@@ -15,7 +15,7 @@ import {
   renderIndexMd,
   RESOURCE_PREFIX,
 } from '@tabs/knowledge/lib/okf-model';
-import type { Workflow } from '@tabs/knowledge/lib/schema';
+import { MAX_ACTOR_PROMPT_BYTES, type Workflow } from '@tabs/knowledge/lib/schema';
 
 // A workflow with steps + actors + rules + per-step tacit — the round-trip target.
 const wf: Workflow = {
@@ -175,6 +175,23 @@ test('an Agent actor prompt survives an OKF export → import round trip', () =>
   assert.ok(bot, 'the Agent actor survives');
   assert.equal(bot?.prompt, '# Triage Bot\n\nYou triage.');
   assert.equal(bot?.id, 'actor-agent-triage-bot', 'the actor id survives too');
+});
+
+test('an imported prompt is capped and CRLF-normalised like every other inlet (review R2)', () => {
+  // An OKF bundle is an inlet for prompt text, and `okfDocToWorkflow` must not throw
+  // (its contract is graceful degradation) — so it truncates and MARKS the truncation,
+  // exactly like reading a stored workflow.md does.
+  const doc = workflowToOkfDoc(wf, { id: 'wf_x', owner: 'u1', domain: 'sales', tier: 'Personal' });
+  doc.sovereign_os!.workflow!.actors = [
+    { id: 'a-crlf', name: 'CRLF Bot', category: 'Agent', prompt: 'one\r\ntwo' },
+    { id: 'a-big', name: 'Big Bot', category: 'Agent', prompt: 'x'.repeat(MAX_ACTOR_PROMPT_BYTES + 5) },
+  ];
+  const back = okfDocToWorkflow(doc, 'wf_x', 'sales');
+  const crlf = back.actors.find((a) => a.name === 'CRLF Bot');
+  assert.equal(crlf?.prompt, 'one\ntwo');
+  const big = back.actors.find((a) => a.name === 'Big Bot');
+  assert.equal(big?.prompt?.length, MAX_ACTOR_PROMPT_BYTES);
+  assert.equal(big?.promptTruncatedFrom, MAX_ACTOR_PROMPT_BYTES + 5);
 });
 
 test('renderIndexMd: subdirectories + concepts render in spec form', () => {

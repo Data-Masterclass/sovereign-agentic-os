@@ -161,6 +161,11 @@ test('HandoverPanel never attributes an agent to a MANUAL step (review M2)', () 
   assert.match(src, /disp\[\w+\] === 'manual'/, 'a manual step must be excluded from the attribution');
 });
 
+test('the inspector surfaces a truncated prompt rather than hiding it (review R3)', () => {
+  const src = read('tabs/knowledge/ui/ActorInspector.tsx');
+  assert.match(src, /promptWarnings|promptTruncatedFrom/, 'a truncated prompt must be reported');
+});
+
 test('no knowledge editor component pulls an Agents-tab module into the browser bundle', () => {
   for (const f of ['tabs/knowledge/ui/ActorInspector.tsx', 'tabs/knowledge/ui/HandoverPanel.tsx']) {
     assert.ok(!read(f).includes('@tabs/agents'), `${f} must import only @core/* and this tab`);
