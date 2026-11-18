@@ -14,7 +14,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseWorkflow } from '@tabs/knowledge/lib/schema';
-import { stepDraftFrom, stepDraftDirty, normaliseStepDraft } from '@tabs/knowledge/lib/step-draft';
+import { stepDraftFrom, stepDraftDirty, normaliseStepDraft, subFormDirty } from '@tabs/knowledge/lib/step-draft';
 
 const WF = parseWorkflow(`---
 id: wf
@@ -73,6 +73,13 @@ test('a reordered or added input IS dirty', () => {
 
 test('picking another actor IS dirty', () => {
   assert.equal(stepDraftDirty({ ...saved, actorValue: 'Software::BankPortal' }, saved), true);
+});
+
+test('typed-but-unadded sub-form text counts as unsaved; whitespace does not', () => {
+  assert.equal(subFormDirty([]), false);
+  assert.equal(subFormDirty(['', undefined, '   ']), false);
+  assert.equal(subFormDirty(['', 'sales.gold.orders']), true, 'a half-typed link ref is unsaved work');
+  assert.equal(subFormDirty(['Must validate the IBAN']), true);
 });
 
 test('normaliseStepDraft is idempotent (normalising twice changes nothing)', () => {

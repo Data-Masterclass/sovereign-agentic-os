@@ -27,7 +27,7 @@ import type { Gap } from '@tabs/knowledge/lib/gaps';
 import type { ActorWarning } from '@tabs/knowledge/lib/actor-registry';
 import type { CommitOutcome } from '@tabs/knowledge/lib/commit-queue';
 import type { WorkflowReducer } from '@tabs/knowledge/lib/workflow-commit';
-import { stepDraftFrom, stepDraftDirty, type StepDraft } from '@tabs/knowledge/lib/step-draft';
+import { stepDraftFrom, stepDraftDirty, subFormDirty, type StepDraft } from '@tabs/knowledge/lib/step-draft';
 import {
   updateStep,
   setStepIO,
@@ -99,7 +99,11 @@ export default function StepInspector({
   const [naDesc, setNaDesc] = useState('');
 
   const idx = workflow.steps.findIndex((s) => s.id === step.id);
-  const dirty = stepDraftDirty(draft, saved);
+  /** The step's own fields — what Save commits. */
+  const draftDirty = stepDraftDirty(draft, saved);
+  /** The little add-a-link / add-a-rule / new-actor forms: text that is not committed yet. */
+  const subFormsDirty = subFormDirty([newLinkRef, newLinkLabel, newRule, naName, naDesc]);
+  const dirty = draftDirty || subFormsDirty;
 
   /** Fold the open draft into a workflow — every commit from here carries it. */
   function applyDraft(base: Workflow): Workflow {
@@ -126,14 +130,32 @@ export default function StepInspector({
 
   /** Commit every field above in one go. The ONLY path that saves the text fields. */
   async function save(): Promise<boolean> {
-    if (!dirty) return true;
+    if (!draftDirty) return true; // a half-typed sub-form has nothing to commit
     if (!draft.title.trim()) { setErr('A step needs a title.'); return false; }
     return commit((fresh) => applyDraft(fresh));
   }
 
   function revert() {
     setDraft(saved);
+    clearSubForms();
     setErr('');
+  }
+
+  function clearSubForms() {
+    setNewLinkRef(''); setNewLinkLabel('');
+    setNewRule(''); setNewRuleHard(false);
+    setNaName(''); setNaDesc(''); setNaCategory('Human'); setAddingActor(false);
+  }
+
+  /**
+   * Stop reporting a draft, now. Used by "Remove step": the step is gone, so a guard
+   * that still believed this inspector was dirty would try to "Save & continue" into a
+   * step that no longer exists.
+   */
+  function discardDraft() {
+    setDraft(saved);
+    clearSubForms();
+    onDirtyChange({ dirty: false, save: async () => true });
   }
 
   // The latest `save` closure, so the parent's guard always saves the CURRENT draft.
@@ -273,11 +295,15 @@ export default function StepInspector({
       {/* The one Save for every field above */}
       {canEdit && (
         <div className="si-save-row">
-          <button className="btn sm" disabled={!dirty || saving} onClick={() => void save()}>
+          <button className="btn sm" disabled={!draftDirty || saving} onClick={() => void save()}>
             {saving ? <span className="spin" /> : 'Save'}</button>
           <button className="btn ghost sm" disabled={!dirty || saving} onClick={revert}>Revert</button>
           <span className="si-save-hint muted">
-            {dirty ? 'Unsaved changes — press Save to commit them to workflow.md.' : 'All changes saved.'}
+            {draftDirty
+              ? 'Unsaved changes — press Save to commit them to workflow.md.'
+              : subFormsDirty
+                ? 'A form below holds text that is not added yet — add it, or it is discarded.'
+                : 'All changes saved.'}
           </span>
         </div>
       )}
@@ -289,7 +315,13 @@ export default function StepInspector({
           <button className="btn ghost sm" disabled={idx >= workflow.steps.length - 1 || saving}
             onClick={() => void commit((fresh) => moveStep(applyDraft(fresh), step.id, 1))}>Move later →</button>
           <button className="btn ghost sm" style={{ marginLeft: 'auto', color: 'var(--danger)' }} disabled={saving}
-            onClick={() => { void commit((fresh) => removeStep(fresh, step.id)).then((ok) => { if (ok) onClose(); }); }}>
+            onClick={() => {
+              void commit((fresh) => removeStep(fresh, step.id)).then((ok) => {
+                if (!ok) return;
+                discardDraft();
+                onClose();
+              });
+            }}>
             Remove step
           </button>
         </div>

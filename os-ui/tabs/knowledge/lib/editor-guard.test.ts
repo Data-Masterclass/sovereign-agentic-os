@@ -13,7 +13,12 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { requestNavigation, resolveNavigation, type EditorIntent } from '@tabs/knowledge/lib/editor-guard';
+import {
+  requestNavigation,
+  resolveNavigation,
+  editorDirty,
+  type EditorIntent,
+} from '@tabs/knowledge/lib/editor-guard';
 
 const toStep: EditorIntent = { kind: 'step', stepId: 'two' };
 const deselect: EditorIntent = { kind: 'step', stepId: null };
@@ -42,6 +47,19 @@ test('Discard navigates without saving', () => {
 
 test('Keep editing stays put', () => {
   assert.deepEqual(resolveNavigation('keep', toStep), { action: 'stay' });
+});
+
+test('every unsaved source dirties the editor — the inspector, the Markdown buffer, a sub-form', () => {
+  assert.equal(editorDirty({}), false);
+  assert.equal(editorDirty({ inspector: false, markdown: false, subForms: false }), false);
+  assert.equal(editorDirty({ inspector: true }), true);
+  assert.equal(editorDirty({ markdown: true }), true, 'the Markdown panel is an exit too');
+  assert.equal(editorDirty({ subForms: true }), true, 'typed-but-unadded sub-form text counts');
+});
+
+test('an unsaved Markdown buffer alone is enough to prompt before leaving the panel', () => {
+  const dirty = editorDirty({ inspector: false, markdown: true, subForms: false });
+  assert.deepEqual(requestNavigation(dirty, toPanel), { action: 'prompt', intent: toPanel });
 });
 
 test('a resolution with nothing pending stays put (a stray click cannot navigate)', () => {

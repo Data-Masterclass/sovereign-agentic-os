@@ -431,3 +431,17 @@ Two deliberate choices inside these fixes:
   the parent gained the prompt — two guards on the same exit means the user answers twice.
 * **`RulesPanel` moved to reducers too**, although the review only named the inspectors: it is the
   same lost-update shape in the same editor, and the change was mechanical.
+
+---
+
+# REVIEW ROUND 2 (re-review: MERGE with three lows, 2026-11-18)
+
+| # | Finding | Fix | Test |
+|---|---|---|---|
+| L4 | The Markdown panel's buffer was the one unguarded exit: `dirty = mdDraft !== data.md` fed nothing, so leaving the tab discarded it, and a queued canvas commit's `reload()` overwrote it mid-typing | the buffer feeds the SAME guard through `editorDirty({ inspector, markdown })`, with `saveMarkdown` (now returning a boolean, registered in a ref) as the Save for that source; `reload` re-seeds the buffer only when it is clean (`mdDraftRef.current === mdBaseRef.current`), and a kept-but-stale buffer is labelled *based on an older version*, so saving over a newer file is a visible choice rather than a surprise | `editor-guard.test.ts` → *every unsaved source dirties the editor — the inspector, the Markdown buffer, a sub-form*, *an unsaved Markdown buffer alone is enough to prompt before leaving the panel*; tripwire *the Markdown buffer is guarded too, and a reload never clobbers it* |
+| L5 | "Remove step" with a dirty draft closed the inspector while `dirtyRef` was still true, so "Save & continue" would reduce into a vanished step | the remove path calls `discardDraft()` — resets the draft, clears the sub-forms, reports `{dirty:false}` — **before** `onClose()` | tripwire *"Remove step" stops reporting a draft for a step that no longer exists* |
+| L6 | Sub-form buffers (`newLinkRef`, `newLinkLabel`, `newRule`, `naName`, `naDesc`) were not part of dirtiness, so half-typed text vanished unannounced | `subFormDirty` (`lib/step-draft.ts`) joins the report: the guard counts it, Revert clears it, Discard drops it. Save still keys off `draftDirty` alone — a half-typed sub-form has nothing to commit — and the hint says so instead | `step-draft.test.ts` → *typed-but-unadded sub-form text counts as unsaved; whitespace does not*; tripwire *the inspector reports typed-but-unadded sub-form text as unsaved* |
+
+Checks after round 2: knowledge lib suite **316 / 316**, `tsc --noEmit -p os-ui` clean,
+`check-structure` ok (419 / 1 / 200 / FILE-HEADER 1231). The full suite and `gate.sh` were last
+green at round 1 and nothing outside `tabs/knowledge` has changed since.
