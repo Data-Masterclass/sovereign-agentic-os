@@ -263,7 +263,10 @@ export async function promoteThroughSeam(
   id: string,
   user: CurrentUser,
   opts: { mode?: string; rung?: 'promote' | 'certify' } = {},
-): Promise<EffectResult & { rung: 'promote' | 'certify'; artifact: Resolved }> {
+): Promise<
+  | { requested: true; approval: Approval; hint: string; rung: 'certify'; artifact: Resolved }
+  | (EffectResult & { requested?: false; rung: 'promote' | 'certify'; artifact: Resolved })
+> {
   // `forGovernanceAct`: this entry IS the approve-half (the ladder's own one-shot and the
   // re-pointed UI promote buttons), so the appointed approver may read what they are deciding.
   // Filing (`fileArtifactPromotion`) and certification-filing deliberately do NOT pass it.
@@ -276,14 +279,37 @@ export async function promoteThroughSeam(
     fail(`Cannot ${opts.rung} a ${tier} ${kind} — its next rung is ${rung}. Refuse rather than silently ${rung}.`, 409);
   }
 
-  // Separation-of-duties on rung 1: owner one-shots; a non-owner may only act as
-  // the APPROVE-half of a request the owner already filed.
+  // SEPARATION OF DUTIES, ON BOTH RUNGS.
+  //
+  // Rung 1 (My→Domain): the owner one-shots — that is the carve-out `canApprove` grants, because
+  // a rung-1 request is owner-only to file, so refusing the owner-approver would only strand the
+  // artefact. A NON-owner may act here solely as the APPROVE-half of a request the owner filed.
+  //
+  // Rung 2 (Domain→COMPANY): the owner must NOT one-shot. This check used to read rung 1 only, so
+  // an admin who OWNED a Shared artefact and called the tab's own promote entry (publish_knowledge,
+  // promote_connection, the software `promote`, a UI promote button — none of which name a rung,
+  // so the rung is derived from the tier) certified it company-wide in a single call, and minted a
+  // `promote_certify` record with `decidedBy === requestedBy`: exactly the act the Governance door
+  // refuses. Company scope is the whole tenant and rung 2 is normally filed by a Builder or
+  // Domain-admin of the domain, so there IS somebody else to ask. File (or reuse) the request and
+  // say so, rather than quietly performing both halves.
   let realPending: Approval | null = null;
-  if (rung === 'promote' && art.owner !== user.id) {
-    realPending = existingPending('artifact_promote', kind, id);
-    if (!realPending) {
-      fail(`Only the ${kind} owner can promote it directly — the owner must file request_promotion first, then a domain admin approves it.`, 403);
+  if (art.owner !== user.id) {
+    if (rung === 'promote') {
+      realPending = existingPending('artifact_promote', kind, id);
+      if (!realPending) {
+        fail(`Only the ${kind} owner can promote it directly — the owner must file request_promotion first, then a domain admin approves it.`, 403);
+      }
     }
+  } else if (rung === 'certify') {
+    const pending = existingPending('promote_certify', kind, id) ?? (await fileArtifactCertification(kind, id, user, opts));
+    return {
+      requested: true,
+      approval: pending,
+      hint: 'Certification to Company needs a second Admin — you filed this request, so you cannot also decide it.',
+      rung: 'certify',
+      artifact: art,
+    };
   }
 
   const synthetic: Approval = {
@@ -369,7 +395,11 @@ export async function promoteOrRequest(
   if (normVisibility(art.visibility) === 'Personal' && art.owner === user.id && !canPromote(user.role, 'Personal')) {
     return { requested: true, approval: await fileArtifactPromotion(kind, id, user) };
   }
-  return { requested: false, ...(await promoteThroughSeam(kind, id, user)) };
+  const out = await promoteThroughSeam(kind, id, user);
+  // `promoteThroughSeam` can itself answer "filed" now — the owner of a SHARED artefact asking to
+  // certify it. Forward that, rather than labelling it `requested: false`.
+  if (out.requested) return { requested: true, approval: out.approval };
+  return { requested: false, ...out };
 }
 
 /** The ladder kinds a DEMOTE (revoke sharing) is wired for — the reverse of the

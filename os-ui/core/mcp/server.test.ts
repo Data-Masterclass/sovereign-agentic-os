@@ -129,9 +129,12 @@ test('tools/call: a role-gated tool a creator may not use returns a TYPED forbid
 });
 
 test('tools/call: a GOVERNANCE denial maps to an MCP tool error (isError), not a crash', async () => {
-  // A domain_admin creates a Personal app, promotes it to Shared (allowed — rung-1
-  // now needs domain_admin), then the second promote (Shared→Certified) needs an
-  // Admin → governed 403.
+  // A domain_admin creates a Personal app and promotes it to Shared (allowed — rung-1 needs
+  // domain_admin). The SECOND promote is the Company rung, and she OWNS the app, so it is no
+  // longer a one-shot: Company scope keeps four-eyes, and the seam FILES the certification
+  // request instead (a domain_admin is an eligible filer for rung 2). The governed DENIAL this
+  // test exists for is asserted below on a principal who may not act at all — and the point is
+  // the same: a typed tool error, never a crash.
   const created = result(
     await handleRpc(domainAdmin, {
       jsonrpc: '2.0',
@@ -160,10 +163,24 @@ test('tools/call: a GOVERNANCE denial maps to an MCP tool error (isError), not a
       params: { name: 'promote', arguments: { appId } },
     }),
   );
-  assert.equal(secondPromote.isError, true); // Shared → Certified needs an Admin
-  const err = (secondPromote.structuredContent as { error: { code: string; reason: string } }).error;
-  assert.equal(err.code, 'forbidden'); // typed, not an opaque string
-  assert.match(err.reason, /Admin/i);
+  assert.notEqual(secondPromote.isError, true); // it FILES, rather than dead-ending the owner
+  const filed = JSON.parse((secondPromote.content as { text: string }[])[0].text) as { requested?: boolean; hint?: string };
+  assert.equal(filed.requested, true, 'the Company rung is filed, not self-approved by its owner');
+  assert.match(String(filed.hint), /second Admin/i, 'and the answer says what is still needed');
+
+  // THE GOVERNED DENIAL: a creator may not promote an app they do not own. Typed, not a crash.
+  const denied = result(
+    await handleRpc(creator, {
+      jsonrpc: '2.0',
+      id: 7.5,
+      method: 'tools/call',
+      params: { name: 'promote', arguments: { appId } },
+    }),
+  );
+  assert.equal(denied.isError, true);
+  const err = (denied.structuredContent as { error: { code: string; reason: string } }).error;
+  assert.ok(err.code === 'forbidden' || err.code === 'not_found', `typed, not an opaque string: ${err.code}`);
+  assert.ok(err.reason.length > 0, 'and it carries a reason');
 });
 
 test('unknown method: returns JSON-RPC method-not-found', async () => {

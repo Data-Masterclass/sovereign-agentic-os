@@ -620,6 +620,110 @@ test('M2: approve_promotion re-gates canApprove and refuses a parked agent run',
   assert.equal(getApproval(filed.requestId!)!.status, 'approved');
 });
 
+
+// ===== M: THE SECOND DOOR TO THE COMPANY RUNG ================================
+
+test('M: an admin who OWNS a Shared artefact cannot one-shot the Company rung either', async () => {
+  __resetApprovals();
+  // ada is a platform admin AND the owner. Get the connection to Domain first, through the
+  // rung-1 carve-out (file, then decide her own request — that one IS allowed).
+  const conn = await call<{ id: string }>(ada, 'create_connection', {
+    name: 'Ada API',
+    template: 'generic-api',
+    endpoint: 'https://api.example.com',
+    credential: 'tok',
+  });
+  const filed = await call<Filed>(ada, 'request_promotion', { kind: 'connection', id: conn.id });
+  await call(ada, 'decide_approval', { requestId: filed.requestId!, decision: 'approve' });
+  assert.equal((await call<{ visibility: string }>(ada, 'get_connection', { connId: conn.id })).visibility, 'Shared');
+
+  // Now the SECOND door. `promote_connection` derives the rung from the tier, so for a Shared
+  // artefact it is CERTIFY — and `promoteThroughSeam`'s separation-of-duties check only ever
+  // looked at rung 1. The owner-admin therefore certified company-wide in one call and minted a
+  // `promote_certify` record with `decidedBy === requestedBy` — precisely the act `canApprove`
+  // refuses at the other door. It must FILE instead.
+  __resetApprovals();
+  const out = await call<{ requested?: boolean; requestId?: string; hint?: string }>(ada, 'promote_connection', { connId: conn.id });
+  assert.equal(out.requested, true, 'the Company rung is filed, never one-shot by its own owner');
+  assert.ok(out.requestId, 'and the caller gets the handle to poll');
+  assert.match(String(out.hint), /second Admin/i, `the answer must say what is needed: ${out.hint}`);
+
+  // Nothing moved, and the record is genuinely pending for someone else.
+  assert.equal((await call<{ visibility: string }>(ada, 'get_connection', { connId: conn.id })).visibility, 'Shared');
+  const rows = listApprovals({});
+  assert.equal(rows.length, 1, 'exactly one record');
+  assert.equal(rows[0].kind, 'promote_certify');
+  assert.equal(rows[0].status, 'pending');
+  assert.equal(rows[0].requestedBy, ada.id);
+  assert.equal(rows[0].decidedBy, undefined, 'a certify record must never be self-decided');
+  assert.equal(canApprove({ id: ada.id, role: 'admin', domains: ada.domains }, rows[0]), false, 'and the queue agrees');
+
+  // Calling again REUSES that request rather than stacking duplicates.
+  const again = await call<{ requested?: boolean; requestId?: string }>(ada, 'promote_connection', { connId: conn.id });
+  assert.equal(again.requested, true);
+  assert.equal(again.requestId, rows[0].id, 'the second call reuses the pending request');
+  assert.equal(listApprovals({}).length, 1);
+});
+
+test('M: a non-owner Admin still certifies in one shot — the domain vouched, she decides', async () => {
+  __resetApprovals();
+  // cara owns it; the domain promoted it; ada is NOT the owner, so certifying is a genuine
+  // second pair of eyes and the one-shot stands.
+  const wf = await call<{ id: string }>(cara, 'author_knowledge', { title: 'vouched' });
+  const filed = await call<Filed>(cara, 'request_promotion', { kind: 'knowledge', id: wf.id });
+  await call(dana, 'decide_approval', { requestId: filed.requestId!, decision: 'approve' });
+  __resetApprovals();
+
+  const out = await call<{ ok?: boolean; rung?: string; requested?: boolean }>(ada, 'request_certification', { kind: 'knowledge', id: wf.id });
+  // request_certification always files; the one-shot door is the tab's own promote entry.
+  assert.ok(out, 'filed');
+  const cert = listApprovals({ status: 'pending' })[0];
+  assert.equal(cert.requestedBy, ada.id);
+  // ada filed it, so SHE cannot decide it — but dana cannot either (tenant scope), which is the
+  // documented shape: a second Admin. Proven by the predicate, since this tenant has one admin.
+  assert.equal(canApprove({ id: ada.id, role: 'admin', domains: ada.domains }, cert), false);
+  assert.equal(canApprove({ id: 'other-admin', role: 'admin', domains: ['sales'] }, cert), true, 'a second Admin can');
+});
+
+
+test('L: a decision whose effect did not complete is audited, not only stamped on the card', async () => {
+  __resetApprovals();
+  __resetAudit();
+  // A legacy metric request: the effect refuses with the dataset-derived-audience reason, so the
+  // request must stay pending AND the attempt must be in the audit log — a decision that was
+  // made and did not land is exactly what an auditor asks about later.
+  const legacy = enqueue({
+    kind: 'artifact_promote',
+    title: 'Promote "revenue"',
+    detail: 'legacy metric promotion request',
+    agent: cara.id,
+    domain: 'sales',
+    requestedBy: cara.id,
+    tool: 'metric_promote',
+    payload: { artifactKind: 'metric', id: 'ds_x.revenue', name: 'revenue' },
+    approverRole: 'domain_admin',
+    scope: 'domain',
+  });
+  await refusal(dana, 'decide_approval', { requestId: legacy.id, decision: 'approve' });
+  assert.equal(getApproval(legacy.id)!.status, 'pending', 'left pending and retriable');
+  const log = auditSearch({ actor: dana.id });
+  assert.ok(
+    log.some((e) => /Effect (FAILED|did not complete)/i.test(e.reason)),
+    `the failed attempt is audited: ${log.map((e) => e.reason).join(' | ') || '(nothing logged)'}`,
+  );
+});
+
+test('tripwire: both approval doors audit an effect that reported failure', () => {
+  for (const rel of ['app/api/governance/approvals/route.ts', 'core/mcp/governance-tools.ts']) {
+    const c = code(rel);
+    const at = c.indexOf('!effect.ok');
+    assert.ok(at > 0, `${rel}: the effect-reported-failure branch must exist`);
+    const branch = c.slice(at, at + 900);
+    assert.match(branch, /audit\(\{/, `${rel}: that branch must write an audit entry, not only recordEffect`);
+    assert.match(branch, /recordEffect\(/, `${rel}: and still stamp the card`);
+  }
+});
+
 // ============ M4: the knowledge guard is on the AUDIENCE axis =================
 
 test('M4: a Personal workflow is promoted on its AUDIENCE, not on its legacy status word', async () => {

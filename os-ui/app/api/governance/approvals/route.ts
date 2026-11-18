@@ -102,6 +102,17 @@ export async function POST(req: Request) {
       );
     }
     if (!effect.ok) {
+      // An effect that RAN and reported failure is as audit-worthy as one that threw: a physical
+      // publish that could not materialise is the very event an auditor asks about later, and
+      // `recordEffect` alone writes it only onto the card.
+      audit({
+        actor: user.id,
+        action: 'approve',
+        subject: target.tool || target.kind,
+        domain: target.domain,
+        reason: `Effect did not complete — request left pending: ${effect.applied}`,
+        detail: { approvalId: target.id, kind: target.kind, publish: effect.publish },
+      });
       recordEffect(target.id, { applied: effect.applied, live: false, publish: effect.publish });
       return NextResponse.json(
         { approval: { ...getApproval(target.id) }, applied: null, error: effect.applied, publish: effect.publish },

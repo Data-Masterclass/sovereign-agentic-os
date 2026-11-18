@@ -291,7 +291,13 @@ export const connectionTools: McpTool[] = [
       if (!id) fail('promote_connection needs a `connId`', 400);
       // Route the flip through the ONE effect seam (never promoteConnection directly).
       const r = await promoteThroughSeam('connection', id, user);
-      return getConnectionForUser(id, user).then((c) => ({ id: c.id, name: c.name, visibility: c.visibility, applied: r.applied, live: r.live }));
+      // The seam can answer "filed" — the OWNER of a Shared connection asking to certify it, where
+      // Company scope keeps four-eyes. Hand back the pending handle, never a false success.
+      if (r.requested) {
+        return { requested: true, requestId: r.approval.id, approvalId: r.approval.id, kind: r.approval.kind, hint: r.hint };
+      }
+      const c = await getConnectionForUser(id, user);
+      return { id: c.id, name: c.name, visibility: c.visibility, applied: r.applied, live: r.live };
     },
   },
   {
