@@ -25,9 +25,16 @@
  *   WHAT IT DOES NOT GUARANTEE: that no fabrication exists under a spelling not in
  *     {@link MARKERS}. That is the lesson of review H2 — `mode: 'mock'`, `mockClient(`,
  *     `mockAdapterFor(` and `mockEmbed` were all invisible to the first version of this test, and
- *     six real fabrication sites in the Files ingest pipeline rode through it. So: **a new
- *     stand-in must either reuse a marker in this set or be added to it.** The set is the
- *     contract; widening it is cheap and is how this test stays honest.
+ *     six real fabrication sites in the Files ingest pipeline rode through it. The RE-REVIEW then
+ *     found two more under two further spellings: `hashEmbed(` / `'offline-hash'` (the Knowledge
+ *     embedder — the identical defect to the Files one, on the corpus agents cite) and
+ *     `seedToolResult(` (an app tool answering "Sample record A" when its runner said nothing).
+ *     Twice now, the gap has been a NAME rather than a missing gate. So: **a new stand-in must
+ *     either reuse a marker in this set or be added to it.** The set is the contract; widening it
+ *     is cheap and is how this test stays honest.
+ *     Matching is deliberately quote- and space-tolerant for the `mode: mock` family
+ *     ({@link MARKER_PATTERNS}), because `mode: "mock"` and `mode:'mock'` are the same fact and a
+ *     literal `includes` would have missed either variant.
  *
  *   Follows the repo's grep-the-tree pattern (`core/ui/charts/echarts-surface.test.ts` for the
  *   single ECharts registration, the MODEL-KEY rule for the LiteLLM master key). Reads from disk
@@ -50,7 +57,23 @@ const ROOTS = ['tabs', 'core', 'app'];
  * the Files pipeline entirely, which labels its fabrications `mode: 'mock'` and reaches them
  * through `mockClient(` / `mockAdapterFor(` / `mockEmbed`.
  */
-const MARKERS = ["offline-mock", "mode: 'mock'", 'mockClient(', 'mockAdapterFor(', 'mockEmbed'];
+const MARKERS = [
+  'offline-mock',
+  'mockClient(',
+  'mockAdapterFor(',
+  'mockEmbed',
+  // Re-review: the Knowledge embedder's spelling, and the Software seed-row helper.
+  'hashEmbed(',
+  'offline-hash',
+  'seedToolResult(',
+];
+
+/**
+ * Markers whose spelling varies in ways a literal `includes` would miss — quote style and the
+ * space after the colon. Kept as patterns rather than enumerating every variant as a string, so
+ * `mode:"mock"`, `mode: 'mock'` and `mode :  "mock"` are all one fact.
+ */
+const MARKER_PATTERNS = [/\bmode\s*:\s*['"]mock['"]/];
 
 const PREDICATE_IMPORT = '@core/kernel/offline-mock';
 
@@ -82,6 +105,10 @@ const DECIDERS = [
   'tabs/files/lib/connectors-live.ts',
   'tabs/files/lib/embed.ts',
   'tabs/files/lib/ingest/live.ts',
+  // Re-review: the identical embedder defect on the Knowledge corpus, and the app tool that
+  // answered with two invented rows when its runner said nothing.
+  'tabs/knowledge/lib/embed.ts',
+  'tabs/software/lib/app-records.ts',
 ];
 
 /** Files that READ a refusal somebody else produced. They must import, and must not decide. */
@@ -136,6 +163,20 @@ const LABELS = [
   'tabs/data/lib/build/live-clients.ts',
   'tabs/files/lib/connectors.ts',
   'tabs/files/lib/ingest/mocks.ts',
+  // Definitions and propagators of the Knowledge offline hash. `embed-core.ts` DEFINES
+  // `hashEmbed`; `eval-harness.ts` hashes BOTH sides of a comparison over its own fixtures, which
+  // is a self-consistent offline scoring harness and stands in for no real read; `index-pipeline`
+  // and `retrieve` carry `embedSource`; `librarian-live` and `agentic-graph` READ it as a guard
+  // (returning `[]` / keeping deterministic rows), which mitigates the read side and decides
+  // nothing about whether to write.
+  'core/infra/context/librarian-live.ts',
+  'tabs/agents/lib/build/agentic-graph.ts',
+  'tabs/knowledge/lib/embed-core.ts',
+  'tabs/knowledge/lib/eval-harness.ts',
+  'tabs/knowledge/lib/index-pipeline.ts',
+  'tabs/knowledge/lib/retrieve.ts',
+  // Defines `seedToolResult` + the demo-seed label. Defining a stand-in is not choosing one.
+  'tabs/software/lib/tool-exec.ts',
   'tabs/metrics/lib/build/live.ts',
   'tabs/metrics/lib/build/server.ts',
   'tabs/monitoring/lib/adapters/cost.ts',
@@ -183,7 +224,8 @@ function filesNamingAMarker(): string[] {
   for (const root of ROOTS) {
     for (const abs of walk(join(OS_UI, root))) {
       const src = readFileSync(abs, 'utf8');
-      if (MARKERS.some((m) => src.includes(m))) hits.push(relative(OS_UI, abs).split(sep).join('/'));
+      const named = MARKERS.some((m) => src.includes(m)) || MARKER_PATTERNS.some((re) => re.test(src));
+      if (named) hits.push(relative(OS_UI, abs).split(sep).join('/'));
     }
   }
   return hits.sort();

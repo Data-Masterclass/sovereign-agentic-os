@@ -961,11 +961,30 @@ now greps a marker **set** over three roots, and its docstring states exactly
 what it does and does not guarantee: coverage of that set, not of the concept
 "fabrication". A new stand-in must reuse a marker or be added to the set.
 
-The lesson generalises three ways: when a guarantee must hold in production, key
+And then it happened a second time. The re-review of the same PR found two more:
+`tabs/knowledge/lib/embed.ts` writing `hashEmbed` vectors labelled
+`source: 'offline-hash'` — the identical defect to the Files one, on the corpus
+agents cite *with a citation* — and `tabs/software/lib/app-records.ts` answering
+an app tool call with two rows called "Sample record A" when the runner said
+nothing, inside the very subsystem whose `seeded-evidence.ts` documents why a
+label is not a guard. **Both were missed for the same reason as the first six: a
+NAME, not a missing gate.** Twice is a pattern, so the marker set is now seven
+strings plus a quote/space-tolerant `mode: "mock"` pattern, and the tripwire's
+docstring states that a new stand-in must reuse a marker or be added to the set.
+
+The lesson generalises four ways: when a guarantee must hold in production, key
 it on something production **has**; make the gate structural rather than
-advisory; and when you put a grep in CI to enforce it, **write down what the
-grep cannot see** — the same move `tabs/software/lib/seeded-evidence.ts` made
-when it chose a positive provenance rule over scanning for a negative marker.
+advisory; when you put a grep in CI to enforce it, **write down what the grep
+cannot see** — the same move `tabs/software/lib/seeded-evidence.ts` made when it
+chose a positive provenance rule over scanning for a negative marker; and expect
+the next gap to be a **synonym**, because a codebase this size will always have
+more than one word for "stand-in".
+
+One consequence has no clean fix: a fabricated row is **indistinguishable from a
+real one once written**. The `files` and `knowledge` indexes hold invented
+documents and hash vectors from before this gate, and nothing in the rows marks
+them. Re-indexing is the only remedy. That asymmetry — cheap to prevent,
+impossible to undo — is the argument for the gate being structural.
 
 ## Generated documentation
 

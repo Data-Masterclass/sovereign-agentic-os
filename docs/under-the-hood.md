@@ -1741,6 +1741,15 @@ git tag --list 'app/invoices/v*'                # the release scheme — current
 >   "FAILED (0 findings)" read as "we looked and it is broken" when it meant "nothing looked". The
 >   hardcoded two-entry deps list and the missing Semgrep/Trivy/gitleaks wiring are UNCHANGED and
 >   still open — and with the gate closed they now BLOCK approval on a real cluster.
+> - **An app tool answered "Sample record A" when its runner said nothing.**
+>   `tabs/software/lib/app-records.ts` ended in `result ?? seedToolResult(tool, args)`, returning
+>   two invented rows labelled `source: 'demo-seed'`. `seeded-evidence.ts` makes that label
+>   STRUCTURAL at the deploy gates — but the tool RESULT still reached the caller, and `source` is
+>   a response field an agent that reads `items[]` never looks at. **FIXED 2026-11-18**
+>   (re-review): a typed `ENGINE_UNAVAILABLE` naming the app, the tool and the runner phase. Found
+>   in the subsystem whose own module documents why a label is not a guard.
+>   `os-ui/tabs/software/lib/app-records.ts`; `tool-exec.ts:43-67`;
+>   `tabs/software/lib/offline-mock-seed-production.test.ts`
 > - **`verify_software` runs no tests.** It returns a directive and trusts the agent's PASS/FAIL.
 >   `platform-mcp.ts:291-325`
 > - **No release tags are written.** `annotatedTag` exists in the git store with *zero callers*; the
@@ -1905,6 +1914,18 @@ POST /knowledge/_search
 >   and are not retroactively identifiable** — a re-index after the parsers and the embeddings
 >   gateway are reachable is the only remedy. `os-ui/tabs/files/lib/connectors-live.ts`;
 >   `ingest/live.ts`; `embed.ts`; `tabs/files/lib/offline-mock-production.test.ts`
+> - **The KNOWLEDGE embedder had the identical defect, on the corpus agents cite.**
+>   `tabs/knowledge/lib/embed.ts` returned `hashEmbed(t, config.embedDim)` with
+>   `source: 'offline-hash'` on a timeout, a transport failure, a 5xx **or** a wrong-dimension
+>   reply — and `index-pipeline.ts` propagates `embedSource`, so the rows are written before
+>   anything notices. `core/infra/context/librarian-live.ts` returning `[]` for an `offline-hash`
+>   batch mitigates the READ side only. A hash is not an embedding: k-NN over those rows ranks by
+>   a hash while looking exactly like retrieval, and this is the knowledge base agents quote WITH
+>   A CITATION. **FIXED 2026-11-18** (re-review): refused at the WRITE. A 4xx still throws
+>   `GatewayRejectedError` — a decision about your key is not an unreachable dependency.
+>   **The `knowledge` index carries the same re-index debt as `files`, and the two should be
+>   re-indexed together.** `os-ui/tabs/knowledge/lib/embed.ts`;
+>   `tabs/knowledge/lib/offline-mock-production.test.ts`
 > - **Presidio is absent, not stubbed.** Six occurrences exist in the whole repository: two in a
 >   `gateway-mirror.test.ts` fixture (`{ guardrail_name: 'presidio-pii' }`) and four in a plan document
 >   that proposes deploying it. There is no Presidio HTTP call, no `apply_guardrail`, no
@@ -2886,8 +2907,11 @@ the managed deployment too.
 >   `MONITORING_DEMO_FIXTURES` (`core/kernel/config.ts:427-432`), which defaults OFF under
 >   `NODE_ENV=production`; it was deliberately not folded into the predicate so the Monitoring
 >   fixtures stay independently switchable. The tripwire covers a marker SET
->   (`offline-mock`, `mode: 'mock'`, `mockClient(`, `mockAdapterFor(`, `mockEmbed`) over
->   `tabs/**`, `core/**` and `app/**` — it guarantees coverage of that set, not of the concept.
+>   (`offline-mock`, `mockClient(`, `mockAdapterFor(`, `mockEmbed`, `hashEmbed(`, `offline-hash`,
+>   `seedToolResult(`, plus a quote/space-tolerant `mode: "mock"` pattern) over `tabs/**`,
+>   `core/**` and `app/**` — it guarantees coverage of that set, not of the concept. The set grew
+>   twice during review, both times because a real fabrication used a different NAME, not because
+>   a gate was missing.
 >   `charts/sovereign-agentic-os/values.yaml` → `osUI.offlineMock`;
 >   `os-ui/core/kernel/offline-mock-tripwire.test.ts`
 > - **Platform-admin spend was invented from the envelope, and raised a real alert.**
