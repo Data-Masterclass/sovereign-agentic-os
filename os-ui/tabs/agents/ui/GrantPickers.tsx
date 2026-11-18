@@ -37,11 +37,13 @@ import { itemsUnderFolder, normaliseFolderPath } from '@core/kernel/folders';
  */
 
 export type Available = { id: string; name: string; scope: 'personal' | 'domain' | 'marketplace'; layers?: DataLayer[]; folder?: string };
-/** A folder row from the feed. `outsideDomain` marks a node that is only present because a
+/** A folder row from the feed. `outsideDomain` marks a row that is only present because a
  *  LIVE grant on this system points at it from outside the system's domain — the feed is
- *  otherwise narrowed to that domain. Such a node still renders (and still shows as ticked),
- *  with a warning, because hiding a grant the system really holds would be a lie, and a
- *  tick-and-save round trip over a tree missing it would delete it. */
+ *  otherwise narrowed to that domain. Such a row is deliberately NOT put into the tree: the
+ *  narrowed feed gives it no items, and an item-less folder renders UNTICKED (`triState`
+ *  returns 'none'), which would show a live grant as un-granted. It is rendered instead as a
+ *  read-only chip with a warning, and passed to the reconcile as PROTECTED so that no
+ *  tick-and-save round trip can delete it. */
 export type FolderNode = { path: string; scope: 'personal' | 'domain'; outsideDomain?: boolean };
 export type AvailableFeed = { items: Available[]; folders?: FolderNode[] };
 
@@ -55,7 +57,6 @@ export function highestLayer(layers: DataLayer[] | undefined): DataLayer | null 
 }
 
 /**
- * Wave-3 folder-aware grant picker/**
  * Wave-3 folder-aware grant picker for the FOLDERED kinds (data · knowledge · files).
  * Renders the shared `<FolderTree variant="checkbox">` over the DLS-scoped feed so the
  * author ticks whole FOLDERS (→ a folder grant that late-binds to every item under it,
@@ -144,9 +145,11 @@ export function FolderResourcePicker({
     onCommit(applyFolderSelection(system, kind, sel, layerFor, {
       inFamily,
       manageFolders: managesFolders,
-      // Removal is bounded by what the tree could actually show: the feed's own item ids,
-      // and the out-of-domain folders it was never given.
-      listedItemIds: items.map((a) => a.id),
+      // Removal is bounded by what the TREE could actually show — `treeItems`, NOT the whole
+      // feed. Marketplace items live in the separate "+ Add from marketplace" picker and are
+      // never tickable here, so counting them as listed made the first tick delete every
+      // marketplace grant. Same reason the out-of-domain folders are passed as protected.
+      listedItemIds: treeItems.map((a) => a.id),
       protectedFolders: outsideFolders.map((f) => ({ path: f.path, scope: f.scope })),
     }));
   };
@@ -157,12 +160,19 @@ export function FolderResourcePicker({
   const cap = accessCap(system.safetyPreset);
   const scopeOf = (id: string): 'personal' | 'domain' | 'marketplace' => availOf(id)?.scope ?? 'personal';
   const mktGrantedIds = new Set(grantedItems.map((g) => g.id));
-  // Folder grants the feed flagged as pointing OUTSIDE this system's domain (legacy): they
-  // still render and still tick, but the chip says so, so the author can see why a foreign
-  // folder is attached and remove it deliberately rather than discover it at run time.
+  // Folder grants the feed flagged as pointing OUTSIDE this system's domain (legacy). They are
+  // NOT tree nodes (see `FolderNode`): they render here as read-only chips carrying a warning,
+  // so the author can see why a foreign folder is attached and remove it deliberately instead
+  // of discovering it at run time.
   const outsideKeys = new Set(outsideFolders.map((f) => `${f.scope}:${normaliseFolderPath(f.path)}`));
   const isOutside = (f: { path: string; scope: string }) =>
     outsideKeys.has(`${f.scope}:${normaliseFolderPath(f.path)}`);
+  // The same honesty for an ITEM grant: an id the narrowed feed did not return is one this
+  // picker cannot show or describe (`nameOf` falls back to the id). It is kept — the reconcile
+  // protects it — and badged, so a bare id is never left unexplained. The wording says only
+  // what is actually known: it is not in this view, which is usually another domain but can
+  // also be an artifact that is gone.
+  const isOutsideItem = (id: string) => !availOf(id);
   const addableMkt = mktItems.filter((a) => !mktGrantedIds.has(a.id));
 
   return (
@@ -209,11 +219,14 @@ export function FolderResourcePicker({
               </span>
               {/* Files are folder-granted only, so the folder chip carries the SAME access
                   selector item grants use — this is the only place a Files write can be set.
-                  `cap` (from the system safety preset) bounds it exactly like every kind. */}
+                  `cap` (from the system safety preset) bounds it exactly like every kind.
+                  READ-ONLY for an out-of-domain folder: this picker cannot show what is inside
+                  it, so raising its capability would be granting write over contents the author
+                  cannot inspect. Removing it (✕) stays available — that only ever reduces. */}
               <AccessLevelSelect
                 cap={cap}
                 capability={g.capability}
-                canEdit={canEdit}
+                canEdit={canEdit && !isOutside(g.folder!)}
                 onLevel={(l) => onCommit(setFolderGrantLevel(system, kind, g.folder!, l))}
               />
               {canEdit ? (
@@ -223,7 +236,20 @@ export function FolderResourcePicker({
           ))}
           {grantedItems.map((g) => (
             <span key={g.id} className="sb-chip granted" style={{ gap: 8 }}>
-              <span>{nameOf(g.id)}<span className="badge muted" style={{ marginLeft: 6 }}>{scopeLabel(scopeKeyOf(scopeOf(g.id)))}</span></span>
+              <span>
+                {nameOf(g.id)}
+                {isOutsideItem(g.id) ? (
+                  <span
+                    className="badge warn"
+                    style={{ marginLeft: 6 }}
+                    title="This artifact is not in this team's domain — or is no longer visible here. The grant still works at run time (it resolves as whoever runs the team), but this picker cannot show you what it is. Remove it unless you meant it."
+                  >
+                    outside this domain
+                  </span>
+                ) : (
+                  <span className="badge muted" style={{ marginLeft: 6 }}>{scopeLabel(scopeKeyOf(scopeOf(g.id)))}</span>
+                )}
+              </span>
               <AccessLevelSelect
                 cap={cap}
                 capability={g.capability}

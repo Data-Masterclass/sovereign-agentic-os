@@ -122,6 +122,25 @@ test('GRANT-APPLY: ticking an item ADDS it, and the write capability of a kept g
   assert.ok(next.grants.data.some((g) => g.id === 'ds_new'), 'the newly ticked item was added');
 });
 
+test('GRANT-APPLY: a MARKETPLACE item grant survives the first tick', () => {
+  // Marketplace items are granted through the separate "+ Add from marketplace" picker and are
+  // never tree-tickable, so they must not count as listed. Passing the WHOLE feed (tree items
+  // plus marketplace) as `listedItemIds` deleted every marketplace grant on the first tick.
+  let sys = blankSystem();
+  sys = setArtifactGrant(sys, 'data', 'ds_certified', false, 'gold');
+  sys = setArtifactGrant(sys, 'data', 'ds_local', false, 'gold');
+  const treeIds = ['ds_local']; // what the TREE showed — marketplace is not in it
+  const next = applyFolderSelection(
+    sys,
+    'data',
+    { folderGrants: [], itemGrants: ['ds_local'] },
+    layer,
+    { listedItemIds: treeIds },
+  );
+  const ids = next.grants.data.filter((g) => !g.folder).map((g) => g.id).sort();
+  assert.deepEqual(ids, ['ds_certified', 'ds_local'], 'the marketplace grant is still there');
+});
+
 test('GRANT-APPLY: the Workflows picker (manageFolders=false) touches no folder grant', () => {
   const sys = systemWithLegacyGrants();
   const next = applyFolderSelection(
@@ -140,5 +159,19 @@ test('GRANT-APPLY-TRIPWIRE: the picker delegates to the lib and passes both prot
   assert.match(src, /from '@tabs\/agents\/lib\/grant-apply'/, 'the picker imports the reconcile');
   assert.ok(!/export function applyFolderSelection/.test(src), 'and no longer defines its own');
   assert.match(src, /protectedFolders/, 'it passes the out-of-domain folders it kept out of the tree');
-  assert.match(src, /listedItemIds/, 'and the ids the narrowed feed could actually show');
+  assert.match(
+    src,
+    /listedItemIds:\s*treeItems\.map/,
+    'and the TREE\'s ids — not the whole feed, which would make a marketplace grant look unticked',
+  );
+  // The out-of-domain folder chip must be read-only: this picker cannot show what is inside a
+  // folder in another domain, so raising its capability would grant write over contents the
+  // author cannot inspect. Removing it stays allowed — that only reduces.
+  assert.match(
+    src,
+    /canEdit=\{canEdit && !isOutside\(g\.folder!\)\}/,
+    'the out-of-domain folder chip cannot have its access level raised',
+  );
+  // An item grant the narrowed feed did not return shows as a bare id; it must say why.
+  assert.match(src, /isOutsideItem\(/, 'out-of-domain ITEM grants are badged too');
 });

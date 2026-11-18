@@ -72,6 +72,21 @@ test('reconcileGranted still DROPS a listed grant the user de-selected', () => {
   assert.equal(isGranted(next, 'data', 'ds_local'), false, 'de-selecting something shown removes it');
 });
 
+test('reconcileGranted KEEPS a MARKETPLACE grant the tree never offered', () => {
+  // Marketplace items have their own picker and are not tree-tickable, so `listed` is the TREE's
+  // ids. Counting the whole feed as listed deleted every marketplace grant on the first tick.
+  const cap = contextAccessCap('read-propose');
+  let grants = emptyContextGrants();
+  grants = {
+    ...grants,
+    data: [{ id: 'ds_local', access: 'read-only' }, { id: 'ds_certified', access: 'read-only' }],
+  };
+  const listedTreeIds = new Set(['ds_local']);
+  const next = reconcileGranted(grants, 'data', new Set(['ds_local']), cap, listedTreeIds);
+  assert.equal(isGranted(next, 'data', 'ds_certified'), true, 'the marketplace grant survives');
+  assert.equal(isGranted(next, 'data', 'ds_local'), true, 'the ticked one stays');
+});
+
 // -------------------- Personal-DATA grant warning (0.6.115 C1) --
 
 test('C1: a Personal-scoped DATA grant surfaces the access-denied risk', () => {
