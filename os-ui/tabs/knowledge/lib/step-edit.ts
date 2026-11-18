@@ -8,6 +8,7 @@ import {
   type StepRule,
   type ActorType,
   type Actor,
+  actorKey,
   KnowledgeError,
 } from '@tabs/knowledge/lib/schema';
 
@@ -189,7 +190,15 @@ export function addActor(
   return w;
 }
 
-/** Patch a registry actor (name / category / description) by id. */
+/**
+ * Patch a registry actor (name / category / description) by id.
+ *
+ * A name or category change TRAVELS: every step that referenced the old
+ * (category, name) pair is rewritten in the same returned workflow, so one commit
+ * leaves the registry and the steps agreeing. Steps reference an actor by that pair,
+ * so a registry-only rename used to leave every step pointing at a name nobody
+ * declared — a warning at best, a silent mismatch at worst.
+ */
 export function updateActor(
   input: Workflow,
   actorId: string,
@@ -198,6 +207,7 @@ export function updateActor(
   const w = structuredClone(input);
   const a = w.actors.find((x) => x.id === actorId);
   if (!a) throw new KnowledgeError(`Actor '${actorId}' is not in this workflow`);
+  const oldKey = actorKey(a.category, a.name);
   if (patch.name !== undefined) a.name = patch.name.trim() || a.name;
   if (patch.category !== undefined) a.category = patch.category;
   if (patch.description !== undefined) {
@@ -205,12 +215,49 @@ export function updateActor(
     if (d) a.description = d;
     else delete a.description;
   }
+  const dup = w.actors.find((x) => x.id !== a.id && actorKey(x.category, x.name) === actorKey(a.category, a.name));
+  if (dup) throw new KnowledgeError(`Another actor is already named '${a.name}' (${a.category})`);
+  for (const s of w.steps) {
+    if (!s.actor_name.trim()) continue;
+    if (actorKey(s.actor, s.actor_name) !== oldKey) continue;
+    s.actor = a.category;
+    s.actor_name = a.name;
+  }
   return w;
 }
 
-/** Remove a registry actor by id. Does not touch steps (their actor_name stays). */
-export function removeActor(input: Workflow, actorId: string): Workflow {
+/**
+ * Remove a registry actor by id.
+ *
+ * What happens to the steps that use it is the CALLER's decision, because there is no
+ * safe default — the UI asks:
+ *   - `{ reassignTo: <actorId> }` — point every referencing step at that registry actor;
+ *   - `{ clearSteps: true }`      — clear their actor name (the step becomes unassigned);
+ *   - neither                     — registry-only removal. The steps keep the name, and
+ *                                   `actorWarnings()` reports each one. The actor does NOT
+ *                                   come back on the next load.
+ */
+export function removeActor(
+  input: Workflow,
+  actorId: string,
+  opts: { reassignTo?: string; clearSteps?: boolean } = {},
+): Workflow {
   const w = structuredClone(input);
+  const gone = w.actors.find((a) => a.id === actorId);
+  if (!gone) return w; // idempotent — nothing addressed by that id
+  const target = opts.reassignTo ? w.actors.find((a) => a.id === opts.reassignTo) : undefined;
+  if (opts.reassignTo && !target) throw new KnowledgeError(`Actor '${opts.reassignTo}' is not in this workflow`);
+  if (target && target.id === actorId) throw new KnowledgeError('An actor cannot be reassigned to itself');
+
+  const goneKey = actorKey(gone.category, gone.name);
+  if (target || opts.clearSteps) {
+    for (const s of w.steps) {
+      if (!s.actor_name.trim()) continue;
+      if (actorKey(s.actor, s.actor_name) !== goneKey) continue;
+      if (target) { s.actor = target.category; s.actor_name = target.name; }
+      else s.actor_name = '';
+    }
+  }
   w.actors = w.actors.filter((a) => a.id !== actorId);
   return w;
 }

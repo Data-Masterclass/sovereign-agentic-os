@@ -9,7 +9,7 @@ import {
   type Actor,
   type ActorType,
   ACTOR_TYPES,
-  deriveActors,
+  resolveActorRegistry,
 } from '@tabs/knowledge/lib/schema';
 
 /**
@@ -337,7 +337,11 @@ export function okfDocToWorkflow(doc: OkfDoc, fallbackId: string, domain: string
   if (ext && Array.isArray(ext.steps)) {
     const steps = ext.steps.map(coerceStep).filter(Boolean) as WorkflowStep[];
     const rules = Array.isArray(ext.rules) ? (ext.rules.map(coerceRule).filter(Boolean) as WorkflowRule[]) : [];
-    const declared = Array.isArray(ext.actors) ? (ext.actors.map(coerceActor).filter(Boolean) as Actor[]) : [];
+    // The bundle's registry IS the registry (same rule as `workflow.md`'s `actors:` key);
+    // only a bundle without one derives a registry from its steps.
+    const declared = Array.isArray(ext.actors)
+      ? (ext.actors.map(coerceActor).filter(Boolean) as Actor[])
+      : undefined;
     return {
       id: fallbackId,
       title,
@@ -346,7 +350,7 @@ export function okfDocToWorkflow(doc: OkfDoc, fallbackId: string, domain: string
       status: 'draft',
       version: String(ext.version ?? '1'),
       rules,
-      actors: deriveActors(steps, declared),
+      actors: resolveActorRegistry(steps, declared),
       steps,
       body: '',
     };

@@ -221,14 +221,33 @@ function parseActor(raw: unknown): Actor | null {
   return actor;
 }
 
-const actorKey = (category: ActorType, name: string) => `${category}::${name.trim().toLowerCase()}`;
+/** The identity of an actor REFERENCE on a step: its (category, name) pair. */
+export const actorKey = (category: ActorType, name: string) => `${category}::${name.trim().toLowerCase()}`;
 
 /**
- * Derive an actor registry from the steps' distinct (category, name) pairs.
- * Used as a back-compat fallback for workflows that predate the `actors:` section
- * so they gain a registry for free. Merges any explicitly-declared actors first
- * (those keep their description); a step whose (category, name) is already
- * declared is not re-added.
+ * A deterministic id for an actor that arrives without one (a legacy file's derived
+ * entry, or a hand-written `actors:` row). Deterministic matters: the id is written
+ * back on the next serialize, so a non-stable id would churn the file on every load
+ * and a serialize → parse round trip would never be a fixed point.
+ */
+export function stableActorId(category: ActorType, name: string): string {
+  const slug = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'unnamed';
+  return `actor-${category.toLowerCase()}-${slug}`;
+}
+
+/** Fill in a missing id so EVERY registry actor is addressable (and therefore deletable). */
+export function withActorIds(actors: Actor[]): Actor[] {
+  return actors.map((a) => (a.id ? a : { ...a, id: stableActorId(a.category, a.name) }));
+}
+
+/**
+ * Derive an actor registry from the steps' distinct (category, name) pairs, merged
+ * behind any explicitly-declared actors (those keep their description). This is the
+ * AUTHORING helper — it is what the MCP `author_knowledge` path wants, where actors
+ * implied by the submitted steps should be registered.
+ *
+ * It is NOT what loading a stored workflow does: see {@link resolveActorRegistry}.
+ * Merging on every parse is what used to resurrect a deleted actor.
  */
 export function deriveActors(steps: WorkflowStep[], declared: Actor[] = []): Actor[] {
   const out: Actor[] = [];
@@ -247,10 +266,70 @@ export function deriveActors(steps: WorkflowStep[], declared: Actor[] = []): Act
     seen.add(key);
     out.push({ name, category: s.actor });
   }
-  return out;
+  return withActorIds(out);
+}
+
+/**
+ * The registry of a STORED workflow. Once an `actors:` section exists it is the
+ * source of truth — even when it is empty, which is how "I deleted the last actor"
+ * is expressed. Only a legacy file with no `actors:` section at all derives its
+ * registry from the steps (and that derivation is written back on the next save).
+ *
+ * A step naming an actor the registry does not hold is a validation warning
+ * (`actor-registry.ts` → `actorWarnings`), never a re-added registry entry.
+ */
+export function resolveActorRegistry(steps: WorkflowStep[], declared: Actor[] | undefined): Actor[] {
+  if (declared === undefined) return deriveActors(steps);
+  const out: Actor[] = [];
+  const seen = new Set<string>();
+  for (const a of declared) {
+    const key = actorKey(a.category, a.name);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(a);
+  }
+  return withActorIds(out);
 }
 
 // ------------------------------------------------------ step block parse -----
+
+/**
+ * Read a step's `> tacit:` note out of the text that follows its fence.
+ *
+ * A LINE SCAN, deliberately, and symmetric with {@link serializeTacit}, which writes
+ * `> tacit:` on every line:
+ *   - the note starts at the first line matching `> tacit:` and runs for as long as
+ *     the blockquote does (every consecutive line starting `>`);
+ *   - each line sheds its `>` + one space, then an optional `tacit:` + one space.
+ *
+ * The two defects this replaces: a regex that stripped only `> ` grew a literal
+ * `tacit: ` prefix on every continuation line each round trip, and its lookahead
+ * (`\n```` ` / `\n---`) truncated any note containing a fence or a `---` line. In a
+ * blockquote both are ordinary `> `-prefixed lines, so neither can end the note.
+ */
+function parseTacit(after: string): string {
+  const lines = after.split('\n');
+  const start = lines.findIndex((l) => /^\s*>\s*tacit:/.test(l));
+  if (start < 0) return '';
+  const out: string[] = [];
+  for (let i = start; i < lines.length; i++) {
+    const line = lines[i];
+    if (!/^\s*>/.test(line)) break; // the blockquote — and so the note — ends here
+    out.push(line.replace(/^\s*>\s?/, '').replace(/^tacit:[ \t]?/, ''));
+  }
+  // Trim blank lines at the edges but keep the note's own interior line breaks.
+  while (out.length > 0 && out[0].trim() === '') out.shift();
+  while (out.length > 0 && out[out.length - 1].trim() === '') out.pop();
+  return out.join('\n');
+}
+
+/** Write a step's tacit note as a `> tacit:`-prefixed blockquote ({@link parseTacit} reads it). */
+function serializeTacit(tacit: string): string {
+  const note = tacit.trim();
+  if (!note) return '';
+  const body = note.split('\n').map((l) => (l.trim() ? `> tacit: ${l}` : '> tacit:')).join('\n');
+  return '\n\n' + body;
+}
 
 /**
  * Extract all fenced ```step blocks and their immediately-following
@@ -297,15 +376,7 @@ function parseSteps(body: string): WorkflowStep[] {
     const actor = (doc.actor as ActorType) ?? 'Human';
     if (!ACTOR_TYPES.includes(actor)) continue;
 
-    // Extract tacit note from the "after" text: `> tacit: ...`
-    const tacitMatch = />\s*tacit:\s*([\s\S]*?)(?=\n```|\n---|\s*$)/.exec(after);
-    const tacit = tacitMatch
-      ? tacitMatch[1]
-          .split('\n')
-          .map((l) => l.replace(/^>\s?/, '').trim())
-          .filter(Boolean)
-          .join('\n')
-      : '';
+    const tacit = parseTacit(after);
 
     const step: WorkflowStep = {
       id: String(doc.id ?? '').trim() || `step-${steps.length + 1}`,
@@ -362,13 +433,13 @@ export function parseWorkflow(text: string): Workflow {
   const body = norm.slice(fmMatch[0].length);
   const steps = parseSteps(body);
 
-  // Actor registry: explicitly-declared `actors:` (if any) merged with the
-  // distinct (category, name) pairs found in the steps. A pre-registry workflow
-  // (no `actors:` section) therefore still gets a registry derived from its steps.
-  const declared: Actor[] = Array.isArray(front.actors)
+  // Actor registry: the `actors:` section IS the registry once it exists — including
+  // when it is empty, which is how a deleted last actor stays deleted. Only a
+  // pre-registry file (no `actors:` key at all) derives one from its steps.
+  const declared: Actor[] | undefined = Array.isArray(front.actors)
     ? (front.actors.map(parseActor).filter(Boolean) as Actor[])
-    : [];
-  const actors = deriveActors(steps, declared);
+    : undefined;
+  const actors = resolveActorRegistry(steps, declared);
 
   return {
     id: String(front.id ?? '').trim() || 'untitled',
@@ -401,18 +472,17 @@ export function serializeWorkflow(w: Workflow): string {
       return out;
     });
   }
-  // Actor registry — its own frontmatter section, alongside `rules:`. Persisted
-  // in full so a registry entry survives even when no step references it yet
-  // (add-then-assign) or it carries no description. On load it's re-merged with
-  // the steps' distinct (category, name) pairs, so nothing is lost either way.
-  if ((w.actors ?? []).length > 0) {
-    frontDoc.actors = w.actors.map((a) => {
-      const out: Record<string, unknown> = { name: a.name, category: a.category };
-      if (a.id) out.id = a.id;
-      if (a.description) out.description = a.description;
-      return out;
-    });
-  }
+  // Actor registry — its own frontmatter section, alongside `rules:`. ALWAYS written,
+  // the empty list included: the presence of the key is what tells the parser "this
+  // registry is the source of truth, do not derive one from the steps". Without the
+  // empty list, deleting the last actor would hand the next load a section-less file
+  // and every actor would be re-derived from the steps it still names.
+  frontDoc.actors = (w.actors ?? []).map((a) => {
+    const out: Record<string, unknown> = { name: a.name, category: a.category };
+    if (a.id) out.id = a.id;
+    if (a.description) out.description = a.description;
+    return out;
+  });
 
   const frontmatter = '---\n' + yaml.dump(frontDoc, { lineWidth: 100, noRefs: true }) + '---\n\n';
 
@@ -430,10 +500,7 @@ export function serializeWorkflow(w: Workflow): string {
       if (s.rules.length > 0) stepDoc.rules = s.rules.map((r) => ({ id: r.id, text: r.text, hard: r.hard }));
 
       const block = '```step\n' + yaml.dump(stepDoc, { lineWidth: 100, noRefs: true }) + '```';
-      const tacit = s.tacit.trim()
-        ? '\n\n' + s.tacit.trim().split('\n').map((l) => `> tacit: ${l}`).join('\n')
-        : '';
-      return block + tacit;
+      return block + serializeTacit(s.tacit);
     })
     .join('\n\n');
 
