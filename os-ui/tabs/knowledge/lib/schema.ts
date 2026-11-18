@@ -63,6 +63,16 @@ export type Actor = {
   name: string;
   category: ActorType;
   description?: string;
+  /**
+   * The actor's LONG agent prompt (markdown, multi-line). It is the head of the
+   * `AGENT.md` the agent system scaffolded from this workflow carries, with the
+   * actor's steps compiled in beneath it (`lib/actor-prompt.ts`).
+   *
+   * Only an `Agent` actor is OFFERED one in the editor, but the model parses and
+   * serializes it for every category: dropping the prompt when the category changed
+   * would silently destroy the author's work on a mis-click.
+   */
+  prompt?: string;
 };
 
 export type StepLink = {
@@ -218,6 +228,10 @@ function parseActor(raw: unknown): Actor | null {
   if (id) actor.id = id;
   const description = String(raw.description ?? '').trim();
   if (description) actor.description = description;
+  // Trimmed on the way in AND written trimmed on the way out, so a save does not add
+  // a newline per round trip — the fixed point `schema.test.ts` pins.
+  const prompt = String(raw.prompt ?? '').trim();
+  if (prompt) actor.prompt = prompt;
   return actor;
 }
 
@@ -510,6 +524,9 @@ export function serializeWorkflow(w: Workflow): string {
     const out: Record<string, unknown> = { name: a.name, category: a.category };
     if (a.id) out.id = a.id;
     if (a.description) out.description = a.description;
+    // `js-yaml` writes a multi-line prompt as a `|-` block scalar, so the markdown stays
+    // readable in the file and a `---` line or a fence inside it is just text.
+    if (a.prompt?.trim()) out.prompt = a.prompt.trim();
     return out;
   });
 

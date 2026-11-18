@@ -18,7 +18,14 @@
  *     between the render and the click.
  *   - Dirtiness is REPORTED UP (`onDirtyChange`); the unsaved-changes prompt lives in WorkflowView,
  *     which owns every way out of this panel (another actor, another panel, a step jump).
+ *   - An actor of category `Agent` also carries its LONG PROMPT here: one more controlled field in
+ *     the same draft, reported through the same `onDirtyChange` and saved by the same reducer, and
+ *     beneath it a read-only preview of the `AGENT.md` the scaffold would write — built by the
+ *     scaffold's own `actorAgentMd`, never a second copy of the format, so the preview cannot drift
+ *     from what the Agents tab receives.
  *   - Imports only `@core/*` and this tab; all mutations are the pure helpers in `lib/step-edit.ts`.
+ *     The preview comes from `lib/actor-prompt.ts` precisely because that module does NOT import
+ *     the Agents tab's System schema, which must not reach the browser bundle.
  */
 'use client';
 
@@ -26,6 +33,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { Workflow, Actor, ActorType } from '@tabs/knowledge/lib/schema';
 import { ACTOR_TYPES, EXTERNAL_ACTORS } from '@tabs/knowledge/lib/schema';
 import { stepsUsingActor } from '@tabs/knowledge/lib/actor-registry';
+import { actorAgentMd } from '@tabs/knowledge/lib/actor-prompt';
 import type { CommitOutcome } from '@tabs/knowledge/lib/commit-queue';
 import type { WorkflowReducer } from '@tabs/knowledge/lib/workflow-commit';
 import { updateActor, removeActor } from '@tabs/knowledge/lib/step-edit';
@@ -58,10 +66,12 @@ export default function ActorInspector({
     name: actor.name,
     category: actor.category,
     description: actor.description ?? '',
+    prompt: actor.prompt ?? '',
   };
   const [name, setName] = useState(saved.name);
   const [category, setCategory] = useState<ActorType>(saved.category);
   const [description, setDescription] = useState(saved.description);
+  const [prompt, setPrompt] = useState(saved.prompt);
 
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
@@ -70,7 +80,21 @@ export default function ActorInspector({
 
   const dirty = name.trim() !== saved.name.trim()
     || category !== saved.category
-    || description.trim() !== saved.description.trim();
+    || description.trim() !== saved.description.trim()
+    || prompt.trim() !== saved.prompt.trim();
+
+  /**
+   * The AGENT.md the agent system will carry for this actor — the SCAFFOLD'S OWN builder
+   * (`actorAgentMd`), never a second copy of the format, so what the author reads here is
+   * byte-for-byte what `scaffoldSystem` writes. The draft prompt is previewed live; the
+   * SAVED name and category drive the step lookup, because the steps only follow a rename
+   * once it is saved and a draft name would blank the step list mid-typing.
+   */
+  const previewActor: Actor = { ...actor, prompt };
+  const agentMd = actorAgentMd(
+    { ...workflow, actors: workflow.actors.map((a) => (a.id === actor.id ? previewActor : a)) },
+    previewActor,
+  );
 
   async function commit(reduce: WorkflowReducer): Promise<boolean> {
     setSaving(true);
@@ -85,13 +109,16 @@ export default function ActorInspector({
   async function save(): Promise<boolean> {
     if (!dirty) return true;
     if (!name.trim()) { setErr('An actor needs a name.'); return false; }
-    return commit((fresh) => updateActor(fresh, actor.id ?? '', { name, category, description }));
+    // The prompt rides the SAME patch — one reducer, one commit, so the registry, the steps
+    // that reference the actor and the agent's instructions never disagree.
+    return commit((fresh) => updateActor(fresh, actor.id ?? '', { name, category, description, prompt }));
   }
 
   function revert() {
     setName(saved.name);
     setCategory(saved.category);
     setDescription(saved.description);
+    setPrompt(saved.prompt);
     setErr('');
   }
 
@@ -148,6 +175,33 @@ export default function ActorInspector({
           onChange={(e) => setDescription(e.target.value)}
         />
       </label>
+
+      {/* ── An actor that IS an agent: its long prompt, and the AGENT.md it compiles into ── */}
+      {category === 'Agent' && (
+        <>
+          <label className="ai-field" style={{ marginTop: 14 }}>
+            <span className="ai-label">Prompt — this agent&rsquo;s instructions</span>
+            <textarea
+              className="ai-prompt mono"
+              rows={14}
+              value={prompt}
+              disabled={!canEdit}
+              placeholder={
+                '# Triage Bot\n\nYou are the triage desk for inbound submissions.\n'
+                + 'Work only from the governed context you are given…'
+              }
+              onChange={(e) => setPrompt(e.target.value)}
+            />
+            <span className="ai-hint muted">
+              Markdown. It becomes the head of this agent&rsquo;s <code>AGENT.md</code>; the steps you
+              assigned to this actor are appended below it automatically.
+            </span>
+          </label>
+
+          <div className="ai-section-label">AGENT.md the agent system will carry</div>
+          <pre className="ai-preview mono" aria-label="Generated AGENT.md preview">{agentMd}</pre>
+        </>
+      )}
 
       {canEdit && (
         <div className="ai-save-row">
@@ -261,6 +315,12 @@ const ActorInspectorStyles = `
   font-family: var(--font-body); font-size: 13px; padding: 7px 9px;
   background: var(--bg-input); color: var(--text);
   border: 1px solid var(--border-strong); border-radius: 8px;
+}
+.ai-prompt { min-height: 220px; line-height: 1.5; resize: vertical; }
+.ai-preview {
+  margin: 0; padding: 12px 14px; max-height: 340px; overflow: auto; white-space: pre-wrap;
+  font-size: 12px; line-height: 1.55; color: var(--text-muted);
+  border: 1px solid var(--border); border-radius: 9px; background: var(--bg);
 }
 .ai-save-row { display: flex; align-items: center; gap: 9px; margin-top: 12px; flex-wrap: wrap; }
 .ai-hint { font-size: 12px; }

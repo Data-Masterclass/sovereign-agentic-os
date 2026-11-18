@@ -314,6 +314,48 @@ test('back-compat: an old workflow.md with NO actors section derives a registry 
   assert.ok(w.actors.every((a) => a.description === undefined));
 });
 
+// ------------------------------------------------- an Agent actor's long prompt ---
+// The prompt is the head of the AGENT.md the agent system carries, so losing a line of
+// it loses the author's work. `js-yaml` writes it as a `|-` block scalar; the round trip
+// has to be a FIXED POINT, or every save would rewrite the file.
+const AGENT_PROMPT = [
+  '# Triage Bot',
+  '',
+  'You are the triage desk.',
+  '--- escalate to the desk head ---',
+  '```',
+  'json',
+  '```',
+  '',
+  'Always answer in English.',
+].join('\n');
+
+test('an Agent actor prompt round-trips unchanged, and twice is a fixed point', () => {
+  const w = parseWorkflow(VALID_WORKFLOW);
+  w.actors = [{ id: 'actor-agent-triage-bot', name: 'Triage Bot', category: 'Agent', prompt: AGENT_PROMPT }];
+  const md = serializeWorkflow(w);
+  const once = parseWorkflow(md);
+  assert.equal(once.actors.length, 1);
+  assert.equal(once.actors[0].prompt, AGENT_PROMPT);
+  const twice = parseWorkflow(serializeWorkflow(once));
+  assert.equal(twice.actors[0].prompt, AGENT_PROMPT, 'a second round trip must not alter the prompt');
+  assert.equal(serializeWorkflow(twice), serializeWorkflow(once), 'serialize must be a fixed point');
+});
+
+test('an actor with no prompt writes no prompt key', () => {
+  const w = parseWorkflow(VALID_WORKFLOW);
+  const md = serializeWorkflow(w);
+  assert.ok(!/prompt:/.test(md), 'a workflow whose actors have no prompt must not grow the key');
+  assert.ok(parseWorkflow(md).actors.every((a) => a.prompt === undefined));
+});
+
+test('a prompt on a non-Agent actor survives — the category is the editor’s business, not the model’s', () => {
+  // Switching an actor's category must never silently destroy the prompt the author wrote.
+  const w = parseWorkflow(VALID_WORKFLOW);
+  w.actors = [{ id: 'actor-human-officer', name: 'Loan Officer', category: 'Human', prompt: 'Keep me.' }];
+  assert.equal(parseWorkflow(serializeWorkflow(w)).actors[0].prompt, 'Keep me.');
+});
+
 test('emptyDomainKnowledge returns seven sections in canonical order', () => {
   const dk = emptyDomainKnowledge('sales');
   assert.equal(dk.domain, 'sales');

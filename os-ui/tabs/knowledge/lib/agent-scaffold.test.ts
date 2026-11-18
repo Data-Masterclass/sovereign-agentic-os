@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import { parseWorkflow } from '@tabs/knowledge/lib/schema';
 import { parseSystem } from '@tabs/agents/lib/system-schema';
 import { scaffoldSystem, defaultDisposition } from '@tabs/knowledge/lib/agent-scaffold';
+import { actorAgentMd } from '@tabs/knowledge/lib/actor-prompt';
 
 const WF = `---
 id: bank-submission
@@ -90,6 +91,110 @@ test('the scaffold yaml parses back as a valid System', () => {
   const sys = parseSystem(out.yaml);
   assert.equal(sys.system.domain, 'sales');
   assert.ok(sys.agents.length >= 2);
+});
+
+// ------------------------------------------------ one agent per AGENT ACTOR ---
+// The steps of an Agent actor are that actor's work, so they belong to ONE agent
+// carrying the actor's long prompt — not to one agent each.
+const WF_REG = `---
+id: refunds
+title: Refunds
+domain: sales
+visibility: Shared
+status: live
+version: "1"
+rules:
+  - {id: wr1, text: "Never refund without a verified order", hard: true, scope: workflow}
+actors:
+  - id: actor-agent-triage-bot
+    name: Triage Bot
+    category: Agent
+    prompt: |-
+      # Triage Bot
+
+      You are the refunds triage desk.
+  - {id: actor-human-officer, name: Support Agent, category: Human}
+---
+
+\`\`\`step
+id: intake
+title: Intake Request
+actor: Agent
+actor_name: Triage Bot
+outputs: [Triage verdict]
+\`\`\`
+
+\`\`\`step
+id: review
+title: Review Evidence
+actor: Human
+actor_name: Support Agent
+\`\`\`
+
+\`\`\`step
+id: decide
+title: Decide Refund
+actor: Agent
+actor_name: Triage Bot
+rules:
+  - {id: sr1, text: "Over 500 EUR needs a manager", hard: true}
+\`\`\`
+`;
+
+test('an Agent actor with two steps scaffolds ONE agent, keyed by the actor', () => {
+  const out = scaffoldSystem(parseWorkflow(WF_REG));
+  assert.equal(out.actorAgents.length, 1);
+  assert.deepEqual(out.actorAgents[0], {
+    actorId: 'actor-agent-triage-bot',
+    agentId: 'triage-bot',
+    actorName: 'Triage Bot',
+    stepIds: ['intake', 'decide'],
+  });
+  assert.equal(out.agentSteps.length, 0, 'no per-step agent for an actor-owned step');
+  assert.deepEqual(out.manualSteps.map((m) => m.stepId), ['review']);
+  assert.equal(out.system.agents.length, 1);
+  assert.equal(out.system.entrypoint, 'triage-bot');
+});
+
+test('the actor agent’s AGENT.md is actorAgentMd, byte for byte', () => {
+  const wf = parseWorkflow(WF_REG);
+  const out = scaffoldSystem(wf);
+  const agent = out.system.agents.find((a) => a.id === 'triage-bot')!;
+  const actor = wf.actors.find((a) => a.name === 'Triage Bot')!;
+  assert.equal(agent.agent_md, actorAgentMd(wf, actor));
+  // and it really is the author's prompt plus the steps
+  assert.ok(agent.agent_md.startsWith('# Triage Bot\n\nYou are the refunds triage desk.'));
+  assert.match(agent.agent_md, /### 1\. Intake Request/);
+  assert.match(agent.agent_md, /### 2\. Decide Refund/);
+  assert.match(agent.agent_md, /- HARD RULE: Over 500 EUR needs a manager/);
+  assert.match(agent.agent_md, /Never refund without a verified order/);
+});
+
+test('the actor agent names the actor in its role and keeps the retrieve tool', () => {
+  const out = scaffoldSystem(parseWorkflow(WF_REG));
+  const agent = out.system.agents.find((a) => a.id === 'triage-bot')!;
+  assert.match(agent.role, /Triage Bot/);
+  assert.deepEqual(agent.tools, ['retrieve']);
+});
+
+test('a Human-actor step set to automate becomes an agent beside the actor agent', () => {
+  const out = scaffoldSystem(parseWorkflow(WF_REG), { dispositions: { review: 'automate' } });
+  assert.equal(out.actorAgents.length, 1);
+  assert.equal(out.agentSteps.length, 1);
+  assert.equal(out.agentSteps[0].stepId, 'review');
+  assert.equal(out.system.entrypoint, 'supervisor');
+  const sup = out.system.agents.find((a) => a.id === 'supervisor')!;
+  assert.deepEqual(sup.members, ['triage-bot', 'review'], 'members follow workflow order');
+  assert.equal(out.system.edges.filter((e) => e.type === 'handoff').length, 1);
+});
+
+test('the scaffold yaml with an actor agent parses back as a valid System', () => {
+  const out = scaffoldSystem(parseWorkflow(WF_REG), { dispositions: { review: 'augment' } });
+  const sys = parseSystem(out.yaml);
+  assert.equal(sys.system.domain, 'sales');
+  assert.deepEqual(sys.agents.map((a) => a.id).sort(), ['review', 'supervisor', 'triage-bot']);
+  const agent = sys.agents.find((a) => a.id === 'triage-bot')!;
+  assert.ok(agent.agent_md.includes('You are the refunds triage desk.'), 'the prompt survives the yaml');
 });
 
 test('all-manual workflow scaffolds a single coordinator with the workflow context', () => {

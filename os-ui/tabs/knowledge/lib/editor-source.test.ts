@@ -126,6 +126,32 @@ test('ActorsPanel no longer edits the name inline — a row opens the inspector'
   assert.match(src, /onSelect/, 'a row must open the inspector');
 });
 
+// ---- the Agent actor's long prompt, and the AGENT.md preview beside it ---------
+
+test('the ActorInspector prompt field is controlled and part of the one Save', () => {
+  const src = read('tabs/knowledge/ui/ActorInspector.tsx');
+  assert.match(src, /value=\{prompt\}/, 'the prompt textarea must be controlled');
+  assert.match(src, /setPrompt\(e\.target\.value\)/);
+  assert.match(src, /prompt(\.trim\(\))? !== saved\.prompt/, 'the prompt must count towards `dirty`');
+  assert.match(
+    src,
+    /updateActor\(fresh[\s\S]{0,120}prompt/,
+    'the prompt must ride the SAME updateActor reducer — not a second commit',
+  );
+});
+
+test('the AGENT.md preview is the scaffold’s own builder, not a second copy', () => {
+  const src = read('tabs/knowledge/ui/ActorInspector.tsx');
+  assert.match(src, /actorAgentMd/, 'the preview must call the shared builder');
+  assert.match(src, /@tabs\/knowledge\/lib\/actor-prompt/);
+});
+
+test('no knowledge editor component pulls an Agents-tab module into the browser bundle', () => {
+  for (const f of ['tabs/knowledge/ui/ActorInspector.tsx', 'tabs/knowledge/ui/HandoverPanel.tsx']) {
+    assert.ok(!read(f).includes('@tabs/agents'), `${f} must import only @core/* and this tab`);
+  }
+});
+
 test('WorkflowView commits through the never-dropping queue, not the drop-if-busy guard', () => {
   const src = read('tabs/knowledge/ui/WorkflowView.tsx');
   assert.match(src, /createCommitQueue/);
