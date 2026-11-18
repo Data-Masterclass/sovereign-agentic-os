@@ -50,6 +50,9 @@
      values file, deploy script or manifest ever set — so it read `local` on the live cluster and
      the honesty gate was inert exactly where it mattered. RUN-path, so the `os-ui-worker` pod
      that EXECUTES agent runs carries the same answer as the UI; the two cannot drift.
+     ONE lever, with no per-subsystem exemption: see the `osUI.offlineMock` comment in
+     values.yaml for what `refuse` blocks (notably: a software deploy cannot be approved until a
+     real security scanner is wired) and why `allow` is not the fix for that.
      Nil-safe under `--reuse-values` (an absent key renders the `refuse` default). */}}
 - name: OS_OFFLINE_MOCK
   value: {{ $u.offlineMock | default "refuse" | quote }}

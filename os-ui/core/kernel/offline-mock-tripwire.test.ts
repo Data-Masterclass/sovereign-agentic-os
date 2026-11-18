@@ -1,29 +1,38 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  *
- * FEATURE:    THE TRIPWIRE — no file may choose `offline-mock` without the kernel predicate
- * USER STORY: As a maintainer I want the tenth fabricating code path to be impossible to add
- *             quietly: the nine that existed each keyed their own gate on `OS_PROFILE`, which the
- *             deploy never set, and nothing in CI noticed for weeks because each one looked fine
- *             on its own.
+ * FEATURE:    THE TRIPWIRE — no file may choose to fabricate without the kernel predicate
+ * USER STORY: As a maintainer I want the next fabricating code path to be impossible to add
+ *             quietly: the ones that existed each keyed their own gate on `OS_PROFILE`, which the
+ *             deploy never set, and nothing in CI noticed for weeks because each looked fine
+ *             alone — and the first version of THIS test missed six more, because it grepped for
+ *             one spelling of "mock" and the Files pipeline uses another.
+ *
  * ARCHITECTURE:
- *   - Greps every non-test `.ts`/`.tsx` under `tabs/**` and `core/**` for the string
- *     `offline-mock` and partitions the result against two PINNED lists:
- *       DECIDERS — the file CHOOSES to serve a mock. It must import `@core/kernel/offline-mock`
- *                  AND call `offlineMockAllowed(` or `refuseOfflineMock(`.
- *       LABELS   — the file only DECLARES the type, RENDERS the badge, or CARRIES a mode it was
- *                  handed. It must NOT import the module at all: a propagator that gates would be
- *                  a second decision point, which is the thing this test exists to prevent.
- *       RECOGNISERS — the file READS a refusal somebody else produced (today: the one MCP error
- *                  mapper). It must import the module, and must NOT call the predicate: deciding
- *                  at the error boundary would be deciding after the fact.
- *     A file in NEITHER list fails the test BY NAME, so the author has to classify it — and
- *     classifying it a decider immediately fails the import/call assertion until it is gated.
- *   - Follows the repo's established grep-the-tree pattern (`core/ui/charts/echarts-surface.test.ts`
- *     for the single ECharts registration, the MODEL-KEY rule for the LiteLLM master key). A
- *     structural rule a reviewer must remember is a rule that will be forgotten.
- *   - Reads the tree from disk rather than importing it: a `.tsx` cannot be imported by a test at
- *     all (Node strips types, not JSX), and the point is coverage of files, not of behaviour.
+ *   WHAT THIS GUARANTEES, exactly — no more and no less:
+ *     1. COVERAGE OF A MARKER SET, not of the concept "fabrication". Every non-test `.ts`/`.tsx`
+ *        under `tabs/**`, `core/**` and `app/**` that contains any of {@link MARKERS} is
+ *        classified into exactly one of three pinned lists. A file in none of them FAILS BY NAME.
+ *     2. DECIDERS import `@core/kernel/offline-mock` **and** call `offlineMockAllowed(` or
+ *        `refuseOfflineMock(`. An import alone proves nothing, so both are checked.
+ *     3. RECOGNISERS (today: the one MCP error mapper) import the module to RECOGNISE a refusal
+ *        and must NOT call the predicate — deciding at an error boundary is deciding too late.
+ *     4. LABELS — a type union, a badge, a tool description, a mock IMPLEMENTATION, a
+ *        reachability probe, or a function carrying a mode it was handed — must not import the
+ *        module at all. A propagator that gates is a second decision point.
+ *     5. No decider keys its own gate on `deploymentProfile` / `OS_PROFILE` again.
+ *
+ *   WHAT IT DOES NOT GUARANTEE: that no fabrication exists under a spelling not in
+ *     {@link MARKERS}. That is the lesson of review H2 — `mode: 'mock'`, `mockClient(`,
+ *     `mockAdapterFor(` and `mockEmbed` were all invisible to the first version of this test, and
+ *     six real fabrication sites in the Files ingest pipeline rode through it. So: **a new
+ *     stand-in must either reuse a marker in this set or be added to it.** The set is the
+ *     contract; widening it is cheap and is how this test stays honest.
+ *
+ *   Follows the repo's grep-the-tree pattern (`core/ui/charts/echarts-surface.test.ts` for the
+ *   single ECharts registration, the MODEL-KEY rule for the LiteLLM master key). Reads from disk
+ *   rather than importing: a `.tsx` cannot be imported by a test at all, and the point is
+ *   coverage of FILES, not of behaviour.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -32,21 +41,32 @@ import { join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const OS_UI = join(fileURLToPath(new URL('.', import.meta.url)), '..', '..');
-const ROOTS = ['tabs', 'core'];
-const MARKER = 'offline-mock';
+
+/** Every tree that can run on a cluster. `app/**` was missing and hid two ungated spend routes. */
+const ROOTS = ['tabs', 'core', 'app'];
+
+/**
+ * The spellings a stand-in uses in this codebase. Review H2: grepping only `offline-mock` missed
+ * the Files pipeline entirely, which labels its fabrications `mode: 'mock'` and reaches them
+ * through `mockClient(` / `mockAdapterFor(` / `mockEmbed`.
+ */
+const MARKERS = ["offline-mock", "mode: 'mock'", 'mockClient(', 'mockAdapterFor(', 'mockEmbed'];
+
 const PREDICATE_IMPORT = '@core/kernel/offline-mock';
 
-/** The kernel module itself — it DEFINES the predicate, so neither list applies to it. */
+/** The kernel module itself — it DEFINES the predicate, so no list applies to it. */
 const THE_MODULE = 'core/kernel/offline-mock.ts';
 
 /**
- * Files that CHOOSE to serve an offline mock. Every one must consult the predicate.
+ * Files that CHOOSE to serve a stand-in. Every one must consult the predicate.
  *
- * Each entry is a place the OS used to fabricate on the live cluster: a hash-seeded metric
- * number, an in-memory "build", a table that was never written, a domain-table verifier that
- * returned `true` because it could not check, a security scan whose engine label was a default
- * parameter, a connector op reporting "128 rows ingested" from a seed, and an agent tool answer
- * invented because no live executor was registered.
+ * Each is a place the OS used to fabricate on the live cluster: a hash-seeded metric number, an
+ * in-memory "build", a table never written, a domain-table verifier that answered `true` because
+ * it could not check, a security verdict whose engine label was a default parameter, a connector
+ * op reporting "128 rows ingested" from a seed, an agent tool answer invented because no live
+ * executor was registered, 62% of the envelope invented as spend (with a real alert raised off
+ * it), documents that do not exist in the customer's Drive, invented text for a document the
+ * parser never read, and hash vectors standing in for embeddings.
  */
 const DECIDERS = [
   'tabs/metrics/lib/build/explore-server.ts',
@@ -58,22 +78,41 @@ const DECIDERS = [
   'tabs/software/lib/scan.ts',
   'tabs/connections/lib/connection-adapters.ts',
   'tabs/connections/lib/store.ts',
+  'tabs/monitoring/lib/spend.ts',
+  'tabs/files/lib/connectors-live.ts',
+  'tabs/files/lib/embed.ts',
+  'tabs/files/lib/ingest/live.ts',
 ];
 
-/**
- * Files that merely NAME the mode — a type union, a badge, a note in a tool description, a
- * reachability probe, or a function that carries a mode it was handed. None of them decides,
- * so none of them may gate; `tabs/data/lib/build/live-clients.ts` is the interesting case: it
- * OWNS the probes (`queryToolReachable`, `dataRunnerReachable`) but answers only "is the engine
- * up", which is a fact about the world and not a decision about honesty.
- */
+/** Files that READ a refusal somebody else produced. They must import, and must not decide. */
 const RECOGNISERS = [
-  // `structuredError` is the ONE door every tool exception leaves through, so the refusal→
+  // `structuredError` is the ONE door every tool exception leaves through, so the refusal →
   // ENGINE_UNAVAILABLE mapping belongs there and nowhere else.
   'core/mcp/server.ts',
 ];
 
+/**
+ * Files that merely NAME a marker. None decides, so none may import the module.
+ *
+ * Two kinds are worth calling out because they look like deciders and are not:
+ *  - `tabs/files/lib/connectors.ts` and `tabs/files/lib/ingest/mocks.ts` *define* the stand-ins.
+ *    Defining a mock is not choosing to use one; the choosing happens in the three Files
+ *    deciders above.
+ *  - `tabs/data/lib/build/live-clients.ts` owns the probes (`queryToolReachable`,
+ *    `dataRunnerReachable`). They answer "is the engine up", which is a fact about the world, not
+ *    a decision about honesty.
+ *  - `tabs/monitoring/lib/adapters/*` gate on `config.monitoringDemoFixtures`, a SECOND switch
+ *    that is already `NODE_ENV`-keyed off in production (`core/kernel/config.ts`). Recorded in
+ *    the plan; deliberately not folded into this predicate, so the Monitoring demo fixtures stay
+ *    independently switchable.
+ */
 const LABELS = [
+  // Route prose (the decision lives in the lib the route calls).
+  'app/api/data/datasets/[id]/build/route.ts',
+  'app/api/metrics/define/route.ts',
+  'app/api/metrics/preview/route.ts',
+  'app/api/platform-admin/billing/route.ts',
+  'app/api/platform-admin/overview/route.ts',
   // Kernel / cross-cutting prose and effect vocabulary.
   'core/infra/agent-governed.ts',
   'core/infra/governed.ts',
@@ -87,27 +126,28 @@ const LABELS = [
   'tabs/admin/mcp/discovery-read-tools.ts',
   'tabs/dashboards/mcp/dashboard-write-tools.ts',
   'tabs/metrics/mcp/metric-write-tools.ts',
-  // Types, propagators and reachability probes.
+  // Types, propagators, reachability probes and mock IMPLEMENTATIONS.
   'tabs/agents/lib/build/run-diagnostics.ts',
   'tabs/agents/lib/store.ts',
   'tabs/connections/lib/schema.ts',
+  'tabs/connections/ui/shared.ts',
   'tabs/dashboards/lib/build/panel-query.ts',
   'tabs/dashboards/ui/shared.ts',
   'tabs/data/lib/build/live-clients.ts',
+  'tabs/files/lib/connectors.ts',
+  'tabs/files/lib/ingest/mocks.ts',
   'tabs/metrics/lib/build/live.ts',
   'tabs/metrics/lib/build/server.ts',
   'tabs/monitoring/lib/adapters/cost.ts',
   'tabs/monitoring/lib/adapters/pipeline-health.ts',
   'tabs/monitoring/lib/adapters/run-trace.ts',
   'tabs/monitoring/lib/agent-diagnosis-core.ts',
-  'tabs/monitoring/lib/spend.ts',
   'tabs/monitoring/lib/types.ts',
   'tabs/software/lib/model.ts',
-  // review.ts USED to decide: `securityScan(files, opts.scanMode ?? 'offline-mock')`. That default
-  // is gone — the engine is decided once, in scan.ts — so the file now only carries the mode.
+  // review.ts USED to decide: `securityScan(files, opts.scanMode ?? 'offline-mock')`. That
+  // default is gone — the engine is decided once, in scan.ts — so it now only carries the mode.
   'tabs/software/lib/review.ts',
   'tabs/software/lib/seeded-evidence.ts',
-  'tabs/connections/ui/shared.ts',
   // Render-only: a badge over a mode the server already decided.
   'tabs/agents/ui/BuildRunPanel.tsx',
   'tabs/agents/ui/SystemView.tsx',
@@ -137,14 +177,13 @@ function walk(dir: string, out: string[] = []): string[] {
   return out;
 }
 
-/** Every non-test source file under tabs/ + core/ that names the mock mode, repo-relative. */
-function filesNamingTheMock(): string[] {
+/** Every non-test source file under the roots that names a marker, repo-relative. */
+function filesNamingAMarker(): string[] {
   const hits: string[] = [];
   for (const root of ROOTS) {
     for (const abs of walk(join(OS_UI, root))) {
-      if (readFileSync(abs, 'utf8').includes(MARKER)) {
-        hits.push(relative(OS_UI, abs).split(sep).join('/'));
-      }
+      const src = readFileSync(abs, 'utf8');
+      if (MARKERS.some((m) => src.includes(m))) hits.push(relative(OS_UI, abs).split(sep).join('/'));
     }
   }
   return hits.sort();
@@ -152,32 +191,34 @@ function filesNamingTheMock(): string[] {
 
 const read = (rel: string) => readFileSync(join(OS_UI, ...rel.split('/')), 'utf8');
 
-test('TRIPWIRE: every file naming `offline-mock` is classified as a decider or a label', () => {
+/** Drop block + line comments so a rule about CODE is not satisfied or broken by prose. */
+function code(src: string): string {
+  return src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+}
+
+test('TRIPWIRE: every file naming a stand-in marker is classified', () => {
   const classified = new Set([...DECIDERS, ...LABELS, ...RECOGNISERS, THE_MODULE]);
-  const unclassified = filesNamingTheMock().filter((f) => !classified.has(f));
+  const unclassified = filesNamingAMarker().filter((f) => !classified.has(f));
   assert.deepEqual(
     unclassified,
     [],
-    'These files name `offline-mock` and are in neither list. Decide which they are:\n' +
-      '  • it CHOOSES to serve a mock  -> add it to DECIDERS and gate it on offlineMockAllowed()\n' +
-      '  • it only declares/renders/carries the mode -> add it to LABELS\n' +
+    'These files name a stand-in marker and are in no list. Decide which they are:\n' +
+      '  • it CHOOSES to serve a stand-in       -> DECIDERS, and gate it on offlineMockAllowed()\n' +
+      '  • it READS a refusal somebody produced -> RECOGNISERS\n' +
+      '  • it declares / renders / defines / carries -> LABELS\n' +
       `Unclassified: ${unclassified.join(', ')}`,
   );
 });
 
-test('TRIPWIRE: a pinned decider that no longer names the mock has gone stale', () => {
-  const naming = new Set(filesNamingTheMock());
+test('TRIPWIRE: no pinned entry has gone stale', () => {
+  const naming = new Set(filesNamingAMarker());
   const stale = [...DECIDERS, ...LABELS, ...RECOGNISERS].filter((f) => !naming.has(f));
-  assert.deepEqual(stale, [], `Pinned but no longer naming \`offline-mock\` — remove: ${stale.join(', ')}`);
+  assert.deepEqual(stale, [], `Pinned but no longer naming a marker — remove: ${stale.join(', ')}`);
 });
 
 test('TRIPWIRE: every decider imports the ONE kernel predicate', () => {
   const missing = DECIDERS.filter((f) => !read(f).includes(PREDICATE_IMPORT));
-  assert.deepEqual(
-    missing,
-    [],
-    `These files choose offline-mock without importing ${PREDICATE_IMPORT}: ${missing.join(', ')}`,
-  );
+  assert.deepEqual(missing, [], `Chooses a stand-in without importing ${PREDICATE_IMPORT}: ${missing.join(', ')}`);
 });
 
 test('TRIPWIRE: every decider actually CALLS the predicate (an import alone proves nothing)', () => {
@@ -209,11 +250,6 @@ test('TRIPWIRE: no label consults the predicate — one decision point, not two'
       `or take the gate out. Offenders: ${gating.join(', ')}`,
   );
 });
-
-/** Drop block + line comments so a rule about CODE is not satisfied or broken by prose. */
-function code(src: string): string {
-  return src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
-}
 
 test('TRIPWIRE: the kernel predicate is keyed on NODE_ENV, never on the profile the deploy omits', () => {
   const src = code(read(THE_MODULE));

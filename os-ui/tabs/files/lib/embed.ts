@@ -13,9 +13,18 @@
  *     `GatewayRejectedError` is THROWN; nothing is indexed.
  *   - CRITICAL invariant: the vector dimension is NEVER hardcoded — `config.filesEmbedDim`, wired by
  *     the chart from `retrieval.knnDimension`. Index-time and query-time use the SAME model + dim.
+ *   - THE HONESTY GATE (2026-11-18, review H2). `mockEmbed` is a HASH of the text, not an
+ *     embedding: vectors built from it have no semantic relationship to each other, so a k-NN
+ *     search over them returns essentially arbitrary passages — which an agent then quotes as
+ *     "the relevant context". Worse, the rows are indistinguishable from real ones once written,
+ *     so the index stays poisoned after the gateway comes back. The `mode: 'mock'` label never
+ *     reached the `offline-mock` tripwire (different string). So unless this deployment
+ *     explicitly asked for the teaching flow, an unreachable embeddings gateway REFUSES and
+ *     nothing is indexed.
  *   - Importable in unit tests (config has no `server-only`); only used server-side.
  */
 import { config } from '@core/kernel/config';
+import { offlineMockAllowed, refuseOfflineMock } from '@core/kernel/offline-mock';
 import { roleModel } from '@core/models/roles';
 import {
   callerCredential,
@@ -119,11 +128,21 @@ export async function embedTexts(texts: string[], caller: EmbedCaller = PLATFORM
       /* fall through to mock */
     }
   }
+  if (!offlineMockAllowed()) {
+    refuseOfflineMock(
+      `Cannot embed ${texts.length} passage(s) with ${model}: the embeddings gateway is ` +
+        'unreachable or answered at the wrong dimension. Hash vectors would make every ' +
+        'similarity search over these rows meaningless, so nothing was embedded or indexed.',
+    );
+  }
   return { vectors: texts.map((t) => mockEmbed(t)), model, dim, mode: 'mock' };
 }
 
 /** Embed a single query (deep-design B2). */
 export async function embedQuery(text: string, caller: EmbedCaller = PLATFORM_CALLER): Promise<{ vector: number[]; mode: 'live' | 'mock' }> {
+  // `embedTexts` already decided: it either returned real vectors or threw the typed refusal.
+  // The `?? mockEmbed(text)` guard stays for the empty-array case a live gateway could in
+  // principle return, and is reachable only on the path that was already allowed to mock.
   const r = await embedTexts([text], caller);
   return { vector: r.vectors[0] ?? mockEmbed(text), mode: r.mode };
 }

@@ -6,7 +6,7 @@ import { adminCtx, fail } from '../_ctx';
 import { recompile } from '../_compile';
 import { listDomains } from '@tabs/admin/lib/domains';
 import { listAccess } from '@tabs/admin/lib/tenant-users';
-import { billingView, offlineSpend } from '@tabs/monitoring/lib/spend';
+import { tenantSpendView } from '@tabs/monitoring/lib/spend';
 import { listRequests } from '@tabs/governance/lib/egress';
 import { listTargets } from '@tabs/admin/lib/backups';
 import { listAudit } from '@tabs/admin/lib/audit';
@@ -28,14 +28,21 @@ export async function GET() {
 
     const domains = listDomains();
     const users = await listAccess();
-    const { spendEUR, premiumSpendEUR, trend } = offlineSpend(tenant.envelopeEUR);
-    const billing = billingView({ envelopeEUR: tenant.envelopeEUR, premiumCapEUR: tenant.premiumCapEUR, spendEUR, premiumSpendEUR, trend, source: 'offline-mock' });
+    // Review H1 (2026-11-18): this used to be an unconditional `offlineSpend(...)` +
+    // `source: 'offline-mock'`, and the alert below was raised off the invented number — a real
+    // warning about a figure nobody had measured. One door decides now.
+    const billing = tenantSpendView(tenant.envelopeEUR, tenant.premiumCapEUR);
     const { compiled, publish } = await recompile();
     const openEgress = listRequests().filter((r) => r.status === 'pending').length;
     const failedBackups = listTargets().filter((t) => t.lastStatus === 'failed').length;
 
     const alerts: { level: 'warn' | 'info'; text: string; href: string }[] = [];
-    if (billing.pctUsed >= 80) alerts.push({ level: 'warn', text: `Spend at ${billing.pctUsed}% of envelope`, href: '/monitoring#spend' });
+    // NO ALERT off a figure that was not read. `pctUsed` is null when spend is unavailable, and
+    // `null >= 80` is false in JS — but relying on that coercion is exactly how this kind of bug
+    // survives a refactor, so the check is explicit.
+    if (billing.pctUsed !== null && billing.pctUsed >= 80) {
+      alerts.push({ level: 'warn', text: `Spend at ${billing.pctUsed}% of envelope`, href: '/monitoring#spend' });
+    }
     if (openEgress > 0) alerts.push({ level: 'info', text: `${openEgress} egress request(s) awaiting approval`, href: '/governance?section=egress' });
     if (failedBackups > 0) alerts.push({ level: 'warn', text: `${failedBackups} backup target(s) failed last run`, href: '/platform?section=backups' });
     if (publish.status === 'opa-unreachable') alerts.push({ level: 'info', text: 'OPA offline — policy compiled locally', href: '/governance' });

@@ -1291,6 +1291,17 @@ osUI:
   # Set it here rather than leaving it to a default: the predecessor gate keyed on OS_PROFILE,
   # which nothing in this chart ever set, so it read `local` on a real cluster and the OS served
   # hash-seeded numbers as KPIs. Rendered into BOTH the os-ui and os-ui-worker env.
+  #
+  # ONE LEVER, DELIBERATELY. There is NO per-subsystem exemption and none is planned: a
+  # per-metric, per-ingest or per-scan escape hatch would be filed under pressure, for one
+  # subsystem, by whoever hit the refusal first — and the whole value of a single tripwire is
+  # that there is exactly one place to read to answer "can this cluster fabricate?".
+  # The consequence to plan for: with `refuse`, a SOFTWARE DEPLOY CANNOT BE APPROVED until a
+  # real scanner (Semgrep / Trivy / gitleaks) is wired behind `securityScan(files, 'live')`,
+  # because `decide_deploy` approves only on a passing scan and a scan with no engine now
+  # reports `unavailable` instead of `passed`. Flipping this key to `allow` to unblock a deploy
+  # also re-enables fabricated metrics, ingests and connector syncs tenant-wide. Wire the
+  # scanner instead.
   offlineMock: refuse
   image:
     repository: sovereign-os/os-ui    # built locally, loaded into kind

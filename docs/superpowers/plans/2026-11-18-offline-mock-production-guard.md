@@ -243,3 +243,140 @@ labelled worked examples inside a cluster:
 ```
 
 `values.local.yaml` (the kind/laptop profile) already carries `osUI.offlineMock: allow`.
+
+---
+
+## 9. Review round (PR #56, 2026-11-18) — H1–H3 blocked merge
+
+An independent review found that §8's partition was **incomplete, and in a way that mattered**:
+the tripwire grepped one string over two roots, so it proved less than §8 claimed. The claim is
+narrowed throughout the docs accordingly. Per finding:
+
+### H1 (block) — platform-admin spend was invented and raised a real alert. **Fixed.**
+`billing/route.ts` and `overview/route.ts` called `offlineSpend(tenant.envelopeEUR)`
+**unconditionally** and stamped `source: 'offline-mock'`, so a deployed cluster reported 62% of
+its own envelope as spend — derived from the ceiling it was compared against — and
+`overview/route.ts` pushed a genuine `Spend at 62% of envelope` warning off it.
+*How:* the decision moved OUT of the routes into one door, `tenantSpendView(envelope, cap, live?)`
+in `tabs/monitoring/lib/spend.ts`, which consults the predicate. Refused ⇒ `unavailableBilling()`:
+`source: 'unavailable'`, **null** `spendEUR` / `premiumSpendEUR` / `pctUsed` / `premiumPctUsed`,
+empty `trend`, a `reason`. Null and not zero, because "cannot read spend" and "nothing spent" are
+different facts. The overview's alert condition is now an explicit `pctUsed !== null &&` rather
+than relying on JS coercion. `SpendSection.tsx` and `OverviewHealth.tsx` render `—` / "not
+readable" and the reason. Real LiteLLM figures bypass the gate entirely — it governs only the
+invented fallback. `'app'` was added to the tripwire's roots.
+*Test:* `tabs/monitoring/lib/spend-honesty.test.ts` (5) — null not zero, the exact alert condition
+cannot fire, the typo case, the `allow` opt-in, and that real figures bypass the gate. The routes
+are `route.ts` files a test may not import, which is precisely why the decision was moved out.
+
+### H2 (block) — the Files/Knowledge ingest fabricated documents. **Fixed.**
+The worst of the lot, and the first tripwire was blind to it because this pipeline spells its
+stand-in `mode: 'mock'`. Three sites, six branches: `connectors-live.ts` fell back to the FAKE
+DRIVE on a missing token, a non-OK Drive/Graph response **or** an unparseable body — so a broken
+connection *indexed files that do not exist in the customer's Drive*; `ingest/live.ts` returned
+`mockAdapterFor(kind).apply(input)` when Docling/ASR/OCR was unreachable, so the chunks,
+embeddings and every quote drawn from them described a document nobody had read; `embed.ts` wrote
+`mockEmbed` **hash vectors**, which have no semantic relationship to each other, so k-NN search
+over those rows ranks by a hash while looking exactly like retrieval.
+*How:* all six go through `refuseOfflineMock()` with a reason naming the real cause (no token /
+HTTP status / unparseable body / which parser / which model), via a small `fakeDrive(provider,
+why)` helper in `connectors-live.ts`. Nothing is parsed, embedded or indexed. The tripwire now
+greps a marker **set** over three roots.
+*Test:* `tabs/files/lib/offline-mock-production.test.ts` (8) — no `RemoteFile`, no representation,
+no vector, for each cause; plus three laptop cases proving the teaching flow is intact.
+**Not remediable by this PR:** rows written before the fix are in the OpenSearch index and are not
+retroactively identifiable. A re-index once the parsers and the embeddings gateway are reachable
+is the only remedy. Recorded in `docs/under-the-hood.md` §9.
+
+### H3 (block) — the sandbox upload route flattened every error to 400. **Fixed.**
+*How:* `(e as {status?: number}).status ?? 400`, and the error `code` is forwarded when present,
+so the refusal reaches the browser as a 503 with its own message instead of "bad request".
+*Test:* covered by the typed-status assertions in `tabs/data/lib/offline-mock-production.test.ts`;
+the route itself is a `route.ts` a test may not import.
+
+### M1 — the approver UI showed a binary badge. **Fixed.**
+"security scan FAILED (0 findings)" read as "we looked and it is broken" when it meant "nothing
+looked" — and only one of those is fixed by changing the code.
+*How:* `ReviewCard.tsx` renders a third state, `security scan NOT RUN` (warn, not err) with
+`scan.reason` beneath, and **disables Approve** with the reason on the button's title and beside
+it; Deny stays enabled, because refusing a deploy needs no scanner. `ReviewCardData.scan` gained
+optional `unavailable` / `reason`, so a card serialised before this still renders. The Governance
+inbox preview string in `review.ts` says `NOT RUN` and labels the counts "from the offline
+baseline".
+
+### M2 — no per-subsystem lever. **Documented, deliberately not built.**
+Per the owner decision, no per-scan exemption was added. `values.yaml`'s `osUI.offlineMock`
+comment and the `_os-ui-env.tpl` comment now state that there is ONE lever, that `refuse` means a
+software deploy cannot be approved until a real scanner is wired behind
+`securityScan(files, 'live')`, and that flipping the key to `allow` to unblock a deploy re-enables
+fabrication tenant-wide — wire the scanner instead. A per-subsystem escape hatch would be filed
+under pressure by whoever hit the refusal first, and the whole value of one tripwire is that there
+is exactly one place to read to answer "can this cluster fabricate?".
+
+### M3 — `BuildMode` folded `unavailable` into `live`. **Fixed.**
+`tabs/metrics/lib/build/server.ts:44` mapped everything that was not `offline-mock` to `live`, so
+the one outcome meaning "nothing ran" reported as the one meaning "it really ran". `BuildMode` is
+now `'live' | 'offline-mock' | 'unavailable'` and the mapping is explicit.
+
+### M4 — `runVerified` swallowed the typed refusal. **Fixed.**
+Its `catch` turned the refusal into `mode: 'offline-mock'` with an error string — the exact label
+the refusal exists to prevent, and a 200 where the caller needed a 503. It now rethrows when
+`isOfflineMockRefused(e)`.
+
+### M5 — the tripwire's guarantee. **Fixed.**
+Its docstring now states, in numbered form, exactly what it guarantees (coverage of a marker SET
+over three roots; deciders import *and* call; recognisers import and do not decide; labels do not
+import; no decider keys on the profile) **and what it does not**: that no fabrication exists under
+a spelling outside the set. H2 is cited there as the reason, so the next reader learns it from the
+test rather than from an incident.
+
+### M6 — "Nothing was written." was not always true. **Fixed.**
+`publish-server` and `reconcile-server` refuse at the VERIFY step, which runs *after* the promote
+CTAS, so a table may exist even though the tier was not flipped. `structuredError` now carries the
+refusal's **own** `reason` into the hint and claims only that nothing was *invented*; each site
+states its own consequence.
+
+### L1 — `MONITORING_DEMO_FIXTURES` is a second switch. **Documented.**
+`core/kernel/config.ts:427-432` keys it on `NODE_ENV !== 'production'`, so it is already off where
+it matters; it is deliberately NOT folded into the predicate, so the Monitoring demo fixtures stay
+independently switchable. Recorded here, in `docs/under-the-hood.md` Appendix C, and in the
+tripwire's LABELS commentary (which is why `monitoring/lib/adapters/*` are labels, not deciders).
+
+### L2 — `tabs/software/lib/scan.ts` is now `server-only`. **Fixed.**
+It reads the process environment to decide a verdict, and a decision like that must be unreachable
+from the browser bundle, where `process.env` is whatever the build inlined. Both existing importers
+are already server-only, so this constrains the next one, not them.
+
+### L3 — `run-trace.ts` `mockTrace(id)` was ungated. **Fixed.**
+The run LIST has always been `config.monitoringDemoFixtures ? [...MOCK_RUNS] : []`; the DETAIL was
+not, so a deployed Monitoring tab answered "open this run" with invented node timings and invented
+logs. Now gated the same way; `fetchTrace` already returns `TraceDetail | null`, so the honest
+answer needed no new shape.
+
+### Gates after the review round
+
+| Check | Result |
+|---|---|
+| `npm --prefix os-ui test` | **exit 0** — 6323 tests, 6319 pass, **0 fail**, 4 todo |
+| `bash os-ui/scripts/gate.sh` | **exit 0** — 436 tests, 432 pass, 0 fail, 4 todo |
+| `node scripts/check-structure.mjs` | **exit 0** — ratchet unmoved: `419 / 1 / 200 / 1233` |
+| `os-ui/node_modules/.bin/tsc --noEmit -p os-ui` | **exit 0**, no output |
+| `helm lint charts/sovereign-agentic-os -f values.local.yaml` | **exit 0** |
+
+Tripwire partition after the round: **13 deciders · 1 recogniser · 49 labels**, over
+`tabs/**` + `core/**` + `app/**`, on five markers.
+
+### The claim, narrowed
+
+The honest headline is **not** "offline-mock is impossible". It is:
+
+> On a deployed cluster, every fabrication path **the marker set covers** is refused by default,
+> through one predicate, with a typed `ENGINE_UNAVAILABLE` and no row. Monitoring's demo fixtures
+> are governed by a second, `NODE_ENV`-keyed switch. A stand-in introduced under a spelling outside
+> the marker set is **not** covered until the set is widened — which is what H2 was, and why the
+> tripwire now says so itself.
+
+Two residual labelled-but-ungated `offline-mock` returns remain, deliberately and recorded in §8:
+the connection adapters' static tool presets / credential capture / placeholder OAuth token (they
+invent nothing), and `domainTableMissing`'s don't-cry-wolf `false` (it declines to flag rather than
+asserting anything).

@@ -35,7 +35,7 @@ import {
   type OpaConnectionBundle,
   type CompilerGrant,
 } from '@core/infra/capability-compiler';
-import { offlineMockAllowed, refuseOfflineMock } from '@core/kernel/offline-mock';
+import { isOfflineMockRefused, offlineMockAllowed, refuseOfflineMock } from '@core/kernel/offline-mock';
 import type { ConnectionTool, ConnectionTemplate, CapabilityMode, ConnectorKind } from '@tabs/connections/lib/schema';
 
 export type { ConnectorKind };
@@ -334,6 +334,11 @@ export async function runVerified<T>(
     const verified = verify(r);
     return { op, applied: true, verified, ok: verified, mode: r.mode, detail: r.detail, error: verified ? undefined : 'verify failed' };
   } catch (e) {
+    // The typed refusal must NOT be folded into a row (review M4, 2026-11-18). Catching it here
+    // turned "this deployment refuses to fabricate" into `mode: 'offline-mock'` with an error
+    // string — the exact label the refusal exists to prevent, and a 200 where the caller needed
+    // a 503. It is rethrown so the route / MCP door maps it to ENGINE_UNAVAILABLE.
+    if (isOfflineMockRefused(e)) throw e;
     return { op, applied: false, verified: false, ok: false, mode: 'offline-mock', detail: '', error: (e as Error).message };
   }
 }

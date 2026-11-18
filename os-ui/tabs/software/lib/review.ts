@@ -434,7 +434,10 @@ export async function requestDeploy(
     title: `Deploy review: ${app.name}`,
     detail:
       `${card.reason === 'first-deploy' ? 'First deploy' : 'Scope-broadening change'} — ` +
-      `scan ${scan.passed ? 'passed' : 'FAILED'} (${scan.findings.length} findings), ` +
+      // Review M1: "scan FAILED (0 findings)" was what an approver read when NOTHING had
+      // scanned — the one wording that makes the two different facts look identical.
+      `scan ${scan.unavailable ? 'NOT RUN' : scan.passed ? 'passed' : 'FAILED'} ` +
+      `(${scan.findings.length} findings from the offline baseline), ` +
       `${requested.connections.length} connections, ${requested.writeTools.length} write tools, ` +
       `~$${requested.footprint.estMonthlyUsd}/mo.` +
       (warnings.length ? ` ⚠ references ungranted datasets — see the review card.` : ''),

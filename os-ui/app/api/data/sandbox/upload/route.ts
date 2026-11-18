@@ -58,6 +58,13 @@ export async function POST(req: Request) {
       report,
     });
   } catch (e) {
-    return NextResponse.json({ error: (e as Error).message }, { status: 400 });
+    // Carry the thrown status (2026-11-18, review H3). A hardcoded 400 turned the typed
+    // ENGINE_UNAVAILABLE refusal — and every other tagged status this path can throw — into
+    // "bad request", so the browser was told the UPLOAD was malformed when in fact the
+    // data-runner was unreachable and the OS declined to fabricate a landing.
+    return NextResponse.json(
+      { error: (e as Error).message, ...((e as { code?: string }).code ? { code: (e as { code?: string }).code } : {}) },
+      { status: (e as { status?: number }).status ?? 400 },
+    );
   }
 }

@@ -85,19 +85,23 @@ export default function SpendSection() {
           <div className="pa-kpis" style={{ marginTop: 6 }}>
             <div className="card pa-kpi">
               <span className="k-label">Spend vs envelope</span>
-              <span className="k-value">{billing.pctUsed}%</span>
-              <div className={`pa-bar${billing.hardStop ? ' stop' : billing.pctUsed >= 80 ? ' warn' : ''}`}>
-                <span style={{ width: `${Math.min(100, billing.pctUsed)}%` }} />
+              <span className="k-value">{billing.pctUsed === null ? '—' : `${billing.pctUsed}%`}</span>
+              <div className={`pa-bar${billing.hardStop ? ' stop' : (billing.pctUsed ?? 0) >= 80 ? ' warn' : ''}`}>
+                <span style={{ width: `${Math.min(100, billing.pctUsed ?? 0)}%` }} />
               </div>
-              <span className="k-sub">€{billing.spendEUR} / €{billing.envelopeEUR} per mo{billing.hardStop ? ' · hard stop' : ''}</span>
+              <span className="k-sub">
+                {billing.spendEUR === null ? 'not readable' : `€${billing.spendEUR}`} / €{billing.envelopeEUR} per mo{billing.hardStop ? ' · hard stop' : ''}
+              </span>
             </div>
             <div className="card pa-kpi">
               <span className="k-label">STACKIT premium cap</span>
-              <span className="k-value">{billing.premiumPctUsed}%</span>
-              <div className={`pa-bar${billing.premiumHardStop ? ' stop' : billing.premiumPctUsed >= 80 ? ' warn' : ''}`}>
-                <span style={{ width: `${Math.min(100, billing.premiumPctUsed)}%` }} />
+              <span className="k-value">{billing.premiumPctUsed === null ? '—' : `${billing.premiumPctUsed}%`}</span>
+              <div className={`pa-bar${billing.premiumHardStop ? ' stop' : (billing.premiumPctUsed ?? 0) >= 80 ? ' warn' : ''}`}>
+                <span style={{ width: `${Math.min(100, billing.premiumPctUsed ?? 0)}%` }} />
               </div>
-              <span className="k-sub">€{billing.premiumSpendEUR} / €{billing.premiumCapEUR} per mo{billing.premiumHardStop ? ' · hard stop' : ''}</span>
+              <span className="k-sub">
+                {billing.premiumSpendEUR === null ? 'not readable' : `€${billing.premiumSpendEUR}`} / €{billing.premiumCapEUR} per mo{billing.premiumHardStop ? ' · hard stop' : ''}
+              </span>
             </div>
           </div>
 
@@ -115,7 +119,7 @@ export default function SpendSection() {
                 ))}
               </div>
             </div>
-          ) : <div className="hint">No trend data.</div>}
+          ) : <div className="hint">{billing.source === 'unavailable' ? 'No trend — spend could not be read.' : 'No trend data.'}</div>}
 
           <div className="section-title" style={{ marginTop: 22 }}>Edit envelope</div>
           <div className="card">
@@ -133,7 +137,11 @@ export default function SpendSection() {
               </button>
             </div>
             <div className="hint" style={{ marginTop: 8 }}>
-              {billing.source === 'offline-mock' ? 'Demo figures until LiteLLM reports live spend.' : `Source: ${billing.source}`}
+              {billing.source === 'unavailable'
+                ? billing.reason ?? 'Spend could not be read — no figures are shown rather than estimated ones.'
+                : billing.source === 'offline-mock'
+                  ? 'Demo figures until LiteLLM reports live spend.'
+                  : `Source: ${billing.source}`}
             </div>
           </div>
         </>
