@@ -43,6 +43,16 @@
      Production fails closed (503) instead of reverting passwords. */}}
 - name: OS_ALLOW_OFFLINE_USER_SEED
   value: {{ ternary "true" "false" (eq (toString $u.allowOfflineUserSeed) "true") | quote }}
+{{- /* MAY THIS DEPLOYMENT FABRICATE? (core/kernel/offline-mock.ts). `refuse` ⇒ an unreachable
+     engine is a typed ENGINE_UNAVAILABLE refusal, never a hash-seeded `offline-mock` number,
+     table, row count or passing security scan. `allow` ⇒ the local teaching flow.
+     SET EXPLICITLY, deliberately: the gate this replaces keyed on OS_PROFILE, which no chart,
+     values file, deploy script or manifest ever set — so it read `local` on the live cluster and
+     the honesty gate was inert exactly where it mattered. RUN-path, so the `os-ui-worker` pod
+     that EXECUTES agent runs carries the same answer as the UI; the two cannot drift.
+     Nil-safe under `--reuse-values` (an absent key renders the `refuse` default). */}}
+- name: OS_OFFLINE_MOCK
+  value: {{ $u.offlineMock | default "refuse" | quote }}
 {{- /* Tab gating. Empty = base-tier default. */}}
 {{- if .Values.osUI.enabledTabs }}
 - name: OS_ENABLED_TABS

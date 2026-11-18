@@ -97,6 +97,12 @@ osUI:
   # forces a real email + password on first sign-in.
   allowOfflineUserSeed: true
   usersSeed: ""
+  # THE TEACHING FLOW. This is the one profile where the deterministic, honestly-labelled
+  # `offline-mock` is legitimate: a laptop has no Trino, no query-tool and no data-runner, and
+  # the worked example IS the lesson. Every other profile leaves this at the chart default
+  # (`refuse`), where an unreachable engine is a typed ENGINE_UNAVAILABLE and no number,
+  # table, row count or passing security scan is invented. See core/kernel/offline-mock.ts.
+  offlineMock: allow
   # Show the whole OS locally. Unset would fall back to the 10-key base tier and
   # hide Data/Files/Knowledge/Metrics/Dashboards/Software/Connections/Workflows.
   enabledTabs: "home,agents,dashboards,software,data,metrics,files,knowledge,connections,monitoring,governance,admin,workflows"
