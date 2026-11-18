@@ -218,3 +218,272 @@ the instruction.
 | `yaml.dump` mangles a multi-line prompt. | The round-trip test is a fixed point over a prompt containing a `---` line, a fence and a blank line, run twice. |
 | An actor-derived agent id collides with a step-derived one. | One de-duplication pass over the whole plan, tested. |
 | The browser bundle grows an Agents-tab import. | The preview imports `actor-prompt.ts`, which imports nothing but this tab's schema and registry. |
+
+---
+
+# Design — the exact shapes, and the test each task starts from
+
+> Written after reading the tree at `490a65f5` and before the implementation. Everything below is
+> the contract; the tests are copied into the suite as-is and seen failing first.
+
+## 0. Coordination with PR #55's in-flight fix round
+
+#55 is receiving a second round while this branch is written: `mutate` becomes **reducer-based**
+(`mutate((fresh: Workflow) => Workflow)`, with a re-fetch inside the queued task), both inspectors
+report dirtiness upwards through an **`onDirtyChange`** prop, and `withActorIds` uniquifies colliding
+ids. The additions to `ActorInspector.tsx` are therefore shaped to be signature-agnostic:
+
+* the prompt joins the **existing** `saved` snapshot, the **existing** draft state and the
+  **existing** `dirty` expression — so whatever reports dirtiness upwards reports the prompt too,
+  with no second mechanism to keep in sync;
+* the prompt joins the **existing** `updateActor(…, patch)` call inside the component's one
+  `save()` — it adds a key to a patch object, never a second commit, so a reducer-shaped `mutate`
+  needs no change here;
+* the preview is **read-only** and derives from props plus the draft; it never writes.
+
+`withActorIds` uniquifying ids changes nothing relied on here: `agentIdForActor` slugs the actor's
+**name** and de-duplicates within the plan itself.
+
+## 1. The model — `Actor.prompt`
+
+```ts
+export type Actor = {
+  id?: string;
+  name: string;
+  category: ActorType;
+  description?: string;
+  /**
+   * The actor's LONG agent prompt (markdown, multi-line). Meaningful for an `Agent`
+   * actor — it becomes the head of the AGENT.md the scaffold writes — but parsed and
+   * serialized for ANY category, because dropping it when the category changes would
+   * silently destroy the author's work.
+   */
+  prompt?: string;
+};
+```
+
+`parseActor`: `const prompt = String(raw.prompt ?? '').trim(); if (prompt) actor.prompt = prompt;`
+`serializeWorkflow`: `if (a.prompt) out.prompt = a.prompt;` — `js-yaml` writes it as a `|-` block
+scalar (verified against `js-yaml` 4.1.0: a prompt containing a blank line, a `--- … ---` line and a
+fence round-trips identically).
+
+```ts
+const AGENT_PROMPT = [
+  '# Triage Bot', '', 'You are the triage desk.',
+  '--- escalate to the desk head ---',
+  '```', 'json', '```', '', 'Always answer in English.',
+].join('\n');
+
+test('an Agent actor prompt round-trips unchanged, and twice is a fixed point', () => {
+  const w = parseWorkflow(VALID_WORKFLOW);
+  w.actors = [{ id: 'actor-agent-triage-bot', name: 'Triage Bot', category: 'Agent', prompt: AGENT_PROMPT }];
+  const once = parseWorkflow(serializeWorkflow(w));
+  assert.equal(once.actors[0].prompt, AGENT_PROMPT);
+  const twice = parseWorkflow(serializeWorkflow(once));
+  assert.equal(twice.actors[0].prompt, AGENT_PROMPT);
+  assert.equal(serializeWorkflow(twice), serializeWorkflow(once), 'serialize must be a fixed point');
+});
+
+test('an actor without a prompt writes no prompt key', () => { /* !/prompt:/.test(md) */ });
+test('a prompt on a non-Agent actor is preserved — the category is the UI’s business, not the model’s', () => {});
+```
+
+## 2. `actor-prompt.ts` — the AGENT.md
+
+`actorAgentMd(workflow: Workflow, actor: Actor): string` — a pure function of those two arguments
+**only**, no dispositions. That is what lets the editor's preview equal the scaffold's output without
+predicting what the author will choose later in the handover panel.
+
+```
+<actor.prompt verbatim>                 ← or, with no prompt:
+                                          # <name>
+                                          <blank>
+                                          You are <name>, an agent in the "<title>" workflow.
+                                          <description, when set>
+
+## Your steps in the <title> workflow
+
+### 1. <step title>
+- Inputs: <a, b>                         ← each line omitted when the field is empty
+- Outputs: <c>
+- Linked entities: data:Customer Applications, app:refund-tool
+- Expert knowledge: <tacit line 1>
+  <tacit line 2>                         ← continuation lines indented two spaces
+- HARD RULE: <rule>                      ← step.rules[hard] + workflow.rules[hard, step_id = this step]
+
+### 2. …                                 ← with no steps at all: "No steps are assigned to you in
+                                            this workflow yet."
+
+## Hard rules for the whole <title> workflow      ← omitted when there are none
+- <workflow-level hard rule>
+
+Use the granted, governed `retrieve` tool to pull this workflow's steps, expert-knowledge notes and
+rules as needed.
+```
+
+Soft rules are deliberately absent: they are guidance for a human reviewer, and a prompt that mixes
+"must not" with "prefer" makes neither enforceable.
+
+```ts
+test('the actor prompt is the head of the AGENT.md, verbatim and first', () => {
+  assert.ok(actorAgentMd(wf, agentActor).startsWith(AGENT_PROMPT));
+});
+
+test('every step assigned to the actor is listed in workflow order with its facts', () => {
+  const md = actorAgentMd(wf, agentActor);
+  assert.match(md, /## Your steps in the Bank Submission workflow/);
+  assert.ok(md.indexOf('### 1. Triage Submission') < md.indexOf('### 2. Verify Submission'));
+  assert.match(md, /- Inputs: Customer application form/);
+  assert.match(md, /- Outputs: Triage verdict/);
+  assert.match(md, /- Linked entities: data:Customer Applications/);
+  assert.match(md, /- Expert knowledge: Check section 4/);
+  assert.match(md, /- HARD RULE: Error < 0\.1%/);
+});
+
+test('workflow-level hard rules come last; a step-scoped one sits on its step', () => {});
+test('a soft rule never reaches the prompt', () => {});
+test('an actor with no prompt still gets a usable generated head', () => {});
+test('an actor with no steps says so — the preview is honest before assignment', () => {});
+test('a multi-line expert-knowledge note is indented as a markdown continuation', () => {});
+```
+
+## 3. `planAgents` — the grouping
+
+```ts
+export type Disposition = 'manual' | 'augment' | 'automate';          // moved here from agent-scaffold
+export function defaultDisposition(step: WorkflowStep): Disposition;  // unchanged: Agent → automate
+
+export type ActorAgentPlan = { agentId: string; actor: Actor; steps: WorkflowStep[] };
+export type StepAgentPlan  = { agentId: string; step: WorkflowStep; disposition: Disposition };
+
+export type AgentPlan = {
+  actorAgents: ActorAgentPlan[];
+  stepAgents: StepAgentPlan[];
+  /** Every agent in workflow order — the order the supervisor routes them in. */
+  order: { agentId: string; title: string }[];
+  manualSteps: { stepId: string; title: string; actor: string }[];
+};
+
+export function planAgents(w: Workflow, dispositions?: Record<string, Disposition>): AgentPlan;
+```
+
+One walk over the steps, in workflow order:
+
+| Step | Becomes |
+|---|---|
+| disposition `manual` | a manual handoff |
+| `actor === 'Agent'` **and** the registry holds its actor | folded into that actor's agent (created on first sight, which fixes its position in `order`) |
+| `actor === 'Agent'` **and** the registry does not (or the step has no actor name) | a per-step agent — the step must not vanish while the author fixes the warning `actorWarnings()` already reports |
+| any other category with `augment` / `automate` | a per-step agent (today's shape, today's `stepAgentMd`) |
+
+An actor agent's `steps` are **all** the steps `stepsUsingActor()` returns, not only the non-manual
+ones — see §2 for why.
+
+```ts
+test('one agent per Agent ACTOR, not per step: two steps of one actor fold into one agent', () => {
+  const plan = planAgents(wf);
+  assert.equal(plan.actorAgents.length, 1);
+  assert.deepEqual(plan.actorAgents[0].steps.map((s) => s.id), ['triage', 'verify']);
+  assert.equal(plan.stepAgents.length, 0);
+});
+
+test('an Agent step whose actor is not in the registry still becomes a step agent', () => {});
+test('a Human-actor step set to automate becomes a step agent; manual stays manual', () => {});
+test('an Agent actor with every step set to manual gets no agent', () => {});
+test('agent ids are deterministic, slugged from the actor name, and never collide', () => {});
+```
+
+## 4. `agent-scaffold.ts` — rebuilt on the plan
+
+```ts
+export type ScaffoldResult = {
+  system: System;
+  yaml: string;
+  /** Agents built from an Agent ACTOR, with the steps each owns. */
+  actorAgents: { actorId: string; agentId: string; actorName: string; stepIds: string[] }[];
+  /** Agents built from ONE step (an augmented/automated non-Agent step, or an orphan Agent step). */
+  agentSteps: { stepId: string; agentId: string; title: string; disposition: Disposition }[];
+  manualSteps: { stepId: string; title: string; actor: string }[];
+};
+```
+
+`Disposition` and `defaultDisposition` are re-exported from here, so `scaffold-agent/route.ts` and
+`HandoverPanel.tsx` keep their imports. The supervisor / single-agent / coordinator branches and
+`grants.knowledge` are untouched; the supervisor's member list and the handoff edges follow
+`plan.order`.
+
+```ts
+test('the AGENT.md of an actor agent is actorAgentMd, byte for byte', () => {
+  const wf = parseWorkflow(WF_WITH_REGISTRY);
+  const out = scaffoldSystem(wf);
+  const agent = out.system.agents.find((a) => a.id === 'triage-bot')!;
+  assert.equal(agent.agent_md, actorAgentMd(wf, wf.actors.find((a) => a.name === 'Triage Bot')!));
+});
+
+test('the actor agent’s role names the actor, and it carries the retrieve tool', () => {});
+test('the scaffold yaml with actor agents parses back as a valid System', () => {});
+// Every existing agent-scaffold test stays green unchanged: its fixture's Agent step carries no
+// actor_name, so it still becomes a step agent.
+```
+
+## 5. The mutations
+
+```ts
+addActor(w, { name, category, description?, prompt? })
+updateActor(w, id, patch /* … | 'prompt' */)   // '' deletes the key, exactly like description
+```
+
+```ts
+test('addActor stores an Agent actor prompt', () => {});
+test('updateActor replaces a prompt, and an empty string removes it', () => {});
+test('updateActor leaves the prompt alone when the patch omits it', () => {});
+```
+
+## 6. The editor
+
+`ActorInspector` additions, all inside the existing form:
+
+* `const [prompt, setPrompt] = useState(saved.prompt)` with `saved.prompt = actor.prompt ?? ''`;
+  `dirty` gains `prompt !== saved.prompt`; `revert()` resets it; `save()`'s patch gains `prompt`.
+* The field renders **only when the draft `category` is `Agent`**, so switching the category in the
+  inspector reveals it immediately. Controlled, 14 rows, no `onBlur`.
+* Below it, a read-only `<pre>` preview, "AGENT.md the agent system will carry", built from
+  `actorAgentMd(previewWorkflow, previewActor)` where `previewActor = { ...actor, prompt }` and
+  `previewWorkflow` swaps that actor into `workflow.actors`. The **saved** name and category drive
+  the step lookup, because the steps only follow a rename once it is saved — a preview using the
+  draft name would show an empty step list mid-typing.
+
+`HandoverPanel`: the button's count becomes `plan.actorAgents.length + plan.stepAgents.length`, and
+each step row says which agent the step will land in.
+
+```ts
+// editor-source.test.ts (appended — a test cannot import a .tsx)
+test('the ActorInspector prompt field is controlled and saved by the one Save button', () => {
+  const src = read('tabs/knowledge/ui/ActorInspector.tsx');
+  assert.match(src, /value=\{prompt\}/);
+  assert.match(src, /setPrompt\(e\.target\.value\)/);
+});
+
+test('the AGENT.md preview is the scaffold’s own builder, not a second copy', () => {
+  assert.match(read('tabs/knowledge/ui/ActorInspector.tsx'), /actorAgentMd/);
+});
+
+test('the inspector pulls no Agents-tab module into the browser bundle', () => {
+  assert.ok(!read('tabs/knowledge/ui/ActorInspector.tsx').includes('@tabs/agents'));
+});
+```
+
+## 7. Lossless export
+
+`okf-model.ts` → `coerceActor` keeps `prompt` (and the actor's `id`, which it silently dropped), so
+an OKF export → import round trip of an Agent actor does not lose the prompt the agent system is
+built from.
+
+```ts
+test('an Agent actor prompt survives an OKF export → import round trip', () => {});
+```
+
+## 8. Gates
+
+`npm --prefix os-ui test` · `bash os-ui/scripts/gate.sh` · `node scripts/check-structure.mjs`
+(must stay ≤ 419 / 1 / 200 / 1231) · `os-ui/node_modules/.bin/tsc --noEmit -p os-ui`.
