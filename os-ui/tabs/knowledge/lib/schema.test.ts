@@ -9,6 +9,7 @@ import {
   KnowledgeError,
   emptyDomainKnowledge,
   DOMAIN_SECTION_IDS,
+  MAX_ACTOR_PROMPT_BYTES,
 } from '@tabs/knowledge/lib/schema';
 
 const VALID_WORKFLOW = `---
@@ -347,6 +348,32 @@ test('an actor with no prompt writes no prompt key', () => {
   const md = serializeWorkflow(w);
   assert.ok(!/prompt:/.test(md), 'a workflow whose actors have no prompt must not grow the key');
   assert.ok(parseWorkflow(md).actors.every((a) => a.prompt === undefined));
+});
+
+test('a prompt is capped, with a typed error rather than an unbounded agent brief', () => {
+  const w = parseWorkflow(VALID_WORKFLOW);
+  const tooBig = 'x'.repeat(MAX_ACTOR_PROMPT_BYTES + 1);
+  w.actors = [{ id: 'actor-agent-bot', name: 'Bot', category: 'Agent', prompt: tooBig }];
+  // The serializer refuses it where the user can still see their draft…
+  assert.throws(() => serializeWorkflow(w), KnowledgeError);
+  // …and a hand-edited file carrying one is a parse error, not a 64 KiB prompt in a graph.
+  const md = `---\nid: x\ntitle: X\ndomain: d\nvisibility: Personal\nstatus: draft\nversion: "1"\nactors:\n  - {id: a1, name: Bot, category: Agent, prompt: "${tooBig}"}\n---\n`;
+  assert.throws(() => parseWorkflow(md), (e: unknown) => {
+    assert.ok(e instanceof KnowledgeError);
+    assert.match((e as Error).message, /prompt is \d+ bytes.*64 KiB/);
+    return true;
+  });
+});
+
+test('a CRLF prompt is normalised, so js-yaml keeps writing a readable block scalar', () => {
+  const md = [
+    '---', 'id: x', 'title: X', 'domain: d', 'visibility: Personal', 'status: draft', 'version: "1"',
+    'actors:', '  - id: a1', '    name: Bot', '    category: Agent', '    prompt: "one\\r\\ntwo\\rthree"',
+    '---', '',
+  ].join('\n');
+  const w = parseWorkflow(md);
+  assert.equal(w.actors[0].prompt, 'one\ntwo\nthree');
+  assert.match(serializeWorkflow(w), /prompt: \|-\n/, 'a multi-line prompt stays a block scalar');
 });
 
 test('a prompt on a non-Agent actor survives — the category is the editor’s business, not the model’s', () => {

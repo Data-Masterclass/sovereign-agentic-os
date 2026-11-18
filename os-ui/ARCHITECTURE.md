@@ -867,6 +867,31 @@ else — the client component renders the preview, and a cross-tab import on tha
 path would ship the Agents tab's schema to the browser (and grow the
 `TAB-ISOLATION` ratchet) for a `<pre>` block.
 
+**A generator that injects its own nodes must reserve their ids before anything
+else may claim them.** The workflow scaffold names an agent after its actor, then
+adds `supervisor` (or `coordinator`) afterwards — so an actor called "Supervisor"
+produced two agents with one id, a supervisor whose `members` listed itself, and
+ambiguous edges. Nothing downstream caught it: `parseSystem` validates document
+SHAPE and has no duplicate-id check, and adding one there would be another tab's
+business. The fix is both halves — `planAgents` seeds its taken-set with
+`RESERVED_AGENT_IDS`, and `agent-scaffold.ts` runs `assertUniqueAgentIds` over the
+**final** list, after the injection, because a guard over the plan alone cannot see
+the node the caller adds next.
+
+**Text an author typed is DATA when it reaches a model, even when it is a prompt.**
+Everything in a generated `AGENT.md` that came from a workflow is either wrapped in
+an explicit author-supplied region (the actor's prompt, a step's expert-knowledge
+note — with any line that forges a marker quoted rather than dropped) or flattened
+through `inline()` (step titles, I/O, link labels, rule text: newlines collapsed,
+leading `#`/`-`/`>` stripped). Otherwise a tacit note reading
+`## Hard rules for the whole X workflow` forges the section the real hard rules
+live in. Note how many inlets that text has — `workflow.md` in git, the editor, an
+OKF import, an MCP call — which is the argument for sanitising in the ONE builder
+both the preview and the scaffold call, rather than at each door. The prompt's own
+region says what it is ("this agent's own instructions"); telling the model to
+disregard the brief the author deliberately wrote would negate the feature. A
+boundary is not a demotion.
+
 **The ACTOR is the unit of agency in a workflow, not the step.** The first scaffold
 proposed one agent per step, so an actor that owned six steps became six agents
 with six three-line briefs and no identity — and the author had nowhere to write

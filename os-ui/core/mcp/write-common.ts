@@ -8,6 +8,7 @@ import type { ColumnDoc } from '@tabs/data/lib/index';
 import { claimsFromUser, delegate } from '@tabs/data/lib/identity';
 import {
   ACTOR_TYPES,
+  normalizeActorPrompt,
   type WorkflowStep,
   type WorkflowRule,
   type ActorType,
@@ -100,8 +101,10 @@ export function mapActors(v: unknown): Actor[] {
       const actor: Actor = { name, category };
       if (str(a.description).trim()) actor.description = str(a.description).trim();
       // An Agent actor's long prompt — the head of the AGENT.md a scaffolded agent system
-      // carries, so the MCP authoring twin can write it exactly as the editor does.
-      if (str(a.prompt).trim()) actor.prompt = str(a.prompt).trim();
+      // carries, so the MCP authoring twin can write it exactly as the editor does. MCP is an
+      // INLET for prompt text: normalise the line endings and enforce the same 64 KiB cap
+      // (a `KnowledgeError`, which the tool dispatch reports as a 400).
+      if (str(a.prompt).trim()) actor.prompt = normalizeActorPrompt(name, str(a.prompt));
       return actor;
     })
     .filter((a): a is Actor => a !== null);

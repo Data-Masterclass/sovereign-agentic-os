@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseWorkflow } from '@tabs/knowledge/lib/schema';
 import { parseSystem } from '@tabs/agents/lib/system-schema';
-import { scaffoldSystem, defaultDisposition } from '@tabs/knowledge/lib/agent-scaffold';
+import { scaffoldSystem, defaultDisposition, assertUniqueAgentIds } from '@tabs/knowledge/lib/agent-scaffold';
 import { actorAgentMd } from '@tabs/knowledge/lib/actor-prompt';
 
 const WF = `---
@@ -163,7 +163,10 @@ test('the actor agent’s AGENT.md is actorAgentMd, byte for byte', () => {
   const actor = wf.actors.find((a) => a.name === 'Triage Bot')!;
   assert.equal(agent.agent_md, actorAgentMd(wf, actor));
   // and it really is the author's prompt plus the steps
-  assert.ok(agent.agent_md.startsWith('# Triage Bot\n\nYou are the refunds triage desk.'));
+  assert.match(
+    agent.agent_md,
+    /^--- author-supplied agent prompt;[^\n]*---\n# Triage Bot\n\nYou are the refunds triage desk\.\n--- end author-supplied agent prompt ---\n/,
+  );
   assert.match(agent.agent_md, /### 1\. Intake Request/);
   assert.match(agent.agent_md, /### 2\. Decide Refund/);
   assert.match(agent.agent_md, /- HARD RULE: Over 500 EUR needs a manager/);
@@ -195,6 +198,82 @@ test('the scaffold yaml with an actor agent parses back as a valid System', () =
   assert.deepEqual(sys.agents.map((a) => a.id).sort(), ['review', 'supervisor', 'triage-bot']);
   const agent = sys.agents.find((a) => a.id === 'triage-bot')!;
   assert.ok(agent.agent_md.includes('You are the refunds triage desk.'), 'the prompt survives the yaml');
+});
+
+// ------------------ review H1: the scaffold's own node ids are not up for grabs ---
+const WF_RESERVED = `---
+id: reserved
+title: Reserved
+domain: sales
+visibility: Shared
+status: live
+version: "1"
+actors:
+  - {id: actor-agent-supervisor, name: Supervisor, category: Agent}
+  - {id: actor-human-officer, name: Officer, category: Human}
+---
+
+\`\`\`step
+id: route
+title: Route It
+actor: Agent
+actor_name: Supervisor
+\`\`\`
+
+\`\`\`step
+id: check
+title: Check It
+actor: Human
+actor_name: Officer
+\`\`\`
+`;
+
+test('an actor named "Supervisor" cannot collide with the supervisor node', () => {
+  const out = scaffoldSystem(parseWorkflow(WF_RESERVED), { dispositions: { check: 'automate' } });
+  const ids = out.system.agents.map((a) => a.id);
+  assert.equal(new Set(ids).size, ids.length, `duplicate agent id: ${ids.join(', ')}`);
+  assert.ok(ids.includes('supervisor'), 'the graph keeps its supervisor');
+  assert.equal(out.actorAgents[0].agentId, 'supervisor-2');
+  const sup = out.system.agents.find((a) => a.id === 'supervisor')!;
+  assert.ok(!sup.members?.includes('supervisor'), 'a supervisor must never list itself');
+  assert.deepEqual(sup.members, ['supervisor-2', 'check']);
+  parseSystem(out.yaml); // and it is still a valid System
+});
+
+test('assertUniqueAgentIds refuses a graph with a duplicate id', () => {
+  // The guard the scaffold runs on its own output: `parseSystem` has no duplicate-id check
+  // (and adding one there would be another tab's business), so a broken graph could commit.
+  const spec = (id: string) => ({ id, role: '', agent_md: '', memory_md: '' });
+  assert.throws(
+    () => assertUniqueAgentIds([spec('a'), spec('b'), spec('a')]),
+    /duplicate agent id 'a'/,
+  );
+  assertUniqueAgentIds([spec('a'), spec('b')]); // does not throw
+});
+
+test('an Agent actor with no steps yields no agent (review M3)', () => {
+  const WF_IDLE = `---
+id: idle
+title: Idle
+domain: sales
+visibility: Personal
+status: draft
+version: "1"
+actors:
+  - {id: actor-agent-idle, name: Idle Bot, category: Agent}
+---
+
+\`\`\`step
+id: hand
+title: Hand It Over
+actor: Human
+actor_name: Officer
+\`\`\`
+`;
+  const out = scaffoldSystem(parseWorkflow(WF_IDLE));
+  assert.equal(out.actorAgents.length, 0);
+  assert.equal(out.agentSteps.length, 0);
+  assert.deepEqual(out.system.agents.map((a) => a.id), ['coordinator']);
 });
 
 test('all-manual workflow scaffolds a single coordinator with the workflow context', () => {

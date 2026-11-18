@@ -91,10 +91,11 @@ export default function ActorInspector({
    * once it is saved and a draft name would blank the step list mid-typing.
    */
   const previewActor: Actor = { ...actor, prompt };
-  const agentMd = actorAgentMd(
-    { ...workflow, actors: workflow.actors.map((a) => (a.id === actor.id ? previewActor : a)) },
-    previewActor,
-  );
+  const agentMd = actorAgentMd(workflow, previewActor);
+  // An Agent actor the scaffold would emit NO agent for: the preview must say so, or a file
+  // nobody will build reads as a promise. (`planAgents` also drops an actor whose every step
+  // is set to manual in the handover panel — a choice made over there, not here.)
+  const noAgentYet = used.length === 0;
 
   async function commit(reduce: WorkflowReducer): Promise<boolean> {
     setSaving(true);
@@ -198,7 +199,16 @@ export default function ActorInspector({
             </span>
           </label>
 
-          <div className="ai-section-label">AGENT.md the agent system will carry</div>
+          <div className="ai-section-label">
+            {noAgentYet ? 'AGENT.md — no agent yet, assign a step' : 'AGENT.md the agent system will carry'}
+          </div>
+          {noAgentYet && (
+            <div className="muted ai-preview-note">
+              No step uses this actor, so building an agent system from this workflow creates
+              <strong> no agent</strong> for it. Assign it a step and this becomes its{' '}
+              <code>AGENT.md</code>.
+            </div>
+          )}
           <pre className="ai-preview mono" aria-label="Generated AGENT.md preview">{agentMd}</pre>
         </>
       )}
@@ -317,6 +327,7 @@ const ActorInspectorStyles = `
   border: 1px solid var(--border-strong); border-radius: 8px;
 }
 .ai-prompt { min-height: 220px; line-height: 1.5; resize: vertical; }
+.ai-preview-note { font-size: 12.5px; margin-bottom: 8px; }
 .ai-preview {
   margin: 0; padding: 12px 14px; max-height: 340px; overflow: auto; white-space: pre-wrap;
   font-size: 12px; line-height: 1.55; color: var(--text-muted);

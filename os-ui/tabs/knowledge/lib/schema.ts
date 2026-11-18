@@ -228,11 +228,40 @@ function parseActor(raw: unknown): Actor | null {
   if (id) actor.id = id;
   const description = String(raw.description ?? '').trim();
   if (description) actor.description = description;
-  // Trimmed on the way in AND written trimmed on the way out, so a save does not add
-  // a newline per round trip — the fixed point `schema.test.ts` pins.
-  const prompt = String(raw.prompt ?? '').trim();
+  // Normalised on the way in AND written normalised on the way out, so a save is a fixed
+  // point rather than a file that grows a newline per round trip. Over the cap it throws:
+  // a hand-edited or imported file is an inlet like any other.
+  const prompt = normalizeActorPrompt(name, String(raw.prompt ?? ''));
   if (prompt) actor.prompt = prompt;
   return actor;
+}
+
+/**
+ * The cap on an actor's long `prompt`: 64 KiB. It bounds what the OS puts in front of a
+ * model and commits into a `system.yaml`, so it is enforced at EVERY inlet — `parseActor`
+ * (a hand-edited or OKF-imported file), `serializeWorkflow` (the editor's commit, where the
+ * user can still see their draft), the `step-edit` mutations and the MCP `mapActors` —
+ * rather than only wherever the UI happens to type.
+ */
+export const MAX_ACTOR_PROMPT_BYTES = 64 * 1024;
+
+/**
+ * Normalise an actor prompt to exactly what the file keeps: CRLF/CR → LF (so `js-yaml`
+ * writes a readable `|-` block scalar instead of a quoted string full of `\r\n`), trimmed
+ * at both ends, and bounded by {@link MAX_ACTOR_PROMPT_BYTES}.
+ *
+ * TRIMMED-LOSSLESS, to be precise: nothing inside the prompt is altered — only the line
+ * endings and the surrounding blank space, neither of which a round trip could preserve.
+ */
+export function normalizeActorPrompt(name: string, raw: string): string {
+  const text = raw.replace(/\r\n?/g, '\n').trim();
+  const bytes = new TextEncoder().encode(text).length;
+  if (bytes > MAX_ACTOR_PROMPT_BYTES) {
+    throw new KnowledgeError(
+      `actor '${name}': prompt is ${bytes} bytes, over the 64 KiB cap (${MAX_ACTOR_PROMPT_BYTES} bytes)`,
+    );
+  }
+  return text;
 }
 
 /**
@@ -526,7 +555,7 @@ export function serializeWorkflow(w: Workflow): string {
     if (a.description) out.description = a.description;
     // `js-yaml` writes a multi-line prompt as a `|-` block scalar, so the markdown stays
     // readable in the file and a `---` line or a fence inside it is just text.
-    if (a.prompt?.trim()) out.prompt = a.prompt.trim();
+    if (a.prompt?.trim()) out.prompt = normalizeActorPrompt(a.name, a.prompt);
     return out;
   });
 

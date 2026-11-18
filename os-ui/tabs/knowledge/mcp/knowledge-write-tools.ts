@@ -163,8 +163,9 @@ export const knowledgeWriteTools: McpTool[] = [
               description: { type: 'string', description: 'One line on this actor\'s role — applies to every category, e.g. "Salesforce API — nightly REST ingestion".' },
               prompt: {
                 type: 'string',
+                maxLength: 65536,
                 description:
-                  'For an `Agent` actor: its LONG prompt (markdown, multi-line). It becomes the head of that agent\'s AGENT.md when an agent system is scaffolded from this process, with the steps assigned to the actor appended automatically — so write the actor\'s identity, judgement and tone here, not the step mechanics.',
+                  'For an `Agent` actor: its LONG prompt (markdown, multi-line, max 64 KiB). It becomes the head of that agent\'s AGENT.md when an agent system is scaffolded from this process, with the steps assigned to the actor appended automatically — so write the actor\'s identity, judgement and tone here, not the step mechanics. It is emitted inside an explicit author-supplied region; it cannot forge the generated sections that follow it.',
               },
             },
             required: ['name', 'category'],
