@@ -157,6 +157,27 @@ test('round-trip preserves tacit notes', () => {
   assert.ok(again.steps[0].tacit.includes('section 4'));
 });
 
+// A multi-line note is where the parser and the serializer used to disagree: the
+// serializer writes `> tacit: ` on EVERY line, the parser stripped only `> `, so each
+// round trip grew literal `tacit: ` prefixes — and a line starting `---` or a fence
+// truncated the note outright. Three lines, one of each shape.
+const MULTILINE_TACIT = [
+  'Check section 4 — the date field is frequently missed.',
+  '--- escalate to the desk head ---',
+  '```',
+].join('\n');
+
+test('tacit: a three-line note with a --- line and a fence line round-trips unchanged', () => {
+  const w = parseWorkflow(VALID_WORKFLOW);
+  w.steps[0].tacit = MULTILINE_TACIT;
+  const once = parseWorkflow(serializeWorkflow(w));
+  assert.equal(once.steps[0].tacit, MULTILINE_TACIT);
+  const twice = parseWorkflow(serializeWorkflow(once));
+  assert.equal(twice.steps[0].tacit, MULTILINE_TACIT, 'a second round trip must not add `tacit: ` prefixes');
+  assert.equal(twice.steps[1].tacit, '', 'the note must not leak into the next step');
+  assert.equal(twice.steps.length, w.steps.length, 'a fence inside the note must not split the document');
+});
+
 test('throws KnowledgeError when frontmatter is missing', () => {
   assert.throws(() => parseWorkflow('# No frontmatter'), KnowledgeError);
 });

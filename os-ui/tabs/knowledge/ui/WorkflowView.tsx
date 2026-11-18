@@ -9,6 +9,7 @@ import SwimlaneCanvas from '@tabs/knowledge/ui/SwimlaneCanvas';
 import MermaidPreview from '@tabs/knowledge/ui/MermaidPreview';
 import StepInspector from '@tabs/knowledge/ui/StepInspector';
 import ActorsPanel from '@tabs/knowledge/ui/ActorsPanel';
+import ActorInspector from '@tabs/knowledge/ui/ActorInspector';
 import RulesPanel from '@tabs/knowledge/ui/RulesPanel';
 import TacitPanel from '@tabs/knowledge/ui/TacitPanel';
 import DataMetricsPanel from '@tabs/knowledge/ui/DataMetricsPanel';
@@ -23,6 +24,8 @@ import { FolderPickerModal } from '@core/ui/core/FolderTree';
 import { useFolders } from '@core/folders/useFolders';
 import { usePublishPageContext } from '@core/ui/core/PageContext';
 import { addStep } from '@tabs/knowledge/lib/step-edit';
+import { createCommitQueue, type CommitOutcome, type CommitQueue } from '@tabs/knowledge/lib/commit-queue';
+import { actorWarnings, findActorById } from '@tabs/knowledge/lib/actor-registry';
 import { buildWorkflowReport, workflowPdfFilename } from '@tabs/knowledge/lib/workflow-pdf';
 import { renderSwimlaneSvg } from '@tabs/knowledge/lib/swimlane-svg';
 import type { Workflow, ActorType } from '@tabs/knowledge/lib/schema';
@@ -34,11 +37,14 @@ import type { Gap } from '@tabs/knowledge/lib/gaps';
  *   • the visual swimlane (SwimlaneCanvas + StepInspector) — EDITABLE
  *   • the markdown (Monaco panel)                          — EDITABLE
  *   • the Mermaid diagram (MermaidPreview)                 — DERIVED, read-only
- * Clone of SystemView's `actingRef`/`mutate`/reload mechanism: each canvas edit
- * builds its diff from the freshly-reloaded source and commits through the same
- * sha-checked PATCH the markdown panel uses, so all three stay in sync.
+ * Each canvas edit builds its diff from the freshly-reloaded source and commits through
+ * the same sha-checked PATCH the markdown panel uses, so all three stay in sync. Commits
+ * go through ONE `createCommitQueue` (lib/commit-queue.ts): serial — each re-reads the sha
+ * — and never dropped, which is what the old drop-if-busy guard did to an edit made while
+ * the previous commit was still in flight.
  *
- * Missing-entity links are surfaced as gap flags with a jump-to-build.
+ * Missing-entity links are surfaced as gap flags with a jump-to-build; a step naming an
+ * actor the registry does not hold is an actor warning shown in the inspector.
  */
 
 type WorkflowData = {
@@ -94,9 +100,13 @@ export default function WorkflowView({
   const [error, setError] = useState('');
   const [panel, setPanel] = useState<Panel>('visual');
   const [selectedStep, setSelectedStep] = useState<string | null>(null);
+  const [selectedActor, setSelectedActor] = useState<string | null>(null);
   const [acting, setActing] = useState(false);
   const [actErr, setActErr] = useState('');
-  const actingRef = useRef(false);
+  // One queue for the whole editor: commits run in order and none is dropped.
+  const queueRef = useRef<CommitQueue>(
+    createCommitQueue({ onError: (m) => setActErr(m), onBusyChange: (b) => setActing(b) }),
+  );
 
   // New step form
   const [newStepTitle, setNewStepTitle] = useState('');
@@ -156,24 +166,20 @@ export default function WorkflowView({
     artifactName: data?.title,
   });
 
-  // The one-source commit: serialize the next Workflow, PATCH with the sha,
-  // then reload so the swimlane / markdown / mermaid all reflect the new source.
+  // The one-source commit: serialize the next Workflow, PATCH with the sha, then reload
+  // so the swimlane / markdown / mermaid all reflect the new source.
+  //
+  // QUEUED, never dropped. This used to `return` when a previous commit+reload was still
+  // in flight, so an edit followed by a click was lost in silence. The queue runs commits
+  // one at a time (each re-reads the sha, so overlapping them would 409), reports every
+  // failure, and hands the outcome back to the caller — which is how an inspector can keep
+  // its draft and show the error on the field the user was typing in.
   const mutate = useCallback(
-    async (next: Workflow) => {
-      if (actingRef.current) return;
-      actingRef.current = true;
-      setActing(true);
-      setActErr('');
-      try {
+    async (next: Workflow): Promise<CommitOutcome> =>
+      queueRef.current.enqueue(async () => {
         await commitWorkflow(workflowId, next);
         await reload();
-      } catch (e) {
-        setActErr((e as Error).message);
-      } finally {
-        actingRef.current = false;
-        setActing(false);
-      }
-    },
+      }),
     [workflowId, reload],
   );
 
@@ -455,6 +461,9 @@ export default function WorkflowView({
 
   const wf = data.workflow;
   const step = selectedStep ? wf.steps.find((s) => s.id === selectedStep) ?? null : null;
+  const actor = selectedActor ? findActorById(wf, selectedActor) ?? null : null;
+  // A step naming an actor the registry does not hold is a warning, never a re-added actor.
+  const warnings = actorWarnings(wf);
   const dirty = mdDraft !== data.md;
 
   return (
@@ -666,11 +675,13 @@ export default function WorkflowView({
 
               {step && (
                 <StepInspector
+                  key={step.id}
                   workflow={wf}
                   step={step}
                   gaps={data.gaps}
+                  actorWarning={warnings.find((w) => w.stepId === step.id)}
                   canEdit={data.canEdit}
-                  mutate={(next) => void mutate(next)}
+                  mutate={mutate}
                   onClose={() => setSelectedStep(null)}
                 />
               )}
@@ -704,11 +715,26 @@ export default function WorkflowView({
 
           {/* ── ACTORS (the workflow's first-class actor registry) ── */}
           {panel === 'actors' && (
-            <ActorsPanel
-              workflow={wf}
-              canEdit={data.canEdit}
-              mutate={(next) => void mutate(next)}
-            />
+            <>
+              <ActorsPanel
+                workflow={wf}
+                canEdit={data.canEdit}
+                selectedActorId={selectedActor}
+                onSelect={(id) => setSelectedActor((cur) => (cur === id ? null : id))}
+                mutate={mutate}
+              />
+              {actor && (
+                <ActorInspector
+                  key={actor.id ?? actor.name}
+                  workflow={wf}
+                  actor={actor}
+                  canEdit={data.canEdit}
+                  mutate={mutate}
+                  onSelectStep={(stepId) => { setSelectedStep(stepId); setPanel('visual'); }}
+                  onClose={() => setSelectedActor(null)}
+                />
+              )}
+            </>
           )}
 
           {/* ── BUSINESS RULES (workflow-level + guardrail apply) ── */}
