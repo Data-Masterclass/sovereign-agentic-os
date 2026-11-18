@@ -154,6 +154,31 @@
 - name: OS_APPS_TLS_ISSUER
   value: {{ .Values.softwareRunner.tlsIssuer | default .Values.ingress.tlsIssuer | quote }}
 {{- end }}
+{{- /* ---- Software SECURITY SCANNER (tabs/software/lib/scan-trivy.ts). os-ui launches ONE
+     Trivy Job per deploy request in THIS namespace (RBAC + NetworkPolicy in
+     templates/base/os-ui/software-scanner.yaml) and maps its JSON onto the review card's
+     scan. `mode: 'live'` only when the Job completed; a failure, a timeout or an
+     unreachable API server leaves the scan `unavailable` with a reason and the deploy
+     unapprovable (PR #56). This is what `osUI.offlineMock: refuse` tells an operator to
+     wire — it is NOT an offline-mock lever and it weakens nothing.
+     RUN-path, so `os-ui-worker` (which executes agent runs, and therefore the Platform MCP's
+     `request_deploy`) resolves the scanner exactly as the UI pod does; the two cannot drift.
+     Nil-safe under `--reuse-values`: an absent `software.scanner` renders the code defaults. */}}
+{{- $sc := (($u.software | default dict).scanner | default dict) }}
+- name: SOFTWARE_SCANNER_ENABLED
+  value: {{ ternary "true" "false" ($sc.enabled | default false) | quote }}
+{{- if $sc.enabled | default false }}
+- name: SOFTWARE_SCANNER_IMAGE
+  value: {{ printf "%s:%s" (($sc.image | default dict).repository | default "aquasec/trivy") (($sc.image | default dict).tag | default "0.58.2") }}{{ if ($sc.image | default dict).digest }}{{ printf "@%s" ($sc.image).digest }}{{ end }}
+- name: SOFTWARE_SCANNER_NAMESPACE
+  value: {{ .Release.Namespace | quote }}
+- name: SOFTWARE_SCANNER_DB_MODE
+  value: {{ $sc.dbMode | default "mirror" | quote }}
+- name: SOFTWARE_SCANNER_DB_REPOSITORY
+  value: {{ $sc.dbRepository | default "ghcr.io/aquasecurity/trivy-db" | quote }}
+- name: SOFTWARE_SCANNER_TIMEOUT_MS
+  value: {{ mul ($sc.timeoutSeconds | default 180) 1000 | quote }}
+{{- end }}
 # ---- Data-tab ingest (T3). os-ui streams an uploaded file to MinIO
 # (uploads/<uid>/) with a SigV4 PUT, then calls the data-runner /ingest —
 # which writes the physical Iceberg Bronze table. Reuses the SAME

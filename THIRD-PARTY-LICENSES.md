@@ -139,6 +139,7 @@ models, so run tracing is done explicitly with the `langfuse` SDK.
 |---|---|---|---|---|
 | amazon/aws-cli | 2.31.13 | Apache-2.0 | `licenses/Apache-2.0.txt` | Bucket-init helper |
 | traefik/whoami | 1.10.3 | MIT | `licenses/MIT.txt` | Software-delivery demo app |
+| **Trivy** | **0.58.2** (`aquasec/trivy`) | **Apache-2.0** | `licenses/Apache-2.0.txt` | **Software deploy security scanner.** os-ui launches ONE Job per deploy request (`os-ui/tabs/software/lib/scan-trivy.ts`) and maps its JSON onto the Builder review card: dependency vulnerabilities from the app's manifests/lockfiles + committed secrets. **Deployed image only** — no Trivy source is vendored into `os-ui` and nothing links against it; it is a separate short-lived process (mere aggregation). `sast` stays *not run*: Semgrep's engine is LGPL-2.1 and is **not** on `licenses/allowed-licenses.txt`. |
 | Docker-in-Docker (dind) | 27 | Apache-2.0 | `licenses/Apache-2.0.txt` | CI build sidecar (Moby/Docker) |
 
 ### Model serving

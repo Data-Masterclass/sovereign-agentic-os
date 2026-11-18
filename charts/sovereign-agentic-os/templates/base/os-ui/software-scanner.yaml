@@ -1,0 +1,129 @@
+{{- $sc := ((.Values.osUI.software | default dict).scanner | default dict) }}
+{{- if $sc.enabled | default false }}
+{{- /*
+  SOFTWARE SECURITY SCANNER (Software golden path §D, 2026-11-19).
+
+  Since PR #56 the OS refuses to issue a security verdict no engine produced, so a software
+  deploy on a real cluster cannot be approved until a scanner is wired. This is that scanner:
+  os-ui launches ONE Kubernetes Job per deploy request (tabs/software/lib/scan-trivy.ts),
+  running Trivy (Apache-2.0) over the app's committed tree — dependency vulnerabilities from
+  its manifests/lockfiles plus committed secrets — and reads the Job's JSON back from the pod
+  log. A failed, timed-out or unreachable Job leaves the scan `unavailable` with its reason;
+  it NEVER becomes a pass. Nothing here touches OS_OFFLINE_MOCK, which keeps its single lever.
+
+  The Job runs in the RELEASE namespace, beside os-ui, NOT in the untrusted
+  `softwareRunner.namespace`: it holds the app's SOURCE, and the apps namespace is where
+  student code runs. There is no Job TEMPLATE object here on purpose — a Job is created per
+  scan with a per-scan payload, so the manifest is built in code (unit-tested without a
+  cluster) and only the permission to create it, and the egress it needs, are declared here.
+*/}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: os-ui-software-scanner
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+rules:
+  {{- /* LEAST PRIVILEGE, and each verb is load-bearing:
+         create  — launch one scan Job
+         get/list/watch — poll it to completion (the adapter polls `get`; list/watch let a
+                          later reconcile find orphans without widening the grant)
+         delete  — reap a Job the adapter abandoned on timeout, so an abandoned scan does not
+                   sit in the namespace until its TTL. Jobs only; no other `batch` resource.
+         The namespace-level `os-ui` Role (os-ui.yaml) grants `cronjobs` and deliberately NOT
+         `jobs`; this is the separate, flag-gated grant that adds jobs and nothing else. */}}
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "get", "list", "watch", "delete"]
+  {{- /* The scan RESULT is the Job pod's stdout, read through the `/log` subresource
+         (core/infra/k8s.ts `k8sText`). `get` on pods is already granted namespace-wide by the
+         os-ui Role; `pods/log` is not, and without it the scan would complete and the OS would
+         never see the verdict. Read-only: no create, no exec, no delete. */}}
+  - apiGroups: [""]
+    resources: ["pods", "pods/log"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: os-ui-software-scanner
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: os-ui-software-scanner
+subjects:
+  - kind: ServiceAccount
+    name: os-ui
+    namespace: {{ .Release.Namespace }}
+{{- if .Values.networkPolicies.defaultDeny }}
+---
+{{- /*
+  EGRESS for the scan pods, and nothing more.
+
+  The scanner pod is excluded from this namespace's blanket `allow-intra-namespace-egress` and
+  `allow-apiserver-egress` rules (templates/base/network/egress-policies.yaml — the same
+  `NotIn` treatment `agent-schedule` already gets, for the same reason): a pod whose entire job
+  is "fetch a vulnerability DB, read files from an emptyDir, print JSON" has no business on the
+  in-namespace service plane or the API server. It also mounts no ServiceAccount token.
+
+  What it gets instead:
+    • DNS, always.
+    • TCP 443, ONLY when `dbMode: mirror` — the Trivy DB lives in an OCI registry
+      (`scanner.dbRepository`, default ghcr.io/aquasecurity/trivy-db). NetworkPolicy cannot
+      express "that hostname": Kubernetes selectors are IP/namespace-based, so this is 443 to
+      any destination. Where FQDN policy exists (Cilium on STACKIT) narrow it there; where it
+      does not, `dbMode: offline` is the airtight answer — DNS only, with the DB baked into
+      the scanner image. That trade-off is the reason `dbMode` is an operator-visible value and
+      not a hidden default.
+    • With `dbMode: offline`, no 443 rule is rendered at all.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: software-scanner-egress
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: software-scanner
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+        # Gardener/SKE CoreDNS listens on 8053 (see egress-policies.yaml).
+        - { protocol: UDP, port: 8053 }
+        - { protocol: TCP, port: 8053 }
+    {{- if ne ($sc.dbMode | default "mirror") "offline" }}
+    - ports:
+        - { protocol: TCP, port: 443 }
+    {{- end }}
+---
+{{- /* INGRESS lock: nothing may reach a scan pod. It listens on no port and serves nothing;
+       the policy says so rather than leaving it to the absence of a Service. */}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: software-scanner-no-ingress
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: software-scanner
+  policyTypes:
+    - Ingress
+{{- end }}
+{{- end }}
