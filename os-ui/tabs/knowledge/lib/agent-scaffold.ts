@@ -18,7 +18,7 @@
  *     baselined TAB-ISOLATION entry); the pure prompt/plan half lives in `lib/actor-prompt.ts` so
  *     the editor can render the same bytes without that import.
  */
-import { type Workflow, type WorkflowStep } from '@tabs/knowledge/lib/schema';
+import { KnowledgeError, type Workflow, type WorkflowStep } from '@tabs/knowledge/lib/schema';
 import { type System, type AgentSpec, type Edge, serializeSystem } from '@tabs/agents/lib/system-schema';
 import {
   actorAgentMd,
@@ -55,6 +55,29 @@ function stepAgentMd(workflow: Workflow, step: WorkflowStep, disp: Disposition):
     for (const r of hardRules) lines.push(`- ${r.text}`);
   }
   return lines.filter((l) => l !== '').join('\n');
+}
+
+/**
+ * The scaffold's own validation of the graph it just built: no two agents may share an id.
+ *
+ * It lives HERE, not in the Agents tab's `parseSystem`: that schema belongs to another tab,
+ * and its job is to read a document, not to police this generator. But nothing downstream
+ * rejects a duplicate — `members` and `edges` reference agents by id, so two agents called
+ * `supervisor` would commit a graph where "route to supervisor" has two answers. The ids
+ * come from `planAgents` (which reserves `RESERVED_AGENT_IDS`) plus the node this function's
+ * caller injects, and a guard over the final list is the one check that covers both.
+ */
+export function assertUniqueAgentIds(agents: { id: string }[]): void {
+  const seen = new Set<string>();
+  for (const a of agents) {
+    if (seen.has(a.id)) {
+      throw new KnowledgeError(
+        `agent-system scaffold: duplicate agent id '${a.id}' — the graph's members and edges would be ambiguous`,
+        500,
+      );
+    }
+    seen.add(a.id);
+  }
 }
 
 export type ScaffoldResult = {
@@ -136,6 +159,10 @@ export function scaffoldSystem(
       edges.push({ from: members[i].spec.id, to: members[i + 1].spec.id, type: 'handoff', when: 'step complete' });
     }
   }
+
+  // The graph is only now complete (the supervisor/coordinator node is injected above), so
+  // this is the one place the check can see every id it must be unique against.
+  assertUniqueAgentIds(agents);
 
   const system: System = {
     version: '1',

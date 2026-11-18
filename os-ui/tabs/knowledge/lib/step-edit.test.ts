@@ -3,7 +3,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseWorkflow, serializeWorkflow } from '@tabs/knowledge/lib/schema';
+import { parseWorkflow, serializeWorkflow, KnowledgeError, MAX_ACTOR_PROMPT_BYTES } from '@tabs/knowledge/lib/schema';
 import {
   addStep,
   removeStep,
@@ -132,6 +132,19 @@ test('updateActor replaces a prompt, and an empty string removes it', () => {
   const w2 = updateActor(w1, id, { prompt: '' });
   assert.equal(w2.actors[0].prompt, undefined);
   assert.ok(!/prompt:/.test(serializeWorkflow(w2)), 'an emptied prompt leaves no key behind');
+});
+
+test('a prompt over the cap is refused at the mutation, where the draft is still on screen', () => {
+  const tooBig = 'x'.repeat(MAX_ACTOR_PROMPT_BYTES + 1);
+  assert.throws(() => addActor(wf(), { name: 'Bot', category: 'Agent', prompt: tooBig }), KnowledgeError);
+  const w0 = addActor(wf(), { name: 'Bot', category: 'Agent', prompt: 'ok' });
+  assert.throws(() => updateActor(w0, w0.actors[0].id!, { prompt: tooBig }), KnowledgeError);
+});
+
+test('a CRLF prompt is normalised by the mutations too', () => {
+  const w = addActor(wf(), { name: 'Bot', category: 'Agent', prompt: 'one\r\ntwo' });
+  assert.equal(w.actors[0].prompt, 'one\ntwo');
+  assert.equal(updateActor(w, w.actors[0].id!, { prompt: 'a\r\nb' }).actors[0].prompt, 'a\nb');
 });
 
 test('updateActor leaves the prompt alone when the patch omits it', () => {

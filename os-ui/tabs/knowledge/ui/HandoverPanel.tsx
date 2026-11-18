@@ -46,9 +46,14 @@ export default function HandoverPanel({
   // the user will actually get: every step of one Agent actor folds into that actor's agent.
   const plan = planAgents(workflow, disp);
   const agentCount = plan.actorAgents.length + plan.stepAgents.length;
+  // A MANUAL step is a human/software handoff: it does not run in an agent, even when its
+  // actor has one. (An actor agent's AGENT.md still MENTIONS the step — the prompt is the
+  // actor's whole brief — but saying "agent <id>" on a manual row read as "this runs there".)
   const agentForStep = (stepId: string): string | undefined =>
-    plan.actorAgents.find((a) => a.steps.some((s) => s.id === stepId))?.agentId
-    ?? plan.stepAgents.find((s) => s.step.id === stepId)?.agentId;
+    disp[stepId] === 'manual'
+      ? undefined
+      : plan.actorAgents.find((a) => a.steps.some((s) => s.id === stepId))?.agentId
+        ?? plan.stepAgents.find((s) => s.step.id === stepId)?.agentId;
 
   // Returns a promise so <ActionButton> can drive busy → ✓/error + the success toast.
   // We throw on failure; ActionButton catches it and toasts the message, and we also

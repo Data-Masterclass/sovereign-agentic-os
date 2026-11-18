@@ -146,6 +146,21 @@ test('the AGENT.md preview is the scaffold’s own builder, not a second copy', 
   assert.match(src, /@tabs\/knowledge\/lib\/actor-prompt/);
 });
 
+test('the preview says so when the actor would get no agent (review M3)', () => {
+  const src = read('tabs/knowledge/ui/ActorInspector.tsx');
+  assert.match(src, /no agent yet/i, 'an Agent actor with no steps must not look like a planned agent');
+});
+
+test('the preview does not rebuild the registry it never reads (review L4)', () => {
+  const src = read('tabs/knowledge/ui/ActorInspector.tsx');
+  assert.ok(!src.includes('workflow.actors.map('), 'the dead registry swap must be gone');
+});
+
+test('HandoverPanel never attributes an agent to a MANUAL step (review M2)', () => {
+  const src = read('tabs/knowledge/ui/HandoverPanel.tsx');
+  assert.match(src, /disp\[\w+\] === 'manual'/, 'a manual step must be excluded from the attribution');
+});
+
 test('no knowledge editor component pulls an Agents-tab module into the browser bundle', () => {
   for (const f of ['tabs/knowledge/ui/ActorInspector.tsx', 'tabs/knowledge/ui/HandoverPanel.tsx']) {
     assert.ok(!read(f).includes('@tabs/agents'), `${f} must import only @core/* and this tab`);

@@ -9,6 +9,7 @@ import {
   type ActorType,
   type Actor,
   actorKey,
+  normalizeActorPrompt,
   KnowledgeError,
 } from '@tabs/knowledge/lib/schema';
 
@@ -186,8 +187,10 @@ export function addActor(
     category: actor.category,
   };
   if (actor.description?.trim()) next.description = actor.description.trim();
-  // An Agent actor's long prompt — the head of the AGENT.md the scaffold writes.
-  if (actor.prompt?.trim()) next.prompt = actor.prompt.trim();
+  // An Agent actor's long prompt — the head of the AGENT.md the scaffold writes. Normalised
+  // and capped here too, so an over-long paste fails at the mutation, where the user can
+  // still see (and shorten) their draft, rather than at the next parse.
+  if (actor.prompt?.trim()) next.prompt = normalizeActorPrompt(name, actor.prompt);
   w.actors.push(next);
   return w;
 }
@@ -220,7 +223,7 @@ export function updateActor(
   // The long agent prompt. An empty string DELETES it (same shape as description), while an
   // omitted key leaves it alone — the inspector saves name/category/description/prompt together.
   if (patch.prompt !== undefined) {
-    const p = patch.prompt.trim();
+    const p = normalizeActorPrompt(a.name, patch.prompt);
     if (p) a.prompt = p;
     else delete a.prompt;
   }
