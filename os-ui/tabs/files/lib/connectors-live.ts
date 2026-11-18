@@ -9,6 +9,7 @@ import {
   type RemoteFile,
   mockClient,
 } from '@tabs/files/lib/connectors';
+import { offlineMockAllowed, refuseOfflineMock } from '@core/kernel/offline-mock';
 
 /**
  * LIVE connector clients — real pulls against Google Drive / Microsoft Graph
@@ -17,6 +18,15 @@ import {
  * the API is unreachable → fall back to the deterministic mock client, honestly
  * labelled `mode: 'mock'`. This is the dual pattern: a deploy with a real Drive
  * connection syncs for real; kind uses the fake drive.
+ *
+ * THE HONESTY GATE (2026-11-18, review H2). Six branches here fell back to the fake drive — a
+ * missing token, a non-OK HTTP response and a JSON parse failure, for each of the two providers —
+ * and the fabrication was labelled `mode: 'mock'`, a DIFFERENT string from `offline-mock`, so
+ * the original tripwire never saw this file at all. Every one of those files was then INDEXED:
+ * the Files tab, the Knowledge retrieval and any agent reading them got documents that do not
+ * exist in the customer's Drive. All six now go through `fakeDrive()`, which refuses unless this
+ * deployment explicitly asked for the teaching flow. A broken Drive connection is an outage, and
+ * an outage is the honest answer.
  *
  * Importable in tests (no server-only); only invoked from the server sync route,
  * which resolves the token from the governed Connection.
@@ -34,17 +44,32 @@ async function get(url: string, token: string, ms = 8000): Promise<Response | nu
   }
 }
 
+/**
+ * The fake-drive fallback, gated. `why` names the real cause (no token / HTTP status / unparseable
+ * body) so a refusal tells the operator which of the three to fix — the old code collapsed all
+ * three into the same silent substitution.
+ */
+function fakeDrive(provider: Provider, why: string): ConnectorClient {
+  if (!offlineMockAllowed()) {
+    refuseOfflineMock(
+      `Cannot sync ${provider}: ${why} No files were read, and this deployment will not index ` +
+        'placeholder documents in their place.',
+    );
+  }
+  return mockClient(provider);
+}
+
 /** Google Drive: list a folder's files (incremental via the changes feed cursor). */
 function googleDrive(token: string | null): ConnectorClient {
   return {
     provider: 'google-drive',
     mode: token ? 'live' : 'mock',
     async pull(source: ConnectorSource, sinceCursor: string | null): Promise<Pull> {
-      if (!token) return mockClient('google-drive').pull(source, sinceCursor);
+      if (!token) return fakeDrive('google-drive', 'the connection has no Read token.').pull(source, sinceCursor);
       const q = source.scope === 'folder' ? `'${source.target}' in parents and trashed=false` : 'trashed=false';
       const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id,name,mimeType,modifiedTime,md5Checksum,webViewLink)&pageSize=100`;
       const res = await get(url, token);
-      if (!res || !res.ok) return mockClient('google-drive').pull(source, sinceCursor);
+      if (!res || !res.ok) return fakeDrive('google-drive', `the Drive API answered ${res ? res.status : 'nothing (unreachable/timeout)'}.`).pull(source, sinceCursor);
       try {
         const json = (await res.json()) as { files?: Record<string, unknown>[] };
         const items: RemoteFile[] = (json.files ?? []).map((f) => ({
@@ -58,7 +83,7 @@ function googleDrive(token: string | null): ConnectorClient {
         }));
         return { items, cursor: new Date().toISOString() };
       } catch {
-        return mockClient('google-drive').pull(source, sinceCursor);
+        return fakeDrive('google-drive', 'the Drive API response could not be parsed.').pull(source, sinceCursor);
       }
     },
   };
@@ -70,7 +95,7 @@ function oneDrive(token: string | null): ConnectorClient {
     provider: 'onedrive',
     mode: token ? 'live' : 'mock',
     async pull(source: ConnectorSource, sinceCursor: string | null): Promise<Pull> {
-      if (!token) return mockClient('onedrive').pull(source, sinceCursor);
+      if (!token) return fakeDrive('onedrive', 'the connection has no Read token.').pull(source, sinceCursor);
       // Use the saved deltaLink when present (incremental); otherwise a fresh delta.
       const base = sinceCursor && sinceCursor.startsWith('http')
         ? sinceCursor
@@ -78,7 +103,7 @@ function oneDrive(token: string | null): ConnectorClient {
           ? `https://graph.microsoft.com/v1.0/me/drive/items/${source.target}/delta`
           : 'https://graph.microsoft.com/v1.0/me/drive/root/delta';
       const res = await get(base, token);
-      if (!res || !res.ok) return mockClient('onedrive').pull(source, sinceCursor);
+      if (!res || !res.ok) return fakeDrive('onedrive', `Microsoft Graph answered ${res ? res.status : 'nothing (unreachable/timeout)'}.`).pull(source, sinceCursor);
       try {
         const json = (await res.json()) as { value?: Record<string, unknown>[]; ['@odata.deltaLink']?: string };
         const items: RemoteFile[] = (json.value ?? [])
@@ -98,7 +123,7 @@ function oneDrive(token: string | null): ConnectorClient {
           });
         return { items, cursor: String(json['@odata.deltaLink'] ?? new Date().toISOString()) };
       } catch {
-        return mockClient('onedrive').pull(source, sinceCursor);
+        return fakeDrive('onedrive', 'the Microsoft Graph response could not be parsed.').pull(source, sinceCursor);
       }
     },
   };

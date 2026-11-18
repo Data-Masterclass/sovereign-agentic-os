@@ -943,13 +943,29 @@ os-ui *and* os-ui-worker env, and every site that chooses to fabricate calls
 `offlineMockAllowed()` — nothing else. Refusing is typed:
 `refuseOfflineMock(reason)` throws `ENGINE_UNAVAILABLE` (503), which the MCP
 error mapper hands an agent as `{error:{code:'ENGINE_UNAVAILABLE'}}`, never a
-row. `offline-mock-tripwire.test.ts` greps `tabs/**` and `core/**` and partitions
-every file naming `'offline-mock'` into deciders (must import the predicate) and
-labels (must not decide), so the tenth decision site cannot be added quietly.
-The lesson generalises: when a guarantee must hold in production, key it on
-something production **has**, make the gate structural rather than advisory, and
-put a grep in CI that fails when a new call site forgets it — the same move
-`tabs/software/lib/seeded-evidence.ts` made for seeded evidence.
+row. `offline-mock-tripwire.test.ts` greps `tabs/**`, `core/**` and `app/**` and
+partitions every file naming a stand-in marker into deciders (must import *and*
+call the predicate), recognisers (read a refusal, must not decide) and labels
+(must not import it), so the next decision site cannot be added quietly.
+
+**And then a third lesson, from the review of that fix.** The first version of
+the tripwire grepped for one string, `'offline-mock'` — and missed six real
+fabrication sites in the Files pipeline, which spells its stand-in `mode:
+'mock'` and reaches it through `mockClient()`, `mockAdapterFor()` and
+`mockEmbed()`. Those were indexing documents that are not in the customer's
+Drive, inventing the text of documents the parser never read, and writing *hash
+vectors* as embeddings, so every k-NN search over them ranked by a hash. It also
+missed `app/**` entirely, where two platform-admin routes invented 62% of the
+tenant's own envelope as spend and raised a real alert off it. So the tripwire
+now greps a marker **set** over three roots, and its docstring states exactly
+what it does and does not guarantee: coverage of that set, not of the concept
+"fabrication". A new stand-in must reuse a marker or be added to the set.
+
+The lesson generalises three ways: when a guarantee must hold in production, key
+it on something production **has**; make the gate structural rather than
+advisory; and when you put a grep in CI to enforce it, **write down what the
+grep cannot see** — the same move `tabs/software/lib/seeded-evidence.ts` made
+when it chose a positive provenance rule over scanning for a negative marker.
 
 ## Generated documentation
 

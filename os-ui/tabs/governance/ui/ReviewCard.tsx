@@ -22,7 +22,17 @@ export type ReviewCardData = {
   requestedBy: string;
   requestedAt: string;
   reason: 'first-deploy' | 'scope-broadened';
-  scan: { passed: boolean; summary: { sast: number; deps: number; secrets: number }; findings: Finding[]; scannedAt: string };
+  // `unavailable` + `reason` are the THIRD scan state (review M1, 2026-11-18): no scanner engine
+  // ran, so there is no verdict — distinct from a verdict of "failed". Optional, so a card
+  // serialised before this existed still renders.
+  scan: {
+    passed: boolean;
+    summary: { sast: number; deps: number; secrets: number };
+    findings: Finding[];
+    scannedAt: string;
+    unavailable?: boolean;
+    reason?: string;
+  };
   requested: {
     writeTools: string[];
     connections: string[];
@@ -94,12 +104,20 @@ export default function ReviewCard({
 
       {/* Security scan */}
       <div style={{ marginTop: 12 }}>
-        <span className={`badge ${card.scan.passed ? 'ok' : 'err'}`}>
-          security scan {card.scan.passed ? 'passed' : 'FAILED'}
+        {/* THREE states, not two (review M1, 2026-11-18). A scan that no engine ran used to
+            render as "security scan FAILED (0 findings)" — which reads as "we looked and it is
+            broken" when it means "nothing looked". The approver has to be able to tell those
+            apart, because only one of them is fixed by changing the code. */}
+        <span className={`badge ${card.scan.unavailable ? 'warn' : card.scan.passed ? 'ok' : 'err'}`}>
+          security scan {card.scan.unavailable ? 'NOT RUN' : card.scan.passed ? 'passed' : 'FAILED'}
         </span>{' '}
         <span className="muted" style={{ fontSize: 12 }}>
           sast {card.scan.summary.sast} · deps {card.scan.summary.deps} · secrets {card.scan.summary.secrets}
+          {card.scan.unavailable ? ' · from the offline baseline only' : null}
         </span>
+        {card.scan.unavailable ? (
+          <div className="hint" style={{ marginTop: 6 }}>{card.scan.reason}</div>
+        ) : null}
         {card.scan.findings.length > 0 ? (
           <ul style={{ margin: '8px 0 0', paddingLeft: 18 }}>
             {card.scan.findings.map((f, i) => (
@@ -151,10 +169,24 @@ export default function ReviewCard({
             placeholder="Note (optional)"
             style={{ flex: 1, minWidth: 160 }}
           />
-          <button className="btn" onClick={() => decide('approve')} disabled={busy}>
+          {/* Approve is DISABLED when there is no verdict to approve, with the reason on the
+              button itself — `decideDeploy` would refuse the call anyway (409), and an enabled
+              button that always fails is a worse experience than a disabled one that says why.
+              Deny stays available: refusing a deploy needs no scanner. */}
+          <button
+            className="btn"
+            onClick={() => decide('approve')}
+            disabled={busy || card.scan.unavailable === true}
+            title={card.scan.unavailable ? card.scan.reason : undefined}
+          >
             {busy ? <span className="spin" /> : 'Approve & go live'}
           </button>
           <button className="btn ghost" onClick={() => decide('deny')} disabled={busy}>Deny</button>
+          {card.scan.unavailable ? (
+            <span className="hint" style={{ flexBasis: '100%' }}>
+              Cannot approve: there is no security verdict. {card.scan.reason}
+            </span>
+          ) : null}
         </div>
       ) : (
         <div className="hint" style={{ marginTop: 10 }}>Awaiting a Builder/Admin in {card.domain} to review.</div>

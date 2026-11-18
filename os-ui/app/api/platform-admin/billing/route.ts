@@ -3,27 +3,21 @@
  */
 import { NextResponse } from 'next/server';
 import { adminCtx, fail } from '../_ctx';
-import { billingView, offlineSpend } from '@tabs/monitoring/lib/spend';
+import { tenantSpendView } from '@tabs/monitoring/lib/spend';
 import { getTenant, updateTenant } from '@tabs/admin/lib/tenant';
 import { audit } from '@tabs/admin/lib/audit';
 
 export const dynamic = 'force-dynamic';
 
-/** Usage vs the tenant envelope. Live spend is read from LiteLLM in a real
- * deploy; offline we use a deterministic mock so the envelope view renders.
- * Operational sub-caps stay in Governance; live spend detail is in Monitoring. */
+/** Usage vs the tenant envelope. `tenantSpendView` is the ONE door that decides whether a
+ * demo figure may stand in for a reading (review H1, 2026-11-18): this route used to call
+ * `offlineSpend(tenant.envelopeEUR)` unconditionally and stamp `source: 'offline-mock'`, so the
+ * deployed cluster showed 62% of its own envelope as spend. Refused ⇒ `source: 'unavailable'`
+ * with null figures. Operational sub-caps stay in Governance; spend detail is in Monitoring. */
 export async function GET() {
   try {
     const { tenant } = await adminCtx();
-    const { spendEUR, premiumSpendEUR, trend } = offlineSpend(tenant.envelopeEUR);
-    const view = billingView({
-      envelopeEUR: tenant.envelopeEUR,
-      premiumCapEUR: tenant.premiumCapEUR,
-      spendEUR,
-      premiumSpendEUR,
-      trend,
-      source: 'offline-mock',
-    });
+    const view = tenantSpendView(tenant.envelopeEUR, tenant.premiumCapEUR);
     return NextResponse.json({ billing: view, plan: tenant.plan });
   } catch (e) {
     return fail(e);

@@ -1,6 +1,13 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
+// server-only (review L2, 2026-11-18): this module now DECIDES whether a scan verdict may be
+// issued, by reading the process environment. A decision like that must be unreachable from the
+// browser bundle, where `process.env` is whatever the build inlined — a client-side caller would
+// get a verdict from a different switch than the server used. Both existing importers
+// (`adapters.ts`, `review.ts`) are already server-only, so this adds no constraint; it prevents
+// the next one. The test loader stubs `server-only`, so the unit tests are unaffected.
+import 'server-only';
 import type { ScanCategory, ScanFinding, ScanMode, ScanResult, ScaffoldFile } from '@tabs/software/lib/model';
 import { offlineMockAllowed } from '@core/kernel/offline-mock';
 

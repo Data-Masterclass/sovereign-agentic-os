@@ -45,7 +45,9 @@ type Cockpit = {
   opa: string;
   health: { total: number; running: number; source: string };
   counts: { domains: number; domainsActive: number; users: number; usersActive: number; admins: number };
-  billing: { envelopeEUR: number; spendEUR: number; pctUsed: number; hardStop: boolean };
+  // Null figures when spend could not be read (review H1) — never 0, which would read as
+  // "nothing spent". The tile shows an em dash instead.
+  billing: { envelopeEUR: number; spendEUR: number | null; pctUsed: number | null; hardStop: boolean };
   policy: { principals: number; tools: string[]; bundle: string; publish: { status: string; detail: string } };
   alerts: { level: 'warn' | 'info'; text: string; href: string }[];
   recentAudit: { id: string; ts: string; actor: string; action: string; detail: string }[];
@@ -213,11 +215,13 @@ function AdminOverviewHealth() {
               </div>
               <div className="card pa-kpi">
                 <span className="k-label">Spend vs envelope</span>
-                <span className="k-value">{cockpit.billing.pctUsed}%</span>
-                <div className={`pa-bar${cockpit.billing.hardStop ? ' stop' : cockpit.billing.pctUsed >= 80 ? ' warn' : ''}`}>
-                  <span style={{ width: `${Math.min(100, cockpit.billing.pctUsed)}%` }} />
+                <span className="k-value">{cockpit.billing.pctUsed === null ? '—' : `${cockpit.billing.pctUsed}%`}</span>
+                <div className={`pa-bar${cockpit.billing.hardStop ? ' stop' : (cockpit.billing.pctUsed ?? 0) >= 80 ? ' warn' : ''}`}>
+                  <span style={{ width: `${Math.min(100, cockpit.billing.pctUsed ?? 0)}%` }} />
                 </div>
-                <span className="k-sub">€{cockpit.billing.spendEUR} / €{cockpit.billing.envelopeEUR} per mo</span>
+                <span className="k-sub">
+                  {cockpit.billing.spendEUR === null ? 'spend not readable' : `€${cockpit.billing.spendEUR}`} / €{cockpit.billing.envelopeEUR} per mo
+                </span>
               </div>
               <div className="card pa-kpi">
                 <span className="k-label">Users</span>

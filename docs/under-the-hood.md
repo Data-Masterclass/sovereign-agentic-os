@@ -1736,8 +1736,11 @@ git tag --list 'app/invoices/v*'                # the release scheme — current
 >   the kernel predicate. With no engine the result is `mode: 'unavailable'`, `passed: false` and a
 >   `reason`, so `decide_deploy` refuses with "there is no security verdict to approve" instead of
 >   approving on a mocked one. The baseline's real findings are still returned — refusing a verdict
->   is not hiding evidence — and a caller that injects `'live'` is unaffected. The hardcoded
->   two-entry deps list and the missing Semgrep/Trivy/gitleaks wiring are UNCHANGED and still open.
+>   is not hiding evidence — and a caller that injects `'live'` is unaffected. The approver UI shows
+>   a THIRD state ("security scan NOT RUN" + the reason) and disables Approve, because
+>   "FAILED (0 findings)" read as "we looked and it is broken" when it meant "nothing looked". The
+>   hardcoded two-entry deps list and the missing Semgrep/Trivy/gitleaks wiring are UNCHANGED and
+>   still open — and with the gate closed they now BLOCK approval on a real cluster.
 > - **`verify_software` runs no tests.** It returns a directive and trusts the agent's PASS/FAIL.
 >   `platform-mcp.ts:291-325`
 > - **No release tags are written.** `annotatedTag` exists in the git store with *zero callers*; the
@@ -1886,6 +1889,22 @@ POST /knowledge/_search
 ```
 
 > **Not yet true:**
+> - **The ingest pipeline used to invent the contents of your documents — and the index still holds
+>   whatever it invented.** Three fallbacks, all labelled `mode: 'mock'` (which is a *different*
+>   string from `offline-mock`, so the first honesty tripwire never looked here — this was found in
+>   the review of that fix, not by it): `connectors-live.ts` fell back to the FAKE DRIVE on a missing
+>   token, a non-OK Drive/Graph response **or** an unparseable body — six branches, so a broken
+>   connection indexed files that do not exist in the customer's Drive; `ingest/live.ts` returned
+>   `mockAdapterFor(kind).apply(input)` when Docling/ASR/OCR was unreachable, so the chunks, the
+>   embeddings and every quote drawn from them described a document nobody had read; and `embed.ts`
+>   wrote `mockEmbed` **hash vectors**, which have no semantic relationship to one another, so k-NN
+>   search over those rows ranks by a hash while looking exactly like real retrieval.
+>   **FIXED 2026-11-18** (review H2): all three now go through `refuseOfflineMock()` — nothing is
+>   parsed, embedded or indexed, and the caller gets a typed `ENGINE_UNAVAILABLE`. The laptop
+>   teaching flow keeps all three, labelled. **Rows written before this fix are still in the index
+>   and are not retroactively identifiable** — a re-index after the parsers and the embeddings
+>   gateway are reachable is the only remedy. `os-ui/tabs/files/lib/connectors-live.ts`;
+>   `ingest/live.ts`; `embed.ts`; `tabs/files/lib/offline-mock-production.test.ts`
 > - **Presidio is absent, not stubbed.** Six occurrences exist in the whole repository: two in a
 >   `gateway-mirror.test.ts` fixture (`{ guardrail_name: 'presidio-pii' }`) and four in a plan document
 >   that proposes deploying it. There is no Presidio HTTP call, no `apply_guardrail`, no
@@ -2044,7 +2063,8 @@ kubectl -n agentic-os get secret trino-ext-<catalog> -o jsonpath='{.data}' | jq 
 >   deployment they refuse with `ENGINE_UNAVAILABLE` instead of returning a seed. The static tool
 >   PRESETS, the credential capture and the placeholder OAuth token the real callback overwrites are
 >   deliberately NOT gated: they invent no fact about the outside world. The missing live sync client
->   is still the underlying gap.
+>   is still the underlying gap. `runVerified` also no longer swallows the typed refusal into a
+>   `mode: 'offline-mock'` row — it rethrows, so the door maps it to ENGINE_UNAVAILABLE.
 > - **The adapter layer is a deterministic offline mock** (`OpMode = 'live' | 'offline-mock'`), including
 >   the OAuth consent on create (`authCode: 'mock-consent-grant'`).
 >   `os-ui/tabs/connections/lib/connection-adapters.ts:25-28`, `:42`, `:169`; `lib/store.ts:700`
@@ -2858,6 +2878,28 @@ the managed deployment too.
 >   and the acceptance report records that `git-http:1.0.0` is "not built/pushed … E must stay undeployed
 >   until the image exists". The image has since been built and pushed on 2026-11-14 (digest `sha256:598ac199…`) after the Dockerfile's own build guard caught that Alpine ships `git-http-backend` in the `git-daemon` package (PR #49). The lesson stands: a default-on sidecar pointing at an unbuilt image is the one direct
 >   contradiction between the chart and the report. `values.yaml:1404`, `:1406-1407`; gap-report §3 item 10
+> - **`OS_OFFLINE_MOCK` is the one honesty switch, and `MONITORING_DEMO_FIXTURES` is a second one.**
+>   `osUI.offlineMock` (default `refuse`) is rendered into both the `os-ui` and `os-ui-worker` env
+>   and decides whether this deployment may answer with a stand-in. It has **no per-subsystem
+>   exemption**, which is deliberate — and the practical cost is that a **software deploy cannot be
+>   approved** until a real scanner is wired. Monitoring's demo fixtures are governed separately by
+>   `MONITORING_DEMO_FIXTURES` (`core/kernel/config.ts:427-432`), which defaults OFF under
+>   `NODE_ENV=production`; it was deliberately not folded into the predicate so the Monitoring
+>   fixtures stay independently switchable. The tripwire covers a marker SET
+>   (`offline-mock`, `mode: 'mock'`, `mockClient(`, `mockAdapterFor(`, `mockEmbed`) over
+>   `tabs/**`, `core/**` and `app/**` — it guarantees coverage of that set, not of the concept.
+>   `charts/sovereign-agentic-os/values.yaml` → `osUI.offlineMock`;
+>   `os-ui/core/kernel/offline-mock-tripwire.test.ts`
+> - **Platform-admin spend was invented from the envelope, and raised a real alert.**
+>   `app/api/platform-admin/billing/route.ts` and `overview/route.ts` called
+>   `offlineSpend(tenant.envelopeEUR)` **unconditionally** and stamped `source: 'offline-mock'`, so
+>   a deployed cluster reported 62% of its own envelope as spend — a number derived from the
+>   ceiling it was being compared against — and the overview pushed a genuine
+>   "Spend at 62% of envelope" warning off it. **FIXED 2026-11-18** (review H1): one door,
+>   `tenantSpendView`, decides; refused ⇒ `source: 'unavailable'` with **null** figures (never 0,
+>   which would read as "nothing spent"), an empty trend, and no alert. Real LiteLLM figures bypass
+>   the gate entirely. No LiteLLM spend read is wired yet, so on a cluster the honest answer today
+>   is "not readable". `os-ui/tabs/monitoring/lib/spend.ts`; `spend-honesty.test.ts`
 > - **`OS_PROFILE` is still set nowhere** — not in `charts/`, not in either root overlay, not in
 >   `deploy/` or `scripts/`, so `config.deploymentProfile` stays `'local'` on a real deployment. (Mode B
 >   sets `global.profile: stackit`, which is a different key and does not reach that env var.) **Since

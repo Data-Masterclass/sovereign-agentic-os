@@ -14,6 +14,7 @@ import {
   verifyResult,
 } from '@tabs/files/lib/ingest/types';
 import { mockAdapterFor } from '@tabs/files/lib/ingest/mocks';
+import { offlineMockAllowed, refuseOfflineMock } from '@core/kernel/offline-mock';
 
 /**
  * LIVE ingest adapters — real `apply → verify` against the actual services, behind
@@ -22,6 +23,14 @@ import { mockAdapterFor } from '@tabs/files/lib/ingest/mocks';
  * service for images); when it is unreachable (kind, or the service is off) we fall
  * back to the deterministic MOCK and label the result `mode: 'mock'` — honest, never
  * a silent failure. This is the agent-runtime dual pattern (lib/agents/build/live).
+ *
+ * THE HONESTY GATE (2026-11-18, review H2). The fallback produced INVENTED TEXT for the file —
+ * placeholder sections, a placeholder transcript, a placeholder caption — which was then chunked,
+ * embedded and indexed, so Knowledge retrieval and any agent reading the file quoted content the
+ * document does not contain. It was labelled `mode: 'mock'`, which is a different string from
+ * `offline-mock`, so the original tripwire never looked here. Unless this deployment explicitly
+ * asked for the teaching flow, an unreachable parser is now refused: no representations, nothing
+ * indexed, a typed ENGINE_UNAVAILABLE.
  *
  * server-only: it makes outbound calls, so it is imported by the pipeline's server
  * boundary, not by the pure store/tests (those use the mocks + injected fakes).
@@ -80,7 +89,16 @@ function liveAdapter(
           /* fall through to the mock */
         }
       }
-      // Honest fallback: the deterministic mock, labelled mode: 'mock'.
+      // Honest fallback: the deterministic mock, labelled mode: 'mock' — but ONLY where a
+      // worked example is the point. Everywhere else, inventing the contents of somebody's
+      // document is the worst thing this pipeline could do, so it refuses.
+      if (!offlineMockAllowed()) {
+        refuseOfflineMock(
+          `Cannot ingest “${input.name}”: the ${name} service at ${url} is ` +
+            'unreachable or returned nothing usable, so the file was not parsed. No text, no ' +
+            'chunks and no embeddings were produced, and nothing was indexed.',
+        );
+      }
       return mockAdapterFor(input.kind).apply(input);
     },
     verify: verifyResult,

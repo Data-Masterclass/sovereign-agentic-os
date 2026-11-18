@@ -588,11 +588,18 @@ export function structuredError(e: unknown): ToolError {
   if (isOfflineMockRefused(e)) {
     return {
       code: ENGINE_UNAVAILABLE,
+      // The hint carries the REFUSAL'S OWN reason (review M6, 2026-11-18). The first version
+      // said "Nothing was written." for every ENGINE_UNAVAILABLE, and that is not true of every
+      // refusal site: `publish-server` and `reconcile-server` refuse at the VERIFY step, which
+      // runs AFTER the promote CTAS, so a table may well have been created even though the tier
+      // was not flipped. A blanket reassurance about state is worse than no reassurance, so each
+      // site states its own consequence and this door repeats it rather than overriding it.
       reason,
       hint:
-        'A component this tool needs is unreachable, and this deployment refuses to answer with ' +
-        'fabricated data. Nothing was written. Check the component’s health row in ' +
-        'Platform → Components, then retry — your arguments are fine.',
+        `${(e as { reason?: string }).reason ?? reason} This deployment refuses to answer with ` +
+        'fabricated data, so no figure, row or verdict was invented in place of the real one. ' +
+        'Check the component\u2019s health row in Platform \u2192 Components, then retry \u2014 your ' +
+        'arguments are fine.',
     };
   }
   const code =

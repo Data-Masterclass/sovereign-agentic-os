@@ -17,7 +17,11 @@ import { exploreMetric } from '@tabs/metrics/lib/build/explore-server';
  * mode is whatever the read path honestly ran as.
  */
 
-export type BuildMode = 'live' | 'offline-mock';
+/** 'unavailable' is its OWN state (2026-11-18, review M3): a metric Build over an unreachable
+ *  Trino used to be reported as `live`, because the mapping below folded everything that was not
+ *  `offline-mock` into it — so the one outcome that means "nothing ran" read as the one that means
+ *  "it really ran". */
+export type BuildMode = 'live' | 'offline-mock' | 'unavailable';
 export type MetricBuildReport = {
   rows: BuildRow[];
   ok: boolean;
@@ -41,7 +45,9 @@ export async function buildMetric(
   const adapters = makeMetricAdapters(deps);
   const rows = [await runAdapter(adapters.trino, ctx)];
   const ok = rows.every((r) => r.status === 'ok');
-  const mode: BuildMode = ctx.outcome?.mode === 'offline-mock' ? 'offline-mock' : 'live';
+  const outcome = ctx.outcome?.mode;
+  const mode: BuildMode =
+    outcome === 'offline-mock' ? 'offline-mock' : outcome === 'unavailable' ? 'unavailable' : 'live';
   const pending = !ok && ctx.outcome?.pending === true;
   return { rows, ok, member: ctx.member, mode, ...(pending ? { pending: true } : {}) };
 }

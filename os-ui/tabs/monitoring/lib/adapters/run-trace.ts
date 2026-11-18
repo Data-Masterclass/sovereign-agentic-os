@@ -183,7 +183,14 @@ export async function fetchTrace(id: string): Promise<TraceDetail | null> {
       /* fall through to mock */
     }
   }
-  return mockTrace(id);
+  // Review L3 (2026-11-18): gated EXACTLY like the run LIST at `collectRuns` above, which has
+  // always been `config.monitoringDemoFixtures ? [...MOCK_RUNS] : []`. This line was not, so a
+  // deployed Monitoring tab answered "open this run" with a fabricated trace — invented node
+  // timings and invented logs for a run id that may never have existed. `fetchTrace` already
+  // returns `TraceDetail | null`, so the honest answer needs no new shape: null is "no trace",
+  // which the caller renders as not-found. `monitoringDemoFixtures` defaults to OFF under
+  // NODE_ENV=production (`config.ts`), which is the second switch recorded in the plan.
+  return config.monitoringDemoFixtures ? mockTrace(id) : null;
 }
 
 /**
