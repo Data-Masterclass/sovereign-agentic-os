@@ -280,6 +280,42 @@ export function getDashboard(id: string, user: Principal): Stored {
   return d;
 }
 
+/**
+ * Read a dashboard for a GOVERNANCE act on the AUDIENCE ladder (promote · certify · revoke)
+ * — the normal view gate UNIONED with the ladder's appointed approvers for the owning
+ * domain (an in-domain `domain_admin`, or a platform `admin`).
+ *
+ * WHY THIS IS A SEPARATE FUNCTION, AND WHY IT IS NOT A PRIVACY HOLE.
+ *
+ * `getDashboard` makes a Personal dashboard visible to its OWNER alone, and
+ * `canManageArtifact` closes the `personal` scope absolutely — deliberately, because an
+ * admin has no business reading a colleague's private draft. But `transitionDashboard` read
+ * the record through that same gate, so the domain admin who must approve a filed
+ * `artifact_promote` could not read it either: every dashboard promotion was fileable and
+ * then permanently unapprovable, dying with "not authorized to view this dashboard" on the
+ * approver's click. The owner could not approve it themself either, because `canApprove`
+ * refuses the requester (four-eyes). A dashboard could not leave My at all.
+ *
+ * The resolution is not to weaken `canManageArtifact` — it is that THE OWNER'S FILED REQUEST
+ * IS THE CONSENT. A Personal dashboard only ever reaches this function because its owner
+ * asked for it to be published (`fileArtifactPromotion` is owner-only, and
+ * `promoteThroughSeam` admits a non-owner only as the approve-half of a request that
+ * already exists). What is exposed is the record the owner is asking the domain admin to
+ * decide on, to exactly the person appointed to decide it.
+ *
+ * It is NEVER narrower than `getDashboard`, so no existing consumer loses a read; and the
+ * general list/read surfaces still go through `getDashboard`, unchanged.
+ */
+export function getDashboardForGovernance(id: string, user: Principal): Stored {
+  const d = dashState().dashboards.find((x) => x.id === id);
+  if (!d) throw status(`dashboard '${id}' not found`, 404);
+  const visible = d.tier === 'marketplace' || d.owner === user.id || (d.tier === 'domain' && user.domains.includes(d.domain));
+  const isLadderApprover =
+    user.role === 'admin' || (user.role === 'domain_admin' && user.domains.includes(d.domain));
+  if (visible || isLadderApprover || canManageArtifact(user, manageArg(d))) return d;
+  throw status('not authorized to view this dashboard', 403);
+}
+
 /** Create (or replace) a dashboard the user owns — both build modes land here. */
 export function saveDashboard(user: Principal, id: string, spec: DashboardSpec): Stored {
   // M-7: the STORE is the boundary, so the servability gate lives here and not only in the MCP
@@ -332,7 +368,10 @@ export function renameDashboard(id: string, user: Principal, newName: string): S
 
 /** Promote/certify a dashboard (role-gated, reused from governance). */
 export function transitionDashboard(id: string, approver: Principal, transition: 'promote' | 'certify'): Stored {
-  const d = getDashboard(id, approver);
+  // The APPROVER need not own the dashboard (see getDashboardForGovernance) — a Personal
+  // dashboard is owner-visible only, so reading it through the plain view gate made every
+  // filed promotion unapprovable. The role gate below is still the authority.
+  const d = getDashboardForGovernance(id, approver);
   const res = governDashboard(d, transition, { id: approver.id, role: approver.role });
   if (!res.ok) throw status(res.reason ?? 'transition denied', 403);
   d.tier = res.record.tier;

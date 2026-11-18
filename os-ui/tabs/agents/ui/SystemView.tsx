@@ -22,6 +22,11 @@ import { roleAtLeast, type Role } from '@core/kernel/session';
 import { promoteVerb, visibilityLabel } from '@core/kernel/scopes';
 import LifecycleActions from '@core/ui/lifecycle/LifecycleActions';
 import { ConfirmProvider } from '@core/ui/lifecycle/ConfirmDialog';
+// The ONE OS-wide "this needs approval" confirmation: it names Policies & Approvals, links
+// there, and offers Approve now inline to a user who may decide. Shared with PromoteButton,
+// the Data builder and the Knowledge editor so a filed request reads the same everywhere.
+import { useApprovalNotifier } from '@core/ui/lifecycle/useApprovalNotifier';
+import type { FiledApproval } from '@core/policy/approval-notice';
 import type { Visibility } from '@core/kernel/lifecycle';
 import DomainTag from '@core/ui/DomainTag';
 // Night 2 (stream G): the ONE shared git line. The header used to render its own sha/author
@@ -133,6 +138,7 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
   const { data, loading, error, reload } = useApi<SystemViewData>(`/api/agents/systems/${systemId}`);
   const { data: modelsData } = useApi<ModelsData>('/api/agents/models');
   const { data: routingData } = useApi<RoutingData>('/api/agents/routing');
+  const { notifyApprovalFiled } = useApprovalNotifier();
 
   // Developer tabs open on Build & run (the day-to-day surface); system.yaml is the
   // last tab and a read-only source view unless the user clicks Edit (yamlEditing).
@@ -149,6 +155,9 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
   const [simpleEdit, setSimpleEdit] = useState<boolean | null>(null);
   const [catalog, setCatalog] = useState<string[] | null>(null);
   const [actErr, setActErr] = useState('');
+  // The honest outcome of an action that neither failed nor changed anything yet — today only
+  // "a promotion request was filed", which is a 200 with nothing moved.
+  const [actNote, setActNote] = useState('');
   const [acting, setActing] = useState(false);
   const [confirmDemote, setConfirmDemote] = useState(false);
   // Inline rename of the DISPLAY name (edit-gated; the record id + yaml identity are
@@ -180,6 +189,7 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
       actingRef.current = true;
       setActing(true);
       setActErr('');
+      setActNote('');
       try {
         if (!opts?.skipHistory) {
           const snap = opts?.snapshot ?? currentSysRef.current;
@@ -259,14 +269,26 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
       actingRef.current = true;
       setActing(true);
       setActErr('');
+      setActNote('');
       try {
         const res = await fetch(`/api/agents/systems/${systemId}/${path}`, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: body ? JSON.stringify(body) : undefined,
         });
-        const b = await res.json();
+        const b = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(b.error ?? 'Action failed');
+        // A PROMOTION BY A NON-APPROVER OWNER IS NOT A PROMOTION. The route answers
+        // `{ requested: true, approval }` with a 200, and this handler used to fall straight
+        // through to reloadAll() — which re-rendered the SAME visibility. So a creator or
+        // builder pressed "Promote to Domain", saw no error, no toast and no pill, and had no
+        // way to tell a filed request from a button that did nothing at all. Say what happened
+        // and name where it is decided.
+        if (b.requested) {
+          if (b.approval?.id) notifyApprovalFiled(b.approval as FiledApproval, 'agent system', () => { void reloadAll(); });
+          else setActNote('Request filed — approve this agent system in Policies & Approvals.');
+          return;
+        }
         await reloadAll();
       } catch (e) {
         setActErr((e as Error).message);
@@ -275,7 +297,7 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
         setActing(false);
       }
     },
-    [systemId, reloadAll],
+    [systemId, reloadAll, notifyApprovalFiled],
   );
 
   // Rename the system (display name only). The store freezes the record id + the yaml's
@@ -495,6 +517,7 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
       </div>
 
       {actErr ? <div className="error" style={{ marginBottom: 12 }}>{actErr}</div> : null}
+      {actNote ? <div className="muted" style={{ marginBottom: 12 }}>{actNote}</div> : null}
 
       {effectiveMode === 'simple' ? (
         <SimpleBuilder

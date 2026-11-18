@@ -5,7 +5,7 @@ import { NextResponse } from 'next/server';
 import { withRoute } from '@core/kernel/route-server';
 import type { CurrentUser } from '@core/kernel/auth';
 import { requirePrincipal } from '@tabs/files/lib/server';
-import { requestPromotion, promotionStatus } from '@tabs/files/lib/store';
+import { promoteFileOrPropose, promotionStatus } from '@tabs/files/lib/store';
 import { enqueue, listApprovals } from '@core/policy/approvals';
 import type { DataVisibility, Grant } from '@tabs/data/lib/index';
 
@@ -26,9 +26,17 @@ export const POST = withRoute<{ id: string }, { visibility?: DataVisibility; gra
   const existing = listApprovals({ status: 'pending' }).find(
     (a) => a.kind === 'file_promote' && a.payload?.fileId === id,
   );
-  if (existing) return NextResponse.json({ approval: existing, already: true });
+  if (existing) return NextResponse.json({ requested: true, approval: existing, already: true });
 
-  const request = requestPromotion(id, user, { visibility: body.visibility, grants: body.grants });
+  // PROMOTE-OR-PROPOSE. An owner who ALSO holds the rung-1 authority (a domain admin or the
+  // platform admin sharing their OWN file) is promoted in one shot: `canApprove` refuses the
+  // requester whatever their rank, so filing for them would strand the file in My with nobody
+  // able to decide. Every gate still runs in the same order — the documentation gate first, so
+  // the refusal is byte-identical on both branches.
+  const out = promoteFileOrPropose(id, user, { visibility: body.visibility, grants: body.grants });
+  if (out.promoted) return NextResponse.json({ promoted: true, asset: out.asset });
+
+  const request = out.request;
   const approval = enqueue({
     kind: 'file_promote',
     title: `Promote "${request.fileName}" to a domain asset`,
@@ -45,7 +53,10 @@ export const POST = withRoute<{ id: string }, { visibility?: DataVisibility; gra
     approverRole: 'domain_admin',
     scope: 'domain',
   });
-  return NextResponse.json({ approval });
+  // `requested: true` is what every other kind's promote route answers and what the shared
+  // <PromoteButton> and the Files bulk counter branch on — without it a filed request reads as
+  // neither requested nor failed, which is how "0 requested · 1 failed" came to be possible.
+  return NextResponse.json({ requested: true, approval });
 }, { parse: true, gate: requirePrincipal as () => Promise<CurrentUser> });
 
 export const GET = withRoute<{ id: string }>(async ({ user, params }) => {

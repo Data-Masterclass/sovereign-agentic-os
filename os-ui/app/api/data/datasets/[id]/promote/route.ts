@@ -5,7 +5,8 @@ import { NextResponse } from 'next/server';
 import { withRoute } from '@core/kernel/route-server';
 import type { CurrentUser } from '@core/kernel/auth';
 import { requirePrincipal } from '@tabs/data/lib/server';
-import { requestPromotion, getDataset } from '@tabs/data/lib/store';
+import { getDataset } from '@tabs/data/lib/store';
+import { promoteDatasetOrPropose } from '@tabs/data/lib/publish-server';
 import { transparencyGate } from '@tabs/data/lib/transparency';
 import { enqueue, listApprovals } from '@core/policy/approvals';
 import type { DataVisibility, Grant } from '@tabs/data/lib/index';
@@ -27,9 +28,25 @@ export const POST = withRoute<{ id: string }, { visibility?: DataVisibility; gra
   const existing = listApprovals({ status: 'pending' }).find(
     (a) => a.kind === 'dataset_promote' && a.payload?.datasetId === id,
   );
-  if (existing) return NextResponse.json({ approval: existing, already: true });
+  if (existing) return NextResponse.json({ requested: true, approval: existing, already: true });
 
-  const request = requestPromotion(id, user, { visibility: body.visibility, grants: body.grants });
+  // PROMOTE-OR-PROPOSE. An owner who ALSO holds the rung-1 authority runs the full physical
+  // publish as themself; everyone else files. `canApprove` refuses the requester whatever
+  // their rank, so filing for an owner-approver would strand their dataset in My. Gates run in
+  // the same order either way (owner-only trigger → Silver/Gold → transparency → publish), and
+  // a failed materialization leaves the tier untouched exactly as on the approval path.
+  const out = await promoteDatasetOrPropose(id, user, { visibility: body.visibility, grants: body.grants });
+  if (out.promoted) {
+    if (!out.outcome.ok) {
+      return NextResponse.json(
+        { error: `Physical publish FAILED — the dataset stays private (tier unchanged): ${out.outcome.error}`, publish: out.outcome },
+        { status: 502 },
+      );
+    }
+    return NextResponse.json({ promoted: true, dataset: out.outcome.dataset, publish: { ok: true, fqn: out.outcome.fqn, mode: out.outcome.mode } });
+  }
+
+  const request = out.request;
   const approval = enqueue({
     kind: 'dataset_promote',
     title: `Promote "${request.datasetName}" to a data asset`,
@@ -45,7 +62,8 @@ export const POST = withRoute<{ id: string }, { visibility?: DataVisibility; gra
     approverRole: 'domain_admin',
     scope: 'domain',
   });
-  return NextResponse.json({ approval });
+  // `requested: true` is the shape every other kind's promote route answers.
+  return NextResponse.json({ requested: true, approval });
 }, { parse: true, gate: requirePrincipal as () => Promise<CurrentUser> });
 
 export const GET = withRoute<{ id: string }>(async ({ user, params }) => {

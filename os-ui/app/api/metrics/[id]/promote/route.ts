@@ -8,25 +8,23 @@ import type { CurrentUser } from '@core/kernel/auth';
 import { transition as transitionDataset } from '@tabs/data/lib/store';
 import { delegatedToken } from '@core/infra/identity-server';
 import { getMetric } from '@tabs/metrics/lib/store';
-import { governMetric, canPromote as canPromoteMetric } from '@tabs/metrics/lib/governance';
+import { governMetric } from '@tabs/metrics/lib/governance';
 import { exploreMetric } from '@tabs/metrics/lib/build/explore-server';
-import { enqueue, listApprovals } from '@core/policy/approvals';
 
 export const dynamic = 'force-dynamic';
 
-/** The pending promotion request key for a metric — matches what GET filters on. */
-const isMetricRequest = (id: string) => (a: { kind: string; payload?: Record<string, unknown> }) =>
-  a.kind === 'artifact_promote' && a.payload?.artifactKind === 'metric' && a.payload?.id === id;
-
 /**
- * Promote a metric one rung — the SAME governance-ladder contract every tab's shared
- * <PromoteButton> speaks (0.1.102). The rung is DERIVED from the metric's tier
- * (Personal→promote, Domain→certify) so a bodyless POST is unambiguous:
- *   • a non-approver OWNER (a creator) FILES a request → `{ requested: true, approval }`,
- *     no more "needs a Builder" dead-end;
- *   • an approver runs the existing consistency-gated govern flow → `{ item }`.
- * The consistency gate + the dataset-materialisation invariant are preserved verbatim
- * from /api/metrics/govern — this route only adds the creator's request path.
+ * Walk a metric one rung on the audience ladder — the contract every tab's shared
+ * <PromoteButton> speaks. The rung is DERIVED from the metric's tier so a bodyless POST is
+ * unambiguous, and the consistency gate + the dataset-materialisation invariant are preserved
+ * verbatim from /api/metrics/govern.
+ *
+ * THE ONE THING TO KNOW ABOUT METRICS. A metric is not an artefact with an audience of its
+ * own: it IS a measure on a governed dataset, and its tier is read straight off that dataset.
+ * So My→Domain is the DATASET's move, and this route says so instead of offering a request no
+ * approver can apply (see the POST). Domain→Company remains an Admin act here, because
+ * certifying the measure and certifying the table it reads are the same decision and must not
+ * be able to drift apart.
  */
 export const POST = withRoute<{ id: string }>(async ({ user, params }) => {
   const { id } = params;
@@ -36,23 +34,26 @@ export const POST = withRoute<{ id: string }>(async ({ user, params }) => {
   }
   const transition: 'promote' | 'certify' = record.tier === 'personal' ? 'promote' : 'certify';
 
-  // Non-approver OWNER at Personal → file a governed request rather than dead-end.
-  if (transition === 'promote' && record.owner === user.id && !canPromoteMetric(user.role)) {
-    const dup = listApprovals({ status: 'pending' }).find(isMetricRequest(id));
-    if (dup) return NextResponse.json({ requested: true, approval: dup });
-    const approval = enqueue({
-      kind: 'artifact_promote',
-      title: `Promote "${record.measure.name}" to a ${record.dataset.domain} domain metric`,
-      detail: `${user.id} requests promoting the metric "${record.measure.name}" to a shared domain asset. A domain admin must approve.`,
-      agent: user.id,
-      domain: record.dataset.domain,
-      requestedBy: user.id,
-      tool: 'metric_promote',
-      payload: { artifactKind: 'metric', id, name: record.measure.name },
-      approverRole: 'domain_admin',
-      scope: 'domain',
-    });
-    return NextResponse.json({ requested: true, approval });
+  // A METRIC HAS NO AUDIENCE OF ITS OWN. A metric IS a measure on a governed dataset, and
+  // `tabs/metrics/lib/store.ts` reads its tier straight off that dataset (`TIER_OF[d.tier]`).
+  // So `tier === 'personal'` means the DATASET is still private, and the only move that can
+  // widen this metric's audience is promoting the dataset — a different artifact, with its own
+  // documentation gate and its own physical publish.
+  //
+  // This branch used to FILE an `artifactKind: 'metric'` request. Nothing could ever apply it:
+  // `applyLadder` has no metric case, so a domain admin's approve answered 502 and the request
+  // sat pending forever. A promise the system cannot keep is worse than a refusal, so the
+  // refusal now names the dataset and the action that actually works.
+  if (transition === 'promote') {
+    return NextResponse.json(
+      {
+        error:
+          `A metric's audience is its dataset's audience — promote the dataset “${record.dataset.name}” to Domain in the Data tab ` +
+          'and this metric follows.',
+        datasetId: record.dataset.id,
+      },
+      { status: 409 },
+    );
   }
 
   // Approver path — the exact consistency-gated flow from /api/metrics/govern.
@@ -76,10 +77,15 @@ export const POST = withRoute<{ id: string }>(async ({ user, params }) => {
   return NextResponse.json({ item: { id, tier: result.record.tier } });
 }, { gate: requirePrincipal as () => Promise<CurrentUser> });
 
-/** The pending promotion request for this metric (so the UI shows "awaiting approval"). */
+/**
+ * What the shared <PromoteButton> polls on mount. There is NEVER a pending metric promotion
+ * request to report: nothing files one any more, because nothing could apply one. Answering
+ * `{ request: null }` keeps the control's contract (it reads `data.request`) and keeps it
+ * honest — an "awaiting approval" pill over a request that does not exist is the worst of the
+ * three possible answers.
+ */
 export const GET = withRoute<{ id: string }>(async ({ user, params }) => {
   void user; // gate enforces auth; user not needed for the read
-  const { id } = params;
-  const request = listApprovals({ status: 'pending' }).find(isMetricRequest(id)) ?? null;
-  return NextResponse.json({ request });
+  void params;
+  return NextResponse.json({ request: null });
 }, { gate: requirePrincipal as () => Promise<CurrentUser> });

@@ -1047,6 +1047,51 @@ every draft change** so it saves what is on screen rather than what was on scree
 dirtiness last flipped. A complete draft is committed on the way out; only an incomplete
 one is worth a question. `tabs/agents/lib/output-draft.ts` holds the two predicates, and
 a source tripwire keeps the old label from coming back.
+**Four-eyes on a one-person tenant is not a control, it is a deadlock.** The approvals
+queue refuses the requester whatever their rank (`canApprove`, A2 review L-G) — correct for a
+parked agent run, where the whole point is that a second human authorises what the first
+one's agent tried. Applied to an AUDIENCE promotion it inverted: rung-1 requests are
+owner-only by construction, so an owner who also held the approver authority filed a request
+nobody on earth could decide. Their own dataset, file, dashboard, workflow, app or agent
+system could not leave My, and the queue just grew. Worse, the two front doors disagreed —
+MCP `approve_promotion` never had the check, so the same act succeeded there and failed in
+the Governance inbox. The rule now yields for the audience-ladder kinds and only when nothing
+parked a run on them; rank and scope are still checked first, which is what keeps it from
+being a widening. **A separation-of-duties rule needs a story for the case where one person
+holds both duties** — otherwise it does not separate anything, it just stops.
+
+**A refusal that does not reach the user is a bug, not a gate.** The owner's
+"0 requested · 1 failed" on a file promotion was a *correct* documentation gate
+(`Cannot promote — add a description, at least one tag first.`) whose reason the bulk UI
+discarded. Auditing every other kind for the same shape found four more, each a different
+way of losing the same information: the agent-system promote button had no branch for the
+route's `{requested:true}` 200 and so looked like a no-op; the software one dereferenced
+`body.app` unconditionally and showed the user a TypeError instead of "request filed"; the
+workflow publisher had a bare `res.json()` and no `catch`, so a 502 produced *nothing*; and
+the Governance inbox replaced the effect's real message with the literal `"Effect failed"`
+and then skipped its own reload, leaving the only copy of the cause (`effect.applied`)
+invisible until a manual refresh. Three habits prevent all five: `res.json().catch(() => ({}))`
+plus a real `catch`; a branch for every documented response shape, not just the happy one;
+and an error field that carries the cause rather than a category.
+
+**A gate the approver cannot see through is a gate nobody can open.** Dashboard promotions
+were fileable and permanently unapprovable: `transitionDashboard` read the record through the
+normal view gate, and a Personal dashboard is visible to its owner alone — deliberately, since
+`canManageArtifact` closes the `personal` scope to admins too. So the domain admin's approve
+answered "not authorized to view this dashboard". The fix is not to weaken that privacy rule
+but to notice that **the owner's filed request IS the consent**: a Personal dashboard only
+reaches the ladder because its owner asked for it to be published, so the appointed approver
+may read what they are being asked to decide (`getDashboardForGovernance`). Everything else
+keeps the old gate.
+
+**An audience is only an axis if the kind HAS one.** A metric's tier is read straight off its
+dataset (`tier: TIER_OF[d.tier]`), so "Personal metric" just means "the dataset is private"
+and no metric-level approval can change it. Both front doors nevertheless filed an
+`artifact_promote` carrying `artifactKind: 'metric'`, for which `applyLadder` has no case: a
+creator could file, and the domain admin's approve then died on `unknown ladder artifactKind`
+and left the request pending forever. Deriving a property is fine; **offering a control over a
+derived property is a promise you cannot keep.** Both doors now refuse with the dataset named,
+and the stale queue shape refuses with the same sentence instead of an internal error.
 
 ## Generated documentation
 

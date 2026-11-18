@@ -346,7 +346,7 @@ export const metricWriteTools: McpTool[] = [
     tab: 'metrics',
     minRole: 'creator',
     description:
-      'Promote a metric one rung on the governance ladder (Personal→Domain or Domain→Company). A creator OWNER files a request (returned as { requested: true, approval }); a builder+ runs the consistency-gated govern flow directly. Mirrors the Metrics tab promote button.',
+      'Walk a metric one rung on the AUDIENCE ladder. Read this first: a metric is NOT an artefact with an audience of its own — it IS a measure on a governed dataset, and its tier is read straight off that dataset. So My→Domain is the DATASET’s move and this tool refuses it with the dataset named (promote the dataset with request_promotion; the metric follows). Domain→Company is an Admin act here, because certifying the measure and certifying the table it reads are the same decision. Governance: the consistency gate (documented + defined + resolves on its canonical member) and the dataset-tier ceiling both apply, and their refusal reaches you verbatim. Mirrors the Metrics tab promote button.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -361,25 +361,17 @@ export const metricWriteTools: McpTool[] = [
       const record = getMetric(id, P(user));
       if (record.tier === 'marketplace') fail('This metric is already certified', 409);
       const transition: 'promote' | 'certify' = record.tier === 'personal' ? 'promote' : 'certify';
-      // Creator owner at Personal → file a governed request
-      if (transition === 'promote' && record.owner === user.id && !canPromoteMetric(user.role)) {
-        const dup = listApprovals({ status: 'pending' }).find(
-          (a) => a.kind === 'artifact_promote' && a.payload?.artifactKind === 'metric' && a.payload?.id === id,
+      // My→Domain is the DATASET's move, not the metric's: a metric IS a measure on a
+      // governed dataset and `getMetric` reads its tier straight off that dataset, so
+      // `tier === 'personal'` means the dataset is still private. This used to enqueue an
+      // `artifactKind: 'metric'` request that `applyLadder` had no case for — fileable,
+      // never appliable. Name the dataset and the action that works instead.
+      if (transition === 'promote') {
+        fail(
+          `A metric's audience is its dataset's audience — promote the dataset “${record.dataset.name}” ` +
+            `(request_promotion({kind:'dataset', id:'${record.dataset.id}'})) to Domain and this metric follows.`,
+          409,
         );
-        if (dup) return { requested: true, approval: dup };
-        const approval = enqueue({
-          kind: 'artifact_promote',
-          title: `Promote "${record.measure.name}" to a ${record.dataset.domain} domain metric`,
-          detail: `${user.id} requests promoting the metric "${record.measure.name}" to a shared domain asset. A domain admin must approve.`,
-          agent: user.id,
-          domain: record.dataset.domain,
-          requestedBy: user.id,
-          tool: 'metric_promote',
-          payload: { artifactKind: 'metric', id, name: record.measure.name },
-          approverRole: 'domain_admin',
-          scope: 'domain',
-        });
-        return { requested: true, approval };
       }
       // Approver path — consistency-gated govern flow
       const token = mcpToken(user);

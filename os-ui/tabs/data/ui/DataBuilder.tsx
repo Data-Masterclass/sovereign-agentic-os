@@ -547,6 +547,9 @@ export default function DataBuilder({
   // ---- sharing / promotion (mirrors Files: gate hint + button + request status) ----
   const [promote, setPromote] = useState<PromoteStatus | null>(null);
   const [certifyPending, setCertifyPending] = useState(false);
+  // True when the promotion-gate READ failed. Distinct from "the gate is red": an
+  // unknown gate must not render as a green one.
+  const [gateUnknown, setGateUnknown] = useState(false);
   const [shareErr, setShareErr] = useState('');
   const [shareBusy, setShareBusy] = useState(false);
 
@@ -584,9 +587,16 @@ export default function DataBuilder({
         fetch(`/api/data/datasets/${datasetId}/promote`, { cache: 'no-store' }),
         fetch(`/api/data/datasets/${datasetId}/certify`, { cache: 'no-store' }),
       ]);
-      if (pRes.ok) setPromote(await pRes.json());
+      if (pRes.ok) { setPromote(await pRes.json()); setGateUnknown(false); }
+      // A SWALLOWED GATE READ IS NOT A GREEN GATE. `promote === null` made `gateBlocked`
+      // false, so a failed read rendered an ENABLED "Promote to Domain" with no hint —
+      // the user then met the server's refusal only after clicking. Record that the gate
+      // could not be read and say so on the control instead of guessing.
+      else setGateUnknown(true);
       if (cRes.ok) setCertifyPending((await cRes.json()).request?.status === 'pending');
-    } catch { /* sharing status is best-effort; the builder stands without it */ }
+    } catch {
+      setGateUnknown(true);
+    }
   }, [datasetId]);
   useEffect(() => { loadPromote(); }, [loadPromote]);
 
@@ -1061,6 +1071,9 @@ export default function DataBuilder({
             {shareBusy ? <span className="spin" /> : 'Promote to Domain →'}
           </button>
           {gateBlocked && !compact ? <span className="hint" style={{ margin: 0 }}>To share, add {promote!.gate.missing.join(', ')}.</span> : null}
+          {gateUnknown && !compact ? (
+            <span className="hint" style={{ margin: 0 }}>The promotion gate could not be read — the server will say what is missing.</span>
+          ) : null}
         </span>
       );
     }

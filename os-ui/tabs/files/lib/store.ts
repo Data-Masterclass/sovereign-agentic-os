@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
-import type { Role } from '@core/kernel/session';
+import { canPromote, type Role } from '@core/kernel/session';
 import {
   type FileAsset,
   type FileKind,
@@ -851,6 +851,41 @@ export function applyApprovedFilePromotion(req: FilePromotionRequest, approver: 
   persist(rec, a);
   recordLineage({ kind: 'file_promoted', fileId: a.id, fileName: a.name, target: req.target, by: approver.id });
   return a;
+}
+
+/**
+ * PROMOTE-OR-PROPOSE — the one entry both front doors (the `/promote` route and the MCP
+ * `request_promotion`) use, so a file's My→Domain step behaves identically whoever opens it.
+ *
+ * WHY THIS EXISTS. Both doors used to ALWAYS file a request, and `canApprove` refuses the
+ * requester whatever their rank (four-eyes, A2 review L-G). An owner who ALSO holds the
+ * rung-1 authority — a domain admin or the platform admin sharing their OWN file, which on a
+ * small tenant is the common case — therefore filed a request that nobody could ever decide:
+ * the file could not leave My at all. The ladder kinds already avoid this through
+ * `promoteOrRequest`; files did not.
+ *
+ * It widens nothing. The direct branch needs `requestPromotion` to pass (OWNER-only trigger +
+ * the documentation gate) AND `canPromote(role,'Personal')` — precisely the two authorities the
+ * two-step path would have combined — and then applies through `applyApprovedFilePromotion`,
+ * which re-checks the domain, the role, the docs gate and `assertGrantsWithinAuthority` before
+ * any grant is persisted. Note the ORDER: `requestPromotion` runs FIRST on both branches, so
+ * the one-shot can never skip a gate the proposing path enforces and the refusal an owner sees
+ * is byte-identical either way.
+ *
+ * The ENQUEUE deliberately stays with the caller: `@core/policy/approvals` is `server-only`
+ * and this store is imported from places that are not, so the propose branch returns the
+ * validated request and the route / MCP tool files it with their own wording.
+ */
+export function promoteFileOrPropose(
+  id: string,
+  user: Principal,
+  opts: { visibility?: DataVisibility; grants?: Grant[] } = {},
+):
+  | { promoted: true; asset: FileAsset }
+  | { promoted: false; request: FilePromotionRequest } {
+  const request = requestPromotion(id, user, opts); // owner-only + documentation gate
+  if (!canPromote(user.role, 'Personal')) return { promoted: false, request };
+  return { promoted: true, asset: applyApprovedFilePromotion(request, user) };
 }
 
 /**

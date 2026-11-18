@@ -213,7 +213,7 @@ export const governanceTools: McpTool[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        kind: { type: 'string', enum: ['dataset', 'knowledge', 'connection', 'dashboard', 'app', 'agent_system'], description: 'What to certify (a Domain asset).' },
+        kind: { type: 'string', enum: ['dataset', 'knowledge', 'personal_knowledge', 'connection', 'dashboard', 'artifact', 'app', 'agent_system'], description: 'What to certify (a Domain asset). A file is certified directly by an Admin (there is no request rung for it), and a metric follows its dataset.' },
         id: { type: 'string', description: 'The domain asset id.' },
         mode: { type: 'string', description: 'Optional marketplace consumption mode (e.g. read-in-place | fork-allowed for models).' },
       },
@@ -226,7 +226,7 @@ export const governanceTools: McpTool[] = [
       const id = str(args.id).trim();
       if (!id) fail('request_certification needs an `id`', 400);
       if (!isLadderKind(kind) && kind !== 'dataset') {
-        fail('request_certification needs `kind` = dataset | knowledge | connection | dashboard | model | app', 400);
+        fail('request_certification needs `kind` = dataset | knowledge | personal_knowledge | connection | dashboard | artifact | app | agent_system', 400);
       }
       // Datasets keep their own two-step certification path; here we file the
       // ladder kinds. (Dataset certification: use the Data tab / requestCertification.)

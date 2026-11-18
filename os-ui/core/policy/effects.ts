@@ -490,6 +490,21 @@ async function applyLadder(
       const rec = promoteSystem(id, approverPrincipal(approver, rung === 'promote' ? 'builder' : 'admin', a.domain));
       return okResult(rec.name, { visibility: rec.visibility });
     }
+    case 'metric': {
+      // A metric IS a measure on a dataset, so its audience IS the dataset's tier
+      // (`tabs/metrics/lib/store.ts` reads `tier: TIER_OF[d.tier]`). There is no metric
+      // rung to apply here: the only move that could change a metric's audience is
+      // promoting its DATASET — a different artifact, with its own documentation gate and
+      // its own physical publish, which an approver must authorise on its own card.
+      // Nothing files this shape any more; a request left over from when the Metrics tab
+      // did is refused with the REASON instead of dying on "unknown artifactKind", and it
+      // stays pending rather than being marked approved with nothing applied.
+      const e = new Error(
+        "A metric's audience is its dataset's audience — promote the dataset in the Data tab (request_promotion runs the physical publish) and this metric follows. This request cannot be applied.",
+      ) as Error & { status?: number };
+      e.status = 409;
+      throw e;
+    }
     case 'connection':
     case 'artifact':
     case 'app': {
