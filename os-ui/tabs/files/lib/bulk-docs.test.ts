@@ -18,6 +18,7 @@ import {
   unionTags,
   parseTagInput,
   describeAndTagPatch,
+  tierBreakdown,
   type DescribeAndTagInput,
   type DocsRow,
 } from '@tabs/files/lib/bulk-docs';
@@ -76,6 +77,25 @@ test('one patch can carry both halves, and an identical value is not a write', (
   const both = describeAndTagPatch(row(), input({ description: 'FY26 invoices', tags: ['invoices'] }));
   assert.deepEqual(both, { tags: ['invoices'], description: 'FY26 invoices' });
   assert.equal(describeAndTagPatch(row({ description: 'FY26', tags: ['invoices'] }), input({ description: 'FY26', tags: ['invoices'], overwriteDescription: true })), null);
+});
+
+/**
+ * REVIEW L1 — a domain admin can select files that are ALREADY shared, and "Describe & tag"
+ * relabels those too. The dialog must say what it is about to touch, in the tab's own
+ * vocabulary (personal / domain / company), before the admin presses Apply.
+ */
+test('the selection’s tier breakdown names only the tiers present, in ladder order', () => {
+  const rows = (ds: number, as: number, pr: number) => [
+    ...Array.from({ length: ds }, () => ({ tier: 'dataset' as const })),
+    ...Array.from({ length: as }, () => ({ tier: 'asset' as const })),
+    ...Array.from({ length: pr }, () => ({ tier: 'product' as const })),
+  ];
+  assert.equal(tierBreakdown(rows(3, 9, 0)), '3 personal · 9 domain');
+  assert.equal(tierBreakdown(rows(0, 0, 2)), '2 company');
+  assert.equal(tierBreakdown(rows(1, 1, 1)), '1 personal · 1 domain · 1 company');
+  // A single-tier selection still reads as a count, and an empty one says nothing.
+  assert.equal(tierBreakdown(rows(12, 0, 0)), '12 personal');
+  assert.equal(tierBreakdown([]), '');
 });
 
 test('the patch is exactly what the gate asks for — a described, tagged file passes', async () => {

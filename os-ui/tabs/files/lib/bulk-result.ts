@@ -17,15 +17,25 @@
  *     was a governance claim: `approvalNote` is emitted only when at least one call succeeded.
  */
 
-/** One file's outcome in a bulk action. `error` is the server's text, never a paraphrase. */
-export type BulkOutcome = { id: string; name: string; ok: boolean; error?: string };
+/**
+ * One file's outcome in a bulk action. `error` is the server's text, never a paraphrase.
+ *
+ * `already` is the 200 that CHANGED NOTHING: the promote route answers a file whose request is
+ * still pending with `{ approval, already: true }`. Counting that as a fresh request told a
+ * user who pressed Promote twice that twelve more were filed when none were — the same
+ * "a count is not a reason" defect one layer along (review M1).
+ */
+export type BulkOutcome = { id: string; name: string; ok: boolean; error?: string; already?: boolean };
 
 /** Identical reasons, collapsed: "12 files: add a description, at least one tag first". */
 export type ReasonGroup = { reason: string; count: number; names: string[] };
 
 export type BulkSummary = {
-  /** Calls that succeeded. For Promote this is requests FILED, not promotions applied. */
+  /** Calls that CHANGED something. For Promote this is requests FILED, not promotions
+   *  applied — and never a request that was already pending before the press. */
   ok: number;
+  /** Succeeded, but nothing happened because it was already in that state. */
+  already: number;
   failed: number;
   /** Files the UI never attempted (not promotable / not the user's to manage / no change). */
   skipped: number;
@@ -72,7 +82,9 @@ export function summariseBulk(
   outcomes: BulkOutcome[],
   opts: { verb: string; skipped?: number; approvalNote?: string },
 ): BulkSummary {
-  const ok = outcomes.filter((o) => o.ok).length;
+  // A 200 that filed nothing is its own clause, never a success (review M1).
+  const ok = outcomes.filter((o) => o.ok && !o.already).length;
+  const already = outcomes.filter((o) => o.ok && o.already).length;
   const failures = outcomes.filter((o) => !o.ok);
   const skipped = opts.skipped ?? 0;
 
@@ -87,11 +99,12 @@ export function summariseBulk(
   const reasons = [...groups.values()].sort((a, b) => b.count - a.count || a.reason.localeCompare(b.reason));
 
   const counts = [ok > 0 ? `${ok} ${opts.verb}` : `Nothing ${opts.verb}`];
+  if (already) counts.push(`${already} already pending`);
   if (failures.length) counts.push(`${failures.length} failed`);
   if (skipped) counts.push(`${skipped} skipped`);
 
   const sentences = [`${counts.join(' · ')}.`];
-  // The approval claim is only true if a request really was filed.
+  // The approval claim is only true if a request really was filed BY THIS PRESS.
   if (ok > 0 && opts.approvalNote) sentences.push(opts.approvalNote);
   for (const g of reasons) {
     // With one casualty the NAME is the more useful fact; with several, the count is.
@@ -99,5 +112,5 @@ export function summariseBulk(
     sentences.push(`${subject}: ${g.reason}.`);
   }
 
-  return { ok, failed: failures.length, skipped, reasons, notice: sentences.join(' ') };
+  return { ok, already, failed: failures.length, skipped, reasons, notice: sentences.join(' ') };
 }
