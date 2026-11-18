@@ -9,7 +9,7 @@
  *             lands a source file with no explanation of what it does.
  * ARCHITECTURE:
  *   - Pure filesystem + regex checks, no dependencies, no network. Exits 1 on any violation.
- *   - Six rules (below). Each prints every offending path, not just the first. The header rule
+ *   - Seven rules (below). Each prints every offending path, not just the first. The header rule
  *     also covers os-ui/worker/ (the worker entrypoint, outside core/ and tabs/).
  *   - Runs before the layout migration too: missing core//tabs/ is reported, not crashed on.
  *   - `os-ui/vendor/**` (attributed third-party source) is EXCLUDED from the FEATURE / USER STORY /
@@ -118,14 +118,42 @@ for (const f of walk(VENDOR_DIR).filter(code)) {
   }
 }
 
+// ---- rule 7: no cloud-sync conflict copies under our own trees -------------
+// macOS/iCloud/Finder duplicate a path by appending " 2" (`approvals.test 2.ts`, `plan 2.md`,
+// `os-ui/node_modules 2`). git never tracks them, so they are invisible in a diff — but
+// `docker build` copies the WORKING TREE and `next build` type-checks `*.test 2.ts` (tsconfig
+// excludes only `**/*.test.ts`). That pair once failed a production image build with type
+// errors in files nobody had edited. `os-ui/scripts/gate.sh` sweeps the whole tree; this is the
+// second door, scoped to the four directories we own, and it matters because check-structure
+// also runs as the PostToolUse hook — so a duplicate surfaces in-session rather than at CI.
+// DIRECTORIES and symlinks count, not just files: a duplicated directory is the expensive case.
+const DUP_NAME = (base) => / 2$/.test(base) || / 2\.[^/]*$/.test(base);
+const scanDuplicates = (dir, out = []) => {
+  if (!existsSync(dir)) return out;
+  for (const e of readdirSync(dir)) {
+    if (e === 'node_modules' || e === '.next' || e.startsWith('.')) continue;
+    const p = join(dir, e);
+    // Report the match and do NOT descend into it: a duplicated node_modules would otherwise
+    // print one line per vendored file.
+    if (DUP_NAME(e)) { out.push(p); continue; }
+    if (statSync(p).isDirectory()) scanDuplicates(p, out);
+  }
+  return out;
+};
+for (const root of [UI, 'charts', 'scripts', 'docs']) {
+  for (const p of scanDuplicates(root)) {
+    fail('CLOUD-SYNC-DUPLICATE', p, 'an iCloud/Finder conflict copy — never tracked by git, but copied into images and type-checked. Delete it');
+  }
+}
+
 // ---- ratchet ---------------------------------------------------------------
-// Two rules must always be clean; the other three carry a real backlog from the
+// Four rules must always be clean; the other three carry a real backlog from the
 // v1 codebase, so they are ratcheted: CI fails when a count GROWS, never because
 // the backlog still exists. Shrink the baseline as the backlog is paid down.
 const BASELINE_FILE = 'scripts/structure-baseline.json';
 const counts = {};
 for (const p of problems) { const rule = p.trim().split(/\s+/)[0]; counts[rule] = (counts[rule] ?? 0) + 1; }
-const HARD = ['COMPONENT-UPSTREAM-ONLY', 'TAB-MANIFEST', 'VENDOR-LICENCE-HEADER'];
+const HARD = ['COMPONENT-UPSTREAM-ONLY', 'TAB-MANIFEST', 'VENDOR-LICENCE-HEADER', 'CLOUD-SYNC-DUPLICATE'];
 const baseline = existsSync(BASELINE_FILE) ? JSON.parse(readFileSync(BASELINE_FILE, 'utf8')) : {};
 
 if (process.argv.includes('--baseline')) {
@@ -150,7 +178,7 @@ for (const rule of new Set([...HARD, ...Object.keys(counts), ...Object.keys(base
   }
 }
 if (failed) {
-  console.error('\nRules: components/ is upstream-only · a tab imports only @core and itself · core never imports a tab · every tab has a manifest · every source file carries a FEATURE / USER STORY / ARCHITECTURE header · every os-ui/vendor file keeps its upstream licence header plus a `Modified from … @ <sha>` notice.\n');
+  console.error('\nRules: components/ is upstream-only · a tab imports only @core and itself · core never imports a tab · every tab has a manifest · every source file carries a FEATURE / USER STORY / ARCHITECTURE header · every os-ui/vendor file keeps its upstream licence header plus a `Modified from … @ <sha>` notice \u00b7 no iCloud/Finder `* 2` conflict copy under os-ui/ charts/ scripts/ docs/.\n');
   process.exit(1);
 }
 console.log('check-structure: ok (no new violations)');

@@ -134,6 +134,56 @@ debugging time — a Next.js `route.ts` may export only its handlers, a test can
 - **Merge with "Rebase and merge", never squash.** A squash creates a commit absent from the
   branch's ancestry, so the next branch reports conflicts in every touched file.
 
+## Images: build in CI
+
+Building images on a laptop is the most expensive thing this repo asks of a maintainer: the
+Colima VM reserves 14 GB on a 24 GB host, its DNS has failed mid-build twice, the host has
+OOM-killed runs, and an emulated `linux/amd64` build blocks the machine for 10–15 minutes.
+`.github/workflows/build-images.yml` builds the same Dockerfiles on an amd64 runner instead —
+on a `os-ui-v*` / `git-http-v*` / `dagster-v*` tag, or by hand via **Run workflow** (inputs:
+image, version). For `os-ui` it runs the same worker type-stripping smoke `deploy.sh` runs,
+**before** it pushes.
+
+Then deploy **with no local Docker at all**:
+
+```bash
+./scripts/deploy.sh --from-registry <version>   # verifies the tag, reads its digest, upgrades
+./scripts/deploy.sh --verify-only <version>     # just prove the tag exists; touches no cluster
+```
+
+`--from-registry` keeps everything else identical: the pre-upgrade backup gate still aborts the
+deploy, the values are still derived from the live release, and it is still one
+`helm upgrade … --force-conflicts`. It needs `crane` (`brew install crane`) or `skopeo`; failing
+both it falls back to the registry v2 API over `curl` (`gh auth token` for a private package).
+
+**One decision is still open**, and nothing changes in production until it is made. Images live
+at `ghcr.io/aborek/sovereign-os/*`, but this repository is `Data-Masterclass/…`, so a
+workflow's built-in `GITHUB_TOKEN` can push to `ghcr.io/data-masterclass/*` and **cannot** push
+to the `aborek` namespace. Pick one:
+
+**Option A — move the namespace to `data-masterclass`.** No secret, no variable; the workflow
+already defaults here. The cluster's image pull secret must be re-pointed at the new namespace.
+
+```bash
+git tag os-ui-v<version> && git push public os-ui-v<version>
+IMAGE_REPO=ghcr.io/data-masterclass/sovereign-os IMAGE_FROM_REGISTRY=1 ./scripts/deploy.sh <version>
+```
+
+**Option B — keep `ghcr.io/aborek/sovereign-os`.** Needs a classic PAT with `write:packages` on
+the `aborek` account, stored as the repository secret `GHCR_TOKEN`, plus the repository
+variable `IMAGE_REPO_PREFIX=ghcr.io/aborek/sovereign-os`. Nothing about the cluster changes.
+
+```bash
+gh variable set IMAGE_REPO_PREFIX --repo Data-Masterclass/sovereign-agentic-os --body ghcr.io/aborek/sovereign-os
+gh secret   set GHCR_TOKEN        --repo Data-Masterclass/sovereign-agentic-os   # paste the PAT
+git tag os-ui-v<version> && git push public os-ui-v<version>
+IMAGE_FROM_REGISTRY=1 ./scripts/deploy.sh <version>
+```
+
+`IMAGE_REPO` defaults to `ghcr.io/aborek/sovereign-os` and is the only thing that moves the
+chart's `osUI.image.repository`; a plain `./scripts/deploy.sh <version>` still builds locally
+and deploys exactly as it always has.
+
 ## Pull requests
 
 - Keep changes small and focused; explain **what** and **why**.
