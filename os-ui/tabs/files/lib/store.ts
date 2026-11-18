@@ -91,6 +91,10 @@ export type FileSummary = {
   kind: FileKind;
   folder: string;
   tags: string[];
+  /** The promotion-gate documentation, carried so the BROWSER can run `promotionGate` over a
+   *  listing row and pre-flight a bulk promotion (2026-11-18). Without it the selection
+   *  toolbar could only guess, or re-implement the rule and drift from the server. */
+  description: string;
   sensitivity: Sensitivity;
   freshness: string | null;
   version: string;
@@ -357,7 +361,7 @@ function summarise(a: FileAsset, rec: FileRecord): FileSummary {
   return {
     id: a.id, name: a.name, owner: a.owner, domain: a.domain,
     tier: a.tier, visibility: a.visibility, kind: a.kind, folder: a.folder,
-    tags: a.tags, sensitivity: a.sensitivity, freshness: a.freshness,
+    tags: a.tags, description: a.description, sensitivity: a.sensitivity, freshness: a.freshness,
     version: a.version, deepLink: a.deepLink, storage: a.storage,
     status: statusOf(a), bytes: rec.bytes,
     hasPreview: !!rec.object && inlineRenderable(rec.object.contentType),

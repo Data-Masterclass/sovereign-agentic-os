@@ -22,13 +22,20 @@ import { ConfirmProvider, useConfirm } from '@core/ui/lifecycle/ConfirmDialog';
 import { archiveFolderCopy, deleteFolderCopy } from '@core/kernel/lifecycle';
 import { canManageArtifact, type ArtifactScope } from '@core/policy/edit-scope';
 import { uploadRawFile, createNoteFile } from '@tabs/files/lib/upload-client';
+import { serverError, summariseBulk, type BulkOutcome } from '@tabs/files/lib/bulk-result';
+import { describeAndTagPatch, parseTagInput, type DescribeAndTagInput } from '@tabs/files/lib/bulk-docs';
+import { promotionReadiness, readinessLabel, readinessHint } from '@tabs/files/lib/promotion';
 import FilePreview from '@tabs/files/ui/FilePreview';
 import NoteEditor from '@tabs/files/ui/NoteEditor';
 
 type Summary = {
   id: string; name: string; owner: string; domain: string;
   tier: 'dataset' | 'asset' | 'product'; kind: 'doc' | 'image' | 'video' | 'audio' | 'table' | 'archive' | 'other';
-  folder: string; tags: string[]; sensitivity: string; freshness: string | null;
+  folder: string; tags: string[];
+  /** The promotion-gate documentation, carried by the listing so the toolbar can pre-flight
+   *  the gate with the SAME `promotionGate` the server runs. */
+  description: string;
+  sensitivity: string; freshness: string | null;
   version: string; status: 'processing' | 'searchable' | 'stored'; bytes: number;
   /** Original bytes render inline → the tile shows a thumbnail via /raw. */
   hasPreview?: boolean;
@@ -172,6 +179,102 @@ function canManageFile(u: ManageUser | null, f: Summary): boolean {
 }
 
 
+/**
+ * "Describe & tag" over a selection — the documentation the promotion gate asks for, written
+ * once for many files. The SEMANTICS live in `@tabs/files/lib/bulk-docs` (append vs replace,
+ * fill vs overwrite) so they are unit-tested; this is only the form.
+ *
+ * Both defaults are the non-destructive ones: tags are appended and a description is written
+ * only where one is missing. Replacing or overwriting is an explicit tick, because a bulk
+ * action that silently dropped an author's own words would destroy work on a mis-click.
+ */
+function DescribeAndTagModal({ count, busy, onCancel, onApply }: {
+  count: number;
+  busy: boolean;
+  onCancel: () => void;
+  onApply: (input: DescribeAndTagInput) => void;
+}) {
+  const [description, setDescription] = useState('');
+  const [tagText, setTagText] = useState('');
+  const [overwriteDescription, setOverwriteDescription] = useState(false);
+  const [replaceTags, setReplaceTags] = useState(false);
+  const tags = parseTagInput(tagText);
+  // Nothing to apply: no description, no tags, and not an explicit clear.
+  const empty = !description.trim() && tags.length === 0 && !replaceTags;
+  const files = `${count} file${count > 1 ? 's' : ''}`;
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="Describe and tag the selected files"
+      style={{
+        position: 'fixed', inset: 0, zIndex: 300,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        background: 'rgba(0,0,0,0.45)',
+      }}
+      onClick={(e) => { if (e.target === e.currentTarget) onCancel(); }}
+    >
+      <div
+        className="card"
+        style={{
+          minWidth: 420, maxWidth: 620, width: '90vw', maxHeight: '75vh', overflowY: 'auto',
+          padding: '20px 24px', borderRadius: 12, boxShadow: '0 8px 40px rgba(0,0,0,0.32)',
+          display: 'flex', flexDirection: 'column', gap: 14,
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <h3 style={{ margin: 0, fontSize: 15, fontWeight: 600, letterSpacing: 0.2 }}>
+            Describe &amp; tag {files}
+          </h3>
+          <button className="btn ghost sm" onClick={onCancel} aria-label="Close" style={{ fontSize: 18, lineHeight: 1 }}>
+            ×
+          </button>
+        </div>
+        <p className="hint" style={{ margin: 0 }}>
+          A description and at least one tag are what a file needs before it can be shared with
+          your domain. Tags are <strong>added</strong> to the ones each file already has.
+        </p>
+        <label className="rail-group-title" htmlFor="bulk-docs-description">Description</label>
+        <textarea
+          id="bulk-docs-description"
+          rows={3}
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          placeholder="What these files are, and who they are for"
+        />
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <input type="checkbox" checked={overwriteDescription}
+            onChange={(e) => setOverwriteDescription(e.target.checked)} />
+          Overwrite descriptions that already exist
+        </label>
+        <label className="rail-group-title" htmlFor="bulk-docs-tags">Tags</label>
+        <input
+          id="bulk-docs-tags"
+          value={tagText}
+          onChange={(e) => setTagText(e.target.value)}
+          placeholder="invoices, finance, 2026"
+        />
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <input type="checkbox" checked={replaceTags} onChange={(e) => setReplaceTags(e.target.checked)} />
+          Replace existing tags (an empty list clears them)
+        </label>
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+          <button className="btn ghost sm" onClick={onCancel}>Cancel</button>
+          <button
+            className="btn sm"
+            disabled={busy || empty}
+            title={empty ? 'Enter a description or at least one tag' : `Apply to ${files}`}
+            onClick={() => onApply({ description, tags, overwriteDescription, replaceTags })}
+          >
+            Apply to {files}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function FilesBrowserInner() {
   const { user } = useUser();
   const searchParams = useSearchParams();
@@ -197,6 +300,8 @@ function FilesBrowserInner() {
   const { personalNodes, domainNodes, loadFolders } = useFolders('files', showArchived);
   // Folder picker modal: which file ids are being moved; null = closed.
   const [pickerIds, setPickerIds] = useState<string[] | null>(null);
+  // "Describe & tag" dialog over the current selection (false = closed).
+  const [docsOpen, setDocsOpen] = useState(false);
   // Folder lifecycle: folder being moved (opens a second picker); null = closed.
   const [folderMove, setFolderMove] = useState<FolderRef | null>(null);
 
@@ -354,7 +459,14 @@ function FilesBrowserInner() {
   // the detail view uses (POST /api/files/{id}/promote), so governance is identical:
   // the server files a promotion REQUEST for each (a domain admin still approves). Only
   // personal-tier (dataset) files the user can manage are promotable; the rest are
-  // reported as skipped. Result summary: "N requested / K failed / S skipped".
+  // reported as skipped.
+  //
+  // PER-FILE RESULTS (2026-11-18). This loop used to count `res.ok` and throw the response
+  // body away, so twelve files refused by the documentation gate read as
+  // "0 requested · 1 failed. A domain admin approves each." — no reason, and a promise of an
+  // approval that was never filed. Every outcome now carries the server's own `error` text
+  // (`serverError`) and `summariseBulk` collapses identical reasons into one line and drops
+  // the approval sentence when nothing was requested.
   const bulkPromote = useCallback(async (files: Summary[]) => {
     const mu = user ? { id: user.id, role: user.role, domains: user.domains } : null;
     const eligible = files.filter((f) => f.tier === 'dataset' && canManageFile(mu, f));
@@ -364,18 +476,65 @@ function FilesBrowserInner() {
       return;
     }
     setBulkBusy(true); setBulkNotice(''); setErr('');
-    let requested = 0; let failed = 0;
+    const outcomes: BulkOutcome[] = [];
     for (const f of eligible) {
       try {
         const res = await fetch(`/api/files/${f.id}/promote`, {
           method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
         });
-        if (res.ok) requested += 1; else failed += 1;
-      } catch { failed += 1; }
+        const data = await res.json().catch(() => ({}));
+        outcomes.push(res.ok
+          ? { id: f.id, name: f.name, ok: true }
+          : { id: f.id, name: f.name, ok: false, error: serverError(data, 'Could not request promotion') });
+      } catch (e) {
+        outcomes.push({ id: f.id, name: f.name, ok: false, error: (e as Error).message });
+      }
     }
     setBulkBusy(false);
     setPicked(new Set());
-    setBulkNotice(`${requested} requested${failed ? ` · ${failed} failed` : ''}${skipped ? ` · ${skipped} skipped` : ''}. A domain admin approves each.`);
+    setBulkNotice(summariseBulk(outcomes, {
+      verb: 'requested', skipped, approvalNote: 'A domain admin approves each.',
+    }).notice);
+    refresh();
+  }, [user, refresh]);
+
+  // Bulk DESCRIBE & TAG — the fix for the gate that refuses an undocumented file, offered in
+  // the toolbar that reported the refusal. One description + one tag list over the selection,
+  // through the EXISTING per-file write path (PATCH /api/files/{id} → setDocs, edit-gated),
+  // so there is no second gate. Tags are appended (set-union) and a description fills a gap;
+  // replacing or overwriting is an explicit tick. `describeAndTagPatch` returning null means
+  // the file would not change — skipped, never "failed", and no version churn.
+  const bulkDescribeAndTag = useCallback(async (files: Summary[], input: DescribeAndTagInput) => {
+    const mu = user ? { id: user.id, role: user.role, domains: user.domains } : null;
+    const eligible = files.filter((f) => canManageFile(mu, f));
+    let skipped = files.length - eligible.length;
+    const work: { file: Summary; patch: Record<string, unknown> }[] = [];
+    for (const f of eligible) {
+      const patch = describeAndTagPatch({ id: f.id, name: f.name, description: f.description, tags: f.tags }, input);
+      if (patch) work.push({ file: f, patch });
+      else skipped += 1; // already carries exactly this documentation
+    }
+    if (work.length === 0) {
+      setBulkNotice(summariseBulk([], { verb: 'updated', skipped }).notice);
+      return;
+    }
+    setBulkBusy(true); setBulkNotice(''); setErr('');
+    const outcomes: BulkOutcome[] = [];
+    for (const { file, patch } of work) {
+      try {
+        const res = await fetch(`/api/files/${file.id}`, {
+          method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(patch),
+        });
+        const data = await res.json().catch(() => ({}));
+        outcomes.push(res.ok
+          ? { id: file.id, name: file.name, ok: true }
+          : { id: file.id, name: file.name, ok: false, error: serverError(data, 'Update failed') });
+      } catch (e) {
+        outcomes.push({ id: file.id, name: file.name, ok: false, error: (e as Error).message });
+      }
+    }
+    setBulkBusy(false);
+    setBulkNotice(summariseBulk(outcomes, { verb: 'updated', skipped }).notice);
     refresh();
   }, [user, refresh]);
 
@@ -479,6 +638,15 @@ function FilesBrowserInner() {
   const pickedFiles = filtered.filter((f) => picked.has(f.id));
   const allInViewPicked = filtered.length > 0 && filtered.every((f) => picked.has(f.id));
 
+  // PRE-FLIGHT the promotion gate on the LISTING rows, before anything is POSTed — the
+  // toolbar says "3 of 12 ready to promote" and names the gap, instead of letting the user
+  // discover it twelve 400s later. `promotionReadiness` runs the SAME `promotionGate` the
+  // store and Governance run; the summary carries `description` precisely so it can.
+  const manageUser = user ? { id: user.id, role: user.role, domains: user.domains } : null;
+  const manageable = pickedFiles.filter((f) => canManageFile(manageUser, f));
+  const promotable = manageable.filter((f) => f.tier === 'dataset');
+  const readiness = promotionReadiness(promotable);
+
   // Resolve search hits to their full Summary (from any scope) so results render with
   // the SAME tile/row as browse. Hit order (relevance) is preserved; a hit not in the
   // loaded list falls back to a minimal Summary so it still renders + opens.
@@ -488,7 +656,7 @@ function FilesBrowserInner() {
     const byId = new Map(all.map((f) => [f.id, f]));
     return hits.map((h) => byId.get(h.id) ?? ({
       id: h.id, name: h.name, owner: '', domain: '', tier: 'dataset',
-      kind: h.kind, folder: h.folder, tags: h.tags, sensitivity: 'internal',
+      kind: h.kind, folder: h.folder, tags: h.tags, description: '', sensitivity: 'internal',
       freshness: null, version: 'v1', status: 'searchable', bytes: 0,
     } as Summary));
   }, [hits, groups]);
@@ -847,16 +1015,27 @@ function FilesBrowserInner() {
                       {allInViewPicked ? 'Deselect all' : 'Select all'}
                     </label>
                   </div>
-                  {/* Bulk actions — appear once ≥1 card is ticked. Promote + Archive reuse
-                      the same per-file governed endpoints the detail view uses. */}
+                  {/* Bulk actions — appear once ≥1 card is ticked. Promote, Describe & tag and
+                      Archive reuse the same per-file governed endpoints the detail view uses.
+                      Promote also carries the gate PRE-FLIGHT: "3 of 12 ready to promote", and
+                      is disabled with the gap named when none of the selection is ready. */}
                   {picked.size > 0 ? (
                     <div className="files-bulk" aria-busy={bulkBusy}>
                       <span>{picked.size} selected</span>
                       <button className="btn ghost sm" disabled={bulkBusy}
                         onClick={() => promptMove([...picked])}>Move to folder…</button>
-                      <button className="btn ghost sm" disabled={bulkBusy}
+                      <button className="btn ghost sm" disabled={bulkBusy || manageable.length === 0}
+                        onClick={() => setDocsOpen(true)}
+                        title={manageable.length === 0
+                          ? 'None of the selected files are yours to edit'
+                          : 'Add one description and tags to the selected files — exactly what the promotion gate asks for'}>
+                        Describe &amp; tag…
+                      </button>
+                      <button className="btn ghost sm" disabled={bulkBusy || readiness.ready === 0}
                         onClick={() => void bulkPromote(pickedFiles)}
-                        title="Propose sharing the selected files with your domain — a domain admin approves each">
+                        title={readiness.ready === 0
+                          ? (readinessHint(readiness) || 'None of the selected files can be promoted')
+                          : 'Propose sharing the ready files with your domain — a domain admin approves each'}>
                         Promote to Domain →
                       </button>
                       <button className="btn ghost sm" disabled={bulkBusy}
@@ -866,6 +1045,13 @@ function FilesBrowserInner() {
                       </button>
                       <button className="btn ghost sm" disabled={bulkBusy}
                         onClick={() => { setPicked(new Set()); setBulkNotice(''); }}>Clear</button>
+                      {/* The gate, read off the listing BEFORE the user presses Promote. */}
+                      {promotable.length > 0 ? (
+                        <span className="file-sub">{readinessLabel(readiness)}</span>
+                      ) : null}
+                      {readiness.blocked.length > 0 ? (
+                        <span className="file-sub">{readinessHint(readiness)}</span>
+                      ) : null}
                       {bulkBusy ? <span className="file-sub"><span className="spin" /> Working…</span> : null}
                       {bulkNotice ? <span className="file-sub">{bulkNotice}</span> : null}
                     </div>
@@ -888,6 +1074,17 @@ function FilesBrowserInner() {
             </>
           )}
       </FolderLayout>
+
+      {/* ---- Describe & tag the selection — writes through the per-file PATCH route, then
+              reports per file exactly like Promote does. ---- */}
+      {docsOpen ? (
+        <DescribeAndTagModal
+          count={manageable.length}
+          busy={bulkBusy}
+          onCancel={() => setDocsOpen(false)}
+          onApply={(input) => { setDocsOpen(false); void bulkDescribeAndTag(manageable, input); }}
+        />
+      ) : null}
 
       {/* ---- New note: the markdown Edit surface. On save it creates a text/markdown
               file through the SAME raw-upload path, then we open it in View (focus). ---- */}

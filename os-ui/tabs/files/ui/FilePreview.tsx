@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useUser } from '@core/ui/useUser';
 import { previewText } from '@tabs/files/lib/preview';
+import { serverError } from '@tabs/files/lib/bulk-result';
 import { reuploadVersion, saveTextVersion } from '@tabs/files/lib/upload-client';
 import { ConfirmProvider } from '@core/ui/lifecycle/ConfirmDialog';
 import LifecycleActions from '@core/ui/lifecycle/LifecycleActions';
@@ -178,7 +179,9 @@ export default function FilePreview({ id, onMutated, onClose, startInEdit }: { i
     setErr('');
     const res = await fetch(`/api/files/${id}/promote`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
     const data = await res.json();
-    if (!res.ok) { setErr(data.error ?? 'Could not request promotion'); return; }
+    // The server's own words — the SAME helper the bulk path uses, so the two cannot drift
+    // (the bulk notice once dropped this text entirely and reported a bare count).
+    if (!res.ok) { setErr(serverError(data, 'Could not request promotion')); return; }
     // ONE OS-wide "this needs approval" confirmation (Policies link + inline approve).
     const approval = data.approval as FiledApproval | undefined;
     if (approval?.id) notifyApprovalFiled(approval, 'file', () => { void load(); onMutated(); });
