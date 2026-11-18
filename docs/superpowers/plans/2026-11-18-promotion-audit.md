@@ -295,3 +295,71 @@ IMPLEMENT is test-first: `core/policy/promotion-matrix.test.ts` is written and r
 production edit, then S1–S7 and U1–U5 turn it green. The `.tsx` fixes are pinned by source
 tripwires in the same file (a test may not import a `.tsx`, so the file is read as text and the
 required branch asserted by pattern).
+
+---
+
+# TEST — what was run, and what it proved
+
+`core/policy/promotion-matrix.test.ts` — **19 tests**, importing `@core/*` only and driving every
+kind in-process through `handleRpc` as creator / builder / domain_admin / admin (plus a builder in
+a foreign domain, who is the only principal that can prove the no-existence-leak answer, because a
+creator never clears `decide_approval`'s rank floor at all).
+
+Per kind — knowledge, agent system, app, dashboard, file, dataset — it pins:
+
+1. **the refusal is verbatim.** The documentation gate answers
+   `Cannot promote — add a description, at least one tag first.` and, when only one half is
+   missing, names only that half. Bronze-only answers
+   `Promote a Silver or Gold version — Bronze raw data is not shareable`.
+2. **the request is the right request** — `artifact_promote` / `file_promote` /
+   `dataset_promote`, `approverRole: 'domain_admin'`, `scope: 'domain'`, requester recorded,
+   and filing twice is idempotent (exactly one pending row).
+3. **approve flips the audience and nothing else** — read back through each kind's own getter,
+   and `livePin(kind, id)` is unchanged across the promotion, so the lifecycle axis is untouched.
+4. **a creator can never approve** — not their own request, not anyone else's; a plain builder
+   cannot decide a domain_admin rung; an out-of-domain builder gets `not_found`; and a refused
+   decision leaves the request pending.
+5. **rung 2** — `promote_certify` / `approverRole: 'admin'` / `scope: 'tenant'`; a domain admin is
+   refused with "a platform Admin", and the admin's approve reaches Company.
+6. **the owner-approver is not dead-ended** — dana files and then decides her own audience
+   request, and the asset really reaches Domain.
+7. **the carve-out is narrow** — a creator owner is still refused (rank), a domain admin still
+   cannot certify her own filing (scope), and a parked agent run (`runId`) still refuses the
+   requester absolutely.
+8. **metrics** — a legacy `artifactKind: 'metric'` queue item refuses with the sentence that names
+   the dataset, and stays pending; and a source tripwire asserts neither front door files one.
+
+Six source tripwires cover the `.tsx` fixes (a test may not import a `.tsx`, so each component is
+read as text and the required branch asserted by pattern — a tripwire proves the branch exists,
+never that it renders).
+
+## Gate results
+
+| Gate | Result |
+|---|---|
+| `os-ui/node_modules/.bin/tsc --noEmit -p os-ui` | clean |
+| targeted suites (MCP waves, policy, data, files, dashboards) | 185 / 185 |
+| full suite, one run | **6466 tests · 6462 pass · 0 fail · 4 todo** (the 4 todo are pre-existing `{ todo: 'fixed in Phase 1/2' }` markers in `tabs/agents/lib/build/os-tools.test.ts`) |
+| `bash os-ui/scripts/gate.sh` | exit 0 — 436 tests, 0 fail, 4 todo; `check-litellm-allowlist: PASS` |
+| `node scripts/check-structure.mjs` | 419 / 1 / 200 / 1230 — at baseline, no new violations |
+
+## Design notes that changed during IMPLEMENT
+
+The DESIGN section above proposed promote-or-propose at BOTH front doors. Driving it through the
+real dispatcher showed that was the wrong half of the problem to fix: twenty existing assertions
+across `core/mcp/wave-a`, `wave-b`, `refine-0164`, `write-tools` and `tabs/data/lib/*` encode an
+owner-who-is-also-approver filing and then applying their own request through
+`approve_promotion` — which **never had the four-eyes check**. So the deadlock was not that
+`request_promotion` files; it was that the two front doors disagreed about whether an
+owner-approver may decide, and the Governance inbox said no. Fixing `canApprove` instead keeps
+`request_promotion`'s contract ("it files"), makes both doors agree, and needs no test rewritten.
+The promote-or-propose helpers were kept for the two UI routes, where a one-click promote matches
+every other kind's route, and are pinned by a tripwire.
+
+Two findings the audit matrix did not predict, both found by the tests rather than by reading:
+
+- **dashboard promotions were unapprovable** — `transitionDashboard` read through the owner-only
+  view gate, so the appointed approver could not see the record.
+- **a metric's tier IS its dataset's tier**, so `tier === 'personal'` can only mean the dataset is
+  private; the "file a request" branch was unreachable-by-design in one direction and
+  un-appliable in the other.
