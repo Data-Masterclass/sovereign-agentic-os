@@ -1,0 +1,246 @@
+<!-- SPDX-License-Identifier: Apache-2.0
+     Copyright 2026 Borek Data Ventures UG -->
+
+# Grant picker shows folders from every domain — narrow the feed to the system's domain
+
+**Date:** 2026-11-18 · **Branch:** `fix/grant-picker-domain-scope` · **Status:** PLAN
+
+## The report
+
+> "I see folders that do not belong to a domain when I want to grant context."
+
+Reproduced while editing an agent system homed in `agentic-leader-autumn-winter-2026-2027`:
+the Grants & Routing / Choose-Context folder tree offered `/northpeak/invoices PDF`, a
+**personal** Files folder that lives in `agentic-leader-q3-2026`.
+
+## Verified cause
+
+`app/api/agents/systems/[id]/grants/available/route.ts` builds the feed from
+
+```
+listDatasets(principal) · listWorkflows(principal) · listPersonalKnowledge(principal)
+listFiles(principal)    · listMetrics(principal)   · listConnectionsForUser(user)
+```
+
+Those listers scope to **`principal.domains`** — i.e. *everything the caller can see across
+all their domains*. `core/kernel/auth.ts` narrows `user.domains` to `[activeDomain]` only when
+the sidebar switcher has an active domain; in **"All domains"** mode (the default for a
+multi-domain admin, and the state the reporter was in) `domains` is all four memberships, so
+every tier — My, Domain and Company — returns four domains' worth of artifacts.
+
+`tabs/agents/lib/grant-folders.ts` `grantFolderNodes()` then synthesises a folder node from
+**each item's own `folder` path**, so every one of those four domains' folders (plus the
+caller's personal folders in each) lands in the tree. The route never consults the SYSTEM's
+domain — `getSystem(id, principal).domain` is read for the 403/404 scope gate and then
+discarded.
+
+`app/api/context/available/route.ts` → `tabs/software/lib/available-context.ts`
+(`availableContext` / `availableContextWithFolders`, used by the core ContextGrants picker and
+by "Ask the OS") has the identical pattern: `principal.domains`, no target-domain narrowing.
+
+By contrast `app/api/folders/route.ts` already does the right thing — it passes
+`activeDomain` into `listFolders(user, tab, scope, { activeDomain })`, and
+`core/folders/folder-store.ts` drops any row not stamped with it.
+
+## What this is NOT
+
+A presentation leak, not an authorisation leak. Every item in the feed is one the caller may
+already see and grant: the lists are canView/DLS-scoped, so no other user's drafts and no
+non-member domain ever appeared. The defect is that the picker offers a **wider** choice than
+the system it is editing can sensibly use, which (a) makes the tree unreadable and (b) invites
+an author to wire a cross-domain folder into an agent by accident.
+
+## Required outcome → design
+
+### 1. The agents grant feed narrows to the system's domain
+
+The route resolves the target domain once — `const target = getSystem(id, principal).domain`
+(the record field, authoritative; the yaml's `system.domain` is cosmetic per
+`tabs/agents/lib/store.ts`) — and applies it per scope:
+
+| scope | rule |
+| --- | --- |
+| `personal` | keep only items whose own `domain === target` (a domainless item is kept — an unassigned artifact shows everywhere today and an admin needs it to domain-move it) |
+| `domain` | keep only items whose own `domain === target` (same domainless carve-out) |
+| `marketplace` | **unchanged** — cross-domain discovery of a certified product is the Marketplace's business, and narrowing it would remove grants that work today |
+
+Every list exposes the field the rule needs (verified against the stores, not the docs):
+
+- `DatasetSummary.domain: string` (`tabs/data/lib/store.ts:95`)
+- `FileSummary.domain: string` (`tabs/files/lib/store.ts:88`)
+- `PersonalKnowledgeSummary` = `Omit<PersonalKnowledgeRecord,'md'>` → `domain: string`
+- `WorkflowSummary` = `Omit<WorkflowRecord,'md'|'tacit'>` → `domain: string`
+- `MetricSummary.domain?: string` — **optional**, set from the owning dataset
+  (`domain: d.domain || undefined`), so absent means a domainless dataset → kept by the
+  domainless carve-out. No separate lookup needed.
+- `Connection.domain: string` (`tabs/connections/lib/schema.ts:198`) — narrowed too, for
+  consistency; `Certified` connections map to `marketplace` and stay unchanged.
+- `operating-manual` is **not** narrowed: those items are not domain-keyed artifacts but the
+  three manual SCOPES `resolveManual(scope, principal).canView` already gates. Narrowing a
+  scope by a domain string would be meaningless.
+
+Folder nodes then derive from the **narrowed** items, so the implicit rail cannot re-introduce
+another domain's folder. The explicit registry rows merged alongside them switch to
+`listFolders(viewer, tab, scope, { activeDomain: target })` — the same argument
+`/api/folders` passes, which is what makes the two surfaces agree.
+
+### 2. The same narrowing for `availableContextWithFolders`
+
+Ask the OS / ContextGrants run **in the active domain**, not against a system record, so the
+target there is `user.activeDomain` — read exactly the way `/api/folders` reads it. When it is
+`null` ("All domains" chosen deliberately, and the only state in which there is no domain
+context at all) **behaviour is unchanged**: the feed stays the union over `user.domains`,
+because there is no single domain to narrow to and silently picking `domains[0]` would hide
+artifacts the user explicitly asked to see across domains. This is the documented limit of
+this fix: in "All domains" the ContextGrants picker still spans domains by design.
+
+`availableContext` (the itemless-folders variant, also the grounding list for the Software
+assistant's grant suggestions) takes the same narrowing so the assistant cannot propose an
+id the picker no longer offers.
+
+### 3. Legacy out-of-domain folder grants still render, with a warning
+
+A system saved before this change can hold a folder grant whose path lives in another domain.
+Narrowing the tree would make that grant **invisible** while it is still live on
+`system.yaml` — the picker would show a system granting less than it grants, and a tick-and-
+save round trip in the UI (`applyFolderSelection` removes de-selected folder grants) would
+silently DELETE it.
+
+So the feed builder also takes the system's **existing** folder-grant paths and re-admits any
+that the domain narrowing dropped, marked `outsideDomain: true`:
+
+```ts
+{ items, folders: [{ path, scope, outsideDomain?: true }] }
+```
+
+The node is present ⇒ the tree renders it and shows it ticked (the tick already derives from
+`system.grants`), so nothing is dropped and no round trip destroys it. `GrantPickers.tsx`
+renders an `outside this domain` warning badge on that folder's chip so the author can see
+why it looks foreign and remove it deliberately. Item grants need no equivalent: the granted
+chips already render from `system.grants[kind]` regardless of the feed, and `nameOf()` falls
+back to the id.
+
+### 4. Governance is unchanged — this is presentation only
+
+Stated explicitly because it is the thing a reviewer must not have to guess:
+
+- No authorisation decision moves. The real gates stay exactly where they are: the
+  canView/DLS filter inside every lister (nothing the caller cannot see was ever in the
+  feed), `assertGrantsWithinAuthority` on the promotion path
+  (`tabs/data/lib/store.ts:1694`, `tabs/files/lib/store.ts:842`), and the **per-item DLS at
+  build/run**, where `tabs/agents/lib/build/os-tools.ts`'s `ScopedItemsLoader` re-resolves
+  every folder grant through the same owner-scoped lists as the acting principal.
+- `os-tools.ts` is deliberately **not** narrowed. A build/run resolution must stay a function
+  of the runner's authority, not of a picker's current view; narrowing it would change what an
+  existing system actually does at run time, which is a governance change and out of scope.
+- Nothing is removed from any stored `system.yaml` by this change. A legacy cross-domain grant
+  keeps working until a human removes it.
+
+### 5. Tests
+
+A route cannot be imported by a test (`next/headers` ⇒ `ERR_MODULE_NOT_FOUND`), so the feed
+builder is extracted into **`tabs/agents/lib/grant-feed.ts`** and tested directly. It takes the
+already-listed groups as inputs rather than importing the other tabs' stores — a tab imports
+only `@core/*` and itself (CONTRIBUTING rule 2), and `tabs/agents` importing
+`@tabs/data/lib/store` would raise the `TAB-ISOLATION` ratchet. The route stays the gatherer;
+the pure narrowing + folder derivation is the part worth testing.
+
+`tabs/agents/lib/grant-feed.test.ts` — 4-domain admin principal, fixtures in two domains
+(`agentic-leader-autumn-winter-2026-2027` = the system's, `agentic-leader-q3-2026` = foreign):
+
+1. only the system domain's personal items survive; the foreign personal file (the reported
+   `/northpeak/invoices PDF`) is gone;
+2. only the system domain's domain-scope items survive;
+3. marketplace items still appear, both domains' included;
+4. a domainless item still appears (the carve-out);
+5. folder nodes derive from the narrowed items only — no foreign folder, no foreign ancestor;
+6. an explicit registry row from the foreign domain does not appear;
+7. a legacy folder grant pointing outside the system's domain **is still in `folders`**, is
+   flagged `outsideDomain: true`, and is not dropped;
+8. a source **tripwire** over `app/api/agents/systems/[id]/grants/available/route.ts` (read
+   with `readFileSync`, never imported) asserting the route imports the builder and hands it
+   the system's domain — so the narrowing cannot be quietly bypassed in the route later.
+
+`tabs/agents/lib/grant-folders.test.ts` (existing behaviour of `grantFolderNodes`) must stay
+green and unchanged — the narrowing happens before it, never inside it.
+
+`tabs/software/lib/available-context-domain.test.ts` — the active-domain narrowing of
+`availableContext`, including the documented "no active domain ⇒ unchanged" case.
+
+## Files
+
+| file | change |
+| --- | --- |
+| `os-ui/tabs/agents/lib/grant-feed.ts` | **new** — pure feed builder: domain narrowing, folder-node derivation (delegates to `grantFolderNodes`), legacy out-of-domain grant re-admission |
+| `os-ui/tabs/agents/lib/grant-feed.test.ts` | **new** — the eight assertions above |
+| `os-ui/app/api/agents/systems/[id]/grants/available/route.ts` | reads the system's domain, passes `activeDomain: target` to `listFolders`, delegates assembly to `grant-feed.ts` |
+| `os-ui/tabs/agents/ui/GrantPickers.tsx` | `outsideDomain` on the folder-node type; "outside this domain" badge on such a folder chip |
+| `os-ui/tabs/software/lib/available-context.ts` | narrow by `user.activeDomain` when set; unchanged when null |
+| `os-ui/tabs/software/lib/available-context-domain.test.ts` | **new** |
+| `os-ui/ARCHITECTURE.md` | one entry under "Things this codebase will punish you for" |
+
+## Task B — "Where the results go" loses the typed output (same tab, same PR)
+
+### The report
+
+The owner filled Type / Name / Scope / Folder under **"Where the results go"**, moved to
+another stage, came back, and found the fields empty — read as "the settings reset".
+
+### Cause
+
+`OutputsSection` (`tabs/agents/ui/SimpleBuilder.tsx:1588`, mounted from `DefineStep` at line
+537) keeps `draftKind` / `draftName` / `draftScope` / `draftFolder` as **local component
+state**. Nothing is persisted until `addRow()` → `addOutput(system, …)` → `onCommit`, and the
+button that calls it is labelled `+ Add output` — which reads as "add another one", not as
+"this is how your typing gets saved". Leaving the Define stage unmounts the component and the
+draft dies silently. The same class of defect as the inspector guard in
+`os-ui/ARCHITECTURE.md` ("an unsaved-changes guard belongs to whoever owns the selection").
+
+### Fix — the UX, not the model
+
+The persistence path is unchanged: `addOutput(system, …)` → `onCommit` → the governed
+`system.yaml` write. Nothing new is stored, no new route, no governance change.
+
+1. **Relabel** the button `+ Add output` → **`Save output`**. There is no edit-an-existing-row
+   mode in this section (rows are added and removed only — `removeOutput(system, i)`), so no
+   "Save changes" variant is introduced; adding one would mean inventing an edit mode the
+   model does not have.
+2. **Visible draft marker.** The draft row shows an `unsaved output` badge as soon as any
+   field differs from the empty draft.
+3. **Guard the exit.** `OutputsSection` reports `{ dirty, valid, save }` up (the knowledge
+   editor's `onDirtyChange` shape — mirrored, **not** imported: a tab imports only `@core/*`
+   and itself). `DefineStep` forwards it; `SimpleBuilder` owns every exit from the Define
+   stage (`go`, `next`, and `StageShell`'s rail via `onState`) and therefore owns the prompt:
+   - dirty **and valid** (name + folder present) → commit it, then navigate. The user's work
+     lands; no question asked, because there is nothing to decide.
+   - dirty and **invalid** → one shared confirm (`Save output` / `Discard` / `Keep editing`),
+     with `Save output` disabled and a line saying the output still needs a name.
+   One prompt in one place: putting it inside `OutputsSection` would guard neither the rail
+   nor the "Grant context →" button, which is exactly the mistake the knowledge editor made.
+4. **`tabs/agents/lib/output-draft.ts`** (new) — the pure part: the `OutputDraft` type,
+   `EMPTY_OUTPUT_DRAFT`, `outputDraftDirty(draft)` (true when any field differs from the empty
+   draft — including a lone Type or Scope flip, so the marker never under-reports) and
+   `outputDraftValid(draft)` (trimmed name non-empty **and** a folder path present; `'/'`
+   counts — root is a real destination).
+5. **Tests** — `tabs/agents/lib/output-draft.test.ts`: dirty/clean for every field, valid vs
+   invalid (blank name, whitespace name, blank folder), and a **source tripwire** over
+   `SimpleBuilder.tsx` (read with `readFileSync`, never imported — a test cannot import a
+   `.tsx`) asserting the label `+ Add output` is gone, `Save output` is present, and that the
+   draft guard is wired (`outputDraftDirty` imported by the component).
+
+### Files (task B)
+
+| file | change |
+| --- | --- |
+| `os-ui/tabs/agents/lib/output-draft.ts` | **new** — `OutputDraft`, `EMPTY_OUTPUT_DRAFT`, `outputDraftDirty`, `outputDraftValid` |
+| `os-ui/tabs/agents/lib/output-draft.test.ts` | **new** — the predicates + the label/wiring tripwire |
+| `os-ui/tabs/agents/ui/SimpleBuilder.tsx` | one draft object, `Save output` label, `unsaved output` badge, `{dirty,valid,save}` reported up through `DefineStep`, the exit guard + prompt in `SimpleBuilder` |
+
+## Guardrails for the execution
+
+- Two other agents own `tabs/files/ui/*` and the promotion/approval paths — not touched here.
+- `node scripts/check-structure.mjs` must not exceed 419 / 1 / 200 / 1230; both new files carry
+  the SPDX + `FEATURE:` / `USER STORY:` / `ARCHITECTURE:` header.
+- No TS enums, no parameter properties, no `.tsx`/`route.ts` imports from tests.
+- Full suite runs **once**, with `--test-concurrency=2`; targeted files otherwise.
+- No merge, no deploy.
