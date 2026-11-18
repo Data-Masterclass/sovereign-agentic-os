@@ -164,3 +164,58 @@ user could not do one-by-one.
 - The gate itself is unchanged. The fix is visibility, not permissiveness.
 - No bulk MCP twin: the per-file file write tools already exist, and a bulk wrapper is a
   separate decision.
+
+---
+
+## 6. Outcome (TEST phase, 2026-11-18)
+
+### 6.1 What the owner now reads
+
+The same selection of 12 undocumented invoices, before anything is POSTed:
+
+> `12 selected` · Promote to Domain → *(disabled)* · `0 of 12 ready to promote` ·
+> `Add a description, at least one tag first — “Describe & tag” does it for the selection.`
+
+And if the request is filed anyway (some ready, some not):
+
+> `3 requested · 9 failed. A domain admin approves each. 9 files: add a description, at least
+> one tag first.`
+
+With none ready, the governance sentence is gone:
+
+> `Nothing requested · 12 failed. 12 files: add a description, at least one tag first.`
+
+### 6.2 Gates
+
+| Gate | Result |
+|---|---|
+| `os-ui/node_modules/.bin/tsc --noEmit -p os-ui` | clean |
+| Targeted: `bulk-result` / `bulk-docs` / `promotion` / `bulk-promote-tripwire` | 24 tests, 24 pass |
+| Files tab: `tabs/files/**/*.test.ts` | 183 tests, 183 pass |
+| Full suite (`core/**` + `tabs/**`) | 6469 tests · 6465 pass · 0 fail · 4 todo (pre-existing `os-tools` Phase-2 todos) |
+| `bash os-ui/scripts/gate.sh` | exit 0 — 436 tests, 432 pass, 0 fail, 4 todo |
+| `node scripts/check-structure.mjs` | ok — 419 / 1 / 200 / 1230, unchanged by this branch |
+
+### 6.3 Deviations from the design
+
+- The tripwire's two "forbidden string" assertions (`if (res.ok)`, `res.ok ? `) were replaced
+  with the STRUCTURAL invariant they were groping at: inside `bulkPromote`, `res.json()` must
+  appear **before** `res.ok`. A whitespace change could have satisfied the string ban while
+  leaving the defect; "parse before you judge" cannot be satisfied by formatting. Likewise the
+  "the component must not reimplement the gate" negative was narrowed to `missing.push(` and
+  paired with a positive assertion that `promotionReadiness(` is called — the first version
+  matched the dialog's own empty-form check and failed for the wrong reason.
+- `FileSummary` also had to be filled in at one more place: the search-hit fallback summary in
+  `FilesBrowser` (`description: ''`), which synthesises a row for a hit not in the loaded list.
+
+### 6.4 Left open
+
+- The `files` listing now carries every file's description to the browser. That is the same
+  text the preview already fetches per file and is covered by the identical DLS read gate
+  (`canView` → `listFiles`), so no new material is exposed — but the payload grows with
+  description length. If a drive of long descriptions ever makes the list heavy, the fix is a
+  gate-only projection (`documented: boolean`), not dropping the pre-flight.
+- "Describe & tag" writes the same description to every selected file. That is the point for a
+  folder of invoices and wrong for a mixed selection; the per-file editor remains the place to
+  differentiate, and the overwrite guard (off by default) is what keeps a mixed selection from
+  losing its existing text.
