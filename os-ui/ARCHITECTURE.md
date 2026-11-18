@@ -849,6 +849,34 @@ inspector always opened the first, and React logged duplicate keys. Uniquify on
 generation (`-2`, `-3`, …) and delete by object identity, not by id — a
 hand-edited file can still carry the same id twice.
 
+**A preview of generated output must call the generator, not re-implement its
+format.** The Knowledge editor shows the `AGENT.md` an Agent actor will carry into
+the scaffolded agent system. Two copies of that layout — one in the component, one
+in the scaffold — would drift on the first edit and the author would be reading a
+promise nobody keeps. So the builder is a pure function both sides call
+(`tabs/knowledge/lib/actor-prompt.ts` → `actorAgentMd(workflow, actor)`), with a
+test asserting the preview equals `scaffoldSystem`'s `agent_md` **byte for byte**
+and a source tripwire that the component really imports it.
+
+That is also why it is a function of `(workflow, actor)` ONLY. The scaffold also
+takes per-step dispositions, but the editor has none to offer: making the prompt
+depend on them would mean the preview could only ever be a guess. Dispositions
+decide **whether** an agent exists; they never rewrite **what it is told**. And the
+module deliberately imports neither the Agents tab's System schema nor anything
+else — the client component renders the preview, and a cross-tab import on that
+path would ship the Agents tab's schema to the browser (and grow the
+`TAB-ISOLATION` ratchet) for a `<pre>` block.
+
+**The ACTOR is the unit of agency in a workflow, not the step.** The first scaffold
+proposed one agent per step, so an actor that owned six steps became six agents
+with six three-line briefs and no identity — and the author had nowhere to write
+what that agent *is*. An `Agent` actor now carries a long `prompt` in the workflow's
+`actors:` registry and becomes exactly one agent, with its steps compiled in
+beneath the prompt. The registry entry parses and serializes that prompt for
+**every** category, not just `Agent`: a model that dropped it when the category
+changed would destroy the author's work on a mis-click, and the editor can decide
+what to *offer* without the file deciding what to *keep*.
+
 **Never restate a route path that already exists in the nav.** The Drive OAuth
 callback sent every user to `/files`, which exists only as an API path and has
 no page, while the Files tab is at `/unstructured`. All eight exits of that
