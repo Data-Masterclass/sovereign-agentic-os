@@ -103,26 +103,20 @@ export async function ensureKnowledgeIndex(): Promise<boolean> {
   return Boolean(res && res.ok);
 }
 
-/** Bulk-write embedded units to OpenSearch (best-effort live path). */
+/**
+ * Bulk-write embedded units to OpenSearch (best-effort live path).
+ *
+ * ADD, THEN PRUNE (2026-11-19, the admin re-index). This used to `_delete_by_query` the scope
+ * FIRST and bulk-add second, which meant a failed or unreachable bulk write left the workflow
+ * with no indexed units at all — a delete of rows it then could not replace, and on the
+ * re-index path that is the one failure mode the whole tool promises not to have. Unit ids are
+ * stable (`chunkWorkflow` derives them from the workflow + step), so an `index` op OVERWRITES in
+ * place: adding first is idempotent, and the delete afterwards only has to remove the units this
+ * write did NOT cover (a step that was deleted since the last index). It is skipped entirely when
+ * the bulk write failed, and it never runs with an empty keep-set.
+ */
 async function writeOpenSearch(scope: string, indexed: IndexedUnit[]): Promise<boolean> {
   await ensureKnowledgeIndex();
-
-  // Delete the scope's existing docs first (incremental re-index), then bulk-add.
-  const delBody = {
-    query: {
-      bool: {
-        should: [
-          { term: { workflow_id: scope } },
-          { term: { _id: scope } },
-        ],
-      },
-    },
-  };
-  await withTimeout(`${config.opensearchUrl}/${config.knowledgeIndex}/_delete_by_query?refresh=true`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(delBody),
-  });
 
   const lines: string[] = [];
   for (const u of indexed) {
@@ -152,12 +146,40 @@ async function writeOpenSearch(scope: string, indexed: IndexedUnit[]): Promise<b
     body: lines.join('\n') + '\n',
   });
   if (!res || !res.ok) return false;
+  let landed = false;
   try {
     const data = (await res.json()) as { errors?: boolean };
-    return data.errors !== true;
+    landed = data.errors !== true;
   } catch {
     return false;
   }
+  if (!landed) return false;
+  await pruneScopeExcept(scope, indexed.map((u) => u.id));
+  return true;
+}
+
+/**
+ * Remove the scope's units that the write just made did NOT cover. The prune half of
+ * add-then-prune (see {@link writeOpenSearch}); refuses an empty keep-set, so it can never be the
+ * delete-everything call it exists to replace.
+ */
+async function pruneScopeExcept(scope: string, keepIds: string[]): Promise<boolean> {
+  if (keepIds.length === 0) return false;
+  const body = {
+    query: {
+      bool: {
+        should: [{ term: { workflow_id: scope } }, { term: { _id: scope } }],
+        minimum_should_match: 1,
+        must_not: [{ ids: { values: keepIds } }],
+      },
+    },
+  };
+  const res = await withTimeout(`${config.opensearchUrl}/${config.knowledgeIndex}/_delete_by_query?refresh=true`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  return Boolean(res && res.ok);
 }
 
 /**
