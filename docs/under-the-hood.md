@@ -843,6 +843,17 @@ python -c "import json;print([n for n in json.load(open('target/manifest.json'))
 >   is labelled rather than disguised — but it is synthetic, and the guard written to stop exactly that
 >   was keyed on the one variable the deployment does not set. **This is the most consequential single
 >   finding on this page.**
+>
+>   **FIXED 2026-11-18** (`fix/offline-mock-production-guard`). The decision moved to ONE kernel
+>   predicate, `core/kernel/offline-mock.ts` `offlineMockAllowed()`, keyed on `OS_OFFLINE_MOCK`
+>   (`allow` | `refuse`) and defaulting to **refuse** under `NODE_ENV=production` — the variable the
+>   deploy actually sets, and the key `config.ts`'s own two fail-closed guards use. The chart writes
+>   it explicitly into the os-ui AND os-ui-worker env (`osUI.offlineMock`, default `refuse`;
+>   `values.local.yaml` sets `allow` for the teaching flow). A refusal is typed —
+>   `ENGINE_UNAVAILABLE`, 503 — and the MCP error mapper surfaces it to an agent as
+>   `{error:{code:'ENGINE_UNAVAILABLE'}}`, never a row. `core/kernel/offline-mock-tripwire.test.ts`
+>   greps `tabs/**` + `core/**` so a new fabricating path cannot be added without the predicate.
+>   See `docs/superpowers/plans/2026-11-18-offline-mock-production-guard.md`.
 > - **The SQL identifier gate lives one layer out from the boundary it guards.** `explorer.ts:228` and
 >   `:263` write `date_trunc('${spec.granularity}', "${timeCol}")` and `:158` writes
 >   `CAST("${col}" AS varchar) IN (…)`, and none of them checks anything locally: `assertColumn` exists
@@ -1086,6 +1097,9 @@ query_metric { metricId: "ds_orders.revenue", grain: "month" }
 >   mock rows labelled `offline-mock`; the tile shows the label (and "mixed · N live / M mock" when a
 >   dashboard has both), so it is disclosed — but it is not an outage, which is what the gate was written
 >   to produce. `os-ui/tabs/dashboards/ui/DashboardGrid.tsx:317`, `:362`
+>
+>   **FIXED 2026-11-18** with the gate in section 4: `exploreMetric` returns `mode: 'unavailable'`
+>   and no rows, so a panel over a down Trino is an outage rather than a labelled synthetic number.
 
 ---
 
@@ -1716,6 +1730,14 @@ git tag --list 'app/invoices/v*'                # the release scheme — current
 >   live deploy swaps in the real scanners (Semgrep / Trivy / gitleaks) behind the same shape". Yet
 >   `decide_deploy` *requires* `card.scan.passed` to approve, so an approval gate depends on a mocked
 >   scanner. `os-ui/tabs/software/lib/scan.ts:9-11`, `:19-43`, `:116`; `review.ts:359`, `:541-546`
+>
+>   **FIXED 2026-11-18.** The `mode = 'offline-mock'` default parameter and the
+>   `opts.scanMode ?? 'offline-mock'` caller default are both gone: the engine is DECIDED once, via
+>   the kernel predicate. With no engine the result is `mode: 'unavailable'`, `passed: false` and a
+>   `reason`, so `decide_deploy` refuses with "there is no security verdict to approve" instead of
+>   approving on a mocked one. The baseline's real findings are still returned — refusing a verdict
+>   is not hiding evidence — and a caller that injects `'live'` is unaffected. The hardcoded
+>   two-entry deps list and the missing Semgrep/Trivy/gitleaks wiring are UNCHANGED and still open.
 > - **`verify_software` runs no tests.** It returns a directive and trusts the agent's PASS/FAIL.
 >   `platform-mcp.ts:291-325`
 > - **No release tags are written.** `annotatedTag` exists in the git store with *zero callers*; the
@@ -2016,6 +2038,13 @@ kubectl -n agentic-os get secret trino-ext-<catalog> -o jsonpath='{.data}' | jq 
 >   `sync.mode` is 'offline-mock' and the row/item counts are **FABRICATED**." The UI surfaces that
 >   honestly, with badges and a banner. `os-ui/tabs/connections/lib/store.ts:1945-1950`;
 >   `ui/ConnectionBuilder.tsx:526-527`, `:619-620`, `:885`
+>
+>   **FIXED 2026-11-18** for the fabricating branches only: the sync row/item counts and the
+>   "reachable" ✓ that never probed now go through `fabricated()` → the kernel predicate, so on a
+>   deployment they refuse with `ENGINE_UNAVAILABLE` instead of returning a seed. The static tool
+>   PRESETS, the credential capture and the placeholder OAuth token the real callback overwrites are
+>   deliberately NOT gated: they invent no fact about the outside world. The missing live sync client
+>   is still the underlying gap.
 > - **The adapter layer is a deterministic offline mock** (`OpMode = 'live' | 'offline-mock'`), including
 >   the OAuth consent on create (`authCode: 'mock-consent-grant'`).
 >   `os-ui/tabs/connections/lib/connection-adapters.ts:25-28`, `:42`, `:169`; `lib/store.ts:700`
@@ -2829,10 +2858,13 @@ the managed deployment too.
 >   and the acceptance report records that `git-http:1.0.0` is "not built/pushed … E must stay undeployed
 >   until the image exists". The image has since been built and pushed on 2026-11-14 (digest `sha256:598ac199…`) after the Dockerfile's own build guard caught that Alpine ships `git-http-backend` in the `git-daemon` package (PR #49). The lesson stands: a default-on sidecar pointing at an unbuilt image is the one direct
 >   contradiction between the chart and the report. `values.yaml:1404`, `:1406-1407`; gap-report §3 item 10
-> - **`OS_PROFILE` is set nowhere.** Not in `charts/`, not in either root overlay, not in `deploy/` or
->   `scripts/` — so `config.deploymentProfile` stays `'local'` on a real deployment. Section 4's
->   synthetic-metric gate depends on it. (Mode B sets `global.profile: stackit`, which is a different key
->   and does not reach that env var.)
+> - **`OS_PROFILE` is still set nowhere** — not in `charts/`, not in either root overlay, not in
+>   `deploy/` or `scripts/`, so `config.deploymentProfile` stays `'local'` on a real deployment. (Mode B
+>   sets `global.profile: stackit`, which is a different key and does not reach that env var.) **Since
+>   2026-11-18 nothing load-bearing depends on it:** `deploymentProfile` is deployment IDENTITY, shown on
+>   Settings, and every honesty gate reads `OS_OFFLINE_MOCK` / `NODE_ENV` through
+>   `core/kernel/offline-mock.ts` instead. `core/kernel/offline-mock-tripwire.test.ts` fails if a decider
+>   keys on the profile again.
 > - **Several orphan overrides remain in `values.stackit-managed.yaml`** — keys the chart no longer has,
 >   so they are dead values: `llm.mode`/`provider`/`secretRef`, `openmetadata.*`, `osUI.supersetUrl`,
 >   `osUI.openmetadataUrl`, `sampleAgent.*`, `haystack.*`, `superset.*`, `mlflow.*`, `mlAgent.*`,
