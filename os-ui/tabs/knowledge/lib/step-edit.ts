@@ -258,7 +258,9 @@ export function removeActor(
       else s.actor_name = '';
     }
   }
-  w.actors = w.actors.filter((a) => a.id !== actorId);
+  // By object identity, not by id: ids are uniquified on load, but a hand-edited file can
+  // still carry the same id twice, and "delete one actor" must never remove two.
+  w.actors = w.actors.filter((a) => a !== gone);
   return w;
 }
 

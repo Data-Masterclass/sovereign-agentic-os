@@ -6,6 +6,7 @@
 import { useState } from 'react';
 import type { Workflow } from '@tabs/knowledge/lib/schema';
 import { addWorkflowRule, setWorkflowRuleHard, removeWorkflowRule } from '@tabs/knowledge/lib/rules-edit';
+import type { WorkflowReducer } from '@tabs/knowledge/lib/workflow-commit';
 import { useToast } from '@core/ui/core/Toast';
 
 /**
@@ -36,7 +37,8 @@ export default function RulesPanel({
   workflow: Workflow;
   workflowId: string;
   canEdit: boolean;
-  mutate: (next: Workflow) => void;
+  /** A commit is a reducer over the FRESH document — never a snapshot of this render. */
+  mutate: (reduce: WorkflowReducer) => void;
 }) {
   const [newRule, setNewRule] = useState('');
   const [newHard, setNewHard] = useState(false);
@@ -90,10 +92,10 @@ export default function RulesPanel({
               <span className="rp-rule-text">{r.text}</span>
               {canEdit && (
                 <>
-                  <button className="btn ghost sm" onClick={() => mutate(setWorkflowRuleHard(workflow, r.id, !r.hard))}>
+                  <button className="btn ghost sm" onClick={() => mutate((fresh) => setWorkflowRuleHard(fresh, r.id, !r.hard))}>
                     {r.hard ? 'Make soft' : 'Mark hard'}
                   </button>
-                  <button className="rp-x" title="Remove" onClick={() => mutate(removeWorkflowRule(workflow, r.id))}>✕</button>
+                  <button className="rp-x" title="Remove" onClick={() => mutate((fresh) => removeWorkflowRule(fresh, r.id))}>✕</button>
                 </>
               )}
             </div>
@@ -107,7 +109,7 @@ export default function RulesPanel({
           onSubmit={(e) => {
             e.preventDefault();
             if (!newRule.trim()) return;
-            mutate(addWorkflowRule(workflow, { text: newRule.trim(), hard: newHard }));
+            mutate((fresh) => addWorkflowRule(fresh, { text: newRule.trim(), hard: newHard }));
             setNewRule('');
             setNewHard(false);
           }}

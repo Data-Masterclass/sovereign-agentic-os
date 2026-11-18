@@ -1,24 +1,42 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
-import { serializeWorkflow, type Workflow } from '@tabs/knowledge/lib/schema';
+import type { Workflow } from '@tabs/knowledge/lib/schema';
+import { commitReducer, type WorkflowStore, type WorkflowReducer } from '@tabs/knowledge/lib/workflow-commit';
 
 /**
- * Commit a mutated {@link Workflow} back to the one source (`workflow.md`) through
- * the same sha-checked PATCH the Monaco panel uses. Clone of agents'
- * `commitSystem`: read the current sha first (optimistic concurrency), then PATCH.
- * Throws the route's error message on failure (incl. a 409 stale-sha conflict), so
- * the swimlane, the markdown editor and the Mermaid preview all edit one source.
+ * The one `fetch` implementation of {@link WorkflowStore} — read the workflow with its
+ * sha, PATCH the next markdown with that sha. Everything else about a commit (what is
+ * changed, and against which document) lives in `lib/workflow-commit.ts`, where it is
+ * testable against a fake store.
+ *
+ * A commit is a REDUCER, never a finished document: the editor used to serialise a
+ * snapshot from the render the click happened in and send it with a sha re-read right
+ * before the PATCH, so two quick edits made the later one revert the earlier and the sha
+ * check could never fire.
  */
-export async function commitWorkflow(workflowId: string, next: Workflow): Promise<void> {
-  const cur = await fetch(`/api/knowledge/workflows/${workflowId}`, { cache: 'no-store' });
-  const curBody = await cur.json();
-  if (!cur.ok) throw new Error(curBody.error ?? 'Could not read workflow');
-  const res = await fetch(`/api/knowledge/workflows/${workflowId}`, {
-    method: 'PATCH',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ md: serializeWorkflow(next), sha: curBody.sha }),
-  });
-  const body = await res.json();
-  if (!res.ok) throw new Error(body.error ?? 'Save failed');
+export function workflowStore(workflowId: string): WorkflowStore {
+  const url = `/api/knowledge/workflows/${workflowId}`;
+  return {
+    async read() {
+      const res = await fetch(url, { cache: 'no-store' });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error ?? 'Could not read workflow');
+      return { workflow: body.workflow as Workflow, sha: String(body.sha ?? '') };
+    },
+    async patch(md: string, sha: string) {
+      const res = await fetch(url, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ md, sha }),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error ?? 'Save failed');
+    },
+  };
+}
+
+/** Commit a change to the one source (`workflow.md`) as a reducer over the fresh document. */
+export function commitWorkflow(workflowId: string, reduce: WorkflowReducer): Promise<void> {
+  return commitReducer(workflowStore(workflowId), reduce);
 }

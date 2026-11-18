@@ -800,6 +800,21 @@ and they generalise to any derived-or-declared collection:
 Derived entries also get a **deterministic** id (`stableActorId`), so writing the
 derivation back is a fixed point rather than a file that churns on every load.
 
+**A queued write must carry a REDUCER, never a finished document.** Queueing the
+workflow editor's commits fixed the dropped edit and introduced a quieter bug:
+each queued task held a whole document serialised in the render where the click
+happened, so the task behind reverted the one in front — and because the commit
+re-read the sha immediately before its PATCH, the optimistic-concurrency check
+could never fire. A commit is now `(fresh: Workflow) => Workflow` applied to the
+document the store just returned, committed with **that read's** sha
+(`tabs/knowledge/lib/workflow-commit.ts`). Two rules fall out of it:
+
+- **Read, reduce, write — inside the task.** Anything serialised before the task
+  runs is a snapshot, and a snapshot plus a fresh sha is a lost update wearing a
+  concurrency check.
+- **A sha re-read next to the write is not a check.** The token must come from the
+  same read as the data it describes, or it only proves the server was reachable.
+
 **"Drop the action if one is already in flight" loses the user's work.** The
 workflow editor's `mutate` returned early while a previous commit+reload ran, and
 every field committed on blur — so "type, then click" dropped the edit with no
@@ -812,6 +827,27 @@ the user typed). A busy flag may disable a button; it must never swallow an edit
 `defaultValue` plus no key means React keeps the previous item's DOM state, so
 selecting another step showed the first step's text — and because the fields also
 committed on blur, the stale text could be saved onto the new step.
+
+**An unsaved-changes guard belongs to whoever owns the selection.** Putting it on
+the inspector's own ✕ guards one exit out of five: the parent still changed
+`selectedStep` / `selectedActor` / `panel`, and the keyed inspector remounted with
+the draft gone. The child reports dirtiness (`onDirtyChange({ dirty, save })`), the
+parent routes every move through one `navigate(intent)` and renders one prompt
+(`tabs/knowledge/lib/editor-guard.ts`). Two guards on one exit is worse than none —
+the user answers twice — so when the parent gained the prompt the children lost
+theirs. The registered `save` must read the CURRENT draft (a ref assigned each
+render), or the guard saves whatever the draft was when dirtiness last flipped.
+
+**"• unsaved" has to be computed on the values the store keeps.** The step
+mutations trim the title, drop blank I/O lines and trim the note, so comparing the
+raw textarea text with the saved step reported "dirty" immediately after a
+successful save. Normalise both sides first (`tabs/knowledge/lib/step-draft.ts`).
+
+**A slug is not an id.** `Loan Officer` and `Loan-Officer` slugify identically, so
+one derived id addressed two registry actors: deleting one removed both, the
+inspector always opened the first, and React logged duplicate keys. Uniquify on
+generation (`-2`, `-3`, …) and delete by object identity, not by id — a
+hand-edited file can still carry the same id twice.
 
 **Never restate a route path that already exists in the nav.** The Drive OAuth
 callback sent every user to `/files`, which exists only as an API path and has

@@ -399,3 +399,35 @@ os-ui/node_modules/.bin/tsc --noEmit -p os-ui   clean
   through the commit queue. It is already an explicit-Save surface, so it has neither defect; moving
   it behind the queue would be a refactor beyond this fix.
 * Links and step rules remain immediate commits by design (they are actions, not text fields).
+
+## Rollback note — READ BEFORE REVERTING THIS BRANCH
+
+This build always writes an `actors:` key, including `actors: []`. The build on `main` **re-derives
+the registry from the steps whenever the key is absent or empty-looking**, so rolling back while
+such files exist resurrects every actor that was deleted here (each step's (category, name) seeds a
+registry entry again, and the resurrected entries arrive without ids, so they cannot be deleted
+until this branch is restored). A rollback is therefore not neutral for workflows edited in the
+meantime: either keep the actor deletions and re-apply them after the revert, or roll forward.
+
+---
+
+# REVIEW ROUND 1 (independent review of PR #55, 2026-11-18)
+
+| # | Finding | Fix | Test |
+|---|---|---|---|
+| H1 | Lost update: `mutate` enqueued an already-serialised document built from the render's `workflow` prop, and `commitWorkflow` re-read the sha immediately before the PATCH, so the check could never fire | a commit is now a **reducer** (`lib/workflow-commit.ts` → `commitReducer`): the queued task reads the workflow **and its sha**, applies the reducer to THAT document and PATCHes with THAT sha. `ui/commitWorkflow.ts` is the one `fetch` store. Every call site in `StepInspector`, `ActorInspector`, `ActorsPanel`, `RulesPanel` and the canvas add-step form passes a reducer; the list ✕ / "Make soft" buttons also carry `disabled={saving}` | `workflow-commit.test.ts` — *two edits queued back to back BOTH land*, *an add and a remove queued together both survive*, *commitReducer PATCHes with the sha it just read*, *sends exactly the serialisation of the reduced fresh document* |
+| H2 | Draft discarded with no guard when the selection or panel changed (the guard lived on the ✕ only) | dirtiness is reported up (`onDirtyChange({ dirty, save })`); `WorkflowView` owns one prompt (Save & continue / Discard changes / Keep editing) and **every** exit goes through `navigate(intent)` — canvas selection, deselect, actor row, panel strip, both ✕ buttons. Decision logic is the pure `lib/editor-guard.ts` | `editor-guard.test.ts` (6 tests) + `editor-source.test.ts` → *the unsaved-changes guard covers EVERY exit, not just the ✕* (also asserts no `setPanel(` / `setSelectedStep(` bypass) |
+| M1 | `setActErr('')` never cleared once the queue owned the banner | each queued task clears it before committing | `editor-source.test.ts` → *every commit is a reducer …* asserts `setActErr('')` |
+| M2 | `Loan Officer` / `Loan-Officer` shared one `stableActorId` → one delete removed both | `withActorIds` uniquifies (`-2`, `-3`, …); `removeActor` filters by **object identity** | `actor-registry.test.ts` → *two actors whose names slugify alike still get DISTINCT ids*, *deleting one of two like-slugged actors leaves the other*, *renaming one … touches only its own steps* |
+| M3 | "• unsaved" never cleared: raw draft vs normalised store | `lib/step-draft.ts` normalises both sides the way `setStepIO` / `updateStep` / `serializeTacit` store them | `step-draft.test.ts` (7 tests, incl. *trailing spaces, blank lines and a trailing newline are NOT a change*) |
+| M4 | Rollback resurrects deleted actors | documented above and in the PR body (no code change — it is a property of the old build) | n/a |
+| L1 | `useRef(createCommitQueue(…))` rebuilt a queue every render; late failures hit a dead tree | lazy `useRef<CommitQueue \| null>(null)` + a `mountedRef`: after unmount the failure is `console.error`ed instead of set as state | `editor-source.test.ts` → *the commit queue is created lazily, not on every render* |
+| L2 | A hand-written lazy continuation line (no `>`) would be dropped by the next commit | the scanner honours markdown's lazy continuation: unquoted prose directly under the blockquote is kept; a blank line, a fence, a `---` or a heading ends the note | `schema.test.ts` → *a hand-written lazy continuation line (no > prefix) is kept, not dropped*, *a blank line, a fence or a --- ends the note* |
+| L3 | `actorKey` ignored interior whitespace, so `Loan  Officer` looked unknown and no rename reached it | `actorKey` collapses interior whitespace as well as trimming | `actor-registry.test.ts` → *a step referencing "Loan  Officer" resolves …*, *a rename reaches a step whose reference has interior double spaces*, *a reassigning delete reaches …* |
+
+Two deliberate choices inside these fixes:
+
+* **The guard lives in exactly one place.** The inspectors' own close-confirmation was removed when
+  the parent gained the prompt — two guards on the same exit means the user answers twice.
+* **`RulesPanel` moved to reducers too**, although the review only named the inspectors: it is the
+  same lost-update shape in the same editor, and the change was mechanical.
