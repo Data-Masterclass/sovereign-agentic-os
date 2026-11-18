@@ -161,6 +161,11 @@ export const knowledgeWriteTools: McpTool[] = [
               name: { type: 'string', description: 'e.g. "Loan Officer", "Salesforce API", "Campaign Optimizer".' },
               category: { type: 'string', enum: ['Human', 'Software', 'Agent', 'Customer', 'Partner'] },
               description: { type: 'string', description: 'One line on this actor\'s role — applies to every category, e.g. "Salesforce API — nightly REST ingestion".' },
+              prompt: {
+                type: 'string',
+                description:
+                  'For an `Agent` actor: its LONG prompt (markdown, multi-line). It becomes the head of that agent\'s AGENT.md when an agent system is scaffolded from this process, with the steps assigned to the actor appended automatically — so write the actor\'s identity, judgement and tone here, not the step mechanics.',
+              },
             },
             required: ['name', 'category'],
           },

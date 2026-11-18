@@ -411,7 +411,11 @@ function coerceActor(raw: unknown): Actor | null {
   const category = String(raw.category ?? '') as ActorType;
   if (!name || !ACTOR_TYPES.includes(category)) return null;
   const actor: Actor = { name, category };
+  if (typeof raw.id === 'string' && raw.id.trim()) actor.id = raw.id.trim();
   if (typeof raw.description === 'string' && raw.description.trim()) actor.description = raw.description.trim();
+  // An Agent actor's long prompt is the head of its AGENT.md — a bundle that dropped it
+  // would import a workflow whose agents had lost their brief.
+  if (typeof raw.prompt === 'string' && raw.prompt.trim()) actor.prompt = raw.prompt.trim();
   return actor;
 }
 

@@ -171,7 +171,7 @@ export function removeStepRule(input: Workflow, id: string, ruleId: string): Wor
 /** Add an actor to the workflow's registry. Deduped by (category, name). */
 export function addActor(
   input: Workflow,
-  actor: { name: string; category: ActorType; description?: string },
+  actor: { name: string; category: ActorType; description?: string; prompt?: string },
 ): Workflow {
   const name = actor.name.trim();
   if (!name) throw new KnowledgeError('An actor needs a name');
@@ -186,6 +186,8 @@ export function addActor(
     category: actor.category,
   };
   if (actor.description?.trim()) next.description = actor.description.trim();
+  // An Agent actor's long prompt — the head of the AGENT.md the scaffold writes.
+  if (actor.prompt?.trim()) next.prompt = actor.prompt.trim();
   w.actors.push(next);
   return w;
 }
@@ -202,7 +204,7 @@ export function addActor(
 export function updateActor(
   input: Workflow,
   actorId: string,
-  patch: Partial<Pick<Actor, 'name' | 'category' | 'description'>>,
+  patch: Partial<Pick<Actor, 'name' | 'category' | 'description' | 'prompt'>>,
 ): Workflow {
   const w = structuredClone(input);
   const a = w.actors.find((x) => x.id === actorId);
@@ -214,6 +216,13 @@ export function updateActor(
     const d = patch.description.trim();
     if (d) a.description = d;
     else delete a.description;
+  }
+  // The long agent prompt. An empty string DELETES it (same shape as description), while an
+  // omitted key leaves it alone — the inspector saves name/category/description/prompt together.
+  if (patch.prompt !== undefined) {
+    const p = patch.prompt.trim();
+    if (p) a.prompt = p;
+    else delete a.prompt;
   }
   const dup = w.actors.find((x) => x.id !== a.id && actorKey(x.category, x.name) === actorKey(a.category, a.name));
   if (dup) throw new KnowledgeError(`Another actor is already named '${a.name}' (${a.category})`);

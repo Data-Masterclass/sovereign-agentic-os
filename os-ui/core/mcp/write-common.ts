@@ -99,6 +99,9 @@ export function mapActors(v: unknown): Actor[] {
       if (!name) return null;
       const actor: Actor = { name, category };
       if (str(a.description).trim()) actor.description = str(a.description).trim();
+      // An Agent actor's long prompt — the head of the AGENT.md a scaffolded agent system
+      // carries, so the MCP authoring twin can write it exactly as the editor does.
+      if (str(a.prompt).trim()) actor.prompt = str(a.prompt).trim();
       return actor;
     })
     .filter((a): a is Actor => a !== null);

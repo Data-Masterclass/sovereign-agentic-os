@@ -159,6 +159,24 @@ test('resolveKnowledgeLinks: resolves known links, flags unresolvable, dedupes, 
   assert.ok(unresolved.some((u) => u.href.includes('other.md')));
 });
 
+test('an Agent actor prompt survives an OKF export → import round trip', () => {
+  // The prompt is the head of the AGENT.md the agent system carries, so an export that
+  // dropped it would hand the importer a workflow whose agents had lost their brief.
+  const withAgent: Workflow = {
+    ...wf,
+    actors: [
+      ...wf.actors,
+      { id: 'actor-agent-triage-bot', name: 'Triage Bot', category: 'Agent', prompt: '# Triage Bot\n\nYou triage.' },
+    ],
+  };
+  const doc = workflowToOkfDoc(withAgent, { id: 'wf_x', owner: 'u1', domain: 'sales', tier: 'Personal' });
+  const back = okfDocToWorkflow(doc, 'wf_x', 'sales');
+  const bot = back.actors.find((a) => a.name === 'Triage Bot');
+  assert.ok(bot, 'the Agent actor survives');
+  assert.equal(bot?.prompt, '# Triage Bot\n\nYou triage.');
+  assert.equal(bot?.id, 'actor-agent-triage-bot', 'the actor id survives too');
+});
+
 test('renderIndexMd: subdirectories + concepts render in spec form', () => {
   const md = renderIndexMd([
     { path: 'metrics/index.md', title: 'Metrics', description: 'The numbers.', isDir: true },

@@ -15,6 +15,8 @@ import {
   addStepRule,
   setStepRuleHard,
   removeStepRule,
+  addActor,
+  updateActor,
 } from '@tabs/knowledge/lib/step-edit';
 
 const BASE = `---
@@ -111,4 +113,30 @@ test('edits survive a serialize → parse round-trip', () => {
 
 test('removeStep on unknown id throws', () => {
   assert.throws(() => removeStep(wf(), 'nope'), /not in this workflow/);
+});
+
+// ------------------------------------- an Agent actor's long prompt (the AGENT.md) ---
+
+test('addActor stores an Agent actor prompt', () => {
+  const w = addActor(wf(), { name: 'Triage Bot', category: 'Agent', prompt: '# Triage Bot\n\nYou triage.' });
+  assert.equal(w.actors[0].prompt, '# Triage Bot\n\nYou triage.');
+  assert.equal(parseWorkflow(serializeWorkflow(w)).actors[0].prompt, '# Triage Bot\n\nYou triage.');
+});
+
+test('updateActor replaces a prompt, and an empty string removes it', () => {
+  const w0 = addActor(wf(), { name: 'Triage Bot', category: 'Agent', prompt: 'first' });
+  const id = w0.actors[0].id!;
+  const w1 = updateActor(w0, id, { prompt: 'second' });
+  assert.equal(w1.actors[0].prompt, 'second');
+  assert.equal(w0.actors[0].prompt, 'first', 'the input is never mutated');
+  const w2 = updateActor(w1, id, { prompt: '' });
+  assert.equal(w2.actors[0].prompt, undefined);
+  assert.ok(!/prompt:/.test(serializeWorkflow(w2)), 'an emptied prompt leaves no key behind');
+});
+
+test('updateActor leaves the prompt alone when the patch omits it', () => {
+  const w0 = addActor(wf(), { name: 'Triage Bot', category: 'Agent', prompt: 'keep me' });
+  const w1 = updateActor(w0, w0.actors[0].id!, { name: 'Triage Desk' });
+  assert.equal(w1.actors[0].name, 'Triage Desk');
+  assert.equal(w1.actors[0].prompt, 'keep me');
 });

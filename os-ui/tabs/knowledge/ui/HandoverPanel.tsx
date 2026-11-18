@@ -4,30 +4,28 @@
 'use client';
 
 import { useState } from 'react';
-import type { Workflow, WorkflowStep } from '@tabs/knowledge/lib/schema';
+import type { Workflow } from '@tabs/knowledge/lib/schema';
+import { defaultDisposition, planAgents, type Disposition } from '@tabs/knowledge/lib/actor-prompt';
 import ActionButton from '@core/ui/core/ActionButton';
 
 /**
  * Handovers-out panel — how this workflow flows into the rest of the OS:
  *   1. BUILD AN AGENT — suggest a graph scaffold from the steps, with a per-step
  *      AUGMENT (agent-assisted) / AUTOMATE (agent-run) / MANUAL choice; create it
- *      in the Agents tab (the whole workflow attaches as governed context).
+ *      in the Agents tab (the whole workflow attaches as governed context). The agent
+ *      COUNT and the per-step "agent <id>" hint come from `planAgents` — the very plan
+ *      `scaffoldSystem` builds — because an Agent ACTOR's steps fold into ONE agent and
+ *      counting non-manual steps would promise the user more agents than they get.
  *   2. ATTACH AS CONTEXT — the ref other tabs (Data / Agents / Software) use to
  *      pull this workflow in as AI context while building.
  * Execution lives in the Agents tab; Knowledge only hands off the design.
  */
-
-type Disposition = 'manual' | 'augment' | 'automate';
 
 const DISPOSITIONS: { value: Disposition; label: string; hint: string }[] = [
   { value: 'manual', label: 'Manual', hint: 'human/software handoff' },
   { value: 'augment', label: 'Augment', hint: 'agent assists a human' },
   { value: 'automate', label: 'Automate', hint: 'agent runs the step' },
 ];
-
-function defaultDisp(step: WorkflowStep): Disposition {
-  return step.actor === 'Agent' ? 'automate' : 'manual';
-}
 
 export default function HandoverPanel({
   workflow,
@@ -39,12 +37,18 @@ export default function HandoverPanel({
   canEdit: boolean;
 }) {
   const [disp, setDisp] = useState<Record<string, Disposition>>(
-    Object.fromEntries(workflow.steps.map((s) => [s.id, defaultDisp(s)])),
+    Object.fromEntries(workflow.steps.map((s) => [s.id, defaultDisposition(s)])),
   );
   const [created, setCreated] = useState<{ systemId: string } | null>(null);
   const [error, setError] = useState('');
 
-  const agentCount = Object.values(disp).filter((d) => d !== 'manual').length;
+  // The SAME plan the scaffold builds, so the count on the button is the number of agents
+  // the user will actually get: every step of one Agent actor folds into that actor's agent.
+  const plan = planAgents(workflow, disp);
+  const agentCount = plan.actorAgents.length + plan.stepAgents.length;
+  const agentForStep = (stepId: string): string | undefined =>
+    plan.actorAgents.find((a) => a.steps.some((s) => s.id === stepId))?.agentId
+    ?? plan.stepAgents.find((s) => s.step.id === stepId)?.agentId;
 
   // Returns a promise so <ActionButton> can drive busy → ✓/error + the success toast.
   // We throw on failure; ActionButton catches it and toasts the message, and we also
@@ -72,7 +76,9 @@ export default function HandoverPanel({
       {/* ── Build an agent ── */}
       <div className="section-title" style={{ marginTop: 0 }}>Build an agent from this workflow</div>
       <p className="hint" style={{ marginTop: 0 }}>
-        Augment/automate steps become agents; the rest stay human/software handoffs.
+        Every step of an actor that <em>is</em> an agent folds into that one agent, carrying the long
+        prompt from the actor&rsquo;s panel. Other steps become an agent only where you choose
+        augment or automate; the rest stay human/software handoffs.
       </p>
 
       {workflow.steps.length === 0 ? (
@@ -83,7 +89,10 @@ export default function HandoverPanel({
             <div key={s.id} className="ho-step">
               <div className="ho-step-info">
                 <span className="ho-step-title">{s.title}</span>
-                <span className="muted" style={{ fontSize: 11 }}>{s.actor}{s.actor_name ? ` · ${s.actor_name}` : ''}</span>
+                <span className="muted" style={{ fontSize: 11 }}>
+                  {s.actor}{s.actor_name ? ` · ${s.actor_name}` : ''}
+                  {agentForStep(s.id) ? <> · agent <span className="mono">{agentForStep(s.id)}</span></> : ''}
+                </span>
               </div>
               <div className="ho-disp" role="group" aria-label={`Disposition for ${s.title}`}>
                 {DISPOSITIONS.map((d) => (

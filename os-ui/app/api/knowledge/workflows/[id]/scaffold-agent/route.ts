@@ -13,8 +13,13 @@ export const dynamic = 'force-dynamic';
  * POST → SUGGEST an agent-system scaffold from this workflow's steps (handover to
  * the Agents tab). Body: { dispositions?: {stepId: manual|augment|automate},
  * create?: boolean }. Without `create` we just return the proposed system.yaml +
- * the per-step preview; with `create` we materialise it in the Agents tab (the
- * whole workflow is attached as context via grants.knowledge) and return its id.
+ * the preview; with `create` we materialise it in the Agents tab (the whole
+ * workflow is attached as context via grants.knowledge) and return its id.
+ *
+ * The preview has two lists: `actorAgents` — one agent per Agent ACTOR, carrying the
+ * actor's long prompt plus the steps it owns — and `agentSteps`, the single-step agents
+ * (an augmented/automated non-Agent step, or an Agent step whose actor is not in the
+ * registry). `manualSteps` are the remaining human/software handoffs.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export const POST = withRoute<{ id: string }, any>(async ({ user, params, body }) => {
@@ -32,6 +37,7 @@ export const POST = withRoute<{ id: string }, any>(async ({ user, params, body }
       return NextResponse.json({
         created: true,
         systemId: rec.id,
+        actorAgents: scaffold.actorAgents,
         agentSteps: scaffold.agentSteps,
         manualSteps: scaffold.manualSteps,
       });
@@ -40,6 +46,7 @@ export const POST = withRoute<{ id: string }, any>(async ({ user, params, body }
     return NextResponse.json({
       created: false,
       yaml: scaffold.yaml,
+      actorAgents: scaffold.actorAgents,
       agentSteps: scaffold.agentSteps,
       manualSteps: scaffold.manualSteps,
     });
