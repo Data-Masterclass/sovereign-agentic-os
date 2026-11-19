@@ -176,7 +176,18 @@ export type ReviewCard = {
    * security verdict", which is a different fact from "approved".
    */
   approvedWithoutScan?: true;
-  /** The admin's mandatory written reason (>= 20 characters). Present with `approvedWithoutScan`. */
+  /**
+   * The SECOND audited state (PR #63 re-review H-1): the engine RAN, found nothing blocking, and
+   * declared a category it could not cover — today `deps`, when the tree has a dependency manifest
+   * but no lockfile for the scanner to resolve. That is not "no verdict" (an engine did run and
+   * the secret scan DID cover every file) and it is not a failure (there is nothing to fix), so it
+   * gets its own label rather than being folded into either. Lists the uncovered categories.
+   */
+  approvedWithUncoveredCategories?: ScanCategory[];
+  /**
+   * The admin's mandatory written reason (>= 20 characters). Present with `approvedWithoutScan`
+   * OR `approvedWithUncoveredCategories`.
+   */
   noScanReason?: string;
 };
 

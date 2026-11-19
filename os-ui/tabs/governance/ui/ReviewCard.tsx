@@ -52,6 +52,8 @@ export type ReviewCardData = {
   note?: string;
   /** Set when an admin approved this deploy while there was NO security verdict. */
   approvedWithoutScan?: boolean;
+  /** Set when an admin approved it on a scan that RAN but could not cover these categories. */
+  approvedWithUncoveredCategories?: ('sast' | 'deps' | 'secrets')[];
   noScanReason?: string;
 };
 
@@ -108,13 +110,25 @@ export default function ReviewCard({
   const r = card.requested;
   const decided = card.decision !== 'pending';
 
+  // The three not-passed states, mirroring `scanGate` in `tabs/software/lib/review.ts` (which is
+  // the AUTHORITY — this only avoids offering a press the server would refuse):
+  //   no verdict  — nothing ran.
+  //   blocking    — the engine found a secret or a high/critical finding. Never acknowledgeable.
+  //   uncovered   — it ran, found nothing blocking, and named a category it could not cover
+  //                 (`deps`, when the tree declares dependencies and commits no lockfile).
   const noVerdict = card.scan.unavailable === true;
-  const mayAck = noVerdict && canAcknowledgeNoScan;
+  const blocking = card.scan.findings.some(
+    (f) => f.category === 'secrets' || f.severity === 'high' || f.severity === 'critical',
+  );
+  const uncovered = (card.scan.notRun ?? []).filter((c) => c !== 'sast');
+  const uncoveredGate = !noVerdict && !card.scan.passed && !blocking && uncovered.length > 0;
+  const incomplete = noVerdict || uncoveredGate;
+  const mayAck = incomplete && canAcknowledgeNoScan;
   const ackReady = ack && ackReason.trim().length >= NO_SCAN_REASON_MIN;
-  // Approve is blocked when there is no verdict — UNLESS an admin has explicitly acknowledged it
-  // in writing. `decideDeploy` enforces the identical rule; this only stops a press that would
+  // Approve is blocked on an incomplete scan — UNLESS an admin has explicitly acknowledged it in
+  // writing. `decideDeploy` enforces the identical rule; this only stops a press that would
   // certainly 409/400.
-  const approveBlocked = noVerdict && !(mayAck && ackReady);
+  const approveBlocked = incomplete && !(mayAck && ackReady);
 
   async function decide(decision: 'approve' | 'deny') {
     if (!onDecide || busy) return;
@@ -150,8 +164,15 @@ export default function ReviewCard({
             render as "security scan FAILED (0 findings)" — which reads as "we looked and it is
             broken" when it means "nothing looked". The approver has to be able to tell those
             apart, because only one of them is fixed by changing the code. */}
-        <span className={`badge ${card.scan.unavailable ? 'warn' : card.scan.passed ? 'ok' : 'err'}`}>
-          security scan {card.scan.unavailable ? 'NOT RUN' : card.scan.passed ? 'passed' : 'FAILED'}
+        <span className={`badge ${noVerdict || uncoveredGate ? 'warn' : card.scan.passed ? 'ok' : 'err'}`}>
+          security scan{' '}
+          {noVerdict
+            ? 'NOT RUN'
+            : card.scan.passed
+              ? 'passed'
+              : uncoveredGate
+                ? `INCOMPLETE (${uncovered.join(', ')} not covered)`
+                : 'FAILED'}
         </span>{' '}
         <span className="muted" style={{ fontSize: 12 }}>
           {/* A category NO engine covered is printed as "not run", never as `0`. Trivy finds
@@ -229,7 +250,18 @@ export default function ReviewCard({
         <div className="muted" style={{ fontSize: 12, marginTop: 10 }}>
           {/* "approved" and "approved WITHOUT a security verdict" are different facts, and the
               second one must never be readable as the first. */}
-          {card.approvedWithoutScan && card.decision === 'approved' ? (
+          {card.approvedWithUncoveredCategories?.length && card.decision === 'approved' ? (
+            <>
+              <span className="badge warn">
+                approved without a {card.approvedWithUncoveredCategories.join('/')} verdict
+              </span>{' '}
+              by {card.decidedBy}
+              {card.noScanReason ? (
+                <div style={{ marginTop: 4 }}>reason given: {card.noScanReason}</div>
+              ) : null}
+              {card.note ? <div style={{ marginTop: 4 }}>note: {card.note}</div> : null}
+            </>
+          ) : card.approvedWithoutScan && card.decision === 'approved' ? (
             <>
               <span className="badge warn">approved without a security verdict</span>{' '}
               by {card.decidedBy}
@@ -265,13 +297,29 @@ export default function ReviewCard({
             disabled={busy || approveBlocked}
             title={approveBlocked ? card.scan.reason : undefined}
           >
-            {busy ? <span className="spin" /> : mayAck && ackReady ? 'Approve without a scan' : 'Approve & go live'}
+            {busy
+              ? <span className="spin" />
+              : mayAck && ackReady
+                ? uncoveredGate ? `Approve without a ${uncovered.join('/')} verdict` : 'Approve without a scan'
+                : 'Approve & go live'}
           </button>
           <button className="btn ghost" onClick={() => decide('deny')} disabled={busy}>Deny</button>
-          {noVerdict && !mayAck ? (
+          {incomplete && !mayAck ? (
             <span className="hint" style={{ flexBasis: '100%' }}>
-              Cannot approve: there is no security verdict. {card.scan.reason} Wire a scanner, or
-              ask an Administrator to approve without one — that decision is recorded.
+              {uncoveredGate ? (
+                <>
+                  Cannot approve: the scan found nothing, but it could not cover {uncovered.join(', ')}.
+                  {uncovered.includes('deps')
+                    ? ' Commit a lockfile so the dependencies can be resolved, and re-request the deploy'
+                    : ' Commit what the scanner needs and re-request the deploy'}
+                  , or ask an Administrator to acknowledge the gap — that decision is recorded.
+                </>
+              ) : (
+                <>
+                  Cannot approve: there is no security verdict. {card.scan.reason} Wire a scanner, or
+                  ask an Administrator to approve without one — that decision is recorded.
+                </>
+              )}
             </span>
           ) : null}
           {mayAck ? (
@@ -279,9 +327,20 @@ export default function ReviewCard({
               <label className="row" style={{ gap: 6, alignItems: 'flex-start', fontSize: 12 }}>
                 <input type="checkbox" checked={ack} onChange={(e) => setAck(e.target.checked)} />
                 <span>
-                  <strong>Approve without a security verdict.</strong> No scanner produced a result
-                  for this deploy. Approving anyway is recorded against your name in the audit log,
-                  with the reason below.
+                  {uncoveredGate ? (
+                    <>
+                      <strong>Approve without a {uncovered.join('/')} verdict.</strong> The scanner
+                      ran and found nothing, but it could not cover {uncovered.join(', ')}
+                      {uncovered.includes('deps') ? ' (no lockfile to resolve)' : null}. Approving
+                      anyway is recorded against your name in the audit log, with the reason below.
+                    </>
+                  ) : (
+                    <>
+                      <strong>Approve without a security verdict.</strong> No scanner produced a
+                      result for this deploy. Approving anyway is recorded against your name in the
+                      audit log, with the reason below.
+                    </>
+                  )}
                 </span>
               </label>
               {ack ? (

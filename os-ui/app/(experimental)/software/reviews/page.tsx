@@ -41,6 +41,12 @@ export default function ReviewsPage() {
       });
       const body = await res.json();
       if (!res.ok) setMsg(`✗ ${body.error}`);
+      else if (body.card?.approvedWithUncoveredCategories?.length)
+        setMsg(
+          `✓ Deploy approved WITHOUT a ${body.card.approvedWithUncoveredCategories.join('/')} ` +
+            `verdict — ${body.app.name} is now ${body.app.deploy.state}. Recorded in the audit ` +
+            `log against your name.`,
+        );
       else if (body.card?.approvedWithoutScan)
         setMsg(
           `✓ Deploy approved WITHOUT a security verdict — ${body.app.name} is now ` +

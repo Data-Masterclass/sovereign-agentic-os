@@ -216,11 +216,14 @@ export async function resolveScan(
     // "there is no Kubernetes API at all" — the laptop — may fall back, and even then the
     // scanner's reason travels with the result.
     if (live.kind === 'scan-failed') {
+      // The baseline is read ONCE (re-review L-2): it re-scans every file, and the findings and
+      // the summary are two views of one pass, not two passes.
+      const evidence = securityScan(files, 'offline-mock');
       return {
         mode: 'unavailable',
         passed: false,
-        findings: securityScan(files, 'offline-mock').findings,
-        summary: securityScan(files, 'offline-mock').summary,
+        findings: evidence.findings,
+        summary: evidence.summary,
         scannedAt: new Date().toISOString(),
         unavailable: true,
         reason: live.reason,

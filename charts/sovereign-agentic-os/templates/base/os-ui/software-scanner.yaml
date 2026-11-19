@@ -72,8 +72,12 @@ rules:
   {{- /* THE APP'S SOURCE travels to the scan pod in a Secret mounted read-only — not an env var
          (a container argument is capped by Linux MAX_ARG_STRLEN at 128 KiB, which a real app tree
          exceeds: the container then fails to start with E2BIG and EVERY scan comes back
-         `unavailable`) and not a ConfigMap (a Secret is redacted in API audit logs and can be
-         encrypted at rest).
+         `unavailable`) and not a ConfigMap. A Secret is the better carrier on two counts, each
+         with its condition stated: its contents are omitted from the API audit log wherever the
+         cluster's audit policy sets level `Metadata` for `secrets` (the common default, and what
+         STACKIT/SKE ships — but it IS a cluster policy, not a property of the object), and it can
+         be encrypted at rest where an EncryptionConfiguration covers secrets. A ConfigMap gets
+         neither treatment anywhere.
          `create` + `delete` ONLY. Deliberately NO `get` and NO `list`: the ServiceAccount must
          not be able to READ any secret in this namespace, and it never needs to — it writes the
          payload and deletes it. Deliberately no `patch`/`update` either: the owner reference that

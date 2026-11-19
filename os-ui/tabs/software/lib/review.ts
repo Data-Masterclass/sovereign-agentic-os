@@ -23,7 +23,7 @@ import {
   AUDITED_OVERRIDE_REASON_MIN,
 } from '@core/policy/approvals';
 import { record as recordAudit } from '@core/policy/audit';
-import { resolveScan } from '@tabs/software/lib/scan';
+import { resolveScan, type ResolveScanOpts } from '@tabs/software/lib/scan';
 import { resolveSurface } from '@tabs/software/lib/metadata';
 import { ungrantedDatasetWarningForApp } from '@tabs/software/lib/dataset-guard';
 import { getSnapshot, hydrateSnapshot } from '@tabs/software/lib/snapshot';
@@ -44,7 +44,9 @@ import type {
   DiffSummary,
   ResourceFootprint,
   ReviewCard,
+  ScanCategory,
   ScanMode,
+  ScanResult,
   ScaffoldFile,
 } from '@tabs/software/lib/model';
 
@@ -320,7 +322,7 @@ export type DeployRequestResult =
 export async function requestDeploy(
   appId: string,
   user: CurrentUser,
-  opts: { changedFiles?: DiffSummary['files']; scanMode?: ScanMode } = {},
+  opts: { changedFiles?: DiffSummary['files']; scanMode?: ScanMode; scan?: ResolveScanOpts } = {},
 ): Promise<DeployRequestResult> {
   // EXISTENCE FIRST (F2-1) — see startPreview.
   const app = await getAppForUser(appId, user);
@@ -369,7 +371,7 @@ export async function requestDeploy(
   // completed; a failed Job, a timeout or an unreachable API server leave the scan
   // `unavailable` with the real cause, and `decideDeploy` below still refuses to approve one.
   // Passing a mode here wins, which is what the unit suite does.
-  const scan = await resolveScan(app.slug, files, opts.scanMode);
+  const scan = await resolveScan(app.slug, files, opts.scanMode, opts.scan);
 
   // Routine update within the approved envelope + a clean scan + NO dataset warning →
   // auto-deploy. An ungranted-dataset reference re-opens the review gate so it is seen.
@@ -502,6 +504,46 @@ async function applyDeployDecisionToApp(
 }
 
 /**
+ * WHY a scan did not pass — because the three answers need three different behaviours, and the
+ * first implementation of the hatch had only two (PR #63 re-review H-1).
+ *
+ *   `passed`    — nothing to decide.
+ *   `blocking`  — the engine found something: a secret, or a high/critical finding. NEVER
+ *                 acknowledgeable. Fix it and re-request.
+ *   `no-verdict`— no engine ran at all (`unavailable`). The audited admin hatch exists for this.
+ *   `uncovered` — the engine RAN, found nothing blocking, and declared a category it could not
+ *                 cover (`notRun` beyond the always-uncovered `sast`): today `deps`, when a tree
+ *                 declares dependencies and commits no lockfile. This was the DEAD END: `passed`
+ *                 is false and `unavailable` is unset, so the old code took the "fix the findings"
+ *                 branch — for a card with zero findings — and refused the hatch, which made every
+ *                 generated app undeployable on a scanner-enabled cluster. It is acknowledgeable,
+ *                 on the same admin-only, written-reason, audited terms as `no-verdict`.
+ *
+ * `sast` is excluded from `uncovered` deliberately: no allowlisted SAST engine exists, the card
+ * says so on every scan, and treating it as a gap would mean every deploy needed an
+ * acknowledgement — which is how an audited exception becomes a rubber stamp.
+ */
+export type ScanGate =
+  | { kind: 'passed' }
+  | { kind: 'blocking' }
+  | { kind: 'no-verdict' }
+  | { kind: 'uncovered'; categories: ScanCategory[] };
+
+export function scanGate(scan: ScanResult): ScanGate {
+  if (scan.passed) return { kind: 'passed' };
+  if (scan.unavailable) return { kind: 'no-verdict' };
+  const blocking = scan.findings.some(
+    (f) => f.category === 'secrets' || f.severity === 'high' || f.severity === 'critical',
+  );
+  if (blocking) return { kind: 'blocking' };
+  const categories = (scan.notRun ?? []).filter((c) => c !== 'sast');
+  if (categories.length > 0) return { kind: 'uncovered', categories };
+  // A scan that did not pass, found nothing blocking and covered everything should not exist.
+  // Treat the unknown case as blocking: an unexplained refusal must never open the hatch.
+  return { kind: 'blocking' };
+}
+
+/**
  * The minimum a written acknowledgement must say before it counts as a record. The number itself
  * lives in `@core/policy/approvals` (`AUDITED_OVERRIDE_REASON_MIN`) — it is a platform-wide
  * property of an auditable justification, not this tab's preference — and is re-exported here
@@ -526,11 +568,12 @@ export type DecideDeployOpts = {
  * go-live). On approval the app goes live and the approved envelope is recorded
  * so later in-envelope updates auto-deploy.
  *
- * THE ONE WAY PAST A MISSING VERDICT (2026-11-19) — `opts.acknowledgeNoScan` + `opts.reason`.
+ * THE ONE WAY PAST AN INCOMPLETE SCAN (2026-11-19) — `opts.acknowledgeNoScan` + `opts.reason`.
  * It is a governance control, not an exemption, and it is fenced four ways:
- *   • the scan must be `unavailable` (NO engine ran). A scan that RAN and FAILED can never be
- *     acknowledged — a real finding still blocks, which is what keeps this from becoming
- *     "click here to skip security";
+ *   • the scan must have produced NO VERDICT (`unavailable`, no engine ran) or an INCOMPLETE one
+ *     (the engine ran, found nothing blocking, and declared a category it could not cover — see
+ *     {@link scanGate}). A scan that FOUND something can never be acknowledged: a real finding
+ *     still blocks, which is what keeps this from becoming "click here to skip security";
  *   • the actor must be `admin`. NOT `domain_admin`: that rank approves artefact promotions in
  *     its own domain and would otherwise inherit a tenant-wide security waiver by accident;
  *   • the acknowledgement must be explicit — the default path still returns the 409;
@@ -588,39 +631,42 @@ export async function decideDeploy(
     );
   }
 
-  // Set once the four gates below all hold; it is what makes the approval, the Governance
-  // effect and the audit row say WHICH KIND of approval this was.
+  // Set once every gate below holds; it is what makes the approval, the Governance effect and the
+  // audit row say WHICH KIND of approval this was.
   let acknowledgedNoScan: string | null = null;
+  let uncovered: ScanCategory[] | null = null;
 
   if (decision === 'approve') {
-    if (!card.scan.passed) {
-      // Two different facts, and an approver must be told which: findings were found, or NOTHING
-      // SCANNED. The second one used to be indistinguishable from the first (2026-11-18) — and
-      // only the second one is acknowledgeable.
-      if (!card.scan.unavailable) {
+    const gate = scanGate(card.scan);
+    if (gate.kind !== 'passed') {
+      // THREE different facts, and an approver must be told which: something was FOUND, NOTHING
+      // ran, or something ran and could not see part of the tree. Only the last two are
+      // acknowledgeable, and the first used to be indistinguishable from the third — which is
+      // what made every lockfile-less app undeployable (re-review H-1).
+      if (gate.kind === 'blocking') {
         throw withStatus(
           new Error(
             'Cannot approve: the security scan did not pass (fix the findings and re-request). ' +
-              'A scan that RAN and FAILED cannot be acknowledged — the no-verdict acknowledgement ' +
-              'applies only when no scanner engine ran at all.',
+              'A scan that FOUND something cannot be acknowledged — the acknowledgement applies ' +
+              'only when no engine ran, or when the engine could not cover a category.',
           ),
           409,
         );
       }
       if (!opts.acknowledgeNoScan) {
-        throw withStatus(
-          new Error(`Cannot approve: there is no security verdict to approve. ${card.scan.reason ?? ''}`.trim()),
-          409,
-        );
+        throw withStatus(new Error(incompleteScanRefusal(card.scan, gate)), 409);
       }
       // ROLE: admin, and only admin. `isBuilder` above already let a builder/domain_admin in to
       // decide; this is a second, higher floor for the waiver specifically.
       if (!roleAtLeast(user.role, 'admin')) {
         throw withStatus(
           new Error(
-            `Only an Administrator can approve a deploy without a security verdict — your role is ` +
-              `${user.role}. Wire a scanner (osUI.software.scanner.enabled), fix the scanner's ` +
-              `failure, or ask an Administrator to acknowledge it.`,
+            `Only an Administrator can approve a deploy on an incomplete security scan — your ` +
+              `role is ${user.role}. ` +
+              (gate.kind === 'uncovered'
+                ? `Commit a lockfile so the dependencies can be resolved, `
+                : `Wire a scanner (osUI.software.scanner.enabled) or fix the scanner's failure, `) +
+              `or ask an Administrator to acknowledge it.`,
           ),
           403,
         );
@@ -629,16 +675,23 @@ export async function decideDeploy(
       if (reason.length < NO_SCAN_REASON_MIN) {
         throw withStatus(
           new Error(
-            `Approving without a security verdict needs a written reason of at least ` +
+            `Approving on an incomplete security scan needs a written reason of at least ` +
               `${NO_SCAN_REASON_MIN} characters — it is the permanent record of why this shipped ` +
-              `unscanned.`,
+              `without ${gate.kind === 'uncovered' ? `a ${gate.categories.join('/')} verdict` : 'a scan'}.`,
           ),
           400,
         );
       }
       acknowledgedNoScan = reason;
-      card.approvedWithoutScan = true;
       card.noScanReason = reason;
+      if (gate.kind === 'uncovered') {
+        // An engine DID run and the secret scan DID cover every file; saying "approved without a
+        // security verdict" here would overstate the gap.
+        uncovered = gate.categories;
+        card.approvedWithUncoveredCategories = gate.categories;
+      } else {
+        card.approvedWithoutScan = true;
+      }
     }
     card.decision = 'approved';
     await applyDeployDecisionToApp(app, 'approve', card.requested);
@@ -658,12 +711,15 @@ export async function decideDeploy(
     // effect recorded after it would be a second write that a crash in between could lose.
     if (acknowledgedNoScan !== null) {
       recordEffect(a, {
-        applied: 'deploy approved WITHOUT a security verdict',
+        applied: uncovered
+          ? `deploy approved with an INCOMPLETE security scan (${uncovered.join(', ')} not covered)`
+          : 'deploy approved WITHOUT a security verdict',
         live: app.deploy.state === 'live',
         approvedWithoutScan: {
           reason: acknowledgedNoScan,
           by: user.id,
           scanMode: card.scan.mode,
+          ...(uncovered ? { uncoveredCategories: uncovered } : {}),
         },
       });
     }
@@ -682,12 +738,15 @@ export async function decideDeploy(
       domain: card.domain,
       reason: acknowledgedNoScan,
       detail: {
-        approvedWithoutScan: true,
+        // Two distinct keys for two distinct facts, so an auditor can search for either: nothing
+        // scanned, or something scanned and named what it could not see.
+        ...(uncovered ? { approvedWithUncoveredCategories: uncovered } : { approvedWithoutScan: true }),
         cardId: card.id,
         appId: app.id,
         appName: app.name,
         role: user.role,
         scanMode: card.scan.mode,
+        scanEngine: card.scan.engine ?? 'none',
         scanReason: card.scan.reason ?? 'no reason recorded on the card',
         findings: card.scan.findings.length,
       },
@@ -703,11 +762,36 @@ export async function decideDeploy(
       state: app.deploy.state,
       ...(acknowledgedNoScan === null
         ? {}
-        : { approvedWithoutScan: true, noScanReason: acknowledgedNoScan }),
+        : uncovered
+          ? { approvedWithUncoveredCategories: uncovered, noScanReason: acknowledgedNoScan }
+          : { approvedWithoutScan: true, noScanReason: acknowledgedNoScan }),
     },
     decision: decision === 'approve' ? 'allow' : 'deny',
   });
   return { app, card };
+}
+
+/**
+ * What an approver is told when a scan is incomplete and they did not acknowledge it. The
+ * `uncovered` wording is the point of re-review H-1(b): "fix the findings and re-request" was
+ * read by a Builder looking at a card with ZERO findings, which names no action they can take.
+ */
+function incompleteScanRefusal(scan: ScanResult, gate: ScanGate): string {
+  if (gate.kind === 'uncovered') {
+    const cats = gate.categories.join(', ');
+    const deps = gate.categories.includes('deps');
+    return (
+      `Cannot approve: the security scan ran and found nothing, but it could not cover ${cats}. ` +
+      (deps
+        ? `Dependencies were not resolvable (no lockfile) — commit a lockfile ` +
+          `(package-lock.json / yarn.lock / poetry.lock / go.sum / …) and re-request the deploy, ` +
+          `or an Administrator may acknowledge the gap in writing. `
+        : `Commit what the scanner needs and re-request the deploy, or an Administrator may ` +
+          `acknowledge the gap in writing. `) +
+      (scan.reason ?? '')
+    ).trim();
+  }
+  return `Cannot approve: there is no security verdict to approve. ${scan.reason ?? ''}`.trim();
 }
 
 // Link Governance approval ids back to a card (best-effort; in-process).
