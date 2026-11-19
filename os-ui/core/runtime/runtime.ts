@@ -5,7 +5,7 @@ import 'server-only';
 import { config } from '@core/kernel/config';
 import {
   callerCredential, runCredentialConfigured, NoRunCredentialError,
-  BudgetExceededError, isBudgetRejection, type CallerContext,
+  BudgetExceededError, GatewayRateLimitedError, isBudgetRejection, type CallerContext,
 } from '@core/infra/litellm-credential';
 import type { CurrentUser } from '@core/kernel/auth';
 import { handleRpc, toolsForTab, listToolsForRole, type McpTab } from '@core/mcp/server';
@@ -228,6 +228,8 @@ export function liteLlmCaller(caller?: CallerContext): LlmCall {
       }
       // A budget rejection is a typed, actionable state — not a raw 400.
       if (isBudgetRejection(res.status, text)) throw new BudgetExceededError(text.slice(0, 300));
+      // A rate-limit 429 keeps its message and gains the gateway's Retry-After (agent engine waits on it).
+      if (res.status === 429) throw new GatewayRateLimitedError(text, res.headers.get('retry-after'));
       throw new Error(`LiteLLM ${res.status}: ${text.slice(0, 300)}`);
     }
 

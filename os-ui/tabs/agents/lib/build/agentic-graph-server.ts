@@ -32,7 +32,7 @@ import { runNode, type AgenticGraphResult, type AgenticGraphDeps } from '@tabs/a
 import { liveEmbedder } from '@core/infra/context/librarian-live';
 import { runGraphEngine } from '@tabs/agents/lib/engine/run';
 import { selectCheckpointer, type CheckpointerKind } from '@tabs/agents/lib/engine/checkpointer';
-import type { HeldCall, RouteDecision } from '@tabs/agents/lib/engine/build-graph';
+import type { GraphDeps, HeldCall, RouteDecision } from '@tabs/agents/lib/engine/build-graph';
 import { inspectGraphRun, type PendingApproval, type RunInspection } from '@tabs/agents/lib/engine/run';
 import { holdDecisionFor } from '@tabs/agents/lib/build/hold';
 import type { ApprovalDecision, ApprovalPort } from '@tabs/agents/lib/engine/approval-port';
@@ -270,6 +270,10 @@ export type RunOsTeamInput = {
   signal?: AbortSignal;
   /** A2: fired when a held write PARKS the run (the route's `approval-required`). */
   onInterrupt?: (ev: { approvalId: string; tool: string; node: string }) => void;
+  /** Fired when an agent WAITS for the model rate limit to reset (the route's `rate-limit-wait`). */
+  onRateLimitWait?: (ev: { node: string; attempt: number; maxAttempts: number; waitMs: number; message: string }) => void;
+  /** Injected in tests: the rate-limit retry's bounds and clock (`engine/rate-limit.ts`). */
+  rateLimit?: GraphDeps['rateLimit'];
   /** Injected in tests; defaults to the Governance queue (`approvals-bridge.ts`). */
   approvalPort?: ApprovalPort;
   /** A3: the system's own LiteLLM key by secret REFERENCE (minted by Build); absent → the shared agent key. */
@@ -391,6 +395,7 @@ export async function runOsTeam(input: RunOsTeamInput): Promise<RunOsTeamResult>
         ...graphDeps,
         observe,
         unmappedTools: resolveGrantedTools(sys).unmapped,
+        rateLimit: input.rateLimit,
         // X9 — the engine's own guardrails on EVERY tool call: a per-call deadline so a slow
         // upstream (Trino, a connector) cannot hang the superstep, and a bound on the result so a
         // large answer is truncated — with a visible marker and the row count — before it enters
@@ -416,7 +421,7 @@ export async function runOsTeam(input: RunOsTeamInput): Promise<RunOsTeamResult>
       resumeWith: input.resumeWith,
       signal: input.signal,
       checkpointer,
-      hooks: { onNodeStart, onStep, onNodeComplete, onInterrupt: input.onInterrupt },
+      hooks: { onNodeStart, onStep, onNodeComplete, onInterrupt: input.onInterrupt, onRateLimitWait: input.onRateLimitWait },
     });
     emitRunSummaryTrace(input, result, tracked, prices, traceContext);
     return { ...result, traceUrl: observe.enabled ? traceUrlFor(input.runId) : undefined, traceStoreAvailable: observe.enabled };

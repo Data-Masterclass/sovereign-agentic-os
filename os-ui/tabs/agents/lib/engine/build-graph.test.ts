@@ -520,13 +520,13 @@ function failsInAct(node: string, message: string): LlmCall {
 }
 
 test('a node that fails in ACT stops the run: the next agent in an unconditional handoff is NOT visited', async () => {
-  const { result, calls } = await run(TWO_AGENTS, failsInAct('a', 'LiteLLM 429: rate limit'));
+  const { result, calls } = await run(TWO_AGENTS, failsInAct('a', 'LiteLLM 500: upstream unavailable'));
   assert.deepEqual(result.path, ['a'], 'b must not run after a failed');
   assert.equal(result.runs[0].status, 'failed');
-  assert.equal(result.runs[0].error, 'LiteLLM 429: rate limit');
+  assert.equal(result.runs[0].error, 'LiteLLM 500: upstream unavailable');
   assert.equal(result.runs[0].result.steps.length, 1, 'the tool step that DID run before the failure is kept on the failed visit');
   assert.equal(result.reachedEnd, false);
-  assert.match(result.finalText, /a failed: LiteLLM 429: rate limit/);
+  assert.match(result.finalText, /a failed: LiteLLM 500: upstream unavailable/);
   assert.deepEqual(calls.map((c) => c.tool), ['search_knowledge'], 'only a\'s own tool ran');
 });
 
@@ -537,4 +537,68 @@ test('a MEMBER that fails in ACT stops the run: the supervisor is not asked to r
   assert.equal(result.runs.at(-1)?.status, 'failed');
   assert.equal(result.reachedEnd, false);
   assert.equal(result.routes.length, 1, 'one decision (lead → researcher), none after the failure');
+});
+
+// ---- a model RATE LIMIT is waited out; a spent BUDGET is not ----
+
+const TPM_429 =
+  'LiteLLM 429: {"error":{"message":"Rate limit exceeded for api_key: abc. Limit type: tokens. Current limit: 200000, Remaining: 16320. Limit resets at: 2026-11-19 17:20:00 UTC"}}';
+
+/** Throws `error` on a's SECOND act call (once, or every time), otherwise the normal script. */
+function limitedOnSecondAct(error: () => Error, times: number): { llm: LlmCall; attempts: () => number } {
+  const inner = script();
+  let acts = 0;
+  let thrown = 0;
+  return {
+    attempts: () => thrown,
+    llm: async (req) => {
+      if (nodeOf(req) === 'a' && req.tools) {
+        acts += 1;
+        if (acts >= 2 && thrown < times) { thrown += 1; throw error(); }
+      }
+      return inner(req);
+    },
+  };
+}
+
+const FAKE_CLOCK = (slept: number[]) => ({
+  now: () => Date.parse('2026-11-19T17:19:26Z'),
+  sleep: async (ms: number) => { slept.push(ms); },
+  jitter: () => 0,
+});
+
+test('a rate-limit 429 does not fail the agent: the node waits for the reset, says so, re-sends, and the run completes', async () => {
+  const slept: number[] = [];
+  const waits: string[] = [];
+  const limited = limitedOnSecondAct(() => new Error(TPM_429), 1);
+  const { result, calls } = await run(TWO_AGENTS, limited.llm, { rateLimit: FAKE_CLOCK(slept) }, {
+    hooks: { onRateLimitWait: (ev) => waits.push(`${ev.node}:${ev.message}`) },
+  });
+  assert.deepEqual(result.path, ['a', 'b']);
+  assert.equal(result.runs[0].status, 'ok');
+  assert.equal(result.reachedEnd, true);
+  assert.deepEqual(slept, [34_000], 'waited to the stated reset');
+  assert.deepEqual(waits, ['a:Waiting 34 s for the model rate limit to reset — tokens per minute (limit 200,000) (retry 1 of 3)']);
+  assert.deepEqual(calls.map((c) => c.tool), ['search_knowledge', 'query_data'], 'no tool was re-run by the retry');
+});
+
+test('a rate limit that never clears fails the agent after the bounded retries — and the run stops there', async () => {
+  const slept: number[] = [];
+  const limited = limitedOnSecondAct(() => new Error(TPM_429), 99);
+  const { result } = await run(TWO_AGENTS, limited.llm, { rateLimit: FAKE_CLOCK(slept) });
+  assert.equal(limited.attempts(), 4, 'first attempt + 3 retries');
+  assert.equal(slept.length, 3);
+  assert.deepEqual(result.path, ['a'], 'the failed agent does not hand off');
+  assert.equal(result.runs[0].status, 'failed');
+  assert.match(result.runs[0].error ?? '', /rate limit did not clear after 3 waits/);
+});
+
+test('a budget 429 is not retried: the agent fails at once with a plain message', async () => {
+  const slept: number[] = [];
+  const limited = limitedOnSecondAct(() => new Error('LiteLLM 429: {"error":{"message":"Budget has been exceeded! Current cost: 5.01, Max budget: 5.0"}}'), 99);
+  const { result } = await run(TWO_AGENTS, limited.llm, { rateLimit: FAKE_CLOCK(slept) });
+  assert.equal(limited.attempts(), 1);
+  assert.deepEqual(slept, []);
+  assert.deepEqual(result.path, ['a']);
+  assert.match(result.runs[0].error ?? '', /model budget .* is used up/);
 });

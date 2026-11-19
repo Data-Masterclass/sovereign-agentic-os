@@ -132,6 +132,7 @@ import { evaluateWhen, parseWhen, whenChannels, WhenSyntaxError, type WhenAst } 
 import type { HoldDecision } from '@tabs/agents/lib/build/hold';
 import type { ApprovalDecision, ApprovalPort, ApprovalState, RunOwner, RunnerSnapshot } from '@tabs/agents/lib/engine/approval-port';
 import { noopObserver, type RunObserver, type SpanHandle } from '@tabs/agents/lib/engine/observe';
+import { withRateLimitRetry, type RateLimitRetryOptions, type RateLimitWait } from '@tabs/agents/lib/engine/rate-limit';
 import type { LlmCall } from '@core/runtime/agentic';
 
 // ------------------------------------------------------------------- types --
@@ -164,6 +165,13 @@ export type GraphDeps = Omit<AgenticGraphDeps, 'onNodeStart' | 'onStep' | 'onNod
    * Default {@link DEFAULT_TOOL_CALL_TIMEOUT_MS}.
    */
   toolCallTimeoutMs?: number;
+  /**
+   * How a model RATE LIMIT (a LiteLLM 429 on requests/tokens per minute) is waited out: bounded
+   * retries, a capped wait, an injectable clock for tests. Absent → the defaults in
+   * `rate-limit.ts` (3 retries, 75 s cap). `{ retries: 0 }` turns the waiting off. A spent BUDGET
+   * is never retried, whatever this says.
+   */
+  rateLimit?: Pick<RateLimitRetryOptions, 'retries' | 'maxWaitMs' | 'now' | 'sleep' | 'jitter'>;
 };
 
 /** What the tools node needs to hold a call: the rule, the queue port and the attribution. */
@@ -263,7 +271,9 @@ export type AgentCursor = {
 export type EngineEvent =
   | { event: 'node-started'; data: { node: string; index: number; total: number } }
   | { event: 'tool-step'; data: { node: string; step: AgenticStep; index: number } }
-  | { event: 'node-completed'; data: { node: string; status: NodeStatus; finalText: string } };
+  | { event: 'node-completed'; data: { node: string; status: NodeStatus; finalText: string } }
+  /** The agent is WAITING for the model rate limit to reset before re-sending its request. */
+  | { event: 'rate-limit-wait'; data: { node: string } & RateLimitWait };
 
 export class GraphCompileError extends Error {
   constructor(message: string) {
@@ -771,6 +781,18 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
     return new Command({ goto: END, update: { nodeRuns: [f.run], final: f.finalText, failed: f.error, current: null } });
   };
 
+  /**
+   * The model caller a node uses: recorded by the span (every attempt is its own generation), and
+   * a RATE-LIMIT 429 is waited out and re-sent instead of failing the node — visibly, through a
+   * `rate-limit-wait` event, so a run that is waiting does not look like one that is stuck.
+   */
+  const modelFor = (obs: SpanHandle, config: LangGraphRunnableConfig, agentId: string, name: string): LlmCall =>
+    withRateLimitRetry(obs.llm(deps.llm, name), {
+      ...deps.rateLimit,
+      signal: config.signal,
+      onWait: (wait) => emit(config, { event: 'rate-limit-wait', data: { node: agentId, ...wait } }),
+    });
+
   const entries: [string, NodeFn, { ends?: string[] }?][] = [];
 
   for (const node of active) {
@@ -785,7 +807,7 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
 
     // ---------------------------------------------------------------- plan --
     const plan: NodeBody = async (state, config, obs) => {
-      const llm = obs.llm(deps.llm, `llm.plan_${id}`);
+      const llm = modelFor(obs, config, id, `llm.plan_${id}`);
       const stepsUsed = state.budget.stepsUsed;
       if (stepsUsed >= stepBudget) {
         return new Command({ goto: END, update: { budget: { stepsUsed, exhausted: true }, current: null } });
@@ -839,7 +861,7 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
 
     // ----------------------------------------------------------------- act --
     const act: NodeBody = async (state, config, obs) => {
-      const llm = obs.llm(deps.llm, `llm.act_${id}`);
+      const llm = modelFor(obs, config, id, `llm.act_${id}`);
       const cur = state.current;
       if (!cur || cur.node !== id) throw new Error(`act_${id}: no agent visit in flight`);
       const tools = toolsFor(node);
@@ -1140,7 +1162,7 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
           return update;
         }
         try {
-          const decision = await decideRoute(state, node, members, obs.llm(deps.llm, `llm.route_${id}`));
+          const decision = await decideRoute(state, node, members, modelFor(obs, config, id, `llm.route_${id}`));
           update.routes = [decision];
           update.budget = { stepsUsed: stepsUsed + 1, exhausted: false };
           if (decision.next === 'END') {

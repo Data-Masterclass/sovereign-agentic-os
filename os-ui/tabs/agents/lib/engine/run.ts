@@ -47,6 +47,8 @@ import type { CheckpointerKind, SelectedCheckpointer } from '@tabs/agents/lib/en
 /** The live hooks — the walker's three, plus A2's interrupt notice (the route's `approval-required`). */
 export type EngineHooks = Pick<AgenticGraphDeps, 'onNodeStart' | 'onStep' | 'onNodeComplete'> & {
   onInterrupt?: (ev: InterruptPayload) => void;
+  /** An agent is waiting for the model rate limit to reset (the route's `rate-limit-wait`). */
+  onRateLimitWait?: (ev: Extract<EngineEvent, { event: 'rate-limit-wait' }>['data']) => void;
 };
 
 /** An approval a parked run is waiting on. */
@@ -128,6 +130,7 @@ function dispatch(ev: EngineEvent, hooks: EngineHooks | undefined): void {
   if (ev.event === 'node-started') hooks.onNodeStart?.(ev.data);
   else if (ev.event === 'tool-step') hooks.onStep?.(ev.data);
   else if (ev.event === 'node-completed') hooks.onNodeComplete?.(ev.data);
+  else if (ev.event === 'rate-limit-wait') hooks.onRateLimitWait?.(ev.data);
 }
 
 function isEngineEvent(v: unknown): v is EngineEvent {
