@@ -3,7 +3,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { alertOn, coerceChannels, evaluateAlert } from '@tabs/metrics/lib/alerts';
+import { alertOn, coerceChannels, evaluateAlert, type AlertRule } from '@tabs/metrics/lib/alerts';
 import { measureFromForm } from '@tabs/metrics/lib/model';
 import { goldSales } from '@tabs/metrics/lib/fixtures';
 import { saveAlertRule, listAlertRules, recordEvaluation, __resetAlertStore } from '@tabs/metrics/lib/alert-store';
@@ -93,4 +93,26 @@ test('alert-store: recordEvaluation returns null for unknown rule id', () => {
   __resetAlertStore();
   const result = recordEvaluation('nonexistent', 100, false);
   assert.equal(result, null);
+});
+
+test('a breach with a named agent says what really happens: the hand-off is recorded, no run is started', () => {
+  const rule: AlertRule = {
+    id: 'a-handoff',
+    member: 'Sales.revenue',
+    comparator: 'lt',
+    threshold: 50000,
+    notify: ['in_app'],
+    triggerAgent: { systemId: 'sales', agent: 'sales-agent', preset: 'recovery-note' },
+  };
+  const r = evaluateAlert(rule, 42000);
+  assert.equal(r.agentRun?.started, false);
+  assert.match(r.agentRun?.note ?? '', /No agent run was started/);
+});
+
+test('the Alerts panel does not claim a breach starts an agent run', async () => {
+  const { readFileSync } = await import('node:fs');
+  const src = readFileSync(new URL('../ui/Alerts.tsx', import.meta.url), 'utf8');
+  assert.doesNotMatch(src, /Trigger an Agent/);
+  assert.doesNotMatch(src, /triggers a Langfuse-traced agent run/);
+  assert.match(src, /agentRun\.note/, 'the panel shows the note the evaluation returns');
 });

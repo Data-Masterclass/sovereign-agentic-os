@@ -18,8 +18,8 @@ type AgentSystemSummary = { id: string; name: string };
 
 /**
  * Alerts — a threshold on a governed metric member. On breach the route NOTIFIES you
- * in-app AND, if a governed agent is wired, triggers a Langfuse-traced agent run
- * (event → LangGraph).
+ * in-app and, if an agent is named, records that hand-off as a trace event. It does not
+ * start an agent run.
  *
  * The live metric value is resolved by the server (one governed Trino SELECT, as you) — no
  * hand-typed demo value. Rules are persisted and can be batch-evaluated via /api/metrics/alerts/run
@@ -132,7 +132,7 @@ export default function Alerts({
 
       <label className="chk" style={{ marginTop: 12, maxWidth: 320 }}>
         <input type="checkbox" checked={agentOn} onChange={(e) => setAgentOn(e.target.checked)} />
-        Trigger an Agent
+        Name an agent to hand a breach to (recorded only, no run is started)
       </label>
       {agentOn ? (
         <div style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', marginTop: 10 }}>
@@ -175,11 +175,12 @@ export default function Alerts({
                 </div>
               ))}
               {result.agentRun ? (
-                <div className="build-row ok">
+                <div className="build-row">
                   <span className="build-tool">agent</span>
                   <span>
-                    {result.agentRun.systemId}:{result.agentRun.agent} ({result.agentRun.preset}) — {result.agentRun.reason}
-                    {result.traced ? ' · ✓ traced in Langfuse' : ''}
+                    {result.agentRun.systemId}:{result.agentRun.agent} ({result.agentRun.preset}) — {result.agentRun.reason}.{' '}
+                    {result.agentRun.note}
+                    {result.traced ? ' Recorded in the trace.' : ''}
                   </span>
                 </div>
               ) : null}

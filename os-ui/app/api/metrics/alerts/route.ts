@@ -17,9 +17,8 @@ export const dynamic = 'force-dynamic';
 
 /**
  * Evaluate a metric alert. On breach it actually NOTIFIES the recipient (email when a
- * mailer is configured, else a persisted in-app notification) AND, if a governed agent
- * is configured, requests an agent run (event → LangGraph) — landed as a Langfuse trace
- * so the alert-triggered run is audited.
+ * mailer is configured, else a persisted in-app notification) AND, if an agent is named on
+ * the rule, records that hand-off as a trace event. It does NOT start an agent run.
  *
  * `value` is now OPTIONAL. When omitted, the route resolves the live metric value through the
  * governed-SQL path (exploreMetric — Cube is off the read path, Phase 2), evaluated AS THE
