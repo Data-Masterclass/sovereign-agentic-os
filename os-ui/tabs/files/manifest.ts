@@ -16,7 +16,7 @@ export const manifest: TabManifest = {
   nav: { label: 'Files', icon: '❏', href: '/unstructured', group: 'Context' },
   routes: ["/unstructured"],
   api: ["/api/files"],
-  mcpTools: ["file-write"],
+  mcpTools: ["file-write", "reindex"],
   policies: [],
   services: ["minio", "opensearch", "docling", "dagster"],
 };

@@ -19,6 +19,7 @@ The authoritative contract is [`manifest.ts`](./manifest.ts) — this file expla
 
 - `knowledge-search`
 - `knowledge-write`
+- `reindex`
 
 **Needs deployed**
 

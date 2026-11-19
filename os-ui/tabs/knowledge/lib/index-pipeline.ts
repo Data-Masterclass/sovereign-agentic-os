@@ -6,6 +6,7 @@ import { config } from '@core/kernel/config';
 import { type Workflow, type DomainKnowledge } from '@tabs/knowledge/lib/schema';
 import { chunkWorkflow, chunkDomain, type KnowledgeUnit } from '@tabs/knowledge/lib/chunk';
 import { embed, type EmbedCaller } from '@tabs/knowledge/lib/embed';
+import { refuseOfflineMock } from '@core/kernel/offline-mock';
 import { upsertUnits, removeUnits, type IndexedUnit } from '@tabs/knowledge/lib/index-store';
 
 /**
@@ -103,26 +104,20 @@ export async function ensureKnowledgeIndex(): Promise<boolean> {
   return Boolean(res && res.ok);
 }
 
-/** Bulk-write embedded units to OpenSearch (best-effort live path). */
+/**
+ * Bulk-write embedded units to OpenSearch (best-effort live path).
+ *
+ * ADD, THEN PRUNE (2026-11-19, the admin re-index). This used to `_delete_by_query` the scope
+ * FIRST and bulk-add second, which meant a failed or unreachable bulk write left the workflow
+ * with no indexed units at all — a delete of rows it then could not replace, and on the
+ * re-index path that is the one failure mode the whole tool promises not to have. Unit ids are
+ * stable (`chunkWorkflow` derives them from the workflow + step), so an `index` op OVERWRITES in
+ * place: adding first is idempotent, and the delete afterwards only has to remove the units this
+ * write did NOT cover (a step that was deleted since the last index). It is skipped entirely when
+ * the bulk write failed, and it never runs with an empty keep-set.
+ */
 async function writeOpenSearch(scope: string, indexed: IndexedUnit[]): Promise<boolean> {
   await ensureKnowledgeIndex();
-
-  // Delete the scope's existing docs first (incremental re-index), then bulk-add.
-  const delBody = {
-    query: {
-      bool: {
-        should: [
-          { term: { workflow_id: scope } },
-          { term: { _id: scope } },
-        ],
-      },
-    },
-  };
-  await withTimeout(`${config.opensearchUrl}/${config.knowledgeIndex}/_delete_by_query?refresh=true`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(delBody),
-  });
 
   const lines: string[] = [];
   for (const u of indexed) {
@@ -152,12 +147,62 @@ async function writeOpenSearch(scope: string, indexed: IndexedUnit[]): Promise<b
     body: lines.join('\n') + '\n',
   });
   if (!res || !res.ok) return false;
+  let landed = false;
   try {
     const data = (await res.json()) as { errors?: boolean };
-    return data.errors !== true;
+    landed = data.errors !== true;
   } catch {
     return false;
   }
+  if (!landed) return false;
+  await pruneScopeExcept(scope, indexed.map((u) => u.id));
+  return true;
+}
+
+/**
+ * Remove the scope's units that the write just made did NOT cover. The prune half of
+ * add-then-prune (see {@link writeOpenSearch}); refuses an empty keep-set, so it can never be the
+ * delete-everything call it exists to replace.
+ */
+async function pruneScopeExcept(scope: string, keepIds: string[]): Promise<boolean> {
+  if (keepIds.length === 0) return false;
+  const body = {
+    query: {
+      bool: {
+        should: [
+          { term: { workflow_id: scope } },
+          { term: { _id: scope } },
+          // A domain card's units are `domain:<name>:<section>` and carry NO `workflow_id`
+          // (`chunkDomain` sets it null), so neither term above matches them: without this prefix
+          // a renamed or deleted SECTION kept its stale unit in the index forever (review low 1).
+          { prefix: { _id: `${scope}:` } },
+        ],
+        minimum_should_match: 1,
+        must_not: [{ ids: { values: keepIds } }],
+      },
+    },
+  };
+  const res = await withTimeout(`${config.opensearchUrl}/${config.knowledgeIndex}/_delete_by_query?refresh=true`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  return Boolean(res && res.ok);
+}
+
+/**
+ * The REQUIRE-LIVE gate, raised between the embedding and the first write. `source` is the
+ * embedder's own honest label; anything but `litellm` means a hash of the text, which bears no
+ * semantic relationship to anything — writing one over a real vector is strictly worse than
+ * leaving the row as it is. See the module header for why this cannot live in the caller.
+ */
+function requireLiveOrRefuse(required: boolean | undefined, source: IndexReport['embedSource'], what: string): void {
+  if (!required || source === 'litellm') return;
+  refuseOfflineMock(
+    `Cannot re-index ${what}: the embeddings gateway answered with a stand-in (${source}) rather ` +
+      'than real vectors. Nothing was embedded into the index, nothing was written and nothing ' +
+      'was pruned — the existing units stand.',
+  );
 }
 
 /**
@@ -171,10 +216,22 @@ async function writeOpenSearch(scope: string, indexed: IndexedUnit[]): Promise<b
  */
 export async function indexWorkflow(
   workflow: Workflow,
-  opts: { owner: string; tacit?: string; updatedAt?: string; caller?: EmbedCaller },
+  opts: {
+    owner: string;
+    tacit?: string;
+    updatedAt?: string;
+    caller?: EmbedCaller;
+    /**
+     * Refuse (typed `ENGINE_UNAVAILABLE`) instead of writing anything when the gateway answered
+     * with a hash. The re-index sets it; an ordinary publish keeps its honestly-labelled offline
+     * path so a laptop still works. See the module header.
+     */
+    requireLive?: boolean;
+  },
 ): Promise<IndexReport> {
   const units = chunkWorkflow({ workflow, owner: opts.owner, tacit: opts.tacit, updatedAt: opts.updatedAt });
   const { vectors, source } = await embed(units.map((u) => u.text), opts.caller);
+  requireLiveOrRefuse(opts.requireLive, source, `workflow “${workflow.title ?? workflow.id}”`);
   const indexed = toIndexed(units, vectors);
 
   // Always populate the in-process mirror (offline retrieval), best-effort live.
@@ -186,9 +243,14 @@ export async function indexWorkflow(
 
 /** Index the general domain knowledge (the pinned domain card source). `caller` attributes the
  *  embedding call to the acting user — see {@link indexWorkflow}. */
-export async function indexDomain(dk: DomainKnowledge, caller?: EmbedCaller): Promise<IndexReport> {
+export async function indexDomain(
+  dk: DomainKnowledge,
+  caller?: EmbedCaller,
+  opts: { requireLive?: boolean } = {},
+): Promise<IndexReport> {
   const units = chunkDomain(dk);
   const { vectors, source } = await embed(units.map((u) => u.text), caller);
+  requireLiveOrRefuse(opts.requireLive, source, `the ${dk.domain} domain card`);
   const indexed = toIndexed(units, vectors);
   const scope = `domain:${dk.domain}`;
   upsertUnits(scope, indexed);

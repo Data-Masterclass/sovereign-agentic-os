@@ -986,6 +986,69 @@ documents and hash vectors from before this gate, and nothing in the rows marks
 them. Re-indexing is the only remedy. That asymmetry — cheap to prevent,
 impossible to undo — is the argument for the gate being structural.
 
+**And a tool that cleans up after a fabrication must say what it cannot find.**
+The admin re-index (`tabs/{files,knowledge}/lib/reindex.ts`, `POST
+/api/platform-admin/reindex`, MCP `reindex_corpus`, Platform → Re-index) pays
+that debt down by re-parsing and re-embedding through the same live paths an
+upload uses. Writing it turned up the hard part: `IndexReport.embedSource` and
+`EmbedResult.mode` are **report** fields that neither `writeOpenSearch` nor
+`bulkIndex` ever persisted, so "find the mock rows" has no answer. Four kinds of
+evidence are genuinely queryable — a persisted stand-in label, a row with no
+vector, an index whose knn mapping dimension no longer matches the configured
+one (OpenSearch rejects a wrong-length vector at write time, so that one is
+index-wide and exact), and a stored unit the index holds nothing for — and the
+fifth, a hash vector with no marker, is not. So `filter: 'marked'` is honest
+about being incomplete: the caveat is a FIELD on the plan
+(`ReindexPlan.unmarkedCaveat`), repeated by the route, the tool description and
+the panel, because an agent reading `counts.marked === 0` would otherwise report
+a clean corpus. Three more rules came out of it, each generalising:
+
+- **Add, then prune.** `writeOpenSearch` used to `_delete_by_query` a scope and
+  bulk-add second, so a failed write left a workflow with no units at all. Unit
+  ids are stable and an index op overwrites in place, so it now adds, then
+  removes only what the add did not cover — and prunes nothing when the add did
+  not land. `pruneChunksExcept` refuses an empty keep-set, so it can never
+  become delete-everything. "Never delete a row you could not replace" has to
+  be an ORDER, not an intention.
+- **A re-index must check the mode it got back.** On a laptop
+  `OS_OFFLINE_MOCK=allow` lets the ingest and the embedder stand in, so a run
+  that trusted them would rewrite the exact rows it was started to remove. Each
+  unit's own report is read (`ingestMode`/`embedMode`/`embedSource`/`store`) and
+  anything but live is a FAILURE with the old rows left in place.
+- **The tripwire grew a fourth category, `REFUSERS`.** These two services name
+  the markers because they QUERY for them, and they call `refuseOfflineMock`,
+  but they have no fabricating branch: DECIDERS would overstate them and LABELS
+  may not import the module at all. A refuser must call `refuseOfflineMock(` and
+  must never call `offlineMockAllowed(` — a real assertion, because a future
+  edit that let a re-index fall back would have to add exactly that call.
+
+The re-index also inherits the September-2026 lesson directly: a plan whose
+store lists no unit while the index holds rows is **blocked**, not reported
+clean, because an unhydrated store looks exactly like a tenant that owns
+nothing.
+
+**The review of that tool then found the same class of mistake twice more, and
+both generalise.** First: **a check after the write is not a check.** The
+re-index read the parse/embed mode off the report it got back — which is one
+statement after `indexAsset` had written the index and `writeOpenSearch` had
+written *and pruned*. Where a deployment still permits a stand-in, an engine
+falling over mid-run would therefore have overwritten good rows before anyone
+looked. The demand moved INTO the pipeline (`requireLive`), raising the typed
+refusal between the embedding and the first write; the caller's check stays as a
+second line. If an invariant is "we never write X", the guard belongs where the
+write is, not where the result is read.
+
+Second: **being in a catalog is not being gated by it.** `WRITE_TOOL_TABS` made
+`reindex_corpus` visible to the agent hold gate, and `writeTargetScope` then
+answered `personal` — its default for "the runner's own work" — so an agent
+could have re-indexed a whole tenant unheld. That is the third time this exact
+shape has cost something (`commit`, `push_app_files`, now this), so the fix is
+both halves: a `company` scope that holds it to an admin under every preset, and
+`AGENT_FORBIDDEN_TOOLS` — an operator act is refused at the agent door outright
+and dropped from the advertised schemas, because a model will try whatever it can
+see. **A new write whose effect is tenant-wide must be classified when it is
+added; the default is "personal", and the default is wrong for it.**
+
 **A picker scoped to "everything the caller may see" is not scoped to the thing being
 edited.** The agent grant picker built its feed from `listDatasets/listWorkflows/
 listPersonalKnowledge/listFiles/listMetrics(principal)` — each of which scopes to

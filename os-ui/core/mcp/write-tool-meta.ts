@@ -85,7 +85,49 @@ export const WRITE_TOOL_TABS: Readonly<Record<string, string>> = {
   // Lifecycle (night 2) — change what RUNS, not who may use it.
   go_live: 'governance',
   retire: 'governance',
+  // 2026-11-19: the admin re-index REWRITES index rows, so the hold gate must see it as a write.
+  // It is not in `ALL_WRITE_TOOLS` because it is built by a FACTORY over the two tab-owned
+  // services (`core/mcp/reindex-tools.ts`) — one tool cannot live in either tab and the kernel may
+  // not import one — so it is classified here deliberately, for exactly the reason H-1 classified
+  // `commit`: an unclassified write answers "not a write" for every preset and would run unheld.
+  reindex_corpus: 'files',
 };
 
 
 export const WRITE_TOOL_NAMES: ReadonlySet<string> = new Set(Object.keys(WRITE_TOOL_TABS));
+
+/**
+ * Writes an UNATTENDED AGENT RUN may not perform at all — name → the reason a caller is told.
+ *
+ * Being in {@link WRITE_TOOL_TABS} makes a tool HELD; it does not make it unavailable, and for
+ * `reindex_corpus` "held" is not enough on its own. Its effect is not an artifact in a lane: it
+ * re-parses and re-embeds EVERY selected row of a tenant's Files or Knowledge index and spends
+ * real embeddings budget doing it. There is no version of that which belongs to an agent loop
+ * deciding on its own that the corpus looks wrong. An admin runs it from Platform → Re-index, the
+ * admin HTTP door, or their own MCP session — all three of which are a person, present, choosing.
+ *
+ * ONE door consults this today: `tabs/agents/lib/build/os-tools.ts` (gate 0 of the agent system's
+ * tool executor, plus `grantedMcpTools`, which drops a closed tool from the schemas a model is
+ * offered). It lives here rather than in that tab for the same reason `WRITE_TOOL_TABS` does — a
+ * core table, independent of which bundles happen to be registered — and so that the second door
+ * can reuse it verbatim.
+ *
+ * FOLLOW-UP, stated rather than implied: `tabs/software/lib/app-tool-call.ts` does NOT consult it
+ * yet. That door executes an APP's own tools, so the OS `reindex_corpus` is not reachable through
+ * it; what is left is an `actions.yml` declaring an action of the same NAME, which would read like
+ * the real thing in a trace and an inbox while doing something else entirely. The guard there is
+ * two lines against this catalog and belongs to whoever owns that file (this branch is not
+ * permitted to touch `tabs/software/**`).
+ */
+export const AGENT_FORBIDDEN_TOOLS: Readonly<Record<string, string>> = {
+  reindex_corpus:
+    'reindex_corpus is an operator act, not an agent action: it re-parses and re-embeds every ' +
+    'selected row of a tenant corpus and spends real embeddings budget. An unattended run may ' +
+    'not start one. A platform admin runs it from Platform → Re-index, from ' +
+    'POST /api/platform-admin/reindex, or from their own MCP session.',
+};
+
+/** The reason this tool is closed to agent runs, or null when it is not. Fail-closed by name. */
+export function agentForbiddenReason(name: string): string | null {
+  return AGENT_FORBIDDEN_TOOLS[name] ?? null;
+}

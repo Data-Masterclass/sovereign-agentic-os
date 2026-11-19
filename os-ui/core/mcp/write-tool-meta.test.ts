@@ -3,8 +3,11 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, resolve } from 'node:path';
 import { ALL_WRITE_TOOLS } from '@core/mcp/write-tools';
-import { WRITE_TOOL_TABS, WRITE_TOOL_NAMES } from '@core/mcp/write-tool-meta';
+import { WRITE_TOOL_TABS, WRITE_TOOL_NAMES, AGENT_FORBIDDEN_TOOLS, agentForbiddenReason } from '@core/mcp/write-tool-meta';
 
 /**
  * The write tools that do NOT live in `ALL_WRITE_TOOLS`: the PLATFORM-MCP surface
@@ -28,14 +31,34 @@ import { WRITE_TOOL_TABS, WRITE_TOOL_NAMES } from '@core/mcp/write-tool-meta';
  */
 const PLATFORM_WRITE_TOOLS: Readonly<Record<string, string>> = { commit: 'software', push_app_files: 'software' };
 
-test('WRITE_TOOL_TABS matches ALL_WRITE_TOOLS plus the platform-MCP writes (names and tabs)', () => {
-  const actual = { ...Object.fromEntries(ALL_WRITE_TOOLS.map((t) => [t.name, t.tab])), ...PLATFORM_WRITE_TOOLS };
+/**
+ * Writes built by a FACTORY rather than exported as a static array. `reindex_corpus`
+ * (`core/mcp/reindex-tools.ts`) takes the two tab-owned re-index services as arguments, because
+ * one tool must serve both corpora and neither a tab nor the kernel may import the other tab — so
+ * it cannot be in `ALL_WRITE_TOOLS`, which is a barrel of static arrays. It still rewrites index
+ * rows, so the hold gate has to know it is a write: listed here for the same reason `commit` is.
+ */
+const FACTORY_WRITE_TOOLS: Readonly<Record<string, string>> = { reindex_corpus: 'files' };
+
+test('WRITE_TOOL_TABS matches ALL_WRITE_TOOLS plus the platform-MCP and factory writes (names and tabs)', () => {
+  const actual = {
+    ...Object.fromEntries(ALL_WRITE_TOOLS.map((t) => [t.name, t.tab])),
+    ...PLATFORM_WRITE_TOOLS,
+    ...FACTORY_WRITE_TOOLS,
+  };
   assert.deepEqual(WRITE_TOOL_TABS, actual);
   assert.equal(
     WRITE_TOOL_NAMES.size,
-    ALL_WRITE_TOOLS.length + Object.keys(PLATFORM_WRITE_TOOLS).length,
+    ALL_WRITE_TOOLS.length + Object.keys(PLATFORM_WRITE_TOOLS).length + Object.keys(FACTORY_WRITE_TOOLS).length,
     'duplicate write tool names',
   );
+});
+
+test('the factory-built write is classified for the hold gate', () => {
+  for (const [name, tab] of Object.entries(FACTORY_WRITE_TOOLS)) {
+    assert.equal(WRITE_TOOL_TABS[name], tab, `${name} must be in the hold-gate table`);
+    assert.ok(WRITE_TOOL_NAMES.has(name));
+  }
 });
 
 test('every platform-MCP write listed here is actually held-eligible', () => {
@@ -43,4 +66,33 @@ test('every platform-MCP write listed here is actually held-eligible', () => {
     assert.equal(WRITE_TOOL_TABS[name], tab, `${name} must be in the hold-gate table`);
     assert.ok(WRITE_TOOL_NAMES.has(name));
   }
+});
+
+/**
+ * H1 of the re-index review: being in the write catalog makes a tool HELD, not unavailable, and
+ * for one of them "held" is not the posture we want — an unattended run has no business
+ * re-indexing a tenant corpus. The catalog of agent-closed tools lives next to the write catalog
+ * so neither agent-facing door can forget it, and every entry must ALSO be a classified write:
+ * the hold is the second line of defence behind the refusal, and a tool that is closed but
+ * unclassified would be unheld the moment someone removed the refusal.
+ */
+test('AGENT_FORBIDDEN_TOOLS: every agent-closed tool is also a classified write, and says why', () => {
+  assert.ok(Object.keys(AGENT_FORBIDDEN_TOOLS).length > 0);
+  for (const [name, reason] of Object.entries(AGENT_FORBIDDEN_TOOLS)) {
+    assert.ok(WRITE_TOOL_NAMES.has(name), `${name} must also be in the hold-gate table`);
+    assert.ok(reason.length > 40, `${name} must tell the caller WHY, and where to do it instead`);
+    assert.equal(agentForbiddenReason(name), reason);
+  }
+  assert.equal(agentForbiddenReason('create_dataset'), null, 'an ordinary write is not closed');
+  assert.equal(agentForbiddenReason(''), null);
+});
+
+test('AGENT_FORBIDDEN_TOOLS: the catalog names the door that really consults it, and flags the other as a follow-up', () => {
+  // Re-review edit (1): the first version claimed `app-tool-call.ts` consulted this table. It does
+  // not, and a comment that overstates a guard is worse than no comment — the next reader stops
+  // looking. Pinned here so it cannot drift back while the follow-up is open.
+  const src = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), 'write-tool-meta.ts'), 'utf8');
+  assert.match(src, /ONE door consults this today: `tabs\/agents\/lib\/build\/os-tools\.ts`/);
+  assert.match(src, /FOLLOW-UP, stated rather than implied/);
+  assert.match(src, /does NOT consult it\n \* yet/);
 });

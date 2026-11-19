@@ -17,6 +17,14 @@
  *        `refuseOfflineMock(`. An import alone proves nothing, so both are checked.
  *     3. RECOGNISERS (today: the one MCP error mapper) import the module to RECOGNISE a refusal
  *        and must NOT call the predicate — deciding at an error boundary is deciding too late.
+ *     3b. REFUSERS import the module to REFUSE and nothing else: they call `refuseOfflineMock(`
+ *        and never `offlineMockAllowed(`, so they can only ever decline — never opt in. The admin
+ *        re-index is the case that needed this category (2026-11-19): it names the markers
+ *        because it QUERIES for them, and it refuses when a parser or the gateway is down, but it
+ *        has no fabricating branch to gate, so DECIDERS would overstate it and LABELS — which may
+ *        not import the module at all — would have forced it to swallow the refusal. The
+ *        assertion is real: a future edit that let a re-index fall back would have to add
+ *        `offlineMockAllowed(` and this test would fail.
  *     4. LABELS — a type union, a badge, a tool description, a mock IMPLEMENTATION, a
  *        reachability probe, or a function carrying a mode it was handed — must not import the
  *        module at all. A propagator that gates is a second decision point.
@@ -111,6 +119,24 @@ const DECIDERS = [
   'tabs/software/lib/app-records.ts',
 ];
 
+/**
+ * Files that import the predicate module only to REFUSE — never to choose a stand-in. They must
+ * call `refuseOfflineMock(` and must NOT call `offlineMockAllowed(`: a re-index that could opt
+ * into fabrication would rewrite the very rows it exists to replace.
+ */
+const REFUSERS = [
+  'tabs/files/lib/reindex.ts',
+  'tabs/knowledge/lib/reindex.ts',
+  // The two index WRITERS, under `requireLive` (re-index review M1). They do not choose a
+  // stand-in — they are handed one by an embedder or a parser that fell over mid-run — and their
+  // job is to refuse BEFORE the write rather than report the mode afterwards, which is one
+  // statement too late: by then the rows are overwritten and, on the knowledge side, pruned. An
+  // ordinary upload or publish passes no `requireLive` and keeps its honestly-labelled offline
+  // path, so this is a demand the CALLER makes, never a second honesty decision.
+  'tabs/files/lib/index-pipeline.ts',
+  'tabs/knowledge/lib/index-pipeline.ts',
+];
+
 /** Files that READ a refusal somebody else produced. They must import, and must not decide. */
 const RECOGNISERS = [
   // `structuredError` is the ONE door every tool exception leaves through, so the refusal →
@@ -149,6 +175,13 @@ const LABELS = [
   'core/policy/effects.ts',
   'core/policy/roles.ts',
   'core/runtime/chat-artifacts.ts',
+  // Tool descriptions and route prose for the admin re-index (2026-11-19). Each NAMES the
+  // outage it exists to clean up; none of them decides anything. `core/kernel/reindex.ts` is the
+  // re-index CONTRACT (types + the job table) and `core/mcp/reindex-tools.ts` the tool shape; the
+  // refusal is the tab services' (see REFUSERS) and this surfaces it.
+  'app/api/platform-admin/reindex/route.ts',
+  'core/kernel/reindex.ts',
+  'core/mcp/reindex-tools.ts',
   // Tool descriptions.
   'tabs/admin/mcp/discovery-read-tools.ts',
   'tabs/dashboards/mcp/dashboard-write-tools.ts',
@@ -173,7 +206,6 @@ const LABELS = [
   'tabs/agents/lib/build/agentic-graph.ts',
   'tabs/knowledge/lib/embed-core.ts',
   'tabs/knowledge/lib/eval-harness.ts',
-  'tabs/knowledge/lib/index-pipeline.ts',
   'tabs/knowledge/lib/retrieve.ts',
   // Defines `seedToolResult` + the demo-seed label. Defining a stand-in is not choosing one.
   'tabs/software/lib/tool-exec.ts',
@@ -239,7 +271,7 @@ function code(src: string): string {
 }
 
 test('TRIPWIRE: every file naming a stand-in marker is classified', () => {
-  const classified = new Set([...DECIDERS, ...LABELS, ...RECOGNISERS, THE_MODULE]);
+  const classified = new Set([...DECIDERS, ...LABELS, ...RECOGNISERS, ...REFUSERS, THE_MODULE]);
   const unclassified = filesNamingAMarker().filter((f) => !classified.has(f));
   assert.deepEqual(
     unclassified,
@@ -247,6 +279,7 @@ test('TRIPWIRE: every file naming a stand-in marker is classified', () => {
     'These files name a stand-in marker and are in no list. Decide which they are:\n' +
       '  • it CHOOSES to serve a stand-in       -> DECIDERS, and gate it on offlineMockAllowed()\n' +
       '  • it READS a refusal somebody produced -> RECOGNISERS\n' +
+      '  • it only ever REFUSES, never fabricates  -> REFUSERS\n' +
       '  • it declares / renders / defines / carries -> LABELS\n' +
       `Unclassified: ${unclassified.join(', ')}`,
   );
@@ -254,7 +287,7 @@ test('TRIPWIRE: every file naming a stand-in marker is classified', () => {
 
 test('TRIPWIRE: no pinned entry has gone stale', () => {
   const naming = new Set(filesNamingAMarker());
-  const stale = [...DECIDERS, ...LABELS, ...RECOGNISERS].filter((f) => !naming.has(f));
+  const stale = [...DECIDERS, ...LABELS, ...RECOGNISERS, ...REFUSERS].filter((f) => !naming.has(f));
   assert.deepEqual(stale, [], `Pinned but no longer naming a marker — remove: ${stale.join(', ')}`);
 });
 
@@ -279,6 +312,20 @@ test('TRIPWIRE: every recogniser imports the module but never DECIDES with it', 
       src.includes('offlineMockAllowed(') || src.includes('refuseOfflineMock('),
       false,
       `${f} is an error boundary: deciding there would be deciding after the fabrication`,
+    );
+  }
+});
+
+test('TRIPWIRE: every refuser can ONLY refuse — it never consults the predicate', () => {
+  for (const f of REFUSERS) {
+    const src = read(f);
+    assert.ok(src.includes(PREDICATE_IMPORT), `${f} must import ${PREDICATE_IMPORT} to refuse`);
+    assert.ok(src.includes('refuseOfflineMock('), `${f} must actually refuse`);
+    assert.equal(
+      src.includes('offlineMockAllowed('),
+      false,
+      `${f} refuses by construction: letting it ask whether fabrication is allowed would let a ` +
+        're-index write the stand-ins it exists to remove',
     );
   }
 });

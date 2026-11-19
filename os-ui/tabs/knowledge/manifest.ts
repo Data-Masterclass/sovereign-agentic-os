@@ -16,7 +16,7 @@ export const manifest: TabManifest = {
   nav: { label: 'Knowledge', icon: '❦', href: '/knowledge', group: 'Context' },
   routes: ["/knowledge"],
   api: ["/api/knowledge", "/api/context"],
-  mcpTools: ["knowledge-search", "knowledge-write"],
+  mcpTools: ["knowledge-search", "knowledge-write", "reindex"],
   policies: [],
   services: ["opensearch", "litellm", "docling", "dagster"],
 };

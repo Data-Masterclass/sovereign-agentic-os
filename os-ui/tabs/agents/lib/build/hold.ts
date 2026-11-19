@@ -43,7 +43,25 @@ export type WriteScope = 'personal' | 'domain' | 'company';
 const ESCALATING_DOMAIN_TOOLS = new Set(['publish_knowledge', 'request_promotion', 'approve_promotion']);
 
 /**
+ * The TENANT-WIDE writes — held to a platform `admin` under EVERY preset, because their effect is
+ * not an artifact in a lane at all.
+ *
+ *   - `reindex_corpus` — re-parses and re-embeds every selected row of the tenant's Files or
+ *     Knowledge index, through the real parser and the real embeddings gateway, spending real
+ *     budget. `writeTargetScope` defaulting to `personal` would have made it the ONE thing in the
+ *     write catalog that a non-read-only agent could fire at an entire tenant corpus with no
+ *     human in the loop — the `commit` / `push_app_files` lesson again, one rung up: being in the
+ *     write catalog makes a tool VISIBLE to the hold gate, not held by it.
+ *
+ * Belt and braces, deliberately: `AGENT_FORBIDDEN_TOOLS` closes this tool to agent runs outright
+ * (`os-tools.ts` gate 0), and this classification is the second line — so if any future door
+ * reaches the hold instead, the answer is "an admin decides", never "personal, run it".
+ */
+const COMPANY_SCOPE_TOOLS = new Set(['reindex_corpus']);
+
+/**
  * The TARGET SCOPE of a granted write tool call. Conservative + fail-closed:
+ *   - the tenant-wide family (re-index a whole corpus) -> Company (the admin gate);
  *   - the escalation family (promote/publish/approve) -> Domain (the My->Domain gate);
  *   - everything else (create_/ingest_/author_/upload_/build_/transform_/document_/
  *     define_/attach_/wire_/update_/archive_ ... on a My artifact) -> Personal.
@@ -51,6 +69,7 @@ const ESCALATING_DOMAIN_TOOLS = new Set(['publish_knowledge', 'request_promotion
  * personal create is never held.
  */
 export function writeTargetScope(mcpName: string): WriteScope {
+  if (COMPANY_SCOPE_TOOLS.has(mcpName)) return 'company';
   if (ESCALATING_DOMAIN_TOOLS.has(mcpName)) return 'domain';
   return 'personal';
 }

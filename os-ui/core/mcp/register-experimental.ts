@@ -148,6 +148,25 @@ const BUNDLES: BundleSpec[] = [
     },
   },
 
+  // The admin re-index (2026-11-19). The TOOL is kernel-side and imports no tab; the two
+  // tab-owned services are loaded HERE and injected, because one tool must serve two corpora and
+  // a tab may not import another tab. Always on: it re-gates to admin itself, and it refuses a
+  // target whose tab is disabled (naming the reason) rather than disappearing silently.
+  {
+    name: 'reindex',
+    load: async () => {
+      const [tool, files, knowledge] = await Promise.all([
+        import('@core/mcp/reindex-tools'),
+        import('@tabs/files/lib/reindex'),
+        import('@tabs/knowledge/lib/reindex'),
+      ]);
+      return tool.reindexTools({
+        files: files.filesReindexService,
+        knowledge: knowledge.knowledgeReindexService,
+      });
+    },
+  },
+
   // night-2 stream T: the engineering view's MCP twin. Always on — the tool itself refuses a kind
   // whose tab is disabled, naming the reason, so there is nothing to gate here.
   { name: 'engineering', load: async () => (await import('@core/mcp/engineering-tools')).engineeringTools },

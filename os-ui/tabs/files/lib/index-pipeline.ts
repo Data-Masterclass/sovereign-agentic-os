@@ -6,6 +6,7 @@ import { docMetaOf } from '@tabs/files/lib/dls';
 import { type IngestAdapter, type Chunk } from '@tabs/files/lib/ingest/types';
 import { liveAdapterFor } from '@tabs/files/lib/ingest/live';
 import { embedTexts, type EmbedCaller } from '@tabs/files/lib/embed';
+import { refuseOfflineMock } from '@core/kernel/offline-mock';
 import {
   type ChunkDoc,
   type ChunkMeta,
@@ -20,6 +21,15 @@ import {
  * embed (only NEW/changed chunks — content-hash cache) → write to the hybrid index.
  * It is the orchestration the status chip narrates: Processing → Extracting →
  * Indexing → Searchable ✓.
+ *
+ * REQUIRE-LIVE (2026-11-19, re-index review M1). The honesty check used to live in the CALLER: the
+ * re-index read `ingestMode`/`embedMode` off the report it got back — which is one statement too
+ * late, because by then this function had already written the in-process index and awaited the
+ * OpenSearch mirror. On a deployment that permits a stand-in (`OS_OFFLINE_MOCK=allow`) a parser
+ * or gateway that fell over MID-RUN would therefore have overwritten good rows with placeholder
+ * text and hash vectors, and the re-index would then have pruned around them. So the demand moved
+ * INTO the pipeline: with `requireLive`, anything but a live parse and a live embedding is a typed
+ * refusal raised BEFORE `indexFile` and BEFORE `bulkIndex`. Nothing is written at all.
  *
  * Dual by composition: it uses the LIVE ingest adapter + LIVE embedder by default
  * (each of which self-falls-back to its deterministic mock when the service is off),
@@ -36,6 +46,10 @@ export type IndexReport = {
   ingestMode: 'live' | 'mock' | 'n/a';
   embedMode: 'live' | 'mock' | 'n/a';
   representations: string[];
+  /** The chunk ids this run wrote — the keep-set an add-then-prune re-index needs. */
+  chunkIds: string[];
+  /** Did the OpenSearch mirror land? `null` = not awaited (the default fire-and-forget). */
+  mirrored: boolean | null;
 };
 
 function metaOf(asset: FileAsset): ChunkMeta {
@@ -58,33 +72,75 @@ function metaOf(asset: FileAsset): ChunkMeta {
 export async function indexAsset(
   asset: FileAsset,
   text: string,
-  opts: { adapter?: IngestAdapter; embed?: typeof embedTexts; live?: boolean; caller?: EmbedCaller } = {},
+  opts: {
+    adapter?: IngestAdapter;
+    embed?: typeof embedTexts;
+    live?: boolean;
+    caller?: EmbedCaller;
+    /**
+     * Bypass the content-hash vector cache and embed EVERY chunk again (the admin re-index,
+     * 2026-11-19). The cache is what makes an ordinary re-index cheap, and it is also what would
+     * make a re-index pointless: an unchanged chunk's cached vector may be the very hash vector
+     * the re-index was started to replace. Default false — only the re-index asks for this.
+     */
+    reembed?: boolean;
+    /**
+     * AWAIT the OpenSearch mirror and report whether it landed, instead of firing it off. The
+     * upload path deliberately does not wait (a 4 s OpenSearch timeout must not slow an upload);
+     * a re-index MUST, because it may only prune the stale rows once the new ones are really
+     * there. Default false.
+     */
+    awaitMirror?: boolean;
+    /**
+     * Refuse (typed `ENGINE_UNAVAILABLE`) instead of indexing anything when the parse or the
+     * embedding came back as a stand-in. The re-index sets it: a re-index that accepted a
+     * stand-in would rewrite the very rows it exists to replace. Default false — an ordinary
+     * upload on a laptop keeps its honestly-labelled offline path.
+     */
+    requireLive?: boolean;
+    /**
+     * Keep the file's existing index rows when this run produced nothing indexable, instead of
+     * dropping them (review M2). The re-index sets it, because "the parse produced nothing" is a
+     * reason to leave the old rows alone, not to delete them — only a stored-only opt-out and a
+     * genuine re-index of real content should ever remove rows.
+     */
+    keepOnEmpty?: boolean;
+  } = {},
 ): Promise<IndexReport> {
   // Stored-only opt-out (sensitive/huge / restricted): held but never indexed.
   if (asset.indexing.mode === 'stored-only') {
     removeFromIndex(asset.id); // drop any stale index if it was just opted out
-    return { fileId: asset.id, status: 'stored-only', indexed: 0, embedded: 0, reusedFromCache: 0, ingestMode: 'n/a', embedMode: 'n/a', representations: [] };
+    return { fileId: asset.id, status: 'stored-only', indexed: 0, embedded: 0, reusedFromCache: 0, ingestMode: 'n/a', embedMode: 'n/a', representations: [], chunkIds: [], mirrored: null };
   }
 
   const adapter = opts.adapter ?? liveAdapterFor(asset.kind);
   const embed = opts.embed ?? embedTexts;
 
   const result = await adapter.apply({ fileId: asset.id, name: asset.name, kind: asset.kind, text, deepLink: asset.deepLink });
+  // REQUIRE-LIVE, first half: refuse on a stand-in PARSE before anything is removed or written.
+  if (opts.requireLive && result.mode !== 'live') {
+    refuseOfflineMock(
+      `Cannot re-index “${asset.name}”: the parser answered with a stand-in (${result.mode}) ` +
+        'rather than a real parse, so its placeholder text would have replaced the file’s indexed ' +
+        'content. Nothing was written, removed or pruned.',
+    );
+  }
   if (!adapter.verify(result)) {
-    removeFromIndex(asset.id);
-    return { fileId: asset.id, status: 'empty', indexed: 0, embedded: 0, reusedFromCache: 0, ingestMode: result.mode, embedMode: 'n/a', representations: [] };
+    if (!opts.keepOnEmpty) removeFromIndex(asset.id);
+    return { fileId: asset.id, status: 'empty', indexed: 0, embedded: 0, reusedFromCache: 0, ingestMode: result.mode, embedMode: 'n/a', representations: [], chunkIds: [], mirrored: null };
   }
 
   // Flatten chunks across representations, tagging each with its representation type.
   const flat: { chunk: Chunk; repType: string }[] = [];
   for (const rep of result.representations) for (const chunk of rep.chunks) flat.push({ chunk, repType: rep.type });
   if (flat.length === 0) {
-    removeFromIndex(asset.id);
-    return { fileId: asset.id, status: 'empty', indexed: 0, embedded: 0, reusedFromCache: 0, ingestMode: result.mode, embedMode: 'n/a', representations: result.representations.map((r) => r.type) };
+    if (!opts.keepOnEmpty) removeFromIndex(asset.id);
+    return { fileId: asset.id, status: 'empty', indexed: 0, embedded: 0, reusedFromCache: 0, ingestMode: result.mode, embedMode: 'n/a', representations: result.representations.map((r) => r.type), chunkIds: [], mirrored: null };
   }
 
   // Content-hash cache: reuse the prior vector for any unchanged chunk; embed the rest.
-  const prior = priorVectorsByHash(asset.id);
+  // `reembed` hands the cache an EMPTY prior set, so every chunk is embedded again. See the opt.
+  const prior = opts.reembed ? new Map<string, number[]>() : priorVectorsByHash(asset.id);
   const toEmbed: { idx: number; text: string }[] = [];
   const vectors: (number[] | null)[] = flat.map(({ chunk }, idx) => {
     const cached = prior.get(chunk.hash);
@@ -97,6 +153,16 @@ export async function indexAsset(
   if (toEmbed.length > 0) {
     const embedded = await embed(toEmbed.map((t) => t.text), opts.caller);
     embedMode = embedded.mode;
+    // REQUIRE-LIVE, second half: a hash vector has no semantic relationship to anything, so
+    // writing one over a real one is strictly worse than leaving the row alone. Refuse BEFORE
+    // `indexFile` and `bulkIndex` — the whole point of the check being here and not in the caller.
+    if (opts.requireLive && embedded.mode !== 'live') {
+      refuseOfflineMock(
+        `Cannot re-index “${asset.name}”: the embeddings gateway answered with a stand-in ` +
+          `(${embedded.mode}) rather than real vectors, so hash vectors would have replaced the ` +
+          'file’s embeddings. Nothing was written, removed or pruned.',
+      );
+    }
     toEmbed.forEach((t, i) => { vectors[t.idx] = embedded.vectors[i]; });
   }
 
@@ -107,7 +173,13 @@ export async function indexAsset(
   }));
 
   indexFile(docs, asset.id);
-  if (opts.live) void bulkIndex(docs); // best-effort OpenSearch mirror on a real deploy
+  // Best-effort OpenSearch mirror on a real deploy. Fire-and-forget by default (an upload must
+  // not wait on it); awaited only when the caller needs to know it landed — see `awaitMirror`.
+  let mirrored: boolean | null = null;
+  if (opts.live) {
+    if (opts.awaitMirror) mirrored = await bulkIndex(docs);
+    else void bulkIndex(docs);
+  }
 
   return {
     fileId: asset.id,
@@ -118,5 +190,7 @@ export async function indexAsset(
     ingestMode: result.mode,
     embedMode,
     representations: result.representations.map((r) => r.type),
+    chunkIds: docs.map((d) => d.chunkId),
+    mirrored,
   };
 }
