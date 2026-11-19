@@ -32,10 +32,10 @@ Work flows in a directed graph across tabs:
 ```
 data (Gold) ──→ metrics ──→ dashboards
 knowledge ──────────────────────────────→ agents
-connections ──→ software ──[use_as_data]──→ data (Bronze)
+connections ──→ software ──[create_dataset + ingest_dataset]──→ data (Bronze)
 ```
 
-Build data first to Gold, then define metrics on it, and compose dashboards from metrics. Ground agents in published knowledge. Wire software to connections; close the loop by exporting app output back into the Bronze data tier.
+Build data first to Gold, then define metrics on it, and compose dashboards from metrics. Ground agents in published knowledge. Wire software to connections; to close the loop, land app output as a dataset with `create_dataset` + `ingest_dataset` (`use_as_data` only sets a flag).
 
 ## Tools, resources, and prompts
 

@@ -2,7 +2,7 @@
 
 ## What this is
 
-The Software tab is where apps are built and governed. An app is a **validated AppSpec of cookbook-pattern tabs over governed data**, served **same-origin** by the trusted OS renderer under the viewer's session — **no repo, no CI, no image, no pod**. You author it declaratively (author the tabs over granted data), and it is **live at `/apps/<slug>` the moment its spec validates** — no build latency. Software is the most dependency-rich surface in the OS: it consumes governed datasets, published knowledge, promoted connections and governed metrics — all by reference, never by copying. A running app can also export its output back to the Bronze tier via `use_as_data`, closing the cross-tab spine loop.
+The Software tab is where apps are built and governed. An app is a **validated AppSpec of cookbook-pattern tabs over governed data**, served **same-origin** by the trusted OS renderer under the viewer's session — **no repo, no CI, no image, no pod**. You author it declaratively (author the tabs over granted data), and it is **live at `/apps/<slug>` the moment its spec validates** — no build latency. Software is the most dependency-rich surface in the OS: it consumes governed datasets, published knowledge, promoted connections and governed metrics — all by reference, never by copying. `use_as_data` only marks the app as a data source (a flag); it copies no rows. To land app output as data, use `create_dataset` + `ingest_dataset`.
 
 **Declarative is the default and the golden path.** The CODED path (raw generated code, committed to the domain git repository under `apps/<slug>/`; there is no CI runner and no image builder in the OS) is an ADVANCED option that is **OFF by default** and **platform-admin-gated** — `create_software` with `kind:'code'` and the `commit` tool fail closed with a clear message unless a platform admin has enabled coded apps.
 
@@ -26,7 +26,7 @@ They work, and they are **kind-aware**: on a `serveMode:'spec'` app the result c
 
 `design_software({ grants: { data: [{ id, access }] } })`. A grant with **no** `access` is granted at the **narrowest** level (`read-only`) and the response tells you so in `grantNotes`; a grant whose `access` is not one of `read-only` / `read-propose` / `read-write` is **refused** and named in `grantNotes`. Nothing is ever dropped silently — if a later door says *"… is not granted to this app"*, read `grantNotes` from the grant call.
 
-**Wire dependencies by reference** (design/author time): a tab may only read a dataset the app was granted; `use_data` / `use_knowledge` / `use_connection` formally bind a granted asset. **Close the loop:** `use_as_data` registers the app's output as a Bronze dataset.
+**Wire dependencies by reference** (design/author time): a tab may only read a dataset the app was granted; `use_data` / `use_knowledge` / `use_connection` formally bind a granted asset. **Close the loop:** `use_as_data` only marks the app as a data source (a flag); it copies no rows. To land app output as data, use `create_dataset` + `ingest_dataset`.
 
 **Model tiers:** Define — no LLM. Design — reasoning. `generate_app_spec` — reasoning (composes the spec). `set_app_spec` — no LLM (pure validate + persist).
 
@@ -86,7 +86,7 @@ app uses the copy frozen under `vendor/` when the app was created.
 - **Reference shorthand is tolerated, and reported.** Writing `"metric": "<id>"` or `"metric": { "id": "<id>" }` where the grammar wants `{ "metricId": "<id>" }` no longer kills the author: every spec write door (`set_app_spec`, the composer autosave, Publish, `generate_app_spec`) normalises the unambiguous shapes first and returns a `warning` naming the rewrite. What is **stored** is always canonical. Only genuinely ambiguous shapes — a bare id where the object needs more than one key — are still refused.
 - **`get_dataset` for real columns.** Never invent a column name; discover them first.
 - **delete is lineage-blocked.** If something depends on this app's output, `delete` returns `conflict` — use `archive`.
-- **`use_as_data` closes the spine.** The Bronze dataset it creates inherits the app's lineage, making the data → software → data chain traceable.
+- **`use_as_data` is a flag, not a copy.** It creates no dataset; use `create_dataset` + `ingest_dataset` to land app output as data.
 
 ## Governance
 
