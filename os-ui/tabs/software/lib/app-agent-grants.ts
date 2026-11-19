@@ -70,3 +70,23 @@ export function setAgentGrant(
   const rest = grants.filter((g) => g.id !== id);
   return access === null ? rest : [...rest, { id, access }];
 }
+
+/**
+ * Why an app may NOT start a run of `systemId`, or `null` when it may. The run door calls this
+ * for a request that carries an app's signed intent: the app must still exist for this user,
+ * and the agent system must be on the app's own agents grant. The user's own right to run the
+ * system is checked separately and stays the real authority; this only stops an app reaching
+ * an agent it was never given. Pure, so it is tested without a route.
+ */
+export function appAgentRunRefusal(
+  app: { name: string; agents?: AppAgentGrant[] } | null,
+  systemId: string,
+): string | null {
+  if (!app) {
+    return 'the app this request came from no longer exists, or you can no longer open it. Reopen the app from the Software tab.';
+  }
+  if (!isAgentGranted(normalizeAgentGrants(app.agents), systemId)) {
+    return `the app '${app.name}' was not granted the agent system ${systemId}. Its owner can grant it in the app's Choose Context step, under Agents.`;
+  }
+  return null;
+}
