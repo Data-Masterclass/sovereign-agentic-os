@@ -115,3 +115,36 @@ export function evaluateDls(filter: DlsFilter, doc: DocMeta): boolean {
 export function canRead(a: FileAsset, reader: Reader): boolean {
   return evaluateDls(compileDls(reader), docMetaOf(a));
 }
+
+// --- The SAME filter, spelled with the field names the `files` index stores ---------
+
+/** DocMeta field → the `files` index field (`bulkIndex` writes snake_case). */
+const INDEX_FIELD: Record<string, string> = { grantedUsers: 'granted_users' };
+
+/**
+ * The compiled filter as OpenSearch must receive it. `compileDls` names the in-process
+ * DocMeta fields; the index stores `granted_users`, so sending `grantedUsers` matched no
+ * document and silently dropped every named-individual grant from live search (2026-11-20).
+ */
+export function toIndexDls(filter: DlsFilter): Record<string, unknown> {
+  const rename = (c: Clause): Record<string, unknown> => {
+    if ('term' in c) {
+      const [f, v] = Object.entries(c.term)[0];
+      return { term: { [INDEX_FIELD[f] ?? f]: v } };
+    }
+    if ('terms' in c) {
+      const [f, v] = Object.entries(c.terms)[0];
+      return { terms: { [INDEX_FIELD[f] ?? f]: v } };
+    }
+    const b = c.bool;
+    return {
+      bool: {
+        ...(b.filter ? { filter: b.filter.map(rename) } : {}),
+        ...(b.must ? { must: b.must.map(rename) } : {}),
+        ...(b.should ? { should: b.should.map(rename) } : {}),
+        ...(b.minimum_should_match !== undefined ? { minimum_should_match: b.minimum_should_match } : {}),
+      },
+    };
+  };
+  return rename(filter);
+}

@@ -15,7 +15,7 @@ import {
 import { listDatasets, getDataset } from '@tabs/data/lib/store';
 import type { Dataset } from '@tabs/data/lib/dataset-schema';
 import { listWorkflows, getWorkflow } from '@tabs/knowledge/lib/store';
-import { listFiles, searchFilesRanked, getFile } from '@tabs/files/lib/store';
+import { listFiles, getFile, searchFilesHybrid } from '@tabs/files/lib';
 import { listMetrics } from '@tabs/metrics/lib/store';
 import { listDashboards, getDashboard } from '@tabs/dashboards/lib/store';
 import { normalizePanel, panelMetrics } from '@tabs/dashboards/lib/model';
@@ -325,7 +325,7 @@ export const readTools: McpTool[] = [
     tab: 'files',
     minRole: 'creator',
     description:
-      'Semantic + lexical search over the files you are entitled to (restricted files are stored-not-indexed, so never surface). Path: DISCOVERY for the Files golden path. Before: list_files. After: reference a hit, or upload_file if absent. Governance: read-only; the same document-level grant filter as the Files tab.',
+      'Semantic + lexical search over the files you are entitled to (restricted files are stored-not-indexed, so never surface). Returns { mode, total, hits, note? }: mode `hybrid` = meaning + words; `lexical` = words only (embedding gateway down); `keyword-only` = the search index is unavailable and only name/tag/text words were matched. Path: DISCOVERY for the Files golden path. Before: list_files. After: reference a hit, or upload_file if absent. Governance: read-only; the same document-level grant filter as the Files tab.',
     inputSchema: {
       type: 'object',
       properties: { query: { type: 'string', description: 'What to find.' } },
@@ -335,12 +335,15 @@ export const readTools: McpTool[] = [
     call: async (user, args) => {
       const query = str(args.query).trim();
       if (!query) fail('search_files needs a `query`', 400);
-      const { hits, total } = searchFilesRanked(P(user), query);
+      // Hybrid (BM25 + k-NN over the `files` index, fused) with the Files tab's DLS; when the
+      // index is down the keyword scan, labelled `mode: 'keyword-only'` with a note.
+      const res = await searchFilesHybrid(P(user), query);
       // The top-k is said, never implied: "20 hits" must not read as "20 files match".
-      const note = total > hits.length
-        ? `${total} files match; showing the top ${hits.length} of ${total} by relevance. Refine the query, or use list_files with folder= to see a whole folder.`
-        : undefined;
-      return { query, total, hits, ...(note ? { note } : {}) };
+      if (res.total <= res.hits.length) return res;
+      const count = `${res.total} files match; showing the top ${res.hits.length} of ${res.total} by relevance.`;
+      const hint = 'Refine the query, or use list_files with folder= to see a whole folder.';
+      const said = res.note?.includes('files match;') ? res.note : [res.note, count].filter(Boolean).join(' ');
+      return { ...res, note: `${said} ${hint}` };
     },
   },
   {
