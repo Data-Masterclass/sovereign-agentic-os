@@ -1,0 +1,69 @@
+{{- /*
+  Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+  SPDX-License-Identifier: Apache-2.0
+
+  Langfuse web — ingress allowlist (defence in depth).
+
+  `langfuse-web` (port 3000) serves the trace ingestion API, the public read API and the
+  console. Inside the cluster, only these workloads call it:
+
+    os-ui         LANGFUSE_URL: trace ingestion, trace/observation reads, the admin console
+                  session (core/infra/langfuse.ts, governed.ts, agent-governed.ts,
+                  policy/audit.ts, tool-sso-langfuse.ts, tool-proxy.ts)
+    os-ui-worker  the same run-path env (`soa.osUI.runEnv`): ingestion from agent runs
+    LiteLLM       `success_callback: ["langfuse"]` -> LANGFUSE_HOST
+    langfuse      the subchart's own worker (same release), admitted so the pair stays
+                  self-contained if a future version calls back into web
+
+  Plus the ingress controller, ONLY when the console is deliberately published
+  (`ingress.restricted.langfuse.expose`, see soa.restrictedExposed). Operator access through
+  `kubectl port-forward` is tunnelled by the kubelet into the pod and is not subject to
+  NetworkPolicy, so it needs no rule. Kubelet health probes come from the node and are allowed
+  by the CNI's host-to-pod default.
+
+  Rendered with the namespace's default-deny baseline (`networkPolicies.defaultDeny`). Opt out of
+  this one policy with `networkPolicies.langfuseWeb: false` (default: on).
+*/}}
+{{- $np := .Values.networkPolicies | default dict }}
+{{- if and .Values.langfuse.enabled $np.defaultDeny (ne (toString (index $np "langfuseWeb")) "false") }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: langfuse-web-allow-os-only
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/name: langfuse
+      app.kubernetes.io/component: web
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: os-ui
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: os-ui-worker
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ .Release.Name }}
+              app.kubernetes.io/name: litellm
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ .Release.Name }}
+              app.kubernetes.io/name: langfuse
+              app.kubernetes.io/component: worker
+        {{- if eq (include "soa.restrictedExposed" (dict "ctx" . "key" "langfuse")) "true" }}
+        # The console is published (ingress.restricted.langfuse.expose): admit the controller.
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ (.Values.ingress.restricted.langfuse).ingressNamespace | default "ingress-nginx" | quote }}
+        {{- end }}
+      ports:
+        - { protocol: TCP, port: 3000 }
+{{- end }}

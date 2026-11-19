@@ -62,6 +62,11 @@ jobs:
       - name: deploy.sh --from-registry + conflict-copy tests
         run: bash scripts/tests/deploy-from-registry.test.sh
 
+      # Langfuse web: sign-up off, and the NetworkPolicy admits only the OS's own callers.
+      # Renders the chart (the dependencies were built above); CI=true turns a skip into a failure.
+      - name: Langfuse hardening chart test
+        run: bash scripts/tests/langfuse-hardening.test.sh
+
       # Generates the code map and fails if the generator cannot (a broken
       # manifest, an unreadable tab). Deliberately NOT `--check`: comparing a
       # COMMITTED copy made the artifact a merge-conflict magnet without

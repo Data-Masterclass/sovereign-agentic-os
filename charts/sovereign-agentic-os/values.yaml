@@ -265,6 +265,12 @@ langfuse:
         secretKeyRef: { name: langfuse-core-secrets, key: nextauthSecret }
     features:
       telemetryEnabled: false           # sovereign/offline — no phone-home
+      # AUTH_DISABLE_SIGNUP=true: only existing users can sign in. The OS's own Langfuse user,
+      # org, project and API keys are created by headless initialisation (LANGFUSE_INIT_*,
+      # Secret `langfuse-init`), which writes them directly and does not use sign-up.
+      # https://langfuse.com/self-hosting/security/authentication-and-sso
+      # https://langfuse.com/self-hosting/administration/headless-initialization
+      signUpDisabled: true
     # Headless org/project/key provisioning (Secret from templates/base/langfuse/init.yaml).
     additionalEnvFrom:
       - secretRef:
