@@ -18,8 +18,9 @@
  *          webserver, daemon, code server) — a typo would otherwise be a peer that admits nobody;
  *       4. the webserver callers (os-ui, os-ui-worker, the code server's repo-sync sidecar) are
  *          admitted on the webserver's container port and a launched run pod is NOT (it shares
- *          `component: user-deployments` with the code server); the gRPC callers (webserver,
- *          daemon, code server, run pods) on the code server's gRPC port; os-ui is NOT on gRPC;
+ *          `component: user-deployments` with the code server, and carries `dagster/run-id`);
+ *          the code server's gRPC port admits the webserver and the daemon ONLY (not os-ui, not
+ *          a run pod, not the code server itself);
  *       5. both are Ingress-only (egress stays with egress-policies.yaml) and no ingress
  *          controller is admitted while no Dagster Ingress renders.
  *   - With `ingress.enabled` + `ingress.hosts.dagster`, the controller namespace is admitted to
@@ -85,9 +86,20 @@ function render(args) {
   });
   return yaml.loadAll(text).filter(Boolean);
 }
+const expr = (e, labels) => {
+  const has = Object.hasOwn(labels ?? {}, e.key);
+  switch (e.operator) {
+    case 'Exists': return has;
+    case 'DoesNotExist': return !has;
+    case 'In': return has && e.values.includes(labels[e.key]);
+    case 'NotIn': return !has || !e.values.includes(labels[e.key]);
+    default: throw new Error(`unknown selector operator ${e.operator}`);
+  }
+};
 const matches = (selector, labels) =>
-  !!selector && Object.entries(selector.matchLabels ?? {}).every(([k, v]) => labels?.[k] === v) &&
-  Object.keys(selector.matchLabels ?? {}).length > 0;
+  !!selector && Object.keys(selector.matchLabels ?? {}).length > 0 &&
+  Object.entries(selector.matchLabels ?? {}).every(([k, v]) => labels?.[k] === v) &&
+  (selector.matchExpressions ?? []).every((e) => expr(e, labels));
 const policy = (docs, name) => docs.find((d) => d.kind === 'NetworkPolicy' && d.metadata?.name === name);
 const workload = (docs, name) => docs.find((d) => d.kind === 'Deployment' && d.metadata?.name === name);
 const podLabels = (d) => d?.spec?.template?.metadata?.labels ?? {};
@@ -124,6 +136,7 @@ const runPod = {
   'app.kubernetes.io/component': 'run_worker',
   'app.kubernetes.io/part-of': 'sovereign-os',
   component: 'user-deployments',
+  'dagster/run-id': '00000000-0000-0000-0000-000000000000',
 };
 
 const web = policy(docs, WEB_POLICY);
@@ -163,10 +176,10 @@ if (web && grpc && !problems.length) {
   }
   if (admits(web, runPod, webPort)) problems.push(`${WEB_POLICY} admits launched run pods, which make no webserver call — select the code server by name too`);
   if (admits(web, podLabels(W.daemon), webPort)) problems.push(`${WEB_POLICY} admits the daemon, which does not call the webserver`);
-  for (const [k, labels] of [['webserver', podLabels(W.web)], ['daemon', podLabels(W.daemon)], ['code server', podLabels(W.code)], ['run pod', runPod]]) {
+  for (const [k, labels] of [['webserver', podLabels(W.web)], ['daemon', podLabels(W.daemon)]]) {
     if (!admits(grpc, labels, grpcPort)) problems.push(`${GRPC_POLICY} does not admit ${k} on gRPC ${grpcPort}`);
   }
-  for (const [k, labels] of [['os-ui', podLabels(W.osUi)], ['os-ui-worker', podLabels(W.worker)]]) {
+  for (const [k, labels] of [['os-ui', podLabels(W.osUi)], ['os-ui-worker', podLabels(W.worker)], ['run pod', runPod], ['code server', podLabels(W.code)]]) {
     if (admits(grpc, labels, grpcPort)) problems.push(`${GRPC_POLICY} admits ${k} on gRPC ${grpcPort}`);
   }
 }
