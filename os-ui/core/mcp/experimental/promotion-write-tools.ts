@@ -29,7 +29,7 @@ import { runQualityChecks } from '@tabs/data/lib/dq-run';
 import { DATA_CHECK_RULES, type DataCheckRule } from '@tabs/data/lib/index';
 import { queryRun } from '@core/infra/governed';
 import { publishPromotionLive } from '@tabs/data/lib/publish-server';
-import { enqueue, getApproval, decide, listApprovals } from '@core/policy/approvals';
+import { enqueue, getApproval, decide, listApprovals, refreshApprovalFromMirror } from '@core/policy/approvals';
 import { canApprove } from '@core/policy/roles';
 import { canBuildStage, canPassThrough, stageArtifact } from '@tabs/data/lib/panels';
 import { ingestAndRegisterBronze } from '@tabs/data/lib/ingest';
@@ -227,6 +227,10 @@ export const promotionTools: McpTool[] = [
     call: async (user, args) => {
       const approvalId = str(args.approvalId).trim();
       if (!approvalId) fail('approve_promotion needs an `approvalId`', 400);
+      // The NEWEST copy of the request: this process's queue may be older than its real state (in
+      // the run worker it was loaded at boot), and a request decided meanwhile in os-ui must answer
+      // "already decided" here — never be applied again, or applied after a rejection.
+      await refreshApprovalFromMirror(approvalId);
       const approval = getApproval(approvalId);
       if (!approval) fail('Promotion request not found', 404);
       if (approval.status !== 'pending') fail(`Already ${approval.status}`, 409);
@@ -260,7 +264,11 @@ export const promotionTools: McpTool[] = [
       } else {
         applied = applyApprovedFilePromotion(approval.payload as unknown as FilePromotionRequest, p);
       }
-      decide(approvalId, 'approve', user.id);
+      // Decide on the newest copy too: the apply above can take a while.
+      await refreshApprovalFromMirror(approvalId);
+      if (!decide(approvalId, 'approve', user.id)) {
+        fail(`Applied, but the request was decided elsewhere meanwhile (${getApproval(approvalId)?.status ?? 'gone'}) — check Governance`, 409);
+      }
       return { approved: true, kind: approval.kind, approvalId, asset: applied };
     },
   },

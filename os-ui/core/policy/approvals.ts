@@ -16,6 +16,7 @@
  */
 import 'server-only';
 import { osMirror } from '@core/infra/os-mirror';
+import { newSeenFields, noteSeen, writeChanged, writeNew, refreshRecord, type SeenFields } from '@core/infra/field-writes';
 import type { Role } from '@core/kernel/session';
 
 /**
@@ -197,11 +198,16 @@ export type ApprovalEffect = {
 // Pinned to globalThis so the queue is a TRUE singleton across separately
 // bundled Next.js route handlers (one route enqueues; the governance route
 // reads) and survives dev HMR.
-type ApprovalsState = { queue: Map<string, Approval>; hydration: Promise<void> | null };
+type ApprovalsState = {
+  queue: Map<string, Approval>;
+  hydration: Promise<void> | null;
+  /** What this process last knew the mirror held per approval (see `core/infra/field-writes.ts`). */
+  seen: SeenFields;
+};
 const QUEUE_KEY = Symbol.for('soa.approvals.queue');
 function approvalsState(): ApprovalsState {
   const g = globalThis as unknown as Record<symbol, ApprovalsState | undefined>;
-  if (!g[QUEUE_KEY]) g[QUEUE_KEY] = { queue: new Map(), hydration: null };
+  if (!g[QUEUE_KEY]) g[QUEUE_KEY] = { queue: new Map(), hydration: null, seen: newSeenFields() };
   return g[QUEUE_KEY]!;
 }
 function queueMap(): Map<string, Approval> {
@@ -231,12 +237,34 @@ async function hydrate(): Promise<void> {
   const docs = (await mirror.hydrate(2000)) ?? [];
   for (const a of docs as Approval[]) {
     // Don't clobber any approval created in-process before hydration completed.
-    if (a && a.id && !s.queue.has(a.id)) s.queue.set(a.id, a);
+    if (a && a.id && !s.queue.has(a.id)) {
+      s.queue.set(a.id, a);
+      noteSeen(s.seen, a.id, a as unknown as Record<string, unknown>);
+    }
   }
 }
 
-async function writeThrough(a: Approval): Promise<void> {
-  mirror.writeThrough(a.id, a); // best-effort durable mirror
+/**
+ * The ONE write path for an existing approval: only the fields this process changed reach the
+ * mirror. The run worker stamps `resume` / `effect` on its own copy of a request, which may be
+ * older than the decision taken in os-ui — sending the whole record put `status: 'pending'` back
+ * over that decision. In the worker a write never re-creates a withdrawn/deleted record.
+ */
+function writeThrough(a: Approval): void {
+  writeChanged(mirror, approvalsState().seen, a.id, a as unknown as Record<string, unknown>);
+}
+
+/**
+ * Re-read ONE request from the mirror before acting on it — for a decision taken in a process
+ * whose queue may be older than the request's real state (the run worker resuming an agent's
+ * `approve_promotion`): a request decided in os-ui meanwhile must answer "already decided".
+ */
+export async function refreshApprovalFromMirror(approvalId: string): Promise<'found' | 'absent' | 'unreachable'> {
+  const s = approvalsState();
+  return refreshRecord(mirror, s.seen, approvalId, {
+    put: (doc) => s.queue.set(approvalId, doc as unknown as Approval),
+    drop: () => s.queue.delete(approvalId),
+  });
 }
 
 export function enqueue(input: {
@@ -289,7 +317,7 @@ export function enqueue(input: {
     args: input.args,
   };
   queue.set(a.id, a);
-  void writeThrough(a);
+  writeNew(mirror, approvalsState().seen, a.id, a as unknown as Record<string, unknown>);
   return a;
 }
 
@@ -359,7 +387,7 @@ export function recordResume(approvalId: string, resume: ApprovalResume): Approv
   if (!a) return null;
   a.resume = resume;
   queue.set(a.id, a);
-  void writeThrough(a);
+  writeThrough(a);
   return a;
 }
 
@@ -384,7 +412,7 @@ export function decide(approvalId: string, decision: 'approve' | 'reject', by: s
   a.decidedBy = by;
   a.decidedAt = now();
   queue.set(a.id, a);
-  void writeThrough(a);
+  writeThrough(a);
   // A2: exactly one transition → exactly one resume. A racing second decider got `null` above.
   fireDecided(a, decision);
   return a;
@@ -405,7 +433,7 @@ export function withdraw(approvalId: string, by: string): Approval | null {
   a.decidedBy = by;
   a.decidedAt = now();
   queue.set(a.id, a);
-  void writeThrough(a);
+  writeThrough(a);
   fireDecided(a, 'withdraw');
   return a;
 }
@@ -419,7 +447,7 @@ export function recordEffect(
   if (!a) return null;
   a.effect = effect;
   queue.set(a.id, a);
-  void writeThrough(a);
+  writeThrough(a);
   return a;
 }
 
@@ -427,6 +455,7 @@ export function recordEffect(
 export function __resetApprovals(): void {
   const s = approvalsState();
   s.queue.clear();
+  s.seen.clear();
   s.hydration = null;
   hookState().settled.clear();
   mirror.__reset();
@@ -439,6 +468,7 @@ export function __resetApprovals(): void {
 export function __simulateRestart(): void {
   const s = approvalsState();
   s.queue.clear();
+  s.seen.clear();
   s.hydration = null;
   hookState().settled.clear();
 }
