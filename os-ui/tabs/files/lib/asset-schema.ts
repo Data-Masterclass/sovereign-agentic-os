@@ -104,6 +104,48 @@ export type Extraction = {
   chars?: number;
 };
 
+/**
+ * AUTOMATIC DESCRIPTION + TAGS (2026-11-19). One model call writes a short description and a
+ * few tags from a file's text; this block records the state of that work and, per field, WHO
+ * wrote what is on the file — because a user's own words always win and must never be replaced.
+ *
+ * `generation` reuses the extraction's bookkeeping style: pending / done / failed-with-reason,
+ * plus `skipped` when the model was deliberately not called. Never a stand-in for the text.
+ */
+export type AutoDocsCode =
+  | 'model-unreachable' // no answer from the gateway (connection refused / timeout / 5xx)
+  | 'model-rejected'    // the gateway refused this call (key, allowlist, bad request)
+  | 'budget'            // a spend cap or the key's budget is used up
+  | 'not-configured'    // no scoped key, or the standard model role points at the mock
+  | 'bad-output'        // the model answered, twice, with something that is not a usable result
+  | 'interrupted'       // a background run did not report back (process replaced)
+  | 'no-text'           // skipped: there is no text to describe
+  | 'nothing-to-write'  // skipped: both fields are the user's own
+  | 'disabled';         // skipped: switched off by the platform admin
+
+export type AutoDocsGeneration = {
+  status: 'pending' | 'done' | 'failed' | 'skipped';
+  /** When this state was recorded (ISO). */
+  at: string;
+  /** Set when `failed` or `skipped`. */
+  code?: AutoDocsCode;
+  /** One human sentence, shown in Details. */
+  reason?: string;
+};
+
+/** Who wrote a field. `model` + `at` are set for `generated`. */
+export type DocsProvenance = { source: 'user' | 'generated'; model?: string; at?: string };
+
+export type AutoDocs = {
+  generation?: AutoDocsGeneration;
+  /** Provenance of `description`. Absent = never recorded (a non-empty one is then the user's). */
+  description?: DocsProvenance;
+  /** Provenance of `tags`, per tag: a tag listed in `generated` was written by the model, every
+   *  other tag is the user's. `removed` are generated tags a user took off — they never return,
+   *  and once it is non-empty generation no longer touches the tags of this file. */
+  tags?: { generated: string[]; model?: string; at?: string; removed?: string[] };
+};
+
 /** The retrieval side of the envelope (filled by the Phase-3 ingest pipeline). */
 export type Indexing = {
   mode: IndexingMode;
@@ -147,6 +189,9 @@ export type FileAsset = {
   indexing: Indexing;
   /** The ONE policy source the DLS/OPA compiler reads (same as Data `grants`). */
   grants: Grant[];
+  /** Automatic description + tags: generation state and per-field provenance. Absent on files
+   *  nothing was ever generated for and nobody edited since 2026-11-19. */
+  autoDocs?: AutoDocs;
 };
 
 export class AssetError extends Error {
@@ -271,6 +316,44 @@ function parseExtraction(v: unknown): Extraction | undefined {
   return out;
 }
 
+const AUTO_DOCS_CODES: AutoDocsCode[] = [
+  'model-unreachable', 'model-rejected', 'budget', 'not-configured', 'bad-output', 'interrupted',
+  'no-text', 'nothing-to-write', 'disabled',
+];
+
+function parseProvenanceOf(v: unknown): DocsProvenance | undefined {
+  if (!isRecord(v) || (v.source !== 'user' && v.source !== 'generated')) return undefined;
+  const out: DocsProvenance = { source: v.source };
+  if (typeof v.model === 'string' && v.model) out.model = v.model;
+  if (typeof v.at === 'string' && v.at) out.at = v.at;
+  return out;
+}
+
+function parseAutoDocs(v: unknown, tags: string[]): AutoDocs | undefined {
+  if (!isRecord(v)) return undefined;
+  const out: AutoDocs = {};
+  const g = v.generation;
+  if (isRecord(g) && (g.status === 'pending' || g.status === 'done' || g.status === 'failed' || g.status === 'skipped')) {
+    out.generation = { status: g.status, at: typeof g.at === 'string' ? g.at : '' };
+    if (AUTO_DOCS_CODES.includes(g.code as AutoDocsCode)) out.generation.code = g.code as AutoDocsCode;
+    if (typeof g.reason === 'string' && g.reason) out.generation.reason = g.reason;
+  }
+  const description = parseProvenanceOf(v.description);
+  if (description) out.description = description;
+  if (isRecord(v.tags)) {
+    // A tag can only be "generated" while it is still on the file.
+    const generated = strArray(v.tags.generated, 'autoDocs.tags.generated').filter((t) => tags.includes(t));
+    const removed = strArray(v.tags.removed, 'autoDocs.tags.removed').filter(Boolean);
+    if (generated.length > 0 || removed.length > 0) {
+      out.tags = { generated };
+      if (typeof v.tags.model === 'string' && v.tags.model) out.tags.model = v.tags.model;
+      if (typeof v.tags.at === 'string' && v.tags.at) out.tags.at = v.tags.at;
+      if (removed.length > 0) out.tags.removed = removed;
+    }
+  }
+  return out.generation || out.description || out.tags ? out : undefined;
+}
+
 function parseIndexing(v: unknown, sensitivity: Sensitivity): Indexing {
   const r = isRecord(v) ? v : {};
   const requested = (r.mode === 'stored-only' ? 'stored-only' : 'indexed') as IndexingMode;
@@ -376,6 +459,8 @@ export function parseAsset(input: string | Record<string, unknown>): FileAsset {
     indexing: parseIndexing(doc.indexing, sensitivity),
     grants: grantsRaw.map(parseGrant),
   };
+  const autoDocs = parseAutoDocs(doc.autoDocs, asset.tags);
+  if (autoDocs) asset.autoDocs = autoDocs;
   // Keep the deep-link canonical for stored files (derive it; in-place keeps source).
   if (storage === 'object-store') asset.deepLink = deepLinkFor(asset);
   return asset;
@@ -415,6 +500,10 @@ export function serializeAsset(a: FileAsset): string {
   doc.indexing = indexing;
   if (a.relationships.length > 0) doc.relationships = a.relationships;
   if (a.grants.length > 0) doc.grants = a.grants;
+  // JSON round-trip drops every `undefined` (js-yaml refuses one) without listing the fields.
+  if (a.autoDocs && (a.autoDocs.generation || a.autoDocs.description || a.autoDocs.tags)) {
+    doc.autoDocs = JSON.parse(JSON.stringify(a.autoDocs));
+  }
   return yaml.dump(doc, { lineWidth: 100, noRefs: true });
 }
 

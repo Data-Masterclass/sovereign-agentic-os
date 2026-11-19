@@ -437,6 +437,43 @@ test('file records: extracted text, the extraction state and the stored-only rea
   }
 });
 
+test('file records: a generated description and its provenance reach the mirror, so the run worker\'s get_file / list_files see them', async () => {
+  const os = fakeCluster();
+  const files = await import('@tabs/files/lib/store');
+  try {
+    // The worker boots first and sees the file undescribed.
+    files.__resetStore();
+    await files.ensureHydrated();
+    const f = files.createFile(admin, { name: 'invoice-0042.md', text: 'Invoice INV-2026-0042. Total due: 1,234.56 EUR.' });
+    await settle();
+
+    // os-ui writes the generated description + tags (the same `persist` the extraction uses).
+    const applied = files.applyGeneratedDocs(f.id, { description: 'Invoice INV-2026-0042 over 1,234.56 EUR.', tags: ['invoice', 'finance', 'supplier'] }, 'sovereign-default');
+    assert.ok(applied);
+    await settle();
+    const doc = os.docsOf('os-file-records').get(f.id) as Record<string, unknown>;
+    assert.match(String(doc.yaml), /description: Invoice INV-2026-0042 over/);
+    assert.match(String(doc.yaml), /source: generated/);
+
+    // A second process that hydrated BEFORE the write picks it up on its next refresh.
+    files.__resetStore();
+    files.enableMirrorRefresh();
+    os.seed('os-file-records', f.id, { ...doc, updatedAt: new Date(Date.now() + 60_000).toISOString() });
+    await files.ensureHydrated();
+    const seen = files.getFile(f.id, admin).asset;
+    assert.equal(seen.description, 'Invoice INV-2026-0042 over 1,234.56 EUR.');
+    assert.deepEqual(seen.tags, ['invoice', 'finance', 'supplier']);
+    assert.equal(seen.autoDocs?.description?.source, 'generated');
+    assert.equal(seen.autoDocs?.description?.model, 'sovereign-default');
+    const row = files.listFiles(admin).mine.find((x) => x.id === f.id)!;
+    assert.equal(row.description, 'Invoice INV-2026-0042 over 1,234.56 EUR.');
+    assert.deepEqual(row.suggested, { description: true, tags: ['invoice', 'finance', 'supplier'] });
+  } finally {
+    os.restore();
+    files.__resetStore();
+  }
+});
+
 test('file records: a SECOND process (the run worker) picks up text extracted — and files uploaded — elsewhere, without a restart', async () => {
   const os = fakeCluster();
   const files = await import('@tabs/files/lib/store');
