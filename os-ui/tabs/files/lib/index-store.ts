@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { config } from '@core/kernel/config';
-import { type DlsFilter, evaluateDls, type DocMeta } from '@tabs/files/lib/dls';
+import { type DlsFilter, evaluateDls, toIndexDls, type DocMeta } from '@tabs/files/lib/dls';
 import { cosine } from '@tabs/files/lib/embed';
 
 /**
@@ -151,6 +151,10 @@ export function filesIndexMapping(dim = config.filesEmbedDim): Record<string, un
         domain: { type: 'keyword' },
         granted_users: { type: 'keyword' },
         tags: { type: 'keyword' },
+        // Read back by search (name is BM25-matched and shown; deep_link/kind label a hit).
+        name: { type: 'text' },
+        deep_link: { type: 'keyword' },
+        kind: { type: 'keyword' },
         description: { type: 'text' },
         freshness: { type: 'date' },
         vector: { type: 'knn_vector', dimension: dim },
@@ -179,6 +183,7 @@ export async function bulkIndex(docs: ChunkDoc[]): Promise<boolean> {
       file_id: d.fileId, rep_type: d.repType, text: d.text,
       owner: d.meta.owner, tier: d.meta.tier, domain: d.meta.domain,
       granted_users: d.meta.grantedUsers, tags: d.meta.tags, description: d.meta.description ?? '', freshness: d.meta.freshness, vector: d.vector,
+      name: d.meta.name, deep_link: d.meta.deepLink, kind: d.meta.kind,
     }));
   }
   const res = await osFetch(`/_bulk?refresh=true`, {
@@ -260,7 +265,7 @@ export function buildOpenSearchQuery(queryVector: number[], queryText: string, f
             minimum_should_match: 1,
           },
         }],
-        filter: [filter], // the compiled DLS — OpenSearch enforces it
+        filter: [toIndexDls(filter)], // the compiled DLS, spelled with the index's field names
       },
     },
   };

@@ -231,6 +231,25 @@ test('SEARCH: search_knowledge and search_files return only granted items', asyn
   assert.deepEqual(JSON.parse((fs as { text: string }).text).items, [{ id: 'f_inv2', name: 'a.pdf' }]);
 });
 
+test('SEARCH: the hybrid search_files result ({ mode, total, hits }) is narrowed to the granted folder', async () => {
+  // 2026-11-20: search_files became hybrid and returns an object, not a bare array. The grant
+  // filter walks into `hits` (rows carrying `id`), so an agent still sees only granted files.
+  const f = await check('search_files', { query: 'notice period' }, system({ files: [{ folder: { path: '/Invoices', scope: 'personal' }, capability: 'Read' }] }));
+  assert.ok(f.allow && f.shape);
+  const result = { query: 'notice period', mode: 'hybrid', total: 2, hits: [
+    { id: 'f_inv2', name: 'a.pdf', matchedBy: ['semantic'], snippet: 'thirty days notice' },
+    { id: 'f_hr', name: 'b.pdf', matchedBy: ['lexical', 'semantic'], snippet: 'notice period' },
+  ] };
+  const shaped = f.allow && f.shape ? f.shape(JSON.stringify(result)) : null;
+  const out = JSON.parse((shaped as { text: string }).text);
+  assert.deepEqual(out.hits.map((h: { id: string }) => h.id), ['f_inv2'], 'the ungranted file is removed');
+  assert.equal(out.mode, 'hybrid', 'the mode label survives the narrowing');
+  assert.match(out.grantScope, /1 other item/);
+  // The keyword-only fallback has the same shape, so it is narrowed the same way.
+  const fb = f.allow && f.shape ? f.shape(JSON.stringify({ ...result, mode: 'keyword-only', note: 'keyword only (search index unavailable)' })) : null;
+  assert.deepEqual(JSON.parse((fb as { text: string }).text).hits.map((h: { id: string }) => h.id), ['f_inv2']);
+});
+
 test('SQL: query_data runs only over the granted datasets\' tables, by full name', async () => {
   const sys = system({ data: [{ id: 'ds_orders', capability: 'Read' }] });
   assert.equal((await check('query_data', { sql: 'SELECT region, sum(net) FROM iceberg.sales.gold_orders GROUP BY 1' }, sys)).allow, true);

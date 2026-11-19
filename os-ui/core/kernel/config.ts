@@ -231,6 +231,9 @@ export const config = {
   // The OS UI degrades to a deterministic in-process mock for every one of these
   // when the service is unreachable (kind), so the golden path runs offline. ----
   filesIndex: env('FILES_INDEX', 'files'),
+  // Files + Knowledge search: a k-NN hit counts only at or above this cosine similarity, so an
+  // unrelated query returns nothing instead of the k nearest of everything (rank-fusion.ts).
+  searchSemanticMinCosine: Number(env('SEARCH_SEMANTIC_MIN_COSINE', '0.3')),
   // The SHARED embedding model fronted by LiteLLM (kind: sovereign-embed@384;
   // STACKIT: Qwen3-VL-Embedding-8B@4096 via STACKIT-managed inference). NEVER
   // hardcode the dim — the helm template wires FILES_EMBED_DIM from

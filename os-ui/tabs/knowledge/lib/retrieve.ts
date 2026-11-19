@@ -9,6 +9,7 @@ import { type KnowledgeUnit, type Provenance, type UnitType } from '@tabs/knowle
 import { embedQuery } from '@tabs/knowledge/lib/embed';
 import { allUnits } from '@tabs/knowledge/lib/index-store';
 import { cosine } from '@tabs/knowledge/lib/embed-core';
+import { reciprocalRankFusion, maxFusedScore, l2ScoreForCosine } from '@core/kernel/rank-fusion';
 import {
   type Principal,
   type Scored,
@@ -89,7 +90,7 @@ function srcToUnit(id: string, src: Record<string, unknown>): KnowledgeUnit {
   return { id, title: String(src.title ?? id), text: String(src.text ?? ''), provenance };
 }
 
-type LiveHit = { id: string; src: Record<string, unknown> };
+type LiveHit = { id: string; score: number; src: Record<string, unknown> };
 
 async function search(body: unknown): Promise<LiveHit[] | null> {
   const res = await withTimeout(`${config.opensearchUrl}/${config.knowledgeIndex}/_search`, {
@@ -102,7 +103,7 @@ async function search(body: unknown): Promise<LiveHit[] | null> {
   try {
     const data = JSON.parse(await res.text());
     const hits = Array.isArray(data?.hits?.hits) ? data.hits.hits : [];
-    return hits.map((h: Record<string, unknown>) => ({ id: String(h._id ?? ''), src: (h._source ?? {}) as Record<string, unknown> }));
+    return hits.map((h: Record<string, unknown>) => ({ id: String(h._id ?? ''), score: Number(h._score ?? 0), src: (h._source ?? {}) as Record<string, unknown> }));
   } catch {
     return null;
   }
@@ -113,50 +114,52 @@ const bm25Clause = (query: string) => ({
 });
 
 /**
- * LIVE: ADAPTIVE hybrid. Issue a true knn (dense) + BM25 (lexical) query when the
- * index has the `knn_vector` mapping (the chart provides it on STACKIT, dim from
- * `retrieval.knnDimension`); if that query is REJECTED (bare kind OpenSearch with
- * no vector field) fall back to BM25-only. Returns the units + which mode ran, or
- * null when OpenSearch is unreachable / has nothing indexed.
+ * LIVE: TRUE hybrid by fusion. BM25 (lexical) and k-NN (dense) run as TWO queries, each with the
+ * DLS filter, and are fused by rank (RRF, `core/kernel/rank-fusion.ts`). A unit either list found
+ * counts — a dense hit needs no keyword.
+ *
+ * Until 2026-11-20 this was ONE query with BM25 in `must` and k-NN in `should`: the keyword was a
+ * precondition, so a passage that meant the question without using its words was never found; and
+ * the caller then scored every live hit `hybridScore(0.5, lexical)`, discarding the dense signal.
+ *
+ * k-NN first tries the DLS as an EFFICIENT filter (inside the k-NN clause, so k stays k after
+ * filtering); an engine that refuses that (400) gets a post-filtered k-NN with a wider k. No query
+ * vector (gateway down, or a stand-in hash that has nothing to do with the stored real vectors) →
+ * BM25 alone, `mode: 'bm25'`. Returns null when OpenSearch is unreachable or found nothing.
  */
 async function retrieveLive(
   query: string,
-  vector: number[],
+  vector: number[] | null,
   principal: Principal,
   k: number,
-): Promise<{ units: KnowledgeUnit[]; mode: 'hybrid' | 'bm25' } | null> {
+): Promise<{ candidates: { unit: KnowledgeUnit; relevance: number }[]; mode: 'hybrid' | 'bm25' } | null> {
   const size = Math.max(k * 3, 12);
-  const filter = [dlsFilter(principal)];
+  const dls = dlsFilter(principal);
+  const source = { excludes: ['embedding'] };
 
-  // 1) Try true hybrid: knn (dense) + BM25 (lexical), DLS pushed down.
-  const hybridBody = {
-    size,
-    _source: { excludes: ['embedding'] },
-    query: {
-      bool: {
-        must: [bm25Clause(query)],
-        should: [{ knn: { embedding: { vector, k: size } } }],
-        filter,
-      },
-    },
-  };
-  const hybrid = await search(hybridBody);
-  if (hybrid && hybrid.length > 0) {
-    return { units: hybrid.map((h) => srcToUnit(h.id, h.src)), mode: 'hybrid' };
-  }
+  const lexicalP = search({ size, _source: source, query: { bool: { must: [bm25Clause(query)], filter: [dls] } } });
+  const denseP = vector
+    ? (async () => {
+        const filtered = await search({ size, _source: source, query: { knn: { embedding: { vector, k: size, filter: dls } } } });
+        if (filtered) return filtered;
+        return search({ size, _source: source, query: { bool: { must: [{ knn: { embedding: { vector, k: size * 4 } } }], filter: [dls] } } });
+      })()
+    : Promise.resolve(null);
+  const [lexical, denseAll] = await Promise.all([lexicalP, denseP]);
+  // k-NN returns the k nearest however unrelated; below the semantic floor a unit is not a match.
+  const floor = l2ScoreForCosine(config.searchSemanticMinCosine);
+  const dense = denseAll ? denseAll.filter((h) => h.score >= floor) : null;
+  if (!lexical && !dense) return null;
 
-  // 2) Fall back to BM25-only (the vector field isn't mapped, or hybrid was empty).
-  const bm25Body = {
-    size,
-    _source: { excludes: ['embedding'] },
-    query: { bool: { must: [bm25Clause(query)], filter } },
-  };
-  const bm25 = await search(bm25Body);
-  if (bm25 && bm25.length > 0) {
-    return { units: bm25.map((h) => srcToUnit(h.id, h.src)), mode: 'bm25' };
-  }
+  const units = new Map<string, KnowledgeUnit>();
+  for (const h of [...(lexical ?? []), ...(dense ?? [])]) if (!units.has(h.id)) units.set(h.id, srcToUnit(h.id, h.src));
+  if (units.size === 0) return null; // nothing indexed for this principal → the offline mirror
 
-  return null; // unreachable or nothing indexed → caller uses the offline mirror
+  const lists = [{ name: 'lexical', ids: (lexical ?? []).map((h) => h.id) }];
+  if (dense) lists.push({ name: 'dense', ids: dense.map((h) => h.id) });
+  const top = maxFusedScore(lists.length);
+  const candidates = reciprocalRankFusion(lists).map((f) => ({ unit: units.get(f.id)!, relevance: f.score / top }));
+  return { candidates, mode: dense ? 'hybrid' : 'bm25' };
 }
 
 /**
@@ -192,14 +195,15 @@ export async function retrieveKnowledge(
   let candidates: { unit: KnowledgeUnit; relevance: number }[];
   let store: 'opensearch' | 'memory';
   let mode: RetrievalMode;
-  const live = await retrieveLive(query, vector, principal, k);
+  // A stand-in hash vector is never compared with the stored real vectors (it would rank by a hash).
+  const live = await retrieveLive(query, embedSource === 'litellm' ? vector : null, principal, k);
   if (live) {
     store = 'opensearch';
     mode = live.mode;
-    // Re-check DLS in code (belt-and-suspenders) + score lexically.
-    candidates = applyDls(live.units, principal)
-      .filter((u) => !opts.workflowId || u.provenance.workflowId === opts.workflowId || u.provenance.type === 'domain')
-      .map((unit) => ({ unit, relevance: hybridScore(0.5, lexicalScore(query, `${unit.title} ${unit.text}`)) }));
+    // Re-check DLS in code (belt-and-suspenders); relevance is the fused rank (lexical + dense).
+    candidates = live.candidates
+      .filter(({ unit }) => canSee(unit.provenance, principal))
+      .filter(({ unit: u }) => !opts.workflowId || u.provenance.workflowId === opts.workflowId || u.provenance.type === 'domain');
   } else {
     store = 'memory';
     mode = 'offline';
