@@ -53,7 +53,7 @@ import {
 } from '@tabs/agents/lib/engine/jobs';
 import { runJobStoreFor } from '@tabs/agents/lib/engine/jobs-postgres';
 import { leaseWatch, settlementOf, workerLoop, type LeaseWatch, type WorkerLoopDeps } from '@tabs/agents/lib/engine/worker-loop';
-import { currentUserOf, executeTeamRun, prepareRunYaml, type RunReportBody } from '@tabs/agents/lib/build/run-service';
+import { currentUserOf, executeTeamRun, prepareRun, type RunReportBody } from '@tabs/agents/lib/build/run-service';
 import type { LivePrincipal } from '@tabs/agents/lib/engine/resume';
 import type { ApprovalDecision } from '@tabs/agents/lib/engine/approval-port';
 import type { Approval } from '@core/policy/approvals';
@@ -283,12 +283,13 @@ export async function executeJob(store: RunJobStore, job: RunJob, opts: ExecuteJ
     // Worker: the registry here is a read-only mirror — fetch THIS system fresh (no-op in os-ui).
     await refreshSystemFromMirror(job.systemId);
     const view = getSystemForRun(job.systemId, user);
-    const yaml = await prepareRunYaml(user, view, job.systemId);
+    const { yaml, warnings: definitionWarnings } = await prepareRun(user, view, job.systemId);
     const body = await executeTeamRun({
       user,
       systemId: job.systemId,
       view,
       yaml,
+      definitionWarnings,
       messages: job.input.messages ?? [],
       runId: job.runId,
       resume: job.kind === 'resume',

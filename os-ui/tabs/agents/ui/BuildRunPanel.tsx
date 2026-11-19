@@ -1404,7 +1404,7 @@ export default function BuildRunPanel({
       {run && !runningNow && ((run.warnings && run.warnings.length > 0) || run.checkpointer) ? (
         <div className="hint" style={{ marginTop: 2, marginBottom: 4, color: 'var(--warn, #b7791f)' }}>
           {run.checkpointer ? <>Checkpoints: {run.checkpointer === 'postgres' ? 'Postgres (durable)' : 'in memory (not durable across restarts)'}{run.warnings && run.warnings.length > 0 ? ' · ' : ''}</> : null}
-          {run.warnings && run.warnings.length > 0 ? <>{run.warnings.length} compile warning{run.warnings.length === 1 ? '' : 's'}: {run.warnings.join(' · ')}</> : null}
+          {run.warnings && run.warnings.length > 0 ? <>{run.warnings.length} warning{run.warnings.length === 1 ? '' : 's'}: {run.warnings.join(' · ')}</> : null}
         </div>
       ) : null}
       {/* Seed timestamp for the persisted run result. */}
@@ -1415,6 +1415,14 @@ export default function BuildRunPanel({
       ) : null}
       <p className="hint" style={{ marginTop: 0 }}>
         Every tool call goes through the governed gateway. Approvals land in Governance.
+      </p>
+      {/* Which definition a run uses. Edits in the builder save as they are made, and a run
+          reads the saved definition when it starts — so a changed grant, instruction or output
+          needs no rebuild, and nothing here should suggest it does. */}
+      <p className="hint" style={{ marginTop: 0 }}>
+        ▶ Run uses the definition as it is saved at that moment. Changes to grants, instructions and
+        outputs apply to the next run — no rebuild needed. An edit that is still typed but not saved
+        (an unsaved output, or system.yaml open in the editor) is not part of the run.
       </p>
       {/* Primary affordance: one click runs the task DEFINED in Define. The server
           fills a real, purpose-derived default when the prompt is empty — no need to

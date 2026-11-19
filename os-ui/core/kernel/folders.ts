@@ -270,3 +270,81 @@ export function triState(
   if (hits === 0) return 'none';
   return hits === allUnder.length ? 'all' : 'some';
 }
+
+// ------------------------------------------------------- checkbox selection --
+
+/** An item of the checkbox tree: an id, its folder, and the root (My / Domain) it belongs to. */
+export type SelectionItem = { id: string; folder: string; scope?: FolderRootScope };
+/** A folder as a grant names it: a path inside ONE root. */
+export type FolderGrantRef = { path: string; scope: FolderRootScope };
+/** What a checkbox tree stores: whole folders (late-bound) plus single items. */
+export type FolderSelectionResult = { folderGrants: FolderGrantRef[]; itemGrants: string[] };
+
+/**
+ * Reduce the checked item ids of a two-root checkbox tree to the grants a caller stores: a folder
+ * whose EVERY item is checked becomes one FOLDER grant (so items added later are covered), the
+ * rest are emitted one by one.
+ *
+ * EACH ROOT IS REDUCED OVER ITS OWN ITEMS AND STAMPED WITH ITS OWN SCOPE. This used to run once,
+ * over the items of BOTH roots, and stamp every folder with the root that was clicked: unticking
+ * something under "My files" turned a fully ticked Domain folder into a `personal` folder grant
+ * (a folder that does not exist in that lane, so the grant matched nothing), and a `/` grant in
+ * one lane counted the other lane's items as its own.
+ *
+ * `rootScopes` are the roots that hold the catch-all `/` grant — because the grant is already
+ * there, or because the "All …" row was just ticked. Only those collapse to `/` when every item
+ * is checked. Ticking the one folder that happens to hold everything is a grant on THAT folder,
+ * not on everything that will ever be filed in the lane.
+ *
+ * `actingScope` is the root the toggle happened in; it owns items that carry no scope (the
+ * historical single-root shape).
+ */
+export function computeFolderSelection(args: {
+  nodes: Partial<Record<FolderRootScope, FolderPathNode[]>>;
+  items: SelectionItem[];
+  checked: Set<string>;
+  actingScope: FolderRootScope;
+  rootScopes?: FolderRootScope[];
+}): FolderSelectionResult {
+  const { items, checked, actingScope } = args;
+  const rootScopes = new Set(args.rootScopes ?? []);
+  const anyScoped = items.some((i) => i.scope !== undefined);
+  const scopes: FolderRootScope[] = anyScoped ? ['personal', 'domain'] : [actingScope];
+  const folderGrants: FolderGrantRef[] = [];
+  const covered = new Set<string>();
+
+  for (const scope of scopes) {
+    const own = items.filter((i) => (i.scope ?? actingScope) === scope);
+    if (own.length === 0) continue;
+
+    if (rootScopes.has(scope) && own.every((i) => checked.has(i.id))) {
+      folderGrants.push({ path: '/', scope });
+      for (const i of own) covered.add(i.id);
+      continue;
+    }
+
+    // Every folder path that has a row OR holds items; deepest first, so a fully checked deep
+    // folder is captured before its (also full) ancestor.
+    const paths = new Set<string>();
+    for (const n of args.nodes[scope] ?? []) paths.add(normaliseFolderPath(n.path));
+    for (const i of own) paths.add(normaliseFolderPath(i.folder));
+    paths.delete('/');
+    const ordered = [...paths].sort((a, b) => b.split('/').length - a.split('/').length);
+    for (const path of ordered) {
+      const under = itemsUnderFolder(path, own).map((i) => i.id);
+      if (under.length === 0) continue;
+      if (!under.every((id) => checked.has(id))) continue;
+      if (!under.every((id) => covered.has(id))) folderGrants.push({ path, scope });
+      for (const id of under) covered.add(id);
+    }
+  }
+
+  const seen = new Set<string>();
+  const itemGrants: string[] = [];
+  for (const i of items) {
+    if (!checked.has(i.id) || covered.has(i.id) || seen.has(i.id)) continue;
+    seen.add(i.id);
+    itemGrants.push(i.id);
+  }
+  return { folderGrants, itemGrants };
+}

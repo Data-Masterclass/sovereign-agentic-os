@@ -171,7 +171,10 @@ function setArtifactGrantCapability(
 ): System {
   const sys = structuredClone(input);
   const write = capabilityWrites(cap);
-  if (kind !== 'files' && id) {
+  // An id grant is stored for EVERY kind, files included: a single file is granted by its id
+  // (`grant-scope.ts` enforces it, `parseSystem` reads it). Files used to be skipped here, so
+  // ticking one file in the builder stored nothing and the tick silently came back off.
+  if (id) {
     const arr = sys.grants[kind];
     const existing = arr.find((g) => g.id === id);
     if (existing) existing.capability = cap;
@@ -192,10 +195,12 @@ function setArtifactGrantCapability(
 
   const provision = kind === 'plan' && id ? planToolsForId(id, cap) : toolsForGrant(kind, cap);
   for (const t of provision) if (!sys.grants.tools.includes(t)) sys.grants.tools.push(t);
-  // A Read grant of Files strips only the write tool (files have no id list, so a
-  // Read after a Write must drop upload_file); the id-kinds keep write tools until
-  // no grant writes (handled on removal/downgrade below).
-  if (kind === 'files' && !write) for (const t of writeToolsForKind('files')) stripTool(sys, t);
+  // A Read grant of Files strips the write tool only once NO files grant writes any more.
+  // It used to strip it unconditionally, so ticking a file to read took `upload_file` away
+  // from a team whose declared output still had its Write folder grant.
+  if (kind === 'files' && !write && !sys.grants.files.some((g) => capabilityWrites(g.capability))) {
+    for (const t of writeToolsForKind('files')) stripTool(sys, t);
+  }
   if (write && sys.safetyPreset === 'read-only') sys.safetyPreset = 'read-bounded';
   return sys;
 }
@@ -241,7 +246,7 @@ export function setDescription(input: System, text: string): System {
  */
 export function removeArtifactGrant(input: System, kind: GrantKind, id: string | null): System {
   const sys = structuredClone(input);
-  if (kind !== 'files' && id) sys.grants[kind] = sys.grants[kind].filter((g) => g.id !== id);
+  if (id) sys.grants[kind] = sys.grants[kind].filter((g) => g.folder || g.id !== id);
   // Keep the kind's WRITE tools while ANY remaining grant of the kind writes. Files carry
   // only folder grants (no item list), so count those — otherwise removing an unrelated
   // grant would wrongly strip `upload_file` while a write files-folder grant still stands.
@@ -357,12 +362,27 @@ export function addOutput(input: System, output: DeclaredOutput): System {
   if (!name) throw new SystemError('Simple: an output needs a name');
   const target: FolderGrantTarget = { path: normaliseFolderPath(output.folder.path), scope: output.folder.scope };
   let sys = structuredClone(input);
-  sys.outputs = [...(sys.outputs ?? []), { kind: output.kind, name, folder: target }];
+  const producer = output.agent && sys.agents.some((a) => a.id === output.agent) ? output.agent : undefined;
+  sys.outputs = [...(sys.outputs ?? []), { kind: output.kind, name, folder: target, ...(producer ? { agent: producer } : {}) }];
   // Auto-provision the Write folder-grant (reusing the folder-grant machinery) unless an
   // equivalent write grant already covers this folder — dedupe so we never stack grants.
   if (!hasWriteFolderGrant(sys, output.kind, target)) {
     sys = setFolderGrant(sys, output.kind, target, true);
   }
+  return sys;
+}
+
+/**
+ * Name the agent that WRITES the declared output at `index` (`null` = any agent of the team).
+ * At run time only that agent holds the output's write tool (`output-tools.ts`). An id that is
+ * not an agent of this team clears the choice rather than storing a dangling name.
+ */
+export function setOutputAgent(input: System, index: number, agentId: string | null): System {
+  const sys = structuredClone(input);
+  const o = (sys.outputs ?? [])[index];
+  if (!o) return sys;
+  if (agentId && sys.agents.some((a) => a.id === agentId)) o.agent = agentId;
+  else delete o.agent;
   return sys;
 }
 

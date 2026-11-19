@@ -180,14 +180,21 @@ test('FILES: a folder grant covers its subfolders in its own lane, and nothing e
   assert.equal((await check('get_file', { fileId: 'f_unknown' }, sys)).allow, false, 'a file the runner cannot see is not in a granted folder');
 });
 
-test('FILES: writing into a read-only granted folder is refused; a writable folder and a new folder are not', async () => {
+test('FILES: writing into a read-only granted folder is refused; a writable folder is not; with a writable folder chosen, nowhere else is', async () => {
   const sys = system({ files: [
     { folder: { path: '/Invoices', scope: 'personal' }, capability: 'Read' },
     { folder: { path: '/Reports', scope: 'personal' }, capability: 'Write-bounded' },
   ] });
   assert.match(reason(await check('upload_file', { name: 'x.md', folder: 'Invoices/2026' }, sys)), /granted the folder \/Invoices\/2026 read-only.*It may write to: \/Reports \(My files\)/);
   assert.equal((await check('upload_file', { name: 'x.md', folder: '/Reports/2026' }, sys)).allow, true);
-  assert.equal((await check('upload_file', { name: 'x.md', folder: '/Scratch' }, sys)).allow, true, 'a NEW personal file outside every granted folder touches nothing existing');
+  // Where a writable folder was chosen (a declared output, or Read + write), THAT is where new
+  // files go — choosing the target is the permission, and not one for the rest of the drive.
+  assert.match(reason(await check('upload_file', { name: 'x.md', folder: '/Scratch' }, sys)), /may not write a file to \/Scratch: this system writes files only to \/Reports \(My files\)/);
+  // With NO writable folder at all the earlier rule stands: a new personal file outside every
+  // granted folder touches nothing existing, so only the read-only folders refuse it.
+  const readOnly = system({ files: [{ folder: { path: '/Invoices', scope: 'personal' }, capability: 'Read' }] });
+  assert.equal((await check('upload_file', { name: 'x.md', folder: '/Scratch' }, readOnly)).allow, true);
+  assert.match(reason(await check('upload_file', { name: 'x.md', folder: '/Invoices' }, readOnly)), /read-only/);
 });
 
 test('LISTS: only the granted rows come back, and the result says rows were left out', async () => {

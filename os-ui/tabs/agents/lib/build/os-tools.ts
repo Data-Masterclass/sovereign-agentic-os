@@ -21,6 +21,7 @@ import { enqueue as realEnqueue } from '@core/policy/approvals';
 import { holdDecision, holdReason, writeTargetScope } from '@tabs/agents/lib/build/hold';
 import { agentForbiddenReason } from '@core/mcp/write-tool-meta';
 import { resolveFolderGrant } from '@core/kernel/folders';
+import { folderGrantCoverage, zeroMatchWarning, isOutputFolder, type TreeItemRef } from '@tabs/agents/lib/grant-apply';
 import { config } from '@core/kernel/config';
 import { TAB_FEATURES } from '@core/kernel/tabs';
 import { toolSummary } from '@tabs/agents/lib/build/tool-brief';
@@ -264,6 +265,19 @@ export async function resolveFolderGrants(
   return { system: next, resolutions };
 }
 
+/** The Files listing as the loader needs it: the runner's My lane and their Domain lane. */
+export type FileLister = (principal: { id: string; domains: string[]; role: CurrentUser['role'] }) => Promise<{
+  mine: { id: string; folder: string }[];
+  domain: { id: string; folder: string }[];
+}>;
+
+/** The real Files store, read as the runner (the same listing the Files tab shows). */
+const realFileLister: FileLister = async (principal) => {
+  const { listFiles, ensureHydrated } = await import('@tabs/files/lib/store');
+  await ensureHydrated();
+  return listFiles(principal);
+};
+
 /**
  * The REAL, server-backed {@link ScopedItemsLoader}: reads the SAME canView/DLS-scoped
  * lists the `grants/available` route surfaces, as the acting `user`, and projects each
@@ -273,7 +287,7 @@ export async function resolveFolderGrants(
  * Never widens: it is exactly the owner-grantable universe, so the kernel's result is
  * provably a subset.
  */
-export function serverScopedItemsLoader(user: CurrentUser): ScopedItemsLoader {
+export function serverScopedItemsLoader(user: CurrentUser, deps: { listFiles?: FileLister } = {}): ScopedItemsLoader {
   const principal = { id: user.id, domains: user.domains, role: user.role };
   return async (kind, scope) => {
     if (kind === 'data') {
@@ -284,9 +298,7 @@ export function serverScopedItemsLoader(user: CurrentUser): ScopedItemsLoader {
       return group.map((d) => ({ id: d.id, folder: d.folder }));
     }
     if (kind === 'files') {
-      const { listFiles, ensureHydrated } = await import('@tabs/files/lib/store');
-      await ensureHydrated();
-      const g = listFiles(principal);
+      const g = await (deps.listFiles ?? realFileLister)(principal);
       const group = scope === 'personal' ? g.mine : g.domain;
       return group.map((f) => ({ id: f.id, folder: f.folder }));
     }
@@ -317,14 +329,68 @@ export async function resolveFolderGrantsForRun(
   systemId: string,
   deps: Pick<OsToolDeps, 'trace'> = { trace: realTrace },
 ): Promise<System> {
+  return (await resolveFolderGrantsWithWarnings(user, sys, systemId, deps)).system;
+}
+
+/**
+ * The warnings a run shows its RUNNER about folder grants that matched nothing: "The grant on
+ * /invoices in My files currently contains 0 files. 12 files are in Domain files /invoices."
+ *
+ * The pointer to the other lane is computed from the runner's OWN listing (`load` reads as the
+ * acting user), and it goes to the run's `warnings` list — the run report a person reads. It is
+ * never added to the system prompt or to a tool result: an agent is not told about files outside
+ * its grant. A declared output's folder is skipped (empty until the first result is written).
+ */
+export async function folderGrantWarnings(
+  sys: System,
+  resolutions: FolderResolution[],
+  load: ScopedItemsLoader,
+): Promise<string[]> {
+  const out: string[] = [];
+  const lanes = new Map<string, TreeItemRef[]>();
+  const lane = async (kind: FolderGrantKind, scope: 'personal' | 'domain'): Promise<TreeItemRef[]> => {
+    const key = `${kind}:${scope}`;
+    let rows = lanes.get(key);
+    if (!rows) {
+      rows = (await load(kind, scope)).map((i) => ({ id: i.id, folder: i.folder, scope }));
+      lanes.set(key, rows);
+    }
+    return rows;
+  };
+  for (const r of resolutions) {
+    if (r.total > 0) continue;
+    const folder = { path: r.path, scope: r.scope };
+    if (isOutputFolder(sys, r.kind, folder)) continue;
+    let items: TreeItemRef[] = [];
+    try {
+      items = [...(await lane(r.kind, 'personal')), ...(await lane(r.kind, 'domain'))];
+    } catch {
+      /* the pointer is best-effort; the zero itself is already known */
+    }
+    const cov = folderGrantCoverage(folder, items);
+    const text = zeroMatchWarning(r.kind, { ...cov, count: 0 }, 'named');
+    if (text && !out.includes(text)) out.push(text);
+  }
+  return out;
+}
+
+/** {@link resolveFolderGrantsForRun}, also returning the zero-match warnings for the run report. */
+export async function resolveFolderGrantsWithWarnings(
+  user: CurrentUser,
+  sys: System,
+  systemId: string,
+  deps: Pick<OsToolDeps, 'trace'> & { load?: ScopedItemsLoader } = { trace: realTrace },
+): Promise<{ system: System; warnings: string[] }> {
   // Fast path: no folder grants anywhere ⇒ nothing to resolve (zero store reads).
   const hasFolder =
     sys.grants.data.some((g) => g.folder) ||
     sys.grants.knowledge.some((g) => g.folder) ||
     sys.grants.files.some((g) => g.folder);
-  if (!hasFolder) return sys;
+  if (!hasFolder) return { system: sys, warnings: [] };
 
-  const { system, resolutions } = await resolveFolderGrants(sys, serverScopedItemsLoader(user));
+  const load = deps.load ?? serverScopedItemsLoader(user);
+  const { system, resolutions } = await resolveFolderGrants(sys, load);
+  const warnings = await folderGrantWarnings(sys, resolutions, load);
   const principal = principalFor(systemId);
   for (const r of resolutions) {
     try {
@@ -339,7 +405,7 @@ export async function resolveFolderGrantsForRun(
       /* attribution is best-effort */
     }
   }
-  return system;
+  return { system, warnings };
 }
 
 /**
