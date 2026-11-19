@@ -59,6 +59,7 @@ function metaOf(asset: FileAsset): ChunkMeta {
     deepLink: asset.deepLink,
     kind: asset.kind,
     tags: asset.tags,
+    description: asset.description,
     freshness: asset.freshness,
   };
 }

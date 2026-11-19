@@ -80,6 +80,13 @@ export type Settings = {
   // PLATFORM admin explicitly turns it on. Fail-closed: the gate lives at the run
   // entrypoint, not the UI — the scheduler + event receiver both consult it.
   autonomousAgentsEnabled: boolean;
+  // FILES: AUTOMATIC DESCRIPTION + TAGS (2026-11-19). When ON (the DEFAULT), every uploaded
+  // file whose text is available gets a short description and a few tags written from its
+  // content — one call on the STANDARD model, billed to the uploader. OFF stops every such
+  // call (uploads, "Regenerate" and the admin backfill). Restricted files and files their
+  // owner keeps stored-only are never sent regardless. Read through
+  // `core/models/roles.ts` `filesAutoDescribeEnabled()`.
+  filesAutoDescribe: boolean;
 };
 
 const EMPTY_ROLES = { reasoning: '', standard: '', tools: '', embeddings: '' };
@@ -97,6 +104,7 @@ function defaults(): Settings {
     codedAppsEnabled: false,
     promoteAsView: false,
     autonomousAgentsEnabled: false,
+    filesAutoDescribe: true,
   };
 }
 
@@ -209,6 +217,9 @@ function mergeSettings(base: Settings, patch: Partial<Settings> & Record<string,
     // settings PUT can never accidentally ENABLE unattended agent execution.
     autonomousAgentsEnabled:
       typeof patch.autonomousAgentsEnabled === 'boolean' ? patch.autonomousAgentsEnabled : base.autonomousAgentsEnabled,
+    // Nil-safe: only a REAL boolean flips it; a settings blob saved before the switch existed
+    // (or a partial PATCH) keeps the current value, which defaults ON.
+    filesAutoDescribe: typeof patch.filesAutoDescribe === 'boolean' ? patch.filesAutoDescribe : base.filesAutoDescribe !== false,
   };
 }
 

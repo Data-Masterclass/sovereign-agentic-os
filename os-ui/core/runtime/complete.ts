@@ -68,6 +68,8 @@ export type AssistantRequest = {
   user?: string;
   /** The caller's domain, when known — drives per-domain spend attribution. */
   domain?: string;
+  /** The surface the call is for, as the `tab:` spend tag. Default `assistant`. */
+  tab?: string;
   signal?: AbortSignal;
 };
 
@@ -90,7 +92,7 @@ export function liteLlmAssistantCaller(): AssistantCaller {
     const cred = callerCredential({
       userId: req.user ?? 'system',
       domain: req.domain ?? 'platform',
-      tab: 'assistant',
+      tab: req.tab ?? 'assistant',
     });
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), LLM_TIMEOUT_MS);
@@ -178,6 +180,8 @@ export async function assistantComplete(
      * tagging apply identically either way.
      */
     model?: string;
+    /** The surface this call is for (the `tab:` spend tag). Default `assistant`. */
+    tab?: string;
   } = {},
 ): Promise<{ content: string; model: string }> {
   const model = opts.model && opts.model.trim().length > 0 ? opts.model : resolveAssistantModelId();
@@ -190,6 +194,6 @@ export async function assistantComplete(
   // Live cost-cap enforcement: an over-cap caller is blocked before spend.
   enforceCostCaps(domains);
   // A3: the caller's ACTIVE (else first) domain rides to the gateway as `domain:` — per-domain spend.
-  const content = await caller({ model, messages, temperature: opts.temperature, user, domain: activeDomain ?? domains?.[0], signal: opts.signal });
+  const content = await caller({ model, messages, temperature: opts.temperature, user, domain: activeDomain ?? domains?.[0], tab: opts.tab, signal: opts.signal });
   return { content, model };
 }

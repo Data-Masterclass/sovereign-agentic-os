@@ -22,6 +22,8 @@ export type ChunkMeta = DocMeta & {
   deepLink: string;
   kind: string;
   tags: string[];
+  /** The file's description (user-written or generated) — matched by the lexical half of search. */
+  description?: string;
   freshness: string | null;
 };
 
@@ -104,7 +106,8 @@ export function hybridQuery(opts: {
   for (const d of fileIndex().values()) {
     if (!evaluateDls(opts.filter, d.meta)) continue; // DLS: only what the reader may see
     const semantic = cosine(opts.queryVector, d.vector);
-    const hay = `${d.meta.name} ${d.text}`.toLowerCase();
+    // Name, tags and description are matched alongside the passage — the same way whoever wrote them.
+    const hay = `${d.meta.name} ${d.meta.tags.join(' ')} ${d.meta.description ?? ''} ${d.text}`.toLowerCase();
     const docTokens = tokens(hay);
     let lexical = docTokens.filter((t) => qTokens.has(t)).length;
     if (q && hay.includes(q)) lexical += 3; // exact phrase / id / filename
@@ -148,6 +151,7 @@ export function filesIndexMapping(dim = config.filesEmbedDim): Record<string, un
         domain: { type: 'keyword' },
         granted_users: { type: 'keyword' },
         tags: { type: 'keyword' },
+        description: { type: 'text' },
         freshness: { type: 'date' },
         vector: { type: 'knn_vector', dimension: dim },
       },
@@ -174,7 +178,7 @@ export async function bulkIndex(docs: ChunkDoc[]): Promise<boolean> {
     lines.push(JSON.stringify({
       file_id: d.fileId, rep_type: d.repType, text: d.text,
       owner: d.meta.owner, tier: d.meta.tier, domain: d.meta.domain,
-      granted_users: d.meta.grantedUsers, tags: d.meta.tags, freshness: d.meta.freshness, vector: d.vector,
+      granted_users: d.meta.grantedUsers, tags: d.meta.tags, description: d.meta.description ?? '', freshness: d.meta.freshness, vector: d.vector,
     }));
   }
   const res = await osFetch(`/_bulk?refresh=true`, {
@@ -226,7 +230,7 @@ export function buildOpenSearchQuery(queryVector: number[], queryText: string, f
         must: [{
           bool: {
             should: [
-              { multi_match: { query: queryText, fields: ['text^1.5', 'name'], type: 'best_fields', fuzziness: 'AUTO' } },
+              { multi_match: { query: queryText, fields: ['text^1.5', 'name', 'tags', 'description'], type: 'best_fields', fuzziness: 'AUTO' } },
               { knn: { vector: { vector: queryVector, k } } },
             ],
             minimum_should_match: 1,

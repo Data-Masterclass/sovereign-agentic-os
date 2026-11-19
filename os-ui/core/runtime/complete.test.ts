@@ -35,3 +35,11 @@ test('assistantComplete throws an HONEST error when no assistant is configured',
     (e: unknown) => e instanceof AssistantNotConfiguredError && (e as { status?: number }).status === 503,
   );
 });
+
+test('assistantComplete threads the surface (`tab`) to the caller so the spend is tagged with it; default is unset → `assistant`', async () => {
+  const seen: (string | undefined)[] = [];
+  const caller: AssistantCaller = async (req) => { seen.push(req.tab); return 'ok'; };
+  await assistantComplete([{ role: 'user', content: 'x' }], { model: 'sovereign-default', user: { id: 'amir', domains: ['sales'] }, tab: 'files', caller });
+  await assistantComplete([{ role: 'user', content: 'x' }], { model: 'sovereign-default', user: { id: 'amir', domains: ['sales'] }, caller });
+  assert.deepEqual(seen, ['files', undefined]);
+});

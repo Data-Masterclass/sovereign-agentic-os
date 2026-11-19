@@ -11,6 +11,12 @@ import '@tabs/files/lib/object-store-server'; // registers the durable MinIO bac
 import { convertWithDocling } from '@tabs/files/lib/ingest/docling-client';
 import { extractFileText, settleStaleExtraction, type ExtractDeps, type ExtractResult } from '@tabs/files/lib/extract';
 import { recordLineage } from '@tabs/files/lib/lineage';
+import {
+  describeFile, settleStaleAutoDocs, planDescribeBackfill, runDescribeBackfill,
+  type BackfillPlan, type BackfillPrincipal, type BackfillRun, type DescribeDeps, type DescribeResult, type ModelPriceLike,
+} from '@tabs/files/lib/describe';
+import { assistantComplete } from '@core/runtime/complete';
+import { roleModel, filesAutoDescribeEnabled } from '@core/models/roles';
 import type { FileAsset } from '@tabs/files/lib/asset-schema';
 
 /**
@@ -60,11 +66,53 @@ export async function reindexFile(asset: FileAsset, text: string, actingUserId?:
   }
 }
 
+/** How long one description call may take before it is recorded as "did not answer in time". */
+export const DESCRIBE_TIMEOUT_MS = 60_000;
+/** How long an upload waits for the generator: long enough to record "pending", never for the model. */
+export const DESCRIBE_UPLOAD_WAIT_MS = 100;
+
+/**
+ * The live description wiring. ONE call on the cheap STANDARD model (never the reasoning tier),
+ * through `assistantComplete` — so it goes through the central gateway with the scoped
+ * credential, is cost-cap checked, and is billed to the ACTING user with the file's domain and
+ * the `tab:files` spend tag. There is no fallback of any kind: when the call fails, it throws.
+ */
+export const LIVE_DESCRIBE_DEPS: DescribeDeps = {
+  enabled: filesAutoDescribeEnabled,
+  model: () => roleModel('standard'),
+  complete: async (messages, ctx) => {
+    const { content } = await assistantComplete(messages, {
+      user: { id: ctx.userId, domains: [ctx.domain] },
+      model: ctx.model,
+      temperature: 0,
+      tab: 'files',
+      signal: AbortSignal.timeout(DESCRIBE_TIMEOUT_MS),
+    });
+    return content;
+  },
+  index: reindexFile,
+};
+
+/** Write (or rewrite) one file's description + tags as `actingUserId`. Bounded by `waitMs`. */
+export function describeNow(id: string, actingUserId: string, opts: { waitMs?: number } = {}): Promise<DescribeResult> {
+  return describeFile(id, LIVE_DESCRIBE_DEPS, { actingUserId, waitMs: opts.waitMs });
+}
+
+/** The admin backfill, on the live wiring. `priceOf` is the price-book lookup the door passes in. */
+export function planDescribe(principal: BackfillPrincipal, priceOf?: (model: string) => ModelPriceLike | undefined | Promise<ModelPriceLike | undefined>): Promise<BackfillPlan> {
+  return planDescribeBackfill(principal, LIVE_DESCRIBE_DEPS, { priceOf });
+}
+export function runDescribe(principal: BackfillPrincipal, opts: { batch?: number; after?: string | null } = {}): Promise<BackfillRun> {
+  return runDescribeBackfill(principal, LIVE_DESCRIBE_DEPS, opts);
+}
+
 /** The live extraction wiring: the real Docling, the real object store, the ordinary indexer. */
 export const LIVE_EXTRACT_DEPS: ExtractDeps = {
   convert: (doc) => convertWithDocling(doc, { baseUrl: config.doclingUrl, timeoutMs: config.doclingTimeoutMs }),
   getBlob,
   index: reindexFile,
+  // The text exists now (including when it arrived in the background): describe it, off this path.
+  describe: (id, actingUserId) => { void describeNow(id, actingUserId, { waitMs: 0 }); },
 };
 
 /**
@@ -81,6 +129,7 @@ export function extractText(id: string, opts: { waitMs?: number; actingUserId?: 
 /** Turn a `pending` extraction nobody is running any more into an honest `interrupted`. */
 export function settleStale(id: string): void {
   settleStaleExtraction(id, config.doclingTimeoutMs + 60_000);
+  settleStaleAutoDocs(id, 2 * DESCRIBE_TIMEOUT_MS + 60_000);
 }
 
 /**
@@ -92,7 +141,10 @@ export function settleStale(id: string): void {
 export async function ingestUploaded(asset: FileAsset, text: string, actingUserId?: string): Promise<FileAsset> {
   if (text.trim()) {
     await reindexFile(asset, text, actingUserId);
-    return asset;
+    // The description + tags are written OFF this path: the wait only lets "pending" be
+    // recorded so the response already says a description is being written.
+    if (actingUserId) await describeNow(asset.id, actingUserId, { waitMs: DESCRIBE_UPLOAD_WAIT_MS });
+    return bodyForIndex(asset.id)?.asset ?? asset;
   }
   await extractText(asset.id, { waitMs: config.uploadExtractWaitMs, actingUserId });
   return bodyForIndex(asset.id)?.asset ?? asset;

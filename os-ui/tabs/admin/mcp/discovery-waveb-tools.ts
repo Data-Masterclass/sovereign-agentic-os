@@ -213,6 +213,9 @@ export const waveBReadTools: McpTool[] = [
         folder: a.folder,
         tags: a.tags,
         description: a.description,
+        /** `generated` when the description was written automatically from the file's content
+         *  (a suggestion nobody has edited), `user` when a person wrote it, null when there is none. */
+        descriptionSource: a.description ? a.autoDocs?.description?.source ?? 'user' : null,
         sensitivity: a.sensitivity,
         kind: a.kind,
         indexing: a.indexing.mode,
