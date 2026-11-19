@@ -852,7 +852,9 @@ function sysWithDataGrant(datasetId: string, layer: 'bronze' | 'silver' | 'gold'
   });
 }
 
-test('RESOURCE-NARROWING: get_dataset on an UNGRANTED dataset is refused before dispatch', { todo: 'fixed in Phase 1' }, async () => {
+// No longer a `todo`: the executor's resource-grant check (gate 1a, `grant-scope.ts`) is what this
+// regression gate was waiting for.
+test('RESOURCE-NARROWING: get_dataset on an UNGRANTED dataset is refused before dispatch', async () => {
   const deps = spyDeps();
   const exec = grantedToolExecutor(CREATOR, sysWithDataGrant('ds-A', 'gold'), 'sys-1', deps);
   const res = await exec('get_dataset', { datasetId: 'ds-B' });
