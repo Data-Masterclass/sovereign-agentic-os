@@ -10,6 +10,6 @@ Next steps after install:
   kubectl -n {{ .Release.Namespace }} get pods
   # Port-forward the UIs once their components are enabled, e.g.:
   #   kubectl -n {{ .Release.Namespace }} port-forward svc/langfuse-web 3000:3000
-  #   kubectl -n {{ .Release.Namespace }} port-forward svc/litellm 4000:4000
+  #   kubectl -n {{ .Release.Namespace }} port-forward svc/{{ .Release.Name }}-litellm 4000:4000   # the gateway is never published; see docs/components/litellm.md
 
 Local only. Do NOT deploy to STACKIT from this overlay.

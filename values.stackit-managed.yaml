@@ -357,7 +357,8 @@ ingress:
   tlsIssuer: letsencrypt-prod
   hosts:
     osUI: "os.REPLACE-DNS-NAME"
-    litellm: "litellm.REPLACE-DNS-NAME"
+    # No `litellm:` host — the model gateway has no public route (ingress.exposeGateway stays
+    # false). Admins reach its console through the OS at /tools/litellm/ui.
     langfuse: "langfuse.REPLACE-DNS-NAME"
     openmetadata: "openmetadata.REPLACE-DNS-NAME"
     superset: "superset.REPLACE-DNS-NAME"

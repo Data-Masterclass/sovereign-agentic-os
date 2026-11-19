@@ -58,7 +58,7 @@ cmd_urls(){
   local d; d="$(domain)"
   c "Sovereign Agentic OS — STACKIT consoles (once ingress is up):"
   printf "  %-14s https://%s\n" "OS UI"        "os.$d"
-  printf "  %-14s https://%s\n" "LiteLLM"      "litellm.$d"
+  printf "  %-14s https://%s  (admins only; the gateway has no public host)\n" "LLM Gateway" "os.$d/tools/litellm/ui"
   printf "  %-14s https://%s\n" "Langfuse"     "langfuse.$d"
   printf "  %-14s https://%s\n" "Superset"     "superset.$d"
   printf "  %-14s https://%s\n" "Forgejo"      "forgejo.$d"
@@ -70,6 +70,8 @@ cmd_urls(){
 cmd_open(){
   local d t="${1:-os}"; d="$(domain)"
   [ "$d" = "<your-domain>" ] && die "No domain yet — set STACKIT_DNS_NAME in deploy/.env.stackit."
+  # The LLM gateway has no public host — its console is served through the OS UI.
+  case "$t" in litellm|gateway) open "https://os.$d/tools/litellm/ui"; return ;; esac
   open "https://$t.$d"
 }
 

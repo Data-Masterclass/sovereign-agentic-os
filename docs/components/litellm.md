@@ -34,10 +34,43 @@ the same one LiteLLM itself reads, so there is one credential, not two. It is de
 **not** the proxy master key: a leaked UI session must not equal full API access. If it is
 unset, the OS reports "not configured" instead of framing a login screen.
 
+## Not reachable from the internet
+
+The gateway has **no public route**, on any profile. It holds the provider credentials and an
+admin API, and nothing outside the cluster needs to call it: os-ui, the worker, the reconcile
+Job and the query tool all use the in-cluster Service `agentic-os-litellm:4000`.
+
+* `ingress.hosts.litellm` alone renders nothing. The chart only renders the route when
+  `ingress.exposeGateway: true` is set as well (default `false`; the STACKIT overlay sets
+  neither).
+* `scripts/check-gateway-not-public.mjs` (run by `os-ui/scripts/gate.sh`, so by CI) renders the
+  default and the STACKIT profile and fails if either contains an Ingress whose backend is the
+  gateway Service — including the `litellm-helm` subchart's own `litellm.ingress.enabled`.
+* Admins open the console through the OS (**Admin → LLM Gateway**, `/tools/litellm/ui`): that
+  path is behind the OS login and role gate, and the proxy talks to the in-cluster Service.
+* Operators who need the raw API or the Swagger page use a port-forward (below).
+
+**After upgrading a cluster that had the route** (STACKIT before this change): Helm deletes the
+`agentic-os-litellm-ingress` object; the cert-manager `Certificate` it owned goes with it. Two
+leftovers are harmless and can be removed by hand: the TLS Secret `litellm.<zone>-tls`, and the
+DNS record `litellm.<zone>` (Terraform `ingress_subdomains` no longer lists it; remove it with a
+targeted apply of `stackit_dns_record_set.subdomains["litellm"]`, or leave it — the name then
+answers with the ingress controller's 404). Check:
+
+```bash
+kubectl -n agentic-os get ingress            # no agentic-os-litellm-ingress
+curl -sS -o /dev/null -w '%{http_code}\n' https://litellm.<zone>/health/liveliness   # 404, not 200
+```
+
+**If you really must publish it** (not recommended; there is no authentication in front of the
+admin UI login and the key-checked API): put your own authentication on the route first, then
+set both `ingress.hosts.litellm` and `ingress.exposeGateway: true` in a private overlay. The
+gate will refuse that in `values.stackit-managed.yaml` itself.
+
 ## Direct access (port-forward)
 ```bash
 kubectl -n agentic-os port-forward svc/agentic-os-litellm 4000:4000
-# Admin UI: http://localhost:4000/ui    API docs: http://localhost:4000/docs
+# Admin UI: http://localhost:4000/tools/litellm/ui   (SERVER_ROOT_PATH=/tools/litellm)
 ```
 **Login:** `admin` / `litellm-admin-local-dev`  ·  **Master key:** `sk-litellm-local-dev-master`
 
