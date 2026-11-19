@@ -649,7 +649,14 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
   for (const c of ir.commands) {
     if (!byId.has(c.from) || !byId.has(c.to)) continue;
     let ast: WhenAst | null = null;
-    if (c.when && c.when.trim().length > 0) {
+    // Teams scaffolded from a workflow before 2026-11-18 stored the literal 'step complete' on
+    // every sequential handoff. It was never a `when` expression — it meant "go on when this step
+    // is done", which is exactly the unguarded edge. Read that one literal as unguarded so those
+    // stored teams run; any other malformed guard still fails the build.
+    const legacyUnguarded = typeof c.when === 'string' && /^step\s+complete$/i.test(c.when.trim());
+    if (legacyUnguarded) {
+      warnings.push(`handoff ${c.from} → ${c.to}: when "${c.when}" is the old scaffold placeholder, not a condition — treated as an unconditional handoff`);
+    } else if (c.when && c.when.trim().length > 0) {
       try {
         ast = parseWhen(c.when);
       } catch (e) {
@@ -670,7 +677,7 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
       }
     }
     const list = handoffsFrom.get(c.from) ?? [];
-    list.push({ to: c.to, when: ast, raw: c.when });
+    list.push({ to: c.to, when: ast, raw: legacyUnguarded ? null : c.when });
     handoffsFrom.set(c.from, list);
   }
 

@@ -402,6 +402,19 @@ test('compile errors: unmapped legacy tools, a disabled entrypoint, a malformed 
   assert.throws(() => buildGraph(shadow.ir, shadow.deps), (e: Error) => e instanceof GraphCompileError && /shadows an engine state key/.test(e.message));
 });
 
+test("a stored team with the old scaffold placeholder `when: step complete` runs as an unconditional handoff, with a warning", async () => {
+  for (const legacy of ['step complete', ' Step  Complete ']) {
+    const { result } = await run(guarded(legacy), script());
+    assert.deepEqual(result.path, ['a', 'b'], 'the placeholder never was a condition — b is visited');
+    assert.equal(result.warnings.length, 1);
+    assert.match(result.warnings[0], /handoff a → b/);
+    assert.match(result.warnings[0], /unconditional handoff/);
+  }
+  // Only that one literal is forgiven: anything else that is not an expression still fails the build.
+  const other = depsFor(guarded('step done'), script());
+  assert.throws(() => buildGraph(other.ir, other.deps), (e: Error) => e instanceof GraphCompileError && /handoff a → b/.test(e.message));
+});
+
 test('live events arrive in order through the stream writer: node-started → tool-step → node-completed per agent', async () => {
   const seen: string[] = [];
   await run(TWO_AGENTS, script(), {}, {
