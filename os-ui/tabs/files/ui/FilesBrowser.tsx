@@ -322,6 +322,8 @@ function FilesBrowserInner() {
   // search
   const [query, setQuery] = useState('');
   const [hits, setHits] = useState<Hit[] | null>(null);
+  // Set when search fell back (index or embedding gateway unavailable) — said, never hidden.
+  const [searchNote, setSearchNote] = useState('');
 
   // view mode (grid|list) + sort. The view choice is remembered across sessions.
   const [viewMode, setViewMode] = useState<ViewMode>('grid');
@@ -380,12 +382,12 @@ function FilesBrowserInner() {
   // Debounced search across the user's indexed files.
   useEffect(() => {
     const q = query.trim();
-    if (!q) { setHits(null); return; }
+    if (!q) { setHits(null); setSearchNote(''); return; }
     const t = setTimeout(async () => {
       try {
         const res = await fetch(`/api/files/search?q=${encodeURIComponent(q)}`, { cache: 'no-store' });
         const data = await res.json();
-        if (res.ok) setHits(data.hits ?? []);
+        if (res.ok) { setHits(data.hits ?? []); setSearchNote(typeof data.note === 'string' ? data.note : ''); }
       } catch { /* ignore transient */ }
     }, 220);
     return () => clearTimeout(t);
@@ -1020,6 +1022,7 @@ function FilesBrowserInner() {
         {searching ? (
             <>
               <div className="section-title">Results<span className="count-pill">{hits?.length ?? 0}</span></div>
+              {searchNote ? <div className="muted" role="status">{searchNote}</div> : null}
               {hits && hits.length === 0 ? <div className="stub-page">No files match “{query}”.</div> : null}
               {/* Search results reuse the SAME tile/row as browse (resolved from the
                   loaded scope list by id) so the tab reads as one product. */}
