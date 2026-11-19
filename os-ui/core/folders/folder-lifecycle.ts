@@ -112,9 +112,11 @@ export function restoreFolder(user: Principal, tab: string, id: string): FolderN
 /**
  * PHYSICALLY delete a folder — permanent, ARCHIVED-ONLY (enforced by `deleteFolderRows`).
  * Removes the folder rows AND permanently deletes every member item under them
- * (adapter.deleteItem). Edit-scoped + fail-closed cascade.
+ * (adapter.deleteItem, awaited one by one). Edit-scoped + fail-closed cascade: a member that
+ * cannot be deleted (403, or a delete its store did not confirm) stops the cascade BEFORE the
+ * rows go, so the folder is still there holding what is left and the delete can be retried.
  */
-export function deleteFolder(user: Principal, tab: string, id: string): { deleted: string[] } {
+export async function deleteFolder(user: Principal, tab: string, id: string): Promise<{ deleted: string[] }> {
   const adapter = adapterFor(tab);
   const node = getFolder(id);
   if (!node) throw new FolderError('Folder not found', 404);
@@ -123,7 +125,7 @@ export function deleteFolder(user: Principal, tab: string, id: string): { delete
   }
   const members = adapter.itemsUnderFolder(principal(user), scopeOf(node), node.path);
   // Delete member items first (each edit-scoped); then remove the rows.
-  for (const item of members) adapter.deleteItem(item.id, principal(user));
+  for (const item of members) await adapter.deleteItem(item.id, principal(user));
   const deleted = deleteFolderRows(user, id);
   return { deleted };
 }
