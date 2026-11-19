@@ -1197,6 +1197,43 @@ the interactive-assistant rows in the table above are still accurate, and a test
 `core/mcp/tool-classes.test.ts` fails if a production file starts importing the
 module before the gate that uses it is reviewed.
 
+**The harness now takes a *gated* executor, and every interactive caller says
+"ungated" out loud.** `runAgentic`'s `callTool` is a `GatedToolExecutor`
+(`core/runtime/confirm-gate.ts`, pure): a plain executor does not type-check
+(`confirm-gate.typecheck.ts` fails the build if that stops being true), so a caller
+has to pick a constructor — `userConfirmGate`, `readOnlyGate`, `engineHeldGate`, or
+`ungatedInteractive`. **All three production callers pick `ungatedInteractive`
+today**, a pass-through, so nothing is confirmed, parked or refused that was not
+before; the door table above is unchanged. `core/runtime/confirm-gate.test.ts`
+pins the exact `ungatedInteractive(` call sites (Ask the OS, the tab assistant, the
+Software Team panel) and the files that call `runAgentic(`, so the first list can
+only shrink in review and the second cannot grow unnoticed.
+
+What the later wiring will rely on, already in place and tested:
+
+- A third tool outcome, **`parked`**: the gate did not run the call. The harness
+  keeps it out of the dedup and failed-write ledgers and out of the error streak,
+  stops the batch there (later calls get "not executed: an earlier action awaits
+  the user"), ends the turn, and composes the final text itself
+  (`parkedFinalText`) — the model gets no further completion in which to say the
+  action happened. `AgenticResult.pending` carries what parked.
+- A store, `core/policy/confirmations.ts`, shaped like the approvals store but a
+  different thing: the *same* person confirming their own assistant's action, not
+  a second person deciding an agent run. Ten-minute expiry; single use is the one
+  `pending → executing` transition; a wrong user is indistinguishable from "not
+  found"; the confirmed call is identified by a sha256 of its canonical signature.
+  The durable mirror receives the record **without its arguments** (they can hold
+  a credential or a file), so a record read back after a restart is expired
+  rather than executable.
+- "Allow for this conversation": a per (user, conversation, tool) allowance that
+  can only be created for `SESSION_ALLOWABLE_TOOLS` — seven tools that create a
+  new Personal artifact or append a record. Edit tools are deliberately absent:
+  the gate is name-only and cannot tell a Personal artifact from a shared one.
+
+Not built: the confirm endpoint, any UI, and any caller that parks. The external
+MCP door (`app/api/mcp/route.ts` → `serveMcp` → `handleRpc`) references none of
+this, by test — a person's own MCP client is not confirm-gated.
+
 **A picker scoped to "everything the caller may see" is not scoped to the thing being
 edited.** The agent grant picker built its feed from `listDatasets/listWorkflows/
 listPersonalKnowledge/listFiles/listMetrics(principal)` — each of which scopes to

@@ -7,6 +7,7 @@ import {
   compactToolResult,
   truncateToTokens,
 } from '@core/infra/context/context-assembler';
+import type { GatedToolExecutor } from '@core/runtime/confirm-gate';
 
 /**
  * THE AGENTIC ASSISTANT HARNESS (pure core).
@@ -112,7 +113,37 @@ export function trackUsage(inner: LlmCall): UsageTracker {
 /** Execute one governed tool call; returns the model-readable result text. */
 export type ToolExecutor = (name: string, args: Record<string, unknown>) => Promise<{ text: string; isError: boolean }>;
 
-export type AgenticStep = { tool: string; args: Record<string, unknown>; result: string; isError: boolean };
+/**
+ * A tool call that was NOT executed because it awaits the present user's confirmation. The
+ * harness never creates one: a gate (`core/runtime/confirm-gate.ts`) returns it in place of
+ * running the call, and the harness carries it out on {@link AgenticResult.pending}.
+ */
+export type PendingToolCall = {
+  /** The confirmation record's id — what a later confirm/decline names. */
+  confirmationId: string;
+  tool: string;
+  args: Record<string, unknown>;
+  /** ISO time after which the confirmation can no longer be used. */
+  expiresAt: string;
+};
+
+/**
+ * What a GATED executor answers for one call — the plain executor result, plus the third
+ * outcome: `parked` (the call did not run; it awaits the user). `isError` is false on a parked
+ * outcome: nothing failed, and nothing happened either.
+ */
+export type ToolOutcome = { text: string; isError: boolean; parked?: PendingToolCall };
+
+export type AgenticStep = {
+  tool: string;
+  args: Record<string, unknown>;
+  result: string;
+  isError: boolean;
+  /** The call did NOT run: it awaits the user's confirmation (see {@link PendingToolCall}). */
+  parked?: true;
+  /** The call did NOT run: an EARLIER call in the same batch parked, so this one was never tried. */
+  skipped?: true;
+};
 
 export type AgenticResult = {
   plan: string;
@@ -121,6 +152,12 @@ export type AgenticResult = {
   iterations: number;
   /** false once we fell back to the ReAct JSON protocol (model lacks tool-calling). */
   toolCallingSupported: boolean;
+  /**
+   * The calls this turn parked for the user's confirmation — empty on every turn that parked
+   * nothing. When it is non-empty the turn ENDED at the first parked call and `finalText` was
+   * composed by the server ({@link parkedFinalText}), never by the model.
+   */
+  pending: PendingToolCall[];
 };
 
 /** Thrown by an `llm` caller when the model/gateway rejects the `tools` param. */
@@ -407,7 +444,13 @@ export async function runAgentic(opts: {
   system: string;
   userMessages: { role: 'user' | 'assistant'; content: string }[];
   tools: ToolSpec[];
-  callTool: ToolExecutor;
+  /**
+   * The governed executor — and it must come out of a gate constructor
+   * (`core/runtime/confirm-gate.ts`), so a caller cannot compile without CHOOSING whether its
+   * tool calls are confirmed by the user, held by the engine, read-only, or explicitly ungated.
+   * The brand is a compile-time property; the harness does not re-check it at runtime.
+   */
+  callTool: GatedToolExecutor;
   llm: LlmCall;
   planModel: string;
   actModel: string;
@@ -514,6 +557,9 @@ export async function runAgentic(opts: {
   let escalated = false;
   const toolErrorCounts = new Map<string, number>();
 
+  // PARKED calls: a gate answered "not run — awaits the user". The turn ends at the first one.
+  const pending: PendingToolCall[] = [];
+
   let iterations = 0;
   let finalText = '';
   let forcedStop = false;
@@ -583,7 +629,8 @@ export async function runAgentic(opts: {
     // Execute each call through the governed executor and feed the result back —
     // UNLESS it's an exact repeat, in which case answer with a short synthetic note
     // (dedup) so we never re-run the tool or re-append its full result.
-    for (const call of calls) {
+    for (let callIndex = 0; callIndex < calls.length; callIndex += 1) {
+      const call = calls[callIndex];
       const sig = toolCallSignature(call.name, call.args);
       const prior = executedSignatures.get(sig);
 
@@ -633,6 +680,32 @@ export async function runAgentic(opts: {
       }
 
       const out = await opts.callTool(call.name, call.args);
+
+      // THE THIRD OUTCOME — PARKED. The gate did not run the call; it awaits the user. So:
+      //   - it is NOT recorded in `executedSignatures` (an identical later call must not be told
+      //     "you already ran this") nor in `failedWriteSignatures` (it did not fail);
+      //   - it does NOT touch the error streak or the escalation counters;
+      //   - the batch STOPS here: every later call in it is answered "not executed" without
+      //     reaching the executor, because it was chosen on the assumption this one would run;
+      //   - the turn ENDS, and its final text is composed by the server below — the model gets
+      //     no further completion in which it could claim the action happened.
+      if (out.parked) {
+        pending.push(out.parked);
+        const step: AgenticStep = { tool: call.name, args: call.args, result: out.text, isError: false, parked: true };
+        steps.push(step);
+        opts.onStep?.(step);
+        if (react) messages.push({ role: 'user', content: `Observation: ${out.text}` });
+        else messages.push({ role: 'tool', tool_call_id: call.id, content: out.text });
+        for (const later of calls.slice(callIndex + 1)) {
+          const skipped: AgenticStep = { tool: later.name, args: later.args, result: SKIPPED_AFTER_PARK_NOTE, isError: false, skipped: true };
+          steps.push(skipped);
+          opts.onStep?.(skipped);
+          if (react) messages.push({ role: 'user', content: `Observation: ${SKIPPED_AFTER_PARK_NOTE}` });
+          else messages.push({ role: 'tool', tool_call_id: later.id, content: SKIPPED_AFTER_PARK_NOTE });
+        }
+        break;
+      }
+
       // Record the OUTCOME after the call: a success becomes dedup-able; an error is
       // recorded ok:false so an identical retry re-runs instead of being short-circuited.
       executedSignatures.set(sig, { count: (prior?.count ?? 0) + 1, ok: !out.isError });
@@ -687,6 +760,15 @@ export async function runAgentic(opts: {
         forcedStop = true;
         break;
       }
+    }
+
+    // A parked call ends the turn. `finalText` is set HERE, by the server, which is also what
+    // keeps the two paths below from running: the budget-exhaustion escalation and the cap
+    // synthesis both require an empty `finalText`, and both would hand the model another
+    // completion.
+    if (pending.length > 0) {
+      finalText = parkedFinalText(pending, steps.filter((s) => s.skipped).length);
+      break;
     }
 
     // A node stuck re-firing identical calls has exhausted its repeat budget: stop
@@ -756,7 +838,31 @@ export async function runAgentic(opts: {
 
   if (!finalText) finalText = '(no final answer produced)';
 
-  return { plan, steps, finalText, iterations, toolCallingSupported: !react };
+  return { plan, steps, finalText, iterations, toolCallingSupported: !react, pending };
+}
+
+/** The result every call AFTER a parked one in the same batch gets — it never reaches the executor. */
+export const SKIPPED_AFTER_PARK_NOTE =
+  'not executed: an earlier action awaits the user. Nothing was run for this call.';
+
+/**
+ * The final text of a turn that parked — composed by the SERVER, never synthesised by the model.
+ * A model asked to summarise a turn whose write did not run will, some of the time, say it ran;
+ * so it is not asked. Names only the tools: the arguments belong on the confirmation itself.
+ */
+export function parkedFinalText(pending: PendingToolCall[], skippedCount = 0): string {
+  const names = pending.map((p) => `\`${p.tool}\``).join(', ');
+  const one = pending.length === 1;
+  const lines = [
+    `Nothing has been changed yet. ${one ? 'One action is' : `${pending.length} actions are`} waiting for your confirmation: ${names}.`,
+    `${one ? 'It has' : 'They have'} NOT been run. Confirm or decline to continue.`,
+  ];
+  if (skippedCount > 0) {
+    lines.push(
+      `${skippedCount === 1 ? 'One further step was' : `${skippedCount} further steps were`} not attempted, because ${skippedCount === 1 ? 'it' : 'they'} came after the action that is waiting.`,
+    );
+  }
+  return lines.join(' ');
 }
 
 /**
