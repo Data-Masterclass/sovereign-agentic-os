@@ -40,6 +40,14 @@ export type OsMirror = {
   /** Probe, then `match_all` up to `size` docs. `null` → mirror unreachable;
    *  `[]` → reachable but empty (a fresh index hydrates to nothing). */
   hydrate(size?: number): Promise<unknown[] | null>;
+  /**
+   * Like `hydrate`, but says whether the answer is the WHOLE index. `complete` is true only when
+   * the search itself succeeded on every shard, did not time out, and returned as many docs as it
+   * says exist — so "this id is not in `docs`" then means "this doc is not in the mirror".
+   * A failed search answers `{ docs: [], complete: false }` (never mistaken for an empty index);
+   * `null` → mirror unreachable. This is what lets a reader process DROP what another deleted.
+   */
+  list(size?: number): Promise<{ docs: unknown[]; complete: boolean } | null>;
   /** One doc's `_source`, or null when missing/unreachable. Does NOT probe. */
   getDoc(id: string): Promise<unknown | null>;
   /** Atomic single-use claim: an AWAITED delete that reports who won the race.
@@ -174,6 +182,33 @@ export function osMirror(opts: {
     }
   }
 
+  async function list(size = 1000): Promise<{ docs: unknown[]; complete: boolean } | null> {
+    if (!(await probe())) return null;
+    const res = await osFetch(`/${index}/_search?size=${size}`, {
+      method: 'POST',
+      body: JSON.stringify({ query: { match_all: {} }, track_total_hits: true }),
+    });
+    if (!res || !res.ok) return { docs: [], complete: false };
+    try {
+      const data = (await res.json()) as {
+        timed_out?: boolean;
+        _shards?: { total?: number; successful?: number; failed?: number };
+        hits?: { total?: { value?: number; relation?: string } | number; hits?: { _source?: unknown }[] };
+      };
+      const hits = data?.hits?.hits;
+      if (!Array.isArray(hits)) return { docs: [], complete: false };
+      const total = typeof data.hits?.total === 'number' ? { value: data.hits.total, relation: 'eq' } : data.hits?.total;
+      const shards = data._shards;
+      const complete =
+        data.timed_out === false &&
+        !!shards && shards.failed === 0 && typeof shards.total === 'number' && shards.successful === shards.total &&
+        !!total && total.relation === 'eq' && total.value === hits.length;
+      return { docs: hits.map((h) => h._source).filter((d) => d !== undefined && d !== null), complete };
+    } catch {
+      return { docs: [], complete: false };
+    }
+  }
+
   async function getDoc(id: string): Promise<unknown | null> {
     // A by-id GET must distinguish "genuinely absent" (404) from a TRANSIENT
     // failure (5xx / auth blip / timeout-with-response). Conflating the two made a
@@ -266,6 +301,7 @@ export function osMirror(opts: {
     healthy: () => st().healthy,
     probe,
     hydrate,
+    list,
     getDoc,
     claim,
     writeThrough,

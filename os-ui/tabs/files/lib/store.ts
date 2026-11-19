@@ -157,6 +157,10 @@ type FilesStoreState = {
   mirrorRefresh?: boolean;
   refreshedAt?: number;
   refreshing?: Promise<void> | null;
+  /** Reader process: ids a mirror listing has contained (so their later absence means "deleted"). */
+  mirrorSeen?: Set<string>;
+  /** Reader process: consecutive COMPLETE listings each such id was absent from. */
+  mirrorMissing?: Map<string, number>;
 };
 const FS_KEY = Symbol.for('soa.files.store');
 function fs(): FilesStoreState {
@@ -228,12 +232,22 @@ export async function ensureHydrated(): Promise<void> {
  * NEWER WINS, by the record's own `updatedAt` stamp: a mirror document replaces the in-memory
  * record only when it is strictly newer, so a file this process itself just wrote (an agent's
  * `upload_file`, whose mirror write is fire-and-forget) is never rolled back by a read that
- * raced it. Nothing is ever REMOVED here: `hydrate()` answers `[]` both for an empty index and
- * for a failed search, and an empty answer must not be read as "every file was deleted".
- * (So a file deleted in os-ui stays visible to this process until it restarts — stated, not
- * solved.) A mirror that is down leaves memory exactly as it was.
+ * raced it. A mirror that is down leaves memory exactly as it was.
+ *
+ * DELETES PROPAGATE (2026-11-19 — an agent run read twelve files their owner had deleted hours
+ * earlier). This used to remove nothing, because `hydrate()` answers `[]` both for an empty index
+ * and for a failed search. A record is now dropped from this process when ALL of these hold:
+ *   1. the listing is COMPLETE (`fileMirror.list`: every shard answered, no timeout, as many docs
+ *      returned as the index says it holds) — a failed, partial or truncated answer drops nothing;
+ *   2. the id was in an earlier listing, i.e. the mirror did hold it — a file this process just
+ *      wrote, whose fire-and-forget mirror write has not landed, is never dropped;
+ *   3. it is absent from {@link MIRROR_ABSENT_CONFIRMATIONS} complete listings IN A ROW.
+ * So a file deleted in os-ui disappears from `list_files` / `get_file` / `search_files` in the
+ * worker after two refreshes (about ten seconds of use), without a restart.
  */
 export const MIRROR_REFRESH_MIN_MS = 5000;
+/** Complete listings in a row an id must be absent from before this process drops its record. */
+export const MIRROR_ABSENT_CONFIRMATIONS = 2;
 
 /** Declare THIS process a reader of files other processes write (called by the worker at boot). */
 export function enableMirrorRefresh(on = true): void {
@@ -247,11 +261,29 @@ export async function refreshFromMirror(opts: { force?: boolean; nowMs?: number 
   if (!opts.force && s.refreshedAt !== undefined && nowMs - s.refreshedAt < MIRROR_REFRESH_MIN_MS) return;
   s.refreshedAt = nowMs;
   s.refreshing = (async () => {
-    const docs = (await fileMirror.hydrate(2000)) ?? [];
-    for (const rec of docs as FileRecord[]) {
-      if (!rec || !rec.id || typeof rec.yaml !== 'string') continue;
+    const listing = await fileMirror.list(2000);
+    if (!listing) return; // mirror down — memory stays exactly as it was
+    const seen = (s.mirrorSeen ??= new Set<string>());
+    const missing = (s.mirrorMissing ??= new Map<string, number>());
+    const listed = new Set<string>();
+    for (const rec of listing.docs as FileRecord[]) {
+      if (!rec || !rec.id) continue;
+      listed.add(rec.id); // present in the mirror, whatever its shape
+      seen.add(rec.id);
+      missing.delete(rec.id);
+      if (typeof rec.yaml !== 'string') continue;
       const held = s.store.get(rec.id);
       if (!held || String(rec.updatedAt ?? '') > String(held.updatedAt ?? '')) s.store.set(rec.id, rec);
+    }
+    // Only a COMPLETE listing can say what is NOT there.
+    if (!listing.complete) return;
+    for (const id of seen) {
+      if (listed.has(id)) continue;
+      const n = (missing.get(id) ?? 0) + 1;
+      if (n < MIRROR_ABSENT_CONFIRMATIONS) { missing.set(id, n); continue; }
+      seen.delete(id);
+      missing.delete(id);
+      if (s.store.delete(id)) console.info(`[files] ${id} is gone from the mirror — deleted in another process; dropped here`);
     }
   })().finally(() => { s.refreshing = null; });
   return s.refreshing;
@@ -261,6 +293,8 @@ async function hydrateFiles(): Promise<void> {
   const s = fs();
   const docs = (await fileMirror.hydrate(2000)) ?? [];
   for (const rec of docs as FileRecord[]) {
+    // What the mirror held at boot is what a later complete listing may report as deleted.
+    if (rec && rec.id) (s.mirrorSeen ??= new Set<string>()).add(rec.id);
     if (rec && rec.id && !s.store.has(rec.id)) s.store.set(rec.id, rec);
   }
   s.seeded = true;
@@ -340,6 +374,8 @@ export function __resetStore(): void {
   s.mirrorRefresh = false;
   s.refreshedAt = undefined;
   s.refreshing = null;
+  s.mirrorSeen = undefined;
+  s.mirrorMissing = undefined;
   fileMirror.__reset();
   versions.__reset();
 }
