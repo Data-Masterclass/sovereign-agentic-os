@@ -150,6 +150,14 @@ export type GraphDeps = Omit<AgenticGraphDeps, 'onNodeStart' | 'onStep' | 'onNod
    */
   hold?: HoldDeps;
   /**
+   * RESOURCE GRANTS, asked ahead of the hold: would the executor refuse this call because it names
+   * a resource outside the system's grants? Returns the typed refusal, or null. `tools_<id>` asks
+   * for the whole batch BEFORE it holds anything, so a person is never asked to approve a call
+   * that would be refused anyway. The executor makes the same check again when it runs a call —
+   * this is an early answer, never the enforcement. Absent → nothing is refused here.
+   */
+  precheck?: (tool: string, args: Record<string, unknown>) => Promise<{ text: string; isError: boolean } | null>;
+  /**
    * A3 — the run's Langfuse observer (trace id = run id): every node becomes a span, every model
    * call a generation, every tool call a span carrying the decision. Absent → the no-op observer.
    */
@@ -260,7 +268,11 @@ export type AgentCursor = {
   react: boolean;
   pending: ToolCall[];
   /** A2: set once the batch's hold decisions are all known (phase 1 done); cleared when the batch is executed. */
-  gate?: { decisions: Record<string, { approvalId: string; decision: ApprovalDecision }> };
+  gate?: {
+    decisions: Record<string, { approvalId: string; decision: ApprovalDecision }>;
+    /** Calls the resource grants refuse (call id → the typed refusal text): never held, never executed. */
+    refused?: Record<string, string>;
+  };
   finalText: string;
   forcedStop: boolean;
   repeatedCalls: number;
@@ -949,12 +961,22 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
 
       if (!cur.gate) {
         const decisions: Record<string, { approvalId: string; decision: ApprovalDecision }> = {};
+        // 0. RESOURCE GRANTS first: a call that names something outside the system's grants is
+        //    refused, so it must not be put in front of an approver either.
+        const refused: Record<string, string> = {};
+        if (deps.precheck) {
+          for (const c of cur.pending) {
+            if (!advertised.has(c.name) || c.name === SET_STATE_TOOL_NAME) continue;
+            const no = await deps.precheck(c.name, c.args);
+            if (no) refused[c.id] = no.text;
+          }
+        }
         const hold = deps.hold;
         if (hold) {
           const threadId = String(config.configurable?.thread_id ?? '');
           const heldCalls = cur.pending
             // `os_set_state` writes the team's own state: it is never a governed write, never held.
-            .filter((c) => advertised.has(c.name) && c.name !== SET_STATE_TOOL_NAME)
+            .filter((c) => advertised.has(c.name) && c.name !== SET_STATE_TOOL_NAME && refused[c.id] === undefined)
             .map((call) => ({ call, rule: hold.decide(call.name) }))
             .filter((h): h is { call: ToolCall; rule: { held: true; approverRole: 'domain_admin' | 'admin' } } => h.rule.held);
           const enqueue = (h: { call: ToolCall; rule: { held: true; approverRole: 'domain_admin' | 'admin' } }) =>
@@ -1000,7 +1022,7 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
             decisions[h.call.id] = { approvalId: h.approvalId, decision: status };
           }
         }
-        return { current: { ...cur, gate: { decisions } } };
+        return { current: { ...cur, gate: Object.keys(refused).length > 0 ? { decisions, refused } : { decisions } } };
       }
 
       // Phase 2 — execute exactly ONE pending call this superstep.
@@ -1069,6 +1091,10 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
             out = { text: JSON.stringify({ ok: true, channel: parsed.channel, value: parsed.value }), isError: false };
             obs.toolEvent(call, { decision: 'ok', detail: `state.${parsed.channel} = ${JSON.stringify(parsed.value)}` });
           }
+        } else if (cur.gate.refused?.[call.id] !== undefined) {
+          // Outside the system's resource grants: the typed refusal, and the executor is not reached.
+          out = { text: cur.gate.refused[call.id], isError: true };
+          obs.toolEvent(call, { decision: 'denied', detail: 'outside the system\'s resource grants — not executed' });
         } else if (gate && gate.decision === 'reject') {
           out = rejectedResult(call.name, gate.approvalId);
           obs.toolEvent(call, { decision: 'denied', approvalId: gate.approvalId, detail: 'rejected in Governance' });

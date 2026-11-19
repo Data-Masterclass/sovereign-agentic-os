@@ -570,7 +570,14 @@ export function fixtureToolDeps(sink: HoldSink, opts: FixtureToolOptions = {}): 
     };
   }) as unknown as OsToolDeps['handleRpc'];
   const trace = (async () => undefined) as unknown as OsToolDeps['trace'];
-  return { enqueue, handleRpc, trace };
+  // The resource-grant check's two store lookups, as the fixture world has them: no files, and
+  // the one granted Gold dataset resolving to its physical table — what `builtLayerFqn` answers
+  // for a built Gold in production. A fixture that grants a dataset is checked against it for real.
+  const resolvers: OsToolDeps['resolvers'] = {
+    fileLocations: async () => [],
+    datasetTables: async (id) => (id === GOLD_DATASET_ID ? [GOLD_DATASET_FQN] : []),
+  };
+  return { enqueue, handleRpc, trace, resolvers };
 }
 
 /**

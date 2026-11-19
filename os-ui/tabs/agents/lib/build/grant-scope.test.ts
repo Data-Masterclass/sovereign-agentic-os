@@ -1,0 +1,307 @@
+/* SPDX-License-Identifier: Apache-2.0
+ * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * TAB:        agents
+ * FEATURE:    Resource grants enforced at run time — the registry ratchet and the rule itself
+ * ARCHITECTURE:
+ *   - THE RATCHET: every tool in `ALL_MCP_TOOLS` is in exactly one of `TOOL_RESOURCES` (it names,
+ *     lists, searches or creates a grantable resource) or `NO_GRANTED_RESOURCE` (it does not, with
+ *     the reason). A NEW tool fails here until someone reads its arguments and classifies it; a
+ *     tool whose schema carries a resource id cannot be parked in the "touches nothing" table.
+ *   - THE RULE: `checkGrantScope` against hand-built scopes, with in-memory resolvers.
+ *   - LIMIT: this is `ALL_MCP_TOOLS` as registered in the test environment — a bundle behind a
+ *     feature flag that is off here is not in it (the executor refuses an unclassified tool).
+ */
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { ALL_MCP_TOOLS } from '@core/mcp/server';
+import { parseSystem, type System } from '@tabs/agents/lib/system-schema';
+import { allToolsForKind } from '@tabs/agents/lib/capability-tools';
+import {
+  checkGrantScope,
+  createdFromSteps,
+  createdIds,
+  grantScopeBrief,
+  grantScopeOf,
+  NO_GRANTED_RESOURCE,
+  RESOURCE_KINDS,
+  TOOL_RESOURCES,
+  type GrantResolvers,
+  type GrantVerdict,
+} from '@tabs/agents/lib/build/grant-scope';
+
+// ------------------------------------------------------------- the ratchet --
+
+test('REGISTRY RATCHET: every MCP tool is classified for resource grants — in the map, or in the "touches none" table with a reason', () => {
+  const registry = ALL_MCP_TOOLS.map((t) => t.name);
+  const unplaced = registry.filter((n) => !(n in TOOL_RESOURCES) && !(n in NO_GRANTED_RESOURCE));
+  assert.deepEqual(unplaced, [], 'a NEW tool: read its arguments, then add it to TOOL_RESOURCES (it names / lists / creates a dataset, knowledge item, metric, connection, file or plan item) or to NO_GRANTED_RESOURCE with the reason — tabs/agents/lib/build/grant-scope.ts');
+  const both = registry.filter((n) => n in TOOL_RESOURCES && n in NO_GRANTED_RESOURCE);
+  assert.deepEqual(both, [], 'a tool sits in both tables');
+  // The other direction: nothing listed that the registry no longer has (a stale line hides a rename).
+  const known = new Set(registry);
+  assert.deepEqual(Object.keys(TOOL_RESOURCES).filter((n) => !known.has(n)), [], 'TOOL_RESOURCES names a tool that is not registered');
+  assert.deepEqual(Object.keys(NO_GRANTED_RESOURCE).filter((n) => !known.has(n)), [], 'NO_GRANTED_RESOURCE names a tool that is not registered');
+  for (const [name, why] of Object.entries(NO_GRANTED_RESOURCE)) assert.ok(why.length > 30, `${name} must say WHY it touches no granted resource`);
+});
+
+test('REGISTRY RATCHET: every argument a rule names exists in that tool\'s input schema', () => {
+  const props = new Map(ALL_MCP_TOOLS.map((t) => [t.name, Object.keys(((t.inputSchema ?? {}) as { properties?: Record<string, unknown> }).properties ?? {})]));
+  for (const [name, rule] of Object.entries(TOOL_RESOURCES)) {
+    const has = new Set(props.get(name) ?? []);
+    const named = [
+      ...(rule.ids ?? []).map((t) => t.arg.split('[].')[0]),
+      ...(rule.kindId ? [rule.kindId.kindArg, rule.kindId.idArg] : []),
+      ...(rule.ref ? [rule.ref.arg] : []),
+      ...(rule.planScope ? [rule.planScope.arg] : []),
+      ...(rule.folderWrite ? [rule.folderWrite.arg] : []),
+      ...(rule.sql ? [rule.sql.arg] : []),
+    ];
+    for (const arg of named) assert.ok(has.has(arg), `${name}: the rule names argument '${arg}', which the tool does not declare (${[...has].join(', ')})`);
+    const acts = !!(rule.ids?.length || rule.kindId || rule.ref || rule.planScope || rule.folderWrite || rule.sql || rule.filter || rule.creates?.length || rule.broad);
+    assert.ok(acts, `${name}: an empty rule — put the tool in NO_GRANTED_RESOURCE with a reason instead`);
+  }
+});
+
+test('REGISTRY RATCHET: an argument that carries a resource id is always checked — it cannot hide in the "touches none" table', () => {
+  // The id argument names the registry uses for the grantable kinds. A tool that declares one
+  // must check it (or be `broad`, which refuses the whole tool under a restriction).
+  const ID_ARGS: Record<string, string> = { datasetId: 'data', workflowId: 'knowledge', metricId: 'metrics', connId: 'connections', connectionId: 'connections', fileId: 'files' };
+  for (const t of ALL_MCP_TOOLS) {
+    const declared = Object.keys(((t.inputSchema ?? {}) as { properties?: Record<string, unknown> }).properties ?? {});
+    for (const arg of declared) {
+      const kind = ID_ARGS[arg];
+      if (!kind) continue;
+      const rule = TOOL_RESOURCES[t.name];
+      assert.ok(rule, `${t.name} takes '${arg}' (a ${kind} id) but is not in TOOL_RESOURCES`);
+      const checked = (rule.ids ?? []).some((i) => i.arg === arg && i.kind === kind) || !!rule.broad;
+      assert.ok(checked, `${t.name}: '${arg}' names a ${kind} resource and is not checked`);
+    }
+  }
+});
+
+test('REGISTRY RATCHET: every tool the builder provisions for a resource grant is in the map', () => {
+  const known = new Set(ALL_MCP_TOOLS.map((t) => t.name));
+  for (const kind of RESOURCE_KINDS) {
+    for (const tool of allToolsForKind(kind)) {
+      if (!known.has(tool)) continue; // flag-gated tools the test registry does not hold
+      assert.ok(tool in TOOL_RESOURCES || tool === 'list_connection_templates', `${tool} is provisioned for a ${kind} grant but is not checked against it`);
+    }
+  }
+});
+
+// ---------------------------------------------------------------- the rule --
+
+function system(grants: Record<string, unknown>): System {
+  return parseSystem({
+    version: '1',
+    system: { name: 'T', domain: 'sales', visibility: 'Personal' },
+    entrypoint: 'a',
+    grants: { tools: [], ...grants },
+    agents: [{ id: 'a', role: 'agent', agent_md: '', memory_md: '' }],
+  });
+}
+
+const RESOLVERS: GrantResolvers = {
+  fileLocations: async () => [
+    { id: 'f_inv1', folder: '/Invoices', lane: 'personal' },
+    { id: 'f_inv2', folder: '/Invoices/2026/Q1', lane: 'personal' },
+    { id: 'f_hr', folder: '/HR', lane: 'personal' },
+    { id: 'f_dom', folder: '/Invoices', lane: 'domain' },
+    { id: 'f_out', folder: '/Reports', lane: 'personal' },
+  ],
+  datasetTables: async (id) =>
+    id === 'ds_orders' ? ['iceberg.sales.gold_orders', 'iceberg.sales.silver_orders'] : id === 'ds_new' ? ['iceberg.personal_u1.bronze_new'] : [],
+};
+
+const check = (tool: string, args: Record<string, unknown>, sys: System) => checkGrantScope(tool, args, grantScopeOf(sys), RESOLVERS);
+const reason = (v: GrantVerdict): string => (v.allow ? '' : v.refusal.reason);
+
+test('an id outside the grants is refused with a typed forbidden naming the kind and the id; a granted id passes', async () => {
+  const sys = system({ data: [{ id: 'ds_orders', capability: 'Read' }] });
+  assert.equal((await check('get_dataset', { datasetId: 'ds_orders' }, sys)).allow, true);
+  const no = await check('get_dataset', { datasetId: 'ds_salaries' }, sys);
+  assert.equal(no.allow, false);
+  if (!no.allow) {
+    assert.equal(no.refusal.code, 'forbidden');
+    assert.equal(no.refusal.kind, 'data');
+    assert.equal(no.refusal.id, 'ds_salaries');
+    assert.match(no.refusal.reason, /This agent is not granted dataset ds_salaries\. It may use: ds_orders\./);
+  }
+});
+
+test('EMPTY GRANTS: a kind with no grant is not restricted — and only that kind', async () => {
+  const none = system({});
+  assert.equal((await check('get_dataset', { datasetId: 'ds_anything' }, none)).allow, true);
+  assert.equal((await check('get_file', { fileId: 'f_hr' }, none)).allow, true);
+  assert.equal((await check('query_data', { sql: 'select * from iceberg.hr.gold_salaries' }, none)).allow, true);
+  // A data grant restricts DATA; knowledge stays on the running user's own access.
+  const dataOnly = system({ data: [{ id: 'ds_orders', capability: 'Read' }] });
+  assert.equal((await check('get_knowledge', { workflowId: 'wf_any' }, dataOnly)).allow, true);
+  assert.equal((await check('get_dataset', { datasetId: 'ds_other' }, dataOnly)).allow, false);
+});
+
+test('an id switched Off is refused even when the kind is otherwise unrestricted', async () => {
+  const sys = system({ knowledge: [{ id: 'wf_secret', capability: 'Off' }] });
+  assert.match(reason(await check('get_knowledge', { workflowId: 'wf_secret' }, sys)), /switched off/);
+  assert.equal((await check('get_knowledge', { workflowId: 'wf_other' }, sys)).allow, true);
+});
+
+test('CAPABILITY: a Read grant refuses writes on that resource; a write grant allows them', async () => {
+  const sys = system({ data: [{ id: 'ds_orders', capability: 'Read' }, { id: 'ds_stage', capability: 'Write-bounded' }, { id: 'ds_held', capability: 'Write-approval' }] });
+  assert.match(reason(await check('ingest_dataset', { datasetId: 'ds_orders', content: 'a,b' }, sys)), /granted dataset ds_orders read-only — it may not change it/);
+  assert.equal((await check('ingest_dataset', { datasetId: 'ds_stage', content: 'a,b' }, sys)).allow, true);
+  assert.equal((await check('ingest_dataset', { datasetId: 'ds_held', content: 'a,b' }, sys)).allow, true);
+  // A join writes its target and READS its sources: a read-only source is fine, an ungranted one is not.
+  assert.equal((await check('build_gold_join', { datasetId: 'ds_stage', picks: [{ datasetId: 'ds_orders' }] }, sys)).allow, true);
+  assert.match(reason(await check('build_gold_join', { datasetId: 'ds_stage', picks: [{ datasetId: 'ds_orders' }, { datasetId: 'ds_hr' }] }, sys)), /not granted dataset ds_hr/);
+  assert.match(reason(await check('build_gold_join', { datasetId: 'ds_orders', picks: [] }, sys)), /read-only/);
+});
+
+test('FILES: a folder grant covers its subfolders in its own lane, and nothing else', async () => {
+  const sys = system({ files: [{ folder: { path: '/Invoices', scope: 'personal' }, capability: 'Read' }] });
+  assert.equal((await check('get_file', { fileId: 'f_inv1' }, sys)).allow, true);
+  assert.equal((await check('get_file', { fileId: 'f_inv2' }, sys)).allow, true, 'a subfolder is covered');
+  assert.match(reason(await check('get_file', { fileId: 'f_hr' }, sys)), /not granted file f_hr\. It may use files in: \/Invoices \(My files, read-only\)/);
+  assert.equal((await check('get_file', { fileId: 'f_dom' }, sys)).allow, false, 'the same path in the Domain lane is a different folder');
+  assert.equal((await check('get_file', { fileId: 'f_unknown' }, sys)).allow, false, 'a file the runner cannot see is not in a granted folder');
+});
+
+test('FILES: writing into a read-only granted folder is refused; a writable folder and a new folder are not', async () => {
+  const sys = system({ files: [
+    { folder: { path: '/Invoices', scope: 'personal' }, capability: 'Read' },
+    { folder: { path: '/Reports', scope: 'personal' }, capability: 'Write-bounded' },
+  ] });
+  assert.match(reason(await check('upload_file', { name: 'x.md', folder: 'Invoices/2026' }, sys)), /granted the folder \/Invoices\/2026 read-only.*It may write to: \/Reports \(My files\)/);
+  assert.equal((await check('upload_file', { name: 'x.md', folder: '/Reports/2026' }, sys)).allow, true);
+  assert.equal((await check('upload_file', { name: 'x.md', folder: '/Scratch' }, sys)).allow, true, 'a NEW personal file outside every granted folder touches nothing existing');
+});
+
+test('LISTS: only the granted rows come back, and the result says rows were left out', async () => {
+  const sys = system({ data: [{ id: 'ds_orders', capability: 'Read' }] });
+  const v = await check('list_datasets', {}, sys);
+  assert.ok(v.allow && v.shape);
+  const shaped = v.allow && v.shape ? v.shape(JSON.stringify({ mine: [{ id: 'ds_orders', name: 'Orders' }, { id: 'ds_salaries', name: 'Salaries' }], domain: [{ id: 'ds_hr' }], marketplace: [] })) : null;
+  assert.ok(shaped && 'text' in shaped);
+  const out = JSON.parse((shaped as { text: string }).text);
+  assert.deepEqual(out.mine, [{ id: 'ds_orders', name: 'Orders' }]);
+  assert.deepEqual(out.domain, []);
+  assert.match(out.grantScope, /2 other items the running user can see were left out/);
+  // A result that cannot be parsed cannot be narrowed, so it is withheld — never passed through.
+  const bad = v.allow && v.shape ? v.shape('Datasets: ds_orders, ds_salaries') : null;
+  assert.ok(bad && 'refusal' in bad);
+  // No grant for the kind → no filter at all.
+  assert.equal(((await check('list_datasets', {}, system({}))) as { shape?: unknown }).shape, undefined);
+});
+
+test('SEARCH: search_knowledge and search_files return only granted items', async () => {
+  const k = await check('search_knowledge', { query: 'refunds' }, system({ knowledge: [{ id: 'wf_refunds', capability: 'Read' }] }));
+  assert.ok(k.allow && k.shape);
+  const hits = { decision: 'allow', hits: [
+    { unit: { id: 'u1', text: 'refund in 5 days', provenance: { workflowId: 'wf_refunds' } }, score: 1 },
+    { unit: { id: 'u2', text: 'salary bands', provenance: { workflowId: 'wf_hr' } }, score: 0.9 },
+    { unit: { id: 'u3', text: 'domain card', provenance: { workflowId: null, type: 'domain' } }, score: 0.8 },
+  ] };
+  const ks = k.allow && k.shape ? k.shape(JSON.stringify(hits)) : null;
+  const kOut = JSON.parse((ks as { text: string }).text);
+  assert.deepEqual(kOut.hits.map((h: { unit: { id: string } }) => h.unit.id), ['u1'], 'a hit from another workflow — or from none — is removed');
+
+  const f = await check('search_files', { query: 'invoice' }, system({ files: [{ folder: { path: '/Invoices', scope: 'personal' }, capability: 'Read' }] }));
+  const fs = f.allow && f.shape ? f.shape(JSON.stringify([{ id: 'f_inv2', name: 'a.pdf' }, { id: 'f_hr', name: 'b.pdf' }])) : null;
+  assert.deepEqual(JSON.parse((fs as { text: string }).text).items, [{ id: 'f_inv2', name: 'a.pdf' }]);
+});
+
+test('SQL: query_data runs only over the granted datasets\' tables, by full name', async () => {
+  const sys = system({ data: [{ id: 'ds_orders', capability: 'Read' }] });
+  assert.equal((await check('query_data', { sql: 'SELECT region, sum(net) FROM iceberg.sales.gold_orders GROUP BY 1' }, sys)).allow, true);
+  assert.equal((await check('query_data', { sql: 'WITH t AS (SELECT * FROM "iceberg"."sales"."SILVER_orders") SELECT count(*) FROM t' }, sys)).allow, true);
+  assert.match(reason(await check('query_data', { sql: 'SELECT * FROM iceberg.hr.gold_salaries' }, sys)), /not granted the table iceberg\.hr\.gold_salaries.*iceberg\.sales\.gold_orders/);
+  assert.match(reason(await check('query_data', { sql: 'SELECT * FROM iceberg.sales.gold_orders o JOIN iceberg.hr.gold_salaries s ON 1=1' }, sys)), /iceberg\.hr\.gold_salaries/);
+  assert.match(reason(await check('query_data', { sql: 'SELECT (SELECT max(pay) FROM iceberg.hr.gold_salaries) FROM iceberg.sales.gold_orders' }, sys)), /iceberg\.hr\.gold_salaries/);
+  // An unqualified name cannot be tied to a granted dataset → refused, with the names to use.
+  assert.match(reason(await check('query_data', { sql: 'SELECT * FROM gold_orders' }, sys)), /not granted the table gold_orders/);
+  // What cannot be checked is refused honestly, never run on trust.
+  assert.match(reason(await check('query_data', { sql: 'SHOW TABLES FROM iceberg.hr' }, sys)), /cannot be checked against them because it is not a SELECT/);
+  assert.match(reason(await check('query_data', { sql: "SELECT * FROM TABLE(system.query(query => 'select 1'))" }, sys)), /table function/i);
+});
+
+test('METRICS follow their dataset when the system has no metric grant of its own', async () => {
+  const sys = system({ data: [{ id: 'ds_orders', capability: 'Read' }] });
+  assert.equal((await check('query_metric', { metricId: 'ds_orders.revenue' }, sys)).allow, true);
+  assert.match(reason(await check('query_metric', { metricId: 'ds_salaries.avg_pay' }, sys)), /its dataset is not one of the datasets this system is granted/);
+  // With its own metric grants, the metric list is what counts.
+  const own = system({ metrics: [{ id: 'ds_orders.revenue', capability: 'Read' }] });
+  assert.equal((await check('query_metric', { metricId: 'ds_orders.revenue' }, own)).allow, true);
+  assert.equal((await check('query_metric', { metricId: 'ds_orders.margin' }, own)).allow, false);
+});
+
+test('POLYMORPHIC tools: "<kind>, <id>" and "<kind>:<id>" are checked against the kind they name', async () => {
+  const sys = system({ data: [{ id: 'ds_orders', capability: 'Read' }] });
+  assert.equal((await check('get_history', { kind: 'dataset', id: 'ds_orders' }, sys)).allow, true);
+  assert.equal((await check('get_history', { kind: 'dataset', id: 'ds_hr' }, sys)).allow, false);
+  assert.match(reason(await check('request_promotion', { kind: 'dataset', id: 'ds_orders' }, sys)), /read-only/);
+  assert.equal((await check('get_history', { kind: 'app', id: 'app_1' }, sys)).allow, true, 'apps are not a grant kind');
+  assert.equal((await check('get_lineage', { ref: 'dataset:ds_hr' }, sys)).allow, false);
+  assert.equal((await check('get_lineage', { ref: 'dataset:ds_orders' }, sys)).allow, true);
+});
+
+test('PLAN: an Operating Model scope is a plan grant', async () => {
+  const sys = system({ plan: [{ id: 'manual:domain', capability: 'Read' }] });
+  assert.equal((await check('get_operating_manual', { scope: 'domain' }, sys)).allow, true);
+  assert.match(reason(await check('get_operating_manual', { scope: 'company' }, sys)), /not granted plan item manual:company/);
+  assert.match(reason(await check('update_operating_manual', { scope: 'domain', sections: [] }, sys)), /read-only/);
+});
+
+test('BROAD tools are refused while a kind they sweep is restricted, and say why', async () => {
+  const sys = system({ data: [{ id: 'ds_orders', capability: 'Read' }] });
+  assert.match(reason(await check('suggest_metrics', { goal: 'x' }, sys)), /reads every dataset and metric the running user can see/);
+  assert.equal((await check('suggest_metrics', { goal: 'x' }, system({}))).allow, true);
+});
+
+test('CREATED in this run: a new artifact is usable afterwards, by id and in SQL', async () => {
+  const sys = system({ data: [{ id: 'ds_orders', capability: 'Read' }] });
+  const scope = grantScopeOf(sys);
+  assert.equal((await checkGrantScope('get_dataset', { datasetId: 'ds_new' }, scope, RESOLVERS)).allow, false);
+  const made = await checkGrantScope('create_dataset', { name: 'New' }, scope, RESOLVERS);
+  assert.ok(made.allow && made.created, 'creating is allowed — nothing existing is touched');
+  if (made.allow) made.created?.(JSON.stringify({ id: 'ds_new', name: 'New' }));
+  assert.equal((await checkGrantScope('get_dataset', { datasetId: 'ds_new' }, scope, RESOLVERS)).allow, true);
+  assert.equal((await checkGrantScope('ingest_dataset', { datasetId: 'ds_new', content: 'a' }, scope, RESOLVERS)).allow, true, 'the run may write what it created');
+  assert.equal((await checkGrantScope('query_data', { sql: 'select * from iceberg.personal_u1.bronze_new' }, scope, RESOLVERS)).allow, true);
+});
+
+test('createdIds / createdFromSteps: the ids a creating tool answers with, and the ledger a resumed run rebuilds', () => {
+  assert.deepEqual(createdIds('data', JSON.stringify({ id: 'ds_1' })), ['ds_1']);
+  assert.deepEqual(createdIds('data', JSON.stringify({ dataset: { id: 'ds_2' }, cron: '* * * * *' })), ['ds_2']);
+  assert.deepEqual(createdIds('knowledge', JSON.stringify({ workflows: [{ id: 'wf_1' }, { id: 'wf_2' }] })), ['wf_1', 'wf_2']);
+  assert.deepEqual(createdIds('metrics', JSON.stringify({ datasetId: 'ds_1', measure: { name: 'revenue' } })), ['ds_1.revenue']);
+  assert.deepEqual(createdIds('data', 'not json'), []);
+  const seed = createdFromSteps([
+    { tool: 'create_dataset', result: JSON.stringify({ id: 'ds_new' }), isError: false },
+    { tool: 'write_file', result: JSON.stringify({ id: 'f_new' }), isError: false },
+    { tool: 'create_dataset', result: JSON.stringify({ error: { code: 'forbidden' } }), isError: true },
+    { tool: 'get_dataset', result: JSON.stringify({ id: 'ds_seen' }), isError: false },
+  ], (t) => (t === 'write_file' ? 'upload_file' : t));
+  assert.deepEqual(seed, { data: ['ds_new'], files: ['f_new'] });
+  const scope = grantScopeOf(system({ data: [{ id: 'ds_orders', capability: 'Read' }] }), seed);
+  assert.ok(scope.created.data.has('ds_new') && scope.created.files.has('f_new'));
+});
+
+test('an UNCLASSIFIED tool is refused, never run unchecked', async () => {
+  const v = await check('some_future_tool', { datasetId: 'ds_orders' }, system({}));
+  assert.match(reason(v), /has not been classified for resource grants/);
+});
+
+test('THE PROMPT says what is enforced, kind by kind — and nothing it does not do', () => {
+  const sys = system({
+    data: [{ id: 'ds_orders', capability: 'Read' }, { id: 'ds_stage', capability: 'Write-bounded' }],
+    files: [{ folder: { path: '/Invoices', scope: 'personal' }, capability: 'Read' }],
+  });
+  const brief = grantScopeBrief(sys);
+  assert.match(brief, /the engine ENFORCES it/);
+  assert.match(brief, /- datasets: ds_orders \(read-only\), ds_stage/);
+  assert.match(brief, /- files: only files in \/Invoices \(My files, read-only\)/);
+  assert.match(brief, /No grant narrows these kinds, so the running user's own access applies to them: knowledge, metrics, connections, plan/);
+  assert.doesNotMatch(brief, /DENIED by OPA|ONLY resource ids/);
+  assert.equal(grantScopeBrief(system({})), '', 'no resource grant → nothing is claimed');
+});
