@@ -115,6 +115,7 @@ import {
   DEFAULT_TOOL_RESULT_MAX_CHARS,
 } from '@tabs/agents/lib/engine/tool-result';
 import { isWriteTool } from '@tabs/agents/lib/build/hold';
+import { briefToolSpecs } from '@tabs/agents/lib/build/tool-brief';
 import {
   boundInput,
   curatePredecessor,
@@ -838,7 +839,11 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
           model: routed.model,
           tier: routed.tier,
           tierReason: routed.reason,
-          messages: [{ role: 'system', content: actSystem(system, planText, tools, false) }, ...turns],
+          // PROMPT DIET: with native tool-calling the full descriptions travel in the request's
+          // `tools` schema, so the prompt's own list is names + one-line summaries. The ReAct
+          // fallback in `act_<id>` rebuilds this prompt with the FULL descriptions, because there
+          // the prompt is the only place the model can read them.
+          messages: [{ role: 'system', content: actSystem(system, planText, briefToolSpecs(tools), false) }, ...turns],
           steps: [],
           executed: [],
           iterations: 0,

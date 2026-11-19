@@ -23,6 +23,7 @@ import { agentForbiddenReason } from '@core/mcp/write-tool-meta';
 import { resolveFolderGrant } from '@core/kernel/folders';
 import { config } from '@core/kernel/config';
 import { TAB_FEATURES } from '@core/kernel/tabs';
+import { toolSummary } from '@tabs/agents/lib/build/tool-brief';
 
 /**
  * THE ONE reusable core that lets an INTERNAL agent (Agents tab) call the SAME
@@ -510,7 +511,9 @@ export function grantedToolSpecs(user: CurrentUser, sys: System, nodeTools?: str
 
 /**
  * The GRANT-SCOPED tool brief injected into a run's system prompt — a plain-text
- * listing of EXACTLY the tools this system may drive (name + one-line description),
+ * listing of EXACTLY the tools this system may drive (name + a ONE-LINE summary: the
+ * description's first sentence, hard-capped — `tool-brief.ts`; the full description
+ * travels once, in the request's `tools` schema, instead of being repeated here),
  * built from the SAME {@link grantedToolSpecs} set advertised to the model. This is
  * the discovery-layer counterpart to the manifest scoping: the prompt can name only
  * granted tools, so the model is never TOLD about a tool (e.g. `create_software`,
@@ -525,20 +528,16 @@ export function grantedToolBrief(user: CurrentUser, sys: System): string {
   if (specs.length === 0) {
     return 'You have been granted NO tools. You cannot take any action — explain this plainly.';
   }
-  const lines = specs.map((s) => `- ${s.name} — ${firstLine(s.description)}`);
+  const lines = specs.map((s) => `- ${s.name} — ${toolSummary(s.description)}`);
   return [
     'You may call ONLY the tools listed here — this is your COMPLETE toolset. Any tool',
     'not on this list is NOT available to you; do not attempt it or reference it as an',
     'option. Consume granted resources by reference via the tools you hold.',
+    'Each line is a one-line summary; a tool\'s full description, rules and arguments are',
+    'in its own tool definition — read that before you call it.',
     '',
     ...lines,
   ].join('\n');
-}
-
-/** The first non-empty line of a (possibly multi-line) tool description, trimmed. */
-function firstLine(text: string): string {
-  const line = text.split('\n').map((l) => l.trim()).find((l) => l.length > 0) ?? '';
-  return line;
 }
 
 /** Injected collaborators (default to the real governed libs; tests inject spies). */
