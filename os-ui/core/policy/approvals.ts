@@ -63,7 +63,12 @@ export type ApprovalKind =
   | 'artifact_promote'
   // Rung-2 certification (Domain→Marketplace) for EVERY kind — admin-approved.
   | 'promote_certify';
-export type ApprovalStatus = 'pending' | 'approved' | 'rejected';
+/**
+ * `withdrawn` — the requester of a PARKED AGENT RUN's held call took it back before anyone
+ * decided it ({@link withdraw}). Terminal like the other two, and distinct from both: nobody
+ * approved it, nobody refused it, and the held tool was never executed.
+ */
+export type ApprovalStatus = 'pending' | 'approved' | 'rejected' | 'withdrawn';
 
 /** Who must clear the item. Personal→Shared promotions need a domain_admin;
  *  egress + tenant defaults are Admin-only; runtime write-approvals stay builder. */
@@ -302,7 +307,7 @@ export function enqueueOnce(input: Parameters<typeof enqueue>[0] & { interruptKe
 }
 
 /** A registered post-decision handler (A2): called once per decided approval that carries a `runId`. */
-export type DecidedHandler = (approval: Approval, decision: 'approve' | 'reject') => Promise<void> | void;
+export type DecidedHandler = (approval: Approval, decision: 'approve' | 'reject' | 'withdraw') => Promise<void> | void;
 
 type HookState = { handlers: Set<DecidedHandler>; settled: Map<string, Promise<void>> };
 const HOOK_KEY = Symbol.for('soa.approvals.decided-hooks');
@@ -328,7 +333,7 @@ export function decisionSettled(approvalId: string): Promise<void> {
   return hookState().settled.get(approvalId) ?? Promise.resolve();
 }
 
-function fireDecided(a: Approval, decision: 'approve' | 'reject'): void {
+function fireDecided(a: Approval, decision: 'approve' | 'reject' | 'withdraw'): void {
   const st = hookState();
   if (!a.runId) return;
   if (st.handlers.size === 0) {
@@ -382,6 +387,26 @@ export function decide(approvalId: string, decision: 'approve' | 'reject', by: s
   void writeThrough(a);
   // A2: exactly one transition → exactly one resume. A racing second decider got `null` above.
   fireDecided(a, decision);
+  return a;
+}
+
+/**
+ * The requester takes a parked run's held call back. Transitions a PENDING item that carries a
+ * `runId` to `withdrawn` and fires the same post-decision hook a rejection does, so the run
+ * resumes and the agent receives a typed `withdrawn_by_requester` result instead of the tool
+ * running. Returns null — and changes nothing — for an item that is not pending or is not a
+ * parked run's call, so a decided hold can never be withdrawn and a racing approver wins or
+ * loses cleanly. WHO may call this is the caller's job: see `canWithdraw` in `roles.ts`.
+ */
+export function withdraw(approvalId: string, by: string): Approval | null {
+  const a = queue.get(approvalId);
+  if (!a || a.status !== 'pending' || !a.runId) return null;
+  a.status = 'withdrawn';
+  a.decidedBy = by;
+  a.decidedAt = now();
+  queue.set(a.id, a);
+  void writeThrough(a);
+  fireDecided(a, 'withdraw');
   return a;
 }
 

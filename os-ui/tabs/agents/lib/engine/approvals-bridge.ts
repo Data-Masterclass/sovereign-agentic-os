@@ -31,7 +31,7 @@ function boundedArgs(args: Record<string, unknown>): Record<string, unknown> {
 }
 
 function toState(status: ApprovalStatus): ApprovalState {
-  return status === 'approved' ? 'approve' : status === 'rejected' ? 'reject' : 'pending';
+  return status === 'approved' ? 'approve' : status === 'rejected' ? 'reject' : status === 'withdrawn' ? 'withdraw' : 'pending';
 }
 
 /** The production port: every held call is one record in the Governance inbox. */
@@ -56,7 +56,7 @@ export function serverApprovalPort(): ApprovalPort {
           // The TRUE reason (review L3): an always-confirmed or escalating call is not held "by the
           // preset" — it is held under every preset, and the card must not suggest otherwise.
           why: reason.why,
-          impact: `Approve → the parked run resumes and executes this call as its runner (${input.runner.id}), who cannot approve it themselves. Deny → the agent receives a typed rejection and continues.`,
+          impact: `Approve → the parked run resumes and executes this call as its runner (${input.runner.id}), who cannot approve it themselves. Deny → the agent receives a typed rejection and continues. The runner can also withdraw the call: it is then not executed and the run continues without it.`,
         },
         runId: input.runId,
         threadId: input.threadId,

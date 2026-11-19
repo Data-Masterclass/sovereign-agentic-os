@@ -94,7 +94,7 @@ export const governanceTools: McpTool[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        status: { type: 'string', enum: ['pending', 'approved', 'rejected'], description: 'Filter by decision status.' },
+        status: { type: 'string', enum: ['pending', 'approved', 'rejected', 'withdrawn'], description: 'Filter by decision status (`withdrawn` = the requester took their own agent run\'s held call back; it was not executed).' },
         kind: { type: 'string', description: 'Filter by approval kind (e.g. artifact_promote, promote_certify, dataset_promote).' },
         mine: { type: 'boolean', description: 'Only requests YOU raised.' },
       },
