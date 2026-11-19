@@ -942,8 +942,11 @@ export function promotionStatus(id: string, user: Principal): { tier: FileAsset[
  * `indexing` choice, and "Opt out of indexing" was not offered on a file that was already
  * stored-only. So a legacy record that is (not restricted) + (has object bytes) + (a parseable
  * document) + (empty text) is stored-only because nothing could be read — not because anyone
- * asked. A legacy file the owner opted out of had text (that is the only way the button showed),
- * and a file with text is never eligible.
+ * asked. A legacy file the owner opted out of normally had text (an indexed file is what the
+ * button is offered on), and a file with text is never eligible.
+ * KNOWN RESIDUAL: an owner who pressed "Index this file" on a text-less legacy PDF and then
+ * "Opt out of indexing" again left a record this rule cannot tell from the ordinary case; it is
+ * treated as recoverable. Opting out again after this fix records `opt-out` and is final.
  */
 export type ExtractionEligibility = { eligible: true } | { eligible: false; why: string };
 
