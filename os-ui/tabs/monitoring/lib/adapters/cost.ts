@@ -10,6 +10,7 @@
  *   - Health is spend ÷ cap: ≥90% amber, ≥100% red. With no caps, live per-tag spend is shown
  *     with health `unknown`; with neither, demo fixtures only when
  *     `config.monitoringDemoFixtures` is on.
+ *   - Live where LiteLLM is up; offline-mock otherwise (honest `source`).
  *   - Called by `aggregate.ts`; `litellmSpendByTag` is also used by `core/policy/cost.ts`.
  */
 import 'server-only';

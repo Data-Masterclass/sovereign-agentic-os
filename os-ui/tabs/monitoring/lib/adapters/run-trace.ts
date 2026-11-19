@@ -13,6 +13,7 @@
  *   - Failure is read structurally (Langfuse `level`, then the `isError` / `failed` / `ok` /
  *     `success` / `error` fields) and text is probed only for string values, because the
  *     payload KEY names contain "error"/"fail" and a JSON-wide grep marked every span red.
+ *   - Live where Langfuse is up; offline-mock otherwise (honest `source`).
  *   - Used by `aggregate.ts`, `index.ts` and `core/mcp/monitoring-tools.ts`.
  */
 import 'server-only';
