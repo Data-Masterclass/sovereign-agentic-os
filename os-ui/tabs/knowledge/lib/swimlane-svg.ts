@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
-import { layoutSwimlanes } from '@tabs/knowledge/lib/swimlane-layout';
+import { layoutSwimlanes, wrapTitle } from '@tabs/knowledge/lib/swimlane-layout';
 import type { Workflow, WorkflowStep } from '@tabs/knowledge/lib/schema';
 
 /**
@@ -42,31 +42,6 @@ function esc(s: string): string {
     .replace(/'/g, '&apos;');
 }
 
-// Wrap a step title onto up to 3 lines by whole words — a plain clone of
-// SwimlaneCanvas.wrapTitle so the printed box reads the same as the screen.
-const TITLE_CHARS_PER_LINE = 24;
-const TITLE_MAX_LINES = 3;
-function wrapTitle(title: string): string[] {
-  const words = title.trim().split(/\s+/);
-  const lines: string[] = [];
-  let line = '';
-  for (const w of words) {
-    const next = line ? `${line} ${w}` : w;
-    if (next.length <= TITLE_CHARS_PER_LINE) {
-      line = next;
-    } else {
-      if (line) lines.push(line);
-      line = w.length > TITLE_CHARS_PER_LINE ? w.slice(0, TITLE_CHARS_PER_LINE - 1) + '…' : w;
-    }
-    if (lines.length === TITLE_MAX_LINES) break;
-  }
-  if (lines.length < TITLE_MAX_LINES && line) lines.push(line);
-  const drawn = lines.join(' ').replace(/…$/, '').split(/\s+/).length;
-  if (drawn < words.length && lines.length > 0 && !lines[lines.length - 1].endsWith('…')) {
-    lines[lines.length - 1] = lines[lines.length - 1] + '…';
-  }
-  return lines.length ? lines : [''];
-}
 
 /**
  * Render the workflow swimlane as a standalone SVG string. `gapFor` reports how

@@ -14,6 +14,7 @@ import { roleAtLeast } from '@core/kernel/session';
 import { getUrlParam, patchUrl } from '@core/kernel/url-params';
 import { useTabNavReset } from '@core/kernel/tab-nav';
 import './monitoring.css';
+import { ago, compact, money } from '@tabs/monitoring/ui/format';
 
 /**
  * Monitoring — the artifact-centric read plane, with real telemetry on every
@@ -71,21 +72,6 @@ function Dot({ cls, title }: { cls: string; title?: string }) {
   return <span className={`mon-dot ${cls}`} title={title} />;
 }
 
-function ago(at: number | string | null): string {
-  if (at == null) return '—';
-  const t = typeof at === 'number' ? at : Date.parse(at);
-  if (Number.isNaN(t)) return '—';
-  const s = Math.max(0, Math.floor((Date.now() - t) / 1000));
-  if (s < 60) return 'just now';
-  const m = Math.floor(s / 60); if (m < 60) return `${m}m ago`;
-  const h = Math.floor(m / 60); if (h < 24) return `${h}h ago`;
-  const d = Math.floor(h / 24); if (d < 30) return `${d}d ago`;
-  return `${Math.floor(d / 30)}mo ago`;
-}
-// Zero/absent cost renders '—' (matching the other absent facts, e.g. `ago`):
-// runs whose models carry no explicit price are UNPRICED, not free — never "$0".
-const money = (n: number) => (n >= 1 ? `€${n.toFixed(2)}` : n > 0 ? `€${n.toFixed(3)}` : '—');
-const compact = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${n}`);
 
 function ScopeTabs({ scope, setScope, counts }: { scope: ScopeKey; setScope: (s: ScopeKey) => void; counts: Record<ScopeKey, number> }) {
   return (

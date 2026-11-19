@@ -5,6 +5,7 @@ import 'server-only';
 import { createSign } from 'crypto';
 import type { Connection } from '@tabs/connections/lib/schema';
 import { getSecretServerSide } from '@core/infra/secrets';
+import { base64url } from '@core/kernel/base64url';
 
 /**
  * Google Cloud identity/resource-governance client — the per-connection bridge to a
@@ -57,14 +58,8 @@ const IAM = 'https://iam.googleapis.com/v1';
 
 // ------------------------------------------------------------------ JWT ---------
 
-/** base64url of a Buffer/string (no padding) — the JOSE encoding. */
-export function base64url(input: Buffer | string): string {
-  return (typeof input === 'string' ? Buffer.from(input, 'utf8') : input)
-    .toString('base64')
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/, '');
-}
+/** base64url (no padding) — the JOSE encoding; one shared implementation in the kernel. */
+export { base64url };
 
 /**
  * Build a signed RS256 JWT assertion for the Google OAuth2 JWT-bearer grant.
