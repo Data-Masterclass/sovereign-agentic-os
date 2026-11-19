@@ -10,7 +10,10 @@
  *             manifests a seed commits (`lockInputs`), writes ONLY those into an empty temp
  *             directory, runs `npm install --package-lock-only --ignore-scripts` there, and copies
  *             npm's `package-lock.json` VERBATIM to `tabs/software/lib/scaffolds/locks/`. Nothing
- *             is edited afterwards: a lockfile that is not npm's own output is fiction. Needs
+ *             is edited afterwards: a lockfile that is not npm's own output is fiction. The seed's
+ *             `.npmrc` (the `@sovereign-os` scope pin) is written there too, so the resolution runs
+ *             under the config a generated app has; `file:` dependencies never ask a registry, so
+ *             the pin does not change a byte of the lockfile. Needs
  *             network access to the npm registry. Run from anywhere:
  *               node --experimental-strip-types os-ui/scripts/regen-scaffold-locks.mjs [--check]
  *             `--check` resolves into the temp directory and exits 1 if the committed file differs.
@@ -41,7 +44,7 @@ for (const family of ['vite', 'api-service']) {
   if (!existsSync(p)) writeFileSync(p, '{}\n');
 }
 
-const { lockInputs } = await import('../tabs/software/lib/scaffold-lock.ts');
+const { lockInputs, withScopePin } = await import('../tabs/software/lib/scaffold-lock.ts');
 const { viteBaseFiles } = await import('../tabs/software/lib/scaffolds/vite-os.ts');
 const { apiServiceFiles } = await import('../tabs/software/lib/scaffolds/api-service.ts');
 
@@ -54,7 +57,10 @@ let drift = 0;
 for (const [family, scaffold] of Object.entries(FAMILIES)) {
   const dir = mkdtempSync(join(tmpdir(), `scaffold-lock-${family}-`));
   try {
-    for (const f of lockInputs(family, scaffold(SLUG), SLUG)) {
+    // The scope pin (`.npmrc`) is written beside the manifests: the lock is resolved under the
+    // same npm config a seeded app has. `--registry` below does not override a scope registry, so
+    // a manifest that asked a registry for `@sovereign-os/*` would fail here instead of resolving.
+    for (const f of withScopePin(lockInputs(family, scaffold(SLUG), SLUG))) {
       const abs = join(dir, f.path);
       mkdirSync(dirname(abs), { recursive: true });
       writeFileSync(abs, f.content);

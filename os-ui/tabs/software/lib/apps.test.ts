@@ -180,7 +180,8 @@ test('scaffold: nextjs-supabase seeds a runnable App Router app + a correct Dock
   // Dockerfile: installs (not `npm ci`, no swallowed errors), builds, serves on 8080.
   const docker = byPath('Dockerfile');
   assert.ok(docker, 'Dockerfile is seeded');
-  assert.match(docker!.content, /RUN npm install/, 'uses npm install (no lockfile seeded)');
+  assert.match(docker!.content, /^RUN .*npm install$/m, 'uses npm install (no lockfile seeded)');
+  assert.match(docker!.content, /npm_config_@sovereign-os:registry=https:\/\/[a-z-]+\.invalid\//, 'the install runs with the scope pin');
   assert.doesNotMatch(docker!.content, /npm ci/, 'does not use npm ci');
   assert.doesNotMatch(docker!.content, /\|\| true/, 'does not swallow install errors');
   assert.match(docker!.content, /RUN npm run build/, 'runs next build');

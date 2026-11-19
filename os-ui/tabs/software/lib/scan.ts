@@ -12,6 +12,7 @@ import type { ScanCategory, ScanFinding, ScanMode, ScanResult, ScaffoldFile } fr
 import { offlineMockAllowed } from '@core/kernel/offline-mock';
 import { config } from '@core/kernel/config';
 import { runTrivyScan, type TrivyScanOpts } from '@tabs/software/lib/scan-trivy';
+import { scopePinFindings } from '@tabs/software/lib/scope-pin';
 
 /**
  * The security scanner that feeds the Builder review card (Software golden path
@@ -124,7 +125,10 @@ const BLOCKING = new Set(['high', 'critical']);
  * the review card enforces.
  */
 export function securityScan(files: ScaffoldFile[], mode?: ScanMode): ScanResult {
-  const findings = [...scanSecrets(files), ...scanSast(files), ...scanDeps(files)];
+  // `scopePinFindings`: an `@sovereign-os/*` package that would come from a registry instead of
+  // the app's vendored folder is a blocking `deps` finding (`scope-pin.ts`). It reads manifests
+  // and lockfiles directly, so it holds in every mode and is layered onto a live Trivy result.
+  const findings = [...scanSecrets(files), ...scanSast(files), ...scanDeps(files), ...scopePinFindings(files)];
   const summary = emptySummary();
   for (const f of findings) summary[f.category] += 1;
   const hasSecret = findings.some((f) => f.category === 'secrets');
