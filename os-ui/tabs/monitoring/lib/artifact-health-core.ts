@@ -1,10 +1,13 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
- */
-/**
- * Pure health-rollup for the artifact-centric Monitor (no IO / server-only), so the
- * combine rules are unit-testable. `artifacts-view.ts` is the server-only half that
- * feeds these from the live stores.
+ *
+ * FEATURE:    Artifact health rules — pure combine and threshold functions for Monitor tiles
+ * USER STORY: As a user watching my datasets and agents I want one health dot per artifact
+ *             computed the same way everywhere so that the colours mean the same thing.
+ * ARCHITECTURE:
+ *   - Pure (no IO, no `server-only`); `artifacts-view.ts` is the server half that feeds it.
+ *   - `combine` is worse-of with grey = no signal; pipeline health turns amber after 7 days and
+ *     red after 30; `ageInDays` takes `nowMs` from the caller.
  */
 
 export type Health = 'green' | 'amber' | 'red' | 'grey';

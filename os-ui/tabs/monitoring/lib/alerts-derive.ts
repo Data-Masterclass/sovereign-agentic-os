@@ -1,17 +1,15 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
- */
-/**
- * Pure (no IO, no server-only) operational-alert derivation from real in-process
- * signals. Kept free of `server-only` so the logic is unit-testable. `aggregate.ts`
- * feeds in the live signals (governed-run ring + governance cost store).
  *
- * Sources:
- *   1. Failed / denied agent runs from the in-process governed-run ring.
- *   2. Cost-cap breaches (≥100% → critical) or near-breaches (≥90% → warning)
- *      from the governance cost store — caps the admin SET, never mocked.
- *
- * If neither source has any signals, returns [] (honest "no active alerts").
+ * FEATURE:    Operational alert derivation — failed runs and cost-cap breaches
+ * USER STORY: As a domain owner I want an alert when my agent runs fail or my LLM spend nears
+ *             its cap so that I can react, and no alert when nothing is wrong.
+ * ARCHITECTURE:
+ *   - Pure (no IO, no `server-only`) so it is unit-testable; `aggregate.ts` feeds it the
+ *     governed-run ring and the governance cost store.
+ *   - Failed/denied runs (capped at 5) and caps at ≥90% (warning) or ≥100% (critical);
+ *     returns `[]` when neither source has a signal.
+ *   - Output is scope-filtered with `filterScope` from `scope-core.ts`.
  */
 import type { Alert, Scope } from '@tabs/monitoring/lib/types';
 import { filterScope } from '@tabs/monitoring/lib/scope-core';

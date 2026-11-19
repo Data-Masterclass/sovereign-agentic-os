@@ -1,14 +1,17 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    Monitoring scope predicates — who may see which signal
+ * USER STORY: As a user I want to see only my own runs and spend, as a builder my domains, and
+ *             as an admin everything, so that Monitoring never shows me another user's work.
+ * ARCHITECTURE:
+ *   - Pure (no `server-only`, no config) so the invariants run under `node --test`;
+ *     `scope.ts` adds the async `scopeForUser`.
+ *   - Role map: creator → user, builder and domain_admin → builder, admin → admin.
+ *   - `canSee`: admin sees all; cluster-wide items are admin-only; builder sees its domains and
+ *     anything it owns; user sees only what it owns. `assertInScope` throws 404/403.
  */
 import type { Scope, ScopeLevel } from '@tabs/monitoring/lib/types';
-
-/**
- * PURE scope predicates (no IO) — the testable heart of the OPA-scoping spine.
- * Kept free of `server-only`/config imports so the security invariants run under
- * `node --test`. `scope.ts` adds the async `scopeForUser` (the Ory→OPA resolve)
- * on top of these.
- */
 
 export const ROLE_LEVEL: Record<string, ScopeLevel> = {
   'creator': 'user',

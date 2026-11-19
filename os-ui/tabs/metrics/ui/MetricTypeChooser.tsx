@@ -1,5 +1,13 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    New-metric type chooser — Simple (aggregation) or Complex (formula)
+ * USER STORY: As a creator starting a new metric I want to pick the kind of metric first so
+ *             that the builder opens with the right editor.
+ * ARCHITECTURE:
+ *   - Client component rendered by `MetricsTab` before `MetricBuilder`; `onPick` returns the
+ *     `MetricKind` the builder preselects.
+ *   - Pure presentational: no fetch, no state beyond the props.
  */
 'use client';
 

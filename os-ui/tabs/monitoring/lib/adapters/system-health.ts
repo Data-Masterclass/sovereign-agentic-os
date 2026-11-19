@@ -1,24 +1,20 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    System-health adapter (lens 4) — workload status from the Kubernetes API
+ * USER STORY: As a platform admin I want the platform's workloads that are not running listed,
+ *             with the healthy ones rolled up, so that I see cluster trouble at a glance.
+ * ARCHITECTURE:
+ *   - Server-only, read-only; reuses `listComponentsWithStatus()` from `@tabs/admin/lib`.
+ *     Called by `app/api/platform-admin/components/route.ts`, not by the Monitoring overview.
+ *   - running/on-demand → green, starting/off → amber, unknown/disabled/n/a → unknown;
+ *     on-demand (job-based) components are not counted as a signal.
+ *   - Every item is `cluster: true` (admin-only under the scope filter). No mock path: an
+ *     unreachable cluster returns `[]`.
  */
 import 'server-only';
 import { listComponentsWithStatus } from '@tabs/admin/lib/index';
 import type { Health, HealthItem } from '@tabs/monitoring/lib/types';
-
-/**
- * System-health adapter (lens 4) — node/pod/service status + self-heal state.
- * READ-ONLY. This tab SURFACES the self-healing runbook (monitoring-and-healing.md);
- * it does NOT rebuild it. Live reads:
- *   • workload status — REUSE `lib/platform.listComponentsWithStatus()` (the k8s
- *     API read the OS UI pod's ServiceAccount already grants). off/starting → amber,
- *     unknown/disabled → handled; running → green.
- * Mock (not in the bundle on kind): Prometheus/Alertmanager +
- * SKE node auto-repair + the OOMKilled→auto-restart self-heal story + OpenSearch
- * green/yellow/red. Marked `source:'mock'` so the dual pattern stays honest.
- *
- * Cluster/tenant-wide signals are tagged `cluster:true` so the scope spine shows
- * them to ADMIN only.
- */
 
 function workloadHealth(status: string): Health {
   switch (status) {

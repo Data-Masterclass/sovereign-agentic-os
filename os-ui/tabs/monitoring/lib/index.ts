@@ -1,10 +1,15 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
- */
-/**
- * Monitoring — the read/observe plane. Barrel for the OPA-scoped aggregation +
- * trace/lineage correlation spine and its five read-only adapters. See
- * `lib/monitoring/README.md` for the architecture + the validation gate.
+ *
+ * FEATURE:    Monitoring library barrel — the read/observe plane's public surface
+ * USER STORY: As a developer wiring a Monitoring route or MCP tool I want one import for the
+ *             overview, correlation, scope and trace functions so that callers do not reach
+ *             into internals.
+ * ARCHITECTURE:
+ *   - Re-exports `types`, `buildOverview` / `collectAll`, `correlate`, the scope predicates and
+ *     `fetchTrace`.
+ *   - Imported by the `/api/monitoring` routes, `app/api/platform-admin/components/route.ts`
+ *     and `core/mcp/monitoring-tools.ts`. Architecture notes: `tabs/monitoring/lib/README.md`.
  */
 export * from '@tabs/monitoring/lib/types';
 export { buildOverview, collectAll } from '@tabs/monitoring/lib/aggregate';

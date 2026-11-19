@@ -1,23 +1,19 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    Data-quality roll-up — governed datasets ranked by risk
+ * USER STORY: As a domain owner I want the datasets with failing or missing quality checks
+ *             listed first so that I fix the riskiest data before it reaches a dashboard.
+ * ARCHITECTURE:
+ *   - Pure ranking: dataset summaries and their latest DQ run in, ranked rows and a domain
+ *     roll-up out. Used by `app/api/monitoring/data-quality/route.ts`, which scopes first.
+ *   - Input verdicts come from the Data tab's `dq-status-server.latestDqRuns` (Dagster asset
+ *     checks, or the `os-dq-results` series when `DATA_PROJECT_GIT` is off); `source` is
+ *     carried through so a row can name the engine. No second store, no re-run.
+ *   - Risk 0–100: failing starts at 60, never-run at 40; low health, open failures and a late
+ *     freshness check add weight.
  */
 import type { DqSource, QualityBadge } from '@tabs/data/lib/dq';
-
-/**
- * The Monitoring-tab DATA-QUALITY ROLLUP (Data Quality Phase 1 · §5.2) — PURE ranking.
- *
- * A read-only tenant/domain overview: governed datasets ranked by RISK so the few that
- * need a human lead, greens recede. It ranks the verdicts the caller already read through the
- * Data tab's one seam (`dq-status-server.latestDqRuns` — Dagster asset checks with
- * `DATA_PROJECT_GIT` on, the persisted `os-dq-results` series under the opt-out): no second store,
- * no re-run, and `source` is carried through so a row can say WHICH engine decided. Author quality
- * in Data; monitor it here. Each row deep-links back to that dataset's Validate stage (monitor
- * here, fix there — the hybrid IA).
- *
- * Pure: dataset-summaries + their latest runs in → ranked rows + a domain roll-up out,
- * no engine, no network, so the risk ordering is unit-tested. Scoping happens BEFORE this
- * (the route filters to the viewer's My/Domain/Company scope); this module only ranks.
- */
 
 /** The per-dataset input: identity + its most recent persisted run (null = never run). */
 export type DqDatasetInput = {

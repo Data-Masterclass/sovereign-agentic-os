@@ -1,5 +1,18 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    Agent telemetry adapter — 7-day run history per agent system
+ * USER STORY: As an agent owner I want real cost, tokens, runs and errors for my agent over the
+ *             last week so that I can see whether it is healthy.
+ * ARCHITECTURE:
+ *   - Server-only. A system `S` traces under principal `os-S` (or `os-S:<node>`); runs are read
+ *     from the Langfuse public traces API and the in-process governed ring (`recentTraces`),
+ *     merged and de-duplicated by id, then folded by `telemetry-core`.
+ *   - `agentTelemetryBatch` (one Langfuse read for the whole tile grid) is used by
+ *     `artifacts-view.ts`; `agentTelemetryFor` by `detail-view.ts`; `tenantRuns` has no caller
+ *     outside its test.
+ *   - If both sources are empty the tile shows "no telemetry yet" (runs = 0); there is no
+ *     fixture fallback in this file.
  */
 import 'server-only';
 import { config } from '@core/kernel/config';
@@ -7,21 +20,6 @@ import { recentTraces, type TraceRecord } from '@core/infra/agent-governed';
 import { principalFor } from '@tabs/agents/lib/build/runtime-contract';
 import { readFetch } from '@tabs/monitoring/lib/util';
 import { type RawRun, type RunHealth } from '@tabs/monitoring/lib/telemetry-core';
-
-/**
- * Agent telemetry adapter — the REAL per-agent-system run history for the Monitor
- * tiles + detail window. A system with id `S` traces to Langfuse (and the governed
- * ring) under principal `os-S` (or `os-S:<node>` per sub-agent). We pull the last 7
- * days of traces for that principal prefix and normalise them to `RawRun`, which the
- * pure rollup then folds into cost/tokens/runs/last-run/warnings/errors.
- *
- * TWO real sources, no fake path:
- *   1) Langfuse public traces API — the durable history (cost/tokens/time/errors).
- *   2) The in-process governed ring (`recentTraces`) — this process's runs, so a
- *      just-run agent shows even before Langfuse is queried / when it is down.
- * If BOTH are empty the tile honestly shows "no telemetry yet" (runs===0); we only
- * fall to fixtures when `config.monitoringDemoFixtures` is on (dev/test), never prod.
- */
 
 const WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 

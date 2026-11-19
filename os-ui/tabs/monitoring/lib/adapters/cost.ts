@@ -1,5 +1,16 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    Cost adapter (lens 3) — LiteLLM spend measured against the Governance caps
+ * USER STORY: As a domain owner I want to see LLM spend against my domain's cap so that I
+ *             notice I am nearing the cap before it trips.
+ * ARCHITECTURE:
+ *   - Server-only, read-only: reads caps via `listCaps` (`@core/policy`) and spend via
+ *     LiteLLM `/spend/tags` through `adminGet`. It never sets a cap; Governance does.
+ *   - Health is spend ÷ cap: ≥90% amber, ≥100% red. With no caps, live per-tag spend is shown
+ *     with health `unknown`; with neither, demo fixtures only when
+ *     `config.monitoringDemoFixtures` is on.
+ *   - Called by `aggregate.ts`; `litellmSpendByTag` is also used by `core/policy/cost.ts`.
  */
 import 'server-only';
 import { config } from '@core/kernel/config';
@@ -7,17 +18,6 @@ import { listCaps } from '@core/policy/index';
 import { adminGet } from '@core/infra/litellm-admin';
 import { MOCK_COST } from '@tabs/monitoring/lib/mock';
 import type { Health, HealthItem } from '@tabs/monitoring/lib/types';
-
-/**
- * Cost adapter (lens 3) — LiteLLM spend by model/agent/domain measured AGAINST the
- * Governance caps. CRITICAL boundary: Monitoring READS the caps and WATCHES the
- * spend; it NEVER sets a cap (that is Governance). So this adapter only ever does
- * read calls: LiteLLM `/spend` + the caps map; it has no write path at all.
- *
- * Live where LiteLLM is up; offline-mock otherwise. The amber/red roll-up is a
- * function of spend÷cap (≥90% amber, ≥100% red) so "nearing the cap" surfaces
- * before the cap trips — the cap itself is enforced in Governance, not here.
- */
 
 /**
  * The Governance caps, READ-ONLY. Reads domain-scoped caps the admin SET in

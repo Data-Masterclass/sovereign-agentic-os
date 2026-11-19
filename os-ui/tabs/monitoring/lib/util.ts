@@ -1,5 +1,12 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    Monitoring read helper — a fetch with a timeout that never throws
+ * USER STORY: As a Monitoring adapter author I want a down backend to resolve to `null` so that
+ *             one unreachable service never breaks the whole overview.
+ * ARCHITECTURE:
+ *   - Server-only; used by `adapters/run-trace.ts` and `adapters/agent-telemetry.ts`.
+ *   - Aborts after `ms` (default 2500) and sends `cache: 'no-store'`.
  */
 import 'server-only';
 

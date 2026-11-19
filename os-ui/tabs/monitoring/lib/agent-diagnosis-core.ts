@@ -1,25 +1,18 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    Agent diagnosis core — pure folds behind the agent detail view
+ * USER STORY: As an agent owner opening an agent tile I want its shape, its last run and its
+ *             governed tool calls so that I can diagnose it even when Langfuse is down.
+ * ARCHITECTURE:
+ *   - Pure: no fetch, no stores, no `server-only`; runs under `node --test`.
+ *   - `buildProfile` (nodes, roles, models, trigger, runtime, grants resolved via a
+ *     caller-supplied, viewer-scoped lookup), `lastRunReport` (the run store's last run,
+ *     trimmed), `toolTraceRows` (the governed ring filtered to `os-<id>[:node]`).
+ *   - Only caller is `detail-view.ts`.
  */
 import type { System, Schedule, ArtifactGrant } from '@tabs/agents/lib/system-schema';
 import type { LastRun } from '@tabs/agents/lib/store';
-
-/**
- * Pure core for the agent DIAGNOSIS view (Monitoring → open an agent tile).
- * Three plain-data folds that make the detail page substantive even when
- * Langfuse is thin or down, because every input already exists in-process:
- *
- *   • buildProfile   — the team's shape: nodes/roles/models, trigger mode,
- *                      runtime/safety, and its grants (ids resolved to names
- *                      via a caller-supplied, viewer-scoped lookup).
- *   • lastRunView    — the OS run store's persisted last-run report, trimmed
- *                      for the read plane (per-node status + tool steps).
- *   • toolTraceRows  — the in-process governed ring filtered to one system's
- *                      principal (`os-<id>[:node]`): time · tool · decision.
- *
- * No fetch, no stores, no `server-only` — runs under `node --test`; the detail
- * route stays a thin governed assembler.
- */
 
 // ------------------------------------------------------------ system profile --
 

@@ -1,5 +1,15 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    Metrics tab root — switches between the registry, the type chooser and the builder
+ * USER STORY: As a user I want one Metrics page where I can list metrics, start a new one, or
+ *             open an existing one so that I always know where metrics live.
+ * ARCHITECTURE:
+ *   - Client component mounted by `app/(experimental)/metrics/page.tsx`; loads
+ *     `/api/metrics` (with `?archived=1` when archived metrics are shown).
+ *   - Views: `list` (MetricsRegistry) → `chooser` (MetricTypeChooser) → `builder`
+ *     (MetricBuilder, Edit for new, View for existing).
+ *   - Handles the `?focus=<metricId>` deep link and resets on tab re-navigation.
  */
 'use client';
 

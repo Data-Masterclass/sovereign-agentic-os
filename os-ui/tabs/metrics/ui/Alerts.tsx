@@ -1,5 +1,17 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    Metric alerts panel — set a threshold rule on a governed metric member
+ * USER STORY: As a metric owner I want to be told when a metric crosses a threshold so that I
+ *             can act before the number drifts too far.
+ * ARCHITECTURE:
+ *   - Client component rendered by `MetricBuilder` (metric View), optionally with
+ *     `presetMember` locked to one member.
+ *   - POSTs the rule to `/api/metrics/alerts`, which resolves the live value server-side,
+ *     persists the rule and delivers an in-app notification; lists agents from
+ *     `/api/agents/systems` for the optional agent hook.
+ *   - The optional agent hook records a governed `alert_trigger` trace; it does not start an
+ *     agent run.
  */
 'use client';
 

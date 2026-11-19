@@ -1,5 +1,16 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    Diagnosis-window payloads — everything about one agent system or one dataset
+ * USER STORY: As a user opening an agent or dataset tile I want its full diagnosis in one fetch
+ *             so that I can see why it is red without visiting several tabs.
+ * ARCHITECTURE:
+ *   - Server-only; `agentDetail` and `datasetDetail` are used by
+ *     `app/api/monitoring/agent/[id]` and `app/api/monitoring/dataset/[id]` routes.
+ *   - Assembled from the same governed stores as the tiles (Agents, Data, Knowledge, Files,
+ *     Metrics, Connections, the governed ring, DQ status) plus `agent-telemetry`.
+ *   - Visibility is enforced by `getSystem` / `getDataset`; a 403 from there is passed on,
+ *     never widened here.
  */
 import 'server-only';
 import type { CurrentUser } from '@core/kernel/auth';
@@ -36,13 +47,6 @@ import {
   type DqSummary,
 } from '@tabs/monitoring/lib/telemetry-core';
 import { LAYERS, type Layer } from '@tabs/data/lib/index';
-
-/**
- * The big DIAGNOSIS-WINDOW payloads. Everything a user needs to diagnose ONE agent
- * system or ONE dataset in a single fetch — assembled from the SAME governed stores
- * the tiles use, so scope/visibility is enforced by `getSystem`/`getDataset` (a 403
- * from there is the caller's own scope, never widened here).
- */
 
 // ------------------------------------------------------------------ agent detail --
 
