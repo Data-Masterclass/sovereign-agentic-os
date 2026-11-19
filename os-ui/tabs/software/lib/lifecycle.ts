@@ -230,10 +230,9 @@ export async function demoteApp(appId: string, user: CurrentUser): Promise<App> 
 // ------------------------------------------------------------- Use as Data -----
 
 /**
- * "Use as Data" — the app's operational data stays in Supabase; this snapshots it
- * into a (personal) Bronze dataset (dlt → Bronze). The data artifact was created
- * with the app; this marks the explicit snapshot the creator asked for so it
- * flows into the Data golden path.
+ * "Use as Data" — sets the app's `usedAsData` flag and nothing else. No rows are copied and no
+ * dataset (or dataset version) is created: the data artifact registered with the app at creation
+ * is unchanged. Turning the app's records into a dataset is done with the Data tools.
  */
 export async function useAsData(appId: string, user: CurrentUser): Promise<App> {
   // EXISTENCE FIRST (F2-1) — see archiveApp.
@@ -245,7 +244,7 @@ export async function useAsData(appId: string, user: CurrentUser): Promise<App> 
     principal: app.mcpPrincipal,
     tool: 'generate',
     input: { action: 'use_as_data', by: user.id },
-    output: { dataset: app.dataArtifactId, layer: 'bronze' },
+    output: { usedAsData: true, dataArtifactId: app.dataArtifactId, rowsCopied: 0 },
     decision: 'allow',
   });
   return app;

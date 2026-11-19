@@ -19,7 +19,7 @@
 - `start_preview(appId)` — private sandbox, no review.
 - `request_deploy(appId)` — opens a Builder review card; `decide_deploy(cardId, decision)` — Builder/Admin only.
 - `use_connection|use_data|use_knowledge(appId, ref, scope?)` — consume a granted resource by reference (never raw creds).
-- `use_as_data(appId)` — snapshot app data → Bronze dataset.
+- `use_as_data(appId)` — marks the app as used as Data (a flag only; no rows are copied and no dataset is created — ingest with the Data tools for that).
 - `promote|archive|delete(appId)` — lifecycle (role-gated).
 
 **Golden path:** `create_software` → `push_app_files` → `start_preview` → `request_deploy` → `decide_deploy` (Builder).
