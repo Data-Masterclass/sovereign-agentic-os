@@ -144,3 +144,10 @@ test('no token ⇒ no Authorization header sent (honest auth failure, not a brok
   await listChannels({ baseUrl: 'https://slack.com/api', fetchImpl: f.impl });
   assert.equal((f.calls[0].init.headers as Record<string, string>).authorization, undefined);
 });
+
+test('Track B: conversationsHistory says when the channel has more messages than one read returns', async () => {
+  const f = fakeFetch(() => ({ status: 200, body: { ok: true, has_more: true, messages: [{ user: 'U1', text: 'a', ts: '1.1' }] } }));
+  const r = await conversationsHistory(conn(f.impl), 'C1');
+  assert.ok(r.ok);
+  assert.equal(r.ok && r.truncated, true);
+});

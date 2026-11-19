@@ -464,7 +464,9 @@ function budgetTranscript(transcript: HandoffEntry[], ceiling: number): HandoffE
   const total = transcript.reduce((n, e) => n + estimateTokens(e.block), 0);
   if (total <= ceiling) return transcript;
   const kept: HandoffEntry[] = [];
-  let used = 0;
+  // Room for the note that says what was cut (Track B: a cut hand-off is never silent).
+  let used = estimateTokens(handoffCutNote(transcript.length, transcript.length));
+  let shortened = 0;
   // Walk newest → oldest; keep full while it fits, else compact to the narration line.
   for (let i = transcript.length - 1; i >= 0; i -= 1) {
     const e = transcript[i];
@@ -479,11 +481,22 @@ function budgetTranscript(transcript: HandoffEntry[], ceiling: number): HandoffE
     if (used + lineTokens <= ceiling) {
       kept.unshift({ node: e.node, block: line });
       used += lineTokens;
+      shortened += 1;
     }
     // else: too full even for a summary line — drop this and any older entry.
     else break;
   }
-  return kept;
+  const dropped = transcript.length - kept.length;
+  return [{ node: '(hand-off note)', block: handoffCutNote(shortened, dropped) }, ...kept];
+}
+
+/** What the hand-off budget did to the team progress, said to the next agent. */
+function handoffCutNote(shortened: number, dropped: number): string {
+  const parts = [
+    shortened > 0 ? `${shortened} earlier agent output${shortened === 1 ? ' was' : 's were'} shortened to a summary line` : '',
+    dropped > 0 ? `${dropped} earlier agent output${dropped === 1 ? ' was' : 's were'} left out` : '',
+  ].filter(Boolean);
+  return `## (hand-off note)\n${parts.join('; ') || 'Earlier agent outputs were shortened'} to fit the hand-off budget. What those agents found is not all shown here — do not read its absence as "they found nothing".`;
 }
 
 /**

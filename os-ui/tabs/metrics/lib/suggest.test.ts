@@ -148,3 +148,12 @@ test('parseCandidates returns an empty list (not an error) when the model propos
   assert.deepEqual(candidates, []);
   assert.deepEqual(grounding, groundingOf(CTX));
 });
+
+test('Track B: context over the budget is CUT with a note — never replaced by "nothing is visible"', () => {
+  const huge: SuggestContext = { ...CTX, omSections: [{ id: 'strategy', title: 'Strategy', content: 'win on price. '.repeat(4_000) }] };
+  const user = suggestMetricsMessages(huge)[1].content;
+  assert.doesNotMatch(user, /no operating model or datasets are visible yet/);
+  assert.match(user, /win on price/);
+  assert.match(user, /shortened|omitted/i);
+  assert.ok(user.length < 40_000, `bounded (${user.length} chars)`);
+});

@@ -225,3 +225,11 @@ test('nodeSystem: the definition\'s one-line role is sent under the role header;
   assert.doesNotMatch(without, /Your role:/);
   assert.equal(nodeSystem('RULES', node, [], undefined, '   '), without);
 });
+
+test('Track B: a hand-off cut to its budget SAYS that earlier agents were shortened or left out', () => {
+  const big = (n: string) => ({ node: n, block: `## ${n}\nDid the work.\nFound things.\n${'row of data '.repeat(2_000)}` });
+  const transcript: HandoffEntry[] = [big('a1'), big('a2'), big('a3'), big('a4')];
+  const sys = nodeSystem('OS RULES', NODE('builder'), transcript, 2_000);
+  assert.match(sys, /earlier agent(s|'s)? .*(shortened|left out)/i);
+  assert.match(sys, /hand-off budget/);
+});

@@ -30,7 +30,7 @@ test('keeps only the last 20 turns', () => {
   const many = Array.from({ length: 25 }, (_, i) => ({ role: 'user' as const, content: `m${i}` }));
   const out = cleanTurns(many);
   assert.equal(out.length, 20);
-  assert.equal(out[0].content, 'm5');
+  assert.match(out[0].content, /^\[5 earlier turns of this conversation were omitted.*\]\nm5$/, 'the oldest kept turn says what was dropped (Track B)');
   assert.equal(out[19].content, 'm24');
 });
 

@@ -215,7 +215,8 @@ export async function conversationsHistory(
   const r = await slackCall(conn, 'GET', 'conversations.history', { channel, limit: String(limit) });
   if (!r.ok) return r;
   const rows = Array.isArray(r.data.messages) ? (r.data.messages as Record<string, unknown>[]).map(shapeMessage) : [];
-  return { ok: true, data: rows };
+  // One page only: say so when the channel has more (Slack's `has_more`), like the paged reads do.
+  return { ok: true, data: rows, ...(r.data.has_more === true ? { truncated: true } : {}) };
 }
 
 // ---------------------------------------------- writes (Write-approval) ---------

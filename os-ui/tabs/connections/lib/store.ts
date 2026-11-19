@@ -2122,6 +2122,29 @@ async function executeAirflow(c: Connection, tool: string, args: Record<string, 
   }
 }
 
+/** A connector client's answer: rows, or a reason — `truncated` when its page limit stopped the read. */
+export type ConnectorClientResult<T> = { ok: true; data: T; truncated?: boolean } | { ok: false; reason: string };
+
+/**
+ * THE ONE SHAPE every connector read returns to its caller (it replaces 16 near-identical copies). When
+ * the client stopped at its page limit the result says so in full — `truncated`, how many rows came
+ * back, and a note that the source holds more — so an agent never reads "first 250" as "all".
+ */
+export function connectorDone(connection: string, fail: (reason: string) => unknown) {
+  return <T>(r: ConnectorClientResult<T>, key: string) => {
+    if (!r.ok) return fail(r.reason);
+    if (!r.truncated) return { connection, [key]: r.data };
+    const returned = Array.isArray(r.data) ? r.data.length : undefined;
+    return {
+      connection,
+      [key]: r.data,
+      truncated: true,
+      ...(returned !== undefined ? { returned } : {}),
+      note: `Only ${returned !== undefined ? `the first ${returned}` : 'part'} of the ${key} came back: the source holds more than one read returns (the connector's page limit). Narrow the request (a filter, a date range, a smaller scope) — do not treat this as everything.`,
+    };
+  };
+}
+
 /**
  * Execute an ALLOWED GitHub tool against the real REST API. The governance gate
  * (reads auto · writes Write-approval · deletes Blocked) already passed upstream;
@@ -2133,8 +2156,7 @@ async function executeGithub(c: Connection, tool: string, args: Record<string, u
   const repo = String(args.repo ?? args.repository ?? '');
   const number = Number(args.number ?? args.issue ?? args.pull ?? 0);
   const fail = (reason: string) => ({ connection: c.name, ok: false, reason });
-  const done = <T>(r: { ok: true; data: T; truncated?: boolean } | { ok: false; reason: string }, key: string) =>
-    r.ok ? { connection: c.name, [key]: r.data, ...(('truncated' in r && r.truncated) ? { truncated: true } : {}) } : fail(r.reason);
+  const done = connectorDone(c.name, fail);
   switch (tool) {
     case 'list_repos':
       return done(await ghListRepos(conn), 'repos');
@@ -2180,8 +2202,7 @@ async function executeSupabase(c: Connection, tool: string, args: Record<string,
   const conn = supabaseConnFrom(c);
   const ref = String(args.ref ?? args.project ?? args.projectRef ?? '');
   const fail = (reason: string) => ({ connection: c.name, ok: false, reason });
-  const done = <T>(r: { ok: true; data: T } | { ok: false; reason: string }, key: string) =>
-    r.ok ? { connection: c.name, [key]: r.data } : fail(r.reason);
+  const done = connectorDone(c.name, fail);
   const needsRef = (): string | null => (ref ? null : `${tool} needs a project ref`);
   switch (tool) {
     case 'list_projects':
@@ -2210,8 +2231,7 @@ async function executeSupabase(c: Connection, tool: string, args: Record<string,
 async function executeAtlassian(c: Connection, tool: string, args: Record<string, unknown>): Promise<unknown> {
   const conn = atlassianConnFrom(c);
   const fail = (reason: string) => ({ connection: c.name, ok: false, reason });
-  const done = <T>(r: { ok: true; data: T; truncated?: boolean } | { ok: false; reason: string }, key: string) =>
-    r.ok ? { connection: c.name, [key]: r.data, ...(('truncated' in r && r.truncated) ? { truncated: true } : {}) } : fail(r.reason);
+  const done = connectorDone(c.name, fail);
   switch (tool) {
     case 'jira_search_issues':
       return done(await atlJiraSearchIssues(conn, String(args.jql ?? args.query ?? '')), 'issues');
@@ -2254,8 +2274,7 @@ async function executeAtlassian(c: Connection, tool: string, args: Record<string
 async function executeNotion(c: Connection, tool: string, args: Record<string, unknown>): Promise<unknown> {
   const conn = notionConnFor(c);
   const fail = (reason: string) => ({ connection: c.name, ok: false, reason });
-  const done = <T>(r: { ok: true; data: T } | { ok: false; reason: string }, key: string) =>
-    r.ok ? { connection: c.name, [key]: r.data } : fail(r.reason);
+  const done = connectorDone(c.name, fail);
   switch (tool) {
     case 'notion_search':
       return done(await apiNotionSearch(conn, String(args.query ?? args.q ?? '')), 'results');
@@ -2286,8 +2305,7 @@ function notionConnFor(c: Connection) {
 async function executeSlack(c: Connection, tool: string, args: Record<string, unknown>): Promise<unknown> {
   const conn = slackConnFrom(c);
   const fail = (reason: string) => ({ connection: c.name, ok: false, reason });
-  const done = <T>(r: { ok: true; data: T; truncated?: boolean } | { ok: false; reason: string }, key: string) =>
-    r.ok ? { connection: c.name, [key]: r.data, ...(('truncated' in r && r.truncated) ? { truncated: true } : {}) } : fail(r.reason);
+  const done = connectorDone(c.name, fail);
   switch (tool) {
     case 'list_channels':
       return done(await slkListChannels(conn), 'channels');
@@ -2310,8 +2328,7 @@ async function executeSlack(c: Connection, tool: string, args: Record<string, un
 async function executeGmail(c: Connection, tool: string, args: Record<string, unknown>): Promise<unknown> {
   const conn = googleMailConnFrom(c);
   const fail = (reason: string) => ({ connection: c.name, ok: false, reason });
-  const done = <T>(r: { ok: true; data: T; truncated?: boolean } | { ok: false; reason: string }, key: string) =>
-    r.ok ? { connection: c.name, [key]: r.data, ...(('truncated' in r && r.truncated) ? { truncated: true } : {}) } : fail(r.reason);
+  const done = connectorDone(c.name, fail);
   switch (tool) {
     case 'list_messages':
       return done(await gmailListMessages(conn, { query: args.query ? String(args.query) : undefined }), 'messages');
@@ -2336,8 +2353,7 @@ async function executeGcal(c: Connection, tool: string, args: Record<string, unk
   const conn = gcalConnFrom(c);
   const cal = String(args.calendarId ?? args.calendar ?? 'primary');
   const fail = (reason: string) => ({ connection: c.name, ok: false, reason });
-  const done = <T>(r: { ok: true; data: T; truncated?: boolean } | { ok: false; reason: string }, key: string) =>
-    r.ok ? { connection: c.name, [key]: r.data, ...(('truncated' in r && r.truncated) ? { truncated: true } : {}) } : fail(r.reason);
+  const done = connectorDone(c.name, fail);
   switch (tool) {
     case 'list_calendars':
       return done(await gcalListCalendars(conn), 'calendars');
@@ -2362,8 +2378,7 @@ async function executeGcal(c: Connection, tool: string, args: Record<string, unk
 async function executeOutlook(c: Connection, tool: string, args: Record<string, unknown>): Promise<unknown> {
   const conn = graphConnFrom(c);
   const fail = (reason: string) => ({ connection: c.name, ok: false, reason });
-  const done = <T>(r: { ok: true; data: T; truncated?: boolean } | { ok: false; reason: string }, key: string) =>
-    r.ok ? { connection: c.name, [key]: r.data, ...(('truncated' in r && r.truncated) ? { truncated: true } : {}) } : fail(r.reason);
+  const done = connectorDone(c.name, fail);
   switch (tool) {
     case 'list_messages':
       return done(await outlookListMessages(conn, { search: args.search ? String(args.search) : undefined }), 'messages');
@@ -2388,8 +2403,7 @@ async function executeTeams(c: Connection, tool: string, args: Record<string, un
   const team = String(args.teamId ?? args.team ?? '');
   const channel = String(args.channelId ?? args.channel ?? '');
   const fail = (reason: string) => ({ connection: c.name, ok: false, reason });
-  const done = <T>(r: { ok: true; data: T; truncated?: boolean } | { ok: false; reason: string }, key: string) =>
-    r.ok ? { connection: c.name, [key]: r.data, ...(('truncated' in r && r.truncated) ? { truncated: true } : {}) } : fail(r.reason);
+  const done = connectorDone(c.name, fail);
   switch (tool) {
     case 'list_teams':
       return done(await teamsListTeams(conn), 'teams');
@@ -2412,8 +2426,7 @@ async function executeTeams(c: Connection, tool: string, args: Record<string, un
 async function executeEntra(c: Connection, tool: string, args: Record<string, unknown>): Promise<unknown> {
   const conn = entraConnFrom(c);
   const fail = (reason: string) => ({ connection: c.name, ok: false, reason });
-  const done = <T>(r: { ok: true; data: T; truncated?: boolean } | { ok: false; reason: string }, key: string) =>
-    r.ok ? { connection: c.name, [key]: r.data, ...(('truncated' in r && r.truncated) ? { truncated: true } : {}) } : fail(r.reason);
+  const done = connectorDone(c.name, fail);
   switch (tool) {
     case 'list_users':
       return done(await entraListUsers(conn, { search: args.search ? String(args.search) : undefined }), 'users');
@@ -2436,8 +2449,7 @@ async function executeEntra(c: Connection, tool: string, args: Record<string, un
 async function executePurview(c: Connection, tool: string, args: Record<string, unknown>): Promise<unknown> {
   const conn = purviewConnFrom(c);
   const fail = (reason: string) => ({ connection: c.name, ok: false, reason });
-  const done = <T>(r: { ok: true; data: T; truncated?: boolean } | { ok: false; reason: string }, key: string) =>
-    r.ok ? { connection: c.name, [key]: r.data, ...(('truncated' in r && r.truncated) ? { truncated: true } : {}) } : fail(r.reason);
+  const done = connectorDone(c.name, fail);
   switch (tool) {
     case 'search_assets':
       return done(await purviewSearchAssets(conn, String(args.keywords ?? args.query ?? args.q ?? '')), 'assets');
@@ -2460,8 +2472,7 @@ async function executePurview(c: Connection, tool: string, args: Record<string, 
 async function executeAiFoundry(c: Connection, tool: string, args: Record<string, unknown>): Promise<unknown> {
   const conn = aiFoundryConnFrom(c);
   const fail = (reason: string) => ({ connection: c.name, ok: false, reason });
-  const done = <T>(r: { ok: true; data: T; truncated?: boolean } | { ok: false; reason: string }, key: string) =>
-    r.ok ? { connection: c.name, [key]: r.data, ...(('truncated' in r && r.truncated) ? { truncated: true } : {}) } : fail(r.reason);
+  const done = connectorDone(c.name, fail);
   switch (tool) {
     case 'list_models':
       return done(await aiFoundryListModels(conn), 'models');
@@ -2482,8 +2493,7 @@ async function executeAiFoundry(c: Connection, tool: string, args: Record<string
 async function executeSageMaker(c: Connection, tool: string, args: Record<string, unknown>): Promise<unknown> {
   const conn = sagemakerConnFrom(c);
   const fail = (reason: string) => ({ connection: c.name, ok: false, reason });
-  const done = <T>(r: { ok: true; data: T; truncated?: boolean } | { ok: false; reason: string }, key: string) =>
-    r.ok ? { connection: c.name, [key]: r.data, ...(('truncated' in r && r.truncated) ? { truncated: true } : {}) } : fail(r.reason);
+  const done = connectorDone(c.name, fail);
   switch (tool) {
     case 'list_models':
       return done(await sagemakerListModels(conn), 'models');
@@ -2507,8 +2517,7 @@ async function executeSageMaker(c: Connection, tool: string, args: Record<string
 async function executeGcpIdentity(c: Connection, tool: string, args: Record<string, unknown>): Promise<unknown> {
   const conn = gcpIdentityConnFrom(c);
   const fail = (reason: string) => ({ connection: c.name, ok: false, reason });
-  const done = <T>(r: { ok: true; data: T; truncated?: boolean } | { ok: false; reason: string }, key: string) =>
-    r.ok ? { connection: c.name, [key]: r.data, ...(('truncated' in r && r.truncated) ? { truncated: true } : {}) } : fail(r.reason);
+  const done = connectorDone(c.name, fail);
   switch (tool) {
     case 'list_projects':
       return done(await gcpListProjects(conn), 'projects');
@@ -2531,8 +2540,7 @@ async function executeGcpIdentity(c: Connection, tool: string, args: Record<stri
 async function executeGcpDirectory(c: Connection, tool: string, _args: Record<string, unknown>): Promise<unknown> {
   const conn = gcpDirectoryConnFrom(c);
   const fail = (reason: string) => ({ connection: c.name, ok: false, reason });
-  const done = <T>(r: { ok: true; data: T; truncated?: boolean } | { ok: false; reason: string }, key: string) =>
-    r.ok ? { connection: c.name, [key]: r.data, ...(('truncated' in r && r.truncated) ? { truncated: true } : {}) } : fail(r.reason);
+  const done = connectorDone(c.name, fail);
   switch (tool) {
     case 'list_users':
       return done(await gcpDirListUsers(conn), 'users');
@@ -2558,8 +2566,7 @@ async function executeGcpDirectory(c: Connection, tool: string, _args: Record<st
 async function executeSnowflakeGov(c: Connection, tool: string, _args: Record<string, unknown>): Promise<unknown> {
   const conn = snowflakeGovConnFrom(c);
   const fail = (reason: string) => ({ connection: c.name, ok: false, reason });
-  const done = <T>(r: { ok: true; data: T; truncated?: boolean } | { ok: false; reason: string }, key: string) =>
-    r.ok ? { connection: c.name, [key]: r.data, ...(('truncated' in r && r.truncated) ? { truncated: true } : {}) } : fail(r.reason);
+  const done = connectorDone(c.name, fail);
   switch (tool) {
     case 'list_users':
       return done(await snowflakeGovListUsers(conn), 'users');
