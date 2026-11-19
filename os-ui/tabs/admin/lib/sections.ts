@@ -73,6 +73,10 @@ export const ADMIN_SECTIONS: AdminSection[] = [
 
   // Infrastructure
   { id: 'backups', label: 'Backups & Restore', href: '/platform?section=backups', sub: 'Status & guarded restore', group: 'Infrastructure', minRole: 'admin' },
+  // 2026-11-19: the admin re-index. It belongs to Infrastructure for the same reason Backups
+  // does — it is an operator act against stored state, with a cost, that no other tab can offer:
+  // the Files and Knowledge tabs each own HALF of it, and a tab may not import another tab.
+  { id: 'reindex', label: 'Re-index', href: '/platform?section=reindex', sub: 'Re-parse & re-embed the Files and Knowledge indexes', group: 'Infrastructure', minRole: 'admin' },
 ];
 
 /** Tab-strip order — related tabs sit together, groups in this sequence. */

@@ -109,6 +109,11 @@ export type EngineProbe = {
 export type ReindexPlan = {
   target: ReindexTarget;
   filter: ReindexFilter;
+  /**
+   * ROW counts per reason — except `missing-representation`, which is a UNIT count, because a
+   * unit with no indexed row has no rows to count. Said here rather than left for the reader to
+   * infer, since the two numbers are not comparable.
+   */
   counts: Record<ReindexReason, number>;
   units: ReindexUnit[];
   /** Rows in the index right now (the `all` count's row-level twin). */
@@ -126,6 +131,117 @@ export type ReindexPlan = {
   /** True when the unit list was capped — the run is still correct, it just needs more calls. */
   truncated: boolean;
 };
+
+/**
+ * What one read of the target index found. The tab builds it (it owns the mapping, the field
+ * names and the queries); {@link buildReindexPlan} turns it into a plan, so the CLASSIFICATION is
+ * written and tested once instead of twice.
+ */
+export type IndexSnapshot = {
+  /** False ⇒ the index itself could not be read. A plan over an unreadable index is not a plan. */
+  reachable: boolean;
+  rowsTotal: number;
+  /** The knn field's mapping dimension; null when the index is absent or unreadable. */
+  mappingDim: number | null;
+  rowsMarked: number;
+  rowsMissingVector: number;
+  /** unit key → rows the index holds for it. */
+  rowsByUnit: Map<string, number>;
+  unitsMarked: Set<string>;
+  unitsMissingVector: Set<string>;
+  /** Rows that belong to no stored unit (a pasted Knowledge doc). Ids, capped. */
+  looseDocs: { id: string; label: string }[];
+  /** True when an enumeration hit its cap — the plan is still correct, just partial. */
+  truncated: boolean;
+};
+
+/** A unit the tab's own store holds, independent of what the index says about it. */
+export type StoredUnit = { id: string; label: string };
+
+/** How many units one plan carries. A bigger corpus is several plan→run cycles, not one huge list. */
+export const REINDEX_UNIT_CAP = 2000;
+
+/**
+ * Assemble the plan. PURE — no I/O, no clock, no randomness — so the classification that decides
+ * what an operator is told (and billed for) is exhaustively testable, and identical for both
+ * corpora.
+ *
+ * The three things it refuses to do:
+ *   - it never reports `ready` while an engine is down, so the panel cannot offer a Run that
+ *     would refuse;
+ *   - it never treats an EMPTY STORE over a NON-EMPTY INDEX as "nothing to re-index". That is the
+ *     shape of the September-2026 outage (a store hydrates empty without throwing, and an empty
+ *     store looks exactly like a tenant that owns nothing); here it would have told an operator
+ *     their corpus was clean while every poisoned row sat in the index. It blocks instead;
+ *   - it never drops {@link UNMARKED_CAVEAT}.
+ */
+export function buildReindexPlan(input: {
+  target: ReindexTarget;
+  filter: ReindexFilter;
+  engines: EngineProbe[];
+  snapshot: IndexSnapshot;
+  stored: StoredUnit[];
+  configuredDim: number;
+  unitCap?: number;
+}): ReindexPlan {
+  const { target, filter, engines, snapshot, stored, configuredDim } = input;
+  const cap = input.unitCap ?? REINDEX_UNIT_CAP;
+  const dimMismatch = snapshot.mappingDim !== null && snapshot.mappingDim !== configuredDim;
+
+  const counts = zeroCounts();
+  counts.all = snapshot.rowsTotal;
+  counts.marked = snapshot.rowsMarked;
+  counts['missing-vector'] = snapshot.rowsMissingVector;
+  // Index-level, not row-level: OpenSearch rejects a wrong-length vector at write time, so when
+  // the mapping disagrees with the configured dimension EVERY row is un-queryable.
+  counts['dimension-mismatch'] = dimMismatch ? snapshot.rowsTotal : 0;
+
+  const candidates: ReindexUnit[] = [];
+  for (const u of [...stored, ...snapshot.looseDocs]) {
+    const rows = snapshot.rowsByUnit.get(u.id) ?? 0;
+    const reasons: ReindexReason[] = [];
+    if (rows === 0) reasons.push('missing-representation');
+    if (snapshot.unitsMarked.has(u.id)) reasons.push('marked');
+    if (snapshot.unitsMissingVector.has(u.id)) reasons.push('missing-vector');
+    if (dimMismatch && rows > 0) reasons.push('dimension-mismatch');
+    candidates.push({ id: u.id, label: u.label, reasons, rows });
+  }
+  counts['missing-representation'] = candidates.filter((u) => u.reasons.includes('missing-representation')).length;
+
+  const selected =
+    filter === 'all'
+      ? candidates.map((u) => (u.reasons.length ? u : { ...u, reasons: ['all' as ReindexReason] }))
+      : candidates.filter((u) => u.reasons.length > 0);
+
+  // The hydration guard, over CANDIDATES rather than over `stored`: a corpus whose only units
+  // are loose index docs is a real corpus, and blocking it would be a false alarm.
+  const unhydrated = candidates.length === 0 && snapshot.rowsTotal > 0;
+  const down = engines.find((e) => !e.ready);
+  const blockedReason = !snapshot.reachable
+    ? 'The index could not be read, so there is nothing trustworthy to plan against.'
+    : unhydrated
+      ? `The index holds ${snapshot.rowsTotal} row(s) but no unit was found to re-index — either ` +
+        'the durable mirror did not hydrate, or every unit those rows belonged to has been ' +
+        'deleted. Refusing: an empty store is not evidence of a clean corpus.'
+      : down
+        ? `${down.name} is not reachable at ${down.url}${down.detail ? ` — ${down.detail}` : ''}.`
+        : null;
+
+  return {
+    target,
+    filter,
+    counts,
+    units: selected.slice(0, cap),
+    rowsTotal: snapshot.rowsTotal,
+    mappingDim: snapshot.mappingDim,
+    configuredDim,
+    engines,
+    ready: blockedReason === null,
+    blockedReason,
+    unmarkedCaveat: UNMARKED_CAVEAT,
+    truncated: snapshot.truncated || selected.length > cap,
+  };
+}
 
 export type ReindexJobStatus = 'running' | 'done' | 'failed';
 
@@ -166,7 +282,7 @@ export type ReindexService = {
   runReindex(
     principal: ReindexPrincipal,
     plan: ReindexPlan,
-    opts?: { batch?: number; onProgress?: (job: ReindexJob) => void },
+    opts?: { batch?: number; onProgress?: (job: ReindexJob) => void | Promise<void> },
   ): Promise<{ started: boolean; job: ReindexJob; reason?: string }>;
 };
 

@@ -85,6 +85,12 @@ export const WRITE_TOOL_TABS: Readonly<Record<string, string>> = {
   // Lifecycle (night 2) — change what RUNS, not who may use it.
   go_live: 'governance',
   retire: 'governance',
+  // 2026-11-19: the admin re-index REWRITES index rows, so the hold gate must see it as a write.
+  // It is not in `ALL_WRITE_TOOLS` because it is built by a FACTORY over the two tab-owned
+  // services (`core/mcp/reindex-tools.ts`) — one tool cannot live in either tab and the kernel may
+  // not import one — so it is classified here deliberately, for exactly the reason H-1 classified
+  // `commit`: an unclassified write answers "not a write" for every preset and would run unheld.
+  reindex_corpus: 'files',
 };
 
 
