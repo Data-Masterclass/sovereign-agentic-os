@@ -136,3 +136,48 @@ test('dependentsSummary is direction-aware', () => {
   assert.match(dependentsSummary(deps, 'promote'), /re-point/);
   assert.match(dependentsSummary([], 'break'), /Nothing depends/);
 });
+
+// ── the ids each tab really mints ────────────────────────────────────────────────
+// The kind is read from the id prefix. Files are minted `as_…`, knowledge processes `wf_…` and
+// personal notes `pk_…`; none of those were mapped, so deleting a file or a knowledge item the
+// whole team's agents and apps use warned "nothing depends on this".
+
+function appGranted(kind: 'files' | 'knowledge' | 'metrics', id: string) {
+  return { connections: [], data: [], knowledge: [], files: [], metrics: [], [kind]: [{ id, access: 'read-only' }] };
+}
+
+test('file (as_…) → apps: an app granted the file is a dependent', async () => {
+  const app = await createApp(owner, { name: 'Rates app', template: 'sovereign-app' });
+  app.grants = appGranted('files', 'as_ab12cdxyz') as never;
+  const deps = await dependentsOf('as_ab12cdxyz');
+  assert.deepEqual(deps.map((d) => d.id), [app.id]);
+});
+
+test('knowledge process (wf_…) → agents: an agent granted it is a dependent', async () => {
+  const yaml = [
+    'system: { name: uses_kb, domain: sales, visibility: Personal }',
+    'entrypoint: a',
+    'grants: { data: [], knowledge: [{ id: wf_k9pol1, capability: Read }], tools: [], connections: [] }',
+    'agents: [{ id: a, role: does stuff }]',
+  ].join('\n');
+  createSystem({ id: 'amir', domains: ['sales'], role: 'creator' }, { name: 'uses_kb', yaml });
+  const deps = await dependentsOf('wf_k9pol1');
+  assert.equal(deps.length, 1);
+  assert.equal(deps[0].tab, 'agents');
+});
+
+test('personal note (pk_…) → apps: an app granted it is a dependent', async () => {
+  const app = await createApp(owner, { name: 'Notes app', template: 'sovereign-app' });
+  app.grants = appGranted('knowledge', 'pk_q1w2e3r4') as never;
+  const deps = await dependentsOf('pk_q1w2e3r4');
+  assert.deepEqual(deps.map((d) => d.tab), ['software']);
+});
+
+test('metric → apps: an app granted the metric itself is a dependent, beside its dashboards', async () => {
+  const { member, metricId } = seedRevenue();
+  saveDashboard(amir, 'dash_rev', panelSpec('Sales', 'Orders', member));
+  const app = await createApp(owner, { name: 'Revenue app', template: 'sovereign-app' });
+  app.grants = appGranted('metrics', metricId) as never;
+  const deps = await dependentsOf(metricId);
+  assert.deepEqual(deps.map((d) => d.tab).sort(), ['dashboards', 'software']);
+});
