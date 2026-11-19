@@ -5,17 +5,14 @@
 
 import { useState } from 'react';
 import { postJson } from '@tabs/dashboards/ui/shared';
-import type { Cadence, DashboardSummary, ReportResponse } from '@tabs/dashboards/ui/shared';
-
-const CADENCES: Cadence[] = ['daily', 'weekly', 'monthly'];
+import type { DashboardSummary, ReportResponse } from '@tabs/dashboards/ui/shared';
+import { REPORT_COPY } from '@tabs/dashboards/lib/report-copy';
 
 /**
- * Scheduled reports — deliver a dashboard snapshot on a cadence. "Send now" is the manual
- * trigger the scheduler also calls; the route advances the report's lastSentAt and returns
- * the send record.
+ * Report notice — posts ONE in-app notification naming this dashboard. There is no scheduler and
+ * no saved cadence, so the panel offers none and says so (report-copy.ts, report-honesty.test.ts).
  */
 export default function Reports({ dashboard }: { dashboard: DashboardSummary }) {
-  const [cadence, setCadence] = useState<Cadence>('weekly');
   const [result, setResult] = useState<ReportResponse | null>(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -26,9 +23,10 @@ export default function Reports({ dashboard }: { dashboard: DashboardSummary }) 
     setBusy(true);
     try {
       const report = {
-        id: `${dashboard.id}-${cadence}`,
+        id: `${dashboard.id}-manual`,
         dashboardId: dashboard.id,
-        cadence,
+        // The route's record shape still carries a cadence; nothing schedules on it.
+        cadence: 'weekly',
         channel: 'in_app',
         lastSentAt: 0,
       };
@@ -43,23 +41,13 @@ export default function Reports({ dashboard }: { dashboard: DashboardSummary }) 
 
   return (
     <div className="agent-editor" style={{ marginTop: 18 }}>
-      <div className="agent-editor-title">Scheduled report — {dashboard.name}</div>
-      <p className="hint" style={{ marginTop: 4 }}>A snapshot of this dashboard, delivered on a cadence.</p>
-
-      <div style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', marginTop: 12 }}>
-        <label>
-          <span className="comp-label">Cadence</span>
-          <select value={cadence} onChange={(e) => setCadence(e.target.value as Cadence)} style={{ width: '100%' }}>
-            {CADENCES.map((c) => <option key={c} value={c}>{c}</option>)}
-          </select>
-        </label>
-      </div>
-
-      <p className="hint" style={{ marginTop: 12 }}>Delivered to you in-app.</p>
+      <div className="agent-editor-title">{REPORT_COPY.title} — {dashboard.name}</div>
+      <p className="hint" style={{ marginTop: 4 }}>{REPORT_COPY.intro}</p>
+      <p className="hint" style={{ marginTop: 8 }}>{REPORT_COPY.schedulingUnavailable}</p>
 
       <div className="row" style={{ marginTop: 16 }}>
         <button className="btn" onClick={sendNow} disabled={busy}>
-          {busy ? <span className="spin" /> : 'Send now'}
+          {busy ? <span className="spin" /> : REPORT_COPY.button}
         </button>
       </div>
 
@@ -67,8 +55,8 @@ export default function Reports({ dashboard }: { dashboard: DashboardSummary }) 
 
       {result ? (
         <div className="passthrough-note" style={{ marginTop: 14 }}>
-          ✓ Sent <strong>{dashboard.name}</strong> <strong>in-app</strong> at{' '}
-          {new Date(result.send.sentAt).toLocaleString()} — cadence <strong>{result.report.cadence}</strong>.
+          {REPORT_COPY.posted} — <strong>{dashboard.name}</strong>, at{' '}
+          {new Date(result.send.sentAt).toLocaleString()}.
         </div>
       ) : null}
     </div>
