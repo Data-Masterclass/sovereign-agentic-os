@@ -13,9 +13,17 @@
  * rail always used (see "guided step rail" in app/globals.css), so old and new look
  * byte-identical with zero new CSS.
  *
- * Purely presentational + controlled: the tab owns a `StageState` (usually one
- * `useState`), derives a fresh `ctx` each render, and hands both here. All gating,
- * ✓ and advance rules live in lib/core/stages.ts (unit-tested, no React).
+ * Purely presentational + controlled: the tab owns a `StageState` (the position —
+ * usually one `useState`), derives a fresh `ctx` each render from the artifact's
+ * current state, and hands both here. All gating, ✓ and advance rules live in
+ * core/kernel/stages.ts (unit-tested, no React).
+ *
+ * What a step's badge means — always about the WORK, never about which buttons were
+ * pressed, so it is identical after a reload and for every viewer:
+ *   ✓ (teal)  the stage's work is done          ! (gold)  it needs a look
+ *   ✕ (red)   its last attempt failed           n         not done yet
+ * Each state is also spelled out in the button's tooltip and accessible label
+ * ("Grant: done", "Grant: nothing granted yet"), so it never rides on colour alone.
  *
  * Render order: rail (+ optional `aside` on its right) → optional standard stage
  * header (title + one-line hint) → body → optional per-stage `assistant` slot →
@@ -25,10 +33,13 @@
 
 import type { ReactNode } from 'react';
 import {
-  advance, canEnter, goTo, markDone, nextStageId, prevStageId, retreat,
+  advance, canEnter, goTo, nextStageId, prevStageId, retreat,
   stageDefOf, stageStatuses,
-  type StageDef, type StageState,
+  type StageDef, type StageMark, type StageState,
 } from '@core/kernel/stages';
+
+/** The glyph a step badge shows for each mark (`todo` shows the step number instead). */
+const MARK_GLYPH: Record<Exclude<StageMark, 'todo'>, string> = { done: '✓', warn: '!', error: '✕' };
 
 export type { StageDef, StageState } from '@core/kernel/stages';
 
@@ -38,14 +49,12 @@ export type StageApi<Id extends string = string> = {
   stageId: Id;
   /** Step back one stage. */
   back: () => void;
-  /** Step forward one stage — records the current stage's ✓ when its condition is met. */
+  /** Step forward one stage (a no-op while the next stage is gated). */
   next: () => void;
   /** Is the next stage enterable right now (drives disabled-until-ready)? */
   canNext: boolean;
   /** Jump to any enterable stage. */
   goTo: (id: Id) => void;
-  /** Record a stage as completed this session (for work that settles in-stage). */
-  markDone: (id: Id) => void;
 };
 
 export default function StageShell<Id extends string, Ctx>({
@@ -63,9 +72,9 @@ export default function StageShell<Id extends string, Ctx>({
 }: {
   /** The ordered stage definitions (ids, titles, hints, gates, conditions). */
   stages: readonly StageDef<Id, Ctx>[];
-  /** The session stage state the tab owns (current stage + done-set). */
+  /** The position the tab owns (the stage on screen). */
   state: StageState<Id>;
-  /** The live context the gates/conditions read — derive it fresh each render. */
+  /** The artifact's current state, as the gates/conditions read it — derive it fresh each render. */
   ctx: Ctx;
   /** Receive every transition (wire straight to the tab's setState). */
   onState: (next: StageState<Id>) => void;
@@ -99,7 +108,6 @@ export default function StageShell<Id extends string, Ctx>({
     next: () => onState(advance(stages, state, ctx)),
     canNext: !!nextId && canEnter(stages, nextId, ctx),
     goTo: (id) => onState(goTo(stages, state, id, ctx)),
-    markDone: (id) => onState(markDone(state, id)),
   };
 
   const nextHidden = !!hideNextFor?.includes(state.current);
@@ -109,9 +117,16 @@ export default function StageShell<Id extends string, Ctx>({
       <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
         <ol className="sb-steps" aria-label={ariaLabel} style={{ marginBottom: 0 }}>
           {rail.map((st) => (
-            <li key={st.id} className={`sb-step${st.active ? ' active' : ''}${st.done ? ' done' : ''}`}>
-              <button type="button" onClick={() => api.goTo(st.id)} disabled={!st.enabled}>
-                <span className="sb-step-n">{st.done ? '✓' : st.index + 1}</span>
+            <li key={st.id} className={`sb-step${st.active ? ' active' : ''}${st.mark === 'todo' ? '' : ` ${st.mark}`}`}>
+              <button
+                type="button"
+                onClick={() => api.goTo(st.id)}
+                disabled={!st.enabled}
+                title={st.label}
+                aria-label={`Step ${st.index + 1} — ${st.label}`}
+                aria-current={st.active ? 'step' : undefined}
+              >
+                <span className="sb-step-n" aria-hidden="true">{st.mark === 'todo' ? st.index + 1 : MARK_GLYPH[st.mark]}</span>
                 <span className="sb-step-label">{st.title}</span>
               </button>
             </li>

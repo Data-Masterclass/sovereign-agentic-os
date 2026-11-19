@@ -40,10 +40,10 @@ import { AGENT_TEMPLATES, agentTemplate, type AgentTemplateKey } from '@tabs/age
 import StageShell from '@core/ui/core/StageShell';
 import { usePublishPageContext } from '@core/ui/core/PageContext';
 import {
-  advance, goTo, initialStageState, isSatisfied, markDone,
+  advance, goTo, initialStageState,
   type StageState,
 } from '@core/kernel/stages';
-import { AGENT_STAGES, type AgentStageId, type AgentStageCtx } from '@tabs/agents/lib/stages';
+import { AGENT_STAGES, agentStageCtx, type AgentStageId, type AgentStageCtx } from '@tabs/agents/lib/stages';
 import { runChecks, allChecksPass } from '@tabs/agents/lib/build/run-checks';
 import type { DiagRun } from '@tabs/agents/lib/build/run-diagnostics';
 import { dimensionLabel, type JudgeResult } from '@tabs/agents/lib/evaluate-judge';
@@ -133,10 +133,10 @@ export default function SimpleBuilder({
     );
   }
   // Always OPEN on Define — creating a new system OR opening an existing one lands
-  // here, never jumping ahead. Phase checkmarks reflect what the user has actually
-  // completed THIS session (`stage.done`), so a freshly opened system shows NO green
-  // checks even if its persisted state happens to satisfy a phase's condition. Both
-  // rules are guaranteed by the shared stage model (lib/core/stages.ts).
+  // here, never jumping ahead. `stage` is ONLY the position: a phase's ✓ is derived from
+  // the saved system + its last build/run (`ctx` below), so it is the same on first open,
+  // after a reload and for a colleague — never a record of which buttons were pressed
+  // (the shared stage model, core/kernel/stages.ts).
   const [stage, setStage] = useState<StageState<AgentStageId>>(() => initialStageState(PHASES));
   const phase = stage.current;
 
@@ -196,19 +196,19 @@ export default function SimpleBuilder({
 
   const commit = useCallback((next: System) => guard(() => onCommit(next)), [guard, onCommit]);
 
-  // The live context the PHASES gates/conditions read. `checksPass` inspects the run
-  // only when one exists (&& short-circuit), matching the old lazy evaluate condition.
-  const ctx: AgentStageCtx = {
-    named: !!system.system.name && system.system.name !== 'Untitled system',
-    ready,
-    builtOk: !!buildRun.lastBuild?.ok,
-    hasRun,
-    checksPass: hasRun && allChecksPass(runChecks(lastRunToDiag(buildRun.lastRun!))),
-  };
+  // What the PHASES gates and ✓s read: SAVED state only (the system as committed, its last
+  // build, its last run) — see `agentStageCtx`. `checksPass` is asked only when a run exists.
+  // HOOK (PR #106): pass `grantWarning` here once the zero-match folder computation is lifted
+  // out of the grant pickers, and Grant shows an amber "!" with that text.
+  const ctx: AgentStageCtx = agentStageCtx({
+    system,
+    lastBuild: buildRun.lastBuild,
+    lastRun: buildRun.lastRun,
+    checksPass: (run) => allChecksPass(runChecks(lastRunToDiag(run))),
+  });
 
   // Every transition goes through the shared stage model: `go` jumps (entry-gated),
-  // `next` advances and records the current phase's ✓ only when its condition is met
-  // — the same "mark if done, then move" behavior the builder always had. All of them
+  // `next` advances one phase. Neither records anything — ✓s come from `ctx`. All of them
   // (and the rail, via `onState`) funnel through `applyStage`, the ONE exit the
   // unsaved-output guard watches.
   // The transition is applied through the FUNCTIONAL `setStage` form (never a value computed
@@ -246,17 +246,6 @@ export default function SimpleBuilder({
     setStage(() => target);
   };
 
-  // Build · Run · Evaluate complete inside their own panels (no explicit "Next"), so
-  // once the user is ON one of those phases and its live condition is met, record it
-  // as completed. Gated on the current phase so nothing is pre-marked before the user
-  // has actually worked that step.
-  useEffect(() => {
-    if ((phase === 'build' || phase === 'run' || phase === 'evaluate') && isSatisfied(PHASES, phase, ctx)) {
-      setStage((s) => markDone(s, phase));
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phase, buildRun.lastBuild?.ok, hasRun, buildRun.lastRun]);
-
   // The per-stage assistant, mounted at the TOP of every stage body. One helper, one
   // endpoint; it auto-suggests on entering each stage (edit-mode only — read-only VIEW
   // never fires it, since nothing can be applied there).
@@ -275,7 +264,7 @@ export default function SimpleBuilder({
   return (
     <div className="simple-builder">
       {/* The shared staged-builder chrome: the numbered `.sb-step*` rail with gated
-          jumps + session ✓s. Headers/footers stay bespoke per phase (below), so the
+          jumps + state-derived ✓s. Headers/footers stay bespoke per phase (below), so the
           shell renders rail-only. */}
       <StageShell
         stages={PHASES}
@@ -344,6 +333,11 @@ export default function SimpleBuilder({
         <div>
           {assistant}
           <GrantStage systemId={systemId} system={system} canEdit={editable} onCommit={commit} />
+          {ctx.grantCount === 0 ? (
+            <p className="hint" role="status" style={{ marginBottom: 0 }}>
+              No context granted yet. That is allowed — a team that needs none can go on to Design — and this step stays un-ticked until something is granted.
+            </p>
+          ) : null}
           <div className="row" style={{ justifyContent: 'space-between', marginTop: 18 }}>
             <button className="btn ghost sm" onClick={() => go('define')}>← Define</button>
             <button className="btn" onClick={() => go('design')}>Design your team →</button>

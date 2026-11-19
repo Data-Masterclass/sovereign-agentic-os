@@ -58,7 +58,7 @@ import DataPlanPanel from '@tabs/software/ui/DataPlanPanel';
 import RefinementList, { type RefineHandlers } from '@tabs/software/ui/RefinementList';
 import { buildableBatch } from '@tabs/software/ui/refinement-view';
 import StageConversation from '@core/ui/core/StageConversation';
-import { initialStageState, canEnter, isSatisfied, markDone, type StageState } from '@core/kernel/stages';
+import { initialStageState, canEnter, isSatisfied, type StageState } from '@core/kernel/stages';
 import { buildStatusRail } from '@tabs/software/lib/build-activity';
 import { type BuildTarget } from '@tabs/software/lib/build-target';
 import { everyStoryHasSpec, specHasContent, storiesMissingSpec, designLadder, type StorySpec } from '@tabs/software/lib/story-spec';
@@ -370,24 +370,14 @@ export default function SoftwareBuilder({
   // Open on the FIRST INCOMPLETE stage that is reachable — a fresh app lands on
   // Define (purpose not set), never Preview. Falls back to the first stage.
   //
-  // COHORT P0 (symptom #2): an app AUTHORED in a prior session (named + epics/stories specced +
-  // context granted) opens directly on Build — but the earlier stages showed a NUMBER, not a ✓,
-  // because the session `done`-set starts empty. That reads as "Define/Design regressed" to a user
-  // who clearly finished them. We SEED `done` with every EARLIER stage that is ALREADY SATISFIED on
-  // open. This stays honest: each ✓ is still `isDone`-gated on its live condition (stageStatuses →
-  // isDone), so it clears the instant the user invalidates that stage's work. A truly fresh app
-  // seeds nothing (nothing is satisfied yet), preserving the "no pre-marked checks" behaviour.
+  // `stage` is only the position. The ✓s are derived from the saved app each render (the shared
+  // stage model), so an app authored in a prior session opens with its finished stages ticked
+  // and a truly fresh app with none — no seeding needed (this replaced the COHORT P0 seed of a
+  // session `done` set, which papered over the same problem for the stages before the landing one).
   const [stage, setStage] = useState<StageState<SwStageId>>(() => {
     const base = initialStageState(SW_STAGES);
     const firstIncompleteIdx = SW_STAGES.findIndex((s) => canEnter(SW_STAGES, s.id, ctx) && !isSatisfied(SW_STAGES, s.id, ctx));
-    const current = firstIncompleteIdx >= 0 ? SW_STAGES[firstIncompleteIdx].id : base.current;
-    // Every stage before the landing stage that is already satisfied is genuinely complete on open.
-    const cutoff = firstIncompleteIdx >= 0 ? firstIncompleteIdx : SW_STAGES.length;
-    const seeded = new Set<SwStageId>();
-    for (let i = 0; i < cutoff; i++) {
-      if (isSatisfied(SW_STAGES, SW_STAGES[i].id, ctx)) seeded.add(SW_STAGES[i].id);
-    }
-    return { current, done: seeded };
+    return { current: firstIncompleteIdx >= 0 ? SW_STAGES[firstIncompleteIdx].id : base.current };
   });
 
   async function saveDesign(patch: { purpose?: string; epics?: Epic[]; grants?: ContextGrantsValue; agents?: AppAgentGrant[] }): Promise<void> {
@@ -738,7 +728,7 @@ export default function SoftwareBuilder({
                 app={app} epics={epics} surface={surface}
                 busy={busy} onPreview={() => deployAction('preview')}
                 deployMsg={deployMsg}
-                offlineAck={previewAck} onOfflineAck={() => { setPreviewAck(true); setStage((s) => markDone(s, 'publish')); }}
+                offlineAck={previewAck} onOfflineAck={() => setPreviewAck(true)}
                 connTools={connection?.tools ?? app.mcpTools}
                 improvements={improvements}
                 onAddImprovements={addImprovements}

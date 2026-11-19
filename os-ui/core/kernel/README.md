@@ -57,7 +57,7 @@ directly. The files below are the stable surface:
 ## Staged builders (`stages.ts` + `components/core/StageShell.tsx`)
 
 Every tab's guided path wears the SAME staged UX: a numbered stepper rail with
-✓ marks, per-stage entry gates, and honest session-tracked progress. The model
+✓ marks, per-stage entry gates, and progress derived from the artifact's state. The model
 lives here (`stages.ts`, unit-tested, framework-free); the visual shell is
 `components/core/StageShell.tsx`, which renders the shared `.sb-step*` rail
 classes ("guided step rail" in `app/globals.css`). The Agents builder
@@ -66,15 +66,19 @@ Evaluate) is the reference adoption.
 
 The contract the model guarantees:
 
-- **Opens on the first stage, nothing pre-marked.** A freshly opened artifact
-  shows no ✓s even when its persisted state satisfies a stage's condition.
+- **A ✓ is about the work, never about navigation.** A stage shows ✓ exactly when
+  `completed(ctx)` holds for the artifact's current state — on first open, after a
+  reload, after jumping between stages, and for a colleague. `StageState` is only
+  the position; there is no session record of "stages worked".
 - **`enabled(ctx)` gates entry** — later stages stay unreachable until earlier
   work exists (omit for always-reachable stages).
-- **`completed(ctx)` is the live condition.** A ✓ shows only when the user has
-  ALSO worked the stage this session (`advance` past it with the condition met,
-  or `markDone` when in-stage work settles) — and it clears if later invalidated.
-- **`advance` never fakes progress**: it moves only when the next stage is
-  enterable and records the current stage only if genuinely satisfied.
+- **`completed(ctx)` must describe the stage's own work.** It clears when the work
+  is invalidated. A condition that repeats an earlier stage's (or "it has a name")
+  ticks a stage nobody worked — the one way to fake a ✓ under this rule.
+- **`problem(ctx)` / `pending(ctx)`** say what is wrong (a failed build → red ✕, a
+  grant matching nothing → gold !) or still missing ("nothing granted yet"). A
+  problem outranks ✓. Each state is in the step's tooltip and accessible label.
+- **`advance` records nothing**: it moves only when the next stage is enterable.
 
 ### Adoption recipe (per tab)
 
@@ -93,11 +97,12 @@ The contract the model guarantees:
    `assistant` render prop to mount a stage-scoped helper, `aside` for rail-row
    badges. Tabs with bespoke per-stage headers/footers (Agents) pass
    `showHeader={false} showNav={false}` and drive nav via the `StageApi`
-   render-prop (`back`/`next`/`goTo`/`markDone`/`canNext`) or their own
+   render-prop (`back`/`next`/`goTo`/`canNext`) or their own
    `goTo`/`advance` calls.
-4. **Record in-stage settles** (a build finishing, a run landing) with a
-   `markDone(state, stageId)` effect gated on `isSatisfied` and the current
-   stage — exactly like the Agents Build/Run/Evaluate effect.
+4. **Derive `ctx` from saved state** (the definition as committed, the last
+   build/run record) in one pure function you can unit-test — see
+   `agentStageCtx` in `tabs/agents/lib/stages.ts`. Nothing needs "recording"
+   when in-stage work settles: the next render reads the new state.
 
 ## Invariants
 

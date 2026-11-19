@@ -12,8 +12,8 @@
  * Four plain-language stages for a platform admin exposing external-catalog tables to domains:
  *   • Catalog  — snapshot health + Refresh; browse the catalog by schema, multi-select tables.
  *   • Organize — (Phase B: AI folders) group the same selection by category; enterable but
- *                SKIPPABLE — AI never blocks exposure. Done = the admin visited it or picked
- *                something. In Phase A it falls back to the schema browser with a quiet note.
+ *                SKIPPABLE — AI never blocks exposure. Done = the catalog has actually been
+ *                organized. In Phase A it falls back to the schema browser with a quiet note.
  *   • Assign   — the calm form: name (auto-suggested), domains, mode (Live/Sync), tier, note.
  *   • Review   — human-impact card + grouped read-only list + one primary Create/Update.
  *
@@ -22,8 +22,14 @@
  *   • Organize never gates entry (AI is optional) and never blocks Assign.
  *   • Assign needs at least one selected table (there is nothing to name/assign otherwise).
  *   • Review needs the whole thing ready to write — a selection, a name, and ≥1 domain.
- * `completed(ctx)` is each stage's LIVE condition; a stage shows a ✓ only when the user ALSO
- * worked it this session (tracked by the StageState in the component).
+ * `completed(ctx)` is what each stage's ✓ MEANS, read from the exposure being written (the
+ * form for a new one, the saved set when editing) — never from which stages were visited
+ * (the contract in core/kernel/stages.ts):
+ *   Catalog   a snapshot exists AND tables are picked from it
+ *   Organize  the catalog has been organized into folders (a classification run exists)
+ *   Assign    it has a name and ≥1 domain
+ *   Review    the exposure is SAVED (an existing set is open). A new one is not done until
+ *             "Create exposure" succeeds — which closes this flow.
  */
 
 import type { StageDef } from '@core/kernel/stages';
@@ -42,9 +48,11 @@ export type ExposeCtx = {
   hasName: boolean;
   /** At least one domain is chosen. */
   hasDomains: boolean;
-  /** The admin has worked Organize this session — visited it or made a selection there.
-   *  Purely a ✓ signal (Organize is optional); it never gates any downstream stage. */
+  /** The connection's catalog has been organized into folders — a classification run exists
+   *  (persisted per connection). Purely a ✓ signal (Organize is optional); it gates nothing. */
   classified: boolean;
+  /** An existing, saved exposure is open for editing (false while creating a new one). */
+  saved: boolean;
 };
 
 /** Everything Assign/Review need before a set can be written. */
@@ -61,27 +69,31 @@ export const EXPOSE_STAGES: StageDef<ExposeStageId, ExposeCtx>[] = [
     id: 'catalog',
     title: 'Catalog',
     hint: 'Snapshot the connection’s catalog, then pick the tables to expose.',
-    completed: (c) => c.hasSnapshot,
+    completed: (c) => c.hasSnapshot && c.selectedCount > 0,
+    pending: (c) => (c.hasSnapshot ? 'no tables picked yet' : 'no catalog snapshot yet'),
   },
   {
     id: 'organize',
     title: 'Organize',
     hint: 'Group the tables by category to expose whole areas at once — optional.',
     // No `enabled` gate: Organize is voluntary and never blocks exposure.
-    completed: (c) => c.classified || c.selectedCount > 0,
+    completed: (c) => c.classified,
+    pending: () => 'not organized (optional)',
   },
   {
     id: 'assign',
     title: 'Assign',
     hint: 'Name it, choose the domains, and set how the data is served.',
     enabled: (c) => c.selectedCount > 0,
-    completed: (c) => c.hasName && c.hasDomains,
+    completed: (c) => c.selectedCount > 0 && c.hasName && c.hasDomains,
+    pending: () => 'needs a name and a domain',
   },
   {
     id: 'review',
     title: 'Review',
     hint: 'See exactly who gains access, then create the exposure.',
     enabled: readyToWrite,
-    completed: readyToWrite,
+    completed: (c) => c.saved && readyToWrite(c),
+    pending: () => 'not created yet',
   },
 ];
