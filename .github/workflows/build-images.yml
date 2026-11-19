@@ -208,12 +208,21 @@ jobs:
           smoked=$(docker image inspect --format '{{.Id}}' "$REF")
           pushed=$(docker buildx imagetools inspect "$REF@$DIGEST" --raw \
             | python3 -c 'import json,sys; print(json.load(sys.stdin)["config"]["digest"])')
-          if [ "$smoked" != "$pushed" ]; then
-            echo "SMOKED_IMAGE_IS_NOT_THE_PUSHED_IMAGE — smoked $smoked, pushed $pushed" >&2
+          # What `.Id` IS depends on the runner's image store. The classic store reports the
+          # image CONFIG digest; the containerd image store (the default on current GitHub
+          # runners) reports the MANIFEST digest — which is exactly the digest the push
+          # returned. The first run of this workflow failed here with smoked == $DIGEST: the
+          # same image, compared against the wrong kind of digest. Either equality proves
+          # identity; neither can hold for a different image.
+          if [ "$smoked" = "$DIGEST" ]; then
+            echo "pushed manifest $DIGEST == the smoked image (containerd image store)"
+          elif [ "$smoked" = "$pushed" ]; then
+            echo "pushed image config $pushed == the smoked image"
+          else
+            echo "SMOKED_IMAGE_IS_NOT_THE_PUSHED_IMAGE — smoked $smoked, pushed manifest $DIGEST, pushed config $pushed" >&2
             echo "   The worker smoke verified an image that is not the one now in the registry." >&2
             exit 1
           fi
-          echo "pushed image config $pushed == the smoked image"
 
       # The digest is what an operator needs next, so print it with the command that uses it.
       - name: Summary
