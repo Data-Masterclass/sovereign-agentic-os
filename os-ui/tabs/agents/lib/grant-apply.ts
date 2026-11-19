@@ -19,11 +19,20 @@
  *     removed — unknown universe ⇒ no destruction, never the other way round.
  *   - Per-item write capabilities are preserved: an id that stays selected is left ALONE rather
  *     than re-set at the Read default.
+ *   - THE TREE'S TICKS ARE DERIVED HERE TOO (`checkedIdsFor`), and they are per LANE. They used
+ *     to be computed in the component by path alone, so a `/` grant on "My files" ticked every
+ *     file under "Domain files" as well: a system that could read nothing showed Domain
+ *     `/invoices` as granted, and its owner had no way to see that the grant was in the other
+ *     lane. A grant is `{ path, scope }`; a tick must be too.
+ *   - A FOLDER GRANT THAT COVERS NO ITEM cannot be drawn from item ticks at all, so the tree can
+ *     never emit it — the same "absent ≠ unticked" trap as above. `treeProtectedFolders` keeps
+ *     those out of the reconcile (an output folder nothing was written to yet lost its Write
+ *     grant on the next unrelated tick); they are granted and removed as folders, explicitly.
  */
 import {
   setArtifactGrant, removeArtifactGrant, setFolderGrant, removeFolderGrant,
 } from '@tabs/agents/lib/simple-edit';
-import { normaliseFolderPath } from '@core/kernel/folders';
+import { itemsUnderFolder, normaliseFolderPath } from '@core/kernel/folders';
 import type { System, DataLayer } from '@tabs/agents/lib/system-schema';
 
 /** The foldered grant kinds the tree edits. */
@@ -115,4 +124,161 @@ export function applyFolderSelection(
     }
   }
   return next;
+}
+
+// ------------------------------------------------- what the tree shows, per lane --
+
+/** A feed item as the tree sees it: its id, folder and LANE (My / Domain). */
+export type TreeItemRef = { id: string; folder: string; scope: 'personal' | 'domain' };
+
+const sameFolder = (a: FolderRef, b: FolderRef) => keyOf(a) === keyOf(b);
+
+/** The tree items a folder grant covers: under its path AND in its own lane. */
+export function itemsCoveredBy<T extends TreeItemRef>(folder: FolderRef, items: T[]): T[] {
+  return itemsUnderFolder(folder.path, items.filter((i) => i.scope === folder.scope));
+}
+
+/**
+ * The item ids the tree draws as ticked: explicit item grants, plus every tree item a folder
+ * grant covers IN THAT GRANT'S LANE.
+ */
+export function checkedIdsFor(
+  system: System,
+  kind: FolderedGrantKind,
+  treeItems: TreeItemRef[],
+  inFamily: (id: string) => boolean = () => true,
+): string[] {
+  const checked = new Set<string>();
+  for (const g of system.grants[kind]) {
+    if (g.folder) for (const it of itemsCoveredBy(g.folder, treeItems)) checked.add(it.id);
+    else if (g.id && inFamily(g.id)) checked.add(g.id);
+  }
+  return [...checked];
+}
+
+/** The lanes that hold the catch-all `/` folder grant of a kind. */
+export function rootGrantedScopes(system: System, kind: FolderedGrantKind): FolderRef['scope'][] {
+  const out = new Set<FolderRef['scope']>();
+  for (const f of folderGrantsOf(system, kind)) if (normaliseFolderPath(f.path) === '/') out.add(f.scope);
+  return [...out];
+}
+
+/** Folder grants that cover NO tree item right now (an empty or not-yet-created folder). */
+export function emptyFolderGrants(system: System, kind: FolderedGrantKind, treeItems: TreeItemRef[]): FolderRef[] {
+  return folderGrantsOf(system, kind).filter((f) => itemsCoveredBy(f, treeItems).length === 0);
+}
+
+/**
+ * Every folder grant the tree CANNOT express as ticks, and therefore must never remove by
+ * omission:
+ *   - the ones the feed flagged as outside the system's domain (`outside`);
+ *   - the ones that cover no item (nothing to tick);
+ *   - a `/` grant on a kind whose tree has no "All …" row (`rootGrantable` false): the tree
+ *     emits folders and items there, never `/`, so the first tick would replace a Write grant
+ *     on the whole lane with Read grants on what happens to be in it today.
+ */
+export function treeProtectedFolders(
+  system: System,
+  kind: FolderedGrantKind,
+  treeItems: TreeItemRef[],
+  opts: { outside?: FolderRef[]; rootGrantable?: boolean } = {},
+): FolderRef[] {
+  const out: FolderRef[] = [...(opts.outside ?? []).map((f) => ({ path: f.path, scope: f.scope }))];
+  const add = (f: FolderRef) => { if (!out.some((o) => sameFolder(o, f))) out.push(f); };
+  for (const f of emptyFolderGrants(system, kind, treeItems)) add(f);
+  if (!opts.rootGrantable) {
+    for (const f of folderGrantsOf(system, kind)) if (normaliseFolderPath(f.path) === '/') add(f);
+  }
+  return out;
+}
+
+// --------------------------------------------------------- "this grant is empty" --
+
+const LANE_LABEL: Record<FolderRef['scope'], Record<FolderedGrantKind, string>> = {
+  personal: { files: 'My files', data: 'My data', knowledge: 'My knowledge' },
+  domain: { files: 'Domain files', data: 'Domain data', knowledge: 'Domain knowledge' },
+};
+const KIND_NOUN: Record<FolderedGrantKind, [string, string]> = {
+  files: ['file', 'files'],
+  data: ['dataset', 'datasets'],
+  knowledge: ['knowledge item', 'knowledge items'],
+};
+
+/** How a folder grant is named to a person: `/invoices in Domain files`. */
+export function describeFolderGrant(kind: FolderedGrantKind, f: FolderRef): string {
+  const path = normaliseFolderPath(f.path);
+  return path === '/' ? `all of ${LANE_LABEL[f.scope][kind]}` : `${path} in ${LANE_LABEL[f.scope][kind]}`;
+}
+
+/** Where the items a zero-match grant was probably meant for actually are. */
+export type GrantElsewhere = { path: string; scope: FolderRef['scope']; count: number };
+
+/** One folder grant against the items currently visible: how many it covers, and a pointer if none. */
+export type FolderGrantCoverage = { folder: FolderRef; count: number; elsewhere: GrantElsewhere | null };
+
+/**
+ * How many of `items` a folder grant covers, and — when it covers NONE — the folder of the same
+ * name that does hold items: first the same path in the OTHER lane (My vs Domain), then a folder
+ * whose name differs only in letter case (a grant matches its path exactly), same lane first.
+ *
+ * `items` must already be the list the reader may see (the builder's feed, or the runner's own
+ * listing). The pointer is for the PERSON building or running the system. It is never put into
+ * an agent's prompt or a tool result: an agent is not told about files outside its grant.
+ */
+export function folderGrantCoverage(folder: FolderRef, items: TreeItemRef[]): FolderGrantCoverage {
+  const path = normaliseFolderPath(folder.path);
+  const ref: FolderRef = { path, scope: folder.scope };
+  const count = itemsCoveredBy(ref, items).length;
+  if (count > 0) return { folder: ref, count, elsewhere: null };
+
+  const other: FolderRef['scope'] = folder.scope === 'personal' ? 'domain' : 'personal';
+  const exactOther = itemsCoveredBy({ path, scope: other }, items).length;
+  if (exactOther > 0) return { folder: ref, count, elsewhere: { path, scope: other, count: exactOther } };
+
+  // Same name, different letter case — the most specific folder that holds items.
+  const lower = path.toLowerCase();
+  for (const scope of [folder.scope, other]) {
+    const candidates = new Set<string>();
+    for (const i of items) {
+      if (i.scope !== scope) continue;
+      const segs = normaliseFolderPath(i.folder).split('/').filter(Boolean);
+      for (let n = 1; n <= segs.length; n += 1) {
+        const p = '/' + segs.slice(0, n).join('/');
+        if (p !== path && p.toLowerCase() === lower) candidates.add(p);
+      }
+    }
+    for (const p of [...candidates].sort()) {
+      const n = itemsCoveredBy({ path: p, scope }, items).length;
+      if (n > 0) return { folder: ref, count, elsewhere: { path: p, scope, count: n } };
+    }
+  }
+  return { folder: ref, count, elsewhere: null };
+}
+
+/**
+ * The warning for a folder grant that covers nothing, or null when it covers something.
+ * `subject: 'this'` is the builder's wording at the chip; `'named'` names the grant, for a list
+ * of run warnings read away from the control.
+ */
+export function zeroMatchWarning(
+  kind: FolderedGrantKind,
+  cov: FolderGrantCoverage,
+  subject: 'this' | 'named' = 'this',
+): string | null {
+  if (cov.count > 0) return null;
+  const [one, many] = KIND_NOUN[kind];
+  const head = subject === 'this'
+    ? `This grant currently contains 0 ${many}.`
+    : `The grant on ${describeFolderGrant(kind, cov.folder)} currently contains 0 ${many}.`;
+  if (!cov.elsewhere) return head;
+  const e = cov.elsewhere;
+  const where = normaliseFolderPath(e.path) === '/' ? LANE_LABEL[e.scope][kind] : `${LANE_LABEL[e.scope][kind]} ${e.path}`;
+  return `${head} ${e.count} ${e.count === 1 ? `${one} is` : `${many} are`} in ${where}.`;
+}
+
+/** True when a folder is where a declared output of this kind is written (empty is expected there). */
+export function isOutputFolder(system: System, kind: FolderedGrantKind, f: FolderRef): boolean {
+  return (system.outputs ?? []).some(
+    (o) => o.kind === kind && o.folder.scope === f.scope && normaliseFolderPath(o.folder.path) === normaliseFolderPath(f.path),
+  );
 }

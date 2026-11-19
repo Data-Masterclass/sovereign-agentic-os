@@ -89,7 +89,13 @@ export type ConnectionGrant = ArtifactGrant;
  * byte-stable (mirrors the plan-grants handling).
  */
 export type OutputKind = 'files' | 'data' | 'knowledge';
-export type DeclaredOutput = { kind: OutputKind; name: string; folder: FolderGrantTarget };
+export type DeclaredOutput = {
+  kind: OutputKind;
+  name: string;
+  folder: FolderGrantTarget;
+  /** The agent that writes this output. Absent ⇒ any agent of the team may (`output-tools.ts`). */
+  agent?: string;
+};
 
 export type Grants = {
   data: ArtifactGrant[];
@@ -432,7 +438,8 @@ function parseOutputs(v: unknown): DeclaredOutput[] {
     if (!name) continue;
     if (!isRecord(raw.folder) || typeof raw.folder.path !== 'string') continue;
     const scope = raw.folder.scope === 'domain' ? 'domain' : 'personal';
-    out.push({ kind, name, folder: { path: raw.folder.path, scope } });
+    const agent = typeof raw.agent === 'string' && raw.agent.trim() ? raw.agent.trim() : undefined;
+    out.push({ kind, name, folder: { path: raw.folder.path, scope }, ...(agent ? { agent } : {}) });
   }
   return out;
 }

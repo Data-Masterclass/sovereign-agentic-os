@@ -16,8 +16,9 @@ import {
   addSimpleAgent, moveAgent, removeAgentSimple,
   setAgentInstructions, setAgentRole,
   setDescription, addSystemTool,
-  addOutput, removeOutput,
+  addOutput, removeOutput, setOutputAgent,
 } from '@tabs/agents/lib/simple-edit';
+import { outputLanding, agentOutputTools, OUTPUT_TOOL } from '@tabs/agents/lib/output-tools';
 import { useToast } from '@core/ui/core/Toast';
 import { normaliseFolderPath } from '@core/kernel/folders';
 import { scopeLabel } from '@core/kernel/scopes';
@@ -1189,6 +1190,19 @@ function AgentCapabilities({
         ) : null}
       </div>
 
+      {/* WRITING is not a capability to pick here: it comes from the outputs declared on Define,
+          and the tool is handed to this agent at run time. Say which it has — or how to get one —
+          instead of leaving the author to look for a tool this picker never lists. */}
+      {agentOutputTools(system, agentId).length > 0 ? (
+        <p className="hint" style={{ marginTop: 0, marginBottom: 6 }}>
+          Saves results with <span className="mono">{agentOutputTools(system, agentId).join(', ')}</span> — granted automatically by the outputs under “Where the results go” (Define).
+        </p>
+      ) : (
+        <p className="hint" style={{ marginTop: 0, marginBottom: 6 }}>
+          This agent cannot save a file, dataset or knowledge item. To let it, declare the result under “Where the results go” (Define) — the saving tool is then added automatically; it is not picked here.
+        </p>
+      )}
+
       {offeredChips.length === 0 ? (
         <p className="hint" style={{ marginTop: 0, marginBottom: 0 }}>
           No capabilities available yet — grant the team some data, knowledge, files or connections first (on Define).
@@ -1812,16 +1826,39 @@ function OutputsSection({
       {outputs.length > 0 ? (
         <div className="sb-out-list">
           {outputs.map((o, i) => (
-            <div key={`${o.kind}:${o.folder.scope}:${o.folder.path}:${o.name}:${i}`} className="sb-out-row">
+            <div key={`${o.kind}:${o.folder.scope}:${o.folder.path}:${o.name}:${i}`} className="sb-out-row" style={{ flexWrap: 'wrap' }}>
               <span className="badge muted">{kindLabel(o.kind)}</span>
               <span className="sb-out-name">{o.name}</span>
               <span className="sb-out-dest hint" style={{ marginTop: 0 }}>
                 → 📁 {o.folder.path === '/' ? 'root' : o.folder.path}
                 <span className="badge muted" style={{ marginLeft: 6 }}>{scopeLabel(o.folder.scope === 'domain' ? 'shared' : 'mine')}</span>
               </span>
+              {/* Who writes it. The writing tool goes to that agent automatically at run time —
+                  choosing the target IS the permission; there is no tool to add by hand. */}
+              {system.agents.length > 1 ? (
+                <label className="hint" style={{ marginTop: 0, display: 'inline-flex', gap: 4, alignItems: 'center' }}>
+                  written by
+                  <select
+                    value={o.agent && system.agents.some((a) => a.id === o.agent) ? o.agent : ''}
+                    disabled={!canEdit}
+                    onChange={(e) => onCommit(setOutputAgent(system, i, e.target.value || null))}
+                  >
+                    <option value="">any agent</option>
+                    {system.agents.map((a) => <option key={a.id} value={a.id}>{a.id}</option>)}
+                  </select>
+                </label>
+              ) : null}
               {canEdit ? (
                 <button className="sb-chip-x" title="Remove output" style={{ marginLeft: 'auto' }} onClick={() => onCommit(removeOutput(system, i))}>✕</button>
               ) : null}
+              {/* What will happen when it is written — from the same hold rule the run applies. */}
+              <span
+                className="hint"
+                role="note"
+                style={{ flexBasis: '100%', marginTop: 2, color: outputLanding(system, o).mode === 'direct' ? undefined : 'var(--warn, #b7791f)' }}
+              >
+                {outputLanding(system, o).text} The agent saves it with <span className="mono">{OUTPUT_TOOL[o.kind]}</span> — added automatically.
+              </span>
             </div>
           ))}
         </div>

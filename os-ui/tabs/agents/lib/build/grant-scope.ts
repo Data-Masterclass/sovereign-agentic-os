@@ -489,12 +489,23 @@ export async function checkGrantScope(
     // inside a granted folder that no write-capable grant covers.
     const raw = a[rule.folderWrite.arg];
     const target = normaliseFolderPath(typeof raw === 'string' ? raw : '');
+    const writable = scope.folders.filter((f) => f.write);
     const covering = scope.folders.filter((f) => f.scope === 'personal' && isUnderFolder(f.path, target));
     if (covering.length > 0 && !covering.some((f) => f.write)) {
-      const writable = scope.folders.filter((f) => f.write);
       return refuse(
         `This agent is granted the folder ${target} read-only — it may not write a file there.` +
           (writable.length > 0 ? ` It may write to: ${writable.map(describeFolder).join(', ')}.` : ' This system has no writable folder grant.'),
+        'files',
+      );
+    }
+    // WHERE A TARGET WAS CHOSEN, THAT IS WHERE FILES GO. A system with a writable folder (a
+    // declared output, or a folder granted Read + write) may create files inside one of them and
+    // nowhere else: choosing the target is the permission, and it is not a permission for the
+    // rest of the runner's drive. The new file lands in the runner's My files at that path — also
+    // for a Domain target, whose sharing is the separate, held promotion — so the path decides.
+    if (writable.length > 0 && !writable.some((f) => isUnderFolder(f.path, target))) {
+      return refuse(
+        `This agent may not write a file to ${target}: this system writes files only to ${writable.map(describeFolder).join(', ')}. Pass one of those as \`folder\`.`,
         'files',
       );
     }
@@ -669,8 +680,11 @@ export function grantScopeBrief(sys: System): string {
   for (const kind of RESOURCE_KINDS) {
     const ks = scope.kinds[kind];
     if (kind === 'files') {
+      const fileIds = [...ks.read].map((rid) => (ks.write.has(rid) ? rid : `${rid} (read-only)`));
       if (scope.folders.length > 0) {
-        rows.push(`- files: only files in ${scope.folders.map(describeFolder).join(', ')} — list_files returns exactly these files; read each with get_file`);
+        rows.push(`- files: only files in ${scope.folders.map(describeFolder).join(', ')}${fileIds.length > 0 ? `, and the files ${fileIds.join(', ')}` : ''} — list_files returns exactly these files; read each with get_file`);
+      } else if (fileIds.length > 0) {
+        rows.push(`- files: only the files ${fileIds.join(', ')} — read each with get_file`);
       } else if (!ks.restricted) open.push(LABEL[kind]);
       continue;
     }

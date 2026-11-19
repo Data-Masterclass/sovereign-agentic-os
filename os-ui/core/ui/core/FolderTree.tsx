@@ -11,6 +11,7 @@ import {
   itemsUnderFolder,
   normaliseFolderPath,
   visibleFolderRoots,
+  computeFolderSelection,
   type FolderPathNode,
   type FolderTreeNode,
 } from '@core/kernel/folders';
@@ -139,6 +140,23 @@ type CheckboxProps = CommonProps & {
    * grant — the ONLY way to grant files that live at the root with no subfolder.
    */
   rootGrantable?: boolean;
+  /**
+   * The roots that currently HOLD the catch-all `/` grant (only read with `rootGrantable`).
+   * The "All …" row is ticked from this — not from "every item happens to be ticked" — and a
+   * root collapses to `/` only when it is listed here or its "All …" row was just ticked.
+   */
+  rootGranted?: RootScope[];
+  /**
+   * Granted folders that hold NO item right now. A tick is drawn from the items under a folder,
+   * so without this a granted empty folder renders unticked.
+   */
+  emptyFolderGrants?: FolderGrant[];
+  /**
+   * Grant / un-grant a folder that holds no item (a late-bound grant: it covers what is filed
+   * there later). Absent, the checkbox of an empty folder is disabled and says why — it used to
+   * be a live-looking control that did nothing.
+   */
+  onToggleEmptyFolder?: (folder: FolderGrant, grant: boolean) => void;
 };
 
 type PickerProps = CommonProps & {
@@ -181,10 +199,14 @@ function TriBox({
   state,
   onToggle,
   label,
+  disabled,
+  title,
 }: {
   state: 'none' | 'some' | 'all';
   onToggle: () => void;
   label: string;
+  disabled?: boolean;
+  title?: string;
 }) {
   return (
     <input
@@ -195,10 +217,15 @@ function TriBox({
         if (el) el.indeterminate = state === 'some';
       }}
       onChange={onToggle}
-      style={{ accentColor: 'var(--gold-deep)', cursor: 'pointer' }}
+      disabled={disabled}
+      title={title}
+      style={{ accentColor: 'var(--gold-deep)', cursor: disabled ? 'not-allowed' : 'pointer' }}
     />
   );
 }
+
+/** Why the checkbox of an empty folder is disabled when the caller cannot grant one. */
+const EMPTY_FOLDER_HINT = 'This folder is empty — there is nothing in it to grant yet.';
 
 // -------------------------------------------------------------- one subtree --
 
@@ -221,7 +248,7 @@ function FolderRow({
   itemsByFolder: Map<string, FolderTreeItem[]>;
   allItems: FolderTreeItem[];
   checked: Set<string>;
-  emit: (nextChecked: Set<string>) => void;
+  emit: (nextChecked: Set<string>, rootOn?: boolean) => void;
   pickerSelected?: { path: string; scope: RootScope } | null;
   onPickerSelect?: (dest: { path: string; scope: RootScope }) => void;
 }) {
@@ -248,7 +275,18 @@ function FolderRow({
     pickerSelected?.path === node.path &&
     pickerSelected?.scope === scope;
 
+  // A folder with no item under it cannot be ticked through its items. It is granted (or not)
+  // as a folder, through `onToggleEmptyFolder`; without that handler the box is disabled.
+  const isEmpty = underIds.length === 0;
+  const emptyGranted =
+    !!box && isEmpty && (box.emptyFolderGrants ?? []).some((f) => f.scope === scope && normaliseFolderPath(f.path) === node.path);
+  const folderState = isEmpty ? (emptyGranted ? 'all' : 'none') : triState(node.path, checked, underIds);
+
   function toggleFolder() {
+    if (isEmpty) {
+      box?.onToggleEmptyFolder?.({ path: node.path, scope }, !emptyGranted);
+      return;
+    }
     const state = triState(node.path, checked, underIds);
     const next = new Set(checked);
     if (state === 'all') {
@@ -323,9 +361,11 @@ function FolderRow({
 
         {box && (
           <TriBox
-            state={triState(node.path, checked, underIds)}
+            state={folderState}
             onToggle={toggleFolder}
             label={`Select folder ${node.name}`}
+            disabled={isEmpty && !box.onToggleEmptyFolder}
+            title={isEmpty && !box.onToggleEmptyFolder ? EMPTY_FOLDER_HINT : undefined}
           />
         )}
 
@@ -557,30 +597,46 @@ function Root({
 
   const checked = props.variant === 'checkbox' ? new Set(props.checkedIds) : new Set<string>();
 
-  function emit(nextChecked: Set<string>) {
+  /**
+   * Emit the selection for BOTH roots (they share the one `checkedIds`/`onChange`), each root
+   * reduced over its own items and stamped with its own scope — see `computeFolderSelection`.
+   * `rootOn` is the "All …" row of THIS root being ticked (true) or cleared (false).
+   */
+  function emit(nextChecked: Set<string>, rootOn?: boolean) {
     if (props.variant !== 'checkbox') return;
-    // Compute the emitted selection over the FULL item list (both scopes share the one
-    // `checkedIds`/`onChange`), so a toggle in this root never drops the OTHER root's
-    // grants during the caller's reconcile. Only RENDERING (rootItems/itemsByFolder/
-    // tri-state) is scoped, above.
-    props.onChange?.(computeSelection(nodes, props.items, nextChecked, scope, props.rootGrantable ?? false));
+    const held = props.rootGrantable ? (props.rootGranted ?? []) : [];
+    const rootScopes = new Set<RootScope>(held);
+    if (rootOn === true && props.rootGrantable) rootScopes.add(scope);
+    if (rootOn === false) rootScopes.delete(scope);
+    props.onChange?.(computeFolderSelection({
+      nodes: { personal: props.personalNodes, domain: props.domainNodes ?? [] },
+      items: props.items,
+      checked: nextChecked,
+      actingScope: scope,
+      rootScopes: [...rootScopes],
+    }));
   }
 
-  // A checkable "All …" root row for a folder-only kind (Files): the only way to
-  // grant files that live at the root with no named subfolder. Ticks every item in
-  // this scope; `computeSelection(rootGrantable)` collapses that to one `/` grant.
+  // A checkable "All …" root row for a kind whose root is grantable (Files): the only way to
+  // grant everything in a lane, including what is filed there later. It is ticked when the lane
+  // HOLDS the `/` grant — every file being ticked one by one is a dash, not a tick, because
+  // that does not cover tomorrow's file. An empty lane that holds the grant still shows the row.
   const box = props.variant === 'checkbox' ? props : null;
-  const rootRow = box?.rootGrantable && scopedItems.length > 0 ? (
+  const rootIds = scopedItems.map((i) => i.id);
+  const rootHeld = !!box?.rootGrantable && (box.rootGranted ?? []).includes(scope);
+  const rootEmpty = rootIds.length === 0;
+  const rootRow = box?.rootGrantable && (!rootEmpty || rootHeld) ? (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8, height: 32, paddingLeft: 8, paddingRight: 8 }}>
       <TriBox
-        state={triState('/', checked, scopedItems.map((i) => i.id))}
+        state={rootHeld ? 'all' : triState('/', checked, rootIds) === 'none' ? 'none' : 'some'}
         label={`Grant all ${label}`}
+        disabled={rootEmpty && !box.onToggleEmptyFolder}
+        title={rootEmpty && !box.onToggleEmptyFolder ? EMPTY_FOLDER_HINT : undefined}
         onToggle={() => {
-          const all = scopedItems.map((i) => i.id);
+          if (rootEmpty) { box.onToggleEmptyFolder?.({ path: '/', scope }, !rootHeld); return; }
           const next = new Set(checked);
-          if (triState('/', checked, all) === 'all') { for (const id of all) next.delete(id); }
-          else { for (const id of all) next.add(id); }
-          emit(next);
+          if (rootHeld) { for (const id of rootIds) next.delete(id); emit(next, false); }
+          else { for (const id of rootIds) next.add(id); emit(next, true); }
         }}
       />
       <span aria-hidden style={{ opacity: 0.85 }}>📂</span>
@@ -672,59 +728,6 @@ function Root({
       </div>
     </div>
   );
-}
-
-/**
- * Reduce a raw checked-id set to the normalised grant the caller stores: a folder
- * whose EVERY under-item is checked collapses to a single FOLDER grant (so future
- * items are auto-covered); items under partially-checked folders emit
- * individually. Root-level checked items always emit individually.
- */
-function computeSelection(
-  nodes: FolderPathNode[],
-  items: FolderTreeItem[],
-  checked: Set<string>,
-  scope: RootScope,
-  rootGrantable = false,
-): FolderSelection {
-  const folderGrants: FolderGrant[] = [];
-  const covered = new Set<string>();
-
-  // rootGrantable (Files): a FULLY-checked root collapses to ONE catch-all `/` grant
-  // (covers every file, present + future) and nothing else. Handled first so it
-  // marks everything covered; a partially-checked root falls through to per-folder
-  // grants as usual. This is the only way to grant files that sit at the root.
-  if (rootGrantable) {
-    const rootIds = itemsUnderFolder('/', items).map((i) => i.id);
-    if (rootIds.length > 0 && rootIds.every((id) => checked.has(id))) {
-      folderGrants.push({ path: '/', scope });
-      for (const id of rootIds) covered.add(id);
-    }
-  }
-
-  // Consider every folder path that has a row OR holds items; deepest first so a
-  // fully-checked deep folder is captured before its (also-full) ancestor.
-  const paths = new Set<string>();
-  for (const n of nodes) paths.add(normaliseFolderPath(n.path));
-  for (const i of items) if (normaliseFolderPath(i.folder) !== '/') paths.add(normaliseFolderPath(i.folder));
-  const ordered = [...paths].sort((a, b) => b.split('/').length - a.split('/').length);
-
-  for (const path of ordered) {
-    const under = itemsUnderFolder(path, items).map((i) => i.id);
-    if (under.length === 0) continue;
-    if (under.every((id) => checked.has(id))) {
-      // Whole folder is checked → one folder grant; mark its items covered so we
-      // don't also emit them (or a redundant ancestor grant) individually.
-      if (!under.every((id) => covered.has(id))) folderGrants.push({ path, scope });
-      for (const id of under) covered.add(id);
-    }
-  }
-
-  const itemGrants = items
-    .filter((i) => checked.has(i.id) && !covered.has(i.id))
-    .map((i) => i.id);
-
-  return { folderGrants, itemGrants };
 }
 
 // --------------------------------------------------------------- component --

@@ -7,9 +7,12 @@ import { useEffect, useState } from 'react';
 import type { System, DataLayer, SafetyPreset } from '@tabs/agents/lib/system-schema';
 import {
   setDataGrantLayer, removeArtifactGrant, removeFolderGrant,
-  setArtifactGrantLevel, setFolderGrantLevel,
+  setArtifactGrantLevel, setFolderGrantLevel, setFolderGrant,
 } from '@tabs/agents/lib/simple-edit';
-import { applyFolderSelection, folderGrantsOf } from '@tabs/agents/lib/grant-apply';
+import {
+  applyFolderSelection, folderGrantsOf, checkedIdsFor, rootGrantedScopes, emptyFolderGrants,
+  treeProtectedFolders, folderGrantCoverage, zeroMatchWarning, isOutputFolder,
+} from '@tabs/agents/lib/grant-apply';
 import {
   accessCap, allowedAccessLevels, capabilityToAccess, clampAccess,
   ACCESS_LABELS, type AccessLevel, type AccessCap,
@@ -17,7 +20,7 @@ import {
 import { isWorkflowId } from '@tabs/agents/lib/resource-groups';
 import { scopeLabel, type ScopeKey } from '@core/kernel/scopes';
 import FolderTree, { type FolderSelection } from '@core/ui/core/FolderTree';
-import { itemsUnderFolder, normaliseFolderPath } from '@core/kernel/folders';
+import { normaliseFolderPath } from '@core/kernel/folders';
 
 /**
  * The AGENTS grant-picker bodies — extracted VERBATIM out of SimpleBuilder (no behaviour
@@ -128,17 +131,24 @@ export function FolderResourcePicker({
   const domainNodes = folders.filter((f) => f.scope === 'domain').map((f) => ({ path: f.path }));
   const mktItems = items.filter((a) => a.scope === 'marketplace');
 
-  // Currently-checked ids = explicit item grants ∪ every feed item under a granted folder
-  // (so a folder grant renders as a fully-ticked folder). Files: only folders drive checks.
-  // Workflows carry no folders, so the Workflows picker manages item grants only.
+  // Currently-checked ids = explicit item grants ∪ every feed item a granted folder covers IN
+  // THAT GRANT'S LANE (so a folder grant renders as a fully-ticked folder — and a grant on
+  // "My files" never ticks anything under "Domain files"). Workflows carry no folders, so the
+  // Workflows picker manages item grants only.
   const managesFolders = idFamily !== 'workflow';
+  const rootGrantable = kind === 'files';
   const grantList = system.grants[kind];
-  const itemGrantIds = new Set(grantList.filter((g) => !g.folder && g.id && inFamily(g.id)).map((g) => g.id));
-  const checked = new Set<string>(itemGrantIds);
-  for (const g of grantList) {
-    if (!g.folder) continue;
-    for (const it of itemsUnderFolder(g.folder.path, treeItems)) checked.add(it.id);
-  }
+  const checked = checkedIdsFor(system, kind, treeItems, inFamily);
+  // Every foldered item of the feed, whatever its id family — what a folder grant is COUNTED
+  // against ("this grant currently contains 0 files").
+  const laneItems = (feed?.items ?? [])
+    .filter((a) => a.scope === 'personal' || a.scope === 'domain')
+    .map((a) => ({ id: a.id, folder: a.folder ?? '/', scope: a.scope as 'personal' | 'domain' }));
+  const outsideRefs = outsideFolders.map((f) => ({ path: f.path, scope: f.scope }));
+  // Folder grants the tree cannot draw as ticks (outside the domain, empty, or a `/` this tree
+  // has no row for). They are never removed by a tick elsewhere — only by their own ✕ / box.
+  const protectedFolders = treeProtectedFolders(system, kind, treeItems, { outside: outsideRefs, rootGrantable });
+  const emptyGranted = managesFolders ? emptyFolderGrants(system, kind, treeItems) : [];
 
   const onChange = (sel: FolderSelection) => {
     if (!canEdit) return;
@@ -148,10 +158,16 @@ export function FolderResourcePicker({
       // Removal is bounded by what the TREE could actually show — `treeItems`, NOT the whole
       // feed. Marketplace items live in the separate "+ Add from marketplace" picker and are
       // never tickable here, so counting them as listed made the first tick delete every
-      // marketplace grant. Same reason the out-of-domain folders are passed as protected.
+      // marketplace grant. Same reason the folders the tree cannot draw are passed as protected.
       listedItemIds: treeItems.map((a) => a.id),
-      protectedFolders: outsideFolders.map((f) => ({ path: f.path, scope: f.scope })),
+      protectedFolders,
     }));
+  };
+  // An EMPTY folder (or lane) is granted as a folder, explicitly: there is no item to tick, so
+  // the selection above can neither add nor remove it.
+  const onToggleEmptyFolder = (f: { path: string; scope: 'personal' | 'domain' }, grant: boolean) => {
+    if (!canEdit) return;
+    onCommit(grant ? setFolderGrant(system, kind, f, false) : removeFolderGrant(system, kind, f));
   };
 
   // The granted chips (item grants + folder grants) shown below the tree with controls.
@@ -173,6 +189,13 @@ export function FolderResourcePicker({
   // what is actually known: it is not in this view, which is usually another domain but can
   // also be an artifact that is gone.
   const isOutsideItem = (id: string) => !availOf(id);
+  // A folder grant that matches nothing today, said at the chip — with where the items of that
+  // name actually are, when they are in the other lane. Shown to the BUILDER only. Not for an
+  // output folder (empty until the first result is written) nor one this view cannot count.
+  const emptyNote = (f: { path: string; scope: 'personal' | 'domain' }): string | null => {
+    if (feed === null || isOutside(f) || isOutputFolder(system, kind, f)) return null;
+    return zeroMatchWarning(kind, folderGrantCoverage(f, laneItems));
+  };
   const addableMkt = mktItems.filter((a) => !mktGrantedIds.has(a.id));
 
   return (
@@ -189,13 +212,16 @@ export function FolderResourcePicker({
           personalNodes={personalNodes}
           domainNodes={domainNodes}
           items={treeItems}
-          checkedIds={[...checked]}
+          checkedIds={checked}
           onChange={onChange}
+          rootGranted={rootGrantable ? rootGrantedScopes(system, kind) : undefined}
+          emptyFolderGrants={emptyGranted}
+          onToggleEmptyFolder={managesFolders && canEdit ? onToggleEmptyFolder : undefined}
           // Files are grantable at ANY granularity: a single file (leaf tick), a
           // folder, or "All" (the `/` root row). Leaves are selectable for every
           // kind; the extra "All …" root row is a Files convenience for granting a
           // whole scope (incl. files that sit at the root with no named subfolder).
-          rootGrantable={kind === 'files'}
+          rootGrantable={rootGrantable}
         />
       )}
 
@@ -207,13 +233,22 @@ export function FolderResourcePicker({
               <span>
                 📁 {g.folder!.path === '/' ? 'All' : g.folder!.path}
                 <span className="badge muted" style={{ marginLeft: 6 }}>{scopeLabel(g.folder!.scope === 'domain' ? 'shared' : 'mine')}</span>
-                {isOutside(g.folder!) ? (
+                {isOutputFolder(system, kind, g.folder!) ? (
+                  <span className="badge muted" style={{ marginLeft: 6 }} title="Declared under “Where the results go” — the team writes its results here.">
+                    results go here
+                  </span>
+                ) : isOutside(g.folder!) ? (
                   <span
                     className="badge warn"
                     style={{ marginLeft: 6 }}
                     title="This folder belongs to another domain than this team. The grant still works, but it was made before grants were scoped to the team's domain — remove it unless you meant it."
                   >
                     outside this domain
+                  </span>
+                ) : null}
+                {emptyNote(g.folder!) ? (
+                  <span className="hint" role="note" style={{ display: 'block', marginTop: 2, color: 'var(--warn, #b7791f)' }}>
+                    {emptyNote(g.folder!)}
                   </span>
                 ) : null}
               </span>

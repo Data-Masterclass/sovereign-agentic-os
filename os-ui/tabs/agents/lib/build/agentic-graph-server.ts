@@ -36,6 +36,7 @@ import type { GraphDeps, HeldCall, RouteDecision } from '@tabs/agents/lib/engine
 import { inspectGraphRun, type PendingApproval, type RunFailure, type RunInspection } from '@tabs/agents/lib/engine/run';
 import { holdDecisionFor } from '@tabs/agents/lib/build/hold';
 import { createdFromSteps, grantScopeBrief, type ResourceKind } from '@tabs/agents/lib/build/grant-scope';
+import { outputsBrief } from '@tabs/agents/lib/output-tools';
 import type { ApprovalDecision, ApprovalPort } from '@tabs/agents/lib/engine/approval-port';
 import { serverApprovalPort } from '@tabs/agents/lib/engine/approvals-bridge';
 import {
@@ -199,6 +200,10 @@ export function osPreamble(user: CurrentUser, sys: System): string {
   // saves the model the refusal. A kind with no grant is said to be open, because it is.
   const ctx = grantedContextBrief(sys);
   if (ctx) parts.push('', '--- YOUR GRANTED CONTEXT (enforced: the resources this system may use) ---', ctx);
+  // OUTPUTS — where each declared result goes and with which tool, generated from the
+  // declaration ("Where the results go"), so no agent has to guess a path from free text.
+  const outs = outputsBrief(sys);
+  if (outs) parts.push('', '--- YOUR OUTPUTS (where this system\'s results are saved) ---', outs);
   parts.push('', '--- YOUR GRANTED TOOLS (your complete, authoritative toolset) ---', grantedToolBrief(user, sys));
   // The build spec names `create_software` as its entry point — inject it only when
   // that tool is genuinely granted, so it never advertises an ungranted capability.

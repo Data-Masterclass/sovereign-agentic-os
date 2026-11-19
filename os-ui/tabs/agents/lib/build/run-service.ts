@@ -32,7 +32,8 @@ import type { CurrentUser } from '@core/kernel/auth';
 import { config } from '@core/kernel/config';
 import { runOsTeam, type RunOsTeamResult } from '@tabs/agents/lib/build/agentic-graph-server';
 import { classifyStepError } from '@tabs/agents/lib/build/agentic-graph';
-import { resolveFolderGrantsForRun, summarizeWriteOutcomes, writeOutcomesLine } from '@tabs/agents/lib/build/os-tools';
+import { resolveFolderGrantsWithWarnings, summarizeWriteOutcomes, writeOutcomesLine } from '@tabs/agents/lib/build/os-tools';
+import { withOutputTools } from '@tabs/agents/lib/output-tools';
 import { governYamlForOwner } from '@tabs/agents/lib/build/owner-grants';
 import { deriveContextUsage } from '@tabs/agents/lib/build/context-usage';
 import { parseSystem, serializeSystem } from '@tabs/agents/lib/system-schema';
@@ -66,8 +67,24 @@ export function configuredCheckpointer(): 'postgres' | 'memory' {
  * DLS-scoped lists. Both read live, never trusted from the saved yaml.
  */
 export async function prepareRunYaml(user: CurrentUser, view: SystemView, systemId: string): Promise<string> {
+  return (await prepareRun(user, view, systemId)).yaml;
+}
+
+/**
+ * {@link prepareRunYaml} plus what the RUNNER should be told about the definition before it
+ * runs: a folder grant that matches nothing right now (`folderGrantWarnings`). The run reads the
+ * SAVED definition here, at run time — a grant changed in the builder applies to the next run
+ * with no rebuild. Each declared output's write tool is handed to the agent(s) that produce it
+ * (`withOutputTools`); nothing of that is stored.
+ */
+export async function prepareRun(
+  user: CurrentUser,
+  view: SystemView,
+  systemId: string,
+): Promise<{ yaml: string; warnings: string[] }> {
   const governed = await governYamlForOwner(view.yaml, view.owner);
-  return serializeSystem(await resolveFolderGrantsForRun(user, parseSystem(governed), systemId));
+  const { system, warnings } = await resolveFolderGrantsWithWarnings(user, parseSystem(governed), systemId);
+  return { yaml: serializeSystem(withOutputTools(system)), warnings };
 }
 
 /** A one-line, single-line result summary for a tool step (observability, kept tight). */
@@ -126,6 +143,14 @@ function grantedIdsFromYaml(yaml: string) {
   } catch {
     return { data: [], knowledge: [], files: [], metrics: [], connections: [] };
   }
+}
+
+/** The run result with the definition warnings appended to the engine's own (deduplicated). */
+export function withDefinitionWarnings<T extends { warnings?: string[] }>(team: T, extra?: string[]): T {
+  if (!extra || extra.length === 0) return team;
+  const merged = [...(team.warnings ?? [])];
+  for (const w of extra) if (!merged.includes(w)) merged.push(w);
+  return { ...team, warnings: merged };
 }
 
 /**
@@ -244,6 +269,11 @@ export type ExecuteTeamRunInput = {
   /** For a fresh run: the prompt recorded on the durable store checkpoint. */
   prompt?: string;
   /**
+   * Warnings about the definition, for the RUNNER (`prepareRun`): they are appended to the run
+   * report's `warnings`. They never enter a prompt or a tool result.
+   */
+  definitionWarnings?: string[];
+  /**
    * LIFECYCLE (review M-3): which point of the system's life this run is — `run` for a schedule
    * executing the PINNED definition, `test` for a verify pass, `studio` (the default) for a run
    * started by hand. It becomes the LiteLLM `env:` tag and the Langfuse trace `environment`, so
@@ -313,7 +343,7 @@ export async function executeTeamRun(input: ExecuteTeamRunInput): Promise<RunRep
       onRateLimitWait: (ev) => emit('rate-limit-wait', { node: ev.node, attempt: ev.attempt, maxAttempts: ev.maxAttempts, waitSeconds: Math.round(ev.waitMs / 1000), message: ev.message }),
     });
     const running = markRunFinished(id, user);
-    const { body, lastRun } = finalizeTeamRun(team, running, yaml);
+    const { body, lastRun } = finalizeTeamRun(withDefinitionWarnings(team, input.definitionWarnings), running, yaml);
     try { setLastRun(id, user, lastRun); } catch { /* run-only consumer: persist best-effort */ }
     emit('done', body);
     return body;
