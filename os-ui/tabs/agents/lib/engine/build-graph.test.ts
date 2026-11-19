@@ -501,3 +501,40 @@ test('M-3: a SUCCESSFUL write is still deduped by the original rule, not the unr
   assert.equal(toolErrorCode(steps[1].result), null);
   assert.match(steps[1].result, /already ran this exact call/);
 });
+
+// ---- a FAILED agent does not hand off (the invoice run: reader failed on a 429, verifier ran anyway) ----
+
+/** `a` plans, calls its tool, then its NEXT model call throws — the failure is in ACT, not PLAN. */
+function failsInAct(node: string, message: string): LlmCall {
+  const inner = script();
+  const acts = new Map<string, number>();
+  return async (req) => {
+    const n = nodeOf(req);
+    if (n === node && req.tools && !(req.tools.length === 1 && req.tools[0].function.name === 'route')) {
+      const k = (acts.get(n) ?? 0) + 1;
+      acts.set(n, k);
+      if (k >= 2) throw new Error(message);
+    }
+    return inner(req);
+  };
+}
+
+test('a node that fails in ACT stops the run: the next agent in an unconditional handoff is NOT visited', async () => {
+  const { result, calls } = await run(TWO_AGENTS, failsInAct('a', 'LiteLLM 429: rate limit'));
+  assert.deepEqual(result.path, ['a'], 'b must not run after a failed');
+  assert.equal(result.runs[0].status, 'failed');
+  assert.equal(result.runs[0].error, 'LiteLLM 429: rate limit');
+  assert.equal(result.runs[0].result.steps.length, 1, 'the tool step that DID run before the failure is kept on the failed visit');
+  assert.equal(result.reachedEnd, false);
+  assert.match(result.finalText, /a failed: LiteLLM 429: rate limit/);
+  assert.deepEqual(calls.map((c) => c.tool), ['search_knowledge'], 'only a\'s own tool ran');
+});
+
+test('a MEMBER that fails in ACT stops the run: the supervisor is not asked to route onward', async () => {
+  const { result } = await run(SUPERVISED, failsInAct('researcher', 'gateway down'));
+  assert.equal(result.path.at(-1), 'researcher', 'nothing runs after the failed member');
+  assert.ok(!result.path.includes('analyst'), 'the other member is never visited');
+  assert.equal(result.runs.at(-1)?.status, 'failed');
+  assert.equal(result.reachedEnd, false);
+  assert.equal(result.routes.length, 1, 'one decision (lead → researcher), none after the failure');
+});
