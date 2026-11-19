@@ -10,7 +10,15 @@
 # excludes `**/*.test.ts` — so a stray duplicate fails the production image build with
 # errors in a file nobody edited. This is the build context's half of the fix;
 # `os-ui/scripts/gate.sh` fails locally and in CI if any such file exists at all.
+#
+# All THREE patterns are needed (review M2). `**/* 2.*` matches only a name with a dot in it, so
+# an extension-less `Dockerfile 2` and — far worse — a duplicated DIRECTORY (`os-ui/core 2`,
+# `public/monaco 2`) still entered the context and got type-checked. `**/* 2` covers both, and
+# `**/* 2/` is kept for the directory case explicitly because Docker's pattern matching treats a
+# trailing slash as a separate thing from the bare name.
 **/* 2.*
+**/* 2
+**/* 2/
 
 # Python bytecode from running the images/ test suites locally. Nothing in any image
 # consumes it and a stale .pyc for a deleted module is worse than useless.

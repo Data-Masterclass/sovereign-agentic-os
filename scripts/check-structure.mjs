@@ -17,7 +17,7 @@
  *     vendored file could never satisfy it — and is covered by rule 6 instead, which demands the
  *     upstream header verbatim plus our `Modified from … @ <sha>` notice. Both are hard rules.
  */
-import { readFileSync, readdirSync, statSync, existsSync, writeFileSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync, lstatSync, existsSync, writeFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 
 const repo = process.cwd();
@@ -127,23 +127,53 @@ for (const f of walk(VENDOR_DIR).filter(code)) {
 // second door, scoped to the four directories we own, and it matters because check-structure
 // also runs as the PostToolUse hook — so a duplicate surfaces in-session rather than at CI.
 // DIRECTORIES and symlinks count, not just files: a duplicated directory is the expensive case.
-const DUP_NAME = (base) => / 2$/.test(base) || / 2\.[^/]*$/.test(base);
-const scanDuplicates = (dir, out = []) => {
+//
+// HARD IN CI, A WARNING LOCALLY (review H1). This script is also the PostToolUse hook on
+// Write|Edit (`.claude/settings.json`), so a hard failure here fails every subsequent tool
+// call. A conflict copy is dropped by a cloud-sync daemon, at a moment nobody chose, in a file
+// nobody edited — wedging an entire session on one is a worse outcome than the stray itself.
+// So locally it prints the exact paths and the delete command and returns 0; in CI (`CI` set)
+// it is a hard rule and the build fails. CI is the machine that must never let one through.
+const DUP_DIR = (base) => / 2$/.test(base);
+const DUP_FILE = (base) => / 2$/.test(base) || / 2\.[^/]*$/.test(base);
+// docs/ is prose, and a human may legitimately keep `design 2.md` or `notes 2.txt`. Only a
+// DIRECTORY ending in " 2" (always a sync artefact) and a duplicated SOURCE file matter there
+// (review L12) — a duplicated `.ts`/`.mjs`/`.sh` under docs/ still reaches a build or a hook.
+const DOC_CODE = / 2\.(ts|tsx|mjs|cjs|js|json|sh|bash|py|rego|ya?ml|tpl|sql)$/i;
+const scanDuplicates = (dir, { docsArm = false } = {}, out = []) => {
   if (!existsSync(dir)) return out;
   for (const e of readdirSync(dir)) {
+    // `.claude` carries other sessions' worktrees; `node_modules`/`.next` are vendored or built.
     if (e === 'node_modules' || e === '.next' || e.startsWith('.')) continue;
     const p = join(dir, e);
+    // lstat, not stat: a BROKEN symlink named `* 2` must be reported, not throw and take the
+    // PostToolUse hook down with it.
+    let isDir = false;
+    try { isDir = lstatSync(p).isDirectory(); } catch { /* vanished mid-scan — nothing to report */ continue; }
     // Report the match and do NOT descend into it: a duplicated node_modules would otherwise
     // print one line per vendored file.
-    if (DUP_NAME(e)) { out.push(p); continue; }
-    if (statSync(p).isDirectory()) scanDuplicates(p, out);
+    const hit = docsArm ? (isDir ? DUP_DIR(e) : DOC_CODE.test(e)) : (isDir ? DUP_DIR(e) : DUP_FILE(e));
+    if (hit) { out.push(p); continue; }
+    if (isDir) scanDuplicates(p, { docsArm }, out);
   }
   return out;
 };
-for (const root of [UI, 'charts', 'scripts', 'docs']) {
-  for (const p of scanDuplicates(root)) {
-    fail('CLOUD-SYNC-DUPLICATE', p, 'an iCloud/Finder conflict copy — never tracked by git, but copied into images and type-checked. Delete it');
-  }
+const duplicates = [
+  ...scanDuplicates(UI),
+  ...scanDuplicates('charts'),
+  ...scanDuplicates('scripts'),
+  ...scanDuplicates('docs', { docsArm: true }),
+];
+const DUP_DETAIL = 'an iCloud/Finder conflict copy — never tracked by git, but copied into images and type-checked. Delete it';
+if (process.env.CI) {
+  for (const p of duplicates) fail('CLOUD-SYNC-DUPLICATE', p, DUP_DETAIL);
+} else if (duplicates.length) {
+  console.warn(`\ncheck-structure: WARNING — ${duplicates.length} iCloud/Finder conflict cop${duplicates.length === 1 ? 'y' : 'ies'} in the tree.`);
+  for (const p of duplicates) console.warn('  ' + p);
+  console.warn('  Never tracked by git, but copied into images and type-checked — delete them.');
+  console.warn('  A listed DIRECTORY is reported once: delete it whole.');
+  console.warn('  This is a hard failure in CI (CLOUD-SYNC-DUPLICATE); locally it only warns, so a');
+  console.warn('  stray dropped mid-edit cannot wedge the PostToolUse hook on every tool call.\n');
 }
 
 // ---- ratchet ---------------------------------------------------------------
@@ -178,7 +208,7 @@ for (const rule of new Set([...HARD, ...Object.keys(counts), ...Object.keys(base
   }
 }
 if (failed) {
-  console.error('\nRules: components/ is upstream-only · a tab imports only @core and itself · core never imports a tab · every tab has a manifest · every source file carries a FEATURE / USER STORY / ARCHITECTURE header · every os-ui/vendor file keeps its upstream licence header plus a `Modified from … @ <sha>` notice \u00b7 no iCloud/Finder `* 2` conflict copy under os-ui/ charts/ scripts/ docs/.\n');
+  console.error('\nRules: components/ is upstream-only · a tab imports only @core and itself · core never imports a tab · every tab has a manifest · every source file carries a FEATURE / USER STORY / ARCHITECTURE header · every os-ui/vendor file keeps its upstream licence header plus a `Modified from … @ <sha>` notice \u00b7 no iCloud/Finder `* 2` conflict copy under os-ui/ charts/ scripts/ docs/ (hard in CI, a warning locally).\n');
   process.exit(1);
 }
 console.log('check-structure: ok (no new violations)');

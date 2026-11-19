@@ -117,7 +117,9 @@ out=$(cd "$TMP/cs" && node "$REPO/scripts/check-structure.mjs" 2>&1); rc=$?
 [ $rc -eq 0 ] && ok "a clean tree passes check-structure" || bad "a clean tree passes check-structure" "$out"
 mkdir -p "$TMP/cs/charts/values 2"
 echo x > "$TMP/cs/scripts/thing 2.sh"
-out=$(cd "$TMP/cs" && node "$REPO/scripts/check-structure.mjs" 2>&1); rc=$?
+# CI=true: rule 7 is a hard failure there and only a warning locally (review H1b, asserted
+# in both modes further down).
+out=$(cd "$TMP/cs" && CI=true node "$REPO/scripts/check-structure.mjs" 2>&1); rc=$?
 [ $rc -ne 0 ] && ok "check-structure fails on a '* 2' entry" || bad "check-structure fails on a '* 2' entry" "exit 0"
 check "it names the rule"      "CLOUD-SYNC-DUPLICATE"   "$out"
 check "it names the directory" "charts/values 2"        "$out"
@@ -126,11 +128,164 @@ rm -rf "$TMP/cs/charts/values 2" "$TMP/cs/scripts/thing 2.sh"
 out=$(cd "$TMP/cs" && node "$REPO/scripts/check-structure.mjs" 2>&1); rc=$?
 [ $rc -eq 0 ] && ok "removing them passes again" || bad "removing them passes again" "$out"
 
+echo "== review H1a: the gate does not police other sessions' worktrees"
+# `.claude/worktrees/*` holds OTHER sessions' checkouts. Walking into them reported ~28 copied
+# monaco duplicates as strays in this tree — a failure nobody here could fix.
+mkdir -p "$TMP/tree/.claude/worktrees/w/os-ui/public/monaco 2/vs"
+echo x > "$TMP/tree/.claude/worktrees/w/os-ui/public/monaco 2/vs/loader.js"
+out=$(cd "$TMP/tree" && bash os-ui/scripts/gate.sh 2>&1)
+check "a clean tree still passes with .claude present" "check-conflict-copies: ok" "$out"
+case $out in *".claude"*) bad "the gate ignores .claude/worktrees" "reported a sibling worktree" ;; *) ok "the gate ignores .claude/worktrees" ;; esac
+
+echo "== review H1b: rule 7 is hard in CI, a warning locally"
+# check-structure is the PostToolUse hook, so a stray dropped by cloud sync mid-edit must not
+# wedge every tool call — but CI must never let one through.
+mkdir -p "$TMP/cs/os-ui/core 2"
+out=$(cd "$TMP/cs" && node "$REPO/scripts/check-structure.mjs" 2>&1); rc=$?
+[ $rc -eq 0 ] && ok "locally a duplicate does NOT fail" || bad "locally a duplicate does NOT fail" "exit $rc"
+check "locally it warns"             "WARNING"          "$out"
+check "locally it prints the path"   "os-ui/core 2"     "$out"
+check "locally it says CI is hard"   "hard failure in CI" "$out"
+out=$(cd "$TMP/cs" && CI=true node "$REPO/scripts/check-structure.mjs" 2>&1); rc=$?
+[ $rc -ne 0 ] && ok "in CI the same duplicate fails" || bad "in CI the same duplicate fails" "exit 0"
+check "in CI it names the rule" "CLOUD-SYNC-DUPLICATE" "$out"
+rm -rf "$TMP/cs/os-ui/core 2"
+
+echo "== review L12: docs/ keeps prose, refuses source and directories"
+echo x > "$TMP/cs/docs/design 2.md"
+out=$(cd "$TMP/cs" && CI=true node "$REPO/scripts/check-structure.mjs" 2>&1); rc=$?
+[ $rc -eq 0 ] && ok "docs/'design 2.md' is not a failure" || bad "docs/'design 2.md' is not a failure" "$out"
+echo x > "$TMP/cs/docs/helper 2.mjs"
+out=$(cd "$TMP/cs" && CI=true node "$REPO/scripts/check-structure.mjs" 2>&1); rc=$?
+[ $rc -ne 0 ] && ok "docs/'helper 2.mjs' IS a failure" || bad "docs/'helper 2.mjs' IS a failure" "exit 0"
+rm -f "$TMP/cs/docs/helper 2.mjs"
+mkdir -p "$TMP/cs/docs/plans 2"
+out=$(cd "$TMP/cs" && CI=true node "$REPO/scripts/check-structure.mjs" 2>&1); rc=$?
+[ $rc -ne 0 ] && ok "docs/'plans 2/' IS a failure" || bad "docs/'plans 2/' IS a failure" "exit 0"
+rm -rf "$TMP/cs/docs/plans 2" "$TMP/cs/docs/design 2.md"
+
+echo "== review M2: the build context excludes directories too"
+for pat in '**/* 2.*' '**/* 2' '**/* 2/'; do
+  grep -qxF "$pat" .dockerignore && ok ".dockerignore has $pat" || bad ".dockerignore has $pat"
+done
+
+echo "== review M3: a split-namespace deploy is refused"
+vals=$TMP/vals.yaml
+printf 'osUI:\n  image:\n    repository: ghcr.io/data-masterclass/sovereign-os/os-ui\n    tag: "0.9.5"\n' > "$vals"
+out=$(python3 scripts/lib/check-image-repo.py "$vals" ghcr.io/aborek/sovereign-os/os-ui 2>&1); rc=$?
+[ $rc -ne 0 ] && ok "a mismatched repository refuses" || bad "a mismatched repository refuses" "exit 0"
+check "it names the failure"      "IMAGE_REPOSITORY_MISMATCH" "$out"
+check "it names what the release pulls" "ghcr.io/data-masterclass/sovereign-os/os-ui" "$out"
+check "it offers the IMAGE_REPO fix"    "IMAGE_REPO=ghcr.io/data-masterclass/sovereign-os" "$out"
+out=$(python3 scripts/lib/check-image-repo.py "$vals" ghcr.io/data-masterclass/sovereign-os/os-ui 2>&1); rc=$?
+[ $rc -eq 0 ] && ok "a matching repository passes" || bad "a matching repository passes" "$out"
+printf 'osUI:\n  enabled: true\n' > "$TMP/norepo.yaml"
+out=$(python3 scripts/lib/check-image-repo.py "$TMP/norepo.yaml" ghcr.io/aborek/sovereign-os/os-ui 2>&1); rc=$?
+[ $rc -eq 0 ] && ok "no repository in the values passes" || bad "no repository in the values passes" "$out"
+out=$(python3 scripts/lib/check-image-repo.py "$TMP/absent.yaml" ghcr.io/aborek/sovereign-os/os-ui 2>&1); rc=$?
+[ $rc -eq 0 ] && ok "an absent values file passes" || bad "an absent values file passes" "$out"
+# deploy.sh must actually call it, and only when IMAGE_REPO was not given.
+grep -q 'check-image-repo.py' scripts/deploy.sh \
+  && ok "deploy.sh runs the repository check" || bad "deploy.sh runs the repository check"
+
+echo "== review M4/L8/L9: the curl fallback classifies status, and keeps the token out of argv"
+fake=$TMP/fakecurl/curl
+mkdir -p "$TMP/fakecurl"
+cat > "$fake" <<'FAKE'
+#!/usr/bin/env bash
+# A stand-in for curl: records argv and stdin, answers with $FAKE_CODE.
+printf '%s\n' "$*" >> "$FAKE_ARGV"
+cat >> "$FAKE_STDIN"
+hdr=; url=; prev=
+for a in "$@"; do
+  [ "$prev" = "-D" ] && hdr=$a
+  case $a in https://*) url=$a ;; esac
+  prev=$a
+done
+case $url in
+  */token\?*)
+    if [ "${FAKE_TOKEN_DENY:-}" = 1 ]
+      then echo '{"errors":[{"code":"DENIED"}]}'
+      else echo '{"token":"faketoken"}'
+    fi ;;
+  *)
+    if [ "${FAKE_CODE:-200}" = 200 ] && [ -n "$hdr" ]; then
+      printf 'HTTP/2 200\r\ndocker-content-digest: sha256:%s\r\n\r\n' \
+        "2222222222222222222222222222222222222222222222222222222222222222" > "$hdr"
+    elif [ -n "$hdr" ]; then
+      printf 'HTTP/2 %s\r\n\r\n' "${FAKE_CODE}" > "$hdr"
+    fi
+    printf '%s' "${FAKE_CODE:-200}" ;;
+esac
+FAKE
+chmod +x "$fake"
+# No gh on PATH: the probe must never touch the owner's real token in a test.
+fakepath=$TMP/fakecurl:/usr/bin:/bin
+export FAKE_ARGV=$TMP/argv.log FAKE_STDIN=$TMP/stdin.log
+: > "$FAKE_ARGV"; : > "$FAKE_STDIN"
+
+out=$(PATH=$fakepath REGISTRY_CURL=curl FAKE_CODE=200 \
+      bash scripts/lib/registry-digest.sh ghcr.io/x/y/os-ui:1.0.0 2>&1); rc=$?
+[ $rc -eq 0 ] && ok "200 yields the digest" || bad "200 yields the digest" "exit $rc: $out"
+check "the digest is the header's" "sha256:2222222222222222222222222222222222222222222222222222222222222222" "$out"
+check "both calls carry --max-time 30" "--max-time 30" "$(cat "$FAKE_ARGV")"
+case $(cat "$FAKE_ARGV") in
+  *faketoken*) bad "the bearer token stays out of argv" "found in argv" ;;
+  *) ok "the bearer token stays out of argv" ;;
+esac
+check "the bearer token goes in on stdin" "faketoken" "$(cat "$FAKE_STDIN")"
+check "stdin is a curl config, not a flag" 'header = "Authorization: Bearer' "$(cat "$FAKE_STDIN")"
+
+for code in 401 403; do
+  out=$(PATH=$fakepath REGISTRY_CURL=curl FAKE_CODE=$code \
+        bash scripts/lib/registry-digest.sh ghcr.io/x/y/os-ui:1.0.0 2>&1); rc=$?
+  [ $rc -ne 0 ] && ok "$code refuses" || bad "$code refuses" "exit 0"
+  check "$code says not authorised"      "REGISTRY_NOT_AUTHORISED" "$out"
+  check "$code names read:packages"      "read:packages"           "$out"
+  case $out in *REGISTRY_TAG_NOT_FOUND*) bad "$code is not reported as a 404" "$out" ;; *) ok "$code is not reported as a 404" ;; esac
+done
+
+out=$(PATH=$fakepath REGISTRY_CURL=curl FAKE_CODE=404 \
+      bash scripts/lib/registry-digest.sh ghcr.io/x/y/os-ui:1.0.0 2>&1); rc=$?
+[ $rc -ne 0 ] && ok "404 refuses" || bad "404 refuses" "exit 0"
+check "404 says the tag is not there" "REGISTRY_TAG_NOT_FOUND" "$out"
+case $out in *read:packages*) bad "404 is not reported as an auth problem" "$out" ;; *) ok "404 is not reported as an auth problem" ;; esac
+
+out=$(PATH=$fakepath REGISTRY_CURL=curl FAKE_TOKEN_DENY=1 \
+      bash scripts/lib/registry-digest.sh ghcr.io/x/y/os-ui:1.0.0 2>&1); rc=$?
+[ $rc -ne 0 ] && ok "a denied pull token refuses" || bad "a denied pull token refuses" "exit 0"
+check "a denied token says not authorised" "REGISTRY_NOT_AUTHORISED" "$out"
+
+out=$(PATH=$fakepath REGISTRY_CURL=curl FAKE_CODE=500 \
+      bash scripts/lib/registry-digest.sh ghcr.io/x/y/os-ui:1.0.0 2>&1); rc=$?
+[ $rc -ne 0 ] && ok "a 500 refuses" || bad "a 500 refuses" "exit 0"
+check "a 500 names its status" "REGISTRY_HTTP_500" "$out"
+
 echo "== the workflow parses, and the smoke matches deploy.sh byte-for-byte"
 for wf in .github/workflows/*.yml; do
   python3 -c "import yaml,sys; yaml.safe_load(open(sys.argv[1]))" "$wf" \
     && ok "YAML parses: $wf" || bad "YAML parses: $wf"
 done
+# review L6 / L7 / L10: the pushed image is the smoked one, the job cannot hang for an hour,
+# and the registry login user can be pinned to the PAT's owner.
+wf=.github/workflows/build-images.yml
+python3 -c "
+import sys, yaml
+j = yaml.safe_load(open('$wf'))['jobs']['build']
+assert j['timeout-minutes'] == 45, j.get('timeout-minutes')
+names = [s.get('name','') for s in j['steps']]
+assert any('smoked' in n for n in names), names
+" && ok "the build job has timeout-minutes: 45 and the smoked==pushed step" \
+  || bad "the build job has timeout-minutes: 45 and the smoked==pushed step"
+grep -q 'vars.IMAGE_REGISTRY_USER' "$wf" \
+  && ok "the login user can be pinned (IMAGE_REGISTRY_USER)" || bad "the login user can be pinned (IMAGE_REGISTRY_USER)"
+grep -q 'IMAGE_REGISTRY_USER' CONTRIBUTING.md \
+  && ok "CONTRIBUTING documents IMAGE_REGISTRY_USER" || bad "CONTRIBUTING documents IMAGE_REGISTRY_USER"
+# review M5: a dockerconfigjson secret is keyed by HOST, so "re-point the pull secret" was wrong.
+grep -q 're-pointed' CONTRIBUTING.md \
+  && bad "CONTRIBUTING no longer says the pull secret is re-pointed" || ok "CONTRIBUTING no longer says the pull secret is re-pointed"
+grep -q 'keyed by registry \*\*host\*\*' CONTRIBUTING.md \
+  && ok "CONTRIBUTING explains host-keyed pull credentials" || bad "CONTRIBUTING explains host-keyed pull credentials"
 # The one line that must never drift: the worker smoke. deploy.sh is the original.
 smoke=$(grep -F "register('./worker/resolve-hook.mjs'" scripts/deploy.sh | sed 's/^ *//;s/ *\\$//')
 grep -qF "$smoke" .github/workflows/build-images.yml \

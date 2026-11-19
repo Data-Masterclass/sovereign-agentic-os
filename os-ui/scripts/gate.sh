@@ -17,13 +17,19 @@ cd "$(dirname "$0")/.."
 # duplicated `node_modules 2` is one line rather than one line per vendored file.
 # `scripts/check-structure.mjs` carries the same rule (CLOUD-SYNC-DUPLICATE) as a second door,
 # because it also runs as the PostToolUse hook and so catches a duplicate in-session.
-strays="$(find .. \( -path '*/node_modules' -o -path '*/.next' -o -path '*/.git' \) -prune -o \
+#
+# `.claude` MUST stay in the prune group (review H1): it holds `.claude/worktrees/*`, i.e. OTHER
+# sessions' checkouts. Without it this scan walks into every sibling worktree and reports their
+# copied `public/monaco/...` duplicates — ~28 of them — as if they were strays in this tree, and
+# the gate fails for something no one here can fix. A worktree runs its own gate; this one only
+# polices the tree it is in.
+strays="$(find .. \( -path '*/node_modules' -o -path '*/.next' -o -path '*/.git' -o -path '*/.claude' \) -prune -o \
   \( -name '* 2' -o -name '* 2.*' \) \( -type f -o -type d -o -type l \) -print -prune)"
 if [ -n "$strays" ]; then
   echo "gate: FAIL — iCloud/Finder conflict copies in the tree. They are never tracked; delete them:" >&2
   printf '%s\n' "$strays" >&2
   echo "  (a listed DIRECTORY is reported once — delete the whole directory, contents and all)" >&2
-  echo "  find . \( -path '*/node_modules' -o -path '*/.next' \) -prune -o \\" >&2
+  echo "  find . \( -path '*/node_modules' -o -path '*/.next' -o -path '*/.claude' \) -prune -o \\" >&2
   echo "       \( -name '* 2' -o -name '* 2.*' \) -print -prune" >&2
   exit 1
 fi

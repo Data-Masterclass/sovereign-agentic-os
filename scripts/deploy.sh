@@ -59,7 +59,8 @@ images are built in CI — pick ONE of these once (see CONTRIBUTING.md -> "Image
   A  push to ghcr.io/data-masterclass/sovereign-os (the workflow default, no secret needed):
        git tag os-ui-v<version> && git push public os-ui-v<version>
        IMAGE_REPO=ghcr.io/data-masterclass/sovereign-os IMAGE_FROM_REGISTRY=1 ./scripts/deploy.sh <version>
-  B  keep ghcr.io/aborek/sovereign-os (repo variable IMAGE_REPO_PREFIX + secret GHCR_TOKEN):
+  B  keep ghcr.io/aborek/sovereign-os (repo variables IMAGE_REPO_PREFIX + IMAGE_REGISTRY_USER,
+     secret GHCR_TOKEN):
        git tag os-ui-v<version> && git push public os-ui-v<version>
        IMAGE_FROM_REGISTRY=1 ./scripts/deploy.sh <version>
 USAGE
@@ -112,31 +113,10 @@ remote_digest() {
     echo "NO_REGISTRY_TOOL — install crane (brew install crane) or skopeo, or set DEPLOY_REGISTRY_PROBE" >&2
     return 1
   }
-  # Registry v2 by hand. host/path:tag — the path is everything between the first `/` and the
-  # `:`, which for ghcr.io is `<owner>/<repo>/<image>`.
-  host=${ref%%/*}
-  rest=${ref#*/}
-  path=${rest%:*}
-  tag=${rest##*:}
-  # A pull token is required even for a public GHCR package. `gh auth token` is used when the
-  # CLI is logged in (a private package needs it); otherwise ask anonymously.
-  auth=
-  if command -v gh >/dev/null 2>&1; then
-    tok=$(gh auth token 2>/dev/null || true)
-    [ -n "$tok" ] && auth="-u x:$tok"
-  fi
-  # shellcheck disable=SC2086  # $auth is two words on purpose, or none
-  bearer=$(curl -sS $auth "https://$host/token?service=$host&scope=repository:$path:pull" \
-    | python3 -c 'import json,sys; print(json.load(sys.stdin).get("token") or "")' 2>/dev/null || true)
-  [ -n "$bearer" ] || { echo "REGISTRY_TOKEN_FAILED for $path on $host" >&2; return 1; }
-  curl -sSI -X HEAD \
-    -H "Authorization: Bearer $bearer" \
-    -H 'Accept: application/vnd.oci.image.index.v1+json' \
-    -H 'Accept: application/vnd.oci.image.manifest.v1+json' \
-    -H 'Accept: application/vnd.docker.distribution.manifest.list.v2+json' \
-    -H 'Accept: application/vnd.docker.distribution.manifest.v2+json' \
-    "https://$host/v2/$path/manifests/$tag" \
-    | tr -d '\r' | awk 'tolower($1) == "docker-content-digest:" { print $2 }'
+  # Registry v2 by hand, in its own script so its HTTP-status handling is testable without a
+  # network (it distinguishes 401/403 — a private package the token cannot read — from 404, a
+  # tag that was never pushed) and so credentials go in on stdin rather than argv.
+  bash scripts/lib/registry-digest.sh "$ref"
 }
 
 if [ -n "$FROM_REGISTRY" ]; then
@@ -207,6 +187,17 @@ print(f"   kept {len(kept)} top-level keys; dropped {len(dropped)} for removed c
 if dropped: print("   dropped:", ', '.join(dropped))
 if migrated: print("   chart-owned keys reset to the chart defaults:", ', '.join(migrated))
 PY
+
+# REFUSE A SPLIT-NAMESPACE DEPLOY (review M3). The digest comes from the image we are about to
+# build or verify; the repository comes from the live release's own values. If those two
+# disagree the digest does not exist where the chart pulls from, and every os-ui pod goes
+# ImagePullBackOff — after the backup gate, after the push, with the old ReplicaSet gone. Only
+# checked when IMAGE_REPO was NOT passed: with it, the upgrade below --sets the repository, so
+# the two agree by construction. See scripts/lib/check-image-repo.py.
+if [ "$IMAGE_REPO" = "$IMAGE_REPO_DEFAULT" ]; then
+  say "the release's os-ui repository must match the image we are deploying"
+  python3 scripts/lib/check-image-repo.py "$VALUES" "$IMAGE_REPO/os-ui"
+fi
 
 say "what the upgrade changes"
 helm --kube-context "$CTX" get manifest "$REL" -n "$NS" > "$WORK/before.yaml"
