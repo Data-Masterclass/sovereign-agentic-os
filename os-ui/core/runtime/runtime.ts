@@ -21,6 +21,7 @@ import {
   type ToolExecutor,
   type ToolSpec,
 } from '@core/runtime/agentic';
+import { ungatedInteractive } from '@core/runtime/confirm-gate';
 import { resolveAssistantModelId } from '@core/runtime/complete';
 import { inputBudget, modelContext } from '@core/models/context-windows';
 
@@ -82,10 +83,10 @@ export function tabToolSpecs(user: CurrentUser, tab: McpTab): ToolSpec[] {
  * the underlying governed function (OPA + Langfuse) is the real authority, so
  * this never bypasses governance.
  */
-export function tabToolExecutor(user: CurrentUser, tab: McpTab): ToolExecutor {
+export function tabToolExecutor(user: CurrentUser, tab: McpTab, dispatch: typeof handleRpc = handleRpc): ToolExecutor {
   const tools = toolsForTab(tab);
   return async (name, args) => {
-    const res = await handleRpc(
+    const res = await dispatch(
       user,
       { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } },
       { tools },
@@ -434,7 +435,9 @@ export async function runTabAgent(input: RunTabAgentInput): Promise<AgenticResul
     system: osSystem(input.tab, input.extraContext),
     userMessages: input.messages,
     tools: specs,
-    callTool,
+    // No structural confirmation step yet — named so it can be found and replaced (the
+    // call sites are pinned in `confirm-gate.test.ts`). Behaviour is exactly what it was.
+    callTool: ungatedInteractive(callTool),
     llm: injected ?? liteLlmCaller({
       userId: input.user.id,
       domain: input.user.domains[0] ?? 'none',
@@ -462,7 +465,8 @@ export function renderAssistantText(result: AgenticResult): string {
   if (result.steps.length > 0) {
     lines.push('### Actions');
     for (const s of result.steps) {
-      const mark = s.isError ? '⚠︎' : '✓';
+      // A parked or skipped step did NOT run — it must never carry the tick of one that did.
+      const mark = s.parked ? '⏸' : s.skipped ? '–' : s.isError ? '⚠︎' : '✓';
       const preview = s.result.length > 400 ? `${s.result.slice(0, 400)}…` : s.result;
       lines.push(`${mark} \`${s.tool}\` — ${preview}`);
     }

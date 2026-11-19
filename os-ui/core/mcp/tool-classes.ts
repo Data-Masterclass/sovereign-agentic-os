@@ -120,6 +120,42 @@ export function needsUserConfirm(name: string): boolean {
   return !CONFIRM_FREE.has(name);
 }
 
+/**
+ * The ONLY tools an "Allow for this conversation" grant may ever cover (the owner's decision:
+ * such a grant is for creating the user's own work in My scope, and for nothing that removes,
+ * widens, requests or approves). Deliberately SMALLER than "every My-scope write":
+ *
+ *   - every entry either creates a NEW artifact that is born Personal/owner-only, or appends a
+ *     record without changing an artifact — read in the handler, not inferred from the name;
+ *   - EDIT tools are left out even where the owner's intent would cover them (`document_dataset`,
+ *     `commit`, `set_app_design`, `commit_agent_files`, `create_dashboard` — which REPLACES by
+ *     id, …). The gate decides on the tool NAME and cannot tell the user's Personal artifact from
+ *     one already Shared or Certified, so a blanket allowance for an edit tool could silently
+ *     cover an edit other people see. An argument-aware gate could widen this; a name-only one
+ *     must not;
+ *   - never delete / archive / retire / revoke, never a request (`request_deploy`,
+ *     `request_promotion`, `request_certification`), never a promotion or approval, and nothing in
+ *     `AGENT_FORBIDDEN_TOOLS` or the hold gate's always-confirmed and escalation sets. The tests
+ *     pin the disjointness (`tool-classes.test.ts` for the core tables,
+ *     `tabs/agents/lib/build/confirm-session-allowable.test.ts` for `hold.ts`).
+ *
+ * Nothing in production creates such a grant yet. Each entry: name → why it qualifies.
+ */
+export const SESSION_ALLOWABLE_TOOLS: Readonly<Record<string, string>> = {
+  create_dataset: 'creates a NEW private dataset; sharing is the separate promotion path',
+  author_knowledge: 'creates a NEW Personal (draft) business process — `createWorkflow`, never an update of an existing one',
+  upload_file: 'creates a NEW private file in the Files tab',
+  create_agent_system: 'creates a NEW agent system, always My-scope and owner-only',
+  create_software: 'creates a NEW app record, Personal until promoted',
+  run_quality_checks: 'changes no artifact: runs the rules and appends one run to the quality history',
+  export_okf_bundle: 'changes no artifact: writes the export as a NEW Personal-tier file owned by the caller',
+};
+
+/** May an "Allow for this conversation" grant cover this tool? By exact own name. */
+export function isSessionAllowable(name: string): boolean {
+  return Object.hasOwn(SESSION_ALLOWABLE_TOOLS, name);
+}
+
 export type ToolClass = 'read' | 'confirm-free-catalogued' | 'write' | 'backlog' | 'unknown';
 
 const READ_SET: ReadonlySet<string> = new Set(READ_TOOLS);

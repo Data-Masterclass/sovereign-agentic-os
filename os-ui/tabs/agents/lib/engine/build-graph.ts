@@ -738,7 +738,7 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
       status: 'failed',
       error,
       input,
-      result: { plan: '', steps: [], finalText, iterations: 0, toolCallingSupported: true },
+      result: { plan: '', steps: [], finalText, iterations: 0, toolCallingSupported: true, pending: [] },
     };
     emit(config, { event: 'node-completed', data: { node: node.id, status: 'failed', finalText } });
     return { run, finalText, error };
@@ -1083,6 +1083,8 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
           finalText: cur.finalText || '(no final answer produced)',
           iterations: cur.iterations,
           toolCallingSupported: !cur.react,
+          // The engine holds on a graph interrupt, never on a user-confirm park (see `engineHeldGate`).
+          pending: [],
         };
         const status = nodeStatus(result);
         ownRuns.push({ node: id, model: cur.model, tier: cur.tier, tierReason: cur.tierReason, status, result, input: cur.input });

@@ -11,6 +11,7 @@ import {
   type ToolExecutor,
   type ToolSpec,
 } from '@core/runtime/agentic';
+import { ungatedInteractive } from '@core/runtime/confirm-gate';
 import { compactToolResult } from '@core/infra/context/context-assembler';
 import { curateContext, type CurateCandidate, type EmbedFn } from '@core/infra/context/librarian';
 
@@ -521,7 +522,10 @@ export async function runNode(
     system,
     userMessages: messages,
     tools: deps.toolSpecsFor(node),
-    callTool: deps.callTool,
+    // Type-level wiring only: `runAgentic` takes a gated executor, and this path has no
+    // structural confirmation step today — named so it can be found (pinned in
+    // `core/runtime/confirm-gate.test.ts`). Behaviour is exactly what it was.
+    callTool: ungatedInteractive(deps.callTool),
     llm: deps.llm,
     planModel: deps.reasoningModel,
     actModel,

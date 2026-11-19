@@ -22,6 +22,8 @@ import {
   CONFIRM_FREE_CATALOGUED_TOOLS,
   needsUserConfirm,
   toolClass,
+  SESSION_ALLOWABLE_TOOLS,
+  isSessionAllowable,
 } from '@core/mcp/tool-classes';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -102,11 +104,38 @@ test('nothing closed to agent runs, and no approval or destructive verb, is conf
   }
 });
 
+test('SESSION_ALLOWABLE_TOOLS: a small, reasoned set of catalogued writes — no removal, request, promotion or approval', () => {
+  const names = Object.keys(SESSION_ALLOWABLE_TOOLS);
+  assert.deepEqual(names.sort(), [
+    'author_knowledge', 'create_agent_system', 'create_dataset', 'create_software',
+    'export_okf_bundle', 'run_quality_checks', 'upload_file',
+  ], 'growing this set is an owner decision — it must be a visible diff');
+  const registered = new Set(ALL_MCP_TOOLS.map((t) => t.name));
+  for (const [name, why] of Object.entries(SESSION_ALLOWABLE_TOOLS)) {
+    assert.ok(registered.has(name), `${name} is not a registered tool`);
+    assert.equal(toolClass(name), 'write', `${name} must be a catalogued write that needs confirmation — there is nothing to allow otherwise`);
+    assert.equal(needsUserConfirm(name), true);
+    assert.equal(Object.hasOwn(AGENT_FORBIDDEN_TOOLS, name), false, `${name} is closed to agent runs`);
+    assert.doesNotMatch(name, /delete|archive|retire|revoke|request_|promot|approv|decide|certif|publish|deploy|go_live|reindex|restore|adopt|expos/, `${name} reads like a removal, request, promotion or approval`);
+    assert.ok(why.length > 30, `${name} must say why it qualifies`);
+    assert.equal(isSessionAllowable(name), true);
+  }
+  for (const name of [...Object.keys(AGENT_FORBIDDEN_TOOLS), 'delete', 'archive', 'retire', 'request_deploy', 'request_promotion', 'approve_promotion', 'promote_metric', 'no_such_tool', 'constructor', '__proto__', '']) {
+    assert.equal(isSessionAllowable(name), false, `${name} must not be session-allowable`);
+  }
+});
+
 test('GROUNDWORK ONLY: no production file consults the confirm classes yet', () => {
   // The classification ships before the gate. Until the gate is wired, an import of this module
   // from production code would be a behaviour change smuggled into a no-behaviour-change PR.
   // LATER PRs add their consumer to ALLOWED — a reviewed, one-line diff.
-  const ALLOWED = new Set<string>(['core/mcp/tool-classes.ts']);
+  const ALLOWED = new Set<string>([
+    'core/mcp/tool-classes.ts',
+    // The gate's pure module and the store behind its port. Neither is REACHED by a production
+    // caller with a real gate yet — `core/runtime/confirm-gate.test.ts` pins that.
+    'core/runtime/confirm-gate.ts',
+    'core/policy/confirmations.ts',
+  ]);
   const offenders: string[] = [];
   const walk = (dir: string) => {
     for (const entry of readdirSync(dir)) {
