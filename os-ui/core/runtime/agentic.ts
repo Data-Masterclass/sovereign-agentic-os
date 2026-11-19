@@ -48,7 +48,18 @@ export type OpenAiTool = {
   function: { name: string; description: string; parameters: ToolSpec['inputSchema'] };
 };
 
-export type ToolCall = { id: string; name: string; args: Record<string, unknown> };
+export type ToolCall = {
+  id: string;
+  name: string;
+  args: Record<string, unknown>;
+  /**
+   * Set by the model client when the call's argument text was NOT a JSON object (broken or cut
+   * off). `args` is then `{}` and MUST NOT be executed as if the model had sent no arguments.
+   */
+  argsError?: string;
+  /** The argument text as the model sent it, when `argsError` is set (for the error shown back). */
+  rawArgs?: string;
+};
 
 /** Token usage ONE model call reported (chat-completions `usage`, harness shape). */
 export type LlmUsage = { input: number; output: number; total: number };
@@ -56,6 +67,10 @@ export type LlmUsage = { input: number; output: number; total: number };
 export type LlmCompletion = {
   content: string;
   toolCalls: ToolCall[];
+  /** The backend's `finish_reason` for this reply (`stop`, `tool_calls`, `length`, `content_filter`, …) when it reported one. */
+  finishReason?: string;
+  /** The model's refusal text, when the backend reported the reply as a refusal. */
+  refusal?: string;
   /** Present only when the backend actually REPORTED usage — never fabricated. */
   usage?: LlmUsage;
 };
@@ -631,6 +646,17 @@ export async function runAgentic(opts: {
     // (dedup) so we never re-run the tool or re-append its full result.
     for (let callIndex = 0; callIndex < calls.length; callIndex += 1) {
       const call = calls[callIndex];
+      // A call whose argument text was not a JSON object is NEVER executed with `{}` in its
+      // place: the model is told, and may send it again.
+      if (call.argsError) {
+        const note = JSON.stringify({ error: { code: 'invalid_argument', reason: `${call.name} was NOT run: its arguments were not valid JSON (${call.argsError}). Send the call again with a complete JSON object.` } });
+        const step: AgenticStep = { tool: call.name, args: call.args, result: note, isError: true };
+        steps.push(step);
+        opts.onStep?.(step);
+        if (react) messages.push({ role: 'user', content: `Observation: ${note}` });
+        else messages.push({ role: 'tool', tool_call_id: call.id, content: note });
+        continue;
+      }
       const sig = toolCallSignature(call.name, call.args);
       const prior = executedSignatures.get(sig);
 

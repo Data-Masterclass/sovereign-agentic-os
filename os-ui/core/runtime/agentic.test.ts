@@ -721,3 +721,30 @@ test('B1: a write that CHANGES its args after a failure re-runs normally (the gu
   assert.equal(executed, 2, 'the CHANGED commit re-ran (guard blocks only byte-identical failed args)');
   assert.equal(res.steps[1].isError, false, 'the fixed commit succeeded');
 });
+
+test('F10: a tool call whose argument JSON was broken is NOT executed with {} — the model is told and repairs it', async () => {
+  const executed: { name: string; args: Record<string, unknown> }[] = [];
+  let acts = 0;
+  const res = await runAgentic({
+    system: 'sys',
+    userMessages: [{ role: 'user', content: 'commit it' }],
+    tools: TOOLS,
+    callTool: async (name, args) => {
+      executed.push({ name, args });
+      return { text: 'ok', isError: false };
+    },
+    llm: async (req) => {
+      if (!req.tools) return { content: 'plan', toolCalls: [] };
+      acts += 1;
+      if (acts === 1) return { content: '', toolCalls: [{ id: 'c1', name: TOOLS[0].name, args: {}, argsError: 'Unexpected end of JSON input', rawArgs: '{"a":' }] };
+      if (acts === 2) return { content: '', toolCalls: [{ id: 'c2', name: TOOLS[0].name, args: { a: 1 } }] };
+      return { content: 'done', toolCalls: [] };
+    },
+    planModel: 'reason-x',
+    actModel: 'exec-y',
+  });
+  assert.deepEqual(executed, [{ name: TOOLS[0].name, args: { a: 1 } }], 'the empty-argument call never reached the executor');
+  assert.equal(res.steps[0].isError, true);
+  assert.match(res.steps[0].result, /invalid_argument/);
+  assert.match(res.steps[0].result, /not valid JSON/);
+});
