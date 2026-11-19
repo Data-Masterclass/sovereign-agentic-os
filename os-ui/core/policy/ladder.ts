@@ -15,7 +15,7 @@ import { getDashboard, getDashboardForGovernance, demoteDashboard } from '@tabs/
 import { getConnectionForUser, promoteConnection, demoteConnection, approveOnce } from '@tabs/connections/lib/index';
 import { approveExposureActions } from '@tabs/connections/lib/exposures';
 import { getArtifact, promoteArtifact, demoteArtifact } from '@core/kernel/artifacts';
-import { getAppForUser, promoteApp } from '@tabs/software/lib/apps';
+import { getAppForGovernance, getAppForUser, promoteApp } from '@tabs/software/lib/apps';
 import { demoteApp } from '@tabs/software/lib/lifecycle';
 import { decideDeploy } from '@tabs/software/lib/review';
 import { getSystem, demoteSystem } from '@tabs/agents/lib/store';
@@ -121,7 +121,9 @@ export async function resolveLadderArtifact(
       return { owner: a.owner, domain: a.domain, name: a.name, visibility: a.visibility };
     }
     case 'app': {
-      const app = await getAppForUser(id, user); // throws 403/404
+      // The governance read is reached ONLY through `opts.forGovernanceAct`, so an appointed
+      // approver can see the Personal app whose promotion they were asked to decide.
+      const app = forGovernanceAct ? await getAppForGovernance(id, user) : await getAppForUser(id, user);
       return { owner: app.owner, domain: app.domain, name: app.name, visibility: app.visibility };
     }
     case 'agent_system': {

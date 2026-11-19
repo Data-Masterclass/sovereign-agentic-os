@@ -16,7 +16,15 @@ An external agent (Claude / Codex) walks the SAME governed stages the UI does; e
 3. **Author the app — `generate_app_spec` OR `set_app_spec`.**
    - **`generate_app_spec`** — the one-call scaffold: reads your designed epics + user stories + granted data (datasets with their REAL columns, metrics, agents) and asks the OS reasoning model to compose a complete, validated AppSpec whose tabs are cookbook patterns wired only to granted ids + real columns. Returns `{ ok:true, spec }` (a validated spec, not yet persisted) — review it, then publish with `set_app_spec`.
    - **`set_app_spec`** — the author-and-publish door. Set the validated AppSpec `{ version:2, name, description, theme?, functions?, tabs:[] }`. Each tab is a cookbook **pattern** (`{ kind:'pattern', pattern, config }`) or a sandboxed **custom** block (`{ kind:'custom', html, css?, js?, data? }` — a null-origin iframe that can never act as the user). A data-backed pattern's `source.datasetId` must be a **granted** dataset and every referenced column must be **real** — call `get_dataset` to discover exact column names. Optional app-wide `theme.css` (scoped under the app root; no `<`/`>`) and governed query/expression `functions` (rendered by a KPI card's `functionId`). **A governed author = a versioned publish:** on success the spec goes LIVE and a version is snapshotted; `{ ok:true, servedUrl:'/apps/<slug>', version }`. On any blocking issue it returns `{ ok:false, issues:[{path,reason,fix}] }` and persists nothing.
-4. **Live.** The app serves at `/apps/<slug>` immediately. `get_app_spec` reads the live spec (+ a plain-language `describe` legibility summary) for read-modify-write. Climb the ladder with `promote`; `archive` / `delete` (lineage-blocked) for lifecycle.
+4. **Live.** The app serves at `/apps/<slug>` immediately — **the moment its spec validates, with no review gate, no build and no deploy**. `get_app_spec` reads the live spec (+ a plain-language `describe` legibility summary) for read-modify-write. Climb the ladder with `promote`; `archive` / `delete` (lineage-blocked) for lifecycle.
+
+### `build_software` and `verify_software` on a declarative app
+
+They work, and they are **kind-aware**: on a `serveMode:'spec'` app the result carries `kind:'spec'`, the directive says there is no source tree and nothing to compile, and `next` names `generate_app_spec` → `set_app_spec`. They never tell you to write code or call `commit` — on a declarative app `commit` would answer 403 anyway (coded apps are off by default). Use them if you want the grounded brief and the honest story-by-story progress; the authoring verbs above are the shortest path.
+
+### Grants: always pass `access`
+
+`design_software({ grants: { data: [{ id, access }] } })`. A grant with **no** `access` is granted at the **narrowest** level (`read-only`) and the response tells you so in `grantNotes`; a grant whose `access` is not one of `read-only` / `read-propose` / `read-write` is **refused** and named in `grantNotes`. Nothing is ever dropped silently — if a later door says *"… is not granted to this app"*, read `grantNotes` from the grant call.
 
 **Wire dependencies by reference** (design/author time): a tab may only read a dataset the app was granted; `use_data` / `use_knowledge` / `use_connection` formally bind a granted asset. **Close the loop:** `use_as_data` registers the app's output as a Bronze dataset.
 
@@ -33,9 +41,30 @@ The registry in `appspec/patterns.ts` is the source of truth; a spec referencing
 
 CODED apps (`kind:'code'`) commit raw code into the **domain's git repository** under `apps/<slug>/` — one repo per domain, authored as you, with a sha and a history — and the OS previews, verifies and serves it from the committed tree. There is no CI runner and no image builder in the OS. This path is **DISABLED by default** and only works when a platform admin has enabled coded apps. When enabled, the staged flow is `create_software(kind:'code')` → `design_software` → `build_software` (returns the governed build directive + committed files, design-before-build gated) → author code → `push_app_files` (the documented verb: one governed commit, the compile gate first, `changed:false` for an unchanged push) or `commit` (the older Developer-mode direct write, Builder+) → `verify_software` (5-dimension test) → `start_preview` / `request_deploy` → a Builder `decide_deploy`. `commit` is role-gated to Builder/Admin and fails closed (403) when coded apps are off — author a declarative app with `set_app_spec` instead.
 
+## Preview and serving — what is actually true
+
+| | Declarative (`serveMode:'spec'`) | Coded (`serveMode:'image'`) |
+|---|---|---|
+| Where it runs | **the OS process itself**, same-origin at `/apps/<slug>`, under the viewer's own session | a per-app Kubernetes workload at its own host |
+| `start_preview` returns | the served URL (or, with no spec yet, says so and names `set_app_spec`) | a URL **only** when an operator-supplied image exists and the cluster is reachable |
+| Needs a container image | no | **yes — and the OS builds none** |
+
+**There is no CI runner and no image builder in this repo, and no app-runner image is shipped.** A coded app therefore needs a container image *you* publish, set as the app's image reference (or cluster-wide via `softwareRunner.runnerImage`, empty by default). Where no image is set, `start_preview` provisions **nothing**, `previewUrl` stays `null`, and `runnerNote` says which of the two it was — a missing image or an unreachable cluster. A placeholder container is never substituted on your domain and a URL is never invented.
+
+The `apps-runner` chart template deploys **no workload** — it is the Namespace, RBAC and NetworkPolicy scaffolding that lets the OS create per-app Deployments — and it is `enabled: false` by default.
+
+## The promotion ladder
+
+A **creator** cannot `promote`: they **file** the My→Domain request (the UI's Promote button, or `request_promotion`) and hand off. The appointed **domain_admin** approves that rung. Domain→Company is the **admin's** alone. For a deploy review, a **builder** who is not the requester approves (`decide_deploy`) — the owner can never approve their own, and a scan with no verdict cannot be approved by anyone.
+
+## The security scan is a gate that can be CLOSED
+
+`request_deploy` runs the scan over the files that will ship. On a cluster with **no scanner engine** the verdict is `unavailable` with `passed: false` and a reason — not a green tick — and `decide_deploy` then refuses with a 409 naming the absence. Real findings are still reported either way: refusing a verdict is not hiding evidence. A coded app therefore cannot go live until a scanner is wired in.
+
 ## What to consider
 
 - **Grant before you author.** A tab that reads a dataset the app wasn't granted, or references a column that doesn't exist, is a BLOCKING validation issue — `set_app_spec` returns a machine-actionable `{ path, reason, fix }` and persists nothing.
+- **Reference shorthand is tolerated, and reported.** Writing `"metric": "<id>"` or `"metric": { "id": "<id>" }` where the grammar wants `{ "metricId": "<id>" }` no longer kills the author: every spec write door (`set_app_spec`, the composer autosave, Publish, `generate_app_spec`) normalises the unambiguous shapes first and returns a `warning` naming the rewrite. What is **stored** is always canonical. Only genuinely ambiguous shapes — a bare id where the object needs more than one key — are still refused.
 - **`get_dataset` for real columns.** Never invent a column name; discover them first.
 - **delete is lineage-blocked.** If something depends on this app's output, `delete` returns `conflict` — use `archive`.
 - **`use_as_data` closes the spine.** The Bronze dataset it creates inherits the app's lineage, making the data → software → data chain traceable.

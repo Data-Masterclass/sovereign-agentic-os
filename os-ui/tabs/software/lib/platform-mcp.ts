@@ -18,14 +18,14 @@ import {
   type AppTemplateKey,
 } from '@tabs/software/lib/apps';
 import { describeApp } from '@tabs/software/lib/appspec/describe';
-import { normalizeContextGrants } from '@core/kernel/context-grants';
+import { normalizeContextGrants, normalizeContextGrantsWithReport } from '@core/kernel/context-grants';
 import { promoteThroughSeam } from '@core/policy/ladder';
 import { trace } from '@core/infra/agent-governed';
 import { startPreview, requestDeploy, decideDeploy } from '@tabs/software/lib/review';
 import { archiveApp, deleteApp, useAsData, consumeResource } from '@tabs/software/lib/lifecycle';
 import { authorThroughFrontDoor, commitToApp } from '@tabs/software/lib/server';
 import type { ConsumedResource, SurfaceDeclaration } from '@tabs/software/lib/model';
-import { asBuildTarget, buildGate, stageDirective, targetProgress, resolveTarget } from '@tabs/software/lib/mcp-stages';
+import { asBuildTarget, buildGate, declarativeStageDirective, stageDirective, stagePathKind, targetProgress, resolveTarget } from '@tabs/software/lib/mcp-stages';
 import { resolveGrantedContext } from '@tabs/software/lib/grants-context';
 import { normalizeImprovement, type Improvement } from '@tabs/software/lib/improvements';
 import { assertNotSeeded } from '@tabs/software/lib/seeded-evidence';
@@ -129,7 +129,8 @@ export const PLATFORM_MCP_TOOLS: { name: string; description: string; write: boo
   {
     name: 'start_preview',
     description:
-      'Start the app’s PRIVATE sandbox preview — a running instance only you can reach, with no review and no promotion. Use it to see a built app before `request_deploy`. Owner-only (a domain colleague cannot preview your app). Governance: an unseeable app id → not_found; an app you can see but do not own → forbidden. Next: `get_software_status` reports the preview URL and readiness.',
+      "Start the app's PRIVATE preview, with no review and no promotion. WHAT THIS ACTUALLY GIVES YOU DEPENDS ON THE APP'S KIND, stated honestly. A DECLARATIVE app (`serveMode:'spec'`, the default) is already served SAME-ORIGIN by the OS at `/apps/<slug>` under the viewer's own session, gated by the app's visibility — so this returns that URL and provisions nothing; with no spec yet it says so and names `set_app_spec`/`generate_app_spec`. A CODED app needs a container image the OPERATOR supplies (the app's own `runImage`, or the cluster-wide `SOFTWARE_RUNNER_IMAGE`): THE OS BUILDS NO IMAGES and ships none, so where no image is configured, or the Kubernetes API is unreachable, NOTHING is provisioned, `previewUrl` stays null and `runnerNote` says which of the two it was — a placeholder container is never substituted and a URL is never fabricated. Role: the owner, or a Builder in the app's domain. Governance: an unseeable app id → not_found; an app you can see but may not preview → forbidden. Next: `get_software_status` reports the preview URL and readiness.",
+
     write: true,
   },
   {
@@ -251,11 +252,20 @@ export async function callPlatformMcp(
       // (patchAppDesign). Its own fail-closed edit-scope re-gates owner/domain-admin/
       // admin; an explicit view-gate first yields a typed not_found on an invisible id.
       await getAppForUser(appId, user);
-      result = await patchAppDesign(appId, user, {
+      // A grant the normaliser had to change or drop is REPORTED (2026-11-19): a silently
+      // discarded `{ id }` with no `access` left the author looping between this door and a
+      // "not granted to this app" refusal, with no error message anywhere in between.
+      const grantReport =
+        args.grants !== undefined ? normalizeContextGrantsWithReport(args.grants) : null;
+      const patched = await patchAppDesign(appId, user, {
         purpose: args.purpose !== undefined ? str(args.purpose) : undefined,
         epics: args.epics !== undefined ? (args.epics as AppEpic[]) : undefined,
-        grants: args.grants !== undefined ? normalizeContextGrants(args.grants) : undefined,
+        grants: grantReport ? grantReport.grants : undefined,
       });
+      result =
+        grantReport && grantReport.notes.length > 0
+          ? { ...patched, grantNotes: grantReport.notes }
+          : patched;
       break;
     }
 
@@ -274,8 +284,27 @@ export async function callPlatformMcp(
       // byte-identical directive below. Nothing else in this case changes.
       if (agenticBuilderEnabled()) { result = await agenticBuild(user, app, target); break; }
       const buildGrants = await resolveGrantedContext(app.grants, user);
+      // KIND-AWARE (2026-11-19). A DECLARATIVE app has no source tree and `commit` is 403 while
+      // coded apps are off, so handing it the coded directive was a dead end on the DEFAULT path.
+      // Its build IS authoring the AppSpec — so say that, and name the verbs that do it.
+      if (stagePathKind(app) === 'spec') {
+        result = {
+          stage: 'build',
+          kind: 'spec',
+          appId: app.id,
+          target,
+          tier: 'standard',
+          gate: 'passed',
+          directive: declarativeStageDirective(app, target, 'build', buildGrants, IMPLEMENTED_PATTERN_LIST),
+          progress: targetProgress(app, target),
+          spec: app.spec ?? null,
+          next: 'Call `generate_app_spec` to scaffold a validated AppSpec from this design, review it, then `set_app_spec` to publish it live at /apps/' + app.slug + '. There is no code to write and nothing to commit.',
+        };
+        break;
+      }
       result = {
         stage: 'build',
+        kind: 'code',
         appId: app.id,
         target,
         tier: 'standard',
@@ -306,13 +335,22 @@ export async function callPlatformMcp(
             .filter((r): r is Improvement => r !== null)
         : [];
       const testGrants = await resolveGrantedContext(app.grants, user);
+      // KIND-AWARE (2026-11-19), for the same reason as build: a declarative app has no
+      // committed code to read, so the verifier is pointed at the LIVE SPEC and its
+      // plain-language legibility summary — the artefact that actually ships.
+      const isSpecApp = stagePathKind(app) === 'spec';
       result = {
         stage: 'test',
+        kind: isSpecApp ? 'spec' : 'code',
         appId: app.id,
         target,
         tier: 'reasoning',
-        directive: stageDirective(app, target, 'test', testGrants),
-        code: await committedFiles(appId, user),
+        directive: isSpecApp
+          ? declarativeStageDirective(app, target, 'test', testGrants, IMPLEMENTED_PATTERN_LIST)
+          : stageDirective(app, target, 'test', testGrants),
+        ...(isSpecApp
+          ? { spec: app.spec ?? null, describe: app.spec ? describeApp(app.spec) : null }
+          : { code: await committedFiles(appId, user) }),
         refinements,
         refinementsNote:
           'Report PASS/FAIL per dimension. Each shortfall → one refinement { storyId, note, dimension }: a missed-spec item is a rebuild (buildable now); a requirement change is kind:"design" and must go to design_software first.',
