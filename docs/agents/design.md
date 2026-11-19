@@ -219,7 +219,7 @@ Also:
 - **One layer owns retries: the engine.** Agent calls ask the gateway for at most one retry of its own, so one failed call is not multiplied.
 - Time limits are made consistent, so the engine never gives up while the gateway is still working. Today the engine waits 240 seconds while the gateway may retry for longer (`core/runtime/runtime.ts:153`; `charts/sovereign-agentic-os/values.yaml:512-517`).
 
-A first version of "wait and retry on 429" is in progress (PR #91, open, not merged).
+A first version of "wait and retry on 429" is on main (PR #91, merged 2026-11-19, not yet in a release). It waits out a rate-limit 429 with a visible event. Parking is not part of it.
 
 ### 3.7 Tool calling made safe for open-weight models
 
@@ -261,7 +261,7 @@ Today the grant lists are prompt text only (defect F6). Proposed:
 | **Network** | The gateway is reachable only inside the cluster. Admins reach its console through the OS at `/tools/litellm`, as they already can. | Owner decision pending (decision 2). |
 | **Salt key** | Set `LITELLM_SALT_KEY` once, before the next model is stored in the gateway's database. Never change it afterwards. | Without it the master key is also the encryption key and cannot be rotated. |
 | **Keys** | One key per agent system, with a **random** value created by the gateway. The value is stored **encrypted in the `agent_runs` Postgres database**, which the web process and the worker both already use. The encryption key comes from a Kubernetes Secret. If a system's key cannot be found, the run is refused with "Rebuild needed". No silent use of the shared key. | Today the value is guessable and lives in one process's memory (`core/infra/secrets.ts:21-40`). |
-| **Budgets** | Every budget resets. Suggested defaults from the research: 10 USD per 30 days per system, plus a daily guard of about 2 USD that the OS checks itself until the gateway supports two windows on one key. A budget on the domain's team is the ceiling above that. The OS warns at 80 %. | A lifetime cap guarantees that every successful system eventually stops. The in-progress change (PR #92) uses a weekly window; see decision 5. |
+| **Budgets** | Every budget resets. Suggested defaults from the research: 10 USD per 30 days per system, plus a daily guard of about 2 USD that the OS checks itself until the gateway supports two windows on one key. A budget on the domain's team is the ceiling above that. The OS warns at 80 %. | A lifetime cap guarantees that every successful system eventually stops. PR #92 (merged to main 2026-11-19) sets the default for system keys to 5 USD per 7 days; see decision 5. |
 | **Limits** | On every key: 60 requests per minute, 200,000 tokens per minute, 4 parallel calls for a Simple system. A developer may raise them up to the domain team's limits. | System keys have no parallel limit today. |
 | **Prices** | One price list, written once in the chart, rendered into both the gateway's model definitions and the OS's price book. | The OS has prices (`charts/sovereign-agentic-os/values.yaml:1427`); the gateway has none. A gateway without prices may count every call as free, and then no budget triggers. Not verified live. |
 | **What a model can do** | Runs read context size, tool support and image support from the gateway's `/model/info`. The OS's explicit image allow-list stays the authority for "may this model be sent an image". | Today these are fixed in OS code (`core/models/context-windows.ts:46-52`). |
@@ -398,7 +398,7 @@ Each can be answered with yes or no, or by picking one option.
 2. **Shall the model gateway stop being reachable from the internet?** Admins would open its console through the OS, as they can today. **Recommendation: yes, now.**
 3. **Shall we upgrade the gateway in two steps (first to the long-term-support version to close the security advisories, later to the newest line for tracing), rather than one big step?** **Recommendation: yes, two steps.**
 4. **One gateway key per agent system (random, stored encrypted in the database), or one shared key with budgets counted by the OS?** **Recommendation: one key per system.**
-5. **What is the default budget for a system?** Option A: 10 USD per 30 days plus a daily guard of 2 USD. Option B: a weekly budget, as the change in progress (PR #92) does. **Recommendation: ship B now because it is already in progress, move to A when the upgraded gateway supports two windows on one key.**
+5. **What is the default budget for a system?** Option A: 10 USD per 30 days plus a daily guard of 2 USD. Option B: 5 USD per 7 days, which PR #92 has put on main as the default. **Recommendation: keep B for now because it is already on main, move to A when the upgraded gateway supports two windows on one key.**
 6. **Shall a run stop when one agent fails, unless the builder has drawn a failure hand-off?** **Recommendation: yes.**
 7. **Shall the planning call be off by default?** It roughly halves the model calls of a simple agent. A developer can switch it on per agent. **Recommendation: yes, off by default.**
 8. **Shall traces contain no document and no image content by default, including in the gateway's records?** The cost: an admin can no longer read full prompts in Langfuse unless a system is switched to the less strict level. **Recommendation: yes.**

@@ -102,15 +102,17 @@ There are **four** adapters, in this order (`tabs/agents/lib/build/live.ts:158-2
 **Rebuild re-does:** the policy write, the two graph builds, the trace count, and the "last build" stamp.
 
 **Rebuild skips:** everything about the gateway key once it exists. Its models, budget and limits
-are never updated (`live.ts:197-198`). A change that makes Rebuild reconcile the key is in
-progress (PR #92, open, not merged).
+are never updated (`live.ts:197-198`). Fixed on main after this commit: PR #92 (merged 2026-11-19,
+not yet in a release) makes Rebuild update an existing key through `/key/update`, takes the caps
+from the chart (`osUI.agentSystemKey`, default 5 USD per 7 days, 300 requests and 1,000,000 tokens
+per minute), and makes the Build rows say Created, Updated or Already in place.
 
 **What Build does not tell you:**
 
 - A run does not need a green Build. Nothing in the run path reads "last build ok" (`tabs/agents/lib/build/run-service.ts:280` is the only use, and it reads the key reference).
 - Nothing notices that you changed the file after a green Build. The button says "Rebuild" as soon as any build exists (`tabs/agents/ui/BuildRunPanel.tsx:769`, `:980`, `:1209`).
 - The key's value is the guessable text `sk-os-<systemId>` (`live-clients.ts:95-106`).
-- The key's value is kept only in the memory of the web process that handled the Build. The worker is a different process, so it cannot find the value and uses the shared key instead (`core/infra/litellm-credential.ts:108-111`). Production runs in worker mode (seen on the live system, 2026-11-19), so in production runs use the shared key.
+- The key's value is kept only in the memory of the web process that handled the Build. The worker is a different process, so it cannot find the value and uses the shared key instead (`core/infra/litellm-credential.ts:108-111`). The worker is enabled in production (checked on the running system, 2026-11-19), so production runs should be using the shared key. That is an inference from the code; it was not observed.
 - A Build through the MCP tool `build_agent_system` creates the key but does not save "last build" (`core/mcp/agent-write-tools.ts:109-114`).
 
 ---
@@ -200,8 +202,9 @@ therefore does not reach the second agent.
 
 **What "steps used" counts.** One for each agent visit, one for each model reply that contains
 tool calls (however many), one for each supervisor decision (`build-graph.ts:812`, `:879`, `:1124`).
-The default limit is 400. A limit of 12 was seen on the live system. No default in the code or the
-chart produces 12. Where it comes from is not known.
+The default limit is 400. A display of "12 / limit 12" was seen for one run: 12 was the real number
+of steps used, and the limit shown was a wrong default in the display of `get_agent_run`. Fixed on
+main by PR #91.
 
 **What is saved.** The whole run state after every step, including full tool results, in Postgres
 (`tabs/agents/lib/engine/checkpointer.ts:44-65`). Runs that finished more than 30 days ago are
@@ -402,8 +405,9 @@ and the model's reasoning text are not read.
 - In the **supervisor decision**: the run ends (`build-graph.ts:1132-1137`).
 - In all three cases the job is stored as `done`, not `failed` (`run-jobs-server.ts:305-330`).
 
-A fix for the rate-limit case (wait and try again) and for the act-step case (stop the run) is in
-progress (PR #91, open, not merged).
+Fixed on main after this commit, by PR #91 (merged 2026-11-19, not yet in a release): a rate-limit
+429 is waited out with a visible event, a failed agent stops the run, and tool descriptions are sent
+once. The tables above still describe commit `b47e2cd5`.
 
 ### What happens with a tool result
 

@@ -12,19 +12,18 @@ Written 2026-11-19 against commit `b47e2cd5`.
 - Defect numbers (F1, S5, L1 and so on) refer to [`known-defects.md`](known-defects.md).
 - Every pull request that changes how agents behave also updates the matching row in these documents. See [`README.md`](README.md).
 
-## Work already in progress
+## Work merged or in progress since the verified commit
 
-These pull requests are **open and not merged** (state on 2026-11-19). The plan builds on them and
-does not repeat them. What each one changes is taken from its title; they were not reviewed for
-this plan.
+State on 2026-11-19, evening. The plan builds on these and does not repeat them. What each one
+changes is taken from the pull request's own report. The new `main` was not re-read for this plan.
 
-| PR | Title | Belongs to |
-|---|---|---|
-| #88 | chore(litellm): raise the shared agent key's rate limits | Phase 0 |
-| #89 | feat(confirm-gate): Ask the OS behind the real gate — confirm endpoint and Confirm card (PR2) | Owner decision D2, outside this plan |
-| #90 | fix(software): pin the @sovereign-os npm scope so it can never resolve from a registry | Outside this plan |
-| #91 | fix(agents): a 12-invoice run no longer burns the token limit — prompt diet, scoped list_files, 429 wait, failed agent stops | Phase 0 and Phase 1 |
-| #92 | fix(agents): Rebuild reconciles a system's LiteLLM key; caps from config, weekly budget, honest build rows | Phase 0 and Phase 4 |
+| PR | State | What it changes | Belongs to |
+|---|---|---|---|
+| #88 | **merged**, not yet in a release | The shared agent key allows 1,000,000 tokens and 300 requests per minute (was 200,000 and 120). | Phase 0 |
+| #91 | **merged**, not yet in a release | A failed agent stops the run. A rate-limit 429 is waited out, with a visible event. Tool descriptions are sent once. The agent's `list_files` shows only the granted folder, in compact form. The step-limit display of `get_agent_run` is corrected. A test measures the token footprint of the 12-invoice run. | Phase 0 and Phase 1 |
+| #92 | **merged**, not yet in a release | System-key caps come from the chart (`osUI.agentSystemKey`, default 5 USD per 7 days, 300 requests and 1,000,000 tokens per minute). Rebuild updates an existing key through `/key/update`. Build rows say Created, Updated or Already in place. | Phase 0 and Phase 4 |
+| #89 | open | Confirmation gate for Ask the OS. | Owner decision D2, outside this plan |
+| #90 | open | Pins the `@sovereign-os` npm scope. | Outside this plan |
 
 Already shipped and live (image tag 0.9.12, as reported on 2026-11-19): reading text from PDFs
 with Docling, refreshing the worker's copy of system records, hardening of the older approvals
@@ -70,16 +69,35 @@ One benchmark is used to judge Phases 1 and 2.
 
 **Numbers.**
 
-| | Model calls | Tokens | Wall time | Outcome | Kind of number |
-|---|---|---|---|---|---|
-| Today | 10 | about 185,000 | not recorded | **fails** on the limit of 200,000 tokens per minute | Measured once on the live system, on the owner's real two-agent invoice team, not on the fixture |
-| After Phase 1 | at most 30 | at most 80,000 | at most 5 minutes | passes | **Estimate.** To be replaced by a measurement |
-| After Phase 2 | about 15 | at most 50,000 | at most 2 minutes | passes | **Estimate.** To be replaced by a measurement |
+The only numbers that exist today come from two different sources. They must not be mixed.
 
-Two honest notes on "today":
+*Source 1: the scripted-model test added by PR #91.* It runs the 12-invoice team with a scripted
+model and adds up the size of every request with the repository's own `estimateTokens` (characters
+divided by four). It counts **input only**. These are **estimates, not measurements of real tokens.**
 
-1. The gateway's limit counter shows about 20,000 tokens per call for that run. The code trace's own estimate for such a run is lower. The difference is not explained.
-2. The first task of Phase 1 is therefore to run the fixture on today's code and record a true baseline, including wall time.
+| | Estimated input tokens, whole run | Invoices the agents could see | Kind of number |
+|---|---|---|---|
+| Today (`main` before PR #91) | 199,820 | 9 of 12 | Estimate from the scripted-model test |
+| After PR #91 | 136,851 | 12 of 12 | Estimate from the scripted-model test |
+| After PR #91 plus a per-agent tool list | roughly 50,000 | 12 of 12 (expected) | **Calculated, not measured.** Not built |
+
+*Source 2: one real run on the production system* (2026-11-19), on the owner's real two-agent
+invoice team, not on the fixture: ten model calls, about 185,000 tokens by the gateway's counter,
+**failed** on the limit of 200,000 tokens per minute. Wall time was not recorded.
+
+*Targets.* These are **estimates, to be replaced by measurements** from the live benchmark run
+(real tokens, input and output, from the gateway).
+
+| | Model calls | Tokens (in + out, from the gateway) | Wall time | Outcome |
+|---|---|---|---|---|
+| After Phase 1 | at most 30 | at most 80,000 | at most 5 minutes | passes |
+| After Phase 2 | about 15 | at most 50,000 | at most 2 minutes | passes |
+
+Three honest notes:
+
+1. The scripted-model numbers and the gateway's numbers are not comparable one to one: different input (fixture versus real documents), estimate versus real tokenizer, input only versus input and output.
+2. Whether the Phase 1 target of 80,000 is still the right one, given the calculated 50,000 for a per-agent tool list alone, has to be decided when the first real measurement exists.
+3. The first task of Phase 1 is therefore a live run of the fixture on the current `main`, recording calls, tokens, peak minute and wall time.
 
 ---
 
@@ -93,13 +111,13 @@ Two honest notes on "today":
 |---|---|---|
 | 0.1 | Remove the gateway's public hostname (after owner decision 2). Upgrade LiteLLM from 1.90.0 to the long-term-support line. Set the salt key. Turn off the gateway's logging of prompt and reply text. | L1, L2, F16 (first half) |
 | 0.2 | System keys get random values, stored encrypted in the `agent_runs` database and readable by web and worker. Old guessable keys are deleted. One key scheme instead of two. No silent use of the shared key. | F3, F4, L3 |
-| 0.3 | Budgets reset. Limits and budgets come from settings, not from code. Rebuild updates an existing key. Real prices in the gateway. (In progress: PR #88, PR #92.) | F5, S5 |
-| 0.4 | A failed agent stops the run. A run that failed is stored as failed. (In progress: PR #91.) | F1, part of F15 |
-| 0.5 | On "too many requests": tell budget from rate limit; wait and retry. (In progress: PR #91.) Parking a throttled run comes in Phase 2. | F2 |
+| 0.3 | Budgets reset. Limits and budgets come from settings, not from code. Rebuild updates an existing key. Real prices in the gateway. (On main: PR #88 for the shared key's limits; PR #92 for system-key caps from the chart, a 7-day budget window and key update on Rebuild. Still open: the shared key's budget window, and prices in the gateway.) | F5, S5 |
+| 0.4 | A failed agent stops the run. A run that failed is stored as failed. (On main: PR #91 stops the run. Whether the job is then stored as failed was not checked.) | F1, part of F15 |
+| 0.5 | On "too many requests": tell budget from rate limit; wait and retry. (On main: PR #91 waits out a rate-limit 429 with a visible event.) Parking a throttled run comes in Phase 2. | F2 |
 | 0.6 | Tool arguments are checked before the tool runs. Broken arguments are not executed; the model gets one repair turn. The stop reason of a reply is read. An empty reply is not a success. | F10 |
 | 0.7 | Grants are enforced when a tool runs: every dataset, document, metric, connection, file or folder a call names is checked against the system's grants and access level. | F6 |
 | 0.8 | The team proposer stops writing invalid hand-off conditions. | F0 |
-| 0.9 | Build verifies what a run uses: the key the run will really use, one test call per model alias with a tool attached, the grants as the executor will enforce them. Rows that verify nothing are removed or relabelled. (Partly in progress: PR #92.) | F13 (first half), S1, S6 |
+| 0.9 | Build verifies what a run uses: the key the run will really use, one test call per model alias with a tool attached, the grants as the executor will enforce them. Rows that verify nothing are removed or relabelled. (Partly on main: PR #92 makes the Build rows say Created, Updated or Already in place.) | F13 (first half), S1, S6 |
 
 **What the user will notice**
 
@@ -144,12 +162,12 @@ Two honest notes on "today":
 
 | # | Change | Fixes |
 |---|---|---|
-| 1.0 | Run the "12 invoices" fixture on the code as it is after Phase 0. Record calls, tokens, peak minute and wall time. | Baseline |
-| 1.1 | Prompt diet: each tool described once; an agent sees only its own tools; the software-team sentence is removed from other teams. (In progress: PR #91.) | F7 |
+| 1.0 | Run the "12 invoices" fixture live on the code as it is after Phase 0. Record calls, real tokens, peak minute and wall time. Keep the scripted-model footprint test from PR #91 as the CI guard. | Baseline |
+| 1.1 | Prompt diet: each tool described once; an agent sees only its own tools; the software-team sentence is removed from other teams. (On main: PR #91 sends tool descriptions once. The per-agent tool list is still open; it is the step calculated at roughly 50,000 tokens above.) | F7 |
 | 1.2 | Results by reference: large tool results are stored once outside the conversation; the conversation and the checkpoint hold a reference. | F9, checkpoint size |
 | 1.3 | Old tool results are cleared from the model's input (the last 3 stay). A per-agent input budget (24,000 tokens) with summarising above it. The `tools` part is counted. | F9 |
 | 1.4 | The plan step becomes optional and is off by default. When on, it uses the agent's own model. | F11 |
-| 1.5 | Scoped listings: a listing tool returns only what is inside the granted folders, in pages. (In progress for `list_files`: PR #91.) | Token use, F6 |
+| 1.5 | Scoped listings: a listing tool returns only what is inside the granted folders, in pages. (On main for the agent's `list_files`: PR #91.) | Token use, F6 |
 | 1.6 | Hand-off passes the previous agent's answer, its structured results and references, not a cut-down copy. | F8 |
 | 1.7 | Lower default limits: 10 tool rounds per agent, 60 steps per run. | F9 |
 

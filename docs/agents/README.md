@@ -29,18 +29,21 @@ the other components.
 |---|---|
 | Code state | Commit `b47e2cd53f6fe2ba3def93f28e385f04fa91b899` on `main` (short: `b47e2cd5`), 2026-11-19 |
 | How it was verified | By reading the code and the chart. Nothing was executed and no test was run for these pages. |
-| Live facts | A small number of statements are marked "live" or "seen on the live system". They were observed on the production system on 2026-11-19 by the investigation that preceded these pages. They were not re-checked while writing. |
+| Live facts | Only the five facts listed below this table were checked on the running system (2026-11-19). A statement is marked "live" only if it is one of them. Everything else about today is from reading code. Where a page says what production does beyond these five facts, it is an inference and says so. |
+| Changes after that commit | PR #88, PR #91 and PR #92 were merged to `main` later on 2026-11-19. They are not yet in a release. These pages still describe `b47e2cd5`; where one of those pull requests changes a statement, the page says "fixed on main" and names it. The new `main` was not re-read line by line. |
 | Line numbers | From the code trace of the same commit. A sample was re-checked against a fresh clone while writing (the model client, the key handling, the failure path, the prompt texts, the chart's gateway settings). Not every line number was re-checked. |
 | Research | The feature lists and version numbers for LangGraph, LiteLLM and Langfuse come from research done on 2026-11-19. Its sources are listed at the end of each feature map. |
 | Path convention | Paths are relative to `os-ui/` unless they start with `charts/`, `docs/` or `values`. |
 
-Production facts used on these pages (all observed 2026-11-19):
+The five facts checked on the running system on 2026-11-19:
 
-- The run worker is switched on: one `os-ui-worker` replica. The web process (`os-ui`) also runs as one replica. The chart's default is the opposite, worker off (`charts/sovereign-agentic-os/values.yaml:1408-1409`).
-- LiteLLM is version 1.90.0. Langfuse is version 3.194.1.
-- The LiteLLM gateway is reachable from the internet at its own hostname, with only its own key check in front.
-- The OS has its own price book (`MODEL_PRICES_JSON`).
-- One real run of a two-agent invoice team used about 185,000 tokens in ten model calls, failed on the limit of 200,000 tokens per minute, and its failed first agent still handed off to the second.
+1. Production runs LiteLLM 1.90.0 and Langfuse 3.194.1.
+2. The LiteLLM gateway's hostname answers from the internet with only its own key check in front (401 without a key).
+3. GitHub lists security advisories that cover LiteLLM 1.90.0.
+4. The run worker is enabled. The chart's default is the opposite, worker off (`charts/sovereign-agentic-os/values.yaml:1408-1409`).
+5. One real run of a two-agent invoice team hit the limit of 200,000 tokens per minute (about 185,000 tokens in ten model calls by the gateway's counter), and its failed first agent still handed off to the second (seen in that run's event log).
+
+Not checked on the running system, although they follow from the code: budgets that never reset, the gateway's unredacted second record of each model call, grants not being enforced at run time, the guessable value of a system's key, and that production runs use the shared key (an inference from the code plus fact 4).
 
 ## Words used for certainty
 
@@ -52,6 +55,7 @@ Production facts used on these pages (all observed 2026-11-19):
 | estimate | A calculated number, not a measurement. To be replaced by a measurement. |
 | not verified / not confirmed | We do not know. |
 | in progress | A pull request is open. It is not merged. |
+| fixed on main | A pull request was merged after the verified commit. It is not yet in a release, and the pages were not re-verified against it. |
 | proposed | Not built. Not agreed. |
 
 ## How to keep these pages true
