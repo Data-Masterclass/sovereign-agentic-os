@@ -2,6 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import type { AgenticResult } from '@core/runtime/agentic';
+import type { PanelConfirmation } from '@tabs/agents/lib/build/phase-tools';
 
 /**
  * THE PHASE ROUTER — the interactive brain of the Software Delivery Team.
@@ -25,7 +26,8 @@ import type { AgenticResult } from '@core/runtime/agentic';
  *   build   → builder create_software (once) + commit real files (committed edge).
  *   feedback→ builder diff-commits the changed files only; loops until "ship it"
  *             (the tester→builder loop the old visited-once walk could not do).
- *   deploy  → deployer request_deploy → a Builder review card (never self-approve).
+ *   deploy  → deployer request_deploy → the user's Confirm button → a Builder review card
+ *             (never self-approve). Until Confirm, nothing is filed and the phase is `feedback`.
  */
 
 export type Phase = 'intake' | 'plan' | 'build' | 'feedback' | 'deploy' | 'done';
@@ -46,6 +48,13 @@ export type TeamSession = {
   appId: string | null;
   planApproved: boolean;
   updatedAt: string;
+  /**
+   * A call the turn's agent asked for that waits for THIS user's Confirm / Cancel (see
+   * `phase-tools.ts`). At most one; a new turn supersedes it. Never sent by the client.
+   */
+  pendingConfirm?: PanelConfirmation | null;
+  /** How the last confirmation ended — the typed record of a decline, kept with the session. */
+  lastConfirm?: { tool: string; outcome: 'filed' | 'failed' | 'not_filed_user_declined'; at: string } | null;
 };
 
 export function newSession(): TeamSession {
@@ -160,9 +169,10 @@ export function phaseGuidance(phase: Phase, appId: string | null): string {
       ].join(' ');
     case 'deploy':
       return [
-        `PHASE: DEPLOY. Call request_deploy for app ${app} to open the Builder review card, report the card`,
-        'id, and stop. You cannot approve it — that is a human Builder decision. Approval records the governed',
-        'go-live decision and rolls the app onto the in-cluster runner; the served URL appears once the pod is ready.',
+        `PHASE: DEPLOY. Call request_deploy for app ${app} once, then stop. The request is NOT filed by your call:`,
+        'the user is shown a Confirm and a Cancel button and it is filed only when they confirm. Say that it is',
+        'waiting for their confirmation — do not say a review card exists and do not invent a card id. You cannot',
+        'approve a deploy either — that is a human Builder decision after the request is filed.',
       ].join(' ');
     default:
       return 'PHASE: DONE. Summarise the status honestly and say what happens next.';

@@ -224,7 +224,8 @@ export const WRITE_TOOL_NAMES: ReadonlySet<string> = new Set(Object.keys(WRITE_T
  *      the engine, a schedule, `run_agent_system`.
  *   2. THE SOFTWARE TEAM PANEL — `tabs/agents/lib/build/phase-tools.ts` (`phaseToolExecutor`,
  *      wired in `runPhaseTurn`): the interactive, one-agent-per-turn builder refuses these names
- *      and anything the turn's agent was not offered. It has no hold at all — see that file.
+ *      and anything the turn's agent was not offered. It parks nothing for a second person;
+ *      instead `request_deploy` waits for the present user's own Confirm — see that file.
  *   3. APP TOOL CALLS — `tabs/software/lib/app-tool-call.ts`: `callAppTool` refuses a tool of the
  *      same NAME before any authorization, and `parseAppActions` rejects an `actions.yml` action
  *      declared under one. That door executes an APP's own tools, so the OS tools above are not

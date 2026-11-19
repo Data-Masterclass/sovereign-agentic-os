@@ -8,10 +8,10 @@ import type { LlmCall } from '@core/runtime/agentic';
 import { parseSystem, serializeSystem, type System } from '@tabs/agents/lib/system-schema';
 import { SOFTWARE_TEAM_YAML } from '@tabs/agents/lib/software-team';
 import { unmappedGrantNames, type OsToolDeps } from '@tabs/agents/lib/build/os-tools';
-import { runOsTeam, runPhaseTurn, osPreamble } from '@tabs/agents/lib/build/agentic-graph-server';
+import { runOsTeam, runPhaseTurn, resolvePhaseConfirmation, osPreamble } from '@tabs/agents/lib/build/agentic-graph-server';
 import { memoryApprovalPort } from '@tabs/agents/lib/engine/approval-port';
 import { phaseToolExecutor } from '@tabs/agents/lib/build/phase-tools';
-import { resetSession, saveSession } from '@tabs/agents/lib/build/phase-router';
+import { getSession, resetSession, saveSession } from '@tabs/agents/lib/build/phase-router';
 import { setModelPrices, _reset as resetModelPrices } from '@tabs/admin/lib/model-prices';
 
 /**
@@ -518,15 +518,15 @@ test('Team panel: the turn\'s OWN tool still runs — the door is an allow-list,
   assert.deepEqual(turn.steps, [{ tool: 'commit', isError: false }]);
 });
 
-test('Team panel, STATED AS IT IS: in the deploy phase request_deploy executes at once as the present user — this door has NO hold', async () => {
-  // Not an endorsement — a record. The engine path parks `request_deploy` for a second person
-  // (see the production-wiring test above). This interactive panel is a synchronous turn with no
-  // checkpoint to park on; the user reaches the deploy phase by typing a "ship it"-style phrase
-  // and the deployer's one offered tool then runs under their own role gates. Whether that typed
-  // phrase is confirmation enough is an open product decision (os-ui/ARCHITECTURE.md). If a hold
-  // is added here, this test is the one that must change.
+// --- The confirm step: the panel never files a deploy request on the model's say-so -------------
+//
+// Owner decision 2026-11-19 (this replaces the "STATED AS IT IS: no hold" test that recorded the
+// old behaviour): a `request_deploy` the deployer asks for is PARKED in the user's server-side
+// session, and only `resolvePhaseConfirmation` — the Confirm button's endpoint — executes it.
+
+/** Run the deploy turn with a model that calls `request_deploy`; returns what got through. */
+async function deployTurn(inner = innerSpy()) {
   inPhase('deploy');
-  const inner = innerSpy();
   const seen: string[][] = [];
   const turn = await runPhaseTurn({
     user: PANEL_USER,
@@ -535,10 +535,129 @@ test('Team panel, STATED AS IT IS: in the deploy phase request_deploy executes a
     llm: insistentLlm('request_deploy', seen),
     callTool: inner.exec,
   });
+  return { inner, seen, turn };
+}
+
+const noTrace = (async () => ({})) as unknown as NonNullable<Parameters<typeof resolvePhaseConfirmation>[0]['trace']>;
+
+test('Team panel: request_deploy in the deploy phase is NOT executed — it waits for the user\'s confirmation', async () => {
+  const { inner, seen, turn } = await deployTurn();
   assert.deepEqual(seen[0], ['request_deploy'], 'the deployer is offered exactly one tool');
-  assert.deepEqual(inner.calls, ['request_deploy']);
+  assert.deepEqual(inner.calls, [], 'the turn itself dispatches nothing');
   assert.equal(turn.role, 'deployer');
+  assert.deepEqual(turn.steps, [{ tool: 'request_deploy', isError: false }]);
+  assert.ok(turn.confirm, 'the turn reports what is waiting');
+  assert.equal(turn.confirm!.tool, 'request_deploy');
+  assert.equal(turn.confirm!.appId, 'app_1');
+  assert.equal(turn.phase, 'feedback', 'nothing is filed, so the session is not "done"');
+  assert.equal(getSession(PANEL_USER.id).pendingConfirm?.id, turn.confirm!.id);
   resetSession(PANEL_USER.id);
+});
+
+test('Team panel: Confirm executes the parked call ONCE, as that user, from the server-held arguments', async () => {
+  const { inner, turn } = await deployTurn();
+  const dispatched: { name: string; args: Record<string, unknown> }[] = [];
+  const exec = async (name: string, args: Record<string, unknown>) => {
+    dispatched.push({ name, args });
+    return { text: '{"cardId":"rev_1"}', isError: false };
+  };
+  const res = await resolvePhaseConfirmation({ user: PANEL_USER, confirmationId: turn.confirm!.id, decision: 'confirm', callTool: exec, trace: noTrace });
+  assert.deepEqual(inner.calls, []);
+  assert.deepEqual(dispatched, [{ name: 'request_deploy', args: { appId: 'app_1', decision: 'approve' } }]);
+  assert.ok(res.ok && res.outcome === 'filed');
+  assert.equal(res.ok && res.phase, 'done');
+  assert.equal(getSession(PANEL_USER.id).pendingConfirm ?? null, null);
+  // A second press finds nothing and dispatches nothing.
+  const again = await resolvePhaseConfirmation({ user: PANEL_USER, confirmationId: turn.confirm!.id, decision: 'confirm', callTool: exec, trace: noTrace });
+  assert.deepEqual(again.ok ? null : again.code, 'not_found');
+  assert.equal(dispatched.length, 1);
+  resetSession(PANEL_USER.id);
+});
+
+test('Team panel: a confirm request with no parked call, a wrong id, or from another user executes nothing', async () => {
+  const { turn } = await deployTurn();
+  const inner = innerSpy();
+  const other: CurrentUser = { id: 'u-other', name: 'Otto Other', domains: ['platform'], role: 'admin' };
+  resetSession(other.id);
+  for (const attempt of [
+    { user: PANEL_USER, confirmationId: 'made-up' },
+    { user: PANEL_USER, confirmationId: '' },
+    { user: other, confirmationId: turn.confirm!.id },
+  ]) {
+    const res = await resolvePhaseConfirmation({ ...attempt, decision: 'confirm', callTool: inner.exec, trace: noTrace });
+    assert.deepEqual(res.ok ? null : res.code, 'not_found');
+  }
+  assert.deepEqual(inner.calls, []);
+  assert.equal(getSession(PANEL_USER.id).pendingConfirm?.id, turn.confirm!.id, 'a failed attempt does not consume the real one');
+  resetSession(PANEL_USER.id);
+});
+
+test('Team panel: Cancel files nothing, records a typed "not filed, user declined" outcome, and the team cannot retry on its own', async () => {
+  const { turn } = await deployTurn();
+  const inner = innerSpy();
+  const traced: { decision?: string; output: unknown }[] = [];
+  const trace = (async (e: { decision?: string; output: unknown }) => { traced.push(e); return {}; }) as unknown as typeof noTrace;
+  const res = await resolvePhaseConfirmation({ user: PANEL_USER, confirmationId: turn.confirm!.id, decision: 'cancel', callTool: inner.exec, trace });
+  assert.deepEqual(res, { ok: true, outcome: 'not_filed', code: 'user_declined', tool: 'request_deploy', appId: 'app_1', phase: 'feedback' });
+  assert.deepEqual(inner.calls, []);
+  const session = getSession(PANEL_USER.id);
+  assert.equal(session.pendingConfirm ?? null, null);
+  assert.equal(session.lastConfirm?.outcome, 'not_filed_user_declined');
+  assert.deepEqual(traced.map((t) => [t.decision, t.output]), [['deny', { status: 'not_filed', code: 'user_declined' }]]);
+  // The declined call cannot be confirmed afterwards…
+  const late = await resolvePhaseConfirmation({ user: PANEL_USER, confirmationId: turn.confirm!.id, decision: 'confirm', callTool: inner.exec, trace: noTrace });
+  assert.equal(late.ok, false);
+  // …and the next turn is the builder's, where request_deploy is not offered: no loop.
+  const next = await runPhaseTurn({
+    user: PANEL_USER,
+    yaml: SOFTWARE_TEAM_YAML,
+    messages: [{ role: 'user', content: 'make the header blue' }],
+    llm: insistentLlm('request_deploy'),
+    callTool: inner.exec,
+  });
+  assert.equal(next.role, 'builder');
+  assert.deepEqual(next.steps, [{ tool: 'request_deploy', isError: true }]);
+  assert.equal(next.confirm, null);
+  assert.deepEqual(inner.calls, []);
+  resetSession(PANEL_USER.id);
+});
+
+test('Team panel: a new message drops a call that was waiting — it can no longer be confirmed', async () => {
+  const { turn } = await deployTurn();
+  const inner = innerSpy();
+  await runPhaseTurn({
+    user: PANEL_USER,
+    yaml: SOFTWARE_TEAM_YAML,
+    messages: [{ role: 'user', content: 'actually, change the title first' }],
+    llm: insistentLlm('commit'),
+    callTool: inner.exec,
+  });
+  const res = await resolvePhaseConfirmation({ user: PANEL_USER, confirmationId: turn.confirm!.id, decision: 'confirm', callTool: inner.exec, trace: noTrace });
+  assert.equal(res.ok, false);
+  assert.deepEqual(inner.calls, ['commit']);
+  resetSession(PANEL_USER.id);
+});
+
+test('Team panel: a confirmed call the tool itself refuses is reported as failed, not filed', async () => {
+  const { turn } = await deployTurn();
+  const res = await resolvePhaseConfirmation({
+    user: PANEL_USER,
+    confirmationId: turn.confirm!.id,
+    decision: 'confirm',
+    callTool: async () => ({ text: 'Error: Only the creator or a Builder can request a deploy', isError: true }),
+    trace: noTrace,
+  });
+  assert.ok(res.ok && res.outcome === 'failed');
+  assert.equal(res.ok && res.phase, 'feedback');
+  resetSession(PANEL_USER.id);
+});
+
+test('phaseToolExecutor: with nothing to park on, a confirmed tool is refused — fail closed', async () => {
+  const inner = innerSpy();
+  const refused = await phaseToolExecutor(inner.exec, ['request_deploy'])('request_deploy', { appId: 'app_1' });
+  assert.equal(refused.isError, true);
+  assert.equal((JSON.parse(refused.text) as { error: { code: string } }).error.code, 'confirmation_required');
+  assert.deepEqual(inner.calls, []);
 });
 
 test('phaseToolExecutor: a forbidden name is refused even when a yaml OFFERS it; prototype names are just un-offered', async () => {

@@ -88,6 +88,12 @@
 .sw-team-node { color: var(--gold-deep); }
 [data-theme='dark'] .sw-team-node { color: var(--gold-light); }
 .sw-team-arrow { color: var(--text-faint); }
+.sw-team-confirm {
+  margin-top: 10px; padding: 12px 14px;
+  border: 1px solid var(--gold-deep); border-radius: 10px;
+  font-size: 13px; line-height: 1.5;
+}
+.sw-team-confirm-title { font-weight: 600; margin-bottom: 4px; }
 
 /* ---- Section heading + quiet links ---- */
 .sw-sec-title {
