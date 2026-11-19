@@ -19,7 +19,7 @@ The Agents tab is where you define, build, and run agent systems inside the OS. 
 5. **Build.** Call `build_agent_system` to compile, validate, and verify the system. The response includes a `status` (`success` | `failed`), a `checks` array, and Langfuse trace IDs for every verification run. A failed build returns typed errors per file.
 6. **Run.** Call `run_agent_system` with the `systemId` and a `message` (or a `messages` history). What runs is a real **LangGraph `StateGraph`** compiled from your `system.yaml`: one subgraph per agent (plan → act → tools → route), the edges you declared, your `when` guards evaluated, a supervisor that *decides* which member goes next. It runs in-process **AS YOU** — every tool call the team makes dispatches through the SAME governed door as your own MCP calls (grant-scoped, OPA-pre-gated per system, role-floored per tool), so a team can never exceed its declared grants nor your role.
 
-   You get back `runId` — one id that is **three things at once**: the LangGraph thread id, the Langfuse trace id, and the handle for every follow-up tool below. Also `traceUrl`, the reply, and the per-node governed tool steps. If a grant names a tool with no governed MCP tool behind it (a retired legacy name, a typo), the call is a `bad_request` that NAMES the tool — fix `system.yaml` with `commit_agent_files`.
+   You get back `runId` — one id that is **three things at once**: the LangGraph thread id, the Langfuse trace id, and the handle for every follow-up tool below. Also the reply, the per-node governed tool steps and — only when this deployment publishes the Langfuse console — `traceUrl`. If a grant names a tool with no governed MCP tool behind it (a retired legacy name, a typo), the call is a `bad_request` that NAMES the tool — fix `system.yaml` with `commit_agent_files`.
 
    **A long run does not block you.** In worker mode the call may return `queued: true` with the `runId`; follow it with `get_agent_run`.
 
@@ -77,7 +77,7 @@ build_agent_system({ id: "as_11C..." })
 → { status: "success", checks: ["grants_valid","knowledge_resolved"], traceId: "lf_..." }
 
 run_agent_system({ systemId: "as_11C...", message: "Reconcile this week's invoice exceptions" })
-→ { runId: "run_1b4e...", traceUrl: "https://langfuse…/trace/run_1b4e...",
+→ { runId: "run_1b4e...", /* traceUrl: only when this deployment publishes the Langfuse console */
     parked: true, heldApprovals: [{ approvalId: "ap_7K...", tool: "request_promotion", node: "reconciler" }],
     path: ["reconciler"], nodes: [{ node: "reconciler", model: "…", steps: [{ tool: "search_knowledge", isError: false }] }] }
    — the run PAUSED on a write that needs a human; nothing was written.

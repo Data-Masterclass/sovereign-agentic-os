@@ -85,9 +85,50 @@ Args: dict "ctx" $ "key" "<ingress host key>" "fallback" "<local url>"
 {{- $ing := .ctx.Values.ingress | default dict -}}
 {{- if $ing.enabled -}}
 {{- $host := index ($ing.hosts | default dict) .key | default "" -}}
+{{- /* A RESTRICTED console (soa.restrictedHosts) has a public URL only when its route is
+       actually rendered. A hostname left in the values without the opt-in must give "" here,
+       or every "open in Langfuse" link in the OS would point at a host that no longer answers. */ -}}
+{{- if and $host (has .key (include "soa.restrictedHosts" . | fromJsonArray)) -}}
+{{- if ne (include "soa.restrictedExposed" (dict "ctx" .ctx "key" .key)) "true" -}}{{- $host = "" -}}{{- end -}}
+{{- end -}}
 {{- if $host -}}https://{{ $host }}{{- end -}}
 {{- else -}}
 {{- .fallback -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+The consoles that get NO public route unless an operator opts in AND protects the route:
+  litellm  — the model gateway: provider credentials and an admin API;
+  langfuse — every prompt, completion and tool result of every run, behind one login.
+Neither needs to be called from outside the cluster (os-ui, the worker, the gateway and the Jobs
+use the in-cluster Services). `scripts/check-consoles-not-public.mjs` holds this list too.
+*/}}
+{{- define "soa.restrictedHosts" -}}
+["litellm","langfuse"]
+{{- end -}}
+
+{{/*
+"true" when a restricted console is deliberately published: `ingress.restricted.<key>.expose`
+is true. Fails the render when the opt-in carries no protection annotation — a public route to
+one of these consoles with nothing in front of it is the state this chart exists to prevent.
+Args: dict "ctx" $ "key" "<litellm|langfuse>"
+*/}}
+{{- define "soa.restrictedExposed" -}}
+{{- $r := index ((.ctx.Values.ingress | default dict).restricted | default dict) .key | default dict -}}
+{{- if eq (toString $r.expose) "true" -}}
+{{- $a := $r.annotations | default dict -}}
+{{- $allow := index $a "nginx.ingress.kubernetes.io/whitelist-source-range" | default "" -}}
+{{- $authUrl := index $a "nginx.ingress.kubernetes.io/auth-url" | default "" -}}
+{{- $basic := and (index $a "nginx.ingress.kubernetes.io/auth-type" | default "") (index $a "nginx.ingress.kubernetes.io/auth-secret" | default "") -}}
+{{- $mtls := eq (index $a "nginx.ingress.kubernetes.io/auth-tls-verify-client" | default "") "on" -}}
+{{- if not (or $allow $authUrl $basic $mtls) -}}
+{{- fail (printf "ingress.restricted.%s.expose is true but ingress.restricted.%s.annotations sets no protection. Add one of: nginx.ingress.kubernetes.io/whitelist-source-range, nginx.ingress.kubernetes.io/auth-url, auth-type + auth-secret, or auth-tls-verify-client: \"on\". See docs/components/litellm.md \"Not reachable from the internet\"." .key .key) -}}
+{{- end -}}
+{{- if or (contains "0.0.0.0/0" $allow) (contains "::/0" $allow) -}}
+{{- fail (printf "ingress.restricted.%s.annotations: whitelist-source-range contains 0.0.0.0/0 or ::/0, which is no allowlist at all." .key) -}}
+{{- end -}}
+true
 {{- end -}}
 {{- end -}}
 

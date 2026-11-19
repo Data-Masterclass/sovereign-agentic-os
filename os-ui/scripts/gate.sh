@@ -65,11 +65,13 @@ node ../scripts/check-worker-env.mjs
 # pods — the worker makes the model calls — and must be ABSENT when unset, so the built-in list in
 # core/models/capabilities.ts stays in force. Rendered YAML again, so same skip rules as above.
 node ../scripts/check-image-allowlist-chart.mjs
-# The model gateway (LiteLLM) must have NO public route: it holds the provider credentials and an
-# admin API. Renders the default and the STACKIT profile and fails on any Ingress whose backend is
-# the gateway Service; a bare `ingress.hosts.litellm` must render nothing, and the explicit
-# `ingress.exposeGateway` opt-in may not appear in a committed profile. Same skip rules as above.
-node ../scripts/check-gateway-not-public.mjs
+# The model gateway (LiteLLM) and Langfuse must have NO public route: one holds the provider
+# credentials and an admin API, the other every prompt and completion. Renders the default and
+# the STACKIT profile and fails on any Ingress whose backend is either Service; a bare
+# `ingress.hosts.<key>` must render nothing (and leave the Langfuse console URL empty), an opt-in
+# without a protection annotation must fail the render, and no committed profile may opt in.
+# Same skip rules as above.
+node ../scripts/check-consoles-not-public.mjs
 # B3 review H-1/H-5/H-6: the reconciler must run on a DEFAULT install, the Dagster run pod must
 # connect as the user rules.json allows, and the os-ui Role must not grant namespace-wide Secrets.
 # B4 review H-2 rides on the same check: the os-ui Role must carry `batch`/`cronjobs` in EVERY

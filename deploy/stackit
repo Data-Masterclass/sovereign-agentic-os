@@ -59,7 +59,7 @@ cmd_urls(){
   c "Sovereign Agentic OS — STACKIT consoles (once ingress is up):"
   printf "  %-14s https://%s\n" "OS UI"        "os.$d"
   printf "  %-14s https://%s  (admins only; the gateway has no public host)\n" "LLM Gateway" "os.$d/tools/litellm/ui"
-  printf "  %-14s https://%s\n" "Langfuse"     "langfuse.$d"
+  printf "  %-14s %s\n" "Langfuse"     "no public host — kubectl -n agentic-os port-forward svc/agentic-os-langfuse-web 3000:3000"
   printf "  %-14s https://%s\n" "Superset"     "superset.$d"
   printf "  %-14s https://%s\n" "Forgejo"      "forgejo.$d"
   printf "  %-14s https://%s\n" "Argo CD"      "argocd.$d"
@@ -70,8 +70,11 @@ cmd_urls(){
 cmd_open(){
   local d t="${1:-os}"; d="$(domain)"
   [ "$d" = "<your-domain>" ] && die "No domain yet — set STACKIT_DNS_NAME in deploy/.env.stackit."
-  # The LLM gateway has no public host — its console is served through the OS UI.
-  case "$t" in litellm|gateway) open "https://os.$d/tools/litellm/ui"; return ;; esac
+  # The LLM gateway and Langfuse have no public host (chart: ingress.restricted).
+  case "$t" in
+    litellm|gateway) open "https://os.$d/tools/litellm/ui"; return ;;
+    langfuse) die "Langfuse has no public host. Run: kubectl -n agentic-os port-forward svc/agentic-os-langfuse-web 3000:3000  — then open http://localhost:3000" ;;
+  esac
   open "https://$t.$d"
 }
 

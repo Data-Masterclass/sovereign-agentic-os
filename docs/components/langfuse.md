@@ -6,6 +6,44 @@ the graph's nodes as spans, every model call as a generation with token usage, e
 as a span carrying the governance decision, and the LLM-judge verdict as a score on that trace.
 Backed by Postgres (metadata), ClickHouse (analytics), Valkey (queue) and MinIO (event blobs).
 
+## Not reachable from the internet
+
+Langfuse has **no public route**, on any profile. It holds every prompt, completion and tool
+result of every run behind a single login, and nothing outside the cluster needs it: os-ui, the
+worker and the gateway send traces to the in-cluster Service `agentic-os-langfuse-web:3000`
+(`LANGFUSE_URL`, `LANGFUSE_HOST`), and the OS reads traces back the same way.
+
+* `ingress.hosts.langfuse` alone renders nothing — also for a release whose values still carry
+  the hostname. The route needs `ingress.restricted.langfuse.expose: true` **and** a protection
+  annotation (the render fails without one); see `docs/components/litellm.md` for the shape.
+  `scripts/check-consoles-not-public.mjs` enforces it in `gate.sh`.
+* **Trace links.** With no route the chart gives the OS an **empty** `LANGFUSE_CONSOLE_URL`, and
+  every "open in Langfuse" affordance disappears instead of pointing at a dead host: the Run
+  panel's "Full trace" link, `traceUrl` from `run_agent_system` / `get_agent_run` /
+  `resume_agent_run` (absent), Monitoring's run rows and "Langfuse traces" link, the Components
+  page's "Open" button, and the engineering view (which says the trace exists but has no address
+  here). A run recorded while the console was public no longer shows its stored link either: the
+  address is derived from the current console URL. What stays in the OS, for everyone it is
+  meant for: the Run panel's own steps and Monitoring's own trace reads.
+* **Why there is no in-OS view.** Langfuse cannot be embedded through the OS tool proxy: it is a
+  Next.js app whose assets and API calls are root-absolute and collide with the OS's own routes
+  (`core/infra/tool-proxy.ts`, `ownTab`). The entry therefore shows "opens in its own tab" with
+  no button when the console has no address.
+* **Operator access:**
+  ```bash
+  kubectl -n agentic-os port-forward svc/agentic-os-langfuse-web 3000:3000   # http://localhost:3000
+  ```
+  Langfuse redirects to its own base URL after sign-in
+  (`langfuse.langfuse.nextauth.url`; the STACKIT profile now sets `http://localhost:3000`). **A
+  release that still carries the old public value there keeps redirecting to the removed host**
+  until that value is changed — not verified on a cluster. If operators need the console from
+  their desks, publish it behind an IP allowlist with the opt-in above and set
+  `nextauth.url` to that host in the same overlay.
+
+**After upgrading a cluster that had the route:** Helm deletes `agentic-os-langfuse-web-ingress`
+(and any annotation added to it by hand) and its Certificate; the TLS Secret
+`langfuse.<zone>-tls` and the DNS record remain and can be removed by hand.
+
 ## What ships (and where in the code)
 
 | Concern | Where | What |
@@ -102,7 +140,7 @@ kubectl -n agentic-os port-forward svc/agentic-os-langfuse-web 3000:3000
 **Login:** `admin@datamasterclass.com` / `langfuse-local-dev-admin`
 
 ## How to use it
-- **Open a run's trace:** the Run panel's "Full trace: open in Langfuse", or `traceUrl` from
+- **Open a run's trace** (only on a deployment that publishes the console — see "Not reachable from the internet"): the Run panel's "Full trace: open in Langfuse", or `traceUrl` from
   `run_agent_system` / `get_agent_run`. The link opens that one trace, never a list.
 - **See what one agent spent:** filter traces by tag `agent:<systemId>`; one run by `run:<runId>`.
   The same vocabulary is what LiteLLM tags its spend with (`docs/components/litellm.md`).

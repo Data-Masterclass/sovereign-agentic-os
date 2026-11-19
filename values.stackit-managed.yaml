@@ -157,11 +157,13 @@ langfuse:
     host: "REPLACE-postgres-flex-host"   # Langfuse metadata DB -> managed PostgreSQL
   langfuse:
     nextauth:
-      # MUST be the public console URL. The subchart default is http://localhost:3000,
-      # which makes NextAuth redirect the browser to localhost after a successful
-      # login — the UI looks "unable to log in" (2026-10-21). Same REPLACE token as
-      # the ingress hosts; render-values.sh fills it.
-      url: "https://langfuse.REPLACE-DNS-NAME"
+      # MUST be the address the browser really uses: NextAuth redirects there after a
+      # successful login, and a wrong value looks like "unable to log in" (2026-10-21).
+      # Langfuse has no public route (ingress.restricted.langfuse), so its own base URL is the
+      # port-forward address an operator uses:
+      #   kubectl -n agentic-os port-forward svc/agentic-os-langfuse-web 3000:3000
+      # If you publish it behind an allowlist, set this to https://<that host> in the same overlay.
+      url: "http://localhost:3000"
   s3:
     endpoint: "https://object.storage.eu01.onstackit.cloud" # blob store -> managed S3
 
@@ -190,7 +192,8 @@ osUI:
   opensearchUrl: "https://REPLACE-opensearch-host:9200"
   # Browser-reachable consoles -> the public Ingress hosts (was localhost port-forwards).
   supersetUrl: "https://superset.REPLACE-DNS-NAME"
-  langfuseConsoleUrl: "https://langfuse.REPLACE-DNS-NAME"
+  # No langfuseConsoleUrl: Langfuse has no public route, so the OS shows no "open in Langfuse"
+  # link (the chart derives an empty console URL from the missing ingress host).
   openmetadataUrl: "https://openmetadata.REPLACE-DNS-NAME"
 
 # A3 (checklist A28): the scoped agent key's allowlist MUST cover every alias the OS can
@@ -357,9 +360,9 @@ ingress:
   tlsIssuer: letsencrypt-prod
   hosts:
     osUI: "os.REPLACE-DNS-NAME"
-    # No `litellm:` host — the model gateway has no public route (ingress.exposeGateway stays
-    # false). Admins reach its console through the OS at /tools/litellm/ui.
-    langfuse: "langfuse.REPLACE-DNS-NAME"
+    # No `litellm:` and no `langfuse:` host — neither console has a public route
+    # (ingress.restricted.*.expose stays false). Admins reach the LiteLLM console through the OS
+    # at /tools/litellm/ui; both are reachable with `kubectl port-forward`.
     openmetadata: "openmetadata.REPLACE-DNS-NAME"
     superset: "superset.REPLACE-DNS-NAME"
     # Terminal + Workbench broker hosts (used when terminal/workbench are enabled).
