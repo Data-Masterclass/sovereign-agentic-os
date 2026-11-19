@@ -7,6 +7,9 @@ import { useRef, useState } from 'react';
 
 type Msg = { role: 'user' | 'assistant'; content: string };
 
+/** A deploy request the team asked for. Nothing is filed until the user presses Confirm. */
+type PendingConfirm = { id: string; tool: string; appId: string | null; appName: string | null };
+
 /**
  * "Build with the Software Delivery Team" — the Software-tab launcher for the
  * governed team, rebuilt as an INTERACTIVE, phase-driven conversation. One turn
@@ -15,7 +18,9 @@ type Msg = { role: 'user' | 'assistant'; content: string };
  * iterate as diff commits — every tool governed, run AS YOU. Progress STREAMS
  * (SSE) live: the current phase + each tool step, so it never looks silent, and a
  * failure shows its REAL cause (timeout · budget · model · offline), never a
- * catch-all. Deploy stays a human Builder decision in Deploy reviews.
+ * catch-all. A deploy request is filed only when you press Confirm on the card the team
+ * leaves in the chat; Cancel files nothing. Deploy itself stays a human Builder decision in
+ * Deploy reviews.
  *
  * Same visual grammar as the build chat (sw-create card + chat-log/bubble) — no
  * new design system.
@@ -36,6 +41,8 @@ export default function TeamPanel({ onBuilt }: { onBuilt?: () => void }) {
   const [busy, setBusy] = useState(false);
   const [phase, setPhase] = useState<string>('');
   const [progress, setProgress] = useState<string>('');
+  const [pending, setPending] = useState<PendingConfirm | null>(null);
+  const [deciding, setDeciding] = useState(false);
   const logRef = useRef<HTMLDivElement>(null);
 
   function scrollLog() {
@@ -52,6 +59,8 @@ export default function TeamPanel({ onBuilt }: { onBuilt?: () => void }) {
     setInput('');
     setBusy(true);
     setProgress('');
+    // A new message replaces whatever was waiting for confirmation (the server drops it too).
+    setPending(null);
     let builtSomething = false;
     try {
       const res = await fetch('/api/software/team', {
@@ -91,10 +100,16 @@ export default function TeamPanel({ onBuilt }: { onBuilt?: () => void }) {
           } else if (event === 'step') {
             const tool = String(data.tool ?? '');
             if (tool === 'create_software' || tool === 'commit') builtSomething = true;
-            setProgress(`${data.isError ? '⚠︎' : '✓'} ${tool}`);
+            setProgress(data.awaiting ? `${tool} — waiting for your confirmation` : `${data.isError ? '⚠︎' : '✓'} ${tool}`);
           } else if (event === 'message') {
             setPhase(String(data.phase ?? ''));
             setMessages((m) => [...m, { role: 'assistant', content: String(data.content ?? '(no reply)') }]);
+            const c = data.confirm as Partial<PendingConfirm> | null | undefined;
+            setPending(
+              c && typeof c.id === 'string'
+                ? { id: c.id, tool: String(c.tool ?? ''), appId: c.appId ?? null, appName: c.appName ?? null }
+                : null,
+            );
           } else if (event === 'error') {
             const kind = String(data.kind ?? 'error');
             setMessages((m) => [...m, { role: 'assistant', content: `⚠︎ ${data.message} (${kind})` }]);
@@ -108,6 +123,38 @@ export default function TeamPanel({ onBuilt }: { onBuilt?: () => void }) {
     } finally {
       setBusy(false);
       setProgress('');
+      scrollLog();
+    }
+  }
+
+  /** Confirm files the waiting request as you; Cancel files nothing. Either way the card goes. */
+  async function decide(decision: 'confirm' | 'cancel') {
+    if (!pending || deciding) return;
+    setDeciding(true);
+    const note = (content: string) => setMessages((m) => [...m, { role: 'assistant', content }]);
+    try {
+      const res = await fetch('/api/software/team/confirm', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ confirmationId: pending.id, decision }),
+      });
+      const body = (await res.json().catch(() => ({}))) as { outcome?: string; result?: string; phase?: string; error?: string };
+      if (!res.ok) {
+        note(`⚠︎ Nothing was filed: ${body.error ?? res.status}`);
+      } else if (body.outcome === 'filed') {
+        note(`Deploy request filed. A Builder now reviews it in Deploy reviews; nothing is live yet.\n${body.result ?? ''}`.trim());
+        onBuilt?.();
+      } else if (body.outcome === 'failed') {
+        note(`⚠︎ The deploy request was not filed: ${body.result ?? 'the request was refused'}`);
+      } else {
+        note('Deploy request not filed — you cancelled it. Say “ship it” when you want to ask again.');
+      }
+      if (body.phase) setPhase(body.phase);
+    } catch (e) {
+      note(`⚠︎ Could not reach the server, so nothing was filed: ${(e as Error).message}`);
+    } finally {
+      setPending(null);
+      setDeciding(false);
       scrollLog();
     }
   }
@@ -178,6 +225,30 @@ export default function TeamPanel({ onBuilt }: { onBuilt?: () => void }) {
             </div>
           ) : null}
 
+          {pending && !busy ? (
+            <div className="sw-team-confirm" role="group" aria-label="Confirm deploy request">
+              <div className="sw-team-confirm-title">File a deploy request?</div>
+              <div className="sw-team-confirm-body">
+                App: <strong>{pending.appName ?? pending.appId ?? 'unknown'}</strong>
+                {pending.appName && pending.appId ? <span className="mono"> ({pending.appId})</span> : null}
+                <br />
+                This asks a Builder to review the app for go-live (security scan, access, changes).
+                It is filed in your name. Nothing goes live until a Builder approves it.
+              </div>
+              <div className="row" style={{ marginTop: 8, gap: 8 }}>
+                <button type="button" className="btn" onClick={() => decide('confirm')} disabled={deciding}>
+                  {deciding ? <span className="spin" /> : 'Confirm — file request'}
+                </button>
+                <button type="button" className="btn ghost" onClick={() => decide('cancel')} disabled={deciding}>
+                  Cancel
+                </button>
+              </div>
+              <div className="sw-create-note" style={{ marginTop: 8 }}>
+                Nothing has been filed yet. Sending a new message also drops this request.
+              </div>
+            </div>
+          ) : null}
+
           <div className="row" style={{ marginTop: 10, gap: 10, alignItems: 'flex-end' }}>
             <textarea
               rows={2}
@@ -195,8 +266,8 @@ export default function TeamPanel({ onBuilt }: { onBuilt?: () => void }) {
             </button>
           </div>
           <p className="sw-create-note">
-            One turn at a time — reply to the team’s questions in the same chat. Deploy opens a Builder review card;
-            it never goes live on its own.
+            One turn at a time — reply to the team’s questions in the same chat. A deploy request is filed only
+            when you confirm it, and then opens a Builder review card; it never goes live on its own.
           </p>
         </div>
       ) : null}

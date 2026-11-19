@@ -2,6 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
+import { randomUUID } from 'node:crypto';
 import { config } from '@core/kernel/config';
 import { roleModel } from '@core/models/roles';
 import { inputBudget, modelContext } from '@core/models/context-windows';
@@ -16,7 +17,12 @@ import type { RunEnv } from '@core/kernel/object-lifecycle';
 import { tabToolExecutor, liteLlmCaller } from '@core/runtime/runtime';
 import type { CallerContext } from '@core/infra/litellm-credential';
 import { trackUsage, type ToolSpec, type AgenticStep, type LlmCall, type ToolExecutor, type UsageTracker } from '@core/runtime/agentic';
-import { phaseCallableTools, phaseToolExecutor } from '@tabs/agents/lib/build/phase-tools';
+import {
+  PANEL_CONFIRMED_TOOLS,
+  phaseCallableTools,
+  phaseToolExecutor,
+  type PanelConfirmation,
+} from '@tabs/agents/lib/build/phase-tools';
 import { loadBuildSpec } from '@core/tabs-meta/build-spec';
 import { parseSystem, type System } from '@tabs/agents/lib/system-schema';
 import { compile } from '@tabs/agents/lib/langgraph-compile';
@@ -505,7 +511,20 @@ export type PhaseTurnResult = {
   appId: string | null;
   /** The governed tool steps this turn took (for the UI). */
   steps: { tool: string; isError: boolean }[];
+  /**
+   * A call this turn asked for that was NOT executed and waits for the user's Confirm / Cancel
+   * (`resolvePhaseConfirmation`). Null on every turn that asked for no such call.
+   */
+  confirm: PhaseConfirmView | null;
 };
+
+/** What the panel shows the user before a parked call runs. No secrets: the tool and its own arguments. */
+export type PhaseConfirmView = { id: string; tool: string; appId: string | null; args: Record<string, unknown> };
+
+function confirmView(c: PanelConfirmation, sessionAppId: string | null): PhaseConfirmView {
+  const argApp = typeof c.args.appId === 'string' && c.args.appId ? c.args.appId : null;
+  return { id: c.id, tool: c.tool, appId: argApp ?? sessionAppId, args: c.args };
+}
 
 export type RunPhaseTurnInput = {
   user: CurrentUser;
@@ -539,8 +558,17 @@ export async function runPhaseTurn(input: RunPhaseTurnInput): Promise<PhaseTurnR
   // offered list used to be advice — the executor below was the whole Software tab, and
   // `runAgentic` does not check a call against its specs — so a model emitting `decide_deploy`,
   // `promote`, `delete` or `archive` had it dispatched as the user. Now a name closed to agents is
-  // dropped from the specs and refused, and anything not offered this turn is refused. There is
-  // NO hold on this door (see `phase-tools.ts`): an offered tool runs at once, as the present user.
+  // dropped from the specs and refused, and anything not offered this turn is refused.
+  // THE CONFIRM STEP: a `PANEL_CONFIRMED_TOOLS` call (`request_deploy`) is not dispatched either —
+  // it is parked here and saved with the session below; only `resolvePhaseConfirmation` runs it.
+  // A new turn starts with no parked call: whatever was waiting from the last turn is superseded.
+  let parked: PanelConfirmation | null = null;
+  const park = (tool: string, args: Record<string, unknown>): PanelConfirmation => {
+    // The same call asked twice in one turn is ONE confirmation, not two.
+    if (parked && parked.tool === tool && JSON.stringify(parked.args) === JSON.stringify(args)) return parked;
+    parked = { id: randomUUID(), tool, args, createdAt: new Date().toISOString() };
+    return parked;
+  };
   const turnNode = ir.nodes.find((n) => n.id === role);
   const offered = phaseCallableTools(specsFor(turnNode?.tools ?? []).map((t) => t.name));
   const run = await runNode(
@@ -551,7 +579,7 @@ export async function runPhaseTurn(input: RunPhaseTurnInput): Promise<PhaseTurnR
       // A3: attributed — the runner, the system's domain and the Software tab (no run id: not a checkpointed run).
       llm: input.llm ?? liteLlmCaller({ userId: input.user.id, domain: sys.system.domain, tab: 'software' }),
       toolSpecsFor: (node) => specsFor(node.tools).filter((t) => offered.includes(t.name)),
-      callTool: phaseToolExecutor(input.callTool ?? tabToolExecutor(input.user, 'software'), offered),
+      callTool: phaseToolExecutor(input.callTool ?? tabToolExecutor(input.user, 'software'), offered, park),
       preamble: preamble(),
       reasoningModel: roleModel('reasoning'),
       // Tool-calling fallback model (per-agent pin still wins) — Qwen by default
@@ -565,13 +593,19 @@ export async function runPhaseTurn(input: RunPhaseTurnInput): Promise<PhaseTurnR
   );
 
   const signals = extractSignals(run.result);
-  const nextPhase = postRoute(phase, signals);
+  // `parked` is assigned inside the `park` closure, which control-flow analysis cannot see.
+  const waiting = parked as PanelConfirmation | null;
+  // A parked call means the deploy request is NOT filed: the session goes back to `feedback`
+  // (where `request_deploy` is not offered), never to `done`. Confirm moves it on.
+  const nextPhase = waiting ? 'feedback' : postRoute(phase, signals);
   const appId = signals.appId ?? session.appId;
   saveSession(key, {
     phase: nextPhase,
     appId,
     planApproved: session.planApproved || phase === 'build',
     updatedAt: session.updatedAt,
+    pendingConfirm: waiting,
+    lastConfirm: session.lastConfirm ?? null,
   });
 
   return {
@@ -580,5 +614,85 @@ export async function runPhaseTurn(input: RunPhaseTurnInput): Promise<PhaseTurnR
     role,
     appId,
     steps: run.result.steps.map((s) => ({ tool: s.tool, isError: s.isError })),
+    confirm: waiting ? confirmView(waiting, appId) : null,
   };
+}
+
+export type PhaseConfirmResult =
+  /** Confirmed and executed as the user; `result` is the tool's own output. */
+  | { ok: true; outcome: 'filed'; tool: string; appId: string | null; phase: Phase; result: string }
+  /** Confirmed, executed as the user, and the tool itself refused or failed. */
+  | { ok: true; outcome: 'failed'; tool: string; appId: string | null; phase: Phase; result: string }
+  /** The user pressed Cancel. Nothing was executed. */
+  | { ok: true; outcome: 'not_filed'; code: 'user_declined'; tool: string; appId: string | null; phase: Phase }
+  /** Nothing is waiting under that id for this user (never asked, already decided, or superseded). */
+  | { ok: false; code: 'not_found'; reason: string };
+
+export type ResolvePhaseConfirmationInput = {
+  user: CurrentUser;
+  confirmationId: string;
+  decision: 'confirm' | 'cancel';
+  /** Injected in tests; defaults to the governed Software-tab executor, as the user. */
+  callTool?: ToolExecutor;
+  /** Injected in tests; defaults to the governance trace. */
+  trace?: typeof gvTrace;
+};
+
+/**
+ * THE ONLY PLACE a parked Team-panel call executes — POST /api/software/team/confirm.
+ *
+ * The call is looked up in the SIGNED-IN USER's own session (so nobody confirms anyone else's),
+ * by the id the server issued, and is removed BEFORE anything runs, so one confirmation is one
+ * execution however often the button is pressed. On `confirm` the server-held tool and arguments
+ * are dispatched through the same governed executor as any Software-tab call, as that user,
+ * under their own role gates. On `cancel` nothing is dispatched and a typed
+ * `not_filed` / `user_declined` outcome is recorded with the session and in the trace.
+ */
+export async function resolvePhaseConfirmation(input: ResolvePhaseConfirmationInput): Promise<PhaseConfirmResult> {
+  const key = input.user.id;
+  const session = getSession(key);
+  const pending = session.pendingConfirm ?? null;
+  if (!pending || !input.confirmationId || pending.id !== input.confirmationId) {
+    return { ok: false, code: 'not_found', reason: 'Nothing is waiting for your confirmation under that id. It may already be decided, or a newer message replaced it.' };
+  }
+  const appId = confirmView(pending, session.appId).appId;
+  const settle = (outcome: 'filed' | 'failed' | 'not_filed_user_declined', phase: Phase) =>
+    saveSession(key, { ...session, phase, pendingConfirm: null, lastConfirm: { tool: pending.tool, outcome, at: new Date().toISOString() } });
+  const traceFn = input.trace ?? gvTrace;
+  const audit = (decision: 'allow' | 'deny', output: unknown) =>
+    void Promise.resolve(
+      traceFn({
+        principal: `user:${input.user.id}`,
+        tool: pending.tool,
+        input: { action: 'team_panel_confirmation', decision: input.decision, confirmationId: pending.id, args: pending.args },
+        output,
+        decision,
+      }),
+    ).catch(() => undefined);
+
+  if (input.decision !== 'confirm') {
+    settle('not_filed_user_declined', 'feedback');
+    audit('deny', { status: 'not_filed', code: 'user_declined' });
+    return { ok: true, outcome: 'not_filed', code: 'user_declined', tool: pending.tool, appId, phase: 'feedback' };
+  }
+
+  // Defence in depth: only a tool this door parks can ever be run from here.
+  if (!PANEL_CONFIRMED_TOOLS.has(pending.tool)) {
+    saveSession(key, { ...session, pendingConfirm: null });
+    return { ok: false, code: 'not_found', reason: 'That call is not one this panel can confirm.' };
+  }
+  // Single-use: gone from the session before the dispatch, so a second press finds nothing.
+  saveSession(key, { ...session, pendingConfirm: null });
+  const exec = input.callTool ?? tabToolExecutor(input.user, 'software');
+  let out: { text: string; isError: boolean };
+  try {
+    out = await exec(pending.tool, pending.args);
+  } catch (e) {
+    out = { text: `Error: ${(e as Error).message}`, isError: true };
+  }
+  const outcome = out.isError ? 'failed' : 'filed';
+  const phase: Phase = out.isError ? 'feedback' : 'done';
+  settle(outcome, phase);
+  audit('allow', { status: outcome, confirmedBy: input.user.id });
+  return { ok: true, outcome, tool: pending.tool, appId, phase, result: out.text };
 }

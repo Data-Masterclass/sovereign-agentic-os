@@ -1071,7 +1071,7 @@ a tool, and there are five ways a model's tool call reaches `handleRpc`:
 | Door | Entry | Forbidden names | Hold | What a call may be |
 |---|---|---|---|---|
 | Agent system run | `runOsTeam` → `grantedToolExecutor` (engine, schedule, `run_agent_system`) | refused at gate 0, never advertised | yes — decided in the tools node, run parks | the system's grants ∩ the node's tools |
-| Software Team panel | `runPhaseTurn` → `phaseToolExecutor` (`POST /api/software/team`) | refused, never advertised | **none** — synchronous turn, nothing to park on | only what this turn's agent was offered |
+| Software Team panel | `runPhaseTurn` → `phaseToolExecutor` (`POST /api/software/team`) | refused, never advertised | **the user's own Confirm** for `request_deploy` (`PANEL_CONFIRMED_TOOLS`) — not a second person | only what this turn's agent was offered |
 | App tool call | `callAppTool` (`POST /api/apps/<id>/tool`) | refused by name; `parseAppActions` rejects the declaration | the app's own reads-on/writes-off preset | the app's own tools |
 | Ask the OS | `runOsAssistant` (`/api/assistant/chat`) | **not consulted** | **none** | the present user's whole role-scoped registry |
 | Tab assistant | `runTabAgent` (`/api/agent-chat`, the app Build chat) | **not consulted** | **none** | the tab's tools for the user's role (an allow-list in Build-chat modes) |
@@ -1084,19 +1084,34 @@ NOT a confirmation gate" — and "confirm before a write" is a prompt-level rule
 only. A person's own MCP session and every UI route go straight to `handleRpc`
 under the user's role gates and consult neither table, which is intended.
 
-**The Software Team panel has no hold, and that is an open product decision.**
-A turn starts when the user presses *Send* (or the *Approve — build it* button
-shown while a plan is waiting). The phase router picks one agent; the user sees
-the phase label and each tool step stream by as it happens — there is no card or
-button between the model's call and its execution. Of the always-confirmed tools,
-no agent of the team is offered `delete` or `archive`, so they cannot be called
-there at all; `request_deploy` is offered only to the deployer, in the `deploy`
-phase, which the user enters by typing a phrase `isShip` matches ("ship it",
-"go live", "request deploy", …). It then executes immediately, as that user. On
-the engine path the same call parks for a second person. Whether a typed phrase is
-confirmation enough is not decided here; a test in
-`tabs/agents/lib/build/agentic-graph-server.test.ts` states the current behaviour
-and is the one to change with it.
+**The Software Team panel asks its user to confirm a deploy request (decided
+2026-11-19).** The panel is a synchronous chat turn with no checkpoint, so it
+cannot park a call for a second person the way the engine does. It applies the
+product's own rule instead: a write happens only on the signed-in user's explicit
+confirmation. When the deployer calls `request_deploy`, `phaseToolExecutor` does
+not dispatch it. The call is stored in the user's server-side session, the model
+gets a typed `awaiting_user_confirmation` result, and the turn's final event
+carries what would be filed. The panel shows the app with a **Confirm** and a
+**Cancel** button.
+
+- **Confirm** → `POST /api/software/team/confirm` → `resolvePhaseConfirmation`
+  runs the server-held call through the same governed executor, as that user. The
+  client sends only the id and the decision, never the tool or its arguments.
+- **Cancel** → nothing is dispatched; the outcome is the typed `not_filed` /
+  `user_declined`, recorded with the session and in the trace. The session is back
+  in `feedback`, where `request_deploy` is not offered, so the team cannot ask
+  again until the user does.
+- A confirmation is single-use, belongs to the user whose turn asked for it, and is
+  dropped when that user sends a new message. With no way to ask (a caller that
+  wires no `park`), the door refuses the call rather than running it.
+
+This is a different guarantee from the engine's hold and is not a substitute for
+it: here the confirmer is the requester, there it is a second person. The Builder
+review that `request_deploy` opens is unchanged. `PANEL_CONFIRMED_TOOLS` is the
+panel's own list, not derived from `hold.ts`. The waiting call lives in the same
+in-process, per-user session as the phase (`phase-router.ts`), so a pod restart
+drops it and nothing is filed. `delete` and `archive` are offered to no agent of
+the team and stay uncallable there.
 
 **The unclassified backlog** — every tool in the MCP registry that changes state
 (or may) and has no hold posture. The ratchet pins this list exactly, so it can
