@@ -204,6 +204,14 @@ export type LastRun = {
   heldApprovals?: { approvalId: string; tool: string; node: string }[];
   /** A2: `buildGraph` compile warnings reported with the run (e.g. a guard over a channel nothing sets). */
   warnings?: string[];
+  /**
+   * What happened to each DECLARED OUTPUT of this run ("Where the results go"): saved where, with
+   * which id, promotion requested, or not saved and why (`output-saver.ts`). Written twice: as
+   * `pending` together with the report, BEFORE the save, and again with the outcome — so a
+   * process that dies in between leaves a record that says the save is unfinished. Absent on a
+   * system that declares no output and on runs recorded before this existed.
+   */
+  outputs?: import('./output-saver.ts').OutputResult[];
 };
 
 export type SystemRecord = {

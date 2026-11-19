@@ -147,6 +147,10 @@ export async function runScheduledSystem(
       team: true,
       path: b.path,
       finalText: b.finalText,
+      // A scheduled run saves its declared outputs like any other run (the same executor);
+      // the schedule's report says where each went, or that one was not saved.
+      outputs: b.outputs ?? [],
+      completedWithUnsavedOutputs: b.completedWithUnsavedOutputs === true,
       nodes: b.nodes.map((r) => ({ node: r.node, model: r.model, steps: r.steps.map((x) => ({ tool: x.tool, isError: x.isError })) })),
     },
   };

@@ -22,7 +22,7 @@ export const discoveryBaseTools: McpTool[] = [
     tab: 'agents',
     minRole: 'creator',
     description:
-      'READ the state of one agent run by its runId: the agents visited so far, whether it finished, FAILED (`status: "failed"`, `failed: true`, with `failedNode` and `failureReason` — an agent failed and the run stopped there), is PARKED on held writes awaiting approval (with their approvalIds and who can decide), or was interrupted; the budget used; compile warnings; AND the tail of the run\'s event log (node-started / tool-step / node-completed / approval-required / resumed / done / error) — pass `afterSeq` (the `nextSeq` from your last call) to get only what happened since, so following a long run is a cheap poll rather than a re-read. Purpose: follow a run started by run_agent_system (or the UI) through hold → approve → completion over MCP alone. Before: run_agent_system (take its runId). After: decide_approval if parked, resume_agent_run after a restart, get_run_trace(runId) for the Langfuse trace. Governance: only the RUNNER of the run (the user who started it) can read it, and only on their own system; any other runId is a typed not_found — a run id is a capability, not an index.',
+      'READ the state of one agent run by its runId: the agents visited so far, whether it finished, FAILED (`status: "failed"`, `failed: true`, with `failedNode` and `failureReason` — an agent failed and the run stopped there), is PARKED on held writes awaiting approval (with their approvalIds and who can decide), or was interrupted; the budget used; compile warnings; the run’s DECLARED OUTPUTS (`outputs`: per output its `state`, the saved item’s `id`/`link`, a requested Domain `promotion`, or the `reason` it was not saved — for the system’s latest run); AND the tail of the run\'s event log (node-started / tool-step / node-completed / approval-required / resumed / done / error) — pass `afterSeq` (the `nextSeq` from your last call) to get only what happened since, so following a long run is a cheap poll rather than a re-read. Purpose: follow a run started by run_agent_system (or the UI) through hold → approve → completion over MCP alone. Before: run_agent_system (take its runId). After: decide_approval if parked, resume_agent_run after a restart, get_run_trace(runId) for the Langfuse trace. Governance: only the RUNNER of the run (the user who started it) can read it, and only on their own system; any other runId is a typed not_found — a run id is a capability, not an index.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -103,6 +103,12 @@ export const discoveryBaseTools: McpTool[] = [
         eventsAvailable,
         /** Pass this back as `afterSeq` to get only what happens next. */
         nextSeq: events.at(-1)?.seq ?? afterSeq,
+        // DECLARED OUTPUTS of this run — where each was saved (id, link), whether a Domain promotion
+        // was requested, or why it was not saved. Recorded for the system's latest run only.
+        outputs: view.lastRun?.runId === runId ? view.lastRun.outputs ?? [] : undefined,
+        completedWithUnsavedOutputs: view.lastRun?.runId === runId && run.finished && !run.failed
+          ? (view.lastRun.outputs ?? []).some((o) => o.state === 'failed' || o.state === 'not_saved')
+          : undefined,
         lastRun: view.lastRun?.runId === runId ? { at: view.lastRun.at, ok: view.lastRun.ok, reachedEnd: view.lastRun.reachedEnd, interrupted: view.lastRun.interrupted } : undefined,
       };
     },
