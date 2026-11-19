@@ -28,6 +28,7 @@ import { promotionReadiness, readinessLabel, readinessHint } from '@tabs/files/l
 import FilePreview from '@tabs/files/ui/FilePreview';
 import { SUGGESTED_WORD, SUGGESTED_TOOLTIP } from '@tabs/files/lib/preview-views';
 import NoteEditor from '@tabs/files/ui/NoteEditor';
+import { FILE_STATUS_LABEL, fileStatusClass, type FileStatus } from '@tabs/files/lib/file-status';
 
 type Summary = {
   id: string; name: string; owner: string; domain: string;
@@ -37,7 +38,7 @@ type Summary = {
    *  the gate with the SAME `promotionGate` the server runs. */
   description: string;
   sensitivity: string; freshness: string | null;
-  version: string; status: 'processing' | 'searchable' | 'stored'; bytes: number;
+  version: string; status: FileStatus; bytes: number;
   /** Original bytes render inline → the tile shows a thumbnail via /raw. */
   hasPreview?: boolean;
   /** Soft-archived (retained, reversible). Absent/false = live. */
@@ -81,9 +82,7 @@ function bytesLabel(n: number): string {
 }
 
 function StatusChip({ s }: { s: Summary['status'] }) {
-  const cls = s === 'stored' ? 's-stored' : s === 'processing' ? 's-processing' : 's-searchable';
-  const label = s === 'stored' ? 'Stored' : s === 'processing' ? 'Processing…' : 'Searchable ✓';
-  return <span className={`status-chip ${cls}`}>{label}</span>;
+  return <span className={`status-chip ${fileStatusClass(s)}`}>{FILE_STATUS_LABEL[s]}</span>;
 }
 
 /** The visual anchor of a tile: an inline thumbnail for renderable files (image via
