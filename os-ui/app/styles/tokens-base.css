@@ -3243,6 +3243,16 @@ button.card.tile:hover .tile-action { opacity: 1; }
 .files-viewtoggle button.on { background: var(--gold-soft); color: var(--gold-text); font-weight: 600; }
 .files-viewtoggle button + button { border-left: 1px solid var(--border); }
 
+/* ---- View switch above the viewer: Original / Extracted text / Details (reuses `.seg`) ---- */
+.preview-views { align-self: flex-start; width: fit-content; max-width: 100%; }
+.preview-views button { padding: 6px 12px; font-size: 12.5px; }
+.preview-views button:hover { color: var(--text); }
+/* Inset ring: `.seg` clips its overflow, so an outer outline would be cut off. */
+.preview-views button:focus-visible { outline: 2px solid var(--gold); outline-offset: -2px; }
+.preview-text-empty { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 10px; }
+.preview-details-panel { border-top: 0; padding-top: 0; }
+.preview-details-panel > *:first-child { margin-top: 0; }
+
 /* ---- Quick Look viewer (the file itself is the hero) ---- */
 .file-viewer {
   border: 1px solid var(--border); border-radius: var(--radius);

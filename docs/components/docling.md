@@ -36,6 +36,10 @@ search all read it — and then indexed. The original bytes are never rewritten.
   (or the MCP tool `reindex_corpus`). A file that is stored-only only because it had no text is
   planned as `missing-representation` and its text is read from the stored bytes. One file can
   be retried from its preview (**Extract text**).
+- **Where the reader sees it:** a file with an inline viewer (PDF, image, audio, video) has a
+  view switch above the viewer — **Original** (default) / **Extracted text** / **Details** —
+  and, once extracted, a line under the title ("Text extracted · 877 characters · date"). The
+  extracted text used to sit below the 88vh PDF frame, where nobody found it.
 - Text-like uploads (txt, md, csv, json, html…) never come here: their bytes are their text.
 
 ## FAQ
