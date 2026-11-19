@@ -89,6 +89,23 @@ export function isUnderFolder(folder: string, child: string): boolean {
   return c === f || c.startsWith(f + '/');
 }
 
+/**
+ * `isUnderFolder` for a folder NAME SOMEBODY TYPED OR A MODEL WROTE — the optional `folder`
+ * argument of a listing, never a grant. Letter case is ignored, so asking for `/invoices` finds
+ * the files in `/Invoices`. Access rules keep using the exact `isUnderFolder`: this only decides
+ * which of the rows the caller may already see are shown.
+ */
+export function isUnderFolderIgnoringCase(folder: string, child: string): boolean {
+  return isUnderFolder(normaliseFolderPath(folder).toLowerCase(), normaliseFolderPath(child).toLowerCase());
+}
+
+/** The distinct folder paths of `items`, sorted — for telling a caller which folders exist. */
+export function distinctFolders(items: { folder?: unknown }[], cap = 40): string[] {
+  const seen = new Set<string>();
+  for (const i of items) seen.add(normaliseFolderPath(typeof i.folder === 'string' ? i.folder : '/'));
+  return [...seen].sort((a, b) => a.localeCompare(b)).slice(0, cap);
+}
+
 /** An item that carries a folder path — the only field the tree algebra needs. */
 type Foldered = { folder: string };
 

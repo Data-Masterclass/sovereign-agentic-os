@@ -824,10 +824,17 @@ export function agentToolGate(
     // to a domain repo — an agent system, a dbt project — then carries an `OS-Run-Id` trailer, so
     // the git log distinguishes "a run did this" from "a person did this at the same moment".
     // Nothing else changes: the identity, the grants and the policy are still the acting user's.
+    // `list_files` is asked for the WHOLE listing and narrowed afterwards (grant first, then the
+    // folder the agent asked for). If the tool narrowed first, an asked-for folder that matches
+    // nothing would leave no rows to tell the agent which folders its grant does contain.
+    const dispatchArgs =
+      mcpName === 'list_files' && args && typeof args === 'object' && 'folder' in (args as Record<string, unknown>)
+        ? (({ folder: _asked, ...rest }) => rest)(args as Record<string, unknown>)
+        : args;
     const dispatch = () =>
       deps.handleRpc(
         user,
-        { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: mcpName, arguments: args } },
+        { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: mcpName, arguments: dispatchArgs } },
         { tools: granted },
       );
     const runId = opts.traceContext?.traceId;

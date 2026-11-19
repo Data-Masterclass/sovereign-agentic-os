@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
-import { isUnderFolder, normaliseFolderPath } from '@core/kernel/folders';
+import { distinctFolders, isUnderFolderIgnoringCase, normaliseFolderPath } from '@core/kernel/folders';
 import 'server-only';
 import type { CurrentUser } from '@core/kernel/auth';
 import type { McpTool, JsonSchema } from '@core/mcp/server';
@@ -304,8 +304,16 @@ export const readTools: McpTool[] = [
       const asked = str(args?.folder).trim();
       if (!asked) return all;
       const folder = normaliseFolderPath(asked);
-      const under = <T extends { folder: string }>(rows: T[]) => rows.filter((f) => isUnderFolder(folder, f.folder));
-      return { ...all, folder, mine: under(all.mine), domain: under(all.domain), marketplace: under(all.marketplace) };
+      // Letter case is ignored for the folder somebody asked for: `/invoices` finds `/Invoices`.
+      const under = <T extends { folder: string }>(rows: T[]) => rows.filter((f) => isUnderFolderIgnoringCase(folder, f.folder));
+      const narrowed = { ...all, folder, mine: under(all.mine), domain: under(all.domain), marketplace: under(all.marketplace) };
+      if (narrowed.mine.length + narrowed.domain.length + narrowed.marketplace.length > 0) return narrowed;
+      // Nothing there: say which folders DO exist, so "0 files" is never mistaken for an empty drive.
+      return {
+        ...narrowed,
+        note: `No folder "${folder}" among the files you can see. Folders that exist are listed in availableFolders.`,
+        availableFolders: distinctFolders([...all.mine, ...all.domain, ...all.marketplace]),
+      };
     },
   },
   {
