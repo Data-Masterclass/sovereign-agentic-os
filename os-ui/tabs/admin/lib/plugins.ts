@@ -17,6 +17,7 @@
  * a governed enablement flag — it does not provision infrastructure. Unit-testable.
  */
 import { osMirror } from '@core/infra/os-mirror';
+import { REGISTRATION_NOTE } from '@tabs/admin/lib/marketplace-copy';
 
 export type PluginKind = 'mcp' | 'skill' | 'tool';
 export type PluginStatus = 'available' | 'installed' | 'approved';
@@ -121,7 +122,12 @@ export type MarketplaceRegistration = {
   listingName: string;
   partnerId: string;
   status: 'unregistered' | 'pending' | 'listed';
+  /** What registering actually did (set on register). */
+  note?: string;
 };
+
+/** True today: registering sets this OS's own record and calls no marketplace API. */
+export { REGISTRATION_NOTE } from '@tabs/admin/lib/marketplace-copy';
 
 function defaultRegistration(): MarketplaceRegistration {
   return { registered: false, listingName: 'Sovereign Agentic OS — Data Masterclass', partnerId: '', status: 'unregistered' };
@@ -139,6 +145,7 @@ export function registerMarketplace(input: { listingName?: string; partnerId: st
     listingName: input.listingName?.trim() || s.registration.listingName,
     partnerId: input.partnerId.trim(),
     status: 'pending',
+    note: REGISTRATION_NOTE,
   };
   persistRegistration(s.registration);
   return s.registration;
