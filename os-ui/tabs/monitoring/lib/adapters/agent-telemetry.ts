@@ -96,7 +96,8 @@ function fromLangfuseRow(t: Record<string, unknown>): (AgentRunRecord & { princi
     health: verdictOf(meta.decision as string | undefined, t.output),
     costUsd: num(meta.costUsd) ?? num(t.totalCost) ?? num(t.calculatedTotalCost),
     tokens: num(t.totalTokens) ?? num((t.usage as Record<string, unknown>)?.total) ?? num(meta.tokens),
-    ms: num(t.latency),
+    // Langfuse reports trace latency in seconds; `ms` is milliseconds.
+    ms: num(t.latency) === undefined ? undefined : Math.round(num(t.latency)! * 1000),
     source: 'live',
   };
 }
