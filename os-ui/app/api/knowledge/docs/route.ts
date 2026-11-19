@@ -30,6 +30,16 @@ const base = () => `${config.opensearchUrl}/${config.knowledgeIndex}`;
 
 type Doc = { id: string; title: string; excerpt: string; source: string; ingestedAt: string | null };
 
+/**
+ * Whether an app granted `granted` (knowledge ids) may see this indexed passage. A workflow is
+ * indexed as one passage per step, under `<workflowId>:step:<stepId>` (`chunk.ts`), while the
+ * app's grant names the WORKFLOW — so the passage's own `workflow_id` is what is matched. A
+ * document indexed under its own id (no workflow) matches on that id.
+ */
+function grantedPassage(granted: Set<string>, id: string, workflowId: string): boolean {
+  return granted.has(id) || (workflowId !== '' && granted.has(workflowId));
+}
+
 export async function GET(req: Request) {
   let principal;
   try {
@@ -64,9 +74,11 @@ export async function GET(req: Request) {
     }
     const data = JSON.parse(text);
     const rawHits = Array.isArray(data?.hits?.hits) ? data.hits.hits : [];
+    const workflowOf = new Map<string, string>();
     const docs: Doc[] = rawHits.map((h: Record<string, unknown>) => {
       const src = (h._source ?? {}) as Record<string, unknown>;
       const t = String(src.text ?? src.content ?? '');
+      workflowOf.set(String(h._id ?? ''), String(src.workflow_id ?? ''));
       return {
         id: String(h._id ?? ''),
         title: String(src.title ?? '(untitled)'),
@@ -82,7 +94,7 @@ export async function GET(req: Request) {
     const shown = slug
       ? await (async () => {
           const granted = await grantedIdSet(slug, 'knowledge');
-          return docs.filter((d) => granted.has(d.id));
+          return docs.filter((d) => grantedPassage(granted, d.id, workflowOf.get(d.id) ?? ''));
         })()
       : docs;
     const total = slug
