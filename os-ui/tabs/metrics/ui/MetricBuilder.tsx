@@ -36,6 +36,7 @@ import {
   datasetLayerLabel,
 } from '@tabs/metrics/ui/shared';
 import { UnderTheHood } from '@core/ui/engineering/UnderTheHood';
+import { TechnicalDetailsOnly } from '@core/ui/TechnicalDetails';
 import GitHeadBadge from '@core/ui/git/GitHeadBadge';
 import CloneRepository from '@core/ui/git-clone/CloneRepository';
 
@@ -1065,7 +1066,7 @@ export default function MetricBuilder({
           {/* Connect Power BI is REMOVED from View for now — the connection is unverified;
               restore <ConnectPowerBI domain={saved.domain} /> once it is proven working. */}
           {/* night-2 stream T: the tool-native artefacts of this KPI. */}
-          <UnderTheHood kind="metric" id={saved.id} />
+          <TechnicalDetailsOnly><UnderTheHood kind="metric" id={saved.id} /></TechnicalDetailsOnly>
           <CloneRepository domain={saved.domain} />
         </div>
       ) : (

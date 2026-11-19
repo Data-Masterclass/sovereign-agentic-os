@@ -28,6 +28,7 @@ import {
   TIER_BADGE, TIER_LABEL,
 } from '@tabs/dashboards/ui/shared';
 import { UnderTheHood } from '@core/ui/engineering/UnderTheHood';
+import { TechnicalDetailsOnly } from '@core/ui/TechnicalDetails';
 import GitHeadBadge from '@core/ui/git/GitHeadBadge';
 import CloneRepository from '@core/ui/git-clone/CloneRepository';
 
@@ -396,7 +397,7 @@ export default function DashboardBuilder({
                 the connections are unverified; restore <ConnectTools /> once each is proven live. */}
           </div>
           {/* night-2 stream T: the tool-native artefacts of this dashboard. */}
-          <UnderTheHood kind="dashboard" id={built.id} />
+          <TechnicalDetailsOnly><UnderTheHood kind="dashboard" id={built.id} /></TechnicalDetailsOnly>
           <CloneRepository domain={built.domain} />
         </div>
       ) : (

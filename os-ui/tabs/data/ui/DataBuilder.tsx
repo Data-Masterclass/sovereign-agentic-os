@@ -77,6 +77,7 @@ type RowPreview =
 // lives in `lib/dq-rule-form.ts` so it can be unit-tested — a test may not import a `.tsx`.
 import { RULE_LABELS, fieldsFor, addPayload, canSubmit as canSubmitRule, ruleText } from '@tabs/data/lib/dq-rule-form';
 import { UnderTheHood } from '@core/ui/engineering/UnderTheHood';
+import { TechnicalDetailsOnly } from '@core/ui/TechnicalDetails';
 import GitHeadBadge from '@core/ui/git/GitHeadBadge';
 import CloneRepository from '@core/ui/git-clone/CloneRepository';
 const RULE_KINDS = new Set<DataCheckRule>(Object.keys(RULE_LABELS) as DataCheckRule[]);
@@ -2025,7 +2026,7 @@ export default function DataBuilder({
         )}
       </div>
       {/* night-2 stream T: the tool-native artefacts of this data product. */}
-      <UnderTheHood kind="dataset" id={dataset.id} />
+      <TechnicalDetailsOnly><UnderTheHood kind="dataset" id={dataset.id} /></TechnicalDetailsOnly>
       <CloneRepository domain={dataset.domain} />
       </div>
     </ConfirmProvider>
