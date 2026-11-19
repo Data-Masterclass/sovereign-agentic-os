@@ -726,6 +726,7 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
     node: IRNode,
     input: string,
     e: unknown,
+    partial?: Pick<AgentCursor, 'plan' | 'steps' | 'iterations' | 'react'>,
   ): { run: NodeRun; finalText: string; error: string } => {
     const error = (e as Error)?.message ?? String(e);
     const finalText = `(${node.id} failed: ${error})`;
@@ -738,15 +739,35 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
       status: 'failed',
       error,
       input,
-      result: { plan: '', steps: [], finalText, iterations: 0, toolCallingSupported: true, pending: [] },
+      // What the agent DID before it failed stays on the record (its plan and the tool steps
+      // that ran) — a failed visit is not an empty one.
+      result: {
+        plan: partial?.plan ?? '',
+        steps: partial?.steps ?? [],
+        finalText,
+        iterations: partial?.iterations ?? 0,
+        toolCallingSupported: partial ? !partial.react : true,
+        pending: [],
+      },
     };
     emit(config, { event: 'node-completed', data: { node: node.id, status: 'failed', finalText } });
     return { run, finalText, error };
   };
 
-  /** Record the failure and stop the run. */
-  const failNode = (config: LangGraphRunnableConfig, node: IRNode, input: string, e: unknown): Command => {
-    const f = failedVisit(config, node, input, e);
+  /**
+   * Record the failure and stop the run. `failed` is what the edges out of `act_<id>` read: a
+   * `Command({ goto })` ADDS to a node's edges, it does not replace them, so without that check
+   * the conditional edge still sent a failed agent on to `route_<id>` — which handed off to the
+   * next agent as if the visit had succeeded.
+   */
+  const failNode = (
+    config: LangGraphRunnableConfig,
+    node: IRNode,
+    input: string,
+    e: unknown,
+    partial?: Pick<AgentCursor, 'plan' | 'steps' | 'iterations' | 'react'>,
+  ): Command => {
+    const f = failedVisit(config, node, input, e, partial);
     return new Command({ goto: END, update: { nodeRuns: [f.run], final: f.finalText, failed: f.error, current: null } });
   };
 
@@ -880,7 +901,7 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
         };
       } catch (e) {
         if (isGraphBubbleUp(e)) throw e;
-        return failNode(config, node, cur.input, e);
+        return failNode(config, node, cur.input, e, cur);
       }
     };
 
@@ -1200,9 +1221,11 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
   builder = builder.addEdge(START, nameOf(ir.entrypoint).plan);
   for (const node of active) {
     const nn = nameOf(node.id);
-    builder = builder.addConditionalEdges(nn.act, (s: EngineState) => (s.current && s.current.pending.length > 0 ? nn.tools : nn.route), {
+    // A FAILED visit ends the run here (`failNode` set `failed`): no tools, no route, no handoff.
+    builder = builder.addConditionalEdges(nn.act, (s: EngineState) => (s.failed ? END : s.current && s.current.pending.length > 0 ? nn.tools : nn.route), {
       [nn.tools]: nn.tools,
       [nn.route]: nn.route,
+      [END]: END,
     });
     // One executed call per superstep: more pending → tools again, else back to act.
     builder = builder.addConditionalEdges(nn.tools, (s: EngineState) => (s.current && s.current.pending.length > 0 ? nn.tools : nn.act), {
