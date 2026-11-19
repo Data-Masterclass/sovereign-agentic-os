@@ -5,6 +5,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import PageHeader from '@core/ui/PageHeader';
+import { REGISTRATION_NOTE } from '@tabs/admin/lib/marketplace-copy';
 
 type Plugin = {
   id: string;
@@ -149,7 +150,7 @@ export default function PluginsPage() {
                   </button>
                 </div>
               ) : (
-                <div className="hint" style={{ marginTop: 8 }}>Registered with the external STACKIT marketplace.</div>
+                <div className="hint" style={{ marginTop: 8 }}>{REGISTRATION_NOTE}</div>
               )}
             </>
           ) : <div className="hint">Loading…</div>}

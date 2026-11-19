@@ -40,7 +40,7 @@ export async function POST(req: Request) {
         break;
       case 'register':
         payload = registerMarketplace({ listingName: body?.listingName ? String(body.listingName) : undefined, partnerId: String(body?.partnerId ?? '') });
-        detail = `Registered external STACKIT marketplace listing (${body?.partnerId})`;
+        detail = `Marked the marketplace listing as registered in this OS (${body?.partnerId}); no external marketplace call was made`;
         break;
       default:
         return NextResponse.json({ error: 'Unknown op' }, { status: 400 });
