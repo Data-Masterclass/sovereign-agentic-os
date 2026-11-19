@@ -106,10 +106,18 @@ export const WRITE_TOOL_NAMES: ReadonlySet<string> = new Set(Object.keys(WRITE_T
  * deciding on its own that the corpus looks wrong. An admin runs it from Platform → Re-index, the
  * admin HTTP door, or their own MCP session — all three of which are a person, present, choosing.
  *
- * This is the catalog BOTH agent-facing doors consult (`tabs/agents/lib/build/os-tools.ts` for an
- * agent system's tool calls, `tabs/software/lib/app-tool-call.ts` for an app's tool surface), and
- * it lives here for the same reason `WRITE_TOOL_TABS` does: a core table neither door can forget,
- * independent of which bundles happen to be registered.
+ * ONE door consults this today: `tabs/agents/lib/build/os-tools.ts` (gate 0 of the agent system's
+ * tool executor, plus `grantedMcpTools`, which drops a closed tool from the schemas a model is
+ * offered). It lives here rather than in that tab for the same reason `WRITE_TOOL_TABS` does — a
+ * core table, independent of which bundles happen to be registered — and so that the second door
+ * can reuse it verbatim.
+ *
+ * FOLLOW-UP, stated rather than implied: `tabs/software/lib/app-tool-call.ts` does NOT consult it
+ * yet. That door executes an APP's own tools, so the OS `reindex_corpus` is not reachable through
+ * it; what is left is an `actions.yml` declaring an action of the same NAME, which would read like
+ * the real thing in a trace and an inbox while doing something else entirely. The guard there is
+ * two lines against this catalog and belongs to whoever owns that file (this branch is not
+ * permitted to touch `tabs/software/**`).
  */
 export const AGENT_FORBIDDEN_TOOLS: Readonly<Record<string, string>> = {
   reindex_corpus:

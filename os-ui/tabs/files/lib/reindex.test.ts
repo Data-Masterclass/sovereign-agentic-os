@@ -686,3 +686,44 @@ test('M2 (files): an empty parse KEEPS the file’s existing rows (keepOnEmpty),
 test('TRIPWIRE (files): the live unit path demands live AND keeps rows on an empty parse', () => {
   assert.match(SRC, /requireLive: true, keepOnEmpty: true/, 'both review fixes are bound in the default deps');
 });
+
+test('M (re-review): a unit still mid-await when the job is abandoned cannot advance the NEXT job', async () => {
+  // THE RACE, end to end. `abandonReindex` clears the in-flight flag so the target can be re-run,
+  // but it cannot un-await a unit that is already inside the parser or the gateway. A new job then
+  // claims the slot, and the stale unit resolves afterwards. Target-keyed, its progress report
+  // landed on the NEW job — which could reach `done` with units nobody re-indexed.
+  let release: () => void = () => {};
+  const gate = new Promise<void>((r) => { release = r; });
+  let calls = 0;
+  const slow = deps({
+    reindexUnit: async () => {
+      calls += 1;
+      if (calls === 1) await gate; // unit 'a' is inside the engine and stays there
+      return { outcome: 'replaced' };
+    },
+  });
+
+  const stale = runReindex(ADMIN, PLAN_OF(['a', 'b', 'c']), { batch: 3, deps: slow });
+  await new Promise((r) => setImmediate(r)); // let the loop reach the await
+  const abandoned = await abandonReindex(ADMIN);
+  assert.equal(abandoned.abandoned, true);
+
+  // A NEW job, one unit of two, so it is still `running` when the stale unit resolves — the
+  // window in which the bug could be observed at all.
+  const fresh = await runReindex(ADMIN, PLAN_OF(['x', 'y']), {
+    batch: 1,
+    deps: deps({ reindexUnit: async () => ({ outcome: 'replaced' }) }),
+  });
+  assert.equal(fresh.started, true);
+  assert.equal(fresh.job.cursor, 1);
+
+  release();
+  await stale; // the abandoned loop finishes its in-flight unit and unwinds
+
+  const now = jobFor('files')!;
+  assert.equal(now.id, fresh.job.id, 'the slot still belongs to the new job');
+  assert.equal(now.cursor, 1, 'the stale unit did NOT advance it');
+  assert.equal(now.replaced, 1, 'and was not counted as its work');
+  assert.equal(now.status, 'running', 'so it cannot report done with a unit never processed');
+  assert.equal(calls, 1, 'and the abandoned loop stopped instead of working through its batch');
+});

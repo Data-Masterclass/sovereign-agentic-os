@@ -3,6 +3,9 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, resolve } from 'node:path';
 import { ALL_WRITE_TOOLS } from '@core/mcp/write-tools';
 import { WRITE_TOOL_TABS, WRITE_TOOL_NAMES, AGENT_FORBIDDEN_TOOLS, agentForbiddenReason } from '@core/mcp/write-tool-meta';
 
@@ -82,4 +85,14 @@ test('AGENT_FORBIDDEN_TOOLS: every agent-closed tool is also a classified write,
   }
   assert.equal(agentForbiddenReason('create_dataset'), null, 'an ordinary write is not closed');
   assert.equal(agentForbiddenReason(''), null);
+});
+
+test('AGENT_FORBIDDEN_TOOLS: the catalog names the door that really consults it, and flags the other as a follow-up', () => {
+  // Re-review edit (1): the first version claimed `app-tool-call.ts` consulted this table. It does
+  // not, and a comment that overstates a guard is worse than no comment — the next reader stops
+  // looking. Pinned here so it cannot drift back while the follow-up is open.
+  const src = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), 'write-tool-meta.ts'), 'utf8');
+  assert.match(src, /ONE door consults this today: `tabs\/agents\/lib\/build\/os-tools\.ts`/);
+  assert.match(src, /FOLLOW-UP, stated rather than implied/);
+  assert.match(src, /does NOT consult it\n \* yet/);
 });
