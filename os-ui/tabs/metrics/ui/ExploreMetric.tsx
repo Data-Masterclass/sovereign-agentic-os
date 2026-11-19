@@ -12,8 +12,6 @@ import {
 } from '@tabs/metrics/ui/shared';
 
 type Granularity = 'day' | 'week' | 'month';
-const VIEWERS = ['me', 'DE', 'FR', 'US'] as const;
-type Viewer = (typeof VIEWERS)[number];
 
 /** Stable column order across rows (first-seen wins) so the table doesn't reshuffle. */
 function columnsOf(rows: Record<string, unknown>[]): string[] {
@@ -63,7 +61,6 @@ export default function ExploreMetric({ metric }: { metric: MetricSummary | null
   const [selectedDims, setSelectedDims] = useState<string[]>([]);
   const [selectedTime, setSelectedTime] = useState('');
   const [granularity, setGranularity] = useState<Granularity>('month');
-  const [viewer, setViewer] = useState<Viewer>('me');
   const [showSql, setShowSql] = useState(false);
 
   const [busy, setBusy] = useState(false);
@@ -108,7 +105,6 @@ export default function ExploreMetric({ metric }: { metric: MetricSummary | null
           dimensions: selectedDims,
           timeDimension: selectedTime || undefined,
           granularity: selectedTime ? granularity : undefined,
-          viewerRegion: viewer === 'me' ? undefined : viewer,
           filters: chips.length ? chips.map((c) => ({ column: c.column, values: [c.value] })) : undefined,
         }),
       });
@@ -118,9 +114,9 @@ export default function ExploreMetric({ metric }: { metric: MetricSummary | null
     } catch (e) { setErr((e as Error).message); setResult(null); } finally { setBusy(false); }
     // chips are captured via chipsKey (stable string) to re-run on change without identity churn.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [metricId, selectedDims, selectedTime, granularity, viewer, chipsKey]);
+  }, [metricId, selectedDims, selectedTime, granularity, chipsKey]);
 
-  // Re-run whenever the slice or the viewer changes — switching viewer is the RLS demo.
+  // Re-run whenever the slice changes. Every run is under the signed-in viewer's own identity.
   useEffect(() => { run(); }, [run]);
 
   if (!metric) {
@@ -168,10 +164,6 @@ export default function ExploreMetric({ metric }: { metric: MetricSummary | null
             </select>
           ) : null}
           <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span className="comp-label" style={{ margin: 0 }}>View as</span>
-            <select value={viewer} onChange={(e) => setViewer(e.target.value as Viewer)}>
-              {VIEWERS.map((v) => <option key={v} value={v}>{v}</option>)}
-            </select>
             {busy ? <span className="spin" /> : null}
           </div>
         </div>
@@ -225,7 +217,7 @@ export default function ExploreMetric({ metric }: { metric: MetricSummary | null
           ) : null}
           {result.rows.length === 0 ? (
             <div className="stub-page">
-              {result.unavailable ? 'No number shown — the semantic layer is unavailable.' : 'No rows for this viewer.'}
+              {result.unavailable ? 'No number shown — the semantic layer is unavailable.' : 'No rows you can see for this slice.'}
             </div>
           ) : (
             <div className="table-wrap">
