@@ -538,7 +538,9 @@ export async function checkGrantScope(
     if (active) {
       const keepFiles = filter.kind === 'files' ? new Set([...filesIn(scope.folders, await files(), false), ...ks.read]) : null;
       const keep = (rid: unknown): boolean => {
-        if (typeof rid !== 'string' || !rid) return false;
+        // A row that names no item: removed under a restriction (it cannot be shown to be granted),
+        // kept when the only thing in force is a list of switched-off ids.
+        if (typeof rid !== 'string' || !rid) return !(ks.restricted || keepFiles !== null || metricsFollowData);
         if (scope.created[filter.kind].has(rid)) return true;
         if (ks.denied.has(rid)) return false;
         if (keepFiles) return keepFiles.has(rid);

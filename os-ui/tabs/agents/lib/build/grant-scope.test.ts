@@ -149,6 +149,17 @@ test('an id switched Off is refused even when the kind is otherwise unrestricted
   assert.equal((await check('get_knowledge', { workflowId: 'wf_other' }, sys)).allow, true);
 });
 
+test('a switched-off id is taken out of a search without restricting the rest of the kind', async () => {
+  const v = await check('search_knowledge', { query: 'x' }, system({ knowledge: [{ id: 'wf_secret', capability: 'Off' }] }));
+  assert.ok(v.allow && v.shape);
+  const out = v.allow && v.shape ? v.shape(JSON.stringify({ hits: [
+    { unit: { id: 'u1', provenance: { workflowId: 'wf_secret' } } },
+    { unit: { id: 'u2', provenance: { workflowId: 'wf_other' } } },
+    { unit: { id: 'u3', provenance: { workflowId: null } } },
+  ] })) : null;
+  assert.deepEqual(JSON.parse((out as { text: string }).text).hits.map((h: { unit: { id: string } }) => h.unit.id), ['u2', 'u3']);
+});
+
 test('CAPABILITY: a Read grant refuses writes on that resource; a write grant allows them', async () => {
   const sys = system({ data: [{ id: 'ds_orders', capability: 'Read' }, { id: 'ds_stage', capability: 'Write-bounded' }, { id: 'ds_held', capability: 'Write-approval' }] });
   assert.match(reason(await check('ingest_dataset', { datasetId: 'ds_orders', content: 'a,b' }, sys)), /granted dataset ds_orders read-only — it may not change it/);
