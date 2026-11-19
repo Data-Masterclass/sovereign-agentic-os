@@ -24,6 +24,7 @@ import { resolveFolderGrant } from '@core/kernel/folders';
 import { config } from '@core/kernel/config';
 import { TAB_FEATURES } from '@core/kernel/tabs';
 import { toolSummary } from '@tabs/agents/lib/build/tool-brief';
+import { shapeForAgent, type AgentResultContext } from '@tabs/agents/lib/build/agent-tool-results';
 
 /**
  * THE ONE reusable core that lets an INTERNAL agent (Agents tab) call the SAME
@@ -612,6 +613,12 @@ export function grantedToolExecutor(
   const granted = grantedMcpTools(sys);
   const grantedNames = new Set(granted.map((t) => t.name));
   const sysPrincipal = principalFor(systemId);
+  // What an AGENT is shown of a result (never what the tool returns to a person or an external
+  // MCP client): `list_files` limited to the system's FILES folder grant(s) and compact, every
+  // JSON result without the pretty-printing. See `agent-tool-results.ts`.
+  const resultContext: AgentResultContext = {
+    filesFolders: sys.grants.files.map((g) => g.folder).filter((f): f is NonNullable<typeof f> => !!f),
+  };
 
   return async (name, args) => {
     const mcpName = resolveAlias(name);
@@ -715,7 +722,8 @@ export function grantedToolExecutor(
     if (res?.error) return errorResult('upstream_error', res.error.message);
     const result = (res?.result ?? {}) as { content?: { text?: string }[]; isError?: boolean };
     const text = result.content?.map((c) => c.text ?? '').join('\n') ?? '';
-    return { text: text || '(no output)', isError: !!result.isError };
+    if (result.isError || !text) return { text: text || '(no output)', isError: !!result.isError };
+    return { text: shapeForAgent(mcpName, (args ?? {}) as Record<string, unknown>, text, resultContext), isError: false };
   };
 }
 

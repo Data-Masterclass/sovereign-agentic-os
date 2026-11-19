@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
+import { isUnderFolder, normaliseFolderPath } from '@core/kernel/folders';
 import 'server-only';
 import type { CurrentUser } from '@core/kernel/auth';
 import type { McpTool, JsonSchema } from '@core/mcp/server';
@@ -288,9 +289,24 @@ export const readTools: McpTool[] = [
     tab: 'files',
     minRole: 'creator',
     description:
-      'List the files you can see (My · Domain · Company). Path: DISCOVERY for the Files golden path (guide: sovereign-os://guide/path/files). Before: whoami. After: search_files for content, or upload_file only if nothing fits. Governance: read-only, DLS-scoped.',
-    inputSchema: NO_ARGS,
-    call: async (user) => listFiles(P(user)),
+      'List the files you can see (My · Domain · Company). Pass `folder` to list ONE folder (and its subfolders) instead of everything. Path: DISCOVERY for the Files golden path (guide: sovereign-os://guide/path/files). Before: whoami. After: search_files for content, or upload_file only if nothing fits. Governance: read-only, DLS-scoped.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        folder: { type: 'string', description: 'Optional. Only files in this folder and its subfolders, e.g. "/Invoices". Omit to list everything you can see.' },
+      },
+      examples: [{}, { folder: '/Invoices' }],
+    },
+    call: async (user, args) => {
+      const all = listFiles(P(user));
+      // No `folder` → exactly the listing it always was. With one, each tier is narrowed to that
+      // folder's subtree; it only ever removes rows from what the caller could already see.
+      const asked = str(args?.folder).trim();
+      if (!asked) return all;
+      const folder = normaliseFolderPath(asked);
+      const under = <T extends { folder: string }>(rows: T[]) => rows.filter((f) => isUnderFolder(folder, f.folder));
+      return { ...all, folder, mine: under(all.mine), domain: under(all.domain), marketplace: under(all.marketplace) };
+    },
   },
   {
     name: 'search_files',
