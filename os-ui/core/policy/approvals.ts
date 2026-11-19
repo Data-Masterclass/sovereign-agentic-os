@@ -147,6 +147,18 @@ export type Approval = {
   resume?: ApprovalResume;
 };
 
+/**
+ * The floor on a written justification that becomes a permanent record — today the ADMIN's reason
+ * for approving a software deploy that has NO security verdict (`ApprovalEffect`
+ * `approvedWithoutScan`, enforced in `tabs/software/lib/review.ts` `decideDeploy`).
+ *
+ * It lives here, in the kernel's policy module, rather than in the tab that happens to enforce it
+ * first: it is a property of what this platform considers an auditable justification, and the next
+ * governed override must not pick its own number. Short enough to type, long enough that "ok"
+ * cannot be the record.
+ */
+export const AUDITED_OVERRIDE_REASON_MIN = 20;
+
 /** The recorded outcome of an approval's executed effect. `publish` carries the
  *  physical dataset-publish result (T8) so the PromotePanel / Governance card can
  *  show live | failed honestly instead of string-matching the summary. */

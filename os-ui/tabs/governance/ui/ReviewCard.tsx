@@ -74,6 +74,10 @@ function Chips({ label, items }: { label: string; items: string[] }) {
 }
 
 /** The written reason's floor, mirroring `NO_SCAN_REASON_MIN` in `tabs/software/lib/review.ts`. */
+// Mirrors `AUDITED_OVERRIDE_REASON_MIN` in `@core/policy/approvals`, which is the AUTHORITY —
+// `decideDeploy` enforces it server-side and refuses a short reason with a 400 whatever this
+// client believes. The value is duplicated rather than imported because that module is
+// `server-only` and this is a client component; `scanner-chart.test.ts` pins the two equal.
 const NO_SCAN_REASON_MIN = 20;
 
 export default function ReviewCard({
@@ -168,7 +172,11 @@ export default function ReviewCard({
           {card.scan.engine ? ` · ${card.scan.engine}` : card.scan.unavailable ? null : ' · offline baseline'}
           {card.scan.unavailable ? ' · from the offline baseline only' : null}
         </span>
-        {card.scan.unavailable ? (
+        {/* The reason is shown whenever there is one — not only when the scan is `unavailable`.
+            A LIVE scan can also carry one: "dependencies were NOT scanned, there is no lockfile"
+            is the single most important sentence on such a card, and hiding it behind the
+            no-verdict state is how a `deps 0` over unresolved dependencies would read as clean. */}
+        {card.scan.reason ? (
           <div className="hint" style={{ marginTop: 6 }}>{card.scan.reason}</div>
         ) : null}
         {card.scan.notRun?.includes('sast') && !card.scan.unavailable ? (

@@ -20,6 +20,7 @@ import {
   listApprovals,
   recordEffect,
   ensureHydrated as ensureApprovalsHydrated,
+  AUDITED_OVERRIDE_REASON_MIN,
 } from '@core/policy/approvals';
 import { record as recordAudit } from '@core/policy/audit';
 import { resolveScan } from '@tabs/software/lib/scan';
@@ -500,8 +501,13 @@ async function applyDeployDecisionToApp(
   }
 }
 
-/** The minimum a written acknowledgement must say before it counts as a record. */
-export const NO_SCAN_REASON_MIN = 20;
+/**
+ * The minimum a written acknowledgement must say before it counts as a record. The number itself
+ * lives in `@core/policy/approvals` (`AUDITED_OVERRIDE_REASON_MIN`) — it is a platform-wide
+ * property of an auditable justification, not this tab's preference — and is re-exported here
+ * because this is where it is enforced.
+ */
+export const NO_SCAN_REASON_MIN = AUDITED_OVERRIDE_REASON_MIN;
 
 /**
  * The explicit, admin-only acknowledgement that there is NO security verdict to approve

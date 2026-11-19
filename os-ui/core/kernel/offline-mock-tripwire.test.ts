@@ -188,6 +188,12 @@ const LABELS = [
   // review.ts USED to decide: `securityScan(files, opts.scanMode ?? 'offline-mock')`. That
   // default is gone — the engine is decided once, in scan.ts — so it now only carries the mode.
   'tabs/software/lib/review.ts',
+  // The LIVE scanner adapter (2026-11-19). It never consults the predicate and never serves a
+  // stand-in: it runs Trivy in a Job and returns a typed FAILURE when it cannot. It names the
+  // marker once, in the doc comment of that failure type, to say which failure kind may NOT
+  // degrade to a labelled baseline result (PR #63 review M6). A label, by this test's own
+  // definition: it declares, it does not decide.
+  'tabs/software/lib/scan-trivy.ts',
   'tabs/software/lib/seeded-evidence.ts',
   // Render-only: a badge over a mode the server already decided.
   'tabs/agents/ui/BuildRunPanel.tsx',

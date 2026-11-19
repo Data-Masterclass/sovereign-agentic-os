@@ -171,7 +171,7 @@
 - name: SOFTWARE_SCANNER_IMAGE
   value: {{ printf "%s:%s" (($sc.image | default dict).repository | default "aquasec/trivy") (($sc.image | default dict).tag | default "0.58.2") }}{{ if ($sc.image | default dict).digest }}{{ printf "@%s" ($sc.image).digest }}{{ end }}
 - name: SOFTWARE_SCANNER_NAMESPACE
-  value: {{ .Release.Namespace | quote }}
+  value: {{ $sc.namespace | default .Release.Namespace | quote }}
 - name: SOFTWARE_SCANNER_DB_MODE
   value: {{ $sc.dbMode | default "mirror" | quote }}
 - name: SOFTWARE_SCANNER_DB_REPOSITORY

@@ -1337,6 +1337,19 @@ osUI:
       # outcome this gate exists to prevent.
       dbMode: mirror
       dbRepository: ghcr.io/aquasecurity/trivy-db
+      # WHERE THE SCAN RUNS. Empty = the release namespace, beside os-ui (the default, and what
+      # has been exercised). Deliberately NOT softwareRunner.namespace: a scan holds the app's
+      # SOURCE, and the apps namespace is where untrusted student code runs.
+      #
+      # The cost of the default, stated plainly: `pods`/`pods/log` cannot be narrowed by name, so
+      # in the release namespace the os-ui ServiceAccount gains read access to every pod LOG in
+      # the platform namespace (it already had namespace-wide `pods` get/list, so this adds the
+      # log subresource rather than a new reach). Setting a name here — e.g. `software-scans` —
+      # moves the whole grant set (jobs, pods/log, and secrets create/delete) into a dedicated,
+      # default-deny, Pod-Security-`restricted` namespace this chart creates, and leaves the
+      # platform namespace with none of it. That is the better posture and the intended default
+      # once it has been run on a real cluster.
+      namespace: ""
       # Wall clock for one scan, including the DB fetch. On expiry the Job is abandoned and the
       # scan is `unavailable` with the timeout as its reason - never a pass.
       timeoutSeconds: 180
