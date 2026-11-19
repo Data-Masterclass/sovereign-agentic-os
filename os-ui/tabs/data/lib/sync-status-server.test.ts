@@ -294,3 +294,40 @@ test('get_dagster_run: an empty runId is not_found, not a store scan', async () 
     /not found/i,
   );
 });
+
+/* ---- "Scheduled sync is not running" (live incident 2026-11, track H) --------------------- */
+
+test('flag ON: no Dagster schedule for an enabled sync ⇒ "Scheduled sync is not running", naming the cause', async () => {
+  __setDataProjectGitForTests(true);
+  const s = await syncStatusFor(dataset(true), { dagster: dg([], null), readRepoFile: async () => null });
+  assert.match(s.notRunning!, /^Scheduled sync is not running: Dagster has not loaded the schedule sales__ds_1\./);
+  assert.match(s.notRunning!, /has not passed `dbt parse`/);
+  assert.equal(s.nextRunAt, null);
+});
+
+test('flag ON: a dataset the generator left out of the project says which dbt rule it broke', async () => {
+  __setDataProjectGitForTests(true);
+  const files: Record<string, string> = { 'os/skipped.yml': 'version: 1\nskipped:\n  - dataset: ds_1\n    reason: column \'id\' carries the same \'not_null\' test twice\n' };
+  const s = await syncStatusFor(dataset(true), { dagster: dg([], null), readRepoFile: async (_d, p) => files[p] ?? null });
+  assert.match(s.notRunning!, /^Scheduled sync is not running: this dataset was left out of the domain's dbt project because dbt would refuse it — column 'id' carries the same 'not_null' test twice/);
+});
+
+test('flag ON: an API-batch / Kafka sync (os/external.yml) is honestly "not run by Dagster yet"', async () => {
+  __setDataProjectGitForTests(true);
+  const ext = 'version: 1\nexternal_assets:\n  - dataset: ds_1\n    kind: api-batch\n';
+  const s = await syncStatusFor(dataset(true), { dagster: dg([], null), readRepoFile: async (_d, p) => (p === 'os/external.yml' ? ext : null) });
+  assert.match(s.notRunning!, /^Scheduled sync is not running: API-based SaaS syncs are not run by Dagster yet/);
+  const kafka = await syncStatusFor(dataset(true), { dagster: dg([], null), readRepoFile: async (_d, p) => (p === 'os/external.yml' ? ext.replace('api-batch', 'kafka-offsets') : null) });
+  assert.match(kafka.notRunning!, /Kafka \(offset-tracked\) syncs are not run by Dagster yet/);
+});
+
+test('flag ON: a loaded schedule, an outage or a disabled sync is NOT reported as "not running"', async () => {
+  __setDataProjectGitForTests(true);
+  const loaded = await syncStatusFor(dataset(true), { dagster: dg([run()]), readRepoFile: async () => null });
+  assert.equal(loaded.notRunning, null);
+  const outage = await syncStatusFor(dataset(true), { dagster: { ...dg([]), nextTick: async () => ({ ok: false as const, error: 'HTTP 503' }) }, readRepoFile: async () => null });
+  assert.equal(outage.notRunning, null, 'Dagster unreachable is dagster.error, not a claim about the schedule');
+  const off = parseDataset(JSON.stringify({ ...JSON.parse(JSON.stringify(dataset(true))), sync: { ...dataset(true).sync, enabled: false } }));
+  const disabled = await syncStatusFor(off, { dagster: dg([], null), readRepoFile: async () => null });
+  assert.equal(disabled.notRunning, null);
+});

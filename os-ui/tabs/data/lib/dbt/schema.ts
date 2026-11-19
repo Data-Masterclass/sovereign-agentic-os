@@ -94,6 +94,39 @@ export function checkToTest(check: DataCheck, resolveRef?: (datasetId: string) =
   }
 }
 
+/**
+ * A canonical key for a test spec: two specs with the same key are the SAME dbt test. Object keys
+ * are sorted so `{min, max}` and `{max, min}` agree — dbt derives the test's unique id from the
+ * test name plus a hash of its arguments, so key order is not what tells two tests apart.
+ */
+export function testSpecKey(spec: TestSpec): string {
+  const canon = (v: unknown): unknown => {
+    if (Array.isArray(v)) return v.map(canon);
+    if (v && typeof v === 'object') {
+      return Object.fromEntries(Object.keys(v as Record<string, unknown>).sort().map((k) => [k, canon((v as Record<string, unknown>)[k])]));
+    }
+    return v;
+  };
+  return JSON.stringify(canon(spec));
+}
+
+/**
+ * Append `spec` to `list` unless an identical test is already there.
+ *
+ * WHY (live incident 2026-11, track H): a quality rule recorded twice on the same column (e.g. a
+ * proposed fix applied twice, or `define_quality_rules` re-run) used to be emitted twice, and dbt
+ * REFUSES a project in which two tests share a unique id — `dbt found two data_tests with the name
+ * "not_null_<model>_<column>" …` is a COMPILATION error of `dbt parse`, so ONE dataset's repeated
+ * rule failed the whole domain's project and repo-sync kept Dagster on the last good commit (or on
+ * nothing) for days. Two identical tests check exactly what one checks, so dropping the repeat
+ * loses nothing. Non-identical tests of the same kind (`range: {min: 0}` next to
+ * `range: {max: 0}`) get distinct ids from dbt and are kept.
+ */
+export function pushUniqueTest(list: TestSpec[], spec: TestSpec): TestSpec[] {
+  const key = testSpecKey(spec);
+  return list.some((t) => testSpecKey(t) === key) ? list : [...list, spec];
+}
+
 /** A dataset's checks → per-column test specs + the intentions that cannot be tests. */
 export function checksToColumnTests(
   checks: DataCheck[] | undefined,
@@ -108,7 +141,7 @@ export function checksToColumnTests(
       continue;
     }
     const col = check.column!.trim();
-    tests.set(col, [...(tests.get(col) ?? []), spec]);
+    tests.set(col, pushUniqueTest(tests.get(col) ?? [], spec));
   }
   return { tests, intentions: intentions.sort() };
 }
@@ -132,7 +165,7 @@ export function columnDocs(
     intentions = ct.intentions;
     for (const [col, specs] of ct.tests) {
       const entry = columns.get(col) ?? { name: col };
-      entry.data_tests = [...((entry.data_tests as TestSpec[] | undefined) ?? []), ...specs];
+      entry.data_tests = specs.reduce(pushUniqueTest, (entry.data_tests as TestSpec[] | undefined) ?? []);
       columns.set(col, entry);
     }
   }

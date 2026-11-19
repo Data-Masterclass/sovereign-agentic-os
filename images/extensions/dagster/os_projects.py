@@ -779,6 +779,31 @@ def partition_definitions(
 # ---------------------------------------------------------------------- cli --
 
 
+_LOG_NOISE = re.compile(r"keyring module not found|^\s*$|^Encountered an error:?\s*$", re.I)
+_TS_PREFIX = re.compile(r"^\d\d:\d\d:\d\d\s+")
+
+
+def parse_error_summary(output: str, limit: int = 400) -> str:
+    """The ONE line repo-sync logs when `dbt parse` refuses a commit — the error kind and its message.
+
+    Live incident 2026-11 (track H): the sidecar logged only "failed dbt parse — schedules keep
+    running nothing", ~6,000 times, while the actual dbt error sat in `status.json` that nothing
+    reads. dbt's message names files, models, columns and test names, never data values, so it is
+    safe for the pod log. E.g. `Compilation Error: dbt found two data_tests with the name
+    "not_null_gold_x_po_number" defined on column "po_number" in "models.gold_x".`
+    """
+    lines = [_TS_PREFIX.sub("", ln).strip() for ln in (output or "").splitlines()]
+    lines = [ln for ln in lines if ln and not _LOG_NOISE.search(ln)]
+    if not lines:
+        return "no output from dbt parse"
+    for i, ln in enumerate(lines):
+        if re.search(r"error", ln, re.I):
+            # dbt prints the error KIND on its own line ("Compilation Error") and the message next.
+            msg = ln if len(ln.split()) > 3 or i + 1 >= len(lines) else f"{ln}: {lines[i + 1]}"
+            return msg[:limit]
+    return lines[-1][:limit]
+
+
 def _main(argv: Sequence[str]) -> int:
     """`os_projects.py --parse <project-dir>` — `dbt parse` under the allowlisted environment.
 
@@ -789,10 +814,13 @@ def _main(argv: Sequence[str]) -> int:
         code, out = dbt_parse(argv[2])
         sys.stdout.write(out)
         return code
+    if len(argv) == 2 and argv[1] == "--error-summary":
+        sys.stdout.write(parse_error_summary(sys.stdin.read()) + "\n")
+        return 0
     if len(argv) == 2 and argv[1] == "--parse-env-names":
         sys.stdout.write("\n".join(sorted(parse_env({}))) + "\n")
         return 0
-    sys.stderr.write("usage: os_projects.py --parse <project-dir> | --parse-env-names\n")
+    sys.stderr.write("usage: os_projects.py --parse <project-dir> | --error-summary (stdin) | --parse-env-names\n")
     return 2
 
 
