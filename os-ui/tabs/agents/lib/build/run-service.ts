@@ -42,6 +42,7 @@ import { saveRunOutputs, type OutputDoorOptions } from '@tabs/agents/lib/build/o
 import { pendingOutputs, unsavedOutputs, unsavedOutputsWarning, type OutputResult, type ProducerRun } from '@tabs/agents/lib/output-saver';
 import { classifyStepError } from '@tabs/agents/lib/build/agentic-graph';
 import { resolveFolderGrantsWithWarnings, summarizeWriteOutcomes, writeOutcomesLine } from '@tabs/agents/lib/build/os-tools';
+import { missingGrantWarnings } from '@tabs/agents/lib/build/grant-presence';
 import { withOutputTools } from '@tabs/agents/lib/output-tools';
 import { governYamlForOwner } from '@tabs/agents/lib/build/owner-grants';
 import { deriveContextUsage } from '@tabs/agents/lib/build/context-usage';
@@ -81,7 +82,8 @@ export async function prepareRunYaml(user: CurrentUser, view: SystemView, system
 
 /**
  * {@link prepareRunYaml} plus what the RUNNER should be told about the definition before it
- * runs: a folder grant that matches nothing right now (`folderGrantWarnings`). The run reads the
+ * runs: a folder grant that matches nothing right now (`folderGrantWarnings`), and an item grant
+ * whose target was deleted or is no longer visible (`missingGrantWarnings`). The run reads the
  * SAVED definition here, at run time — a grant changed in the builder applies to the next run
  * with no rebuild. Each declared output's write tool is handed to the agent(s) that produce it
  * (`withOutputTools`); nothing of that is stored.
@@ -93,7 +95,10 @@ export async function prepareRun(
 ): Promise<{ yaml: string; warnings: string[] }> {
   const governed = await governYamlForOwner(view.yaml, view.owner);
   const { system, warnings } = await resolveFolderGrantsWithWarnings(user, parseSystem(governed), systemId);
-  return { yaml: serializeSystem(withOutputTools(system)), warnings };
+  // An item grant whose target was deleted since it was granted is named here, before any agent
+  // runs, rather than discovered by an agent that "cannot find" it (`grant-presence.ts`).
+  const missing = await missingGrantWarnings(user, system).catch(() => []);
+  return { yaml: serializeSystem(withOutputTools(system)), warnings: [...warnings, ...missing] };
 }
 
 /** A one-line, single-line result summary for a tool step (observability, kept tight). */
