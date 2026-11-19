@@ -2054,3 +2054,36 @@ v0.58.2 release carries no downloadable binaries — so the first scan of a lock
 is the real confirmation that the engine returns a `lang-pkgs` result for these files. If it does
 not, the app reads "deps not covered" as before: the coverage claim still rests on the engine's
 own result.
+
+## Which models may be sent images: a list, not a guess
+
+Message content is a plain string everywhere today, and no model call sends an image. Before any
+does, the question "may THIS model be sent an image?" has exactly one answer in the codebase:
+`canReceiveImages(model)` in `core/models/capabilities.ts`.
+
+- **It is a data-egress decision, so it is an explicit list.** The built-in list is the four
+  gateway aliases the STACKIT profile points at Qwen3-VL-235B on STACKIT (EU):
+  `sovereign-reasoning`, `sovereign-vision`, `sovereign-premium`, `sovereign-reasoning-fast`.
+  `sovereign-default` / `sovereign-mock` (text-only) and `sovereign-embed` are not on it.
+- **A name is never evidence.** `tabs/agents/lib/routing.ts` `tierOf` calls any model whose name
+  contains "qwen", "vl" or "vision" the `vision` tier. That is a display label. The capability
+  check is exact, case-sensitive membership; an unknown model, a look-alike and a role name are
+  all `false`. `capabilities.ts` imports nothing, so no heuristic can leak into it.
+- **Admins control the list.** `MODEL_IMAGE_ALLOWLIST` (chart: `osUI.imageAllowlist`, rendered into
+  both the `os-ui` and `os-ui-worker` env) is a JSON array that **replaces** the built-in list, so
+  a model can be removed as well as added; `[]` means no model. A value that cannot be read falls
+  back to the built-in list with a logged warning — there is no wildcard and no input that means
+  "all models". Same mechanism as `MODEL_CONTEXT_WINDOWS`: JSON in an env var, read on each lookup.
+- **Pass the alias that is actually sent.** The argument is the final LiteLLM `model_name` in the
+  request's `model` field — after `roleModel(role)` and after a per-agent pin. Checking a role
+  name, or checking before resolution, checks the wrong thing.
+- **The list names aliases, not endpoints.** Re-pointing a listed alias in
+  `litellm.proxy_config.model_list`, or adding a router fallback from a listed alias to an
+  unlisted one, must update the list in the same change. Nothing verifies that for you yet.
+- **It is not the file gate.** This says which models may be shown an image at all. Which files
+  may be shown is a separate, earlier decision, and nothing here can override it.
+
+Visible read-only in Platform → Models & Providers ("Images: yes/no" per model, plus the list in
+force) and in `GET /api/agents/models` (`images` per row, `imageInput`). `capabilities.test.ts`
+fails if a second image-capability predicate, or a second reader of the override, appears anywhere
+under `core/`, `tabs/` or `app/`; `scripts/check-image-allowlist-chart.mjs` checks the rendered env.

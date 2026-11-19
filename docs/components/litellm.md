@@ -248,3 +248,13 @@ plus any **admin override** per role in Platform Settings (`modelRoles`, read by
 `core/models/roles.ts`). Renaming an alias or re-pointing a role means updating
 `litellmAgentKey.models` in the same change; the Job will push the new list on
 the next upgrade.
+
+**Which aliases may be sent images.** Separate from the key allowlist above: the OS keeps an
+explicit list of aliases that may receive images (`os-ui/core/models/capabilities.ts`,
+`canReceiveImages`). Built-in: `sovereign-reasoning`, `sovereign-vision`, `sovereign-premium`,
+`sovereign-reasoning-fast` — the aliases this chart's STACKIT profile points at Qwen3-VL-235B on
+STACKIT (EU). Replace it with `osUI.imageAllowlist` (a list of exact `model_name`s; `[]` = none;
+env `MODEL_IMAGE_ALLOWLIST`). The list names aliases, not endpoints, so **re-pointing a listed
+alias at another endpoint, or adding a router fallback from a listed alias to an unlisted one,
+needs the list updated in the same change**. Platform → Models & Providers shows the list in
+force. Nothing sends images to a model yet; this is the list the image features will obey.
