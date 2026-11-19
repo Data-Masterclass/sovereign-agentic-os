@@ -21,7 +21,7 @@ import { enqueue as realEnqueue } from '@core/policy/approvals';
 import { holdDecision, holdReason, writeTargetScope } from '@tabs/agents/lib/build/hold';
 import { agentForbiddenReason } from '@core/mcp/write-tool-meta';
 import { resolveFolderGrant } from '@core/kernel/folders';
-import { folderGrantCoverage, zeroMatchWarning, isOutputFolder, type TreeItemRef } from '@tabs/agents/lib/grant-apply';
+import { cappedGrantWarning, folderGrantCoverage, zeroMatchWarning, isOutputFolder, type TreeItemRef } from '@tabs/agents/lib/grant-apply';
 import { config } from '@core/kernel/config';
 import { TAB_FEATURES } from '@core/kernel/tabs';
 import { toolSummary } from '@tabs/agents/lib/build/tool-brief';
@@ -334,7 +334,8 @@ export async function resolveFolderGrantsForRun(
 
 /**
  * The warnings a run shows its RUNNER about folder grants that matched nothing: "The grant on
- * /invoices in My files currently contains 0 files. 12 files are in Domain files /invoices."
+ * /invoices in My files currently contains 0 files. 12 files are in Domain files /invoices." —
+ * and about a data/knowledge folder grant cut to the folder-grant budget ("first 50 of 80").
  *
  * The pointer to the other lane is computed from the runner's OWN listing (`load` reads as the
  * acting user), and it goes to the run's `warnings` list — the run report a person reads. It is
@@ -358,6 +359,13 @@ export async function folderGrantWarnings(
     return rows;
   };
   for (const r of resolutions) {
+    // Over the budget: a data/knowledge grant materialises only the first ids (files are checked
+    // live per call, so the budget never narrows them). Said on the run AND in the server log.
+    if (r.capped && r.kind !== 'files') {
+      const text = cappedGrantWarning(r.kind, { path: r.path, scope: r.scope }, r.ids.length, r.total);
+      console.warn(`[folder-grant] ${text}`);
+      if (!out.includes(text)) out.push(text);
+    }
     if (r.total > 0) continue;
     const folder = { path: r.path, scope: r.scope };
     if (isOutputFolder(sys, r.kind, folder)) continue;
@@ -823,7 +831,12 @@ export function agentToolGate(
       if (requiredFeature && !TAB_FEATURES.has(requiredFeature)) {
         return errorResult('not_found', `Tool not available: the '${requiredFeature}' feature is not enabled`);
       }
-      return errorResult('not_found', `Tool not available: ${name || '(none)'}`);
+      // Said in full, so an agent never reads "not available" as "there is nothing there".
+      return errorResult(
+        'not_found',
+        `Tool not available: ${name || '(none)'} is not granted to this system, so it was not run and nothing was read. ` +
+          'Use only the tools in your toolset, and say in your answer that this could not be checked.',
+      );
     }
 
     // LAYER ENFORCEMENT — steer a layer-aware data read to the medallion layer the

@@ -387,7 +387,41 @@ function messagesTokens(messages: LlmMessage[]): number {
  * turn. As a last resort the pinned head itself is truncated so the ceiling holds.
  */
 export function budgetMessages(messages: LlmMessage[], budget: number): LlmMessage[] {
-  if (messagesTokens(messages) <= budget) return messages;
+  return budgetMessagesReport(messages, budget).messages;
+}
+
+/** What one {@link budgetMessagesReport} call removed: recorded on the run, never silent. */
+export type ContextTrim = { dropped: number; beforeTokens: number; afterTokens: number };
+
+/**
+ * The note a trimmed request carries, appended to its first (system) message: the MODEL is told
+ * that it no longer sees everything, so a missing step result is never read as "it said nothing".
+ */
+export function contextTrimNote(dropped: number): string {
+  const what = dropped > 0
+    ? `${dropped} earlier ${dropped === 1 ? 'message was' : 'messages were'} removed to fit the model's context window`
+    : "earlier tool results were shortened to fit the model's context window";
+  return `\n\n[Context note: ${what}. Their content is no longer visible here; re-read only what you still need, and do not assume it said nothing.]`;
+}
+
+/**
+ * {@link budgetMessages} with the evidence: the bounded messages AND, when anything was compacted
+ * or dropped, a {@link ContextTrim} report (null when the request already fit). Room for the
+ * {@link contextTrimNote} is reserved inside the budget, so the note never pushes it over.
+ */
+export function budgetMessagesReport(messages: LlmMessage[], budget: number): { messages: LlmMessage[]; trim: ContextTrim | null } {
+  const beforeTokens = messagesTokens(messages);
+  if (beforeTokens <= budget) return { messages, trim: null };
+  const reserve = estimateTokens(contextTrimNote(9_999)) + MESSAGE_ENVELOPE_TOKENS;
+  const fitted = fitMessages(messages, Math.max(1, budget - reserve));
+  const dropped = messages.length - fitted.length;
+  const [first, ...rest] = fitted;
+  const out = first ? [{ ...first, content: `${first.content}${contextTrimNote(dropped)}` }, ...rest] : fitted;
+  return { messages: out, trim: { dropped, beforeTokens, afterTokens: messagesTokens(out) } };
+}
+
+/** The bounding itself (see {@link budgetMessages}); only called when the messages do not fit. */
+function fitMessages(messages: LlmMessage[], budget: number): LlmMessage[] {
 
   // Pinned head: the leading system message(s) + the initial user turn(s), before
   // the first assistant/tool turn. These are the task spine and are never dropped.

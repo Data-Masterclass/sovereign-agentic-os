@@ -87,7 +87,7 @@ import {
 import type { IR, IRNode } from '@tabs/agents/lib/langgraph-compile';
 import {
   actSystem,
-  budgetMessages,
+  budgetMessagesReport,
   DEFAULT_MAX_CONSECUTIVE_TOOL_ERRORS,
   DEFAULT_MAX_ITERATIONS,
   DEFAULT_MAX_REPEATED_CALLS,
@@ -147,11 +147,29 @@ import type { HoldDecision } from '@tabs/agents/lib/build/hold';
 import type { ApprovalDecision, ApprovalPort, ApprovalState, RunOwner, RunnerSnapshot } from '@tabs/agents/lib/engine/approval-port';
 import { noopObserver, type RunObserver, type SpanHandle } from '@tabs/agents/lib/engine/observe';
 import { withRateLimitRetry, type RateLimitRetryOptions, type RateLimitWait } from '@tabs/agents/lib/engine/rate-limit';
-import type { LlmCall } from '@core/runtime/agentic';
+import type { ContextTrim, LlmCall } from '@core/runtime/agentic';
+import { estimateTokens } from '@core/infra/context/context-assembler';
 
 // ------------------------------------------------------------------- types --
 
 /** What the graph needs from its host — the walker's deps minus the live hooks (events flow through the stream writer). */
+/**
+ * Bound ONE model request to the input budget — its TOOL DEFINITIONS INCLUDED (they ride in the
+ * same request, and at ~5k tokens they were the part the budget did not count) — and report a trim.
+ */
+function fitRequest(
+  deps: Pick<GraphDeps, 'onContextTrim'>,
+  node: string,
+  messages: LlmMessage[],
+  budget: number,
+  wire?: unknown,
+): LlmMessage[] {
+  const toolTokens = wire ? estimateTokens(JSON.stringify(wire)) : 0;
+  const { messages: fitted, trim } = budgetMessagesReport(messages, Math.max(512, budget - toolTokens));
+  if (trim) deps.onContextTrim?.({ node, ...trim });
+  return fitted;
+}
+
 export type GraphDeps = Omit<AgenticGraphDeps, 'onNodeStart' | 'onStep' | 'onNodeComplete' | 'tieBreaker'> & {
   /** Checkpoint store (Postgres in the cluster, memory in tests). Absent → no checkpointing. */
   checkpointer?: BaseCheckpointSaver;
@@ -181,6 +199,12 @@ export type GraphDeps = Omit<AgenticGraphDeps, 'onNodeStart' | 'onStep' | 'onNod
    * (`AGENT_TOOL_RESULT_MAX_CHARS`). Default {@link DEFAULT_TOOL_RESULT_MAX_CHARS}.
    */
   toolResultMaxChars?: number;
+  /**
+   * Track B — told when a request's history had to be trimmed to fit the model's input budget
+   * (the model itself is told by the note `budgetMessagesReport` adds). The run collects these
+   * into its warnings. Absent → the trim is still told to the model, just not collected.
+   */
+  onContextTrim?: (ev: ContextTrim & { node: string }) => void;
   /**
    * X9 — per-tool-call deadline (`AGENT_TOOL_CALL_TIMEOUT_MS`). A tool that does not answer in
    * time becomes a typed `timeout` tool result, so the superstep ends instead of hanging.
@@ -873,7 +897,7 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
         const routed = resolveNodeModel(node, deps);
         const completion = await llm({
           model: deps.reasoningModel,
-          messages: budgetMessages([{ role: 'system', content: planPrompt(system) }, ...turns], deps.budget ?? 24_000),
+          messages: fitRequest(deps, id, [{ role: 'system', content: planPrompt(system) }, ...turns], deps.budget ?? 24_000),
           temperature: 0.2,
           maxTokens: deps.maxOutputTokens,
         });
@@ -926,7 +950,7 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
           try {
             const synth = await llm({
               model: cur.model,
-              messages: budgetMessages([...cur.messages, { role: 'user', content: CAP_SYNTHESIS_PROMPT }], budget),
+              messages: fitRequest(deps, id, [...cur.messages, { role: 'user', content: CAP_SYNTHESIS_PROMPT }], budget),
               temperature: 0.2,
               maxTokens: deps.maxOutputTokens,
             });
@@ -947,7 +971,7 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
         try {
           completion = await llm({
             model: cur.model,
-            messages: budgetMessages(messages, budget),
+            messages: fitRequest(deps, id, messages, budget, react ? undefined : wire),
             tools: react ? undefined : wire,
             temperature: 0.2,
             maxTokens: deps.maxOutputTokens,
@@ -957,7 +981,7 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
           // Native tool-calling unsupported → ReAct protocol: rebuild the system prompt, retry without `tools`.
           react = true;
           messages = [{ role: 'system', content: actSystem(cur.system, cur.plan, tools, true) }, ...conversation(state.messages)];
-          completion = await llm({ model: cur.model, messages: budgetMessages(messages, budget), temperature: 0.2, maxTokens: deps.maxOutputTokens });
+          completion = await llm({ model: cur.model, messages: fitRequest(deps, id, messages, budget), temperature: 0.2, maxTokens: deps.maxOutputTokens });
         }
         // (c) A REFUSAL is not an answer: the agent fails, saying so, instead of handing it on.
         if (completion.refusal) throw new Error(`the model refused: ${completion.refusal}`);
@@ -1369,7 +1393,7 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
     try {
       completion = await llm({
         model: routed.model,
-        messages: budgetMessages([{ role: 'system', content: base + routeInstructions(members, false) }, ...turns], budget),
+        messages: fitRequest(deps, node.id, [{ role: 'system', content: base + routeInstructions(members, false) }, ...turns], budget, toOpenAiTools([routeTool(members)])),
         tools: toOpenAiTools([routeTool(members)]),
         temperature: 0.2,
         maxTokens: deps.maxOutputTokens,
@@ -1378,7 +1402,7 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
       if (!(e instanceof ToolCallingUnsupportedError)) throw e;
       completion = await llm({
         model: routed.model,
-        messages: budgetMessages([{ role: 'system', content: base + routeInstructions(members, true) }, ...turns], budget),
+        messages: fitRequest(deps, node.id, [{ role: 'system', content: base + routeInstructions(members, true) }, ...turns], budget),
         temperature: 0.2,
         maxTokens: deps.maxOutputTokens,
       });

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { probeServices } from '@tabs/admin/lib/services';
 import { requireUser } from '@core/kernel/auth';
+import { hydrationShortfalls } from '@core/infra/os-mirror';
 
 export const dynamic = 'force-dynamic';
 
@@ -9,6 +10,10 @@ export const dynamic = 'force-dynamic';
  * health endpoint in parallel (via the shared `probeServices` helper, reused by
  * Platform → Components) and reports up/down. No backend address or key reaches
  * the browser.
+ *
+ * `storeWarnings`: every in-process store whose last load from its index was cut at the
+ * store's hydration cap (`hydrationShortfalls`) — a health signal, so "records are missing"
+ * is visible to a signed-in person instead of silent. Empty when every store loaded in full.
  */
 export async function GET() {
   try {
@@ -19,5 +24,6 @@ export async function GET() {
       { status: (e as { status?: number }).status ?? 401 },
     );
   }
-  return NextResponse.json(await probeServices());
+  const storeWarnings = hydrationShortfalls().map((s) => `${s.index}: loaded ${s.loaded} of ${s.total} records (hydration cap) — lists over this store are incomplete.`);
+  return NextResponse.json({ ...(await probeServices()), storeWarnings });
 }
