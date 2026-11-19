@@ -47,6 +47,7 @@ import { AGENT_TEMPLATES, agentTemplate } from '@tabs/agents/lib/agent-templates
 import { SOFTWARE_TEAM_YAML } from '@tabs/agents/lib/software-team';
 import { grantedToolExecutor, grantedToolSpecs, type OsToolDeps } from '@tabs/agents/lib/build/os-tools';
 import { SET_STATE_TOOL_NAME, type GraphDeps } from '@tabs/agents/lib/engine/build-graph';
+import { checkToolArgsJsonOnly } from '@tabs/agents/lib/engine/tool-args';
 import { memoryCheckpointer, type SelectedCheckpointer } from '@tabs/agents/lib/engine/checkpointer';
 import { runGraphEngine, type EngineHooks } from '@tabs/agents/lib/engine/run';
 import { holdDecisionFor } from '@tabs/agents/lib/build/hold';
@@ -585,6 +586,8 @@ export type GraphDepsOptions = FixtureToolOptions & {
   toolResultMaxChars?: number;
   /** The acting user the executor dispatches as (default {@link FIXTURE_USER}). */
   user?: CurrentUser;
+  /** How tool arguments are checked (default: JSON only — see the note in {@link graphDeps}). */
+  checkArgs?: GraphDeps['checkArgs'];
 };
 
 export function graphDeps(sys: System, systemId: string, llm: LlmCall, sink: HoldSink, opts: GraphDepsOptions = {}): Omit<GraphDeps, 'checkpointer'> {
@@ -594,6 +597,12 @@ export function graphDeps(sys: System, systemId: string, llm: LlmCall, sink: Hol
     llm,
     toolSpecsFor: (node) => grantedToolSpecs(user, sys, node.tools),
     callTool: grantedToolExecutor(user, sys, systemId, fixtureToolDeps(sink, opts), { holdAt: 'node' }),
+    // The frozen goldens were recorded with a scripted model that calls every tool with fixture
+    // arguments (`{ input, task }`), which satisfy no real input schema. Production validates the
+    // schema (`checkToolArgs`) and would rightly refuse each of them; the goldens measure the
+    // graph's shape, not argument validity, so they replay with the JSON-only check. A test that
+    // passes its own `checkArgs` (or real, valid arguments) is not affected.
+    checkArgs: opts.checkArgs ?? checkToolArgsJsonOnly,
     ...(opts.toolCallTimeoutMs !== undefined ? { toolCallTimeoutMs: opts.toolCallTimeoutMs } : {}),
     ...(opts.toolResultMaxChars !== undefined ? { toolResultMaxChars: opts.toolResultMaxChars } : {}),
     preamble: FIXTURE_PREAMBLE,

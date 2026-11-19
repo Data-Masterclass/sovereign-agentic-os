@@ -114,6 +114,19 @@ import {
   DEFAULT_TOOL_CALL_TIMEOUT_MS,
   DEFAULT_TOOL_RESULT_MAX_CHARS,
 } from '@tabs/agents/lib/engine/tool-result';
+import {
+  checkToolArgs,
+  type ArgsVerdict,
+  emptyReplyResult,
+  truncatedCallResult,
+  EMPTY_REPLY_PROMPT,
+  MAX_ARG_REPAIR_ATTEMPTS,
+  MAX_EMPTY_REPLY_NUDGES,
+  MAX_TRUNCATED_CALL_RETRIES,
+  MODEL_REPLY_STEP,
+  TRUNCATED_ANSWER_NOTE,
+  TRUNCATED_CALL_PROMPT,
+} from '@tabs/agents/lib/engine/tool-args';
 import { isWriteTool } from '@tabs/agents/lib/build/hold';
 import { briefToolSpecs } from '@tabs/agents/lib/build/tool-brief';
 import {
@@ -166,6 +179,14 @@ export type GraphDeps = Omit<AgenticGraphDeps, 'onNodeStart' | 'onStep' | 'onNod
    * Default {@link DEFAULT_TOOL_CALL_TIMEOUT_MS}.
    */
   toolCallTimeoutMs?: number;
+  /**
+   * How a tool call's arguments are checked before it may run. Absent → {@link checkToolArgs}:
+   * the argument text must be a JSON object AND satisfy the tool's input schema. Production never
+   * sets this. It exists for the frozen parity goldens, whose scripted model calls every tool
+   * with fixture arguments (`{ input, task }`) that satisfy no real schema — those replay with
+   * {@link checkToolArgsJsonOnly}, which still refuses a call whose JSON was broken.
+   */
+  checkArgs?: (call: ToolCall, spec: ToolSpec) => ArgsVerdict;
   /**
    * How a model RATE LIMIT (a LiteLLM 429 on requests/tokens per minute) is waited out: bounded
    * retries, a capped wait, an injectable clock for tests. Absent → the defaults in
@@ -266,6 +287,20 @@ export type AgentCursor = {
   repeatedCalls: number;
   errorStreakTool: string;
   errorStreak: number;
+  /**
+   * The last reply could not be acted on (invalid arguments with nothing else to run, a cut-off
+   * tool call, an empty reply): `act_<id>` runs again with what the model was told. Optional —
+   * a checkpoint written before these fields existed reads as "no".
+   */
+  again?: boolean;
+  /** Consecutive replies that carried a tool call with invalid arguments (reset by a clean reply). */
+  invalidCalls?: number;
+  /** Tool calls cut off at the output limit in this visit. */
+  truncatedCalls?: number;
+  /** Empty replies in this visit. */
+  emptyReplies?: number;
+  /** The final answer was cut off at the output limit. */
+  truncated?: boolean;
 };
 
 /** The events nodes emit through the custom stream writer — the run route forwards them as SSE unchanged. */
@@ -890,7 +925,7 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
           finalText = finalText
             ? `${finalText}${CAP_NOTE}`
             : `Reached the tool step limit (cap) before finishing — review the steps above and continue if needed.${CAP_NOTE}`;
-          return { current: { ...cur, finalText, pending: [] } };
+          return { current: { ...cur, finalText, pending: [], again: false } };
         }
 
         let react = cur.react;
@@ -912,9 +947,73 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
           messages = [{ role: 'system', content: actSystem(cur.system, cur.plan, tools, true) }, ...conversation(state.messages)];
           completion = await llm({ model: cur.model, messages: budgetMessages(messages, budget), temperature: 0.2, maxTokens: deps.maxOutputTokens });
         }
+        // (c) A REFUSAL is not an answer: the agent fails, saying so, instead of handing it on.
+        if (completion.refusal) throw new Error(`the model refused: ${completion.refusal}`);
+        if (completion.finishReason === 'content_filter') throw new Error("the model's reply was blocked by the provider's content filter");
+
         const calls: ToolCall[] = !react && completion.toolCalls.length > 0 ? completion.toolCalls : reactCall(completion.content);
+        const cutOff = completion.finishReason === 'length';
+        const steps = [...cur.steps];
+        /** A step recorded by this node itself: a call that was NOT run, or a reply that could not be used. */
+        const record = (tool: string, args: Record<string, unknown>, result: string) => {
+          const step: AgenticStep = { tool, args, result, isError: true };
+          steps.push(step);
+          emit(config, { event: 'tool-step', data: { node: id, step, index: steps.length } });
+        };
+        // Every retry below is a model call that produced nothing usable: it costs a step and a round.
+        const spent = { stepsUsed: state.budget.stepsUsed + 1, exhausted: false };
+
         if (calls.length === 0) {
-          return { current: { ...cur, react, messages, finalText: stripThinking(completion.content), pending: [] } };
+          const text = stripThinking(completion.content);
+          if (!text) {
+            // (d) AN EMPTY REPLY is not "ok": one nudge, then the agent fails.
+            const emptyReplies = cur.emptyReplies ?? 0;
+            record(MODEL_REPLY_STEP, {}, emptyReplyResult());
+            if (emptyReplies >= MAX_EMPTY_REPLY_NUDGES) {
+              return failNode(config, node, cur.input, new Error(`the model returned nothing (an empty reply ${emptyReplies + 1} times, the last after being asked again)`), { ...cur, steps, react });
+            }
+            return {
+              current: { ...cur, react, steps, messages: [...messages, { role: 'user', content: EMPTY_REPLY_PROMPT }], emptyReplies: emptyReplies + 1, iterations: cur.iterations + 1, pending: [], again: true },
+              budget: spent,
+            };
+          }
+          // (b) A FINAL ANSWER cut off at the output limit is kept, and marked as cut off.
+          return { current: { ...cur, react, messages, finalText: cutOff ? `${text}${TRUNCATED_ANSWER_NOTE}` : text, truncated: cutOff || undefined, pending: [], again: false } };
+        }
+
+        if (cutOff) {
+          // (b) A TOOL CALL cut off at the output limit is not executed, even when what arrived
+          // happens to parse: one retry asking for a shorter call, then the agent fails.
+          const truncatedCalls = cur.truncatedCalls ?? 0;
+          for (const c of calls) record(c.name, c.args, truncatedCallResult(c.name));
+          if (truncatedCalls >= MAX_TRUNCATED_CALL_RETRIES) {
+            return failNode(
+              config,
+              node,
+              cur.input,
+              new Error(`a tool call (${calls.map((c) => c.name).join(', ')}) was cut off at the model's output limit ${truncatedCalls + 1} times — nothing was executed. Ask for smaller calls, or raise the model's output limit.`),
+              { ...cur, steps, react },
+            );
+          }
+          return {
+            current: { ...cur, react, steps, messages: [...messages, { role: 'user', content: TRUNCATED_CALL_PROMPT }], truncatedCalls: truncatedCalls + 1, iterations: cur.iterations + 1, pending: [], again: true },
+            budget: spent,
+          };
+        }
+
+        // (a) ARGUMENTS. A call whose argument text was not a JSON object, or whose arguments fail
+        // the tool's own input schema, is NOT executed and never reaches the hold: the model gets
+        // a typed error naming the problem and the expected shape. A tool this node is not
+        // advertised is left to `tools_<id>`, which answers it with the typed `not_found`.
+        const specs = new Map(tools.map((t) => [t.name, t]));
+        const runnable: ToolCall[] = [];
+        const refused: { call: ToolCall; text: string; problem: string }[] = [];
+        for (const c of calls) {
+          const spec = specs.get(c.name);
+          if (!spec) { runnable.push(c); continue; }
+          const verdict = (deps.checkArgs ?? checkToolArgs)(c, spec);
+          if (verdict.ok) runnable.push({ id: c.id, name: c.name, args: verdict.args });
+          else refused.push({ call: c, text: verdict.text, problem: verdict.problem });
         }
         const assistant: LlmMessage = react
           ? { role: 'assistant', content: completion.content }
@@ -923,9 +1022,36 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
               content: completion.content,
               tool_calls: calls.map((c) => ({ id: c.id, type: 'function', function: { name: c.name, arguments: JSON.stringify(c.args) } })),
             };
+        const next: LlmMessage[] = [...messages, assistant];
+        for (const r of refused) {
+          record(r.call.name, r.call.args, r.text);
+          next.push(react ? { role: 'user', content: `Observation: ${r.text}` } : { role: 'tool', tool_call_id: r.call.id, content: r.text });
+        }
+        const invalidCalls = cur.invalidCalls ?? 0;
+        if (refused.length > 0 && invalidCalls >= MAX_ARG_REPAIR_ATTEMPTS) {
+          const last = refused[0];
+          return failNode(
+            config,
+            node,
+            cur.input,
+            new Error(`the model kept sending invalid arguments for ${last.call.name} (${last.problem}) — ${invalidCalls + 1} attempts in a row, and nothing was executed`),
+            { ...cur, steps, react },
+          );
+        }
         return {
-          current: { ...cur, react, messages: [...messages, assistant], iterations: cur.iterations + 1, pending: calls, gate: undefined },
-          budget: { stepsUsed: state.budget.stepsUsed + 1, exhausted: false },
+          current: {
+            ...cur,
+            react,
+            steps,
+            messages: next,
+            iterations: cur.iterations + 1,
+            pending: runnable,
+            gate: undefined,
+            invalidCalls: refused.length > 0 ? invalidCalls + 1 : 0,
+            // Nothing left to run: the model answers the error(s) in the next ACT.
+            again: runnable.length === 0,
+          },
+          budget: spent,
         };
       } catch (e) {
         if (isGraphBubbleUp(e)) throw e;
@@ -1136,7 +1262,7 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
           pending: [],
         };
         const status = nodeStatus(result);
-        ownRuns.push({ node: id, model: cur.model, tier: cur.tier, tierReason: cur.tierReason, status, result, input: cur.input });
+        ownRuns.push({ node: id, model: cur.model, tier: cur.tier, tierReason: cur.tierReason, status, result, input: cur.input, ...(cur.truncated ? { truncated: true as const } : {}) });
         update.nodeRuns = ownRuns;
         update.handoffs = [{ node: id, block: handoffBlock(id, result.finalText, result.steps), finalText: result.finalText, steps: result.steps }];
         update.final = result.finalText;
@@ -1250,8 +1376,11 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
   for (const node of active) {
     const nn = nameOf(node.id);
     // A FAILED visit ends the run here (`failNode` set `failed`): no tools, no route, no handoff.
-    builder = builder.addConditionalEdges(nn.act, (s: EngineState) => (s.failed ? END : s.current && s.current.pending.length > 0 ? nn.tools : nn.route), {
+    // …and a reply that could not be acted on (invalid arguments, a cut-off call, an empty reply)
+    // comes back to `act_<id>` with what the model was told, instead of going on as an answer.
+    builder = builder.addConditionalEdges(nn.act, (s: EngineState) => (s.failed ? END : s.current && s.current.pending.length > 0 ? nn.tools : s.current?.again ? nn.act : nn.route), {
       [nn.tools]: nn.tools,
+      [nn.act]: nn.act,
       [nn.route]: nn.route,
       [END]: END,
     });

@@ -113,6 +113,8 @@ export type NodeRun = {
   input?: string;
   /** Present only when the node threw — the reason, for a node-level failure surface. */
   error?: string;
+  /** The final answer was cut off at the model's output limit (`finish_reason: length`). */
+  truncated?: true;
 };
 
 /** Upper bound on the captured node `input` (chars) so the run response stays lean. */

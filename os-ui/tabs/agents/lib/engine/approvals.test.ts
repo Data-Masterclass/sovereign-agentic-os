@@ -116,8 +116,8 @@ function runInput(h: ReturnType<typeof harness>, runId: string, cp: SelectedChec
 }
 
 const BATCH: Call[] = [
-  { id: 'c-read', name: 'search_knowledge', args: { q: 'Q3 findings' } },
-  { id: 'c-write', name: 'request_promotion', args: { id: 'kn_q3' } },
+  { id: 'c-read', name: 'search_knowledge', args: { query: 'Q3 findings' } },
+  { id: 'c-write', name: 'request_promotion', args: { kind: 'knowledge', id: 'kn_q3' } },
 ];
 
 test('P3(a)+(d) a held write PARKS the run before anything executes; the non-held call of the same batch waits too', async () => {
@@ -241,9 +241,9 @@ test('P3(e) a racing second decision gets null and resumes nothing; a resume pay
   const port = memoryApprovalPort();
   // Two held writes in one batch plus a read.
   const batch: Call[] = [
-    { id: 'c-read', name: 'search_knowledge', args: { q: 'x' } },
-    { id: 'c-w1', name: 'request_promotion', args: { id: 'kn_1' } },
-    { id: 'c-w2', name: 'request_promotion', args: { id: 'kn_2' } },
+    { id: 'c-read', name: 'search_knowledge', args: { query: 'x' } },
+    { id: 'c-w1', name: 'request_promotion', args: { kind: 'knowledge', id: 'kn_1' } },
+    { id: 'c-w2', name: 'request_promotion', args: { kind: 'knowledge', id: 'kn_2' } },
   ];
   const h = harness(HELD_YAML, script(batch), spy, port);
   const cp = memoryCheckpointer();
@@ -310,7 +310,7 @@ test('M5: a crash between two executions of one batch re-executes only the call 
   const spy = spyDeps({ failOnce: 'query_data' });
   const port = memoryApprovalPort();
   const batch: Call[] = [
-    { id: 'c-1', name: 'search_knowledge', args: { q: 'a' } },
+    { id: 'c-1', name: 'search_knowledge', args: { query: 'a' } },
     { id: 'c-2', name: 'query_data', args: { sql: 'select 1' } },
   ];
   const h = harness(READS_YAML, script(batch), spy, port);
