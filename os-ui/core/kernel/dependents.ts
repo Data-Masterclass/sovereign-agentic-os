@@ -22,8 +22,8 @@ import 'server-only';
  *   • dataset  → dashboards (a panel references a metric member on that dataset's view)
  *   • dataset  → apps        (app.grants.data includes the id)
  *   • dataset  → agents      (agent grants.data includes the id, per-item)
- *   • metric   → dashboards  (a panel uses that metric's member)
- *   • knowledge/file/connection → apps + agents (grants include the id)
+ *   • metric   → dashboards  (a panel uses that metric's member) + apps + agents granted the metric
+ *   • knowledge (`wf_`/`pk_`) / file (`as_`) / connection (`conn_`) → apps + agents (grants include the id)
  * // TODO: extend for transformation→dataset lineage and knowledge/file→dashboard edges.
  */
 
@@ -45,8 +45,11 @@ export { type Dependent, type DependentTab, dependentsSummary };
  *  IS its dataset), so metric queries only walk the dashboard edge. */
 function grantKindFor(prefix: string): ContextKind | null {
   if (prefix === 'ds' || prefix === 'dataset') return 'data';
-  if (prefix === 'knowledge' || prefix === 'kb') return 'knowledge';
-  if (prefix === 'file') return 'files';
+  // `wf_` is a knowledge process (knowledge store `uid('wf')`), `pk_` a personal note: the ids the
+  // knowledge tab actually mints. Without them a knowledge item's warning never found a dependent.
+  if (prefix === 'wf' || prefix === 'pk' || prefix === 'knowledge' || prefix === 'kb') return 'knowledge';
+  // `as_` is what the files store mints for a file.
+  if (prefix === 'as' || prefix === 'file') return 'files';
   if (prefix === 'connection' || prefix === 'conn') return 'connections';
   if (prefix === 'metric') return 'metrics';
   return null;
@@ -109,6 +112,8 @@ export async function dependentsOf(artifactId: string): Promise<Dependent[]> {
     const d = datasetForScheduler(datasetId);
     const measure = d?.measures.find((m) => m.name === measureName);
     if (d && measure) out.push(...dashboardsReferencing(new Set([measureMember(d, measure)])));
+    // A metric can also be granted to an app or an agent by its own id: those break too.
+    out.push(...(await grantDependents('metrics', artifactId)));
     return dedupe(out);
   }
 
@@ -123,20 +128,26 @@ export async function dependentsOf(artifactId: string): Promise<Dependent[]> {
 
   // GRANT edges — apps + agents that were granted this id directly (dataset/knowledge/file/
   // connection). Metrics-as-grant are covered via the dashboard walk above.
-  if (kind) {
-    for (const app of await listAllAppsInternal()) {
-      if (isGranted(app.grants, kind, artifactId)) {
-        out.push({ kind: 'app', id: app.id, name: app.name, tab: 'software' });
-      }
-    }
-    for (const sys of listAllSystemsInternal()) {
-      if (agentGrantList(sys.grants, kind).some((g) => g.id === artifactId && !g.folder)) {
-        out.push({ kind: 'agent', id: sys.id, name: sys.name, tab: 'agents' });
-      }
-    }
-  }
+  if (kind) out.push(...(await grantDependents(kind, artifactId)));
 
   return dedupe(out);
+}
+
+/** The apps and agents granted `artifactId` directly (a folder grant names no item, so it is
+ *  re-resolved at run time and is not a dependent of one item). */
+async function grantDependents(kind: ContextKind, artifactId: string): Promise<Dependent[]> {
+  const out: Dependent[] = [];
+  for (const app of await listAllAppsInternal()) {
+    if (isGranted(app.grants, kind, artifactId)) {
+      out.push({ kind: 'app', id: app.id, name: app.name, tab: 'software' });
+    }
+  }
+  for (const sys of listAllSystemsInternal()) {
+    if (agentGrantList(sys.grants, kind).some((g) => g.id === artifactId && !g.folder)) {
+      out.push({ kind: 'agent', id: sys.id, name: sys.name, tab: 'agents' });
+    }
+  }
+  return out;
 }
 
 function dedupe(list: Dependent[]): Dependent[] {
