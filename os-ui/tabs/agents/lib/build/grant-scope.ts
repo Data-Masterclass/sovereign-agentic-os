@@ -504,7 +504,13 @@ export async function checkGrantScope(
     const refs = sqlTableRefs(typeof a[rule.sql.arg] === 'string' ? (a[rule.sql.arg] as string) : '');
     const ids = [...new Set([...scope.kinds.data.read, ...scope.created.data])];
     const allowed = new Map<string, string>();
-    for (const d of ids) for (const t of await resolvers.datasetTables(d)) allowed.set(t.toLowerCase(), d);
+    // A table name is compared in the form the statement reader produces (lower-cased, quotes
+    // dropped), so `"iceberg"."Sales"."gold_orders"` and iceberg.sales.gold_orders are one table.
+    const canonical = (fqn: string): string => {
+      const r = sqlTableRefs(`select 1 from ${fqn}`);
+      return r.ok && r.tables.length === 1 ? r.tables[0] : fqn.toLowerCase();
+    };
+    for (const d of ids) for (const t of await resolvers.datasetTables(d)) allowed.set(canonical(t), d);
     const names = allowed.size > 0 ? [...allowed.keys()].join(', ') : 'none (no granted dataset is built yet)';
     if (!refs.ok) {
       return refuse(

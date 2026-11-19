@@ -218,6 +218,9 @@ test('SQL: query_data runs only over the granted datasets\' tables, by full name
   assert.match(reason(await check('query_data', { sql: 'SELECT * FROM iceberg.hr.gold_salaries' }, sys)), /not granted the table iceberg\.hr\.gold_salaries.*iceberg\.sales\.gold_orders/);
   assert.match(reason(await check('query_data', { sql: 'SELECT * FROM iceberg.sales.gold_orders o JOIN iceberg.hr.gold_salaries s ON 1=1' }, sys)), /iceberg\.hr\.gold_salaries/);
   assert.match(reason(await check('query_data', { sql: 'SELECT (SELECT max(pay) FROM iceberg.hr.gold_salaries) FROM iceberg.sales.gold_orders' }, sys)), /iceberg\.hr\.gold_salaries/);
+  // A quoted physical name (a catalog with a hyphen) matches however the model quotes it.
+  const quoted: GrantResolvers = { ...RESOLVERS, datasetTables: async () => ['"lake-house".sales."Gold_Orders"'] };
+  assert.equal((await checkGrantScope('query_data', { sql: 'select * from "lake-house".sales.gold_orders' }, grantScopeOf(sys), quoted)).allow, true);
   // An unqualified name cannot be tied to a granted dataset → refused, with the names to use.
   assert.match(reason(await check('query_data', { sql: 'SELECT * FROM gold_orders' }, sys)), /not granted the table gold_orders/);
   // What cannot be checked is refused honestly, never run on trust.
