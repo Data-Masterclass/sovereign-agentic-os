@@ -40,7 +40,7 @@ export const GET = withRoute(async ({ user }) => {
 
   let evaluated = 0;
   let breached = 0;
-  const results: { ruleId: string; member: string; value: number | null; breached: boolean; status: 'ok' | 'pending' | 'unavailable' | 'error'; reason?: string }[] = [];
+  const results: { ruleId: string; owner: string; member: string; value: number | null; breached: boolean; status: 'ok' | 'pending' | 'unavailable' | 'orphaned' | 'error'; reason?: string }[] = [];
 
   for (const rule of rules) {
     try {
@@ -49,7 +49,7 @@ export const GET = withRoute(async ({ user }) => {
       if (resolved.status !== 'ok') {
         // Unavailable (Trino outage) or pending (no number yet): SKIP — never fabricate, never
         // fire. Both are honest non-evaluations; the next tick retries.
-        results.push({ ruleId: rule.id, member: rule.member, value: null, breached: false, status: resolved.status, reason: resolved.reason });
+        results.push({ ruleId: rule.id, owner: rule.owner, member: rule.member, value: null, breached: false, status: resolved.status, reason: resolved.reason });
         continue;
       }
 
@@ -63,11 +63,15 @@ export const GET = withRoute(async ({ user }) => {
         await deliverAlert(evald, rule.member, { userId: rule.owner, email });
       }
 
-      results.push({ ruleId: rule.id, member: rule.member, value: resolved.value, breached: evald.breached, status: 'ok' });
+      results.push({ ruleId: rule.id, owner: rule.owner, member: rule.member, value: resolved.value, breached: evald.breached, status: 'ok' });
     } catch (e) {
-      results.push({ ruleId: rule.id, member: rule.member, value: null, breached: false, status: 'error', reason: (e as Error).message });
+      results.push({ ruleId: rule.id, owner: rule.owner, member: rule.member, value: null, breached: false, status: 'error', reason: (e as Error).message });
     }
   }
 
-  return NextResponse.json({ evaluated, breached, results });
+  // Every rule is evaluated (and delivered to ITS owner) whoever triggers the sweep, but the
+  // values in the answer are each owner's own numbers, read with their row security. So the
+  // caller sees the rows of their own rules; only an admin sees every rule's row.
+  const visible = user.role === 'admin' ? results : results.filter((r) => r.owner === user.id);
+  return NextResponse.json({ evaluated, breached, results: visible });
 }, { gate: requirePrincipal as () => Promise<CurrentUser> });

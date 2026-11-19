@@ -147,6 +147,16 @@ test('resolveOwner: returns a live principal for an active owner, null for disab
   assert.equal(await resolveOwner('gone', async () => null), null, 'missing owner → null');
 });
 
+test('resolveOwner: an archived domain is out of a scheduled run’s scope, as in the browser session', async () => {
+  const { createDomain, setArchived } = await import('@tabs/admin/lib/domains');
+  createDomain({ name: 'Closedtrack', owner: 'u1' });
+  setArchived('closedtrack', true);
+  const owner = { id: 'u1', name: 'A', domains: ['sales', 'closedtrack'], role: 'builder', disabled: false } as never;
+  const ok = await resolveOwner('u1', async () => owner);
+  assert.deepEqual(ok?.domains, ['sales']);
+  assert.deepEqual(ok?.allDomains, ['sales']);
+});
+
 // --- 6) platform autonomous-agents gate: OFF ⇒ unattended run refused (403) ----
 
 test('autonomous-agents gate OFF: a scheduled run is refused 403 BEFORE owner resolution or execution', async () => {

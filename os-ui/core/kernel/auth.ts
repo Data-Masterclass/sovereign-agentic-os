@@ -40,6 +40,15 @@ export type CurrentUser = {
  * agent engine re-reads a parked run's runner through this before resuming (A2): a runner who
  * was deactivated or lost the role since the run parked must not have the run execute as them.
  */
+/**
+ * A member's domains as they are in scope NOW: archived domains dropped, the same narrowing the
+ * cookie session applies. For the headless doors (MCP bearer, scheduled runs, alert evaluation),
+ * which resolve a stored user id rather than a signed session.
+ */
+export function liveDomains(ids: string[]): string[] {
+  return activeDomainIds(ids);
+}
+
 export async function principalById(id: string): Promise<{ id: string; name: string; role: Role; domains: string[] } | null> {
   const u = await getPublicUser(id);
   if (!u || u.disabled) return null;
