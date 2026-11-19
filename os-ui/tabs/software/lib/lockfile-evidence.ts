@@ -37,12 +37,17 @@
  *     - the range check is a deliberately small semver subset (`semver` is not a dependency of
  *       os-ui): exact versions, `^`, `~`, the comparators, x-ranges, hyphen ranges, and `||`. A
  *       range it cannot read (a tag such as `latest`, `npm:` aliases, git/URL/`file:` specifiers)
- *       or a prerelease on either side is NOT judged — it is left alone rather than guessed at;
+ *       or a prerelease on either side is NOT judged — it is left alone rather than guessed at.
+ *       "Not judged" means NO problem is raised: the pair is ACCEPTED. So a prerelease resolution
+ *       (`19.0.0-rc.1`), a Ruby-style `~>`, a bare operator (`^`, `>=`) and a malformed x-range
+ *       (`1.x.3`) all pass this particular check. A resolution entry with NO `version` at all is
+ *       different: there is nothing to accept, and it is stale;
  *     - a local package's devDependencies are compared as ranges but not required to be resolved:
  *       npm installs them for a workspace member and not for a plain `file:` dependency, and the
  *       lockfile does not say which the entry is;
- *     - `yarn.lock` / `pnpm-lock.yaml` and npm lockfileVersion 1 are not parsed (`other-lock`):
- *       coverage for those still rests on the engine's own `lang-pkgs` result, as before;
+ *     - `yarn.lock` / `pnpm-lock.yaml` / bun locks and npm lockfileVersion 1 are not parsed
+ *       (`other-lock`). Their agreement with the manifest is NOT checked; the entry names the
+ *       lockfile so the scanner can at least require a `lang-pkgs` result for THAT file;
  *     - other ecosystems (pip, go, cargo, …) are out of scope here.
  */
 import type { ScaffoldFile } from '@tabs/software/lib/model';
@@ -73,7 +78,7 @@ export type NpmManifestEvidence = {
    * a peer-only manifest still asks a resolver for packages and is not "nothing to resolve".
    */
   declared: number;
-  /** The npm lockfile that covers it, when one does. */
+  /** The lockfile that covers it, when one does (for `other-lock`: the yarn / pnpm / v1 file). */
   lock: string | null;
   state: NpmLockState;
   /** Packages the covering lockfile resolves (0 = it resolves nothing, so there is nothing to scan). */
@@ -138,6 +143,8 @@ function partial(p: string): { lo: V; hi: V | null; full: boolean } | null {
   if (!m) return null;
   const major = Number(m[1]);
   const wild = (x: string | undefined) => x === undefined || /^[xX*]$/.test(x);
+  // `1.x.3` is not a range anything defines — a wildcard followed by a number is malformed.
+  if (wild(m[2]) && m[3] !== undefined && !wild(m[3])) return null;
   if (wild(m[2])) return { lo: [major, 0, 0], hi: [major + 1, 0, 0], full: false };
   const minor = Number(m[2]);
   if (wild(m[3])) return { lo: [major, minor, 0], hi: [major, minor + 1, 0], full: false };
@@ -149,6 +156,8 @@ function testComparator(v: V, c: string): boolean | null {
   const m = /^(\^|~|>=|<=|>|<|=)?\s*(.*)$/.exec(c.trim());
   if (!m) return null;
   const op = m[1] ?? '';
+  // A bare operator (`^`, `~`, `>=`) names no version. It must not read as "anything satisfies".
+  if (op !== '' && m[2].trim() === '') return null;
   const p = partial(m[2]);
   if (!p) return null;
   const { lo, hi, full } = p;
@@ -247,7 +256,13 @@ function resolutionProblems(
       }
       if (hit.link === true && typeof hit.resolved === 'string') hit = packages[hit.resolved] ?? hit;
       const version = typeof hit.version === 'string' ? hit.version : null;
-      if (version && satisfiesRange(version, range) === false) {
+      if (!version) {
+        // npm records a version for every installed package. An entry without one resolves
+        // nothing a scanner could look up — a placeholder, not a resolution.
+        out.push(`${field}: "${name}" has a lockfile entry with no version, so nothing was actually resolved for it`);
+        continue;
+      }
+      if (satisfiesRange(version, range) === false) {
         out.push(`${field}: "${name}" asks for ${range} but the lockfile resolves ${version}, which does not satisfy it`);
       }
     }
@@ -401,8 +416,8 @@ export function npmLockEvidence(files: ScaffoldFile[]): NpmManifestEvidence[] {
     }
     if (covered) continue;
 
-    const other = OTHER_LOCK_NAMES.some((n) => byPath.has(join(dir, n)));
-    out.push({ manifest: path, declared, lock: null, state: other ? 'other-lock' : 'unlocked', resolved: 0, problems: [] });
+    const other = OTHER_LOCK_NAMES.map((n) => join(dir, n)).find((p) => byPath.has(p));
+    out.push({ manifest: path, declared, lock: other ?? null, state: other ? 'other-lock' : 'unlocked', resolved: 0, problems: [] });
   }
   return out;
 }

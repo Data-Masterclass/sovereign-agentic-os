@@ -1826,12 +1826,21 @@ and is run against every range in the real lockfile in the tests, so it cannot c
 stale; `yarn.lock`, `pnpm-lock.yaml` and npm lockfileVersion 1 are not parsed and still rest on the
 engine's result alone.
 
-**One covered corner must not read as the whole tree — in any ecosystem.** The first version
-asked "did *any* `lang-pkgs` result come back?", so an `api/pyproject.toml` with no lockfile rode
-on the npm lockfile's result. Every non-npm manifest now names the file whose result would prove
-it was resolved (`evidenceTargets`: the manifest itself for `requirements*.txt` / `go.mod` /
-`pom.xml`, which Trivy parses directly; the lockfile beside it or at a workspace root for the
-rest) and is uncovered without one.
+**One covered corner must not read as the whole tree — in any ecosystem, and it took three
+passes to mean it.** The first version asked "did *any* `lang-pkgs` result come back?", so an
+`api/pyproject.toml` with no lockfile rode on the npm lockfile's result. The second gave every
+non-npm manifest its own evidence but left two doors open: a `package.json` under `yarn.lock`,
+`pnpm-lock.yaml` or an npm v1 lock was judged by nobody, and the carve-outs were generous (any
+`requirements*.txt` satisfied a `pyproject.toml`; any ancestor lockfile satisfied any manifest
+below it). Now: every manifest needs a result for a specific file (`evidenceTargets`, and for npm
+the lockfile recorded by `lockfile-evidence.ts`) — the manifest itself for `requirements*.txt` /
+`go.mod` / `pom.xml`, which Trivy parses directly; `requirements.txt` by that exact name beside a
+`pyproject.toml`, `setup.py` or `setup.cfg`; otherwise the NEAREST lockfile, and an ancestor's only
+when no other manifest of the same ecosystem sits in between. The limits are in that function's
+header and are real: workspace membership is inferred from layout and never read from the
+workspace file, and only npm lockfiles are compared with their manifests — a stale `poetry.lock`
+or `yarn.lock` is not detected, only an unread one. **A carve-out is a claim of coverage; write it
+as narrowly as the evidence, and expect the reviewer to find the one that was not.**
 
 **"Covered" has to say covered BY WHAT.** Trivy drops development dependencies unless run with
 `--include-dev-deps`, and 180 of the Vite lockfile's 189 packages are dev — the bundler and
@@ -1860,6 +1869,14 @@ into the template functions would have silently changed the effective tree, and 
 of every such app. `templateFiles()` therefore stays the plain scaffold and only `createApp` calls
 `lockedSeed`; the failure direction of a lost snapshot is "deps not covered", never a green tick
 for a lockfile the app's real tree does not contain.
+
+Be exact about "existing apps are untouched", because the first write-up of this overstated it.
+An app with a stored tree — a mirror snapshot or a tree in git — is byte-for-byte unchanged. An
+app with neither reads the template fallback, and that fallback DID change in one place: its
+`package.json` now asks for `vite ^6.4.6` where it asked for `^5.4.2`. The patched range was
+applied to the one manifest both seeds share rather than leaving the plain scaffold on a range that
+resolves to a release with a known high advisory. Such an app still has no lockfile, no vendored
+tree and no dependency coverage.
 
 Two things the tests turned up that were already broken. The scanner's path allowlist had no `@`,
 so any tree with a file under `vendor/@sovereign-os/` — which "refresh vendored SDK" has been
@@ -1898,14 +1915,22 @@ each exception named (today one: `caniuse-lite`, CC-BY-4.0 browser data pulled i
 
 **A lost snapshot is not an empty app (again).** `commitToApp` merged a push over `getSnapshot() ??
 templateFiles()` and then replaced the app's whole git subtree. `hydrateSnapshot` returns null when
-the mirror is unreachable as well as when there is nothing to read — so for a locked app, one
-partial push during a mirror outage would have committed the deletion of the lockfile, the
-vendored tree and the `file:` manifest (and, as before this change, every file the user had
-written). The scan would then have said "no lockfile", honestly but about a tree the commit had
-just destroyed. `app.repo.seeded` is the recorded evidence of what the app was created with, so
-the commit now refuses (503, nothing written) when the fallback lacks any seeded path. An app
-whose seed *is* the plain template behaves as before — its user-authored files are still exposed
-to that same loss, which is the older, wider defect and is not fixed here.
+the mirror is unreachable as well as when there is nothing to read — so one partial push during a
+mirror outage committed the deletion of everything not in the template: every file the user had
+written, for any app, and for a locked app its lockfile, vendored tree and `file:` manifest too.
+`priorTreeForCommit` (`tabs/software/lib/server.ts`) now reads in the order of trust: the mirror
+snapshot, then **git, the home of record** (`readAppTreeFromGit`; a truncated read is not used,
+since merging over part of a tree deletes the rest), then the template — and the template only
+when it can stand in for the app's tree. `app.repo.seeded` records what the app was created with;
+if the template plus the push lacks any of those paths the commit is refused (503, nothing
+written), naming the two real ways out: retry when a store answers, or push the app's complete
+tree. That refusal is reachable for a locked app that was never yet committed to git (creation
+writes the mirror, not git) and for an older app whose template has since dropped a seeded file.
+What is still not fixed: an app whose seed is the current template, with git disabled or no
+domain, still merges over the template and loses user-authored files — there is no other copy to
+read. And the six READ-side fallbacks (scan, preview, records, builder) still read the template
+for an app with no snapshot; a scan there reports "no lockfile", which is true of the tree it was
+given and not of the app.
 
 Costs, stated: a locked Vite seed is about 214 kB (lockfile 95 kB, vendored OS packages 79 kB,
 scaffold 40 kB) against the scan payload ceiling (`DEFAULT_MAX_PAYLOAD`, 900 kB encoded), so an

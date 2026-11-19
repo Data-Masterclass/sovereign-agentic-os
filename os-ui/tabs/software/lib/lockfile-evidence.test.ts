@@ -277,3 +277,32 @@ test('satisfiesRange: the subset it reads, and the specifiers it REFUSES to judg
   for (const [v, r] of no) assert.equal(satisfiesRange(v, r), false, `${v} should NOT satisfy ${r}`);
   for (const [v, r] of unknown) assert.equal(satisfiesRange(v, r), null, `${v} vs ${r} must not be judged`);
 });
+
+test('satisfiesRange: a MALFORMED range is not judged — it never reads as satisfied', () => {
+  // A bare operator names no version; `1.x.3` is not a range anything defines; `~>` is Ruby's.
+  for (const r of ['^', '~', '>=', '>', '<=', '=', '1.x.3', '1.*.0', '~> 1.2', '>= ', '^ ']) {
+    assert.equal(satisfiesRange('1.2.3', r), null, `"${r}" must be not-judged, never true`);
+  }
+});
+
+test('a resolution entry with NO version is stale — a placeholder resolves nothing', () => {
+  const manifest = { name: 'shop', dependencies: { clsx: '^2.1.1' } };
+  const lock = {
+    name: 'shop',
+    lockfileVersion: 3,
+    packages: { '': { name: 'shop', dependencies: { clsx: '^2.1.1' } }, 'node_modules/clsx': {} },
+  };
+  const problems = compareManifestToLock(manifest, lock);
+  assert.equal(problems.length, 1);
+  assert.match(problems[0], /"clsx" has a lockfile entry with no version/);
+});
+
+test('tree: an OTHER-LOCK entry names the lockfile, so a caller can demand a result for that file', () => {
+  for (const lock of ['yarn.lock', 'pnpm-lock.yaml']) {
+    const ev = npmLockEvidence([
+      { path: 'web/package.json', content: json(MANIFEST) },
+      { path: `web/${lock}`, content: 'x\n' },
+    ]);
+    assert.deepEqual([ev[0].state, ev[0].lock], ['other-lock', `web/${lock}`]);
+  }
+});

@@ -457,27 +457,100 @@ after(() => {
 const dev = { id: 'dan', name: 'Dan', domains: ['eng'], role: 'creator' } as Parameters<typeof createApp>[0];
 const PUSH = [{ path: 'src/note.ts', content: 'export const note = 1;\n' }];
 
-test('LOST SNAPSHOT · a push over a locked app whose tree cannot be loaded is REFUSED, not merged over the plain template', async () => {
-  const app = await createApp(dev, { name: 'Lost Lock', template: 'sovereign-app' });
-  assert.ok(app.repo.seeded.includes(LOCK_PATH), 'the app records that it was seeded with a lockfile');
-  __resetSnapshots(); // a cold process whose durable mirror answers nothing
-  assert.equal(getSnapshot(app.id), null);
-  await assert.rejects(
-    () => commitToApp(app.id, dev, PUSH, 'partial push'),
-    (e: Error & { status?: number }) => {
-      assert.equal(e.status, 503);
-      assert.match(e.message, /could not be loaded/);
-      assert.match(e.message, /Nothing was written/);
-      return true;
-    },
-  );
-  // Nothing was written: no tree was conjured from the plain template.
-  assert.equal(getSnapshot(app.id), null);
+const { __setAppProjectGitForTests } = await import('./git-commit.ts');
+
+async function refusal(fn: () => Promise<unknown>): Promise<Error & { status?: number }> {
+  try {
+    await fn();
+  } catch (e) {
+    return e as Error & { status?: number };
+  }
+  throw new Error('expected a refusal, got none');
+}
+
+test('LOST SNAPSHOT · mirror empty, GIT has the tree → the push merges over the git tree and keeps lockfile + vendor/', async () => {
+  __setAppProjectGitForTests(true);
+  try {
+    const app = await createApp(dev, { name: 'Lost Mirror', template: 'sovereign-app' });
+    // The first governed commit puts the whole tree into the domain repository.
+    const first = await commitToApp(app.id, dev, [{ path: 'src/first.ts', content: 'export const first = 1;\n' }], 'first');
+    assert.ok(first.git && first.git.ok && first.git.recorded, 'the tree is in git');
+    __resetSnapshots(); // a cold process whose durable mirror answers nothing
+    assert.equal(getSnapshot(app.id), null);
+
+    await commitToApp(app.id, dev, PUSH, 'partial push after the mirror was lost');
+    const tree = getSnapshot(app.id) ?? [];
+    const has = (p: string) => tree.some((f) => f.path === p);
+    assert.ok(has(LOCK_PATH), 'the lockfile survived');
+    assert.ok(has('vendor/@sovereign-os/ui/package.json'), 'the vendored tree survived');
+    assert.ok(has('src/first.ts'), 'and so did the file the user committed earlier');
+    assert.ok(has('src/note.ts'), 'alongside the new push');
+    for (const e of npmLockEvidence(tree)) assert.equal(e.state, 'consistent', `${e.manifest}: ${e.problems.join('; ')}`);
+  } finally {
+    __setAppProjectGitForTests(null);
+  }
 });
 
-test('LOST SNAPSHOT · an app whose seed IS the plain template keeps today’s behaviour', async () => {
-  const app = await createApp(dev, { name: 'Lost Legacy', template: 'nextjs-supabase' });
-  __resetSnapshots();
-  const out = await commitToApp(app.id, dev, [{ path: 'notes.txt', content: 'hi\n' }], 'push');
-  assert.equal(out.step.ok, true);
+test('LOST SNAPSHOT · the git fallback also rescues an app seeded from the PLAIN template', async () => {
+  // The older, wider defect: any app lost every user-authored file in this situation.
+  __setAppProjectGitForTests(true);
+  try {
+    const app = await createApp(dev, { name: 'Lost Legacy Git', template: 'nextjs-supabase' });
+    await commitToApp(app.id, dev, [{ path: 'lib/mine.ts', content: 'export const mine = 1;\n' }], 'first');
+    __resetSnapshots();
+    await commitToApp(app.id, dev, [{ path: 'notes.txt', content: 'hi\n' }], 'second');
+    assert.ok((getSnapshot(app.id) ?? []).some((f) => f.path === 'lib/mine.ts'), 'the user file was not deleted');
+  } finally {
+    __setAppProjectGitForTests(null);
+  }
+});
+
+test('LOST SNAPSHOT · mirror empty AND git cannot supply the tree → 503, nothing written', async () => {
+  __setAppProjectGitForTests(false); // no domain repository to read back from
+  try {
+    const app = await createApp(dev, { name: 'Lost Lock', template: 'sovereign-app' });
+    assert.ok(app.repo.seeded.includes(LOCK_PATH), 'the app records that it was seeded with a lockfile');
+    __resetSnapshots();
+    const e = await refusal(() => commitToApp(app.id, dev, PUSH, 'partial push'));
+    assert.equal(e.status, 503);
+    assert.match(e.message, /could not be loaded/);
+    assert.match(e.message, /Nothing was written/);
+    assert.match(e.message, /push the app's COMPLETE tree/, 'the recovery path is named');
+    assert.equal(getSnapshot(app.id), null, 'no tree was conjured from the plain template');
+
+    // …and that recovery path is real: a push carrying everything the app was seeded with lands.
+    const whole = lockedSeed('sovereign-app', templateFiles('sovereign-app', app.name, app.slug), app.slug);
+    const out = await commitToApp(app.id, dev, [...whole, ...PUSH], 'full tree');
+    assert.equal(out.step.ok, true);
+    assert.ok((getSnapshot(app.id) ?? []).some((f) => f.path === LOCK_PATH));
+  } finally {
+    __setAppProjectGitForTests(null);
+  }
+});
+
+test('LOST SNAPSHOT · an OLDER app whose template has since dropped a seeded file is held to the same rule', async () => {
+  __setAppProjectGitForTests(false);
+  try {
+    const app = await createApp(dev, { name: 'Lost Old', template: 'nextjs-supabase' });
+    // What "the template changed since this app was created" looks like in the record.
+    app.repo.seeded = [...app.repo.seeded, 'legacy/once-seeded.ts'];
+    __resetSnapshots();
+    const e = await refusal(() => commitToApp(app.id, dev, [{ path: 'notes.txt', content: 'hi\n' }], 'push'));
+    assert.equal(e.status, 503);
+    assert.match(e.message, /legacy\/once-seeded\.ts/);
+  } finally {
+    __setAppProjectGitForTests(null);
+  }
+});
+
+test('LOST SNAPSHOT · an app whose seed IS the plain template, with no git, keeps today’s behaviour', async () => {
+  __setAppProjectGitForTests(false);
+  try {
+    const app = await createApp(dev, { name: 'Lost Legacy', template: 'nextjs-supabase' });
+    __resetSnapshots();
+    const out = await commitToApp(app.id, dev, [{ path: 'notes.txt', content: 'hi\n' }], 'push');
+    assert.equal(out.step.ok, true);
+  } finally {
+    __setAppProjectGitForTests(null);
+  }
 });
