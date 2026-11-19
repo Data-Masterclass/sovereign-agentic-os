@@ -30,6 +30,9 @@ import { isUnderFolder, normaliseFolderPath } from '@core/kernel/folders';
 import type { ArtifactGrant, Capability, System } from '@tabs/agents/lib/system-schema';
 import { sqlTableRefs } from '@tabs/agents/lib/build/sql-tables';
 
+/** The kinds whose artifacts live in folders, so a NEW one can be confined to a granted folder. */
+export type FolderKind = 'files' | 'data' | 'knowledge';
+
 /** The governed resource kinds a system can be granted (`grants.*` minus `tools`). */
 export type ResourceKind = 'data' | 'knowledge' | 'metrics' | 'connections' | 'files' | 'plan';
 export const RESOURCE_KINDS: readonly ResourceKind[] = ['data', 'knowledge', 'metrics', 'connections', 'files', 'plan'];
@@ -59,8 +62,11 @@ export type ToolResourceRule = {
   ref?: { arg: string; access: Access };
   /** The Operating Model `scope` argument (my | domain | company) → `manual:<scope>`. */
   planScope?: { arg: string; access: Access };
-  /** A folder argument a NEW file is written into. */
-  folderWrite?: { arg: string };
+  /**
+   * A folder argument a NEW artifact is written into. `kind` says which kind's folder grants
+   * decide it (default `files`).
+   */
+  folderWrite?: { arg: string; kind?: FolderKind };
   /** Free-form SQL: every table it names must belong to a granted dataset. */
   sql?: { arg: string };
   /**
@@ -103,7 +109,7 @@ export const TOOL_RESOURCES: Readonly<Record<string, ToolResourceRule>> = {
   transform_silver: writes('data', 'datasetId'),
   build_gold_join: { ids: [id('data', 'datasetId', 'write'), id('data', 'picks[].datasetId', 'read')] },
   set_dataset_sync: { ids: [id('data', 'datasetId', 'write'), id('connections', 'connectionId', 'read')] },
-  create_dataset: { creates: ['data'] },
+  create_dataset: { folderWrite: { arg: 'folder', kind: 'data' }, creates: ['data'] },
   // Adopts a table an exposure set published to the runner's domain as a NEW dataset.
   adopt_exposed_table: { creates: ['data'] },
   reconcile_domain_tables: { broad: { kinds: ['data'], why: 'it reconciles every table of a domain' } },
@@ -125,6 +131,9 @@ export const TOOL_RESOURCES: Readonly<Record<string, ToolResourceRule>> = {
   publish_knowledge: writes('knowledge', 'workflowId'),
   retire_knowledge: writes('knowledge', 'workflowId'),
   author_knowledge: { creates: ['knowledge'] },
+  // A note is filed into a folder of My knowledge, so a writable knowledge folder confines it.
+  // (`author_knowledge` creates a business process, which has no folder — nothing to confine.)
+  save_knowledge_note: { folderWrite: { arg: 'folder', kind: 'knowledge' }, creates: ['knowledge'] },
   import_okf_bundle: { creates: ['knowledge'] },
   export_okf_bundle: { ids: [id('knowledge', 'workflowId', 'read')], creates: ['files'] },
   // ----------------------------------------------------------------- files --
@@ -245,6 +254,12 @@ export type GrantScope = {
   kinds: Record<ResourceKind, KindScope>;
   /** Enabled FILES folder grants (files are granted by folder, resolved live). */
   folders: FolderScope[];
+  /**
+   * Enabled DATA and KNOWLEDGE folder grants. Their items are already expanded to ids upstream
+   * (which is what READS are checked against); the folders themselves are kept for one thing —
+   * deciding where a NEW dataset or note may be filed.
+   */
+  createFolders: Record<Exclude<FolderKind, 'files'>, FolderScope[]>;
   /** Ids this RUN created, per kind — usable for the rest of the run, by every agent of the team. */
   created: Record<ResourceKind, Set<string>>;
 };
@@ -299,9 +314,13 @@ export function grantScopeOf(sys: System, createdSeed?: Partial<Record<ResourceK
   const folders: FolderScope[] = g.files
     .filter((f) => f.folder && enabled(f.capability))
     .map((f) => ({ path: normaliseFolderPath(f.folder!.path), scope: f.folder!.scope, write: canWrite(f.capability) }));
+  const foldersOf = (list: ArtifactGrant[]): FolderScope[] =>
+    list
+      .filter((f) => f.folder && enabled(f.capability))
+      .map((f) => ({ path: normaliseFolderPath(f.folder!.path), scope: f.folder!.scope, write: canWrite(f.capability) }));
   const created = { data: new Set<string>(), knowledge: new Set<string>(), metrics: new Set<string>(), connections: new Set<string>(), files: new Set<string>(), plan: new Set<string>() };
   for (const k of RESOURCE_KINDS) for (const v of createdSeed?.[k] ?? []) created[k].add(v);
-  return { kinds, folders, created };
+  return { kinds, folders, createFolders: { data: foldersOf(g.data), knowledge: foldersOf(g.knowledge) }, created };
 }
 
 /** Where one file the running user can see lives. */
@@ -375,7 +394,14 @@ function filesIn(folders: FolderScope[], locations: FileLocation[], needWrite: b
   return out;
 }
 
-const describeFolder = (f: FolderScope): string => `${f.path} (${f.scope === 'personal' ? 'My files' : 'Domain files'}${f.write ? '' : ', read-only'})`;
+const FOLDER_NOUN: Record<FolderKind, { one: string; many: string; lane: string }> = {
+  files: { one: 'a file', many: 'files', lane: 'files' },
+  data: { one: 'a dataset', many: 'datasets', lane: 'data' },
+  knowledge: { one: 'a knowledge note', many: 'knowledge notes', lane: 'knowledge' },
+};
+
+const describeFolder = (f: FolderScope, kind: FolderKind = 'files'): string =>
+  `${f.path} (${f.scope === 'personal' ? 'My' : 'Domain'} ${FOLDER_NOUN[kind].lane}${f.write ? '' : ', read-only'})`;
 
 /**
  * THE CHECK — one tool call against the system's grants, before the tool runs.
@@ -414,7 +440,7 @@ export async function checkGrantScope(
       if (access === 'write' && filesIn(scope.folders, index, false).has(rid)) {
         return `This agent is granted file ${rid} read-only — it may not change it.`;
       }
-      return `This agent is not granted file ${rid}. It may use files in: ${scope.folders.map(describeFolder).join(', ') || 'no folder'} — list them with list_files.`;
+      return `This agent is not granted file ${rid}. It may use files in: ${scope.folders.map((f) => describeFolder(f)).join(', ') || 'no folder'} — list them with list_files.`;
     }
     if (!ks.restricted) {
       // A metric follows its dataset: with no metric grant of its own, a metric is in scope only
@@ -484,30 +510,37 @@ export async function checkGrantScope(
     }
   }
 
-  if (rule.folderWrite && scope.folders.length > 0) {
-    // A NEW file is the runner's own (My files). It is refused only where a grant says read-only:
-    // inside a granted folder that no write-capable grant covers.
-    const raw = a[rule.folderWrite.arg];
-    const target = normaliseFolderPath(typeof raw === 'string' ? raw : '');
-    const writable = scope.folders.filter((f) => f.write);
-    const covering = scope.folders.filter((f) => f.scope === 'personal' && isUnderFolder(f.path, target));
-    if (covering.length > 0 && !covering.some((f) => f.write)) {
-      return refuse(
-        `This agent is granted the folder ${target} read-only — it may not write a file there.` +
-          (writable.length > 0 ? ` It may write to: ${writable.map(describeFolder).join(', ')}.` : ' This system has no writable folder grant.'),
-        'files',
-      );
-    }
-    // WHERE A TARGET WAS CHOSEN, THAT IS WHERE FILES GO. A system with a writable folder (a
-    // declared output, or a folder granted Read + write) may create files inside one of them and
-    // nowhere else: choosing the target is the permission, and it is not a permission for the
-    // rest of the runner's drive. The new file lands in the runner's My files at that path — also
-    // for a Domain target, whose sharing is the separate, held promotion — so the path decides.
-    if (writable.length > 0 && !writable.some((f) => isUnderFolder(f.path, target))) {
-      return refuse(
-        `This agent may not write a file to ${target}: this system writes files only to ${writable.map(describeFolder).join(', ')}. Pass one of those as \`folder\`.`,
-        'files',
-      );
+  if (rule.folderWrite) {
+    const fk: FolderKind = rule.folderWrite.kind ?? 'files';
+    const kindFolders = fk === 'files' ? scope.folders : scope.createFolders[fk];
+    if (kindFolders.length > 0) {
+      const noun = FOLDER_NOUN[fk];
+      const describe = (f: FolderScope) => describeFolder(f, fk);
+      // A NEW artifact is the runner's own (My …). It is refused only where a grant says read-only:
+      // inside a granted folder that no write-capable grant covers.
+      const raw = a[rule.folderWrite.arg];
+      const target = normaliseFolderPath(typeof raw === 'string' ? raw : '');
+      const writable = kindFolders.filter((f) => f.write);
+      const covering = kindFolders.filter((f) => f.scope === 'personal' && isUnderFolder(f.path, target));
+      if (covering.length > 0 && !covering.some((f) => f.write)) {
+        return refuse(
+          `This agent is granted the folder ${target} read-only — it may not write ${noun.one} there.` +
+            (writable.length > 0 ? ` It may write to: ${writable.map(describe).join(', ')}.` : ' This system has no writable folder grant.'),
+          fk,
+        );
+      }
+      // WHERE A TARGET WAS CHOSEN, THAT IS WHERE NEW ARTIFACTS GO. A system with a writable folder
+      // (a declared output, or a folder granted Read + write) may create inside one of them and
+      // nowhere else: choosing the target is the permission, and it is not a permission for the
+      // rest of the runner's drive. The new artifact lands in the runner's My lane at that path —
+      // also for a Domain target, whose sharing is the separate, held promotion — so the path
+      // decides. The same rule for a file, a dataset and a knowledge note.
+      if (writable.length > 0 && !writable.some((f) => isUnderFolder(f.path, target))) {
+        return refuse(
+          `This agent may not write ${noun.one} to ${target}: this system writes ${noun.many} only to ${writable.map(describe).join(', ')}. Pass one of those as \`folder\`.`,
+          fk,
+        );
+      }
     }
   }
 
@@ -682,7 +715,7 @@ export function grantScopeBrief(sys: System): string {
     if (kind === 'files') {
       const fileIds = [...ks.read].map((rid) => (ks.write.has(rid) ? rid : `${rid} (read-only)`));
       if (scope.folders.length > 0) {
-        rows.push(`- files: only files in ${scope.folders.map(describeFolder).join(', ')}${fileIds.length > 0 ? `, and the files ${fileIds.join(', ')}` : ''} — list_files returns exactly these files; read each with get_file`);
+        rows.push(`- files: only files in ${scope.folders.map((f) => describeFolder(f)).join(', ')}${fileIds.length > 0 ? `, and the files ${fileIds.join(', ')}` : ''} — list_files returns exactly these files; read each with get_file`);
       } else if (fileIds.length > 0) {
         rows.push(`- files: only the files ${fileIds.join(', ')} — read each with get_file`);
       } else if (!ks.restricted) open.push(LABEL[kind]);

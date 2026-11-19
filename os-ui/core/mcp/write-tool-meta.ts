@@ -33,6 +33,9 @@ export const WRITE_TOOL_TABS: Readonly<Record<string, string>> = {
   sync_dataset_now: 'data',
   reconcile_domain_tables: 'data',
   author_knowledge: 'knowledge',
+  // A titled markdown note in the caller's own My knowledge — a My-scope write like
+  // `author_knowledge` (read-only holds it; otherwise the runner's own rights decide).
+  save_knowledge_note: 'knowledge',
   publish_knowledge: 'knowledge',
   index_knowledge: 'knowledge',
   retire_knowledge: 'knowledge',

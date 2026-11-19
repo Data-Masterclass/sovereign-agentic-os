@@ -39,6 +39,13 @@ export type PersonalKnowledgeRecord = {
   folder: string;
   updatedAt: string;
   archived?: boolean;
+  /**
+   * What produced this entry, when a program did (an agent run saving a declared output:
+   * `agent-output:<system>:<run>:<output>`). It makes that save REPEATABLE: asking again with
+   * the same key returns this entry instead of writing a second one. Absent on entries a person
+   * wrote. Never an access rule.
+   */
+  sourceKey?: string;
 };
 
 export type PersonalKnowledgeSummary = Omit<PersonalKnowledgeRecord, 'md'>;
@@ -79,6 +86,7 @@ const mirror = osMirror({
         updatedAt: { type: 'date' },
         md: { type: 'text', index: false },
         archived: { type: 'boolean' },
+        sourceKey: { type: 'keyword' },
       },
     },
   },
@@ -259,9 +267,10 @@ export function getPersonalKnowledge(id: string, user: Principal): PersonalKnowl
 
 export function createPersonalKnowledge(
   user: Principal,
-  input: { title: string; md?: string; domain?: string; folder?: string },
+  input: { title: string; md?: string; domain?: string; folder?: string; sourceKey?: string },
 ): PersonalKnowledgeRecord {
   ensureSeeded();
+  const sourceKey = input.sourceKey?.trim() || undefined;
   const domain = input.domain && user.domains.includes(input.domain) ? input.domain : user.domains[0] ?? 'default';
   const title = input.title.trim() || 'Untitled Note';
   const id = uid();
@@ -274,10 +283,26 @@ export function createPersonalKnowledge(
     visibility: 'Personal',
     folder: normaliseFolderPath(input.folder),
     updatedAt: now(),
+    ...(sourceKey ? { sourceKey } : {}),
   };
   st().entries.set(id, rec);
   writeThrough(rec);
   return rec;
+}
+
+/**
+ * The entry THIS OWNER already saved under `sourceKey`, or null. Owner-scoped on purpose: a key
+ * is only ever matched against the caller's own entries, so it cannot be used to find out
+ * whether somebody else saved something. An archived entry still counts (it was saved).
+ */
+export function findPersonalKnowledgeBySourceKey(user: Principal, sourceKey: string): PersonalKnowledgeRecord | null {
+  ensureSeeded();
+  const key = sourceKey.trim();
+  if (!key) return null;
+  for (const rec of st().entries.values()) {
+    if (rec.owner === user.id && rec.sourceKey === key) return rec;
+  }
+  return null;
 }
 
 /** Move a personal knowledge entry into a folder. Edit-scoped — owner, in-domain domain_admin, or admin. */

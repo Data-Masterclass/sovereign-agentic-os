@@ -120,6 +120,7 @@ const tools: McpTool[] = [
       properties: {
         name: { type: 'string', description: 'Human dataset name, e.g. "Orders".' },
         domain: { type: 'string', description: 'One of YOUR domains; defaults to your first domain.' },
+        folder: { type: 'string', description: 'Optional folder path in My data to file the dataset in, e.g. "/Finance/Processed". Omit for the top level.' },
         columns: {
           type: 'array',
           description: 'Optional column docs to seed (name + description).',
@@ -137,7 +138,7 @@ const tools: McpTool[] = [
     },
     call: async (user, args) =>
       // The SAME service the Data tab's "New dataset" route calls (checklist X8).
-      createDatasetService(P(user), { name: args.name, domain: args.domain, columns: colDocs(args.columns) }),
+      createDatasetService(P(user), { name: args.name, domain: args.domain, folder: args.folder, columns: colDocs(args.columns) }),
   },
   {
     name: 'add_dataset_version',
