@@ -1,8 +1,10 @@
-# Agent engine: proposed design
+# Agent engine: design
 
-> **Status: PROPOSED. Not yet agreed.** Nothing on this page is built unless a line says so.
-> What the OS does today is in [`how-an-agent-runs.md`](how-an-agent-runs.md).
-> Section 8 lists the decisions the owner has to take before work starts.
+> **Status: Agreed direction, 2026-11-19; details may change as each phase is built and measured.**
+> The owner accepted all thirteen recommendations of the earlier draft on 2026-11-19. They are
+> recorded as D10 to D22 in section 7. Agreed does not mean built: nothing on this page is built
+> unless a line says so. What the OS does today is in [`how-an-agent-runs.md`](how-an-agent-runs.md).
+> Numbers given as defaults and estimates are starting points.
 
 Written 2026-11-19 against commit `b47e2cd5`. Paths are relative to `os-ui/` unless they start
 with `charts/`, `docs/` or `values`.
@@ -15,8 +17,8 @@ with `charts/`, `docs/` or `values`.
 4. Gateway design (LiteLLM)
 5. Observability design (Langfuse)
 6. Simple versus Developer settings
-7. Decisions already taken
-8. Decisions the owner must take
+7. Decisions taken
+8. Still open
 
 ---
 
@@ -72,7 +74,7 @@ and human approval. The OS would write its policy and approval rules as middlewa
 | Tests with a scripted model | Our own scripted model (exists today) | `fakeModel` from `langchain` |
 | Work to get there from today's code | Smaller: the graph, the tool executor, the queue and the approval bridge stay | Larger: the loop is replaced and every OS rule is re-expressed as middleware |
 
-**Recommendation: A now.** Two reasons.
+**Decided on 2026-11-19: A (D10).** Two reasons.
 
 1. Every tool call must pass the OS's policy check, the hold and approval rules, and the hand-over of the person's identity, in one audited place. With A that place is our own code by construction.
 2. The models in use are open-weight models. Their tool calling needs hardening (checking arguments, a repair turn, forcing a call where one is required). We need to control that ourselves.
@@ -87,7 +89,7 @@ ready-made versions.
 around the tool call, after the model call, after the agent. Each OS rule (grant check, hold,
 budget, redaction) is one such hook. If we move to B later, each hook becomes one middleware.
 
-**Revisit after Phase 2**, with the benchmark numbers and the amount of own code in hand.
+**To be reviewed after Phase 2**, with the benchmark numbers and the amount of own code in hand.
 
 ---
 
@@ -255,13 +257,13 @@ Today the grant lists are prompt text only (defect F6). Proposed:
 
 ## 4. Gateway design (LiteLLM)
 
-| Topic | Proposal | Why |
+| Topic | Design | Why |
 |---|---|---|
 | **Upgrade** | Phase 0: from 1.90.0 to the long-term-support line (1.108.12). Phase 3: to 1.109 or later, which the new tracing link needs. | 1.108.12 is past the fix versions of all four published advisories. Two smaller steps are safer than one large one while the gateway is exposed. Known changes on the way: from 1.103.0 a setting in the config file wins over the database; from 1.104.0 the old Langfuse sender changes how it sends. Both need a test before the switch. |
-| **Network** | The gateway is reachable only inside the cluster. Admins reach its console through the OS at `/tools/litellm`, as they already can. | Owner decision pending (decision 2). |
+| **Network** | The gateway is reachable only inside the cluster. Admins reach its console through the OS at `/tools/litellm`, as they already can. | Decided (D11). |
 | **Salt key** | Set `LITELLM_SALT_KEY` once, before the next model is stored in the gateway's database. Never change it afterwards. | Without it the master key is also the encryption key and cannot be rotated. |
 | **Keys** | One key per agent system, with a **random** value created by the gateway. The value is stored **encrypted in the `agent_runs` Postgres database**, which the web process and the worker both already use. The encryption key comes from a Kubernetes Secret. If a system's key cannot be found, the run is refused with "Rebuild needed". No silent use of the shared key. | Today the value is guessable and lives in one process's memory (`core/infra/secrets.ts:21-40`). |
-| **Budgets** | Every budget resets. Suggested defaults from the research: 10 USD per 30 days per system, plus a daily guard of about 2 USD that the OS checks itself until the gateway supports two windows on one key. A budget on the domain's team is the ceiling above that. The OS warns at 80 %. | A lifetime cap guarantees that every successful system eventually stops. PR #92 (merged to main 2026-11-19) sets the default for system keys to 5 USD per 7 days; see decision 5. |
+| **Budgets** | Every budget resets. Suggested defaults from the research: 10 USD per 30 days per system, plus a daily guard of about 2 USD that the OS checks itself until the gateway supports two windows on one key. A budget on the domain's team is the ceiling above that. The OS warns at 80 %. | A lifetime cap guarantees that every successful system eventually stops. PR #92 (merged to main 2026-11-19) sets the default for system keys to 5 USD per 7 days; see D14. |
 | **Limits** | On every key: 60 requests per minute, 200,000 tokens per minute, 4 parallel calls for a Simple system. A developer may raise them up to the domain team's limits. | System keys have no parallel limit today. |
 | **Prices** | One price list, written once in the chart, rendered into both the gateway's model definitions and the OS's price book. | The OS has prices (`charts/sovereign-agentic-os/values.yaml:1427`); the gateway has none. A gateway without prices may count every call as free, and then no budget triggers. Not verified live. |
 | **What a model can do** | Runs read context size, tool support and image support from the gateway's `/model/info`. The OS's explicit image allow-list stays the authority for "may this model be sent an image". | Today these are fixed in OS code (`core/models/context-windows.ts:46-52`). |
@@ -367,9 +369,11 @@ The Simple or Developer switch itself is remembered per browser today (`tabs/age
 
 ---
 
-## 7. Decisions already taken
+## 7. Decisions taken
 
 These are encoded in the design above. They are listed so nobody re-opens them by accident.
+
+### Taken before 2026-11-19
 
 | # | Decision |
 |---|---|
@@ -383,6 +387,27 @@ These are encoded in the design above. They are listed so nobody re-opens them b
 | D8 | Model keys are managed centrally by admins. Users have none. |
 | D9 | The LiteLLM master key is never in the browser and never on the run path. |
 
+### Taken on 2026-11-19
+
+The owner accepted all thirteen recommendations put to him ("Fix it short-term and at its roots.
+Just do it."). In the earlier draft they were numbered 1 to 13; decision *n* there is D(*n*+9) here.
+
+| # | Decision | Why, in one line |
+|---|---|---|
+| D10 | **The OS keeps its own agent loop and rebuilds it on LangGraph's own parts (option A).** To be reviewed after Phase 2, with the benchmark numbers and the amount of own code in hand. | Every tool call must pass policy, approval and identity in one audited place, and tool calling for open-weight models has to be hardened by us. |
+| D11 | **The model gateway is no longer reachable from the internet.** Admins open its console through the OS. | An outdated gateway with only a key check in front should not be on the internet. |
+| D12 | **The gateway is upgraded in two steps:** first to the patched long-term-support line, later to the newest line for tracing. | Two smaller steps are safer than one large one, and the first closes the published advisories. |
+| D13 | **One gateway key per agent system,** with a random value, stored encrypted in the database. Not one shared key with budgets counted by the OS. | The gateway then enforces budgets and limits even if the OS has a bug. |
+| D14 | **Budget default: weekly now** (5 USD per 7 days, as on main), **monthly plus a daily guard once the upgraded gateway supports two windows on one key.** | The weekly budget already exists; two windows need the newer gateway. |
+| D15 | **A run stops when one agent fails,** unless the builder has drawn a failure hand-off. | Later agents should not spend tokens on a run that is already lost. |
+| D16 | **The planning call is off by default.** A developer can switch it on per agent. | It roughly halves the model calls of a simple agent. |
+| D17 | **Traces contain no document and no image content by default,** including in the gateway's records. A system can be set to the less strict level within what the admin allows. | Content should not be copied into a second store. The cost: admins cannot read full prompts in Langfuse by default. |
+| D18 | **No memory across runs for now.** It stays off; to be decided again after Phase 2. | Not needed for the current teams, and it raises privacy questions. |
+| D19 | **Traces are deleted after the same period as run data** (30 days by default). | One retention period is easier to explain and to check. |
+| D20 | **When a write may or may not have happened, the run stops and asks a person.** It does not try again by itself. | A write that runs twice is worse than a run that waits. |
+| D21 | **When the definition changed after the last Build: Simple mode rebuilds on Run; Developer mode shows "Rebuild needed".** | Nobody should run an old build without knowing it. |
+| D22 | **Langfuse is upgraded to version 4 before the end of January 2027.** | Version 3 stops receiving security fixes then. |
+
 One point to check against D1: the description of the MCP tool `run_agent_system` tells its caller
 to use `decide_approval` when a run parks (`core/mcp/agent-write-tools.ts:121`). Whether an
 assistant can still decide an approval that way after the route hardening shipped in image tag
@@ -390,20 +415,10 @@ assistant can still decide an approval that way after the route hardening shippe
 
 ---
 
-## 8. Decisions the owner must take
+## 8. Still open
 
-Each can be answered with yes or no, or by picking one option.
+Only these three points are open. None of them blocks the phases in [`plan.md`](plan.md).
 
-1. **Who owns the agent loop?** Option A: we keep our own loop and rebuild it on LangGraph's parts. Option B: we adopt LangChain's ready-made agent and add our rules as middleware. **Recommendation: A, and look again after Phase 2.**
-2. **Shall the model gateway stop being reachable from the internet?** Admins would open its console through the OS, as they can today. **Recommendation: yes, now.**
-3. **Shall we upgrade the gateway in two steps (first to the long-term-support version to close the security advisories, later to the newest line for tracing), rather than one big step?** **Recommendation: yes, two steps.**
-4. **One gateway key per agent system (random, stored encrypted in the database), or one shared key with budgets counted by the OS?** **Recommendation: one key per system.**
-5. **What is the default budget for a system?** Option A: 10 USD per 30 days plus a daily guard of 2 USD. Option B: 5 USD per 7 days, which PR #92 has put on main as the default. **Recommendation: keep B for now because it is already on main, move to A when the upgraded gateway supports two windows on one key.**
-6. **Shall a run stop when one agent fails, unless the builder has drawn a failure hand-off?** **Recommendation: yes.**
-7. **Shall the planning call be off by default?** It roughly halves the model calls of a simple agent. A developer can switch it on per agent. **Recommendation: yes, off by default.**
-8. **Shall traces contain no document and no image content by default, including in the gateway's records?** The cost: an admin can no longer read full prompts in Langfuse unless a system is switched to the less strict level. **Recommendation: yes.**
-9. **Shall teams be able to remember facts across runs?** **Recommendation: not now. Keep it off and decide after Phase 2.**
-10. **Shall traces be deleted after the same period as run data (30 days by default)?** **Recommendation: yes.**
-11. **When a write may or may not have happened (the worker died mid-write), shall the run stop and ask a person instead of trying again?** **Recommendation: yes.**
-12. **When the definition was changed after the last Build: shall Run rebuild automatically in Simple mode, and show "Rebuild needed" in Developer mode?** **Recommendation: yes to both.**
-13. **Shall the Langfuse upgrade to version 4 be finished before the end of January 2027, when version 3 stops receiving security fixes?** It needs more database disk for a while and a planned maintenance window. **Recommendation: yes.**
+1. **Rotation of the gateway's master key.** It needs the owner's go at the time it is done.
+2. **Any load test against a live service.** It needs the owner's go each time.
+3. **Whether the "My Settings" menu is lowered to creators.** Not decided.

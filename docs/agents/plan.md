@@ -1,7 +1,8 @@
 # Agent engine: delivery plan
 
-> **Status: PROPOSED.** This plan follows [`design.md`](design.md). It starts when the owner has
-> taken the decisions listed there. Nothing here is scheduled yet.
+> **Status: agreed direction, 2026-11-19. Phase 0 is in progress.** This plan follows
+> [`design.md`](design.md), whose decisions the owner took on 2026-11-19 (D10 to D22 there).
+> Phases 1 to 5 have not started. Details may change as each phase is built and measured.
 
 Written 2026-11-19 against commit `b47e2cd5`.
 
@@ -103,13 +104,29 @@ Three honest notes:
 
 ## Phase 0: stop the bleeding
 
+**Status: in progress** (started 2026-11-19).
+
 **Goal:** close the security holes and the failures that make runs die or misbehave. No new features.
+
+**Work now under way.** No result is claimed for any of it: nothing in this table is merged,
+released or verified yet. The state of every row is "in progress, PR not yet open".
+
+| Track | Work under way | Scope rows | State |
+|---|---|---|---|
+| Gateway | Removing the public route. Turning on redaction at the gateway. A resetting budget on the shared key. Model prices in the gateway. Upgrade to the patched long-term-support line, with a rehearsed in-place upgrade test first. | 0.1, 0.3 | in progress, PR not yet open |
+| Per-system keys | Random key values, stored encrypted in the agent-runs database and used by the worker. A sweep that removes the derivable keys. | 0.2 | in progress, PR not yet open |
+| Engine correctness | Grants enforced at run time. Argument validation with a repair turn. Handling of cut-off and empty replies. Valid hand-off conditions from the team proposer. A truthful "failed" status for failed runs. | 0.4, 0.6, 0.7, 0.8 | in progress, PR not yet open |
+
+Not yet started in Phase 0: the salt key (part of 0.1), merging the two key schemes (part of 0.2),
+and Build verifying what a run uses beyond the new row wording (0.9). Rotating the gateway's master
+key and any load test against a live service need the owner's go each time
+([`design.md`](design.md), section 8).
 
 **Scope**
 
 | # | Change | Fixes |
 |---|---|---|
-| 0.1 | Remove the gateway's public hostname (after owner decision 2). Upgrade LiteLLM from 1.90.0 to the long-term-support line. Set the salt key. Turn off the gateway's logging of prompt and reply text. | L1, L2, F16 (first half) |
+| 0.1 | Remove the gateway's public hostname (decision D11). Upgrade LiteLLM from 1.90.0 to the long-term-support line. Set the salt key. Turn off the gateway's logging of prompt and reply text. | L1, L2, F16 (first half) |
 | 0.2 | System keys get random values, stored encrypted in the `agent_runs` database and readable by web and worker. Old guessable keys are deleted. One key scheme instead of two. No silent use of the shared key. | F3, F4, L3 |
 | 0.3 | Budgets reset. Limits and budgets come from settings, not from code. Rebuild updates an existing key. Real prices in the gateway. (On main: PR #88 for the shared key's limits; PR #92 for system-key caps from the chart, a 7-day budget window and key update on Rebuild. Still open: the shared key's budget window, and prices in the gateway.) | F5, S5 |
 | 0.4 | A failed agent stops the run. A run that failed is stored as failed. (On main: PR #91 stops the run. Whether the job is then stored as failed was not checked.) | F1, part of F15 |
@@ -307,7 +324,7 @@ Three honest notes:
 | 4.1 | Simple mode shows the settings marked "shown" with their defaults. Developer mode gets a Settings panel for the rest, each limited by the admin cap. | F12 |
 | 4.2 | Admin caps as platform settings. | New |
 | 4.3 | Settings that do nothing are removed (`routing.overrides`) or made to work (the agent's role line, access per grant). | F12 |
-| 4.4 | Staleness: the builder knows when the definition changed after the last Build. Simple rebuilds on Run; Developer shows "Rebuild needed" (owner decision 12). | F0b |
+| 4.4 | Staleness: the builder knows when the definition changed after the last Build. Simple rebuilds on Run; Developer shows "Rebuild needed" (decision D21). | F0b |
 | 4.5 | One place for name, visibility, domain and schedule. | F0b |
 | 4.6 | Build rows say only what was really verified. The Langfuse row asks Langfuse. A build through MCP is saved. | F13, S7 |
 | 4.7 | Golden runs per system and a judge after every run, as options. A fallback model per agent. A daily budget guard and a warning at 80 %. | New |
@@ -330,7 +347,7 @@ Three honest notes:
 - Old definitions. Every new key needs a default that reproduces the behaviour after Phase 2, so existing systems do not change when they are opened.
 - Too many settings. Mitigation: a setting enters the Developer panel only if it is in the table in the design.
 
-**Not included:** memory across runs (owner decision 9); marketplace changes.
+**Not included:** memory across runs (decision D18); marketplace changes.
 
 **Exit check**
 
@@ -383,11 +400,11 @@ Three honest notes:
 
 | Phase | Needs | Can run in parallel with |
 |---|---|---|
-| 0 | Owner decisions 2, 3, 4, 5, 6 | — |
+| 0 (in progress) | decisions D11, D12, D13, D14, D15, all taken | — |
 | 1 | Phase 0.4 to 0.6 | Phase 0.1 to 0.3 |
-| 2 | Phase 1; owner decisions 1, 7, 11 | Phase 3.1 |
-| 3 | Phase 0.1; owner decisions 8, 10 | Phase 2 |
-| 4 | Phase 2; owner decision 12 | Phase 3 |
-| 5 | Phase 3; owner decision 13 | Phase 4 |
+| 2 | Phase 1; decisions D10, D16, D20 | Phase 3.1 |
+| 3 | Phase 0.1; decisions D17, D19 | Phase 2 |
+| 4 | Phase 2; decision D21 | Phase 3 |
+| 5 | Phase 3; decision D22 | Phase 4 |
 
-No dates are given. Phase 5 has the only hard date: before the end of January 2027.
+All decisions named in this table were taken on 2026-11-19. No dates are given. Phase 5 has the only hard date: before the end of January 2027.

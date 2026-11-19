@@ -1,4 +1,4 @@
-# Agents: how they are built, how they run, and what we propose to change
+# Agents: how they are built, how they run, and what we will change
 
 This folder is the single source of truth for the agent engine of the Sovereign Agentic OS: what
 a team of agents is, what Build does, what happens in a run, what is sent to the model, what
@@ -10,15 +10,18 @@ references second.
 
 ## The pages
 
-| Page | What it is for | Who should read it | Fact or proposal |
+| Page | What it is for | Who should read it | Fact or design |
 |---|---|---|---|
 | [`how-an-agent-runs.md`](how-an-agent-runs.md) | A step-by-step walk through today's behaviour: the definition, Build, a run from click to answer, exactly what is sent to the model, and what the OS does with every kind of reply. | Everyone. Start here. | Fact (today) |
-| [`feature-map-langgraph.md`](feature-map-langgraph.md) | A table of every LangGraph feature: what it is for, whether the OS uses it, where, and what we propose. | Anyone who asks "do we use X?" | Fact (today) and proposal (target), in separate columns |
-| [`feature-map-litellm.md`](feature-map-litellm.md) | The same table for LiteLLM, the model gateway. Says which features need the paid edition and are therefore not usable. | Same, and admins | Fact and proposal, in separate columns |
-| [`feature-map-langfuse.md`](feature-map-langfuse.md) | The same table for Langfuse, the trace store. | Same, and admins | Fact and proposal, in separate columns |
+| [`feature-map-langgraph.md`](feature-map-langgraph.md) | A table of every LangGraph feature: what it is for, whether the OS uses it, where, and what we propose. | Anyone who asks "do we use X?" | Fact (today) and agreed target, in separate columns |
+| [`feature-map-litellm.md`](feature-map-litellm.md) | The same table for LiteLLM, the model gateway. Says which features need the paid edition and are therefore not usable. | Same, and admins | Fact and agreed target, in separate columns |
+| [`feature-map-langfuse.md`](feature-map-langfuse.md) | The same table for Langfuse, the trace store. | Same, and admins | Fact and agreed target, in separate columns |
 | [`known-defects.md`](known-defects.md) | Everything known to be wrong, ranked, with evidence, severity, status and the phase that fixes it. | The owner, and whoever picks the next piece of work | Fact (today) |
-| [`design.md`](design.md) | The proposed design: principles, the central choice, the target run, the gateway, tracing, the table of Simple and Developer settings, and the decisions the owner must take. | The owner, before any work starts | **Proposal. Not yet agreed.** |
-| [`plan.md`](plan.md) | The proposed delivery in six phases, each with scope, tests, risks and an exit check, and the "12 invoices" benchmark. | The owner and the people doing the work | **Proposal.** |
+| [`design.md`](design.md) | The design: principles, the central choice, the target run, the gateway, tracing, the table of Simple and Developer settings, and the decisions taken (D1 to D22). | The owner, and everyone doing the work | **Agreed direction (2026-11-19), not built.** |
+| [`plan.md`](plan.md) | The delivery in six phases, each with scope, tests, risks and an exit check, and the "12 invoices" benchmark. | The owner and the people doing the work | **Agreed direction. Phase 0 in progress.** |
+
+**The design is agreed.** The owner took all open decisions on 2026-11-19. The list of decisions is
+in [`design.md`](design.md), section 7 (D1 to D22); the three points still open are in section 8.
 
 A short pointer also exists at `docs/components/langgraph.md`, so that LangGraph has a page next to
 the other components.
@@ -56,6 +59,8 @@ Not checked on the running system, although they follow from the code: budgets t
 | not verified / not confirmed | We do not know. |
 | in progress | A pull request is open. It is not merged. |
 | fixed on main | A pull request was merged after the verified commit. It is not yet in a release, and the pages were not re-verified against it. |
+| agreed direction | Decided by the owner. Not built unless the line says so. |
+| in progress, PR not yet open | Work has started. No pull request yet, no result claimed. |
 | proposed | Not built. Not agreed. |
 
 ## How to keep these pages true
@@ -76,7 +81,7 @@ in the same pull request.**
 
 Three more habits:
 
-1. When a proposal in `design.md` is agreed, change its status line at the top. When it is built, move the description into `how-an-agent-runs.md` and leave one line behind.
+1. When something in `design.md` is built, move the description into `how-an-agent-runs.md` and leave one line behind.
 2. Never describe planned behaviour in the present tense. "The engine waits" is for things that are built. "The engine will wait" or "proposed:" is for the rest.
 3. When the date and commit above are more than a release old, re-check the sampled lines and update the date.
 

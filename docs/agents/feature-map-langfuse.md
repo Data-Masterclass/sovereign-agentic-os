@@ -5,7 +5,7 @@ were made, which tools were called, and how the run was scored. This page lists 
 feature and says how the OS uses it today and what we propose.
 
 - "In the OS today" was verified by reading the code and chart at commit `b47e2cd5` (2026-11-19). Lines marked "live" were seen on the production system on 2026-11-19.
-- "Target", "Simple mode default" and "Developer mode override" are **proposed**. See [`design.md`](design.md).
+- "Target", "Simple mode default" and "Developer mode override" are the **agreed direction (2026-11-19), not built** unless a row says so. See [`design.md`](design.md).
 - "Phase" refers to [`plan.md`](plan.md). A dash means no change is planned.
 - Paths are relative to `os-ui/` unless they start with `charts/`, `docs/` or `values`. `observe.ts` means `tabs/agents/lib/engine/observe.ts`. `values.yaml` means `charts/sovereign-agentic-os/values.yaml`.
 
