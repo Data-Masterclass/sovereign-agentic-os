@@ -176,7 +176,17 @@ export type ApprovalEffect = {
    * clean scan. Stamped here so the Governance card shows the acknowledgement without the
    * Software tab having to re-tell the story, and so it rides the approval's durable mirror.
    */
-  approvedWithoutScan?: { reason: string; by: string; scanMode: string };
+  approvedWithoutScan?: {
+    reason: string;
+    by: string;
+    scanMode: string;
+    /**
+     * Present instead of a missing verdict when the engine RAN but could not cover a category
+     * (`['deps']` when a tree declares dependencies and commits no lockfile). Two different facts,
+     * two different labels: one says nothing looked, the other says something looked and said so.
+     */
+    uncoveredCategories?: string[];
+  };
 };
 
 // Pinned to globalThis so the queue is a TRUE singleton across separately

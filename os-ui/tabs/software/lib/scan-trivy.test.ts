@@ -561,7 +561,7 @@ test('a Job with no UID is refused rather than guessed at', async () => {
 
 test('M1: a log contaminated with stderr before the JSON still scans', async () => {
   const { client } = mockK8s(cluster({ jobStatus: { succeeded: 1 } }));
-  const noisy = logFor(VULNERABLE, VERSION_JSON, '{"not":"the report"}\nWARN: db is stale\n \n');
+  const noisy = logFor(VULNERABLE, VERSION_JSON, '{"not":"the report"}\nWARN: db is stale\n\u0000\n');
   const out = await runTrivyScan('shop', LOCKED, { ...OPTS, k8s: client, k8sText: textOf(noisy) });
   assert.equal(out.ok, true, 'the framing makes stray output harmless');
   if (!out.ok) return;
@@ -629,6 +629,25 @@ test('a REFUSED create is `scan-failed` and names the Role it needs', async () =
     if (out.ok) continue;
     assert.equal(out.kind, 'scan-failed', '403 means a cluster EXISTS and the grant is missing');
     assert.match(out.reason, /os-ui-software-scanner Role/);
+  }
+});
+
+test('L-1: a 409 on create is REFUSED — a leftover Job would hand back a stale verdict', async () => {
+  // The last door into the M2 hole: 409 means a Job of this name already exists (the DELETE has
+  // not finished, or another process owns it), so the UID read back belongs to THAT Job and its
+  // pod log is a PREVIOUS scan's result. Accepting 409 and then GETting the UID reintroduced
+  // exactly the staleness the uid check exists to prevent.
+  for (const [who, resp] of [
+    ['job', cluster({ jobStatus: { succeeded: 1 }, jobCreate: 409 })],
+    ['secret', cluster({ jobStatus: { succeeded: 1 }, secretCreate: 409 })],
+  ] as const) {
+    const { client } = mockK8s(resp);
+    const out = await runTrivyScan('shop', LOCKED, { ...OPTS, k8s: client, k8sText: textOf(logFor(CLEAN)) });
+    assert.equal(out.ok, false, `${who}: a 409 must not be treated as success`);
+    if (out.ok) continue;
+    assert.equal(out.kind, 'scan-failed');
+    assert.match(out.reason, /already exists/i);
+    assert.match(out.reason, /previous run/i, 'and the reason says WHY it is refused');
   }
 });
 

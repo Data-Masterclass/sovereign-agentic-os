@@ -23,8 +23,9 @@ import assert from 'node:assert/strict';
 import type { CurrentUser } from '@core/kernel/auth';
 import { createApp, saveAppFile } from '@tabs/software/lib/apps';
 import { requestDeploy, decideDeploy, __resetReviewCards } from './review.ts';
-import { __resetApprovals, listApprovals } from '@core/policy/approvals';
+import { __resetApprovals, listApprovals, AUDITED_OVERRIDE_REASON_MIN } from '@core/policy/approvals';
 import { __resetAudit, search, verifyChain } from '@core/policy/audit';
+import { VERSION_DELIM, REPORT_DELIM, type ScanK8s, type ScanK8sText } from './scan-trivy.ts';
 
 const creator: CurrentUser = { id: 'alice', name: 'Alice', domains: ['sales'], role: 'creator' };
 const builder: CurrentUser = { id: 'bob', name: 'Bob', domains: ['sales'], role: 'builder' };
@@ -66,6 +67,78 @@ async function cardWithFailedScan(name: string): Promise<string> {
   assert.equal(res.card.scan.passed, false);
   assert.notEqual(res.card.scan.unavailable, true, 'this scan RAN; it just failed');
   return res.card.id;
+}
+
+// ------------------------------------------------------- a REAL live scan, mocked --
+
+const SCAN_NS = 'agentic-os';
+const SCAN_UID = 'job-uid-hatch';
+
+/** A cluster whose scan Job succeeds and whose pod prints the given Trivy report. */
+function liveScan(report: string): { scannerEnabled: true; trivy: { k8s: ScanK8s; k8sText: ScanK8sText } & Record<string, unknown> } {
+  const k8s: ScanK8s = async (method, path) => {
+    if (method === 'POST') return { status: 201, body: { metadata: { uid: SCAN_UID } } };
+    if (method === 'DELETE') return { status: 200, body: {} };
+    if (path.includes('/pods?')) {
+      return {
+        status: 200,
+        body: { items: [{ metadata: { name: 'scan-pod', ownerReferences: [{ uid: SCAN_UID }] } }] },
+      };
+    }
+    if (path.includes('/jobs/')) {
+      return { status: 200, body: { metadata: { uid: SCAN_UID }, status: { succeeded: 1 } } };
+    }
+    return { status: 404, body: {} };
+  };
+  const k8sText: ScanK8sText = async () => ({
+    status: 200,
+    text: `${VERSION_DELIM}\n{}\n${REPORT_DELIM}\n${report}\n`,
+  });
+  return {
+    scannerEnabled: true,
+    trivy: {
+      k8s,
+      k8sText,
+      namespace: SCAN_NS,
+      image: 'aquasec/trivy:0.58.2',
+      dbMode: 'mirror',
+      dbRepository: 'ghcr.io/aquasecurity/trivy-db',
+      timeoutMs: 5_000,
+      runId: 'hatch001',
+      sleep: async () => {},
+    },
+  };
+}
+
+/** What Trivy returns for the tree our scaffolds actually produce: nothing resolved. */
+const RESOLVED_NOTHING = JSON.stringify({ SchemaVersion: 2, ArtifactName: '/work', Results: [] });
+
+/**
+ * A pending card from a REAL live scan over a GENERATED app: the engine ran, found nothing, and
+ * could not resolve the dependencies because no lockfile is committed. This is the state that was
+ * a dead end before the re-review: `mode: 'live'`, `passed: false`, `unavailable` UNSET.
+ */
+async function cardWithUncoveredDeps(name: string): Promise<{ cardId: string; appId: string }> {
+  const app = await createApp(builder, { name, template: 'nextjs-supabase' });
+  // A manifest with nothing on the known-bad list, and no lockfile — exactly what the scaffolds
+  // emit, so the baseline layer adds no finding and the card really does carry zero.
+  await saveAppFile(app.id, builder, {
+    path: 'package.json',
+    content: JSON.stringify({ name: 'generated', dependencies: { next: '^15.0.0' } }),
+    sha: '',
+  });
+  const res = await requestDeploy(app.id, builder, { scan: liveScan(RESOLVED_NOTHING) });
+  assert.equal(res.kind, 'review', 'an incomplete scan must open a review card, not auto-deploy');
+  if (res.kind !== 'review') throw new Error('expected a review card');
+  assert.equal(res.card.scan.mode, 'live', 'the engine DID run');
+  assert.equal(res.card.scan.unavailable, undefined, 'and it is NOT the no-verdict state');
+  assert.equal(res.card.scan.passed, false);
+  assert.ok(res.card.scan.notRun?.includes('deps'), 'deps is declared uncovered');
+  assert.ok(
+    !res.card.scan.findings.some((f) => f.severity === 'high' || f.severity === 'critical'),
+    'and nothing blocking was found',
+  );
+  return { cardId: res.card.id, appId: app.id };
 }
 
 async function refusal(fn: () => Promise<unknown>): Promise<{ message: string; status: number }> {
@@ -238,6 +311,173 @@ test('DENY needs no scanner and no acknowledgement, whatever the scan says', asy
     assert.equal(card.decision, 'denied');
     assert.equal(app.deploy.state, 'preview');
     assert.equal(card.approvedWithoutScan, undefined);
+  } finally {
+    reset();
+  }
+});
+
+// ============================ re-review H-1: the dead end ============================
+// A live scan over a GENERATED app (no lockfile) returns `passed: false` with `unavailable`
+// unset and ZERO findings. Before this round that combination hit the "fix the findings and
+// re-request" branch — naming no action, for a card with nothing to fix — and the hatch was
+// refused, so EVERY generated app was undeployable on a scanner-enabled cluster.
+
+test('H-1: a BUILDER is refused with text that names the real action, not "fix the findings"', async () => {
+  reset();
+  try {
+    const { cardId } = await cardWithUncoveredDeps('Uncovered Builder');
+    const r = await refusal(() => decideDeploy(cardId, builder, 'approve'));
+    assert.equal(r.status, 409);
+    // The wording is the finding: a Builder reading a card with zero findings must be told what
+    // to DO about it.
+    assert.ok(!/fix the findings/i.test(r.message), `must not say "fix the findings": ${r.message}`);
+    assert.match(r.message, /could not cover/i);
+    assert.match(r.message, /lockfile/i);
+    assert.match(r.message, /Administrator may acknowledge/i, 'and that there IS a way through');
+  } finally {
+    reset();
+  }
+});
+
+test('H-1: an ADMIN without the acknowledgement is still refused', async () => {
+  reset();
+  try {
+    const { cardId } = await cardWithUncoveredDeps('Uncovered No Ack');
+    const r = await refusal(() => decideDeploy(cardId, admin, 'approve'));
+    assert.equal(r.status, 409);
+    assert.match(r.message, /lockfile/i);
+    assert.deepEqual(search({ action: 'deploy' }), []);
+  } finally {
+    reset();
+  }
+});
+
+test('H-1: a DOMAIN_ADMIN cannot acknowledge an uncovered category either', async () => {
+  reset();
+  try {
+    const { cardId } = await cardWithUncoveredDeps('Uncovered Domain Admin');
+    const r = await refusal(() =>
+      decideDeploy(cardId, domainAdmin, 'approve', undefined, { acknowledgeNoScan: true, reason: GOOD_REASON }),
+    );
+    assert.equal(r.status, 403);
+    assert.match(r.message, /Administrator/i);
+    assert.match(r.message, /lockfile/i, 'the refusal names the cheaper fix first');
+  } finally {
+    reset();
+  }
+});
+
+test('H-1: a short reason is refused, and the refusal names what is being waived', async () => {
+  reset();
+  try {
+    const { cardId } = await cardWithUncoveredDeps('Uncovered Short Reason');
+    const r = await refusal(() =>
+      decideDeploy(cardId, admin, 'approve', undefined, { acknowledgeNoScan: true, reason: 'ok' }),
+    );
+    assert.equal(r.status, 400);
+    assert.match(r.message, new RegExp(String(AUDITED_OVERRIDE_REASON_MIN)));
+    assert.match(r.message, /deps verdict/, 'not "without a scan" — a scan DID run');
+  } finally {
+    reset();
+  }
+});
+
+test('H-1: an ADMIN with an acknowledgement ships it, audited as an UNCOVERED CATEGORY', async () => {
+  reset();
+  try {
+    const { cardId, appId } = await cardWithUncoveredDeps('Uncovered Acknowledged');
+    const { app, card } = await decideDeploy(cardId, admin, 'approve', undefined, {
+      acknowledgeNoScan: true,
+      reason: GOOD_REASON,
+    });
+
+    assert.equal(app.deploy.state, 'live', 'the dead end is gone: the app can ship');
+    assert.equal(card.decision, 'approved');
+    // The TWO facts stay apart: a scan ran here, so this is NOT "approved without a scan".
+    assert.deepEqual(card.approvedWithUncoveredCategories, ['deps']);
+    assert.equal(card.approvedWithoutScan, undefined, 'an engine ran; do not overstate the gap');
+    assert.equal(card.noScanReason, GOOD_REASON);
+
+    const governed = listApprovals({}).filter((a) => a.kind === 'app_deploy');
+    assert.equal(governed.length, 1);
+    const effect = governed[0].effect?.approvedWithoutScan;
+    assert.ok(effect);
+    assert.deepEqual(effect.uncoveredCategories, ['deps']);
+    assert.equal(effect.scanMode, 'live', 'the record says the engine ran');
+    assert.match(governed[0].effect?.applied ?? '', /INCOMPLETE/);
+
+    const rows = search({ action: 'deploy' });
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].actor, 'ada');
+    assert.equal(rows[0].reason, GOOD_REASON);
+    // The key the reviewer asked for, and NOT the no-verdict one.
+    assert.deepEqual(rows[0].detail.approvedWithUncoveredCategories, ['deps']);
+    assert.equal(rows[0].detail.approvedWithoutScan, undefined);
+    assert.equal(rows[0].detail.appId, appId);
+    assert.equal(rows[0].detail.scanMode, 'live');
+    assert.ok(String(rows[0].detail.scanEngine ?? '').includes('trivy'), 'and which engine said so');
+    assert.ok(String(rows[0].detail.scanReason ?? '').includes('lockfile'));
+    assert.equal(verifyChain(), null);
+  } finally {
+    reset();
+  }
+});
+
+test('H-1: a HIGH finding ALONGSIDE an uncovered category is NOT acknowledgeable', async () => {
+  reset();
+  try {
+    // The line that keeps this from becoming "click here to skip security": the engine found
+    // something real, so no amount of acknowledgement gets past it — even though `deps` is also
+    // uncovered and the card therefore looks like the approvable case.
+    const app = await createApp(builder, { name: 'Uncovered And Blocking', template: 'nextjs-supabase' });
+    await saveAppFile(app.id, builder, {
+      path: 'package.json',
+      content: JSON.stringify({ dependencies: { next: '^15.0.0' } }),
+      sha: '',
+    });
+    const withHigh = JSON.stringify({
+      SchemaVersion: 2,
+      Results: [
+        {
+          Target: 'src/app.ts',
+          Class: 'secret',
+          Secrets: [{ RuleID: 'aws-access-key-id', Title: 'AWS Access Key ID', StartLine: 2 }],
+        },
+      ],
+    });
+    const res = await requestDeploy(app.id, builder, { scan: liveScan(withHigh) });
+    assert.equal(res.kind, 'review');
+    if (res.kind !== 'review') return;
+    assert.ok(res.card.scan.notRun?.includes('deps'), 'deps is uncovered on this card too');
+    assert.ok(res.card.scan.findings.some((f) => f.severity === 'critical'), 'and a secret was FOUND');
+
+    const r = await refusal(() =>
+      decideDeploy(res.card.id, admin, 'approve', undefined, { acknowledgeNoScan: true, reason: GOOD_REASON }),
+    );
+    assert.equal(r.status, 409);
+    assert.match(r.message, /did not pass/i);
+    assert.match(r.message, /FOUND something cannot be acknowledged/i);
+    assert.deepEqual(search({ action: 'deploy' }), [], 'and nothing is recorded as waived');
+  } finally {
+    reset();
+  }
+});
+
+test('H-1: a live scan that COVERED everything and found nothing just passes', async () => {
+  reset();
+  try {
+    const app = await createApp(builder, { name: 'Resolved Clean', template: 'nextjs-supabase' });
+    await saveAppFile(app.id, builder, { path: 'package.json', content: '{"dependencies":{}}', sha: '' });
+    await saveAppFile(app.id, builder, { path: 'package-lock.json', content: '{"lockfileVersion":3}', sha: '' });
+    const resolved = JSON.stringify({
+      SchemaVersion: 2,
+      Results: [{ Target: 'package-lock.json', Class: 'lang-pkgs', Type: 'npm', Vulnerabilities: [] }],
+    });
+    const res = await requestDeploy(app.id, builder, { scan: liveScan(resolved) });
+    // A Builder's own Personal app with a PASSING scan self-serves — which is the proof that the
+    // scan really did pass, with no acknowledgement anywhere.
+    assert.equal(res.kind, 'auto-deployed');
+    assert.deepEqual(search({ action: 'deploy' }), []);
   } finally {
     reset();
   }

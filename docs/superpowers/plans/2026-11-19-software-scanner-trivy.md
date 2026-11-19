@@ -543,3 +543,98 @@ unparseable report, oversized tree, unsafe path — is `kind: 'scan-failed'` and
 8. **The dedicated scan namespace is not yet the default.** The value exists and renders; making
    it the default needs one run on a real cluster, because a cross-namespace Job launch is the
    kind of thing that works in a render and 403s in a cluster.
+
+---
+
+## 11. Re-review round (PR #63 @ `6cfa9968`, 2026-11-19) — one blocker, CI red
+
+### BLOCK H-1 — the honest `deps` gap was a DEAD END. **Fixed, both halves.**
+
+H1's fix was right and incomplete. A live scan over a generated app returns
+`mode: 'live'`, `passed: false`, `unavailable` **unset**, and **zero findings** — and
+`decideDeploy` had only two branches, so that combination fell into the `!unavailable` one and
+refused with *"the security scan did not pass (fix the findings and re-request)"*. There are no
+findings to fix. The hatch was refused because the scan was not `unavailable`; auto-deploy and
+self-serve both require `passed`. Net effect: **every generated app — no lockfile, dependencies
+matching nothing in the two-entry known-bad list — was undeployable on a scanner-enabled
+cluster**, which is worse than the gap H1 set out to close.
+
+*(a) A third state.* `scanGate(scan)` now classifies a not-passed scan into **`blocking`** (a
+secret or a high/critical finding — never acknowledgeable), **`no-verdict`** (`unavailable`, no
+engine ran) and **`uncovered`** (the engine ran, found nothing blocking, and declared a category
+it could not cover — `notRun` beyond the always-uncovered `sast`). `uncovered` is acknowledgeable
+on the *same* terms as `no-verdict`: admin only, explicit acknowledgement, reason ≥ 20 characters,
+audited. The record keeps the two apart, because they are different facts — a scan DID run here
+and the secret scan DID cover every file:
+
+| | card | approval effect | audit detail |
+|---|---|---|---|
+| no engine ran | `approvedWithoutScan: true` | `approvedWithoutScan` | `approvedWithoutScan: true` |
+| category uncovered | `approvedWithUncoveredCategories: ['deps']` | `approvedWithoutScan.uncoveredCategories` | `approvedWithUncoveredCategories: ['deps']` |
+
+`sast` is deliberately **excluded** from `uncovered`: no allowlisted SAST engine exists, the card
+says so on every scan, and counting it as a gap would make every deploy need an acknowledgement —
+which is how an audited exception becomes a rubber stamp.
+
+*(b) The refusal text.* When `notRun` is the cause a Builder now reads: *"the security scan ran
+and found nothing, but it could not cover deps. Dependencies were not resolvable (no lockfile) —
+commit a lockfile (package-lock.json / yarn.lock / poetry.lock / go.sum / …) and re-request the
+deploy, or an Administrator may acknowledge the gap in writing."* Two actions, both real. The card
+badge reads `security scan INCOMPLETE (deps not covered)` — neither `passed` nor `FAILED` — and a
+decided card reads *"approved without a deps verdict"*.
+
+Auto-deploy and self-serve still require `passed`, deliberately: a routine update that cannot get
+a dependency verdict belongs in front of a reviewer, not on a fast path.
+
+*Tests (7, all against a REAL mocked live scan through `requestDeploy`, not a hand-built card —
+`requestDeploy` gained a `scan?: ResolveScanOpts` passthrough for exactly this):* generated tree →
+`live`, 0 findings, deps `notRun`; Builder refused with the new text and **no** "fix the findings";
+admin without acknowledgement refused; domain_admin refused; short reason refused naming "deps
+verdict"; admin with acknowledgement approved with the audit row naming `deps` and the engine; a
+**secret found alongside** an uncovered `deps` NOT acknowledgeable; a fully-resolved clean tree
+still self-serves with nothing recorded.
+
+### CI RED — a raw NUL byte in a test fixture. **Fixed.**
+`core/kernel/source-text-tripwire.test.ts` (from #60, now on main) flagged
+`scan-trivy.test.ts:564 byte 0x00`: the "contaminated log" fixture carried a **literal** NUL
+instead of the escape, which makes the file binary to git. Replaced with `\u0000`. The tripwire
+passes, and it is now part of this change's gate list so it cannot regress unnoticed.
+
+### L-1 — HTTP 409 on create reopened the M2 hole. **Fixed.**
+Accepting 409 and then reading the UID from a GET returns the **leftover** Job's UID — so the pod
+we then trust, and the log we read, belong to a previous scan. Both creates now treat 409 as
+`scan-failed` ("a scan Job named … already exists, so this scan would read a previous run's
+result"), the Secret case too (a leftover Secret holds a previous **tree**), and the comment at the
+fallback GET records that it is only reachable after a 200/201. Tested for both objects.
+
+### L-2 — `securityScan` ran up to three times per result. **Fixed.**
+The scan-failed branch called it twice for one pass (findings, then summary). One call, reused.
+
+### L-3 — the audit-redaction claim was unqualified. **Fixed.**
+The template now says what is actually true: a Secret's contents are omitted from the API audit
+log *wherever the cluster's audit policy sets level `Metadata` for `secrets`* (the common default,
+and what SKE ships — but it is a cluster policy, not a property of the object), and it can be
+encrypted at rest *where an EncryptionConfiguration covers secrets*. A ConfigMap gets neither
+treatment anywhere.
+
+### Gates after the re-review
+
+| Check | Result |
+|---|---|
+| `tsc --noEmit -p os-ui` | **exit 0** |
+| scan + software tests | **exit 0** |
+| governance + policy + mcp + kernel tripwires (incl. `source-text-tripwire`) | **exit 0** |
+| `node scripts/check-structure.mjs` | **exit 0** — no new violations |
+| `helm lint -f values.local.yaml` | **exit 0** |
+
+### Open item added
+
+9. **Commit a REAL lockfile into the scaffold templates — the actual fix.** Everything above makes
+   the missing dependency verdict *visible and governable*; it does not make it *go away*. The real
+   fix is a `package-lock.json` produced by a real `npm install` against the pinned dependency set,
+   committed into the scaffold templates (and refreshed when they change), so a generated app gets
+   a dependency verdict on its first deploy with no acknowledgement at all. It must come from a
+   real install — a synthesised lockfile has no integrity hashes and no transitive tree, so Trivy
+   would resolve a fiction and issue a verdict over it. That work lives in the BUILD path
+   (`scaffolds/**`, and the image build that would run the install), which another stream owns this
+   session; filed here with its reason rather than guessed at.

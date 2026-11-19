@@ -686,7 +686,21 @@ export async function runTrivyScan(
     buildScanJobManifest({ name, namespace: ns, image: o.image, args, timeoutMs: o.timeoutMs, resources: o.resources }),
   );
   if (created.status === 0) return noCluster();
-  if (created.status !== 201 && created.status !== 200 && created.status !== 409) {
+  if (created.status === 409) {
+    // THE LAST DOOR INTO THE M2 HOLE (re-review L-1). A 409 means a Job of this name already
+    // exists — the DELETE above has not finished, or another process owns it — so the UID we
+    // could read back belongs to THAT Job, and its pod's log is a PREVIOUS scan's verdict. There
+    // is no safe way to continue; the next deploy request gets a fresh name.
+    return {
+      ok: false,
+      kind: 'scan-failed',
+      reason:
+        `A scan Job named ${name} already exists in ${ns} (HTTP 409), so this scan would read a ` +
+        `previous run's result. No verdict is issued; re-request the deploy once the old Job has ` +
+        `finished terminating.`,
+    };
+  }
+  if (created.status !== 201 && created.status !== 200) {
     return {
       ok: false,
       kind: 'scan-failed',
@@ -699,6 +713,8 @@ export async function runTrivyScan(
 
   // 3. THE JOB'S UID is the identity everything downstream hangs off: the Secret's owner
   //    reference, and the pod we are allowed to believe (M2). Without it there is no verdict.
+  //    The fallback GET is only reachable after a 200/201 create (a 409 is refused above), so it
+  //    can only ever read back the UID of the Job THIS call created.
   let jobUid = uidOf(created.body);
   if (!jobUid) {
     const got = await o.k8s('GET', object);
@@ -721,7 +737,19 @@ export async function runTrivyScan(
   //    secrets, and no `get`/`list` either.
   const payload = await o.k8s('POST', secrets, buildPayloadSecretManifest({ name, namespace: ns, script: writer.script, jobUid }));
   if (payload.status === 0) return noCluster();
-  if (payload.status !== 201 && payload.status !== 200 && payload.status !== 409) {
+  if (payload.status === 409) {
+    // Same reasoning as the Job: a leftover Secret of this name holds a PREVIOUS tree, and the
+    // pod would scan that instead of this deploy's source.
+    void o.k8s('DELETE', `${object}?propagationPolicy=Background`);
+    return {
+      ok: false,
+      kind: 'scan-failed',
+      reason:
+        `A scan payload Secret named ${name} already exists in ${ns} (HTTP 409), so this scan ` +
+        `would read a previous run's source tree. No verdict is issued; re-request the deploy.`,
+    };
+  }
+  if (payload.status !== 201 && payload.status !== 200) {
     void o.k8s('DELETE', `${object}?propagationPolicy=Background`);
     return {
       ok: false,
