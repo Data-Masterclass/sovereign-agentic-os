@@ -30,7 +30,7 @@ the named test fails, and that failure is the reminder to update this page too.
 | "The MCP is the same path, not a back door" | `os-ui/tabs/data/lib/mcp-parity.test.ts` | Drives each data tool through `handleRpc` and the same input through the service, then compares the **committed tree, the author, the `OS-Actor` trailer and the Dagster launch args**. |
 | "Both doors write the same files" (the coin test) | `os-ui/tabs/agents/lib/git/coin-test.test.ts`, `os-ui/tabs/data/lib/dbt/ingest.test.ts` | The same change made over the MCP and by a `git push` must leave identical files and identical registry state, differing only in the `OS-Surface` trailer. |
 | The LiteLLM master key never reaching a run | `os-ui/core/runtime/runtime.test.ts:241` | An **equality** assertion on the exact set of four files allowed to name it — `core/infra/litellm-admin.ts`, `core/infra/litellm-write.ts`, `core/kernel/config.ts`, `tabs/agents/lib/build/live-clients.ts` — so a file dropping out is as interesting as one appearing. `:252` drives a real completion and asserts the authorization header is not the master key. |
-| Which MCP writes a governed agent can be made to hold | `os-ui/core/mcp/write-tool-meta.test.ts` | Membership of `WRITE_TOOL_TABS` in both directions, and held-eligibility. Its own header records the thirteen platform writes that are **not** in the table. |
+| Which MCP writes a governed agent can be made to hold | `os-ui/core/mcp/write-tool-meta.test.ts` | Membership of `WRITE_TOOL_TABS` in both directions, and held-eligibility. Since 2026-11-19 every platform write is in the table; the per-tool posture (refused / always held / My-scope) is pinned in `os-ui/tabs/agents/lib/build/os-tools.test.ts`. |
 | Audience and lifecycle staying orthogonal | `os-ui/core/kernel/object-lifecycle.test.ts` | A tripwire that fails if any function ever derives one axis from the other. |
 | The optional `lifecycle` list filter | `os-ui/core/mcp/lifecycle-filter.test.ts` | That `LIFECYCLE_TOOLS_WITHOUT_LIFECYCLE` and the tool registry agree in **both** directions, so a new artifact list tool cannot quietly skip the filter. |
 | `go_live` writing no git tag | `os-ui/core/kernel/go-live.test.ts` | `res.tag.written === false`. |
@@ -1498,14 +1498,14 @@ select seq, event, at from run_events where run_id = '<runId>' order by seq;
 >   [`docs/components/os-ui.md`](components/os-ui.md) rather than decided. `os-ui/ARCHITECTURE.md:369`
 > - **Checkpoints are kept indefinitely, raw tool results included.** Retention is an open item (plan
 >   A13 follow-up). `os-ui/ARCHITECTURE.md:298-299`
-> - **Thirteen platform MCP writes are never held by any preset.** `PLATFORM_WRITE_TOOLS` is
->   `{ commit: 'software', push_app_files: 'software' }`, and `create_software`, `request_deploy`,
->   `start_preview`, `promote`, `archive`, `delete`, `set_app_spec`, `design_software`, `decide_deploy`,
->   `use_connection`, `use_data`, `use_knowledge` and `use_as_data` are absent from `WRITE_TOOL_TABS` —
->   which is the table the agent hold gate reads. So `holdDecisionFor(preset, tool)` answers "not a
->   write" for every preset on all thirteen. The test's own header records this honestly, which is why
->   it is visible at all; adding them moves the shipped Software Delivery Team's governance posture and
->   the frozen engine goldens. `os-ui/core/mcp/write-tool-meta.test.ts:29`; gap-report §3 item 1
+> - **Closed 2026-11-19: every platform MCP write is now classified for the agent hold gate.** The
+>   thirteen that were absent from `WRITE_TOOL_TABS` are all in it, with three postures: `decide_deploy`
+>   and `promote` are refused to agent runs outright (`AGENT_FORBIDDEN_TOOLS`); `delete`, `archive` and
+>   `request_deploy` are held for a second person under every preset; the rest are My-scope (`read-only`
+>   holds them, otherwise the runner's own rights decide). The table is in `os-ui/ARCHITECTURE.md`
+>   ("Things this codebase will punish you for"). What is still true: the hold is name-only, and
+>   `decide_approval`, `promote_connection`, `retire_connection` and `request_certification` are not in
+>   the hold table at all. `os-ui/core/mcp/write-tool-meta.ts`; `os-ui/tabs/agents/lib/build/hold.ts`
 > - **Build's Langfuse row is `pending` until the system has really run.** Its probe reads the traces a
 >   *run* leaves behind, and a build no longer stages a fake one — which is honest, and means a freshly
 >   built system shows an empty observability row. `os-ui/ARCHITECTURE.md:308-310`
@@ -2755,8 +2755,9 @@ The surface is recorded as `mcp:<tool>` in `OS-Surface` and as `os/surface` on t
 | `create_connection` … `retire_connection` | `os-connections` + the secrets vault by reference; `retire` with `delete` also removes the live Trino catalogue and its `trino-ext-<catalog>` Secret — see section 10 |
 
 The hold table a governed agent reads is `WRITE_TOOL_TABS` in
-`os-ui/core/mcp/write-tool-meta.ts:20-89`, plus `PLATFORM_WRITE_TOOLS`. Thirteen platform writes are
-missing from it and are therefore never held by any preset — see section 7's callout.
+`os-ui/core/mcp/write-tool-meta.ts`, which since 2026-11-19 includes every platform write. Being in it
+makes a tool *visible* to the gate, not held by it: the posture per tool is decided in
+`os-ui/tabs/agents/lib/build/hold.ts` and `AGENT_FORBIDDEN_TOOLS` — see section 7's callout.
 
 ---
 

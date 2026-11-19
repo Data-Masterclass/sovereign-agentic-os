@@ -1049,6 +1049,59 @@ and dropped from the advertised schemas, because a model will try whatever it ca
 see. **A new write whose effect is tenant-wide must be classified when it is
 added; the default is "personal", and the default is wrong for it.**
 
+**The platform write surface is now fully classified, and "who confirms it?" has
+three answers, not one.** The last eleven `write: true` tools of the platform MCP
+were declared writes that the hold gate could not see, so no preset held them —
+`read-only` included. They were closed together on 2026-11-19 with a posture per
+tool decided by the owner, and the ratchet in
+`tabs/software/lib/builder/dispatch.test.ts` now pins the unclassified remainder
+at **zero** (it stays two-way: a new platform write fails until it is classified).
+
+| Posture for an agent run | Tools | Mechanism |
+|---|---|---|
+| **Refused** — never executed, never advertised | `decide_deploy`, `promote`, `reindex_corpus` | `AGENT_FORBIDDEN_TOOLS` (`core/mcp/write-tool-meta.ts`): gate 0 of `grantedToolExecutor`, dropped from `grantedMcpTools`, and refused by name in `callAppTool`. Also `COMPANY_SCOPE_TOOLS` as the second line. |
+| **Held under every preset** — a second person confirms | `delete`, `archive`, `request_deploy` | `ALWAYS_CONFIRMED_TOOLS` in `tabs/agents/lib/build/hold.ts` → `domain_admin` of the system's domain (`admin` under `read-only`). |
+| **Held on escalation** (pre-existing) | `publish_knowledge`, `request_promotion`, `approve_promotion` | `ESCALATING_DOMAIN_TOOLS` → `domain_admin`. |
+| **My-scope** — `read-only` holds; otherwise the runner's own rights decide (gate 2) | `create_software`, `start_preview`, `use_connection`, `use_data`, `use_knowledge`, `use_as_data`, `commit`, `push_app_files`, `set_app_spec`, `design_software`, and every other catalogued write | the `personal` default of `writeTargetScope`. |
+
+Four things this cost, each of which generalises:
+
+- **An approval must not be holdable.** Holding an agent's `decide_deploy` looks
+  safe and is not: whoever approves the hold is approving "let the agent approve",
+  so the go-live rests on one human judgement while the record shows a request, an
+  approval and a confirmation. Four-eyes means two people. An agent may *request*
+  (held) and may never *decide* (refused). The tools stay fully available to a
+  person in the UI or their own MCP session — the table is consulted only at
+  agent-facing doors.
+- **"Always held" and "tenant-wide" are different properties that happened to share
+  one set.** `COMPANY_SCOPE_TOOLS` meant both. Deleting one app is not tenant-wide,
+  and routing it to a platform admin would have made *asking* for a deploy need a
+  higher role than *approving* one (a Builder). Hence a separate set with the same
+  unconditional hold and the domain gate. Moving a name between the two sets is one
+  line; the posture tests in `tabs/agents/lib/build/os-tools.test.ts` state which.
+- **A parked run cannot be confirmed by its own runner.** `canApprove` refuses the
+  requester whenever the approval carries a `runId`. So "held for confirmation"
+  always means a second person with the role — on a single-admin tenant an
+  always-held call waits until there is one. That is the intended reading of
+  four-eyes, and it is worth knowing before granting `delete` to an agent.
+- **A frozen golden is evidence, not a spec.** The Software Delivery Team's fixture
+  records the deploy request running straight through. The file is untouched; the
+  engine-side assertion in `tabs/agents/lib/engine/parity.test.ts` now states the
+  divergence exactly — the run parks at the deployer with one `request_deploy`
+  awaiting a `domain_admin` — and then proves that, once approved, the resumed run
+  ends on the golden's path, calls and final text. Nothing else moved: the team's
+  other grants are My-scope under its `read-propose` preset, and `os.appsmith`
+  grants none of the eleven.
+
+Still open, and stated so nobody assumes otherwise: the hold is **name-only**
+(`hold.ts` is pure and sees no arguments), so a My-scope tool cannot tell the
+runner's Personal app from one already Shared or Certified; and several approval
+verbs outside the platform surface — `decide_approval`, `promote_connection`,
+`retire_connection`, `request_certification` — are in neither `WRITE_TOOL_TABS`
+nor `AGENT_FORBIDDEN_TOOLS`, so the agent hold gate does not see them at all.
+`promote_metric` is catalogued but My-scope. They were out of this change's scope
+and are the next candidates for the same question.
+
 **A picker scoped to "everything the caller may see" is not scoped to the thing being
 edited.** The agent grant picker built its feed from `listDatasets/listWorkflows/
 listPersonalKnowledge/listFiles/listMetrics(principal)` — each of which scopes to

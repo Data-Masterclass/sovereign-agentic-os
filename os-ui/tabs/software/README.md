@@ -164,13 +164,12 @@ says so instead of dying mid-iteration.
   "~20% model" half of the diagnosis is still an estimate rather than a measurement.
 - **The loop driving the Tier-1 AppSpec generator** as well as the Tier-2 code tree.
 - **A review card for a loop that stops short** (today it is an honest tool result, not a card).
-- **The rest of the platform-MCP write surface is still unheld by the agent gate.** `commit` is now
-  in `core/mcp/write-tool-meta.ts`, so a `read-only` agent can no longer write app files. But
-  `create_software`, `request_deploy`, `start_preview`, `promote`, `archive`, `delete`,
-  `set_app_spec`, `design_software`, `decide_deploy` and the `use_*` family are all declared
-  `write: true` and all absent from that table, so no preset holds them. A test pins the list so a
-  NEW platform write cannot join it silently; closing it changes the shipped Software Delivery
-  Team's posture and belongs to the software stream.
+- **The agent hold on the platform-MCP surface is name-only.** Every `write: true` platform tool is
+  now classified (2026-11-19): `decide_deploy` and `promote` are refused to agent runs, `delete`,
+  `archive` and `request_deploy` are held for a second person under every preset, and the rest are
+  My-scope writes that `read-only` holds. What is left: the gate sees a tool NAME and no arguments,
+  so a My-scope tool (`set_app_spec`, `commit`, `use_*` …) cannot tell the runner's Personal app
+  from one already Shared or Certified. The posture table is in `os-ui/ARCHITECTURE.md`.
 - **Column masking is a NAME HEURISTIC, not a classification.** The OS has no column-sensitivity
   facility to consult (`ColumnDoc` is `{ name, description }`; `get_catalog_classification` places
   warehouse tables into folders by connection). There is also **no trace-redaction facility on this
