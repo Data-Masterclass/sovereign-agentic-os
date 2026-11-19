@@ -18,9 +18,10 @@
  *             (`pkg/scanner/langpkg/scan.go`: one `lang-pkgs` result per lockfile with packages,
  *             `Target` = the lockfile path, and NO result for a lockfile with none).
  */
-import { test } from 'node:test';
+import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -33,7 +34,7 @@ import {
   lockfileFor,
   type LockFamily,
 } from './scaffold-lock.ts';
-import { compareManifestToLock, npmLockEvidence } from './lockfile-evidence.ts';
+import { compareManifestToLock, npmLockEvidence, satisfiesRange } from './lockfile-evidence.ts';
 import { VENDORED_SDK_DEP, VENDORED_UI_DEP, viteBaseFiles } from './scaffolds/vite-os.ts';
 import { apiServiceFiles } from './scaffolds/api-service.ts';
 import { applyUiFileDep } from './app-ui-vendor.ts';
@@ -158,8 +159,8 @@ test('DRIFT · the test bites: a bumped scaffold range without a regenerated loc
   };
   manifest.dependencies.react = '^19.0.0';
   const problems = compareManifestToLock(manifest, committedLock('vite'));
-  assert.equal(problems.length, 1);
-  assert.match(problems[0], /"react" is \^19\.0\.0 in package\.json but \^18\.3\.1 in the lockfile/);
+  assert.ok(problems.some((p) => /"react" is \^19\.0\.0 in package\.json but \^18\.3\.1 in the lockfile/.test(p)), problems.join('\n'));
+  assert.ok(problems.some((p) => /"react" asks for \^19\.0\.0 but the lockfile resolves 18\./.test(p)), problems.join('\n'));
 });
 
 test('the regeneration script resolves under the same placeholder name', () => {
@@ -362,10 +363,121 @@ test('the offline baseline finds nothing blocking in a locked seed (lockfile has
 });
 
 test('the agentic builder may not write a lockfile anywhere — a model cannot resolve dependencies', () => {
+  // EVERY one of these must be refused BY THE LOCKFILE RULE. The root-level file would also be
+  // refused as "outside src/", so matching either reason would not prove the new rule exists.
   for (const p of ['package-lock.json', 'src/package-lock.json', 'src/yarn.lock', 'public/pnpm-lock.yaml', 'src/api/go.sum']) {
-    assert.match(pathRefusal(p) ?? '', /lockfile|outside src/, p);
-    assert.notEqual(pathRefusal(p), null, p);
+    assert.match(pathRefusal(p) ?? '', /is a dependency lockfile/, p);
   }
   assert.match(pathRefusal('src/package-lock.json') ?? '', /output of a real install/);
   assert.equal(pathRefusal('src/lock.ts'), null, 'an ordinary source file is still writable');
+});
+
+// ------------------------------------------------- review round 2 (PR #66) ----------
+
+test('L2 · every `resolved` URL in the committed lockfiles is on registry.npmjs.org (or a local link)', () => {
+  for (const family of FAMILIES) {
+    const packages = (committedLock(family) as { packages: Record<string, { resolved?: string; link?: boolean }> }).packages;
+    for (const [path, pkg] of Object.entries(packages)) {
+      if (path === '' || pkg.resolved === undefined) continue; // a local package records no URL
+      if (pkg.link === true) {
+        assert.match(pkg.resolved, /^vendor\/@sovereign-os\//, `${path}: a link must point into the vendored tree`);
+        continue;
+      }
+      assert.ok(
+        pkg.resolved.startsWith('https://registry.npmjs.org/'),
+        `${family}: ${path} resolves from ${pkg.resolved} — a maintainer's private mirror must not ` +
+          'leak into every generated app. Regenerate with the script (it pins --registry).',
+      );
+    }
+  }
+  const script = readFileSync(join(HERE, '..', '..', '..', 'scripts', 'regen-scaffold-locks.mjs'), 'utf8');
+  assert.ok(script.includes("const REGISTRY = 'https://registry.npmjs.org/';"));
+  assert.ok(script.includes('`--registry=${REGISTRY}`'));
+});
+
+test('H1 · the Vite toolchain is on the patched line, and dev packages are most of what gets scanned', () => {
+  const packages = (committedLock('vite') as { packages: Record<string, { version?: string; dev?: boolean; link?: boolean }> }).packages;
+  // vite <= 6.4.3 (GHSA-587h-7wmj-h5pm, high) and esbuild <= 0.24.2 (GHSA-67mh-4wv8-2f99) are the
+  // advisories `npm audit` reported against the first lockfile. Pinned here so a regeneration
+  // under a loosened range cannot quietly walk back onto them.
+  assert.equal(satisfiesRange(packages['node_modules/vite'].version!, '>=6.4.6'), true, packages['node_modules/vite'].version);
+  assert.equal(satisfiesRange(packages['node_modules/esbuild'].version!, '>=0.25.0'), true, packages['node_modules/esbuild'].version);
+  const all = Object.entries(packages).filter(([k, v]) => k !== '' && v.link !== true);
+  const dev = all.filter(([, v]) => v.dev === true);
+  // Why `--include-dev-deps` is not optional: without it Trivy would examine the remainder only.
+  assert.ok(dev.length / all.length > 0.9, `dev ${dev.length} of ${all.length}`);
+});
+
+test('the range evaluator agrees with npm on EVERY range in the real lockfile (no false "stale")', () => {
+  // Thousands of real-world ranges resolved by npm itself: if `satisfiesRange` ever says `false`
+  // for one of them it is wrong, and it would mark a sound lockfile stale.
+  const packages = (committedLock('vite') as { packages: Record<string, Record<string, unknown>> }).packages;
+  let judged = 0;
+  for (const [path, pkg] of Object.entries(packages)) {
+    for (const field of ['dependencies', 'optionalDependencies', 'peerDependencies', 'devDependencies'] as const) {
+      const deps = pkg[field] as Record<string, string> | undefined;
+      if (!deps || (path !== '' && field === 'devDependencies')) continue;
+      for (const [name, range] of Object.entries(deps)) {
+        let dir = path;
+        let hit: Record<string, unknown> | undefined;
+        for (;;) {
+          hit = packages[dir ? `${dir}/node_modules/${name}` : `node_modules/${name}`];
+          if (hit || dir === '') break;
+          dir = dir.includes('/node_modules/') ? dir.slice(0, dir.lastIndexOf('/node_modules/')) : '';
+        }
+        if (!hit || typeof hit.version !== 'string') continue; // optional / peer not installed, or a link
+        const verdict = satisfiesRange(hit.version, range);
+        assert.notEqual(verdict, false, `${path || '(root)'} ${field} ${name}@${range} resolved ${hit.version}`);
+        if (verdict === true) judged += 1;
+      }
+    }
+  }
+  assert.ok(judged > 150, `only ${judged} ranges were judged`);
+});
+
+// ------------------------------------- a lost snapshot must not unlock a locked app ----
+
+const { createApp } = await import('./apps.ts');
+const { commitToApp, getSnapshot } = await import('./server.ts');
+const { __resetSnapshots } = await import('./file-mirror.ts');
+const { config } = await import('@core/kernel/config');
+
+let reposDir = '';
+let priorRepos = '';
+before(() => {
+  reposDir = mkdtempSync(join(tmpdir(), 'os-repos-lock-'));
+  priorRepos = config.reposDir;
+  (config as { reposDir: string }).reposDir = reposDir;
+});
+after(() => {
+  (config as { reposDir: string }).reposDir = priorRepos;
+  rmSync(reposDir, { recursive: true, force: true });
+});
+
+const dev = { id: 'dan', name: 'Dan', domains: ['eng'], role: 'creator' } as Parameters<typeof createApp>[0];
+const PUSH = [{ path: 'src/note.ts', content: 'export const note = 1;\n' }];
+
+test('LOST SNAPSHOT · a push over a locked app whose tree cannot be loaded is REFUSED, not merged over the plain template', async () => {
+  const app = await createApp(dev, { name: 'Lost Lock', template: 'sovereign-app' });
+  assert.ok(app.repo.seeded.includes(LOCK_PATH), 'the app records that it was seeded with a lockfile');
+  __resetSnapshots(); // a cold process whose durable mirror answers nothing
+  assert.equal(getSnapshot(app.id), null);
+  await assert.rejects(
+    () => commitToApp(app.id, dev, PUSH, 'partial push'),
+    (e: Error & { status?: number }) => {
+      assert.equal(e.status, 503);
+      assert.match(e.message, /could not be loaded/);
+      assert.match(e.message, /Nothing was written/);
+      return true;
+    },
+  );
+  // Nothing was written: no tree was conjured from the plain template.
+  assert.equal(getSnapshot(app.id), null);
+});
+
+test('LOST SNAPSHOT · an app whose seed IS the plain template keeps today’s behaviour', async () => {
+  const app = await createApp(dev, { name: 'Lost Legacy', template: 'nextjs-supabase' });
+  __resetSnapshots();
+  const out = await commitToApp(app.id, dev, [{ path: 'notes.txt', content: 'hi\n' }], 'push');
+  assert.equal(out.step.ok, true);
 });

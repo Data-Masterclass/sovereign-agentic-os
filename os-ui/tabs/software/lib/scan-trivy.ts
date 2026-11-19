@@ -253,6 +253,11 @@ export function trivyArgs(o: { dbMode: ScannerDbMode; dbRepository: string }): s
     'json',
     '--scanners',
     'vuln,secret',
+    // Trivy DROPS development dependencies unless told otherwise (`excludeDevDeps`,
+    // pkg/scanner/local/scan.go). A Vite app's lockfile is ~95% dev packages — the bundler and
+    // compiler its own Dockerfile runs — so without this flag "deps covered" would have meant
+    // "a dozen production packages looked at". Coverage is claimed for the WHOLE lockfile.
+    '--include-dev-deps',
     // The report goes to a FILE, not stdout: the log is a merged stream and one stderr byte in
     // front of the JSON would void an otherwise good scan (M1).
     '--output',
@@ -467,6 +472,55 @@ const DEP_LOCKS: RegExp[] = [
   /(^|\/)composer\.lock$/,
 ];
 
+/**
+ * What Trivy did NOT look at when it scanned for secrets. Its analyser skips lockfiles, `.git`
+ * and `node_modules`, and its built-in allow rules drop `*.md` and any path matching its test /
+ * example / nested-`vendor` patterns (pkg/fanal/analyzer/secret, pkg/fanal/secret, v0.58.2). So
+ * "ran over every file" was an overclaim; this is the sentence that is true.
+ */
+const SECRETS_RAN =
+  ` The secret scan ran over the tree, minus what Trivy skips by design: lockfiles, ` +
+  `node_modules, *.md, and paths that look like tests, examples or a nested vendor directory.`;
+
+/**
+ * For a NON-npm dependency manifest, the files whose `lang-pkgs` result would prove it was
+ * resolved; `null` for a manifest this rule does not judge (npm has its own, stricter evidence).
+ *
+ * Trivy parses some manifests directly (`requirements.txt`, `go.mod`, `pom.xml`) and reads a
+ * lockfile for the rest. A lock-based ecosystem accepts the lock in the manifest's own directory
+ * or any ancestor's, because Cargo / Poetry / Gradle workspaces keep one lockfile at the root.
+ * Limit, stated: a manifest that declares nothing yields no result from Trivy and reads as
+ * uncovered here — the safe direction, and acknowledgeable.
+ */
+function evidenceTargets(manifest: string, files: ScaffoldFile[]): string[] | null {
+  const dir = manifest.includes('/') ? manifest.slice(0, manifest.lastIndexOf('/')) : '';
+  const name = manifest.slice(manifest.lastIndexOf('/') + 1);
+  const at = (d: string, n: string) => (d ? `${d}/${n}` : n);
+  const upward = (lockNames: string[]): string[] => {
+    const out: string[] = [];
+    for (let d = dir; ; d = d.includes('/') ? d.slice(0, d.lastIndexOf('/')) : '') {
+      for (const n of lockNames) out.push(at(d, n));
+      if (d === '') return out;
+    }
+  };
+  if (name === 'package.json') return null;
+  if (/^requirements[^/]*\.txt$/.test(name) || name === 'go.mod' || name === 'pom.xml') return [manifest];
+  if (name === 'pyproject.toml') {
+    // Also satisfied by a resolved requirements file beside it: a pyproject that only carries
+    // tool configuration next to a requirements.txt is a common, fully covered layout.
+    const reqs = files
+      .map((f) => f.path.replace(/^\.\//, ''))
+      .filter((p) => (p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : '') === dir && /(^|\/)requirements[^/]*\.txt$/.test(p));
+    return [...upward(['poetry.lock', 'uv.lock']), ...reqs];
+  }
+  if (name === 'Pipfile') return upward(['Pipfile.lock']);
+  if (name === 'Cargo.toml') return upward(['Cargo.lock']);
+  if (name === 'Gemfile') return upward(['Gemfile.lock']);
+  if (/^build\.gradle(\.kts)?$/.test(name)) return upward(['gradle.lockfile']);
+  if (name === 'composer.json') return upward(['composer.lock']);
+  return null;
+}
+
 const matches = (files: ScaffoldFile[], res: RegExp[]): string[] =>
   files.filter((f) => res.some((re) => re.test(f.path))).map((f) => f.path);
 
@@ -633,10 +687,22 @@ export function mapTrivyReport(text: string, files: ScaffoldFile[] = []): TrivyR
     npm.some((e) => e.manifest === path && e.state === 'consistent' && e.declared === 0 && e.resolved === 0);
   const needingEvidence = manifests.filter((m) => !nothingToResolve(m.replace(/^\.\//, '')));
 
-  const SECRETS_RAN = ` The secret scan DID run over every file.`;
+  // OTHER ECOSYSTEMS get the same per-manifest rule: a `pyproject.toml` with no lockfile must
+  // not ride on the result the npm lockfile produced. Each manifest names the file(s) whose
+  // `lang-pkgs` result would prove IT was resolved.
+  const uncoveredOther = manifests.filter((m) => {
+    const targets = evidenceTargets(m.replace(/^\.\//, ''), files);
+    return targets !== null && !targets.some((t) => langTargets.has(t));
+  });
+
   const REGENERATE =
     `Regenerate the lockfile from the current manifest (\`npm install --package-lock-only\`), ` +
     `commit the new package-lock.json and re-request the deploy.`;
+  const unseenLocks = [...new Set(unseen.map((e) => e.lock))].join(', ');
+  const UNSEEN =
+    `the scanner returned no result for ${unseenLocks}, a lockfile that agrees with its manifest ` +
+    `and resolves packages — the scanner could not read it, or is not running with ` +
+    `--include-dev-deps`;
   if (stale.length > 0) {
     notRun.push('deps');
     const shown = stale
@@ -660,25 +726,27 @@ export function mapTrivyReport(text: string, files: ScaffoldFile[] = []): TrivyR
         ? ` — there is no lockfile (package-lock.json / yarn.lock / poetry.lock / go.sum / …), ` +
           `and Trivy's language analysers read lockfiles, not manifests. Commit a lockfile and ` +
           `re-request the deploy to get a dependency verdict.`
-        : ` even though a lockfile is present (${locks.join(', ')}); the ecosystem may be ` +
-          `unsupported by this scanner version.`) +
+        : unseen.length > 0
+          ? // NOT "the ecosystem may be unsupported": npm is supported, the lock is sound, and
+            // saying otherwise would send the reader looking in the wrong place.
+            ` — ${UNSEEN}.`
+          : ` even though a lockfile is present (${locks.join(', ')}); the ecosystem may be ` +
+            `unsupported by this scanner version.`) +
       SECRETS_RAN;
-  } else if (unlocked.length > 0 || unseen.length > 0) {
+  } else if (unlocked.length > 0 || unseen.length > 0 || uncoveredOther.length > 0) {
     notRun.push('deps');
     const parts: string[] = [];
-    if (unlocked.length > 0) {
+    const bare = [...unlocked.map((e) => e.manifest), ...uncoveredOther];
+    if (bare.length > 0) {
       parts.push(
-        `${unlocked.map((e) => e.manifest).join(', ')} declare(s) dependencies that no lockfile covers`,
+        `${bare.join(', ')} declare(s) dependencies the scanner did not resolve — another ` +
+          `manifest's result does not cover it`,
       );
     }
-    if (unseen.length > 0) {
-      parts.push(
-        `the scanner returned no result for ${[...new Set(unseen.map((e) => e.lock))].join(', ')}`,
-      );
-    }
+    if (unseen.length > 0) parts.push(UNSEEN);
     reason =
       `Dependencies are only PARTLY covered: ${parts.join('; and ')}. Commit a lockfile next to ` +
-      `each manifest (\`npm install --package-lock-only\`) and re-request the deploy.` +
+      `each manifest that lacks one and re-request the deploy.` +
       SECRETS_RAN;
   }
 

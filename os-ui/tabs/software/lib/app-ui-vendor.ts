@@ -45,8 +45,11 @@ const UI_SOURCE_FILES = [
 
 /**
  * DOC files — OPTIONAL. The shipped os-ui docker image excludes markdown from its
- * build context, so README.md is absent at runtime; a preview must never fail over
- * missing docs. Read best-effort and skipped when absent.
+ * build context, so README.md is absent at runtime; neither a preview nor a new app's
+ * seed (`scaffold-lock.ts` vendors this package into every locked Vite seed) may fail
+ * over missing docs. Read best-effort and skipped when absent — so a seed created by
+ * the image has no `vendor/@sovereign-os/ui/README.md` while one created on a laptop
+ * does. The seed's lockfile is unaffected: npm reads only the vendored `package.json`.
  */
 const UI_DOC_FILES = ['README.md'] as const;
 

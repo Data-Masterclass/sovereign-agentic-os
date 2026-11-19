@@ -360,7 +360,9 @@ test('H1: `Results: []` over a package.json with NO lockfile must NOT pass', () 
   assert.ok(r.notRun.includes('sast'));
   assert.match(r.reason ?? '', /lockfile/i, 'and the reason must name the cause');
   assert.ok((r.reason ?? '').includes('package.json'), 'and the manifest it saw');
-  assert.match(r.reason ?? '', /secret scan DID run/i, 'while saying what DID happen');
+  assert.match(r.reason ?? '', /secret scan ran over the tree, minus what Trivy skips/i, 'while saying what DID happen');
+  // L1: it must not claim more than Trivy does — lockfiles, *.md and test/example paths are skipped.
+  assert.ok(!/every file/i.test(r.reason ?? ''), 'no "every file" overclaim');
 });
 
 test('H1: a lockfile present but still no lang-pkgs result is also NOT a pass', () => {
@@ -370,8 +372,102 @@ test('H1: a lockfile present but still no lang-pkgs result is also NOT a pass', 
   assert.equal(r.passed, false);
   assert.ok(r.notRun.includes('deps'));
   assert.ok((r.reason ?? '').includes('package-lock.json'));
-  assert.match(r.reason ?? '', /unsupported/i, 'the other explanation, named');
+  // npm IS supported and this lock agrees with its manifest, so "the ecosystem may be
+  // unsupported" would point the reader at the wrong cause.
+  assert.match(r.reason ?? '', /returned no result for package-lock\.json/);
+  assert.match(r.reason ?? '', /--include-dev-deps/);
+  assert.ok(!/unsupported/i.test(r.reason ?? ''));
 });
+
+test('H1: a DEV-ONLY manifest with a consistent lock and no result is not blamed on the ecosystem', () => {
+  // The exact side effect of Trivy dropping dev packages: a lock that is all devDependencies
+  // yields no result at all unless the scan runs with --include-dev-deps.
+  const devOnly: ScaffoldFile[] = [
+    { path: 'package.json', content: JSON.stringify({ name: 'tool', devDependencies: { vite: '^6.4.6' } }) },
+    {
+      path: 'package-lock.json',
+      content: JSON.stringify({
+        name: 'tool',
+        lockfileVersion: 3,
+        packages: { '': { name: 'tool', devDependencies: { vite: '^6.4.6' } }, 'node_modules/vite': { version: '6.4.6', dev: true } },
+      }),
+    },
+  ];
+  const r = mapTrivyReport(CLEAN, devOnly);
+  assert.ok(r.ok);
+  if (!r.ok) return;
+  assert.ok(r.notRun.includes('deps'));
+  assert.match(r.reason ?? '', /--include-dev-deps/);
+  assert.ok(!/unsupported/i.test(r.reason ?? ''));
+});
+
+test('H1: a NON-npm lockfile with no result keeps the "may be unsupported" explanation', () => {
+  const r = mapTrivyReport(CLEAN, [
+    { path: 'Gemfile', content: "gem 'rails'\n" },
+    { path: 'Gemfile.lock', content: 'GEM\n' },
+  ]);
+  assert.ok(r.ok);
+  if (!r.ok) return;
+  assert.ok(r.notRun.includes('deps'));
+  assert.match(r.reason ?? '', /unsupported/i);
+});
+
+test('the scan covers DEV dependencies too — Trivy drops them unless asked', () => {
+  assert.ok(ARGS.includes('--include-dev-deps'));
+  assert.ok(trivyArgs({ dbMode: 'offline', dbRepository: 'x' }).includes('--include-dev-deps'));
+});
+
+// ---- M2: one covered corner must not read as the whole tree, in ANY ecosystem ----
+
+const NPM_RESULT = { Target: 'package-lock.json', Class: 'lang-pkgs', Type: 'npm' };
+const report = (...results: Record<string, unknown>[]) => JSON.stringify({ SchemaVersion: 2, Results: results });
+
+for (const [manifest, content] of [
+  ['api/pyproject.toml', '[project]\nname = "api"\ndependencies = ["flask"]\n'],
+  ['api/requirements.txt', 'flask==3.0.0\n'],
+  ['svc/go.mod', 'module svc\nrequire github.com/x/y v1.0.0\n'],
+  ['rs/Cargo.toml', '[dependencies]\nserde = "1"\n'],
+  ['jvm/pom.xml', '<project/>\n'],
+  ['rb/Gemfile', "gem 'rails'\n"],
+] as const) {
+  test(`M2: ${manifest} with no result of its own does NOT ride on the npm lockfile's result`, () => {
+    const r = mapTrivyReport(report(NPM_RESULT), [...LOCKED, { path: manifest, content }]);
+    assert.ok(r.ok);
+    if (!r.ok) return;
+    assert.ok(r.notRun.includes('deps'), 'an unresolved manifest is not covered by another ecosystem');
+    assert.equal(r.passed, false);
+    assert.match(r.reason ?? '', /only PARTLY covered/);
+    assert.ok((r.reason ?? '').includes(manifest), 'the uncovered manifest is named');
+  });
+}
+
+test('M2: each ecosystem is covered by ITS OWN result — lock beside it, lock at a workspace root, or the manifest itself', () => {
+  const tree: ScaffoldFile[] = [
+    ...LOCKED,
+    { path: 'api/pyproject.toml', content: '[tool.poetry]\n' },
+    { path: 'api/poetry.lock', content: '' },
+    { path: 'svc/go.mod', content: 'module svc\n' },
+    { path: 'Cargo.lock', content: '' },
+    { path: 'crates/core/Cargo.toml', content: '[package]\n' },
+    { path: 'tools/requirements-dev.txt', content: 'ruff==0.6.0\n' },
+    { path: 'tools/pyproject.toml', content: '[tool.ruff]\n' },
+  ];
+  const r = mapTrivyReport(
+    report(
+      NPM_RESULT,
+      { Target: 'api/poetry.lock', Class: 'lang-pkgs', Type: 'poetry' },
+      { Target: 'svc/go.mod', Class: 'lang-pkgs', Type: 'gomod' },
+      { Target: 'Cargo.lock', Class: 'lang-pkgs', Type: 'cargo' },
+      { Target: 'tools/requirements-dev.txt', Class: 'lang-pkgs', Type: 'pip' },
+    ),
+    tree,
+  );
+  assert.ok(r.ok);
+  if (!r.ok) return;
+  assert.deepEqual(r.notRun, ['sast'], r.reason);
+  assert.equal(r.passed, true);
+});
+
 
 test('H1: a report that DID resolve the tree covers deps', () => {
   const r = mapTrivyReport(VULNERABLE, LOCKED);
