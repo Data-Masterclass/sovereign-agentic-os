@@ -13,7 +13,7 @@ import {
 import { canPromote, roleAtLeast } from '@core/kernel/session';
 import { type TemplateKey, templateYaml } from '@tabs/agents/lib/templates';
 import { canManageArtifact, type ArtifactScope } from '@core/policy/edit-scope';
-import { osMirror } from '@core/infra/os-mirror';
+import { osMirror, type MirrorPatch } from '@core/infra/os-mirror';
 import { type ArtifactVersion, versionLog } from '@core/kernel/versioning';
 import { normaliseFolderPath } from '@core/kernel/folders';
 // The GOVERNED folder registry (Wave 1) — a moved-into folder is upserted as an
@@ -329,28 +329,68 @@ const versions = versionLog('agent-system');
 /**
  * What a write means, for the git commit hook (Part D). REQUIRED on every `writeThrough` so a
  * new writer cannot be added without deciding: a `SystemChangeSpec` is a DEFINITION change and
- * becomes a commit; `null` says "run/build bookkeeping — deliberately not a commit", and
- * `lib/git/commit.test.ts` enumerates both sets so neither can grow silently.
+ * becomes a commit (`writeThrough`); run/build bookkeeping is deliberately not a commit and goes
+ * through `writeRunState` with the run fields it changed. `lib/git/commit.test.ts` enumerates
+ * both sets so neither can grow silently.
  */
 type SystemChangeSpec = { action: string; actorId: string; previousDomain?: string };
 
-function writeThrough(rec: SystemRecord, change: SystemChangeSpec | null): void {
-  // Part D review H-3: a DEFINITION change (a non-null `change`) must become a commit. In the
-  // run-worker process it cannot — no `os-repos` mount, no commit hook — so it fails CLOSED with
-  // a typed error instead of reaching the durable mirror uncommitted. Run/build bookkeeping
-  // (`change === null`) is exactly what the worker is for and passes straight through.
-  if (change) assertSystemWriteAvailable(change.action);
-  mirror.writeThrough(rec.id, rec);
-  if (change) {
-    emitSystemChange({
-      domain: rec.domain,
-      systemId: rec.id,
-      name: rec.name,
-      action: change.action,
-      actorId: change.actorId,
-      previousDomain: change.previousDomain,
-    });
+/**
+ * The fields of a record that belong to a RUN, not to the definition — the same set the git
+ * snapshot leaves out (`git/snapshot.ts`). The run worker writes these and nothing else.
+ */
+const RUN_FIELDS = ['activity', 'runCheckpoint', 'lastRun', 'lastActivity'] as const;
+type RunField = (typeof RUN_FIELDS)[number];
+
+/** Every DEFINITION field (all of `SystemRecord` but the run fields) — checked complete by the compiler. */
+const DEFINITION_FIELDS = Object.keys({
+  id: 1, name: 1, domain: 1, owner: 1, visibility: 1, origin: 1, sourceId: 1, running: 1, schedule: 1,
+  disabledAgents: 1, yaml: 1, folder: 1, updatedAt: 1, lastBuild: 1, archived: 1,
+} satisfies Record<Exclude<keyof SystemRecord, RunField>, 1>) as (keyof SystemRecord)[];
+
+/** The mirror patch that writes exactly `fields` of `rec` (an absent field is removed). */
+function patchOf(rec: SystemRecord, fields: readonly (keyof SystemRecord)[]): MirrorPatch {
+  const set: Record<string, unknown> = {};
+  const unset: string[] = [];
+  for (const k of fields) {
+    if (rec[k] === undefined) unset.push(k);
+    else set[k] = rec[k];
   }
+  return { set, unset };
+}
+
+/**
+ * Persist a DEFINITION change. Only the definition fields are written (a partial update), so a
+ * run the worker is executing at the same time keeps its in-flight marker, checkpoint and report
+ * in the mirror. The whole record is the `upsert`: stored only if the mirror has no doc yet.
+ */
+function writeThrough(rec: SystemRecord, change: SystemChangeSpec, opts: { create?: true } = {}): void {
+  // Part D review H-3: a DEFINITION change must become a commit. In the run-worker process it
+  // cannot — no `os-repos` mount, no commit hook — so it fails CLOSED with a typed error instead
+  // of reaching the durable mirror uncommitted.
+  assertSystemWriteAvailable(change.action);
+  // A brand-new record (create, install) has no doc anyone else could have advanced: store it whole.
+  if (opts.create) mirror.writeThrough(rec.id, rec);
+  else mirror.patchThrough(rec.id, patchOf(rec, DEFINITION_FIELDS), { upsert: rec });
+  emitSystemChange({
+    domain: rec.domain,
+    systemId: rec.id,
+    name: rec.name,
+    action: change.action,
+    actorId: change.actorId,
+    previousDomain: change.previousDomain,
+  });
+}
+
+/**
+ * Persist run/build BOOKKEEPING — never a commit, and never a definition field. Only the run
+ * fields named are written, as a partial update WITHOUT upsert: this process's copy of the yaml,
+ * name, grants or last build can be older than what os-ui has since saved, and a write here must
+ * not put it back (the worker runs for minutes while the owner keeps editing). A record deleted
+ * meanwhile stays deleted — the mirror answers 404 and nothing is created.
+ */
+function writeRunState(rec: SystemRecord, fields: readonly RunField[]): void {
+  mirror.patchThrough(rec.id, patchOf(rec, fields));
 }
 
 /** The versioned slice of a system record — the single source (system.yaml). */
@@ -497,7 +537,7 @@ export function recoverInterrupted(rec: SystemRecord): boolean {
   delete rec.runCheckpoint; // the checkpoint has been consumed into lastRun
   rec.running = false;
   rec.updatedAt = now();
-  writeThrough(rec, null); // run bookkeeping salvaged from a dead process — not a definition change
+  writeRunState(rec, ['lastRun', 'activity', 'runCheckpoint']); // run bookkeeping salvaged from a dead process — not a definition change
   return true;
 }
 
@@ -912,7 +952,7 @@ export function createSystem(
     yaml,
   });
   state().store.set(rec.id, rec);
-  writeThrough(rec, { action: 'create system', actorId: user.id });
+  writeThrough(rec, { action: 'create system', actorId: user.id }, { create: true });
   return rec;
 }
 
@@ -1016,7 +1056,7 @@ export function forkSystem(systemId: string, user: Principal): SystemRecord {
     yaml: src.yaml,
   });
   state().store.set(rec.id, rec);
-  writeThrough(rec, { action: `install system from ${src.id}`, actorId: user.id });
+  writeThrough(rec, { action: `install system from ${src.id}`, actorId: user.id }, { create: true });
   return rec;
 }
 
@@ -1138,7 +1178,7 @@ export function toggleAgent(systemId: string, user: Principal, agentId: string, 
 export function recordActivity(systemId: string): void {
   const rec = state().store.get(systemId);
   if (rec) rec.lastActivity = now();
-  if (rec) writeThrough(rec, null); // last-activity stamp — a run artefact, never a commit
+  if (rec) writeRunState(rec, ['lastActivity']); // last-activity stamp — a run artefact, never a commit
 }
 
 export function setLastBuild(systemId: string, user: Principal, build: LastBuild): SystemRecord {
@@ -1161,7 +1201,7 @@ export function setActivity(systemId: string, marker: ActivityMarker): void {
   // Stamp the marker with THIS process's nonce (unless the caller already set one),
   // so a later process can recognise a run this process abandoned on a crash.
   rec.activity = { ...marker, instanceId: marker.instanceId ?? PROCESS_INSTANCE };
-  writeThrough(rec, null); // in-flight marker — a run artefact, never a commit
+  writeRunState(rec, ['activity']); // in-flight marker — a run artefact, never a commit
 }
 
 /** Clear the in-progress marker once a build or run completes (or errors). Also
@@ -1171,7 +1211,7 @@ export function clearActivity(systemId: string): void {
   if (!rec) return;
   delete rec.activity;
   delete rec.runCheckpoint;
-  writeThrough(rec, null); // in-flight marker cleared — a run artefact, never a commit
+  writeRunState(rec, ['activity', 'runCheckpoint']); // in-flight marker cleared — a run artefact, never a commit
 }
 
 /**
@@ -1198,7 +1238,7 @@ export function startRunCheckpoint(
     runId: input.runId,
     checkpointer: input.checkpointer,
   };
-  writeThrough(rec, null); // run checkpoint — a run artefact, never a commit
+  writeRunState(rec, ['runCheckpoint']); // run checkpoint — a run artefact, never a commit
 }
 
 /** Upper bound on a checkpointed node's finalText (chars) — the checkpoint stays lean. */
@@ -1230,7 +1270,7 @@ export function checkpointNode(
     cp.completedNodes.push({ node: ev.node, status: ev.status ?? 'ok', finalText });
     if (cp.currentNode === ev.node) delete cp.currentNode;
   }
-  writeThrough(rec, null); // run checkpoint — a run artefact, never a commit
+  writeRunState(rec, ['runCheckpoint']); // run checkpoint — a run artefact, never a commit
 }
 
 /**
@@ -1243,7 +1283,7 @@ export function setLastRun(systemId: string, user: Principal, run: LastRun): Sys
   const rec = requireEdit(systemId, user);
   rec.lastRun = run;
   rec.updatedAt = now();
-  writeThrough(rec, null); // last-run report — a run artefact, never a commit
+  writeRunState(rec, ['lastRun']); // last-run report — a run artefact, never a commit
   return rec;
 }
 

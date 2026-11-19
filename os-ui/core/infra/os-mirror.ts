@@ -64,9 +64,24 @@ export type OsMirror = {
   writeThrough(id: string, doc: unknown): void;
   /** Fire-and-forget delete (same lazy-heal behavior as writeThrough). */
   deleteThrough(id: string): void;
+  /**
+   * Fire-and-forget PARTIAL update: replace only the top-level fields in `set` and remove those
+   * in `unset`; every other field of the stored doc is left as it is. Two processes that each
+   * own a disjoint set of a record's fields can therefore write the same record without either
+   * putting its stale copy of the other's fields back. Without `upsert` a missing doc stays
+   * missing (OpenSearch answers 404) — a partial write never creates or resurrects a record;
+   * with `upsert` that doc is stored when none exists. Same queue/lazy-heal as writeThrough.
+   */
+  patchThrough(id: string, patch: MirrorPatch, opts?: { upsert?: unknown }): void;
   /** Test seam: forget probe state — simulates a fresh process. */
   __reset(): void;
 };
+
+/** A partial update: top-level fields to replace, and top-level fields to remove. */
+export type MirrorPatch = { set: Record<string, unknown>; unset: string[] };
+
+/** The painless script behind `patchThrough` — top-level replace (not a deep merge) + removals. */
+export const PATCH_SCRIPT = 'ctx._source.putAll(params.set); for (def k : params.unset) { ctx._source.remove(k); }';
 
 type MirrorState = {
   healthy: boolean;
@@ -296,6 +311,16 @@ export function osMirror(opts: {
     });
   }
 
+  function patchThrough(id: string, patch: MirrorPatch, o?: { upsert?: unknown }): void {
+    const body = JSON.stringify({
+      script: { lang: 'painless', source: PATCH_SCRIPT, params: { set: patch.set, unset: patch.unset } },
+      ...(o?.upsert !== undefined ? { upsert: o.upsert } : {}),
+    });
+    sendThrough(() => {
+      void osFetch(`/${index}/_update/${id}?refresh=true&retry_on_conflict=3`, { method: 'POST', body });
+    });
+  }
+
   return {
     index,
     healthy: () => st().healthy,
@@ -306,6 +331,7 @@ export function osMirror(opts: {
     claim,
     writeThrough,
     deleteThrough,
+    patchThrough,
     __reset: () => {
       const s = st();
       s.healthy = false;
