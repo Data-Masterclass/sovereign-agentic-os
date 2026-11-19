@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   previewViews, isPreviewViewId, previewViewStorageKey, nextPreviewView,
-  extractedStatusLine, emptyTextMessage,
+  extractedStatusLine, emptyTextMessage, autoDocsLine, SUGGESTED_WORD, SUGGESTED_TOOLTIP,
 } from '@tabs/files/lib/preview-views';
 
 const fmt = (iso: string) => `on ${iso.slice(0, 10)}`;
@@ -84,4 +84,38 @@ test('empty text view — stored only by choice and restricted: the pane\'s own 
 test('empty text view — nothing recorded: a plain statement, worded for the kind', () => {
   assert.equal(emptyTextMessage({ extracting: false, storedWhy: '', transcript: false }), 'No extracted text is stored for this file.');
   assert.equal(emptyTextMessage({ extracting: false, storedWhy: '', transcript: true }), 'No transcript is stored for this file.');
+});
+
+// ---- automatic description + tags: the one line Details shows ----
+
+const base = { restricted: false, optedOut: false, hasText: true, extracting: false, hasDescription: false, canManage: true };
+
+test('auto-docs line — pending says "Writing a description…" and offers nothing', () => {
+  assert.deepEqual(autoDocsLine({ ...base, generation: { status: 'pending' } }), { text: 'Writing a description…', pending: true, action: null });
+});
+
+test('auto-docs line — a failure shows its recorded reason with "Try again" for whoever may edit', () => {
+  const reason = 'No description was written: the model could not be reached.';
+  assert.deepEqual(autoDocsLine({ ...base, generation: { status: 'failed', reason } }), { text: reason, pending: false, action: 'retry' });
+  assert.equal(autoDocsLine({ ...base, canManage: false, generation: { status: 'failed', reason } })?.action, null);
+});
+
+test('auto-docs line — a restricted file says why nothing was written and offers no action, even after a failure was recorded', () => {
+  const line = autoDocsLine({ ...base, restricted: true, generation: { status: 'failed', reason: 'x' } });
+  assert.match(line?.text ?? '', /^Restricted files are never sent to a model/);
+  assert.equal(line?.action, null);
+  assert.equal(autoDocsLine({ ...base, optedOut: true })?.action, null);
+  assert.match(autoDocsLine({ ...base, optedOut: true })?.text ?? '', /owner’s choice/);
+});
+
+test('auto-docs line — no text: nothing to describe; still extracting: silent; otherwise Regenerate for the editor only', () => {
+  assert.match(autoDocsLine({ ...base, hasText: false })?.text ?? '', /there is no text to describe/);
+  assert.equal(autoDocsLine({ ...base, hasText: false, extracting: true }), null);
+  assert.deepEqual(autoDocsLine({ ...base, hasDescription: true, generation: { status: 'done' } }), { text: '', pending: false, action: 'regenerate' });
+  assert.equal(autoDocsLine({ ...base, canManage: false, hasDescription: true }), null);
+});
+
+test('the marker is a plain word with the documented tooltip', () => {
+  assert.equal(SUGGESTED_WORD, 'suggested');
+  assert.equal(SUGGESTED_TOOLTIP, 'Written automatically from the file’s content. Edit to change.');
 });

@@ -10,6 +10,7 @@ import { previewText } from '@tabs/files/lib/preview';
 import {
   previewViews, previewViewStorageKey, isPreviewViewId, nextPreviewView,
   extractedStatusLine, emptyTextMessage, type PreviewViewId,
+  autoDocsLine, SUGGESTED_WORD, SUGGESTED_TOOLTIP,
 } from '@tabs/files/lib/preview-views';
 import { serverError } from '@tabs/files/lib/bulk-result';
 import { reuploadVersion, saveTextVersion } from '@tabs/files/lib/upload-client';
@@ -42,6 +43,12 @@ type Asset = {
     extraction?: { status: 'extracted' | 'pending' | 'failed'; reason?: string; code?: string; at?: string; engine?: string; chars?: number };
   };
   description: string;
+  /** Automatic description + tags: the run's state, and which text is still as generated. */
+  autoDocs?: {
+    generation?: { status: 'pending' | 'done' | 'failed' | 'skipped'; reason?: string };
+    description?: { source: 'user' | 'generated' };
+    tags?: { generated: string[] };
+  };
 };
 type StoredObject = { key: string; contentType: string; bytes: number };
 type View = { asset: Asset; text: string; bytes: number; object?: StoredObject | null; history: { version: string; at: string }[]; archived?: boolean };
@@ -193,7 +200,11 @@ export default function FilePreview({ id, onMutated, onClose, startInEdit }: { i
   // While the document parser is still reading this file, look again every few seconds and
   // swap the view in ONLY when that state ends — a full `load()` would reset the drafts the
   // reader may be typing into.
-  const extractionPending = view?.asset.indexing.extraction?.status === 'pending';
+  // The same wait covers the description being written after the text is in.
+  const shownRef = useRef<Asset | undefined>(undefined);
+  shownRef.current = view?.asset;
+  const describing = view?.asset.autoDocs?.generation?.status === 'pending';
+  const extractionPending = view?.asset.indexing.extraction?.status === 'pending' || describing;
   useEffect(() => {
     if (!extractionPending) return;
     const timer = setInterval(async () => {
@@ -201,11 +212,17 @@ export default function FilePreview({ id, onMutated, onClose, startInEdit }: { i
         const res = await fetch(`/api/files/${id}`, { cache: 'no-store' });
         if (!res.ok) return;
         const data = await res.json();
-        if (data?.asset?.indexing?.extraction?.status !== 'pending') { setView(data); onMutated(); }
+        if (data?.asset?.indexing?.extraction?.status !== 'pending' && data?.asset?.autoDocs?.generation?.status !== 'pending') {
+          setView(data); onMutated();
+          // Fill each field with what was just written — unless the reader has typed in it.
+          const was = shownRef.current;
+          setDescDraft((d) => (d === (was?.description ?? '') ? data.asset.description ?? '' : d));
+          setTagDraft((t) => (t === (was?.tags ?? []).join(', ') ? (data.asset.tags ?? []).join(', ') : t));
+        }
       } catch { /* try again on the next tick */ }
     }, 5000);
     return () => clearInterval(timer);
-  }, [extractionPending, id, onMutated]);
+  }, [extractionPending, describing, id, onMutated]);
 
   // Original ⇄ Extracted text ⇄ Details, for a file with an inline viewer. The last choice is
   // remembered per kind of viewer in this browser — a convenience only: storage may be blocked
@@ -289,6 +306,22 @@ export default function FilePreview({ id, onMutated, onClose, startInEdit }: { i
       });
       const data = await res.json();
       if (!res.ok) { setErr(data.error ?? 'Update failed'); return; }
+      await load();
+      onMutated();
+    } catch (e) { setErr((e as Error).message); }
+  }, [id, load, onMutated]);
+
+  // "Regenerate" / "Try again": write the description + tags again, as the person asking.
+  const [describeMsg, setDescribeMsg] = useState('');
+  const describe = useCallback(async () => {
+    setErr(''); setDescribeMsg('');
+    try {
+      const res = await fetch(`/api/files/${id}`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'describe' }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setErr(data.error ?? 'Could not write a description'); return; }
+      if (data.result?.state === 'skipped') setDescribeMsg(data.result.why ?? '');
       await load();
       onMutated();
     } catch (e) { setErr((e as Error).message); }
@@ -403,6 +436,13 @@ export default function FilePreview({ id, onMutated, onClose, startInEdit }: { i
     ? canManageArtifact({ id: user.id, role: user.role, domains: user.domains }, { owner: a.owner, domain: a.domain, scope: editScope })
     : false;
   const isMedia = a.kind === 'image' || a.kind === 'video' || a.kind === 'audio';
+  // Automatic description + tags: what is still as generated, and the one line Details shows.
+  const suggestedDescription = a.autoDocs?.description?.source === 'generated' && !!a.description && descDraft === a.description;
+  const suggestedTags = (a.autoDocs?.tags?.generated ?? []).filter((t) => a.tags.includes(t));
+  const docsLine = autoDocsLine({
+    restricted: a.sensitivity === 'restricted', optedOut: storedOnly && a.sensitivity !== 'restricted' && (a.indexing.storedOnlyReason === 'opt-out' || !!view.text),
+    hasText: !!view.text, extracting, hasDescription: !!a.description, canManage, generation: a.autoDocs?.generation,
+  });
 
   /** Truncate very long extracted text; the reader can expand on demand. */
   const preview = previewText(view.text, showFullText);
@@ -759,19 +799,39 @@ export default function FilePreview({ id, onMutated, onClose, startInEdit }: { i
         <dt>Link</dt><dd className="deep-link">{a.deepLink}</dd>
       </dl>
 
+      {docsLine ? (
+        <div className="preview-row file-sub" role="status" data-testid="auto-docs-status">
+          {docsLine.pending ? <span className="spin" /> : null}
+          {docsLine.text ? <span>{docsLine.text}</span> : null}
+          {docsLine.action ? (
+            <button className="btn ghost sm" onClick={() => void describe()}
+              title="Write the description and tags again from the file’s content. Your own description and any tag you removed are kept as they are.">
+              {docsLine.action === 'retry' ? 'Try again' : 'Regenerate'}
+            </button>
+          ) : null}
+          {describeMsg ? <span>{describeMsg}</span> : null}
+        </div>
+      ) : null}
+
       {/* Editable: description, tags, sensitivity, index opt-out. Shown to whoever
           may manage the file (owner, or a domain_admin/admin once it is promoted);
           hidden for a plain viewer, who would only hit a 403 on blur. */}
       {canManage ? (
         <>
           <div>
-            <label className="rail-group-title">Description</label>
+            <label className="rail-group-title">
+              Description
+              {suggestedDescription ? <span className="suggested-mark" title={SUGGESTED_TOOLTIP}>{SUGGESTED_WORD}</span> : null}
+            </label>
             <textarea rows={2} value={descDraft} placeholder="What is this file? (needed to share)"
               onChange={(e) => setDescDraft(e.target.value)}
               onBlur={() => { if (descDraft !== a.description) patch({ description: descDraft }); }} />
           </div>
           <div>
-            <label className="rail-group-title">Tags</label>
+            <label className="rail-group-title">
+              Tags
+              {suggestedTags.length > 0 ? <span className="suggested-mark" title={SUGGESTED_TOOLTIP}>{SUGGESTED_WORD}: {suggestedTags.join(', ')}</span> : null}
+            </label>
             <input value={tagDraft} placeholder="comma, separated, tags"
               onChange={(e) => setTagDraft(e.target.value)}
               onBlur={() => patch({ tags: tagDraft.split(',').map((t) => t.trim()).filter(Boolean) })}
