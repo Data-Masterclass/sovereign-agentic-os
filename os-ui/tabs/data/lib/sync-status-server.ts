@@ -27,7 +27,9 @@ import { LAYERS, type Dataset, type DatasetSyncMode, type Layer } from '@tabs/da
 import { listAllDatasets, listDatasets, type Principal } from '@tabs/data/lib/store';
 import { dataProjectGitEnabled } from '@tabs/data/lib/dbt/commit';
 import * as dagster from '@core/infra/dagster';
-import { listRepos } from '@core/infra/git-store';
+import { listRepos, readBlob } from '@core/infra/git-store';
+import yaml from 'js-yaml';
+import { SKIPPED_PATH } from '@tabs/data/lib/dbt/generate';
 import {
   consecutiveErrorCount, currentWatermark, ensureSyncRunsHydrated, isQuarantined, lastMaintenanceAt, latestSyncRun, listSyncRuns,
   type SyncRunRecord, type SyncRunStatus,
@@ -60,12 +62,21 @@ export type SyncStatusView = {
   nextRunAt: string | null;
   source: 'ledger' | 'dagster';
   dagster?: { schedule: string; location: string; status: 'RUNNING' | 'STOPPED' | null; error: string | null };
+  /**
+   * Set when the dataset's sync is ENABLED but no scheduler will fire it — "Scheduled sync is not
+   * running: <reason>". Null when the schedule is loaded (or the sync is off). Live incident
+   * 2026-11 (track H): the panel said "Dagster schedules this sync" for days while the domain's
+   * newest commit failed `dbt parse` and Dagster had no schedule at all.
+   */
+  notRunning?: string | null;
 };
 
 export type SyncStatusDeps = {
   dagster?: Pick<typeof dagster, 'runsForDataset' | 'nextTick'>;
   location?: string;
   flag?: () => boolean;
+  /** Read one file of the domain repository at `main`; null when absent. Default: the git store. */
+  readRepoFile?: (domain: string, path: string) => Promise<string | null>;
   /** Every domain with a repo. Needed to name a schedule whose domain's sanitized name collides
    *  with another's — the code location appends a digest then (review B2-review-M2, closed in B3).
    *  Default: the repos on disk. */
@@ -75,6 +86,63 @@ export type SyncStatusDeps = {
 /** Every domain that has a data-project repo, for collision-safe schedule naming. */
 async function repoDomains(): Promise<string[]> {
   return (await listRepos()).map((r) => r.name);
+}
+
+async function readMainFile(domain: string, path: string): Promise<string | null> {
+  try {
+    return await readBlob(domain, 'main', path);
+  } catch {
+    return null;
+  }
+}
+
+function yamlList(text: string | null, key: string): Record<string, unknown>[] {
+  if (!text) return [];
+  try {
+    const doc = yaml.load(text) as Record<string, unknown> | null;
+    const v = doc?.[key];
+    return Array.isArray(v) ? (v.filter((x) => x && typeof x === 'object') as Record<string, unknown>[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+export const NOT_RUNNING_PREFIX = 'Scheduled sync is not running: ';
+
+/**
+ * Why an ENABLED sync is not being scheduled, or null when nothing says so. Pure over what the
+ * caller read: the schedule read, and the domain repository's `os/skipped.yml` + `os/external.yml`.
+ *
+ *   1. The generator LEFT THE DATASET OUT of the dbt project (`os/skipped.yml`): no model, no
+ *      schedule — say which dbt rule it broke.
+ *   2. The dataset is an EXTERNAL asset (`os/external.yml` — Kafka offsets, API-batch SaaS such as
+ *      Salesforce, Kajabi, OData, Workday): the OS writes that file but the Dagster code location
+ *      does not read it, so nothing schedules these syncs and there is no dbt model to launch.
+ *   3. Dagster has no schedule of that name (`ScheduleNotFoundError`): the domain's newest commit has
+ *      not loaded — repo-sync's `dbt parse` refused it, so Dagster still runs an older commit or none.
+ */
+export function notRunningReason(input: {
+  datasetId: string;
+  enabled: boolean;
+  schedule: string;
+  tickError: string | null;
+  skippedYml: string | null;
+  externalYml: string | null;
+}): string | null {
+  if (!input.enabled) return null;
+  const skipped = yamlList(input.skippedYml, 'skipped').find((e) => e.dataset === input.datasetId);
+  if (skipped) {
+    return `${NOT_RUNNING_PREFIX}this dataset was left out of the domain's dbt project because dbt would refuse it — ${String(skipped.reason ?? 'no reason recorded')}. Fix the dataset definition; the next save regenerates the project.`;
+  }
+  const external = yamlList(input.externalYml, 'external_assets').find((e) => e.dataset === input.datasetId);
+  if (external) {
+    const what = external.kind === 'kafka-offsets' ? 'Kafka (offset-tracked)' : 'API-based SaaS';
+    return `${NOT_RUNNING_PREFIX}${what} syncs are not run by Dagster yet — the OS lists them in os/external.yml, which the Dagster code location does not read, so no schedule exists and there is no dbt model to launch.`;
+  }
+  if (input.tickError && /ScheduleNotFound/i.test(input.tickError)) {
+    return `${NOT_RUNNING_PREFIX}Dagster has not loaded the schedule ${input.schedule}. The domain repository's newest commit has not passed \`dbt parse\` in repo-sync, so Dagster still runs an older commit of this domain (or none) and this dataset's schedule is not in it.`;
+  }
+  return null;
 }
 
 /** Dagster run status → the panel's vocabulary. */
@@ -145,6 +213,22 @@ export async function syncStatusFor(d: Dataset, deps: SyncStatusDeps = {}): Prom
   const list = runs.ok ? runs.data : [];
   const tickData = tick && tick.ok ? tick.data : null;
   const error = !runs.ok ? runs.error : tick && !tick.ok ? tick.error : null;
+  let notRunning: string | null = null;
+  if (d.sync?.enabled) {
+    const read = deps.readRepoFile ?? readMainFile;
+    const [skippedYml, externalYml] = await Promise.all([
+      read(d.domain, SKIPPED_PATH).catch(() => null),
+      read(d.domain, 'os/external.yml').catch(() => null),
+    ]);
+    notRunning = notRunningReason({
+      datasetId: d.id,
+      enabled: true,
+      schedule,
+      tickError: tick && !tick.ok ? tick.error : null,
+      skippedYml,
+      externalYml,
+    });
+  }
   return {
     sync: d.sync ?? null,
     runs: list.map((r) => runToView(r, d.sync?.mode ?? 'full-refresh')),
@@ -157,6 +241,7 @@ export async function syncStatusFor(d: Dataset, deps: SyncStatusDeps = {}): Prom
     nextRunAt: tickData?.nextTickAt ?? null,
     source: 'dagster',
     dagster: { schedule, location: deps.location ?? config.dagsterLocation, status: tickData?.status ?? null, error },
+    notRunning,
   };
 }
 

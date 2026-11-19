@@ -512,6 +512,40 @@ class ParseEnvironment(unittest.TestCase):
         self.assertIn("dagster-run-*", text)
 
 
+class ParseErrorSummary(unittest.TestCase):
+    """Live incident 2026-11 (track H): the log said only "failed dbt parse", never WHICH error."""
+
+    # Captured verbatim from `os_projects.py --parse` in ghcr.io/aborek/sovereign-os/dagster:0.3.1
+    # (dbt-core 1.9.11) on a generated project whose rule was recorded twice.
+    DBT_DUPLICATE_TEST = (
+        "INFO:trino.auth:keyring module not found. OAuth2 token will not be stored in keyring.\n"
+        "21:59:39  Encountered an error:\n"
+        "Compilation Error\n"
+        '  dbt found two data_tests with the name "not_null_gold_goods_receipts_po_number" defined on column "po_number" in "models.gold_goods_receipts".\n'
+        "  \n"
+        "  Since these resources have the same name, dbt will be unable to find the correct resource\n"
+        "  when running tests.\n"
+    )
+
+    def test_names_the_error_kind_and_message(self):
+        got = osp.parse_error_summary(self.DBT_DUPLICATE_TEST)
+        self.assertTrue(got.startswith("Compilation Error: dbt found two data_tests with the name"), got)
+        self.assertIn("not_null_gold_goods_receipts_po_number", got)
+        self.assertNotIn("keyring", got)
+
+    def test_a_one_line_error_and_empty_output(self):
+        self.assertEqual(osp.parse_error_summary("12:00:00  Runtime Error: No dbt_project.yml found"), "Runtime Error: No dbt_project.yml found")
+        self.assertEqual(osp.parse_error_summary(""), "no output from dbt parse")
+        self.assertEqual(len(osp.parse_error_summary("Error " + "x" * 2000)), 400)
+
+    def test_repo_sync_logs_the_summary_on_a_failed_parse(self):
+        sh = os.path.join(os.path.dirname(__file__), "..", "repo-sync.sh")
+        with open(sh, encoding="utf-8") as fh:
+            text = fh.read()
+        self.assertIn('os_projects.py" --error-summary', text)
+        self.assertRegex(text, r'failed dbt parse — schedules keep running \$\{current:-nothing\} — \$why')
+
+
 class NameCollisions(unittest.TestCase):
     """Review B2-review-M2: `sanitize` is lossy; a duplicate name breaks the WHOLE location."""
 

@@ -314,6 +314,23 @@ If a run Job stays Running with its main container done, the guard did not fire 
 
 ## Known limits
 
+- **`os/external.yml` is written but not read** (live audit 2026-11, track H). Kafka-offset and
+  API-batch syncs (Salesforce, Kajabi, OData, Workday — any connection without a Trino catalog)
+  are planned as *external assets*: the generator lists them in `os/external.yml`, but neither
+  `repo.py` nor `os_projects.py` reads that file, so **no schedule exists for them** and, with
+  `DATA_PROJECT_GIT` on, "Sync now" returns `no dbt model for bronze of this dataset`. The Sync
+  panel and `get_sync_status` say so (`notRunning`: "Scheduled sync is not running: … not run by
+  Dagster yet"). Closing it needs a Dagster asset per external entry that calls the OS's governed
+  slice executor as the dataset owner — a new os-ui runtime endpoint plus `repo.py` wiring.
+- **One bad dataset no longer fails the domain's `dbt parse`** (live incident 2026-11, track H). A
+  quality rule recorded twice used to become two identical tests, which dbt 1.9 refuses
+  (`dbt found two data_tests with the name …`), so repo-sync kept the domain on its last good
+  commit — or on nothing — and no schedule ran. The generator now de-duplicates identical tests
+  (`schema.ts` `pushUniqueTest`) and, before returning a tree, runs `project-check.ts`; any dataset
+  an issue is attributed to is **left out** and listed in `os/skipped.yml`, which the Sync panel
+  reads back. repo-sync now logs the dbt error itself (`os_projects.parse_error_summary`). A
+  `ScheduleNotFoundError` for an enabled sync is surfaced as "Scheduled sync is not running".
+
 - **A schedule that has never ticked cannot be paused** (review B2-review-L2). `os_quarantine` and
   `os_principals` pause through the instance's stored instigator state, and Dagster exposes no
   name-addressed `stop_schedule`; a brand-new schedule therefore pauses on its FIRST tick, not

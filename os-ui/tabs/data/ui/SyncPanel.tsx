@@ -57,6 +57,10 @@ type SyncStatus = {
   source?: 'ledger' | 'dagster';
   /** The next tick Dagster reports; `null` with the flag off, where there is no next run. */
   nextRunAt?: string | null;
+  /** "Scheduled sync is not running: <reason>" — set when the sync is enabled but nothing will
+   *  fire it (the dataset was left out of the dbt project, it is an external asset Dagster does
+   *  not read yet, or the domain's newest commit has not loaded in Dagster). */
+  notRunning?: string | null;
 };
 
 const PRESETS: { label: string; cron: string }[] = [
@@ -253,6 +257,12 @@ export default function SyncPanel({
           from <span className="mono">{source.schema}.{source.table}</span>
         </span>
       </div>
+
+      {status.notRunning ? (
+        <div className="error" role="status" style={{ marginBottom: 10 }}>
+          {status.notRunning}
+        </div>
+      ) : null}
 
       {status.quarantined ? (
         <div className="error" style={{ marginBottom: 10 }}>

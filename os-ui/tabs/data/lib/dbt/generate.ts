@@ -18,6 +18,8 @@ import { renderSchedules, renderExternal } from '@tabs/data/lib/dbt/schedules';
 import { renderSourceAssets } from '@tabs/data/lib/dbt/source-assets';
 import { renderSemantic } from '@tabs/data/lib/dbt/semantic/render';
 import { renderDbtProject, renderProfiles, renderMacros, renderGenericTests, renderReadme, renderGitignore } from '@tabs/data/lib/dbt/project';
+import { checkProject, type ProjectIssue } from '@tabs/data/lib/dbt/project-check';
+import { yml } from '@tabs/data/lib/dbt/emit';
 
 /** What the generator must be TOLD about the deployment (it reads no env of its own). */
 export type GenerateOptions = {
@@ -25,10 +27,57 @@ export type GenerateOptions = {
    *  not 'none' (B4-review E-3 — dbt parses the YAML before rendering Jinja, so a guard inside a
    *  comment cannot decide this). Default 'none'. */
   trinoAuthMethod?: string;
+  /** The structural check run before the tree is returned. Default `checkProject`; injected by
+   *  tests to prove the skip path independently of which rules exist today. */
+  check?: (files: Map<string, string>) => ProjectIssue[];
 };
 
-/** The complete project tree: path → content. Sorted by path. */
+/** A dataset the generator LEFT OUT of the project because its files would fail `dbt parse`. */
+export type SkippedDataset = { dataset: string; reason: string };
+
+/** Where the skip report is committed — the OS reads it back to say why a sync is not scheduled. */
+export const SKIPPED_PATH = 'os/skipped.yml';
+
+/**
+ * The complete project tree plus the datasets that had to be left out of it.
+ *
+ * ONE BAD DATASET MUST NOT BREAK THE DOMAIN (live incident 2026-11, track H). repo-sync runs
+ * `dbt parse` on every new commit and keeps Dagster on the last commit that parsed, so a single
+ * dataset whose files dbt refuses used to stop EVERY scheduled sync and build in its domain,
+ * silently. So: render, run `checkProject` (the parse-time rules dbt enforces that generated input
+ * can break), drop the datasets the issues are attributed to, and render again — until clean or
+ * nothing attributable is left. Dropping a dataset can orphan a `ref()` in a dataset built on it;
+ * the next pass catches and drops that one too, so the loop is bounded by the dataset count. The
+ * skipped datasets and the reason are committed in `os/skipped.yml`.
+ */
+export function generateProjectReport(
+  domain: string,
+  snapshot: ProjectSnapshot,
+  opts: GenerateOptions = {},
+): { files: Map<string, string>; skipped: SkippedDataset[] } {
+  const skipped = new Map<string, string>();
+  let files = renderProject(domain, snapshot, opts);
+  for (let pass = 0; pass <= snapshot.datasets.length; pass++) {
+    const fresh = (opts.check ?? checkProject)(files).filter((i) => i.datasetId && !skipped.has(i.datasetId));
+    if (!fresh.length) break;
+    for (const i of fresh) if (!skipped.has(i.datasetId!)) skipped.set(i.datasetId!, `${i.reason} (${i.path})`);
+    files = renderProject(domain, { ...snapshot, datasets: snapshot.datasets.filter((e) => !skipped.has(e.dataset.id)) }, opts);
+  }
+  const list = [...skipped.entries()].map(([dataset, reason]) => ({ dataset, reason })).sort((a, b) => a.dataset.localeCompare(b.dataset));
+  if (list.length) {
+    files.set(SKIPPED_PATH, yml({ version: 1, skipped: list }));
+    files = new Map([...files.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
+  }
+  return { files, skipped: list };
+}
+
+/** The complete project tree: path → content. Sorted by path. Invalid datasets are left out. */
 export function generateProject(domain: string, snapshot: ProjectSnapshot, opts: GenerateOptions = {}): Map<string, string> {
+  return generateProjectReport(domain, snapshot, opts).files;
+}
+
+/** One render of every dataset in `snapshot`, unchecked. */
+function renderProject(domain: string, snapshot: ProjectSnapshot, opts: GenerateOptions): Map<string, string> {
   const plan = planModels(snapshot);
   const files = new Map<string, string>();
   files.set('dbt_project.yml', renderDbtProject(domain, plan));

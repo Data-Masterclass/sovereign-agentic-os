@@ -270,7 +270,7 @@ export async function reconcileSyncSchedule(
     action: removed.action === 'deleted' ? 'deleted' : 'noop',
     name: removed.name,
     detail:
-      `Dagster schedules this sync from the domain repository (os/schedules.yml, UTC) — no CronJob is provisioned.` + cleaned,
+      `Dagster schedules this sync from the domain repository (os/schedules.yml, UTC) — no CronJob is provisioned. It only runs once the domain's newest commit has passed dbt parse; the Sync panel says "Scheduled sync is not running" with the reason when it has not.` + cleaned,
   };
 }
 

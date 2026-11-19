@@ -254,7 +254,9 @@ sync_domain() { # domain  (sets REPOINTED=1 when `current` moved)
   else
     err="$(printf '%s' "$out" | tail -n 20 | tr '\n' ' ' | cut -c1-900)"
     write_status "$d" "$head" "$current" "$current" "dbt parse failed: $err"
-    log "$d: $head failed dbt parse — schedules keep running ${current:-nothing}"
+    # Say WHICH dbt error, not just that there was one (live incident 2026-11, track H).
+    why="$(printf '%s' "$out" | python3 "$APP_DIR/os_projects.py" --error-summary 2>/dev/null || echo 'unreadable dbt output')"
+    log "$d: $head failed dbt parse — schedules keep running ${current:-nothing} — $why"
   fi
 }
 
