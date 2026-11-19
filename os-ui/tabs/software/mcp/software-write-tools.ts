@@ -107,7 +107,7 @@ import { isTemplateKey } from '@tabs/agents/lib/templates';
 import { buildSystem } from '@tabs/agents/lib/build/server';
 
 import { patchAppDesign, getAppForUser, type AppEpic } from '@tabs/software/lib/apps';
-import { normalizeContextGrants } from '@core/kernel/context-grants';
+import { normalizeContextGrantsWithReport } from '@core/kernel/context-grants';
 
 // ============================== SOFTWARE =======================================
 export const softwareWriteTools: McpTool[] = [
@@ -193,11 +193,15 @@ export const softwareWriteTools: McpTool[] = [
       // Confirm visibility before patching (patchAppDesign also checks, but an
       // explicit view-gate here gives a typed not_found on an invisible app id).
       await getAppForUser(appId, user);
-      return patchAppDesign(appId, user, {
+      // Report, never silently discard, a grant the normaliser had to change or drop — the
+      // same contract `design_software` carries (2026-11-19).
+      const grantReport = args.grants !== undefined ? normalizeContextGrantsWithReport(args.grants) : null;
+      const patched = await patchAppDesign(appId, user, {
         purpose: args.purpose !== undefined ? str(args.purpose) : undefined,
         epics: args.epics !== undefined ? (args.epics as AppEpic[]) : undefined,
-        grants: args.grants !== undefined ? normalizeContextGrants(args.grants) : undefined,
+        grants: grantReport ? grantReport.grants : undefined,
       });
+      return grantReport && grantReport.notes.length > 0 ? { ...patched, grantNotes: grantReport.notes } : patched;
     },
   },
 ];

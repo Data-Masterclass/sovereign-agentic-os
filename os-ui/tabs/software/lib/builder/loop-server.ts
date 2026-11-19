@@ -73,8 +73,15 @@ export function builderIterationBudget(user: CurrentUser, perIterationUsd = BUIL
  * whether the build satisfied its stories. The narrowest additive path that does NOT touch stream
  * S's files is the COMMITTED TREE itself: one `.app/acceptance.json` written by the SAME governed
  * `commitToApp` call that writes the code, in the same commit. So it is versioned with the code it
- * describes, it needs no `App` schema field, it is readable by `read_app_files` / the review card /
- * the MCP with no new tool, and a rollback to an earlier commit carries the matching scorecard.
+ * describes, it needs no `App` schema field, and a rollback to an earlier commit carries the
+ * matching scorecard.
+ *
+ * WHO ACTUALLY READS IT, stated honestly (corrected 2026-11-19): `read_app_files` does — it is a
+ * file in the committed tree, and `e2e-golden-path.test.ts` round-trips it through that tool. The
+ * DEPLOY REVIEW CARD DOES NOT. An earlier version of this comment claimed the card read it "with
+ * no new tool"; a tree-wide grep for `ACCEPTANCE_FILE` / `acceptance.json` finds no reader
+ * anywhere outside this module and its tests. Wiring the record onto the card is real work on
+ * `review.ts` and is listed in the plan's "what is still not true", not claimed here.
  * See deviation H-review-5 for the merger: if S later adds an `App` field, this file stays the
  * source of truth and the field becomes its cache.
  */

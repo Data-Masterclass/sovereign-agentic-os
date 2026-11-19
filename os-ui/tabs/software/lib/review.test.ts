@@ -182,3 +182,60 @@ test('HONESTY: a card whose app no longer exists → actionable 409 (not bare "A
   const card = getReviewCard(res.card.id);
   assert.ok(card && card.decision !== 'pending', 'orphaned card is auto-retired (no longer pending)');
 });
+
+// ───────────────── the preview tells the TRUTH about what it did (2026-11-19) ─────────────────
+
+test('PREVIEW: a DECLARATIVE app’s preview IS its same-origin URL — no pod is attempted', async () => {
+  // A `serveMode:'spec'` app is rendered by the OS at /apps/<slug> under the viewer's own
+  // session. `startPreview` used to send it to `deployApp` anyway, which fail-closed on a missing
+  // image — reporting a failure for an app that was already viewable.
+  const app = await createApp(creator, { name: 'Declarative preview', template: 'sovereign-app', kind: 'spec' });
+  const { app: previewed, runnerNote } = await startPreview(app.id, creator);
+
+  assert.equal(previewed.deploy.state, 'preview');
+  // No spec authored yet ⇒ nothing is served, and it says exactly that plus the verb to use.
+  assert.equal(previewed.deploy.previewUrl, null, 'no URL is fabricated before there is a spec');
+  assert.match(runnerNote ?? '', /declarative/i, 'the note names the kind');
+  assert.match(runnerNote ?? '', /set_app_spec|generate_app_spec/, 'and the verb that authors one');
+  assert.doesNotMatch(runnerNote ?? '', /Kubernetes/i, 'never blames a cluster it did not call');
+
+  // With a spec, the served URL IS the preview.
+  const { setAppSpec } = await import('./apps.ts');
+  const { app: withSpec } = await setAppSpec(
+    app.id,
+    {
+      version: 2,
+      name: 'Declarative preview',
+      description: 'x',
+      tabs: [{ id: 't1', label: 'Home', body: { kind: 'custom', html: '<p>hi</p>' } }],
+    },
+    creator,
+  );
+  assert.ok(withSpec.spec, 'the spec validated');
+  const second = await startPreview(app.id, creator);
+  assert.equal(second.app.deploy.previewUrl, `/apps/${app.slug}`, 'the same-origin render IS the private preview');
+  assert.equal(second.runnerNote, null, 'and there is nothing left to explain');
+});
+
+test('PREVIEW: a MISSING IMAGE says so — it is never reported as a Kubernetes outage', async () => {
+  // `deployApp` catches `MissingAppImageError` and returns an explained `phase:'failed'` outcome.
+  // The note ladder keyed only on `live`, so the honest reason was discarded and the user was
+  // told the Kubernetes API was unreachable.
+  const { previewNoteForRunner, PREVIEW_PENDING_NOTE } = await import('./review.ts');
+  const { deployApp } = await import('./runner.ts');
+
+  const outcome = await deployApp({ slug: 'no-image', host: 'no-image.sales.apps.local', footprint: 'small' });
+  assert.equal(outcome.ok, false, 'fail-closed: nothing was provisioned');
+  assert.equal(outcome.phase, 'failed');
+  assert.match(outcome.detail, /no image reference is set/i, 'and the runner says why');
+
+  const app = await createApp(creator, { name: 'Image preview', template: 'sovereign-app', kind: 'code' });
+  const { runnerNote } = await startPreview(app.id, creator);
+  assert.ok(runnerNote, 'there is a note');
+  assert.notEqual(runnerNote, PREVIEW_PENDING_NOTE, 'and it is NOT the cluster-unreachable blurb');
+  assert.match(runnerNote ?? '', /image/i, 'it names the actual problem');
+  assert.doesNotMatch(runnerNote ?? '', /Kubernetes API is reachable/i, 'no wrong-cause diagnosis');
+
+  // A genuinely silent cluster still gets the unreachable note — the other branch is intact.
+  assert.equal(previewNoteForRunner(null), PREVIEW_PENDING_NOTE);
+});
