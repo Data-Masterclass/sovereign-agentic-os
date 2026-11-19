@@ -96,7 +96,7 @@ app uses the copy frozen under `vendor/` when the app was created.
 | `create_software`, `design_software`, `set_app_spec`, `use_data`, `use_knowledge`, `use_connection`, `archive` | Creator (owner / owning-domain builder+ for the spec doors) |
 | ⛔ `promote` | Builder or Admin |
 | ⛔ `commit` (Advanced coded path — direct file write; disabled when coded apps are off) | Builder or Admin |
-| `delete` | Creator (lineage permitting) |
+| `delete` | Builder or Admin (lineage permitting); a creator uses `archive` |
 
 Every author runs AS you, is OPA-policy-checked and Langfuse-traced. A governed `set_app_spec` author is a versioned publish, at parity with the UI Publish.
 

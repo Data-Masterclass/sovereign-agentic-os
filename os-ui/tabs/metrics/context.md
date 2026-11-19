@@ -15,7 +15,7 @@
 - `ratio {numerator, denominator}` — with `aggregation: "number"`, a ratio over two EXISTING metrics on the same dataset; emitted as a dbt `type: ratio` metric (never a measure carrying division SQL). Any other `number` formula is emitted as `type: derived`; a rolling window as `type: cumulative`.
 - `format` (currency/percent/number…) and `drillMembers` (drill-down exploration).
 
-**Golden path:** in Data, build a Gold version, file `request_promotion` (kind `"dataset"`), a Builder runs `approve_promotion` → `define_metric` here → chart it with `create_dashboard`.
+**Golden path:** in Data, build a Gold version, file `request_promotion` (kind `"dataset"`), a Domain admin runs `approve_promotion` → `define_metric` here → chart it with `create_dashboard`.
 
 **Constraints:** the dataset must already be a governed asset/product (promote it in Data first — the metric reads the Trino mart the dbt project builds). `count` needs no column; `sum`/`avg`/`min`/`max`/`count_distinct*` need a Gold column; `number` needs a `ratio`. Runs as you; audited.
 

@@ -15,7 +15,7 @@ The Files tab stores binary and document assets — PDFs, spreadsheets, images, 
    - `restricted` — set `true` to store the file without indexing it (e.g. for PII-containing documents)
    The file is created in **My** scope — yours, no approval. If `restricted` is false (the default), text is extracted, chunked, and embedded automatically.
 3. **Read it back.** Call `get_file` with the file id to read back the metadata (tags, description, sensitivity, version history) and the extracted text. Long text is truncated at ~8k characters with an explicit note; a `restricted` file returns metadata only — its text is never returned.
-4. **Propose it to Domain.** To share the file wider, the owner (any builder) calls `request_promotion` to move it My → Domain. Requires `description` and at least one `tag`; missing either returns `bad_request`.
+4. **Propose it to Domain.** To share the file wider, the owner calls `request_promotion` to move it My → Domain. Requires `description` and at least one `tag`; missing either returns `bad_request`.
 5. ⛔ **Domain admin approves.** A domain admin (or tenant admin) calls `approve_promotion`. The file becomes visible to domain members and its embeddings are merged into the shared search index.
 
 ## What to consider
@@ -33,7 +33,7 @@ The Files tab stores binary and document assets — PDFs, spreadsheets, images, 
 |---|---|
 | `list_files`, `search_files`, `get_file` | Creator |
 | `upload_file` | Creator (own work) |
-| `request_promotion` (owner proposes My → Domain) | Builder (the file's owner) |
+| `request_promotion` (owner proposes My → Domain) | Creator (the file's owner) |
 | ⛔ `approve_promotion` | Domain admin (or tenant admin) |
 
 OPA enforces domain scope on file reads. DLS on files respects the scope ladder — a My-scope file is invisible to other users even if they know its ID. Restricted files are additionally scoped to their uploader until they are shared. Langfuse traces every file access and promotion event.

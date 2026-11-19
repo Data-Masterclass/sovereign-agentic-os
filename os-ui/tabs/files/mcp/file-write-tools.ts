@@ -123,7 +123,7 @@ export const fileWriteTools: McpTool[] = [
       'For plain-text files (Markdown, CSV, JSON, TXT) you may omit `base64Content` and pass the content as `text` instead; it is indexed for search. ' +
       'Do NOT pass a markdown description of a binary file as `text` and omit the bytes — that produces a misleading text-only record. ' +
       'MCP in-band limit: ~4 MB of base64 (≈3 MB decoded). Larger files must be uploaded through the Files tab UI. ' +
-      '`restricted` sensitivity is stored-but-not-indexed. A `description` + ≥1 tag make the file eligible for `promote_file`.',
+      '`restricted` sensitivity is stored-but-not-indexed. A `description` + ≥1 tag make the file eligible for `request_promotion` (kind `file`).',
     inputSchema: {
       type: 'object',
       properties: {

@@ -23,11 +23,7 @@ The Sovereign Agentic OS MCP is the **same governed front door as the UI** — e
 | `software` | Apps and services wired to governed deps |
 | `metrics` | Canonical metric definitions backed by gold data |
 | `dashboards` | Per-viewer charts bound to governed metrics |
-| `bigbets` | Strategic initiatives tracking real OS components |
 | `files` | Binary and document assets |
-| `science` | Governed predict door into ML models |
-| `strategy` | Pillars and value spine |
-| `marketplace` | Browse and install certified shared assets |
 | `monitoring` | Cost, usage, and system health |
 
 ## Role summary
@@ -37,9 +33,9 @@ Your role is set by the platform — you cannot self-elevate.
 | Role | What you can do |
 |---|---|
 | **creator** | Full, unapproved rights over your OWN **My** work (create · edit · run); consume Domain/Company assets; FILE promotion requests (cannot approve or certify) |
-| **builder** | Everything a creator can, PLUS approve software deploys (`decide_deploy`) and create/promote Domain strategy pillars. Files promotion requests like anyone — the artifact My → Domain approval itself is a domain admin's |
-| **domain_admin** | Everything a builder can, PLUS APPROVE every My → Domain artifact promotion in your domain (`approve_promotion`, `publish_knowledge`, `promote_connection`) and administer users in your OWN domain(s) (invite, edit, deactivate; roles up to builder only) |
-| **admin** | Everything tenant-wide: certify My/Domain → Company, cross-domain big bets, policy overrides, cost caps, and appointing domain admins |
+| **builder** | Everything a creator can, PLUS approve software deploys (`decide_deploy`). Files promotion requests like anyone — the artifact My → Domain approval itself is a domain admin's |
+| **domain_admin** | Everything a builder can, PLUS APPROVE every My → Domain artifact promotion in your domain (`approve_promotion`, `publish_knowledge`, `promote_connection`) |
+| **admin** | Everything tenant-wide: certify My/Domain → Company, policy overrides, cost caps, and all user administration (invite, edit, deactivate, assign roles, appoint domain admins) |
 
 **My is yours.** In your own My scope there is NO approval — you (and the agents you build, which run AS you) create and write freely. Approval only enters when you promote up a scope: **Domain** needs a domain admin, **Company** needs an admin. You can only change what you originally built. If a tool returns `forbidden`, your role is below a promotion gate — file a request (`request_promotion`) or ask a domain admin.
 
@@ -47,7 +43,7 @@ Your role is set by the platform — you cannot self-elevate.
 
 Before creating anything, discover what is already there:
 
-- Read `sovereign-os://my/<datasets|knowledge|connections|files|metrics|dashboards|agents|software|bigbets|science>`
+- Read `sovereign-os://my/<datasets|knowledge|connections|files|metrics|dashboards|agents|software>`
 - Or call the matching `list_*` tool (e.g. `list_datasets`, `list_knowledge`)
 
 Reuse existing ids rather than duplicating assets — the OS is built around a single source of truth per concept.

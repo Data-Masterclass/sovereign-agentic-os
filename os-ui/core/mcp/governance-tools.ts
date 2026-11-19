@@ -69,7 +69,7 @@ export const governanceTools: McpTool[] = [
     tab: 'governance',
     minRole: 'creator',
     description:
-      'Read the status of ONE approval request you can see — its kind, decision, who can approve it, and (once decided) the executed effect. Path: the poll step of any gated golden path. Before: you filed a request (request_promotion / request_certification / import_product) and got a requestId. Governance: scoped by rank-aware canSee — your own requests always; +your domain if Builder+; tenant-wide if Admin. An id you cannot see is not_found (no existence leak).',
+      'Read the status of ONE approval request you can see — its kind, decision, who can approve it, and (once decided) the executed effect. Path: the poll step of any gated golden path. Before: you filed a request (request_promotion / request_certification) and got a requestId. Governance: scoped by rank-aware canSee — your own requests always; +your domain if Builder+; tenant-wide if Admin. An id you cannot see is not_found (no existence leak).',
     inputSchema: {
       type: 'object',
       properties: { requestId: { type: 'string', description: 'The requestId from a pending handle.' } },
