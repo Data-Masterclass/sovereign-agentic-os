@@ -7,7 +7,7 @@ import type { Dataset, Measure } from '@tabs/data/lib/index';
 import { type Principal } from '@tabs/data/lib/store';
 import { exploreMetric } from '@tabs/metrics/lib/build/explore-server';
 import type { Granularity } from '@tabs/metrics/lib/explorer';
-import { getMetric, listMetrics } from '@tabs/metrics/lib/store';
+import { getMetric, listMetrics, listAllMetricsInternal } from '@tabs/metrics/lib/store';
 import { type Panel, assertServableFilters, normalizePanel, panelMetrics } from '@tabs/dashboards/lib/model';
 
 /**
@@ -89,7 +89,31 @@ export type PanelQueryDeps = {
   resolve?: MemberResolver;
   /** Injectable explore path (defaults to the governed-SQL {@link exploreMetric}). */
   explore?: typeof exploreMetric;
+  /** Why a member did not resolve (defaults to {@link registryExplainer}). */
+  explain?: MissingExplainer;
 };
+
+/**
+ * Why a panel member did not resolve, so the tile can say what happened to the metric instead of
+ * a generic "may be undefined, out of your entitlement, or stale":
+ *   • `archived` — the viewer can see the metric, and it was archived (restorable in KPIs);
+ *   • `gone`     — no dataset in the OS defines it any more: the metric or its dataset was deleted;
+ *   • `unavailable` — it exists but does not resolve for this viewer (entitlement, or a stale model).
+ * Only the state of a member already written in the dashboard is told, never anything about a
+ * metric the viewer could not already name.
+ */
+export type MissingReason = 'archived' | 'gone' | 'unavailable';
+export type MissingExplainer = (member: string) => MissingReason;
+
+export function registryExplainer(user: Principal): MissingExplainer {
+  return (member: string) => {
+    const groups = listMetrics(user, { includeArchived: true });
+    const seen = [...groups.mine, ...groups.domain, ...groups.marketplace].find((s) => s.member === member);
+    if (seen?.archived) return 'archived';
+    if (!listAllMetricsInternal().some((m) => m.member === member)) return 'gone';
+    return 'unavailable';
+  };
+}
 
 /**
  * Run one panel's governed query as the viewer, resolving numbers through the compiled-SQL
@@ -114,6 +138,7 @@ export async function runPanelQuery(
   const { securityContext } = propagate(token); // throws if the token isn't user-delegated (R2/R3)
   const resolve = deps.resolve ?? registryResolver(user);
   const explore = deps.explore ?? exploreMetric;
+  const explain = deps.explain ?? registryExplainer(user);
   const p = normalizePanel(panel);
   const members = panelMetrics(p);
   void view; // the panel's members already encode the view; kept for the honest signature
@@ -213,7 +238,7 @@ export async function runPanelQuery(
   // an unpinned order is how the loudest notice ends up hidden behind the quietest one.
   const warning =
     unavailableWarning ??
-    (missing.length > 0 ? missingMembersWarning(missing) : undefined) ??
+    (missing.length > 0 ? missingMembersWarning(missing, explain) : undefined) ??
     (droppedMembers.size > 0 ? dropWarnings[0] : undefined) ??
     (commentValues.length > 0 ? commentValueWarning(commentValues) : undefined);
 
@@ -230,8 +255,41 @@ export async function runPanelQuery(
   };
 }
 
-/** The honest degradation notice for members no visible metric owns (Northpeak fix). */
-export function missingMembersWarning(missing: string[]): string {
+/** The honest degradation notice for members no visible metric owns (Northpeak fix). A metric
+ *  that was archived or no longer exists is named as such first; only the rest get the generic
+ *  model/entitlement advice. */
+export function missingMembersWarning(missing: string[], explain?: MissingExplainer): string {
+  const reasons = missing.map((m) => ({ m, why: explain ? safeExplain(explain, m) : 'unavailable' as MissingReason }));
+  const list = (ms: string[]) => ms.map((m) => `“${m}”`).join(', ');
+  const archived = reasons.filter((r) => r.why === 'archived').map((r) => r.m);
+  const gone = reasons.filter((r) => r.why === 'gone').map((r) => r.m);
+  const rest = reasons.filter((r) => r.why === 'unavailable').map((r) => r.m);
+  const parts: string[] = [];
+  if (archived.length > 0) {
+    parts.push(
+      `The ${archived.length === 1 ? 'metric' : 'metrics'} ${list(archived)} this chart uses ${archived.length === 1 ? 'was' : 'were'} archived. ` +
+        'Restore it in KPIs to show the chart again, or pick another metric.',
+    );
+  }
+  if (gone.length > 0) {
+    parts.push(
+      `The ${gone.length === 1 ? 'metric' : 'metrics'} ${list(gone)} this chart uses no longer ${gone.length === 1 ? 'exists' : 'exist'}: ` +
+        'the metric or the dataset it was defined on was deleted. Pick another metric for this chart.',
+    );
+  }
+  if (rest.length > 0) parts.push(genericMissingWarning(rest));
+  return parts.join(' ');
+}
+
+function safeExplain(explain: MissingExplainer, member: string): MissingReason {
+  try {
+    return explain(member);
+  } catch {
+    return 'unavailable';
+  }
+}
+
+function genericMissingWarning(missing: string[]): string {
   const dims = missing.map((m) => `“${m}”`).join(', ');
   return (
     `${missing.length === 1 ? 'Member' : 'Members'} ${dims} ${missing.length === 1 ? 'is' : 'are'} not available ` +
