@@ -20,7 +20,7 @@
  * `defineContextBlock`, `specPromptLines`, `deriveStoryChecklist`, `everyStoryHasSpec`).
  */
 
-import type { App, AppEpic, AppStory } from '@tabs/software/lib/apps';
+import type { App, AppEpic, AppStory, ServeMode } from '@tabs/software/lib/apps';
 import type { BuildTarget } from '@tabs/software/lib/build-target';
 import { targetLabel, type TargetEpic } from '@tabs/software/lib/build-target';
 import {
@@ -167,6 +167,83 @@ export function stageDirective(
       : 'Read the COMMITTED code for this scope (get_software / read_app_files) and report PASS/FAIL per the five dimensions; every shortfall becomes one dimension-tagged refinement.',
   );
   return lines.join('\n');
+}
+
+// ----------------------------------------------------- the DECLARATIVE directives --
+
+/**
+ * THE DECLARATIVE BUILD / TEST DIRECTIVE — for a `serveMode: 'spec'` app.
+ *
+ * THE DEFECT THIS CLOSES (2026-11-19, driving the Software chain end to end). `stageDirective`
+ * above is written for the CODED path and nothing branched on the app's kind, so
+ * `build_software` handed EVERY app — including the DEFAULT declarative one — a directive that
+ * ends "author the code, then call `commit`", plus a code-structure convention naming
+ * `src/epics/<epic>/<story>/`. On a declarative app there is no source tree to write into, and
+ * `commit` then answers 403 because coded apps are OFF by default. The default golden path had
+ * no stage-4 verb at all: the agent wrote code into the void and hit a role refusal that named
+ * no way forward.
+ *
+ * A declarative app's "build" IS authoring its AppSpec. So this directive hands back the same
+ * grounded context the coded one does — Define block, the real granted schema, the target's
+ * stories — and then names the verbs that actually author THIS app: `generate_app_spec` to
+ * scaffold from the design, `get_app_spec` to read-modify-write, `set_app_spec` to publish. It
+ * never mentions `commit`, `src/` or an image.
+ *
+ * `patternList` is injected (the registry summary lives with the tool descriptions) so this
+ * module stays pure and free of a cycle.
+ */
+export function declarativeStageDirective(
+  app: App,
+  target: BuildTarget,
+  mode: 'build' | 'test',
+  grantedContext = '',
+  patternList: { view: string; interactive: string } = { view: '', interactive: '' },
+): string {
+  const resolved = resolveTarget(app, target);
+  const tabs = app.spec?.tabs?.length ?? 0;
+  const lines: string[] = [
+    defineContextBlock(app),
+    ...(grantedContext ? ['', grantedContext] : []),
+    '',
+    '## This is a DECLARATIVE (no-code) app',
+    'The app IS its validated AppSpec: cookbook-pattern tabs over governed data, served',
+    "SAME-ORIGIN by the trusted OS renderer at `/apps/" + app.slug + '` under the viewer\'s own',
+    'session. There is NO source tree, NO image, NO pod and NO CI — so there is nothing to',
+    'compile and no `commit` to make. Authoring the spec is the whole build.',
+  ];
+  if (patternList.view || patternList.interactive) {
+    lines.push(
+      '',
+      '### The cookbook',
+      `VIEW (read): ${patternList.view}`,
+      `INTERACTIVE (write through the governed \`os.records\` door + role gates): ${patternList.interactive}`,
+      'A data-backed pattern\'s `config.source.datasetId` MUST be a dataset GRANTED above, and',
+      'every column it names MUST exist in that dataset\'s real schema (shown above — never invent one).',
+    );
+  }
+  lines.push('', `## Target: ${resolved.label}`);
+  for (const { epic, story } of resolved.stories) lines.push('', ...storyLines(epic, story));
+  lines.push(
+    '',
+    `## Current spec: ${tabs === 0 ? 'none yet' : `${tabs} tab(s) live`}`,
+    `## Model tier: ${tierNote(modelRoleForMode(mode as ChatRunMode))}`,
+    mode === 'build'
+      ? 'Call `generate_app_spec` to scaffold a validated AppSpec from this design, review the spec it returns, then `set_app_spec` to publish it live. To change a live app, `get_app_spec` → edit → `set_app_spec`. A blocking issue comes back as { path, reason, fix } and persists nothing: act on the fix and retry.'
+      : 'Read the LIVE spec (`get_app_spec` — it also returns a plain-language `describe` of every tab) and report PASS/FAIL per the five dimensions against the stories above; every shortfall becomes one dimension-tagged refinement.',
+  );
+  return lines.join('\n');
+}
+
+/**
+ * The one-word answer to "which of the two paths is this app on?" — for a stage tool's result.
+ *
+ * Takes the already-resolved `ServeMode` rather than the App, so this module stays PURE (its whole
+ * reason for existing is that the gate and directive assembly are unit-testable without a repo, a
+ * store or a model). The caller resolves it with `serveModeOf(app)`, which is the one nil-safe
+ * coercion; a legacy record with no `serveMode` therefore reads as `'spec'` here too.
+ */
+export function stagePathKind(serveMode: ServeMode): 'spec' | 'code' {
+  return serveMode === 'spec' ? 'spec' : 'code';
 }
 
 // --------------------------------------------------------------- built-vs-pending --

@@ -36,6 +36,7 @@ import type {
 import { normalizeSpec, type StorySpec } from '@tabs/software/lib/story-spec';
 import type { AppSpec, SpecIssue } from '@tabs/software/lib/appspec/schema';
 import { parseAppSpec } from '@tabs/software/lib/appspec/schema';
+import { normaliseSpecShapes } from '@tabs/software/lib/appspec/normalise';
 import type { SpecWarning } from '@tabs/software/lib/appspec/validate';
 import { detectPreviewShape } from '@tabs/software/lib/preview-shape';
 import { viteOsFiles } from '@tabs/software/lib/scaffolds/vite-os';
@@ -168,6 +169,38 @@ export function normalizeServeMode(raw: unknown): ServeMode {
 /** The app's effective serve mode (nil-safe read for a possibly-legacy record). */
 export function serveModeOf(app: Pick<App, 'serveMode'>): ServeMode {
   return normalizeServeMode(app.serveMode);
+}
+
+/**
+ * TOLERANT PARSE, STRICT OUTPUT — the ONE pre-parse step every AppSpec WRITE door runs.
+ *
+ * THE DEFECT THIS CLOSES (2026-11-19). `normaliseSpecShapes` was written for the production
+ * failure the owner hit in the Build stage — a reasoning model writes `"metric": "m_revenue"`
+ * where the grammar wants `"metric": { "metricId": "m_revenue" }`, and the structural gate
+ * answered `metric must be an object / use { metricId }` and killed the whole build. But it was
+ * wired into `parseGeneratedSpec` ONLY, so it protected `generate_app_spec` and left the three
+ * doors that actually PERSIST a spec — `setAppSpec` (the documented author-and-publish verb and
+ * `PUT /api/apps/[id]/spec`), `saveAppDraft` (the composer's autosave) and `publishApp` — calling
+ * `parseAppSpec` raw. An agent that hand-authored a spec, which `guide.md` explicitly offers as
+ * the alternative to generating one, met the exact error the normaliser exists to prevent.
+ *
+ * Normalising HERE puts it on every write path at once. `parseAppSpec` is NOT loosened: what
+ * persists is always canonical. Each rewrite comes back as a non-blocking `SpecWarning`, so the
+ * author is TOLD what was tidied up and a coercion is never invisible.
+ */
+export function parseAuthoredSpec(input: unknown): {
+  parsed: ReturnType<typeof parseAppSpec>;
+  warnings: SpecWarning[];
+} {
+  const { value, notes } = normaliseSpecShapes(input);
+  return {
+    parsed: parseAppSpec(value),
+    warnings: notes.map((reason) => ({
+      path: '',
+      reason,
+      fix: 'Write the canonical shape next time to avoid the rewrite; the stored spec is already canonical.',
+    })),
+  };
 }
 
 export type App = {
@@ -1327,15 +1360,18 @@ export async function setAppSpec(
   if (!ownerOrBuilder) throw withStatus(new Error('Only the creator can set this app spec'), 403);
   if (app.status === 'archived') throw withStatus(new Error('Archived apps cannot set a spec'), 409);
 
-  // Structural gate first — a malformed payload returns its parse issues, unpersisted.
-  const parsed = parseAppSpec(spec);
-  if (!parsed.ok) return { app, issues: parsed.issues, warnings: [], version: null };
+  // Structural gate first — a malformed payload returns its parse issues, unpersisted. The
+  // unambiguous model shapes are normalised BEFORE it (`parseAuthoredSpec`) and reported as
+  // warnings, so a readable spec is never rejected over the shape of a reference slot.
+  const { parsed, warnings: shapeWarnings } = parseAuthoredSpec(spec);
+  if (!parsed.ok) return { app, issues: parsed.issues, warnings: shapeWarnings, version: null };
 
   // Semantic gate — dataset/column/metric/grant invariants against the real stores.
   // Imported LAZILY: validate.ts pulls in the data/metrics stores, and keeping that off the
   // module-load path of apps.ts preserves the store-mock isolation other suites rely on.
   const { validateAppSpec } = await import('@tabs/software/lib/appspec/validate');
-  const { issues, warnings } = await validateAppSpec(app, parsed.spec, user);
+  const { issues, warnings: semanticWarnings } = await validateAppSpec(app, parsed.spec, user);
+  const warnings = [...shapeWarnings, ...semanticWarnings];
   if (issues.length > 0) return { app, issues, warnings, version: null };
 
   // A GOVERNED AUTHOR = a versioned PUBLISH (0.6.136). set_app_spec writes the LIVE spec, so it
@@ -1370,6 +1406,13 @@ export async function setAppSpec(
  * • BEST-EFFORT structural parse: a clean payload is stored as a parsed AppSpec; a structurally
  *   incomplete payload is stored verbatim (never rejected) so no keystrokes are lost. Serving is
  *   unaffected either way (it reads `spec`, not `draftSpec`).
+ * • NO WARNINGS BY DESIGN (reviewed 2026-11-19). It runs `parseAuthoredSpec`, so the normalised
+ *   shapes are what get STORED and the author sees the tidy-up reflected in the composer — but it
+ *   deliberately returns no `warnings`. This is a debounced autosave that fires on keystrokes: a
+ *   per-save notice would be noise, and the draft is not the served artefact. `publishApp` re-runs
+ *   the same normalisation over the stored draft and DOES return the warnings, so the author is
+ *   told at the one moment it matters — the go-live gate. Changing this means changing the return
+ *   type the autosave route depends on, for a message nobody can act on mid-keystroke.
  * • Flip `serveMode` to 'spec' so the app is recognised as a declarative app in the tiles/rail
  *   from its very first draft (it only SERVES once `spec` is set on Publish).
  * Idempotent + debounce-friendly: re-saving the same payload is a plain write-through.
@@ -1382,7 +1425,7 @@ export async function saveAppDraft(appId: string, draft: unknown, user: CurrentU
   if (!ownerOrBuilder) throw withStatus(new Error('Only the creator can edit this app draft'), 403);
   if (app.status === 'archived') throw withStatus(new Error('Archived apps cannot save a draft'), 409);
 
-  const parsed = parseAppSpec(draft);
+  const { parsed } = parseAuthoredSpec(draft);
   // A clean parse stores the normalised spec; an incomplete one stores the raw payload so the
   // composer can re-hydrate exactly what the author had (no serve-gate here, by design).
   app.draftSpec = (parsed.ok ? parsed.spec : (draft as AppSpec)) ?? undefined;
@@ -1419,13 +1462,15 @@ export async function publishApp(
     throw withStatus(new Error('There is nothing to publish yet — build a draft first.'), 409);
   }
 
-  // Structural gate first — a malformed candidate returns its parse issues, unpublished.
-  const parsed = parseAppSpec(candidate);
-  if (!parsed.ok) return { app, issues: parsed.issues, warnings: [], version: null };
+  // Structural gate first — a malformed candidate returns its parse issues, unpublished. The
+  // unambiguous model shapes are normalised BEFORE it, the same way every other spec door does.
+  const { parsed, warnings: shapeWarnings } = parseAuthoredSpec(candidate);
+  if (!parsed.ok) return { app, issues: parsed.issues, warnings: shapeWarnings, version: null };
 
   // Semantic gate — the SAME serving gate `setAppSpec` runs (dataset/column/metric/grant invariants).
   const { validateAppSpec } = await import('@tabs/software/lib/appspec/validate');
-  const { issues, warnings } = await validateAppSpec(app, parsed.spec, user);
+  const { issues, warnings: semanticWarnings } = await validateAppSpec(app, parsed.spec, user);
+  const warnings = [...shapeWarnings, ...semanticWarnings];
   if (issues.length > 0) return { app, issues, warnings, version: null };
 
   // Deterministic change summary: diff the PREVIOUS live spec vs the newly-published one.
@@ -1525,6 +1570,32 @@ export async function getAppForUser(appId: string, user: CurrentUser): Promise<A
   const a = await getAppByIdWithMirror(appId);
   if (!a || !visibleToUser(a, user)) throw withStatus(new Error('App not found'), 404);
   return a;
+}
+
+/**
+ * Fetch an app for a GOVERNANCE ACT — the approve-half of a promotion rung. Mirrors
+ * `getDashboardForGovernance` / `getPersonalKnowledgeForGovernance` exactly.
+ *
+ * THE DEFECT THIS CLOSES (2026-11-19). `resolveLadderArtifact` passes `forGovernanceAct: true`
+ * from `promoteThroughSeam`, and honours it for `personal_knowledge` and `dashboard` — but the
+ * `'app'` case called plain `getAppForUser`, whose Personal-visibility gate hides a creator's own
+ * app from everyone else. So a creator could FILE a My→Domain promotion and the appointed
+ * domain_admin approver got `not_found` on the very artefact they had been asked to decide: an
+ * app owned by a creator could never leave their lane through the governed ladder.
+ *
+ * This is NOT a general read bypass. It widens the read by exactly the set of principals the
+ * ladder can appoint as THIS app's approver — an in-domain `domain_admin`, or an `admin` — and
+ * only through the ONE call site that passes the flag (`resolveLadderArtifact`, reached from
+ * `promoteThroughSeam`). Anyone else still gets the 404. `apps.test.ts` pins the refusal arm for
+ * an out-of-domain domain_admin and for a plain in-domain builder.
+ */
+export async function getAppForGovernance(appId: string, user: CurrentUser): Promise<App> {
+  const a = await getAppByIdWithMirror(appId);
+  if (!a) throw withStatus(new Error('App not found'), 404);
+  const isLadderApprover =
+    user.role === 'admin' || (user.role === 'domain_admin' && user.domains.includes(a.domain));
+  if (visibleToUser(a, user) || isLadderApprover) return a;
+  throw withStatus(new Error('App not found'), 404);
 }
 
 /**

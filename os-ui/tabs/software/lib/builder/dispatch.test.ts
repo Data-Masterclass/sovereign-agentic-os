@@ -138,6 +138,18 @@ test('H-1 `commit` is visible to the agent hold gate; the rest of the platform s
   // `commit`, and must be held-eligible for the same reason.
   assert.ok(declared.includes('push_app_files'), 'push_app_files must still be a declared platform write');
   assert.ok(WRITE_TOOL_NAMES.has('push_app_files'), 'push_app_files must be in the hold-gate table');
+  // 2026-11-19: and it did its job a THIRD time — `set_app_spec` was a declared platform write
+  // that PUBLISHES a live app, and the hold gate could not see it. Classified, not excused.
+  assert.ok(declared.includes('set_app_spec'), 'set_app_spec must still be a declared platform write');
+  assert.ok(WRITE_TOOL_NAMES.has('set_app_spec'), 'set_app_spec publishes a live app — it must be held-eligible');
+  // And a FOURTH: `design_software` is the platform-MCP twin of the tab's own `set_app_design`.
+  // Both land in `patchAppDesign`, so leaving one unclassified made a write's hold posture depend
+  // on which of its two names an agent happened to call.
+  assert.ok(declared.includes('design_software'), 'design_software must still be a declared platform write');
+  assert.ok(
+    WRITE_TOOL_NAMES.has('design_software') && WRITE_TOOL_NAMES.has('set_app_design'),
+    'the two doors onto patchAppDesign must be classified TOGETHER or the hold depends on the name used',
+  );
   // The fix: the build tool is held-eligible. Before this, `holdDecisionFor(preset,'commit')`
   // answered "not a write" for EVERY preset, so even a read-only agent could write app files.
   assert.ok(WRITE_TOOL_NAMES.has('commit'));
@@ -152,10 +164,8 @@ test('H-1 `commit` is visible to the agent hold gate; the rest of the platform s
       'create_software',
       'decide_deploy',
       'delete',
-      'design_software',
       'promote',
       'request_deploy',
-      'set_app_spec',
       'start_preview',
       'use_as_data',
       'use_connection',

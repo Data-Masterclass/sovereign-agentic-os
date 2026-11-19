@@ -65,28 +65,76 @@ export function emptyContextGrants(): ContextGrants {
   return { connections: [], data: [], knowledge: [], files: [], metrics: [] };
 }
 
+/** One thing the normaliser had to do to a caller's grant, as a user-facing line. */
+export type GrantNote = string;
+
 /**
  * Normalise a possibly-partial / legacy value into a full ContextGrants object,
  * so an app persisted BEFORE grants existed (undefined) still loads. Unknown
  * kinds are dropped; a missing kind defaults to an empty list.
+ *
+ * A grant whose `access` is MISSING takes the NARROWEST level (`read-only`) rather than
+ * vanishing — see `normalizeContextGrantsWithReport`, which this delegates to.
  */
 export function normalizeContextGrants(v: unknown): ContextGrants {
-  const out = emptyContextGrants();
-  if (!v || typeof v !== 'object') return out;
+  return normalizeContextGrantsWithReport(v).grants;
+}
+
+/**
+ * The same normalisation, plus a REPORT of everything it had to do — because a grant that
+ * disappears without a word is a dead end.
+ *
+ * THE DEFECT THIS REPLACES (2026-11-19, driving the Software chain end to end). The filter
+ * used to require a VALID `access` on every entry, so `{ id: 'ds_…' }` — the shape a model
+ * writes when it reads `grants: { data: [{ id }] }` out of a worked example — was dropped
+ * SILENTLY and the write still answered 200. The next door then refused with
+ * "<id> is not granted to this app", which sends the author back to the grant door, which
+ * drops it again: a loop with no error message anywhere in it.
+ *
+ * So:
+ *   • `access` MISSING or empty  → `read-only`, the NARROWEST level, plus a note. An explicit
+ *     grant is never silently ignored, and defaulting can only ever under-privilege.
+ *   • `access` present but UNRECOGNISED → still dropped (the caller asked for something that
+ *     does not exist and must not be quietly handed a different level), but now NAMED in the
+ *     report so the caller can correct it.
+ *   • no `id`, or not an object → dropped and named.
+ *
+ * Pure: no IO, no mutation of the input.
+ */
+export function normalizeContextGrantsWithReport(v: unknown): { grants: ContextGrants; notes: GrantNote[] } {
+  const grants = emptyContextGrants();
+  const notes: GrantNote[] = [];
+  if (!v || typeof v !== 'object') return { grants, notes };
   const rec = v as Record<string, unknown>;
   for (const kind of CONTEXT_KINDS) {
     const arr = rec[kind];
-    if (Array.isArray(arr)) {
-      out[kind] = arr
-        .filter((g): g is ContextGrant =>
-          !!g && typeof g === 'object' &&
-          typeof (g as ContextGrant).id === 'string' &&
-          CONTEXT_ACCESS_LEVELS.includes((g as ContextGrant).access),
-        )
-        .map((g) => ({ id: g.id, access: g.access }));
+    if (!Array.isArray(arr)) continue;
+    for (const raw of arr) {
+      if (!raw || typeof raw !== 'object') {
+        notes.push(`${kind}: dropped a grant that is not an object`);
+        continue;
+      }
+      const g = raw as Partial<ContextGrant>;
+      if (typeof g.id !== 'string' || !g.id) {
+        notes.push(`${kind}: dropped a grant with no "id"`);
+        continue;
+      }
+      if (g.access === undefined || g.access === null || (g.access as string) === '') {
+        grants[kind].push({ id: g.id, access: 'read-only' });
+        notes.push(`${kind} ${g.id}: no "access" given — granted at the narrowest level, read-only`);
+        continue;
+      }
+      if (!CONTEXT_ACCESS_LEVELS.includes(g.access)) {
+        notes.push(
+          `${kind} ${g.id}: dropped — "${String(g.access)}" is not an access level ` +
+            `(use one of ${CONTEXT_ACCESS_LEVELS.join(', ')})`,
+        );
+        continue;
+      }
+      grants[kind].push({ id: g.id, access: g.access });
     }
   }
-  return out;
+  return { grants, notes };
 }
 
 // ------------------------------------------------------------- Safety cap ------

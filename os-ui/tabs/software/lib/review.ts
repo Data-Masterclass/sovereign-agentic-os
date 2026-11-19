@@ -7,6 +7,7 @@ import {
   getAppByIdInternal,
   getAppForUser,
   persistApp,
+  serveModeOf,
   templateFiles,
   newId,
   withStatus,
@@ -231,7 +232,20 @@ export const IMAGE_BUILDING_NOTE =
   'Image build in progress — the app is provisioned and the preview URL appears once ' +
   'its image is available and the pod becomes ready.';
 
+/**
+ * THE DEFECT THIS CLOSES (2026-11-19). A FAIL-CLOSED runner refusal — today the only one is
+ * `MissingAppImageError`, which `deployApp` catches and returns as
+ * `{ ok:false, live:false, phase:'failed', detail:<the honest reason> }` — fell through to
+ * `PREVIEW_PENDING_NOTE` because that branch keys on `live`. The user was therefore told
+ * "Preview runner unreachable … pending until the Kubernetes API is reachable" when the
+ * Kubernetes API was fine and the app simply had no image, and `detail` was discarded. A
+ * configuration problem reported as an outage sends the operator to debug the wrong thing.
+ *
+ * So: an explained `failed` outcome says what it says. Only a genuinely silent cluster gets
+ * the unreachable note.
+ */
 function previewPendingNote(outcome: RunnerOutcome): string {
+  if (outcome.phase === 'failed' && outcome.detail) return outcome.detail;
   return outcome.live ? IMAGE_BUILDING_NOTE : PREVIEW_PENDING_NOTE;
 }
 
@@ -259,11 +273,16 @@ export function previewNoteForRunner(status: RunnerStatus | null): string {
 export type PreviewResult = {
   app: App;
   /**
-   * The human-readable runner outcome detail surfaced to the client.
-   * Set when the runner provisioned the pod (or is trying to); null when the
-   * preview URL is already live (nothing extra to say). The deploy route
-   * includes this so the UI can distinguish "provisioning — URL coming" from
-   * "runner failed: <reason>" instead of showing the same "pending" blurb for both.
+   * The human-readable preview outcome surfaced to the client, or null when there is nothing
+   * left to say because the app is already reachable. The deploy route forwards it so the UI can
+   * tell the four cases apart instead of showing one "pending" blurb for all of them:
+   *   • DECLARATIVE, spec authored  → null (it is served at `/apps/<slug>`; the URL says it)
+   *   • DECLARATIVE, no spec yet    → "…served same-origin as soon as it has a validated spec",
+   *                                    naming `set_app_spec` / `generate_app_spec`
+   *   • CODED, provisioning         → the image-build / pod-starting note
+   *   • CODED, refused or offline   → the runner's OWN reason (e.g. no image reference is set),
+   *                                    and only a genuinely silent cluster gets the
+   *                                    "Kubernetes API unreachable" note
    */
   runnerNote: string | null;
 };
@@ -275,6 +294,31 @@ export async function startPreview(appId: string, user: CurrentUser): Promise<Pr
   if (!ownerOrBuilder) throw withStatus(new Error('Only the creator can preview this app'), 403);
   if (app.status === 'archived') throw withStatus(new Error('Archived apps cannot run a preview'), 409);
   app.deploy.state = app.deploy.state === 'live' ? 'live' : 'preview';
+
+  // DECLARATIVE APPS (2026-11-19). A `serveMode:'spec'` app is rendered SAME-ORIGIN by the OS at
+  // `/apps/<slug>` under the viewer's own session — there is no image, no pod and nothing for the
+  // runner to provision. Calling `deployApp` for one attempted an image deploy that fail-closed on
+  // a missing image, so `start_preview` on the DEFAULT app kind reported a failure for an app that
+  // was already viewable. Its private preview is that same-origin URL, gated by the app's own
+  // visibility (Personal ⇒ only the owner reaches it), so return it and say what backs it.
+  if (serveModeOf(app) === 'spec') {
+    const servedUrl = `/apps/${app.slug}`;
+    app.deploy.previewUrl = app.spec ? servedUrl : null;
+    await persistApp(app);
+    const runnerNote = app.spec
+      ? null
+      : 'This is a declarative app: it is served same-origin at ' +
+        servedUrl +
+        ' as soon as it has a validated spec. There is no spec yet — author one with set_app_spec (or scaffold it with generate_app_spec).';
+    void trace({
+      principal: app.mcpPrincipal,
+      tool: 'generate',
+      input: { action: 'start_preview', by: user.id, serveMode: 'spec' },
+      output: { preview: app.spec ? 'served' : 'no-spec', url: app.deploy.previewUrl },
+      decision: 'allow',
+    });
+    return { app, runnerNote };
+  }
 
   // Provision the real runner; reflect its outcome honestly (no fake URL offline).
   const runner = await deployApp(runnerAppFor(app));

@@ -140,7 +140,10 @@ test('commit with an appId but NO files returns a corrective 400 (an empty commi
 });
 
 test('BUILD GATE: build_software enforces the design-before-build gate (no spec → 409), passes once designed', async () => {
-  const app = (await callPlatformMcp(creator, 'create_software', { name: 'Gated app', template: 'sovereign-app' })) as App;
+  // CODED app (`kind:'code'`): this case pins the coded BUILD directive, so it must ask for the
+  // coded path explicitly — `create_software` defaults to the DECLARATIVE one, whose build
+  // directive names `generate_app_spec`/`set_app_spec` instead (2026-11-19, kind-aware stages).
+  const app = (await callPlatformMcp(creator, 'create_software', { name: 'Gated app', template: 'sovereign-app', kind: 'code' })) as App;
   // Author an epic with ONE story but NO spec yet.
   await callPlatformMcp(creator, 'design_software', {
     appId: app.id,
@@ -167,7 +170,8 @@ test('BUILD GATE: build_software enforces the design-before-build gate (no spec 
 });
 
 test('TEST: verify_software returns the 5-dimension directive + normalizes findings into refinements', async () => {
-  const app = (await callPlatformMcp(creator, 'create_software', { name: 'Verify app', template: 'sovereign-app' })) as App;
+  // CODED app, for the same reason as the BUILD-GATE case above.
+  const app = (await callPlatformMcp(creator, 'create_software', { name: 'Verify app', template: 'sovereign-app', kind: 'code' })) as App;
   await callPlatformMcp(creator, 'design_software', {
     appId: app.id,
     epics: [{ id: 'e1', title: 'E', stories: [{ id: 's1', title: 'S', asA: 'u', iWant: 'x', soThat: 'y', spec: { features: ['F1'], nfrs: [], rules: [] } }] }],
@@ -187,6 +191,40 @@ test('TEST: verify_software returns the 5-dimension directive + normalizes findi
   assert.equal(res.refinements.length, 1);
   assert.equal(res.refinements[0].storyId, 's1');
   assert.equal(res.refinements[0].dimension, 'ux');
+});
+
+// ------------------------------------ the two paths, each with its own directive (2026-11-19) --
+
+test('KIND-AWARE: a DECLARATIVE app’s build names the spec verbs, never `commit` or a source tree', async () => {
+  const app = (await callPlatformMcp(creator, 'create_software', { name: 'Declarative build', purpose: 'p' })) as App;
+  await callPlatformMcp(creator, 'design_software', {
+    appId: app.id,
+    epics: [{ id: 'e1', title: 'E', stories: [{ id: 's1', title: 'S', asA: 'u', iWant: 'x', soThat: 'y', spec: { features: ['F1'], nfrs: [], rules: [] } }] }],
+  });
+  const build = (await callPlatformMcp(creator, 'build_software', { appId: app.id })) as {
+    kind: string; directive: string; next: string; code?: unknown;
+  };
+  assert.equal(build.kind, 'spec', 'the result says which path this app is on');
+  assert.match(build.next, /generate_app_spec/, 'it names the verb that actually authors this app');
+  assert.doesNotMatch(build.directive + build.next, /(call|then) `commit`/, 'never instructs a commit');
+  assert.doesNotMatch(build.directive + build.next, /src\/epics/, 'and never a source tree');
+  assert.equal(build.code, undefined, 'no template scaffold is passed off as "the code"');
+  assert.match(build.directive, /DECLARATIVE \(no-code\) app/, 'and it says so plainly');
+});
+
+test('KIND-AWARE: a DECLARATIVE app’s verify reads the LIVE SPEC, not committed code', async () => {
+  const app = (await callPlatformMcp(creator, 'create_software', { name: 'Declarative verify', purpose: 'p' })) as App;
+  await callPlatformMcp(creator, 'design_software', {
+    appId: app.id,
+    epics: [{ id: 'e1', title: 'E', stories: [{ id: 's1', title: 'S', asA: 'u', iWant: 'x', soThat: 'y', spec: { features: ['F1'], nfrs: [], rules: [] } }] }],
+  });
+  const res = (await callPlatformMcp(creator, 'verify_software', { appId: app.id })) as {
+    kind: string; directive: string; code?: unknown; spec?: unknown;
+  };
+  assert.equal(res.kind, 'spec');
+  assert.equal(res.code, undefined, 'there is no committed code for a declarative app');
+  assert.equal('spec' in res, true, 'the artefact under test is the spec itself');
+  assert.match(res.directive, /get_app_spec/, 'and it points the verifier at the live spec');
 });
 
 // -------------------------------- advertised templates + src/ framing (0.6.115 A5) --

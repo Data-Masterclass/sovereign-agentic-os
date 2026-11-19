@@ -203,6 +203,77 @@ test('H-1 `commit` is a WRITE tool the hold gate can see', () => {
   assert.equal(WRITE_TOOL_TABS.commit, 'software');
 });
 
+test('set_app_spec is a WRITE tool the hold gate can see (the 4th "in the catalog != held")', () => {
+  // 2026-11-19. `set_app_spec` PUBLISHES: it writes the app's LIVE served surface and snapshots a
+  // version, so the app is immediately reachable at /apps/<slug> by everyone its visibility
+  // admits. It was absent from WRITE_TOOL_TABS, so `holdDecisionFor` answered "not a write" for
+  // every preset and an agent granted it could publish with no hold — against the owner's
+  // standing rule that writes happen only on explicit confirmation.
+  assert.ok(isWriteTool('set_app_spec'), 'set_app_spec must be in WRITE_TOOL_TABS or no preset can hold it');
+  assert.equal(WRITE_TOOL_TABS.set_app_spec, 'software');
+});
+
+test('posture: read-only HOLDS set_app_spec to an admin; other presets treat it as a My write', () => {
+  // read-only: every write is blocked and queued to an admin. THIS is the gap that is now closed.
+  assert.deepEqual(holdDecisionFor('read-only', 'set_app_spec'), { held: true, approverRole: 'admin' });
+
+  // read-propose / full: identical to `commit`'s posture below, and for the same reason. The app
+  // is the RUNNER'S OWN (a My-scope artifact) — `setAppSpec` re-gates owner-or-in-domain-builder
+  // itself — so `writeTargetScope` classifies it `personal` and gate 2 (the run-as-user governed
+  // dispatch: OPA, DLS, role, ownership) is the authority rather than a hold.
+  //
+  // PRECISELY WHAT PUBLISHING DOES NOT DO (narrowed on re-review): it does not change the app's
+  // `visibility`. Climbing the ladder is `promote`, which stays separately role-gated. It is NOT
+  // true that publishing never reaches a wider audience — on an app ALREADY Shared or Certified,
+  // `set_app_spec` pushes a new live surface to that existing audience, unheld under these two
+  // presets. The hold is name-only today (`hold.ts` is pure and sees no arguments), so it cannot
+  // tell a My app from a Domain one. The follow-up — making this tool's hold scope follow the
+  // TARGET app's visibility — is specified in the plan, §4.7 "Follow-up".
+  assert.deepEqual(holdDecisionFor('read-propose', 'set_app_spec'), { held: false });
+  assert.deepEqual(holdDecisionFor('full-in-scope', 'set_app_spec'), { held: false });
+  assert.equal(writeTargetScope('set_app_spec'), 'personal');
+
+  // NO FROZEN GOLDEN MOVES: nothing grants `set_app_spec`, so no run's tool sequence changes.
+  assert.equal(
+    parseSystem(APPSMITH_YAML).grants.tools.includes('set_app_spec'),
+    false,
+    'App Smith authors code through `commit`; if it is ever granted set_app_spec, re-check the golden',
+  );
+});
+
+test('design_software is classified WITH its twin set_app_design (the 5th "catalog != held")', () => {
+  // 2026-11-19. Both doors land in the SAME governed write, `patchAppDesign`. `set_app_design` is
+  // the software tab's own MCP tool and was classified; `design_software` is the platform-MCP tool
+  // onto the same function and was not — so the hold posture of one write depended on which of
+  // its two names an agent used. It matters more since F10: this door now DEFAULTS a grant with
+  // no `access` to `read-only` rather than dropping it, so an unheld call can bind governed
+  // context the caller never explicitly authorised.
+  assert.ok(isWriteTool('design_software'), 'design_software must be in WRITE_TOOL_TABS');
+  assert.equal(WRITE_TOOL_TABS.design_software, 'software');
+  assert.equal(
+    WRITE_TOOL_TABS.design_software,
+    WRITE_TOOL_TABS.set_app_design,
+    'two doors onto one write must carry one classification',
+  );
+});
+
+test('posture: design_software matches set_app_design exactly, under every preset', () => {
+  for (const preset of ['read-only', 'read-propose', 'full-in-scope'] as const) {
+    assert.deepEqual(
+      holdDecisionFor(preset, 'design_software'),
+      holdDecisionFor(preset, 'set_app_design'),
+      `${preset}: the twins must decide identically`,
+    );
+  }
+  // And concretely: read-only holds to an admin; otherwise it is the runner's own My-scope write.
+  assert.deepEqual(holdDecisionFor('read-only', 'design_software'), { held: true, approverRole: 'admin' });
+  assert.deepEqual(holdDecisionFor('read-propose', 'design_software'), { held: false });
+  assert.equal(writeTargetScope('design_software'), 'personal');
+
+  // NO FROZEN GOLDEN MOVES: nothing grants design_software.
+  assert.equal(parseSystem(APPSMITH_YAML).grants.tools.includes('design_software'), false);
+});
+
 test('H-1 posture: read-only HOLDS the build tool; the other presets do not, by design', () => {
   // read-only: every write is blocked and queued to an admin. This is the bug that is now fixed —
   // before `commit` was in the table this returned `{ held: false }`.

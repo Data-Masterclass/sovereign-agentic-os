@@ -23,13 +23,28 @@ import { WRITE_TOOL_TABS, WRITE_TOOL_NAMES, AGENT_FORBIDDEN_TOOLS, agentForbidde
  * unheld-write gap H-1 closed for `commit`. The shipped Software Delivery Team grants `commit` and
  * not `push_app_files`, so classifying it moved no golden.
  *
+ * 2026-11-19: `set_app_spec` joined them — the FOURTH time a tool in the catalog turned out not
+ * to be held-eligible. It PUBLISHES (it writes the live served surface and snapshots a version),
+ * so an agent granted it under ANY preset — `read-only` included — could put an app live with no
+ * hold. No golden moved: nothing grants it.
+ *
+ * Then `design_software` — the FIFTH, and the unclassified TWIN of `set_app_design`. Both land in
+ * the same governed write (`patchAppDesign`); only the tab's own tool was classified, so the hold
+ * posture of one write depended on which of its two names the agent used. No golden moved either.
+ *
  * HONEST LIMIT, recorded rather than quietly fixed: the REST of the platform write surface
  * (`create_software`, `request_deploy`, `start_preview`, `promote`, `archive`, `delete`, …) is
  * still absent from WRITE_TOOL_TABS and therefore still unheld. Adding them changes the governance
  * posture of the shipped Software Delivery Team and the frozen engine goldens, so it belongs to the
- * software stream, not to a one-line fix here.
+ * software stream, not to a one-line fix here. `tabs/software/lib/builder/dispatch.test.ts` holds
+ * the RATCHET that names every one of them, so a new platform write cannot arrive unnoticed.
  */
-const PLATFORM_WRITE_TOOLS: Readonly<Record<string, string>> = { commit: 'software', push_app_files: 'software' };
+const PLATFORM_WRITE_TOOLS: Readonly<Record<string, string>> = {
+  commit: 'software',
+  push_app_files: 'software',
+  set_app_spec: 'software',
+  design_software: 'software',
+};
 
 /**
  * Writes built by a FACTORY rather than exported as a static array. `reindex_corpus`
