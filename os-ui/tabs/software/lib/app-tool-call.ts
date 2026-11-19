@@ -5,6 +5,7 @@ import 'server-only';
 import { executeAppTool, type RecordActor } from '@tabs/software/lib/app-records';
 import { authorizeAppTool, authorizeConnectionCall, exposedConnectionTools, trace } from '@core/infra/agent-governed';
 import { enqueue } from '@core/policy/approvals';
+import { agentForbiddenReason } from '@core/mcp/write-tool-meta';
 import type { App } from '@tabs/software/lib/apps';
 import { authorizeDeclaredAction, parseAppActions, type AdoptionPort } from '@tabs/software/lib/app-actions';
 import { getSnapshot, hydrateSnapshot } from '@tabs/software/lib/snapshot';
@@ -46,6 +47,21 @@ export async function callAppTool(
   adoption?: AdoptionPort,
 ): Promise<AppToolCallResult> {
   const principal = app.mcpPrincipal;
+
+  // ---- CLOSED NAMES (`AGENT_FORBIDDEN_TOOLS`) ---------------------------------------------
+  // The OS's own `decide_deploy` / `promote` / `reindex_corpus` are not behind this door — it
+  // executes an APP's tools. What it could carry is an app action DECLARED under one of those
+  // names: a write action is held, so it would file "Approval needed: promote" into the same
+  // Governance inbox under an app principal, reading exactly like the platform approval while
+  // doing something else. Refused by exact name, before any authorization, declared or not.
+  if (agentForbiddenReason(tool)) {
+    const reason = `'${tool}' is the name of an OS decision that only a person may take; it cannot be called through an app, and an app action may not use that name — rename the action in actions.yml`;
+    const tr = await trace({ principal, tool, input: rawBody, output: { denied: reason, layer: 'agent-forbidden' }, decision: 'deny' });
+    return {
+      status: 403,
+      body: { tool, principal, decision: 'deny', policy: 'app-grant', layer: 'agent-forbidden', reason, traceId: tr.id },
+    };
+  }
 
   // ---- DECLARED ACTIONS (review H-2) -----------------------------------------------------
   // An app's `actions.yml` surface is governed by capability ∩ declaration ∩ ADOPTION ∩ grant,
