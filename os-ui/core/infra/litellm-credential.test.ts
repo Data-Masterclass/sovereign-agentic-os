@@ -18,9 +18,8 @@ import assert from 'node:assert/strict';
 import {
   callerCredential, runCredentialConfigured, endUserId,
   NoRunCredentialError, BudgetExceededError, isBudgetRejection,
-  TAG_RUN, GatewayRejectedError, isClientRejection,
+  TAG_RUN, GatewayRejectedError, isClientRejection, SystemKeyRefusedError, isModelAccessRejection,
 } from './litellm-credential.ts';
-import { putSecret, deleteSecret } from '@core/infra/secrets';
 import { config } from '@core/kernel/config';
 
 type Cfg = { litellmAgentKey: string; litellmMasterKey: string };
@@ -72,16 +71,37 @@ test('RUN-CRED (A3): a run tags `run:<runId>` and the vocabulary includes the ru
   assert.ok(!callerCredential({ userId: 'u1', domain: 'sales' }).tags.some((t) => t.startsWith(TAG_RUN)), 'no run → no run tag');
 });
 
-test('RUN-CRED (A3): a per-agent key by REFERENCE wins over the shared key; a dangling reference falls back to the shared key — never the master key', () => {
-  const ref = putSecret('agent-litellm-key', 'sys-own', 'sk-os-sys-own');
-  const own = callerCredential({ userId: 'u1', domain: 'sales', systemId: 'sys-own', keyRef: ref });
-  assert.equal(own.apiKey, 'sk-os-sys-own');
+test('RUN-CRED: an agent-system call uses the system\'s OWN key — and with no key it gets NONE, never the shared key, never the master key', () => {
+  const ref = { name: 'agent-system-key', key: 'sys-own' };
+  const own = callerCredential({ userId: 'u1', domain: 'sales', systemId: 'sys-own', keyRef: ref }, 'sk-the-systems-own-key');
+  assert.equal(own.apiKey, 'sk-the-systems-own-key');
   assert.equal(own.keySource, 'agent-key');
-  const dangling = callerCredential({ userId: 'u1', domain: 'sales', systemId: 'sys-other', keyRef: { name: 'agent-litellm-key', key: 'nope' } });
-  assert.equal(dangling.apiKey, config.litellmAgentKey);
-  assert.equal(dangling.keySource, 'shared-agent-key');
-  assert.notEqual(dangling.apiKey, config.litellmMasterKey);
-  deleteSecret(ref);
+  for (const missing of [undefined, '']) {
+    const none = callerCredential({ userId: 'u1', domain: 'sales', systemId: 'sys-own', keyRef: ref }, missing);
+    assert.equal(none.apiKey, '', 'no silent fallback: the caller must refuse');
+    assert.equal(none.keySource, 'none');
+    assert.notEqual(none.apiKey, config.litellmAgentKey);
+    assert.notEqual(none.apiKey, config.litellmMasterKey);
+    assert.ok(none.tags.includes('agent:sys-own'), 'attribution is still computed');
+  }
+  // A call that is NOT an agent-system run (no reference) is unaffected: the shared agent key.
+  const shared = callerCredential({ userId: 'u1', domain: 'sales' }, 'sk-ignored-without-a-reference');
+  assert.equal(shared.apiKey, config.litellmAgentKey);
+  assert.equal(shared.keySource, 'shared-agent-key');
+});
+
+test('RUN-CRED: a refused system key is a typed error that says what to do, and names the model when that is the cause', () => {
+  const gone = new SystemKeyRefusedError('rejected', 401, 'sovereign-default', 'Authentication Error, Invalid proxy server token passed');
+  assert.equal(gone.code, 'system_key_rejected');
+  assert.match(gone.message, /Press Rebuild/);
+  const model = new SystemKeyRefusedError('model_not_allowed', 403, 'sovereign-premium', 'key not allowed to access model');
+  assert.equal(model.code, 'system_key_model_not_allowed');
+  assert.match(model.message, /"sovereign-premium"/);
+  assert.match(model.message, /Press Rebuild/);
+  assert.equal(isModelAccessRejection(403, 'key_model_access_denied'), true);
+  assert.equal(isModelAccessRejection(401, 'API Key not allowed to access model. This token can only access models=[..]'), true);
+  assert.equal(isModelAccessRejection(401, 'Invalid proxy server token passed'), false);
+  assert.equal(isModelAccessRejection(500, 'key not allowed to access model'), false);
 });
 
 test('RUN-CRED (A3): a gateway 4xx is a typed rejection with the right code', () => {

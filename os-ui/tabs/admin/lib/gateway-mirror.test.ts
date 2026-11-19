@@ -99,6 +99,7 @@ test('GATEWAY-MIRROR: an absent budget is null, never 0', () => {
 test('GATEWAY-MIRROR: an OS stamp beats the alias convention for key ownership', () => {
   assert.equal(ownerOf({ key_alias: 'svc-nightly', metadata: { os_owner: 'agent' } }), 'agent');
   assert.equal(ownerOf({ key_alias: 'agent-triage' }), 'agent');
+  assert.equal(ownerOf({ key_alias: 'os-sys_ab12' }), 'agent', "Build's per-system key alias is an agent's key");
   assert.equal(ownerOf({ key_alias: 'service-indexer' }), 'service');
   assert.equal(ownerOf({ key_alias: 'random' }), 'unknown');
 });

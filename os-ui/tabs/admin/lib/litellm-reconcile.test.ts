@@ -54,26 +54,25 @@ test('RECONCILE: a budget set in LiteLLM is NEVER overwritten', () => {
   assert.equal('max_budget' in fresh.creates[0].payload, false);
 });
 
-test('RECONCILE: an agent with no key is a create, stamped with its OS owner', () => {
+test('RECONCILE: an agent system with no key is NOT given one here — it is listed as needing a Build', () => {
   const p = buildPlan(mirror(), { domains: [], agents: ['triage'] });
-  assert.equal(p.creates[0].endpoint, '/key/generate');
-  assert.equal(p.creates[0].payload.key_alias, agentKeyAlias('triage'));
-  assert.deepEqual(p.creates[0].payload.metadata, { os_owner: 'agent', os_id: 'triage' });
+  assert.deepEqual(p.creates, [], 'reconcile must not create a key: it could set no budget and keep no value');
+  assert.deepEqual(p.updates, []);
+  assert.deepEqual(p.needsBuild, ['triage']);
+  assert.equal(agentKeyAlias('triage'), 'os-triage', 'one key scheme: the alias Build uses');
 });
 
-test('RECONCILE: an existing agent key already stamped needs nothing', () => {
+test('RECONCILE: a system whose Build key exists needs nothing', () => {
+  const keys = [{ alias: 'os-triage', owner: 'agent' as const, blocked: false, spend: 0 }];
+  const p = buildPlan(mirror({ keys }), { domains: [], agents: ['triage'] });
+  assert.deepEqual([p.creates, p.updates, p.needsBuild], [[], [], []]);
+});
+
+test('RECONCILE: the old unbudgeted `agent-<id>` key does not count as the system\'s key and is never touched here', () => {
   const keys = [{ alias: 'agent-triage', owner: 'agent' as const, blocked: false, spend: 0 }];
   const p = buildPlan(mirror({ keys }), { domains: [], agents: ['triage'] });
-  assert.deepEqual(p.creates, []);
-  assert.deepEqual(p.updates, []);
-});
-
-test('RECONCILE: an unstamped key is restamped, not recreated', () => {
-  const keys = [{ alias: 'agent-triage', owner: 'unknown' as const, blocked: false, spend: 0 }];
-  const p = buildPlan(mirror({ keys }), { domains: [], agents: ['triage'] });
-  assert.deepEqual(p.creates, []);
-  assert.equal(p.updates.length, 1);
-  assert.equal(p.updates[0].endpoint, '/key/update');
+  assert.deepEqual(p.needsBuild, ['triage']);
+  assert.deepEqual([...p.creates, ...p.updates].filter((o) => o.kind === 'key'), [], 'no key op of any kind — the sweep removes the old key');
 });
 
 test('RECONCILE: drift is reported and is never an applicable op', () => {
@@ -88,10 +87,11 @@ test('RECONCILE: a degraded mirror marks the plan untrustworthy', () => {
   assert.equal(buildPlan(mirror({ degraded: true }), { domains: [], agents: [] }).degraded, true);
 });
 
-test('RECONCILE: an empty LiteLLM is fully repopulated from the OS', () => {
+test('RECONCILE: an empty LiteLLM gets its teams back; the systems are listed for a Build', () => {
   const p = buildPlan(mirror(), { domains: ['finance', 'ops'], agents: ['triage', 'summariser'] });
   assert.equal(p.creates.filter((o) => o.kind === 'team').length, 2);
-  assert.equal(p.creates.filter((o) => o.kind === 'key').length, 2);
+  assert.equal(p.creates.filter((o) => o.kind === 'key').length, 0, 'keys come from Build, never from reconcile');
+  assert.deepEqual(p.needsBuild, ['triage', 'summariser']);
 });
 
 test('RECONCILE: every op explains itself to the admin', () => {

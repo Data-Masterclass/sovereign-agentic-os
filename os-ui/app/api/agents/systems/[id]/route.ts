@@ -9,6 +9,7 @@ import { latestRunView } from '@tabs/agents/lib/build/latest-run-server';
 import { reconcileScheduleCron } from '@tabs/agents/lib/schedule-cron';
 import { compile } from '@tabs/agents/lib/langgraph-compile';
 import { config } from '@core/kernel/config';
+import { removeSystemKey } from '@tabs/agents/lib/build/system-key-admin';
 
 export const dynamic = 'force-dynamic';
 
@@ -121,5 +122,9 @@ export const DELETE = withRoute<{ id: string }>(async ({ user, params }) => {
       return { ok: r.ok, detail: r.detail };
     },
   });
+  // The system's own model key goes with it: deleted at the gateway (its value stops working)
+  // and removed from the key store. Reported like the other leftovers, never silent.
+  const key = await removeSystemKey(id).catch((e) => ({ ok: false, detail: (e as Error).message }));
+  physical.physical.push({ target: `model key os-${id}`, ok: key.ok, ...(key.ok ? {} : { reason: key.detail }) });
   return NextResponse.json({ ok: true, physical });
 }, { hydrate: ensureHydrated, defaultStatus: 500 });

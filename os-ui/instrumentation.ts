@@ -276,6 +276,23 @@ export async function register(): Promise<void> {
     })();
   }
 
+  // GUESSABLE KEYS OUT. Per-system model keys used to be `sk-os-<systemId>`; such a key keeps
+  // working at the gateway until it is deleted. Delete every one at boot (and the unbudgeted
+  // `agent-<id>` keys the old admin reconcile made), retrying while the gateway is not up yet. A
+  // swept system needs one Rebuild before it runs again, and its run says so. Decided from what
+  // the GATEWAY reports only, so an OS store that hydrated empty cannot cause a deletion. Web
+  // process only: it needs the gateway's admin API, which the worker is deliberately not given.
+  if (process.env.NEXT_RUNTIME === 'nodejs') {
+    void (async () => {
+      try {
+        const { scheduleBootKeySweep } = await import('./core/infra/agent-system-key-sweep.ts');
+        scheduleBootKeySweep();
+      } catch (err) {
+        console.error(`[os-ui] key sweep: could not be scheduled: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    })();
+  }
+
   // PROJECTS IN GIT (engine rebuild B1 for data, Part D for agent systems): when
   // DATA_PROJECT_GIT=true, subscribe the ONE commit path to both stores' change events so every
   // dataset / composition / check / sync / publish / retire write regenerates the domain's dbt

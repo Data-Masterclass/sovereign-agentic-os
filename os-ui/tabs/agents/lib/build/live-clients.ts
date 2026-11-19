@@ -7,7 +7,8 @@ import { config } from '@core/kernel/config';
 import { publishOpa } from '@core/policy/opa-publish';
 import { mergeRequiresApproval } from '@tabs/agents/lib/build/opa-state';
 import { recentTraces } from '@core/infra/agent-governed';
-import { principalFor } from '@tabs/agents/lib/build/runtime-contract';
+import { deploymentKek, durableSystemKeyStore } from '@core/infra/agent-system-keys';
+import { roleModel } from '@core/models/roles';
 import { type Decision } from '@tabs/agents/lib/gateway';
 import {
   type LangfuseClient,
@@ -15,6 +16,7 @@ import {
   type LiteLlmKeyInput,
   type LiveDeps,
   type OpaClient,
+  parseGatewayFallbacks,
 } from '@tabs/agents/lib/build/live';
 
 /**
@@ -76,24 +78,12 @@ export function realOpa(): OpaClient {
 
 // ------------------------------------------------------------------ LiteLLM ------
 
-/** Deterministic per-system virtual key value (kept out of git; derived, not stored). */
-function keyValue(alias: string): string {
-  return `sk-${alias}`;
-}
-
-/**
- * The virtual key value Build mints for one system (`sk-os-<systemId>`). A3: the build route writes it
- * to the secrets store ONCE and persists only the reference on the system record; runs read the
- * value back by reference. Exported for that single caller — never for a run path.
- */
-export function agentKeyValue(systemId: string): string {
-  return keyValue(principalFor(systemId));
-}
-
 /**
  * The LiteLLM key properties Build sets — shared by `/key/generate` and `/key/update`.
  * `budget_duration` makes `max_budget` a resetting window ("7d" = weekly). It is sent as `null`
  * when the cap is configured as a lifetime one, so an update can also turn the reset OFF.
+ * `metadata.os_owner` / `os_id` are the ownership stamp the gateway mirror reads back
+ * (`tabs/admin/lib/gateway-mirror.ts` `ownerOf`), so the key shows as an agent's key in the Admin view.
  */
 function keyProperties(input: LiteLlmKeyInput): Record<string, unknown> {
   return {
@@ -102,70 +92,86 @@ function keyProperties(input: LiteLlmKeyInput): Record<string, unknown> {
     budget_duration: input.budgetDuration || null,
     rpm_limit: input.rpmLimit,
     tpm_limit: input.tpmLimit,
-    metadata: { allowed_tools: input.allowedTools, model_max_budget: input.modelMaxBudget },
+    max_parallel_requests: input.maxParallelRequests,
+    metadata: { os_owner: 'agent', os_id: input.systemId, allowed_tools: input.allowedTools, model_max_budget: input.modelMaxBudget },
   };
 }
 
+type KeyListRow = {
+  token?: unknown;
+  key_alias?: unknown;
+  models?: unknown;
+  max_budget?: unknown;
+  budget_duration?: unknown;
+  rpm_limit?: unknown;
+  tpm_limit?: unknown;
+  max_parallel_requests?: unknown;
+  metadata?: { allowed_tools?: unknown } | null;
+};
+
+const num = (v: unknown): number | undefined => (typeof v === 'number' ? v : undefined);
+
+/**
+ * The key-provisioning client. Every call here is an ADMIN call with the master key, made from the
+ * server-side Build path only (this module is `server-only`; the worker pod that executes runs is
+ * not given the master key at all). A key is addressed by its TOKEN ID (the SHA-256 of its value,
+ * which LiteLLM accepts wherever it accepts a key) — the value itself is sent exactly once, in the
+ * `/key/generate` that registers it, and is never logged or put in an error message.
+ */
 export function realLitellm(): LiteLlmClient {
   const master = config.litellmMasterKey;
   const bearer = { authorization: `Bearer ${master}`, 'content-type': 'application/json' };
+  const post = async (path: string, body: unknown, what: string): Promise<void> => {
+    const res = await withTimeout(`${config.litellmUrl}${path}`, { method: 'POST', headers: bearer, body: JSON.stringify(body) }, 8000);
+    if (!res || !res.ok) throw new Error(`LiteLLM ${path} failed (${res?.status ?? 'unreachable'}) — ${what}`);
+  };
   return {
-    async keyInfo(alias) {
-      const res = await withTimeout(`${config.litellmUrl}/key/info?key=${encodeURIComponent(keyValue(alias))}`, {
-        method: 'GET',
-        headers: bearer,
-      });
-      if (!res || !res.ok) return null;
-      const d = (await res.json().catch(() => null)) as {
-        info?: {
-          models?: string[];
-          max_budget?: number | null;
-          budget_duration?: string | null;
-          rpm_limit?: number | null;
-          tpm_limit?: number | null;
-          metadata?: { allowed_tools?: unknown } | null;
-        };
-      } | null;
-      if (!d?.info) return null;
-      const tools = d.info.metadata?.allowed_tools;
-      return {
-        models: d.info.models ?? [],
-        maxBudget: d.info.max_budget ?? undefined,
-        budgetDuration: d.info.budget_duration ?? '',
-        rpmLimit: d.info.rpm_limit ?? undefined,
-        tpmLimit: d.info.tpm_limit ?? undefined,
-        // Absent metadata reads as "not reported" (no drift), never as an empty allowlist.
-        allowedTools: Array.isArray(tools) ? tools.filter((t): t is string => typeof t === 'string') : undefined,
-      };
+    async keysByAlias(alias) {
+      // `/key/list` matches `key_alias` exactly; the rows are filtered here as well, so a gateway
+      // version that ignores the filter cannot hand back somebody else's key.
+      const res = await withTimeout(
+        `${config.litellmUrl}/key/list?key_alias=${encodeURIComponent(alias)}&return_full_object=true&include_team_keys=true&size=100`,
+        { method: 'GET', headers: bearer },
+        8000,
+      );
+      if (!res || !res.ok) throw new Error(`LiteLLM /key/list failed (${res?.status ?? 'unreachable'}) — could not check the key '${alias}', nothing was changed`);
+      const body = (await res.json().catch(() => null)) as { keys?: unknown } | unknown[] | null;
+      const rows = (Array.isArray(body) ? body : Array.isArray((body as { keys?: unknown })?.keys) ? (body as { keys: unknown[] }).keys : []) as KeyListRow[];
+      return rows
+        .filter((r) => r && typeof r === 'object' && r.key_alias === alias && typeof r.token === 'string' && r.token.length > 0)
+        .map((r) => {
+          const tools = r.metadata?.allowed_tools;
+          return {
+            tokenId: String(r.token),
+            models: Array.isArray(r.models) ? r.models.filter((m): m is string => typeof m === 'string') : [],
+            maxBudget: num(r.max_budget),
+            budgetDuration: typeof r.budget_duration === 'string' ? r.budget_duration : '',
+            rpmLimit: num(r.rpm_limit),
+            tpmLimit: num(r.tpm_limit),
+            maxParallelRequests: num(r.max_parallel_requests),
+            // Absent metadata reads as "not reported" (no drift), never as an empty allowlist.
+            allowedTools: Array.isArray(tools) ? tools.filter((t): t is string => typeof t === 'string') : undefined,
+          };
+        });
     },
-    async generateKey(input: LiteLlmKeyInput) {
+    async generateKey(input: LiteLlmKeyInput, key: string) {
       // NOTE: `model_max_budget` (per-model cost cap) is a LiteLLM ENTERPRISE
       // feature — open-source LiteLLM 500s if it is set. We therefore enforce the
       // overall key spend cap (`max_budget`, OSS) here; the per-model STACKIT caps
       // are applied via the chart only where an enterprise license is present.
-      const res = await withTimeout(`${config.litellmUrl}/key/generate`, {
-        method: 'POST',
-        headers: bearer,
-        body: JSON.stringify({
-          key: keyValue(input.alias),
-          key_alias: input.alias,
-          ...keyProperties(input),
-        }),
-      });
-      if (!res || !res.ok) throw new Error(`LiteLLM /key/generate failed (${res?.status ?? 'unreachable'})`);
-      return { key: keyValue(input.alias) };
+      await post(
+        '/key/generate',
+        { key, key_alias: input.alias, ...keyProperties(input) },
+        'the key was not created (a 403 here means the gateway setting "disable custom API keys" is on; the OS supplies its own random key value and needs it off)',
+      );
     },
-    async updateKey(input: LiteLlmKeyInput) {
+    async updateKey(tokenId: string, input: LiteLlmKeyInput) {
       // The SAME properties as the create path (`keyProperties`), so the two can never disagree —
-      // the rule the chart's key-init Job follows for the shared agent key. An ADMIN call: master
-      // key, from the server-side build path only (this module is `server-only`, and the worker
-      // pod that executes runs is not given the master key at all).
-      const res = await withTimeout(`${config.litellmUrl}/key/update`, {
-        method: 'POST',
-        headers: bearer,
-        body: JSON.stringify({ key: keyValue(input.alias), ...keyProperties(input) }),
-      });
-      if (!res || !res.ok) throw new Error(`LiteLLM /key/update failed (${res?.status ?? 'unreachable'}) — the key keeps its previous limits`);
+      // the rule the chart's key-init Job follows for the shared agent key.
+      await post('/key/update', { key: tokenId, ...keyProperties(input) }, 'the key keeps its previous limits');
+    },
+    async deleteKey(tokenId: string) {
+      await post('/key/delete', { keys: [tokenId] }, 'the old key was not removed');
     },
     async models() {
       const res = await withTimeout(`${config.litellmUrl}/v1/models`, { method: 'GET', headers: bearer });
@@ -241,7 +247,12 @@ export function makeRealClients(): LiveDeps {
     opa: realOpa(),
     litellm: realLitellm(),
     langfuse: realLangfuse(),
+    // The key Build mints is kept encrypted in the durable store both os-ui and the worker read.
+    keys: { store: durableSystemKeyStore, kek: () => deploymentKek() },
     // The caps of a system's own key come from deployment config, not from a constant in the adapter.
     caps: { ...config.agentSystemKey, modelMaxBudget: {} },
+    // The models a run picks by ROLE, and the gateway's fallback targets — both must be on the key.
+    runModels: () => [roleModel('reasoning'), roleModel('tools')],
+    fallbacks: parseGatewayFallbacks(config.agentSystemKeyFallbacksJson),
   };
 }
