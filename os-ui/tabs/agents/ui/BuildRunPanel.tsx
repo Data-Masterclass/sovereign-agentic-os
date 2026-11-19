@@ -390,6 +390,8 @@ type LiveProgress = {
   resumed?: { approvalId: string; decision: string };
   /** The agent is waiting for the model rate limit to reset (cleared by its next event). */
   waiting?: string;
+  /** The team finished; its declared outputs are being saved where they were declared. */
+  savingOutputs?: number;
 };
 
 // ── Context actually used (#177) ────────────────────────────────────────────
@@ -596,6 +598,7 @@ function GrantsVsUsage({ granted, usage }: { granted: GrantedIds; usage?: RunCon
 function liveLine(p: LiveProgress): string {
   if (p.awaiting) return `${p.awaiting.node} · ${p.awaiting.tool} — parked, awaiting approval in Governance → Inbox`;
   if (p.waiting) return `${p.node ? `${p.node} — ` : ''}${p.waiting}`;
+  if (p.savingOutputs) return `Saving ${p.savingOutputs === 1 ? 'the result' : `${p.savingOutputs} results`} where they go…`;
   if (!p.node) return p.resumed ? `Resumed after the ${p.resumed.decision === 'approve' ? 'approval' : p.resumed.decision === 'withdraw' ? 'withdrawal' : 'rejection'}…` : 'Starting the team…';
   const where = p.index && p.total ? ` (agent ${p.index} of ${p.total})` : '';
   if (!p.tool) return `${p.node} — thinking${where}`;
@@ -1086,6 +1089,9 @@ export default function BuildRunPanel({
         ...(p ?? { started: [], completed: [] }),
         awaiting: { approvalId: String(data.approvalId ?? ''), tool: String(data.tool ?? ''), node: String(data.node ?? '') },
       }));
+    } else if (event === 'outputs-saving') {
+      const n = Array.isArray(data.outputs) ? data.outputs.length : 0;
+      setLive((p) => ({ ...(p ?? { started: [], completed: [] }), savingOutputs: n || undefined }));
     } else if (event === 'resumed') {
       setLive((p) => ({
         ...(p ?? { started: [], completed: [] }),

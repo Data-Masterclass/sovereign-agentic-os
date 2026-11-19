@@ -76,7 +76,7 @@ type Call = { user: CurrentUser; name: string; args: Record<string, unknown> };
 function world() {
   const files: { id: string; name: string; folder: string; owner: string; tier: 'dataset' | 'asset'; description?: string; tags?: string[]; text?: string }[] = [];
   const notes: { id: string; title: string; md: string; folder: string; owner: string; sourceKey?: string; visibility: string }[] = [];
-  const datasets: { id: string; name: string; folder: string; owner: string; tier: 'dataset' | 'asset'; documented: boolean; bronze: boolean; ingests: string[] }[] = [];
+  const datasets: { id: string; name: string; folder: string; owner: string; tier: 'dataset' | 'asset'; documented: boolean; bronze: boolean; bronzeAt?: number; ingests: string[] }[] = [];
   const approvals: { id: string; kind: string; artifactId: string }[] = [];
   const calls: Call[] = [];
   const failing = new Map<string, string>();
@@ -121,12 +121,13 @@ function world() {
         const d = datasets.find((x) => x.id === a.datasetId);
         if (!d) return err('not_found', 'Dataset not found');
         d.bronze = true;
+        d.bronzeAt = Date.now();
         d.ingests.push(String(a.content));
         return ok({ ok: true, rowCount: String(a.content).trim().split('\n').length - 1, bronzeRegistered: true, datasetId: d.id });
       }
       case 'get_dataset': {
         const d = datasets.find((x) => x.id === a.datasetId);
-        return d ? ok({ ...d, versions: { bronze: { built: d.bronze } } }) : err('not_found', 'Dataset not found');
+        return d ? ok({ ...d, versions: { bronze: { built: d.bronze, ...(d.bronzeAt ? { updatedAt: new Date(d.bronzeAt).toISOString() } : {}) } } }) : err('not_found', 'Dataset not found');
       }
       case 'request_promotion': {
         if (a.kind === 'dataset') {
@@ -166,14 +167,14 @@ const newRun = () => `run_${String((seq += 1)).padStart(8, '0')}-0000-4000-8000-
 const AT = Date.UTC(2026, 10, 19, 14, 5);
 
 /** Run the team for real (scripted model), then save its outputs through the real gate. */
-async function runAndSave(sys: System, answers: Record<string, string | Error>, w = world(), opts: { mode?: 'run' | 'by-hand'; previous?: OutputResult[]; runId?: string } = {}) {
+async function runAndSave(sys: System, answers: Record<string, string | Error>, w = world(), opts: { mode?: 'run' | 'by-hand'; previous?: OutputResult[]; runId?: string; at?: number } = {}) {
   const runId = opts.runId ?? newRun();
   const run = withOutputTools(sys);
   const team = await runOsTeam({ runId, user: USER, yaml: serializeSystem(run), systemId: 'sys-inv', messages: [{ role: 'user', content: 'Process the invoices.' }], llm: scripted(answers), toolDeps: w.toolDeps });
   const nodes: ProducerRun[] = team.runs.map((r) => ({ node: r.node, status: r.status, finalText: r.result.finalText }));
   const status = team.failed ? 'failed' as const : team.reachedEnd ? 'done' as const : 'incomplete' as const;
   const outputs = await saveRunOutputs({
-    user: USER, system: run, systemId: 'sys-inv', runId, at: AT, status,
+    user: USER, system: run, systemId: 'sys-inv', runId, at: opts.at ?? AT, status,
     failure: team.failure ? { node: team.failure.node, reason: team.failure.reason } : undefined,
     nodes, previous: opts.previous, mode: opts.mode, ...w.door,
   });
@@ -227,7 +228,8 @@ test('File + Knowledge + Data outputs in My scope are all saved, in their folder
 test('a second run adds a new file and a new note, and a new VERSION of the one dataset', async () => {
   const w = world();
   await runAndSave(threeOutputs(), { reader: ROWS, writer: REPORT }, w);
-  const { outputs } = await runAndSave(threeOutputs(), { reader: '[{"invoice_no":"R-2001","net_amount":10,"paid":true}]', writer: REPORT }, w);
+  // The second run produced its result after the first run's rows had landed.
+  const { outputs } = await runAndSave(threeOutputs(), { reader: '[{"invoice_no":"R-2001","net_amount":10,"paid":true}]', writer: REPORT }, w, { at: Date.now() + 60_000 });
   assert.equal(w.files.length, 2);
   assert.notEqual(w.files[0].name, w.files[1].name, 'two runs in the same minute still get two names');
   assert.equal(w.notes.length, 2);
@@ -349,7 +351,26 @@ test('a failed write is retried once it works, and a save that already happened 
   assert.equal(byKind(third, 'files').id, w.files[0].id);
   assert.equal(byKind(fourth, 'files').id, w.files[0].id, 'found by the run tag in its name');
   assert.equal(byKind(fourth, 'knowledge').id, w.notes[0].id, 'found by the save key');
+  assert.equal(w.datasets[0].ingests.length, 1, 'the rows landed once: a Bronze built after the run’s result is this run’s');
+  assert.equal(w.calls.filter((c) => c.name === 'upload_file').length, 2, 'one refused upload, then exactly one that wrote');
   assert.equal(w.files[0].name, outputFileName(first.run, first.run.outputs![0], first.runId, AT));
+});
+
+test('a crash between landing the rows and recording it: the resumed save finds them and lands nothing again; an older run never overwrites newer rows', async () => {
+  const w = world();
+  const first = await runAndSave(threeOutputs(), { reader: ROWS, writer: REPORT }, w, { at: Date.now() - 1_000 });
+  assert.equal(w.datasets[0].ingests.length, 1);
+  // The ledger was lost (the process died before it was written): the same run saves again.
+  const resumed = await saveRunOutputs({ user: USER, system: first.run, systemId: 'sys-inv', runId: first.runId, at: Date.now() - 1_000, status: 'done', nodes: first.nodes, ...w.door });
+  assert.deepEqual(resumed.map((o) => o.state), ['saved', 'saved', 'saved']);
+  assert.equal(w.datasets[0].ingests.length, 1, 'no second landing');
+  assert.equal(w.files.length, 1);
+  assert.equal(w.notes.length, 1);
+  assert.match(byKind(resumed, 'data').message, /\(2 rows, already landed\)$/);
+  // A run whose result is OLDER than the rows now in the dataset does not replace them.
+  const older = await runAndSave(threeOutputs(), { reader: '[{"invoice_no":"OLD","net_amount":1,"paid":false}]', writer: REPORT }, w, { at: Date.now() - 3_600_000 });
+  assert.equal(byKind(older.outputs, 'data').state, 'saved');
+  assert.equal(w.datasets[0].ingests.length, 1, 'the newer rows stay');
 });
 
 // ---------------------------------------------------------- run service ----
@@ -422,6 +443,8 @@ test('executeTeamRun: resuming a run that finished but died before its save was 
   assert.equal(w.datasets.length, 1, 'no second dataset');
   assert.equal(w.calls.filter((c) => c.name === 'upload_file').length, 1);
   assert.equal(w.calls.filter((c) => c.name === 'create_dataset').length, 1);
+  assert.equal(w.calls.filter((c) => c.name === 'ingest_dataset').length, 1, 'the rows are not landed a second time');
+  assert.equal(w.datasets[0].ingests.length, 1);
   assert.equal(resumed.body.outputs!.find((o) => o.kind === 'files')!.id, w.files[0].id);
   assert.deepEqual(resumed.lastRun.outputs!.map((o) => o.state), ['saved', 'saved', 'saved']);
 

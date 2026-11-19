@@ -41,7 +41,9 @@ import type { ApprovalDecision } from '@tabs/agents/lib/engine/approval-port';
 import { RunNotVisibleError } from '@tabs/agents/lib/engine/run-visibility';
 
 /** The SSE event vocabulary of a run — what `run_events.event` may hold. */
-export const RUN_EVENT_NAMES = ['node-started', 'tool-step', 'node-completed', 'approval-required', 'rate-limit-wait', 'resumed', 'done', 'error'] as const;
+/** `outputs-saving` = the run finished and its declared outputs are being saved (all `pending`);
+ *  `outputs-saved` = a LATER save of the run's outputs by hand ("Try saving again"), after `done`. */
+export const RUN_EVENT_NAMES = ['node-started', 'tool-step', 'node-completed', 'approval-required', 'rate-limit-wait', 'resumed', 'outputs-saving', 'outputs-saved', 'done', 'error'] as const;
 export type RunEventName = (typeof RUN_EVENT_NAMES)[number];
 
 export function isRunEventName(v: unknown): v is RunEventName {

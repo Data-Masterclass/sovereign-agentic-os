@@ -144,3 +144,16 @@ test('a run started in ONE panel empties the other panels of the same system at 
   announceRunStarted('sys-inv', a);
   assert.equal(late, 0, 'an unmounted panel is no longer told');
 });
+
+test('patched: a later save of the outputs updates the SHOWN run only — never another run on screen', () => {
+  type WithOutputs = Run & { outputs?: string[] };
+  const r = runViewReducer<WithOutputs>;
+  const shown = seedRunView<WithOutputs>({ ...RUN_2, outputs: ['failed'] });
+  const same = r(shown, { type: 'patched', runId: RUN_2.runId, patch: { outputs: ['saved'] } });
+  assert.deepEqual(same.run?.outputs, ['saved']);
+  assert.equal(same.source, 'stored', 'the label does not change');
+  const other = r(shown, { type: 'patched', runId: RUN_1.runId, patch: { outputs: ['saved'] } });
+  assert.equal(other, shown, 'a save of ANOTHER run changes nothing here');
+  const empty = seedRunView<WithOutputs>(null);
+  assert.equal(r(empty, { type: 'patched', runId: RUN_2.runId, patch: { outputs: ['saved'] } }), empty);
+});
