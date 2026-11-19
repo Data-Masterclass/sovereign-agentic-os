@@ -95,7 +95,8 @@ import { reindexFile } from '@tabs/files/lib/pipeline-server';
 import { putBlob } from '@tabs/files/lib/object-store';
 import type { Sensitivity } from '@tabs/files/lib/asset-schema';
 
-import { saveDashboard } from '@tabs/dashboards/lib/store';
+import { saveDashboard, refreshDashboardFromMirror, hasDashboard } from '@tabs/dashboards/lib/store';
+import { isRunWorkerProcess } from '@core/kernel/process-role';
 import { VIZ_TYPES, assertServableFilters, fromTiles, missingPanelMembers, type ChartSpec } from '@tabs/dashboards/lib/model';
 import { panelViewsFor, type RegistryViewDims } from '@tabs/dashboards/lib/panel-views';
 import { listMetrics } from '@tabs/metrics/lib/store';
@@ -166,6 +167,17 @@ export const dashboardWriteTools: McpTool[] = [
       // there is no external import step, so create_dashboard is persist-only (mirrors
       // /api/dashboards/build).
       const spec = fromTiles(name, view, charts, user.domains[0]);
+      // REPLACE-BY-ID reads the newest copy first, so the store's edit-scope check sees the
+      // dashboard as it really is — this process (often the run worker) may not know a dashboard
+      // someone else created after it booted, and must not overwrite it as if it were new. If, in
+      // the worker, the mirror cannot answer for an id this process does not hold, refuse rather
+      // than guess (in os-ui an unreachable mirror means nothing else can have written it).
+      if (str(args.id).trim()) {
+        const fresh = await refreshDashboardFromMirror(id);
+        if (fresh === 'unreachable' && !hasDashboard(id) && isRunWorkerProcess()) {
+          fail(`cannot check whether dashboard '${id}' exists right now (the shared store did not answer) — nothing was written; retry, or omit \`id\` to create a new one`, 503);
+        }
+      }
       const rec = saveDashboard(P(user), id, spec);
       // FLAG AT CREATE, never silently degrade (Northpeak fix): check every chart's
       // requested members against the served model (registry fallback). The dashboard IS

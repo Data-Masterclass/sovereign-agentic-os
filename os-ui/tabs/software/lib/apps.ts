@@ -50,6 +50,8 @@ import { generateAndCompile } from '@tabs/software/lib/auto-mcp';
 import { dataPlaneToolsFromGrants, agentToolsFromGrants } from '@tabs/software/lib/grant-tools';
 import { parseAppManifest, renderAppYaml, defaultOpenApi, resolveSurface } from '@tabs/software/lib/metadata';
 import { osMirror } from '@core/infra/os-mirror';
+import { newSeenFields, noteSeen, writeDeleted, writeChanged, writeNew, refreshRecord, type SeenFields } from '@core/infra/field-writes';
+import { isRunWorkerProcess } from '@core/kernel/process-role';
 import { getPublicUser, type PublicUser } from '@tabs/admin/lib/users';
 import { codedAppsEnabled, ensureHydrated as ensureSettingsHydrated } from '@tabs/admin/lib/settings';
 import { createFolder, type FolderScope, type Principal as FolderPrincipal } from '@core/folders/index';
@@ -798,11 +800,16 @@ export const APP_TEMPLATES: { key: AppTemplateKey; label: string; blurb: string 
 // `hydrated` distinguishes "cache is the mirror's authoritative snapshot" from "cache exists
 // but the mirror was UNREACHABLE at load, so it may be missing persisted apps" — the latter must
 // re-hydrate on the next read once the mirror is back (so apps never disappear for the pod's life).
-type AppCacheState = { cache: Map<string, App> | null; hydrated: boolean };
+type AppCacheState = {
+  cache: Map<string, App> | null;
+  hydrated: boolean;
+  /** What this process last knew the mirror held per app, as persisted (see `core/infra/field-writes.ts`). */
+  seen: SeenFields;
+};
 const APP_STATE_KEY = Symbol.for('soa.apps.cache');
 function appCacheState(): AppCacheState {
   const g = globalThis as unknown as Record<symbol, AppCacheState | undefined>;
-  if (!g[APP_STATE_KEY]) g[APP_STATE_KEY] = { cache: null, hydrated: false };
+  if (!g[APP_STATE_KEY]) g[APP_STATE_KEY] = { cache: null, hydrated: false, seen: newSeenFields() };
   return g[APP_STATE_KEY]!;
 }
 
@@ -891,8 +898,18 @@ function toPersistedDoc(a: App): Record<string, unknown> {
   return doc;
 }
 
+/**
+ * The ONE write path for an existing app: only the persisted fields this process changed reach
+ * the mirror (an agent setting the design in the worker never puts back its stale copy of the
+ * name, spec or members the owner just edited in os-ui), and the worker never re-creates an app
+ * deleted elsewhere. A NEW app is stored whole with {@link writeNewApp}.
+ */
 function writeThrough(a: App): void {
-  mirror.writeThrough(a.id, toPersistedDoc(a));
+  writeChanged(mirror, appCacheState().seen, a.id, toPersistedDoc(a));
+}
+
+function writeNewApp(a: App): void {
+  writeNew(mirror, appCacheState().seen, a.id, toPersistedDoc(a));
 }
 
 /** The versioned slice of an app — the user-editable documentation fields. */
@@ -981,19 +998,27 @@ function hydrateAppDoc(app: App): App {
   return app;
 }
 
-/** Authoritative by-id read: on a cache MISS, consult the durable mirror — a
- *  DIFFERENT server instance may have created the app after THIS instance
- *  hydrated its cache (the "commit → App not found" bug), so a bare map.get is
- *  not authoritative. Populates the cache on a mirror hit. Null ⇒ exists nowhere. */
+/**
+ * THE by-id read every app operation uses (reads and writes alike).
+ *
+ * In os-ui the cache is served, and a MISS consults the durable mirror — a DIFFERENT process may
+ * have created the app after this one hydrated (the "commit → App not found" bug).
+ *
+ * In the RUN WORKER the mirror is read FIRST, every time: this process never serves the Software
+ * tab, so its copy is only as fresh as its boot, and an agent's write must start from what the
+ * owner saved since. A mirror that answers "absent" means the app was deleted elsewhere — it is
+ * dropped here too, never written back. Unreachable → the cached copy (offline degrade).
+ * Null ⇒ exists nowhere this process can see.
+ */
 async function getAppByIdWithMirror(appId: string): Promise<App | null> {
   const map = await getCache();
   const hit = map.get(appId);
-  if (hit) return hit;
-  const doc = (await mirror.getDoc(appId)) as App | null;
-  if (!doc) return null;
-  const app = hydrateAppDoc(doc);
-  map.set(app.id, app);
-  return app;
+  if (hit && !isRunWorkerProcess()) return hit;
+  await refreshRecord(mirror, appCacheState().seen, appId, {
+    put: (doc) => map.set(appId, hydrateAppDoc(doc as unknown as App)),
+    drop: () => map.delete(appId),
+  });
+  return map.get(appId) ?? null;
 }
 
 async function getCache(): Promise<Map<string, App>> {
@@ -1016,6 +1041,7 @@ async function getCache(): Promise<Map<string, App>> {
   // preserving any in-process-only apps created during an outage (still queued for write-through).
   const map = new Map<string, App>();
   for (const app of docs as App[]) {
+    noteSeen(appCacheState().seen, app.id, { ...app }); // the doc as persisted, before parsing
     hydrateAppDoc(app);
     map.set(app.id, app);
   }
@@ -1779,7 +1805,7 @@ export async function createApp(
   registerConnection(conn);
 
   map.set(app.id, app);
-  writeThrough(app);
+  writeNewApp(app);
   // The scaffold IS the first commit: seed the durable source tree (code apps only).
   if (seedFiles.length > 0) snapshotFiles(app.id, seedFiles);
 
@@ -1824,7 +1850,7 @@ export async function saveChat(
   messages: { role: 'user' | 'assistant'; content: string }[],
 ): Promise<App> {
   const map = await getCache();
-  const a = map.get(appId);
+  const a = await getAppByIdWithMirror(appId);
   if (!a || a.owner !== user.id) throw withStatus(new Error('App not found'), 404);
   const t = now();
   a.chat = messages
@@ -1844,7 +1870,7 @@ export async function updateAppDocs(
   patch: { designDecisions?: string; dataDescriptions?: string; docs?: string },
 ): Promise<App> {
   const map = await getCache();
-  const a = map.get(appId);
+  const a = await getAppByIdWithMirror(appId);
   if (!a) throw withStatus(new Error('App not found'), 404);
   // Fail-closed edit-scope: owner, domain_admin of the owning domain, or admin.
   if (!isOwnerOrAdminApp(a, user)) throw withStatus(new Error('Not permitted to edit this app'), 403);
@@ -1917,7 +1943,7 @@ export async function addAppMember(
   role: AppMemberRole,
 ): Promise<App> {
   const map = await getCache();
-  const a = map.get(appId) ?? (await getAppByIdWithMirror(appId));
+  const a = await getAppByIdWithMirror(appId);
   if (!a) throw withStatus(new Error('App not found'), 404);
   if (!isOwnerOrAdminApp(a, user)) throw withStatus(new Error('Not permitted to manage this app'), 403);
   const id = (memberId ?? '').trim();
@@ -1943,7 +1969,7 @@ export async function addAppMember(
  */
 export async function removeAppMember(appId: string, user: CurrentUser, memberId: string): Promise<App> {
   const map = await getCache();
-  const a = map.get(appId) ?? (await getAppByIdWithMirror(appId));
+  const a = await getAppByIdWithMirror(appId);
   if (!a) throw withStatus(new Error('App not found'), 404);
   if (!isOwnerOrAdminApp(a, user)) throw withStatus(new Error('Not permitted to manage this app'), 403);
   const id = (memberId ?? '').trim();
@@ -2003,7 +2029,7 @@ export async function patchAppDesign(
   patch: { purpose?: string; epics?: AppEpic[]; grants?: ContextGrants; agents?: AppAgentGrant[] },
 ): Promise<App> {
   const map = await getCache();
-  const a = map.get(appId);
+  const a = await getAppByIdWithMirror(appId);
   if (!a) throw withStatus(new Error('App not found'), 404);
   if (!isOwnerOrAdminApp(a, user)) throw withStatus(new Error('Not permitted to edit this app'), 403);
   if (patch.purpose !== undefined) a.purpose = patch.purpose.slice(0, 2000);
@@ -2054,7 +2080,7 @@ export async function patchAppDesign(
  */
 export async function promoteApp(appId: string, user: CurrentUser): Promise<App> {
   const map = await getCache();
-  const a = map.get(appId);
+  const a = await getAppByIdWithMirror(appId);
   if (!a) throw withStatus(new Error('App not found'), 404);
   if (!user.domains.includes(a.domain)) {
     throw withStatus(new Error('You can only promote apps in a domain you belong to'), 403);
@@ -2120,7 +2146,7 @@ export async function promoteApp(appId: string, user: CurrentUser): Promise<App>
  */
 export async function renameApp(appId: string, user: CurrentUser, newName: string): Promise<App> {
   const map = await getCache();
-  const a = map.get(appId);
+  const a = await getAppByIdWithMirror(appId);
   if (!a) throw withStatus(new Error('App not found'), 404);
   if (!isOwnerOrAdminApp(a, user)) throw withStatus(new Error('Not permitted to rename this app'), 403);
   const name = (newName ?? '').trim();
@@ -2194,7 +2220,7 @@ function upsertAppFolderRow(a: App, user: CurrentUser): void {
  */
 export async function moveApp(appId: string, user: CurrentUser, folder: string): Promise<App> {
   const map = await getCache();
-  const a = map.get(appId);
+  const a = await getAppByIdWithMirror(appId);
   if (!a) throw withStatus(new Error('App not found'), 404);
   if (!isOwnerOrAdminApp(a, user)) throw withStatus(new Error('Not permitted to move this app'), 403);
   a.folder = normaliseFolderPath(folder);
@@ -2226,7 +2252,7 @@ export async function listAppVersions(appId: string, user: CurrentUser): Promise
  */
 export async function restoreAppVersion(appId: string, user: CurrentUser, version: number): Promise<App> {
   const map = await getCache();
-  const a = map.get(appId);
+  const a = await getAppByIdWithMirror(appId);
   if (!a || !visibleToUser(a, user)) throw withStatus(new Error('App not found'), 404);
   if (!isOwnerOrAdminApp(a, user)) throw withStatus(new Error('Not permitted to edit this app'), 403);
   const snap = versions.get(appId, version);
@@ -2301,7 +2327,7 @@ export async function listAllAppsInternal(): Promise<App[]> {
 export async function removeAppInternal(appId: string): Promise<void> {
   const map = await getCache();
   map.delete(appId);
-  mirror.deleteThrough(appId);
+  writeDeleted(mirror, appCacheState().seen, appId);
   deleteSnapshot(appId); // drop the durable source-file mirror doc too
   versions.purge(appId);
 }
@@ -2330,6 +2356,7 @@ export function __resetAppsCache(): void {
   const s = appCacheState();
   s.cache = null;
   s.hydrated = false;
+  s.seen.clear();
   mirror.__reset();
   versions.__reset();
 }

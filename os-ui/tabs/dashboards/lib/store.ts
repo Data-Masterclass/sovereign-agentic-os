@@ -5,6 +5,7 @@ import type { Role } from '@core/kernel/session';
 import { type DashTier, type DashboardRecord, dashboardRecord, governDashboard } from '@tabs/dashboards/lib/governance';
 import { assertServableFilters, type DashboardSpec } from '@tabs/dashboards/lib/model';
 import { osMirror } from '@core/infra/os-mirror';
+import { newSeenFields, noteSeen, writeDeleted, writeChanged, writeNew, refreshRecord, type SeenFields } from '@core/infra/field-writes';
 import { type ArtifactVersion, versionLog } from '@core/kernel/versioning';
 import { canManageArtifact, type ArtifactScope } from '@core/policy/edit-scope';
 // The GOVERNED folder registry (Wave-2 parity rollout) — a moved-into folder is upserted
@@ -41,11 +42,18 @@ function manageArg(d: Stored): { owner: string; domain: string; scope: ArtifactS
 // platform's own governed flows (e.g. the Northpeak e-commerce seed).
 const SEED: Stored[] = [];
 
-type DashState = { dashboards: Stored[]; hydration: Promise<void> | null; hydratedAt?: number; hydrateFailedAt?: number };
+type DashState = {
+  dashboards: Stored[];
+  hydration: Promise<void> | null;
+  hydratedAt?: number;
+  hydrateFailedAt?: number;
+  /** What this process last knew the mirror held per dashboard (see `core/infra/field-writes.ts`). */
+  seen: SeenFields;
+};
 const DASH_KEY = Symbol.for('soa.dashboards.store');
 function dashState(): DashState {
   const g = globalThis as unknown as Record<symbol, DashState | undefined>;
-  if (!g[DASH_KEY]) g[DASH_KEY] = { dashboards: SEED.map((d) => ({ ...d, spec: { ...d.spec, charts: [...d.spec.charts] } })), hydration: null };
+  if (!g[DASH_KEY]) g[DASH_KEY] = { dashboards: SEED.map((d) => ({ ...d, spec: { ...d.spec, charts: [...d.spec.charts] } })), hydration: null, seen: newSeenFields() };
   return g[DASH_KEY]!;
 }
 
@@ -75,8 +83,40 @@ function snapshotState(rec: Stored): { spec: DashboardSpec } {
   return { spec: rec.spec };
 }
 
+/**
+ * The ONE write path for an existing dashboard: only the fields this process changed reach the
+ * mirror (an agent replacing the charts in the worker never puts back its stale copy of the
+ * folder, tier or archive flag the owner set in os-ui), and the worker never re-creates a
+ * dashboard deleted elsewhere. A NEW dashboard is stored whole (`writeNew`).
+ */
 function writeThrough(rec: Stored): void {
-  mirror.writeThrough(rec.id, rec);
+  writeChanged(mirror, dashState().seen, rec.id, rec as unknown as Record<string, unknown>);
+}
+
+/**
+ * Refresh-before-write for a write addressed BY ID from outside this process's knowledge (the
+ * `create_dashboard` tool and the build route accept a caller-chosen id). The newest mirrored
+ * copy replaces this process's copy, so `saveDashboard`'s edit-scope check runs against the
+ * dashboard as it really is — a dashboard created by someone else after this process booted can
+ * no longer be overwritten as if it were new. Returns the mirror's answer.
+ */
+export async function refreshDashboardFromMirror(id: string): Promise<'found' | 'absent' | 'unreachable'> {
+  const s = dashState();
+  return refreshRecord(mirror, s.seen, id, {
+    put: (doc) => {
+      const at = s.dashboards.findIndex((d) => d.id === id);
+      if (at >= 0) s.dashboards[at] = doc as unknown as Stored;
+      else s.dashboards.push(doc as unknown as Stored);
+    },
+    drop: () => {
+      s.dashboards = s.dashboards.filter((d) => d.id !== id);
+    },
+  });
+}
+
+/** Is a dashboard with this id held by this process? */
+export function hasDashboard(id: string): boolean {
+  return dashState().dashboards.some((d) => d.id === id);
 }
 
 export async function ensureHydrated(): Promise<void> {
@@ -98,6 +138,7 @@ async function hydrate(): Promise<void> {
   for (const rec of docs as Stored[]) {
     if (rec && rec.id && !s.dashboards.find((d) => d.id === rec.id)) {
       s.dashboards.push(rec);
+      noteSeen(s.seen, rec.id, rec as unknown as Record<string, unknown>);
     }
   }
   s.hydratedAt = Date.now();
@@ -109,6 +150,7 @@ export function __resetDashboards(): void {
   s.hydration = null;
   delete s.hydratedAt;
   delete s.hydrateFailedAt;
+  s.seen.clear();
   mirror.__reset();
   versions.__reset();
 }
@@ -336,7 +378,7 @@ export function saveDashboard(user: Principal, id: string, spec: DashboardSpec):
   }
   const rec = { ...dashboardRecord(id, spec, user.id, 'personal'), domain: user.domains[0] ?? 'sales' };
   dashState().dashboards.push(rec);
-  writeThrough(rec);
+  writeNew(mirror, dashState().seen, rec.id, rec as unknown as Record<string, unknown>);
   announce(rec, user.id, 'create dashboard');
   return rec;
 }
@@ -472,7 +514,7 @@ export function deleteDashboard(id: string, user: Principal): void {
   const d = requireOwned(id, user);
   const arr = dashState().dashboards;
   arr.splice(arr.indexOf(d), 1);
-  mirror.deleteThrough(d.id);
+  writeDeleted(mirror, dashState().seen, d.id);
   versions.purge(d.id);
   // Announced AFTER removal, so the hook's capture of the domain no longer holds it and the
   // commit IS the deletion.

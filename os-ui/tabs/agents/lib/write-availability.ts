@@ -25,7 +25,10 @@
  *     the store itself (no cycle) and from the worker entrypoint.
  */
 
-const KEY = Symbol.for('soa.agents.run-worker-process');
+import { isRunWorkerProcess } from '@core/kernel/process-role';
+
+// The marker itself lives in core (every store asks it); re-exported so existing imports keep working.
+export { markRunWorkerProcess, isRunWorkerProcess, __clearRunWorkerProcess } from '@core/kernel/process-role';
 
 /** The typed refusal of a definition change attempted where it could not be committed. */
 export class SystemWriteUnavailableError extends Error {
@@ -39,21 +42,6 @@ export class SystemWriteUnavailableError extends Error {
     );
     this.name = 'SystemWriteUnavailableError';
   }
-}
-
-/** Declare THIS process the run worker. Called once by `worker/agent-runs.ts` at boot. */
-export function markRunWorkerProcess(): void {
-  (globalThis as unknown as Record<symbol, boolean>)[KEY] = true;
-}
-
-/** Is this process the run worker (and therefore unable to commit a definition change)? */
-export function isRunWorkerProcess(): boolean {
-  return (globalThis as unknown as Record<symbol, boolean>)[KEY] === true;
-}
-
-/** Test hook: forget the marker. */
-export function __clearRunWorkerProcess(): void {
-  delete (globalThis as unknown as Record<symbol, boolean>)[KEY];
 }
 
 /**
