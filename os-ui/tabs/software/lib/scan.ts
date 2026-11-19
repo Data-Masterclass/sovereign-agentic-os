@@ -255,6 +255,10 @@ export async function resolveScan(
     engine: extra.length > 0 ? `${live.engine} + offline baseline` : live.engine,
     notRun: live.notRun,
     ...(live.reason ? { reason: live.reason } : {}),
+    // What the card's capped list does NOT show. The deploy gate reads these rather than
+    // re-deriving severity from a truncated list (re-review L-B).
+    ...(live.truncated ? { truncated: true as const } : {}),
+    ...(live.blockingBeyondCap ? { blockingBeyondCap: true as const } : {}),
   };
 }
 

@@ -99,6 +99,10 @@ export type TrivyReport = {
   passed: boolean;
   /** Categories NO engine actually covered — DERIVED from the tree, never assumed. */
   notRun: ScanCategory[];
+  /** `findings` is a capped view of a longer list (`summary` and `passed` still count them all). */
+  truncated: boolean;
+  /** A blocking finding exists that the cap left OUT of `findings`. The deploy gate reads this. */
+  blockingBeyondCap: boolean;
   /** Why a category in `notRun` was not covered, when the answer is actionable. */
   reason?: string;
 };
@@ -463,6 +467,12 @@ const SEVERITY: Record<string, ScanSeverity> = {
 
 const BLOCKING = new Set<ScanSeverity>(['high', 'critical']);
 
+/** Severity order for the card's "most severe first" cap. */
+const SEVERITY_RANK: Record<ScanSeverity, number> = { critical: 5, high: 4, medium: 3, low: 2, info: 1 };
+
+/** The repo's gate rule in one place: a secret, or a high/critical finding, blocks a deploy. */
+const isBlocking = (f: ScanFinding): boolean => f.category === 'secrets' || BLOCKING.has(f.severity);
+
 type TrivyVuln = {
   VulnerabilityID?: unknown;
   PkgName?: unknown;
@@ -604,23 +614,33 @@ export function mapTrivyReport(text: string, files: ScaffoldFile[] = []): TrivyR
   const summary: Record<ScanCategory, number> = { sast: 0, deps: 0, secrets: 0 };
   for (const f of findings) summary[f.category] += 1;
 
-  // A card nobody can read is not evidence: cap the list and say so in the list itself.
-  const shown = findings.slice(0, MAX_FINDINGS);
-  if (findings.length > MAX_FINDINGS) {
+  // A card nobody can read is not evidence, so the list is capped — but SEVERITY FIRST, so the
+  // findings a reviewer must act on are the ones that survive the cap. Before this, 200 LOW
+  // findings could push a CRITICAL off the card (re-review L-B).
+  const ranked = [...findings].sort((a, b) => SEVERITY_RANK[b.severity] - SEVERITY_RANK[a.severity]);
+  const shown = ranked.slice(0, MAX_FINDINGS);
+  const hidden = ranked.slice(MAX_FINDINGS);
+  const truncated = hidden.length > 0;
+  // Belt and braces: with severity-first ordering a blocking finding can only be hidden when
+  // MORE than MAX_FINDINGS of them exist. The gate still must not have to assume that.
+  const blockingBeyondCap = hidden.some(isBlocking);
+  if (truncated) {
     shown.push({
       category: 'deps',
       severity: 'info',
-      title: `${findings.length - MAX_FINDINGS} further finding(s) not shown`,
+      title: `${hidden.length} further finding(s) not shown`,
       detail:
-        `This scan produced ${findings.length} findings; the card lists the first ${MAX_FINDINGS}. ` +
-        `The verdict below accounts for ALL of them.`,
+        `This scan produced ${findings.length} findings; the card lists ${MAX_FINDINGS}, most ` +
+        `severe first. The verdict accounts for ALL of them` +
+        (blockingBeyondCap ? ', INCLUDING blocking findings that are not listed here' : '') +
+        `.`,
     });
   }
 
   const passed =
     // `deps` uncovered is not a pass: see H1. `sast` uncovered is the accepted, labelled baseline.
-    !notRun.includes('deps') && !findings.some((f) => f.category === 'secrets' || BLOCKING.has(f.severity));
-  return { ok: true, findings: shown, summary, passed, notRun, reason };
+    !notRun.includes('deps') && !findings.some(isBlocking);
+  return { ok: true, findings: shown, summary, passed, notRun, reason, truncated, blockingBeyondCap };
 }
 
 // --------------------------------------------------------------- resolve opts ---

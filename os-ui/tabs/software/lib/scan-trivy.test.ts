@@ -418,22 +418,61 @@ test('an UNKNOWN severity maps to info and does not block', () => {
   assert.equal(r.passed, true);
 });
 
-test('a flood of findings is capped, and the card says the verdict covers them all', () => {
-  const many = Array.from({ length: MAX_FINDINGS + 25 }, (_, i) => ({
-    VulnerabilityID: `CVE-${i}`,
+const flood = (n: number, severity: string) =>
+  Array.from({ length: n }, (_, i) => ({
+    VulnerabilityID: `CVE-${severity}-${i}`,
     PkgName: `p${i}`,
     InstalledVersion: '1',
-    Severity: 'LOW',
+    Severity: severity,
   }));
-  const r = mapTrivyReport(
-    JSON.stringify({ SchemaVersion: 2, Results: [{ Target: 'package-lock.json', Class: 'lang-pkgs', Vulnerabilities: many }] }),
-    LOCKED,
-  );
+
+const reportOf = (vulns: unknown[]) =>
+  JSON.stringify({
+    SchemaVersion: 2,
+    Results: [{ Target: 'package-lock.json', Class: 'lang-pkgs', Vulnerabilities: vulns }],
+  });
+
+test('a flood of findings is capped, and the card says the verdict covers them all', () => {
+  const r = mapTrivyReport(reportOf(flood(MAX_FINDINGS + 25, 'LOW')), LOCKED);
   assert.ok(r.ok);
   if (!r.ok) return;
   assert.equal(r.findings.length, MAX_FINDINGS + 1, 'the cap plus one line saying so');
   assert.equal(r.summary.deps, MAX_FINDINGS + 25, 'the SUMMARY still counts every one');
   assert.match(r.findings[r.findings.length - 1].title, /further finding/);
+  assert.equal(r.truncated, true);
+  assert.equal(r.blockingBeyondCap, false, 'nothing blocking exists at all here');
+});
+
+test('L-B: the cap keeps the SEVERE findings — a critical is never pushed off the card', () => {
+  // Before this, 200 LOW findings could hide a CRITICAL: the list was capped in report order.
+  const vulns = [...flood(MAX_FINDINGS + 50, 'LOW'), ...flood(1, 'CRITICAL')];
+  const r = mapTrivyReport(reportOf(vulns), LOCKED);
+  assert.ok(r.ok);
+  if (!r.ok) return;
+  assert.equal(r.findings[0].severity, 'critical', 'most severe first');
+  assert.equal(r.passed, false);
+  assert.equal(r.truncated, true);
+  assert.equal(r.blockingBeyondCap, false, 'it was shown, so nothing blocking is hidden');
+});
+
+test('L-B: blocking findings BEYOND the cap are flagged, so the gate cannot miss them', () => {
+  // More blocking findings than the cap: some genuinely cannot be shown. `passed` already
+  // counted them; the FLAG is what lets the deploy gate see them without the full list.
+  const r = mapTrivyReport(reportOf(flood(MAX_FINDINGS + 10, 'CRITICAL')), LOCKED);
+  assert.ok(r.ok);
+  if (!r.ok) return;
+  assert.equal(r.passed, false);
+  assert.equal(r.truncated, true);
+  assert.equal(r.blockingBeyondCap, true, 'the card must admit what the cap hid');
+  assert.match(r.findings[r.findings.length - 1].detail, /INCLUDING blocking findings/);
+});
+
+test('an un-truncated scan carries neither flag', () => {
+  const r = mapTrivyReport(VULNERABLE, LOCKED);
+  assert.ok(r.ok);
+  if (!r.ok) return;
+  assert.equal(r.truncated, false);
+  assert.equal(r.blockingBeyondCap, false);
 });
 
 // ------------------------------------------------------------------ the Job -----

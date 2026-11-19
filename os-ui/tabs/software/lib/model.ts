@@ -130,6 +130,19 @@ export type ScanResult = {
    * read as "we looked at the code and it is fine".
    */
   notRun?: ScanCategory[];
+  /**
+   * True when `findings` is a CAPPED view of a longer list. `passed` and `summary` always account
+   * for every finding; `findings` does not, so anything deriving severity from the list alone is
+   * reading an incomplete picture (PR #63 re-review L-B).
+   */
+  truncated?: true;
+  /**
+   * True when a BLOCKING finding (a secret, or high/critical) exists that the cap left out of
+   * `findings`. The deploy gate (`scanGate` in `review.ts`) must read this: without it, a card
+   * whose blocking findings sat past the cap classified as "nothing blocking found" — and became
+   * ACKNOWLEDGEABLE by an admin, which is the one thing a real finding must never be.
+   */
+  blockingBeyondCap?: true;
 };
 
 // ------------------------------------------------------------- Review card -----
