@@ -18,7 +18,7 @@ import { trace as realTrace } from '@core/infra/agent-governed';
 import type { RunTraceContext } from '@core/infra/langfuse';
 import { runWithRunId } from '@core/infra/request-surface';
 import { enqueue as realEnqueue } from '@core/policy/approvals';
-import { holdDecision, writeTargetScope } from '@tabs/agents/lib/build/hold';
+import { holdDecision, holdReason, writeTargetScope } from '@tabs/agents/lib/build/hold';
 import { agentForbiddenReason } from '@core/mcp/write-tool-meta';
 import { resolveFolderGrant } from '@core/kernel/folders';
 import { config } from '@core/kernel/config';
@@ -424,7 +424,7 @@ export function writeOutcomesLine(o: WriteOutcomes): string {
  * `tools_<id>` node can compute it BEFORE executing a batch and park the run on an
  * `interrupt()`. Re-exported here unchanged for every existing caller.
  */
-export { holdDecision, holdDecisionFor, writeTargetScope, type HoldDecision, type WriteScope } from '@tabs/agents/lib/build/hold';
+export { holdDecision, holdDecisionFor, holdReason, writeTargetScope, type HoldDecision, type WriteScope } from '@tabs/agents/lib/build/hold';
 
 
 /**
@@ -675,7 +675,7 @@ export function grantedToolExecutor(
         deps.enqueue({
           kind: 'connection_write',
           title: `Approval needed: ${mcpName}`,
-          detail: `System '${systemId}' agent attempted a ${writeTargetScope(mcpName)}-scope write '${mcpName}' during a run — Domain/Company writes are held for admin approval.`,
+          detail: `System '${systemId}' agent attempted the ${holdReason(mcpName).label} write '${mcpName}' during a run — ${holdReason(mcpName).why}.`,
           agent: sysPrincipal,
           domain: sys.system.domain,
           requestedBy: user.id,

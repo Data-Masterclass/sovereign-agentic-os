@@ -1286,7 +1286,7 @@ export default function BuildRunPanel({
               {i > 0 ? ', ' : ''}<code>{h.tool}</code> ({h.node})
             </span>
           ))}{' '}
-          in <a href={`/governance?focus=${encodeURIComponent(run.heldApprovals[0].approvalId)}`}>Governance → Inbox</a>. The decision resumes the run as you;{' '}
+          in <a href={`/governance?focus=${encodeURIComponent(run.heldApprovals[0].approvalId)}`}>Governance → Inbox</a>. Someone else has to decide it — a domain admin of this system&apos;s domain or a platform admin (the card names who). You cannot approve a call your own run made. Their decision resumes the run as you;{' '}
           {run.runId ? (
             <button type="button" className="btn-ghost" onClick={() => void attachToRun(run.runId!)} disabled={runningNow}>
               watch it finish

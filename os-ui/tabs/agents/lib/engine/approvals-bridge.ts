@@ -19,7 +19,7 @@
 import 'server-only';
 import { ensureHydrated, enqueueOnce, getApproval, type ApprovalStatus } from '@core/policy/approvals';
 import type { ApprovalPort, ApprovalState, HeldApprovalInput } from '@tabs/agents/lib/engine/approval-port';
-import { writeTargetScope } from '@tabs/agents/lib/build/hold';
+import { holdReason } from '@tabs/agents/lib/build/hold';
 
 /** Upper bound (chars) on the serialised tool arguments stored on an approval card. */
 const ARGS_MAX = 4_000;
@@ -39,10 +39,11 @@ export function serverApprovalPort(): ApprovalPort {
   return {
     async enqueueOnce(input: HeldApprovalInput) {
       await ensureHydrated();
+      const reason = holdReason(input.tool);
       const { approval } = enqueueOnce({
         kind: 'connection_write',
         title: `Approval needed: ${input.tool}`,
-        detail: `Agent '${input.node}' of system '${input.systemId}' asked to run the ${writeTargetScope(input.tool)}-scope write '${input.tool}'. The run is parked until you decide; approving resumes it and the write executes as the runner (${input.runner.id}).`,
+        detail: `Agent '${input.node}' of system '${input.systemId}' asked to run the ${reason.label} write '${input.tool}'. The run is parked until you decide; approving resumes it and the write executes as the runner (${input.runner.id}).`,
         agent: input.agent,
         domain: input.domain,
         requestedBy: input.runner.id,
@@ -52,8 +53,10 @@ export function serverApprovalPort(): ApprovalPort {
         preview: {
           what: `${input.tool} ${JSON.stringify(boundedArgs(input.args)).slice(0, 240)}`,
           who: `agent ${input.node} · run ${input.runId} · as ${input.runner.id}`,
-          why: `${writeTargetScope(input.tool)}-scope write held by the system's safety preset`,
-          impact: 'Approve → the parked run resumes and executes this call as its runner. Deny → the agent receives a typed rejection and continues.',
+          // The TRUE reason (review L3): an always-confirmed or escalating call is not held "by the
+          // preset" — it is held under every preset, and the card must not suggest otherwise.
+          why: reason.why,
+          impact: `Approve → the parked run resumes and executes this call as its runner (${input.runner.id}), who cannot approve it themselves. Deny → the agent receives a typed rejection and continues.`,
         },
         runId: input.runId,
         threadId: input.threadId,

@@ -21,10 +21,18 @@ export type PendingHandle = {
   hint: string;
 };
 
-/** Human "who can approve this", derived from the approver role + scope. */
-export function whoCanApprove(a: Pick<Approval, 'approverRole' | 'scope' | 'domain'>): string {
-  if (a.approverRole === 'admin' || a.scope === 'tenant') return 'a platform admin';
-  return `a Builder or Domain-admin in the '${a.domain}' domain`;
+/**
+ * Human "who can approve this", derived from the approver role + scope — and it has to say what
+ * `canApprove` (`core/policy/roles.ts`) actually enforces, or the requester goes and asks someone
+ * who will be refused. Two things it used to get wrong: a `domain_admin` item was described as
+ * "a Builder or Domain-admin" although a Builder is below the rank and is rejected; and nothing
+ * said that the runner of a parked agent run can never decide their own run's call.
+ */
+export function whoCanApprove(a: Pick<Approval, 'approverRole' | 'scope' | 'domain'> & Partial<Pick<Approval, 'runId'>>): string {
+  const notRunner = a.runId ? ' — not the person whose agent run asked (a run\'s own runner can never confirm it)' : '';
+  if (a.approverRole === 'admin' || a.scope === 'tenant') return `a platform admin${notRunner}`;
+  if (a.approverRole === 'domain_admin') return `a Domain-admin of the '${a.domain}' domain, or a platform admin${notRunner}`;
+  return `a Builder or Domain-admin in the '${a.domain}' domain${notRunner}`;
 }
 
 /** Build the canonical pending handle from an enqueued approval (+ optional extras). */

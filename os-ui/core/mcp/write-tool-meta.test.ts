@@ -7,6 +7,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { ALL_WRITE_TOOLS } from '@core/mcp/write-tools';
+import { ALL_MCP_TOOLS, listToolsForRole } from '@core/mcp/server';
 import { WRITE_TOOL_TABS, WRITE_TOOL_NAMES, AGENT_FORBIDDEN_TOOLS, agentForbiddenReason } from '@core/mcp/write-tool-meta';
 
 /**
@@ -72,16 +73,29 @@ const PLATFORM_WRITE_TOOLS: Readonly<Record<string, string>> = {
  */
 const FACTORY_WRITE_TOOLS: Readonly<Record<string, string>> = { reindex_corpus: 'files' };
 
-test('WRITE_TOOL_TABS matches ALL_WRITE_TOOLS plus the platform-MCP and factory writes (names and tabs)', () => {
+/**
+ * The APPROVAL verbs that live outside both `ALL_WRITE_TOOLS` and the platform surface (review
+ * H2): `decide_approval` is a governance tool (`core/mcp/governance-tools.ts`) and
+ * `promote_connection` sits with the connection discovery tools. Both are closed to agent runs
+ * (`AGENT_FORBIDDEN_TOOLS`), and a forbidden tool must also be a classified write so the hold is
+ * the second line behind the refusal — so they are classified by name, like the platform writes.
+ */
+const APPROVAL_WRITE_TOOLS: Readonly<Record<string, string>> = {
+  decide_approval: 'governance',
+  promote_connection: 'connections',
+};
+
+test('WRITE_TOOL_TABS matches ALL_WRITE_TOOLS plus the platform-MCP, factory and approval writes (names and tabs)', () => {
   const actual = {
     ...Object.fromEntries(ALL_WRITE_TOOLS.map((t) => [t.name, t.tab])),
     ...PLATFORM_WRITE_TOOLS,
     ...FACTORY_WRITE_TOOLS,
+    ...APPROVAL_WRITE_TOOLS,
   };
   assert.deepEqual(WRITE_TOOL_TABS, actual);
   assert.equal(
     WRITE_TOOL_NAMES.size,
-    ALL_WRITE_TOOLS.length + Object.keys(PLATFORM_WRITE_TOOLS).length + Object.keys(FACTORY_WRITE_TOOLS).length,
+    ALL_WRITE_TOOLS.length + Object.keys(PLATFORM_WRITE_TOOLS).length + Object.keys(FACTORY_WRITE_TOOLS).length + Object.keys(APPROVAL_WRITE_TOOLS).length,
     'duplicate write tool names',
   );
 });
@@ -123,27 +137,145 @@ test('AGENT_FORBIDDEN_TOOLS: approvals are closed to agent runs — four-eyes me
   // The owner's decision (2026-11-19): an agent can NEVER execute an approval. A held approval is
   // not enough — whoever approves the hold would be approving the agent's approval, and the
   // go-live would then carry one human decision while reading as two.
-  for (const name of ['decide_deploy', 'promote']) {
+  for (const name of ['decide_deploy', 'promote', 'decide_approval', 'promote_connection']) {
     const reason = agentForbiddenReason(name);
     assert.ok(reason, `${name} must be closed to agent runs`);
     assert.match(reason!, /human decision/);
     assert.match(reason!, /four-eyes/);
   }
-  assert.deepEqual(Object.keys(AGENT_FORBIDDEN_TOOLS).sort(), ['decide_deploy', 'promote', 'reindex_corpus']);
+  assert.deepEqual(Object.keys(AGENT_FORBIDDEN_TOOLS).sort(), ['decide_approval', 'decide_deploy', 'promote', 'promote_connection', 'reindex_corpus']);
   // Requesting is not approving: the request side stays open to agents (and is held instead).
   assert.equal(agentForbiddenReason('request_deploy'), null);
+  assert.equal(agentForbiddenReason('request_promotion'), null);
 });
 
-test('AGENT_FORBIDDEN_TOOLS: the catalog names BOTH doors that consult it, and no longer claims a follow-up', () => {
-  // History: the first version claimed `app-tool-call.ts` consulted this table when it did not,
-  // and a comment that overstates a guard is worse than no comment — so the gap was pinned as a
-  // stated follow-up. The follow-up is now CLOSED (the guard is in `callAppTool`, and its
-  // behaviour is tested in `tabs/software/lib/app-tool-call.test.ts`); this pins the comment to
-  // the new truth so it cannot drift in either direction.
+test('agentForbiddenReason answers by OWN name only — never for a name inherited from Object.prototype', () => {
+  // Review L1: a bare `TABLE[name]` returned `Object` for 'constructor', a function for
+  // 'toString' and an object for '__proto__' — truthy, so every door that asks
+  // `if (agentForbiddenReason(name))` refused them, with a "reason" that was not a string.
+  for (const name of ['constructor', 'toString', 'valueOf', 'hasOwnProperty', '__proto__', 'prototype']) {
+    assert.equal(agentForbiddenReason(name), null, `${name} is not a forbidden tool`);
+  }
+  for (const name of Object.keys(AGENT_FORBIDDEN_TOOLS)) assert.equal(typeof agentForbiddenReason(name), 'string');
+});
+
+test('AGENT_FORBIDDEN_TOOLS: the catalog names exactly the doors that consult it — and the ones that do not', () => {
+  // History: the first version of this comment claimed a door consulted the table when it did
+  // not; the second said "TWO doors" and "never executed, never advertised" as if that were every
+  // door, while the two interactive assistants offer the role-scoped registry and consult neither
+  // table (review M1). A comment that overstates a guard is worse than none — the next reader
+  // stops looking — so the scope statement is pinned in BOTH directions.
   const src = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), 'write-tool-meta.ts'), 'utf8');
-  assert.match(src, /TWO doors consult this/);
+  assert.match(src, /WHICH DOORS CONSULT THIS — exactly three/);
   assert.match(src, /`tabs\/agents\/lib\/build\/os-tools\.ts`/);
+  assert.match(src, /`tabs\/agents\/lib\/build\/phase-tools\.ts`/);
   assert.match(src, /`tabs\/software\/lib\/app-tool-call\.ts`/);
+  assert.match(src, /OUT OF SCOPE, on purpose/);
+  assert.match(src, /`runOsAssistant`/);
+  assert.match(src, /`runTabAgent`/);
+  assert.match(src, /NO structural confirm step/);
+  assert.doesNotMatch(src, /TWO doors consult this/);
   assert.doesNotMatch(src, /does NOT consult it/);
   assert.doesNotMatch(src, /ONE door consults this today/);
+});
+
+test('a PERSON keeps every agent-forbidden tool: the MCP registry and dispatch never consult the table', () => {
+  // The table is consulted at agent-facing doors only. The human's own surface — tools/list by
+  // role, and `handleRpc` — must be untouched, or "an agent may not approve" would have quietly
+  // become "nobody may approve over MCP".
+  const admin = new Set(listToolsForRole('admin', ALL_MCP_TOOLS).map((t) => t.name));
+  for (const name of ['decide_deploy', 'promote', 'decide_approval', 'promote_connection']) {
+    assert.ok(admin.has(name), `${name} is still listed for a human admin`);
+  }
+  const builder = new Set(listToolsForRole('builder', ALL_MCP_TOOLS).map((t) => t.name));
+  assert.ok(builder.has('decide_approval') && builder.has('decide_deploy'), 'a Builder still decides what a Builder decides');
+  const server = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), 'server.ts'), 'utf8');
+  assert.doesNotMatch(server, /agentForbiddenReason|AGENT_FORBIDDEN_TOOLS/, 'handleRpc must not consult the agent table');
+});
+
+// --- THE REGISTRY-WIDE RATCHET (review H2) ---------------------------------------------------
+//
+// The platform ratchet (`tabs/software/lib/builder/dispatch.test.ts`) only ever covered tools that
+// DECLARE `write: true`, and only the platform surface has that flag. Everything else in the
+// registry was classified by nobody: `decide_approval` — which decides any queued request — was
+// invisible to the hold gate under every preset until the review found it by reading.
+//
+// So: every tool in `ALL_MCP_TOOLS` is in EXACTLY ONE of
+//   - the write catalog (`WRITE_TOOL_TABS`, which includes every agent-forbidden tool),
+//   - READ_TOOLS — reviewed, changes no governed state,
+//   - UNCLASSIFIED_BACKLOG — changes state (or may), and NOT YET given a hold posture.
+// Two-way: a NEW tool fails until someone puts it in one of the three; a tool that leaves the
+// registry or gets classified fails until its line is removed. The backlog cannot grow silently,
+// and — the point — it cannot be mistaken for a list of reads.
+//
+// LIMIT: this is `ALL_MCP_TOOLS` as registered in the test environment. A bundle behind a feature
+// flag that is off here is not in it.
+
+/** Reviewed: read-only against governed state. (A read may still cost model or query budget.) */
+const READ_TOOLS: readonly string[] = [
+  'diff_versions', 'get_agent_run', 'get_agent_system', 'get_app_spec', 'get_connection', 'get_cost',
+  'get_dagster_run', 'get_dashboard', 'get_dataset', 'get_engineering_view', 'get_file', 'get_guide',
+  'get_history', 'get_knowledge', 'get_lineage', 'get_metric', 'get_monitoring_overview',
+  'get_operating_manual', 'get_policy_view', 'get_request', 'get_run_trace', 'get_software',
+  'get_software_status', 'get_sync_status', 'get_version', 'list_agent_systems', 'list_approvals',
+  'list_capabilities', 'list_connection_templates', 'list_connections', 'list_dashboards',
+  'list_datasets', 'list_files', 'list_knowledge', 'list_metrics', 'list_operating_manual_versions',
+  'list_runs', 'list_software', 'profile_dataset', 'query_data', 'query_metric', 'read_app_files',
+  'search_files', 'search_knowledge', 'whoami',
+  // Persist nothing, but are not free: each spends reasoning-model budget and returns a candidate
+  // or a directive. `generate_app_spec` returns an unsaved AppSpec (`set_app_spec` publishes it);
+  // `verify_software` returns the test directive and normalises findings it does not store.
+  'generate_app_spec', 'verify_software',
+];
+
+/**
+ * STATE-CHANGING (or possibly so) and NOT YET CLASSIFIED for the agent hold gate: the gate answers
+ * "not a write" for each of these under EVERY preset, `read-only` included. Named so they can be
+ * decided one by one — not excused. Each line says what it does; the recommended posture for
+ * each is in os-ui/ARCHITECTURE.md ("the unclassified backlog").
+ */
+const UNCLASSIFIED_BACKLOG: readonly string[] = [
+  'build_software', // returns the build directive; with SOFTWARE_BUILDER=agentic it RUNS the build loop and commits
+  'configure_connection', // rename / re-scope / rotate the credential of a connection
+  'create_connection', // creates a personal connection and stores its secret by reference
+  'request_certification', // files a Domain → Company certification request (the rung-2 twin of request_promotion)
+  'restore_operating_manual_version', // overwrites an Operating Model with a prior version
+  'retire_connection', // archives a connection, or DELETES it with its Trino catalogue and Secret
+  'revoke_action_adoption', // revokes a domain's adoption of an app's write actions
+  'test_connection', // a live probe that writes the connection's status back
+  'update_operating_manual', // edits an Operating Model at My / Domain / Company scope
+];
+
+test('REGISTRY RATCHET: every MCP tool is a classified write, a reviewed read, or on the named backlog — exactly one', () => {
+  const registry = ALL_MCP_TOOLS.map((t) => t.name);
+  assert.equal(new Set(registry).size, registry.length, 'tool names are unique');
+  const buckets: Record<string, string[]> = { write: [], read: [], backlog: [] };
+  const reads = new Set(READ_TOOLS);
+  const backlog = new Set(UNCLASSIFIED_BACKLOG);
+  assert.equal(reads.size, READ_TOOLS.length, 'READ_TOOLS has a duplicate');
+  assert.equal(backlog.size, UNCLASSIFIED_BACKLOG.length, 'UNCLASSIFIED_BACKLOG has a duplicate');
+  const unplaced: string[] = [];
+  const multiply: string[] = [];
+  for (const name of registry) {
+    const hits = [WRITE_TOOL_NAMES.has(name) && 'write', reads.has(name) && 'read', backlog.has(name) && 'backlog'].filter(Boolean) as string[];
+    if (hits.length === 0) unplaced.push(name);
+    else if (hits.length > 1) multiply.push(`${name} (${hits.join('+')})`);
+    else buckets[hits[0]].push(name);
+  }
+  assert.deepEqual(unplaced, [], 'a NEW tool: classify it in write-tool-meta.ts, or add it to READ_TOOLS (if it changes nothing) or to the backlog WITH a comment');
+  assert.deepEqual(multiply, [], 'a tool sits in more than one bucket');
+  // The other direction: nothing listed that the registry no longer has (a stale line hides a rename).
+  const known = new Set(registry);
+  assert.deepEqual(READ_TOOLS.filter((n) => !known.has(n)), [], 'READ_TOOLS names a tool that is not registered');
+  assert.deepEqual(UNCLASSIFIED_BACKLOG.filter((n) => !known.has(n)), [], 'the backlog names a tool that is not registered');
+  assert.deepEqual([...WRITE_TOOL_NAMES].filter((n) => !known.has(n)), [], 'the write catalog names a tool that is not registered');
+  // And every agent-forbidden tool is a real, registered tool.
+  assert.deepEqual(Object.keys(AGENT_FORBIDDEN_TOOLS).filter((n) => !known.has(n)), []);
+  // The backlog is pinned EXACTLY, so shrinking it is a visible, reviewed diff — and growing it is too.
+  assert.deepEqual(buckets.backlog.sort(), [
+    'build_software', 'configure_connection', 'create_connection', 'request_certification',
+    'restore_operating_manual_version', 'retire_connection', 'revoke_action_adoption',
+    'test_connection', 'update_operating_manual',
+  ]);
+  assert.equal(buckets.write.length + buckets.read.length + buckets.backlog.length, registry.length);
 });
