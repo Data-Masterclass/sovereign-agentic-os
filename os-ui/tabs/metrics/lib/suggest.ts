@@ -20,6 +20,7 @@ import { MEASURE_TYPES, type MeasureType } from '@tabs/data/lib/index';
 import type { MetricForm } from '@tabs/metrics/lib/model';
 import type { AssistantMessage } from '@core/runtime/complete';
 import { estimateTokens } from '@tabs/knowledge/lib/context-pack';
+import { truncateToTokens } from '@core/infra/context/context-assembler';
 
 /* ─────────────────────────────── context in ────────────────────────────── */
 
@@ -106,15 +107,29 @@ export class SuggestError extends Error {
 /** Rough token budget for the assembled context block (reasoning model, generous). */
 const CONTEXT_BUDGET = 6000;
 
-/** Trim a list of rendered blocks to fit `budget` tokens, lowest-priority last. */
+/**
+ * Trim a list of rendered blocks to fit `budget` tokens, lowest-priority last. A block that does not
+ * fit is SHORTENED to the room left (with the marker `truncateToTokens` adds), and every block left
+ * out is counted in a final note — before Track B an oversized first block emptied the context and
+ * the prompt then said nothing was visible, which was false.
+ */
 function trimToBudget(blocks: string[], budget: number): string[] {
   const kept: string[] = [];
   let used = 0;
+  let omitted = 0;
   for (const b of blocks) {
+    const room = budget - used;
     const t = estimateTokens(b);
-    if (used + t > budget) break;
-    kept.push(b);
-    used += t;
+    if (t <= room) {
+      kept.push(b);
+      used += t;
+    } else if (room > 200) {
+      kept.push(truncateToTokens(b, room));
+      used = budget;
+    } else omitted += 1;
+  }
+  if (omitted > 0 || kept.some((b) => b.endsWith('[truncated to fit context]…'))) {
+    kept.push(`(Context shortened to fit the prompt${omitted > 0 ? `: ${omitted} more context block${omitted === 1 ? '' : 's'} omitted` : ''}.)`);
   }
   return kept;
 }

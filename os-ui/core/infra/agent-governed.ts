@@ -452,12 +452,18 @@ function srcVisible(src: Record<string, unknown>, principal: DlsPrincipal): bool
  * governed, certified passage on a laptop with no live OpenSearch. No
  * customer/worked-example content is baked in.
  */
+/**
+ * The OFFLINE SAMPLE used only when the knowledge index cannot be reached at all. It is labelled
+ * as a sample in its source and title and is never `certified`: before Track B it was returned as
+ * "Discount Policy (Certified)" — also when the index answered with zero hits — so an agent quoted
+ * a policy that exists nowhere.
+ */
 const RETRIEVE_SEED: Passage[] = [
   {
-    source: 'knowledge:discount-policy',
-    title: 'Discount Policy (Certified)',
+    source: 'offline-sample:discount-policy',
+    title: 'Discount Policy (offline sample — the knowledge index did not answer)',
     text: 'Standard renewals may offer 5–10% off list. Multi-year commitments may go up to 15%. Anything beyond 15% requires Builder approval.',
-    certified: true,
+    certified: false,
   },
 ];
 
@@ -482,26 +488,25 @@ export async function retrieveTool(query: string, principal: DlsPrincipal): Prom
     try {
       const data = JSON.parse(await res.text());
       const hits = Array.isArray(data?.hits?.hits) ? data.hits.hits : [];
-      if (hits.length > 0) {
-        return hits
-          // Belt-and-suspenders: re-check DLS per hit in code (default-deny).
-          .filter((h: Record<string, unknown>) => srcVisible((h._source ?? {}) as Record<string, unknown>, principal))
-          .map((h: Record<string, unknown>) => {
-            const src = (h._source ?? {}) as Record<string, unknown>;
-            return {
-              source: `knowledge:${String(h._id ?? '')}`,
-              title: String(src.title ?? '(untitled)'),
-              text: String(src.text ?? src.content ?? ''),
-              certified: Boolean(src.certified),
-            };
-          });
-      }
+      // The index ANSWERED: its answer is the answer, even when it found nothing.
+      return hits
+        // Belt-and-suspenders: re-check DLS per hit in code (default-deny).
+        .filter((h: Record<string, unknown>) => srcVisible((h._source ?? {}) as Record<string, unknown>, principal))
+        .map((h: Record<string, unknown>) => {
+          const src = (h._source ?? {}) as Record<string, unknown>;
+          return {
+            source: `knowledge:${String(h._id ?? '')}`,
+            title: String(src.title ?? '(untitled)'),
+            text: String(src.text ?? src.content ?? ''),
+            certified: Boolean(src.certified),
+          };
+        });
     } catch {
-      /* fall through to seed */
+      /* an unreadable answer: fall through to the labelled offline sample */
     }
   }
-  // Offline curated passages — certified/Marketplace, so DLS-visible to everyone;
-  // still filtered per-unit so the invariant holds on the offline path too.
+  // Index UNREACHABLE (or its answer unreadable): the labelled offline sample, Marketplace so
+  // DLS-visible to everyone; still filtered per-unit so the invariant holds on the offline path too.
   const q = query.toLowerCase();
   const matched = RETRIEVE_SEED.filter(
     (p) => (q.length === 0 || /contract|renew|discount|policy|term/.test(q)) && srcVisible({ visibility: 'Marketplace' }, principal),

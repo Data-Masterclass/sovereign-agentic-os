@@ -25,7 +25,7 @@
  *     people (`JSON.stringify(result, null, 2)`), and that whitespace is a quarter of the tokens.
  *   - Pure; anything that does not parse as JSON, and every error result, passes through unchanged.
  */
-import { distinctFolders, isUnderFolder, isUnderFolderIgnoringCase, normaliseFolderPath } from '@core/kernel/folders';
+import { distinctFolderList, isUnderFolder, isUnderFolderIgnoringCase, normaliseFolderPath } from '@core/kernel/folders';
 import type { FolderGrantTarget } from '@tabs/agents/lib/system-schema';
 
 /** Cap on a file's description in an agent's listing. */
@@ -110,10 +110,12 @@ export function shapeFileListing(result: unknown, args: Record<string, unknown>,
   }
   // An asked-for folder that matches nothing must not read as "there are no files": name the
   // folders that do exist in this system's scope, so the agent can look in the right one.
+  const folders = distinctFolderList(inScope);
   const missed = asked && items.length === 0 && inScope.length > 0
     ? {
-        note: `No folder "${asked}" in this system's files. ${inScope.length} file(s) exist in other folders: see availableFolders, then call list_files again with one of them (or with no folder).`,
-        availableFolders: distinctFolders(inScope),
+        note: `No folder "${asked}" in this system's files. ${inScope.length} file(s) exist in other folders: see availableFolders${folders.more > 0 ? ` (the first ${folders.folders.length}; ${folders.more} more exist)` : ''}, then call list_files again with one of them (or with no folder).`,
+        availableFolders: folders.folders,
+        ...(folders.more > 0 ? { moreFolders: folders.more } : {}),
       }
     : {};
   // A grant that covers NOTHING says so in the result: an empty `items` alone reads as "there are

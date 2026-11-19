@@ -13,6 +13,7 @@ import { assertRunVisible } from '@tabs/agents/lib/engine/run-visibility';
 import { peekRunOwner } from '@tabs/agents/lib/build/agentic-graph-server';
 import type { CurrentUser } from '@core/kernel/auth';
 import type { System } from '@tabs/agents/lib/system-schema';
+import { truncateToTokens } from '@core/infra/context/context-assembler';
 
 export const dynamic = 'force-dynamic';
 
@@ -34,7 +35,8 @@ function gatherGrantedCriteria(system: System, user: CurrentUser): string {
       /* not readable / not found — skip, never fail the evaluation */
     }
   }
-  return parts.join('\n').slice(0, 4000);
+  // Bounded for the judge prompt WITH a marker, so a long criteria text is never cut silently.
+  return truncateToTokens(parts.join('\n'), 1_000);
 }
 
 /**

@@ -56,6 +56,7 @@ import {
   ARTIFACT_OUTPUT_SCHEMA,
   citationArtifact,
   tableArtifactFromObjectRows,
+  rowLimitTruncation,
   type ChatArtifact,
 } from '@core/runtime/chat-artifacts';
 import type { Granularity } from '@tabs/metrics/lib/explorer';
@@ -332,13 +333,15 @@ export const metricWriteTools: McpTool[] = [
       const dataset = getDataset(datasetId, P(user));
       const draft = { ...dataset, measures: [...dataset.measures.filter((m) => m.name !== measure.name), measure] };
       const token = mcpToken(user);
+      const previewLimit = typeof args.limit === 'number' && args.limit > 0 ? Math.min(Math.floor(args.limit), 100) : 20;
       const result = await exploreMetric(draft, measure, token, {
         dimensions: strArr(args.dimensions),
         timeDimension: str(args.timeDimension) || undefined,
         granularity: (str(args.granularity) as Granularity) || undefined,
-        limit: typeof args.limit === 'number' ? Math.min(args.limit, 100) : 20,
+        limit: previewLimit,
       });
-      return { datasetId, measure, ...result };
+      // The same row-limit honesty `query_metric` has: a full page may be only the first rows.
+      return { datasetId, measure, ...result, ...rowLimitTruncation(result.rows.length, previewLimit) };
     },
   },
   {
