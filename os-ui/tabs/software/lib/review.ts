@@ -217,6 +217,8 @@ async function appFilesForScan(app: App): Promise<ScaffoldFile[]> {
  * a URL. When a cluster IS reachable, `startPreview`/`decideDeploy` provision a
  * real Deployment+Service+Ingress and the served URL appears once the pod is ready.
  */
+export { deployStatusOf, declarativePreviewNote, isDeclarative } from '@tabs/software/lib/deploy-status';
+
 export const PREVIEW_PENDING_NOTE =
   'Preview runner unreachable — your commits are real, but no in-cluster runner could be provisioned; ' +
   'the served preview URL is pending until the Kubernetes API is reachable.';
@@ -539,8 +541,10 @@ async function applyDeployDecisionToApp(
     app.deploy.releases += 1; // approved go-live ships a new release/version.
     // Provision the real in-cluster runner on the app's per-app host; the served
     // URL only lands once the pod is actually running (offline stays honestly
-    // pending — the go-live decision is still recorded).
-    applyRunnerOutcome(app, await deployApp(runnerAppFor(app)));
+    // pending — the go-live decision is still recorded). `state: 'live'` records the
+    // DECISION; the badge says "Live" only once a URL is really served (deploy-status.ts).
+    // Only an IMAGE app has a runner: a declarative or runtime app is served by the OS itself.
+    if (serveModeOf(app) === 'image') applyRunnerOutcome(app, await deployApp(runnerAppFor(app)));
   } else {
     app.deploy.state = 'preview'; // back to the free preview loop to fix it
     app.deploy.reviewCardId = null;
@@ -948,6 +952,11 @@ export async function reconcileDeployStatus(
   // then re-read. Only fires for absent-but-reachable + a deploy state that should
   // be running; `offline` (status 0) is left untouched (we honestly cannot heal
   // what we cannot reach), and a running/deploying/failed runner is never re-applied.
+  // Only an IMAGE app has a runner to heal or a pod URL to reconcile. A declarative (`spec`) or
+  // runtime app is served by the OS itself: a poll must never create a Deployment for it, and
+  // must never overwrite its same-origin URL with a pod's (absent) state.
+  if (serveModeOf(app) !== 'image') return { app, status };
+
   if (status.phase === 'absent' && (app.deploy.state === 'live' || app.deploy.state === 'preview')) {
     const healed = await deployApp(runnerAppFor(app), opts);
     // NIGHT-2 S2: the heal can REFUSE — an `image` app with no published image provisions
