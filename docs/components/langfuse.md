@@ -40,6 +40,21 @@ worker and the gateway send traces to the in-cluster Service `agentic-os-langfus
   their desks, publish it behind an IP allowlist with the opt-in above and set
   `nextauth.url` to that host in the same overlay.
 
+* **Sign-up is off** (`langfuse.langfuse.features.signUpDisabled: true`, i.e.
+  `AUTH_DISABLE_SIGNUP=true`): only existing users can sign in, and an invite cannot create an
+  account. The OS's own user, org, project and API keys come from headless initialisation
+  (`LANGFUSE_INIT_*` in the `langfuse-init` Secret), which creates them directly at start-up and
+  does not go through sign-up. To add another console user, set `signUpDisabled: false` in a
+  private overlay for the time it takes them to register, then set it back.
+  Docs: <https://langfuse.com/self-hosting/security/authentication-and-sso>,
+  <https://langfuse.com/self-hosting/administration/headless-initialization>.
+* **NetworkPolicy** `langfuse-web-allow-os-only`
+  (`templates/base/langfuse/web-ingress-policy.yaml`): the web pod accepts TCP 3000 only from
+  os-ui, os-ui-worker, LiteLLM and the Langfuse worker — plus the ingress controller's namespace
+  when the console is published with the opt-in above. `kubectl port-forward` is unaffected.
+  Rendered with `networkPolicies.defaultDeny`; `networkPolicies.langfuseWeb: false` turns this
+  one policy off. `scripts/tests/langfuse-hardening.test.sh` checks both settings.
+
 **After upgrading a cluster that had the route:** Helm deletes `agentic-os-langfuse-web-ingress`
 (and any annotation added to it by hand) and its Certificate; the TLS Secret
 `langfuse.<zone>-tls` and the DNS record remain and can be removed by hand.
