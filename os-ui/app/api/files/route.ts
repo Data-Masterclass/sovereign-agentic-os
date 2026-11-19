@@ -23,16 +23,34 @@ export const GET = withRoute(async ({ user, req }) => {
   // archived file stays openable → its preview exposes Restore + Delete (OS-wide rule).
   const includeArchived = new URL(req.url).searchParams.get('archived') === '1';
   const groups = listFiles(user, { includeArchived });
-  // LEAST-PRIVILEGE for app origins: narrow to (user access ∩ app grants); `facets`
-  // (aggregate counts) is passed through. The OS UI is untouched (slug === null).
+  // LEAST-PRIVILEGE for app origins: narrow to (user access ∩ app grants). The folder and tag
+  // rail (`facets`) is rebuilt from the rows the app keeps: the drive-wide one names the folders
+  // and tags of files the app was never granted. The OS UI is untouched (slug === null).
   const slug = appSlugFromRequest(req);
   if (slug) {
     const granted = await grantedIdSet(slug, 'files');
     const keep = <T extends { id: string }>(xs: T[]) => xs.filter((f) => granted.has(f.id));
-    return NextResponse.json({ ...groups, mine: keep(groups.mine), domain: keep(groups.domain), marketplace: keep(groups.marketplace) });
+    const mine = keep(groups.mine);
+    const domain = keep(groups.domain);
+    const marketplace = keep(groups.marketplace);
+    return NextResponse.json({ ...groups, mine, domain, marketplace, facets: facetsOfRows([...mine, ...domain, ...marketplace]) });
   }
   return NextResponse.json(groups);
 }, { gate: requirePrincipal as () => Promise<CurrentUser> });
+
+/** The folder and tag counts of exactly these rows (the shape `listFiles` returns as `facets`). */
+function facetsOfRows(rows: { folder: string; tags: string[] }[]) {
+  const folders = new Map<string, number>();
+  const tags = new Map<string, number>();
+  for (const r of rows) {
+    folders.set(r.folder, (folders.get(r.folder) ?? 0) + 1);
+    for (const t of r.tags) tags.set(t, (tags.get(t) ?? 0) + 1);
+  }
+  return {
+    folders: [...folders.entries()].map(([path, count]) => ({ path, count })).sort((a, b) => a.path.localeCompare(b.path)),
+    tags: [...tags.entries()].map(([tag, count]) => ({ tag, count })).sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag)),
+  };
+}
 
 /** True when a file's bytes should also be kept as indexable extracted text. */
 function isTextLike(name: string, type: string): boolean {
