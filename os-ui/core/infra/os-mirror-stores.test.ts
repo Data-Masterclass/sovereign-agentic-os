@@ -33,6 +33,8 @@ type FakeIndex = { docs: Map<string, unknown> };
 function fakeCluster() {
   const indices = new Map<string, FakeIndex>();
   const log: string[] = [];
+  /** How the next searches answer: a real envelope, a shard failure, a truncated page, or a 503. */
+  const search = { mode: 'ok' as 'ok' | 'shard-failed' | 'truncated' | 'error' };
   const orig = globalThis.fetch;
   const json = (body: unknown, status = 200) =>
     new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -51,7 +53,14 @@ function fakeCluster() {
     }
     if (rest?.startsWith('/_search')) {
       if (!idx) return json({ error: 'index_not_found_exception' }, 404);
-      return json({ hits: { hits: [...idx.docs.values()].map((_source) => ({ _source })) } });
+      if (search.mode === 'error') return json({ error: 'search_phase_execution_exception' }, 503);
+      const all = [...idx.docs.values()].map((_source) => ({ _source }));
+      const hits = search.mode === 'truncated' ? all.slice(0, Math.max(0, all.length - 1)) : search.mode === 'shard-failed' ? [] : all;
+      return json({
+        timed_out: false,
+        _shards: search.mode === 'shard-failed' ? { total: 1, successful: 0, failed: 1 } : { total: 1, successful: 1, failed: 0 },
+        hits: { total: { value: search.mode === 'shard-failed' ? 0 : all.length, relation: 'eq' }, hits },
+      });
     }
     if (rest?.startsWith('/_doc/')) {
       const id = decodeURIComponent(rest.slice('/_doc/'.length).split('?')[0]);
@@ -74,6 +83,7 @@ function fakeCluster() {
   return {
     indices,
     log,
+    search,
     docsOf: (index: string) => indices.get(index)?.docs ?? new Map<string, unknown>(),
     seed(index: string, id: string, doc: unknown) {
       if (!indices.has(index)) indices.set(index, { docs: new Map() });
@@ -478,7 +488,7 @@ test('file records: a SECOND process (the run worker) picks up text extracted �
   }
 });
 
-test('file records: the refresh is NEWER-WINS and never removes — a record this process just wrote is not rolled back, an empty answer deletes nothing', async () => {
+test('file records: the refresh is NEWER-WINS — a record this process just wrote is not rolled back, and ONE empty answer deletes nothing', async () => {
   const os = fakeCluster();
   const files = await import('@tabs/files/lib/store');
   try {
@@ -494,10 +504,82 @@ test('file records: the refresh is NEWER-WINS and never removes — a record thi
     await files.refreshFromMirror({ force: true });
     assert.equal(files.getFile(mine.id, admin).text, 'the version this process just wrote');
 
-    // The mirror answers with nothing (an empty index and a failed search look the same).
+    // The mirror answers with nothing, once: a single reading is never enough to drop a record.
     os.docsOf('os-file-records').clear();
     await files.refreshFromMirror({ force: true });
-    assert.equal(files.listFiles(admin).mine.length, 1, 'nothing was dropped on an empty answer');
+    assert.equal(files.listFiles(admin).mine.length, 1, 'nothing was dropped on one empty answer');
+  } finally {
+    os.restore();
+    files.__resetStore();
+  }
+});
+
+test('file records: a file DELETED in os-ui disappears from the worker — list_files and get_file stop returning it, without a restart', async () => {
+  const os = fakeCluster();
+  const files = await import('@tabs/files/lib/store');
+  try {
+    // os-ui holds two files; the worker boots and sees both.
+    files.__resetStore();
+    await files.ensureHydrated();
+    const gone = files.createFile(admin, { name: 'invoice-old.md', text: 'deleted hours ago' });
+    const kept = files.createFile(admin, { name: 'invoice-kept.md', text: 'still here' });
+    await settle();
+    files.__resetStore();
+    files.enableMirrorRefresh();
+    await files.ensureHydrated();
+    assert.equal(files.listFiles(admin).mine.length, 2);
+
+    // os-ui deletes one (all the worker can observe: the mirror document is gone).
+    os.docsOf('os-file-records').delete(gone.id);
+
+    // A search that FAILS, loses a shard, or comes back short must never read as a deletion.
+    for (const mode of ['error', 'shard-failed', 'truncated'] as const) {
+      os.search.mode = mode;
+      for (let i = 0; i < 3; i++) await files.refreshFromMirror({ force: true });
+      assert.equal(files.listFiles(admin).mine.length, 2, `nothing dropped while the search is '${mode}'`);
+    }
+    os.search.mode = 'ok';
+
+    // One complete listing without it is not yet enough…
+    await files.refreshFromMirror({ force: true });
+    assert.ok(files.listFiles(admin).mine.some((f) => f.id === gone.id), 'one reading does not drop a record');
+    // …the second in a row is: the record is gone from every read door.
+    await files.refreshFromMirror({ force: true });
+    assert.deepEqual(files.listFiles(admin).mine.map((f) => f.id), [kept.id], 'list_files no longer returns the deleted file');
+    assert.throws(() => files.getFile(gone.id, admin), /not found/i, 'get_file answers not found');
+    assert.equal(files.getFile(kept.id, admin).text, 'still here');
+  } finally {
+    os.search.mode = 'ok';
+    os.restore();
+    files.__resetStore();
+  }
+});
+
+test('file records: a file the worker itself just wrote is never dropped, and a file that reappears is not counted absent', async () => {
+  const os = fakeCluster();
+  const files = await import('@tabs/files/lib/store');
+  try {
+    files.__resetStore();
+    files.enableMirrorRefresh();
+    await files.ensureHydrated();
+    // An agent's upload_file in the worker: in memory at once, its mirror write not landed yet.
+    const mine = files.createFile(admin, { name: 'summary.md', text: 'written by this process' });
+    os.docsOf('os-file-records').delete(mine.id); // the write has not reached the mirror
+    for (let i = 0; i < 4; i++) await files.refreshFromMirror({ force: true });
+    assert.equal(files.getFile(mine.id, admin).text, 'written by this process', 'never seen in the mirror → never dropped');
+
+    // A record the mirror DID hold, missing from one listing and back in the next (a blip): kept.
+    const other = files.createFile(admin, { name: 'other.md', text: 'x' });
+    await settle();
+    await files.refreshFromMirror({ force: true });
+    const doc = os.docsOf('os-file-records').get(other.id);
+    os.docsOf('os-file-records').delete(other.id);
+    await files.refreshFromMirror({ force: true });
+    os.seed('os-file-records', other.id, doc);
+    await files.refreshFromMirror({ force: true });
+    os.docsOf('os-file-records').delete(other.id);
+    await files.refreshFromMirror({ force: true });
+    assert.ok(files.listFiles(admin).mine.some((f) => f.id === other.id), 'the absences were not consecutive');
   } finally {
     os.restore();
     files.__resetStore();
