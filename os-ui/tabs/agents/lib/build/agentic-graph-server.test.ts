@@ -8,7 +8,7 @@ import type { LlmCall } from '@core/runtime/agentic';
 import { parseSystem, serializeSystem, type System } from '@tabs/agents/lib/system-schema';
 import { SOFTWARE_TEAM_YAML } from '@tabs/agents/lib/software-team';
 import { unmappedGrantNames, type OsToolDeps } from '@tabs/agents/lib/build/os-tools';
-import { runOsTeam, runPhaseTurn, resolvePhaseConfirmation, osPreamble } from '@tabs/agents/lib/build/agentic-graph-server';
+import { runOsTeam, runPhaseTurn, resolvePhaseConfirmation, osPreamble, inspectOsRun } from '@tabs/agents/lib/build/agentic-graph-server';
 import { memoryApprovalPort } from '@tabs/agents/lib/engine/approval-port';
 import { phaseToolExecutor } from '@tabs/agents/lib/build/phase-tools';
 import { getSession, resetSession, saveSession } from '@tabs/agents/lib/build/phase-router';
@@ -672,4 +672,29 @@ test('phaseToolExecutor: a forbidden name is refused even when a yaml OFFERS it;
   assert.deepEqual(inner.calls, []);
   assert.equal((await exec('commit', {})).isError, false);
   assert.deepEqual(inner.calls, ['commit']);
+});
+
+// --- get_agent_run reports the step budget the run actually had -------------------
+
+test('inspectOsRun: the reported step limit is the run\'s own (AGENT_TEAM_RUN_MAX_STEPS), not the harness default × agents', async () => {
+  const runId = `run-inspect-${Date.now()}`;
+  const res = await runOsTeam({ runId, user: CREATOR, yaml: mixedYaml(), systemId: 'sys-mix', messages: [{ role: 'user', content: 'How many rows?' }], llm: toolCallingLlm('query_data'), toolDeps: spyDeps() });
+  const seen = await inspectOsRun({ user: CREATOR, yaml: mixedYaml(), systemId: 'sys-mix', runId });
+  assert.equal(seen.budget.limit, 400);
+  assert.equal(seen.budget.limit, res.budget?.limit ?? 400, 'the same limit the run reported');
+});
+
+test('osPreamble: a FILES folder grant is named in the granted context, and the tool brief is one line per tool', () => {
+  const sys = parseSystem({
+    version: '1',
+    system: { name: 'Invoices', domain: 'sales', visibility: 'Personal' },
+    runtime: 'langgraph',
+    entrypoint: 'reader',
+    grants: { tools: ['get_file'], files: [{ folder: { path: '/Invoices', scope: 'personal' }, capability: 'Read' }] },
+    agents: [{ id: 'reader', role: 'agent', agent_md: 'Read.', memory_md: '' }],
+  });
+  const text = osPreamble(CREATOR, sys);
+  assert.match(text, /- files folder: \/Invoices \(My files\) — list_files returns exactly these files/);
+  assert.match(text, /\n- get_file — Read ONE governed file[^\n]{0,100}(\n|$)/);
+  assert.ok(!text.includes('Honesty: `restricted` files'), 'the long description is not in the prompt');
 });
