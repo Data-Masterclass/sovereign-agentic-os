@@ -1,5 +1,13 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * TAB:        agents
+ * FEATURE:    Is this tool call fit to run? — tests of the argument check
+ * USER STORY: As the owner of an agent system I want a call with broken or incomplete arguments
+ *             refused with a message the model can act on, and never run with defaults.
+ * ARCHITECTURE:
+ *   - Pure tests of `checkToolArgs`, plus one registry-wide check: every tool's own documented
+ *     examples pass its schema, so enforcing the schemas refuses nothing the tools document.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
