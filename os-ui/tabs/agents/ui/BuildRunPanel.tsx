@@ -1207,7 +1207,7 @@ export default function BuildRunPanel({
       ) : null}
       <p className="hint" style={{ marginTop: 0 }}>
         Compiles system.yaml → LangGraph, saves the agent files, registers the LiteLLM key +
-        routing and the OPA grants, links Langfuse — then verifies each with a probe. Mocked in kind.
+        routing and the OPA grants, links Langfuse — then verifies each with a probe.
       </p>
       {buildErr ? <div className="error">{buildErr}</div> : null}
       {report ? (
