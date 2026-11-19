@@ -1207,6 +1207,24 @@ above; and `promote_metric`, which is catalogued but My-scope although it is a
 promotion. The registry ratchet covers `ALL_MCP_TOOLS` as registered in the test
 environment — a bundle behind a flag that is off there is not in it.
 
+**Groundwork for a user-confirm gate: the classification is production code, and
+nothing consults it yet.** `core/mcp/tool-classes.ts` holds `READ_TOOLS` and the
+backlog (they used to live only inside the registry ratchet test), a small table of
+tools that sit in the write catalog and are confirm-free anyway — each with the
+reason, each only after its handler was read — and
+`needsUserConfirm(name) = !CONFIRM_FREE.has(name)`. It is fail-closed: an unknown
+name, a backlog tool and every other catalogued write need confirmation.
+`WRITE_TOOL_NAMES` alone is the wrong predicate for this question because five
+read-shaped tools live in a write barrel (`list_exposure_sets`,
+`get_catalog_snapshot`, `get_catalog_classification`, `list_exposed_tables`,
+`list_adoptable_actions`). Three cost-only actions that save nothing are confirm-free
+too (`preview_metric`, `suggest_metrics`, `propose_quality_fixes`). Two that read like
+them are **not**: `run_quality_checks` appends a run to the dataset's durable quality
+series and `export_okf_bundle` creates a Files artifact. This changes no behaviour —
+the interactive-assistant rows in the table above are still accurate, and a test in
+`core/mcp/tool-classes.test.ts` fails if a production file starts importing the
+module before the gate that uses it is reviewed.
+
 **A picker scoped to "everything the caller may see" is not scoped to the thing being
 edited.** The agent grant picker built its feed from `listDatasets/listWorkflows/
 listPersonalKnowledge/listFiles/listMetrics(principal)` — each of which scopes to

@@ -9,6 +9,7 @@ import { dirname, resolve } from 'node:path';
 import { ALL_WRITE_TOOLS } from '@core/mcp/write-tools';
 import { ALL_MCP_TOOLS, listToolsForRole } from '@core/mcp/server';
 import { WRITE_TOOL_TABS, WRITE_TOOL_NAMES, AGENT_FORBIDDEN_TOOLS, agentForbiddenReason } from '@core/mcp/write-tool-meta';
+import { READ_TOOLS, UNCLASSIFIED_BACKLOG } from '@core/mcp/tool-classes';
 
 /**
  * The write tools that do NOT live in `ALL_WRITE_TOOLS`: the PLATFORM-MCP surface
@@ -259,6 +260,8 @@ test('a PERSON keeps every agent-forbidden tool: the MCP registry and dispatch n
     const src = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), file), 'utf8');
     assert.doesNotMatch(src, /agentForbiddenReason|AGENT_FORBIDDEN_TOOLS/, `${file} must not consult the agent table`);
     assert.doesNotMatch(src, /write-tool-meta|build\/hold|holdDecision/, `${file} must not consult the hold either`);
+    // Nor the user-confirm classification: a person's own MCP client is never confirm-gated.
+    assert.doesNotMatch(src, /tool-classes|needsUserConfirm|CONFIRM_FREE/, `${file} must not consult the confirm classes`);
   }
 });
 
@@ -280,38 +283,10 @@ test('a PERSON keeps every agent-forbidden tool: the MCP registry and dispatch n
 // LIMIT: this is `ALL_MCP_TOOLS` as registered in the test environment. A bundle behind a feature
 // flag that is off here is not in it.
 
-/** Reviewed: read-only against governed state. (A read may still cost model or query budget.) */
-const READ_TOOLS: readonly string[] = [
-  'diff_versions', 'get_agent_run', 'get_agent_system', 'get_app_spec', 'get_connection', 'get_cost',
-  'get_dagster_run', 'get_dashboard', 'get_dataset', 'get_engineering_view', 'get_file', 'get_guide',
-  'get_history', 'get_knowledge', 'get_lineage', 'get_metric', 'get_monitoring_overview',
-  'get_operating_manual', 'get_policy_view', 'get_request', 'get_run_trace', 'get_software',
-  'get_sync_status', 'get_version', 'list_agent_systems', 'list_approvals',
-  'list_capabilities', 'list_connection_templates', 'list_connections', 'list_dashboards',
-  'list_datasets', 'list_files', 'list_knowledge', 'list_metrics', 'list_operating_manual_versions',
-  'list_runs', 'list_software', 'profile_dataset', 'query_data', 'query_metric', 'read_app_files',
-  'search_files', 'search_knowledge', 'whoami',
-  // Persist nothing, but are not free: each spends reasoning-model budget and returns a candidate
-  // or a directive. `generate_app_spec` returns an unsaved AppSpec (`set_app_spec` publishes it);
-  // `verify_software` returns the test directive and normalises findings it does not store.
-  'generate_app_spec', 'verify_software',
-];
-
-/**
- * STATE-CHANGING (or possibly so) and NOT YET CLASSIFIED for the agent hold gate: the gate answers
- * "not a write" for each of these under EVERY preset, `read-only` included. Named so they can be
- * decided one by one — not excused.
- *
- * The nine that were here until 2026-11-19 are decided and live in the write catalog now
- * (`DECIDED_BACKLOG_WRITE_TOOLS` above). ONE name took their place, and it came out of READ_TOOLS:
- * a "reviewed read" that turned out not to have been checked is worse than a named unknown.
- */
-const UNCLASSIFIED_BACKLOG: readonly string[] = [
-  // Listed as a read until someone looked: it calls `reconcileDeployStatus`, which re-polls the
-  // runner and may write the app's deploy fields (the self-healed preview URL) back. Whether that
-  // counts as a governed write an agent should be held on is NOT decided — unclassified until it is.
-  'get_software_status',
-];
+// READ_TOOLS and UNCLASSIFIED_BACKLOG are PRODUCTION lists now (`core/mcp/tool-classes.ts`): the
+// user-confirm predicate reads them, so they can no longer live only in a test. This ratchet
+// imports them — it still pins the hold gate's three buckets; `tool-classes.test.ts` pins the
+// confirm classes built on top.
 
 test('REGISTRY RATCHET: every MCP tool is a classified write, a reviewed read, or on the named backlog — exactly one', () => {
   const registry = ALL_MCP_TOOLS.map((t) => t.name);
@@ -329,7 +304,7 @@ test('REGISTRY RATCHET: every MCP tool is a classified write, a reviewed read, o
     else if (hits.length > 1) multiply.push(`${name} (${hits.join('+')})`);
     else buckets[hits[0]].push(name);
   }
-  assert.deepEqual(unplaced, [], 'a NEW tool: classify it in write-tool-meta.ts, or add it to READ_TOOLS (if it changes nothing) or to the backlog WITH a comment');
+  assert.deepEqual(unplaced, [], 'a NEW tool: classify it in write-tool-meta.ts, or add it to READ_TOOLS (if it changes nothing) or to the backlog WITH a comment — both in core/mcp/tool-classes.ts');
   assert.deepEqual(multiply, [], 'a tool sits in more than one bucket');
   // The other direction: nothing listed that the registry no longer has (a stale line hides a rename).
   const known = new Set(registry);
