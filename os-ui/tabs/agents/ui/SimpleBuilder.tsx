@@ -19,6 +19,9 @@ import {
   addOutput, removeOutput, setOutputAgent,
 } from '@tabs/agents/lib/simple-edit';
 import { outputLanding, agentOutputTools, OUTPUT_TOOL } from '@tabs/agents/lib/output-tools';
+import {
+  agentCapabilityState, capabilityStateLine, staleLimitNote, useEverything, addMissingCapability, toolsForSelection,
+} from '@tabs/agents/lib/agent-capabilities';
 import { useToast } from '@core/ui/core/Toast';
 import { normaliseFolderPath } from '@core/kernel/folders';
 import { scopeLabel } from '@core/kernel/scopes';
@@ -1158,24 +1161,26 @@ function AgentCapabilities({
     return base.filter((id) => offeredIds.includes(id));
   }, [agent.tools, offeredIds]);
 
-  // Persist a new selection: full recommended set → clear the narrowing (undefined);
-  // otherwise store the narrowed tool subset (⊆ grants.tools).
+  // Persist a new selection. Everything on offer selected ⇒ NO list: the agent keeps using
+  // everything the team is granted (so applying the picker unchanged never limits an agent).
+  // Anything less ⇒ the narrowed list: each selected capability resolves to its kind's
+  // read ∪ granted-write tools ∩ the team pool (never wider than `grants.tools`).
   const persist = (nextIds: string[]) => {
     if (!canEdit) return;
-    const isFull = offeredIds.length > 0 && nextIds.length === offeredIds.length
-      && offeredIds.every((id) => nextIds.includes(id));
-    let tools: string[] | undefined;
-    if (isFull) {
-      tools = undefined;
-    } else {
-      // Pool-aware: each selected chip resolves to its kind's read ∪ granted-write tools
-      // ∩ the team pool — so a capability keeps the write access the team was granted
-      // (not just read). The ∩ pool keeps the agent ⊆ grants.tools (never widens).
-      const narrow = toolsForCapabilityChipsInPool(nextIds, system.grants.tools);
-      tools = narrow.length > 0 ? narrow : [];
-    }
-    onCommit({ ...system, agents: system.agents.map((a) => a.id === agentId ? { ...a, tools } : a) });
+    const tools = toolsForSelection(offeredIds, nextIds, (ids) => toolsForCapabilityChipsInPool(ids, system.grants.tools));
+    onCommit({ ...system, agents: system.agents.map((a) => {
+      if (a.id !== agentId) return a;
+      if (tools !== undefined) return { ...a, tools };
+      const { tools: _own, ...inheriting } = a;
+      void _own;
+      return inheriting;
+    }) });
   };
+
+  // Is this agent using everything the team is granted, or its own list — and has the team
+  // been granted something that list lacks? Said on the card, with the one-click repairs.
+  const capState = agentCapabilityState(system, agentId);
+  const staleNote = staleLimitNote(capState);
 
   const removeCap = (id: string) => persist(selectedIds.filter((s) => s !== id));
 
@@ -1189,6 +1194,37 @@ function AgentCapabilities({
           </button>
         ) : null}
       </div>
+
+      <p className="hint" role="status" style={{ marginTop: 0, marginBottom: 6 }}>
+        {capabilityStateLine(capState, selectedIds.length)}
+        {capState.mode === 'limited' && canEdit ? (
+          <button
+            type="button"
+            className="btn ghost sm"
+            style={{ marginLeft: 8 }}
+            title="Remove this agent's own list — it then has everything the team is granted, now and later"
+            onClick={() => onCommit(useEverything(system, agentId))}
+          >
+            Use everything
+          </button>
+        ) : null}
+      </p>
+      {staleNote && capState.mode === 'limited' ? (
+        <p className="hint" role="note" style={{ marginTop: 0, marginBottom: 6, color: 'var(--warn, #b7791f)' }}>
+          {staleNote}
+          {canEdit ? capState.missingLabels.map((label) => (
+            <button
+              key={label}
+              type="button"
+              className="btn ghost sm"
+              style={{ marginLeft: 8 }}
+              onClick={() => onCommit(addMissingCapability(system, agentId, label))}
+            >
+              Add {label}
+            </button>
+          )) : null}
+        </p>
+      ) : null}
 
       {/* WRITING is not a capability to pick here: it comes from the outputs declared on Define,
           and the tool is handed to this agent at run time. Say which it has — or how to get one —

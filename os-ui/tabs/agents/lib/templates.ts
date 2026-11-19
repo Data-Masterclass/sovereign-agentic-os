@@ -76,7 +76,10 @@ export function templateYaml(key: TemplateKey, name: string, domain: string, vis
     grants: { data: [], knowledge: [], metrics: [], tools: ['search_knowledge'], connections: [], files: [], plan: [] },
     routing: { overrides: {} },
     agents: [
-      { id: spec.agentId, role: spec.role, agent_md: spec.agentMd, memory_md: spec.memoryMd, tools: ['search_knowledge'] },
+      // NO per-agent `tools:` — the agent inherits everything the team is granted. A list here
+      // froze the first agent of every new system at `search_knowledge`: nothing granted later
+      // (files, data, an output's write tool) ever reached it.
+      { id: spec.agentId, role: spec.role, agent_md: spec.agentMd, memory_md: spec.memoryMd },
     ],
     edges: [],
   };

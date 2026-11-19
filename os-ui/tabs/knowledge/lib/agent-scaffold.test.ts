@@ -58,6 +58,11 @@ test('the workflow is attached as context via grants.knowledge', () => {
   const out = scaffoldSystem(parseWorkflow(WF));
   assert.deepEqual(out.system.grants.knowledge, [{ id: 'bank-submission', capability: 'Read' }]);
   assert.deepEqual(out.system.grants.tools, ['retrieve']);
+  // Every scaffolded agent, in every shape (single, supervisor + members, coordinator).
+  for (const dispositions of [{}, { review: 'automate' as const }]) {
+    const shape = scaffoldSystem(parseWorkflow(WF_REG), { dispositions });
+    assert.ok(shape.system.agents.every((x) => x.tools === undefined), 'no agent carries its own tool list');
+  }
 });
 
 test('a single agent needs no supervisor (it is the entrypoint)', () => {
@@ -173,11 +178,12 @@ test('the actor agent’s AGENT.md is actorAgentMd, byte for byte', () => {
   assert.match(agent.agent_md, /Never refund without a verified order/);
 });
 
-test('the actor agent names the actor in its role and keeps the retrieve tool', () => {
+test('the actor agent names the actor in its role and inherits the team tools (retrieve) — no list of its own', () => {
   const out = scaffoldSystem(parseWorkflow(WF_REG));
   const agent = out.system.agents.find((a) => a.id === 'triage-bot')!;
   assert.match(agent.role, /Triage Bot/);
-  assert.deepEqual(agent.tools, ['retrieve']);
+  assert.equal(agent.tools, undefined, 'a scaffolded agent is not limited: it uses everything the team is granted');
+  assert.deepEqual(out.system.grants.tools, ['retrieve']);
 });
 
 test('a Human-actor step set to automate becomes an agent beside the actor agent', () => {
