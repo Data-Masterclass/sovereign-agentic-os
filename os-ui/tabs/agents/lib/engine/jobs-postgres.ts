@@ -64,6 +64,7 @@ export const RUN_JOBS_DDL: readonly string[] = [
    )`,
   `CREATE INDEX IF NOT EXISTS run_jobs_queued_idx ON run_jobs (status, created_at)`,
   `CREATE INDEX IF NOT EXISTS run_jobs_lease_idx  ON run_jobs (status, locked_at)`,
+  `CREATE INDEX IF NOT EXISTS run_jobs_system_idx ON run_jobs (system_id, requested_by)`,
   `CREATE TABLE IF NOT EXISTS run_events (
      run_id TEXT        NOT NULL,
      seq    INTEGER     NOT NULL,
@@ -264,6 +265,15 @@ export function postgresRunJobStore(sql: SqlClient): RunJobStore {
 
     async get(runId) {
       const res = await sql.query(`SELECT ${JOB_COLS} FROM run_jobs WHERE run_id=$1`, [runId]);
+      return res.rows.length > 0 ? toJob(res.rows[0]) : null;
+    },
+
+    async latestForSystem(systemId, requestedBy) {
+      const res = await sql.query(
+        `SELECT ${JOB_COLS} FROM run_jobs WHERE system_id=$1 AND requested_by=$2
+          ORDER BY updated_at DESC, created_at DESC LIMIT 1`,
+        [systemId, requestedBy],
+      );
       return res.rows.length > 0 ? toJob(res.rows[0]) : null;
     },
 

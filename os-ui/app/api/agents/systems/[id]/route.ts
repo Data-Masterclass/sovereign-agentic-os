@@ -5,6 +5,7 @@ import { NextResponse } from 'next/server';
 import { withRoute } from '@core/kernel/route-server';
 import { getSystem, canRunCheck, archiveSystem, unarchiveSystem, deleteSystem, renameAgentSystem, ensureHydrated } from '@tabs/agents/lib/store';
 import { purgeSystemResources } from '@tabs/agents/lib/physical-delete';
+import { latestRunView } from '@tabs/agents/lib/build/latest-run-server';
 import { reconcileScheduleCron } from '@tabs/agents/lib/schedule-cron';
 import { compile } from '@tabs/agents/lib/langgraph-compile';
 import { config } from '@core/kernel/config';
@@ -32,6 +33,11 @@ export const GET = withRoute<{ id: string }>(async ({ user, params }) => {
   // read-back (`get_agent_system`) still calls `systemGitInfo` for its own `git` field.
   const canEdit = view.owner === user.id || (user.role === 'admin' && user.domains.includes(view.domain));
   const canRun = canRunCheck(view, user);
+  // The run shown on page load comes from the RUN STORE (the caller's latest run of this system),
+  // not from this process's copy of the record: runs execute in the worker, and its `setLastRun`
+  // never reaches this process's memory — so `view.lastRun` can be many runs old. The record's
+  // value is only the fallback (no stored run, or the run database unreachable).
+  const latest = await latestRunView(id, user.id, view.lastRun);
   return NextResponse.json({
     id: view.id,
     name: view.name,
@@ -44,11 +50,13 @@ export const GET = withRoute<{ id: string }>(async ({ user, params }) => {
     disabledAgents: view.disabledAgents,
     lastActivity: view.lastActivity,
     lastBuild: view.lastBuild ?? null,
-    activity: view.activity ?? null,
-    lastRun: view.lastRun ?? null,
+    // A run of the caller's that is queued or executing (possibly in the worker, which this
+    // process's `view.activity` never sees) is reported as in progress, with its id.
+    activity: view.activity ?? (latest.inFlight ? { kind: 'running', startedAt: latest.inFlight.startedAt, runId: latest.inFlight.runId } : null),
+    lastRun: latest.lastRun,
     // True when the last run was recovered after a mid-run restart — the UI shows an
     // "interrupted — re-run to continue" affordance rather than a stale live spinner.
-    interrupted: view.lastRun?.interrupted ?? false,
+    interrupted: latest.lastRun?.interrupted ?? false,
     system: view.system,
     ir,
     compileError,
