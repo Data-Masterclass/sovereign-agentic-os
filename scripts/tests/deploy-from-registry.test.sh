@@ -111,9 +111,10 @@ check "a clean tree passes the check" "check-conflict-copies: ok" "$out"
 
 echo "== check-structure.mjs rule 7, in a throwaway tree"
 # An isolated cwd: no components/, no os-ui/core|tabs (layout rules skip), no baseline file —
-# so CLOUD-SYNC-DUPLICATE is the only thing that can speak.
+# so CLOUD-SYNC-DUPLICATE is the only thing that can speak. Every invocation states the CI
+# variable explicitly (see the H1b block below for why): never inherit it from the runner.
 mkdir -p "$TMP/cs/docs" "$TMP/cs/os-ui" "$TMP/cs/charts" "$TMP/cs/scripts"
-out=$(cd "$TMP/cs" && node "$REPO/scripts/check-structure.mjs" 2>&1); rc=$?
+out=$(cd "$TMP/cs" && env -u CI node "$REPO/scripts/check-structure.mjs" 2>&1); rc=$?
 [ $rc -eq 0 ] && ok "a clean tree passes check-structure" || bad "a clean tree passes check-structure" "$out"
 mkdir -p "$TMP/cs/charts/values 2"
 echo x > "$TMP/cs/scripts/thing 2.sh"
@@ -125,7 +126,7 @@ check "it names the rule"      "CLOUD-SYNC-DUPLICATE"   "$out"
 check "it names the directory" "charts/values 2"        "$out"
 check "it names the file"      "scripts/thing 2.sh"     "$out"
 rm -rf "$TMP/cs/charts/values 2" "$TMP/cs/scripts/thing 2.sh"
-out=$(cd "$TMP/cs" && node "$REPO/scripts/check-structure.mjs" 2>&1); rc=$?
+out=$(cd "$TMP/cs" && env -u CI node "$REPO/scripts/check-structure.mjs" 2>&1); rc=$?
 [ $rc -eq 0 ] && ok "removing them passes again" || bad "removing them passes again" "$out"
 
 echo "== review H1a: the gate does not police other sessions' worktrees"
@@ -140,8 +141,14 @@ case $out in *".claude"*) bad "the gate ignores .claude/worktrees" "reported a s
 echo "== review H1b: rule 7 is hard in CI, a warning locally"
 # check-structure is the PostToolUse hook, so a stray dropped by cloud sync mid-edit must not
 # wedge every tool call — but CI must never let one through.
+#
+# `env -u CI` / `CI=true` are BOTH explicit, and that is the point: GitHub Actions exports
+# CI=true to every step, so a "local mode" case that merely omitted the variable inherited the
+# runner's and ran the hard branch — these three assertions failed on the first CI run of this
+# file while passing on a laptop. A test of an environment-dependent branch has to set the
+# environment itself, in both directions.
 mkdir -p "$TMP/cs/os-ui/core 2"
-out=$(cd "$TMP/cs" && node "$REPO/scripts/check-structure.mjs" 2>&1); rc=$?
+out=$(cd "$TMP/cs" && env -u CI node "$REPO/scripts/check-structure.mjs" 2>&1); rc=$?
 [ $rc -eq 0 ] && ok "locally a duplicate does NOT fail" || bad "locally a duplicate does NOT fail" "exit $rc"
 check "locally it warns"             "WARNING"          "$out"
 check "locally it prints the path"   "os-ui/core 2"     "$out"
@@ -171,20 +178,24 @@ mkdir -p "$TMP/tree/docs"
 echo x > "$TMP/tree/docs/notes 2.md"
 out=$(cd "$TMP/tree" && bash os-ui/scripts/gate.sh 2>&1)
 check "docs/'notes 2.md' does not fail the gate" "check-conflict-copies: ok" "$out"
+# These assert the CONFLICT-COPY message, not merely a non-zero exit: the throwaway tree has no
+# chart-check scripts, so the gate exits non-zero anyway once it gets past this check — a bare
+# `rc != 0` would pass for the wrong reason.
 echo x > "$TMP/tree/docs/helper 2.mjs"
-out=$(cd "$TMP/tree" && bash os-ui/scripts/gate.sh 2>&1); rc=$?
-[ $rc -ne 0 ] && ok "docs/'helper 2.mjs' DOES fail the gate" || bad "docs/'helper 2.mjs' DOES fail the gate" "exit 0"
+out=$(cd "$TMP/tree" && bash os-ui/scripts/gate.sh 2>&1)
+check "docs/'helper 2.mjs' DOES fail the gate" "docs/helper 2.mjs" "$out"
+check "and it is reported as a conflict copy"  "conflict copies"   "$out"
 rm -f "$TMP/tree/docs/helper 2.mjs"
 mkdir -p "$TMP/tree/docs/plans 2"
-out=$(cd "$TMP/tree" && bash os-ui/scripts/gate.sh 2>&1); rc=$?
-[ $rc -ne 0 ] && ok "docs/'plans 2/' DOES fail the gate" || bad "docs/'plans 2/' DOES fail the gate" "exit 0"
+out=$(cd "$TMP/tree" && bash os-ui/scripts/gate.sh 2>&1)
+check "docs/'plans 2/' DOES fail the gate" "docs/plans 2" "$out"
 rmdir "$TMP/tree/docs/plans 2"
 # Only the TOP-LEVEL docs/ is relaxed — a nested docs/ elsewhere stays under the strict sweep,
 # exactly as rule 7 scopes it.
 mkdir -p "$TMP/tree/components/x/docs"
 echo x > "$TMP/tree/components/x/docs/notes 2.md"
-out=$(cd "$TMP/tree" && bash os-ui/scripts/gate.sh 2>&1); rc=$?
-[ $rc -ne 0 ] && ok "a NESTED docs/'notes 2.md' still fails" || bad "a NESTED docs/'notes 2.md' still fails" "exit 0"
+out=$(cd "$TMP/tree" && bash os-ui/scripts/gate.sh 2>&1)
+check "a NESTED docs/'notes 2.md' still fails" "components/x/docs/notes 2.md" "$out"
 rm -rf "$TMP/tree/components"
 out=$(cd "$TMP/tree" && bash os-ui/scripts/gate.sh 2>&1)
 check "the tree is clean again (prose kept)" "check-conflict-copies: ok" "$out"
