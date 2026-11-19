@@ -1,0 +1,75 @@
+{{- /*
+  OpenSearch: restrict ingress to the OS components that use it (defence in depth).
+
+  Selects the bundled OpenSearch pods (the upstream subchart's selector labels) and admits:
+
+    :9200 (REST)  from the OS components that actually call it —
+                    os-ui                          (component os-ui; includes its
+                                                    wait-for-opensearch initContainer, same pod)
+                    os-ui-worker                   (component os-ui-worker; runs agent tools,
+                                                    retrieval included — see the query-tool
+                                                    policy for why the worker must be listed)
+                    register-opensearch-snapshot-repo  (component opensearch-snapshot-register)
+                    opensearch-snapshot CronJob        (component opensearch-snapshot-cron)
+    :9200/:9300   between OpenSearch pods themselves (transport; a no-op while single-node,
+                  required as soon as `opensearch.replicas` > 1).
+
+  Everything else in the namespace (and outside it) is not admitted. `:9600` (performance
+  analyzer) has no in-cluster consumer and is therefore not opened. Kubelet probes and
+  `kubectl port-forward` are unaffected (they do not traverse pod-to-pod policy).
+
+  Nothing else in the chart talks to OpenSearch directly: Docling, Dagster, data-runner,
+  query-tool, LiteLLM and Langfuse never do — documents reach the index only through os-ui.
+  A NEW direct client must be added here, or its requests will time out once the policy is
+  enforced. `scripts/check-opensearch-ingress-policy.mjs` asserts this peer list in the gate.
+
+  Gated by `networkPolicies.opensearchIngress` (default true) and rendered only when the
+  bundled OpenSearch is deployed (`opensearch.enabled`); a managed endpoint is out of scope.
+  As with the egress baseline, kind's default CNI does not enforce NetworkPolicies — locally
+  this applies but is inert; on STACKIT (Calico) it enforces.
+
+  The flag lives under `networkPolicies`, not `opensearch.networkPolicy`, because the latter
+  is the upstream subchart's own (label-based) NetworkPolicy switch.
+*/}}
+{{- if and .Values.opensearch.enabled .Values.networkPolicies.opensearchIngress }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: opensearch-allow-os-clients-only
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: opensearch
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  policyTypes:
+    - Ingress
+  ingress:
+    # REST API — only the OS components that use it.
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: os-ui
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: os-ui-worker
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: opensearch-snapshot-register
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: opensearch-snapshot-cron
+      ports:
+        - { protocol: TCP, port: 9200 }
+    # Node-to-node: transport (and REST, used by cluster bootstrap) between OpenSearch pods.
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: opensearch
+              app.kubernetes.io/instance: {{ .Release.Name }}
+      ports:
+        - { protocol: TCP, port: 9200 }
+        - { protocol: TCP, port: 9300 }
+{{- end }}

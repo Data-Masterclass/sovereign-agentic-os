@@ -77,6 +77,10 @@ node ../scripts/check-image-allowlist-chart.mjs
 # without a protection annotation must fail the render, and no committed profile may opt in.
 # Same skip rules as above.
 node ../scripts/check-consoles-not-public.mjs
+# OpenSearch: restrict ingress to the OS components that use it (defence in depth). The policy
+# must render by default, select the OpenSearch pods, and admit every rendered workload that calls
+# OpenSearch (a missed client times out once enforced). Same skip rules as above.
+node ../scripts/check-opensearch-ingress-policy.mjs
 # B3 review H-1/H-5/H-6: the reconciler must run on a DEFAULT install, the Dagster run pod must
 # connect as the user rules.json allows, and the os-ui Role must not grant namespace-wide Secrets.
 # B4 review H-2 rides on the same check: the os-ui Role must carry `batch`/`cronjobs` in EVERY
