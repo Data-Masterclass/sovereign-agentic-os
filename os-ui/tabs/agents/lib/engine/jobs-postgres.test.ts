@@ -125,3 +125,28 @@ test('the latest run of a system is read for ONE requester, most recently active
   assert.deepEqual(db.args[0], ['sys-1', 'u1']);
   assert.ok(RUN_JOBS_DDL.some((s) => /run_jobs_system_idx ON run_jobs \(system_id, requested_by\)/.test(s)), 'the lookup has an index');
 });
+
+test('run listing SQL: one statement, scope + filters in the WHERE, outcome fields only, newest first', async () => {
+  const db = recorder([[{
+    run_id: 'r1', system_id: 'sys-1', domain: 'sales', requested_by: 'u1', kind: 'start', status: 'done',
+    locked_by: null, locked_at: null, attempts: 1, error: null, created_at: new Date(1000), updated_at: new Date(2000),
+    report: { status: 'failed', failed: true, failure: { node: 'a', reason: 'boom' }, interrupted: null },
+  }]]);
+  const rows = await postgresRunJobStore(db).listRuns({ systemId: 'sys-1', statuses: ['done', 'failed'], visibleTo: { requestedBy: 'u1', domains: ['sales'] }, limit: 25 });
+  assert.equal(db.sql.length, 1, 'no per-run follow-up queries');
+  const sql = db.sql[0];
+  assert.match(sql, /LEFT JOIN LATERAL/);
+  assert.match(sql, /e\.event = 'done'/);
+  assert.match(sql, /ORDER BY e\.seq DESC LIMIT 1/, 'the LATEST done frame');
+  assert.match(sql, /j\.requested_by = \$3 OR j\.domain = ANY\(\$4::text\[\]\)/, 'the viewer scope is in the read');
+  assert.match(sql, /ORDER BY j\.created_at DESC/);
+  assert.doesNotMatch(sql, /e\.data\s+AS|SELECT e\.data|finalText|principal_snapshot|j\.input/, 'never the report body, input or principal');
+  assert.deepEqual(db.args[0], ['sys-1', ['done', 'failed'], 'u1', ['sales'], 25]);
+  assert.equal(rows[0].runId, 'r1');
+  assert.equal(rows[0].createdAt, 1000);
+  assert.deepEqual(rows[0].report, { status: 'failed', failed: true, failure: { node: 'a', reason: 'boom' } });
+  // Unset filters are NULL (match everything).
+  const db2 = recorder([[]]);
+  await postgresRunJobStore(db2).listRuns({ limit: 5 });
+  assert.deepEqual(db2.args[0], [null, null, null, [], 5]);
+});

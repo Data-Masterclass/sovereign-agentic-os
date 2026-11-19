@@ -40,6 +40,8 @@ import {
   type RunJobKind,
   type RunJobStatus,
   type RunJobStore,
+  type RunListRow,
+  reportSummaryOf,
 } from '@tabs/agents/lib/engine/jobs';
 
 /** The minimum of `pg.Pool` this module uses — so tests can drive it with a fake. */
@@ -275,6 +277,43 @@ export function postgresRunJobStore(sql: SqlClient): RunJobStore {
         [systemId, requestedBy],
       );
       return res.rows.length > 0 ? toJob(res.rows[0]) : null;
+    },
+
+    async listRuns({ systemId, statuses, visibleTo, limit }) {
+      // ONE statement: the scope and filters are in the WHERE (a creator's runs are never crowded
+      // out by the tenant's newest), and each row carries only the outcome fields of its latest
+      // `done` frame — never the report's outputs. Unset filters are NULL and match everything.
+      const res = await sql.query(
+        `SELECT j.run_id, j.system_id, j.domain, j.requested_by, j.kind, j.status, j.locked_by, j.locked_at,
+                j.attempts, j.error, j.created_at, j.updated_at,
+                d.report
+           FROM run_jobs j
+           LEFT JOIN LATERAL (
+             SELECT jsonb_build_object(
+                      'status', e.data->'status', 'failed', e.data->'failed', 'interrupted', e.data->'interrupted',
+                      'parked', e.data->'parked', 'reachedEnd', e.data->'reachedEnd', 'failure', e.data->'failure'
+                    ) AS report
+               FROM run_events e
+              WHERE e.run_id = j.run_id AND e.event = 'done'
+              ORDER BY e.seq DESC LIMIT 1
+           ) d ON true
+          WHERE ($1::text IS NULL OR j.system_id = $1)
+            AND ($2::text[] IS NULL OR j.status = ANY($2::text[]))
+            AND ($3::text IS NULL OR j.requested_by = $3 OR j.domain = ANY($4::text[]))
+          ORDER BY j.created_at DESC, j.run_id DESC
+          LIMIT $5`,
+        [
+          systemId ?? null,
+          statuses ? [...statuses] : null,
+          visibleTo ? visibleTo.requestedBy : null,
+          visibleTo ? [...visibleTo.domains] : [],
+          Math.max(0, Math.floor(limit)),
+        ],
+      );
+      return res.rows.map((row): RunListRow => {
+        const { input: _input, principal: _principal, ...job } = toJob({ ...row, principal_snapshot: null, input: null });
+        return { ...job, report: reportSummaryOf(parseJson<unknown>(row.report, null)) };
+      });
     },
 
     async appendEvent(runId, event, data, when) {

@@ -6,7 +6,11 @@ import { config } from '@core/kernel/config';
 import { recentTraces } from '@core/infra/agent-governed';
 import { readFetch } from '@tabs/monitoring/lib/util';
 import { MOCK_RUNS, mockTrace } from '@tabs/monitoring/lib/mock';
-import type { Health, HealthItem, TraceDetail, TraceStep } from '@tabs/monitoring/lib/types';
+import type { Health, HealthItem, Scope, TraceDetail, TraceStep } from '@tabs/monitoring/lib/types';
+import { isRunId } from '@core/kernel/run-id';
+import { storeRuns, type RunListFilter, type RunListItem, type RunListSource } from '@tabs/monitoring/lib/adapters/run-store-runs';
+
+export { isRunListStatus, RUN_LIST_STATUSES, type RunListStatus } from '@tabs/monitoring/lib/adapters/run-store-runs';
 
 /**
  * Run/trace adapter (lens 1) — Langfuse runs + the in-process governed trace ring,
@@ -84,12 +88,106 @@ function runHealth(t: { decision?: string; output?: unknown; level?: unknown }):
   return 'green';
 }
 
+/** Whether the run store answered a listing. */
+export type RunStoreState = { available: true } | { available: false; code: 'run_store_unavailable'; reason: string };
+
+export type RunList = {
+  /** Agent runs (run store) and governed tool-call traces (Langfuse + this process's ring), newest first. */
+  items: HealthItem[];
+  runStore: RunStoreState;
+};
+
+export type CollectRunsOptions = {
+  /** The viewer's scope, pushed into the run-store read. Absent: every run (callers still `filterScope`). */
+  scope?: Scope;
+  /** Additive filters. A filtered listing holds agent runs only (traces carry no system or status). */
+  filter?: RunListFilter;
+  /** Max agent runs read from the store (default 50). */
+  limit?: number;
+  /** Test seam: the run store. Default: this process's store (Postgres when configured). */
+  runSource?: () => Promise<RunListSource>;
+  /** Test seam: system display names. Default: the agents registry, best-effort. */
+  systemNames?: () => Promise<(systemId: string) => string | undefined>;
+};
+
+async function defaultRunSource(): Promise<RunListSource> {
+  // Lazy, like every other door into the run store: it is server-only and opens a pool.
+  const { runJobStore } = await import('@tabs/agents/lib/build/run-jobs-server');
+  return runJobStore();
+}
+
+/** System display names for run titles. Best-effort: a miss falls back to the system id. */
+async function defaultSystemNames(): Promise<(id: string) => string | undefined> {
+  try {
+    const agents = await import('@tabs/agents/lib/store');
+    await agents.ensureHydrated();
+    const names = new Map(agents.listAllSystemsInternal().map((s) => [s.id, s.name]));
+    return (id) => names.get(id);
+  } catch {
+    return () => undefined;
+  }
+}
+
 /**
- * Collect recent runs. Owner/domain are derived from the trace metadata where
- * present (principal → owner; the principal's domain → domain); the offline ring
- * is tagged best-effort. Scope filtering happens centrally in aggregate.
+ * Collect the runs lens. AGENT RUNS come from the durable run store (the rows the worker writes),
+ * scoped in the read, with their real status: a run Langfuse has not ingested is listed all the
+ * same. Langfuse and the in-process governed ring still contribute the governed TOOL-CALL traces
+ * (and remain the drill-down via `fetchTrace`); an agent-run trace (`run_<uuid>`) from them is not
+ * listed a second time, because the store row is the run. An unreachable store is reported in
+ * `runStore`, never turned into an empty list.
  */
-export async function collectRuns(): Promise<HealthItem[]> {
+export async function collectRunList(opts: CollectRunsOptions = {}): Promise<RunList> {
+  const filter = opts.filter ?? {};
+  const filtered = Boolean(filter.systemId || filter.status);
+  const [fromStore, nameOf, traces] = await Promise.all([
+    storeRuns(opts.runSource ?? defaultRunSource, { scope: opts.scope, filter, limit: opts.limit ?? 50 }),
+    (opts.systemNames ?? defaultSystemNames)(),
+    filtered ? Promise.resolve<HealthItem[]>([]) : traceRuns(),
+  ]);
+  const runs: RunListItem[] = fromStore.ok
+    ? fromStore.items.map((it) => {
+        const name = it.links?.systemId ? nameOf(it.links.systemId) : undefined;
+        return name ? { ...it, title: `${name} — agent run` } : it;
+      })
+    : [];
+  const runStore: RunStoreState = fromStore.ok
+    ? { available: true }
+    : { available: false, code: 'run_store_unavailable', reason: fromStore.reason };
+  const items = [...runs, ...traces.filter((t) => !isRunId(t.id))].sort(
+    (a, b) => (Date.parse(b.ts ?? '') || 0) - (Date.parse(a.ts ?? '') || 0),
+  );
+  // Offline mock: only when nothing live was found, the store answered, nothing was filtered AND
+  // demo fixtures are on (dev/test). A real deploy with no runs yet shows an honest empty list.
+  if (items.length === 0 && runStore.available && !filtered && config.monitoringDemoFixtures) {
+    return { items: [...MOCK_RUNS], runStore };
+  }
+  return { items, runStore };
+}
+
+/**
+ * The runs lens as items, for the overview. An unreachable run store becomes ONE `unknown` item
+ * owned by the viewer (so the scope filter keeps it), and the lens says it could not list agent
+ * runs instead of reading as "no runs".
+ */
+export async function collectRuns(opts: CollectRunsOptions = {}): Promise<HealthItem[]> {
+  const { items, runStore } = await collectRunList(opts);
+  if (runStore.available) return items;
+  const notice: HealthItem = {
+    id: 'run-store-unavailable',
+    lens: 'runs',
+    title: 'Agent runs could not be listed',
+    health: 'unknown',
+    detail: `The run store did not answer (${runStore.reason}), so agent runs are not shown here; that does not mean there are none.`,
+    owner: opts.scope?.principal ?? 'unknown',
+    domain: UNKNOWN_DOMAIN,
+    ts: new Date().toISOString(),
+    source: 'live',
+  };
+  return [notice, ...items];
+}
+
+/** Governed tool-call traces: this process's ring and Langfuse's newest traces. */
+async function traceRuns(): Promise<HealthItem[]> {
   // 1) In-process governed ring (always available; reflects this process's runs).
   const ring = recentTraces(50).map<HealthItem>((r) => ({
     id: r.id,
@@ -104,15 +202,9 @@ export async function collectRuns(): Promise<HealthItem[]> {
     links: { runId: r.id },
     source: 'live',
   }));
-
   // 2) Langfuse public traces (richer history when the service is up).
   const lf = await langfuseRuns();
-
-  const merged = [...lf, ...ring];
-  // 3) Offline mock — only when nothing live was found AND demo fixtures are on
-  // (dev/test). A real deploy with no runs yet shows an honest empty list.
-  if (merged.length === 0) return config.monitoringDemoFixtures ? [...MOCK_RUNS] : [];
-  return merged;
+  return [...lf, ...ring];
 }
 
 async function langfuseRuns(): Promise<HealthItem[]> {

@@ -123,6 +123,50 @@ export class RunJobConflictError extends Error {
   }
 }
 
+/**
+ * The few fields of a run's last `done` report a LISTING needs to say truthfully how it ended —
+ * never the report itself (outputs, nodes, context), which stay behind the owner-only run doors.
+ */
+export type RunReportSummary = {
+  status?: string;
+  failed?: boolean;
+  interrupted?: boolean;
+  parked?: boolean;
+  reachedEnd?: boolean;
+  failure?: { node?: string | null; reason?: string };
+};
+
+/** One row of a run listing: the job row without its input/principal snapshot, plus its report summary. */
+export type RunListRow = Omit<RunJob, 'input' | 'principal'> & { report: RunReportSummary | null };
+
+/**
+ * A run LISTING query (Monitoring `list_runs` / the runs lens). `visibleTo` pushes the viewer's
+ * scope into the read so a creator's own runs are never crowded out by other people's: a row is
+ * returned when `requested_by` is the viewer OR its `domain` is one of `domains`. Absent = every
+ * run (the admin scope). Newest first by when the run was filed.
+ */
+export type RunListQuery = {
+  systemId?: string;
+  statuses?: readonly RunJobStatus[];
+  visibleTo?: { requestedBy: string; domains: readonly string[] };
+  limit: number;
+};
+
+/** Reduce a `done` frame's body to the {@link RunReportSummary} a listing carries. */
+export function reportSummaryOf(data: unknown): RunReportSummary | null {
+  if (!data || typeof data !== 'object') return null;
+  const b = data as Record<string, unknown>;
+  const f = b.failure && typeof b.failure === 'object' ? (b.failure as Record<string, unknown>) : null;
+  const out: RunReportSummary = {};
+  if (typeof b.status === 'string') out.status = b.status;
+  if (typeof b.failed === 'boolean') out.failed = b.failed;
+  if (typeof b.interrupted === 'boolean') out.interrupted = b.interrupted;
+  if (typeof b.parked === 'boolean') out.parked = b.parked;
+  if (typeof b.reachedEnd === 'boolean') out.reachedEnd = b.reachedEnd;
+  if (f) out.failure = { node: typeof f.node === 'string' ? f.node : null, ...(typeof f.reason === 'string' ? { reason: f.reason } : {}) };
+  return out;
+}
+
 export type RunJobStore = {
   kind: RunJobStoreKind;
   /** Insert a `start` job, or re-queue the run's row as a `resume`. Throws `RunJobConflictError`. */
@@ -148,6 +192,9 @@ export type RunJobStore = {
    * by construction — a run is visible to its runner only (`run-visibility.ts`).
    */
   latestForSystem(systemId: string, requestedBy: string): Promise<RunJob | null>;
+  /** A run LISTING, scoped and filtered in the read (see {@link RunListQuery}); each row with the
+   *  summary of its latest `done` report (null when it has none yet). Newest first. */
+  listRuns(query: RunListQuery): Promise<RunListRow[]>;
   /** Append one event with the next `seq` for the run. */
   appendEvent(runId: string, event: RunEventName, data: unknown, at?: number): Promise<RunEventRow>;
   /** Events with `seq > afterSeq`, ascending, at most `limit`. */
@@ -301,6 +348,19 @@ export function memoryRunJobStore(): MemoryRunJobStore {
         if (!latest || j.updatedAt > latest.updatedAt || (j.updatedAt === latest.updatedAt && j.createdAt >= latest.createdAt)) latest = j;
       }
       return latest ? copy(latest) : null;
+    },
+    async listRuns({ systemId, statuses, visibleTo, limit }) {
+      const rows: RunListRow[] = [];
+      for (const j of st.jobs.values()) {
+        if (systemId && j.systemId !== systemId) continue;
+        if (statuses && !statuses.includes(j.status)) continue;
+        if (visibleTo && j.requestedBy !== visibleTo.requestedBy && !visibleTo.domains.includes(j.domain)) continue;
+        const done = (st.events.get(j.runId) ?? []).filter((e) => e.event === 'done').at(-1);
+        const { input: _input, principal: _principal, ...row } = j;
+        rows.push({ ...row, report: done ? reportSummaryOf(done.data) : null });
+      }
+      rows.sort((a, b) => b.createdAt - a.createdAt || (a.runId < b.runId ? 1 : -1));
+      return rows.slice(0, Math.max(0, limit));
     },
     async appendEvent(runId, event, data, at) {
       if (!isRunEventName(event)) throw new Error(`not a run event: ${String(event)}`);
