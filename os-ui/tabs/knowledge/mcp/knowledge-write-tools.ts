@@ -119,6 +119,29 @@ import {
   ensureHydrated as ensurePersonalKnowledgeHydrated,
 } from '@tabs/knowledge/lib/personal-store';
 
+/**
+ * Make a saved note findable by `search_knowledge` — for its owner only (`chunkNote`). A note
+ * already in the index is not embedded again (a repeated call with the same `sourceKey`).
+ * Best-effort and honest: the note stands either way, and `searchable` says whether it is indexed.
+ */
+async function indexSavedNote(
+  rec: { id: string; title: string; md: string; domain: string; owner: string; visibility: string; updatedAt: string },
+  user: { id: string; domains: string[] },
+  already: boolean,
+): Promise<{ searchable: boolean; note: string }> {
+  const { indexNote } = await import('@tabs/knowledge/lib/index-pipeline');
+  const { hasWorkflowUnits } = await import('@tabs/knowledge/lib/index-store');
+  if (already && hasWorkflowUnits(rec.id)) return { searchable: true, note: 'Listed in Knowledge → My knowledge, and found by search_knowledge (for you only).' };
+  try {
+    const r = await indexNote(rec, { userId: user.id, domain: user.domains[0], tab: 'knowledge' });
+    return r.units > 0
+      ? { searchable: true, note: `Listed in Knowledge → My knowledge, and found by search_knowledge (for you only${r.store === 'memory' ? '; indexed in this process only, the search cluster was unreachable' : ''}).` }
+      : { searchable: false, note: 'Listed in Knowledge → My knowledge. The note has no text to index.' };
+  } catch (e) {
+    return { searchable: false, note: `Listed in Knowledge → My knowledge. It could not be indexed for search_knowledge: ${(e as Error)?.message ?? String(e)}` };
+  }
+}
+
 /** The largest note body `save_knowledge_note` accepts; a longer document belongs in Files. */
 const NOTE_MAX_BYTES = 512 * 1024;
 
@@ -307,7 +330,7 @@ export const knowledgeWriteTools: McpTool[] = [
     tab: 'knowledge',
     minRole: 'creator',
     description:
-      'Save a knowledge NOTE — a titled, free-form markdown document — into YOUR My knowledge, optionally in a folder. This is the entry the Knowledge tab lists under My knowledge (not a business process: use author_knowledge for steps, actors and rules). Purpose: keep a result, a summary or a piece of know-how where you and the agent systems you grant it to can use it. After: grant it (or its folder) to an agent system, or share it with your domain through request_promotion({kind:"personal_knowledge"}). Governance: created AS YOU, Personal and owner-only; sharing is the separate governed promotion. Idempotency: pass `sourceKey` to make the call repeatable — a second call with the same key returns the note you already saved (`already: true`) instead of writing another. Honesty: a note is NOT part of search_knowledge (that index holds business processes and the domain card); the result says so in `searchable: false`.',
+      'Save a knowledge NOTE — a titled, free-form markdown document — into YOUR My knowledge, optionally in a folder. This is the entry the Knowledge tab lists under My knowledge (not a business process: use author_knowledge for steps, actors and rules). Purpose: keep a result, a summary or a piece of know-how where you and the agent systems you grant it to can use it. After: grant it (or its folder) to an agent system, or share it with your domain through request_promotion({kind:"personal_knowledge"}). Governance: created AS YOU, Personal and owner-only; sharing is the separate governed promotion. Idempotency: pass `sourceKey` to make the call repeatable — a second call with the same key returns the note you already saved (`already: true`) instead of writing another. Search: the note is indexed so search_knowledge finds it — for YOU only (a Personal note is owner-only in search too); `searchable` says whether indexing worked.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -346,8 +369,7 @@ export const knowledgeWriteTools: McpTool[] = [
         domain: rec.domain,
         visibility: rec.visibility,
         ...(existing ? { already: true } : {}),
-        searchable: false,
-        note: 'Listed in Knowledge → My knowledge. Not part of search_knowledge, which indexes business processes and the domain card.',
+        ...(await indexSavedNote(rec, user, !!existing)),
       };
     },
   },

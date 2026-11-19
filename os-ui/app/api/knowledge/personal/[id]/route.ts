@@ -28,6 +28,14 @@ export const PATCH = withRoute<{ id: string }, any>(async ({ user, params, body 
       title: typeof body.title === 'string' ? body.title : undefined,
       md: typeof body.md === 'string' ? body.md : undefined,
     });
+    // A note that is in the search index (one an agent run saved) is re-indexed with its new text.
+    try {
+      const { hasWorkflowUnits } = await import('@tabs/knowledge/lib/index-store');
+      if (hasWorkflowUnits(rec.id)) {
+        const { indexNote } = await import('@tabs/knowledge/lib/index-pipeline');
+        await indexNote(rec, { userId: user.id, domain: user.domains[0], tab: 'knowledge' });
+      }
+    } catch { /* the edit stands; the search index catches up on the next save */ }
     return NextResponse.json({ id: rec.id, title: rec.title, updatedAt: rec.updatedAt });
 }, { parse: true, hydrate: ensureHydrated, defaultStatus: 500 });
 
@@ -48,5 +56,10 @@ export const POST = withRoute<{ id: string }, { action?: string }>(async ({ user
 export const DELETE = withRoute<{ id: string }>(async ({ user, params }) => {
     const { id } = params;
     deletePersonalKnowledge(id, user);
+    // A deleted note stops being findable by search_knowledge too.
+    try {
+      const { purgeKnowledgeUnits } = await import('@tabs/knowledge/lib/index-pipeline');
+      await purgeKnowledgeUnits(id);
+    } catch { /* the delete stands */ }
     return NextResponse.json({ ok: true });
 }, { hydrate: ensureHydrated, defaultStatus: 500 });

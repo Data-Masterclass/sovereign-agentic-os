@@ -11,13 +11,27 @@
  *     the same `createPersonalKnowledge` the Knowledge tab's own route does.
  *   - `sourceKey` is matched against the CALLER'S OWN entries only, so a key never reveals
  *     whether someone else saved something.
- *   - The result says `searchable: false`: a note is not in the retrieval index.
+ *   - The note is INDEXED so `search_knowledge` finds it — for its OWNER only: a builder of the
+ *     same domain (who may see other Personal units) does not find someone else's note.
+ *     Offline here: OPA + OpenSearch + the model are unreachable, so the in-process index is used.
  */
-import { test } from 'node:test';
+import { afterEach, beforeEach, test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { CurrentUser } from '@core/kernel/auth';
 import { knowledgeWriteTools } from '@tabs/knowledge/mcp/knowledge-write-tools';
 import { __resetStore, getPersonalKnowledge, listPersonalKnowledge } from '@tabs/knowledge/lib/personal-store';
+import { __resetIndex } from '@tabs/knowledge/lib/index-store';
+import { retrieveKnowledge } from '@tabs/knowledge/lib/retrieve';
+import { config } from '@core/kernel/config';
+
+const realFetch = globalThis.fetch;
+const realFailOpen = config.opaFailOpen;
+beforeEach(() => {
+  __resetIndex();
+  config.opaFailOpen = true;
+  globalThis.fetch = (async () => { throw new Error('offline'); }) as typeof fetch;
+});
+afterEach(() => { globalThis.fetch = realFetch; config.opaFailOpen = realFailOpen; });
 
 const amir: CurrentUser = { id: 'amir', name: 'Amir', domains: ['sales'], role: 'creator' };
 const bea: CurrentUser = { id: 'bea', name: 'Bea', domains: ['sales'], role: 'builder' };
@@ -30,7 +44,7 @@ test('a note is saved as the caller, Personal, in the folder asked for', async (
   const out = await save(amir, { title: 'Run result', md: '## Summary\n12 invoices.', folder: 'results/2026' });
   assert.equal(out.folder, '/results/2026');
   assert.equal(out.visibility, 'Personal');
-  assert.equal(out.searchable, false, 'it does not claim to be searchable');
+  assert.equal(out.searchable, true, 'it is in the search index');
   const rec = getPersonalKnowledge(out.id, amir);
   assert.equal(rec.owner, 'amir');
   assert.equal(rec.md, '## Summary\n12 invoices.');
@@ -59,4 +73,20 @@ test('a note needs a title and a body', async () => {
   __resetStore();
   await assert.rejects(() => save(amir, { title: ' ', md: 'x' }), /needs a `title`/);
   await assert.rejects(() => save(amir, { title: 'T', md: '  ' }), /non-empty `md`/);
+});
+
+test('search_knowledge finds a saved note — for its owner only', async () => {
+  __resetStore();
+  const out = await save(amir, { title: 'Invoice run result', md: 'Twelve invoices from Muster GmbH were verified and booked.', folder: '/results', sourceKey: 'agent-output:sys:run:k' });
+  assert.equal(out.searchable, true);
+  const mine = await retrieveKnowledge('Muster GmbH invoices verified', { id: 'amir', domains: ['sales'], role: 'creator' });
+  const hit = mine.hits.find((h) => h.unit.id === `note:${out.id}`);
+  assert.ok(hit, 'the owner finds the note');
+  // A builder of the same domain may see other Personal units — never someone else's note.
+  const theirs = await retrieveKnowledge('Muster GmbH invoices verified', { id: 'bea', domains: ['sales'], role: 'builder' });
+  assert.equal(theirs.hits.some((h) => h.unit.id === `note:${out.id}`), false);
+  // Asking again with the same key does not index a second copy.
+  await save(amir, { title: 'Invoice run result', md: 'x', folder: '/results', sourceKey: 'agent-output:sys:run:k' });
+  const again = await retrieveKnowledge('Muster GmbH invoices verified', { id: 'amir', domains: ['sales'], role: 'creator' });
+  assert.equal(again.hits.filter((h) => h.unit.id === `note:${out.id}`).length, 1);
 });

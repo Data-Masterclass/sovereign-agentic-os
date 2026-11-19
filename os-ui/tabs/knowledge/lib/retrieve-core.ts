@@ -29,6 +29,8 @@ export function canSee(prov: Provenance, principal: Principal): boolean {
   if (prov.visibility === 'Shared') return principal.domains.includes(prov.domain);
   // Personal/draft units: only the owner, or a Builder+ in the same domain.
   if (prov.owner === principal.id) return true;
+  // A Personal NOTE is owner-only, exactly as the note itself is in My knowledge.
+  if (prov.type === 'note') return false;
   return roleAtLeast(principal.role, 'builder') && principal.domains.includes(prov.domain);
 }
 
