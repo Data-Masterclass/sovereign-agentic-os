@@ -72,7 +72,7 @@ const CONNECTIONS_CHIP_TOOLS = ['list_connections', 'get_connection', 'test_conn
  * no author path in the builder, so writing grants nothing extra. */
 const WRITE_TOOLS: Record<GrantKind, string[]> = {
   data: ['create_dataset', 'ingest_dataset', 'transform_silver', 'build_gold_join', 'add_dataset_version', 'document_dataset'],
-  knowledge: ['author_knowledge', 'index_knowledge'],
+  knowledge: ['author_knowledge', 'index_knowledge', 'save_knowledge_note'],
   files: ['upload_file'],
   connections: ['create_connection', 'import_warehouse_table'],
   metrics: ['define_metric'],

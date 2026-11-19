@@ -24,8 +24,10 @@ import 'server-only';
 import { roleAtLeast } from '@core/kernel/session';
 import { queryRun, type ExecuteIdentity } from '@core/infra/governed';
 import type { CurrentUser } from '@core/kernel/auth';
+import { normaliseFolderPath } from '@core/kernel/folders';
 import {
   createDataset,
+  moveDataset,
   getDataset,
   buildVersion,
   buildGoldJoin,
@@ -152,6 +154,12 @@ export type CreateDatasetInput = {
   name?: unknown;
   domain?: unknown;
   origin?: unknown;
+  /**
+   * Optional folder in the creator's My data to file the new dataset in. It is the same edit-scoped
+   * `moveDataset` the Data tab's "Move to folder" runs, applied right after the create — so a
+   * dataset can be created where it belongs instead of at the top level and moved by hand.
+   */
+  folder?: unknown;
   /** Optional column docs to seed in the same act (the MCP's `columns`). */
   columns?: ColumnDoc[];
 };
@@ -165,7 +173,9 @@ export function createDatasetService(user: Principal, input: CreateDatasetInput)
   if (!name) fail('a dataset needs a name', 400, 'name');
   const domain = typeof input.domain === 'string' && input.domain.trim() ? input.domain.trim() : undefined;
   const origin = input.origin === 'curated' ? ('curated' as const) : undefined;
-  const dataset = createDataset(user, { name, domain, origin });
+  const created = createDataset(user, { name, domain, origin });
+  const folder = typeof input.folder === 'string' ? normaliseFolderPath(input.folder) : '/';
+  const dataset = folder === '/' ? created : moveDataset(created.id, user, folder);
   const columns = (input.columns ?? []).filter((c) => c.name);
   return columns.length ? setDocs(dataset.id, user, { columns }) : dataset;
 }

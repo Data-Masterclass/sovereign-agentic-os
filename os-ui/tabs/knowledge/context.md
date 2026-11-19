@@ -10,6 +10,11 @@ filter).
   outputs, tacit}`. The top-level `tacit` string is the process-level TACIT.md
   (unstructured know-how that resists formalization — gotchas, cultural notes, the
   "why"). Per-step inline notes go in `steps[].tacit`.
+- `save_knowledge_note(title, md, folder?, domain?, sourceKey?)` — save a free-form
+  markdown NOTE into My knowledge (not a business process), optionally in a folder.
+  Personal and owner-only; share it with `request_promotion({kind:"personal_knowledge"})`.
+  Repeating a call with the same `sourceKey` returns the note already saved. A note is
+  NOT part of `search_knowledge` (the result says `searchable: false`).
 - `index_knowledge(workflowId)` — chunk → embed → index; required before
   `search_knowledge` returns the business process. Both per-step tacit notes and the
   process-level tacit doc are indexed as separate `type: "tacit"` units.

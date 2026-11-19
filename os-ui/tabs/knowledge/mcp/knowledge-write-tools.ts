@@ -113,6 +113,15 @@ import { buildSystem } from '@tabs/agents/lib/build/server';
 import { patchAppDesign, getAppForUser, type AppEpic } from '@tabs/software/lib/apps';
 import { normalizeContextGrants } from '@core/kernel/context-grants';
 
+import {
+  createPersonalKnowledge,
+  findPersonalKnowledgeBySourceKey,
+  ensureHydrated as ensurePersonalKnowledgeHydrated,
+} from '@tabs/knowledge/lib/personal-store';
+
+/** The largest note body `save_knowledge_note` accepts; a longer document belongs in Files. */
+const NOTE_MAX_BYTES = 512 * 1024;
+
 // ============================== KNOWLEDGE ======================================
 export const knowledgeWriteTools: McpTool[] = [
   {
@@ -291,6 +300,55 @@ export const knowledgeWriteTools: McpTool[] = [
       const workflow = await indexWorkflow(view.workflow, { owner: view.owner, tacit: view.tacit, updatedAt: view.updatedAt, caller });
       const domain = await indexDomain(getDomainKnowledge(view.domain), caller);
       return { workflow, domain };
+    },
+  },
+  {
+    name: 'save_knowledge_note',
+    tab: 'knowledge',
+    minRole: 'creator',
+    description:
+      'Save a knowledge NOTE — a titled, free-form markdown document — into YOUR My knowledge, optionally in a folder. This is the entry the Knowledge tab lists under My knowledge (not a business process: use author_knowledge for steps, actors and rules). Purpose: keep a result, a summary or a piece of know-how where you and the agent systems you grant it to can use it. After: grant it (or its folder) to an agent system, or share it with your domain through request_promotion({kind:"personal_knowledge"}). Governance: created AS YOU, Personal and owner-only; sharing is the separate governed promotion. Idempotency: pass `sourceKey` to make the call repeatable — a second call with the same key returns the note you already saved (`already: true`) instead of writing another. Honesty: a note is NOT part of search_knowledge (that index holds business processes and the domain card); the result says so in `searchable: false`.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: 'The note’s title.' },
+        md: { type: 'string', description: 'The note’s body, as markdown.' },
+        folder: { type: 'string', description: 'Optional folder path in My knowledge, e.g. "/results". Created when the first note is saved there.' },
+        domain: { type: 'string', description: 'One of YOUR domains; defaults to your first.' },
+        sourceKey: { type: 'string', description: 'Optional. A key that identifies this save; repeating the call with it returns the note already saved.' },
+      },
+      required: ['title', 'md'],
+      examples: [{ title: 'Invoice run — 2026-11-19', md: '## Summary\n12 invoices processed.', folder: '/results' }],
+    },
+    call: async (user, args) => {
+      const title = str(args.title).trim();
+      if (!title) fail('save_knowledge_note needs a `title`', 400);
+      const md = typeof args.md === 'string' ? args.md : '';
+      if (!md.trim()) fail('save_knowledge_note needs a non-empty `md` body', 400);
+      if (Buffer.byteLength(md, 'utf8') > NOTE_MAX_BYTES) {
+        fail(`save_knowledge_note: the body is larger than ${NOTE_MAX_BYTES / 1024} KB — save a long document as a file with upload_file instead`, 400);
+      }
+      const p = P(user);
+      await ensurePersonalKnowledgeHydrated();
+      const sourceKey = str(args.sourceKey).trim();
+      const existing = sourceKey ? findPersonalKnowledgeBySourceKey(p, sourceKey) : null;
+      const rec = existing ?? createPersonalKnowledge(p, {
+        title,
+        md,
+        folder: str(args.folder) || undefined,
+        domain: str(args.domain) || undefined,
+        sourceKey: sourceKey || undefined,
+      });
+      return {
+        id: rec.id,
+        title: rec.title,
+        folder: rec.folder,
+        domain: rec.domain,
+        visibility: rec.visibility,
+        ...(existing ? { already: true } : {}),
+        searchable: false,
+        note: 'Listed in Knowledge → My knowledge. Not part of search_knowledge, which indexes business processes and the domain card.',
+      };
     },
   },
   {
