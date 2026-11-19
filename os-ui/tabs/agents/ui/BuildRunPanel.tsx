@@ -39,7 +39,15 @@ import { isRunOver, parseSseChunk, reattachFrom, runStreamUrl, REATTACH_LIMIT } 
  */
 
 type BuildStatus = 'ok' | 'fail' | 'pending';
-type BuildRow = { tool: string; applied: boolean; verified: boolean; status: BuildStatus; detail: string; error?: string };
+type BuildChange = 'created' | 'updated' | 'unchanged' | 'reapplied';
+type BuildRow = { tool: string; applied: boolean; verified: boolean; status: BuildStatus; detail: string; error?: string; change?: BuildChange; appliedDetail?: string };
+/** What a build step actually did — so a rebuild that finishes in a blink is understandable. */
+const BUILD_CHANGE_LABEL: Record<BuildChange, string> = {
+  created: 'Created',
+  updated: 'Updated',
+  unchanged: 'Already in place',
+  reapplied: 'Applied again',
+};
 type BuildReport = { ok: boolean; rows: BuildRow[] };
 type LastBuild = { ok: boolean; at: number; rows: BuildRow[] };
 type ActivityMarker = { kind: 'building' | 'running'; startedAt: number };
@@ -1254,6 +1262,11 @@ export default function BuildRunPanel({
                   </td>
                   <td style={{ whiteSpace: 'normal', fontSize: 12.5 }}>
                     {r.status === 'fail' ? <span className="b-off">{r.error ?? r.detail}</span> : r.detail}
+                    {r.change ? (
+                      <div style={{ opacity: 0.75, marginTop: 2 }}>
+                        <strong>{BUILD_CHANGE_LABEL[r.change]}</strong>{r.appliedDetail ? ` — ${r.appliedDetail}` : ''}
+                      </div>
+                    ) : null}
                   </td>
                 </tr>
               ))}

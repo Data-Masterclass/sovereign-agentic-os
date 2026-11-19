@@ -137,7 +137,11 @@ export class BudgetExceededError extends Error {
   // NOT a TS parameter property (`constructor(readonly detail: string)`): Node's
   // strip-only type removal rejects those, and the test runner loads .ts directly.
   constructor(detail: string) {
-    super('The LLM budget for this key or team is exhausted. Raise the cap in Admin → LLM Gateway.');
+    super(
+      'The model budget of the key this ran on is used up, so the gateway refused the call. Waiting a minute does not help: ' +
+      'the budget comes back when its period resets, or when an admin raises it — the shared agent key in Admin → LLM Gateway ' +
+      '(chart: litellmAgentKey.maxBudget); an agent system\'s own key via osUI.agentSystemKey.maxBudget, then Rebuild the system.',
+    );
     this.name = 'BudgetExceededError';
     this.detail = detail;
   }
