@@ -38,6 +38,7 @@ import GitHeadBadge from '@core/ui/git/GitHeadBadge';
 import { UnderTheHood } from '@core/ui/engineering/UnderTheHood';
 import { TechnicalDetailsOnly } from '@core/ui/TechnicalDetails';
 import CloneRepository from '@core/ui/git-clone/CloneRepository';
+import { scheduleSavedNote } from '@tabs/agents/lib/schedule-note';
 
 // React Flow + Monaco are heavy, client-only, and SSR-tolerant only when lazy —
 // load the canvas ssr:false (same pattern as MonacoFile) so the standalone build
@@ -742,6 +743,7 @@ function TriggerEditor({ systemId, schedule, canEdit, canRun, onSaved }: { syste
   const [cron, setCron] = useState(schedule.cron ?? '0 9 * * 1');
   const [busy, setBusy] = useState(false);
   const [cronStatus, setCronStatus] = useState<CronStatus | null>(null);
+  const [autonomousOn, setAutonomousOn] = useState(false);
   const [err, setErr] = useState('');
   // On-demand trigger state for event-mode systems (non-editors who can run).
   const [triggerPrompt, setTriggerPrompt] = useState('');
@@ -763,6 +765,7 @@ function TriggerEditor({ systemId, schedule, canEdit, canRun, onSaved }: { syste
       const b = await res.json();
       if (!res.ok) throw new Error(b.error ?? 'Schedule update failed');
       if (b.cron) setCronStatus(b.cron as CronStatus);
+      setAutonomousOn(b.autonomousEnabled === true);
       await onSaved();
     } catch (e) {
       setErr((e as Error).message);
@@ -867,11 +870,11 @@ function TriggerEditor({ systemId, schedule, canEdit, canRun, onSaved }: { syste
       {err ? <div className="error" style={{ marginTop: 8 }}>{err}</div> : null}
       {cronStatus && kind === 'cron' && !cronStatus.ok ? (
         <div className="hint" style={{ marginTop: 8, color: 'var(--warn, #b7791f)' }} title={cronStatus.detail}>
-          ⚠ schedule saved but not scheduled — {cronStatus.detail}
+          {scheduleSavedNote(cronStatus, autonomousOn)}
         </div>
       ) : null}
       {cronStatus && kind === 'cron' && cronStatus.ok && cronStatus.live ? (
-        <div className="hint" style={{ marginTop: 8 }}>✓ CronJob {cronStatus.action} — runs on schedule</div>
+        <div className="hint" style={{ marginTop: 8, ...(autonomousOn ? {} : { color: 'var(--warn, #b7791f)' }) }}>{scheduleSavedNote(cronStatus, autonomousOn)}</div>
       ) : null}
     </div>
   );

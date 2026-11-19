@@ -51,6 +51,7 @@ import type { DiagRun } from '@tabs/agents/lib/build/run-diagnostics';
 import { dimensionLabel, type JudgeResult } from '@tabs/agents/lib/evaluate-judge';
 import { downloadEvalPdf } from '@tabs/agents/lib/build/agent-pdf';
 import { useUser } from '@core/ui/useUser';
+import { scheduleSavedNote } from '@tabs/agents/lib/schedule-note';
 
 /**
  * Simple mode — the guided builder for non-coders, a SIX-stage path:
@@ -1415,7 +1416,7 @@ function TriggerMode({
       const b = await res.json();
       if (!res.ok) throw new Error(b.error ?? 'Could not update the trigger.');
       if (b.cron && next.kind === 'cron') {
-        setNote(b.cron.ok && b.cron.live ? `✓ CronJob ${b.cron.action} — runs on schedule` : `⚠ schedule saved but not scheduled — ${b.cron.detail}`);
+        setNote(scheduleSavedNote(b.cron, b.autonomousEnabled === true));
       }
       const TRIGGER_WORD: Record<TriggerKind, string> = { manual: 'Manual', cron: 'Scheduled', event: 'On-demand' };
       toast.success(`Trigger set to ${TRIGGER_WORD[next.kind]}`);
