@@ -400,8 +400,12 @@ litellmAgentKey:
   # STACKIT routes.
   modelMaxBudget: {}
   # Per-key rate limits with graceful queueing (security.md).
-  rpmLimit: 120
-  tpmLimit: 200000
+  # This ONE key serves every agent run and assistant of every user, so the limits are
+  # tenant-wide, not per run. 200000 tokens/min was reached by a single 12-document run
+  # on 2026-11-19 (each step re-sends its prompt and history, about 20k tokens a step).
+  # Spend stays bounded by maxBudget / modelMaxBudget above, not by these.
+  rpmLimit: 300
+  tpmLimit: 1000000
   maxParallelRequests: 8
   local:
     value: "sk-agents-local-dev"
