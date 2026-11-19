@@ -1059,11 +1059,12 @@ at **zero** (it stays two-way: a new platform write fails until it is classified
 
 | Posture for an agent run | Tools | Mechanism |
 |---|---|---|
-| **Refused** at the three agent-run doors below | `decide_deploy`, `promote`, `decide_approval`, `promote_connection`, `reindex_corpus` | `AGENT_FORBIDDEN_TOOLS` (`core/mcp/write-tool-meta.ts`). Also `COMPANY_SCOPE_TOOLS` as the second line. |
-| **Held under every preset** — a second person confirms (engine path only) | `delete`, `archive`, `request_deploy` | `ALWAYS_CONFIRMED_TOOLS` in `tabs/agents/lib/build/hold.ts` → `domain_admin` of the system's domain (`admin` under `read-only`). |
+| **Refused** at the three agent-run doors below | `decide_deploy`, `promote`, `decide_approval`, `promote_connection`, `reindex_corpus`, `revoke_action_adoption` | `AGENT_FORBIDDEN_TOOLS` (`core/mcp/write-tool-meta.ts`). Also `COMPANY_SCOPE_TOOLS` as the second line. |
+| **Held under every preset** — a second person confirms (engine path only) | `delete`, `archive`, `request_deploy`, `retire_connection`, `request_certification` | `ALWAYS_CONFIRMED_TOOLS` in `tabs/agents/lib/build/hold.ts` → `domain_admin` of the system's domain (`admin` under `read-only`). |
+| **Held under every preset** — a *platform admin* confirms (engine path only) | `update_operating_manual`, `restore_operating_manual_version` | `ALWAYS_CONFIRMED_TOOLS` and `ADMIN_CONFIRMED_TOOLS` in `hold.ts` → `admin`. The scope (My / Domain / Company) is an argument the name-only gate cannot see, so it answers for the widest. |
 | **Held on escalation** (pre-existing) | `publish_knowledge`, `request_promotion`, `approve_promotion` | `ESCALATING_DOMAIN_TOOLS` → `domain_admin`. |
-| **My-scope** — `read-only` holds; otherwise the runner's own rights decide (gate 2) | `create_software`, `start_preview`, `use_connection`, `use_data`, `use_knowledge`, `use_as_data`, `commit`, `push_app_files`, `set_app_spec`, `design_software`, and every other catalogued write | the `personal` default of `writeTargetScope`. |
-| **Not classified** — the gate answers "not a write" under every preset | the nine-tool backlog below | pinned by the registry ratchet in `core/mcp/write-tool-meta.test.ts`. |
+| **My-scope** — `read-only` holds; otherwise the runner's own rights decide (gate 2) | `create_software`, `start_preview`, `use_connection`, `use_data`, `use_knowledge`, `use_as_data`, `commit`, `push_app_files`, `set_app_spec`, `design_software`, `create_connection`, `configure_connection`, `test_connection`, `build_software`, and every other catalogued write | the `personal` default of `writeTargetScope`. |
+| **Not classified** — the gate answers "not a write" under every preset | `get_software_status` (see below) | pinned by the registry ratchet in `core/mcp/write-tool-meta.test.ts`. |
 
 **Which door enforces what.** "Refused" and "held" are properties of a door, not of
 a tool, and there are five ways a model's tool call reaches `handleRpc`:
@@ -1098,22 +1099,48 @@ confirmation enough is not decided here; a test in
 `tabs/agents/lib/build/agentic-graph-server.test.ts` states the current behaviour
 and is the one to change with it.
 
-**The unclassified backlog** — every tool in the MCP registry that changes state
-(or may) and has no hold posture. The ratchet pins this list exactly, so it can
-shrink only by a reviewed diff and cannot grow silently. Recommended postures are
-suggestions for the owner, not decisions:
+**The nine-tool backlog is decided (2026-11-19, the owner's decision).** These
+were in the MCP registry and in no hold table, so the gate answered "not a write"
+for each under every preset. All nine are in `WRITE_TOOL_TABS` now:
 
-| Tool | What it does | Recommended posture |
+| Tool | What it does | Posture for an agent run |
 |---|---|---|
-| `request_certification` | files a Domain → Company certification request | held on escalation, like `request_promotion` — to `admin`, since a platform admin approves it |
-| `retire_connection` | archives a connection, or deletes it with its Trino catalogue and Secret | always confirmed (the `delete`/`archive` family) |
-| `revoke_action_adoption` | revokes a domain's adoption of an app's write actions | refused — a domain admin's governance decision, the inverse of an approval |
-| `restore_operating_manual_version` | overwrites an Operating Model with a prior version | always confirmed; Company scope to `admin` |
-| `update_operating_manual` | edits an Operating Model at My / Domain / Company scope | needs an argument-aware hold: My-scope personal, Domain/Company held — the name-only gate cannot tell them apart, so hold until it can |
-| `create_connection` | creates a personal connection and stores its secret by reference | My-scope (already asserted `personal` by a test; just not in the catalog) |
-| `configure_connection` | renames, re-scopes or rotates the credential of a connection | My-scope, with the same Shared/Certified caveat as `set_app_spec` |
-| `test_connection` | a live probe that writes the connection's status back | My-scope, or reclassify as a read if the status write is moved out |
+| `revoke_action_adoption` | revokes a domain's adoption of an exposed entity's write actions | **refused** — a domain admin's governance decision, the inverse of an approval |
+| `retire_connection` | archives a connection, or deletes it with its Trino catalogue and Secret | **always held** → `domain_admin` (the `delete`/`archive` family) |
+| `request_certification` | files a Domain → Company certification request | **always held** → `domain_admin`. The platform admin decides the certification itself; making the same admin confirm that an agent may *ask* would have them approve twice |
+| `update_operating_manual` | edits an Operating Model at My / Domain / Company scope | **always held** → `admin`. The gate sees the name, not the `scope` argument, so it answers for Company |
+| `restore_operating_manual_version` | overwrites an Operating Model with a prior version | **always held** → `admin`, same reason |
+| `create_connection` | creates a personal connection and stores its secret by reference | My-scope |
+| `configure_connection` | renames, moves, demotes or re-configures the capabilities of a connection | My-scope, with the same Shared/Certified caveat as `set_app_spec` |
+| `test_connection` | a live probe that writes the connection's status back | My-scope — so a `read-only` system now parks on it, like any other write |
 | `build_software` | returns the build directive; with `SOFTWARE_BUILDER=agentic` it runs the build loop and commits | My-scope, same as `commit` — it reaches the same bytes |
+
+Three consequences worth knowing before granting one of these to an agent:
+
+- **These rules bind agent runs only.** A signed-in person calling the same tool
+  from the UI or their own MCP session goes `app/api/mcp/route.ts` → `serveMcp`
+  (`core/mcp/http.ts`) → `handleRpc` (`core/mcp/server.ts`), which checks the tool
+  exists and the caller's role floor and nothing else. Neither module imports
+  either table; `write-tool-meta.test.ts` pins that by source, and
+  `core/mcp/connection-lifecycle-tools.test.ts` drives it: a domain admin's
+  `revoke_action_adoption` reaches the governed lib, and their `retire_connection`
+  executes at once with nothing filed in the inbox.
+- **An agent's edit of its runner's own My-scope Operating Model waits on a
+  platform admin.** That is the price of a name-only gate deciding a
+  scope-dependent tool conservatively. An argument-aware hold would lift it;
+  removing a name from `ADMIN_CONFIRMED_TOOLS` routes it to a domain admin instead.
+- **`revoke_action_adoption` is now a reserved app-tool name**, like every entry in
+  `AGENT_FORBIDDEN_TOOLS`: `parseAppActions` drops an `actions.yml` action called
+  that and `callAppTool` refuses an OpenAPI `operationId` of that name.
+
+**The unclassified backlog** is one tool, and it came out of the *read* list:
+
+| Tool | Why it is here |
+|---|---|
+| `get_software_status` | Listed as a reviewed read, but it calls `reconcileDeployStatus`, which re-polls the runner and may write the app's deploy fields (the self-healed preview URL) back. Whether that is a governed write an agent should be held on has not been checked. Until it is, the gate answers "not a write" for it under every preset — which is what it did as a "read", but now it says so. |
+
+The ratchet pins this list exactly, so it can shrink only by a reviewed diff and
+cannot grow silently: a new tool that is in none of the three buckets fails the test.
 
 Four things this cost, each of which generalises:
 
@@ -1146,7 +1173,8 @@ Four things this cost, each of which generalises:
 
 Still open, and stated so nobody assumes otherwise: the hold is **name-only**
 (`hold.ts` is pure and sees no arguments), so a My-scope tool cannot tell the
-runner's Personal app from one already Shared or Certified; the nine-tool backlog
+runner's Personal app (or connection) from one already Shared or Certified, nor a
+My-scope Operating Model from the Company one; `get_software_status`, unclassified
 above; and `promote_metric`, which is catalogued but My-scope although it is a
 promotion. The registry ratchet covers `ALL_MCP_TOOLS` as registered in the test
 environment — a bundle behind a flag that is off there is not in it.
