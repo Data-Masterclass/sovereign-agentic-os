@@ -3,7 +3,7 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { osMirror } from '@core/infra/os-mirror';
+import { osMirror, PATCH_SCRIPT } from '@core/infra/os-mirror';
 
 /**
  * Tests for the shared durable-mirror core — the regression suite for the
@@ -257,6 +257,31 @@ test('hydration round-trip: a doc written through comes back unchanged after a "
     m.__reset(); // simulate a fresh process
     const docs = await m.hydrate();
     assert.deepEqual(docs, [doc], 'byte-identical round-trip through the mirror');
+  } finally {
+    os.restore();
+  }
+});
+
+test('patchThrough sends a partial scripted _update: only the named fields, upsert only when given', async () => {
+  const os = fakeOs({ indexExists: true });
+  const m = osMirror({ index: 'os-mirror-test-patch' });
+  m.__reset();
+  try {
+    await m.probe();
+    m.patchThrough('p1', { set: { lastRun: { ok: true } }, unset: ['activity'] });
+    m.patchThrough('p2', { set: { name: 'n' }, unset: [] }, { upsert: { id: 'p2', name: 'n' } });
+    await settle();
+    const updates = os.calls.filter((c) => c.path.includes('/_update/'));
+    assert.equal(updates.length, 2);
+    assert.equal(updates[0].method, 'POST');
+    assert.match(updates[0].path, /^\/os-mirror-test-patch\/_update\/p1\?refresh=true&retry_on_conflict=3$/);
+    const first = JSON.parse(updates[0].body!);
+    assert.equal(first.script.lang, 'painless');
+    assert.equal(first.script.source, PATCH_SCRIPT);
+    assert.deepEqual(first.script.params, { set: { lastRun: { ok: true } }, unset: ['activity'] });
+    assert.equal('upsert' in first, false, 'no upsert: a partial write never creates a doc');
+    assert.deepEqual(JSON.parse(updates[1].body!).upsert, { id: 'p2', name: 'n' });
+    assert.equal(os.calls.some((c) => c.method === 'PUT' && c.path.includes('/_doc/')), false, 'never a whole-doc PUT');
   } finally {
     os.restore();
   }
