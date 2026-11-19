@@ -8,7 +8,7 @@ import { requirePrincipal, errorResponse } from '@tabs/files/lib/server';
 import { listFiles, createFile, attachObject, objectKeyForAsset, type UploadInput } from '@tabs/files/lib/store';
 import { putBlob } from '@tabs/files/lib/object-store';
 import '@tabs/files/lib/object-store-server'; // registers the durable MinIO backend
-import { reindexFile, ingestUploaded } from '@tabs/files/lib/pipeline-server';
+import { ingestUploaded } from '@tabs/files/lib/pipeline-server';
 import { truncationError } from '@tabs/files/lib/integrity';
 import { config } from '@core/kernel/config';
 import type { Sensitivity, Storage } from '@tabs/files/lib/asset-schema';
@@ -140,6 +140,7 @@ export async function POST(req: Request) {
       name: body.name,
       folder: body.folder,
       tags: body.tags,
+      description: body.description,
       sensitivity: body.sensitivity,
       storage: body.storage,
       text: body.text,
@@ -149,8 +150,9 @@ export async function POST(req: Request) {
     });
     // Auto-index: ingest-by-type → chunk+hash → embed → hybrid index (Processing →
     // Searchable ✓). Best-effort; the adapters self-fall-back to their mocks offline.
-    await reindexFile(asset, body.text ?? '', user.id); // A27
-    return NextResponse.json({ asset }, { status: 201 });
+    // A text upload then gets its description + tags written in the background (the uploader pays).
+    const stored = await ingestUploaded(asset, body.text ?? '', user.id); // A27
+    return NextResponse.json({ asset: stored }, { status: 201 });
   } catch (e) {
     return errorResponse(e);
   }

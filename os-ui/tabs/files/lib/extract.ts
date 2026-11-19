@@ -48,6 +48,12 @@ export type ExtractDeps = {
   getBlob: (key: string) => Promise<{ body: Buffer; contentType: string } | null>;
   /** Index the file now that its text is stored (the ordinary upload pipeline). */
   index: (asset: FileAsset, text: string, actingUserId?: string) => Promise<void>;
+  /**
+   * Start writing the automatic description + tags now that the text exists (describe.ts).
+   * Fire-and-return: it must not hold this extraction open. Called only when there is an acting
+   * user to bill — an extraction nobody asked for by name (the admin re-index) starts none.
+   */
+  describe?: (id: string, actingUserId: string) => void;
 };
 
 export type ExtractResult =
@@ -116,6 +122,13 @@ async function run(id: string, deps: ExtractDeps, actingUserId?: string): Promis
   await deps.index(updated, outcome.text, actingUserId).catch((e) => {
     console.warn(`[files] indexing after text extraction failed for ${id} — the text is stored: ${(e as Error)?.message ?? String(e)}`);
   });
+  if (actingUserId && deps.describe) {
+    try {
+      deps.describe(id, actingUserId);
+    } catch (e) {
+      console.warn(`[files] could not start the automatic description for ${id}: ${(e as Error)?.message ?? String(e)}`);
+    }
+  }
   return { state: 'extracted', chars: outcome.text.length, seconds: outcome.seconds };
 }
 

@@ -7,9 +7,10 @@ import type { CurrentUser } from '@core/kernel/auth';
 import { requirePrincipal } from '@tabs/files/lib/server';
 import {
   getFile, moveFile, setDocs, setSensitivity, setIndexingMode, deleteFile,
-  archiveFile, unarchiveFile, renameFile,
+  archiveFile, unarchiveFile, renameFile, canEditFile,
 } from '@tabs/files/lib/store';
-import { reindexById, settleStale } from '@tabs/files/lib/pipeline-server';
+import { reindexById, settleStale, describeNow } from '@tabs/files/lib/pipeline-server';
+import { config } from '@core/kernel/config';
 import { removeFromIndex } from '@tabs/files/lib/index-store';
 import { purgeFileObjects } from '@tabs/files/lib/physical-delete';
 import { deleteBlob } from '@tabs/files/lib/object-store';
@@ -75,6 +76,15 @@ export const POST = withRoute<{ id: string }, { action?: string }>(async ({ user
       return NextResponse.json({ file: archiveFile(id, user) });
     case 'unarchive':
       return NextResponse.json({ file: unarchiveFile(id, user) });
+    case 'describe': {
+      // "Regenerate" / "Try again": write the description + tags again, as and billed to the
+      // person who asked. Edit-scoped like every other change to the file's docs. The user's own
+      // description and a tag they removed are never touched (auto-docs.ts decides, not this door).
+      getFile(id, user); // 403/404 for a file the caller may not even see
+      if (!canEditFile(id, user)) return NextResponse.json({ error: 'Not permitted to edit this file' }, { status: 403 });
+      const result = await describeNow(id, user.id, { waitMs: config.uploadExtractWaitMs });
+      return NextResponse.json({ result, ...getFile(id, user) });
+    }
     default:
       return NextResponse.json({ error: 'Unknown action' }, { status: 400 });
   }

@@ -41,7 +41,7 @@
  */
 
 import { config } from '@core/kernel/config';
-import { getSettings } from '@tabs/admin/lib/settings';
+import { getSettings, ensureHydrated as ensureSettingsHydrated } from '@tabs/admin/lib/settings';
 
 export type ModelRole = 'reasoning' | 'standard' | 'tools' | 'embeddings' | 'coder';
 
@@ -104,6 +104,18 @@ export function roleModel(role: ModelRole): string {
  */
 export function standardFirstEscalationEnabled(): boolean {
   return getSettings().standardFirstEscalation !== false;
+}
+
+/**
+ * Whether uploaded files get an AUTOMATIC DESCRIPTION + TAGS (one call on the standard model per
+ * file, billed to the uploader). ON by default; the ONE admin switch the Files generator
+ * consults. The settings are hydrated first: after a pod restart the in-memory value is the
+ * default until the saved one is read, and a switch an admin turned OFF must not read ON.
+ * Nil-safe: a settings blob saved before the switch existed means ON.
+ */
+export async function filesAutoDescribeEnabled(): Promise<boolean> {
+  await ensureSettingsHydrated();
+  return getSettings().filesAutoDescribe !== false;
 }
 
 /** All effective role models — surfaced to the agent builder + admin panel. */
