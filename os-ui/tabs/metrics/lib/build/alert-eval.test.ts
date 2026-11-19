@@ -15,9 +15,14 @@ import type { ExploreServerResult } from '@tabs/metrics/lib/build/explore-server
 
 mock.module('@tabs/admin/lib/users', {
   namedExports: {
+    authenticate: async () => null,
     // The rule owner 'amir' is a domain_admin in 'sales' — the headless token must carry this.
     getPublicUser: async (id: string) =>
-      id === 'amir' ? { id: 'amir', name: 'Amir', domains: ['sales'], role: 'domain_admin' } : null,
+      id === 'amir'
+        ? { id: 'amir', name: 'Amir', domains: ['sales'], role: 'domain_admin' }
+        : id === 'zed'
+          ? { id: 'zed', name: 'Zed', domains: ['sales'], role: 'builder', disabled: true }
+          : null,
   },
 });
 const { resolveAlertValue } = await import('./alert-eval.ts');
@@ -61,8 +66,24 @@ test('PENDING: an empty (no rows) result is pending, not a zero-value breach', a
   assert.equal(r.status, 'pending');
 });
 
-test('PENDING: a member no visible metric owns resolves to pending (never a wrong number)', async () => {
-  const r = await resolveAlertValue(rule, { resolve: () => null, explore: (async () => explored({})) as never });
-  assert.equal(r.status, 'pending');
-  assert.match((r as { reason: string }).reason ?? '', /could not be resolved/i);
+test('ORPHANED: a metric that was deleted or archived is named, never retried as "pending" forever', async () => {
+  let explored_ = false;
+  const r = await resolveAlertValue(rule, { resolve: () => null, explore: (async () => { explored_ = true; return explored({}); }) as never });
+  assert.equal(r.status, 'orphaned');
+  assert.match((r as { reason: string }).reason, /the metric Sales\.revenue this alert watches was deleted or archived/);
+  assert.equal(explored_, false, 'nothing is queried');
+});
+
+test('ORPHANED: an alert whose owner was deleted does not run under a stand-in identity', async () => {
+  let explored_ = false;
+  const explore = (async () => { explored_ = true; return explored({ rows: [{ 'Sales.revenue': 1 }] }); }) as never;
+  const r = await resolveAlertValue({ ...rule, owner: 'gone' }, { resolve, explore });
+  assert.equal(r.status, 'orphaned');
+  assert.match((r as { reason: string }).reason, /owner of this alert \(gone\) was deleted or deactivated/);
+  assert.equal(explored_, false, 'no read ran as a role the rule merely remembered');
+});
+
+test('ORPHANED: an alert whose owner was deactivated does not run', async () => {
+  const r = await resolveAlertValue({ ...rule, owner: 'zed' }, { resolve, explore: (async () => explored({ rows: [{ 'Sales.revenue': 1 }] })) as never });
+  assert.equal(r.status, 'orphaned');
 });

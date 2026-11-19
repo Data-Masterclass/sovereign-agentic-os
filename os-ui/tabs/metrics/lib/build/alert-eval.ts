@@ -5,6 +5,7 @@ import 'server-only';
 import { claimsFromUser, delegate, type DelegatedToken } from '@tabs/data/lib/index';
 import { getMetric, listMetrics } from '@tabs/metrics/lib/store';
 import { getPublicUser } from '@tabs/admin/lib/users';
+import { liveDomains } from '@core/kernel/auth';
 import type { Principal } from '@tabs/data/lib/store';
 import type { Dataset, Measure } from '@tabs/data/lib/index';
 import { exploreMetric } from '@tabs/metrics/lib/build/explore-server';
@@ -28,19 +29,21 @@ export type AlertValue =
   | { status: 'ok'; value: number }
   /** Trino unreachable on a real deployment — evaluation is SKIPPED, no value fabricated. */
   | { status: 'unavailable'; reason: string }
-  /** No number yet (metric un-computable for this slice / empty result / unresolved member). */
-  | { status: 'pending'; reason?: string };
+  /** No number yet (metric un-computable for this slice / empty result). */
+  | { status: 'pending'; reason?: string }
+  /** The alert has nothing left to watch, or no one to watch it for: its metric was deleted or
+   *  archived (or is no longer visible to its owner), or its owner was deleted or deactivated.
+   *  Never evaluated, and never retried as if a number were merely late. */
+  | { status: 'orphaned'; reason: string };
 
-/** The owner Principal the headless evaluation runs as (RLS-scoped registry + dataset reads).
- *  Derived from the governed user directory; falls back to the rule's stored owner/domain when
- *  the directory has no record (pre-IdP / seeded rules) — still the OWNER's subject. */
-async function ownerPrincipal(rule: AlertRuleRecord): Promise<Principal> {
+/** The owner Principal the headless evaluation runs as (RLS-scoped registry + dataset reads):
+ *  the owner as the user directory has them NOW (role, active domains). `null` when the owner
+ *  no longer exists or is deactivated — the alert then does not run at all, rather than run
+ *  under an identity assembled from what the rule remembered. */
+async function ownerPrincipal(rule: AlertRuleRecord): Promise<Principal | null> {
   const pub = await getPublicUser(rule.owner);
-  return {
-    id: rule.owner,
-    domains: pub?.domains ?? (rule.domain ? [rule.domain] : []),
-    role: pub?.role ?? 'creator',
-  };
+  if (!pub || pub.disabled) return null;
+  return { id: rule.owner, domains: liveDomains(pub.domains), role: pub.role };
 }
 
 /** The owner's DELEGATED token so the headless read runs AS the owner (R2/R3 — the per-viewer
@@ -73,15 +76,24 @@ export async function resolveAlertValue(
   deps: {
     explore?: typeof exploreMetric;
     resolve?: (member: string, owner: Principal) => { dataset: Dataset; measure: Measure } | null;
+    owner?: (rule: AlertRuleRecord) => Promise<Principal | null>;
   } = {},
 ): Promise<AlertValue> {
   const explore = deps.explore ?? exploreMetric;
   const resolve = deps.resolve ?? resolveMemberForOwner;
-  const owner = await ownerPrincipal(rule);
+  const owner = await (deps.owner ?? ownerPrincipal)(rule);
+  if (!owner) {
+    return { status: 'orphaned', reason: `the owner of this alert (${rule.owner}) was deleted or deactivated, so it is not evaluated` };
+  }
   const token = ownerToken(owner);
 
   const found = resolve(rule.member, owner);
-  if (!found) return { status: 'pending', reason: 'the metric behind this alert could not be resolved for the owner' };
+  if (!found) {
+    return {
+      status: 'orphaned',
+      reason: `the metric ${rule.member} this alert watches was deleted or archived, or its owner can no longer see it`,
+    };
+  }
 
   const result = await explore(found.dataset, found.measure, token, {});
   if (result.unavailable) {

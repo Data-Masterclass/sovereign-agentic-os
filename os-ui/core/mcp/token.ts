@@ -4,7 +4,7 @@
 import 'server-only';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { config } from '@core/kernel/config';
-import type { CurrentUser } from '@core/kernel/auth';
+import { principalById, type CurrentUser } from '@core/kernel/auth';
 import { getPublicUser } from '@tabs/admin/lib/users';
 
 /**
@@ -107,6 +107,10 @@ export async function resolveMcpUser(token: string | undefined | null): Promise<
   if (!payload || payload.typ === 'refresh') return null; // a refresh token is not an MCP bearer
   const u = await getPublicUser(payload.id);
   if (!u || u.mustChangeCredentials) return null;
-  // MCP bearer (no browser cookie) ⇒ no active-domain narrowing: all domains.
-  return { id: u.id, name: u.name, domains: u.domains, allDomains: u.domains, activeDomain: null, role: u.role };
+  // The SAME live principal every headless door uses (`principalById`): a deactivated account is
+  // refused, and an archived domain is out of scope, exactly as the cookie session drops it.
+  const live = await principalById(u.id);
+  if (!live) return null;
+  // MCP bearer (no browser cookie) ⇒ no active-domain narrowing: all (active) domains.
+  return { id: live.id, name: live.name, domains: live.domains, allDomains: live.domains, activeDomain: null, role: live.role };
 }
