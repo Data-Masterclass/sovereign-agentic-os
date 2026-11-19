@@ -63,11 +63,24 @@ import { claimsFromUser, delegate } from '@tabs/data/lib/identity';
 const FILE_TEXT_CAP = 8000;
 const APP_FILE_CAP = 24000;
 
-function truncated(text: string, cap: number): { text: string; note: string | null } {
-  if (text.length <= cap) return { text, note: null };
+/** The optional paging argument the long-text readers share. */
+const OFFSET_PROP = { type: 'number', description: 'Optional. Character offset to start reading at (from a previous answer\'s `nextOffset`). Omit for the start.' };
+
+/**
+ * One PAGE of a long text: `cap` characters from `offset`. When more follows, the note says how
+ * to read it with the same tool, and `nextOffset` carries the number — a model can read a long
+ * file to the end, and nobody is told to "read the rest in the UI", which an agent cannot do.
+ */
+function textPage(text: string, cap: number, offsetArg: unknown, tool: string): { text: string; note: string | null; nextOffset?: number } {
+  const offset = typeof offsetArg === 'number' && offsetArg > 0 ? Math.min(Math.floor(offsetArg), text.length) : 0;
+  const end = Math.min(text.length, offset + cap);
+  if (offset === 0 && end === text.length) return { text, note: null };
+  const page = text.slice(offset, end);
+  if (end >= text.length) return { text: page, note: `Characters ${offset}–${end} of ${text.length}: this is the end of the text.` };
   return {
-    text: text.slice(0, cap),
-    note: `Truncated: showing the first ${cap} of ${text.length} characters. Read the rest in the tab UI.`,
+    text: page,
+    note: `Truncated: showing characters ${offset}–${end} of ${text.length}. Call ${tool} again with offset=${end} to read the next part.`,
+    nextOffset: end,
   };
 }
 
@@ -187,11 +200,12 @@ export const waveBReadTools: McpTool[] = [
     tab: 'files',
     minRole: 'creator',
     description:
-      'Read ONE governed file you are entitled to — metadata (name, folder, tags, description, sensitivity, tier, version history) plus the extracted text. Purpose: read back what upload_file stored so agents can quote the actual content, not a guess. Before: list_files or search_files. After: request_promotion once documented, or reference the content in knowledge/agent work. Governance: read-only through the SAME document-level entitlement filter (DLS) as the Files tab — an unentitled id is a typed not_found/forbidden. Honesty: `restricted` files return metadata ONLY (the text is stored but never returned or indexed), and long text is truncated at ~8k characters with an explicit note — never silently.',
+      'Read ONE governed file you are entitled to — metadata (name, folder, tags, description, sensitivity, tier, version history) plus the extracted text. Purpose: read back what upload_file stored so agents can quote the actual content, not a guess. Before: list_files or search_files. After: request_promotion once documented, or reference the content in knowledge/agent work. Governance: read-only through the SAME document-level entitlement filter (DLS) as the Files tab — an unentitled id is a typed not_found/forbidden. Honesty: `restricted` files return metadata ONLY (the text is stored but never returned or indexed), and long text comes in pages of ~8k characters: the note and `nextOffset` say how to read the next one — never silently.',
     inputSchema: {
       type: 'object',
       properties: {
         fileId: { type: 'string', description: 'File id from list_files / search_files.' },
+        offset: OFFSET_PROP,
       },
       required: ['fileId'],
       examples: [{ fileId: 'as_ab12cd34' }],
@@ -202,7 +216,7 @@ export const waveBReadTools: McpTool[] = [
       const v = getFile(id, P(user)); // DLS entitlement guard (403/404)
       const a = v.asset;
       const restricted = a.sensitivity === 'restricted';
-      const body = restricted ? { text: null, note: 'This file is `restricted` — its text is stored but never returned or indexed. You see metadata only.' } : truncated(v.text, FILE_TEXT_CAP);
+      const body = restricted ? { text: null, note: 'This file is `restricted` — its text is stored but never returned or indexed. You see metadata only.' } : textPage(v.text, FILE_TEXT_CAP, args.offset, 'get_file');
       return {
         id: a.id,
         name: a.name,
@@ -231,6 +245,7 @@ export const waveBReadTools: McpTool[] = [
         history: v.history,
         text: body.text,
         textNote: body.note,
+        ...('nextOffset' in body && body.nextOffset !== undefined ? { nextOffset: body.nextOffset } : {}),
         /** Present when the original bytes were stored (UI or MCP binary upload);
          *  null for text-only (MCP `upload_file` without `base64Content`) records. */
         object: v.object ? { key: v.object.key, contentType: v.object.contentType, bytes: v.object.bytes } : null,
@@ -242,12 +257,13 @@ export const waveBReadTools: McpTool[] = [
     tab: 'software',
     minRole: 'creator',
     description:
-      'Read an app’s FILE TREE — or, when `path` is given, one FILE’s content (kind "file") OR a DIRECTORY’s immediate entries (kind "dir"). The read-back counterpart of `commit`: what you committed is what you read. Purpose: iterate on the real code instead of re-guessing it. Before: list_software / get_software (you must be able to SEE the app — the same gate). After: commit changed files, start_preview, get_software_status. Governance: read-only under YOUR identity; an unseeable app is a typed not_found (no existence leak). Honesty: returns the tree as it was COMMITTED through the governed commit door (the app’s source lives in the domain git repository under `apps/<slug>/`, mirrored to a read cache), or the template seed for a fresh app — labelled `source` so you always know which. There is no external git forge, no CI runner and no image registry in the OS. Large files are truncated at ~24k characters with an explicit note.',
+      'Read an app’s FILE TREE — or, when `path` is given, one FILE’s content (kind "file") OR a DIRECTORY’s immediate entries (kind "dir"). The read-back counterpart of `commit`: what you committed is what you read. Purpose: iterate on the real code instead of re-guessing it. Before: list_software / get_software (you must be able to SEE the app — the same gate). After: commit changed files, start_preview, get_software_status. Governance: read-only under YOUR identity; an unseeable app is a typed not_found (no existence leak). Honesty: returns the tree as it was COMMITTED through the governed commit door (the app’s source lives in the domain git repository under `apps/<slug>/`, mirrored to a read cache), or the template seed for a fresh app — labelled `source` so you always know which. There is no external git forge, no CI runner and no image registry in the OS. Large files come in pages of ~24k characters: `contentNote` and `nextOffset` say how to read the next one.',
     inputSchema: {
       type: 'object',
       properties: {
         appId: { type: 'string', description: 'App id from list_software.' },
         path: { type: 'string', description: 'Optional. A FILE path returns its content; a DIRECTORY path returns its entries (drill down); omit it for the whole tree.' },
+        offset: OFFSET_PROP,
       },
       required: ['appId'],
       examples: [{ appId: 'app_ab12cd34' }, { appId: 'app_ab12cd34', path: 'app.yaml' }],
@@ -296,8 +312,8 @@ export const waveBReadTools: McpTool[] = [
         if (dir.length > 0) return { appId, source, branch: 'main', kind: 'dir', path, entries: dir, note };
         fail(`Path not found in the app tree: ${path}`, 404);
       }
-      const body = truncated(f.content, APP_FILE_CAP);
-      return { appId, source, kind: 'file', path: f.path, content: body.text, contentNote: body.note, note };
+      const body = textPage(f.content, APP_FILE_CAP, args.offset, 'read_app_files');
+      return { appId, source, kind: 'file', path: f.path, content: body.text, contentNote: body.note, ...(body.nextOffset !== undefined ? { nextOffset: body.nextOffset } : {}), note };
     },
   },
   {

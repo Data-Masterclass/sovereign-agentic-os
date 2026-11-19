@@ -12,11 +12,14 @@
  *     (`query_data`, `search_knowledge`, a connector read, anything added later) rather than one
  *     handler. A per-handler bound would still be worth having — see the follow-up in the plan —
  *     but it can never be the only one.
- *   - Row-aware: a result that parses as JSON carrying an array (`rows`, `data`, `items`,
- *     `results`, or a bare array) is truncated BY ROWS, so the model still sees well-formed JSON
- *     plus `[truncated: showing 200 of 50000 rows]`. Anything else is cut by characters, with the
- *     character counts in the marker. The marker is plain text on its own line, so it is visible
- *     in the prompt, in the Run panel's `tool-step` and in the Langfuse span preview.
+ *   - THE ONE TRUNCATION RULE for tool results. Row-aware: a result that parses as JSON carrying
+ *     an array (`rows`, `data`, `items`, `results`, a bare array) — or several, as the
+ *     scope-grouped `{ mine, domain, marketplace }` listings do — is truncated BY ROWS, so the
+ *     model still sees well-formed JSON plus `[truncated: showing 200 of 50000 rows] <how to
+ *     narrow>`. Anything else is cut by characters, with the character counts in the marker. The
+ *     marker is plain text on its own line, so it is visible in the prompt, in the Run panel's
+ *     `tool-step` and in the Langfuse span preview; `truncationWarnings` turns the same markers
+ *     into the run report's warnings.
  *   - The deadline cannot CANCEL an in-flight HTTP call (fetch has no universal abort here), so it
  *     stops WAITING and returns a typed `timeout`. The superstep ends; a late answer is ignored.
  *   - A TIMEOUT IS THEREFORE UNRESOLVED, NOT FAILED (review M-3): the write may have landed. The
@@ -91,21 +94,32 @@ export type BoundedResult = {
 
 const ROW_KEYS = ['rows', 'data', 'items', 'results'] as const;
 
-/** The array a tabular result carries, with the key it sits under (`''` for a bare array). */
-function rowsOf(value: unknown): { key: string; rows: unknown[] } | null {
-  if (Array.isArray(value)) return { key: '', rows: value };
-  if (!value || typeof value !== 'object') return null;
-  const obj = value as Record<string, unknown>;
+/** One array of rows inside a result, and the key it sits under (`''` for a bare array). */
+type RowGroup = { key: string; rows: unknown[] };
+
+const isRecord = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
+
+/**
+ * The row arrays a result carries. A table (`rows`/`data`/`items`/`results`, or a bare array) is
+ * ONE group. Otherwise every top-level array of objects is a group — the scope-grouped listings
+ * (`{ mine, domain, marketplace }`) every `list_*` tool answers with. Empty → not tabular.
+ */
+function rowGroupsOf(value: unknown): RowGroup[] {
+  if (Array.isArray(value)) return value.length > 0 ? [{ key: '', rows: value }] : [];
+  if (!isRecord(value)) return [];
   for (const key of ROW_KEYS) {
-    if (Array.isArray(obj[key])) return { key, rows: obj[key] as unknown[] };
+    const rows = value[key];
+    if (Array.isArray(rows) && rows.length > 0) return [{ key, rows }];
   }
-  return null;
+  return Object.entries(value)
+    .filter(([, v]) => Array.isArray(v) && v.length > 0 && v.every(isRecord))
+    .map(([key, rows]) => ({ key, rows: rows as unknown[] }));
 }
 
-/** The largest row count whose serialisation still fits the budget (never more than `total`). */
-function fitRows(render: (n: number) => string, total: number, maxChars: number): number {
+/** The largest `n` in [0, max] whose rendering still fits (rendering grows with `n`). */
+function largestFitting(render: (n: number) => string, max: number, maxChars: number): number {
   let lo = 0;
-  let hi = total;
+  let hi = max;
   while (lo < hi) {
     const mid = Math.ceil((lo + hi) / 2);
     if (render(mid).length <= maxChars) lo = mid;
@@ -115,11 +129,28 @@ function fitRows(render: (n: number) => string, total: number, maxChars: number)
 }
 
 /**
- * Bound one tool result to `maxChars` for the prompt. Returns the text unchanged when it already
- * fits. A truncated result ALWAYS carries a marker naming what was dropped — a silently shortened
- * answer is how an agent comes to a confident wrong conclusion.
+ * How the model can see the rest — named per tool where there is a real way, generic otherwise.
+ * One sentence, so the marker stays one line.
  */
-export function boundToolResult(text: string, maxChars: number = DEFAULT_TOOL_RESULT_MAX_CHARS): BoundedResult {
+export function narrowHint(tool?: string): string {
+  if (tool === 'list_files') return 'Narrow it: call list_files with folder=<a subfolder>, or search_files with a query.';
+  if (tool === 'query_data') return 'Narrow it: filter (WHERE), aggregate (GROUP BY) or page (LIMIT/OFFSET) in the SQL.';
+  return 'Narrow the request (a filter, a folder or a search) to see the rest — do not treat this as everything.';
+}
+
+/** Prefix every truncation marker starts with — what the model, the Run panel and the warnings read. */
+export const TRUNCATION_MARKER = '\n[truncated: ';
+
+/**
+ * Bound one tool result to `maxChars` for the prompt. Returns the text unchanged when it already
+ * fits. A truncated result ALWAYS carries a marker naming what was dropped and how to see it — a
+ * silently shortened answer is how an agent comes to a confident wrong conclusion.
+ *
+ * Row-aware: a tabular result keeps the first rows of EACH group (the same per-group cap), so a
+ * grouped listing shows some of every tier instead of being cut mid-JSON; the marker counts every
+ * group. Anything else is cut by characters.
+ */
+export function boundToolResult(text: string, maxChars: number = DEFAULT_TOOL_RESULT_MAX_CHARS, tool?: string): BoundedResult {
   const total = text.length;
   const budget = Math.max(200, maxChars);
   if (total <= budget) return { text, truncated: false, chars: { kept: total, total } };
@@ -130,25 +161,54 @@ export function boundToolResult(text: string, maxChars: number = DEFAULT_TOOL_RE
   } catch {
     parsed = undefined;
   }
-  const table = parsed === undefined ? null : rowsOf(parsed);
-  if (table && table.rows.length > 0) {
-    const render = (n: number): string => {
-      const head = table.rows.slice(0, n);
-      const body = table.key === '' ? head : { ...(parsed as Record<string, unknown>), [table.key]: head };
+  const groups = rowGroupsOf(parsed);
+  const hint = narrowHint(tool);
+  if (groups.length > 0) {
+    const allRows = groups.reduce((n, g) => n + g.rows.length, 0);
+    const largest = Math.max(...groups.map((g) => g.rows.length));
+    const render = (perGroup: number): string => {
+      if (groups[0].key === '') return JSON.stringify(groups[0].rows.slice(0, perGroup));
+      const body: Record<string, unknown> = { ...(parsed as Record<string, unknown>) };
+      for (const g of groups) body[g.key] = g.rows.slice(0, perGroup);
       return JSON.stringify(body);
     };
-    // Leave room for the marker line itself.
-    const marker = (kept: number) => `\n[truncated: showing ${kept} of ${table.rows.length} rows]`;
-    const kept = fitRows(render, table.rows.length, Math.max(100, budget - marker(table.rows.length).length));
-    const body = render(kept);
-    const out = `${body}${marker(kept)}`;
-    return { text: out, truncated: true, rows: { kept, total: table.rows.length }, chars: { kept: out.length, total } };
+    const marker = (perGroup: number) => {
+      const shown = groups.reduce((n, g) => n + Math.min(perGroup, g.rows.length), 0);
+      const each = groups.length > 1 ? ` (${groups.map((g) => `${g.key} ${Math.min(perGroup, g.rows.length)} of ${g.rows.length}`).join(', ')})` : '';
+      return `${TRUNCATION_MARKER}showing ${shown} of ${allRows} rows${each}] ${hint}`;
+    };
+    // Leave room for the marker line itself (its longest form).
+    const perGroup = largestFitting(render, largest, Math.max(100, budget - marker(largest).length));
+    const out = `${render(perGroup)}${marker(perGroup)}`;
+    const kept = groups.reduce((n, g) => n + Math.min(perGroup, g.rows.length), 0);
+    return { text: out, truncated: true, rows: { kept, total: allRows }, chars: { kept: out.length, total } };
   }
 
-  const markerFor = (kept: number) => `\n[truncated: showing ${kept} of ${total} characters]`;
+  const markerFor = (kept: number) => `${TRUNCATION_MARKER}showing ${kept} of ${total} characters] ${hint}`;
   const keep = Math.max(100, budget - markerFor(total).length);
   const out = `${text.slice(0, keep)}${markerFor(keep)}`;
   return { text: out, truncated: true, chars: { kept: out.length, total } };
+}
+
+/**
+ * The run warnings for every result the bound cut, one per agent and tool: what a PERSON reads in
+ * the run report, next to the marker the model read. Derived from the recorded steps, so it is the
+ * same on a live run, a resumed run and a replay.
+ */
+export function truncationWarnings(runs: { node: string; result: { steps: { tool: string; result: string }[] } }[]): string[] {
+  const seen = new Map<string, { count: number; last: string }>();
+  for (const r of runs) {
+    for (const s of r.result.steps) {
+      const at = s.result.lastIndexOf(TRUNCATION_MARKER);
+      if (at < 0) continue;
+      const what = s.result.slice(at + TRUNCATION_MARKER.length).split(']')[0];
+      const key = `${r.node}: ${s.tool}`;
+      seen.set(key, { count: (seen.get(key)?.count ?? 0) + 1, last: what });
+    }
+  }
+  return [...seen].map(([key, v]) =>
+    `${key} returned more than fits one prompt ${v.count === 1 ? 'once' : `${v.count} times`} (last: ${v.last}); the agent saw only part of it and was told so.`,
+  );
 }
 
 /**
@@ -184,6 +244,6 @@ export async function callToolGuarded(
   } finally {
     if (timer !== undefined) clock.clearTimeout(timer);
   }
-  const bounded = boundToolResult(out.text, opts.maxChars ?? DEFAULT_TOOL_RESULT_MAX_CHARS);
+  const bounded = boundToolResult(out.text, opts.maxChars ?? DEFAULT_TOOL_RESULT_MAX_CHARS, call.name);
   return bounded.truncated ? { text: bounded.text, isError: out.isError } : out;
 }

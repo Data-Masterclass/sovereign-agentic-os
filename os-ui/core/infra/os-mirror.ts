@@ -31,6 +31,41 @@ import { config } from '@core/kernel/config';
  * imports (only `config` + global `fetch`) so it is directly unit-testable.
  */
 
+/**
+ * HYDRATION SHORTFALLS — the honest interim for the store hydration caps. A store loads at most
+ * `size` docs from its index at boot (500–5000 per store); when the index holds MORE, the rest are
+ * absent from the in-process Map, so lists and searches silently miss them. Until the stores move
+ * to a real database (the structural fix), every such load is logged loudly and recorded here, and
+ * `/api/status` shows it as a health warning. A later full load clears the record.
+ */
+export type HydrationShortfall = { index: string; loaded: number; total: number; at: string };
+
+const SHORTFALLS = Symbol.for('sovereign-os.os-mirror.shortfalls');
+
+function shortfallMap(): Map<string, HydrationShortfall> {
+  const g = globalThis as unknown as Record<symbol, Map<string, HydrationShortfall> | undefined>;
+  return (g[SHORTFALLS] ??= new Map());
+}
+
+function totalOf(total: { value?: number } | number | undefined): number | undefined {
+  return typeof total === 'number' ? total : total?.value;
+}
+
+/** Record (or clear) one load's shortfall; a short load is also logged as an error. */
+function noteHydration(index: string, loaded: number, total: number | undefined): void {
+  if (typeof total !== 'number' || total <= loaded) {
+    shortfallMap().delete(index);
+    return;
+  }
+  shortfallMap().set(index, { index, loaded, total, at: new Date().toISOString() });
+  console.error(`[os-mirror] ${index}: loaded ${loaded} of ${total} records — ${total - loaded} are missing from this process (the store's hydration cap). Lists and searches over this store are INCOMPLETE.`);
+}
+
+/** Every store whose last load was cut short — the health warning `/api/status` reports. */
+export function hydrationShortfalls(): HydrationShortfall[] {
+  return [...shortfallMap().values()];
+}
+
 export type OsMirror = {
   readonly index: string;
   /** Current best knowledge of mirror health (false until first probe). */
@@ -196,12 +231,14 @@ export function osMirror(opts: {
     if (!(await probe())) return null;
     const res = await osFetch(`/${index}/_search?size=${size}`, {
       method: 'POST',
-      body: JSON.stringify({ query: { match_all: {} } }),
+      body: JSON.stringify({ query: { match_all: {} }, track_total_hits: true }),
     });
     if (!res || !res.ok) return [];
     try {
-      const data = (await res.json()) as { hits?: { hits?: { _source?: unknown }[] } };
-      return (data?.hits?.hits ?? []).map((h) => h._source).filter((d) => d !== undefined && d !== null);
+      const data = (await res.json()) as { hits?: { total?: { value?: number } | number; hits?: { _source?: unknown }[] } };
+      const docs = (data?.hits?.hits ?? []).map((h) => h._source).filter((d) => d !== undefined && d !== null);
+      noteHydration(index, docs.length, totalOf(data?.hits?.total));
+      return docs;
     } catch {
       return [];
     }
@@ -228,7 +265,9 @@ export function osMirror(opts: {
         data.timed_out === false &&
         !!shards && shards.failed === 0 && typeof shards.total === 'number' && shards.successful === shards.total &&
         !!total && total.relation === 'eq' && total.value === hits.length;
-      return { docs: hits.map((h) => h._source).filter((d) => d !== undefined && d !== null), complete };
+      const docs = hits.map((h) => h._source).filter((d) => d !== undefined && d !== null);
+      noteHydration(index, docs.length, total?.value);
+      return { docs, complete };
     } catch {
       return { docs: [], complete: false };
     }

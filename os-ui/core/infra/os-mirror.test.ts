@@ -385,3 +385,35 @@ test('deleteConfirmed: an unreachable cluster is a failed delete, never a silent
     globalThis.fetch = orig;
   }
 });
+
+test('a store hydrated below its index size is NOT silent: logged, recorded, and cleared by a full load', async () => {
+  const { hydrationShortfalls } = await import('@core/infra/os-mirror');
+  const orig = globalThis.fetch;
+  const errors: string[] = [];
+  const origError = console.error;
+  console.error = (...a: unknown[]) => { errors.push(a.join(' ')); };
+  let total = 2500;
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const path = String(input).replace(/^https?:\/\/[^/]+/, '');
+    const json = (b: unknown) => new Response(JSON.stringify(b), { status: 200, headers: { 'content-type': 'application/json' } });
+    if (path.endsWith('/_count')) return json({ count: total });
+    const size = Number(/size=(\d+)/.exec(path)?.[1] ?? 10);
+    const n = Math.min(size, total);
+    return json({ hits: { total: { value: total, relation: 'eq' }, hits: Array.from({ length: n }, (_, i) => ({ _source: { id: `d${i}` } })) } });
+  }) as typeof fetch;
+  const m = osMirror({ index: 'os-mirror-test-shortfall', createBody: {} });
+  m.__reset();
+  try {
+    const docs = await m.hydrate(2000);
+    assert.equal(docs?.length, 2000);
+    const s = hydrationShortfalls().find((x) => x.index === 'os-mirror-test-shortfall');
+    assert.deepEqual(s && { loaded: s.loaded, total: s.total }, { loaded: 2000, total: 2500 });
+    assert.ok(errors.some((e) => /loaded 2000 of 2500 records/.test(e)), 'logged loudly');
+    total = 1500;
+    await m.hydrate(2000);
+    assert.equal(hydrationShortfalls().find((x) => x.index === 'os-mirror-test-shortfall'), undefined, 'a full load clears it');
+  } finally {
+    globalThis.fetch = orig;
+    console.error = origError;
+  }
+});

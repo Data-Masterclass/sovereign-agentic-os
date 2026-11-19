@@ -17,7 +17,8 @@
  *     files) and folder subtree — the same rule `resolveFolderGrant` uses.
  *   - `list_files`: rows as `{ id, name, folder, kind, bytes, status, description }` under `items`
  *     (so the engine's row-aware truncation applies), with a `scope` sentence saying what the
- *     listing is limited to. No facets, deep links, owners, versions or other tiers.
+ *     listing is limited to, and a `note` when the grant covers no file at all. No facets, deep
+ *     links, owners, versions or other tiers.
  *   - `get_file`: the metadata an agent reasons with plus the text; the version history and the
  *     object-store record are dropped.
  *   - EVERY JSON result is re-serialised without indentation: the MCP door pretty-prints for
@@ -115,7 +116,12 @@ export function shapeFileListing(result: unknown, args: Record<string, unknown>,
         availableFolders: distinctFolders(inScope),
       }
     : {};
-  return { scope, ...(asked ? { folder: asked } : {}), count: items.length, items, ...missed };
+  // A grant that covers NOTHING says so in the result: an empty `items` alone reads as "there are
+  // no invoices", when the truth is "this system was pointed at an empty (or misspelt) folder".
+  const empty = grants.length > 0 && inScope.length === 0
+    ? { note: `0 files in ${grants.map(describeFolderGrant).join(', ')}; the grant is empty. Say so in your answer — do not report that there are no such files anywhere. The system's owner can fix the folder grant.` }
+    : {};
+  return { scope, ...(asked ? { folder: asked } : {}), count: items.length, items, ...missed, ...empty };
 }
 
 /** The agent's view of a `get_file` result: metadata + text, without the version history and object record. */

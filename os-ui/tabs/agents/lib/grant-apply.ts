@@ -276,6 +276,15 @@ export function zeroMatchWarning(
   return `${head} ${e.count} ${e.count === 1 ? `${one} is` : `${many} are`} in ${where}.`;
 }
 
+/**
+ * The warning for a folder grant that covers MORE items than one run may resolve (the folder-grant
+ * budget): only the first `kept` are granted, and the run must say so rather than look complete.
+ */
+export function cappedGrantWarning(kind: FolderedGrantKind, folder: FolderRef, kept: number, total: number): string {
+  const [, many] = KIND_NOUN[kind];
+  return `The grant on ${describeFolderGrant(kind, folder)} covers ${total} ${many}; this run was given only the first ${kept} of ${total} ${many} (the folder-grant budget). Narrow the grant to a subfolder, or ask an admin to raise the budget.`;
+}
+
 /** True when a folder is where a declared output of this kind is written (empty is expected there). */
 export function isOutputFolder(system: System, kind: FolderedGrantKind, f: FolderRef): boolean {
   return (system.outputs ?? []).some(

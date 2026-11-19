@@ -30,8 +30,9 @@ test('budgetMessages bounds an oversized transcript to the budget', () => {
   const budget = 2_000;
   const out = budgetMessages(ms, budget);
   assert.ok(tokens(out) <= budget, `bounded to ${budget}, got ${tokens(out)}`);
-  // The pinned head (system + user) always survives.
-  assert.equal(out[0].content, 'system spine');
+  // The pinned head (system + user) always survives — the system message now also TELLS the
+  // model that earlier content was shortened (Track B: a trim is never silent).
+  assert.match(out[0].content, /^system spine\n\n\[Context note: .*to fit the model's context window/);
   assert.equal(out[1].content, 'do the thing');
 });
 

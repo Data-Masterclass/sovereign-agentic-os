@@ -178,7 +178,7 @@ test('get_file: metadata + extracted text for an entitled caller; long text trun
   const long = payload<{ id: string }>(await call(creator, 'upload_file', { name: 'big.txt', text: 'x'.repeat(20000) }));
   const lf = payload<{ text: string; textNote: string }>(await call(creator, 'get_file', { fileId: long.id }));
   assert.equal(lf.text.length, 8000, 'truncated at the cap');
-  assert.match(lf.textNote, /first 8000 of 20000/, 'the truncation is stated, never silent');
+  assert.match(lf.textNote, /characters 0–8000 of 20000\. Call get_file again with offset=8000/, 'the truncation is stated, never silent — with how to read the next part');
 });
 
 test('get_file: a restricted file returns metadata but NEVER the text; an unentitled caller → typed forbidden', async () => {

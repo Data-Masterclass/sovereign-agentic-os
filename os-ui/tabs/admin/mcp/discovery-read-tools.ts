@@ -15,7 +15,7 @@ import {
 import { listDatasets, getDataset } from '@tabs/data/lib/store';
 import type { Dataset } from '@tabs/data/lib/dataset-schema';
 import { listWorkflows, getWorkflow } from '@tabs/knowledge/lib/store';
-import { listFiles, searchFiles, getFile } from '@tabs/files/lib/store';
+import { listFiles, searchFilesRanked, getFile } from '@tabs/files/lib/store';
 import { listMetrics } from '@tabs/metrics/lib/store';
 import { listDashboards, getDashboard } from '@tabs/dashboards/lib/store';
 import { normalizePanel, panelMetrics } from '@tabs/dashboards/lib/model';
@@ -331,7 +331,12 @@ export const readTools: McpTool[] = [
     call: async (user, args) => {
       const query = str(args.query).trim();
       if (!query) fail('search_files needs a `query`', 400);
-      return searchFiles(P(user), query);
+      const { hits, total } = searchFilesRanked(P(user), query);
+      // The top-k is said, never implied: "20 hits" must not read as "20 files match".
+      const note = total > hits.length
+        ? `${total} files match; showing the top ${hits.length} of ${total} by relevance. Refine the query, or use list_files with folder= to see a whole folder.`
+        : undefined;
+      return { query, total, hits, ...(note ? { note } : {}) };
     },
   },
   {
