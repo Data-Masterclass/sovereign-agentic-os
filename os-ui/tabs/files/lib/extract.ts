@@ -76,6 +76,9 @@ async function run(id: string, deps: ExtractDeps, actingUserId?: string): Promis
 
   const fail = (code: ExtractionFailureCode, reason: string): ExtractResult => {
     recordExtractionFailure(id, code, reason);
+    // On the file (the preview, `get_file`) AND in the pod log — an operator looking for why a
+    // batch of uploads is not searchable should not have to open each one.
+    console.warn(`[files] text extraction failed for ${id} (${code}): ${reason}`);
     return { state: 'failed', code, reason };
   };
 
@@ -110,7 +113,9 @@ async function run(id: string, deps: ExtractDeps, actingUserId?: string): Promis
   }
   // Indexing is best-effort exactly as for a text upload: the text is already stored (so
   // `get_file` and lexical search have it); a gateway outage must not undo that.
-  await deps.index(updated, outcome.text, actingUserId).catch(() => undefined);
+  await deps.index(updated, outcome.text, actingUserId).catch((e) => {
+    console.warn(`[files] indexing after text extraction failed for ${id} — the text is stored: ${(e as Error)?.message ?? String(e)}`);
+  });
   return { state: 'extracted', chars: outcome.text.length, seconds: outcome.seconds };
 }
 

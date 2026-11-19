@@ -132,6 +132,19 @@ export async function bootWorker(): Promise<WorkerBoot> {
     warn(`agent-system registry not hydrated: ${err instanceof Error ? err.message : String(err)}`);
   }
 
+  // The FILES registry. This process never serves the Files UI, but an agent's `list_files` /
+  // `get_file` / `search_files` read its in-process copy — which is hydrated once and would
+  // otherwise never see a file uploaded in os-ui afterwards, nor the text os-ui extracts from a
+  // PDF (2026-11-19: the run kept reading `text: ""`). Declare this process a READER of other
+  // processes' writes, so the store re-reads its mirror before serving (newer-wins, throttled).
+  try {
+    const { enableMirrorRefresh } = await import('@tabs/files/lib/store');
+    enableMirrorRefresh();
+    log('files registry: mirror refresh ON (file tools read what os-ui wrote)');
+  } catch (err) {
+    warn(`files registry mirror refresh NOT enabled (file tools may serve stale text): ${err instanceof Error ? err.message : String(err)}`);
+  }
+
   // The LangGraph checkpoint store — without it a run cannot survive this pod, which is the whole
   // point of the worker.
   const { ensureCheckpointerReady } = await import('@tabs/agents/lib/engine/checkpointer');

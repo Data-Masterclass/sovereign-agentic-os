@@ -382,6 +382,148 @@ test('file records (os-file-records): fresh-boot bootstrap + round-trip hydratio
   }
 });
 
+// The PDF fix (2026-11-19) stores Docling's text ON the record and two new `indexing` fields in
+// its yaml. Both must survive the mirror, or a pod roll turns the file back into a text-less
+// stored-only one — and a SECOND process (the run worker, which executes an agent's `get_file`)
+// must actually pick the text up, or the agent keeps reading `text: ""`.
+
+async function uploadPdf(files: typeof import('@tabs/files/lib/store'), name: string) {
+  const blobs = await import('@tabs/files/lib/object-store');
+  const asset = files.createFile(admin, { name, text: '', bytes: 9 });
+  await blobs.putBlob(files.objectKeyForAsset(asset)!, Buffer.from('%PDF-1.4 x'), 'application/pdf');
+  files.attachObject(asset.id, admin, { contentType: 'application/pdf', bytes: 9 });
+  return asset;
+}
+
+test('file records: extracted text, the extraction state and the stored-only reason survive a pod roll', async () => {
+  const os = fakeCluster();
+  const files = await import('@tabs/files/lib/store');
+  try {
+    files.__resetStore();
+    await files.ensureHydrated();
+    const read = await uploadPdf(files, 'invoice-ok.pdf');
+    const unreadable = await uploadPdf(files, 'invoice-scan.pdf');
+    const secret = files.createFile(admin, { name: 'payroll.pdf', text: '', sensitivity: 'restricted' });
+    assert.ok(files.applyExtractedText(read.id, 'Invoice INV-1. Total due: 10 EUR.'));
+    assert.ok(files.recordExtractionFailure(unreadable.id, 'no-text', 'The parser found no text in it.'));
+    await settle();
+
+    files.__resetStore(); // pod roll: memory gone, only the mirror is left
+    await files.ensureHydrated();
+
+    const a = files.getFile(read.id, admin);
+    assert.equal(a.text, 'Invoice INV-1. Total due: 10 EUR.', 'the extracted text is in the mirror document');
+    assert.equal(a.asset.indexing.mode, 'indexed');
+    assert.equal(a.asset.indexing.extraction?.status, 'extracted');
+    assert.notEqual(a.history[0].hash, '00000000');
+    assert.equal(a.object?.contentType, 'application/pdf', 'and so is the pointer to the original bytes');
+
+    const b = files.getFile(unreadable.id, admin);
+    assert.equal(b.text, '');
+    assert.equal(b.asset.indexing.mode, 'stored-only');
+    assert.equal(b.asset.indexing.storedOnlyReason, 'no-text');
+    assert.deepEqual(
+      { status: b.asset.indexing.extraction?.status, code: b.asset.indexing.extraction?.code, reason: b.asset.indexing.extraction?.reason },
+      { status: 'failed', code: 'no-text', reason: 'The parser found no text in it.' },
+    );
+    assert.equal(files.extractionSubject(unreadable.id)!.eligibility.eligible, true, 'still retryable after the roll');
+
+    const c = files.getFile(secret.id, admin);
+    assert.equal(c.asset.indexing.storedOnlyReason, 'restricted');
+    assert.equal(files.extractionSubject(secret.id)!.eligibility.eligible, false, 'still never parsed after the roll');
+  } finally {
+    os.restore();
+    files.__resetStore();
+  }
+});
+
+test('file records: a SECOND process (the run worker) picks up text extracted — and files uploaded — elsewhere, without a restart', async () => {
+  const os = fakeCluster();
+  const files = await import('@tabs/files/lib/store');
+  try {
+    // os-ui uploads a PDF; its text has not been read yet.
+    files.__resetStore();
+    await files.ensureHydrated();
+    const pdf = await uploadPdf(files, 'invoice-0042.pdf');
+    await settle();
+
+    // The worker process starts and hydrates: it sees the file, text-less.
+    files.__resetStore();
+    files.enableMirrorRefresh();
+    await files.ensureHydrated();
+    assert.equal(files.getFile(pdf.id, admin).text, '');
+
+    // Meanwhile os-ui (another process — here: a direct write to the mirror, which is all the
+    // worker can ever observe of it) extracts the text and uploads one more file.
+    const held = os.docsOf('os-file-records').get(pdf.id) as Record<string, unknown>;
+    const later = new Date(Date.now() + 60_000).toISOString();
+    const yaml = String(held.yaml)
+      .replace('mode: stored-only', 'mode: indexed')
+      .replace(/\n\s*storedOnlyReason: no-text/, '');
+    os.seed('os-file-records', pdf.id, { ...held, yaml, text: 'Invoice INV-2026-0042. Total due: 1,234.56 EUR.', updatedAt: later });
+    os.seed('os-file-records', 'as_elsewhere', { ...held, id: 'as_elsewhere', yaml: String(held.yaml).replace(pdf.id, 'as_elsewhere'), updatedAt: later });
+
+    // Inside the throttle window nothing is re-read (one mirror read per MIRROR_REFRESH_MIN_MS)…
+    await files.ensureHydrated();
+    assert.equal(files.getFile(pdf.id, admin).text, '');
+    // …and after it, the SAME call every door makes brings the worker up to date.
+    await files.refreshFromMirror({ nowMs: Date.now() + files.MIRROR_REFRESH_MIN_MS + 1 });
+    const fresh = files.getFile(pdf.id, admin);
+    assert.equal(fresh.text, 'Invoice INV-2026-0042. Total due: 1,234.56 EUR.', 'get_file in the worker now returns the text');
+    assert.equal(fresh.asset.indexing.mode, 'indexed');
+    assert.ok(files.listFiles(admin).mine.some((f) => f.id === 'as_elsewhere'), 'and list_files sees the file uploaded after it booted');
+  } finally {
+    os.restore();
+    files.__resetStore();
+  }
+});
+
+test('file records: the refresh is NEWER-WINS and never removes — a record this process just wrote is not rolled back, an empty answer deletes nothing', async () => {
+  const os = fakeCluster();
+  const files = await import('@tabs/files/lib/store');
+  try {
+    files.__resetStore();
+    files.enableMirrorRefresh();
+    await files.ensureHydrated();
+    const mine = files.createFile(admin, { name: 'report.md', text: 'the version this process just wrote' });
+    await settle();
+
+    // The mirror still holds an OLDER copy (the fire-and-forget write of a later edit has not landed).
+    const doc = os.docsOf('os-file-records').get(mine.id) as Record<string, unknown>;
+    os.seed('os-file-records', mine.id, { ...doc, text: 'a stale copy', updatedAt: '2020-01-01T00:00:00.000Z' });
+    await files.refreshFromMirror({ force: true });
+    assert.equal(files.getFile(mine.id, admin).text, 'the version this process just wrote');
+
+    // The mirror answers with nothing (an empty index and a failed search look the same).
+    os.docsOf('os-file-records').clear();
+    await files.refreshFromMirror({ force: true });
+    assert.equal(files.listFiles(admin).mine.length, 1, 'nothing was dropped on an empty answer');
+  } finally {
+    os.restore();
+    files.__resetStore();
+  }
+});
+
+test('file records: os-ui itself does NOT re-read the mirror (it is the writer); only a declared reader does — and the worker declares it at boot', async () => {
+  const os = fakeCluster();
+  const files = await import('@tabs/files/lib/store');
+  const { readFileSync } = await import('node:fs');
+  const { join } = await import('node:path');
+  try {
+    files.__resetStore();
+    await files.ensureHydrated();
+    const before = os.log.filter((l) => l === 'POST /os-file-records/_search').length;
+    for (let i = 0; i < 3; i++) await files.ensureHydrated();
+    assert.equal(os.log.filter((l) => l === 'POST /os-file-records/_search').length, before, 'no extra mirror read per request in os-ui');
+
+    const worker = readFileSync(join(process.cwd(), 'worker/agent-runs.ts'), 'utf8');
+    assert.match(worker, /const \{ enableMirrorRefresh \} = await import\('@tabs\/files\/lib\/store'\);\s*enableMirrorRefresh\(\);/);
+  } finally {
+    os.restore();
+    files.__resetStore();
+  }
+});
+
 // ----------------------------------------------------------- standing policies --
 
 test('standing policies (os-standing-policies): fresh-boot bootstrap + round-trip hydration', async () => {
