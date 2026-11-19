@@ -1,5 +1,11 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG
+ *
+ * FEATURE:    The confirm classes — every registered tool in exactly one, fail-closed.
+ * USER STORY: As the owner I want a new or renamed tool to fail CI until someone has decided
+ *             whether the assistant may run it without asking.
+ * ARCHITECTURE: the real registry against the production lists, plus a source scan that keeps
+ *             the classification unconsumed until the gate that uses it is reviewed.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
