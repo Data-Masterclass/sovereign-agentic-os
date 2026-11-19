@@ -1,0 +1,423 @@
+{
+  "id": "w2-agent-run",
+  "title": "WRITE: a tiny sandbox agent reads 2 sandbox files and saves a File and a Knowledge output; prove models, tools and saved effects",
+  "requiresWrite": true,
+  "sandboxDomain": "test",
+  "writeBudgetMs": 60000,
+  "vars": {
+    "domain": "test"
+  },
+  "steps": [
+    {
+      "id": "upload-second",
+      "tool": "upload_file",
+      "write": true,
+      "stopOnFail": true,
+      "args": {
+        "name": "selftest-${runTag}-b.md",
+        "folder": "${sandbox}",
+        "domain": "${domain}",
+        "sensitivity": "internal",
+        "tags": [
+          "os-selftest"
+        ],
+        "description": "OS self-test input B (safe to delete)",
+        "text": "# Self-test input B\n\nThe sandbox supplier is Kestrel Tools. The order number is SO-${runTag}. Delivery is due on Friday."
+      },
+      "creates": {
+        "kind": "file",
+        "idPath": "id"
+      },
+      "save": {
+        "fileB": "id"
+      },
+      "assert": [
+        {
+          "path": "id",
+          "op": "nonEmpty"
+        }
+      ]
+    },
+    {
+      "id": "inputs",
+      "tool": "list_files",
+      "args": {
+        "folder": "${sandbox}"
+      },
+      "assert": [
+        {
+          "path": "mine",
+          "op": "gte",
+          "value": 2,
+          "label": "two sandbox inputs exist (run w1 first)"
+        }
+      ],
+      "record": {
+        "inputs": "mine"
+      }
+    },
+    {
+      "id": "create",
+      "tool": "create_agent_system",
+      "write": true,
+      "stopOnFail": true,
+      "args": {
+        "name": "OS self-test ${runTag}",
+        "domain": "${domain}",
+        "template": "blank"
+      },
+      "creates": {
+        "kind": "agent_system",
+        "idPath": "id"
+      },
+      "save": {
+        "systemId": "id"
+      },
+      "assert": [
+        {
+          "path": "id",
+          "op": "matches",
+          "value": "^sys_"
+        }
+      ]
+    },
+    {
+      "id": "define",
+      "tool": "commit_agent_files",
+      "write": true,
+      "stopOnFail": true,
+      "requires": [
+        "systemId"
+      ],
+      "args": {
+        "systemId": "${systemId}",
+        "files": [
+          {
+            "path": "system.yaml",
+            "content": "version: '1'\nsystem:\n  name: OS self-test ${runTag}\n  domain: ${domain}\n  visibility: Personal\n  description: Scenario-runner self-test. Reads the sandbox, saves one file and one note. Safe to delete.\nentrypoint: reader\nstate:\n  channels:\n    messages: add_messages\ngrants:\n  data: []\n  knowledge:\n    - id: ''\n      folder:\n        path: ${sandbox}\n        scope: personal\n      capability: Write-bounded\n  metrics: []\n  tools:\n    - list_files\n    - get_file\n    - upload_file\n  connections: []\n  files:\n    - id: ''\n      folder:\n        path: ${sandbox}\n        scope: personal\n      capability: Write-bounded\nagents:\n  - id: reader\n    role: Reads the two sandbox files and writes a short summary\noutputs:\n  - kind: files\n    name: Self-test summary\n    folder:\n      path: ${sandbox}\n      scope: personal\n    agent: reader\n  - kind: knowledge\n    name: Self-test note\n    folder:\n      path: ${sandbox}\n      scope: personal\n    agent: reader\n"
+          },
+          {
+            "path": "agents/reader/AGENT.md",
+            "content": "# Self-test reader\n\nYou are a tiny test agent. Use list_files on My files folder ${sandbox}, then get_file on the two self-test files there. Write a summary of at most three lines naming the supplier and the order number. Save the summary as the declared File output named selftest-summary-${runTag}.md and as the declared Knowledge output titled OS self-test note ${runTag}. Do nothing else. Be brief."
+          }
+        ]
+      },
+      "assert": [
+        {
+          "path": "",
+          "op": "notContains",
+          "value": "\"error\""
+        }
+      ]
+    },
+    {
+      "id": "build",
+      "tool": "build_agent_system",
+      "write": true,
+      "stopOnFail": true,
+      "requires": [
+        "systemId"
+      ],
+      "args": {
+        "systemId": "${systemId}"
+      },
+      "assert": [
+        {
+          "path": "ok",
+          "op": "equals",
+          "value": true,
+          "soft": true
+        }
+      ],
+      "record": {
+        "ok": "ok",
+        "rows": "rows"
+      }
+    },
+    {
+      "id": "run",
+      "tool": "run_agent_system",
+      "write": true,
+      "stopOnFail": true,
+      "requires": [
+        "systemId"
+      ],
+      "budgetMs": 180000,
+      "args": {
+        "systemId": "${systemId}",
+        "message": "Run the self-test now: read the two sandbox files and save the summary file and the note. Marker ${runTag}."
+      },
+      "save": {
+        "runId": "runId"
+      },
+      "assert": [
+        {
+          "path": "runId",
+          "op": "matches",
+          "value": "^run_"
+        }
+      ],
+      "record": {
+        "queued": "queued",
+        "parked": "parked",
+        "finished": "finished"
+      }
+    },
+    {
+      "id": "follow",
+      "tool": "get_agent_run",
+      "requires": [
+        "runId"
+      ],
+      "args": {
+        "runId": "${runId}",
+        "limit": 200
+      },
+      "retry": {
+        "times": 24,
+        "delayMs": 5000,
+        "until": [
+          {
+            "path": "finished",
+            "op": "equals",
+            "value": true
+          }
+        ]
+      },
+      "assert": [
+        {
+          "path": "finished",
+          "op": "equals",
+          "value": true
+        },
+        {
+          "path": "failed",
+          "op": "equals",
+          "value": false
+        },
+        {
+          "path": "parked",
+          "op": "equals",
+          "value": false,
+          "label": "a My-scope write needs no approval"
+        },
+        {
+          "path": "outputs",
+          "op": "exists",
+          "soft": true,
+          "label": "the run reports its saved outputs (engine-saved outputs, merged #115)"
+        }
+      ],
+      "record": {
+        "status": "status",
+        "stepsUsed": "budget.stepsUsed",
+        "events": "events",
+        "eventKinds": {
+          "distinct": "events[*].event"
+        },
+        "durationMs": {
+          "span": "events[*].at"
+        }
+      }
+    },
+    {
+      "id": "trace",
+      "tool": "get_run_trace",
+      "requires": [
+        "runId"
+      ],
+      "args": {
+        "runId": "${runId}"
+      },
+      "budgetMs": 5000,
+      "retry": {
+        "times": 6,
+        "delayMs": 5000,
+        "until": [
+          {
+            "path": "steps[?kind=llm]",
+            "op": "gte",
+            "value": 1
+          }
+        ]
+      },
+      "assert": [
+        {
+          "path": "source",
+          "op": "equals",
+          "value": "live",
+          "label": "the trace is live, not a mock"
+        },
+        {
+          "path": "steps[?kind=llm]",
+          "op": "gte",
+          "value": 1,
+          "label": "real model calls are in the trace"
+        },
+        {
+          "path": "steps[?kind=llm].tokens",
+          "op": "anyGt",
+          "value": 0,
+          "label": "model calls carry token counts"
+        },
+        {
+          "path": "steps[?name~=tool.]",
+          "op": "gte",
+          "value": 2,
+          "label": "the sandbox reads reached the governed door (tool.<name> spans)"
+        },
+        {
+          "path": "steps[?name~=tool.].output",
+          "op": "allNonEmpty",
+          "label": "every tool call returned content"
+        },
+        {
+          "path": "steps[?kind=tool]",
+          "op": "gte",
+          "value": 1,
+          "soft": true,
+          "label": "the trace labels tool calls as tools (run-trace.ts kind mapping)"
+        }
+      ],
+      "record": {
+        "steps": "steps",
+        "llmSteps": "steps[?kind=llm]",
+        "gatewayGenerations": "steps[?name~=litellm:]",
+        "engineGenerations": "steps[?name~=llm.]",
+        "toolSpans": "steps[?name~=tool.]",
+        "llmTokens": {
+          "sum": "steps[?kind=llm].tokens"
+        },
+        "gatewayTokens": {
+          "sum": "steps[?name~=litellm:].tokens"
+        },
+        "engineTokens": {
+          "sum": "steps[?name~=llm.].tokens"
+        },
+        "errorSteps": "steps[?status=error]",
+        "llmLatencySum": {
+          "sum": "steps[?kind=llm].ms"
+        }
+      }
+    },
+    {
+      "id": "system-after",
+      "tool": "get_agent_system",
+      "requires": [
+        "systemId"
+      ],
+      "args": {
+        "systemId": "${systemId}"
+      },
+      "assert": [
+        {
+          "path": "lastRun.runId",
+          "op": "equals",
+          "value": "${runId}"
+        },
+        {
+          "path": "lastRun.writeSummary.wroteTotal",
+          "op": "gte",
+          "value": 1,
+          "soft": true,
+          "label": "the run wrote something"
+        },
+        {
+          "path": "lastRun.steps[?effect=deny]",
+          "op": "lte",
+          "value": 0,
+          "label": "no tool call was denied"
+        }
+      ],
+      "record": {
+        "models": {
+          "distinct": "lastRun.nodes[*].model"
+        },
+        "wroteTotal": "lastRun.writeSummary.wroteTotal",
+        "heldTotal": "lastRun.writeSummary.heldTotal",
+        "toolsRan": {
+          "distinct": "lastRun.steps[?ran=true].tool"
+        },
+        "deniedTools": {
+          "distinct": "lastRun.steps[?effect=deny].tool"
+        },
+        "nodeStatus": {
+          "distinct": "lastRun.nodes[*].status"
+        }
+      }
+    },
+    {
+      "id": "file-output",
+      "tool": "list_files",
+      "cleanup": true,
+      "args": {
+        "folder": "${sandbox}"
+      },
+      "creates": {
+        "kind": "file",
+        "idPath": "mine[?name~=selftest-summary-${runTag}].0.id"
+      },
+      "assert": [
+        {
+          "path": "mine[?name~=selftest-summary-${runTag}]",
+          "op": "gte",
+          "value": 1,
+          "label": "the File output exists afterwards (read back)"
+        }
+      ],
+      "record": {
+        "mine": "mine"
+      }
+    },
+    {
+      "id": "note-output",
+      "tool": "list_knowledge",
+      "cleanup": true,
+      "creates": {
+        "kind": "knowledge",
+        "idPath": "mine[?title~=${runTag}].0.id"
+      },
+      "save": {
+        "noteId": "mine[?title~=${runTag}].0.id"
+      },
+      "assert": [
+        {
+          "path": "mine[?title~=${runTag}]",
+          "op": "gte",
+          "value": 1,
+          "label": "the Knowledge output exists afterwards (read back)"
+        }
+      ]
+    },
+    {
+      "id": "cost",
+      "tool": "get_cost",
+      "cleanup": true,
+      "record": {
+        "caps": "caps",
+        "alerts": "alerts"
+      }
+    },
+    {
+      "id": "cleanup-note",
+      "tool": "retire_knowledge",
+      "write": true,
+      "cleanup": true,
+      "requires": [
+        "noteId"
+      ],
+      "args": {
+        "workflowId": "${noteId}",
+        "action": "delete"
+      },
+      "assert": [
+        {
+          "path": "",
+          "op": "notContains",
+          "value": "\"error\""
+        }
+      ]
+    }
+  ],
+  "cleanup": "retire_knowledge(delete) removes the note. The MCP door has no delete for files or agent systems: remove the `created` files (My files \u2192 /_os-selftest) and the agent system (Agents \u2192 OS self-test \u2026) in the UI."
+}

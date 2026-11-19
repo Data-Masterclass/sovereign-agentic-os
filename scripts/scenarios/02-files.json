@@ -1,0 +1,135 @@
+{
+  "id": "02-files",
+  "title": "Files: the invoice folder lists, reads back extracted text, and is found by search",
+  "vars": {
+    "invoiceFolder": "/invoices",
+    "expectedInvoices": 12,
+    "searchTerm": "AlpinTex invoice",
+    "searchExpect": "AlpinTex"
+  },
+  "steps": [
+    {
+      "id": "list-all",
+      "tool": "list_files",
+      "assert": [
+        {
+          "path": "mine",
+          "op": "type",
+          "value": "array"
+        },
+        {
+          "path": "domain",
+          "op": "type",
+          "value": "array"
+        }
+      ],
+      "record": {
+        "mine": "mine",
+        "domain": "domain",
+        "company": "marketplace",
+        "folders": "facets.folders"
+      }
+    },
+    {
+      "id": "list-invoices",
+      "tool": "list_files",
+      "args": {
+        "folder": "${invoiceFolder}"
+      },
+      "save": {
+        "invoiceIds": "domain[?name~=.pdf].id"
+      },
+      "assert": [
+        {
+          "path": "folder",
+          "op": "exists",
+          "label": "the folder filter is applied (response names the folder)"
+        },
+        {
+          "path": "domain[?name~=.pdf]",
+          "op": "gte",
+          "value": "${expectedInvoices}",
+          "label": "at least the expected number of PDFs in the Domain folder"
+        },
+        {
+          "path": "domain[?name~=.pdf]",
+          "op": "lte",
+          "value": "${expectedInvoices}",
+          "label": "no more PDFs than expected"
+        },
+        {
+          "path": "domain[*].folder",
+          "op": "allEqual",
+          "value": "${invoiceFolder}",
+          "label": "every row is in the folder"
+        }
+      ],
+      "record": {
+        "domainPdfs": "domain[?name~=.pdf]",
+        "mine": "mine",
+        "kinds": {
+          "distinct": "domain[*].kind"
+        }
+      }
+    },
+    {
+      "id": "get-invoice",
+      "tool": "get_file",
+      "forEach": "invoiceIds",
+      "max": 3,
+      "args": {
+        "fileId": "${item}"
+      },
+      "assert": [
+        {
+          "path": "extraction.status",
+          "op": "equals",
+          "value": "extracted"
+        },
+        {
+          "path": "text",
+          "op": "nonEmpty"
+        },
+        {
+          "path": "text",
+          "op": "containsAny",
+          "value": [
+            "Total due",
+            "Invoice"
+          ]
+        }
+      ],
+      "record": {
+        "chars": "extraction.chars",
+        "engine": "extraction.engine",
+        "textLength": "text.length",
+        "bytes": "bytes"
+      }
+    },
+    {
+      "id": "search",
+      "tool": "search_files",
+      "args": {
+        "query": "${searchTerm}"
+      },
+      "assert": [
+        {
+          "path": "0.name",
+          "op": "contains",
+          "value": "${searchExpect}",
+          "label": "the top hit is the expected file"
+        },
+        {
+          "path": "[*].name",
+          "op": "contains",
+          "value": "${searchExpect}",
+          "label": "the expected file is among the hits"
+        }
+      ],
+      "record": {
+        "hits": "",
+        "topScore": "0.score"
+      }
+    }
+  ]
+}

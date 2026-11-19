@@ -1,0 +1,136 @@
+{
+  "id": "04-data",
+  "title": "Data: the goods-receipts dataset the invoice system is granted answers a count and a sample, fast",
+  "vars": {
+    "systemMatch": "Invoice Processing Workflow",
+    "datasetMatch": "receipt"
+  },
+  "steps": [
+    {
+      "id": "list-datasets",
+      "tool": "list_datasets",
+      "save": {
+        "receiptIds": "mine[?name~=receipt].id"
+      },
+      "record": {
+        "mine": "mine",
+        "domain": "domain",
+        "company": "marketplace"
+      }
+    },
+    {
+      "id": "list-systems",
+      "tool": "list_agent_systems",
+      "save": {
+        "invoiceSystems": "mine[?name~=Invoice Processing Workflow].id"
+      },
+      "assert": [
+        {
+          "path": "mine[?name~=Invoice Processing Workflow]",
+          "op": "gte",
+          "value": 1
+        }
+      ]
+    },
+    {
+      "id": "system-grants",
+      "tool": "get_agent_system",
+      "requires": [
+        "invoiceSystems.0"
+      ],
+      "args": {
+        "systemId": "${invoiceSystems.0}"
+      },
+      "save": {
+        "grantedData": "system.grants.data[?id~=_].id"
+      },
+      "assert": [
+        {
+          "path": "system.grants.data[?id~=_]",
+          "op": "gte",
+          "value": 1,
+          "label": "the system is granted at least one dataset by id"
+        }
+      ],
+      "record": {
+        "grantedData": "system.grants.data",
+        "grantedFiles": "system.grants.files",
+        "grantedKnowledge": "system.grants.knowledge",
+        "tools": "system.grants.tools",
+        "dataFolderGrants": "system.grants.data[?capability=Write-bounded]"
+      }
+    },
+    {
+      "id": "get-dataset",
+      "tool": "get_dataset",
+      "forEach": "grantedData",
+      "max": 2,
+      "args": {
+        "datasetId": "${item}"
+      },
+      "save": {
+        "fqn": "queryable.fqn"
+      },
+      "assert": [
+        {
+          "path": "queryable.fqn",
+          "op": "nonEmpty"
+        }
+      ],
+      "record": {
+        "layer": "queryable.layer",
+        "tier": "tier",
+        "metricsReady": "metrics.ready"
+      }
+    },
+    {
+      "id": "count",
+      "tool": "query_data",
+      "requires": [
+        "fqn_0"
+      ],
+      "args": {
+        "sql": "SELECT COUNT(*) AS n FROM ${fqn_0}"
+      },
+      "budgetMs": 5000,
+      "assert": [
+        {
+          "path": "rows",
+          "op": "gte",
+          "value": 1
+        }
+      ],
+      "record": {
+        "rowCount": "rows.0.n",
+        "engine": "engine"
+      }
+    },
+    {
+      "id": "sample",
+      "tool": "query_data",
+      "requires": [
+        "fqn_0"
+      ],
+      "args": {
+        "sql": "SELECT * FROM ${fqn_0} LIMIT 5"
+      },
+      "budgetMs": 5000,
+      "assert": [
+        {
+          "path": "rows",
+          "op": "gte",
+          "value": 1
+        },
+        {
+          "path": "rows",
+          "op": "lte",
+          "value": 5
+        }
+      ],
+      "record": {
+        "rows": "rows",
+        "columns": "columns"
+      }
+    }
+  ]
+}
