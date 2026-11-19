@@ -363,7 +363,10 @@ const MESSAGE_ENVELOPE_TOKENS = 4;
 function messageTokens(m: LlmMessage): number {
   let n = estimateTokens(m.content ?? '') + MESSAGE_ENVELOPE_TOKENS;
   if (m.tool_calls) {
-    for (const c of m.tool_calls) n += estimateTokens(`${c.function.name}${c.function.arguments ?? ''}`) + MESSAGE_ENVELOPE_TOKENS;
+    // Counted as it goes on the wire (id, type, name, arguments as JSON), not name + arguments only:
+    // the shorter count under-estimated every tool call by ~10 tokens, enough to push a trimmed
+    // request past its budget once the tool definitions grew (#135 + #140 together).
+    for (const c of m.tool_calls) n += estimateTokens(JSON.stringify(c)) + MESSAGE_ENVELOPE_TOKENS;
   }
   return n;
 }
