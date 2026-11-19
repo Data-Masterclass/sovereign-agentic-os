@@ -48,10 +48,13 @@ export async function deliverReport(
   recipient: { userId: string; email?: string },
   sentAt: number,
 ): Promise<DeliveryResult> {
-  const title = `Scheduled report: ${report.dashboardId}`;
+  // Says only what happened: a notice was posted. No snapshot is attached and no schedule
+  // exists (report-honesty.test.ts), so the text claims neither.
+  void report.cadence;
+  const title = `Report notice: ${report.dashboardId}`;
   const bodyLines = [
-    `Your ${report.cadence} snapshot of dashboard "${report.dashboardId}" is ready.`,
-    `Delivered ${new Date(sentAt).toISOString()} in-app.`,
+    `A notice for dashboard "${report.dashboardId}" was posted by hand. Open the dashboard to see its current data.`,
+    `Posted ${new Date(sentAt).toISOString()} in-app.`,
   ];
   return deliver(recipient, 'report', title, bodyLines);
 }
