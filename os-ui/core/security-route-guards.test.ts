@@ -142,11 +142,13 @@ test('LOCKDOWN 4: /api/traces requires a session and scopes to the caller (admin
 test('LOCKDOWN 5: the remaining proxy read routes require a session', () => {
   for (const p of [
     'app/api/gateway/route.ts',
-    'app/api/chat/route.ts',
     'app/api/catalog/route.ts',
   ]) {
     assert.match(read(p), /requireUser/, `${p} must require a session`);
   }
+  // The chat proxy route was removed as dead code (#125); it must stay gone. A re-added
+  // route would also be caught by the every-route session sweep below.
+  assert.equal(existsSync(resolve(OSUI, 'app/api/chat/route.ts')), false, 'app/api/chat/route.ts was removed and must not return');
   // catalog scopes its show-tables to the principal too.
   assert.match(read('app/api/catalog/route.ts'), /fromQueryTool\(principal\)/);
 });
