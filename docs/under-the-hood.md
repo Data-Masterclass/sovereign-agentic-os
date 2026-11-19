@@ -2802,7 +2802,7 @@ because several capabilities people assume are chart-gated are not.
 | Trino resource groups | `trino.resourceGroups.enabled` | true `:1197` | selectors keyed on a client tag nothing sets |
 | Trino client auth | *`trinoAuthMethod` / `TRINO_AUTH_METHOD`* | **NOT FOUND** | no chart value exists, so `config.trinoAuthMethod` stays `'none'` — `os-ui/core/kernel/config.ts:513` |
 | Langfuse | `langfuse.enabled` | true `:233` | subchart v1.5.36 — web + worker. Its four backends are `deploy: false` each `:290`, `:303`, `:313`, `:326`; telemetry off `:246` |
-| LiteLLM | `litellm.enabled` | true `:411` | litellm-helm v1.90.0 proxy Deployment |
+| LiteLLM | `litellm.enabled` | true `:411` | litellm-helm v1.108.12 proxy Deployment |
 | the scoped agent key | `litellmAgentKey.enabled` | true `:385` | the Secret plus the key-init Job. Without it the run path refuses rather than using the master key. |
 | OpenSearch | `opensearch.enabled` | true `:552` | subchart v3.7.0. `securityConfig.enabled: false` `:566` ⇒ plain HTTP; `persistence.enabled: false` `:568` ⇒ ephemeral |
 | Presidio | *any `presidio.*` key* | **NOT FOUND** | zero occurrences in `values.yaml` and zero in `templates/**` |

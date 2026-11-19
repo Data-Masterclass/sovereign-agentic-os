@@ -413,6 +413,17 @@ litellmAgentKey:
 # LiteLLM — model/MCP gateway (wrapped upstream subchart, alias `litellm`).
 litellm:
   enabled: true
+  # The gateway image, pinned by DIGEST (the digest is authoritative; the tag is for people).
+  # Same image family production has always run (`litellm-database`, which bundles the Prisma
+  # client the migration step needs). The 1.108 subchart's own default moved to
+  # `ghcr.io/berriai/litellm`; that switch is deliberately NOT taken with this upgrade — one
+  # change at a time. Upgrade procedure, test script and rollback: docs/ops/litellm-upgrade.md.
+  # Verify before changing:  cosign verify --certificate-identity
+  #   https://github.com/BerriAI/project-releaser/.github/workflows/release.yml@refs/heads/main
+  #   --certificate-oidc-issuer https://token.actions.githubusercontent.com <image>
+  image:
+    repository: ghcr.io/berriai/litellm-database
+    tag: "1.108.12@sha256:1a5e629eee10f0a38a4eb276afea812411ed6c27031b826525134730c57f05ce"
   # Use the existing CloudNativePG database (enables the admin UI + virtual keys
   # + cost caps).
   db:

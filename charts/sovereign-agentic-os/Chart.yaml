@@ -51,7 +51,11 @@ dependencies:
   # fast-follow against CloudNativePG.
   - name: litellm-helm
     alias: litellm
-    version: "1.90.0"
+    # 1.108.x is upstream's long-term-support line. 1.108.12 carries the fixes for
+    # GHSA-3cv6-jpf6-8222, GHSA-g5ff-637f-6q2m, GHSA-w4c7-34wj-hqm8 and GHSA-2rwg-2wh4-7c4f
+    # (the last one landed in 1.108.6). The IMAGE is pinned separately, by digest, in
+    # values.yaml `litellm.image` — see docs/ops/litellm-upgrade.md before changing either.
+    version: "1.108.12"
     repository: "oci://ghcr.io/berriai"
     condition: litellm.enabled
   # OpenSearch — the retrieval backbone (hybrid vector + lexical). Single node

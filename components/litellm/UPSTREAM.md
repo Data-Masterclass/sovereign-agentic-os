@@ -4,7 +4,7 @@ Upstream, unmodified. Nothing in this folder is ours — see the rule in `compon
 
 - **Licence:** MIT
 - **Source:** https://github.com/BerriAI/litellm
-- **Pinned as:** Helm chart `litellm-helm` 1.90.0 (oci://ghcr.io/berriai)
+- **Pinned as:** Helm chart `litellm-helm` 1.108.12 (oci://ghcr.io/berriai)
 
 **Why the OS ships it:** The only model gateway: virtual keys, budgets, routing to the configured provider.
 
