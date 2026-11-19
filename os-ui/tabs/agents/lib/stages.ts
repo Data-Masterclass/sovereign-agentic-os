@@ -28,7 +28,10 @@
  * between stages and for a colleague (see the contract in core/kernel/stages.ts):
  *
  *   Define    the team has a name AND a described deliverable
- *   Grant     at least one enabled context grant (an item or a folder, of any kind)
+ *   Grant     at least one enabled context grant (an item or a folder, of any kind) that is
+ *             not a folder known to be empty. If EVERY grant is an empty folder the step
+ *             shows an amber "!" saying so; one empty folder next to working grants is fine
+ *             (a folder grant deliberately covers items added later).
  *   Design    ≥1 agent and a start agent
  *   Build     the last build is green (and the team is still runnable)
  *   Run       the last run produced a result and did not fail or get interrupted
@@ -56,10 +59,11 @@ export type AgentStageCtx = {
   /** How many ENABLED context grants the system holds (see {@link countContextGrants}). */
   grantCount: number;
   /**
-   * A specific problem with the grants, in plain words — e.g. a folder grant that matches no
-   * item today. Null/absent = none known. HOOK: nothing on main computes this yet; the
-   * zero-match computation arrives with PR #106 (`zeroMatchWarning` in lib/grant-apply.ts).
+   * How many of those grants are folder grants KNOWN to match no item today (see
+   * `zeroMatchFolderGrants` in lib/grant-apply.ts). 0 while that is not known yet.
    */
+  emptyGrantCount: number;
+  /** The first of those, as a sentence — the Grant step's tooltip when nothing granted matches. */
   grantWarning?: string | null;
   /** ≥1 agent AND an entrypoint — the team can actually be built + run. */
   ready: boolean;
@@ -113,16 +117,21 @@ export function agentStageCtx<Run extends StageRunRecord>(input: {
   lastBuild?: StageBuildRecord | null;
   lastRun?: Run | null;
   checksPass: (run: Run) => boolean;
-  grantWarning?: string | null;
+  /** One sentence per enabled folder grant known to match nothing (`zeroMatchFolderGrants`). */
+  emptyGrants?: readonly string[];
 }): AgentStageCtx {
   const { system, lastBuild, lastRun } = input;
+  const emptyGrants = input.emptyGrants ?? [];
   const name = system.system.name;
   const hasRun = !!lastRun && ((lastRun.nodes?.length ?? 0) > 0 || !!lastRun.output);
   return {
     named: !!name && name !== 'Untitled system',
     hasGoal: !!(system.system.description ?? '').trim(),
     grantCount: countContextGrants(system),
-    grantWarning: input.grantWarning ?? null,
+    emptyGrantCount: emptyGrants.length,
+    grantWarning: emptyGrants.length === 0 ? null
+      : emptyGrants.length === 1 ? emptyGrants[0]
+        : `${emptyGrants[0]} (and ${emptyGrants.length - 1} more empty folder grant${emptyGrants.length === 2 ? '' : 's'})`,
     ready: system.agents.length > 0 && !!system.entrypoint,
     builtOk: !!lastBuild?.ok,
     buildFailed: !!lastBuild && !lastBuild.ok,
@@ -148,8 +157,12 @@ export const AGENT_STAGES: StageDef<AgentStageId, AgentStageCtx>[] = [
   {
     id: 'grant', title: 'Grant',
     enabled: (c) => c.named,
-    completed: (c) => c.grantCount > 0,
-    problem: (c) => (c.grantWarning ? { tone: 'warn', label: c.grantWarning } : null),
+    completed: (c) => c.grantCount > c.emptyGrantCount,
+    // Something is granted, but every grant is a folder with nothing in it: say so.
+    problem: (c) =>
+      c.grantCount > 0 && c.emptyGrantCount >= c.grantCount
+        ? { tone: 'warn', label: c.grantWarning || 'nothing granted matches any item' }
+        : null,
     pending: () => 'nothing granted yet',
   },
   {

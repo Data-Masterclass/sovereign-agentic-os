@@ -21,11 +21,13 @@ import {
 import { canEnter, goTo, initialStageState, isDone, isSatisfied, stageStatuses } from '@core/kernel/stages';
 import { parseSystem, serializeSystem, type System } from '@tabs/agents/lib/system-schema';
 import { addOutput, addSimpleAgent, setArtifactGrant, setDescription, setFolderGrant } from '@tabs/agents/lib/simple-edit';
+import { zeroMatchFolderGrants } from '@tabs/agents/lib/grant-apply';
 
 const base: AgentStageCtx = {
   named: false,
   hasGoal: false,
   grantCount: 0,
+  emptyGrantCount: 0,
   grantWarning: null,
   ready: false,
   builtOk: false,
@@ -149,12 +151,57 @@ test('a declared output\'s destination folder counts as a grant (the Grant stage
   assert.equal(countContextGrants(sys), 1);
 });
 
-test('Grant: a grant PROBLEM (the PR #106 zero-match hook) shows amber instead of ✓', () => {
+/** The grantable feed as the route returns it: three invoices in the DOMAIN lane only. */
+const FEED = {
+  items: [
+    { id: 'f_1', scope: 'domain', folder: '/Invoices' },
+    { id: 'f_2', scope: 'domain', folder: '/Invoices' },
+    { id: 'f_3', scope: 'domain', folder: '/Invoices/2026' },
+  ],
+};
+
+test('Grant: when EVERY grant is a folder that matches nothing, the step is amber and says why', () => {
+  // Granted "My files /Invoices" — but the invoices live in the Domain lane.
   const sys = setFolderGrant(named(), 'files', { path: '/Invoices', scope: 'personal' }, false);
-  const c = ctxOf(sys, { grantWarning: 'the folder /Invoices matches no file' });
-  assert.equal(marks(c).grant, 'warn');
-  assert.equal(labels(c).grant, 'Grant: the folder /Invoices matches no file');
+  const empty = zeroMatchFolderGrants(sys, 'files', FEED);
+  assert.equal(empty.length, 1);
+  assert.match(empty[0], /currently contains 0 files\. 3 files are in Domain files \/Invoices\./);
+  const c = ctxOf(sys, { emptyGrants: empty });
   assert.equal(isDone(AGENT_STAGES, 'grant', c), false);
+  assert.equal(marks(c).grant, 'warn');
+  assert.equal(labels(c).grant, `Grant: ${empty[0]}`);
+  // Before the feed is known nothing is claimed to be empty: the grant exists, so ✓.
+  assert.equal(marks(ctxOf(sys)).grant, 'done');
+});
+
+test('Grant: an empty folder NEXT TO a working grant is fine — folder grants cover items added later', () => {
+  let sys = setFolderGrant(named(), 'files', { path: '/Inbox', scope: 'personal' }, false);
+  sys = setArtifactGrant(sys, 'data', 'ds_orders', false);
+  const empty = zeroMatchFolderGrants(sys, 'files', FEED);
+  assert.equal(empty.length, 1);
+  assert.equal(marks(ctxOf(sys, { emptyGrants: empty })).grant, 'done');
+  // Two empty folders and nothing else → amber, and the tooltip counts the rest.
+  let two = setFolderGrant(named(), 'files', { path: '/Inbox', scope: 'personal' }, false);
+  two = setFolderGrant(two, 'files', { path: '/Later', scope: 'personal' }, false);
+  const c = ctxOf(two, { emptyGrants: zeroMatchFolderGrants(two, 'files', FEED) });
+  assert.equal(marks(c).grant, 'warn');
+  assert.match(labels(c).grant, /\(and 1 more empty folder grant\)$/);
+});
+
+test('zeroMatchFolderGrants: a folder that HAS items, an output folder, a disabled or out-of-domain grant are not "empty"', () => {
+  const lane = { path: '/Invoices', scope: 'domain' as const };
+  assert.deepEqual(zeroMatchFolderGrants(setFolderGrant(named(), 'files', lane, false), 'files', FEED), []);
+  // An output folder is empty until the first result is written — expected, not a problem.
+  const out = addOutput(named(), { kind: 'files', name: 'summary.md', folder: { path: '/Reports', scope: 'personal' } });
+  assert.deepEqual(zeroMatchFolderGrants(out, 'files', FEED), []);
+  // Switched off: it grants nothing, so it is not counted as a grant at all.
+  const off = named();
+  off.grants.files.push({ id: '', capability: 'Off', folder: { path: '/Empty', scope: 'personal' } });
+  assert.deepEqual(zeroMatchFolderGrants(off, 'files', FEED), []);
+  // Outside the system's domain: this feed cannot count it — unknown is not reported as empty.
+  const foreign = setFolderGrant(named(), 'files', { path: '/Elsewhere', scope: 'domain' }, false);
+  const feed = { ...FEED, folders: [{ path: '/Elsewhere', scope: 'domain', outsideDomain: true }] };
+  assert.deepEqual(zeroMatchFolderGrants(foreign, 'files', feed), []);
 });
 
 test('Design ✓ = ready (≥1 agent and a start agent)', () => {
