@@ -35,7 +35,7 @@ Two ways out, and this plan refuses to choose for the owner:
 | registry prefix | `ghcr.io/data-masterclass/sovereign-os` (the workflow default) | `ghcr.io/aborek/sovereign-os` |
 | secret needed | **none** | `GHCR_TOKEN` (classic PAT, `write:packages`) |
 | repo variable | none | `IMAGE_REPO_PREFIX=ghcr.io/aborek/sovereign-os` |
-| cluster pull secret | must be re-pointed at the new namespace | unchanged |
+| cluster image access | the new package must be readable by the existing `ghcr.io` credential (or public) | unchanged |
 
 So the workflow is written so that **neither choice changes production until the owner flips one
 value**: the push target is
@@ -156,8 +156,11 @@ blocks, and the two deploy commands.
 
 1. **Pick A or B.** Until then CI pushes to `ghcr.io/data-masterclass/sovereign-os` and the
    cluster still pulls `ghcr.io/aborek/sovereign-os` — i.e. nothing changes by accident.
-2. Under option A the cluster's **image pull secret** must be re-pointed at the new namespace,
-   and the packages made visible to the cluster's puller.
+2. Under option A a `dockerconfigjson` pull secret is keyed by registry HOST, so it needs no
+   re-pointing — but `GITHUB_TOKEN` creates the package PRIVATE and repo-scoped, so the
+   `data-masterclass` package must be made public or readable by the account behind the
+   cluster's existing `ghcr.io` credential. The other images stay in `ghcr.io/aborek`, so one
+   credential must read both namespaces for as long as that is true.
 3. `git-daemon` has no tag trigger (it changes almost never); it is dispatch-only. Add
    `git-daemon-v*` if that stops being true.
 
@@ -296,7 +299,9 @@ neither `f` nor `d`.
 
 ```
 rule 7  CLOUD-SYNC-DUPLICATE   roots: os-ui/ charts/ scripts/ docs/
-        name matches /(^| )2$/ or / 2\.[^/]*$/ on the basename
+        a DIRECTORY whose basename matches / 2$/ (always a sync artefact), or a FILE
+        matching / 2$/ or / 2\.[^/]*$/ — under docs/, only / 2$/ dirs and duplicated
+        SOURCE files, so a hand-written `design 2.md` is not a failure
         never descends into node_modules | .next | a match | a dotted dir
         not in structure-baseline.json  ->  count > 0 fails
 ```
@@ -321,3 +326,67 @@ IMAGE_FROM_REGISTRY=1 ./scripts/deploy.sh <version>              # roll it out, 
   at deploy time; writing it into `values.yaml` would make every build a commit.
 - **`--verify-only` rather than a general `--dry-run`.** A dry run that stops somewhere in the
   middle of a deploy is a lie about what was verified; this stops at one honest boundary.
+
+---
+
+## Review round 1 — what the independent review found, and what changed (2026-11-19)
+
+PR #62 blocked on H1. All thirteen findings are addressed; each has a test.
+
+**H1 — the two doors could wedge a session (BLOCKER).**
+(a) `os-ui/scripts/gate.sh`'s prune group lacked `.claude`, so the `* 2` scan walked into
+`.claude/worktrees/*` — OTHER sessions' checkouts — and reported ~28 copied
+`public/monaco/...` duplicates as strays in this tree. A worktree runs its own gate; this one
+now only polices the tree it is in.
+(b) `scripts/check-structure.mjs` is the PostToolUse hook on Write|Edit, so a hard rule-7
+failure fails every subsequent tool call — and a conflict copy is dropped by a sync daemon, in
+a file nobody edited, at a moment nobody chose. Rule 7 is now **hard only when `CI` is set**
+and a **warning with the exact paths** locally. CI stays the machine that never lets one
+through; a stray mid-edit can no longer wedge a session.
+
+**M2 — `.dockerignore` had only `**/* 2.*`**, which needs a dot in the name, so an
+extension-less `Dockerfile 2` and (worse) a duplicated DIRECTORY still entered the build
+context. Added `**/* 2` and `**/* 2/`.
+
+**M3 — a split-namespace deploy would ImagePullBackOff.** The digest comes from the image being
+built; the repository comes from the live release. Once option A is taken, a plain
+`deploy.sh 0.9.6` would push to `aborek` and pin that digest against a `data-masterclass`
+repository — after the backup gate, after the push, with the old ReplicaSet already gone. A
+digest is only meaningful inside one repository, so `scripts/lib/check-image-repo.py` now
+**refuses** the mismatch and names the two `IMAGE_REPO=` commands that resolve it. Checked only
+when `IMAGE_REPO` was not passed; with it, the upgrade `--set`s the repository so the two agree
+by construction. (Implemented for BOTH the local-build and the `--from-registry` path: the
+mismatch is identical in each, and with an explicit `IMAGE_REPO` neither can trip it.)
+
+**M4 / L8 / L9 — the curl fallback.** Moved out of `deploy.sh` into
+`scripts/lib/registry-digest.sh`, which (M4) captures `%{http_code}` and reports **401/403 —
+not authorised for a private package, the token lacks `read:packages`** distinctly from **404 —
+the tag was never pushed**; (L8) carries `--max-time 30` on both calls so a hanging registry
+cannot hang a deploy; and (L9) passes credentials on **stdin via `curl -K -`** instead of `-u`
+in argv, where any process could read them from `ps`. `REGISTRY_CURL` substitutes the binary,
+which is what lets the test drive every status code with no network.
+
+**M5 — the pull-secret advice was wrong.** A `dockerconfigjson` secret is keyed by registry
+**host** (`ghcr.io`), not by namespace, so nothing needs "re-pointing". What actually bites is
+that `GITHUB_TOKEN` creates the package **private and repo-scoped**: the `data-masterclass`
+package must be made public or readable by the account behind the cluster's existing `ghcr.io`
+credential — and since the other images stay in `ghcr.io/aborek`, one credential must read both
+namespaces for as long as that is true.
+
+**L6 — the smoked image might not be the pushed image.** Two `build-push-action` calls share a
+context and a cache, so they *should* produce one image — but "should" is not a check. A step
+now compares the smoked image's config id with the config digest inside the pushed manifest and
+fails if they differ.
+
+**L7** `timeout-minutes: 45` on the build job. **L10** the registry login user is
+`vars.IMAGE_REGISTRY_USER || github.actor`, because under option B it must be the PAT's owner
+(`aborek`) and not whoever pushed the tag; documented in CONTRIBUTING. **L11** the design
+section's regex line was wrong (`/(^| )2$/` would match a file named `2`) — corrected to what
+the code does. **L12** rule 7's `docs/` arm is narrowed to `/ 2$/` directories plus duplicated
+SOURCE extensions, so a hand-written `design 2.md` is prose, not a build failure.
+
+Tests: **85 assertions, 0 failures** (was 37). `os-ui/scripts/gate.sh` green (436 tests, 432
+pass, 0 fail, 4 todo) · `check-structure` 419/1/200/1230 in **both** modes · `helm lint` 0
+failed · `add-spdx-headers.sh --check` clean · all four workflows YAML-parse. Both real probes
+re-verified against the live private GHCR tag `0.9.5` (crane and the curl fallback return the
+same digest) and a real missing tag classifies as `REGISTRY_TAG_NOT_FOUND`.
