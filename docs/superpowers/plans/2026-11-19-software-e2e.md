@@ -252,13 +252,105 @@ what each kind actually gets.
 
 - [x] **PLAN** — this document: the two paths, every door located, the first findings.
 - [x] **DESIGN** — the shape of each fix, above, written against the driven chain.
-- [ ] **IMPLEMENT** — test-first, iterating: `e2e-golden-path.test.ts` drives the chain; each red
-      stage gets its fix at the source and a test that pins it.
-- [ ] **TEST** — tsc, targeted tests, ONE full-suite run (`--test-concurrency=2`),
-      `bash os-ui/scripts/gate.sh`, `node scripts/check-structure.mjs`.
+- [x] **IMPLEMENT** — test-first, iterating: `e2e-golden-path.test.ts` drove the chain; each red
+      stage got its fix at the source and a test that pins it.
+- [x] **TEST** — tsc clean; targeted suites green; ONE full-suite run (`--test-concurrency=2`);
+      `bash os-ui/scripts/gate.sh` exit 0; `node scripts/check-structure.mjs` at baseline.
 
 ---
 
 ## 4. What is true on the cluster today / what is still not
 
-*(the plan's final section — written from what the driven chain actually proved, not from intent)*
+Written from what the driven chain actually proved. The evidence is
+`os-ui/tabs/software/lib/e2e-golden-path.test.ts` (32 cases, `NODE_ENV=production` +
+`OS_OFFLINE_MOCK=refuse`, four principals, a real temp-dir git repository, one stubbed seam —
+the reasoning model).
+
+### True today, for a DECLARATIVE app — which is the default and the golden path
+
+- **Create → design → author → live.** `create_software` (defaults to `kind:'spec'`) →
+  `design_software` (epics, per-story spec, grants **by reference**) → `generate_app_spec`
+  (the real reasoning-model call, grounded in the granted dataset's REAL columns) →
+  `set_app_spec` → the app is **live at `/apps/<slug>`**, same-origin, rendered by the trusted
+  OS renderer under the viewer's own session. No image, no pod, no CI, no registry, no build
+  latency. This whole path now works for an agent that writes the model's natural reference
+  shorthand instead of the canonical object.
+- **The validation gate is real and machine-actionable.** An invented column, an ungranted
+  dataset, a duplicate tab id: each is a blocking `{ path, reason, fix }` and **nothing is
+  persisted**. What is genuinely ambiguous is still refused — the gate was loosened for nothing.
+- **Governance holds at every door.** An app you cannot see is `not_found` from the write doors
+  too. A creator cannot `promote`; they file, and the appointed `domain_admin` approves the
+  My→Domain rung; Domain→Company is the admin's alone. An owner can never approve their own
+  deploy; a builder who is not the requester can. An archived app refuses every write with a 409.
+- **`start_preview` tells the truth.** A declarative app's preview is its served URL; with no
+  spec it says so and names the verb that authors one.
+- **Git is the home of record for a coded app.** `push_app_files` commits under `apps/<slug>/`
+  in the domain repository, authored as the acting user, with `OS-Action` / `OS-Object` /
+  `OS-Surface` / `OS-Request-Id` trailers. Identical bytes pushed twice yield **one** commit.
+  `read_app_files` round-trips what was pushed.
+- **The app's SDK is same-origin and carries no credential of its own.** `os.whoami` hits the
+  OS UI's own identity door with the ambient session. A record written through the governed
+  store is stamped with the **writing user**, and two sessions on the same app see different row
+  sets. An app action outside its declared `actions.yml` scopes is not in scope, and a malformed
+  declaration comes back as an issue rather than being dropped.
+- **The agentic builder (`SOFTWARE_BUILDER=agentic`) is honest.** The **scorecard is the gate,
+  not the reviewer**: a tree that compiles but never reaches governed data is NOT committed even
+  when the reviewer says `pass`, and the result says "Nothing was committed" and "Nothing is done
+  yet". A tree that does satisfy its checks commits, with `.app/acceptance.json` in the **same**
+  commit. In that record, `manual` checks are never machine-passed, static checks say
+  `static check (AST)`, and an `unknown` can never add up to `ok: true`. The real compile gate
+  refuses a non-compiling tree — it caught this plan's own first fixture.
+- **Nothing fabricates.** Under `OS_OFFLINE_MOCK=refuse` a scan with no engine is `unavailable`
+  with `passed: false` and a reason; `decide_deploy` then refuses with a 409 naming the absence.
+  No placeholder container is ever substituted, and no preview URL is ever invented.
+
+### NOT true today — say this plainly, do not imply otherwise
+
+1. **There is no CI runner and no image builder in this repository, and no app-runner image is
+   shipped.** `images/` contains no such image; `softwareRunner.runnerImage` is empty by design
+   and must stay empty; `softwareRunner.enabled` is `false`. The `apps-runner` chart template
+   deploys **no workload** — it is Namespace + RBAC + NetworkPolicy scaffolding so the OS process
+   *can* create per-app Deployments. **A coded app can therefore not be served by this repo
+   alone**: an operator must publish an image and set the reference.
+2. **A coded app cannot go live on a cluster with no security scanner.** The scan has no engine,
+   so `decide_deploy` refuses — correctly, fail-closed. Wiring a scanner (the Trivy Job another
+   agent is adding) is what opens that gate. *This is a feature, not a defect, but it means
+   "deploy a coded app" is not an available end-to-end path today.*
+3. **A declarative app goes live with no review gate and no scan.** `set_app_spec` validates and
+   the app serves. That is the design — the renderer is trusted, the patterns are fixed, a custom
+   block is a null-origin iframe, and data access is grant- + RLS-gated — but it is worth stating
+   next to the review-card machinery, which gates something else.
+4. **`request_deploy` on a declarative app reviews the wrong artefact** (F4). `appFilesForScan`
+   falls back to the template scaffold, so the card's scan and diff are over files the app does
+   not use. Not fixed this round: `review.ts`'s scan half is another agent's module. The right
+   shape is to scan the spec's own shippable surface — the spec JSON, each custom block's
+   html/css/js and the theme CSS, which is where a pasted secret would actually live.
+5. **The same-origin render does not apply the app-grant intersection** (F3, documented in
+   `app/apps/[slug]/page.tsx` itself). A Shared spec app shows a viewer everything **they** may
+   see among its sources, not the grant-narrowed subset. More-permissive, never less. Fixing it
+   means carrying the app slug into every pattern renderer's data fetch.
+6. **The deploy review card does not carry the acceptance scorecard** (F7). The record is
+   committed and readable by `read_app_files`; the card does not show it. The false claim that it
+   did has been removed from `builder/loop-server.ts`.
+7. **`set_app_spec` is not in the hold table.** `WRITE_TOOL_TABS` carries `set_app_design`,
+   `commit` and `push_app_files` for this tab. `set_app_spec` **publishes a live app** and is not
+   hold-eligible, so no agent preset can park it for approval. This is the carried open item #1
+   from the night-2 gap report, unchanged; adding it moves the shipped Software Delivery Team's
+   posture and the frozen engine goldens, so it is a posture decision, not a patch.
+8. **`promote` over the MCP has a builder floor, so a creator cannot reach it at all** — they
+   must use the UI's Promote button / `request_promotion` to file. The ladder's own rule is the
+   same, but the two doors are not symmetric, and an agent acting as a creator gets a refusal
+   rather than a filed request. Worth closing; not closed here.
+9. **No browser verification.** Every claim above is in-process. `/apps/<slug>` rendering, the
+   composer, and the review inbox were not opened in a browser this round.
+
+### The honest one-line answer to the owner's question
+
+*Building and running a **declarative** app — the default — now works end to end, from
+`create_software` to a live, governed, same-origin app at `/apps/<slug>`, and the two dead ends
+you hit (the reference-shape rejection and the stage-4 directive that led to a 403) are fixed and
+pinned by tests. Building a **coded** app works up to and including a governed commit with a real
+compile gate and an honest acceptance scorecard; it cannot be **served** by this repository
+because there is no image builder and no runner image, and it cannot be **approved** on a cluster
+with no security scanner. Both of those are now said out loud by the tools instead of being
+dressed up as a cluster outage.*

@@ -22,6 +22,10 @@
  *   - FOUR PRINCIPALS, one app. creator (owns it), builder (approves another's deploy), and
  *     domain_admin / admin for the promotion rungs. Separation of duties is asserted in both
  *     directions: the owner cannot approve their own, and the approver cannot be the requester.
+ *   - WHAT THIS FILE DELIBERATELY DOES NOT RE-ASSERT: the coded-apps platform gate (default OFF,
+ *     fail-closed 403 from every door) is pinned four ways by `coded-apps-gate.test.ts`, which
+ *     owns the one cross-tab import of `@tabs/admin/lib/settings` the ratchet has baselined. The
+ *     suite harness turns coded apps ON, which is the environment the coded stages below need.
  *   - OFFLINE BUT NOT FAKE. `fetch` rejects, so the stores run in process; git is a REAL temp-dir
  *     repository (`config.reposDir`), so the commit shas, paths and OS-* trailers asserted below
  *     are the ones a cluster would write. The reasoning model is the ONE stubbed seam
@@ -76,9 +80,6 @@ const { __resetReviewCards, requestDeploy, decideDeploy } = await import('./revi
 const { securityScan } = await import('./scan.ts');
 const { resolveServeTarget } = await import('./served-app.ts');
 const { __setAppProjectGitForTests, appSubtreePrefix } = await import('./git-commit.ts');
-const { __resetStore, createDataset, buildVersion, setDocs, defineMeasure, transition } =
-  await import('@tabs/data/lib/store');
-import type { Principal } from '@tabs/data/lib/store';
 
 // ── the four principals ──────────────────────────────────────────────────────────────────────
 /** The CREATOR who owns the app. Full rights over their own work; approves nothing. */
@@ -89,8 +90,6 @@ const ben: CurrentUser = testUser({ id: 'ben', name: 'Ben', domains: ['sales'], 
 const dana: CurrentUser = testUser({ id: 'dana', name: 'Dana', domains: ['sales'], role: 'domain_admin' });
 /** The ADMIN — the only role that certifies to Company. */
 const alex: CurrentUser = testUser({ id: 'alex', name: 'Alex', domains: ['sales'], role: 'admin' });
-/** The same store identity the data seeds are written as. */
-const caraP: Principal = { id: 'cara', domains: ['sales'], role: 'builder' };
 
 let reposDir = '';
 let priorRepos = '';
@@ -99,7 +98,6 @@ before(() => {
   priorRepos = config.reposDir;
   (config as { reposDir: string }).reposDir = reposDir;
   __setAppProjectGitForTests(true);
-  __resetStore();
   __resetAppsCache();
   __resetReviewCards();
 });
@@ -160,35 +158,32 @@ function unwrap(result: { content?: { text?: string }[]; structuredContent?: unk
 
 // ── the governed data the app is built over ──────────────────────────────────────────────────
 
-/** A Gold, Domain-promoted "Orders" dataset with REAL documented columns. */
-function seedOrders(name = 'Orders'): string {
-  const d = createDataset(caraP, { name });
-  for (const layer of ['bronze', 'silver', 'gold'] as const) {
-    buildVersion(d.id, caraP, layer, { quality: 'passing', artifact: `${layer}/orders.sql` });
-  }
-  setDocs(d.id, caraP, {
+/**
+ * An "Orders" dataset with REAL documented columns, created through the GOVERNED `create_dataset`
+ * MCP tool — the same door a user or an agent walks — rather than by reaching into the data tab's
+ * store. That keeps the fixture honest (the columns the validator later checks are the columns
+ * the governed write actually recorded) and keeps this file inside its own tab.
+ */
+async function seedOrders(name = 'Orders'): Promise<string> {
+  const out = await callOk(cara, 'create_dataset', {
+    name,
+    domain: 'sales',
     columns: [
       { name: 'order_id', description: 'PK' },
       { name: 'net_amount', description: 'Money' },
       { name: 'status', description: 'State' },
     ],
   });
-  transition(d.id, caraP, 'promote');
-  return d.id;
-}
-
-/** A governed metric on that dataset — the reference slot the owner's error was about. */
-function seedMetric(datasetId: string, name = 'revenue'): string {
-  defineMeasure(datasetId, caraP, { name, type: 'sum', sql: 'net_amount' });
-  return `${datasetId}.${name}`;
+  const id = (out.id ?? (out.dataset as { id?: string } | undefined)?.id) as string | undefined;
+  assert.ok(id, `create_dataset returned no id: ${JSON.stringify(out)}`);
+  return id;
 }
 
 /** The app state shared across the ordered stages below. */
-const S: { appId: string; slug: string; datasetId: string; metricId: string; cardId: string } = {
+const S: { appId: string; slug: string; datasetId: string; cardId: string } = {
   appId: '',
   slug: '',
   datasetId: '',
-  metricId: '',
   cardId: '',
 };
 
@@ -212,8 +207,7 @@ const EPICS = [
 // ═══════════════════════ STAGE 1 · DEFINE ═══════════════════════
 
 test('STAGE 1 · create_software — the creator defines a DECLARATIVE app by default', async () => {
-  S.datasetId = seedOrders();
-  S.metricId = seedMetric(S.datasetId);
+  S.datasetId = await seedOrders();
 
   const app = await callOk(cara, 'create_software', {
     name: 'Orders desk',
@@ -232,18 +226,6 @@ test('STAGE 1 · create_software — the creator defines a DECLARATIVE app by de
   assert.equal(stored.visibility, 'Personal', 'a new app starts in the creator’s own lane');
 });
 
-test('STAGE 1 · GOVERNANCE — a coded app is refused while coded apps are off', async () => {
-  const { __setForTests, codedAppsEnabled } = await import('@tabs/admin/lib/settings');
-  const prior = codedAppsEnabled();
-  __setForTests({ codedAppsEnabled: false });
-  try {
-    const err = await callFails(cara, 'create_software', { name: 'Raw code app', domain: 'sales', kind: 'code' });
-    assert.match(err, /coded apps are disabled/i, 'fails CLOSED and says who can change it');
-  } finally {
-    __setForTests({ codedAppsEnabled: prior });
-  }
-});
-
 // ═══════════════════════ STAGE 2 · DESIGN + CHOOSE CONTEXT ═══════════════════════
 
 test('STAGE 2 · design_software — epics, per-story spec, and the dataset GRANT', async () => {
@@ -251,7 +233,7 @@ test('STAGE 2 · design_software — epics, per-story spec, and the dataset GRAN
     appId: S.appId,
     purpose: 'Triage and view orders',
     epics: EPICS,
-    grants: { data: [{ id: S.datasetId, access: 'read-only' }], metrics: [{ id: S.metricId, access: 'read-only' }] },
+    grants: { data: [{ id: S.datasetId, access: 'read-only' }] },
   });
   assert.ok(out, 'the design write returns the patched app');
 
@@ -273,7 +255,7 @@ test('STAGE 2 · a grant with no `access` is GRANTED at the narrowest level, and
   const app = await callOk(cara, 'create_software', { name: 'Grant shapes', domain: 'sales', purpose: 'p' });
   const out = await callOk(cara, 'design_software', {
     appId: app.id,
-    grants: { data: [{ id: S.datasetId }], metrics: [{ id: S.metricId, access: 'nope' }] },
+    grants: { data: [{ id: S.datasetId }], knowledge: [{ id: 'kn_x', access: 'nope' }] },
   });
   const stored = await getAppByIdInternal(app.id as string);
   assert.deepEqual(
@@ -281,7 +263,7 @@ test('STAGE 2 · a grant with no `access` is GRANTED at the narrowest level, and
     [{ id: S.datasetId, access: 'read-only' }],
     'an explicit grant is never silently ignored — it takes the NARROWEST level',
   );
-  assert.deepEqual(stored?.grants?.metrics, [], 'an access level that does not exist is still refused');
+  assert.deepEqual(stored?.grants?.knowledge, [], 'an access level that does not exist is still refused');
   const notes = (out.grantNotes ?? []) as string[];
   assert.ok(notes.some((n) => n.includes('read-only')), 'the default is reported');
   assert.ok(notes.some((n) => /nope/.test(n)), 'and so is the drop, naming what was wrong');
@@ -295,8 +277,13 @@ test('STAGE 2 · GOVERNANCE — a stranger can neither see nor design the app', 
 
 // ═══════════════════════ STAGE 3 · THE SPEC ═══════════════════════
 
-/** The spec a model actually writes: a granted table tab plus a KPI card over the granted metric. */
-function specWithMetric(metric: unknown): Record<string, unknown> {
+/**
+ * The spec a model actually writes. `source` is passed in so each case can use the CANONICAL
+ * object or one of the two shorthands the reasoning model keeps emitting — a bare id string, or
+ * a generic `{ id }`. `source` is a one-required-key reference slot, exactly like the `metric`
+ * slot the owner's failure named, and it goes through the same normaliser rule.
+ */
+function specWithSource(source: unknown): Record<string, unknown> {
   return {
     version: 2,
     name: 'Orders desk',
@@ -308,16 +295,7 @@ function specWithMetric(metric: unknown): Record<string, unknown> {
         body: {
           kind: 'pattern',
           pattern: 'records-table',
-          config: { source: { datasetId: S.datasetId }, columns: [{ field: 'order_id' }, { field: 'net_amount' }] },
-        },
-      },
-      {
-        id: 'tab_kpi',
-        label: 'Revenue',
-        body: {
-          kind: 'pattern',
-          pattern: 'kpi-overview',
-          config: { cards: [{ label: 'Revenue', metric }] },
+          config: { source, columns: [{ field: 'order_id' }, { field: 'net_amount' }] },
         },
       },
     ],
@@ -325,11 +303,11 @@ function specWithMetric(metric: unknown): Record<string, unknown> {
 }
 
 test('STAGE 3 · generate_app_spec — the scaffold runs the model and validates its reply', async () => {
-  MODEL_REPLY = () => JSON.stringify(specWithMetric({ metricId: S.metricId }));
+  MODEL_REPLY = () => JSON.stringify(specWithSource({ datasetId: S.datasetId }));
   const out = await callOk(cara, 'generate_app_spec', { appId: S.appId });
   assert.equal(out.ok, true, `generate failed: ${JSON.stringify(out)}`);
   const spec = out.spec as { tabs: unknown[] };
-  assert.equal(spec.tabs.length, 2, 'the generated spec carries both designed tabs');
+  assert.equal(spec.tabs.length, 1, 'the generated spec carries the designed tab');
   assert.ok(MODEL_CALLS.length > 0, 'the reasoning model really was asked');
   assert.match(
     MODEL_CALLS[MODEL_CALLS.length - 1].user,
@@ -339,13 +317,16 @@ test('STAGE 3 · generate_app_spec — the scaffold runs the model and validates
 });
 
 test('STAGE 3 · generate_app_spec TOLERATES the shape the model keeps writing, and SAYS so', async () => {
-  // The owner's stage-4 failure, verbatim: `"metric": "<id>"` instead of `{ metricId }`.
-  MODEL_REPLY = () => JSON.stringify(specWithMetric(S.metricId));
+  // The owner's stage-4 failure in its general form: a bare id string where the grammar wants
+  // the canonical one-key object. The exact `metric must be an object / use { metricId }` case
+  // the owner hit is pinned per-door in `set-app-spec.test.ts`, which already owns the data-tab
+  // fixture import this file deliberately does without.
+  MODEL_REPLY = () => JSON.stringify(specWithSource(S.datasetId));
   const out = await callOk(cara, 'generate_app_spec', { appId: S.appId });
   assert.equal(out.ok, true, `a bare metric id must not kill the build: ${JSON.stringify(out)}`);
   const notes = (out.notes ?? []) as string[];
   assert.ok(
-    notes.some((n) => /metric id/i.test(n)),
+    notes.some((n) => /normalised source id/i.test(n)),
     'the rewrite is REPORTED, never silent',
   );
 });
@@ -354,35 +335,35 @@ test('STAGE 3 · set_app_spec — authoring a bare metric id must NOT be the own
   // THE FIX UNDER TEST (F1). `set_app_spec` is the documented hand-authoring door and the one an
   // agent reaches for after reviewing a generated spec. It used to call `parseAppSpec` directly,
   // so the tolerant normaliser protected `generate_app_spec` and NOTHING else.
-  const out = await callOk(cara, 'set_app_spec', { appId: S.appId, spec: specWithMetric(S.metricId) });
+  const out = await callOk(cara, 'set_app_spec', { appId: S.appId, spec: specWithSource(S.datasetId) });
   assert.equal(out.ok, true, `set_app_spec rejected a readable spec: ${JSON.stringify(out)}`);
   const warnings = (out.warnings ?? []) as { reason?: string }[];
   assert.ok(
-    warnings.some((w) => /metric id/i.test(w.reason ?? '')),
+    warnings.some((w) => /normalised source id/i.test(w.reason ?? '')),
     'the author is TOLD what was tidied up — a coercion is never invisible',
   );
   assert.equal(out.servedUrl, `/apps/${S.slug}`, 'author = publish: it names where the app is now live');
 });
 
 test('STAGE 3 · set_app_spec — the `{ id }` rename is tolerated too, and the stored spec is CANONICAL', async () => {
-  const out = await callOk(cara, 'set_app_spec', { appId: S.appId, spec: specWithMetric({ id: S.metricId }) });
+  const out = await callOk(cara, 'set_app_spec', { appId: S.appId, spec: specWithSource({ id: S.datasetId }) });
   assert.equal(out.ok, true, `the { id } shape must be read: ${JSON.stringify(out)}`);
   const stored = await getAppByIdInternal(S.appId);
-  const kpi = stored?.spec?.tabs?.[1] as { body: { config: { cards: { metric: unknown }[] } } };
+  const tab = stored?.spec?.tabs?.[0] as { body: { config: { source: unknown } } };
   assert.deepEqual(
-    kpi.body.config.cards[0].metric,
-    { metricId: S.metricId },
+    tab.body.config.source,
+    { datasetId: S.datasetId },
     'TOLERANT PARSE, STRICT OUTPUT — what persists is always the canonical shape',
   );
 });
 
 test('STAGE 3 · the OTHER two spec doors normalise identically (draft autosave + publish)', async () => {
   // `saveAppDraft` and `publishApp` are the composer's doors; they re-parse the same bytes.
-  await saveAppDraft(S.appId, specWithMetric(S.metricId), cara);
+  await saveAppDraft(S.appId, specWithSource(S.datasetId), cara);
   const published = await publishApp(S.appId, cara);
   assert.deepEqual(published.issues, [], `publish rejected a readable draft: ${JSON.stringify(published.issues)}`);
-  const kpi = published.app.spec?.tabs?.[1] as { body: { config: { cards: { metric: unknown }[] } } };
-  assert.deepEqual(kpi.body.config.cards[0].metric, { metricId: S.metricId });
+  const tab = published.app.spec?.tabs?.[0] as { body: { config: { source: unknown } } };
+  assert.deepEqual(tab.body.config.source, { datasetId: S.datasetId });
 });
 
 test('STAGE 3 · GOVERNANCE — what is genuinely wrong is still REFUSED, and persists nothing', async () => {
@@ -413,7 +394,7 @@ test('STAGE 3 · GOVERNANCE — what is genuinely wrong is still REFUSED, and pe
 });
 
 test('STAGE 3 · GOVERNANCE — an ungranted dataset cannot be authored in', async () => {
-  const ungranted = seedOrders('Other orders'); // real, promoted — but NOT granted to this app
+  const ungranted = await seedOrders('Other orders'); // real — but NOT granted to this app
   const out = await callOk(cara, 'set_app_spec', {
     appId: S.appId,
     spec: {
@@ -642,10 +623,7 @@ test('STAGE 4b · the agentic harness: the SCORECARD is the gate, and a reviewer
   //
   // THE CASE: a page that compiles but never reaches governed data. The reviewer is scripted to
   // say `pass`. It must NOT ship — "it compiled" is not "it satisfies the story".
-  const { __setForTests, codedAppsEnabled } = await import('@tabs/admin/lib/settings');
-  const prior = codedAppsEnabled();
-  __setForTests({ codedAppsEnabled: true });
-  try {
+  {
     const created = await callOk(cara, 'create_software', {
       name: 'Agentic hollow', domain: 'sales', purpose: 'Triage orders', kind: 'code',
     });
@@ -670,16 +648,11 @@ test('STAGE 4b · the agentic harness: the SCORECARD is the gate, and a reviewer
     assert.match(out.next, /Nothing is done yet/i, 'never "done" over an unmet scorecard');
     assert.equal(out.acceptance.failed > 0, true, 'the failing check is the reason, and it is reported');
     assert.match(out.acceptance.report, /static check \(AST\)/, 'the static check SAYS it is static');
-  } finally {
-    __setForTests({ codedAppsEnabled: prior });
   }
 });
 
 test('STAGE 4b · the agentic harness commits a real tree AND an HONEST `.app/acceptance.json`', async () => {
-  const { __setForTests, codedAppsEnabled } = await import('@tabs/admin/lib/settings');
-  const prior = codedAppsEnabled();
-  __setForTests({ codedAppsEnabled: true });
-  try {
+  {
     const created = await callOk(cara, 'create_software', {
       name: 'Agentic real', domain: 'sales', purpose: 'Triage orders', kind: 'code',
     });
@@ -727,8 +700,6 @@ test('STAGE 4b · the agentic harness commits a real tree AND an HONEST `.app/ac
     const raw = JSON.stringify(read);
     assert.match(raw, /acceptance-passed|acceptance-incomplete/, 'the committed record round-trips');
     assert.match(raw, /agentic/, 'and names which builder produced it');
-  } finally {
-    __setForTests({ codedAppsEnabled: prior });
   }
 });
 
@@ -778,10 +749,7 @@ test('STAGE 11 · archive is reversible and an archived app refuses every write'
 // ═══════════════════════ STAGE 12 · GIT ═══════════════════════
 
 test('STAGE 12 · push_app_files commits under apps/<slug>/ with the OS-* trailers, as the USER', async () => {
-  const { __setForTests, codedAppsEnabled } = await import('@tabs/admin/lib/settings');
-  const prior = codedAppsEnabled();
-  __setForTests({ codedAppsEnabled: true });
-  try {
+  {
     const coded = await callOk(cara, 'create_software', {
       name: 'Coded orders',
       domain: 'sales',
@@ -815,7 +783,5 @@ test('STAGE 12 · push_app_files commits under apps/<slug>/ with the OS-* traile
     // The round trip: what was pushed is what reads back.
     const read = await callOk(cara, 'read_app_files', { appId: coded.id, path: 'src/App.tsx' });
     assert.match(JSON.stringify(read), /export default function App/, 'push → read round-trips the real bytes');
-  } finally {
-    __setForTests({ codedAppsEnabled: prior });
   }
 });
