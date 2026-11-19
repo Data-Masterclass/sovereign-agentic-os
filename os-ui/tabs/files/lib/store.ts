@@ -161,6 +161,8 @@ type FilesStoreState = {
   mirrorSeen?: Set<string>;
   /** Reader process: consecutive COMPLETE listings each such id was absent from. */
   mirrorMissing?: Map<string, number>;
+  /** Ids this process deleted (confirmed) that a mirror listing must not bring back. See `deleteFile`. */
+  deletedHere?: Set<string>;
 };
 const FS_KEY = Symbol.for('soa.files.store');
 function fs(): FilesStoreState {
@@ -283,9 +285,13 @@ export async function refreshFromMirror(opts: { force?: boolean; nowMs?: number 
     const seen = (s.mirrorSeen ??= new Set<string>());
     const missing = (s.mirrorMissing ??= new Map<string, number>());
     const listed = new Set<string>();
+    const tombstones = s.deletedHere;
     for (const rec of listing.docs as FileRecord[]) {
       if (!rec || !rec.id) continue;
       listed.add(rec.id); // present in the mirror, whatever its shape
+      // Deleted HERE (confirmed): a listing read before the shared store confirmed the delete
+      // still holds the document and must not put the record back.
+      if (tombstones?.has(rec.id)) continue;
       seen.add(rec.id);
       missing.delete(rec.id);
       if (typeof rec.yaml !== 'string') continue;
@@ -294,6 +300,10 @@ export async function refreshFromMirror(opts: { force?: boolean; nowMs?: number 
     }
     // Only a COMPLETE listing can say what is NOT there.
     if (!listing.complete) return;
+    // A complete listing without a tombstoned id means the mirror agrees it is gone.
+    if (tombstones) {
+      for (const id of tombstones) if (!listed.has(id)) tombstones.delete(id);
+    }
     for (const id of seen) {
       if (listed.has(id)) continue;
       const n = (missing.get(id) ?? 0) + 1;
@@ -393,6 +403,7 @@ export function __resetStore(): void {
   s.refreshing = null;
   s.mirrorSeen = undefined;
   s.mirrorMissing = undefined;
+  s.deletedHere = undefined;
   fileMirror.__reset();
   versions.__reset();
 }
@@ -849,7 +860,13 @@ export async function deleteFile(id: string, user: Principal): Promise<FileRecor
     fail(`The file was not deleted: ${out.reason}. It is unchanged — try again.`, 503);
   }
   versions.purge(id);
-  fs().store.delete(id);
+  const s = fs();
+  s.store.delete(id);
+  // A refresh whose listing was read before this delete was confirmed still holds the document;
+  // it must not re-add the record (see `refreshFromMirror`). Cleared once a complete listing agrees.
+  (s.deletedHere ??= new Set<string>()).add(id);
+  s.mirrorSeen?.delete(id);
+  s.mirrorMissing?.delete(id);
   return rec;
 }
 
