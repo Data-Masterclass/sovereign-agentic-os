@@ -954,8 +954,12 @@ export function searchFiles(user: Principal, query: string): SearchHit[] {
 /** How many hits a search returns at most (the UI box and `search_files`). */
 export const SEARCH_TOP_K = 20;
 
-/** {@link searchFiles} plus how many files matched in all, so a caller can say "top 20 of 57". */
-export function searchFilesRanked(user: Principal, query: string): { hits: SearchHit[]; total: number } {
+/**
+ * {@link searchFiles} plus how many files matched in all, so a caller can say "top 20 of 57".
+ * `limit` caps the returned hits (default the top-k); the hybrid search passes `Infinity` to fuse the
+ * whole keyword ranking.
+ */
+export function searchFilesRanked(user: Principal, query: string, limit = SEARCH_TOP_K): { hits: SearchHit[]; total: number } {
   ensureSeeded();
   const q = query.trim().toLowerCase();
   if (!q) return { hits: [], total: 0 };
@@ -985,7 +989,7 @@ export function searchFilesRanked(user: Principal, query: string): { hits: Searc
     });
   }
   const ranked = hits.sort((x, y) => y.score - x.score || x.name.localeCompare(y.name));
-  return { hits: ranked.slice(0, SEARCH_TOP_K), total: ranked.length };
+  return { hits: ranked.slice(0, limit), total: ranked.length };
 }
 
 /** A short highlight window around the first matching token. */
