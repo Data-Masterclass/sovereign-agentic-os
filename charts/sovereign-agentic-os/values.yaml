@@ -234,10 +234,12 @@ clickhouse:
     # steady-state.
     requests: { cpu: 200m, memory: 2Gi }
     limits: { cpu: "2", memory: 6Gi }
-  # Data volume.
+  # Data volume. 30Gi (was 10Gi): production reached 90% of 10Gi on 2026-11-19 with no
+  # retention on trace data or on ClickHouse's own system logs. A larger volume is the
+  # stop-gap; retention is tracked separately. Volumes can grow but never shrink.
   persistence:
     enabled: false
-    size: 10Gi
+    size: 30Gi
   local:
     password: clickhouse-local-dev
 
