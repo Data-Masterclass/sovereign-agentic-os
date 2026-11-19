@@ -289,3 +289,64 @@ answer.
 * `app/api/knowledge/docs` POST keeps writing an un-embedded doc. Fixing that door is a separate
   change; the re-index's `missing-vector` reason is what makes its output retrievable meanwhile,
   and §8 records the gap rather than hiding it.
+
+## 9. Outcome (TEST phase, 2026-11-19)
+
+Built as planned, with four decisions worth recording because they changed the shape:
+
+1. **`dimension-mismatch` is read from the MAPPING, not from the rows.** OpenSearch rejects a
+   wrong-length `knn_vector` at write time, so no row can individually carry a bad length — but an
+   index whose mapping dimension no longer equals `config.filesEmbedDim` / `config.embedDim` makes
+   **every** row un-queryable. One `_mapping` GET answers it exactly, and the count is reported as
+   the whole row total rather than a sample.
+2. **A fourth tripwire category, `REFUSERS`.** The two services name the markers (they query for
+   them) and call `refuseOfflineMock`, but they have no fabricating branch: DECIDERS overstates
+   them, and LABELS may not import the predicate at all, which would have forced them to swallow
+   the refusal. A refuser must call `refuseOfflineMock(` and may never call `offlineMockAllowed(`
+   — asserted, so a future edit that let a re-index fall back fails CI.
+3. **The run checks the mode it got back.** On a laptop the switch permits a stand-in, so a run
+   that trusted the pipeline would rewrite the very rows it was started to remove. Each unit's own
+   report is read (`ingestMode` / `embedMode` / `embedSource` / `store`) and anything but live is a
+   failure with the existing rows left in place — the honest reading of a report that was always
+   there.
+4. **`reindex_corpus` is classified in `WRITE_TOOL_TABS`.** It is built by a factory, so it is not
+   in `ALL_WRITE_TOOLS` (a barrel of static arrays) — exactly the gap review H-1 closed for
+   `commit`: an unclassified write answers "not a write" for every preset and runs unheld. The
+   equality test gained a third, documented source.
+
+Also fixed on the way through, because the requirement demanded it: the Knowledge index writer
+**deleted a scope before bulk-adding it**, so a failed or unreachable write left a workflow with
+no indexed units at all. Unit ids are stable and an index op overwrites in place, so it now adds
+and then prunes only what the add did not cover, and prunes nothing when the add did not land.
+
+### Tests
+
+| Suite | Tests |
+|---|---|
+| `core/kernel/reindex.test.ts` (job table + the pure plan assembly) | 23 |
+| `tabs/files/lib/reindex.test.ts` | 28 |
+| `tabs/knowledge/lib/reindex.test.ts` | 22 |
+| `core/mcp/reindex-doors.test.ts` (MCP gate + route gate + registration) | 22 |
+| `tabs/admin/lib/reindex-view.test.ts` (the panel's copy and disabled-state) | 10 |
+| `core/kernel/offline-mock-tripwire.test.ts` | 9 (was 8 — REFUSERS) |
+
+### Gates
+
+| Check | Result |
+|---|---|
+| `os-ui/node_modules/.bin/tsc --noEmit -p os-ui` | **exit 0**, no output |
+| full suite (`core/**` + `tabs/**`, concurrency 2) | **exit 0** — 6668 tests, 6664 pass, **0 fail**, 4 todo |
+| `bash os-ui/scripts/gate.sh` | **exit 0** — 436 tests, 432 pass, 0 fail, 4 todo |
+| `node scripts/check-structure.mjs` | **exit 0** — ratchet unmoved: `419 / 1 / 200 / 1230` |
+
+### Open, deliberately
+
+- `app/api/knowledge/docs` POST still writes a document with **no embedding**. The re-index's
+  `missing-vector` reason is what makes those rows retrievable meanwhile; fixing the door is a
+  separate change (§8).
+- The job table is **in-process**. A pod restart mid-run loses the cursor, not the work: a fresh
+  plan + run is idempotent and re-does at most what the lost batch had not finished.
+- `filter: 'all'` is the only complete remedy and nobody can tell an operator how much of the
+  corpus needs it, because the evidence was never written. The tool says so in every payload
+  rather than implying `marked` is a clean-up.
+- No schedule, no auto-run, and no backfill of a provenance marker onto old rows (§8).
