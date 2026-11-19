@@ -19,6 +19,9 @@ REPO=$PWD
 . scripts/tests/assert.sh
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
+# Hermetic git: no user or system config (CI has no init.defaultBranch=main; a laptop usually
+# does, which hid a broken fixture on the first CI run of this file).
+export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.invalid GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.invalid
 
 # ---- stubs on PATH --------------------------------------------------------------------------
@@ -62,7 +65,7 @@ new_checkout() {
   rm -rf "$TMP/case"; mkdir -p "$TMP/case"
   export FAKE_DIR=$TMP/case/fake FAKE_LOG=$TMP/case/calls.log
   mkdir -p "$FAKE_DIR"; : > "$FAKE_LOG"
-  git init -q --bare "$TMP/case/public.git"
+  git init -q --bare -b main "$TMP/case/public.git"
   OP=$TMP/case/op
   git init -q -b main "$OP"
   mkdir -p "$OP/scripts/lib" "$OP/os-ui"
@@ -75,6 +78,12 @@ new_checkout() {
   git -C "$OP" remote add public "$TMP/case/public.git"
   git -C "$OP" push -q public main
   SHA=$(git -C "$OP" rev-parse HEAD)
+}
+# push_elsewhere — another checkout pushes a commit to public/main (so ours is behind).
+push_elsewhere() {
+  (set -e; cd "$TMP/case"; git clone -q public.git other; cd other
+   echo b > os-ui/b.ts; git add -A; git commit -qm b; git push -q origin main) \
+    || { echo "fixture: push_elsewhere failed" >&2; exit 1; }
 }
 green_ci()    { printf 'ci.yml\tcompleted\tsuccess\tu1\nlicense-gate.yml\tcompleted\tsuccess\tu2\n' > "$FAKE_DIR/runs-main.tsv"; }
 green_build() { printf 'build-images.yml\tcompleted\tsuccess\tu3\n' > "$FAKE_DIR/runs-os-ui-v$1.tsv"; }
@@ -110,7 +119,7 @@ absent "no token is printed" "ghp_FAKE_TOKEN" "$out"
 
 echo "== --dry-run does not fast-forward"
 new_checkout; green_ci
-(cd "$TMP/case" && git clone -q public.git other && cd other && echo b > os-ui/b.ts && git add -A && git commit -qm b && git push -q origin main)
+push_elsewhere
 before=$(git -C "$OP" rev-parse HEAD)
 release --dry-run 1.0.1
 check "dry run reports the fast-forward it would do" "would fast-forward main" "$out"
@@ -118,7 +127,7 @@ holds "dry run leaves main where it was" [ "$(git -C "$OP" rev-parse HEAD)" = "$
 
 echo "== the full release"
 new_checkout; green_ci; green_build 1.1.0
-(cd "$TMP/case" && git clone -q public.git other && cd other && echo b > os-ui/b.ts && git add -A && git commit -qm b && git push -q origin main)
+push_elsewhere
 SHA=$(git -C "$TMP/case/public.git" rev-parse main)
 green_ci   # CI green for the NEW head
 out=$(cd "$OP" && PATH="$BIN:$PATH" WORKFLOW_POLL_SECONDS=0 RELEASE_CI_WAIT_MINUTES=0 RELEASE_BUILD_WAIT_MINUTES=0 \
