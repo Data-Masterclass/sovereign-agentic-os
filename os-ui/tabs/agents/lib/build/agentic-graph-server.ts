@@ -372,6 +372,9 @@ export async function runOsTeam(input: RunOsTeamInput): Promise<RunOsTeamResult>
     budget: handoffBudget(),
     maxOutputTokens: modelContext(roleModel('tools')).reservedOutput,
     disabled: input.disabledAgents,
+    // The definition's one-line `role` per agent — stored and shown by the builder, and until now
+    // never sent to the model.
+    roleOf: (agentId) => sys.agents.find((a) => a.id === agentId)?.role,
     // LIVE PROGRESS: forwarded to the streaming run route (no-op when unset).
     onNodeStart: input.onNodeStart,
     onStep: input.onStep,

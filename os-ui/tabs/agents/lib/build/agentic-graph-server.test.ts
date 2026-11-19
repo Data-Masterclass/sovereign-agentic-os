@@ -698,3 +698,24 @@ test('osPreamble: a FILES folder grant is named in the granted context, and the 
   assert.match(text, /\n- get_file — Read ONE governed file[^\n]{0,100}(\n|$)/);
   assert.ok(!text.includes('Honesty: `restricted` files'), 'the long description is not in the prompt');
 });
+
+test('runOsTeam: each agent\'s one-line `role` from the definition reaches the model (F12)', async () => {
+  const systems: string[] = [];
+  const inner = toolCallingLlm('query_data');
+  await runOsTeam({
+    runId: 'run-test-role',
+    user: CREATOR,
+    yaml: mixedYaml(),
+    systemId: 'sys-mix',
+    messages: [{ role: 'user', content: 'How many rows?' }],
+    llm: async (req) => {
+      systems.push(req.messages.find((m) => m.role === 'system')?.content ?? '');
+      return inner(req);
+    },
+    toolDeps: spyDeps(),
+    maxIterations: 3,
+  });
+  const role = parseSystem(mixedYaml()).agents[0].role;
+  assert.ok(role.trim().length > 0, 'the fixture declares a role');
+  assert.ok(systems.length > 0 && systems.every((s) => s.includes(`Your role: ${role}`)), 'the PLAN and every ACT prompt carry the role line');
+});

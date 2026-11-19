@@ -151,6 +151,49 @@ export function parseWhen(expression: string): WhenAst {
   return ast;
 }
 
+/**
+ * Is this stored `when` the LABEL an earlier scaffolder wrote, rather than a condition?
+ *
+ * Two scaffolders used to write a hand-off's `when` as prose: the workflow scaffold wrote the
+ * literal `step complete`, and the team proposer wrote `<the agent's role> complete` ("Pulls the
+ * raw campaign data complete"). Neither was ever an expression — it meant "then", which is the
+ * unguarded hand-off — so stored teams carrying one must keep running. This recognises exactly
+ * that shape and nothing wider:
+ *   1. the text is `<one or more words> complete`;
+ *   2. it does NOT parse as a `when` expression (a real expression is always a guard);
+ *   3. it contains no comparison or boolean operator and no `state.` reference — text someone
+ *      wrote AS a condition and got wrong must stay an error, never become "always".
+ * The graph builder treats a match as unguarded and warns about it.
+ */
+export function isLegacyUnguardedWhen(text: string | null | undefined): boolean {
+  const src = (text ?? '').trim();
+  if (!/^\S.*\s+complete$/i.test(src)) return false;
+  if (/==|!=|&&|\|\||\bstate\s*\./i.test(src)) return false;
+  try {
+    parseWhen(src);
+    return false;
+  } catch (e) {
+    return e instanceof WhenSyntaxError;
+  }
+}
+
+/**
+ * What is wrong with a hand-off's `when`, or null when nothing is: no guard at all, a valid
+ * expression, or the legacy label above. The ONE check the compiler, the canvas edit and the
+ * proposer share, so an invalid guard is refused where it is written — not when the team runs.
+ */
+export function whenProblem(text: string | null | undefined): string | null {
+  const src = (text ?? '').trim();
+  if (!src || isLegacyUnguardedWhen(src)) return null;
+  try {
+    parseWhen(src);
+    return null;
+  } catch (e) {
+    if (e instanceof WhenSyntaxError) return e.message;
+    throw e;
+  }
+}
+
 /** Explicit truthiness: undefined/null/false/''/0/[] are false; everything else is true. */
 export function isTruthy(v: unknown): boolean {
   if (v === undefined || v === null || v === false || v === '' || v === 0) return false;

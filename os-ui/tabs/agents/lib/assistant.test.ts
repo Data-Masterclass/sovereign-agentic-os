@@ -161,3 +161,46 @@ test('parseProposedAgents repairs ids and drops empty steps', () => {
   assert.equal(agents[0].id, 'pull-data');
   assert.notEqual(agents[1].id, agents[0].id); // unique
 });
+
+// --- F0: a proposed team must BUILD and RUN ---------------------------------------------------
+//
+// The proposer used to write every hand-off as `when: "<role> complete"`. That is a label, not a
+// `when` expression, so the graph builder rejected it and a team accepted from "Proposed team"
+// could be neither built nor run.
+
+import { parseWhen } from '@tabs/agents/lib/engine/when';
+import { buildGraph } from '@tabs/agents/lib/engine/build-graph';
+
+function buildable(system: ReturnType<typeof parseSystem>) {
+  return buildGraph(compile(system), {
+    llm: async () => ({ content: '', toolCalls: [] }),
+    toolSpecsFor: () => [],
+    callTool: async () => ({ text: '', isError: false }),
+    preamble: '',
+    reasoningModel: 'r',
+    execModel: 'e',
+  });
+}
+
+test('F0: a proposed team writes UNGUARDED hand-offs — every edge is a valid `when` or has none — and the graph builds clean', async () => {
+  const before = parseSystem(BASE);
+  const { system } = await scaffoldSystem(before, 'pull data, check margins, score, recommend', { complete: stub(FOUR_STEP) });
+  assert.ok(system.edges.length >= 2);
+  for (const e of system.edges) {
+    assert.equal(e.when, undefined, `${e.from} → ${e.to} is a plain "then" — it carries no condition`);
+    if (e.when !== undefined) assert.doesNotThrow(() => parseWhen(e.when!));
+  }
+  // The stored form (what the builder commits) round-trips without a `when` either.
+  const stored = parseSystem(serializeSystem(system));
+  assert.ok(stored.edges.every((e) => e.when === undefined));
+  const built = buildable(stored);
+  assert.deepEqual(built.warnings, [], 'nothing to warn about');
+  assert.deepEqual(built.agents, system.agents.map((a) => a.id));
+});
+
+test('F0: "add a research sub-agent that hands off to the writer" writes an unguarded hand-off that builds', () => {
+  const { system } = applyInstruction(parseSystem(BASE), 'add a research sub-agent that hands off to the writer');
+  const edge = system.edges.find((e) => e.type === 'handoff' && e.to === 'writer')!;
+  assert.equal(edge.when, undefined);
+  assert.doesNotThrow(() => buildable(system));
+});

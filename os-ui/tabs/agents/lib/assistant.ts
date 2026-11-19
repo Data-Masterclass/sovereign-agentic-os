@@ -3,6 +3,7 @@
  */
 import { type AgentSpec, type System, type Edge, SystemError } from '@tabs/agents/lib/system-schema';
 import { suggestToolNames } from '@tabs/agents/lib/suggest-tools';
+import { whenProblem } from '@tabs/agents/lib/engine/when';
 
 /**
  * The agent-system helper's edit engine (Approach A, dual-mode #2). It turns a
@@ -19,6 +20,19 @@ import { suggestToolNames } from '@tabs/agents/lib/suggest-tools';
  */
 
 export type InstructionResult = { system: System; summary: string };
+
+/**
+ * The proposer checks its OWN output before returning it: every hand-off it wrote either has no
+ * `when` (a plain "then") or a `when` the guard parser accepts. It writes none today; this is
+ * what keeps a later change from shipping a team that cannot be built.
+ */
+function assertHandoffsValid(edges: Edge[]): void {
+  for (const e of edges) {
+    if (e.type !== 'handoff') continue;
+    const problem = whenProblem(e.when);
+    if (problem) throw new SystemError(`The team helper produced an invalid hand-off ${e.from} → ${e.to}: ${problem}`, 500);
+  }
+}
 
 function slugify(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'agent';
@@ -77,7 +91,10 @@ export function applyInstruction(input: System, instruction: string): Instructio
     // Wire the requested handoff (only to a declared agent).
     const wired = !!handoffTarget && system.agents.some((a) => a.id === handoffTarget);
     if (wired) {
-      const edge: Edge = { from: newId, to: handoffTarget!, type: 'handoff', when: `${roleWord} complete` };
+      // UNGUARDED: "hands off to X" means "then X". `when` is an expression over the team's state
+      // channels, and a label such as "<role> complete" is not one — it made the team unbuildable.
+      const edge: Edge = { from: newId, to: handoffTarget!, type: 'handoff' };
+      assertHandoffsValid([edge]);
       system.edges.push(edge);
     }
 
@@ -224,11 +241,14 @@ export function scaffoldFromProposal(
     });
   }
 
-  // Linear chain: each agent hands off to the next; the first is the entrypoint.
+  // Linear chain: each agent hands off to the next; the first is the entrypoint. The hand-offs
+  // are UNGUARDED — a pipeline step simply passes on. (They used to carry `when: "<role>
+  // complete"`, a label the guard parser rejects, so an accepted proposal could not be built.)
   const edges: Edge[] = [];
   for (let i = 0; i < agents.length - 1; i++) {
-    edges.push({ from: agents[i].id, to: agents[i + 1].id, type: 'handoff', when: `${agents[i].role} complete` });
+    edges.push({ from: agents[i].id, to: agents[i + 1].id, type: 'handoff' });
   }
+  assertHandoffsValid(edges);
 
   system.agents = agents;
   system.edges = edges;

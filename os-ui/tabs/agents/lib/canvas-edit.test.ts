@@ -70,10 +70,17 @@ test('addSuperviseEdge adds the member to the supervisor AND a return edge; comp
 
 test('addHandoffEdge wires a guarded Command between two agents; compiles', () => {
   let sys = addAgent(base(), { id: 'writer', role: 'drafts' });
-  sys = addHandoffEdge(sys, 'researcher', 'writer', 'research done');
+  sys = addHandoffEdge(sys, 'researcher', 'writer', 'research_done');
   const ir = compile(sys);
   const cmd = ir.commands.find((c) => c.from === 'researcher' && c.to === 'writer')!;
-  assert.equal(cmd.when, 'research done');
+  assert.equal(cmd.when, 'research_done');
+});
+
+test('addHandoffEdge refuses a `when` that is not an expression — at the edit, not at the run', () => {
+  const sys = addAgent(base(), { id: 'writer', role: 'drafts' });
+  assert.throws(() => addHandoffEdge(sys, 'researcher', 'writer', 'research done'), /when "research done".*unexpected trailing token/s);
+  // No condition at all is the plain "then" hand-off.
+  assert.equal(addHandoffEdge(sys, 'researcher', 'writer').edges.at(-1)!.when, undefined);
 });
 
 test('edge helpers reject unknown / self endpoints', () => {

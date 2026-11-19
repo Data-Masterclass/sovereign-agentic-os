@@ -119,3 +119,25 @@ agents:
     /agent 'a' supervises unknown member 'ghost'/,
   );
 });
+
+// --- F0: an invalid `when` is a definition error the builder shows at edit time ----------------
+
+const WHEN_SYS = (when: string) => parseSystem(`
+entrypoint: a
+grants: { tools: [] }
+agents:
+  - { id: a, role: r, agent_md: "", memory_md: "" }
+  - { id: b, role: r, agent_md: "", memory_md: "" }
+edges:
+  - { from: a, to: b, type: handoff, when: ${JSON.stringify(when)} }
+`);
+
+test('compile rejects a hand-off whose `when` is not an expression, naming the edge and the problem', () => {
+  assert.throws(() => compile(WHEN_SYS('research done')), /handoff 'a' -> 'b'.*when "research done".*unexpected trailing token 'done'.*Leave `when` empty/s);
+  assert.throws(() => compile(WHEN_SYS('state.done &&')), /handoff 'a' -> 'b'/);
+});
+
+test('compile accepts a valid `when`, and the proposer\'s old "<role> complete" label (the graph builder warns about it)', () => {
+  assert.deepEqual(compile(WHEN_SYS('state.done && reviewed')).commands, [{ from: 'a', to: 'b', when: 'state.done && reviewed' }]);
+  assert.deepEqual(compile(WHEN_SYS('Pulls the raw data complete')).commands, [{ from: 'a', to: 'b', when: 'Pulls the raw data complete' }]);
+});

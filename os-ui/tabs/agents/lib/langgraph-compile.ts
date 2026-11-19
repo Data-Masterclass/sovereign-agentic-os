@@ -2,6 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { type System, SystemError } from '@tabs/agents/lib/system-schema';
+import { whenProblem } from '@tabs/agents/lib/engine/when';
 
 /**
  * The PURE `system.yaml` → LangGraph IR compiler (Approach A). It validates the
@@ -101,6 +102,15 @@ export function compile(sys: System): IR {
       // Control returns from the member to the supervisor after it runs.
       memberEdges.push({ from: e.to, to: e.from });
     } else {
+      // A `when` that is not an expression is a DEFINITION error, reported here so the builder
+      // shows it while the team is being edited (the system view compiles on every load) — not
+      // when someone presses Run. No guard, a valid guard and the old scaffold label all pass.
+      const problem = whenProblem(e.when);
+      if (problem) {
+        throw new SystemError(
+          `system.yaml: handoff '${e.from}' -> '${e.to}': ${problem}. Leave \`when\` empty for a plain hand-off, or write a condition over the team's state channels (for example: state.review_done).`,
+        );
+      }
       commands.push({ from: e.from, to: e.to, when: e.when ?? null });
     }
   }

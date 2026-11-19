@@ -129,7 +129,7 @@ import {
   type NodeRun,
   type NodeStatus,
 } from '@tabs/agents/lib/build/agentic-graph';
-import { evaluateWhen, parseWhen, whenChannels, WhenSyntaxError, type WhenAst } from '@tabs/agents/lib/engine/when';
+import { evaluateWhen, isLegacyUnguardedWhen, parseWhen, whenChannels, WhenSyntaxError, type WhenAst } from '@tabs/agents/lib/engine/when';
 import type { HoldDecision } from '@tabs/agents/lib/build/hold';
 import type { ApprovalDecision, ApprovalPort, ApprovalState, RunOwner, RunnerSnapshot } from '@tabs/agents/lib/engine/approval-port';
 import { noopObserver, type RunObserver, type SpanHandle } from '@tabs/agents/lib/engine/observe';
@@ -668,13 +668,14 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
   for (const c of ir.commands) {
     if (!byId.has(c.from) || !byId.has(c.to)) continue;
     let ast: WhenAst | null = null;
-    // Teams scaffolded from a workflow before 2026-11-18 stored the literal 'step complete' on
-    // every sequential handoff. It was never a `when` expression — it meant "go on when this step
-    // is done", which is exactly the unguarded edge. Read that one literal as unguarded so those
-    // stored teams run; any other malformed guard still fails the build.
-    const legacyUnguarded = typeof c.when === 'string' && /^step\s+complete$/i.test(c.when.trim());
+    // Two scaffolders used to write a LABEL into `when`: the workflow scaffold the literal
+    // 'step complete' (until 2026-11-18), the team proposer '<role> complete'. Neither was ever a
+    // condition — it meant "go on when this step is done", which is exactly the unguarded edge.
+    // Read that shape as unguarded so stored teams run, and say so; anything else that is not an
+    // expression still fails (`isLegacyUnguardedWhen` holds the exact rule).
+    const legacyUnguarded = isLegacyUnguardedWhen(c.when);
     if (legacyUnguarded) {
-      warnings.push(`handoff ${c.from} → ${c.to}: when "${c.when}" is the old scaffold placeholder, not a condition — treated as an unconditional handoff`);
+      warnings.push(`handoff ${c.from} → ${c.to}: when "${c.when}" is a label an earlier scaffold wrote, not a condition — treated as an unconditional handoff (clear it, or write a real condition)`);
     } else if (c.when && c.when.trim().length > 0) {
       try {
         ast = parseWhen(c.when);
@@ -816,7 +817,7 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
       const turns = conversation(state.messages);
       const userTask = turns.filter((m) => m.role === 'user').at(-1)?.content ?? '';
       const transcript = await curatePredecessor(state.handoffs, node, userTask, deps);
-      const system = nodeSystem(deps.preamble, node, transcript, deps.budget) + channelBrief;
+      const system = nodeSystem(deps.preamble, node, transcript, deps.budget, deps.roleOf?.(node.id)) + channelBrief;
       const input = boundInput(system + renderUserTurn(turns));
       const visit = state.nodeRuns.length + 1;
       // `total` never reads below `index` on a supervisor revisit (review L2).
@@ -1205,7 +1206,7 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
   async function decideRoute(state: EngineState, node: IRNode, members: string[], llm: LlmCall): Promise<RouteDecision> {
     const turns = conversation(state.messages);
     const routed = resolveNodeModel(node, deps);
-    const base = nodeSystem(deps.preamble, node, state.handoffs, deps.budget) + stateSnapshot(channelValues(state), settable);
+    const base = nodeSystem(deps.preamble, node, state.handoffs, deps.budget, deps.roleOf?.(node.id)) + stateSnapshot(channelValues(state), settable);
     const budget = deps.budget ?? 24_000;
     const valid = new Set([...members, 'END']);
     const settle = (next: string, brief: string, source: RouteDecision['source']): RouteDecision => {
