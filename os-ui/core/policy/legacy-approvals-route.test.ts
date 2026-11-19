@@ -14,7 +14,8 @@ import assert from 'node:assert/strict';
  *  2. a Builder of another domain cannot decide, and cannot even see the item;
  *  3. rank still matters — a Builder cannot clear a `domain_admin` item;
  *  4. an authorised approver still can, the effect applies once, a repeat is a 409;
- *  5. GET returns only what the Governance inbox would show that user.
+ *  5. GET returns only what the Governance inbox would show that user;
+ *  6. a `withdraw` (or any decision this route does not know) is refused — it never approves.
  */
 
 let ACTING: { id: string; name: string; domains: string[]; role: string } | null = null;
@@ -36,7 +37,7 @@ async function loadRoute() {
   return import(`../../app/api/agent/approvals/route.ts?${Math.random()}`);
 }
 
-function post(id: string, decision: 'approve' | 'reject' = 'approve', headers: Record<string, string> = {}) {
+function post(id: string, decision: string = 'approve', headers: Record<string, string> = {}) {
   return new Request('http://x', {
     method: 'POST',
     headers: { 'content-type': 'application/json', ...headers },
@@ -166,4 +167,25 @@ test('an item the user cannot see is "not found" on POST — its existence is no
   const res = await (await loadRoute()).POST(post(a.id));
   assert.ok(res.status === 403 || res.status === 404);
   assert.equal(getApproval(a.id)?.status, 'pending');
+});
+
+test('a `withdraw` posted here NEVER approves — not for an approver, not for the requester — and the run is not resumed', async () => {
+  const a = seedHeldCall('builder');
+  const resumed: string[] = [];
+  onDecided((_a, d) => { resumed.push(d); });
+  const route = await loadRoute();
+  for (const who of [
+    { id: 'bea', name: 'Bea', domains: ['sales'], role: 'builder' }, // could approve it
+    { id: 'rae', name: 'Rae', domains: ['sales'], role: 'builder' }, // the requester
+    { id: 'ada', name: 'Ada', domains: ['platform'], role: 'admin' },
+  ]) {
+    ACTING = who;
+    for (const decision of ['withdraw', 'withdrawn', 'APPROVE', 'yes']) {
+      const res = await route.POST(post(a.id, decision));
+      assert.equal(res.status, 400, `${who.id} posting '${decision}'`);
+    }
+  }
+  assert.equal(getApproval(a.id)?.status, 'pending');
+  assert.equal(getApproval(a.id)?.decidedBy, undefined);
+  assert.deepEqual(resumed, []);
 });
