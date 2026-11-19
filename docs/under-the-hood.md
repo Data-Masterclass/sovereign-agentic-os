@@ -2895,7 +2895,7 @@ storage class:
 | `ingress.enabled` | false | **true**, 7 hosts `:355`, `:359-370` |
 | `queryTool.image.tag` | `"0.6.2"` | `"0.3.0@sha256:310342ad…"` — an *older* query-tool, losing the promote-as-view allowlist `:276` |
 | LiteLLM `model_list` | 4 aliases | 7 — adds `sovereign-vision`, `sovereign-premium`, `sovereign-reasoning-fast` `:89-128` |
-| LiteLLM `litellm_settings` | `success_callback` + `failure_callback` + Valkey cache | **only** `success_callback` + `drop_params` — the response cache *and* the failure callback are dropped `:139-141` |
+| LiteLLM `litellm_settings` | `success_callback` + Valkey cache (no failure callback since 2026-11-19) | **only** `success_callback` + `drop_params` — the response cache *and* the failure callback are dropped `:139-141` |
 | LiteLLM `general_settings` | includes `store_model_in_db: true` | `master_key` only — `store_model_in_db` dropped `:143` |
 | `egressProxy.allowlist` | 17 entries | 29 — adds GitHub, Supabase, Atlassian, Slack, Gmail, Purview, AzureML, AWS, GCP and Snowflake hosts, but **drops `api.kajabi.com`** `:234-266` |
 | `trino.catalog.iceberg.vendedCredentials` | false | true, with `oauth2SecretName: polaris-trino-oauth` `:385-386` |

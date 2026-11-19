@@ -24,8 +24,10 @@
  *        alias that points at a Qwen3-VL chat model;
  *     5. `router_settings.enable_pre_call_checks` is not on unless every chat alias carries
  *        `max_input_tokens` (LiteLLM would otherwise filter on a guess);
- *     6. `litellm_settings.turn_off_message_logging` is true and
- *        `general_settings.store_prompts_in_spend_logs` is not true;
+ *     6. `litellm_settings.turn_off_message_logging` is true,
+ *        `general_settings.store_prompts_in_spend_logs` is not true, and
+ *        `litellm_settings.failure_callback` does not send to Langfuse (a request the proxy
+ *        refuses is logged with its full body, which the redaction switch does not cover);
  *     7. the shared key has a positive `maxBudget` AND a `budgetDuration` (a lifetime cap ends in
  *        a permanent outage).
  *   Pure file reads — no helm, no cluster, no network — so it never skips. Wired into
@@ -120,6 +122,10 @@ function check(name, values, images) {
   }
   if (pc.litellm_settings?.turn_off_message_logging !== true) {
     problems.push('litellm_settings.turn_off_message_logging is not true — the gateway would log every prompt and completion to Langfuse, past the OS redaction');
+  }
+  const failureCallbacks = [].concat(pc.litellm_settings?.failure_callback ?? []);
+  if (failureCallbacks.some((c) => /^langfuse/.test(String(c)))) {
+    problems.push(`litellm_settings.failure_callback contains ${JSON.stringify(failureCallbacks)} — for a request the proxy refuses (rate limit, budget, model not allowed) LiteLLM logs the full request body to Langfuse, and turn_off_message_logging does not redact it`);
   }
   if (pc.general_settings?.store_prompts_in_spend_logs === true || String(pc.general_settings?.store_prompts_in_spend_logs).toLowerCase() === 'true') {
     problems.push('general_settings.store_prompts_in_spend_logs is true — prompts would be stored in the gateway database');

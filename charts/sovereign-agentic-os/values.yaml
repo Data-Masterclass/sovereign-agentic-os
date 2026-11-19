@@ -603,9 +603,15 @@ litellm:
       # it does not cover, and how to switch content on for one debugging session, is in
       # docs/components/langfuse.md "What the gateway writes".
       turn_off_message_logging: true
-      # A3 (checklist A30): a REJECTED or failed call is observable too — it lands in
-      # Langfuse as a failed generation (inside the run trace when the OS passed one).
-      failure_callback: ["langfuse"]
+      # NO `failure_callback: ["langfuse"]` — deliberately. When the PROXY ITSELF refuses a
+      # request (rate limit, spent budget, a model outside the key's list) LiteLLM logs the
+      # whole request body as the generation's model parameters, and `turn_off_message_logging`
+      # does not reach that copy: the full prompt of every refused call landed in Langfuse
+      # (measured on 1.90.0 and 1.108.12). A rate-limited run is exactly the run that carries
+      # twelve documents. The OS records a refused or failed call itself, on its own span, at
+      # its own redaction level (tabs/agents/lib/engine/observe.ts), so nothing is lost but the
+      # gateway's duplicate. `scripts/check-litellm-model-info.mjs` fails the gate if this
+      # callback comes back. docs/components/langfuse.md "What the gateway writes".
       drop_params: true
       # A3: response cache on the bundled Valkey, OPT-IN PER REQUEST. `mode: default_off`
       # means nothing is cached unless the caller sends `cache: {"use-cache": true}` —
