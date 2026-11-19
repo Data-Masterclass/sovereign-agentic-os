@@ -2070,8 +2070,9 @@ osUI:
   # worker decrypt it with this secret (it is NOT the LiteLLM master key). Leave both EMPTY on a
   # `helm install/upgrade` deployment: the chart generates a value once and keeps it across
   # upgrades (templates/base/os-ui/os-ui-agent-key-encryption.yaml).
-  #   secret          an explicit value (32+ characters). REQUIRED for Argo CD / Flux /
-  #                   `helm template` pipelines, where the generated value cannot be kept.
+  #   secret          an explicit value (32+ characters). REQUIRED when the chart is rendered
+  #                   without access to the live cluster (`helm template`, a GitOps
+  #                   controller), because the generated value cannot be kept there.
   #   existingSecret  name of a Secret you manage, with the key AGENT_KEY_ENCRYPTION_KEY.
   # IF THIS VALUE CHANGES, every stored key becomes unreadable: each system shows "Rebuild
   # needed" and does not run until its owner presses Rebuild once. Nothing else is lost.
