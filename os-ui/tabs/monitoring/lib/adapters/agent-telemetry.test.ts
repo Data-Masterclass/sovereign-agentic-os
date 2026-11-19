@@ -103,3 +103,12 @@ test('tenantRuns reports Langfuse unreachable honestly (spend unknown, not 0)', 
   // The in-process ring is empty in this test process — no fabricated runs.
   assert.deepEqual(runs, []);
 });
+
+test('a run duration is in milliseconds (Langfuse reports trace latency in seconds)', async () => {
+  const nowMs = Date.now();
+  stubLangfuse([
+    { id: 'lf-ms', timestamp: new Date(nowMs - 60_000).toISOString(), name: 'agent.generate', latency: 156.661, metadata: { principal: 'os-sys_ms:run', decision: 'allow' } },
+  ]);
+  const { runsBySystem } = await agentTelemetryBatch(nowMs);
+  assert.equal(runsBySystem.get('sys_ms')![0].ms, 156661);
+});

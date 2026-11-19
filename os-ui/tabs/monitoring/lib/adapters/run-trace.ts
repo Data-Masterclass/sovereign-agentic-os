@@ -237,6 +237,27 @@ async function langfuseRuns(): Promise<HealthItem[]> {
   }
 }
 
+/**
+ * Langfuse's public API reports `latency` (trace and observation) in SECONDS; every `ms` field
+ * in Monitoring is milliseconds. Unknown stays unknown, never 0.
+ */
+export function latencyMs(seconds: unknown): number | undefined {
+  const s = numOrUndef(seconds);
+  return s === undefined ? undefined : Math.round(s * 1000);
+}
+
+/**
+ * What one Langfuse observation is, as a trace step. `observe.ts` writes every governed tool
+ * call as a SPAN named `tool.<name>` (and a refused one as a zero-length span of that name), so
+ * the name decides it is a tool; other spans (agents, `run.result`) stay spans. A Langfuse
+ * EVENT is an event.
+ */
+function stepKind(o: Record<string, unknown>): TraceStep['kind'] {
+  if (o.type === 'GENERATION') return 'llm';
+  if (o.type === 'EVENT') return 'event';
+  return String(o.name ?? '').startsWith('tool.') ? 'tool' : 'span';
+}
+
 /** Drill into ONE trace (the core promise). Live Langfuse first, then mock. */
 export async function fetchTrace(id: string): Promise<TraceDetail | null> {
   const auth = Buffer.from(`${config.langfusePublicKey}:${config.langfuseSecretKey}`).toString('base64');
@@ -250,11 +271,11 @@ export async function fetchTrace(id: string): Promise<TraceDetail | null> {
       const obs = Array.isArray(t.observations) ? (t.observations as Record<string, unknown>[]) : [];
       const steps: TraceStep[] = obs.map((o) => ({
         name: String(o.name ?? 'step'),
-        kind: (o.type === 'GENERATION' ? 'llm' : o.type === 'SPAN' ? 'span' : 'tool') as TraceStep['kind'],
+        kind: stepKind(o),
         input: preview(o.input),
         output: preview(o.output),
         tokens: numOrUndef((o.usage as Record<string, unknown>)?.total) ?? numOrUndef(o.totalTokens),
-        ms: numOrUndef(o.latency),
+        ms: latencyMs(o.latency),
         status: obsError(o) ? 'error' : 'ok',
       }));
       const owner = traceOwner(t, meta);
@@ -327,7 +348,7 @@ function logsFrom(t: Record<string, unknown>, obs: Record<string, unknown>[]): s
     const type = String(o.type ?? 'EVENT');
     const name = String(o.name ?? 'step');
     const level = obsError(o) ? 'ERROR' : String(o.level ?? 'INFO').toUpperCase();
-    const ms = numOrUndef(o.latency);
+    const ms = latencyMs(o.latency);
     const toks = numOrUndef((o.usage as Record<string, unknown>)?.total) ?? numOrUndef(o.totalTokens);
     const status = String(o.statusMessage ?? '').trim();
     const extras = [
