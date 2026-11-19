@@ -26,6 +26,7 @@ import { serverError, summariseBulk, type BulkOutcome } from '@tabs/files/lib/bu
 import { describeAndTagPatch, parseTagInput, tierBreakdown, type DescribeAndTagInput } from '@tabs/files/lib/bulk-docs';
 import { promotionReadiness, readinessLabel, readinessHint } from '@tabs/files/lib/promotion';
 import FilePreview from '@tabs/files/ui/FilePreview';
+import { SUGGESTED_WORD, SUGGESTED_TOOLTIP } from '@tabs/files/lib/preview-views';
 import NoteEditor from '@tabs/files/ui/NoteEditor';
 
 type Summary = {
@@ -41,6 +42,8 @@ type Summary = {
   hasPreview?: boolean;
   /** Soft-archived (retained, reversible). Absent/false = live. */
   archived?: boolean;
+  /** Description / tags written automatically and not edited since. */
+  suggested?: { description: boolean; tags: string[] };
 };
 type Facets = { folders: { path: string; count: number }[]; tags: { tag: string; count: number }[] };
 type Groups = { mine: Summary[]; domain: Summary[]; marketplace: Summary[]; facets: Facets };
@@ -128,7 +131,10 @@ function FileCard({
       <span className="file-name">{f.name}</span>
       <span className="file-sub">{f.owner} · {f.version} · {bytesLabel(f.bytes)}</span>
       {f.tags.length > 0 ? (
-        <div className="file-tags">{f.tags.slice(0, 3).map((t) => <span className="chip" key={t}>{t}</span>)}</div>
+        <div className="file-tags">
+          {f.tags.slice(0, 3).map((t) => <span className="chip" key={t}>{t}</span>)}
+          {f.tags.slice(0, 3).some((t) => f.suggested?.tags.includes(t)) ? <span className="suggested-mark" title={SUGGESTED_TOOLTIP}>{SUGGESTED_WORD}</span> : null}
+        </div>
       ) : null}
     </button>
   );

@@ -16,6 +16,7 @@ import ModelsProviders from '@tabs/admin/ui/ModelsProviders';
 import BackupsRestore from '@tabs/admin/ui/BackupsRestore';
 import AccessTokens from '@tabs/admin/ui/AccessTokens';
 import ReindexSection from '@tabs/admin/ui/ReindexSection';
+import DescribeFilesSection from '@tabs/admin/ui/DescribeFilesSection';
 
 /**
  * Platform — ONE route, tabs on top, exactly like Governance.
@@ -101,7 +102,7 @@ function PlatformPageInner() {
         {current === 'models' && <ModelsProviders />}
         {current === 'backups' && <BackupsRestore />}
         {current === 'tokens' && <AccessTokens />}
-        {current === 'reindex' && <ReindexSection />}
+        {current === 'reindex' && <><ReindexSection /><DescribeFilesSection /></>}
       </div>
     </>
   );

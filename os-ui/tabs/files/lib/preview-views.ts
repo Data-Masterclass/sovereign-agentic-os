@@ -78,3 +78,55 @@ export function emptyTextMessage(s: { extracting: boolean; storedWhy: string; tr
   if (s.storedWhy) return s.storedWhy;
   return s.transcript ? 'No transcript is stored for this file.' : 'No extracted text is stored for this file.';
 }
+
+// ---------------------------------------------------------------------------
+//  Automatic description + tags: the marker and the one status line in Details
+// ---------------------------------------------------------------------------
+
+/** The plain word next to a description / tag nobody has edited since it was generated. */
+export const SUGGESTED_WORD = 'suggested';
+export const SUGGESTED_TOOLTIP = 'Written automatically from the file’s content. Edit to change.';
+export const WRITING_DESCRIPTION = 'Writing a description…';
+
+export type AutoDocsLine = {
+  /** One sentence, or '' when there is only an action to offer. */
+  text: string;
+  /** The generator is running right now. */
+  pending: boolean;
+  /** `retry` after a failure, `regenerate` otherwise; null when the file may not be described. */
+  action: 'retry' | 'regenerate' | null;
+};
+
+/**
+ * What Details says about the automatic description, and which action it offers. Null = say
+ * nothing. A restricted file and an owner's opt-out explain WHY nothing was written and offer no
+ * action; a failure shows its recorded reason with "Try again"; otherwise whoever may edit the
+ * file gets "Regenerate" (which never replaces their own description or a tag they removed).
+ */
+export function autoDocsLine(s: {
+  restricted: boolean;
+  optedOut: boolean;
+  hasText: boolean;
+  extracting: boolean;
+  hasDescription: boolean;
+  canManage: boolean;
+  generation?: { status: string; reason?: string };
+}): AutoDocsLine | null {
+  if (s.restricted) {
+    return s.hasDescription ? null
+      : { text: 'Restricted files are never sent to a model, so no description or tags are written for them.', pending: false, action: null };
+  }
+  if (s.optedOut) {
+    return s.hasDescription ? null
+      : { text: 'This file is stored only by its owner’s choice, so no description is written for it.', pending: false, action: null };
+  }
+  if (s.generation?.status === 'pending') return { text: WRITING_DESCRIPTION, pending: true, action: null };
+  if (s.extracting) return null; // the text is still being read; the description follows it
+  if (!s.hasText) {
+    return s.hasDescription ? null : { text: 'No description was written: there is no text to describe.', pending: false, action: null };
+  }
+  if (s.generation?.status === 'failed') {
+    return { text: s.generation.reason ?? 'No description was written.', pending: false, action: s.canManage ? 'retry' : null };
+  }
+  return s.canManage ? { text: '', pending: false, action: 'regenerate' } : null;
+}
