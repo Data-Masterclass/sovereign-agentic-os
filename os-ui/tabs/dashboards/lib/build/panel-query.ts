@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
-import { type DelegatedToken, propagate } from '@tabs/data/lib/index';
+import { propagate, type DelegatedToken } from '@core/kernel/identity';
 import type { Dataset, Measure } from '@tabs/data/lib/index';
 import { type Principal } from '@tabs/data/lib/store';
 import { exploreMetric } from '@tabs/metrics/lib/build/explore-server';

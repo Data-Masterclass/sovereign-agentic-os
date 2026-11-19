@@ -3,7 +3,7 @@
  */
 import 'server-only';
 import type { Dataset, Measure } from '@tabs/data/lib/index';
-import type { DelegatedToken } from '@tabs/data/lib/index';
+import { type DelegatedToken } from '@core/kernel/identity';
 import { measureMember } from '@tabs/metrics/lib/model';
 import { type BuildRow, type MetricBuildContext, runAdapter } from '@tabs/metrics/lib/build/adapter';
 import { type MetricLiveDeps, makeMetricAdapters } from '@tabs/metrics/lib/build/live';

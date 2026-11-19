@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import type { Dataset, Measure } from '@tabs/data/lib/index';
-import type { DelegatedToken } from '@tabs/data/lib/index';
+import { type DelegatedToken } from '@core/kernel/identity';
 import { type BuildAdapter, type MetricBuildContext, ok, fail } from '@tabs/metrics/lib/build/adapter';
 
 /**
