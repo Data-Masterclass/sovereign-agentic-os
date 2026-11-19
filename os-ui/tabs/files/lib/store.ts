@@ -46,6 +46,7 @@ import { canManageArtifact, type ArtifactScope } from '@core/policy/edit-scope';
 import { promotionGate, gateReason } from '@tabs/files/lib/promotion';
 import { recordLineage } from '@tabs/files/lib/lineage';
 import { osMirror } from '@core/infra/os-mirror';
+import { newSeenFields, noteSeen, forgetSeen, writeNew, writeMergedYaml, writesSettled, type SeenFields } from '@core/infra/field-writes';
 import { type ArtifactVersion, versionLog } from '@core/kernel/versioning';
 // The GOVERNED folder registry (Wave 1) — a moved-into folder is upserted as an
 // explicit row so it persists even when empty. Reused, never forked.
@@ -163,11 +164,15 @@ type FilesStoreState = {
   mirrorMissing?: Map<string, number>;
   /** Ids this process deleted (confirmed) that a mirror listing must not bring back. See `deleteFile`. */
   deletedHere?: Set<string>;
+  /** What this process last knew the mirror held per file record, and its yaml (see
+   *  `core/infra/field-writes.ts` and {@link writeThrough}). */
+  seen: SeenFields;
+  seenYaml: Map<string, string>;
 };
 const FS_KEY = Symbol.for('soa.files.store');
 function fs(): FilesStoreState {
   const g = globalThis as unknown as Record<symbol, FilesStoreState | undefined>;
-  if (!g[FS_KEY]) g[FS_KEY] = { store: new Map(), seeded: false, hydration: null };
+  if (!g[FS_KEY]) g[FS_KEY] = { store: new Map(), seeded: false, hydration: null, seen: newSeenFields(), seenYaml: new Map() };
   return g[FS_KEY]!;
 }
 
@@ -220,7 +225,33 @@ function writeThrough(rec: FileRecord): void {
   // A record this process no longer holds was deleted: a late writer holding it must not
   // re-create its document in the shared store.
   if (!fs().store.has(rec.id)) return;
-  fileMirror.writeThrough(rec.id, rec);
+  // Only what this process changed is sent, and a changed yaml is merged with the newest mirrored
+  // yaml by the asset's own fields (`core/infra/field-writes.ts`): the run worker's copy — at
+  // most as fresh as its last throttled refresh — never puts back the name, folder or docs the
+  // owner just edited in os-ui, and in the worker a file deleted elsewhere is not re-created.
+  const s = fs();
+  writeMergedYaml(fileMirror, s.seen, s.seenYaml, rec, FILE_YAML, {
+    absent: () => {
+      if (s.store.get(rec.id) === rec) s.store.delete(rec.id);
+    },
+    merged: (yaml) => {
+      const a = parseAsset(yaml);
+      rec.yaml = yaml;
+      rec.owner = a.owner;
+      rec.domain = a.domain;
+    },
+  });
+}
+
+const FILE_YAML = {
+  parse: (yaml: string): object => parseAsset(yaml),
+  serialize: (doc: object): string => serializeAsset(doc as FileAsset),
+};
+
+/** Remember a record as what the mirror holds (after a hydrate or a refresh read it there). */
+function noteMirrored(rec: FileRecord): void {
+  noteSeen(fs().seen, rec.id, rec as unknown as Record<string, unknown>);
+  fs().seenYaml.set(rec.id, rec.yaml);
 }
 
 export async function ensureHydrated(): Promise<void> {
@@ -296,7 +327,10 @@ export async function refreshFromMirror(opts: { force?: boolean; nowMs?: number 
       missing.delete(rec.id);
       if (typeof rec.yaml !== 'string') continue;
       const held = s.store.get(rec.id);
-      if (!held || String(rec.updatedAt ?? '') > String(held.updatedAt ?? '')) s.store.set(rec.id, rec);
+      if (!held || String(rec.updatedAt ?? '') > String(held.updatedAt ?? '')) {
+        s.store.set(rec.id, rec);
+        noteMirrored(rec);
+      }
     }
     // Only a COMPLETE listing can say what is NOT there.
     if (!listing.complete) return;
@@ -322,7 +356,10 @@ async function hydrateFiles(): Promise<void> {
   for (const rec of docs as FileRecord[]) {
     // What the mirror held at boot is what a later complete listing may report as deleted.
     if (rec && rec.id) (s.mirrorSeen ??= new Set<string>()).add(rec.id);
-    if (rec && rec.id && !s.store.has(rec.id)) s.store.set(rec.id, rec);
+    if (rec && rec.id && !s.store.has(rec.id)) {
+      s.store.set(rec.id, rec);
+      if (typeof rec.yaml === 'string') noteMirrored(rec);
+    }
   }
   s.seeded = true;
 }
@@ -404,6 +441,8 @@ export function __resetStore(): void {
   s.mirrorSeen = undefined;
   s.mirrorMissing = undefined;
   s.deletedHere = undefined;
+  s.seen.clear();
+  s.seenYaml.clear();
   fileMirror.__reset();
   versions.__reset();
 }
@@ -668,7 +707,8 @@ export function createFile(user: Principal, input: UploadInput): FileAsset {
     updatedAt: at,
   };
   fs().store.set(rec.id, rec);
-  writeThrough(rec);
+  writeNew(fileMirror, fs().seen, rec.id, rec as unknown as Record<string, unknown>); // a NEW file is stored whole
+  fs().seenYaml.set(rec.id, rec.yaml);
   return a;
 }
 
@@ -846,6 +886,7 @@ export async function deleteFile(id: string, user: Principal): Promise<FileRecor
   const rec = get(id);
   const a = parseAsset(rec.yaml);
   if (!canEdit(a, user)) fail('Not permitted to delete this file', 403);
+  await writesSettled(fileMirror, id); // a write of this file still queued here goes out BEFORE the delete
   const window = { heldBack: false };
   deleting().set(id, window);
   let out: Awaited<ReturnType<typeof fileMirror.deleteConfirmed>>;
@@ -862,6 +903,8 @@ export async function deleteFile(id: string, user: Principal): Promise<FileRecor
   versions.purge(id);
   const s = fs();
   s.store.delete(id);
+  forgetSeen(s.seen, id);
+  s.seenYaml.delete(id);
   // A refresh whose listing was read before this delete was confirmed still holds the document;
   // it must not re-add the record (see `refreshFromMirror`). Cleared once a complete listing agrees.
   (s.deletedHere ??= new Set<string>()).add(id);

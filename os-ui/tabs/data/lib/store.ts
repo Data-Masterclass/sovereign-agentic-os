@@ -38,7 +38,7 @@ import { SEMANTIC_ARTIFACT, scaffoldSemanticYaml } from '@tabs/data/lib/semantic
 import { assetTarget, productTarget, reuseSourceFqn, composeSourceBlocker, personalSchema, domainSchema, physicalSlug, versionTarget, slug } from '@tabs/data/lib/store-fqn';
 import { config } from '@core/kernel/config';
 import { osMirror } from '@core/infra/os-mirror';
-import { newSeenFields, noteSeen, writeDeleted, writeNew, writeChangedMerging, mergeChanged, fingerprint, type SeenFields } from '@core/infra/field-writes';
+import { newSeenFields, noteSeen, writeDeleted, writeNew, writeMergedYaml, type SeenFields } from '@core/infra/field-writes';
 import { type ArtifactVersion, versionLog } from '@core/kernel/versioning';
 // The GOVERNED folder registry (Wave 1) — a moved-into folder is upserted as an
 // explicit row so it persists even when empty. Reused, never forked (mirrors Files).
@@ -200,33 +200,23 @@ function writeNewRecord(rec: DatasetRecord): void {
  */
 function writeThrough(rec: DatasetRecord): void {
   const s = ds();
-  const sent = rec.yaml;
-  const baseYaml = s.seenYaml.get(rec.id);
-  const merge = (newest: unknown): unknown => {
-    if (typeof newest !== 'string' || baseYaml === undefined || newest === baseYaml) return sent;
-    try {
-      const base = new Map(Object.entries(parseDataset(baseYaml)).map(([k, v]) => [k, fingerprint(v)]));
-      const merged = mergeChanged(base, parseDataset(sent) as unknown as Record<string, unknown>, parseDataset(newest) as unknown as Record<string, unknown>);
-      return serializeDataset(merged as unknown as Dataset);
-    } catch {
-      return sent; // an unparseable side → this process's yaml, as before
-    }
-  };
-  const dropped = () => {
-    if (s.store.get(rec.id) === rec) s.store.delete(rec.id);
-    s.seenYaml.delete(rec.id);
-  };
-  void writeChangedMerging(mirror, s.seen, rec.id, rec, 'yaml', merge, dropped).then((yaml) => {
-    if (typeof yaml !== 'string') return;
-    s.seenYaml.set(rec.id, yaml);
-    if (yaml !== sent && rec.yaml === sent) {
-      rec.yaml = yaml;
+  writeMergedYaml(mirror, s.seen, s.seenYaml, rec, DATASET_YAML, {
+    absent: () => {
+      if (s.store.get(rec.id) === rec) s.store.delete(rec.id);
+    },
+    merged: (yaml) => {
       const d = parseDataset(yaml);
+      rec.yaml = yaml;
       rec.owner = d.owner;
       rec.domain = d.domain;
-    }
+    },
   });
 }
+
+const DATASET_YAML = {
+  parse: (yaml: string): object => parseDataset(yaml),
+  serialize: (doc: object): string => serializeDataset(doc as Dataset),
+};
 
 /**
  * Version history for datasets. Datasets are NOT git-backed (no per-dataset Forgejo

@@ -91,6 +91,12 @@ test('M-A: after a restart, hydrating from the mirror makes enqueueOnce find the
       stored = JSON.parse(String(init.body)) as Record<string, unknown>; // the write-through
       return new Response('{"result":"created"}', { status: 201, headers: { 'content-type': 'application/json' } });
     }
+    if (/\/_update\//.test(url) && stored) {
+      // A change to an existing approval is a partial update of the fields that changed.
+      const body = JSON.parse(String(init?.body)) as { script?: { params?: { set?: Record<string, unknown> } } };
+      stored = { ...stored, ...(body.script?.params?.set ?? {}) };
+      return new Response('{"result":"updated"}', { status: 200, headers: { 'content-type': 'application/json' } });
+    }
     // probes / index existence / settings: answer OK
     return new Response(init?.method === 'HEAD' ? null : '{"count":0}', { status: 200, headers: { 'content-type': 'application/json' } });
   }) as typeof fetch;
