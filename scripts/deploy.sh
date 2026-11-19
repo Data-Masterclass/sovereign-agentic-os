@@ -196,7 +196,7 @@ PY
 # the two agree by construction. See scripts/lib/check-image-repo.py.
 if [ "$IMAGE_REPO" = "$IMAGE_REPO_DEFAULT" ]; then
   say "the release's os-ui repository must match the image we are deploying"
-  python3 scripts/lib/check-image-repo.py "$VALUES" "$IMAGE_REPO/os-ui"
+  python3 scripts/lib/check-image-repo.py "$VALUES" "$IMAGE_REPO/os-ui" "$CHART/values.yaml"
 fi
 
 say "what the upgrade changes"

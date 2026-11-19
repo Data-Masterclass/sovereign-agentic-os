@@ -164,10 +164,41 @@ out=$(cd "$TMP/cs" && CI=true node "$REPO/scripts/check-structure.mjs" 2>&1); rc
 [ $rc -ne 0 ] && ok "docs/'plans 2/' IS a failure" || bad "docs/'plans 2/' IS a failure" "exit 0"
 rm -rf "$TMP/cs/docs/plans 2" "$TMP/cs/docs/design 2.md"
 
+echo "== review L1: the gate's docs/ arm agrees with rule 7"
+# Two doors that disagree are worse than one: whichever is stricter silently becomes the rule.
+# Rule 7 permits prose `notes 2.md` under docs/, so the gate must too.
+mkdir -p "$TMP/tree/docs"
+echo x > "$TMP/tree/docs/notes 2.md"
+out=$(cd "$TMP/tree" && bash os-ui/scripts/gate.sh 2>&1)
+check "docs/'notes 2.md' does not fail the gate" "check-conflict-copies: ok" "$out"
+echo x > "$TMP/tree/docs/helper 2.mjs"
+out=$(cd "$TMP/tree" && bash os-ui/scripts/gate.sh 2>&1); rc=$?
+[ $rc -ne 0 ] && ok "docs/'helper 2.mjs' DOES fail the gate" || bad "docs/'helper 2.mjs' DOES fail the gate" "exit 0"
+rm -f "$TMP/tree/docs/helper 2.mjs"
+mkdir -p "$TMP/tree/docs/plans 2"
+out=$(cd "$TMP/tree" && bash os-ui/scripts/gate.sh 2>&1); rc=$?
+[ $rc -ne 0 ] && ok "docs/'plans 2/' DOES fail the gate" || bad "docs/'plans 2/' DOES fail the gate" "exit 0"
+rmdir "$TMP/tree/docs/plans 2"
+# Only the TOP-LEVEL docs/ is relaxed — a nested docs/ elsewhere stays under the strict sweep,
+# exactly as rule 7 scopes it.
+mkdir -p "$TMP/tree/components/x/docs"
+echo x > "$TMP/tree/components/x/docs/notes 2.md"
+out=$(cd "$TMP/tree" && bash os-ui/scripts/gate.sh 2>&1); rc=$?
+[ $rc -ne 0 ] && ok "a NESTED docs/'notes 2.md' still fails" || bad "a NESTED docs/'notes 2.md' still fails" "exit 0"
+rm -rf "$TMP/tree/components"
+out=$(cd "$TMP/tree" && bash os-ui/scripts/gate.sh 2>&1)
+check "the tree is clean again (prose kept)" "check-conflict-copies: ok" "$out"
+
 echo "== review M2: the build context excludes directories too"
-for pat in '**/* 2.*' '**/* 2' '**/* 2/'; do
+for pat in '**/* 2.*' '**/* 2'; do
   grep -qxF "$pat" .dockerignore && ok ".dockerignore has $pat" || bad ".dockerignore has $pat"
 done
+# `**/* 2/` would be redundant: a .dockerignore pattern matches a path element whether it is a
+# file or a directory, and excluding a directory excludes everything under it.
+grep -qxF '**/* 2/' .dockerignore \
+  && bad ".dockerignore carries no redundant '**/* 2/'" || ok ".dockerignore carries no redundant '**/* 2/'"
+grep -q 'would be\s*$\|redundant' .dockerignore \
+  && ok ".dockerignore says why there is no third pattern" || bad ".dockerignore says why there is no third pattern"
 
 echo "== review M3: a split-namespace deploy is refused"
 vals=$TMP/vals.yaml
@@ -181,12 +212,29 @@ out=$(python3 scripts/lib/check-image-repo.py "$vals" ghcr.io/data-masterclass/s
 [ $rc -eq 0 ] && ok "a matching repository passes" || bad "a matching repository passes" "$out"
 printf 'osUI:\n  enabled: true\n' > "$TMP/norepo.yaml"
 out=$(python3 scripts/lib/check-image-repo.py "$TMP/norepo.yaml" ghcr.io/aborek/sovereign-os/os-ui 2>&1); rc=$?
-[ $rc -eq 0 ] && ok "no repository in the values passes" || bad "no repository in the values passes" "$out"
+[ $rc -eq 0 ] && ok "no repository and no chart values passes" || bad "no repository and no chart values passes" "$out"
 out=$(python3 scripts/lib/check-image-repo.py "$TMP/absent.yaml" ghcr.io/aborek/sovereign-os/os-ui 2>&1); rc=$?
 [ $rc -eq 0 ] && ok "an absent values file passes" || bad "an absent values file passes" "$out"
 # deploy.sh must actually call it, and only when IMAGE_REPO was not given.
 grep -q 'check-image-repo.py' scripts/deploy.sh \
   && ok "deploy.sh runs the repository check" || bad "deploy.sh runs the repository check"
+
+echo "== review L3: no repository in the release means the CHART DEFAULT applies"
+# The chart default is the laptop/kind profile — a bare `sovereign-os/os-ui` no registry serves.
+# Deploying a ghcr.io digest against it is the same ImagePullBackOff by another route.
+chart=$TMP/chart-values.yaml
+printf 'osUI:\n  image:\n    repository: sovereign-os/os-ui\n    tag: "0.1.0"\n' > "$chart"
+out=$(python3 scripts/lib/check-image-repo.py "$TMP/norepo.yaml" ghcr.io/aborek/sovereign-os/os-ui "$chart" 2>&1); rc=$?
+[ $rc -ne 0 ] && ok "a ghcr digest against the laptop default refuses" || bad "a ghcr digest against the laptop default refuses" "exit 0"
+check "it names the mismatch"       "IMAGE_REPOSITORY_MISMATCH" "$out"
+check "it names the chart default"  "sovereign-os/os-ui"        "$out"
+check "it says the values pin none" "pin NO osUI.image.repository" "$out"
+out=$(python3 scripts/lib/check-image-repo.py "$TMP/norepo.yaml" sovereign-os/os-ui "$chart" 2>&1); rc=$?
+[ $rc -eq 0 ] && ok "matching the chart default passes" || bad "matching the chart default passes" "$out"
+# The real chart must still agree with the real default IMAGE_REPO — i.e. this guard would fire
+# on a live cluster whose values carry no repository, which is the point.
+grep -q 'CHART/values.yaml' scripts/deploy.sh \
+  && ok "deploy.sh passes the chart values in" || bad "deploy.sh passes the chart values in"
 
 echo "== review M4/L8/L9: the curl fallback classifies status, and keeps the token out of argv"
 fake=$TMP/fakecurl/curl
@@ -196,18 +244,21 @@ cat > "$fake" <<'FAKE'
 # A stand-in for curl: records argv and stdin, answers with $FAKE_CODE.
 printf '%s\n' "$*" >> "$FAKE_ARGV"
 cat >> "$FAKE_STDIN"
-hdr=; url=; prev=
+hdr=; out=; url=; prev=
 for a in "$@"; do
   [ "$prev" = "-D" ] && hdr=$a
+  [ "$prev" = "-o" ] && out=$a
   case $a in https://*) url=$a ;; esac
   prev=$a
 done
 case $url in
   */token\?*)
     if [ "${FAKE_TOKEN_DENY:-}" = 1 ]
-      then echo '{"errors":[{"code":"DENIED"}]}'
-      else echo '{"token":"faketoken"}'
-    fi ;;
+      then body='{"errors":[{"code":"DENIED"}]}'
+      else body='{"token":"faketoken"}'
+    fi
+    if [ -n "$out" ] && [ "$out" != /dev/null ]; then printf '%s' "$body" > "$out"; fi
+    printf '%s' "${FAKE_TOKEN_CODE:-200}" ;;
   *)
     if [ "${FAKE_CODE:-200}" = 200 ] && [ -n "$hdr" ]; then
       printf 'HTTP/2 200\r\ndocker-content-digest: sha256:%s\r\n\r\n' \
@@ -255,6 +306,37 @@ out=$(PATH=$fakepath REGISTRY_CURL=curl FAKE_TOKEN_DENY=1 \
       bash scripts/lib/registry-digest.sh ghcr.io/x/y/os-ui:1.0.0 2>&1); rc=$?
 [ $rc -ne 0 ] && ok "a denied pull token refuses" || bad "a denied pull token refuses" "exit 0"
 check "a denied token says not authorised" "REGISTRY_NOT_AUTHORISED" "$out"
+
+echo "== review L2: the TOKEN leg is classified, not assumed to be an auth problem"
+# It used to be judged only by whether a token came back, so a DNS failure or a registry 500 on
+# this call reported "not authorised / the package is private" — the wrong thing to go fix.
+out=$(PATH=$fakepath REGISTRY_CURL=curl FAKE_TOKEN_CODE=000 \
+      bash scripts/lib/registry-digest.sh ghcr.io/x/y/os-ui:1.0.0 2>&1); rc=$?
+[ $rc -ne 0 ] && ok "token leg 000 refuses" || bad "token leg 000 refuses" "exit 0"
+check "token leg 000 says unreachable" "REGISTRY_UNREACHABLE" "$out"
+case $out in *NOT_AUTHORISED*) bad "token leg 000 is not called an auth problem" "$out" ;; *) ok "token leg 000 is not called an auth problem" ;; esac
+
+for code in 500 503; do
+  out=$(PATH=$fakepath REGISTRY_CURL=curl FAKE_TOKEN_CODE=$code \
+        bash scripts/lib/registry-digest.sh ghcr.io/x/y/os-ui:1.0.0 2>&1); rc=$?
+  [ $rc -ne 0 ] && ok "token leg $code refuses" || bad "token leg $code refuses" "exit 0"
+  check "token leg $code is a registry error" "REGISTRY_ERROR" "$out"
+  case $out in *NOT_AUTHORISED*) bad "token leg $code is not called an auth problem" "$out" ;; *) ok "token leg $code is not called an auth problem" ;; esac
+done
+
+for code in 401 403; do
+  out=$(PATH=$fakepath REGISTRY_CURL=curl FAKE_TOKEN_CODE=$code \
+        bash scripts/lib/registry-digest.sh ghcr.io/x/y/os-ui:1.0.0 2>&1); rc=$?
+  [ $rc -ne 0 ] && ok "token leg $code refuses" || bad "token leg $code refuses" "exit 0"
+  check "token leg $code IS an auth problem" "REGISTRY_NOT_AUTHORISED" "$out"
+  check "token leg $code names read:packages" "read:packages" "$out"
+done
+
+out=$(PATH=$fakepath REGISTRY_CURL=curl FAKE_TOKEN_CODE=418 \
+      bash scripts/lib/registry-digest.sh ghcr.io/x/y/os-ui:1.0.0 2>&1); rc=$?
+[ $rc -ne 0 ] && ok "an unexpected token status refuses" || bad "an unexpected token status refuses" "exit 0"
+check "it names the status" "REGISTRY_TOKEN_HTTP_418" "$out"
+check "both token-leg calls carry --max-time 30" "--max-time 30" "$(cat "$FAKE_ARGV")"
 
 out=$(PATH=$fakepath REGISTRY_CURL=curl FAKE_CODE=500 \
       bash scripts/lib/registry-digest.sh ghcr.io/x/y/os-ui:1.0.0 2>&1); rc=$?

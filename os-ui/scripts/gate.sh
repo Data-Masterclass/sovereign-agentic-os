@@ -23,8 +23,28 @@ cd "$(dirname "$0")/.."
 # copied `public/monaco/...` duplicates — ~28 of them — as if they were strays in this tree, and
 # the gate fails for something no one here can fix. A worktree runs its own gate; this one only
 # polices the tree it is in.
-strays="$(find .. \( -path '*/node_modules' -o -path '*/.next' -o -path '*/.git' -o -path '*/.claude' \) -prune -o \
+#
+# `../docs` IS PRUNED FROM THE STRICT SWEEP AND SCANNED SEPARATELY (review L1). docs/ is prose,
+# and a maintainer may legitimately write `notes 2.md` or `design 2.txt`; failing the gate on
+# one made this door disagree with rule 7 in `scripts/check-structure.mjs`, which already
+# permits it. Two doors that disagree are worse than one door: whichever is stricter becomes the
+# real rule, by accident. So under docs/ only a DIRECTORY (or symlink) named `* 2` — always a
+# sync artefact — and a duplicated SOURCE file count; the extension list below is the same one
+# rule 7 uses. Note `-path '../docs'` pins the TOP-LEVEL docs only: a nested `*/docs` elsewhere
+# stays under the strict sweep, exactly as rule 7 scopes it.
+#
+# Every pattern below is written out inline on purpose: a `* 2.ts` pattern held in a shell
+# variable word-splits on its own space and find then reads it as `-name * ` plus a stray
+# `2.ts`, which silently matches nothing.
+strays="$(find .. \( -path '*/node_modules' -o -path '*/.next' -o -path '*/.git' -o -path '*/.claude' -o -path '../docs' \) -prune -o \
   \( -name '* 2' -o -name '* 2.*' \) \( -type f -o -type d -o -type l \) -print -prune)"
+docs_strays="$(find ../docs \( -path '*/node_modules' -o -path '*/.next' \) -prune -o \
+  \( -name '* 2' \( -type d -o -type l \) \) -print -prune -o \
+  -type f \( -name '* 2.ts' -o -name '* 2.tsx' -o -name '* 2.mjs' -o -name '* 2.cjs' \
+             -o -name '* 2.js' -o -name '* 2.json' -o -name '* 2.sh' -o -name '* 2.bash' \
+             -o -name '* 2.py' -o -name '* 2.rego' -o -name '* 2.yaml' -o -name '* 2.yml' \
+             -o -name '* 2.tpl' -o -name '* 2.sql' \) -print)"
+strays="$(printf '%s\n%s' "$strays" "$docs_strays" | sed '/^$/d')"
 if [ -n "$strays" ]; then
   echo "gate: FAIL — iCloud/Finder conflict copies in the tree. They are never tracked; delete them:" >&2
   printf '%s\n' "$strays" >&2

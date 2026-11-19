@@ -28,26 +28,59 @@ import sys
 import yaml
 
 
-def main() -> int:
-    if len(sys.argv) != 3:
-        print("usage: check-image-repo.py <values.yaml> <expected-repository>", file=sys.stderr)
-        return 2
-    values_path, expected = sys.argv[1], sys.argv[2]
+def repository_of(path: str):
+    """osUI.image.repository from a values file, or None (missing file, not a mapping, unset)."""
     try:
-        with open(values_path) as fh:
+        with open(path) as fh:
             values = yaml.safe_load(fh) or {}
     except FileNotFoundError:
-        print(f"   no derived values at {values_path} — image repository not checked")
-        return 0
+        return None
     if not isinstance(values, dict):
-        print(f"   {values_path} is not a mapping — image repository not checked")
-        return 0
+        return None
+    image = (values.get("osUI") or {}).get("image") or {}
+    return image.get("repository") if isinstance(image, dict) else None
 
-    image = ((values.get("osUI") or {}).get("image") or {})
-    found = image.get("repository") if isinstance(image, dict) else None
+
+def main() -> int:
+    if len(sys.argv) not in (3, 4):
+        print(
+            "usage: check-image-repo.py <values.yaml> <expected-repository> [<chart-values.yaml>]",
+            file=sys.stderr,
+        )
+        return 2
+    values_path, expected = sys.argv[1], sys.argv[2]
+    chart_path = sys.argv[3] if len(sys.argv) == 4 else None
+
+    found = repository_of(values_path)
     if not found:
-        print("   the derived values pin no osUI.image.repository — the chart default applies")
-        return 0
+        # NO REPOSITORY IN THE DERIVED VALUES IS NOT AUTOMATICALLY SAFE (review L3). The CHART
+        # DEFAULT then applies — and that default is the laptop/kind profile, an unprefixed
+        # `sovereign-os/os-ui` that no registry serves. Deploying a `ghcr.io/...` digest against
+        # it is the same ImagePullBackOff by another route, so compare against the default
+        # rather than waving it through.
+        if not chart_path:
+            print("   the derived values pin no osUI.image.repository — the chart default applies")
+            return 0
+        default = repository_of(chart_path)
+        if not default:
+            print(f"   neither {values_path} nor {chart_path} pins osUI.image.repository")
+            return 0
+        if default == expected:
+            print(f"   the derived values pin no repository; the chart default matches ({default})")
+            return 0
+        print(
+            "\nIMAGE_REPOSITORY_MISMATCH — refusing to deploy.\n"
+            f"   the derived values pin NO osUI.image.repository, so the chart default applies\n"
+            f"   the chart default ({chart_path}) is : {default}\n"
+            f"   this run would pin a digest from   : {expected}\n"
+            "\n   The chart default is the laptop/kind profile — a bare name no registry serves —\n"
+            "   so the pods would never pull this digest. Either pass\n"
+            f"     IMAGE_REPO={expected.rsplit('/', 1)[0]} ./scripts/deploy.sh <version>\n"
+            "   (which also --sets osUI.image.repository), or set the repository in the release's\n"
+            "   own values first.\n",
+            file=sys.stderr,
+        )
+        return 1
     if found == expected:
         print(f"   osUI.image.repository matches the image being deployed ({found})")
         return 0

@@ -390,3 +390,44 @@ pass, 0 fail, 4 todo) · `check-structure` 419/1/200/1230 in **both** modes · `
 failed · `add-spdx-headers.sh --check` clean · all four workflows YAML-parse. Both real probes
 re-verified against the live private GHCR tag `0.9.5` (crane and the curl fallback return the
 same digest) and a real missing tag classifies as `REGISTRY_TAG_NOT_FOUND`.
+
+### Review round 2 — three lows, closed (re-review says merge)
+
+**L1 — the two doors disagreed about prose.** Rule 7 permits `docs/notes 2.md`; the gate still
+hard-failed on it. Two doors that disagree are worse than one door, because whichever is
+stricter quietly becomes the real rule. `os-ui/scripts/gate.sh` now prunes `../docs` from the
+strict sweep and scans it with the same narrowing rule 7 uses — directories (and symlinks)
+named `* 2`, plus duplicated SOURCE files from the same extension list. `-path '../docs'` pins
+the TOP-LEVEL docs only, so a nested `*/docs` stays strict, exactly as rule 7 scopes it. Every
+pattern is written out inline: a `* 2.ts` pattern held in a shell variable word-splits on its
+own space and find then matches nothing.
+
+**L2 — the token leg was unclassified.** It was judged only by whether a token came back, so a
+DNS failure, a proxy, or a registry 500 on *that* call all reported "not authorised / the
+package is private" — sending the reader after a credential problem that did not exist. The
+token call now carries `-w '%{http_code}'` and branches: `000` unreachable (and says it is not
+a credential problem), `5xx` registry error, `401|403` auth with the `read:packages` fix,
+anything else `REGISTRY_TOKEN_HTTP_<code>`. The body is parsed only on a 200 — and a 200 with
+no token still reports auth, because that is literally how GHCR denies an anonymous request for
+a private package.
+
+**L3 — "no repository pinned" was treated as safe.** It is not: the CHART DEFAULT then applies,
+and that default is the laptop/kind profile, a bare `sovereign-os/os-ui` no registry serves.
+Pinning a `ghcr.io/...` digest against it is the same ImagePullBackOff by another route.
+`check-image-repo.py` takes the chart values as an optional third argument and, when the derived
+values pin nothing, compares the expected repository against the chart default instead of waving
+it through; `deploy.sh` passes `$CHART/values.yaml`.
+
+**Nits.** The `.dockerignore` comment claimed `**/* 2/` was needed because Docker treats a
+trailing slash differently — it does not. A pattern matches a path element whether it is a file
+or a directory, and excluding a directory excludes everything under it, so the redundant line is
+gone and the comment now says why there is no third pattern. `scripts/lib/registry-digest.sh`
+read like an executable CLI; its header now states what is true — a helper every caller runs
+through `bash <path>`, mode 644, with the shebang there to name the interpreter for a reader and
+for shellcheck.
+
+Tests **85 → 115**, 0 failures. Gate green (436 tests, 432 pass, 0 fail, 4 todo) ·
+check-structure 419/1/200/1230 in both modes · helm lint 0 failed · all four workflows
+YAML-parse · SPDX clean. Re-verified against the live registry: crane and the curl fallback
+return the same digest for `0.9.5`, a missing tag is `REGISTRY_TAG_NOT_FOUND`, and a genuinely
+anonymous request is `REGISTRY_NOT_AUTHORISED (401)` — which it is.
