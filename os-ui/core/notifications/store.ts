@@ -1,14 +1,16 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    In-app notification inbox — per-user report and alert notifications
+ * USER STORY: As a user I want report and alert deliveries to land in an in-app inbox when no
+ *             mailer is configured so that I still receive them.
+ * ARCHITECTURE:
+ *   - In-process store plus a best-effort OpenSearch mirror (`os-notifications`), same pattern as
+ *     the dashboards store. Read back via `GET /api/notifications`.
+ *   - Written by dashboard delivery, data-quality alerts and connection events.
+ *   - Each user can read and mark only their own notifications.
  */
 import { osMirror } from '@core/infra/os-mirror';
-
-/**
- * A small, principal-scoped in-app notification inbox (same in-memory + durable-mirror
- * discipline as the dashboards store). It is the honest FALLBACK for report/alert
- * delivery when no mailer is configured: instead of a silent no-op, the send lands here
- * as a real record the recipient can read back (GET /api/notifications).
- */
 
 export type NotificationKind = 'report' | 'alert';
 

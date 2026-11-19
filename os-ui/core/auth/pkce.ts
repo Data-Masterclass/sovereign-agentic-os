@@ -1,16 +1,13 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
- */
-/**
- * PKCE (RFC 7636) — the code verifier + S256 challenge for the Notion hosted-MCP
- * OAuth flow. PURE Web-Crypto: no secrets vault, no `server-only`, no network, so
- * it runs in any runtime and unit-tests directly.
  *
- * Notion's hosted MCP registers us as a PUBLIC OAuth client (no client secret), so
- * PKCE is the mechanism that binds the authorization code to the exact browser
- * session that started the flow: only the holder of the verifier can redeem the
- * code. The verifier is high-entropy and NEVER leaves the server (it is held in a
- * short-lived server-side flow store, not in the URL or any client response).
+ * FEATURE:    PKCE (RFC 7636) — code verifier and S256 challenge for the Notion MCP OAuth flow
+ * USER STORY: As a user connecting Notion I want the authorization code bound to the session that
+ *             started the flow so that only that session can redeem it.
+ * ARCHITECTURE:
+ *   - Pure Web Crypto: no vault, no `server-only`, no network, so it runs in any runtime.
+ *   - Needed because Notion registers the OS as a public client with no client secret.
+ *   - Called by the Notion authorize route; the verifier is kept in `notion-flow.ts`, never in a URL.
  */
 
 export type PkcePair = { verifier: string; challenge: string; method: 'S256' };

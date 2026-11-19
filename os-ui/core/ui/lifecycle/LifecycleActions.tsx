@@ -1,23 +1,20 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    LifecycleActions — the Archive / Restore / Delete / Version history buttons on an artifact detail
+ * USER STORY: As an artifact owner I want the same archive, restore, delete and version-history
+ *             controls on every artifact, with the same confirmations, so that I learn them once.
+ * ARCHITECTURE:
+ *   - Wire it with `api` (POSTs `{action:'archive'|'unarchive'}`, DELETEs, and reads
+ *     `${api}/versions` through `VersionHistory`) or with explicit `handlers`. The host re-fetches
+ *     in `onChanged()`.
+ *   - Archive and Delete go through `useConfirm()` with copy from `@core/kernel/lifecycle` and a
+ *     dependents warning. Restore needs no confirmation. Delete is offered only on an archived
+ *     artifact.
+ *   - Renders nothing when `surface="tile"`. The actions appear only in the opened detail view.
+ *     Errors are shown inline and as a toast.
  */
 'use client';
-
-/**
- * LifecycleActions — the ONE control cluster used on every artifact card + detail:
- *   Archive (or Restore when archived) · Delete · Version history
- * Same placement, same style, same confirm copy everywhere. It takes the
- * artifact's identity + a callbacks bag, drives <ConfirmDialog> for archive
- * (light) and delete (strong, name-gated for shared/certified), and toggles the
- * shared <VersionHistory> popover.
- *
- * Two ways to wire it, whichever the host tab already has:
- *   • `api` — the artifact's API base (e.g. `/api/files/{id}`). We POST
- *     {action:'archive'|'unarchive'}, DELETE, and read `${api}/versions`.
- *   • `handlers` — explicit onArchive/onRestore/onDelete callbacks (for tabs
- *     whose store calls differ). Provide one or the other.
- * The parent stays the owner of "did it succeed" via onChanged() (re-fetch).
- */
 
 import { useCallback, useState } from 'react';
 import { useConfirm } from '@core/ui/lifecycle/ConfirmDialog';

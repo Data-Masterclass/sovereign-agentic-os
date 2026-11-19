@@ -1,3 +1,15 @@
+/* SPDX-License-Identifier: Apache-2.0
+ * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    Sidebar — the left navigation with tab groups, domain switcher and account menu
+ * USER STORY: As a signed-in user I want to see only the tabs my role and this deployment allow,
+ *             switch domain and sign out from one place so that navigation matches what I can do.
+ * ARCHITECTURE:
+ *   - Mounted once in `app/layout.tsx`. Tabs come from `TAB_GROUPS` filtered by role and enabled
+ *     features (`filterTabGroups`, `@core/kernel/tabs`); nothing shows until `/api/auth/me` resolves.
+ *   - Clicking a tab calls `emitTabNav` so a tab already showing a detail view resets to its list.
+ *   - Re-exports `ACCOUNT_ITEMS` from `account-menu.ts`; sign-out does a full-page navigation.
+ */
 'use client';
 
 import Link from 'next/link';

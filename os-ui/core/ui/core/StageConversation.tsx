@@ -1,5 +1,14 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    StageConversation — the context / structure + conversation / outcome layout for a stage
+ * USER STORY: As a builder I want each guided stage laid out around one conversation, with the
+ *             structure beside it and the result below, so that every stage feels the same.
+ * ARCHITECTURE:
+ *   - Layout only, with no fetch, no state and no governance. The stage passes its own
+ *     conversation component (e.g. BuildChat, StageAssistantChat) as `conversation`.
+ *   - Currently used only by `tabs/software/ui/SoftwareBuilder.tsx`. `reverse` puts the
+ *     conversation on the left.
  */
 'use client';
 

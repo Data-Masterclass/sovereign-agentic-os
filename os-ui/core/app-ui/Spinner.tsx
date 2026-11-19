@@ -1,5 +1,12 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    Spinner — a small loading indicator
+ * USER STORY: As an app builder I want a loading spinner so that users see that data is still
+ *             loading.
+ * ARCHITECTURE:
+ *   - Part of the `@sovereign-os/ui` package (`core/app-ui/`), re-exported from `index.ts`.
+ *   - Inline styles plus the `sb-spin` keyframe from `theme.css`; `role="status"` for screen readers.
  */
 import * as React from 'react';
 import { cx } from './cx';

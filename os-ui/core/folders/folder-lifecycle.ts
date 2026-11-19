@@ -1,5 +1,17 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    Folder lifecycle — move, archive, restore and delete a folder together with its items
+ * USER STORY: As a user I want a folder action to apply to everything inside the folder so that a
+ *             moved or archived folder never leaves its files, datasets or metrics behind.
+ * ARCHITECTURE:
+ *   - Combines the folder-row operation (`folder-store.ts`) with a cascade over member items through
+ *     the tab's `ArtifactAdapter` (`@core/kernel/artifact-adapter`); one copy for every tab.
+ *   - Fail-closed: each `adapter.*Item` runs the tab's own edit-scope check and throws 403; this
+ *     module does not catch it, so one denied item aborts the operation. Row changes that already
+ *     ran stay applied (rare, since row and item checks share `canManageArtifact`).
+ *   - Delete is archived-only and deletes items before rows, so a failed delete can be retried.
+ *   - Imports `@core/kernel`; the kernel never imports this module. Exported via `index.ts`.
  */
 import {
   getArtifactAdapter,
@@ -18,25 +30,6 @@ import {
   restoreFolderRows,
   deleteFolderRows,
 } from '@core/folders/folder-store';
-
-/**
- * THE FOLDER LIFECYCLE ORCHESTRATOR — the ONE place the folder-ROW op is combined
- * with a CASCADE over the member ITEMS (files/datasets/knowledge/metrics) through the
- * shared `ArtifactAdapter`. Written once here so every tab's `/api/<tab>/folders/*`
- * behaves identically and can never drift.
- *
- * Every member cascade is PER-ITEM PERMISSION-CHECKED: each `adapter.*Item` runs the
- * tab's own edit-scope gate and throws (`.status === 403`) when the caller may not act.
- * This orchestrator is FAIL-CLOSED — it does NOT catch those throws, so a single denied
- * member aborts the whole op and surfaces the 403; a cascade can never silently skip
- * governance. (Folder-row ops that already ran before a member throw remain applied;
- * because the row gate and the item gate share `canManageArtifact`, a caller who passed
- * the folder gate almost always passes every member gate, so a mid-cascade 403 is the
- * rare cross-owner edge — and failing loud there is the correct, honest behaviour.)
- *
- * LAYERING: `lib/folders` may import `lib/core` (the adapter registry + tree algebra)
- * and its own store; it is never imported BY `lib/core`.
- */
 
 /** Resolve the adapter for a tab or fail with a clear 500 (a tab that wired folders
  *  but forgot to register its adapter — a bug, surfaced honestly). */

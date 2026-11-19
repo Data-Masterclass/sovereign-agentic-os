@@ -1,3 +1,12 @@
+/* SPDX-License-Identifier: Apache-2.0
+ * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    StackStatus — live up/down status of the platform services
+ * USER STORY: As a user on the settings page I want to see which platform services are up so that
+ *             I know whether a problem is on my side or the platform's.
+ * ARCHITECTURE:
+ *   - Used by `app/(entry)/settings/page.tsx`. Polls `/api/status` every 15 seconds.
+ */
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';

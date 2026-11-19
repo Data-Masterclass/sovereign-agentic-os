@@ -1,19 +1,20 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    NotificationBell — the in-app inbox for alerts, data-quality alerts and reports
+ * USER STORY: As a recipient of alerts and scheduled reports I want a bell with an unread count
+ *             and a list of my notifications so that I see what was delivered to me.
+ * ARCHITECTURE:
+ *   - Rendered by `core/ui/Sidebar.tsx`. Reads `GET /api/notifications` on mount, every 60 s and
+ *     on open. There are no websockets.
+ *   - Opening the panel marks everything read (`PATCH /api/notifications`) and clears the badge
+ *     optimistically. A failed fetch is ignored so the shell never crashes.
+ *   - The badge shows only a real unread count. The panel shows exactly what the server
+ *     returns, with a plain empty state.
  */
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-
-/**
- * The ONE in-app notification surface. Alerts, data-quality alerts and scheduled reports
- * all deliver here (GET /api/notifications) — this bell is where the recipient reads them.
- *
- * Honest by construction: the badge shows only a real unread count (>0), the panel shows
- * exactly what the server returns, and the empty state says so plainly. Opening the panel
- * marks everything read (PATCH /api/notifications). Polls lightly (60s) + refetches on open;
- * no websockets.
- */
 
 type Notification = {
   id: string;

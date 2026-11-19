@@ -1,5 +1,24 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    FolderTree — the shared folder tree, in nav, checkbox and picker variants
+ * USER STORY: As a user organising or granting artifacts I want the same folder tree in every
+ *             foldered tab, whether I am browsing, ticking folders to grant, or choosing where to
+ *             move something, so that folders behave the same everywhere.
+ * ARCHITECTURE:
+ *   - Pure UI, with no tab-specific logic. Callers pass folder rows (`personalNodes`,
+ *     `domainNodes`), already-scoped `items`, a `renderLeaf` and handlers. The tree and
+ *     tri-state maths come from `@core/kernel/folders`. Used across Files, Data, Knowledge,
+ *     Metrics, Workflows, Software, Agents and Connections.
+ *   - `variant="nav"` is the rail (select, create, move, rename, archive, restore, delete).
+ *     `variant="checkbox"` emits a normalised `{ folderGrants, itemGrants }`: a fully ticked
+ *     folder becomes a folder grant that also covers future items. `variant="picker"` selects
+ *     one folder and emits `{ path, scope }` on "Move here".
+ *   - Renders a personal root and a domain root (`roots` hides either one). Offering
+ *     domain-folder creation follows `canCreateDomain`. The server gate in `createFolder` is the
+ *     real check.
+ *   - `FolderPickerModal` wraps the picker variant in a dialog that closes on Escape, backdrop
+ *     click or ×.
  */
 'use client';
 
@@ -15,38 +34,6 @@ import {
   type FolderPathNode,
   type FolderTreeNode,
 } from '@core/kernel/folders';
-
-/**
- * FolderTree — the ONE reusable folder component every foldered tab (Files,
- * Knowledge, Data) shares. Pure UI: it holds NO tab-specific logic. Each caller
- * passes its own folder rows (`nodes`), its own already-scoped items, a
- * `renderLeaf` for a file/doc/dataset row, and the handlers it wants. The tree +
- * tri-state maths come from `lib/core/folders`.
- *
- * THREE variants, ONE component:
- *   • `variant="nav"`      — the folder rail: a breadcrumb-free hierarchy the user
- *                            navigates. Selecting a folder calls `onSelect`; an
- *                            inline "New folder" affordance calls `onCreate`; each
- *                            folder's ••• menu calls `onMove`.
- *   • `variant="checkbox"` — tri-state checkboxes on folders AND leaf items. It
- *                            emits a normalised grant `{ folderGrants, itemGrants }`
- *                            via `onChange` — a folder whose every item is checked
- *                            becomes a FOLDER grant (auto-covers future items);
- *                            a partial folder emits its checked items individually.
- *   • `variant="picker"`   — single-select destination picker. Clicking a folder
- *                            highlights it; "Move here" confirms the selection.
- *                            Inline "New folder" creates under the selected node.
- *                            Emits `{ path, scope }` via `onConfirm`; `onCancel`
- *                            dismisses without a selection. Leaf items are hidden —
- *                            only folders (and the root `/`) are selectable.
- *
- * Renders a PERSONAL root and a DOMAIN root side by side (mirrors My / Shared) so
- * the same primitive serves both scopes. Apple-clean: quiet rows, a single gold
- * accent for the active row, generous hit targets, no chrome noise.
- *
- * `FolderPickerModal` — a thin modal wrapper around `variant="picker"`. Import it
- * alongside `FolderTree` when you need the move-to-folder UX in a popover.
- */
 
 type RootScope = 'personal' | 'domain';
 

@@ -1,47 +1,24 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    useTileOrder — client hook for drag-to-reorder tile lists
+ * USER STORY: As a user I want to drag tiles into my own order and have it saved so that the
+ *             artifacts I use most are first.
+ * ARCHITECTURE:
+ *   - Loads the saved order from `/api/prefs/tile-order` on mount and applies it with
+ *     `applyTileOrder` (new items append, stale ids drop).
+ *   - Optimistic update on drop, then PUT; rolls back on error. A sequence counter makes sure only
+ *     the latest request's outcome applies.
+ *   - Drag starts only from the `.drag-handle` element so card text stays selectable. Optional
+ *     `groupOf` limits drops to the source item's group. `idOf` and `groupOf` should be stable.
+ *   - Usage: `const { orderedItems, itemDragProps, dragHandleProps } = useTileOrder('data.list',
+ *     items, idOf)`; spread `itemDragProps(item)` on the tile and `dragHandleProps` on the handle.
  */
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { applyTileOrder, type TileOrderSurface } from '@core/prefs/tile-order-pure';
 
-/**
- * useTileOrder — platform-wide client hook for drag-to-reorder tile lists.
- *
- * Fetches the session user's saved order on mount, applies it to the live items
- * (new items append; stale ids drop), and provides HTML5 drag handlers. Optimistic
- * update on drop with server persist + rollback on error (a stale request's
- * outcome never overrides a newer drag — monotonic sequence guard).
- *
- * Drag starts ONLY from the ⋮⋮ `.drag-handle` element — dragging anywhere else
- * on the card is cancelled so text stays selectable (Apple-lens: never trade a
- * basic affordance for a power feature).
- *
- * Usage:
- *   const { orderedItems, itemDragProps, dragHandleProps } =
- *     useTileOrder('strategy.pillars', cards, idOf);
- *
- *   <section {...itemDragProps(card)}>
- *     <span className="drag-handle" {...dragHandleProps}>⋮⋮</span>
- *     ... card content ...
- *   </section>
- *
- * Options:
- *   groupOf — when the list renders in visual groups (e.g. Big Bets grouped by
- *   pillar), pass a group-key fn; drops are then constrained to the source's
- *   group so the highlight never promises a move the re-grouping would undo.
- *
- * Returned API (for follow-up wiring of other tabs):
- *   orderedItems    — live items in the user's preferred order (memoized)
- *   itemDragProps   — factory: draggable + drag-event props for the container.
- *                     Emits data-drag-over / data-drag-source for the CSS.
- *   dragHandleProps — spread onto the ⋮⋮ glyph (stops mousedown bubbling)
- *   isDragging      — true while a drag is in flight (optional cursor styling)
- *
- * NOTE: idOf/groupOf should be stable references (module-level or useCallback)
- * so the memoization holds.
- */
 export function useTileOrder<T>(
   surface: TileOrderSurface,
   items: T[],

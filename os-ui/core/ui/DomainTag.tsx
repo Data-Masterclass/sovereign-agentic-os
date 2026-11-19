@@ -1,5 +1,12 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    DomainTag — the source-domain badge on shared artifacts
+ * USER STORY: As a user browsing shared or marketplace artifacts I want to see which domain each one
+ *             comes from so that two artifacts with the same name are never confused.
+ * ARCHITECTURE:
+ *   - Shared by many tabs (Metrics, Agents, Software, Knowledge, …); uses the existing `chip` style.
+ *   - Renders nothing when there is no domain, so callers can place it unconditionally.
  */
 import type { CSSProperties } from 'react';
 

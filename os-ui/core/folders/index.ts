@@ -1,12 +1,13 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
- */
-
-/**
- * The `lib/folders` module — the durable, governed folder registry that sits on
- * top of the pure `lib/core/folders` tree algebra. Unlike `lib/core`, this module
- * MAY import `lib/infra` (the durable mirror) and `lib/governance` (the edit-scope
- * gate); it must never be imported BY `lib/core`.
+ *
+ * FEATURE:    Folders module entry — the governed folder registry and its lifecycle in one import
+ * USER STORY: As a developer of a foldered tab I want one import for folder rows and folder
+ *             lifecycle actions so that every tab uses the same governed code.
+ * ARCHITECTURE:
+ *   - Re-exports `folder-store.ts` (rows) and `folder-lifecycle.ts` (row operation plus item cascade).
+ *   - Builds on the pure tree helpers in `@core/kernel/folders`; may import `@core/infra` (mirror)
+ *     and `@core/policy` (edit-scope). The kernel never imports this module.
  */
 export {
   type FolderNode,

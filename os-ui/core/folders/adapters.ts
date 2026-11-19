@@ -1,16 +1,15 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
- */
-
-/**
- * ADAPTER BOOTSTRAP — importing this module registers every tab's `ArtifactAdapter`
- * into the shared core registry (each adapter module self-registers at import). Any
- * server boundary that runs the folder LIFECYCLE (the `/api/<tab>/folders/*` cascade
- * handlers) imports this ONCE so `getArtifactAdapter(tab)` always resolves.
  *
- * This mirrors the warehouse provider registry: one place that wires the per-tab
- * modules together, so adding a foldered tab is "add its adapter file + one import
- * here" — no shared switch to fight over.
+ * FEATURE:    Folder adapter bootstrap — one import that registers every tab's ArtifactAdapter
+ * USER STORY: As a user archiving, moving or deleting a folder in any tab I want the folder's items
+ *             to follow it so that nothing is left behind in the old folder.
+ * ARCHITECTURE:
+ *   - Side-effect module: each `tabs/<tab>/lib/folder-adapter` self-registers into the kernel
+ *     registry (`@core/kernel/artifact-adapter`) when imported.
+ *   - Imported by `app/api/folders/[id]/route.ts`, so `getArtifactAdapter(tab)` resolves before
+ *     `folder-lifecycle.ts` runs a cascade.
+ *   - Adding a foldered tab means adding its adapter file and one import line here.
  */
 import '@tabs/files/lib/folder-adapter';
 import '@tabs/data/lib/folder-adapter';

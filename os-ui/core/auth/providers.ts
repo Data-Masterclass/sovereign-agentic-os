@@ -1,21 +1,16 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
- */
-/**
- * OAuth provider metadata for the connected-drive flow — PURE + client-safe (no
- * secrets, no server imports). One record per identity provider we federate to
- * for a personal Drive/OneDrive connection:
  *
- *   • google    — Google Cloud OAuth client → Google Drive (drive.readonly)
- *   • microsoft — Azure AD app registration → OneDrive via Microsoft Graph
- *                 (Files.Read + offline_access for a refresh token)
- *
- * The endpoints + MINIMAL scopes here are the single source of truth the
- * authorize URL, the code→token exchange, and the silent refresh all read. The
- * scopes are deliberately least-privilege READ scopes — the connector never asks
- * for write access.
+ * FEATURE:    OAuth provider metadata — endpoints and minimal read scopes for Google Drive and OneDrive
+ * USER STORY: As a user connecting a personal drive I want the OS to ask only for read access so
+ *             that the connector can never change my files.
+ * ARCHITECTURE:
+ *   - Pure and client-safe. The single source the authorize URL, the code exchange and the
+ *     refresh read (`token-set.ts`, `client.ts`, `oauth-apps.ts`, the Connections tab).
+ *   - google: Drive `drive.readonly`; microsoft: Graph `Files.Read` + `offline_access`.
+ *   - Maps connection templates (`gdrive`, `onedrive`) to providers and providers to Files-tab
+ *     connector ids.
  */
-
 import type { ConnectionTemplateKey } from '@tabs/connections/lib/schema';
 import type { Provider as FilesProvider } from '@tabs/files/lib/connectors';
 

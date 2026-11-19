@@ -1,5 +1,14 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    DomainStartPrompt — the first-login "where do you want to work?" domain picker
+ * USER STORY: As a user who belongs to several domains I want to choose my working domain once,
+ *             or keep all domains, so that my lists and new work are scoped to it.
+ * ARCHITECTURE:
+ *   - Rendered by `core/ui/Sidebar.tsx`. The caller decides when to show it (more than one domain
+ *     and no choice made yet).
+ *   - POSTs the choice to `/api/session/active-domain` (null = all domains), then reloads the
+ *     page so every tab re-scopes.
  */
 'use client';
 

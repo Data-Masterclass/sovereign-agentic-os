@@ -1,5 +1,17 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    Notion hosted-MCP OAuth client — discovery, client registration, PKCE, tokens, tools/list
+ * USER STORY: As a user I want to connect the OS to my own Notion workspace through Notion's
+ *             hosted MCP server so that agents can use my Notion content with my permissions.
+ * ARCHITECTURE:
+ *   - Server-only. Discovers endpoints via RFC 9728 and RFC 8414 metadata (documented Notion
+ *     endpoints as fallback), registers a public client (RFC 7591), and uses PKCE S256 with
+ *     authorization_code and refresh_token grants.
+ *   - Builds requests and parses responses only; the caller stores tokens in Secrets Manager.
+ *     `fetch` is injectable so every branch is unit-tested against a fake.
+ *   - `listNotionMcpTools` runs a real MCP initialize + tools/list round-trip to prove the
+ *     connection is live. Used by the Notion routes and `tabs/connections/lib/store.ts`.
  */
 import 'server-only';
 import {
@@ -7,27 +19,6 @@ import {
   type TokenResponse,
   tokenSetFromResponse,
 } from '@core/auth/token-set';
-
-/**
- * The Notion HOSTED-MCP OAuth CLIENT — the OS acts as an MCP *client* that a user
- * authorizes to their own Notion workspace. Notion's hosted server at
- * `https://mcp.notion.com/mcp` speaks OAuth 2.1 with:
- *
- *   • RFC 9728 protected-resource metadata + RFC 8414 authorization-server metadata
- *     (we DISCOVER the authorize/token/registration endpoints — no hard-coding),
- *   • RFC 7591 Dynamic Client Registration (we register a PUBLIC client),
- *   • PKCE S256 (the code is bound to the browser that started the flow),
- *   • authorization_code + refresh_token grants.
- *
- * THE ONE RULE holds throughout: the access/refresh token set is a credential — it
- * is written only to Secrets Manager (by the caller) and NEVER returned to a
- * client, logged, or traced. This module only builds requests and parses
- * responses; `fetch` is injectable so every branch unit-tests against a fake.
- *
- * Liveness proof: once connected, `listNotionMcpTools` runs a real MCP
- * `initialize` + `tools/list` round-trip through the stored token, proving the
- * connection is live (not a mock).
- */
 
 export const NOTION_MCP_ENDPOINT = 'https://mcp.notion.com/mcp';
 

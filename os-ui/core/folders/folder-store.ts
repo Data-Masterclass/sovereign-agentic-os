@@ -1,5 +1,18 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    Folder registry — the durable, governed store of folder rows for every foldered tab
+ * USER STORY: As a user I want folders that I can rename, move, share to my domain and archive so
+ *             that I can organise my artifacts the same way in every tab.
+ * ARCHITECTURE:
+ *   - Authoritative in-process Map plus a best-effort OpenSearch mirror (`os-folders`) and an
+ *     append-only version log per row. No `server-only` or Next imports, so it is unit-testable;
+ *     the API routes authenticate and scope callers.
+ *   - Every mutation is checked by `canManageArtifact` (`@core/policy/edit-scope`) before any write:
+ *     personal folders are owner-only; domain folders allow the owner, an in-domain domain_admin
+ *     or an admin. Creating a domain folder needs domain_admin or admin.
+ *   - Archive is reversible; physical delete only works on an archived folder. This store owns only
+ *     the rows; the item cascade lives in `folder-lifecycle.ts`.
  */
 import type { Role } from '@core/kernel/session';
 import {
@@ -10,33 +23,6 @@ import {
 import { canManageArtifact, type ArtifactScope } from '@core/policy/edit-scope';
 import { osMirror } from '@core/infra/os-mirror';
 import { versionLog } from '@core/kernel/versioning';
-
-/**
- * The FOLDER registry — the durable store behind the OS-wide folder primitive.
- *
- * A folder is a first-class, governed row so it can be renamed, moved, shared to
- * a domain and (Wave 3) granted to an agent — none of which a purely-implicit
- * "folder = a path on some item" model allows. It mirrors the shape of every
- * other OS store: an authoritative in-process Map, a best-effort OpenSearch
- * mirror (`os-folders`) that lets folders survive a redeploy, and an append-only
- * version log per row. Kept free of `server-only` / Next imports so it is
- * unit-testable directly; the API routes are the server boundary that
- * authenticates + scopes callers.
- *
- * GOVERNANCE (fail-closed): every mutation is gated by `canManageArtifact` — the
- * ONE shared edit-scope rule (owner, in-domain `domain_admin`, or platform
- * `admin`). A personal folder is owned by its creator; a domain folder is owned
- * by its creator but manageable by a domain admin of its domain too. A caller
- * who fails the gate gets a 403 and NOTHING is written.
- *
- * LIFECYCLE: folders share the OS-wide archive → restore → (physical) delete
- * discipline. A folder is soft-archived (reversible, retained); a physical delete
- * is only allowed on an already-archived folder. The CASCADE over member items
- * (files/datasets/…) is orchestrated ONE layer up in `folder-lifecycle.ts` through
- * the shared `ArtifactAdapter` — this store owns only the folder ROWS. The row ops
- * exposed here (archive/restore/delete a folder + its descendant rows) are the row
- * half of that cascade.
- */
 
 export type FolderTab =
   | 'files'

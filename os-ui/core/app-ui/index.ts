@@ -1,17 +1,16 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
- */
-
-/**
- * @sovereign-os/ui — the Sovereign Agentic OS design language as a small,
- * framework-agnostic React + CSS package.
  *
- * Import the theme ONCE (side-effect), then use the primitives:
- *   import '@sovereign-os/ui/theme.css';
- *   import { AppShell, Button, Card } from '@sovereign-os/ui';
- *
- * Every primitive forwards `className` + native props, so nothing is locked in —
- * override any class or drop down to the raw `.sb-*` classes at any time.
+ * FEATURE:    `@sovereign-os/ui` — the OS design language as a small React + CSS package
+ * USER STORY: As an app builder I want to import the OS theme and primitives in one line so that
+ *             a new app looks like the OS from the first build.
+ * ARCHITECTURE:
+ *   - The package entry point: re-exports every primitive in `core/app-ui/`. Import the theme once
+ *     as a side effect (`import '@sovereign-os/ui/theme.css'`), then the components.
+ *   - Framework-agnostic: vendored into generated apps by `tabs/software/lib/app-ui-vendor.ts`
+ *     and also imported inside os-ui (e.g. `tabs/software/ui/appspec/*Renderer.tsx`).
+ *   - Every primitive forwards `className` and native props, so callers can override any class
+ *     or use the raw `.sb-*` classes directly.
  */
 export { cx } from './cx';
 export { AppShell, type AppShellProps, type NavItem } from './AppShell';
