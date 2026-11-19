@@ -24,7 +24,7 @@
  *     people (`JSON.stringify(result, null, 2)`), and that whitespace is a quarter of the tokens.
  *   - Pure; anything that does not parse as JSON, and every error result, passes through unchanged.
  */
-import { isUnderFolder, normaliseFolderPath } from '@core/kernel/folders';
+import { distinctFolders, isUnderFolder, isUnderFolderIgnoringCase, normaliseFolderPath } from '@core/kernel/folders';
 import type { FolderGrantTarget } from '@tabs/agents/lib/system-schema';
 
 /** Cap on a file's description in an agent's listing. */
@@ -81,16 +81,21 @@ export function shapeFileListing(result: unknown, args: Record<string, unknown>,
     company: rowsOf(result.marketplace),
   };
   const asked = typeof args.folder === 'string' && args.folder.trim() ? normaliseFolderPath(args.folder) : null;
-  const inAsked = (row: Row) => !asked || isUnderFolder(asked, str(row.folder));
+  // The folder the agent ASKED for is matched ignoring letter case (a model writes `/invoices` for
+  // `/Invoices`); the folder GRANT below stays an exact match, because that one is an access rule.
+  const inAsked = (row: Row) => !asked || isUnderFolderIgnoringCase(asked, str(row.folder));
+  /** Every row the system's scope covers, before the asked-for folder narrows it. */
+  const inScope: Row[] = [];
 
   const grants = ctx.filesFolders;
   const items: Row[] = [];
   const seen = new Set<string>();
   const push = (row: Row, tier?: string) => {
     const id = str(row.id);
-    if (!id || seen.has(id) || !inAsked(row)) return;
+    if (!id || seen.has(id)) return;
     seen.add(id);
-    items.push(compactFile(row, tier));
+    inScope.push(row);
+    if (inAsked(row)) items.push(compactFile(row, tier));
   };
   let scope: string;
   if (grants.length > 0) {
@@ -102,7 +107,15 @@ export function shapeFileListing(result: unknown, args: Record<string, unknown>,
     for (const row of lanes.company) push(row, 'company');
     scope = 'Every file the running user can see (this system has no folder grant).';
   }
-  return { scope, ...(asked ? { folder: asked } : {}), count: items.length, items };
+  // An asked-for folder that matches nothing must not read as "there are no files": name the
+  // folders that do exist in this system's scope, so the agent can look in the right one.
+  const missed = asked && items.length === 0 && inScope.length > 0
+    ? {
+        note: `No folder "${asked}" in this system's files. ${inScope.length} file(s) exist in other folders: see availableFolders, then call list_files again with one of them (or with no folder).`,
+        availableFolders: distinctFolders(inScope),
+      }
+    : {};
+  return { scope, ...(asked ? { folder: asked } : {}), count: items.length, items, ...missed };
 }
 
 /** The agent's view of a `get_file` result: metadata + text, without the version history and object record. */

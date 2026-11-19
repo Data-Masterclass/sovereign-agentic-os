@@ -164,3 +164,36 @@ test('shapeForAgent: other JSON results lose only their indentation; non-JSON te
   assert.equal(shapeForAgent('query_data', {}, pretty, { filesFolders: [] }), '{"rows":[{"a":1},{"a":2}]}');
   assert.equal(shapeForAgent('query_data', {}, 'plain words', { filesFolders: [] }), 'plain words');
 });
+
+const executor = (sys: System) => grantedToolExecutor(USER, sys, 'sys_invoices', DEPS, { holdAt: 'node' });
+
+test('the folder an agent ASKS for ignores letter case; a folder that does not exist names the ones that do', async () => {
+  const sys = system([{ folder: { path: '/', scope: 'personal' }, capability: 'Read' }]);
+  const exec = executor(sys);
+  // The owner's real case: the workflow text says "/invoices", the folder is "/Invoices".
+  const lower = JSON.parse((await exec('list_files', { folder: '/invoices' })).text) as { count: number; items: { folder: string }[]; note?: string };
+  assert.equal(lower.count, 12, '`/invoices` finds the 12 files in `/Invoices` (subfolder included)');
+  assert.ok(lower.items.every((f) => f.folder.startsWith('/Invoices')));
+  assert.equal(lower.note, undefined);
+
+  const none = JSON.parse((await exec('list_files', { folder: '/Rechnungen' })).text) as { count: number; note?: string; availableFolders?: string[] };
+  assert.equal(none.count, 0);
+  assert.match(String(none.note), /No folder "\/Rechnungen"/);
+  assert.ok(none.availableFolders?.includes('/Invoices'), 'the folders that exist are named');
+  assert.ok(none.availableFolders?.includes('/Contracts'));
+});
+
+test('a folder GRANT stays an exact match: a grant on /invoices does not open /Invoices', async () => {
+  const sys = system([{ folder: { path: '/invoices', scope: 'personal' }, capability: 'Read' }]);
+  const body = JSON.parse((await executor(sys)('list_files', {})).text) as { count: number };
+  assert.equal(body.count, 0, 'letter case is only forgiven for the asked-for folder, never for the access rule');
+});
+
+test('a person asking list_files for `/invoices` gets `/Invoices`; a missing folder names the ones that exist', async () => {
+  const lower = (await personListing({ folder: '/invoices' })).body;
+  assert.equal(lower.mine.length, 12);
+  const none = (await personListing({ folder: '/nope' })).body as unknown as { mine: unknown[]; note?: string; availableFolders?: string[] };
+  assert.equal(none.mine.length, 0);
+  assert.match(String(none.note), /No folder "\/nope"/);
+  assert.ok(none.availableFolders?.includes('/Invoices'));
+});
