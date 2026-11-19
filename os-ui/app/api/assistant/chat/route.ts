@@ -8,6 +8,7 @@ import { mcpTabForPath, runOsAssistant } from '@core/runtime/agent-loop';
 import { askTurnResponse } from '@core/runtime/ask-response';
 import { sanitizePageContext } from '@core/runtime/page-context';
 import { AssistantNotConfiguredError } from '@core/runtime/complete';
+import { resolveAskConversationId } from '@core/runtime/ask-confirm';
 
 export const dynamic = 'force-dynamic';
 
@@ -25,6 +26,14 @@ export const dynamic = 'force-dynamic';
  * produced (C9), so the surface never hides what it did and a number always
  * arrives with the rows, the SQL or the metric member that produced it.
  *
+ * CONFIRMATION GATE. A write the model calls does not run in this request: it is parked, and the
+ * response carries a Confirm card per parked call (`pending[]`) built from the server's record.
+ * The user decides at `POST /api/assistant/confirm`. `conversationId` is minted here on the
+ * first turn and echoed by the client afterwards; it scopes cards, outcomes and per-conversation
+ * allowances to one drawer. It is not a credential — the session user and the unguessable
+ * confirmation id are what protect a confirmation. What the user decided is re-read from the
+ * store on every turn and told to the model by the server; chat text is never trusted for it.
+ *
  * A route may export only its handlers, so the payload shaping lives in
  * `core/runtime/ask-response.ts` where a test can reach it.
  */
@@ -37,6 +46,7 @@ export async function POST(req: Request) {
   let path = '';
   let messages: Msg[] = [];
   let pageContextRaw: unknown = null;
+  let conversationRaw: unknown = null;
   try {
     const body = await req.json();
     path = (body?.path ?? '').toString();
@@ -44,6 +54,7 @@ export async function POST(req: Request) {
     // The current-screen snapshot the client publishes (open artifact + stage). It
     // only ENRICHES; a missing/malformed value degrades to "no page context".
     pageContextRaw = body?.pageContext ?? null;
+    conversationRaw = body?.conversationId ?? null;
   } catch {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
   }
@@ -76,7 +87,9 @@ export async function POST(req: Request) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), CHAT_TIMEOUT_MS);
   try {
-    const result = await runOsAssistant({ user, tab, page, messages: clean });
+    // A well-formed id is echoed back as-is; anything else (the first turn) gets a fresh one.
+    const conversationId = resolveAskConversationId(conversationRaw);
+    const result = await runOsAssistant({ user, tab, page, messages: clean, conversationId });
     return NextResponse.json(
       askTurnResponse({
         finalText: result.finalText,
@@ -86,6 +99,8 @@ export async function POST(req: Request) {
         tab,
         traceId: result.traceId,
         model: roleModel('standard'),
+        pending: result.pendingCards,
+        conversationId: result.conversationId,
       }),
     );
   } catch (e) {

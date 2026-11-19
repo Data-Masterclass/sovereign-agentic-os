@@ -29,6 +29,7 @@ import {
   engineHeldGate,
   readOnlyGate,
   ungatedInteractive,
+  ungatedByRollbackFlag,
   gateKindOf,
   parkedText,
   type ConfirmContext,
@@ -176,6 +177,34 @@ test('userConfirmGate: if the confirmation cannot be recorded the call is refuse
   assert.equal(reached.length, 0);
 });
 
+test('userConfirmGate: a port may refuse a specific call instead of offering it — typed, not parked, not run; a throwing port refuses', async () => {
+  const { inner, reached } = spyInner();
+  const asked: unknown[] = [];
+  const { port, created } = spyPort({
+    refusalFor: (r) => { asked.push(r); return r.args.name === 'declined-twice' ? { code: 'user_declined', reason: 'declined twice' } : null; },
+  });
+  const gate = userConfirmGate(inner, CTX, port);
+  const refused = await gate(WRITE, { name: 'declined-twice' });
+  assert.equal(refused.isError, true);
+  assert.equal(refused.parked, undefined);
+  assert.deepEqual(JSON.parse(refused.text), { error: { code: 'user_declined', reason: 'declined twice' } });
+  assert.equal(created.length, 0, 'a refused call creates no confirmation');
+  assert.deepEqual(asked, [{ userId: 'rae', conversationId: 'conv-1', tool: WRITE, args: { name: 'declined-twice' } }]);
+  assert.ok((await gate(WRITE, { name: 'fine' })).parked, 'null means: go ahead and park');
+  // Never asked for a confirm-free tool — a read is not something a port can refuse.
+  await gate(READ, {});
+  assert.equal(asked.length, 2);
+  assert.deepEqual(reached.map((r) => r.name), [READ]);
+
+  const throwing = spyPort({ refusalFor: () => { throw new Error('store down'); } });
+  const out = await userConfirmGate(inner, CTX, throwing.port)(WRITE, {});
+  assert.equal(out.isError, true);
+  assert.equal(out.parked, undefined, 'an unanswerable "refuse?" must not park a card it could not vet');
+  assert.equal(JSON.parse(out.text).error.code, 'confirmation_unavailable');
+  assert.equal(throwing.created.length, 0);
+  assert.equal(reached.length, 1);
+});
+
 test('readOnlyGate runs confirm-free tools and refuses everything else; engineHeldGate and ungatedInteractive pass through', async () => {
   const { inner, reached } = spyInner();
   const ro = readOnlyGate(inner);
@@ -188,7 +217,7 @@ test('readOnlyGate runs confirm-free tools and refuses everything else; engineHe
   }
   assert.deepEqual(reached.map((r) => r.name), [READ]);
 
-  for (const make of [engineHeldGate, ungatedInteractive]) {
+  for (const make of [engineHeldGate, ungatedInteractive, (i: ToolExecutor) => ungatedByRollbackFlag(i, 'SOME_FLAG')]) {
     const s = spyInner((name) => ({ text: `ran ${name}`, isError: name === 'boom' }));
     const g = make(s.inner);
     assert.deepEqual(await g(WRITE, { a: 1 }), { text: `ran ${WRITE}`, isError: false });
@@ -205,6 +234,7 @@ test('every constructor stamps its kind; a plain function carries none and the i
   assert.equal(gateKindOf(engineHeldGate(inner)), 'engine-held');
   assert.equal(gateKindOf(readOnlyGate(inner)), 'read-only');
   assert.equal(gateKindOf(ungatedInteractive(inner)), 'ungated-interactive');
+  assert.equal(gateKindOf(ungatedByRollbackFlag(inner, 'SOME_FLAG')), 'ungated-interactive', 'a rolled-back surface is traced as what it is: ungated');
   assert.equal(gateKindOf(inner), null, 'wrapping must not brand the executor it wraps');
   assert.equal(gateKindOf(async () => ({ text: '', isError: false })), null);
   assert.equal(gateKindOf(null), null);
@@ -426,26 +456,44 @@ test('RATCHET: the exact `ungatedInteractive(` call sites — every one is a kno
   // TO SHRINK: replace a call site with `userConfirmGate(...)` (or `readOnlyGate`) and delete its
   // line here. TO GROW: do not. A new assistant surface chooses a real gate.
   assert.deepEqual(occurrences('ungatedInteractive('), {
-    'core/runtime/agent-loop.ts': 1, // Ask the OS
+    // Ask the OS left this list when it went behind `userConfirmGate` (see the next two tests).
     'core/runtime/confirm-gate.ts': 1, // the definition
     'core/runtime/runtime.ts': 1, // tab assistant, app chat, Build chat
     'tabs/agents/lib/build/agentic-graph.ts': 1, // Software Team panel
   });
 });
 
-test('GROUNDWORK: no production code uses a real gate or the confirmation store yet', () => {
-  // The other three constructors exist and are tested, and nothing calls them: this PR changes
-  // no behaviour. A later PR that wires one adds its call site here, in review.
-  for (const ctor of ['userConfirmGate(', 'readOnlyGate(', 'engineHeldGate(']) {
+test('RATCHET: the exact `ungatedByRollbackFlag(` call sites — a gated surface with a documented off-switch', () => {
+  // Not a gap that is waiting for a gate: a surface that HAS one, and an operator flag that
+  // turns it off. Exactly one today — Ask the OS, `ASK_CONFIRM_GATE=off`. Adding one is a
+  // reviewed decision to ship a new off-switch.
+  assert.deepEqual(occurrences('ungatedByRollbackFlag('), {
+    'core/runtime/agent-loop.ts': 1, // Ask the OS, behind ASK_CONFIRM_GATE
+    'core/runtime/confirm-gate.ts': 1, // the definition
+  });
+  assert.match(read('core/runtime/agent-loop.ts'), /ungatedByRollbackFlag\(inner, ASK_CONFIRM_GATE_FLAG\)/);
+});
+
+test('RATCHET: which production code uses a real gate, and which files touch the confirmation store', () => {
+  // Ask the OS is the one surface behind `userConfirmGate`. The other two constructors exist,
+  // are tested, and nothing calls them yet.
+  assert.deepEqual(occurrences('userConfirmGate('), {
+    'core/runtime/ask-confirm.ts': 1, // Ask the OS
+    'core/runtime/confirm-gate.ts': 1, // the definition
+  });
+  for (const ctor of ['readOnlyGate(', 'engineHeldGate(']) {
     assert.deepEqual(occurrences(ctor), { 'core/runtime/confirm-gate.ts': 1 }, `${ctor} is called from production code`);
   }
-  const storeUsers = sourceFiles().filter((f) => f !== 'core/policy/confirmations.ts' && /policy\/confirmations|confirmationPort|createConfirmation|grantSessionAllowance/.test(read(f)));
-  assert.deepEqual(storeUsers, [], 'the confirmation store has a production consumer');
+  // The store is reached from exactly two places: the Ask gate's port and the Ask confirm
+  // endpoint's logic. No MCP tool module, no tab, no other route.
+  const storeUsers = sourceFiles().filter((f) => f !== 'core/policy/confirmations.ts' && /policy\/confirmations|confirmationPort|createConfirmation|grantSessionAllowance|beginExecute/.test(read(f)));
+  assert.deepEqual(storeUsers, ['core/runtime/ask-confirm.ts', 'core/runtime/ask-decide.ts']);
   const gateImporters = sourceFiles().filter((f) => /@core\/runtime\/confirm-gate/.test(read(f)));
   assert.deepEqual(gateImporters, [
     'core/policy/confirmations.ts', // types only
     'core/runtime/agent-loop.ts',
     'core/runtime/agentic.ts', // type only
+    'core/runtime/ask-confirm.ts',
     'core/runtime/confirm-gate.typecheck.ts', // types only
     'core/runtime/runtime.ts',
     'tabs/agents/lib/build/agentic-graph.ts',
@@ -454,10 +502,13 @@ test('GROUNDWORK: no production code uses a real gate or the confirmation store 
 
 test('THE EXTERNAL MCP DOOR IS UNTOUCHED: server.ts, http.ts and the route reference neither the gate nor the store', () => {
   // A signed-in person's own MCP client is not confirm-gated — it reaches `handleRpc` directly.
-  for (const file of ['core/mcp/server.ts', 'core/mcp/http.ts', 'app/api/mcp/route.ts']) {
+  const door = ['core/mcp/server.ts', 'core/mcp/http.ts', ...sourceFiles().filter((f) => f.startsWith('app/api/mcp/'))];
+  assert.ok(door.includes('app/api/mcp/route.ts'));
+  for (const file of door) {
     const src = read(file);
     assert.doesNotMatch(src, /confirm-gate|GatedToolExecutor|userConfirmGate|ungatedInteractive|readOnlyGate|engineHeldGate/, `${file} must not reference the gate`);
     assert.doesNotMatch(src, /policy\/confirmations|confirmationPort|createConfirmation|beginExecute|SessionAllowance/, `${file} must not reference the confirmation store`);
+    assert.doesNotMatch(src, /ask-confirm|ask-decide|askConfirmGate|askToolExecutor|ASK_CONFIRM_GATE/, `${file} must not reference Ask's gate wiring`);
     assert.doesNotMatch(src, /tool-classes|needsUserConfirm|CONFIRM_FREE|SESSION_ALLOWABLE/, `${file} must not reference the confirm classes`);
   }
 });

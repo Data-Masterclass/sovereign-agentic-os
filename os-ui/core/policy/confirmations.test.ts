@@ -26,6 +26,12 @@ import {
   getConfirmationForUser,
   grantSessionAllowance,
   listPendingForConversation,
+  listDecidedForConversation,
+  findPendingForCall,
+  declinedCountForCall,
+  pruneConfirmations,
+  MAX_CONFIRMATION_RESULT_CHARS,
+  DECIDED_RETENTION_MS,
   revokeSessionAllowances,
   sessionAllows,
 } from '@core/policy/confirmations';
@@ -218,12 +224,14 @@ test('THE MIRROR never receives the arguments, and a record read back after a re
     const open = createConfirmation({ ...base, tool: 'configure_connection', args: { connId: 'c1', password: 'hunter2' } }, { at: T0 });
     const done = createConfirmation(base, { at: T0 });
     beginExecute(done.id, 'rae', { at: T0 });
-    finishExecute(done.id, 'executed', 'ok');
+    finishExecute(done.id, 'executed', 'ok', { resultText: '{"id":"ds_9","connectionString":"postgres://u:result-secret@h/db"}' });
+    assert.match(String(getConfirmationForUser(done.id, 'rae', { at: T0 })?.result), /ds_9/, 'the result text is kept in the process for the next turn');
     await new Promise((r) => setTimeout(r, 30)); // the write-through is fire-and-forget
     assert.equal(stored.size, 2, 'both records were written through');
     for (const doc of stored.values()) {
       assert.equal('args' in doc, false, 'the arguments must not reach the mirror');
-      assert.doesNotMatch(JSON.stringify(doc), /hunter2/);
+      assert.equal('result' in doc, false, 'the result text must not reach the mirror either');
+      assert.doesNotMatch(JSON.stringify(doc), /hunter2|result-secret/);
       assert.match(String(doc.argsHash), /^[0-9a-f]{64}$/, 'the hash does');
     }
 
@@ -234,8 +242,66 @@ test('THE MIRROR never receives the arguments, and a record read back after a re
     assert.equal(back?.status, 'expired', 'an open record without its arguments is dead — the user is asked again');
     assert.deepEqual(beginExecute(open.id, 'rae', { at: T0 + 1 }), { ok: false, code: 'expired', status: 'expired' });
     assert.equal(getConfirmationForUser(done.id, 'rae', { at: T0 + 1 })?.status, 'executed', 'a settled record keeps its status');
+    assert.equal(getConfirmationForUser(done.id, 'rae', { at: T0 + 1 })?.result, undefined, 'and has no result text after the restart');
     assert.equal(beginExecute(done.id, 'rae', { at: T0 + 1 }).ok, false, 'and a restart never makes an executed confirmation usable again');
   } finally {
     globalThis.fetch = realFetch;
   }
+});
+
+test('DECIDED RECORDS: listed oldest-first for their own user and conversation, capped; the result text is bounded', () => {
+  const mk = (tool: string, at: number, conversationId = 'conv-1', userId = 'rae') =>
+    createConfirmation({ ...base, tool, userId, conversationId, args: { n: tool } }, { at });
+  const a = mk('create_dataset', T0);
+  const b = mk('delete', T0 + 1);
+  const c = mk('archive', T0 + 2);
+  const stillOpen = mk('upload_file', T0 + 3);
+  mk('create_dataset', T0, 'conv-2');
+  mk('create_dataset', T0, 'conv-1', 'amir');
+  declineConfirmation(b.id, 'rae', { at: T0 + 10 });
+  beginExecute(a.id, 'rae', { at: T0 + 20 });
+  finishExecute(a.id, 'executed', 'executed', { resultText: 'x'.repeat(MAX_CONFIRMATION_RESULT_CHARS + 500) });
+  assert.equal(getConfirmationForUser(a.id, 'rae', { at: T0 + 21 })?.result?.length, MAX_CONFIRMATION_RESULT_CHARS);
+
+  const decided = listDecidedForConversation('rae', 'conv-1', { at: T0 + 30 });
+  assert.deepEqual(decided.map((x) => [x.tool, x.status]), [['delete', 'declined'], ['create_dataset', 'executed']]);
+  // After ten minutes the two never decided are expired — and listed as such.
+  const later = listDecidedForConversation('rae', 'conv-1', { at: T0 + CONFIRMATION_TTL_MS + 5 });
+  assert.deepEqual(later.map((x) => x.status).sort(), ['declined', 'executed', 'expired', 'expired']);
+  assert.equal(listDecidedForConversation('rae', 'conv-1', { at: T0 + CONFIRMATION_TTL_MS + 5, limit: 1 }).length, 1);
+  assert.equal(listDecidedForConversation('amir', 'conv-1', { at: T0 + 30 }).length, 0);
+  void c;
+  void stillOpen;
+});
+
+test('findPendingForCall and declinedCountForCall identify a call by tool + canonical arguments, within one user and conversation', () => {
+  const first = createConfirmation(base, { at: T0 });
+  const key = { userId: 'rae', conversationId: 'conv-1', tool: base.tool, argsHash: argsHashOf(base.tool, { domain: 'sales', name: ' Orders ' }) };
+  assert.equal(findPendingForCall(key, { at: T0 + 1 })?.id, first.id, 'key order and whitespace do not make a different call');
+  assert.equal(findPendingForCall({ ...key, userId: 'amir' }, { at: T0 + 1 }), null);
+  assert.equal(findPendingForCall({ ...key, conversationId: 'conv-2' }, { at: T0 + 1 }), null);
+  assert.equal(findPendingForCall({ ...key, argsHash: argsHashOf(base.tool, { name: 'Other' }) }, { at: T0 + 1 }), null);
+  assert.equal(findPendingForCall(key, { at: T0 + CONFIRMATION_TTL_MS }), null, 'an expired one is not waiting');
+
+  assert.equal(declinedCountForCall(key), 0);
+  for (let i = 0; i < 3; i += 1) {
+    const c = createConfirmation(base, { at: T0 + CONFIRMATION_TTL_MS + i });
+    declineConfirmation(c.id, 'rae', { at: T0 + CONFIRMATION_TTL_MS + i });
+  }
+  assert.equal(declinedCountForCall(key), 3, 'expired is not declined; the three declines count');
+  assert.equal(declinedCountForCall({ ...key, userId: 'amir' }), 0);
+  assert.equal(declinedCountForCall({ ...key, conversationId: 'conv-2' }), 0);
+});
+
+test('pruneConfirmations drops only DECIDED records past the retention window — never one that is still pending or executing', () => {
+  const pending = createConfirmation(base, { at: T0, ttlMs: DECIDED_RETENTION_MS * 3 });
+  const executing = createConfirmation({ ...base, args: { name: 'B' } }, { at: T0, ttlMs: DECIDED_RETENTION_MS * 3 });
+  const declined = createConfirmation({ ...base, args: { name: 'C' } }, { at: T0 });
+  beginExecute(executing.id, 'rae', { at: T0 });
+  declineConfirmation(declined.id, 'rae', { at: T0 });
+  assert.equal(pruneConfirmations({ at: T0 + DECIDED_RETENTION_MS - 1 }), 0);
+  assert.equal(pruneConfirmations({ at: T0 + DECIDED_RETENTION_MS }), 1);
+  assert.equal(getConfirmationForUser(declined.id, 'rae', { at: T0 }), null);
+  assert.ok(getConfirmationForUser(pending.id, 'rae', { at: T0 }));
+  assert.equal(getConfirmationForUser(executing.id, 'rae', { at: T0 })?.status, 'executing');
 });

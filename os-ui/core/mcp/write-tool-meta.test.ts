@@ -222,14 +222,26 @@ test('AGENT_FORBIDDEN_TOOLS: the catalog names exactly the doors that consult it
   // table (review M1). A comment that overstates a guard is worse than none — the next reader
   // stops looking — so the scope statement is pinned in BOTH directions.
   const src = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), 'write-tool-meta.ts'), 'utf8');
-  assert.match(src, /WHICH DOORS CONSULT THIS — exactly three/);
+  assert.match(src, /WHICH DOORS CONSULT THIS — exactly four/);
   assert.match(src, /`tabs\/agents\/lib\/build\/os-tools\.ts`/);
   assert.match(src, /`tabs\/agents\/lib\/build\/phase-tools\.ts`/);
   assert.match(src, /`tabs\/software\/lib\/app-tool-call\.ts`/);
-  assert.match(src, /OUT OF SCOPE, on purpose/);
+  // Ask the OS is the fourth door since the confirmation gate was wired: it refuses these names
+  // and parks every other write for the user's own Confirm.
+  assert.match(src, /4\. ASK THE OS — `core\/runtime\/ask-confirm\.ts`/);
   assert.match(src, /`runOsAssistant`/);
-  assert.match(src, /`runTabAgent`/);
-  assert.match(src, /NO structural confirm step/);
+  assert.match(src, /`POST \/api\/assistant\/confirm`/);
+  assert.match(src, /ASK_CONFIRM_GATE=off/);
+  // What is still NOT gated is named as exactly that — the tab assistant and the Build chat —
+  // and Ask is no longer described as ungated.
+  const outOfScope = src.slice(src.indexOf('OUT OF SCOPE, on purpose'), src.indexOf('It lives here rather than in a tab'));
+  assert.match(outOfScope, /OUT OF SCOPE, on purpose/);
+  assert.match(outOfScope, /`runTabAgent`/);
+  assert.match(outOfScope, /Build\s+\*?\s*chat/);
+  assert.match(outOfScope, /NOT YET GATED/);
+  assert.match(outOfScope, /NO structural confirm step/);
+  assert.doesNotMatch(outOfScope, /Ask the OS|runOsAssistant/, 'Ask the OS is gated and must not be listed as out of scope');
+  assert.doesNotMatch(src, /the two\s+\*?\s*INTERACTIVE ASSISTANTS/);
   assert.doesNotMatch(src, /TWO doors consult this/);
   assert.doesNotMatch(src, /does NOT consult it/);
   assert.doesNotMatch(src, /ONE door consults this today/);

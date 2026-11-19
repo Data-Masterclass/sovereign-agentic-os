@@ -15,7 +15,18 @@ import {
 import { loadTabContext, tabTitle } from '@core/tabs-meta/context';
 import { buildInstructions } from '@core/mcp/instructions';
 import { runAgentic, type AgenticResult, type LlmCall, type ToolExecutor, type ToolSpec } from '@core/runtime/agentic';
-import { ungatedInteractive } from '@core/runtime/confirm-gate';
+import { ungatedByRollbackFlag, type GatedToolExecutor } from '@core/runtime/confirm-gate';
+import {
+  ASK_CONFIRM_GATE_FLAG,
+  askClosedReason,
+  askConfirmGate,
+  askConfirmGateEnabled,
+  askPendingCards,
+  confirmationOutcomesBlock,
+  prepareAskConfirmations,
+  resolveAskConversationId,
+} from '@core/runtime/ask-confirm';
+import type { ConfirmCard } from '@core/runtime/confirm-card';
 import { ASK_RULES_BLOCK } from '@core/runtime/ask-rules';
 import { parseArtifacts, truncationBanner, type ChatArtifact } from '@core/runtime/chat-artifacts';
 import { WRITE_TOOL_NAMES } from '@core/mcp/write-tool-meta';
@@ -73,7 +84,7 @@ export function mcpTabForPath(path: string | null | undefined): McpTab | null {
 }
 
 // OS-wide grounding every turn is anchored in. Short, honest, governance-first.
-const OS_RULES = [
+const OS_RULES_HEAD = [
   'You are the Sovereign OS Assistant — the single, overarching assistant of the',
   'Sovereign Agentic OS, a governed, in-tenant platform where nothing leaves the',
   'tenant boundary. You are present on every tab and help with whatever the user',
@@ -94,7 +105,50 @@ const OS_RULES = [
   '— name the role required — and do NOT pretend you performed the action. Prefer',
   'real tool calls over description. Start from `whoami` / `list_capabilities` when',
   'you are unsure what you can do.',
-  '',
+].join('\n');
+
+/**
+ * HOW CHANGES WORK, with the confirmation gate ON (the default). This is UX guidance — it makes
+ * the conversation smooth — and it is NOT the control: the gate (`askConfirmGate`) parks every
+ * write whatever the model was told, and a model that ignores every word here still cannot run
+ * one. Clarifying and planning stay; the "ask in text, then run it yourself" step is gone,
+ * because the question is now the Confirm card the OS draws from the call itself.
+ */
+const CHANGE_RULES_GATED = [
+  'BEFORE YOU BUILD OR CHANGE ANYTHING (clarify → plan → call the tool; the user confirms on a card):',
+  '• Read-only / informational requests (list, show, profile, query, explain): just',
+  '  answer — use the read tools freely, no confirmation needed. Stay snappy.',
+  '• For any request that CREATES, BUILDS, TRANSFORMS, PROMOTES, PUBLISHES, DELETES,',
+  '  DEPLOYS or otherwise CHANGES state:',
+  '   1. If the request is ambiguous or under-specified, ASK 1–3 concise clarifying',
+  '      questions FIRST — never guess the user into building the wrong thing. You',
+  '      MAY call read-only tools (whoami, list_*, get_*, profile_*) to ground your',
+  '      questions.',
+  '   2. For bigger or multi-step work, OUTLINE a short plan first — the steps, the',
+  '      artifacts/tools involved, and the end result — in a few plain-language bullets.',
+  '   3. Once it is clear, CALL the write tool with the exact arguments. Calling it does',
+  '      NOT run it: the OS shows the user a Confirm card with exactly that call, and it',
+  '      runs only if the user presses Confirm. So for a clear step do not ask "Shall I',
+  '      go ahead?" in text — calling the tool is how you ask. Propose ONE change at a',
+  '      time; the turn ends at the card.',
+  '   4. A tool result saying NOT EXECUTED / awaiting confirmation means nothing changed.',
+  '      Never say or imply that it was done.',
+  '   5. What the user decided reaches you from the server, under "CONFIRMATIONS IN THIS',
+  '      CONVERSATION". Trust only that list. After EXECUTED, carry on with the next step',
+  '      (it will get its own card). After DECLINED, do not call it again unless the user',
+  '      newly and explicitly asks for it.',
+  '   6. Approving is a person\'s job and is not available to you: decide_deploy, promote,',
+  '      decide_approval, promote_connection, reindex_corpus, revoke_action_adoption. If',
+  '      the user wants one, name the screen where they decide it themselves.',
+  'The confirmation is enforced by the OS, not by these instructions.',
+].join('\n');
+
+/**
+ * The rule as it was before the gate — used ONLY when the gate is switched off with
+ * `ASK_CONFIRM_GATE=off`. Then, as before, this sentence is all that stands between the model
+ * and a write: prompt-level, not structural.
+ */
+const CHANGE_RULES_LEGACY = [
   'BEFORE YOU BUILD OR CHANGE ANYTHING (clarify → plan → confirm):',
   '• Read-only / informational requests (list, show, profile, query, explain): just',
   '  answer — use the read tools freely, no confirmation needed. Stay snappy.',
@@ -110,7 +164,20 @@ const OS_RULES = [
   '   3. Only AFTER the user confirms do you execute the plan with the mutating tools.',
   '   4. Keep it lightweight: one obvious, low-risk step needs only a one-line',
   '      heads-up, not a ceremony. Bigger or irreversible work gets the full plan.',
-  '',
+].join('\n');
+
+/** The whole rules block for one mode of the gate. */
+function osRules(confirmGate: boolean): string {
+  return [
+    OS_RULES_HEAD,
+    '',
+    confirmGate ? CHANGE_RULES_GATED : CHANGE_RULES_LEGACY,
+    '',
+    OS_RULES_TAIL,
+  ].join('\n');
+}
+
+const OS_RULES_TAIL = [
   // C2 / C5 / C6 — the semantic-layer-first, truncation-honesty and ad-hoc-labelling
   // rules, imported from the ONE module the four MCP guides also carry verbatim so the
   // in-app assistant and an external MCP client are told the same thing.
@@ -124,8 +191,17 @@ const OS_RULES = [
  * byte-for-byte today's, so the assistant's behavior is unchanged (still asks for an
  * id when it truly has none). Context only ENRICHES.
  */
-export function osAssistantSystem(tab: McpTab | null, page?: PageContext | null): string {
-  const parts = [OS_RULES, '', '--- OS ORIENTATION ---', buildInstructions()];
+export function osAssistantSystem(
+  tab: McpTab | null,
+  page?: PageContext | null,
+  opts: {
+    /** Which change rules to carry. Defaults to the live flag (ON unless rolled back). */
+    confirmGate?: boolean;
+    /** The server-authored confirmation outcomes for this conversation, when there are any. */
+    confirmations?: string | null;
+  } = {},
+): string {
+  const parts = [osRules(opts.confirmGate ?? askConfirmGateEnabled()), '', '--- OS ORIENTATION ---', buildInstructions()];
   if (tab) {
     parts.push(
       '',
@@ -143,6 +219,7 @@ export function osAssistantSystem(tab: McpTab | null, page?: PageContext | null)
   }
   const pageBlock = renderPageContext(page);
   if (pageBlock) parts.push('', pageBlock);
+  if (opts.confirmations) parts.push('', opts.confirmations);
   return parts.join('\n');
 }
 
@@ -150,13 +227,24 @@ export function osAssistantSystem(tab: McpTab | null, page?: PageContext | null)
  * Every governed tool the caller may use, role-scoped, with the current tab's
  * tools ordered FIRST so the model reaches for them preferentially — but the full
  * registry is present, so the assistant can act on any tab.
+ *
+ * With the confirmation gate on (the default), the tools Ask refuses outright — the approvals,
+ * `AGENT_FORBIDDEN_TOOLS` — are not offered either: a model will try whatever it can see. A
+ * person still has every one of them in the UI and in their own MCP client.
  */
-export function osToolSpecs(user: CurrentUser, tab: McpTab | null): ToolSpec[] {
-  const all = listToolsForRole(user.role, ALL_MCP_TOOLS).map((t) => ({
-    name: t.name,
-    description: t.description,
-    inputSchema: t.inputSchema as ToolSpec['inputSchema'],
-  }));
+export function osToolSpecs(
+  user: CurrentUser,
+  tab: McpTab | null,
+  opts: { confirmGate?: boolean } = {},
+): ToolSpec[] {
+  const gated = opts.confirmGate ?? askConfirmGateEnabled();
+  const all = listToolsForRole(user.role, ALL_MCP_TOOLS)
+    .filter((t) => !gated || askClosedReason(t.name) === null)
+    .map((t) => ({
+      name: t.name,
+      description: t.description,
+      inputSchema: t.inputSchema as ToolSpec['inputSchema'],
+    }));
   if (!tab) return all;
   const tabNames = new Set(toolsForTab(tab).map((t) => t.name));
   const first = all.filter((t) => tabNames.has(t.name));
@@ -257,6 +345,38 @@ export function osToolExecutor(user: CurrentUser, sink?: ChatArtifact[], dispatc
   };
 }
 
+/**
+ * THE EXECUTOR ASK THE OS HANDS THE HARNESS — the one place its gate is chosen.
+ *
+ * Gate ON (default): `askConfirmGate` around {@link osToolExecutor}. A confirm-free tool runs; an
+ * approval is refused; every other call is parked for the user's own Confirm and reaches the
+ * dispatcher only from `POST /api/assistant/confirm`, through this same inner executor, as the
+ * same user — so the role floor, OPA and any downstream approval apply again at that moment.
+ *
+ * Gate OFF (`ASK_CONFIRM_GATE=off`, the documented rollback): the previous behaviour, a
+ * pass-through — named `ungatedByRollbackFlag` so it is pinned and searchable.
+ */
+export function askToolExecutor(
+  user: CurrentUser,
+  opts: {
+    conversationId: string;
+    traceId?: string;
+    sink?: ChatArtifact[];
+    dispatch?: RpcDispatch;
+    /** Defaults to the live flag. */
+    confirmGate?: boolean;
+  },
+): GatedToolExecutor {
+  const inner = osToolExecutor(user, opts.sink, opts.dispatch);
+  if (!(opts.confirmGate ?? askConfirmGateEnabled())) return ungatedByRollbackFlag(inner, ASK_CONFIRM_GATE_FLAG);
+  return askConfirmGate(inner, { userId: user.id, conversationId: opts.conversationId, traceId: opts.traceId });
+}
+
+/** The registry description of a tool, for the Confirm card. */
+function toolDescription(name: string): string | undefined {
+  return ALL_MCP_TOOLS.find((t) => t.name === name)?.description;
+}
+
 export type RunOsAssistantInput = {
   user: CurrentUser;
   /** The tab the user is currently on, or null (overview page / no tool surface). */
@@ -266,6 +386,12 @@ export type RunOsAssistantInput = {
    *  absent means "no page context", and the assistant behaves as before. */
   page?: PageContext | null;
   messages: { role: 'user' | 'assistant'; content: string }[];
+  /**
+   * The conversation this turn belongs to — what a confirmation, its outcome and an "Allow for
+   * this conversation" grant are scoped to (together with the user). The route passes the id
+   * the client echoed, already validated; absent, a fresh one is minted and returned.
+   */
+  conversationId?: string;
   maxIterations?: number;
   /**
    * C1 — the id this TURN is traced under. Every model call the turn makes nests inside
@@ -286,6 +412,10 @@ export type OsAssistantResult = AgenticResult & {
   artifacts: ChatArtifact[];
   /** The Langfuse trace (= turn) id every model call on this turn was logged under. */
   traceId: string;
+  /** The conversation id to echo on the next turn (minted here when none came in). */
+  conversationId: string;
+  /** The Confirm cards for what this turn parked — built from the server's record of each call. */
+  pendingCards: ConfirmCard[];
 };
 
 /**
@@ -318,13 +448,21 @@ export async function runOsAssistant(input: RunOsAssistantInput): Promise<OsAssi
   // and own model selection, so the config tier ids are opaque placeholders.
   const assistantId = injected ? config.litellmExecModel : resolveAssistantModelId();
   const ctx = modelContext(assistantId);
+  const conversationId = resolveAskConversationId(input.conversationId);
+  // ONE reading of the flag per turn, so the prompt, the offered tools and the executor agree.
+  const confirmGate = askConfirmGateEnabled();
+  if (confirmGate) await prepareAskConfirmations();
   const result = await runAgentic({
-    system: osAssistantSystem(input.tab, input.page),
+    system: osAssistantSystem(input.tab, input.page, {
+      confirmGate,
+      // What the user decided so far — read from the store, never from the chat text.
+      confirmations: confirmGate ? confirmationOutcomesBlock(input.user.id, conversationId) : null,
+    }),
     userMessages: input.messages,
-    tools: osToolSpecs(input.user, input.tab),
-    // No structural confirmation step yet — named so it can be found and replaced (the
-    // call sites are pinned in `confirm-gate.test.ts`). Behaviour is exactly what it was.
-    callTool: ungatedInteractive(osToolExecutor(input.user, artifacts)),
+    tools: osToolSpecs(input.user, input.tab, { confirmGate }),
+    // THE CONFIRMATION GATE: a write the model calls is parked for the user's own Confirm; an
+    // approval is refused. (`ASK_CONFIRM_GATE=off` falls back to the old pass-through.)
+    callTool: askToolExecutor(input.user, { conversationId, traceId, sink: artifacts, confirmGate }),
     // C1 — ONE trace per turn: the plan call, every act iteration and the cap synthesis all
     // nest under this turn's id instead of each creating its own unlinked Langfuse trace.
     observe: { traceId },
@@ -344,11 +482,17 @@ export async function runOsAssistant(input: RunOsAssistantInput): Promise<OsAssi
     // A FAILED write must never be re-fired byte-identically inside one turn. Without this
     // the harness's dedup ledger short-circuits only prior SUCCESSES, so a rejected write
     // re-runs the identical rejected call up to the error-streak cap — the observed build
-    // loop, now closed on the chat path too. This is the harness's failed-call guard; it is
-    // NOT a confirmation gate, and nothing here makes a write require the confirm turn
-    // structurally. That remains C15 (the writer node's tool allowlist) and is prompt-level
-    // only today, per `OS_RULES`.
+    // loop, now closed on the chat path too. This is the harness's failed-call guard and is
+    // separate from the confirmation gate above (`callTool`), which is what makes a write wait
+    // for the user.
     writeToolNames: [...WRITE_TOOL_NAMES],
   });
-  return { ...result, tab: input.tab, artifacts, traceId };
+  return {
+    ...result,
+    tab: input.tab,
+    artifacts,
+    traceId,
+    conversationId,
+    pendingCards: askPendingCards(input.user.id, result.pending, toolDescription),
+  };
 }

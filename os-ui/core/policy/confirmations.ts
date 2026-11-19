@@ -7,9 +7,16 @@
  *             am still in the conversation it was proposed in — not a different action, not twice,
  *             not for someone else, and not an hour later.
  * ARCHITECTURE:
- *   - GROUNDWORK. Nothing in production creates a confirmation or a grant yet: no route, no
- *     assistant and no executor imports this module (the confirm endpoint and the UI are later
- *     PRs). It is exercised by its tests and by the gate's port adapter only.
+ *   - WHO USES IT. Ask the OS only: its gate port (`core/runtime/ask-confirm.ts`) creates the
+ *     records, and `POST /api/assistant/confirm` (`core/runtime/ask-decide.ts`) decides them.
+ *     No MCP tool and no other route imports this module — pinned in `ask-confirm.test.ts`.
+ *   - SIZE POLICY. Arguments live in this process only, never in the mirror, and a call whose
+ *     arguments serialise above {@link MAX_CONFIRMATION_ARGS_BYTES} is not parked at all (the
+ *     Ask port refuses it). The result text kept for the assistant's next turn is capped at
+ *     {@link MAX_CONFIRMATION_RESULT_CHARS} and is in-process only as well. Decided records
+ *     leave the in-process map after {@link DECIDED_RETENTION_MS} ({@link pruneConfirmations});
+ *     the mirror keeps the argument-free audit row. os-ui runs as ONE replica today — a second
+ *     replica would not see this map, and a Confirm landing there would answer 404.
  *   - Same shape as the approvals store (`core/policy/approvals.ts`): an in-process Map pinned to
  *     `globalThis` (one store across separately bundled route handlers), with a best-effort
  *     durable mirror through `osMirror`.
@@ -37,6 +44,19 @@ export const CONFIRMATION_TTL_MS = 10 * 60 * 1000;
  */
 export const SESSION_ALLOWANCE_TTL_MS = 8 * 60 * 60 * 1000;
 
+/**
+ * The most a parked call's arguments may weigh (UTF-8 bytes of their JSON). They are held in
+ * memory for up to ten minutes pending and {@link DECIDED_RETENTION_MS} decided, so this bounds
+ * what one proposal can pin. A model-authored call is far below it; a whole file is not.
+ */
+export const MAX_CONFIRMATION_ARGS_BYTES = 256 * 1024;
+
+/** The most of an executed call's result text kept for the assistant's next turn. */
+export const MAX_CONFIRMATION_RESULT_CHARS = 4000;
+
+/** How long a decided record (with its arguments and result) stays in this process. */
+export const DECIDED_RETENTION_MS = SESSION_ALLOWANCE_TTL_MS;
+
 export type ConfirmationStatus = 'pending' | 'executing' | 'executed' | 'failed' | 'declined' | 'expired';
 
 export type Confirmation = {
@@ -59,6 +79,11 @@ export type Confirmation = {
   decidedAt?: string;
   /** Set by `finishExecute`: a short account of what the execution did or why it failed. */
   outcome?: string;
+  /**
+   * The executed call's result text, capped — what the assistant is told on its next turn so a
+   * multi-step task can use the id it just created. In-process only, like `args` (see `mirrorDoc`).
+   */
+  result?: string;
 };
 
 export type SessionAllowance = {
@@ -95,9 +120,10 @@ const mirror = osMirror({ index: 'os-confirmations' });
  * be executed. `hydrate` marks such a `pending`/`executing` record `expired` — the user is asked
  * again rather than the server running a call it can no longer show.
  */
-function mirrorDoc(c: Confirmation): Omit<Confirmation, 'args'> {
-  const { args: _args, ...rest } = c;
+function mirrorDoc(c: Confirmation): Omit<Confirmation, 'args' | 'result'> {
+  const { args: _args, result: _result, ...rest } = c;
   void _args;
+  void _result;
   return rest;
 }
 
@@ -221,11 +247,17 @@ export function beginExecute(id: string, userId: string, opts: { at?: number; co
 }
 
 /** Close an `executing` confirmation. Returns null unless THIS call made the transition. */
-export function finishExecute(id: string, result: 'executed' | 'failed', outcome?: string): Confirmation | null {
+export function finishExecute(
+  id: string,
+  result: 'executed' | 'failed',
+  outcome?: string,
+  opts: { resultText?: string } = {},
+): Confirmation | null {
   const c = state().records.get(id);
   if (!c || c.status !== 'executing') return null;
   c.status = result;
   if (outcome) c.outcome = outcome.slice(0, 500);
+  if (opts.resultText) c.result = opts.resultText.slice(0, MAX_CONFIRMATION_RESULT_CHARS);
   persist(c);
   return c;
 }
@@ -262,6 +294,68 @@ export function listPendingForConversation(userId: string, conversationId: strin
     .map((c) => settleExpiry(c, at))
     .filter((c) => c.status === 'pending')
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+}
+
+const DECIDED: ReadonlySet<ConfirmationStatus> = new Set(['executed', 'failed', 'declined', 'expired']);
+
+/**
+ * The user's DECIDED confirmations in one conversation (executed, failed, declined, expired),
+ * oldest first, at most the last `limit`. This is what the assistant is told happened — read
+ * from the record, never from the chat text.
+ */
+export function listDecidedForConversation(
+  userId: string,
+  conversationId: string,
+  opts: { at?: number; limit?: number } = {},
+): Confirmation[] {
+  const at = opts.at ?? Date.now();
+  const all = [...state().records.values()]
+    .filter((c) => c.userId === userId && c.conversationId === conversationId)
+    .map((c) => settleExpiry(c, at))
+    .filter((c) => DECIDED.has(c.status))
+    .sort((a, b) => (a.decidedAt ?? a.createdAt).localeCompare(b.decidedAt ?? b.createdAt));
+  return all.slice(-(opts.limit ?? 12));
+}
+
+/** The still-pending confirmation for exactly this call in this conversation, if there is one. */
+export function findPendingForCall(
+  request: { userId: string; conversationId: string; tool: string; argsHash: string },
+  opts: { at?: number } = {},
+): Confirmation | null {
+  return (
+    listPendingForConversation(request.userId, request.conversationId, opts).find(
+      (c) => c.tool === request.tool && c.argsHash === request.argsHash,
+    ) ?? null
+  );
+}
+
+/** How many times this user declined exactly this call (tool + arguments hash) in this conversation. */
+export function declinedCountForCall(request: { userId: string; conversationId: string; tool: string; argsHash: string }): number {
+  let n = 0;
+  for (const c of state().records.values()) {
+    if (c.status !== 'declined') continue;
+    if (c.userId !== request.userId || c.conversationId !== request.conversationId) continue;
+    if (c.tool === request.tool && c.argsHash === request.argsHash) n += 1;
+  }
+  return n;
+}
+
+/**
+ * Drop DECIDED records older than `olderThanMs` from this process (their arguments and result
+ * with them). The durable mirror is not touched: the argument-free audit row stays. Returns how
+ * many were dropped.
+ */
+export function pruneConfirmations(opts: { at?: number; olderThanMs?: number } = {}): number {
+  const at = opts.at ?? Date.now();
+  const cutoff = at - (opts.olderThanMs ?? DECIDED_RETENTION_MS);
+  let n = 0;
+  for (const [id, c] of state().records) {
+    if (!DECIDED.has(c.status)) continue;
+    if (Date.parse(c.decidedAt ?? c.createdAt) > cutoff) continue;
+    state().records.delete(id);
+    n += 1;
+  }
+  return n;
 }
 
 // --- "Allow for this conversation" -------------------------------------------------------------
@@ -331,6 +425,11 @@ export function confirmationPort(): ConfirmationPort {
     },
     sessionAllows: (request) => sessionAllows(request),
   };
+}
+
+/** Test-only: how many confirmation records this process holds, in any state. */
+export function __countConfirmations(): number {
+  return state().records.size;
 }
 
 /** Test-only: drop everything so each test starts clean. */

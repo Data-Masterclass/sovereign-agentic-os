@@ -320,3 +320,35 @@ test('X7: an agent RUN is deliberately indistinguishable — every run-addressed
     assert.equal(err.code, 'not_found', `${tool.name}: a run you do not own must be not_found, got ${err.code}`);
   }
 });
+
+// ---- the external MCP door is NOT confirm-gated ------------------------------------------------
+
+test('THE MCP DOOR IS NOT CONFIRM-GATED: a person\'s own write over `handleRpc` executes at once — nothing parks, no confirmation is recorded', async () => {
+  // Ask the OS parks every write its MODEL calls for the user's Confirm (`core/runtime/
+  // ask-confirm.ts`). A signed-in person's own MCP client is a different thing: the person IS the
+  // one choosing the call, so the door runs it under their role gates exactly as before.
+  const { __countConfirmations, __resetConfirmations } = await import('@core/policy/confirmations');
+  const { parkedText } = await import('@core/runtime/confirm-gate');
+  const { needsUserConfirm } = await import('@core/mcp/tool-classes');
+  __resetConfirmations();
+
+  assert.equal(needsUserConfirm('create_dataset'), true, 'the probe must be a tool Ask WOULD park');
+  const created = resultOf(await rpc(admin, 'create_dataset', { name: 'MCP door is ungated' }), 'create_dataset');
+  assert.notEqual(created.isError, true, `the write did not execute: ${JSON.stringify(created)}`);
+  const text = (created.content as { text?: string }[]).map((c) => c.text ?? '').join('\n');
+  assert.doesNotMatch(text, /NOT EXECUTED|awaits the user's confirmation|awaiting_user_confirmation/);
+  assert.notEqual(text, parkedText('create_dataset'));
+  const id = (JSON.parse(text) as { id?: string }).id;
+  assert.ok(id, 'the write returned the id of what it created');
+  // It really ran: the artifact is readable straight away, over the same door.
+  const readBack = resultOf(await rpc(admin, 'get_dataset', { datasetId: id }), 'get_dataset');
+  assert.notEqual(readBack.isError, true, 'the dataset the write created is not there');
+  assert.equal(__countConfirmations(), 0, 'the MCP door recorded a confirmation');
+
+  // And the tools Ask refuses outright still DISPATCH for a person here: an absent id is the
+  // tool's own `not_found`, never a "not available through the assistant" refusal.
+  const decided = resultOf(await rpc(admin, 'decide_approval', { id: 'apr_absent_conformance', decision: 'approve' }), 'decide_approval');
+  const decidedText = JSON.stringify(decided);
+  assert.doesNotMatch(decidedText, /surface_closed|not available through the assistant/);
+  assert.equal(__countConfirmations(), 0);
+});

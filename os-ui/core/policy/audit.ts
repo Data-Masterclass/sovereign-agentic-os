@@ -27,6 +27,10 @@ export type AuditAction =
   | 'deny'
   /** A requester took back their own agent run's held call before anyone decided it. */
   | 'approval.withdraw'
+  /** The present user pressed Confirm on a write their assistant proposed (Ask the OS). */
+  | 'assistant.confirm'
+  /** The present user pressed Cancel on a write their assistant proposed; nothing ran. */
+  | 'assistant.decline'
   | 'policy.override'
   | 'cost.cap.set'
   | 'role.change'

@@ -217,7 +217,7 @@ export const WRITE_TOOL_NAMES: ReadonlySet<string> = new Set(Object.keys(WRITE_T
  *     people's work, not a step in an agent's own task. (Not four-eyes — one person decides
  *     it — so its reason does not claim that.)
  *
- * WHICH DOORS CONSULT THIS — exactly three, and what is NOT covered:
+ * WHICH DOORS CONSULT THIS — exactly four, and what is NOT covered:
  *   1. AGENT SYSTEM RUNS — `tabs/agents/lib/build/os-tools.ts`: gate 0 of `grantedToolExecutor`
  *      refuses the call, and `grantedMcpTools` drops the tool from the schemas a model is
  *      offered (a model will try whatever it can see). This is every run of a system.yaml:
@@ -232,14 +232,22 @@ export const WRITE_TOOL_NAMES: ReadonlySet<string> = new Set(Object.keys(WRITE_T
  *      behind it; what it closes is an app tool that would read like the real thing in a trace
  *      and an approval inbox while doing something else entirely.
  *
- * OUT OF SCOPE, on purpose and stated so nobody reads "refused" as "everywhere": the two
- * INTERACTIVE ASSISTANTS — Ask the OS (`runOsAssistant`, `core/runtime/agent-loop.ts`) and the
- * per-tab assistant (`runTabAgent`, `core/runtime/runtime.ts`, via `/api/agent-chat` and the app
- * Build chat). They offer the present user's role-scoped registry and dispatch through
- * `handleRpc` as that user; they consult neither this table nor the hold table. A person is
- * present, but there is NO structural confirm step before a write there — the "confirm first"
- * rule is prompt-level only. Neither does `handleRpc` itself, the MCP HTTP door or any UI route
- * consult this table: a person keeps every one of these tools, under their own role gates.
+ *   4. ASK THE OS — `core/runtime/ask-confirm.ts` (`askClosedReason`, wired by
+ *      `askToolExecutor` in `core/runtime/agent-loop.ts` for `runOsAssistant`): an approval never
+ *      happens through an assistant, so Ask refuses these names with a typed refusal naming the
+ *      screen where a person decides, and `osToolSpecs` does not offer them. Every OTHER write
+ *      Ask's model calls is parked for the present user's own Confirm (`userConfirmGate`) and
+ *      runs only from `POST /api/assistant/confirm`. Switched off as a whole by the rollback
+ *      flag `ASK_CONFIRM_GATE=off`, which returns Ask to the paragraph below.
+ *
+ * OUT OF SCOPE, on purpose and stated so nobody reads "refused" as "everywhere": the per-tab
+ * assistant (`runTabAgent`, `core/runtime/runtime.ts`, via `/api/agent-chat`) and the app Build
+ * chat that runs on it. They are NOT YET GATED: they offer the tab's tools for the present
+ * user's role and dispatch through `handleRpc` as that user; they consult neither this table nor
+ * the hold table. A person is present, but there is NO structural confirm step before a write
+ * there — the "confirm first" rule is prompt-level only. Neither does `handleRpc` itself, the
+ * MCP HTTP door or any UI route consult this table: a person keeps every one of these tools,
+ * under their own role gates, and a person's own MCP client is never confirm-gated.
  *
  * It lives here rather than in a tab for the same reason `WRITE_TOOL_TABS` does — a core
  * table, independent of which bundles happen to be registered. Every entry must ALSO be in

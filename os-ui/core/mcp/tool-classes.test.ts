@@ -125,16 +125,18 @@ test('SESSION_ALLOWABLE_TOOLS: a small, reasoned set of catalogued writes — no
   }
 });
 
-test('GROUNDWORK ONLY: no production file consults the confirm classes yet', () => {
-  // The classification ships before the gate. Until the gate is wired, an import of this module
-  // from production code would be a behaviour change smuggled into a no-behaviour-change PR.
-  // LATER PRs add their consumer to ALLOWED — a reviewed, one-line diff.
+test('exactly these production files consult the confirm classes — a new consumer is a reviewed change', () => {
+  // The classification decides what runs without asking, so who reads it is pinned. A later PR
+  // that gates another surface adds its consumer to ALLOWED — a reviewed, one-line diff.
   const ALLOWED = new Set<string>([
     'core/mcp/tool-classes.ts',
-    // The gate's pure module and the store behind its port. Neither is REACHED by a production
-    // caller with a real gate yet — `core/runtime/confirm-gate.test.ts` pins that.
+    // The gate's pure module and the store behind its port.
     'core/runtime/confirm-gate.ts',
     'core/policy/confirmations.ts',
+    // Ask the OS: the Confirm card asks "may the third button be offered?" and the confirm
+    // endpoint asks the same before it grants an allowance.
+    'core/runtime/confirm-card.ts',
+    'core/runtime/ask-decide.ts',
   ]);
   const offenders: string[] = [];
   const walk = (dir: string) => {

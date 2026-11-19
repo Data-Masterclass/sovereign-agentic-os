@@ -191,7 +191,9 @@ test('C9: the turn returns artifacts BESIDE content and tools, always as an arra
   assert.equal(res.artifacts.length, 2);
   assert.equal(res.traceId, 'ask-1');
   // Total shape: no client branch for "old response".
-  assert.deepEqual(Object.keys(res).sort(), ['artifacts', 'content', 'model', 'plan', 'role', 'tab', 'tools', 'traceId']);
+  // `pending` (the Confirm cards) and `conversationId` joined with the confirmation gate.
+  assert.deepEqual(Object.keys(res).sort(), ['artifacts', 'content', 'conversationId', 'model', 'pending', 'plan', 'role', 'tab', 'tools', 'traceId']);
+  assert.deepEqual(res.pending, []);
 });
 
 test('C9/C5: the route re-validates, and the truncation fields survive to the client', () => {

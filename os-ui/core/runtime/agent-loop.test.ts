@@ -55,12 +55,23 @@ test('the system prompt carries OS orientation AND the current tab context', () 
   assert.match(osAssistantSystem(null), /CURRENT TAB: none/);
 });
 
-test('the system prompt tells the assistant to clarify + plan + confirm before building', () => {
+test('the system prompt keeps clarify + plan, and says calling the write tool is what produces the Confirm card', () => {
   const sys = osAssistantSystem('data');
-  assert.match(sys, /clarify → plan → confirm/i);
+  assert.match(sys, /clarify → plan → call the tool; the user confirms on a card/i);
   assert.match(sys, /clarifying\s+questions/i); // asks before guessing
-  assert.match(sys, /confirm/i);                // confirms before executing
+  assert.match(sys, /OUTLINE a short plan/); // planning stays
   assert.match(sys, /Read-only .* just\s*\n?\s*answer/i); // reads stay snappy (no ceremony)
+  // The prompt is UX guidance now, and says so: the tool call is how the model asks.
+  assert.match(sys, /Calling it does\s+NOT run it/);
+  assert.match(sys, /Confirm card/);
+  assert.match(sys, /enforced by the OS, not by these instructions/);
+  // The old control sentence is gone with the gate on…
+  assert.doesNotMatch(sys, /Only AFTER the user confirms do you execute/);
+  // …and is exactly what comes back when the gate is rolled back, because then it is all there is.
+  const legacy = osAssistantSystem('data', null, { confirmGate: false });
+  assert.match(legacy, /clarify → plan → confirm\)/);
+  assert.match(legacy, /Only AFTER the user confirms do you execute/);
+  assert.doesNotMatch(legacy, /Confirm card/);
 });
 
 test('the current tab tools are surfaced FIRST but the full registry is reachable', () => {
@@ -121,21 +132,21 @@ test('runOsAssistant folds the open-artifact page context into the system prompt
 
 // (c) a governance-blocked tool surfaces HONESTLY (no pretend action) ----------
 test('a Builder-gated tool is refused for a creator and surfaces as an honest error step', async () => {
-  // `promote` (publish a shared asset) needs Builder+. A creator naming it must be
-  // rejected by the SAME governed dispatch — surfaced as an isError step, not a
-  // silent success. The assistant then tells the truth about the block.
+  // `get_policy_view` needs Builder+. A creator naming it must be rejected by the SAME governed
+  // dispatch — surfaced as an isError step, not a silent success. (A read, so the confirmation
+  // gate lets it through to the dispatcher, where the role floor answers.)
   const { llm } = actThenFinish(
-    [{ id: 'p', name: 'promote', args: { appId: 'app-1' } }],
-    'I could not promote it — that action needs a Builder.',
+    [{ id: 'p', name: 'get_policy_view', args: {} }],
+    'I could not open the policy view — that needs a Builder.',
   );
   const res = await runOsAssistant({
     user: creator,
-    tab: 'software',
-    messages: [{ role: 'user', content: 'publish my app to the domain' }],
+    tab: 'governance',
+    messages: [{ role: 'user', content: 'show me the policy view' }],
     llm,
   });
   assert.equal(res.steps.length, 1);
-  assert.equal(res.steps[0].tool, 'promote');
+  assert.equal(res.steps[0].tool, 'get_policy_view');
   assert.equal(res.steps[0].isError, true);
   assert.match(res.steps[0].result, /builder|forbidden/i);
 });

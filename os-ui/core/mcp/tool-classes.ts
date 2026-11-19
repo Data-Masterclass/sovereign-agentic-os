@@ -11,9 +11,10 @@ import { WRITE_TOOL_NAMES } from '@core/mcp/write-tool-meta';
 /**
  * WHICH TOOL CALLS NEED THE PRESENT USER'S CONFIRMATION — the classification, in production code.
  *
- * GROUNDWORK ONLY. Nothing in production consults `needsUserConfirm` yet: no assistant, no route
- * and no executor imports this module, so no call is confirmed, parked or refused because of it.
- * It exists so the confirmation gate that later PRs wire in has ONE reviewed predicate to ask.
+ * WHO ASKS. The confirmation gate (`core/runtime/confirm-gate.ts`) asks `needsUserConfirm`, and
+ * Ask the OS runs behind that gate — so for Ask this list decides which calls run at once and
+ * which wait for the user. The tab assistant and the Build chat are not gated yet. The exact
+ * set of production files that read this module is pinned in `tool-classes.test.ts`.
  *
  * WHY NOT `WRITE_TOOL_NAMES`. The write catalog (`write-tool-meta.ts`) answers a different
  * question — "is an AGENT RUN held on this?" — and it is the wrong predicate here in both
@@ -139,7 +140,8 @@ export function needsUserConfirm(name: string): boolean {
  *     pin the disjointness (`tool-classes.test.ts` for the core tables,
  *     `tabs/agents/lib/build/confirm-session-allowable.test.ts` for `hold.ts`).
  *
- * Nothing in production creates such a grant yet. Each entry: name → why it qualifies.
+ * A grant is created only by the Ask confirm endpoint, on the user's "Allow for this
+ * conversation" click (`core/runtime/ask-decide.ts`). Each entry: name → why it qualifies.
  */
 export const SESSION_ALLOWABLE_TOOLS: Readonly<Record<string, string>> = {
   create_dataset: 'creates a NEW private dataset; sharing is the separate promotion path',

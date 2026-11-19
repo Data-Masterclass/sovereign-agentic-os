@@ -7,9 +7,10 @@
  *             I want that enforced by code rather than by a sentence in a prompt — so the harness
  *             must not be able to receive an executor whose author never chose a gate.
  * ARCHITECTURE:
- *   - GROUNDWORK. Today every production caller chooses `ungatedInteractive`, which passes every
- *     call straight through: behaviour is unchanged, and nothing parks. Later PRs replace those
- *     call sites one by one; `confirm-gate.test.ts` pins the exact list so it can only shrink.
+ *   - WHO USES WHICH GATE. Ask the OS (`core/runtime/agent-loop.ts`) runs behind
+ *     `userConfirmGate`. The tab assistant / Build chat (`runtime.ts`) and the Software Team panel
+ *     (`agentic-graph.ts`) still choose `ungatedInteractive`, which passes every call straight
+ *     through. `confirm-gate.test.ts` pins both lists, so the ungated one can only shrink.
  *   - Pure: no `server-only`, no store, no transport. The confirmation store is reached through an
  *     injected {@link ConfirmationPort}, so this module and its tests need no backend.
  *   - `runAgentic` takes a {@link GatedToolExecutor}. The brand is a compile-time property (a
@@ -84,6 +85,19 @@ export type ConfirmationPort = {
    * `SESSION_ALLOWABLE_TOOLS` set.
    */
   sessionAllows?(request: { userId: string; conversationId: string; tool: string }): boolean | Promise<boolean>;
+  /**
+   * A reason NOT to offer a confirmation for this exact call, although the tool needs one — asked
+   * last, right before `create`. Returns the typed refusal, or null to go ahead and park. This is
+   * where a store says "the user already declined exactly this, twice" or "these arguments are
+   * too large to hold". Optional: a port without it never refuses. A port that throws here is
+   * treated as a refusal — never as "go ahead".
+   */
+  refusalFor?(request: {
+    userId: string;
+    conversationId: string;
+    tool: string;
+    args: Record<string, unknown>;
+  }): { code: string; reason: string } | null | Promise<{ code: string; reason: string } | null>;
 };
 
 /** A refusal in the same `{ error: { code, reason } }` shape the agent executor's refusals use. */
@@ -104,11 +118,13 @@ export function parkedText(tool: string): string {
  *   1. a tool the surface has closed          → typed refusal (`surface_closed`), `inner` not called;
  *   2. a confirm-free tool (`needsUserConfirm` false) → `inner`;
  *   3. a tool the user allowed for this conversation  → `inner`;
- *   4. anything else                          → `inner` is NOT called; a pending confirmation is
+ *   4. a call the port will not offer (`refusalFor`)  → typed refusal, `inner` not called, no
+ *      confirmation created;
+ *   5. anything else                          → `inner` is NOT called; a pending confirmation is
  *      created through `port` and a PARKED outcome returned.
  * Fail-closed at every step: an unknown tool needs confirmation (2); a port that cannot answer
- * "allowed?" is treated as "no" (3); a port that cannot record the confirmation yields a refusal,
- * never an execution (4).
+ * "allowed?" is treated as "no" (3); a port that cannot answer "refuse?" refuses (4); a port that
+ * cannot record the confirmation yields a refusal, never an execution (5).
  */
 export function userConfirmGate(inner: ToolExecutor, ctx: ConfirmContext, port: ConfirmationPort): GatedToolExecutor {
   return brand(async (name, args) => {
@@ -124,6 +140,16 @@ export function userConfirmGate(inner: ToolExecutor, ctx: ConfirmContext, port: 
       allowed = false;
     }
     if (allowed) return inner(name, args);
+
+    try {
+      const refused = await port.refusalFor?.({ userId: ctx.userId, conversationId: ctx.conversationId, tool: name, args });
+      if (refused) return refusal(refused.code, refused.reason);
+    } catch (e) {
+      return refusal(
+        'confirmation_unavailable',
+        `'${name}' needs the user's confirmation and the confirmation could not be prepared (${(e as Error).message}). It was NOT executed.`,
+      );
+    }
 
     let pending: PendingToolCall;
     try {
@@ -172,5 +198,18 @@ export function readOnlyGate(inner: ToolExecutor): GatedToolExecutor {
  * and the list is meant to reach zero.
  */
 export function ungatedInteractive(inner: ToolExecutor): GatedToolExecutor {
+  return brand((name, args) => inner(name, args), 'ungated-interactive');
+}
+
+/**
+ * THE ROLLBACK PASS-THROUGH — a surface that HAS a real gate, running without it because an
+ * operator switched the gate off with that surface's documented rollback flag. Behaviourally the
+ * same as {@link ungatedInteractive}, and stamped with the same kind so a trace tells the truth;
+ * a separate name so the two lists stay honest: a call site of `ungatedInteractive` is a surface
+ * not gated YET, a call site of this one is a gated surface with an off-switch.
+ * `confirm-gate.test.ts` pins this list too. `flag` names the switch, for the reader and the trace.
+ */
+export function ungatedByRollbackFlag(inner: ToolExecutor, flag: string): GatedToolExecutor {
+  void flag;
   return brand((name, args) => inner(name, args), 'ungated-interactive');
 }

@@ -2,6 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { parseArtifacts, type ChatArtifact } from '@core/runtime/chat-artifacts';
+import { parseConfirmCards, type ConfirmCard } from '@core/runtime/confirm-card';
 
 /**
  * FEATURE:    The Ask-the-OS turn response shape — `{ content, plan, tools, artifacts, … }`.
@@ -24,8 +25,13 @@ import { parseArtifacts, type ChatArtifact } from '@core/runtime/chat-artifacts'
  *   that can refuse to hand the browser something it does not understand.
  */
 
-/** The per-turn trace the surface already showed as chips: which governed tools ran. */
-export type AskToolTrace = { name: string; isError: boolean };
+/**
+ * The per-turn trace the surface shows as chips: which governed tools the model called, and what
+ * became of each call. `awaiting` — it did NOT run, it waits for the user's Confirm. `skipped` —
+ * it did NOT run, because it came after a call that is waiting. Neither is an error and neither
+ * is a success, so both travel as their own flag beside `isError` (which stays for old clients).
+ */
+export type AskToolTrace = { name: string; isError: boolean; awaiting?: true; skipped?: true };
 
 export type AskTurnResponse = {
   role: 'assistant';
@@ -38,16 +44,29 @@ export type AskTurnResponse = {
   /** C1 — the Langfuse trace (= turn) id every model call on this turn was logged under. */
   traceId: string;
   model: string;
+  /**
+   * The Confirm cards for what this turn parked — each built by the server from its own record
+   * of the held call (`core/runtime/confirm-card.ts`), never from the model's words. Empty on
+   * every turn that parked nothing.
+   */
+  pending: ConfirmCard[];
+  /**
+   * The conversation id the client echoes on its next turn and that scopes confirmations,
+   * their outcomes and "Allow for this conversation". Not a secret; see `ask-confirm.ts`.
+   */
+  conversationId: string;
 };
 
 export type AskTurnInput = {
   finalText: string;
   plan: string;
-  steps: { tool: string; isError: boolean }[];
+  steps: { tool: string; isError: boolean; parked?: true; skipped?: true }[];
   artifacts: ChatArtifact[];
   tab: string | null;
   traceId: string;
   model: string;
+  pending?: ConfirmCard[];
+  conversationId?: string;
 };
 
 /**
@@ -61,10 +80,17 @@ export function askTurnResponse(input: AskTurnInput): AskTurnResponse {
     content: input.finalText,
     plan: input.plan,
     // The transparent, honest trace of the governed tools it invoked this turn.
-    tools: input.steps.map((s) => ({ name: s.tool, isError: s.isError })),
+    tools: input.steps.map((s) => ({
+      name: s.tool,
+      isError: s.isError,
+      ...(s.parked ? { awaiting: true as const } : {}),
+      ...(s.skipped ? { skipped: true as const } : {}),
+    })),
     artifacts: parseArtifacts({ artifacts: input.artifacts }),
     tab: input.tab,
     traceId: input.traceId,
     model: input.model,
+    pending: parseConfirmCards(input.pending ?? []),
+    conversationId: input.conversationId ?? '',
   };
 }

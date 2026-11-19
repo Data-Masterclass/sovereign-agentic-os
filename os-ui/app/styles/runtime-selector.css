@@ -333,6 +333,91 @@
   color: #b23b3b;
   background: rgba(190, 60, 60, 0.08);
 }
+/* A call that did NOT run: it waits for the user's Confirm, or came after one that does. */
+.chip.osa-tool.awaiting {
+  border-style: dashed;
+  border-color: var(--gold-deep);
+  color: var(--text);
+  background: transparent;
+}
+.chip.osa-tool.skipped {
+  border-style: dashed;
+  border-color: var(--warm-border-strong, var(--gold-line));
+  color: var(--text-faint);
+  background: transparent;
+}
+
+/* A decision the user took on a card, kept in the conversation as a quiet line. */
+.osa-decision-note {
+  align-self: center;
+  margin: 2px 0;
+  font-size: 11.5px;
+  color: var(--text-faint);
+}
+
+/* --- THE CONFIRM CARD (core/ui/ConfirmActionCard.tsx) ------------------------
+   One change the assistant wants to make, waiting for the user. Same border
+   vocabulary as the Software Team panel's confirm (.sw-team-confirm). Theme
+   tokens only, so it follows light and dark with the rest of the drawer. */
+.osa-confirm {
+  margin-top: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--gold-deep);
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.osa-confirm.danger { border-color: var(--danger); }
+.osa-confirm.settled { border-color: var(--gold-line); }
+.osa-confirm.danger.settled { border-color: rgba(190, 60, 60, 0.4); }
+.osa-confirm-title { font-weight: 500; }
+.osa-confirm-title strong { font-weight: 700; }
+.osa-confirm-tool { margin-top: 2px; font-size: 12px; color: var(--text-muted); }
+.osa-confirm-tool .mono { font-family: var(--font-mono, ui-monospace, monospace); color: var(--gold-text); }
+.osa-confirm-args { margin: 8px 0 0; display: grid; gap: 2px; }
+.osa-confirm-arg { display: grid; grid-template-columns: minmax(70px, 30%) 1fr; gap: 8px; }
+.osa-confirm-arg dt { font-family: var(--font-mono, ui-monospace, monospace); font-size: 11.5px; color: var(--text-faint); }
+.osa-confirm-arg dd { margin: 0; font-size: 12.5px; overflow-wrap: anywhere; }
+.osa-confirm-toggle {
+  margin-top: 8px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 12px;
+  color: var(--gold-text);
+  text-decoration: underline;
+  cursor: pointer;
+}
+.osa-confirm-details {
+  margin: 6px 0 0;
+  padding: 8px 10px;
+  max-height: 220px;
+  overflow: auto;
+  border: 1px solid var(--gold-line);
+  border-radius: 8px;
+  background: var(--bg-elevated);
+  color: var(--text);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11.5px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.osa-confirm-consequence { margin: 8px 0 0; font-size: 12.5px; color: var(--text-muted); }
+.osa-confirm.danger .osa-confirm-consequence strong { color: var(--danger); }
+.osa-confirm-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.btn.osa-confirm-danger { background: var(--danger); border-color: var(--danger); color: #fff; }
+.osa-confirm-expiry { margin-top: 8px; font-size: 11.5px; color: var(--text-faint); }
+.osa-confirm-status { margin-top: 8px; font-size: 12.5px; font-weight: 500; }
+.osa-confirm .btn:focus-visible,
+.osa-confirm-toggle:focus-visible,
+.osa-confirm-details:focus-visible {
+  outline: 2px solid var(--gold-deep);
+  outline-offset: 2px;
+}
+.osa-confirm.danger .btn.osa-confirm-danger:focus-visible { outline-color: var(--text); }
 
 
 /* --- Ask-the-OS ARTIFACTS (C9) ----------------------------------------------
