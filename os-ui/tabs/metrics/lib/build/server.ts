@@ -33,6 +33,8 @@ export type MetricBuildReport = {
    * genuine failure. The metric is persisted; the explorer computes it with a time slice.
    */
   pending?: boolean;
+  /** Why the build is not `live` (the failing step's reason), so the state is never unexplained. */
+  reason?: string;
 };
 
 export async function buildMetric(
@@ -45,9 +47,20 @@ export async function buildMetric(
   const adapters = makeMetricAdapters(deps);
   const rows = [await runAdapter(adapters.trino, ctx)];
   const ok = rows.every((r) => r.status === 'ok');
-  const outcome = ctx.outcome?.mode;
-  const mode: BuildMode =
-    outcome === 'offline-mock' ? 'offline-mock' : outcome === 'unavailable' ? 'unavailable' : 'live';
+  const mode = buildModeOf(ctx.outcome);
   const pending = !ok && ctx.outcome?.pending === true;
-  return { rows, ok, member: ctx.member, mode, ...(pending ? { pending: true } : {}) };
+  const reason = mode === 'live' ? undefined : (rows.find((r) => r.error)?.error ?? ctx.outcome?.warning);
+  return { rows, ok, member: ctx.member, mode, ...(pending ? { pending: true } : {}), ...(reason ? { reason } : {}) };
+}
+
+/**
+ * The mode a build honestly ran as. `live` ONLY when the governed read path really answered
+ * (an explore result came back in a live mode). No result at all — the explore step said it was
+ * unavailable, or it threw — means nothing ran, so the build is `unavailable`, never `live`.
+ */
+export function buildModeOf(outcome: MetricBuildContext['outcome']): BuildMode {
+  if (!outcome) return 'unavailable';
+  if (outcome.mode === 'offline-mock') return 'offline-mock';
+  if (outcome.unavailable || outcome.mode === 'unavailable') return 'unavailable';
+  return 'live';
 }
