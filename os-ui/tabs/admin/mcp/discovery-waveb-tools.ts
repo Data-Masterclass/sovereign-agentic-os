@@ -216,6 +216,13 @@ export const waveBReadTools: McpTool[] = [
         sensitivity: a.sensitivity,
         kind: a.kind,
         indexing: a.indexing.mode,
+        /** WHY it is stored-only (`restricted` | `opt-out` | `no-text`), when it is. */
+        storedOnlyReason: a.indexing.mode === 'stored-only' ? a.indexing.storedOnlyReason ?? null : null,
+        /** Binary text-extraction state: `extracted`, `pending` (still being read — call again
+         *  shortly) or `failed` with the specific `reason`. Null for text-like files. An empty
+         *  `text` with a `failed` extraction means the parser could not read the document — it
+         *  does NOT mean the document is empty. */
+        extraction: a.indexing.extraction ?? null,
         version: a.version,
         bytes: v.bytes,
         history: v.history,

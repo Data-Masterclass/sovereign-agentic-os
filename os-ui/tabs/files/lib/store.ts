@@ -9,6 +9,8 @@ import {
   type Sensitivity,
   type Storage,
   type ProvenanceSource,
+  type Extraction,
+  type ExtractionFailureCode,
   AssetError,
   parseAsset,
   serializeAsset,
@@ -29,6 +31,7 @@ import {
   assertGrantsWithinAuthority,
 } from '@tabs/data/lib/index';
 import { canRead } from '@tabs/files/lib/dls';
+import { doclingCanParse } from '@tabs/files/lib/ingest/docling-client';
 import { canManageArtifact, type ArtifactScope } from '@core/policy/edit-scope';
 import { promotionGate, gateReason } from '@tabs/files/lib/promotion';
 import { recordLineage } from '@tabs/files/lib/lineage';
@@ -250,6 +253,12 @@ function ensureSeeded(): void {
   }
 }
 
+/** Test hook: place a record exactly as given — e.g. one written before a schema field existed. */
+export function __putRecordForTests(rec: FileRecord): void {
+  ensureSeeded();
+  fs().store.set(rec.id, rec);
+}
+
 /** Test hook: wipe + reseed. */
 export function __resetStore(): void {
   const s = fs();
@@ -345,6 +354,9 @@ export function moveFilesDomain(sel: { id?: string; onlyUnassigned?: boolean }, 
 // --------------------------------------------------------------------- lists --
 
 function statusOf(a: FileAsset): FileStatus {
+  // A binary whose text is being read right now is neither searchable nor "stored only" by
+  // anyone's choice — say so (the chip the browser already has for it).
+  if (a.indexing.extraction?.status === 'pending') return 'processing';
   return a.indexing.mode === 'stored-only' ? 'stored' : 'searchable';
 }
 
@@ -487,10 +499,19 @@ export function createFile(user: Principal, input: UploadInput): FileAsset {
   });
   const text = input.text ?? '';
   a.indexing.mode = indexingModeFor(a.sensitivity, input.indexing);
-  // Honesty: an upload with no extractable text (e.g. a binary the mock parser
-  // can't read yet) indexes zero chunks, so it is HELD, not searchable. Reflect
-  // that as `stored-only` instead of falsely reporting "Searchable ✓".
-  if (a.indexing.mode === 'indexed' && !text.trim()) a.indexing.mode = 'stored-only';
+  // WHY it is stored-only is recorded with the mode, so a later backfill can tell a choice
+  // (never parse) from an absence (parse when possible). See `StoredOnlyReason`.
+  if (a.indexing.mode === 'stored-only') {
+    a.indexing.storedOnlyReason = a.sensitivity === 'restricted' ? 'restricted' : 'opt-out';
+  }
+  // Honesty: an upload with no text YET (a binary whose bytes have not been through the
+  // parser) indexes zero chunks, so it is HELD, not searchable. Reflect that as
+  // `stored-only` instead of falsely reporting "Searchable ✓". The upload door then runs
+  // text extraction (extract.ts), which flips it to `indexed` only once real text is stored.
+  if (a.indexing.mode === 'indexed' && !text.trim()) {
+    a.indexing.mode = 'stored-only';
+    a.indexing.storedOnlyReason = 'no-text';
+  }
   a.indexing.representations = representationsFor(a.kind, a.indexing.mode);
   const bytes = input.bytes ?? text.length;
   const rec: FileRecord = {
@@ -620,6 +641,13 @@ export function setIndexingMode(id: string, user: Principal, mode: IndexingMode)
   const a = editOf(rec, user);
   versions.record(rec.id, user.id, snapshotState(rec), 'edit indexing');
   a.indexing.mode = indexingModeFor(a.sensitivity, mode);
+  // An explicit choice, recorded as one: `opt-out` is what keeps this file away from the
+  // parser for good (the backfill and "Extract text" both honour it).
+  a.indexing.storedOnlyReason =
+    a.indexing.mode === 'stored-only' ? (a.sensitivity === 'restricted' ? 'restricted' : 'opt-out') : undefined;
+  // A choice supersedes an unfinished or failed parse: there is nothing "still extracting" and
+  // no failure to retry on a file its owner has taken out of indexing.
+  if (a.indexing.mode === 'stored-only' && a.indexing.extraction?.status !== 'extracted') a.indexing.extraction = undefined;
   a.indexing.representations = representationsFor(a.kind, a.indexing.mode);
   persist(rec, a);
   return a;
@@ -632,6 +660,16 @@ export function setSensitivity(id: string, user: Principal, sensitivity: Sensiti
   a.sensitivity = sensitivity;
   // Re-clamp indexing (restricted ⇒ stored-only).
   a.indexing.mode = indexingModeFor(sensitivity, a.indexing.mode);
+  if (sensitivity === 'restricted') {
+    a.indexing.storedOnlyReason = 'restricted';
+    // Policy supersedes an unfinished or failed parse (its result, if it arrives, is discarded).
+    if (a.indexing.extraction?.status !== 'extracted') a.indexing.extraction = undefined;
+  } else if (a.indexing.storedOnlyReason === 'restricted') {
+    // Lifting `restricted` does not make the file searchable by itself (the mode stays
+    // stored-only until someone asks); it only stops being a POLICY hold. With no text on
+    // record that is the recoverable `no-text` state, otherwise an ordinary opt-out.
+    a.indexing.storedOnlyReason = rec.text.trim() ? 'opt-out' : 'no-text';
+  }
   a.indexing.representations = representationsFor(a.kind, a.indexing.mode);
   persist(rec, a);
   return a;
@@ -887,6 +925,103 @@ export function transition(
 export function promotionStatus(id: string, user: Principal): { tier: FileAsset['tier']; gate: ReturnType<typeof promotionGate> } {
   const a = viewOf(get(id), user);
   return { tier: a.tier, gate: promotionGate(a) };
+}
+
+// --------------------------------------------- binary text extraction (server) --
+
+/**
+ * May this file's BYTES be sent to the document parser to obtain its text?
+ *
+ * NEVER for a `restricted` file or an owner's opt-out — those are decisions, and a decision is
+ * not something a backfill gets to revisit. Only for a file that has stored bytes of a format the
+ * parser reads and NO text on record.
+ *
+ * LEGACY RECORDS (created before `storedOnlyReason` existed, 2026-11-19) carry no reason. For
+ * those the rule is a heuristic, and it is safe because of how they came to be: until this fix
+ * `createFile` flipped EVERY upload with empty text to stored-only, the UI upload never sent an
+ * `indexing` choice, and "Opt out of indexing" was not offered on a file that was already
+ * stored-only. So a legacy record that is (not restricted) + (has object bytes) + (a parseable
+ * document) + (empty text) is stored-only because nothing could be read — not because anyone
+ * asked. A legacy file the owner opted out of had text (that is the only way the button showed),
+ * and a file with text is never eligible.
+ */
+export type ExtractionEligibility = { eligible: true } | { eligible: false; why: string };
+
+export function extractionEligibility(
+  a: FileAsset,
+  rec: { text: string; object?: StoredObjectMeta | null },
+): ExtractionEligibility {
+  if (a.sensitivity === 'restricted' || a.indexing.storedOnlyReason === 'restricted') {
+    return { eligible: false, why: 'restricted: held by policy, never parsed or indexed' };
+  }
+  if (a.indexing.storedOnlyReason === 'opt-out') {
+    return { eligible: false, why: 'stored-only by the owner’s choice, never parsed or indexed' };
+  }
+  if (rec.text.trim()) return { eligible: false, why: 'the file already has text on record' };
+  if (!rec.object) return { eligible: false, why: 'no original bytes are stored for this file' };
+  if (!doclingCanParse(a.name, rec.object.contentType)) {
+    return { eligible: false, why: 'not a document format the parser reads (PDF, DOCX, PPTX, XLSX, EPUB)' };
+  }
+  return { eligible: true };
+}
+
+/** What the extraction orchestrator needs about one file — SERVER-INTERNAL, not user-scoped. */
+export function extractionSubject(id: string): { asset: FileAsset; text: string; object: StoredObjectMeta | null; eligibility: ExtractionEligibility } | null {
+  ensureSeeded();
+  const rec = fs().store.get(id);
+  if (!rec) return null;
+  const asset = parseAsset(rec.yaml);
+  return { asset, text: rec.text, object: rec.object ?? null, eligibility: extractionEligibility(asset, rec) };
+}
+
+/** Record an extraction STATE on the file (pending / failed). Never touches the text. */
+function setExtraction(id: string, extraction: Extraction): FileAsset | null {
+  const rec = fs().store.get(id);
+  if (!rec) return null;
+  const a = parseAsset(rec.yaml);
+  if (!extractionEligibility(a, rec).eligible) return null; // restricted / opted out / got text meanwhile
+  a.indexing.mode = 'stored-only';
+  a.indexing.storedOnlyReason = 'no-text';
+  a.indexing.representations = [];
+  a.indexing.extraction = extraction;
+  persist(rec, a);
+  return a;
+}
+
+/** The parser has the bytes and has not answered yet. */
+export function markExtractionPending(id: string): FileAsset | null {
+  return setExtraction(id, { status: 'pending', engine: 'docling', at: now() });
+}
+
+/** The parser could not produce text. The file stays stored-only, with the SPECIFIC reason. */
+export function recordExtractionFailure(id: string, code: ExtractionFailureCode, reason: string): FileAsset | null {
+  return setExtraction(id, { status: 'failed', engine: 'docling', at: now(), code, reason });
+}
+
+/**
+ * Store the text the parser read from the file's bytes, and make the file indexable.
+ *
+ * The eligibility is RE-CHECKED here, at the write: an extraction can take minutes and runs in
+ * the background, and the owner may have marked the file `restricted`, opted it out or deleted
+ * it meanwhile. In every such case the text is dropped — `null` — and never stored.
+ *
+ * The content version is NOT bumped (the bytes did not change); the current version's
+ * fingerprint is updated from the empty-text hash to the real text's.
+ */
+export function applyExtractedText(id: string, text: string): FileAsset | null {
+  const rec = fs().store.get(id);
+  if (!rec || !text.trim()) return null;
+  const a = parseAsset(rec.yaml);
+  if (!extractionEligibility(a, rec).eligible) return null;
+  rec.text = text;
+  const current = rec.history[rec.history.length - 1];
+  if (current) current.hash = contentHash(text);
+  a.indexing.mode = 'indexed';
+  a.indexing.storedOnlyReason = undefined;
+  a.indexing.representations = representationsFor(a.kind, 'indexed');
+  a.indexing.extraction = { status: 'extracted', engine: 'docling', at: now(), chars: text.length };
+  persist(rec, a);
+  return a;
 }
 
 // ------------------------------------------------- index bootstrap (server) --

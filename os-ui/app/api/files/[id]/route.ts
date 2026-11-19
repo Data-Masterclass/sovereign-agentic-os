@@ -9,7 +9,7 @@ import {
   getFile, moveFile, setDocs, setSensitivity, setIndexingMode, deleteFile,
   archiveFile, unarchiveFile, renameFile,
 } from '@tabs/files/lib/store';
-import { reindexById } from '@tabs/files/lib/pipeline-server';
+import { reindexById, settleStale } from '@tabs/files/lib/pipeline-server';
 import { removeFromIndex } from '@tabs/files/lib/index-store';
 import { purgeFileObjects } from '@tabs/files/lib/physical-delete';
 import { deleteBlob } from '@tabs/files/lib/object-store';
@@ -29,6 +29,7 @@ export const GET = withRoute<{ id: string }>(async ({ user, params, req }) => {
     const check = await checkAppGrant(slug, 'files', id);
     if (!check.allowed) return NextResponse.json({ error: check.reason }, { status: 403 });
   }
+  settleStale(id); // a text extraction that died with its process must not read "Extracting…" forever
   return NextResponse.json(getFile(id, user));
 }, { gate: requirePrincipal as () => Promise<CurrentUser> });
 
@@ -57,6 +58,9 @@ export const PATCH = withRoute<{ id: string }, Patch>(async ({ user, params, bod
   // Re-index: sensitivity/index-opt-out/tags/folder change the indexed metadata
   // (or remove the file from the index when it becomes stored-only).
   await reindexById(id, user.id); // A27: the editor pays for the re-embed
+  // Re-read: "Index this file" on a PDF runs text extraction, which decides the final state
+  // (Searchable, still extracting, or Stored only with the reason) after the mutators above.
+  asset = getFile(id, user).asset;
   return NextResponse.json({ asset });
 }, { parse: true, gate: requirePrincipal as () => Promise<CurrentUser> });
 

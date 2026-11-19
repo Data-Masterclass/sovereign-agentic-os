@@ -50,22 +50,25 @@ test('mock table → table for spreadsheets', async () => {
   assert.equal(r.representations[0].type, 'table');
 });
 
-test('LIVE docling parses a real service response (mode: live)', async () => {
-  globalThis.fetch = (async () => new Response(
-    JSON.stringify({ document: { texts: [{ text: 'Parsed block one' }, { text: 'Parsed block two' }] } }),
-    { status: 200, headers: { 'content-type': 'application/json' } },
-  )) as typeof fetch;
-  const r = await liveAdapterFor('doc').apply(input());
-  assert.equal(r.mode, 'live');
-  assert.equal(r.representations[0].chunks.length, 2);
-  assert.equal(r.representations[0].chunks[0].text, 'Parsed block one');
+test('LIVE docling/table adapters chunk the file’s STORED text and never touch the network', async () => {
+  // The Docling call moved to extract.ts (it needs the BYTES, and its text is stored on the file
+  // first). What reaches this adapter is that stored text — the upload's own or the parser's.
+  let calls = 0;
+  globalThis.fetch = (async () => { calls += 1; throw new Error('the adapter must not call out'); }) as typeof fetch;
+  const doc = await liveAdapterFor('doc').apply(input());
+  assert.equal(doc.mode, 'live');
+  assert.deepEqual(doc.representations[0].chunks.map((c) => c.text), ['First sentence.', 'Second sentence.', 'Third one.']);
+  const table = await liveAdapterFor('table').apply(input({ kind: 'table', name: 't.xlsx', text: '| a | b |\n| 1 | 2 |' }));
+  assert.equal(table.representations[0].type, 'table');
+  assert.equal(table.representations[0].chunks.length, 2);
+  assert.equal(calls, 0);
+  assert.ok(verifyResult(doc));
 });
 
-test('LIVE adapter falls back to the deterministic MOCK when the service is down', async () => {
-  globalThis.fetch = (async () => { throw new Error('ECONNREFUSED'); }) as typeof fetch;
-  const r = await liveAdapterFor('doc').apply(input());
-  assert.equal(r.mode, 'mock', 'honest fallback, never a silent failure');
-  assert.equal(r.representations[0].chunks.length, 3);
+test('LIVE docling adapter with NO stored text yields no representation — nothing is invented, nothing indexed', async () => {
+  const r = await liveAdapterFor('doc').apply(input({ text: '' }));
+  assert.deepEqual(r.representations, []);
+  assert.equal(verifyResult(r), false, 'the pipeline reports `empty` and writes no row');
 });
 
 test('LIVE transcribe parses ASR segments', async () => {

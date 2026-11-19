@@ -62,7 +62,9 @@ import {
 import { indexAsset, type IndexReport } from '@tabs/files/lib/index-pipeline';
 import { pruneChunksExcept } from '@tabs/files/lib/index-store';
 import { actingCaller, type EmbedCaller } from '@tabs/files/lib/embed';
-import { bodyForIndex, ensureHydrated, listAllForIndex } from '@tabs/files/lib/store';
+import { bodyForIndex, ensureHydrated, extractionSubject, listAllForIndex } from '@tabs/files/lib/store';
+import { extractFileText, type ExtractResult } from '@tabs/files/lib/extract';
+import { LIVE_EXTRACT_DEPS } from '@tabs/files/lib/pipeline-server';
 import type { FileAsset } from '@tabs/files/lib/asset-schema';
 
 const TARGET = 'files' as const;
@@ -238,11 +240,20 @@ export function mappingDimension(body: Record<string, unknown>, field: string): 
   return null;
 }
 
-/** Every stored file the index is SUPPOSED to hold rows for. `stored-only` files are held, never indexed. */
-async function storedFileUnits(): Promise<StoredUnit[]> {
+/**
+ * Every stored file the index is SUPPOSED to hold rows for.
+ *
+ * `stored-only` files are held, never indexed — with ONE exception (the PDF backfill,
+ * 2026-11-19): a file that is stored-only only because no text could be read from it when it was
+ * uploaded (`store.extractionEligibility` — never a `restricted` file, never an owner's opt-out).
+ * Such a file has bytes in the object store and no row in the index, so the plan lists it as
+ * `missing-representation` and the default `marked` filter picks it up; the run then reads its
+ * text from the bytes before indexing it. See {@link reindexOneFile}.
+ */
+export async function storedFileUnits(): Promise<StoredUnit[]> {
   await ensureHydrated();
   return listAllForIndex()
-    .filter(({ asset }) => asset.indexing.mode !== 'stored-only')
+    .filter(({ asset }) => asset.indexing.mode !== 'stored-only' || extractionSubject(asset.id)?.eligibility.eligible === true)
     .map(({ asset }) => ({ id: asset.id, label: asset.name }));
 }
 
@@ -254,7 +265,16 @@ export type UnitDeps = {
   body: (id: string) => { asset: FileAsset; text: string } | null;
   index: (asset: FileAsset, text: string, caller: EmbedCaller | undefined) => Promise<IndexReport>;
   prune: (fileId: string, keepIds: string[]) => Promise<boolean>;
+  /**
+   * Read a text-less file's text from its stored bytes and store it on the record (Docling).
+   * Returns `skipped` — without calling the parser — for a restricted / opted-out / non-document
+   * file. Optional so a test of the add-then-prune order need not supply it.
+   */
+  extract?: (id: string) => Promise<ExtractResult>;
 };
+
+/** How long one re-index unit waits for a text extraction before moving on. */
+export const BACKFILL_EXTRACT_WAIT_MS = 120_000;
 
 export const LIVE_UNIT_DEPS: UnitDeps = {
   body: bodyForIndex,
@@ -262,6 +282,12 @@ export const LIVE_UNIT_DEPS: UnitDeps = {
   index: (asset, text, caller) =>
     indexAsset(asset, text, { live: true, reembed: true, awaitMirror: true, requireLive: true, keepOnEmpty: true, caller }),
   prune: pruneChunksExcept,
+  // Extraction only STORES the text here; the strict `index` above (re-embed, awaited mirror,
+  // require-live) is what indexes it, so the ordinary best-effort indexer is switched off.
+  // Bounded per unit: a long scan must not hold a batch request open for the parser's whole
+  // deadline. Past the wait the unit is reported failed-for-now while the extraction finishes in
+  // the background and stores its text; the next plan lists the file again and indexes it.
+  extract: (id) => extractFileText(id, { ...LIVE_EXTRACT_DEPS, index: async () => undefined }, { waitMs: BACKFILL_EXTRACT_WAIT_MS }),
 };
 
 /**
@@ -270,8 +296,26 @@ export const LIVE_UNIT_DEPS: UnitDeps = {
  * parse, the embedding and the mirror all confirmed.
  */
 export async function reindexOneFile(unitId: string, by: string, deps: UnitDeps = LIVE_UNIT_DEPS): Promise<UnitOutcome> {
-  const body = deps.body(unitId);
+  let body = deps.body(unitId);
   if (!body) return { outcome: 'skipped', reason: 'the file is no longer stored' };
+  // THE BACKFILL. No text on record ⇒ ask for it to be read from the stored bytes first. The
+  // extractor itself refuses (`skipped`, parser never called) for a restricted file, an owner's
+  // opt-out and anything that is not a parseable document, so this cannot widen what is indexed.
+  if (!body.text.trim() && deps.extract) {
+    const ex = await deps.extract(unitId);
+    if (ex.state === 'failed') {
+      if (ex.code === 'parser-unreachable') {
+        // The engine went away mid-run: stop the JOB (typed), exactly as a vanished parser
+        // always has — do not walk the rest of the corpus marking every file failed.
+        refuseOfflineMock(`Cannot re-index “${body.asset.name}”: ${ex.reason} Nothing was written, removed or pruned.`);
+      }
+      return { outcome: 'failed', reason: `no text could be extracted — ${ex.reason} The file stays stored-only.` };
+    }
+    if (ex.state === 'pending') {
+      return { outcome: 'failed', reason: 'text extraction is still running for this file (a long document) — its text is stored when it finishes; plan and run the re-index again to index it' };
+    }
+    if (ex.state === 'extracted') body = deps.body(unitId) ?? body;
+  }
   if (body.asset.indexing.mode === 'stored-only') {
     return { outcome: 'skipped', reason: 'stored-only: held by policy, never indexed' };
   }

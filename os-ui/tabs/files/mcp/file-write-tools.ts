@@ -89,7 +89,7 @@ import {
   applyApprovedFilePromotion,
   type FilePromotionRequest,
 } from '@tabs/files/lib/store';
-import { reindexFile } from '@tabs/files/lib/pipeline-server';
+import { ingestUploaded } from '@tabs/files/lib/pipeline-server';
 import { putBlob } from '@tabs/files/lib/object-store';
 import type { Sensitivity } from '@tabs/files/lib/asset-schema';
 
@@ -119,6 +119,7 @@ export const fileWriteTools: McpTool[] = [
       'Upload a governed file (private object-store file at v1) into the Files tab — the SAME governed path as the UI upload. ' +
       'For BINARY files (PDFs, images, Office docs, etc.) provide the raw bytes as `base64Content` (standard base64) and set `mimeType` (e.g. "application/pdf"). ' +
       'The decoded bytes are stored in the governed object store so Download returns the REAL file byte-for-byte. ' +
+      'A binary DOCUMENT (PDF, DOCX, PPTX, XLSX) then has its text read from those bytes by the document parser and stored with the file, so `get_file` returns it and search finds it; if the parser cannot read it the upload still succeeds and the returned `indexing.extraction.reason` says exactly why (nothing is invented). ' +
       'For plain-text files (Markdown, CSV, JSON, TXT) you may omit `base64Content` and pass the content as `text` instead; it is indexed for search. ' +
       'Do NOT pass a markdown description of a binary file as `text` and omit the bytes — that produces a misleading text-only record. ' +
       'MCP in-band limit: ~4 MB of base64 (≈3 MB decoded). Larger files must be uploaded through the Files tab UI. ' +
@@ -226,7 +227,11 @@ export const fileWriteTools: McpTool[] = [
       const description = str(args.description);
       const documented = description ? setFileDocs(asset.id, p, { description, tags }) : asset;
       try {
-        await reindexFile(documented, textArg ?? '', user.id); // A27
+        // Text supplied ⇒ index it. Bytes only (a PDF/DOCX/…) ⇒ the text is read from the
+        // stored bytes by Docling and stored WITH the file, so `get_file` returns it. The
+        // returned asset carries the real outcome: `indexing.mode` plus, when the parser could
+        // not read it, `indexing.extraction.reason`.
+        return await ingestUploaded(documented, textArg ?? '', user.id); // A27
       } catch {
         /* indexing is best-effort; the upload already succeeded */
       }

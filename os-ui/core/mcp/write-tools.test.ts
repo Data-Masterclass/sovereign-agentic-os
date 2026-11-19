@@ -404,6 +404,97 @@ test('FILES binary: upload_file with base64Content stores the real object in the
   assert.equal(roundTripped, pdfContent, 'round-tripped bytes are byte-for-byte identical to the original');
 });
 
+// ---- FILES binary documents: the text is read from the BYTES and returned by get_file ----
+// The defect (2026-11-19): a PDF upload stored `text: ""`, was flipped to stored-only before any
+// parser ran, and `get_file` handed an agent an empty document. These drive the two real doors.
+
+/** A docling-serve double on `globalThis.fetch`; every other host answers 404 (the embedder and
+ *  the OpenSearch mirror then take their ordinary offline paths). */
+function stubDocling(md: string | 'down'): { calls: { url: string; method: string; body: unknown }[]; restore: () => void } {
+  const real = globalThis.fetch;
+  const calls: { url: string; method: string; body: unknown }[] = [];
+  const j = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status, headers: { 'content-type': 'application/json' } });
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (!url.startsWith('http://docling:5001')) return j({}, 404);
+    calls.push({ url, method: init?.method ?? 'GET', body: init?.body });
+    if (md === 'down') throw new Error('connect ECONNREFUSED docling:5001');
+    if (url.endsWith('/v1/convert/file/async')) return j({ task_id: 't1', task_type: 'convert', task_status: 'pending' });
+    if (url.includes('/v1/status/poll/t1')) return j({ task_id: 't1', task_type: 'convert', task_status: 'success' });
+    if (url.endsWith('/v1/result/t1')) return j({ document: { filename: 'f', md_content: md }, status: 'success', errors: [] });
+    return j({ detail: 'Not Found' }, 404);
+  }) as typeof fetch;
+  return { calls, restore: () => { globalThis.fetch = real; } };
+}
+
+type FileRead = { text: string | null; indexing: string; storedOnlyReason: string | null; extraction: { status: string; code?: string; reason?: string } | null; history: { hash: string }[] };
+const PDF_B64 = Buffer.from('%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\nendobj\n', 'utf8').toString('base64');
+
+test('FILES documents: upload_file(PDF bytes) → Docling reads the bytes → get_file returns the text; the file is indexed', async () => {
+  resetAll();
+  const docling = stubDocling('Invoice INV-2026-0042. Total due: 1,234.56 EUR.');
+  try {
+    const file = payload<{ id: string; indexing: { mode: string } }>(
+      await call(builder, 'upload_file', { name: 'invoice-0042.pdf', base64Content: PDF_B64, mimeType: 'application/pdf' }),
+    );
+    assert.equal(file.indexing.mode, 'indexed', 'the upload answer already says it is searchable');
+
+    const submit = docling.calls[0];
+    assert.equal(submit.method, 'POST');
+    assert.equal(submit.url, 'http://docling:5001/v1/convert/file/async');
+    assert.ok(submit.body instanceof FormData && submit.body.get('files') instanceof File, 'the BYTES were sent, in the `files` field');
+
+    const read = payload<FileRead>(await call(builder, 'get_file', { fileId: file.id }));
+    assert.equal(read.text, 'Invoice INV-2026-0042. Total due: 1,234.56 EUR.');
+    assert.equal(read.indexing, 'indexed');
+    assert.equal(read.extraction?.status, 'extracted');
+    assert.notEqual(read.history[0].hash, '00000000');
+
+    const hits = payload<{ results?: { id: string }[]; hits?: { id: string }[] }>(await call(builder, 'search_files', { query: 'invoice total due' }));
+    assert.match(JSON.stringify(hits), new RegExp(file.id), 'search finds it');
+  } finally {
+    docling.restore();
+  }
+});
+
+test('FILES documents: Docling DOWN → the upload still succeeds, the file is stored-only with the reason, get_file invents nothing', async () => {
+  resetAll();
+  const docling = stubDocling('down');
+  try {
+    const file = payload<{ id: string; indexing: { mode: string; extraction?: { status: string } } }>(
+      await call(builder, 'upload_file', { name: 'invoice-0043.pdf', base64Content: PDF_B64, mimeType: 'application/pdf' }),
+    );
+    assert.ok(file.id, 'the upload succeeded');
+    assert.equal(file.indexing.mode, 'stored-only');
+    const read = payload<FileRead & { object: { bytes: number } | null }>(await call(builder, 'get_file', { fileId: file.id }));
+    assert.equal(read.text, '');
+    assert.equal(read.storedOnlyReason, 'no-text');
+    assert.equal(read.extraction?.status, 'failed');
+    assert.equal(read.extraction?.code, 'parser-unreachable');
+    assert.match(read.extraction?.reason ?? '', /could not be reached/);
+    assert.ok(read.object && read.object.bytes > 0, 'the original bytes are stored');
+  } finally {
+    docling.restore();
+  }
+});
+
+test('FILES documents: a `restricted` PDF is never sent to the parser', async () => {
+  resetAll();
+  const docling = stubDocling('must never be read');
+  try {
+    const file = payload<{ id: string }>(
+      await call(builder, 'upload_file', { name: 'payroll.pdf', base64Content: PDF_B64, mimeType: 'application/pdf', sensitivity: 'restricted' }),
+    );
+    assert.equal(docling.calls.length, 0, 'no request reached Docling');
+    const read = payload<FileRead>(await call(builder, 'get_file', { fileId: file.id }));
+    assert.equal(read.indexing, 'stored-only');
+    assert.equal(read.storedOnlyReason, 'restricted');
+    assert.equal(read.extraction, null);
+  } finally {
+    docling.restore();
+  }
+});
+
 test('FILES binary: upload_file without base64Content (text-only) has no object in the blob store', async () => {
   resetAll();
   const file = payload<{ id: string }>(

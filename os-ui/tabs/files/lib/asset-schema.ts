@@ -62,6 +62,48 @@ export type Relationship = {
   note?: string;
 };
 
+/**
+ * WHY a file is `stored-only`. The mode alone cannot tell "the owner / the policy said never
+ * index this" from "there was simply no text to index" — and only the second may ever be sent to
+ * the parser again (the backfill, the per-file "Extract text").
+ *   restricted — sensitivity clamp (decision #7). Never parsed, never indexed.
+ *   opt-out    — the owner chose stored-only. Never parsed, never indexed.
+ *   no-text    — nothing indexable was available: a binary whose text extraction has not
+ *                succeeded (yet). Recoverable; see `extraction` for the specific reason.
+ * ABSENT on files created before 2026-11-19 — `extractionEligibility` (extract.ts) applies a
+ * documented heuristic to those.
+ */
+export type StoredOnlyReason = 'restricted' | 'opt-out' | 'no-text';
+const STORED_ONLY_REASONS: StoredOnlyReason[] = ['restricted', 'opt-out', 'no-text'];
+
+/** A typed reason text extraction did not produce text. Never a stand-in for the text itself. */
+export type ExtractionFailureCode =
+  | 'parser-unreachable' // no answer from the parser (connection refused / DNS / 5xx)
+  | 'parser-timeout'     // the conversion did not finish inside the deadline
+  | 'parser-error'       // the parser answered and reported a failure for this document
+  | 'no-text'            // the parser succeeded and found no text (e.g. a scan OCR read nothing from)
+  | 'bytes-missing'      // the original object is not in the object store
+  | 'unsupported'        // not a format the parser accepts
+  | 'interrupted';       // a background extraction did not report back (process replaced)
+
+/**
+ * The state of BINARY text extraction for this file (PDF/DOCX/PPTX/XLSX → Docling → markdown).
+ * Absent for text-like files (their bytes ARE the text) and for files that were never parsed.
+ */
+export type Extraction = {
+  status: 'extracted' | 'pending' | 'failed';
+  /** The parser that ran (or was asked). */
+  engine: 'docling';
+  /** When this state was recorded (ISO). */
+  at: string;
+  /** Set only when `failed`. */
+  code?: ExtractionFailureCode;
+  /** One human sentence, shown next to "Stored only" — why, specifically. */
+  reason?: string;
+  /** Characters of extracted text (when `extracted`). */
+  chars?: number;
+};
+
 /** The retrieval side of the envelope (filled by the Phase-3 ingest pipeline). */
 export type Indexing = {
   mode: IndexingMode;
@@ -69,6 +111,10 @@ export type Indexing = {
   representations: string[];
   /** Per-chunk content hashes — the content-hash cache that skips re-embeds. */
   chunkHashes: string[];
+  /** Why the file is stored-only (absent when indexed, and on pre-2026-11-19 records). */
+  storedOnlyReason?: StoredOnlyReason;
+  /** Binary text-extraction state (absent when the file never went to the parser). */
+  extraction?: Extraction;
 };
 
 export type FileAsset = {
@@ -210,15 +256,41 @@ function parseRelationship(raw: unknown, i: number): Relationship {
   };
 }
 
+const EXTRACTION_CODES: ExtractionFailureCode[] = [
+  'parser-unreachable', 'parser-timeout', 'parser-error', 'no-text', 'bytes-missing', 'unsupported', 'interrupted',
+];
+
+function parseExtraction(v: unknown): Extraction | undefined {
+  if (!isRecord(v)) return undefined;
+  const status = v.status;
+  if (status !== 'extracted' && status !== 'pending' && status !== 'failed') return undefined;
+  const out: Extraction = { status, engine: 'docling', at: typeof v.at === 'string' ? v.at : '' };
+  if (EXTRACTION_CODES.includes(v.code as ExtractionFailureCode)) out.code = v.code as ExtractionFailureCode;
+  if (typeof v.reason === 'string' && v.reason) out.reason = v.reason;
+  if (typeof v.chars === 'number') out.chars = v.chars;
+  return out;
+}
+
 function parseIndexing(v: unknown, sensitivity: Sensitivity): Indexing {
   const r = isRecord(v) ? v : {};
   const requested = (r.mode === 'stored-only' ? 'stored-only' : 'indexed') as IndexingMode;
-  return {
-    // The restricted ⇒ stored-only invariant is enforced HERE, in one place.
-    mode: indexingModeFor(sensitivity, requested),
+  // The restricted ⇒ stored-only invariant is enforced HERE, in one place.
+  const mode = indexingModeFor(sensitivity, requested);
+  const out: Indexing = {
+    mode,
     representations: strArray(r.representations, 'indexing.representations'),
     chunkHashes: strArray(r.chunkHashes, 'indexing.chunkHashes'),
   };
+  // The reason is only meaningful while stored-only, and `restricted` always wins.
+  if (mode === 'stored-only') {
+    if (sensitivity === 'restricted') out.storedOnlyReason = 'restricted';
+    else if (STORED_ONLY_REASONS.includes(r.storedOnlyReason as StoredOnlyReason) && r.storedOnlyReason !== 'restricted') {
+      out.storedOnlyReason = r.storedOnlyReason as StoredOnlyReason;
+    }
+  }
+  const extraction = parseExtraction(r.extraction);
+  if (extraction) out.extraction = extraction;
+  return out;
 }
 
 function parseGrant(raw: unknown, i: number): Grant {
@@ -329,7 +401,18 @@ export function serializeAsset(a: FileAsset): string {
   if (a.tags.length > 0) doc.tags = a.tags;
   if (a.freshness) doc.freshness = a.freshness;
   doc.provenance = a.provenance;
-  doc.indexing = a.indexing;
+  // Built explicitly: js-yaml refuses an `undefined` value, and the two optional fields below
+  // are cleared by assignment in the store.
+  const indexing: Record<string, unknown> = {
+    mode: a.indexing.mode,
+    representations: a.indexing.representations,
+    chunkHashes: a.indexing.chunkHashes,
+  };
+  if (a.indexing.mode === 'stored-only' && a.indexing.storedOnlyReason) indexing.storedOnlyReason = a.indexing.storedOnlyReason;
+  if (a.indexing.extraction) {
+    indexing.extraction = Object.fromEntries(Object.entries(a.indexing.extraction).filter(([, v]) => v !== undefined));
+  }
+  doc.indexing = indexing;
   if (a.relationships.length > 0) doc.relationships = a.relationships;
   if (a.grants.length > 0) doc.grants = a.grants;
   return yaml.dump(doc, { lineWidth: 100, noRefs: true });

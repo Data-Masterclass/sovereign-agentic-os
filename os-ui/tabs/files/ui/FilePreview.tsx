@@ -5,6 +5,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useUser } from '@core/ui/useUser';
+import { doclingCanParse } from '@tabs/files/lib/ingest/docling-client';
 import { previewText } from '@tabs/files/lib/preview';
 import { serverError } from '@tabs/files/lib/bulk-result';
 import { reuploadVersion, saveTextVersion } from '@tabs/files/lib/upload-client';
@@ -29,7 +30,13 @@ type Asset = {
   kind: 'doc' | 'image' | 'video' | 'audio' | 'table' | 'archive' | 'other';
   folder: string; tags: string[]; sensitivity: 'public' | 'internal' | 'confidential' | 'restricted';
   freshness: string | null; version: string; deepLink: string; storage: string;
-  indexing: { mode: 'indexed' | 'stored-only'; representations: string[] };
+  indexing: {
+    mode: 'indexed' | 'stored-only'; representations: string[];
+    /** Why it is stored-only: a policy / the owner's choice / no text could be read. */
+    storedOnlyReason?: 'restricted' | 'opt-out' | 'no-text';
+    /** Binary text extraction (PDF/DOCX/… → the document parser). */
+    extraction?: { status: 'extracted' | 'pending' | 'failed'; reason?: string; code?: string; at?: string };
+  };
   description: string;
 };
 type StoredObject = { key: string; contentType: string; bytes: number };
@@ -166,6 +173,23 @@ export default function FilePreview({ id, onMutated, onClose, startInEdit }: { i
     window.addEventListener('keydown', onKey);
     return () => { window.removeEventListener('keydown', onKey); };
   }, [onClose]);
+
+  // While the document parser is still reading this file, look again every few seconds and
+  // swap the view in ONLY when that state ends — a full `load()` would reset the drafts the
+  // reader may be typing into.
+  const extractionPending = view?.asset.indexing.extraction?.status === 'pending';
+  useEffect(() => {
+    if (!extractionPending) return;
+    const timer = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/files/${id}`, { cache: 'no-store' });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data?.asset?.indexing?.extraction?.status !== 'pending') { setView(data); onMutated(); }
+      } catch { /* try again on the next tick */ }
+    }, 5000);
+    return () => clearInterval(timer);
+  }, [extractionPending, id, onMutated]);
 
   const loadFolders = useCallback(async () => {
     try {
@@ -313,6 +337,25 @@ export default function FilePreview({ id, onMutated, onClose, startInEdit }: { i
   );
 
   const a = view.asset;
+  // WHY this file is not searchable, in the file's own recorded words. A parser that could not
+  // read a PDF is a different fact from an owner's opt-out, and the reader is owed which.
+  const extraction = a.indexing.extraction;
+  const extracting = extraction?.status === 'pending';
+  const storedOnly = a.indexing.mode === 'stored-only';
+  // Mirrors the server's rule (store.extractionEligibility): a binary DOCUMENT with stored bytes.
+  const parseable = !!view.object && doclingCanParse(a.name, view.object.contentType);
+  const storedWhy = !storedOnly || extracting ? ''
+    : a.sensitivity === 'restricted' ? 'Restricted files are stored but never parsed or indexed.'
+    : a.indexing.storedOnlyReason === 'opt-out' ? 'Opted out of indexing by its owner.'
+    : extraction?.status === 'failed' ? `Not searchable: ${extraction.reason ?? 'its text could not be extracted.'}`
+    : view.text ? ''
+    : parseable ? 'Not searchable: no text has been extracted from this file yet.'
+    : a.indexing.storedOnlyReason === 'no-text' ? 'Not searchable: there is no text to index for this file.'
+    : '';
+  // A text-less file with stored bytes can be (re)sent to the parser — the server decides
+  // whether it really may (never a restricted file, never an opt-out, only a document format).
+  const canExtract = storedOnly && !extracting && a.sensitivity !== 'restricted'
+    && a.indexing.storedOnlyReason !== 'opt-out' && !view.text && parseable;
   const isOwner = user?.id === a.owner;
   // Client mirror of the server edit-scope (lib/files store `canEdit`): the OWNER
   // always, plus — once PROMOTED — an in-domain domain_admin or a platform admin.
@@ -390,12 +433,27 @@ export default function FilePreview({ id, onMutated, onClose, startInEdit }: { i
             )}
           </div>
           <div className="preview-row preview-submeta">
-            <span className={`status-chip ${a.indexing.mode === 'stored-only' ? 's-stored' : 's-searchable'}`}>
-              {a.indexing.mode === 'stored-only' ? 'Stored only' : 'Searchable ✓'}
+            <span className={`status-chip ${extracting ? 's-processing' : storedOnly ? 's-stored' : 's-searchable'}`} title={storedWhy || undefined}>
+              {extracting ? 'Extracting text…' : storedOnly ? 'Stored only' : 'Searchable ✓'}
             </span>
             <span className="badge muted">{TIER_WORD[a.tier]}</span>
             <span className="file-sub">{a.version} · {bytesLabel(view.bytes)}</span>
           </div>
+          {storedWhy ? (
+            <div className="preview-row file-sub" role="status" data-testid="stored-only-reason">
+              <span>{storedWhy}</span>
+              {canExtract && canManage ? (
+                <button className="btn ghost sm" onClick={() => patch({ indexing: 'indexed' })}
+                  title="Send this file to the document parser again, store its text and index it">
+                  {extraction?.status === 'failed' ? 'Retry text extraction' : 'Extract text'}
+                </button>
+              ) : null}
+            </div>
+          ) : extracting ? (
+            <div className="preview-row file-sub" role="status">
+              The document parser is reading this file. It becomes searchable when that finishes.
+            </div>
+          ) : null}
         </div>
         <div className="preview-head-actions">
           {/* View ⇄ Edit — edit-gated. text/markdown → inline editor; binary → Replace/rename/move
@@ -652,7 +710,7 @@ export default function FilePreview({ id, onMutated, onClose, startInEdit }: { i
             <button className="btn ghost sm" title="Stored-only files are never indexed (sensitive/huge)"
               onClick={() => patch({ indexing: a.indexing.mode === 'indexed' ? 'stored-only' : 'indexed' })}
               disabled={a.sensitivity === 'restricted'}>
-              {a.indexing.mode === 'indexed' ? 'Opt out of indexing' : 'Index this file'}
+              {a.indexing.mode === 'indexed' ? 'Opt out of indexing' : canExtract ? 'Extract text & index' : 'Index this file'}
             </button>
           </div>
         </>

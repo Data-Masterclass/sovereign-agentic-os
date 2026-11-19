@@ -224,6 +224,12 @@ export const config = {
   // an OCR/caption service (images). In-cluster Service defaults; the live adapters
   // fall back to the deterministic mock when these are absent.
   doclingUrl: base(env('DOCLING_URL', 'http://docling:5001')),
+  // Binary text extraction (PDF/DOCX/PPTX/XLSX → Docling → markdown). `doclingTimeoutMs` is the
+  // whole-conversion deadline (submit + poll + fetch); `uploadExtractWaitMs` is how long an upload
+  // RESPONSE waits for it before answering "still extracting" and letting it finish in the
+  // background — an upload must never sit behind a multi-minute OCR.
+  doclingTimeoutMs: Number(env('DOCLING_TIMEOUT_MS', '600000')) || 600000,
+  uploadExtractWaitMs: Number(env('UPLOAD_EXTRACT_WAIT_MS', '20000')) || 20000,
   transcribeUrl: base(env('TRANSCRIBE_URL', 'http://whisper:9000')),
   ocrUrl: base(env('OCR_URL', 'http://ocr-caption:8000')),
 
