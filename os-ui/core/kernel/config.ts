@@ -701,8 +701,6 @@ export const config = {
   litellmCoderModel: env('LITELLM_CODER_MODEL', ''),
 } as const;
 
-export type AppConfig = typeof config;
-
 /**
  * May a request authenticate as the in-cluster RUNTIME (bearer token) at all? (review B2-review-M3)
  *

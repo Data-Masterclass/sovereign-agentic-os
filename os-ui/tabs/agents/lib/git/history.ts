@@ -43,7 +43,7 @@ import {
 } from '@core/infra/git-objects';
 import { agentProjectGitEnabled } from '@tabs/agents/lib/git/commit';
 import { projectSnapshot } from '@tabs/agents/lib/git/snapshot';
-import { placeSystems, AGENTS_PREFIX } from '@tabs/agents/lib/git/generate';
+import { placeSystems } from '@tabs/agents/lib/git/generate';
 import { getSystem, type Principal } from '@tabs/agents/lib/store';
 
 /** How many commits of a system's history are returned by default. */
@@ -152,6 +152,3 @@ export function registerAgentSystemGitObject(): void {
     return systemGitLocation(view.domain ?? '', view.id, view.name);
   });
 }
-
-/** The prefix the whole kind lives under — exported so a caller need not import the generator. */
-export const AGENT_SYSTEMS_PREFIX = AGENTS_PREFIX;

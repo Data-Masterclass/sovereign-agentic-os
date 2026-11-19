@@ -130,11 +130,6 @@ export function subscribeRun(
   return () => { t.listeners.delete(listener); };
 }
 
-/** True when the run has a topic (started in this process and not yet swept). */
-export function hasRunTopic(runId: string): boolean {
-  return bus().topics.has(runId);
-}
-
 /** Test-only: drop every topic. */
 export function __resetRunEvents(): void {
   bus().topics.clear();

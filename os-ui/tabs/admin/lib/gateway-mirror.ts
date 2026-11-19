@@ -278,8 +278,3 @@ export async function readMirror(): Promise<GatewayMirror> {
   cache = mirror;
   return mirror;
 }
-
-/** Test seam: drop the cache between cases. */
-export function _resetGatewayMirrorCache(): void {
-  cache = null;
-}

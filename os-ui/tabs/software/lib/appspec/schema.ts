@@ -46,7 +46,6 @@ export type FieldType = (typeof FIELD_TYPES)[number];
 
 /** A tab renders one of these two body kinds. */
 export const BODY_KINDS = ['pattern', 'custom'] as const;
-export type BodyKind = (typeof BODY_KINDS)[number];
 
 // -------------------------------------------------------- shared leaf grammar (v1-stable) --
 
@@ -458,18 +457,3 @@ export function parseAppSpec(input: unknown): ParseResult {
     },
   };
 }
-
-/** The structural schema surface, exported as a namespace-style object so callers can
- *  reference it as one unit (mirrors a Zod schema export) while the parser stays the gate.
- *  Note: `PATTERN_IDS` is deliberately NOT spread in here — it lives in `patterns.ts` and
- *  referencing it at this module's eval time would trip the schema↔patterns import cycle (TDZ).
- *  Import `PATTERN_IDS` from `./patterns.ts` directly when you need the id list. */
-export const AppSpecSchema = {
-  parse: parseAppSpec,
-  FORMATS,
-  CONTROLS,
-  CHARTS,
-  ROLE_GATES,
-  FIELD_TYPES,
-  BODY_KINDS,
-} as const;

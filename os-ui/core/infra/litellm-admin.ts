@@ -170,11 +170,9 @@ export type LiteLlmTagActivityBody = {
 export const readModels = () => rows<LiteLlmModelRow>('/model/info');
 export const readModelGroups = () => rows<LiteLlmModelGroupRow>('/model_group/info');
 export const readTeams = () => rows<LiteLlmTeamRow>('/team/list', 'teams');
-export const readBudgets = () => rows<LiteLlmBudgetRow>('/budget/list', 'budgets');
 /** `return_full_object` is what makes spend and alias present on each row. */
 export const readKeys = () => rows<LiteLlmKeyRow>('/key/list?return_full_object=true&include_team_keys=true', 'keys');
 export const readGuardrails = () => rows<LiteLlmGuardrailRow>('/guardrails/list', 'guardrails');
 export const readSpendReport = () => rows<LiteLlmSpendRow>('/global/spend/report');
 export const readHealthLatest = () => adminGet<LiteLlmHealthBody>('/health/latest');
-export const readHealthServices = () => adminGet<unknown>('/health/services');
 export const readTagActivity = () => adminGet<LiteLlmTagActivityBody>('/tag/daily/activity');

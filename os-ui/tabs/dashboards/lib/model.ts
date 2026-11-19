@@ -90,12 +90,6 @@ export function unservableTimeGrainError(panel: Panel): (Error & { status: numbe
   return e;
 }
 
-/** Throw {@link unservableTimeGrainError} when the panel carries an unservable time grain. */
-export function assertServableTimeGrain(panel: Panel): void {
-  const e = unservableTimeGrainError(panel);
-  if (e) throw e;
-}
-
 /**
  * The filter operators the GOVERNED query path can actually serve. The explorer compiles a
  * panel filter to `column IN (<parameterised values>)`, so an equality — of one value or many —

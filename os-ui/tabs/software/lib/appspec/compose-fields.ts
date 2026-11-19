@@ -187,11 +187,6 @@ export const GRANULARITIES = ['day', 'week', 'month', 'quarter', 'year'] as cons
 /** The chart kinds `chart-explorer` renders (mirrors `patterns.ts` `CHART_KINDS`). */
 export const CHART_KINDS = ['line', 'bar', 'area'] as const;
 
-/** Whether a slot key on this pattern is a COLUMN/field-name slot (so the form fetches the schema). */
-export function patternNeedsColumns(pattern: PatternId): boolean {
-  return slotsFor(pattern).some((s) => s.kind === 'columns' || s.kind === 'single-field' || s.kind === 'multi-field');
-}
-
 /** The dataset id currently set on a config's `source` (or undefined for a source-less pattern OR
  *  when the source is the literal `'records'` string, which is not a dataset). */
 export function datasetIdOf(config: PatternConfig): string | undefined {

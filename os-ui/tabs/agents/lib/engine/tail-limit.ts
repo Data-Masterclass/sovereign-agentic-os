@@ -34,12 +34,6 @@ export class TooManyTailsError extends Error {
 type Slot = { open: number };
 const slot = globalThis as unknown as { __osRunTails?: Slot };
 
-/** How many tails this pod currently holds. */
-export function openTails(): number {
-  slot.__osRunTails ??= { open: 0 };
-  return slot.__osRunTails.open;
-}
-
 /** Take a tail slot, or throw {@link TooManyTailsError}. Returns the (idempotent) release. */
 export function acquireTail(max: number = MAX_CONCURRENT_TAILS): () => void {
   slot.__osRunTails ??= { open: 0 };
