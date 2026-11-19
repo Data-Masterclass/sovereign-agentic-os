@@ -74,8 +74,10 @@ test('context: returns ONLY the app grants, name-resolved (id fallback when unre
   assert.equal(body.items[0].kind, 'data');
   assert.equal(body.items[0].id, 'ds_zpco1s6n7y');
   assert.equal(body.items[0].access, 'read-only');
-  // No registry entry for this id in-test ⇒ honest id fallback (not dropped).
+  // No registry entry for this id in-test ⇒ honest id fallback (not dropped), flagged unavailable
+  // so the app can say the dataset is gone instead of showing a raw id like a working grant.
   assert.equal(body.items[0].name, 'ds_zpco1s6n7y');
+  assert.equal(body.items[0].available, false);
 });
 
 test('context: an app with zero grants returns an empty items list', async () => {

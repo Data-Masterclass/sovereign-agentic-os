@@ -21,7 +21,7 @@ export const dynamic = 'force-dynamic';
  * artifact that no longer exists (or the caller can't resolve) is kept with
  * `name: id` — honest, never silently dropped.
  *
- *   GET → { items: [{ kind, id, name, access }] }
+ *   GET → { items: [{ kind, id, name, access, available }] }   (`available:false` ⇒ deleted or no longer visible)
  */
 export const GET = withRoute<{ slug: string }>(async ({ user, params }) => {
   const app = await getAppBySlugForUser(params.slug, user);
@@ -37,11 +37,16 @@ export const GET = withRoute<{ slug: string }>(async ({ user, params }) => {
   // and only grants already on `app.grants` are ever looked up.
   const kindsWithGrants = CONTEXT_KINDS.filter((k) => app.grants[k].length > 0);
   const names = await availableContext({ ...user, activeDomain: null }, kindsWithGrants);
-  const nameFor = (kind: ContextKind, id: string): string =>
-    names[kind]?.find((i) => i.id === id)?.name ?? id; // honest fallback: the id itself
+  const found = (kind: ContextKind, id: string) => names[kind]?.find((i) => i.id === id);
 
+  // A grant whose artifact no longer resolves keeps its id as its name (never dropped) AND says
+  // so: `available: false` is what lets the app show "this dataset was deleted or is no longer
+  // visible to you" instead of a raw id that looks like a working grant.
   const items = CONTEXT_KINDS.flatMap((kind) =>
-    app.grants[kind].map((g) => ({ kind, id: g.id, name: nameFor(kind, g.id), access: g.access })),
+    app.grants[kind].map((g) => {
+      const hit = found(kind, g.id);
+      return { kind, id: g.id, name: hit?.name ?? g.id, access: g.access, available: Boolean(hit) };
+    }),
   );
   return NextResponse.json({ items });
 }, { defaultStatus: 500 });

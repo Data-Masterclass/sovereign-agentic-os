@@ -319,12 +319,12 @@ export function createOsClient(opts: OsClientOptions = {}): OsClient {
 
       if (appSlug) {
         const r = await request<{
-          items?: { kind: (typeof CONTEXT_KINDS)[number]; id: string; name: string; access?: string }[];
+          items?: { kind: (typeof CONTEXT_KINDS)[number]; id: string; name: string; access?: string; available?: boolean }[];
         }>(`/api/apps/by-slug/${encodeURIComponent(appSlug)}/context`);
         const out = empty();
         for (const it of r?.items ?? []) {
           if (it && (CONTEXT_KINDS as readonly string[]).includes(it.kind)) {
-            out[it.kind].push({ id: it.id, name: it.name, scope: it.access });
+            out[it.kind].push({ id: it.id, name: it.name, scope: it.access, ...(it.available === false ? { available: false } : {}) });
           }
         }
         return out;

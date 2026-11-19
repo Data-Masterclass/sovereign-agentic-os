@@ -274,6 +274,20 @@ test('context WITH an appSlug hits the app-scoped endpoint and groups by kind', 
   assert.deepEqual(ctx.connections, []);
 });
 
+test('context: a granted item that was deleted reaches the app flagged available:false', async () => {
+  const { fn } = stubFetch(() => ({
+    body: {
+      items: [
+        { kind: 'data', id: 'ds_1', name: 'Orders', access: 'read-only', available: true },
+        { kind: 'data', id: 'ds_gone', name: 'ds_gone', access: 'read-only', available: false },
+      ],
+    },
+  }));
+  const ctx = await createOsClient({ appSlug: 'northpeak-products', fetch: fn }).context();
+  assert.equal(ctx.data[0].available, undefined, 'an available item is unchanged');
+  assert.equal(ctx.data[1].available, false);
+});
+
 test('context WITH an appSlug on an app with zero grants returns all-empty kinds', async () => {
   const { fn, calls } = stubFetch(() => ({ body: { items: [] } }));
   const os = createOsClient({ appSlug: 'fresh-app', fetch: fn });

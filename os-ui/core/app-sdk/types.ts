@@ -77,6 +77,9 @@ export interface WhoAmI {
 export interface ContextItem {
   id: string;
   name: string;
+  /** `false` when the app holds a grant on this item but it no longer resolves for the signed-in
+   *  user: it was deleted, or they can no longer see it. Absent means available. */
+  available?: boolean;
   scope?: string;
   folder?: string;
 }
