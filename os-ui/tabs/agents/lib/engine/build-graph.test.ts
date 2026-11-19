@@ -602,3 +602,29 @@ test('a budget 429 is not retried: the agent fails at once with a plain message'
   assert.deepEqual(result.path, ['a']);
   assert.match(result.runs[0].error ?? '', /model budget .* is used up/);
 });
+
+// ---- prompt diet: a tool's long description travels ONCE per request ----
+
+const LONG_RULE = 'Governance: read-only through the document-level entitlement filter; an unentitled id is a typed not_found.';
+const LONG_SPECS = (node: { tools: string[] }): ToolSpec[] =>
+  node.tools.map((t) => ({ name: t, description: `Search the ${t} corpus. ${LONG_RULE} ${'More guidance. '.repeat(20)}`, inputSchema: { type: 'object' as const, properties: {} } }));
+
+test('native tool-calling: the system prompt lists each tool by name with a one-line summary; the FULL description is only in the tools schema', async () => {
+  const seen: LlmRequest[] = [];
+  const inner = script();
+  await run(TWO_AGENTS, async (req) => { seen.push(req); return inner(req); }, { toolSpecsFor: LONG_SPECS });
+  const act = seen.find((r) => r.tools && nodeOf(r) === 'a')!;
+  const system = act.messages[0].content;
+  assert.match(system, /- search_knowledge: Search the search_knowledge corpus\.\n/, 'the authoritative name + summary line is in the prompt');
+  assert.ok(!system.includes(LONG_RULE), 'the long description is NOT repeated in the prompt');
+  assert.ok(act.tools![0].function.description.includes(LONG_RULE), 'the schema carries the full description, rules included');
+});
+
+test('ReAct fallback: with no tools schema to read, the prompt carries the FULL descriptions', async () => {
+  const seen: LlmRequest[] = [];
+  const inner = script({ rejectNativeTools: true, reactReply: true });
+  await run(TWO_AGENTS, async (req) => { seen.push(req); return inner(req); }, { toolSpecsFor: LONG_SPECS, disabled: ['b'] });
+  const react = seen.find((r) => !r.tools && /TOOL PROTOCOL/.test(r.messages[0].content))!;
+  assert.ok(react, 'the ReAct prompt was sent');
+  assert.ok(react.messages[0].content.includes(LONG_RULE), 'the full description, rules included, is in the ReAct prompt');
+});
