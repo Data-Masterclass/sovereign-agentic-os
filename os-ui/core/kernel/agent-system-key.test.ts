@@ -2,6 +2,11 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  *
  * FEATURE:    The caps of an agent system's own LiteLLM key come from deployment config
+ * USER STORY: As a platform admin I want the per-system key's budget, reset window and rate limits
+ *             to come from deployment config, so I can change them without a code change.
+ * ARCHITECTURE:
+ *   - Reads `config.agentSystemKey` only; no gateway and no network. The defaults asserted here
+ *     are the ones the chart block `osUI.agentSystemKey` ships.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
