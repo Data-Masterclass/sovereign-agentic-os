@@ -11,10 +11,9 @@ export const dynamic = 'force-dynamic';
  * The governed `files_retrieve` tool endpoint. Runs under the signed-in user's
  * DELEGATED identity (DLS scopes the rows to what they may see); the OPA tool-grant
  * subject is derived SERVER-SIDE from that session, never from the client body — so
- * a client cannot elevate the tool-gate beyond what its session authorizes. This
- * mirrors /api/agent/tool, whose principal is a fixed server constant, not client
- * input. (A distinct agent runtime authenticates on its OWN path with its own
- * principal; it does not spoof one through this delegated-user endpoint.)
+ * a client cannot elevate the tool-gate beyond what its session authorizes. (A
+ * distinct agent runtime authenticates on its OWN path with its own principal; it
+ * does not spoof one through this delegated-user endpoint.)
  *
  *   POST { query, openOriginal?, vision?, k? }
  *     → { decision, passages:[{name, snippet, deepLink, score, …}], traceId }

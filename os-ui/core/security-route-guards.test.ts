@@ -85,9 +85,12 @@ test('GAP 8 (4-rank migration): the Platform-group user routes stay requireAdmin
   assert.match(read('app/api/platform-admin/access/route.ts'), /adminCtx/, 'platform-admin access stays adminCtx-gated');
 });
 
-test('GAP 5: the unauthenticated knowledge GET route is gone; retrieve callers pass a DLS principal', () => {
+test('GAP 5: the unauthenticated knowledge GET route and the legacy agent tool door are gone', () => {
   assert.ok(!existsSync(resolve(OSUI, 'app/api/knowledge/route.ts')), 'bare /api/knowledge route deleted');
-  assert.match(read('app/api/agent/tool/route.ts'), /retrieveTool\(query, \{/, 'session principal threaded');
+  // The legacy `/api/agent/tool` door is deleted: no screen, MCP tool or script called it, it
+  // answered with sample values, and it decided as a fixed demo principal instead of the caller.
+  // Agents reach every tool through `handleRpc(user, …)`; apps through `/api/apps/[id]/tool`.
+  assert.ok(!existsSync(resolve(OSUI, 'app/api/agent/tool/route.ts')), 'the legacy agent tool route is deleted');
   // A5: `app/api/agents/tool` (the Python agent-runtime's callback door) is deleted — the engine
   // runs in-process and calls `handleRpc(user, …)` directly, so there is no second tool door left.
   assert.ok(!existsSync(resolve(OSUI, 'app/api/agents/tool/route.ts')), 'the runtime callback tool route is deleted');
