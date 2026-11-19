@@ -15,7 +15,8 @@ import { langfuseRunObserver } from '@tabs/agents/lib/engine/observe';
 import type { RunEnv } from '@core/kernel/object-lifecycle';
 import { tabToolExecutor, liteLlmCaller } from '@core/runtime/runtime';
 import type { CallerContext } from '@core/infra/litellm-credential';
-import { trackUsage, type ToolSpec, type AgenticStep, type LlmCall, type UsageTracker } from '@core/runtime/agentic';
+import { trackUsage, type ToolSpec, type AgenticStep, type LlmCall, type ToolExecutor, type UsageTracker } from '@core/runtime/agentic';
+import { phaseCallableTools, phaseToolExecutor } from '@tabs/agents/lib/build/phase-tools';
 import { loadBuildSpec } from '@core/tabs-meta/build-spec';
 import { parseSystem, type System } from '@tabs/agents/lib/system-schema';
 import { compile } from '@tabs/agents/lib/langgraph-compile';
@@ -512,6 +513,10 @@ export type RunPhaseTurnInput = {
   messages: { role: 'user' | 'assistant'; content: string }[];
   /** Streamed after each governed tool step so the UI shows live progress. */
   onStep?: (step: AgenticStep) => void;
+  /** Injected in tests; defaults to the live LiteLLM caller. */
+  llm?: LlmCall;
+  /** Injected in tests; the INNER executor the phase door wraps. Defaults to the governed Software-tab executor. */
+  callTool?: ToolExecutor;
 };
 
 /**
@@ -530,15 +535,23 @@ export async function runPhaseTurn(input: RunPhaseTurnInput): Promise<PhaseTurnR
   const sys = parseSystem(input.yaml);
   const ir = compile(sys);
   const specsFor = toolSpecsFactory(input.user);
+  // THE PHASE DOOR (review H1): what this turn's agent is OFFERED is also all it may CALL. The
+  // offered list used to be advice — the executor below was the whole Software tab, and
+  // `runAgentic` does not check a call against its specs — so a model emitting `decide_deploy`,
+  // `promote`, `delete` or `archive` had it dispatched as the user. Now a name closed to agents is
+  // dropped from the specs and refused, and anything not offered this turn is refused. There is
+  // NO hold on this door (see `phase-tools.ts`): an offered tool runs at once, as the present user.
+  const turnNode = ir.nodes.find((n) => n.id === role);
+  const offered = phaseCallableTools(specsFor(turnNode?.tools ?? []).map((t) => t.name));
   const run = await runNode(
     ir,
     role,
     input.messages,
     {
       // A3: attributed — the runner, the system's domain and the Software tab (no run id: not a checkpointed run).
-      llm: liteLlmCaller({ userId: input.user.id, domain: sys.system.domain, tab: 'software' }),
-      toolSpecsFor: (node) => specsFor(node.tools),
-      callTool: tabToolExecutor(input.user, 'software'),
+      llm: input.llm ?? liteLlmCaller({ userId: input.user.id, domain: sys.system.domain, tab: 'software' }),
+      toolSpecsFor: (node) => specsFor(node.tools).filter((t) => offered.includes(t.name)),
+      callTool: phaseToolExecutor(input.callTool ?? tabToolExecutor(input.user, 'software'), offered),
       preamble: preamble(),
       reasoningModel: roleModel('reasoning'),
       // Tool-calling fallback model (per-agent pin still wins) — Qwen by default

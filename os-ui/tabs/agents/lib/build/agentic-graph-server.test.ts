@@ -8,7 +8,10 @@ import type { LlmCall } from '@core/runtime/agentic';
 import { parseSystem, serializeSystem, type System } from '@tabs/agents/lib/system-schema';
 import { SOFTWARE_TEAM_YAML } from '@tabs/agents/lib/software-team';
 import { unmappedGrantNames, type OsToolDeps } from '@tabs/agents/lib/build/os-tools';
-import { runOsTeam, osPreamble } from '@tabs/agents/lib/build/agentic-graph-server';
+import { runOsTeam, runPhaseTurn, osPreamble } from '@tabs/agents/lib/build/agentic-graph-server';
+import { memoryApprovalPort } from '@tabs/agents/lib/engine/approval-port';
+import { phaseToolExecutor } from '@tabs/agents/lib/build/phase-tools';
+import { resetSession, saveSession } from '@tabs/agents/lib/build/phase-router';
 import { setModelPrices, _reset as resetModelPrices } from '@tabs/admin/lib/model-prices';
 
 /**
@@ -341,4 +344,213 @@ test('runOsTeam run-summary trace carries tokens: undefined when NO call reporte
   const runTraces = deps.calls.trace.filter((t) => t.principal === 'os-sys-mix:run');
   assert.equal(runTraces.length, 1, 'the summary trace still fires');
   assert.equal(runTraces[0].tokens, undefined, 'no reported usage → undefined, not 0');
+});
+
+// --- M2: the PRODUCTION hold wiring (review) ---------------------------------------------------
+//
+// Every other hold test drives `holdDecisionFor`, the executor with `holdAt: 'executor'`, or the
+// parity harness's own copy of the wiring. Nothing ran the wiring `runOsTeam` actually ships —
+// `holdAt: 'node'` on the executor (so gate 1b steps aside) plus `hold.decide` on the graph — so
+// replacing `decide` with `() => ({ held: false })` left the whole suite green while every held
+// write in production ran unheld. This is that test: it fails under exactly that mutation.
+
+function deployerYaml(preset: 'read-propose' | 'full-in-scope'): string {
+  return serializeSystem(
+    parseSystem({
+      version: '1',
+      system: { name: 'Shipper', domain: 'sales', visibility: 'Personal' },
+      runtime: 'langgraph',
+      safety_preset: preset,
+      entrypoint: 'deployer',
+      grants: { tools: ['request_deploy'] },
+      agents: [{ id: 'deployer', role: 'agent', agent_md: 'You request the deploy.', memory_md: '' }],
+    }),
+  );
+}
+
+const BUILDER: CurrentUser = { id: 'u-builder', name: 'Bo Builder', domains: ['sales'], role: 'builder' };
+
+for (const preset of ['read-propose', 'full-in-scope'] as const) {
+  test(`runOsTeam (production wiring, ${preset}): request_deploy PARKS the run — filed once, never dispatched`, async () => {
+    const deps = spyDeps();
+    const port = memoryApprovalPort();
+    const interrupts: { approvalId: string; tool: string; node: string }[] = [];
+    const res = await runOsTeam({
+      runId: `run-hold-${preset}`,
+      user: BUILDER,
+      yaml: deployerYaml(preset),
+      systemId: 'sys-ship',
+      messages: [{ role: 'user', content: 'Ship it.' }],
+      llm: toolCallingLlm('request_deploy'),
+      toolDeps: deps,
+      approvalPort: port,
+      onInterrupt: (ev) => interrupts.push(ev),
+      maxIterations: 3,
+    });
+
+    assert.equal(deps.calls.handleRpc.length, 0, 'a held write is never dispatched — not even once');
+    assert.equal(res.parked, true, 'the run is parked, not finished');
+    assert.equal(res.reachedEnd, false);
+    const held = port.all();
+    assert.equal(held.length, 1, 'exactly one approval is filed');
+    assert.equal(held[0].tool, 'request_deploy');
+    assert.equal(held[0].node, 'deployer');
+    assert.equal(held[0].approverRole, 'domain_admin', 'always-confirmed: the domain gate, whatever the preset');
+    assert.equal(held[0].domain, 'sales');
+    assert.equal(held[0].runner.id, BUILDER.id, 'attributed to the runner, who cannot confirm it');
+    assert.equal(held[0].status, 'pending');
+    assert.deepEqual(res.heldApprovals?.map((h) => h.tool), ['request_deploy']);
+    assert.deepEqual(interrupts.map((i) => i.tool), ['request_deploy'], 'the route is told the run parked');
+  });
+}
+
+test('runOsTeam (production wiring): a My-scope write under the same preset is NOT parked — the hold is per tool', async () => {
+  // The control for the test above: same wiring, same preset, a personal-scope write. If the
+  // park above came from anything but the per-tool rule, this would park too.
+  const deps = spyDeps();
+  const port = memoryApprovalPort();
+  const yaml = serializeSystem(
+    parseSystem({
+      version: '1',
+      system: { name: 'Maker', domain: 'sales', visibility: 'Personal' },
+      runtime: 'langgraph',
+      safety_preset: 'read-propose',
+      entrypoint: 'maker',
+      grants: { tools: ['create_software'] },
+      agents: [{ id: 'maker', role: 'agent', agent_md: 'You create the app.', memory_md: '' }],
+    }),
+  );
+  const res = await runOsTeam({
+    runId: 'run-hold-control',
+    user: BUILDER,
+    yaml,
+    systemId: 'sys-make',
+    messages: [{ role: 'user', content: 'Make it.' }],
+    llm: toolCallingLlm('create_software'),
+    toolDeps: deps,
+    approvalPort: port,
+    maxIterations: 3,
+  });
+  assert.equal(port.all().length, 0);
+  assert.equal(res.parked ?? false, false);
+  assert.deepEqual(deps.calls.handleRpc.map((c) => c.name), ['create_software']);
+});
+
+// --- H1: the Software Team panel's tool door ---------------------------------------------------
+//
+// `runPhaseTurn` is what POST /api/software/team runs: ONE agent per turn, chosen by the phase
+// router, executing as the present user. It used to hand the model that agent's tool specs and
+// then execute through the WHOLE Software-tab executor — and `runAgentic` does not check a call
+// against the specs it offered. So `decide_deploy` / `promote` / `delete` / `archive` were one
+// model-emitted tool call away from being dispatched under the user's name.
+
+/** An executor spy standing in for `tabToolExecutor(user,'software')` — records what got through. */
+function innerSpy(): { exec: (name: string, args: Record<string, unknown>) => Promise<{ text: string; isError: boolean }>; calls: string[] } {
+  const calls: string[] = [];
+  return { calls, exec: async (name) => { calls.push(name); return { text: `{"ok":true,"tool":"${name}"}`, isError: false }; } };
+}
+
+/** A model that ignores what it was offered and calls `name` on its first act. */
+function insistentLlm(name: string, seenTools: string[][] = []): LlmCall {
+  let acts = 0;
+  return async (req) => {
+    if (!req.tools || req.tools.length === 0) return { content: 'plan', toolCalls: [] };
+    seenTools.push(req.tools.map((t) => t.function.name));
+    acts += 1;
+    if (acts === 1) return { content: '', toolCalls: [{ id: 'c1', name, args: { appId: 'app_1', decision: 'approve' } }] };
+    return { content: 'done', toolCalls: [] };
+  };
+}
+
+const PANEL_USER: CurrentUser = { id: 'u-panel', name: 'Ada Admin', domains: ['platform'], role: 'admin' };
+
+/** Put the persisted per-user session in `phase` (the router reads it; a fresh one is `intake`). */
+function inPhase(phase: 'build' | 'deploy' | 'feedback'): void {
+  resetSession(PANEL_USER.id);
+  saveSession(PANEL_USER.id, { phase, appId: 'app_1', planApproved: true, updatedAt: new Date().toISOString() });
+}
+
+for (const forbidden of ['decide_deploy', 'promote', 'decide_approval', 'promote_connection']) {
+  test(`Team panel: a model emitting ${forbidden} is REFUSED and nothing is dispatched — even for an admin`, async () => {
+    inPhase('build'); // the builder turn: create_software, commit, use_*
+    const inner = innerSpy();
+    const turn = await runPhaseTurn({
+      user: PANEL_USER,
+      yaml: SOFTWARE_TEAM_YAML,
+      messages: [{ role: 'user', content: 'build it' }],
+      llm: insistentLlm(forbidden),
+      callTool: inner.exec,
+    });
+    assert.deepEqual(inner.calls, [], `${forbidden} must never reach the governed dispatch`);
+    assert.deepEqual(turn.steps, [{ tool: forbidden, isError: true }]);
+  });
+}
+
+for (const unoffered of ['delete', 'archive', 'request_deploy', 'push_app_files']) {
+  test(`Team panel: ${unoffered} is not offered to the builder turn, so it is refused and not dispatched`, async () => {
+    inPhase('build');
+    const inner = innerSpy();
+    const seen: string[][] = [];
+    const turn = await runPhaseTurn({
+      user: PANEL_USER,
+      yaml: SOFTWARE_TEAM_YAML,
+      messages: [{ role: 'user', content: 'build it' }],
+      llm: insistentLlm(unoffered, seen),
+      callTool: inner.exec,
+    });
+    assert.ok(seen.length > 0 && seen.every((names) => !names.includes(unoffered)), 'it was never offered');
+    assert.deepEqual(inner.calls, [], 'an un-offered tool is not dispatched');
+    assert.deepEqual(turn.steps, [{ tool: unoffered, isError: true }]);
+  });
+}
+
+test('Team panel: the turn\'s OWN tool still runs — the door is an allow-list, not a wall', async () => {
+  inPhase('build');
+  const inner = innerSpy();
+  const turn = await runPhaseTurn({
+    user: PANEL_USER,
+    yaml: SOFTWARE_TEAM_YAML,
+    messages: [{ role: 'user', content: 'build it' }],
+    llm: insistentLlm('commit'),
+    callTool: inner.exec,
+  });
+  assert.deepEqual(inner.calls, ['commit']);
+  assert.deepEqual(turn.steps, [{ tool: 'commit', isError: false }]);
+});
+
+test('Team panel, STATED AS IT IS: in the deploy phase request_deploy executes at once as the present user — this door has NO hold', async () => {
+  // Not an endorsement — a record. The engine path parks `request_deploy` for a second person
+  // (see the production-wiring test above). This interactive panel is a synchronous turn with no
+  // checkpoint to park on; the user reaches the deploy phase by typing a "ship it"-style phrase
+  // and the deployer's one offered tool then runs under their own role gates. Whether that typed
+  // phrase is confirmation enough is an open product decision (os-ui/ARCHITECTURE.md). If a hold
+  // is added here, this test is the one that must change.
+  inPhase('deploy');
+  const inner = innerSpy();
+  const seen: string[][] = [];
+  const turn = await runPhaseTurn({
+    user: PANEL_USER,
+    yaml: SOFTWARE_TEAM_YAML,
+    messages: [{ role: 'user', content: 'ship it' }],
+    llm: insistentLlm('request_deploy', seen),
+    callTool: inner.exec,
+  });
+  assert.deepEqual(seen[0], ['request_deploy'], 'the deployer is offered exactly one tool');
+  assert.deepEqual(inner.calls, ['request_deploy']);
+  assert.equal(turn.role, 'deployer');
+  resetSession(PANEL_USER.id);
+});
+
+test('phaseToolExecutor: a forbidden name is refused even when a yaml OFFERS it; prototype names are just un-offered', async () => {
+  const inner = innerSpy();
+  const exec = phaseToolExecutor(inner.exec, ['commit', 'decide_deploy']);
+  const refused = await exec('decide_deploy', {});
+  assert.equal((JSON.parse(refused.text) as { error: { code: string } }).error.code, 'forbidden');
+  for (const name of ['constructor', 'toString', '__proto__', '']) {
+    const r = await exec(name, {});
+    assert.equal((JSON.parse(r.text) as { error: { code: string } }).error.code, 'not_found', `${name || '(empty)'} is simply not offered`);
+  }
+  assert.deepEqual(inner.calls, []);
+  assert.equal((await exec('commit', {})).isError, false);
+  assert.deepEqual(inner.calls, ['commit']);
 });

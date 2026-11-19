@@ -31,11 +31,21 @@
  * Creator can create/commit/preview/request_deploy but NEVER self-approve a
  * go-live — that stays a human Builder decision in /software/reviews.
  *
- * Since 2026-11-19 that is enforced at the agent door as well as by the grant list:
- * `decide_deploy` is in AGENT_FORBIDDEN_TOOLS (refused and never advertised, even if a
- * copy of this yaml grants it), and `request_deploy` is HELD under every preset — the
- * deployer's call parks the run until a domain admin confirms it, then the Builder
- * review opens. The other grants are My-scope writes, unheld under `read-propose`.
+ * Since 2026-11-19 that is enforced at the doors as well as by the grant list, and the two
+ * doors this yaml runs through are NOT the same:
+ *
+ *   - AS AN AGENT SYSTEM (the engine: `runOsTeam`, a schedule, `run_agent_system`) —
+ *     `decide_deploy` is refused and never advertised even if a copy of this yaml grants it
+ *     (AGENT_FORBIDDEN_TOOLS), and `request_deploy` is HELD under every preset: the deployer's
+ *     call parks the run until a domain admin other than the runner confirms it, and only then
+ *     does the Builder review open. The other grants are My-scope, unheld under `read-propose`.
+ *   - ON THE SOFTWARE TAB'S TEAM PANEL (`runPhaseTurn`, POST /api/software/team) — one agent per
+ *     turn, synchronous, no checkpoint, so NOTHING IS HELD. The turn's agent may call only the
+ *     tools it was offered, and never a name in AGENT_FORBIDDEN_TOOLS (`phase-tools.ts`). So
+ *     `decide_deploy`, `promote`, `delete` and `archive` cannot be called there at all (no agent
+ *     of this team is offered them), and `request_deploy` — offered to the deployer only, in the
+ *     `deploy` phase the user enters by typing a "ship it"-style phrase — executes at once, as
+ *     the present user, under their own role gates. It does NOT park.
  */
 export const SOFTWARE_TEAM_YAML = `version: '1'
 system:
