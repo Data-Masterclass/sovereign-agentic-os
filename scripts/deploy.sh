@@ -58,6 +58,10 @@ environment
   DEPLOY_REGISTRY_PROBE=<cmd>
                             use `<cmd> <ref>` to read a remote digest instead of
                             crane / skopeo / the registry v2 API. For tests.
+  VALUES_OVERLAY=<file>     layer <file> over the values derived from the live release (a second
+                            `-f`). The one supported way to CHANGE a release value; pass it once,
+                            it then lives in the release. Example:
+                            deploy/overlays/gateway-model-info.stackit.yaml
   KUBE_CONTEXT NS REL WORK VALUES   as before
 
 the os-ui image is built in CI (see CONTRIBUTING.md -> "Images: build in CI")
@@ -214,9 +218,22 @@ if [ -z "$IMAGE_REPO_GIVEN" ]; then
   python3 scripts/lib/check-image-repo.py "$VALUES" "$IMAGE_REPO/os-ui" "$CHART/values.yaml"
 fi
 
+# VALUES_OVERLAY=<file> — an operator's deliberate change to the RELEASE VALUES, layered over the
+# file derived above (a second `-f`, so Helm's own merge rules apply: maps merge, lists replace).
+# The derived file is the live release's values, so without this there is no door for changing
+# them short of a hand-run `helm upgrade` that skips the backup gate. What the overlay sets
+# becomes part of the release: the next plain run derives it from there, so it is passed ONCE.
+# It appears in the "what the upgrade changes" list below before anything is applied.
+OVERLAY_ARGS=()
+if [ -n "${VALUES_OVERLAY:-}" ]; then
+  [ -f "$VALUES_OVERLAY" ] || { echo "VALUES_OVERLAY_NOT_FOUND — $VALUES_OVERLAY is not a file" >&2; exit 2; }
+  OVERLAY_ARGS=(-f "$VALUES_OVERLAY")
+  say "layering VALUES_OVERLAY=$VALUES_OVERLAY over the release values"
+fi
+
 say "what the upgrade changes"
 helm --kube-context "$CTX" get manifest "$REL" -n "$NS" > "$WORK/before.yaml"
-helm template "$REL" "$CHART" -n "$NS" -f "$VALUES" --skip-schema-validation > "$WORK/after.yaml"
+helm template "$REL" "$CHART" -n "$NS" -f "$VALUES" "${OVERLAY_ARGS[@]+"${OVERLAY_ARGS[@]}"}" --skip-schema-validation > "$WORK/after.yaml"
 python3 - "$WORK/before.yaml" "$WORK/after.yaml" <<'PY'
 import sys, yaml
 def objs(p):
@@ -297,7 +314,7 @@ say "helm upgrade"
 REPO_SET=()
 [ -z "$IMAGE_REPO_GIVEN" ] || REPO_SET=(--set "osUI.image.repository=$IMAGE_REPO/os-ui")
 [ ${#REPO_SET[@]} -eq 0 ] || say "overriding osUI.image.repository=$IMAGE_REPO/os-ui (IMAGE_REPO)"
-helm --kube-context "$CTX" upgrade "$REL" "$CHART" -n "$NS" -f "$VALUES" \
+helm --kube-context "$CTX" upgrade "$REL" "$CHART" -n "$NS" -f "$VALUES" "${OVERLAY_ARGS[@]+"${OVERLAY_ARGS[@]}"}" \
   --set osUI.image.tag="$VERSION@$DIGEST" "${REPO_SET[@]+"${REPO_SET[@]}"}" \
   --force-conflicts --skip-schema-validation --timeout 20m
 # No rollout restart: the image change already rolls os-ui exactly once.

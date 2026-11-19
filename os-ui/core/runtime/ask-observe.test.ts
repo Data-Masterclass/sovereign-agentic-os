@@ -120,6 +120,43 @@ test('C-R3.2: liteLlmCaller forwards observe as LiteLLM Langfuse metadata and ta
   assert.ok(tags.includes(`tab:${ASK_COST_TAB}`), `Ask-surface cost must be readable back; saw ${tags.join(',')}`);
   assert.ok(tags.includes('run:ask-xyz'), 'the turn dimension must be on the tags');
   assert.ok(tags.includes('domain:sales'));
+  // The gateway's own trace record must not carry the model's output: `turn_off_message_logging`
+  // (chart) redacts text, but LiteLLM 1.90 leaves tool-call arguments in the logged completion.
+  assert.equal(metadata.mask_output, true, 'without mask_output the gateway logs tool-call arguments to Langfuse');
+});
+
+test('the run path masks the gateway\'s logged output on EVERY call, observed or not, tools or not', async () => {
+  const bodies: Record<string, unknown>[] = [];
+  const orig = globalThis.fetch;
+  const origKey = config.litellmAgentKey;
+  (config as { litellmAgentKey: string }).litellmAgentKey = 'sk-scoped-test';
+  globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+    bodies.push(JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>);
+    return new Response(JSON.stringify({ choices: [{ message: { role: 'assistant', content: 'hi' } }] }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  }) as typeof fetch;
+  try {
+    const call = liteLlmCaller({ userId: 'u-42', domain: 'sales', tab: ASK_COST_TAB });
+    await call({ model: 'sovereign-default', messages: [{ role: 'user', content: 'ping' }] });
+    await call({
+      model: 'sovereign-default',
+      messages: [{ role: 'user', content: 'ping' }],
+      tools: [{ type: 'function', function: { name: 'write_file', description: 'd', parameters: { type: 'object', properties: {} } } }],
+    } as LlmRequest);
+  } finally {
+    globalThis.fetch = orig;
+    (config as { litellmAgentKey: string }).litellmAgentKey = origKey;
+  }
+  assert.equal(bodies.length, 2);
+  for (const b of bodies) {
+    const metadata = (b.metadata ?? {}) as Record<string, unknown>;
+    assert.equal(metadata.mask_output, true);
+    // Never the request-side switches that would turn redaction back OFF for this call.
+    assert.equal('turn_off_message_logging' in b, false);
+    assert.equal('no-log' in b, false);
+  }
 });
 
 test('C-R3.2: the Ask cost dimension is its own tab value, not the tab the user happens to be on', () => {

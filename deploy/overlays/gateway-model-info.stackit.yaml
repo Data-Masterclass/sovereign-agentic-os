@@ -1,0 +1,106 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+#
+# Gateway model list WITH prices, for a STACKIT cluster that carries its own `model_list` in its
+# release values. Apply it once, through the deploy script:
+#
+#   VALUES_OVERLAY=deploy/overlays/gateway-model-info.stackit.yaml ./scripts/deploy.sh --from-registry <version>
+#
+# WHY THIS FILE EXISTS. `litellm.proxy_config.model_list` is a LIST, and Helm replaces a list
+# whole. `scripts/deploy.sh` derives its values from the LIVE release, and the production release
+# carries its own list (written before the aliases had prices), so the `model_info` blocks in the
+# chart never reach it: the gateway keeps booking every call at cost 0 and no budget can trigger.
+# Layering this file once puts the priced list into the release; from then on it is part of the
+# live values and every later plain `deploy.sh` run carries it.
+#
+# WHAT IT IS. The routing below (`litellm_params`) is the production release's own list as read
+# on 2026-11-19 (`helm get values`; it holds no secret — endpoint and key are env references).
+# It differs from values.stackit-managed.yaml in three ways that this file deliberately keeps:
+# the upstream id of the standard model is `openai/gpt-oss-20b` (so LiteLLM's `openai/` provider
+# prefix makes it `openai/openai/gpt-oss-20b`), the endpoint comes from STACKIT_API_BASE, and the
+# Qwen3-VL routes switch thinking off. ONLY `model_info` is new.
+#
+# BEFORE YOU APPLY IT: compare with the live list, because this is a copy and the live one wins:
+#   helm get values agentic-os -n agentic-os -o yaml | yq '.litellm.proxy_config.model_list'
+# If an alias or a parameter differs, edit this file to match and keep the `model_info` blocks.
+#
+# WHAT CHANGES WHEN IT LANDS: spend starts to count from that moment (it was 0 before), against
+# the shared key's `litellmAgentKey.maxBudget` per `budgetDuration` and each system key's cap.
+# Check the first days: Admin -> LLM Gateway -> Virtual Keys -> spend.
+#
+# Prices: STACKIT AI Model Serving price table, EUR per 1M tokens (gpt-oss-20b 0.15 / 0.25,
+# Qwen3-VL-235B 1.50 / 1.75, Qwen3-VL-Embedding-8B 0.08 input). Limits and capabilities:
+# docs.stackit.cloud "Available shared models". `scripts/check-litellm-model-info.mjs` checks this
+# file like the two profiles.
+litellm:
+  proxy_config:
+    model_list:
+      - model_name: sovereign-default
+        litellm_params:
+          model: openai/openai/gpt-oss-20b
+          api_base: os.environ/STACKIT_API_BASE
+          api_key: os.environ/STACKIT_API_KEY
+        model_info: &gptOss20bInfo
+          mode: chat
+          input_cost_per_token: 0.00000015
+          output_cost_per_token: 0.00000025
+          max_input_tokens: 131000
+          max_output_tokens: 8192
+          supports_vision: false
+          supports_function_calling: true
+      - model_name: sovereign-mock
+        litellm_params:
+          model: openai/openai/gpt-oss-20b
+          api_base: os.environ/STACKIT_API_BASE
+          api_key: os.environ/STACKIT_API_KEY
+        model_info: *gptOss20bInfo
+      - model_name: sovereign-reasoning
+        litellm_params:
+          model: openai/Qwen/Qwen3-VL-235B-A22B-Instruct-FP8
+          api_base: os.environ/STACKIT_API_BASE
+          api_key: os.environ/STACKIT_API_KEY
+          timeout: 300
+          extra_body: &noThinking
+            chat_template_kwargs:
+              enable_thinking: false
+        model_info: &qwen3Vl235bInfo
+          mode: chat
+          input_cost_per_token: 0.0000015
+          output_cost_per_token: 0.00000175
+          max_input_tokens: 200000
+          max_output_tokens: 16384
+          supports_vision: true
+          supports_function_calling: true
+      - model_name: sovereign-reasoning-fast
+        litellm_params:
+          model: openai/Qwen/Qwen3-VL-235B-A22B-Instruct-FP8
+          api_base: os.environ/STACKIT_API_BASE
+          api_key: os.environ/STACKIT_API_KEY
+          extra_body: *noThinking
+        model_info: *qwen3Vl235bInfo
+      - model_name: sovereign-vision
+        litellm_params:
+          model: openai/Qwen/Qwen3-VL-235B-A22B-Instruct-FP8
+          api_base: os.environ/STACKIT_API_BASE
+          api_key: os.environ/STACKIT_API_KEY
+          extra_body: *noThinking
+        model_info: *qwen3Vl235bInfo
+      - model_name: sovereign-premium
+        litellm_params:
+          model: openai/Qwen/Qwen3-VL-235B-A22B-Instruct-FP8
+          api_base: os.environ/STACKIT_API_BASE
+          api_key: os.environ/STACKIT_API_KEY
+          extra_body: *noThinking
+        model_info: *qwen3Vl235bInfo
+      - model_name: sovereign-embed
+        litellm_params:
+          model: openai/Qwen/Qwen3-VL-Embedding-8B
+          api_base: os.environ/STACKIT_API_BASE
+          api_key: os.environ/STACKIT_API_KEY
+        model_info:
+          mode: embedding
+          input_cost_per_token: 0.00000008
+          output_cost_per_token: 0
+          max_input_tokens: 32000
+          output_vector_size: 4096
+          supports_vision: false

@@ -70,6 +70,9 @@ The panel has **no LiteLLM tab yet** (checklist T10, backlog): the routes per ro
 specified and not built. What already holds, and what the tab will have to keep holding: the panel
 never shows a key — only an alias — and nothing on that surface may widen what a reader can see.
 
+Operations: adding `LITELLM_SALT_KEY` and rotating the master key —
+[`docs/ops/litellm-salt-key.md`](../ops/litellm-salt-key.md).
+
 ## FAQ
 **Q: "Not connected to DB" at login?** The UI needs Postgres — it's DB-backed here (CNPG
 `litellm`). If you see this, the litellm pod isn't connected; check it's running.
@@ -79,11 +82,96 @@ three-tier set (reasoning=Qwen3-VL-235B · standard/worker=gpt-oss-20b · embedd
 Qwen3-VL-Embedding-8B); the offline mock-model serves embeddings only on kind/local.
 **Q: When does STACKIT get called?** Only as the **last-resort** fallback when every self-hosted
 route fails/overloads, or for **vision** inputs (`sovereign-vision`). Cost is hard-capped on the
-agent virtual key (`litellmAgentKey.modelMaxBudget`) and surfaced in Monitoring (Langfuse cost).
+agent virtual key (`litellmAgentKey.maxBudget` per `budgetDuration`; the per-model
+`modelMaxBudget` is a LiteLLM Enterprise feature and is not used) and surfaced in Monitoring.
 **Q: Why a scoped key for agents?** Least privilege (security.md): agents can only reach the
 granted models, capped, and every call is attributable.
-**Q: Spend shows 0.** The mock model has no pricing; with a priced model spend tracks + the
-cap enforces.
+**Q: Spend shows 0.** The alias has no price. See "Prices and budgets" below — an unpriced
+alias is booked at cost 0 and no budget can trigger on it.
+**Q: A request over the rate limit — is it queued?** No. LiteLLM refuses it at once with HTTP
+429 (`Rate limit exceeded ... Limit resets at: ...`, header `retry-after`). The router's
+`num_retries` retries upstream errors only. The OS backs off and retries
+(`tabs/agents/lib/engine/rate-limit.ts`); any other caller has to do the same.
+
+## Prices and budgets
+
+**Every alias carries `model_info`, and the prices in it are what makes a budget real.** The
+model ids behind the aliases are custom ids on an OpenAI-compatible endpoint
+(`openai/gpt-oss-20b`, `openai/Qwen/Qwen3-VL-235B-A22B-Instruct-FP8`); LiteLLM's built-in price
+map has no entry for them. Without `input_cost_per_token` / `output_cost_per_token` LiteLLM
+books each call at cost 0: `x-litellm-response-cost` is 0 (or absent), the key's `spend` never
+moves, and `max_budget` on the shared key or on a system's own key never triggers. That was the
+state of this stack until 2026-11-19 (measured on 1.90.0: three calls of 1,000 + 500 tokens,
+key spend `0.0`). With the prices set, the same calls book 0.000275 (standard) and 0.002375
+(reasoning).
+
+| Alias (STACKIT profile) | Upstream model | Input / output per 1M | per token (`model_info`) | Context / max output | Images | Tools |
+|---|---|---|---|---|---|---|
+| `sovereign-default`, `sovereign-mock` | gpt-oss-20b | 0.15 / 0.25 EUR | 1.5e-07 / 2.5e-07 | 131K / 8192 | no | yes |
+| `sovereign-reasoning`, `-reasoning-fast`, `-premium`, `-vision` | Qwen3-VL-235B-A22B-Instruct-FP8 | 1.50 / 1.75 EUR | 1.5e-06 / 1.75e-06 | 200K / 16384 | yes | yes |
+| `sovereign-embed` | Qwen3-VL-Embedding-8B | 0.08 EUR input | 8e-08 / 0 | 32000 input | no (the OS sends none) | n/a |
+
+Sources: prices — STACKIT AI Model Serving price table (stackit.com, EUR per 1M tokens, read
+2026-11-19); limits, modalities and tool calling — docs.stackit.cloud "Available shared models".
+On the base (laptop) profile `sovereign-embed` is the bundled mock and is priced at 0 on purpose.
+
+* **Currency.** LiteLLM calls its ledger "USD" and converts nothing. The prices are EUR, so
+  `maxBudget`, `spend` and every amount in the LiteLLM console are EUR on this stack.
+* **One price, two ledgers.** `osUI.modelPricesJson` (Monitoring, per 1M tokens) and
+  `model_info` (the gateway, per token) must say the same thing.
+  `scripts/check-litellm-model-info.mjs` (in `gate.sh`) fails when they differ, when an alias
+  has no price, or when two aliases of the same upstream model are priced differently.
+* **`supports_vision`** is true exactly for the aliases on the OS image allowlist
+  (`os-ui/core/models/capabilities.ts`); the same check enforces it. It is metadata for
+  `/model/info` today — the allowlist is what decides whether the OS sends an image.
+* **`max_input_tokens` is informational.** `router_settings.enable_pre_call_checks` is **not**
+  enabled: LiteLLM would then reject or re-route a request by its own token estimate, which for
+  these open-weight models is a tiktoken approximation, against limits STACKIT publishes rounded
+  ("131K", "200K"). The OS already bounds its prompts (`core/models/context-windows.ts`).
+  `stream_timeout` is not set either: nothing in the OS streams, so it would bound nothing.
+* **Rendering trap.** Helm prints `0.00000008` as `8e-08`, which LiteLLM's YAML parser reads as
+  a *string*. 1.90.0 still computes with it (measured: 8 tokens → 6.4e-07); keep prices in the
+  values as plain decimals and re-check `GET /model/info` after a gateway upgrade.
+
+### A cluster that carries its own `model_list` (production does)
+
+`model_list` is a list and Helm replaces a list whole. `scripts/deploy.sh` derives its values
+from the **live release**, so a release that already holds its own `model_list` never receives
+the chart's `model_info`. Apply the priced list once:
+
+```bash
+# compare first — the overlay is a copy of the live routing, and the live one wins
+helm get values agentic-os -n agentic-os -o yaml | yq '.litellm.proxy_config.model_list'
+VALUES_OVERLAY=deploy/overlays/gateway-model-info.stackit.yaml ./scripts/deploy.sh --from-registry <version>
+# afterwards
+curl -s -H "Authorization: Bearer $MASTER" http://localhost:4000/model/info | jq '.data[] | {model_name, in: .model_info.input_cost_per_token}'
+```
+
+`VALUES_OVERLAY` is the supported way to change any release value; what it sets stays in the
+release, so it is passed once. **From that deploy on spend counts** — the shared key against
+`litellmAgentKey.maxBudget`, each system key against `osUI.agentSystemKey.maxBudget` — so look at
+the spend column in the console during the first week and size the caps from what you see.
+
+### The shared key's budget
+
+`litellmAgentKey.maxBudget` per `litellmAgentKey.budgetDuration` (base default 25 per `7d`; the
+STACKIT profile 250 per `7d`). The key-init Job applies both to the **existing** key on every
+upgrade (`/key/update`), not only at creation. What an update does, measured on 1.90.0:
+
+* giving a key a window sets `budget_reset_at` to the next boundary (for `7d`: Monday 00:00 UTC);
+* the spend already counted **stays** until that reset — an update never zeroes it. A key whose
+  spend is already above a newly lowered `maxBudget` is refused until the reset;
+* an empty `budgetDuration` is sent as `null` and **removes** the window (a lifetime cap). The
+  Job used to omit the field, which left whatever window the key had.
+
+An exhausted budget is not a rate limit, although both arrive as HTTP 429. Measured on 1.90.0:
+a spent key gets `{"error":{"message":"Budget has been exceeded! Current cost: 0.002375, Max
+budget: 0.001","type":"budget_exceeded","code":"429"}}`; a rate limit gets `"Rate limit
+exceeded for api_key: … Limit type: tokens. Current limit: 1000, Remaining: 0. Limit resets at:
+2026-11-19 18:55:46 UTC"` with `type: throttling_error` and the headers `retry-after: 60`,
+`rate_limit_type`, `reset_at`. The OS tells them apart by the wording
+(`tabs/agents/lib/engine/rate-limit.ts`): it waits and retries a rate limit, and reports a spent
+budget as "budget used up" without retrying.
 
 ## What the OS reads back (the gateway mirror)
 
@@ -156,6 +244,11 @@ reply — and label it (`source: 'offline-hash'` / `mode: 'mock'`). A 4xx **thro
 `GatewayRejectedError`; nothing is indexed. The run-time handoff curation treats a
 rejection like the offline source (it indexes nothing).
 
+**No prompt content in the gateway's records (chart).** `litellm_settings.turn_off_message_logging:
+true` and `general_settings.store_prompts_in_spend_logs: false` — the gateway logs model, usage,
+cost, tags and trace ids to Langfuse and to its spend logs, never the prompt or the completion.
+Details and the measured result: `docs/components/langfuse.md` "What the gateway writes".
+
 **Cache and failure callback (chart).** `litellm_settings.failure_callback: ["langfuse"]`
 makes a rejected or failed call observable (checklist A30). `cache: true` on the bundled
 Valkey (`cache_params.host: valkey`, password via `extraEnvVars` from `valkey-credentials`)
@@ -187,7 +280,7 @@ the admin API under the master key.
 
 ### Deployment caveat
 
-The scoped key ships with `litellmAgentKey.maxBudget: 5` USD and the
+The scoped key ships with `litellmAgentKey.maxBudget: 25` per `7d` and the
 `litellmAgentKey.models` allowlist (four aliases today). Before enabling this in
 production, check that the key's remaining budget and its allowlist cover real
 traffic — otherwise runs will correctly but unhelpfully fail closed with

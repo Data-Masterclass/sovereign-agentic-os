@@ -413,9 +413,10 @@ provisioner and `config.ts`.
 default): message content as roles + character counts, the tool-call structure (names, ids,
 arguments) in full, each tool result as a character count plus a 160-character preview. `strict`:
 argument **key names** and their sizes only, and no preview — for tenants whose tool arguments can
-carry personal data. Neither level reaches LiteLLM's own nested generation, which carries the full
-prompt unless the gateway is told otherwise (`turn_off_message_logging`) — see
-`docs/components/langfuse.md`.
+carry personal data. Neither level governs LiteLLM's own nested generation: that one is redacted
+at the gateway (`turn_off_message_logging`, chart default) and its logged output is masked per
+request (`metadata.mask_output`, set in `core/runtime/runtime.ts`) — see
+`docs/components/langfuse.md` "What the gateway writes".
 
 **In-flight lock.** `executeTeamRun` takes a per-thread lock (`engine/run-lock.ts`) before any
 marker or event and releases it in `finally`; a second entrant on the same run gets a typed 409
