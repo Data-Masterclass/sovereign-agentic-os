@@ -136,7 +136,15 @@ export type SearchHit = {
   snippet: string;
 };
 
-type FilesStoreState = { store: Map<string, FileRecord>; seeded: boolean; hydration: Promise<void> | null };
+type FilesStoreState = {
+  store: Map<string, FileRecord>;
+  seeded: boolean;
+  hydration: Promise<void> | null;
+  /** This process only READS files another process writes (the run worker). See `refreshFromMirror`. */
+  mirrorRefresh?: boolean;
+  refreshedAt?: number;
+  refreshing?: Promise<void> | null;
+};
 const FS_KEY = Symbol.for('soa.files.store');
 function fs(): FilesStoreState {
   const g = globalThis as unknown as Record<symbol, FilesStoreState | undefined>;
@@ -181,8 +189,59 @@ function writeThrough(rec: FileRecord): void {
 
 export async function ensureHydrated(): Promise<void> {
   const s = fs();
-  if (!s.hydration) s.hydration = Promise.all([hydrateFiles(), versions.ensureHydrated()]).then(() => {});
-  return s.hydration;
+  if (!s.hydration) {
+    s.refreshedAt = Date.now(); // the first hydration IS a fresh read
+    s.hydration = Promise.all([hydrateFiles(), versions.ensureHydrated()]).then(() => {});
+  }
+  await s.hydration;
+  if (s.mirrorRefresh) await refreshFromMirror();
+}
+
+/**
+ * CROSS-PROCESS FRESHNESS (2026-11-19 — the PDF text an agent run could not see).
+ *
+ * The registry is an in-process Map hydrated ONCE, and `hydrateFiles` deliberately keeps a record
+ * it already holds. In os-ui that is right: the process that writes is authoritative. But agent
+ * runs execute in the `os-ui-worker` process, whose tools (`list_files`, `get_file`,
+ * `search_files`) read ITS Map — so a file uploaded in os-ui after the worker first hydrated did
+ * not exist there, and text extracted in os-ui (an upload, "Extract text", the admin backfill)
+ * never arrived: the worker kept answering `text: ""` until its pod was replaced.
+ *
+ * So a process that has declared itself a reader of other processes' writes re-reads the mirror
+ * before serving, at most once per {@link MIRROR_REFRESH_MIN_MS}. Every door already calls
+ * `ensureHydrated()` first (the MCP dispatcher before each `tools/call`, the route gate), so
+ * that is the one seam. It is the files twin of the agents store's `refreshSystemFromMirror`.
+ *
+ * NEWER WINS, by the record's own `updatedAt` stamp: a mirror document replaces the in-memory
+ * record only when it is strictly newer, so a file this process itself just wrote (an agent's
+ * `upload_file`, whose mirror write is fire-and-forget) is never rolled back by a read that
+ * raced it. Nothing is ever REMOVED here: `hydrate()` answers `[]` both for an empty index and
+ * for a failed search, and an empty answer must not be read as "every file was deleted".
+ * (So a file deleted in os-ui stays visible to this process until it restarts — stated, not
+ * solved.) A mirror that is down leaves memory exactly as it was.
+ */
+export const MIRROR_REFRESH_MIN_MS = 5000;
+
+/** Declare THIS process a reader of files other processes write (called by the worker at boot). */
+export function enableMirrorRefresh(on = true): void {
+  fs().mirrorRefresh = on;
+}
+
+export async function refreshFromMirror(opts: { force?: boolean; nowMs?: number } = {}): Promise<void> {
+  const s = fs();
+  const nowMs = opts.nowMs ?? Date.now();
+  if (s.refreshing) return s.refreshing;
+  if (!opts.force && s.refreshedAt !== undefined && nowMs - s.refreshedAt < MIRROR_REFRESH_MIN_MS) return;
+  s.refreshedAt = nowMs;
+  s.refreshing = (async () => {
+    const docs = (await fileMirror.hydrate(2000)) ?? [];
+    for (const rec of docs as FileRecord[]) {
+      if (!rec || !rec.id || typeof rec.yaml !== 'string') continue;
+      const held = s.store.get(rec.id);
+      if (!held || String(rec.updatedAt ?? '') > String(held.updatedAt ?? '')) s.store.set(rec.id, rec);
+    }
+  })().finally(() => { s.refreshing = null; });
+  return s.refreshing;
 }
 
 async function hydrateFiles(): Promise<void> {
@@ -265,6 +324,9 @@ export function __resetStore(): void {
   s.store.clear();
   s.seeded = false;
   s.hydration = null;
+  s.mirrorRefresh = false;
+  s.refreshedAt = undefined;
+  s.refreshing = null;
   fileMirror.__reset();
   versions.__reset();
 }
