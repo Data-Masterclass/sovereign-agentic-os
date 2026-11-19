@@ -12,8 +12,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { budgetDuration, config } from '@core/kernel/config';
 
-test('agentSystemKey defaults: a WEEKLY-resetting $5 budget, 300 requests/min, 1,000,000 tokens/min', () => {
-  assert.deepEqual(config.agentSystemKey, { maxBudget: 5, budgetDuration: '7d', rpmLimit: 300, tpmLimit: 1_000_000 });
+test('agentSystemKey defaults: a WEEKLY-resetting $5 budget, 300 requests/min, 1,000,000 tokens/min, 8 calls at once', () => {
+  assert.deepEqual(config.agentSystemKey, { maxBudget: 5, budgetDuration: '7d', rpmLimit: 300, tpmLimit: 1_000_000, maxParallelRequests: 8 });
 });
 
 test('budgetDuration: a LiteLLM duration passes; "none" turns the reset off; a typo falls back instead of becoming a lifetime cap', () => {
