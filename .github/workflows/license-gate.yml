@@ -5,6 +5,11 @@
 # allowlist (licenses/allowed-licenses.txt), blocking accidental ELv2 / BSL / SSPL
 # (and AGPL-when-bundled) dependencies. Also (re)generates the CycloneDX SBOM with
 # syft and uploads it as an artifact.
+#
+# Part of the release gate (2026-11-19): `scripts/lib/workflow-status.sh` requires this
+# workflow's push run on `main` to be green before an os-ui image is built. So it is pinned like
+# `ci.yml`: actions by commit SHA, syft by release (its tagged install script verifies the
+# download's checksum). It used to run `@v4` tags and the installer from syft's moving `main`.
 name: license-gate
 
 on:
@@ -17,12 +22,14 @@ jobs:
   license-gate:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Install syft
+        env:
+          SYFT_VERSION: v1.57.0
         run: |
-          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh \
-            | sh -s -- -b /usr/local/bin
+          curl -sSfL "https://raw.githubusercontent.com/anchore/syft/${SYFT_VERSION}/install.sh" \
+            | sh -s -- -b /usr/local/bin "${SYFT_VERSION}"
           syft version
 
       - name: SPDX headers present on our source
@@ -39,7 +46,7 @@ jobs:
 
       - name: Upload SBOM
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: sbom-cyclonedx
           path: sbom.cdx.json
