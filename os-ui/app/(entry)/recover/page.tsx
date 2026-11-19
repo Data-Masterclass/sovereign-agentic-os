@@ -5,53 +5,8 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-
-/* ---- Password strength helpers ---- */
-
-const COMMON_PASSWORDS = new Set([
-  'password', 'password1', 'password123', '12345678', '123456789',
-  '1234567890', 'qwerty', 'qwerty123', 'abc123', 'iloveyou',
-  'letmein', 'welcome', 'admin1234', 'monkey', 'dragon', 'master',
-  'sunshine', 'football', 'baseball', 'trustno1', 'access',
-]);
-
-function getStrength(pw: string, user: string): { score: number; unmet: string[] } {
-  const unmet: string[] = [];
-  if (pw.length < 12) unmet.push('At least 12 characters');
-  const classes = [/[a-z]/, /[A-Z]/, /[0-9]/, /[^a-zA-Z0-9]/].filter((r) => r.test(pw)).length;
-  if (classes < 3) unmet.push('Mix of lowercase, uppercase, digit, and symbol (need 3 of 4)');
-  if (COMMON_PASSWORDS.has(pw.toLowerCase())) unmet.push('Too common a password');
-  if (user && pw.toLowerCase().includes(user.toLowerCase())) unmet.push('Must not contain your username');
-  return { score: Math.max(0, 4 - unmet.length), unmet };
-}
-
-const FILL_COLORS = ['#c0392b', '#e06a2a', '#c8a24a', '#2aa39b', '#2aa39b'];
-
-function StrengthMeter({ password, username }: { password: string; username: string }) {
-  if (!password) return null;
-  const { score, unmet } = getStrength(password, username);
-  return (
-    <div className="auth-strength-wrap">
-      <div className="auth-strength-bar">
-        <div
-          className="auth-strength-fill"
-          style={{ width: `${(score + 1) * 20}%`, backgroundColor: FILL_COLORS[score] }}
-        />
-      </div>
-      <div className="auth-strength-rules">
-        {unmet.length === 0 ? (
-          <div className="auth-strength-rule">✓ Strong password</div>
-        ) : (
-          unmet.map((r) => (
-            <div key={r} className="auth-strength-rule unmet">
-              ✗ {r}
-            </div>
-          ))
-        )}
-      </div>
-    </div>
-  );
-}
+import { assessPasswordStrength } from '@core/kernel/password-strength';
+import { PasswordStrengthMeter } from '@core/ui/PasswordStrengthMeter';
 
 /* ---- Page ---- */
 
@@ -65,9 +20,9 @@ export default function RecoverPage() {
   const [done, setDone] = useState(false);
   const [busy, setBusy] = useState(false);
 
-  const { unmet } = getStrength(password, username);
+  const strongEnough = assessPasswordStrength(password, username).ok;
   const passwordsMatch = password === confirm;
-  const canSubmit = !!(username && key && password && confirm && passwordsMatch && unmet.length === 0 && !busy);
+  const canSubmit = !!(username && key && password && confirm && passwordsMatch && strongEnough && !busy);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -154,7 +109,7 @@ export default function RecoverPage() {
                     placeholder="••••••••••••"
                   />
                 </label>
-                <StrengthMeter password={password} username={username} />
+                <PasswordStrengthMeter password={password} username={username} />
               </div>
 
               <div>
