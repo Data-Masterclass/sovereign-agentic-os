@@ -211,6 +211,43 @@ All of them go through `enqueueRun`/the jobs path and `assertRunVisible`, with i
 semantics to the UI. The sequence is taught in `guide.md` and pinned by
 `core/mcp/agent-run-surface.test.ts`.
 
+### Declared outputs are saved by the engine
+
+"Where the results go" (Define) is not advice to the model. When the graph has produced its
+result, `executeTeamRun` (`build/run-service.ts`) saves every declared output itself:
+
+1. the report is persisted with every output `pending` (the analysis is on record first);
+2. `saveDeclaredOutputs` (`output-saver.ts`, pure) files the final answer of the producing agent
+   — "written by", else the last agent — one output after the other;
+3. the report is persisted again with the outcome, and `done` carries `outputs`.
+
+| Kind | What is saved | Tool(s) |
+|---|---|---|
+| File | the result as `<system>-<yyyy-mm-dd-hhmm>-<run tag>.md` (UTC), run and system in its description | `upload_file` |
+| Knowledge | the result as a note in My knowledge, titled `<output> — <date time> UTC` | `save_knowledge_note` |
+| Dataset | the ONE JSON list of flat objects in the result (`output-table.ts`), as the Bronze of one dataset per output; each run is a new version and replaces the rows | `create_dataset` (once), `ingest_dataset` |
+
+Rules that hold for all three:
+
+- **The door.** Every call goes through `agentToolGate` as the running user
+  (`build/output-save-server.ts`), on `outputSaveSystem(run system)`: the saver's own tools and
+  the declared folders only. A write outside a declared folder is refused by `checkGrantScope`.
+- **Domain target.** The write lands in the runner's My lane at the declared path; then
+  `request_promotion` files the request a domain admin decides. The engine never decides it. A
+  request the governed path refuses (an undocumented dataset) is reported with that reason.
+- **Hold.** `holdDecisionFor` is asked before a write: a read-only team writes nothing in a run.
+  "Save now" (the `outputs/save` route) is the person's own act and is not held.
+- **Once.** Before writing, the saver looks for what THIS run already wrote: its ledger
+  (`LastRun.outputs`), a file whose name ends in the run tag, a note under the run's `sourceKey`,
+  the dataset of that name. A re-queued job that finds its thread finished completes the save
+  (`recoverOutputSave`) instead of answering 409.
+- **Said when confirmed.** `saved` is reported after the id was read back. A failed save does
+  not fail the run; it sets `completedWithUnsavedOutputs` and a warning line.
+
+Known limits: a note is not indexed for `search_knowledge`; a Dataset output cannot append; the
+recovery needs the system's last-run record to name the run (a run older than the latest one is
+never re-saved).
+
 ### Parity with what came before
 
 `lib/engine/parity-harness.ts` + `lib/engine/fixtures/*.json` are the **frozen** golden recordings
