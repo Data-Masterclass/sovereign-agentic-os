@@ -452,6 +452,12 @@ export async function inspectOsRun(input: { user: CurrentUser; yaml: string; sys
       preamble: '',
       reasoningModel: roleModel('reasoning'),
       execModel: roleModel('tools'),
+      // The SAME step caps a run is built with, so the `budget.limit` this reports is the one the
+      // run actually had. Without them the graph fell back to the harness default (6 × agents) and
+      // a two-agent run that had used 12 of its 400 steps read as "12 of 12" — a budget stop that
+      // never happened.
+      maxIterations: config.agentTeamNodeMaxSteps,
+      maxRunSteps: config.agentTeamRunMaxSteps,
       unmappedTools: resolveGrantedTools(sys).unmapped,
     },
     runId: input.runId,
