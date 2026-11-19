@@ -1,5 +1,10 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG
+ *
+ * FEATURE:    Tool classes — which model-initiated tool calls need the present user's confirmation.
+ * USER STORY: As the owner I want one reviewed, fail-closed answer to "may the assistant run this
+ *             without asking me?", so a tool nobody classified is asked about rather than run.
+ * ARCHITECTURE: pure lists over the static write catalog; details in the block comment below.
  */
 import { WRITE_TOOL_NAMES } from '@core/mcp/write-tool-meta';
 
