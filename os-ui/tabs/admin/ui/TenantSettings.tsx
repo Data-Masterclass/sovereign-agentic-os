@@ -152,10 +152,6 @@ function TenantSettingsInner() {
   return (
     <>
       <div>
-        <p className="lead">
-          Tenant identity, branding, defaults and localization. Each group saves on its own.
-        </p>
-
         {error ? <div className="error">{error}</div> : null}
 
         <div className="section-title">Identity / SSO</div>

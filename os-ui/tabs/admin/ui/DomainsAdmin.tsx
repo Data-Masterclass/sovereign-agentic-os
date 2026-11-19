@@ -223,12 +223,6 @@ function DomainsInner() {
   return (
     <>
       <div>
-        <p className="lead">
-          Domains are the tenant&apos;s <strong>structural map</strong> — each is a bounded space with an
-          owner, optional compute layers, and its own people and artifacts. Create them here; everything
-          downstream (access, governance, spend) hangs off this shape.
-        </p>
-
         <div className="section-title">Create domain</div>
         <div className="card" style={{ marginBottom: 18 }}>
           <div className="row" style={{ gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>

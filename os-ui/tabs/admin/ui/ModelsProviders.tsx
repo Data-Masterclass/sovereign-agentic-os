@@ -284,15 +284,6 @@ function ModelsPageInner() {
   return (
     <>
       <div>
-        <p className="lead">
-          Govern which models run. The live models behind the gateway aliases are set at deploy time
-          (this deployment runs STACKIT-managed inference: gpt-oss-20b for standard work, Qwen3-VL-235B for
-          reasoning/vision, Qwen3-VL-Embedding-8B for embeddings). Set the <strong>default model per
-          role</strong>, enable/disable, and cap per-model spend. Provider keys are added
-          <strong> via the secrets manager</strong> — the OS stores a reference + fingerprint and
-          <strong> never shows or logs the raw key</strong>.
-        </p>
-
         {toast ? <div className="hint" style={{ color: 'var(--teal)' }}>{toast}</div> : null}
         {error ? <div className="error">{error}</div> : null}
 

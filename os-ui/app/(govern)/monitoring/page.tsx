@@ -216,12 +216,7 @@ export default function MonitoringPage() {
     <>
       <PageHeader title="Monitoring" crumb="agents · data — the read plane" />
       <div className="content">
-        <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
-          <p className="lead" style={{ marginBottom: 0 }}>
-            Real 7-day health of the agent systems and datasets you can access. Open any
-            tile for full diagnostics — run history &amp; traces, cost/token trends, data-quality
-            checks, build timeline and lineage.
-          </p>
+        <div className="row" style={{ justifyContent: 'flex-end', alignItems: 'center' }}>
           <button className="btn ghost" onClick={reload} disabled={loading}>
             {loading ? <span className="spin" /> : 'Refresh'}
           </button>

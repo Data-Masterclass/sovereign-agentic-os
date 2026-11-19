@@ -73,10 +73,7 @@ export default function RepositoriesView() {
   return (
     <>
       <p className="muted" style={{ fontSize: 13, marginTop: 0 }}>
-        One bare git repository per domain, written in-process by the OS as the person who made each
-        change. Read access needs nothing but access to the domain — including the OS-owned{' '}
-        <span className="mono">os/</span> metadata, which is committed as real files so nothing is a
-        black box. <b>{repoSummaryLine(repos)}</b>
+        <b>{repoSummaryLine(repos)}</b>
       </p>
 
       {rows.length > 0 ? (

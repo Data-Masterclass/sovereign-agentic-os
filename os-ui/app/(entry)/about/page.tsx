@@ -20,8 +20,7 @@ export default async function AboutPage() {
       <PageHeader title="About / Licenses" crumb="open-source components & their licenses" />
       <div className="content">
         <p className="lead">
-          The Sovereign Agentic OS is assembled from ~30 best-in-class open-source tools. The
-          core is licensed <strong>Apache-2.0</strong>; each bundled component keeps its own
+          The core is licensed <strong>Apache-2.0</strong>; each bundled component keeps its own
           license, listed below across {COMPONENTS.length} components in {groups.length}{' '}
           license families.
         </p>

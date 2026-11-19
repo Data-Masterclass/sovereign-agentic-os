@@ -30,12 +30,6 @@ export default function ConnectionsPage() {
     <>
       <PageHeader title="Connections" crumb="external systems · governed connections" />
       <div className="content">
-        <p className="lead">
-          The external systems this domain brings in — databases, APIs and SaaS — registered as governed
-          connections that expose <strong>APIs or MCPs as tools</strong> for your agents and software.
-          Credentials go to the secrets store and are never exposed — you share <em>use</em>, never the
-          secret, under policy.
-        </p>
         <GovernedConnections />
         <AdminRegistries />
       </div>

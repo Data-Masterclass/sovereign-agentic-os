@@ -76,15 +76,9 @@ export default function PluginsPage() {
     <>
       <PageHeader title="Plugins" crumb="platform · curate plugins & marketplace" />
       <div className="content">
-        <p className="lead">
-          Curate which plugins — MCP servers, skills, and tools — your domains may use. Install requires a
-          plugin to be both <strong>signed</strong> and <strong>scanned</strong>. This is distinct from the
-          internal Company-scope product catalogue; here you govern the supply chain.
-        </p>
-
         {error ? <div className="error">{error}</div> : null}
 
-        <div className="section-title">Plugins<span className="count-pill">{plugins.length}</span></div>
+        <div className="section-title" style={{ marginTop: 0 }}>Plugins<span className="count-pill">{plugins.length}</span></div>
         <div className="grid">
           {plugins.map((p) => {
             const installable = p.signed && p.scanned && p.status === 'available';

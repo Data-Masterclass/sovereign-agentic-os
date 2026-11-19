@@ -672,16 +672,10 @@ function UsersAccessInner() {
       />
 
       <div>
-        <p className="lead">
-          The <strong>org-wide</strong> identity lifecycle — invite people with a sign-in password,
-          set roles and domain memberships, reset passwords, deactivate and offboard. In-domain role
-          changes are delegated to Builders in <a href="/governance">Governance</a>.
-        </p>
-
         {/* The one workflow cost of the split: assigning a person a role is here,
             defining what that role MAY DO is policy and lives in Governance. One
             click each way — the Roles & permissions tab links straight back. */}
-        <p className="hint" style={{ marginTop: -4, marginBottom: 14 }}>
+        <p className="hint" style={{ marginTop: 0, marginBottom: 14 }}>
           Assigning a role happens here. <strong>What a role may do</strong> is policy —{' '}
           <a href="/governance?section=roles">Governance → Roles &amp; permissions →</a>
         </p>

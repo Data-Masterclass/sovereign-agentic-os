@@ -219,11 +219,7 @@ export default function WorkflowsPage() {
       <PageHeader title="Workflows" crumb="steps · business rules · expert knowledge" />
       <div className="content">
 
-        <div className="row" style={{ marginTop: 18, justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: 10 }}>
-          <p className="lead" style={{ margin: 0 }}>
-            One tile per business process — steps, business rules, and expert knowledge
-            that agents follow.
-          </p>
+        <div className="row" style={{ marginTop: 18, justifyContent: 'flex-end', alignItems: 'baseline', flexWrap: 'wrap', gap: 10 }}>
           <div className="row" style={{ gap: 8 }}>
             <button
               className="btn ghost"

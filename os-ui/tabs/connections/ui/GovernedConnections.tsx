@@ -199,12 +199,8 @@ function GovernedConnectionsInner() {
   // ── List ──
   return (
     <ConfirmProvider>
-      {/* Header: lead + Show archived + ＋ New connection */}
-      <div className="row" style={{ justifyContent: 'space-between', alignItems: 'flex-end', gap: 16, flexWrap: 'wrap' }}>
-        <p className="lead" style={{ margin: 0, maxWidth: 560 }}>
-          Your connections to the tools and data you already use — each signs in as you and keeps
-          your credentials in the vault, never in the record.
-        </p>
+      {/* Header: Show archived + ＋ New connection */}
+      <div className="row" style={{ justifyContent: 'flex-end', alignItems: 'flex-end', gap: 16, flexWrap: 'wrap' }}>
         <div className="row" style={{ gap: 8 }}>
           <button className="btn ghost" style={{ opacity: 1 }} onClick={() => setShowArchived((v) => !v)} title="Archived connections are hidden by default">
             {showArchived ? 'Hide archived' : 'Show archived'}

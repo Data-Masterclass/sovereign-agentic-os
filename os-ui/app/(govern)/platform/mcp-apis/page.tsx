@@ -132,11 +132,7 @@ export default function McpApisPage() {
     <>
       <PageHeader title="MCPs & APIs" crumb="platform · every MCP server & API available in the OS" />
       <div className="content">
-        <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
-          <p className="lead" style={{ marginBottom: 0 }}>
-            One registry for every governed tool surface: the OS&rsquo;s own MCP servers &amp; APIs, the bundled
-            stack tools, and the MCPs your apps &amp; connections generate — shared across a domain or private to you.
-          </p>
+        <div className="row" style={{ justifyContent: 'flex-end', alignItems: 'center' }}>
           <button className="btn ghost" onClick={reload} disabled={loading}>{loading ? <span className="spin" /> : 'Refresh'}</button>
         </div>
 

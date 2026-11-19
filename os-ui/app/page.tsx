@@ -55,9 +55,6 @@ export default async function HomePage() {
           <h1 className="home-greeting">
             Welcome back, <span className="home-name">{firstName}</span>.
           </h1>
-          <p className="home-sub">
-            Your governed space on the Sovereign Agentic OS. Pick a golden path to create something.
-          </p>
         </div>
         <div className="home-persona" title="Your role shapes what Home emphasizes.">
           <span className="home-persona-stance">{feed.personaStance}</span>

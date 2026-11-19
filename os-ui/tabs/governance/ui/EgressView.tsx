@@ -64,12 +64,6 @@ export default function EgressView() {
 
   return (
     <>
-      <p className="lead">
-        The tenant’s sovereignty posture: the Admin-curated <strong>egress allowlist</strong>, secrets-manager
-        status, data residency, the OPA policy-bundle version, and audit retention — no raw secrets, ever.
-        Builders raise egress requests; you approve them below, and every decision compiles into the same
-        OPA bundle the Policies tab shows.
-      </p>
       {error ? <div className="error">{error}</div> : null}
 
       {posture ? (
