@@ -55,6 +55,11 @@ jobs:
       - name: Structure ratchet (core / tabs / components)
         run: node scripts/check-structure.mjs
 
+      # Langfuse web: sign-up off, and the NetworkPolicy admits only the OS's own callers.
+      # Renders the chart (the dependencies were built above); CI=true turns a skip into a failure.
+      - name: Langfuse hardening chart test
+        run: bash scripts/tests/langfuse-hardening.test.sh
+
       # The registry deploy mode and the widened conflict-copy check. No Docker, no network, no
       # cluster: it drives `deploy.sh --verify-only` against a fake digest probe and runs the
       # real gate.sh / check-structure.mjs inside throwaway trees. It also asserts the CI worker
