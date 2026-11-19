@@ -42,12 +42,12 @@ function mixedYaml(): string {
  * present) emits a single `query_data` tool call; the next ACT call finishes. This
  * drives exactly one governed tool dispatch through the injected executor.
  */
-function toolCallingLlm(toolName: string): LlmCall {
+function toolCallingLlm(toolName: string, args: Record<string, unknown> = { sql: 'select 1' }): LlmCall {
   let acts = 0;
   return async (req) => {
     if (!req.tools || req.tools.length === 0) return { content: 'plan: query the data', toolCalls: [] };
     acts += 1;
-    if (acts === 1) return { content: '', toolCalls: [{ id: 'c1', name: toolName, args: { sql: 'select 1' } }] };
+    if (acts === 1) return { content: '', toolCalls: [{ id: 'c1', name: toolName, args }] };
     return { content: 'done: analysed 1 row', toolCalls: [] };
   };
 }
@@ -381,7 +381,7 @@ for (const preset of ['read-propose', 'full-in-scope'] as const) {
       yaml: deployerYaml(preset),
       systemId: 'sys-ship',
       messages: [{ role: 'user', content: 'Ship it.' }],
-      llm: toolCallingLlm('request_deploy'),
+      llm: toolCallingLlm('request_deploy', { appId: 'app_1' }),
       toolDeps: deps,
       approvalPort: port,
       onInterrupt: (ev) => interrupts.push(ev),
@@ -426,7 +426,7 @@ test('runOsTeam (production wiring): a My-scope write under the same preset is N
     yaml,
     systemId: 'sys-make',
     messages: [{ role: 'user', content: 'Make it.' }],
-    llm: toolCallingLlm('create_software'),
+    llm: toolCallingLlm('create_software', { name: 'Tracker' }),
     toolDeps: deps,
     approvalPort: port,
     maxIterations: 3,

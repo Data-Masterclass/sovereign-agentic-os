@@ -48,8 +48,8 @@ edges: []
 `;
 
 const BATCH = [
-  { id: 'c-read', name: 'search_knowledge', args: { q: 'Q3 findings' } },
-  { id: 'c-write', name: 'request_promotion', args: { id: 'kn_q3' } },
+  { id: 'c-read', name: 'search_knowledge', args: { query: 'Q3 findings' } },
+  { id: 'c-write', name: 'request_promotion', args: { kind: 'knowledge', id: 'kn_q3' } },
 ];
 
 /** PLAN → fixed; first ACT → the batch; every later ACT → FINAL. */
