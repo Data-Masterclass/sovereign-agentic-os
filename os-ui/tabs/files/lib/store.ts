@@ -1225,6 +1225,16 @@ export function canEditFile(id: string, user: Principal): boolean {
 }
 
 /** What the generator needs about one file — SERVER-INTERNAL, not user-scoped. */
+/** UNSCOPED existence+name peek (no authz, no content), the files twin of `peekDatasetMeta`: used
+ *  ONLY to tell a deleted file apart from an existing one an app was not granted. An archived file
+ *  still exists. */
+export function peekFileMeta(id: string): { name: string } | null {
+  ensureSeeded();
+  const rec = fs().store.get(id);
+  if (!rec) return null;
+  try { return { name: parseAsset(rec.yaml).name }; } catch { return { name: '' }; }
+}
+
 export function autoDocsSubject(id: string): { asset: FileAsset; text: string; archived: boolean } | null {
   ensureSeeded();
   const rec = fs().store.get(id);

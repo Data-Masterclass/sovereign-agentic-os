@@ -7,7 +7,7 @@ import type { CurrentUser } from '@core/kernel/auth';
 import { requirePrincipal } from '@tabs/files/lib/server';
 import {
   getFile, moveFile, setDocs, setSensitivity, setIndexingMode,
-  archiveFile, unarchiveFile, renameFile, canEditFile,
+  archiveFile, unarchiveFile, renameFile, canEditFile, peekFileMeta,
 } from '@tabs/files/lib/store';
 import { reindexById, settleStale, describeNow } from '@tabs/files/lib/pipeline-server';
 import { config } from '@core/kernel/config';
@@ -26,7 +26,7 @@ export const GET = withRoute<{ id: string }>(async ({ user, params, req }) => {
   // granted. Non-app requests (the OS UI) skip this (appSlugFromRequest → null).
   const slug = appSlugFromRequest(req);
   if (slug) {
-    const check = await checkAppGrant(slug, 'files', id);
+    const check = await checkAppGrant(slug, 'files', id, peekFileMeta);
     if (!check.allowed) return NextResponse.json({ error: check.reason }, { status: 403 });
   }
   settleStale(id); // a text extraction that died with its process must not read "Extracting…" forever

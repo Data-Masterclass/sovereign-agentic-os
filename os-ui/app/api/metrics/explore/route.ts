@@ -6,7 +6,7 @@ import { requirePrincipal } from '@tabs/data/lib/server';
 import { withRoute } from '@core/kernel/route-server';
 import type { CurrentUser } from '@core/kernel/auth';
 import { delegatedToken } from '@core/infra/identity-server';
-import { getMetric } from '@tabs/metrics/lib/store';
+import { getMetric, peekMetricExists } from '@tabs/metrics/lib/store';
 import { exploreMetric } from '@tabs/metrics/lib/build/explore-server';
 import type { Granularity } from '@tabs/metrics/lib/explorer';
 import { appSlugFromRequest, checkAppGrant } from '@tabs/software/lib/app-origin';
@@ -36,7 +36,7 @@ export const POST = withRoute<Record<string, string>, {
   // granted. Non-app requests (the OS UI) skip this (appSlugFromRequest → null).
   const slug = appSlugFromRequest(req);
   if (slug) {
-    const check = await checkAppGrant(slug, 'metrics', metricId);
+    const check = await checkAppGrant(slug, 'metrics', metricId, (id) => (peekMetricExists(id) ? { name: id } : null));
     if (!check.allowed) return NextResponse.json({ error: check.reason }, { status: 403 });
   }
 

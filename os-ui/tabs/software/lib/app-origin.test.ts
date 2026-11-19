@@ -149,3 +149,48 @@ test('grantedIdSet: returns the granted ids for a kind, empty for an unknown slu
   const empty = await grantedIdSet('ghost-app', 'data');
   assert.equal(empty.size, 0); // fail closed
 });
+
+// ── the denial asks each artifact's OWN store ────────────────────────────────────
+// Datasets and files do not live in the artifacts registry. Asked there, a LIVE dataset or file
+// an app was simply not granted read as "no longer exists (it may have been deleted)", which
+// sent the user to rebuild a working app instead of granting it.
+
+test('checkAppGrant: a LIVE dataset in the data store that the app was not granted says "grant it", by name', async () => {
+  const app = await seedGrantedApp();
+  const { createDataset, peekDatasetMeta } = await import('@tabs/data/lib/store');
+  const ds = createDataset({ id: 'own', domains: ['sales'], role: 'builder' } as never, { name: 'Service Points' });
+  const out = await checkAppGrant(app.slug, 'data', ds.id, peekDatasetMeta);
+  assert.equal(out.allowed, false);
+  assert.match(out.reason, new RegExp(`«Service Points» \\(${ds.id}\\)`));
+  assert.match(out.reason, /not granted/);
+  assert.doesNotMatch(out.reason, /no longer exists/);
+});
+
+test('checkAppGrant: a dataset id the data store does not have is reported as deleted', async () => {
+  const app = await seedGrantedApp();
+  const { peekDatasetMeta } = await import('@tabs/data/lib/store');
+  const out = await checkAppGrant(app.slug, 'data', 'ds_gone123', peekDatasetMeta);
+  assert.match(out.reason, /ds_gone123 which no longer exists/);
+});
+
+test('checkAppGrant: a LIVE file the app was not granted says "grant it", not "deleted"', async () => {
+  const app = await seedGrantedApp();
+  const { createFile, peekFileMeta } = await import('@tabs/files/lib/store');
+  const f = createFile({ id: 'own', domains: ['sales'], role: 'builder' } as never, { name: 'rates.pdf', text: 'x' } as never);
+  const out = await checkAppGrant(app.slug, 'files', f.id, peekFileMeta);
+  assert.match(out.reason, /«rates\.pdf»/);
+  assert.match(out.reason, /not granted/);
+});
+
+test('every app-origin door passes its own store’s peek to checkAppGrant', async () => {
+  const { readFileSync } = await import('node:fs');
+  const src = (rel: string) => readFileSync(new URL(`../../../${rel}`, import.meta.url), 'utf8');
+  for (const [route, re] of [
+    ['app/api/data/datasets/[id]/route.ts', /checkAppGrant\(slug, 'data', id, peekDatasetMeta\)/],
+    ['app/api/data/datasets/[id]/preview/route.ts', /checkAppGrant\(slug, 'data', id, peekDatasetMeta\)/],
+    ['app/api/files/[id]/route.ts', /checkAppGrant\(slug, 'files', id, peekFileMeta\)/],
+    ['app/api/metrics/explore/route.ts', /checkAppGrant\(slug, 'metrics', metricId, \(id\) => \(peekMetricExists\(id\)/],
+  ] as const) {
+    assert.match(src(route), re, route);
+  }
+});

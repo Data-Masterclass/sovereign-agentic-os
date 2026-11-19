@@ -5,7 +5,7 @@ import { NextResponse } from 'next/server';
 import { withRoute } from '@core/kernel/route-server';
 import type { CurrentUser } from '@core/kernel/auth';
 import { requirePrincipal } from '@tabs/data/lib/server';
-import { getDataset, builtLayerFqn } from '@tabs/data/lib/store';
+import { getDataset, builtLayerFqn, peekDatasetMeta } from '@tabs/data/lib/store';
 import { queryRun } from '@core/infra/governed';
 import { runPreview } from '@tabs/data/lib/preview';
 import type { Layer } from '@tabs/data/lib/index';
@@ -33,7 +33,7 @@ export const GET = withRoute<{ id: string }>(async ({ user, params, req }) => {
   // LEAST-PRIVILEGE for app origins: cap the preview to datasets the app was granted.
   const slug = appSlugFromRequest(req);
   if (slug) {
-    const check = await checkAppGrant(slug, 'data', id);
+    const check = await checkAppGrant(slug, 'data', id, peekDatasetMeta);
     if (!check.allowed) return NextResponse.json({ error: check.reason }, { status: 403 });
   }
   const dataset = getDataset(id, user); // 403 for a non-viewer (canView guard)
