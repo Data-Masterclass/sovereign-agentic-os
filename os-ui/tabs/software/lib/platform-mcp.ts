@@ -153,13 +153,13 @@ export const PLATFORM_MCP_TOOLS: { name: string; description: string; write: boo
   {
     name: 'use_as_data',
     description:
-      'CLOSE THE LOOP app → Data: snapshot the app’s own records into a BRONZE dataset in the app’s domain, so what the app collected becomes a governed data product other tools (metrics, dashboards, dbt models, agents) can use. Read-only against the app, additive in Data: it creates or adds a version to the dataset, it never mutates the app. Owner-only (not a domain colleague — the app’s records are the owner’s to publish). Governance: an unseeable app id → not_found; an app you can see but do not own → forbidden. Next: `list_datasets` shows the Bronze dataset, then `transform_silver` / `build_gold_join` to refine it.',
+      'MARK the app as used as Data: sets the app’s `usedAsData` flag (shown by get_software and on the app’s Software page) and nothing else. No rows are copied and no dataset or dataset version is created — the data artifact registered with the app at creation (`dataArtifactId`) is left as it is. To turn the app’s records into a governed dataset, ingest them with the Data tools (`create_dataset` / `ingest_dataset`). Owner-only (not a domain colleague). Governance: an unseeable app id → not_found; an app you can see but do not own → forbidden.',
     write: true,
   },
   {
     name: 'archive',
     description:
-      'ARCHIVE the app: disable it (no preview, no deploy, no serving) while RETAINING its records, spec and lineage — the reversible counterpart to `delete`, which is lineage-blocked and permanent. Use it to retire an app without losing what it collected (`use_as_data` first if its records should become a dataset). Owner or an Admin. Governance: an unseeable app id → not_found; an app you can see but may not archive → forbidden.',
+      'ARCHIVE the app: disable it (no preview, no deploy, no serving) while RETAINING its records, spec and lineage — the reversible counterpart to `delete`, which is lineage-blocked and permanent. Use it to retire an app without losing what it collected (ingest its records with the Data tools first if they should become a dataset). Owner or an Admin. Governance: an unseeable app id → not_found; an app you can see but may not archive → forbidden.',
     write: true,
   },
   { name: 'delete', description: 'Delete the app (lineage-aware; blocked if depended on).', write: true },
