@@ -71,16 +71,35 @@ by default, the gateway's records included):
   The mask replaces the whole logged output. The caller still receives the full response.
 * `general_settings.store_prompts_in_spend_logs: false` — the gateway's Postgres spend logs keep
   metadata only (`messages: {}`, `response: {}`).
+* **No `failure_callback: ["langfuse"]`.** When the proxy itself refuses a request — a rate
+  limit, a spent budget, a model outside the key's list — LiteLLM logs the request body as the
+  generation's *model parameters*, and the redaction switch does not reach that copy: the full
+  system and user prompt of every refused call was written to Langfuse. A rate-limited run is
+  the run with the most documents in it. The chart therefore does not register the callback for
+  failures. The OS records a refused or failed call on its own span, at its own redaction level,
+  so the event is still in the run's trace; what is gone is the gateway's duplicate, and with
+  it the gateway's record of calls that failed **upstream**.
 
 Measured on LiteLLM 1.90.0 with the chart's rendered config and a recording Langfuse endpoint
 (markers placed in the system prompt, the user message, the completion, a tool-call argument and
 a tool description):
 
-| | system / user prompt | completion text | tool-call arguments | tool definitions | usage + cost | failure |
-|---|---|---|---|---|---|---|
-| before | logged | logged | logged | logged | usage only (cost 0, unpriced) | logged |
-| `turn_off_message_logging` | **absent** | **absent** | logged | logged | logged | logged |
-| + `mask_output` (run path) | **absent** | **absent** | **absent** | logged | logged | logged |
+| | system / user prompt | completion text | tool-call arguments | tool definitions | usage + cost |
+|---|---|---|---|---|---|
+| before | logged | logged | logged | logged | usage only (cost 0, unpriced) |
+| `turn_off_message_logging` | **absent** on a served call; **logged in full on a refused call** | **absent** | logged | logged | logged |
+| + `mask_output` (run path) | as above | **absent** | **absent** | logged | logged |
+| + no failure callback (now) | **absent** | **absent** | **absent** | logged | logged |
+
+Per kind of call, with redaction on (the same on 1.90.0 and 1.108.12):
+
+| Call | with `failure_callback: ["langfuse"]` | without (now) |
+|---|---|---|
+| served | no content | no content |
+| failed upstream (500) | no content; a failed generation is written | nothing written by the gateway |
+| refused: rate limit (429) | **system and user prompt written** | nothing written |
+| refused: model not on the key (403) | **system and user prompt written** | nothing written |
+| refused: budget spent | **system and user prompt written** | nothing written |
 
 What is still written, deliberately: the **tool definitions** of a call (names, descriptions,
 parameter schemas — the system's static configuration, not user data), the model, token usage,
@@ -150,7 +169,7 @@ kubectl -n agentic-os port-forward svc/agentic-os-langfuse-web 3000:3000
 - Public: `pk-lf-localdev0000public`  ·  Secret: `sk-lf-localdev0000secret`
 - Host (in-cluster): `http://agentic-os-langfuse-web:3000`
 These are injected into os-ui (`LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` / `LANGFUSE_URL`)
-and into LiteLLM (`success_callback` + `failure_callback: ["langfuse"]`).
+and into LiteLLM (`success_callback: ["langfuse"]`; no failure callback — see "What the gateway writes").
 
 ## Engineering view ("Under the hood")
 

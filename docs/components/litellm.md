@@ -249,8 +249,12 @@ true` and `general_settings.store_prompts_in_spend_logs: false` — the gateway 
 cost, tags and trace ids to Langfuse and to its spend logs, never the prompt or the completion.
 Details and the measured result: `docs/components/langfuse.md` "What the gateway writes".
 
-**Cache and failure callback (chart).** `litellm_settings.failure_callback: ["langfuse"]`
-makes a rejected or failed call observable (checklist A30). `cache: true` on the bundled
+**No gateway failure callback (chart).** `litellm_settings.failure_callback` is **not** set:
+for a request the proxy itself refuses, LiteLLM logs the whole request body, unredacted — see
+`docs/components/langfuse.md` "What the gateway writes". A refused or failed call is recorded
+by the OS on its own span instead.
+
+**Cache (chart).** `cache: true` on the bundled
 Valkey (`cache_params.host: valkey`, password via `extraEnvVars` from `valkey-credentials`)
 runs in `mode: default_off`: nothing is cached unless the request says
 `cache: {"use-cache": true}`, which only the deterministic paths do (classify at temperature
