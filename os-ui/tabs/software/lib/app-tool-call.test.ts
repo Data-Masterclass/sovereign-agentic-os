@@ -184,7 +184,7 @@ test('an UNDECLARED tool keeps EXACTLY its previous behaviour — the gate arriv
 // doing something else. The name is refused before any authorization, declared or not.
 
 test('a tool NAMED like an agent-forbidden OS write is refused at the app door — never held, never executed', async () => {
-  for (const name of ['promote', 'decide_deploy', 'reindex_corpus']) {
+  for (const name of ['promote', 'decide_deploy', 'reindex_corpus', 'decide_approval', 'promote_connection']) {
     // The worst case on purpose: declared as a WRITE action, exposed, adopted and granted — every
     // one of the four layers would pass, and without the guard this is a 202 hold in the inbox.
     TREE = [{ path: 'actions.yml', content: `actions:\n  - name: ${name}\n    write: true\n    scopes: [records]\n` }];
@@ -198,6 +198,10 @@ test('a tool NAMED like an agent-forbidden OS write is refused at the app door �
     assert.equal(r.body.decision, 'deny');
     assert.equal(r.body.layer, 'agent-forbidden');
     assert.match(String(r.body.reason), /cannot be called through an app/);
+    // The name is in the app's GRANT (`mcpTools`) and `parseAppActions` dropped the action, so the
+    // only way it can be a tool is an OpenAPI operationId — and the message says to fix THAT.
+    assert.match(String(r.body.reason), /reserved name/);
+    assert.match(String(r.body.reason), /rename the operationId in the app's OpenAPI spec/);
     assert.equal(enqueued.length, 0, 'not held: a hold could be approved and would then read as the real thing');
     assert.equal(executed, false);
     assert.deepEqual(traced.map((t) => t.decision), ['deny'], 'the refusal is traced');
@@ -215,4 +219,23 @@ test('the guard is by exact name: an app action that merely CONTAINS a forbidden
   const r = await callAppTool(granted, 'promote_lead', {}, 'dan', { tool: 'promote_lead' }, undefined, { adopted: () => true });
   assert.notEqual(r.body.layer, 'agent-forbidden');
   TREE = [];
+});
+
+test('a reserved name with NO grant behind it: the message names both places it could have come from', async () => {
+  TREE = [];
+  traced.length = 0;
+  const r = await callAppTool(app, 'promote', {}, 'dan', { tool: 'promote' });
+  assert.equal(r.status, 403);
+  assert.equal(r.body.layer, 'agent-forbidden');
+  assert.match(String(r.body.reason), /the action in actions\.yml, or the operationId in the app's OpenAPI spec/);
+});
+
+test('prototype names are NOT reserved: `constructor` falls through to the ordinary gate', async () => {
+  // Review L1: a bare table lookup made `constructor` / `toString` / `__proto__` look forbidden.
+  TREE = [];
+  AUTHZ_CONN = { effect: 'allow', reason: 'read' };
+  for (const name of ['constructor', 'toString', '__proto__']) {
+    const r = await callAppTool(app, name, {}, 'dan', { tool: name });
+    assert.notEqual(r.body.layer, 'agent-forbidden', `${name} must not be treated as a reserved name`);
+  }
 });

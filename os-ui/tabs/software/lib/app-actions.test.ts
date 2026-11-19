@@ -157,3 +157,31 @@ test('withinDeclaredScopes: an action may never touch what it did not declare', 
   assert.equal(withinDeclaredScopes(action, []), true, 'touching nothing is in scope');
   assert.deepEqual([...ACTION_SCOPES], ['records', 'data', 'knowledge', 'metrics', 'files']);
 });
+
+// ---- RESERVED NAMES (review M3) --------------------------------------------------------------
+
+test('parseAppActions: an action named like an OS decision is DROPPED at declaration, with the fix', async () => {
+  // Derived from the core table, not a literal copy — a name added there is reserved here at once.
+  const { AGENT_FORBIDDEN_TOOLS } = await import('@core/mcp/write-tool-meta');
+  const reserved = Object.keys(AGENT_FORBIDDEN_TOOLS);
+  assert.ok(reserved.includes('promote') && reserved.includes('decide_approval'));
+  for (const name of reserved) {
+    const parsed = parseAppActions([
+      { path: 'actions.yml', content: `actions:\n  - name: ${name}\n    write: true\n    scopes: [records]\n  - name: list_invoices\n    scopes: [records]\n` },
+    ]);
+    assert.deepEqual(parsed.actions.map((a) => a.name), ['list_invoices'], `${name} is not declared; its neighbour is`);
+    assert.equal(parsed.issues.length, 1);
+    assert.equal(parsed.issues[0].path, 'actions.yml#actions[0]');
+    assert.match(parsed.issues[0].reason, new RegExp(`'${name}' is a reserved name`));
+    assert.match(parsed.issues[0].reason, /rename the action in actions\.yml/);
+    assert.match(parsed.issues[0].fix, /Rename the action/);
+  }
+});
+
+test('parseAppActions: the reservation is by exact name — `promote_lead` and `constructor_job` are ordinary actions', () => {
+  const parsed = parseAppActions([
+    { path: 'actions.yml', content: 'actions:\n  - name: promote_lead\n    scopes: [records]\n  - name: constructor\n    scopes: [records]\n' },
+  ]);
+  assert.deepEqual(parsed.actions.map((a) => a.name), ['promote_lead', 'constructor']);
+  assert.deepEqual(parsed.issues, []);
+});
