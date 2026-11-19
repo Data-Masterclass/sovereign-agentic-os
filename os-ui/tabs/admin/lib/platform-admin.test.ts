@@ -9,7 +9,7 @@ import { assertGuarded, confirmationPhrase, GuardError } from '@tabs/admin/lib/g
 import { compile, type CompileInput } from '@tabs/admin/lib/policy-compiler';
 import { _reset as resetDomains, createDomain, setLayer, setArchived, listDomains, compilerView, activeDomainIds, ensureHydrated as ensureDomainsHydrated, hydrateDomains } from '@tabs/admin/lib/domains';
 import { _reset as resetModels, registerProviderKey, listProviderKeys, setEnabled, setCap, getDefaults } from '@tabs/admin/lib/models';
-import { _reset as resetBackups, restore, restorePhrase } from '@tabs/admin/lib/backups';
+import { _reset as resetBackups, restore } from '@tabs/admin/lib/backups';
 import { _resetAudit as resetAudit, listAudit } from '@tabs/admin/lib/audit';
 import { _reset as resetPlugins, __seedPlugins, installPlugin, approvePlugin, listPlugins } from '@tabs/admin/lib/plugins';
 
@@ -228,20 +228,14 @@ test('models: cannot disable a current role default; caps + defaults projection'
 // billing (spend vs envelope) moved to tabs/monitoring/lib/spend.test.ts
 
 // ------------------------------------------------------------------ backups --
-test('backups: restore is GUARDED (412 without confirm) and AUDITED on success', () => {
+test('backups: restore refuses (501) and records nothing — see backups-honest.test.ts', () => {
   resetAudit();
   resetBackups();
-  assert.equal(restorePhrase('postgres'), 'restore postgres');
   assert.throws(
-    () => restore({ targetId: 'postgres', confirm: 'go', tenant: 't', actor: 'sara', role: 'admin' }),
-    (e: { status?: number }) => e.status === 412,
+    () => restore({ targetId: 'postgres', confirm: 'restore postgres', tenant: 't', actor: 'sara', role: 'admin' }),
+    (e: { status?: number }) => e.status === 501,
   );
-  const { job, audit } = restore({ targetId: 'postgres', confirm: 'restore postgres', tenant: 't', actor: 'sara', role: 'admin' });
-  assert.equal(job.status, 'running');
-  assert.equal(audit.guarded, true);
-  const trail = listAudit({ prefix: 'backups.restore' });
-  assert.equal(trail.length, 1);
-  assert.equal(trail[0].action, 'backups.restore');
+  assert.equal(listAudit({ prefix: 'backups.restore' }).length, 0);
 });
 
 // ------------------------------------------------------------------ plugins --

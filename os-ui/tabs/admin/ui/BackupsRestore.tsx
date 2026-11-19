@@ -3,13 +3,14 @@
  */
 /**
  * TAB:        admin
- * FEATURE:    Backups & Restore — protected stores and the guarded restore, as a Platform tab
- * USER STORY: As a platform admin I want to see that every store is backed up and, when I must,
- *             restore one behind a type-the-phrase guard that is audited.
+ * FEATURE:    Backups & Restore — what this page can and cannot tell an admin, as a Platform tab
+ * USER STORY: As a platform admin I want this page to say plainly that backup status is not
+ *             connected to it yet and where the real state and the restore procedure are, instead
+ *             of a table of invented "success" rows and a Restore button that restores nothing.
  * ARCHITECTURE:
- *   - Markup carried over unchanged from app/(govern)/platform/backups/page.tsx (2026-10-30 move
- *     to one route with tabs on top, not a redesign). That route is now a redirect to
- *     /platform?section=backups — the overview alert that deep-links a failed backup still lands.
+ *   - No reader of the backup jobs exists (lib/backups.ts), so the page shows BACKUP_STATUS_NOTE
+ *     and lists only targets the API really returns (none today). The Restore action is removed;
+ *     the API refuses one with 501 and records nothing.
  *   - The page's `.content` wrapper moved up to platform/page.tsx; the leftover plain <div> is it.
  *   - FAIL-CLOSED gate: Platform is minRole 'builder' (only Overview & Health is builder-readable),
  *     and every section now lives at /platform, so the old pathname gate in platform/layout.tsx no
@@ -21,18 +22,11 @@
  */
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
-import Link from 'next/link';
-import GuardedConfirm from '@core/ui/GuardedConfirm';
+import { useEffect, useState } from 'react';
 import { useUser } from '@core/ui/useUser';
 import { roleAtLeast } from '@core/kernel/session';
 import { sectionMinRole } from '@tabs/admin/lib/sections';
-
-type Target = {
-  id: string; name: string; method: string; frequency: string; retention: string;
-  lastRun: string; lastStatus: 'success' | 'failed'; restorePhrase: string;
-};
-type Restore = { id: string; target: string; startedBy: string; startedAt: string; status: string; auditId: string };
+import { BACKUP_STATUS_NOTE, type BackupTarget } from '@tabs/admin/lib/backups';
 
 export default function BackupsRestore() {
   const { user, loading } = useUser();
@@ -44,49 +38,29 @@ export default function BackupsRestore() {
 }
 
 function BackupsRestoreInner() {
-  const [targets, setTargets] = useState<Target[]>([]);
-  const [restores, setRestores] = useState<Restore[]>([]);
+  const [targets, setTargets] = useState<BackupTarget[]>([]);
   const [error, setError] = useState('');
-  const [loading, setLoading] = useState(true);
-  const [pending, setPending] = useState<Target | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [toast, setToast] = useState('');
 
-  const load = useCallback(async () => {
-    setLoading(true); setError('');
-    try {
-      const res = await fetch('/api/platform-admin/backups', { cache: 'no-store' });
-      const body = await res.json();
-      if (!res.ok) setError(body.error ?? 'Failed to load');
-      else { setTargets(body.targets ?? []); setRestores(body.restores ?? []); }
-    } catch (e) { setError((e as Error).message); } finally { setLoading(false); }
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch('/api/platform-admin/backups', { cache: 'no-store' });
+        const body = await res.json();
+        if (!res.ok) setError(body.error ?? 'Failed to load');
+        else setTargets(body.targets ?? []);
+      } catch (e) { setError((e as Error).message); }
+    })();
   }, []);
-  useEffect(() => { load(); }, [load]);
-
-  const doRestore = useCallback(async () => {
-    if (!pending) return;
-    setBusy(true); setError('');
-    try {
-      const res = await fetch('/api/platform-admin/backups', {
-        method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ targetId: pending.id, confirm: pending.restorePhrase }),
-      });
-      const body = await res.json();
-      if (!res.ok) setError(body.error ?? 'Restore failed');
-      else { setToast(`Restore of ${pending.name} started — audited (${body.auditId}).`); setPending(null); await load(); }
-    } finally { setBusy(false); }
-  }, [pending, load]);
 
   return (
-    <>
-      <div>
-        {toast ? <div className="hint" style={{ color: 'var(--teal)' }}>{toast}</div> : null}
-        {error ? <div className="error">{error}</div> : null}
-
-        <div className="section-title">Protected stores<span className="count-pill">{targets.length}</span></div>
+    <div>
+      {error ? <div className="error">{error}</div> : null}
+      <div className="section-title">Backups</div>
+      <p className="hint" role="status" data-testid="backup-status-note">{BACKUP_STATUS_NOTE}</p>
+      {targets.length > 0 ? (
         <div className="table-wrap">
           <table>
-            <thead><tr><th>Store</th><th>Method</th><th>Frequency</th><th>Retention</th><th>Last run</th><th></th></tr></thead>
+            <thead><tr><th>Store</th><th>Method</th><th>Frequency</th><th>Retention</th><th>Last run</th></tr></thead>
             <tbody>
               {targets.map((t) => (
                 <tr key={t.id}>
@@ -98,52 +72,12 @@ function BackupsRestoreInner() {
                     <span className={`badge ${t.lastStatus === 'success' ? 'ok' : 'err'}`}>{t.lastStatus}</span>
                     <div className="muted" style={{ fontSize: 11 }}>{new Date(t.lastRun).toLocaleString()}</div>
                   </td>
-                  <td style={{ textAlign: 'right' }}>
-                    <button className="btn ghost" style={{ padding: '4px 10px' }} onClick={() => setPending(t)}>Restore…</button>
-                  </td>
                 </tr>
               ))}
-              {!loading && targets.length === 0 ? <tr><td colSpan={6} className="muted">No backup targets.</td></tr> : null}
             </tbody>
           </table>
         </div>
-
-        <div className="section-title" style={{ marginTop: 22 }}>
-          Recent restores
-          <Link href="/governance" className="hint" style={{ marginLeft: 10, textTransform: 'none', letterSpacing: 0 }}>audit in Governance →</Link>
-        </div>
-        {restores.length === 0 ? (
-          <div className="hint">No restores triggered this session.</div>
-        ) : (
-          <div className="table-wrap">
-            <table>
-              <thead><tr><th>Target</th><th>By</th><th>Started</th><th>Status</th><th>Audit</th></tr></thead>
-              <tbody>
-                {restores.map((r) => (
-                  <tr key={r.id}>
-                    <td><strong>{r.target}</strong></td>
-                    <td>{r.startedBy}</td>
-                    <td className="muted" style={{ fontSize: 11.5 }}>{new Date(r.startedAt).toLocaleString()}</td>
-                    <td><span className="badge ok">{r.status}</span></td>
-                    <td className="mono" style={{ fontSize: 11.5 }}>{r.auditId}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-
-      <GuardedConfirm
-        open={!!pending}
-        title={pending ? `Restore ${pending.name}?` : ''}
-        phrase={pending?.restorePhrase ?? ''}
-        detail={pending ? `Restores "${pending.name}" from the last ${pending.lastStatus} backup (${pending.method}). This overwrites current state and cannot be undone.` : ''}
-        confirmLabel="Restore now"
-        busy={busy}
-        onConfirm={doRestore}
-        onCancel={() => setPending(null)}
-      />
-    </>
+      ) : null}
+    </div>
   );
 }
