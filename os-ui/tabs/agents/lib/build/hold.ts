@@ -43,6 +43,35 @@ export type WriteScope = 'personal' | 'domain' | 'company';
 const ESCALATING_DOMAIN_TOOLS = new Set(['publish_knowledge', 'request_promotion', 'approve_promotion']);
 
 /**
+ * The writes whose hold is NOT a matter of the agent's rights — held to a human under EVERY
+ * preset, `full-in-scope` included, by name.
+ *
+ *   - `delete`         — deletes an app. Not undoable by the agent, and the one platform write
+ *                        whose mistake cannot be reviewed after the fact.
+ *   - `archive`        — takes an app out of service for everyone it reaches.
+ *   - `request_deploy` — files the go-live request and starts the review gate (scan, envelope,
+ *                        diff). The twin of `request_promotion` above: asking to cross a boundary
+ *                        is itself confirmed by a person.
+ *
+ * WHY THIS SET AND NOT `COMPANY_SCOPE_TOOLS` (the owner asked for a "company-style" hold — the
+ * property wanted is "held regardless of preset", and both sets give exactly that; they differ
+ * only in WHO confirms). `COMPANY_SCOPE_TOOLS` means "the effect is tenant-wide, so a PLATFORM
+ * admin decides". These three act on ONE app in ONE domain, so the confirmation is routed like
+ * the escalation family — to a `domain_admin` of the system's domain. Three reasons:
+ *   1. the deploy `request_deploy` asks for is itself approved by a Builder; requiring a platform
+ *      admin merely to let an agent ASK would invert the ladder;
+ *   2. `admin` outranks `domain_admin`, so a platform admin can still confirm — nothing is lost;
+ *   3. the approval card would otherwise call a personal app's deletion a "company-scope write".
+ * Under `read-only` the blanket rule still wins and it goes to an admin, like every write.
+ * To tighten: move a name to `COMPANY_SCOPE_TOOLS` — one line, and the posture tests say so.
+ *
+ * NOT self-confirmable: a parked agent run's approval is four-eyes absolute (`canApprove` in
+ * `core/policy/roles.ts` refuses the requester whenever `runId` is set), so "confirmation" here
+ * always means a SECOND person with the role, never the runner clicking through.
+ */
+const ALWAYS_CONFIRMED_TOOLS = new Set(['delete', 'archive', 'request_deploy']);
+
+/**
  * The TENANT-WIDE writes — held to a platform `admin` under EVERY preset, because their effect is
  * not an artifact in a lane at all.
  *
@@ -52,25 +81,34 @@ const ESCALATING_DOMAIN_TOOLS = new Set(['publish_knowledge', 'request_promotion
  *     write catalog that a non-read-only agent could fire at an entire tenant corpus with no
  *     human in the loop — the `commit` / `push_app_files` lesson again, one rung up: being in the
  *     write catalog makes a tool VISIBLE to the hold gate, not held by it.
+ *   - `decide_deploy`, `promote` — the APPROVALS. An agent never reaches the hold for these
+ *     (see below); they are listed so that if one ever does, the strictest gate answers.
  *
- * Belt and braces, deliberately: `AGENT_FORBIDDEN_TOOLS` closes this tool to agent runs outright
+ * Belt and braces, deliberately: `AGENT_FORBIDDEN_TOOLS` closes all three to agent runs outright
  * (`os-tools.ts` gate 0), and this classification is the second line — so if any future door
  * reaches the hold instead, the answer is "an admin decides", never "personal, run it".
+ * `core/mcp/write-tool-meta.test.ts` requires every forbidden tool to be a classified write;
+ * `os-tools.test.ts` requires each to be company-scoped here.
  */
-const COMPANY_SCOPE_TOOLS = new Set(['reindex_corpus']);
+const COMPANY_SCOPE_TOOLS = new Set(['reindex_corpus', 'decide_deploy', 'promote']);
 
 /**
  * The TARGET SCOPE of a granted write tool call. Conservative + fail-closed:
- *   - the tenant-wide family (re-index a whole corpus) -> Company (the admin gate);
+ *   - the tenant-wide family and the approvals -> Company (the admin gate);
  *   - the escalation family (promote/publish/approve) -> Domain (the My->Domain gate);
+ *   - the always-confirmed family (delete/archive/request a deploy) -> Domain, same gate;
  *   - everything else (create_/ingest_/author_/upload_/build_/transform_/document_/
- *     define_/attach_/wire_/update_/archive_ ... on a My artifact) -> Personal.
+ *     define_/attach_/wire_/update_ ... on a My artifact) -> Personal.
  * A write only crosses a governance boundary when THIS says Domain/Company, so a
  * personal create is never held.
+ *
+ * `personal` is the DEFAULT, and the default has been wrong five times for a tool nobody
+ * classified. A new write whose effect is destructive, tenant-wide, or an approval must be added
+ * to one of the sets above when it is added to the catalog.
  */
 export function writeTargetScope(mcpName: string): WriteScope {
   if (COMPANY_SCOPE_TOOLS.has(mcpName)) return 'company';
-  if (ESCALATING_DOMAIN_TOOLS.has(mcpName)) return 'domain';
+  if (ESCALATING_DOMAIN_TOOLS.has(mcpName) || ALWAYS_CONFIRMED_TOOLS.has(mcpName)) return 'domain';
   return 'personal';
 }
 

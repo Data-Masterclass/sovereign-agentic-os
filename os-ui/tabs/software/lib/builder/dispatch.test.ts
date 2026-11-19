@@ -17,7 +17,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { WRITE_TOOL_NAMES } from '@core/mcp/write-tool-meta';
+import { WRITE_TOOL_NAMES, agentForbiddenReason } from '@core/mcp/write-tool-meta';
 import { PLATFORM_MCP_TOOLS } from '../platform-mcp.ts';
 import { agenticBuilderEnabled, softwareBuilderMode } from './dispatch.ts';
 
@@ -153,26 +153,32 @@ test('H-1 `commit` is visible to the agent hold gate; the rest of the platform s
   // The fix: the build tool is held-eligible. Before this, `holdDecisionFor(preset,'commit')`
   // answered "not a write" for EVERY preset, so even a read-only agent could write app files.
   assert.ok(WRITE_TOOL_NAMES.has('commit'));
-  // The pre-existing gap, pinned rather than tolerated: a NEW platform write tool fails this test
-  // until someone classifies it in `core/mcp/write-tool-meta.ts` or adds it here deliberately.
-  // Closing the rest changes the shipped Software Delivery Team's posture and the frozen engine
-  // goldens, so it belongs to the software stream — see the report's cross-stream findings.
-  assert.deepEqual(
-    declared.filter((n) => !WRITE_TOOL_NAMES.has(n)).sort(),
-    [
-      'archive',
-      'create_software',
-      'decide_deploy',
-      'delete',
-      'promote',
-      'request_deploy',
-      'start_preview',
-      'use_as_data',
-      'use_connection',
-      'use_data',
-      'use_knowledge',
-    ],
-  );
+  // 2026-11-19 — THE RATCHET REACHES ZERO. The eleven that were named here (`archive`,
+  // `create_software`, `decide_deploy`, `delete`, `promote`, `request_deploy`, `start_preview`,
+  // `use_as_data`, `use_connection`, `use_data`, `use_knowledge`) are all classified in
+  // `core/mcp/write-tool-meta.ts`, with three different postures decided by the owner — see
+  // `tabs/agents/lib/build/hold.ts` and the per-tool tests in `tabs/agents/lib/build/os-tools.test.ts`.
+  // It stays a two-way ratchet: a NEW platform write fails this until someone classifies it.
+  // "Classified" is not "held" (that lesson has now cost five times), so the posture of each is
+  // pinned too — see the next test for where, and why it is not here.
+  assert.deepEqual(declared.filter((n) => !WRITE_TOOL_NAMES.has(n)).sort(), []);
+});
+
+test('H-1 the declared platform write surface is EXACTLY the fifteen the posture tests name', () => {
+  // The posture of each write (refused / always held / personal) is decided by `hold.ts` in the
+  // AGENTS tab, and a tab may not import another tab — so the per-tool posture tests live there
+  // (`tabs/agents/lib/build/os-tools.test.ts`) over a LITERAL list of these names. This is the
+  // other half: the literal and the real surface cannot drift, because a platform write added or
+  // renamed here fails this test until the posture list over there is updated with it.
+  const declared = PLATFORM_MCP_TOOLS.filter((t) => t.write).map((t) => t.name).sort();
+  assert.deepEqual(declared, [
+    'archive', 'commit', 'create_software', 'decide_deploy', 'delete', 'design_software', 'promote',
+    'push_app_files', 'request_deploy', 'set_app_spec', 'start_preview', 'use_as_data',
+    'use_connection', 'use_data', 'use_knowledge',
+  ]);
+  // The one posture this tab CAN assert (the table is in core): approvals are closed to agents,
+  // and nothing else on this surface is — in particular REQUESTING a deploy is not approving one.
+  assert.deepEqual(declared.filter((n) => agentForbiddenReason(n) !== null), ['decide_deploy', 'promote']);
 });
 
 // ------------------------------- M-6: the deadlock tripwire ------------------------

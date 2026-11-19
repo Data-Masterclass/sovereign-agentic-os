@@ -7,6 +7,7 @@ import type { CurrentUser } from '@core/kernel/auth';
 import { parseSystem, serializeSystem, type System } from '@tabs/agents/lib/system-schema';
 import { handleRpc as realHandleRpc } from '@core/mcp/server';
 import { isWriteTool } from '@tabs/agents/lib/build/hold';
+import { agentForbiddenReason } from '@core/mcp/write-tool-meta';
 import {
   OS_TOOL_ALIASES,
   resolveAlias,
@@ -19,6 +20,7 @@ import {
   resolveFolderGrants,
   writeTargetScope,
   holdDecision,
+  holdDecisionFor,
   summarizeWriteOutcomes,
   writeOutcomesLine,
   type ScopedItemsLoader,
@@ -337,6 +339,121 @@ test('H1: reindex_corpus is never ADVERTISED to a model, even when a system gran
   assert.ok(!specs.includes('reindex_corpus'), 'a schema the gate will refuse must not be offered');
   assert.ok(specs.includes('search_knowledge'), 'the rest of the grant is untouched');
 });
+
+// --- 2026-11-19: the last eleven platform writes, classified (owner's decision) --------------
+//
+// Until now `decide_deploy`, `promote`, `delete`, `archive`, `request_deploy`, `create_software`,
+// `use_connection`, `use_data`, `use_knowledge`, `use_as_data` and `start_preview` were declared
+// `write: true` on the platform-MCP surface and ABSENT from the hold table, so
+// `holdDecisionFor(preset, name)` answered "not a write" under every preset — `read-only`
+// included. Three postures, one test each, plus the refusal at the door.
+
+const ALL_PRESETS = ['read-only', 'read-propose', 'read-bounded', 'full-in-scope'] as const;
+
+/** Approvals are a HUMAN's decision: four-eyes has to mean two people, never a person and their agent. */
+const HUMAN_ONLY_APPROVALS = ['decide_deploy', 'promote'] as const;
+/** Destructive or deploy-requesting: confirmed by a human under every preset, whatever the agent may do. */
+const ALWAYS_CONFIRMED = ['delete', 'archive', 'request_deploy'] as const;
+/** The runner's own My-scope work: the existing rule (read-only holds; otherwise gate 2 decides). */
+const PERSONAL_PLATFORM_WRITES = ['create_software', 'use_connection', 'use_data', 'use_knowledge', 'use_as_data', 'start_preview'] as const;
+
+test('platform writes: all eleven are WRITES the hold gate can see', () => {
+  for (const t of [...HUMAN_ONLY_APPROVALS, ...ALWAYS_CONFIRMED, ...PERSONAL_PLATFORM_WRITES]) {
+    assert.equal(isWriteTool(t), true, `${t} must be in the hold table or no preset can hold it`);
+  }
+});
+
+test('platform writes: the WHOLE declared surface has a stated posture — classified is not held', () => {
+  // The fifteen `write: true` tools of the platform-MCP surface, as a literal (this tab may not
+  // import the software tab; `tabs/software/lib/builder/dispatch.test.ts` pins the same fifteen
+  // against the real `PLATFORM_MCP_TOOLS`, so the two halves cannot drift).
+  const personal = [...PERSONAL_PLATFORM_WRITES, 'commit', 'push_app_files', 'set_app_spec', 'design_software'];
+  const all = [...HUMAN_ONLY_APPROVALS, ...ALWAYS_CONFIRMED, ...personal];
+  assert.equal(new Set(all).size, 15, 'every platform write sits in exactly one posture bucket');
+  for (const t of HUMAN_ONLY_APPROVALS) assert.ok(agentForbiddenReason(t), `${t}: refused`);
+  for (const t of [...ALWAYS_CONFIRMED, ...personal]) assert.equal(agentForbiddenReason(t), null, `${t}: not refused`);
+  for (const preset of ALL_PRESETS) {
+    for (const t of [...HUMAN_ONLY_APPROVALS, ...ALWAYS_CONFIRMED]) assert.equal(holdDecisionFor(preset, t).held, true, `${preset} holds ${t}`);
+    for (const t of personal) assert.equal(holdDecisionFor(preset, t).held, preset === 'read-only', `${preset}/${t}`);
+  }
+});
+
+for (const tool of ALWAYS_CONFIRMED) {
+  test(`posture: ${tool} is HELD under EVERY preset — an agent's rights never waive the confirmation`, () => {
+    assert.equal(writeTargetScope(tool), 'domain', `${tool} must never default to personal`);
+    // read-only blocks every write to a platform admin (the pre-existing blanket rule)…
+    assert.deepEqual(holdDecisionFor('read-only', tool), { held: true, approverRole: 'admin' });
+    // …and under every OTHER preset — `full-in-scope` included — it still parks, on the domain gate.
+    for (const preset of ['read-propose', 'read-bounded', 'full-in-scope'] as const) {
+      assert.deepEqual(holdDecisionFor(preset, tool), { held: true, approverRole: 'domain_admin' }, `${preset} must hold ${tool}`);
+    }
+  });
+
+  test(`executor: a full-in-scope agent granted ${tool} is HELD, enqueued, and never dispatched`, async () => {
+    const deps = spyDeps();
+    const exec = grantedToolExecutor(ADMIN_USER, sysWithPreset([tool], 'full-in-scope'), 'sys1', deps);
+    const res = await exec(tool, { appId: 'app_1' });
+    assert.equal(res.isError, true);
+    assert.equal((JSON.parse(res.text) as { error: { code: string } }).error.code, 'held');
+    assert.equal(deps.calls.enqueue.length, 1, 'the confirmation request is filed');
+    assert.equal((deps.calls.enqueue[0] as { approverRole?: string }).approverRole, 'domain_admin');
+    assert.equal(deps.calls.handleRpc.length, 0, 'a held write is never executed');
+  });
+}
+
+for (const tool of PERSONAL_PLATFORM_WRITES) {
+  test(`posture: ${tool} is a My-scope write — read-only HOLDS it, an agent with rights in scope is not held`, () => {
+    assert.equal(writeTargetScope(tool), 'personal');
+    assert.deepEqual(holdDecisionFor('read-only', tool), { held: true, approverRole: 'admin' });
+    for (const preset of ['read-propose', 'read-bounded', 'full-in-scope'] as const) {
+      assert.deepEqual(holdDecisionFor(preset, tool), { held: false }, `${preset}: gate 2 (the runner's own rights) is the authority`);
+    }
+    // Mirrors `set_app_spec` exactly — one rule for the runner's own software work.
+    for (const preset of ALL_PRESETS) {
+      assert.deepEqual(holdDecisionFor(preset, tool), holdDecisionFor(preset, 'set_app_spec'), `${preset}: same posture as set_app_spec`);
+    }
+  });
+}
+
+test('executor: read-only HOLDS create_software (it ran unheld while it was unclassified)', async () => {
+  const deps = spyDeps();
+  const exec = grantedToolExecutor(ADMIN_USER, sysWithPreset(['create_software'], 'read-only'), 'sys1', deps);
+  const res = await exec('create_software', { name: 'x' });
+  assert.equal((JSON.parse(res.text) as { error: { code: string } }).error.code, 'held');
+  assert.equal(deps.calls.enqueue.length, 1);
+  assert.equal(deps.calls.handleRpc.length, 0);
+});
+
+for (const tool of HUMAN_ONLY_APPROVALS) {
+  test(`approvals are human: an agent run may not call ${tool} AT ALL — refused, not held`, async () => {
+    const deps = spyDeps();
+    // Granted, most permissive preset, an ADMIN runner: nothing but the door itself can be refusing.
+    const exec = grantedToolExecutor(ADMIN_USER, sysWithPreset([tool], 'full-in-scope'), 'sys1', deps);
+    const res = await exec(tool, { appId: 'app_1', decision: 'approve' });
+    assert.equal(res.isError, true);
+    const err = JSON.parse(res.text) as { error: { code: string; reason: string } };
+    assert.equal(err.error.code, 'forbidden');
+    assert.match(err.error.reason, /human decision/);
+    assert.match(err.error.reason, /four-eyes/);
+    assert.equal(deps.calls.handleRpc.length, 0, 'never dispatched');
+    assert.equal(deps.calls.enqueue.length, 0, 'and not enqueued — a hold could be approved and then FIRE it');
+  });
+
+  test(`approvals are human: ${tool} is never ADVERTISED to a model, even when a system grants it`, () => {
+    // `request_deploy` is granted beside it as the control: the platform bundle IS registered and
+    // an admin clears every role floor, so the only thing that can be hiding `${tool}` is the door.
+    const specs = grantedToolSpecs(ADMIN_USER, sysWithPreset([tool, 'request_deploy'], 'full-in-scope')).map((t) => t.name);
+    assert.ok(specs.includes('request_deploy'), 'control: a sibling platform write is advertised');
+    assert.ok(!specs.includes(tool), 'a schema the gate will refuse must not be offered');
+  });
+
+  test(`approvals are human: ${tool} is ALSO company-held behind the refusal — the second line`, () => {
+    // If a future door reaches the hold instead of gate 0, the answer must be "an admin decides",
+    // never "personal, run it" (the reindex_corpus belt-and-braces, applied to approvals).
+    assert.equal(writeTargetScope(tool), 'company');
+    for (const preset of ALL_PRESETS) assert.deepEqual(holdDecisionFor(preset, tool), { held: true, approverRole: 'admin' });
+  });
+}
 
 test('holdDecision: read-only holds all; personal never held; domain→domain_admin', () => {
   // read-only blocks every write (any target).

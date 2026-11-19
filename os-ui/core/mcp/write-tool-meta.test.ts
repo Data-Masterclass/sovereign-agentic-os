@@ -15,7 +15,7 @@ import { WRITE_TOOL_TABS, WRITE_TOOL_NAMES, AGENT_FORBIDDEN_TOOLS, agentForbidde
  * its own `write: true` tools. The hold gate reads WRITE_TOOL_TABS, so a platform write missing
  * from it is NEVER held — which is exactly the gap the night-2 app-builder stream found for
  * `commit` (review H-1). They are listed LITERALLY here because a core test must not import a tab
- * (CORE-INDEPENDENCE); `tabs/agents/lib/builtin/appsmith.test.ts` asserts this literal still
+ * (CORE-INDEPENDENCE); `tabs/software/lib/builder/dispatch.test.ts` asserts this literal still
  * matches the real `PLATFORM_MCP_TOOLS` write flags, so the two halves cannot drift silently.
  *
  * NIGHT-2 MERGE: `push_app_files` joined `commit` here. Stream S shipped it as a platform write
@@ -32,18 +32,35 @@ import { WRITE_TOOL_TABS, WRITE_TOOL_NAMES, AGENT_FORBIDDEN_TOOLS, agentForbidde
  * the same governed write (`patchAppDesign`); only the tab's own tool was classified, so the hold
  * posture of one write depended on which of its two names the agent used. No golden moved either.
  *
- * HONEST LIMIT, recorded rather than quietly fixed: the REST of the platform write surface
- * (`create_software`, `request_deploy`, `start_preview`, `promote`, `archive`, `delete`, …) is
- * still absent from WRITE_TOOL_TABS and therefore still unheld. Adding them changes the governance
- * posture of the shipped Software Delivery Team and the frozen engine goldens, so it belongs to the
- * software stream, not to a one-line fix here. `tabs/software/lib/builder/dispatch.test.ts` holds
- * the RATCHET that names every one of them, so a new platform write cannot arrive unnoticed.
+ * 2026-11-19, later the same day: the REMAINING ELEVEN joined them, which closes the list — every
+ * `write: true` tool on the platform-MCP surface is now classified, and the ratchet in
+ * `tabs/software/lib/builder/dispatch.test.ts` pins the unclassified remainder at ZERO. They carry
+ * three different postures (the owner's decision; the table and the reasons are in
+ * `write-tool-meta.ts` and `tabs/agents/lib/build/hold.ts`, the per-tool tests in
+ * `tabs/agents/lib/build/os-tools.test.ts`):
+ *   - `decide_deploy`, `promote`            — closed to agent runs outright (AGENT_FORBIDDEN_TOOLS);
+ *   - `delete`, `archive`, `request_deploy` — held for a human under EVERY preset;
+ *   - `create_software`, `use_connection`, `use_data`, `use_knowledge`, `use_as_data`,
+ *     `start_preview`                       — the runner's own My-scope work (read-only holds).
+ * One frozen golden's ENGINE-side assertion moved (`software-team`: the deployer now parks on
+ * `request_deploy`); the fixture file itself is untouched. See `engine/parity.test.ts`.
  */
 const PLATFORM_WRITE_TOOLS: Readonly<Record<string, string>> = {
   commit: 'software',
   push_app_files: 'software',
   set_app_spec: 'software',
   design_software: 'software',
+  create_software: 'software',
+  start_preview: 'software',
+  request_deploy: 'software',
+  decide_deploy: 'software',
+  promote: 'software',
+  use_connection: 'software',
+  use_data: 'software',
+  use_knowledge: 'software',
+  use_as_data: 'software',
+  archive: 'software',
+  delete: 'software',
 };
 
 /**
@@ -102,12 +119,31 @@ test('AGENT_FORBIDDEN_TOOLS: every agent-closed tool is also a classified write,
   assert.equal(agentForbiddenReason(''), null);
 });
 
-test('AGENT_FORBIDDEN_TOOLS: the catalog names the door that really consults it, and flags the other as a follow-up', () => {
-  // Re-review edit (1): the first version claimed `app-tool-call.ts` consulted this table. It does
-  // not, and a comment that overstates a guard is worse than no comment — the next reader stops
-  // looking. Pinned here so it cannot drift back while the follow-up is open.
+test('AGENT_FORBIDDEN_TOOLS: approvals are closed to agent runs — four-eyes means two humans', () => {
+  // The owner's decision (2026-11-19): an agent can NEVER execute an approval. A held approval is
+  // not enough — whoever approves the hold would be approving the agent's approval, and the
+  // go-live would then carry one human decision while reading as two.
+  for (const name of ['decide_deploy', 'promote']) {
+    const reason = agentForbiddenReason(name);
+    assert.ok(reason, `${name} must be closed to agent runs`);
+    assert.match(reason!, /human decision/);
+    assert.match(reason!, /four-eyes/);
+  }
+  assert.deepEqual(Object.keys(AGENT_FORBIDDEN_TOOLS).sort(), ['decide_deploy', 'promote', 'reindex_corpus']);
+  // Requesting is not approving: the request side stays open to agents (and is held instead).
+  assert.equal(agentForbiddenReason('request_deploy'), null);
+});
+
+test('AGENT_FORBIDDEN_TOOLS: the catalog names BOTH doors that consult it, and no longer claims a follow-up', () => {
+  // History: the first version claimed `app-tool-call.ts` consulted this table when it did not,
+  // and a comment that overstates a guard is worse than no comment — so the gap was pinned as a
+  // stated follow-up. The follow-up is now CLOSED (the guard is in `callAppTool`, and its
+  // behaviour is tested in `tabs/software/lib/app-tool-call.test.ts`); this pins the comment to
+  // the new truth so it cannot drift in either direction.
   const src = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), 'write-tool-meta.ts'), 'utf8');
-  assert.match(src, /ONE door consults this today: `tabs\/agents\/lib\/build\/os-tools\.ts`/);
-  assert.match(src, /FOLLOW-UP, stated rather than implied/);
-  assert.match(src, /does NOT consult it\n \* yet/);
+  assert.match(src, /TWO doors consult this/);
+  assert.match(src, /`tabs\/agents\/lib\/build\/os-tools\.ts`/);
+  assert.match(src, /`tabs\/software\/lib\/app-tool-call\.ts`/);
+  assert.doesNotMatch(src, /does NOT consult it/);
+  assert.doesNotMatch(src, /ONE door consults this today/);
 });

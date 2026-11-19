@@ -628,6 +628,8 @@ export type GraphRunOptions = {
   /** Tool calls recorded so far (a resume appends to the aborted run's list). */
   toolCalls?: GoldenToolCall[];
   sink?: HoldSink;
+  /** The decision(s) a resume of a PARKED run carries, `{ [approvalId]: 'approve' | 'reject' }`. */
+  resumeWith?: Record<string, 'approve' | 'reject'>;
 };
 
 /** Run (or resume) a fixture through the LangGraph engine with the real gates and a memory checkpointer. */
@@ -643,6 +645,7 @@ export async function runGraph(spec: Pick<EngineFixture, 'name' | 'yaml' | 'task
     messages: [{ role: 'user', content: spec.task }],
     runId,
     resume: opts.resume,
+    ...(opts.resumeWith ? { resumeWith: opts.resumeWith } : {}),
     signal: opts.signal,
     checkpointer: opts.checkpointer ?? memoryCheckpointer(),
     hooks: {
