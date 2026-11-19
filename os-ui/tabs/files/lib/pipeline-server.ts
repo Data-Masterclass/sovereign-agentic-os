@@ -55,9 +55,9 @@ export async function bootstrapFilesIndex(): Promise<void> {
 export async function reindexFile(asset: FileAsset, text: string, actingUserId?: string): Promise<void> {
   const report = await indexAsset(asset, text, { live: true, caller: callerFor(asset, actingUserId) }).catch((e) => {
     // Still best-effort (an upload must not fail because the gateway is down) but no longer
-    // SILENT: the file keeps its stored text and reads "Searchable" while its vector rows are
-    // missing, and until now nothing anywhere said so. The admin re-index plan lists such a file
-    // as `missing-representation`.
+    // SILENT: `indexAsset` has recorded the failure on the file, so its chip reads "Indexing
+    // failed" rather than "Searchable". The admin re-index plan lists such a file as
+    // `missing-representation`.
     console.warn(`[files] indexing failed for ${asset.id} — its text is stored, its index rows were NOT written: ${(e as Error)?.message ?? String(e)}`);
     return null;
   });
