@@ -736,9 +736,11 @@ docling:
     repository: quay.io/docling-project/docling-serve-cpu
     tag: "latest"
     digest: sha256:7b7448d333e0e444adcc3818c65f87bc3e5861bea4f72100e4ac49048d73eae3
+  # 4Gi (was 2Gi): a warmed docling-serve idles near 1.7Gi and one photo-sized image
+  # OOM-killed it at 2Gi (2026-11-19). The request stays small; only the ceiling moves.
   resources:
     requests: { cpu: 100m, memory: 512Mi }
-    limits: { cpu: "2", memory: 2Gi }
+    limits: { cpu: "2", memory: 4Gi }
 
 # Dagster — data orchestrator (subchart).
 dagster:
