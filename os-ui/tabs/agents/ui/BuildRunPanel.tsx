@@ -1167,6 +1167,20 @@ export default function BuildRunPanel({
    * Take back a call this run is parked on. The server checks that the run is yours; the call is
    * not executed, and the run resumes without it — so follow it to its end.
    */
+  // RE-ATTACH ON MOUNT: a run of mine that is still queued or executing when this panel mounts
+  // (I switched tabs and came back, reloaded, or opened another browser) is followed from its
+  // first event to its end — its progress, then its result — without pressing anything. The
+  // re-attach chain in `run-stream-client.ts` only ever continued a stream this panel had
+  // already opened; a freshly mounted panel had no run id to attach to. Once per run id.
+  const autoAttached = useRef<string | null>(null);
+  const inFlightRunId = activity?.kind === 'running' ? activity.runId : undefined;
+  useEffect(() => {
+    if (!showRun || !inFlightRunId || runningNow || autoAttached.current === inFlightRunId) return;
+    autoAttached.current = inFlightRunId;
+    void attachToRun(inFlightRunId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showRun, inFlightRunId, runningNow]);
+
   const withdrawHeld = async (approvalId: string) => {
     if (withdrawing) return;
     setWithdrawing(approvalId);

@@ -52,7 +52,8 @@ export const GET = withRoute<{ id: string }>(async ({ user, params }) => {
     lastBuild: view.lastBuild ?? null,
     // A run of the caller's that is queued or executing (possibly in the worker, which this
     // process's `view.activity` never sees) is reported as in progress, with its id.
-    activity: view.activity ?? (latest.inFlight ? { kind: 'running', startedAt: latest.inFlight.startedAt, runId: latest.inFlight.runId } : null),
+    // The run store's answer comes first: it carries the run id the panel re-attaches to.
+    activity: latest.inFlight ? { kind: 'running', startedAt: latest.inFlight.startedAt, runId: latest.inFlight.runId } : view.activity ?? null,
     lastRun: latest.lastRun,
     // True when the last run was recovered after a mid-run restart — the UI shows an
     // "interrupted — re-run to continue" affordance rather than a stale live spinner.
