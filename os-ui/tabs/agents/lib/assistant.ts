@@ -45,19 +45,6 @@ function uniqueId(base: string, taken: Set<string>): string {
   return `${base}-${i}`;
 }
 
-/**
- * A small role → suggested-tool map, intersected with the system's grants.
- * All names are canonical OS MCP tool names (from ALL_MCP_TOOLS).
- * Note: `web_fetch` had no MCP equivalent and was removed from research roles.
- */
-const ROLE_TOOLS: Record<string, string[]> = {
-  research: ['search_knowledge'],
-  researcher: ['search_knowledge'],
-  writer: ['upload_file'],
-  analyst: ['list_metrics', 'query_data'],
-  data: ['list_metrics', 'query_data'],
-};
-
 export function applyInstruction(input: System, instruction: string): InstructionResult {
   const text = instruction.trim();
 
@@ -71,16 +58,14 @@ export function applyInstruction(input: System, instruction: string): Instructio
     const taken = new Set(system.agents.map((a) => a.id));
     const newId = uniqueId(slugify(roleWord), taken);
 
-    // Narrow-only: intersect suggested tools with the system grants.
-    const suggested = ROLE_TOOLS[roleWord] ?? ['search_knowledge'];
-    const tools = suggested.filter((t) => system.grants.tools.includes(t));
+    // The new agent INHERITS the team's grants (no `tools:` list of its own): a list written
+    // here would never receive what the team is granted afterwards.
 
     const agent: AgentSpec = {
       id: newId,
       role: `${roleWord} sub-agent (added by the agent-system helper)`,
       agent_md: `# ${newId}\n\nA ${roleWord} sub-agent. Use only your granted, governed tools.`,
       memory_md: '',
-      tools,
     };
     system.agents.push(agent);
 
@@ -100,7 +85,7 @@ export function applyInstruction(input: System, instruction: string): Instructio
 
     const summary = `Added a ${roleWord} sub-agent '${newId}'${
       wired ? ` that hands off to '${handoffTarget}'` : ''
-    }${supervisor ? ` under supervisor '${supervisor.id}'` : ''}. Tools: ${tools.join(', ') || '(none)'}.${
+    }${supervisor ? ` under supervisor '${supervisor.id}'` : ''}. It uses everything this team is granted.${
       handoffTarget && !wired ? ` (Requested handoff target '${handoffTarget}' does not exist — not wired.)` : ''
     }`;
     return { system, summary };
@@ -214,9 +199,11 @@ export function parseProposedAgents(raw: string): ProposedAgent[] {
  * {@link System}, REPLACING any prior scaffold so describing again does not
  * endlessly append duplicates. Tools are assigned deterministically per agent
  * via `suggest-tools`, intersected with the caller's role-floor `catalog`, and
- * unioned into `grants.tools` (each agent narrowed to its own subset) — so the
- * result stays within the caller's floor AND passes the narrow-only compiler
- * check. Models are left as Auto (no per-agent `model`).
+ * unioned into `grants.tools` — the TEAM pool. No agent gets a `tools:` list of its own:
+ * every scaffolded agent inherits what the team is granted, now and later. (Each agent used
+ * to be narrowed to its own suggested subset, which froze it: a tool the team was granted
+ * afterwards — an output's `upload_file` — never reached it.) Narrowing an agent stays a
+ * deliberate choice made on its card. Models are left as Auto (no per-agent `model`).
  */
 export function scaffoldFromProposal(
   input: System,
@@ -237,7 +224,6 @@ export function scaffoldFromProposal(
       role: p.role,
       agent_md: `# ${p.id}\n\n${p.instruction}`,
       memory_md: '',
-      tools,
     });
   }
 
@@ -259,7 +245,7 @@ export function scaffoldFromProposal(
   system.routing = { overrides: {} };
   if (system.ui) delete system.ui;
 
-  const summary = `Scaffolded a ${agents.length}-agent team: ${agents.map((a) => a.id).join(' → ')}. Start: '${agents[0].id}'. Tools were auto-suggested per role within your access; review and adjust each agent below.`;
+  const summary = `Scaffolded a ${agents.length}-agent team: ${agents.map((a) => a.id).join(' → ')}. Start: '${agents[0].id}'. The tools the roles need were added to the team within your access; every agent uses everything the team is granted.`;
   return { system, summary };
 }
 

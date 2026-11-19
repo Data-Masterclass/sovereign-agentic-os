@@ -544,7 +544,7 @@ function starterYaml(name: string, domain: string, visibility: Visibility): stri
         role: 'A helpful assistant',
         agent_md: `# ${name}\n\nYou are a helpful assistant in the Sovereign Agentic OS.\nUse only your granted, governed tools.`,
         memory_md: '# Memory\n\n(Durable facts the assistant should always know.)',
-        tools: ['search_knowledge'],
+        // No per-agent `tools:` — the agent inherits everything the team is granted.
       },
     ],
     edges: [],

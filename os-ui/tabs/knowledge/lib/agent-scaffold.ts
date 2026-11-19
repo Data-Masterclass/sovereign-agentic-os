@@ -116,7 +116,6 @@ export function scaffoldSystem(
       role: `${inline(a.actor.name)} — the Agent actor in ${inline(workflow.title)}`,
       agent_md: actorAgentMd(workflow, a.actor),
       memory_md: '',
-      tools: ['retrieve'],
     });
   }
   for (const s of plan.stepAgents) {
@@ -125,7 +124,6 @@ export function scaffoldSystem(
       role: `${s.disposition === 'automate' ? 'Automates' : 'Assists'}: ${inline(s.step.title)}`,
       agent_md: stepAgentMd(workflow, s.step, s.disposition),
       memory_md: '',
-      tools: ['retrieve'],
     });
   }
   const members = plan.order.map((o) => ({ spec: specById.get(o.agentId)!, title: o.title }));
@@ -140,7 +138,6 @@ export function scaffoldSystem(
       role: `Coordinates the ${inline(workflow.title)} workflow`,
       agent_md: `# Coordinator\n\nYou coordinate the "${inline(workflow.title)}" workflow. All steps are currently human/software handoffs — use the granted \`retrieve\` tool for context.`,
       memory_md: '',
-      tools: ['retrieve'],
     };
     agents.push(coord);
     entrypoint = 'coordinator';
