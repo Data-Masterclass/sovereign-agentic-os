@@ -5,7 +5,7 @@
 
 import Link from 'next/link';
 import type { System } from '@tabs/agents/lib/system-schema';
-import { accessCap, AGENT_SAFETY_PRESETS } from '@tabs/agents/lib/access-levels';
+import { accessCap, AGENT_SAFETY_PRESETS, PRESET_RUNTIME_NOTE } from '@tabs/agents/lib/access-levels';
 import type { ResourceMember } from '@tabs/agents/lib/resource-groups';
 import ChooseContextShell, { type ContextTypeDescriptor } from '@core/ui/core/ChooseContextShell';
 import {
@@ -152,6 +152,7 @@ export default function GrantStage({
             );
           })}
         </div>
+        <p className="hint" role="note" style={{ marginTop: 8, marginBottom: 0 }}>{PRESET_RUNTIME_NOTE}</p>
       </div>
 
       {/* What your team can use — the Choose-Context surface. */}

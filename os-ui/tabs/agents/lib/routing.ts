@@ -346,3 +346,16 @@ export function routeProbe(activity: Activity, table: RoutingTable): RouteProbe 
   const model = resolveModel(activity, table);
   return { activity, model, tier: table[activity]?.tier ?? tierOf(model) };
 }
+
+/**
+ * WHAT THE PER-ACTIVITY ROUTING OVERRIDE DOES, today — shown above the override table.
+ *
+ * `routing.overrides` is read by Build (it decides which model names are registered on the
+ * system's key) and by nothing on the run path: a run picks each agent's model from the agent's
+ * own pin, else the automatic tier (`resolveNodeModel`), over the workspace role models.
+ * `routing.test.ts` pins that no engine module reads the overrides; the day one does, that test
+ * fails and this note has to go.
+ */
+export const ROUTING_OVERRIDE_RUNTIME_NOTE =
+  'Not yet in effect when a team runs: a run takes each agent\'s model from that agent\'s own “How this agent thinks” setting and the workspace role models. ' +
+  'An override here only changes which models Build registers for this system.';

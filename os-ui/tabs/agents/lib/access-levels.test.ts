@@ -116,3 +116,25 @@ test('both agent builders use the ONE shared AGENT_SAFETY_PRESETS const (no dive
     assert.doesNotMatch(src, /My scope run directly/, `${name} no longer carries the contradictory copy`);
   }
 });
+
+/* ── F12/F13: the preset picker says what a RUN does today ───────────────── */
+
+import { holdDecision } from '@tabs/agents/lib/build/hold';
+import { WRITE_TOOL_NAMES } from '@core/mcp/write-tool-meta';
+import { PRESET_RUNTIME_NOTE } from '@tabs/agents/lib/access-levels';
+
+test('PRESET_RUNTIME_NOTE is true: the three non-read-only presets hold exactly the same writes, and read-only holds them all', () => {
+  // The note under the preset picker claims this. If the presets ever start to differ at run
+  // time, this fails — and the note (tabs/agents/lib/access-levels.ts) must be rewritten or removed.
+  let directSomewhere = false;
+  for (const tool of WRITE_TOOL_NAMES) {
+    const propose = holdDecision('read-propose', tool);
+    assert.deepEqual(holdDecision('read-bounded', tool), propose, `${tool}: read-bounded differs from read-propose`);
+    assert.deepEqual(holdDecision('full-in-scope', tool), propose, `${tool}: full-in-scope differs from read-propose`);
+    assert.equal(holdDecision('read-only', tool).held, true, `${tool}: read-only holds every write`);
+    if (!propose.held) directSomewhere = true;
+  }
+  assert.ok(directSomewhere, 'under the other presets a My-scope write runs directly');
+  assert.match(PRESET_RUNTIME_NOTE, /currently behave the same/);
+  assert.match(PRESET_RUNTIME_NOTE, /Read-only is the one preset that holds every write/);
+});
