@@ -48,19 +48,58 @@ on:
         required: true
         type: string
 
-# packages: write to push to GHCR; contents: read to check the source out. Nothing else —
-# this workflow must not be able to move a ref or open a pull request.
+# packages: write to push to GHCR; contents: read to check the source out; actions: read so the
+# `require-green-ci` job can read this repository's workflow runs. Nothing else — this workflow
+# must not be able to move a ref or open a pull request.
 permissions:
   contents: read
   packages: write
+  actions: read
 
 concurrency:
   group: build-images-${{ github.ref }}-${{ inputs.image || '' }}
   cancel-in-progress: false
 
 jobs:
+  # NO os-ui IMAGE WITHOUT A GREEN CI ON THAT EXACT COMMIT (2026-11-19). The image used to be
+  # built from whatever a tag pointed at, guarded only by the worker import smoke below — so a
+  # commit whose tests were red, or never ran (main ran only `license-gate` on push), could
+  # reach production. This job asks the API whether `ci.yml` AND `license-gate.yml` concluded
+  # `success` on a PUSH to `main` for `github.sha`, and waits for them if they are still running
+  # (a tag pushed right after a merge). WHY THE API RATHER THAN RE-RUNNING THE TESTS HERE: the
+  # question is "did the suite pass on this commit", which `ci.yml` already answers on push;
+  # running the jobs again here would be a second copy of them that drifts, and would double
+  # the runner time of every release. The query lives in `scripts/lib/workflow-status.sh`, the
+  # same script `scripts/release.sh` uses before it tags.
+  #
+  # os-ui only (tag or dispatch): the brief this gate exists for. The other images keep their
+  # old behaviour; the job is then `skipped`, which the `build` job below accepts.
+  require-green-ci:
+    name: require-green-ci
+    if: startsWith(github.ref_name, 'os-ui-v') || inputs.image == 'os-ui'
+    runs-on: ubuntu-latest
+    # CI takes ~15 min; a tag pushed straight after a merge waits for it, but not forever.
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: ci.yml and license-gate.yml passed on main for this commit
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if ! bash scripts/lib/workflow-status.sh --sha "$SHA" --branch main \
+                 --workflows "ci.yml license-gate.yml" --wait-minutes 50; then
+            echo "::error::CI_NOT_GREEN — ci.yml and license-gate.yml must both pass on a push to main for $SHA before its os-ui image is built. Merge to main, wait for CI, then tag that commit (scripts/release.sh does this)."
+            exit 1
+          fi
+
   build:
     name: build
+    needs: require-green-ci
+    # `skipped` is fine (a non-os-ui image); anything else but `success` is not.
+    if: ${{ !cancelled() && (needs.require-green-ci.result == 'success' || needs.require-green-ci.result == 'skipped') }}
     runs-on: ubuntu-latest
     # An os-ui build is ~10 min warm and the whole point of this workflow is that nobody is
     # watching it. A hung buildx step must not burn an hour of runner time (review L7).

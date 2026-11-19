@@ -1,18 +1,31 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
 #
-# CI — runs on pull requests targeting `main`. The job ids below (build,
-# helm-lint, secret-scan) are STABLE and are wired as required status checks in
-# the branch ruleset. Actions are pinned to commit SHAs.
+# CI — runs on pull requests targeting `main` AND on every push to `main`. The job ids below
+# (build, helm-lint, secret-scan) are STABLE and are wired as required status checks in the
+# branch ruleset. Actions are pinned to commit SHAs.
+#
+# WHY `push: main` TOO (2026-11-19). A PR run tests the PR's head, not what lands on main: a
+# rebase merge writes NEW commits, and two PRs that were each green can be red together. Before
+# this, main only ran `license-gate` on push, so the merged combination never had a full run and
+# nothing could prove a release commit was tested. The SAME jobs run on both events (one file,
+# no second copy), and `scripts/lib/workflow-status.sh` — used by `build-images.yml` and
+# `scripts/release.sh` — accepts only a green PUSH run of this workflow on `main` for the exact
+# commit being released.
 name: ci
 
 on:
   pull_request:
     branches: [main]
+  push:
+    branches: [main]
 
 permissions:
   contents: read
 
+# One group per ref: a newer push to main cancels the older main run (its commit then has no
+# green run and cannot be released — release the newer one), and a PR's group is its own
+# `refs/pull/<n>/merge`, so PR runs and main runs never cancel each other.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -61,6 +74,15 @@ jobs:
       # smoke in build-images.yml is still deploy.sh's command verbatim.
       - name: deploy.sh --from-registry + conflict-copy tests
         run: bash scripts/tests/deploy-from-registry.test.sh
+
+      # The release gate itself (scripts/release.sh, scripts/lib/workflow-status.sh), the post-
+      # deploy smoke test and the deploy's values diff — all against stubs: real git in
+      # throwaway repositories, fake gh / kubectl / helm / curl. No network, no cluster.
+      - name: release.sh + smoke-test.sh + values-diff tests
+        run: |
+          bash scripts/tests/release.test.sh
+          bash scripts/tests/smoke-test.test.sh
+          bash scripts/tests/values-diff.test.sh
 
       # Generates the code map and fails if the generator cannot (a broken
       # manifest, an unreadable tab). Deliberately NOT `--check`: comparing a
@@ -178,16 +200,21 @@ jobs:
       # and scan ONLY this PR's commit range so pre-existing history cannot fail
       # every PR. Fails the job (--exit-code 1) when a secret is found; --redact keeps
       # any finding out of the public log.
-      - name: Gitleaks scan (PR commits)
+      # On a push to main the range is the push itself (`before..sha`: every commit a rebase
+      # merge wrote). An all-zero `before` (a newly created ref) scans just the head commit.
+      - name: Gitleaks scan (the PR's or the push's commits)
         env:
           GITLEAKS_VERSION: '8.21.2'
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
+          range="${BASE_SHA}..${HEAD_SHA}"
+          # empty, or only zeros: there is no base commit, so scan the head commit alone
+          if [ -z "${BASE_SHA//0/}" ]; then range="${HEAD_SHA}^!"; fi
           curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
             | tar -xz -C /tmp gitleaks
           /tmp/gitleaks detect \
             --source . \
-            --log-opts "${BASE_SHA}..${HEAD_SHA}" \
+            --log-opts "$range" \
             --redact --no-banner --exit-code 1
