@@ -457,7 +457,7 @@ after(() => {
 const dev = { id: 'dan', name: 'Dan', domains: ['eng'], role: 'creator' } as Parameters<typeof createApp>[0];
 const PUSH = [{ path: 'src/note.ts', content: 'export const note = 1;\n' }];
 
-const { __setAppProjectGitForTests } = await import('./git-commit.ts');
+const { __setAppProjectGitForTests, __setAppTreeReaderForTests } = await import('./git-commit.ts');
 
 async function refusal(fn: () => Promise<unknown>): Promise<Error & { status?: number }> {
   try {
@@ -551,6 +551,46 @@ test('LOST SNAPSHOT · an app whose seed IS the plain template, with no git, kee
     const out = await commitToApp(app.id, dev, [{ path: 'notes.txt', content: 'hi\n' }], 'push');
     assert.equal(out.step.ok, true);
   } finally {
+    __setAppProjectGitForTests(null);
+  }
+});
+
+// ---- F1: git KNOWN to hold a tree it could not hand over whole is a refusal, never the template ----
+
+for (const [label, reader, expected] of [
+  ['a TRUNCATED git read', async () => ({ files: [{ path: 'package.json', content: '{}' }], sha: 'abc', truncated: true }), /too large to read back whole/],
+  ['a FAILED git read', async () => { throw new Error('object file is corrupt'); }, /could not be read \(object file is corrupt\)/],
+] as const) {
+  test(`LOST SNAPSHOT · ${label} → 503, nothing written — even for an app the template could stand in for`, async () => {
+    __setAppProjectGitForTests(true);
+    try {
+      // A plain-template app: the seeded-path guard would let this through to the template.
+      const app = await createApp(dev, { name: `Unreadable ${label}`, template: 'nextjs-supabase' });
+      __resetSnapshots();
+      __setAppTreeReaderForTests(reader as never);
+      const e = await refusal(() => commitToApp(app.id, dev, [{ path: 'notes.txt', content: 'hi\n' }], 'push'));
+      assert.equal(e.status, 503);
+      assert.match(e.message, expected);
+      assert.match(e.message, /Nothing was written/);
+      assert.equal(getSnapshot(app.id), null, 'no tree was written');
+    } finally {
+      __setAppTreeReaderForTests(null);
+      __setAppProjectGitForTests(null);
+    }
+  });
+}
+
+test('LOST SNAPSHOT · git answers and genuinely holds NO tree → the template path is unchanged', async () => {
+  __setAppProjectGitForTests(true);
+  try {
+    const app = await createApp(dev, { name: 'Never Committed', template: 'nextjs-supabase' });
+    __resetSnapshots();
+    __setAppTreeReaderForTests(async () => null);
+    const out = await commitToApp(app.id, dev, [{ path: 'notes.txt', content: 'hi\n' }], 'push');
+    assert.equal(out.step.ok, true);
+    assert.ok((getSnapshot(app.id) ?? []).some((f) => f.path === 'package.json'), 'merged over the template');
+  } finally {
+    __setAppTreeReaderForTests(null);
     __setAppProjectGitForTests(null);
   }
 });

@@ -46,7 +46,7 @@ import { ungrantedDatasetWarningForApp } from '@tabs/software/lib/dataset-guard'
 // path in apps.ts can update it too, without an import cycle). Re-exported here
 // for existing importers.
 import { snapshotFiles, getSnapshot, hydrateSnapshot } from '@tabs/software/lib/snapshot';
-import { commitAppTree, gitCommitNote, readAppTreeFromGit, type AppCommitOutcome } from '@tabs/software/lib/git-commit';
+import { commitAppTree, gitCommitNote, readAppTreeState, type AppCommitOutcome } from '@tabs/software/lib/git-commit';
 import { ensureSectionsRegistered, unregisteredPageHints } from '@tabs/software/lib/sections-registry';
 import { compileGate, formatGateError, gateActivityNote } from '@tabs/software/lib/compile-gate';
 export { snapshotFiles, getSnapshot, hydrateSnapshot };
@@ -77,8 +77,9 @@ function mergeTree(prior: ScaffoldFile[], incoming: ScaffoldFile[]): ScaffoldFil
  *      mirror is unreachable as well as when it is empty, and before this a commit in that state
  *      merged over the bare template and committed the deletion of everything else — for ANY app,
  *      and for a locked one that includes its lockfile and vendored tree. Git has the real tree
- *      for every app that has been committed at least once. A TRUNCATED read is not used: merging
- *      over part of a tree deletes the rest just as surely;
+ *      for every app that has been committed at least once. A TRUNCATED or FAILED read is a
+ *      refusal, not a fall-through: git is then known (or must be assumed) to hold a tree, and
+ *      only a clean "no tree" (`readAppTreeState` → `none`) may reach the template;
  *   3. the template — but only when it can stand in for the app's tree. `app.repo.seeded` records
  *      what the app was created with; if the template plus this push lacks any of those paths, the
  *      commit would delete them, so it is refused and NOTHING is written. That is the case for a
@@ -91,8 +92,25 @@ function mergeTree(prior: ScaffoldFile[], incoming: ScaffoldFile[]): ScaffoldFil
 async function priorTreeForCommit(app: App, files: ScaffoldFile[]): Promise<ScaffoldFile[]> {
   const snapshot = getSnapshot(app.id);
   if (snapshot) return snapshot;
-  const fromGit = await readAppTreeFromGit({ slug: app.slug, domain: app.domain });
-  if (fromGit && !fromGit.truncated && fromGit.files.length > 0) return fromGit.files;
+  const fromGit = await readAppTreeState({ slug: app.slug, domain: app.domain });
+  if (fromGit.kind === 'tree' && !fromGit.truncated && fromGit.files.length > 0) return fromGit.files;
+  // GIT HOLDS A TREE IT COULD NOT HAND OVER WHOLE — truncated, or the read failed. That is not
+  // "no tree": falling through to the template here would replace a tree we know (or must
+  // assume) exists with the scaffold. Only a clean `none` may reach the template below.
+  if (fromGit.kind === 'failed' || (fromGit.kind === 'tree' && fromGit.truncated)) {
+    throw withStatus(
+      new Error(
+        `This app's source tree could not be loaded: the file mirror returned nothing, and the ` +
+          `domain git repository ${
+            fromGit.kind === 'failed'
+              ? `could not be read (${fromGit.reason})`
+              : 'holds a tree too large to read back whole'
+          }. Committing now would replace that tree with the template plus this push. Nothing ` +
+          `was written. Retry once the mirror or the repository answers.`,
+      ),
+      503,
+    );
+  }
 
   const template = templateFiles(app.template, app.name, app.slug);
   const have = new Set([...template, ...files].map((f) => f.path));
@@ -101,7 +119,7 @@ async function priorTreeForCommit(app: App, files: ScaffoldFile[]): Promise<Scaf
     throw withStatus(
       new Error(
         `This app's source tree could not be loaded: the file mirror returned nothing, and the ` +
-          `domain git repository ${fromGit?.truncated ? 'holds a tree too large to read back whole' : 'holds no readable tree for it'}. ` +
+          `domain git repository holds no tree for it. ` +
           `Committing now would delete ${missing.length} file(s) the app was created with ` +
           `(${missing.slice(0, 3).join(', ')}${missing.length > 3 ? ', …' : ''}). Nothing was written. ` +
           `Retry once the mirror or the repository answers; or, if the tree is gone for good, push ` +

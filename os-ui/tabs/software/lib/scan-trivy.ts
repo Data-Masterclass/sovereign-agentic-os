@@ -511,6 +511,9 @@ const LOCK_BASED: { manifest: RegExp; locks: string[] }[] = [
  *     sub-project nobody has shown to be a member, and is uncovered.
  *
  * LIMITS, stated:
+ *   - a sub-project manifest whose nearest lockfile sits beside the ROOT manifest is treated as
+ *     a workspace member of that root — membership is not parsed, so this holds even when the
+ *     root declares no workspace at all;
  *   - workspace membership is INFERRED from layout, never read from `[workspace] members`,
  *     `settings.gradle` or a Poetry path dependency. A directory that merely sits under a root
  *     lockfile with no manifest in between is accepted as a member even if the workspace file
