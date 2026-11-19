@@ -132,8 +132,6 @@ export type ReportResponse = {
   send: { reportId: string; dashboardId: string; channel: Channel; sentAt: number };
 };
 
-export type GovernResponse = { ok: boolean; dashboardId: string; tier: DashTier };
-
 /** POST JSON and surface the route's `error` field as a thrown Error. */
 export async function postJson<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(path, {

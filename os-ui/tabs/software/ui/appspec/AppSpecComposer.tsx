@@ -2298,18 +2298,6 @@ function IssueLine({ issue }: { issue: LocatedIssue }) {
   );
 }
 
-// ------------------------------------------------------------------- save error map ----
-
-/** Map a non-OK save response to a plain sentence a business user can act on. A governed 403 /
- *  "Forbidden" / write-envelope denial becomes a permission sentence; anything else keeps the
- *  server's own message (already user-facing) with a safe fallback — never a raw stack. */
-export function friendlySaveError(status: number, serverError?: string): string {
-  const raw = (serverError ?? '').toLowerCase();
-  const isPerm = status === 403 || /forbidden|not permitted|permission|write.?envelope|not allowed/.test(raw);
-  if (isPerm) return 'You don’t have permission to publish this app — ask a Builder to publish it for you.';
-  return serverError && serverError.trim() !== '' ? serverError : 'Save failed — please try again.';
-}
-
 // -------------------------------------------------------------- preview error boundary ----
 
 /** A calm boundary around the LIVE preview: a spec that structurally parses can still THROW at

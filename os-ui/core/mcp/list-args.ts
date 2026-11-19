@@ -27,7 +27,6 @@ import 'server-only';
 import type { JsonSchema } from '@core/mcp/server';
 import {
   LIFECYCLE_WORDS,
-  LIFECYCLE_KINDS,
   audienceOfTier,
   isLifecycleWord,
   lifecycleOf,
@@ -174,6 +173,3 @@ export const LIST_TOOLS_WITHOUT_LIFECYCLE: Readonly<Record<string, string>> = {
   list_adoptable_actions: 'upstream actions, discovered rather than authored',
   list_files: 'a file has no versioned definition to pin — it IS its bytes',
 };
-
-/** The kinds a list tool may annotate — the same seven the model is total over. */
-export const LIFECYCLE_LIST_KINDS: readonly LifecycleKind[] = LIFECYCLE_KINDS;

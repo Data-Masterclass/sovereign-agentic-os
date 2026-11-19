@@ -22,7 +22,6 @@
  * Publish's `saved`) — it should become "an alert threshold is set".
  */
 
-import type { StageDef } from '@core/kernel/stages';
 
 export type MetricStageId = 'define' | 'refine' | 'preview' | 'publish' | 'monitor';
 
@@ -37,40 +36,3 @@ export type MetricCtx = {
   /** The metric was saved (persisted) at least once this session or was pre-existing. */
   saved: boolean;
 };
-
-export const METRIC_STAGES: StageDef<MetricStageId, MetricCtx>[] = [
-  {
-    id: 'define',
-    title: 'Define',
-    hint: 'Pick a governed dataset and name your metric — describe it in words to let the assistant fill the form.',
-    completed: (c) => c.defined,
-  },
-  {
-    id: 'refine',
-    title: 'Refine',
-    hint: 'Choose the aggregation, optional filters, time window, format and slice dimensions.',
-    enabled: (c) => c.defined,
-    completed: (c) => c.refined,
-  },
-  {
-    id: 'preview',
-    title: 'Preview',
-    hint: 'See the live governed number before you save — row-level security applies.',
-    enabled: (c) => c.defined && c.refined,
-    completed: (c) => c.previewed,
-  },
-  {
-    id: 'publish',
-    title: 'Publish',
-    hint: 'Save the metric definition and, optionally, promote it to your domain.',
-    enabled: (c) => c.defined && c.refined,
-    completed: (c) => c.saved,
-  },
-  {
-    id: 'monitor',
-    title: 'Monitor',
-    hint: 'Set alert thresholds and explore the live value under row-level security.',
-    enabled: (c) => c.saved,
-    completed: (c) => c.saved,
-  },
-];

@@ -137,10 +137,6 @@ let hostBuilds = 0;
 export function __vendorReads(): number {
   return vendorFilesMemo ? 1 : 0;
 }
-/** Test-only: how many CompilerHosts were built (one per gate call — the tsc program). */
-export function __hostBuilds(): number {
-  return hostBuilds;
-}
 
 // ------------------------------------------------------------------- Shared helpers ---
 

@@ -126,14 +126,6 @@ export const CAPABILITY_MODES: CapabilityMode[] = [
   'Blocked',
 ];
 
-export const MODE_HELP: Record<CapabilityMode, string> = {
-  Off: 'Not exposed at all (default for anything not needed).',
-  Read: 'Read-only; safe, auto-allowed.',
-  'Write-approval': 'Side-effecting; each call held for human approval (Governance tab).',
-  'Write-bounded': 'Allowed only within explicit limits encoded as policy (amounts, scope).',
-  Blocked: 'Explicitly forbidden (e.g. delete); needs an Admin override to enable.',
-};
-
 /** Per-tool limits compiled into the connection's OPA policy. */
 export type CapabilityLimits = {
   /** Which objects/fields/records — e.g. "Sales domain accounts". */
@@ -1136,5 +1128,3 @@ export function isPersonalConnectable(tpl: ConnectionTemplate): boolean {
 export function templateByKey(key: string): ConnectionTemplate | undefined {
   return CONNECTION_TEMPLATES.find((t) => t.key === key);
 }
-
-export const CONNECTION_TYPES: ConnectionType[] = ['Drive', 'Database', 'API', 'MCP', 'SaaS'];

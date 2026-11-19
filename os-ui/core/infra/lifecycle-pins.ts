@@ -40,7 +40,6 @@ import {
   type CommitTreeOptions,
 } from '@core/infra/git-store';
 import {
-  EMPTY_LIFECYCLE_INDEX,
   pinKey,
   parsePinKey,
   liveTagName,
@@ -548,9 +547,6 @@ async function commitPinFile(
     return null;
   }
 }
-
-/** The empty index, for a caller that wants the shape without touching the store. */
-export const EMPTY_INDEX: LifecycleIndex = EMPTY_LIFECYCLE_INDEX;
 
 // ============================================ the pin as a VERSIONED OBJECT ===
 /**

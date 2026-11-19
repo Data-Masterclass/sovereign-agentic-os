@@ -86,13 +86,6 @@ export function resolveChartColors(read: CssVarReader, vars: ChartCssVars = CHAR
   };
 }
 
-/** Read one themed CSS custom property from the live document (browser only). */
-export function cssVar(name: string, fallback: string): string {
-  if (typeof window === 'undefined') return fallback;
-  const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-  return v || fallback;
-}
-
 /**
  * The live OS palette. Call inside a `useMemo` — it reads computed style. Pass
  * {@link APP_SHELL_CSS_VARS} from inside a sandboxed app shell, which namespaces its tokens.

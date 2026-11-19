@@ -170,11 +170,6 @@ export function extractTable(text: string): ExtractedTable {
   return { ok: true, columns, rows, csv };
 }
 
-/** True when the text carries a table that `extractTable` accepts. */
-export function hasTable(text: string): boolean {
-  return extractTable(text).ok;
-}
-
 /**
  * The exact format a Data output needs, as the sentence the producing agent is given. Generated
  * here so it always states the rule `extractTable` enforces.
