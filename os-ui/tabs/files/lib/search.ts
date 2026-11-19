@@ -34,7 +34,7 @@ import { config } from '@core/kernel/config';
 import { reciprocalRankFusion, l2ScoreForCosine } from '@core/kernel/rank-fusion';
 import { compileDls, toIndexDls } from '@tabs/files/lib/dls';
 import { embedQuery } from '@tabs/files/lib/embed';
-import { searchFiles, getFile, type Principal, type SearchHit } from '@tabs/files/lib/store';
+import { searchFilesRanked, getFile, type Principal, type SearchHit } from '@tabs/files/lib/store';
 
 export type FileSearchMode = 'hybrid' | 'lexical' | 'keyword-only';
 export type MatchedBy = 'lexical' | 'semantic' | 'keyword';
@@ -146,7 +146,8 @@ export async function searchFilesHybrid(user: Principal, rawQuery: string, deps:
   const search = deps.search ?? liveSearch;
 
   // The registry scan: current metadata, the Files tab's own DLS. Also the fallback.
-  const keyword = searchFiles(user, query);
+  // The whole ranking, not the top-k: it is fused below, and its length is the keyword-only total.
+  const keyword = searchFilesRanked(user, query, Infinity).hits;
   const dls = toIndexDls(compileDls({ id: user.id, domains: user.domains }));
 
   // A slow gateway must not stall the search box: past EMBED_WAIT_MS the lexical half answers alone.
