@@ -10,7 +10,7 @@ import {
   routeProbe,
 } from '@tabs/agents/lib/routing';
 import { type Decision } from '@tabs/agents/lib/gateway';
-import { type BuildAdapter, type StepResult } from '@tabs/agents/lib/build/adapter';
+import { type BuildAdapter, type BuildChange, type BuildContext, type StepResult } from '@tabs/agents/lib/build/adapter';
 import { principalFor } from '@tabs/agents/lib/build/runtime-contract';
 import { compileVerify } from '@tabs/agents/lib/build/compile-verify';
 
@@ -53,15 +53,30 @@ export type LiteLlmKeyInput = {
   alias: string;
   models: string[];
   maxBudget: number;
+  /** LiteLLM `budget_duration` ("7d", "30d", …): `maxBudget` resets every period. '' = never resets. */
+  budgetDuration: string;
   modelMaxBudget: Record<string, number>;
   rpmLimit: number;
   tpmLimit: number;
   allowedTools: string[];
 };
 
+/** What LiteLLM currently holds for a key — every field Build sets, so a rebuild can compare. */
+export type LiteLlmKeyState = {
+  models: string[];
+  maxBudget?: number;
+  /** '' / absent = the budget never resets. */
+  budgetDuration?: string;
+  rpmLimit?: number;
+  tpmLimit?: number;
+  allowedTools?: string[];
+};
+
 export interface LiteLlmClient {
-  keyInfo(alias: string): Promise<{ models: string[]; maxBudget?: number } | null>;
+  keyInfo(alias: string): Promise<LiteLlmKeyState | null>;
   generateKey(input: LiteLlmKeyInput): Promise<{ key: string }>;
+  /** Bring an EXISTING key to the given state (`/key/update`). Throws when the gateway refuses. */
+  updateKey(input: LiteLlmKeyInput): Promise<void>;
   models(): Promise<string[]>;
 }
 
@@ -71,19 +86,33 @@ export interface LangfuseClient {
   tracesFor(principal: string): Promise<number>;
 }
 
-/** Per-key cost + rate caps (chart `litellmAgentKey` defaults). */
+/**
+ * Per-key cost + rate caps for the key Build mints for ONE agent system (`os-<systemId>`).
+ * They come from deployment config (`config.agentSystemKey` ← `AGENT_SYSTEM_KEY_*` ← the chart's
+ * `osUI.agentSystemKey`), passed in by the server wiring — they used to be hard-coded here, so no
+ * operator setting could reach a system's key.
+ */
 export type KeyCaps = {
+  /** USD the key may spend per `budgetDuration`. */
   maxBudget: number;
+  /** LiteLLM `budget_duration`. '' = `maxBudget` is a LIFETIME cap that never resets. */
+  budgetDuration: string;
   modelMaxBudget: Record<string, number>;
   rpmLimit: number;
   tpmLimit: number;
 };
 
+/**
+ * The defaults when nothing is configured. The budget RESETS WEEKLY: a lifetime cap means a
+ * system stops working for good once it has spent it — after a few dozen ordinary runs on the
+ * reasoning model — with nothing its owner can do. The rate limits match the shared agent key's.
+ */
 export const DEFAULT_KEY_CAPS: KeyCaps = {
   maxBudget: 5,
+  budgetDuration: '7d',
   modelMaxBudget: {},
-  rpmLimit: 120,
-  tpmLimit: 200_000,
+  rpmLimit: 300,
+  tpmLimit: 1_000_000,
 };
 
 export type LiveDeps = {
@@ -142,8 +171,8 @@ function connectionTools(sys: System): { all: string[]; held: string[] } {
   return { all, held };
 }
 
-function ok(detail: string): StepResult {
-  return { ok: true, detail };
+function ok(detail: string, change?: BuildChange): StepResult {
+  return change ? { ok: true, detail, change } : { ok: true, detail };
 }
 function fail(error: string): StepResult {
   return { ok: false, detail: error, error };
@@ -151,6 +180,37 @@ function fail(error: string): StepResult {
 /** A NEUTRAL "verified from a run trace — needs a run first" result (not a failure). */
 function pending(detail: string): StepResult {
   return { ok: true, pending: true, detail };
+}
+
+/** "budget $5 per 7d, 300 requests/min, 1000000 tokens/min" — the caps in words. */
+export function describeCaps(k: Pick<LiteLlmKeyInput, 'maxBudget' | 'budgetDuration' | 'rpmLimit' | 'tpmLimit'>): string {
+  const budget = k.budgetDuration ? `$${k.maxBudget} per ${k.budgetDuration}` : `$${k.maxBudget} in total (never resets)`;
+  return `budget ${budget}, ${k.rpmLimit} requests/min, ${k.tpmLimit} tokens/min`;
+}
+
+const sameSet = (a: string[] | undefined, b: string[]) => {
+  const x = new Set(a ?? []);
+  return x.size === new Set(b).size && b.every((v) => x.has(v));
+};
+
+/**
+ * How an existing key differs from the one the definition wants, as human sentences
+ * ("tokens/min 200000 → 1000000"). Empty = already up to date. Compares every field Build sets
+ * that the gateway reports back.
+ */
+export function keyDrift(have: LiteLlmKeyState, want: LiteLlmKeyInput): string[] {
+  const out: string[] = [];
+  const show = (v: number | string | undefined) => (v === undefined || v === '' ? 'none' : String(v));
+  if (!sameSet(have.models, want.models)) out.push(`models ${[...(have.models ?? [])].sort().join(', ') || 'none'} → ${[...want.models].sort().join(', ')}`);
+  if (have.maxBudget !== want.maxBudget) out.push(`budget $${show(have.maxBudget)} → $${want.maxBudget}`);
+  if ((have.budgetDuration ?? '') !== want.budgetDuration) out.push(`budget reset ${show(have.budgetDuration)} → ${show(want.budgetDuration)}`);
+  if (have.rpmLimit !== want.rpmLimit) out.push(`requests/min ${show(have.rpmLimit)} → ${want.rpmLimit}`);
+  if (have.tpmLimit !== want.tpmLimit) out.push(`tokens/min ${show(have.tpmLimit)} → ${want.tpmLimit}`);
+  // `allowedTools` absent from the read-back (a gateway that hides metadata) is not drift.
+  if (have.allowedTools !== undefined && !sameSet(have.allowedTools, want.allowedTools)) {
+    out.push(`allowed tools ${have.allowedTools.length} → ${want.allowedTools.length}`);
+  }
+  return out;
 }
 
 // ----------------------------------------------------------------- adapters ------
@@ -166,7 +226,7 @@ export function makeLiveAdapters(deps: LiveDeps): BuildAdapter[] {
       const tools = await grantVocabulary(ctx.system, all);
       await deps.opa.putGrants(principal, tools);
       if (held.length > 0) await deps.opa.mergeRequiresApproval(held);
-      return ok(`granted ${tools.length} tool(s) to ${principal}${held.length ? `; ${held.length} held for approval` : ''}`);
+      return ok(`granted ${tools.length} tool(s) to ${principal}${held.length ? `; ${held.length} held for approval` : ''}`, 'reapplied');
     },
     async verify(ctx) {
       const principal = principalFor(ctx.systemId ?? 'sys');
@@ -190,42 +250,64 @@ export function makeLiveAdapters(deps: LiveDeps): BuildAdapter[] {
     },
   };
 
+  /** The key this system SHOULD have, from its definition and the configured caps. */
+  const desiredKey = async (ctx: BuildContext): Promise<LiteLlmKeyInput> => {
+    const table = routingTableFor(ctx.system);
+    const models = routedModels(ctx.system, table);
+    // Per-model hard cost cap for the pay-per-token STACKIT (qwen) routes only.
+    const modelMaxBudget: Record<string, number> = { ...caps.modelMaxBudget };
+    for (const m of models) {
+      if (/stackit|qwen/i.test(m) && modelMaxBudget[m] === undefined) modelMaxBudget[m] = 2;
+    }
+    const { all } = connectionTools(ctx.system);
+    return {
+      alias: principalFor(ctx.systemId ?? 'sys'),
+      models,
+      maxBudget: caps.maxBudget,
+      budgetDuration: caps.budgetDuration,
+      modelMaxBudget,
+      rpmLimit: caps.rpmLimit,
+      tpmLimit: caps.tpmLimit,
+      allowedTools: await grantVocabulary(ctx.system, all),
+    };
+  };
+
   const litellm: BuildAdapter = {
     tool: 'litellm',
+    /**
+     * RECONCILE, not create-once. A key that exists is COMPARED with what the definition and the
+     * configured caps say it should be, and brought to that state with `/key/update` when it
+     * differs. It used to return "already provisioned" as soon as the key existed, so a rebuild
+     * never changed a key's models, budget or rate limits — whatever the first build set stayed
+     * for good. A failed update throws, which the orchestrator reports as a failed row.
+     */
     async apply(ctx) {
-      const alias = principalFor(ctx.systemId ?? 'sys');
-      const existing = await deps.litellm.keyInfo(alias);
-      if (existing) return ok(`key '${alias}' already provisioned (idempotent)`);
-      const table = routingTableFor(ctx.system);
-      const models = routedModels(ctx.system, table);
-      // Per-model hard cost cap for the pay-per-token STACKIT (qwen) routes only.
-      const modelMaxBudget: Record<string, number> = { ...caps.modelMaxBudget };
-      for (const m of models) {
-        if (/stackit|qwen/i.test(m) && modelMaxBudget[m] === undefined) modelMaxBudget[m] = 2;
+      const want = await desiredKey(ctx);
+      const have = await deps.litellm.keyInfo(want.alias);
+      if (!have) {
+        await deps.litellm.generateKey(want);
+        return ok(`created key '${want.alias}' — ${want.models.length} model(s), ${describeCaps(want)}`, 'created');
       }
-      const { all } = connectionTools(ctx.system);
-      await deps.litellm.generateKey({
-        alias,
-        models,
-        maxBudget: caps.maxBudget,
-        modelMaxBudget,
-        rpmLimit: caps.rpmLimit,
-        tpmLimit: caps.tpmLimit,
-        allowedTools: await grantVocabulary(ctx.system, all),
-      });
-      return ok(`registered scoped key '${alias}' (${models.length} model(s), budget ${caps.maxBudget})`);
+      const drift = keyDrift(have, want);
+      if (drift.length === 0) return ok(`key '${want.alias}' already up to date — ${describeCaps(want)}`, 'unchanged');
+      await deps.litellm.updateKey(want);
+      return ok(`updated key '${want.alias}': ${drift.join('; ')}`, 'updated');
     },
     async verify(ctx) {
-      const alias = principalFor(ctx.systemId ?? 'sys');
-      const info = await deps.litellm.keyInfo(alias);
-      if (!info) return fail(`key '${alias}' not found via /key/info`);
+      const want = await desiredKey(ctx);
+      const info = await deps.litellm.keyInfo(want.alias);
+      if (!info) return fail(`key '${want.alias}' not found via /key/info`);
+      // Read back what apply wrote: a gateway that accepted the update but did not store it must
+      // not read as ✓.
+      const drift = keyDrift(info, want);
+      if (drift.length > 0) return fail(`key '${want.alias}' does not match the definition after the build: ${drift.join('; ')}`);
       const table = routingTableFor(ctx.system);
       const light = routeProbe('coding', table);
       const reason = routeProbe('planning', table);
       if (light.tier !== 'light') return fail(`light activity routed to ${light.tier}`);
       if (reason.tier !== 'reasoning') return fail(`reasoning activity routed to ${reason.tier}`);
       const models = ctx.system.agents.map((a) => `${a.id}=${resolveModel('tool-selection', table, a.model)}`);
-      return ok(`light→${light.model}; reasoning→${reason.model}; agents: ${models.join(', ')}`);
+      return ok(`light→${light.model}; reasoning→${reason.model}; agents: ${models.join(', ')}; ${describeCaps(want)}`);
     },
   };
 
@@ -238,7 +320,7 @@ export function makeLiveAdapters(deps: LiveDeps): BuildAdapter[] {
       // malformed `when` guard and a channel shadowing an engine key all fail HERE.
       const built = await compileVerify(ctx.system, ctx.ir);
       if (!built.ok) return fail(built.error);
-      return ok(`graph compiled — ${built.nodes} agent(s), entrypoint '${ctx.ir.entrypoint}', step budget ${built.stepBudget}`);
+      return ok(`graph compiled — ${built.nodes} agent(s), entrypoint '${ctx.ir.entrypoint}', step budget ${built.stepBudget}`, 'reapplied');
     },
     async verify(ctx) {
       const built = await compileVerify(ctx.system, ctx.ir);
@@ -257,7 +339,7 @@ export function makeLiveAdapters(deps: LiveDeps): BuildAdapter[] {
     async apply(ctx) {
       const project = `os-${ctx.systemId ?? 'sys'}`;
       await deps.langfuse.ensureProject(project);
-      return ok(`ensured Langfuse project ${project}`);
+      return ok(`Langfuse project ${project} comes with the platform — nothing to create per system`, 'unchanged');
     },
     async verify(ctx) {
       const principal = principalFor(ctx.systemId ?? 'sys');

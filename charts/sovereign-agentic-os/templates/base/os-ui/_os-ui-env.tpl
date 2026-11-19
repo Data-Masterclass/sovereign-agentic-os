@@ -426,6 +426,30 @@
       name: litellm-credentials
       key: UI_PASSWORD
       optional: true
+{{- /* PER-SYSTEM KEY CAPS (`osUI.agentSystemKey` → os-ui/core/kernel/config.ts `agentSystemKey`).
+     Build mints one LiteLLM key per agent system and reconciles it to these on every Rebuild.
+     ADMIN env, not run env: only the Build path (os-ui, which holds the master key below) reads
+     them — the worker that executes runs never mints or updates a key. Each is rendered only
+     when set, so an absent block (`--reuse-values` from an older release) leaves the code
+     defaults in force. `toString` because helm parses 1000000 as a float (1e+06). */}}
+{{- with $u.agentSystemKey }}
+{{- if .maxBudget }}
+- name: AGENT_SYSTEM_KEY_MAX_BUDGET
+  value: {{ .maxBudget | toString | quote }}
+{{- end }}
+{{- if .budgetDuration }}
+- name: AGENT_SYSTEM_KEY_BUDGET_DURATION
+  value: {{ .budgetDuration | quote }}
+{{- end }}
+{{- if .rpmLimit }}
+- name: AGENT_SYSTEM_KEY_RPM_LIMIT
+  value: {{ .rpmLimit | int64 | quote }}
+{{- end }}
+{{- if .tpmLimit }}
+- name: AGENT_SYSTEM_KEY_TPM_LIMIT
+  value: {{ .tpmLimit | int64 | quote }}
+{{- end }}
+{{- end }}
 # LiteLLM master key — from a Secret so it never sits in plaintext.
 # Override the name/key per environment.
 - name: LITELLM_MASTER_KEY

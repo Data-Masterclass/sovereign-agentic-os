@@ -19,6 +19,24 @@ function env(name: string, fallback: string): string {
   return v && v.length > 0 ? v : fallback;
 }
 
+/** A positive number from an env string, else the fallback (empty, zero, negative and junk all fall back). */
+function positiveNumber(raw: string, fallback: number): number {
+  const n = Number(raw);
+  return raw.trim() !== '' && Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+/**
+ * A LiteLLM `budget_duration` ("30s", "30m", "24h", "7d", "1mo"). `none`/`never`/`off` → '' (the
+ * budget never resets). Anything malformed falls back, so a typo cannot silently make a weekly
+ * budget a lifetime one.
+ */
+export function budgetDuration(raw: string, fallback: string): string {
+  const v = raw.trim().toLowerCase();
+  if (v === '') return fallback;
+  if (v === 'none' || v === 'never' || v === 'off') return '';
+  return /^\d+(s|m|h|d|mo)$/.test(v) ? v : fallback;
+}
+
 // Like env(), but distinguishes "unset" from "set-but-empty". Used for the
 // browser-reachable console URLs: when ingress is enabled but a tool has NO
 // public host, the chart sets its console env var to an EXPLICIT empty string
@@ -346,6 +364,18 @@ export const config = {
   // scoped credential; see core/infra/litellm-credential.ts, which refuses to
   // silently fall back to the master key.
   litellmAgentKey: env('LITELLM_AGENT_KEY', ''),
+  // The caps of the key Build mints for ONE agent system (`os-<systemId>`), applied on every
+  // Build/Rebuild (which reconciles an existing key to them). Chart: `osUI.agentSystemKey.*`.
+  //   maxBudget      — USD the key may spend per `budgetDuration`.
+  //   budgetDuration — LiteLLM `budget_duration` ("7d", "30d", "24h"). The default RESETS WEEKLY;
+  //                    AGENT_SYSTEM_KEY_BUDGET_DURATION=none makes it a lifetime cap that never resets.
+  //   rpmLimit / tpmLimit — requests and tokens per minute. Defaults match the shared agent key.
+  agentSystemKey: {
+    maxBudget: positiveNumber(env('AGENT_SYSTEM_KEY_MAX_BUDGET', ''), 5),
+    budgetDuration: budgetDuration(env('AGENT_SYSTEM_KEY_BUDGET_DURATION', ''), '7d'),
+    rpmLimit: Math.floor(positiveNumber(env('AGENT_SYSTEM_KEY_RPM_LIMIT', ''), 300)),
+    tpmLimit: Math.floor(positiveNumber(env('AGENT_SYSTEM_KEY_TPM_LIMIT', ''), 1_000_000)),
+  },
   // Chat model fronted by LiteLLM that the task-scoped agent chat windows call
   // (POST {LITELLM_URL}/v1/chat/completions). Offline default = the mock model.
   litellmChatModel: env('LITELLM_CHAT_MODEL', 'sovereign-mock'),

@@ -1401,6 +1401,22 @@ osUI:
   # checkpoint IS the run, and deleting it would make the pending decision unresumable.
   # Empty ⇒ the code default of 30 days. `"0"` ⇒ keep everything (your own policy decides).
   agentRunsRetentionDays: ""
+  # THE KEY EACH AGENT SYSTEM GETS AT BUILD (`os-<systemId>`, minted by os-ui's Build with the
+  # LiteLLM admin API — not the shared `litellmAgentKey` above, whose values never reached it).
+  # These caps are applied on EVERY Build / Rebuild: an existing key is reconciled to them
+  # (LiteLLM /key/update), so changing a value here and pressing Rebuild is enough.
+  #   maxBudget      USD the key may spend per budgetDuration.
+  #   budgetDuration LiteLLM `budget_duration` ("7d" weekly, "30d", "24h"). "none" = a LIFETIME cap
+  #                  that never resets: the system stops for good once it is spent. At the seeded
+  #                  price of the reasoning model ($1.50 per 1M input tokens) $5 is roughly 3M
+  #                  tokens — a few dozen ordinary runs.
+  #   rpmLimit / tpmLimit  requests and tokens per minute, per system (same as the shared key).
+  # Leave a value empty to use the code default shown here.
+  agentSystemKey:
+    maxBudget: 5
+    budgetDuration: "7d"
+    rpmLimit: 300
+    tpmLimit: 1000000
 
   worker:
     enabled: false

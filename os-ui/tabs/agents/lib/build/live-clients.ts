@@ -105,6 +105,22 @@ export function agentKeyValue(systemId: string): string {
   return keyValue(principalFor(systemId));
 }
 
+/**
+ * The LiteLLM key properties Build sets — shared by `/key/generate` and `/key/update`.
+ * `budget_duration` makes `max_budget` a resetting window ("7d" = weekly). It is sent as `null`
+ * when the cap is configured as a lifetime one, so an update can also turn the reset OFF.
+ */
+function keyProperties(input: LiteLlmKeyInput): Record<string, unknown> {
+  return {
+    models: input.models,
+    max_budget: input.maxBudget,
+    budget_duration: input.budgetDuration || null,
+    rpm_limit: input.rpmLimit,
+    tpm_limit: input.tpmLimit,
+    metadata: { allowed_tools: input.allowedTools, model_max_budget: input.modelMaxBudget },
+  };
+}
+
 export function realLitellm(): LiteLlmClient {
   const master = config.litellmMasterKey;
   const bearer = { authorization: `Bearer ${master}`, 'content-type': 'application/json' };
@@ -115,9 +131,27 @@ export function realLitellm(): LiteLlmClient {
         headers: bearer,
       });
       if (!res || !res.ok) return null;
-      const d = (await res.json().catch(() => null)) as { info?: { models?: string[]; max_budget?: number } } | null;
+      const d = (await res.json().catch(() => null)) as {
+        info?: {
+          models?: string[];
+          max_budget?: number | null;
+          budget_duration?: string | null;
+          rpm_limit?: number | null;
+          tpm_limit?: number | null;
+          metadata?: { allowed_tools?: unknown } | null;
+        };
+      } | null;
       if (!d?.info) return null;
-      return { models: d.info.models ?? [], maxBudget: d.info.max_budget };
+      const tools = d.info.metadata?.allowed_tools;
+      return {
+        models: d.info.models ?? [],
+        maxBudget: d.info.max_budget ?? undefined,
+        budgetDuration: d.info.budget_duration ?? '',
+        rpmLimit: d.info.rpm_limit ?? undefined,
+        tpmLimit: d.info.tpm_limit ?? undefined,
+        // Absent metadata reads as "not reported" (no drift), never as an empty allowlist.
+        allowedTools: Array.isArray(tools) ? tools.filter((t): t is string => typeof t === 'string') : undefined,
+      };
     },
     async generateKey(input: LiteLlmKeyInput) {
       // NOTE: `model_max_budget` (per-model cost cap) is a LiteLLM ENTERPRISE
@@ -130,15 +164,23 @@ export function realLitellm(): LiteLlmClient {
         body: JSON.stringify({
           key: keyValue(input.alias),
           key_alias: input.alias,
-          models: input.models,
-          max_budget: input.maxBudget,
-          rpm_limit: input.rpmLimit,
-          tpm_limit: input.tpmLimit,
-          metadata: { allowed_tools: input.allowedTools, model_max_budget: input.modelMaxBudget },
+          ...keyProperties(input),
         }),
       });
       if (!res || !res.ok) throw new Error(`LiteLLM /key/generate failed (${res?.status ?? 'unreachable'})`);
       return { key: keyValue(input.alias) };
+    },
+    async updateKey(input: LiteLlmKeyInput) {
+      // The SAME properties as the create path (`keyProperties`), so the two can never disagree —
+      // the rule the chart's key-init Job follows for the shared agent key. An ADMIN call: master
+      // key, from the server-side build path only (this module is `server-only`, and the worker
+      // pod that executes runs is not given the master key at all).
+      const res = await withTimeout(`${config.litellmUrl}/key/update`, {
+        method: 'POST',
+        headers: bearer,
+        body: JSON.stringify({ key: keyValue(input.alias), ...keyProperties(input) }),
+      });
+      if (!res || !res.ok) throw new Error(`LiteLLM /key/update failed (${res?.status ?? 'unreachable'}) — the key keeps its previous limits`);
     },
     async models() {
       const res = await withTimeout(`${config.litellmUrl}/v1/models`, { method: 'GET', headers: bearer });
@@ -214,5 +256,7 @@ export function makeRealClients(): LiveDeps {
     opa: realOpa(),
     litellm: realLitellm(),
     langfuse: realLangfuse(),
+    // The caps of a system's own key come from deployment config, not from a constant in the adapter.
+    caps: { ...config.agentSystemKey, modelMaxBudget: {} },
   };
 }
