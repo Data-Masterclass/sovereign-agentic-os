@@ -3,6 +3,10 @@
  *
  * TAB:        agents
  * FEATURE:    Tool-summary tests — first sentence, hard cap, and the whole registry stays one line
+ * USER STORY: As the engine engineer I want every tool's prompt summary pinned to one short line,
+ *             so a long new tool description cannot quietly grow every agent's prompt again.
+ * ARCHITECTURE:
+ *   - Pure function tests over the REAL tool registry (`ALL_MCP_TOOLS`); no model, no network.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

@@ -5,6 +5,8 @@
  * FEATURE:    Rate-limit retry tests — wait and retry, give up after N, never retry a budget, cap the wait
  * USER STORY: As the engine engineer I want the 429 rule pinned with a fake caller and a fake clock,
  *             so a regression is caught without a gateway and without waiting a real minute.
+ * ARCHITECTURE:
+ *   - A fake model caller and an injected clock/sleep; the retry rule itself is the unit under test.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
