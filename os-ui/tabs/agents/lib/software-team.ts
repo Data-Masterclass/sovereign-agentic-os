@@ -40,12 +40,13 @@
  *     call parks the run until a domain admin other than the runner confirms it, and only then
  *     does the Builder review open. The other grants are My-scope, unheld under `read-propose`.
  *   - ON THE SOFTWARE TAB'S TEAM PANEL (`runPhaseTurn`, POST /api/software/team) — one agent per
- *     turn, synchronous, no checkpoint, so NOTHING IS HELD. The turn's agent may call only the
- *     tools it was offered, and never a name in AGENT_FORBIDDEN_TOOLS (`phase-tools.ts`). So
- *     `decide_deploy`, `promote`, `delete` and `archive` cannot be called there at all (no agent
- *     of this team is offered them), and `request_deploy` — offered to the deployer only, in the
- *     `deploy` phase the user enters by typing a "ship it"-style phrase — executes at once, as
- *     the present user, under their own role gates. It does NOT park.
+ *     turn, synchronous, no checkpoint, so nothing parks for a second person. The turn's agent
+ *     may call only the tools it was offered, and never a name in AGENT_FORBIDDEN_TOOLS
+ *     (`phase-tools.ts`). So `decide_deploy`, `promote`, `delete` and `archive` cannot be called
+ *     there at all (no agent of this team is offered them), and `request_deploy` — offered to the
+ *     deployer only, in the `deploy` phase — is NOT executed by the turn: the user is shown what
+ *     would be filed with a Confirm and a Cancel button, and only Confirm files it, as that user
+ *     (`resolvePhaseConfirmation`, POST /api/software/team/confirm).
  */
 export const SOFTWARE_TEAM_YAML = `version: '1'
 system:

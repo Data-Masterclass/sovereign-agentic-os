@@ -13,6 +13,8 @@ import {
   lastUserText,
 } from '@tabs/agents/lib/build/phase-router';
 import { cleanTurns } from '@core/runtime/turns';
+import { isAwaitingConfirmation } from '@tabs/agents/lib/build/phase-tools';
+import { getAppForUser } from '@tabs/software/lib/apps';
 
 export const dynamic = 'force-dynamic';
 // The phase router runs ONE role-agent per turn; a 235B PLAN call can still take
@@ -28,7 +30,9 @@ type Msg = { role: 'user' | 'assistant'; content: string };
  * governed via handleRpc. It STREAMS (SSE) each phase + tool step so the user sees
  * progress, never a silent spinner, and surfaces the REAL, typed failure cause
  * (timeout · weekly budget reached · model error · gateway offline) instead of the
- * old catch-all "offline". Deploy stays a human Builder decision in /software/reviews.
+ * old catch-all "offline". A deploy request the team asks for is NOT filed by the turn: the
+ * final `message` event carries it as `confirm`, and only POST /api/software/team/confirm files
+ * it. Deploy itself stays a human Builder decision in /software/reviews.
  */
 export async function POST(req: Request) {
   let user;
@@ -68,8 +72,23 @@ export async function POST(req: Request) {
           user,
           yaml: SOFTWARE_TEAM_YAML,
           messages: clean,
-          onStep: (s) => send('step', { tool: s.tool, isError: s.isError }),
+          onStep: (s) => send('step', { tool: s.tool, isError: s.isError, awaiting: isAwaitingConfirmation(s.result) }),
         });
+
+        // The app's name for the confirm card — read as the user, so an app they cannot see
+        // stays an id. Display only: the confirm endpoint never reads anything from the client.
+        let confirm: (NonNullable<typeof turn.confirm> & { appName: string | null }) | null = null;
+        if (turn.confirm) {
+          let appName: string | null = null;
+          if (turn.confirm.appId) {
+            try {
+              appName = (await getAppForUser(turn.confirm.appId, user)).name ?? null;
+            } catch {
+              appName = null;
+            }
+          }
+          confirm = { ...turn.confirm, appName };
+        }
 
         send('message', {
           role: 'assistant',
@@ -78,6 +97,7 @@ export async function POST(req: Request) {
           agent: turn.role,
           appId: turn.appId,
           path: [turn.role],
+          confirm,
           built: turn.steps.some((s) => s.tool === 'create_software' || s.tool === 'commit'),
         });
       } catch (e) {
