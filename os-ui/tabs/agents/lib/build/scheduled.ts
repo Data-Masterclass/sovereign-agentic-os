@@ -138,6 +138,10 @@ export async function runScheduledSystem(
       engine: 'langgraph',
       runId: b.runId ?? runId,
       checkpointer: b.checkpointer,
+      // How the scheduled run ended — a run whose agent failed says `failed`, with the reason.
+      status: b.status,
+      failed: b.failed === true,
+      ...(b.failure ? { failedNode: b.failure.node ?? undefined, failureReason: b.failure.reason } : {}),
       reachedEnd: b.reachedEnd,
       parked: b.parked,
       team: true,

@@ -207,3 +207,20 @@ test('L-6: a pod holds at most MAX_CONCURRENT_TAILS tails and refuses the next w
   again();
   resetTails();
 });
+
+// --- F15: a run ended by an agent failure is FAILED, not done ----------------------------------
+
+test('settlementOf: a run that returned normally but whose agent failed settles `failed`, with the reason', () => {
+  assert.deepEqual(
+    settlementOf({ leaseLost: false, stopping: false, parked: false, reachedEnd: false, failed: 'gateway down' }),
+    { kind: 'complete', status: 'failed', error: 'gateway down' },
+  );
+  // A failed run reached END: it must not be re-queued on shutdown (a resume would find nothing to run).
+  assert.deepEqual(
+    settlementOf({ leaseLost: false, stopping: true, parked: false, reachedEnd: false, failed: 'gateway down' }),
+    { kind: 'complete', status: 'failed', error: 'gateway down' },
+  );
+  // A lost lease still wins; a run that merely stopped short without a failure is unchanged.
+  assert.equal(settlementOf({ leaseLost: true, stopping: false, failed: 'x' }).kind, 'abandon');
+  assert.deepEqual(settlementOf({ leaseLost: false, stopping: false, parked: false, reachedEnd: false }), { kind: 'complete', status: 'done' });
+});

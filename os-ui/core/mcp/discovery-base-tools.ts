@@ -22,7 +22,7 @@ export const discoveryBaseTools: McpTool[] = [
     tab: 'agents',
     minRole: 'creator',
     description:
-      'READ the state of one agent run by its runId: the agents visited so far, whether it finished, is PARKED on held writes awaiting approval (with their approvalIds and who can decide), or was interrupted; the budget used; compile warnings; AND the tail of the run\'s event log (node-started / tool-step / node-completed / approval-required / resumed / done / error) — pass `afterSeq` (the `nextSeq` from your last call) to get only what happened since, so following a long run is a cheap poll rather than a re-read. Purpose: follow a run started by run_agent_system (or the UI) through hold → approve → completion over MCP alone. Before: run_agent_system (take its runId). After: decide_approval if parked, resume_agent_run after a restart, get_run_trace(runId) for the Langfuse trace. Governance: only the RUNNER of the run (the user who started it) can read it, and only on their own system; any other runId is a typed not_found — a run id is a capability, not an index.',
+      'READ the state of one agent run by its runId: the agents visited so far, whether it finished, FAILED (`status: "failed"`, `failed: true`, with `failedNode` and `failureReason` — an agent failed and the run stopped there), is PARKED on held writes awaiting approval (with their approvalIds and who can decide), or was interrupted; the budget used; compile warnings; AND the tail of the run\'s event log (node-started / tool-step / node-completed / approval-required / resumed / done / error) — pass `afterSeq` (the `nextSeq` from your last call) to get only what happened since, so following a long run is a cheap poll rather than a re-read. Purpose: follow a run started by run_agent_system (or the UI) through hold → approve → completion over MCP alone. Before: run_agent_system (take its runId). After: decide_approval if parked, resume_agent_run after a restart, get_run_trace(runId) for the Langfuse trace. Governance: only the RUNNER of the run (the user who started it) can read it, and only on their own system; any other runId is a typed not_found — a run id is a capability, not an index.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -76,14 +76,20 @@ export const discoveryBaseTools: McpTool[] = [
         eventsAvailable = false;
       }
       const { traceUrlFor, langfuseEnabled } = await import('@core/infra/langfuse');
+      const { reportedJobStatus } = await import('@tabs/agents/lib/engine/run-status');
       return {
         runId,
         systemId: seen.systemId,
         engine: 'langgraph',
         // A3: the run's Langfuse trace (id = run id) — a deep link, never a list.
         traceUrl: langfuseEnabled() ? traceUrlFor(runId) : undefined,
-        status: jobStatus,
+        // `failed` when an agent failed and the run stopped there — read from the run's own
+        // state, so it is true even for a job row an older version settled `done`.
+        status: reportedJobStatus(jobStatus, { failed: run.failed, parked: run.parked, finished: run.finished }),
         finished: run.finished,
+        failed: run.failed,
+        failedNode: run.failure?.node ?? undefined,
+        failureReason: run.failure?.reason,
         parked: run.parked,
         heldApprovals,
         next: run.next,

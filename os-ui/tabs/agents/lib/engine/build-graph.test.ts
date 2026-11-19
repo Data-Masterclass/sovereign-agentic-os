@@ -29,7 +29,7 @@ import {
 } from '@tabs/agents/lib/engine/build-graph';
 import { memoryCheckpointer } from '@tabs/agents/lib/engine/checkpointer';
 import { toolErrorCode } from '@tabs/agents/lib/engine/tool-result';
-import { runGraphEngine, type EngineRunInput } from '@tabs/agents/lib/engine/run';
+import { inspectGraphRun, runGraphEngine, type EngineRunInput } from '@tabs/agents/lib/engine/run';
 
 const TASK = 'Do the task.';
 const SPECS: Record<string, ToolSpec> = {
@@ -385,6 +385,27 @@ test('a node that throws is a failed visit; the run stops there with the failure
   assert.equal(result.runs[1].error, 'gateway down');
   assert.equal(result.reachedEnd, false);
   assert.match(result.finalText, /b failed: gateway down/);
+  // F15: the run SAYS it failed, where and why — not merely that it did not reach the end.
+  assert.equal(result.failed, true);
+  assert.deepEqual(result.failure, { node: 'b', reason: 'gateway down' });
+});
+
+test('F15: a run that finished, parked nothing and failed nowhere reports failed:false and no failure', async () => {
+  const { result } = await run(TWO_AGENTS, script());
+  assert.equal(result.reachedEnd, true);
+  assert.equal(result.failed, false);
+  assert.equal(result.failure, undefined);
+});
+
+test('F15: inspecting a failed run reads the failure back from the checkpoint', async () => {
+  const boom: LlmCall = async (req) => { if (nodeOf(req) === 'b') throw new Error('gateway down'); return script()(req); };
+  const { ir, deps } = depsFor(TWO_AGENTS, boom);
+  const checkpointer = memoryCheckpointer();
+  await runGraphEngine({ ir, deps, messages: [{ role: 'user', content: TASK }], runId: 'failed-run', checkpointer });
+  const seen = await inspectGraphRun({ ir, deps, runId: 'failed-run', checkpointer });
+  assert.equal(seen.finished, true);
+  assert.equal(seen.failed, true);
+  assert.deepEqual(seen.failure, { node: 'b', reason: 'gateway down' });
 });
 
 test('disabled agents are pruned at build: a disabled member is never visited', async () => {

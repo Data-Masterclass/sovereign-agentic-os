@@ -49,6 +49,7 @@ import {
 } from '@tabs/agents/lib/store';
 import { openRunTopic, publishRunEvent } from '@tabs/agents/lib/engine/run-events';
 import { acquireRunLock } from '@tabs/agents/lib/engine/run-lock';
+import { runOutcomeOf } from '@tabs/agents/lib/engine/run-status';
 import type { ApprovalDecision } from '@tabs/agents/lib/engine/approval-port';
 import type { LivePrincipal } from '@tabs/agents/lib/engine/resume';
 
@@ -150,12 +151,19 @@ export function finalizeTeamRun(team: RunOsTeamResult, running: boolean, yaml: s
   const heldApprovals = team.heldApprovals ?? [];
   const parked = heldApprovals.length > 0;
   const writeSummary = { line: writeOutcomesLine(outcomes), ...outcomes };
+  // HOW IT ENDED, truthfully. A run that stopped because an agent failed is `failed` — in this
+  // report, in the stored last run and (through `executeJob`) on its job row. It used to be told
+  // apart only by `reachedEnd: false`, which a budget stop and an interruption share.
+  const failed = !!team.failed;
+  const failure = failed ? { node: team.failure?.node ?? null, reason: team.failure?.reason ?? 'an agent failed' } : undefined;
+  const status = runOutcomeOf({ parked, failed, interrupted: !!team.interrupted, reachedEnd: team.reachedEnd });
   const lastRun: LastRun = {
     at: Date.now(),
     running,
     ok: teamOk && team.reachedEnd,
     path: team.path,
     reachedEnd: team.reachedEnd,
+    ...(failure ? { failed: true as const, failureReason: failure.reason, ...(failure.node ? { failedNode: failure.node } : {}) } : {}),
     traces: 0,
     // Held = write outcomes the model saw as held + the approvals a parked run is waiting on (A2).
     held: outcomes.heldTotal + heldApprovals.length,
@@ -191,6 +199,12 @@ export function finalizeTeamRun(team: RunOsTeamResult, running: boolean, yaml: s
     heldApprovals,
     team: true,
     ok: teamOk && team.reachedEnd,
+    /** `done` | `failed` | `parked` | `interrupted` | `incomplete` (stopped at the step budget). */
+    status,
+    /** An agent failed and the run stopped there. */
+    failed,
+    /** Which agent failed and why — present only when `failed`. */
+    failure,
     reachedEnd: team.reachedEnd,
     path: team.path,
     finalText: team.finalText,
