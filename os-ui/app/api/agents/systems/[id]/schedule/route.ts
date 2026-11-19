@@ -5,6 +5,7 @@ import { NextResponse } from 'next/server';
 import { withRoute } from '@core/kernel/route-server';
 import { setSchedule } from '@tabs/agents/lib/store';
 import { reconcileScheduleCron, isValidCron } from '@tabs/agents/lib/schedule-cron';
+import { autonomousAgentsEnabled, ensureHydrated as ensureSettingsHydrated } from '@tabs/admin/lib/settings';
 
 export const dynamic = 'force-dynamic';
 
@@ -33,5 +34,8 @@ export const POST = withRoute<{ id: string }, any>(async ({ user, params, body }
   });
   // Reconcile the real CronJob (create/update on cron, delete on manual/event).
   const cronStatus = await reconcileScheduleCron(id, rec.schedule);
-  return NextResponse.json({ schedule: rec.schedule, cron: cronStatus });
+  // A CronJob that exists still runs nothing while scheduled runs are switched off (every firing
+  // is refused by runScheduledSystem), so the answer carries the platform gate too.
+  await ensureSettingsHydrated();
+  return NextResponse.json({ schedule: rec.schedule, cron: cronStatus, autonomousEnabled: autonomousAgentsEnabled() });
 }, { parse: true, defaultStatus: 500 });
