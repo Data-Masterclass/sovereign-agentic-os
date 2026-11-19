@@ -1,6 +1,9 @@
 # Workflows · Build
 
-Business workflows that orchestrate agents, data and approvals as one governed run.
+Process documentation. Each workflow records a business process (its steps and the actors who carry
+them out) as a document you can file in folders, share and promote. The tab **runs nothing**: it has no
+run engine, no schedules, no APIs of its own and no MCP tools. To run work, or to run it on a schedule,
+build an agent system in the Agents tab.
 
 The authoritative contract is [`manifest.ts`](./manifest.ts) — this file explains it; the manifest is what the checks and the docs generator read. If the two disagree, the manifest is right.
 
