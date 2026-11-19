@@ -4,7 +4,7 @@
 
 The Sovereign Agentic OS is a single governed operating system for your data, knowledge, and software. Every action — whether taken through the UI or through this MCP server at `/api/mcp` — travels the same OPA-policy-checked, row/document-level-security (DLS) filtered, Langfuse audit-traced path. The MCP is not a backdoor; it is the same governed pathway as the UI.
 
-## The ten surfaces
+## The surfaces
 
 | Tab | What lives here |
 |---|---|
@@ -15,9 +15,7 @@ The Sovereign Agentic OS is a single governed operating system for your data, kn
 | **Software** | Apps and services wired to governed deps |
 | **Metrics** | Canonical metric definitions backed by gold data |
 | **Dashboards** | Per-viewer charts bound to governed metrics, rendered natively (ECharts over governed Trino SQL) |
-| **Big Bets** | Strategic initiatives referencing real OS components |
 | **Files** | Binary and document assets, promotable to shared |
-| **Science** | Governed predict door into ML models |
 
 ## The scope ladder
 
@@ -32,18 +30,18 @@ My  →[Promote to Domain: domain-admin gate]→  Domain  →[Promote to Company
 Work flows in a directed graph across tabs:
 
 ```
-data (Gold) ──→ metrics ──→ dashboards ──→ big bets
+data (Gold) ──→ metrics ──→ dashboards
 knowledge ──────────────────────────────→ agents
 connections ──→ software ──[use_as_data]──→ data (Bronze)
 ```
 
-Build data first to Gold, then define metrics on it, compose dashboards from metrics, and anchor big bets to those dashboards. Ground agents in published knowledge. Wire software to connections; close the loop by exporting app output back into the Bronze data tier.
+Build data first to Gold, then define metrics on it, and compose dashboards from metrics. Ground agents in published knowledge. Wire software to connections; close the loop by exporting app output back into the Bronze data tier.
 
 ## Tools, resources, and prompts
 
 - **Tools** — imperative calls that create or read state (e.g. `create_dataset`, `define_metric`). Writes into your own **My** scope need no approval; only promoting up a scope (Domain/Company) hits a role gate.
-- **Resources** — read-only `sovereign-os://` URIs that return structured documents (e.g. `sovereign-os://my/datasets`, `sovereign-os://tenant/connections`). Use these to discover what already exists.
-- **Prompts** — slash commands that trigger pre-built guided flows on the server side (e.g. `/new-dataset`, `/promote`).
+- **Resources** — read-only `sovereign-os://` URIs that return structured documents (e.g. `sovereign-os://my/datasets`, `sovereign-os://connection/{id}`). Use these to discover what already exists.
+- **Prompts** — slash commands that trigger pre-built guided flows on the server side (e.g. `build_data_product`, `upload_and_share_file`).
 
 ## How to start a session
 

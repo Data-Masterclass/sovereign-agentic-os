@@ -415,9 +415,3 @@ export const connectionTools: McpTool[] = [
     },
   },
 ];
-
-// External-warehouse tools — registered ONLY when the operator enabled external
-// connectors. `warehouse_registration` returns the GitOps values snippet an operator
-// applies to register the catalog in Trino (read-only-rootfs → no runtime catalog
-// creation); `import_warehouse_table` materializes one federated table into the OS
-// Iceberg lakehouse via the SAME governed CTAS path promote/materialize uses.

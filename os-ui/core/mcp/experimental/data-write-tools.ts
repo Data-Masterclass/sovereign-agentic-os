@@ -114,7 +114,7 @@ const tools: McpTool[] = [
     tab: 'data',
     minRole: 'creator',
     description:
-      'Create a new PRIVATE dataset (also called: table, data product) — a Bronze→Silver→Gold spine — in one of your domains, the same governed path as the Data tab’s “New dataset”. Starts Personal/owner-only; sharing is the separate governed `promote_dataset`. Optionally seed column docs. Idempotency: each call creates a distinct dataset.',
+      'Create a new PRIVATE dataset (also called: table, data product) — a Bronze→Silver→Gold spine — in one of your domains, the same governed path as the Data tab’s “New dataset”. Starts Personal/owner-only; sharing is the separate governed `request_promotion` (kind `dataset`), approved by a Domain admin. Optionally seed column docs. Idempotency: each call creates a distinct dataset.',
     inputSchema: {
       type: 'object',
       properties: {

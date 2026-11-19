@@ -266,3 +266,28 @@ test('toolsForCapabilityChipsInPool: plan chip resolves its read tool from the p
 test('toolsForCapabilityChipsInPool: empty selection ⇒ no tools', () => {
   assert.deepEqual(toolsForCapabilityChipsInPool([], ['query_data']), []);
 });
+
+// ─── Claims: a grant provisions only tools that exist ─────────────────────────
+// A grant that names a tool the registry does not have is a promise nothing keeps: the
+// builder shows the capability, the run silently drops the tool. This pins the provision
+// lists to the live registry, and the connection chip to what its tools really do.
+
+test('CLAIM: every tool a grant or a chip can provision is a registered MCP tool', async () => {
+  const { ALL_MCP_TOOLS } = await import('@core/mcp/server');
+  const registered = new Set(ALL_MCP_TOOLS.map((t) => t.name));
+  const kinds = ['data', 'knowledge', 'files', 'connections', 'metrics', 'plan'] as const;
+  const provisioned = [
+    ...kinds.flatMap((k) => allToolsForKind(k)),
+    ...CAPABILITY_CHIPS.flatMap((c) => c.tools),
+  ];
+  const dead = [...new Set(provisioned)].filter((n) => !registered.has(n));
+  assert.deepEqual(dead, [], `grants provision unregistered tools: ${dead.join(', ')}`);
+});
+
+test('CLAIM: the connection chip does not promise to call the external system', () => {
+  const chip = CAPABILITY_CHIPS.find((c) => c.grantKind === 'connections');
+  assert.ok(chip, 'a connections chip exists');
+  // Its tools only list, read and test a connection; none executes a call against it.
+  assert.ok(chip.tools.every((t) => /^(list|get|test)_/.test(t)), `unexpected tool in ${chip.tools.join(', ')}`);
+  assert.doesNotMatch(chip.description, /^Call\b/, 'the description must not promise a call');
+});

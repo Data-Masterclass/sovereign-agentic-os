@@ -46,22 +46,11 @@ const READ_TOOLS: Record<GrantKind, string[]> = {
   data: ['query_data', 'list_datasets', 'get_dataset', 'profile_dataset'],
   knowledge: ['search_knowledge', 'list_knowledge', 'get_knowledge'],
   files: ['list_files', 'search_files', 'get_file'],
-  connections: ['list_connections', 'get_connection', 'test_connection', 'list_connection_templates', 'warehouse_registration'],
+  connections: ['list_connections', 'get_connection', 'test_connection', 'list_connection_templates'],
   metrics: ['list_metrics', 'query_metric', 'get_metric'],
   plan: ['get_operating_manual'],
 };
 
-/**
- * The ALWAYS-available core connection read tools — a strict subset of
- * `READ_TOOLS.connections` that excludes `warehouse_registration`, which is only
- * registered when `config.externalConnectorsEnabled` is on. The capability CHIP gates
- * on this core set so a granted connection ALWAYS surfaces its chip (the catalog check
- * would otherwise hide the whole chip whenever external connectors are off). Grant
- * PROVISIONING still uses the full `READ_TOOLS.connections`, so the warehouse tool is
- * added to `grants.tools` and becomes usable the moment the connector config is on
- * (the runtime just drops it when unregistered — harmless).
- */
-const CONNECTIONS_CHIP_TOOLS = ['list_connections', 'get_connection', 'test_connection', 'list_connection_templates'];
 
 /** Create/write tools per kind — added on top of the read set when the grant writes.
  * Promotion/lifecycle tools (request_promotion, publish_knowledge, promote_connection,
@@ -74,7 +63,7 @@ const WRITE_TOOLS: Record<GrantKind, string[]> = {
   data: ['create_dataset', 'ingest_dataset', 'transform_silver', 'build_gold_join', 'add_dataset_version', 'document_dataset'],
   knowledge: ['author_knowledge', 'index_knowledge'],
   files: ['upload_file'],
-  connections: ['create_connection', 'import_warehouse_table'],
+  connections: ['create_connection'],
   metrics: ['define_metric'],
   plan: [],
 };
@@ -175,10 +164,12 @@ export const CAPABILITY_CHIPS: CapabilityChip[] = [
   {
     id: 'use-connection',
     label: 'Use a connection',
-    description: 'Call the external connections (APIs, databases) the team was given.',
+    // Honest scope: these tools read and test a connection. No tool lets an agent CALL the
+    // external system yet, so the chip must not promise it (pinned in capability-tools.test.ts).
+    description: 'See and test the connections the team was given. Calling the external system from an agent is not available yet.',
     domain: 'Connections',
     grantKind: 'connections',
-    tools: CONNECTIONS_CHIP_TOOLS,
+    tools: READ_TOOLS.connections,
   },
   {
     id: 'create-files',

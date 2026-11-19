@@ -181,7 +181,7 @@ test('DISCOVERY: whoami + list_capabilities reflect the caller’s role', async 
   const who = payload<{ role: string; id: string; cannot: string[]; can: string[] }>(await call(creator, 'whoami'));
   assert.equal(who.role, 'creator');
   assert.equal(who.id, 'cara');
-  assert.ok(who.cannot.some((c) => /promote|publish/i.test(c)), 'a creator is told they cannot promote');
+  assert.ok(who.cannot.some((c) => /approve a My→Domain promotion/.test(c)), 'a creator is told they cannot approve a promotion');
 
   const caps = payload<{ role: string; available: { name: string }[]; gated: { name: string; reason: string }[] }>(
     await call(creator, 'list_capabilities'),

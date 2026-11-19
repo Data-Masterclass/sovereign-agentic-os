@@ -13,7 +13,7 @@ filter).
 - `index_knowledge(workflowId)` — chunk → embed → index; required before
   `search_knowledge` returns the business process. Both per-step tacit notes and the
   process-level tacit doc are indexed as separate `type: "tacit"` units.
-- `publish_knowledge(workflowId)` — Builder+ only; My → Domain.
+- `publish_knowledge(workflowId)` — Domain admin+ only; My → Domain.
 - `retire_knowledge(workflowId, action?)` — `archive` (default, reversible) or
   `delete` (physical + index purge). Edit-gated (owner, or same-domain Builder+ for
   a Domain business process). LINEAGE-AWARE: blocked (409) if any App/Agent still consumes

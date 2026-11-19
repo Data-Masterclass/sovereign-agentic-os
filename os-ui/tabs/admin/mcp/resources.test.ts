@@ -44,7 +44,9 @@ test('initialize: declares resources + prompts capabilities and ALWAYS carries o
   for (const role of ['creator', 'builder', 'domain_admin', 'admin']) {
     assert.ok(text.includes(`- ${role} —`), `orientation describes the ${role} role`);
   }
-  assert.match(text, /never domain_admin\/admin/, 'states the domain_admin ceiling (cannot mint domain_admin/admin)');
+  // User administration is admin-only today (every Users & Access route is adminCtx → requireAdmin).
+  assert.match(text, /no user administration/, 'states that a domain_admin does not administer users');
+  assert.match(text, /ALL user administration/, 'states that the admin administers users');
 });
 
 test('resources/list: exposes the 10 guides + the 9 my/* inventories, annotated for the assistant', async () => {

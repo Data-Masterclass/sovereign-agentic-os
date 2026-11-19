@@ -51,9 +51,9 @@ function roleBanner(user: CurrentUser): string {
       ? 'You CAN approve promotions, deploys, AND certify to Company / administer users tenant-wide.'
 
       : isDomainAdmin(user.role)
-        ? 'You CAN approve promotions/deploys AND administer users in your own domain(s) (roles up to builder). You CANNOT certify to Company or appoint domain admins (Admin only).'
-        : 'You CAN approve My→Domain promotions (promote to Domain) and deploys in your domain(s). You CANNOT certify to Company (Admin only) or administer users (Domain admin+).'
-    : 'You are a CREATOR: you build/run your own work and FILE promotion requests, but you CANNOT promote/publish/approve. At a ⛔ step, hand off to a Builder.';
+        ? 'You CAN approve My→Domain promotions and deploys in your domain(s). You CANNOT certify to Company or administer users (Admin only).'
+        : 'You CAN approve software deploys in your domain(s). You CANNOT approve a My→Domain promotion (a Domain admin decides it — file the request and hand off), certify to Company or administer users (Admin only).'
+    : 'You are a CREATOR: you build/run your own work and FILE promotion requests, but you CANNOT promote/publish/approve. At a ⛔ step, hand off to a Domain admin.';
   return `— YOUR ROLE: ${user.role} in domain(s) [${user.domains.join(', ') || 'none'}]. ${gate} —`;
 }
 
@@ -88,7 +88,7 @@ export const PROMPTS: McpPrompt[] = [
       '4b. CURATED (a NEW table composed from datasets you already trust): build_gold_join(base, joins, kept/renamed columns, derived fields, measures). Mismatched join keys? set the key’s adapt: {mode:"text"} (case/whitespace/format) or {mode:"cast",type} (coerce both sides to one Trino type). Ingested datasets never join — use the curated path for that.',
       '5. document_dataset — description + column docs. (Docs are the PROMOTION GATE.)',
       '6. request_promotion(kind: "dataset", id) — file the promotion request.',
-      '⛔ Builder+ only: approve_promotion(approvalId) applies it into Trino. A creator STOPS here and hands off.',
+      '⛔ Domain admin+ only: approve_promotion(approvalId) applies it into Trino. A creator or builder STOPS here and hands off.',
       '7. Optional: define_metric on the materialized business layer.',
     ].filter(Boolean).join('\n'),
   },
@@ -108,7 +108,7 @@ export const PROMPTS: McpPrompt[] = [
       '3. author_knowledge — steps (each with a Human/Software/Agent/Customer/Partner actor; Customer + Partner are external), an optional described actors registry, rules (mark hard rules), and tacit context.',
       '4. index_knowledge — so search returns it.',
       '5. search_knowledge again to verify it is retrievable (cite provenance).',
-      '⛔ Builder+ only: publish_knowledge(workflowId) — draft→live + reindex. A creator STOPS here.',
+      '⛔ Domain admin+ only: publish_knowledge(workflowId) — draft→live + reindex. A creator or builder STOPS here.',
     ].join('\n'),
   },
   {
@@ -126,7 +126,7 @@ export const PROMPTS: McpPrompt[] = [
       '2. list_connections — reuse an existing connection first.',
       `3. create_connection(name, template${a.kind ? `: "${a.kind}"` : ''}, endpoint, credential) — My-scope; credential is stored server-side, never returned.`,
       '4. test_connection(connId) — expect live | offline.',
-      '⛔ Builder+ only: promote_connection(connId) → Domain source. A creator STOPS here.',
+      '⛔ Domain admin+ only: promote_connection(connId) → Domain source. A creator or builder STOPS here.',
       '5. Consume it from an app with use_connection(appId, ref) — BY REFERENCE, never raw creds.',
       'WAREHOUSE tables (Glue/Databricks/Snowflake/BigQuery/OneLake): do NOT import raw. Register + refresh_connection_catalog, optionally classify_catalog, then ⛔ admin create_exposure_set(domains, mode, tier, tables) → ⛔ domain_admin adopt_exposed_table (list_exposed_tables) makes a governed live/synced dataset. An unexposed external table reads zero rows for everyone; revoke propagates honestly.',
     ].join('\n'),
@@ -148,7 +148,7 @@ export const PROMPTS: McpPrompt[] = [
       `4. create_agent_system(name${a.domain ? `, domain: "${a.domain}"` : ''}${a.template ? `, template: "${a.template}"` : ''}).`,
       '5. commit_agent_files — ONLY system.yaml, agents/<id>/AGENT.md, MEMORY.md (a whitelist). In system.yaml `grants`, declare what the team can use: CONTEXT (data · knowledge · metrics · connections · files-folders) and PLAN ITEMS (Operating Model · Pillars · Big Bets, via `plan`). Per item, set `capability`: Read (read-only) · Write-approval (read + propose) · Write-bounded (read + write); or grant a whole folder with `folder: {path, scope}`. Sub-agent grants ⊆ system grants.',
       '6. build_agent_system(systemId) — compile + verify (✓/✗ rows + Langfuse traces).',
-      '⛔ Sharing is the promote ladder: Builder→Domain, Admin→Company. A creator keeps it My.',
+      '⛔ Sharing is the promote ladder: a Domain admin approves My→Domain, an Admin approves Company. A creator files the request.',
     ].join('\n'),
   },
   {
@@ -226,7 +226,7 @@ export const PROMPTS: McpPrompt[] = [
       `2. search_files(query: "${a.name || '<name>'}") — dedupe.`,
       '3. upload_file(name, text, tags, description) — a description + ≥1 tag make it promote-eligible; restricted = stored-not-indexed.',
       '4. request_promotion(kind: "file", id) — file the promotion request.',
-      '⛔ Builder+ only: approve_promotion(approvalId) re-governs the prefix + DLS. A creator STOPS here.',
+      '⛔ Domain admin+ only: approve_promotion(approvalId) re-governs the prefix + DLS. A creator or builder STOPS here.',
     ].join('\n'),
   },
   {
@@ -240,7 +240,7 @@ export const PROMPTS: McpPrompt[] = [
     script: (a) => [
       'GOAL: work your governance approval queue.',
       'Steps:',
-      '1. whoami — your role decides what you may approve (Builder = domain promotions; Admin = certifications + cross-domain).',
+      '1. whoami — your role decides what you may approve (Domain admin = My→Domain promotions; Admin = certifications + cross-domain).',
       `2. list_approvals(status: "pending"${a.kind ? `, kind: "${a.kind}"` : ''}) — your scoped queue (own requests always; +domain if Builder+; tenant-wide if Admin).`,
       '3. get_request(requestId) — read one item: its kind, effect summary, and who can approve it.',
       '⛔ decide_approval is Builder+ AND re-gated per item: a certification (scope tenant) needs a platform Admin; a creator can only file + poll, never decide.',
