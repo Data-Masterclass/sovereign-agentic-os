@@ -138,6 +138,10 @@ test('H-1 `commit` is visible to the agent hold gate; the rest of the platform s
   // `commit`, and must be held-eligible for the same reason.
   assert.ok(declared.includes('push_app_files'), 'push_app_files must still be a declared platform write');
   assert.ok(WRITE_TOOL_NAMES.has('push_app_files'), 'push_app_files must be in the hold-gate table');
+  // 2026-11-19: and it did its job a THIRD time — `set_app_spec` was a declared platform write
+  // that PUBLISHES a live app, and the hold gate could not see it. Classified, not excused.
+  assert.ok(declared.includes('set_app_spec'), 'set_app_spec must still be a declared platform write');
+  assert.ok(WRITE_TOOL_NAMES.has('set_app_spec'), 'set_app_spec publishes a live app — it must be held-eligible');
   // The fix: the build tool is held-eligible. Before this, `holdDecisionFor(preset,'commit')`
   // answered "not a write" for EVERY preset, so even a read-only agent could write app files.
   assert.ok(WRITE_TOOL_NAMES.has('commit'));
@@ -155,7 +159,6 @@ test('H-1 `commit` is visible to the agent hold gate; the rest of the platform s
       'design_software',
       'promote',
       'request_deploy',
-      'set_app_spec',
       'start_preview',
       'use_as_data',
       'use_connection',

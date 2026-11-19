@@ -20,13 +20,23 @@ import { WRITE_TOOL_TABS, WRITE_TOOL_NAMES } from '@core/mcp/write-tool-meta';
  * unheld-write gap H-1 closed for `commit`. The shipped Software Delivery Team grants `commit` and
  * not `push_app_files`, so classifying it moved no golden.
  *
+ * 2026-11-19: `set_app_spec` joined them — the FOURTH time a tool in the catalog turned out not
+ * to be held-eligible. It PUBLISHES (it writes the live served surface and snapshots a version),
+ * so an agent granted it under ANY preset — `read-only` included — could put an app live with no
+ * hold. No golden moved: nothing grants it.
+ *
  * HONEST LIMIT, recorded rather than quietly fixed: the REST of the platform write surface
  * (`create_software`, `request_deploy`, `start_preview`, `promote`, `archive`, `delete`, …) is
  * still absent from WRITE_TOOL_TABS and therefore still unheld. Adding them changes the governance
  * posture of the shipped Software Delivery Team and the frozen engine goldens, so it belongs to the
- * software stream, not to a one-line fix here.
+ * software stream, not to a one-line fix here. `tabs/software/lib/builder/dispatch.test.ts` holds
+ * the RATCHET that names every one of them, so a new platform write cannot arrive unnoticed.
  */
-const PLATFORM_WRITE_TOOLS: Readonly<Record<string, string>> = { commit: 'software', push_app_files: 'software' };
+const PLATFORM_WRITE_TOOLS: Readonly<Record<string, string>> = {
+  commit: 'software',
+  push_app_files: 'software',
+  set_app_spec: 'software',
+};
 
 test('WRITE_TOOL_TABS matches ALL_WRITE_TOOLS plus the platform-MCP writes (names and tabs)', () => {
   const actual = { ...Object.fromEntries(ALL_WRITE_TOOLS.map((t) => [t.name, t.tab])), ...PLATFORM_WRITE_TOOLS };

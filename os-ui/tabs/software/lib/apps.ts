@@ -1406,6 +1406,13 @@ export async function setAppSpec(
  * • BEST-EFFORT structural parse: a clean payload is stored as a parsed AppSpec; a structurally
  *   incomplete payload is stored verbatim (never rejected) so no keystrokes are lost. Serving is
  *   unaffected either way (it reads `spec`, not `draftSpec`).
+ * • NO WARNINGS BY DESIGN (reviewed 2026-11-19). It runs `parseAuthoredSpec`, so the normalised
+ *   shapes are what get STORED and the author sees the tidy-up reflected in the composer — but it
+ *   deliberately returns no `warnings`. This is a debounced autosave that fires on keystrokes: a
+ *   per-save notice would be noise, and the draft is not the served artefact. `publishApp` re-runs
+ *   the same normalisation over the stored draft and DOES return the warnings, so the author is
+ *   told at the one moment it matters — the go-live gate. Changing this means changing the return
+ *   type the autosave route depends on, for a message nobody can act on mid-keystroke.
  * • Flip `serveMode` to 'spec' so the app is recognised as a declarative app in the tiles/rail
  *   from its very first draft (it only SERVES once `spec` is set on Publish).
  * Idempotent + debounce-friendly: re-saving the same payload is a plain write-through.
@@ -1578,7 +1585,9 @@ export async function getAppForUser(appId: string, user: CurrentUser): Promise<A
  *
  * This is NOT a general read bypass. It widens the read by exactly the set of principals the
  * ladder can appoint as THIS app's approver — an in-domain `domain_admin`, or an `admin` — and
- * only through the two call sites that pass the flag. Anyone else still gets the 404.
+ * only through the ONE call site that passes the flag (`resolveLadderArtifact`, reached from
+ * `promoteThroughSeam`). Anyone else still gets the 404. `apps.test.ts` pins the refusal arm for
+ * an out-of-domain domain_admin and for a plain in-domain builder.
  */
 export async function getAppForGovernance(appId: string, user: CurrentUser): Promise<App> {
   const a = await getAppByIdWithMirror(appId);

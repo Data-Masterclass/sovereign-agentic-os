@@ -332,11 +332,7 @@ the reasoning model).
 6. **The deploy review card does not carry the acceptance scorecard** (F7). The record is
    committed and readable by `read_app_files`; the card does not show it. The false claim that it
    did has been removed from `builder/loop-server.ts`.
-7. **`set_app_spec` is not in the hold table.** `WRITE_TOOL_TABS` carries `set_app_design`,
-   `commit` and `push_app_files` for this tab. `set_app_spec` **publishes a live app** and is not
-   hold-eligible, so no agent preset can park it for approval. This is the carried open item #1
-   from the night-2 gap report, unchanged; adding it moves the shipped Software Delivery Team's
-   posture and the frozen engine goldens, so it is a posture decision, not a patch.
+7. ~~**`set_app_spec` is not in the hold table.**~~ **CLOSED in the review round — see §4.7.**
 8. **`promote` over the MCP has a builder floor, so a creator cannot reach it at all** — they
    must use the UI's Promote button / `request_promotion` to file. The ladder's own rule is the
    same, but the two doors are not symmetric, and an agent acting as a creator gets a refusal
@@ -354,3 +350,81 @@ compile gate and an honest acceptance scorecard; it cannot be **served** by this
 because there is no image builder and no runner image, and it cannot be **approved** on a cluster
 with no security scanner. Both of those are now said out loud by the tools instead of being
 dressed up as a cluster outage.*
+
+### §4.7 — The review round: `set_app_spec` is now held-eligible
+
+**The finding (HIGH).** `set_app_spec` **publishes**: it writes the app's LIVE served surface and
+snapshots a version, so the app becomes reachable at `/apps/<slug>` by everyone its visibility
+admits. It is declared `write: true` on the platform-MCP surface — but the agent hold gate reads
+`WRITE_TOOL_TABS` (`core/mcp/write-tool-meta.ts`), and it was absent. So
+`holdDecisionFor(preset, 'set_app_spec')` answered **"not a write" for every preset**, and an agent
+granted it — **including under `read-only`** — could put an app live with no hold. That contradicts
+the owner's standing rule that writes happen only on explicit confirmation.
+
+**The fix.** `set_app_spec: 'software'` in `WRITE_TOOL_TABS`, with the reasoning in place.
+
+**The resulting posture**, pinned in `tabs/agents/lib/builtin/appsmith.test.ts` next to `commit`'s:
+
+| preset | decision | why |
+|---|---|---|
+| `read-only` | **HELD**, approver `admin` | every write is blocked and queued — this is the gap that was open |
+| `read-propose` | not held | `writeTargetScope` is `personal`: the app is the runner's own, `setAppSpec` re-gates owner-or-in-domain-builder itself, and publishing does **not** widen the audience (`visibility` is untouched; climbing the ladder is `promote`, separately gated). Gate 2 — the run-as-user governed dispatch — is the authority. |
+| `full-in-scope` | not held | same |
+
+**Frozen engine goldens changed: NONE.** A tree-wide search found **no system granting
+`set_app_spec`** (`tabs/agents`, `core/runtime`, `seed`). The shipped App Smith team authors through
+`commit`; a test now asserts it still does not grant `set_app_spec`, so if that ever changes the
+golden is re-checked deliberately rather than silently.
+
+**The other two spec doors need no entry, and must not get one.** `publishApp` and `saveAppDraft`
+are HTTP routes (`/api/apps/[id]/publish`, `…/spec/draft`), not governed MCP tools. No agent can
+reach them, and `WRITE_TOOL_TABS` classifies MCP tool names only. Recorded in the table's comment
+so the next reader does not have to re-derive it.
+
+**On the generic tripwire.** This is the fourth occurrence of *"in the catalog ≠ held"* — `commit`,
+`push_app_files`, `reindex_corpus`, `set_app_spec`. The cheap structural signal already exists and
+is already wired: the platform-MCP table's own **`write: true`** declaration *is* the "this
+persists a record" flag, and `tabs/software/lib/builder/dispatch.test.ts` asserts, by
+`deepEqual` on a sorted list, that the set of declared platform writes **not** in
+`WRITE_TOOL_TABS` is exactly a named literal. That is a two-way ratchet: a new unclassified
+platform write fails it, and classifying one fails it until the list is edited deliberately. It is
+what caught `push_app_files`, and `set_app_spec` was sitting in its named backlog — the mechanism
+worked; nobody had paid the item down. So rather than build a second mechanism, this round
+**shrank that list by one** and strengthened the positive half (`set_app_spec` must be both a
+declared platform write *and* in the hold table).
+
+A broader signal — "every tool whose handler imports a `*-store` or an `apps.ts` mutator" — was
+considered and **not** built: the platform-MCP handlers all live in one `switch` in one module that
+imports every mutator, so an import-based signal cannot distinguish the write cases from the read
+cases (`build_software`, `get_app_spec`, `verify_software` are in the same file). The per-tool
+`write` flag is strictly more precise, and it is declared next to the thing it describes.
+
+**Still unclassified, and therefore still unheld** (the named ratchet list, unchanged otherwise):
+`archive`, `create_software`, `decide_deploy`, `delete`, `design_software`, `promote`,
+`request_deploy`, `start_preview`, `use_as_data`, `use_connection`, `use_data`, `use_knowledge`.
+Each is a real posture decision — `decide_deploy` and `promote` in particular are approval verbs an
+agent arguably should never hold *because* they are already role-gated to a human — and classifying
+them moves the shipped team's posture. They are named here so the debt is visible.
+
+### §4.8 — The review round: the four mediums and the lows
+
+- **M1** `app/api/apps/[id]/route.ts` — the **UI's own** design PATCH still used the silent
+  normaliser, so the composer could show a saved grant that was never stored. Now
+  `normalizeContextGrantsWithReport`, returning `grantNotes`.
+- **M2** `saveAppDraft` returns no `warnings` — kept, and the exemption is now **justified in the
+  comment**: it is a debounced keystroke autosave, the draft is not the served artefact, and
+  `publishApp` re-runs the same normalisation and *does* return the warnings at the one moment the
+  author can act on them.
+- **M3** e2e stage 12 asserted inside `if (commit)`, which would have turned a failed governed
+  write into a silent pass. Now `assert.ok(commit, …)` and the trailer assertions run unguarded.
+- **M4** `core/policy/promotion-matrix.test.ts` — the ladder tripwire checked the opt-in widened
+  read for `dashboard` only; it now pins the `'app'` case in the same shape. Plus three unit cases
+  in `apps.test.ts` for `getAppForGovernance`: the in-domain `domain_admin` and the `admin` can
+  read a Personal app, while an **out-of-domain `domain_admin`** and a **plain in-domain builder**
+  both still get 404 — a governance read that widens one step too far is the whole risk.
+- **Lows:** the stray blank line in `platform-mcp.ts`; `stagePathKind` now takes a `ServeMode`
+  parameter so `mcp-stages.ts` stays pure and imports no module from its own tab's store layer;
+  `PreviewResult.runnerNote` documents all four cases it can carry; the chart comment is reflowed;
+  the e2e header records that the single-walk stages are order-dependent through `S` (and which
+  cases are independent); and `getAppForGovernance`'s comment says **one** call site, because there
+  is one.

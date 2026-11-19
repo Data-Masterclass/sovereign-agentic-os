@@ -70,6 +70,21 @@ export const WRITE_TOOL_TABS: Readonly<Record<string, string>> = {
   // preset and a `read-only` agent granted it could write app files unheld. Classified rather than
   // excused. The shipped Software Delivery Team grants `commit`, not this, so no golden moves.
   push_app_files: 'software',
+  // 2026-11-19 — THE FOURTH OCCURRENCE of "in the catalog != held" (after `commit`,
+  // `push_app_files` and `reindex_corpus`). `set_app_spec` PUBLISHES: it writes the app's LIVE
+  // served surface and snapshots a version, so the app is immediately reachable at
+  // `/apps/<slug>` by everyone its visibility admits. It is declared `write: true` on the
+  // platform-MCP surface, but the hold gate reads THIS table — so while it was missing,
+  // `holdDecisionFor(preset,'set_app_spec')` answered "not a write" for EVERY preset and an agent
+  // granted it, INCLUDING under `read-only`, could publish a live app with no hold. That
+  // contradicts the owner's standing rule that writes happen only on explicit confirmation.
+  // No golden moves: a tree-wide search finds no system granting `set_app_spec`.
+  // The OTHER two spec doors need no entry here and must not get one: `publishApp` and
+  // `saveAppDraft` are HTTP routes (`/api/apps/[id]/publish`, `…/spec/draft`), not governed MCP
+  // tools, so no agent can reach them and this table — which only classifies MCP tool names —
+  // has nothing to say about them. `tabs/software/lib/builder/dispatch.test.ts` is the ratchet
+  // that keeps the remaining unclassified platform writes named.
+  set_app_spec: 'software',
   list_exposure_sets: 'connections',
   create_exposure_set: 'connections',
   update_exposure_set: 'connections',

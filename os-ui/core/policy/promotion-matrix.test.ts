@@ -817,6 +817,15 @@ test('tripwire: the ladder one-shot is never silent', () => {
   // L2: the widened dashboard read is opt-in, not the default for every resolve.
   assert.match(c, /forGovernanceAct/, 'the widened dashboard read must be explicit per call site');
   assert.match(c, /getDashboard\(id, p\)/, 'the default resolve keeps the plain view gate');
+  // 2026-11-19: the SAME shape for `app`. Its resolve used the plain view gate unconditionally,
+  // so the domain_admin asked to approve a creator's My→Domain app promotion got `not_found` on
+  // the artefact itself and the rung could never be walked. Both halves are pinned: the widened
+  // read is opt-in, and the default resolve still keeps the plain gate.
+  assert.match(
+    c,
+    /forGovernanceAct \? await getAppForGovernance\(id, user\) : await getAppForUser\(id, user\)/,
+    'the widened APP read must be explicit per call site, with the plain view gate as the default',
+  );
 });
 
 

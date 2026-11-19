@@ -4,7 +4,7 @@
 import { NextResponse } from 'next/server';
 import { withRoute } from '@core/kernel/route-server';
 import { getAppForUser, updateAppDocs, patchAppDesign, renameApp, reconcileBuiltStatus, setAppServeMode, normalizeServeMode, type AppEpic } from '@tabs/software/lib/apps';
-import { normalizeContextGrants } from '@core/kernel/context-grants';
+import { normalizeContextGrantsWithReport } from '@core/kernel/context-grants';
 import { normalizeAgentGrants } from '@tabs/software/lib/app-agent-grants';
 import { reconcileDeployApproval } from '@tabs/software/lib/review';
 import { getConnectionByApp } from '@core/infra/app-registry';
@@ -51,13 +51,19 @@ export const PATCH = withRoute<{ id: string }>(async ({ user, params, req }) => 
     body?.purpose !== undefined || body?.epics !== undefined ||
     body?.grants !== undefined || body?.agents !== undefined;
   if (hasDesign) {
+    // A grant the normaliser had to default or drop is REPORTED, never silently discarded — the
+    // same contract `design_software` and `set_app_design` carry. This is the UI's own door, so
+    // without it the composer could show a saved grant that was never stored.
+    const grantReport = body?.grants !== undefined ? normalizeContextGrantsWithReport(body.grants) : null;
     const app = await patchAppDesign(id, user, {
       purpose: body?.purpose !== undefined ? String(body.purpose) : undefined,
       epics: body?.epics !== undefined ? (body.epics as AppEpic[]) : undefined,
-      grants: body?.grants !== undefined ? normalizeContextGrants(body.grants) : undefined,
+      grants: grantReport ? grantReport.grants : undefined,
       agents: body?.agents !== undefined ? normalizeAgentGrants(body.agents) : undefined,
     });
-    return NextResponse.json({ app });
+    return NextResponse.json(
+      grantReport && grantReport.notes.length > 0 ? { app, grantNotes: grantReport.notes } : { app },
+    );
   }
 
   const app = await updateAppDocs(id, user, {

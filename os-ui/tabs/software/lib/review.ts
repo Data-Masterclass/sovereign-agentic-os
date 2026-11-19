@@ -267,11 +267,16 @@ export function previewNoteForRunner(status: RunnerStatus | null): string {
 export type PreviewResult = {
   app: App;
   /**
-   * The human-readable runner outcome detail surfaced to the client.
-   * Set when the runner provisioned the pod (or is trying to); null when the
-   * preview URL is already live (nothing extra to say). The deploy route
-   * includes this so the UI can distinguish "provisioning — URL coming" from
-   * "runner failed: <reason>" instead of showing the same "pending" blurb for both.
+   * The human-readable preview outcome surfaced to the client, or null when there is nothing
+   * left to say because the app is already reachable. The deploy route forwards it so the UI can
+   * tell the four cases apart instead of showing one "pending" blurb for all of them:
+   *   • DECLARATIVE, spec authored  → null (it is served at `/apps/<slug>`; the URL says it)
+   *   • DECLARATIVE, no spec yet    → "…served same-origin as soon as it has a validated spec",
+   *                                    naming `set_app_spec` / `generate_app_spec`
+   *   • CODED, provisioning         → the image-build / pod-starting note
+   *   • CODED, refused or offline   → the runner's OWN reason (e.g. no image reference is set),
+   *                                    and only a genuinely silent cluster gets the
+   *                                    "Kubernetes API unreachable" note
    */
   runnerNote: string | null;
 };

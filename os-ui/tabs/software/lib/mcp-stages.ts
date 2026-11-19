@@ -20,8 +20,7 @@
  * `defineContextBlock`, `specPromptLines`, `deriveStoryChecklist`, `everyStoryHasSpec`).
  */
 
-import type { App, AppEpic, AppStory } from '@tabs/software/lib/apps';
-import { serveModeOf } from '@tabs/software/lib/apps';
+import type { App, AppEpic, AppStory, ServeMode } from '@tabs/software/lib/apps';
 import type { BuildTarget } from '@tabs/software/lib/build-target';
 import { targetLabel, type TargetEpic } from '@tabs/software/lib/build-target';
 import {
@@ -235,9 +234,16 @@ export function declarativeStageDirective(
   return lines.join('\n');
 }
 
-/** The one-word answer to "which of the two paths is this app on?" — for a stage tool's result. */
-export function stagePathKind(app: Pick<App, 'serveMode'>): 'spec' | 'code' {
-  return serveModeOf(app) === 'spec' ? 'spec' : 'code';
+/**
+ * The one-word answer to "which of the two paths is this app on?" — for a stage tool's result.
+ *
+ * Takes the already-resolved `ServeMode` rather than the App, so this module stays PURE (its whole
+ * reason for existing is that the gate and directive assembly are unit-testable without a repo, a
+ * store or a model). The caller resolves it with `serveModeOf(app)`, which is the one nil-safe
+ * coercion; a legacy record with no `serveMode` therefore reads as `'spec'` here too.
+ */
+export function stagePathKind(serveMode: ServeMode): 'spec' | 'code' {
+  return serveMode === 'spec' ? 'spec' : 'code';
 }
 
 // --------------------------------------------------------------- built-vs-pending --

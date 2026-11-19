@@ -22,6 +22,12 @@
  *   - FOUR PRINCIPALS, one app. creator (owns it), builder (approves another's deploy), and
  *     domain_admin / admin for the promotion rungs. Separation of duties is asserted in both
  *     directions: the owner cannot approve their own, and the approver cannot be the requester.
+ *   - ORDER-DEPENDENT BY DESIGN. The stages share one app through the module-level `S`, in file
+ *     order, because that IS the chain under test — stage 8 approves the card stage 7 filed, and
+ *     stage 9 serves the spec stage 3 published. `node:test` runs top-level tests in declaration
+ *     order, so this holds; it also means a failure early in the file will cascade, and the FIRST
+ *     red stage is the one to read. Anything that does not belong to the single walk (the grant
+ *     shapes, the agentic-builder cases, archive) creates its own app and is independent.
  *   - WHAT THIS FILE DELIBERATELY DOES NOT RE-ASSERT: the coded-apps platform gate (default OFF,
  *     fail-closed 403 from every door) is pinned four ways by `coded-apps-gate.test.ts`, which
  *     owns the one cross-tab import of `@tabs/admin/lib/settings` the ratchet has baselined. The
@@ -761,20 +767,22 @@ test('STAGE 12 · push_app_files commits under apps/<slug>/ with the OS-* traile
 
     const out = await callOk(cara, 'push_app_files', { appId: coded.id, files, message: 'first push' });
     assert.equal(out.changed, true, 'the first push changes the tree');
+    // UNGUARDED on purpose: `config.reposDir` is a real temp directory and app-project git is
+    // forced on for this suite, so a null commit means the governed write FAILED and the trailer
+    // assertions below must not be skipped into a false pass.
     const commit = out.commit as string | null;
+    assert.ok(commit, `the governed commit produced no sha: ${JSON.stringify(out)}`);
 
-    if (commit) {
-      const { log } = await import('@core/infra/git-store');
-      const entries = await log('sales', { path: appSubtreePrefix(codedSlug) });
-      assert.ok(entries.length > 0, 'the commit is path-scoped under apps/<slug>/');
-      const head = entries[0];
-      assert.equal(head.author.email?.includes('cara') || head.author.name?.includes('ara'), true,
-        'the AUTHOR is the acting user — not a service principal');
-      assert.match(head.message, /OS-Action:/, 'OS-Action trailer');
-      assert.match(head.message, /OS-Object: app:/, 'OS-Object names the app');
-      assert.match(head.message, /OS-Surface:/, 'OS-Surface names the door');
-      assert.match(head.message, /OS-Request-Id:/, 'OS-Request-Id ties it to the request');
-    }
+    const { log } = await import('@core/infra/git-store');
+    const entries = await log('sales', { path: appSubtreePrefix(codedSlug) });
+    assert.ok(entries.length > 0, 'the commit is path-scoped under apps/<slug>/');
+    const head = entries[0];
+    assert.equal(head.author.email?.includes('cara') || head.author.name?.includes('ara'), true,
+      'the AUTHOR is the acting user — not a service principal');
+    assert.match(head.message, /OS-Action:/, 'OS-Action trailer');
+    assert.match(head.message, /OS-Object: app:/, 'OS-Object names the app');
+    assert.match(head.message, /OS-Surface:/, 'OS-Surface names the door');
+    assert.match(head.message, /OS-Request-Id:/, 'OS-Request-Id ties it to the request');
 
     // S-R1.4: pushing the SAME bytes twice yields ONE commit.
     const again = await callOk(cara, 'push_app_files', { appId: coded.id, files, message: 'same bytes' });

@@ -130,7 +130,6 @@ export const PLATFORM_MCP_TOOLS: { name: string; description: string; write: boo
     name: 'start_preview',
     description:
       "Start the app's PRIVATE preview, with no review and no promotion. WHAT THIS ACTUALLY GIVES YOU DEPENDS ON THE APP'S KIND, stated honestly. A DECLARATIVE app (`serveMode:'spec'`, the default) is already served SAME-ORIGIN by the OS at `/apps/<slug>` under the viewer's own session, gated by the app's visibility — so this returns that URL and provisions nothing; with no spec yet it says so and names `set_app_spec`/`generate_app_spec`. A CODED app needs a container image the OPERATOR supplies (the app's own `runImage`, or the cluster-wide `SOFTWARE_RUNNER_IMAGE`): THE OS BUILDS NO IMAGES and ships none, so where no image is configured, or the Kubernetes API is unreachable, NOTHING is provisioned, `previewUrl` stays null and `runnerNote` says which of the two it was — a placeholder container is never substituted and a URL is never fabricated. Role: the owner, or a Builder in the app's domain. Governance: an unseeable app id → not_found; an app you can see but may not preview → forbidden. Next: `get_software_status` reports the preview URL and readiness.",
-
     write: true,
   },
   {
@@ -287,7 +286,7 @@ export async function callPlatformMcp(
       // KIND-AWARE (2026-11-19). A DECLARATIVE app has no source tree and `commit` is 403 while
       // coded apps are off, so handing it the coded directive was a dead end on the DEFAULT path.
       // Its build IS authoring the AppSpec — so say that, and name the verbs that do it.
-      if (stagePathKind(app) === 'spec') {
+      if (stagePathKind(serveModeOf(app)) === 'spec') {
         result = {
           stage: 'build',
           kind: 'spec',
@@ -338,7 +337,7 @@ export async function callPlatformMcp(
       // KIND-AWARE (2026-11-19), for the same reason as build: a declarative app has no
       // committed code to read, so the verifier is pointed at the LIVE SPEC and its
       // plain-language legibility summary — the artefact that actually ships.
-      const isSpecApp = stagePathKind(app) === 'spec';
+      const isSpecApp = stagePathKind(serveModeOf(app)) === 'spec';
       result = {
         stage: 'test',
         kind: isSpecApp ? 'spec' : 'code',
