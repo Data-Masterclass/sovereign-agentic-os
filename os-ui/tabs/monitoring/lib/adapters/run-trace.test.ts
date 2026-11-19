@@ -185,3 +185,45 @@ test('X-R4/M-1: a run that records nobody says so, and is not visible on a guess
   serve({ id: 't_none', name: 'run', output: { failed: false }, metadata: {}, observations: [] });
   assert.equal((await fetchTrace('t_none'))?.owner, 'unknown', 'and with nothing recorded at all, honestly unknown');
 });
+
+// ------------------------------------- live scenario 05 (2026-11-19): kinds and units ---
+// Langfuse's public API reports an observation's `latency` in SECONDS (langfuse-core
+// ObservationsView: "The latency in seconds."). A live agent run of 156 s with 60 model calls
+// read back as 466 "ms" in total. And `observe.ts` writes every governed tool call as a SPAN
+// named `tool.<name>`, which was labelled `span`, so no agent-run trace ever had a `tool` step.
+
+const UNITS_TRACE = {
+  id: 'run_u1',
+  name: 'Units',
+  userId: 'amir',
+  timestamp: '2026-11-19T02:00:00.000Z',
+  output: { failed: false },
+  metadata: { systemId: 'sys_u', domain: 'sales', runId: 'run_u1' },
+  observations: [
+    { type: 'GENERATION', name: 'llm.act_reader', level: 'DEFAULT', startTime: '2026-11-19T02:00:01.000Z', latency: 7.25, usage: { total: 900 } },
+    { type: 'SPAN', name: 'tool.get_file', level: 'DEFAULT', startTime: '2026-11-19T02:00:09.000Z', output: { isError: false, text: 'ok' }, latency: 0.042 },
+    { type: 'SPAN', name: 'agent.reader', level: 'DEFAULT', startTime: '2026-11-19T02:00:00.500Z', latency: 9.5 },
+    { type: 'EVENT', name: 'approval-required', level: 'DEFAULT', startTime: '2026-11-19T02:00:10.000Z' },
+  ],
+};
+
+test('a trace step time is in milliseconds (Langfuse reports seconds)', async () => {
+  serve(UNITS_TRACE);
+  const trace = await fetchTrace('run_u1');
+  const byName = new Map(trace!.steps.map((s) => [s.name, s]));
+  assert.equal(byName.get('llm.act_reader')?.ms, 7250);
+  assert.equal(byName.get('tool.get_file')?.ms, 42);
+  assert.equal(byName.get('agent.reader')?.ms, 9500);
+  assert.equal(byName.get('approval-required')?.ms, undefined, 'no latency stays unknown, not 0');
+  assert.ok(trace!.logs.some((l) => l.includes('tool.get_file') && l.includes('42ms')), 'the derived log line uses ms too');
+});
+
+test('a governed tool call reads back as a tool step, an event as an event', async () => {
+  serve(UNITS_TRACE);
+  const trace = await fetchTrace('run_u1');
+  const kind = (n: string) => trace!.steps.find((s) => s.name === n)?.kind;
+  assert.equal(kind('tool.get_file'), 'tool', 'a tool.<name> span is a tool call');
+  assert.equal(kind('agent.reader'), 'span', 'an agent span stays a span');
+  assert.equal(kind('llm.act_reader'), 'llm');
+  assert.equal(kind('approval-required'), 'event', 'a Langfuse EVENT is an event, not a tool');
+});
