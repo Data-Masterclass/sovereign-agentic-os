@@ -111,7 +111,7 @@ export const WRITE_TOOL_TABS: Readonly<Record<string, string>> = {
   //
   //   posture                       | tools                                   | enforced by
   //   ------------------------------|-----------------------------------------|---------------------------
-  //   REFUSED to agent runs         | decide_deploy, promote                  | AGENT_FORBIDDEN_TOOLS below
+  //   REFUSED at agent-run doors    | decide_deploy, promote                  | AGENT_FORBIDDEN_TOOLS below
   //   HELD under every preset       | delete, archive, request_deploy         | hold.ts ALWAYS_CONFIRMED_TOOLS
   //   My-scope (read-only holds)    | create_software, start_preview, use_*   | hold.ts default (`personal`)
   //
@@ -128,6 +128,12 @@ export const WRITE_TOOL_TABS: Readonly<Record<string, string>> = {
   delete: 'software',
   decide_deploy: 'software',
   promote: 'software',
+  // The two APPROVAL verbs outside the platform surface (review H2). Neither is in `ALL_WRITE_TOOLS`
+  // — `decide_approval` is a governance tool, `promote_connection` lives with the connection
+  // discovery tools — so, like the platform writes, they are classified here by name. Both are
+  // closed to agent runs below; the entry is what makes the hold the second line behind that.
+  decide_approval: 'governance',
+  promote_connection: 'connections',
   list_exposure_sets: 'connections',
   create_exposure_set: 'connections',
   update_exposure_set: 'connections',
@@ -173,17 +179,34 @@ export const WRITE_TOOL_NAMES: ReadonlySet<string> = new Set(Object.keys(WRITE_T
  *     and may never decide. The same tools stay fully available to a person in the UI or in
  *     their own MCP session; this table is consulted only at agent-facing doors.
  *
- * TWO doors consult this:
- *   1. `tabs/agents/lib/build/os-tools.ts` — gate 0 of the agent system's tool executor refuses
- *      the call, and `grantedMcpTools` drops the tool from the schemas a model is offered (a
- *      model will try whatever it can see).
- *   2. `tabs/software/lib/app-tool-call.ts` — `callAppTool` refuses a tool of the same NAME before
- *      any authorization. That door executes an APP's own tools, so the OS tools above are not
- *      behind it; what it closes is an `actions.yml` declaring an action called `promote` or
- *      `reindex_corpus`, which would read like the real thing in a trace and an approval inbox
- *      while doing something else entirely.
+ *   - `decide_approval`, `promote_connection` — the same principle outside the software tab:
+ *     `decide_approval` decides ANY queued request (and executes its effect on approve);
+ *     `promote_connection` is itself the domain-admin approval of a connection's My → Domain step.
  *
- * It lives here rather than in either tab for the same reason `WRITE_TOOL_TABS` does — a core
+ * WHICH DOORS CONSULT THIS — exactly three, and what is NOT covered:
+ *   1. AGENT SYSTEM RUNS — `tabs/agents/lib/build/os-tools.ts`: gate 0 of `grantedToolExecutor`
+ *      refuses the call, and `grantedMcpTools` drops the tool from the schemas a model is
+ *      offered (a model will try whatever it can see). This is every run of a system.yaml:
+ *      the engine, a schedule, `run_agent_system`.
+ *   2. THE SOFTWARE TEAM PANEL — `tabs/agents/lib/build/phase-tools.ts` (`phaseToolExecutor`,
+ *      wired in `runPhaseTurn`): the interactive, one-agent-per-turn builder refuses these names
+ *      and anything the turn's agent was not offered. It has no hold at all — see that file.
+ *   3. APP TOOL CALLS — `tabs/software/lib/app-tool-call.ts`: `callAppTool` refuses a tool of the
+ *      same NAME before any authorization, and `parseAppActions` rejects an `actions.yml` action
+ *      declared under one. That door executes an APP's own tools, so the OS tools above are not
+ *      behind it; what it closes is an app tool that would read like the real thing in a trace
+ *      and an approval inbox while doing something else entirely.
+ *
+ * OUT OF SCOPE, on purpose and stated so nobody reads "refused" as "everywhere": the two
+ * INTERACTIVE ASSISTANTS — Ask the OS (`runOsAssistant`, `core/runtime/agent-loop.ts`) and the
+ * per-tab assistant (`runTabAgent`, `core/runtime/runtime.ts`, via `/api/agent-chat` and the app
+ * Build chat). They offer the present user's role-scoped registry and dispatch through
+ * `handleRpc` as that user; they consult neither this table nor the hold table. A person is
+ * present, but there is NO structural confirm step before a write there — the "confirm first"
+ * rule is prompt-level only. Neither does `handleRpc` itself, the MCP HTTP door or any UI route
+ * consult this table: a person keeps every one of these tools, under their own role gates.
+ *
+ * It lives here rather than in a tab for the same reason `WRITE_TOOL_TABS` does — a core
  * table, independent of which bundles happen to be registered. Every entry must ALSO be in
  * `WRITE_TOOL_TABS` and company-scoped in `hold.ts`, so a door that forgets this table still
  * parks the call for a platform admin instead of running it.
@@ -204,9 +227,22 @@ export const AGENT_FORBIDDEN_TOOLS: Readonly<Record<string, string>> = {
     '→ Company), and the four-eyes on that step means two people — never a person and their ' +
     'agent. An agent run may not climb the ladder. The owner or an admin promotes the app in ' +
     'Software → the app, or from their own MCP session.',
+  decide_approval:
+    'decide_approval is a human decision, not an agent action: it approves or denies a queued ' +
+    'request and, on approve, executes its effect. The four-eyes on a request means two people ' +
+    '— never a person and their agent. An agent run may file requests and must stop there. ' +
+    'An entitled person decides in Governance → Inbox, or from their own MCP session.',
+  promote_connection:
+    'promote_connection is a human decision, not an agent action: it is the domain admin\'s ' +
+    'approval that turns a personal connection into a shared domain data source, and the ' +
+    'four-eyes on that step means two people — never a person and their agent. A domain ' +
+    'admin promotes it in Connections, or from their own MCP session.',
 };
 
-/** The reason this tool is closed to agent runs, or null when it is not. Fail-closed by name. */
+/** The reason this tool is closed to agent runs, or null when it is not. By exact own name. */
 export function agentForbiddenReason(name: string): string | null {
-  return AGENT_FORBIDDEN_TOOLS[name] ?? null;
+  // `Object.hasOwn`, not a bare lookup: `AGENT_FORBIDDEN_TOOLS['constructor']` is a function and
+  // `['__proto__']` an object, so an indexed read answered "forbidden" (truthy, and not a string)
+  // for names inherited from Object.prototype. A tool or an app action can be called `constructor`.
+  return Object.hasOwn(AGENT_FORBIDDEN_TOOLS, name) ? AGENT_FORBIDDEN_TOOLS[name] : null;
 }

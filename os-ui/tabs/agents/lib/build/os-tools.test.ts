@@ -21,6 +21,7 @@ import {
   writeTargetScope,
   holdDecision,
   holdDecisionFor,
+  holdReason,
   summarizeWriteOutcomes,
   writeOutcomesLine,
   type ScopedItemsLoader,
@@ -351,13 +352,16 @@ test('H1: reindex_corpus is never ADVERTISED to a model, even when a system gran
 const ALL_PRESETS = ['read-only', 'read-propose', 'read-bounded', 'full-in-scope'] as const;
 
 /** Approvals are a HUMAN's decision: four-eyes has to mean two people, never a person and their agent. */
-const HUMAN_ONLY_APPROVALS = ['decide_deploy', 'promote'] as const;
+const PLATFORM_APPROVALS = ['decide_deploy', 'promote'] as const;
+/** …and the same principle outside the software tab (review H2): deciding ANY queued request, and
+ *  the domain admin's approval of a connection's My → Domain step. */
+const HUMAN_ONLY_APPROVALS = [...PLATFORM_APPROVALS, 'decide_approval', 'promote_connection'] as const;
 /** Destructive or deploy-requesting: confirmed by a human under every preset, whatever the agent may do. */
 const ALWAYS_CONFIRMED = ['delete', 'archive', 'request_deploy'] as const;
 /** The runner's own My-scope work: the existing rule (read-only holds; otherwise gate 2 decides). */
 const PERSONAL_PLATFORM_WRITES = ['create_software', 'use_connection', 'use_data', 'use_knowledge', 'use_as_data', 'start_preview'] as const;
 
-test('platform writes: all eleven are WRITES the hold gate can see', () => {
+test('platform writes: all eleven (and the two approvals outside the platform surface) are WRITES the hold gate can see', () => {
   for (const t of [...HUMAN_ONLY_APPROVALS, ...ALWAYS_CONFIRMED, ...PERSONAL_PLATFORM_WRITES]) {
     assert.equal(isWriteTool(t), true, `${t} must be in the hold table or no preset can hold it`);
   }
@@ -368,7 +372,7 @@ test('platform writes: the WHOLE declared surface has a stated posture — class
   // import the software tab; `tabs/software/lib/builder/dispatch.test.ts` pins the same fifteen
   // against the real `PLATFORM_MCP_TOOLS`, so the two halves cannot drift).
   const personal = [...PERSONAL_PLATFORM_WRITES, 'commit', 'push_app_files', 'set_app_spec', 'design_software'];
-  const all = [...HUMAN_ONLY_APPROVALS, ...ALWAYS_CONFIRMED, ...personal];
+  const all = [...PLATFORM_APPROVALS, ...ALWAYS_CONFIRMED, ...personal];
   assert.equal(new Set(all).size, 15, 'every platform write sits in exactly one posture bucket');
   for (const t of HUMAN_ONLY_APPROVALS) assert.ok(agentForbiddenReason(t), `${t}: refused`);
   for (const t of [...ALWAYS_CONFIRMED, ...personal]) assert.equal(agentForbiddenReason(t), null, `${t}: not refused`);
@@ -769,4 +773,34 @@ test("grantedToolSpecs: an explicit empty node `tools: []` advertises NO tools; 
   const narrowed = grantedToolSpecs(CREATOR, sys, ['search_knowledge']).map((s) => s.name);
   assert.ok(narrowed.includes('search_knowledge'));
   assert.ok(!narrowed.includes('query_data'));
+});
+
+test('holdReason: the card says WHY, and never blames the preset for a hold no preset can lift', () => {
+  // Review L3: every held call used to read "held by the system's safety preset". For `delete`
+  // that is false under read-propose and full-in-scope, and it tells the approver the wrong fix.
+  for (const t of ALWAYS_CONFIRMED) {
+    const r = holdReason(t);
+    assert.equal(r.label, 'always-confirmed');
+    assert.match(r.why, /always confirmed by a second person, whatever the system's safety preset/);
+  }
+  assert.match(holdReason('request_promotion').why, /My → Domain boundary.*under every safety preset/);
+  assert.match(holdReason('reindex_corpus').why, /platform admin decides it under every safety preset/);
+  // Only a My-scope write is held BY the preset — and only read-only does that.
+  assert.equal(holdReason('create_dataset').label, 'personal-scope');
+  assert.match(holdReason('create_dataset').why, /read-only safety preset holds every write/);
+  // The label agrees with the scope the decision is made on, for every catalogued family.
+  for (const t of ['delete', 'request_promotion', 'reindex_corpus', 'create_dataset']) {
+    const scope = writeTargetScope(t);
+    if (!(ALWAYS_CONFIRMED as readonly string[]).includes(t)) assert.equal(holdReason(t).label, `${scope}-scope`);
+  }
+});
+
+test('executor: the enqueued card for an always-confirmed call carries the true reason', async () => {
+  const deps = spyDeps();
+  const exec = grantedToolExecutor(ADMIN_USER, sysWithPreset(['delete'], 'full-in-scope'), 'sys1', deps);
+  await exec('delete', { appId: 'app_1' });
+  const card = deps.calls.enqueue[0] as { detail: string };
+  assert.match(card.detail, /always-confirmed write 'delete'/);
+  assert.match(card.detail, /whatever the system's safety preset/);
+  assert.doesNotMatch(card.detail, /held by the system's safety preset/);
 });

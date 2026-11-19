@@ -81,16 +81,17 @@ const ALWAYS_CONFIRMED_TOOLS = new Set(['delete', 'archive', 'request_deploy']);
  *     write catalog that a non-read-only agent could fire at an entire tenant corpus with no
  *     human in the loop — the `commit` / `push_app_files` lesson again, one rung up: being in the
  *     write catalog makes a tool VISIBLE to the hold gate, not held by it.
- *   - `decide_deploy`, `promote` — the APPROVALS. An agent never reaches the hold for these
- *     (see below); they are listed so that if one ever does, the strictest gate answers.
+ *   - `decide_deploy`, `promote`, `decide_approval`, `promote_connection` — the APPROVALS. An
+ *     agent run never reaches the hold for these (see below); they are listed so that if one
+ *     ever does, the strictest gate answers.
  *
- * Belt and braces, deliberately: `AGENT_FORBIDDEN_TOOLS` closes all three to agent runs outright
+ * Belt and braces, deliberately: `AGENT_FORBIDDEN_TOOLS` closes all of these to agent runs outright
  * (`os-tools.ts` gate 0), and this classification is the second line — so if any future door
  * reaches the hold instead, the answer is "an admin decides", never "personal, run it".
  * `core/mcp/write-tool-meta.test.ts` requires every forbidden tool to be a classified write;
  * `os-tools.test.ts` requires each to be company-scoped here.
  */
-const COMPANY_SCOPE_TOOLS = new Set(['reindex_corpus', 'decide_deploy', 'promote']);
+const COMPANY_SCOPE_TOOLS = new Set(['reindex_corpus', 'decide_deploy', 'promote', 'decide_approval', 'promote_connection']);
 
 /**
  * The TARGET SCOPE of a granted write tool call. Conservative + fail-closed:
@@ -110,6 +111,39 @@ export function writeTargetScope(mcpName: string): WriteScope {
   if (COMPANY_SCOPE_TOOLS.has(mcpName)) return 'company';
   if (ESCALATING_DOMAIN_TOOLS.has(mcpName) || ALWAYS_CONFIRMED_TOOLS.has(mcpName)) return 'domain';
   return 'personal';
+}
+
+/**
+ * WHY a held call is held, in words a decider can act on — the text the approval card and the
+ * trace carry. It used to say "held by the system's safety preset" for every hold, which is false
+ * for the families that are held whatever the preset says: an approver reading that on a `delete`
+ * would reasonably conclude that loosening the preset makes the confirmation go away.
+ *
+ * `label` completes "the <label> write"; `why` is a full clause.
+ */
+export function holdReason(mcpName: string): { label: string; why: string } {
+  if (ALWAYS_CONFIRMED_TOOLS.has(mcpName)) {
+    return {
+      label: 'always-confirmed',
+      why: `'${mcpName}' is always confirmed by a second person, whatever the system's safety preset — it is destructive or asks for a go-live`,
+    };
+  }
+  if (COMPANY_SCOPE_TOOLS.has(mcpName)) {
+    return {
+      label: 'company-scope',
+      why: `'${mcpName}' is tenant-wide or an approval, so a platform admin decides it under every safety preset`,
+    };
+  }
+  if (ESCALATING_DOMAIN_TOOLS.has(mcpName)) {
+    return {
+      label: 'domain-scope',
+      why: `'${mcpName}' crosses the My → Domain boundary, so a domain admin decides it under every safety preset`,
+    };
+  }
+  return {
+    label: 'personal-scope',
+    why: `'${mcpName}' is a write, and the system's read-only safety preset holds every write`,
+  };
 }
 
 export type HoldDecision = { held: false } | { held: true; approverRole: 'domain_admin' | 'admin' };

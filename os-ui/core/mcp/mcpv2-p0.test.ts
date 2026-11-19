@@ -13,6 +13,8 @@ import { __resetStore as resetFiles } from '@tabs/files/lib/store';
 import { __resetDashboards } from '@tabs/dashboards/lib/store';
 import { __resetStore as resetAgents } from '@tabs/agents/lib/store';
 import { __resetApprovals } from '@core/policy/approvals';
+import { whoCanApprove } from '@core/mcp/pending';
+import { canApprove } from '@core/policy/roles';
 
 /**
  * MCP v2 — P0 (the cross-cutting primitives). The SECURITY-CRITICAL foundation:
@@ -91,6 +93,29 @@ test('P0.1 every enqueue-write returns the uniform PendingHandle shape (dataset 
   assert.equal(p1.kind, 'dataset_promote');
   assert.equal(p2.kind, 'artifact_promote');
   assert.match(p1.whoCanApprove, /sales/, 'domain promotion → a builder in the domain');
+  // Review L2: the text must say what `canApprove` enforces. A `domain_admin` item is NOT
+  // decidable by a Builder (rank), and the runner of a parked agent run can never decide it.
+  assert.equal(
+    whoCanApprove({ approverRole: 'domain_admin', scope: 'domain', domain: 'sales' }),
+    "a Domain-admin of the 'sales' domain, or a platform admin",
+  );
+  assert.doesNotMatch(whoCanApprove({ approverRole: 'domain_admin', scope: 'domain', domain: 'sales' }), /Builder/);
+  assert.match(whoCanApprove({ approverRole: 'builder', scope: 'domain', domain: 'sales' }), /a Builder or Domain-admin in the 'sales' domain/);
+  assert.equal(whoCanApprove({ approverRole: 'admin', scope: 'domain', domain: 'sales' }), 'a platform admin');
+  assert.equal(whoCanApprove({ approverRole: 'builder', scope: 'tenant', domain: 'sales' }), 'a platform admin');
+  const parked = whoCanApprove({ approverRole: 'domain_admin', scope: 'domain', domain: 'sales', runId: 'run_1' });
+  assert.match(parked, /a Domain-admin of the 'sales' domain, or a platform admin/);
+  assert.match(parked, /a run's own runner can never confirm it/);
+  // …and it agrees with the rule itself, for the three ranks that could be asked.
+  for (const role of ['builder', 'domain_admin', 'admin'] as const) {
+    const can = canApprove({ id: 'someone-else', role, domains: ['sales'] }, { approverRole: 'domain_admin', scope: 'domain', domain: 'sales', requestedBy: 'runner', runId: 'run_1' });
+    assert.equal(can, role !== 'builder', `${role}: canApprove`);
+  }
+  assert.equal(
+    canApprove({ id: 'runner', role: 'admin', domains: ['sales'] }, { approverRole: 'domain_admin', scope: 'domain', domain: 'sales', requestedBy: 'runner', runId: 'run_1' }),
+    false,
+    'even an admin cannot confirm a call their own run made',
+  );
 });
 
 // ============================ 2. QUEUE TOOLS ==================================
