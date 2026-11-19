@@ -431,3 +431,24 @@ check-structure 419/1/200/1230 in both modes · helm lint 0 failed · all four w
 YAML-parse · SPDX clean. Re-verified against the live registry: crane and the curl fallback
 return the same digest for `0.9.5`, a missing tag is `REGISTRY_TAG_NOT_FOUND`, and a genuinely
 anonymous request is `REGISTRY_NOT_AUTHORISED (401)` — which it is.
+
+### Review round 3 — the test of the environment-dependent branch depended on the environment
+
+The first CI run of `scripts/tests/deploy-from-registry.test.sh` failed 3 of 115: "locally a
+duplicate does NOT fail", "locally it warns", "locally it says CI is hard". GitHub Actions
+exports `CI=true` to every step, so the three cases that meant "local mode" merely omitted the
+variable and inherited the runner's — running the hard branch and asserting the soft one. They
+passed on a laptop for the same reason they failed on a runner.
+
+Fix: every `check-structure.mjs` invocation in the test now states the variable explicitly —
+`env -u CI node …` for the warning branch, `CI=true node …` for the hard branch. A test of an
+environment-dependent branch has to set the environment itself, in both directions, or it is
+only testing the machine it happens to run on.
+
+Also strengthened while in there: three of the L1 docs assertions checked only a non-zero exit.
+The throwaway tree has no chart-check scripts, so the gate exits non-zero anyway once it gets
+past the conflict check — those three could have passed for the wrong reason. They now assert
+the reported PATH and the conflict-copy message.
+
+**116 assertions, 0 failures, under `CI` unset AND `CI=true`.** Gate green, check-structure
+419/1/200/1230 in both modes, helm lint 0 failed, four workflows parse.
