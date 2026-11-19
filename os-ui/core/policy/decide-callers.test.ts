@@ -52,6 +52,14 @@ const IMPORTS_BUT_NEVER_CALLS = [
   'tabs/software/mcp/software-write-tools.ts',
 ];
 
+/**
+ * `withdraw()` is the queue's other transition (pending → withdrawn; it resumes the run without
+ * executing the call). Same contract: it checks nothing about WHO, so its callers are listed too.
+ */
+const WITHDRAW_CALLERS: Record<string, string> = {
+  'core/policy/withdraw.ts': 'withdrawHeldCall: canSee, still pending, a parked run\'s call, then canWithdraw (the requester only)',
+};
+
 const SKIP_DIRS = new Set(['node_modules', '.next', '.git', 'dist', 'coverage']);
 
 function sourceFiles(dir: string, out: string[] = []): string[] {
@@ -71,14 +79,14 @@ const NAMED_IMPORT = new RegExp(String.raw`import\s*(?:type\s*)?\{([^}]*)\}\s*fr
 const WHOLE_MODULE = new RegExp(String.raw`import\s*\*\s*as\s+\w+\s+from\s*${APPROVALS_SPEC}|import\(\s*${APPROVALS_SPEC}\s*\)|require\(\s*${APPROVALS_SPEC}\s*\)`, 'g');
 
 /** How this file can reach `decide`: the local names it is bound to, and whole-module imports. */
-function decideBindings(src: string, file: string): { names: string[]; wholeModule: string[] } {
+function decideBindings(src: string, file: string, fn = 'decide'): { names: string[]; wholeModule: string[] } {
   const names: string[] = [];
   for (const m of src.matchAll(NAMED_IMPORT)) {
     // A relative `./approvals` only counts inside core/policy (other folders have their own).
     if (!m[0].includes('@core/policy/approvals') && !file.startsWith('core/policy/')) continue;
     for (const part of m[1].split(',')) {
-      const mm = part.trim().match(/^decide(?:\s+as\s+(\w+))?$/);
-      if (mm) names.push(mm[1] ?? 'decide');
+      const mm = part.trim().match(new RegExp(String.raw`^${fn}(?:\s+as\s+(\w+))?$`));
+      if (mm) names.push(mm[1] ?? fn);
     }
   }
   const wholeModule = [...src.matchAll(WHOLE_MODULE)]
@@ -131,7 +139,16 @@ test('nothing outside tests reaches decide() through a whole-module import of th
     const { wholeModule } = decideBindings(src, file);
     if (wholeModule.length === 0) return [];
     // Allowed only when the file provably does not touch `decide` at all.
-    return /\bdecide\b/.test(src.replace(/\/\/[^\n]*|\/\*[\s\S]*?\*\//g, '')) ? [file] : [];
+    return /\b(decide|withdraw)\b/.test(src.replace(/\/\/[^\n]*|\/\*[\s\S]*?\*\//g, '')) ? [file] : [];
   });
   assert.deepEqual(offenders, [], 'import decide by name from @core/policy/approvals so this ratchet can see the caller');
+});
+
+test('every non-test file that imports withdraw() from the approvals queue is listed, and gates it with canWithdraw', () => {
+  const found = SCAN.filter(({ file, src }) => decideBindings(src, file, 'withdraw').names.length > 0).map(({ file }) => file).sort();
+  assert.deepEqual(found, Object.keys(WITHDRAW_CALLERS).sort(), 'a new (or removed) importer of withdraw(): review who it lets withdraw, then update decide-callers.test.ts');
+  for (const file of found) {
+    const src = readFileSync(join(ROOT, file), 'utf8');
+    assert.ok(/(?<![.\w$])canWithdraw\s*\(/.test(src), `${file} must call canWithdraw()`);
+  }
 });

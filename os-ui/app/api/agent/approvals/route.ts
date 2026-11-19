@@ -33,7 +33,8 @@ export const dynamic = 'force-dynamic';
  * parked agent run, which four-eyes forbids. Its GET listed the whole queue, payloads included,
  * to anyone signed in.
  *   GET  -> the queue as the Governance inbox would show it to this user.
- *   POST { id, decision } -> approve/reject, only for a user `canApprove` clears. Approving
+ *   POST { id, decision } -> approve/reject, only for a user `canApprove` clears. Any other
+ *     named decision (`withdraw` included) is a 400 — never an approval. Approving
  *     APPLIES the write (attributed to the agent + the approving human) and logs it to Langfuse.
  */
 export async function GET() {
@@ -75,7 +76,16 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
   }
   const id = (body?.id ?? '').toString();
-  const decision = body?.decision === 'reject' ? 'reject' : 'approve';
+  // NAMED DECISIONS ONLY. This line used to read "anything that is not `reject` is `approve`",
+  // which would have turned a posted `withdraw` — or a typo — into an APPROVAL. Withdrawing a
+  // held call is the requester's own act and lives on the Governance route; this legacy door
+  // does not offer it. (No `decision` at all still means approve, as it always has here.)
+  const asked: unknown = body?.decision;
+  if (asked !== undefined && asked !== null && asked !== 'approve' && asked !== 'reject') {
+    const hint = asked === 'withdraw' ? ' To withdraw a held call, POST { id, decision: "withdraw" } to /api/governance/approvals.' : '';
+    return NextResponse.json({ error: `decision must be 'approve' or 'reject'.${hint}` }, { status: 400 });
+  }
+  const decision = asked === 'reject' ? 'reject' : 'approve';
   await ensureHydrated();
   const existing = getApproval(id);
   if (!existing) return NextResponse.json({ error: 'Approval not found' }, { status: 404 });
