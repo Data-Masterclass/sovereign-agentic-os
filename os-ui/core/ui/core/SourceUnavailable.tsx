@@ -1,19 +1,19 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    SourceUnavailable — the inline empty state shown when an artifact's source is gone
+ * USER STORY: As a user opening a metric or dashboard whose dataset was demoted, archived or
+ *             deleted I want that tile to say its source is unavailable so that the rest of the
+ *             page still works instead of crashing.
+ * ARCHITECTURE:
+ *   - Part of the lifecycle work (0.6.98). Shows a heading (the optional `name`) and a reason,
+ *     which defaults to `SOURCE_UNAVAILABLE_REASON` from `@core/kernel/source-availability`.
+ *     `app/error.tsx` is the fallback for real crashes.
+ *   - Not tied to any tab, but currently used only by `tabs/metrics/ui/MetricsRegistry.tsx` and
+ *     `tabs/dashboards/ui/DashboardGrid.tsx`. The rollout to the other consumer tabs is not
+ *     done yet.
  */
 'use client';
-
-/**
- * SourceUnavailable — the ONE calm, honest "the thing this was built on is gone" inline
- * empty-state for the graceful lifecycle spine (0.6.98). When a consumer artifact's source
- * (a dataset demoted to Personal, archived, or deleted) can no longer be resolved, the
- * consumer renders THIS for the affected tile/panel while the rest of the surface renders
- * normally — a degradation, not a crash (belt-and-suspenders with app/error.tsx).
- *
- * Reusable + tab-agnostic: 0.6.98 applies it to Metrics + Dashboards (the reported crash
- * sites); a later 0.6.99 rolls it out to the remaining consumer tabs (Knowledge / Files /
- * Connections / Science / Agents), so it takes only a short reason + optional name.
- */
 
 import { SOURCE_UNAVAILABLE_REASON } from '@core/kernel/source-availability';
 

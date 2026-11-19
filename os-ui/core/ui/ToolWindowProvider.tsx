@@ -1,22 +1,20 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    ToolWindowProvider — app-wide `openTool` for embedded tools (Langfuse, MLflow, …)
+ * USER STORY: As a user I want "Open <tool>" buttons to open the tool without any overlay that could
+ *             cover the OS so that I can never be locked out of the navigation.
+ * ARCHITECTURE:
+ *   - Mounted in `app/layout.tsx`; consumers call `useToolWindow()` (e.g. the Components page).
+ *   - `openTool` opens the same-origin proxy `/tools/<key>/…` in a new browser tab; `closeTool` is
+ *     a no-op kept for the old signature. The in-app overlay was removed in os-ui 0.6.140.
+ *   - On mount it strips stale `?tool=` / `toolTitle` / `toolPath` URL params.
  */
 'use client';
 
 import { createContext, useCallback, useContext, useEffect, useMemo } from 'react';
 import { getUrlParam, patchUrl } from '@core/kernel/url-params';
 
-/**
- * App-wide host for embedded tools (Langfuse, MLflow, …).
- *
- * os-ui 0.6.140 — the in-app FULL-SCREEN tool OVERLAY was REMOVED entirely. It could leave a
- * black screen over the whole OS chrome (including the left nav) with no reliable way out — a
- * stale `?tool=` URL param restored it on every reload, and a hung/focus-grabbing embed could
- * swallow the dismiss keys ("the menu is blacked out and I can't click anything"). An overlay
- * that can trap the operator is never acceptable. Tools now open in their OWN BROWSER TAB, which
- * can never cover the OS. `openTool` keeps the same signature so every "Open <tool>" button keeps
- * working; `closeTool` is a no-op (there is nothing to close).
- */
 type ToolWindowCtx = {
   openTool: (key: string, title: string, path?: string) => void;
   closeTool: () => void;

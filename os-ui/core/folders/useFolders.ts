@@ -1,5 +1,14 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    useFolders — load a tab's personal and domain folder rows in one hook
+ * USER STORY: As a user browsing a foldered tab I want my personal and domain folders loaded
+ *             together, including archived ones when I ask for them, so that the folder rail is complete.
+ * ARCHITECTURE:
+ *   - Client hook; fetches `/api/folders?tab=<tab>&scope=personal|domain` in parallel. Used by the
+ *     artifact browsers (Files, Metrics, Dashboards, Agents, Connections, Workflows, Software).
+ *   - Owns only the fetch and the two node lists; callers decide when to call `loadFolders`.
+ *   - Fail-soft: a failed request keeps the last good nodes, so the derived rail still renders.
  */
 'use client';
 
@@ -7,20 +16,6 @@ import { useCallback, useState } from 'react';
 import type { FolderPathNode } from '@core/kernel/folders';
 import type { FolderTab } from '@core/folders/index';
 
-/**
- * The parallel personal + domain folder fetch shared by every artifact browser
- * (Data / Metrics / Files). Each tab hit `/api/folders?tab=<tab>&scope=personal`
- * and `…&scope=domain` in a `Promise.all`, stored the two node lists, and re-ran
- * the fetch whenever the archived toggle flipped — identical code but for the
- * `tab` param. This hook is that one copy.
- *
- * It owns ONLY the fetch + the two node lists; each caller keeps its own effect /
- * reload wiring and simply invokes the returned `loadFolders`. Fail-soft: a failed
- * request leaves the last good nodes in place (the synthesised rail still renders).
- *
- * @param tab          the folders namespace — any registered {@link FolderTab}
- * @param showArchived include archived folders (mirrors the tab's archived view)
- */
 export function useFolders(
   tab: FolderTab,
   showArchived: boolean,

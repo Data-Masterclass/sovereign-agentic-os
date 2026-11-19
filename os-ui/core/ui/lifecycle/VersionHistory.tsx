@@ -1,16 +1,17 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    VersionHistory — the shared version list with a per-version Restore
+ * USER STORY: As an artifact owner I want to see who changed what and when, and restore an
+ *             earlier version after confirming, so that I can undo a bad change.
+ * ARCHITECTURE:
+ *   - Reads `GET {basePath}/versions` (`{ versions: [{ version, at, author, summary }] }`) and
+ *     restores with `POST {basePath}/versions { version }` after a confirmation through
+ *     `useConfirm()` with `restoreVersionCopy` from `@core/kernel/lifecycle`.
+ *   - A 404 means the type has no versions route, so it shows a quiet "no version history"
+ *     note. Rendered by `LifecycleActions` and `tabs/software/ui/SoftwareBuilder.tsx`.
  */
 'use client';
-
-/**
- * VersionHistory — the ONE version panel for the whole OS. Reads the artifact's
- * `{basePath}/versions` route (every type exposes the same shape:
- * { versions: [{ version, at, author, summary }] }) and offers a per-version
- * Restore. Restore itself CONFIRMS (it changes current state) via useConfirm,
- * then POSTs { version } to the same route. Types without a versions route
- * degrade gracefully to a quiet "no version history" note.
- */
 
 import { useCallback, useEffect, useState } from 'react';
 import { useConfirm } from '@core/ui/lifecycle/ConfirmDialog';

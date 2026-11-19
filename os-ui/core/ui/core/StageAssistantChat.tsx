@@ -1,5 +1,23 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    StageAssistantChat — the shared assistant chat panel for guided builder stages
+ * USER STORY: As a builder in a guided stage I want to chat with a stage-scoped assistant and
+ *             apply its suggestions with one click so that I can move forward without filling
+ *             every field by hand.
+ * ARCHITECTURE:
+ *   - POSTs `{ stage, messages }` to `endpoint`, or by default to `/api/apps/<appId>/assistant`
+ *     (the Software route). Used by `tabs/software/ui/SoftwareBuilder.tsx` and
+ *     `tabs/agents/ui/AgentStageAssistant.tsx`. Assistant replies render through
+ *     `@core/ui/Markdown`.
+ *   - Suggestion cards call the host's `onApply*` callbacks. The host applies and saves through
+ *     its own governed path, and this component changes nothing itself. `renderSuggestions`
+ *     lets a host (Agents) replace the built-in Software cards.
+ *   - Holds only local chat state. Governance stays in the route. Route errors (4xx/402/503) are
+ *     shown as the route's own message. `autoFirePrompt` sends one prompt per `stage` into an
+ *     empty thread.
+ *   - Imports suggestion types from `@tabs/software/lib/*`, so this core file depends on the
+ *     Software tab.
  */
 'use client';
 
@@ -17,24 +35,6 @@ import type { SuggestedDataset } from '@tabs/software/lib/data-plan';
 
 /** A next-step the host can offer at the foot of the thread (never a dead end). */
 export type NextStep = { label: string; prompt?: string; onClick?: () => void };
-
-/**
- * StageAssistantChat — the ONE reusable, governed assistant CHAT panel any guided stage
- * can mount. It replaces the old one-shot StageAssistant stub with a real conversation:
- *
- *   • a visible thread of user + assistant turns, assistant replies rendered as MARKDOWN
- *     (reuses the OS `<Markdown>` renderer — no new dep, no raw markdown leaking through);
- *   • a message input + Send that POSTs the running thread to the stage assistant route;
- *   • structured SUGGESTION CARDS returned by the route, each with an Apply button that
- *     invokes a host callback — the host applies it locally + persists through its own
- *     governed path. The assistant only suggests; this component never mutates anything.
- *
- * Honest states: a busy spinner while awaiting; a 503/402/4xx surfaced plainly as the
- * route's own error; an empty thread invites the first question. Governance stays in the
- * route — this is presentation + fetch only.
- *
- * Controlled by the host via `onApply*` callbacks; it holds only local chat state.
- */
 
 type Turn = { role: 'user' | 'assistant'; content: string };
 

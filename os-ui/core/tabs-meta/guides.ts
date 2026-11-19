@@ -1,18 +1,18 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    Golden-path guides — load the guide markdown an AI reads when it connects
+ * USER STORY: As an AI client connected over MCP I want a full guide for each pathway (tool order,
+ *             things to consider, governance gates) so that I can build without guessing.
+ * ARCHITECTURE:
+ *   - Server-only. Served as `sovereign-os://guide/*` resources and by the `get_guide` tool
+ *     (`tabs/admin/mcp/resources.ts`, `core/mcp/discovery-base-tools.ts`, `core/mcp/prompts.ts`).
+ *   - A tab's guide is `tabs/<tab>/guide.md`; overview, how-to-use and governance live in
+ *     `core/guides/<name>.guide.md`. Read once and cached; a missing file returns ''.
  */
 import 'server-only';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-
-/**
- * The golden-path GUIDES — the rich, self-describing docs an AI reads on
- * connect (as `sovereign-os://guide/*` resources and via the `get_guide` tool).
- * Each lives with its tab (`tabs/<tab>/guide.md`) or, for the cross-cutting ones, in `core/guides/`. Unlike the token-minimal
- * `*.context.md` briefs, a guide teaches the full pathway: what it is · the exact
- * tool sequence · what to consider · the governance gates. Read once + cached; a
- * missing file degrades to '' (the surface still works, just ungrounded).
- */
 
 /** The stable guide keys ("paths"). Two meta guides + one per golden pathway. */
 export const GUIDE_PATHS = [

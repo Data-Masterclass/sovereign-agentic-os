@@ -1,20 +1,18 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    DemoteButton — the "Unshare" / "Revoke from Company" control, one rung down the ladder
+ * USER STORY: As an artifact owner I want to lower an artifact's reach (Company → Domain, or
+ *             Domain → My) behind a confirmation that lists its dependents, so that I can take
+ *             back sharing without deleting anything.
+ * ARCHITECTURE:
+ *   - The mirror of `PromoteButton`. Both rungs go through `useConfirm()` with a
+ *     dependents warning when `artifactId` is given. It then POSTs `demoteUrl` and calls
+ *     `onDone()` so the host re-fetches. Renders nothing at the Personal tier.
+ *   - The tab's demote route is the real permission check. The host decides whether to show the
+ *     button. Used by the Data, Metrics and Dashboards builders.
  */
 'use client';
-
-/**
- * DemoteButton — the ONE consistent "revoke sharing / step down the ladder" control
- * for every tab, the mirror of <PromoteButton>. Marketplace/Company → Shared/Domain
- * ("Revoke from Company") and Shared/Domain → Personal/My ("Unshare"), rendered with
- * the same button, copy and confirm everywhere so a user learns it once.
- *
- * Revoking sharing is a governed, reach-lowering step, so BOTH rungs run behind the
- * shared <ConfirmDialog> (unlike Promote, whose low-stakes first rung fires directly).
- * It POSTs `demoteUrl`; on success it calls `onDone()` so the host re-fetches. The
- * server (each tab's demote route → the governed demote seam) is the real gate — this
- * only surfaces the control when the caller may act.
- */
 
 import { useCallback, useState } from 'react';
 import { useConfirm } from '@core/ui/lifecycle/ConfirmDialog';

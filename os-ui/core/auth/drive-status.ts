@@ -1,16 +1,15 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    Connected-drive status — derive the Drive/OneDrive status and the authorize link
+ * USER STORY: As a user on the Connections tab I want to see whether my drive is connected or
+ *             needs a reconnect, and a Connect button that starts consent, so that I know what to do.
+ * ARCHITECTURE:
+ *   - Pure and client-safe: no secrets, no server imports. Shared by
+ *     `tabs/connections/ui/ConnectionBuilder.tsx` and its unit test.
+ *   - Status comes only from the connection's safe `health` field, never from a token.
+ *   - `driveAuthorizePath` is a full-page navigation target; the route 302s to the provider.
  */
-/**
- * Connected-drive status — PURE + client-safe (no secrets, no server imports), so
- * the Connections tab and its unit tests share ONE source of truth for:
- *   • what a personal Drive/OneDrive connection's status is (Not connected /
- *     Connected / needs reconnect), derived only from the safe fields the API
- *     already returns (never a token), and
- *   • the full-page authorize URL the "Connect" button navigates to (which 302s to
- *     the provider consent screen).
- */
-
 import type { OAuthProvider } from '@core/auth/providers';
 
 export type DriveConnectionStatus = 'not-connected' | 'connected' | 'needs-reconnect';

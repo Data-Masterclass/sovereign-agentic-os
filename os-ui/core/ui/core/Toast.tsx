@@ -1,19 +1,19 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    Toast — the self-dismissing confirmation pill for actions across the OS
+ * USER STORY: As a user I want a short message after I press a button so that an action never
+ *             looks like it did nothing.
+ * ARCHITECTURE:
+ *   - `ToastProvider` is mounted once in `app/layout.tsx`. Components call `useToast()` and then
+ *     `toast.success()`, `.error()` or `.info()`. Outside a provider `useToast()` is a no-op, so
+ *     tests and isolated previews do not throw.
+ *   - The queue rules (dedup, cap, dwell) are in the pure `@core/kernel/toast`. This file is only
+ *     the React and DOM shell plus the auto-dismiss timers.
+ *   - Toast actions can carry an `href` (navigates with `window.location.assign`) or an async
+ *     `onClick` (with `busy`, it shows a spinner, then ✓, then closes).
  */
 'use client';
-
-/**
- * Toast — the ONE transient "that did something" confirmation for the whole OS.
- *
- * A calm, self-dismissing pill that slides in bottom-right after a button press so an
- * action never looks like a silent no-op. It is the sibling of <ConfirmDialog>: same
- * imperative shape (wrap the app once, call a hook), but passive — it never blocks.
- *
- * Mounted once in the root layout, so every tab can `const toast = useToast()` and
- * `toast.success('Added to your team')`. The queue rules (dedup, cap, dwell) live in
- * the pure, unit-tested lib/core/toast.ts; this file is only the React + DOM shell.
- */
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { pushToast, dismissToast, type Toast, type ToastAction, type ToastInput, type ToastTone } from '@core/kernel/toast';

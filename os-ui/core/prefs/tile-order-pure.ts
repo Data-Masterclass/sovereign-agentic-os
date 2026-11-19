@@ -1,11 +1,13 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    Tile order (pure) — known surfaces and the rule that applies a saved order to a list
+ * USER STORY: As a user who rearranged my tiles I want new artifacts to appear at the end without
+ *             breaking my order so that my layout survives new items.
+ * ARCHITECTURE:
+ *   - Pure and isomorphic: safe in client components, server routes and tests.
+ *   - Re-exported by the server store `tile-order.ts` and used by the client hook `useTileOrder.ts`.
  */
-/**
- * Pure, isomorphic helpers for tile-order preferences. No server imports —
- * safe to import in client components, server routes, and tests alike.
- */
-
 // Known surfaces — extend this list when new tabs wire the hook.
 export const TILE_ORDER_SURFACES = [
   'dashboard.list',

@@ -1,22 +1,20 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    Tile order store — per-user saved tile order for each list surface
+ * USER STORY: As a user I want the tile order I set to be kept across sessions so that my lists stay
+ *             arranged the way I left them.
+ * ARCHITECTURE:
+ *   - Server-only. In-process Map pinned on `globalThis` plus a best-effort OpenSearch mirror
+ *     (`os-user-prefs`); works with no cluster. Same pattern as `tabs/agents/lib/store.ts`.
+ *   - Called by `app/api/prefs/tile-order/route.ts`, which restricts access to the session user.
+ *   - Trims a saved order to `ORDER_LIMIT` ids.
  */
 import 'server-only';
 import { osMirror } from '@core/infra/os-mirror';
 export { applyTileOrder, TILE_ORDER_SURFACES, ORDER_LIMIT } from '@core/prefs/tile-order-pure';
 export type { TileOrderSurface } from '@core/prefs/tile-order-pure';
 import { type TileOrderSurface, ORDER_LIMIT } from '@core/prefs/tile-order-pure';
-
-/**
- * Per-user tile-order preference store — the server-side half of the platform-
- * wide tile-reorder mechanism. Persists via the standard dual pattern:
- * authoritative in-process globalThis-pinned Map (works with NO cluster) plus
- * best-effort OpenSearch write-through to "os-user-prefs" for durability on a
- * real deploy. Same pattern as lib/agents/store.ts.
- *
- * The session user is the only valid caller — enforced at the route layer, not
- * here, so this module stays free of Next.js request context.
- */
 
 type PrefsState = { cache: Map<string, string[]> | null };
 const STATE_KEY = Symbol.for('soa.prefs.tileOrder');

@@ -1,24 +1,19 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    ActionButton — a `.btn` for async actions with idle → pending → done/error states
+ * USER STORY: As a user I want every button press on an async action to show a spinner and then a
+ *             check (or an error toast) so that I can tell it worked and cannot submit it twice.
+ * ARCHITECTURE:
+ *   - Shared core UI. `onAction` returns a promise that the button awaits. While pending, a
+ *     spinner replaces the label and the button is disabled. A second press during pending is
+ *     ignored.
+ *   - On resolve, a "✓" shows for `doneMs`, plus a success toast if `successToast` is set. On
+ *     reject, the button goes back to idle and the error message is toasted through `useToast()`
+ *     from `@core/ui/core/Toast`, and `onError` runs if given.
+ *   - The same visuals in every tab, so "spinner → check" means the same thing everywhere.
  */
 'use client';
-
-/**
- * ActionButton — the drop-in button for any async action that used to look silent.
- *
- * It wraps a normal `.btn` and manages the whole idle → pending → done/error dance so a
- * press ALWAYS visibly does something, and can never double-submit:
- *   • idle    — your label.
- *   • pending — a spinner replaces the label; the button is disabled.
- *   • done    — a brief "✓" flash (the label swaps to a check) then back to idle.
- *   • error   — the button settles back to idle so the user can retry; the error is
- *               surfaced via the toast (pass a shared useToast()) or your own onError.
- *
- * `onAction` returns a promise; ActionButton awaits it. Give it `successToast` and it
- * fires a success toast on resolve; give it `toast` (from useToast) so it can. Keeping
- * the visuals identical everywhere means a user learns "spinner → check = it worked"
- * once and trusts it across every tab.
- */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useToast } from '@core/ui/core/Toast';

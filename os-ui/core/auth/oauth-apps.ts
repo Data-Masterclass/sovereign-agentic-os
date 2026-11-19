@@ -1,25 +1,21 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    Admin OAuth-app registry — the Google and Microsoft apps the drive connections use
+ * USER STORY: As a platform admin I want to register the Google Cloud OAuth client and the Azure
+ *             app once so that users can connect their own drives.
+ * ARCHITECTURE:
+ *   - Server-only. The client secret is written to Secrets Manager (`@core/infra/secrets`
+ *     `putSecret`); the record keeps only the public client id, the secret ref and a fingerprint.
+ *   - `getClientCredentials()` reads the secret back server-side for `client.ts`; it is never
+ *     returned to a client, a trace or a log. Same pattern as `tabs/admin/lib/models.ts`.
+ *   - In-process cache plus a best-effort OpenSearch mirror (`os-oauth-apps`), so the
+ *     configuration survives an os-ui restart. Written by `/api/platform-admin/oauth-apps`.
  */
 import 'server-only';
 import { osMirror } from '@core/infra/os-mirror';
 import { putSecret, secretFingerprint, getSecretServerSide, type SecretRef } from '@core/infra/secrets';
 import { type OAuthProvider, OAUTH_PROVIDERS } from '@core/auth/providers';
-
-/**
- * Admin OAuth-app registry — where the platform admin registers the Google Cloud
- * OAuth client and the Microsoft/Azure app the connected-drive flow federates to.
- * This is the SAME provider-key pattern as `lib/platform-admin/models.ts`:
- *
- *   THE ONE RULE — the client SECRET never lives in a record. The admin route
- *   writes it to Secrets Manager (`lib/secrets.putSecret`) and this registry keeps
- *   only { clientId (public), secretRef, fingerprint }. `getClientSecret()` reads
- *   it back SERVER-SIDE for the token exchange/refresh and never returns it to a
- *   client, a trace, or a log.
- *
- * In-process authoritative cache + best-effort OpenSearch mirror for durability,
- * so an admin configures the app once and it survives an os-ui restart.
- */
 
 export type OAuthApp = {
   provider: OAuthProvider;

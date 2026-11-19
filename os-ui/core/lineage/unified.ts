@@ -1,5 +1,15 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    Unified lineage — one `{nodes, edges}` graph for a dataset, metric, dashboard or app
+ * USER STORY: As an agent or user asking "where does this come from and what uses it?" I want one
+ *             lineage shape for every artifact kind so that I do not need a different call per kind.
+ * ARCHITECTURE:
+ *   - Server-only dispatcher behind the MCP `get_lineage(ref)` tool (`core/mcp/governance-tools.ts`).
+ *     Parses `kind:id` and calls the existing collector per kind; it reimplements none.
+ *   - View permission is checked at the root (the per-tab getters throw 403/404).
+ *   - Dataset and metric graphs report `source`: `dbt` when dbt's own graph was used, `registry`
+ *     for the OS's own records.
  */
 import 'server-only';
 import type { CurrentUser } from '@core/kernel/auth';
@@ -8,14 +18,6 @@ import { datasetLineage } from '@tabs/data/lib/lineage-server';
 import { getDashboard } from '@tabs/dashboards/lib/store';
 import { panelMetrics } from '@tabs/dashboards/lib/model';
 import { getAppForUser } from '@tabs/software/lib/apps';
-
-/**
- * `get_lineage(ref)` — ONE normalized lineage graph across every artifact kind
- * (mcp-v2 P0.3). A THIN dispatcher: it parses `kind:id` and routes to the EXISTING
- * per-artifact collector, then normalizes to `{nodes, edges}`. It re-implements no
- * collector. canView is enforced at the ROOT (an unseeable root is not_found);
- * unviewable nodes render as `{redacted:true, kind}` (existence without content).
- */
 
 export type UnifiedNode = { id: string; kind: string; label: string; redacted?: boolean };
 export type UnifiedEdge = { from: string; to: string; rel: string };

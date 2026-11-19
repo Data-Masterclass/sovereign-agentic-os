@@ -1,5 +1,15 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    FolderLayout — the shared left-rail and main-area shell for foldered tabs
+ * USER STORY: As a user moving between foldered tabs I want folders and tiles laid out the same
+ *             way everywhere so that I do not have to learn a new layout per tab.
+ * ARCHITECTURE:
+ *   - Uses the Files tab's `.files-layout` / `.files-rail` / `.files-main` grid. Files keeps its
+ *     own inline markup (it has an extra preview column). Data, Knowledge, Metrics, Workflows,
+ *     Software, Agents and Connections render through this component.
+ *   - The rail starts with an "All <items>" row that clears the folder filter, followed by the
+ *     host's `rail` content (normally `FolderTree variant="nav"`).
  */
 'use client';
 

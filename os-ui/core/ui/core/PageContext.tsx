@@ -1,33 +1,23 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    Page context — what the user has open right now, shared across the OS shell
+ * USER STORY: As a user asking the OS Assistant about the dataset or agent I have open I want it
+ *             to know which artifact that is so that it does not ask me for the id.
+ * ARCHITECTURE:
+ *   - A plain client-side React context. `PageContextProvider` is mounted once in
+ *     `app/layout.tsx`, `core/ui/OsAssistant.tsx` reads it with `usePageContext()`, and tab
+ *     surfaces (Agents SimpleBuilder, Data DataBuilder, Knowledge WorkflowView, Files
+ *     FilePreview) publish with `usePublishPageContext()`.
+ *   - It only adds information. With nothing published, `usePageContext()` returns null and the
+ *     assistant asks for the id as before. Calling it without a provider is a harmless no-op.
+ *   - A publisher clears its snapshot on unmount, so one screen's context does not carry over to
+ *     the next. There is no server round trip. The pathname stays the server's source for the
+ *     tab.
  */
 'use client';
 
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
-
-/**
- * PAGE CONTEXT — "where is the user right now?", shared across the whole OS shell.
- *
- * The overarching OS Assistant ("Ask the OS") is mounted once in the app shell and
- * rides along on every tab. Historically it only knew the ROUTE (the pathname), so
- * with a dataset open in Data → Silver and the user asking "document the columns",
- * it still replied "which dataset ID?" — blind to what is plainly on screen.
- *
- * This tiny client-side store fixes that. Any tab surface can PUBLISH a small
- * snapshot of what the user is looking at — the current sub-stage/step and the open
- * artifact (id + name + type) — and the assistant reads it and folds it into its
- * request so the open artifact becomes the DEFAULT subject. No dataset-ID question
- * when the dataset is right there.
- *
- * Design notes (kept deliberately small + defensive):
- *  • It only ENRICHES. If nothing is published, `usePageContext()` returns null and
- *    the assistant behaves exactly as before (asks for the id). Nothing breaks.
- *  • Publishing is a single `useEffect` one-liner per surface; unmounting CLEARS it
- *    (a surface's context never leaks into the next screen). See `usePublishPageContext`.
- *  • It is a plain React context — no route coupling, no server round-trip. The
- *    server stays authoritative on the tab-lens (via the pathname); this just adds
- *    the in-tab focus the URL can't express.
- */
 
 /** The focus snapshot a tab publishes. Every field beyond `tab` is optional — a tab
  *  publishes only what it actually knows (a builder may know its stage but have no

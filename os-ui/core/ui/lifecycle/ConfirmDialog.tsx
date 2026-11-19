@@ -1,20 +1,20 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    ConfirmDialog — the shared confirmation modal for lifecycle actions
+ * USER STORY: As a user about to archive, delete, demote or certify an artifact I want one
+ *             clear confirmation, with a typed name for dangerous steps and a list of what
+ *             depends on it, so that I do not break something by accident.
+ * ARCHITECTURE:
+ *   - A surface wraps its subtree in `<ConfirmProvider>` and calls
+ *     `await useConfirm()(copy)`, which resolves true on confirm and false on cancel, Escape or
+ *     backdrop click. The copy and the typed-phrase check come from `@core/kernel/lifecycle`.
+ *   - Focus is trapped in the card and set on the first control. Uses the existing
+ *     `.pa-confirm-backdrop` / `.pa-confirm` styles.
+ *   - When `copy.dependents` is set, it fetches `GET /api/artifacts/{id}/dependents` and shows a
+ *     summary line. This is best effort and never blocks Confirm (warn, then allow).
  */
 'use client';
-
-/**
- * ConfirmDialog — the ONE confirmation popup for the whole OS. A real, focus-
- * trapped modal (ESC / backdrop cancel, keyboard-accessible) that renders the
- * lifecycle copy from lib/lifecycle.ts identically everywhere. It reuses the
- * existing .pa-confirm-backdrop / .pa-confirm brand chrome so it matches the
- * app's visual language rather than looking like a generic browser dialog.
- *
- * Trigger it imperatively via useConfirm() — any tab wraps its subtree in
- * <ConfirmProvider> and calls `const confirm = useConfirm()` then
- * `if (await confirm(deleteCopy('dataset', name, visibility))) { …do it… }`.
- * The promise resolves true on confirm, false on cancel/ESC/backdrop.
- */
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type { ConfirmCopy } from '@core/kernel/lifecycle';

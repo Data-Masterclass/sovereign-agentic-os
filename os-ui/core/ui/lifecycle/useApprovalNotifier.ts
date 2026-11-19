@@ -1,26 +1,20 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    useApprovalNotifier — the "request filed" toast after a governed action needs approval
+ * USER STORY: As a user who has just filed a promotion, certification or deploy request I want a
+ *             toast that says where the request went and links there, plus "Approve now" if I
+ *             can approve it, so that I know what happens next.
+ * ARCHITECTURE:
+ *   - The wording, the `policiesHref` deep link to /governance and the approver check are in the
+ *     pure `@core/policy/approval-notice`. The check fails closed. This hook only wires the toast,
+ *     the router, `useUser()` and the approve fetch.
+ *   - "Approve now" POSTs `{ id, decision: 'approve' }` to `/api/governance/approvals`, the same
+ *     route the approvals inbox uses, and throws on failure so the toast button goes back to
+ *     idle.
+ *   - Called by `PromoteButton` and by the Software, Agents, Knowledge and Files surfaces.
  */
 'use client';
-
-/**
- * useApprovalNotifier — the ONE hook every tab calls right after a governed action
- * FILES an approval request (promote/propose to Domain, certify to Company, request
- * a deploy, promote an agent system…). It fires a single, consistent toast so the
- * user is never left guessing WHERE the request went or how to act on it:
- *
- *   • a calm success line — "Request filed — this <kind> is awaiting approval to
- *     <Domain|Company>. Approve it in Policies & Approvals." —
- *   • a primary  Go to Policies & Approvals →  action that deep-links to /governance
- *     (focused on the just-filed request), and
- *   • IF the signed-in user can actually approve it (an admin/domain_admin at the
- *     target scope — fail-closed), an inline  Approve now  action that POSTs the
- *     decision through the SAME governed route the inbox uses.
- *
- * All the wording + the fail-closed approver gate live in the pure, unit-tested
- * lib/governance/approval-notice.ts; this hook is only the React wiring (toast +
- * router + current user + the approve fetch).
- */
 
 import { useCallback } from 'react';
 import { useRouter } from 'next/navigation';

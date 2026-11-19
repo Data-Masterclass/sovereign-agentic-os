@@ -1,19 +1,16 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
- */
-/**
- * The OAuth token set + the PURE request builders for the drive OAuth flow — no
- * network, no secrets vault, no server-only imports, so every branch is unit-
- * testable. The server modules (`client.ts`, `connection-token.ts`) call these to
- * build the authorize URL / the token-exchange + refresh request bodies, and to
- * parse + serialize the token set that lands in Secrets Manager.
  *
- * A token set is the shape stored (as JSON) under the Connection's `secretRef`.
- * The raw JSON NEVER leaves the server (it is the credential); only a fingerprint
- * is ever surfaced. A connection that has only the offline placeholder token (a
- * plain non-JSON string) parses to `null` here → the sync falls back to the mock.
+ * FEATURE:    OAuth token set — shape, parsing and the pure request builders for the drive flow
+ * USER STORY: As a maintainer I want the token handling free of network and vault code so that
+ *             every branch of the OAuth flow can be unit-tested.
+ * ARCHITECTURE:
+ *   - Pure: no network, no vault, no `server-only`. `client.ts`, `connection-token.ts` and
+ *     `notion-mcp.ts` call it to build the authorize URL and the exchange and refresh bodies.
+ *   - The token set is stored as JSON under the connection's `secretRef` and never leaves the server.
+ *   - A stored value that is not JSON (the offline placeholder) parses to `null`, so the sync
+ *     falls back to the mock client.
  */
-
 import { type OAuthProviderConfig } from '@core/auth/providers';
 
 export type TokenSet = {

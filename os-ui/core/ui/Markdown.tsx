@@ -1,16 +1,15 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    Markdown — render GFM markdown from LLM responses
+ * USER STORY: As a user reading an assistant answer I want tables, lists and code shown properly so
+ *             that the answer is easy to read.
+ * ARCHITECTURE:
+ *   - Used by the OS assistant, stage assistant chats and the build chats.
+ *   - react-markdown with remark-gfm; raw HTML passthrough stays disabled (the library default).
+ *   - Links open in a new tab; tables scroll horizontally. Colours come from the app's CSS variables.
  */
 'use client';
-
-/**
- * <Markdown> — renders GFM markdown from LLM responses.
- *
- * Security: raw HTML passthrough is deliberately disabled (react-markdown default).
- * Tables scroll horizontally on overflow. Links open in a new tab.
- * Typography and colours are driven by the app's CSS variables so it blends in
- * with the rest of the OS UI rather than imposing its own opinionated theme.
- */
 
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';

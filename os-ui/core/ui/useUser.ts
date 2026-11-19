@@ -1,5 +1,16 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG
+ *
+ * FEATURE:    useUser — the client hook for the signed-in user, their role and domains
+ * USER STORY: As a UI component I want the current user's role, domains and enabled tabs so that
+ *             I can show or hide controls and scope lists without asking the server myself.
+ * ARCHITECTURE:
+ *   - Reads `GET /api/auth/me` on mount and returns `{ user, loading, reload, isAdmin,
+ *     domainChosen }`. A failed fetch leaves `user` null.
+ *   - `domainChosen` defaults to true so `DomainStartPrompt` does not flash before the response
+ *     arrives. `enabledFeatures` comes from the server, so the sidebar does not depend on a
+ *     build-time default.
+ *   - UI gating only. The API routes do the real permission checks.
  */
 'use client';
 

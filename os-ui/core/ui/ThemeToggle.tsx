@@ -1,5 +1,13 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG
+ *
+ * FEATURE:    ThemeToggle — switch between the light and dark theme
+ * USER STORY: As a user I want to choose light or dark mode and have it remembered so that the OS
+ *             is comfortable to read.
+ * ARCHITECTURE:
+ *   - Used by `app/(entry)/settings/page.tsx`. Stores the choice in localStorage (`soa-theme`) and
+ *     sets `<html data-theme>`; the boot script in `layout.tsx` reads the same key before paint.
+ *   - Light is the default; the sidebar and topbar stay dark in both modes.
  */
 'use client';
 

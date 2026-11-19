@@ -1,35 +1,24 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    StageShell — the numbered stepper rail and stage chrome for guided builders
+ * USER STORY: As a builder in a guided flow I want a numbered rail that shows which stages are
+ *             done, need a look, or failed, and stops me jumping ahead too early, so that I
+ *             always know where I am.
+ * ARCHITECTURE:
+ *   - Controlled and presentational. The tab owns a `StageState` and derives `ctx` each render.
+ *     All gating, ✓ and advance rules are in `@core/kernel/stages` (unit-tested, no React).
+ *     Taken from the Agents guided builder. It renders the existing `.sb-step*` classes from
+ *     `app/globals.css`.
+ *   - A step badge describes the stage's work, not which buttons were pressed, so it is the same
+ *     after a reload: ✓ done, ! needs a look, ✕ last attempt failed, n not done. Each state is
+ *     also in the tooltip and aria label.
+ *   - Render order: rail (+ `aside`), then the optional header, the body, the optional
+ *     `assistant` slot and the optional back/next nav. Agents turns off the header and nav.
+ *   - The component is rendered by Agents (SimpleBuilder), Software and Connections (Expose).
+ *     Data and Metrics use the kernel stage rules, not this component.
  */
 'use client';
-
-/**
- * StageShell — the ONE staged-builder chrome for the whole OS.
- *
- * The numbered stepper rail with ✓ marks and gated navigation, extracted verbatim
- * from the Agents guided builder (Define · Design · Build · Run · Evaluate) so every
- * tab's guided path — Data, Metrics, Dashboards, Science, Software — wears the same
- * calm, Apple-grade staged UX. It renders the exact `.sb-step*` classes the Agents
- * rail always used (see "guided step rail" in app/globals.css), so old and new look
- * byte-identical with zero new CSS.
- *
- * Purely presentational + controlled: the tab owns a `StageState` (the position —
- * usually one `useState`), derives a fresh `ctx` each render from the artifact's
- * current state, and hands both here. All gating, ✓ and advance rules live in
- * core/kernel/stages.ts (unit-tested, no React).
- *
- * What a step's badge means — always about the WORK, never about which buttons were
- * pressed, so it is identical after a reload and for every viewer:
- *   ✓ (teal)  the stage's work is done          ! (gold)  it needs a look
- *   ✕ (red)   its last attempt failed           n         not done yet
- * Each state is also spelled out in the button's tooltip and accessible label
- * ("Grant: done", "Grant: nothing granted yet"), so it never rides on colour alone.
- *
- * Render order: rail (+ optional `aside` on its right) → optional standard stage
- * header (title + one-line hint) → body → optional per-stage `assistant` slot →
- * optional standard back/next nav. Tabs with bespoke per-stage headers/footers
- * (like Agents) pass `showHeader={false} showNav={false}` and keep their own.
- */
 
 import type { ReactNode } from 'react';
 import {

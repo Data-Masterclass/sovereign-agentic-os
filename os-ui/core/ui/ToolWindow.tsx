@@ -1,27 +1,21 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    ToolWindow — full-screen overlay that frames one embedded tool (not mounted)
+ * USER STORY: As a user opening an embedded tool I want it framed inside the OS session so that I
+ *             do not have to sign in again.
+ * ARCHITECTURE:
+ *   - Not imported anywhere: `ToolWindowProvider.tsx` removed the overlay and now opens tools in a
+ *     new browser tab. Kept as source only.
+ *   - Loads tools same-origin at `/tools/<key>/` (`core/infra/tool-proxy.ts`) and asks
+ *     `/api/tools/<key>` whether a tool can be framed or needs its own tab (falls back to the iframe).
+ *   - Escape, the × and a click on the chrome close it.
  */
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
 import { onEscape, isBackdropClick } from '@core/kernel/overlay-dismiss';
 
-/**
- * Full-bleed overlay that frames one embedded tool. The tool loads same-origin
- * at `/tools/<key>/` — served by the os-ui server (lib/tool-proxy.ts), never a
- * localhost address — so the browser only ever presents the OS session. A black
- * top bar (the OS `.topbar` context) carries the title + a Close ×; the iframe
- * fills the rest. Open/close are a quiet fade + lift, and Escape closes.
- *
- * Not every tool can live in the frame: SPAs that load root-absolute assets
- * (`/_next/*`, `/static/*`) collide with the OS's own routes behind the
- * `/tools/<key>` prefix and render blank, and
- * WebSocket tools can't run over the HTTP proxy at all. `/api/tools/<key>`
- * reports which mode a tool gets; for `own-tab` tools the frame area shows the
- * Tier-2 card — the tool's own console link in its own tab — instead of a
- * blank iframe. If that lookup fails we fall back to the iframe (never block
- * a working tool on a metadata hiccup).
- */
 export type OpenToolTarget = { key: string; title: string; path?: string } | null;
 
 type EmbedInfo = {

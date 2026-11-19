@@ -1,3 +1,15 @@
+/* SPDX-License-Identifier: Apache-2.0
+ * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    useApi — a small client-side GET hook returning { data, loading, error, reload }
+ * USER STORY: As a page author I want a one-line way to load JSON from an OS API route, with
+ *             the route's error message shown, so that read-only pages do not each write their
+ *             own fetch state.
+ * ARCHITECTURE:
+ *   - Fetches `path` with `cache: 'no-store'` on mount and whenever `path` changes. A non-OK
+ *     response sets `error` from the body's `error` field.
+ *   - Used by app pages such as Monitoring, Components, MCP APIs and Software.
+ */
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
