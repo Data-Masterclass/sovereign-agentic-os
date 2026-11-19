@@ -274,7 +274,7 @@ Today the grant lists are prompt text only (defect F6). Proposed:
 **Per-system keys or one shared key?** The alternative is one shared key for all systems, with
 budgets counted and enforced by the OS.
 
-| | Per-system keys (recommended) | One shared key, OS-side budgets |
+| | Per-system keys (decided, D13) | One shared key, OS-side budgets |
 |---|---|---|
 | Who enforces the budget | The gateway. It still holds if the OS has a bug | OS code. A bug means no limit |
 | Models allowed per system | Yes, on the key | No |
@@ -282,7 +282,7 @@ budgets counted and enforced by the OS.
 | What must be stored safely | One secret per system | Nothing new |
 | Moving parts | A secrets table, key creation and deletion | A spend check before each call |
 
-**Recommendation: per-system keys.** The gateway is the enforcement point and the record of
+**Decided on 2026-11-19: per-system keys (D13).** The gateway is the enforcement point and the record of
 spend. Keeping the budget there means a mistake in OS code cannot remove the limit. The cost is
 one small table of encrypted secrets.
 
