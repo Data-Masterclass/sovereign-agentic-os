@@ -3,6 +3,8 @@
  *
  * TAB:        agents
  * FEATURE:    Resource grants enforced at run time — the registry ratchet and the rule itself
+ * USER STORY: As the owner I want a new tool to fail the suite until someone has said which
+ *             granted resource it touches, so resource grants cannot be forgotten for it.
  * ARCHITECTURE:
  *   - THE RATCHET: every tool in `ALL_MCP_TOOLS` is in exactly one of `TOOL_RESOURCES` (it names,
  *     lists, searches or creates a grantable resource) or `NO_GRANTED_RESOURCE` (it does not, with

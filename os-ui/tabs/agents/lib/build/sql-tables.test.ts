@@ -1,5 +1,12 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * TAB:        agents
+ * FEATURE:    Which tables does a read-only SQL statement name? — tests
+ * USER STORY: As the owner of an agent system limited to some datasets I want the table check
+ *             to find every table a query reads, or refuse — never a partial list.
+ * ARCHITECTURE:
+ *   - Pure tests of `sqlTableRefs`: what it lists, and what it refuses with the reason.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
