@@ -173,3 +173,46 @@ test('an UNDECLARED tool keeps EXACTLY its previous behaviour — the gate arriv
   assert.ok(executed);
   TREE = [];
 });
+
+// ---- AGENT_FORBIDDEN_TOOLS at the app door (the deferred guard, 2026-11-19) -----------------
+//
+// This door executes an APP's own tools, so the OS's `decide_deploy` / `promote` /
+// `reindex_corpus` are not behind it. What IS reachable (POST /api/apps/<id>/tool takes any tool
+// string from any signed-in user who can see the app): an `actions.yml` declaring an action with
+// one of those NAMES. A write action is held, so it would file "Approval needed: promote" into the
+// same Governance inbox, under an app principal — reading exactly like the platform approval while
+// doing something else. The name is refused before any authorization, declared or not.
+
+test('a tool NAMED like an agent-forbidden OS write is refused at the app door — never held, never executed', async () => {
+  for (const name of ['promote', 'decide_deploy', 'reindex_corpus']) {
+    // The worst case on purpose: declared as a WRITE action, exposed, adopted and granted — every
+    // one of the four layers would pass, and without the guard this is a 202 hold in the inbox.
+    TREE = [{ path: 'actions.yml', content: `actions:\n  - name: ${name}\n    write: true\n    scopes: [records]\n` }];
+    AUTHZ_CONN = { effect: 'allow', reason: 'read' };
+    enqueued.length = 0;
+    traced.length = 0;
+    executed = false;
+    const granted = { ...app, mcpTools: [{ name, description: '', write: true }] } as typeof app;
+    const r = await callAppTool(granted, name, { id: 'x' }, 'dan', { tool: name }, undefined, { adopted: () => true });
+    assert.equal(r.status, 403, `${name} must be refused`);
+    assert.equal(r.body.decision, 'deny');
+    assert.equal(r.body.layer, 'agent-forbidden');
+    assert.match(String(r.body.reason), /cannot be called through an app/);
+    assert.equal(enqueued.length, 0, 'not held: a hold could be approved and would then read as the real thing');
+    assert.equal(executed, false);
+    assert.deepEqual(traced.map((t) => t.decision), ['deny'], 'the refusal is traced');
+  }
+  TREE = [];
+});
+
+test('the guard is by exact name: an app action that merely CONTAINS a forbidden name is untouched', async () => {
+  TREE = [{ path: 'actions.yml', content: 'actions:\n  - name: promote_lead\n    scopes: [records]\n' }];
+  AUTHZ_CONN = { effect: 'allow', reason: 'read' };
+  executed = false;
+  const granted = { ...app, mcpTools: [{ name: 'promote_lead', description: '', write: false }] } as typeof app;
+  // `exposedConnectionTools` (layer 1) does not list it, so the declared-action gate answers for
+  // itself — at the CAPABILITY layer, not the forbidden one.
+  const r = await callAppTool(granted, 'promote_lead', {}, 'dan', { tool: 'promote_lead' }, undefined, { adopted: () => true });
+  assert.notEqual(r.body.layer, 'agent-forbidden');
+  TREE = [];
+});
