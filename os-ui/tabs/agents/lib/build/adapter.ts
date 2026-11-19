@@ -26,7 +26,18 @@ export type StepResult = {
    * row renders as pending, and pending NEVER counts as a build failure.
    */
   pending?: boolean;
+  /**
+   * What `apply` actually DID, so a rebuild that finishes in a blink is understandable:
+   *   `created`   — the thing did not exist and was made now;
+   *   `updated`   — it existed and differed from the definition; it was changed (the detail says how);
+   *   `unchanged` — it existed and already matched; nothing was written;
+   *   `reapplied` — the step has no "already matches" check: it was written/computed again.
+   * Set by `apply` only; `verify` never changes anything.
+   */
+  change?: BuildChange;
 };
+
+export type BuildChange = 'created' | 'updated' | 'unchanged' | 'reapplied';
 
 export type BuildContext = {
   system: System;
@@ -53,6 +64,10 @@ export type BuildRow = {
   status: BuildStatus;
   detail: string;
   error?: string;
+  /** What apply did (see {@link StepResult.change}); absent on a row that failed before applying. */
+  change?: BuildChange;
+  /** Apply's own sentence — WHAT was created or changed ("updated key …: tokens/min 200000 → 1000000"). */
+  appliedDetail?: string;
 };
 
 /**
@@ -73,20 +88,23 @@ export async function runAdapter(adapter: BuildAdapter, ctx: BuildContext): Prom
       error = ap.error ?? 'apply failed';
       return { tool: adapter.tool, applied, verified, status: 'fail', detail, error };
     }
+    // What apply did survives the verify (whose detail used to overwrite it): the row says both
+    // what was done and what was then checked.
+    const did = ap.change ? { change: ap.change, appliedDetail: ap.detail } : {};
     const vr = await adapter.verify(ctx);
     verified = vr.ok;
     detail = vr.detail || detail;
     if (!vr.ok) {
       error = vr.error ?? 'verify failed';
-      return { tool: adapter.tool, applied, verified, status: 'fail', detail, error };
+      return { tool: adapter.tool, applied, verified, status: 'fail', detail, error, ...did };
     }
     // A NEUTRAL pending verify (ok:true, pending:true) is NOT a failure: the setup
     // applied, but the probe needs a prior run to observe. Surface it as its own
     // status so the report/UI never renders it as ✗.
     if (vr.pending) {
-      return { tool: adapter.tool, applied, verified: false, status: 'pending', detail };
+      return { tool: adapter.tool, applied, verified: false, status: 'pending', detail, ...did };
     }
-    return { tool: adapter.tool, applied, verified, status: 'ok', detail };
+    return { tool: adapter.tool, applied, verified, status: 'ok', detail, ...did };
   } catch (e) {
     return {
       tool: adapter.tool,

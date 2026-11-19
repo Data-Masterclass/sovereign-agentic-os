@@ -12,6 +12,10 @@ import {
   type LiteLlmClient,
   type LangfuseClient,
   type LiveDeps,
+  type LiteLlmKeyInput,
+  type LiteLlmKeyState,
+  DEFAULT_KEY_CAPS,
+  keyDrift,
   makeLiveAdapters,
 } from '@tabs/agents/lib/build/live';
 
@@ -66,21 +70,39 @@ function fakeOpa(): OpaClient & { grants: Map<string, Set<string>>; approval: Se
   };
 }
 
-function fakeLitellm(): LiteLlmClient & { keys: Map<string, unknown> } {
-  const keys = new Map<string, unknown>();
-  return {
+type FakeKey = LiteLlmKeyState & { updates: number };
+
+/** A LiteLLM that stores keys the way the real one reports them back (`/key/info`). */
+function fakeLitellm(): LiteLlmClient & { keys: Map<string, FakeKey>; generated: number } {
+  const keys = new Map<string, FakeKey>();
+  const store = (input: LiteLlmKeyInput, updates: number): FakeKey => ({
+    models: [...input.models],
+    maxBudget: input.maxBudget,
+    budgetDuration: input.budgetDuration,
+    rpmLimit: input.rpmLimit,
+    tpmLimit: input.tpmLimit,
+    allowedTools: [...input.allowedTools],
+    updates,
+  });
+  const client = {
     keys,
-    async keyInfo(alias) {
-      return (keys.get(alias) as { models: string[] } | undefined) ?? null;
+    generated: 0,
+    async keyInfo(alias: string) {
+      return keys.get(alias) ?? null;
     },
-    async generateKey(input) {
-      keys.set(input.alias, { models: input.models, maxBudget: input.maxBudget });
+    async generateKey(input: LiteLlmKeyInput) {
+      client.generated += 1;
+      keys.set(input.alias, store(input, 0));
       return { key: `sk-${input.alias}` };
+    },
+    async updateKey(input: LiteLlmKeyInput) {
+      keys.set(input.alias, store(input, (keys.get(input.alias)?.updates ?? 0) + 1));
     },
     async models() {
       return ['sovereign-default', 'stackit-qwen3-vl-reasoning', 'stackit-qwen3-vl', 'sovereign-mock'];
     },
   };
+  return client;
 }
 
 function fakeLangfuse(): LangfuseClient & { projects: Set<string>; traces: Map<string, number> } {
@@ -218,4 +240,95 @@ test('CARDINAL RULE — a failing verify surfaces ✗ (opa grants silently dropp
   const opa = report.rows.find((r) => r.tool === 'opa')!;
   assert.equal(opa.status, 'fail');
   assert.equal(report.ok, false);
+});
+
+// ------------------------------------------ the system's own key is RECONCILED ----
+
+const build = (d: LiveDeps) => orchestrateBuild({ yaml: YAML, systemId: 'sys_live', adapters: makeLiveAdapters(d), probe: 'p' });
+const keyRow = async (d: LiveDeps) => (await build(d)).rows.find((r) => r.tool === 'litellm')!;
+
+test('key ABSENT: the build creates it with the configured caps and says "created"', async () => {
+  const d = deps();
+  const row = await keyRow(d);
+  assert.equal(row.status, 'ok', row.error ?? '');
+  assert.equal(row.change, 'created');
+  assert.match(row.appliedDetail ?? '', /created key 'os-sys_live' — \d+ model\(s\), budget \$5 per 7d, 300 requests\/min, 1000000 tokens\/min/);
+  const key = d.litellm.keys.get('os-sys_live')!;
+  assert.equal(key.tpmLimit, 1_000_000);
+  assert.equal(key.rpmLimit, 300);
+  assert.equal(key.budgetDuration, '7d', 'the budget resets weekly by default — never a lifetime cap');
+  assert.equal(d.litellm.generated, 1);
+});
+
+test('key EQUAL: a rebuild writes nothing and says "already up to date"', async () => {
+  const d = deps();
+  await build(d);
+  const row = await keyRow(d);
+  assert.equal(row.status, 'ok');
+  assert.equal(row.change, 'unchanged');
+  assert.match(row.appliedDetail ?? '', /already up to date/);
+  assert.equal(d.litellm.generated, 1, 'not regenerated');
+  assert.equal(d.litellm.keys.get('os-sys_live')!.updates, 0, 'not updated');
+});
+
+test('key DRIFTED (the old hard-coded caps): a rebuild updates it and says exactly what changed', async () => {
+  const d = deps();
+  // A key as every system built before this change holds it: 200k tokens/min, 120 rpm, a $5 LIFETIME budget.
+  await orchestrateBuild({ yaml: YAML, systemId: 'sys_live', adapters: makeLiveAdapters({ ...d, caps: { maxBudget: 5, budgetDuration: '', modelMaxBudget: {}, rpmLimit: 120, tpmLimit: 200_000 } }), probe: 'p' });
+  assert.equal(d.litellm.keys.get('os-sys_live')!.tpmLimit, 200_000);
+
+  const row = await keyRow(d); // now with the configured defaults
+  assert.equal(row.status, 'ok', row.error ?? '');
+  assert.equal(row.change, 'updated');
+  assert.equal(row.appliedDetail, "updated key 'os-sys_live': budget reset none → 7d; requests/min 120 → 300; tokens/min 200000 → 1000000");
+  const key = d.litellm.keys.get('os-sys_live')!;
+  assert.deepEqual([key.tpmLimit, key.rpmLimit, key.budgetDuration, key.updates], [1_000_000, 300, '7d', 1]);
+  assert.equal(d.litellm.generated, 1, 'the key is updated in place, never regenerated');
+
+  // …and the build after that is a no-op again: reconciling is idempotent.
+  assert.equal((await keyRow(d)).change, 'unchanged');
+});
+
+test('a changed DEFINITION reaches the key too: a newly routed model is added to the allowlist', async () => {
+  const d = deps();
+  await build(d);
+  const report = await orchestrateBuild({ yaml: YAML.replace('model: sovereign-default', 'model: sovereign-vision'), systemId: 'sys_live', adapters: makeLiveAdapters(d), probe: 'p' });
+  const row = report.rows.find((r) => r.tool === 'litellm')!;
+  assert.equal(row.change, 'updated');
+  assert.match(row.appliedDetail ?? '', /models .* → .*sovereign-vision/);
+  assert.ok(d.litellm.keys.get('os-sys_live')!.models.includes('sovereign-vision'));
+});
+
+test('an update the gateway REFUSES is a failed build row, not a silent ok', async () => {
+  const d = deps();
+  await orchestrateBuild({ yaml: YAML, systemId: 'sys_live', adapters: makeLiveAdapters({ ...d, caps: { ...DEFAULT_KEY_CAPS, tpmLimit: 200_000 } }), probe: 'p' });
+  d.litellm.updateKey = async () => { throw new Error('LiteLLM /key/update failed (500) — the key keeps its previous limits'); };
+  const report = await build(d);
+  const row = report.rows.find((r) => r.tool === 'litellm')!;
+  assert.equal(row.status, 'fail');
+  assert.match(row.error ?? '', /\/key\/update failed \(500\)/);
+  assert.equal(report.ok, false);
+  assert.equal(d.litellm.keys.get('os-sys_live')!.tpmLimit, 200_000, 'the key really is unchanged');
+});
+
+test('an update the gateway ACCEPTS but does not store fails VERIFY — the read-back is the proof', async () => {
+  const d = deps();
+  await orchestrateBuild({ yaml: YAML, systemId: 'sys_live', adapters: makeLiveAdapters({ ...d, caps: { ...DEFAULT_KEY_CAPS, tpmLimit: 200_000 } }), probe: 'p' });
+  d.litellm.updateKey = async () => {};
+  const row = await keyRow(d);
+  assert.equal(row.status, 'fail');
+  assert.match(row.error ?? '', /does not match the definition after the build: tokens\/min 200000 → 1000000/);
+});
+
+test('every build row says what apply DID, so a fast rebuild is understandable', async () => {
+  const d = deps();
+  await build(d);
+  const rows = new Map((await build(d)).rows.map((r) => [r.tool, r.change]));
+  assert.deepEqual(Object.fromEntries(rows), { opa: 'reapplied', litellm: 'unchanged', langgraph: 'reapplied', langfuse: 'unchanged' });
+});
+
+test('keyDrift: equal is empty; a gateway that does not report allowed tools is not drift', () => {
+  const want: LiteLlmKeyInput = { alias: 'os-x', models: ['b', 'a'], maxBudget: 5, budgetDuration: '7d', modelMaxBudget: {}, rpmLimit: 300, tpmLimit: 1_000_000, allowedTools: ['t'] };
+  assert.deepEqual(keyDrift({ models: ['a', 'b'], maxBudget: 5, budgetDuration: '7d', rpmLimit: 300, tpmLimit: 1_000_000 }, want), []);
+  assert.deepEqual(keyDrift({ models: ['a', 'b'], maxBudget: 5, budgetDuration: '7d', rpmLimit: 300, tpmLimit: 1_000_000, allowedTools: [] }, want), ['allowed tools 0 → 1']);
 });
