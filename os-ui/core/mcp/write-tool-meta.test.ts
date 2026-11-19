@@ -28,14 +28,34 @@ import { WRITE_TOOL_TABS, WRITE_TOOL_NAMES } from '@core/mcp/write-tool-meta';
  */
 const PLATFORM_WRITE_TOOLS: Readonly<Record<string, string>> = { commit: 'software', push_app_files: 'software' };
 
-test('WRITE_TOOL_TABS matches ALL_WRITE_TOOLS plus the platform-MCP writes (names and tabs)', () => {
-  const actual = { ...Object.fromEntries(ALL_WRITE_TOOLS.map((t) => [t.name, t.tab])), ...PLATFORM_WRITE_TOOLS };
+/**
+ * Writes built by a FACTORY rather than exported as a static array. `reindex_corpus`
+ * (`core/mcp/reindex-tools.ts`) takes the two tab-owned re-index services as arguments, because
+ * one tool must serve both corpora and neither a tab nor the kernel may import the other tab — so
+ * it cannot be in `ALL_WRITE_TOOLS`, which is a barrel of static arrays. It still rewrites index
+ * rows, so the hold gate has to know it is a write: listed here for the same reason `commit` is.
+ */
+const FACTORY_WRITE_TOOLS: Readonly<Record<string, string>> = { reindex_corpus: 'files' };
+
+test('WRITE_TOOL_TABS matches ALL_WRITE_TOOLS plus the platform-MCP and factory writes (names and tabs)', () => {
+  const actual = {
+    ...Object.fromEntries(ALL_WRITE_TOOLS.map((t) => [t.name, t.tab])),
+    ...PLATFORM_WRITE_TOOLS,
+    ...FACTORY_WRITE_TOOLS,
+  };
   assert.deepEqual(WRITE_TOOL_TABS, actual);
   assert.equal(
     WRITE_TOOL_NAMES.size,
-    ALL_WRITE_TOOLS.length + Object.keys(PLATFORM_WRITE_TOOLS).length,
+    ALL_WRITE_TOOLS.length + Object.keys(PLATFORM_WRITE_TOOLS).length + Object.keys(FACTORY_WRITE_TOOLS).length,
     'duplicate write tool names',
   );
+});
+
+test('the factory-built write is classified for the hold gate', () => {
+  for (const [name, tab] of Object.entries(FACTORY_WRITE_TOOLS)) {
+    assert.equal(WRITE_TOOL_TABS[name], tab, `${name} must be in the hold-gate table`);
+    assert.ok(WRITE_TOOL_NAMES.has(name));
+  }
 });
 
 test('every platform-MCP write listed here is actually held-eligible', () => {

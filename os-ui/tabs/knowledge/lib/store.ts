@@ -863,3 +863,33 @@ export function restoreWorkflowVersion(id: string, user: Principal, version: num
   writeThrough(rec);
   return rec;
 }
+
+// ------------------------------------------------- index bootstrap (server) --
+// SERVER-INTERNAL and deliberately NOT user-scoped, mirroring `listAllForIndex` /
+// `bodyForIndex` in `tabs/files/lib/store.ts`. The admin re-index
+// (`tabs/knowledge/lib/reindex.ts`) must see EVERY unit the index holds rows for: a poisoned row
+// in somebody else's Personal workflow is exactly the row that most needs replacing, and a
+// DLS-scoped read would skip it and then report the corpus clean. The gate is on the CALLER
+// (admin-only, at both doors); it cannot also be on the read, or the tool could not do its job.
+
+/** Every workflow with its parsed document. Archived records are included — the caller decides. */
+export function listAllForIndex(): { record: WorkflowRecord; workflow: Workflow }[] {
+  ensureSeeded();
+  return [...ks().workflows.values()].map((record) => ({ record, workflow: parseWorkflow(record.md) }));
+}
+
+/** One workflow with its parsed document, for a re-index of that scope. */
+export function recordForIndex(id: string): { record: WorkflowRecord; workflow: Workflow } | null {
+  ensureSeeded();
+  const record = ks().workflows.get(id);
+  return record ? { record, workflow: parseWorkflow(record.md) } : null;
+}
+
+/** Every domain that has a knowledge card or a workflow — the `domain:<name>` scopes to re-index. */
+export function domainsForIndex(): string[] {
+  ensureSeeded();
+  const set = new Set<string>();
+  for (const rec of ks().workflows.values()) if (rec.domain) set.add(rec.domain);
+  for (const domain of ks().domainKnowledge.keys()) if (domain) set.add(domain);
+  return [...set].sort();
+}

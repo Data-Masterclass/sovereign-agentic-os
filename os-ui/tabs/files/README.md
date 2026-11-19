@@ -17,6 +17,7 @@ The authoritative contract is [`manifest.ts`](./manifest.ts) — this file expla
 **MCP tools**
 
 - `file-write`
+- `reindex`
 
 **Needs deployed**
 
