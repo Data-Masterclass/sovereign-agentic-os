@@ -152,3 +152,20 @@ export const AGENT_SAFETY_PRESETS: { id: SafetyPreset; label: string; consequenc
   { id: 'read-bounded',  label: 'Read + bounded writes', consequence: 'The agent can write inside its own workspace, nowhere else.' },
   { id: 'full-in-scope', label: 'Full in-scope',         consequence: 'The agent may write anywhere its grants allow — use with care.' },
 ];
+
+/**
+ * WHAT THE PRESETS DO WHEN A TEAM RUNS, today — shown under the preset picker.
+ *
+ * The run path decides a hold in `tabs/agents/lib/build/hold.ts` (`holdDecision`): `read-only`
+ * holds every write; under EVERY other preset a write to the runner's own My-scope work runs
+ * directly, and only a write that reaches Domain or Company, a deletion, or a request to go live
+ * waits for a person. So the three non-read-only presets behave the same at run time, and the
+ * card texts above (written for the intended design) promise differences a run does not make.
+ * Until that is decided one way or the other, the picker says so in one plain sentence.
+ * `access-levels.test.ts` compares the three presets over the whole write catalog: the day they
+ * differ, that test fails and this note has to go.
+ */
+export const PRESET_RUNTIME_NOTE =
+  'Not yet in effect as described: when a team runs, Read + propose, Read + bounded writes and Full in-scope currently behave the same — ' +
+  'the agent writes its runner\'s own (My) work directly, and only a change that reaches Domain or Company, a deletion or a go-live request waits for a person. ' +
+  'Read-only is the one preset that holds every write.';

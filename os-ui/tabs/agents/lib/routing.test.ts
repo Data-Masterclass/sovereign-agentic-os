@@ -191,3 +191,28 @@ test('every provider type has a human label', () => {
     assert.ok(PROVIDER_TYPE_LABELS[t]?.length > 0, `${t} has a label`);
   }
 });
+
+// --- F12: the routing-override table says what a RUN does today ------------------------------
+
+import { readdirSync, readFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { ROUTING_OVERRIDE_RUNTIME_NOTE } from '@tabs/agents/lib/routing';
+
+test('ROUTING_OVERRIDE_RUNTIME_NOTE is true: nothing on the run path reads `routing.overrides`', () => {
+  // The note above the override table claims a run ignores it. The run path is the engine
+  // (`engine/`) plus the graph server and the node layer; if any of them starts reading the
+  // overrides, this fails — and the note (tabs/agents/lib/routing.ts) must be rewritten or removed.
+  const lib = dirname(fileURLToPath(import.meta.url));
+  const runPath = [
+    ...readdirSync(join(lib, 'engine')).filter((f) => f.endsWith('.ts') && !f.endsWith('.test.ts')).map((f) => join(lib, 'engine', f)),
+    resolve(lib, 'build/agentic-graph.ts'),
+    resolve(lib, 'build/agentic-graph-server.ts'),
+    resolve(lib, 'build/run-service.ts'),
+    resolve(lib, 'build/os-tools.ts'),
+  ];
+  for (const file of runPath) {
+    assert.doesNotMatch(readFileSync(file, 'utf8'), /routing\.overrides|\.routing\b/, `${file} reads the routing config`);
+  }
+  assert.match(ROUTING_OVERRIDE_RUNTIME_NOTE, /Not yet in effect when a team runs/);
+});

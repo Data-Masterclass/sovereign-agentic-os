@@ -6,7 +6,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { commitSystem } from '@tabs/agents/ui/commitSystem';
 import type { ArtifactGrant, Capability, System } from '@tabs/agents/lib/system-schema';
-import { modelInfo } from '@tabs/agents/lib/routing';
+import { modelInfo, ROUTING_OVERRIDE_RUNTIME_NOTE } from '@tabs/agents/lib/routing';
 
 /** Mirrors CatalogEntry from lib/agents/tool-catalog — client-safe (no server import). */
 type CatalogEntry = {
@@ -364,6 +364,7 @@ export default function GrantsRouting({
         (Auto / Standard / Reasoning). A per-activity override here — Standard or Reasoning —
         writes the system’s routing config, applied on Build.
       </p>
+      <p className="hint" role="note" style={{ marginTop: 0 }}>{ROUTING_OVERRIDE_RUNTIME_NOTE}</p>
       <div className="table-wrap">
         <table>
           <thead><tr><th>Activity</th><th>Tier</th><th>Default model</th><th>System override</th></tr></thead>

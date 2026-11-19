@@ -4,7 +4,7 @@
 'use client';
 
 import type { System } from '@tabs/agents/lib/system-schema';
-import { AGENT_SAFETY_PRESETS } from '@tabs/agents/lib/access-levels';
+import { AGENT_SAFETY_PRESETS, PRESET_RUNTIME_NOTE } from '@tabs/agents/lib/access-levels';
 
 /**
  * Safety-preset selector, plus one honest line about the runtime.
@@ -70,6 +70,7 @@ export default function RuntimeSelector({
             );
           })}
         </div>
+        <p className="hint" role="note" style={{ marginTop: 8, marginBottom: 0 }}>{PRESET_RUNTIME_NOTE}</p>
       </div>
     </div>
   );
