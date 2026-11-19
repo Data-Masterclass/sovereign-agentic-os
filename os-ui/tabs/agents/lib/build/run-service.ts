@@ -295,6 +295,8 @@ export async function executeTeamRun(input: ExecuteTeamRunInput): Promise<RunRep
       },
       // A2: a held write parked the run — the panel shows it; the decision in Governance resumes it.
       onInterrupt: (ev) => emit('approval-required', { approvalId: ev.approvalId, tool: ev.tool, node: ev.node }),
+      // The agent is waiting for the model rate limit to reset — say so, so the run is not silent.
+      onRateLimitWait: (ev) => emit('rate-limit-wait', { node: ev.node, attempt: ev.attempt, maxAttempts: ev.maxAttempts, waitSeconds: Math.round(ev.waitMs / 1000), message: ev.message }),
     });
     const running = markRunFinished(id, user);
     const { body, lastRun } = finalizeTeamRun(team, running, yaml);

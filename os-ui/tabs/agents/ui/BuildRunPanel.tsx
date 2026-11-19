@@ -351,6 +351,8 @@ type LiveProgress = {
   awaiting?: HeldApproval;
   /** A2: the last decision that resumed the run. */
   resumed?: { approvalId: string; decision: string };
+  /** The agent is waiting for the model rate limit to reset (cleared by its next event). */
+  waiting?: string;
 };
 
 // ── Context actually used (#177) ────────────────────────────────────────────
@@ -556,6 +558,7 @@ function GrantsVsUsage({ granted, usage }: { granted: GrantedIds; usage?: RunCon
 /** A calm one-line "what is happening right now" for the live banner. */
 function liveLine(p: LiveProgress): string {
   if (p.awaiting) return `${p.awaiting.node} · ${p.awaiting.tool} — parked, awaiting approval in Governance → Inbox`;
+  if (p.waiting) return `${p.node ? `${p.node} — ` : ''}${p.waiting}`;
   if (!p.node) return p.resumed ? `Resumed after the ${p.resumed.decision === 'approve' ? 'approval' : p.resumed.decision === 'withdraw' ? 'withdrawal' : 'rejection'}…` : 'Starting the team…';
   const where = p.index && p.total ? ` (agent ${p.index} of ${p.total})` : '';
   if (!p.tool) return `${p.node} — thinking${where}`;
@@ -997,6 +1000,7 @@ export default function BuildRunPanel({
         tool: undefined,
         stepStatus: undefined,
         stepIndex: undefined,
+        waiting: undefined,
         started: p?.started.includes(node) ? p.started : [...(p?.started ?? []), node],
       }));
     } else if (event === 'tool-step') {
@@ -1006,12 +1010,20 @@ export default function BuildRunPanel({
         tool: String(data.tool ?? ''),
         stepStatus: (data.status as LiveStepStatus) ?? 'running',
         stepIndex: typeof data.index === 'number' ? data.index : undefined,
+        waiting: undefined,
       }));
     } else if (event === 'node-completed') {
       const node = String(data.node ?? '');
       setLive((p) => ({
         ...(p ?? { started: [], completed: [] }),
         completed: p?.completed.includes(node) ? p.completed : [...(p?.completed ?? []), node],
+      }));
+    } else if (event === 'rate-limit-wait') {
+      // The agent is waiting for the model rate limit to reset — show it instead of a silent spinner.
+      setLive((p) => ({
+        ...(p ?? { started: [], completed: [] }),
+        node: String(data.node ?? p?.node ?? ''),
+        waiting: String(data.message ?? 'Waiting for the model rate limit to reset'),
       }));
     } else if (event === 'approval-required') {
       // A2: a held write parked the run — say so, and keep the banner until the decision resumes it.
