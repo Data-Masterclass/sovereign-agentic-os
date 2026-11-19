@@ -1,0 +1,127 @@
+{
+  "id": "03-knowledge",
+  "title": "Knowledge: the invoice workflow's granted note is readable and retrievable with provenance",
+  "vars": {
+    "systemMatch": "Invoice Processing Workflow"
+  },
+  "steps": [
+    {
+      "id": "list",
+      "tool": "list_knowledge",
+      "assert": [
+        {
+          "path": "mine",
+          "op": "type",
+          "value": "array"
+        },
+        {
+          "path": "domain",
+          "op": "type",
+          "value": "array"
+        }
+      ],
+      "record": {
+        "mine": "mine",
+        "domain": "domain",
+        "company": "marketplace"
+      }
+    },
+    {
+      "id": "list-systems",
+      "tool": "list_agent_systems",
+      "save": {
+        "invoiceSystems": "mine[?name~=Invoice Processing Workflow].id"
+      }
+    },
+    {
+      "id": "system",
+      "tool": "get_agent_system",
+      "requires": [
+        "invoiceSystems.0"
+      ],
+      "args": {
+        "systemId": "${invoiceSystems.0}"
+      },
+      "save": {
+        "noteIds": "system.grants.knowledge[*].id"
+      },
+      "assert": [
+        {
+          "path": "system.grants.knowledge",
+          "op": "gte",
+          "value": 1,
+          "label": "the invoice workflow is granted knowledge"
+        }
+      ]
+    },
+    {
+      "id": "get",
+      "tool": "get_knowledge",
+      "requires": [
+        "noteIds.0"
+      ],
+      "args": {
+        "workflowId": "${noteIds.0}"
+      },
+      "save": {
+        "noteTitle": "title"
+      },
+      "assert": [
+        {
+          "path": "title",
+          "op": "nonEmpty"
+        },
+        {
+          "path": "knowledgeLinks",
+          "op": "exists",
+          "label": "first-class links are returned"
+        }
+      ],
+      "record": {
+        "status": "status",
+        "links": "knowledgeLinks.links",
+        "unresolved": "knowledgeLinks.unresolved"
+      }
+    },
+    {
+      "id": "search",
+      "tool": "search_knowledge",
+      "requires": [
+        "noteTitle"
+      ],
+      "args": {
+        "query": "${noteTitle}",
+        "k": 5
+      },
+      "assert": [
+        {
+          "path": "decision",
+          "op": "equals",
+          "value": "allow"
+        },
+        {
+          "path": "hits",
+          "op": "gte",
+          "value": 1
+        },
+        {
+          "path": "hits[*].unit.provenance",
+          "op": "allNonEmpty",
+          "label": "every hit carries provenance"
+        },
+        {
+          "path": "hits[*].unit.provenance",
+          "op": "contains",
+          "value": "${noteIds.0}",
+          "label": "the note itself is among the hits"
+        }
+      ],
+      "record": {
+        "hits": "hits",
+        "store": "store",
+        "mode": "mode",
+        "embedSource": "embedSource"
+      }
+    }
+  ]
+}

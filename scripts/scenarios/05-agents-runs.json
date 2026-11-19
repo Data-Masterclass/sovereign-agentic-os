@@ -1,0 +1,281 @@
+{
+  "id": "05-agents-runs",
+  "title": "Agents and runs: the invoice systems' latest run is consistent and really called models and tools",
+  "steps": [
+    {
+      "id": "list-systems",
+      "tool": "list_agent_systems",
+      "save": {
+        "invoiceSystems": "mine[?name~=Invoice Processing Workflow].id"
+      },
+      "assert": [
+        {
+          "path": "mine[?name~=Invoice Processing Workflow]",
+          "op": "gte",
+          "value": 1
+        }
+      ],
+      "record": {
+        "mine": "mine",
+        "domain": "domain",
+        "invoiceSystems": "mine[?name~=Invoice Processing Workflow]"
+      }
+    },
+    {
+      "id": "runs-by-system",
+      "tool": "list_runs",
+      "forEach": "invoiceSystems",
+      "max": 2,
+      "args": {
+        "systemId": "${item}",
+        "limit": 5
+      },
+      "assert": [
+        {
+          "path": "filters.systemId",
+          "op": "exists",
+          "soft": true,
+          "label": "the systemId filter is applied (run-store list, merged f8c496f1)"
+        },
+        {
+          "path": "runs[*].links.systemId",
+          "op": "allEqual",
+          "value": "${item}",
+          "soft": true,
+          "label": "every row belongs to the system"
+        },
+        {
+          "path": "runs[*].links.runId",
+          "op": "allNonEmpty",
+          "label": "every row links a run id"
+        }
+      ],
+      "record": {
+        "count": "count",
+        "runStore": "runStore.available",
+        "linkPrefixes": {
+          "distinct": "runs[*].lens"
+        }
+      }
+    },
+    {
+      "id": "system",
+      "tool": "get_agent_system",
+      "forEach": "invoiceSystems",
+      "max": 2,
+      "args": {
+        "systemId": "${item}"
+      },
+      "save": {
+        "lastRunId": "lastRun.runId"
+      },
+      "assert": [
+        {
+          "path": "lastRun.runId",
+          "op": "matches",
+          "value": "^run_"
+        },
+        {
+          "path": "lastRun.nodes[*].model",
+          "op": "allNonEmpty",
+          "label": "every agent node names the model it used"
+        },
+        {
+          "path": "lastRun.steps[?ran=true]",
+          "op": "gte",
+          "value": 1,
+          "label": "at least one granted tool step actually ran"
+        },
+        {
+          "path": "lastRun.writeSummary.wroteTotal",
+          "op": "gte",
+          "value": 1,
+          "soft": true,
+          "label": "declared outputs were saved (engine-saved outputs, merged #115)"
+        },
+        {
+          "path": "lastRun.ok",
+          "op": "equals",
+          "value": true,
+          "soft": true,
+          "label": "the stored last run is ok (no agent node denied)"
+        }
+      ],
+      "record": {
+        "ok": "lastRun.ok",
+        "reachedEnd": "lastRun.reachedEnd",
+        "toolSteps": "lastRun.steps",
+        "toolStepsRan": "lastRun.steps[?ran=true]",
+        "tools": {
+          "distinct": "lastRun.steps[*].tool"
+        },
+        "models": {
+          "distinct": "lastRun.nodes[*].model"
+        },
+        "declaredOutputs": "system.outputs",
+        "wroteTotal": "lastRun.writeSummary.wroteTotal",
+        "engine": "lastRun.engine",
+        "nodeStatus": {
+          "distinct": "lastRun.nodes[*].status"
+        },
+        "deniedSteps": "lastRun.steps[?effect=deny]",
+        "deniedTools": {
+          "distinct": "lastRun.steps[?effect=deny].tool"
+        }
+      }
+    },
+    {
+      "id": "run",
+      "tool": "get_agent_run",
+      "forEach": "lastRunId_all",
+      "max": 2,
+      "args": {
+        "runId": "${item}",
+        "limit": 200
+      },
+      "assert": [
+        {
+          "path": "status",
+          "op": "nonEmpty"
+        },
+        {
+          "path": "failed",
+          "op": "type",
+          "value": "boolean"
+        },
+        {
+          "path": "path",
+          "op": "type",
+          "value": "array"
+        },
+        {
+          "path": "budget.stepsUsed",
+          "op": "type",
+          "value": "number"
+        },
+        {
+          "path": "failed",
+          "op": "equals",
+          "value": false,
+          "when": {
+            "path": "status",
+            "equals": "done"
+          },
+          "label": "status done => failed false"
+        },
+        {
+          "path": "failed",
+          "op": "equals",
+          "value": true,
+          "when": {
+            "path": "status",
+            "equals": "failed"
+          },
+          "label": "status failed => failed true"
+        },
+        {
+          "path": "events",
+          "op": "gte",
+          "value": 1,
+          "label": "the run has a recorded event log"
+        },
+        {
+          "path": "outputs",
+          "op": "exists",
+          "soft": true,
+          "label": "the run reports its saved outputs (merged #115)"
+        }
+      ],
+      "record": {
+        "status": "status",
+        "failed": "failed",
+        "finished": "finished",
+        "path": "path",
+        "stepsUsed": "budget.stepsUsed",
+        "stepLimit": "budget.limit",
+        "events": "events",
+        "eventKinds": {
+          "distinct": "events[*].event"
+        },
+        "durationMs": {
+          "span": "events[*].at"
+        }
+      }
+    },
+    {
+      "id": "trace",
+      "tool": "get_run_trace",
+      "forEach": "lastRunId_all",
+      "max": 2,
+      "args": {
+        "runId": "${item}"
+      },
+      "assert": [
+        {
+          "path": "source",
+          "op": "equals",
+          "value": "live",
+          "label": "the trace is live, not a mock"
+        },
+        {
+          "path": "steps[?kind=llm]",
+          "op": "gte",
+          "value": 1,
+          "label": "real model calls are in the trace"
+        },
+        {
+          "path": "steps[?kind=llm].tokens",
+          "op": "anyGt",
+          "value": 0,
+          "label": "model calls carry token counts"
+        },
+        {
+          "path": "steps[?name~=tool.]",
+          "op": "gte",
+          "value": 1,
+          "label": "governed tool calls are in the trace (tool.<name> spans)"
+        },
+        {
+          "path": "steps[?name~=tool.].output",
+          "op": "allNonEmpty",
+          "label": "every tool call returned content"
+        },
+        {
+          "path": "steps[?kind=tool]",
+          "op": "gte",
+          "value": 1,
+          "soft": true,
+          "label": "the trace labels tool calls as tools (run-trace.ts kind mapping)"
+        },
+        {
+          "path": "steps[?status=error]",
+          "op": "lte",
+          "value": 0,
+          "soft": true,
+          "label": "no step errored"
+        }
+      ],
+      "record": {
+        "steps": "steps",
+        "llmSteps": "steps[?kind=llm]",
+        "gatewayGenerations": "steps[?name~=litellm:]",
+        "engineGenerations": "steps[?name~=llm.]",
+        "toolSpans": "steps[?name~=tool.]",
+        "llmTokens": {
+          "sum": "steps[?kind=llm].tokens"
+        },
+        "gatewayTokens": {
+          "sum": "steps[?name~=litellm:].tokens"
+        },
+        "engineTokens": {
+          "sum": "steps[?name~=llm.].tokens"
+        },
+        "errorSteps": "steps[?status=error]",
+        "llmLatencySum": {
+          "sum": "steps[?kind=llm].ms"
+        }
+      },
+      "budgetMs": 3000
+    }
+  ]
+}
