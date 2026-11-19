@@ -239,12 +239,18 @@ Rules that hold for all three:
   "Save now" (the `outputs/save` route) is the person's own act and is not held.
 - **Once.** Before writing, the saver looks for what THIS run already wrote: its ledger
   (`LastRun.outputs`), a file whose name ends in the run tag, a note under the run's `sourceKey`,
-  the dataset of that name. A re-queued job that finds its thread finished completes the save
+  the dataset of that name, and a Bronze built at or after the run's result (its rows are not
+  landed twice; an older run never replaces a newer run's rows). A re-queued job that finds its thread finished completes the save
   (`recoverOutputSave`) instead of answering 409.
 - **Said when confirmed.** `saved` is reported after the id was read back. A failed save does
   not fail the run; it sets `completedWithUnsavedOutputs` and a warning line.
 
-Known limits: a note is not indexed for `search_knowledge`; a Dataset output cannot append; the
+- **On record.** The list is in the run's own event log: `outputs-saving` (all pending), the
+  `done` frame, and `outputs-saved` when the person saves again by hand. `latest-run.ts` and
+  `get_agent_run` read it from there, so every pod shows the same list after a reload.
+- **Searchable.** A saved note is indexed for `search_knowledge`, owner-only (`chunkNote`).
+
+Known limits: a Dataset output cannot append; the
 recovery needs the system's last-run record to name the run (a run older than the latest one is
 never re-saved).
 

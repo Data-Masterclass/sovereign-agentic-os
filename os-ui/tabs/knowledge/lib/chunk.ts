@@ -15,7 +15,8 @@ import { type Workflow, type DomainKnowledge } from '@tabs/knowledge/lib/schema'
  * units with provenance, never as canonical truth.
  */
 
-export type UnitType = 'domain' | 'workflow' | 'rule' | 'tacit';
+/** `note` = a My knowledge NOTE (free-form markdown, e.g. a result an agent run saved). */
+export type UnitType = 'domain' | 'workflow' | 'rule' | 'tacit' | 'note';
 
 export type Provenance = {
   domain: string;
@@ -194,6 +195,38 @@ export function chunkDomain(dk: DomainKnowledge, owner = 'domain'): KnowledgeUni
         authority: 0.7,
       },
     }));
+}
+
+/** The longest note text indexed as one unit; the rest of a long note is not searchable. */
+const NOTE_INDEX_CHARS = 8000;
+
+/**
+ * A My knowledge NOTE as ONE searchable unit. Its scope key is the note's own id (`workflowId`),
+ * so a re-index replaces it and a delete purges it without touching any other unit, and a hit
+ * links straight to the note (`/knowledge?focus=<id>`). OWNER-ONLY: `canSee` and the live DLS
+ * filter never show a Personal note to anyone but its owner (stricter than other personal units).
+ */
+export function chunkNote(note: { id: string; title: string; md: string; domain: string; owner: string; visibility: string; updatedAt: string }): KnowledgeUnit[] {
+  const text = note.md.trim().slice(0, NOTE_INDEX_CHARS);
+  if (!text) return [];
+  return [{
+    id: `note:${note.id}`,
+    title: note.title,
+    text,
+    provenance: {
+      domain: note.domain,
+      workflowId: note.id,
+      stepId: null,
+      type: 'note' as UnitType,
+      actor: null,
+      owner: note.owner,
+      version: '1',
+      visibility: note.visibility,
+      updatedAt: note.updatedAt,
+      trust: visibilityTrust(note.visibility),
+      authority: 0.4,
+    },
+  }];
 }
 
 /**

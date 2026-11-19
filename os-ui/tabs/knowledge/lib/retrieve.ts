@@ -66,7 +66,8 @@ export function dlsFilter(principal: Principal): Record<string, unknown> {
     { term: { owner: principal.id } },
   ];
   if (roleAtLeast(principal.role, 'builder')) {
-    visible.push({ bool: { must: [{ term: { visibility: 'Personal' } }, { terms: { domain: principal.domains } }] } });
+    // …but never a Personal NOTE: a note is its owner's only (`canSee`).
+    visible.push({ bool: { must: [{ term: { visibility: 'Personal' } }, { terms: { domain: principal.domains } }], must_not: [{ term: { type: 'note' } }] } });
   }
   return { bool: { should: visible, minimum_should_match: 1 } };
 }

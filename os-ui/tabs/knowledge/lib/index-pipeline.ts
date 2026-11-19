@@ -4,7 +4,7 @@
 import 'server-only';
 import { config } from '@core/kernel/config';
 import { type Workflow, type DomainKnowledge } from '@tabs/knowledge/lib/schema';
-import { chunkWorkflow, chunkDomain, type KnowledgeUnit } from '@tabs/knowledge/lib/chunk';
+import { chunkWorkflow, chunkDomain, chunkNote, type KnowledgeUnit } from '@tabs/knowledge/lib/chunk';
 import { embed, type EmbedCaller } from '@tabs/knowledge/lib/embed';
 import { refuseOfflineMock } from '@core/kernel/offline-mock';
 import { upsertUnits, removeUnits, type IndexedUnit } from '@tabs/knowledge/lib/index-store';
@@ -239,6 +239,22 @@ export async function indexWorkflow(
   const live = await writeOpenSearch(workflow.id, indexed);
 
   return { units: units.length, store: live ? 'opensearch' : 'memory', embedSource: source, scope: workflow.id };
+}
+
+/**
+ * Index ONE My knowledge note so `search_knowledge` finds it — for its owner only (see
+ * `chunkNote`). Scope = the note id: a re-index replaces it, `purgeKnowledgeUnits(id)` removes it.
+ */
+export async function indexNote(
+  note: Parameters<typeof chunkNote>[0],
+  caller?: EmbedCaller,
+): Promise<IndexReport> {
+  const units = chunkNote(note);
+  const { vectors, source } = await embed(units.map((u) => u.text), caller);
+  const indexed = toIndexed(units, vectors);
+  upsertUnits(note.id, indexed);
+  const live = indexed.length > 0 ? await writeOpenSearch(note.id, indexed) : false;
+  return { units: units.length, store: live ? 'opensearch' : 'memory', embedSource: source, scope: note.id };
 }
 
 /** Index the general domain knowledge (the pinned domain card source). `caller` attributes the
