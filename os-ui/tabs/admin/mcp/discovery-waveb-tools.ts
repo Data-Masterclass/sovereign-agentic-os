@@ -28,7 +28,7 @@ import {
   dirListing,
 } from '@tabs/software/lib/apps';
 import { getSnapshot, hydrateSnapshot } from '@tabs/software/lib/server';
-import { getReviewCard, listReviewCards, reconcileDeployStatus, previewNoteForRunner } from '@tabs/software/lib/review';
+import { getReviewCard, listReviewCards, reconcileDeployStatus, previewNoteForRunner, deployStatusOf, declarativePreviewNote, isDeclarative } from '@tabs/software/lib/review';
 import type { RunnerStatus } from '@tabs/software/lib/runner';
 import { getConnectionForUser } from '@tabs/connections/lib/index';
 import { scaffoldMetricYaml } from '@tabs/data/lib/metrics';
@@ -350,13 +350,18 @@ export const waveBReadTools: McpTool[] = [
       }
       // Honest preview note from the FRESH runner status (running ⇒ served URL, no note;
       // provisioned-not-running ⇒ image build in progress; offline/null ⇒ unreachable).
-      const previewNote = previewNoteForRunner(runner);
+      // A DECLARATIVE app has no image and no runner: it is served same-origin once it has a
+      // published spec, so the runner poll says nothing about it (no "image build" note).
+      const declarative = isDeclarative(app);
+      const badge = deployStatusOf(app);
+      const previewNote = declarative ? declarativePreviewNote(app) : previewNoteForRunner(runner);
+      const previewUrl = declarative ? badge.servedUrl : app.deploy.previewUrl;
       const openCard = app.deploy.reviewCardId ? await getReviewCard(app.deploy.reviewCardId) : null;
       const latest = openCard ?? (await listReviewCards({ domain: app.domain })).find((c) => c.appId === app.id) ?? null;
       const isLive = app.deploy.state === 'live';
       // NEVER claim a working URL that is not actually served: live state alone is not
       // enough — a runner must actually be serving the workload right now.
-      const liveServed = isLive && runner?.phase === 'running' && runner.ready >= 1;
+      const liveServed = declarative ? badge.servedUrl !== null : isLive && runner?.phase === 'running' && runner.ready >= 1;
       const lastCommit = [...app.chat].reverse().find((m) => m.role === 'assistant' && m.content.startsWith('Committed:')) ?? null;
       return {
         appId: app.id,
@@ -364,8 +369,10 @@ export const waveBReadTools: McpTool[] = [
         status: app.status,
         preview: {
           state: app.deploy.state,
-          url: app.deploy.previewUrl,
-          ...(app.deploy.previewUrl ? {} : { note: previewNote }),
+          // The one status word the builder badge shows too (deploy-status.ts).
+          label: badge.label,
+          url: previewUrl,
+          ...(previewUrl || !previewNote ? {} : { note: previewNote }),
         },
         deploy: {
           state: app.deploy.state,
@@ -381,8 +388,8 @@ export const waveBReadTools: McpTool[] = [
                 note: latest.note ?? null,
               }
             : null,
-          liveUrl: liveServed ? `https://${app.subdomain}` : null,
-          ...(isLive && !liveServed
+          liveUrl: liveServed ? (declarative ? badge.servedUrl : `https://${app.subdomain}`) : null,
+          ...(isLive && !liveServed && !declarative
             ? { liveUrlNote: 'Approved to go live, but no cluster runner serves it here — so no URL is claimed.' }
             : {}),
         },
