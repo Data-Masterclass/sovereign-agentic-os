@@ -1506,6 +1506,11 @@ select seq, event, at from run_events where run_id = '<runId>' order by seq;
 >   ("Things this codebase will punish you for"), with the door-by-door table: the refusal and the hold
 >   apply to agent system runs; the Software Team panel refuses but has **no hold**; Ask the OS and the
 >   tab assistants consult neither table. `decide_approval` and `promote_connection` are refused too.
+>   The nine non-platform tools that were still unclassified were decided the same day:
+>   `revoke_action_adoption` is refused; `retire_connection` and `request_certification` are held for a
+>   domain admin and the two Operating Model writes for a platform admin, under every preset;
+>   `create_connection`, `configure_connection`, `test_connection` and `build_software` are My-scope.
+>   One tool remains unclassified, `get_software_status`. None of this reaches a person's own MCP session.
 >   What is still true: the hold is name-only, and nine state-changing tools (`request_certification`,
 >   `retire_connection`, `update_operating_manual`, … — the list is pinned by a registry-wide ratchet in
 >   `os-ui/core/mcp/write-tool-meta.test.ts`) have no hold posture at all. `os-ui/core/mcp/write-tool-meta.ts`; `os-ui/tabs/agents/lib/build/hold.ts`
