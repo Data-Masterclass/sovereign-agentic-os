@@ -368,8 +368,15 @@ the owner's standing rule that writes happen only on explicit confirmation.
 | preset | decision | why |
 |---|---|---|
 | `read-only` | **HELD**, approver `admin` | every write is blocked and queued — this is the gap that was open |
-| `read-propose` | not held | `writeTargetScope` is `personal`: the app is the runner's own, `setAppSpec` re-gates owner-or-in-domain-builder itself, and publishing does **not** widen the audience (`visibility` is untouched; climbing the ladder is `promote`, separately gated). Gate 2 — the run-as-user governed dispatch — is the authority. |
+| `read-propose` | not held | `writeTargetScope` is `personal`: the app is the runner's own and `setAppSpec` re-gates owner-or-in-domain-builder itself. Gate 2 — the run-as-user governed dispatch — is the authority. |
 | `full-in-scope` | not held | same |
+
+**What that posture does and does not claim** (narrowed on re-review — the first wording said
+"publishing does not widen the audience", which is too strong). Publishing does **not change the
+app's `visibility`**; climbing the ladder is `promote`, which stays separately role-gated. But on
+an app that is **already Shared or Certified**, `set_app_spec` pushes a **new live surface to that
+existing audience**, and under `read-propose` / `full-in-scope` that is unheld. The hold cannot
+currently tell the two apart, because it is **name-only**.
 
 **Frozen engine goldens changed: NONE.** A tree-wide search found **no system granting
 `set_app_spec`** (`tabs/agents`, `core/runtime`, `seed`). The shipped App Smith team authors through
@@ -381,8 +388,9 @@ are HTTP routes (`/api/apps/[id]/publish`, `…/spec/draft`), not governed MCP t
 reach them, and `WRITE_TOOL_TABS` classifies MCP tool names only. Recorded in the table's comment
 so the next reader does not have to re-derive it.
 
-**On the generic tripwire.** This is the fourth occurrence of *"in the catalog ≠ held"* — `commit`,
-`push_app_files`, `reindex_corpus`, `set_app_spec`. The cheap structural signal already exists and
+**On the generic tripwire.** `set_app_spec` was the fourth occurrence of *"in the catalog ≠ held"*
+— `commit`, `push_app_files`, `reindex_corpus`, `set_app_spec` — and `design_software` (§4.7a) made
+it five in one evening. The cheap structural signal already exists and
 is already wired: the platform-MCP table's own **`write: true`** declaration *is* the "this
 persists a record" flag, and `tabs/software/lib/builder/dispatch.test.ts` asserts, by
 `deepEqual` on a sorted list, that the set of declared platform writes **not** in
@@ -399,12 +407,71 @@ imports every mutator, so an import-based signal cannot distinguish the write ca
 cases (`build_software`, `get_app_spec`, `verify_software` are in the same file). The per-tool
 `write` flag is strictly more precise, and it is declared next to the thing it describes.
 
-**Still unclassified, and therefore still unheld** (the named ratchet list, unchanged otherwise):
-`archive`, `create_software`, `decide_deploy`, `delete`, `design_software`, `promote`,
-`request_deploy`, `start_preview`, `use_as_data`, `use_connection`, `use_data`, `use_knowledge`.
-Each is a real posture decision — `decide_deploy` and `promote` in particular are approval verbs an
-agent arguably should never hold *because* they are already role-gated to a human — and classifying
-them moves the shipped team's posture. They are named here so the debt is visible.
+### §4.7a — `design_software` classified: the fifth, and a twin that had been split
+
+`design_software` and `set_app_design` land in the **same governed write**, `patchAppDesign`. The
+tab's own tool was classified; the platform-MCP tool onto the same function was not — so **the hold
+posture of one write depended on which of its two names an agent used**. Classified now, with the
+posture asserted to be *identical to its twin's under every preset* rather than merely similar.
+
+It matters more after **F10**: that door now **defaults a grant with no `access` to `read-only`
+instead of dropping it**, so an unheld call can bind governed context the caller never explicitly
+authorised. Trading a silent drop for a silent grant is only safe if the door is held-eligible.
+
+**Frozen engine goldens changed: NONE** — nothing grants `design_software`. (The one hit in
+`agentic-graph.test.ts` is a role-floor assertion about the tool *catalogue*, not a grant, and the
+hold table does not touch it.)
+
+### §4.7b — Follow-up (NOT done tonight): make `set_app_spec`'s hold follow the TARGET's visibility
+
+**The gap.** The hold should scale with what is being published to: a **Domain**-visible app held
+to a `domain_admin`, a **Company**-visible one to an `admin`, a Personal one not held. Today all
+three decide identically, because the rule is name-only.
+
+**Why it is not a small change.** `tabs/agents/lib/build/hold.ts` is deliberately **pure and
+synchronous** and receives **only the tool name** — that is what lets the pure graph builder and its
+tests call it without a store. The engine binds it as
+`decide: (tool) => holdDecisionFor(sys.safetyPreset, resolveAlias(tool))`, and the `decide` port in
+`tabs/agents/lib/engine/build-graph.ts` is typed to take a tool name and nothing else. Target
+awareness therefore needs, at minimum:
+
+1. the `decide` port to carry the tool **arguments** (so `appId` is reachable);
+2. an **async, governed read** of that app's `visibility` inside what is currently a pure sync rule
+   — which makes the pre-execution batch gate async;
+3. the same change at the executor's independent gate 1b (`os-tools.ts:654`, `holdDecision`), kept
+   in step or the two gates disagree;
+4. updates to `agentic-graph-server.ts`, the parity harness, and three test harnesses that
+   construct `decide`.
+
+That is five non-test modules, a port-signature change and a sync→async conversion of a security
+decision — well past the ≤30-line bar, and it **moves posture for every team granted an app write
+on a shared app**, so goldens can move. Deliberately deferred rather than rushed.
+
+**The cheaper shape, if the port change is unwanted.** Put the target-aware check in
+`setAppSpec` itself (or an overload) at the service boundary, where the app — and so its
+`visibility` — is already loaded, and have it refuse rather than hold when the call arrives from an
+agent run whose preset does not cover a Domain/Company publish. That keeps `hold.ts` pure, but it
+splits the hold decision across two modules, so it needs a deliberate decision about which one is
+the authority. Either way it is a posture change, not a patch.
+
+**Still unclassified, and therefore still unheld** — the named ratchet list, **12 → 11**, ranked
+worst-first as the reviewer ranked them:
+
+| # | tool | why it ranks here |
+|---|---|---|
+| 1 | `decide_deploy` | **the approval verb itself.** An agent granted it can approve a go-live. It is role-gated to a builder+ and refuses the requester, so it is not *unguarded* — but an unheld approval verb inside an autonomous run is the single worst item on this list. |
+| 2 | `promote` | **climbs the governance ladder** (My→Domain→Company). The applier re-gates each rung, so an agent cannot exceed its runner — but the whole point of the ladder is that a human decides, and this is the one tool whose *effect is* a visibility change. |
+| 3 | `delete` | destructive and lineage-gated; archive is the reversible twin. |
+| 4 | `request_deploy` | opens a review card and runs the scan; it cannot self-deploy, but it can self-serve a Personal app to live for a Builder owner. |
+| 5 | `create_software` | creates a governed artefact (and an MCP principal + a data artifact with it). |
+| 6 | `archive` | reversible, so low — but it takes a live app out of service. |
+| 7–10 | `use_connection`, `use_data`, `use_knowledge`, `use_as_data` | bind/expose governed resources by reference; `use_as_data` additionally registers a **new Bronze dataset**. |
+| 11 | `start_preview` | the mildest: provisions a private preview (or, for a declarative app, just returns the served URL). |
+
+Each is a real posture decision, and classifying `decide_deploy` or `promote` needs an explicit
+answer to "should an agent ever hold an approval verb, or should it simply never be granted one?" —
+plausibly the latter. They are named here so the debt stays visible and a new platform write cannot
+join them unnoticed.
 
 ### §4.8 — The review round: the four mediums and the lows
 
