@@ -61,6 +61,10 @@ node ../scripts/check-litellm-allowlist.mjs
 # carry the LiteLLM master key, the session-signing secret or the mail secret. Skips when helm is
 # not installed — docs/components/os-ui.md carries the same check by hand.
 node ../scripts/check-worker-env.mjs
+# Which models may be sent images is an admin's list (`osUI.imageAllowlist`). It must reach BOTH
+# pods — the worker makes the model calls — and must be ABSENT when unset, so the built-in list in
+# core/models/capabilities.ts stays in force. Rendered YAML again, so same skip rules as above.
+node ../scripts/check-image-allowlist-chart.mjs
 # B3 review H-1/H-5/H-6: the reconciler must run on a DEFAULT install, the Dagster run pod must
 # connect as the user rules.json allows, and the os-ui Role must not grant namespace-wide Secrets.
 # B4 review H-2 rides on the same check: the os-ui Role must carry `batch`/`cronjobs` in EVERY

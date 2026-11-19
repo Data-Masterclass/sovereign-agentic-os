@@ -56,6 +56,16 @@
      Nil-safe under `--reuse-values` (an absent key renders the `refuse` default). */}}
 - name: OS_OFFLINE_MOCK
   value: {{ $u.offlineMock | default "refuse" | quote }}
+{{- /* WHICH MODELS MAY BE SENT IMAGES (MODEL_IMAGE_ALLOWLIST — os-ui/core/models/capabilities.ts).
+     A JSON array of LiteLLM model_names that REPLACES the built-in list. Rendered ONLY when
+     `osUI.imageAllowlist` is a list, so an absent key (the default, and `--reuse-values`) leaves
+     the env unset and the built-in list in force. An EMPTY list renders "[]" = no model at all.
+     RUN-path: the `os-ui-worker` pod makes the model calls, so it must carry the same list as
+     the UI that displays it. */}}
+{{- if kindIs "slice" $u.imageAllowlist }}
+- name: MODEL_IMAGE_ALLOWLIST
+  value: {{ $u.imageAllowlist | toJson | quote }}
+{{- end }}
 {{- /* Tab gating. Empty = base-tier default. */}}
 {{- if .Values.osUI.enabledTabs }}
 - name: OS_ENABLED_TABS
