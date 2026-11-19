@@ -61,6 +61,6 @@ export const POST = withRoute<{ id: string }, { action?: string }>(async ({ user
 
 export const DELETE = withRoute<{ id: string }>(async ({ user, params }) => {
   const { id } = params;
-  const result = deleteFolder(user, tabOf(id), id);
+  const result = await deleteFolder(user, tabOf(id), id);
   return NextResponse.json({ ok: true, ...result });
 }, { hydrate: ensureHydrated });

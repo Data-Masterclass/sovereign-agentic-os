@@ -287,3 +287,76 @@ test('MIRROR-DURABILITY: a 503 on PUT must surface — not leave healthy=true wi
   // The defect: after a failed PUT the mirror still reports healthy and nothing is queued/reported.
   assert.equal(m.healthy(), false, 'a failed write must flip health (or be queued + reported) — never silently succeed');
 });
+
+// --- The DELETE counterpart of the gate above: a confirmed delete surfaces a failure ---------
+
+/** A fake whose `_doc` DELETE answers with the scripted statuses in order (then the last one). */
+function scriptedDelete(statuses: (number | 'down')[]) {
+  const orig = globalThis.fetch;
+  const deletes: string[] = [];
+  let i = 0;
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input); const method = init?.method ?? 'GET';
+    if (url.includes('/_count')) return new Response(JSON.stringify({ count: 1 }), { status: 200 });
+    if (method === 'DELETE' && url.includes('/_doc/')) {
+      deletes.push(url.replace(/^https?:\/\/[^/]+/, '').split('?')[0]);
+      const st = statuses[Math.min(i++, statuses.length - 1)];
+      if (st === 'down') throw new Error('ECONNREFUSED');
+      return new Response(JSON.stringify({ result: st === 404 ? 'not_found' : 'deleted' }), { status: st });
+    }
+    return new Response('{}', { status: 200 });
+  }) as typeof fetch;
+  return { deletes, restore: () => { globalThis.fetch = orig; } };
+}
+
+test('MIRROR-DURABILITY (delete): a 503 on DELETE surfaces as a failed delete after a bounded retry', async () => {
+  const m = osMirror({ index: 'os-gate-del' });
+  m.__reset();
+  const os = scriptedDelete([503]);
+  try {
+    const out = await m.deleteConfirmed('doc-1', { attempts: 3, backoffMs: 1 });
+    assert.equal(out.ok, false, 'a delete the store refused is never reported as done');
+    assert.match((out as { reason: string }).reason, /503/);
+    assert.equal(os.deletes.length, 3, 'bounded: exactly three attempts');
+  } finally {
+    os.restore();
+  }
+});
+
+test('deleteConfirmed: a transient failure then success is a confirmed delete', async () => {
+  const m = osMirror({ index: 'os-gate-del2' });
+  m.__reset();
+  const os = scriptedDelete(['down', 503, 200]);
+  try {
+    assert.deepEqual(await m.deleteConfirmed('doc-1', { attempts: 3, backoffMs: 1 }), { ok: true, result: 'deleted' });
+    assert.equal(os.deletes.length, 3);
+  } finally {
+    os.restore();
+  }
+});
+
+test('deleteConfirmed: 404 means already gone — confirmed, no retry', async () => {
+  const m = osMirror({ index: 'os-gate-del3' });
+  m.__reset();
+  const os = scriptedDelete([404]);
+  try {
+    assert.deepEqual(await m.deleteConfirmed('doc-1', { backoffMs: 1 }), { ok: true, result: 'absent' });
+    assert.equal(os.deletes.length, 1);
+  } finally {
+    os.restore();
+  }
+});
+
+test('deleteConfirmed: an unreachable cluster is a failed delete, never a silent success', async () => {
+  const m = osMirror({ index: 'os-gate-del4' });
+  m.__reset();
+  const orig = globalThis.fetch;
+  globalThis.fetch = (async () => { throw new Error('ECONNREFUSED'); }) as typeof fetch;
+  try {
+    const out = await m.deleteConfirmed('doc-1', { backoffMs: 1 });
+    assert.equal(out.ok, false);
+    assert.match((out as { reason: string }).reason, /unreachable/);
+  } finally {
+    globalThis.fetch = orig;
+  }
+});

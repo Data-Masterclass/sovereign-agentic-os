@@ -6,13 +6,12 @@ import { withRoute } from '@core/kernel/route-server';
 import type { CurrentUser } from '@core/kernel/auth';
 import { requirePrincipal } from '@tabs/files/lib/server';
 import {
-  getFile, moveFile, setDocs, setSensitivity, setIndexingMode, deleteFile,
+  getFile, moveFile, setDocs, setSensitivity, setIndexingMode,
   archiveFile, unarchiveFile, renameFile, canEditFile,
 } from '@tabs/files/lib/store';
 import { reindexById, settleStale, describeNow } from '@tabs/files/lib/pipeline-server';
 import { config } from '@core/kernel/config';
-import { removeFromIndex } from '@tabs/files/lib/index-store';
-import { purgeFileObjects } from '@tabs/files/lib/physical-delete';
+import { deleteFilePermanently } from '@tabs/files/lib/physical-delete';
 import { deleteBlob } from '@tabs/files/lib/object-store';
 import '@tabs/files/lib/object-store-server'; // registers the durable MinIO backend
 import type { IndexingMode, Sensitivity } from '@tabs/files/lib/asset-schema';
@@ -92,15 +91,13 @@ export const POST = withRoute<{ id: string }, { action?: string }>(async ({ user
 
 /**
  * DELETE → permanently remove a file (edit-scoped; confirmed in the UI) — the
- * registry record, its index chunks AND its object-store bytes. The record delete
- * runs first (403 → nothing is purged); then the PHYSICAL bytes are purged through
- * the same governed blob backend the upload/download path uses. An unreachable store
- * surfaces in `physical[].ok:false` — the delete stands, the leftover is never silent.
+ * registry record, its search chunks AND its object-store bytes (`deleteFilePermanently`).
+ * The record delete is confirmed by the shared store first: 403 / 503 → nothing is purged
+ * and the user is told the delete failed. A chunk or byte leftover after that surfaces in
+ * `index.ok:false` / `physical[].ok:false` — the delete stands, the leftover is never silent.
  */
 export const DELETE = withRoute<{ id: string }>(async ({ user, params }) => {
   const { id } = params;
-  const rec = deleteFile(id, user); // throws 403 → nothing is purged
-  removeFromIndex(id); // drop its chunks from the hybrid index
-  const physical = await purgeFileObjects(rec, deleteBlob);
-  return NextResponse.json({ ok: true, physical });
+  const { physical, index } = await deleteFilePermanently(id, user, { deleteBlob });
+  return NextResponse.json({ ok: true, physical, index });
 }, { gate: requirePrincipal as () => Promise<CurrentUser> });

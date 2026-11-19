@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
-import { test, beforeEach } from 'node:test';
+import { test, beforeEach, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { objectPurgePlan, purgeFileObjects, type DeleteFn } from '@tabs/files/lib/physical-delete';
 import { __resetStore, createFile, attachObject, getFile, deleteFile, archiveFile, type Principal } from '@tabs/files/lib/store';
@@ -10,6 +10,12 @@ const amir: Principal = { id: 'amir', domains: ['sales'], role: 'creator' };
 
 beforeEach(() => { __resetStore(); });
 
+// `deleteFile` waits for the shared store (OpenSearch) to confirm: answer like a healthy cluster.
+const realFetch = globalThis.fetch;
+before(() => { globalThis.fetch = (async () => new Response('{"result":"deleted"}', { status: 200, headers: { 'content-type': 'application/json' } })) as typeof fetch; });
+after(() => { globalThis.fetch = realFetch; });
+
+
 /** A file WITH stored object bytes (object-store storage + attached object meta). */
 function fileWithObject() {
   const a = createFile(amir, { name: 'Deck', storage: 'object-store', text: 'hello', bytes: 5 });
@@ -17,24 +23,24 @@ function fileWithObject() {
   return getFile(a.id, amir);
 }
 
-test('objectPurgePlan: a stored file plans its one governed object key', () => {
+test('objectPurgePlan: a stored file plans its one governed object key', async () => {
   const v = fileWithObject();
-  const rec = deleteFile(v.asset.id, amir); // returns the record so we can plan
+  const rec = await deleteFile(v.asset.id, amir); // returns the record so we can plan
   const plan = objectPurgePlan(rec);
   assert.equal(plan.length, 1);
   assert.ok(plan[0].key.startsWith('amir/'), 'key is under the owner prefix (s3://files/<owner>/…)');
   assert.equal(plan[0].key, rec.object!.key);
 });
 
-test('objectPurgePlan: a text-only (no-object) file has nothing to purge', () => {
+test('objectPurgePlan: a text-only (no-object) file has nothing to purge', async () => {
   const a = createFile(amir, { name: 'Note', storage: 'in-place', text: 'body' });
-  const rec = deleteFile(a.id, amir);
+  const rec = await deleteFile(a.id, amir);
   assert.deepEqual(objectPurgePlan(rec), []);
 });
 
 test('purgeFileObjects deletes the right key and reports an honest success', async () => {
   const v = fileWithObject();
-  const rec = deleteFile(v.asset.id, amir);
+  const rec = await deleteFile(v.asset.id, amir);
   const deleted: string[] = [];
   const del: DeleteFn = async (key) => { deleted.push(key); };
   const report = await purgeFileObjects(rec, del);
@@ -45,7 +51,7 @@ test('purgeFileObjects deletes the right key and reports an honest success', asy
 
 test('purgeFileObjects is HONEST when the object store is unreachable (orphan flagged, never silent)', async () => {
   const v = fileWithObject();
-  const rec = deleteFile(v.asset.id, amir);
+  const rec = await deleteFile(v.asset.id, amir);
   const report = await purgeFileObjects(rec, async () => { throw new Error('MinIO unreachable'); });
   assert.equal(report.recordDeleted, true);
   assert.equal(report.physical.length, 1);

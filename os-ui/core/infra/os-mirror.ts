@@ -50,6 +50,12 @@ export type OsMirror = {
    *  single-use action (e.g. refresh-token rotation) on the mirror's OWN atomic
    *  delete instead of read-then-fire-and-forget-delete (which can resurrect). */
   claim(id: string): Promise<'won' | 'lost' | 'unreachable'>;
+  /** An AWAITED delete with bounded retry, for a store that must not tell the user a record is
+   *  gone before the shared store agrees. `ok:true` only when OpenSearch confirmed it:
+   *  'deleted' (it held the doc) or 'absent' (404 — already gone, or never mirrored). Anything
+   *  else — unreachable, timeout, 5xx after every attempt — is `ok:false` with the reason, and
+   *  the caller must keep the record. Writes queued while the mirror was down go out first. */
+  deleteConfirmed(id: string, opts?: { attempts?: number; backoffMs?: number }): Promise<DeleteOutcome>;
   /** Fire-and-forget upsert. While unhealthy, lazily re-probes (throttled) and,
    *  if the mirror healed, persists THIS doc. Earlier dropped writes are NOT
    *  replayed — the in-process store stays authoritative until the next roll. */
@@ -59,6 +65,10 @@ export type OsMirror = {
   /** Test seam: forget probe state — simulates a fresh process. */
   __reset(): void;
 };
+
+export type DeleteOutcome =
+  | { ok: true; result: 'deleted' | 'absent' }
+  | { ok: false; reason: string };
 
 type MirrorState = {
   healthy: boolean;
@@ -213,6 +223,26 @@ export function osMirror(opts: {
     }
   }
 
+  async function deleteConfirmed(id: string, o: { attempts?: number; backoffMs?: number } = {}): Promise<DeleteOutcome> {
+    const attempts = Math.max(1, o.attempts ?? 3);
+    const backoffMs = o.backoffMs ?? 100;
+    const s = st();
+    if (!(s.probed && s.healthy) && !(await probe())) {
+      return { ok: false, reason: 'the shared store (OpenSearch) is unreachable' };
+    }
+    flushPending(); // an older queued write for this id must not land AFTER the delete
+    let reason = 'no answer';
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      if (attempt > 0) await new Promise((r) => setTimeout(r, backoffMs * attempt));
+      const res = await osFetch(`/${index}/_doc/${encodeURIComponent(id)}?refresh=true`, { method: 'DELETE' });
+      if (!res) { reason = 'no answer (network error or timeout)'; continue; }
+      if (res.status === 404) return { ok: true, result: 'absent' };
+      if (res.ok) return { ok: true, result: 'deleted' };
+      reason = `HTTP ${res.status}`;
+    }
+    return { ok: false, reason: `the shared store did not confirm the delete (${reason}, ${attempts} attempts)` };
+  }
+
   // Writes that arrive while the mirror is unhealthy are QUEUED in order and
   // replayed on the next successful probe — NEVER silently dropped. The old
   // throttled path returned without sending, which opened a real write-loss
@@ -268,6 +298,7 @@ export function osMirror(opts: {
     hydrate,
     getDoc,
     claim,
+    deleteConfirmed,
     writeThrough,
     deleteThrough,
     __reset: () => {

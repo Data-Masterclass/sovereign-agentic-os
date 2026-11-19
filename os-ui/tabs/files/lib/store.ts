@@ -196,7 +196,24 @@ function snapshotState(rec: FileRecord): { yaml: string; text: string; bytes: nu
   return { yaml: rec.yaml, text: rec.text, bytes: rec.bytes };
 }
 
+/**
+ * Ids whose permanent delete is waiting for the shared store's answer ({@link deleteFile}). A
+ * write to one of them in that window (an edit, a finishing extraction or description) is held
+ * back: sent, it could reach OpenSearch AFTER the delete and put the file back. If the delete
+ * fails the record is written again, so a held-back edit is not lost either.
+ */
+const DELETING_KEY = Symbol.for('soa.files.deleting');
+function deleting(): Map<string, { heldBack: boolean }> {
+  const g = globalThis as unknown as Record<symbol, Map<string, { heldBack: boolean }> | undefined>;
+  return (g[DELETING_KEY] ??= new Map());
+}
+
 function writeThrough(rec: FileRecord): void {
+  const pending = deleting().get(rec.id);
+  if (pending) { pending.heldBack = true; return; }
+  // A record this process no longer holds was deleted: a late writer holding it must not
+  // re-create its document in the shared store.
+  if (!fs().store.has(rec.id)) return;
   fileMirror.writeThrough(rec.id, rec);
 }
 
@@ -765,17 +782,37 @@ export function setSensitivity(id: string, user: Principal, sensitivity: Sensiti
 }
 
 /**
- * Permanently delete a file (edit-scoped, irreversible). Removes the registry record,
- * its version history and its durable mirror doc. Returns the deleted record so the
- * route can PHYSICALLY purge its object-store bytes (physical-delete.ts) — a "deleted"
- * file whose bytes still sit in MinIO isn't deleted. Archive (below) never purges.
+ * Permanently delete a file's RECORD (edit-scoped, irreversible) — CONFIRMED by the shared store.
+ *
+ * The record lives in this process's Map AND in the OpenSearch mirror every other process (the
+ * run worker) and every later boot reads. So the mirror delete is AWAITED, with a bounded retry,
+ * before anything is removed here: a delete OpenSearch did not confirm throws a 503 and leaves the
+ * record, its history and its document exactly as they were — the user is told it failed and can
+ * try again, instead of being told "deleted" about a file that is still served. (A 404 from
+ * OpenSearch means it is already gone: that is a success.)
+ *
+ * Returns the deleted record so the caller can purge its search chunks and object-store bytes
+ * (`physical-delete.ts` `deleteFilePermanently` — the one entry point the route and the folder
+ * cascade use). Archive (below) never purges.
  */
-export function deleteFile(id: string, user: Principal): FileRecord {
+export async function deleteFile(id: string, user: Principal): Promise<FileRecord> {
   const rec = get(id);
   const a = parseAsset(rec.yaml);
   if (!canEdit(a, user)) fail('Not permitted to delete this file', 403);
+  const window = { heldBack: false };
+  deleting().set(id, window);
+  let out: Awaited<ReturnType<typeof fileMirror.deleteConfirmed>>;
+  try {
+    out = await fileMirror.deleteConfirmed(id);
+  } finally {
+    deleting().delete(id);
+  }
+  if (!out.ok) {
+    const held = fs().store.get(id);
+    if (window.heldBack && held) writeThrough(held); // an edit made while we waited still reaches the store
+    fail(`The file was not deleted: ${out.reason}. It is unchanged — try again.`, 503);
+  }
   versions.purge(id);
-  fileMirror.deleteThrough(id);
   fs().store.delete(id);
   return rec;
 }

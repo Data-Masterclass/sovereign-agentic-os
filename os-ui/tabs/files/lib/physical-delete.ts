@@ -1,9 +1,11 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
-import type { FileRecord } from '@tabs/files/lib/store';
-import { objectKeyForAsset } from '@tabs/files/lib/store';
+import type { FileRecord, Principal } from '@tabs/files/lib/store';
+import { objectKeyForAsset, deleteFile } from '@tabs/files/lib/store';
 import { parseAsset } from '@tabs/files/lib/asset-schema';
+import { removeFromIndex, removeChunksFromMirror } from '@tabs/files/lib/index-store';
+import { deleteBlob } from '@tabs/files/lib/object-store';
 
 /**
  * PHYSICAL cleanup for a file DELETE (never for archive — archive is a reversible
@@ -70,4 +72,34 @@ export async function purgeFileObjects(rec: FileRecord, del: DeleteFn): Promise<
     }
   }
   return report;
+}
+
+/** What a permanent delete did beyond the record: the search chunks and the stored bytes. */
+export type PermanentDeleteReport = PhysicalDeleteReport & {
+  /** The file's chunks in the OpenSearch search index. `ok:false` = they may still be there. */
+  index: { ok: true } | { ok: false; reason: string };
+};
+
+export type PermanentDeleteDeps = {
+  deleteBlob?: DeleteFn;
+  deleteChunks?: (fileId: string) => Promise<{ ok: true } | { ok: false; reason: string }>;
+};
+
+/**
+ * THE permanent delete of a file — the one entry point for the route and the folder cascade, so
+ * a folder delete removes exactly what a file delete removes. In order:
+ *   1. the RECORD, confirmed by the shared store (`deleteFile`): a refusal throws 503 and nothing
+ *      at all is removed — no chunk, no byte — because the file still exists;
+ *   2. its SEARCH CHUNKS: this process's in-memory index and the OpenSearch index live search
+ *      reads, awaited with a bounded retry;
+ *   3. its OBJECT-STORE BYTES (`purgeFileObjects`).
+ * Steps 2 and 3 run after the record is gone, so a failure there is REPORTED (`index.ok:false`,
+ * `physical[].ok:false`) — the delete stands and the leftover is named, never silent.
+ */
+export async function deleteFilePermanently(id: string, user: Principal, deps: PermanentDeleteDeps = {}): Promise<PermanentDeleteReport> {
+  const rec = await deleteFile(id, user); // throws 403 / 404 / 503 → nothing is purged
+  removeFromIndex(id);
+  const index = await (deps.deleteChunks ?? ((fileId: string) => removeChunksFromMirror(fileId)))(id);
+  const physical = await purgeFileObjects(rec, deps.deleteBlob ?? deleteBlob);
+  return { ...physical, index };
 }
