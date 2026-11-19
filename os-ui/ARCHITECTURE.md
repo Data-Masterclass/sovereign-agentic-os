@@ -304,8 +304,10 @@ the Run panel's "Resume" button does exactly that — offered only when the chec
 user or it is a typed `ResumeNotFoundError` (404 — never confirming the thread exists), and a
 thread with nothing left to run is a `RunAlreadyFinishedError` (409), never a silent no-op.
 Run ids come from `core/kernel/run-id.ts` (`crypto.randomUUID`): a run id is a capability.
-Checkpoints hold the full state — raw tool results included — indefinitely; retention is an
-open item (plan A13 follow-up).
+Checkpoints hold the full state — raw tool results included. They are bounded by a retention
+sweep (`tabs/agents/lib/engine/retention.ts`): a run settled more than
+`AGENT_RUNS_RETENTION_DAYS` ago (default 30) loses its checkpoint, events and job row; a
+`parked` run is never swept.
 
 **Build compiles the same graph.** `tabs/agents/lib/build/compile-verify.ts` calls the SAME
 `buildGraph` with inert deps (a model and a tool executor that throw if touched — compiling
