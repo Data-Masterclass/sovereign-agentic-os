@@ -1,6 +1,8 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG
  */
+import { config } from '@core/kernel/config';
+
 /**
  * Components & System — the self-heal + node/pool augmentation over the existing
  * native component registry (`lib/platform.ts`). The route reads live component
@@ -62,19 +64,14 @@ export function pools(): Pool[] {
   return [{ name: 'default-pool', min: 1, max: 1, current: 1, autoRepair: true }];
 }
 
-/** Deployed version per component (the "versions" column the Admin Console
- * shows; in a real deploy these come from the Helm release / image tags). */
-const VERSIONS: Record<string, string> = {
-  litellm: 'v1.55.3', langfuse: 'v3.22.0', opa: 'v0.70.0', opensearch: 'v2.17.1',
-  postgres: 'CNPG 1.24', clickhouse: 'v24.8', minio: 'RELEASE.2026-05', valkey: 'v8.0',
-  dagster: 'v1.13.11',   // images/extensions/dagster/Dockerfile pins dagster==1.13.11
-  'mock-model': 'v0.1.1', 'query-tool': 'v0.4', polaris: 'v1.1.0-incubating', haystack: 'v2.8',
-  trino: '476', 'data-runner': 'v0.1.0',
-  mlflow: 'v2.19', jupyterhub: 'v5.2', 'os-ui': 'v0.5.14',
-};
-
+/**
+ * The version shown per component. os-ui's is the one this install really runs (`OS_VERSION`,
+ * set by the chart). Nothing reads the other components' image tags yet, so they say so — a
+ * typed-in table used to stand here and drifted from what was deployed (it showed os-ui v0.5.14).
+ */
 export function versionFor(id: string): string {
-  return VERSIONS[id] ?? 'n/a';
+  if (id === 'os-ui') return config.osVersion.startsWith('v') ? config.osVersion : `v${config.osVersion}`;
+  return 'not reported';
 }
 
 /** Optional layers the Admin can enable/disable per the component registry. */
