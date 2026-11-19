@@ -141,6 +141,13 @@ export type RunJobStore = {
   /** Re-queue (attempts < maxAttempts) or fail every `running` job whose lease is older than `olderThanMs`. */
   reapStale(opts: { olderThanMs: number; maxAttempts: number; now?: number }): Promise<{ requeued: string[]; failed: string[] }>;
   get(runId: string): Promise<RunJob | null>;
+  /**
+   * The run of `systemId` that `requestedBy` started and that was active most recently (any
+   * status), or null. What the Run panel shows on page load: the durable answer to "what was my
+   * last run of this system", independent of which process executed it. Scoped to the requester
+   * by construction — a run is visible to its runner only (`run-visibility.ts`).
+   */
+  latestForSystem(systemId: string, requestedBy: string): Promise<RunJob | null>;
   /** Append one event with the next `seq` for the run. */
   appendEvent(runId: string, event: RunEventName, data: unknown, at?: number): Promise<RunEventRow>;
   /** Events with `seq > afterSeq`, ascending, at most `limit`. */
@@ -286,6 +293,14 @@ export function memoryRunJobStore(): MemoryRunJobStore {
     async get(runId) {
       const j = st.jobs.get(runId);
       return j ? copy(j) : null;
+    },
+    async latestForSystem(systemId, requestedBy) {
+      let latest: RunJob | null = null;
+      for (const j of st.jobs.values()) {
+        if (j.systemId !== systemId || j.requestedBy !== requestedBy) continue;
+        if (!latest || j.updatedAt > latest.updatedAt || (j.updatedAt === latest.updatedAt && j.createdAt >= latest.createdAt)) latest = j;
+      }
+      return latest ? copy(latest) : null;
     },
     async appendEvent(runId, event, data, at) {
       if (!isRunEventName(event)) throw new Error(`not a run event: ${String(event)}`);
