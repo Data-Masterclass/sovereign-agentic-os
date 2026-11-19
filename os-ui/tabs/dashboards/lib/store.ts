@@ -5,6 +5,7 @@ import type { Role } from '@core/kernel/session';
 import { type DashTier, type DashboardRecord, dashboardRecord, governDashboard } from '@tabs/dashboards/lib/governance';
 import { assertServableFilters, type DashboardSpec } from '@tabs/dashboards/lib/model';
 import { osMirror } from '@core/infra/os-mirror';
+import { mirrorRefresher, newMirrorRefresh, type MirrorRefreshState } from '@core/infra/mirror-refresh';
 import { newSeenFields, noteSeen, writeDeleted, writeChanged, writeNew, refreshRecord, type SeenFields } from '@core/infra/field-writes';
 import { type ArtifactVersion, versionLog } from '@core/kernel/versioning';
 import { canManageArtifact, type ArtifactScope } from '@core/policy/edit-scope';
@@ -29,7 +30,9 @@ import { dashboardLifecycle } from '@tabs/dashboards/lib/lifecycle-port';
 
 export type Principal = { id: string; domains: string[]; role: Role };
 
-type Stored = DashboardRecord & { domain: string; archived?: boolean; folder?: string };
+/** `updatedAt` is stamped on every write (absent on a dashboard not written since it was added):
+ *  the worker's mirror refresh takes the mirror copy only when it is newer. */
+type Stored = DashboardRecord & { domain: string; archived?: boolean; folder?: string; updatedAt?: string };
 
 /** The edit-scope arg for a dashboard. A `personal`-tier dashboard is owner-only
  *  (no admin/domain_admin reaches another user's private dashboard). */
@@ -49,11 +52,13 @@ type DashState = {
   hydrateFailedAt?: number;
   /** What this process last knew the mirror held per dashboard (see `core/infra/field-writes.ts`). */
   seen: SeenFields;
+  /** The run worker re-reads the mirror before serving (`core/infra/mirror-refresh.ts`). */
+  refresh: MirrorRefreshState;
 };
 const DASH_KEY = Symbol.for('soa.dashboards.store');
 function dashState(): DashState {
   const g = globalThis as unknown as Record<symbol, DashState | undefined>;
-  if (!g[DASH_KEY]) g[DASH_KEY] = { dashboards: SEED.map((d) => ({ ...d, spec: { ...d.spec, charts: [...d.spec.charts] } })), hydration: null, seen: newSeenFields() };
+  if (!g[DASH_KEY]) g[DASH_KEY] = { dashboards: SEED.map((d) => ({ ...d, spec: { ...d.spec, charts: [...d.spec.charts] } })), hydration: null, seen: newSeenFields(), refresh: newMirrorRefresh() };
   return g[DASH_KEY]!;
 }
 
@@ -90,6 +95,7 @@ function snapshotState(rec: Stored): { spec: DashboardSpec } {
  * dashboard deleted elsewhere. A NEW dashboard is stored whole (`writeNew`).
  */
 function writeThrough(rec: Stored): void {
+  rec.updatedAt = new Date().toISOString();
   writeChanged(mirror, dashState().seen, rec.id, rec as unknown as Record<string, unknown>);
 }
 
@@ -122,7 +128,34 @@ export function hasDashboard(id: string): boolean {
 export async function ensureHydrated(): Promise<void> {
   const s = dashState();
   if (!s.hydration) s.hydration = Promise.all([hydrate(), versions.ensureHydrated()]).then(() => {});
-  return s.hydration;
+  await s.hydration;
+  // The run worker re-reads what os-ui wrote since (throttled; a no-op in os-ui).
+  if (s.hydratedAt !== undefined) await refresher.beforeRead();
+}
+
+/** The shared worker refresh (`core/infra/mirror-refresh.ts`), applied to the dashboards. */
+const refresher = mirrorRefresher<Stored>(mirror, () => dashState().refresh, {
+  label: 'dashboards',
+  size: 1000,
+  held: (id) => dashState().dashboards.find((d) => d.id === id),
+  put: (rec) => {
+    const s = dashState();
+    const at = s.dashboards.findIndex((d) => d.id === rec.id);
+    if (at >= 0) s.dashboards[at] = rec;
+    else s.dashboards.push(rec);
+    noteSeen(s.seen, rec.id, rec as unknown as Record<string, unknown>);
+  },
+  drop: (id) => {
+    const s = dashState();
+    const before = s.dashboards.length;
+    s.dashboards = s.dashboards.filter((d) => d.id !== id);
+    return s.dashboards.length < before;
+  },
+});
+
+/** Declare THIS process (the run worker) a reader of the dashboards os-ui writes. Refused elsewhere. */
+export function enableMirrorRefresh(on = true): boolean {
+  return refresher.enable(on);
 }
 
 async function hydrate(): Promise<void> {
@@ -135,6 +168,7 @@ async function hydrate(): Promise<void> {
     s.hydrateFailedAt = Date.now();
     return;
   }
+  refresher.noteHydrated((docs as Stored[]).filter((r) => r && r.id).map((r) => r.id));
   for (const rec of docs as Stored[]) {
     if (rec && rec.id && !s.dashboards.find((d) => d.id === rec.id)) {
       s.dashboards.push(rec);
@@ -151,6 +185,7 @@ export function __resetDashboards(): void {
   delete s.hydratedAt;
   delete s.hydrateFailedAt;
   s.seen.clear();
+  s.refresh = newMirrorRefresh();
   mirror.__reset();
   versions.__reset();
 }
@@ -376,7 +411,7 @@ export function saveDashboard(user: Principal, id: string, spec: DashboardSpec):
     announce(existing, user.id, 'edit dashboard');
     return existing;
   }
-  const rec = { ...dashboardRecord(id, spec, user.id, 'personal'), domain: user.domains[0] ?? 'sales' };
+  const rec: Stored = { ...dashboardRecord(id, spec, user.id, 'personal'), domain: user.domains[0] ?? 'sales', updatedAt: new Date().toISOString() };
   dashState().dashboards.push(rec);
   writeNew(mirror, dashState().seen, rec.id, rec as unknown as Record<string, unknown>);
   announce(rec, user.id, 'create dashboard');
@@ -515,6 +550,7 @@ export function deleteDashboard(id: string, user: Principal): void {
   const arr = dashState().dashboards;
   arr.splice(arr.indexOf(d), 1);
   writeDeleted(mirror, dashState().seen, d.id);
+  refresher.noteDeleted(d.id);
   versions.purge(d.id);
   // Announced AFTER removal, so the hook's capture of the domain no longer holds it and the
   // commit IS the deletion.

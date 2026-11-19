@@ -6,6 +6,7 @@ import { offlineMockAllowed, refuseOfflineMock } from '@core/kernel/offline-mock
 import { config } from '@core/kernel/config';
 import { osMirror } from '@core/infra/os-mirror';
 import { newSeenFields, noteSeen, writeDeleted, writeChanged, writeNew, type SeenFields } from '@core/infra/field-writes';
+import { mirrorRefresher, newMirrorRefresh, type MirrorRefreshState } from '@core/infra/mirror-refresh';
 import type { CurrentUser } from '@core/kernel/auth';
 import { canPromote, roleAtLeast } from '@core/kernel/session';
 import { canManageArtifact, type ArtifactScope } from '@core/policy/edit-scope';
@@ -283,11 +284,13 @@ type ConnCacheState = {
   cache: Map<string, Connection> | null;
   /** What this process last knew the mirror held per connection (see `core/infra/field-writes.ts`). */
   seen: SeenFields;
+  /** The run worker re-reads the mirror before serving (`core/infra/mirror-refresh.ts`). */
+  refresh: MirrorRefreshState;
 };
 const CONN_STATE_KEY = Symbol.for('soa.connections.cache');
 function connState(): ConnCacheState {
   const g = globalThis as unknown as Record<symbol, ConnCacheState | undefined>;
-  if (!g[CONN_STATE_KEY]) g[CONN_STATE_KEY] = { cache: null, seen: newSeenFields() };
+  if (!g[CONN_STATE_KEY]) g[CONN_STATE_KEY] = { cache: null, seen: newSeenFields(), refresh: newMirrorRefresh() };
   return g[CONN_STATE_KEY]!;
 }
 
@@ -364,9 +367,14 @@ function compileProfile(c: Connection): void {
 
 async function getCache(): Promise<Map<string, Connection>> {
   const s = connState();
-  if (s.cache) return s.cache;
+  if (s.cache) {
+    // The run worker re-reads what os-ui wrote since (throttled; a no-op in os-ui).
+    await refresher.beforeRead();
+    return connState().cache ?? s.cache;
+  }
   const map = new Map<string, Connection>();
   const [docs] = await Promise.all([mirror.hydrate(500), versions.ensureHydrated()]);
+  if (docs) refresher.noteHydrated((docs as Connection[]).filter((c) => c && c.id).map((c) => c.id));
   for (const c of (docs ?? []) as Connection[]) { // null → mirror down → in-memory only
     map.set(c.id, c);
     noteSeen(s.seen, c.id, c as unknown as Record<string, unknown>);
@@ -385,6 +393,38 @@ async function getCache(): Promise<Map<string, Connection>> {
  * connections list hits it), so by the time a cascade runs it is populated; an unwarmed
  * cache honestly yields NO members rather than blocking on I/O (same as Bigbets when
  * un-hydrated). Never triggers hydration itself — a pure read of `connState().cache`. */
+/** The shared worker refresh (`core/infra/mirror-refresh.ts`), applied to the connection cache.
+ *  A connection taken from the mirror has its OPA profile (re)compiled; a dropped one withdrawn. */
+const refresher = mirrorRefresher<Connection>(mirror, () => connState().refresh, {
+  label: 'connections',
+  size: 500,
+  held: (connId) => connState().cache?.get(connId),
+  put: (c) => {
+    const s = connState();
+    if (!s.cache) return;
+    s.cache.set(c.id, c);
+    noteSeen(s.seen, c.id, c as unknown as Record<string, unknown>);
+    compileProfile(c);
+  },
+  drop: (connId) => {
+    const map = connState().cache;
+    const c = map?.get(connId);
+    if (!map || !c) return false;
+    unregisterConnectionProfile(c.principal);
+    return map.delete(connId);
+  },
+});
+
+/** Declare THIS process (the run worker) a reader of the connections os-ui writes. Refused elsewhere. */
+export function enableMirrorRefresh(on = true): boolean {
+  return refresher.enable(on);
+}
+
+/** Load the connection cache (and, in the run worker, re-read what os-ui wrote since). */
+export async function ensureConnectionsHydrated(): Promise<void> {
+  await getCache();
+}
+
 function syncCache(): Map<string, Connection> {
   return connState().cache ?? new Map<string, Connection>();
 }
@@ -3012,6 +3052,7 @@ export function deleteConnectionSync(connId: string, user: CurrentUser): Connect
   unregisterConnectionProfile(c.principal);
   map.delete(connId);
   writeDeleted(mirror, connState().seen, connId);
+  refresher.noteDeleted(connId);
   versions.purge(connId);
   // Physical: purge the credential + OAuth token (+ Notion MCP client) from the vault —
   // best-effort per target, never silent (mirrors the async deleteConnection's ONE rule).
@@ -3088,6 +3129,7 @@ export async function deleteConnection(connId: string, user: CurrentUser): Promi
   unregisterConnectionProfile(c.principal);
   map.delete(connId);
   writeDeleted(mirror, connState().seen, connId);
+  refresher.noteDeleted(connId);
   versions.purge(connId);
   // Physical: purge the credential + OAuth token (+ Notion MCP client) from the vault.
   const physical = [...teardown, ...purgeConnectionSecrets(c, hasSecret, deleteSecret)];
@@ -3105,6 +3147,7 @@ export function __resetConnections(): void {
   const s = connState();
   s.cache = null;
   s.seen.clear();
+  s.refresh = newMirrorRefresh();
   mirror.__reset();
   versions.__reset();
 }

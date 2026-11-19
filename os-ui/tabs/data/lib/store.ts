@@ -38,6 +38,7 @@ import { SEMANTIC_ARTIFACT, scaffoldSemanticYaml } from '@tabs/data/lib/semantic
 import { assetTarget, productTarget, reuseSourceFqn, composeSourceBlocker, personalSchema, domainSchema, physicalSlug, versionTarget, slug } from '@tabs/data/lib/store-fqn';
 import { config } from '@core/kernel/config';
 import { osMirror } from '@core/infra/os-mirror';
+import { mirrorRefresher, newMirrorRefresh, type MirrorRefreshState } from '@core/infra/mirror-refresh';
 import { newSeenFields, noteSeen, writeDeleted, writeNew, writeMergedYaml, type SeenFields } from '@core/infra/field-writes';
 import { type ArtifactVersion, versionLog } from '@core/kernel/versioning';
 // The GOVERNED folder registry (Wave 1) — a moved-into folder is upserted as an
@@ -131,11 +132,13 @@ type DataStoreState = {
   /** The `yaml` this process last knew the mirror held per dataset — the base of the merge in
    *  {@link writeThrough}. The same string object as the record's until it changes, so free. */
   seenYaml: Map<string, string>;
+  /** The run worker re-reads the mirror before serving (`core/infra/mirror-refresh.ts`). */
+  refresh: MirrorRefreshState;
 };
 const DS_KEY = Symbol.for('soa.data.store');
 function ds(): DataStoreState {
   const g = globalThis as unknown as Record<symbol, DataStoreState | undefined>;
-  if (!g[DS_KEY]) g[DS_KEY] = { store: new Map(), seeded: false, hydration: null, seen: newSeenFields(), seenYaml: new Map() };
+  if (!g[DS_KEY]) g[DS_KEY] = { store: new Map(), seeded: false, hydration: null, seen: newSeenFields(), seenYaml: new Map(), refresh: newMirrorRefresh() };
   return g[DS_KEY]!;
 }
 
@@ -250,7 +253,33 @@ export async function ensureHydrated(): Promise<void> {
     if (s.hydrateFailedAt && Date.now() - s.hydrateFailedAt < HYDRATE_RETRY_MS) return;
     s.hydration = hydrate();
   }
-  return s.hydration;
+  await s.hydration;
+  // The run worker re-reads what os-ui wrote since (throttled; a no-op in os-ui).
+  if (s.hydratedAt !== undefined) await refresher.beforeRead();
+}
+
+/** The shared worker refresh (`core/infra/mirror-refresh.ts`), applied to the dataset registry. */
+const refresher = mirrorRefresher<DatasetRecord>(mirror, () => ds().refresh, {
+  label: 'datasets',
+  size: 1000,
+  accept: (doc) => typeof (doc as Partial<DatasetRecord>).yaml === 'string',
+  held: (id) => ds().store.get(id),
+  put: (rec) => {
+    const s = ds();
+    s.store.set(rec.id, rec);
+    noteSeen(s.seen, rec.id, rec);
+    s.seenYaml.set(rec.id, rec.yaml);
+  },
+  drop: (id) => {
+    const s = ds();
+    s.seenYaml.delete(id);
+    return s.store.delete(id);
+  },
+});
+
+/** Declare THIS process (the run worker) a reader of datasets os-ui writes. Refused elsewhere. */
+export function enableMirrorRefresh(on = true): boolean {
+  return refresher.enable(on);
 }
 
 /**
@@ -281,6 +310,7 @@ async function hydrate(): Promise<void> {
   }
   s.hydrateFailedAt = undefined;
   s.hydratedAt = Date.now();
+  refresher.noteHydrated((docs as DatasetRecord[]).filter((r) => r && r.id).map((r) => r.id));
   for (const rec of docs as DatasetRecord[]) {
     // Don't clobber records created in-process before hydration completed.
     if (rec && rec.id && !s.store.has(rec.id)) {
@@ -345,6 +375,7 @@ export function __resetStore(): void {
   s.hydration = null;
   s.hydrateFailedAt = undefined;
   s.hydratedAt = undefined;
+  s.refresh = newMirrorRefresh();
   mirror.__reset();
   versions.__reset();
 }
@@ -2043,6 +2074,7 @@ export function deleteDataset(id: string, user: Principal): Dataset {
   ds().store.delete(id);
   ds().seenYaml.delete(id);
   writeDeleted(mirror, ds().seen, id);
+  refresher.noteDeleted(id); // a listing read before the delete landed must not bring it back
   versions.purge(id); // forget + delete-through the snapshot history
   emitProjectChange({ domain: d.domain, datasetId: d.id, action: 'retire', actorId: user.id });
   return d;

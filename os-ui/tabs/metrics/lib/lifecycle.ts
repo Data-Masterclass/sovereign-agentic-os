@@ -12,6 +12,7 @@ import {
 } from '@tabs/data/lib/store';
 import { MetricError } from '@tabs/metrics/lib/model';
 import { osMirror } from '@core/infra/os-mirror';
+import { mirrorRefresher, newMirrorRefresh, type MirrorRefreshState } from '@core/infra/mirror-refresh';
 import { normaliseFolderPath } from '@core/kernel/folders';
 import { createFolder, type FolderScope } from '@core/folders/index';
 import { type ArtifactVersion, versionLog } from '@core/kernel/versioning';
@@ -57,11 +58,16 @@ function splitId(metricId: string): { datasetId: string; measure: string } {
 // lifecycle OVERLAY (archive flag + FOLDER) is keyed here by metric id. The folder is
 // a normalised path exactly like every other foldered artifact; absent ⇒ root `'/'`.
 type ArchiveFlag = { id: string; datasetId: string; measure: string; archived: boolean; folder?: string; updatedAt: string };
-type LifecycleState = { flags: Map<string, ArchiveFlag>; hydration: Promise<void> | null };
+type LifecycleState = {
+  flags: Map<string, ArchiveFlag>;
+  hydration: Promise<void> | null;
+  /** The run worker re-reads the mirror before serving (`core/infra/mirror-refresh.ts`). */
+  refresh: MirrorRefreshState;
+};
 const LC_KEY = Symbol.for('soa.metrics.lifecycle');
 function lc(): LifecycleState {
   const g = globalThis as unknown as Record<symbol, LifecycleState | undefined>;
-  if (!g[LC_KEY]) g[LC_KEY] = { flags: new Map(), hydration: null };
+  if (!g[LC_KEY]) g[LC_KEY] = { flags: new Map(), hydration: null, refresh: newMirrorRefresh() };
   return g[LC_KEY]!;
 }
 
@@ -88,12 +94,28 @@ const versions = versionLog('metric');
 export async function ensureHydrated(): Promise<void> {
   const s = lc();
   if (!s.hydration) s.hydration = Promise.all([hydrate(), versions.ensureHydrated()]).then(() => {});
-  return s.hydration;
+  await s.hydration;
+  await refresher.beforeRead(); // the run worker re-reads what os-ui wrote since (no-op in os-ui)
+}
+
+/** The shared worker refresh (`core/infra/mirror-refresh.ts`), applied to the archive/folder flags. */
+const refresher = mirrorRefresher<ArchiveFlag>(mirror, () => lc().refresh, {
+  label: 'metrics-lifecycle',
+  size: 2000,
+  held: (id) => lc().flags.get(id),
+  put: (f) => { lc().flags.set(f.id, f); },
+  drop: (id) => lc().flags.delete(id),
+});
+
+/** Declare THIS process (the run worker) a reader of the metric flags os-ui writes. Refused elsewhere. */
+export function enableMirrorRefresh(on = true): boolean {
+  return refresher.enable(on);
 }
 
 async function hydrate(): Promise<void> {
   const s = lc();
   const docs = (await mirror.hydrate(2000)) ?? [];
+  refresher.noteHydrated((docs as ArchiveFlag[]).filter((f) => f && f.id).map((f) => f.id));
   for (const f of docs as ArchiveFlag[]) {
     if (f && f.id && !s.flags.has(f.id)) s.flags.set(f.id, f);
   }
@@ -103,6 +125,7 @@ export function __resetLifecycle(): void {
   const s = lc();
   s.flags.clear();
   s.hydration = null;
+  s.refresh = newMirrorRefresh();
   mirror.__reset();
   versions.__reset();
 }
@@ -245,6 +268,7 @@ export function deleteMetric(metricId: string, user: Principal): PhysicalDeleteR
   // Forget the lifecycle flag (the registry side of the delete).
   lc().flags.delete(metricId);
   mirror.deleteThrough(metricId);
+  refresher.noteDeleted(metricId);
   return { recordDeleted: true, physical };
 }
 

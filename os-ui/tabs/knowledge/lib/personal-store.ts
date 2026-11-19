@@ -6,6 +6,7 @@ import type { Visibility } from '@tabs/knowledge/lib/schema';
 import { roleAtLeast } from '@core/kernel/session';
 import type { Role } from '@core/kernel/session';
 import { osMirror } from '@core/infra/os-mirror';
+import { mirrorRefresher, newMirrorRefresh, type MirrorRefreshState } from '@core/infra/mirror-refresh';
 import { newSeenFields, noteSeen, writeDeleted, writeChanged, writeNew, type SeenFields } from '@core/infra/field-writes';
 import { type ArtifactVersion, versionLog } from '@core/kernel/versioning';
 import { canManageArtifact, type ArtifactScope } from '@core/policy/edit-scope';
@@ -60,11 +61,13 @@ function fail(message: string, status: number): never {
 type State = { entries: Map<string, PersonalKnowledgeRecord>; seeded: boolean; hydration: Promise<void> | null
   /** What this process last knew the mirror held per note (see `core/infra/field-writes.ts`). */
   seen: SeenFields;
+  /** The run worker re-reads the mirror before serving (`core/infra/mirror-refresh.ts`). */
+  refresh: MirrorRefreshState;
 };
 const PK_KEY = Symbol.for('soa.knowledge.personal-store');
 function st(): State {
   const g = globalThis as unknown as Record<symbol, State | undefined>;
-  if (!g[PK_KEY]) g[PK_KEY] = { entries: new Map(), seeded: false, hydration: null, seen: newSeenFields() };
+  if (!g[PK_KEY]) g[PK_KEY] = { entries: new Map(), seeded: false, hydration: null, seen: newSeenFields(), refresh: newMirrorRefresh() };
   return g[PK_KEY]!;
 }
 
@@ -99,12 +102,31 @@ function writeThrough(rec: PersonalKnowledgeRecord): void {
 export async function ensureHydrated(): Promise<void> {
   const s = st();
   if (!s.hydration) s.hydration = Promise.all([hydrate(), versions.ensureHydrated()]).then(() => {});
-  return s.hydration;
+  await s.hydration;
+  await refresher.beforeRead(); // the run worker re-reads what os-ui wrote since (no-op in os-ui)
+}
+
+/** The shared worker refresh (`core/infra/mirror-refresh.ts`), applied to the personal notes. */
+const refresher = mirrorRefresher<PersonalKnowledgeRecord>(mirror, () => st().refresh, {
+  label: 'personal-knowledge',
+  size: 2000,
+  held: (id) => st().entries.get(id),
+  put: (rec) => {
+    st().entries.set(rec.id, rec);
+    noteSeen(st().seen, rec.id, rec as unknown as Record<string, unknown>);
+  },
+  drop: (id) => st().entries.delete(id),
+});
+
+/** Declare THIS process (the run worker) a reader of the notes os-ui writes. Refused elsewhere. */
+export function enableMirrorRefresh(on = true): boolean {
+  return refresher.enable(on);
 }
 
 async function hydrate(): Promise<void> {
   const s = st();
   const docs = (await mirror.hydrate(2000)) ?? [];
+  refresher.noteHydrated((docs as PersonalKnowledgeRecord[]).filter((r) => r && r.id).map((r) => r.id));
   for (const rec of docs as PersonalKnowledgeRecord[]) {
     if (rec && rec.id && !s.entries.has(rec.id)) {
       s.entries.set(rec.id, rec);
@@ -125,6 +147,7 @@ export function __resetStore(): void {
   s.seen.clear();
   s.seeded = false;
   s.hydration = null;
+  s.refresh = newMirrorRefresh();
   mirror.__reset();
   versions.__reset();
 }
@@ -333,6 +356,7 @@ export function updatePersonalKnowledge(
 export function deletePersonalKnowledge(id: string, user: Principal): void {
   requireEdit(id, user);
   writeDeleted(mirror, st().seen, id);
+  refresher.noteDeleted(id);
   versions.purge(id);
   st().entries.delete(id);
 }
