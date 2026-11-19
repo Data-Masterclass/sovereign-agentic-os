@@ -16,6 +16,15 @@ curl http://localhost:9200/knowledge/_search?pretty     # the agents' RAG docs
 - **kNN search**, index management, mappings — all via the REST API (or Dashboards if enabled).
 - **Haystack** runs RAG pipelines over it; the agents query it for context.
 
+## Who may connect
+Ingress to the bundled OpenSearch pods is restricted to the OS components that use it
+(`networkPolicies.opensearchIngress`, default on; `templates/base/network/opensearch-ingress-policy.yaml`):
+`:9200` from os-ui, os-ui-worker and the snapshot register Job / CronJob; `:9200`/`:9300`
+between OpenSearch pods. Every other component reaches the index only through os-ui. A new
+direct client must be added to that policy (and to `scripts/check-opensearch-ingress-policy.mjs`),
+or its requests time out where NetworkPolicies are enforced. `kubectl port-forward` (above) is
+unaffected.
+
 ## FAQ
 **Q: No auth?** The security plugin is disabled locally for simplicity; the default-deny
 NetworkPolicies + in-cluster-only service protect it. On STACKIT, enable security + TLS.

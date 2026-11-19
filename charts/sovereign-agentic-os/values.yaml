@@ -34,6 +34,10 @@ networkPolicies:
   dagster:
     enabled: true
     ingressNamespace: ingress-nginx
+  # OpenSearch: restrict ingress to the OS components that use it (defence in depth).
+  # templates/base/network/opensearch-ingress-policy.yaml; rendered only with opensearch.enabled.
+  # Lives here, not under `opensearch:`, which is the upstream subchart's own value tree.
+  opensearchIngress: true
 
 # Backups (templates/extensions/backup/).
 backup:
