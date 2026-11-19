@@ -105,6 +105,11 @@ export type EngineFixture = {
   description: string;
   /** True when any handoff edge carries a `when` guard — P1's walker side skipped these. */
   guarded: boolean;
+  /**
+   * Optional reader's note on a frozen fixture — where the engine is now SUPPOSED to differ from
+   * what the golden records, and why. Metadata only: no test compares it to a run.
+   */
+  note?: string;
   task: string;
   yaml: string;
   script: string;

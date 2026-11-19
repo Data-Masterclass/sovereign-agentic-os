@@ -70,3 +70,21 @@ test('the guarded fixture still records the DEFECT the walker had (the reason it
   assert.ok(fx.golden.path.includes('publisher'), 'the walker ignored `when` and visited the guarded target');
   assert.equal(fx.golden.held, 1, 'and held the write that target attempted');
 });
+
+test('the software-team golden still records the PRE-HOLD run, and says so to whoever opens it', () => {
+  // Review L4. The golden's `held: 0` and `request_deploy → ok` are stale against the engine on
+  // purpose: the file is frozen evidence of the walker, and `parity.test.ts` asserts the park.
+  // What must not happen is someone reading `held: 0` as the current posture, or "fixing" it by
+  // regenerating — so the file carries a note, and this pins both the note and the frozen values.
+  const fx = JSON.parse(readFileSync(join(DIR, 'software-team.json'), 'utf8')) as EngineFixture;
+  assert.equal(fx.golden.held, 0, 'frozen: the walker held nothing');
+  assert.deepEqual(
+    fx.golden.toolCalls.map((c) => `${c.node}:${c.tool}:${c.outcome}`),
+    ['planner:use_data:ok', 'builder:create_software:ok', 'tester:start_preview:ok', 'deployer:request_deploy:ok'],
+    'frozen: the four calls, all straight through',
+  );
+  assert.match(fx.note ?? '', /predates the hold on request_deploy/);
+  assert.match(fx.note ?? '', /PARKS at the deployer/);
+  assert.match(fx.note ?? '', /Do not regenerate/);
+});
+

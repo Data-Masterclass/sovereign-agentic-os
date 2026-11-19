@@ -1059,10 +1059,61 @@ at **zero** (it stays two-way: a new platform write fails until it is classified
 
 | Posture for an agent run | Tools | Mechanism |
 |---|---|---|
-| **Refused** — never executed, never advertised | `decide_deploy`, `promote`, `reindex_corpus` | `AGENT_FORBIDDEN_TOOLS` (`core/mcp/write-tool-meta.ts`): gate 0 of `grantedToolExecutor`, dropped from `grantedMcpTools`, and refused by name in `callAppTool`. Also `COMPANY_SCOPE_TOOLS` as the second line. |
-| **Held under every preset** — a second person confirms | `delete`, `archive`, `request_deploy` | `ALWAYS_CONFIRMED_TOOLS` in `tabs/agents/lib/build/hold.ts` → `domain_admin` of the system's domain (`admin` under `read-only`). |
+| **Refused** at the three agent-run doors below | `decide_deploy`, `promote`, `decide_approval`, `promote_connection`, `reindex_corpus` | `AGENT_FORBIDDEN_TOOLS` (`core/mcp/write-tool-meta.ts`). Also `COMPANY_SCOPE_TOOLS` as the second line. |
+| **Held under every preset** — a second person confirms (engine path only) | `delete`, `archive`, `request_deploy` | `ALWAYS_CONFIRMED_TOOLS` in `tabs/agents/lib/build/hold.ts` → `domain_admin` of the system's domain (`admin` under `read-only`). |
 | **Held on escalation** (pre-existing) | `publish_knowledge`, `request_promotion`, `approve_promotion` | `ESCALATING_DOMAIN_TOOLS` → `domain_admin`. |
 | **My-scope** — `read-only` holds; otherwise the runner's own rights decide (gate 2) | `create_software`, `start_preview`, `use_connection`, `use_data`, `use_knowledge`, `use_as_data`, `commit`, `push_app_files`, `set_app_spec`, `design_software`, and every other catalogued write | the `personal` default of `writeTargetScope`. |
+| **Not classified** — the gate answers "not a write" under every preset | the nine-tool backlog below | pinned by the registry ratchet in `core/mcp/write-tool-meta.test.ts`. |
+
+**Which door enforces what.** "Refused" and "held" are properties of a door, not of
+a tool, and there are five ways a model's tool call reaches `handleRpc`:
+
+| Door | Entry | Forbidden names | Hold | What a call may be |
+|---|---|---|---|---|
+| Agent system run | `runOsTeam` → `grantedToolExecutor` (engine, schedule, `run_agent_system`) | refused at gate 0, never advertised | yes — decided in the tools node, run parks | the system's grants ∩ the node's tools |
+| Software Team panel | `runPhaseTurn` → `phaseToolExecutor` (`POST /api/software/team`) | refused, never advertised | **none** — synchronous turn, nothing to park on | only what this turn's agent was offered |
+| App tool call | `callAppTool` (`POST /api/apps/<id>/tool`) | refused by name; `parseAppActions` rejects the declaration | the app's own reads-on/writes-off preset | the app's own tools |
+| Ask the OS | `runOsAssistant` (`/api/assistant/chat`) | **not consulted** | **none** | the present user's whole role-scoped registry |
+| Tab assistant | `runTabAgent` (`/api/agent-chat`, the app Build chat) | **not consulted** | **none** | the tab's tools for the user's role (an allow-list in Build-chat modes) |
+
+The last two are interactive assistants acting for a person who is present, and
+they are deliberately out of scope of both tables. There is **no structural
+confirm step** before a write in either: `core/runtime/agent-loop.ts` says so in
+its own words — its `writeToolNames` is "the harness's failed-call guard; it is
+NOT a confirmation gate" — and "confirm before a write" is a prompt-level rule
+only. A person's own MCP session and every UI route go straight to `handleRpc`
+under the user's role gates and consult neither table, which is intended.
+
+**The Software Team panel has no hold, and that is an open product decision.**
+A turn starts when the user presses *Send* (or the *Approve — build it* button
+shown while a plan is waiting). The phase router picks one agent; the user sees
+the phase label and each tool step stream by as it happens — there is no card or
+button between the model's call and its execution. Of the always-confirmed tools,
+no agent of the team is offered `delete` or `archive`, so they cannot be called
+there at all; `request_deploy` is offered only to the deployer, in the `deploy`
+phase, which the user enters by typing a phrase `isShip` matches ("ship it",
+"go live", "request deploy", …). It then executes immediately, as that user. On
+the engine path the same call parks for a second person. Whether a typed phrase is
+confirmation enough is not decided here; a test in
+`tabs/agents/lib/build/agentic-graph-server.test.ts` states the current behaviour
+and is the one to change with it.
+
+**The unclassified backlog** — every tool in the MCP registry that changes state
+(or may) and has no hold posture. The ratchet pins this list exactly, so it can
+shrink only by a reviewed diff and cannot grow silently. Recommended postures are
+suggestions for the owner, not decisions:
+
+| Tool | What it does | Recommended posture |
+|---|---|---|
+| `request_certification` | files a Domain → Company certification request | held on escalation, like `request_promotion` — to `admin`, since a platform admin approves it |
+| `retire_connection` | archives a connection, or deletes it with its Trino catalogue and Secret | always confirmed (the `delete`/`archive` family) |
+| `revoke_action_adoption` | revokes a domain's adoption of an app's write actions | refused — a domain admin's governance decision, the inverse of an approval |
+| `restore_operating_manual_version` | overwrites an Operating Model with a prior version | always confirmed; Company scope to `admin` |
+| `update_operating_manual` | edits an Operating Model at My / Domain / Company scope | needs an argument-aware hold: My-scope personal, Domain/Company held — the name-only gate cannot tell them apart, so hold until it can |
+| `create_connection` | creates a personal connection and stores its secret by reference | My-scope (already asserted `personal` by a test; just not in the catalog) |
+| `configure_connection` | renames, re-scopes or rotates the credential of a connection | My-scope, with the same Shared/Certified caveat as `set_app_spec` |
+| `test_connection` | a live probe that writes the connection's status back | My-scope, or reclassify as a read if the status write is moved out |
+| `build_software` | returns the build directive; with `SOFTWARE_BUILDER=agentic` it runs the build loop and commits | My-scope, same as `commit` — it reaches the same bytes |
 
 Four things this cost, each of which generalises:
 
@@ -1071,8 +1122,8 @@ Four things this cost, each of which generalises:
   so the go-live rests on one human judgement while the record shows a request, an
   approval and a confirmation. Four-eyes means two people. An agent may *request*
   (held) and may never *decide* (refused). The tools stay fully available to a
-  person in the UI or their own MCP session — the table is consulted only at
-  agent-facing doors.
+  person in the UI or their own MCP session — the table is consulted only at the
+  three doors named above, and a test pins that `handleRpc` does not read it.
 - **"Always held" and "tenant-wide" are different properties that happened to share
   one set.** `COMPANY_SCOPE_TOOLS` meant both. Deleting one app is not tenant-wide,
   and routing it to a platform admin would have made *asking* for a deploy need a
@@ -1095,12 +1146,10 @@ Four things this cost, each of which generalises:
 
 Still open, and stated so nobody assumes otherwise: the hold is **name-only**
 (`hold.ts` is pure and sees no arguments), so a My-scope tool cannot tell the
-runner's Personal app from one already Shared or Certified; and several approval
-verbs outside the platform surface — `decide_approval`, `promote_connection`,
-`retire_connection`, `request_certification` — are in neither `WRITE_TOOL_TABS`
-nor `AGENT_FORBIDDEN_TOOLS`, so the agent hold gate does not see them at all.
-`promote_metric` is catalogued but My-scope. They were out of this change's scope
-and are the next candidates for the same question.
+runner's Personal app from one already Shared or Certified; the nine-tool backlog
+above; and `promote_metric`, which is catalogued but My-scope although it is a
+promotion. The registry ratchet covers `ALL_MCP_TOOLS` as registered in the test
+environment — a bundle behind a flag that is off there is not in it.
 
 **A picker scoped to "everything the caller may see" is not scoped to the thing being
 edited.** The agent grant picker built its feed from `listDatasets/listWorkflows/

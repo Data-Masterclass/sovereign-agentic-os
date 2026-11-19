@@ -1503,9 +1503,12 @@ select seq, event, at from run_events where run_id = '<runId>' order by seq;
 >   and `promote` are refused to agent runs outright (`AGENT_FORBIDDEN_TOOLS`); `delete`, `archive` and
 >   `request_deploy` are held for a second person under every preset; the rest are My-scope (`read-only`
 >   holds them, otherwise the runner's own rights decide). The table is in `os-ui/ARCHITECTURE.md`
->   ("Things this codebase will punish you for"). What is still true: the hold is name-only, and
->   `decide_approval`, `promote_connection`, `retire_connection` and `request_certification` are not in
->   the hold table at all. `os-ui/core/mcp/write-tool-meta.ts`; `os-ui/tabs/agents/lib/build/hold.ts`
+>   ("Things this codebase will punish you for"), with the door-by-door table: the refusal and the hold
+>   apply to agent system runs; the Software Team panel refuses but has **no hold**; Ask the OS and the
+>   tab assistants consult neither table. `decide_approval` and `promote_connection` are refused too.
+>   What is still true: the hold is name-only, and nine state-changing tools (`request_certification`,
+>   `retire_connection`, `update_operating_manual`, … — the list is pinned by a registry-wide ratchet in
+>   `os-ui/core/mcp/write-tool-meta.test.ts`) have no hold posture at all. `os-ui/core/mcp/write-tool-meta.ts`; `os-ui/tabs/agents/lib/build/hold.ts`
 > - **Build's Langfuse row is `pending` until the system has really run.** Its probe reads the traces a
 >   *run* leaves behind, and a build no longer stages a fake one — which is honest, and means a freshly
 >   built system shows an empty observability row. `os-ui/ARCHITECTURE.md:308-310`
