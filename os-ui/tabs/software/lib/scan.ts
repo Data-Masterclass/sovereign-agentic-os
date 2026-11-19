@@ -10,6 +10,8 @@
 import 'server-only';
 import type { ScanCategory, ScanFinding, ScanMode, ScanResult, ScaffoldFile } from '@tabs/software/lib/model';
 import { offlineMockAllowed } from '@core/kernel/offline-mock';
+import { config } from '@core/kernel/config';
+import { runTrivyScan, type TrivyScanOpts } from '@tabs/software/lib/scan-trivy';
 
 /**
  * The security scanner that feeds the Builder review card (Software golden path
@@ -153,4 +155,79 @@ export function securityScan(files: ScaffoldFile[], mode?: ScanMode): ScanResult
     };
   }
   return { mode: resolved, passed: clean, findings, summary, scannedAt };
+}
+
+// ------------------------------------------------------ The live engine's door -----
+
+export type ResolveScanOpts = {
+  /** Defaults to `config.softwareScannerEnabled` (the chart's `osUI.software.scanner.enabled`). */
+  scannerEnabled?: boolean;
+  /** Passed through to the adapter — the injection point the tests use. */
+  trivy?: TrivyScanOpts;
+};
+
+/**
+ * THE ONE DOOR a deploy request walks through to get a scan.
+ *
+ * `securityScan` above is unchanged on purpose: it is the decider the kernel tripwire pins, and
+ * it is what produces the baseline EVIDENCE. This is the live engine's door beside it:
+ *
+ *   1. An EXPLICIT `mode` from the caller wins. That injection point pre-dates this change
+ *      (#56: "a caller that injects a real engine ('live') is unaffected") and the whole unit
+ *      suite leans on it, so it keeps its exact meaning.
+ *   2. SCANNER OFF  -> `securityScan(files)`, i.e. the #56 behaviour verbatim, with the reason
+ *      naming the flag that turned it off instead of claiming nothing is wired.
+ *   3. SCANNER ON   -> Trivy, as one Kubernetes Job (`scan-trivy.ts`). `mode: 'live'` is
+ *      returned ONLY when that Job completed and its report parsed.
+ *   4. TRIVY COULD NOT ANSWER -> delegate to `securityScan(files)`, which already decides
+ *      between the laptop's honestly-labelled `offline-mock` and a cluster's `unavailable`
+ *      (that is `OS_OFFLINE_MOCK`'s job and this function does not second-guess it) — and when
+ *      the answer is `unavailable`, the scanner's REAL cause replaces the generic reason, so an
+ *      approver reads "the Job failed: DeadlineExceeded" rather than "no scanner is wired".
+ *
+ * There is no branch in which a scanner that could not run yields `passed: true`.
+ */
+export async function resolveScan(
+  slug: string,
+  files: ScaffoldFile[],
+  mode?: ScanMode,
+  opts: ResolveScanOpts = {},
+): Promise<ScanResult> {
+  if (mode) return securityScan(files, mode);
+
+  const enabled = opts.scannerEnabled ?? config.softwareScannerEnabled;
+  if (!enabled) {
+    return withScannerReason(
+      securityScan(files),
+      'The live security scanner is switched off for this deployment ' +
+        '(`osUI.software.scanner.enabled: false`), so no engine ran and there is no verdict to ' +
+        'give. Turn it on, or wire another engine behind `resolveScan`.',
+    );
+  }
+
+  const live = await runTrivyScan(slug, files, opts.trivy ?? {});
+  if (!live.ok) return withScannerReason(securityScan(files), live.reason);
+
+  // The live verdict. Note what is NOT here: no `offlineMockAllowed()` call. A real engine's
+  // real answer is not a fabrication and is not that lever's business.
+  return {
+    mode: 'live',
+    passed: live.passed,
+    findings: live.findings,
+    summary: live.summary,
+    scannedAt: new Date().toISOString(),
+    engine: live.engine,
+    notRun: live.notRun,
+  };
+}
+
+/**
+ * Replace the baseline's generic "nothing is wired" reason with the scanner's REAL cause — but
+ * ONLY on an `unavailable` result. On a laptop the baseline answers `offline-mock`, which is a
+ * complete, honestly-labelled result; bolting a failure reason onto it would make the teaching
+ * flow look broken, and would change a shape the rest of the suite asserts on.
+ */
+function withScannerReason(result: ScanResult, reason: string): ScanResult {
+  if (result.mode !== 'unavailable') return result;
+  return { ...result, reason };
 }

@@ -20,10 +20,21 @@ export const GET = withRoute<{ cardId: string }>(async ({ params }) => {
  * the app's domain may approve/deny — a non-Builder gets 403, and a failing
  * security scan blocks approval (409). Identical whether reached from the UI or
  * the Platform MCP.
+ *
+ * `acknowledgeNoScan` + `reason` are the audited, ADMIN-ONLY hatch for a scan that produced no
+ * verdict (2026-11-19). Both are forwarded verbatim and every gate is enforced in
+ * `decideDeploy` — the role, the fact that the scan is `unavailable` rather than failed, and the
+ * reason's length — so this route adds no authority of its own.
  */
-export const POST = withRoute<{ cardId: string }, { decision?: string; note?: string }>(async ({ user, params, body }) => {
+export const POST = withRoute<
+  { cardId: string },
+  { decision?: string; note?: string; acknowledgeNoScan?: boolean; reason?: string }
+>(async ({ user, params, body }) => {
   const { cardId } = params;
   const decision = body.decision === 'approve' ? 'approve' : 'deny';
-  const result = await decideDeploy(cardId, user, decision, body.note);
+  const result = await decideDeploy(cardId, user, decision, body.note, {
+    acknowledgeNoScan: body.acknowledgeNoScan === true,
+    reason: typeof body.reason === 'string' ? body.reason : undefined,
+  });
   return NextResponse.json(result);
 }, { parse: true, defaultStatus: 500 });

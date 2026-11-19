@@ -250,6 +250,21 @@ const PLATFORM_SCHEMAS: Record<string, JsonSchema> = {
       cardId: { type: 'string', description: 'Deploy review card id.' },
       decision: { type: 'string', enum: ['approve', 'deny'] },
       note: { type: 'string' },
+      acknowledgeNoScan: {
+        type: 'boolean',
+        description:
+          'ADMIN ONLY, and only when the card\'s security scan is `unavailable` (no scanner ' +
+          'engine ran). Explicitly approve a deploy that has NO security verdict. Requires ' +
+          '`reason`. Refused for a scan that RAN and FAILED — a real finding still blocks. The ' +
+          'acknowledgement, the reason and your identity are written to the approval record and ' +
+          'the audit log.',
+      },
+      reason: {
+        type: 'string',
+        description:
+          'Mandatory with `acknowledgeNoScan` (at least 20 characters): why this deploy is going ' +
+          'ahead without a security verdict. It becomes the permanent audit record.',
+      },
     },
     required: ['cardId', 'decision'],
   },
