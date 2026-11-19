@@ -15,6 +15,7 @@ import {
 import { loadTabContext, tabTitle } from '@core/tabs-meta/context';
 import { buildInstructions } from '@core/mcp/instructions';
 import { runAgentic, type AgenticResult, type LlmCall, type ToolExecutor, type ToolSpec } from '@core/runtime/agentic';
+import { ungatedInteractive } from '@core/runtime/confirm-gate';
 import { ASK_RULES_BLOCK } from '@core/runtime/ask-rules';
 import { parseArtifacts, truncationBanner, type ChatArtifact } from '@core/runtime/chat-artifacts';
 import { WRITE_TOOL_NAMES } from '@core/mcp/write-tool-meta';
@@ -222,9 +223,12 @@ export function composeToolText(artifacts: ChatArtifact[], body: string): string
   return marker ? `${marker}\n\n${text}` : text;
 }
 
-export function osToolExecutor(user: CurrentUser, sink?: ChatArtifact[]): ToolExecutor {
+/** The governed dispatch an executor calls. Injectable so a test can observe what reaches it. */
+export type RpcDispatch = typeof handleRpc;
+
+export function osToolExecutor(user: CurrentUser, sink?: ChatArtifact[], dispatch: RpcDispatch = handleRpc): ToolExecutor {
   return async (name, args) => {
-    const res = await handleRpc(user, {
+    const res = await dispatch(user, {
       jsonrpc: '2.0',
       id: 1,
       method: 'tools/call',
@@ -318,7 +322,9 @@ export async function runOsAssistant(input: RunOsAssistantInput): Promise<OsAssi
     system: osAssistantSystem(input.tab, input.page),
     userMessages: input.messages,
     tools: osToolSpecs(input.user, input.tab),
-    callTool: osToolExecutor(input.user, artifacts),
+    // No structural confirmation step yet — named so it can be found and replaced (the
+    // call sites are pinned in `confirm-gate.test.ts`). Behaviour is exactly what it was.
+    callTool: ungatedInteractive(osToolExecutor(input.user, artifacts)),
     // C1 — ONE trace per turn: the plan call, every act iteration and the cap synthesis all
     // nest under this turn's id instead of each creating its own unlinked Langfuse trace.
     observe: { traceId },
