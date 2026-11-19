@@ -6,7 +6,7 @@ import type { McpTool, JsonSchema } from '@core/mcp/server';
 
 // --- The EXACT governed monitoring spine the Monitoring tab + /api/monitoring call
 import { buildOverview, scopeForUser, filterScope, fetchTrace, assertInScope } from '@tabs/monitoring/lib/index';
-import { collectRuns } from '@tabs/monitoring/lib/adapters/run-trace';
+import { collectRunList, isRunListStatus, RUN_LIST_STATUSES } from '@tabs/monitoring/lib/adapters/run-trace';
 import { isRunId } from '@core/kernel/run-id';
 
 /**
@@ -49,18 +49,33 @@ export const MONITORING_TOOLS: McpTool[] = [
     tab: 'monitoring',
     minRole: 'creator',
     description:
-      'List recent agent/tool RUNS you are entitled to see — each with its health (green/amber/red), a one-line detail, owner, domain and cost. Purpose: the run-trace lens as a list — find a run to inspect. Before: whoami / get_monitoring_overview. After: get_run_trace(runId) to drill into one. Governance: read-only and HARD-scoped — every run is passed through `filterScope`, so a creator sees ONLY their own runs, a builder only their domain’s. NOTE the ladder (A5-review-L-4): this LISTING is scope-wide, so a builder sees that a colleague’s run exists and its health; the run CONTENTS are owner-only — `get_agent_run` and `get_run_trace` on an agent run id answer not_found unless you started it. LIVE from Langfuse + the in-process governed trace ring (offline-mock only when nothing live is found); each row carries `source`.',
+      'List recent agent RUNS (and governed tool-call traces) you are entitled to see, newest first — each with its health (green/amber/red), a one-line detail, owner, domain and, for an agent run, its `status` (queued · running · done · failed · parked · interrupted · incomplete) and `links.systemId`. Purpose: the run-trace lens as a list — find a run to inspect. Before: whoami / get_monitoring_overview. After: get_run_trace(runId) or get_agent_run(runId) to drill into one. READS: agent runs from the durable RUN STORE (the `run_jobs` rows every run is filed in, wherever it executed — a run the worker finished a moment ago is listed even before Langfuse has ingested it; a failed run reads `failed`, red); governed tool-call traces from Langfuse + this process’s trace ring. `systemId` and `status` filter agent runs (a filtered list holds agent runs only). If the run store does not answer, `runStore.available` is false with a reason — agent runs are then NOT listed, which does not mean there are none. Governance: read-only and HARD-scoped — every row is passed through `filterScope`, so a creator sees ONLY their own runs, a builder their own and their domain’s. NOTE the ladder (A5-review-L-4): this LISTING is scope-wide, so a builder sees that a colleague’s run exists and its health; the run CONTENTS are owner-only — `get_agent_run` and `get_run_trace` on an agent run id answer not_found unless you started it. Each row carries `source`.',
     inputSchema: {
       type: 'object',
-      properties: { limit: { type: 'number', description: 'Max runs to return (default 25, capped 50).' } },
-      examples: [{}, { limit: 10 }],
+      properties: {
+        limit: { type: 'number', description: 'Max runs to return (default 25, capped 50).' },
+        systemId: { type: 'string', description: 'Only agent runs of this agent system (id from list_agent_systems).' },
+        status: { type: 'string', enum: [...RUN_LIST_STATUSES], description: 'Only agent runs with this status.' },
+      },
+      examples: [{}, { limit: 10 }, { systemId: 'sys_ab12cd34', status: 'failed' }],
     },
     call: async (user, args) => {
+      const systemId = str(args.systemId).trim() || undefined;
+      const rawStatus = str(args.status).trim();
+      if (rawStatus && !isRunListStatus(rawStatus)) fail(`list_runs: \`status\` must be one of ${RUN_LIST_STATUSES.join(', ')}`, 400);
+      const status = isRunListStatus(rawStatus) ? rawStatus : undefined;
       const scope = await scopeForUser(user);
-      const all = await collectRuns();
-      const visible = filterScope(scope, all); // HARD scope: only what this identity may see
       const cap = typeof args.limit === 'number' && args.limit > 0 ? Math.min(Math.floor(args.limit), 50) : 25;
-      return { scope: { level: scope.level, via: scope.via }, count: visible.length, runs: visible.slice(0, cap) };
+      const { items, runStore } = await collectRunList({ scope, filter: { systemId, status }, limit: cap });
+      const visible = filterScope(scope, items); // HARD scope: only what this identity may see
+      return {
+        scope: { level: scope.level, via: scope.via },
+        count: visible.length,
+        runs: visible.slice(0, cap),
+        // Additive: where agent runs were read from, and whether it answered.
+        runStore,
+        ...(systemId || status ? { filters: { ...(systemId ? { systemId } : {}), ...(status ? { status } : {}) } } : {}),
+      };
     },
   },
   {

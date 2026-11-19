@@ -6,6 +6,7 @@ import type { CurrentUser } from '@core/kernel/auth';
 import { recentTraces } from '@core/infra/agent-governed';
 import { listCaps, getSpend, reconcileSpendFromLiteLLM } from '@core/policy/index';
 import { collectRuns } from '@tabs/monitoring/lib/adapters/run-trace';
+import type { RunListFilter } from '@tabs/monitoring/lib/adapters/run-store-runs';
 import { collectPipelines } from '@tabs/monitoring/lib/adapters/pipeline-health';
 import { collectCost } from '@tabs/monitoring/lib/adapters/cost';
 import { collectArtifacts } from '@tabs/monitoring/lib/adapters/artifact-health';
@@ -31,9 +32,10 @@ import { LENS_IDS, type HealthItem, type LensSummary, type Overview, type Scope 
  * deliberately NOT here: it belongs to Platform→Components, which collects it via
  * `collectSystem` directly (so the same adapter is reused, never duplicated).
  */
-export async function collectAll(): Promise<HealthItem[]> {
+export async function collectAll(scope?: Scope, runFilter?: RunListFilter): Promise<HealthItem[]> {
   const [runs, pipelines, cost, artifacts] = await Promise.all([
-    collectRuns(),
+    // The viewer's scope goes into the run-store read, so their own runs are never crowded out.
+    collectRuns({ scope, filter: runFilter }),
     collectPipelines(),
     collectCost(),
     collectArtifacts(),
@@ -41,10 +43,10 @@ export async function collectAll(): Promise<HealthItem[]> {
   return [...runs, ...pipelines, ...cost, ...artifacts];
 }
 
-/** The scoped, attention-first overview the UI renders in one fetch. */
-export async function buildOverview(user: CurrentUser): Promise<Overview> {
+/** The scoped, attention-first overview the UI renders in one fetch. `runs` filters the runs lens. */
+export async function buildOverview(user: CurrentUser, opts: { runs?: RunListFilter } = {}): Promise<Overview> {
   const scope = await scopeForUser(user);
-  const all = await collectAll();
+  const all = await collectAll(scope, opts.runs);
   const visible = filterScope(scope, all);
 
   const lenses: LensSummary[] = LENS_IDS.map((id) =>
