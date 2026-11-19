@@ -19,6 +19,7 @@ import { getAppForGovernance, getAppForUser, promoteApp } from '@tabs/software/l
 import { demoteApp } from '@tabs/software/lib/lifecycle';
 import { decideDeploy } from '@tabs/software/lib/review';
 import { getSystem, demoteSystem } from '@tabs/agents/lib/store';
+import { appWriteApplier } from '@core/policy/app-write-port';
 
 /**
  * THE UNIFIED PROMOTION / CERTIFICATION LADDER — the ONE filing + enforcement
@@ -227,6 +228,11 @@ export function buildEffectDeps(): EffectDeps {
     },
     enableExposureActions: (exposureId, approver) => approveExposureActions(exposureId, asCurrentUser(approver)),
     freezeKnowledgeBundle: (workflowId, approver) => freezeCertifiedKnowledgeBundle(workflowId, { id: approver.id, role: approver.role, domains: approver.domains }),
+    // Read at call time: the Software tab registers it at boot (`instrumentation.ts`).
+    applyAppWrite: async (req) => {
+      const run = appWriteApplier();
+      return run ? run(req) : { ok: false, reason: 'no app-write runner is registered in this OS process; nothing was written' };
+    },
     applyConnectionWrite: async (payload, approver) => {
       // EXECUTE the held write through the governed approveOnce seam AS the approver — the
       // capability profile / four-layer intersection is re-checked inside, so a doctored

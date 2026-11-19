@@ -32,6 +32,7 @@ mock.module('@core/policy/approvals', {
   namedExports: {
     enqueue: (x: unknown) => {
       enqueued.push(x);
+      return { id: `apr_${enqueued.length}` };
     },
   },
 });
@@ -91,8 +92,27 @@ test('write tool → 202, enqueued for approval, traced requires_approval, NOT e
   assert.equal(r.body.decision, 'requires_approval');
   assert.equal(r.body.held, true);
   assert.equal(enqueued.length, 1, 'one approval enqueued');
+  assert.equal(r.body.approvalId, 'apr_1', 'the app is told which approval holds its write');
   assert.ok(!executed, 'a held write is never executed');
   assert.equal(traced.at(-1)?.decision, 'requires_approval');
+});
+
+test('an APPROVED write executes instead of filing a second approval', async () => {
+  AUTHZ_CONN = { effect: 'requires_approval', reason: 'write held' };
+  executed = false;
+  enqueued.length = 0;
+  const r = await callAppTool(app, 'add_record', { name: 'x' }, 'dan', {}, undefined, undefined, { approved: true });
+  assert.equal(r.status, 200);
+  assert.ok(executed, 'the approved write ran');
+  assert.equal(enqueued.length, 0, 'no second approval card');
+});
+
+test('an approval never lifts a DENY: an approved call the gate now refuses is 403 and does not run', async () => {
+  AUTHZ_CONN = { effect: 'deny', reason: 'grant removed' };
+  executed = false;
+  const r = await callAppTool(app, 'add_record', { name: 'x' }, 'dan', {}, undefined, undefined, { approved: true });
+  assert.equal(r.status, 403);
+  assert.ok(!executed);
 });
 
 test('denied tool → 403, traced deny, NOT executed', async () => {
