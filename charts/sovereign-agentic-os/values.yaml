@@ -54,6 +54,14 @@ ingress:
     nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
   # Per-tool public hostnames. Empty => that tool gets NO Ingress.
   hosts: {}
+  # The model gateway (LiteLLM) gets NO public route, even when `hosts.litellm` is set. It holds
+  # the provider credentials and an admin API; nothing outside the cluster needs to call it —
+  # os-ui, the worker and the Jobs use the in-cluster Service, and admins open its console
+  # through the OS at /tools/litellm/ui (authenticated proxy) or with `kubectl port-forward`.
+  # Setting this to true AND `hosts.litellm` is the only way to render the route. Do not, unless
+  # you have put your own authentication in front of it; `scripts/check-gateway-not-public.mjs`
+  # fails the gate if the STACKIT profile does. See docs/components/litellm.md.
+  exposeGateway: false
 
 # Object storage — local stand-in for STACKIT Object Storage (MinIO, S3).
 objectStorage:

@@ -230,7 +230,8 @@ variable "dns_contact_email" {
 variable "ingress_subdomains" {
   description = "Hostnames (relative to dns_name) that resolve to the ingress load balancer."
   type        = list(string)
-  default     = ["os", "litellm", "langfuse", "openmetadata", "superset", "forgejo", "argocd", "terminal", "workbench", "dagster"]
+  # No "litellm": the model gateway is not published (chart value ingress.exposeGateway).
+  default     = ["os", "langfuse", "openmetadata", "superset", "forgejo", "argocd", "terminal", "workbench", "dagster"]
 }
 
 # --- Container Registry (provider has no resource — see registry.tf) ----------
