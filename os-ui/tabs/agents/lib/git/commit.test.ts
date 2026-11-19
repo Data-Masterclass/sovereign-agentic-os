@@ -61,7 +61,7 @@ const READ_ONLY = new Set([
  * Writers that deliberately do NOT commit: a RUN's artefacts are the LangGraph checkpoint, the
  * `run_events` rows and the Langfuse trace — none of them belongs in the definition repo, and
  * committing per node would bury every real change under run noise. Each of these is
- * `writeThrough(rec, null)` in the store, with the reason on the line.
+ * `writeRunState(rec, [...run fields])` in the store, with the reason on the line.
  */
 const RUN_ONLY: Record<string, () => void> = {
   recoverInterrupted: () => {
@@ -169,7 +169,7 @@ test('every store export is classified: read-only, run-only, or a committing mut
 
 test('the store has no un-classified write-through, and a delete announces itself', () => {
   const src = readFileSync(join(import.meta.dirname, '..', 'store.ts'), 'utf8');
-  assert.equal(/writeThrough\(rec\)\s*;/.test(src), false, 'writeThrough must carry a change descriptor or an explicit null');
+  assert.equal(/writeThrough\(rec\)\s*;/.test(src), false, 'writeThrough must carry a change descriptor (run bookkeeping goes through writeRunState)');
   const lines = src.split('\n');
   for (let i = 0; i < lines.length; i++) {
     if (!lines[i].includes('mirror.deleteThrough(')) continue;
