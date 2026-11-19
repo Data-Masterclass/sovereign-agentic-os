@@ -8,14 +8,52 @@ cd "$(dirname "$0")/.."
 # `next build` type-checks `*.test 2.ts`, because tsconfig excludes only `**/*.test.ts`. That
 # combination failed a production image build with type errors in files nobody had edited.
 # `.dockerignore` keeps them out of the image context; this keeps them out of the tree.
-strays="$(find .. -path '*/node_modules' -prune -o -path '*/.next' -prune -o -type f -name '* 2.*' -print)"
+#
+# WIDENED (2026-11-19): the check used to be `-type f -name '* 2.*'`, which missed the three
+# shapes that hurt most — a DIRECTORY (`os-ui/node_modules 2`, `tabs/data 2`), whose contents
+# then get type-checked and COPYed wholesale; a SYMLINK named `* 2`; and an extension-less file
+# (`Dockerfile 2`, `gate 2`). So: files, directories AND symlinks, named `* 2` or `* 2.*`.
+# `-print -prune` is load-bearing — print the match, then refuse to descend into it, so a
+# duplicated `node_modules 2` is one line rather than one line per vendored file.
+# `scripts/check-structure.mjs` carries the same rule (CLOUD-SYNC-DUPLICATE) as a second door,
+# because it also runs as the PostToolUse hook and so catches a duplicate in-session.
+#
+# `.claude` MUST stay in the prune group (review H1): it holds `.claude/worktrees/*`, i.e. OTHER
+# sessions' checkouts. Without it this scan walks into every sibling worktree and reports their
+# copied `public/monaco/...` duplicates — ~28 of them — as if they were strays in this tree, and
+# the gate fails for something no one here can fix. A worktree runs its own gate; this one only
+# polices the tree it is in.
+#
+# `../docs` IS PRUNED FROM THE STRICT SWEEP AND SCANNED SEPARATELY (review L1). docs/ is prose,
+# and a maintainer may legitimately write `notes 2.md` or `design 2.txt`; failing the gate on
+# one made this door disagree with rule 7 in `scripts/check-structure.mjs`, which already
+# permits it. Two doors that disagree are worse than one door: whichever is stricter becomes the
+# real rule, by accident. So under docs/ only a DIRECTORY (or symlink) named `* 2` — always a
+# sync artefact — and a duplicated SOURCE file count; the extension list below is the same one
+# rule 7 uses. Note `-path '../docs'` pins the TOP-LEVEL docs only: a nested `*/docs` elsewhere
+# stays under the strict sweep, exactly as rule 7 scopes it.
+#
+# Every pattern below is written out inline on purpose: a `* 2.ts` pattern held in a shell
+# variable word-splits on its own space and find then reads it as `-name * ` plus a stray
+# `2.ts`, which silently matches nothing.
+strays="$(find .. \( -path '*/node_modules' -o -path '*/.next' -o -path '*/.git' -o -path '*/.claude' -o -path '../docs' \) -prune -o \
+  \( -name '* 2' -o -name '* 2.*' \) \( -type f -o -type d -o -type l \) -print -prune)"
+docs_strays="$(find ../docs \( -path '*/node_modules' -o -path '*/.next' \) -prune -o \
+  \( -name '* 2' \( -type d -o -type l \) \) -print -prune -o \
+  -type f \( -name '* 2.ts' -o -name '* 2.tsx' -o -name '* 2.mjs' -o -name '* 2.cjs' \
+             -o -name '* 2.js' -o -name '* 2.json' -o -name '* 2.sh' -o -name '* 2.bash' \
+             -o -name '* 2.py' -o -name '* 2.rego' -o -name '* 2.yaml' -o -name '* 2.yml' \
+             -o -name '* 2.tpl' -o -name '* 2.sql' \) -print)"
+strays="$(printf '%s\n%s' "$strays" "$docs_strays" | sed '/^$/d')"
 if [ -n "$strays" ]; then
   echo "gate: FAIL — iCloud/Finder conflict copies in the tree. They are never tracked; delete them:" >&2
   printf '%s\n' "$strays" >&2
-  echo "  find . -path '*/node_modules' -prune -o -type f -name '* 2.*' -print -delete" >&2
+  echo "  (a listed DIRECTORY is reported once — delete the whole directory, contents and all)" >&2
+  echo "  find . \( -path '*/node_modules' -o -path '*/.next' -o -path '*/.claude' \) -prune -o \\" >&2
+  echo "       \( -name '* 2' -o -name '* 2.*' \) -print -prune" >&2
   exit 1
 fi
-echo "check-conflict-copies: ok — no '* 2.*' files in the tree"
+echo "check-conflict-copies: ok — no '* 2' / '* 2.*' file, directory or symlink in the tree"
 # A3 (checklist A28): the scoped key's allowlist covers every alias the OS can request —
 # config defaults, agentRuntime models, router fallback targets — on both chart profiles.
 node ../scripts/check-litellm-allowlist.mjs

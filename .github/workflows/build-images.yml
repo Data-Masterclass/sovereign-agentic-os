@@ -1,0 +1,245 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+#
+# build-images — build ONE of our images on a GitHub runner and push it to GHCR.
+#
+# WHY THIS EXISTS. Every image this project ever shipped was built on the owner's Mac through
+# Colima: a 14 GB VM on a 24 GB host. The VM's DNS failed twice mid-build (after the deploy's
+# backup gate had already run), the host OOM-killed runs, and an emulated linux/amd64 build
+# blocks the machine for 10-15 minutes. GitHub's runners are amd64 natively and have a cache.
+# `scripts/deploy.sh --from-registry <version>` then rolls out a tag built here, with no local
+# Docker at all.
+#
+# WHERE IT PUSHES — the one value the owner flips. Images live at
+# `ghcr.io/aborek/sovereign-os/*`, but this repository is `Data-Masterclass/...`, and a
+# workflow's built-in GITHUB_TOKEN can push to `ghcr.io/data-masterclass/*` and CANNOT push to
+# the `aborek` user namespace. So:
+#
+#   Option A (default, no secret at all) — push to ghcr.io/data-masterclass/sovereign-os.
+#     Nothing to configure. The cluster's pull secret must then be re-pointed at that namespace
+#     before a deploy uses it.
+#   Option B (keep ghcr.io/aborek/sovereign-os) — set the repository VARIABLE
+#     IMAGE_REPO_PREFIX=ghcr.io/aborek/sovereign-os and the repository SECRET GHCR_TOKEN to a
+#     classic PAT with `write:packages` on the aborek account.
+#
+# An unset secret or variable is the EMPTY STRING inside a ${{ }} expression, hence falsy — so
+# `secrets.GHCR_TOKEN || secrets.GITHUB_TOKEN` needs no `if:` and no second job, and the
+# workflow is correct under both options with nothing set today. CONTRIBUTING.md -> "Images:
+# build in CI" carries the owner's copy-paste blocks.
+#
+# Actions are pinned to commit SHAs, as `ci.yml` does.
+name: build-images
+
+on:
+  push:
+    tags:
+      - 'os-ui-v*'
+      - 'git-http-v*'
+      - 'dagster-v*'
+  workflow_dispatch:
+    inputs:
+      image:
+        description: which image to build
+        required: true
+        type: choice
+        options: [os-ui, git-http, git-daemon, dagster]
+      version:
+        description: the image tag to push (e.g. 0.9.0)
+        required: true
+        type: string
+
+# packages: write to push to GHCR; contents: read to check the source out. Nothing else —
+# this workflow must not be able to move a ref or open a pull request.
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: build-images-${{ github.ref }}-${{ inputs.image || '' }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    # An os-ui build is ~10 min warm and the whole point of this workflow is that nobody is
+    # watching it. A hung buildx step must not burn an hour of runner time (review L7).
+    timeout-minutes: 45
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+      version: ${{ steps.meta.outputs.version }}
+      ref: ${{ steps.meta.outputs.ref }}
+      digest: ${{ steps.push.outputs.digest }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      # A tag names ONE image, so this is a resolve step rather than a matrix (a matrix would
+      # build all four on every tag). The dockerfile/context pairs differ per image and getting
+      # one wrong fails SILENTLY — a wrong context just misses a COPY source. The table is the
+      # one in `scripts/os` ($IMAGES), which is otherwise the only place that knows it.
+      - name: Resolve image, version, dockerfile and context
+        id: meta
+        env:
+          EVENT: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_IMAGE: ${{ inputs.image }}
+          INPUT_VERSION: ${{ inputs.version }}
+          PREFIX: ${{ vars.IMAGE_REPO_PREFIX || 'ghcr.io/data-masterclass/sovereign-os' }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" = workflow_dispatch ]; then
+            image=$INPUT_IMAGE
+            version=$INPUT_VERSION
+          else
+            # Split on the LAST `-v`, so the version is always what follows it and an image
+            # name that itself contains `-v` falls through to the `unknown image` error below
+            # rather than being silently truncated.
+            image=${REF_NAME%-v*}
+            version=${REF_NAME##*-v}
+          fi
+          # A dispatch input is operator-supplied text that ends up in a shell and in a tag.
+          # Refuse anything that is not a Docker tag before it goes anywhere near either.
+          case $version in
+            *[!A-Za-z0-9._-]* | '' | [!A-Za-z0-9]*)
+              echo "::error::'$version' is not a valid image tag" >&2; exit 1 ;;
+          esac
+          case $image in
+            # os-ui's context is the REPO ROOT: the image bakes in docs/components/*.md.
+            os-ui)      dockerfile=images/base/os-ui/Dockerfile;        context=. ;;
+            git-http)   dockerfile=images/base/git-http/Dockerfile;     context=images/base/git-http ;;
+            git-daemon) dockerfile=images/base/git-daemon/Dockerfile;   context=images/base/git-daemon ;;
+            # dagster COPYs both dagster/ and dbt/, so its context is their shared parent.
+            dagster)    dockerfile=images/extensions/dagster/Dockerfile; context=images/extensions ;;
+            *) echo "::error::unknown image '$image' — expected one of os-ui, git-http, git-daemon, dagster" >&2; exit 1 ;;
+          esac
+          test -f "$dockerfile" || { echo "::error::$dockerfile does not exist" >&2; exit 1; }
+          {
+            echo "image=$image"
+            echo "version=$version"
+            echo "dockerfile=$dockerfile"
+            echo "context=$context"
+            echo "ref=$PREFIX/$image:$version"
+          } >> "$GITHUB_OUTPUT"
+          echo "resolved: $image $version -> $PREFIX/$image:$version  ($dockerfile in $context)"
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      # GHCR_TOKEN when the owner chose option B, else the built-in token (option A).
+      #
+      # The USERNAME must be the PAT's owner under option B (review L10). `github.actor` is
+      # whoever pushed the tag, which is only incidentally the PAT owner — and when it is not,
+      # GHCR rejects the login outright rather than falling back. So option B also sets the
+      # repository variable IMAGE_REGISTRY_USER=aborek; option A leaves it unset and the actor
+      # is correct, because the built-in token belongs to this repository.
+      - name: Log in to GHCR
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ vars.IMAGE_REGISTRY_USER || github.actor }}
+          password: ${{ secrets.GHCR_TOKEN || secrets.GITHUB_TOKEN }}
+
+      # os-ui ONLY, and BEFORE the pushing build: build into the local daemon so the worker
+      # smoke can run against the real image. A registry has no un-push, so a broken worker
+      # graph must be caught here. The second build call is a cache hit and costs seconds.
+      - name: Build os-ui locally (for the worker smoke)
+        id: load
+        if: steps.meta.outputs.image == 'os-ui'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ${{ steps.meta.outputs.context }}
+          file: ${{ steps.meta.outputs.dockerfile }}
+          platforms: linux/amd64
+          provenance: false
+          load: true
+          push: false
+          tags: ${{ steps.meta.outputs.ref }}
+          cache-from: type=gha,scope=${{ steps.meta.outputs.image }}
+          cache-to: type=gha,mode=max,scope=${{ steps.meta.outputs.image }}
+
+      # The SAME smoke `scripts/deploy.sh` runs, copied byte-for-byte. The os-ui-worker
+      # container executes the TypeScript SOURCE under Node's type stripping, which no unit
+      # test can verify: it is a property of the BASE IMAGE's Node (>= 22.6) and of the resolve
+      # hook's aliases. A base-image bump that goes backwards breaks the worker with
+      # ERR_UNKNOWN_FILE_EXTENSION at boot, AFTER the deploy. Nothing connects to a database
+      # until main() runs, so this needs no cluster and fails loudly on its own.
+      - name: Worker smoke — the image can import the worker under --experimental-strip-types
+        if: steps.meta.outputs.image == 'os-ui'
+        env:
+          REF: ${{ steps.meta.outputs.ref }}
+        run: |
+          set -euo pipefail
+          docker run --rm --entrypoint node --workdir /app/src "$REF" \
+            --experimental-strip-types --no-warnings --input-type=module \
+            -e "import { register } from 'node:module'; register('./worker/resolve-hook.mjs', 'file:///app/src/'); const m = await import('./worker/agent-runs.ts'); if (typeof m.main !== 'function') { console.error('worker/agent-runs.ts exports no main()'); process.exit(1); } console.log('worker smoke: graph loaded, main() present');" \
+            || { echo "WORKER_STRIP_TYPES_SMOKE_FAILED — the image cannot load the worker graph (Node < 22.6, or a package missing from the standalone tree: see scripts/worker-deps.mjs)"; exit 1; }
+
+      # provenance: false is not cosmetic. An attestation makes the pushed tag a manifest LIST,
+      # and `docker inspect`'s RepoDigests[0] then yields the attestation index rather than the
+      # image — which is exactly the digest deploy.sh pins into osUI.image.tag. Same flag
+      # deploy.sh already passes to `docker build`.
+      - name: Build and push
+        id: push
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ${{ steps.meta.outputs.context }}
+          file: ${{ steps.meta.outputs.dockerfile }}
+          platforms: linux/amd64
+          provenance: false
+          push: true
+          tags: ${{ steps.meta.outputs.ref }}
+          cache-from: type=gha,scope=${{ steps.meta.outputs.image }}
+          cache-to: type=gha,mode=max,scope=${{ steps.meta.outputs.image }}
+
+      # THE PUSHED IMAGE MUST BE THE IMAGE THAT WAS SMOKED (review L6). The smoke runs against
+      # a locally loaded build and the push is a SECOND build-push-action call: same context and
+      # same cache, so they should be identical — but "should" is not a check, and a cache miss,
+      # a mutated context or a buildx bug would quietly ship an image nothing verified. Compare
+      # the smoked image's config id with the config digest inside the manifest that was pushed;
+      # they are the same object, so they must be equal.
+      - name: The pushed image is the image that was smoked
+        if: steps.meta.outputs.image == 'os-ui'
+        env:
+          REF: ${{ steps.meta.outputs.ref }}
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          set -euo pipefail
+          smoked=$(docker image inspect --format '{{.Id}}' "$REF")
+          pushed=$(docker buildx imagetools inspect "$REF@$DIGEST" --raw \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin)["config"]["digest"])')
+          if [ "$smoked" != "$pushed" ]; then
+            echo "SMOKED_IMAGE_IS_NOT_THE_PUSHED_IMAGE — smoked $smoked, pushed $pushed" >&2
+            echo "   The worker smoke verified an image that is not the one now in the registry." >&2
+            exit 1
+          fi
+          echo "pushed image config $pushed == the smoked image"
+
+      # The digest is what an operator needs next, so print it with the command that uses it.
+      - name: Summary
+        env:
+          IMAGE: ${{ steps.meta.outputs.image }}
+          VERSION: ${{ steps.meta.outputs.version }}
+          REF: ${{ steps.meta.outputs.ref }}
+          DIGEST: ${{ steps.push.outputs.digest }}
+          PREFIX: ${{ vars.IMAGE_REPO_PREFIX || 'ghcr.io/data-masterclass/sovereign-os' }}
+        run: |
+          set -euo pipefail
+          {
+            echo "### pushed \`$REF\`"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| image | \`$IMAGE\` |"
+            echo "| version | \`$VERSION\` |"
+            echo "| digest | \`$DIGEST\` |"
+            echo
+            if [ "$IMAGE" = os-ui ]; then
+              echo "Roll it out with no local Docker:"
+              echo
+              echo '```bash'
+              echo "IMAGE_REPO=$PREFIX IMAGE_FROM_REGISTRY=1 ./scripts/deploy.sh $VERSION"
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "digest $DIGEST"
