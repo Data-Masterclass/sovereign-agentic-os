@@ -2053,12 +2053,31 @@ osUI:
   #                  price of the reasoning model ($1.50 per 1M input tokens) $5 is roughly 3M
   #                  tokens — a few dozen ordinary runs.
   #   rpmLimit / tpmLimit  requests and tokens per minute, per system (same as the shared key).
+  #   maxParallelRequests  model calls in flight on one system's key at once (LiteLLM
+  #                  `max_parallel_requests`; a breach is a 429 the agent engine waits out).
   # Leave a value empty to use the code default shown here.
+  # The key's MODEL list is not set here: Build derives it from the system's definition, the
+  # model roles a run uses (reasoning + tools) and the gateway's router fallbacks
+  # (litellm.proxy_config.router_settings.*fallbacks), so a fallback never hits a 403.
   agentSystemKey:
     maxBudget: 5
     budgetDuration: "7d"
     rpmLimit: 300
     tpmLimit: 1000000
+    maxParallelRequests: 8
+  # THE SECRET THE PER-SYSTEM KEYS ARE ENCRYPTED UNDER. Each system's key is random, and its
+  # only copy outside the gateway is stored encrypted in the `agent_runs` database; os-ui and the
+  # worker decrypt it with this secret (it is NOT the LiteLLM master key). Leave both EMPTY on a
+  # `helm install/upgrade` deployment: the chart generates a value once and keeps it across
+  # upgrades (templates/base/os-ui/os-ui-agent-key-encryption.yaml).
+  #   secret          an explicit value (32+ characters). REQUIRED for Argo CD / Flux /
+  #                   `helm template` pipelines, where the generated value cannot be kept.
+  #   existingSecret  name of a Secret you manage, with the key AGENT_KEY_ENCRYPTION_KEY.
+  # IF THIS VALUE CHANGES, every stored key becomes unreadable: each system shows "Rebuild
+  # needed" and does not run until its owner presses Rebuild once. Nothing else is lost.
+  agentKeyEncryption:
+    secret: ""
+    existingSecret: ""
 
   worker:
     enabled: false

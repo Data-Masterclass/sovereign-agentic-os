@@ -292,17 +292,17 @@ separable by a reviewer.
 
 **No inference path uses the master key** (A3; checklist A25). Every model call —
 agent runs, the assistant, the OS assistant, classify, both embedders — goes through
-`core/infra/litellm-credential.ts` `callerCredential`, which chooses, in this order and
-with no third branch:
+`core/infra/litellm-credential.ts` `callerCredential`. Which key a call carries depends on
+what the call is, and there is no fallback from one to the other:
 
-1. the system's **own virtual key** when Build minted one, read from the secrets store by
-   **reference** (`LastBuild.litellmKeyRef`, never the value on a record);
-2. the **shared agent key** the chart provisions (`LITELLM_AGENT_KEY`, alias
-   `sovereign-agents`, idempotent Job `litellm-agent-key-init`, re-asserted on every
-   `helm upgrade` — see below);
-3. otherwise the caller **refuses to run**. There is no fallback to the master key, because a
-   fallback would quietly remove both the model allowlist and the spend cap at exactly the
-   moment someone misconfigured the thing meant to enforce them.
+- **A run of an agent system** uses that system's **own virtual key** (alias `os-<systemId>`)
+  — or it does not run. See "The key of an agent system" below.
+- **Everything else** (the assistant, classify, the embedders) uses the **shared agent key**
+  the chart provisions (`LITELLM_AGENT_KEY`, alias `sovereign-agents`, idempotent Job
+  `litellm-agent-key-init`, re-asserted on every `helm upgrade` — see below).
+- With no usable key the caller **refuses**. Nothing ever falls back to the master key, and a
+  system run never falls back to the shared key: either fallback would quietly remove the
+  very limits the key exists to enforce.
 
 The master key is reserved for administering the gateway itself, through exactly two doors:
 `core/infra/litellm-admin.ts` (reads) and `core/infra/litellm-write.ts` (writes), plus the
@@ -356,9 +356,13 @@ The plan has three lists and only two are ever applied:
 
 | List | What it is | Applied? |
 |---|---|---|
-| `creates` | a team per domain, a key per agent, missing from the gateway | yes |
+| `creates` | a team per domain, missing from the gateway | yes |
 | `updates` | an OS-owned object missing its ownership stamp | yes |
 | `drift` | exists in LiteLLM, not governed by the OS | **never** |
+
+Reconcile does **not** create agent keys (it used to: `agent-<id>`, with no budget and a value
+nobody kept). A system's key comes from its Build; the plan lists systems without one under
+`needsBuild`.
 
 Two deliberate limits. **Budgets are not pushed**: a cap set in LiteLLM is the
 real cap, and reconcile would otherwise undo an admin's work on every run.
@@ -370,6 +374,44 @@ LiteLLM's own UI with the same aliases, rather than as a divergent shadow
 configuration. The POST route ignores its request body and applies a
 server-recomputed plan, so an admin session cannot post arbitrary payloads to
 the admin API under the master key.
+
+## The key of an agent system
+
+Each agent system has ONE key at the gateway, alias `os-<systemId>`, made by the system's
+**Build** (`tabs/agents/lib/build/live.ts`, the `litellm` step) and by nothing else.
+
+| | |
+|---|---|
+| Value | `sk-` + 32 random bytes (`mintSystemKey`). Never derived from an id. The OS generates it and passes it to `/key/generate` (LiteLLM requires the `sk-` prefix; the gateway setting "disable custom API keys" must be off). |
+| Where it is kept | Encrypted (AES-256-GCM, random nonce per record, bound to the system id) in table `agent_system_keys` of the `agent_runs` Postgres database — the store os-ui and `os-ui-worker` already share. Never on the system record, in git, in a trace or in an API answer. |
+| Encryption secret | `AGENT_KEY_ENCRYPTION_KEY`, from Secret `os-ui-agent-key-encryption` (chart `osUI.agentKeyEncryption`), on os-ui and the worker. Not the master key. Generated once and kept across `helm upgrade`. |
+| Limits | `osUI.agentSystemKey.*`: budget + reset window, requests/min, tokens/min, calls at once. Reconciled on every Rebuild. |
+| Models | The system's routed models and pins, the reasoning and tools role models a run uses, and every gateway fallback target of those (`router_settings.*fallbacks`, passed to os-ui as `AGENT_SYSTEM_KEY_FALLBACKS_JSON`). |
+| How it is addressed | By its token id (SHA-256 of the value — what LiteLLM calls `token`), found with `/key/list?key_alias=`. |
+
+**A system without a usable key does not run.** A never-built system, a system whose old key
+was removed, or a key that cannot be decrypted stops the run before anything executes, with
+a message that says to press Build (`SystemKeyUnavailableError`). The Build & Run panel shows
+"Build needed" beforehand, and Admin → overview lists every system's key state.
+
+**Old keys.** Before this, a system's key was `sk-os-<systemId>` — guessable. A Build of such a
+system deletes the old key at the gateway and issues a random one. For systems nobody
+rebuilds, a sweep (`core/infra/agent-system-key-sweep.ts`) runs at every os-ui start and can
+be run from Admin: it deletes every key whose hash equals that of `sk-<alias>`, and the
+unbudgeted `agent-<id>` keys of the old reconcile. It is idempotent and judges only from what
+the gateway reports.
+
+**Rotation** is "mint new, swap, delete old" (LiteLLM's own rotation endpoints are
+Enterprise): Admin → "Replace key", or
+`POST /api/platform-admin/gateway/system-keys {"action":"rotate","systemId":"…"}`. LiteLLM
+requires unique aliases, so the old key is deleted first; a model call that lands in that
+moment gets a 401, re-reads the store and is repeated once with the new key. The key's spend
+counter starts again from zero (it is a new key); spend by tag is unaffected.
+
+**If the encryption secret is lost or changed**, every stored key is unreadable: each system
+shows "Rebuild needed" and one Rebuild per system issues a new key. Nothing else is lost.
+On Argo CD / Flux / `helm template` pipelines set `osUI.agentKeyEncryption.secret` or
+`.existingSecret`, because a generated value cannot be kept there.
 
 ### Deployment caveat
 
