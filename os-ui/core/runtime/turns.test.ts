@@ -40,3 +40,13 @@ test('non-array input yields an empty list', () => {
   assert.deepEqual(cleanTurns('nope'), []);
   assert.deepEqual(cleanTurns({}), []);
 });
+
+test('readBoundedTurns (Track B): both cuts are told — dropped turns and a message cut short', async () => {
+  const { readBoundedTurns } = await import('@core/runtime/turns');
+  const msgs = Array.from({ length: 15 }, (_, i) => ({ role: 'user', content: i === 14 ? 'x'.repeat(5_000) : `m${i}` }));
+  const out = readBoundedTurns(msgs);
+  assert.equal(out.length, 12);
+  assert.match(out[0].content, /^\[3 earlier messages were omitted to keep the request short\.\]\nm3$/);
+  assert.match(out[11].content, /\[…this message was cut at 4000 of 5000 characters\]$/);
+  assert.deepEqual(readBoundedTurns([{ role: 'user', content: 'hi' }]), [{ role: 'user', content: 'hi' }]);
+});

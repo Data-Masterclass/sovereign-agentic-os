@@ -29,6 +29,8 @@ export type RepoRead = {
   unreadable: { path: string; reason: string }[];
   /** Why there is nothing — null when there is. */
   reason: string | null;
+  /** Matching files NOT read because of `limit` (absent when every match was read). */
+  omitted?: number;
 };
 
 const empty = (repo: string, reason: string): RepoRead => ({ repo, head: null, files: [], unreadable: [], reason });
@@ -74,5 +76,7 @@ export async function readRepoFiles(
     files,
     unreadable,
     reason: files.length === 0 ? `every matching file in '${repo}' failed to read (${unreadable.map((u) => u.reason).join('; ')})` : null,
+    // Track B: more files matched than one panel reads — say how many were not read.
+    ...(wanted.length > limit ? { omitted: wanted.length - limit } : {}),
   };
 }

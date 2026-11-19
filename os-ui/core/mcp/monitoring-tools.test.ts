@@ -86,3 +86,11 @@ test('MONITORING get_monitoring_overview — scoped, and no out-of-scope owner l
   const owners = [...ov.attention.map((a) => a.owner), ...ov.lenses.flatMap((l) => l.items.map((i) => i.owner))];
   assert.ok(!owners.includes(OTHER_OWNER), 'no other-user signal in a creator’s overview');
 });
+
+test('MONITORING list_runs (Track B) — a full page says there are more runs', async () => {
+  const out = payload<{ runs: unknown[]; count: number; hasMore?: boolean; note?: string }>(await call(salesRep, 'list_runs', { limit: 1 }));
+  assert.equal(out.runs.length, 1);
+  assert.equal(out.count, 1);
+  assert.equal(out.hasMore, true);
+  assert.match(String(out.note), /there are more/);
+});

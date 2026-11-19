@@ -200,7 +200,9 @@ export const readTools: McpTool[] = [
         }
       }
       const profile = assembleProfile({ fqn, layer, columns, statsRes, topRes, previewRes });
-      return { datasetId: id, name: dataset.name, available: true, ...profile };
+      // Said, not just absent: a wide table gets no top values (Track B).
+      const skipped = columns.length > 40 ? { topValuesSkipped: `Top values were not computed: the table has ${columns.length} columns (more than 40 would be a heavy scan). The other statistics are complete.` } : {};
+      return { datasetId: id, name: dataset.name, available: true, ...profile, ...skipped };
     },
   },
   {
