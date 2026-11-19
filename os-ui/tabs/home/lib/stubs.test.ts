@@ -88,3 +88,12 @@ test('health: domain cap takes precedence over tenant cap', () => {
 
   __resetCost();
 });
+
+// ── Only counters that are really counted are reported as live ───────────────
+
+test('the domain pulse reports no constant-zero counters as live (promoted / certified this period)', async () => {
+  const p = (await domainPulseStub('sales')) as Record<string, unknown>;
+  assert.equal(p.source, 'live');
+  assert.equal('promotedThisPeriod' in p, false, 'nothing counts promotions per period');
+  assert.equal('certifiedThisPeriod' in p, false, 'nothing counts certifications per period');
+});

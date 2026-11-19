@@ -122,7 +122,7 @@ export type Comparator = 'lt' | 'lte' | 'gt' | 'gte';
 /** In-app is the only alert channel (email/Slack were UI fiction with no delivery path). */
 export type Channel = 'in_app';
 export type Notification = { channel: Channel; message: string };
-export type AgentRun = { systemId: string; agent: string; preset: string; reason: string; traced: true };
+export type AgentRun = { systemId: string; agent: string; preset: string; reason: string; traced: true; started: false; note: string };
 export type AlertResponse = {
   breached: boolean;
   value: number;

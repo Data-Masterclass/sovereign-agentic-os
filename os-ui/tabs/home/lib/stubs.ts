@@ -32,8 +32,8 @@ export type DomainPulse = {
   domain: string;
   activeCreators: number;
   activeBuilders: number;
-  promotedThisPeriod: number;
-  certifiedThisPeriod: number;
+  // No promoted/certified-this-period counters: nothing counts them per period, so they were a
+  // constant 0 labelled `live`. They come back when a real count exists.
 };
 
 export type HealthCost = {
@@ -66,8 +66,6 @@ export async function domainPulseStub(domain: string): Promise<DomainPulse> {
     domain,
     activeCreators,
     activeBuilders,
-    promotedThisPeriod: 0,
-    certifiedThisPeriod: 0,
   };
 }
 

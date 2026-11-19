@@ -31,7 +31,7 @@ export type AlertRule = {
   threshold: number;
   /** Delivery channels — always ['in_app']. Kept as an array for storage compat. */
   notify: Channel[];
-  /** Optional: a governed agent to trigger on breach (event → LangGraph run). */
+  /** Optional: the governed agent to hand a breach to. Recorded only — no run is started. */
   triggerAgent?: { systemId: string; agent: string; preset: string };
 };
 
@@ -63,8 +63,20 @@ function breaches(value: number, comparator: Comparator, threshold: number): boo
 }
 
 export type Notification = { channel: Channel; message: string };
-/** The governed run an alert requests on breach (Langfuse-traced when executed). */
-export type AgentRunRequest = { systemId: string; agent: string; preset: string; reason: string; traced: true };
+/** The agent hand-off an alert records on breach. `started` is always false: no run is started. */
+export type AgentRunRequest = {
+  systemId: string;
+  agent: string;
+  preset: string;
+  reason: string;
+  traced: true;
+  started: false;
+  /** What really happens, in words the UI shows as is. */
+  note: string;
+};
+
+/** The words for what a breach does with a named agent — shown by the Alerts panel. */
+export const AGENT_HANDOFF_NOTE = 'Hand-off recorded. No agent run was started: start it from Agents.';
 
 export type AlertEvaluation = {
   breached: boolean;
@@ -75,9 +87,8 @@ export type AlertEvaluation = {
 
 /**
  * Evaluate an alert against the metric's current value. No breach → nothing fires. On
- * breach → one notification per channel AND (if configured) a governed agent-run request
- * carrying the reason. The request is `traced: true` because every alert-triggered run is
- * a governed event the route hands to the agent runtime + Langfuse.
+ * breach → one notification per channel AND (if an agent is named) a recorded hand-off carrying
+ * the reason. The route writes the hand-off as a trace event; it does not start a run.
  */
 export function evaluateAlert(rule: AlertRule, value: number): AlertEvaluation {
   const breached = breaches(value, rule.comparator, rule.threshold);
@@ -86,7 +97,7 @@ export function evaluateAlert(rule: AlertRule, value: number): AlertEvaluation {
   // Coerce so a legacy rule persisted with 'email'/'slack' still fires exactly one in-app note.
   const notifications = coerceChannels(rule.notify).map((channel) => ({ channel, message: `Alert: ${reason}` }));
   const agentRun: AgentRunRequest | null = rule.triggerAgent
-    ? { systemId: rule.triggerAgent.systemId, agent: rule.triggerAgent.agent, preset: rule.triggerAgent.preset, reason, traced: true }
+    ? { systemId: rule.triggerAgent.systemId, agent: rule.triggerAgent.agent, preset: rule.triggerAgent.preset, reason, traced: true, started: false, note: AGENT_HANDOFF_NOTE }
     : null;
   return { breached: true, value, notifications, agentRun };
 }

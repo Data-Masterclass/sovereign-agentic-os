@@ -1,10 +1,12 @@
 import McpDrawer from '@tabs/admin/ui/McpDrawer';
 import StudioRunToggle from '@core/ui/lifecycle/StudioRunToggle';
+import ClusterPill from '@core/ui/ClusterPill';
 
 /**
- * Shared page header: topbar (title + crumb + Live pill + global MCP button).
+ * Shared page header: topbar (title + crumb + cluster pill + global MCP button).
  *
- * TOP-RIGHT topbar-actions: the ONE Studio | Run toggle · Live-cluster pill ·
+ * TOP-RIGHT topbar-actions: the ONE Studio | Run toggle · cluster pill (the real
+ *   /api/status roll-up, `ClusterPill`) ·
  *   "Connect your AI Tool via MCP" — global button, present on EVERY page,
  *   targets the overarching /api/mcp endpoint (all golden-path tools).
  *
@@ -29,10 +31,7 @@ export default function PageHeader({
       <div className="topbar-actions">
         <StudioRunToggle />
         <McpDrawer className="topbar-mcp-btn" />
-        <span className="pill">
-          <span className="live" />
-          Live cluster
-        </span>
+        <ClusterPill />
       </div>
     </div>
   );
