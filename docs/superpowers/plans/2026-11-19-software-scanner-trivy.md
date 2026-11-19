@@ -202,7 +202,7 @@ behave unchanged.
 | `os-ui/tabs/software/lib/scan.ts` | **additive** — `resolveScan` / `securityScanLive`; `securityScan` itself untouched |
 | `os-ui/tabs/software/lib/review.ts` | scan call becomes `await resolveScan(...)`; `decideDeploy` gains the hatch + the audit write |
 | `os-ui/tabs/governance/ui/ReviewCard.tsx` | the scan block + the acknowledgement controls |
-| `charts/.../templates/base/os-ui/software-scanner.yaml` | **new** — Role + RoleBinding (jobs, pods, pods/log) + the scanner NetworkPolicy |
+| `charts/.../templates/base/os-ui/software-scanner.yaml` | **new** — Role + RoleBinding (jobs, pods, pods/log) + the scanner NetworkPolicies. IMPLEMENT change from the plan: the `batch/jobs` grant became its OWN flag-gated Role here rather than a rule inside the shared `os-ui.yaml` Role, so that file was never touched and the grant disappears entirely when the scanner is off |
 | `docs/superpowers/plans/2026-11-19-software-scanner-trivy.md` | this plan |
 
 ### Shared files, edited additively (declared in the report)
@@ -214,7 +214,6 @@ behave unchanged.
 | `os-ui/core/kernel/config.ts` | five `softwareScanner*` keys |
 | `charts/.../values.yaml` | `osUI.software.scanner.*` |
 | `charts/.../templates/base/os-ui/_os-ui-env.tpl` | the scanner env block (RUN path, so the worker matches) |
-| `charts/.../templates/base/os-ui/os-ui.yaml` | the `batch/jobs` rule, gated on the scanner flag |
 | `charts/.../templates/base/network/egress-policies.yaml` | `software-scanner` added to two `NotIn` lists |
 | `os-ui/app/api/software/reviews/[cardId]/route.ts` | reads the two new body fields |
 | `os-ui/app/(experimental)/software/reviews/page.tsx` | passes `canAcknowledgeNoScan` |
@@ -265,8 +264,131 @@ No deploy, no merge, no live-cluster call.
 
 ## 8. What an operator does to turn it on
 
-Filled in with measured values in §9 after the TEST phase.
+The chart turns it on by DEFAULT (`osUI.software.scanner.enabled: true`), so a normal
+`helm upgrade` is enough — but two things must be true on the cluster first, and both are
+operator work, not chart work:
 
-## 9. Outcome
+**1. The image must be pullable.** There is no OS image builder and nothing pulls it on your
+behalf at install time; the first scan pulls it:
 
-Filled in by the TEST phase.
+```
+aquasec/trivy:0.58.2
+```
+
+Air-gapped or registry-mirrored installs re-tag it into their own registry and point the chart
+at that:
+
+```
+--set osUI.software.scanner.image.repository=harbor.internal/mirror/aquasec/trivy \
+--set osUI.software.scanner.image.tag=0.58.2 \
+--set osUI.software.scanner.image.digest=sha256:<digest>      # optional, recommended
+```
+
+**2. The vulnerability database must be reachable — or baked in.** Pick one, deliberately:
+
+```
+# (a) DEFAULT — the Job fetches the DB per scan. Needs DNS + TCP 443 egress, which the
+#     chart's software-scanner-egress NetworkPolicy grants and nothing else.
+--set osUI.software.scanner.dbMode=mirror \
+--set osUI.software.scanner.dbRepository=ghcr.io/aquasecurity/trivy-db
+
+# (b) AIR-GAPPED — no registry is contacted at all (--skip-db-update --offline-scan), so the
+#     image you pull MUST already contain the DB. An image without one finds nothing and the
+#     scan would PASS, so only use this with a DB-baked mirror image.
+--set osUI.software.scanner.dbMode=offline \
+--set osUI.software.scanner.image.repository=harbor.internal/mirror/trivy-with-db
+```
+
+Verified renders on this branch:
+
+| Command | Result |
+|---|---|
+| default | Role + RoleBinding + `software-scanner-egress` (DNS + 443) + `software-scanner-no-ingress`; `SOFTWARE_SCANNER_*` on **both** the `os-ui` and `os-ui-worker` pods |
+| `--set osUI.software.scanner.enabled=false` | the whole template renders **nothing**; `SOFTWARE_SCANNER_ENABLED=false` is still set, so the UI says the scanner is off instead of "nothing is wired" |
+| `--set osUI.software.scanner.dbMode=offline` | **zero** `port: 443` rules — DNS only |
+
+Optional, if a first scan is slow because of the DB fetch:
+`--set osUI.software.scanner.timeoutSeconds=300`.
+
+**What NOT to do.** Do not set `osUI.offlineMock=allow` to unblock a deploy. That re-enables
+fabricated metrics, ingests and connector syncs tenant-wide and still does not scan anything —
+and it is the exact trade #56's review M2 refused. If the scanner cannot run and a deploy must
+ship, use the admin acknowledgement: it ships the same deploy and leaves a record of who decided
+and why.
+
+**Verifying it on the cluster** (read-only, nothing in this branch was deployed):
+
+```
+kubectl -n agentic-os get role os-ui-software-scanner
+kubectl -n agentic-os get netpol software-scanner-egress software-scanner-no-ingress
+kubectl -n agentic-os get jobs -l app.kubernetes.io/component=software-scanner
+```
+
+A scan Job self-deletes 600 s after it finishes (`ttlSecondsAfterFinished`), so an empty list
+between deploys is the expected state.
+
+---
+
+## 9. Outcome (TEST phase, 2026-11-19)
+
+### Gates, measured on `feat/software-scanner-trivy`
+
+| Check | Result |
+|---|---|
+| `os-ui/node_modules/.bin/tsc --noEmit -p os-ui` | **exit 0**, no output |
+| full unit suite (`--test-concurrency=2`) | **exit 0** — 6601 tests, 6597 pass, **0 fail**, 4 todo (the pinned regression markers) |
+| `bash os-ui/scripts/gate.sh` | **exit 0** — 436 tests, 432 pass, 0 fail, 4 todo; all four chart/allowlist checks pass, including `OS_OFFLINE_MOCK` still explicit on both pods and defaulting to `refuse` |
+| `node scripts/check-structure.mjs` | **exit 0** — "ok (no new violations)" |
+| ratchet | `TAB-ISOLATION 419` · `LEGACY-IMPORT 1` · `CORE-INDEPENDENCE 200` — at baseline; `FILE-HEADER 1230` against a committed baseline of 1235, i.e. **5 under**. Not re-baselined: the baseline file is shared with another agent's branch this session, and tightening it is not this change's business. |
+| `bash scripts/license-check.sh` (with syft) | **exit 0** — "LICENSE GATE: PASS", 48 bundled components checked, `Trivy (aquasec/trivy) -> Apache-2.0` among them. The five syft warnings are pre-existing transitive app-dependency licences, unchanged by this branch. |
+| `helm lint charts/sovereign-agentic-os -f values.local.yaml` | **exit 0** — 1 linted, 0 failed |
+
+### New tests — 40, in four files
+
+| File | Tests | What they pin |
+|---|---|---|
+| `tabs/software/lib/scan-trivy.test.ts` | 17 | the four Trivy JSON fixtures (clean / vulnerable / secret / malformed, the last across six malformed inputs), the Job manifest's hardening + label + TTL + `backoffLimit: 0`, the base64 writer's quoting safety, unsafe paths and the payload cap failing closed, `dbMode` arguments, and every Job failure mode (failed, timeout, unreachable, unreadable log) |
+| `tabs/software/lib/scan-live.test.ts` | 10 | the seam: a completed Job is the only route to `live`; failed / timed-out / unreachable / disabled all land on `unavailable` with the real cause; the laptop flow is unchanged; the baseline evidence survives a refused verdict; and the #56 tripwire — under `NODE_ENV=production` no path returns `passed: true` without an engine |
+| `tabs/software/lib/review-no-scan-hatch.test.ts` | 8 | the §4.5 matrix row by row, including domain_admin **and** builder refused with their rank named, six bad reasons refused, a **failed** scan refused, and the happy path's three writes (card, approval effect, hash-chained audit row with `verifyChain() === null`) |
+| `tabs/software/lib/scanner-chart.test.ts` | 5 | the Role's exact resources and verbs (and that it grants no Secrets, no ConfigMaps, no `pods/exec`, and is not a ClusterRole), the flag's default, the pinned image, the NetworkPolicies, the scanner's exclusion from the two blanket egress allows, the env on the RUN path, and that nothing here sets `OS_OFFLINE_MOCK` |
+
+The ten most-related pre-existing files (`scan`, `review`, `review-security`, `approval-sync`,
+`offline-mock-production`, `reconcile-deploy`, `platform-mcp`, the kernel offline-mock tripwire,
+`approvals-route`, `audit`) pass unchanged — 63 tests. That is the property that made this safe:
+the laptop flow still answers `offline-mock` because `resolveScan` delegates the
+no-verdict decision to `securityScan`, which already keys on `OS_OFFLINE_MOCK`.
+
+### Decisions a later reader will want
+
+* **`sast` is `notRun`, not `0`.** There is no allowlisted SAST engine — Semgrep's is LGPL-2.1
+  and absent from `licenses/allowed-licenses.txt` — so the card says "sast not run" with the
+  reason. A zero would have been the same shape of lie #56 removed.
+* **Misconfiguration scanning is not requested.** `--scanners vuln,secret` only. `ScanCategory`
+  is `sast | deps | secrets` and folding misconfig into `sast` would claim SAST coverage. Open
+  item 2.
+* **The scanner Job runs in the RELEASE namespace, not `softwareRunner.namespace`.** It holds the
+  app's SOURCE; the apps namespace is where untrusted student code runs.
+* **The files travel inline, not via a ConfigMap.** A ConfigMap would need namespace-wide
+  `configmaps` create/delete in the os-ui Role for a transient payload, and that grant would be
+  reused. The cost is the payload ceiling — open item 1.
+* **The hatch is `admin`-only, not `domain_admin`.** `domain_admin` approves artefact promotions
+  in its own domain; a security waiver is a different kind of authority and must not be inherited.
+* **The hatch writes an audit row only for the waiver.** An audit log carrying every ordinary
+  approval is one nobody reads; the Governance item and the run trace already record those.
+
+### Open items
+
+1. **The payload ceiling (768 KiB encoded) is a real limit.** A larger tree is REFUSED, honestly,
+   with the size in the reason — not truncated. The follow-up is an initContainer that clones
+   from the OS git store instead, which needs a credential decision; filed rather than guessed.
+2. **No misconfiguration findings**, per the decision above. Adding them means adding a fourth
+   `ScanCategory`, which touches the serialised card shape and the Builder UI — a separate change.
+3. **No SAST at all.** Not fixable without an allowlisted engine. If one is wanted, the licence
+   question comes first, not the wiring.
+4. **The DB mirror's 443 rule is destination-wide.** Kubernetes NetworkPolicy cannot express a
+   hostname; on Cilium (STACKIT) narrow it with an FQDN policy, or run `dbMode: offline`. Recorded
+   in the template's own comment so the next reader meets it there.
+5. **Not verified against a live cluster.** Every Job branch is unit-tested against an injected
+   API client; nothing in this branch was deployed, per the brief. The first real scan will
+   exercise the image pull and the DB fetch for the first time.
+6. **Not deployed, not merged** — per the brief. The branch is pushed and one PR is open.
