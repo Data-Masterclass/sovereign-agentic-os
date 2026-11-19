@@ -1775,3 +1775,88 @@ because a builder is judged by its own report: an ungated shape is `unknown`, ne
 `manual` acceptance check is never machine-passed; a tree that compiles but satisfies no story is
 committed (on budget exhaustion) with `ok: false` and the unmet checks named; and a reviewer that
 says PASS over a scorecard with a FAIL is **overridden** and told so.
+
+## A generated app ships a real lockfile (scanner plan item 9)
+
+Trivy resolves npm dependencies from `package-lock.json` and never reads the ranges in
+`package.json`. Scaffolds used to emit a manifest and no lockfile, so every generated app reached
+the review card as "scan INCOMPLETE (deps not covered)" and needed an admin's written
+acknowledgement to deploy. A new coded app is now seeded **locked**
+(`tabs/software/lib/scaffold-lock.ts`, called by `createApp` only). Five things came out of
+building it, and each one generalises.
+
+**A lockfile is the record of a resolution, so it can only be produced by resolving.** The files
+in `tabs/software/lib/scaffolds/locks/` are the verbatim output of `npm install
+--package-lock-only` (`os-ui/scripts/regen-scaffold-locks.mjs`) over exactly the manifests a seed
+commits. The one thing done to them at seed time is writing the app's slug into the two `name`
+fields npm copies from the manifest — verified once against npm itself (a seed re-resolved under
+another slug is byte-identical) and pinned by a test that the seeded file differs from the
+committed one in those two fields only. Everything else is a refusal: the agentic builder may not
+write a lockfile anywhere in the tree (`pathRefusal`, `src/` included), because a model can only
+write something that *looks* like one and the scanner would read invented versions as the app's
+dependency tree.
+
+**The brief assumed a lockfile could be generated for the manifest as it was. It could not.** The
+Vite scaffolds declared `@sovereign-os/ui` and `@sovereign-os/app-sdk` as registry ranges
+(`^0.1.0`), and neither package is published — `npm install` on a freshly generated app failed
+with E404, and so would the scaffold's own Dockerfile. Seed-time vendoring had existed
+(`applySdkFileDep`, `vendorUiForRepo`) and was dropped in the v2 restructure, leaving the docstrings
+describing a tree nobody produced. So a locked Vite seed declares both as `file:` dependencies and
+carries the vendored source under `vendor/@sovereign-os/*`; the Dockerfile copies `vendor/` in
+before the install. That tree was installed with `npm ci` and built (`tsc -b && vite build`) from a
+clean directory before the lockfile was committed. **When a manifest cannot be resolved, the fix is
+to make the manifest true, not to produce a lockfile for a different one.**
+
+**Presence is not evidence; agreement is.** A `package.json` edited after its lockfile was
+generated still yields a tidy `lang-pkgs` result — over the dependency set the app used to
+declare. `tabs/software/lib/lockfile-evidence.ts` compares each npm manifest with the lockfile
+that covers it (name, version, every range in the four dependency fields, a resolution entry for
+each declared dependency, and vendored local packages against the entry the root lock holds for
+them). `mapTrivyReport` puts `deps` in `notRun` when any manifest is stale, when a manifest that
+declares dependencies has no lockfile while another lockfile resolved, or when a lockfile that
+resolves packages got no result from the engine — each with a reason naming the remedy. It is
+the same predicate the scaffold drift test uses, so "in sync" cannot mean two things. **What it
+cannot see** is written at the top of that file: it contacts no registry, so a lockfile forged end
+to end but internally consistent passes; `yarn.lock`, `pnpm-lock.yaml` and npm lockfileVersion 1
+are not parsed and still rest on the engine's result alone.
+
+**"Nothing was found" needs something to have been looked at — and sometimes there is nothing to
+look at.** Trivy emits no result for a lockfile that resolves zero packages
+(`pkg/scanner/langpkg/scan.go`, v0.58.2), which is the APIs-only scaffold exactly. Reading that as
+"deps not covered" would have made the zero-dependency template the one that still needs an
+acknowledgement. So a manifest that declares no dependency, beside a lockfile that agrees and
+resolves none, needs no engine result. It needs the lockfile: a bare manifest proves nothing, which
+is also what keeps an API app created before this change exactly where it was.
+
+**A change that only applies to new things must be made where new things are made.** Six call
+sites read `getSnapshot(app.id) ?? templateFiles(...)` — the template is the *fallback tree* of
+any app without a snapshot, including one whose mirror failed to hydrate. Putting the lockfile
+into the template functions would have silently changed the effective tree, and the scan verdict,
+of every such app. `templateFiles()` therefore stays the plain scaffold and only `createApp` calls
+`lockedSeed`; the failure direction of a lost snapshot is "deps not covered", never a green tick
+for a lockfile the app's real tree does not contain.
+
+Two things the tests turned up that were already broken. The scanner's path allowlist had no `@`,
+so any tree with a file under `vendor/@sovereign-os/` — which "refresh vendored SDK" has been
+committing all along — failed the scan closed on its first vendored file; `@` is admitted (it is
+inert inside the single-quoted `sh` word a path sits in). And the scanner tests' own "lockfile"
+fixture was `{"lockfileVersion":3}`, a file that describes no manifest: the new check rightly reads
+it as stale, and the fixtures now carry locks that agree with the manifests beside them.
+
+Where the lockfiles live: `scaffolds/locks/<family>.package-lock.json`, imported as JSON so they
+are bundled with the server and present for the worker's type-stripped source. The name is
+deliberate — syft's npm cataloguer keys on the exact filename `package-lock.json`, so these do not
+enter the repository SBOM as if their packages were shipped by the OS. They are template data; the
+licence rule that applies to them is the scaffold one, enforced by `scaffold-lock.test.ts` with
+each exception named (today one: `caniuse-lite`, CC-BY-4.0 browser data pulled in by
+`autoprefixer`).
+
+Costs, stated: a locked Vite seed is about 211 kB (lockfile 91 kB, vendored OS packages 79 kB,
+scaffold 40 kB) against the scan payload ceiling (`DEFAULT_MAX_PAYLOAD`, 900 kB encoded), so an
+app has less room to grow before a scan is refused as too large; the seed test fails if the seed
+alone passes half the ceiling. The legacy `nextjs-supabase` family ships no lockfile on purpose
+(`next` resolves `sharp`'s LGPL-3.0 libvips binaries). No Trivy binary ran in the tests — the
+v0.58.2 release carries no downloadable binaries — so the first scan of a locked app on a cluster
+is the real confirmation that the engine returns a `lang-pkgs` result for these files. If it does
+not, the app reads "deps not covered" as before: the coverage claim still rests on the engine's
+own result.

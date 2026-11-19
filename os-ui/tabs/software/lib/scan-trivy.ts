@@ -30,6 +30,12 @@
  *      were never resolved, i.e. WEAKER than the baseline it replaced. `mapTrivyReport` therefore
  *      takes the tree: a dependency manifest with no `Class: 'lang-pkgs'` result puts `'deps'` in
  *      `notRun` and makes the result NOT green, with the lockfile named as the cause.
+ *      A lockfile's PRESENCE is not evidence either: Trivy reads the lock and never the manifest,
+ *      so a `package.json` changed after its lock was generated would be "covered" by the old
+ *      dependency set. `lockfile-evidence.ts` compares each npm manifest with the lock that
+ *      covers it; a mismatch puts `'deps'` in `notRun` with the remedy (regenerate and commit).
+ *      New apps are seeded with a real lockfile (`scaffold-lock.ts`), so this is now the path a
+ *      generated app takes to a dependency verdict — and the path by which it loses one.
  *   2. THE TREE TRAVELS IN A SECRET, NOT AN ENV VAR (H3/M4). A container argument/env string is
  *      capped by Linux `MAX_ARG_STRLEN` (128 KiB); a real app tree exceeded it, so the container
  *      failed to start with E2BIG and EVERY scan came back `unavailable` — which would have made
@@ -50,13 +56,14 @@
  *
  *   Path safety: content travels as base64 and is decoded in-pod, so nothing in an app's source is
  *   ever interpreted by the shell; a path that is absolute, contains `..`, or carries a character
- *   outside `[A-Za-z0-9._/-]` FAILS THE SCAN CLOSED rather than being silently skipped, because a
+ *   outside `[A-Za-z0-9._/@-]` FAILS THE SCAN CLOSED rather than being silently skipped, because a
  *   scan of a subset of the tree is not the verdict the card claims.
  */
 import 'server-only';
 import { config } from '@core/kernel/config';
 import { k8s as liveK8s, k8sText as liveK8sText } from '@core/infra/k8s';
 import type { ScanCategory, ScanFinding, ScanSeverity, ScaffoldFile } from '@tabs/software/lib/model';
+import { npmLockEvidence } from '@tabs/software/lib/lockfile-evidence';
 
 export type ScanK8s = (
   method: string,
@@ -131,8 +138,16 @@ const VERSION_PATH = '/tmp/os-scan-version.json';
 export const VERSION_DELIM = '<<<OS-SCAN-VERSION>>>';
 export const REPORT_DELIM = '<<<OS-SCAN-REPORT>>>';
 
-/** `[A-Za-z0-9._/-]` only: everything else is refused rather than quoted. */
-const SAFE_PATH = /^[A-Za-z0-9._/-]+$/;
+/**
+ * `[A-Za-z0-9._/@-]` only: everything else is refused rather than quoted.
+ *
+ * `@` is admitted because an npm scope is a directory name: the vendored OS packages live under
+ * `vendor/@sovereign-os/…`, and without it every tree carrying them — every locked seed, and any
+ * app that ran "refresh vendored SDK" — failed the scan CLOSED on its first vendored file. It is
+ * inert where a path is used: inside a single-quoted `sh` word, where only `'` could end the
+ * quote, and `'` is not in the set.
+ */
+const SAFE_PATH = /^[A-Za-z0-9._/@-]+$/;
 
 /**
  * Default ceiling on the Secret payload (bytes of the base64-encoded writer script).
@@ -191,7 +206,7 @@ export function writerScript(files: ScaffoldFile[], maxPayloadBytes = DEFAULT_MA
         kind: 'scan-failed',
         reason:
           `The app tree carries a path the scanner refuses to materialise: "${path}". A path ` +
-          `must be relative, free of ".." segments and limited to [A-Za-z0-9._/-]. The scan is ` +
+          `must be relative, free of ".." segments and limited to [A-Za-z0-9._/@-]. The scan is ` +
           `refused rather than run over a subset of the tree, because a partial scan is not the ` +
           `verdict the review card claims.`,
       };
@@ -596,11 +611,50 @@ export function mapTrivyReport(text: string, files: ScaffoldFile[] = []): TrivyR
   let reason: string | undefined;
   const manifests = matches(files, DEP_MANIFESTS);
   const locks = matches(files, DEP_LOCKS);
-  const resolvedDeps = results.some((r) => str(r.Class) === 'lang-pkgs');
-  if (manifests.length > 0 && !resolvedDeps) {
+  const langTargets = new Set(results.filter((r) => str(r.Class) === 'lang-pkgs').map((r) => str(r.Target)));
+  const resolvedDeps = langTargets.size > 0;
+
+  // npm: a lockfile's PRESENCE is not evidence — its AGREEMENT with the manifest is. Trivy reads
+  // only the lockfile, so a `package.json` edited after its lock was generated still yields a
+  // tidy `lang-pkgs` result, over a dependency set the app no longer declares.
+  const npm = npmLockEvidence(files);
+  const stale = npm.filter((e) => e.state === 'stale' || e.state === 'unreadable');
+  // A manifest that asks for dependencies and that NO lockfile covers, while some other lockfile
+  // in the tree did resolve: one covered corner must not read as the whole tree.
+  const unlocked = npm.filter((e) => e.state === 'unlocked' && e.declared > 0);
+  // A consistent lockfile that resolves packages, for which the engine returned no result.
+  const unseen = npm.filter(
+    (e) => e.state === 'consistent' && e.resolved > 0 && e.lock !== null && !langTargets.has(e.lock),
+  );
+  // NOTHING TO RESOLVE is the one case where "no `lang-pkgs` result" is the right answer: the
+  // manifest declares no dependency and a lockfile that agrees with it resolves no package (Trivy
+  // emits no result for an empty lockfile). It needs the lockfile — a bare manifest proves nothing.
+  const nothingToResolve = (path: string): boolean =>
+    npm.some((e) => e.manifest === path && e.state === 'consistent' && e.declared === 0 && e.resolved === 0);
+  const needingEvidence = manifests.filter((m) => !nothingToResolve(m.replace(/^\.\//, '')));
+
+  const SECRETS_RAN = ` The secret scan DID run over every file.`;
+  const REGENERATE =
+    `Regenerate the lockfile from the current manifest (\`npm install --package-lock-only\`), ` +
+    `commit the new package-lock.json and re-request the deploy.`;
+  if (stale.length > 0) {
+    notRun.push('deps');
+    const shown = stale
+      .slice(0, 3)
+      .map((e) => `${e.manifest} vs ${e.lock ?? 'its lockfile'}: ${e.problems.slice(0, 3).join('; ')}` +
+        (e.problems.length > 3 ? `; and ${e.problems.length - 3} more` : ''))
+      .join(' | ');
+    reason =
+      `Dependencies are NOT covered: the lockfile does not match the manifest, so the scanner ` +
+      `resolved a dependency tree this app does not declare (${shown}` +
+      (stale.length > 3 ? ` | and ${stale.length - 3} more manifest(s)` : '') +
+      `). ${REGENERATE} Any dependency finding listed is from the STALE lockfile and is still ` +
+      `real for the versions it names.` +
+      SECRETS_RAN;
+  } else if (needingEvidence.length > 0 && !resolvedDeps) {
     notRun.push('deps');
     reason =
-      `Dependencies were NOT scanned: the tree declares them (${manifests.join(', ')}) but the ` +
+      `Dependencies were NOT scanned: the tree declares them (${needingEvidence.join(', ')}) but the ` +
       `scanner resolved no dependency tree` +
       (locks.length === 0
         ? ` — there is no lockfile (package-lock.json / yarn.lock / poetry.lock / go.sum / …), ` +
@@ -608,7 +662,24 @@ export function mapTrivyReport(text: string, files: ScaffoldFile[] = []): TrivyR
           `re-request the deploy to get a dependency verdict.`
         : ` even though a lockfile is present (${locks.join(', ')}); the ecosystem may be ` +
           `unsupported by this scanner version.`) +
-      ` The secret scan DID run over every file.`;
+      SECRETS_RAN;
+  } else if (unlocked.length > 0 || unseen.length > 0) {
+    notRun.push('deps');
+    const parts: string[] = [];
+    if (unlocked.length > 0) {
+      parts.push(
+        `${unlocked.map((e) => e.manifest).join(', ')} declare(s) dependencies that no lockfile covers`,
+      );
+    }
+    if (unseen.length > 0) {
+      parts.push(
+        `the scanner returned no result for ${[...new Set(unseen.map((e) => e.lock))].join(', ')}`,
+      );
+    }
+    reason =
+      `Dependencies are only PARTLY covered: ${parts.join('; and ')}. Commit a lockfile next to ` +
+      `each manifest (\`npm install --package-lock-only\`) and re-request the deploy.` +
+      SECRETS_RAN;
   }
 
   const summary: Record<ScanCategory, number> = { sast: 0, deps: 0, secrets: 0 };

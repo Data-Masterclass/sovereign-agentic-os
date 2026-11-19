@@ -557,7 +557,8 @@ async function applyDeployDecisionToApp(
  *   `no-verdict`— no engine ran at all (`unavailable`). The audited admin hatch exists for this.
  *   `uncovered` — the engine RAN, found nothing blocking, and declared a category it could not
  *                 cover (`notRun` beyond the always-uncovered `sast`): today `deps`, when a tree
- *                 declares dependencies and commits no lockfile. This was the DEAD END: `passed`
+ *                 declares dependencies and commits no lockfile — or commits one that no longer
+ *                 matches its manifest (`lockfile-evidence.ts`). This was the DEAD END: `passed`
  *                 is false and `unavailable` is unset, so the old code took the "fix the findings"
  *                 branch — for a card with zero findings — and refused the hatch, which made every
  *                 generated app undeployable on a scanner-enabled cluster. It is acknowledgeable,
@@ -715,7 +716,7 @@ export async function decideDeploy(
             `Only an Administrator can approve a deploy on an incomplete security scan — your ` +
               `role is ${user.role}. ` +
               (gate.kind === 'uncovered'
-                ? `Commit a lockfile so the dependencies can be resolved, `
+                ? `Commit a lockfile that matches the manifest so the dependencies can be resolved, `
                 : `Wire a scanner (osUI.software.scanner.enabled) or fix the scanner's failure, `) +
               `or ask an Administrator to acknowledge it.`,
           ),
@@ -837,7 +838,11 @@ function incompleteScanRefusal(scan: ScanResult, gate: ScanGate): string {
       `Cannot approve: the security scan ran and found nothing blocking, but it could not cover ` +
       `${cats}. ` +
       (deps
-        ? `Dependencies were not resolvable (no lockfile) — commit a lockfile ` +
+        ? // Two causes share this gate and the scanner's own reason (appended) says which: no
+          // lockfile at all, or one that no longer matches the manifest. The wording must be
+          // true of both — "no lockfile" was wrong for an app whose lockfile had gone stale.
+          `The dependency scan does not cover this tree (the lockfile is missing, or no longer ` +
+          `matches the manifest) — commit a lockfile generated from the current manifest ` +
           `(package-lock.json / yarn.lock / poetry.lock / go.sum / …) and re-request the deploy, ` +
           `or an Administrator may acknowledge the gap in writing. `
         : `Commit what the scanner needs and re-request the deploy, or an Administrator may ` +

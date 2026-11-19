@@ -142,6 +142,22 @@ const ALLOWED_ROOTS = ['src/', 'public/'];
  */
 const ALLOWED_EXACT = ['index.html'];
 
+/** Lockfiles of every ecosystem the scanner reads — never the coder's to write. */
+const LOCKFILE_NAMES = new Set([
+  'package-lock.json',
+  'npm-shrinkwrap.json',
+  'yarn.lock',
+  'pnpm-lock.yaml',
+  'bun.lock',
+  'bun.lockb',
+  'poetry.lock',
+  'Pipfile.lock',
+  'go.sum',
+  'Cargo.lock',
+  'Gemfile.lock',
+  'composer.lock',
+]);
+
 /** Why a proposed path was refused, or null when it is acceptable. */
 export function pathRefusal(path: string): string | null {
   if (typeof path !== 'string' || path.trim().length === 0) return 'empty path';
@@ -158,6 +174,12 @@ export function pathRefusal(path: string): string | null {
   if (dot) return `"${p}" writes the dotfile "${dot}" — configuration and secrets are not the coder's to write`;
   if (p === 'package.json' || p.endsWith('/package.json')) {
     return `"${p}" is the app manifest — adding a dependency is a human decision, and a declared-but-uninstalled one compiles green and fails at runtime`;
+  }
+  // A lockfile is the record of a real dependency resolution. A model cannot produce one — it can
+  // only write something that LOOKS like one, and the security scanner would then read invented
+  // versions as the app's dependency tree. Refused anywhere in the tree, `src/` included.
+  if (LOCKFILE_NAMES.has(segments[segments.length - 1])) {
+    return `"${p}" is a dependency lockfile — it is the output of a real install (npm install --package-lock-only), never something to write by hand`;
   }
   if (p.startsWith('vendor/') || segments.includes('node_modules')) return `"${p}" is inside the vendored tree, which the OS owns`;
   if (ALLOWED_EXACT.includes(p)) return null;

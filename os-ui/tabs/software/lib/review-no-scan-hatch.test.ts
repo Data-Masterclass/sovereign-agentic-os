@@ -468,7 +468,7 @@ test('H-1: a live scan that COVERED everything and found nothing just passes', a
   try {
     const app = await createApp(builder, { name: 'Resolved Clean', template: 'nextjs-supabase' });
     await saveAppFile(app.id, builder, { path: 'package.json', content: '{"dependencies":{}}', sha: '' });
-    await saveAppFile(app.id, builder, { path: 'package-lock.json', content: '{"lockfileVersion":3}', sha: '' });
+    await saveAppFile(app.id, builder, { path: 'package-lock.json', content: '{"lockfileVersion":3,"packages":{"":{"dependencies":{}}}}', sha: '' });
     const resolved = JSON.stringify({
       SchemaVersion: 2,
       Results: [{ Target: 'package-lock.json', Class: 'lang-pkgs', Type: 'npm', Vulnerabilities: [] }],

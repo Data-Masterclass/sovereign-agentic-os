@@ -44,7 +44,29 @@ export function viteOsFiles(name: string, slug: string): ScaffoldFile[] {
 
 // ----------------------------------------------------------------- package.json --
 
-function packageJson(slug: string): ScaffoldFile {
+/**
+ * The `file:` specifiers a LOCKED seed uses for the two OS packages. Neither package is published
+ * to a registry, so the registry ranges below (`^0.1.0`) cannot be resolved by npm at all — which
+ * is why a seed that ships a real `package-lock.json` must point at the vendored copies instead.
+ * Must equal what `applyUiFileDep` / `applySdkFileDep` write (pinned by scaffold-lock.test.ts).
+ */
+export const VENDORED_UI_DEP = 'file:./vendor/@sovereign-os/ui';
+export const VENDORED_SDK_DEP = 'file:./vendor/@sovereign-os/app-sdk';
+
+/**
+ * The manifest and Dockerfile of a LOCKED Vite seed: the same files as the plain scaffold, with
+ * the two OS packages as `file:` dependencies and the vendored tree copied in before the install.
+ * `scaffold-lock.ts` swaps these in for a NEW app; the plain scaffold functions are untouched so
+ * an app created before lockfiles shipped keeps reading the tree it was actually seeded with.
+ */
+export function viteLockedPackageJson(slug: string): ScaffoldFile {
+  return packageJson(slug, true);
+}
+export function viteLockedDockerfile(): ScaffoldFile {
+  return dockerfile(true);
+}
+
+function packageJson(slug: string, vendored = false): ScaffoldFile {
   const pkg = {
     name: slug,
     private: true,
@@ -63,9 +85,9 @@ function packageJson(slug: string): ScaffoldFile {
       clsx: '^2.1.1',
       'tailwind-merge': '^2.5.4',
       // OS design system — theme + AppShell + primitives — Apache-2.0 (internal, vendored)
-      '@sovereign-os/ui': '^0.1.0',
+      '@sovereign-os/ui': vendored ? VENDORED_UI_DEP : '^0.1.0',
       // OS client SDK — Apache-2.0 (internal package)
-      '@sovereign-os/app-sdk': '^0.1.0',
+      '@sovereign-os/app-sdk': vendored ? VENDORED_SDK_DEP : '^0.1.0',
     },
     devDependencies: {
       // Vite — MIT
@@ -436,7 +458,7 @@ function srcOsTs(): ScaffoldFile {
 // Multi-stage build: node:22-alpine builds the SPA, nginx:alpine serves static files
 // on port 8080 (the OS runner's probe port).
 
-function dockerfile(): ScaffoldFile {
+function dockerfile(vendored = false): ScaffoldFile {
   return {
     path: 'Dockerfile',
     content: [
@@ -450,6 +472,9 @@ function dockerfile(): ScaffoldFile {
       'ARG OS_API_URL=""',
       'ENV VITE_OS_API=$OS_API_URL',
       'COPY package.json ./package-lock.json* ./',
+      // The two OS packages are `file:` dependencies on the vendored tree, so the install
+      // needs that tree in place BEFORE it runs (a locked seed only — see scaffold-lock.ts).
+      ...(vendored ? ['# The OS packages are file: dependencies on the vendored tree.', 'COPY vendor ./vendor'] : []),
       '# Use install (not ci) if no lockfile is committed yet; do NOT swallow errors.',
       'RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi',
       'COPY . .',

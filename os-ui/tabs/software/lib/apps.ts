@@ -44,6 +44,7 @@ import { sovereignAppFiles, sovereignAppGuide } from '@tabs/software/lib/scaffol
 import { websiteFiles, websiteGuide } from '@tabs/software/lib/scaffolds/website';
 import { apiServiceFiles, apiServiceGuide } from '@tabs/software/lib/scaffolds/api-service';
 import { emptyAppFiles, emptyAppGuide } from '@tabs/software/lib/scaffolds/empty-app';
+import { lockedSeed } from '@tabs/software/lib/scaffold-lock';
 import { snapshotFiles, getSnapshot, hydrateSnapshot, deleteSnapshot } from '@tabs/software/lib/snapshot';
 import { generateAndCompile } from '@tabs/software/lib/auto-mcp';
 import { dataPlaneToolsFromGrants, agentToolsFromGrants } from '@tabs/software/lib/grant-tools';
@@ -1678,7 +1679,11 @@ export async function createApp(
 
   // 1. The source tree — code apps only. The template files are the app's first
   //    committed tree, written to the durable file mirror once the id is known below.
-  const seedFiles: ScaffoldFile[] = specKind ? [] : tpl.files(name, slug);
+  //    A NEW app is seeded LOCKED (`scaffold-lock.ts`): its real npm lockfile rides along, so
+  //    the dependency scan can cover it. `templateFiles()` below deliberately stays the PLAIN
+  //    scaffold — it is the fallback tree for an app with no snapshot, i.e. one created before
+  //    lockfiles shipped, and that app must keep reading the tree it was actually seeded with.
+  const seedFiles: ScaffoldFile[] = specKind ? [] : lockedSeed(tpl.key, tpl.files(name, slug), slug);
 
   // 3. Auto-register the data as a Personal artifact owned by the creator.
   let dataArtifactId: string | null = null;

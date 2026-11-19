@@ -106,6 +106,22 @@ bash os-ui/scripts/gate.sh          # the regression gate
 helm lint charts/sovereign-agentic-os -f values.local.yaml
 ```
 
+**Changed a scaffold's dependencies?** New apps are seeded with a real `package-lock.json`, and
+the committed lockfiles (`os-ui/tabs/software/lib/scaffolds/locks/`) are npm's own output — never
+edit one by hand, and never write one any other way. Regenerate them (needs the npm registry),
+then run the drift test, which fails while a scaffold manifest and its lockfile disagree:
+
+```bash
+node --experimental-strip-types os-ui/scripts/regen-scaffold-locks.mjs           # rewrite the lockfiles
+node --experimental-strip-types os-ui/scripts/regen-scaffold-locks.mjs --check   # compare with a fresh resolution
+cd os-ui && node --experimental-test-module-mocks --import ./scripts/test-setup.mjs \
+  --test tabs/software/lib/scaffold-lock.test.ts
+```
+
+The drift test also holds every package the lockfiles resolve to Apache-2.0 / MIT / BSD / ISC,
+with each exception named in the test (`LICENCE_EXCEPTIONS`). See "A generated app ships a real
+lockfile" in `os-ui/ARCHITECTURE.md` for why the files are named `<family>.package-lock.json`.
+
 `check-structure.mjs` is a **ratchet**: pre-existing violations are baselined in
 `scripts/structure-baseline.json` and the counts may only go **down**. Pay one down, then run
 it with `--baseline` to lock the new number in. It also requires a
