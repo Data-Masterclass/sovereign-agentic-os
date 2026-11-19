@@ -16,6 +16,7 @@ import {
 import { canPromote, roleAtLeast } from '@core/kernel/session';
 import type { Role } from '@core/kernel/session';
 import { osMirror } from '@core/infra/os-mirror';
+import { newSeenFields, noteSeen, writeDeleted, writeChanged, writeNew, type SeenFields } from '@core/infra/field-writes';
 import { type ArtifactVersion, versionLog } from '@core/kernel/versioning';
 import { canManageArtifact, type ArtifactScope } from '@core/policy/edit-scope';
 import { normaliseFolderPath } from '@core/kernel/folders';
@@ -129,11 +130,18 @@ function makeRecord(
 
 // --------------------------------------------------------- in-process state --
 
-type KnowledgeStoreState = { workflows: Map<string, WorkflowRecord>; domainKnowledge: Map<string, DomainKnowledge>; seeded: boolean; hydration: Promise<void> | null };
+type KnowledgeStoreState = {
+  workflows: Map<string, WorkflowRecord>;
+  domainKnowledge: Map<string, DomainKnowledge>;
+  seeded: boolean;
+  hydration: Promise<void> | null;
+  /** What this process last knew the mirror held per workflow (see `core/infra/field-writes.ts`). */
+  seen: SeenFields;
+};
 const KS_KEY = Symbol.for('soa.knowledge.store');
 function ks(): KnowledgeStoreState {
   const g = globalThis as unknown as Record<symbol, KnowledgeStoreState | undefined>;
-  if (!g[KS_KEY]) g[KS_KEY] = { workflows: new Map(), domainKnowledge: new Map(), seeded: false, hydration: null };
+  if (!g[KS_KEY]) g[KS_KEY] = { workflows: new Map(), domainKnowledge: new Map(), seeded: false, hydration: null, seen: newSeenFields() };
   return g[KS_KEY]!;
 }
 
@@ -170,8 +178,13 @@ const versions = versionLog('knowledge-workflow');
 // version log primitive, keyed by domain, snapshotted on every meaningful edit.
 const domainVersions = versionLog('domain-knowledge');
 
+/**
+ * The ONE write path for an existing workflow: only the fields this process changed reach the
+ * mirror (an agent archiving in the worker never puts back its stale copy of the markdown the
+ * owner just edited in os-ui), and the worker never re-creates a workflow deleted elsewhere.
+ */
 function writeThrough(rec: WorkflowRecord): void {
-  mirror.writeThrough(rec.id, rec);
+  writeChanged(mirror, ks().seen, rec.id, rec);
 }
 
 /** The versioned slice of a workflow record — the editable canonical source. */
@@ -189,7 +202,10 @@ async function hydrate(): Promise<void> {
   const s = ks();
   const docs = (await mirror.hydrate(2000)) ?? [];
   for (const rec of docs as WorkflowRecord[]) {
-    if (rec && rec.id && !s.workflows.has(rec.id)) s.workflows.set(rec.id, rec);
+    if (rec && rec.id && !s.workflows.has(rec.id)) {
+      s.workflows.set(rec.id, rec);
+      noteSeen(s.seen, rec.id, rec);
+    }
   }
   s.seeded = true;
 }
@@ -209,6 +225,7 @@ export function __resetStore(): void {
   s.domainKnowledge.clear();
   s.seeded = false;
   s.hydration = null;
+  s.seen.clear();
   mirror.__reset();
   versions.__reset();
   domainVersions.__reset();
@@ -388,7 +405,7 @@ export function createWorkflow(
     status: 'draft',
   });
   ks().workflows.set(id, rec);
-  writeThrough(rec);
+  writeNew(mirror, ks().seen, id, rec);
   return rec;
 }
 
@@ -520,7 +537,7 @@ export function deleteWorkflow(id: string, user: Principal): void {
   if (rec.status === 'live' && !rec.archived) {
     fail('Archive this published workflow before deleting it', 400);
   }
-  mirror.deleteThrough(id);
+  writeDeleted(mirror, ks().seen, id);
   versions.purge(id);
   ks().workflows.delete(id);
 }

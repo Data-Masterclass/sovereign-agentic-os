@@ -5,6 +5,7 @@ import 'server-only';
 import { offlineMockAllowed, refuseOfflineMock } from '@core/kernel/offline-mock';
 import { config } from '@core/kernel/config';
 import { osMirror } from '@core/infra/os-mirror';
+import { newSeenFields, noteSeen, writeDeleted, writeChanged, writeNew, type SeenFields } from '@core/infra/field-writes';
 import type { CurrentUser } from '@core/kernel/auth';
 import { canPromote, roleAtLeast } from '@core/kernel/session';
 import { canManageArtifact, type ArtifactScope } from '@core/policy/edit-scope';
@@ -278,11 +279,15 @@ import { normaliseFolderPath } from '@core/kernel/folders';
  *     a real deploy injects the secret server-side and routes via the egress proxy.
  */
 
-type ConnCacheState = { cache: Map<string, Connection> | null };
+type ConnCacheState = {
+  cache: Map<string, Connection> | null;
+  /** What this process last knew the mirror held per connection (see `core/infra/field-writes.ts`). */
+  seen: SeenFields;
+};
 const CONN_STATE_KEY = Symbol.for('soa.connections.cache');
 function connState(): ConnCacheState {
   const g = globalThis as unknown as Record<symbol, ConnCacheState | undefined>;
-  if (!g[CONN_STATE_KEY]) g[CONN_STATE_KEY] = { cache: null };
+  if (!g[CONN_STATE_KEY]) g[CONN_STATE_KEY] = { cache: null, seen: newSeenFields() };
   return g[CONN_STATE_KEY]!;
 }
 
@@ -331,8 +336,18 @@ function snapshotState(c: Connection): { tools: ConnectionTool[] } {
   return { tools: c.tools };
 }
 
+/**
+ * The ONE write path for an existing connection: only the fields this process changed reach the
+ * mirror (an agent's test stamp in the worker never puts back its stale copy of the name or the
+ * capabilities the owner just edited in os-ui), and the worker never re-creates a connection
+ * deleted elsewhere. A NEW connection is stored whole with {@link writeNewConnection}.
+ */
 function writeThrough(c: Connection): void {
-  mirror.writeThrough(c.id, c);
+  writeChanged(mirror, connState().seen, c.id, c as unknown as Record<string, unknown>);
+}
+
+function writeNewConnection(c: Connection): void {
+  writeNew(mirror, connState().seen, c.id, c as unknown as Record<string, unknown>);
 }
 
 /** Compile the capability profile into the offline OPA mirror for a connection. */
@@ -354,6 +369,7 @@ async function getCache(): Promise<Map<string, Connection>> {
   const [docs] = await Promise.all([mirror.hydrate(500), versions.ensureHydrated()]);
   for (const c of (docs ?? []) as Connection[]) { // null → mirror down → in-memory only
     map.set(c.id, c);
+    noteSeen(s.seen, c.id, c as unknown as Record<string, unknown>);
     compileProfile(c); // re-hydrate the OPA mirror after a restart
   }
   s.cache = map;
@@ -663,7 +679,7 @@ export async function createConnection(
     };
     map.set(cW.id, cW);
     compileProfile(cW);
-    writeThrough(cW);
+    writeNewConnection(cW);
     void trace({
       principal,
       tool: 'generate',
@@ -779,7 +795,7 @@ export async function createConnection(
 
   map.set(c.id, c);
   compileProfile(c); // 3. CAPABILITY → OPA: compile the profile into the bundle/mirror
-  writeThrough(c);
+  writeNewConnection(c);
 
   // Audit creation through the SAME Langfuse spine — note: NO secret in the trace.
   void trace({
@@ -2995,7 +3011,7 @@ export function deleteConnectionSync(connId: string, user: CurrentUser): Connect
     .catch(() => {});
   unregisterConnectionProfile(c.principal);
   map.delete(connId);
-  mirror.deleteThrough(connId);
+  writeDeleted(mirror, connState().seen, connId);
   versions.purge(connId);
   // Physical: purge the credential + OAuth token (+ Notion MCP client) from the vault —
   // best-effort per target, never silent (mirrors the async deleteConnection's ONE rule).
@@ -3071,7 +3087,7 @@ export async function deleteConnection(connId: string, user: CurrentUser): Promi
   const teardown = await teardownConnection(c, user);
   unregisterConnectionProfile(c.principal);
   map.delete(connId);
-  mirror.deleteThrough(connId);
+  writeDeleted(mirror, connState().seen, connId);
   versions.purge(connId);
   // Physical: purge the credential + OAuth token (+ Notion MCP client) from the vault.
   const physical = [...teardown, ...purgeConnectionSecrets(c, hasSecret, deleteSecret)];
@@ -3088,6 +3104,7 @@ export async function deleteConnection(connId: string, user: CurrentUser): Promi
 export function __resetConnections(): void {
   const s = connState();
   s.cache = null;
+  s.seen.clear();
   mirror.__reset();
   versions.__reset();
 }

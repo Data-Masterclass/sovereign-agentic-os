@@ -414,9 +414,29 @@ function fakeOpenSearch() {
     if (u.includes('/_doc/')) {
       const id = decodeURIComponent(u.split('/_doc/')[1].split('?')[0]);
       const key = `${idx}\n${id}`;
+      if (method === 'GET') {
+        return docs.has(key)
+          ? json({ _source: docs.get(key) })
+          : new Response(JSON.stringify({ found: false }), { status: 404, headers: { 'content-type': 'application/json' } });
+      }
       if (method === 'DELETE') docs.delete(key);
       else docs.set(key, JSON.parse(String(init?.body ?? '{}')));
       return json({ result: 'ok' });
+    }
+    if (u.includes('/_update/')) {
+      // The mirror's partial write: top-level `params.set`/`params.unset`; `upsert` when the doc is absent.
+      const id = decodeURIComponent(u.split('/_update/')[1].split('?')[0]);
+      const key = `${idx}\n${id}`;
+      const body = JSON.parse(String(init?.body ?? '{}'));
+      const cur = docs.get(key) as Record<string, unknown> | undefined;
+      if (!cur) {
+        if (body.upsert) docs.set(key, body.upsert);
+        return json({ result: body.upsert ? 'created' : 'noop' });
+      }
+      const next: Record<string, unknown> = { ...cur, ...(body.script?.params?.set ?? {}) };
+      for (const k of (body.script?.params?.unset ?? []) as string[]) delete next[k];
+      docs.set(key, next);
+      return json({ result: 'updated' });
     }
     return json({});
   }) as typeof fetch;
@@ -429,8 +449,8 @@ test('the data store mirrors writes to the backend and hydrates from it after a 
   try {
     await ensureHydrated();
     const id = seedOrders(); // create + build → mirrored fire-and-forget
-    // Fire-and-forget writes settle on the next tick.
-    await new Promise((r) => setTimeout(r, 0));
+    // Fire-and-forget writes settle within a few ticks (an edit re-reads the newest copy first).
+    for (let i = 0; i < 6; i++) await new Promise((r) => setTimeout(r, 0));
     assert.equal(os.datasetDocs().length, 1, 'the write was mirrored to the durable backend');
 
     // Simulate an os-ui restart: wipe the in-process cache, keep the backend.
