@@ -3,7 +3,7 @@
  */
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useReducer, useRef, useState } from 'react';
 import Link from 'next/link';
 import Markdown from '@core/ui/Markdown';
 import ProgressStepper, { type Step } from '@core/ui/core/ProgressStepper';
@@ -28,6 +28,7 @@ import type { System } from '@tabs/agents/lib/system-schema';
 import { downloadRunPdf } from '@tabs/agents/lib/build/agent-pdf';
 import { agentDisplayName } from '@tabs/agents/lib/build/eval-report';
 import { isRunOver, parseSseChunk, reattachFrom, runStreamUrl, REATTACH_LIMIT } from '@tabs/agents/lib/build/run-stream-client';
+import { announceRunStarted, onRunStartedElsewhere, runLabel, runViewReducer, seedRunView, type RunViewAction, type RunViewState } from '@tabs/agents/lib/build/run-view';
 
 /**
  * Build = execute + verify (Task 4) and Run (Task 7). Build runs the 5 adapters
@@ -50,9 +51,11 @@ const BUILD_CHANGE_LABEL: Record<BuildChange, string> = {
 };
 type BuildReport = { ok: boolean; rows: BuildRow[] };
 type LastBuild = { ok: boolean; at: number; rows: BuildRow[] };
-type ActivityMarker = { kind: 'building' | 'running'; startedAt: number };
+type ActivityMarker = { kind: 'building' | 'running'; startedAt: number; /** The run in progress, when the run store knows it. */ runId?: string };
 type LastRun = {
   at: number;
+  /** When the run began (run store). Absent on a run read from the system record. */
+  startedAt?: number;
   running: boolean;
   ok: boolean;
   path: string[];
@@ -805,8 +808,14 @@ export default function BuildRunPanel({
   // the primary affordance is a one-click ▶ Run of the task defined in Define.
   const [showInput, setShowInput] = useState(false);
   const [runningNow, setRunningNow] = useState(false);
-  // Seed from server-persisted lastRun so the panel survives tab-switches.
-  const [run, setRun] = useState<RunReport | null>(lastRun ?? null);
+  // WHICH run is shown, and where it came from. Seeded from the server's stored latest run
+  // (labelled "Last run"); a run followed here replaces it as "This run". See `run-view.ts`.
+  const [view, dispatchRun] = useReducer(
+    runViewReducer as (s: RunViewState<RunReport>, a: RunViewAction<RunReport>) => RunViewState<RunReport>,
+    lastRun ?? null,
+    seedRunView<RunReport>,
+  );
+  const run = view.run;
   const [runErr, setRunErr] = useState('');
   /** The approval id of a held call being withdrawn right now ('' when none). */
   const [withdrawing, setWithdrawing] = useState('');
@@ -824,6 +833,18 @@ export default function BuildRunPanel({
   // the trace store is reachable. Fetched once per completed run.
   const [metrics, setMetrics] = useState<TraceMetrics | null>(null);
   const [pdfBusy, setPdfBusy] = useState(false);
+
+  // The stored latest run arrived or changed (a reload after ANY panel's run): show it — unless a
+  // run is being followed here, or what is on screen is a newer result than the stored one. A
+  // panel used to copy `lastRun` once at mount and then kept that run for as long as it lived.
+  useEffect(() => {
+    dispatchRun({ type: 'stored', run: lastRun ?? null, busy: runningNow });
+  }, [lastRun, runningNow]);
+
+  // Two panels of one system can share a screen (Run above, Evaluate below). When the OTHER one
+  // starts a run, drop this panel's run in the same tick; the reload after the run brings the new one.
+  const panelId = useRef<object>({});
+  useEffect(() => onRunStartedElsewhere(systemId, panelId.current, () => dispatchRun({ type: 'cleared' })), [systemId]);
 
   const runComplete = !!run && !runningNow && ((run.nodes && run.nodes.length > 0) || !!run.output);
 
@@ -847,9 +868,9 @@ export default function BuildRunPanel({
       .then((b: { metrics?: TraceMetrics } | null) => { if (!cancelled) setMetrics(b?.metrics ?? null); })
       .catch(() => { if (!cancelled) setMetrics(null); });
     return () => { cancelled = true; };
-    // Re-fetch per distinct run (path is a cheap identity for a completed run).
+    // Re-fetch per distinct run: the run id, and the path for a run recorded without one.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [runComplete, systemId, run?.path.join('>')]);
+  }, [runComplete, systemId, run?.runId, run?.path.join('>')]);
 
   /**
    * RUN-phase PDF — EXACTLY the Run screen (final output + per-agent results + status),
@@ -861,7 +882,7 @@ export default function BuildRunPanel({
     try {
       await downloadRunPdf(system, runToDiag(run), {
         ranBy: user?.name ?? 'unknown',
-        at: lastRun?.at ?? Date.now(),
+        at: view.at ?? Date.now(),
         prompt,
       });
     } catch (e) {
@@ -879,7 +900,7 @@ export default function BuildRunPanel({
       const [{ jsPDF }, autoTableMod] = await Promise.all([import('jspdf'), import('jspdf-autotable')]);
       const autoTable = autoTableMod.default;
       const diag = buildDiagnostics(runToDiag(run), metrics ?? undefined);
-      const at = lastRun?.at ?? Date.now();
+      const at = view.at ?? Date.now();
       const report = buildRunReport(runToDiag(run), diag, {
         systemName: systemId,
         ranBy: user?.name ?? 'unknown',
@@ -1119,7 +1140,7 @@ export default function BuildRunPanel({
           if (again) { next = again; return true; }
           if (event === 'done') {
             const r = normalizeRun(data as RawRun);
-            setRun(r);
+            dispatchRun({ type: 'result', run: r, at: Date.now() });
             if (!isRunOver(frame)) return false; // the replayed parked `done` — keep listening
             setLive(null);
             return true;
@@ -1174,10 +1195,20 @@ export default function BuildRunPanel({
   const doRun = async (stop = false, resumeRunId?: string) => {
     setRunningNow(true);
     setRunErr('');
-    // Immediately clear the prior result so the in-progress state is unambiguous —
-    // the student sees "running the team…" the instant they press Run, never a stale
-    // report or a silent spinner. (A stop press keeps the last result visible.)
-    if (!stop) { setRun(null); setLive(null); }
+    // Immediately clear EVERYTHING that belongs to the prior run — result, context card, counters,
+    // warnings, failure banner (all read `run`), trace metrics and the open drill-downs — before
+    // the first event arrives, so nothing of an earlier run can sit next to this one.
+    // (A stop press keeps the last result visible. A resume continues the SAME run, so it keeps
+    // that run's start time.)
+    if (!stop) {
+      const resumingShown = !!resumeRunId && run?.runId === resumeRunId;
+      dispatchRun({ type: 'started', at: resumingShown && view.startedAt !== null ? view.startedAt : Date.now() });
+      announceRunStarted(systemId, panelId.current);
+      setLive(null);
+      setMetrics(null);
+      setOpenNodes({});
+      setOpenSteps({});
+    }
     try {
       const res = await fetch(`/api/agents/systems/${systemId}/run`, {
         method: 'POST',
@@ -1206,7 +1237,7 @@ export default function BuildRunPanel({
           if (again) { follow = again; return true; }
           if (event === 'done') {
             const r = normalizeRun(data as RawRun);
-            setRun(r);
+            dispatchRun({ type: 'result', run: r, at: Date.now() });
             // A2: a PARKED run — the request is over, but the run is not: re-attach below.
             if (!isRunOver(frame) && r.runId) follow = { runId: r.runId, afterSeq: 0 };
             else setLive(null);
@@ -1228,7 +1259,7 @@ export default function BuildRunPanel({
         // Non-streaming (stop press, or a server without the stream): read JSON.
         const body = await res.json();
         if (!res.ok) setRunErr(body.error ?? 'Run failed');
-        else if (!stop) setRun(normalizeRun(body as RawRun));
+        else if (!stop) dispatchRun({ type: 'result', run: normalizeRun(body as RawRun), at: Date.now() });
       }
       onStateChange();
     } catch (e) {
@@ -1345,6 +1376,14 @@ export default function BuildRunPanel({
         <div className="hint" style={{ marginTop: 2, marginBottom: 4, color: 'var(--warn, #b7791f)' }}>
           <span className="spin" style={{ marginRight: 6 }} />
           Running since {timeAgo(activity.startedAt)} — in progress on another tab or session
+          {activity.runId ? (
+            <>
+              {' · '}
+              <button type="button" className="btn-ghost" onClick={() => void attachToRun(activity.runId!)} disabled={runningNow}>
+                watch it finish
+              </button>
+            </>
+          ) : null}
         </div>
       ) : null}
       {/* An interrupted run (recovered after a mid-run restart) is legible, not lost:
@@ -1382,20 +1421,20 @@ export default function BuildRunPanel({
           The run stopped there — no later agent ran. Fix the cause and press ▶ Run to start again.
         </div>
       ) : null}
-      {lastRun?.interrupted && !runningNow && !run?.parked ? (
+      {run?.interrupted && view.source === 'stored' && !runningNow && !run.parked ? (
         <div className="hint" style={{ marginTop: 2, marginBottom: 4, color: 'var(--warn, #b7791f)' }}>
-          {lastRun.runId && lastRun.checkpointer === 'postgres' ? (
+          {run.runId && run.checkpointer === 'postgres' ? (
             <>
-              Interrupted {timeAgo(lastRun.at)} — completed steps preserved below;{' '}
-              <button type="button" className="btn-ghost" onClick={() => void doRun(false, lastRun.runId)} disabled={runningNow}>
+              Interrupted {timeAgo(view.at ?? Date.now())} — completed steps preserved below;{' '}
+              <button type="button" className="btn-ghost" onClick={() => void doRun(false, run.runId)} disabled={runningNow}>
                 Resume
               </button>{' '}
               continues from the last checkpoint.
             </>
-          ) : lastRun.runId ? (
-            <>Interrupted {timeAgo(lastRun.at)} — completed steps preserved below. Its checkpoints were in memory and did not survive the restart; press ▶ Run to start again.</>
+          ) : run.runId ? (
+            <>Interrupted {timeAgo(view.at ?? Date.now())} — completed steps preserved below. Its checkpoints were in memory and did not survive the restart; press ▶ Run to start again.</>
           ) : (
-            <>Interrupted by a restart {timeAgo(lastRun.at)} — completed steps preserved below; press ▶ Run to continue.</>
+            <>Interrupted by a restart {timeAgo(view.at ?? Date.now())} — completed steps preserved below; press ▶ Run to continue.</>
           )}
         </div>
       ) : null}
@@ -1405,12 +1444,6 @@ export default function BuildRunPanel({
         <div className="hint" style={{ marginTop: 2, marginBottom: 4, color: 'var(--warn, #b7791f)' }}>
           {run.checkpointer ? <>Checkpoints: {run.checkpointer === 'postgres' ? 'Postgres (durable)' : 'in memory (not durable across restarts)'}{run.warnings && run.warnings.length > 0 ? ' · ' : ''}</> : null}
           {run.warnings && run.warnings.length > 0 ? <>{run.warnings.length} warning{run.warnings.length === 1 ? '' : 's'}: {run.warnings.join(' · ')}</> : null}
-        </div>
-      ) : null}
-      {/* Seed timestamp for the persisted run result. */}
-      {run && lastRun && !runningNow && !lastRun.interrupted ? (
-        <div className="hint" style={{ marginTop: 2, marginBottom: 4 }}>
-          Last run {timeAgo(lastRun.at)}
         </div>
       ) : null}
       <p className="hint" style={{ marginTop: 0 }}>
@@ -1489,6 +1522,14 @@ export default function BuildRunPanel({
 
       {run ? (
         <div className="answer" style={{ marginTop: 12, fontSize: 13 }}>
+          {/* WHICH run this is — always, in the Run and the Evaluate half alike: a stored earlier
+              run reads "Last run · …", the run just followed here "This run · …", each with its
+              start time and short id. Everything below belongs to this run only. */}
+          {showRun || showEvaluate ? (
+            <div className="hint" data-run-source={view.source ?? undefined} title={run.runId} style={{ marginTop: 0, marginBottom: 6 }}>
+              {runLabel(view)}
+            </div>
+          ) : null}
           {showRun ? (
           <>
           {/* One-line run summary — a student sees instantly whether it worked and how far
