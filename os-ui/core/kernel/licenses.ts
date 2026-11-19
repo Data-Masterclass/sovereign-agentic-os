@@ -51,6 +51,9 @@ export const COMPONENTS: Component[] = [
   { name: 'MinIO', license: 'AGPL-3.0', layer: 'Infrastructure', note: 'S3-compatible object storage (local stand-in).' },
   { name: 'Valkey', license: 'BSD-3-Clause', layer: 'Infrastructure', note: 'Redis-protocol queue/cache (not Redis).' },
 
+  // ---- Software delivery ----
+  { name: 'Trivy', license: 'Apache-2.0', layer: 'Software', note: 'Deploy security scanner: one Job per deploy request over the app\'s committed tree (dependency vulnerabilities + committed secrets). Deployed image only; no vendored source. SAST is deliberately not covered — no allowlisted SAST engine exists (Semgrep is LGPL).' },
+
   // ---- Governance & egress ----
   { name: 'Open Policy Agent', license: 'Apache-2.0', layer: 'Governance', note: 'Default-deny tool authorization.' },
   { name: 'Ory', license: 'Apache-2.0', layer: 'Governance', note: 'Identity & roles.' },

@@ -9,7 +9,13 @@ import PageHeader from '@core/ui/PageHeader';
 import ReviewCard, { type ReviewCardData } from '@tabs/governance/ui/ReviewCard';
 import { useApi } from '@core/ui/useApi';
 
-type Data = { user: { id: string; role: string }; cards: ReviewCardData[]; canReview: boolean };
+type Data = {
+  user: { id: string; role: string };
+  cards: ReviewCardData[];
+  canReview: boolean;
+  /** Admin only: may this viewer approve a deploy that has no security verdict? */
+  canAcknowledgeNoScan?: boolean;
+};
 
 /**
  * The deploy-review inbox (Software golden path §D). A Builder/Admin reviews
@@ -20,16 +26,32 @@ export default function ReviewsPage() {
   const { data, loading, error, reload } = useApi<Data>('/api/software/reviews');
   const [msg, setMsg] = useState('');
 
-  async function decide(cardId: string, decision: 'approve' | 'deny', note?: string) {
+  async function decide(
+    cardId: string,
+    decision: 'approve' | 'deny',
+    note?: string,
+    opts?: { acknowledgeNoScan?: boolean; reason?: string },
+  ) {
     setMsg('');
     try {
       const res = await fetch(`/api/software/reviews/${cardId}`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ decision, note }),
+        body: JSON.stringify({ decision, note, ...(opts ?? {}) }),
       });
       const body = await res.json();
       if (!res.ok) setMsg(`✗ ${body.error}`);
+      else if (body.card?.approvedWithUncoveredCategories?.length)
+        setMsg(
+          `✓ Deploy approved WITHOUT a ${body.card.approvedWithUncoveredCategories.join('/')} ` +
+            `verdict — ${body.app.name} is now ${body.app.deploy.state}. Recorded in the audit ` +
+            `log against your name.`,
+        );
+      else if (body.card?.approvedWithoutScan)
+        setMsg(
+          `✓ Deploy approved WITHOUT a security verdict — ${body.app.name} is now ` +
+            `${body.app.deploy.state}. Recorded in the audit log against your name.`,
+        );
       else setMsg(`✓ Deploy ${body.card.decision} — ${body.app.name} is now ${body.app.deploy.state}.`);
       reload();
     } catch (e) {
@@ -68,7 +90,13 @@ export default function ReviewsPage() {
         ) : (
           <div className="grid">
             {pending.map((c) => (
-              <ReviewCard key={c.id} card={c} canReview={Boolean(data?.canReview)} onDecide={(d, n) => decide(c.id, d, n)} />
+              <ReviewCard
+                key={c.id}
+                card={c}
+                canReview={Boolean(data?.canReview)}
+                canAcknowledgeNoScan={Boolean(data?.canAcknowledgeNoScan)}
+                onDecide={(d, n, o) => decide(c.id, d, n, o)}
+              />
             ))}
           </div>
         )}

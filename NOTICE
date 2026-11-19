@@ -72,7 +72,9 @@ Other bundled Apache-2.0 components
 --------------------------------------------------------------------------------
 ClickHouse, Apache Polaris, Apache Trino (optional), dbt Core, Haystack, Cube,
 OpenMetadata, OPA, Dagster, MLflow, KServe, Harbor, Argo CD, Velero,
-cert-manager, Cilium, CloudNativePG, SeaweedFS, Supabase, JupyterHub, the
+cert-manager, Cilium, CloudNativePG, SeaweedFS, Supabase, JupyterHub, Trivy
+(aquasec/trivy - the software deploy security scanner, run as a short-lived
+Job; deployed image only, no Trivy source is vendored or linked), the
 amazon/aws-cli image, and others carry their own NOTICE/attribution where
 applicable. Where a component ships a NOTICE file, it is reproduced under
 licenses/notices/. The complete, per-component attribution manifest — with

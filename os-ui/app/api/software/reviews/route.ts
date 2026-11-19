@@ -16,5 +16,10 @@ export const dynamic = 'force-dynamic';
 export const GET = withRoute(async ({ user }) => {
   const cards = (await Promise.all(user.domains.map((d) => listReviewCards({ domain: d })))).flat();
   const canReview = roleAtLeast(user.role, 'builder');
-  return NextResponse.json({ user, cards, canReview });
+  // May this viewer approve a deploy that has NO security verdict? ADMIN ONLY (2026-11-19) — the
+  // audited hatch in `decideDeploy`. Decided here, server-side, so the card never renders a
+  // control the server would refuse; `decideDeploy` re-checks it regardless, because a client
+  // flag is a hint and never the gate.
+  const canAcknowledgeNoScan = roleAtLeast(user.role, 'admin');
+  return NextResponse.json({ user, cards, canReview, canAcknowledgeNoScan });
 }, { defaultStatus: 500 });

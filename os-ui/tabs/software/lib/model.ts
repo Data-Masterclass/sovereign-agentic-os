@@ -116,6 +116,33 @@ export type ScanResult = {
   unavailable?: true;
   /** Why there is no verdict. Present with `unavailable`. */
   reason?: string;
+  /**
+   * WHICH engine produced this result, when one did — e.g. `'trivy'`. Optional: a card
+   * serialised before the live scanner existed carries none, and the baseline run names none
+   * because it is not an engine, it is a deterministic read of the files.
+   */
+  engine?: string;
+  /**
+   * The categories NO engine covered, so a ZERO count in `summary` cannot be read as "clean".
+   * `['sast']` on every live Trivy scan: Trivy finds dependency vulnerabilities and committed
+   * secrets, and there is no allowlisted SAST engine to wire (Semgrep's engine is LGPL-2.1 and
+   * absent from `licenses/allowed-licenses.txt`). Saying nothing here is how `sast 0` came to
+   * read as "we looked at the code and it is fine".
+   */
+  notRun?: ScanCategory[];
+  /**
+   * True when `findings` is a CAPPED view of a longer list. `passed` and `summary` always account
+   * for every finding; `findings` does not, so anything deriving severity from the list alone is
+   * reading an incomplete picture (PR #63 re-review L-B).
+   */
+  truncated?: true;
+  /**
+   * True when a BLOCKING finding (a secret, or high/critical) exists that the cap left out of
+   * `findings`. The deploy gate (`scanGate` in `review.ts`) must read this: without it, a card
+   * whose blocking findings sat past the cap classified as "nothing blocking found" — and became
+   * ACKNOWLEDGEABLE by an admin, which is the one thing a real finding must never be.
+   */
+  blockingBeyondCap?: true;
 };
 
 // ------------------------------------------------------------- Review card -----
@@ -154,6 +181,27 @@ export type ReviewCard = {
   decidedBy?: string;
   decidedAt?: string;
   note?: string;
+  /**
+   * THE AUDITED HATCH (2026-11-19). Set when an `admin` approved this deploy while the scan was
+   * `unavailable` — no verdict existed and a named human took responsibility for going ahead.
+   * NEVER set when a scan RAN and FAILED: a real finding still blocks, and the acknowledgement
+   * is refused in that case rather than recorded. The card therefore reads "approved WITHOUT a
+   * security verdict", which is a different fact from "approved".
+   */
+  approvedWithoutScan?: true;
+  /**
+   * The SECOND audited state (PR #63 re-review H-1): the engine RAN, found nothing blocking, and
+   * declared a category it could not cover — today `deps`, when the tree has a dependency manifest
+   * but no lockfile for the scanner to resolve. That is not "no verdict" (an engine did run and
+   * the secret scan DID cover every file) and it is not a failure (there is nothing to fix), so it
+   * gets its own label rather than being folded into either. Lists the uncovered categories.
+   */
+  approvedWithUncoveredCategories?: ScanCategory[];
+  /**
+   * The admin's mandatory written reason (>= 20 characters). Present with `approvedWithoutScan`
+   * OR `approvedWithUncoveredCategories`.
+   */
+  noScanReason?: string;
 };
 
 export type DiffSummary = {

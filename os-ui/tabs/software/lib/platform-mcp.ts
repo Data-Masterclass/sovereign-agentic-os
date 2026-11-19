@@ -442,12 +442,16 @@ export async function callPlatformMcp(
       break;
 
     case 'decide_deploy':
-      // Role-gated inside decideDeploy: a non-Builder caller gets 403, same as UI.
+      // Role-gated inside decideDeploy: a non-Builder caller gets 403, same as UI. The
+      // no-verdict acknowledgement (2026-11-19) is forwarded the same way and gated the same
+      // way — ADMIN only, reason >= 20 chars, never for a scan that ran and failed — so an
+      // agent cannot reach a door the UI does not have, or skip a check the UI enforces.
       result = await decideDeploy(
         str(args.cardId),
         user,
         str(args.decision) === 'approve' ? 'approve' : 'deny',
         str(args.note) || undefined,
+        { acknowledgeNoScan: args.acknowledgeNoScan === true, reason: str(args.reason) || undefined },
       );
       break;
 

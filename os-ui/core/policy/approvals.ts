@@ -147,6 +147,18 @@ export type Approval = {
   resume?: ApprovalResume;
 };
 
+/**
+ * The floor on a written justification that becomes a permanent record — today the ADMIN's reason
+ * for approving a software deploy that has NO security verdict (`ApprovalEffect`
+ * `approvedWithoutScan`, enforced in `tabs/software/lib/review.ts` `decideDeploy`).
+ *
+ * It lives here, in the kernel's policy module, rather than in the tab that happens to enforce it
+ * first: it is a property of what this platform considers an auditable justification, and the next
+ * governed override must not pick its own number. Short enough to type, long enough that "ok"
+ * cannot be the record.
+ */
+export const AUDITED_OVERRIDE_REASON_MIN = 20;
+
 /** The recorded outcome of an approval's executed effect. `publish` carries the
  *  physical dataset-publish result (T8) so the PromotePanel / Governance card can
  *  show live | failed honestly instead of string-matching the summary. */
@@ -155,6 +167,26 @@ export type ApprovalEffect = {
   live: boolean;
   standingPolicyId?: string;
   publish?: { ok: boolean; fqn: string; error?: string; mode?: string };
+  /**
+   * THE AUDITED NO-SCAN HATCH (2026-11-19). Set on an `app_deploy` approval that an ADMIN
+   * approved while the software security scan was `unavailable` — i.e. no scanner engine ran, so
+   * there was no verdict to approve and a named human took responsibility instead. It is NOT an
+   * exemption from the scan (a scan that RAN and FAILED can never be acknowledged) and it is NOT
+   * related to `OS_OFFLINE_MOCK`, which keeps its single lever: nothing here lets the OS claim a
+   * clean scan. Stamped here so the Governance card shows the acknowledgement without the
+   * Software tab having to re-tell the story, and so it rides the approval's durable mirror.
+   */
+  approvedWithoutScan?: {
+    reason: string;
+    by: string;
+    scanMode: string;
+    /**
+     * Present instead of a missing verdict when the engine RAN but could not cover a category
+     * (`['deps']` when a tree declares dependencies and commits no lockfile). Two different facts,
+     * two different labels: one says nothing looked, the other says something looked and said so.
+     */
+    uncoveredCategories?: string[];
+  };
 };
 
 // Pinned to globalThis so the queue is a TRUE singleton across separately

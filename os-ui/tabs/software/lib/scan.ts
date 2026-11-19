@@ -10,6 +10,8 @@
 import 'server-only';
 import type { ScanCategory, ScanFinding, ScanMode, ScanResult, ScaffoldFile } from '@tabs/software/lib/model';
 import { offlineMockAllowed } from '@core/kernel/offline-mock';
+import { config } from '@core/kernel/config';
+import { runTrivyScan, type TrivyScanOpts } from '@tabs/software/lib/scan-trivy';
 
 /**
  * The security scanner that feeds the Builder review card (Software golden path
@@ -153,4 +155,143 @@ export function securityScan(files: ScaffoldFile[], mode?: ScanMode): ScanResult
     };
   }
   return { mode: resolved, passed: clean, findings, summary, scannedAt };
+}
+
+// ------------------------------------------------------ The live engine's door -----
+
+export type ResolveScanOpts = {
+  /** Defaults to `config.softwareScannerEnabled` (the chart's `osUI.software.scanner.enabled`). */
+  scannerEnabled?: boolean;
+  /** Passed through to the adapter — the injection point the tests use. */
+  trivy?: TrivyScanOpts;
+};
+
+/**
+ * THE ONE DOOR a deploy request walks through to get a scan.
+ *
+ * `securityScan` above is unchanged on purpose: it is the decider the kernel tripwire pins, and
+ * it is what produces the baseline EVIDENCE. This is the live engine's door beside it:
+ *
+ *   1. An EXPLICIT `mode` from the caller wins. That injection point pre-dates this change
+ *      (#56: "a caller that injects a real engine ('live') is unaffected") and the whole unit
+ *      suite leans on it, so it keeps its exact meaning.
+ *   2. SCANNER OFF  -> `securityScan(files)`, i.e. the #56 behaviour verbatim, with the reason
+ *      naming the flag that turned it off instead of claiming nothing is wired.
+ *   3. SCANNER ON   -> Trivy, as one Kubernetes Job (`scan-trivy.ts`). `mode: 'live'` is
+ *      returned ONLY when that Job completed and its framed report parsed — and the BASELINE's
+ *      own known-bad dependency list and secret patterns are layered ON TOP of the live result
+ *      (see below), never replaced by it.
+ *   4. THE SCAN FAILED on a reachable cluster -> `unavailable` with the cause, FULL STOP. It does
+ *      NOT degrade to a green `offline-mock`, not even where `OS_OFFLINE_MOCK=allow` (PR #63
+ *      review M6): a scanner that is wired and broken is a different fact from a laptop with no
+ *      cluster, and the second one must not launder the first.
+ *   5. THERE IS NO CLUSTER AT ALL -> delegate to `securityScan(files)`, which decides between the
+ *      laptop's honestly-labelled `offline-mock` and a cluster's `unavailable`. That is
+ *      `OS_OFFLINE_MOCK`'s job and this function does not second-guess it. The scanner's reason is
+ *      attached either way, so the card always says what was tried.
+ *
+ * There is no branch in which a scanner that could not run yields `passed: true`.
+ */
+export async function resolveScan(
+  slug: string,
+  files: ScaffoldFile[],
+  mode?: ScanMode,
+  opts: ResolveScanOpts = {},
+): Promise<ScanResult> {
+  if (mode) return securityScan(files, mode);
+
+  const enabled = opts.scannerEnabled ?? config.softwareScannerEnabled;
+  if (!enabled) {
+    return withScannerReason(
+      securityScan(files),
+      'The live security scanner is switched off for this deployment ' +
+        '(`osUI.software.scanner.enabled: false`), so no engine ran and there is no verdict to ' +
+        'give. Turn it on, or wire another engine behind `resolveScan`.',
+    );
+  }
+
+  const live = await runTrivyScan(slug, files, opts.trivy ?? {});
+  if (!live.ok) {
+    // M6: a WIRED scanner that failed is never laundered into a green offline-mock result. Only
+    // "there is no Kubernetes API at all" — the laptop — may fall back, and even then the
+    // scanner's reason travels with the result.
+    if (live.kind === 'scan-failed') {
+      // The baseline is read ONCE (re-review L-2): it re-scans every file, and the findings and
+      // the summary are two views of one pass, not two passes.
+      const evidence = securityScan(files, 'offline-mock');
+      return {
+        mode: 'unavailable',
+        passed: false,
+        findings: evidence.findings,
+        summary: evidence.summary,
+        scannedAt: new Date().toISOString(),
+        unavailable: true,
+        reason: live.reason,
+      };
+    }
+    return withScannerReason(securityScan(files), live.reason);
+  }
+
+  // THE LIVE VERDICT, with the baseline LAYERED ON TOP (PR #63 review H1). Trivy resolves
+  // dependencies from lockfiles; our scaffolds commit none, so its `deps` coverage can be empty
+  // where the baseline's two-entry known-bad list would still have flagged `lodash@4.17.20`.
+  // Dropping the baseline would therefore have made the live scanner a REGRESSION on exactly the
+  // trees this product generates. Both run; the strictest answer wins.
+  //
+  // Note what is NOT here: no `offlineMockAllowed()` call. A real engine's real answer is not a
+  // fabrication and is not that lever's business.
+  const baseline = securityScan(files, 'offline-mock');
+  const extra = layeredBaselineFindings(baseline.findings, live.findings);
+  const findings = [...live.findings, ...extra];
+  const summary: Record<ScanCategory, number> = { ...live.summary };
+  for (const f of extra) summary[f.category] += 1;
+  const extraBlocks = extra.some((f) => f.category === 'secrets' || f.severity === 'high' || f.severity === 'critical');
+  return {
+    mode: 'live',
+    passed: live.passed && !extraBlocks,
+    findings,
+    summary,
+    scannedAt: new Date().toISOString(),
+    engine: extra.length > 0 ? `${live.engine} + offline baseline` : live.engine,
+    notRun: live.notRun,
+    ...(live.reason ? { reason: live.reason } : {}),
+    // What the card's capped list does NOT show. The deploy gate reads these rather than
+    // re-deriving severity from a truncated list (re-review L-B).
+    ...(live.truncated ? { truncated: true as const } : {}),
+    ...(live.blockingBeyondCap ? { blockingBeyondCap: true as const } : {}),
+  };
+}
+
+/**
+ * The baseline findings worth carrying alongside a live result: `deps` (its known-bad version
+ * list, which does not need a lockfile) and `secrets` (its credential patterns). `sast` is
+ * deliberately EXCLUDED — those patterns are heuristics over source text, `notRun` says sast was
+ * not covered, and adding them would contradict that label.
+ *
+ * Deduped two ways: an identical title for the same path, and — for secrets — any file the live
+ * engine already flagged, since two engines naming one leaked key is noise, not two leaks.
+ */
+function layeredBaselineFindings(baseline: ScanFinding[], live: ScanFinding[]): ScanFinding[] {
+  const seen = new Set(live.map((f) => `${f.category}|${f.path ?? ''}|${f.title}`));
+  const liveSecretPaths = new Set(live.filter((f) => f.category === 'secrets').map((f) => f.path ?? ''));
+  const out: ScanFinding[] = [];
+  for (const f of baseline) {
+    if (f.category === 'sast') continue;
+    if (f.category === 'secrets' && liveSecretPaths.has(f.path ?? '')) continue;
+    const key = `${f.category}|${f.path ?? ''}|${f.title}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ ...f, detail: `${f.detail} (offline baseline check, layered on the live scan.)` });
+  }
+  return out;
+}
+
+/**
+ * Replace the baseline's generic "nothing is wired" reason with the scanner's REAL cause. On an
+ * `unavailable` result it IS the reason; on the laptop's `offline-mock` result it is attached
+ * alongside, so the card can always say what was attempted without the teaching flow's shape
+ * changing (`unavailable` stays unset, `passed` stays the baseline's answer).
+ */
+function withScannerReason(result: ScanResult, reason: string): ScanResult {
+  return { ...result, reason };
 }

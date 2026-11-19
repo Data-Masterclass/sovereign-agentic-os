@@ -1303,6 +1303,59 @@ osUI:
   # also re-enables fabricated metrics, ingests and connector syncs tenant-wide. Wire the
   # scanner instead.
   offlineMock: refuse
+  # SOFTWARE TAB - the LIVE SECURITY SCANNER (2026-11-19). Trivy (Apache-2.0) runs as ONE
+  # Kubernetes Job per deploy request, in THIS namespace, over the app's committed tree:
+  # dependency vulnerabilities from its manifests/lockfiles + committed secrets. The Job's
+  # JSON is mapped onto the review card's existing scan shape. `mode: 'live'` is reported
+  # ONLY when the Job actually completed - a disabled scanner, an unreachable API server, a
+  # failed Job or a timeout all leave the scan `unavailable` with a reason, which the Builder
+  # review card shows and `decide_deploy` refuses to approve (PR #56). This is the thing that
+  # `osUI.offlineMock: refuse` tells you to wire; it is NOT a way to re-enable fabrication,
+  # and it changes OS_OFFLINE_MOCK not at all.
+  #
+  # `sast` stays honestly NOT RUN: Trivy is not a SAST engine, and Semgrep's engine is
+  # LGPL-2.1 - absent from licenses/allowed-licenses.txt - so there is nothing allowlisted to
+  # wire behind it. The card labels the category "not run" rather than showing `sast 0`.
+  software:
+    scanner:
+      # ON by default. A cluster WITHOUT a scanner cannot approve a software deploy at all,
+      # so the useful default is "try, and say so honestly when it does not work".
+      enabled: true
+      image:
+        repository: aquasec/trivy
+        tag: "0.58.2"
+        digest: ""              # optional pin; set it for an immutable, content-addressed ref
+      # WHERE TRIVY GETS ITS VULNERABILITY DATABASE - a real choice, not a detail:
+      #   mirror  (default) the Job pulls the DB from `dbRepository`. Needs DNS + TCP 443 to
+      #                     that registry; the chart's `software-scanner-egress` NetworkPolicy
+      #                     opens exactly that and nothing else.
+      #   offline           `--skip-db-update --skip-java-db-update --offline-scan`. The DB must
+      #                     ALREADY be inside the image you pull. Air-gapped installs set this
+      #                     AND point `image.repository` at their own DB-baked mirror image.
+      # `mirror` is the default deliberately: `offline` against an image with no DB finds
+      # NOTHING and would report a PASS - a clean verdict from an empty database is the exact
+      # outcome this gate exists to prevent.
+      dbMode: mirror
+      dbRepository: ghcr.io/aquasecurity/trivy-db
+      # WHERE THE SCAN RUNS. Empty = the release namespace, beside os-ui (the default, and what
+      # has been exercised). Deliberately NOT softwareRunner.namespace: a scan holds the app's
+      # SOURCE, and the apps namespace is where untrusted student code runs.
+      #
+      # The cost of the default, stated plainly: `pods`/`pods/log` cannot be narrowed by name, so
+      # in the release namespace the os-ui ServiceAccount gains read access to every pod LOG in
+      # the platform namespace (it already had namespace-wide `pods` get/list, so this adds the
+      # log subresource rather than a new reach). Setting a name here — e.g. `software-scans` —
+      # moves the whole grant set (jobs, pods/log, and secrets create/delete) into a dedicated,
+      # default-deny, Pod-Security-`restricted` namespace this chart creates, and leaves the
+      # platform namespace with none of it. That is the better posture and the intended default
+      # once it has been run on a real cluster.
+      namespace: ""
+      # Wall clock for one scan, including the DB fetch. On expiry the Job is abandoned and the
+      # scan is `unavailable` with the timeout as its reason - never a pass.
+      timeoutSeconds: 180
+      resources:
+        requests: { cpu: 100m, memory: 256Mi }
+        limits:   { cpu: "1",  memory: 1Gi }
   image:
     repository: sovereign-os/os-ui    # built locally, loaded into kind
     tag: "0.1.0"
