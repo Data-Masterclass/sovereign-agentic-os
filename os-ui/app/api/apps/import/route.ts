@@ -5,6 +5,7 @@ import { NextResponse } from 'next/server';
 import { withRoute } from '@core/kernel/route-server';
 import { createApp, type AppTemplateKey } from '@tabs/software/lib/apps';
 import { authorThroughFrontDoor, commitToApp } from '@tabs/software/lib/server';
+import { assertNoForbiddenAppPaths } from '@tabs/software/lib/app-write-paths';
 
 export const dynamic = 'force-dynamic';
 
@@ -24,6 +25,8 @@ export const POST = withRoute<Record<string, string>, {
 }>(async ({ user, body }) => {
   const name = String(body.name ?? '').trim() || (body.repoUrl ? body.repoUrl.split('/').pop() ?? 'imported-app' : '');
   if (!name) return NextResponse.json({ error: 'A name or repo URL is required' }, { status: 400 });
+  // The SAME forbidden-paths rule as every other app-file door, before the app is even created.
+  assertNoForbiddenAppPaths(body.files);
 
   const app = await createApp(user, {
     name,
