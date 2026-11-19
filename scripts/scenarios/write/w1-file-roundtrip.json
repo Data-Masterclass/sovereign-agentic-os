@@ -1,0 +1,36 @@
+{
+  "id": "w1-file-roundtrip",
+  "title": "WRITE: upload a small text file to the sandbox, read it back, find it by search, list it for cleanup",
+  "requiresWrite": true,
+  "sandboxDomain": "test",
+  "writeBudgetMs": 30000,
+  "vars": { "domain": "test" },
+  "steps": [
+    { "id": "sandbox-before", "tool": "list_files", "args": { "folder": "${sandbox}" },
+      "record": { "mineBefore": "mine" } },
+    { "id": "upload", "tool": "upload_file", "write": true, "stopOnFail": true,
+      "args": { "name": "selftest-${runTag}.md", "folder": "${sandbox}", "domain": "${domain}", "sensitivity": "internal", "tags": ["os-selftest"],
+        "text": "# OS self-test ${runTag}\n\nThis file was written by the scenario runner to check upload, extraction, description and search.\nMarker: zebra-quartz-${runTag}.\nIt is safe to delete." },
+      "creates": { "kind": "file", "idPath": "id" },
+      "save": { "fileId": "id" },
+      "assert": [ { "path": "id", "op": "nonEmpty" } ],
+      "record": { "version": "version", "status": "status" } },
+    { "id": "read-back", "tool": "get_file", "requires": ["fileId"], "args": { "fileId": "${fileId}" },
+      "retry": { "times": 5, "delayMs": 4000, "until": [ { "path": "extraction.status", "op": "matches", "value": "^(extracted|not_needed|skipped)$" } ] },
+      "assert": [
+        { "path": "folder", "op": "equals", "value": "${sandbox}", "label": "stored in the sandbox folder" },
+        { "path": "text", "op": "contains", "value": "zebra-quartz-${runTag}", "label": "the stored text is the uploaded text" },
+        { "path": "extraction.status", "op": "matches", "value": "^(extracted|not_needed|skipped)$" },
+        { "path": "description", "op": "nonEmpty", "soft": true, "label": "the OS describes an undescribed upload" }
+      ],
+      "record": { "extraction": "extraction.status", "descriptionSource": "descriptionSource", "indexing": "indexing", "tier": "tier", "visibility": "visibility" } },
+    { "id": "search", "tool": "search_files", "requires": ["fileId"], "args": { "query": "zebra-quartz-${runTag}" },
+      "retry": { "times": 5, "delayMs": 4000, "until": [ { "path": "[*].id", "op": "contains", "value": "${fileId}" } ] },
+      "assert": [ { "path": "[*].id", "op": "contains", "value": "${fileId}", "label": "search finds the new file" }, { "path": "0.id", "op": "equals", "value": "${fileId}", "soft": true, "label": "as the top hit" } ],
+      "record": { "hits": "" } },
+    { "id": "sandbox-after", "tool": "list_files", "cleanup": true, "args": { "folder": "${sandbox}" },
+      "assert": [ { "path": "mine[*].id", "op": "contains", "value": "${fileId}" }, { "path": "domain", "op": "lte", "value": 0, "label": "nothing in the sandbox is Domain-visible" } ],
+      "record": { "mineAfter": "mine" } }
+  ],
+  "cleanup": "The MCP door has no file delete (upload_file exists, no delete_file). Remove every `created` file in the Files tab: My files → /_os-selftest → delete."
+}

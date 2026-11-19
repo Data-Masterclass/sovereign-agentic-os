@@ -1,0 +1,177 @@
+{
+  "id": "01-identity-catalogue",
+  "title": "Identity and catalogue: who am I, which tools exist, do the guides name only real tools",
+  "readBudgetMs": 3000,
+  "steps": [
+    {
+      "id": "whoami",
+      "tool": "whoami",
+      "assert": [
+        {
+          "path": "id",
+          "op": "nonEmpty"
+        },
+        {
+          "path": "role",
+          "op": "matches",
+          "value": "^(creator|builder|domain_admin|admin)$"
+        },
+        {
+          "path": "domains",
+          "op": "type",
+          "value": "array"
+        }
+      ],
+      "record": {
+        "role": "role",
+        "domains": "domains"
+      }
+    },
+    {
+      "id": "capabilities",
+      "tool": "list_capabilities",
+      "save": {
+        "toolNames": "available[*].name",
+        "gatedNames": "gated[*].name"
+      },
+      "assert": [
+        {
+          "path": "availableCount",
+          "op": "gte",
+          "value": 50
+        },
+        {
+          "path": "available[*].name",
+          "op": "containsAll",
+          "label": "every tool on the runner's read-only allowlist exists on the server",
+          "value": [
+            "whoami",
+            "list_capabilities",
+            "get_guide",
+            "list_files",
+            "get_file",
+            "search_files",
+            "list_knowledge",
+            "get_knowledge",
+            "search_knowledge",
+            "list_datasets",
+            "get_dataset",
+            "profile_dataset",
+            "query_data",
+            "list_metrics",
+            "get_metric",
+            "list_dashboards",
+            "list_agent_systems",
+            "get_agent_system",
+            "get_agent_run",
+            "list_runs",
+            "get_run_trace",
+            "list_connections",
+            "get_connection",
+            "get_cost",
+            "get_monitoring_overview",
+            "list_software",
+            "get_software"
+          ]
+        }
+      ],
+      "record": {
+        "available": "availableCount",
+        "gated": "gated"
+      }
+    },
+    {
+      "id": "guide-how-to-use",
+      "tool": "get_guide",
+      "assert": [
+        {
+          "op": "backtickedNamesIn",
+          "value": "${toolNames}",
+          "label": "every `tool_name` the guide names is a real tool",
+          "ignore": [
+            "not_found",
+            "bad_request",
+            "forbidden",
+            "rate_limited",
+            "not_configured",
+            "conflict",
+            "upstream_unavailable",
+            "budget_exceeded"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "guide-overview",
+      "tool": "get_guide",
+      "args": {
+        "path": "overview"
+      },
+      "assert": [
+        {
+          "op": "backtickedNamesIn",
+          "value": "${toolNames}",
+          "label": "every `tool_name` the guide names is a real tool",
+          "ignore": [
+            "not_found",
+            "bad_request",
+            "forbidden",
+            "rate_limited",
+            "not_configured",
+            "conflict",
+            "upstream_unavailable",
+            "budget_exceeded"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "guide-files",
+      "tool": "get_guide",
+      "args": {
+        "path": "files"
+      },
+      "assert": [
+        {
+          "op": "backtickedNamesIn",
+          "value": "${toolNames}",
+          "label": "every `tool_name` the guide names is a real tool",
+          "ignore": [
+            "not_found",
+            "bad_request",
+            "forbidden",
+            "rate_limited",
+            "not_configured",
+            "conflict",
+            "upstream_unavailable",
+            "budget_exceeded"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "guide-agents",
+      "tool": "get_guide",
+      "args": {
+        "path": "agents"
+      },
+      "assert": [
+        {
+          "op": "backtickedNamesIn",
+          "value": "${toolNames}",
+          "label": "every `tool_name` the guide names is a real tool",
+          "ignore": [
+            "not_found",
+            "bad_request",
+            "forbidden",
+            "rate_limited",
+            "not_configured",
+            "conflict",
+            "upstream_unavailable",
+            "budget_exceeded"
+          ]
+        }
+      ]
+    }
+  ]
+}

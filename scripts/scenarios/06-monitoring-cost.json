@@ -1,0 +1,12 @@
+{
+  "id": "06-monitoring-cost",
+  "title": "Monitoring and cost: both answer, and say which signals are live",
+  "steps": [
+    { "id": "overview", "tool": "get_monitoring_overview",
+      "assert": [ { "path": "lenses", "op": "gte", "value": 1 }, { "path": "scope.level", "op": "nonEmpty" } ],
+      "record": { "lenses": "lenses", "attention": "attention", "alerts": "alerts", "scope": "scope.level" } },
+    { "id": "cost", "tool": "get_cost",
+      "assert": [ { "path": "caps", "op": "type", "value": "array" } ],
+      "record": { "caps": "caps", "alerts": "alerts", "canSetCap": "canSetCap" } }
+  ]
+}
