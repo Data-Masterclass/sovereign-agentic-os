@@ -6,6 +6,11 @@
  * USER STORY: As the person who started a run I want "failed" to read failed everywhere — the
  *             report every door returns, the stored last run, the Monitoring run list — so a
  *             run whose agent failed never shows as done or green.
+ * ARCHITECTURE:
+ *   - A real `runOsTeam` over a scripted model (the second agent throws), then the same
+ *     `finalizeTeamRun` every door uses. The run-summary trace is captured through the injected
+ *     `trace` and read with Monitoring's OWN verdict function, loaded at run time: this test is
+ *     the contract between the two tabs, and neither imports the other statically.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -15,7 +20,12 @@ import type { LlmCall } from '@core/runtime/agentic';
 import { runOsTeam } from '@tabs/agents/lib/build/agentic-graph-server';
 import type { OsToolDeps } from '@tabs/agents/lib/build/os-tools';
 import { finalizeTeamRun } from '@tabs/agents/lib/build/run-service';
-import { outputFailed } from '@tabs/monitoring/lib/adapters/run-trace';
+
+/** Monitoring's verdict over a run trace's output — the function its run list colours rows with. */
+async function monitoringReadsAsFailed(output: unknown): Promise<boolean> {
+  const { outputFailed } = await import('@tabs/monitoring/lib/adapters/run-trace');
+  return outputFailed(output);
+}
 
 const USER: CurrentUser = { id: 'u1', name: 'Cara', domains: ['sales'], role: 'creator' };
 
@@ -73,7 +83,7 @@ test('F15: a run ended by an agent failure — the report, the stored last run a
   // The Monitoring RUN LIST reads the run-summary trace: it was green for a failed run.
   const summary = traces.find((t) => t.principal === 'os-sys-two:run');
   assert.ok(summary, 'the run-summary trace was emitted');
-  assert.equal(outputFailed(summary!.output), true, 'the run list reads this run as failed (red)');
+  assert.equal(await monitoringReadsAsFailed(summary!.output), true, 'the run list reads this run as failed (red)');
   assert.deepEqual(summary!.output, { reachedEnd: false, path: ['reader', 'writer'], failed: true, failedNode: 'writer', reason: 'LiteLLM 503: upstream unavailable' });
 });
 
@@ -86,5 +96,5 @@ test('F15: a run that completed is unchanged — done, ok, and its summary trace
   assert.equal(lastRun.failed, undefined);
   const summary = traces.find((t) => t.principal === 'os-sys-two:run')!;
   assert.deepEqual(summary.output, { reachedEnd: true, path: ['reader', 'writer'] });
-  assert.equal(outputFailed(summary.output), false);
+  assert.equal(await monitoringReadsAsFailed(summary.output), false);
 });
