@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
-import type { CurrentUser } from '@core/kernel/auth';
+import { liveDomains, type CurrentUser } from '@core/kernel/auth';
 import { getPublicUser } from '@tabs/admin/lib/users';
 import { autonomousAgentsEnabled, ensureHydrated as ensureSettingsHydrated } from '@tabs/admin/lib/settings';
 import { parseSystem } from '@tabs/agents/lib/system-schema';
@@ -41,8 +41,10 @@ export async function resolveOwner(
 ): Promise<CurrentUser | null> {
   const u = await get(ownerId);
   if (!u || u.disabled || u.mustChangeCredentials) return null;
-  // Headless (no browser cookie) ⇒ no active-domain narrowing: operate across all domains.
-  return { id: u.id, name: u.name, domains: u.domains, allDomains: u.domains, activeDomain: null, role: u.role };
+  // Headless (no browser cookie) ⇒ no active-domain narrowing: operate across all domains that
+  // are still active. An archived domain is out of scope here exactly as in the cookie session.
+  const domains = liveDomains(u.domains);
+  return { id: u.id, name: u.name, domains, allDomains: domains, activeDomain: null, role: u.role };
 }
 
 /**
