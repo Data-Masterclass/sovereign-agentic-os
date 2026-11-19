@@ -25,7 +25,7 @@
  *   - No dependencies, no YAML parser: it splits the manifest stream and matches `- name: X`.
  */
 import { execFileSync } from 'node:child_process';
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -36,7 +36,17 @@ const VALUES = join(repo, 'values.local.yaml');
 /** Never on the run path: full gateway admin, session forging, outbound mail. */
 const ADMIN_ONLY = ['LITELLM_MASTER_KEY', 'LITELLM_UI_USERNAME', 'LITELLM_UI_PASSWORD', 'GRAPH_CLIENT_SECRET', 'OS_SESSION_SECRET', 'OS_MCP_TOKEN_SECRET', 'LANGFUSE_SSO_PASSWORD'];
 /** The run path cannot work without these, so their absence is a broken split, not a safe one. */
-const RUN_PATH = ['LITELLM_AGENT_KEY', 'AGENT_RUNS_DATABASE_URL', 'LANGFUSE_SECRET_KEY', 'OPA_URL'];
+const RUN_PATH = ['LITELLM_AGENT_KEY', 'AGENT_RUNS_DATABASE_URL', 'LANGFUSE_SECRET_KEY', 'OPA_URL', 'AGENT_KEY_ENCRYPTION_KEY'];
+/**
+ * BUILD-only configuration (2026-11-19): what os-ui's Build needs to mint and reconcile a system's
+ * model key. The worker never mints or updates a key — it only decrypts the stored one — so these
+ * must be on os-ui and must NOT be on the worker.
+ */
+const BUILD_ONLY = ['AGENT_SYSTEM_KEY_FALLBACKS_JSON'];
+/** The Secret the per-system keys are encrypted under, and the template that generates it. */
+const KEK_ENV = 'AGENT_KEY_ENCRYPTION_KEY';
+const KEK_SECRET = 'os-ui-agent-key-encryption';
+const KEK_TEMPLATE = join(CHART, 'templates', 'base', 'os-ui', 'os-ui-agent-key-encryption.yaml');
 /**
  * Must be on BOTH pods, EXPLICITLY (2026-11-18). `OS_OFFLINE_MOCK` decides whether this
  * deployment may answer with fabricated data; the os-ui-worker EXECUTES agent runs, so a worker
@@ -104,11 +114,56 @@ if (worker) {
   for (const n of ADMIN_ONLY) if (have.has(n)) problems.push(`os-ui-worker carries the ADMIN-ONLY env ${n} — include soa.osUI.runEnv, not soa.osUI.env`);
   for (const n of RUN_PATH) if (!have.has(n)) problems.push(`os-ui-worker is MISSING the run-path env ${n} — the split dropped something a run needs`);
   for (const n of BOTH_PODS) if (!have.has(n)) problems.push(`os-ui-worker is MISSING ${n} — the honesty switch must be set explicitly on the run path too`);
+  for (const n of BUILD_ONLY) if (have.has(n)) problems.push(`os-ui-worker carries the BUILD-only env ${n} — the worker never mints or updates a key`);
 }
 if (osui) {
   const have = names(osui);
   for (const n of ADMIN_ONLY) if (!have.has(n)) problems.push(`os-ui is MISSING ${n} — soa.osUI.env must still include soa.osUI.adminEnv`);
   for (const n of BOTH_PODS) if (!have.has(n)) problems.push(`os-ui is MISSING ${n} — the honesty switch must be set explicitly`);
+  for (const n of BUILD_ONLY) if (!have.has(n)) problems.push(`os-ui is MISSING ${n} — Build could not put the gateway's fallback models on a system's key`);
+  if (!have.has(KEK_ENV)) problems.push(`os-ui is MISSING ${KEK_ENV} — Build could not store a system's key`);
+}
+
+// THE KEY-ENCRYPTION SECRET (2026-11-19). Per-system model keys are stored encrypted under it; if
+// it changed on a `helm upgrade`, every stored key would become unreadable and every system would
+// need a Rebuild. A renderer cannot observe an upgrade (`lookup` is empty under `helm template`),
+// so this asserts the four things it CAN see:
+//   1. both pods read it from its OWN Secret — never from the Secret holding the LiteLLM master key;
+//   2. the template keeps the value: it reads the live Secret back with `lookup` and carries
+//      `helm.sh/resource-policy: keep`;
+//   3. an explicit value renders unchanged, twice in a row (no hidden randomness in that path);
+//   4. `existingSecret` is honoured: no Secret is rendered and both pods reference the named one.
+{
+  /** The Secret name the pod reads `KEK_ENV` from. */
+  const kekSource = (doc) => doc.match(new RegExp(`- name: ${KEK_ENV}\\n\\s+valueFrom:\\n\\s+secretKeyRef:\\n\\s+name: "?([^"\\n]+)"?`))?.[1];
+  const masterSource = osui?.match(/- name: LITELLM_MASTER_KEY\n\s+valueFrom:\n\s+secretKeyRef:\n\s+name: "?([^"\n]+)"?/)?.[1];
+  for (const [pod, doc] of [['os-ui', osui], ['os-ui-worker', worker]]) {
+    if (!doc) continue;
+    const src = kekSource(doc);
+    if (src !== KEK_SECRET) problems.push(`${pod}: ${KEK_ENV} is read from "${src ?? '(nothing)'}" — it must come from the dedicated Secret ${KEK_SECRET}`);
+    if (src && src === masterSource) problems.push(`${pod}: ${KEK_ENV} comes from the Secret that holds the LiteLLM master key — the encryption secret must be independent of it`);
+  }
+
+  const tpl = existsSync(KEK_TEMPLATE) ? readFileSync(KEK_TEMPLATE, 'utf8') : '';
+  if (!tpl) problems.push(`${KEK_TEMPLATE} is missing — nothing generates the key-encryption secret`);
+  else {
+    if (!/lookup "v1" "Secret" \.Release\.Namespace \$name/.test(tpl)) problems.push('the key-encryption Secret template no longer reads the live Secret back (`lookup`) — a `helm upgrade` would generate a NEW value and make every stored key unreadable');
+    if (!/"helm\.sh\/resource-policy": keep/.test(tpl)) problems.push('the key-encryption Secret template lost `helm.sh/resource-policy: keep`');
+  }
+
+  const FIXED = 'check-only-not-a-real-secret-0123456789abcdef';
+  const secretDoc = (text) => text.split(/^---$/m).find((d) => /^kind: Secret$/m.test(d) && new RegExp(`^  name: ${KEK_SECRET}$`, 'm').test(d));
+  const withValue = () => execFileSync('helm', ['template', CHART, '-f', VALUES, '--set', `osUI.agentKeyEncryption.secret=${FIXED}`], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+  const [a, b] = [secretDoc(withValue()), secretDoc(withValue())];
+  if (!a || !a.includes(`${KEK_ENV}: "${FIXED}"`) || a !== b) problems.push('an explicit osUI.agentKeyEncryption.secret does not render unchanged on two consecutive renders');
+  if (!secretDoc(rendered)) problems.push(`the default render has no ${KEK_SECRET} Secret — a fresh install would start without an encryption secret`);
+
+  const ext = execFileSync('helm', ['template', CHART, '-f', VALUES, '--set', 'osUI.worker.enabled=true', '--set', 'osUI.agentKeyEncryption.existingSecret=operator-managed-kek'], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+  if (secretDoc(ext)) problems.push('osUI.agentKeyEncryption.existingSecret is set but the chart still renders its own Secret');
+  for (const [pod, doc] of deployments(ext)) {
+    if (pod !== 'os-ui' && pod !== 'os-ui-worker') continue;
+    if (kekSource(doc) !== 'operator-managed-kek') problems.push(`${pod}: does not read ${KEK_ENV} from osUI.agentKeyEncryption.existingSecret`);
+  }
 }
 
 // The DEFAULT render (chart values only) must REFUSE. values.local.yaml deliberately sets
@@ -130,4 +185,4 @@ if (problems.length) {
   for (const p of problems) console.error(`  - ${p}`);
   process.exit(1);
 }
-console.log(`check-worker-env: ok — os-ui-worker holds none of ${ADMIN_ONLY.length} admin credentials and all ${RUN_PATH.length} run-path ones; OS_OFFLINE_MOCK is explicit on both pods and defaults to refuse`);
+console.log(`check-worker-env: ok — os-ui-worker holds none of ${ADMIN_ONLY.length} admin credentials (the LiteLLM master key among them) and all ${RUN_PATH.length} run-path ones; OS_OFFLINE_MOCK is explicit on both pods and defaults to refuse; the key-encryption secret is dedicated, kept across upgrades and honours an explicit value`);

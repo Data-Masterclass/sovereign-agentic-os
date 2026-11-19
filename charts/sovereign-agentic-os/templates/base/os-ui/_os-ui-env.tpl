@@ -298,6 +298,16 @@
       name: agent-litellm-key
       key: apiKey
       optional: true
+# The secret an agent system's stored model key is encrypted under (os-ui Build writes the
+# encrypted key to the `agent_runs` database; os-ui AND the worker decrypt it for that
+# system's model calls). RUN-path, so the worker gets it. A dedicated secret — NOT the
+# LiteLLM master key, which stays in adminEnv and never reaches the worker. Not `optional`:
+# a pod that could not decrypt would fail every run with "encryption secret missing".
+- name: AGENT_KEY_ENCRYPTION_KEY
+  valueFrom:
+    secretKeyRef:
+      name: {{ ($u.agentKeyEncryption | default dict).existingSecret | default "os-ui-agent-key-encryption" | quote }}
+      key: AGENT_KEY_ENCRYPTION_KEY
 # LangGraph checkpoint store for agent runs (engine rebuild A1): the `agent_runs`
 # database declared in postgres.extraDatabases, wired exactly like LiteLLM's DB —
 # username/password from the role's credential Secret, host = the CNPG rw Service,
@@ -642,7 +652,27 @@
 - name: AGENT_SYSTEM_KEY_TPM_LIMIT
   value: {{ .tpmLimit | int64 | quote }}
 {{- end }}
+{{- if .maxParallelRequests }}
+- name: AGENT_SYSTEM_KEY_MAX_PARALLEL_REQUESTS
+  value: {{ .maxParallelRequests | int64 | quote }}
 {{- end }}
+{{- end }}
+{{- /* THE GATEWAY'S FALLBACKS, for the per-system key's model allowlist. LiteLLM authorises a key
+     against the model it falls back TO, so a system key without the fallback target answers 403
+     exactly when the primary model is failing. Build therefore adds every fallback target of a
+     model on the key. READ from the gateway's own router settings (all four fallback maps) so
+     the two cannot drift; nothing here changes the gateway. ADMIN env: only Build reads it. */}}
+{{- $rs := (((.Values.litellm | default dict).proxy_config | default dict).router_settings | default dict) }}
+{{- $fb := dict }}
+{{- range $key := list "fallbacks" "context_window_fallbacks" "content_policy_fallbacks" }}
+{{- range $entry := (index $rs $key | default list) }}
+{{- range $from, $targets := $entry }}
+{{- $_ := set $fb $from (concat (index $fb $from | default list) ($targets | default list) | uniq) }}
+{{- end }}
+{{- end }}
+{{- end }}
+- name: AGENT_SYSTEM_KEY_FALLBACKS_JSON
+  value: {{ dict "fallbacks" $fb "default" ($rs.default_fallbacks | default list) | toJson | quote }}
 # LiteLLM master key — from a Secret so it never sits in plaintext.
 # Override the name/key per environment.
 - name: LITELLM_MASTER_KEY

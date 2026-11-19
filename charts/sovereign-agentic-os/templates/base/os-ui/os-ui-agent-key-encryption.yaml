@@ -1,0 +1,56 @@
+{{- if .Values.osUI.enabled }}
+{{- /*
+  The secret agent-system MODEL KEYS are encrypted under (AGENT_KEY_ENCRYPTION_KEY).
+
+  os-ui's Build mints one LiteLLM key per agent system and stores it ENCRYPTED in the
+  `agent_runs` database; os-ui and the os-ui-worker both decrypt it to make that system's
+  model calls (os-ui/core/infra/agent-system-keys.ts). This Secret is what they encrypt under.
+  It is a DEDICATED secret: not the LiteLLM master key, and not derived from it — the worker
+  holds this and never the master key.
+
+  IT MUST NOT CHANGE ON `helm upgrade`. If it does, every stored key becomes unreadable: each
+  system then shows "Rebuild needed" and its runs stop until its owner presses Rebuild once
+  (that is also the whole recovery — a Rebuild issues a new key under the new secret; no data
+  is lost, because the gateway, not this store, holds budgets and spend).
+
+  Resolution order (no secret is ever committed to git):
+    1. `osUI.agentKeyEncryption.existingSecret` — a Secret YOU manage (ExternalSecret, sealed
+       secret) with the key `AGENT_KEY_ENCRYPTION_KEY`; this template then renders nothing. Else
+    2. an explicit `osUI.agentKeyEncryption.secret` (32+ characters), else
+    3. the value already stored in this Secret (preserved across `helm upgrade` via `lookup`),
+       else
+    4. a freshly generated 64-character random value on first install.
+  `helm.sh/resource-policy: keep` — an uninstall or a values change that stops rendering this
+  Secret does not delete the value the stored keys depend on.
+
+  GITOPS CAVEAT (same as os-ui-session): `lookup` is empty under `helm template`, Argo CD and
+  Flux, so step 3 cannot preserve the value and step 4 would mint a NEW secret on every sync.
+  For those pipelines use step 1 or 2. `scripts/check-worker-env.mjs` asserts the three
+  properties a renderer can see: the lookup-and-keep is in place, an explicit value renders
+  unchanged, and `existingSecret` is honoured.
+*/}}
+{{- $cfg := .Values.osUI.agentKeyEncryption | default dict }}
+{{- if not $cfg.existingSecret }}
+{{- $name := "os-ui-agent-key-encryption" }}
+{{- $existing := (lookup "v1" "Secret" .Release.Namespace $name) }}
+{{- $current := "" }}
+{{- if $existing }}{{ $current = (index $existing.data "AGENT_KEY_ENCRYPTION_KEY" | b64dec) }}{{- end }}
+{{- $secret := $cfg.secret | default $current | default (randAlphaNum 64) }}
+{{- if lt (len $secret) 32 }}
+{{- fail "osUI.agentKeyEncryption.secret must be at least 32 characters" }}
+{{- end }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "os-ui") | nindent 4 }}
+  annotations:
+    "helm.sh/resource-policy": keep
+type: Opaque
+stringData:
+  AGENT_KEY_ENCRYPTION_KEY: {{ $secret | quote }}
+{{- end }}
+{{- end }}
