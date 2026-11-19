@@ -31,6 +31,7 @@ import {
   reindexOneFile,
   planReindex,
   runReindex,
+  storedFileUnits,
   filesReindexService,
   __resetFilesReindex,
   type FilesReindexDeps,
@@ -38,8 +39,11 @@ import {
 } from '@tabs/files/lib/reindex';
 import { __resetReindexJobs, jobFor, type EngineProbe, type IndexSnapshot } from '@core/kernel/reindex';
 import { isOfflineMockRefused } from '@core/kernel/offline-mock';
-import { emptyAsset, type FileAsset } from '@tabs/files/lib/asset-schema';
-import { createFile, __resetStore } from '@tabs/files/lib/store';
+import { emptyAsset, serializeAsset, type FileAsset } from '@tabs/files/lib/asset-schema';
+import { createFile, bodyForIndex, getFile, setIndexingMode, __putRecordForTests, __resetStore } from '@tabs/files/lib/store';
+import { getBlob, putBlob, __resetBlobs } from '@tabs/files/lib/object-store';
+import { extractFileText, __resetExtractFlights } from '@tabs/files/lib/extract';
+import type { DoclingOutcome } from '@tabs/files/lib/ingest/docling-client';
 import { __resetIndex, indexSize } from '@tabs/files/lib/index-store';
 import type { IndexReport } from '@tabs/files/lib/index-pipeline';
 
@@ -726,4 +730,119 @@ test('M (re-review): a unit still mid-await when the job is abandoned cannot adv
   assert.equal(now.replaced, 1, 'and was not counted as its work');
   assert.equal(now.status, 'running', 'so it cannot report done with a unit never processed');
   assert.equal(calls, 1, 'and the abandoned loop stopped instead of working through its batch');
+});
+
+// ---------------------------------------------------------------------------
+//  THE PDF BACKFILL (2026-11-19): a file that is stored-only only because no text could be read
+//  at upload is planned and recovered; a file that is stored-only by POLICY or CHOICE is not.
+// ---------------------------------------------------------------------------
+
+const OWNER = { id: 'amir', domains: ['sales'], role: 'creator' as const };
+const BACKFILL_BYTES = Buffer.from('%PDF-1.4 original');
+const BACKFILL_TEXT = 'Invoice INV-7. Total due: 99 EUR.';
+
+/** A record exactly as the pre-fix upload wrote it: stored-only, no reason, empty text, bytes stored. */
+async function legacyPdf(id: string, name: string, over: { sensitivity?: 'restricted' } = {}): Promise<void> {
+  const a = emptyAsset({ id, name, owner: 'amir', domain: 'sales', sensitivity: over.sensitivity });
+  a.deepLink = `s3://files/amir/${name}`;
+  a.indexing.mode = 'stored-only';
+  __putRecordForTests({
+    id, owner: 'amir', domain: 'sales', yaml: serializeAsset(a), text: '', bytes: BACKFILL_BYTES.length,
+    object: { key: `amir/${name}`, contentType: 'application/pdf', bytes: BACKFILL_BYTES.length },
+    history: [{ version: 'v1', hash: '00000000', at: a.provenance.addedAt, bytes: BACKFILL_BYTES.length }],
+    updatedAt: a.provenance.addedAt,
+  });
+  await putBlob(`amir/${name}`, BACKFILL_BYTES, 'application/pdf');
+}
+
+/** Unit deps over the REAL store and the REAL extractor, with a scripted parser. */
+function backfillDeps(convert: () => Promise<DoclingOutcome>, seen: { parsed: string[]; indexed: { id: string; text: string }[] }): UnitDeps {
+  return {
+    body: bodyForIndex,
+    index: async (a, text) => { seen.indexed.push({ id: a.id, text }); return report({ fileId: a.id, chunkIds: [`${a.id}#0`] }); },
+    prune: async () => true,
+    extract: (id) => extractFileText(id, {
+      convert: async (doc) => { seen.parsed.push(doc.name); return convert(); },
+      getBlob,
+      index: async () => undefined,
+    }),
+  };
+}
+
+test('BACKFILL (plan): an old empty-text PDF is planned as missing-representation; policy / choice stored-only files are not units at all', async () => {
+  __resetStore(); __resetBlobs(); __resetExtractFlights();
+  await legacyPdf('as_old', 'old-invoice.pdf');
+  await legacyPdf('as_secret', 'payroll.pdf', { sensitivity: 'restricted' });
+  const optedOut = createFile(OWNER, { name: 'diary.md', text: 'private', indexing: 'stored-only' });
+  const searchable = createFile(OWNER, { name: 'notes.md', text: 'ordinary indexed text' });
+
+  const plan = await planReindex(ADMIN, { filter: 'marked', deps: deps({ storedUnits: storedFileUnits, readSnapshot: async () => snapshot({ rowsTotal: 0, rowsByUnit: new Map() }) }) });
+  const byId = new Map(plan.units.map((u) => [u.id, u]));
+  assert.deepEqual(byId.get('as_old')?.reasons, ['missing-representation'], 'the default `marked` filter picks the old PDF up');
+  assert.equal(byId.has('as_secret'), false, 'a restricted file is never a unit');
+  assert.equal(byId.has(optedOut.id), false, 'an owner’s opt-out is never a unit');
+  assert.equal(byId.has(searchable.id), true);
+});
+
+test('BACKFILL (unit): the old PDF’s text is read from its stored bytes, stored on the file, then indexed by the strict path', async () => {
+  __resetStore(); __resetBlobs(); __resetExtractFlights();
+  await legacyPdf('as_old', 'old-invoice.pdf');
+  const seen = { parsed: [] as string[], indexed: [] as { id: string; text: string }[] };
+  const out = await reindexOneFile('as_old', 'u_admin', backfillDeps(async () => ({ ok: true, text: BACKFILL_TEXT, seconds: 1 }), seen));
+  assert.deepEqual(out, { outcome: 'replaced' });
+  assert.deepEqual(seen.parsed, ['old-invoice.pdf']);
+  assert.deepEqual(seen.indexed, [{ id: 'as_old', text: BACKFILL_TEXT }], 'indexed once, with the extracted text');
+  const view = getFile('as_old', OWNER);
+  assert.equal(view.text, BACKFILL_TEXT, 'get_file now returns the document’s text');
+  assert.equal(view.asset.indexing.mode, 'indexed');
+});
+
+test('BACKFILL (unit): a restricted file and an owner’s opt-out are skipped — the parser is never called, nothing is indexed', async () => {
+  __resetStore(); __resetBlobs(); __resetExtractFlights();
+  await legacyPdf('as_secret', 'payroll.pdf', { sensitivity: 'restricted' });
+  await legacyPdf('as_choice', 'diary.pdf');
+  setIndexingMode('as_choice', OWNER, 'stored-only'); // the owner says so explicitly
+  const seen = { parsed: [] as string[], indexed: [] as { id: string; text: string }[] };
+  const d = backfillDeps(async () => ({ ok: true, text: BACKFILL_TEXT, seconds: 1 }), seen);
+  for (const id of ['as_secret', 'as_choice']) {
+    const out = await reindexOneFile(id, 'u_admin', d);
+    assert.equal(out.outcome, 'skipped', id);
+    assert.match(out.reason ?? '', /stored-only/, id);
+    assert.equal(getFile(id, OWNER).text, '', id);
+    assert.equal(getFile(id, OWNER).asset.indexing.mode, 'stored-only', id);
+  }
+  assert.deepEqual(seen, { parsed: [], indexed: [] });
+});
+
+test('BACKFILL (unit): a document the parser finds no text in FAILS with that reason and stays stored-only; the run goes on', async () => {
+  __resetStore(); __resetBlobs(); __resetExtractFlights();
+  await legacyPdf('as_scan', 'scan.pdf');
+  const seen = { parsed: [] as string[], indexed: [] as { id: string; text: string }[] };
+  const out = await reindexOneFile('as_scan', 'u_admin', backfillDeps(
+    async () => ({ ok: false, code: 'no-text', reason: 'The document parser (Docling) read the document and found no text in it.', seconds: 2 }), seen));
+  assert.equal(out.outcome, 'failed');
+  assert.match(out.reason ?? '', /found no text/);
+  assert.deepEqual(seen.indexed, [], 'nothing invented, nothing indexed');
+  const a = getFile('as_scan', OWNER).asset;
+  assert.equal(a.indexing.mode, 'stored-only');
+  assert.equal(a.indexing.extraction?.code, 'no-text', 'and the preview now shows why');
+});
+
+test('BACKFILL (unit): the parser going away MID-RUN is the typed refusal that stops the job — not a per-file shrug', async () => {
+  __resetStore(); __resetBlobs(); __resetExtractFlights();
+  await legacyPdf('as_old', 'old-invoice.pdf');
+  const seen = { parsed: [] as string[], indexed: [] as { id: string; text: string }[] };
+  await assert.rejects(
+    () => reindexOneFile('as_old', 'u_admin', backfillDeps(
+      async () => ({ ok: false, code: 'parser-unreachable', reason: 'The document parser (Docling) at http://docling:5001 could not be reached (ECONNREFUSED).', seconds: 0 }), seen)),
+    (e: unknown) => isOfflineMockRefused(e) && /old-invoice\.pdf/.test((e as Error).message),
+  );
+  assert.deepEqual(seen.indexed, []);
+  assert.equal(getFile('as_old', OWNER).text, '');
+});
+
+test('BACKFILL: the live unit path extracts WITHOUT the best-effort indexer, so the strict index is the only writer', () => {
+  const here = fileURLToPath(new URL('.', import.meta.url));
+  const src = readFileSync(join(here, 'reindex.ts'), 'utf8');
+  assert.match(src, /extract: \(id\) => extractFileText\(id, \{ \.\.\.LIVE_EXTRACT_DEPS, index: async \(\) => undefined \}, \{ waitMs: BACKFILL_EXTRACT_WAIT_MS \}\)/);
 });

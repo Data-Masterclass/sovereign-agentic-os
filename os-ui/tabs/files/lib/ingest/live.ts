@@ -17,12 +17,13 @@ import { mockAdapterFor } from '@tabs/files/lib/ingest/mocks';
 import { offlineMockAllowed, refuseOfflineMock } from '@core/kernel/offline-mock';
 
 /**
- * LIVE ingest adapters — real `apply → verify` against the actual services, behind
- * the SAME interface as the mocks. When the service is reachable the file is parsed
- * for real (Docling for docs, a Whisper-style ASR for audio/video, an OCR/caption
- * service for images); when it is unreachable (kind, or the service is off) we fall
- * back to the deterministic MOCK and label the result `mode: 'mock'` — honest, never
- * a silent failure. This is the agent-runtime dual pattern (lib/agents/build/live).
+ * LIVE ingest adapters — real `apply → verify` behind the SAME interface as the mocks.
+ * Documents and tables represent the file's STORED text (see `storedTextAdapter` below; the
+ * Docling call itself lives in `ingest/docling-client.ts` + `extract.ts`). Audio/video and
+ * images still call their service here (a Whisper-style ASR, an OCR/caption service); when
+ * that is unreachable (kind, or the service is off) they fall back to the deterministic MOCK
+ * and label the result `mode: 'mock'` — honest, never a silent failure. This is the
+ * agent-runtime dual pattern (lib/agents/build/live).
  *
  * THE HONESTY GATE (2026-11-18, review H2). The fallback produced INVENTED TEXT for the file —
  * placeholder sections, a placeholder transcript, a placeholder caption — which was then chunked,
@@ -105,16 +106,39 @@ function liveAdapter(
   };
 }
 
-/** Docling REST: POST {DOCLING_URL}/convert {source} → { document: { texts: [{text}] } }. */
-export const doclingLive = liveAdapter(
-  'docling', ['doc', 'archive', 'other'], `${config.doclingUrl}/convert`, 'text', 'section',
-  (i) => ({ source: i.deepLink, options: { ocr: true } }),
-  (json, i) => {
-    const doc = (json.document ?? {}) as Record<string, unknown>;
-    const texts = Array.isArray(doc.texts) ? (doc.texts as Record<string, unknown>[]).map((t) => String(t.text ?? '')) : [];
-    return texts.length ? [toRepresentation('text', i.fileId, 'section', texts)] : [{ type: 'text', chunks: chunkText(i.text, i.fileId, 'section') }];
-  },
-);
+/**
+ * A document / table adapter that represents the file's STORED TEXT (2026-11-19).
+ *
+ * It makes no network call, on purpose. A document reaches the index in two steps now:
+ *   1. its text is obtained ONCE and stored on the file — a text-like upload's bytes ARE its
+ *      text; a binary document (PDF/DOCX/PPTX/XLSX) is sent to Docling as bytes by
+ *      `extract.ts`, which stores the markdown it returns or a typed reason it could not;
+ *   2. this adapter chunks + hashes that stored text.
+ * So `get_file`, the preview, lexical search and the vector index all read ONE body, and a
+ * re-index does not pay for a second OCR pass. The previous version posted
+ * `{ source: 's3://…' }` to `{DOCLING_URL}/convert` here — a route docling-serve does not have —
+ * so on a deployed cluster EVERY file (plain text included) was refused from the index.
+ *
+ * HONESTY: there is no stand-in to refuse any more, because nothing here can invent. The text is
+ * the file's own or the parser's; when there is none the result carries NO representation, the
+ * pipeline reports `empty`, and nothing is indexed. `mode: 'live'` is therefore the truth — the
+ * chunks are real content, never a placeholder. The "parser unreachable" refusal moved to where
+ * the parser is actually called: `extract.ts` records it on the file as a typed failure.
+ */
+function storedTextAdapter(name: string, kinds: FileKind[], type: RepresentationType, unit: string): IngestAdapter {
+  return {
+    name,
+    kinds,
+    async apply(input: IngestInput): Promise<IngestResult> {
+      const chunks = chunkText(input.text, input.fileId, unit);
+      return { adapter: name, mode: 'live', representations: chunks.length ? [{ type, chunks }] : [] };
+    },
+    verify: verifyResult,
+  };
+}
+
+/** Documents: the stored text (the upload's own, or Docling's markdown) in reading order. */
+export const doclingLive = storedTextAdapter('docling', ['doc', 'archive', 'other'], 'text', 'section');
 
 /** ASR (Whisper-style): POST {TRANSCRIBE_URL}/asr {source} → { segments: [{text}] }. */
 export const transcribeLive = liveAdapter(
@@ -140,16 +164,8 @@ export const ocrCaptionLive = liveAdapter(
   },
 );
 
-/** Table reader (docling table mode reused). */
-export const tableLive = liveAdapter(
-  'table', ['table'], `${config.doclingUrl}/convert`, 'table', 'row',
-  (i) => ({ source: i.deepLink, options: { tables: true } }),
-  (json, i) => {
-    const doc = (json.document ?? {}) as Record<string, unknown>;
-    const rows = Array.isArray(doc.tables) ? (doc.tables as Record<string, unknown>[]).map((t) => String(t.text ?? '')) : [];
-    return rows.length ? [toRepresentation('table', i.fileId, 'row', rows)] : [{ type: 'table', chunks: chunkText(i.text, i.fileId, 'row') }];
-  },
-);
+/** Tables: the stored text (CSV/TSV as uploaded; XLSX as Docling's markdown table), row-chunked. */
+export const tableLive = storedTextAdapter('table', ['table'], 'table', 'row');
 
 const ALL = [doclingLive, transcribeLive, ocrCaptionLive, tableLive];
 

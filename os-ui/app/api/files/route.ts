@@ -8,7 +8,7 @@ import { requirePrincipal, errorResponse } from '@tabs/files/lib/server';
 import { listFiles, createFile, attachObject, objectKeyForAsset, type UploadInput } from '@tabs/files/lib/store';
 import { putBlob } from '@tabs/files/lib/object-store';
 import '@tabs/files/lib/object-store-server'; // registers the durable MinIO backend
-import { reindexFile } from '@tabs/files/lib/pipeline-server';
+import { reindexFile, ingestUploaded } from '@tabs/files/lib/pipeline-server';
 import { truncationError } from '@tabs/files/lib/integrity';
 import { config } from '@core/kernel/config';
 import type { Sensitivity, Storage } from '@tabs/files/lib/asset-schema';
@@ -67,7 +67,8 @@ export async function POST(req: Request) {
       const sensitivity = (form.get('sensitivity') as Sensitivity) || undefined;
       const bytes = Buffer.from(await file.arrayBuffer());
       const fileType = file.type || 'application/octet-stream';
-      // Keep the extracted text for text-like files so search/indexing still works.
+      // A text-like file's bytes ARE its text. A binary document's text is read from the
+      // stored bytes by the parser AFTER the object is in the store (ingestUploaded below).
       const text = isTextLike(name, fileType) ? bytes.toString('utf8') : '';
 
       const asset = createFile(user, { name, folder, tags, sensitivity, text, bytes: bytes.length });
@@ -77,8 +78,10 @@ export async function POST(req: Request) {
         await putBlob(key, bytes, fileType);
         attachObject(asset.id, user, { contentType: fileType, bytes: bytes.length });
       }
-      await reindexFile(asset, text, user.id); // A27: the uploader pays for the embed
-      return NextResponse.json({ asset }, { status: 201 });
+      // Text in hand ⇒ index it. None (a PDF/DOCX/…) ⇒ read it from the stored bytes via
+      // Docling, bounded: the response shows Searchable, still-extracting, or the reason.
+      const stored = await ingestUploaded(asset, text, user.id); // A27: the uploader pays for the embed
+      return NextResponse.json({ asset: stored }, { status: 201 });
     }
 
     // ---- UI upload (raw bytes): the browser POSTs the file as the RAW request
@@ -119,8 +122,10 @@ export async function POST(req: Request) {
         await putBlob(key, bytes, fileType);
         attachObject(asset.id, user, { contentType: fileType, bytes: bytes.length });
       }
-      await reindexFile(asset, text, user.id); // A27: the uploader pays for the embed
-      return NextResponse.json({ asset }, { status: 201 });
+      // Text in hand ⇒ index it. None (a PDF/DOCX/…) ⇒ read it from the stored bytes via
+      // Docling, bounded: the response shows Searchable, still-extracting, or the reason.
+      const stored = await ingestUploaded(asset, text, user.id); // A27: the uploader pays for the embed
+      return NextResponse.json({ asset: stored }, { status: 201 });
     }
 
     // ---- JSON upload: MCP `upload_file` / programmatic — extracted text only, no
