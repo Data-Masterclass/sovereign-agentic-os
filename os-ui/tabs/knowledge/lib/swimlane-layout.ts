@@ -151,3 +151,34 @@ export function layoutSwimlanes(
 
   return { lanes, blocks, edges, width, height };
 }
+
+// Wrap a step title onto up to TITLE_MAX_LINES lines that fit the box width by whole
+// words (usable ~172px at 13px ≈ 24 chars/line). The last line is ellipsised only
+// if the title still overflows — so titles up to ~3 words × lines show in FULL, and
+// the SVG <title> tooltip always holds the complete text. Shared by the on-screen canvas
+// (`ui/SwimlaneCanvas.tsx`) and the printed SVG (`swimlane-svg.ts`) so both read the same.
+const TITLE_CHARS_PER_LINE = 24;
+const TITLE_MAX_LINES = 3;
+export function wrapTitle(title: string): string[] {
+  const words = title.trim().split(/\s+/);
+  const lines: string[] = [];
+  let line = '';
+  for (const w of words) {
+    const next = line ? `${line} ${w}` : w;
+    if (next.length <= TITLE_CHARS_PER_LINE) {
+      line = next;
+    } else {
+      if (line) lines.push(line);
+      // A single word longer than a line: hard-slice it so it can't overflow.
+      line = w.length > TITLE_CHARS_PER_LINE ? w.slice(0, TITLE_CHARS_PER_LINE - 1) + '…' : w;
+    }
+    if (lines.length === TITLE_MAX_LINES) break;
+  }
+  if (lines.length < TITLE_MAX_LINES && line) lines.push(line);
+  // If words remain beyond the last drawable line, mark the overflow with an ellipsis.
+  const drawn = lines.join(' ').replace(/…$/, '').split(/\s+/).length;
+  if (drawn < words.length && lines.length > 0 && !lines[lines.length - 1].endsWith('…')) {
+    lines[lines.length - 1] = lines[lines.length - 1] + '…';
+  }
+  return lines.length ? lines : [''];
+}

@@ -28,6 +28,8 @@
  * (Governance golden path §5.) Former `participant` and `agentic-leader` roles are
  * removed; any legacy/unknown role normalises to `creator`.
  */
+import { b64urlDecode, b64urlEncode } from '@core/kernel/base64url';
+
 export type Role = 'creator' | 'builder' | 'domain_admin' | 'admin';
 
 /** Every role, lowest→highest privilege. Single source for selects + ranking. */
@@ -159,20 +161,6 @@ export function sessionCookieOptions(opts: {
 const enc = new TextEncoder();
 const dec = new TextDecoder();
 
-function b64urlEncode(bytes: Uint8Array): string {
-  let s = '';
-  for (const b of bytes) s += String.fromCharCode(b);
-  return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
-
-function b64urlDecode(str: string): Uint8Array {
-  let s = str.replace(/-/g, '+').replace(/_/g, '/');
-  while (s.length % 4) s += '=';
-  const bin = atob(s);
-  const bytes = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-  return bytes;
-}
 
 async function hmacKey(secret: string): Promise<CryptoKey> {
   return crypto.subtle.importKey(

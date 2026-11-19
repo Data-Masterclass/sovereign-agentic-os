@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { loader } from '@monaco-editor/react';
+import { useMonacoTheme } from '@core/ui/useMonacoTheme';
 
 /**
  * In-browser code editor for the Software golden path (Layer 3), shown beside
@@ -69,17 +70,6 @@ function langFor(path: string): string {
   }
 }
 
-function useMonacoTheme(): 'vs-dark' | 'light' {
-  const [dark, setDark] = useState(false);
-  useEffect(() => {
-    const read = () => setDark(document.documentElement.getAttribute('data-theme') === 'dark');
-    read();
-    const obs = new MutationObserver(read);
-    obs.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
-    return () => obs.disconnect();
-  }, []);
-  return dark ? 'vs-dark' : 'light';
-}
 
 export default function CodePanel({ appId, appName }: { appId: string; appName: string }) {
   const monacoTheme = useMonacoTheme();

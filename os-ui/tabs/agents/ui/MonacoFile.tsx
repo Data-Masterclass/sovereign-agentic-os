@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { loader } from '@monaco-editor/react';
+import { useMonacoTheme } from '@core/ui/useMonacoTheme';
 
 /**
  * One whitelisted file of an agent system, edited in Monaco and committed back to
@@ -32,17 +33,6 @@ function langFor(path: string): string {
   return 'plaintext';
 }
 
-function useMonacoTheme(): 'vs-dark' | 'light' {
-  const [dark, setDark] = useState(false);
-  useEffect(() => {
-    const read = () => setDark(document.documentElement.getAttribute('data-theme') === 'dark');
-    read();
-    const obs = new MutationObserver(read);
-    obs.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
-    return () => obs.disconnect();
-  }, []);
-  return dark ? 'vs-dark' : 'light';
-}
 
 export default function MonacoFile({
   systemId,

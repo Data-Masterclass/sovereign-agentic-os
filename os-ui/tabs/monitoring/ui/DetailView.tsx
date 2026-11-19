@@ -4,6 +4,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { ago, compact, money } from '@tabs/monitoring/ui/format';
 
 /**
  * The DIAGNOSIS view — opened from an agent or dataset tile IN THE MAIN WINDOW
@@ -73,19 +74,6 @@ type DatasetDetail = {
 
 export type DetailTarget = { kind: 'agent' | 'dataset'; id: string; name?: string };
 
-function ago(at: number | string | null): string {
-  if (at == null) return '—';
-  const t = typeof at === 'number' ? at : Date.parse(at);
-  if (Number.isNaN(t)) return '—';
-  const s = Math.max(0, Math.floor((Date.now() - t) / 1000));
-  if (s < 60) return 'just now';
-  const m = Math.floor(s / 60); if (m < 60) return `${m}m ago`;
-  const h = Math.floor(m / 60); if (h < 24) return `${h}h ago`;
-  const d = Math.floor(h / 24); if (d < 30) return `${d}d ago`;
-  return `${Math.floor(d / 30)}mo ago`;
-}
-const money = (n: number) => (n >= 1 ? `€${n.toFixed(2)}` : n > 0 ? `€${n.toFixed(3)}` : '—');
-const compact = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${n}`);
 const dur = (ms?: number) => (typeof ms !== 'number' ? '—' : ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(1)}s`);
 const H7_DOT: Record<Health7, string> = { ok: 'h-green', warn: 'h-amber', error: 'h-red' };
 const DECISION_DOT: Record<string, string> = { allow: 'h-green', deny: 'h-red', requires_approval: 'h-amber' };
