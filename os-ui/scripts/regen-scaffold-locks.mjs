@@ -29,6 +29,9 @@ process.chdir(ROOT); // the vendor readers resolve `core/app-ui` and `core/app-s
 const LOCKS = join(ROOT, 'tabs', 'software', 'lib', 'scaffolds', 'locks');
 const check = process.argv.includes('--check');
 const SLUG = 'sovereign-os-scaffold'; // LOCK_PLACEHOLDER_NAME — asserted equal by the drift test
+// Pinned: a maintainer's ~/.npmrc may point at a private mirror, and the `resolved` URLs npm writes
+// would then carry that host into every generated app. The drift test asserts the host.
+const REGISTRY = 'https://registry.npmjs.org/';
 
 // scaffold-lock.ts imports the lockfiles, so a first-ever run needs something to import. These
 // stubs are overwritten below before the process exits 0.
@@ -56,7 +59,7 @@ for (const [family, scaffold] of Object.entries(FAMILIES)) {
       mkdirSync(dirname(abs), { recursive: true });
       writeFileSync(abs, f.content);
     }
-    const run = spawnSync('npm', ['install', '--package-lock-only', '--ignore-scripts', '--no-audit', '--no-fund'], {
+    const run = spawnSync('npm', ['install', '--package-lock-only', '--ignore-scripts', '--no-audit', '--no-fund', `--registry=${REGISTRY}`], {
       cwd: dir,
       encoding: 'utf8',
     });

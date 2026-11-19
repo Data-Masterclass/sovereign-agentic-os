@@ -91,7 +91,7 @@ function packageJson(slug: string, vendored = false): ScaffoldFile {
     },
     devDependencies: {
       // Vite — MIT
-      vite: '^5.4.2',
+      vite: '^6.4.6',
       '@vitejs/plugin-react': '^4.3.1',
       // TypeScript — Apache-2.0
       typescript: '^5.5.3',

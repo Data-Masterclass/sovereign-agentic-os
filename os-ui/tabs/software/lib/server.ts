@@ -90,7 +90,31 @@ export async function commitToApp(
   // commit after a pod restart merges the changeset over the app's REAL last tree
   // (not the bare template seed) — the whole-tree metadata parse + scan stay honest.
   await hydrateSnapshot(app.id);
-  const prior = getSnapshot(app.id) ?? templateFiles(app.template, app.name, app.slug);
+  const snapshot = getSnapshot(app.id);
+  const prior = snapshot ?? templateFiles(app.template, app.name, app.slug);
+  if (!snapshot) {
+    // A LOST SNAPSHOT IS NOT AN EMPTY APP. `hydrateSnapshot` returns null when the mirror is
+    // unreachable as well as when there is nothing to read, and the commit below REPLACES the
+    // app's whole git subtree with `prior + files`. The template fallback is only this app's
+    // tree if it contains everything the app was seeded with — and a LOCKED seed
+    // (`scaffold-lock.ts`) carries a lockfile, a vendored tree and a different manifest that the
+    // plain template does not. Merging a push over the fallback would silently delete all of
+    // them and commit the deletion. `app.repo.seeded` is the recorded evidence of what was
+    // seeded, so the check is positive: any seeded path the fallback lacks ⇒ refuse, write nothing.
+    const have = new Set(prior.map((f) => f.path));
+    const missing = app.repo.seeded.filter((p) => !have.has(p));
+    if (missing.length > 0) {
+      throw withStatus(
+        new Error(
+          `This app's source tree could not be loaded (its file mirror is unreachable or empty), and ` +
+            `the template is not the tree it was created with: ${missing.length} seeded file(s) — ` +
+            `${missing.slice(0, 3).join(', ')}${missing.length > 3 ? ', …' : ''} — would be deleted by ` +
+            `committing over it. Nothing was written. Retry once the mirror is reachable.`,
+        ),
+        503,
+      );
+    }
+  }
   const toCommit = ensureSectionsRegistered(prior, files, app.template);
   const tree = mergeTree(prior, toCommit);
   // COMPILE GATE (verify-before-commit, redesign Week 1): the MERGED tree — including

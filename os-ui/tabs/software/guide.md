@@ -61,6 +61,25 @@ A **creator** cannot `promote`: they **file** the My→Domain request (the UI's 
 
 `request_deploy` runs the scan over the files that will ship. On a cluster with **no scanner engine** the verdict is `unavailable` with `passed: false` and a reason — not a green tick — and `decide_deploy` then refuses with a 409 naming the absence. Real findings are still reported either way: refusing a verdict is not hiding evidence. A coded app therefore cannot go live until a scanner is wired in.
 
+### Dependency coverage, and what to do when it is lost
+
+A **new coded app** is created with a real `package-lock.json`, so the scanner can resolve and
+check its dependencies — development dependencies included. That coverage holds only while the
+lockfile still matches `package.json`. Change the manifest without a new lockfile and the scan
+reports dependencies as **not covered**, naming what differs.
+
+Nothing in the OS runs npm, so the lockfile cannot be regenerated from inside it. The ways forward
+are: on a checkout of the app, run `npm install --package-lock-only` and push the new
+`package-lock.json` with `push_app_files` (or paste it in the code editor), then re-request the
+deploy; or ask an Administrator to acknowledge the uncovered scan in writing. The build assistant
+cannot do either — it is refused `package.json` and every lockfile.
+
+Three limits worth knowing. Apps created before lockfiles shipped have none and stay "not covered"
+until one is pushed. The vendored `@sovereign-os/*` source under `vendor/` is the OS's own code and
+is **not** vulnerability-scanned (no advisory database knows it, and no SAST engine runs). And the
+compile check type-checks against the OS's current UI/SDK packages, while an image built from the
+app uses the copy frozen under `vendor/` when the app was created.
+
 ## What to consider
 
 - **Grant before you author.** A tab that reads a dataset the app wasn't granted, or references a column that doesn't exist, is a BLOCKING validation issue — `set_app_spec` returns a machine-actionable `{ path, reason, fix }` and persists nothing.

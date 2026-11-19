@@ -21,15 +21,26 @@
  *     - the lock's ROOT entry (`packages[""]`) against the manifest beside it: `name`, `version`,
  *       and every range in `dependencies`, `devDependencies`, `optionalDependencies` and
  *       `peerDependencies` — exactly the fields npm copies from the manifest when it resolves;
- *     - that every declared (dev)dependency has a resolution entry (`node_modules/<name>`), so a
- *       root entry edited by hand without resolving is caught;
+ *     - that every declared dependency, devDependency and non-optional peer has a resolution
+ *       entry (`node_modules/<name>`), so a root entry edited by hand without resolving is caught;
+ *     - that each resolved version SATISFIES the range that asked for it ({@link satisfiesRange}),
+ *       so `^4.17.21` beside a resolution of 4.17.20 is stale even though both sides "exist";
  *     - a manifest WITHOUT its own lockfile that an ancestor lockfile carries as a local package
- *       (`file:` / workspace — e.g. `vendor/@sovereign-os/ui`) against that entry.
+ *       (`file:` / workspace — e.g. `vendor/@sovereign-os/ui`) against that entry: version, all
+ *       four range fields, and a resolution for each of its dependencies and non-optional peers,
+ *       looked up the way Node resolves (its own `node_modules`, then each ancestor's).
  *
  *   WHAT IT CANNOT SEE, stated so nobody reads more into "consistent" than is there:
- *     - it does not contact a registry, so it cannot prove a resolved version satisfies its range,
- *       nor that an `integrity` hash is genuine. A lockfile forged end to end but internally
- *       consistent passes this check. It proves the lock was written FOR this manifest, not BY npm;
+ *     - it does not contact a registry, so it cannot prove a resolved version EXISTS or that an
+ *       `integrity` hash is genuine. A lockfile forged end to end but internally consistent passes
+ *       this check. It proves the lock was written FOR this manifest, not BY npm;
+ *     - the range check is a deliberately small semver subset (`semver` is not a dependency of
+ *       os-ui): exact versions, `^`, `~`, the comparators, x-ranges, hyphen ranges, and `||`. A
+ *       range it cannot read (a tag such as `latest`, `npm:` aliases, git/URL/`file:` specifiers)
+ *       or a prerelease on either side is NOT judged — it is left alone rather than guessed at;
+ *     - a local package's devDependencies are compared as ranges but not required to be resolved:
+ *       npm installs them for a workspace member and not for a plain `file:` dependency, and the
+ *       lockfile does not say which the entry is;
  *     - `yarn.lock` / `pnpm-lock.yaml` and npm lockfileVersion 1 are not parsed (`other-lock`):
  *       coverage for those still rests on the engine's own `lang-pkgs` result, as before;
  *     - other ecosystems (pip, go, cargo, …) are out of scope here.
@@ -57,7 +68,10 @@ export type NpmLockState =
 export type NpmManifestEvidence = {
   /** The `package.json` path, relative to the tree root. */
   manifest: string;
-  /** How many dependencies it asks a resolver for (deps + dev + optional; peers are the host's). */
+  /**
+   * How many dependencies it names, across ALL FOUR fields. Peers count: npm 7+ installs them, so
+   * a peer-only manifest still asks a resolver for packages and is not "nothing to resolve".
+   */
   declared: number;
   /** The npm lockfile that covers it, when one does. */
   lock: string | null;
@@ -101,11 +115,144 @@ function diffRanges(field: RangeField, want: Record<string, string>, got: Record
 }
 
 function declaredCount(manifest: Json): number {
-  return (
-    Object.keys(ranges(manifest, 'dependencies')).length +
-    Object.keys(ranges(manifest, 'devDependencies')).length +
-    Object.keys(ranges(manifest, 'optionalDependencies')).length
-  );
+  return RANGE_FIELDS.reduce((n, field) => n + Object.keys(ranges(manifest, field)).length, 0);
+}
+
+// ------------------------------------------------------------- a small semver ------
+
+type V = [number, number, number];
+
+/** `1.2.3` (optionally `v`-prefixed, optionally with build metadata). Prereleases return null. */
+function parseVersion(v: string): V | null {
+  const m = /^v?(\d+)\.(\d+)\.(\d+)(?:\+[0-9A-Za-z.-]+)?$/.exec(v.trim());
+  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
+}
+
+const cmp = (a: V, b: V): number => a[0] - b[0] || a[1] - b[1] || a[2] - b[2];
+
+/** A partial version (`1`, `1.2`, `1.x`, `*`, ``) as its inclusive lower and exclusive upper bound. */
+function partial(p: string): { lo: V; hi: V | null; full: boolean } | null {
+  const t = p.trim().replace(/^v/, '');
+  if (t === '' || t === '*' || t === 'x' || t === 'X') return { lo: [0, 0, 0], hi: null, full: false };
+  const m = /^(\d+)(?:\.(\d+|[xX*]))?(?:\.(\d+|[xX*]))?$/.exec(t);
+  if (!m) return null;
+  const major = Number(m[1]);
+  const wild = (x: string | undefined) => x === undefined || /^[xX*]$/.test(x);
+  if (wild(m[2])) return { lo: [major, 0, 0], hi: [major + 1, 0, 0], full: false };
+  const minor = Number(m[2]);
+  if (wild(m[3])) return { lo: [major, minor, 0], hi: [major, minor + 1, 0], full: false };
+  return { lo: [major, minor, Number(m[3])], hi: null, full: true };
+}
+
+/** One comparator (`^1.2.3`, `>=2`, `1.x`, …) against a version. null = not a form we read. */
+function testComparator(v: V, c: string): boolean | null {
+  const m = /^(\^|~|>=|<=|>|<|=)?\s*(.*)$/.exec(c.trim());
+  if (!m) return null;
+  const op = m[1] ?? '';
+  const p = partial(m[2]);
+  if (!p) return null;
+  const { lo, hi, full } = p;
+  switch (op) {
+    case '^': {
+      // Up to, not including, the next change of the left-most non-zero component.
+      const upper: V = lo[0] > 0 ? [lo[0] + 1, 0, 0] : lo[1] > 0 ? [0, lo[1] + 1, 0] : full ? [0, 0, lo[2] + 1] : (hi ?? [1, 0, 0]);
+      return cmp(v, lo) >= 0 && cmp(v, upper) < 0;
+    }
+    case '~': {
+      const upper: V = full || m[2].split('.').length >= 2 ? [lo[0], lo[1] + 1, 0] : [lo[0] + 1, 0, 0];
+      return cmp(v, lo) >= 0 && cmp(v, upper) < 0;
+    }
+    case '>=':
+      return cmp(v, lo) >= 0;
+    case '>':
+      return full ? cmp(v, lo) > 0 : hi === null ? false : cmp(v, hi) >= 0;
+    case '<':
+      return cmp(v, lo) < 0;
+    case '<=':
+      return full ? cmp(v, lo) <= 0 : hi === null ? true : cmp(v, hi) < 0;
+    default:
+      // `=` or bare: an exact version, or an x-range.
+      return full ? cmp(v, lo) === 0 : cmp(v, lo) >= 0 && (hi === null || cmp(v, hi) < 0);
+  }
+}
+
+/**
+ * Does `version` satisfy the npm `range`? `true` / `false` when this module can tell, `null` when
+ * it cannot and therefore must not judge: a non-semver specifier (tag, alias, git, URL, `file:`,
+ * `workspace:`), a prerelease on either side, or a syntax outside the subset described above.
+ */
+export function satisfiesRange(version: string, range: string): boolean | null {
+  const v = parseVersion(version);
+  if (!v) return null;
+  const r = range.trim();
+  if (/[a-zA-Z]:|\/|^[a-zA-Z][\w-]*$/.test(r) && !/^[xX]$/.test(r)) return null; // alias / url / path / tag
+  if (/\d-[0-9A-Za-z]/.test(r.replace(/\s-\s/g, ' '))) return null; // a prerelease inside the range
+  let any = false;
+  for (const alt of r.split('||')) {
+    const hyphen = /^\s*(\S+)\s+-\s+(\S+)\s*$/.exec(alt);
+    // npm allows a space between an operator and its version (`>= 3.1.0 < 4`): rejoin them first.
+    const joined = alt.trim().replace(/(\^|~|>=|<=|>|<|=)\s+/g, '$1');
+    const parts = hyphen ? [`>=${hyphen[1]}`, `<=${hyphen[2]}`] : joined.split(/\s+/).filter(Boolean);
+    let all = true;
+    for (const c of parts.length > 0 ? parts : ['*']) {
+      const t = testComparator(v, c);
+      if (t === null) return null;
+      if (!t) all = false;
+    }
+    if (all) any = true;
+  }
+  return any;
+}
+
+/** Peers npm will not install: those a manifest marks `optional` in `peerDependenciesMeta`. */
+function optionalPeers(holder: Json): Set<string> {
+  const meta = holder.peerDependenciesMeta;
+  const out = new Set<string>();
+  if (isObj(meta)) for (const [k, v] of Object.entries(meta)) if (isObj(v) && v.optional === true) out.add(k);
+  return out;
+}
+
+/**
+ * Where a dependency of the package at `from` ('' = the root) is resolved: its own
+ * `node_modules`, then each ancestor directory's — Node's own lookup.
+ */
+function resolutionOf(packages: Record<string, Json>, from: string, name: string): Json | null {
+  for (let dir = from; ; dir = dir.includes('/') ? dir.slice(0, dir.lastIndexOf('/')) : '') {
+    const hit = packages[dir ? `${dir}/node_modules/${name}` : `node_modules/${name}`];
+    if (hit) return hit;
+    if (dir === '') return null;
+  }
+}
+
+/**
+ * Every name in `fields` must be RESOLVED, and resolved to a version its range accepts. A link
+ * entry (`file:` / workspace) is followed to its target for the version.
+ */
+function resolutionProblems(
+  packages: Record<string, Json>,
+  from: string,
+  holder: Json,
+  fields: readonly RangeField[],
+): string[] {
+  const out: string[] = [];
+  const skipPeers = optionalPeers(holder);
+  for (const field of fields) {
+    for (const [name, range] of Object.entries(ranges(holder, field))) {
+      if (field === 'peerDependencies' && skipPeers.has(name)) continue;
+      let hit = resolutionOf(packages, from, name);
+      if (!hit) {
+        if (field === 'optionalDependencies') continue; // may legitimately be absent on this platform
+        out.push(`${field}: "${name}" is declared but the lockfile holds no resolution for it (node_modules/${name})`);
+        continue;
+      }
+      if (hit.link === true && typeof hit.resolved === 'string') hit = packages[hit.resolved] ?? hit;
+      const version = typeof hit.version === 'string' ? hit.version : null;
+      if (version && satisfiesRange(version, range) === false) {
+        out.push(`${field}: "${name}" asks for ${range} but the lockfile resolves ${version}, which does not satisfy it`);
+      }
+    }
+  }
+  return out;
 }
 
 /** The lock's `packages` table, or null when this is not a v2/v3 lockfile. */
@@ -138,14 +285,8 @@ export function compareManifestToLock(manifest: Json, lock: Json): string[] {
   for (const field of RANGE_FIELDS) out.push(...diffRanges(field, ranges(manifest, field), ranges(root, field)));
 
   // A root entry can be edited to match by hand; a resolution cannot be conjured the same way.
-  // Every declared (dev)dependency must have been RESOLVED — optional ones may legitimately not be.
-  for (const field of ['dependencies', 'devDependencies'] as const) {
-    for (const name of Object.keys(ranges(manifest, field))) {
-      if (!packages[`node_modules/${name}`]) {
-        out.push(`${field}: "${name}" is declared but the lockfile holds no resolution for it (node_modules/${name})`);
-      }
-    }
-  }
+  // Every declared name must have been RESOLVED, to a version its range accepts.
+  out.push(...resolutionProblems(packages, '', manifest, RANGE_FIELDS));
   return out;
 }
 
@@ -153,13 +294,21 @@ export function compareManifestToLock(manifest: Json, lock: Json): string[] {
  * Compare a manifest with the entry an ANCESTOR lockfile holds for it as a local package
  * (`file:` dependency or workspace). npm records the member's own version and ranges there.
  */
-export function compareManifestToLockEntry(manifest: Json, entry: Json): string[] {
+export function compareManifestToLockEntry(
+  manifest: Json,
+  entry: Json,
+  where?: { packages: Record<string, Json>; path: string },
+): string[] {
   const out: string[] = [];
   const mv = typeof manifest.version === 'string' ? manifest.version : undefined;
   const lv = typeof entry.version === 'string' ? entry.version : undefined;
   if (mv !== lv) out.push(`version: package.json says ${mv ?? '(none)'} but the lockfile says ${lv ?? '(none)'}`);
-  for (const field of ['dependencies', 'optionalDependencies', 'peerDependencies'] as const) {
-    out.push(...diffRanges(field, ranges(manifest, field), ranges(entry, field)));
+  for (const field of RANGE_FIELDS) out.push(...diffRanges(field, ranges(manifest, field), ranges(entry, field)));
+  // Its dependencies must be resolved too — a `file:` package that gained a dependency the lock
+  // never resolved is exactly a manifest the lock no longer describes. devDependencies are
+  // compared above but not REQUIRED here (see the header: workspace member vs plain `file:`).
+  if (where) {
+    out.push(...resolutionProblems(where.packages, where.path, manifest, ['dependencies', 'optionalDependencies', 'peerDependencies']));
   }
   return out;
 }
@@ -237,7 +386,7 @@ export function npmLockEvidence(files: ScaffoldFile[]): NpmManifestEvidence[] {
       const rel = up ? dir.slice(up.length + 1) : dir;
       const entry = packages?.[rel];
       if (anc && packages && entry && entry.link !== true) {
-        const problems = compareManifestToLockEntry(manifest, entry);
+        const problems = compareManifestToLockEntry(manifest, entry, { packages, path: rel });
         out.push({
           manifest: path,
           declared,
