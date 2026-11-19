@@ -66,12 +66,15 @@ export const MONITORING_TOOLS: McpTool[] = [
       const status = isRunListStatus(rawStatus) ? rawStatus : undefined;
       const scope = await scopeForUser(user);
       const cap = typeof args.limit === 'number' && args.limit > 0 ? Math.min(Math.floor(args.limit), 50) : 25;
-      const { items, runStore } = await collectRunList({ scope, filter: { systemId, status }, limit: cap });
+      // One past the cap answers "are there more?" (Track B: a full page is not "all the runs").
+      const { items, runStore } = await collectRunList({ scope, filter: { systemId, status }, limit: cap + 1 });
       const visible = filterScope(scope, items); // HARD scope: only what this identity may see
+      const hasMore = visible.length > cap;
       return {
         scope: { level: scope.level, via: scope.via },
-        count: visible.length,
+        count: Math.min(visible.length, cap),
         runs: visible.slice(0, cap),
+        ...(hasMore ? { hasMore: true, note: `Showing the ${cap} most recent runs; there are more. Narrow with systemId or status, or raise limit (max 50).` } : {}),
         // Additive: where agent runs were read from, and whether it answered.
         runStore,
         ...(systemId || status ? { filters: { ...(systemId ? { systemId } : {}), ...(status ? { status } : {}) } } : {}),

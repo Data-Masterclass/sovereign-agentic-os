@@ -14,6 +14,7 @@ import { listExposureSets, entityActionKey } from '@tabs/connections/lib/exposur
 import { listDomains } from '@tabs/admin/lib/domains';
 import { isOperationalTemplate } from '@tabs/connections/lib/operational-platform';
 import { config } from '@core/kernel/config';
+import { readBoundedTurns } from '@core/runtime/turns';
 
 export const dynamic = 'force-dynamic';
 
@@ -40,19 +41,9 @@ const CAPABILITY =
 
 type Turn = { role: 'user' | 'assistant'; content: string };
 
-/** Coerce the request `messages` into a clean, bounded turn list. */
+/** The request's turns, bounded — and told when bounded (`readBoundedTurns`). */
 function readTurns(body: Record<string, unknown>): Turn[] {
-  const raw = Array.isArray(body.messages) ? body.messages : [];
-  const turns: Turn[] = [];
-  for (const m of raw.slice(-12)) {
-    if (!m || typeof m !== 'object') continue;
-    const role = (m as Record<string, unknown>).role;
-    const content = (m as Record<string, unknown>).content;
-    if ((role === 'user' || role === 'assistant') && typeof content === 'string' && content.trim()) {
-      turns.push({ role, content: content.slice(0, 4000) });
-    }
-  }
-  return turns;
+  return readBoundedTurns(body.messages);
 }
 
 const systemPrompt = [
