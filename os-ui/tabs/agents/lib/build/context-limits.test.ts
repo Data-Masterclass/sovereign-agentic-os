@@ -89,3 +89,22 @@ test('history trimming leaves a marker the model reads and a report the engine c
   assert.ok(total <= 2_200, `the trimmed request stays near the budget (${total})`);
   assert.equal(fn!(msgs.slice(0, 2), 2_000).trim, null, 'nothing trimmed → no report');
 });
+
+test('"which folders exist" past its 40-name cap says how many more exist', async () => {
+  const { shapeFileListing } = await import('@tabs/agents/lib/build/agent-tool-results');
+  const mine = Array.from({ length: 50 }, (_, i) => ({ id: `f${i}`, name: `f${i}.pdf`, folder: `/F${String(i).padStart(2, '0')}` }));
+  const out = shapeFileListing({ mine, domain: [], marketplace: [] }, { folder: '/Nope' }, { filesFolders: [] }) as { availableFolders: string[]; moreFolders?: number; note: string };
+  assert.equal(out.availableFolders.length, 40);
+  assert.equal(out.moreFolders, 10);
+  assert.match(out.note, /10 more exist/);
+});
+
+test('a conversation longer than the turn window tells the model how many turns were omitted', async () => {
+  const { cleanTurns } = await import('@core/runtime/turns');
+  const turns = Array.from({ length: 25 }, (_, i) => ({ role: i % 2 ? 'assistant' : 'user', content: `turn ${i}` }));
+  const kept = cleanTurns(turns);
+  assert.equal(kept.length, 20);
+  assert.match(kept[0].content, /^\[5 earlier turns of this conversation were omitted/);
+  assert.match(kept[0].content, /turn 5$/);
+  assert.equal(cleanTurns(turns.slice(0, 3))[0].content, 'turn 0', 'nothing omitted, nothing added');
+});

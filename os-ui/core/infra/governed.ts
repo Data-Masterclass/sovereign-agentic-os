@@ -135,7 +135,9 @@ export async function queryRun(sql: string, principal?: string, schema?: string)
     },
     8000,
   );
-  if (!res) throw new Error('Could not reach query-tool');
+  // The same words every caller already classifies on, plus what an 8 s wait CAN mean: a slow
+  // query is still running on the cluster (QUERY_MAX_RUN_TIME ends it), so "down" is not certain.
+  if (!res) throw new Error('Could not reach query-tool within 8 s — it may be down, or the query is slow and still running on the cluster');
   const text = await res.text();
   let data: Record<string, unknown> = {};
   try {

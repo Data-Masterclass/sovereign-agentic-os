@@ -101,9 +101,15 @@ export function isUnderFolderIgnoringCase(folder: string, child: string): boolea
 
 /** The distinct folder paths of `items`, sorted — for telling a caller which folders exist. */
 export function distinctFolders(items: { folder?: unknown }[], cap = 40): string[] {
+  return distinctFolderList(items, cap).folders;
+}
+
+/** {@link distinctFolders} plus how many MORE folders exist beyond `cap`, so a caller can say so. */
+export function distinctFolderList(items: { folder?: unknown }[], cap = 40): { folders: string[]; more: number } {
   const seen = new Set<string>();
   for (const i of items) seen.add(normaliseFolderPath(typeof i.folder === 'string' ? i.folder : '/'));
-  return [...seen].sort((a, b) => a.localeCompare(b)).slice(0, cap);
+  const all = [...seen].sort((a, b) => a.localeCompare(b));
+  return { folders: all.slice(0, cap), more: Math.max(0, all.length - cap) };
 }
 
 /** An item that carries a folder path — the only field the tree algebra needs. */

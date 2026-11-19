@@ -57,3 +57,20 @@ test('globalThis pin: create survives a fresh bundles() call', async () => {
   // connectionBundle() calls bundles() afresh — must still return the bundle.
   assert.ok(connectionBundle('crm-conn') !== null);
 });
+
+test('Track B: a search that finds NOTHING returns nothing — never the offline sample passage', async () => {
+  stubHits([]);
+  const passages = await retrieveTool('quarterly churn', marketingCreator);
+  assert.deepEqual(passages, []);
+});
+
+test('Track B: an UNREACHABLE index returns the offline sample LABELLED as such, never as certified knowledge', async () => {
+  globalThis.fetch = (async () => { throw new Error('ECONNREFUSED'); }) as unknown as typeof fetch;
+  const passages = await retrieveTool('discount policy', marketingCreator);
+  assert.ok(passages.length > 0);
+  for (const p of passages) {
+    assert.match(p.source, /^offline-sample:/);
+    assert.equal(p.certified, false);
+    assert.match(p.title, /offline sample/i);
+  }
+});

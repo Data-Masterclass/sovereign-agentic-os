@@ -60,6 +60,7 @@ export const discoveryBaseTools: McpTool[] = [
       let jobStatus: string | undefined;
       let eventsAvailable = true;
       let logged: { outputs: NonNullable<NonNullable<typeof view.lastRun>['outputs']> } | null = null;
+      let hasMore = false;
       try {
         const { runJobStore } = await import('@tabs/agents/lib/build/run-jobs-server');
         const store = await runJobStore();
@@ -68,7 +69,10 @@ export const discoveryBaseTools: McpTool[] = [
           assertRunVisible(job, runId, user.id, seen.systemId);
           jobStatus = job.status;
         }
-        events = (await store.eventsAfter(runId, afterSeq, limit)).map((e) => ({ seq: e.seq, event: e.event, at: e.at, data: e.data }));
+        // One row past the page answers "is there more?" without a count query.
+        const page = await store.eventsAfter(runId, afterSeq, limit + 1);
+        hasMore = page.length > limit;
+        events = page.slice(0, limit).map((e) => ({ seq: e.seq, event: e.event, at: e.at, data: e.data }));
         // The run's declared outputs, from its OWN log (the `done` frame, or a later by-hand save):
         // the same answer on every pod, for any run of this runner — not only the latest one.
         const lastSeq = await store.lastSeq(runId);
@@ -111,6 +115,8 @@ export const discoveryBaseTools: McpTool[] = [
         eventsAvailable,
         /** Pass this back as `afterSeq` to get only what happens next. */
         nextSeq: events.at(-1)?.seq ?? afterSeq,
+        // Track B: a full page is not the whole log — call again with `afterSeq: nextSeq`.
+        hasMore,
         // DECLARED OUTPUTS of this run — where each was saved (id, link), whether a Domain promotion
         // was requested, or why it was not saved. Recorded for the system's latest run only.
         outputs: runOutputs,

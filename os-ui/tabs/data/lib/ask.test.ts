@@ -410,3 +410,23 @@ test('ASK: answerMessages caps the grounding rows but reports the true rowCount'
   assert.match(messages[1].content, /80 rows total, first 50 shown/);
   assert.doesNotMatch(messages[1].content, /r79\t/);
 });
+
+test('ASK (Track B): a result cut at the row limit is told to the summary model AND returned to the caller', async () => {
+  const prompts: AskMessage[][] = [];
+  const out = await runAsk({
+    question: 'every order',
+    datasets: [northpeak],
+    llm: async (messages) => {
+      prompts.push(messages);
+      return prompts.length === 1 ? 'select * from iceberg.sales.gold_northpeak_commerce' : 'There are 1000 orders.';
+    },
+    models: { generate: 'g', summarize: 's' },
+    query: async () => ({ ...grid(Array.from({ length: 1000 }, (_, i) => [`r${i}`, '1'])), truncated: true, rowLimit: 1000 }),
+  });
+  assert.ok(out.ok);
+  const summary = prompts[1][1].content;
+  assert.match(summary, /row limit of 1000/);
+  assert.match(summary, /do not (count|total)/i);
+  assert.equal((out as { truncated?: boolean }).truncated, true, 'the caller is told the rows are partial');
+  assert.match(String((out as { truncationNote?: string }).truncationNote), /first 1000 rows/);
+});

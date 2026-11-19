@@ -108,3 +108,11 @@ test('buildContextBlock notes when no assets are granted', () => {
   const block = buildContextBlock({ description: 'do a thing' });
   assert.match(block, /No governed assets are granted yet/i);
 });
+
+test('Track B: a granted list longer than the 40 shown says how many more ARE granted', () => {
+  const data = Array.from({ length: 45 }, (_, i) => ({ id: `d${i}`, name: `Dataset ${i}` }));
+  const block = buildContextBlock({ description: 'x', data });
+  assert.match(block, /Dataset 39/);
+  assert.doesNotMatch(block, /Dataset 40\b/);
+  assert.match(block, /5 more .*granted/);
+});

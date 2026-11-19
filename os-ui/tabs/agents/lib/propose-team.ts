@@ -109,9 +109,13 @@ function plannerRules(): string {
 /** A named-list block ("- Foo\n- Bar") or '' when the list is empty. */
 function namedList(label: string, items: GroundedResource[] | undefined): string {
   if (!items || items.length === 0) return '';
-  const rows = items.slice(0, 40).map((r) => `- ${r.name}`).join('\n');
-  return `${label}:\n${rows}`;
+  const rows = items.slice(0, NAMED_LIST_MAX).map((r) => `- ${r.name}`).join('\n');
+  const more = items.length - NAMED_LIST_MAX;
+  return `${label}:\n${rows}${more > 0 ? `\n- …and ${more} more that ARE granted (not listed here to keep the prompt short)` : ''}`;
 }
+
+/** How many granted items of one kind the planner prompt names. */
+const NAMED_LIST_MAX = 40;
 
 /** Build the grounding CONTEXT block prepended to the planner's user turn. */
 export function buildContextBlock(ctx: GroundingContext): string {

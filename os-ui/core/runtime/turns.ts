@@ -21,8 +21,13 @@ export type ConversationTurn = { role: 'user' | 'assistant'; content: string };
  */
 export function cleanTurns(messages: unknown): ConversationTurn[] {
   const raw = Array.isArray(messages) ? (messages as ConversationTurn[]) : [];
-  return raw
-    .filter((m) => m && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string' && m.content.trim())
-    .slice(-20)
-    .map((m) => ({ role: m.role, content: m.content.trim() }));
+  const valid = raw.filter((m) => m && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string' && m.content.trim());
+  const kept = valid.slice(-TURN_WINDOW).map((m) => ({ role: m.role, content: m.content.trim() }));
+  const omitted = valid.length - kept.length;
+  // Older turns are dropped — and the model is TOLD, on the oldest turn it still sees (Track B).
+  if (omitted > 0) kept[0] = { ...kept[0], content: `[${omitted} earlier turn${omitted === 1 ? ' of this conversation was' : 's of this conversation were'} omitted to keep the request short.]\n${kept[0].content}` };
+  return kept;
 }
+
+/** How many of the most recent turns a request carries. */
+export const TURN_WINDOW = 20;

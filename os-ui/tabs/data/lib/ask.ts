@@ -164,7 +164,15 @@ export function sqlGenMessages(question: string, datasets: AskDataset[]): AskMes
 const MAX_SUMMARY_ROWS = 50;
 const MAX_CELL_CHARS = 200;
 
-export type AskGrid = { columns: string[]; rows: string[][]; rowCount: number };
+/** A query result as the Ask turn sees it. `truncated`/`rowLimit` come from the query-tool when it cut the rows. */
+export type AskGrid = { columns: string[]; rows: string[][]; rowCount: number; truncated?: boolean; rowLimit?: number };
+
+/** The sentence that tells model and person alike that the rows are only the first ones. */
+export function askTruncationNote(grid: AskGrid): string | null {
+  if (!grid.truncated) return null;
+  const limit = grid.rowLimit ?? grid.rows.length;
+  return `The query hit the row limit of ${limit}: these are the first ${limit} rows only, and there are more. Do not count or total them as the whole answer.`;
+}
 
 export function answerMessages(question: string, sql: string, grid: AskGrid): AskMessage[] {
   const shown = grid.rows.slice(0, MAX_SUMMARY_ROWS);
@@ -184,6 +192,7 @@ export function answerMessages(question: string, sql: string, grid: AskGrid): As
     sql,
     '',
     `Result (${grid.rowCount} row${grid.rowCount === 1 ? '' : 's'} total, first ${shown.length} shown):`,
+    ...(askTruncationNote(grid) ? [askTruncationNote(grid)!, 'Say in your answer that the result is partial.'] : []),
     tsv,
   ].join('\n');
   return [
@@ -211,6 +220,9 @@ export type AskSuccess = {
   rows: string[][];
   rowCount: number;
   answer: string;
+  /** Present when the query-tool cut the rows at its limit: the caller shows "first N rows". */
+  truncated?: true;
+  truncationNote?: string;
 };
 export type AskFailure = {
   ok: false;
@@ -297,5 +309,6 @@ export async function runAsk(input: {
     // The rows are real and governed — show them even if the summary model is down.
     answer = 'The query succeeded (see the result table below), but the summary model was unreachable.';
   }
-  return { ok: true, sql: v.sql, columns: grid.columns, rows: grid.rows, rowCount: grid.rowCount, answer };
+  const note = askTruncationNote(grid);
+  return { ok: true, sql: v.sql, columns: grid.columns, rows: grid.rows, rowCount: grid.rowCount, answer, ...(note ? { truncated: true as const, truncationNote: note } : {}) };
 }

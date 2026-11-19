@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
-import { distinctFolders, isUnderFolderIgnoringCase, normaliseFolderPath } from '@core/kernel/folders';
+import { distinctFolderList, isUnderFolderIgnoringCase, normaliseFolderPath } from '@core/kernel/folders';
 import 'server-only';
 import type { CurrentUser } from '@core/kernel/auth';
 import type { McpTool, JsonSchema } from '@core/mcp/server';
@@ -309,10 +309,12 @@ export const readTools: McpTool[] = [
       const narrowed = { ...all, folder, mine: under(all.mine), domain: under(all.domain), marketplace: under(all.marketplace) };
       if (narrowed.mine.length + narrowed.domain.length + narrowed.marketplace.length > 0) return narrowed;
       // Nothing there: say which folders DO exist, so "0 files" is never mistaken for an empty drive.
+      const folders = distinctFolderList([...all.mine, ...all.domain, ...all.marketplace]);
       return {
         ...narrowed,
-        note: `No folder "${folder}" among the files you can see. Folders that exist are listed in availableFolders.`,
-        availableFolders: distinctFolders([...all.mine, ...all.domain, ...all.marketplace]),
+        note: `No folder "${folder}" among the files you can see. Folders that exist are listed in availableFolders${folders.more > 0 ? ` (the first ${folders.folders.length}; ${folders.more} more exist)` : ''}.`,
+        availableFolders: folders.folders,
+        ...(folders.more > 0 ? { moreFolders: folders.more } : {}),
       };
     },
   },

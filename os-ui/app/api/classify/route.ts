@@ -17,6 +17,7 @@
 import { NextResponse } from 'next/server';
 import { config } from '@core/kernel/config';
 import { withRoute } from '@core/kernel/route-server';
+import { truncateToTokens } from '@core/infra/context/context-assembler';
 import {
   callerCredential,
   classifyRejection,
@@ -81,7 +82,7 @@ export const POST = withRoute<Record<string, string>, { title?: unknown; text?: 
     model: config.litellmChatModel,
     messages: [
       { role: 'system', content: SYSTEM },
-      { role: 'user', content: `TITLE: ${title}\n\nTEXT:\n${text.slice(0, 4000)}` },
+      { role: 'user', content: `TITLE: ${title}\n\nTEXT:\n${truncateToTokens(text, 1_000)}` },
     ],
     temperature: 0,
     user: cred.user,
