@@ -171,7 +171,7 @@ export const PROMPTS: McpPrompt[] = [
       '4. get_dataset(id) for each granted dataset — discover its REAL columns (a tab may only reference real columns).',
       '5. generate_app_spec(appId) — ✨ scaffold a complete, validated AppSpec from the design + granted data; review the returned spec.',
       '6. set_app_spec(appId, spec) — AUTHOR = versioned PUBLISH: the spec goes live at /apps/<slug> and a version is snapshotted. Blocking issues come back as { path, reason, fix } (persists nothing) — fix and retry.',
-      '7. Optional: use_as_data(appId) closes the loop app → Bronze; promote(appId) climbs the ladder (Builder+).',
+      '7. Optional: use_as_data(appId) marks the app as a data source (a flag; it copies no rows — land rows with create_dataset + ingest_dataset); promote(appId) climbs the ladder (Builder+).',
       'ADVANCED (only if a platform admin has enabled coded apps): create_software(kind:"code") → build_software → commit → verify_software → request_deploy. Otherwise the coded path fails closed.',
     ].filter(Boolean).join('\n'),
   },
