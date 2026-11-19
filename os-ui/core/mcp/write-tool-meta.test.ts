@@ -28,6 +28,10 @@ import { WRITE_TOOL_TABS, WRITE_TOOL_NAMES, AGENT_FORBIDDEN_TOOLS, agentForbidde
  * so an agent granted it under ANY preset — `read-only` included — could put an app live with no
  * hold. No golden moved: nothing grants it.
  *
+ * Then `design_software` — the FIFTH, and the unclassified TWIN of `set_app_design`. Both land in
+ * the same governed write (`patchAppDesign`); only the tab's own tool was classified, so the hold
+ * posture of one write depended on which of its two names the agent used. No golden moved either.
+ *
  * HONEST LIMIT, recorded rather than quietly fixed: the REST of the platform write surface
  * (`create_software`, `request_deploy`, `start_preview`, `promote`, `archive`, `delete`, …) is
  * still absent from WRITE_TOOL_TABS and therefore still unheld. Adding them changes the governance
@@ -39,6 +43,7 @@ const PLATFORM_WRITE_TOOLS: Readonly<Record<string, string>> = {
   commit: 'software',
   push_app_files: 'software',
   set_app_spec: 'software',
+  design_software: 'software',
 };
 
 /**
