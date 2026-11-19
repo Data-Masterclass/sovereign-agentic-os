@@ -12,6 +12,8 @@
  *       `result`  — a `done` frame of the run this panel is following: shown as `live`.
  *       `stored`  — the server's stored latest run (the `lastRun` prop) arrived or changed.
  *       `cleared` — ANOTHER panel of the same system started a run: drop the shown run too.
+ *       `patched` — a later fact about the SHOWN run (e.g. its declared outputs were saved again
+ *                   by hand): merged into it only when it is that run, never into another one.
  *   - One screen can mount two panels of one system (Run above, Evaluate below). They do not
  *     share React state, so the panel that starts a run announces it (`announceRunStarted`) and
  *     the others empty themselves in the same tick — a module-level listener set, nothing more.
@@ -41,7 +43,8 @@ export type RunViewAction<R> =
   | { type: 'started'; at: number }
   | { type: 'result'; run: R; at: number }
   | { type: 'stored'; run: (R & RunIdentity) | null; busy: boolean }
-  | { type: 'cleared' };
+  | { type: 'cleared' }
+  | { type: 'patched'; runId: string | undefined; patch: Partial<R> };
 
 export function seedRunView<R>(stored: (R & RunIdentity) | null | undefined): RunViewState<R> {
   if (!stored) return { run: null, source: null, startedAt: null, at: null };
@@ -56,6 +59,10 @@ export function runViewReducer<R extends { runId?: string }>(state: RunViewState
     return { run: action.run, source: 'live', startedAt: state.startedAt, at: action.at };
   }
   if (action.type === 'cleared') return state.run === null ? state : seedRunView<R>(null);
+  if (action.type === 'patched') {
+    if (!state.run || (action.runId && state.run.runId && action.runId !== state.run.runId)) return state;
+    return { ...state, run: { ...state.run, ...action.patch } };
+  }
   // 'stored'
   if (action.busy) return state;
   const stored = action.run;

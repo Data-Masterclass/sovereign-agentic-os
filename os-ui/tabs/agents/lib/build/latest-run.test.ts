@@ -216,3 +216,32 @@ test('a resumed earlier run that finished last is the latest run', async () => {
   assert.equal(shown?.startedAt, T, 'its start time is when it was first filed');
   assert.equal(shown?.at, T + 701 * MIN);
 });
+
+// ------------------------------------------------- declared outputs on reload --
+
+const SAVED = { key: 'files:personal:/reports:report', index: 0, kind: 'files', name: 'Report', target: { scope: 'personal', path: '/reports' }, state: 'saved', id: 'as_1', link: '/files?focus=as_1', message: 'Saved to My files /reports/x.md' };
+const FAILED = { key: 'knowledge:personal:/results:result', index: 1, kind: 'knowledge', name: 'Result', target: { scope: 'personal', path: '/results' }, state: 'failed', retry: 'again', reason: 'knowledge store unreachable', message: 'Not saved: knowledge store unreachable' };
+
+test('a reload shows the run’s declared outputs from its own done frame — and a later "Try saving again" over it', async () => {
+  const store = memoryRunJobStore();
+  const runId = RUN_2.runId!;
+  const { body } = finalizeTeamRun(RUN_2, false, YAML);
+  await store.enqueue(job(runId), T);
+  await store.claimById(runId, 'worker-1', T + 1_000);
+  const warning = 'Completed with unsaved outputs — “Result”: knowledge store unreachable';
+  await store.appendEvent(runId, 'outputs-saving', { outputs: [{ ...SAVED, state: 'pending' }, { ...FAILED, state: 'pending' }] }, T + 2_000);
+  await store.appendEvent(runId, 'done', JSON.parse(JSON.stringify({ ...body, outputs: [SAVED, FAILED], warnings: [warning] })), T + MIN);
+  await store.complete(runId, 'done', { lockedBy: 'worker-1', now: T + MIN });
+
+  const first = (await readLatestRun(store, 'sys-inv', 'u1'))!.lastRun!;
+  assert.deepEqual(first.outputs!.map((o) => o.state), ['saved', 'failed'], 'the done frame’s list, not the pending one before it');
+  assert.deepEqual(first.warnings, [warning]);
+
+  // The person pressed "Try saving again" and it worked: the route appended `outputs-saved`.
+  const fixed = { ...FAILED, state: 'saved', id: 'pk_1', retry: undefined, reason: undefined, message: 'Saved to My knowledge /results as “Result”' };
+  await store.appendEvent(runId, 'outputs-saved', { outputs: [SAVED, fixed], warnings: [], completedWithUnsavedOutputs: false }, T + 5 * MIN);
+  const after = (await readLatestRun(store, 'sys-inv', 'u1'))!.lastRun!;
+  assert.deepEqual(after.outputs!.map((o) => o.state), ['saved', 'saved']);
+  assert.equal(after.warnings, undefined, 'the "completed with unsaved outputs" line is gone once the save worked');
+  assert.equal(after.output, 'No invoices exist.', 'the rest of the report is the run’s own');
+});

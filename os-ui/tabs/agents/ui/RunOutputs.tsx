@@ -42,7 +42,8 @@ export default function RunOutputs({
   canSave: boolean;
   /** A run is in progress: its outputs are saved when it finishes, so nothing can be retried yet. */
   running?: boolean;
-  onSaved: (outputs: OutputResult[]) => void;
+  /** The new list, and the run it belongs to (the save route names it). */
+  onSaved: (outputs: OutputResult[], runId?: string) => void;
 }) {
   const [busy, setBusy] = useState<number | 'all' | null>(null);
   const [err, setErr] = useState('');
@@ -61,7 +62,7 @@ export default function RunOutputs({
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? 'Could not save the result.');
-      onSaved(Array.isArray(body.outputs) ? body.outputs : []);
+      onSaved(Array.isArray(body.outputs) ? body.outputs : [], typeof body.runId === 'string' ? body.runId : undefined);
     } catch (e) {
       setErr((e as Error).message);
     } finally {

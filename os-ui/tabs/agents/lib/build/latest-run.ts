@@ -20,6 +20,8 @@
  *     wiring (which store, fail-soft) is `latest-run-server.ts`.
  *   - Requester-scoped by construction (`latestForSystem(systemId, userId)`): a run's contents are
  *     its runner's only (`engine/run-visibility.ts`).
+ *   - Its DECLARED OUTPUTS come from the same log: the `done` frame's `outputs`, replaced by a
+ *     later `outputs-saved` event when the person saved again by hand (`latestOutputsOf`).
  *   - A run that is queued/running has no result yet: it is reported as `inFlight` and NO earlier
  *     run is offered in its place. A run that ended without a report (refused, crashed) is a
  *     failed run with the job's reason — never silently replaced by the run before it.
@@ -61,7 +63,11 @@ type DoneBody = {
   heldApprovals?: LastRun['heldApprovals'];
   failed?: boolean;
   failure?: { node?: string | null; reason?: string };
+  outputs?: unknown;
 };
+
+/** What a later by-hand save of the run's outputs recorded (`outputs-saved` event). */
+type OutputsSavedBody = { outputs?: unknown; warnings?: unknown };
 
 /** The stored-run shape of one job's `done` report — every field from THIS run's own frame. */
 export function shownRunFromDone(job: Pick<RunJob, 'runId' | 'createdAt' | 'status' | 'error'>, done: Pick<RunEventRow, 'data' | 'at'>): ShownRun {
@@ -108,7 +114,29 @@ export function shownRunFromDone(job: Pick<RunJob, 'runId' | 'createdAt' | 'stat
     warnings: Array.isArray(b.warnings) && b.warnings.length > 0 ? (b.warnings as string[]) : undefined,
     traceStoreAvailable: b.traceStoreAvailable,
     traceUrl: b.traceUrl,
+    ...(Array.isArray(b.outputs) ? { outputs: b.outputs as NonNullable<LastRun['outputs']> } : {}),
   };
+}
+
+/**
+ * The run's DECLARED OUTPUTS as last recorded in its own event log: the `done` frame's list, or —
+ * when the person saved again by hand afterwards — the latest `outputs-saved` event after it.
+ * Returns the warnings that event carried too (the "completed with unsaved outputs" line is
+ * replaced by a save that succeeded). `null` when the log holds no list.
+ */
+export function latestOutputsOf(events: Pick<RunEventRow, 'event' | 'data' | 'seq'>[]): { outputs: NonNullable<LastRun['outputs']>; warnings?: string[]; fromSave: boolean } | null {
+  const ordered = [...events].sort((a, b) => a.seq - b.seq);
+  const doneAt = ordered.filter((e) => e.event === 'done').at(-1);
+  const saved = ordered.filter((e) => e.event === 'outputs-saved' && (!doneAt || e.seq > doneAt.seq)).at(-1);
+  if (saved) {
+    const b = (saved.data && typeof saved.data === 'object' ? saved.data : {}) as OutputsSavedBody;
+    if (Array.isArray(b.outputs)) {
+      const warnings = Array.isArray(b.warnings) ? (b.warnings as string[]) : undefined;
+      return { outputs: b.outputs as NonNullable<LastRun['outputs']>, ...(warnings ? { warnings } : {}), fromSave: true };
+    }
+  }
+  const d = (doneAt?.data && typeof doneAt.data === 'object' ? doneAt.data : {}) as DoneBody;
+  return Array.isArray(d.outputs) ? { outputs: d.outputs as NonNullable<LastRun['outputs']>, fromSave: false } : null;
 }
 
 /** A run that settled WITHOUT a report (refused before it ran, or it threw): failed, with the reason. */
@@ -145,7 +173,16 @@ export async function readLatestRun(store: Pick<RunJobStore, 'latestForSystem' |
   const lastSeq = await store.lastSeq(job.runId);
   const tail = await store.eventsAfter(job.runId, Math.max(0, lastSeq - TAIL), TAIL);
   const done = tail.filter((e) => e.event === 'done').at(-1);
-  if (done) return { lastRun: shownRunFromDone(job, done), inFlight: null };
+  if (done) {
+    const shown = shownRunFromDone(job, done);
+    // A by-hand save after the run ("Try saving again") is the newer record of its outputs.
+    const later = latestOutputsOf(tail);
+    if (later?.fromSave) {
+      shown.outputs = later.outputs;
+      shown.warnings = later.warnings && later.warnings.length > 0 ? later.warnings : undefined;
+    }
+    return { lastRun: shown, inFlight: null };
+  }
   return { lastRun: shownRunWithoutReport(job, tail.filter((e) => e.event === 'error').at(-1)), inFlight: null };
 }
 

@@ -28,7 +28,8 @@
  *     by a run. The person can save it by hand ("Save now"), which is their own act.
  *   - EXACTLY ONCE. Before anything is written the saver looks for what THIS RUN already saved:
  *     the ledger of the run (`previous`), then the store itself — a file whose name carries the
- *     run's tag, a note under the run's `sourceKey`, the dataset of that name. So a run resumed
+ *     run's tag, a note under the run's `sourceKey`, the dataset of that name and a Bronze built
+ *     at or after the run's result (its rows are not landed twice). So a run resumed
  *     after a crash between the write and the bookkeeping finds its own work instead of
  *     repeating it.
  *   - SAID ONLY WHEN CONFIRMED. A save is reported after the id was read back through the door.
@@ -369,6 +370,16 @@ async function saveTable(input: SaveOutputsInput, o: DeclaredOutput, text: strin
     id = isRecord(made) ? str(made.id) : '';
     if (!id) return { ok: false, state: 'failed', reason: 'the dataset was answered without an id', retry: 'again' };
   }
+  // EXACTLY ONCE for rows too: a Bronze built at or after the moment this run produced its
+  // result was landed by this run (a resume after a crash between the ingest and the
+  // bookkeeping) or by a newer run — either way these rows are not landed again, and an older
+  // run never replaces a newer run's rows.
+  if (existing) {
+    const landedAt = bronzeBuiltAt(parse((await dispatch('get_dataset', { datasetId: id })).text), id);
+    if (landedAt !== null && landedAt >= input.at) {
+      return { ok: true, saved: { id, item: name, rows: table.rows.length, note: 'already landed' } };
+    }
+  }
   const res = await dispatch('ingest_dataset', { datasetId: id, content: table.csv, fileName: `${slug(name)}-${runTag(input.runId)}.csv` });
   if (res.isError) return { ok: false, state: 'failed', reason: `the dataset “${name}” exists, but the rows did not land: ${errorReason(res.text)}`, retry: 'again' };
   const back = parse((await dispatch('get_dataset', { datasetId: id })).text);
@@ -377,6 +388,15 @@ async function saveTable(input: SaveOutputsInput, o: DeclaredOutput, text: strin
     return { ok: false, state: 'failed', reason: 'the dataset could not be read back with its rows after the write', retry: 'again' };
   }
   return { ok: true, saved: { id, item: name, rows: table.rows.length, note: existing ? 'new version' : 'new dataset' } };
+}
+
+/** When the dataset's Bronze was last built (ms), from a `get_dataset` answer; null when unbuilt or unknown. */
+function bronzeBuiltAt(back: unknown, id: string): number | null {
+  if (!isRecord(back) || str(back.id) !== id || !isRecord(back.versions) || !isRecord(back.versions.bronze)) return null;
+  const b = back.versions.bronze;
+  if (b.built !== true) return null;
+  const t = Date.parse(str(b.updatedAt));
+  return Number.isFinite(t) ? t : null;
 }
 
 /** File the My → Domain request for a saved item. Never decides it. */
