@@ -103,6 +103,31 @@ export const WRITE_TOOL_TABS: Readonly<Record<string, string>> = {
   // explicitly authorised. Same posture as its twin (read-only holds; otherwise a My-scope
   // write). No golden moves: nothing grants `design_software`.
   design_software: 'software',
+  // 2026-11-19 — THE REMAINING ELEVEN platform-MCP writes, which takes the ratchet in
+  // `tabs/software/lib/builder/dispatch.test.ts` to ZERO. All were declared `write: true` and
+  // absent here, so `holdDecisionFor(preset, name)` answered "not a write" under every preset,
+  // `read-only` included. Being listed here is only step one — "in the catalog is not held" has
+  // now cost five times — so each carries a posture the owner decided, enforced elsewhere:
+  //
+  //   posture                       | tools                                   | enforced by
+  //   ------------------------------|-----------------------------------------|---------------------------
+  //   REFUSED to agent runs         | decide_deploy, promote                  | AGENT_FORBIDDEN_TOOLS below
+  //   HELD under every preset       | delete, archive, request_deploy         | hold.ts ALWAYS_CONFIRMED_TOOLS
+  //   My-scope (read-only holds)    | create_software, start_preview, use_*   | hold.ts default (`personal`)
+  //
+  // The six personal ones mirror `set_app_spec` above, with the SAME known limit: the hold is
+  // name-only, so it cannot tell the runner's Personal app from one already Shared or Certified.
+  create_software: 'software',
+  start_preview: 'software',
+  use_connection: 'software',
+  use_data: 'software',
+  use_knowledge: 'software',
+  use_as_data: 'software',
+  request_deploy: 'software',
+  archive: 'software',
+  delete: 'software',
+  decide_deploy: 'software',
+  promote: 'software',
   list_exposure_sets: 'connections',
   create_exposure_set: 'connections',
   update_exposure_set: 'connections',
@@ -133,24 +158,35 @@ export const WRITE_TOOL_NAMES: ReadonlySet<string> = new Set(Object.keys(WRITE_T
  * Writes an UNATTENDED AGENT RUN may not perform at all — name → the reason a caller is told.
  *
  * Being in {@link WRITE_TOOL_TABS} makes a tool HELD; it does not make it unavailable, and for
- * `reindex_corpus` "held" is not enough on its own. Its effect is not an artifact in a lane: it
- * re-parses and re-embeds EVERY selected row of a tenant's Files or Knowledge index and spends
- * real embeddings budget doing it. There is no version of that which belongs to an agent loop
- * deciding on its own that the corpus looks wrong. An admin runs it from Platform → Re-index, the
- * admin HTTP door, or their own MCP session — all three of which are a person, present, choosing.
+ * the tools below "held" is not enough on its own.
  *
- * ONE door consults this today: `tabs/agents/lib/build/os-tools.ts` (gate 0 of the agent system's
- * tool executor, plus `grantedMcpTools`, which drops a closed tool from the schemas a model is
- * offered). It lives here rather than in that tab for the same reason `WRITE_TOOL_TABS` does — a
- * core table, independent of which bundles happen to be registered — and so that the second door
- * can reuse it verbatim.
+ *   - `reindex_corpus` — its effect is not an artifact in a lane: it re-parses and re-embeds EVERY
+ *     selected row of a tenant's Files or Knowledge index and spends real embeddings budget doing
+ *     it. There is no version of that which belongs to an agent loop deciding on its own that the
+ *     corpus looks wrong. An admin runs it from Platform → Re-index, the admin HTTP door, or their
+ *     own MCP session — all three of which are a person, present, choosing.
+ *   - `decide_deploy`, `promote` — APPROVALS. An approval is a human decision, and four-eyes has
+ *     to mean two humans. Holding an agent's approval does not preserve that: the person who
+ *     approves the hold is approving "let the agent approve", so the go-live or the wider audience
+ *     ends up resting on ONE human judgement while the record shows a request, an approval and a
+ *     confirmation. So an agent may REQUEST (`request_deploy`, `request_promotion` — both held)
+ *     and may never decide. The same tools stay fully available to a person in the UI or in
+ *     their own MCP session; this table is consulted only at agent-facing doors.
  *
- * FOLLOW-UP, stated rather than implied: `tabs/software/lib/app-tool-call.ts` does NOT consult it
- * yet. That door executes an APP's own tools, so the OS `reindex_corpus` is not reachable through
- * it; what is left is an `actions.yml` declaring an action of the same NAME, which would read like
- * the real thing in a trace and an inbox while doing something else entirely. The guard there is
- * two lines against this catalog and belongs to whoever owns that file (this branch is not
- * permitted to touch `tabs/software/**`).
+ * TWO doors consult this:
+ *   1. `tabs/agents/lib/build/os-tools.ts` — gate 0 of the agent system's tool executor refuses
+ *      the call, and `grantedMcpTools` drops the tool from the schemas a model is offered (a
+ *      model will try whatever it can see).
+ *   2. `tabs/software/lib/app-tool-call.ts` — `callAppTool` refuses a tool of the same NAME before
+ *      any authorization. That door executes an APP's own tools, so the OS tools above are not
+ *      behind it; what it closes is an `actions.yml` declaring an action called `promote` or
+ *      `reindex_corpus`, which would read like the real thing in a trace and an approval inbox
+ *      while doing something else entirely.
+ *
+ * It lives here rather than in either tab for the same reason `WRITE_TOOL_TABS` does — a core
+ * table, independent of which bundles happen to be registered. Every entry must ALSO be in
+ * `WRITE_TOOL_TABS` and company-scoped in `hold.ts`, so a door that forgets this table still
+ * parks the call for a platform admin instead of running it.
  */
 export const AGENT_FORBIDDEN_TOOLS: Readonly<Record<string, string>> = {
   reindex_corpus:
@@ -158,6 +194,16 @@ export const AGENT_FORBIDDEN_TOOLS: Readonly<Record<string, string>> = {
     'selected row of a tenant corpus and spends real embeddings budget. An unattended run may ' +
     'not start one. A platform admin runs it from Platform → Re-index, from ' +
     'POST /api/platform-admin/reindex, or from their own MCP session.',
+  decide_deploy:
+    'decide_deploy is a human decision, not an agent action: approving or denying a go-live is ' +
+    'the review gate itself, and four-eyes means two people — never a person and their agent. ' +
+    'An agent run may request a deploy (request_deploy) and must stop there. A Builder or Admin ' +
+    'decides it in Software → the app → Review, or from their own MCP session.',
+  promote:
+    'promote is a human decision, not an agent action: it widens who an app reaches (My → Domain ' +
+    '→ Company), and the four-eyes on that step means two people — never a person and their ' +
+    'agent. An agent run may not climb the ladder. The owner or an admin promotes the app in ' +
+    'Software → the app, or from their own MCP session.',
 };
 
 /** The reason this tool is closed to agent runs, or null when it is not. Fail-closed by name. */

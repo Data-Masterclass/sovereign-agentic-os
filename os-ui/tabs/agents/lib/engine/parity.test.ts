@@ -15,7 +15,10 @@
  *     files ARE the walker, frozen, and `fixtures.test.ts` keeps them that way.
  *   - Guarded fixtures are asserted explicitly, because the engine is SUPPOSED to differ there:
  *     the software team's guards are all false (nothing sets their channels) so its supervisor
- *     drives the walker's order; shape (c) must NOT visit `publisher`, which the walker did.
+ *     drives the walker's order — and since 2026-11-19 it PARKS at the deployer, because
+ *     `request_deploy` is held for a human under every preset (the golden predates that; the test
+ *     asserts the park, then that the approved resume ends exactly as the golden);
+ *     shape (c) must NOT visit `publisher`, which the walker did.
  *   - P2 aborts the stream after the first `node-completed`, resumes with the same thread id on
  *     the same MemorySaver and compares path, tool sequence and final text with a clean run.
  */
@@ -32,6 +35,7 @@ import {
   hasSupervisor,
   replayGraph,
   runGraph,
+  type HoldSink,
   scriptedLlm,
   scriptGraph,
   SCRIPT_ID,
@@ -85,14 +89,59 @@ for (const fx of fixtures) {
 // ------------------------------------------------------ guarded fixtures, engine side --
 
 const softwareTeam = fixtures.find((f) => f.name === 'software-team');
-test('P1 software-team: its five guards now have a declared, settable channel each — ZERO compile warnings, and the supervisor still drives the walker\'s declared order when nothing sets them', async (t) => {
+test('P1 software-team: the deployer PARKS on `request_deploy` (always confirmed by a human); approved, the run ends exactly as the frozen golden — and its five guards still compile clean', async (t) => {
   if (!softwareTeam) return t.skip('fixture missing');
-  const run = await scriptGraph(softwareTeam);
-  assert.deepEqual(run.path, softwareTeam.golden.path);
-  assert.deepEqual(run.toolCalls, softwareTeam.golden.toolCalls);
-  assert.equal(run.finalText, softwareTeam.golden.finalText);
+  const golden = softwareTeam.golden;
+  // The FROZEN file is untouched and still records what the walker did before `request_deploy`
+  // was held: the deploy request ran straight through and nothing was parked. That is the
+  // behaviour the owner's 2026-11-19 decision ends, so — like the two guarded divergences below —
+  // the engine is SUPPOSED to differ here, and the difference is asserted exactly.
+  assert.deepEqual(golden.toolCalls.at(-1), { node: 'deployer', tool: 'request_deploy', args: golden.toolCalls.at(-1)!.args, outcome: 'ok' });
+  assert.equal(golden.held, 0, 'the walker golden predates the hold');
+
+  // ONE model across park + resume: the scripted route rule counts its decisions, as a real
+  // conversation carries its history.
+  const llm = scriptedLlm(softwareTeam.task);
+  const sink: HoldSink = { enqueued: [] };
+  const cp = memoryCheckpointer();
+  const parked = await runGraph(softwareTeam, llm, { sink, checkpointer: cp });
+
+  // Everything BEFORE the deployer is the golden, call for call: `use_data`, `create_software`
+  // and `start_preview` are the runner's own My-scope writes and are not held under `read-propose`.
+  assert.deepEqual(parked.path, ['orchestrator', 'planner', 'builder', 'tester'], 'the deployer has not completed');
+  assert.deepEqual(parked.toolCalls, golden.toolCalls.slice(0, 3), 'the three My-scope calls ran, unheld, exactly as recorded');
+  assert.equal(parked.reachedEnd, false, 'the run did not finish — it is waiting for a person');
+  assert.equal(parked.interrupted, true);
+  assert.match(parked.finalText, /parked: a write is awaiting approval/);
+  // Exactly one write is parked, and it is the deploy request — on the domain gate, with the
+  // arguments the agent asked for, attributed to the runner.
+  assert.equal(parked.held, 1);
+  const held = sink.port!.all();
+  assert.equal(held.length, 1);
+  assert.equal(held[0].node, 'deployer');
+  assert.equal(held[0].tool, 'request_deploy');
+  assert.equal(held[0].approverRole, 'domain_admin');
+  assert.equal(held[0].domain, 'platform');
+  assert.equal(held[0].runner.id, FIXTURE_USER.id);
+  assert.deepEqual(held[0].args, golden.toolCalls[3].args);
+  assert.equal(held[0].status, 'pending');
+
+  // A second person approves. The run resumes on the same thread and ends where the golden ends:
+  // same path, same four calls with the same arguments and outcomes, same final text.
+  assert.ok(sink.port!.decide(held[0].approvalId, 'approve', 'domain-admin-dana'));
+  const run = await runGraph(softwareTeam, llm, {
+    sink,
+    checkpointer: cp,
+    resume: true,
+    resumeWith: { [held[0].approvalId]: 'approve' },
+    toolCalls: parked.toolCalls,
+  });
+  assert.deepEqual(run.path, golden.path);
+  assert.deepEqual(run.toolCalls, golden.toolCalls);
+  assert.equal(run.finalText, golden.finalText);
   assert.equal(run.reachedEnd, true);
-  assert.equal(run.held, softwareTeam.golden.held);
+  assert.equal(run.interrupted, false);
+  assert.equal(run.held, 1, 'still ONE approval record — the resume did not file a second');
   // A5-review-H-2 (7): the five "no node sets it" warnings are GONE — the channels are declared
   // `boolean` and the agent each guard follows is advertised `os_set_state`. The scripted model
   // never calls it, so the guards are false and the supervisor's declared order still holds:

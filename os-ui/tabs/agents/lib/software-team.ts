@@ -30,6 +30,12 @@
  * the team may touch; `decide_deploy` is deliberately NOT granted, so a running
  * Creator can create/commit/preview/request_deploy but NEVER self-approve a
  * go-live — that stays a human Builder decision in /software/reviews.
+ *
+ * Since 2026-11-19 that is enforced at the agent door as well as by the grant list:
+ * `decide_deploy` is in AGENT_FORBIDDEN_TOOLS (refused and never advertised, even if a
+ * copy of this yaml grants it), and `request_deploy` is HELD under every preset — the
+ * deployer's call parks the run until a domain admin confirms it, then the Builder
+ * review opens. The other grants are My-scope writes, unheld under `read-propose`.
  */
 export const SOFTWARE_TEAM_YAML = `version: '1'
 system:
