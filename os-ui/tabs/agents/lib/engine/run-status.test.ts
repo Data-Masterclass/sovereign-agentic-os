@@ -1,5 +1,12 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * TAB:        agents
+ * FEATURE:    How a run ended — tests of the one-word outcome and the reported job status
+ * USER STORY: As the person who started a run I want a failed run to read "failed", also when
+ *             an older version stored its job row as done.
+ * ARCHITECTURE:
+ *   - Pure tests of `runOutcomeOf` and `reportedJobStatus`.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
