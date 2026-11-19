@@ -181,6 +181,34 @@ test('P3(b)+(d) approve → the held write executes EXACTLY ONCE as the RUNNER (
   assert.match(step.result, /"ran":"request_promotion"/);
 });
 
+test('withdraw → a typed `withdrawn_by_requester` result reaches the model, the run continues to END, and the write NEVER executes', async () => {
+  const spy = spyDeps();
+  const port = memoryApprovalPort();
+  const acts: LlmRequest[] = [];
+  const h = harness(HELD_YAML, script(BATCH, acts), spy, port);
+  const cp = memoryCheckpointer();
+  const r1 = await runGraphEngine(runInput(h, 'held-w', cp));
+  assert.equal(r1.parked, true);
+  const approvalId = r1.heldApprovals[0].approvalId;
+  assert.ok(port.decide(approvalId, 'withdraw', FIXTURE_USER.id));
+
+  // Resumed WITHOUT a payload too: the node reads the queue, so the outcome does not depend on it.
+  const r2 = await runGraphEngine(runInput(h, 'held-w', cp, { resume: true }));
+  assert.equal(r2.reachedEnd, true, 'the run continued to END');
+  assert.equal(r2.parked, false);
+  assert.deepEqual(spy.rpc.map((c) => c.tool), ['search_knowledge'], 'the withdrawn write never reached the executor');
+  assert.deepEqual(r2.held, [{ node: 'writer', tool: 'request_promotion', callId: 'c-write', approvalId, decision: 'withdraw' }]);
+  const toolMsg = acts.at(-1)!.messages.find((m) => m.role === 'tool' && m.tool_call_id === 'c-write');
+  assert.ok(toolMsg, 'a tool message for the held call reached the model');
+  const parsed = JSON.parse(toolMsg!.content) as { error: { code: string; approvalId: string } };
+  assert.equal(parsed.error.code, 'withdrawn_by_requester', 'distinct from `rejected`');
+  assert.equal(parsed.error.approvalId, approvalId);
+  assert.equal(r2.runs[0].status, 'denied', 'a withdrawal is a governance outcome, not an execution failure');
+  // A late approval changes nothing: the record is decided and the finished thread does not re-run the call.
+  assert.equal(port.decide(approvalId, 'approve', 'domain-admin-dana'), null);
+  assert.deepEqual(spy.rpc.map((c) => c.tool), ['search_knowledge']);
+});
+
 test('P3(c) reject → a typed `rejected` result reaches the model and the run continues to END; the write never executes', async () => {
   const spy = spyDeps();
   const port = memoryApprovalPort();

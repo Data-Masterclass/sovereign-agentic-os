@@ -1177,6 +1177,19 @@ Four things this cost, each of which generalises:
   always means a second person with the role — on a single-admin tenant an
   always-held call waits until there is one. That is the intended reading of
   four-eyes, and it is worth knowing before granting `delete` to an agent.
+- **The runner can take a held call back.** A hold has no timeout, so the person
+  who started the run may *withdraw* their own pending held call
+  (`withdrawHeldCall` in `core/policy/withdraw.ts`, `canWithdraw` in
+  `core/policy/roles.ts`; `POST /api/governance/approvals` with
+  `decision: 'withdraw'`; the button is on the run's parked banner and on the
+  requester's card in the Inbox). The approval ends as `withdrawn` — a fourth
+  status, not `rejected` — the tool is never executed, the run resumes exactly as
+  after a rejection, the agent receives the typed `withdrawn_by_requester`
+  result, and the audit log records `approval.withdraw`. Only the requester can
+  do it (an approver who is not the requester already has Deny), only while the
+  item is pending, and only for a parked run's call. The one transition it can
+  make is pending → withdrawn, so it cannot be used to approve anything, and
+  four-eyes for approval is unchanged. There is no MCP tool for it yet.
 - **A frozen golden is evidence, not a spec.** The Software Delivery Team's fixture
   records the deploy request running straight through. The file is untouched; the
   engine-side assertion in `tabs/agents/lib/engine/parity.test.ts` now states the

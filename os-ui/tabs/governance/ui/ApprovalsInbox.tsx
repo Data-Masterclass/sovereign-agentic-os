@@ -33,12 +33,14 @@ type Approval = {
   rememberable: boolean;
   source: string;
   preview?: Preview;
-  status: 'pending' | 'approved' | 'rejected';
+  status: 'pending' | 'approved' | 'rejected' | 'withdrawn';
   decidedBy?: string;
   decidedAt?: string;
   effect?: { applied: string; live: boolean; standingPolicyId?: string };
   createdAt: string;
   mayApprove: boolean;
+  /** True for the requester of a parked agent run's pending held call — they may take it back. */
+  mayWithdraw?: boolean;
   /** A2: raised by a PARKED agent run — the decision resumes it (the approver authorises, the runner executes). */
   runId?: string;
   systemId?: string;
@@ -57,6 +59,7 @@ function ResumeBadge({ r }: { r: NonNullable<Approval['resume']> }) {
 function StatusBadge({ s }: { s: Approval['status'] }) {
   if (s === 'approved') return <span className="badge ok">approved</span>;
   if (s === 'rejected') return <span className="badge err">rejected</span>;
+  if (s === 'withdrawn') return <span className="badge muted">withdrawn</span>;
   return <span className="badge warn">pending</span>;
 }
 
@@ -96,7 +99,7 @@ export default function ApprovalsInbox({ focusId = null }: { focusId?: string | 
   }, [focusId, items]);
 
   const decide = useCallback(
-    async (id: string, decision: 'approve' | 'reject', remember?: boolean) => {
+    async (id: string, decision: 'approve' | 'reject' | 'withdraw', remember?: boolean) => {
       const key = `${id}:${decision}${remember ? ':remember' : ''}`;
       setBusy(key);
       setError('');
@@ -165,6 +168,8 @@ export default function ApprovalsInbox({ focusId = null }: { focusId?: string | 
                 ? 'var(--teal)'
                 : a.status === 'rejected'
                 ? 'var(--danger)'
+                : a.status === 'withdrawn'
+                ? 'var(--border)'
                 : 'var(--gold)';
             const isBusy = busy.startsWith(a.id + ':');
             const isFocused = focusId === a.id;
@@ -415,6 +420,13 @@ export default function ApprovalsInbox({ focusId = null }: { focusId?: string | 
                   </div>
                 )}
 
+                {a.status === 'withdrawn' && (
+                  <div className="hint" style={{ marginTop: 10 }}>
+                    Withdrawn by the requester{a.decidedBy ? <> (<span className="mono">{a.decidedBy}</span>)</> : null}
+                    {a.decidedAt && <> · {new Date(a.decidedAt).toLocaleString()}</>}. The call was not run.
+                  </div>
+                )}
+
                 {/* Action row */}
                 {a.status === 'pending' && (
                   <div
@@ -475,6 +487,17 @@ export default function ApprovalsInbox({ focusId = null }: { focusId?: string | 
                           : `Needs a Builder of ${a.domain}`}
                       </span>
                     )}
+                    {a.mayWithdraw ? (
+                      <button
+                        className="btn ghost"
+                        style={{ padding: '5px 14px' }}
+                        disabled={isBusy}
+                        title="Take this call back. It will not run, and your agent run continues without it."
+                        onClick={() => decide(a.id, 'withdraw')}
+                      >
+                        {busy === `${a.id}:withdraw` ? <span className="spin" /> : 'Withdraw'}
+                      </button>
+                    ) : null}
                     <span
                       className="mono muted"
                       style={{ marginLeft: 'auto', fontSize: 11 }}

@@ -204,6 +204,17 @@ export function canApprove(
 }
 
 /**
+ * Can `actor` WITHDRAW this held call? Only the person whose run asked for it — the approval's
+ * `requestedBy`, which for a parked agent run is the run's initiator — and only for a parked
+ * run's call (`runId`). No role is needed and none helps: an approver who is not the requester
+ * uses Deny, which is theirs already. Withdrawing can only ever stop the call, so this rule
+ * cannot be used to push anyone's call through.
+ */
+export function canWithdraw(actor: Pick<Actor, 'id'>, a: Partial<Pick<Approval, 'requestedBy' | 'runId'>>): boolean {
+  return Boolean(a.runId) && Boolean(a.requestedBy) && a.requestedBy === actor.id;
+}
+
+/**
  * Can `actor` assign `targetRole` in `domain`? Admin = any role, tenant-wide.
  * Domain admin = within their own domain(s), UP TO Builder — a domain admin can
  * NEVER mint another domain_admin or an admin (only the platform Admin appoints

@@ -193,13 +193,21 @@ export function isInterruptPayload(v: unknown): v is InterruptPayload {
 function decisionFromResume(v: unknown, approvalId: string): ApprovalDecision | undefined {
   if (!v || typeof v !== 'object') return undefined;
   const d = (v as Record<string, unknown>)[approvalId];
-  return d === 'approve' || d === 'reject' ? d : undefined;
+  return d === 'approve' || d === 'reject' || d === 'withdraw' ? d : undefined;
 }
 
 /** Model-readable typed result for a call a human REJECTED (mirrors os-tools `errorResult`). */
 function rejectedResult(tool: string, approvalId: string): { text: string; isError: boolean } {
   return {
     text: JSON.stringify({ error: { code: 'rejected', reason: `${tool} was rejected in Governance — do not retry it; continue without it`, approvalId } }),
+    isError: true,
+  };
+}
+
+/** Model-readable typed result for a held call its own REQUESTER took back before anyone decided it. */
+function withdrawnResult(tool: string, approvalId: string): { text: string; isError: boolean } {
+  return {
+    text: JSON.stringify({ error: { code: 'withdrawn_by_requester', reason: `${tool} was withdrawn by the person who started this run before anyone approved it — it was not executed; do not retry it; continue without it`, approvalId } }),
     isError: true,
   };
 }
@@ -927,7 +935,7 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
           for (const h of parked) {
             let status: ApprovalState = h.status;
             if (status === 'pending') status = await hold.approvals.status(h.approvalId);
-            while (status !== 'approve' && status !== 'reject') {
+            while (status !== 'approve' && status !== 'reject' && status !== 'withdraw') {
               if (status === 'unknown') {
                 // The queue lost the record (e.g. a memory queue after a restart): file it again.
                 const again = await enqueue(heldCalls.find((x) => x.call.id === h.call.id)!);
@@ -1016,6 +1024,11 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
         } else if (gate && gate.decision === 'reject') {
           out = rejectedResult(call.name, gate.approvalId);
           obs.toolEvent(call, { decision: 'denied', approvalId: gate.approvalId, detail: 'rejected in Governance' });
+        } else if (gate && gate.decision === 'withdraw') {
+          // Withdrawn by the run's initiator: same path as a rejection — the executor is never
+          // reached — with its own typed result, so nobody reads it as a refusal.
+          out = withdrawnResult(call.name, gate.approvalId);
+          obs.toolEvent(call, { decision: 'denied', approvalId: gate.approvalId, detail: 'withdrawn by the requester — not executed' });
         } else {
           // Approved or never held: the UNCHANGED governed executor, as the runner (gate 2 = handleRpc(user)).
           // A3: recorded as a span carrying the decision (`ok`, or `denied`/`error` from the result).

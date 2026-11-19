@@ -14,7 +14,12 @@
  */
 import type { Role } from '@core/kernel/session';
 
-export type ApprovalDecision = 'approve' | 'reject';
+/**
+ * How a held call ended. `withdraw` is the run's own initiator taking the call back before
+ * anyone decided it: like `reject` the tool is NOT executed and the run continues, but it is a
+ * different fact — nobody refused it — and the agent, the trace and the card all say so.
+ */
+export type ApprovalDecision = 'approve' | 'reject' | 'withdraw';
 export type ApprovalState = 'pending' | ApprovalDecision | 'unknown';
 
 /** The runner's principal snapshot stored on the approval (the approver authorises, the runner executes). */
