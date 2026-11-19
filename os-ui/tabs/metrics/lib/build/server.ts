@@ -1,5 +1,13 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    Metric build server boundary — `buildMetric`
+ * USER STORY: As a creator I want a build report for my metric that says whether it ran live, on the
+ *             offline mock or not at all, so that I know how far to trust it.
+ * ARCHITECTURE:
+ *   - Server-only. Derives the canonical member, runs the `trino` adapter from `./live.ts` through
+ *     `runAdapter`, and maps the explore mode into `BuildMode`.
+ *   - Called by `app/api/metrics/define/route.ts` and the metric (and other) MCP write tools.
  */
 import 'server-only';
 import type { Dataset, Measure } from '@tabs/data/lib/index';
@@ -8,14 +16,6 @@ import { measureMember } from '@tabs/metrics/lib/model';
 import { type BuildRow, type MetricBuildContext, runAdapter } from '@tabs/metrics/lib/build/adapter';
 import { type MetricLiveDeps, makeMetricAdapters } from '@tabs/metrics/lib/build/live';
 import { exploreMetric } from '@tabs/metrics/lib/build/explore-server';
-
-/**
- * Server boundary for a Metric build (mirrors lib/data/build/server.ts). It derives the
- * canonical member, then runs the `trino` adapter: the metric's compiled governed SQL over
- * the gold mart AS the viewer (R3), verified to resolve to a number. `exploreMetric`
- * decides live vs the honest offline-mock (and the loud outage gate), so the report's
- * mode is whatever the read path honestly ran as.
- */
 
 /** 'unavailable' is its OWN state (2026-11-18, review M3): a metric Build over an unreachable
  *  Trino used to be reported as `live`, because the mapping below folded everything that was not

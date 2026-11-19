@@ -1,5 +1,17 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    Metrics MCP write tools — suggest_metrics, define_metric, preview_metric, promote_metric
+ * USER STORY: As an agent acting for a creator I want to suggest, define, preview and promote metrics
+ *             over MCP with the same rules as the Metrics tab, so that the MCP is not a side door.
+ * ARCHITECTURE:
+ *   - Server-only. Each tool calls the same governed libs as the UI and `/api/metrics` routes
+ *     (`../lib/suggest-server`, `model`, `build/server`, `build/explore-server`, `store`, `governance`).
+ *   - Collected by `core/mcp/write-tools.ts` and `core/mcp/register-experimental.ts`.
+ *   - promote_metric refuses My→Domain (that is the dataset's move) and runs `governMetric` for
+ *     Domain→Company, then moves the dataset's tier.
+ *   - The import block still carries many symbols from other tabs (knowledge, files, dashboards,
+ *     agents, software) that this file does not use.
  */
 import 'server-only';
 import type { CurrentUser } from '@core/kernel/auth';

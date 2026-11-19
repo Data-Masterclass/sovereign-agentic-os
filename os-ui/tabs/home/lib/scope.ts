@@ -1,19 +1,14 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
- */
-
-/**
- * Cockpit **scoping** — the OPA/RLS security boundary for Home's personalized
- * modules (home-golden-path.md §"Cockpit modules"). PURE: it takes the raw
- * registry rows (approvals, artifacts, apps) the feed adapter already fetched
- * and shapes the per-viewer cockpit, applying the SAME visibility predicates the
- * owning tabs enforce — so Home never shows what the viewer isn't entitled to,
- * and never recomputes a number a tab already owns (it only re-surfaces rows).
  *
- * Home is a READ + ROUTE surface: every item carries a deep-link to its owning
- * tab; nothing here mutates. Promote/approve happen in the owning tab's governed
- * flow. Keeping this pure makes the entitlement boundary directly unit-testable
- * (feed.test / scope.test) with a second role, which is the validation gate.
+ * FEATURE:    Home cockpit scoping — per-viewer shaping of approvals, WIP, activity and top items
+ * USER STORY: As a user I want Home to show only the approvals, drafts and items I am entitled to see,
+ *             each linking to its owning tab, so that Home never leaks another user's or domain's work.
+ * ARCHITECTURE:
+ *   - Pure: takes the rows `./feed` already fetched with the viewer's identity and applies the same
+ *     visibility rules the owning tabs enforce. It never recomputes a tab's numbers.
+ *   - Read and route: every item carries a deep link; promote and approve happen in the owning tab.
+ *   - Kept pure so the entitlement boundary is unit-tested (`scope.test.ts`).
  */
 
 import type { HomePersona } from '@tabs/home/lib/launcher';

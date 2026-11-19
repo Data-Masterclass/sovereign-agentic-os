@@ -1,5 +1,17 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    Metric explorer server boundary — run a metric as one governed Trino query
+ * USER STORY: As a viewer I want a metric's number computed over the gold mart under my own identity,
+ *             with the SQL shown, and no number at all during an outage, so that every value is real.
+ * ARCHITECTURE:
+ *   - Server-only. `exploreMetric` compiles the slice (`../explorer`), picks the tier-aware gold table
+ *     (personal lane or domain schema) and runs it via `queryRun` as the delegated token's subject.
+ *   - Labels each result `live (sql)`, `offline-mock` or `unavailable`. The hash-seeded mock is used
+ *     only where `offlineMockAllowed()`; elsewhere an unreachable Trino returns no rows.
+ *   - Adds loud warnings for dropped slice members, query-tool truncation and bucket-based windows.
+ *   - Called by the metric routes, metric and other MCP tools, `./alert-eval.ts`, `./server.ts` and
+ *     `tabs/dashboards/lib/build/panel-query.ts`.
  */
 import 'server-only';
 import { offlineMockAllowed } from '@core/kernel/offline-mock';
@@ -18,15 +30,6 @@ import {
   sqlRowsToExploreRows,
 } from '@tabs/metrics/lib/explorer';
 import { liveMetricsReachable } from '@tabs/metrics/lib/build/live-clients';
-
-/**
- * Server boundary for the metric explorer. A metric is a VIRTUAL DECLARATION served as ONE
- * governed Trino SELECT over the physical gold mart, run UNDER the viewer's delegated
- * identity (R3 — Trino/OPA row/column security). On the local/teaching
- * laptop, where no backend exists, an honest offline-MOCK filters by the viewer's region so
- * the "two viewers see different rows" guarantee still holds. Returns the rows + the exact
- * SQL that ran, honestly labelled 'live (sql)' / 'offline-mock' / 'unavailable'.
- */
 
 /** 'live (sql)' = the number came from a governed Trino query over the gold mart (the
  *  metric read path since Phase 1), honestly labelled. 'unavailable' = a REAL deployment

@@ -1,5 +1,16 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    Approvals inbox — the Governance queue of pending approval requests
+ * USER STORY: As a builder or admin I want to see each pending request with its preview and approve,
+ *             reject or "approve & remember" it, and as a requester I want to withdraw my own held call,
+ *             so that governed actions only run once someone entitled has decided.
+ * ARCHITECTURE:
+ *   - Client component rendered by `app/(govern)/governance/page.tsx`; reads and decides through
+ *     `GET`/`POST /api/governance/approvals`. The role gate is server-side; `mayApprove` /
+ *     `mayWithdraw` only decide which buttons are shown.
+ *   - Always re-reads the queue after a decision, because a failed effect still commits the decision.
+ *   - Approvals raised by a parked agent run show the run and its resume status.
  */
 'use client';
 

@@ -1,15 +1,14 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
- */
-/**
- * The Metric AGENT (pure core).
  *
- * Turns a natural-language goal + the dataset's REAL columns into a STRUCTURED
- * metric proposal (aggregation + column + dimensions) — the same {@link MetricForm}
- * the friendly form writes, so agent and form converge on one artifact. The LLM
- * call is made by the route through the ONE governed assistant helper; this module
- * only builds the prompt and validates the model's JSON against the real schema, so
- * it is transport-free and unit-testable offline.
+ * FEATURE:    Metric agent core — prompt and validation for a natural-language metric proposal
+ * USER STORY: As a creator I want to describe a business goal and get a metric proposal built only from
+ *             my dataset's real columns, so that the agent and the form produce the same metric.
+ * ARCHITECTURE:
+ *   - Pure and transport-free: builds the system/user messages and parses the model's JSON into a
+ *     `MetricForm`. The LLM call itself is made by `app/api/metrics/agent/route.ts`.
+ *   - Columns the dataset does not have are dropped; an unusable reply throws `MetricAgentError` (502)
+ *     instead of producing a guessed metric.
  */
 import { MEASURE_TYPES, type MeasureType } from '@tabs/data/lib/index';
 import type { MetricForm } from '@tabs/metrics/lib/model';

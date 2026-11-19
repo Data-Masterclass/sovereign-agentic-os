@@ -1,20 +1,19 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    Durable alert-rule store for metric alerts
+ * USER STORY: As a creator I want my metric alert rules to survive a restart and keep their last
+ *             evaluation, so that the scheduled check can keep evaluating them.
+ * ARCHITECTURE:
+ *   - Server-only. In-process map keyed by `Symbol.for` with write-through to the `os-alert-rules`
+ *     OpenSearch index via `osMirror`, the same pattern as the dashboards store.
+ *   - Hydrated on demand; legacy `email`/`slack` channels are coerced to `in_app` on load.
+ *   - Used by `app/api/metrics/alerts/route.ts` and `app/api/metrics/alerts/run/route.ts`; the run
+ *     route is called on a schedule by the chart's `extensions/metrics/metrics-alert-cronjob.yaml`.
  */
 import 'server-only';
 import { osMirror } from '@core/infra/os-mirror';
 import { coerceChannels, type AlertRule } from '@tabs/metrics/lib/alerts';
-
-/**
- * Durable alert-rule registry — mirrors the dashboards store pattern (osMirror
- * write-through + global-symbol in-process cache). Alert rules are owned by a user,
- * evaluated by the /api/metrics/alerts/run endpoint (wire to a CronJob — see chart
- * follow-up note below), and stored in the os-alert-rules OpenSearch index.
- *
- * Chart follow-up: wire the /api/metrics/alerts/run endpoint to a Kubernetes CronJob
- * (charts/sovereign-agentic-os/templates/metrics-alert-cronjob.yaml) on a schedule
- * like `* /5 * * * *` (every 5 minutes) to auto-evaluate all persisted rules.
- */
 
 export type AlertRuleRecord = AlertRule & {
   owner: string;

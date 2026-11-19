@@ -1,26 +1,17 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    Home domain-pulse and spend/health readers
+ * USER STORY: As a builder I want Home to show how many creators and builders are active in my domain and
+ *             how much of the cost cap is spent, so that I see the state of my domain at a glance.
+ * ARCHITECTURE:
+ *   - Server-only. Despite the file name and the `*Stub` suffix, both functions read live in-process
+ *     stores: `listUsers()` from `@tabs/admin/lib` and `listCaps()` / `getSpend()` from `@core/policy`.
+ *   - Partly unimplemented: `promotedThisPeriod` and `certifiedThisPeriod` are always 0 and
+ *     `redItems` is always empty, while the result is still marked `source: 'live'`.
+ *   - Most specific cap wins (domain before tenant). Called only by `./feed`.
  */
 import 'server-only';
-
-/**
- * NOTE: despite the filename (`stubs.ts`) and the `*Stub` export suffix, these are
- * LIVE readers, not stubs. The names are kept to avoid rippling imports across the
- * Home feed; the behavior below is real. (A rename is a separate, larger change.)
- *
- * Cross-tab feed ADAPTERS for the Cockpit "Domain Pulse" and "Spend / Health"
- * modules. These were formerly stubs returning `source: 'mock'` with all-zero
- * values. They now read from the real in-process stores that are already live
- * server-side (Governance cost, User directory).
- *
- * Design rules:
- *   - Honest empty state: a domain with NO activity genuinely shows 0s with
- *     source:'live'; the UI is responsible for the "no activity yet" affordance.
- *   - No recomputation drift: Home reads exactly what these functions return and
- *     never re-derives; the stores are the single source of truth.
- *   - Surgical dependency: user counts come from a direct listUsers() call
- *     (in-process, fast).
- */
 
 import { listUsers } from '@tabs/admin/lib/index';
 import { listCaps, getSpend } from '@core/policy/index';

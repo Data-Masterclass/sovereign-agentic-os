@@ -1,5 +1,14 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    Policy plane view — capability profiles, access grants, egress allowlist, standing policies
+ * USER STORY: As a builder or admin I want to see who may call which tool, where each grant came from and
+ *             what it compiles to, and as an admin revoke a grant, so that access is visible and correctable.
+ * ARCHITECTURE:
+ *   - Client component rendered by `app/(govern)/governance/page.tsx`; reads
+ *     `GET /api/governance/policies` and revokes with `POST` `{ principal, tool }`.
+ *   - Revoke and "Edit profiles" show only when the server returns `canOverride`; the badge says
+ *     whether OPA is live or the plane is only compiled.
  */
 'use client';
 

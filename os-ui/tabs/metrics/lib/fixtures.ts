@@ -1,5 +1,13 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    Shared test fixtures for the metrics tab
+ * USER STORY: As a developer writing metrics or dashboards tests I want one documented Gold dataset and
+ *             a real user-delegated token, so that tests exercise the real read-path checks.
+ * ARCHITECTURE:
+ *   - Test-only helpers (`goldSales`, `viewerToken`); not imported by production code.
+ *   - Kept outside `*.test.ts` so importing it never re-runs another file's tests, and so the one
+ *     cross-tab import of Data helpers is counted once by `scripts/check-structure.mjs`.
  */
 import { emptyVersions, type Dataset } from '@tabs/data/lib/index';
 import { claimsFromUser, delegate, type DelegatedToken } from '@core/kernel/identity';
