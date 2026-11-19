@@ -65,7 +65,7 @@ test('mint refuses a token with no user or no known scope', () => {
 
 test('GUARD, agent-run: the app’s intent passes; missing or forged is 403', () => {
   const ok = guardAppIntent(headers({ [APP_ORIGIN_HEADER]: 'app', [APP_INTENT_HEADER]: appRun(), 'sec-fetch-site': 'same-origin' }), amir, 'agent-run');
-  assert.deepEqual(ok, { ok: true, via: 'app-intent' });
+  assert.deepEqual(ok, { ok: true, via: 'app-intent', appSlug: 'invoices' });
 
   // Says it is an app and presents NOTHING → 403 (the silent-run case).
   const none = guardAppIntent(headers({ [APP_ORIGIN_HEADER]: 'app' }), amir, 'agent-run');
@@ -97,7 +97,7 @@ test('GUARD, approval-decide: an APP IS REFUSED — the scope split is the whole
   const shell = mintAppIntent({ userId: 'amir', appSlug: '', scopes: ['approval-decide'] });
   assert.deepEqual(
     guardAppIntent(headers({ [APP_INTENT_HEADER]: shell }), amir, 'approval-decide'),
-    { ok: true, via: 'app-intent' },
+    { ok: true, via: 'app-intent', appSlug: '' },
   );
 });
 

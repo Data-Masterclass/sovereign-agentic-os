@@ -27,6 +27,8 @@ import { acquireTail } from '@tabs/agents/lib/engine/tail-limit';
 import { unmappedGrantNames } from '@tabs/agents/lib/build/os-tools';
 import { cleanTurns } from '@core/runtime/turns';
 import { guardAppIntent } from '@core/kernel/app-intent';
+import { getAppBySlugForUser } from '@tabs/software/lib/apps';
+import { appAgentRunRefusal } from '@tabs/software/lib/app-agent-grants';
 
 export const dynamic = 'force-dynamic';
 // A multi-node team walk (each node a PLAN→ACT loop on a large model) can run long;
@@ -104,6 +106,13 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     // refused outright. The OS UI's own call carries neither header and is unaffected.
     const intent = guardAppIntent(req.headers, resolvedUser, 'agent-run');
     if (!intent.ok) return NextResponse.json({ error: intent.reason }, { status: intent.status });
+    // An app's intent also names WHICH app it was minted for: that app may start only the agent
+    // systems it was granted (Choose Context → Agents), and only while it still exists for this user.
+    // The host shell's own intent names no app and is unaffected.
+    if (intent.via === 'app-intent' && intent.appSlug) {
+      const refusal = appAgentRunRefusal(await getAppBySlugForUser(intent.appSlug, resolvedUser), id);
+      if (refusal) return NextResponse.json({ error: refusal }, { status: 403 });
+    }
 
     if (body.stop === true) {
       const rec = setRunning(id, resolvedUser, false);

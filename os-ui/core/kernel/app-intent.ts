@@ -128,7 +128,12 @@ export type IntentHeaders = {
   get: (name: string) => string | null;
 };
 
-export type GuardVerdict = { ok: true; via: 'app-intent' | 'os-ui' } | { ok: false; status: 403; reason: string };
+export type GuardVerdict =
+  | { ok: true; via: 'os-ui' }
+  /** `appSlug` is the app the intent was minted for (`''` for the host shell), so a route can
+   *  hold the call to what THAT app was granted, not only to what its user may do. */
+  | { ok: true; via: 'app-intent'; appSlug: string }
+  | { ok: false; status: 403; reason: string };
 
 /**
  * THE GUARD, for a route that a governed app can reach with the ambient session.
@@ -176,5 +181,5 @@ export function guardAppIntent(
           : `this app intent does not carry the '${scope}' scope`,
     };
   }
-  return { ok: true, via: 'app-intent' };
+  return { ok: true, via: 'app-intent', appSlug: verdict.intent.appSlug };
 }
