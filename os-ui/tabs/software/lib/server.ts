@@ -46,7 +46,7 @@ import { ungrantedDatasetWarningForApp } from '@tabs/software/lib/dataset-guard'
 // path in apps.ts can update it too, without an import cycle). Re-exported here
 // for existing importers.
 import { snapshotFiles, getSnapshot, hydrateSnapshot } from '@tabs/software/lib/snapshot';
-import { commitAppTree, gitCommitNote, type AppCommitOutcome } from '@tabs/software/lib/git-commit';
+import { commitAppTree, gitCommitNote, readAppTreeFromGit, type AppCommitOutcome } from '@tabs/software/lib/git-commit';
 import { ensureSectionsRegistered, unregisteredPageHints } from '@tabs/software/lib/sections-registry';
 import { compileGate, formatGateError, gateActivityNote } from '@tabs/software/lib/compile-gate';
 export { snapshotFiles, getSnapshot, hydrateSnapshot };
@@ -65,6 +65,53 @@ function mergeTree(prior: ScaffoldFile[], incoming: ScaffoldFile[]): ScaffoldFil
 }
 
 // ----------------------------------------------------- Commit (convergence) ----
+
+/**
+ * THE TREE A COMMIT MERGES OVER — and a lost snapshot is not an empty app.
+ *
+ * `commitToApp` REPLACES the app's whole git subtree with `prior + files`, so whatever this
+ * returns is what survives. Three sources, in order of how much they can be trusted:
+ *
+ *   1. the mirror snapshot — the fast cache, present in the normal case;
+ *   2. GIT, the home of record (`readAppTreeFromGit`). `hydrateSnapshot` returns null when the
+ *      mirror is unreachable as well as when it is empty, and before this a commit in that state
+ *      merged over the bare template and committed the deletion of everything else — for ANY app,
+ *      and for a locked one that includes its lockfile and vendored tree. Git has the real tree
+ *      for every app that has been committed at least once. A TRUNCATED read is not used: merging
+ *      over part of a tree deletes the rest just as surely;
+ *   3. the template — but only when it can stand in for the app's tree. `app.repo.seeded` records
+ *      what the app was created with; if the template plus this push lacks any of those paths, the
+ *      commit would delete them, so it is refused and NOTHING is written. That is the case for a
+ *      locked app (`scaffold-lock.ts`) never yet committed to git, and for an older app whose
+ *      template has since dropped a file. An app whose seed is still the template passes, as before.
+ *
+ * The refusal names the two real ways out: retry when the stores answer, or push the app's
+ * COMPLETE tree, which makes the fallback irrelevant.
+ */
+async function priorTreeForCommit(app: App, files: ScaffoldFile[]): Promise<ScaffoldFile[]> {
+  const snapshot = getSnapshot(app.id);
+  if (snapshot) return snapshot;
+  const fromGit = await readAppTreeFromGit({ slug: app.slug, domain: app.domain });
+  if (fromGit && !fromGit.truncated && fromGit.files.length > 0) return fromGit.files;
+
+  const template = templateFiles(app.template, app.name, app.slug);
+  const have = new Set([...template, ...files].map((f) => f.path));
+  const missing = app.repo.seeded.filter((p) => !have.has(p));
+  if (missing.length > 0) {
+    throw withStatus(
+      new Error(
+        `This app's source tree could not be loaded: the file mirror returned nothing, and the ` +
+          `domain git repository ${fromGit?.truncated ? 'holds a tree too large to read back whole' : 'holds no readable tree for it'}. ` +
+          `Committing now would delete ${missing.length} file(s) the app was created with ` +
+          `(${missing.slice(0, 3).join(', ')}${missing.length > 3 ? ', …' : ''}). Nothing was written. ` +
+          `Retry once the mirror or the repository answers; or, if the tree is gone for good, push ` +
+          `the app's COMPLETE tree (those files included) in one push to re-establish it.`,
+      ),
+      503,
+    );
+  }
+  return template;
+}
 
 /**
  * The ONE convergent commit step every front door flows through. Writes the
@@ -90,31 +137,7 @@ export async function commitToApp(
   // commit after a pod restart merges the changeset over the app's REAL last tree
   // (not the bare template seed) — the whole-tree metadata parse + scan stay honest.
   await hydrateSnapshot(app.id);
-  const snapshot = getSnapshot(app.id);
-  const prior = snapshot ?? templateFiles(app.template, app.name, app.slug);
-  if (!snapshot) {
-    // A LOST SNAPSHOT IS NOT AN EMPTY APP. `hydrateSnapshot` returns null when the mirror is
-    // unreachable as well as when there is nothing to read, and the commit below REPLACES the
-    // app's whole git subtree with `prior + files`. The template fallback is only this app's
-    // tree if it contains everything the app was seeded with — and a LOCKED seed
-    // (`scaffold-lock.ts`) carries a lockfile, a vendored tree and a different manifest that the
-    // plain template does not. Merging a push over the fallback would silently delete all of
-    // them and commit the deletion. `app.repo.seeded` is the recorded evidence of what was
-    // seeded, so the check is positive: any seeded path the fallback lacks ⇒ refuse, write nothing.
-    const have = new Set(prior.map((f) => f.path));
-    const missing = app.repo.seeded.filter((p) => !have.has(p));
-    if (missing.length > 0) {
-      throw withStatus(
-        new Error(
-          `This app's source tree could not be loaded (its file mirror is unreachable or empty), and ` +
-            `the template is not the tree it was created with: ${missing.length} seeded file(s) — ` +
-            `${missing.slice(0, 3).join(', ')}${missing.length > 3 ? ', …' : ''} — would be deleted by ` +
-            `committing over it. Nothing was written. Retry once the mirror is reachable.`,
-        ),
-        503,
-      );
-    }
-  }
+  const prior = await priorTreeForCommit(app, files);
   const toCommit = ensureSectionsRegistered(prior, files, app.template);
   const tree = mergeTree(prior, toCommit);
   // COMPILE GATE (verify-before-commit, redesign Week 1): the MERGED tree — including

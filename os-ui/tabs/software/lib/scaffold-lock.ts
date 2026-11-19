@@ -24,9 +24,14 @@
  *   `vendor/@sovereign-os/*` — the arrangement `app-sdk-vendor.ts` / `app-ui-vendor.ts` were
  *   written for. The result is a tree `npm ci` can really install.
  *
- *   EXISTING APPS ARE NOT TOUCHED. Only `createApp` calls {@link lockedSeed}. `templateFiles()` —
- *   the fallback tree for an app that has no snapshot — still returns the plain scaffold, so an app
- *   created before this change keeps the tree it was seeded with and stays "deps not covered".
+ *   EXISTING APPS GET NO LOCKFILE. Only `createApp` calls {@link lockedSeed}. `templateFiles()` —
+ *   the fallback tree for an app that has no snapshot — still returns the plain scaffold: no
+ *   lockfile, no vendored tree, registry ranges for the OS packages. So an app created before this
+ *   change stays "deps not covered". Precisely what DID change for such an app: an app with a
+ *   stored tree (mirror snapshot or git) is byte-for-byte untouched; an app that has NEITHER and
+ *   therefore reads the fallback now sees `vite ^6.4.6` there instead of `^5.4.2`, because the
+ *   patched toolchain range was applied to the one shared manifest rather than leaving the plain
+ *   scaffold on a range that resolves to a version with a known high advisory.
  *
  *   No `server-only` import and only relative `.ts` specifiers at runtime, so the regeneration
  *   script can load this file under plain `node`. It reads the vendored source from disk (`fs`),

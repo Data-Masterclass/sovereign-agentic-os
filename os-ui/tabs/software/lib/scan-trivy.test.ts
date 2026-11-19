@@ -449,7 +449,7 @@ test('M2: each ecosystem is covered by ITS OWN result — lock beside it, lock a
     { path: 'svc/go.mod', content: 'module svc\n' },
     { path: 'Cargo.lock', content: '' },
     { path: 'crates/core/Cargo.toml', content: '[package]\n' },
-    { path: 'tools/requirements-dev.txt', content: 'ruff==0.6.0\n' },
+    { path: 'tools/requirements.txt', content: 'ruff==0.6.0\n' },
     { path: 'tools/pyproject.toml', content: '[tool.ruff]\n' },
   ];
   const r = mapTrivyReport(
@@ -458,7 +458,7 @@ test('M2: each ecosystem is covered by ITS OWN result — lock beside it, lock a
       { Target: 'api/poetry.lock', Class: 'lang-pkgs', Type: 'poetry' },
       { Target: 'svc/go.mod', Class: 'lang-pkgs', Type: 'gomod' },
       { Target: 'Cargo.lock', Class: 'lang-pkgs', Type: 'cargo' },
-      { Target: 'tools/requirements-dev.txt', Class: 'lang-pkgs', Type: 'pip' },
+      { Target: 'tools/requirements.txt', Class: 'lang-pkgs', Type: 'pip' },
     ),
     tree,
   );
@@ -840,4 +840,109 @@ test('an unsafe path refuses BEFORE any Job or Secret is created', async () => {
   });
   assert.equal(out.ok, false);
   assert.equal(calls.length, 0, 'nothing may be launched, and no source may be written');
+});
+
+// ---- N1: a manifest under a lockfile we do not parse still needs a result OF ITS OWN ----
+
+const WEB_MANIFEST = { path: 'web/package.json', content: JSON.stringify({ name: 'web', dependencies: { next: '^15.0.0' } }) };
+const OTHER_LOCKS: [string, string, string][] = [
+  ['yarn.lock', '# yarn lockfile v1\n', 'yarn'],
+  ['pnpm-lock.yaml', "lockfileVersion: '9.0'\n", 'pnpm'],
+  ['package-lock.json', JSON.stringify({ lockfileVersion: 1, dependencies: { next: { version: '15.0.0' } } }), 'npm'],
+];
+for (const [lockName, lockContent, type] of OTHER_LOCKS) {
+  const tree: ScaffoldFile[] = [...LOCKED, WEB_MANIFEST, { path: `web/${lockName}`, content: lockContent }];
+  test(`N1: web/package.json under ${lockName}${type === 'npm' ? ' (lockfileVersion 1)' : ''} does NOT ride on the root lockfile's result`, () => {
+    const r = mapTrivyReport(report(NPM_RESULT), tree);
+    assert.ok(r.ok);
+    if (!r.ok) return;
+    assert.ok(r.notRun.includes('deps'));
+    assert.equal(r.passed, false);
+    assert.match(r.reason ?? '', /only PARTLY covered/);
+    assert.ok((r.reason ?? '').includes('web/package.json'), 'the uncovered manifest is named');
+  });
+  test(`N1: …and IS covered once the engine returns a result for web/${lockName}`, () => {
+    const r = mapTrivyReport(report(NPM_RESULT, { Target: `web/${lockName}`, Class: 'lang-pkgs', Type: type }), tree);
+    assert.ok(r.ok);
+    if (!r.ok) return;
+    assert.deepEqual(r.notRun, ['sast'], r.reason);
+  });
+}
+
+// ---- N2: the carve-outs, tightened ----
+
+const covered = (r: ReturnType<typeof mapTrivyReport>) => r.ok && !r.notRun.includes('deps');
+const pip = (target: string) => ({ Target: target, Class: 'lang-pkgs', Type: 'pip' });
+
+test('N2a: a pyproject.toml is satisfied by `requirements.txt` beside it — and by NO other requirements file', () => {
+  const py = (req: string): ScaffoldFile[] => [
+    ...LOCKED,
+    { path: 'api/pyproject.toml', content: '[project]\ndependencies = ["flask"]\n' },
+    { path: `api/${req}`, content: 'flask==3.0.0\n' },
+  ];
+  assert.equal(covered(mapTrivyReport(report(NPM_RESULT, pip('api/requirements.txt')), py('requirements.txt'))), true);
+  // requirements-dev.txt is resolved (its own result covers IT) but says nothing about pyproject.
+  const dev = mapTrivyReport(report(NPM_RESULT, pip('api/requirements-dev.txt')), py('requirements-dev.txt'));
+  assert.equal(covered(dev), false);
+  assert.ok(dev.ok && (dev.reason ?? '').includes('api/pyproject.toml'));
+  // A requirements.txt in ANOTHER directory does not count either.
+  const elsewhere = mapTrivyReport(report(NPM_RESULT, pip('requirements.txt')), [
+    ...LOCKED,
+    { path: 'api/pyproject.toml', content: '[project]\n' },
+    { path: 'requirements.txt', content: 'flask==3.0.0\n' },
+  ]);
+  assert.equal(covered(elsewhere), false);
+});
+
+test('N2b: an ancestor lockfile covers a workspace MEMBER, not a sub-project behind another manifest', () => {
+  const cargo = { Target: 'Cargo.lock', Class: 'lang-pkgs', Type: 'cargo' };
+  const member: ScaffoldFile[] = [
+    ...LOCKED,
+    { path: 'Cargo.toml', content: '[workspace]\n' },
+    { path: 'Cargo.lock', content: '' },
+    { path: 'crates/core/Cargo.toml', content: '[package]\n' },
+  ];
+  assert.equal(covered(mapTrivyReport(report(NPM_RESULT, cargo), member)), true, 'nothing sits between the member and the root lock');
+
+  const nested: ScaffoldFile[] = [
+    ...LOCKED,
+    { path: 'Cargo.toml', content: '[workspace]\n' },
+    { path: 'Cargo.lock', content: '' },
+    { path: 'tools/Cargo.toml', content: '[package]\n' }, // its own project, no lockfile
+    { path: 'tools/gen/Cargo.toml', content: '[package]\n' },
+  ];
+  const r = mapTrivyReport(report(NPM_RESULT, cargo), nested);
+  assert.equal(covered(r), false);
+  // `tools/` itself sits directly under the root lock and is accepted; `tools/gen/` is behind it.
+  assert.ok(r.ok && (r.reason ?? '').includes('tools/gen/Cargo.toml'));
+  assert.ok(r.ok && !(r.reason ?? '').includes('tools/Cargo.toml,'));
+
+  // The same rule for Poetry: a nearer lock wins, and a result for the FAR one does not count.
+  const poetry: ScaffoldFile[] = [
+    ...LOCKED,
+    { path: 'pyproject.toml', content: '[tool.poetry]\n' },
+    { path: 'poetry.lock', content: '' },
+    { path: 'svc/pyproject.toml', content: '[tool.poetry]\n' },
+    { path: 'svc/poetry.lock', content: '' },
+  ];
+  const far = mapTrivyReport(report(NPM_RESULT, { Target: 'poetry.lock', Class: 'lang-pkgs', Type: 'poetry' }), poetry);
+  assert.equal(covered(far), false);
+  assert.ok(far.ok && (far.reason ?? '').includes('svc/pyproject.toml'));
+});
+
+test('N2c: setup.py / setup.cfg are Python manifests — uncovered unless requirements.txt beside them resolved', () => {
+  for (const name of ['setup.py', 'setup.cfg']) {
+    const bare = mapTrivyReport(report(NPM_RESULT), [...LOCKED, { path: `lib/${name}`, content: 'x\n' }]);
+    assert.equal(covered(bare), false, name);
+    assert.ok(bare.ok && (bare.reason ?? '').includes(`lib/${name}`));
+    const withReqs = mapTrivyReport(report(NPM_RESULT, pip('lib/requirements.txt')), [
+      ...LOCKED,
+      { path: `lib/${name}`, content: 'x\n' },
+      { path: 'lib/requirements.txt', content: 'flask==3.0.0\n' },
+    ]);
+    assert.equal(covered(withReqs), true, name);
+  }
+  // On its own, with no lockfile anywhere, it is the plain "nothing was resolved" case.
+  const alone = mapTrivyReport(CLEAN, [{ path: 'setup.py', content: 'x\n' }]);
+  assert.ok(alone.ok && alone.notRun.includes('deps'));
 });
