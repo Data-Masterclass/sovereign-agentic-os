@@ -18,7 +18,7 @@ import {
   setDescription, addSystemTool,
   addOutput, removeOutput, setOutputAgent,
 } from '@tabs/agents/lib/simple-edit';
-import { outputLanding, agentOutputTools, OUTPUT_TOOL } from '@tabs/agents/lib/output-tools';
+import { outputLanding, outputCaveats, agentOutputTools } from '@tabs/agents/lib/output-tools';
 import {
   agentCapabilityState, capabilityStateLine, staleLimitNote, useEverything, addMissingCapability, toolsForSelection,
 } from '@tabs/agents/lib/agent-capabilities';
@@ -30,7 +30,8 @@ import {
   type CapabilityChip,
 } from '@tabs/agents/lib/capability-tools';
 import { setEntrypoint } from '@tabs/agents/lib/canvas-edit';
-import { canSaveFromResult, DATA_NON_TABULAR_NOTE } from '@tabs/agents/lib/output-save';
+import RunOutputs from '@tabs/agents/ui/RunOutputs';
+import { outputKey, type OutputResult } from '@tabs/agents/lib/output-saver';
 import {
   EMPTY_OUTPUT_DRAFT, outputDraftDirty, outputDraftValid,
   outputDraftStorageKey, serializeOutputDraft, parseOutputDraft,
@@ -328,6 +329,7 @@ export default function SimpleBuilder({
             onReload={onReload}
             onNext={next}
             onOutputDraftState={onOutputDraftState}
+            lastOutputs={buildRun.lastRun?.outputs}
           />
         </div>
       ) : null}
@@ -562,6 +564,7 @@ function DefineStep({
   onReload,
   onNext,
   onOutputDraftState,
+  lastOutputs,
 }: {
   systemId: string;
   system: System;
@@ -569,6 +572,8 @@ function DefineStep({
   onCommit: (next: System) => void;
   onReload: () => void | Promise<void>;
   onNext: () => void;
+  /** What the last run did with each declared output (shown at the output's row). */
+  lastOutputs?: OutputResult[];
   /** Report the output section's draft state up to the builder, which owns every exit. */
   onOutputDraftState?: (state: OutputDraftState) => void;
 }) {
@@ -636,6 +641,7 @@ function DefineStep({
         canEdit={canEdit}
         onCommit={onCommit}
         onDraftState={onOutputDraftState}
+        lastOutputs={lastOutputs}
       />
 
       {/* How the team is triggered — Manual / On schedule / Called from system. Part of
@@ -1228,7 +1234,7 @@ function AgentCapabilities({
           instead of leaving the author to look for a tool this picker never lists. */}
       {agentOutputTools(system, agentId).length > 0 ? (
         <p className="hint" style={{ marginTop: 0, marginBottom: 6 }}>
-          Saves results with <span className="mono">{agentOutputTools(system, agentId).join(', ')}</span> — granted automatically by the outputs under “Where the results go” (Define).
+          May write with <span className="mono">{agentOutputTools(system, agentId).join(', ')}</span> — granted automatically by the outputs under “Where the results go” (Define). The declared results themselves are saved by the system when a run finishes; this agent only has to produce them.
         </p>
       ) : (
         <p className="hint" style={{ marginTop: 0, marginBottom: 6 }}>
@@ -1497,84 +1503,6 @@ function lastRunToDiag(lastRun: NonNullable<BuildRunProps['lastRun']>): DiagRun 
 }
 
 /**
- * "Save result → <output>" — persists the last run's final text into each DECLARED
- * output (Define → Outputs) through the governed create the tabs use (the outputs/save
- * route). File and Knowledge are the natural cases; a Dataset save is offered ONLY when
- * the result is CSV/tabular (`canSaveFromResult`) — otherwise the team's own write tools
- * (enabled by the declared Write grant) are the path, and we say so. Nothing renders when
- * no outputs are declared.
- */
-function SaveResultBlock({
-  systemId, system, output, canEdit,
-}: {
-  systemId: string;
-  system: System;
-  /** The last run's final text. */
-  output: string;
-  canEdit: boolean;
-}) {
-  const toast = useToast();
-  const outputs = system.outputs ?? [];
-  const [busyIdx, setBusyIdx] = useState<number | null>(null);
-  const kindLabel = (k: OutputKind) => (k === 'files' ? 'File' : k === 'data' ? 'Dataset' : 'Knowledge');
-
-  if (outputs.length === 0) return null;
-
-  const save = async (index: number) => {
-    if (busyIdx !== null) return;
-    setBusyIdx(index);
-    try {
-      const res = await fetch(`/api/agents/systems/${systemId}/outputs/save`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ index, text: output }),
-      });
-      const body = await res.json();
-      if (!res.ok) throw new Error(body.error ?? 'Could not save the result.');
-      toast.success(`Saved to ${kindLabel(outputs[index].kind)} “${outputs[index].name}”`);
-    } catch (e) {
-      toast.error((e as Error).message);
-    } finally {
-      setBusyIdx(null);
-    }
-  };
-
-  return (
-    <div className="sb-save-outputs" style={{ marginBottom: 14 }}>
-      <h2 className="sb-section-title" style={{ marginTop: 0 }}>Save the result</h2>
-      <p className="hint" style={{ marginTop: 0 }}>
-        Store this run’s result in a destination you declared on Define.
-      </p>
-      <div className="sb-out-list">
-        {outputs.map((o, i) => {
-          const canSave = canSaveFromResult(o, output);
-          return (
-            <div key={`${o.kind}:${o.folder.scope}:${o.folder.path}:${o.name}:${i}`} className="sb-out-row">
-              <span className="badge muted">{kindLabel(o.kind)}</span>
-              <span className="sb-out-name">{o.name}</span>
-              <span className="sb-out-dest hint" style={{ marginTop: 0 }}>
-                → 📁 {o.folder.path === '/' ? 'root' : o.folder.path}
-              </span>
-              <span style={{ marginLeft: 'auto' }}>
-                {canSave ? (
-                  <button className="btn ghost sm" disabled={!canEdit || busyIdx !== null} onClick={() => save(i)}>
-                    {busyIdx === i ? <span className="spin" /> : `Save result → ${o.name}`}
-                  </button>
-                ) : (
-                  <span className="hint" style={{ marginTop: 0 }} title={DATA_NON_TABULAR_NOTE}>
-                    {o.kind === 'data' ? 'Written by the team during a run' : 'No result to save yet'}
-                  </span>
-                )}
-              </span>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-/**
  * Phase 5 — Evaluate. Deterministic checks (green/red) + a one-click LLM-judge that
  * scores Clarity · Grounding · Actionability against the system's task Description via
  * the governed assistant model (the evaluate route). Diagnostics/PDF/trace live below,
@@ -1597,6 +1525,9 @@ function EvaluateStep({
 
   const checks = useMemo(() => (lastRun ? runChecks(lastRunToDiag(lastRun)) : []), [lastRun]);
   const output = lastRun?.output ?? '';
+  // The list a "Save now" just answered with — shown until the next run replaces it.
+  const [savedOutputs, setSavedOutputs] = useState<OutputResult[] | null>(null);
+  useEffect(() => { setSavedOutputs(null); }, [lastRun?.runId, lastRun?.at]);
 
   // The Evaluate PDF: the visual graph first, then the on-screen Evaluate content
   // (checks + AI judge — the judge only when it has actually been run), then the
@@ -1657,8 +1588,14 @@ function EvaluateStep({
       </div>
       {pdfErr ? <div className="error" style={{ marginBottom: 8 }}>{pdfErr}</div> : null}
 
-      {/* Save the result into a declared output (Define → Outputs). */}
-      <SaveResultBlock systemId={systemId} system={system} output={output} canEdit={canEdit} />
+      {/* Where the run's results went (Define → "Where the results go") — and save again. */}
+      <RunOutputs
+        systemId={systemId}
+        outputs={savedOutputs ?? lastRun.outputs}
+        declared={system.outputs}
+        canSave={canEdit}
+        onSaved={setSavedOutputs}
+      />
 
       {/* Deterministic checks — green/red, zero-cost, no model. */}
       <div className="row" style={{ alignItems: 'center', gap: 8 }}>
@@ -1750,8 +1687,10 @@ const OUTPUT_KIND_CARDS: { kind: OutputKind; label: string; feedKind: 'files' | 
  * materialises when the first result is saved. Consistent with the grants picker.
  */
 function OutputsSection({
-  systemId, system, canEdit, onCommit, onDraftState,
+  systemId, system, canEdit, onCommit, onDraftState, lastOutputs,
 }: {
+  /** What the LAST run did with each declared output — shown at its row. */
+  lastOutputs?: OutputResult[];
   systemId: string;
   system: System;
   canEdit: boolean;
@@ -1890,8 +1829,23 @@ function OutputsSection({
                 role="note"
                 style={{ flexBasis: '100%', marginTop: 2, color: outputLanding(system, o).mode === 'direct' ? undefined : 'var(--warn, #b7791f)' }}
               >
-                {outputLanding(system, o).text} The agent saves it with <span className="mono">{OUTPUT_TOOL[o.kind]}</span> — added automatically.
+                {outputLanding(system, o).text}
               </span>
+              {/* What this output cannot do — said here, before a run finds out. */}
+              {outputCaveats(system, o).map((c) => (
+                <span key={c} className="hint" role="note" style={{ flexBasis: '100%', marginTop: 0 }}>{c}</span>
+              ))}
+              {/* Where the last run put it. */}
+              {(() => {
+                const last = lastOutputs?.find((r) => r.key === outputKey(o));
+                if (!last) return null;
+                return (
+                  <span className="hint" style={{ flexBasis: '100%', marginTop: 0, color: last.state === 'saved' ? undefined : 'var(--warn, #b7791f)' }}>
+                    Last run: {last.message}
+                    {last.state === 'saved' && last.link ? <> · <a href={last.link} target="_blank" rel="noopener">Open ↗</a></> : null}
+                  </span>
+                );
+              })()}
             </div>
           ))}
         </div>

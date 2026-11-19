@@ -296,6 +296,8 @@ export type RunInspection = {
   /** The LangGraph nodes queued next (empty when finished). */
   next: string[];
   path: string[];
+  /** Every agent visit with its result, in order — what a declared output is saved from. */
+  nodes: { node: string; status: string; finalText: string }[];
   finalText: string;
   budget: { stepsUsed: number; limit: number; exhausted: boolean };
   held: HeldCall[];
@@ -316,7 +318,7 @@ export async function inspectGraphRun(input: Pick<EngineRunInput, 'ir' | 'deps' 
   const recorded = ((snap.values ?? {}) as Partial<EngineState>).owner ?? null;
   const mine = !input.owner || (!!recorded && recorded.systemId === input.owner.systemId && recorded.userId === input.owner.userId);
   if (!threadExists(snap) || !mine) {
-    return { exists: false, owner: null, finished: false, parked: false, heldApprovals: [], next: [], path: [], finalText: '', budget: { stepsUsed: 0, limit: built.stepBudget, exhausted: false }, held: [], warnings: built.warnings, failed: false };
+    return { exists: false, owner: null, finished: false, parked: false, heldApprovals: [], next: [], path: [], nodes: [], finalText: '', budget: { stepsUsed: 0, limit: built.stepBudget, exhausted: false }, held: [], warnings: built.warnings, failed: false };
   }
   const s = summarize(snap, built, { runId: input.runId, checkpointer: input.checkpointer }, false);
   return {
@@ -327,6 +329,7 @@ export async function inspectGraphRun(input: Pick<EngineRunInput, 'ir' | 'deps' 
     heldApprovals: s.heldApprovals,
     next: [...snap.next],
     path: s.path,
+    nodes: s.runs.map((r) => ({ node: r.node, status: r.status, finalText: r.result.finalText })),
     finalText: s.finalText,
     budget: s.budget,
     held: s.held,

@@ -23,6 +23,13 @@
  *     entrant (the owner's `POST {resume}` racing a decision-driven resume, or two deciders) gets a
  *     typed `RunInFlightError` (409) instead of re-running `tools_<id>` and executing an approved
  *     write twice. Single replica, like the checkpointer; A4's worker moves this to `run_jobs`.
+ *   - DECLARED OUTPUTS are saved here, by the engine, once the graph has produced its result
+ *     (`saveOutputsOf`): the report is persisted FIRST with every output `pending`, then the save
+ *     runs through the governed door as the runner, then the report is persisted again with the
+ *     outcome and `done` is emitted. A save that fails never fails the run — it marks it
+ *     "completed with unsaved outputs". A process that dies between the two writes leaves
+ *     `pending` behind; the re-queued job then finds a finished thread and `recoverOutputSave`
+ *     completes the save from the checkpoint instead of answering "already finished".
  *   - `server-only`: it touches the store, config and the server wiring. The pure logic it drives
  *     (`engine/run.ts`, `engine/resume.ts`, `run-lock.ts`) is what the tests exercise.
  */
@@ -30,7 +37,9 @@ import 'server-only';
 import type { RunEnv } from '@core/kernel/object-lifecycle';
 import type { CurrentUser } from '@core/kernel/auth';
 import { config } from '@core/kernel/config';
-import { runOsTeam, type RunOsTeamResult } from '@tabs/agents/lib/build/agentic-graph-server';
+import { inspectOsRun, runOsTeam, type RunOsTeamResult } from '@tabs/agents/lib/build/agentic-graph-server';
+import { saveRunOutputs, type OutputDoorOptions } from '@tabs/agents/lib/build/output-save-server';
+import { pendingOutputs, unsavedOutputs, unsavedOutputsWarning, type OutputResult, type ProducerRun } from '@tabs/agents/lib/output-saver';
 import { classifyStepError } from '@tabs/agents/lib/build/agentic-graph';
 import { resolveFolderGrantsWithWarnings, summarizeWriteOutcomes, writeOutcomesLine } from '@tabs/agents/lib/build/os-tools';
 import { withOutputTools } from '@tabs/agents/lib/output-tools';
@@ -241,7 +250,35 @@ export function finalizeTeamRun(team: RunOsTeamResult, running: boolean, yaml: s
   return { body, lastRun };
 }
 
-export type RunReportBody = ReturnType<typeof finalizeTeamRun>['body'];
+/** The report body every door returns: the run's own report plus what happened to its declared outputs. */
+export type RunReportBody = ReturnType<typeof finalizeTeamRun>['body'] & {
+  /** Per declared output: saved where (id, link), promotion requested, or not saved and why. */
+  outputs?: OutputResult[];
+  /** The run finished, and at least one declared output was not saved. */
+  completedWithUnsavedOutputs?: boolean;
+};
+
+/** A report and its stored record, with the outputs' outcome (and its warning line) applied. */
+export function withOutputResults<B extends { status: string; warnings?: string[] }>(
+  fin: { body: B; lastRun: LastRun },
+  outputs: OutputResult[],
+): { body: B & { outputs: OutputResult[]; completedWithUnsavedOutputs: boolean }; lastRun: LastRun } {
+  const unsaved = fin.body.status === 'done' && unsavedOutputs(outputs).length > 0;
+  const line = unsaved ? unsavedOutputsWarning(outputs) : null;
+  // The line is replaced, never stacked — and it goes away once a later save succeeded.
+  const others = (fin.body.warnings ?? []).filter((w) => !w.startsWith('Completed with unsaved outputs'));
+  const merged = line ? [...others, line] : others;
+  const warnings = merged.length > 0 || fin.body.warnings ? merged : undefined;
+  return {
+    body: { ...fin.body, warnings, outputs, completedWithUnsavedOutputs: unsaved },
+    lastRun: { ...fin.lastRun, outputs, warnings: warnings && warnings.length > 0 ? warnings : undefined },
+  };
+}
+
+/** The result of every agent visit, in order — what a declared output is saved from. */
+function producerRuns(team: RunOsTeamResult): ProducerRun[] {
+  return team.runs.map((r) => ({ node: r.node, status: r.status, finalText: r.result.finalText }));
+}
 
 /** Mark the run FINISHED (clear the running flag for editors; record activity for run-only consumers). */
 function markRunFinished(id: string, user: CurrentUser): boolean {
@@ -273,6 +310,10 @@ export type ExecuteTeamRunInput = {
    * report's `warnings`. They never enter a prompt or a tool result.
    */
   definitionWarnings?: string[];
+  /** Injected in tests: the door the declared outputs are saved through (`output-save-server.ts`). */
+  outputDoor?: OutputDoorOptions;
+  /** Injected in tests: the team run itself (a scripted graph), in place of `runOsTeam`. */
+  runTeam?: typeof runOsTeam;
   /**
    * LIFECYCLE (review M-3): which point of the system's life this run is — `run` for a schedule
    * executing the PINNED definition, `test` for a verify pass, `studio` (the default) for a run
@@ -309,7 +350,9 @@ export async function executeTeamRun(input: ExecuteTeamRunInput): Promise<RunRep
     });
   }
   try {
-    const team = await runOsTeam({
+    let team: RunOsTeamResult;
+    try {
+      team = await (input.runTeam ?? runOsTeam)({
       user,
       yaml,
       systemId: id,
@@ -341,9 +384,44 @@ export async function executeTeamRun(input: ExecuteTeamRunInput): Promise<RunRep
       onInterrupt: (ev) => emit('approval-required', { approvalId: ev.approvalId, tool: ev.tool, node: ev.node }),
       // The agent is waiting for the model rate limit to reset — say so, so the run is not silent.
       onRateLimitWait: (ev) => emit('rate-limit-wait', { node: ev.node, attempt: ev.attempt, maxAttempts: ev.maxAttempts, waitSeconds: Math.round(ev.waitMs / 1000), message: ev.message }),
-    });
+      });
+    } catch (e) {
+      // A re-queued job that finds its thread FINISHED: the graph is done, but the process that
+      // ran it may have died before the declared outputs were saved. Finish that, once.
+      const recovered = input.resume && (e as { status?: number })?.status === 409 ? await recoverOutputSave(input, emit) : null;
+      if (!recovered) throw e;
+      return recovered;
+    }
     const running = markRunFinished(id, user);
-    const { body, lastRun } = finalizeTeamRun(withDefinitionWarnings(team, input.definitionWarnings), running, yaml);
+    const fin = finalizeTeamRun(withDefinitionWarnings(team, input.definitionWarnings), running, yaml);
+    const sys = parseSystem(yaml);
+    if ((sys.outputs ?? []).length === 0) {
+      try { setLastRun(id, user, fin.lastRun); } catch { /* run-only consumer: persist best-effort */ }
+      emit('done', fin.body);
+      return fin.body;
+    }
+    // DECLARED OUTPUTS. The report first, with every output `pending` (what this run already
+    // saved before it parked stays as it was) — the analysis is on record before any write.
+    const before = view.lastRun?.runId === runId ? view.lastRun.outputs : undefined;
+    const finished = fin.body.status === 'done' && !input.signal?.aborted;
+    if (finished) {
+      const waiting = pendingOutputs(sys).map((p) => before?.find((b) => b.key === p.key && b.state === 'saved') ?? p);
+      try { setLastRun(id, user, { ...fin.lastRun, outputs: waiting }); } catch { /* persist best-effort */ }
+      emit('outputs-saving', { outputs: waiting });
+    }
+    const outputs = await saveRunOutputs({
+      user,
+      system: sys,
+      systemId: id,
+      runId,
+      at: fin.lastRun.at,
+      status: input.signal?.aborted && fin.body.status === 'done' ? 'interrupted' : fin.body.status,
+      failure: fin.body.failure ? { node: fin.body.failure.node, reason: fin.body.failure.reason } : undefined,
+      nodes: producerRuns(team),
+      previous: before,
+      ...input.outputDoor,
+    });
+    const { body, lastRun } = withOutputResults(fin, outputs);
     try { setLastRun(id, user, lastRun); } catch { /* run-only consumer: persist best-effort */ }
     emit('done', body);
     return body;
@@ -356,6 +434,78 @@ export async function executeTeamRun(input: ExecuteTeamRunInput): Promise<RunRep
     clearActivity(id);
     release();
   }
+}
+
+/**
+ * A `resume` reached a thread that already FINISHED. That is a conflict (409) — unless this is the
+ * run whose declared outputs were never recorded as saved: the worker died between the graph's
+ * end and the bookkeeping. Then the save is completed here, from the checkpoint's own per-agent
+ * results, and the run reports as done. The saver looks for what the run already wrote before it
+ * writes anything, so nothing is saved a second time.
+ *
+ * Returns null when there is nothing to recover — the caller then throws the 409 as before. Only
+ * the system's CURRENT last run qualifies: an older run is never re-saved over a newer one.
+ */
+async function recoverOutputSave(input: ExecuteTeamRunInput, emit: (event: string, data: unknown) => void): Promise<RunReportBody | null> {
+  const { user, systemId: id, view, yaml, runId } = input;
+  const sys = parseSystem(yaml);
+  const last = view.lastRun;
+  if ((sys.outputs ?? []).length === 0 || !last || last.runId !== runId) return null;
+  const unfinished = !last.outputs || last.outputs.some((o) => o.state === 'pending');
+  if (!unfinished) return null;
+  const run = await inspectOsRun({ user, yaml, systemId: id, runId });
+  if (!run.exists || !run.finished || run.failed || run.budget.exhausted || run.nodes.length === 0) return null;
+  const at = last.outputs ? last.at : Date.now();
+  const outputs = await saveRunOutputs({
+    user, system: sys, systemId: id, runId, at, status: 'done', nodes: run.nodes, previous: last.outputs, ...input.outputDoor,
+  });
+  const running = markRunFinished(id, user);
+  const base: LastRun = {
+    ...last,
+    at,
+    running,
+    ok: true,
+    reachedEnd: true,
+    interrupted: undefined,
+    path: run.path,
+    output: run.finalText,
+    nodes: last.nodes && last.nodes.length >= run.nodes.length ? last.nodes : run.nodes.map((n) => ({ node: n.node, status: n.status, finalText: n.finalText, steps: [] })),
+  };
+  const fin = withOutputResults({ body: { status: 'done', warnings: last.warnings }, lastRun: base }, outputs);
+  try { setLastRun(id, user, fin.lastRun); } catch { /* persist best-effort */ }
+  const body = {
+    running,
+    mode: 'live' as const,
+    engine: 'langgraph' as const,
+    runId,
+    checkpointer: base.checkpointer,
+    traceUrl: base.traceUrl,
+    traceStoreAvailable: base.traceStoreAvailable,
+    warnings: fin.body.warnings,
+    interrupted: false,
+    parked: false,
+    heldApprovals: [],
+    team: true,
+    ok: true,
+    status: 'done' as const,
+    failed: false,
+    failure: undefined,
+    reachedEnd: true,
+    path: run.path,
+    finalText: run.finalText,
+    nodes: (base.nodes ?? []).map((n) => ({
+      node: n.node, model: n.model ?? '', tier: n.tier, tierReason: n.tierReason, status: n.status, error: n.error, input: n.input,
+      finalText: n.finalText ?? '',
+      steps: (n.steps ?? []).map((st) => ({ tool: st.tool, isError: !!st.isError, errorKind: undefined, summary: st.summary ?? '', args: st.args ?? '', result: st.result ?? '' })),
+    })),
+    contextUsage: base.contextUsage ?? deriveContextUsage([]),
+    grantedIds: base.grantedIds ?? grantedIdsFromYaml(yaml),
+    writeSummary: base.writeSummary ?? { line: '', wrote: [], wroteTotal: 0, heldTotal: 0 },
+    outputs,
+    completedWithUnsavedOutputs: fin.body.completedWithUnsavedOutputs,
+  } as RunReportBody;
+  emit('done', body);
+  return body;
 }
 
 /** The `CurrentUser` a live principal acts as (all domains active; the runner chose no narrower scope). */

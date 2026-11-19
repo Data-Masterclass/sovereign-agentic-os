@@ -3,83 +3,67 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@core/kernel/route-server';
-import { getSystem } from '@tabs/agents/lib/store';
-import { createFile } from '@tabs/files/lib/store';
-import { createPersonalKnowledge } from '@tabs/knowledge/lib/personal-store';
-import { createDataset } from '@tabs/data/lib/store';
-import { ingestAndRegisterBronze } from '@tabs/data/lib/ingest';
-import { canSaveFromResult, DATA_NON_TABULAR_NOTE } from '@tabs/agents/lib/output-save';
-import type { DeclaredOutput } from '@tabs/agents/lib/system-schema';
+import { getSystemForRun, setLastRun } from '@tabs/agents/lib/store';
+import { prepareRun, withOutputResults } from '@tabs/agents/lib/build/run-service';
+import { saveRunOutputs } from '@tabs/agents/lib/build/output-save-server';
+import { outputKey, type ProducerRun } from '@tabs/agents/lib/output-saver';
+import { parseSystem } from '@tabs/agents/lib/system-schema';
 
 export const dynamic = 'force-dynamic';
 
 /**
- * POST → SAVE the last run's final result into a DECLARED OUTPUT (Run/Evaluate action).
+ * POST → SAVE the last run's result into its DECLARED OUTPUTS, by hand ("Save now" / "Try saving
+ * again" in the Run panel and on Evaluate).
  *
- * The output was declared in Define (destination kind + name + folder + scope) and its
- * folder already carries a Write grant. Here we persist the run text into that
- * destination through the SAME governed create the tabs use — never a parallel store:
- *   • files     → `createFile` (foldered) — the run text as a .md/.csv/.txt file.
- *   • knowledge → `createPersonalKnowledge` (foldered My-knowledge lane) — text as body.
- *   • data      → `createDataset` + `ingestAndRegisterBronze` — ONLY when the result is
- *                 CSV/tabular; otherwise the agent's own write tools are the path and we
- *                 return a typed note (the client hides the button for this case too).
+ * It is the SAME save the engine runs when a run finishes (`saveRunOutputs`): the same governed
+ * tools as the signed-in user, the same folder check, the same naming — and the same look for
+ * what this run already wrote, so pressing it twice, or after the run saved it, writes nothing a
+ * second time. Two things differ, both because a person is asking: a read-only team's hold does
+ * not apply (it holds what a RUN does), and a run that stopped early can still have a finished
+ * agent's result saved.
  *
- * Everything runs AS the current user (governed), so scope/DLS are enforced exactly as
- * on the tab. Body: `{ index, text }` — the output index into `system.outputs` + the
- * run text to persist (the client passes the output it just saw).
+ * Body: `{ index? }` — one declared output (its position on Define), or all of them when omitted.
+ * Only the system's LAST run can be saved; its per-agent results are what is on record.
  */
-export const POST = withRoute<{ id: string }, { index?: number; text?: string }>(async ({ user, params, body }) => {
-    const { id } = params;
+export const POST = withRoute<{ id: string }, { index?: number }>(async ({ user, params, body }) => {
+  const { id } = params;
+  const view = getSystemForRun(id, user);
+  const last = view.lastRun;
+  if (!last || !last.runId) {
+    return NextResponse.json({ error: 'There is no run result to save yet — run the team first.' }, { status: 400 });
+  }
+  if (last.running) {
+    return NextResponse.json({ error: 'The run is still going — its results are saved when it finishes.' }, { status: 409 });
+  }
+  const { yaml } = await prepareRun(user, view, id);
+  const system = parseSystem(yaml);
+  const outputs = system.outputs ?? [];
+  if (outputs.length === 0) {
+    return NextResponse.json({ error: 'This system declares no output under “Where the results go”.' }, { status: 400 });
+  }
+  let only: string[] | undefined;
+  if (typeof body.index === 'number') {
+    const one = outputs[body.index];
+    if (!one) return NextResponse.json({ error: 'No such declared output.' }, { status: 400 });
+    only = [outputKey(one)];
+  }
+  const nodes: ProducerRun[] = (last.nodes ?? []).map((n) => ({ node: n.node, status: n.status, finalText: n.finalText ?? '' }));
+  if (nodes.length === 0 && last.output) nodes.push({ node: last.path.at(-1) ?? 'agent', status: last.ok ? 'ok' : 'failed', finalText: last.output });
 
-    const view = getSystem(id, user);
-    const outputs: DeclaredOutput[] = view.system.outputs ?? [];
-    const index = typeof body.index === 'number' ? body.index : -1;
-    const output = outputs[index];
-    if (!output) {
-      return NextResponse.json({ error: 'No such declared output.' }, { status: 400 });
-    }
-
-    const text = (typeof body.text === 'string' && body.text.trim())
-      ? body.text
-      : (view.lastRun?.output ?? '');
-    if (!text.trim()) {
-      return NextResponse.json({ error: 'There is no run result to save yet — run the team first.' }, { status: 400 });
-    }
-    if (!canSaveFromResult(output, text)) {
-      return NextResponse.json({ error: DATA_NON_TABULAR_NOTE }, { status: 400 });
-    }
-
-    const folder = output.folder.path;
-    const name = output.name.trim();
-
-    if (output.kind === 'files') {
-      // A plain-text (Markdown/CSV) file in the declared folder — the Files-tab create path.
-      const fileName = /\.[a-z0-9]{1,8}$/i.test(name) ? name : `${name}.md`;
-      const asset = createFile(
-        { id: user.id, domains: user.domains, role: user.role },
-        { name: fileName, folder, text, sensitivity: 'internal' },
-      );
-      return NextResponse.json({ saved: { kind: 'files', id: asset.id, name: asset.name, folder } });
-    }
-
-    if (output.kind === 'knowledge') {
-      // A My-knowledge note in the declared folder — the Knowledge-tab foldered create.
-      const rec = createPersonalKnowledge(
-        { id: user.id, domains: user.domains, role: user.role },
-        { title: name, md: text, folder },
-      );
-      return NextResponse.json({ saved: { kind: 'knowledge', id: rec.id, name: rec.title, folder } });
-    }
-
-    // Data (tabular): create a private dataset, then ingest the CSV text as its Bronze —
-    // the SAME governed pipeline the Data tab's "Upload a file" runs.
-    const principal = { id: user.id, domains: user.domains, role: user.role };
-    const ds = createDataset(principal, { name });
-    const fileName = `${name.replace(/[^\w.-]+/g, '_') || 'result'}.csv`;
-    const outcome = await ingestAndRegisterBronze(principal, ds.id, fileName, Buffer.from(text, 'utf8'));
-    if (!outcome.ok) {
-      return NextResponse.json({ error: `The dataset was created but the result could not be ingested (${outcome.report.mode ?? 'ingest failed'}).` }, { status: 502 });
-    }
-    return NextResponse.json({ saved: { kind: 'data', id: ds.id, name: ds.name, folder } });
+  const results = await saveRunOutputs({
+    user,
+    system,
+    systemId: id,
+    runId: last.runId,
+    at: last.at,
+    status: last.failed ? 'failed' : last.reachedEnd === false ? 'incomplete' : 'done',
+    nodes,
+    previous: last.outputs,
+    mode: 'by-hand',
+    only,
+  });
+  const status = last.reachedEnd === false || last.failed ? 'stopped' : 'done';
+  const fin = withOutputResults({ body: { status, warnings: last.warnings }, lastRun: last }, results);
+  try { setLastRun(id, user, fin.lastRun); } catch { /* a run-only consumer cannot record it; the save itself stands */ }
+  return NextResponse.json({ outputs: results, warnings: fin.lastRun.warnings ?? [], completedWithUnsavedOutputs: fin.body.completedWithUnsavedOutputs });
 }, { parse: true, defaultStatus: 500 });

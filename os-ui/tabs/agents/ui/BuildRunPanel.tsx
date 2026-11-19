@@ -29,6 +29,8 @@ import { downloadRunPdf } from '@tabs/agents/lib/build/agent-pdf';
 import { agentDisplayName } from '@tabs/agents/lib/build/eval-report';
 import { isRunOver, parseSseChunk, reattachFrom, runStreamUrl, REATTACH_LIMIT } from '@tabs/agents/lib/build/run-stream-client';
 import { announceRunStarted, onRunStartedElsewhere, runLabel, runViewReducer, seedRunView, type RunViewAction, type RunViewState } from '@tabs/agents/lib/build/run-view';
+import RunOutputs from '@tabs/agents/ui/RunOutputs';
+import type { OutputResult } from '@tabs/agents/lib/output-saver';
 
 /**
  * Build = execute + verify (Task 4) and Run (Task 7). Build runs the 5 adapters
@@ -89,6 +91,8 @@ type LastRun = {
   checkpointer?: 'postgres' | 'memory';
   heldApprovals?: HeldApproval[];
   warnings?: string[];
+  /** What happened to each declared output of this run ("Where the results go"). */
+  outputs?: OutputResult[];
 };
 
 /** Grant ids per kind, mirroring ContextKind — for the Evaluate granted-vs-used strip. */
@@ -158,6 +162,7 @@ type RunReport = {
   failed?: boolean;
   failedNode?: string;
   failureReason?: string;
+  outputs?: OutputResult[];
 };
 type HeldApproval = { approvalId: string; tool: string; node: string };
 
@@ -234,6 +239,7 @@ function normalizeRun(body: RawRun): RunReport {
     failed: body.failed === true,
     failedNode: body.failedNode ?? body.failure?.node ?? undefined,
     failureReason: body.failureReason ?? body.failure?.reason,
+    outputs: Array.isArray(body.outputs) ? body.outputs : undefined,
   };
 }
 
@@ -1588,6 +1594,16 @@ export default function BuildRunPanel({
               My-direct rule) and any writes held in Governance → Inbox. Counted from the
               real executed steps, never inferred. Silent when the run wrote nothing. */}
           <WriteOutcomeBanner writeSummary={run.writeSummary} />
+
+          {/* DECLARED OUTPUTS — where the engine saved each result, what waits for a domain
+              admin, and what was not saved and why; with "Try saving again". */}
+          <RunOutputs
+            systemId={systemId}
+            outputs={run.outputs}
+            canSave={canRun}
+            running={runningNow}
+            onSaved={(outputs, runId) => { dispatchRun({ type: 'patched', runId: runId ?? run.runId, patch: { outputs } }); onStateChange(); }}
+          />
 
           {/* Path, governed-call counts and the raw tool-call table are run DETAIL —
               in Simple mode they belong under Evaluate (mirrored below), so Run stays

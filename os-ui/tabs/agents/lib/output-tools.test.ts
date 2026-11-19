@@ -19,7 +19,7 @@ import { parseSystem, serializeSystem, type System } from '@tabs/agents/lib/syst
 import { addOutput, removeOutput, setArtifactGrant, setFolderGrant, setFolderGrantLevel, setOutputAgent } from '@tabs/agents/lib/simple-edit';
 import { compile } from '@tabs/agents/lib/langgraph-compile';
 import {
-  agentOutputTools, outputLanding, outputsBrief, withOutputTools, OUTPUT_TOOL,
+  agentOutputTools, outputCaveats, outputLanding, outputsBrief, withOutputTools, OUTPUT_TOOL,
 } from '@tabs/agents/lib/output-tools';
 import { checkGrantScope, grantScopeOf, type GrantResolvers } from '@tabs/agents/lib/build/grant-scope';
 import { holdDecisionFor } from '@tabs/agents/lib/build/hold';
@@ -111,28 +111,50 @@ test('hold behaviour is unchanged: a My write runs directly, a Domain promotion 
   assert.equal(sys.safetyPreset, 'read-bounded', 'declaring a write output lifts a read-only team, as before');
   assert.deepEqual(holdDecisionFor(sys.safetyPreset, 'upload_file'), { held: false });
   assert.deepEqual(holdDecisionFor(sys.safetyPreset, 'request_promotion'), { held: true, approverRole: 'domain_admin' });
-  assert.deepEqual(outputLanding(sys, sys.outputs![0]), { mode: 'direct', text: 'Saved directly to My files /reports.' });
+  assert.deepEqual(outputLanding(sys, sys.outputs![0]), { mode: 'direct', text: 'Saved automatically to My files /reports as a dated markdown file when a run finishes.' });
 
   const dom = addOutput(team(), { kind: 'files', name: 'Shared report', folder: { path: '/reports', scope: 'domain' } });
-  assert.match(outputLanding(dom, dom.outputs![0]).text, /Saved directly to My files \/reports\. Sharing it to Domain files is a promotion, held for a domain admin’s approval\./);
+  assert.match(outputLanding(dom, dom.outputs![0]).text, /Saved automatically to My files \/reports as a dated markdown file when a run finishes\. Sharing it to Domain files is then requested for you and waits for a domain admin’s approval\./);
 
   sys = { ...sys, safetyPreset: 'read-only' };
   assert.deepEqual(holdDecisionFor(sys.safetyPreset, 'upload_file'), { held: true, approverRole: 'admin' });
   const held = outputLanding(sys, sys.outputs![0]);
   assert.equal(held.mode, 'held');
-  assert.match(held.text, /Held for an admin’s approval before it is saved — this team is read-only/);
+  assert.match(held.text, /Not saved by a run: this team is read-only, so a run writes nothing by itself\. After a run, “Save now” saves it as you\./);
 });
 
-test('the agent is told where each output goes and with which tool', () => {
+test('the agent is told whose final answer each output is, what it must contain, and NOT to save it', () => {
   let sys = addOutput(team(), { kind: 'files', name: 'Verification report', folder: { path: '/reports', scope: 'personal' }, agent: 'writer' });
   sys = addOutput(sys, { kind: 'knowledge', name: 'Result', folder: { path: '/results', scope: 'personal' } });
+  sys = addOutput(sys, { kind: 'data', name: 'Invoices', folder: { path: '/processed', scope: 'domain' }, agent: 'writer' });
   const brief = outputsBrief(sys);
-  assert.match(brief, /- "Verification report" \(file\): written by agent writer using upload_file with folder "\/reports"/);
-  assert.match(brief, /- "Result" \(knowledge\): written by the agent that produces it using author_knowledge \(it cannot file into a folder/);
-  assert.ok(brief.split('\n').length <= 6, 'short');
+  assert.match(brief, /The SYSTEM saves them when the run finishes/);
+  assert.match(brief, /do NOT call a tool to save it/);
+  assert.match(brief, /- "Verification report" \(file, folder "\/reports"\): the final answer of agent writer\./);
+  assert.match(brief, /- "Result" \(knowledge note, folder "\/results"\): the final answer of the last agent of the run\./);
+  // The Data format is generated from the declaration, and it is the rule the engine checks.
+  assert.match(brief, /- "Invoices" \(dataset, folder "\/processed"\): the final answer of agent writer\. For the dataset "Invoices", your final answer MUST contain exactly one JSON list/);
+  assert.match(brief, /the SAME keys in every object/);
   // A producer that is no longer on the team does not leave the output unwritable.
   const orphan = { ...sys, agents: sys.agents.filter((a) => a.id !== 'writer'), entrypoint: 'reader' };
   assert.ok(toolsOf(withOutputTools(orphan), 'reader')!.includes('upload_file'));
+});
+
+test('the builder is told in advance what an output cannot do', () => {
+  let sys = addOutput(team(), { kind: 'data', name: 'Invoices', folder: { path: '/processed', scope: 'domain' }, agent: 'writer' });
+  const data = outputCaveats(sys, sys.outputs![0]);
+  assert.match(data[0], /The instructions of writer do not ask for rows\./);
+  assert.ok(data.some((c) => /replaces its rows/.test(c)), 'a run replaces the rows — said before it happens');
+  assert.ok(data.some((c) => /documented and has a Silver or Gold version/.test(c)), 'the promotion gate of a dataset is named');
+
+  // Once the producing agent is asked for a table, the note about the instructions goes away.
+  sys = { ...sys, agents: sys.agents.map((a) => (a.id === 'writer' ? { ...a, agent_md: 'Return a JSON list with one object per invoice.' } : a)) };
+  assert.ok(!outputCaveats(sys, sys.outputs![0]).some((c) => /ask for rows/.test(c)));
+
+  const note = addOutput(team(), { kind: 'knowledge', name: 'Result', folder: { path: '/results', scope: 'personal' } });
+  assert.match(outputCaveats(note, note.outputs![0])[0], /Knowledge search does not find notes yet/);
+  const file = addOutput(team(), { kind: 'files', name: 'Report', folder: { path: '/reports', scope: 'personal' } });
+  assert.deepEqual(outputCaveats(file, file.outputs![0]), []);
 });
 
 test('the producer is stored on the output and survives the YAML round trip', () => {
