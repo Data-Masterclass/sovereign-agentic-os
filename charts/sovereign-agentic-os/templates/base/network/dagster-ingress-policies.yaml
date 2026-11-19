@@ -16,8 +16,9 @@
       - the ingress controller         ONLY when the Dagster Ingress renders (ingress.enabled and
                                        ingress.hosts.dagster set; basic-auth is on that Ingress)
     code server :<deployment port> (gRPC) and its sidecar ports
-      - webserver, daemon              the workspace's code-location gRPC
-      - code-server and run pods       `component: user-deployments` (both carry it)
+      - webserver, daemon              the workspace's code-location gRPC (the only callers:
+                                       a launched run pod loads its code from its own image and
+                                       the code server's health check dials localhost)
     The code-location policy SELECTS the code-server pod only (name + component), so run pods,
     which serve nothing, keep their current ingress.
       - os-ui, os-ui-worker            sidecar ports only (the repo-sync status server)
@@ -58,12 +59,15 @@ spec:
             matchLabels:
               app.kubernetes.io/component: os-ui-worker
         # The code-server pod only (its repo-sync sidecar calls reloadRepositoryLocation). Launched
-        # run pods share `component: user-deployments` but not this `name` label, and they make no
-        # webserver call, so they are not admitted here.
+        # run pods share `component: user-deployments` but not this `name` label, and dagster-k8s
+        # stamps every run pod with `dagster/run-id`, which the code server never carries — both
+        # keep run pods out. They make no webserver call.
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: dagster-user-deployments
               component: user-deployments
+            matchExpressions:
+              - { key: dagster/run-id, operator: DoesNotExist }
       ports:
         - { protocol: TCP, port: {{ $webPort }} }
     {{- if $dagsterHost }}
@@ -100,9 +104,6 @@ spec:
             matchLabels:
               app.kubernetes.io/name: dagster
               component: dagster-daemon
-        - podSelector:
-            matchLabels:
-              component: user-deployments
       ports:
         {{- range $ud.deployments }}
         - { protocol: TCP, port: {{ .port }} }
