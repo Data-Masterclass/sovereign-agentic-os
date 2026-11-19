@@ -12,24 +12,43 @@
  *     explicit mode  -> the caller wins (the existing injection point, and what tests use)
  *     scanner off    -> the #56 behaviour verbatim
  *     scanner on     -> Trivy; `mode: 'live'` ONLY on a completed Job
- *     Trivy refused  -> delegate to `securityScan(files)`, which already decides between the
+ *     scan FAILED    -> `unavailable` with the cause, FULL STOP — not even where
+ *                       `OS_OFFLINE_MOCK=allow` (review M6). A wired-and-broken scanner must not
+ *                       be laundered into a green `offline-mock` result.
+ *     NO cluster     -> delegate to `securityScan(files)`, which already decides between the
  *                       laptop's labelled `offline-mock` and a cluster's `unavailable`. The
- *                       scanner's REAL cause replaces the generic "no scanner is wired" reason.
- *   The last line is the whole design: there is no branch in which a scanner failure produces
- *   `passed: true`, and `OS_OFFLINE_MOCK` keeps deciding whether a laptop may show the baseline.
+ *                       scanner's reason is attached either way.
+ *     live verdict   -> the baseline's known-bad dependency list and secret patterns are LAYERED
+ *                       ON TOP (review H1): Trivy needs a lockfile, our scaffolds commit none, so
+ *                       dropping the baseline would have made the live scanner a regression on
+ *                       exactly the trees this product generates.
+ *   The design in one line: there is no branch in which a scanner failure produces
+ *   `passed: true`, and `OS_OFFLINE_MOCK` only ever decides what a LAPTOP may show.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { securityScan, resolveScan } from './scan.ts';
-import type { ScanK8s, ScanK8sText } from './scan-trivy.ts';
+import { VERSION_DELIM, REPORT_DELIM, type ScanK8s, type ScanK8sText } from './scan-trivy.ts';
 import type { ScaffoldFile } from '@tabs/software/lib/model';
 
 const NS = 'agentic-os';
 const JOBS = `/apis/batch/v1/namespaces/${NS}/jobs`;
 const PODS_PREFIX = `GET /api/v1/namespaces/${NS}/pods?`;
 
+/**
+ * A tree Trivy can actually resolve: a manifest AND a lockfile. Without the lockfile an empty
+ * `Results` means "nothing was resolved" and the mapper correctly refuses to call it clean (H1),
+ * which would make every assertion here about the WRONG thing.
+ */
 const CLEAN_FILES: ScaffoldFile[] = [
   { path: 'package.json', content: JSON.stringify({ dependencies: { next: '^15.0.0' } }) },
+  { path: 'package-lock.json', content: '{"lockfileVersion":3}' },
+  { path: 'src/index.ts', content: 'export const ok = 1;\n' },
+];
+
+/** What our scaffolds really emit: a manifest, no lockfile — and a known-bad version in it. */
+const SCAFFOLD_FILES: ScaffoldFile[] = [
+  { path: 'package.json', content: JSON.stringify({ dependencies: { lodash: '4.17.20' } }) },
   { path: 'src/index.ts', content: 'export const ok = 1;\n' },
 ];
 
@@ -44,20 +63,37 @@ const TRIVY_FOUND_A_SECRET = JSON.stringify({
   ],
 });
 
-const TRIVY_CLEAN = JSON.stringify({ SchemaVersion: 2, Results: [] });
+const TRIVY_CLEAN = JSON.stringify({
+  SchemaVersion: 2,
+  Results: [{ Target: 'package-lock.json', Class: 'lang-pkgs', Type: 'npm', Vulnerabilities: [] }],
+});
+
+const UID = 'job-uid-1';
 
 function k8sFor(jobStatus: Record<string, unknown>, createStatus = 201): ScanK8s {
   return async (method, path) => {
-    if (method === 'POST') return { status: createStatus, body: {} };
+    if (method === 'POST') return { status: createStatus, body: { metadata: { uid: UID } } };
     if (method === 'DELETE') return { status: 200, body: {} };
     if (`${method} ${path}`.startsWith(PODS_PREFIX)) {
-      return { status: 200, body: { items: [{ metadata: { name: 'scan-pod' } }] } };
+      return {
+        status: 200,
+        body: { items: [{ metadata: { name: 'scan-pod', ownerReferences: [{ uid: UID }] } }] },
+      };
     }
-    if (path.startsWith(`${JOBS}/`)) return { status: 200, body: { status: jobStatus } };
+    if (path.startsWith(`${JOBS}/`)) {
+      return { status: 200, body: { metadata: { uid: UID }, status: jobStatus } };
+    }
     return { status: 404, body: {} };
   };
 }
-const logOf = (text: string): ScanK8sText => async () => ({ status: 200, text });
+
+/** A pod log in the adapter's framing: noise, the version section, then the report. */
+const logOf = (report: string): ScanK8sText => async () => ({
+  status: 200,
+  text:
+    `INFO: scanning\n${VERSION_DELIM}\n${JSON.stringify({ VulnerabilityDB: { UpdatedAt: '2026-11-18T12:00:00Z' } })}\n` +
+    `${REPORT_DELIM}\n${report}\n`,
+});
 
 const LIVE_OPTS = {
   namespace: NS,
@@ -98,6 +134,7 @@ test('a COMPLETED Job is the only route to a live verdict', async () => {
   assert.ok(r.engine?.startsWith('trivy'), 'the card names the engine that answered');
   assert.deepEqual(r.notRun, ['sast'], 'sast is reported NOT RUN, never as a clean zero');
   assert.deepEqual(r.summary, { sast: 0, deps: 0, secrets: 0 });
+  assert.ok((r.engine ?? '').includes('mirror'), 'and the card names the DB that answered');
 });
 
 test('a live scan that FINDS a secret fails the gate with the real finding', async () => {
@@ -187,17 +224,113 @@ test('the REAL findings survive a refused verdict — refusing a verdict is not 
 
 // ------------------------------------------------------ the laptop teaching flow --
 
-test('OFF A CLUSTER an unreachable scanner falls back to the labelled baseline, unchanged', async () => {
-  // No NODE_ENV=production: `offlineMockAllowed()` is true, which is the laptop/kind flow.
+test('OFF A CLUSTER (no API at all) the labelled baseline still answers — the teaching flow', async () => {
+  // No NODE_ENV=production: `offlineMockAllowed()` is true, which is the laptop/kind flow. This is
+  // the ONE failure kind allowed to fall back, because "there is no Kubernetes" is not a broken
+  // scanner — and even here the card is told what was attempted.
   const down: ScanK8s = async () => ({ status: 0, body: {} });
   const r = await resolveScan('shop', CLEAN_FILES, undefined, {
     scannerEnabled: true,
     trivy: { ...LIVE_OPTS, k8s: down, k8sText: logOf(TRIVY_CLEAN) },
   });
-  assert.equal(r.mode, 'offline-mock', 'the teaching flow is byte-identical to before this change');
+  assert.equal(r.mode, 'offline-mock', 'the teaching flow still works on a laptop');
   assert.equal(r.passed, true);
   assert.equal(r.unavailable, undefined);
   assert.equal(r.engine, undefined, 'the baseline is not an engine and must not claim to be one');
+  assert.match(r.reason ?? '', /Kubernetes API/i, 'but it says what it tried');
+});
+
+test('M6: a WIRED scanner that FAILED is `unavailable` even where offline-mock is ALLOWED', async () => {
+  // The defect this pins: with OS_OFFLINE_MOCK=allow (a teaching install, or a laptop pointed at a
+  // cluster) a broken scanner would have produced a GREEN offline-mock card — laundering a real
+  // scan failure into a pass. The failure KIND is what separates it from the test above.
+  const cases: [string, ScanK8s, string][] = [
+    ['a failed Job', k8sFor({ failed: 1, conditions: [{ type: 'Failed', reason: 'OOMKilled' }] }), 'OOMKilled'],
+    ['a refused create', k8sFor({ succeeded: 1 }, 403), 'os-ui-software-scanner Role'],
+  ];
+  for (const [what, k8s, expect] of cases) {
+    const r = await resolveScan('shop', CLEAN_FILES, undefined, {
+      scannerEnabled: true,
+      trivy: { ...LIVE_OPTS, k8s, k8sText: logOf(TRIVY_CLEAN) },
+    });
+    assert.equal(r.mode, 'unavailable', `${what} must not become offline-mock`);
+    assert.equal(r.passed, false);
+    assert.equal(r.unavailable, true);
+    assert.ok((r.reason ?? '').includes(expect), `${what}: ${r.reason}`);
+  }
+});
+
+test('M6: a malformed report is `unavailable` too, with offline-mock allowed', async () => {
+  const r = await resolveScan('shop', CLEAN_FILES, undefined, {
+    scannerEnabled: true,
+    trivy: { ...LIVE_OPTS, k8s: k8sFor({ succeeded: 1 }), k8sText: logOf('not a report') },
+  });
+  assert.equal(r.mode, 'unavailable');
+  assert.equal(r.passed, false);
+  assert.ok((r.reason ?? '').length > 0);
+});
+
+// ------------------------------------------------- the baseline, layered on top --
+
+test('H1: the baseline known-bad list is LAYERED on a live scan that resolved nothing', async () => {
+  // The real scaffold case: `package.json` with lodash 4.17.20, no lockfile. Trivy resolves
+  // nothing, so on its own the card would read `deps 0` — WEAKER than the baseline it replaced.
+  const r = await resolveScan('shop', SCAFFOLD_FILES, undefined, {
+    scannerEnabled: true,
+    trivy: {
+      ...LIVE_OPTS,
+      k8s: k8sFor({ succeeded: 1 }),
+      k8sText: logOf(JSON.stringify({ SchemaVersion: 2, Results: [] })),
+    },
+  });
+  assert.equal(r.mode, 'live', 'the engine DID run');
+  assert.equal(r.passed, false, 'and the known-bad lodash version still blocks');
+  assert.ok(r.notRun?.includes('deps'), 'while saying honestly that deps were not resolved');
+  assert.match(r.reason ?? '', /lockfile/i);
+  assert.ok(r.summary.deps >= 1, 'the baseline finding is counted, not just mentioned');
+  assert.ok(
+    r.findings.some((f) => f.category === 'deps' && f.title.includes('lodash')),
+    'the finding a reviewer can act on is present',
+  );
+  assert.match(r.engine ?? '', /offline baseline/, 'and the card says both engines spoke');
+});
+
+test('H1: the layered baseline does not duplicate a secret the live engine already found', async () => {
+  const leaked: ScaffoldFile[] = [
+    { path: 'config.ts', content: 'const k = "AKIAIOSFODNN7EXAMPLE";\n' },
+    { path: 'package-lock.json', content: '{"lockfileVersion":3}' },
+    { path: 'package.json', content: '{}' },
+  ];
+  const r = await resolveScan('shop', leaked, undefined, {
+    scannerEnabled: true,
+    trivy: {
+      ...LIVE_OPTS,
+      k8s: k8sFor({ succeeded: 1 }),
+      k8sText: logOf(
+        JSON.stringify({
+          SchemaVersion: 2,
+          Results: [
+            { Target: 'package-lock.json', Class: 'lang-pkgs', Vulnerabilities: [] },
+            { Target: 'config.ts', Class: 'secret', Secrets: [{ RuleID: 'aws-access-key-id', Title: 'AWS Access Key ID', StartLine: 1 }] },
+          ],
+        }),
+      ),
+    },
+  });
+  assert.equal(r.mode, 'live');
+  assert.equal(r.passed, false);
+  assert.equal(r.summary.secrets, 1, 'two engines naming one key is one leak, not two');
+});
+
+test('a live scan over a clean, RESOLVED tree passes with nothing layered on', async () => {
+  const r = await resolveScan('shop', CLEAN_FILES, undefined, {
+    scannerEnabled: true,
+    trivy: { ...LIVE_OPTS, k8s: k8sFor({ succeeded: 1 }), k8sText: logOf(TRIVY_CLEAN) },
+  });
+  assert.equal(r.mode, 'live');
+  assert.equal(r.passed, true);
+  assert.deepEqual(r.notRun, ['sast']);
+  assert.ok(!(r.engine ?? '').includes('baseline'), 'nothing was layered, so nothing is claimed');
 });
 
 test('an EXPLICIT mode from the caller still wins (the pre-existing injection point)', async () => {
@@ -235,11 +368,24 @@ test('TRIPWIRE: `securityScan` still has NO mock default, and no path fakes a pa
         scannerEnabled: true,
         trivy: { ...LIVE_OPTS, k8s: k8sFor({ succeeded: 1 }), k8sText: logOf('not a report') },
       }),
+      // And the H1 case: a live scan that resolved NOTHING over a tree that declares deps.
+      await resolveScan('shop', SCAFFOLD_FILES, undefined, {
+        scannerEnabled: true,
+        trivy: {
+          ...LIVE_OPTS,
+          k8s: k8sFor({ succeeded: 1 }),
+          k8sText: logOf(JSON.stringify({ SchemaVersion: 2, Results: [] })),
+        },
+      }),
     ];
     for (const r of outcomes) {
       assert.equal(r.passed, false, `a scan that did not run must never pass (${r.mode})`);
-      assert.equal(r.mode, 'unavailable');
       assert.ok((r.reason ?? '').length > 0, 'and it must always say why');
     }
+    // The first four produced no verdict at all; the last one DID run but could not see the
+    // dependencies, which is a live result that is honestly not green.
+    for (const r of outcomes.slice(0, 4)) assert.equal(r.mode, 'unavailable');
+    assert.equal(outcomes[4].mode, 'live');
+    assert.ok(outcomes[4].notRun?.includes('deps'));
   });
 });

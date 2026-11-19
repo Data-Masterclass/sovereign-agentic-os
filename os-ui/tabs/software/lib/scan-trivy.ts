@@ -5,7 +5,8 @@
  * FEATURE:    The live security scanner — Trivy, as one Kubernetes Job per deploy request
  * USER STORY: As a Builder approving a software deploy I need the security verdict on the review
  *             card to come from a scanner that really ran over the real committed files, and I
- *             need "the scanner could not run" to be impossible to mistake for "it found nothing".
+ *             need "the scanner could not run" — or "it ran but could not see the dependencies" —
+ *             to be impossible to mistake for "it found nothing".
  * ARCHITECTURE:
  *   Since PR #56 `securityScan` refuses to issue a verdict no engine produced, so on a real
  *   cluster a software deploy cannot be approved until a scanner exists. This is that scanner.
@@ -13,24 +14,44 @@
  *   Trivy (Apache-2.0, `aquasec/trivy`) covers the two categories the review card can honestly
  *   claim: dependency vulnerabilities read from the app's manifests/lockfiles, and committed
  *   secrets. It is NOT a SAST engine, and there is no allowlisted one to wire — Semgrep's engine
- *   is LGPL-2.1 and absent from `licenses/allowed-licenses.txt` — so `sast` is reported in
+ *   is LGPL-2.1 and absent from `licenses/allowed-licenses.txt` — so `sast` is always reported in
  *   `notRun` rather than as a zero count that reads like a clean bill of health.
  *
- *   It deliberately mirrors `tabs/software/lib/runner.ts`: deterministic names, an INJECTABLE
- *   k8s client so every branch is unit-testable without a cluster, and honest degradation — an
- *   unreachable API server, a failed Job, a timeout, an unreadable log or a malformed report all
- *   return `{ ok: false, reason }`, which the caller turns into `mode: 'unavailable'`. There is
- *   exactly one way to get `ok: true`: a Job that SUCCEEDED and whose stdout parsed as a Trivy
- *   report.
+ *   It mirrors `tabs/software/lib/runner.ts`: deterministic names, an INJECTABLE k8s client so
+ *   every branch is unit-testable without a cluster, and honest degradation. There is exactly one
+ *   way to get `ok: true`: a Job that SUCCEEDED, whose pod we positively identified, whose log
+ *   carried our report delimiter, and whose report parsed.
  *
- *   HOW THE FILES GET IN. The app tree is rendered to a generated `sh` writer script — one
- *   `mkdir -p` plus one `printf … | base64 -d > path` per file — base64-encoded into ONE
- *   container env var and run by the container's prelude. No ConfigMap, and therefore no
- *   namespace-wide `configmaps` write in the os-ui ServiceAccount's Role for what is a transient
- *   payload. Content travels as base64, so no shell metacharacter in an app's source can escape
- *   the writer; a path that is absolute, contains `..`, or carries a character outside
- *   `[A-Za-z0-9._/-]` FAILS THE SCAN CLOSED rather than being silently skipped, because a scan
- *   of a subset of the tree is not the scan the card claims.
+ *   FOUR DESIGN POINTS THAT ARE EACH A FIXED DEFECT (PR #63 review):
+ *
+ *   1. COVERAGE IS DERIVED FROM EVIDENCE, NOT ASSUMED (H1). Trivy's language analysers resolve
+ *      dependencies from LOCKFILES. Our scaffolds emit `package.json` with no lockfile, so Trivy
+ *      returns `Results: []` — which, read naively, is a clean `deps 0` over dependencies that
+ *      were never resolved, i.e. WEAKER than the baseline it replaced. `mapTrivyReport` therefore
+ *      takes the tree: a dependency manifest with no `Class: 'lang-pkgs'` result puts `'deps'` in
+ *      `notRun` and makes the result NOT green, with the lockfile named as the cause.
+ *   2. THE TREE TRAVELS IN A SECRET, NOT AN ENV VAR (H3/M4). A container argument/env string is
+ *      capped by Linux `MAX_ARG_STRLEN` (128 KiB); a real app tree exceeded it, so the container
+ *      failed to start with E2BIG and EVERY scan came back `unavailable` — which would have made
+ *      the admin hatch the routine path. The writer script is now a Secret mounted at
+ *      {@link SCAN_MOUNT}, owned by the Job (`ownerReferences`) so Kubernetes garbage-collects it,
+ *      and deleted explicitly as soon as the result is read. The Job is created FIRST so the
+ *      Secret can carry the owner reference at creation: the kubelet retries a missing mount, so
+ *      the brief gap costs nothing and we need no `patch` on secrets — and no `get`/`list`, so the
+ *      ServiceAccount cannot read any other secret in the namespace.
+ *   3. THE RESULT COMES FROM A DELIMITED REPORT, NOT THE MERGED LOG (M1). `trivy` writes the
+ *      report to a file; the prelude then echoes {@link REPORT_DELIM} and `cat`s it. One stray
+ *      byte on stderr — a DB-download notice, a warning — would otherwise sit in front of the
+ *      JSON and void the scan.
+ *   4. THE POD IS IDENTIFIED BY THE JOB'S UID, NOT ITS NAME (M2). A `job-name` selector plus
+ *      `items[0]` can hand back a PREVIOUS generation's pod while a Background delete is still
+ *      finishing — i.e. read a stale verdict for this deploy. The pod must be owned by the exact
+ *      Job UID we created, or there is no verdict.
+ *
+ *   Path safety: content travels as base64 and is decoded in-pod, so nothing in an app's source is
+ *   ever interpreted by the shell; a path that is absolute, contains `..`, or carries a character
+ *   outside `[A-Za-z0-9._/-]` FAILS THE SCAN CLOSED rather than being silently skipped, because a
+ *   scan of a subset of the tree is not the verdict the card claims.
  */
 import 'server-only';
 import { config } from '@core/kernel/config';
@@ -55,7 +76,7 @@ export type TrivyScanOpts = {
   dbMode?: ScannerDbMode;
   dbRepository?: string;
   timeoutMs?: number;
-  /** Ceiling on the base64 writer payload. Above it the scan refuses (never truncates). */
+  /** Ceiling on the Secret payload. Above it the scan refuses (never truncates). */
   maxPayloadBytes?: number;
   resources?: ScanResources;
   /** Injected in tests for a deterministic Job name. */
@@ -76,21 +97,53 @@ export type TrivyReport = {
   findings: ScanFinding[];
   summary: Record<ScanCategory, number>;
   passed: boolean;
+  /** Categories NO engine actually covered — DERIVED from the tree, never assumed. */
   notRun: ScanCategory[];
+  /** Why a category in `notRun` was not covered, when the answer is actionable. */
+  reason?: string;
 };
 
-export type TrivyFailure = { ok: false; reason: string };
+/**
+ * Why there is no verdict. `kind` separates the two cases the caller must treat differently:
+ *   `no-cluster`  — there is no Kubernetes API at all (a laptop). The teaching flow is intact
+ *                   and `securityScan`'s own `OS_OFFLINE_MOCK` decision still applies.
+ *   `scan-failed` — a cluster answered and the SCAN failed (refused, failed Job, deadline,
+ *                   unreadable, unparseable, oversized, unsafe path). This must NEVER degrade to
+ *                   a green `offline-mock` result, whatever `OS_OFFLINE_MOCK` says (M6).
+ */
+export type TrivyFailure = { ok: false; kind: 'no-cluster' | 'scan-failed'; reason: string };
 
 export type TrivyOutcome = (TrivyReport & { engine: string }) | TrivyFailure;
 
 /** The workspace the Job scans — a tmpfs the writer fills and trivy reads. */
 const WORK = '/work';
+/** Where the Secret carrying the writer script is mounted (read-only). */
+export const SCAN_MOUNT = '/scan';
+const WRITER_KEY = 'write.sh';
+const REPORT_PATH = '/tmp/os-scan-report.json';
+const VERSION_PATH = '/tmp/os-scan-version.json';
+
+/** Framing in the pod log, so one stray stderr byte cannot void the scan (M1). */
+export const VERSION_DELIM = '<<<OS-SCAN-VERSION>>>';
+export const REPORT_DELIM = '<<<OS-SCAN-REPORT>>>';
 
 /** `[A-Za-z0-9._/-]` only: everything else is refused rather than quoted. */
 const SAFE_PATH = /^[A-Za-z0-9._/-]+$/;
 
-/** Default ceiling on the encoded payload (bytes). A pod spec is not a file store. */
-const DEFAULT_MAX_PAYLOAD = 768 * 1024;
+/**
+ * Default ceiling on the Secret payload (bytes of the base64-encoded writer script).
+ *
+ * A Kubernetes Secret is capped at ~1 MiB by etcd, so this sits below it with room for the
+ * object's own metadata. It is NOT the 128 KiB that `MAX_ARG_STRLEN` would have forced — that
+ * limit is precisely why the payload no longer travels in an env var (H3).
+ */
+export const DEFAULT_MAX_PAYLOAD = 900 * 1024;
+
+/** Hard cap on findings carried onto a review card — a card nobody can read is not evidence. */
+export const MAX_FINDINGS = 200;
+
+/** Ceiling on the pod log we will read. A truncated log fails to PARSE, so it can never pass. */
+const LOG_LIMIT_BYTES = 8 * 1024 * 1024;
 
 // ------------------------------------------------------------------- naming -----
 
@@ -120,14 +173,18 @@ export type WriterScript = { ok: true; script: string; bytes: number } | TrivyFa
 /**
  * The `sh` script that recreates the app tree inside the scanner pod. Content is carried as
  * base64 and decoded in-pod, so nothing in an app's source is ever interpreted by the shell.
+ * Repeated paths collapse to the LAST occurrence, so the script never writes the same file twice.
  */
 export function writerScript(files: ScaffoldFile[], maxPayloadBytes = DEFAULT_MAX_PAYLOAD): WriterScript {
-  const lines = ['set -e'];
+  // Last write wins, insertion order kept — the same file twice in a tree is a caller bug, and
+  // writing it twice would make the script's size a function of that bug.
+  const unique = new Map<string, string>();
   for (const f of files) {
     const path = f.path.replace(/^\.\//, '');
     if (path.startsWith('/') || path.split('/').includes('..') || !SAFE_PATH.test(path)) {
       return {
         ok: false,
+        kind: 'scan-failed',
         reason:
           `The app tree carries a path the scanner refuses to materialise: "${path}". A path ` +
           `must be relative, free of ".." segments and limited to [A-Za-z0-9._/-]. The scan is ` +
@@ -135,20 +192,27 @@ export function writerScript(files: ScaffoldFile[], maxPayloadBytes = DEFAULT_MA
           `verdict the review card claims.`,
       };
     }
+    unique.set(path, f.content);
+  }
+
+  const lines = ['set -e'];
+  for (const [path, content] of unique) {
     const abs = `${WORK}/${path}`;
     const dir = abs.slice(0, abs.lastIndexOf('/'));
     lines.push(`mkdir -p '${dir}'`);
-    lines.push(`printf %s '${Buffer.from(f.content, 'utf8').toString('base64')}' | base64 -d > '${abs}'`);
+    lines.push(`printf %s '${Buffer.from(content, 'utf8').toString('base64')}' | base64 -d > '${abs}'`);
   }
   const script = `${lines.join('\n')}\n`;
+  // What the Secret object will actually carry: base64 of the script.
   const bytes = Buffer.byteLength(Buffer.from(script, 'utf8').toString('base64'), 'utf8');
   if (bytes > maxPayloadBytes) {
     return {
       ok: false,
+      kind: 'scan-failed',
       reason:
-        `The app tree is too large for the inline scan payload (${bytes} bytes encoded, ceiling ` +
-        `${maxPayloadBytes}). The scan is refused rather than run over a truncated tree. Raise ` +
-        `the ceiling deliberately, or scan a smaller tree.`,
+        `The app tree is too large for one scan payload (${bytes} bytes encoded, ceiling ` +
+        `${maxPayloadBytes} — a Kubernetes Secret is capped near 1 MiB). The scan is refused ` +
+        `rather than run over a truncated tree.`,
     };
   }
   return { ok: true, script, bytes };
@@ -162,7 +226,19 @@ export function writerScript(files: ScaffoldFile[], maxPayloadBytes = DEFAULT_MA
  * misconfig into `sast` would claim SAST coverage this scanner does not have.
  */
 export function trivyArgs(o: { dbMode: ScannerDbMode; dbRepository: string }): string[] {
-  const args = ['fs', '--quiet', '--no-progress', '--format', 'json', '--scanners', 'vuln,secret'];
+  const args = [
+    'fs',
+    '--quiet',
+    '--no-progress',
+    '--format',
+    'json',
+    '--scanners',
+    'vuln,secret',
+    // The report goes to a FILE, not stdout: the log is a merged stream and one stderr byte in
+    // front of the JSON would void an otherwise good scan (M1).
+    '--output',
+    REPORT_PATH,
+  ];
   if (o.dbMode === 'offline') {
     // No registry is contacted at all: the DB must already be inside the image.
     args.push('--skip-db-update', '--skip-java-db-update', '--offline-scan');
@@ -173,14 +249,29 @@ export function trivyArgs(o: { dbMode: ScannerDbMode; dbRepository: string }): s
   return args;
 }
 
-// -------------------------------------------------------------- job manifest ----
+// ----------------------------------------------------------------- manifests ----
+
+export function scanPrelude(args: string[]): string {
+  return [
+    'set -e',
+    `mkdir -p ${WORK}`,
+    `sh ${SCAN_MOUNT}/${WRITER_KEY}`,
+    // Best-effort: the DB's age is evidence an approver needs (M5), but a scanner that cannot
+    // print its version is not a scanner that failed.
+    `trivy version --format json > ${VERSION_PATH} 2>/dev/null || true`,
+    `trivy ${args.join(' ')}`,
+    `echo '${VERSION_DELIM}'`,
+    `cat ${VERSION_PATH} 2>/dev/null || echo '{}'`,
+    `echo '${REPORT_DELIM}'`,
+    `cat ${REPORT_PATH}`,
+  ].join('; ');
+}
 
 export function buildScanJobManifest(spec: {
   name: string;
   namespace: string;
   image: string;
   args: string[];
-  payload: string;
   timeoutMs: number;
   resources: ScanResources;
 }): Record<string, unknown> {
@@ -190,12 +281,6 @@ export function buildScanJobManifest(spec: {
     'app.kubernetes.io/component': 'software-scanner',
     'app.kubernetes.io/managed-by': 'os-ui',
   };
-  // One shell line: decode the writer, run it, then exec trivy so the container's exit status IS
-  // trivy's. `--exit-code` is NOT passed, so findings leave the Job SUCCEEDED — "the scan ran" and
-  // "the scan is clean" are different facts and only the first one is the Job's business.
-  const prelude =
-    `set -e; mkdir -p ${WORK}; printf %s "$OS_SCAN_PAYLOAD" | base64 -d > /tmp/os-scan-write.sh; ` +
-    `sh /tmp/os-scan-write.sh; exec trivy ${spec.args.join(' ')}`;
   return {
     apiVersion: 'batch/v1',
     kind: 'Job',
@@ -203,23 +288,28 @@ export function buildScanJobManifest(spec: {
     spec: {
       backoffLimit: 0,
       activeDeadlineSeconds: deadline,
-      // Self-reaping: the adapter deletes the Job it abandons, and this covers the rest
-      // (a pod roll between create and poll must not leave litter in the namespace).
+      // Self-reaping: the adapter deletes what it abandons, and this covers the rest (a pod roll
+      // between create and poll must not leave litter — or the app's source — in the namespace).
       ttlSecondsAfterFinished: 600,
       template: {
         metadata: { labels },
         spec: {
           restartPolicy: 'Never',
           automountServiceAccountToken: false,
-          securityContext: { runAsNonRoot: true, runAsUser: 10001, runAsGroup: 10001, fsGroup: 10001 },
+          securityContext: {
+            runAsNonRoot: true,
+            runAsUser: 10001,
+            runAsGroup: 10001,
+            fsGroup: 10001,
+            seccompProfile: { type: 'RuntimeDefault' },
+          },
           containers: [
             {
               name: 'trivy',
               image: spec.image,
               command: ['/bin/sh', '-c'],
-              args: [prelude],
+              args: [scanPrelude(spec.args)],
               env: [
-                { name: 'OS_SCAN_PAYLOAD', value: spec.payload },
                 // The root filesystem is read-only, so both the cache and /tmp are emptyDirs.
                 { name: 'TRIVY_CACHE_DIR', value: '/tmp/trivy-cache' },
                 { name: 'TRIVY_NO_PROGRESS', value: 'true' },
@@ -228,17 +318,23 @@ export function buildScanJobManifest(spec: {
                 allowPrivilegeEscalation: false,
                 readOnlyRootFilesystem: true,
                 capabilities: { drop: ['ALL'] },
+                seccompProfile: { type: 'RuntimeDefault' },
               },
               resources: spec.resources,
               volumeMounts: [
                 { name: 'work', mountPath: WORK },
                 { name: 'tmp', mountPath: '/tmp' },
+                { name: 'payload', mountPath: SCAN_MOUNT, readOnly: true },
               ],
             },
           ],
           volumes: [
             { name: 'work', emptyDir: {} },
             { name: 'tmp', emptyDir: {} },
+            // The app's SOURCE. A Secret rather than a ConfigMap or an env var: it is redacted in
+            // API audit logs, can be encrypted at rest, and is not part of the Job spec that
+            // every `kubectl get job -o yaml` prints (H3/M4).
+            { name: 'payload', secret: { secretName: spec.name, defaultMode: 0o400 } },
           ],
         },
       },
@@ -246,7 +342,116 @@ export function buildScanJobManifest(spec: {
   };
 }
 
-// ------------------------------------------------------------------ mapping -----
+/**
+ * The Secret carrying the writer script, OWNED by the Job so Kubernetes garbage-collects it even
+ * if this process dies between the two creates. The adapter also deletes it explicitly as soon as
+ * the result is read, so the app's source lives for the length of one scan and no longer.
+ */
+export function buildPayloadSecretManifest(spec: {
+  name: string;
+  namespace: string;
+  script: string;
+  jobUid: string;
+}): Record<string, unknown> {
+  return {
+    apiVersion: 'v1',
+    kind: 'Secret',
+    type: 'Opaque',
+    metadata: {
+      name: spec.name,
+      namespace: spec.namespace,
+      labels: {
+        'app.kubernetes.io/name': 'software-scanner',
+        'app.kubernetes.io/component': 'software-scanner',
+        'app.kubernetes.io/managed-by': 'os-ui',
+      },
+      ownerReferences: [
+        {
+          apiVersion: 'batch/v1',
+          kind: 'Job',
+          name: spec.name,
+          uid: spec.jobUid,
+          controller: false,
+          blockOwnerDeletion: false,
+        },
+      ],
+    },
+    stringData: { [WRITER_KEY]: spec.script },
+  };
+}
+
+// ------------------------------------------------------------------- the log ----
+
+/** The two framed sections of a scan pod's log. */
+export type ScanLog = { report: string; version: string };
+
+/**
+ * Split the pod log on our delimiters. Everything before {@link VERSION_DELIM} is noise (Trivy's
+ * stderr, a DB-download notice, a kubelet line) and is DISCARDED rather than parsed.
+ */
+export function parseScanLog(text: string): ScanLog | TrivyFailure {
+  const r = text.lastIndexOf(REPORT_DELIM);
+  if (r < 0) {
+    return {
+      ok: false,
+      kind: 'scan-failed',
+      reason:
+        'The scan pod produced no report section: its log carries no report delimiter, so the ' +
+        'scanner did not reach the point of writing one. No verdict is issued.',
+    };
+  }
+  const v = text.lastIndexOf(VERSION_DELIM);
+  return {
+    report: text.slice(r + REPORT_DELIM.length).trim(),
+    version: v >= 0 && v < r ? text.slice(v + VERSION_DELIM.length, r).trim() : '',
+  };
+}
+
+/** Trivy's `version --format json` carries the vulnerability DB's age — evidence, not trivia. */
+export function dbUpdatedAt(versionJson: string): string | null {
+  try {
+    const v = JSON.parse(versionJson) as { VulnerabilityDB?: { UpdatedAt?: unknown } };
+    const at = v?.VulnerabilityDB?.UpdatedAt;
+    return typeof at === 'string' && at.length > 0 ? at : null;
+  } catch {
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------- dep evidence --
+
+/** Files whose presence means "this app HAS dependencies that a scanner should resolve". */
+const DEP_MANIFESTS: RegExp[] = [
+  /(^|\/)package\.json$/,
+  /(^|\/)requirements[^/]*\.txt$/,
+  /(^|\/)pyproject\.toml$/,
+  /(^|\/)Pipfile$/,
+  /(^|\/)go\.mod$/,
+  /(^|\/)Cargo\.toml$/,
+  /(^|\/)Gemfile$/,
+  /(^|\/)pom\.xml$/,
+  /(^|\/)build\.gradle(\.kts)?$/,
+  /(^|\/)composer\.json$/,
+];
+
+/** Files Trivy's language analysers actually READ to resolve a dependency tree. */
+const DEP_LOCKS: RegExp[] = [
+  /(^|\/)package-lock\.json$/,
+  /(^|\/)npm-shrinkwrap\.json$/,
+  /(^|\/)yarn\.lock$/,
+  /(^|\/)pnpm-lock\.yaml$/,
+  /(^|\/)poetry\.lock$/,
+  /(^|\/)Pipfile\.lock$/,
+  /(^|\/)go\.sum$/,
+  /(^|\/)Cargo\.lock$/,
+  /(^|\/)Gemfile\.lock$/,
+  /(^|\/)composer\.lock$/,
+];
+
+const matches = (files: ScaffoldFile[], res: RegExp[]): string[] =>
+  files.filter((f) => res.some((re) => re.test(f.path))).map((f) => f.path);
+
+// ------------------------------------------------------------------- mapping ----
 
 const SEVERITY: Record<string, ScanSeverity> = {
   CRITICAL: 'critical',
@@ -277,38 +482,48 @@ type TrivySecret = {
   Match?: unknown;
 };
 
-type TrivyResult = { Target?: unknown; Vulnerabilities?: unknown; Secrets?: unknown };
+type TrivyResult = { Target?: unknown; Class?: unknown; Vulnerabilities?: unknown; Secrets?: unknown };
 
 const str = (v: unknown, fallback = ''): string => (typeof v === 'string' && v.length > 0 ? v : fallback);
 
 /**
  * Map one `trivy fs --format json` report onto the review card's findings.
  *
- * A report is only accepted when it carries `SchemaVersion` — proof Trivy itself wrote it. An
- * empty or absent `Results` on such a report IS a clean verdict (a tree with no dependency
- * manifest has no vulnerable dependency, and the secret scanner read every file). Anything that
- * does not parse, or parses to something that is not a Trivy report, is a FAILURE — the one
- * outcome this whole gate exists to prevent is a parse error becoming a green tick.
+ * A report is only accepted when it carries `SchemaVersion` — proof Trivy itself wrote it.
+ * Anything that does not parse, or parses to something that is not a Trivy report, is a FAILURE:
+ * the one outcome this whole gate exists to prevent is a parse error becoming a green tick.
+ *
+ * `files` is the tree that was scanned, and it is NOT optional in spirit (H1): an empty `Results`
+ * means "nothing was found" only if there was something to look at. With a dependency manifest
+ * present and no `lang-pkgs` result, Trivy resolved NO dependency tree — almost always a missing
+ * lockfile — and `deps` goes into `notRun` with the result marked not-green, because a `deps 0`
+ * over unresolved dependencies is weaker than the baseline it replaced.
  */
-export function mapTrivyReport(text: string): TrivyReport | TrivyFailure {
+export function mapTrivyReport(text: string, files: ScaffoldFile[] = []): TrivyReport | TrivyFailure {
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
   } catch (e) {
     return {
       ok: false,
+      kind: 'scan-failed',
       reason:
         `The scanner's output did not parse as JSON (${(e as Error).message}). No verdict is ` +
         `issued from unreadable output.`,
     };
   }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    return { ok: false, reason: 'The scanner produced no Trivy report object; no verdict is issued.' };
+    return {
+      ok: false,
+      kind: 'scan-failed',
+      reason: 'The scanner produced no Trivy report object; no verdict is issued.',
+    };
   }
   const report = parsed as Record<string, unknown>;
   if (report.SchemaVersion === undefined) {
     return {
       ok: false,
+      kind: 'scan-failed',
       reason:
         'The scanner output carries no Trivy `SchemaVersion`, so it is not a scan report — no ' +
         'verdict is issued from it.',
@@ -316,7 +531,11 @@ export function mapTrivyReport(text: string): TrivyReport | TrivyFailure {
   }
   const raw = report.Results;
   if (raw !== undefined && !Array.isArray(raw)) {
-    return { ok: false, reason: 'The Trivy report\'s `Results` was not a list; no verdict is issued.' };
+    return {
+      ok: false,
+      kind: 'scan-failed',
+      reason: "The Trivy report's `Results` was not a list; no verdict is issued.",
+    };
   }
   const results = (raw ?? []) as TrivyResult[];
 
@@ -361,12 +580,47 @@ export function mapTrivyReport(text: string): TrivyReport | TrivyFailure {
     }
   }
 
+  // --- COVERAGE, derived from the tree + what the engine actually returned (H1) ---
+  // Trivy is not a SAST engine and no allowlisted one exists (Semgrep is LGPL-2.1).
+  const notRun: ScanCategory[] = ['sast'];
+  let reason: string | undefined;
+  const manifests = matches(files, DEP_MANIFESTS);
+  const locks = matches(files, DEP_LOCKS);
+  const resolvedDeps = results.some((r) => str(r.Class) === 'lang-pkgs');
+  if (manifests.length > 0 && !resolvedDeps) {
+    notRun.push('deps');
+    reason =
+      `Dependencies were NOT scanned: the tree declares them (${manifests.join(', ')}) but the ` +
+      `scanner resolved no dependency tree` +
+      (locks.length === 0
+        ? ` — there is no lockfile (package-lock.json / yarn.lock / poetry.lock / go.sum / …), ` +
+          `and Trivy's language analysers read lockfiles, not manifests. Commit a lockfile and ` +
+          `re-request the deploy to get a dependency verdict.`
+        : ` even though a lockfile is present (${locks.join(', ')}); the ecosystem may be ` +
+          `unsupported by this scanner version.`) +
+      ` The secret scan DID run over every file.`;
+  }
+
   const summary: Record<ScanCategory, number> = { sast: 0, deps: 0, secrets: 0 };
   for (const f of findings) summary[f.category] += 1;
-  const passed = !findings.some((f) => f.category === 'secrets' || BLOCKING.has(f.severity));
-  // Trivy is not a SAST engine, and no allowlisted one exists (Semgrep is LGPL-2.1). Saying so
-  // here is what stops `sast 0` from reading as "we read the code and it is fine".
-  return { ok: true, findings, summary, passed, notRun: ['sast'] };
+
+  // A card nobody can read is not evidence: cap the list and say so in the list itself.
+  const shown = findings.slice(0, MAX_FINDINGS);
+  if (findings.length > MAX_FINDINGS) {
+    shown.push({
+      category: 'deps',
+      severity: 'info',
+      title: `${findings.length - MAX_FINDINGS} further finding(s) not shown`,
+      detail:
+        `This scan produced ${findings.length} findings; the card lists the first ${MAX_FINDINGS}. ` +
+        `The verdict below accounts for ALL of them.`,
+    });
+  }
+
+  const passed =
+    // `deps` uncovered is not a pass: see H1. `sast` uncovered is the accepted, labelled baseline.
+    !notRun.includes('deps') && !findings.some((f) => f.category === 'secrets' || BLOCKING.has(f.severity));
+  return { ok: true, findings: shown, summary, passed, notRun, reason };
 }
 
 // --------------------------------------------------------------- resolve opts ---
@@ -399,10 +653,8 @@ const POLL_MS = 2_000;
 /**
  * Run ONE Trivy scan over `files` as a Kubernetes Job and return the mapped report.
  *
- * Never throws. Every failure path — unsafe path, oversized payload, unreachable API server,
- * refused create, failed Job, deadline, unreadable log, malformed report — returns
- * `{ ok: false, reason }`, and the caller renders that as `mode: 'unavailable'`. There is no
- * path from a failure to `passed: true`.
+ * Never throws. Every failure path returns `{ ok: false, kind, reason }`, and the caller renders
+ * that as `mode: 'unavailable'`. There is no path from a failure to `passed: true`.
  */
 export async function runTrivyScan(
   slug: string,
@@ -413,37 +665,31 @@ export async function runTrivyScan(
   const ns = o.namespace || config.platformNamespace;
 
   // 1. Materialise the tree FIRST: an unsafe path or an oversized tree must refuse before
-  //    anything is launched, so a refused scan leaves no pod behind.
+  //    anything is launched, so a refused scan leaves no pod and no Secret behind.
   const writer = writerScript(files, o.maxPayloadBytes);
   if (!writer.ok) return writer;
 
   const name = scanJobName(slug, o.runId);
   const jobs = `/apis/batch/v1/namespaces/${ns}/jobs`;
+  const secrets = `/api/v1/namespaces/${ns}/secrets`;
   const object = `${jobs}/${name}`;
   const args = trivyArgs({ dbMode: o.dbMode, dbRepository: o.dbRepository });
-  const manifest = buildScanJobManifest({
-    name,
-    namespace: ns,
-    image: o.image,
-    args,
-    payload: Buffer.from(writer.script, 'utf8').toString('base64'),
-    timeoutMs: o.timeoutMs,
-    resources: o.resources,
-  });
 
-  // 2. Create it (idempotently: a same-named leftover is deleted first, so a retried scan does
-  //    not read a previous run's log).
-  const existing = await o.k8s('GET', object);
-  if (existing.status === 0) return { ok: false, reason: unreachable() };
-  if (existing.status === 200) {
-    const del = await o.k8s('DELETE', `${object}?propagationPolicy=Background`);
-    if (del.status === 0) return { ok: false, reason: unreachable() };
-  }
-  const created = await o.k8s('POST', jobs, manifest);
-  if (created.status === 0) return { ok: false, reason: unreachable() };
+  // 2. Clear any leftover of the same name, then create. Deleting first (rather than reading
+  //    first) also serves as the reachability probe: `status: 0` is "there is no cluster".
+  const cleared = await o.k8s('DELETE', `${object}?propagationPolicy=Background`);
+  if (cleared.status === 0) return noCluster();
+
+  const created = await o.k8s(
+    'POST',
+    jobs,
+    buildScanJobManifest({ name, namespace: ns, image: o.image, args, timeoutMs: o.timeoutMs, resources: o.resources }),
+  );
+  if (created.status === 0) return noCluster();
   if (created.status !== 201 && created.status !== 200 && created.status !== 409) {
     return {
       ok: false,
+      kind: 'scan-failed',
       reason:
         `Kubernetes refused to create the scan Job (HTTP ${created.status}). The os-ui ` +
         `ServiceAccount needs \`create\` on \`batch/jobs\` in ${ns} — see the ` +
@@ -451,30 +697,74 @@ export async function runTrivyScan(
     };
   }
 
-  // 3. Poll to completion within the deadline.
+  // 3. THE JOB'S UID is the identity everything downstream hangs off: the Secret's owner
+  //    reference, and the pod we are allowed to believe (M2). Without it there is no verdict.
+  let jobUid = uidOf(created.body);
+  if (!jobUid) {
+    const got = await o.k8s('GET', object);
+    if (got.status === 0) return noCluster();
+    jobUid = uidOf(got.body);
+  }
+  if (!jobUid) {
+    return {
+      ok: false,
+      kind: 'scan-failed',
+      reason:
+        'The scan Job was created but Kubernetes returned no UID for it, so its pod could not be ' +
+        'told apart from a previous generation\'s. No verdict is issued.',
+    };
+  }
+
+  // 4. The payload, owned by the Job so it is garbage-collected with it. Created AFTER the Job on
+  //    purpose: the kubelet retries a missing secret mount, so the ordering costs nothing and the
+  //    owner reference can be set at creation — which is why the Role needs no `patch` on
+  //    secrets, and no `get`/`list` either.
+  const payload = await o.k8s('POST', secrets, buildPayloadSecretManifest({ name, namespace: ns, script: writer.script, jobUid }));
+  if (payload.status === 0) return noCluster();
+  if (payload.status !== 201 && payload.status !== 200 && payload.status !== 409) {
+    void o.k8s('DELETE', `${object}?propagationPolicy=Background`);
+    return {
+      ok: false,
+      kind: 'scan-failed',
+      reason:
+        `Kubernetes refused to create the scan payload Secret (HTTP ${payload.status}). The ` +
+        `os-ui ServiceAccount needs \`create\` on \`secrets\` in ${ns} — see the ` +
+        `os-ui-software-scanner Role in the chart. No scan ran.`,
+    };
+  }
+  const dropPayload = () => {
+    void o.k8s('DELETE', `${secrets}/${name}`);
+  };
+
+  // 5. Poll to completion within the deadline.
   const started = o.now();
-  let phase: 'active' | 'succeeded' | 'failed' = 'active';
   let failure = '';
+  let succeeded = false;
   for (;;) {
     const got = await o.k8s('GET', `${object}?t=${o.now()}`);
-    if (got.status === 0) return { ok: false, reason: unreachable() };
+    if (got.status === 0) {
+      dropPayload();
+      return noCluster();
+    }
     const status = (got.body.status ?? {}) as Record<string, unknown>;
     if (typeof status.succeeded === 'number' && status.succeeded >= 1) {
-      phase = 'succeeded';
+      succeeded = true;
       break;
     }
     if (typeof status.failed === 'number' && status.failed >= 1) {
-      phase = 'failed';
       const conds = Array.isArray(status.conditions) ? (status.conditions as Record<string, unknown>[]) : [];
       const c = conds.find((x) => x.type === 'Failed') ?? conds[0];
       failure = [str(c?.reason), str(c?.message)].filter(Boolean).join(': ');
       break;
     }
     if (o.now() - started >= o.timeoutMs) {
-      // Abandon it, and reap it so the namespace does not accumulate stuck scans.
+      // Abandon it, and reap both objects so the namespace does not accumulate stuck scans —
+      // or the app's source.
       void o.k8s('DELETE', `${object}?propagationPolicy=Background`);
+      dropPayload();
       return {
         ok: false,
+        kind: 'scan-failed',
         reason:
           `The security scan timed out after ${Math.round(o.timeoutMs / 1000)}s (the Job never ` +
           `completed). No verdict is issued; raise osUI.software.scanner.timeoutSeconds, or check ` +
@@ -484,49 +774,87 @@ export async function runTrivyScan(
     await o.sleep(POLL_MS);
   }
 
-  if (phase === 'failed') {
+  if (!succeeded) {
+    dropPayload();
     return {
       ok: false,
+      kind: 'scan-failed',
       reason:
         `The security scan Job failed${failure ? ` — ${failure}` : ''}. A failed scan is NOT a ` +
         `passing scan: no verdict is issued.`,
     };
   }
 
-  // 4. Read the verdict off the pod's stdout.
+  // 6. Find THE pod this Job created — owned by this exact UID, not merely sharing its name (M2).
   const pods = await o.k8s(
     'GET',
-    `/api/v1/namespaces/${ns}/pods?labelSelector=job-name%3D${encodeURIComponent(name)}`,
+    `/api/v1/namespaces/${ns}/pods?labelSelector=${encodeURIComponent(`controller-uid=${jobUid}`)}`,
   );
-  if (pods.status === 0) return { ok: false, reason: unreachable() };
+  if (pods.status === 0) {
+    dropPayload();
+    return noCluster();
+  }
   const items = Array.isArray(pods.body.items) ? (pods.body.items as Record<string, unknown>[]) : [];
-  const podName = str(((items[0]?.metadata ?? {}) as Record<string, unknown>).name);
+  const mine = items.find((p) => ownedBy(p, jobUid));
+  const podName = str(((mine?.metadata ?? {}) as Record<string, unknown>).name);
   if (!podName) {
+    dropPayload();
     return {
       ok: false,
+      kind: 'scan-failed',
       reason:
-        `The scan Job reported success but its pod could not be found, so its output is ` +
-        `unreadable. No verdict is issued.`,
+        `The scan Job reported success but no pod owned by it (uid ${jobUid}) could be found, so ` +
+        `its output is unreadable. No verdict is issued — a pod that merely shares the Job's name ` +
+        `may belong to a previous scan.`,
     };
   }
-  const log = await o.k8sText(`/api/v1/namespaces/${ns}/pods/${podName}/log`);
+
+  const log = await o.k8sText(
+    `/api/v1/namespaces/${ns}/pods/${podName}/log?limitBytes=${LOG_LIMIT_BYTES}`,
+  );
+  dropPayload();
   if (log.status !== 200 || log.text.trim().length === 0) {
     return {
       ok: false,
+      kind: 'scan-failed',
       reason:
         `The scan Job completed but its output (pod log) could not be read (HTTP ${log.status}). ` +
         `The os-ui ServiceAccount needs \`get\` on \`pods/log\` in ${ns}. No verdict is issued.`,
     };
   }
 
-  const mapped = mapTrivyReport(log.text);
+  // 7. Read the framed report — never the raw merged log (M1).
+  const framed = parseScanLog(log.text);
+  if ('ok' in framed) return framed;
+  const mapped = mapTrivyReport(framed.report, files);
   if (!mapped.ok) return mapped;
-  return { ...mapped, engine: `trivy (${o.image})` };
+
+  // The engine string is EVIDENCE: which DB mode answered, and how old that DB is. A baked
+  // offline DB from last year and a fresh mirror fetch are not the same scan (M5).
+  const updated = dbUpdatedAt(framed.version);
+  const db =
+    o.dbMode === 'offline'
+      ? `db: offline/baked${updated ? `, vuln DB updated ${updated}` : ', vuln DB age UNKNOWN'}`
+      : `db: mirror ${o.dbRepository}${updated ? `, vuln DB updated ${updated}` : ''}`;
+  return { ...mapped, engine: `trivy (${o.image}; ${db})` };
 }
 
-function unreachable(): string {
-  return (
-    'The Kubernetes API server is unreachable from the OS, so no security scan could be ' +
-    'launched. No verdict is issued — a deploy cannot be approved without one.'
-  );
+function uidOf(body: Record<string, unknown>): string {
+  return str(((body.metadata ?? {}) as Record<string, unknown>).uid);
+}
+
+function ownedBy(pod: Record<string, unknown>, jobUid: string): boolean {
+  const meta = (pod.metadata ?? {}) as Record<string, unknown>;
+  const owners = Array.isArray(meta.ownerReferences) ? (meta.ownerReferences as Record<string, unknown>[]) : [];
+  return owners.some((r) => str(r.uid) === jobUid);
+}
+
+function noCluster(): TrivyFailure {
+  return {
+    ok: false,
+    kind: 'no-cluster',
+    reason:
+      'The Kubernetes API server is unreachable from the OS, so no security scan could be ' +
+      'launched. No verdict is issued — a deploy cannot be approved without one.',
+  };
 }

@@ -392,3 +392,154 @@ no-verdict decision to `securityScan`, which already keys on `OS_OFFLINE_MOCK`.
    API client; nothing in this branch was deployed, per the brief. The first real scan will
    exercise the image pull and the DB fetch for the first time.
 6. **Not deployed, not merged** — per the brief. The branch is pushed and one PR is open.
+
+---
+
+## 10. Review round (PR #63, 2026-11-19) — H1–H3 blocked merge
+
+An independent review found three blockers, and it was right about all three: each one is a way
+the *first* implementation could have shipped a verdict weaker than the baseline it replaced, or
+no verdict at all. Per finding.
+
+### H1 (block) — `Results: []` was read as a clean dependency verdict. **Fixed.**
+Trivy's language analysers resolve dependencies from **lockfiles**. Our own scaffolds emit
+`package.json` with **no** lockfile (`scaffolds/vite-os.ts`'s Dockerfile even says "if no
+lockfile is committed yet"), so `trivy fs` returns `Results: []` and the first mapper read that as
+`deps 0, passed: true, mode: 'live'` — a green dependency verdict over dependencies **never
+resolved**, and therefore *weaker* than the two-entry baseline it replaced, which would still have
+flagged `lodash@4.17.20` straight from the manifest.
+
+*How:* coverage is now **derived from evidence**. `mapTrivyReport(text, files)` takes the scanned
+tree; if it holds a dependency manifest (`package.json`, `requirements*.txt`, `pyproject.toml`,
+`Pipfile`, `go.mod`, `Cargo.toml`, `Gemfile`, `pom.xml`, `build.gradle`, `composer.json`) and **no**
+result carries `Class: 'lang-pkgs'`, then `'deps'` joins `notRun`, `passed` is **false**, and the
+`reason` names the cause — distinguishing "there is no lockfile" (names the manifests it saw, and
+what to commit) from "a lockfile is present but the ecosystem is unsupported". The card renders
+that reason for a *live* scan too, not only for `unavailable`.
+
+*And the baseline is layered on top, not replaced.* `resolveScan` runs `securityScan` alongside
+every live scan and merges its `deps` and `secrets` findings into the result (deduped; `sast`
+excluded, because `notRun` says sast was not covered and adding heuristics would contradict the
+label). The strictest answer wins: `passed` requires both. So the real scaffold case —
+`lodash@4.17.20`, no lockfile — comes back `mode: 'live'`, `passed: false`, with the actionable
+finding present, `notRun: ['sast','deps']` and the lockfile named.
+
+*On emitting a lockfile from the scaffold:* **deliberately not done, and this is the honest
+answer.** A lockfile we synthesise would carry no integrity hashes and no resolved transitive
+tree; Trivy would then resolve a *fiction* and report a verdict over it — the same class of defect
+as #56, dressed as a fix. Running `npm install --package-lock-only` inside the Job was considered
+and rejected: it needs `npm` in the scanner image (it is not there) and **registry egress from the
+scan pod**, which is exactly the reach H2 is about narrowing. The honest states are the two we
+now produce: a tree *with* a lockfile gets a dependency verdict; a tree without one is told, in
+the reason, that it will not get one until a lockfile is committed. Open item 7 carries the
+follow-up.
+
+### H2 (block) — the DB-mirror rule granted 443 to *any* destination. **Fixed.**
+`software-scanner-egress` carried a `ports:`-only rule with no `to:`. A NetworkPolicy rule without
+`to:` matches **every** destination, so the "narrow" scanner policy was *wider* than the
+egress-proxy chokepoint — and re-granted the API server the `NotIn` exclusion had just taken away.
+
+*How:* the rule now mirrors policy 5 of `egress-policies.yaml` exactly: `ipBlock 0.0.0.0/0` with
+`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16` in `except`. Public address space only, so it can
+reach an OCI registry and nothing in the cluster. NetworkPolicy still cannot name a hostname —
+that limit is now recorded in the template itself, with the two real answers (a Cilium FQDN policy,
+or `dbMode: offline`). `scanner-chart.test.ts` asserts the `to:` block and all three `except`
+entries.
+
+### H3 (block) — a 768 KiB env var cannot start a container. **Fixed.**
+The writer script travelled in one container env var capped at **768 KiB**. Linux
+`MAX_ARG_STRLEN` caps a single argument/environment string at **128 KiB**, so for any real app the
+container would have failed to start with `E2BIG`, every scan would have come back `unavailable`,
+and **the admin hatch would have become the routine path** — the worst possible outcome for a
+change whose point is that the hatch is exceptional.
+
+*How:* the tree now travels in a **Secret**, mounted read-only at `/scan`:
+* The Job is created **first**, so the Secret can carry `ownerReferences` to the Job's UID **at
+  creation** and Kubernetes garbage-collects it. The kubelet retries a missing secret mount, so
+  the ordering costs nothing — and it means the Role needs no `patch` on secrets.
+* The Role gets `secrets: ["create", "delete"]` and **deliberately no `get` and no `list`**: the
+  ServiceAccount must not be able to *read* any secret in the namespace, and it never needs to.
+* The adapter deletes the Secret the moment the result is read (and on every abandon path), so the
+  app's source lives for one scan.
+* The cap is now 900 KiB of encoded payload — below a Secret's ~1 MiB etcd ceiling — and
+  `scan-trivy.test.ts` pins the **shipped default** by not injecting it: a 300 KiB file must scan,
+  a 2 MiB one must be refused with the Secret ceiling named.
+
+This also closes **M4**: the app's source is no longer part of the Job spec that every
+`kubectl get job -o yaml` prints, and a Secret is redacted in API audit logs and can be encrypted
+at rest.
+
+### M1 — the result was read from the merged pod log. **Fixed.**
+One byte of stderr in front of the JSON — a DB-download notice, a warning — voided the scan.
+*How:* `trivy --output /tmp/os-scan-report.json`; the prelude then echoes `<<<OS-SCAN-VERSION>>>`,
+the version blob, `<<<OS-SCAN-REPORT>>>`, and `cat`s the report. `parseScanLog` reads after the
+**last** delimiter and discards everything before it; a log with no report delimiter is a typed
+failure, never an empty clean scan. Fixture: a log whose noise is itself JSON still scans.
+
+### M2 — pod selection could read a previous generation's output. **Fixed.**
+`labelSelector=job-name=<name>` + `items[0]` can return a pod from a prior Job of the same name
+while a Background delete finishes — i.e. a *stale verdict for this deploy*.
+*How:* the Job's **UID** is now the identity everything hangs off. The pod query selects on
+`controller-uid=<uid>` **and** every candidate's `ownerReferences` must contain that UID; a pod
+that merely shares the name is refused with that reason. A Job the API returns without a UID is
+refused rather than guessed at.
+
+### M3 — namespace-wide `pods/log`. **Accepted, narrowable, and written down.**
+`pods` / `pods/log` cannot be narrowed by name, so in the default layout this is read access to
+every pod log in the platform namespace. The os-ui Role already held namespace-wide `pods`
+get/list, so this adds the log *subresource* rather than a new reach — but it is broader than the
+feature needs, and that is now stated **at the grant**, not only in a doc.
+*And it is narrowable today:* `osUI.software.scanner.namespace` (default `""` = release namespace)
+moves the whole grant set — jobs, pods/log, secrets — into a dedicated namespace this chart
+creates with Pod Security `restricted` **and its own default-deny NetworkPolicy** (a fresh
+namespace inherits none, so without that it would start wide open). Making it the default is
+open item 8, after it has been run on a real cluster.
+
+### M5 — the engine string hid which database answered. **Fixed.**
+A fresh mirror fetch and a baked DB from last year are not the same scan. The prelude now runs
+`trivy version --format json` into the framed version section, and the engine reads
+`trivy (aquasec/trivy:0.58.2; db: mirror ghcr.io/aquasecurity/trivy-db, vuln DB updated
+2026-11-18T12:00:00Z)` — or, for a baked DB with no readable date, `db: offline/baked, vuln DB age
+UNKNOWN`, which is the honest label for exactly the case an approver must not read as fresh.
+
+### M6 — a failed scan could still fall back to a green `offline-mock`. **Fixed.**
+With `OS_OFFLINE_MOCK=allow` (a teaching install, or a laptop pointed at a cluster) a *wired and
+broken* scanner degraded to the baseline — laundering a real scan failure into a pass.
+*How:* the adapter's failure is typed. `kind: 'no-cluster'` (there is no Kubernetes API at all —
+a laptop) is the **only** kind allowed to fall back, and even then the scanner's reason is attached
+to the card. Every other failure — refused create, failed Job, deadline, unreadable log,
+unparseable report, oversized tree, unsafe path — is `kind: 'scan-failed'` and forces
+`mode: 'unavailable'` with the cause, whatever the lever says.
+
+### Lows — all fixed
+* `AUDITED_OVERRIDE_REASON_MIN` now lives in `@core/policy/approvals`; `review.ts` takes the number
+  from there. `ReviewCard.tsx` cannot import a `server-only` module, so its copy stays — and
+  `scanner-chart.test.ts` pins the two equal, plus that the tab does not restate the number.
+* The pod-log GET carries `limitBytes`; findings on a card are capped at 200 with a line saying the
+  verdict still covers them all (the `summary` counts every one).
+* `seccompProfile: RuntimeDefault` on both the pod and the container.
+* The writer dedupes repeated paths (last write wins), so the payload's size is not a function of a
+  caller's bug.
+* The Job test asserts the configured `resources` actually reach the container.
+
+### Gates after the review round
+
+| Check | Result |
+|---|---|
+| `os-ui/node_modules/.bin/tsc --noEmit -p os-ui` | **exit 0**, no output |
+| scan + software + governance + policy tests | **exit 0** — see §9's table, re-measured |
+| `node scripts/check-structure.mjs` | **exit 0** — no new violations |
+| `bash scripts/license-check.sh` | **exit 0** — PASS |
+| `helm lint charts/sovereign-agentic-os -f values.local.yaml` | **exit 0** |
+| three chart renders | default · `scanner.enabled=false` (nothing) · `scanner.namespace=software-scans` (dedicated ns + default-deny) |
+
+### Open items added by this round
+
+7. **A scaffolded app gets no dependency verdict until it commits a lockfile.** The scan says so,
+   in those words, and the baseline's known-bad list is layered on so the common case still
+   blocks. The real fix is a resolve step the OS can run honestly — a lockfile produced by a real
+   `npm install` in the build path, not in the scan path. That belongs to the build/deploy stream,
+   not here.
+8. **The dedicated scan namespace is not yet the default.** The value exists and renders; making
+   it the default needs one run on a real cluster, because a cross-namespace Job launch is the
+   kind of thing that works in a render and 403s in a cluster.

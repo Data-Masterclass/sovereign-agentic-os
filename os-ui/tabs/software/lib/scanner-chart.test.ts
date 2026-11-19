@@ -31,29 +31,57 @@ const VALUES = 'charts/sovereign-agentic-os/values.yaml';
 const ENV_TPL = 'charts/sovereign-agentic-os/templates/base/os-ui/_os-ui-env.tpl';
 const EGRESS = 'charts/sovereign-agentic-os/templates/base/network/egress-policies.yaml';
 
-test('the scanner Role grants jobs + pods/log and NOTHING else', () => {
+test('the scanner Role grants jobs, pods/log and a WRITE-ONLY secret — nothing else', () => {
   const y = read(TEMPLATE);
   assert.ok(y.includes('kind: Role'), 'a namespaced Role, not a ClusterRole');
   assert.ok(!y.includes('ClusterRole'), 'the scanner must never need cluster-wide power');
   assert.ok(y.includes('name: os-ui-software-scanner'));
 
-  // Exactly two rules, and each resource list is named.
+  // Exactly three rules, each with a named resource list.
   const groups = [...y.matchAll(/apiGroups: \[([^\]]*)\]/g)].map((m) => m[1]);
-  assert.deepEqual(groups, ['"batch"', '""'], 'two rules: batch, then core');
+  assert.deepEqual(groups, ['"batch"', '""', '""'], 'batch/jobs, pods+log, secrets');
 
   const resources = [...y.matchAll(/resources: \[([^\]]*)\]/g)].map((m) => m[1]);
-  assert.deepEqual(resources, ['"jobs"', '"pods", "pods/log"']);
+  assert.deepEqual(resources, ['"jobs"', '"pods", "pods/log"', '"secrets"']);
 
   const verbs = [...y.matchAll(/verbs: \[([^\]]*)\]/g)].map((m) => m[1]);
-  // jobs: the lifecycle of one scan. pods/log: read-only — the result is the pod's stdout.
-  assert.deepEqual(verbs, ['"create", "get", "list", "watch", "delete"', '"get", "list", "watch"']);
-  assert.ok(!y.includes('"secrets"'), 'the scanner Role must never grant Secrets');
-  assert.ok(!y.includes('"configmaps"'), 'the payload travels inline precisely so this is unneeded');
-  assert.ok(!/pods\/exec/.test(y), 'no exec into a pod running untrusted source');
+  assert.deepEqual(verbs, [
+    // jobs: the lifecycle of one scan.
+    '"create", "get", "list", "watch", "delete"',
+    // pods/log: read-only — the result is the pod's stdout.
+    '"get", "list", "watch"',
+    // THE LINE THAT MATTERS: the app's source is WRITTEN to a Secret and deleted. No `get`, no
+    // `list` — so this grant can never be used to read another secret in the namespace — and no
+    // `patch`/`update`, because the Job-owner reference is set at creation.
+    '"create", "delete"',
+  ]);
+  assert.ok(!y.includes('"configmaps"'), 'a ConfigMap is not audit-redacted; the payload is a Secret');
+  assert.ok(!/pods\/exec/.test(y), 'no exec into a pod holding an app\'s source');
 
   // Bound to the os-ui ServiceAccount in the release namespace, and nothing else.
   assert.ok(y.includes('kind: RoleBinding'));
   assert.ok(y.includes('name: os-ui'));
+});
+
+test('M3: the scan namespace is an operator value, defaulting to the release namespace', () => {
+  const y = read(TEMPLATE);
+  assert.match(y, /\$scanNs\s*:=\s*\$sc\.namespace \| default \.Release\.Namespace/, 'one resolution, used everywhere');
+  assert.ok(!/namespace: \{\{ \.Release\.Namespace \}\}\n\s+labels:[\s\S]*?name: os-ui-software-scanner/.test(y));
+  // A dedicated namespace must not start life WIDE OPEN: it carries no inherited policy.
+  assert.ok(y.includes('name: software-scanner-default-deny'), 'a dedicated namespace gets the baseline');
+  assert.ok(y.includes('pod-security.kubernetes.io/enforce: restricted'));
+  // And the accept for the default layout is written down where the grant is, not only in a doc.
+  assert.match(y, /ACCEPTED, AND NOT IDEAL/, 'the pods/log breadth is acknowledged at the grant');
+  const values = read(VALUES);
+  assert.match(values, /^\s{6}namespace: ""$/m, 'default = the release namespace');
+  assert.ok(values.includes('software-scans'), 'and the values comment names the better posture');
+});
+
+test('H3: the payload is a Secret volume, not an env var — and the plan says why', () => {
+  const y = read(TEMPLATE);
+  assert.match(y, /MAX_ARG_STRLEN/, 'the reason the env-var delivery was abandoned is recorded');
+  const plan = read('docs/superpowers/plans/2026-11-19-software-scanner-trivy.md');
+  assert.ok(plan.includes('MAX_ARG_STRLEN'), 'and in the plan, where a reviewer looks first');
 });
 
 test('the whole scanner surface is behind osUI.software.scanner.enabled', () => {
@@ -79,6 +107,24 @@ test('the scanner image is PINNED, from the Apache-2.0 upstream', () => {
   assert.ok(read('licenses/components.tsv').includes('Trivy (aquasec/trivy)'));
   assert.ok(read('THIRD-PARTY-LICENSES.md').includes('Trivy'));
   assert.ok(read('NOTICE').includes('Trivy'));
+});
+
+test('H2: the DB-mirror rule is SCOPED to public address space, not "port 443 anywhere"', () => {
+  const y = read(TEMPLATE);
+  const egress = y.slice(y.indexOf('name: software-scanner-egress'));
+  const rule = egress.slice(egress.indexOf('port: 8053'));
+  // The defect this pins: a `ports:`-only rule with no `to:` grants 443 to EVERY destination —
+  // the API server and every platform service included — which is wider than the egress-proxy
+  // chokepoint it was supposed to be narrower than.
+  assert.match(rule, /- to:\n\s+- ipBlock:/, 'the 443 rule must carry a `to:` block');
+  assert.ok(rule.includes('cidr: 0.0.0.0/0'), 'public space...');
+  for (const priv of ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16']) {
+    assert.ok(rule.includes(priv), `...minus ${priv}, the same subtraction the egress proxy uses`);
+  }
+  const proxy = read(EGRESS);
+  for (const priv of ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16']) {
+    assert.ok(proxy.includes(priv), 'and that subtraction is still what the chokepoint does');
+  }
 });
 
 test('the scan pods get DNS + the DB mirror, and are off the in-namespace plane', () => {
@@ -123,5 +169,24 @@ test('the scanner env reaches BOTH os-ui and the worker, and weakens nothing', (
   assert.ok(
     !/- name: OS_OFFLINE_MOCK|OS_OFFLINE_MOCK\s*[:=]/.test(read(TEMPLATE)),
     'the scanner template must not set OS_OFFLINE_MOCK',
+  );
+});
+
+test('the approver UI and the kernel agree on the audited-reason floor', () => {
+  // The floor lives in `@core/policy/approvals` (AUDITED_OVERRIDE_REASON_MIN) and is enforced
+  // server-side. `ReviewCard.tsx` is a client component and cannot import a `server-only` module,
+  // so the number is duplicated there — which is exactly the kind of duplicate that drifts. A test
+  // may not IMPORT a .tsx, so this reads it as text, the way the vendor-licence test does.
+  const kernel = read('os-ui/core/policy/approvals.ts');
+  const m = kernel.match(/AUDITED_OVERRIDE_REASON_MIN = (\d+)/);
+  assert.ok(m, 'the kernel must define the floor');
+  const ui = read('os-ui/tabs/governance/ui/ReviewCard.tsx');
+  const u = ui.match(/const NO_SCAN_REASON_MIN = (\d+)/);
+  assert.ok(u, 'the card must state the floor it enforces in the browser');
+  assert.equal(u[1], m[1], 'the card and the kernel must not drift apart');
+  const review = read('os-ui/tabs/software/lib/review.ts');
+  assert.ok(
+    review.includes('NO_SCAN_REASON_MIN = AUDITED_OVERRIDE_REASON_MIN'),
+    'and the enforcing tab must take the number from the kernel, not restate it',
   );
 });
