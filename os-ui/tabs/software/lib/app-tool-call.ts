@@ -7,7 +7,7 @@ import { authorizeAppTool, authorizeConnectionCall, exposedConnectionTools, trac
 import { enqueue } from '@core/policy/approvals';
 import { agentForbiddenReason } from '@core/mcp/write-tool-meta';
 import type { App } from '@tabs/software/lib/apps';
-import { authorizeDeclaredAction, parseAppActions, type AdoptionPort } from '@tabs/software/lib/app-actions';
+import { authorizeDeclaredAction, parseAppActions, reservedToolNameReason, type AdoptionPort } from '@tabs/software/lib/app-actions';
 import { getSnapshot, hydrateSnapshot } from '@tabs/software/lib/snapshot';
 
 /**
@@ -54,8 +54,14 @@ export async function callAppTool(
   // names: a write action is held, so it would file "Approval needed: promote" into the same
   // Governance inbox under an app principal, reading exactly like the platform approval while
   // doing something else. Refused by exact name, before any authorization, declared or not.
+  // FIRST line: `parseAppActions` rejects such an action at commit/ingest. This is the second —
+  // it also covers an OpenAPI `operationId` of that name, which no parser rejects.
   if (agentForbiddenReason(tool)) {
-    const reason = `'${tool}' is the name of an OS decision that only a person may take; it cannot be called through an app, and an app action may not use that name — rename the action in actions.yml`;
+    // The name can arrive two ways and the fix differs: an `actions.yml` action (which
+    // `parseAppActions` already dropped at commit, so it is never in `declared`) or an OpenAPI
+    // `operationId` the auto-MCP turned into a tool. Say which, when the app's grant tells us.
+    const kind = (app.mcpTools ?? []).some((t) => t.name === tool) ? 'operation' : 'unknown';
+    const reason = `${reservedToolNameReason(tool, kind)}. It cannot be called through an app.`;
     const tr = await trace({ principal, tool, input: rawBody, output: { denied: reason, layer: 'agent-forbidden' }, decision: 'deny' });
     return {
       status: 403,

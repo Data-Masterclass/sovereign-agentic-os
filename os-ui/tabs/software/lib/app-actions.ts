@@ -38,6 +38,7 @@
  *   - Pure: parsing + the intersection are plain functions, no I/O, unit-testable alone.
  */
 import type { ScaffoldFile } from '@tabs/software/lib/model';
+import { agentForbiddenReason } from '@core/mcp/write-tool-meta';
 
 /** The scopes an app action may declare. An action may never touch what it did not declare. */
 export const ACTION_SCOPES = ['records', 'data', 'knowledge', 'metrics', 'files'] as const;
@@ -65,6 +66,21 @@ const NAME_RE = /^[a-z][a-z0-9_]{2,47}$/;
 
 function isScope(s: string): s is ActionScope {
   return (ACTION_SCOPES as readonly string[]).includes(s);
+}
+
+/**
+ * Why a tool name is unavailable to an app. `kind` says which declaration carries it, so the
+ * message tells the author the file to edit: an `actions.yml` action, or an OpenAPI
+ * `operationId` (the auto-MCP derives one tool per operation — `tool-exec.ts`).
+ */
+export function reservedToolNameReason(name: string, kind: 'action' | 'operation' | 'unknown'): string {
+  const where =
+    kind === 'action'
+      ? `rename the action in ${ACTIONS_FILE}`
+      : kind === 'operation'
+        ? "rename the operationId in the app's OpenAPI spec"
+        : `rename it — the action in ${ACTIONS_FILE}, or the operationId in the app's OpenAPI spec`;
+  return `'${name}' is a reserved name: it is an OS decision that only a person may take, so no app tool may be called that — ${where}`;
 }
 
 /**
@@ -98,6 +114,16 @@ export function parseAppActions(files: ScaffoldFile[]): ParsedAppActions {
     const name = String(cur.name ?? '').trim();
     if (!NAME_RE.test(name)) {
       issues.push({ path: at, reason: `'${name || '(missing)'}' is not a valid action name`, fix: 'Use snake_case, 3–48 chars, starting with a letter (e.g. `list_invoices`).' });
+      cur = null;
+      return;
+    }
+    // RESERVED NAMES (review M3) — derived from `AGENT_FORBIDDEN_TOOLS`, never a literal here.
+    // An app action called `promote` or `decide_approval` would read, in a trace and in the
+    // approval inbox, exactly like the OS decision of that name while doing something else. It is
+    // dropped at declaration time, where the author sees it at commit/ingest; `callAppTool`
+    // refuses the same names at call time as the second line.
+    if (agentForbiddenReason(name) !== null) {
+      issues.push({ path: at, reason: reservedToolNameReason(name, 'action'), fix: 'Rename the action (e.g. `promote_lead`, `approve_invoice`) and commit again.' });
       cur = null;
       return;
     }
