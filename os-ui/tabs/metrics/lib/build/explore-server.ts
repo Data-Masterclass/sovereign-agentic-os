@@ -4,7 +4,7 @@
 import 'server-only';
 import { offlineMockAllowed } from '@core/kernel/offline-mock';
 import { queryRun } from '@core/infra/governed';
-import { type DelegatedToken, propagate } from '@tabs/data/lib/index';
+import { propagate, type DelegatedToken } from '@core/kernel/identity';
 import type { Dataset, Measure } from '@tabs/data/lib/index';
 import { personalSchema, domainSchema, physicalSlug } from '@tabs/data/lib/store-fqn';
 import {

@@ -99,7 +99,7 @@ import { saveDashboard } from '@tabs/dashboards/lib/store';
 import { VIZ_TYPES, assertServableFilters, fromTiles, missingPanelMembers, type ChartSpec } from '@tabs/dashboards/lib/model';
 import { panelViewsFor, type RegistryViewDims } from '@tabs/dashboards/lib/panel-views';
 import { listMetrics } from '@tabs/metrics/lib/store';
-import { claimsFromUser, delegate } from '@tabs/data/lib/identity';
+import { claimsFromUser, delegate } from '@core/kernel/identity';
 
 import {
   createSystem,

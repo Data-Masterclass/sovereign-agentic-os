@@ -3,7 +3,7 @@
  */
 import 'server-only';
 import { requireUser, type CurrentUser } from '@core/kernel/auth';
-import { type AgentScope, type DelegatedToken, claimsFromUser, delegate } from '@tabs/data/lib/identity';
+import { claimsFromUser, delegate, type AgentScope, type DelegatedToken } from '@core/kernel/identity';
 
 /**
  * The ONE place a route turns the signed-in user into the user-DELEGATED token every
