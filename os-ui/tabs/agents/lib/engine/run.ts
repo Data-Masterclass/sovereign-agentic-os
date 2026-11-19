@@ -89,10 +89,25 @@ export type EngineRunResult = AgenticGraphResult & {
   routes: RouteDecision[];
   /** The team step budget and how much of it the run used. */
   budget: { stepsUsed: number; limit: number; exhausted: boolean };
+  /** An agent FAILED and the run stopped there. Never true for a parked, interrupted or budget-stopped run. */
+  failed: boolean;
+  /** Which agent failed and why (`node` is null when the failure has no visit on record). */
+  failure?: RunFailure;
   /** A3: the Langfuse trace id (= run id) and whether an observer actually recorded this run. */
   traceId: string;
   observed: boolean;
 };
+
+/** The agent a run failed at, and the reason it gave. */
+export type RunFailure = { node: string | null; reason: string };
+
+/** Read a run's failure out of its state: the engine's `failed` channel, else a failed visit. */
+function failureOf(state: Partial<EngineState>): RunFailure | undefined {
+  const runs: NodeRun[] = state.nodeRuns ?? [];
+  const failedRun = [...runs].reverse().find((r) => r.status === 'failed');
+  if (!state.failed && !failedRun) return undefined;
+  return { node: failedRun?.node ?? null, reason: state.failed || failedRun?.error || 'an agent failed' };
+}
 
 export class ResumeNotFoundError extends Error {
   runId: string;
@@ -221,7 +236,7 @@ export async function runGraphEngine(input: EngineRunInput): Promise<EngineRunRe
       reachedEnd: result.reachedEnd,
       parked: result.parked,
       interrupted: result.interrupted,
-      failed: !!(snap.values as Partial<EngineState> | undefined)?.failed,
+      failed: result.failed,
       path: result.path,
       finalChars: result.finalText.length,
       stepsUsed: result.budget.stepsUsed,
@@ -246,7 +261,8 @@ function summarize(snap: Snapshot, built: ReturnType<typeof buildGraph>, input: 
   else if (recursionHit) finalText += RECURSION_NOTE;
   else if (interrupted) finalText += INTERRUPTED_NOTE;
 
-  const failed = !!state.failed || runs.some((r) => r.status === 'failed');
+  const failure = failureOf(state);
+  const failed = !!failure;
   return {
     path: runs.map((r) => r.node),
     runs,
@@ -262,6 +278,8 @@ function summarize(snap: Snapshot, built: ReturnType<typeof buildGraph>, input: 
     held: state.held ?? [],
     routes: state.routes ?? [],
     budget: { stepsUsed: budget.stepsUsed, limit: built.stepBudget, exhausted: budget.exhausted },
+    failed,
+    ...(failure ? { failure } : {}),
     traceId: input.runId,
     observed: !!input.deps?.observe?.enabled,
   };
@@ -282,6 +300,9 @@ export type RunInspection = {
   budget: { stepsUsed: number; limit: number; exhausted: boolean };
   held: HeldCall[];
   warnings: string[];
+  /** An agent failed and the run stopped there. */
+  failed: boolean;
+  failure?: RunFailure;
 };
 
 /**
@@ -295,7 +316,7 @@ export async function inspectGraphRun(input: Pick<EngineRunInput, 'ir' | 'deps' 
   const recorded = ((snap.values ?? {}) as Partial<EngineState>).owner ?? null;
   const mine = !input.owner || (!!recorded && recorded.systemId === input.owner.systemId && recorded.userId === input.owner.userId);
   if (!threadExists(snap) || !mine) {
-    return { exists: false, owner: null, finished: false, parked: false, heldApprovals: [], next: [], path: [], finalText: '', budget: { stepsUsed: 0, limit: built.stepBudget, exhausted: false }, held: [], warnings: built.warnings };
+    return { exists: false, owner: null, finished: false, parked: false, heldApprovals: [], next: [], path: [], finalText: '', budget: { stepsUsed: 0, limit: built.stepBudget, exhausted: false }, held: [], warnings: built.warnings, failed: false };
   }
   const s = summarize(snap, built, { runId: input.runId, checkpointer: input.checkpointer }, false);
   return {
@@ -310,5 +331,7 @@ export async function inspectGraphRun(input: Pick<EngineRunInput, 'ir' | 'deps' 
     budget: s.budget,
     held: s.held,
     warnings: s.warnings,
+    failed: s.failed,
+    ...(s.failure ? { failure: s.failure } : {}),
   };
 }

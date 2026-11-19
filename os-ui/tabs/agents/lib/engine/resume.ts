@@ -37,7 +37,7 @@ export type ResumeDeps = {
   /** Does this role still clear the tool's role floor? */
   toolPermitted: (role: Role, tool: string) => boolean;
   /** Continue the thread as the live runner with the decision; returns what the run did. */
-  resumeRun: (input: { runner: LivePrincipal; approval: Approval; decision: ApprovalDecision }) => Promise<{ parked: boolean; reachedEnd: boolean; queued?: boolean }>;
+  resumeRun: (input: { runner: LivePrincipal; approval: Approval; decision: ApprovalDecision }) => Promise<{ parked: boolean; reachedEnd: boolean; queued?: boolean; /** The resumed run ended because an agent failed — the reason. */ failed?: string }>;
   /** Stamp the outcome on the approval record. */
   markResume: (approvalId: string, resume: ApprovalResume) => void;
   now?: () => string;
@@ -68,6 +68,12 @@ export async function resumeAfterDecision(a: Approval, decision: ApprovalDecisio
   deps.markResume(a.id, { status: 'started', at: now() });
   try {
     const out = await deps.resumeRun({ runner: live, approval: a, decision });
+    // The resume itself worked, but the run it continued ended in an agent failure: the card must
+    // not say `done` for a run that failed.
+    if (out.failed !== undefined) {
+      deps.markResume(a.id, { status: 'failed', at: now(), error: { code: 'agent_failed', reason: out.failed } });
+      return { status: 'failed', approvalId: a.id, runId: a.runId, code: 'agent_failed', reason: out.failed };
+    }
     // L-F: a run that parked again on another held call is not "done" — say so on the card.
     // A4: in worker mode the resume is only FILED here; the card says `queued`, not `done`.
     deps.markResume(a.id, { status: out.queued ? 'queued' : out.parked ? 'parked' : 'done', at: now() });

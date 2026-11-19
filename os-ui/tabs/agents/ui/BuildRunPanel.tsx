@@ -71,6 +71,10 @@ type LastRun = {
   mode?: 'live' | 'offline-mock';
   traceStoreAvailable?: boolean;
   traceUrl?: string;
+  /** The run ended because an agent failed (it stopped there) — with the agent and the reason. */
+  failed?: boolean;
+  failedNode?: string;
+  failureReason?: string;
   /** Set when this run was recovered after a mid-run restart — the completed steps
    *  are preserved and the UI shows an "interrupted — re-run to continue" banner. */
   interrupted?: boolean;
@@ -147,6 +151,10 @@ type RunReport = {
   /** A2: the run is PARKED on these approvals; the decision in Governance resumes it. */
   parked?: boolean;
   heldApprovals?: HeldApproval[];
+  /** The run ended because an agent FAILED: it stopped there and nothing after it ran. */
+  failed?: boolean;
+  failedNode?: string;
+  failureReason?: string;
 };
 type HeldApproval = { approvalId: string; tool: string; node: string };
 
@@ -162,7 +170,16 @@ type TeamNode = {
   finalText?: string;
   steps?: (NodeStep & { errorKind?: ErrorKind })[];
 };
-type RawRun = Partial<RunReport> & { team?: boolean; finalText?: string; nodes?: TeamNode[]; contextUsage?: RunContextUsage; grantedIds?: GrantedIds; writeSummary?: WriteSummary };
+type RawRun = Partial<RunReport> & {
+  team?: boolean;
+  finalText?: string;
+  nodes?: TeamNode[];
+  contextUsage?: RunContextUsage;
+  grantedIds?: GrantedIds;
+  writeSummary?: WriteSummary;
+  /** The live report names the failure as one object; the stored last run as two flat fields. */
+  failure?: { node: string | null; reason: string };
+};
 
 function normalizeRun(body: RawRun): RunReport {
   const steps: RunStep[] =
@@ -211,6 +228,9 @@ function normalizeRun(body: RawRun): RunReport {
     interrupted: body.interrupted,
     parked: body.parked ?? ((body.heldApprovals?.length ?? 0) > 0),
     heldApprovals: Array.isArray(body.heldApprovals) ? body.heldApprovals : undefined,
+    failed: body.failed === true,
+    failedNode: body.failedNode ?? body.failure?.node ?? undefined,
+    failureReason: body.failureReason ?? body.failure?.reason,
   };
 }
 
@@ -1355,6 +1375,13 @@ export default function BuildRunPanel({
           ) : null}
         </div>
       ) : null}
+      {/* A run that ended because an AGENT FAILED says so, where and why — it is not "done". */}
+      {run?.failed && !runningNow ? (
+        <div className="hint" role="alert" style={{ marginTop: 2, marginBottom: 4, color: 'var(--err, #c53030)' }}>
+          Run failed{run.failedNode ? <> at <code>{run.failedNode}</code></> : null}: {run.failureReason ?? 'an agent failed'}.{' '}
+          The run stopped there — no later agent ran. Fix the cause and press ▶ Run to start again.
+        </div>
+      ) : null}
       {lastRun?.interrupted && !runningNow && !run?.parked ? (
         <div className="hint" style={{ marginTop: 2, marginBottom: 4, color: 'var(--warn, #b7791f)' }}>
           {lastRun.runId && lastRun.checkpointer === 'postgres' ? (
@@ -1459,7 +1486,7 @@ export default function BuildRunPanel({
           {/* One-line run summary — a student sees instantly whether it worked and how far
               it got, before any drill-down. */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-            <span className={`badge ${run.ok ? 'ok' : 'warn'}`}>{run.ok ? '✓' : '!'}</span>
+            <span className={`badge ${run.ok ? 'ok' : run.failed ? 'err' : 'warn'}`}>{run.ok ? '✓' : run.failed ? '✗' : '!'}</span>
             <strong style={{ fontSize: 13 }}>{runSummary(run)}</strong>
           </div>
           {/* FIX 2 — node-by-node reveal (multi-agent runs): each agent as a card with

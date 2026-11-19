@@ -33,7 +33,7 @@ import { liveEmbedder } from '@core/infra/context/librarian-live';
 import { runGraphEngine } from '@tabs/agents/lib/engine/run';
 import { selectCheckpointer, type CheckpointerKind } from '@tabs/agents/lib/engine/checkpointer';
 import type { GraphDeps, HeldCall, RouteDecision } from '@tabs/agents/lib/engine/build-graph';
-import { inspectGraphRun, type PendingApproval, type RunInspection } from '@tabs/agents/lib/engine/run';
+import { inspectGraphRun, type PendingApproval, type RunFailure, type RunInspection } from '@tabs/agents/lib/engine/run';
 import { holdDecisionFor } from '@tabs/agents/lib/build/hold';
 import { describeFolderGrant } from '@tabs/agents/lib/build/agent-tool-results';
 import type { ApprovalDecision, ApprovalPort } from '@tabs/agents/lib/engine/approval-port';
@@ -298,6 +298,10 @@ export type RunOsTeamResult = AgenticGraphResult & {
   /** A2: the run is waiting on `heldApprovals`; the decision in Governance resumes it. */
   parked?: boolean;
   heldApprovals?: PendingApproval[];
+  /** An agent FAILED and the run stopped there (never true for a parked or budget-stopped run). */
+  failed?: boolean;
+  /** Which agent failed and why. */
+  failure?: RunFailure;
   held?: HeldCall[];
   routes?: RouteDecision[];
   /** A3: the Langfuse deep link to THIS run's trace (`<console>/trace/<runId>`), when a console is configured. */
@@ -496,7 +500,7 @@ const RUN_TRACE_PROMPT_MAX = 500;
  */
 function emitRunSummaryTrace(
   input: RunOsTeamInput,
-  result: AgenticGraphResult,
+  result: AgenticGraphResult & { failed?: boolean; failure?: RunFailure },
   tracked: UsageTracker,
   prices: Readonly<Record<string, ModelPrice>>,
   run?: { traceId: string },
@@ -509,7 +513,14 @@ function emitRunSummaryTrace(
     principal: `${principalFor(input.systemId)}:run`,
     tool: 'generate',
     input: { prompt: prompt.length > RUN_TRACE_PROMPT_MAX ? `${prompt.slice(0, RUN_TRACE_PROMPT_MAX)}…` : prompt },
-    output: { reachedEnd: result.reachedEnd, path: result.path },
+    // A FAILED run says so in the structured output: Monitoring's run list reads that flag
+    // (`outputFailed`), and without it a run whose agent failed was listed green. A run that did
+    // not fail carries no flag, so its record is byte-for-byte what it was.
+    output: {
+      reachedEnd: result.reachedEnd,
+      path: result.path,
+      ...(result.failed ? { failed: true, failedNode: result.failure?.node ?? null, reason: result.failure?.reason ?? 'an agent failed' } : {}),
+    },
     decision: 'allow',
     tokens: usage?.total,
     costUsd: runCostUsd(usage, tracked.models(), prices),

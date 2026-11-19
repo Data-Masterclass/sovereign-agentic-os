@@ -107,3 +107,13 @@ test('an approval that carries no run is refused typed; a failing resume is stam
   assert.equal((out as { code: string }).code, 'RunAlreadyFinishedError');
   assert.equal(boom.marks.at(-1)?.status, 'failed');
 });
+
+test('F15: a resume that continued the run into an AGENT FAILURE is recorded failed on the approval — not done', async () => {
+  const f = fakeDeps({ id: 'runner-rae', name: 'Rae', role: 'domain_admin', domains: ['sales', 'ops'] });
+  const deps: ResumeDeps = { ...f.deps, resumeRun: async () => ({ parked: false, reachedEnd: false, failed: 'writer: LiteLLM 503' }) };
+  const out = await resumeAfterDecision(RUN_APPROVAL, 'approve', deps);
+  assert.equal(out.status, 'failed');
+  assert.equal((out as { code: string }).code, 'agent_failed');
+  assert.deepEqual(f.marks.map((m) => m.status), ['started', 'failed']);
+  assert.equal(f.marks[1].error?.reason, 'writer: LiteLLM 503');
+});

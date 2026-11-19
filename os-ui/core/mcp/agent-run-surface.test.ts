@@ -202,3 +202,19 @@ test('TRIPWIRE: an embedding never silently substitutes hash vectors on the agen
     'relevance curation is skipped when the vectors are semantically empty',
   );
 });
+
+test('TRIPWIRE (F15): the run doors report a failed run as failed — status, the flag, the agent and the reason', () => {
+  // get_agent_run derives `status` from the run's own state, so a failed run never reads `done`.
+  const read = src('core/mcp/discovery-base-tools.ts');
+  assert.match(read, /status: reportedJobStatus\(jobStatus, \{ failed: run\.failed, parked: run\.parked, finished: run\.finished \}\)/);
+  assert.match(read, /failed: run\.failed,/);
+  assert.match(read, /failureReason: run\.failure\?\.reason/);
+  // run_agent_system and resume_agent_run pass the report's own outcome through.
+  const write = src('core/mcp/agent-write-tools.ts');
+  assert.equal((write.match(/failureReason: b(ody)?\.failure\?\.reason/g) ?? []).length, 2);
+  assert.equal((write.match(/status: b(ody)?\.status,/g) ?? []).length, 2);
+  // The job row: an agent failure is settled `failed`, with the reason.
+  const jobs = src('tabs/agents/lib/build/run-jobs-server.ts');
+  assert.match(jobs, /failed: body\.failed \?/);
+  assert.match(jobs, /await settle\(outcome\.status, outcome\.error\)/);
+});

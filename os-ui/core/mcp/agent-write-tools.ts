@@ -118,7 +118,7 @@ export const agentWriteTools: McpTool[] = [
     tab: 'agents',
     minRole: 'creator',
     description:
-      'RUN an agent system (a real LangGraph StateGraph over your OS-MCP tool grants) for one turn and return the reply + the per-node governed tool steps — the SAME queue, engine and executor the Agents tab uses. Purpose: close the Agents golden path (build → RUN → approval → resume → trace) over MCP. Before: list_agent_systems / get_agent_system (and build_agent_system for a ✓ build). After: get_agent_run(runId) to follow it, decide_approval if it parks, resume_agent_run after a restart, get_run_trace(runId) for the trace. Returns `runId` (= the LangGraph thread id AND the Langfuse trace id) and `traceUrl`. Governance + recursion, stated honestly: the team’s OWN tool calls dispatch through the SAME governed door as this call (grant-scoped, OPA `os-<systemId>` pre-gated, then handleRpc AS YOU) — so a team can never exceed its declared grants NOR your role; there is no escalation in the loop. You must own the system or be entitled to run it (a domain-Shared system is runnable by in-domain members); a non-runnable id is a typed forbidden. A grant naming a tool with no governed MCP tool behind it is a typed bad_request that names the tool. A run that hits a write needing approval PARKS (`parked: true` + `heldApprovals`) instead of executing it. Note: the run drives a live LLM; each node takes seconds, and in worker mode it may return `queued: true` with the runId to follow.',
+      'RUN an agent system (a real LangGraph StateGraph over your OS-MCP tool grants) for one turn and return the reply + the per-node governed tool steps — the SAME queue, engine and executor the Agents tab uses. Purpose: close the Agents golden path (build → RUN → approval → resume → trace) over MCP. Before: list_agent_systems / get_agent_system (and build_agent_system for a ✓ build). After: get_agent_run(runId) to follow it, decide_approval if it parks, resume_agent_run after a restart, get_run_trace(runId) for the trace. Returns `runId` (= the LangGraph thread id AND the Langfuse trace id) and `traceUrl`. Governance + recursion, stated honestly: the team’s OWN tool calls dispatch through the SAME governed door as this call (grant-scoped, OPA `os-<systemId>` pre-gated, then handleRpc AS YOU) — so a team can never exceed its declared grants NOR your role; there is no escalation in the loop. You must own the system or be entitled to run it (a domain-Shared system is runnable by in-domain members); a non-runnable id is a typed forbidden. A grant naming a tool with no governed MCP tool behind it is a typed bad_request that names the tool. A run that hits a write needing approval PARKS (`parked: true` + `heldApprovals`) instead of executing it. A run in which an agent fails stops there and returns `status: "failed"`, `failed: true`, `failedNode` and `failureReason` — it is not reported as done. Note: the run drives a live LLM; each node takes seconds, and in worker mode it may return `queued: true` with the runId to follow.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -169,6 +169,12 @@ export const agentWriteTools: McpTool[] = [
         checkpointer: b.checkpointer,
         // A3: the deep link to THIS run's Langfuse trace (id = run id), when the trace store recorded it.
         traceUrl: b.traceUrl,
+        // How it ended: `done` | `failed` | `parked` | `interrupted` | `incomplete`. A run whose
+        // agent failed is `failed` (with the agent and the reason) — never a quiet `reachedEnd: false`.
+        status: b.status,
+        failed: b.failed === true,
+        failedNode: b.failure?.node ?? undefined,
+        failureReason: b.failure?.reason,
         reachedEnd: b.reachedEnd,
         // A2: a run PARKED on a held write — decide its approvals (decide_approval) to resume it.
         parked: b.parked,
@@ -214,6 +220,10 @@ export const agentWriteTools: McpTool[] = [
         systemId: seen.systemId,
         engine: 'langgraph',
         traceUrl: body.traceUrl,
+        status: body.status,
+        failed: body.failed === true,
+        failedNode: body.failure?.node ?? undefined,
+        failureReason: body.failure?.reason,
         reachedEnd: body.reachedEnd,
         parked: body.parked,
         heldApprovals: body.heldApprovals,
@@ -254,6 +264,9 @@ type StartRunFn = (input: {
     runId?: string;
     checkpointer?: 'postgres' | 'memory';
     traceUrl?: string;
+    status?: string;
+    failed?: boolean;
+    failure?: { node: string | null; reason: string };
     reachedEnd: boolean;
     parked?: boolean;
     heldApprovals?: { approvalId: string; tool: string; node: string }[];

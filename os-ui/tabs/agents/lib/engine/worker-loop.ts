@@ -109,9 +109,23 @@ export type Settlement =
  * What to do with a job whose execution just returned. PURE — the executor supplies the facts.
  * `abandon` wins over everything: a worker that lost its lease owns nothing to settle.
  */
-export function settlementOf(o: { leaseLost: boolean; stopping: boolean; failure?: string; parked?: boolean; reachedEnd?: boolean }): Settlement {
+export function settlementOf(o: {
+  leaseLost: boolean;
+  stopping: boolean;
+  /** The execution THREW (a refused resume, a compile error, an infrastructure failure). */
+  failure?: string;
+  parked?: boolean;
+  reachedEnd?: boolean;
+  /**
+   * The execution returned normally but an AGENT failed and the run stopped there — the reason.
+   * Such a run is `failed`, not `done`: it used to settle `done` because nothing had thrown.
+   */
+  failed?: string;
+}): Settlement {
   if (o.leaseLost) return { kind: 'abandon', reason: 'the lease was lost — another worker owns this run now' };
   if (o.failure !== undefined) return { kind: 'complete', status: 'failed', error: o.failure };
+  // An agent failure ENDS the graph: there is nothing to resume, so it is settled even under SIGTERM.
+  if (o.failed !== undefined && !o.parked) return { kind: 'complete', status: 'failed', error: o.failed };
   // SIGTERM between supersteps: what completed is checkpointed, so the run goes BACK to the queue.
   if (o.stopping && !o.parked && !o.reachedEnd) return { kind: 'requeue' };
   return { kind: 'complete', status: o.parked ? 'parked' : 'done' };

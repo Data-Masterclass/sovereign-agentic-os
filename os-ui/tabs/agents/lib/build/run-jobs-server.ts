@@ -302,7 +302,15 @@ export async function executeJob(store: RunJobStore, job: RunJob, opts: ExecuteJ
     });
     // What now: abandon (lease lost), re-queue (SIGTERM mid-superstep — what completed is
     // checkpointed), or settle. The decision itself is the pure `settlementOf`.
-    const outcome = settlementOf({ leaseLost: lost(), stopping: opts.stopping?.() ?? false, parked: body.parked, reachedEnd: body.reachedEnd });
+    // A run that RETURNED but whose agent failed is settled `failed`, with the agent's reason on
+    // the row — nothing threw, so without this it was settled `done`.
+    const outcome = settlementOf({
+      leaseLost: lost(),
+      stopping: opts.stopping?.() ?? false,
+      parked: body.parked,
+      reachedEnd: body.reachedEnd,
+      failed: body.failed ? `${body.failure?.node ? `${body.failure.node}: ` : ''}${body.failure?.reason ?? 'an agent failed'}` : undefined,
+    });
     if (outcome.kind === 'abandon') {
       await abandon(outcome.reason);
       return;
@@ -313,7 +321,8 @@ export async function executeJob(store: RunJobStore, job: RunJob, opts: ExecuteJ
       opts.log?.(`run ${job.runId} re-queued: the worker is shutting down and the run stopped mid-superstep`);
       return;
     }
-    await settle(outcome.status);
+    if (outcome.status === 'failed') opts.log?.(`run ${job.runId} failed: ${outcome.error ?? 'an agent failed'}`);
+    await settle(outcome.status, outcome.error);
   } catch (e) {
     const err = e as Error & { status?: number };
     const message = err?.message ?? String(e);
@@ -491,7 +500,7 @@ export async function followRun(queued: QueuedRun, opts: { waitMs?: number; sign
  * request any more — it files a `resume` job, which inline mode executes here and worker mode
  * executes in the worker. ONE code path in both pods.
  */
-export async function enqueueResumeAfterDecision(input: { runner: LivePrincipal; approval: Approval; decision: ApprovalDecision }): Promise<{ parked: boolean; reachedEnd: boolean; queued?: boolean }> {
+export async function enqueueResumeAfterDecision(input: { runner: LivePrincipal; approval: Approval; decision: ApprovalDecision }): Promise<{ parked: boolean; reachedEnd: boolean; queued?: boolean; failed?: string }> {
   const a = input.approval;
   if (!a.runId || !a.systemId) throw new Error('resume: the approval carries no run');
   const user = currentUserOf(input.runner);
@@ -506,5 +515,5 @@ export async function enqueueResumeAfterDecision(input: { runner: LivePrincipal;
   const out = await resumeQueuedRun({ user, systemId: a.systemId, domain, runId: a.runId, resumeWith: { [a.id]: input.decision } });
   if (out.error) throw Object.assign(new Error(out.error.message), { status: out.error.status });
   if (!out.body) return { parked: false, reachedEnd: false, queued: true };
-  return { parked: out.body.parked, reachedEnd: out.body.reachedEnd };
+  return { parked: out.body.parked, reachedEnd: out.body.reachedEnd, ...(out.body.failed ? { failed: out.body.failure?.reason ?? 'an agent failed' } : {}) };
 }

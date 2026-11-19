@@ -125,6 +125,14 @@ export type LastRun = {
   /** Did the run reach the natural end of `path`, vs stop early (run-budget
    *  exhaustion or a node failure)? Absent on a pre-existing persisted run. */
   reachedEnd?: boolean;
+  /**
+   * The run ended because an AGENT FAILED (it stopped there; nothing after it ran) — with the
+   * agent and the reason. Absent on a run that did not fail and on runs recorded before this
+   * existed (`ok: false` already marked those not-ok; this says why).
+   */
+  failed?: true;
+  failedNode?: string;
+  failureReason?: string;
   traces: number;
   held: number;
   steps: { node: string; tool: string; effect: string; ran?: boolean }[];
