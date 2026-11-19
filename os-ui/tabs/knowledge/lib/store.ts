@@ -16,6 +16,7 @@ import {
 import { canPromote, roleAtLeast } from '@core/kernel/session';
 import type { Role } from '@core/kernel/session';
 import { osMirror } from '@core/infra/os-mirror';
+import { mirrorRefresher, newMirrorRefresh, type MirrorRefreshState } from '@core/infra/mirror-refresh';
 import { newSeenFields, noteSeen, writeDeleted, writeChanged, writeNew, type SeenFields } from '@core/infra/field-writes';
 import { type ArtifactVersion, versionLog } from '@core/kernel/versioning';
 import { canManageArtifact, type ArtifactScope } from '@core/policy/edit-scope';
@@ -137,11 +138,13 @@ type KnowledgeStoreState = {
   hydration: Promise<void> | null;
   /** What this process last knew the mirror held per workflow (see `core/infra/field-writes.ts`). */
   seen: SeenFields;
+  /** The run worker re-reads the mirror before serving (`core/infra/mirror-refresh.ts`). */
+  refresh: MirrorRefreshState;
 };
 const KS_KEY = Symbol.for('soa.knowledge.store');
 function ks(): KnowledgeStoreState {
   const g = globalThis as unknown as Record<symbol, KnowledgeStoreState | undefined>;
-  if (!g[KS_KEY]) g[KS_KEY] = { workflows: new Map(), domainKnowledge: new Map(), seeded: false, hydration: null, seen: newSeenFields() };
+  if (!g[KS_KEY]) g[KS_KEY] = { workflows: new Map(), domainKnowledge: new Map(), seeded: false, hydration: null, seen: newSeenFields(), refresh: newMirrorRefresh() };
   return g[KS_KEY]!;
 }
 
@@ -195,12 +198,31 @@ function snapshotState(rec: WorkflowRecord): { md: string; tacit: string } {
 export async function ensureHydrated(): Promise<void> {
   const s = ks();
   if (!s.hydration) s.hydration = Promise.all([hydrate(), versions.ensureHydrated(), domainVersions.ensureHydrated()]).then(() => {});
-  return s.hydration;
+  await s.hydration;
+  await refresher.beforeRead(); // the run worker re-reads what os-ui wrote since (no-op in os-ui)
+}
+
+/** The shared worker refresh (`core/infra/mirror-refresh.ts`), applied to the workflows. */
+const refresher = mirrorRefresher<WorkflowRecord>(mirror, () => ks().refresh, {
+  label: 'knowledge',
+  size: 2000,
+  held: (id) => ks().workflows.get(id),
+  put: (rec) => {
+    ks().workflows.set(rec.id, rec);
+    noteSeen(ks().seen, rec.id, rec);
+  },
+  drop: (id) => ks().workflows.delete(id),
+});
+
+/** Declare THIS process (the run worker) a reader of the workflows os-ui writes. Refused elsewhere. */
+export function enableMirrorRefresh(on = true): boolean {
+  return refresher.enable(on);
 }
 
 async function hydrate(): Promise<void> {
   const s = ks();
   const docs = (await mirror.hydrate(2000)) ?? [];
+  refresher.noteHydrated((docs as WorkflowRecord[]).filter((r) => r && r.id).map((r) => r.id));
   for (const rec of docs as WorkflowRecord[]) {
     if (rec && rec.id && !s.workflows.has(rec.id)) {
       s.workflows.set(rec.id, rec);
@@ -226,6 +248,7 @@ export function __resetStore(): void {
   s.seeded = false;
   s.hydration = null;
   s.seen.clear();
+  s.refresh = newMirrorRefresh();
   mirror.__reset();
   versions.__reset();
   domainVersions.__reset();
@@ -538,6 +561,7 @@ export function deleteWorkflow(id: string, user: Principal): void {
     fail('Archive this published workflow before deleting it', 400);
   }
   writeDeleted(mirror, ks().seen, id);
+  refresher.noteDeleted(id);
   versions.purge(id);
   ks().workflows.delete(id);
 }

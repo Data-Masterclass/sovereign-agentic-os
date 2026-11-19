@@ -758,6 +758,16 @@ source is one yaml string; `refreshRecord` before a write that must start from t
 `writeDeleted` so a delete cannot overtake a queued write). Prove it with a two-process test
 through the real store (`core/infra/two-process-fixture.ts`), not with a mock of the store.
 
+**The worker's copy of a store goes stale unless the store re-reads its mirror.** Each store
+hydrates ONCE; the worker never served what os-ui created after its boot and kept serving what
+os-ui deleted. A store an agent tool reads must wire `core/infra/mirror-refresh.ts`
+(`mirrorRefresher`): call `beforeRead()` in its `ensureHydrated`/`getCache` (the MCP dispatcher
+awaits every bundle's `hydrate` before each `tools/call`), `noteHydrated` in the boot hydration,
+`noteDeleted` in its delete, and export `enableMirrorRefresh`, switched on in
+`worker/agent-runs.ts` (refused outside the run worker). Newer wins by `updatedAt`, so a store
+without that stamp must add one on every write (dashboards did). Prove it with
+`core/infra/worker-refresh-suite.ts`.
+
 **A store can hydrate EMPTY without throwing, and an empty store looks exactly
 like a tenant that owns nothing.** `ensureHydrated()` RESOLVES when the durable
 mirror was unreachable: the failure is recorded for a throttled retry and

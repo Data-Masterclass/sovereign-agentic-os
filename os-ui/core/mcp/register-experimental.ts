@@ -79,7 +79,11 @@ const BUNDLES: BundleSpec[] = [
       ]);
       return [...write.knowledgeWriteTools, ...byTab(read.readTools, 'knowledge')];
     },
-    hydrate: () => import('@tabs/knowledge/lib/store').then((m) => m.ensureHydrated()),
+    hydrate: () =>
+      Promise.all([
+        import('@tabs/knowledge/lib/store').then((m) => m.ensureHydrated()),
+        import('@tabs/knowledge/lib/personal-store').then((m) => m.ensureHydrated()),
+      ]).then(() => {}),
   },
   {
     feature: 'files',
@@ -105,6 +109,13 @@ const BUNDLES: BundleSpec[] = [
       ]);
       return [...write.metricWriteTools, ...byTab(read.readTools, 'metrics'), ...byTab(waveb.waveBReadTools, 'metrics')];
     },
+    // A metric is a dataset measure + its lifecycle flags: both stores (in the run worker this is
+    // also the throttled re-read of what os-ui wrote — `core/infra/mirror-refresh.ts`).
+    hydrate: () =>
+      Promise.all([
+        import('@tabs/data/lib/store').then((m) => m.ensureHydrated()),
+        import('@tabs/metrics/lib/lifecycle').then((m) => m.ensureHydrated()),
+      ]).then(() => {}),
   },
   {
     feature: 'dashboards',
@@ -117,6 +128,7 @@ const BUNDLES: BundleSpec[] = [
       ]);
       return [...write.dashboardWriteTools, ...byTab(read.readTools, 'dashboards'), ...byTab(waveb.waveBReadTools, 'dashboards')];
     },
+    hydrate: () => import('@tabs/dashboards/lib/store').then((m) => m.ensureHydrated()),
   },
 
   {
@@ -130,6 +142,7 @@ const BUNDLES: BundleSpec[] = [
       ]);
       return [...write.softwareWriteTools, ...byTab(read.readTools, 'software'), ...byTab(waveb.waveBReadTools, 'software')];
     },
+    hydrate: () => import('@tabs/software/lib/apps').then((m) => m.ensureHydrated()),
   },
 
   {
@@ -146,6 +159,7 @@ const BUNDLES: BundleSpec[] = [
         ...conn.connectionTools,
       ];
     },
+    hydrate: () => import('@tabs/connections/lib/store').then((m) => m.ensureConnectionsHydrated()),
   },
 
   // The admin re-index (2026-11-19). The TOOL is kernel-side and imports no tab; the two
