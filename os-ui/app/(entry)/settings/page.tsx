@@ -5,6 +5,7 @@ import Link from 'next/link';
 import PageHeader from '@core/ui/PageHeader';
 import StackStatus from '@core/ui/StackStatus';
 import ThemeToggle from '@core/ui/ThemeToggle';
+import { TechnicalDetailsToggle } from '@core/ui/TechnicalDetails';
 import { config } from '@core/kernel/config';
 
 // Server component: a read-only view of this deployment's configuration. Only
@@ -32,13 +33,7 @@ export default function SettingsPage() {
     <>
       <PageHeader title="Settings" crumb="deployment configuration — read-only" />
       <div className="content">
-        <p className="lead">
-          Read-only configuration for this deployment: tenant and domain identity, the
-          enabled components, and versions. Member/role management and quotas are governed in
-          the <Link href="/governance">Governance</Link> tab; secrets never surface here.
-        </p>
-
-        <div className="section-title">Deployment</div>
+        <div className="section-title" style={{ marginTop: 0 }}>Deployment</div>
         <div className="grid">
           {DEPLOYMENT.map((d) => (
             <div className="card" key={d.k}>
@@ -73,6 +68,18 @@ export default function SettingsPage() {
               </div>
             </div>
             <ThemeToggle />
+          </div>
+        </div>
+        <div className="card" style={{ marginTop: 14 }}>
+          <div className="row" style={{ alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
+            <div style={{ flex: 1, minWidth: 240 }}>
+              <div style={{ fontWeight: 600 }}>Show technical details</div>
+              <div className="muted">
+                Off by default. Switch it on to see the engineering panels on detail pages, such
+                as <strong>Under the hood</strong>. Your choice is saved on this device.
+              </div>
+            </div>
+            <TechnicalDetailsToggle />
           </div>
         </div>
 

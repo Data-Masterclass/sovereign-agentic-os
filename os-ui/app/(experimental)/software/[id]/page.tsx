@@ -13,6 +13,7 @@ import type { Role as SessionRole } from '@core/kernel/session';
 import type { ReviewCardData } from '@tabs/governance/ui/ReviewCard';
 import SoftwareBuilder, { type SoftwareApp } from '@tabs/software/ui/SoftwareBuilder';
 import { UnderTheHood } from '@core/ui/engineering/UnderTheHood';
+import { TechnicalDetailsOnly } from '@core/ui/TechnicalDetails';
 
 type Tool = { name: string; description: string; write: boolean };
 type Connection = { id: string; name: string; principal: string; visibility: SoftwareApp['visibility']; tools: Tool[] } | null;
@@ -127,7 +128,7 @@ export default function AppPage() {
           onReload={reloadAll}
         />
         {/* night-2 stream T: the app's real artefacts, and what is not in git yet. */}
-        <UnderTheHood kind="app" id={app.id} />
+        <TechnicalDetailsOnly><UnderTheHood kind="app" id={app.id} /></TechnicalDetailsOnly>
       </div>
     </ConfirmProvider>
   );

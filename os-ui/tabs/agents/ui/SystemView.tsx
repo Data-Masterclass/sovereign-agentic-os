@@ -36,6 +36,7 @@ import GitHeadBadge from '@core/ui/git/GitHeadBadge';
 // Night 2 (stream T): the engineering view's panel. Both mounts coexist — the badge is the
 // one-line git answer in the header, `UnderTheHood` is the tool-native panel below it.
 import { UnderTheHood } from '@core/ui/engineering/UnderTheHood';
+import { TechnicalDetailsOnly } from '@core/ui/TechnicalDetails';
 import CloneRepository from '@core/ui/git-clone/CloneRepository';
 
 // React Flow + Monaco are heavy, client-only, and SSR-tolerant only when lazy —
@@ -659,7 +660,7 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
       </>
       )}
       {/* night-2 stream T: the compiled LangGraph graph and the rest of the real artefacts. */}
-      <UnderTheHood kind="agent_system" id={systemId} />
+      <TechnicalDetailsOnly><UnderTheHood kind="agent_system" id={systemId} /></TechnicalDetailsOnly>
       <CloneRepository domain={data.domain} />
     </div>
     </ConfirmProvider>

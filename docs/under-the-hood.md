@@ -3,6 +3,10 @@
 Which open-source tool does the work, where the files live in git, and what to open in each tool's own
 UI to find the object.
 
+> **In the product:** the "Under the hood" panel is hidden by default. Switch on **My Settings →
+> Appearance → Show technical details** (`/settings`) to see it on a detail page; the choice is
+> remembered per device. `get_engineering_view` over MCP needs no switch.
+
 > Written read-only against `feat/night-2` at `71b0c567` (14 November 2026). Two commits landed in the
 > worktree during writing — `ac91c803` (worker boot secrets) and `14ed35ce` (a merge from main) — and
 > between them they change only `os-ui/worker/agent-runs.ts` and

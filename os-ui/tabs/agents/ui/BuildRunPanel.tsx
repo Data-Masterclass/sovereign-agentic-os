@@ -1236,10 +1236,6 @@ export default function BuildRunPanel({
           ) : null}
         </div>
       ) : null}
-      <p className="hint" style={{ marginTop: 0 }}>
-        Compiles system.yaml → LangGraph, saves the agent files, registers the LiteLLM key +
-        routing and the OPA grants, links Langfuse — then verifies each with a probe.
-      </p>
       {buildErr ? <div className="error">{buildErr}</div> : null}
       {report ? (
         <div className="table-wrap" style={{ marginTop: 4 }}>
@@ -1366,8 +1362,7 @@ export default function BuildRunPanel({
         </div>
       ) : null}
       <p className="hint" style={{ marginTop: 0 }}>
-        The team walks the graph from the entrypoint; every tool call is forced through the
-        governed gateway (LiteLLM → OPA → Langfuse). Approvals land in Governance.
+        Every tool call goes through the governed gateway. Approvals land in Governance.
       </p>
       {/* Primary affordance: one click runs the task DEFINED in Define. The server
           fills a real, purpose-derived default when the prompt is empty — no need to
