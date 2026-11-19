@@ -14,6 +14,12 @@
  *     removal.
  *   • Degrades to the install catalog when the gateway is unreachable, and SAYS
  *     SO via `source: 'offline'` rather than implying the gateway is empty.
+ *   • `images` on every row: whether that alias may be sent an image. It is the
+ *     answer of `canReceiveImages` (the explicit, admin-controlled allowlist in
+ *     `@core/models/capabilities`) — never the `tier` guess. `imageInput` carries
+ *     the effective list, whether it is the built-in one or the admin's, and any
+ *     problem with the override, so the admin page can say what is in force.
+ *     Read-only: nothing in the model call path consults it yet.
  *
  * USER STORIES
  *   • As a builder, the models I can pin for an agent are the models the
@@ -35,11 +41,18 @@ import { requireUser } from '@core/kernel/auth';
 import { readModels, type LiteLlmModelRow } from '@core/infra/litellm-admin';
 import { MODEL_CATALOG, modelInfo, classifyProviderType, type ModelInfo } from '@tabs/agents/lib/routing';
 import { roleModels } from '@core/models/roles';
+import { canReceiveImages, imageAllowlist } from '@core/models/capabilities';
 
 export const dynamic = 'force-dynamic';
 
-/** A catalog row + the seeded-vs-admin-added discriminator for the admin page. */
-type CatalogRow = ModelInfo & { dbModel: boolean };
+/** A catalog row + the seeded-vs-admin-added discriminator + the image flag for the admin page. */
+type CatalogRow = ModelInfo & { dbModel: boolean; images: boolean };
+
+/** The effective image allowlist, for display (the decision itself is `canReceiveImages`). */
+function imageInput() {
+  const { models, source, warnings } = imageAllowlist();
+  return { models: [...models], source, warnings };
+}
 
 /**
  * Enrich a live LiteLLM alias with catalog display + provenance + provider TYPE.
@@ -81,14 +94,14 @@ export async function GET() {
       }
     }
     if (models.length > 0) {
-      const rows: CatalogRow[] = models.map((m) => ({ ...m, dbModel: dbModel.get(m.model_name) === true }));
-      return NextResponse.json({ models: rows, source: 'litellm', roles: roleModels() });
+      const rows: CatalogRow[] = models.map((m) => ({ ...m, dbModel: dbModel.get(m.model_name) === true, images: canReceiveImages(m.model_name) }));
+      return NextResponse.json({ models: rows, source: 'litellm', roles: roleModels(), imageInput: imageInput() });
     }
   }
 
   // Offline: the install catalog (Standard gpt-oss-20b / Reasoning + Vision Qwen3-VL-235B / Embeddings Qwen3-VL-Embedding-8B).
   // The shipped seed models are all STACKIT-managed inference, so group them there.
   // All install-catalog entries are deployment seeds → dbModel false (not removable).
-  const models: CatalogRow[] = Object.values(MODEL_CATALOG).map((m) => ({ ...m, providerType: 'stackit' as const, dbModel: false }));
-  return NextResponse.json({ models, source: 'offline', roles: roleModels() });
+  const models: CatalogRow[] = Object.values(MODEL_CATALOG).map((m) => ({ ...m, providerType: 'stackit' as const, dbModel: false, images: canReceiveImages(m.model_name) }));
+  return NextResponse.json({ models, source: 'offline', roles: roleModels(), imageInput: imageInput() });
 }

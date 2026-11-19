@@ -44,7 +44,11 @@ type RoleKey = 'standard' | 'reasoning' | 'embeddings';
 type ProviderType = 'stackit' | 'openai-compatible' | 'azure' | 'bedrock' | 'self-hosted';
 // `dbModel` = LiteLLM's seeded-vs-admin-added flag (true ⇒ registered via the
 // add-provider wizard, removable; false ⇒ seeded from the deployment config).
-type CatalogModel = { model_name: string; display: string; provenance: 'internal' | 'external'; providerType?: ProviderType; tier?: string; dbModel?: boolean };
+type CatalogModel = { model_name: string; display: string; provenance: 'internal' | 'external'; providerType?: ProviderType; tier?: string; dbModel?: boolean; images?: boolean };
+// Which models may be sent an image — the server's answer (core/models/capabilities.ts), shown
+// read-only. `models` is the list in force; `source` says whether it is the built-in list or the
+// deployment's own. This page never works the answer out for itself.
+type ImageInput = { models: string[]; source: 'default' | 'override'; warnings: string[] };
 
 const PROVIDER_LABELS: Record<ProviderType, string> = {
   stackit: 'STACKIT managed inference',
@@ -100,6 +104,7 @@ function ModelsPageInner() {
   // modelRoles store (the ONE per-role default store).
   const [catalog, setCatalog] = useState<CatalogModel[]>([]);
   const [catalogSource, setCatalogSource] = useState<'litellm' | 'offline' | null>(null);
+  const [imageInput, setImageInput] = useState<ImageInput | null>(null);
   const [modelRoles, setModelRoles] = useState<Record<RoleKey, string>>({ standard: '', reasoning: '', embeddings: '' });
   // Cost routing: standard-first escalation (default ON). Strictly-validated surfaces
   // try Standard first and escalate to Reasoning only on a validation miss.
@@ -131,7 +136,7 @@ function ModelsPageInner() {
       const mBody = await mRes.json();
       if (!mRes.ok) { setError(mBody.error ?? 'Failed to load'); return; }
       setModels(mBody.models ?? []); setAssistant(mBody.assistant ?? ''); setAssistantExplicit(Boolean(mBody.assistantExplicit)); setKeys(mBody.keys ?? []);
-      if (cRes.ok) { const c = await cRes.json(); setCatalog(c.models ?? []); setCatalogSource(c.source ?? null); }
+      if (cRes.ok) { const c = await cRes.json(); setCatalog(c.models ?? []); setCatalogSource(c.source ?? null); setImageInput(c.imageInput ?? null); }
       if (sRes.ok) { const s = await sRes.json(); if (s.settings?.modelRoles) setModelRoles(s.settings.modelRoles); setStandardFirst(s.settings?.standardFirstEscalation !== false); }
       if (pRes.ok) { const p = await pRes.json(); setPrices(p.prices ?? {}); setPricesMeta({ updatedAt: p.updatedAt, updatedBy: p.updatedBy }); setPriceEdits({}); }
     } catch (e) { setError((e as Error).message); } finally { setLoading(false); }
@@ -475,12 +480,20 @@ function ModelsPageInner() {
             const isDefault = roleDefaults.has(name);
             const isAssistant = assistant === name;
             const family = familyOf(name);
+            // Exact name on the server's list, or "no". A model the server did not list is "no".
+            const images = live?.images ?? imageInput?.models.includes(name) ?? false;
             return (
               <tr key={name}>
                 <td>
                   <strong>{live?.display ?? m?.label ?? name}</strong>
                   {isDefault ? <span className="pa-tag" style={{ marginLeft: 8 }}>default</span> : null}
                   {isAssistant ? <span className="pa-tag" style={{ marginLeft: 8 }}>assistant</span> : null}
+                  <span
+                    className="pa-tag" style={{ marginLeft: 8 }}
+                    title={images ? 'This model is on the list of models that may be sent images.' : 'This model is not on the list of models that may be sent images.'}
+                  >
+                    Images: {images ? 'yes' : 'no'}
+                  </span>
                   <div className="muted" style={{ fontSize: 11 }}>{name}{m ? ` · ${m.task}` : ''}{family ? ` · ${family}` : ''}{live?.tier ? ` · ${live.tier} tier` : ''}</div>
                 </td>
                 <td>{live?.tier ? <span className="pa-tag">{live.tier}</span> : (m ? <span className="pa-tag">{m.tier}</span> : <span className="muted">—</span>)}</td>
@@ -527,6 +540,20 @@ function ModelsPageInner() {
                 The platform&rsquo;s built-in models, managed by the deployment — always available, not removable here.
                 {catalogSource === 'offline' ? ' LiteLLM is unreachable — showing the install catalog.' : ''}
               </div>
+              {imageInput ? (
+                <div className="hint" style={{ marginBottom: 10 }}>
+                  <strong>Images.</strong>{' '}
+                  {imageInput.models.length === 0
+                    ? 'No model may be sent images.'
+                    : <>Only these models may be sent images: {imageInput.models.map((n, i) => <span key={n}>{i > 0 ? ', ' : ''}<code>{n}</code></span>)}.</>}
+                  {' '}
+                  {imageInput.source === 'override'
+                    ? 'This list is set by your deployment.'
+                    : 'This is the built-in list.'}
+                  {' '}To change it, set <code>osUI.imageAllowlist</code> in the deployment values. Any model not on the list is never sent an image.
+                  {imageInput.warnings.map((w) => <div key={w} style={{ color: 'var(--danger)', marginTop: 4 }}>{w}</div>)}
+                </div>
+              ) : null}
               <div className="table-wrap">
                 <table>
                   <thead><tr><th>Model</th><th>Tier</th><th>Route</th><th>Cap €/mo</th><th>Enabled</th></tr></thead>
