@@ -18,6 +18,9 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 import {
+  abandonReindex,
+  inFlight,
+  reindexOneUnit as reindexUnitLive,
   LOOSE_DOC_CAP,
   MARKER_FIELDS,
   STANDIN_MARKERS,
@@ -328,7 +331,10 @@ const SRC = readFileSync(join(HERE, 'reindex.ts'), 'utf8');
 const PIPELINE = readFileSync(join(HERE, 'index-pipeline.ts'), 'utf8');
 
 test('TRIPWIRE (knowledge): the default unit path is the governed index pipeline, not a copy of it', () => {
-  assert.match(SRC, /indexWorkflow,\n\s*indexDomain,/, 'the live deps ARE the pipeline functions');
+  // The live deps call the pipeline functions and bind `requireLive` there, so the refusal lands
+  // inside the pipeline — before its first write — rather than in this module afterwards (M1).
+  assert.match(SRC, /indexWorkflow: \(workflow, opts\) => indexWorkflow\(workflow, \{ \.\.\.opts, requireLive: true \}\)/);
+  assert.match(SRC, /indexDomain: \(card, caller\) => indexDomain\(card, caller, \{ requireLive: true \}\)/);
   assert.match(SRC, /refuseOfflineMock\(/);
   assert.ok(!/offlineMockAllowed\(/.test(SRC), 'a re-index may never opt INTO fabrication');
 });
@@ -344,4 +350,107 @@ test('TRIPWIRE: the knowledge pipeline ADDS before it prunes, and prunes nothing
 test('KNOWLEDGE REINDEX: the exported service is the contract both doors use', () => {
   assert.equal(typeof knowledgeReindexService.planReindex, 'function');
   assert.equal(typeof knowledgeReindexService.runReindex, 'function');
+});
+
+// ---------------------------------------------------------------------------
+//  H3 · M4 · low 4 — abandon, resume without re-planning, a lost work list
+// ---------------------------------------------------------------------------
+
+test('H3 (knowledge): abandon fails the running job, names the admin, and frees the target', async () => {
+  const d = deps({ reindexUnit: async () => ({ outcome: 'replaced' }) });
+  const started = await runReindex(ADMIN, PLAN_OF(['wf_1', 'wf_2', 'wf_3']), { batch: 1, deps: d });
+  const out = await abandonReindex(ADMIN);
+  assert.equal(out.abandoned, true);
+  assert.equal(out.job?.status, 'failed');
+  assert.match(out.job!.error!, /Abandoned by u_admin at 1\/3/);
+  assert.equal(inFlight(), false);
+  const again = await runReindex(ADMIN, PLAN_OF(['wf_1']), { deps: d });
+  assert.equal(again.started, true);
+  assert.notEqual(again.job.id, started.job.id);
+});
+
+test('H3 (knowledge): abandon is admin-only and honest when nothing runs', async () => {
+  await assert.rejects(() => abandonReindex(CREATOR), (e: Error & { status?: number }) => e.status === 403);
+  const out = await abandonReindex(ADMIN);
+  assert.equal(out.abandoned, false);
+  assert.equal(out.reason, 'nothing-running');
+});
+
+test('M4 (knowledge): a resume (plan=null) continues from the cursor; nothing to resume is a 409', async () => {
+  const d = deps({ reindexUnit: async () => ({ outcome: 'replaced' }) });
+  const first = await runReindex(ADMIN, PLAN_OF(['wf_1', 'wf_2']), { batch: 1, deps: d });
+  const resumed = await runReindex(ADMIN, null, { batch: 1, deps: d });
+  assert.equal(resumed.job.id, first.job.id);
+  assert.equal(resumed.job.status, 'done');
+  await assert.rejects(
+    () => runReindex(ADMIN, null, { deps: d }),
+    (e: Error & { status?: number }) => e.status === 409 && /no running knowledge re-index/.test(e.message),
+  );
+});
+
+test('LOW 4 (knowledge): a lost work list fails the job instead of indexing a stale cursor', async () => {
+  const d = deps({ reindexUnit: async () => ({ outcome: 'replaced' }) });
+  await runReindex(ADMIN, PLAN_OF(['wf_1', 'wf_2']), { batch: 1, deps: d });
+  __resetKnowledgeReindex();
+  const out = await runReindex(ADMIN, PLAN_OF(['other_1', 'other_2']), { batch: 1, deps: d });
+  assert.equal(out.reason, 'work-list-lost');
+  assert.equal(out.job.status, 'failed');
+  assert.match(out.job.error!, /Nothing was indexed against it/);
+});
+
+// ---------------------------------------------------------------------------
+//  M1 — the refusal happens BEFORE the write, through the real wiring
+// ---------------------------------------------------------------------------
+
+test('M1 (knowledge): a hash embedding mid-run refuses BEFORE any OpenSearch write, through LIVE_UNIT_DEPS', async () => {
+  const { __resetStore, createWorkflow } = await import('@tabs/knowledge/lib/store');
+  const { __resetIndex, allUnits } = await import('@tabs/knowledge/lib/index-store');
+  __resetStore();
+  __resetIndex();
+  const rec = createWorkflow({ id: 'amir', domains: ['sales'], role: 'admin' }, { title: 'Onboarding', domain: 'sales' });
+
+  const seen: string[] = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
+    const u = String(url);
+    seen.push(`${(init?.method ?? 'GET').toUpperCase()} ${u}`);
+    // The gateway falls over mid-run; everything else would answer fine.
+    if (u.includes('/v1/embeddings')) return new Response('upstream died', { status: 502 });
+    return new Response('{}', { status: 200 });
+  }) as typeof fetch;
+
+  try {
+    await assert.rejects(
+      // The REAL unit path: `indexWorkflow(..., {requireLive:true})` decides, inside the pipeline.
+      () => reindexUnitLive(rec.id, 'u_admin'),
+      (e: unknown) => {
+        assert.ok(isOfflineMockRefused(e));
+        assert.match((e as Error).message, /stand-in \(offline-hash\)/);
+        assert.match((e as Error).message, /nothing was written and nothing \n?was pruned|nothing was written and nothing was pruned/);
+        return true;
+      },
+    );
+    const wrote = seen.filter((c) => /_bulk|_delete_by_query|_update/.test(c));
+    assert.deepEqual(wrote, [], `no OpenSearch write may have happened, saw: ${wrote.join(', ')}`);
+    assert.deepEqual(allUnits(), [], 'and the in-process mirror was not touched either');
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test('LOW 2 (knowledge): a pasted doc is billed to ITS OWN domain, never to no domain', async () => {
+  const billed: { userId: string; domain: string }[] = [];
+  const out = await reindexOneUnit('doc:abc', 'u_admin', unitDeps({
+    readDoc: async () => ({ text: 'a pasted memo', domain: 'sales' }),
+    embed: (async (_texts: string[], caller: { userId: string; domain: string }) => {
+      billed.push({ userId: caller.userId, domain: caller.domain });
+      return { vectors: [[0.5]], source: 'litellm' };
+    }) as unknown as UnitDeps['embed'],
+  }));
+  assert.equal(out.outcome, 'replaced');
+  assert.deepEqual(billed, [{ userId: 'u_admin', domain: 'sales' }], 'the spend belongs to the object’s domain (A27)');
+});
+
+test('LOW 1: the prune sweeps a domain card’s SECTION ids, which carry no workflow_id', () => {
+  assert.match(PIPELINE, /prefix: \{ _id: `\$\{scope\}:` \}/, 'domain:<name>:<section> must be reachable by the prune');
 });

@@ -22,17 +22,22 @@
  *                                                        at all; it is embedded in place
  *   - IT REFUSES, IT NEVER FALLS BACK. The gateway is probed first; unreachable ⇒
  *     `refuseOfflineMock(...)` (typed ENGINE_UNAVAILABLE, 503) before any row is read. And since
- *     a laptop MAY hash (`OS_OFFLINE_MOCK=allow`), each unit's own report is checked:
- *     `embedSource !== 'litellm'` is a FAILURE and nothing is replaced — a re-index that accepted
- *     `offline-hash` would rewrite the exact rows it was started to remove.
+ *     a laptop MAY hash (`OS_OFFLINE_MOCK=allow`), a gateway that falls over MID-RUN is refused
+ *     too — inside the pipeline, by `requireLive`, which raises after the embedding and BEFORE
+ *     `upsertUnits` and `writeOpenSearch` (review M1; the first version read `embedSource` off
+ *     the report, by which time the write AND the prune had happened). `verdictOf` re-reads the
+ *     report as a second line, so a future caller that forgets `requireLive` still cannot
+ *     replace a real vector with a hash.
  *   - NEVER DELETES A ROW IT COULD NOT REPLACE: `writeOpenSearch` now adds and then prunes only
  *     what the add did not cover (see `index-pipeline.ts`), and a report that says `store:
  *     'memory'` — the OpenSearch write did not land — is a failure here, not a success.
  *   - HONEST ABOUT ITS BLIND SPOT. See
  *     `docs/superpowers/plans/2026-11-19-reindex-files-knowledge.md` §1.1 and
- *     {@link UNMARKED_CAVEAT}: this index DOES persist a `source` keyword, so the `marked` query
- *     is meaningful here — but the embedder's own `offline-hash` label was never written to a
- *     row, so a hash vector is still indistinguishable from a real one. Only `all` re-does those.
+ *     {@link UNMARKED_CAVEAT}. This index has a `source` FIELD, but what it holds is provenance
+ *     (`os-ui-ingest`, `files-use-as`) — no writer in either index ever stamped a stand-in label
+ *     into it, and the embedder's `offline-hash` was never written to a row at all. So the
+ *     `marked` query is well-formed and its expected count is 0 on this corpus too: a hash vector
+ *     stays indistinguishable from a real one, and only `all` re-does those.
  */
 import 'server-only';
 import { config } from '@core/kernel/config';
@@ -77,10 +82,12 @@ export const LOOSE_DOC_CAP = 500;
 // ---------------------------------------------------------------------------
 
 /**
- * The stand-in labels this corpus could carry. Unlike the `files` index, the `knowledge` index
- * really does persist a `source` keyword (`os-ui-ingest`, `files-use-as`, …), so a stand-in that
- * ever stamped one is findable here. The embedder's `offline-hash` label was never written to a
- * row, which is the blind spot {@link UNMARKED_CAVEAT} exists for.
+ * The stand-in labels a row could carry. This index does have a `source` keyword — but it holds
+ * PROVENANCE (`os-ui-ingest`, `files-use-as`), not an honesty label, and no writer ever stamped
+ * one of these strings into it. So the query is well-formed and finds nothing today, exactly as
+ * on the Files corpus; it exists so that a row which DOES carry such a label (a hand-written doc,
+ * a future writer) is found rather than assumed away. The embedder's `offline-hash` never reached
+ * a row at all, which is the blind spot {@link UNMARKED_CAVEAT} exists for.
  */
 export const STANDIN_MARKERS = ['offline-hash', 'offline-mock', 'mock', 'demo-seed'] as const;
 export const MARKER_FIELDS = ['source', 'embed_source', 'embedSource', 'mode', 'embed_mode'] as const;
@@ -285,16 +292,20 @@ export type UnitDeps = {
   indexWorkflow: typeof indexWorkflow;
   indexDomain: typeof indexDomain;
   embed: typeof embed;
-  readDoc: (id: string) => Promise<{ text: string } | null>;
+  readDoc: (id: string) => Promise<{ text: string; domain: string } | null>;
   writeDocVector: (id: string, vector: number[]) => Promise<boolean>;
 };
 
-async function readKnowledgeDoc(id: string): Promise<{ text: string } | null> {
-  const res = await osJson(`/${config.knowledgeIndex}/_doc/${encodeURIComponent(id)}?_source_includes=text`, { method: 'GET' });
+async function readKnowledgeDoc(id: string): Promise<{ text: string; domain: string } | null> {
+  // The doc's OWN domain comes back with it, so the embedding is billed to the domain the
+  // document belongs to rather than to no domain at all (review low 2): the spend belongs to the
+  // object, which is the rule `actingCaller` exists to keep (checklist A27).
+  const res = await osJson(`/${config.knowledgeIndex}/_doc/${encodeURIComponent(id)}?_source_includes=text,domain`, { method: 'GET' });
   if (!res || res.status !== 200) return null;
-  const src = (res.body._source ?? {}) as { text?: unknown };
+  const src = (res.body._source ?? {}) as { text?: unknown; domain?: unknown };
   const text = typeof src.text === 'string' ? src.text : '';
-  return text.trim() ? { text } : null;
+  const domain = typeof src.domain === 'string' ? src.domain : '';
+  return text.trim() ? { text, domain } : null;
 }
 
 async function writeKnowledgeDocVector(id: string, vector: number[]): Promise<boolean> {
@@ -308,8 +319,10 @@ async function writeKnowledgeDocVector(id: string, vector: number[]): Promise<bo
 export const LIVE_UNIT_DEPS: UnitDeps = {
   record: recordForIndex,
   domainCard: getDomainKnowledge,
-  indexWorkflow,
-  indexDomain,
+  // `requireLive` is bound HERE rather than trusted to the caller: the refusal has to happen
+  // inside the pipeline, before its first write (review M1).
+  indexWorkflow: (workflow, opts) => indexWorkflow(workflow, { ...opts, requireLive: true }),
+  indexDomain: (card, caller) => indexDomain(card, caller, { requireLive: true }),
   embed,
   readDoc: readKnowledgeDoc,
   writeDocVector: writeKnowledgeDocVector,
@@ -326,7 +339,7 @@ export async function reindexOneUnit(unitId: string, by: string, deps: UnitDeps 
     const id = unitId.slice('doc:'.length);
     const doc = await deps.readDoc(id);
     if (!doc) return { outcome: 'skipped', reason: 'the document is gone, or holds no text to embed' };
-    const { vectors, source } = await deps.embed([doc.text], actingCaller(by, ''));
+    const { vectors, source } = await deps.embed([doc.text], actingCaller(by, doc.domain));
     if (source !== 'litellm' || !vectors[0]?.length) {
       return { outcome: 'failed', reason: `the gateway answered with a stand-in (${source}) — the row was left as it was` };
     }
@@ -420,7 +433,7 @@ function busy(set?: boolean): boolean {
 
 export async function runReindex(
   principal: ReindexPrincipal,
-  plan: ReindexPlan,
+  plan: ReindexPlan | null,
   opts: { batch?: number; onProgress?: (job: ReindexJob) => void | Promise<void>; deps?: KnowledgeReindexDeps } = {},
 ): Promise<{ started: boolean; job: ReindexJob; reason?: string }> {
   assertReindexAdmin(principal);
@@ -443,15 +456,50 @@ export async function runReindex(
     return { started: false, job: existing, reason: 'already-running' };
   }
 
-  const claim = startOrResume(TARGET, { filter: plan.filter, by: principal.id, total: plan.units.length });
+  // RESUME (`plan === null`): no re-plan, no second index read — the running job's own work list
+  // and cursor are the facts (review M4). Nothing to resume is a stated conflict, not a silent
+  // no-op, because the caller believed there was a job.
+  if (!plan) {
+    if (!existing || existing.status !== 'running') {
+      const err = new Error(
+        `There is no running ${TARGET} re-index to continue. Run a plan first, then start one.`,
+      ) as Error & { status?: number };
+      err.status = 409;
+      throw err;
+    }
+  }
+
+  const claim = plan
+    ? startOrResume(TARGET, { filter: plan.filter, by: principal.id, total: plan.units.length })
+    : { started: false, job: existing! };
   const job = claim.job;
-  if (claim.started) workList().set(job.id, plan.units);
-  const work = workList().get(job.id) ?? plan.units;
+  if (claim.started && plan) workList().set(job.id, plan.units);
+
+  // A resume uses the list the job was CREATED with. If that list is GONE — the process was
+  // replaced between batches — the cursor would index into a different list, so the units it
+  // points past would silently never be re-indexed while the job reported progress. That is a
+  // false claim about the corpus, so the job FAILS here instead (review low 4). A fresh
+  // plan + run then redoes the work honestly; the re-index is idempotent, so that costs only time.
+  const work = workList().get(job.id);
+  if (!work) {
+    const dead = finishJob(
+      TARGET,
+      'failed',
+      'The work list for this job was lost (the process was replaced between batches), so its ' +
+        'cursor no longer points into a known list. Nothing was indexed against it. Run Plan ' +
+        'again and start a fresh re-index — re-indexing is idempotent.',
+    );
+    return { started: false, job: dead ?? job, reason: 'work-list-lost' };
+  }
 
   busy(true);
   try {
     const slice = work.slice(job.cursor, job.cursor + batchSize(opts.batch));
     for (const unit of slice) {
+      // An ABANDON landing mid-batch stops the batch at the next unit boundary: `recordUnit`
+      // already no-ops on a job that is not running, and continuing to call the gateway for a job
+      // nobody is waiting for would spend budget on an answer no one reads.
+      if (jobFor(TARGET)?.status !== 'running') break;
       let out: UnitOutcome;
       try {
         out = await deps.reindexUnit(unit.id, principal.id);
@@ -471,7 +519,7 @@ export async function runReindex(
       if (progressed && opts.onProgress) await opts.onProgress(progressed);
     }
     const after = jobFor(TARGET)!;
-    if (jobRemaining(after) === 0) {
+    if (after.status === 'running' && jobRemaining(after) === 0) {
       finishJob(TARGET, 'done');
       workList().delete(job.id);
     }
@@ -481,10 +529,41 @@ export async function runReindex(
   }
 }
 
+/**
+ * ABANDON the target's running job (review H3). The only way out of a job whose process died
+ * between batches: `busy` is process state, so without this the target stays wedged — the panel
+ * would show a running job forever and every Continue would answer `already-running`.
+ *
+ * It marks the job FAILED and says who abandoned it rather than deleting it, because "somebody
+ * gave up on this at 40/900" is a fact an operator needs afterwards. Nothing in the index is
+ * touched or rolled back: the units already replaced are correctly replaced, and a later run
+ * redoes the rest from a fresh plan.
+ */
+export async function abandonReindex(
+  principal: ReindexPrincipal,
+): Promise<{ abandoned: boolean; job: ReindexJob | null; reason?: string }> {
+  assertReindexAdmin(principal);
+  const job = jobFor(TARGET);
+  if (!job || job.status !== 'running') {
+    busy(false); // a stale flag with no running job is exactly what this door exists to clear
+    return { abandoned: false, job, reason: 'nothing-running' };
+  }
+  const failed = finishJob(TARGET, 'failed', `Abandoned by ${principal.id} at ${job.cursor}/${job.total}. ` +
+    'The units already replaced are replaced; the rest were not touched. Plan again to redo them.');
+  workList().delete(job.id);
+  busy(false);
+  return { abandoned: true, job: failed ?? job };
+}
+
+/** Is a batch executing right now? Exposed so the panel can tell "running" from "busy" (H2). */
+export function inFlight(): boolean {
+  return busy();
+}
+
 /** Test hook. */
 export function __resetKnowledgeReindex(): void {
   workList().clear();
   busy(false);
 }
 
-export const knowledgeReindexService: ReindexService = { planReindex, runReindex };
+export const knowledgeReindexService: ReindexService = { planReindex, runReindex, abandonReindex, inFlight };

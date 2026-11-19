@@ -350,3 +350,102 @@ and then prunes only what the add did not cover, and prunes nothing when the add
   corpus needs it, because the evidence was never written. The tool says so in every payload
   rather than implying `marked` is a clean-up.
 - No schedule, no auto-run, and no backfill of a provenance marker onto old rows (§8).
+
+## 10. Review round (PR #64, 2026-11-19) — H1–H3 blocked merge, M1 landed with them
+
+An independent review found three blockers and four mediums. Per finding:
+
+### H1 (block) — an agent run could execute `reindex_corpus` UNHELD. **Fixed, twice over.**
+`WRITE_TOOL_TABS` made the tool *visible* to the hold gate; `writeTargetScope` then answered
+`personal`, because it defaults every unclassified write to "the runner's own work". So under any
+preset but `read-only`, a granted agent could have fired a tenant-wide re-index with no human in
+the loop — the `commit` / `push_app_files` lesson one rung up.
+*How:* (1) `COMPANY_SCOPE_TOOLS` in `tabs/agents/lib/build/hold.ts` → `writeTargetScope` returns
+`company`, so `holdDecision` holds it to a platform **admin** under every preset. (2) And held is
+not the posture we want for this one: `AGENT_FORBIDDEN_TOOLS` in `core/mcp/write-tool-meta.ts`
+closes it to agent runs outright. `os-tools.ts` gained **gate 0** — ahead of the grant check, so
+the caller gets the real reason — and `grantedMcpTools` drops it from the advertised schemas, since
+a model will try whatever it can see. An admin still runs it from the panel, the HTTP door or their
+own MCP session: all three are a person, present, choosing.
+*Test:* `os-tools.test.ts` — company scope pinned beside the personal/domain families, held to
+`admin` for all four presets, the gate-0 refusal (granted, `full-in-scope`, still refused, nothing
+dispatched and nothing enqueued), and never advertised. `write-tool-meta.test.ts` asserts every
+agent-closed tool is also a classified write, so the hold stays the second line if the refusal ever
+goes.
+**Not done, deliberately:** the same two lines in `callAppTool`. That file is
+`tabs/software/lib/app-tool-call.ts`, inside the `tabs/software/**` path this branch was told not
+to touch (another agent owns it). The OS tool is not reachable through that door — it executes an
+app's own tools — so the residual exposure is an `actions.yml` **name-squatting** on
+`reindex_corpus`, which cannot reach the OS re-index. The catalog is already in `core/`, so the
+guard is a two-line change for whoever owns that file.
+
+### H2 (block) — Continue was greyed out exactly when it was needed. **Fixed.**
+`runDisabledReason` disabled on `job.status === 'running'`, and a job left `running` by an
+interrupted polling loop, a closed tab or a failed batch is *precisely* what must be continued.
+*How:* the server now reports `inFlight` (its own `busy()` flag) from `GET
+/api/platform-admin/reindex` and from `reindex_corpus {status:true}`, and the panel gates on THAT.
+A running job with no batch in flight is continuable **and needs no fresh plan** — the job's work
+list and cursor are the facts.
+*Test:* `reindex-view.test.ts` — running + not in flight ⇒ enabled, with and without a plan; in
+flight ⇒ disabled with the reason.
+
+### H3 (block) — nothing could clear a stuck job. **Fixed.**
+`busy` is process state; a pod killed between batches left the target wedged forever (every
+Continue answering `already-running`) with only a test hook to clear it.
+*How:* `abandonReindex(principal)` on both services — admin-only, marks the running job **failed**
+naming who abandoned it and at what cursor, clears the work list and the in-flight flag, and
+touches no row. Exposed as `POST {mode:'abandon'}` (audited `reindex.abandon`), MCP
+`mode:'abandon'`, and an **Abandon** button that appears only for a running job that is not
+mid-batch. A batch that is mid-flight when an abandon lands stops at the next unit boundary rather
+than spending budget on an answer nobody will read.
+*Test:* 4 files + 2 knowledge + 3 MCP + 2 route-source.
+
+### M1 (with the blockers) — a stand-in was WRITTEN before it was detected. **Fixed.**
+The honesty check lived in the caller: the service read `ingestMode` / `embedMode` /
+`embedSource` off the report — one statement after `indexAsset` had written the in-process index
+and awaited `bulkIndex`, and after `writeOpenSearch` had written **and pruned**. With
+`OS_OFFLINE_MOCK=allow`, an engine falling over mid-run would therefore have overwritten good rows
+with placeholder text and hash vectors.
+*How:* a `requireLive` opt on `indexAsset` / `indexWorkflow` / `indexDomain` that raises the typed
+refusal **after** the parse/embed and **before** any write. The services bind it in their live
+deps; `verdictOf` and the report checks stay as a second line for a future caller that forgets it.
+Both module headers say why the check cannot live in the caller.
+*Test:* one per corpus driving the REAL `LIVE_UNIT_DEPS` with a faked gateway (502) and a faked
+Docling, asserting the typed refusal **and** that no `_bulk` / `_delete_by_query` / `_update` call
+happened and the in-process index is untouched.
+
+### M2 — "existing rows left in place" was not true on an empty parse. **Fixed.**
+`indexAsset` called `removeFromIndex` on `status: 'empty'`. A `keepOnEmpty` opt (set by the
+re-index only) keeps them; every other caller's behaviour is unchanged, and that is asserted.
+
+### M3 — the marked help singled out Files. **Fixed.** It now says no writer in EITHER index ever
+stamped such a label, and that Knowledge's `source` holds provenance (`os-ui-ingest`). The
+knowledge service's header and marker docstring were softened the same way.
+
+### M4 — the panel looped up to 500 POSTs with no estimate, no confirmation and no batch size.
+**Fixed.** The operator picks the batch size (10-200, sent in the body), sees `runEstimate`
+(units · rows · batches, and that it costs real gateway budget) before starting, and must confirm
+`all` with the numbers in front of them. The loop is bounded by the estimate rather than a magic
+500, and a `run` against a running job **resumes without re-planning** at both doors
+(`runReindex(principal, null, …)`), so a long corpus costs one plan and N cheap batches.
+
+### Lows
+1. `pruneScopeExcept` gained a `prefix` clause on `_id` so a domain card's SECTION units — which
+   carry no `workflow_id` — are swept. (The same gap exists in `purgeKnowledgeUnits`; left alone
+   because changing delete semantics is outside this branch — recorded here instead.)
+2. A pasted doc is billed to its own `_source.domain`, not to `''`.
+3. The audit line records `out.job.filter` (the running job's), not the request's.
+4. A resumed job whose work list was lost now **fails** with a reason, instead of indexing a stale
+   cursor into a freshly computed list.
+
+### Gates for this round (scoped, as instructed — no full suite)
+
+| Check | Result |
+|---|---|
+| `core/kernel/*` + `core/mcp/*` + `tabs/{files,knowledge,admin}/**` + `tabs/agents/lib/{build,builtin}/*` + route guards | **exit 0** - 1711 tests, 1708 pass, **0 fail**, 3 todo |
+| `os-ui/node_modules/.bin/tsc --noEmit -p os-ui` | **exit 0**, no output |
+| `node scripts/check-structure.mjs` | **exit 0** - ratchet unmoved `419 / 1 / 200 / 1230` |
+
+The tripwire's REFUSERS list now also holds the two index **writers**, because `requireLive` made
+them refuse: they do not choose a stand-in, they are handed one, and their job is to decline before
+the write.

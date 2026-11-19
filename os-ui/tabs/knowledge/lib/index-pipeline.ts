@@ -6,6 +6,7 @@ import { config } from '@core/kernel/config';
 import { type Workflow, type DomainKnowledge } from '@tabs/knowledge/lib/schema';
 import { chunkWorkflow, chunkDomain, type KnowledgeUnit } from '@tabs/knowledge/lib/chunk';
 import { embed, type EmbedCaller } from '@tabs/knowledge/lib/embed';
+import { refuseOfflineMock } from '@core/kernel/offline-mock';
 import { upsertUnits, removeUnits, type IndexedUnit } from '@tabs/knowledge/lib/index-store';
 
 /**
@@ -168,7 +169,14 @@ async function pruneScopeExcept(scope: string, keepIds: string[]): Promise<boole
   const body = {
     query: {
       bool: {
-        should: [{ term: { workflow_id: scope } }, { term: { _id: scope } }],
+        should: [
+          { term: { workflow_id: scope } },
+          { term: { _id: scope } },
+          // A domain card's units are `domain:<name>:<section>` and carry NO `workflow_id`
+          // (`chunkDomain` sets it null), so neither term above matches them: without this prefix
+          // a renamed or deleted SECTION kept its stale unit in the index forever (review low 1).
+          { prefix: { _id: `${scope}:` } },
+        ],
         minimum_should_match: 1,
         must_not: [{ ids: { values: keepIds } }],
       },
@@ -183,6 +191,21 @@ async function pruneScopeExcept(scope: string, keepIds: string[]): Promise<boole
 }
 
 /**
+ * The REQUIRE-LIVE gate, raised between the embedding and the first write. `source` is the
+ * embedder's own honest label; anything but `litellm` means a hash of the text, which bears no
+ * semantic relationship to anything — writing one over a real vector is strictly worse than
+ * leaving the row as it is. See the module header for why this cannot live in the caller.
+ */
+function requireLiveOrRefuse(required: boolean | undefined, source: IndexReport['embedSource'], what: string): void {
+  if (!required || source === 'litellm') return;
+  refuseOfflineMock(
+    `Cannot re-index ${what}: the embeddings gateway answered with a stand-in (${source}) rather ` +
+      'than real vectors. Nothing was embedded into the index, nothing was written and nothing ' +
+      'was pruned — the existing units stand.',
+  );
+}
+
+/**
  * Index a workflow (steps + rules + tacit). Returns an honest store report.
  *
  * ATTRIBUTION (checklist A27, closed in iteration 2): pass `opts.caller` — the user whose action
@@ -193,10 +216,22 @@ async function pruneScopeExcept(scope: string, keepIds: string[]): Promise<boole
  */
 export async function indexWorkflow(
   workflow: Workflow,
-  opts: { owner: string; tacit?: string; updatedAt?: string; caller?: EmbedCaller },
+  opts: {
+    owner: string;
+    tacit?: string;
+    updatedAt?: string;
+    caller?: EmbedCaller;
+    /**
+     * Refuse (typed `ENGINE_UNAVAILABLE`) instead of writing anything when the gateway answered
+     * with a hash. The re-index sets it; an ordinary publish keeps its honestly-labelled offline
+     * path so a laptop still works. See the module header.
+     */
+    requireLive?: boolean;
+  },
 ): Promise<IndexReport> {
   const units = chunkWorkflow({ workflow, owner: opts.owner, tacit: opts.tacit, updatedAt: opts.updatedAt });
   const { vectors, source } = await embed(units.map((u) => u.text), opts.caller);
+  requireLiveOrRefuse(opts.requireLive, source, `workflow “${workflow.title ?? workflow.id}”`);
   const indexed = toIndexed(units, vectors);
 
   // Always populate the in-process mirror (offline retrieval), best-effort live.
@@ -208,9 +243,14 @@ export async function indexWorkflow(
 
 /** Index the general domain knowledge (the pinned domain card source). `caller` attributes the
  *  embedding call to the acting user — see {@link indexWorkflow}. */
-export async function indexDomain(dk: DomainKnowledge, caller?: EmbedCaller): Promise<IndexReport> {
+export async function indexDomain(
+  dk: DomainKnowledge,
+  caller?: EmbedCaller,
+  opts: { requireLive?: boolean } = {},
+): Promise<IndexReport> {
   const units = chunkDomain(dk);
   const { vectors, source } = await embed(units.map((u) => u.text), caller);
+  requireLiveOrRefuse(opts.requireLive, source, `the ${dk.domain} domain card`);
   const indexed = toIndexed(units, vectors);
   const scope = `domain:${dk.domain}`;
   upsertUnits(scope, indexed);

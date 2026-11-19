@@ -279,11 +279,25 @@ export type ReindexJob = {
  */
 export type ReindexService = {
   planReindex(principal: ReindexPrincipal, opts: { filter: ReindexFilter }): Promise<ReindexPlan>;
+  /**
+   * One bounded batch. `plan: null` RESUMES the target's running job from its cursor without
+   * re-planning — the panel's Continue and an agent's second `mode:'run'` both take that path, so
+   * a long corpus costs one plan and N cheap batches instead of N full index reads (review M4).
+   */
   runReindex(
     principal: ReindexPrincipal,
-    plan: ReindexPlan,
+    plan: ReindexPlan | null,
     opts?: { batch?: number; onProgress?: (job: ReindexJob) => void | Promise<void> },
   ): Promise<{ started: boolean; job: ReindexJob; reason?: string }>;
+  /**
+   * Give up on the target's running job: mark it failed, naming who abandoned it, and clear the
+   * in-flight flag and the work list. The ONLY way out of a job whose process was killed between
+   * batches — without it, `busy` stays set and the target is wedged until the pod restarts
+   * (review H3).
+   */
+  abandonReindex(principal: ReindexPrincipal): Promise<{ abandoned: boolean; job: ReindexJob | null; reason?: string }>;
+  /** Is a batch executing right now? The panel's Continue must gate on THIS, not on job.status. */
+  inFlight(): boolean;
 };
 
 /** Who is asking. The same shape every tab store calls `Principal`. */

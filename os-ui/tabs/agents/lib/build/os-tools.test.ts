@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import type { CurrentUser } from '@core/kernel/auth';
 import { parseSystem, serializeSystem, type System } from '@tabs/agents/lib/system-schema';
 import { handleRpc as realHandleRpc } from '@core/mcp/server';
+import { isWriteTool } from '@tabs/agents/lib/build/hold';
 import {
   OS_TOOL_ALIASES,
   resolveAlias,
@@ -51,6 +52,8 @@ function sysWithPreset(tools: string[], preset: 'read-only' | 'read-propose' | '
 }
 
 const CREATOR: CurrentUser = { id: 'u1', name: 'Cara Creator', domains: ['sales'], role: 'creator' };
+/** An admin runner, so a role floor can never be what hides `reindex_corpus` in the H1 tests. */
+const ADMIN_USER: CurrentUser = { id: 'u_admin', name: 'Ada Admin', domains: ['sales'], role: 'admin' };
 
 // --- grantedToolBrief: the prompt-side manifest = the granted tools only ---------
 
@@ -295,6 +298,44 @@ test('writeTargetScope: create/author/upload/build/define = personal; escalation
   for (const t of ['publish_knowledge', 'request_promotion', 'approve_promotion']) {
     assert.equal(writeTargetScope(t), 'domain', `${t} escalates to domain`);
   }
+  // Tenant-wide family → COMPANY (the admin gate). `reindex_corpus` re-parses and re-embeds a
+  // whole corpus; defaulting it to `personal` made it the one write in the catalog a non-read-only
+  // agent could fire at an entire tenant with no human in the loop (review H1).
+  assert.equal(writeTargetScope('reindex_corpus'), 'company', 'a tenant-wide re-index is company scope');
+});
+
+test('H1: reindex_corpus is HELD to a platform admin under EVERY preset — never personal', () => {
+  // The `commit` posture lesson, one rung up: being in WRITE_TOOL_TABS makes a tool visible to
+  // the hold gate, not held by it. The scope is what decides, so it is pinned per preset here.
+  for (const preset of ['read-only', 'read-propose', 'read-bounded', 'full-in-scope'] as const) {
+    const d = holdDecision(preset, 'reindex_corpus');
+    assert.equal(d.held, true, `${preset} must hold reindex_corpus`);
+    assert.equal(d.held && d.approverRole, 'admin', `${preset} must route it to a platform admin`);
+  }
+  // And it is a write at all — an unclassified write answers "not held" for every preset.
+  assert.equal(isWriteTool('reindex_corpus'), true);
+});
+
+test('H1: an agent run may not call reindex_corpus AT ALL — refused with the catalog’s reason', async () => {
+  const deps = spyDeps();
+  // Granted in the system.yaml AND under the most permissive preset: the refusal is not a grant
+  // or preset accident, it is the door saying this is not an agent action.
+  const exec = grantedToolExecutor(CREATOR, sysWithPreset(['reindex_corpus'], 'full-in-scope'), 'sys1', deps);
+  const res = await exec('reindex_corpus', { target: 'files', mode: 'run', filter: 'all' });
+  assert.equal(res.isError, true);
+  const err = JSON.parse(res.text) as { error: { code: string; reason: string } };
+  assert.equal(err.error.code, 'forbidden');
+  assert.match(err.error.reason, /operator act, not an agent action/);
+  assert.match(err.error.reason, /Platform → Re-index/);
+  assert.equal(deps.calls.handleRpc.length, 0, 'never dispatched');
+  assert.equal(deps.calls.enqueue.length, 0, 'and not even enqueued — this is a refusal, not a hold');
+});
+
+test('H1: reindex_corpus is never ADVERTISED to a model, even when a system grants it', () => {
+  const sys = sysWithPreset(['reindex_corpus', 'search_knowledge'], 'full-in-scope');
+  const specs = grantedToolSpecs(ADMIN_USER, sys).map((t) => t.name);
+  assert.ok(!specs.includes('reindex_corpus'), 'a schema the gate will refuse must not be offered');
+  assert.ok(specs.includes('search_knowledge'), 'the rest of the grant is untouched');
 });
 
 test('holdDecision: read-only holds all; personal never held; domain→domain_admin', () => {

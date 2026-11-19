@@ -122,7 +122,13 @@ export function reindexTools(services: ReindexServices): McpTool[] {
         type: 'object',
         properties: {
           target: { type: 'string', enum: [...REINDEX_TARGETS], description: 'Which index: "files" or "knowledge".' },
-          mode: { type: 'string', enum: ['plan', 'run'], description: '"plan" = dry run, writes nothing. "run" = one bounded batch.' },
+          mode: {
+            type: 'string',
+            enum: ['plan', 'run', 'abandon'],
+            description:
+              '"plan" = dry run, writes nothing. "run" = one bounded batch (resumes a running job ' +
+              'without re-planning). "abandon" = give up on the running job and free the target.',
+          },
           filter: {
             type: 'string',
             enum: [...REINDEX_FILTERS],
@@ -138,6 +144,7 @@ export function reindexTools(services: ReindexServices): McpTool[] {
           { target: 'files', mode: 'plan', filter: 'marked' },
           { target: 'knowledge', mode: 'run', filter: 'all', batch: 50 },
           { target: 'files', status: true },
+          { target: 'files', mode: 'abandon' },
         ],
       },
       call: async (user, args) => {
@@ -149,14 +156,48 @@ export function reindexTools(services: ReindexServices): McpTool[] {
         // A pure status read: no plan, no probe, no write. The cheapest way to poll.
         if (bool(args.status)) {
           const job = jobFor(target);
-          return { target, job: job ? jobPayload(job) : null, running: job?.status === 'running' };
+          return {
+            target,
+            job: job ? jobPayload(job) : null,
+            running: job?.status === 'running',
+            // `inFlight` is the difference between "a batch is executing" and "a job is waiting
+            // to be continued" — the distinction the panel's Continue depends on (review H2).
+            inFlight: service.inFlight(),
+          };
         }
 
         const mode = str(args.mode).trim() || 'plan';
-        if (mode !== 'plan' && mode !== 'run') fail(`reindex_corpus needs mode "plan" or "run" (got "${mode}")`, 400);
+        if (mode !== 'plan' && mode !== 'run' && mode !== 'abandon') {
+          fail(`reindex_corpus needs mode "plan", "run" or "abandon" (got "${mode}")`, 400);
+        }
+
+        // ABANDON (review H3): no plan, no probe, no index write — it frees a target whose job
+        // was left running by a killed process, which is otherwise unreachable from any door.
+        if (mode === 'abandon') {
+          const out = await service.abandonReindex(P(user));
+          return {
+            target,
+            abandoned: out.abandoned,
+            reason: out.reason ?? null,
+            job: out.job ? jobPayload(out.job) : null,
+          };
+        }
         const rawFilter = str(args.filter).trim() || 'marked';
         if (!isReindexFilter(rawFilter)) fail(`reindex_corpus needs filter "marked" or "all" (got "${rawFilter}")`, 400);
         const filter: ReindexFilter = rawFilter;
+
+        // RESUME without re-planning (review M4): one plan, then N cheap batches.
+        const running = jobFor(target);
+        if (mode === 'run' && running?.status === 'running') {
+          const out = await service.runReindex(P(user), null, { batch: num(args.batch) || undefined });
+          return {
+            target,
+            filter: out.job.filter,
+            started: false,
+            reason: out.reason ?? 'resumed',
+            job: jobPayload(out.job),
+          };
+        }
 
         const plan = await service.planReindex(P(user), { filter });
         if (mode === 'plan') return planPayload(plan);

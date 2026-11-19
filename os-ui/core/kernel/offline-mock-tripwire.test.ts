@@ -127,6 +127,14 @@ const DECIDERS = [
 const REFUSERS = [
   'tabs/files/lib/reindex.ts',
   'tabs/knowledge/lib/reindex.ts',
+  // The two index WRITERS, under `requireLive` (re-index review M1). They do not choose a
+  // stand-in — they are handed one by an embedder or a parser that fell over mid-run — and their
+  // job is to refuse BEFORE the write rather than report the mode afterwards, which is one
+  // statement too late: by then the rows are overwritten and, on the knowledge side, pruned. An
+  // ordinary upload or publish passes no `requireLive` and keeps its honestly-labelled offline
+  // path, so this is a demand the CALLER makes, never a second honesty decision.
+  'tabs/files/lib/index-pipeline.ts',
+  'tabs/knowledge/lib/index-pipeline.ts',
 ];
 
 /** Files that READ a refusal somebody else produced. They must import, and must not decide. */
@@ -198,7 +206,6 @@ const LABELS = [
   'tabs/agents/lib/build/agentic-graph.ts',
   'tabs/knowledge/lib/embed-core.ts',
   'tabs/knowledge/lib/eval-harness.ts',
-  'tabs/knowledge/lib/index-pipeline.ts',
   'tabs/knowledge/lib/retrieve.ts',
   // Defines `seedToolResult` + the demo-seed label. Defining a stand-in is not choosing one.
   'tabs/software/lib/tool-exec.ts',

@@ -19,11 +19,13 @@
  *     the stale-row prune can only happen after the new rows are really there.
  *   - IT REFUSES, IT NEVER FALLS BACK. The engines are probed BEFORE anything is read or
  *     written; unreachable ⇒ `refuseOfflineMock(...)`, the house-typed ENGINE_UNAVAILABLE (503)
- *     that `core/mcp/server.ts` maps for an agent and the route maps for a browser. And because
- *     a laptop MAY fabricate (`OS_OFFLINE_MOCK=allow`), the run ALSO checks the report's own
- *     `ingestMode`/`embedMode`: a unit whose parse or embedding came back as a stand-in is a
- *     FAILURE, nothing is pruned, and the existing rows stay. A re-index that accepted a mock
- *     would re-poison the index it was asked to clean.
+ *     that `core/mcp/server.ts` maps for an agent and the route maps for a browser. And because a
+ *     laptop MAY fabricate (`OS_OFFLINE_MOCK=allow`), a parser or gateway that falls over MID-RUN
+ *     is refused too — by `indexAsset`'s own `requireLive`, which raises BEFORE the in-process
+ *     write and before `bulkIndex` (review M1; the first version read the mode off the report,
+ *     which is one statement after the rows were already overwritten). The service re-reads the
+ *     report's `ingestMode`/`embedMode` as a second line, so a future caller that forgets
+ *     `requireLive` still cannot prune around a stand-in.
  *   - NEVER DELETES A ROW IT COULD NOT REPLACE. Add, then prune: `bulkIndex` overwrites by chunk
  *     id, and `pruneChunksExcept(fileId, report.chunkIds)` runs only after the mirror confirmed.
  *   - HONEST ABOUT ITS OWN BLIND SPOT. `marked` can only find rows that still carry evidence; the
@@ -257,7 +259,8 @@ export type UnitDeps = {
 export const LIVE_UNIT_DEPS: UnitDeps = {
   body: bodyForIndex,
   // THE SAME call an upload makes, plus the two re-index opts. See the module header.
-  index: (asset, text, caller) => indexAsset(asset, text, { live: true, reembed: true, awaitMirror: true, caller }),
+  index: (asset, text, caller) =>
+    indexAsset(asset, text, { live: true, reembed: true, awaitMirror: true, requireLive: true, keepOnEmpty: true, caller }),
   prune: pruneChunksExcept,
 };
 
@@ -274,6 +277,8 @@ export async function reindexOneFile(unitId: string, by: string, deps: UnitDeps 
   }
   const report = await deps.index(body.asset, body.text, actingCaller(by, body.asset.domain));
   if (report.status !== 'searchable') {
+    // `keepOnEmpty` is what makes this sentence true: without it the pipeline drops the file's
+    // in-process rows on an empty parse (review M2).
     return { outcome: 'failed', reason: `the parse produced nothing indexable (${report.status}) — existing rows left in place` };
   }
   if (report.ingestMode !== 'live') {
@@ -342,7 +347,7 @@ function busy(set?: boolean): boolean {
 
 export async function runReindex(
   principal: ReindexPrincipal,
-  plan: ReindexPlan,
+  plan: ReindexPlan | null,
   opts: { batch?: number; onProgress?: (job: ReindexJob) => void | Promise<void>; deps?: FilesReindexDeps } = {},
 ): Promise<{ started: boolean; job: ReindexJob; reason?: string }> {
   assertReindexAdmin(principal);
@@ -366,17 +371,50 @@ export async function runReindex(
     return { started: false, job: existing, reason: 'already-running' };
   }
 
-  const claim = startOrResume(TARGET, { filter: plan.filter, by: principal.id, total: plan.units.length });
+  // RESUME (`plan === null`): no re-plan, no second index read — the running job's own work list
+  // and cursor are the facts (review M4). Nothing to resume is a stated conflict, not a silent
+  // no-op, because the caller believed there was a job.
+  if (!plan) {
+    if (!existing || existing.status !== 'running') {
+      const err = new Error(
+        `There is no running ${TARGET} re-index to continue. Run a plan first, then start one.`,
+      ) as Error & { status?: number };
+      err.status = 409;
+      throw err;
+    }
+  }
+
+  const claim = plan
+    ? startOrResume(TARGET, { filter: plan.filter, by: principal.id, total: plan.units.length })
+    : { started: false, job: existing! };
   const job = claim.job;
-  if (claim.started) workList().set(job.id, plan.units);
-  // A resume uses the list the job was CREATED with. Falling back to the caller's plan covers the
-  // process-restart case, and is honest: the cursor then indexes into a freshly computed list.
-  const work = workList().get(job.id) ?? plan.units;
+  if (claim.started && plan) workList().set(job.id, plan.units);
+
+  // A resume uses the list the job was CREATED with. If that list is GONE — the process was
+  // replaced between batches — the cursor would index into a different list, so the units it
+  // points past would silently never be re-indexed while the job reported progress. That is a
+  // false claim about the corpus, so the job FAILS here instead (review low 4). A fresh
+  // plan + run then redoes the work honestly; the re-index is idempotent, so that costs only time.
+  const work = workList().get(job.id);
+  if (!work) {
+    const dead = finishJob(
+      TARGET,
+      'failed',
+      'The work list for this job was lost (the process was replaced between batches), so its ' +
+        'cursor no longer points into a known list. Nothing was indexed against it. Run Plan ' +
+        'again and start a fresh re-index — re-indexing is idempotent.',
+    );
+    return { started: false, job: dead ?? job, reason: 'work-list-lost' };
+  }
 
   busy(true);
   try {
     const slice = work.slice(job.cursor, job.cursor + batchSize(opts.batch));
     for (const unit of slice) {
+      // An ABANDON landing mid-batch stops the batch at the next unit boundary: `recordUnit`
+      // already no-ops on a job that is not running, and continuing to call the engines for a job
+      // nobody is waiting for would spend budget on an answer no one reads.
+      if (jobFor(TARGET)?.status !== 'running') break;
       let out: UnitOutcome;
       try {
         out = await deps.reindexUnit(unit.id, principal.id);
@@ -398,7 +436,7 @@ export async function runReindex(
       if (progressed && opts.onProgress) await opts.onProgress(progressed);
     }
     const after = jobFor(TARGET)!;
-    if (jobRemaining(after) === 0) {
+    if (after.status === 'running' && jobRemaining(after) === 0) {
       finishJob(TARGET, 'done');
       workList().delete(job.id);
     }
@@ -408,6 +446,37 @@ export async function runReindex(
   }
 }
 
+/**
+ * ABANDON the target's running job (review H3). The only way out of a job whose process died
+ * between batches: `busy` is process state, so without this the target stays wedged — the panel
+ * would show a running job forever and every Continue would answer `already-running`.
+ *
+ * It marks the job FAILED and says who abandoned it rather than deleting it, because "somebody
+ * gave up on this at 40/900" is a fact an operator needs afterwards. Nothing in the index is
+ * touched or rolled back: the units already replaced are correctly replaced, and a later run
+ * redoes the rest from a fresh plan.
+ */
+export async function abandonReindex(
+  principal: ReindexPrincipal,
+): Promise<{ abandoned: boolean; job: ReindexJob | null; reason?: string }> {
+  assertReindexAdmin(principal);
+  const job = jobFor(TARGET);
+  if (!job || job.status !== 'running') {
+    busy(false); // a stale flag with no running job is exactly what this door exists to clear
+    return { abandoned: false, job, reason: 'nothing-running' };
+  }
+  const failed = finishJob(TARGET, 'failed', `Abandoned by ${principal.id} at ${job.cursor}/${job.total}. ` +
+    'The units already replaced are replaced; the rest were not touched. Plan again to redo them.');
+  workList().delete(job.id);
+  busy(false);
+  return { abandoned: true, job: failed ?? job };
+}
+
+/** Is a batch executing right now? Exposed so the panel can tell "running" from "busy" (H2). */
+export function inFlight(): boolean {
+  return busy();
+}
+
 /** Test hook — the work list and the busy flag are process state, like the index itself. */
 export function __resetFilesReindex(): void {
   workList().clear();
@@ -415,4 +484,4 @@ export function __resetFilesReindex(): void {
 }
 
 /** The injectable live defaults, exported so a door can reuse them and a test can assert them. */
-export const filesReindexService: ReindexService = { planReindex, runReindex };
+export const filesReindexService: ReindexService = { planReindex, runReindex, abandonReindex, inFlight };

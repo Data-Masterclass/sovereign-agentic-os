@@ -19,6 +19,7 @@ import type { RunTraceContext } from '@core/infra/langfuse';
 import { runWithRunId } from '@core/infra/request-surface';
 import { enqueue as realEnqueue } from '@core/policy/approvals';
 import { holdDecision, writeTargetScope } from '@tabs/agents/lib/build/hold';
+import { agentForbiddenReason } from '@core/mcp/write-tool-meta';
 import { resolveFolderGrant } from '@core/kernel/folders';
 import { config } from '@core/kernel/config';
 import { TAB_FEATURES } from '@core/kernel/tabs';
@@ -469,7 +470,11 @@ export function unmappedGrantNames(sys: System): string[] {
 /** The `McpTool` objects a system is granted (registry ∩ resolved grants). */
 function grantedMcpTools(sys: System): McpTool[] {
   const granted = new Set(resolveGrantedTools(sys).mcpNames);
-  return ALL_MCP_TOOLS.filter((t) => granted.has(t.name));
+  // A tool closed to agent runs (`AGENT_FORBIDDEN_TOOLS`) is never ADVERTISED either: a grant that
+  // names one is dropped here, so the model is not handed a schema for something gate 0 will
+  // refuse. Dropping it from the spec and refusing the call are both needed — a system.yaml can
+  // name any tool, and a model will try whatever it can see.
+  return ALL_MCP_TOOLS.filter((t) => granted.has(t.name) && !agentForbiddenReason(t.name));
 }
 
 /**
@@ -611,6 +616,18 @@ export function grantedToolExecutor(
 
   return async (name, args) => {
     const mcpName = resolveAlias(name);
+
+    // Gate 0 — CLOSED TO AGENT RUNS. A few writes are operator acts whose effect is not an
+    // artifact in a lane: `reindex_corpus` re-parses and re-embeds a whole tenant corpus. Held
+    // would not be enough on its own (the hold can be approved by whoever is watching the inbox,
+    // and the run would then fire it), so the agent door refuses outright, with the reason the
+    // catalog carries. Checked BEFORE the grant check so the answer is "this is not for agents"
+    // rather than a bare "tool not available" — the caller can act on the former.
+    const forbidden = agentForbiddenReason(mcpName);
+    if (forbidden) {
+      await safeTrace(deps, sysPrincipal, mcpName, args, 'deny', forbidden, opts.traceContext);
+      return errorResult('forbidden', forbidden);
+    }
 
     // Gate 1 — structural grant scope. Not granted ⇒ never touch OPA or the tool.
     if (!grantedNames.has(mcpName)) {
