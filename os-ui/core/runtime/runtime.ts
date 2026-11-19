@@ -241,7 +241,7 @@ export function liteLlmCaller(caller?: CallerContext): LlmCall {
     }
     const choices = (data.choices ?? []) as Array<Record<string, unknown>>;
     const message = (choices[0]?.message ?? {}) as Record<string, unknown>;
-    const completion = parseLlmMessage(message);
+    const completion = parseLlmMessage(message, choices[0]?.finish_reason);
     // Surface the gateway's reported token usage so a run path can aggregate it
     // (the Monitoring run-summary trace). Absent/malformed usage stays undefined.
     const usage = parseLlmUsage(data.usage);
@@ -301,6 +301,26 @@ function safeArgs(raw: unknown): Record<string, unknown> {
 }
 
 /**
+ * Parse a tool call's argument text WITHOUT hiding a failure. Text that is not a JSON object
+ * (broken, or cut off at the output limit) yields `{}` together with the reason and the raw text,
+ * so the loop can refuse to run the call instead of running it with no arguments. An absent or
+ * empty argument string is a call with no arguments, which is valid.
+ */
+export function parseToolArgs(raw: unknown): { args: Record<string, unknown>; argsError?: string; rawArgs?: string } {
+  if (raw === undefined || raw === null) return { args: {} };
+  if (typeof raw === 'object') return Array.isArray(raw) ? { args: {}, argsError: 'the arguments are an array, not an object', rawArgs: JSON.stringify(raw) } : { args: raw as Record<string, unknown> };
+  const text = String(raw);
+  if (text.trim() === '') return { args: {} };
+  try {
+    const parsed: unknown = JSON.parse(text);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return { args: parsed as Record<string, unknown> };
+    return { args: {}, argsError: 'the arguments are not a JSON object', rawArgs: text };
+  } catch (e) {
+    return { args: {}, argsError: e instanceof Error ? e.message : 'not valid JSON', rawArgs: text };
+  }
+}
+
+/**
  * Recover a tool call a harmony model emitted as commentary-channel TEXT instead
  * of a structured `tool_calls` entry — e.g. `…<|channel|>commentary to=query_data
  * <|message|>{"question":"…"}<|call|>`. Returns the first `{ name, args }` found,
@@ -320,8 +340,12 @@ export function parseHarmonyToolCall(content: string): { name: string; args: Rec
   return { name, args: brace ? safeArgs(brace[0]) : {} };
 }
 
-/** Parse an OpenAI-shaped assistant message into the harness completion shape. */
-export function parseLlmMessage(message: Record<string, unknown>): LlmCompletion {
+/**
+ * Parse an OpenAI-shaped assistant message into the harness completion shape. `finishReason` is
+ * the choice's `finish_reason`; it and the message's `refusal` are carried through so a caller
+ * can tell a cut-off or refused reply from an answer.
+ */
+export function parseLlmMessage(message: Record<string, unknown>, finishReason?: unknown): LlmCompletion {
   const rawContent = String(message.content ?? '');
   const content = stripHarmonyTokens(rawContent);
   const rawCalls = Array.isArray(message.tool_calls) ? (message.tool_calls as Array<Record<string, unknown>>) : [];
@@ -330,7 +354,7 @@ export function parseLlmMessage(message: Record<string, unknown>): LlmCompletion
       const fn = (c.function ?? {}) as Record<string, unknown>;
       const name = cleanToolName(String(fn.name ?? ''));
       if (!name) return null;
-      return { id: String(c.id ?? `call-${i}`), name, args: safeArgs(fn.arguments) };
+      return { id: String(c.id ?? `call-${i}`), name, ...parseToolArgs(fn.arguments) };
     })
     .filter((c): c is NonNullable<typeof c> => c !== null);
 
@@ -341,7 +365,13 @@ export function parseLlmMessage(message: Record<string, unknown>): LlmCompletion
     if (recovered) toolCalls.push({ id: 'harmony-0', name: recovered.name, args: recovered.args });
   }
 
-  return { content, toolCalls };
+  const refusal = typeof message.refusal === 'string' && message.refusal.trim() ? message.refusal.trim() : undefined;
+  return {
+    content,
+    toolCalls,
+    ...(typeof finishReason === 'string' && finishReason ? { finishReason } : {}),
+    ...(refusal ? { refusal } : {}),
+  };
 }
 
 export type RunTabAgentInput = {

@@ -266,3 +266,33 @@ test('MODEL-KEY: a run-path completion must NOT carry the LiteLLM master key', a
   assert.ok(seen.auth, 'the caller must send an authorization header');
   assert.notEqual(seen.auth, `Bearer ${config.litellmMasterKey}`, 'run path used the MASTER key — per-agent scoped key limits are bypassed');
 });
+
+// --- F10: a reply's argument failures, finish reason and refusal are carried, not swallowed ---
+
+import { parseToolArgs } from '@core/runtime/runtime';
+
+test('parseToolArgs: broken argument JSON is reported, never turned into "no arguments"', () => {
+  assert.deepEqual(parseToolArgs('{"sql":"select 1"}'), { args: { sql: 'select 1' } });
+  assert.deepEqual(parseToolArgs(''), { args: {} });
+  assert.deepEqual(parseToolArgs(undefined), { args: {} });
+  assert.deepEqual(parseToolArgs({ sql: 'x' }), { args: { sql: 'x' } });
+  const cut = parseToolArgs('{"sql":"select 1 fr');
+  assert.deepEqual(cut.args, {});
+  assert.ok(cut.argsError && cut.argsError.length > 0);
+  assert.equal(cut.rawArgs, '{"sql":"select 1 fr');
+  assert.equal(parseToolArgs('"just a string"').argsError, 'the arguments are not a JSON object');
+  assert.equal(parseToolArgs('[1,2]').argsError, 'the arguments are not a JSON object');
+});
+
+test('parseLlmMessage: a call with broken arguments carries argsError; finish_reason and refusal are read', () => {
+  const c = parseLlmMessage({ content: '', tool_calls: [{ id: 'a', function: { name: 'upload_file', arguments: '{"name":"x.md","text":"abc' } }] }, 'length');
+  assert.equal(c.toolCalls[0].name, 'upload_file');
+  assert.deepEqual(c.toolCalls[0].args, {});
+  assert.ok(c.toolCalls[0].argsError);
+  assert.equal(c.finishReason, 'length');
+  const r = parseLlmMessage({ content: null, refusal: 'I can’t help with that.' }, 'stop');
+  assert.equal(r.refusal, 'I can’t help with that.');
+  const plain = parseLlmMessage({ content: 'hi' });
+  assert.equal(plain.finishReason, undefined);
+  assert.equal(plain.refusal, undefined);
+});
