@@ -112,7 +112,9 @@ export function ownerOf(row: LiteLlmKeyRow): 'agent' | 'service' | 'unknown' {
   const stamped = row.metadata?.os_owner;
   if (stamped === 'agent' || stamped === 'service') return stamped;
   const alias = norm(row.key_alias ?? '');
-  if (alias.startsWith('agent-') || alias.startsWith('agent:')) return 'agent';
+  // `os-<systemId>` is the alias Build gives an agent system's own key (it also stamps the key,
+  // so the prefix only matters for keys made before the stamp existed).
+  if (alias.startsWith('os-') || alias.startsWith('agent-') || alias.startsWith('agent:')) return 'agent';
   if (alias.startsWith('svc-') || alias.startsWith('service-') || alias.startsWith('service:')) return 'service';
   return 'unknown';
 }
@@ -224,7 +226,7 @@ export function buildMirror(s: MirrorSources, known: OsCounterparts, now: number
   }
   const agents = new Set(known.agents.map(norm));
   for (const k of keys) {
-    const stripped = norm(k.alias).replace(/^(agent[-:]|svc-|service[-:])/, '');
+    const stripped = norm(k.alias).replace(/^(os-|agent[-:]|svc-|service[-:])/, '');
     if (k.owner === 'unknown' && !agents.has(stripped)) unmanaged.push({ kind: 'key', id: k.alias || '(unnamed key)' });
   }
 

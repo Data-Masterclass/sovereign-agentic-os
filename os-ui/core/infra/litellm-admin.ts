@@ -131,7 +131,9 @@ export type LiteLlmBudgetRow = {
 /** `/key/list` — virtual keys. The OS issues one per agent and per service. */
 export type LiteLlmKeyRow = {
   key_alias?: string | null;
+  /** LiteLLM's id for the key: the SHA-256 of its value. Never the value. */
   token?: string;
+  max_budget?: number | null;
   spend?: number;
   blocked?: boolean;
   team_id?: string | null;
@@ -171,7 +173,28 @@ export const readModels = () => rows<LiteLlmModelRow>('/model/info');
 export const readModelGroups = () => rows<LiteLlmModelGroupRow>('/model_group/info');
 export const readTeams = () => rows<LiteLlmTeamRow>('/team/list', 'teams');
 /** `return_full_object` is what makes spend and alias present on each row. */
-export const readKeys = () => rows<LiteLlmKeyRow>('/key/list?return_full_object=true&include_team_keys=true', 'keys');
+export const readKeys = () => readAllKeys();
+
+/** `/key/list` is PAGED (10 per page by default, 100 at most). A page limit that is hit is reported, never truncated silently. */
+const KEY_PAGE_SIZE = 100;
+const KEY_MAX_PAGES = 100;
+
+/**
+ * EVERY virtual key the gateway holds, page by page. A failure on any page fails the whole read:
+ * a partial list would let a caller conclude "that key does not exist" from a page it never saw.
+ */
+export async function readAllKeys(get: typeof adminGet = adminGet): Promise<Fetched<LiteLlmKeyRow[]>> {
+  const all: LiteLlmKeyRow[] = [];
+  for (let page = 1; page <= KEY_MAX_PAGES; page += 1) {
+    const r = await get<unknown>(`/key/list?return_full_object=true&include_team_keys=true&size=${KEY_PAGE_SIZE}&page=${page}`, 8000);
+    if (!r.ok) return r;
+    const batch = unwrapRows<LiteLlmKeyRow>(r.data, 'keys');
+    all.push(...batch);
+    const totalPages = Number((r.data as { total_pages?: unknown } | null)?.total_pages);
+    if (batch.length < KEY_PAGE_SIZE || (Number.isFinite(totalPages) && page >= totalPages)) return { ok: true, data: all };
+  }
+  return { ok: false, error: `more than ${KEY_PAGE_SIZE * KEY_MAX_PAGES} keys — listing stopped` };
+}
 export const readGuardrails = () => rows<LiteLlmGuardrailRow>('/guardrails/list', 'guardrails');
 export const readSpendReport = () => rows<LiteLlmSpendRow>('/global/spend/report');
 export const readHealthLatest = () => adminGet<LiteLlmHealthBody>('/health/latest');

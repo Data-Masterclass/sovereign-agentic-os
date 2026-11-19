@@ -61,8 +61,9 @@ export type LastBuild = {
   at: number;
   rows: LastBuildRow[];
   /**
-   * A3: the system's own LiteLLM virtual key, by secret REFERENCE (never the value), when the live
-   * Build minted it. Runs resolve it through `callerCredential`; absent → the shared agent key.
+   * LEGACY, no longer written or read. Builds before the durable key store kept a reference to an
+   * in-process secret here; old persisted records may still carry it. A system's key now lives
+   * only in `core/infra/agent-system-keys.ts`, addressed by the system id.
    */
   litellmKeyRef?: { name: string; key: string };
 };

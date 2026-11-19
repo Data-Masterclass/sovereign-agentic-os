@@ -27,10 +27,13 @@
  *   never a run credential, and that separation is what the `MODEL-KEY` gate
  *   test pins down — repo-wide since A3.
  *
- *   PER-PRINCIPAL KEY (A3): when a system's Build minted its own virtual key,
- *   the caller passes its secret REFERENCE (`keyRef`, never the value) and the
- *   key is read from the secrets store at call time; otherwise the shared agent
- *   key. There is no third branch.
+ *   AGENT-SYSTEM KEY: a run of an agent system passes the system's key
+ *   REFERENCE (`keyRef`, never the value). The model caller reads the key from
+ *   the durable, encrypted store (`agent-system-keys.ts`) and hands the value to
+ *   `callerCredential`. A call that carries `keyRef` uses THAT key or none: it
+ *   never falls back to the shared agent key, because the system's budget and
+ *   limits would then silently not apply. Calls with no `keyRef` (the assistant,
+ *   classify, the embedders) use the shared agent key. There is no third branch.
  *
  *   FAIL CLOSED: with no scoped key configured this returns `apiKey: ''` and
  *   the caller must refuse to run. Falling back to the master key would make a
@@ -45,7 +48,7 @@
 import 'server-only';
 import type { RunEnv } from '@core/kernel/object-lifecycle';
 import { config } from '@core/kernel/config';
-import { getSecretServerSide, type SecretRef } from '@core/infra/secrets';
+import type { SecretRef } from '@core/infra/secrets';
 
 /** Who and what a model call is for. `domain` is required: spend is per domain. */
 export type CallerContext = {
@@ -65,7 +68,11 @@ export type CallerContext = {
    * Omitted ⇒ no tag, never a fabricated one.
    */
   env?: RunEnv;
-  /** A per-agent virtual key minted by Build, by secret REFERENCE. Absent → the shared agent key. */
+  /**
+   * Marks the call as belonging to an AGENT SYSTEM, by reference to that system's own key
+   * (`systemKeyRef(systemId)` — an id, never a value). Present ⇒ the system's key or nothing;
+   * absent ⇒ the shared agent key.
+   */
   keyRef?: SecretRef;
 };
 
@@ -95,18 +102,23 @@ export function endUserId(userId: string): string {
 /**
  * The credential and attribution for one model call.
  *
- * Deliberately NOT a fallback chain ending in the master key: a per-agent key
- * by reference, else the shared agent key, else the caller refuses. A silently
- * unlimited run is worse than a run that fails loudly on a misconfiguration.
+ * Deliberately NOT a fallback chain: an agent-system call (`ctx.keyRef`) uses the
+ * system's own key — `ownKey`, already read from the durable store by the caller —
+ * or NONE; every other call uses the shared agent key; and nothing ever uses the
+ * master key. A run that silently spends on a different key than the one its
+ * budget is set on is worse than a run that stops and says why.
  */
-export function callerCredential(ctx: CallerContext): CallerCredential {
+export function callerCredential(ctx: CallerContext, ownKey?: string): CallerCredential {
   const tags = [`${TAG_DOMAIN}${ctx.domain}`];
   if (ctx.systemId) tags.push(`${TAG_AGENT}${ctx.systemId}`);
   if (ctx.tab) tags.push(`${TAG_TAB}${ctx.tab}`);
   if (ctx.runId) tags.push(`${TAG_RUN}${ctx.runId}`);
   if (ctx.env) tags.push(`${TAG_ENV}${ctx.env}`);
-  const own = ctx.keyRef ? getSecretServerSide(ctx.keyRef) : null;
-  if (own && own.length > 0) return { apiKey: own, keySource: 'agent-key', user: endUserId(ctx.userId), tags };
+  if (ctx.keyRef) {
+    return ownKey && ownKey.length > 0
+      ? { apiKey: ownKey, keySource: 'agent-key', user: endUserId(ctx.userId), tags }
+      : { apiKey: '', keySource: 'none', user: endUserId(ctx.userId), tags };
+  }
   const shared = config.litellmAgentKey;
   return { apiKey: shared, keySource: shared.length > 0 ? 'shared-agent-key' : 'none', user: endUserId(ctx.userId), tags };
 }
@@ -126,6 +138,37 @@ export class NoRunCredentialError extends Error {
     );
     this.name = 'NoRunCredentialError';
   }
+}
+
+/**
+ * Thrown when the gateway refuses an agent system's OWN key. Two cases, both fixed by a Rebuild:
+ * `rejected` — the key is not (or no longer) registered at the gateway (deleted, or rotated
+ * outside the OS); `model_not_allowed` — the key exists but its model list does not include the
+ * model this call asked for (the model roles or the gateway's fallbacks changed since the build).
+ */
+export class SystemKeyRefusedError extends Error {
+  readonly code: 'system_key_rejected' | 'system_key_model_not_allowed';
+  readonly status: number;
+  readonly detail: string;
+  constructor(kind: 'rejected' | 'model_not_allowed', status: number, model: string, body: string) {
+    super(
+      kind === 'model_not_allowed'
+        ? `This agent system's model key does not allow the model "${model}" (or the model the gateway fell back to). ` +
+          'The model roles or the gateway fallbacks changed since the system was last built. Press Rebuild on the system: ' +
+          'that updates the key\'s model list.'
+        : 'The gateway refused this agent system\'s model key: it is no longer registered there (it was deleted or replaced ' +
+          'outside the OS). Press Rebuild on the system to issue a new key.',
+    );
+    this.name = 'SystemKeyRefusedError';
+    this.code = kind === 'model_not_allowed' ? 'system_key_model_not_allowed' : 'system_key_rejected';
+    this.status = status;
+    this.detail = body.slice(0, 300);
+  }
+}
+
+/** Does this gateway rejection say "this key may not use this model"? (LiteLLM answers 401 or 403.) */
+export function isModelAccessRejection(status: number, body: string): boolean {
+  return (status === 401 || status === 403) && /key_model_access_denied|not allowed to access model|key not allowed to access/i.test(body);
 }
 
 /** Thrown when LiteLLM rejects a call because a budget is exhausted. */

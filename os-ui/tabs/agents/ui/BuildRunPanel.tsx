@@ -811,6 +811,20 @@ export default function BuildRunPanel({
   // Track the timestamp of the currently displayed report (null = never built).
   const [builtAt, setBuiltAt] = useState<number | null>(lastBuild?.at ?? null);
   const [buildErr, setBuildErr] = useState('');
+  // Does this system have a usable model key of its own? A run without one is refused (it is
+  // never moved onto the shared key), so say "Build needed" here, before the run fails. Read on
+  // mount and after every build. `null` = not known (yet, or the read failed) → no notice.
+  const [keyNotice, setKeyNotice] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/agents/systems/${systemId}/model-key`, { cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((b: { state?: string; message?: string | null } | null) => {
+        if (!cancelled) setKeyNotice(b && b.state && b.state !== 'ready' ? (b.message ?? 'This system has no model key of its own — press Build.') : null);
+      })
+      .catch(() => { if (!cancelled) setKeyNotice(null); });
+    return () => { cancelled = true; };
+  }, [systemId, builtAt]);
 
   const [prompt, setPrompt] = useState('');
   // Whether the optional "add input for this run" field is revealed. Default hidden:
@@ -1334,6 +1348,11 @@ export default function BuildRunPanel({
         </div>
       ) : null}
       {buildErr ? <div className="error">{buildErr}</div> : null}
+      {keyNotice && !building ? (
+        <div className="hint" role="status" style={{ marginTop: 2, marginBottom: 4, color: 'var(--warn, #b7791f)' }}>
+          <strong>{builtAt ? 'Rebuild needed.' : 'Build needed.'}</strong> {keyNotice}
+        </div>
+      ) : null}
       {report ? (
         <div className="table-wrap" style={{ marginTop: 4 }}>
           <table>
@@ -1517,6 +1536,11 @@ export default function BuildRunPanel({
         </div>
       ) : null}
       {runErr ? <div className="error" style={{ marginTop: 10 }}>{runErr}</div> : null}
+      {keyNotice && !showBuild && showRun ? (
+        <div className="hint" role="status" style={{ marginTop: 10, color: 'var(--warn, #b7791f)' }}>
+          <strong>{builtAt ? 'Rebuild needed.' : 'Build needed.'}</strong> {keyNotice}
+        </div>
+      ) : null}
 
       {/* LIVE in-progress — the SAME fancy determinate stepper the Build phase shows,
           now for a team run: one step per agent in the path, driven off the live stream

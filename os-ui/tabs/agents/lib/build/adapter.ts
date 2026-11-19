@@ -46,6 +46,8 @@ export type BuildContext = {
   systemId?: string;
   /** A test prompt for the verify invocation/routing probe. */
   probe?: string;
+  /** Replace the system's model key even though the current one is fine (an admin's "rotate key"). */
+  rotateKey?: boolean;
 };
 
 export interface BuildAdapter {

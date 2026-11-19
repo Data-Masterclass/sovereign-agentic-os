@@ -5,10 +5,11 @@ import 'server-only';
 import { config } from '@core/kernel/config';
 import { runSessionId } from '@core/infra/trace-port';
 import {
-  callerCredential, runCredentialConfigured, NoRunCredentialError,
+  callerCredential, runCredentialConfigured, NoRunCredentialError, SystemKeyRefusedError, isModelAccessRejection,
   BudgetExceededError, GatewayRateLimitedError, isBudgetRejection, type CallerContext,
 } from '@core/infra/litellm-credential';
 import type { CurrentUser } from '@core/kernel/auth';
+import { forgetSystemKey, resolveSystemKey } from '@core/infra/agent-system-keys';
 import { handleRpc, toolsForTab, listToolsForRole, type McpTab } from '@core/mcp/server';
 import { loadTabContext, tabTitle } from '@core/tabs-meta/context';
 import {
@@ -154,6 +155,13 @@ export function boundExecutor(base: ToolExecutor, bound: Record<string, unknown>
 // mid-generation and surfaced as "the model did not respond in time" with nothing streamed.
 const LLM_TIMEOUT_MS = Number(process.env.LLM_CHAT_TIMEOUT_MS ?? '') || 240_000;
 
+/** How long a call waits for an in-progress key rotation to finish before reporting the key as gone. */
+let rotationWaitMs = 2000;
+/** Tests only. */
+export function __setRotationWaitForTests(ms: number): void {
+  rotationWaitMs = ms;
+}
+
 /**
  * A LiteLLM-backed `LlmCall`. Sends OpenAI-shaped chat completions through the
  * governed gateway. When a request carries `tools` and the model/gateway rejects
@@ -176,8 +184,14 @@ export function liteLlmCaller(caller?: CallerContext): LlmCall {
   return async (req) => {
     // Checked per CALL, not when the caller is built: a factory that throws at
     // module scope takes down every module that constructs one eagerly.
-    if (!runCredentialConfigured()) throw new NoRunCredentialError();
-    const cred = callerCredential(caller ?? { userId: 'system', domain: 'platform' });
+    // AN AGENT-SYSTEM CALL (`caller.keyRef`) runs on that system's OWN key, read from the durable
+    // encrypted store on every call (a short in-process cache aside). No usable key ⇒
+    // `SystemKeyUnavailableError` — it is never moved onto the shared key, where the system's
+    // budget and limits would not apply. Every other call uses the shared agent key.
+    const systemId = caller?.keyRef?.key;
+    let own = systemId ? await resolveSystemKey(systemId) : undefined;
+    if (!own && !runCredentialConfigured()) throw new NoRunCredentialError();
+    let cred = callerCredential(caller ?? { userId: 'system', domain: 'platform' }, own?.key);
     if (!cred.apiKey) throw new NoRunCredentialError();
     const body: Record<string, unknown> = {
       model: req.model,
@@ -210,26 +224,49 @@ export function liteLlmCaller(caller?: CallerContext): LlmCall {
       if (req.observe.node) metadata.node = req.observe.node;
     }
     const trace = gatewayTraceHeaders(req.observe);
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), LLM_TIMEOUT_MS);
-    let res: Response;
-    let text: string;
-    try {
-      res = await fetch(`${config.litellmUrl}/v1/chat/completions`, {
-        method: 'POST',
-        headers: {
-          authorization: `Bearer ${cred.apiKey}`,
-          'content-type': 'application/json',
-          accept: 'application/json',
-          ...trace.headers,
-        },
-        body: JSON.stringify({ ...body, user: cred.user, metadata }),
-        cache: 'no-store',
-        signal: ctrl.signal,
-      });
-      text = await res.text();
-    } finally {
-      clearTimeout(timer);
+    const send = async (apiKey: string): Promise<{ res: Response; text: string }> => {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), LLM_TIMEOUT_MS);
+      try {
+        const r = await fetch(`${config.litellmUrl}/v1/chat/completions`, {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${apiKey}`,
+            'content-type': 'application/json',
+            accept: 'application/json',
+            ...trace.headers,
+          },
+          body: JSON.stringify({ ...body, user: cred.user, metadata }),
+          cache: 'no-store',
+          signal: ctrl.signal,
+        });
+        return { res: r, text: await r.text() };
+      } finally {
+        clearTimeout(timer);
+      }
+    };
+    let { res, text } = await send(cred.apiKey);
+
+    // The gateway refused the SYSTEM's key. If the key was ROTATED while this run was in flight
+    // (the store now holds a different one), use the new key once; otherwise say what is wrong.
+    if (own && systemId && (res.status === 401 || res.status === 403)) {
+      if (isModelAccessRejection(res.status, text)) throw new SystemKeyRefusedError('model_not_allowed', res.status, req.model, text);
+      if (res.status === 401) {
+        forgetSystemKey(systemId);
+        let current = await resolveSystemKey(systemId, { fresh: true });
+        if (current.tokenId === own.tokenId) {
+          // A rotation deletes the old key at the gateway a moment before the new one is stored.
+          // Give that moment one chance to pass before concluding the key is simply gone.
+          await new Promise((r) => setTimeout(r, rotationWaitMs));
+          current = await resolveSystemKey(systemId, { fresh: true });
+        }
+        if (current.tokenId === own.tokenId) throw new SystemKeyRefusedError('rejected', res.status, req.model, text);
+        own = current;
+        cred = callerCredential(caller ?? { userId: 'system', domain: 'platform' }, own.key);
+        ({ res, text } = await send(cred.apiKey));
+        if (res.status === 401) throw new SystemKeyRefusedError('rejected', res.status, req.model, text);
+        if (isModelAccessRejection(res.status, text)) throw new SystemKeyRefusedError('model_not_allowed', res.status, req.model, text);
+      }
     }
 
     if (!res.ok) {

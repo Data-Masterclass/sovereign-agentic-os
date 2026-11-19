@@ -64,6 +64,7 @@ import { runOutcomeOf } from '@tabs/agents/lib/engine/run-status';
 import type { ApprovalDecision } from '@tabs/agents/lib/engine/approval-port';
 import type { ResumeDecision } from '@tabs/agents/lib/engine/run';
 import type { LivePrincipal } from '@tabs/agents/lib/engine/resume';
+import { resolveSystemKey, systemKeyRef } from '@core/infra/agent-system-keys';
 
 type ChatMsg = { role: 'user' | 'assistant'; content: string };
 
@@ -361,6 +362,12 @@ export async function executeTeamRun(input: ExecuteTeamRunInput): Promise<RunRep
     });
   }
   try {
+    // NO KEY, NO RUN — and say so before anything executes. A system that was never built (or
+    // whose old, guessable key was removed and not yet replaced by a Rebuild) has no key of its
+    // own; running it on the shared key would put its spend outside its own budget and limits
+    // without anyone noticing. `SystemKeyUnavailableError` carries the sentence the owner needs
+    // ("press Build"); the catch below publishes it as the run's error.
+    await resolveSystemKey(id, { fresh: true });
     let team: RunOsTeamResult;
     try {
       team = await (input.runTeam ?? runOsTeam)({
@@ -376,8 +383,9 @@ export async function executeTeamRun(input: ExecuteTeamRunInput): Promise<RunRep
       resumeWith: input.resumeWith,
       log: input.log,
       signal: input.signal,
-      // A3: the system's own LiteLLM key by reference, when Build minted one; else the shared agent key.
-      keyRef: view.lastBuild?.litellmKeyRef,
+      // The run's model calls use THIS system's own key, by reference: the model caller reads it
+      // from the durable encrypted store on every call. There is no fallback to the shared key.
+      keyRef: systemKeyRef(id),
       onNodeStart: (ev) => {
         try { checkpointNode(id, { phase: 'start', node: ev.node }); } catch { /* best-effort */ }
         emit('node-started', ev);

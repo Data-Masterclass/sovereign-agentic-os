@@ -18,9 +18,21 @@
  * ARCHITECTURE:
  *   Direction of truth: the OS owns identity (which domains and agents exist),
  *   LiteLLM owns enforcement and the ledger (budgets, spend, blocking). So this
- *   reconciler creates the SUBJECTS — a team per domain, a key per agent — and
+ *   reconciler creates the SUBJECTS it can — a team per domain — and
  *   deliberately does NOT push budgets: a cap an admin set in LiteLLM is the
  *   real cap, and overwriting it from OS defaults would silently undo their work.
+ *
+ *   AGENT KEYS ARE NOT CREATED HERE ANY MORE. This reconciler used to create a key
+ *   `agent-<id>` per agent system: alias and ownership stamp only — no budget, no
+ *   model list — and it discarded the value LiteLLM returned, so nothing could ever
+ *   call with it. It predates Build's per-system key (`os-<id>`), which IS the key a
+ *   system's runs use: random value, budget, limits, model list, encrypted copy in
+ *   the durable store (`core/infra/agent-system-keys.ts`). Two keys per system, one
+ *   of them unbudgeted and unusable, was one too many. There is now ONE scheme —
+ *   Build's — and a system that has no `os-<id>` key is listed under `needsBuild`
+ *   ("press Build"), because only Build knows the models and caps and can store the
+ *   value. The old `agent-<id>` keys are deleted by the key sweep
+ *   (`core/infra/agent-system-key-sweep.ts`).
  *
  *   Three lists, and only two of them are ever applied:
  *     creates  subjects the OS governs that the gateway does not have yet
@@ -57,6 +69,12 @@ export type ReconcilePlan = {
   updates: Op[];
   /** Exists in LiteLLM, not governed by the OS. REPORTED, never applied. */
   drift: Op[];
+  /**
+   * Agent systems with no key of their own at the gateway. NOT an op: reconcile cannot make the
+   * key (Build does — it knows the models and caps and stores the value). Reported so an admin
+   * sees which systems still need a Build before they can run.
+   */
+  needsBuild: string[];
   /** True when the mirror could not be read — the plan is then not trustworthy. */
   degraded: boolean;
 };
@@ -68,7 +86,8 @@ const norm = (s: string) => s.trim().toLowerCase();
 
 /** The alias convention. `ownerOf` in gateway-mirror reads these back. */
 export const teamAlias = (domain: string) => domain;
-export const agentKeyAlias = (agentId: string) => `agent-${agentId}`;
+/** The alias of an agent system's own key — the one Build mints (`principalFor` in the agents tab). */
+export const agentKeyAlias = (agentId: string) => `os-${agentId}`;
 
 /**
  * Compare the OS against the gateway. PURE, so the whole decision table is
@@ -91,30 +110,9 @@ export function buildPlan(mirror: GatewayMirror, os: OsSubjects): ReconcilePlan 
     });
   }
 
-  const keyByAlias = new Map(mirror.keys.map((k) => [norm(k.alias), k]));
-  for (const agent of os.agents) {
-    const alias = agentKeyAlias(agent);
-    const existing = keyByAlias.get(norm(alias));
-    if (!existing) {
-      creates.push({
-        kind: 'key', action: 'create', id: agent,
-        reason: `Agent "${agent}" has no key of its own, so its spend is indistinguishable from other agents'.`,
-        endpoint: '/key/generate',
-        payload: { key_alias: alias, metadata: { os_owner: 'agent', os_id: agent } },
-      });
-      continue;
-    }
-    // The key exists but the gateway cannot tell us it is an agent's — restamp
-    // it so ownership survives in LiteLLM rather than only in our conventions.
-    if (existing.owner !== 'agent') {
-      updates.push({
-        kind: 'key', action: 'update', id: agent,
-        reason: `Key "${alias}" exists but carries no OS ownership stamp.`,
-        endpoint: '/key/update',
-        payload: { key_alias: alias, metadata: { os_owner: 'agent', os_id: agent } },
-      });
-    }
-  }
+  // Keys: reported, never created (see the header). A system without its `os-<id>` key needs a Build.
+  const keyAliases = new Set(mirror.keys.map((k) => norm(k.alias)));
+  const needsBuild = os.agents.filter((agent) => !keyAliases.has(norm(agentKeyAlias(agent))));
 
   for (const u of mirror.unmanaged) {
     drift.push({
@@ -124,7 +122,7 @@ export function buildPlan(mirror: GatewayMirror, os: OsSubjects): ReconcilePlan 
     });
   }
 
-  return { creates, updates, drift, degraded: mirror.degraded };
+  return { creates, updates, drift, needsBuild, degraded: mirror.degraded };
 }
 
 /** The OS subjects. Hydration happens upstream in `adminCtx`. */

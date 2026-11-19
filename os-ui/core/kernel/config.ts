@@ -431,7 +431,20 @@ export const config = {
     budgetDuration: budgetDuration(env('AGENT_SYSTEM_KEY_BUDGET_DURATION', ''), '7d'),
     rpmLimit: Math.floor(positiveNumber(env('AGENT_SYSTEM_KEY_RPM_LIMIT', ''), 300)),
     tpmLimit: Math.floor(positiveNumber(env('AGENT_SYSTEM_KEY_TPM_LIMIT', ''), 1_000_000)),
+    // How many model calls may be in flight on one system's key at once (LiteLLM
+    // `max_parallel_requests`). Matches the shared agent key's default.
+    maxParallelRequests: Math.floor(positiveNumber(env('AGENT_SYSTEM_KEY_MAX_PARALLEL_REQUESTS', ''), 8)),
   },
+  // The gateway's router FALLBACKS as JSON (`{"fallbacks": {"<alias>": ["<target>"]}, "default": ["<alias>"]}`),
+  // rendered by the chart from `litellm.proxy_config.router_settings`. Build adds every fallback
+  // target of a model on a system's key to that key's allowlist — LiteLLM checks the key against
+  // the model it falls back TO, so a key without it answers 403 exactly when the primary is down.
+  agentSystemKeyFallbacksJson: env('AGENT_SYSTEM_KEY_FALLBACKS_JSON', ''),
+  // The secret an agent system's stored model key is encrypted under (core/infra/agent-system-keys.ts).
+  // A DEDICATED secret (chart: osUI.agentKeyEncryption → Secret os-ui-agent-key-encryption), given to
+  // os-ui and the worker alike. It is not the gateway master key and is not derived from it. If it
+  // changes, every stored key becomes unreadable and each system needs one Rebuild.
+  agentKeyEncryptionKey: env('AGENT_KEY_ENCRYPTION_KEY', ''),
   // Chat model fronted by LiteLLM that the task-scoped agent chat windows call
   // (POST {LITELLM_URL}/v1/chat/completions). Offline default = the mock model.
   litellmChatModel: env('LITELLM_CHAT_MODEL', 'sovereign-mock'),

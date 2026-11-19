@@ -21,6 +21,8 @@ export async function orchestrateBuild(input: {
   systemId?: string;
   adapters: BuildAdapter[];
   probe?: string;
+  /** Passed to the adapters: replace the system's model key (see `BuildContext.rotateKey`). */
+  rotateKey?: boolean;
 }): Promise<BuildReport> {
   let system;
   let ir;
@@ -43,7 +45,7 @@ export async function orchestrateBuild(input: {
     };
   }
 
-  const ctx = { system, ir, systemId: input.systemId, probe: input.probe };
+  const ctx = { system, ir, systemId: input.systemId, probe: input.probe, rotateKey: input.rotateKey };
   const rows: BuildRow[] = [];
   for (const adapter of input.adapters) {
     rows.push(await runAdapter(adapter, ctx));

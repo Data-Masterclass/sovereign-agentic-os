@@ -38,6 +38,7 @@ import { useUser } from '@core/ui/useUser';
 import { roleAtLeast } from '@core/kernel/session';
 import { OVERVIEW_ACTION_MIN_ROLE, sectionMinRole } from '@tabs/admin/lib/sections';
 import GatewayPanel from '@tabs/admin/ui/GatewayPanel';
+import SystemKeysPanel from '@tabs/admin/ui/SystemKeysPanel';
 
 /** The admin cockpit aggregate — carried over from the old /platform page. */
 type Cockpit = {
@@ -437,6 +438,8 @@ function AdminOverviewHealth() {
       {/* One panel for the merged tab: the 'overview' variant alone lists the
           UNMANAGED gateway rows, and both variants read the same mirror. */}
       <GatewayPanel variant="overview" />
+      {/* The per-system model keys: who has one, the legacy-key sweep, replace a key. */}
+      <SystemKeysPanel />
     </>
   );
 }

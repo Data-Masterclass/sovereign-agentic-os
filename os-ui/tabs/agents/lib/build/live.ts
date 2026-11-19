@@ -13,6 +13,18 @@ import { type Decision } from '@tabs/agents/lib/gateway';
 import { type BuildAdapter, type BuildChange, type BuildContext, type StepResult } from '@tabs/agents/lib/build/adapter';
 import { principalFor } from '@tabs/agents/lib/build/runtime-contract';
 import { compileVerify } from '@tabs/agents/lib/build/compile-verify';
+import {
+  forgetSystemKey,
+  isLegacyDerivedToken,
+  mintSystemKey,
+  openSystemKey,
+  sealSystemKey,
+  tokenIdOf,
+  type Kek,
+  type SystemKeyCaps,
+  type SystemKeyRecord,
+  type SystemKeyStore,
+} from '@core/infra/agent-system-keys';
 
 /**
  * The 4 LIVE Build adapters (Approach A) — the real apply→verify against the
@@ -29,9 +41,13 @@ import { compileVerify } from '@tabs/agents/lib/build/compile-verify';
  *
  *   • opa      — PUT grants for principal os-<id> (+ connection_<id>; Write-approval
  *                merged into requires_approval); verify probes allow/deny/approval.
- *   • litellm  — idempotent /key/generate (alias os-<id>, routed models, budget +
- *                per-model caps, rpm/tpm); verify /key/info + routing resolves
- *                light→Standard, reasoning→Reasoning.
+ *   • litellm  — the system's OWN key: a random value registered under alias os-<id>
+ *                (routed models + the run's role models + gateway fallback targets, budget,
+ *                rpm/tpm/parallel caps) and stored ENCRYPTED in the durable key store, so
+ *                every process that runs the system reads the same key. A rebuild reconciles
+ *                the caps; an old guessable key (`sk-os-<id>`), a key whose stored copy is
+ *                missing or unreadable, or an explicit rotation is REPLACED: old deleted at the
+ *                gateway, new minted and stored. verify reads the gateway and the store back.
  *   • langgraph— compile()→IR→`buildGraph` (the REAL StateGraph the run path executes);
  *                verify re-compiles and reports the node set, the step budget and every
  *                compile warning. A5 replaced a POST to the Python runtime's /reload +
@@ -50,6 +66,8 @@ export interface OpaClient {
 }
 
 export type LiteLlmKeyInput = {
+  /** The system the key belongs to — stamped on the key as `metadata.os_id`. */
+  systemId: string;
   alias: string;
   models: string[];
   maxBudget: number;
@@ -58,25 +76,38 @@ export type LiteLlmKeyInput = {
   modelMaxBudget: Record<string, number>;
   rpmLimit: number;
   tpmLimit: number;
+  /** LiteLLM `max_parallel_requests`: model calls in flight on this key at once. */
+  maxParallelRequests: number;
   allowedTools: string[];
 };
 
 /** What LiteLLM currently holds for a key — every field Build sets, so a rebuild can compare. */
 export type LiteLlmKeyState = {
+  /** LiteLLM's id for the key (its `token`: the SHA-256 of the value). Addresses update and delete. */
+  tokenId: string;
   models: string[];
   maxBudget?: number;
   /** '' / absent = the budget never resets. */
   budgetDuration?: string;
   rpmLimit?: number;
   tpmLimit?: number;
+  maxParallelRequests?: number;
   allowedTools?: string[];
 };
 
 export interface LiteLlmClient {
-  keyInfo(alias: string): Promise<LiteLlmKeyState | null>;
-  generateKey(input: LiteLlmKeyInput): Promise<{ key: string }>;
+  /**
+   * Every key the gateway holds under this alias (normally none or one). THROWS when the gateway
+   * cannot be read: "could not look" must never be mistaken for "there is no key", because the
+   * caller would then mint a second one.
+   */
+  keysByAlias(alias: string): Promise<LiteLlmKeyState[]>;
+  /** Register `key` (a value minted by the OS) with the given properties (`/key/generate`). Throws on refusal. */
+  generateKey(input: LiteLlmKeyInput, key: string): Promise<void>;
   /** Bring an EXISTING key to the given state (`/key/update`). Throws when the gateway refuses. */
-  updateKey(input: LiteLlmKeyInput): Promise<void>;
+  updateKey(tokenId: string, input: LiteLlmKeyInput): Promise<void>;
+  /** Remove a key at the gateway (`/key/delete`), so its value stops working. Throws on refusal. */
+  deleteKey(tokenId: string): Promise<void>;
   models(): Promise<string[]>;
 }
 
@@ -100,6 +131,44 @@ export type KeyCaps = {
   modelMaxBudget: Record<string, number>;
   rpmLimit: number;
   tpmLimit: number;
+  maxParallelRequests: number;
+};
+
+/**
+ * The gateway's router fallbacks: `fallbacks[alias]` are the aliases LiteLLM retries on when
+ * `alias` fails; `default` are tried when no per-alias rule matches. LiteLLM authorises the key
+ * against the model it falls back TO, so those targets must be on the key.
+ */
+export type GatewayFallbacks = { fallbacks: Record<string, string[]>; default: string[] };
+
+/**
+ * Parse the chart-rendered fallback map (`AGENT_SYSTEM_KEY_FALLBACKS_JSON`). Anything malformed
+ * reads as "no fallbacks known" — the run then names the refused model if the gateway does fall back.
+ */
+export function parseGatewayFallbacks(json: string): GatewayFallbacks {
+  const out: GatewayFallbacks = { fallbacks: {}, default: [] };
+  if (!json.trim()) return out;
+  try {
+    const raw = JSON.parse(json) as { fallbacks?: unknown; default?: unknown };
+    const strings = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && x.length > 0) : []);
+    if (raw.fallbacks && typeof raw.fallbacks === 'object' && !Array.isArray(raw.fallbacks)) {
+      for (const [from, targets] of Object.entries(raw.fallbacks as Record<string, unknown>)) out.fallbacks[from] = strings(targets);
+    }
+    out.default = strings(raw.default);
+  } catch {
+    /* malformed → none known */
+  }
+  return out;
+}
+
+/** Where Build keeps the key it minted: the durable encrypted store + this deployment's encryption key. */
+export type KeyVault = {
+  store: SystemKeyStore;
+  /** The key-encryption key. Throws `SystemKeyUnavailableError('not-configured')` when there is none. */
+  kek: () => Kek;
+  /** Injected in tests; defaults to 32 CSPRNG bytes (`mintSystemKey`). */
+  mint?: () => string;
+  now?: () => number;
 };
 
 /**
@@ -113,13 +182,23 @@ export const DEFAULT_KEY_CAPS: KeyCaps = {
   modelMaxBudget: {},
   rpmLimit: 300,
   tpmLimit: 1_000_000,
+  maxParallelRequests: 8,
 };
 
 export type LiveDeps = {
   opa: OpaClient;
   litellm: LiteLlmClient;
   langfuse: LangfuseClient;
+  /** Where the minted key is kept (encrypted) for the run path. */
+  keys: KeyVault;
   caps?: KeyCaps;
+  /**
+   * The models a RUN picks regardless of the definition: the reasoning role (every plan step and
+   * every supervisor routing call) and the tools role (the fast tier). Read at build time, so a
+   * role an admin re-points later needs a Rebuild — the run says so when the gateway refuses.
+   */
+  runModels?: () => string[];
+  fallbacks?: GatewayFallbacks;
 };
 
 // ------------------------------------------------------------------ helpers ------
@@ -136,12 +215,31 @@ function routingTableFor(sys: System): RoutingTable {
   return table;
 }
 
-/** Distinct LiteLLM model_names a system can route to (tier defaults + per-agent). */
+/** Distinct LiteLLM model_names a system can route to (tier defaults + per-agent pins). */
 function routedModels(sys: System, table: RoutingTable): string[] {
   const set = new Set<string>();
   for (const a of ACTIVITIES) set.add(table[a].model);
-  for (const ag of sys.agents) if (ag.model) set.add(ag.model);
+  // `auto` is the "let the engine choose" sentinel, not a model.
+  for (const ag of sys.agents) if (ag.model && ag.model.trim().toLowerCase() !== 'auto') set.add(ag.model.trim());
   return [...set];
+}
+
+/**
+ * Every model a key must allow so that no call a run can make is refused: the given models plus,
+ * transitively, each one's gateway fallback targets, plus the gateway's default fallbacks.
+ */
+export function withFallbackTargets(models: string[], fb: GatewayFallbacks | undefined): string[] {
+  const out = new Set(models.filter(Boolean));
+  if (!fb) return [...out];
+  for (const d of fb.default) out.add(d);
+  const queue = [...out];
+  while (queue.length > 0) {
+    const m = queue.pop()!;
+    for (const target of fb.fallbacks[m] ?? []) {
+      if (!out.has(target)) { out.add(target); queue.push(target); }
+    }
+  }
+  return [...out];
 }
 
 /**
@@ -193,9 +291,9 @@ function pending(detail: string): StepResult {
 }
 
 /** "budget $5 per 7d, 300 requests/min, 1000000 tokens/min" — the caps in words. */
-export function describeCaps(k: Pick<LiteLlmKeyInput, 'maxBudget' | 'budgetDuration' | 'rpmLimit' | 'tpmLimit'>): string {
+export function describeCaps(k: Pick<LiteLlmKeyInput, 'maxBudget' | 'budgetDuration' | 'rpmLimit' | 'tpmLimit' | 'maxParallelRequests'>): string {
   const budget = k.budgetDuration ? `$${k.maxBudget} per ${k.budgetDuration}` : `$${k.maxBudget} in total (never resets)`;
-  return `budget ${budget}, ${k.rpmLimit} requests/min, ${k.tpmLimit} tokens/min`;
+  return `budget ${budget}, ${k.rpmLimit} requests/min, ${k.tpmLimit} tokens/min, ${k.maxParallelRequests} at once`;
 }
 
 const sameSet = (a: string[] | undefined, b: string[]) => {
@@ -208,7 +306,7 @@ const sameSet = (a: string[] | undefined, b: string[]) => {
  * ("tokens/min 200000 → 1000000"). Empty = already up to date. Compares every field Build sets
  * that the gateway reports back.
  */
-export function keyDrift(have: LiteLlmKeyState, want: LiteLlmKeyInput): string[] {
+export function keyDrift(have: Omit<LiteLlmKeyState, 'tokenId'>, want: LiteLlmKeyInput): string[] {
   const out: string[] = [];
   const show = (v: number | string | undefined) => (v === undefined || v === '' ? 'none' : String(v));
   if (!sameSet(have.models, want.models)) out.push(`models ${[...(have.models ?? [])].sort().join(', ') || 'none'} → ${[...want.models].sort().join(', ')}`);
@@ -216,6 +314,7 @@ export function keyDrift(have: LiteLlmKeyState, want: LiteLlmKeyInput): string[]
   if ((have.budgetDuration ?? '') !== want.budgetDuration) out.push(`budget reset ${show(have.budgetDuration)} → ${show(want.budgetDuration)}`);
   if (have.rpmLimit !== want.rpmLimit) out.push(`requests/min ${show(have.rpmLimit)} → ${want.rpmLimit}`);
   if (have.tpmLimit !== want.tpmLimit) out.push(`tokens/min ${show(have.tpmLimit)} → ${want.tpmLimit}`);
+  if (have.maxParallelRequests !== want.maxParallelRequests) out.push(`calls at once ${show(have.maxParallelRequests)} → ${want.maxParallelRequests}`);
   // `allowedTools` absent from the read-back (a gateway that hides metadata) is not drift.
   if (have.allowedTools !== undefined && !sameSet(have.allowedTools, want.allowedTools)) {
     out.push(`allowed tools ${have.allowedTools.length} → ${want.allowedTools.length}`);
@@ -261,7 +360,9 @@ export function makeLiveAdapters(deps: LiveDeps): BuildAdapter[] {
   /** The key this system SHOULD have, from its definition and the configured caps. */
   const desiredKey = async (ctx: BuildContext): Promise<LiteLlmKeyInput> => {
     const table = routingTableFor(ctx.system);
-    const models = routedModels(ctx.system, table);
+    // What the definition routes to, what a run picks by ROLE (the plan step's reasoning model, the
+    // fast tools model), and every model the gateway may fall back to from any of those.
+    const models = withFallbackTargets([...new Set([...routedModels(ctx.system, table), ...(deps.runModels?.() ?? [])])], deps.fallbacks);
     // Per-model hard cost cap for the pay-per-token STACKIT (qwen) routes only.
     const modelMaxBudget: Record<string, number> = { ...caps.modelMaxBudget };
     for (const m of models) {
@@ -269,6 +370,7 @@ export function makeLiveAdapters(deps: LiveDeps): BuildAdapter[] {
     }
     const { all } = connectionTools(ctx.system);
     return {
+      systemId: ctx.systemId ?? 'sys',
       alias: principalFor(ctx.systemId ?? 'sys'),
       models,
       maxBudget: caps.maxBudget,
@@ -276,35 +378,116 @@ export function makeLiveAdapters(deps: LiveDeps): BuildAdapter[] {
       modelMaxBudget,
       rpmLimit: caps.rpmLimit,
       tpmLimit: caps.tpmLimit,
+      maxParallelRequests: caps.maxParallelRequests,
       allowedTools: await grantVocabulary(ctx.system, all),
     };
+  };
+
+  const storedCaps = (want: LiteLlmKeyInput): SystemKeyCaps => ({
+    models: [...want.models],
+    maxBudget: want.maxBudget,
+    budgetDuration: want.budgetDuration,
+    rpmLimit: want.rpmLimit,
+    tpmLimit: want.tpmLimit,
+    maxParallelRequests: want.maxParallelRequests,
+  });
+  const now = () => deps.keys.now?.() ?? Date.now();
+
+  /** The stored record, and whether this deployment can still decrypt it. */
+  const storedKey = async (systemId: string, kek: Kek): Promise<{ record: SystemKeyRecord | null; readable: boolean }> => {
+    const record = await deps.keys.store.get(systemId);
+    if (!record) return { record: null, readable: false };
+    try {
+      openSystemKey(record, kek);
+      return { record, readable: true };
+    } catch {
+      return { record, readable: false };
+    }
   };
 
   const litellm: BuildAdapter = {
     tool: 'litellm',
     /**
-     * RECONCILE, not create-once. A key that exists is COMPARED with what the definition and the
-     * configured caps say it should be, and brought to that state with `/key/update` when it
-     * differs. It used to return "already provisioned" as soon as the key existed, so a rebuild
-     * never changed a key's models, budget or rate limits — whatever the first build set stayed
-     * for good. A failed update throws, which the orchestrator reports as a failed row.
+     * RECONCILE the system's own key, in the gateway AND in the durable store.
+     *
+     *   KEEP    the gateway holds the key whose encrypted copy is stored and readable, and no
+     *           rotation was asked for → compare its caps with the definition and `/key/update`
+     *           when they differ. The value is untouched.
+     *   REPLACE in every other case — no key yet; an old GUESSABLE key (`sk-os-<id>`, from before
+     *           keys were random); a key at the gateway whose stored copy is missing or cannot be
+     *           decrypted; an explicit rotation. The old key is DELETED at the gateway (so its
+     *           value stops working), a new random one is registered under the same alias, and
+     *           its encrypted copy replaces the stored record.
+     *
+     * LiteLLM requires key aliases to be unique, so the old key has to go before the new one can
+     * take the alias: there is a moment with no key. If registering the new key then fails, the
+     * stored record is removed too and the row FAILS — the system honestly has no key until the
+     * next Build, rather than a stored key the gateway no longer knows.
      */
     async apply(ctx) {
       const want = await desiredKey(ctx);
-      const have = await deps.litellm.keyInfo(want.alias);
-      if (!have) {
-        await deps.litellm.generateKey(want);
-        return ok(`created key '${want.alias}' — ${want.models.length} model(s), ${describeCaps(want)}`, 'created');
+      const kek = deps.keys.kek();
+      const atGateway = await deps.litellm.keysByAlias(want.alias);
+      const { record, readable } = await storedKey(want.systemId, kek);
+      const current = record && readable ? atGateway.find((k) => k.tokenId === record.tokenId) : undefined;
+
+      if (record && current && !ctx.rotateKey) {
+        // A second key under the alias cannot be ours (ours is `current`): remove it.
+        for (const stray of atGateway) if (stray.tokenId !== current.tokenId) await deps.litellm.deleteKey(stray.tokenId);
+        const drift = keyDrift(current, want);
+        if (drift.length === 0) return ok(`key '${want.alias}' already up to date — ${describeCaps(want)}`, 'unchanged');
+        await deps.litellm.updateKey(current.tokenId, want);
+        await deps.keys.store.put({ ...record, caps: storedCaps(want) });
+        return ok(`updated key '${want.alias}': ${drift.join('; ')}`, 'updated');
       }
-      const drift = keyDrift(have, want);
-      if (drift.length === 0) return ok(`key '${want.alias}' already up to date — ${describeCaps(want)}`, 'unchanged');
-      await deps.litellm.updateKey(want);
-      return ok(`updated key '${want.alias}': ${drift.join('; ')}`, 'updated');
+
+      const hadLegacy = atGateway.some((k) => isLegacyDerivedToken(want.alias, k.tokenId));
+      const why = current
+        ? 'rotated on request: the old key was deleted at the gateway and a new random key issued'
+        : atGateway.length === 0
+          ? record ? 'the gateway no longer had this system\'s key, so a new random key was issued' : ''
+          : hadLegacy
+            ? 'the old key could be derived from the system id; it was deleted at the gateway and replaced by a random key'
+            : 'the key at the gateway had no readable stored copy; it was deleted and replaced by a new random key';
+
+      const key = (deps.keys.mint ?? mintSystemKey)();
+      for (const old of atGateway) await deps.litellm.deleteKey(old.tokenId);
+      try {
+        await deps.litellm.generateKey(want, key);
+      } catch (e) {
+        // The old key is gone and there is no new one: do not leave a record that claims otherwise.
+        await deps.keys.store.delete(want.systemId).catch(() => undefined);
+        forgetSystemKey(want.systemId);
+        throw new Error(`${(e as Error).message} — this system has NO model key now; press Build again`);
+      }
+      const at = now();
+      try {
+        await deps.keys.store.put(
+          sealSystemKey({ systemId: want.systemId, alias: want.alias, key, caps: storedCaps(want), createdAt: record?.createdAt ?? at, rotatedAt: record ? at : null }, kek),
+        );
+      } catch (e) {
+        // A key nobody can read back is useless and unaccounted for: take it out of the gateway again.
+        await deps.litellm.deleteKey(tokenIdOf(key)).catch(() => undefined);
+        throw new Error(`the new key could not be stored (${(e as Error).message}) — it was removed from the gateway again; press Build again`);
+      }
+      forgetSystemKey(want.systemId);
+      const what = `${want.models.length} model(s), ${describeCaps(want)}`;
+      return why
+        ? ok(`replaced key '${want.alias}' — ${why}; ${what}`, 'updated')
+        : ok(`created key '${want.alias}' — ${what}`, 'created');
     },
     async verify(ctx) {
       const want = await desiredKey(ctx);
-      const info = await deps.litellm.keyInfo(want.alias);
-      if (!info) return fail(`key '${want.alias}' not found via /key/info`);
+      const { record, readable } = await storedKey(want.systemId, deps.keys.kek());
+      // The run path reads the key from the store: a key that is not there, or not readable, is
+      // not a key the system can run on — whatever the gateway says.
+      if (!record) return fail(`key '${want.alias}' is not in the key store — a run could not use it`);
+      if (!readable) return fail(`the stored copy of key '${want.alias}' cannot be decrypted`);
+      const atGateway = await deps.litellm.keysByAlias(want.alias);
+      const info = atGateway.find((k) => k.tokenId === record.tokenId);
+      if (!info) return fail(`key '${want.alias}' not found at the gateway`);
+      if (atGateway.length !== 1) return fail(`the gateway holds ${atGateway.length} keys under '${want.alias}' — exactly one is expected`);
+      if (isLegacyDerivedToken(want.alias, info.tokenId)) return fail(`key '${want.alias}' is still the old guessable key`);
       // Read back what apply wrote: a gateway that accepted the update but did not store it must
       // not read as ✓.
       const drift = keyDrift(info, want);
@@ -315,7 +498,7 @@ export function makeLiveAdapters(deps: LiveDeps): BuildAdapter[] {
       if (light.tier !== 'light') return fail(`light activity routed to ${light.tier}`);
       if (reason.tier !== 'reasoning') return fail(`reasoning activity routed to ${reason.tier}`);
       const models = ctx.system.agents.map((a) => `${a.id}=${resolveModel('tool-selection', table, a.model)}`);
-      return ok(`light→${light.model}; reasoning→${reason.model}; agents: ${models.join(', ')}; ${describeCaps(want)}`);
+      return ok(`random key, stored encrypted; light→${light.model}; reasoning→${reason.model}; agents: ${models.join(', ')}; allowed models: ${[...want.models].sort().join(', ')}; ${describeCaps(want)}`);
     },
   };
 

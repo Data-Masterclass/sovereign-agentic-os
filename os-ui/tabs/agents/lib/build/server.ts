@@ -45,13 +45,14 @@ function bridged(inner: Gateway, principal: string): Gateway {
   };
 }
 
-export async function buildSystem(systemId: string, yaml: string): Promise<BuildReport & { mode: BuildMode }> {
+export async function buildSystem(systemId: string, yaml: string, opts: { rotateKey?: boolean } = {}): Promise<BuildReport & { mode: BuildMode }> {
   if (await gatewayAdminReachable()) {
     const report = await orchestrateBuild({
       yaml,
       systemId,
       adapters: makeLiveAdapters(makeRealClients()),
       probe: 'Build verification',
+      rotateKey: opts.rotateKey,
     });
     // The live adapters write their own governance traces as they go, so there is
     // nothing to mirror here.
