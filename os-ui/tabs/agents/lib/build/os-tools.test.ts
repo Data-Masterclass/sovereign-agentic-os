@@ -1099,3 +1099,12 @@ test('F6: the agent-forbidden tools stay refused by gate 0 whatever the resource
   }
   assert.equal(deps.calls.handleRpc.length, 0);
 });
+
+test('F6: when the grant check itself cannot be made, the call is refused — never run on trust', async () => {
+  const sys = sysGranting(['get_file'], { files: [{ folder: { path: '/Invoices', scope: 'personal' }, capability: 'Read' }] });
+  const deps = spyDeps({ resolvers: { fileLocations: async () => { throw new Error('file index unavailable'); }, datasetTables: async () => [] } });
+  const r = await grantedToolExecutor(CREATOR, sys, 'sys_g', deps)('get_file', { fileId: 'f_inv' });
+  assert.equal(errorOf(r).code, 'forbidden');
+  assert.match(errorOf(r).reason ?? '', /could not be checked against the system's resource grants \(file index unavailable\)/);
+  assert.equal(deps.calls.handleRpc.length, 0);
+});

@@ -31,6 +31,7 @@ import {
   type FileLocation,
   type GrantRefusal,
   type GrantResolvers,
+  type GrantVerdict,
   type ResourceKind,
 } from '@tabs/agents/lib/build/grant-scope';
 
@@ -712,10 +713,23 @@ export function agentToolGate(
   const scope = grantScopeOf(sys, opts.createdSeed);
   const resolvers = deps.resolvers ?? serverGrantResolvers(user);
 
+  /**
+   * The check, FAIL-CLOSED: when it cannot be made (the file listing or the dataset store did not
+   * answer), the call is not run on trust — it is refused with a typed error that says so.
+   */
+  const scopeVerdict = async (mcpName: string, args: Record<string, unknown>): Promise<GrantVerdict> => {
+    try {
+      return await checkGrantScope(mcpName, args, scope, resolvers);
+    } catch (e) {
+      const why = e instanceof Error ? e.message : String(e);
+      return { allow: false, refusal: { code: 'forbidden', reason: `${mcpName} was not run: this call could not be checked against the system's resource grants (${why}). Nothing was assumed — try again, and report it if it persists.` } };
+    }
+  };
+
   const precheck: AgentToolGate['precheck'] = async (name, args) => {
     const mcpName = resolveAlias(name);
     if (agentForbiddenReason(mcpName) || !grantedNames.has(mcpName)) return null; // gates 0 and 1 answer those
-    const verdict = await checkGrantScope(mcpName, args, scope, resolvers);
+    const verdict = await scopeVerdict(mcpName, args);
     return verdict.allow ? null : grantRefusalResult(verdict.refusal);
   };
 
@@ -764,7 +778,7 @@ export function agentToolGate(
     // grants is refused here, before the hold and before the tool: a typed `forbidden` the model
     // can read. Decided in ONE place (`checkGrantScope`) from a declarative map every tool must
     // be in. It only narrows — gate 2 below still runs the call as the acting user.
-    const verdict = await checkGrantScope(mcpName, args, scope, resolvers);
+    const verdict = await scopeVerdict(mcpName, args);
     if (!verdict.allow) {
       await safeTrace(deps, sysPrincipal, mcpName, args, 'deny', verdict.refusal.reason, opts.traceContext);
       return grantRefusalResult(verdict.refusal);
