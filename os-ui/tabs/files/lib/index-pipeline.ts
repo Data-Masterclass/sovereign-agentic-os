@@ -6,7 +6,8 @@ import { docMetaOf } from '@tabs/files/lib/dls';
 import { type IngestAdapter, type Chunk } from '@tabs/files/lib/ingest/types';
 import { liveAdapterFor } from '@tabs/files/lib/ingest/live';
 import { embedTexts, type EmbedCaller } from '@tabs/files/lib/embed';
-import { refuseOfflineMock } from '@core/kernel/offline-mock';
+import { refuseOfflineMock, OfflineMockRefusedError } from '@core/kernel/offline-mock';
+import { recordIndexOutcome } from '@tabs/files/lib/store';
 import {
   type ChunkDoc,
   type ChunkMeta,
@@ -70,44 +71,67 @@ function metaOf(asset: FileAsset): ChunkMeta {
  * rather than the platform's `user os-system` + `domain:platform`. The bootstrap sweep has no
  * acting user and deliberately passes none — it IS a platform action, and saying so is honest.
  */
-export async function indexAsset(
-  asset: FileAsset,
-  text: string,
-  opts: {
-    adapter?: IngestAdapter;
-    embed?: typeof embedTexts;
-    live?: boolean;
-    caller?: EmbedCaller;
-    /**
-     * Bypass the content-hash vector cache and embed EVERY chunk again (the admin re-index,
-     * 2026-11-19). The cache is what makes an ordinary re-index cheap, and it is also what would
-     * make a re-index pointless: an unchanged chunk's cached vector may be the very hash vector
-     * the re-index was started to replace. Default false — only the re-index asks for this.
-     */
-    reembed?: boolean;
-    /**
-     * AWAIT the OpenSearch mirror and report whether it landed, instead of firing it off. The
-     * upload path deliberately does not wait (a 4 s OpenSearch timeout must not slow an upload);
-     * a re-index MUST, because it may only prune the stale rows once the new ones are really
-     * there. Default false.
-     */
-    awaitMirror?: boolean;
-    /**
-     * Refuse (typed `ENGINE_UNAVAILABLE`) instead of indexing anything when the parse or the
-     * embedding came back as a stand-in. The re-index sets it: a re-index that accepted a
-     * stand-in would rewrite the very rows it exists to replace. Default false — an ordinary
-     * upload on a laptop keeps its honestly-labelled offline path.
-     */
-    requireLive?: boolean;
-    /**
-     * Keep the file's existing index rows when this run produced nothing indexable, instead of
-     * dropping them (review M2). The re-index sets it, because "the parse produced nothing" is a
-     * reason to leave the old rows alone, not to delete them — only a stored-only opt-out and a
-     * genuine re-index of real content should ever remove rows.
-     */
-    keepOnEmpty?: boolean;
-  } = {},
-): Promise<IndexReport> {
+export type IndexOpts = {
+  adapter?: IngestAdapter;
+  embed?: typeof embedTexts;
+  live?: boolean;
+  caller?: EmbedCaller;
+  /**
+   * Bypass the content-hash vector cache and embed EVERY chunk again (the admin re-index,
+   * 2026-11-19). The cache is what makes an ordinary re-index cheap, and it is also what would
+   * make a re-index pointless: an unchanged chunk's cached vector may be the very hash vector
+   * the re-index was started to replace. Default false — only the re-index asks for this.
+   */
+  reembed?: boolean;
+  /**
+   * AWAIT the OpenSearch mirror and report whether it landed, instead of firing it off. The
+   * upload path deliberately does not wait (a 4 s OpenSearch timeout must not slow an upload);
+   * a re-index MUST, because it may only prune the stale rows once the new ones are really
+   * there. Default false.
+   */
+  awaitMirror?: boolean;
+  /**
+   * Refuse (typed `ENGINE_UNAVAILABLE`) instead of indexing anything when the parse or the
+   * embedding came back as a stand-in. The re-index sets it: a re-index that accepted a
+   * stand-in would rewrite the very rows it exists to replace. Default false — an ordinary
+   * upload on a laptop keeps its honestly-labelled offline path.
+   */
+  requireLive?: boolean;
+  /**
+   * Keep the file's existing index rows when this run produced nothing indexable, instead of
+   * dropping them (review M2). The re-index sets it, because "the parse produced nothing" is a
+   * reason to leave the old rows alone, not to delete them — only a stored-only opt-out and a
+   * genuine re-index of real content should ever remove rows.
+   */
+  keepOnEmpty?: boolean;
+};
+
+/**
+ * Index one file, and RECORD what happened on the file (`indexing.outcome`), so the status chip
+ * says "Searchable" only when the rows were really written. Recorded here, once, rather than in
+ * each caller, so every door (upload, edit, connector sync, extraction, the boot sweep, the admin
+ * re-index) is covered. Two cases leave the record alone because they leave the old rows alone:
+ * a `requireLive` refusal (nothing written) and an empty run under `keepOnEmpty`.
+ */
+export async function indexAsset(asset: FileAsset, text: string, opts: IndexOpts = {}): Promise<IndexReport> {
+  let report: IndexReport;
+  try {
+    report = await runIndex(asset, text, opts);
+  } catch (e) {
+    if (!(opts.requireLive && e instanceof OfflineMockRefusedError)) {
+      recordIndexOutcome(asset.id, { status: 'failed', at: new Date().toISOString(), reason: (e as Error)?.message ?? String(e) });
+    }
+    throw e;
+  }
+  if (report.status === 'searchable') {
+    recordIndexOutcome(asset.id, { status: 'indexed', at: new Date().toISOString(), chunks: report.indexed });
+  } else if (report.status === 'empty' && !opts.keepOnEmpty) {
+    recordIndexOutcome(asset.id, { status: 'empty', at: new Date().toISOString() });
+  }
+  return report;
+}
+
+async function runIndex(asset: FileAsset, text: string, opts: IndexOpts): Promise<IndexReport> {
   // Stored-only opt-out (sensitive/huge / restricted): held but never indexed.
   if (asset.indexing.mode === 'stored-only') {
     removeFromIndex(asset.id); // drop any stale index if it was just opted out

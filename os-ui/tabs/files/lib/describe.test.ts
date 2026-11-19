@@ -438,6 +438,9 @@ test('instructions inside a document are content: only the description and tags 
   const { description, tags, autoDocs, ...rest } = after.asset;
   const { description: d0, tags: t0, autoDocs: a0, ...rest0 } = before.asset;
   void d0; void t0; void a0; void autoDocs;
+  // The re-index after the description records its outcome; that is the index's own fact, not
+  // something the reply changed (index-outcome.test.ts).
+  delete rest.indexing.outcome; delete rest0.indexing.outcome;
   assert.deepEqual(rest, rest0, 'name, folder, owner, tier, visibility, sensitivity, grants, indexing: all unchanged');
   assert.equal(after.text, before.text, 'the stored text is not modified');
   assert.equal(description, 'An invoice from Example Test GmbH with embedded instructions.');

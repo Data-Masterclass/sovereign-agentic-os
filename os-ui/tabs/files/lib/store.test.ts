@@ -117,11 +117,11 @@ test('a restricted upload is stored-only (never indexed) — decision #7', () =>
   assert.equal(sum.status, 'stored');
 });
 
-test('an indexed upload reports a searchable status chip', () => {
+test('an indexable upload is NOT reported searchable until an index run has written it', () => {
   const a = createFile(amir, { name: 'public.pdf', sensitivity: 'public', text: 'hello world' });
   assert.equal(a.indexing.mode, 'indexed');
   const sum = listFiles(amir).mine.find((f) => f.id === a.id)!;
-  assert.equal(sum.status, 'searchable');
+  assert.equal(sum.status, 'not-indexed', 'the mode alone never says "Searchable" (index-outcome.test.ts)');
 });
 
 test('a no-text upload (binary the mock cannot parse) is stored, not falsely searchable', () => {

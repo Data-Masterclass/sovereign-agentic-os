@@ -23,6 +23,8 @@ import { canManageArtifact, type ArtifactScope } from '@core/policy/edit-scope';
 import { FolderPickerModal } from '@core/ui/core/FolderTree';
 import { usePublishPageContext } from '@core/ui/core/PageContext';
 import type { FolderPathNode } from '@core/kernel/folders';
+import { FILE_STATUS_LABEL, fileStatusClass, fileStatusOf } from '@tabs/files/lib/file-status';
+import type { IndexOutcome } from '@tabs/files/lib/asset-schema';
 
 /** File tier → the OS-wide lifecycle visibility (drives the delete gate). */
 const lcVis = (tier: Asset['tier']): Visibility =>
@@ -41,6 +43,8 @@ type Asset = {
     storedOnlyReason?: 'restricted' | 'opt-out' | 'no-text';
     /** Binary text extraction (PDF/DOCX/… → the document parser). */
     extraction?: { status: 'extracted' | 'pending' | 'failed'; reason?: string; code?: string; at?: string; engine?: string; chars?: number };
+    /** What the last index run did — the "Searchable" chip is read from this. */
+    outcome?: IndexOutcome;
   };
   description: string;
   /** Automatic description + tags: the run's state, and which text is still as generated. */
@@ -412,6 +416,11 @@ export default function FilePreview({ id, onMutated, onClose, startInEdit }: { i
   const storedOnly = a.indexing.mode === 'stored-only';
   // Mirrors the server's rule (store.extractionEligibility): a binary DOCUMENT with stored bytes.
   const parseable = !!view.object && doclingCanParse(a.name, view.object.contentType);
+  // The chip follows the recorded index OUTCOME, never the mode alone (file-status.ts).
+  const chip = fileStatusOf(a);
+  const indexWhy = chip === 'index-failed' ? `Not searchable: indexing failed — ${a.indexing.outcome?.reason ?? 'no reason was recorded.'}`
+    : chip === 'not-indexed' ? 'Not searchable yet: no index run has been recorded for this file.'
+    : '';
   const storedWhy = !storedOnly || extracting ? ''
     : a.sensitivity === 'restricted' ? 'Restricted files are stored but never parsed or indexed.'
     : a.indexing.storedOnlyReason === 'opt-out' ? 'Opted out of indexing by its owner.'
@@ -521,8 +530,8 @@ export default function FilePreview({ id, onMutated, onClose, startInEdit }: { i
             )}
           </div>
           <div className="preview-row preview-submeta">
-            <span className={`status-chip ${extracting ? 's-processing' : storedOnly ? 's-stored' : 's-searchable'}`} title={storedWhy || undefined}>
-              {extracting ? 'Extracting text…' : storedOnly ? 'Stored only' : 'Searchable ✓'}
+            <span className={`status-chip ${fileStatusClass(chip)}`} title={storedWhy || indexWhy || undefined}>
+              {extracting ? 'Extracting text…' : storedOnly ? 'Stored only' : FILE_STATUS_LABEL[chip]}
             </span>
             <span className="badge muted">{TIER_WORD[a.tier]}</span>
             <span className="file-sub">{a.version} · {bytesLabel(view.bytes)}</span>
@@ -536,6 +545,8 @@ export default function FilePreview({ id, onMutated, onClose, startInEdit }: { i
             <div className="preview-row file-sub" role="status">
               The document parser is reading this file. It becomes searchable when that finishes.
             </div>
+          ) : indexWhy ? (
+            <div className="preview-row file-sub" role="status" data-testid="index-outcome">{indexWhy}</div>
           ) : extractedLine ? (
             <div className="preview-row file-sub" role="status" data-testid="extracted-status">{extractedLine}</div>
           ) : null}

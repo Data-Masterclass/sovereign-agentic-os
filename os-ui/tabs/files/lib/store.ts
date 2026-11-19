@@ -13,6 +13,7 @@ import {
   type ExtractionFailureCode,
   type AutoDocsCode,
   type AutoDocsGeneration,
+  type IndexOutcome,
   AssetError,
   parseAsset,
   serializeAsset,
@@ -51,6 +52,7 @@ import { type ArtifactVersion, versionLog } from '@core/kernel/versioning';
 // explicit row so it persists even when empty. Reused, never forked.
 import { createFolder, type FolderScope, type Principal as FolderPrincipal } from '@core/folders/index';
 import { normaliseFolderPath } from '@core/kernel/folders';
+import { fileStatusOf, type FileStatus } from '@tabs/files/lib/file-status';
 
 /**
  * The file registry — the MOCK store behind the Files tab (kind-only, in-process;
@@ -91,8 +93,9 @@ export type FileRecord = {
   archived?: boolean;
 };
 
-/** What an upload becomes Searchable as — the calm status chip (deep-design A5). */
-export type FileStatus = 'processing' | 'searchable' | 'stored';
+/** What an upload becomes Searchable as — the calm status chip (deep-design A5). The rule
+ *  lives in `file-status.ts` so the browser components share it. */
+export type { FileStatus } from '@tabs/files/lib/file-status';
 
 export type FileSummary = {
   id: string;
@@ -493,10 +496,7 @@ export function moveFilesDomain(sel: { id?: string; onlyUnassigned?: boolean }, 
 // --------------------------------------------------------------------- lists --
 
 function statusOf(a: FileAsset): FileStatus {
-  // A binary whose text is being read right now is neither searchable nor "stored only" by
-  // anyone's choice — say so (the chip the browser already has for it).
-  if (a.indexing.extraction?.status === 'pending') return 'processing';
-  return a.indexing.mode === 'stored-only' ? 'stored' : 'searchable';
+  return fileStatusOf(a);
 }
 
 /** True when a stored object's content-type renders inline in a browser (the Quick
@@ -1170,6 +1170,23 @@ function setExtraction(id: string, extraction: Extraction): FileAsset | null {
   a.indexing.extraction = extraction;
   persist(rec, a);
   return a;
+}
+
+/**
+ * Record what the last index run did (`indexAsset` calls this after every run). Never touches the
+ * text, the mode or `updatedAt` — it is a fact about the index, not an edit. A record this
+ * process does not hold (a test asset, a file deleted meanwhile) is left alone. Written through
+ * only when the status changed, so the boot sweep does not rewrite every file.
+ */
+export function recordIndexOutcome(id: string, outcome: IndexOutcome): void {
+  const rec = fs().store.get(id);
+  if (!rec) return;
+  const a = parseAsset(rec.yaml);
+  const prev = a.indexing.outcome;
+  if (prev && prev.status === outcome.status && prev.chunks === outcome.chunks && prev.reason === outcome.reason) return;
+  a.indexing.outcome = outcome;
+  rec.yaml = serializeAsset(a);
+  writeThrough(rec);
 }
 
 /** The parser has the bytes and has not answered yet. */

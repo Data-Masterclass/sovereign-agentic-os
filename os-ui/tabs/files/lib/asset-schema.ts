@@ -157,6 +157,23 @@ export type Indexing = {
   storedOnlyReason?: StoredOnlyReason;
   /** Binary text-extraction state (absent when the file never went to the parser). */
   extraction?: Extraction;
+  /** What the LAST index run did (absent = no run has been recorded for this file). The
+   *  "Searchable" chip is read from this, never from `mode` alone: `mode` says the file MAY be
+   *  indexed, the outcome says whether its index rows were really written. */
+  outcome?: IndexOutcome;
+};
+
+/**
+ * The recorded result of one index run. `indexed` = its chunks were written; `empty` = the run
+ * produced nothing to index; `failed` = the run threw (parser or embeddings gateway), with why.
+ */
+export type IndexOutcome = {
+  status: 'indexed' | 'empty' | 'failed';
+  at: string;
+  /** Chunks written (only on `indexed`). */
+  chunks?: number;
+  /** Why it failed (only on `failed`). */
+  reason?: string;
 };
 
 export type FileAsset = {
@@ -354,6 +371,15 @@ function parseAutoDocs(v: unknown, tags: string[]): AutoDocs | undefined {
   return out.generation || out.description || out.tags ? out : undefined;
 }
 
+function parseOutcome(v: unknown): IndexOutcome | undefined {
+  if (!isRecord(v)) return undefined;
+  if (v.status !== 'indexed' && v.status !== 'empty' && v.status !== 'failed') return undefined;
+  const out: IndexOutcome = { status: v.status, at: typeof v.at === 'string' ? v.at : '' };
+  if (typeof v.chunks === 'number') out.chunks = v.chunks;
+  if (typeof v.reason === 'string' && v.reason) out.reason = v.reason;
+  return out;
+}
+
 function parseIndexing(v: unknown, sensitivity: Sensitivity): Indexing {
   const r = isRecord(v) ? v : {};
   const requested = (r.mode === 'stored-only' ? 'stored-only' : 'indexed') as IndexingMode;
@@ -373,6 +399,8 @@ function parseIndexing(v: unknown, sensitivity: Sensitivity): Indexing {
   }
   const extraction = parseExtraction(r.extraction);
   if (extraction) out.extraction = extraction;
+  const outcome = parseOutcome(r.outcome);
+  if (outcome) out.outcome = outcome;
   return out;
 }
 
@@ -496,6 +524,9 @@ export function serializeAsset(a: FileAsset): string {
   if (a.indexing.mode === 'stored-only' && a.indexing.storedOnlyReason) indexing.storedOnlyReason = a.indexing.storedOnlyReason;
   if (a.indexing.extraction) {
     indexing.extraction = Object.fromEntries(Object.entries(a.indexing.extraction).filter(([, v]) => v !== undefined));
+  }
+  if (a.indexing.outcome) {
+    indexing.outcome = Object.fromEntries(Object.entries(a.indexing.outcome).filter(([, v]) => v !== undefined));
   }
   doc.indexing = indexing;
   if (a.relationships.length > 0) doc.relationships = a.relationships;
