@@ -7,8 +7,7 @@
  * ARCHITECTURE:
  *   - Client component rendered inside `MetricBuilder`'s View; reads real columns from
  *     `/api/data/datasets/{id}` and queries `/api/metrics/explore`.
- *   - Re-runs on every slice, chip or viewer change; the viewer picker (me / DE / FR / US) sends
- *     `viewerRegion` so the server-side row-level filter can be compared.
+ *   - Re-runs on every slice or chip change; row-level filtering is applied server-side as the caller.
  *   - Filter chips are session state only and are never persisted.
  */
 'use client';
