@@ -1,31 +1,18 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    Composite-metric formula compiler (`[profit] / [revenue]` style)
+ * USER STORY: As a creator I want to define a metric as arithmetic over my other metrics, with clear
+ *             errors when I write it wrong, so that I can build ratios and margins without SQL.
+ * ARCHITECTURE:
+ *   - Pure, tested recursive-descent parser for: expr := term (('+'|'-') term)*,
+ *     term := factor (('*'|'/') factor)*, factor := number | '[' metric ']' | '(' expr ')' | '-' factor.
+ *   - Compiles to the `{measure}` reference form a `number` measure already uses, so the existing SQL
+ *     expansion in `./explorer.ts` serves it. `a / b` becomes `a / NULLIF(b, 0)`; the whole
+ *     expression is wrapped in `1.0 *` to force double.
+ *   - `assertFormulaRefs` allows only existing basic (non-`number`) siblings, one level deep. Errors
+ *     are `FormulaError` (400). Used by `./model.ts` and `tabs/metrics/ui/MetricBuilder.tsx`.
  */
-/**
- * Composite-metric FORMULA — arithmetic over OTHER metrics on the same view, the
- * Power BI "measures reference measures" pattern (`Margin % = DIVIDE([Profit], [Revenue])`,
- * `Net = ([Sales] - [Returns]) / [Orders]`). Deliberately NOT DAX itself (DAX is
- * proprietary Microsoft with no open engine); instead a tiny, fully-specified grammar:
- *
- *   expr   := term (('+'|'-') term)*
- *   term   := factor (('*'|'/') factor)*
- *   factor := number | '[' metric ']' | '(' expr ')' | '-' factor
- *
- * compiled to the SAME `{measure}` reference convention the guided ratio already uses,
- * so the whole existing pipeline — Cube YAML, governed-Trino SQL expansion, the
- * consistency gate, dashboards, alerts — serves a formula like any other `number`
- * measure, in the same filter context as its parts (the DAX semantic that matters).
- *
- * Division is null-safe DAX-DIVIDE-style: `a / b` compiles to `a / NULLIF(b, 0)` —
- * zero denominators yield NULL, never an error or Infinity — and the whole expression
- * is `1.0 *`-forced to double so integer counts divide correctly. Because the grammar
- * is a strict subset of DAX arithmetic, every formula stays cleanly compilable to a
- * DAX measure for the roadmap one-way Power BI export (#143) without adopting DAX here.
- *
- * Pure + tested; throws {@link FormulaError} (status 400) with a position-anchored,
- * plain-language message — the UI shows it verbatim.
- */
-
 export class FormulaError extends Error {
   status = 400;
   constructor(message: string) {

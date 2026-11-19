@@ -1,26 +1,20 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    Metric governance — promote and certify a metric along the data tiers
+ * USER STORY: As a domain admin or admin I want a metric promoted only by an entitled role, only when it
+ *             passes the consistency gate, and never above its dataset's tier, so that shared numbers are sound.
+ * ARCHITECTURE:
+ *   - Pure, tested. Tiers map to the data ladder (personal → dataset, domain → asset, marketplace →
+ *     product) and the role gate reuses Data's `canTransition`, so metrics and datasets cannot drift.
+ *   - Check order: role gate, then `consistencyCheck` (`./consistency.ts`), then the dataset-tier ceiling.
+ *   - Used by the metric promote/govern routes, `./store.ts` and the MCP write tools.
  */
 import type { Dataset, Measure, Tier } from '@tabs/data/lib/index';
 import type { Role } from '@core/kernel/session';
 import { canTransition, tierAfter } from '@tabs/data/lib/index';
 import { type ConsistencyResult, type MemberResolver, consistencyCheck } from '@tabs/metrics/lib/consistency';
 import { measureMember } from '@tabs/metrics/lib/model';
-
-/**
- * Metric governance — a metric is a governed PRODUCT, on the SAME tiers/roles as data:
- *
- *   Personal → promote to the Domain (Builder) → certify to the Marketplace (Admin).
- *
- * We reuse the data lifecycle gate ({@link canTransition}) so metrics and datasets can
- * never drift on who-may-do-what (a non-Builder cannot promote; only an Admin certifies),
- * and we gate promotion/certification on the metric CONSISTENCY check (documented +
- * defined + resolves on its canonical member). The OM lineage edge (mart→measure→view)
- * rides in on the dbt exposure the Data build already emits — governance here is the
- * tier move + the consistency gate, not a second catalog write.
- *
- * Pure + tested. A MetricRecord is the governed unit (a measure on a dataset's view).
- */
 
 export type MetricTier = 'personal' | 'domain' | 'marketplace';
 

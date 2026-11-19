@@ -1,19 +1,17 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    Build adapter contract for the metric build — apply, then verify, into one row
+ * USER STORY: As a creator I want a metric build to show a tick only when the step both ran and was
+ *             checked to have worked, so that a tick always means a real result.
+ * ARCHITECTURE:
+ *   - `BuildAdapter<Ctx>` (apply + verify) and `runAdapter`, which turns one adapter into a ✓/✗
+ *     `BuildRow`; verify is skipped if apply fails and any throw becomes ✗.
+ *   - Generic over the context, but today only the metric build uses it (`./live.ts`, `./server.ts`).
+ *   - `MetricBuildContext` carries the viewer's delegated token so the SQL runs as the viewer.
  */
 import type { Dataset, Measure, DelegatedToken } from '@tabs/data/lib/index';
 import type { MetricExploreResult } from '@tabs/metrics/lib/build/live';
-
-/**
- * The ONE adapter interface for the Metrics + Dashboards builds (the Opus deliverable),
- * the same discipline as lib/agents/build + lib/data/build: every adapter does the real
- * `apply` against its tool then a `verify` probe that it actually worked, and a row is ✓
- * ONLY when BOTH pass. LIVE when the service is reachable, an honest offline-MOCK
- * otherwise — same adapter logic both paths, so a ✓ always means a real apply+verify.
- *
- * Generic over the build context so Dashboards reuses it (build/dashboards imports
- * {@link BuildAdapter} + {@link runAdapter}) — one interface, no drift.
- */
 
 export type StepResult = { ok: boolean; detail: string; error?: string };
 

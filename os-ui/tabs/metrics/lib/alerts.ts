@@ -1,22 +1,19 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    Metric alert rules — threshold model and pure breach evaluation
+ * USER STORY: As a creator I want to set a threshold on a governed metric and be notified in-app when it
+ *             is breached, so that I hear about a change without watching a dashboard.
+ * ARCHITECTURE:
+ *   - Pure: `evaluateAlert` decides breach, notifications and an optional agent-run request; the
+ *     routes inject delivery. Value resolution as the rule's owner lives in `./build/alert-eval.ts`.
+ *   - In-app is the only channel; legacy `email`/`slack` values are coerced to `in_app`.
+ *   - `triggerAgent` only produces an `AgentRunRequest`. No route starts an agent run from it:
+ *     `app/api/metrics/alerts/route.ts` records it as a governance trace, and the scheduled
+ *     `alerts/run` route ignores it.
  */
 import { measureMember } from '@tabs/metrics/lib/model';
 import type { Dataset, Measure } from '@tabs/data/lib/index';
-
-/**
- * Alerts on governed metrics. An alert sets a THRESHOLD on a metric member; on breach it
- * NOTIFIES (in-app) AND can TRIGGER a governed agent — an event → a LangGraph
- * run (Langfuse-traced). An alert evaluates the SAME member the explorer/dashboard/agent
- * resolve, through the SAME governed-SQL path (exploreMetric — Cube is off the read path,
- * Phase 2), AS the rule's OWNER, so it fires on exactly the number that owner sees. The
- * headless value resolution + honest 'unavailable'/'pending' skip live in build/alert-eval.ts.
- * Alerts belong with Metrics (a threshold on a metric), not Dashboards.
- *
- * Pure: {@link evaluateAlert} decides; the live wiring (notify, enqueue the agent run) is
- * injected at the route. Modelled so the kind-gate "an alert notifies AND triggers an
- * agent run" is exercised deterministically.
- */
 
 export type Comparator = 'lt' | 'lte' | 'gt' | 'gte';
 /** In-app is the only alert channel — email/Slack were UI fiction (no delivery path).

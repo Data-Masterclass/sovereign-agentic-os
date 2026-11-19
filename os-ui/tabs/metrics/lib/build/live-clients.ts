@@ -1,5 +1,12 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    Trino reachability probe for the metric read path
+ * USER STORY: As a viewer I want a metric to report "unavailable" when Trino is down, so that I am never
+ *             shown an invented number.
+ * ARCHITECTURE:
+ *   - Server-only. `GET http://<trinoHost>:<trinoPort>/v1/info` with a 2.5 s timeout; any error is false.
+ *   - Used only by `./explore-server.ts`, whose honesty gate decides what to return when it is false.
  */
 import 'server-only';
 import { config } from '@core/kernel/config';

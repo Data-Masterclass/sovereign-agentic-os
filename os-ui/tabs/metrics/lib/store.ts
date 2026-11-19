@@ -1,18 +1,20 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    Metric registry read model — every visible measure lifted into a metric summary
+ * USER STORY: As a creator I want one list of the metrics I can see, grouped as mine, domain and
+ *             marketplace, where one broken model does not hide the rest, so that I can find and reuse metrics.
+ * ARCHITECTURE:
+ *   - Read-only over `@tabs/data/lib/store`: a metric is a measure on a dataset, so there is no second
+ *     store. Folder and archive state come from `./lifecycle.ts`; records from `./governance.ts`.
+ *   - Fail-soft per dataset (`safeSummariesFor`): a bad model becomes one summary with an `error`.
+ *   - `getMetric` answers the same 404 whether the metric is missing or not visible to the caller.
+ *   - Re-exported by `./index.ts`; also feeds `./lifecycle-adapter.ts` via `listAllMetricsInternal`.
  */
 import { type Principal, getDataset, listDatasets, peekDatasetMeasureNames, listAllDatasets, ensureHydrated as ensureDataHydrated } from '@tabs/data/lib/store';
 import { type MetricRecord, metricRecord } from '@tabs/metrics/lib/governance';
 import { measureMember, dbtMetricType, metricTimeGrain, type DbtMetricType } from '@tabs/metrics/lib/model';
 import { isMetricArchived, metricFolder } from '@tabs/metrics/lib/lifecycle';
-
-/**
- * Metrics derived from the Data tab's datasets (read-only over lib/data/store) — a metric
- * IS a measure on a governed dataset, so the metric registry is just every measure the
- * user can see, lifted into a {@link MetricRecord} (with its canonical member + tier).
- * No second store, no drift: defining a measure in Data/Metrics is the single write; this
- * is the read model the explorer + governance list from.
- */
 
 const TIER_OF = { dataset: 'personal', asset: 'domain', product: 'marketplace' } as const;
 

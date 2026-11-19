@@ -1,20 +1,15 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
- */
-/**
- * The "Suggest metrics" agent (pure core).
  *
- * Given the caller's OPERATING-MODEL + WORKFLOW context and the datasets they can
- * actually see, propose 3–6 candidate metrics grounded in that context.
- * This is the context-aware sibling of {@link ./agent.ts}: agent.ts turns ONE goal on
- * ONE dataset into a metric; this proposes SEVERAL metrics across the datasets the
- * business's operating model implies matter, before a dataset is even chosen.
- *
- * Transport-free by design (the caller makes the LLM call through the ONE governed
- * assistant helper): this module only (a) builds the token-budgeted prompt from the
- * pre-assembled, already-governed context and (b) validates the model's JSON against
- * the REAL context — dropping any candidate whose dataset the caller can't see or
- * whose columns aren't real, so a suggestion can never fabricate access or a column.
+ * FEATURE:    "Suggest metrics" agent core — prompt building and candidate validation
+ * USER STORY: As a creator I want several candidate metrics proposed across my visible datasets, each
+ *             tied to my business context, so that I can pick one and land straight in the builder.
+ * ARCHITECTURE:
+ *   - Pure and transport-free: builds a token-budgeted prompt from context `./suggest-server.ts`
+ *     already assembled under the caller, and validates the model's JSON against that context.
+ *   - Candidates on an invisible dataset or unreal column are dropped; unresolved process ids are
+ *     cleared; cross-dataset ideas become a "build a curated dataset" note, never an invented join.
+ *   - Sibling of `./agent.ts` (one goal on one dataset); unparseable output throws `SuggestError`.
  */
 import { MEASURE_TYPES, type MeasureType } from '@tabs/data/lib/index';
 import type { MetricForm } from '@tabs/metrics/lib/model';

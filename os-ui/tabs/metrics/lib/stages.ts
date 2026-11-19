@@ -1,25 +1,14 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
- */
-
-/**
- * The METRICS guided path — Define · Refine · Preview · Publish · Monitor.
- * Pure, framework-free (mirrors DASH_STAGES in lib/dashboards/stages.ts) so the
- * gating and ✓ rules are unit-testable without React.
  *
- * Stages:
- *  Define   — pick a source dataset and name the metric. NL-first: the agent box
- *             is the hero (not buried under Advanced). Gate: dataset chosen + measure named.
- *  Refine   — measure/filter/window/format/slice panels. Gate: aggregation and, for
- *             non-count/ratio types, a column selected.
- *  Preview  — live number + mode badge + auto-poll pending state. Gate: preview ran ok.
- *  Publish  — Save + PromoteButton. Gate: (optional) metric saved.
- *  Monitor  — Alerts + Explore-as-viewer. Gate: metric is live (saved).
- *
- * The live `ctx` is derived fresh each render from the builder's real form state; a ✓
- * means the stage's condition holds for that state (core/kernel/stages.ts). NOTE: no screen
- * mounts this model today. Before it is: Monitor's condition is a placeholder (it repeats
- * Publish's `saved`) — it should become "an alert threshold is set".
+ * FEATURE:    Metric guided-path stage model — Define, Refine, Preview, Publish, Monitor
+ * USER STORY: As a creator I want the metric builder to show which step I am on and which steps are done,
+ *             so that I know what is left before my metric is live.
+ * ARCHITECTURE:
+ *   - Pure `StageDef` list (`core/kernel/stages.ts`) with enable/complete rules over a `MetricCtx`
+ *     derived from the builder's form state; unit-testable without React.
+ *   - Not mounted by any screen today: only the `MetricStageId` type is imported (by
+ *     `tabs/metrics/ui/MetricStageAssistant.tsx`). Monitor's condition repeats Publish's `saved`.
  */
 
 import type { StageDef } from '@core/kernel/stages';

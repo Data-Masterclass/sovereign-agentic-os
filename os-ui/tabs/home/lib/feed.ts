@@ -1,24 +1,18 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    Home feed adapter — assembles one viewer's Home page data
+ * USER STORY: As any signed-in user I want Home to show my approvals, work in progress, recent activity,
+ *             domain pulse and spend in one place, limited to what I am entitled to see.
+ * ARCHITECTURE:
+ *   - Server-only. Fetches rows with the caller's identity from the existing stores
+ *     (`@core/policy/approvals`, `@core/kernel/artifacts`, `@tabs/software/lib`, `./stubs`) and passes
+ *     them to the pure shapers in `./scope` and `./launcher`. No logic is duplicated from those tabs.
+ *   - Read and route only: it mutates nothing. Approvals are listed per viewer domain; the certified
+ *     marketplace rows are used only for the "recent activity" feed.
+ *   - Called by `app/api/home/feed/route.ts` and `app/page.tsx`.
  */
 import 'server-only';
-
-/**
- * The Home **home-feed adapter** (home-golden-path.md §"Under the hood").
- *
- * A thin, per-viewer/OPA aggregator that REUSES the existing per-tab data
- * sources and never duplicates their logic:
- *   • approvals  → lib/approvals (Governance queue)            [LIVE]
- *   • my WIP +   → lib/artifacts + lib/apps (registry)         [LIVE]
- *     recent activity
- *   • domain pulse → lib/home/stubs (user directory)           [LIVE]
- *   • health & cost → lib/home/stubs (Governance cost store)   [LIVE]
- *
- * It fetches the raw rows, then hands them to the PURE scope.ts shapers which
- * apply the SAME RLS predicates the owning tabs enforce. Home is read + route —
- * this module triggers nothing and mutates nothing; it only re-surfaces, scoped.
- * The two live feeds read from real in-process stores and return `source:'live'`.
- */
 
 import type { CurrentUser } from '@core/kernel/auth';
 import { listApprovals } from '@core/policy/approvals';

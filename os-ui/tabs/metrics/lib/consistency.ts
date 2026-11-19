@@ -1,5 +1,15 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    Metric consistency checks — define-time convergence and the promotion gate content
+ * USER STORY: As a domain admin promoting a metric I want proof that the form, agent and YAML define the
+ *             same measure and that it is documented and resolves, so that one metric means one number.
+ * ARCHITECTURE:
+ *   - Pure. `convergence` compares the measures built from form, agent and YAML (used by
+ *     `app/api/metrics/define/route.ts`); `consistencyCheck` is the promotion gate run by `./governance.ts`
+ *     (transparency gate from Data, measure present on the dataset, optional resolve check).
+ *   - `numbersMatch` (every consumer returns the same value for a member) is exercised only by tests;
+ *     no production path calls it.
  */
 import type { Dataset, Measure } from '@tabs/data/lib/index';
 import { transparencyGate, gateReason } from '@tabs/data/lib/index';
@@ -12,22 +22,6 @@ import {
   measureMember,
   sameMeasure,
 } from '@tabs/metrics/lib/model';
-
-/**
- * Metric-consistency — "the same number everywhere". Two guarantees:
- *
- *   1. DEFINE-time convergence: form / agent / YAML are three doors to ONE artifact.
- *      {@link convergence} proves they yield the identical Measure + member, so the
- *      define UX can offer all three without ever forking the definition.
- *   2. RESOLVE-time agreement: the explorer, the OS dashboards and the agent `metrics`
- *      tool all read the SAME canonical member. {@link numbersMatch} proves that, for a
- *      member, every consumer returns the identical value (the kind-gate "numbers
- *      match the agent's metrics tool" check, at the unit level).
- *
- * {@link consistencyCheck} is the promotion gate's content (the spec's open question):
- * a metric may only be promoted/certified when it is documented AND resolves AND every
- * consumer would resolve the same member. Pure + tested.
- */
 
 export type CheckRow = { name: string; ok: boolean; detail: string };
 

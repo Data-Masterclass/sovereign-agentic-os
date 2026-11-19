@@ -1,25 +1,17 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    Metric build adapter — the single `trino` apply/verify step
+ * USER STORY: As a creator I want building a metric to run its governed SQL as me and check that it
+ *             resolves to a number, so that a built metric is known to compute.
+ * ARCHITECTURE:
+ *   - Apply runs the injected `explore` (in production `exploreMetric`); verify sums the member over
+ *     the rows and fails when there is no number or the result is pending.
+ *   - Pure: the explore function is injected so it is unit-tested with a fake. Used by `./server.ts`.
  */
 import type { Dataset, Measure } from '@tabs/data/lib/index';
 import type { DelegatedToken } from '@tabs/data/lib/index';
 import { type BuildAdapter, type MetricBuildContext, ok, fail } from '@tabs/metrics/lib/build/adapter';
-
-/**
- * The Metric build adapter — apply→verify against the governed Trino read path, behind
- * the same {@link BuildAdapter} interface as every other Build. ONE adapter:
- *
- *   • `trino` — APPLY runs the metric's compiled governed SQL over the gold mart UNDER
- *     THE VIEWER'S delegated identity (R3 — Trino/OPA row/column security), exactly the
- *     path the explorer, the dashboards and the agent `metrics` tool serve from; VERIFY
- *     proves the canonical member resolved to a number — no ✓ for a measure that never
- *     resolves. Because every consumer runs the same compiled SQL, "the numbers match"
- *     holds by construction.
- *
- * Pure: the explore function is injected so the adapter is unit-tested against an
- * in-memory fake; the real one is `exploreMetric` (explore-server.ts), which already
- * carries the honest offline-mock and the loud outage gate.
- */
 
 /** The slice of an explore result the build needs (structurally `ExploreServerResult`). */
 export type MetricExploreResult = {

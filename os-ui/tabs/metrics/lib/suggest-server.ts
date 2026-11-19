@@ -1,5 +1,16 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    "Suggest metrics" server run — assemble governed context and call the model
+ * USER STORY: As a creator I want metric suggestions based on my operating model, workflows and the
+ *             datasets I can see, so that I start from metrics that matter to my business.
+ * ARCHITECTURE:
+ *   - Server-only. Shared by `app/api/metrics/assistant/route.ts` and the MCP tool in
+ *     `tabs/metrics/mcp/metric-write-tools.ts`, so both use the same context and model call.
+ *   - Context is read under the caller: Operating-Model sections (`resolveManual`, only where
+ *     `canView`), visible workflows and visible datasets with real columns and measures.
+ *   - Runs `completeWithEscalation` standard model first, escalating once when no candidate survives
+ *     `parseCandidates`; with no visible datasets it returns empty without a model call.
  */
 import 'server-only';
 import type { CurrentUser } from '@core/kernel/auth';
@@ -20,20 +31,6 @@ import {
 } from '@tabs/metrics/lib/suggest';
 
 export type { SuggestResult } from '@tabs/metrics/lib/suggest';
-
-/**
- * Server-side context assembly + run for "suggest metrics" — the ONE place the route
- * and the MCP tool share, so both assemble the SAME already-governed context and run
- * the SAME validated model call under the caller (MCP parity by construction).
- *
- * Everything is read UNDER the caller's identity through the existing governed libs:
- * the three Operating-Model scopes via
- * `resolveManual` (only where `canView`), `listWorkflows(user)` + `getWorkflow` for
- * the visible processes' steps + HARD rules, and `listDatasets(user)` + `getDataset`
- * for the datasets the caller can see with their real columns/measures. Nothing is
- * fabricated: {@link parseCandidates} then drops any candidate whose dataset isn't in
- * this visible set or whose columns aren't real.
- */
 
 const OM_SCOPES: ManualScope[] = ['company', 'domain', 'my'];
 

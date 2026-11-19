@@ -1,5 +1,14 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    Home "top items per artifact" board
+ * USER STORY: As a user I want a short list of my most notable datasets, metrics, agents and other items,
+ *             each linking into its tab, so that I can get back to my work quickly.
+ * ARCHITECTURE:
+ *   - Server component that renders the groups `scope.topItems` built from rows already scoped to
+ *     the viewer in `tabs/home/lib/feed.ts`. Shows an empty state when there are none.
+ *   - Not imported anywhere at present: `homeFeed()` still computes `topItems`, but no page
+ *     renders this board.
  */
 import Link from 'next/link';
 import type { TopGroup } from '@tabs/home/lib/scope';

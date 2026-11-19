@@ -1,5 +1,13 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    Audit log viewer — searchable list of audit entries with the chain-integrity status
+ * USER STORY: As an admin I want to search and filter the audit trail by text and action and see
+ *             whether its hash chain is intact, so that I can trust and investigate what happened.
+ * ARCHITECTURE:
+ *   - Client component rendered by `app/(govern)/governance/page.tsx`; reads
+ *     `GET /api/governance/audit?q=&action=`. The server computes `intact` / `broken`.
+ *   - Read-only: the action filter options are derived from the returned entries.
  */
 'use client';
 

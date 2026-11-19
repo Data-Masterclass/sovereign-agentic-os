@@ -1,5 +1,15 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    Headless alert evaluation — resolve an alert's metric value as the rule's owner
+ * USER STORY: As a creator I want my scheduled alert to test the number I would see myself, and to skip
+ *             rather than fire when the number cannot be computed, so that alerts are never false.
+ * ARCHITECTURE:
+ *   - Server-only. Builds the owner's principal from the user directory (falls back to the rule's
+ *     stored owner/domain) and mints an owner-delegated token; no service account is used.
+ *   - Resolves the member among the owner's visible metrics, then calls `exploreMetric` (governed
+ *     Trino SQL). Returns `ok`, `unavailable` (Trino down) or `pending` (no number yet).
+ *   - Called by `app/api/metrics/alerts/run/route.ts`; `explore`/`resolve` are injectable for tests.
  */
 import 'server-only';
 import { claimsFromUser, delegate, type DelegatedToken } from '@tabs/data/lib/index';
@@ -9,20 +19,6 @@ import type { Principal } from '@tabs/data/lib/store';
 import type { Dataset, Measure } from '@tabs/data/lib/index';
 import { exploreMetric } from '@tabs/metrics/lib/build/explore-server';
 import type { AlertRuleRecord } from '@tabs/metrics/lib/alert-store';
-
-/**
- * Headless alert evaluation (Phase 2): resolve an alert rule's metric value through the SAME
- * governed-SQL path the explorer + dashboards use ({@link exploreMetric}) — Cube is off the
- * read path. An alert runs HEADLESS, so it must evaluate AS THE RULE'S OWNER would see the
- * number, not as whoever triggered the cron: we mint an owner-DELEGATED token from the owner's
- * governed identity (R2 — never a service account), so the exact per-viewer row/column security
- * the owner sees is what the threshold is tested against.
- *
- * HONESTY: a real-deployment Trino outage makes exploreMetric return `unavailable` — the alert
- * then SKIPS with status 'unavailable' (never a fabricated value, never a false alarm). A metric
- * that has no number yet (a window measure with no time slice, or an empty result) is 'pending'.
- * Only a genuinely computed number is 'ok'.
- */
 
 export type AlertValue =
   | { status: 'ok'; value: number }

@@ -1,26 +1,15 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
- */
-
-/**
- * The Home **launcher adapter** (home-golden-path.md §"Centerpiece").
  *
- * A PURE, dependency-free path catalog → role→action deep-link + tutorial-link
- * resolver. No server imports, no I/O — so it is trivially unit-testable AND it
- * can render in a React Server Component without a round-trip. The illustrated
- * gallery (one card per golden path) is the platform's front door; this module
- * decides, per viewer persona, each card's:
- *
- *   • one-line explainer (what the path is for),
- *   • a role-aware PRIMARY ACTION verb + deep-link into that tab's flow,
- *   • whether the persona can ACT (else the card is explained-but-dimmed).
- *
- * Roles in the OS auth model are `participant | builder | admin`. Home expresses
- * the design's four personas (home-golden-path.md §"Role-aware emphasis") by
- * deriving a `HomePersona` from the role + the viewer's authoring activity:
- * a participant who has authored at least one artifact is acting as a *Creator*;
- * one who has not is a *User* (pure consumer). This keeps the security model
- * unchanged while giving the four-way emphasis the design calls for.
+ * FEATURE:    Home launcher adapter — the golden-path cards and their role-aware actions
+ * USER STORY: As a user I want Home to show one card per golden path with an action I can actually take,
+ *             and explain the paths I cannot act on, so that I know where to start.
+ * ARCHITECTURE:
+ *   - Pure, no I/O and no server imports, so it is unit-tested and can render in a server component.
+ *   - Derives a Home persona from the auth role plus authoring activity: admin → admin; builder or
+ *     domain_admin → builder; any other role is creator if it has authored something, else user.
+ *   - Each card gets a deep link (`<tab>?from=home&action=…`) and is dimmed when the persona rank is
+ *     below the path's `actRank`. Used by `./feed` and `tabs/home/ui/HomeLauncher.tsx`.
  */
 
 import type { Role } from '@core/kernel/session';

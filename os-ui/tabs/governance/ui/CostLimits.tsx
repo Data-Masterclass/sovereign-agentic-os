@@ -1,5 +1,13 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    Cost caps — list and set LLM spend caps per key, domain or tenant
+ * USER STORY: As an admin I want to set a spend ceiling per domain or tenant (optionally per period and
+ *             model class), so that assistant calls stop before spend runs past the agreed budget.
+ * ARCHITECTURE:
+ *   - Client component rendered by `app/(govern)/governance/page.tsx`; reads and writes
+ *     `GET`/`POST /api/governance/cost`. The form shows only when the server returns `canSet`.
+ *   - Enforcement is not here: this panel only edits the caps the server checks.
  */
 'use client';
 
