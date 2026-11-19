@@ -53,6 +53,14 @@ function seedFiles(): void {
   createFile(amir, { name: 'standup-2026-06.m4a', folder: '/recordings', tags: ['standup'], text: 'Transcript: the team reviewed the renewal.' });
 }
 
+
+/** `deleteFile` waits for the shared store (OpenSearch) to confirm: answer like a healthy cluster. */
+async function withHealthyMirror<T>(fn: () => Promise<T>): Promise<T> {
+  const real = globalThis.fetch;
+  globalThis.fetch = (async () => new Response('{"result":"deleted"}', { status: 200, headers: { 'content-type': 'application/json' } })) as typeof fetch;
+  try { return await fn(); } finally { globalThis.fetch = real; }
+}
+
 test('a fresh tenant has no files', () => {
   assert.equal(listFiles(amir).mine.length, 0);
 });
@@ -239,10 +247,12 @@ test('stored-only files are excluded from search results (not indexed)', () => {
   assert.ok(!hits.some((h) => h.name === 'restricted-doc.pdf'), 'stored-only is not searchable');
 });
 
-test('delete removes a file for its owner', () => {
-  const a = createFile(amir, { name: 'tmp.pdf', text: 'tmp' });
-  deleteFile(a.id, amir);
-  assert.throws(() => getFile(a.id, amir), /not found|404/i);
+test('delete removes a file for its owner', async () => {
+  await withHealthyMirror(async () => {
+    const a = createFile(amir, { name: 'tmp.pdf', text: 'tmp' });
+    await deleteFile(a.id, amir);
+    assert.throws(() => getFile(a.id, amir), /not found|404/i);
+  });
 });
 
 // ----------------------------------------------------- Phase 2: governance ----
@@ -435,14 +445,16 @@ test('unarchive restores the file to the working list', () => {
   assert.ok(g.mine.some((f) => f.id === a.id && !f.archived), 'unarchived file back in list');
 });
 
-test('delete removes the file and purges its version history', () => {
-  const a = createFile(amir, { name: 'gone.pdf', text: 'going' });
-  moveFile(a.id, amir, '/temp'); // creates a version entry
-  const vBefore = listFileVersions(a.id, amir);
-  assert.ok(vBefore.length >= 1, 'history exists before delete');
-  deleteFile(a.id, amir);
-  // File is gone
-  assert.throws(() => getFile(a.id, amir), /not found|404/i);
+test('delete removes the file and purges its version history', async () => {
+  await withHealthyMirror(async () => {
+    const a = createFile(amir, { name: 'gone.pdf', text: 'going' });
+    moveFile(a.id, amir, '/temp'); // creates a version entry
+    const vBefore = listFileVersions(a.id, amir);
+    assert.ok(vBefore.length >= 1, 'history exists before delete');
+    await deleteFile(a.id, amir);
+    // File is gone
+    assert.throws(() => getFile(a.id, amir), /not found|404/i);
+  });
   // Version history purged — a new store reset confirms the symbol state is clean
   // (we cannot re-query versions for a deleted file, but purge is tested by checking
   // the store is gone and the mirror __reset is wired — tested via __resetStore smoke)

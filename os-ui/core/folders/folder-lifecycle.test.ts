@@ -103,15 +103,15 @@ test('restoreFolder reverses the archive cascade', () => {
   assert.equal(one.items.find((i) => i.id === 'i1')!.archived, false);
 });
 
-test('deleteFolder is ARCHIVED-ONLY and physically removes rows + member items', () => {
+test('deleteFolder is ARCHIVED-ONLY and physically removes rows + member items', async () => {
   const a = createFolder(amir, { tab: 'files', scope: 'personal', path: '/a' });
   const one = makeAdapter([{ id: 'i1', folder: '/a', archived: true, owner: 'amir', deleted: false }]);
   registerArtifactAdapter(one.adapter);
   // Live folder → refused.
-  assert.throws(() => deleteFolder(amir, 'files', a.id), (e: unknown) => (e as { status?: number }).status === 409);
+  await assert.rejects(deleteFolder(amir, 'files', a.id), (e: unknown) => (e as { status?: number }).status === 409);
   // Archive, then delete.
   archiveFolder(amir, 'files', a.id);
-  deleteFolder(amir, 'files', a.id);
+  await deleteFolder(amir, 'files', a.id);
   assert.equal(getFolder(a.id), undefined, 'row physically gone');
   assert.equal(one.items.find((i) => i.id === 'i1')!.deleted, true, 'member item physically deleted');
 });
@@ -132,11 +132,11 @@ test('the cascade is FAIL-CLOSED: a member the caller cannot edit surfaces a 403
   void bea;
 });
 
-test('a missing adapter surfaces an honest 500 (a tab wired folders but forgot to register)', () => {
+test('a missing adapter surfaces an honest 500 (a tab wired folders but forgot to register)', async () => {
   const a = createFolder(amir, { tab: 'files', scope: 'personal', path: '/a' });
   archiveFolderRows(amir, a.id); // archive the row directly (no adapter)
-  assert.throws(
-    () => deleteFolder(amir, 'files', a.id),
+  await assert.rejects(
+    deleteFolder(amir, 'files', a.id),
     (e: unknown) => (e as { status?: number }).status === 500,
   );
 });

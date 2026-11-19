@@ -54,8 +54,10 @@ export type ArtifactAdapter = {
   archiveItem(id: string, user: AdapterPrincipal): void;
   /** Reverse the soft-archive (edit-scoped; throws 403 when denied). */
   restoreItem(id: string, user: AdapterPrincipal): void;
-  /** PHYSICAL, permanent delete of one item (edit-scoped; throws 403 when denied). */
-  deleteItem(id: string, user: AdapterPrincipal): void;
+  /** PHYSICAL, permanent delete of one item (edit-scoped; throws 403 when denied). May be async
+   *  (a delete the tab must confirm with a shared store): the cascade awaits it, and a rejection
+   *  stops the cascade before the folder rows are removed. */
+  deleteItem(id: string, user: AdapterPrincipal): void | Promise<void>;
 };
 
 // ------------------------------------------------------------------ registry --

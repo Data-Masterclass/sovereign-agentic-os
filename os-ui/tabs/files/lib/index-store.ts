@@ -219,6 +219,30 @@ export async function pruneChunksExcept(fileId: string, keepIds: string[]): Prom
   return Boolean(res && res.ok);
 }
 
+/**
+ * Delete EVERY OpenSearch chunk of a file — the search half of a permanent delete. Live search
+ * (`retrieve.ts`) reads this index directly, so a chunk left behind would keep quoting a deleted
+ * file to every reader and agent. Awaited, with a bounded retry; a missing index (404) holds no
+ * chunks and is a success. Returns what OpenSearch said, so the caller reports a leftover
+ * honestly instead of assuming it is gone.
+ */
+export async function removeChunksFromMirror(fileId: string, opts: { attempts?: number; backoffMs?: number } = {}): Promise<{ ok: true } | { ok: false; reason: string }> {
+  const attempts = Math.max(1, opts.attempts ?? 3);
+  const backoffMs = opts.backoffMs ?? 100;
+  const body = JSON.stringify({ query: { term: { file_id: fileId } } });
+  let reason = 'no answer';
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    if (attempt > 0) await new Promise((r) => setTimeout(r, backoffMs * attempt));
+    const res = await osFetch(`/${config.filesIndex}/_delete_by_query?refresh=true&conflicts=proceed`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body,
+    });
+    if (!res) { reason = 'no answer (network error or timeout)'; continue; }
+    if (res.ok || res.status === 404) return { ok: true };
+    reason = `HTTP ${res.status}`;
+  }
+  return { ok: false, reason: `the search index did not confirm the chunk delete (${reason}, ${attempts} attempts)` };
+}
+
 /** Build the OpenSearch hybrid query (knn + multi_match) with the DLS as a filter.
  *  Exported so Phase 5's retrieve can run it live (and so it is inspectable/testable). */
 export function buildOpenSearchQuery(queryVector: number[], queryText: string, filter: DlsFilter, k = 8): Record<string, unknown> {

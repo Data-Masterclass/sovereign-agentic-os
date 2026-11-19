@@ -15,8 +15,8 @@ import {
   moveFile,
   archiveFile,
   unarchiveFile,
-  deleteFile,
 } from '@tabs/files/lib/store';
+import { deleteFilePermanently } from '@tabs/files/lib/physical-delete';
 
 /**
  * The Files tab's binding to the shared folder lifecycle (see
@@ -47,7 +47,13 @@ const filesAdapter: ArtifactAdapter = {
   moveItem: (id, user, path) => void moveFile(id, principal(user), path),
   archiveItem: (id, user) => void archiveFile(id, principal(user)),
   restoreItem: (id, user) => void unarchiveFile(id, principal(user)),
-  deleteItem: (id, user) => void deleteFile(id, principal(user)),
+  // The SAME permanent delete as a single file: record (confirmed by the shared store — a refusal
+  // throws and stops the cascade), search chunks and object-store bytes.
+  deleteItem: async (id, user) => {
+    const r = await deleteFilePermanently(id, principal(user));
+    const left = [...(r.index.ok ? [] : [`search chunks (${r.index.reason})`]), ...r.physical.filter((p) => !p.ok).map((p) => `${p.target} (${p.reason})`)];
+    if (left.length) console.warn(`[files] folder delete: ${id} deleted, but left behind: ${left.join('; ')}`);
+  },
 };
 
 registerArtifactAdapter(filesAdapter);
