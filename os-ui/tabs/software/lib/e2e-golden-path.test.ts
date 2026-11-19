@@ -82,7 +82,9 @@ const { handleRpc } = await import('@core/mcp/server');
 const { config } = await import('@core/kernel/config');
 const { __resetAppsCache, getAppByIdInternal, serveModeOf, setAppSpec, saveAppDraft, publishApp } =
   await import('./apps.ts');
-const { __resetReviewCards, requestDeploy, decideDeploy } = await import('./review.ts');
+const { __resetReviewCards, requestDeploy, decideDeploy, scanGate } = await import('./review.ts');
+const { getSnapshot } = await import('./snapshot.ts');
+const { VERSION_DELIM, REPORT_DELIM } = await import('./scan-trivy.ts');
 const { securityScan } = await import('./scan.ts');
 const { resolveServeTarget } = await import('./served-app.ts');
 const { __setAppProjectGitForTests, appSubtreePrefix } = await import('./git-commit.ts');
@@ -792,4 +794,82 @@ test('STAGE 12 · push_app_files commits under apps/<slug>/ with the OS-* traile
     const read = await callOk(cara, 'read_app_files', { appId: coded.id, path: 'src/App.tsx' });
     assert.match(JSON.stringify(read), /export default function App/, 'push → read round-trips the real bytes');
   }
+});
+
+// ── STAGE 13: the lockfile ───────────────────────────────────────────────────────────────────
+// A cluster whose scan Job succeeds and whose pod prints the given Trivy report — the same
+// injected-engine shape `review-no-scan-hatch.test.ts` uses. No Trivy binary runs in this suite;
+// the report is what Trivy v0.58.2 returns for a tree whose one lockfile resolves packages (one
+// `lang-pkgs` result, `Target` = the lockfile path), and it is the SAME report before and after
+// the manifest edit below, because Trivy reads the lockfile and never the manifest.
+function liveScanReturning(report: string) {
+  const uid = 'job-uid-e2e-lock';
+  const k8s = async (method: string, path: string) => {
+    if (method === 'POST') return { status: 201, body: { metadata: { uid } } };
+    if (method === 'DELETE') return { status: 200, body: {} };
+    if (path.includes('/pods?')) {
+      return { status: 200, body: { items: [{ metadata: { name: 'scan-pod', ownerReferences: [{ uid }] } }] } };
+    }
+    if (path.includes('/jobs/')) return { status: 200, body: { metadata: { uid }, status: { succeeded: 1 } } };
+    return { status: 404, body: {} };
+  };
+  const k8sText = async () => ({ status: 200, text: `${VERSION_DELIM}\n{}\n${REPORT_DELIM}\n${report}\n` });
+  return {
+    scannerEnabled: true as const,
+    trivy: {
+      k8s,
+      k8sText,
+      namespace: 'agentic-os',
+      image: 'aquasec/trivy:0.58.2',
+      dbMode: 'mirror' as const,
+      dbRepository: 'ghcr.io/aquasecurity/trivy-db',
+      timeoutMs: 5_000,
+      runId: 'e2elock01',
+      sleep: async () => {},
+    },
+  };
+}
+
+test('STAGE 13 · a freshly scaffolded CODED app ships a REAL lockfile, so the engine covers its dependencies', async () => {
+  const coded = await callOk(cara, 'create_software', { name: 'Locked orders', domain: 'sales', purpose: 'p', kind: 'code' });
+  const appId = coded.id as string;
+  const tree = getSnapshot(appId) ?? [];
+  const manifest = JSON.parse(tree.find((f) => f.path === 'package.json')!.content) as {
+    name: string;
+    dependencies: Record<string, string>;
+  };
+  const lock = JSON.parse(tree.find((f) => f.path === 'package-lock.json')!.content) as {
+    name: string;
+    packages: Record<string, { name?: string; dependencies?: Record<string, string>; version?: string }>;
+  };
+  assert.equal(lock.name, coded.slug, 'the lockfile is the app’s own — it carries the app’s slug');
+  assert.deepEqual(lock.packages[''].dependencies, manifest.dependencies, 'and its root entry IS this manifest');
+  assert.ok(lock.packages['node_modules/react']?.version, 'with a real resolution behind each dependency');
+  assert.ok(tree.some((f) => f.path === 'vendor/@sovereign-os/ui/package.json'), 'the file: dependencies it names are in the tree');
+
+  const resolved = JSON.stringify({ SchemaVersion: 2, Results: [{ Target: 'package-lock.json', Class: 'lang-pkgs', Type: 'npm' }] });
+  const first = await requestDeploy(appId, cara, { scan: liveScanReturning(resolved) });
+  assert.equal(first.kind, 'review');
+  if (first.kind !== 'review') return;
+  assert.equal(first.card.scan.mode, 'live', 'the engine ran');
+  assert.deepEqual(first.card.scan.notRun, ['sast'], `deps must be COVERED on a fresh scaffold: ${first.card.scan.reason ?? ''}`);
+  assert.equal(first.card.scan.passed, true, 'no acknowledgement is needed for a freshly generated app any more');
+  assert.equal(scanGate(first.card.scan).kind, 'passed');
+
+  // STALENESS: the owner pushes a changed manifest and no new lockfile. The engine would report
+  // exactly what it reported a moment ago — and that must no longer count as dependency coverage.
+  manifest.dependencies['date-fns'] = '^3.6.0';
+  await callOk(cara, 'push_app_files', {
+    appId,
+    files: [{ path: 'package.json', content: JSON.stringify(manifest, null, 2) + '\n' }],
+    message: 'add a dependency, forget the lockfile',
+  });
+  const second = await requestDeploy(appId, cara, { scan: liveScanReturning(resolved) });
+  assert.equal(second.kind, 'review');
+  if (second.kind !== 'review') return;
+  assert.equal(second.card.scan.passed, false);
+  assert.ok(second.card.scan.notRun?.includes('deps'), 'a stale lockfile is NOT coverage');
+  assert.deepEqual(scanGate(second.card.scan), { kind: 'uncovered', categories: ['deps'] });
+  assert.match(second.card.scan.reason ?? '', /date-fns/, 'the difference is named');
+  assert.match(second.card.scan.reason ?? '', /npm install --package-lock-only/, 'and so is the remedy');
 });

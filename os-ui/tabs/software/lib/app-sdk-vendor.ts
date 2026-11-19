@@ -11,9 +11,10 @@
  *   1. The Sandpack "Instant preview" (browser) — injects these files under
  *      `node_modules/@sovereign-os/app-sdk/` so a bare
  *      `import { createOsClient } from '@sovereign-os/app-sdk'` resolves in-browser.
- *   2. Seed-time vendoring in `scaffoldRepo` — copies the SAME files into the app
- *      repo under `vendor/@sovereign-os/app-sdk/` + a `file:` dependency, so the
- *      built Docker image can resolve the import with no external registry.
+ *   2. Seed-time vendoring (`scaffold-lock.ts` → `lockedSeed`, called by `createApp`) —
+ *      copies the SAME files into the app tree under `vendor/@sovereign-os/app-sdk/` + a
+ *      `file:` dependency, so `npm ci` resolves the import with no external registry and
+ *      the seed's real `package-lock.json` has something to lock.
  *
  * Both read the ONE source of truth on disk (no duplicated/embedded copy that can
  * drift). Server-only (`fs`): every caller is a Node API route or the scaffolder.

@@ -54,8 +54,20 @@ const FILES: ScaffoldFile[] = [
 const NO_DEPS: ScaffoldFile[] = [{ path: 'README.md', content: '# hi\n' }];
 /** A tree Trivy can actually resolve. */
 const LOCKED: ScaffoldFile[] = [
-  { path: 'package.json', content: '{}' },
-  { path: 'package-lock.json', content: '{"lockfileVersion":3}' },
+  { path: 'package.json', content: JSON.stringify({ name: 'shop', dependencies: { clsx: '^2.1.1' } }) },
+  {
+    // A lockfile that AGREES with the manifest above: since `lockfile-evidence.ts`, a stub like
+    // `{"lockfileVersion":3}` is (rightly) read as a lock that does not describe this manifest.
+    path: 'package-lock.json',
+    content: JSON.stringify({
+      name: 'shop',
+      lockfileVersion: 3,
+      packages: {
+        '': { name: 'shop', dependencies: { clsx: '^2.1.1' } },
+        'node_modules/clsx': { version: '2.1.1' },
+      },
+    }),
+  },
 ];
 
 const ARGS = trivyArgs({ dbMode: 'mirror', dbRepository: 'ghcr.io/aquasecurity/trivy-db' });
@@ -182,6 +194,13 @@ test('an unsafe path FAILS CLOSED instead of being silently skipped', () => {
     assert.match(r.reason, /path/i);
     assert.ok(r.reason.includes(bad), 'the reason must name the offending path');
   }
+});
+
+test('an npm scope directory (`@scope`) is a safe path — the vendored OS packages live under one', () => {
+  const r = writerScript([{ path: 'vendor/@sovereign-os/ui/index.ts', content: 'export {};\n' }]);
+  assert.equal(r.ok, true);
+  if (!r.ok) return;
+  assert.ok(r.script.includes("mkdir -p '/work/vendor/@sovereign-os/ui'"));
 });
 
 test('the DEFAULT payload cap is a Secret-sized one, and it refuses rather than truncating', () => {

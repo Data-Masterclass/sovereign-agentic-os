@@ -42,7 +42,14 @@ const PODS_PREFIX = `GET /api/v1/namespaces/${NS}/pods?`;
  */
 const CLEAN_FILES: ScaffoldFile[] = [
   { path: 'package.json', content: JSON.stringify({ dependencies: { next: '^15.0.0' } }) },
-  { path: 'package-lock.json', content: '{"lockfileVersion":3}' },
+  {
+    // Agrees with the manifest above — a stub lock would now read as stale (lockfile-evidence.ts).
+    path: 'package-lock.json',
+    content: JSON.stringify({
+      lockfileVersion: 3,
+      packages: { '': { dependencies: { next: '^15.0.0' } }, 'node_modules/next': { version: '15.0.0' } },
+    }),
+  },
   { path: 'src/index.ts', content: 'export const ok = 1;\n' },
 ];
 
@@ -298,7 +305,7 @@ test('H1: the baseline known-bad list is LAYERED on a live scan that resolved no
 test('H1: the layered baseline does not duplicate a secret the live engine already found', async () => {
   const leaked: ScaffoldFile[] = [
     { path: 'config.ts', content: 'const k = "AKIAIOSFODNN7EXAMPLE";\n' },
-    { path: 'package-lock.json', content: '{"lockfileVersion":3}' },
+    { path: 'package-lock.json', content: '{"lockfileVersion":3,"packages":{"":{}}}' },
     { path: 'package.json', content: '{}' },
   ];
   const r = await resolveScan('shop', leaked, undefined, {

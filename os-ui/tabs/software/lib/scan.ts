@@ -233,10 +233,12 @@ export async function resolveScan(
   }
 
   // THE LIVE VERDICT, with the baseline LAYERED ON TOP (PR #63 review H1). Trivy resolves
-  // dependencies from lockfiles; our scaffolds commit none, so its `deps` coverage can be empty
-  // where the baseline's two-entry known-bad list would still have flagged `lodash@4.17.20`.
-  // Dropping the baseline would therefore have made the live scanner a REGRESSION on exactly the
-  // trees this product generates. Both run; the strictest answer wins.
+  // dependencies from lockfiles and never reads the manifest, so its `deps` coverage is empty for
+  // an app with no lockfile (every app created before `scaffold-lock.ts` seeded one) and blind to
+  // a `package.json` edited after its lockfile — where the baseline's two-entry known-bad list,
+  // which reads the MANIFEST, would still flag `lodash@4.17.20`. Dropping the baseline would
+  // therefore make the live scanner a regression on exactly those trees. Both run; the strictest
+  // answer wins.
   //
   // Note what is NOT here: no `offlineMockAllowed()` call. A real engine's real answer is not a
   // fabrication and is not that lever's business.
