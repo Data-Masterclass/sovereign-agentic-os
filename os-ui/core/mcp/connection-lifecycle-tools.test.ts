@@ -81,3 +81,38 @@ test('m3 revoke_action_adoption: floors at domain_admin (a creator is refused)',
   const r = (res as JsonRpcResponse).result as Record<string, unknown>;
   assert.equal(r.isError, true, 'creator is refused revoke_action_adoption');
 });
+
+// ---- THE AGENT WRITE POSTURE BINDS AGENTS ONLY (2026-11-19) ----------------------------------
+//
+// `revoke_action_adoption` is closed to agent runs (`AGENT_FORBIDDEN_TOOLS`) and `retire_connection`
+// is held for a second person when an AGENT calls it (`hold.ts`). Neither rule may reach a signed-in
+// person: `/api/mcp` → `serveMcp` → `handleRpc` is this exact call, and it consults no agent table.
+// The retire/configure tests above already show a person's call executing directly; this is the
+// same proof for the one tool that is now refused to agents outright.
+
+test('a PERSON is not refused revoke_action_adoption by the agent-forbidden gate: the call reaches the governed lib', async () => {
+  const { agentForbiddenReason } = await import('./write-tool-meta.ts');
+  const agentReason = agentForbiddenReason('revoke_action_adoption');
+  assert.ok(agentReason, 'precondition: the tool IS closed to agent runs');
+  for (const person of [domainAdmin, admin]) {
+    const r = await call(person, 'revoke_action_adoption', { adoptionId: 'ad_does_not_exist' });
+    // It fails — there is no such adoption — but with the LIB's own answer, which is only
+    // reachable past the role floor and inside the tool body. An agent-door refusal would carry
+    // the catalog's reason and `forbidden` instead.
+    const text = errorText(r);
+    assert.match(text, /Adoption not found/, `${person.role}: the governed lib answered`);
+    assert.doesNotMatch(text, /not an agent action/, `${person.role}: not the agent-door refusal`);
+    assert.ok(!text.includes(agentReason!), `${person.role}: not the catalog's agent reason`);
+    assert.notEqual((JSON.parse(text) as { error: { code: string } }).error.code, 'forbidden');
+  }
+});
+
+test('a PERSON is not HELD on retire_connection: no approval is filed, the connection is archived at once', async () => {
+  const { listApprovals } = await import('@core/policy/approvals');
+  const before = listApprovals().length;
+  const c = await createConnection(domainAdmin, { name: 'DB', template: 'database', endpoint: '', credential: 'pw' });
+  const arch = payload<{ archived: boolean }>(await call(domainAdmin, 'retire_connection', { connId: c.id, mode: 'archive' }));
+  assert.equal(arch.archived, true, 'executed directly, as the person');
+  assert.equal(listApprovals().length, before, 'nothing was parked in the Governance inbox');
+});
+
