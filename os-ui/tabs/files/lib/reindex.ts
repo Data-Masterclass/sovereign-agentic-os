@@ -40,25 +40,22 @@ import 'server-only';
 import { config } from '@core/kernel/config';
 import { refuseOfflineMock } from '@core/kernel/offline-mock';
 import {
-  assertReindexAdmin,
-  batchSize,
-  buildReindexPlan,
-  finishJob,
-  jobFor,
-  jobRemaining,
-  recordUnit,
-  startOrResume,
   REINDEX_UNIT_CAP,
   type EngineProbe,
   type IndexSnapshot,
-  type ReindexFilter,
-  type ReindexJob,
-  type ReindexPlan,
-  type ReindexPrincipal,
   type ReindexService,
-  type ReindexUnit,
   type StoredUnit,
 } from '@core/kernel/reindex';
+import {
+  bucketsOf,
+  countOf,
+  createReindexRunner,
+  mappingDimension,
+  osJson,
+  probeEngine as probe,
+  type ReindexRunnerDeps,
+  type UnitOutcome,
+} from '@core/kernel/reindex-runner';
 import { indexAsset, type IndexReport } from '@tabs/files/lib/index-pipeline';
 import { pruneChunksExcept } from '@tabs/files/lib/index-store';
 import { actingCaller, type EmbedCaller } from '@tabs/files/lib/embed';
@@ -111,54 +108,11 @@ export function missingVectorQuery(field = 'vector'): Record<string, unknown> {
 //  The live seam
 // ---------------------------------------------------------------------------
 
-export type UnitOutcome = { outcome: 'replaced' | 'failed' | 'skipped'; reason?: string };
+export type { UnitOutcome };
+/** Re-exported: the files test (and any caller) reads it from here. */
+export { mappingDimension };
 
-export type FilesReindexDeps = {
-  probeEngines: () => Promise<EngineProbe[]>;
-  readSnapshot: () => Promise<IndexSnapshot>;
-  storedUnits: () => StoredUnit[] | Promise<StoredUnit[]>;
-  reindexUnit: (unitId: string, by: string) => Promise<UnitOutcome>;
-};
-
-type OsReply = { status: number; body: Record<string, unknown> } | null;
-
-async function osJson(path: string, init?: RequestInit, ms = 6000): Promise<OsReply> {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), ms);
-  try {
-    const res = await fetch(`${config.opensearchUrl}${path}`, {
-      ...init,
-      headers: { 'content-type': 'application/json', accept: 'application/json', ...(init?.headers ?? {}) },
-      signal: ctrl.signal,
-      cache: 'no-store',
-    });
-    const text = await res.text();
-    let body: Record<string, unknown> = {};
-    try {
-      body = text ? (JSON.parse(text) as Record<string, unknown>) : {};
-    } catch {
-      body = {};
-    }
-    return { status: res.status, body };
-  } catch {
-    return null; // transport failure or timeout — NOT the same fact as "the index is empty"
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-async function probe(name: string, url: string): Promise<EngineProbe> {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 2500);
-  try {
-    const res = await fetch(url, { method: 'GET', signal: ctrl.signal, cache: 'no-store' });
-    return { name, url, ready: res.ok, detail: res.ok ? null : `HTTP ${res.status}` };
-  } catch (e) {
-    return { name, url, ready: false, detail: (e as Error).message || 'no response' };
-  } finally {
-    clearTimeout(timer);
-  }
-}
+export type FilesReindexDeps = ReindexRunnerDeps;
 
 /** Docling parses the documents; the gateway embeds the chunks. A run needs BOTH. */
 export async function probeFilesEngines(): Promise<EngineProbe[]> {
@@ -166,17 +120,6 @@ export async function probeFilesEngines(): Promise<EngineProbe[]> {
     probe('Docling (document parser)', `${config.doclingUrl}/health`),
     probe('embeddings gateway (LiteLLM)', `${config.litellmUrl}/health/liveliness`),
   ]);
-}
-
-function countOf(reply: OsReply): number {
-  const n = reply?.body?.count;
-  return typeof n === 'number' ? n : 0;
-}
-
-function bucketsOf(reply: OsReply): { key: string; doc_count: number }[] {
-  const aggs = (reply?.body?.aggregations ?? {}) as Record<string, { buckets?: unknown }>;
-  const raw = aggs.units?.buckets;
-  return Array.isArray(raw) ? (raw as { key: string; doc_count: number }[]) : [];
 }
 
 const unitAgg = { units: { terms: { field: 'file_id', size: REINDEX_UNIT_CAP } } };
@@ -225,19 +168,6 @@ export async function readFilesSnapshot(): Promise<IndexSnapshot> {
     looseDocs: [], // every files row carries a file_id; there is no loose row on this corpus
     truncated: bucketsOf(allUnits).length >= REINDEX_UNIT_CAP,
   };
-}
-
-/**
- * Pull the knn field's dimension out of a `_mapping` body, whatever the index is called (the
- * reply is keyed by the concrete index name, which an alias makes unpredictable).
- */
-export function mappingDimension(body: Record<string, unknown>, field: string): number | null {
-  for (const entry of Object.values(body)) {
-    const props = (entry as { mappings?: { properties?: Record<string, { dimension?: unknown }> } })?.mappings?.properties;
-    const dim = props?.[field]?.dimension;
-    if (typeof dim === 'number') return dim;
-  }
-  return null;
 }
 
 /**
@@ -346,191 +276,28 @@ const LIVE_DEPS: FilesReindexDeps = {
 };
 
 // ---------------------------------------------------------------------------
-//  plan · run
+//  plan · run · abandon — the shared loop in `@core/kernel/reindex-runner`
 // ---------------------------------------------------------------------------
 
-export async function planReindex(
-  principal: ReindexPrincipal,
-  opts: { filter: ReindexFilter; deps?: FilesReindexDeps },
-): Promise<ReindexPlan> {
-  assertReindexAdmin(principal);
-  const deps = opts.deps ?? LIVE_DEPS;
-  // A plan WRITES NOTHING and is readable during the very outage that caused the damage, which is
-  // when an operator most wants to know how bad it is. The engines are probed so the panel can
-  // disable Run with a reason — not so the plan can refuse.
-  const [engines, snapshot, stored] = await Promise.all([
-    deps.probeEngines(),
-    deps.readSnapshot(),
-    deps.storedUnits(),
-  ]);
-  return buildReindexPlan({
-    target: TARGET,
-    filter: opts.filter,
-    engines,
-    snapshot,
-    stored,
-    configuredDim: config.filesEmbedDim,
-  });
-}
-
-/** The work list a resume needs: the ORIGINAL unit order, not whatever a later plan computed. */
-const WORK_KEY = Symbol.for('soa.reindex.files.work');
-function workList(): Map<string, ReindexUnit[]> {
-  const g = globalThis as unknown as Record<symbol, Map<string, ReindexUnit[]> | undefined>;
-  if (!g[WORK_KEY]) g[WORK_KEY] = new Map();
-  return g[WORK_KEY]!;
-}
-
-/** One batch at a time per target, so two concurrent callers cannot process the same units. */
-const BUSY_KEY = Symbol.for('soa.reindex.files.busy');
-function busy(set?: boolean): boolean {
-  const g = globalThis as unknown as Record<symbol, boolean | undefined>;
-  if (set !== undefined) g[BUSY_KEY] = set;
-  return Boolean(g[BUSY_KEY]);
-}
-
-export async function runReindex(
-  principal: ReindexPrincipal,
-  plan: ReindexPlan | null,
-  opts: { batch?: number; onProgress?: (job: ReindexJob) => void | Promise<void>; deps?: FilesReindexDeps } = {},
-): Promise<{ started: boolean; job: ReindexJob; reason?: string }> {
-  assertReindexAdmin(principal);
-  const deps = opts.deps ?? LIVE_DEPS;
-
-  // REFUSE BEFORE READING ANYTHING. The probe is the first statement that can fail, so a refusal
-  // provably touches no row — which is the one promise this tool cannot afford to break.
-  const engines = await deps.probeEngines();
-  const down = engines.find((e) => !e.ready);
-  if (down) {
+const runner = createReindexRunner({
+  target: TARGET,
+  liveDeps: () => LIVE_DEPS,
+  configuredDim: () => config.filesEmbedDim,
+  refuse: (down) =>
     refuseOfflineMock(
       `Cannot re-index the Files corpus: ${down.name} is unreachable at ${down.url}` +
         `${down.detail ? ` (${down.detail})` : ''}. Re-parsing without the parser, or re-embedding ` +
         'without the gateway, would write exactly the stand-ins this re-index exists to remove, so ' +
         'nothing was read, replaced or deleted.',
-    );
-  }
+    ),
+});
 
-  const existing = jobFor(TARGET);
-  if (existing?.status === 'running' && busy()) {
-    return { started: false, job: existing, reason: 'already-running' };
-  }
-
-  // RESUME (`plan === null`): no re-plan, no second index read — the running job's own work list
-  // and cursor are the facts (review M4). Nothing to resume is a stated conflict, not a silent
-  // no-op, because the caller believed there was a job.
-  if (!plan) {
-    if (!existing || existing.status !== 'running') {
-      const err = new Error(
-        `There is no running ${TARGET} re-index to continue. Run a plan first, then start one.`,
-      ) as Error & { status?: number };
-      err.status = 409;
-      throw err;
-    }
-  }
-
-  const claim = plan
-    ? startOrResume(TARGET, { filter: plan.filter, by: principal.id, total: plan.units.length })
-    : { started: false, job: existing! };
-  const job = claim.job;
-  if (claim.started && plan) workList().set(job.id, plan.units);
-
-  // A resume uses the list the job was CREATED with. If that list is GONE — the process was
-  // replaced between batches — the cursor would index into a different list, so the units it
-  // points past would silently never be re-indexed while the job reported progress. That is a
-  // false claim about the corpus, so the job FAILS here instead (review low 4). A fresh
-  // plan + run then redoes the work honestly; the re-index is idempotent, so that costs only time.
-  const work = workList().get(job.id);
-  if (!work) {
-    const dead = finishJob(
-      TARGET,
-      'failed',
-      'The work list for this job was lost (the process was replaced between batches), so its ' +
-        'cursor no longer points into a known list. Nothing was indexed against it. Run Plan ' +
-        'again and start a fresh re-index — re-indexing is idempotent.',
-    );
-    return { started: false, job: dead ?? job, reason: 'work-list-lost' };
-  }
-
-  busy(true);
-  try {
-    const slice = work.slice(job.cursor, job.cursor + batchSize(opts.batch));
-    for (const unit of slice) {
-      // An ABANDON — or another job claiming the slot after one — stops the batch at the next
-      // unit boundary: continuing to call the engines for a job nobody is waiting for would spend
-      // budget on an answer no one reads. The guard compares the JOB ID, not just the status
-      // (re-review M): after an abandon frees the slot a NEW job may already hold it, and
-      // `running` would then be true for somebody else's work.
-      const current = jobFor(TARGET);
-      if (!current || current.id !== job.id || current.status !== 'running') break;
-      let out: UnitOutcome;
-      try {
-        out = await deps.reindexUnit(unit.id, principal.id);
-      } catch (e) {
-        // An engine that went away mid-run, or a gateway rejection. The cursor stays where the
-        // work stopped, so the next call resumes; the typed error reaches the caller unchanged.
-        finishJob(TARGET, 'failed', (e as Error).message);
-        workList().delete(job.id);
-        throw e;
-      }
-      recordUnit(
-        TARGET,
-        // The job this loop belongs to — never "whatever holds the slot now". See `recordUnit`.
-        job.id,
-        out.outcome,
-        out.outcome === 'replaced' ? undefined : { unit: unit.label, reason: out.reason ?? 'no reason given' },
-      );
-      const progressed = jobFor(TARGET);
-      // AWAITED: a progress callback may itself be async (a UI flush, a re-entrant status read),
-      // and a fire-and-forget call here would let the batch finish before the callback ran.
-      if (progressed && opts.onProgress) await opts.onProgress(progressed);
-    }
-    const after = jobFor(TARGET)!;
-    if (after.status === 'running' && jobRemaining(after) === 0) {
-      finishJob(TARGET, 'done');
-      workList().delete(job.id);
-    }
-    return { started: claim.started, job: jobFor(TARGET)!, reason: claim.started ? undefined : 'resumed' };
-  } finally {
-    busy(false);
-  }
-}
-
-/**
- * ABANDON the target's running job (review H3). The only way out of a job whose process died
- * between batches: `busy` is process state, so without this the target stays wedged — the panel
- * would show a running job forever and every Continue would answer `already-running`.
- *
- * It marks the job FAILED and says who abandoned it rather than deleting it, because "somebody
- * gave up on this at 40/900" is a fact an operator needs afterwards. Nothing in the index is
- * touched or rolled back: the units already replaced are correctly replaced, and a later run
- * redoes the rest from a fresh plan.
- */
-export async function abandonReindex(
-  principal: ReindexPrincipal,
-): Promise<{ abandoned: boolean; job: ReindexJob | null; reason?: string }> {
-  assertReindexAdmin(principal);
-  const job = jobFor(TARGET);
-  if (!job || job.status !== 'running') {
-    busy(false); // a stale flag with no running job is exactly what this door exists to clear
-    return { abandoned: false, job, reason: 'nothing-running' };
-  }
-  const failed = finishJob(TARGET, 'failed', `Abandoned by ${principal.id} at ${job.cursor}/${job.total}. ` +
-    'The units already replaced are replaced; the rest were not touched. Plan again to redo them.');
-  workList().delete(job.id);
-  busy(false);
-  return { abandoned: true, job: failed ?? job };
-}
-
-/** Is a batch executing right now? Exposed so the panel can tell "running" from "busy" (H2). */
-export function inFlight(): boolean {
-  return busy();
-}
+export const { planReindex, runReindex, abandonReindex, inFlight } = runner;
 
 /** Test hook — the work list and the busy flag are process state, like the index itself. */
 export function __resetFilesReindex(): void {
-  workList().clear();
-  busy(false);
+  runner.reset();
 }
 
 /** The injectable live defaults, exported so a door can reuse them and a test can assert them. */
-export const filesReindexService: ReindexService = { planReindex, runReindex, abandonReindex, inFlight };
+export const filesReindexService: ReindexService = runner.service;
