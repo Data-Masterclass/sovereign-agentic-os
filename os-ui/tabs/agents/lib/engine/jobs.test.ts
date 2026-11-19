@@ -232,3 +232,24 @@ test('A4 tail: an aborted client stops the tail', async () => {
   ctrl.abort();
   assert.equal((await tail).ended, 'aborted');
 });
+
+test('run listing: scoped and filtered in the read, newest first, with the done report’s outcome only', async () => {
+  const s = memoryRunJobStore();
+  await s.enqueue({ ...job('r-own'), requestedBy: 'u1', domain: 'sales' }, 1_000);
+  await s.claimById('r-own', 'w', 1_000);
+  await s.appendEvent('r-own', 'done', { status: 'failed', failed: true, failure: { node: 'a', reason: 'boom' }, finalText: 'private' }, 2_000);
+  await s.complete('r-own', 'done', { now: 2_000 });
+  await s.enqueue({ ...job('r-colleague'), requestedBy: 'u2', domain: 'sales', systemId: 'sys-2' }, 3_000);
+  await s.enqueue({ ...job('r-finance'), requestedBy: 'u3', domain: 'finance' }, 4_000);
+
+  assert.deepEqual((await s.listRuns({ limit: 10 })).map((r) => r.runId), ['r-finance', 'r-colleague', 'r-own'], 'newest first');
+  assert.deepEqual((await s.listRuns({ limit: 10, visibleTo: { requestedBy: 'u1', domains: [] } })).map((r) => r.runId), ['r-own']);
+  assert.deepEqual((await s.listRuns({ limit: 10, visibleTo: { requestedBy: 'u1', domains: ['sales'] } })).map((r) => r.runId), ['r-colleague', 'r-own']);
+  assert.deepEqual((await s.listRuns({ limit: 10, systemId: 'sys-2' })).map((r) => r.runId), ['r-colleague']);
+  assert.deepEqual((await s.listRuns({ limit: 10, statuses: ['done'] })).map((r) => r.runId), ['r-own']);
+  assert.equal((await s.listRuns({ limit: 1 })).length, 1);
+  const [own] = await s.listRuns({ limit: 1, visibleTo: { requestedBy: 'u1', domains: [] } });
+  assert.deepEqual(own.report, { status: 'failed', failed: true, failure: { node: 'a', reason: 'boom' } });
+  assert.ok(!('input' in own) && !('principal' in own), 'a listing row carries no input or principal snapshot');
+  assert.equal((await s.listRuns({ limit: 10, systemId: 'sys-2' }))[0].report, null, 'no done frame yet → no report');
+});

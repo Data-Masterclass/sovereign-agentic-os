@@ -4,7 +4,7 @@
 
 **Tools (MCP `monitoring`):**
 - `get_monitoring_overview()` — attention-first overview (worst-first): per-lens roll-ups + operational alerts, scoped to you. Each item carries `source` (live/mock).
-- `list_runs(limit?)` — your recent runs with health, detail, owner, domain, cost. `filterScope` removes anything you may not see.
+- `list_runs(limit?, systemId?, status?)` — your recent agent runs (read from the run store, with status) and governed tool-call traces, with health, detail, owner, domain, cost. `filterScope` removes anything you may not see.
 - `get_run_trace(runId)` — drill into one trace (steps, tool calls, context pack, logs). `assertInScope` throws BEFORE any step is returned.
 
 **Golden path** (slash command `check_my_runs`): `whoami` → `get_monitoring_overview` → `list_runs` → `get_run_trace`.
