@@ -184,10 +184,9 @@ function ReindexSectionInner() {
     <section>
       <h3>Re-index</h3>
       <p className="muted" style={{ maxWidth: 820 }}>
-        Re-parse and re-embed a search index through the real services. This is the remedy for rows
-        written while a document parser or the embeddings gateway was unreachable, before a deployed
-        cluster began refusing to stand in for them: invented document text, and hash vectors that
-        make every similarity search rank by a hash.
+        A re-index re-reads the stored files and rebuilds search for them; the originals are not
+        changed. Use it when search misses documents or ranks them badly. Plan first: a plan writes
+        nothing.
       </p>
 
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 8 }}>

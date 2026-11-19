@@ -285,7 +285,7 @@ export default function SimpleBuilder({
           // Runtime badge — read-only, tells the author which engine runs their team.
           hasAgents ? (
             <span className="badge" title={`This team runs on the ${system.runtime} runtime`}>
-              Graph (LangGraph)
+              Graph
             </span>
           ) : null
         }

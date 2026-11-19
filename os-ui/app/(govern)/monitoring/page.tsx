@@ -204,7 +204,7 @@ export default function MonitoringPage() {
   if (target) {
     return (
       <>
-        <PageHeader title="Monitoring" crumb="agents · data — the read plane" />
+        <PageHeader title="Monitoring" />
         <div className="content">
           <DetailView target={target} onBack={back} />
         </div>
@@ -214,7 +214,7 @@ export default function MonitoringPage() {
 
   return (
     <>
-      <PageHeader title="Monitoring" crumb="agents · data — the read plane" />
+      <PageHeader title="Monitoring" />
       <div className="content">
         <div className="row" style={{ justifyContent: 'flex-end', alignItems: 'center' }}>
           <button className="btn ghost" onClick={reload} disabled={loading}>

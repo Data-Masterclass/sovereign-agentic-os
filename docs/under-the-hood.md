@@ -1980,8 +1980,9 @@ POST /knowledge/_search
 >   `opensearch.securityConfig.enabled: false` and `opensearch.persistence.enabled: false` are the chart
 >   defaults, meaning plain HTTP and ephemeral storage.
 >   `charts/sovereign-agentic-os/values.yaml:566`, `:568`
-> - **Several knowledge surfaces are explicitly stubs.** The tacit-knowledge recorder is "a *mocked*
->   in-app transcription" with a literal stub transcript and a button reading `● Record (stub)`;
+> - **Several knowledge surfaces are explicitly stubs.** The tacit-knowledge recorder was "a *mocked*
+>   in-app transcription" with a literal stub transcript; its `● Record (stub)` button is no longer
+>   rendered, so only paste and upload remain;
 >   `mock-entities.ts` is a "Mock entity resolver (kind-only)" whose `resolveEntityIndex` returns four
 >   empty sets; the Rego guardrails are "the enforced default-deny-on-violation **stub**", and when OPA is
 >   unreachable `guardrails-apply.ts` runs an "HONEST *in-process mock*" reporting `mode: 'opa-mock'`.

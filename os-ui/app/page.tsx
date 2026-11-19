@@ -71,19 +71,12 @@ export default async function HomePage() {
         <div className="mcp-cta-banner">
           <div className="mcp-cta-banner-text">
             <p className="mcp-cta-banner-kicker">MCP — AI-native access</p>
-            <p className="mcp-cta-banner-line">
-              Drive the whole OS from Claude or ChatGPT — governed as you.
-            </p>
           </div>
           <McpDrawer className="mcp-cta-btn" />
         </div>
 
         <div className="home-sec-head">
           <h2 className="home-sec-title">Golden paths</h2>
-          <p className="home-sec-sub">
-            Ten ways to build. Each card explains itself and launches its flow. Paths your role
-            can't act on yet are dimmed — still yours to explore.
-          </p>
         </div>
 
         <HomeLauncher cards={feed.launcher} />

@@ -7,10 +7,10 @@ import { useEffect, useRef, useState } from 'react';
 
 /**
  * Tacit-knowledge panel — the workflow-level tacit doc (sibling tacit.md). Capture
- * the practitioners' hidden know-how ANY way: paste notes, upload a transcript, or
- * record-stub (a mocked in-app transcription). The captured source lands in the
- * editor; Save commits it to tacit.md. The transcription backend is stubbed in
- * kind; paste/upload are fully real.
+ * the practitioners' hidden know-how by pasting notes or uploading a transcript.
+ * The captured source lands in the editor; Save commits it to tacit.md.
+ * Voice recording is not available yet: the former "Record (stub)" button only
+ * inserted canned text, so it is not rendered until real transcription exists.
  */
 
 export default function TacitPanel({
@@ -26,7 +26,6 @@ export default function TacitPanel({
   const [raw, setRaw] = useState(''); // the captured-but-not-yet-compressed source
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState('');
-  const [recording, setRecording] = useState(false);
   const fileRef = useRef<HTMLInputElement | null>(null);
 
   // Refresh from the server on mount so re-entering the tab shows the latest
@@ -46,20 +45,6 @@ export default function TacitPanel({
     const text = await file.text();
     setRaw((r) => (r ? `${r}\n\n${text}` : text));
     if (fileRef.current) fileRef.current.value = '';
-  }
-
-  // Record-stub: the real mic+transcription is wired on STACKIT; in kind we emit a
-  // deterministic stub transcript so the capture → compress flow is demonstrable.
-  function recordStub() {
-    setRecording(true);
-    setTimeout(() => {
-      const stub =
-        '[transcription stub] So the thing nobody writes down is that the bank portal ' +
-        'truncates long notes, and Friday afternoon submissions slip to next week. ' +
-        'Also the income date in section four is the usual reason a package bounces.';
-      setRaw((r) => (r ? `${r}\n\n${stub}` : stub));
-      setRecording(false);
-    }, 900);
   }
 
   async function save() {
@@ -110,16 +95,14 @@ export default function TacitPanel({
           <div className="row" style={{ gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
             <button className="btn ghost sm" onClick={() => fileRef.current?.click()}>Upload transcript / .md</button>
             <input ref={fileRef} type="file" accept=".txt,.md,.vtt,.srt,text/*" onChange={onUpload} style={{ display: 'none' }} />
-            <button className="btn ghost sm" onClick={recordStub} disabled={recording}>
-              {recording ? <span className="spin" /> : '● Record (stub)'}
-            </button>
+            {/* Voice recording is not available yet — no Record button until transcription is real. */}
           </div>
           <textarea
             className="tacit-raw"
             rows={5}
             value={raw}
             onChange={(e) => setRaw(e.target.value)}
-            placeholder="Paste raw notes / interview transcript here, or use Upload / Record above…"
+            placeholder="Paste raw notes / interview transcript here, or use Upload above…"
           />
           <div className="row" style={{ justifyContent: 'flex-end', marginTop: 8 }}>
             <button

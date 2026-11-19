@@ -96,11 +96,6 @@
   letter-spacing: 1.4px;
   text-transform: uppercase;
   color: var(--gold-text);
-  margin: 0 0 3px;
-}
-.mcp-cta-banner-line {
-  font-size: 13px;
-  color: var(--text-muted);
   margin: 0;
 }
 .mcp-cta-btn {
