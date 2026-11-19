@@ -320,7 +320,15 @@ export function resolveModel(activity: Activity, table: RoutingTable, agentModel
   return table[activity]?.model ?? TIER_MODELS.light;
 }
 
-/** Classify a LiteLLM model_name into its tier (for the routing probe). */
+/**
+ * Classify a LiteLLM model_name into its tier (for the routing probe).
+ *
+ * A DISPLAY GUESS FROM THE NAME, NOTHING MORE. The `vision` tier (and the `vision` / `video`
+ * activities, which no caller routes on today) does NOT mean a model may be sent an image:
+ * any name containing "qwen", "vl" or "vision" lands here. Whether a model may receive images
+ * is decided only by `canReceiveImages` in `@core/models/capabilities` — an explicit,
+ * admin-controlled list of exact names. Never use this function, or `tier`, for that.
+ */
 export function tierOf(model: string): Tier {
   const m = model.toLowerCase();
   // Reasoning first: both the local `sovereign-reasoning[-fast]` and the legacy
