@@ -116,3 +116,12 @@ test('A4 SQL: the event vocabulary is enforced before the insert', async () => {
   await assert.rejects(() => postgresRunJobStore(db).appendEvent('r1', 'whatever' as never, {}), /not a run event/);
   assert.deepEqual(db.sql, [], 'nothing reached the database');
 });
+
+test('the latest run of a system is read for ONE requester, most recently active first', async () => {
+  const db = recorder([[]]);
+  assert.equal(await postgresRunJobStore(db).latestForSystem('sys-1', 'u1'), null);
+  assert.match(db.sql[0], /WHERE system_id=\$1 AND requested_by=\$2/, 'a run is its runner’s — never a system-wide latest');
+  assert.match(db.sql[0], /ORDER BY updated_at DESC, created_at DESC LIMIT 1/);
+  assert.deepEqual(db.args[0], ['sys-1', 'u1']);
+  assert.ok(RUN_JOBS_DDL.some((s) => /run_jobs_system_idx ON run_jobs \(system_id, requested_by\)/.test(s)), 'the lookup has an index');
+});
