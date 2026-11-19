@@ -623,6 +623,47 @@ test('file records: a file the worker itself just wrote is never dropped, and a 
   }
 });
 
+test('file records: a refresh that read the mirror BEFORE a confirmed delete does not put the deleted file back', async () => {
+  const os = fakeCluster();
+  const files = await import('@tabs/files/lib/store');
+  const inner = globalThis.fetch;
+  let release: () => void = () => {};
+  let gate: Promise<void> | null = null;
+  // Hold a search's ANSWER (computed now, with the file still in it) until the delete is done.
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const res = await inner(input, init);
+    if (gate && String(input).includes('/_search')) await gate;
+    return res;
+  }) as typeof fetch;
+  try {
+    files.__resetStore();
+    files.enableMirrorRefresh();
+    await files.ensureHydrated();
+    const f = files.createFile(admin, { name: 'to-delete.md', text: 'bye' });
+    await settle();
+    await files.refreshFromMirror({ force: true }); // the mirror now provably holds it
+
+    gate = new Promise<void>((r) => { release = r; });
+    const refresh = files.refreshFromMirror({ force: true }); // its listing still contains the file
+    await settle();
+    gate = null;
+    await files.deleteFile(f.id, admin); // confirmed by the shared store
+    assert.ok(!os.docsOf('os-file-records').has(f.id));
+    release();
+    await refresh;
+    assert.throws(() => files.getFile(f.id, admin), /not found/i, 'the stale listing did not re-add it');
+    assert.ok(!files.listFiles(admin).mine.some((x) => x.id === f.id));
+
+    // Later complete listings agree it is gone; nothing comes back.
+    for (let i = 0; i < 3; i++) await files.refreshFromMirror({ force: true });
+    assert.throws(() => files.getFile(f.id, admin), /not found/i);
+  } finally {
+    globalThis.fetch = inner;
+    os.restore();
+    files.__resetStore();
+  }
+});
+
 test('file records: os-ui itself does NOT re-read the mirror (it is the writer); only a declared reader does — and the worker declares it at boot', async () => {
   const os = fakeCluster();
   const files = await import('@tabs/files/lib/store');
