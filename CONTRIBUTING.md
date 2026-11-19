@@ -161,45 +161,60 @@ Either way the deploy **refuses** if the live release pulls os-ui from a differe
 than the image being deployed: a digest only exists inside one repository, so that mismatch
 would be ImagePullBackOff on every pod. Pass `IMAGE_REPO` to say which namespace you mean.
 
-**One decision is still open**, and nothing changes in production until it is made. Images live
-at `ghcr.io/aborek/sovereign-os/*`, but this repository is `Data-Masterclass/…`, so a
-workflow's built-in `GITHUB_TOKEN` can push to `ghcr.io/data-masterclass/*` and **cannot** push
-to the `aborek` namespace. Pick one:
+**The decision is taken (2026-11-19): option A, for `os-ui` only.** The os-ui image lives at
+`ghcr.io/data-masterclass/sovereign-os/os-ui`. This repository is `Data-Masterclass/…`, so the
+workflow's built-in `GITHUB_TOKEN` pushes there with no secret and no variable — it **cannot**
+push to the `aborek` user namespace, which is why the image moved rather than the workflow.
+Production was switched the same day (`--from-registry 0.9.6`, Helm revision 415). What that
+took, and what it did not:
 
-**Option A — move the namespace to `data-masterclass`.** No secret, no variable; the workflow
-already defaults here. What must change is **package access, not the pull secret**: a
-`kubernetes.io/dockerconfigjson` secret is keyed by registry **host** (`ghcr.io`), so the
-existing credential already addresses the new namespace — but `GITHUB_TOKEN` creates the
-package **private and scoped to this repository**, which that credential cannot read. So either
-make the `data-masterclass/sovereign-os/os-ui` package public, or grant the account behind the
-cluster's `ghcr.io` credential read access to it. And note the other images (`git-http`,
-`git-daemon`, `dagster`, `minio`) stay in `ghcr.io/aborek` unless they are moved too, so for a
-while **one credential must be able to read both namespaces**.
+- **No pull-secret change.** A `kubernetes.io/dockerconfigjson` secret is
+  keyed by registry **host** (`ghcr.io`), so the existing credential already addresses the new
+  namespace.
+- **No visibility change.** `GITHUB_TOKEN` creates the package **private and scoped to this
+  repository**, and it stays private: the account behind the cluster's `ghcr.io` credential
+  (`aborek`) is an admin of this repository and can already read it.
+- **Only os-ui moved.** `git-http`, `git-daemon`, `dagster`, `minio` and every other image are
+  still at `ghcr.io/aborek/sovereign-os/*`. So **one credential reads both namespaces**, and
+  must keep doing so: revoke that account's access to this repository and os-ui stops pulling;
+  rotate its token and everything does.
 
 ```bash
-# once: make the new package readable by the cluster's ghcr.io credential (or public)
-git tag os-ui-v<version> && git push public os-ui-v<version>
-IMAGE_REPO=ghcr.io/data-masterclass/sovereign-os IMAGE_FROM_REGISTRY=1 ./scripts/deploy.sh <version>
+git tag os-ui-v<version> && git push public os-ui-v<version>   # CI builds, smokes, pushes
+./scripts/deploy.sh --from-registry <version>
 ```
 
-**Option B — keep `ghcr.io/aborek/sovereign-os`.** Needs a classic PAT with `write:packages` on
-the `aborek` account, stored as the repository secret `GHCR_TOKEN`, plus two repository
-variables: `IMAGE_REPO_PREFIX=ghcr.io/aborek/sovereign-os` and
-`IMAGE_REGISTRY_USER=aborek`. The second one matters — the registry login user must be the
-**PAT's owner**, and the workflow otherwise uses `github.actor`, i.e. whoever pushed the tag.
-Nothing about the cluster changes.
+`IMAGE_REPO` defaults to `ghcr.io/data-masterclass/sovereign-os` and names the **os-ui**
+repository only — `deploy.sh` carries every other image's repository over from the live
+release untouched. Passing it (any value, the default included) also `--set`s the chart's
+`osUI.image.repository`; leaving it unset keeps the release's own repository and runs the
+mismatch refusal above.
+
+**A local build is still there, but it is no longer the supported path.** A plain
+`./scripts/deploy.sh <version>` builds on the laptop and `docker push`es to `IMAGE_REPO` with
+your own `docker login ghcr.io`. With the new default that is the org package, so one of:
+
+- **push rights on the org package** — a token with `write:packages` from an account that has
+  write access to `data-masterclass/sovereign-os/os-ui`. Without it the run ends in
+  `PUSH_FAILED`: after the backup gate, before any `helm upgrade`, so the cluster is unchanged.
+- **`IMAGE_REPO=ghcr.io/aborek/sovereign-os ./scripts/deploy.sh <version>`** — pushes to the old
+  namespace, where laptop credentials have always worked. Because `IMAGE_REPO` was passed, this
+  also moves the release's `osUI.image.repository` **back** to `aborek`. The next plain
+  `--from-registry` deploy is then refused (`IMAGE_REPOSITORY_MISMATCH`: the release pulls from
+  `aborek`, the CI image is in `data-masterclass`) until it is run once with
+  `IMAGE_REPO=ghcr.io/data-masterclass/sovereign-os`.
+
+**Option B — the alternative not taken: keep CI pushing to `ghcr.io/aborek/sovereign-os`.**
+Needs a classic PAT with `write:packages` on the `aborek` account as the repository secret
+`GHCR_TOKEN`, plus two repository variables. `IMAGE_REGISTRY_USER` matters — the registry login
+user must be the **PAT's owner**, and the workflow otherwise uses `github.actor`, i.e. whoever
+pushed the tag. Deploys then need `IMAGE_REPO=ghcr.io/aborek/sovereign-os` every time.
 
 ```bash
 gh variable set IMAGE_REPO_PREFIX   --repo Data-Masterclass/sovereign-agentic-os --body ghcr.io/aborek/sovereign-os
 gh variable set IMAGE_REGISTRY_USER --repo Data-Masterclass/sovereign-agentic-os --body aborek
 gh secret   set GHCR_TOKEN          --repo Data-Masterclass/sovereign-agentic-os   # paste the PAT
-git tag os-ui-v<version> && git push public os-ui-v<version>
-IMAGE_FROM_REGISTRY=1 ./scripts/deploy.sh <version>
 ```
-
-`IMAGE_REPO` defaults to `ghcr.io/aborek/sovereign-os` and is the only thing that moves the
-chart's `osUI.image.repository`; a plain `./scripts/deploy.sh <version>` still builds locally
-and deploys exactly as it always has.
 
 ## Pull requests
 
