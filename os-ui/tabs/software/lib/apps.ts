@@ -51,6 +51,7 @@ import { dataPlaneToolsFromGrants, agentToolsFromGrants } from '@tabs/software/l
 import { parseAppManifest, renderAppYaml, defaultOpenApi, resolveSurface } from '@tabs/software/lib/metadata';
 import { osMirror } from '@core/infra/os-mirror';
 import { newSeenFields, noteSeen, writeDeleted, writeChanged, writeNew, refreshRecord, type SeenFields } from '@core/infra/field-writes';
+import { mirrorRefresher, newMirrorRefresh, type MirrorRefreshState } from '@core/infra/mirror-refresh';
 import { isRunWorkerProcess } from '@core/kernel/process-role';
 import { getPublicUser, type PublicUser } from '@tabs/admin/lib/users';
 import { codedAppsEnabled, ensureHydrated as ensureSettingsHydrated } from '@tabs/admin/lib/settings';
@@ -805,11 +806,14 @@ type AppCacheState = {
   hydrated: boolean;
   /** What this process last knew the mirror held per app, as persisted (see `core/infra/field-writes.ts`). */
   seen: SeenFields;
+  /** The run worker re-reads the mirror before serving a LIST (`core/infra/mirror-refresh.ts`);
+   *  a by-id read already re-reads its one record ({@link getAppByIdWithMirror}). */
+  refresh: MirrorRefreshState;
 };
 const APP_STATE_KEY = Symbol.for('soa.apps.cache');
 function appCacheState(): AppCacheState {
   const g = globalThis as unknown as Record<symbol, AppCacheState | undefined>;
-  if (!g[APP_STATE_KEY]) g[APP_STATE_KEY] = { cache: null, hydrated: false, seen: newSeenFields() };
+  if (!g[APP_STATE_KEY]) g[APP_STATE_KEY] = { cache: null, hydrated: false, seen: newSeenFields(), refresh: newMirrorRefresh() };
   return g[APP_STATE_KEY]!;
 }
 
@@ -1025,7 +1029,11 @@ async function getCache(): Promise<Map<string, App>> {
   const s = appCacheState();
   // A fully-hydrated cache is authoritative — serve it. A cache that exists but is NOT yet
   // hydrated (built during a mirror outage) falls through to RE-hydrate below.
-  if (s.cache && s.hydrated) return s.cache;
+  if (s.cache && s.hydrated) {
+    // The run worker re-reads what os-ui wrote since (throttled; a no-op in os-ui).
+    await refresher.beforeRead();
+    return appCacheState().cache ?? s.cache;
+  }
   const docs = await mirror.hydrate(500); // null → mirror UNREACHABLE; [] → reachable-but-empty
   if (docs === null) {
     // Mirror unreachable: keep an in-process cache so THIS pod's creates are retained, but leave
@@ -1040,6 +1048,7 @@ async function getCache(): Promise<Map<string, App>> {
   // Mirror reachable: the persisted docs are the truth for the ids they contain. Fold them in,
   // preserving any in-process-only apps created during an outage (still queued for write-through).
   const map = new Map<string, App>();
+  refresher.noteHydrated((docs as App[]).filter((a) => a && a.id).map((a) => a.id));
   for (const app of docs as App[]) {
     noteSeen(appCacheState().seen, app.id, { ...app }); // the doc as persisted, before parsing
     hydrateAppDoc(app);
@@ -1049,6 +1058,25 @@ async function getCache(): Promise<Map<string, App>> {
   s.cache = map;
   s.hydrated = true;
   return map;
+}
+
+/** The shared worker refresh (`core/infra/mirror-refresh.ts`), applied to the app registry. */
+const refresher = mirrorRefresher<App>(mirror, () => appCacheState().refresh, {
+  label: 'apps',
+  size: 500,
+  held: (appId) => appCacheState().cache?.get(appId),
+  put: (doc) => {
+    const s = appCacheState();
+    if (!s.cache) return;
+    noteSeen(s.seen, doc.id, { ...doc }); // the doc as persisted, before parsing
+    s.cache.set(doc.id, hydrateAppDoc(doc));
+  },
+  drop: (appId) => appCacheState().cache?.delete(appId) ?? false,
+});
+
+/** Declare THIS process (the run worker) a reader of the apps os-ui writes. Refused elsewhere. */
+export function enableMirrorRefresh(on = true): boolean {
+  return refresher.enable(on);
 }
 
 /** Ensure the app registry and its version history are both hydrated. Used by the versions route. */
@@ -2328,6 +2356,7 @@ export async function removeAppInternal(appId: string): Promise<void> {
   const map = await getCache();
   map.delete(appId);
   writeDeleted(mirror, appCacheState().seen, appId);
+  refresher.noteDeleted(appId);
   deleteSnapshot(appId); // drop the durable source-file mirror doc too
   versions.purge(appId);
 }
@@ -2357,6 +2386,7 @@ export function __resetAppsCache(): void {
   s.cache = null;
   s.hydrated = false;
   s.seen.clear();
+  s.refresh = newMirrorRefresh();
   mirror.__reset();
   versions.__reset();
 }

@@ -27,12 +27,20 @@ export type FakeCluster = {
   doc(index: string, id: string): Doc | undefined;
   /** Every request the fake answered, oldest first (`METHOD /index/...`). */
   calls: string[];
+  /** Replace one stored doc as another process (or a late write) would. */
+  put(index: string, id: string, doc: Doc): void;
+  /** Remove one stored doc, as a delete made in another process leaves it. */
+  remove(index: string, id: string): void;
+  /** How `_search` answers: 'ok'; 'error' (500); 'truncated' (one hit fewer than the total it reports);
+   *  'down' (every request fails, as an unreachable cluster). */
+  mode: 'ok' | 'error' | 'truncated' | 'down';
   restore(): void;
 };
 
 export function fakeCluster(): FakeCluster {
   const indices = new Map<string, Map<string, Doc>>();
   const calls: string[] = [];
+  const ctl = { mode: 'ok' as FakeCluster['mode'] };
   const orig = globalThis.fetch;
   const base = config.opensearchUrl.replace(/\/$/, '');
   const json = (body: unknown, status = 200) =>
@@ -43,14 +51,19 @@ export function fakeCluster(): FakeCluster {
     const method = init?.method ?? 'GET';
     const path = url.slice(base.length).split('?')[0];
     calls.push(`${method} ${path}`);
+    if (ctl.mode === 'down') return json({ error: 'unavailable' }, 503);
     const [, index, rest = ''] = path.match(/^\/([^/]+)(.*)$/) ?? [];
     const docs = indices.get(index);
     const body = init?.body ? JSON.parse(String(init.body)) : undefined;
     if (rest === '/_count') return docs ? json({ count: docs.size }) : json({ error: 'index_not_found_exception' }, 404);
     if (rest === '/_search') {
       if (!docs) return json({}, 404);
-      const hits = [...docs.values()].map((_source) => ({ _source }));
-      return json({ timed_out: false, _shards: { total: 1, successful: 1, failed: 0 }, hits: { total: { value: hits.length, relation: 'eq' }, hits } });
+      if (ctl.mode === 'error') return json({ error: 'search_phase_execution_exception' }, 500);
+      const all = [...docs.values()].map((_source) => ({ _source }));
+      // 'truncated': one hit short of the total the index reports (as a cut-off page answers).
+      const hits = ctl.mode === 'truncated' ? all.slice(0, Math.max(0, all.length - 1)) : all;
+      const total = ctl.mode === 'truncated' ? hits.length + 1 : all.length;
+      return json({ timed_out: false, _shards: { total: 1, successful: 1, failed: 0 }, hits: { total: { value: total, relation: 'eq' }, hits } });
     }
     if (rest === '/_settings' || rest === '/_mapping') return json({ acknowledged: true });
     if (rest === '' && method === 'PUT') {
@@ -84,6 +97,19 @@ export function fakeCluster(): FakeCluster {
   return {
     doc: (index, id) => indices.get(index)?.get(id),
     calls,
+    put: (index, id, doc) => {
+      if (!indices.has(index)) indices.set(index, new Map());
+      indices.get(index)!.set(id, doc);
+    },
+    remove: (index, id) => {
+      indices.get(index)?.delete(id);
+    },
+    get mode() {
+      return ctl.mode;
+    },
+    set mode(m) {
+      ctl.mode = m;
+    },
     restore: () => {
       globalThis.fetch = orig;
     },
