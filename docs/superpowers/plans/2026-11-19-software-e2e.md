@@ -127,7 +127,105 @@ the fix · the test that pins it.**
   carrying the app slug into the same-origin data reads is a change to every pattern renderer's
   fetch, which is outside a bounded end-to-end pass. It is in §4 "still not true".
 
-*(further findings appended as the chain is driven)*
+### F4 — `request_deploy` on a declarative app reviews the TEMPLATE SCAFFOLD, not the app
+
+- **What the user sees.** A review card whose security scan and diff are over `package.json`,
+  `src/App.tsx`, `Dockerfile` … of the `sovereign-app` template — files the app does not use and
+  that will never ship.
+- **What actually runs.** `appFilesForScan` (`review.ts:199`) returns `getSnapshot(app.id) ??
+  templateFiles(...)`. A declarative app has no snapshot, so it always falls through to the
+  template seed.
+- **Posture.** Recorded in §4. The declarative app is already live at `/apps/<slug>` the moment
+  `set_app_spec` validates, so this card is not what gates it — but an approver reading evidence
+  about the wrong artefact is still evidence about the wrong artefact. The right shape is to scan
+  the spec's own shippable surface (the spec JSON plus each custom block's html/css/js and the
+  theme CSS, where a pasted secret actually would live). Not done here: `review.ts`'s scan half is
+  another agent's module this round.
+
+### F5 — a missing runner image is reported as a Kubernetes outage
+
+- **What the user sees.** *"Preview runner unreachable — … pending until the Kubernetes API is
+  reachable"* — when the Kubernetes API is fine and the app simply has no image.
+- **What actually runs.** `deployApp` catches `MissingAppImageError` and returns
+  `{ ok:false, live:false, phase:'failed', detail:<the honest reason> }` (`runner.ts:388`). But
+  `startPreview`'s note ladder forwards `detail` only when `runner.live && !runner.ok`
+  (`review.ts:281`), and `previewPendingNote` keyed solely on `live` — so the explained failure
+  fell through to the unreachable note and `detail` was discarded.
+- **The fix.** `previewPendingNote` returns `outcome.detail` for an explained `phase: 'failed'`
+  outcome. Only a genuinely silent cluster gets the unreachable note.
+- **The test.** `review.test.ts` — a fail-closed missing-image outcome's note names the image.
+
+### F6 — `start_preview` attempted an image deploy for the DEFAULT app kind
+
+- **What the user sees.** `start_preview` on a declarative app reports a runner failure for an app
+  that is already viewable at `/apps/<slug>`.
+- **What actually runs.** `startPreview` never branched on `serveMode`; `runnerAppFor(app)` just
+  passes the slug/host/image, so every app went to `deployApp`.
+- **The fix.** A `serveMode: 'spec'` app's private preview IS its same-origin served URL, gated by
+  the app's own visibility (Personal ⇒ only the owner reaches it). `startPreview` now returns that
+  and — when there is no spec yet — says so and names the verb that authors one. No pod is
+  attempted, and nothing is fabricated.
+- **The test.** `e2e-golden-path.test.ts` stage 9 + `review.test.ts`.
+
+### F7 — `.app/acceptance.json` is honest in its content, and its claim about who reads it is not
+
+- **Content: honest.** `builder/acceptance.ts` derives rather than asserts: `compile` runs the real
+  compile gate; `route`/`render` are AST checks whose evidence strings literally say
+  `static check (AST)`; `manual` is never machine-passed; anything undecidable is `unknown`, never
+  `pass`; and `scored:false` is first-class so `total: 0 · failed: 0` cannot read as clean.
+- **Claim: not honest.** `loop-server.ts:71-80` says the record is *"readable by `read_app_files` /
+  the review card / the MCP with no new tool"*. A tree-wide grep finds **no reader anywhere**: the
+  review card does not carry it. `read_app_files` can read it (it is a file in the committed tree),
+  the review card cannot.
+- **The fix.** Correct the claim to what is true, and pin the half that is true with a test that
+  round-trips the record through `read_app_files`.
+
+### F8 — stale chart fiction: "the runner serves each app as a static SPA (nginx)"
+
+`charts/.../apps-runner.yaml:71` says so; there is no nginx image, and no app-runner image, in
+`images/`. The template itself deploys **no workload** — a Namespace, a Role/RoleBinding for the
+os-ui ServiceAccount and five NetworkPolicies, so that the os-ui process *could* create per-app
+Deployments — and is `enabled: false` by default with `runnerImage: ""`. Comment corrected.
+
+### F9 — `start_preview`'s tool description promises a running instance nothing backs
+
+*"a running instance only you can reach"* (`platform-mcp.ts:131`). With `softwareRunner.enabled:
+false` and no image, nothing backs that for a coded app; for the default declarative app the
+truth is better than the promise (it is served same-origin, now). Description corrected to say
+what each kind actually gets.
+
+### F10 — a grant without `access` was dropped SILENTLY, and the loop had no error in it
+
+- **What the user sees.** `design_software({ grants: { data: [{ id: 'ds_…' }] } })` answers **200**.
+  Then `set_app_spec` refuses: *"dataset ds_… is not granted to this app — grant it in Context"*.
+  So the author goes back and grants it again. Which drops it again. Three times, and then the
+  build is abandoned — with no error message anywhere in the loop.
+- **What actually runs.** `normalizeContextGrants` (`core/kernel/context-grants.ts:73`) required a
+  **valid `access`** on every entry and filtered the rest out. The declared JSON schema marks
+  `access` required, but the dispatcher does not validate against it, so the shape a model writes
+  from a worked example (`{ id }`) vanished.
+- **The fix.** `normalizeContextGrantsWithReport` is now the implementation and reports everything
+  it had to do; `normalizeContextGrants` delegates to it. A **missing** `access` takes `read-only`
+  — the narrowest level, so defaulting can only ever under-privilege — rather than vanishing. An
+  **unrecognised** access value is still refused (the caller asked for something that does not
+  exist and must not be quietly handed a different level) but is now **named** in the report.
+  `design_software` and `set_app_design` return the report as `grantNotes`.
+- **The test.** `e2e-golden-path.test.ts` stage 2 drives both shapes through the real dispatcher.
+
+### F11 — a creator's app could never leave their lane through the governed ladder
+
+- **What the user sees.** The creator files a My→Domain promotion. The appointed `domain_admin`
+  opens it and gets **`not_found`** — on the very artefact they were asked to decide.
+- **What actually runs.** `resolveLadderArtifact` passes `forGovernanceAct: true` from
+  `promoteThroughSeam` and honours it for `personal_knowledge` and `dashboard`, each of which has
+  a dedicated `*ForGovernance` reader. The `'app'` case (`core/policy/ladder.ts:124`) called plain
+  `getAppForUser`, whose Personal-visibility gate hides a creator's own app from everyone else.
+- **The fix.** `getAppForGovernance` in `tabs/software/lib/apps.ts`, mirroring
+  `getDashboardForGovernance` exactly: it widens the read by precisely the set of principals the
+  ladder can appoint as THIS app's approver (an in-domain `domain_admin`, or an `admin`), and only
+  through the two call sites that pass the flag. Everyone else still gets the 404.
+- **The test.** `e2e-golden-path.test.ts` stage 11 — the creator files, the domain_admin approves,
+  and the domain_admin is then refused the Company rung that only an admin holds.
 
 ---
 
@@ -135,25 +233,25 @@ the fix · the test that pins it.**
 
 | # | Stage | Broke? | Fix | Test |
 |---|---|---|---|---|
-| 1 | create | | | |
-| 2 | design | | | |
-| 3 | spec | **yes — F1** | normalise at the three spec doors | `e2e-golden-path` s3, `set-app-spec` |
-| 4 | build (spec + agentic) | **yes — F2** | kind-aware stage directives | `e2e-golden-path` s4, `mcp-stages` |
-| 5 | verify | **yes — F2** | kind-aware verify | `e2e-golden-path` s5 |
-| 6 | scan | *(other agent)* | dependency: `live \| unavailable` | `e2e-golden-path` s6 |
-| 7 | request_deploy | | | |
-| 8 | decide_deploy | | | |
-| 9 | preview / serve | | | |
-| 10 | the app's SDK | | | |
-| 11 | lifecycle | | | |
-| 12 | git | | | |
+| 1 | create | no | — | `e2e` s1 (default kind is `spec`; coded fails closed) |
+| 2 | design | **yes — F10** silent grant drop | report, and default a missing `access` to the narrowest level | `e2e` s2 |
+| 3 | spec | **yes — F1** the owner's error, on three doors | normalise at the door, report the rewrite as a warning | `e2e` s3, `set-app-spec` |
+| 4 | build | **yes — F2** the default kind had no verb | kind-aware directives | `e2e` s4, `platform-mcp` |
+| 5 | verify | **yes — F2** read absent code | verify the live spec instead | `e2e` s5, `platform-mcp` |
+| 6 | scan | *(other agent)* | dependency: `live \| unavailable`; `unavailable` closes the gate | `e2e` s6 |
+| 7 | request_deploy | **F4** reviews the template scaffold | recorded, not fixed (other agent's module) | `e2e` s7 |
+| 8 | decide_deploy | no | — | `e2e` s8 (SoD both ways; no verdict ⇒ unapprovable) |
+| 9 | preview / serve | **yes — F5, F6** | explained failures explain themselves; a spec app's preview is its served URL | `e2e` s9, `review` |
+| 10 | the app's SDK | no | — | `e2e` s10, `triangle` |
+| 11 | lifecycle | **yes — F11** the ladder could not see the app | `getAppForGovernance` | `e2e` s11 |
+| 12 | git | no | — | `e2e` s12 (trailers, one commit for identical bytes, round trip) |
 
 ---
 
 ## 3. Phases
 
 - [x] **PLAN** — this document: the two paths, every door located, the first findings.
-- [ ] **DESIGN** — the shape of each fix, written before it is built.
+- [x] **DESIGN** — the shape of each fix, above, written against the driven chain.
 - [ ] **IMPLEMENT** — test-first, iterating: `e2e-golden-path.test.ts` drives the chain; each red
       stage gets its fix at the source and a test that pins it.
 - [ ] **TEST** — tsc, targeted tests, ONE full-suite run (`--test-concurrency=2`),
