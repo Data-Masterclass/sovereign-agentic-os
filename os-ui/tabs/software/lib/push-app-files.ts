@@ -30,6 +30,7 @@ import { commitToApp } from '@tabs/software/lib/server';
 import type { ScaffoldFile } from '@tabs/software/lib/model';
 import type { AppCommitOutcome } from '@tabs/software/lib/git-commit';
 import { parseAppActions, type ActionParseIssue } from '@tabs/software/lib/app-actions';
+import { forbiddenAppPathReason } from '@tabs/software/lib/app-write-paths';
 
 export type PushAppFilesInput = {
   appId: string;
@@ -47,15 +48,8 @@ export const MAX_PUSH_BYTES = 4 * 1024 * 1024;
 /** How many files one push may carry. */
 export const MAX_PUSH_FILES = 400;
 
-/**
- * Dotfiles an app may NOT push. `.app/` is the OS's own metadata lane inside the app tree, and a
- * CI/forge directory is a claim about infrastructure that does not exist (the night-2 S1 purge
- * removed exactly these from the scaffolds — a push must not put them back).
- */
-const FORBIDDEN_PREFIXES = ['.app/', '.forgejo/', '.github/', '.git/', '.gitea/', 'node_modules/'] as const;
-
-/** A path that is a plain dotfile at the root (`.env`, `.npmrc`) — a secret or a registry config. */
-const FORBIDDEN_ROOT_DOTFILES = ['.env', '.env.local', '.env.production', '.npmrc', '.netrc', '.gitconfig'] as const;
+// The forbidden-paths rule (reserved dirs, credential dotfiles) lives in `app-write-paths.ts`,
+// shared by every door that accepts app files.
 
 function bad(message: string): never {
   const err = new Error(message) as Error & { status?: number };
@@ -92,18 +86,8 @@ export function assertPushable(files: ScaffoldFile[]): void {
     if (seen.has(p)) bad(`'${p}' appears twice in this push; send each file once.`);
     seen.add(p);
     const lower = p.toLowerCase();
-    const forbidden = FORBIDDEN_PREFIXES.find((pre) => lower === pre.slice(0, -1) || lower.startsWith(pre));
-    if (forbidden) {
-      bad(
-        `'${p}' is not pushable: '${forbidden}' is reserved. ` +
-          (forbidden === '.app/'
-            ? "The `.app/` lane is the OS's own metadata inside the app tree."
-            : 'There is no CI runner, image builder or registry in the OS, so a forge or CI directory would describe infrastructure that does not exist.'),
-      );
-    }
-    if ((FORBIDDEN_ROOT_DOTFILES as readonly string[]).includes(lower)) {
-      bad(`'${p}' is not pushable: it is a credential or registry file. Secrets never live in an app's source tree.`);
-    }
+    const refused = forbiddenAppPathReason(p);
+    if (refused) bad(refused);
     const bytes = Buffer.byteLength(f.content, 'utf8');
     if (bytes > MAX_FILE_BYTES) bad(`'${p}' is ${Math.round(bytes / 1024)} KiB; a single file may be at most ${MAX_FILE_BYTES / 1024} KiB.`);
     total += bytes;

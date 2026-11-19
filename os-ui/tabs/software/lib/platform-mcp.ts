@@ -30,6 +30,7 @@ import { resolveGrantedContext } from '@tabs/software/lib/grants-context';
 import { normalizeImprovement, type Improvement } from '@tabs/software/lib/improvements';
 import { assertNotSeeded } from '@tabs/software/lib/seeded-evidence';
 import { pushAppFiles } from '@tabs/software/lib/push-app-files';
+import { assertNoForbiddenAppPaths } from '@tabs/software/lib/app-write-paths';
 import { codedAppsEnabled, ensureHydrated as ensureSettingsHydrated } from '@tabs/admin/lib/settings';
 import { PATTERNS, PATTERN_IDS, isImplementedPattern } from '@tabs/software/lib/appspec/patterns';
 import { generateAppSpecForApp } from '@tabs/software/lib/appspec/generate-server';
@@ -442,6 +443,8 @@ export async function callPlatformMcp(
           400,
         );
       }
+      // The SAME forbidden-paths rule as `push_app_files`, before anything is authored or written.
+      assertNoForbiddenAppPaths(files);
       const authored = await authorThroughFrontDoor('platform-mcp', {
         name: str(args.name),
         owner: user.id,

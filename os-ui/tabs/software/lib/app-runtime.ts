@@ -86,8 +86,12 @@ export const APP_CONNECT_ALLOWLIST = [
   "'self'",
 ] as const;
 
-/** The paths app JavaScript must never be able to fetch, asserted by the tests. */
-export const APP_FORBIDDEN_PATHS = ['/api/governance/approvals'] as const;
+/**
+ * The approval-deciding routes app JavaScript may not use: each refuses an app intent through
+ * `guardAppIntent(…, 'approval-decide')`. `app-forbidden-fetch-paths.test.ts` ties this list to
+ * those routes in both directions.
+ */
+export const APP_FORBIDDEN_PATHS = ['/api/agent/approvals', '/api/governance/approvals'] as const;
 
 /**
  * The INNER (iframe) CSP embedded as a <meta> in the srcdoc. Strict:

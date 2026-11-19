@@ -18,6 +18,7 @@
  */
 
 import { parseJsonReply } from '@core/runtime/json-reply';
+import { forbiddenAppPathReason } from '@tabs/software/lib/app-write-paths';
 import type { AcceptanceCheck } from '@tabs/software/lib/builder/acceptance';
 import type { SourceFile } from '@tabs/software/lib/builder/grounding';
 
@@ -182,6 +183,10 @@ export function pathRefusal(path: string): string | null {
     return `"${p}" is a dependency lockfile — it is the output of a real install (npm install --package-lock-only), never something to write by hand`;
   }
   if (p.startsWith('vendor/') || segments.includes('node_modules')) return `"${p}" is inside the vendored tree, which the OS owns`;
+  // The forbidden-paths rule every app-file door shares (`app-write-paths.ts`). The stricter
+  // rules above already refuse each entry today; this keeps the builder on the shared list.
+  const forbidden = forbiddenAppPathReason(p);
+  if (forbidden) return forbidden;
   if (ALLOWED_EXACT.includes(p)) return null;
   if (ALLOWED_ROOTS.some((r) => p.startsWith(r))) return null;
   return `"${p}" is outside src/, public/ and index.html`;
