@@ -22,7 +22,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { CurrentUser } from '@core/kernel/auth';
 import { createApp, saveAppFile } from '@tabs/software/lib/apps';
-import { requestDeploy, decideDeploy, __resetReviewCards } from './review.ts';
+import { requestDeploy, decideDeploy, scanGate, __resetReviewCards } from './review.ts';
 import { __resetApprovals, listApprovals, AUDITED_OVERRIDE_REASON_MIN } from '@core/policy/approvals';
 import { __resetAudit, search, verifyChain } from '@core/policy/audit';
 import { VERSION_DELIM, REPORT_DELIM, type ScanK8s, type ScanK8sText } from './scan-trivy.ts';
@@ -478,6 +478,101 @@ test('H-1: a live scan that COVERED everything and found nothing just passes', a
     // scan really did pass, with no acknowledgement anywhere.
     assert.equal(res.kind, 'auto-deployed');
     assert.deepEqual(search({ action: 'deploy' }), []);
+  } finally {
+    reset();
+  }
+});
+
+// ======================= re-review L-B: the cap must not open the hatch =======================
+
+test('L-B: a card whose BLOCKING findings sat past the cap classifies as blocking, not uncovered', () => {
+  // The hole: `scanGate` read `scan.findings`, which is CAPPED, while `passed` counts every
+  // finding. A scan with (say) 210 criticals shows 200 of them — but if the shown slice had
+  // happened to carry none, the gate would have said "nothing blocking found", fallen through to
+  // `uncovered`, and made a scan with 210 real findings ACKNOWLEDGEABLE by an admin.
+  const base = {
+    mode: 'live' as const,
+    passed: false,
+    scannedAt: '2026-11-19T00:00:00Z',
+    summary: { sast: 0, deps: 210, secrets: 0 },
+    notRun: ['sast', 'deps'] as ('sast' | 'deps' | 'secrets')[],
+    reason: 'dependencies not resolvable (no lockfile)',
+  };
+
+  // (a) The pathological card: the SHOWN findings are all low, the blocking ones are hidden.
+  const hidden = scanGate({
+    ...base,
+    findings: [{ category: 'deps', severity: 'low', title: 'a low one', detail: '' }],
+    truncated: true,
+    blockingBeyondCap: true,
+  });
+  assert.equal(hidden.kind, 'blocking', 'a real finding is NEVER acknowledgeable, shown or not');
+
+  // (b) The same card without the flag is the genuinely acknowledgeable state.
+  const uncovered = scanGate({
+    ...base,
+    findings: [{ category: 'deps', severity: 'low', title: 'a low one', detail: '' }],
+    truncated: true,
+  });
+  assert.equal(uncovered.kind, 'uncovered');
+
+  // (c) And a card serialised before the flag existed still behaves off its visible findings.
+  const legacy = scanGate({
+    ...base,
+    findings: [{ category: 'secrets', severity: 'critical', title: 'a key', detail: '' }],
+  });
+  assert.equal(legacy.kind, 'blocking');
+});
+
+test('L-B: an admin cannot acknowledge a card whose blocking findings are past the cap', async () => {
+  reset();
+  try {
+    const app = await createApp(builder, { name: 'Hidden Blocking', template: 'nextjs-supabase' });
+    await saveAppFile(app.id, builder, {
+      path: 'package.json',
+      content: JSON.stringify({ dependencies: { next: '^15.0.0' } }),
+      sha: '',
+    });
+    // 210 criticals: more than the card can list, so some are genuinely hidden.
+    const many = Array.from({ length: 210 }, (_, i) => ({
+      VulnerabilityID: `CVE-x-${i}`,
+      PkgName: `p${i}`,
+      InstalledVersion: '1',
+      Severity: 'CRITICAL',
+    }));
+    const res = await requestDeploy(app.id, builder, {
+      scan: liveScan(
+        JSON.stringify({
+          SchemaVersion: 2,
+          Results: [{ Target: 'package-lock.json', Class: 'lang-pkgs', Vulnerabilities: many }],
+        }),
+      ),
+    });
+    assert.equal(res.kind, 'review');
+    if (res.kind !== 'review') return;
+    assert.equal(res.card.scan.truncated, true);
+    assert.equal(res.card.scan.blockingBeyondCap, true);
+
+    const r = await refusal(() =>
+      decideDeploy(res.card.id, admin, 'approve', undefined, { acknowledgeNoScan: true, reason: GOOD_REASON }),
+    );
+    assert.equal(r.status, 409);
+    assert.match(r.message, /FOUND something cannot be acknowledged/i);
+    assert.deepEqual(search({ action: 'deploy' }), []);
+  } finally {
+    reset();
+  }
+});
+
+test('L-A: the uncovered refusal says "nothing BLOCKING", because low findings may be listed', async () => {
+  reset();
+  try {
+    const { cardId } = await cardWithUncoveredDeps('Wording');
+    const r = await refusal(() => decideDeploy(cardId, builder, 'approve'));
+    // "found nothing" overstated it: a medium or low finding can sit on the card right above the
+    // message, and a reviewer reading "found nothing" would rightly distrust the whole card.
+    assert.ok(!/found nothing,/.test(r.message), `must not claim nothing was found: ${r.message}`);
+    assert.match(r.message, /found nothing blocking/);
   } finally {
     reset();
   }

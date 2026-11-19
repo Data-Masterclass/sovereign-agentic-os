@@ -532,9 +532,16 @@ export type ScanGate =
 export function scanGate(scan: ScanResult): ScanGate {
   if (scan.passed) return { kind: 'passed' };
   if (scan.unavailable) return { kind: 'no-verdict' };
-  const blocking = scan.findings.some(
-    (f) => f.category === 'secrets' || f.severity === 'high' || f.severity === 'critical',
-  );
+  // `scan.findings` is CAPPED (`MAX_FINDINGS`) while `passed` counts every finding, so deriving
+  // severity from the list alone could classify a card whose blocking findings sat past the cap
+  // as "nothing blocking" — and hand it to the admin hatch, which is the one thing a real finding
+  // must never be eligible for. `blockingBeyondCap` is what the capped list cannot say
+  // (re-review L-B); the `??` keeps a card serialised before the field existed working.
+  const blocking =
+    scan.blockingBeyondCap === true ||
+    scan.findings.some(
+      (f) => f.category === 'secrets' || f.severity === 'high' || f.severity === 'critical',
+    );
   if (blocking) return { kind: 'blocking' };
   const categories = (scan.notRun ?? []).filter((c) => c !== 'sast');
   if (categories.length > 0) return { kind: 'uncovered', categories };
@@ -781,7 +788,10 @@ function incompleteScanRefusal(scan: ScanResult, gate: ScanGate): string {
     const cats = gate.categories.join(', ');
     const deps = gate.categories.includes('deps');
     return (
-      `Cannot approve: the security scan ran and found nothing, but it could not cover ${cats}. ` +
+      // "found nothing" overstated it: medium/low findings may be listed on the card right above
+      // this message. What is true is that nothing BLOCKING was found (re-review L-A).
+      `Cannot approve: the security scan ran and found nothing blocking, but it could not cover ` +
+      `${cats}. ` +
       (deps
         ? `Dependencies were not resolvable (no lockfile) — commit a lockfile ` +
           `(package-lock.json / yarn.lock / poetry.lock / go.sum / …) and re-request the deploy, ` +

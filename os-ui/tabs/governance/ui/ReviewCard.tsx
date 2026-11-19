@@ -32,6 +32,10 @@ export type ReviewCardData = {
     scannedAt: string;
     unavailable?: boolean;
     reason?: string;
+    /** `findings` is a capped view; `summary` and `passed` still count them all. */
+    truncated?: boolean;
+    /** A blocking finding exists that the cap left out of `findings`. */
+    blockingBeyondCap?: boolean;
     /** Which engine answered, when one did (e.g. `trivy (aquasec/trivy:0.58.2)`). */
     engine?: string;
     /** Categories NO engine covered — rendered as "not run", never as a clean zero. */
@@ -117,9 +121,13 @@ export default function ReviewCard({
   //   uncovered   — it ran, found nothing blocking, and named a category it could not cover
   //                 (`deps`, when the tree declares dependencies and commits no lockfile).
   const noVerdict = card.scan.unavailable === true;
-  const blocking = card.scan.findings.some(
-    (f) => f.category === 'secrets' || f.severity === 'high' || f.severity === 'critical',
-  );
+  // `findings` is a CAPPED list; `blockingBeyondCap` is what it cannot say. Mirrors `scanGate`
+  // in `tabs/software/lib/review.ts`, which is the authority (re-review L-B).
+  const blocking =
+    card.scan.blockingBeyondCap === true ||
+    card.scan.findings.some(
+      (f) => f.category === 'secrets' || f.severity === 'high' || f.severity === 'critical',
+    );
   const uncovered = (card.scan.notRun ?? []).filter((c) => c !== 'sast');
   const uncoveredGate = !noVerdict && !card.scan.passed && !blocking && uncovered.length > 0;
   const incomplete = noVerdict || uncoveredGate;
@@ -199,6 +207,13 @@ export default function ReviewCard({
             no-verdict state is how a `deps 0` over unresolved dependencies would read as clean. */}
         {card.scan.reason ? (
           <div className="hint" style={{ marginTop: 6 }}>{card.scan.reason}</div>
+        ) : null}
+        {card.scan.truncated ? (
+          <div className="hint" style={{ marginTop: 6 }}>
+            The findings below are a capped view, most severe first — the counts above and the
+            verdict account for all of them
+            {card.scan.blockingBeyondCap ? ', including blocking findings that are not listed' : null}.
+          </div>
         ) : null}
         {card.scan.notRun?.includes('sast') && !card.scan.unavailable ? (
           <div className="hint" style={{ marginTop: 6 }}>
@@ -308,7 +323,8 @@ export default function ReviewCard({
             <span className="hint" style={{ flexBasis: '100%' }}>
               {uncoveredGate ? (
                 <>
-                  Cannot approve: the scan found nothing, but it could not cover {uncovered.join(', ')}.
+                  Cannot approve: the scan found nothing blocking, but it could not cover{' '}
+                  {uncovered.join(', ')}.
                   {uncovered.includes('deps')
                     ? ' Commit a lockfile so the dependencies can be resolved, and re-request the deploy'
                     : ' Commit what the scanner needs and re-request the deploy'}
@@ -330,7 +346,7 @@ export default function ReviewCard({
                   {uncoveredGate ? (
                     <>
                       <strong>Approve without a {uncovered.join('/')} verdict.</strong> The scanner
-                      ran and found nothing, but it could not cover {uncovered.join(', ')}
+                      ran and found nothing blocking, but it could not cover {uncovered.join(', ')}
                       {uncovered.includes('deps') ? ' (no lockfile to resolve)' : null}. Approving
                       anyway is recorded against your name in the audit log, with the reason below.
                     </>
