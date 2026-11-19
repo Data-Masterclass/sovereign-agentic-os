@@ -1303,6 +1303,23 @@ osUI:
   # also re-enables fabricated metrics, ingests and connector syncs tenant-wide. Wire the
   # scanner instead.
   offlineMock: refuse
+  # WHICH MODELS MAY BE SENT IMAGES (MODEL_IMAGE_ALLOWLIST - os-ui/core/models/capabilities.ts).
+  # An image sent to a model leaves the OS for wherever that gateway alias points, so the
+  # answer is an EXPLICIT list of LiteLLM model_names, never a guess from the name.
+  #   - key absent / null (DEFAULT): the built-in list - the aliases the STACKIT profile points
+  #     at Qwen3-VL-235B on STACKIT (EU): sovereign-reasoning, sovereign-vision,
+  #     sovereign-premium, sovereign-reasoning-fast.
+  #   - a list: REPLACES the built-in list (it is not merged), so you can remove a model as
+  #     well as add one. Names are exact and case-sensitive; there is no wildcard.
+  #       imageAllowlist: ["sovereign-vision", "my-eu-vlm"]
+  #   - an empty list []: NO model may be sent images.
+  # A model that is not on the list is never sent an image, whatever it is called. If you
+  # re-point a listed alias at another endpoint in `litellm.proxy_config.model_list`, or add a
+  # router fallback from a listed alias to an unlisted one, update this list in the same change.
+  # Platform -> Models & Providers shows the list in force and an "Images: yes/no" tag per model.
+  # Rendered into BOTH the os-ui and os-ui-worker env. Nothing sends images to a model yet;
+  # this is the list the upcoming image features will obey.
+  imageAllowlist: null
   # SOFTWARE TAB - the LIVE SECURITY SCANNER (2026-11-19). Trivy (Apache-2.0) runs as ONE
   # Kubernetes Job per deploy request, in THIS namespace, over the app's committed tree:
   # dependency vulnerabilities from its manifests/lockfiles + committed secrets. The Job's
