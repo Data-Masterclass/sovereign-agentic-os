@@ -189,6 +189,26 @@ export async function register(): Promise<void> {
     }
   }
 
+  // APPROVED APP WRITE runner: approving a write a Software app's action was held on must run it
+  // (or fail the approval with the reason). The Software tab owns how an app action runs and the
+  // Connections tab owns domain adoptions; they are composed here and registered into core's port,
+  // so `applyEffect` stays free of both tabs. Adoptions are read fresh per approval.
+  if (process.env.NEXT_RUNTIME === 'nodejs') {
+    try {
+      const { registerAppWriteApplier } = await import('./core/policy/app-write-port.ts');
+      const { applyApprovedAppWrite } = await import('./tabs/software/lib/app-write-approval.ts');
+      const { allActiveAdoptions, adoptionCovers } = await import('./tabs/connections/lib/action-adoptions.ts');
+      registerAppWriteApplier(async (req) => {
+        const adoptions = await allActiveAdoptions().catch(() => []);
+        return applyApprovedAppWrite(req, {
+          adoption: { adopted: (exposureId, domain, action) => adoptionCovers(adoptions, exposureId, domain, action) },
+        });
+      });
+    } catch (err) {
+      console.error(`[os-ui] approved app writes: runner NOT registered — approving one will report that it did not run: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   // AGENT-RUN CHECKPOINTER init (engine rebuild A1): when AGENT_RUNS_DATABASE_URL is set, run
   // `PostgresSaver.setup()` once at boot (idempotent CREATE TABLE IF NOT EXISTS + migrations) so
   // the first run never races the schema. Not awaited (boot must not wait on Postgres); a
