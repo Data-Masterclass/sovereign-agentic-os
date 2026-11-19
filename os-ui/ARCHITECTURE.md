@@ -746,6 +746,18 @@ but not that two materialisations agree row for row. That needs `EXCEPT ALL` bot
 Hard-won, each from a real failure. Read before writing a route, a test, or an
 OAuth flow.
 
+**Two processes hold two copies of every store, so a whole-record write erases the other
+process's edits.** `os-ui` (web) and `os-ui-worker` (agent runs) each load their own in-process
+Map at boot. A store that PUTs the WHOLE record to the mirror puts back its stale copy of every
+field the other process changed meanwhile — an agent documenting a dataset in the worker erased
+the rename its owner had just made in the Data tab, and the next restart hydrated the loss. Never
+write a record with `mirror.writeThrough` after it exists: use `core/infra/field-writes.ts`
+(`writeNew` once, then `writeChanged`, which sends only the fields that differ from what this
+process last saw and never upserts from the worker; `writeMergedYaml` for a record whose single
+source is one yaml string; `refreshRecord` before a write that must start from the newest copy;
+`writeDeleted` so a delete cannot overtake a queued write). Prove it with a two-process test
+through the real store (`core/infra/two-process-fixture.ts`), not with a mock of the store.
+
 **A store can hydrate EMPTY without throwing, and an empty store looks exactly
 like a tenant that owns nothing.** `ensureHydrated()` RESOLVES when the durable
 mirror was unreachable: the failure is recorded for a throttled retry and

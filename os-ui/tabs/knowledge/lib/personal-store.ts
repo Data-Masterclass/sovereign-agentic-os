@@ -6,6 +6,7 @@ import type { Visibility } from '@tabs/knowledge/lib/schema';
 import { roleAtLeast } from '@core/kernel/session';
 import type { Role } from '@core/kernel/session';
 import { osMirror } from '@core/infra/os-mirror';
+import { newSeenFields, noteSeen, writeDeleted, writeChanged, writeNew, type SeenFields } from '@core/infra/field-writes';
 import { type ArtifactVersion, versionLog } from '@core/kernel/versioning';
 import { canManageArtifact, type ArtifactScope } from '@core/policy/edit-scope';
 import { normaliseFolderPath } from '@core/kernel/folders';
@@ -56,11 +57,14 @@ function fail(message: string, status: number): never {
 }
 
 // --------------------------------------------------------- in-process state --
-type State = { entries: Map<string, PersonalKnowledgeRecord>; seeded: boolean; hydration: Promise<void> | null };
+type State = { entries: Map<string, PersonalKnowledgeRecord>; seeded: boolean; hydration: Promise<void> | null
+  /** What this process last knew the mirror held per note (see `core/infra/field-writes.ts`). */
+  seen: SeenFields;
+};
 const PK_KEY = Symbol.for('soa.knowledge.personal-store');
 function st(): State {
   const g = globalThis as unknown as Record<symbol, State | undefined>;
-  if (!g[PK_KEY]) g[PK_KEY] = { entries: new Map(), seeded: false, hydration: null };
+  if (!g[PK_KEY]) g[PK_KEY] = { entries: new Map(), seeded: false, hydration: null, seen: newSeenFields() };
   return g[PK_KEY]!;
 }
 
@@ -86,8 +90,10 @@ const mirror = osMirror({
 
 const versions = versionLog('personal-knowledge');
 
+/** The ONE write path for an existing note: only the fields this process changed reach the mirror,
+ *  and the run worker never re-creates a note deleted elsewhere (`core/infra/field-writes.ts`). */
 function writeThrough(rec: PersonalKnowledgeRecord): void {
-  mirror.writeThrough(rec.id, rec);
+  writeChanged(mirror, st().seen, rec.id, rec as unknown as Record<string, unknown>);
 }
 
 export async function ensureHydrated(): Promise<void> {
@@ -100,7 +106,10 @@ async function hydrate(): Promise<void> {
   const s = st();
   const docs = (await mirror.hydrate(2000)) ?? [];
   for (const rec of docs as PersonalKnowledgeRecord[]) {
-    if (rec && rec.id && !s.entries.has(rec.id)) s.entries.set(rec.id, rec);
+    if (rec && rec.id && !s.entries.has(rec.id)) {
+      s.entries.set(rec.id, rec);
+      noteSeen(s.seen, rec.id, rec as unknown as Record<string, unknown>);
+    }
   }
   s.seeded = true;
 }
@@ -113,6 +122,7 @@ function ensureSeeded(): void {
 export function __resetStore(): void {
   const s = st();
   s.entries.clear();
+  s.seen.clear();
   s.seeded = false;
   s.hydration = null;
   mirror.__reset();
@@ -276,7 +286,7 @@ export function createPersonalKnowledge(
     updatedAt: now(),
   };
   st().entries.set(id, rec);
-  writeThrough(rec);
+  writeNew(mirror, st().seen, id, rec as unknown as Record<string, unknown>);
   return rec;
 }
 
@@ -322,7 +332,7 @@ export function updatePersonalKnowledge(
 
 export function deletePersonalKnowledge(id: string, user: Principal): void {
   requireEdit(id, user);
-  mirror.deleteThrough(id);
+  writeDeleted(mirror, st().seen, id);
   versions.purge(id);
   st().entries.delete(id);
 }

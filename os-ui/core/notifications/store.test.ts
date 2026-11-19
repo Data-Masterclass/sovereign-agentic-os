@@ -44,3 +44,20 @@ test('markRead(user, ids) marks only the given subset', () => {
   assert.equal(changed, 1);
   assert.equal(unreadCount('amir'), 1);
 });
+
+test('two processes adding a notification in the same millisecond never mint the same id', async () => {
+  // Two module instances = two processes (os-ui and os-ui-worker): each has its own counter, and
+  // both start at 0. With the clock frozen, only a random part keeps their ids apart — and a
+  // shared id would make one mirrored notification overwrite the other.
+  const a = await import(new URL('./store.ts?process=web', import.meta.url).href);
+  const b = await import(new URL('./store.ts?process=worker', import.meta.url).href);
+  const realNow = Date.now;
+  Date.now = () => 1_795_000_000_000;
+  try {
+    const one = a.addNotification({ userId: 'amir', kind: 'alert', title: 'From os-ui', body: '' });
+    const two = b.addNotification({ userId: 'amir', kind: 'alert', title: 'From the worker', body: '' });
+    assert.notEqual(one.id, two.id);
+  } finally {
+    Date.now = realNow;
+  }
+});

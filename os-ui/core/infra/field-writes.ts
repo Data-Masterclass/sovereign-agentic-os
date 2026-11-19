@@ -158,6 +158,49 @@ export function writeChangedMerging(
   });
 }
 
+/**
+ * The refresh-before-write for a record whose single source is a `yaml` string (datasets, files):
+ * {@link writeChangedMerging} on `yaml`, merged by the PARSED document's top-level fields against
+ * the yaml this process last saw (`seenYaml`, kept by the store). When the merge produced a yaml
+ * this process did not have, its copy is updated too (`onMerged`), unless it changed again
+ * meanwhile — the next write merges that. An unparseable side falls back to this process's yaml.
+ */
+export function writeMergedYaml<R extends { id: string; yaml: string }>(
+  mirror: OsMirror,
+  seen: SeenFields,
+  seenYaml: Map<string, string>,
+  rec: R,
+  yamlCodec: { parse(yaml: string): object; serialize(doc: object): string },
+  on: { absent(): void; merged(yaml: string): void },
+): void {
+  const sent = rec.yaml;
+  const baseYaml = seenYaml.get(rec.id);
+  const merge = (newest: unknown): unknown => {
+    if (typeof newest !== 'string' || baseYaml === undefined || newest === baseYaml) return sent;
+    try {
+      const base = new Map(Object.entries(yamlCodec.parse(baseYaml)).map(([k, v]) => [k, fingerprint(v)]));
+      return yamlCodec.serialize(mergeChanged(base, yamlCodec.parse(sent) as Doc, yamlCodec.parse(newest) as Doc));
+    } catch {
+      return sent;
+    }
+  };
+  const absent = () => {
+    seenYaml.delete(rec.id);
+    on.absent();
+  };
+  void writeChangedMerging(mirror, seen, rec.id, rec as unknown as Doc, 'yaml', merge, absent).then((yaml) => {
+    if (typeof yaml !== 'string') return;
+    seenYaml.set(rec.id, yaml);
+    if (yaml !== sent && rec.yaml === sent) on.merged(yaml);
+  });
+}
+
+/** Resolves once every write of this record queued here has been sent — for a store that must
+ *  AWAIT its own delete (`deleteConfirmed`) and so cannot use {@link writeDeleted}. */
+export function writesSettled(mirror: OsMirror, id: string): Promise<void> {
+  return (queues.get(`${mirror.index}/${id}`) ?? Promise.resolve()).then(() => undefined);
+}
+
 /** Delete a record from the mirror — AFTER any write of it still queued here, so a write sent
  *  before the delete can never land after it (and re-create the record). */
 export function writeDeleted(mirror: OsMirror, seen: SeenFields, id: string): void {

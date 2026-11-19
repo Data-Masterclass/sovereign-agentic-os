@@ -62,12 +62,20 @@ async function hydrate(): Promise<void> {
   }
 }
 
-let seq = 0;
+/**
+ * A notification id. os-ui and os-ui-worker both add notifications, each with its own counter
+ * starting at 0, so time + counter alone collided across the two processes in the same
+ * millisecond — and the second mirrored doc overwrote the first. A random part (Web Crypto, as
+ * the data store uses) keeps them apart; time first keeps the ids roughly sortable.
+ */
+function newNotificationId(): string {
+  return `ntf_${Date.now().toString(36)}_${globalThis.crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`;
+}
 
 /** Persist a notification for a user. Returns the stored record. */
 export function addNotification(input: { userId: string; kind: NotificationKind; title: string; body: string }): OsNotification {
   const rec: OsNotification = {
-    id: `ntf_${Date.now().toString(36)}_${++seq}`,
+    id: newNotificationId(),
     userId: input.userId,
     kind: input.kind,
     title: input.title,
@@ -112,6 +120,5 @@ export function __resetNotifications(): void {
   const s = notifState();
   s.items = [];
   s.hydration = null;
-  seq = 0;
   mirror.__reset();
 }
