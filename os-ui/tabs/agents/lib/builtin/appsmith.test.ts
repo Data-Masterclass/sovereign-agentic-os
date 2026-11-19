@@ -203,6 +203,38 @@ test('H-1 `commit` is a WRITE tool the hold gate can see', () => {
   assert.equal(WRITE_TOOL_TABS.commit, 'software');
 });
 
+test('set_app_spec is a WRITE tool the hold gate can see (the 4th "in the catalog != held")', () => {
+  // 2026-11-19. `set_app_spec` PUBLISHES: it writes the app's LIVE served surface and snapshots a
+  // version, so the app is immediately reachable at /apps/<slug> by everyone its visibility
+  // admits. It was absent from WRITE_TOOL_TABS, so `holdDecisionFor` answered "not a write" for
+  // every preset and an agent granted it could publish with no hold — against the owner's
+  // standing rule that writes happen only on explicit confirmation.
+  assert.ok(isWriteTool('set_app_spec'), 'set_app_spec must be in WRITE_TOOL_TABS or no preset can hold it');
+  assert.equal(WRITE_TOOL_TABS.set_app_spec, 'software');
+});
+
+test('posture: read-only HOLDS set_app_spec to an admin; other presets treat it as a My write', () => {
+  // read-only: every write is blocked and queued to an admin. THIS is the gap that is now closed.
+  assert.deepEqual(holdDecisionFor('read-only', 'set_app_spec'), { held: true, approverRole: 'admin' });
+
+  // read-propose / full: identical to `commit`'s posture below, and for the same reason. The app
+  // is the RUNNER'S OWN (a My-scope artifact) — `setAppSpec` re-gates owner-or-in-domain-builder
+  // itself — so `writeTargetScope` classifies it `personal` and gate 2 (the run-as-user governed
+  // dispatch: OPA, DLS, role, ownership) is the authority rather than a hold. Publishing does NOT
+  // widen the app's audience: `visibility` is unchanged, and climbing the ladder is `promote`,
+  // which stays separately role-gated.
+  assert.deepEqual(holdDecisionFor('read-propose', 'set_app_spec'), { held: false });
+  assert.deepEqual(holdDecisionFor('full-in-scope', 'set_app_spec'), { held: false });
+  assert.equal(writeTargetScope('set_app_spec'), 'personal');
+
+  // NO FROZEN GOLDEN MOVES: nothing grants `set_app_spec`, so no run's tool sequence changes.
+  assert.equal(
+    parseSystem(APPSMITH_YAML).grants.tools.includes('set_app_spec'),
+    false,
+    'App Smith authors code through `commit`; if it is ever granted set_app_spec, re-check the golden',
+  );
+});
+
 test('H-1 posture: read-only HOLDS the build tool; the other presets do not, by design', () => {
   // read-only: every write is blocked and queued to an admin. This is the bug that is now fixed —
   // before `commit` was in the table this returned `{ held: false }`.

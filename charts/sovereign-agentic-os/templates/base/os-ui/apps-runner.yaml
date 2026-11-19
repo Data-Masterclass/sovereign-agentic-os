@@ -72,13 +72,17 @@ subjects:
   OPERATOR supplies (`softwareRunner.runnerImage`, or the app's own `runImage`) --
   this repo builds no app-runner image and ships none, so with the default empty
   value nothing is served and `start_preview` says so rather than substituting a
-  placeholder container. NOTE: this template itself deploys NO workload; it is the
-  Namespace + RBAC + NetworkPolicy scaffolding that lets the os-ui process create
-  those per-app Deployments at runtime. Their ONLY legitimate traffic is: INGRESS
-  from the ingress controller (public per-app host) and EGRESS to DNS. The browser talks to os-ui directly over the public
-  ingress (the OS_API_URL baked at build time), so the app POD never needs to reach
-  os-ui or any platform service in-cluster. We therefore default-deny both
-  directions and open only those two paths.
+  placeholder container.
+
+  NOTE: this template itself deploys NO workload. It is the Namespace + RBAC +
+  NetworkPolicy scaffolding that lets the os-ui process create those per-app
+  Deployments at runtime.
+
+  Their ONLY legitimate traffic is: INGRESS from the ingress controller (public
+  per-app host) and EGRESS to DNS. The browser talks to os-ui directly over the
+  public ingress (the OS_API_URL baked at build time), so the app POD never needs
+  to reach os-ui or any platform service in-cluster. We therefore default-deny
+  both directions and open only those two paths.
 
   NOTE: kind's default CNI (kindnet) does NOT enforce NetworkPolicies — locally these
   are inert; on STACKIT (Cilium) they enforce. Written to keep the stack working when

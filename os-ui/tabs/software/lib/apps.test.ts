@@ -35,6 +35,7 @@ const {
   addAppMember,
   removeAppMember,
   getAppBySlugForUser,
+  getAppForGovernance,
 } = await import('./apps.ts');
 const { __resetUsers, createUser } = await import('@tabs/admin/lib/users');
 const { snapshotFiles } = await import('./snapshot.ts');
@@ -646,4 +647,65 @@ test('membership: getAppBySlugForUser resolves the deployed app for a viewer, ho
   assert.equal(denied, null, 'a non-visible app is not resolvable by slug');
   // Unknown slug ⇒ null (a deleted deploy degrades honestly).
   assert.equal(await getAppBySlugForUser('no-such-slug', owner), null);
+});
+
+// ───────── getAppForGovernance — the LADDER APPROVER's read, and only theirs (2026-11-19) ─────────
+//
+// `resolveLadderArtifact` passes `forGovernanceAct: true` when the caller IS the approve-half of a
+// promotion rung. Without a widened read the Personal-visibility gate hid a creator's own app from
+// everyone else, so the appointed domain_admin got `not_found` on the very artefact they had been
+// asked to decide. This widens the read by EXACTLY the principals the ladder can appoint for THIS
+// app — an in-domain domain_admin, or an admin — and by nobody else. These cases pin the 404 arm,
+// because a governance read that widens one step too far is the whole risk of the change.
+
+test('getAppForGovernance: the in-domain domain_admin and the admin can read a Personal app', async () => {
+  __resetAppsCache();
+  const owner = { id: 'own', name: 'Own', domains: ['sales'], allDomains: ['sales'], activeDomain: 'sales', role: 'creator' } as const;
+  const app = await createApp(owner, { name: 'Ladder app', template: 'sovereign-app', kind: 'spec' });
+
+  const inDomainDomainAdmin = { id: 'dana', name: 'Dana', domains: ['sales'], allDomains: ['sales'], activeDomain: 'sales', role: 'domain_admin' } as const;
+  const admin = { id: 'alex', name: 'Alex', domains: ['ops'], allDomains: ['ops'], activeDomain: 'ops', role: 'admin' } as const;
+
+  assert.equal((await getAppForGovernance(app.id, inDomainDomainAdmin)).id, app.id);
+  assert.equal((await getAppForGovernance(app.id, admin)).id, app.id, 'an admin is tenant-wide');
+  // The plain view gate is UNCHANGED for the same principal — the widening is opt-in per call site.
+  await assert.rejects(
+    () => getAppForUser(app.id, inDomainDomainAdmin),
+    (e: Error & { status?: number }) => {
+      assert.equal(e.status, 404, 'the ordinary read still hides a Personal app');
+      return true;
+    },
+  );
+});
+
+test('getAppForGovernance: an OUT-OF-DOMAIN domain_admin is still 404 — the widening is scoped', async () => {
+  __resetAppsCache();
+  const owner = { id: 'own', name: 'Own', domains: ['sales'], allDomains: ['sales'], activeDomain: 'sales', role: 'creator' } as const;
+  const app = await createApp(owner, { name: 'Ladder app 2', template: 'sovereign-app', kind: 'spec' });
+
+  // A domain_admin of ANOTHER domain can never be this app's appointed approver.
+  const otherDomainAdmin = { id: 'hugo', name: 'Hugo', domains: ['hr'], allDomains: ['hr'], activeDomain: 'hr', role: 'domain_admin' } as const;
+  await assert.rejects(
+    () => getAppForGovernance(app.id, otherDomainAdmin),
+    (e: Error & { status?: number }) => {
+      assert.equal(e.status, 404, 'not_found — no existence leak to a principal outside the domain');
+      return true;
+    },
+  );
+});
+
+test('getAppForGovernance: a plain BUILDER is still 404 — a role floor is not an approver', async () => {
+  __resetAppsCache();
+  const owner = { id: 'own', name: 'Own', domains: ['sales'], allDomains: ['sales'], activeDomain: 'sales', role: 'creator' } as const;
+  const app = await createApp(owner, { name: 'Ladder app 3', template: 'sovereign-app', kind: 'spec' });
+
+  // In the right domain, but a builder is NOT a rung-1 approver — the ladder cannot appoint them.
+  const inDomainBuilder = { id: 'ben', name: 'Ben', domains: ['sales'], allDomains: ['sales'], activeDomain: 'sales', role: 'builder' } as const;
+  await assert.rejects(
+    () => getAppForGovernance(app.id, inDomainBuilder),
+    (e: Error & { status?: number }) => {
+      assert.equal(e.status, 404, 'being senior in the domain is not being the approver');
+      return true;
+    },
+  );
 });
