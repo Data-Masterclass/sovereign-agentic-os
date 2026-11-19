@@ -3,10 +3,14 @@
  */
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useUser } from '@core/ui/useUser';
 import { doclingCanParse } from '@tabs/files/lib/ingest/docling-client';
 import { previewText } from '@tabs/files/lib/preview';
+import {
+  previewViews, previewViewStorageKey, isPreviewViewId, nextPreviewView,
+  extractedStatusLine, emptyTextMessage, type PreviewViewId,
+} from '@tabs/files/lib/preview-views';
 import { serverError } from '@tabs/files/lib/bulk-result';
 import { reuploadVersion, saveTextVersion } from '@tabs/files/lib/upload-client';
 import { ConfirmProvider } from '@core/ui/lifecycle/ConfirmDialog';
@@ -35,7 +39,7 @@ type Asset = {
     /** Why it is stored-only: a policy / the owner's choice / no text could be read. */
     storedOnlyReason?: 'restricted' | 'opt-out' | 'no-text';
     /** Binary text extraction (PDF/DOCX/… → the document parser). */
-    extraction?: { status: 'extracted' | 'pending' | 'failed'; reason?: string; code?: string; at?: string };
+    extraction?: { status: 'extracted' | 'pending' | 'failed'; reason?: string; code?: string; at?: string; engine?: string; chars?: number };
   };
   description: string;
 };
@@ -100,6 +104,18 @@ function csvRows(text: string, maxRows = 30, maxCols = 12): string[][] {
     .filter((l) => l.length > 0)
     .slice(0, maxRows)
     .map((line) => line.split(',').slice(0, maxCols).map((c) => c.trim()));
+}
+
+/** The details block's wrapper: the "Details" view when the file has a view switch, the
+ *  "Details & sharing" disclosure otherwise. The block itself is the same either way. */
+function DetailsShell({ panel, children }: { panel: Record<string, string> | null; children: ReactNode }) {
+  if (panel) return <div className="preview-details preview-details-panel" {...panel}>{children}</div>;
+  return (
+    <details className="preview-details">
+      <summary>Details &amp; sharing</summary>
+      {children}
+    </details>
+  );
 }
 
 export default function FilePreview({ id, onMutated, onClose, startInEdit }: { id: string; onMutated: () => void; onClose: () => void; startInEdit?: boolean }) {
@@ -190,6 +206,25 @@ export default function FilePreview({ id, onMutated, onClose, startInEdit }: { i
     }, 5000);
     return () => clearInterval(timer);
   }, [extractionPending, id, onMutated]);
+
+  // Original ⇄ Extracted text ⇄ Details, for a file with an inline viewer. The last choice is
+  // remembered per kind of viewer in this browser — a convenience only: storage may be blocked
+  // or empty, and the pane then simply opens on the original.
+  const [viewTab, setViewTab] = useState<PreviewViewId>('original');
+  const switchMode = view?.object ? viewerMode(view.object.contentType, view.asset.name) : null;
+  const viewKey = switchMode && switchMode !== 'csv' ? previewViewStorageKey(switchMode) : null;
+  useEffect(() => {
+    if (!viewKey) return;
+    try {
+      const saved = window.localStorage.getItem(viewKey);
+      setViewTab(isPreviewViewId(saved) ? saved : 'original');
+    } catch { /* no storage — keep the default */ }
+  }, [viewKey]);
+  const chooseView = useCallback((next: PreviewViewId) => {
+    setViewTab(next);
+    if (!viewKey) return;
+    try { window.localStorage.setItem(viewKey, next); } catch { /* not remembered, still shown */ }
+  }, [viewKey]);
 
   const loadFolders = useCallback(async () => {
     try {
@@ -383,6 +418,19 @@ export default function FilePreview({ id, onMutated, onClose, startInEdit }: { i
   // from the already-extracted text, so it does not.
   const mode = rawMode && rawMode !== 'csv' && !view.object ? null : rawMode;
   const csvPreview = mode === 'csv' && view.text ? csvRows(view.text) : null;
+  // The view switch (only for a file with an inline viewer) and which view is showing.
+  const views = previewViews(mode);
+  const hasSwitch = views.length > 0;
+  const activeView: PreviewViewId = views.some((v) => v.id === viewTab) ? viewTab : 'original';
+  const panelProps = (v: PreviewViewId): Record<string, string> =>
+    hasSwitch ? { role: 'tabpanel', id: `file-view-${v}`, 'aria-labelledby': `file-view-tab-${v}` } : {};
+  const extractedLine = extractedStatusLine(extraction, view.text.length, fresh);
+  const extractButton = canExtract && canManage ? (
+    <button className="btn ghost sm" onClick={() => patch({ indexing: 'indexed' })}
+      title="Send this file to the document parser again, store its text and index it">
+      {extraction?.status === 'failed' ? 'Retry text extraction' : 'Extract text'}
+    </button>
+  ) : null;
 
   // Is this file editable inline as text? (drives which Edit surface shows). Binary
   // files get Replace-file instead of a fake editor — never a fake editor.
@@ -442,17 +490,14 @@ export default function FilePreview({ id, onMutated, onClose, startInEdit }: { i
           {storedWhy ? (
             <div className="preview-row file-sub" role="status" data-testid="stored-only-reason">
               <span>{storedWhy}</span>
-              {canExtract && canManage ? (
-                <button className="btn ghost sm" onClick={() => patch({ indexing: 'indexed' })}
-                  title="Send this file to the document parser again, store its text and index it">
-                  {extraction?.status === 'failed' ? 'Retry text extraction' : 'Extract text'}
-                </button>
-              ) : null}
+              {extractButton}
             </div>
           ) : extracting ? (
             <div className="preview-row file-sub" role="status">
               The document parser is reading this file. It becomes searchable when that finishes.
             </div>
+          ) : extractedLine ? (
+            <div className="preview-row file-sub" role="status" data-testid="extracted-status">{extractedLine}</div>
           ) : null}
         </div>
         <div className="preview-head-actions">
@@ -497,13 +542,36 @@ export default function FilePreview({ id, onMutated, onClose, startInEdit }: { i
         </div>
       ) : null}
 
+      {/* ---- View switch: the original, its extracted text and the details are one click
+              apart ABOVE the viewer, so nothing has to be found below a tall PDF frame.
+              Tabs: arrow keys move between them, the chosen one is the only tab stop. ---- */}
+      {!inEdit && hasSwitch ? (
+        <div className="seg preview-views" role="tablist" aria-label="File view">
+          {views.map((v) => (
+            <button key={v.id} type="button" role="tab" id={`file-view-tab-${v.id}`}
+              aria-selected={activeView === v.id} aria-controls={`file-view-${v.id}`}
+              tabIndex={activeView === v.id ? 0 : -1} className={activeView === v.id ? 'on' : undefined}
+              onClick={() => chooseView(v.id)}
+              onKeyDown={(e) => {
+                const next = nextPreviewView(views.map((x) => x.id), activeView, e.key);
+                if (!next) return;
+                e.preventDefault();
+                chooseView(next);
+                document.getElementById(`file-view-tab-${next}`)?.focus();
+              }}>
+              {v.label}
+            </button>
+          ))}
+        </div>
+      ) : null}
+
       {/* ---- Quick Look: render the ACTUAL file inline (the content is the hero).
               Original bytes stream from /raw with Content-Disposition: inline. CSV is
               rendered from the extracted text as a light table (no byte fetch needed).
               Below the viewer, the extracted text / transcript / caption stays for docs
               and media (searchable body); governance lives under the disclosure. ---- */}
-      {!inEdit && mode && mode !== 'csv' ? (
-        <div className="file-viewer">
+      {!inEdit && hasSwitch && activeView === 'original' ? (
+        <div className="file-viewer" {...panelProps('original')}>
           {mode === 'image' ? (
             /* eslint-disable-next-line @next/next/no-img-element */
             <img className="viewer-image" src={rawSrc} alt={a.name} />
@@ -542,9 +610,9 @@ export default function FilePreview({ id, onMutated, onClose, startInEdit }: { i
         </div>
       ) : null}
 
-      {inEdit ? null : view.text ? (
-        <div>
-          {mode ? <label className="rail-group-title">{isMedia ? 'Transcript' : 'Extracted text'}</label> : null}
+      {inEdit || (hasSwitch && activeView !== 'text') ? null : view.text ? (
+        <div {...panelProps('text')}>
+          {mode && !hasSwitch ? <label className="rail-group-title">{isMedia ? 'Transcript' : 'Extracted text'}</label> : null}
           {/* Primary content — flows top-to-bottom with the PAGE scrollbar (no inner scroll
               box). "Show all" expands the DOM (previewText truncates the string for very
               long bodies); it is not a scroll clamp. */}
@@ -555,6 +623,12 @@ export default function FilePreview({ id, onMutated, onClose, startInEdit }: { i
               {showFullText ? 'Collapse text' : `Show all (${(view.text.length / 1000).toFixed(1)} K chars)`}
             </button>
           ) : null}
+        </div>
+      ) : hasSwitch ? (
+        // No text to show: say why, in the same words as the header, with the same way out.
+        <div className="media-stage preview-text-empty" {...panelProps('text')}>
+          <span>{emptyTextMessage({ extracting, storedWhy, transcript: mode === 'video' || mode === 'audio' })}</span>
+          {extractButton}
         </div>
       ) : mode ? null : (
         <div className="media-stage">No preview — download to view the original file.</div>
@@ -672,8 +746,8 @@ export default function FilePreview({ id, onMutated, onClose, startInEdit }: { i
       {/* ---- Details & sharing: everything governance lives one click away so the file
               itself is the default focus (content is the hero). The controls are the
               SAME as before — only reflowed under a disclosure, not rewritten. ---- */}
-      <details className="preview-details">
-        <summary>Details &amp; sharing</summary>
+      {hasSwitch && !inEdit && activeView !== 'details' ? null : (
+      <DetailsShell panel={hasSwitch && !inEdit ? panelProps('details') : null}>
 
       <dl className="preview-meta">
         <dt>ID</dt><dd className="mono muted">{a.id}</dd>
@@ -737,7 +811,8 @@ export default function FilePreview({ id, onMutated, onClose, startInEdit }: { i
         </div>
       ) : null}
 
-      </details>
+      </DetailsShell>
+      )}
     </div>
     </ConfirmProvider>
   );
