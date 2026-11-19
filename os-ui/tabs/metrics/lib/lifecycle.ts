@@ -1,5 +1,17 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    Metric lifecycle — move, rename, archive, delete, restore and version history
+ * USER STORY: As a creator I want to archive a metric reversibly, delete it for real, and restore any
+ *             earlier definition, so that I can tidy my metrics without losing work.
+ * ARCHITECTURE:
+ *   - A metric is a measure on a dataset, so the measure itself lives in `@tabs/data/lib/store`. This
+ *     module keeps the overlay a measure cannot carry (archive flag + folder), keyed by
+ *     `datasetId.measure`, in an in-process map with best-effort `os-metric-lifecycle` mirror.
+ *   - Archive keeps the measure; delete snapshots it to the `versionLog('metric')` history, then
+ *     removes it via `./physical-delete.ts`; restore re-defines a snapshot.
+ *   - Edit authority is the dataset's (owner or domain admin), enforced by the Data store throwing
+ *     403. Used by the `app/api/metrics/[id]` routes, `./store.ts` and `./folder-adapter.ts`.
  */
 import type { Measure } from '@tabs/data/lib/index';
 import {
@@ -19,28 +31,6 @@ import {
   type PhysicalDeleteReport,
   deregisterViewMembers,
 } from '@tabs/metrics/lib/physical-delete';
-
-/**
- * Metric LIFECYCLE — the archive → delete/restore + version-history discipline every
- * other artifact tab already has, brought to Metrics (which had NONE). A metric is a
- * measure on a governed dataset, so the base measure lives in `lib/data/store` (single
- * write, no drift). This module adds the lifecycle OVERLAY that a measure alone can't
- * carry:
- *
- *   • ARCHIVE — a reversible soft-hide flag keyed by metric id (`datasetId.measure`).
- *     Archive KEEPS the measure (and thus its member) — a governance hide,
- *     not a physical removal — so an archived metric restores instantly.
- *   • VERSIONS — per-metric history (the reused `versionLog`); the measure is snapshotted
- *     before a destructive op so a delete/restore can itself be undone.
- *   • DELETE — PHYSICAL: de-register the measure via `lib/metrics/physical-delete`
- *     (the injected `removeMeasure` drops it from the dataset's measures), snapshot it for
- *     restore, then forget the archive flag. Honest `{ recordDeleted, physical[] }` report.
- *
- * Same shape + durability as the other stores: an authoritative in-process flag map, a
- * best-effort os-mirror, `__resetLifecycle` for tests. Edit authority is the SAME gate
- * as the base measure (owner or domain admin) — enforced by `getDataset`/`removeMeasure`
- * throwing 403 for a caller who may not edit, so nothing is hidden or dropped for them.
- */
 
 function now(): string {
   return new Date().toISOString();

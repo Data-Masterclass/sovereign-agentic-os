@@ -1,5 +1,12 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    "Talk to the OS" box on Home
+ * USER STORY: As a user I want to type what I want to do on Home and have the OS assistant open with that
+ *             request already sent, so that I can start without finding the right tab.
+ * ARCHITECTURE:
+ *   - Client component rendered by `app/page.tsx`. It owns no assistant: it dispatches the
+ *     `os-assistant:open` window event that the globally mounted `core/ui/OsAssistant.tsx` handles.
  */
 'use client';
 

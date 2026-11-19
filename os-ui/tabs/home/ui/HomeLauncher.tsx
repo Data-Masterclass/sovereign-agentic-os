@@ -1,5 +1,12 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    Home launcher gallery — one illustrated card per golden path
+ * USER STORY: As a user I want to see every golden path with a short explainer and one action button,
+ *             so that I can start the right flow from Home.
+ * ARCHITECTURE:
+ *   - Server component, rendered by `app/page.tsx` from the cards `tabs/home/lib/launcher` resolves.
+ *   - Cards the viewer cannot act on are dimmed and link to "Explore" instead of the action.
  */
 import Link from 'next/link';
 import type { LauncherCard } from '@tabs/home/lib/launcher';

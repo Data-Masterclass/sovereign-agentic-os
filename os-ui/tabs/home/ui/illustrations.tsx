@@ -1,15 +1,15 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    Home launcher illustrations — one inline SVG per golden path
+ * USER STORY: As a user I want each golden-path card to have a distinct picture, so that the paths are
+ *             easy to tell apart at a glance.
+ * ARCHITECTURE:
+ *   - Hand-drawn inline SVG on a shared `Frame` (warm wash, 2.4px rounded strokes, brand palette).
+ *   - Keyed by `PathId` from `tabs/home/lib/launcher`; used by `./HomeLauncher`. Decorative, so
+ *     `aria-hidden`.
  */
 import type { PathId } from '@tabs/home/lib/launcher';
-
-/**
- * Custom, on-brand illustration set for the Home launcher (home-golden-path.md
- * §Taste — "the platform's front door"). One cohesive system: a soft warm wash,
- * a single 2.4px rounded line language, and the brand palette (gold / teal /
- * navy with a sparing magenta spark). Hand-authored geometry — distinct per
- * path, NOT stock clip-art. Decorative, so aria-hidden.
- */
 
 const GOLD = '#c8a24a';
 const GOLD_LT = '#e7cd86';

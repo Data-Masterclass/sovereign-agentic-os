@@ -1,16 +1,20 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    Deploy review card — security scan, requested resources, footprint and diff for one deploy
+ * USER STORY: As a builder reviewing a software deploy I want the scan result, the governed resources and
+ *             cost asked for, and the change diff on one card with approve/deny, so that I decide on facts.
+ * ARCHITECTURE:
+ *   - Presentation only; the role gate and the scan gate are enforced server-side (`scanGate` in
+ *     `tabs/software/lib/review.ts`, `decideDeploy`). This card only avoids offering a press the
+ *     server would refuse.
+ *   - Used by `tabs/software/ui/SoftwareBuilder.tsx` and the `app/(experimental)/software` review pages.
+ *   - Three scan states: passed, failed, and no verdict. Only an admin, with a written reason, may
+ *     approve without a verdict (`canAcknowledgeNoScan`).
  */
 'use client';
 
 import { useState } from 'react';
-
-/**
- * The Builder deploy-review card (Software golden path §D). Presents the four
- * things a reviewer needs — the security scan, the governed resources requested,
- * the cost/resource footprint, and the change diff — and (for a Builder) the
- * approve/deny controls. Pure presentation; the role gate lives server-side.
- */
 
 type Severity = 'info' | 'low' | 'medium' | 'high' | 'critical';
 type Finding = { category: 'sast' | 'deps' | 'secrets'; severity: Severity; title: string; detail: string; path?: string };

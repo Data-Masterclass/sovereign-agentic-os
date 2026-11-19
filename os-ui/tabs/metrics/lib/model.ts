@@ -1,28 +1,22 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    Metric model — form, agent and YAML compile to one `Measure` and one canonical member
+ * USER STORY: As a creator I want to define a metric by form, by describing it to the agent or by editing
+ *             YAML and get the same metric each way, so that every consumer reads the same number.
+ * ARCHITECTURE:
+ *   - Pure, tested. `measureFromForm` / `measureFromAgent` / `measureFromYaml` build the same `Measure`
+ *     (guided filters, rolling windows, ratios and formulas via `./formula.ts`); `formFromMeasure`
+ *     reverses it; `sameMeasure` compares.
+ *   - `measureMember` (`<View>.<measure>`) is the single key the explorer, dashboards and the agent
+ *     `metrics` tool resolve; changing it would split the number.
+ *   - Reuses Data's dataset/view naming read-only; `dbtMetricType` names the dbt semantic-layer type
+ *     each measure is emitted as. Column references are validated before they reach SQL.
  */
 import yaml from 'js-yaml';
 import type { Dataset, Measure, MeasureFilter, RollingWindow } from '@tabs/data/lib/index';
 import { MEASURE_TYPES, type MeasureType, viewName, modelName, sanitizeIdent, slug, inferDimType } from '@tabs/data/lib/index';
 import { assertFormulaRefs, compileFormula } from '@tabs/metrics/lib/formula';
-
-/**
- * The Metrics tab owns the FULL "define a measure" experience (Data's Gold step is a
- * handoff into here). A metric is ONE artifact — a Cube `Measure` on the auto-cube the
- * Data tab scaffolds — reachable three ways that MUST converge:
- *
- *   • a friendly FORM (column + aggregation + dimensions),
- *   • the metrics AGENT (a structured proposal from natural language),
- *   • hand-edited Cube YAML.
- *
- * All three produce the SAME {@link Measure} and the SAME canonical MEMBER. The member
- * is the single source of the number: the explorer, the OS dashboards and the agent
- * `metrics` tool all resolve `measureMember(dataset, measure)` — so the BI layer and the
- * agents can never disagree (metric-consistency, proven in consistency.ts).
- *
- * Pure + tested; the cube_dbt scaffolding (dimensions + view) is reused from lib/data
- * read-only, so Data owns the base cube and Metrics owns the measures layer on top.
- */
 
 export type { MeasureType } from '@tabs/data/lib/index';
 

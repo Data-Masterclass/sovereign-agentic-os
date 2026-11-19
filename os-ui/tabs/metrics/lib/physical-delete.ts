@@ -1,24 +1,18 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    Physical de-registration of a deleted metric's measure
+ * USER STORY: As a creator deleting a metric I want it to stop resolving everywhere, with a report of what
+ *             was removed, so that a deleted metric cannot keep serving numbers.
+ * ARCHITECTURE:
+ *   - Pure plan (`deregisterPlan`, always one target: the measure's member on its model/view) plus an
+ *     injected executor; `./lifecycle.ts` injects the Data store's `removeMeasure`.
+ *   - Best-effort per target: a failure is reported with its reason and never blocks the delete.
+ *   - Used for delete only; archive keeps the measure.
  */
 import type { Dataset, Measure } from '@tabs/data/lib/index';
 import { modelName, viewName } from '@tabs/data/lib/index';
 import { measureMember } from '@tabs/metrics/lib/model';
-
-/**
- * PHYSICAL cleanup for a metric DELETE (never for archive — archive is a reversible
- * registry-only soft-hide; restore must bring the measure back intact).
- *
- * A metric IS a measure bound to a Gold mart: every consumer (the explorer, dashboards,
- * the agent metrics tool) resolves its `<View>.<measure>` member from the dataset's
- * `measures`. A "deleted" metric that is still a measure on the dataset isn't deleted —
- * it stays queryable. So DELETE must DE-REGISTER the measure: remove it from the dataset's
- * `measures` (the one source), which drops the member everywhere — physical
- * de-registration. Archive keeps the measure (and thus the member) intact.
- *
- * Pure planning + injected executor, so the plan and the honest report fold are unit-
- * testable without a store; the lifecycle store injects the real `removeMeasure`.
- */
 
 export type ModelTarget = {
   /** The metric member that stops resolving once de-registered (`Orders.revenue`). */

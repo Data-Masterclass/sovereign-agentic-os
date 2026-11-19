@@ -1,22 +1,21 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    Metric explorer compiler — slice to spec, spec to governed Trino SQL
+ * USER STORY: As an analyst I want to slice a metric by dimensions, time and filters without writing SQL,
+ *             and see the SQL when I need it, so that I explore the governed number, not a copy of it.
+ * ARCHITECTURE:
+ *   - Pure, unit-tested without a backend. `exploreSpec` reconciles a slice against the view's members
+ *     and records every dropped member in `spec.dropped`, never dropping silently.
+ *   - `previewTrinoSql` is the executed serve SQL over the tier-aware gold mart (window measures via
+ *     `windowTrinoSql`, ratio divisors wrapped in NULLIF). It must contain no SQL comments, because
+ *     the governed query path rejects them; `dropToSql` is display-only.
+ *   - `serveRefusal` gives a typed reason when a slice has no faithful SQL form. Executed by
+ *     `./build/explore-server.ts`; also used by routes, MCP tools and the dashboards tab.
  */
 import type { Dataset, Measure, RollingWindow } from '@tabs/data/lib/index';
 import { dimensionMember, measureMember, dbtMetricType, type DbtMetricType } from '@tabs/metrics/lib/model';
 import { goldMartFqn, viewMembers } from '@tabs/data/lib/index';
-
-/**
- * The metric explorer — pick a metric + dimensions to slice, no SQL, per-viewer RLS.
- *
- * R3 is the whole point here: the query is resolved under the VIEWER'S identity
- * (`securityContext`), never a shared service identity, so two people exploring the same
- * metric see DIFFERENT rows. The live read path is governed Trino SQL run AS the viewer
- * ({@link previewTrinoSql}); the same delegated token drives the agent `metrics` tool, so
- * the explorer and the agent are the same row-filtered query. Pure: the slice→spec and
- * spec→SQL compilation is unit-tested without a backend.
- *
- * Analysts can `dropToSql` for ad-hoc work beyond the metric.
- */
 
 export type Granularity = 'day' | 'week' | 'month' | 'quarter' | 'year';
 
