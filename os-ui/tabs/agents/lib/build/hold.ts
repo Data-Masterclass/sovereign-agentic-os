@@ -68,8 +68,47 @@ const ESCALATING_DOMAIN_TOOLS = new Set(['publish_knowledge', 'request_promotion
  * NOT self-confirmable: a parked agent run's approval is four-eyes absolute (`canApprove` in
  * `core/policy/roles.ts` refuses the requester whenever `runId` is set), so "confirmation" here
  * always means a SECOND person with the role, never the runner clicking through.
+ *
+ * 2026-11-19 — FOUR MORE, from the nine-tool backlog (the owner's decision):
+ *   - `retire_connection`     — archives a connection, or DELETES it with its exposures, action
+ *                               adoptions, Trino catalogue and vault secret. The `delete`/`archive`
+ *                               pair for a connection: one artifact in one domain → `domain_admin`.
+ *   - `request_certification` — files the Domain → Company certification request. The rung-2 twin
+ *                               of `request_promotion` / `request_deploy`: asking to cross a
+ *                               boundary is itself confirmed by a person. Routed to `domain_admin`
+ *                               by reason 1 above — a platform admin decides the certification
+ *                               itself, so needing the same admin merely to let an agent ASK would
+ *                               make them approve twice; the people who may file one by hand are
+ *                               Builders and domain admins of the artifact's domain.
+ *   - `update_operating_manual`, `restore_operating_manual_version` — rewrite an Operating Model
+ *                               at My, Domain OR Company scope, chosen by an ARGUMENT this
+ *                               name-only gate cannot see. See {@link ADMIN_CONFIRMED_TOOLS}.
  */
-const ALWAYS_CONFIRMED_TOOLS = new Set(['delete', 'archive', 'request_deploy']);
+const ALWAYS_CONFIRMED_TOOLS = new Set([
+  'delete',
+  'archive',
+  'request_deploy',
+  'retire_connection',
+  'request_certification',
+  'update_operating_manual',
+  'restore_operating_manual_version',
+]);
+
+/**
+ * The always-confirmed tools whose confirmation goes to a PLATFORM admin, not a domain admin.
+ * A subset of {@link ALWAYS_CONFIRMED_TOOLS} — same posture ("held whatever the preset"), same
+ * card wording; only WHO confirms differs.
+ *
+ * The Operating Model tools take a `scope` argument (my | domain | company), and the Company
+ * card is tenant-wide and editable by a platform admin only (`resolveManual` in
+ * `tabs/knowledge/lib/manual.ts`). This gate decides on the tool NAME, so it has to answer for
+ * the widest scope the call could have: routing it to a `domain_admin` would let someone confirm
+ * a Company rewrite they could not make themselves. The cost, stated rather than hidden: an
+ * agent's edit of its runner's own My-scope card ALSO waits on a platform admin. An
+ * argument-aware hold would lift that; until there is one, the conservative answer stands.
+ * To loosen: delete a name here — one line, and the posture tests say so.
+ */
+const ADMIN_CONFIRMED_TOOLS = new Set(['update_operating_manual', 'restore_operating_manual_version']);
 
 /**
  * The TENANT-WIDE writes — held to a platform `admin` under EVERY preset, because their effect is
@@ -84,6 +123,8 @@ const ALWAYS_CONFIRMED_TOOLS = new Set(['delete', 'archive', 'request_deploy']);
  *   - `decide_deploy`, `promote`, `decide_approval`, `promote_connection` — the APPROVALS. An
  *     agent run never reaches the hold for these (see below); they are listed so that if one
  *     ever does, the strictest gate answers.
+ *   - `revoke_action_adoption` — closed to agent runs like the approvals (it is the inverse of
+ *     one), and listed here for the same second-line reason.
  *
  * Belt and braces, deliberately: `AGENT_FORBIDDEN_TOOLS` closes all of these to agent runs outright
  * (`os-tools.ts` gate 0), and this classification is the second line — so if any future door
@@ -91,13 +132,22 @@ const ALWAYS_CONFIRMED_TOOLS = new Set(['delete', 'archive', 'request_deploy']);
  * `core/mcp/write-tool-meta.test.ts` requires every forbidden tool to be a classified write;
  * `os-tools.test.ts` requires each to be company-scoped here.
  */
-const COMPANY_SCOPE_TOOLS = new Set(['reindex_corpus', 'decide_deploy', 'promote', 'decide_approval', 'promote_connection']);
+const COMPANY_SCOPE_TOOLS = new Set([
+  'reindex_corpus',
+  'decide_deploy',
+  'promote',
+  'decide_approval',
+  'promote_connection',
+  'revoke_action_adoption',
+]);
 
 /**
  * The TARGET SCOPE of a granted write tool call. Conservative + fail-closed:
  *   - the tenant-wide family and the approvals -> Company (the admin gate);
  *   - the escalation family (promote/publish/approve) -> Domain (the My->Domain gate);
- *   - the always-confirmed family (delete/archive/request a deploy) -> Domain, same gate;
+ *   - the always-confirmed family (delete/archive/retire a connection/request a deploy or a
+ *     certification) -> Domain, same gate — EXCEPT the Operating Model pair, whose scope the
+ *     gate cannot see -> Company;
  *   - everything else (create_/ingest_/author_/upload_/build_/transform_/document_/
  *     define_/attach_/wire_/update_ ... on a My artifact) -> Personal.
  * A write only crosses a governance boundary when THIS says Domain/Company, so a
@@ -108,10 +158,23 @@ const COMPANY_SCOPE_TOOLS = new Set(['reindex_corpus', 'decide_deploy', 'promote
  * to one of the sets above when it is added to the catalog.
  */
 export function writeTargetScope(mcpName: string): WriteScope {
-  if (COMPANY_SCOPE_TOOLS.has(mcpName)) return 'company';
+  if (COMPANY_SCOPE_TOOLS.has(mcpName) || ADMIN_CONFIRMED_TOOLS.has(mcpName)) return 'company';
   if (ESCALATING_DOMAIN_TOOLS.has(mcpName) || ALWAYS_CONFIRMED_TOOLS.has(mcpName)) return 'domain';
   return 'personal';
 }
+
+/** What each always-confirmed tool does that earns the confirmation — the tail of its card text. */
+const ALWAYS_CONFIRMED_WHY: Readonly<Record<string, string>> = {
+  delete: 'it is destructive: it deletes an app',
+  archive: 'it is destructive: it takes an app out of service for everyone it reaches',
+  request_deploy: 'it asks for a go-live',
+  retire_connection: 'it archives a connection, or deletes it with its catalogue and secret',
+  request_certification: 'it asks to cross the Domain → Company boundary',
+  update_operating_manual:
+    'it rewrites an Operating Model, and since the scope (My, Domain or Company) cannot be read from the tool name a platform admin confirms it as if it were Company',
+  restore_operating_manual_version:
+    'it overwrites an Operating Model with an earlier version, and since the scope (My, Domain or Company) cannot be read from the tool name a platform admin confirms it as if it were Company',
+};
 
 /**
  * WHY a held call is held, in words a decider can act on — the text the approval card and the
@@ -125,7 +188,7 @@ export function holdReason(mcpName: string): { label: string; why: string } {
   if (ALWAYS_CONFIRMED_TOOLS.has(mcpName)) {
     return {
       label: 'always-confirmed',
-      why: `'${mcpName}' is always confirmed by a second person, whatever the system's safety preset — it is destructive or asks for a go-live`,
+      why: `'${mcpName}' is always confirmed by a second person, whatever the system's safety preset — ${ALWAYS_CONFIRMED_WHY[mcpName] ?? 'it is destructive or crosses a boundary'}`,
     };
   }
   if (COMPANY_SCOPE_TOOLS.has(mcpName)) {

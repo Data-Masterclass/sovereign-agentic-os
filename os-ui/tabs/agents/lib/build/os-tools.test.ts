@@ -459,6 +459,136 @@ for (const tool of HUMAN_ONLY_APPROVALS) {
   });
 }
 
+// --- 2026-11-19: the nine-tool backlog, decided (owner's decision) -----------------------------
+//
+// `revoke_action_adoption`, `retire_connection`, `request_certification`,
+// `update_operating_manual`, `restore_operating_manual_version`, `create_connection`,
+// `configure_connection`, `test_connection` and `build_software` were in the MCP registry and in
+// NO hold table, so `holdDecisionFor(preset, name)` answered "not a write" under every preset.
+// Same three postures as the platform writes above; one more routing rule (who confirms).
+
+/** Closed to agent runs: a domain admin's governance decision, the inverse of an approval. */
+const BACKLOG_FORBIDDEN = ['revoke_action_adoption'] as const;
+/** Held under every preset, confirmed by a domain admin: ONE artifact in ONE domain. */
+const BACKLOG_CONFIRMED_BY_DOMAIN_ADMIN = ['retire_connection', 'request_certification'] as const;
+/** Held under every preset, confirmed by a PLATFORM admin: the name-only gate cannot see which
+ *  Operating Model scope the call targets, and the widest one (Company) is admin-only to edit. */
+const BACKLOG_CONFIRMED_BY_ADMIN = ['update_operating_manual', 'restore_operating_manual_version'] as const;
+/** The runner's own My-scope work: read-only holds; otherwise gate 2 (their own rights) decides. */
+const BACKLOG_PERSONAL = ['create_connection', 'configure_connection', 'test_connection', 'build_software'] as const;
+
+test('backlog: all nine are WRITES the hold gate can see, each in exactly one posture bucket', () => {
+  const all = [...BACKLOG_FORBIDDEN, ...BACKLOG_CONFIRMED_BY_DOMAIN_ADMIN, ...BACKLOG_CONFIRMED_BY_ADMIN, ...BACKLOG_PERSONAL];
+  assert.equal(new Set(all).size, 9);
+  for (const t of all) assert.equal(isWriteTool(t), true, `${t} must be in the hold table or no preset can hold it`);
+  for (const t of BACKLOG_FORBIDDEN) assert.ok(agentForbiddenReason(t), `${t}: refused`);
+  for (const t of all.filter((n) => !(BACKLOG_FORBIDDEN as readonly string[]).includes(n))) {
+    assert.equal(agentForbiddenReason(t), null, `${t}: not refused`);
+  }
+  for (const preset of ALL_PRESETS) {
+    for (const t of [...BACKLOG_FORBIDDEN, ...BACKLOG_CONFIRMED_BY_DOMAIN_ADMIN, ...BACKLOG_CONFIRMED_BY_ADMIN]) {
+      assert.equal(holdDecisionFor(preset, t).held, true, `${preset} holds ${t}`);
+    }
+    for (const t of BACKLOG_PERSONAL) assert.equal(holdDecisionFor(preset, t).held, preset === 'read-only', `${preset}/${t}`);
+  }
+});
+
+for (const tool of BACKLOG_FORBIDDEN) {
+  test(`backlog: an agent run may not call ${tool} AT ALL — refused at gate 0, not held`, async () => {
+    const deps = spyDeps();
+    const exec = grantedToolExecutor(ADMIN_USER, sysWithPreset([tool], 'full-in-scope'), 'sys1', deps);
+    const res = await exec(tool, { adoptionId: 'ad_1' });
+    assert.equal(res.isError, true);
+    const err = JSON.parse(res.text) as { error: { code: string; reason: string } };
+    assert.equal(err.error.code, 'forbidden');
+    assert.match(err.error.reason, /human decision, not an agent action/);
+    assert.match(err.error.reason, /domain admin/);
+    assert.equal(deps.calls.handleRpc.length, 0, 'never dispatched');
+    assert.equal(deps.calls.enqueue.length, 0, 'and not enqueued — a hold could be approved and then FIRE it');
+  });
+
+  test(`backlog: ${tool} is never ADVERTISED to a model, even when a system grants it`, () => {
+    const specs = grantedToolSpecs(ADMIN_USER, sysWithPreset([tool, 'retire_connection'], 'full-in-scope')).map((t) => t.name);
+    assert.ok(specs.includes('retire_connection'), 'control: a sibling connection tool is advertised');
+    assert.ok(!specs.includes(tool), 'a schema the gate will refuse must not be offered');
+  });
+
+  test(`backlog: ${tool} is ALSO company-held behind the refusal — the second line`, () => {
+    assert.equal(writeTargetScope(tool), 'company');
+    for (const preset of ALL_PRESETS) assert.deepEqual(holdDecisionFor(preset, tool), { held: true, approverRole: 'admin' });
+  });
+}
+
+for (const [tools, approverRole, scope] of [
+  [BACKLOG_CONFIRMED_BY_DOMAIN_ADMIN, 'domain_admin', 'domain'],
+  [BACKLOG_CONFIRMED_BY_ADMIN, 'admin', 'company'],
+] as const) {
+  for (const tool of tools) {
+    test(`backlog: ${tool} is HELD under EVERY preset, for a ${approverRole}`, () => {
+      assert.equal(writeTargetScope(tool), scope, `${tool} must never default to personal`);
+      assert.deepEqual(holdDecisionFor('read-only', tool), { held: true, approverRole: 'admin' });
+      for (const preset of ['read-propose', 'read-bounded', 'full-in-scope'] as const) {
+        assert.deepEqual(holdDecisionFor(preset, tool), { held: true, approverRole }, `${preset} must hold ${tool}`);
+      }
+      // Whoever confirms, the card reads "always confirmed" — never "the preset held it".
+      const r = holdReason(tool);
+      assert.equal(r.label, 'always-confirmed');
+      assert.match(r.why, /always confirmed by a second person, whatever the system's safety preset/);
+    });
+
+    test(`backlog executor: a full-in-scope agent granted ${tool} is HELD, enqueued for a ${approverRole}, never dispatched`, async () => {
+      const deps = spyDeps();
+      const exec = grantedToolExecutor(ADMIN_USER, sysWithPreset([tool], 'full-in-scope'), 'sys1', deps);
+      const res = await exec(tool, { connId: 'conn_1', scope: 'my', kind: 'knowledge', id: 'wf_1' });
+      assert.equal(res.isError, true);
+      assert.equal((JSON.parse(res.text) as { error: { code: string } }).error.code, 'held');
+      assert.equal(deps.calls.enqueue.length, 1, 'the confirmation request is filed');
+      assert.equal((deps.calls.enqueue[0] as { approverRole?: string }).approverRole, approverRole);
+      assert.equal(deps.calls.handleRpc.length, 0, 'a held write is never executed');
+    });
+  }
+}
+
+test('backlog: the Operating Model card says a PLATFORM admin confirms, and why the scope cannot be read', () => {
+  for (const tool of BACKLOG_CONFIRMED_BY_ADMIN) {
+    assert.match(holdReason(tool).why, /platform admin/);
+    assert.match(holdReason(tool).why, /Company/);
+  }
+  // The domain-routed ones must NOT claim a platform admin is needed.
+  for (const tool of [...BACKLOG_CONFIRMED_BY_DOMAIN_ADMIN, ...ALWAYS_CONFIRMED]) {
+    assert.doesNotMatch(holdReason(tool).why, /platform admin/, tool);
+  }
+  // Each reason is about THAT tool: a connection is not "a go-live", a request is not "destructive".
+  assert.match(holdReason('retire_connection').why, /connection/);
+  assert.match(holdReason('request_certification').why, /Domain → Company/);
+  assert.match(holdReason('delete').why, /destructive/);
+  assert.match(holdReason('request_deploy').why, /go-live/);
+});
+
+for (const tool of BACKLOG_PERSONAL) {
+  test(`backlog: ${tool} is a My-scope write — read-only HOLDS it, otherwise the runner's own rights decide`, () => {
+    assert.equal(writeTargetScope(tool), 'personal');
+    assert.deepEqual(holdDecisionFor('read-only', tool), { held: true, approverRole: 'admin' });
+    for (const preset of ['read-propose', 'read-bounded', 'full-in-scope'] as const) {
+      assert.deepEqual(holdDecisionFor(preset, tool), { held: false }, `${preset}: gate 2 is the authority`);
+    }
+    assert.equal(holdReason(tool).label, 'personal-scope');
+  });
+
+  test(`backlog executor: read-only HOLDS ${tool} (it ran unheld while it was unclassified); read-propose runs it as the runner`, async () => {
+    const held = spyDeps();
+    const res = await grantedToolExecutor(ADMIN_USER, sysWithPreset([tool], 'read-only'), 'sys1', held)(tool, { connId: 'c1', appId: 'a1' });
+    assert.equal((JSON.parse(res.text) as { error: { code: string } }).error.code, 'held');
+    assert.equal(held.calls.enqueue.length, 1);
+    assert.equal(held.calls.handleRpc.length, 0);
+    const free = spyDeps();
+    await grantedToolExecutor(ADMIN_USER, sysWithPreset([tool], 'read-propose'), 'sys1', free)(tool, { connId: 'c1', appId: 'a1' });
+    assert.equal(free.calls.enqueue.length, 0, `${tool} is not held outside read-only`);
+    assert.equal(free.calls.handleRpc.length, 1, `${tool} is dispatched as the acting user`);
+    assert.equal((free.calls.handleRpc[0] as { user: CurrentUser }).user, ADMIN_USER);
+  });
+}
+
 test('holdDecision: read-only holds all; personal never held; domain→domain_admin', () => {
   // read-only blocks every write (any target).
   assert.deepEqual(holdDecision('read-only', 'create_dataset'), { held: true, approverRole: 'admin' });

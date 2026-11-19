@@ -18,7 +18,9 @@
  *   - TWO refusals, in this order: a name in `AGENT_FORBIDDEN_TOOLS` (an approval is a person's
  *     decision — refused even if a yaml offers it), then any name not in the turn's offered list.
  *   - WHAT THIS DOOR DOES NOT DO — it has NO HOLD. The engine path parks `request_deploy`,
- *     `delete` and `archive` for a second person (`hold.ts` `ALWAYS_CONFIRMED_TOOLS`); this panel
+ *     `delete`, `archive` and the rest of `hold.ts` `ALWAYS_CONFIRMED_TOOLS` for a second person
+ *     (the others — `retire_connection`, `request_certification`, the Operating Model writes —
+ *     are not Software-tab tools, so no phase can offer them); this panel
  *     is a synchronous chat turn with no checkpoint to park on. An offered tool executes
  *     immediately, as the present user, under their own role gates. Today the only
  *     always-confirmed tool any phase offers is `request_deploy`, in the `deploy` phase, which the

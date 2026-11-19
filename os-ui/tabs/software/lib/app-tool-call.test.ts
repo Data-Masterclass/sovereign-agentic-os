@@ -184,7 +184,7 @@ test('an UNDECLARED tool keeps EXACTLY its previous behaviour — the gate arriv
 // doing something else. The name is refused before any authorization, declared or not.
 
 test('a tool NAMED like an agent-forbidden OS write is refused at the app door — never held, never executed', async () => {
-  for (const name of ['promote', 'decide_deploy', 'reindex_corpus', 'decide_approval', 'promote_connection']) {
+  for (const name of ['promote', 'decide_deploy', 'reindex_corpus', 'decide_approval', 'promote_connection', 'revoke_action_adoption']) {
     // The worst case on purpose: declared as a WRITE action, exposed, adopted and granted — every
     // one of the four layers would pass, and without the guard this is a 202 hold in the inbox.
     TREE = [{ path: 'actions.yml', content: `actions:\n  - name: ${name}\n    write: true\n    scopes: [records]\n` }];

@@ -155,6 +155,34 @@ export const WRITE_TOOL_TABS: Readonly<Record<string, string>> = {
   // not import one — so it is classified here deliberately, for exactly the reason H-1 classified
   // `commit`: an unclassified write answers "not a write" for every preset and would run unheld.
   reindex_corpus: 'files',
+  // 2026-11-19 — THE NINE-TOOL BACKLOG, DECIDED. These were in the MCP registry and in no hold
+  // table (they are not in `ALL_WRITE_TOOLS`, and `build_software` declares `write: false`), so
+  // the gate answered "not a write" for each under every preset. The registry ratchet in
+  // `write-tool-meta.test.ts` had them on a named backlog; the owner decided each one:
+  //
+  //   posture                       | tools                                        | enforced by
+  //   ------------------------------|----------------------------------------------|---------------------------
+  //   REFUSED at agent-run doors    | revoke_action_adoption                       | AGENT_FORBIDDEN_TOOLS below
+  //   HELD under every preset       | retire_connection, request_certification     | hold.ts ALWAYS_CONFIRMED_TOOLS → domain_admin
+  //   HELD under every preset       | update_operating_manual,                     | hold.ts ALWAYS_CONFIRMED_TOOLS + ADMIN_CONFIRMED_TOOLS
+  //                                 | restore_operating_manual_version             |   → platform admin
+  //   My-scope (read-only holds)    | create_connection, configure_connection,     | hold.ts default (`personal`)
+  //                                 | test_connection, build_software              |
+  //
+  // The four personal ones carry the SAME known limit as `set_app_spec`: the hold is name-only, so
+  // it cannot tell the runner's Personal connection from one already Shared or Certified (gate 2 —
+  // the runner's own edit rights — is what stands between). `test_connection` is a probe that
+  // writes the connection's status back; under `read-only` it is now held like any other write.
+  // These rules bind AGENT runs only — a person keeps all nine in the UI and in their own MCP session.
+  revoke_action_adoption: 'connections',
+  retire_connection: 'connections',
+  request_certification: 'governance',
+  update_operating_manual: 'operating-manual',
+  restore_operating_manual_version: 'operating-manual',
+  create_connection: 'connections',
+  configure_connection: 'connections',
+  test_connection: 'connections',
+  build_software: 'software',
 };
 
 
@@ -182,6 +210,12 @@ export const WRITE_TOOL_NAMES: ReadonlySet<string> = new Set(Object.keys(WRITE_T
  *   - `decide_approval`, `promote_connection` — the same principle outside the software tab:
  *     `decide_approval` decides ANY queued request (and executes its effect on approve);
  *     `promote_connection` is itself the domain-admin approval of a connection's My → Domain step.
+ *
+ *   - `revoke_action_adoption` — the INVERSE of an approval, and closed for the same reason an
+ *     approval is: it is a domain admin withdrawing what their domain adopted, after which the
+ *     domain can no longer arm those write actions. That is a governance decision about other
+ *     people's work, not a step in an agent's own task. (Not four-eyes — one person decides
+ *     it — so its reason does not claim that.)
  *
  * WHICH DOORS CONSULT THIS — exactly three, and what is NOT covered:
  *   1. AGENT SYSTEM RUNS — `tabs/agents/lib/build/os-tools.ts`: gate 0 of `grantedToolExecutor`
@@ -237,6 +271,12 @@ export const AGENT_FORBIDDEN_TOOLS: Readonly<Record<string, string>> = {
     'approval that turns a personal connection into a shared domain data source, and the ' +
     'four-eyes on that step means two people — never a person and their agent. A domain ' +
     'admin promotes it in Connections, or from their own MCP session.',
+  revoke_action_adoption:
+    'revoke_action_adoption is a human decision, not an agent action: it withdraws a domain\'s ' +
+    'adoption of an exposed entity\'s write actions, after which the domain can no longer arm ' +
+    'them. That is a domain admin\'s governance decision — the inverse of an approval — and an ' +
+    'agent run may not take it. A domain admin of the adopting domain revokes it from the ' +
+    'connection\'s expose panel in Connections, or from their own MCP session.',
 };
 
 /** The reason this tool is closed to agent runs, or null when it is not. By exact own name. */
