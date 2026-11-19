@@ -1,5 +1,16 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    Metric registry — every metric the user can see, in scope groups and folders
+ * USER STORY: As a user I want to browse, file, move, archive and delete the metrics I can see
+ *             so that the metric list stays organised like the other foldered tabs.
+ * ARCHITECTURE:
+ *   - Client component rendered by `MetricsTab`; uses the shared `FolderTree` / `FolderLayout`
+ *     rail, the folder lifecycle and the OS scope helpers (All · My · Domain · Company).
+ *   - A metric has no store row of its own: its folder path rides the metric lifecycle overlay
+ *     (`/api/metrics/{id}/folder`); folders come from `/api/folders`.
+ *   - Folder root is tier-bound (personal metric → personal tree, domain/company metric →
+ *     domain tree); the rail and move picker show only roots that match the active scope.
  */
 'use client';
 
@@ -31,19 +42,6 @@ import {
   TIER_BADGE,
   TIER_WORD,
 } from '@tabs/metrics/ui/shared';
-
-/**
- * The governed metric registry — every measure the user can see, grouped All · My ·
- * Shared · Marketplace via the OS-wide scope helper, now WITH the shared folder primitive
- * (the same `FolderTree` rail + one folder lifecycle Files / Data / Knowledge use). A
- * metric is a measure on a governed dataset, so its folder path rides the metric
- * lifecycle overlay; otherwise the UX is identical to the other foldered tabs.
- *
- * SCOPE-DRIVEN SINGLE ROOT: an item's folder root is tier-bound (personal metric →
- * personal tree; shared/marketplace metric → domain tree). The rail + move picker show
- * ONLY the root(s) that match the active scope segment, so a move can only ever target a
- * folder the metric can actually live in.
- */
 
 /** Which folder ROOT a metric's folders live in — personal (mine) or domain (shared/mkt). */
 function rootOf(m: MetricSummary): FolderRoot {

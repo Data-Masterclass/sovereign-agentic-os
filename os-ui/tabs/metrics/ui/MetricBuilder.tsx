@@ -1,5 +1,18 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    Metric builder — create a metric in Edit, inspect an existing one in View
+ * USER STORY: As a creator I want one screen to define, preview, save and then govern a metric
+ *             so that a metric goes from idea to promoted without switching tools.
+ * ARCHITECTURE:
+ *   - Client component opened by `MetricsTab`; a new metric opens in Edit, an existing one in
+ *     View (definition, governed SQL, preview, explore, alerts, dashboards that use it).
+ *   - Talks to `/api/metrics/preview`, `/api/metrics/define`, `/api/metrics/{id}` (+ promote /
+ *     demote) and reads datasets from `/api/data/datasets`.
+ *   - Composite formulas are validated client-side with `compileFormula` / `assertFormulaRefs`
+ *     from `@tabs/metrics/lib/formula`; `lib/model.ts` checks them again server-side.
+ *   - Lifecycle actions reuse the shared core pieces (PromoteButton, DemoteButton,
+ *     LifecycleActions, ConfirmProvider).
  */
 'use client';
 

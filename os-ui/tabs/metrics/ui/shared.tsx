@@ -1,14 +1,16 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    Shared Metrics-tab types and small presentational parts
+ * USER STORY: As a developer on the Metrics tab I want one place for the route response shapes
+ *             and tiny shared widgets so that every metrics surface uses the same types.
+ * ARCHITECTURE:
+ *   - Client-safe mirror of the route contracts in `@tabs/metrics/lib/*` (read-only copies of
+ *     shapes, not logic) plus helpers: `flatMetrics`, `postJson`, `slug`, `ChecksList`,
+ *     `ModeBadge`, `BuildRowsView`.
+ *   - Imported only by the Metrics UI files.
  */
 'use client';
-
-/**
- * Shared types + tiny presentational parts for the Metrics tab. The route contracts
- * (lib/metrics/*) are the source of truth — these mirror them read-only so the four
- * surfaces (registry / define / explore / govern) speak one language without re-deriving
- * the same shapes five times.
- */
 
 import { TIER_BADGE_CLASS } from '@core/kernel/scopes';
 

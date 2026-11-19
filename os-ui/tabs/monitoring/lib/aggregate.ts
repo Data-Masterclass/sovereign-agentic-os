@@ -1,5 +1,17 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    Monitoring overview aggregation — scoped, attention-first roll-up of all lenses
+ * USER STORY: As any user I want one Monitoring overview that shows only what I may see, with
+ *             the few red and amber items first, so that I do not scan a wall of green.
+ * ARCHITECTURE:
+ *   - Server-only. `collectAll` runs the runs, pipelines, cost and artifacts adapters in
+ *     parallel; system health is not here (Platform → Components calls `collectSystem`).
+ *   - `buildOverview` applies the single scope filter (`scope.ts`) to every item, then
+ *     `rollup.ts` for lens summaries and the attention list.
+ *   - Alerts are operational only (failed/denied runs and cost-cap breaches via
+ *     `alerts-derive.ts`), after seeding spend from LiteLLM; business KPI alerts are not here.
+ *   - Exported through `index.ts`.
  */
 import 'server-only';
 import type { CurrentUser } from '@core/kernel/auth';
@@ -14,17 +26,6 @@ import { filterScope, scopeForUser } from '@tabs/monitoring/lib/scope';
 import { pickAttention, summarize } from '@tabs/monitoring/lib/rollup';
 import { deriveAlerts, type AlertTraceInput, type AlertCapInput } from '@tabs/monitoring/lib/alerts-derive';
 import { LENS_IDS, type HealthItem, type LensSummary, type Overview, type Scope } from '@tabs/monitoring/lib/types';
-
-/**
- * OPA-SCOPED MULTI-SOURCE AGGREGATION (the Opus core). Fans out to the five
- * read-only adapters IN PARALLEL, applies the SINGLE scope filter to every signal
- * (so each lens shows only what the viewer's identity entitles), then uses the
- * pure roll-up to order everything attention-first (the few red/amber lead — NOT
- * a wall of green).
- *
- * Alerts here are OPERATIONAL only (system/run health → self-heal-or-notify).
- * Business/KPI alerts are excluded by construction — they live in Dashboards.
- */
 
 /**
  * Collect the user-facing lenses (runs · pipelines · cost · artifacts) in

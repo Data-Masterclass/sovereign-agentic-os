@@ -1,22 +1,19 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    Artifact-health adapter (lens 5) — health of governed artifacts across tabs
+ * USER STORY: As a domain owner I want one health list for my data products, metrics,
+ *             dashboards, apps, connections and agents so that I see which artifact is stale.
+ * ARCHITECTURE:
+ *   - Server-only, read-only; called by `aggregate.ts` `collectAll`.
+ *   - No live cross-tab reader is wired: it returns `MOCK_ARTIFACTS` when
+ *     `config.monitoringDemoFixtures` is on (dev/test) and `[]` otherwise. The `HealthItem`
+ *     shape with `lens: 'artifacts'` is the seam for a future live reader.
  */
 import 'server-only';
 import { config } from '@core/kernel/config';
 import { MOCK_ARTIFACTS } from '@tabs/monitoring/lib/mock';
 import type { HealthItem } from '@tabs/monitoring/lib/types';
-
-/**
- * Artifact-health adapter (lens 5) — unified health across EVERY tab's governed
- * artifacts (data products, metrics, dashboards, apps, connections, agents),
- * tied to the OS lineage graph. READ-ONLY.
- *
- * The product tabs (Data/Metrics/Dashboards/Software/Connections/Agents) live on
- * PARALLEL branches not yet on `main`. So this adapter defines the
- * artifact-health INTERFACE and STUBS the cross-tab sources for kind (mock).
- * Reconcile the live cross-tab readers at consolidation — the interface
- * (HealthItem with lens:'artifacts') is the seam.
- */
 
 export async function collectArtifacts(): Promise<HealthItem[]> {
   // Cross-tab artifact health is stubbed for kind (parallel branches not on main).

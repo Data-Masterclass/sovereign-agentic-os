@@ -1,16 +1,15 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
- */
-/**
- * Pure telemetry rollups for the redesigned Monitor tiles (no IO, no server-only)
- * so the 7-day aggregation is unit-testable. `adapters/agent-telemetry.ts` feeds
- * these RAW run records from Langfuse + the in-process governed ring; the server
- * half never does maths the tests can't reach.
  *
- * A "run record" here is the flattened, source-agnostic shape both sources map to
- * (see `RawRun`): one recorded agent step/trace with a timestamp, a health verdict,
- * and optional cost/token metrics. The rollup is deliberately additive: an absent
- * metric contributes 0, never a fake number.
+ * FEATURE:    Telemetry roll-ups — pure 7-day maths for the Monitor agent and dataset tiles
+ * USER STORY: As a user I want each tile's cost, tokens, runs, warnings and errors added up
+ *             the same way every time so that the numbers can be trusted.
+ * ARCHITECTURE:
+ *   - Pure (no IO, no `server-only`), unit-tested. `adapters/agent-telemetry.ts` maps Langfuse
+ *     and governed-ring records to `RawRun`; `artifacts-view.ts` and `detail-view.ts` call the
+ *     roll-ups.
+ *   - Additive: a missing metric adds 0, never an invented number. `dailySeries` always
+ *     returns exactly `days` buckets so a quiet day is 0, not missing.
  */
 
 export type RunHealth = 'ok' | 'warn' | 'error';

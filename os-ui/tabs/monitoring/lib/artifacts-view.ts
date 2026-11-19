@@ -1,5 +1,16 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    Artifact-centric Monitor feed — agent and data tiles grouped My · Domain · Company
+ * USER STORY: As a user I want to monitor the agents and datasets I built or use, each with one
+ *             health dot, so that I am not shown a raw stream of signals.
+ * ARCHITECTURE:
+ *   - Server-only, read-only; called by `app/api/monitoring/artifacts/route.ts`.
+ *   - Agents: `agentHealthRows` from the Agents store plus 7-day telemetry from
+ *     `agentTelemetryBatch`. Data: `listDatasets` plus `latestDqRuns` and `latestSyncSignals`
+ *     (fail-soft to empty maps), rolled into one health via `artifact-health-core`.
+ *   - Scoped to the caller's own governed lists; never widens. Files and Knowledge are not
+ *     covered.
  */
 import 'server-only';
 import type { CurrentUser } from '@core/kernel/auth';
@@ -10,19 +21,6 @@ import { latestSyncSignals } from '@tabs/data/lib/sync-status-server';
 import { type Health, combine, pipelineHealth, dqHealth, ageInDays } from '@tabs/monitoring/lib/artifact-health-core';
 import { agentTelemetryBatch } from '@tabs/monitoring/lib/adapters/agent-telemetry';
 import { rollupAgentTelemetry, summarizeDq, type AgentTelemetry } from '@tabs/monitoring/lib/telemetry-core';
-
-/**
- * The ARTIFACT-CENTRIC monitoring feed — the redesigned Monitor tab. Two sections,
- * each grouped My · Domain · Company, so a user monitors the things they actually
- * built or use, not a firehose of raw signals:
- *
- *   • Agent Monitoring — every accessible agent SYSTEM + its last-run health.
- *   • Data Monitoring  — every accessible DATASET, with pipeline (freshness/build)
- *                        and data-quality (DQ) rolled into ONE health per dataset.
- *
- * Read-only, scoped to the caller's own governed lists (never widens). RAG (files +
- * knowledge) is a deliberate later addition; this covers Agents + Data.
- */
 
 /** An agent tile: the store's health row + the real 7-day telemetry key-facts. */
 export type AgentTile = AgentHealthRow & {

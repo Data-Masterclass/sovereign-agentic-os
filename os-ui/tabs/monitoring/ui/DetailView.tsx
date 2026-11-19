@@ -1,22 +1,22 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    Monitoring diagnosis view — full-page detail for one agent system or dataset
+ * USER STORY: As a user who opened an agent or dataset tile I want its telemetry, profile,
+ *             last run, history, tool calls and data-quality detail on one page so that I can
+ *             diagnose it without leaving Monitoring.
+ * ARCHITECTURE:
+ *   - Client component rendered by `app/(govern)/monitoring/page.tsx`; replaces the tile grid
+ *     and returns via `onBack`. Read-only.
+ *   - Fetches `/api/monitoring/agent/{id}` or `/api/monitoring/dataset/{id}` on mount; 403 and
+ *     404 are shown as plain messages.
+ *   - Agent sections: 7-day telemetry, system profile, last-run report, run history (Langfuse +
+ *     in-process ring), governed tool calls, errors. Dataset sections: DQ, medallion build,
+ *     versions and lineage.
  */
 'use client';
 
 import { useEffect, useState } from 'react';
-
-/**
- * The DIAGNOSIS view — opened from an agent or dataset tile IN THE MAIN WINDOW
- * (tab-consistent with Data's DataBuilder and Agents' SystemView: the tile grid
- * swaps to this full view; "← Monitoring" returns). Read-only. Fetches its
- * payload on mount; 403/404 surface calmly.
- *
- * Agent sections: 7-day telemetry (honest source line) · system profile (nodes,
- * trigger, grants) · last-run report (OS run store, per-node drill-down) · run
- * history (Langfuse + in-process ring, merged) · governed tool calls (ring —
- * exists even with Langfuse down) · errors & warnings. Dataset sections: the DQ
- * dashboard, medallion build, versions and lineage, unchanged.
- */
 
 type Health7 = 'ok' | 'warn' | 'error';
 
