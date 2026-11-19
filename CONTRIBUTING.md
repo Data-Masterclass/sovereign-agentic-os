@@ -137,6 +137,10 @@ debugging time — a Next.js `route.ts` may export only its handlers, a test can
 
 - Local: `./scripts/os up | test | down`. A cluster: `./scripts/deploy.sh <version>`, which
   backs up first and aborts if the backup gate fails.
+- **Release with `./scripts/release.sh <version>`** (`--dry-run` first). It refuses unless CI
+  passed on a push to `main` for that exact commit, tags it, waits for the image build (which
+  refuses a commit without green CI too), deploys and runs `./scripts/smoke-test.sh`. The steps,
+  what to do when it stops, and how to roll back: [`docs/ops/releasing.md`](docs/ops/releasing.md).
 - **Never plain `tofu apply`** — always `-target=`.
 - The Velero CRD is `backups.velero.io`, never `backup` (it collides with CloudNativePG's).
 - **Never run a tree-wide script while another executes from the same checkout.** Rewriting a
