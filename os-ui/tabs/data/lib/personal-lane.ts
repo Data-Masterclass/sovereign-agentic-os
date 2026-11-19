@@ -21,6 +21,8 @@
  * the API route wires the real governed query path.
  */
 
+import { privatePrefix } from '@core/kernel/identity';
+
 export type PersonalOrigin = 'upload' | 'extract';
 
 export interface PersonalDataset {
@@ -31,10 +33,8 @@ export interface PersonalDataset {
   rows: string[][];
 }
 
-/** Each user gets a private object-storage prefix — not shared, not a domain product. */
-export function privatePrefix(userId: string): string {
-  return `s3://sandbox/${userId}/`;
-}
+/** Each user gets a private object-storage prefix. Defined in the kernel with the identity it belongs to. */
+export { privatePrefix };
 
 export type GovernedQueryFn = (
   sql: string,

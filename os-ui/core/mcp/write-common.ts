@@ -5,7 +5,7 @@ import 'server-only';
 import type { CurrentUser } from '@core/kernel/auth';
 import type { Role } from '@core/kernel/session';
 import type { ColumnDoc } from '@tabs/data/lib/index';
-import { claimsFromUser, delegate } from '@tabs/data/lib/identity';
+import { claimsFromUser, delegate } from '@core/kernel/identity';
 import {
   ACTOR_TYPES,
   normalizeActorPrompt,

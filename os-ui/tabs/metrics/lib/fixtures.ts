@@ -1,7 +1,8 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
-import { emptyVersions, claimsFromUser, delegate, type Dataset, type DelegatedToken } from '@tabs/data/lib/index';
+import { emptyVersions, type Dataset } from '@tabs/data/lib/index';
+import { claimsFromUser, delegate, type DelegatedToken } from '@core/kernel/identity';
 
 /** A built, documented Gold "Sales" dataset — the shared test fixture for the
  *  Metrics/Dashboards spine (kept out of *.test.ts so importing it never re-runs

@@ -1,7 +1,8 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
-import type { Dataset, Measure, DelegatedToken } from '@tabs/data/lib/index';
+import type { Dataset, Measure } from '@tabs/data/lib/index';
+import { type DelegatedToken } from '@core/kernel/identity';
 import type { MetricExploreResult } from '@tabs/metrics/lib/build/live';
 
 /**

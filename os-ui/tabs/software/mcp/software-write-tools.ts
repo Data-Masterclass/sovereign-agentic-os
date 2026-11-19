@@ -95,7 +95,7 @@ import type { Sensitivity } from '@tabs/files/lib/asset-schema';
 
 import { saveDashboard } from '@tabs/dashboards/lib/store';
 import { fromTiles, type ChartSpec } from '@tabs/dashboards/lib/model';
-import { claimsFromUser, delegate } from '@tabs/data/lib/identity';
+import { claimsFromUser, delegate } from '@core/kernel/identity';
 
 import {
   createSystem,
