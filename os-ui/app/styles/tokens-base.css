@@ -3594,12 +3594,6 @@ button.card.tile:hover .tile-action { opacity: 1; }
   color: var(--text);
   margin: 0;
 }
-.home-sec-sub {
-  margin: 6px 0 0;
-  max-width: 620px;
-  font-size: 13px;
-  color: var(--text-muted);
-}
 
 /* ---- Launcher gallery — flat illustrated tiles (NO cards-in-cards) ---- */
 .launch-gallery {

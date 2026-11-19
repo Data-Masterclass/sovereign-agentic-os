@@ -31,7 +31,7 @@ const VERSIONS = [
 export default function SettingsPage() {
   return (
     <>
-      <PageHeader title="Settings" crumb="deployment configuration — read-only" />
+      <PageHeader title="Settings" />
       <div className="content">
         <div className="section-title" style={{ marginTop: 0 }}>Deployment</div>
         <div className="grid">
