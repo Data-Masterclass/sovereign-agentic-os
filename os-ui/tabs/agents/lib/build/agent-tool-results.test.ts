@@ -18,6 +18,7 @@ import { estimateTokens } from '@core/infra/context/context-assembler';
 import { parseSystem, type System } from '@tabs/agents/lib/system-schema';
 import { grantedToolExecutor, type OsToolDeps } from '@tabs/agents/lib/build/os-tools';
 import { shapeFileListing, shapeForAgent } from '@tabs/agents/lib/build/agent-tool-results';
+import { callToolGuarded } from '@tabs/agents/lib/engine/tool-result';
 import { __resetStore, createFile } from '@tabs/files/lib/store';
 
 const USER: CurrentUser = { id: 'u-owner', name: 'Olive Owner', domains: ['finance'], role: 'admin' };
@@ -196,4 +197,77 @@ test('a person asking list_files for `/invoices` gets `/Invoices`; a missing fol
   assert.equal(none.mine.length, 0);
   assert.match(String(none.note), /No folder "\/nope"/);
   assert.ok(none.availableFolders?.includes('/Invoices'));
+});
+
+// ---------------------------------------------------------------------------------------------
+// CONTEXT LIMITS (Track B): every limit an agent meets is TOLD to it. These drive the real MCP door,
+// the real files store and the engine's own result bound (`callToolGuarded`), as the files-store
+// integration tests above do (this file is the one place the agents tab seeds the Files tab).
+// ---------------------------------------------------------------------------------------------
+
+test('an EMPTY granted folder says so: "0 files in /Empty (My files); the grant is empty"', async () => {
+  const sys = system([{ folder: { path: '/Empty', scope: 'personal' }, capability: 'Read' }]);
+  const body = JSON.parse((await executor(sys)('list_files', {})).text) as { count: number; note?: string };
+  assert.equal(body.count, 0);
+  assert.match(String(body.note), /0 files in \/Empty \(My files\); the grant is empty/);
+});
+
+test('a wrong-case folder GRANT reads as an empty grant, never as "there are no invoices"', async () => {
+  const sys = system([{ folder: { path: '/invoices', scope: 'personal' }, capability: 'Read' }]);
+  const body = JSON.parse((await executor(sys)('list_files', {})).text) as { count: number; note?: string };
+  assert.equal(body.count, 0);
+  assert.match(String(body.note), /the grant is empty/);
+});
+
+test('a folder with more files than the result bound: a row-aware cut, the right counts, and how to narrow', async () => {
+  for (let i = 0; i < 400; i += 1) {
+    createFile(PRINCIPAL, { name: `bulk-invoice-${String(i).padStart(3, '0')}.pdf`, text: 'x', folder: '/Bulk', description: `Supplier invoice number ${i} — `.repeat(6) });
+  }
+  const sys = system([{ folder: { path: '/Bulk', scope: 'personal' }, capability: 'Read' }]);
+  const out = await callToolGuarded(executor(sys), { name: 'list_files', args: {} }, { maxChars: 20_000 });
+  const [json, marker] = out.text.split('\n[truncated: ');
+  const kept = (JSON.parse(json) as { items: unknown[]; count: number }).items.length;
+  assert.ok(kept > 0 && kept < 400, `kept ${kept} rows`);
+  assert.match(marker, new RegExp(`^showing ${kept} of 400 rows\\]`), 'the marker counts the rows the model can see');
+  assert.match(marker, /folder=/, 'the marker says how to narrow the listing');
+  assert.match(marker, /search_files/);
+});
+
+test('get_file over the read cap: the note says how to read the rest, and `offset` does', async () => {
+  const long = Array.from({ length: 900 }, (_, i) => `line ${String(i).padStart(4, '0')} of a very long contract`).join('\n');
+  const f = createFile(PRINCIPAL, { name: 'long-contract.txt', text: long, folder: '/Contracts' });
+  const exec = executor(system([]));
+  let text = '';
+  let offset = 0;
+  for (let page = 0; page < 10 && offset >= 0; page += 1) {
+    const body = JSON.parse((await exec("get_file", { fileId: f.id, ...(offset ? { offset } : {}) })).text) as { text: string; textNote?: string; nextOffset?: number };
+    text += body.text;
+    if (body.nextOffset === undefined) break;
+    assert.match(String(body.textNote), new RegExp(`offset=${body.nextOffset}`), 'the note names the offset to read next');
+    offset = body.nextOffset;
+  }
+  assert.equal(text, long, 'paging with `offset` returns the whole file, nothing lost and nothing doubled');
+});
+
+test('a system with no files tool at all is TOLD so when it asks, not handed an empty answer', async () => {
+  const sys = parseSystem({
+    version: '1',
+    system: { name: 'No files', domain: 'finance', visibility: 'Personal' },
+    runtime: 'langgraph',
+    entrypoint: 'a',
+    grants: { tools: ['query_data'] },
+    agents: [{ id: 'a', role: 'agent', agent_md: 'x', memory_md: '' }],
+  });
+  const out = await executor(sys)('list_files', {});
+  assert.equal(out.isError, true);
+  assert.match(out.text, /list_files/);
+  assert.match(out.text, /not (granted|in this system)|grant/i);
+});
+
+test('search_files past its top-k says how many matched and that only the first ones are shown', async () => {
+  const exec = executor(system([]));
+  const body = JSON.parse((await exec('search_files', { query: 'invoice' })).text) as { hits: unknown[]; total: number; note?: string };
+  assert.equal(body.hits.length, 20, 'the top 20');
+  assert.equal(body.total, 60, 'every file in the corpus matches "invoice" (the text says INVOICE)');
+  assert.match(String(body.note), /showing the top 20 of 60/);
 });

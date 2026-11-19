@@ -16,7 +16,8 @@ import { langfuseRunObserver } from '@tabs/agents/lib/engine/observe';
 import type { RunEnv } from '@core/kernel/object-lifecycle';
 import { tabToolExecutor, liteLlmCaller } from '@core/runtime/runtime';
 import type { CallerContext } from '@core/infra/litellm-credential';
-import { trackUsage, type ToolSpec, type AgenticStep, type LlmCall, type ToolExecutor, type UsageTracker } from '@core/runtime/agentic';
+import { trackUsage, type ToolSpec, type AgenticStep, type LlmCall, type ToolExecutor, type UsageTracker, type ContextTrim } from '@core/runtime/agentic';
+import { truncationWarnings } from '@tabs/agents/lib/engine/tool-result';
 import {
   PANEL_CONFIRMED_TOOLS,
   phaseCallableTools,
@@ -382,11 +383,14 @@ export async function runOsTeam(input: RunOsTeamInput): Promise<RunOsTeamResult>
       // A3 review M-2: how much of a call reaches the trace (LANGFUSE_REDACTION).
       redaction: config.langfuseRedaction,
     });
+    // Track B — every history trim this run made, for the run report (the model is told in-prompt).
+    const trims: (ContextTrim & { node: string })[] = [];
     const result = await runGraphEngine({
       ir,
       deps: {
         ...graphDeps,
         observe,
+        onContextTrim: (ev) => trims.push(ev),
         unmappedTools: resolveGrantedTools(sys).unmapped,
         // Resource grants, asked before a write is held for a person (the executor checks again).
         precheck: gate.precheck,
@@ -419,7 +423,8 @@ export async function runOsTeam(input: RunOsTeamInput): Promise<RunOsTeamResult>
       hooks: { onNodeStart, onStep, onNodeComplete, onInterrupt: input.onInterrupt, onRateLimitWait: input.onRateLimitWait },
     });
     emitRunSummaryTrace(input, result, tracked, prices, traceContext);
-    return { ...result, traceUrl: observe.enabled ? traceUrlFor(input.runId) : undefined, traceStoreAvailable: observe.enabled };
+    const warnings = withContextWarnings(result.warnings, result.runs, trims);
+    return { ...result, ...(warnings.length > 0 ? { warnings } : {}), traceUrl: observe.enabled ? traceUrlFor(input.runId) : undefined, traceStoreAvailable: observe.enabled };
   }
 }
 
@@ -486,6 +491,28 @@ async function createdBeforeResume(runId: string): Promise<Partial<Record<Resour
   } catch {
     return undefined;
   }
+}
+
+/**
+ * The run's warnings plus what the CONTEXT LIMITS did to it (Track B): each tool result the bound
+ * cut (`truncationWarnings`) and each agent whose history was trimmed to fit the model window.
+ * A person reads these in the run report; the model already read the matching in-prompt markers.
+ */
+export function withContextWarnings(
+  base: string[] | undefined,
+  runs: { node: string; result: { steps: { tool: string; result: string }[] } }[],
+  trims: (ContextTrim & { node: string })[],
+): string[] {
+  const out = [...(base ?? []), ...truncationWarnings(runs)];
+  const byNode = new Map<string, { times: number; dropped: number }>();
+  for (const t of trims) {
+    const n = byNode.get(t.node) ?? { times: 0, dropped: 0 };
+    byNode.set(t.node, { times: n.times + 1, dropped: n.dropped + t.dropped });
+  }
+  for (const [node, n] of byNode) {
+    out.push(`${node}: the conversation outgrew the model's context window on ${n.times} request${n.times === 1 ? '' : 's'}; ${n.dropped} earlier message${n.dropped === 1 ? ' was' : 's were'} removed or results shortened, and the agent was told.`);
+  }
+  return out;
 }
 
 /** Upper bound on the prompt echoed into the run-summary trace input. */

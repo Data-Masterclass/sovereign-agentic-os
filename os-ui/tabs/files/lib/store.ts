@@ -947,9 +947,17 @@ function tokens(s: string): string[] {
  * token overlap so names/IDs still match (context-layer: keep exact-match).
  */
 export function searchFiles(user: Principal, query: string): SearchHit[] {
+  return searchFilesRanked(user, query).hits;
+}
+
+/** How many hits a search returns at most (the UI box and `search_files`). */
+export const SEARCH_TOP_K = 20;
+
+/** {@link searchFiles} plus how many files matched in all, so a caller can say "top 20 of 57". */
+export function searchFilesRanked(user: Principal, query: string): { hits: SearchHit[]; total: number } {
   ensureSeeded();
   const q = query.trim().toLowerCase();
-  if (!q) return [];
+  if (!q) return { hits: [], total: 0 };
   const qTokens = new Set(tokens(q));
   const hits: SearchHit[] = [];
   for (const rec of fs().store.values()) {
@@ -975,7 +983,8 @@ export function searchFiles(user: Principal, query: string): SearchHit[] {
       kind: a.kind, deepLink: a.deepLink, score, snippet: snippetOf(rec.text, qTokens),
     });
   }
-  return hits.sort((x, y) => y.score - x.score || x.name.localeCompare(y.name)).slice(0, 20);
+  const ranked = hits.sort((x, y) => y.score - x.score || x.name.localeCompare(y.name));
+  return { hits: ranked.slice(0, SEARCH_TOP_K), total: ranked.length };
 }
 
 /** A short highlight window around the first matching token. */
