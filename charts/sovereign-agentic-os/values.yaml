@@ -54,14 +54,25 @@ ingress:
     nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
   # Per-tool public hostnames. Empty => that tool gets NO Ingress.
   hosts: {}
-  # The model gateway (LiteLLM) gets NO public route, even when `hosts.litellm` is set. It holds
-  # the provider credentials and an admin API; nothing outside the cluster needs to call it —
-  # os-ui, the worker and the Jobs use the in-cluster Service, and admins open its console
-  # through the OS at /tools/litellm/ui (authenticated proxy) or with `kubectl port-forward`.
-  # Setting this to true AND `hosts.litellm` is the only way to render the route. Do not, unless
-  # you have put your own authentication in front of it; `scripts/check-gateway-not-public.mjs`
-  # fails the gate if the STACKIT profile does. See docs/components/litellm.md.
-  exposeGateway: false
+  # RESTRICTED CONSOLES. The model gateway (LiteLLM) and Langfuse get NO public route, even
+  # when `hosts.litellm` / `hosts.langfuse` are set. LiteLLM holds the provider credentials and
+  # an admin API; Langfuse holds every prompt, completion and tool result of every run. Nothing
+  # outside the cluster needs to call either: os-ui, the worker, the gateway and the Jobs use
+  # the in-cluster Services; admins open the LiteLLM console through the OS at /tools/litellm/ui
+  # (authenticated proxy), and both consoles with `kubectl port-forward`.
+  # To publish one anyway you must set `expose: true` AND put a protection on the route under
+  # `annotations` — an IP allowlist (nginx.ingress.kubernetes.io/whitelist-source-range), an
+  # external auth (auth-url), basic auth (auth-type + auth-secret) or client certificates
+  # (auth-tls-verify-client: "on"). The render FAILS without one. Do it in a private overlay:
+  # `scripts/check-consoles-not-public.mjs` fails the gate if a committed profile does.
+  # With the route off, the OS gets an empty console URL and hides its "open in Langfuse" links.
+  restricted:
+    litellm:
+      expose: false
+      annotations: {}
+    langfuse:
+      expose: false
+      annotations: {}
 
 # Object storage — local stand-in for STACKIT Object Storage (MinIO, S3).
 objectStorage:

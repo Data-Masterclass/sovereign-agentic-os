@@ -339,7 +339,10 @@ function AgentBody({ a }: { a: AgentDetail }) {
           <div className="mon-tr mon-th mon-tr-run">
             <span>Time</span><span>Run</span><span>Status</span><span>Duration</span><span>Cost</span><span>Tokens</span><span>Model</span>
           </div>
-          {a.runs.map((r) => (
+          {a.runs.map((r) =>
+            // The Langfuse console has no address on a deployment that does not publish it
+            // (links.langfuse === ''): the row is then plain text, never a link to nowhere.
+            a.links.langfuse ? (
             <a key={r.id} className="mon-tr mon-tr-run" href={a.links.langfuse} target="_blank" rel="noreferrer" title="Open in Langfuse">
               <span className="muted">{ago(r.at)}</span>
               <span className="mono ellip">{r.name}</span>
@@ -349,7 +352,18 @@ function AgentBody({ a }: { a: AgentDetail }) {
               <span>{typeof r.tokens === 'number' ? compact(r.tokens) : '—'}</span>
               <span className="muted ellip">{r.model ?? '—'}</span>
             </a>
-          ))}
+            ) : (
+            <div key={r.id} className="mon-tr mon-tr-run">
+              <span className="muted">{ago(r.at)}</span>
+              <span className="mono ellip">{r.name}</span>
+              <span><span className={`mon-dot ${H7_DOT[r.health]}`} /> {r.health}</span>
+              <span>{dur(r.ms)}</span>
+              <span>{typeof r.costUsd === 'number' ? money(r.costUsd) : '—'}</span>
+              <span>{typeof r.tokens === 'number' ? compact(r.tokens) : '—'}</span>
+              <span className="muted ellip">{r.model ?? '—'}</span>
+            </div>
+            ),
+          )}
         </div>
       )}
 
@@ -368,7 +382,9 @@ function AgentBody({ a }: { a: AgentDetail }) {
 
       <div className="mon-xlinks">
         <a className="mon-xlink" href={a.links.agent}>→ Open agent in Agents</a>
-        <a className="mon-xlink" href={a.links.langfuse} target="_blank" rel="noreferrer">→ Langfuse traces</a>
+        {a.links.langfuse ? (
+          <a className="mon-xlink" href={a.links.langfuse} target="_blank" rel="noreferrer">→ Langfuse traces</a>
+        ) : null}
       </div>
     </>
   );

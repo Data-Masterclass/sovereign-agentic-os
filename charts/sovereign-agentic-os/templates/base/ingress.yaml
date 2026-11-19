@@ -34,16 +34,25 @@
   "langfuse"     (dict "service" "agentic-os-langfuse-web" "port" 3000)
   "dagster"      (dict "service" "agentic-os-dagster-webserver" "port" 80 "annotations" $dagsterAnno)
 }}
-{{- /* The model gateway (LiteLLM) is NOT a public tool. It holds the provider credentials and
-       its admin API, and its console is already reachable for admins through the OS's own
-       authenticated proxy at /tools/litellm/ui (in-cluster upstream). A hostname alone therefore
-       renders NOTHING: the route needs the separate, explicit `ingress.exposeGateway: true`.
-       `scripts/check-gateway-not-public.mjs` fails the gate if the STACKIT profile ever renders
-       it. See docs/components/litellm.md "Not reachable from the internet". */}}
+{{- /* RESTRICTED CONSOLES — the model gateway (LiteLLM) and Langfuse. LiteLLM holds the
+       provider credentials and an admin API; Langfuse holds every prompt, completion and tool
+       result of every run. A hostname alone therefore renders NOTHING for them: the route needs
+       `ingress.restricted.<key>.expose: true` AND a protection annotation under
+       `ingress.restricted.<key>.annotations` (the render fails without one — soa.restrictedExposed).
+       This holds for a release whose values still carry the old hostnames, which is what
+       `scripts/deploy.sh` deploys. `scripts/check-consoles-not-public.mjs` fails the gate if the
+       default or the STACKIT profile ever renders one. See docs/components/litellm.md and
+       docs/components/langfuse.md, "Not reachable from the internet". */}}
+{{- $restricted := include "soa.restrictedHosts" $ctx | fromJsonArray }}
 {{- range $key, $route := $routes }}
 {{- $host := index ($ing.hosts | default dict) $key }}
-{{- if and (eq $key "litellm") (not (eq (toString $ing.exposeGateway) "true")) }}
+{{- $extra := dict }}
+{{- if has $key $restricted }}
+{{- if eq (include "soa.restrictedExposed" (dict "ctx" $ctx "key" $key)) "true" }}
+{{- $extra = (index $ing.restricted $key).annotations }}
+{{- else }}
 {{- $host = "" }}
+{{- end }}
 {{- end }}
 {{- if $host }}
 ---
@@ -62,6 +71,9 @@ metadata:
     {{- toYaml . | nindent 4 }}
     {{- end }}
     {{- with $route.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+    {{- with $extra }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
 spec:
