@@ -137,7 +137,16 @@ export type AppGrantCheck = { allowed: boolean; reason: string };
  * `getArtifact` runs server-side; any lookup ERROR fails soft to CASE 2's shape with
  * the bare id (a lookup failure must never make the denial itself throw).
  */
-export async function appGrantDenial(slug: string, kind: ContextKind, artifactId: string): Promise<string> {
+/**
+ * The artifact's OWN store, asked unscoped "does this id exist, and what is it called?" — no rows,
+ * no authz. Passed in by the route that knows the kind (a tab imports no other tab), because the
+ * artifacts registry `getArtifact` falls back to does not hold datasets, files or connections:
+ * asking it about one always answered "no such artifact", so a live but ungranted dataset was
+ * reported as deleted.
+ */
+export type ArtifactPeek = (id: string) => { name: string } | null;
+
+export async function appGrantDenial(slug: string, kind: ContextKind, artifactId: string, peek?: ArtifactPeek): Promise<string> {
   const noun =
     kind === 'data' ? 'dataset' :
     kind === 'metrics' ? 'metric' :
@@ -146,9 +155,16 @@ export async function appGrantDenial(slug: string, kind: ContextKind, artifactId
   let name: string | null = null;
   let resolved = false;
   try {
-    const art = await getArtifact(artifactId);
-    resolved = true;
-    name = art?.name ?? null;
+    if (peek) {
+      const meta = peek(artifactId);
+      resolved = true;
+      // An existing artifact with no display name is still EXISTING (case 1), shown by its id.
+      name = meta ? meta.name || artifactId : null;
+    } else {
+      const art = await getArtifact(artifactId);
+      resolved = true;
+      name = art?.name ?? null;
+    }
   } catch {
     /* lookup failed — treat as unresolved (CASE 2), bare id */
   }
@@ -170,7 +186,7 @@ export async function appGrantDenial(slug: string, kind: ContextKind, artifactId
     );
   }
   // CASE 1 — exists but not granted: name it + point at the grant flow.
-  const named = name ? `«${name}» (${artifactId})` : artifactId;
+  const named = name && name !== artifactId ? `«${name}» (${artifactId})` : artifactId;
   return (
     `This app (${slug}) is not granted ${noun} ${named}. ` +
     `Grant it in the OS Software tab → ${slug} → Context.`
@@ -187,6 +203,8 @@ export async function checkAppGrant(
   slug: string,
   kind: ContextKind,
   artifactId: string,
+  /** The kind's own existence peek (see {@link ArtifactPeek}); without it the registry is asked. */
+  peek?: ArtifactPeek,
 ): Promise<AppGrantCheck> {
   const app = await getAppBySlugInternal(slug);
   if (!app) {
@@ -198,7 +216,7 @@ export async function checkAppGrant(
     };
   }
   if (isGranted(app.grants, kind, artifactId)) return { allowed: true, reason: '' };
-  return { allowed: false, reason: await appGrantDenial(slug, kind, artifactId) };
+  return { allowed: false, reason: await appGrantDenial(slug, kind, artifactId, peek) };
 }
 
 /**

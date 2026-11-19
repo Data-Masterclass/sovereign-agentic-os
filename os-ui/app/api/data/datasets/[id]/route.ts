@@ -6,7 +6,7 @@ import { withRoute } from '@core/kernel/route-server';
 import type { CurrentUser } from '@core/kernel/auth';
 import { requirePrincipal, errorResponse } from '@tabs/data/lib/server';
 import { runWithSurface, uiSurfaceFor } from '@core/infra/request-surface';
-import { getDataset, isDatasetArchived, archiveDataset, unarchiveDataset, deleteDataset, renameDataset, listAllDatasets } from '@tabs/data/lib/store';
+import { peekDatasetMeta, getDataset, isDatasetArchived, archiveDataset, unarchiveDataset, deleteDataset, renameDataset, listAllDatasets } from '@tabs/data/lib/store';
 import { dropPhysicalTables, sharedFootprintFqns } from '@tabs/data/lib/physical-delete';
 import { domainTableMissing } from '@tabs/data/lib/reconcile-server';
 import { executeRun } from '@core/infra/governed';
@@ -24,7 +24,7 @@ export const GET = withRoute<{ id: string }>(async ({ user, params, req }) => {
   // (the OS UI) skip this entirely (appSlugFromRequest returns null, no I/O).
   const slug = appSlugFromRequest(req);
   if (slug) {
-    const check = await checkAppGrant(slug, 'data', id);
+    const check = await checkAppGrant(slug, 'data', id, peekDatasetMeta);
     if (!check.allowed) return NextResponse.json({ error: check.reason }, { status: 403 });
   }
   const dataset = getDataset(id, user);
