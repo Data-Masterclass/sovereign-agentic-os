@@ -87,7 +87,7 @@ export default function McpToolsClient({ tools }: { tools: CatalogEntry[] }) {
 
   return (
     <>
-      <div className="section-title" style={{ marginTop: 28 }}>Connect your AI tool</div>
+      <div className="section-title" style={{ marginTop: 0 }}>Connect your AI tool</div>
       <McpConnect />
 
       <div className="section-title" style={{ marginTop: 32 }}>Tool reference</div>

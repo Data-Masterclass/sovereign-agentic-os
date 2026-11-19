@@ -3550,14 +3550,6 @@ button.card.tile:hover .tile-action { opacity: 1; }
   color: var(--gold-deep);
 }
 [data-theme='dark'] .home-name { color: var(--gold-light); }
-.home-sub {
-  margin: 12px 0 0;
-  max-width: 540px;
-  font-size: 15px;
-  line-height: 1.6;
-  text-wrap: pretty;
-  color: var(--text-muted);
-}
 .home-persona {
   display: flex;
   flex-direction: column;

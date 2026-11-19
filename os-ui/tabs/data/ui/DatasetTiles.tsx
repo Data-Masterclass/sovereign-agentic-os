@@ -479,10 +479,7 @@ function DatasetTilesInner({ onOpen }: { onOpen: (id: string) => void }) {
 
   return (
     <>
-      <div className="row" style={{ justifyContent: 'space-between', alignItems: 'flex-end' }}>
-        <p className="lead" style={{ margin: 0, maxWidth: 560 }}>
-          Open one to refine it through <strong>Bronze → Silver → Gold</strong>, define a metric, and share it.
-        </p>
+      <div className="row" style={{ justifyContent: 'flex-end', alignItems: 'flex-end' }}>
         <div className="row" style={{ gap: 8 }}>
           <button
             className="btn ghost"

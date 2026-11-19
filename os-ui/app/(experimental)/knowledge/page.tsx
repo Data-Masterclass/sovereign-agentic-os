@@ -444,10 +444,7 @@ function KnowledgePageInner() {
 
         {openEntry ? renderDetail(openEntry) : (<>
 
-        <div className="row" style={{ marginTop: 18, justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap' }}>
-          <p className="lead" style={{ margin: 0, maxWidth: 720 }}>
-            Reference knowledge (markdown) that grounds your agents.
-          </p>
+        <div className="row" style={{ marginTop: 18, justifyContent: 'flex-end', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap' }}>
           <button className="btn" onClick={() => { setPkMsg(''); setKScope('mine'); void createPersonal(); }} disabled={pkCreating}>{pkCreating ? <span className="spin" /> : '＋ New knowledge'}</button>
         </div>
 

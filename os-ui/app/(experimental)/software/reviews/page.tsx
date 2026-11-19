@@ -67,10 +67,6 @@ export default function ReviewsPage() {
       <PageHeader title="Deploy reviews" crumb="Software · go-live review gate" />
       <div className="content">
         <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
-          <p className="lead" style={{ margin: 0 }}>
-            Going live in the domain is Builder-reviewed: the scan, the governed resources the app
-            requests, its footprint, and the change diff. Preview stays free; routine updates auto-deploy.
-          </p>
           <Link className="btn ghost" href="/software">← Software</Link>
         </div>
 

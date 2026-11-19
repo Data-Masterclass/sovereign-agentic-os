@@ -343,10 +343,7 @@ function MetricsRegistryInner({
 
   return (
     <>
-      <div className="row" style={{ justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap' }}>
-        <p className="lead" style={{ marginTop: 4, flex: 1, minWidth: 280 }}>
-          Every business metric, defined once. Open one to explore, govern its tier, or set an alert.
-        </p>
+      <div className="row" style={{ justifyContent: 'flex-end', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap' }}>
         <div className="row" style={{ gap: 8, marginTop: 4 }}>
           {onToggleArchived ? (
             <button className="btn ghost" style={{ opacity: 1 }} onClick={onToggleArchived}

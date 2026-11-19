@@ -150,10 +150,6 @@ function TypeChooser({ canOpen, onPick }: { canOpen: boolean; onPick: (d: NewDoo
   return (
     <div>
       <h2 style={{ margin: '0 0 6px' }}>Connect a new source</h2>
-      <p className="lead" style={{ marginTop: 0, maxWidth: 640 }}>
-        Two ways in. Pick a ready-made connector, or wire up your own — either way it lands governed,
-        with your credentials kept in the vault, never in the record.
-      </p>
       <div className="conn-doors">
         <button
           type="button"

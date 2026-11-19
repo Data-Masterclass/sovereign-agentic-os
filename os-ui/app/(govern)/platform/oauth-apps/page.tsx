@@ -77,14 +77,6 @@ export default function OAuthAppsPage() {
     <>
       <PageHeader title="Drive OAuth apps" crumb="platform · Google & Microsoft apps for connected drives" />
       <div className="content">
-        <p className="lead">
-          Register the tenant&rsquo;s <strong>Google Cloud OAuth client</strong> and <strong>Azure app</strong> once. Each
-          user then connects their <strong>own</strong> Google Drive or OneDrive with their <strong>own</strong> account from
-          the <Link href="/connections">Connections</Link> tab — through the provider consent screen. The client
-          secret is written <strong>via the secrets manager</strong>; the catalog keeps only a reference + fingerprint and
-          <strong> never shows or logs the raw secret</strong>.
-        </p>
-
         {toast ? <div className="hint" style={{ color: 'var(--teal)' }}>{toast}</div> : null}
         {error ? <div className="error">{error}</div> : null}
         {loading && catalog.length === 0 ? <div className="stub-page" style={{ marginTop: 20 }}>Loading OAuth apps…</div> : null}

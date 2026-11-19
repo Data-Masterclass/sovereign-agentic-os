@@ -138,12 +138,6 @@ export default function RolesView() {
 
   return (
     <>
-      <p className="lead">
-        Set up the <strong>role types</strong> and, for every component and golden path, exactly what each
-        category may do. Seeded from how the OS runs today (<strong>creator · builder · domain admin · admin</strong>)
-        so nothing changes until you adjust it — every edit recompiles to the same OPA policy the whole platform
-        enforces, and is audited.
-      </p>
       {assignLink}
 
       {/* Role summary cards — one-line description + live compiled rights/tools. */}

@@ -194,12 +194,7 @@ function AdminOverviewHealth() {
   return (
     <>
       <div>
-        <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
-          <p className="lead" style={{ marginBottom: 0 }}>
-            The tenant cockpit. Platform <strong>configures</strong> structure, identity, models and
-            posture; <Link href="/governance">Governance</Link> enforces &amp; sees it, <Link href="/monitoring">Monitoring</Link>{' '}
-            watches live spend. Every action here is audited.
-          </p>
+        <div className="row" style={{ justifyContent: 'flex-end', alignItems: 'center' }}>
           <button className="btn ghost" onClick={reloadCockpit} disabled={cockpitLoading}>{cockpitLoading ? <span className="spin" /> : 'Refresh'}</button>
         </div>
 

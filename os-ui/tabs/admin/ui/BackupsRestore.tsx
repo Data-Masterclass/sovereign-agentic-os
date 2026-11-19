@@ -80,13 +80,6 @@ function BackupsRestoreInner() {
   return (
     <>
       <div>
-        <p className="lead">
-          Each protected store backs up to sovereign object storage. Restore is the canonical destructive
-          action: it is <strong>guarded</strong> (type the phrase), <strong>confirmed</strong>, and
-          <strong> audited</strong> — and only acts on already-provisioned backups, never provisions
-          infrastructure. Backup-failure alerts also surface in <Link href="/monitoring">Monitoring</Link>.
-        </p>
-
         {toast ? <div className="hint" style={{ color: 'var(--teal)' }}>{toast}</div> : null}
         {error ? <div className="error">{error}</div> : null}
 

@@ -27,16 +27,6 @@ export default function McpPage() {
         crumb="AI tool integration · connect Claude & ChatGPT · governed tool reference"
       />
       <div className="content">
-        <p className="lead">
-          The Sovereign OS exposes a single authenticated{' '}
-          <strong>remote MCP endpoint</strong> — one import in Claude, ChatGPT,
-          or any MCP-compatible AI tool, and you drive the whole OS from your
-          assistant. Every call runs under <em>your</em> identity through the
-          same governed path as the UI: OPA policy, Langfuse audit, and role
-          gates apply unchanged. Your tools are scoped to your role; write
-          operations may be held in the Governance queue.
-        </p>
-
         <McpToolsClient tools={catalog} />
       </div>
     </>
