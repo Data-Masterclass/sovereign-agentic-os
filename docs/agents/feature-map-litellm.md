@@ -4,7 +4,8 @@ LiteLLM is the gateway. Every model call from the OS goes through it. It holds t
 limits, the budgets and the spend record. This page lists each LiteLLM feature and says how the OS
 uses it today and what we propose.
 
-- "In the OS today" was verified by reading the code and chart at commit `b47e2cd5` (2026-11-19). Lines marked "live" were seen on the production system on 2026-11-19.
+- "In the OS today" was verified by reading the code and chart at commit `b47e2cd5` (2026-11-19).
+- Unfixed security findings are not recorded in this public repository; they are published with the fix. Where a cell says "Security items are tracked privately until a fix is released", that is why.
 - "Target", "Simple mode default" and "Developer mode override" are the **agreed direction (2026-11-19), not built** unless a row says so. See [`design.md`](design.md).
 - "Phase" refers to [`plan.md`](plan.md). A dash means no change is planned.
 - Paths are relative to `os-ui/` unless they start with `charts/`, `docs/` or `values`. `values.yaml` means `charts/sovereign-agentic-os/values.yaml`. `live.ts` and `live-clients.ts` are in `tabs/agents/lib/build/`.
@@ -28,16 +29,14 @@ a limit an admin sets.
 
 | Item | Deployed | Latest stable (2026-11-19) | Gap |
 |---|---|---|---|
-| LiteLLM proxy | 1.90.0 (live; chart pin `charts/sovereign-agentic-os/Chart.yaml:52-55`) | 1.110.1. Long-term-support line: 1.108.12. | About 20 minor versions. |
-| Published security advisories covering 1.90.0 | GHSA-3cv6-jpf6-8222 (medium, fixed in 1.90.7), GHSA-g5ff-637f-6q2m (high, fixed in 1.95.0), GHSA-2rwg-2wh4-7c4f (high, fixed in 1.106.9), GHSA-w4c7-34wj-hqm8 (critical, titled "on Enterprise proxy", fixed in 1.103.10) | — | All four are fixed in 1.108.12 and later. Whether the fourth affects a proxy without an Enterprise licence was not confirmed. |
+| LiteLLM proxy | 1.90.0 (chart pin `charts/sovereign-agentic-os/Chart.yaml:52-55`) | 1.110.1. Long-term-support line: 1.108.12. | About 20 minor versions. An upgrade to the long-term-support line is in progress. |
 
-## The five biggest gaps
+## The biggest gaps
 
-1. **The gateway is reachable from the internet** at its own hostname, with only its own key check in front (live: it answers 401 without a key). It is also about 20 versions old with four published advisories. Removing the public hostname is decided (D11) and in progress.
-2. **A system's own key can be guessed and is usually not the key that is used.** Its value is `sk-os-<systemId>`. It is kept only in the memory of one process, so the worker falls back to the shared key (defects F3, F4). Read in code; not observed on the running system.
-3. **Budgets never reset.** 5 USD for the lifetime of a key, on the shared key and on every system key. When it is used up, everything on that key stops until an admin acts (defect F5). Read in code. On main since PR #92, system keys default to 5 USD per 7 days.
-4. **A rate-limit reply is treated as a fatal error.** The gateway answers "429, try again later"; the OS does not wait and does not try again (defect F2; fixed on main by PR #91). The chart comment that says the gateway queues such requests is wrong.
-5. **The gateway writes full prompts and replies into Langfuse**, next to the OS's own redacted record of the same call. Redaction is bypassed and usage is recorded twice (defect F16).
+1. Security items are tracked privately until a fix is released.
+2. **Budgets never reset.** 5 USD for the lifetime of a key, on the shared key and on every system key. When it is used up, everything on that key stops until an admin acts (defect F5). Read in code. On main since PR #92, system keys default to 5 USD per 7 days.
+3. **A rate-limit reply is treated as a fatal error.** The gateway answers "429, try again later"; the OS does not wait and does not try again (defect F2; fixed on main by PR #91). The chart comment that says the gateway queues such requests is wrong.
+4. **Every model call is recorded twice in Langfuse**, once by the OS and once by the gateway, so usage is counted twice.
 
 ---
 
@@ -45,8 +44,8 @@ a limit an admin sets.
 
 | Feature | What it is for | In the OS today | Where | Target | Simple mode default | Developer mode override | Phase |
 |---|---|---|---|---|---|---|---|
-| Virtual keys (`/key/generate`, `/key/info`) | Give each workload its own key with its own models, budget and limits. | **Misused.** Build creates a key per system, but its value is the guessable `sk-os-<systemId>`, it is kept only in one process's memory, and runs in the worker use the shared key instead. | `live-clients.ts:95-106`, `:127-139`; `core/infra/secrets.ts:21-40`; `core/infra/litellm-credential.ts:108-111` | One key per system with a random value, stored durably and encrypted, used by web and worker alike. No silent fallback. | Automatic. | None. | 0 |
-| A second key per agent from the admin reconcile | Same purpose, created from Admin → LLM Gateway. | **Misused.** The admin reconcile creates keys named `agent-<id>` with no budget. The run path never reads them. Two key schemes exist side by side. Read in code, not traced further. | `tabs/admin/lib/litellm-reconcile.ts:71`, `:96-104` | One scheme. Remove or merge the second. | — | — | 0 |
+| Virtual keys (`/key/generate`, `/key/info`) | Give each workload its own key with its own models, budget and limits. | **Used.** Build creates a key per system. Security items are tracked privately until a fix is released. | `live-clients.ts:127-139` | One key per system with a random value, stored durably and encrypted, used by web and worker alike. | Automatic. | None. | 0 |
+| Other key handling | — | Security items are tracked privately until a fix is released. | — | One key scheme. | — | — | 0 |
 | `/key/update`, `/key/delete`, `/key/block` | Change, remove or block a key. | **Not used** by Build. Rebuild never updates an existing key. The admin reconcile uses `/key/update` only to stamp ownership. | `live.ts:197-198`; `tabs/admin/lib/litellm-reconcile.ts:113` | Rebuild updates models, budget and limits. Deleting a system deletes its key. | Automatic. | None. | 0 (on main: PR #92, merged; Rebuild now calls `/key/update`) |
 | Key rotation (`/key/{key}/regenerate`, auto-rotate) | Replace a key's value on a schedule. | **Blocked.** Enterprise. | — | Do it by hand in the OS: create a new key, switch the stored secret, delete the old key. | Automatic on Rebuild after a leak. | None. | 0 |
 | Tags stored on a key | Label keys. | **Blocked.** Enterprise. | — | Not needed. The key alias and metadata carry the system id. | — | — | — |
@@ -103,17 +102,17 @@ a limit an admin sets.
 | Spend-log retention | Delete old spend rows; keep prompts out of them. | **Not used.** Not set in the chart. Prompts are not stored in spend logs by default. | `values.yaml:508-548` | 90 days. Prompts stay off. | — | — | 3 |
 | Guardrails | Check or mask requests and replies at the gateway. | **Not used.** | — | Off for now. The open-source personal-data masking for logs is an option later. Per-key guardrail control is Enterprise. | Off. | None. | Later |
 | Custom hooks | Run own code inside the gateway. | **Not used.** | — | Out of scope. It would put OS logic inside the gateway image. | — | — | — |
-| `langfuse` callback (the older one) | Send a record of every call to Langfuse. | **Misused.** It logs the full prompt and reply into the same trace where the OS logs a redacted record of the same call. Two records per call, one unredacted. | `values.yaml:519-524`; `core/runtime/runtime.ts:196-202` | Replace with the newer `langfuse_otel` callback, content capture off. | — | — | 3 |
+| `langfuse` callback (the older one) | Send a record of every call to Langfuse. | **Misused.** It writes a second record of each call into the trace where the OS already records the same call, so usage is recorded twice. | `values.yaml:519-524`; `core/runtime/runtime.ts:196-202` | Replace with the newer `langfuse_otel` callback, content capture off. | — | — | 3 |
 | `langfuse_otel` callback | The current way to send call records to Langfuse, linked by a standard trace header. | **Not used.** Needs LiteLLM 1.109 or later. | — | Use it. The gateway owns the one record per model call. | On, no content. | Content capture per system, only with tenant-admin consent. | 3 |
-| Log redaction (`turn_off_message_logging`) | Keep prompt and reply text out of the gateway's logs. | **Not used.** Not set. | `values.yaml:519-538` | Set it now, before the callback change. | On. | — | 0 |
+| Log redaction (`turn_off_message_logging`) | Keep prompt and reply text out of the gateway's logs. | Security items are tracked privately until a fix is released. | — | The gateway does not log prompt or reply text. | On. | — | 0 |
 | Models stored in the database | Let an admin add models in the console. | **Used.** Note: from 1.103.0 a setting in the config file wins over the database value. | `values.yaml:539-542` | Keep. Re-check admin-added models after the upgrade. | — | — | 0 |
 | Health endpoints | Tell whether the gateway is up. | **Used.** Build asks `/health/readiness`. | `live-clients.ts:206-209` | Keep. | — | — | — |
 | Pass-through endpoints | Forward other provider routes. | **Not used.** | — | Out of scope. Authentication on them is Enterprise. | — | — | — |
 | MCP gateway | Offer tool servers through the gateway. | **Used** for one server (`sovereign_query`). Agent tools do not go through it; they are called inside the OS. | `values.yaml:544-548`; `tabs/agents/lib/build/os-tools.ts:697-702` | Keep agent tools inside the OS so identity and policy stay in one place. Do not grow a second tool registry. | — | — | — |
 | Master key kept for administration only | Keep the all-powerful key away from normal calls. | **Used** correctly. A test checks that only four files may name it and that a real run does not send it. | `core/infra/litellm-credential.ts:96-116`; `core/runtime/runtime.test.ts:241-252` | Keep (owner decision). | — | — | — |
-| Salt key (`LITELLM_SALT_KEY`) | A separate key that encrypts model credentials stored in the gateway's database. | **Not used.** Without it the master key is also the encryption key, so the master key cannot be changed safely. | `charts/sovereign-agentic-os/templates/base/litellm/credentials.yaml` | Set it once, before the next stored model, and never change it. | — | — | 0 |
-| Network exposure | Who can reach the gateway at all. | **Misused.** The gateway has its own public hostname (live). The chart creates that route whenever a hostname is set for it. | `charts/sovereign-agentic-os/templates/base/ingress.yaml:31-39` | In-cluster only. Admins reach the console through the OS at `/tools/litellm`. | — | — | 0 (decided, D11) |
-| Version pin and image verification | Run a known, supported, verified version. | **Used**: the version is pinned. It is far behind. | `charts/sovereign-agentic-os/Chart.yaml:52-55` | Upgrade, pin by digest, re-test tags and budgets after each upgrade. | — | — | 0 |
+| Salt key (`LITELLM_SALT_KEY`) | A separate key that encrypts model credentials stored in the gateway's database. | Security items are tracked privately until a fix is released. | — | Set once and never changed, so the master key can be rotated. | — | — | 0 |
+| Network exposure | Who can reach the gateway at all. | Security items are tracked privately until a fix is released. | — | The gateway has no public route. Admins reach the console through the OS at `/tools/litellm`. | — | — | 0 (decided, D11) |
+| Version pin and image verification | Run a known, supported, verified version. | **Used**: the version is pinned. | `charts/sovereign-agentic-os/Chart.yaml:52-55` | Upgrade, pin by digest, re-test tags and budgets after each upgrade. | — | — | 0 |
 | Single sign-on, JWT login, audit logs, IP allow-lists, secret managers | Enterprise access controls. | **Blocked.** Enterprise (single sign-on is free up to five users). | — | Not needed: the OS signs admins in server-side. | — | — | — |
 
 ## Sources
@@ -128,10 +127,8 @@ From the research of 2026-11-19.
 - Caching, spend, guardrails: https://docs.litellm.ai/docs/proxy/caching, https://docs.litellm.ai/docs/completion/prompt_caching, https://docs.litellm.ai/docs/proxy/custom_pricing, https://docs.litellm.ai/docs/proxy/spend_logs_deletion, https://docs.litellm.ai/docs/proxy/guardrails/quick_start, https://docs.litellm.ai/docs/proxy/guardrails/pii_masking_v2, https://docs.litellm.ai/docs/proxy/call_hooks
 - Logging and tracing: https://docs.litellm.ai/docs/observability/langfuse_integration, https://docs.litellm.ai/docs/observability/langfuse_to_otel_v2_migration, https://docs.litellm.ai/docs/proxy/logging
 - Administration and security: https://docs.litellm.ai/docs/proxy/prod, https://docs.litellm.ai/docs/proxy/master_key_rotations, https://docs.litellm.ai/docs/proxy/security_best_practices, https://docs.litellm.ai/docs/proxy/health, https://docs.litellm.ai/docs/proxy/pass_through, https://docs.litellm.ai/docs/mcp, https://docs.litellm.ai/blog/security-update-march-2026
-- Advisories: https://github.com/BerriAI/litellm/security/advisories
 
 Points the research could not confirm: the versions that introduced `budget_limits`, budget
 reservation, the default vision filter and rate-limit fallbacks; whether open-source 1.90.0 reads
 `metadata.model_max_budget` on a key; which budget alerts are open source; STACKIT's support for
-prompt caching and its image size limits; whether GHSA-w4c7-34wj-hqm8 affects a proxy without an
-Enterprise licence.
+prompt caching and its image size limits.

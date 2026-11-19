@@ -16,18 +16,12 @@ start with `charts/`, `docs/` or `values`. `build-graph.ts` means
 | **Live** | Seen on the production system on 2026-11-19. |
 | **Suspected** | Follows from the code or the research, but nobody has shown it happen. |
 
-Exactly these things were checked on the running system on 2026-11-19, and nothing else is "Live":
+Exactly these things were checked on the running system on 2026-11-19, and nothing else on this page is "Live":
 
-- Production runs LiteLLM 1.90.0 and Langfuse 3.194.1.
-- The gateway's hostname answers from the internet with only its own key check (401 without a key).
-- GitHub lists security advisories that cover LiteLLM 1.90.0.
 - The run worker is enabled.
 - One real run hit the limit of 200,000 tokens per minute, and its failed first agent still handed off to the second (seen in that run's event log).
 
-Everything else is "Code": read in the code, not observed on the running system. That includes
-budgets that never reset, the gateway's unredacted second record of each call, grants not being
-enforced at run time, and the guessable key value. That production runs use the shared key is an
-inference from the code plus the worker being enabled.
+Everything else is "Code": read in the code, not observed on the running system.
 
 ## Status words
 
@@ -43,20 +37,13 @@ inference from the code plus the worker being enabled.
 
 Entries are ranked. The groups are in order of urgency, and inside a group the most serious entry
 comes first. The numbers (F0 to F19, S1 to S7) are the ones used in the code trace of 2026-11-19, so
-they are not in numeric order here. Entries starting with L were added from the live checks and the
-gateway research.
+they are not in numeric order here. Group 1 is not published here.
 
 ## Group 1: security and governance
 
-| # | What goes wrong | Evidence | Level | Severity | Status | Phase |
-|---|---|---|---|---|---|---|
-| L1 | **The gateway is reachable from the internet and is out of date.** LiteLLM has its own public hostname with only its own key check in front (it answers 401 without a key). The deployed version 1.90.0 is covered by four published security advisories (one medium, two high, one critical titled "on Enterprise proxy"). | `charts/sovereign-agentic-os/templates/base/ingress.yaml:31-39` (the route exists when a hostname is set); `charts/sovereign-agentic-os/Chart.yaml:52-55`; advisories GHSA-3cv6-jpf6-8222, GHSA-g5ff-637f-6q2m, GHSA-2rwg-2wh4-7c4f, GHSA-w4c7-34wj-hqm8 | Live | Critical | in progress, PR not yet open (decision D11) | 0 |
-| F3 | **A system's gateway key can be guessed.** Its value is `sk-os-` followed by the system id. Anyone who knows a system id and can reach the gateway (see L1) holds a working key. | `tabs/agents/lib/build/live-clients.ts:95-106` | Code | High | in progress, PR not yet open | 0 |
-| F6 | **Resource grants are not enforced when an agent runs.** The list of datasets, documents, folders and connections a team "may use" is only text in the prompt. The tool executor checks the tool's name and nothing else. The prompt tells the model other items are "DENIED", which is not true. The agent can reach whatever the person running it can reach. A Files folder grant has no effect at all. The access level per grant and three of the four safety presets do nothing at run time. | `tabs/agents/lib/build/os-tools.ts:613-642`, `:149-151`, `:238`; `tabs/agents/lib/build/agentic-graph-server.ts:176-191`; `tabs/agents/lib/build/hold.ts:230-253` | Code | High | in progress, PR not yet open | 0 |
-| F4 | **The system's own key is usually not the key that is used.** Its value is kept in the memory of the web process that ran Build. After a restart, and always in the worker, the value is missing and the shared key is used without any notice. Production runs in the worker, so per-system budgets and spend separation do not hold there, while Build shows the key as registered. | `core/infra/secrets.ts:21-40`, `:62-64`; `core/infra/litellm-credential.ts:108-111` | Code, inferred for production (only "the worker is enabled" is live) | High | in progress, PR not yet open | 0 |
-| F16 | **Content that should be redacted reaches Langfuse twice over.** The gateway logs the full prompt and reply of every call into the same trace where the OS logs a redacted record. A second span per tool call stores the full arguments, even at the strict level. | `charts/sovereign-agentic-os/values.yaml:519-524`; `runtime.ts:196-202`; `tabs/agents/lib/build/os-tools.ts:726-740`; `core/infra/agent-governed.ts:329-354` | Code | High | in progress, PR not yet open (gateway redaction only; one record per call is Phase 3) | 0 (gateway logging off), 3 (one record per call) |
-| L2 | **No salt key is set for the gateway.** The master key is therefore also the key that encrypts model credentials in the gateway's database, so it cannot be changed safely. | no `LITELLM_SALT_KEY` anywhere in `charts/` or `values.stackit-managed.yaml` | Code | Medium | open | 0 |
-| L3 | **Two key schemes exist.** Build creates `os-<systemId>`. The admin reconcile creates `agent-<id>` with no budget. Runs use neither reliably. | `tabs/agents/lib/build/live.ts:193-230`; `tabs/admin/lib/litellm-reconcile.ts:71`, `:96-104` | Code | Medium | open | 0 |
+Security items are tracked privately until a fix is released.
+
+Unfixed security findings are not recorded in this public repository; they are published with the fix.
 
 ## Group 2: runs that fail or go wrong
 
@@ -86,7 +73,7 @@ gateway research.
 
 | # | What goes wrong | Evidence | Level | Severity | Status | Phase |
 |---|---|---|---|---|---|---|
-| F13 | **Build checks things a run does not use.** The policy entry it writes is never read by a run. The "allowed tools" on the key are not enforced by anything. The Langfuse row counts entries in one process's memory. A run does not need a green build. A build through the MCP tool is not saved. | `tabs/agents/lib/build/os-tools.ts:35-43`; `tabs/agents/lib/build/live.ts:161-191`, `:255-268`; `core/mcp/agent-write-tools.ts:109-114` | Code | Medium | partly fixed on main (PR #92, merged: Build rows say Created / Updated / Already in place) | 0, 4 |
+| F13 | **Build checks things a run does not use.** The policy entry it writes is never read by a run. The Langfuse row counts entries in one process's memory. A run does not need a green build. A build through the MCP tool is not saved. | `tabs/agents/lib/build/os-tools.ts:35-43`; `tabs/agents/lib/build/live.ts:161-191`, `:255-268`; `core/mcp/agent-write-tools.ts:109-114` | Code | Medium | partly fixed on main (PR #92, merged: Build rows say Created / Updated / Already in place) | 0, 4 |
 | F12 | **Model settings that do nothing.** "Routing overrides" in Developer mode and an agent's role line have no effect on a run. Build's gateway check tests a table inside the OS, not the gateway. "Auto" model choice flips to the expensive model when the instructions contain a word like "plan" or "reason" anywhere. | `tabs/agents/ui/GrantsRouting.tsx:373-392`; `tabs/agents/lib/build/live.ts:101-108`, `:222-228`; `tabs/agents/lib/routing.ts:267-290` | Code | Medium | open | 4 |
 | F18 | **The agent loop exists twice.** The engine and the tab assistants each have their own copy with different safety rules. | `core/runtime/agentic.ts:443-915`; `build-graph.ts:820-1070` | Code | Low | open | 2 |
 | F19 | **Documents that describe something else than the code.** Listed in the next section. | see below | Code | Low | partly fixed in this pull request | — |
@@ -96,11 +83,8 @@ gateway research.
 | Where | What it says | What the code does | Status |
 |---|---|---|---|
 | `docs/components/litellm.md` ("Rejections are typed") | Any other 4xx on a model call becomes a typed `GatewayRejectedError`. | On the run path and the assistant path it becomes a plain error. Only the two embedders throw the typed error (`runtime.ts:224-232`; `core/runtime/complete.ts:126-127`; `tabs/knowledge/lib/embed.ts:96`; `tabs/files/lib/embed.ts:109`). | corrected in this pull request |
-| `docs/components/litellm.md` ("read from the secrets store") | A system's key is read from the secrets store by reference. | The "store" is a map in one process's memory (`core/infra/secrets.ts:21-40`). | corrected in this pull request |
 | `os-ui/ARCHITECTURE.md` (checkpoint retention) | Retention is an open item. | A sweep exists (`tabs/agents/lib/engine/retention.ts`). | corrected in this pull request |
 | `docs/components/langgraph.md` | Did not exist. | — | added in this pull request, as a pointer to this folder |
-| `os-ui/ARCHITECTURE.md:407-410` | The system's own key is resolved "by reference". | True as written, but it leaves out that the value is lost on restart and in the worker. | not changed; see F4 here |
-| `core/mcp/agent-write-tools.ts:121` (the description of the MCP tool `run_agent_system`) | Tool calls are "OPA `os-<systemId>` pre-gated". | The run path does not ask the policy service for that entry (`tabs/agents/lib/build/os-tools.ts:35-43`). | not changed: it is code, and this pull request is documentation only |
 | `charts/sovereign-agentic-os/values.yaml:402` (comment) | "Per-key rate limits with graceful queueing". | The gateway refuses with HTTP 429. It does not queue. | not changed: chart file |
 | `tabs/agents/lib/store.ts:28` (comment) | "durable file-backed record". | A map in memory with a best-effort copy in OpenSearch (`store.ts:271-315`). | not changed: code |
 | `docs/superpowers/plans/2026-11-13-engine-rebuild.md:75` | "one subgraph per agent". | Four flat steps per agent in one graph. | not changed: a dated plan, kept as history |
@@ -124,6 +108,5 @@ gateway research.
 2. Which admin model-role overrides are set in production. They decide every model name used in a run.
 3. Whether the STACKIT endpoint reports "cut off at the length limit" and how it treats forced tool calls for the two models in use.
 4. Whether the deployed gateway counts a non-zero cost for the STACKIT aliases. If it counts zero, no budget can ever trigger, and F5 would be hidden rather than fixed.
-5. Whether the tools themselves limit access to granted items anywhere. Only the agent executor was traced, not every tool. This matters for F6.
-6. Real token counts. The trace estimates tokens as characters divided by four. The live run used about 20,000 tokens per call by the gateway's counter, which is more than that estimate predicts. It must be measured (see the benchmark in [`plan.md`](plan.md)).
-7. Whether a timed run uses a pinned version of the definition. A comment says so (`tabs/agents/lib/build/scheduled.ts:120-123`); the executor reads the current record (`tabs/agents/lib/build/run-jobs-server.ts:285-286`).
+5. Real token counts. The trace estimates tokens as characters divided by four. The live run used about 20,000 tokens per call by the gateway's counter, which is more than that estimate predicts. It must be measured (see the benchmark in [`plan.md`](plan.md)).
+6. Whether a timed run uses a pinned version of the definition. A comment says so (`tabs/agents/lib/build/scheduled.ts:120-123`); the executor reads the current record (`tabs/agents/lib/build/run-jobs-server.ts:285-286`).

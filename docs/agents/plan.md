@@ -10,7 +10,7 @@ Written 2026-11-19 against commit `b47e2cd5`.
 
 - There are six phases. Each one can be shipped by itself and leaves the product better than before.
 - Each phase lists: what is in it, what the user will notice, how it is tested, what can go wrong, what is deliberately left out, and an **exit check** that must pass before the phase counts as done.
-- Defect numbers (F1, S5, L1 and so on) refer to [`known-defects.md`](known-defects.md).
+- Defect numbers (F1, S5 and so on) refer to [`known-defects.md`](known-defects.md).
 - Every pull request that changes how agents behave also updates the matching row in these documents. See [`README.md`](README.md).
 
 ## Work merged or in progress since the verified commit
@@ -113,61 +113,59 @@ released or verified yet. The state of every row is "in progress, PR not yet ope
 
 | Track | Work under way | Scope rows | State |
 |---|---|---|---|
-| Gateway | Removing the public route. Turning on redaction at the gateway. A resetting budget on the shared key. Model prices in the gateway. Upgrade to the patched long-term-support line, with a rehearsed in-place upgrade test first. | 0.1, 0.3 | in progress, PR not yet open |
-| Per-system keys | Random key values, stored encrypted in the agent-runs database and used by the worker. A sweep that removes the derivable keys. | 0.2 | in progress, PR not yet open |
-| Engine correctness | Grants enforced at run time. Argument validation with a repair turn. Handling of cut-off and empty replies. Valid hand-off conditions from the team proposer. A truthful "failed" status for failed runs. | 0.4, 0.6, 0.7, 0.8 | in progress, PR not yet open |
+| Gateway | Gateway hardening and upgrade, with a rehearsed in-place upgrade test first. A resetting budget on the shared key. Model prices in the gateway. | 0.1, 0.3 | in progress, PR not yet open |
+| Per-system keys | Per-system key handling. | 0.2 | in progress, PR not yet open |
+| Engine correctness | Grant enforcement. Argument validation with a repair turn. Handling of cut-off and empty replies. Valid hand-off conditions from the team proposer. A truthful "failed" status for failed runs. | 0.4, 0.6, 0.7, 0.8 | in progress, PR not yet open |
 
-Not yet started in Phase 0: the salt key (part of 0.1), merging the two key schemes (part of 0.2),
-and Build verifying what a run uses beyond the new row wording (0.9). Rotating the gateway's master
-key and any load test against a live service need the owner's go each time
-([`design.md`](design.md), section 8).
+Not yet started in Phase 0: Build verifying what a run uses beyond the new row wording (0.9).
+Rotating the gateway's master key and any load test against a live service need the owner's go
+each time ([`design.md`](design.md), section 8).
+
+Security items are tracked privately until a fix is released. The security rows below are therefore named
+only in general terms.
 
 **Scope**
 
 | # | Change | Fixes |
 |---|---|---|
-| 0.1 | Remove the gateway's public hostname (decision D11). Upgrade LiteLLM from 1.90.0 to the long-term-support line. Set the salt key. Turn off the gateway's logging of prompt and reply text. | L1, L2, F16 (first half) |
-| 0.2 | System keys get random values, stored encrypted in the `agent_runs` database and readable by web and worker. Old guessable keys are deleted. One key scheme instead of two. No silent use of the shared key. | F3, F4, L3 |
+| 0.1 | Gateway hardening and upgrade (decisions D11, D12). | Tracked privately |
+| 0.2 | Per-system key handling (decision D13). | Tracked privately |
 | 0.3 | Budgets reset. Limits and budgets come from settings, not from code. Rebuild updates an existing key. Real prices in the gateway. (On main: PR #88 for the shared key's limits; PR #92 for system-key caps from the chart, a 7-day budget window and key update on Rebuild. Still open: the shared key's budget window, and prices in the gateway.) | F5, S5 |
 | 0.4 | A failed agent stops the run. A run that failed is stored as failed. (On main: PR #91 stops the run. Whether the job is then stored as failed was not checked.) | F1, part of F15 |
 | 0.5 | On "too many requests": tell budget from rate limit; wait and retry. (On main: PR #91 waits out a rate-limit 429 with a visible event.) Parking a throttled run comes in Phase 2. | F2 |
 | 0.6 | Tool arguments are checked before the tool runs. Broken arguments are not executed; the model gets one repair turn. The stop reason of a reply is read. An empty reply is not a success. | F10 |
-| 0.7 | Grants are enforced when a tool runs: every dataset, document, metric, connection, file or folder a call names is checked against the system's grants and access level. | F6 |
+| 0.7 | Grant enforcement at execution time. | Tracked privately |
 | 0.8 | The team proposer stops writing invalid hand-off conditions. | F0 |
-| 0.9 | Build verifies what a run uses: the key the run will really use, one test call per model alias with a tool attached, the grants as the executor will enforce them. Rows that verify nothing are removed or relabelled. (Partly on main: PR #92 makes the Build rows say Created, Updated or Already in place.) | F13 (first half), S1, S6 |
+| 0.9 | Build verifies what a run uses: one test call per model alias with a tool attached, and the checks the executor applies. Rows that verify nothing are removed or relabelled. (Partly on main: PR #92 makes the Build rows say Created, Updated or Already in place.) | F13 (first half), S1, S6 |
 
 **What the user will notice**
 
 - Runs no longer die on the first "too many requests".
 - A run with a failed agent stops and says why, instead of carrying on.
 - A system no longer stops for ever after spending 5 USD.
-- An agent that tries to use something it was not granted is refused, and the run shows that.
 - "Use this team" on a proposed team leads to a team that builds.
 
 **Tests**
 
 - Scripted model: a 429 with a rate-limit text, a 429 with a budget text, broken argument JSON, valid JSON with wrong fields, an empty reply, a cut-off reply, an act-step error on the first of two agents.
-- Scripted tools: a call that names an item outside the grants; a write against a read-only grant.
-- Checkpoint and resume: build a key, restart the web process, run in the worker; the run must use the system's own key.
+- Checkpoint and resume: per-system key handling across a restart of the web process and a run in the worker.
 - Trajectory: two agents, the first fails in the act step; the second must not start.
-- Live smoke run: one small team; check in the gateway that the system's own key was used and that the budget has a reset date.
+- Live smoke run: one small team; check the key used and the budget's reset date in the gateway.
 - Gateway upgrade: a rehearsal on the test environment with a copy of the gateway's database; check keys, budgets, request tags and that gateway records still land inside the run's trace.
 
 **Risks**
 
 - The gateway upgrade spans about 18 minor versions. From 1.103.0 a setting in the config file wins over the value in the database, which can change models an admin added by hand.
 - From 1.104.0 the old Langfuse sender changes how it sends. The link between gateway records and the run's trace must be re-tested. If it breaks, gateway records appear as separate traces until Phase 3.
-- Enforcing grants can break teams that worked only because grants were not enforced. Mitigation: for two weeks, log what would be refused before refusing it.
-- Deleting old keys while a run is in flight. Mitigation: switch keys at Rebuild, delete the old key a day later.
+- Grant enforcement can change how existing teams behave. Mitigation: a logging-only period first.
+- Key changes while a run is in flight. Mitigation: switch keys at Rebuild, remove the old key a day later.
 
-**Not included:** smaller prompts beyond what PR #91 brings; parallel work; any change to tracing beyond turning the gateway's content logging off; any builder UI beyond honest Build rows.
+**Not included:** smaller prompts beyond what PR #91 brings; parallel work; the tracing changes of Phase 3; any builder UI beyond honest Build rows.
 
 **Exit check**
 
-1. The gateway cannot be reached from outside the cluster, and runs a version past all four advisories.
-2. No key in the gateway has a value that can be derived from a system id.
-3. A run in the worker uses the system's own key (seen in the gateway's records).
-4. All Phase 0 tests are green in CI, and the live smoke run passes.
+1. The security items tracked privately for this phase are fixed and released.
+2. All Phase 0 tests are green in CI, and the live smoke run passes.
 
 ---
 
@@ -184,7 +182,7 @@ key and any load test against a live service need the owner's go each time
 | 1.2 | Results by reference: large tool results are stored once outside the conversation; the conversation and the checkpoint hold a reference. | F9, checkpoint size |
 | 1.3 | Old tool results are cleared from the model's input (the last 3 stay). A per-agent input budget (24,000 tokens) with summarising above it. The `tools` part is counted. | F9 |
 | 1.4 | The plan step becomes optional and is off by default. When on, it uses the agent's own model. | F11 |
-| 1.5 | Scoped listings: a listing tool returns only what is inside the granted folders, in pages. (On main for the agent's `list_files`: PR #91.) | Token use, F6 |
+| 1.5 | Scoped listings: a listing tool returns only what is inside the granted folders, in pages. (On main for the agent's `list_files`: PR #91.) | Token use |
 | 1.6 | Hand-off passes the previous agent's answer, its structured results and references, not a cut-down copy. | F8 |
 | 1.7 | Lower default limits: 10 tool rounds per agent, 60 steps per run. | F9 |
 
@@ -277,8 +275,8 @@ key and any load test against a live service need the owner's go each time
 
 | # | Change | Fixes |
 |---|---|---|
-| 3.1 | The OS moves from the old `langfuse` SDK to the new one (version 5). One `mask` function on everything sent. | F16 |
-| 3.2 | LiteLLM to 1.109 or later with the `langfuse_otel` sender, content capture off; the old sender is removed. The engine sends the standard `traceparent` header. | F16, S3 |
+| 3.1 | The OS moves from the old `langfuse` SDK to the new one (version 5). One `mask` function on everything sent. | Tracked privately |
+| 3.2 | LiteLLM to 1.109 or later with the `langfuse_otel` sender, content capture off; the old sender is removed. The engine sends the standard `traceparent` header. | S3 |
 | 3.3 | The OS stops writing its own second record per model call and its second span per tool call. | S3 |
 | 3.4 | Sessions are conversations or schedules, not system ids. | Langfuse map |
 | 3.5 | A retention sweep for traces, with the same period as run data. Spend-log retention in the gateway. | Langfuse map |
@@ -287,7 +285,7 @@ key and any load test against a live service need the owner's go each time
 **What the user will notice**
 
 - A run's trace shows each model call once, with its real cost.
-- Admins no longer see full prompts in Langfuse unless a system is set to the less strict level.
+- Traces show structure and sizes, not content, unless a system is set to the less strict level.
 - Old traces disappear after the retention period.
 
 **Tests**

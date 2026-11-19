@@ -122,13 +122,7 @@ agent runs, the assistant, the OS assistant, classify, both embedders — goes t
 with no third branch:
 
 1. the system's **own virtual key** when Build minted one, read from the secrets store by
-   **reference** (`LastBuild.litellmKeyRef`, never the value on a record). **Today that store is
-   a map in the memory of one process** (`os-ui/core/infra/secrets.ts:21-40`): the value exists
-   only in the `os-ui` process that ran the Build, so after a restart — and always in the
-   `os-ui-worker` — the lookup finds nothing and the call falls through to (2) without a notice.
-   The value itself is the derivable string `sk-os-<systemId>`
-   (`os-ui/tabs/agents/lib/build/live-clients.ts:95-106`). See `docs/agents/known-defects.md`
-   (F3, F4);
+   **reference** (`LastBuild.litellmKeyRef`, never the value on a record);
 2. the **shared agent key** the chart provisions (`LITELLM_AGENT_KEY`, alias
    `sovereign-agents`, idempotent Job `litellm-agent-key-init`, re-asserted on every
    `helm upgrade` — see below);
@@ -153,10 +147,10 @@ Langfuse tags the run trace with. Engine runs also pass `existing_trace_id` /
 
 **Rejections are typed — in part.** On the agent run path and the assistant path a budget
 message (400 or 429) is `BudgetExceededError` (402). Only the two **embedders** turn a 4xx into
-`GatewayRejectedError` with `code` `forbidden` (model outside the key's allowlist) / `unauthorized` / `budget_exceeded`
-/ `rate_limited` / `bad_request`. On the **agent run path** and the **assistant path** any other
-non-2xx — including a 429 rate limit — is a plain `Error('LiteLLM <status>: …')`, tried once with
-no retry (`os-ui/core/runtime/runtime.ts:224-232`, `os-ui/core/runtime/complete.ts:126-127`).
+`GatewayRejectedError` with `code` `forbidden` (model outside the key's allowlist) /
+`unauthorized` / `budget_exceeded` / `rate_limited` / `bad_request`. On the **agent run path** and
+the **assistant path** any other non-2xx is a plain `Error('LiteLLM <status>: …')`
+(`os-ui/core/runtime/runtime.ts:224-232`, `os-ui/core/runtime/complete.ts:126-127`).
 See `docs/agents/how-an-agent-runs.md`, section (e).
 
 **Embeddings never index substitutes** (checklist A31). Both embedders

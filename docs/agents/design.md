@@ -245,12 +245,12 @@ A first version of "wait and retry on 429" is on main (PR #91, merged 2026-11-19
 
 ### 3.9 Grants enforced when a tool runs
 
-Today the grant lists are prompt text only (defect F6). Proposed:
+The design:
 
 - Each tool declares which of its inputs name a dataset, document, metric, connection, file or folder.
 - The tool executor checks every such input against the system's grants, and the kind of access (read or write) against the grant's access level, **before** the tool runs. A call outside the grants returns "forbidden" to the model and is recorded.
 - Folder grants are resolved to their contents at run time, for Files too.
-- The prompt still lists what is granted, as help for the model. The sentence that other items are "DENIED" becomes true.
+- The prompt still lists what is granted, as help for the model.
 - The access level per grant decides what happens to a write: `Read` refuses it, `Write-approval` holds it for approval, `Write-bounded` executes it. The safety preset becomes the upper limit for what a grant may be set to, as the Simple builder already shows it (`tabs/agents/lib/access-levels.ts:96-120`).
 
 ---
@@ -259,16 +259,16 @@ Today the grant lists are prompt text only (defect F6). Proposed:
 
 | Topic | Design | Why |
 |---|---|---|
-| **Upgrade** | Phase 0: from 1.90.0 to the long-term-support line (1.108.12). Phase 3: to 1.109 or later, which the new tracing link needs. | 1.108.12 is past the fix versions of all four published advisories. Two smaller steps are safer than one large one while the gateway is exposed. Known changes on the way: from 1.103.0 a setting in the config file wins over the database; from 1.104.0 the old Langfuse sender changes how it sends. Both need a test before the switch. |
-| **Network** | The gateway is reachable only inside the cluster. Admins reach its console through the OS at `/tools/litellm`, as they already can. | Decided (D11). |
-| **Salt key** | Set `LITELLM_SALT_KEY` once, before the next model is stored in the gateway's database. Never change it afterwards. | Without it the master key is also the encryption key and cannot be rotated. |
-| **Keys** | One key per agent system, with a **random** value created by the gateway. The value is stored **encrypted in the `agent_runs` Postgres database**, which the web process and the worker both already use. The encryption key comes from a Kubernetes Secret. If a system's key cannot be found, the run is refused with "Rebuild needed". No silent use of the shared key. | Today the value is guessable and lives in one process's memory (`core/infra/secrets.ts:21-40`). |
+| **Upgrade** | Phase 0: to the patched long-term-support line (1.108.12). Phase 3: to 1.109 or later, which the new tracing link needs. | The long-term-support line carries the current security fixes. Two smaller steps are safer than one large one. Known changes on the way: from 1.103.0 a setting in the config file wins over the database; from 1.104.0 the old Langfuse sender changes how it sends. Both need a test before the switch. |
+| **Network** | The gateway has no public route. It is reachable only inside the cluster. Admins reach its console through the OS at `/tools/litellm`. | Decided (D11). The gateway is an internal service. |
+| **Salt key** | `LITELLM_SALT_KEY` is set once and never changed afterwards. | A separate encryption key lets the master key be rotated. |
+| **Keys** | One key per agent system, with a **random** value created by the gateway. The value is stored **encrypted in the `agent_runs` Postgres database**, which the web process and the worker both already use. The encryption key comes from a Kubernetes Secret. If a system's key cannot be found, the run is refused with "Rebuild needed". | Decided (D13). The gateway then enforces each system's budget and limits. |
 | **Budgets** | Every budget resets. Suggested defaults from the research: 10 USD per 30 days per system, plus a daily guard of about 2 USD that the OS checks itself until the gateway supports two windows on one key. A budget on the domain's team is the ceiling above that. The OS warns at 80 %. | A lifetime cap guarantees that every successful system eventually stops. PR #92 (merged to main 2026-11-19) sets the default for system keys to 5 USD per 7 days; see D14. |
 | **Limits** | On every key: 60 requests per minute, 200,000 tokens per minute, 4 parallel calls for a Simple system. A developer may raise them up to the domain team's limits. | System keys have no parallel limit today. |
 | **Prices** | One price list, written once in the chart, rendered into both the gateway's model definitions and the OS's price book. | The OS has prices (`charts/sovereign-agentic-os/values.yaml:1427`); the gateway has none. A gateway without prices may count every call as free, and then no budget triggers. Not verified live. |
 | **What a model can do** | Runs read context size, tool support and image support from the gateway's `/model/info`. The OS's explicit image allow-list stays the authority for "may this model be sent an image". | Today these are fixed in OS code (`core/models/context-windows.ts:46-52`). |
 | **Retries** | The engine owns them (3.6). Agent calls ask the gateway for at most one. | Avoids multiplying one failure. |
-| **Redaction** | The gateway does not log prompt or reply text. | Today it logs both in full (`charts/sovereign-agentic-os/values.yaml:519-524`). |
+| **Redaction** | The gateway does not log prompt or reply text. | Decided (D17). Content is not copied into a second store. |
 | **Fallbacks** | Only to models that are on the calling key's list. Rebuild puts a system's fallback models on its key. | Otherwise a fallback is refused (suspected defect S1). |
 
 **Per-system keys or one shared key?** The alternative is one shared key for all systems, with
@@ -309,8 +309,8 @@ one small table of encrypted secrets.
 | 5 | OS: move reads to the newer endpoints | The old read endpoints disappear in version 4's default mode |
 | 6 | Switch version 4 to its final mode; SDK version 6 | — |
 
-Until step 2 is done: keep the current link, set the gateway's content logging off, and turn the
-OS's own model-call record into a plain span so usage is not counted twice.
+Until step 2 is done: keep the current link, and turn the OS's own model-call record into a plain
+span so usage is not counted twice.
 
 Langfuse version 3 receives security fixes only until the end of January 2027.
 
@@ -348,8 +348,8 @@ One table with every setting an agent system has in the target design.
 | Retries per step | How often a failed model call or read is tried again. | 3 tries for errors; 5 waits for rate limits. Hidden. | 0 to the cap. Writes are never retried. | 5 and 8 | `reliability.retries`, `reliability.rate_limit_waits` *(new)* | **new** (no retry today) |
 | Time limits per step | How long a model call or a tool call may take. | 5 minutes per model call, 60 seconds per tool. Hidden. | Within the cap. | 10 minutes and 5 minutes | `reliability.model_timeout_s`, `reliability.tool_timeout_s` *(new)* | **fixed**: 240 seconds and 60 seconds |
 | On failure | What happens when an agent fails. | The run stops. Hidden. | A failure hand-off to another agent. | — | `edges[]` with `type: on_failure` *(new)* | **new**; today the next agent starts anyway (defect F1) |
-| Safety preset | The most a team may do with writes. | "Read only". Shown as four cards. Raised automatically when a write output is declared. | Any of the four. | The builder's role decides whether direct writes are allowed. | `safety_preset` | **exists**; three of the four behave the same |
-| Access per grant | What the team may do with each granted item: read, write with approval, write directly. | Read. Shown per item. | Any level up to the safety preset. | Role, as above. | `grants.*[].capability` | **inert** at run time; becomes enforced |
+| Safety preset | The most a team may do with writes. | "Read only". Shown as four cards. Raised automatically when a write output is declared. | Any of the four. | The builder's role decides whether direct writes are allowed. | `safety_preset` | **exists** |
+| Access per grant | What the team may do with each granted item: read, write with approval, write directly. | Read. Shown per item. | Any level up to the safety preset. | Role, as above. | `grants.*[].capability` | **exists**; enforced at execution time in the target design |
 | Approval behaviour | Who must approve a held write. | By the access level: writes with approval are held; an admin approves under "Read only". Hidden. | No override. | — | follows `safety_preset` and `grants` | **exists** |
 | Memory across runs | Whether the team remembers facts from earlier runs. | Off. Hidden. | On, with a size limit. | On or off for the whole installation. | `memory.across_runs` *(new)* | **new**; `agents[].memory_md` (fixed notes) **exists** and stays |
 | Budget amount and window | How much a system may spend, and when the count starts again. | 10 USD per 30 days. Shown, read-only. | Amount and window within the cap. | The domain's budget. | `budget.amount_usd`, `budget.window` *(new)* | **fixed**: 5 USD, never resets |
@@ -395,23 +395,18 @@ Just do it."). In the earlier draft they were numbered 1 to 13; decision *n* the
 | # | Decision | Why, in one line |
 |---|---|---|
 | D10 | **The OS keeps its own agent loop and rebuilds it on LangGraph's own parts (option A).** To be reviewed after Phase 2, with the benchmark numbers and the amount of own code in hand. | Every tool call must pass policy, approval and identity in one audited place, and tool calling for open-weight models has to be hardened by us. |
-| D11 | **The model gateway is no longer reachable from the internet.** Admins open its console through the OS. | An outdated gateway with only a key check in front should not be on the internet. |
-| D12 | **The gateway is upgraded in two steps:** first to the patched long-term-support line, later to the newest line for tracing. | Two smaller steps are safer than one large one, and the first closes the published advisories. |
+| D11 | **The model gateway has no public route.** Admins open its console through the OS. | The gateway is an internal service. |
+| D12 | **The gateway is upgraded in two steps:** first to the patched long-term-support line, later to the newest line for tracing. | Two smaller steps are safer than one large one. |
 | D13 | **One gateway key per agent system,** with a random value, stored encrypted in the database. Not one shared key with budgets counted by the OS. | The gateway then enforces budgets and limits even if the OS has a bug. |
 | D14 | **Budget default: weekly now** (5 USD per 7 days, as on main), **monthly plus a daily guard once the upgraded gateway supports two windows on one key.** | The weekly budget already exists; two windows need the newer gateway. |
 | D15 | **A run stops when one agent fails,** unless the builder has drawn a failure hand-off. | Later agents should not spend tokens on a run that is already lost. |
 | D16 | **The planning call is off by default.** A developer can switch it on per agent. | It roughly halves the model calls of a simple agent. |
-| D17 | **Traces contain no document and no image content by default,** including in the gateway's records. A system can be set to the less strict level within what the admin allows. | Content should not be copied into a second store. The cost: admins cannot read full prompts in Langfuse by default. |
+| D17 | **Traces contain no document and no image content by default,** including in the gateway's records. A system can be set to the less strict level within what the admin allows. | Content should not be copied into a second store. |
 | D18 | **No memory across runs for now.** It stays off; to be decided again after Phase 2. | Not needed for the current teams, and it raises privacy questions. |
 | D19 | **Traces are deleted after the same period as run data** (30 days by default). | One retention period is easier to explain and to check. |
 | D20 | **When a write may or may not have happened, the run stops and asks a person.** It does not try again by itself. | A write that runs twice is worse than a run that waits. |
 | D21 | **When the definition changed after the last Build: Simple mode rebuilds on Run; Developer mode shows "Rebuild needed".** | Nobody should run an old build without knowing it. |
 | D22 | **Langfuse is upgraded to version 4 before the end of January 2027.** | Version 3 stops receiving security fixes then. |
-
-One point to check against D1: the description of the MCP tool `run_agent_system` tells its caller
-to use `decide_approval` when a run parks (`core/mcp/agent-write-tools.ts:121`). Whether an
-assistant can still decide an approval that way after the route hardening shipped in image tag
-0.9.12 was not checked for this page.
 
 ---
 

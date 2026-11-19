@@ -4,7 +4,8 @@ Langfuse is the trace store. It keeps the record of every run: which steps ran, 
 were made, which tools were called, and how the run was scored. This page lists each Langfuse
 feature and says how the OS uses it today and what we propose.
 
-- "In the OS today" was verified by reading the code and chart at commit `b47e2cd5` (2026-11-19). Lines marked "live" were seen on the production system on 2026-11-19.
+- "In the OS today" was verified by reading the code and chart at commit `b47e2cd5` (2026-11-19).
+- Unfixed security findings are not recorded in this public repository; they are published with the fix. Where a cell says "Security items are tracked privately until a fix is released", that is why.
 - "Target", "Simple mode default" and "Developer mode override" are the **agreed direction (2026-11-19), not built** unless a row says so. See [`design.md`](design.md).
 - "Phase" refers to [`plan.md`](plan.md). A dash means no change is planned.
 - Paths are relative to `os-ui/` unless they start with `charts/`, `docs/` or `values`. `observe.ts` means `tabs/agents/lib/engine/observe.ts`. `values.yaml` means `charts/sovereign-agentic-os/values.yaml`.
@@ -23,14 +24,14 @@ Status words:
 
 | Item | Deployed | Latest (2026-11-19) | Gap |
 |---|---|---|---|
-| Langfuse server | 3.194.1 (live; chart 1.5.36, `charts/sovereign-agentic-os/Chart.yaml:45-48`) | 4.83.0 (chart 2.2.5) | One major version. Version 3 receives security fixes only until the end of January 2027. |
+| Langfuse server | 3.194.1 (chart 1.5.36, `charts/sovereign-agentic-os/Chart.yaml:45-48`) | 4.83.0 (chart 2.2.5) | One major version. Version 3 receives security fixes only until the end of January 2027. |
 | JavaScript SDK in the OS | `langfuse` 3.39.2, the last of the old line (`package.json:34`) | `@langfuse/tracing`, `@langfuse/otel`, `@langfuse/langchain`, `@langfuse/client` 6.1.1 | A rewrite. Version 5 of the new SDK works with the deployed server; version 6 needs server 4.59.0 or later. |
 | LiteLLM's Langfuse sender | The older `langfuse` callback in LiteLLM 1.90.0 | `langfuse_otel` (needs LiteLLM 1.109 or later) | See [`feature-map-litellm.md`](feature-map-litellm.md). |
 
 ## The five biggest gaps
 
-1. **Two records for every model call.** The OS writes a redacted one. The gateway writes a second one with the full prompt and reply into the same trace. Redaction is bypassed and usage is counted twice (defect F16).
-2. **Tool arguments are stored in full** in a second span per tool call, even at the strict redaction level (`core/infra/agent-governed.ts:329-354`).
+1. **Two records for every model call.** The OS writes one and the gateway writes a second one into the same trace, so usage is counted twice.
+2. Security items are tracked privately until a fix is released.
 3. **Nothing ever deletes traces.** Retention policies are Enterprise only, and the OS's own clean-up covers run state but not Langfuse (`tabs/agents/lib/engine/retention.ts`).
 4. **The upgrade to version 4 breaks everything the OS sends and reads today:** the old SDK, the gateway's old callback, and the read endpoints the OS uses. It has to be done in a fixed order.
 5. **The "session" is the system id.** All runs of a system, by all users, for ever, form one session (`observe.ts:225`; `core/runtime/runtime.ts:201`).
@@ -44,7 +45,7 @@ Status words:
 | Traces and observations | One trace per run, with one entry per step, model call and tool call inside. | **Used.** One trace per run; the trace id is the run id. | `observe.ts:206-332` | Keep one trace per run. | Always on. | None. | — |
 | One generation per model call | A "generation" is the record of one model call with its usage and cost. | **Misused.** Two per call: the OS's and the gateway's. | `observe.ts:241-270`; `core/runtime/runtime.ts:196-202`; `values.yaml:519-524` | Exactly one, owned by the gateway, because the gateway knows the real usage and cost. Interim: the OS's own entry becomes a plain span. | Automatic. | None. | 3 |
 | Observation types (`agent`, `tool`, `generation`, `retriever` and others) | Label each entry so the trace view can show what it is. | **Used** in part: spans and generations only. | `observe.ts:241-332` | Use `agent`, `tool` and `generation`. | Automatic. | None. | 3 |
-| A second span per tool call from the governance layer | Record the policy decision for a tool call. | **Misused.** It duplicates the engine's tool span and stores the full arguments, outside the redaction setting. | `tabs/agents/lib/build/os-tools.ts:726-740`; `core/infra/agent-governed.ts:329-354` | One span per tool call, carrying the decision, passed through redaction. | Automatic. | None. | 3 |
+| A second span per tool call from the governance layer | Record the policy decision for a tool call. | **Misused.** It duplicates the engine's tool span. | `tabs/agents/lib/build/os-tools.ts:726-740`; `core/infra/agent-governed.ts:329-354` | One span per tool call, carrying the decision, passed through redaction. | Automatic. | None. | 3 |
 | Sessions | Group the traces that belong to one conversation. | **Misused.** The session id is the system id, so the "session" never ends. | `core/runtime/runtime.ts:201`; `observe.ts:225` | Session = one conversation, or one schedule for timed runs. The system stays a tag. | Automatic. | None. | 3 |
 | Users, tags, environments | Say who ran it, label it, and separate test from production. | **Used.** User id, tags `domain:`, `agent:`, `run:`, `engine:`, `env:`, and the environment. | `observe.ts:206-240` | Keep. | Automatic. | Extra tags. | — |
 | Trace ids | A standard 32-character id lets other tools attach their records to the same trace. | **Hand-built.** The trace id is the run id (`run_<uuid>`), which is not the standard form. Linking the gateway relies on two LiteLLM-specific fields that the newer callback ignores. | `core/kernel/run-id.ts:18-20`; `core/runtime/runtime.ts:196-202` | A standard id derived from the run id, sent to the gateway in the W3C `traceparent` header. | Automatic. | None. | 3 |
@@ -59,7 +60,7 @@ Status words:
 | Client-side masking | Remove or shorten content before it leaves the OS. | **Hand-built.** Two levels in the OS's observer: `structure` (default: sizes, tool names, arguments in full, a 160-character preview of results) and `strict` (argument names and sizes only). One setting for the whole installation. | `observe.ts:241-332`; `core/kernel/config.ts:407-417` | The SDK's `mask` function on every entry, so nothing can bypass it. No document or image content is stored. | `strict` for any system with file or image inputs; `structure` otherwise. | `structure` per system, within what the admin allows. | 3 |
 | Server-side masking at ingestion | Mask in Langfuse itself. | **Blocked.** Enterprise. | — | Not needed if client-side masking is complete. | — | — | — |
 | Multi-modal content (images, files) | The SDK uploads images found in a trace to object storage. | **Not used** by intent: by owner decision, image prompts are not stored in traces. Whether the new SDK uploads before or after `mask` runs was not confirmed. | — | Strip images and file bodies before tracing; store type, size and a hash only. Test the upload order before relying on it. | Stripped. | None. | 3 |
-| Gateway content logging | The gateway's own records of prompts and replies. | **Misused.** On, unredacted. See [`feature-map-litellm.md`](feature-map-litellm.md). | `values.yaml:519-524` | Off. | Off. | Per system, only with tenant-admin consent. | 0 |
+| Gateway content logging | The gateway's own records of prompts and replies. | Security items are tracked privately until a fix is released. | — | Off. | Off. | Per system, only with tenant-admin consent. | 0 |
 
 ## Evaluation and prompts
 

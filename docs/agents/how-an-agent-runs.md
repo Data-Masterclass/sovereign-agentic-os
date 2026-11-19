@@ -61,9 +61,9 @@ The definition is one file, `system.yaml`. The code that reads it is
 | `agents[].model` | Which model the agent uses | `auto` | Used for the act step. **Ignored for the plan step**, which always uses the reasoning model (`tabs/agents/lib/engine/build-graph.ts:782-787`). |
 | `agents[].members` | Makes the agent a supervisor of these agents | none | The supervisor picks the next member with one extra model call (`build-graph.ts:1157-1196`). |
 | `edges[]` | Hand-offs (`from`, `to`, optional `when` condition) | none | First hand-off whose `when` is true wins (`build-graph.ts:1099-1106`). |
-| `grants.tools[]` | The system's tool list | `search_knowledge` | The only grant that is enforced at run time (`tabs/agents/lib/build/os-tools.ts:613-642`). |
-| `grants.data[]`, `knowledge[]`, `metrics[]`, `connections[]`, `files[]`, `plan[]` | Which datasets, documents, metrics, connections, folders and plan items the team may use, each with an access level | empty | **Written into the prompt only.** Nothing checks a tool call against them. See [`known-defects.md`](known-defects.md), F6. |
-| `safety_preset` | How writes are treated | `read-only` | Under `read-only` every write tool is held for an admin. The other three presets behave the same as each other (`tabs/agents/lib/build/hold.ts:230-253`). |
+| `grants.tools[]` | The system's tool list | `search_knowledge` | Checked by the tool executor on every call (`tabs/agents/lib/build/os-tools.ts:613-642`). |
+| `grants.data[]`, `knowledge[]`, `metrics[]`, `connections[]`, `files[]`, `plan[]` | Which datasets, documents, metrics, connections, folders and plan items the team may use, each with an access level | empty | Listed in each agent's prompt. The tools run as the signed-in person. The target design enforces these lists when a tool runs; see [`design.md`](design.md), section 3.9. |
+| `safety_preset` | How writes are treated | `read-only` | Decides whether a write tool is held for approval (`tabs/agents/lib/build/hold.ts:230-253`). Under `read-only` every write tool is held for an admin. |
 | `state.channels` | Named values agents can set and hand-off conditions can read | `messages` | Typed values work. The `messages` channel is never written by any step (`build-graph.ts:426-435`; no step returns a `messages` update). |
 | `routing.overrides` | Model per kind of activity | empty | **No effect on a run.** Read only by Build and a Monitoring view (`tabs/agents/lib/build/live.ts:101-108`). |
 | `schedule` | Manual, timed or on event | manual | The file's value is only displayed. The stored record's value drives the timer (`tabs/agents/lib/store.ts:1109-1115`). |
@@ -95,7 +95,7 @@ There are **four** adapters, in this order (`tabs/agents/lib/build/live.ts:158-2
 | Adapter | Apply | Verify | What is stored | Does a run use it? |
 |---|---|---|---|---|
 | **Policy (OPA)** | Writes the system's tool list under the name `os-<systemId>` into the policy service. If a connection needs approval, adds it to a shared approval list. | Asks the policy service three questions: is a granted tool allowed, is an invented tool refused, is a held connection tool held. | In the policy service's memory only. Lost when that service restarts (`live-clients.ts:60-63`). | **No.** A run works out the tool check itself from the file (`os-tools.ts:35-43`, `:613-642`). |
-| **Gateway (LiteLLM)** | Looks for a key named `os-<systemId>`. **If it exists, does nothing** (`live.ts:197-198`). Otherwise creates it with a 5 USD lifetime budget, 120 requests per minute and 200,000 tokens per minute (`live.ts:82-87`; `live-clients.ts:127-139`). | Looks the key up again. Then checks a table inside the OS, not the gateway (`live.ts:222-228`). No model call is made. | A key in the gateway. The key's value in the memory of the web process (`core/infra/secrets.ts:21-40`). | **Rarely.** See below. |
+| **Gateway (LiteLLM)** | Looks for the system's gateway key. **If it exists, does nothing** (`live.ts:197-198`). Otherwise creates it with a budget and rate limits (`live.ts:82-87`; `live-clients.ts:127-139`). | Looks the key up again. Then checks a table inside the OS, not the gateway (`live.ts:222-228`). No model call is made. | A key in the gateway, and a reference to it on the system record. | See "Which key and which model" in section (d). |
 | **Graph (LangGraph)** | Builds the real graph with a stand-in model and stand-in tools (`tabs/agents/lib/build/compile-verify.ts:66-83`). | Builds it again and reports the number of steps and warnings. | Nothing. | The run builds the graph again itself, every time (`tabs/agents/lib/engine/run.ts:177-229`). |
 | **Tracing (Langfuse)** | Nothing (`live-clients.ts:156-159`). | Counts earlier traces for this system. Zero means "pending", not "failed". | Nothing. | Not applicable. |
 
@@ -111,8 +111,6 @@ per minute), and makes the Build rows say Created, Updated or Already in place.
 
 - A run does not need a green Build. Nothing in the run path reads "last build ok" (`tabs/agents/lib/build/run-service.ts:280` is the only use, and it reads the key reference).
 - Nothing notices that you changed the file after a green Build. The button says "Rebuild" as soon as any build exists (`tabs/agents/ui/BuildRunPanel.tsx:769`, `:980`, `:1209`).
-- The key's value is the guessable text `sk-os-<systemId>` (`live-clients.ts:95-106`).
-- The key's value is kept only in the memory of the web process that handled the Build. The worker is a different process, so it cannot find the value and uses the shared key instead (`core/infra/litellm-credential.ts:108-111`). The worker is enabled in production (checked on the running system, 2026-11-19), so production runs should be using the shared key. That is an inference from the code; it was not observed.
 - A Build through the MCP tool `build_agent_system` creates the key but does not save "last build" (`core/mcp/agent-write-tools.ts:109-114`).
 
 ---
@@ -227,7 +225,7 @@ Every model call of a run goes through one function, `liteLlmCaller`
 
 | Question | Answer today | Where |
 |---|---|---|
-| Which key? | The system's own key if this process has its value in memory. Otherwise the shared key. If neither exists, the call is refused. The master key is never used. | `core/infra/litellm-credential.ts:102-112` |
+| Which key? | The system's own key when Build made one, otherwise the shared agent key the chart provides. If neither exists, the call is refused. The master key is never used. | `core/infra/litellm-credential.ts:102-112` |
 | Which model for the plan step? | Always the reasoning model (`sovereign-reasoning` by default). | `build-graph.ts:783`; `core/models/roles.ts:67-96` |
 | Which model for the act step? | The agent's pinned model if set. Otherwise "auto": an agent with a write tool or no tools gets the reasoning model; an agent with read-only tools gets the fast model, unless its instructions contain a word such as "plan", "decide" or "assess". | `tabs/agents/lib/build/agentic-graph.ts:258-269`; `tabs/agents/lib/routing.ts:267-290` |
 | How long may the conversation get? | 118,880 tokens with the default models, estimated as characters divided by four. | `agentic-graph-server.ts:86-88`; `core/models/context-windows.ts:107-123` |
@@ -238,7 +236,7 @@ In this order (`tabs/agents/lib/build/agentic-graph.ts:488-497`; `agentic-graph-
 
 1. Team rules. Fixed text, about 190 tokens.
 2. "WORKSPACE": one line per area of the OS the grants touch.
-3. "YOUR GRANTED CONTEXT": the ids of granted datasets, documents and so on. Folder grants for Files are left out.
+3. "YOUR GRANTED CONTEXT": the ids of granted datasets, documents and so on.
 4. "YOUR GRANTED TOOLS": one line per tool **of the whole system**, not of this agent.
 5. "YOUR ROLE IN THE TEAM": the agent's `agent_md`, then its `memory_md`.
 6. For every agent after the first: the hand-off instruction and "TEAM PROGRESS SO FAR".
@@ -418,7 +416,6 @@ once. The tables above still describe commit `b47e2cd5`.
 | How long may a tool take? | 60 seconds. After that the engine stops waiting. The tool itself is not cancelled. | `tool-result.ts:165-189` |
 | What does an error look like? | `{"error":{"code":"…","reason":"…"}}` | `tool-result.ts`; `os-tools.ts:613-642` |
 | Who is the tool run as? | The person who started the run. Never a service account. | `os-tools.ts:697-702` |
-| Is the target checked against the grants? | No. Only the tool's name is checked. | `os-tools.ts:613-642` |
 
 ### What happens when the conversation gets too long
 
