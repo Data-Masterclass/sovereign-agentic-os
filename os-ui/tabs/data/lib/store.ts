@@ -38,6 +38,7 @@ import { SEMANTIC_ARTIFACT, scaffoldSemanticYaml } from '@tabs/data/lib/semantic
 import { assetTarget, productTarget, reuseSourceFqn, composeSourceBlocker, personalSchema, domainSchema, physicalSlug, versionTarget, slug } from '@tabs/data/lib/store-fqn';
 import { config } from '@core/kernel/config';
 import { osMirror } from '@core/infra/os-mirror';
+import { newSeenFields, noteSeen, writeDeleted, writeNew, writeChangedMerging, mergeChanged, fingerprint, type SeenFields } from '@core/infra/field-writes';
 import { type ArtifactVersion, versionLog } from '@core/kernel/versioning';
 // The GOVERNED folder registry (Wave 1) — a moved-into folder is upserted as an
 // explicit row so it persists even when empty. Reused, never forked (mirrors Files).
@@ -125,11 +126,16 @@ type DataStoreState = {
   hydrateFailedAt?: number;
   /** Set when a hydration READ THE MIRROR SUCCESSFULLY — what `hydrationState` reports. */
   hydratedAt?: number;
+  /** What this process last knew the mirror held per dataset record (see `core/infra/field-writes.ts`). */
+  seen: SeenFields;
+  /** The `yaml` this process last knew the mirror held per dataset — the base of the merge in
+   *  {@link writeThrough}. The same string object as the record's until it changes, so free. */
+  seenYaml: Map<string, string>;
 };
 const DS_KEY = Symbol.for('soa.data.store');
 function ds(): DataStoreState {
   const g = globalThis as unknown as Record<symbol, DataStoreState | undefined>;
-  if (!g[DS_KEY]) g[DS_KEY] = { store: new Map(), seeded: false, hydration: null };
+  if (!g[DS_KEY]) g[DS_KEY] = { store: new Map(), seeded: false, hydration: null, seen: newSeenFields(), seenYaml: new Map() };
   return g[DS_KEY]!;
 }
 
@@ -173,8 +179,53 @@ const mirror = osMirror({
   },
 });
 
+/** Store a NEW dataset record whole (nobody else can have changed it yet). */
+function writeNewRecord(rec: DatasetRecord): void {
+  writeNew(mirror, ds().seen, rec.id, rec);
+  ds().seenYaml.set(rec.id, rec.yaml);
+}
+
+/**
+ * The ONE write path for an existing dataset record. Every dataset operation rewrites the whole
+ * `yaml`, and os-ui and the run worker each hold their own copy — so a plain write from either
+ * process would put back its stale copy of whatever the other changed (an agent documenting the
+ * dataset erasing the rename the owner just made, or the reverse). Instead:
+ *   - only the record fields this process changed are sent (`artifacts` it never touched stay);
+ *   - when the yaml changed, the newest mirrored yaml is read first and merged by the dataset's
+ *     own top-level fields: this process's value for each field it changed (since the yaml it
+ *     last saw), the newest value for every other one. The merged yaml then replaces this
+ *     process's copy too, unless it changed again meanwhile (the next write merges that);
+ *   - in the run worker a dataset deleted elsewhere is never re-created (and is dropped here).
+ * Two processes changing the SAME dataset field still race; the later write wins that field.
+ */
 function writeThrough(rec: DatasetRecord): void {
-  mirror.writeThrough(rec.id, rec);
+  const s = ds();
+  const sent = rec.yaml;
+  const baseYaml = s.seenYaml.get(rec.id);
+  const merge = (newest: unknown): unknown => {
+    if (typeof newest !== 'string' || baseYaml === undefined || newest === baseYaml) return sent;
+    try {
+      const base = new Map(Object.entries(parseDataset(baseYaml)).map(([k, v]) => [k, fingerprint(v)]));
+      const merged = mergeChanged(base, parseDataset(sent) as unknown as Record<string, unknown>, parseDataset(newest) as unknown as Record<string, unknown>);
+      return serializeDataset(merged as unknown as Dataset);
+    } catch {
+      return sent; // an unparseable side → this process's yaml, as before
+    }
+  };
+  const dropped = () => {
+    if (s.store.get(rec.id) === rec) s.store.delete(rec.id);
+    s.seenYaml.delete(rec.id);
+  };
+  void writeChangedMerging(mirror, s.seen, rec.id, rec, 'yaml', merge, dropped).then((yaml) => {
+    if (typeof yaml !== 'string') return;
+    s.seenYaml.set(rec.id, yaml);
+    if (yaml !== sent && rec.yaml === sent) {
+      rec.yaml = yaml;
+      const d = parseDataset(yaml);
+      rec.owner = d.owner;
+      rec.domain = d.domain;
+    }
+  });
 }
 
 /**
@@ -242,7 +293,11 @@ async function hydrate(): Promise<void> {
   s.hydratedAt = Date.now();
   for (const rec of docs as DatasetRecord[]) {
     // Don't clobber records created in-process before hydration completed.
-    if (rec && rec.id && !s.store.has(rec.id)) s.store.set(rec.id, rec);
+    if (rec && rec.id && !s.store.has(rec.id)) {
+      s.store.set(rec.id, rec);
+      noteSeen(s.seen, rec.id, rec);
+      s.seenYaml.set(rec.id, rec.yaml);
+    }
   }
   // Hydrate the snapshot version log alongside the datasets (best-effort).
   await versions.ensureHydrated();
@@ -294,6 +349,8 @@ function ensureSeeded(): void {
 export function __resetStore(): void {
   const s = ds();
   s.store.clear();
+  s.seen.clear();
+  s.seenYaml.clear();
   s.seeded = false;
   s.hydration = null;
   s.hydrateFailedAt = undefined;
@@ -856,7 +913,7 @@ export function createDataset(user: Principal, input: { name: string; domain?: s
   };
   const rec: DatasetRecord = { id: d.id, owner: d.owner, domain: d.domain, yaml: serializeDataset(d), updatedAt: now() };
   ds().store.set(rec.id, rec);
-  writeThrough(rec); // best-effort durable mirror
+  writeNewRecord(rec); // best-effort durable mirror
   emitProjectChange({ domain: d.domain, datasetId: d.id, action: 'create dataset', actorId: user.id });
   return d;
 }
@@ -939,7 +996,7 @@ export function adoptConnectedDataset(
   };
   const rec: DatasetRecord = { id: d.id, owner: d.owner, domain: d.domain, yaml: serializeDataset(d), updatedAt: now() };
   ds().store.set(rec.id, rec);
-  writeThrough(rec);
+  writeNewRecord(rec);
   emitProjectChange({ domain: d.domain, datasetId: d.id, action: 'adopt connected table', actorId: user.id });
   return d;
 }
@@ -1994,7 +2051,8 @@ export function deleteDataset(id: string, user: Principal): Dataset {
     fail(`Cannot delete — ${d.imports!.length} domain(s) import this data product. Remove subscribers first.`, 409);
   }
   ds().store.delete(id);
-  mirror.deleteThrough(id);
+  ds().seenYaml.delete(id);
+  writeDeleted(mirror, ds().seen, id);
   versions.purge(id); // forget + delete-through the snapshot history
   emitProjectChange({ domain: d.domain, datasetId: d.id, action: 'retire', actorId: user.id });
   return d;

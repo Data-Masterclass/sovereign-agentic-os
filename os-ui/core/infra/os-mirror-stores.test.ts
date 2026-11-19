@@ -72,6 +72,22 @@ function fakeCluster() {
       idx.docs.set(id, JSON.parse(String(init?.body ?? '{}')));
       return json({ result: 'created' });
     }
+    if (rest?.startsWith('/_update/')) {
+      // The mirror's partial write (`patchThrough`): top-level `params.set`/`params.unset`, `upsert` when absent.
+      const id = decodeURIComponent(rest.slice('/_update/'.length).split('?')[0]);
+      if (!idx) return json({ error: 'index_not_found_exception' }, 404);
+      const body = JSON.parse(String(init?.body ?? '{}'));
+      const cur = idx.docs.get(id) as Record<string, unknown> | undefined;
+      if (!cur) {
+        if (!body.upsert) return json({ error: 'document_missing_exception' }, 404);
+        idx.docs.set(id, body.upsert);
+        return json({ result: 'created' });
+      }
+      const next: Record<string, unknown> = { ...cur, ...(body.script?.params?.set ?? {}) };
+      for (const k of (body.script?.params?.unset ?? []) as string[]) delete next[k];
+      idx.docs.set(id, next);
+      return json({ result: 'updated' });
+    }
     if (method === 'PUT' && (rest === '' || rest.startsWith('?'))) {
       if (idx) return json({ error: 'resource_already_exists_exception' }, 400);
       indices.set(indexName, { docs: new Map() });
@@ -98,7 +114,9 @@ const settle = async () => { await new Promise((r) => setTimeout(r, 0)); await n
 /** Assert the fresh-boot sequence for one index: index-create BEFORE first doc PUT. */
 function assertBootstrapSequence(log: string[], index: string) {
   const create = log.indexOf(`PUT /${index}`);
-  const firstDocPut = log.findIndex((l) => l.startsWith(`PUT /${index}/_doc/`));
+  // A new record is a whole-doc PUT; a change to an existing one is a partial `_update` (with the
+  // whole record as its upsert) — either is "the first write".
+  const firstDocPut = log.findIndex((l) => l.startsWith(`PUT /${index}/_doc/`) || l.startsWith(`POST /${index}/_update/`));
   assert.notEqual(create, -1, `the ${index} index was created`);
   assert.notEqual(firstDocPut, -1, `a doc was PUT into ${index}`);
   assert.ok(create < firstDocPut, `index-create precedes the doc PUT (${index})`);

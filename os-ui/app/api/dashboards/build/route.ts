@@ -5,7 +5,7 @@ import { NextResponse } from 'next/server';
 import { requirePrincipal } from '@tabs/data/lib/server';
 import { withRoute } from '@core/kernel/route-server';
 import type { CurrentUser } from '@core/kernel/auth';
-import { saveDashboard } from '@tabs/dashboards/lib/store';
+import { saveDashboard, refreshDashboardFromMirror } from '@tabs/dashboards/lib/store';
 import { type Panel, type PanelFilter, fromAgent, fromTiles } from '@tabs/dashboards/lib/model';
 
 export const dynamic = 'force-dynamic';
@@ -39,6 +39,9 @@ export const POST = withRoute<Record<string, string>, {
   const spec = body.mode === 'agent'
     ? fromAgent({ name, view, charts, domain, filters })
     : fromTiles(name, view, charts, domain, filters);
+  // The id is caller-chosen: read the newest copy first so the edit-scope check in the store sees
+  // the dashboard as it really is (one another process created must not be replaced as "new").
+  await refreshDashboardFromMirror(id);
   const rec = saveDashboard(user, id, spec);
   return NextResponse.json({ id, spec: { name: rec.spec.name, view: rec.spec.view, charts: rec.spec.charts } });
 }, { gate: requirePrincipal as () => Promise<CurrentUser>, parse: true });

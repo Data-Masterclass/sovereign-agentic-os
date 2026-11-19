@@ -50,6 +50,10 @@ export type OsMirror = {
   list(size?: number): Promise<{ docs: unknown[]; complete: boolean } | null>;
   /** One doc's `_source`, or null when missing/unreachable. Does NOT probe. */
   getDoc(id: string): Promise<unknown | null>;
+  /** Like `getDoc`, but says WHY there is no doc: 'absent' (the mirror answered 404 — the record
+   *  is not there, e.g. another process deleted it) or 'unreachable' (no answer, or an error
+   *  after retries — nothing can be concluded). Does NOT probe. */
+  read(id: string): Promise<MirrorRead>;
   /** Atomic single-use claim: an AWAITED delete that reports who won the race.
    *  'won'         → this caller deleted an existing doc (authoritative single-use);
    *  'lost'        → the doc was already gone (another caller won / never existed);
@@ -88,6 +92,8 @@ export type MirrorPatch = { set: Record<string, unknown>; unset: string[] };
 
 /** The painless script behind `patchThrough` — top-level replace (not a deep merge) + removals. */
 export const PATCH_SCRIPT = 'ctx._source.putAll(params.set); for (def k : params.unset) { ctx._source.remove(k); }';
+
+export type MirrorRead = { state: 'found'; doc: unknown } | { state: 'absent' } | { state: 'unreachable' };
 
 export type DeleteOutcome =
   | { ok: true; result: 'deleted' | 'absent' }
@@ -234,29 +240,33 @@ export function osMirror(opts: {
     }
   }
 
-  async function getDoc(id: string): Promise<unknown | null> {
+  async function read(id: string): Promise<MirrorRead> {
     // A by-id GET must distinguish "genuinely absent" (404) from a TRANSIENT
     // failure (5xx / auth blip / timeout-with-response). Conflating the two made a
     // momentary OpenSearch hiccup surface as a false "not found" (the intermittent
-    // "commit → App not found"). So: 404 and an unreachable cluster return null
-    // immediately (offline-degrade, no wasted retries); a transient non-404 error
-    // is retried a couple times before we give up. Still NEVER throws.
+    // "commit → App not found"). So: 404 and an unreachable cluster answer at once
+    // (offline-degrade, no wasted retries); a transient non-404 error is retried a
+    // couple times before we give up. Still NEVER throws.
     for (let attempt = 0; ; attempt++) {
-      const res = await osFetch(`/${index}/_doc/${id}`);
-      if (!res) return null; // cluster unreachable → graceful null
-      if (res.status === 404) return null; // genuinely absent
+      const res = await osFetch(`/${index}/_doc/${encodeURIComponent(id)}`);
+      if (!res) return { state: 'unreachable' };
+      if (res.status === 404) return { state: 'absent' };
       if (res.ok) {
         try {
           const body = (await res.json()) as { _source?: unknown };
-          return body?._source ?? null;
+          return body?._source != null ? { state: 'found', doc: body._source } : { state: 'unreachable' };
         } catch {
-          return null;
+          return { state: 'unreachable' };
         }
       }
-      // Transient non-404 error: retry up to 3 attempts, then degrade to null.
-      if (attempt >= 2) return null;
+      if (attempt >= 2) return { state: 'unreachable' };
       await new Promise((r) => setTimeout(r, 40 * (attempt + 1)));
     }
+  }
+
+  async function getDoc(id: string): Promise<unknown | null> {
+    const r = await read(id);
+    return r.state === 'found' ? r.doc : null;
   }
 
   async function claim(id: string): Promise<'won' | 'lost' | 'unreachable'> {
@@ -358,6 +368,7 @@ export function osMirror(opts: {
     hydrate,
     list,
     getDoc,
+    read,
     claim,
     deleteConfirmed,
     writeThrough,
