@@ -93,15 +93,47 @@ is what a debugging session needs, without the values. The level is recorded on 
 (`input.redaction`) and on each tool span (`metadata.redaction`), so a trace always says how it
 was written.
 
-**The OS's redaction does not reach LiteLLM's generation.** The gateway's own Langfuse callback
-creates a second generation *nested under* the OS's (A24: same trace, `existing_trace_id` +
-`parent_observation_id`), and that one carries the **full prompt, the full completion and the
-cost** — it is the gateway's record of what it sent to the provider, not the OS's record of what
-the node decided. `strict` therefore reduces what the OS writes, not what LiteLLM writes. To
-redact at the gateway too, set `turn_off_message_logging: true` under
-`litellm.proxy_config.litellm_settings` in the chart — you keep usage, latency and cost and lose
-the prompt/completion bodies. Decide this per tenant: with it on, nobody can read back what a
-model was actually asked.
+**What the gateway writes.** LiteLLM's own Langfuse callback creates a second generation
+*nested under* the OS's (A24: same trace, `existing_trace_id` + `parent_observation_id`). It is
+the gateway's record of the call — usage, cost, model, latency, tags — and since 2026-11-19 it
+carries **no prompt and no completion** (owner decision: no document or image content in traces
+by default, the gateway's records included):
+
+* `litellm.proxy_config.litellm_settings.turn_off_message_logging: true` (chart default). LiteLLM
+  replaces the request messages with one `{"role":"user","content":"redacted-by-litellm"}` and
+  the completion text with `redacted-by-litellm` **before** any callback runs. An image or a
+  document part is inside the messages, so it goes with them.
+* The OS sends `metadata.mask_output: true` on every run-path call
+  (`core/runtime/runtime.ts`). On LiteLLM 1.90 the setting above leaves the completion's
+  **tool-call arguments** in the logged output — model-written values that can quote a document.
+  The mask replaces the whole logged output. The caller still receives the full response.
+* `general_settings.store_prompts_in_spend_logs: false` — the gateway's Postgres spend logs keep
+  metadata only (`messages: {}`, `response: {}`).
+
+Measured on LiteLLM 1.90.0 with the chart's rendered config and a recording Langfuse endpoint
+(markers placed in the system prompt, the user message, the completion, a tool-call argument and
+a tool description):
+
+| | system / user prompt | completion text | tool-call arguments | tool definitions | usage + cost | failure |
+|---|---|---|---|---|---|---|
+| before | logged | logged | logged | logged | usage only (cost 0, unpriced) | logged |
+| `turn_off_message_logging` | **absent** | **absent** | logged | logged | logged | logged |
+| + `mask_output` (run path) | **absent** | **absent** | **absent** | logged | logged | logged |
+
+What is still written, deliberately: the **tool definitions** of a call (names, descriptions,
+parameter schemas — the system's static configuration, not user data), the model, token usage,
+cost, the tags (`domain:` `agent:` `tab:` `run:`), `trace_user_id` / `session_id`, the key's
+alias and hash, and the requester's IP address.
+
+What it does not cover: a caller holding a gateway key can switch redaction off for its own
+request with the header `litellm-disable-message-redaction: true`. Only the OS holds keys and it
+never sends that header; treat a key as able to do this when you hand one out. To read real
+prompts for one debugging session, use the Run panel (`run_events` holds them, see below) — not
+the gateway. If you must see what the gateway forwarded, set `turn_off_message_logging: false`
+through `VALUES_OVERLAY` for that session and set it back; the logged **output** stays masked.
+
+`LANGFUSE_REDACTION=strict` reduces what the **OS** writes into its own generation and tool
+spans; it is independent of the gateway settings above.
 
 **`LANGFUSE_REDACTION` does not reach `run_events`.** The switch governs what the OS writes to
 the TRACE. The run's own event log — `run_events` in the `agent_runs` database, the rows the Run

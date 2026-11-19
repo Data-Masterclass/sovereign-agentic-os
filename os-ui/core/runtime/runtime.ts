@@ -193,7 +193,17 @@ export function liteLlmCaller(caller?: CallerContext): LlmCall {
     // told to log INTO that trace (existing_trace_id) under the OS generation that recorded this
     // call (parent_observation_id), so the gateway's generation nests instead of starting a
     // second, unlinked trace. Vocabulary is LiteLLM's (docs: Langfuse integration metadata).
-    const metadata: Record<string, unknown> = { tags: cred.tags };
+    //
+    // `mask_output` — the gateway's own Langfuse record of this call must not carry what the
+    // model wrote. The chart sets `turn_off_message_logging`, which redacts the prompt and the
+    // completion TEXT; on LiteLLM 1.90 it leaves the completion's tool-call ARGUMENTS in place,
+    // and those are model-written values that can quote a document (a `write_file` body, a
+    // query predicate). This is the one call path that sends tools, so it asks the gateway to
+    // mask its logged output outright. Usage, cost and the trace ids are still logged; the
+    // OS's own generation (observe.ts) records the tool-call structure at the configured
+    // redaction level, and the caller still receives the full response. Measured against
+    // 1.90.0 with a recording Langfuse endpoint — see docs/components/langfuse.md.
+    const metadata: Record<string, unknown> = { tags: cred.tags, mask_output: true };
     if (req.observe) {
       metadata.existing_trace_id = req.observe.traceId;
       if (req.observe.parentObservationId) metadata.parent_observation_id = req.observe.parentObservationId;

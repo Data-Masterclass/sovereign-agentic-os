@@ -408,10 +408,20 @@ litellmAgentKey:
   alias: "sovereign-agents"
   # Per-model cost caps (model_max_budget)
   enterprise: false
-  maxBudget: 5            # overall USD spend cap on this key
-  # Auto-reset window for maxBudget (LiteLLM key `budget_duration`, e.g. "7d" =
-  # weekly). Empty => no reset (a one-shot cap).
-  budgetDuration: ""
+  # Spend cap on this key PER `budgetDuration`. LiteLLM calls the unit "USD" but converts
+  # nothing: the amount is in whatever currency the `model_info` prices below are in — EUR on
+  # the shipped price book. This ONE key serves every assistant and every agent run that has
+  # no key of its own, for all users, so it is sized above the per-system default
+  # (`osUI.agentSystemKey.maxBudget`, 5 a week): 25 is roughly 16M input tokens of the
+  # reasoning model or 160M of the standard model per week at the seeded prices.
+  maxBudget: 25
+  # Reset window for maxBudget (LiteLLM key `budget_duration`: "7d" weekly, "30d", "24h").
+  # Weekly, like `osUI.agentSystemKey.budgetDuration`. Empty => NO reset: a lifetime cap, after
+  # which every caller of this key is refused until an admin raises it. Do not ship that.
+  # Changing the window on an existing key (the key-init Job runs /key/update on every
+  # upgrade) sets a new reset time; it does NOT zero the spend already counted — that happens
+  # at the first reset. See docs/components/litellm.md "Budgets".
+  budgetDuration: "7d"
   models:                 # only these models are callable with this key
     - sovereign-default   # standard/worker tier (STACKIT gpt-oss-20b)
     - sovereign-mock      # back-compat alias -> same standard/worker tier
@@ -420,7 +430,10 @@ litellmAgentKey:
   # HARD COST GUARDRAIL: a dedicated per-model USD cap for the pay-per-token
   # STACKIT routes.
   modelMaxBudget: {}
-  # Per-key rate limits with graceful queueing (security.md).
+  # Per-key rate limits. They do NOT queue: a request over rpm / tpm / max_parallel_requests is
+  # refused at once with HTTP 429 (body "Rate limit exceeded ... Limit resets at: ...", header
+  # `retry-after`). The router's `num_retries` only retries UPSTREAM errors, never this refusal,
+  # so backing off is the caller's job — the OS does it in tabs/agents/lib/engine/rate-limit.ts.
   # This ONE key serves every agent run and assistant of every user, so the limits are
   # tenant-wide, not per run. 200000 tokens/min was reached by a single 12-document run
   # on 2026-11-19 (each step re-sends its prompt and history, about 20k tokens a step).
@@ -509,16 +522,40 @@ litellm:
   proxy_config:
     model_list:
       # --- Standard / worker tier (STACKIT gpt-oss-20b, pay-per-token)
+      #
+      # `model_info` — WHY EVERY ALIAS CARRIES ONE. These are custom model ids behind an
+      # OpenAI-compatible endpoint, so LiteLLM's built-in price map does not know them: without
+      # `input_cost_per_token` / `output_cost_per_token` it books every call at cost 0, key
+      # spend never moves, and NO budget (`litellmAgentKey.maxBudget`, a system's own key) ever
+      # triggers. The prices are the same ones as `osUI.modelPricesJson` (per 1M tokens there,
+      # per token here: divide by 1,000,000), in the same currency (EUR, STACKIT's price list);
+      # LiteLLM labels its ledger "USD" but converts nothing. `scripts/check-litellm-model-info.mjs`
+      # fails the gate when an alias has no price, when a price disagrees with the price book,
+      # or when `supports_vision` disagrees with os-ui/core/models/capabilities.ts.
+      # Limits and capabilities are STACKIT's published figures (docs.stackit.cloud, "Available
+      # shared models"): gpt-oss-20b 131K context / 8192 max generation, text only, tool calling;
+      # Qwen3-VL-235B 200K context / 16384 max generation, text + image, tool calling.
+      # `max_input_tokens` is informational here (it is what `/model/info` reports): the router's
+      # `enable_pre_call_checks` is deliberately NOT on — see docs/components/litellm.md.
       - model_name: sovereign-default
         litellm_params:
           model: openai/gpt-oss-20b
           api_base: os.environ/STACKIT_API_BASE
           api_key: os.environ/STACKIT_API_KEY
+        model_info: &gptOss20bInfo
+          mode: chat
+          input_cost_per_token: 0.00000015     # 0.15 per 1M
+          output_cost_per_token: 0.00000025    # 0.25 per 1M
+          max_input_tokens: 131000
+          max_output_tokens: 8192
+          supports_vision: false
+          supports_function_calling: true
       - model_name: sovereign-mock            # back-compat alias -> worker tier
         litellm_params:
           model: openai/gpt-oss-20b
           api_base: os.environ/STACKIT_API_BASE
           api_key: os.environ/STACKIT_API_KEY
+        model_info: *gptOss20bInfo
       # --- Reasoning tier (STACKIT Qwen3-VL-235B, pay-per-token)
       - model_name: sovereign-reasoning
         litellm_params:
@@ -526,12 +563,25 @@ litellm:
           api_base: os.environ/STACKIT_API_BASE
           api_key: os.environ/STACKIT_API_KEY
           timeout: 300                        # generous: reasoning generations are long
+        model_info:
+          mode: chat
+          input_cost_per_token: 0.0000015      # 1.50 per 1M
+          output_cost_per_token: 0.00000175    # 1.75 per 1M
+          max_input_tokens: 200000
+          max_output_tokens: 16384
+          supports_vision: true                # on the OS image allowlist (capabilities.ts)
+          supports_function_calling: true
       # --- Offline embeddings (mock-model, deterministic 384-dim) -------------
       - model_name: sovereign-embed
         litellm_params:
           model: openai/mock-embed
           api_base: http://mock-model:8080/v1
           api_key: "sk-mock-unused"
+        model_info:
+          mode: embedding
+          input_cost_per_token: 0              # the bundled mock is free: priced AT zero, on purpose
+          output_cost_per_token: 0
+          supports_vision: false
       # NOTE: this list is the shipped SEED only — the four aliases the OS actually
       # uses (sovereign-default/-mock/-reasoning/-embed).
     router_settings:
@@ -544,6 +594,15 @@ litellm:
       # which is a duplicate reasoning route to fail over to.
     litellm_settings:
       success_callback: ["langfuse"]          # gateway-level tracing to Langfuse
+      # CONTENT STAYS OUT OF THE GATEWAY'S TRACE. Without this the gateway's own Langfuse
+      # generation carries the full prompt and completion of every call — document text, tool
+      # results, images — which defeats the OS's own redaction (`osUI.langfuseRedaction`). With
+      # it LiteLLM replaces the messages and the completion text with "redacted-by-litellm"
+      # before any callback runs and still logs model, usage, cost, latency, tags and the trace
+      # ids. Owner decision 2026-11-19: no document or image content in traces by default. What
+      # it does not cover, and how to switch content on for one debugging session, is in
+      # docs/components/langfuse.md "What the gateway writes".
+      turn_off_message_logging: true
       # A3 (checklist A30): a REJECTED or failed call is observable too — it lands in
       # Langfuse as a failed generation (inside the run trace when the OS passed one).
       failure_callback: ["langfuse"]
@@ -565,6 +624,10 @@ litellm:
       master_key: os.environ/PROXY_MASTER_KEY
       # Persist admin-registered models (via /model/new)
       store_model_in_db: true
+      # Spend logs (the gateway's own Postgres) keep metadata only — never the prompt or the
+      # completion. This is LiteLLM's default; it is pinned here so the admin console cannot
+      # switch it on by accident (from LiteLLM 1.103 a value in this file wins over the database).
+      store_prompts_in_spend_logs: false
     # MCP gateway — register tool servers; agents call them via LiteLLM
     mcp_servers:
       sovereign_query:
@@ -1460,8 +1523,9 @@ osUI:
   # How much of a model/tool call reaches Langfuse (LANGFUSE_REDACTION). Empty = `structure`:
   # roles + character counts for message content, the full tool-call structure, a 160-char result
   # preview. `strict`: argument KEY NAMES + character counts only, no preview — for tenants whose
-  # tool arguments may carry personal data. Either way LiteLLM's own nested generation ships the
-  # full prompt unless `turn_off_message_logging` is set (docs/components/langfuse.md).
+  # tool arguments may carry personal data. LiteLLM's own nested generation is governed
+  # separately, at the gateway: `litellm.proxy_config.litellm_settings.turn_off_message_logging`
+  # (on by default) — docs/components/langfuse.md "What the gateway writes".
   langfuseRedaction: ""
   # Model pricing for Monitoring cost facts — EUR per 1M tokens per LiteLLM
   # model_name.

@@ -84,6 +84,13 @@ litellm:
     - litellm-credentials          # master key + STACKIT_API_BASE (unchanged)
     - stackit-ai-model-serving-key # External-Secrets-synced STACKIT_API_KEY
   proxy_config:
+    # EVERY alias carries `model_info` (prices, limits, capabilities) — see the note in the
+    # chart's values.yaml. Without prices LiteLLM books each call at cost 0 and no budget ever
+    # triggers. Figures: STACKIT price table (stackit.com, AI Model Serving, EUR per 1M tokens)
+    # and docs.stackit.cloud "Available shared models". This is a LIST, so Helm replaces it
+    # whole: a cluster that carries its own `model_list` in its release values (production does
+    # — `scripts/deploy.sh` derives the values from the live release) must add the same
+    # `model_info` blocks THERE; see docs/components/litellm.md "Prices and budgets".
     model_list:
       # Standard/worker tier -> gpt-oss-20b on STACKIT (lightweight, non-reasoning).
       - model_name: sovereign-default
@@ -91,11 +98,20 @@ litellm:
           model: openai/gpt-oss-20b
           api_base: "https://api.openai-compat.model-serving.eu01.onstackit.cloud/v1"
           api_key: os.environ/STACKIT_API_KEY
+        model_info: &gptOss20bInfo
+          mode: chat
+          input_cost_per_token: 0.00000015     # 0.15 EUR per 1M (STACKIT price list)
+          output_cost_per_token: 0.00000025    # 0.25 EUR per 1M
+          max_input_tokens: 131000             # STACKIT: context length 131K
+          max_output_tokens: 8192              # STACKIT: maximum generation 8192
+          supports_vision: false               # STACKIT: input and output are text
+          supports_function_calling: true      # STACKIT: tool calling enabled
       - model_name: sovereign-mock # back-compat alias -> worker tier
         litellm_params:
           model: openai/gpt-oss-20b
           api_base: "https://api.openai-compat.model-serving.eu01.onstackit.cloud/v1"
           api_key: os.environ/STACKIT_API_KEY
+        model_info: *gptOss20bInfo
       - model_name: sovereign-embed # embeddings for RAG (EU-sovereign)
         # NOTE: Qwen3-VL-Embedding-8B is 4096-dim — set opensearch.knnDimension to
         # match (retrieval.knnDimension: 4096) and reindex. Dimension MUST match.
@@ -103,17 +119,33 @@ litellm:
           model: openai/Qwen/Qwen3-VL-Embedding-8B
           api_base: "https://api.openai-compat.model-serving.eu01.onstackit.cloud/v1"
           api_key: os.environ/STACKIT_API_KEY
+        model_info:
+          mode: embedding
+          input_cost_per_token: 0.00000008     # 0.08 EUR per 1M (STACKIT price list; input only)
+          output_cost_per_token: 0
+          max_input_tokens: 32000              # STACKIT: maximum input tokens 32000
+          output_vector_size: 4096             # STACKIT: output dimension 4096
+          supports_vision: false               # the endpoint accepts images, but the OS sends none: off the allowlist
       # Vision + heavy escalation -> Qwen3-VL 235B (the confirmed VLM).
       - model_name: sovereign-vision
         litellm_params:
           model: openai/Qwen/Qwen3-VL-235B-A22B-Instruct-FP8
           api_base: "https://api.openai-compat.model-serving.eu01.onstackit.cloud/v1"
           api_key: os.environ/STACKIT_API_KEY
+        model_info: &qwen3Vl235bInfo
+          mode: chat
+          input_cost_per_token: 0.0000015      # 1.50 EUR per 1M (STACKIT price list)
+          output_cost_per_token: 0.00000175    # 1.75 EUR per 1M
+          max_input_tokens: 200000             # STACKIT: context length 200K
+          max_output_tokens: 16384             # STACKIT: maximum generation 16384
+          supports_vision: true                # STACKIT: text and image input; on the OS image allowlist
+          supports_function_calling: true      # STACKIT: tool calling enabled
       - model_name: sovereign-premium
         litellm_params:
           model: openai/Qwen/Qwen3-VL-235B-A22B-Instruct-FP8
           api_base: "https://api.openai-compat.model-serving.eu01.onstackit.cloud/v1"
           api_key: os.environ/STACKIT_API_KEY
+        model_info: *qwen3Vl235bInfo
       # Reasoning tier (keeps routing.ts' `sovereign-reasoning` default valid).
       # BOTH the sovereign and the fast reasoning names map to STACKIT Qwen3-VL-235B.
       - model_name: sovereign-reasoning
@@ -121,11 +153,13 @@ litellm:
           model: openai/Qwen/Qwen3-VL-235B-A22B-Instruct-FP8
           api_base: "https://api.openai-compat.model-serving.eu01.onstackit.cloud/v1"
           api_key: os.environ/STACKIT_API_KEY
+        model_info: *qwen3Vl235bInfo
       - model_name: sovereign-reasoning-fast
         litellm_params:
           model: openai/Qwen/Qwen3-VL-235B-A22B-Instruct-FP8
           api_base: "https://api.openai-compat.model-serving.eu01.onstackit.cloud/v1"
           api_key: os.environ/STACKIT_API_KEY
+        model_info: *qwen3Vl235bInfo
     router_settings:
       routing_strategy: simple-shuffle
       num_retries: 3
@@ -201,6 +235,11 @@ osUI:
 # chart's four-alias list does not know. `scripts/check-litellm-allowlist.mjs` fails the
 # gate when this list misses one; the `litellm-agent-key-init` Job pushes it on upgrade.
 litellmAgentKey:
+  # The shared key's weekly pool on this profile, in the currency of the `model_info` prices
+  # (EUR). 250 a week is the value production has run with since the key became resetting;
+  # it only started to MEAN something once the aliases above carried prices.
+  maxBudget: 250
+  budgetDuration: "7d"
   models:
     - sovereign-default
     - sovereign-mock
