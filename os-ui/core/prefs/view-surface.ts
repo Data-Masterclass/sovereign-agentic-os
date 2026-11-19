@@ -60,9 +60,3 @@ export async function setViewSurface(userId: string, surface: ViewSurface): Prom
   map.set(userId, surface);
   mirror.writeThrough(docId(userId), { userId, viewSurface: surface, updatedAt: new Date().toISOString() });
 }
-
-/** Test seam. */
-export function __resetViewSurface(): void {
-  state().cache = null;
-  mirror.__reset();
-}

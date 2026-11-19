@@ -59,7 +59,6 @@ export function basename(path: string): string {
  * that map to a first-class internal kind. Everything else maps to `general`.
  */
 export type OkfType = 'workflow' | 'decision-rule' | 'tacit-knowledge' | 'term' | 'overview';
-export const OKF_TYPES: OkfType[] = ['workflow', 'decision-rule', 'tacit-knowledge', 'term', 'overview'];
 
 /** Our internal kinds an imported concept maps to. Unknown OKF types → 'general'. */
 export type InternalKind = 'workflow' | 'general';

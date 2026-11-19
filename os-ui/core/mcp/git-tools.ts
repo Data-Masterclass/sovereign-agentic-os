@@ -30,7 +30,6 @@ import {
   getVersion,
   diffVersions,
   isGitObjectKind,
-  notFoundMessage,
   type GitObjectKind,
   type GitStoreOptionsLike,
 } from '@core/infra/git-objects';
@@ -160,6 +159,3 @@ export const GIT_TOOLS: McpTool[] = [
     },
   },
 ];
-
-/** The `not_found` reason a client sees for an object it may not see — exported for the tests. */
-export const gitNotFound = notFoundMessage;

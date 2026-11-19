@@ -70,18 +70,6 @@ export const ARTIFACT_TYPES: ArtifactType[] = [
 
 export const VISIBILITIES: Visibility[] = ['Personal', 'Shared', 'Certified'];
 
-export const TYPE_LABELS: Record<ArtifactType, string> = {
-  dataset: 'Dataset',
-  transformation: 'dbt Transformation',
-  metric: 'Metric',
-  dashboard: 'Dashboard',
-  agent: 'Agent',
-  knowledge: 'Knowledge Doc',
-  connection: 'Connection',
-  file: 'File',
-  skill: 'Skill',
-};
-
 /**
  * Tier → OS-wide lifecycle visibility, the ONE mapping every tab's tile/detail view
  * used to re-derive as a private `lcVis`. Each tab names its middle/top tiers
@@ -105,9 +93,4 @@ export function promoteLabel(v: Visibility): string | null {
   // (Personal → Shared) then "Certify to Company" (Shared → Certified).
   if (v === 'Personal' || v === 'Shared') return promoteVerb(v);
   return null;
-}
-
-/** CSS modifier class for the visibility badge (defined in globals.css). */
-export function badgeClass(v: Visibility): string {
-  return `badge vis-${v.toLowerCase()}`;
 }

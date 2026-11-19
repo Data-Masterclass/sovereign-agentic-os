@@ -4,7 +4,6 @@
 import 'server-only';
 import type { CurrentUser } from '@core/kernel/auth';
 import type { Connection, AirflowAuthType } from '@tabs/connections/lib/schema';
-import { getSecretServerSide } from '@core/infra/secrets';
 import { getConnectionForUser } from '@tabs/connections/lib/store';
 
 /**
@@ -522,22 +521,6 @@ export async function clearTask(
   if (!r.ok) return r;
   const rows = (r.data as { task_instances?: unknown[] })?.task_instances;
   return { ok: true, data: { cleared: Array.isArray(rows) ? rows.length : 0 } };
-}
-
-// ------------------------------------------------------- server-side bridge -----
-
-/** Build the pure client config from a resolved `airflow` connection. The secret is
- *  dereferenced from the vault HERE and never leaves the server. */
-export function airflowConnFrom(c: Connection): AirflowConn {
-  const secret = getSecretServerSide(c.secretRef) ?? undefined;
-  return {
-    baseUrl: c.endpoint,
-    authType: c.airflow?.authType ?? 'bearer',
-    username: c.airflow?.username,
-    secret,
-    fetchImpl: fetch,
-    timeoutMs: 4000,
-  };
 }
 
 /** Resolve a specific `airflow` connection the caller may see (id from the UI/MCP).

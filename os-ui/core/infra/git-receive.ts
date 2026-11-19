@@ -195,11 +195,6 @@ export function resolveGovernedRef(ref: string, caller: Pusher): { member: strin
   }
 }
 
-/** Test seam. */
-export function __clearGovernedRefResolver(): void {
-  delete (globalThis as unknown as Record<symbol, GovernedRefResolver | undefined>)[REF_RESOLVER_KEY];
-}
-
 // ------------------------------------------------------------------ the lease ---
 
 export class LockTimeoutError extends Error {

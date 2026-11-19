@@ -20,7 +20,7 @@
  *     user id, and the caller re-reads the LIVE principal through `principalById`.
  */
 import { osMirror } from '@core/infra/os-mirror';
-import { hashToken, mintToken, parseAccessToken, tokenMatches } from '@core/auth/access-tokens';
+import { mintToken, parseAccessToken, tokenMatches } from '@core/auth/access-tokens';
 
 /** What a token may be used for. One value today; the field stops a future kind being confused. */
 export type TokenScope = 'git';
@@ -186,15 +186,6 @@ export function resolveAccessToken(presented: string, opts: { scope?: TokenScope
     return { ok: true, userId: rec.userId, tokenId: rec.id, prefix: rec.prefix };
   }
   return { ok: false, reason: 'unknown' };
-}
-
-/** Test seam: seed a record whose plaintext the test already knows. Never used in production. */
-export function __seedAccessToken(token: string, rec: Omit<AccessTokenRecord, 'hash' | 'prefix'>): AccessTokenRecord {
-  const parsed = parseAccessToken(token);
-  if (!parsed) throw tokenError('seed token is not token-shaped', 400);
-  const full: AccessTokenRecord = { ...rec, prefix: parsed.prefix, hash: hashToken(token) };
-  state().items.push(full);
-  return full;
 }
 
 function tokenError(message: string, status: number): Error & { status: number } {

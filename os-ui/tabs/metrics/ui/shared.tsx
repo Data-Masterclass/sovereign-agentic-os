@@ -154,47 +154,7 @@ export function slug(s: string): string {
   return s.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
 }
 
-/** The ✓/✗ check rows shared by define-convergence and the govern consistency gate. */
-export function ChecksList({ rows }: { rows: CheckRow[] }) {
-  return (
-    <div className="build-report">
-      {rows.map((r) => (
-        <div key={r.name} className={`build-row ${r.ok ? 'ok' : 'fail'}`}>
-          <span className="build-tool">{r.ok ? '✓' : '✗'} {r.name}</span>
-          <span className="muted" style={{ fontSize: 12 }}>{r.detail}</span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
 /** The honest live / live (sql) / offline-mock label (gold when live, quiet otherwise). */
 export function ModeBadge({ mode }: { mode: Mode }) {
   return <span className={`badge ${mode.startsWith('live') ? 'ok' : 'muted'}`}>{mode}</span>;
-}
-
-/** The metric Build report (the governed Trino adapter, apply→verify) + its mode.
- *  When the build is `pending` (Cube is up but the model-sync sidecar hasn't pushed the
- *  just-defined measure yet), a not-yet-resolved row is SYNC LAG, not a failure — so it
- *  renders as "syncing" (⟳), never a hard "✗ Build failed". The metric is already saved. */
-export function BuildRowsView({ build }: { build: DefineResult['build'] }) {
-  const header = build.ok ? '✓ Build passed' : build.pending ? '⟳ Build syncing' : '✗ Build failed';
-  return (
-    <div className="build-report">
-      <div className="row" style={{ justifyContent: 'space-between' }}>
-        <strong>{header}</strong>
-        <ModeBadge mode={build.mode} />
-      </div>
-      {build.rows.map((r) => {
-        // A failing row under a pending build is a sync-lag non-resolution, not an error.
-        const syncing = build.pending && r.status === 'fail';
-        return (
-          <div key={r.tool} className={`build-row ${syncing ? 'ok' : r.status}`}>
-            <span className="build-tool">{r.status === 'ok' ? '✓' : syncing ? '⟳' : '✗'} {r.tool}</span>
-            <span className="muted" style={{ fontSize: 12 }}>{syncing ? 'syncing — resolves shortly' : (r.error ?? r.detail)}</span>
-          </div>
-        );
-      })}
-    </div>
-  );
 }

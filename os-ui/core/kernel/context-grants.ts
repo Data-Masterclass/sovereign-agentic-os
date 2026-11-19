@@ -26,15 +26,6 @@ export type ContextKind = 'connections' | 'data' | 'knowledge' | 'files' | 'metr
 /** Every kind, in a stable display order. */
 export const CONTEXT_KINDS: ContextKind[] = ['connections', 'data', 'knowledge', 'files', 'metrics'];
 
-/** The short human label for each kind (title-cased for section headers). */
-export const CONTEXT_KIND_LABELS: Record<ContextKind, string> = {
-  connections: 'Connections',
-  data: 'Data',
-  knowledge: 'Knowledge',
-  files: 'Files',
-  metrics: 'Metrics',
-};
-
 /** The three plain access levels a grant can hold, weakest → strongest. */
 export type ContextAccess = 'read-only' | 'read-propose' | 'read-write';
 
@@ -247,9 +238,4 @@ export function clampAllGrants(grants: ContextGrants, cap: ContextAccessCap): Co
 /** Total grant count across all kinds — drives the "N granted" summary. */
 export function grantCount(grants: ContextGrants): number {
   return CONTEXT_KINDS.reduce((n, k) => n + grants[k].length, 0);
-}
-
-/** Grant count for ONE kind — drives a per-kind "N granted" badge on collapsed rows. */
-export function grantCountForKind(grants: ContextGrants, kind: ContextKind): number {
-  return grants[kind]?.length ?? 0;
 }

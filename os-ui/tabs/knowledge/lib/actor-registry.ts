@@ -41,11 +41,6 @@ export function findActorById(workflow: Workflow, actorId: string): Actor | unde
   return workflow.actors.find((a) => a.id === actorId);
 }
 
-/** `Loan Officer — Human` : one label for a registry actor, used by both inspectors. */
-export function actorLabel(actor: Actor): string {
-  return `${actor.name} — ${actor.category}`;
-}
-
 /**
  * Every step whose actor is not in the registry. A step with no actor name at all is
  * NOT a warning — it is simply unassigned, which the inspector shows as "Choose an
@@ -67,9 +62,4 @@ export function actorWarnings(workflow: Workflow): ActorWarning[] {
     });
   }
   return out;
-}
-
-/** The warning for one step, if it has one. */
-export function warningForStep(workflow: Workflow, stepId: string): ActorWarning | undefined {
-  return actorWarnings(workflow).find((w) => w.stepId === stepId);
 }
