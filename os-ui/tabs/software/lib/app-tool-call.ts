@@ -45,6 +45,13 @@ export async function callAppTool(
    * callable at all. There is no "assume adopted" path: the gate is fail-closed either way.
    */
   adoption?: AdoptionPort,
+  /**
+   * `approved: true` ONLY from the approve effect (`app-write-approval.ts`): a human approved
+   * this held write, so a `requires_approval` verdict now executes instead of filing a second
+   * card. Every other layer (closed names, declaration, adoption, grant, profile) is re-checked
+   * and a deny still denies.
+   */
+  opts: { approved?: boolean } = {},
 ): Promise<AppToolCallResult> {
   const principal = app.mcpPrincipal;
 
@@ -98,8 +105,8 @@ export async function callAppTool(
         body: { tool, principal, decision: 'deny', policy: 'app-grant', layer: decision.layer, reason: decision.reason, traceId: tr.id },
       };
     }
-    if (decision.effect === 'requires_approval') {
-      enqueue({
+    if (decision.effect === 'requires_approval' && !opts.approved) {
+      const held = enqueue({
         kind: 'connection_write',
         title: `Approval needed: ${tool}`,
         detail: `Declared app action '${tool}' on '${app.name}' (${principal}) writes, and the run is under the reads-on/writes-off preset.`,
@@ -112,7 +119,7 @@ export async function callAppTool(
       const tr = await trace({ principal, tool, input: args ?? {}, output: { held: true, reason: decision.reason }, decision: 'requires_approval' });
       return {
         status: 202,
-        body: { tool, principal, decision: 'requires_approval', policy: 'app-grant', reason: decision.reason, held: true, traceId: tr.id },
+        body: { tool, principal, decision: 'requires_approval', policy: 'app-grant', reason: decision.reason, held: true, approvalId: held.id, traceId: tr.id },
       };
     }
   }
@@ -127,8 +134,8 @@ export async function callAppTool(
       ? await authorizeAppTool(principal, tool)
       : { effect: profile.effect, policy: 'app-grant' as const, reason: profile.reason };
 
-  if (authz.effect === 'requires_approval') {
-    enqueue({
+  if (authz.effect === 'requires_approval' && !opts.approved) {
+    const held = enqueue({
       kind: 'connection_write',
       title: `Approval needed: ${tool}`,
       detail: `Write to app MCP '${app.name}' (${principal}) requested via the app tool surface.`,
@@ -141,10 +148,10 @@ export async function callAppTool(
     const tr = await trace({ principal, tool, input: args ?? {}, output: { held: true, reason: authz.reason }, decision: 'requires_approval' });
     return {
       status: 202,
-      body: { tool, principal, decision: 'requires_approval', policy: authz.policy, reason: authz.reason, held: true, traceId: tr.id },
+      body: { tool, principal, decision: 'requires_approval', policy: authz.policy, reason: authz.reason, held: true, approvalId: held.id, traceId: tr.id },
     };
   }
-  if (authz.effect !== 'allow') {
+  if (authz.effect !== 'allow' && !(authz.effect === 'requires_approval' && opts.approved)) {
     const tr = await trace({ principal, tool, input: rawBody, output: { denied: authz.reason }, decision: 'deny' });
     return {
       status: 403,

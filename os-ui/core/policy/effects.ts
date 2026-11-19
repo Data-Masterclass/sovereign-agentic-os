@@ -103,6 +103,9 @@ export type EffectDeps = {
    *  capability profile / four-layer intersection is re-checked server-side, so the held
    *  payload can never smuggle a wider write). Returns the executor's honest {ok, reason}.
    *  Injected by the route so this module (and its tests) stay free of the connections store. */
+  /** Run a held Software-app write (`connection_write` whose payload names an `appId`). Wired
+   *  by `buildEffectDeps` from the registered applier (`app-write-port.ts`). */
+  applyAppWrite?: (req: { appId: string; tool: string; args: Record<string, unknown>; requestedBy: string }) => Promise<{ ok: boolean; reason: string }>;
   applyConnectionWrite?: (
     payload: { connId: string; tool: string; args: Record<string, unknown> },
     approver: { id: string; role: Principal['role']; domains: string[] },
@@ -376,6 +379,33 @@ export async function applyEffect(a: Approval, approver: EffectApprover, deps: E
       // approver — the capability profile / four-layer intersection is re-checked server-side,
       // so a doctored payload can never smuggle a wider write. If execution is IMPOSSIBLE
       // (missing dep/payload), the approval outcome is ok:false with the reason — NEVER a mock.
+      // A HELD APP WRITE (the app tool door files `{ appId, args }`, no connection): run it through
+      // the app's own gate, as the app call would have run, with this approval as the human OK.
+      // The app may have been deleted since, or the gate may now refuse: either is ok:false with
+      // the reason. Never the mock clear below.
+      const appId = s(p.appId);
+      if (appId && !s(p.connId, s(p.connectionId))) {
+        const tool = s(a.tool);
+        const args = (p.args && typeof p.args === 'object' ? p.args : {}) as Record<string, unknown>;
+        const detail = { kind: a.kind, appId, tool, agent: a.agent, requestedBy: a.requestedBy };
+        if (!deps.applyAppWrite || !tool) {
+          return {
+            ok: false,
+            applied: !tool
+              ? 'Held app write could not be run: the approval does not name the app action.'
+              : 'Held app write could not be run: this OS process cannot run app actions. Nothing was written.',
+            live: false,
+            audit: { action: 'approve', subject: tool || a.kind, reason: `${a.kind} approval failed (app write not runnable) — ${who}`, detail },
+          };
+        }
+        const out = await deps.applyAppWrite({ appId, tool, args, requestedBy: a.requestedBy });
+        return {
+          ok: out.ok,
+          applied: out.ok ? `App write executed: ${tool} — ${out.reason}` : `App write did NOT execute: ${out.reason}`,
+          live: out.ok,
+          audit: { action: 'approve', subject: tool, reason: `Held app write approved by ${who}`, detail },
+        };
+      }
       if (deps.applyConnectionWrite) {
         const connId = s(p.connId, s((p.connectionId)));
         const preview = (p.preview ?? {}) as { action?: unknown; args?: unknown };
