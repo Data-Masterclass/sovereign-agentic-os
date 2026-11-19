@@ -1059,7 +1059,7 @@ at **zero** (it stays two-way: a new platform write fails until it is classified
 
 | Posture for an agent run | Tools | Mechanism |
 |---|---|---|
-| **Refused** at the three agent-run doors below | `decide_deploy`, `promote`, `decide_approval`, `promote_connection`, `reindex_corpus`, `revoke_action_adoption` | `AGENT_FORBIDDEN_TOOLS` (`core/mcp/write-tool-meta.ts`). Also `COMPANY_SCOPE_TOOLS` as the second line. |
+| **Refused** at the three agent-run doors below — and by Ask the OS | `decide_deploy`, `promote`, `decide_approval`, `promote_connection`, `reindex_corpus`, `revoke_action_adoption` | `AGENT_FORBIDDEN_TOOLS` (`core/mcp/write-tool-meta.ts`). Also `COMPANY_SCOPE_TOOLS` as the second line. |
 | **Held under every preset** — a second person confirms (engine path only) | `delete`, `archive`, `request_deploy`, `retire_connection`, `request_certification` | `ALWAYS_CONFIRMED_TOOLS` in `tabs/agents/lib/build/hold.ts` → `domain_admin` of the system's domain (`admin` under `read-only`). |
 | **Held under every preset** — a *platform admin* confirms (engine path only) | `update_operating_manual`, `restore_operating_manual_version` | `ALWAYS_CONFIRMED_TOOLS` and `ADMIN_CONFIRMED_TOOLS` in `hold.ts` → `admin`. The scope (My / Domain / Company) is an argument the name-only gate cannot see, so it answers for the widest. |
 | **Held on escalation** (pre-existing) | `publish_knowledge`, `request_promotion`, `approve_promotion` | `ESCALATING_DOMAIN_TOOLS` → `domain_admin`. |
@@ -1074,14 +1074,13 @@ a tool, and there are five ways a model's tool call reaches `handleRpc`:
 | Agent system run | `runOsTeam` → `grantedToolExecutor` (engine, schedule, `run_agent_system`) | refused at gate 0, never advertised | yes — decided in the tools node, run parks | the system's grants ∩ the node's tools |
 | Software Team panel | `runPhaseTurn` → `phaseToolExecutor` (`POST /api/software/team`) | refused, never advertised | **the user's own Confirm** for `request_deploy` (`PANEL_CONFIRMED_TOOLS`) — not a second person | only what this turn's agent was offered |
 | App tool call | `callAppTool` (`POST /api/apps/<id>/tool`) | refused by name; `parseAppActions` rejects the declaration | the app's own reads-on/writes-off preset | the app's own tools |
-| Ask the OS | `runOsAssistant` (`/api/assistant/chat`) | **not consulted** | **none** | the present user's whole role-scoped registry |
+| Ask the OS | `runOsAssistant` (`/api/assistant/chat`) → `askToolExecutor` | refused with the screen where a person decides, never advertised | **the user's own Confirm** for every call that is not confirm-free (`userConfirmGate`) — not a second person | the present user's role-scoped registry minus the forbidden names |
 | Tab assistant | `runTabAgent` (`/api/agent-chat`, the app Build chat) | **not consulted** | **none** | the tab's tools for the user's role (an allow-list in Build-chat modes) |
 
-The last two are interactive assistants acting for a person who is present, and
-they are deliberately out of scope of both tables. There is **no structural
-confirm step** before a write in either: `core/runtime/agent-loop.ts` says so in
-its own words — its `writeToolNames` is "the harness's failed-call guard; it is
-NOT a confirmation gate" — and "confirm before a write" is a prompt-level rule
+The last two are interactive assistants acting for a person who is present. **Ask
+the OS is gated** (see "Ask the OS is behind the confirm gate" below). The **tab
+assistant and the app Build chat are not yet**: there is **no structural confirm
+step** before a write there, and "confirm before a write" is a prompt-level rule
 only. A person's own MCP session and every UI route go straight to `handleRpc`
 under the user's role gates and consult neither table, which is intended.
 
@@ -1207,8 +1206,7 @@ above; and `promote_metric`, which is catalogued but My-scope although it is a
 promotion. The registry ratchet covers `ALL_MCP_TOOLS` as registered in the test
 environment — a bundle behind a flag that is off there is not in it.
 
-**Groundwork for a user-confirm gate: the classification is production code, and
-nothing consults it yet.** `core/mcp/tool-classes.ts` holds `READ_TOOLS` and the
+**The user-confirm classification is production code.** `core/mcp/tool-classes.ts` holds `READ_TOOLS` and the
 backlog (they used to live only inside the registry ratchet test), a small table of
 tools that sit in the write catalog and are confirm-free anyway — each with the
 reason, each only after its handler was read — and
@@ -1220,24 +1218,26 @@ read-shaped tools live in a write barrel (`list_exposure_sets`,
 `list_adoptable_actions`). Three cost-only actions that save nothing are confirm-free
 too (`preview_metric`, `suggest_metrics`, `propose_quality_fixes`). Two that read like
 them are **not**: `run_quality_checks` appends a run to the dataset's durable quality
-series and `export_okf_bundle` creates a Files artifact. This changes no behaviour —
-the interactive-assistant rows in the table above are still accurate, and a test in
-`core/mcp/tool-classes.test.ts` fails if a production file starts importing the
-module before the gate that uses it is reviewed.
+series and `export_okf_bundle` creates a Files artifact. Ask the OS is decided by this list
+(through the gate); a test in `core/mcp/tool-classes.test.ts` pins the exact
+production files that read the module, so a new consumer is a reviewed change.
 
-**The harness now takes a *gated* executor, and every interactive caller says
+**The harness takes a *gated* executor, and a caller that is not gated says
 "ungated" out loud.** `runAgentic`'s `callTool` is a `GatedToolExecutor`
 (`core/runtime/confirm-gate.ts`, pure): a plain executor does not type-check
 (`confirm-gate.typecheck.ts` fails the build if that stops being true), so a caller
 has to pick a constructor — `userConfirmGate`, `readOnlyGate`, `engineHeldGate`, or
-`ungatedInteractive`. **All three production callers pick `ungatedInteractive`
-today**, a pass-through, so nothing is confirmed, parked or refused that was not
-before; the door table above is unchanged. `core/runtime/confirm-gate.test.ts`
-pins the exact `ungatedInteractive(` call sites (Ask the OS, the tab assistant, the
-Software Team panel) and the files that call `runAgentic(`, so the first list can
-only shrink in review and the second cannot grow unnoticed.
+`ungatedInteractive`. **Ask the OS picks `userConfirmGate`; the tab assistant /
+Build chat and the Software Team panel still pick `ungatedInteractive`**, a
+pass-through. `core/runtime/confirm-gate.test.ts` pins the exact
+`ungatedInteractive(` call sites (two: the tab assistant, the Software Team
+panel) and the files that call `runAgentic(`, so the first list can only shrink
+in review and the second cannot grow unnoticed. A fifth constructor,
+`ungatedByRollbackFlag`, is the same pass-through under a different name: a
+surface that HAS a gate, running without it because its rollback flag is off. Its
+call sites are pinned too (one: Ask).
 
-What the later wiring will rely on, already in place and tested:
+What the gate rests on:
 
 - A third tool outcome, **`parked`**: the gate did not run the call. The harness
   keeps it out of the dedup and failed-write ledgers and out of the error streak,
@@ -1258,9 +1258,99 @@ What the later wiring will rely on, already in place and tested:
   new Personal artifact or append a record. Edit tools are deliberately absent:
   the gate is name-only and cannot tell a Personal artifact from a shared one.
 
-Not built: the confirm endpoint, any UI, and any caller that parks. The external
-MCP door (`app/api/mcp/route.ts` → `serveMcp` → `handleRpc`) references none of
-this, by test — a person's own MCP client is not confirm-gated.
+The external MCP door (`app/api/mcp/**` → `serveMcp` → `handleRpc`) references
+none of this, by test, and a conformance test runs a write over it and finds it
+executed with no confirmation recorded — a person's own MCP client is not
+confirm-gated.
+
+**Ask the OS is behind the confirm gate (2026-11-19).** A change the assistant
+proposes in the Ask drawer waits for the user's own Confirm — one change at a
+time — and an approval cannot be taken through the assistant at all.
+
+*What happens on a turn.* `runOsAssistant` hands the harness
+`askToolExecutor(user, { conversationId, … })`: `userConfirmGate` around the same
+`osToolExecutor` as before. Per call the model makes:
+
+| The call is… | What Ask does |
+|---|---|
+| confirm-free (`CONFIRM_FREE`: the reads, five read-shaped catalogued tools, three cost-only ones) | runs it, as the user, as before |
+| in `AGENT_FORBIDDEN_TOOLS` (`decide_deploy`, `promote`, `decide_approval`, `promote_connection`, `reindex_corpus`, `revoke_action_adoption`) | typed refusal `surface_closed` naming the screen where a person decides; the tool is not in the specs the model is offered either. A person keeps all six in the UI and over MCP. |
+| a tool the user allowed for this conversation | runs it |
+| the same call the user already declined **twice** in this conversation | typed refusal `user_declined` — no third card |
+| arguments above 256 KB, or not serialisable | typed refusal `confirmation_too_large` / `confirmation_unavailable` |
+| anything else — unknown names included | **parked**: not run, a confirmation recorded, the turn ends |
+
+A parked turn ends at the first parked call (the harness's rule), so there is at
+most one new card per turn; the final text is the server's `parkedFinalText`, and
+the response carries `pending[]` — one card per parked call, built by
+`core/runtime/confirm-card.ts` from the **stored** call (plain title from the
+tool name, the registry's own description, key arguments, a consequence line that
+reuses `holdReason()`'s wording, the expiry, a danger flag for
+`delete`/`archive`/`retire*`, and whether the third button may be offered).
+Secret-looking argument keys are masked for display; the stored call is not
+changed. The chips under the answer gain a third state, "awaiting you".
+
+*Deciding.* `POST /api/assistant/confirm { confirmationId, decision }`
+(`core/runtime/ask-decide.ts`) — an HTTP route for a person's click, and
+deliberately not an MCP tool. `decision` is one of exactly three words,
+`confirm` / `decline` / `allow_for_conversation`; anything else is a 400 before
+any lookup. `requireUser()`; `guardAppIntent(…, 'approval-decide')` refuses a
+cross-site request and anything that claims to be a governed app; a record that
+does not exist, belongs to someone else or came from another surface is one and
+the same 404; expired is 410, already decided 409. On Confirm the **stored**
+tool and arguments run through `osToolExecutor` as that user — nothing from the
+request body — so the role floor, OPA and whatever approval the tool opens
+downstream apply again at execution time. For deletes, archives and deploy
+requests the user's own Confirm is sufficient; the four-eyes step a tool opens
+afterwards (a deploy review, a promotion approval) still happens. Single use is
+the store's `pending → executing` transition. Confirm and decline are audited as
+`assistant.confirm` / `assistant.decline`, with the call's hash and never its
+arguments. `allow_for_conversation` is accepted only for
+`SESSION_ALLOWABLE_TOOLS`; it runs this call and lets the same tool run without a
+card for the rest of that conversation (the store's allowance, eight hours at
+most, in-process).
+
+*Telling the model.* The model's history is whatever text the browser sends
+(still the last ~20 messages), so it is never trusted for outcomes. On every turn
+the server reads the conversation's confirmations from the store and appends a
+block to the system prompt — executed with a clipped result (so the next step can
+use the id it created), failed, declined ("do not call it again unless the user
+newly asks"), expired, still waiting. After a Confirm the drawer sends **one**
+follow-up turn so a multi-step task continues (its next write parks again); after
+a Cancel it sends none. A user message that *claims* a confirmation changes
+nothing: the gate parks again.
+
+*Conversation identity, honestly.* Ask has no server-side thread. A
+`conversationId` (`ask_` + 128 random bits) is minted on the first turn, returned,
+and echoed by the client; a malformed one is replaced. It is **not** a credential.
+What protects a confirmation is the session user plus the unguessable
+confirmation id; the conversation id only keeps one drawer's cards, outcomes and
+allowances apart from another's. A reload starts a new conversation, so an
+allowance does not follow the user across reloads.
+
+*Size and retention.* Arguments and the result text live in the os-ui process
+only; the durable mirror (`os-confirmations`) gets neither. Arguments are capped
+at 256 KB per parked call, the kept result at 4 000 characters, and decided
+records leave the process after eight hours. A record read back after a restart
+has no arguments and is expired — the user is asked again. **os-ui runs as one
+replica**; with two, a Confirm landing on the other replica would answer 404.
+
+*The prompt is guidance now, not the control.* `OS_RULES` keeps "clarify" and
+"plan", and tells the model that calling the write tool is what puts the Confirm
+card in front of the user — so it should not also ask "shall I go ahead?" in
+text. A model that ignores all of it still cannot run a write.
+
+*Rollback.* `ASK_CONFIRM_GATE=off` (also `0`, `false`, `no`) on the os-ui
+deployment returns Ask to the previous behaviour on the next turn: the
+pass-through executor (`ungatedByRollbackFlag`), the full role-scoped registry
+and the old prompt rule. Default and any unrecognised value: on. Confirmations
+already pending stay decidable.
+
+*Not covered, on purpose:* the tab assistant route, the Build chat, the legacy
+agent-system "instruction" mode (later PRs), and the Software Team panel, which
+keeps its own Confirm for `request_deploy`. The intent guard has the limit it
+states itself: it cannot recognise same-origin code that sends no headers; what
+such code lacks is the confirmation id, which only the Ask drawer receives.
 
 **A picker scoped to "everything the caller may see" is not scoped to the thing being
 edited.** The agent grant picker built its feed from `listDatasets/listWorkflows/
@@ -1753,9 +1843,9 @@ per-step OS span, which needs the engine migration. `exploreMetric` still discar
 query-tool's own `truncated`/`rowLimit`/`message` before `query_metric` can see them
 (`tabs/metrics/lib/build/explore-server.ts`), so a `QUERY_MAX_ROWS` clip landing *below* the
 metric's own `LIMIT` is not yet detected — a three-line fix in the metrics tab, filed for its
-owner. And the confirm before a write is **prompt-level only**: `writeToolNames` stops a failed
-write re-firing byte-identically, but it is not a confirmation gate; the structural one is the
-writer node's tool allowlist (C15, backlog).
+owner. The confirm before a write is **structural in Ask the OS** since 2026-11-19 (the
+user-confirm gate, above); `writeToolNames` is a separate thing — it stops a failed write
+re-firing byte-identically. The engine-side writer node's tool allowlist (C15) is still backlog.
 
 ## The coin — git is the system of record, and both doors write the same files
 

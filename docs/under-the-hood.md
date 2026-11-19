@@ -1508,8 +1508,11 @@ select seq, event, at from run_events where run_id = '<runId>' order by seq;
 >   `request_deploy` are held for a second person under every preset; the rest are My-scope (`read-only`
 >   holds them, otherwise the runner's own rights decide). The table is in `os-ui/ARCHITECTURE.md`
 >   ("Things this codebase will punish you for"), with the door-by-door table: the refusal and the hold
->   apply to agent system runs; the Software Team panel refuses but has **no hold**; Ask the OS and the
->   tab assistants consult neither table. `decide_approval` and `promote_connection` are refused too.
+>   apply to agent system runs; the Software Team panel refuses but has **no hold**; the tab
+>   assistants consult neither table. **Ask the OS is behind the user-confirm gate since 2026-11-19**:
+>   it refuses the six forbidden tools and parks every other write for the user's own Confirm
+>   (`POST /api/assistant/confirm`; rollback `ASK_CONFIRM_GATE=off`). `decide_approval` and
+>   `promote_connection` are refused too.
 >   The nine non-platform tools that were still unclassified were decided the same day:
 >   `revoke_action_adoption` is refused; `retire_connection` and `request_certification` are held for a
 >   domain admin and the two Operating Model writes for a platform admin, under every preset;
