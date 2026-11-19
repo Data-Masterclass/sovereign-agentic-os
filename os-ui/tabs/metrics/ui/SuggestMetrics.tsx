@@ -1,21 +1,21 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    Suggest-metrics panel — 3 to 6 grounded metric candidates from the user's context
+ * USER STORY: As a creator who does not know where to start I want suggested metrics based on
+ *             my operating model, processes and datasets so that I can pre-fill a metric in one
+ *             click.
+ * ARCHITECTURE:
+ *   - Client component (default export `SuggestPanel`); calls `/api/metrics/assistant` and
+ *     lists datasets from `/api/data/datasets`. Types mirror `@tabs/metrics/lib/suggest`.
+ *   - Works with no dataset chosen; the grounding banner names what informed the answer, and an
+ *     offline assistant shows the route's 503/402 message rather than a made-up suggestion.
+ *   - Not imported by any other module at present.
  */
 'use client';
 
 import { useEffect, useState } from 'react';
 import { type DatasetGroups, datasetLayerLabel } from '@tabs/metrics/ui/shared';
-
-/**
- * The context-grounded "Suggest metrics" panel — the calm entry point at Define. It
- * works with NO dataset chosen: the server assembles the caller's operating
- * model, processes and visible datasets, and returns 3–6 grounded candidates. One click
- * on a card pre-fills the dataset + full form and lands the builder on Refine.
- *
- * Honest by construction: the grounding banner names what actually informed the ask (and
- * links to the Operating Model when it's empty), and an offline assistant shows
- * the route's own 503/402 message — never a fabricated suggestion.
- */
 
 /** Mirrors lib/metrics/suggest.ts — the client only needs to READ these (types, not logic). */
 type MetricFormLite = { name: string; aggregation: string; column: string; dimensions: string[] };

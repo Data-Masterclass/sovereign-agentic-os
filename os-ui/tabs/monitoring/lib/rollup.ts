@@ -1,5 +1,13 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    Lens roll-up — worst-of health and attention-first ordering
+ * USER STORY: As any user I want red items first, then amber, then unknown, then green, so
+ *             that what needs attention is at the top.
+ * ARCHITECTURE:
+ *   - Pure (no IO), unit-tested; used by `aggregate.ts`.
+ *   - `byAttention` is the single ordering (health rank, then most recent); `pickAttention`
+ *     keeps red/amber items, capped at 8.
  */
 import {
   LENS_LABEL,
@@ -8,12 +16,6 @@ import {
   type LensId,
   type LensSummary,
 } from '@tabs/monitoring/lib/types';
-
-/**
- * PURE roll-up + attention-first ordering (no IO) — testable. This is the
- * "attention-first, not a wall of green" rule made concrete: red leads, then
- * amber, then unknown, then green; ties broken by recency.
- */
 
 export const HEALTH_RANK: Record<Health, number> = { red: 0, amber: 1, unknown: 2, green: 3 };
 

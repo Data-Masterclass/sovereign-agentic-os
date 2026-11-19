@@ -1,29 +1,20 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    Monitoring demo fixtures — a fixed, offline worked example for every lens
+ * USER STORY: As a developer or tester without a cluster I want the Monitoring tab to show one
+ *             coherent failure story so that I can click through and test the tab offline.
+ * ARCHITECTURE:
+ *   - Static data only, every item marked `source: 'mock'`. The story: a Sales run (run-2002)
+ *     fails → its dbt freshness check is stale (pl-3001) → the ingestion pod was OOMKilled and
+ *     restarted (sys-4001) → Sales spend nears its cap (cost-5001) → mart_sales is stale
+ *     (art-6001). Two owners (`u_sales_rep`, `u_other`) exercise the scope rules.
+ *   - Used at runtime by the run-trace, pipeline-health, cost and artifact-health adapters,
+ *     and only when `config.monitoringDemoFixtures` is on (default on in dev/test, off in
+ *     production).
+ *   - `MOCK_SYSTEM`, `MOCK_ALERTS` and `allMockItems` are used only by tests.
  */
 import type { HealthItem, Alert, TraceDetail } from '@tabs/monitoring/lib/types';
-
-/**
- * Offline-mock fixtures — the OTHER half of the live/offline dual pattern. When a
- * backend is off (no kind cluster: Langfuse/Dagster/LiteLLM/Prometheus all down),
- * the adapters fall back to these so the tab — and the VALIDATION GATE — is fully
- * demonstrable on a laptop, honestly marked `source:'mock'`.
- *
- * These deliberately encode the golden-path worked example end-to-end so the gate
- * is one coherent story you can click through:
- *
- *   a Sales agent run (run-2002) FAILS overnight  → run lens RED
- *     → its upstream dbt freshness check went stale (pl-3001) → pipeline lens RED
- *       → the ingestion pod was OOMKilled and AUTO-RESTARTED (sys-4001) → system
- *         lens shows the self-heal → the run had already failed
- *   cost for the Sales domain (cost-5001) is NEARING the Governance cap → amber
- *   the mart_sales artifact (art-6001) is stale
-
- *   a system alert NOTIFIES; a KPI/business alert is ABSENT here (Dashboards owns it)
- *
- * Scope fixtures: two different owners (`u_sales_rep` vs `u_other`) so the
- * "a User cannot see another user's trace" invariant is testable.
- */
 
 const NOW = Date.parse('2026-06-30T06:00:00Z');
 const ago = (mins: number) => new Date(NOW - mins * 60_000).toISOString();

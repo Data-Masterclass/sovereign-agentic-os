@@ -1,28 +1,19 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    Trace/lineage correlation — tie a signal to its run, pipeline, system and artifact
+ * USER STORY: As a user looking at a failed run I want to reach the stale pipeline and data
+ *             product behind it, and the related audit entry and cost cap, so that I can explain
+ *             the failure end to end.
+ * ARCHITECTURE:
+ *   - Pure; exported via `index.ts` and used by `app/api/monitoring/correlate/route.ts`.
+ *   - Relations are link tokens (an item's id plus every value in `links`); two items relate
+ *     when their token sets intersect, so correlation works whichever side wrote the link.
+ *   - Scope-safe: the component grows only through items `canSee` allows, so following a link
+ *     never reveals an out-of-scope item. One item per lens is kept (anchor first, else worst).
  */
 import type { HealthItem, Correlation, LensId, Scope } from '@tabs/monitoring/lib/types';
 import { canSee } from '@tabs/monitoring/lib/scope-core';
-
-/**
- * TRACE/LINEAGE CORRELATION (the Opus core). Ties a signal back through the chain
- *   run  ↔  pipeline  ↔  system  ↔  artifact
- * and surfaces the Governance cross-links (→ audit entry, → cost cap). This is
- * what turns five separate lenses into one explainable story: from a failed run
- * you reach the stale pipeline, the OOMKilled pod that self-healed, and the stale
- * data product it produced — and equally, from the pipeline you reach the run.
- *
- * The relationships are link TOKENS, not directed pointers: each item exposes a
- * token set (its own id + every value in `links`). Two items are related when
- * their token sets intersect, so correlation is bidirectional regardless of which
- * side authored the link (a run points at its pipeline; the pipeline need not
- * point back). On a live cluster the tokens come from Langfuse trace metadata +
- * the OS lineage graph + the Governance audit/cap ids; offline from the fixtures.
- *
- * SCOPE-SAFE: the component is grown only through items the viewer may see, so
- * correlation can never leak a node/pipeline/artifact out of scope (e.g. a User
- * following a link must still own — or their Builder domain must cover — each hop).
- */
 
 function tokens(it: HealthItem): Set<string> {
   const t = new Set<string>([it.id]);

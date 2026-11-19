@@ -1,5 +1,19 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    Run/trace adapter (lens 1) — the runs list and the drill-into-one-trace view
+ * USER STORY: As an agent owner I want to see my runs with their real status and open one to
+ *             see its steps, tool calls, context pack and logs so that I can tell why it failed.
+ * ARCHITECTURE:
+ *   - Server-only, read-only. Agent runs come from the durable run store (`run-store-runs`);
+ *     governed tool-call traces come from the in-process ring (`recentTraces`) and Langfuse.
+ *     An unreachable run store is reported as one `unknown` item, never an empty list.
+ *   - `fetchTrace` reads Langfuse; the mock trace is returned only when
+ *     `config.monitoringDemoFixtures` is on (off by default in production).
+ *   - Failure is read structurally (Langfuse `level`, then the `isError` / `failed` / `ok` /
+ *     `success` / `error` fields) and text is probed only for string values, because the
+ *     payload KEY names contain "error"/"fail" and a JSON-wide grep marked every span red.
+ *   - Used by `aggregate.ts`, `index.ts` and `core/mcp/monitoring-tools.ts`.
  */
 import 'server-only';
 import { config } from '@core/kernel/config';
@@ -11,26 +25,6 @@ import { isRunId } from '@core/kernel/run-id';
 import { storeRuns, type RunListFilter, type RunListItem, type RunListSource } from '@tabs/monitoring/lib/adapters/run-store-runs';
 
 export { isRunListStatus, RUN_LIST_STATUSES, type RunListStatus } from '@tabs/monitoring/lib/adapters/run-store-runs';
-
-/**
- * Run/trace adapter (lens 1) — Langfuse runs + the in-process governed trace ring,
- * plus the drill-into-trace (steps · tool calls · context pack · in/out · logs).
- * READ-ONLY. Live where Langfuse is up; offline-mock otherwise (honest `source`).
- *
- * REUSE: the same `recentTraces()` ring buffer `lib/agent-governed.ts` already
- * fills on every governed tool call — so a run shows here even with no live
- * Langfuse — and Langfuse's own public traces API when it is reachable.
- *
- * X-R3/X-R4 — WHY FAILURE IS READ STRUCTURALLY AND NOT BY GREP. Every "did this
- * step fail" question used to be answered by running /error|fail|aborted/i over
- * `JSON.stringify(output)`. The observer's own payloads defeat that: a SUCCESSFUL
- * tool span's output is `{"isError":false,…}` (the KEY NAME contains "error") and
- * `run.result`'s output is `{"failed":false,…}` (the key name contains "fail"), so
- * on production 0.8.0 EVERY tool span read back as `status: 'error'` and every
- * successful run read back red. The fix is to read what the writer actually wrote:
- * Langfuse's own `level`, and the boolean fields `isError` / `failed`. The text
- * probe survives only for a genuinely TEXTUAL output, where a word is a word.
- */
 
 /** Words that mean "this went wrong" in a human-written status or result line. */
 const FAILURE_WORDS = /error|fail|aborted|denied|refused|timed out|timeout/i;

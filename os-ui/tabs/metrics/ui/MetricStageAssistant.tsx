@@ -1,20 +1,20 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    Per-stage metric assistant — a collapsible helper inside the metric builder
+ * USER STORY: As a creator defining a metric I want an assistant that can draft the form or
+ *             explain a stage so that I do not have to know the measure syntax up front.
+ * ARCHITECTURE:
+ *   - Client component used by `MetricBuilder`; POSTs stage + context to
+ *     `/api/metrics/assistant` and renders the reply.
+ *   - Define stage returns `{ form }` (partial metric payload applied via `onForm`); every other
+ *     stage returns `{ text }`.
+ *   - Failure is shown as the route's own message (503 = no model, 402 = cost cap).
  */
 'use client';
 
 import { useState } from 'react';
 import type { MetricStageId } from '@tabs/metrics/lib/stages';
-
-/**
- * The per-stage Metrics assistant slot — a calm, collapsible helper mounted in
- * StageShell's `assistant` render prop. POSTs stage + context to
- * /api/metrics/assistant and renders the suggestion. Honest about failure:
- * a 503 (no model) or 402 (cost cap) surfaces as the route's own message.
- *
- * Define stage: returns `{ form }` — a partial metric payload the parent applies
- * via `onForm`. Every other stage returns `{ text }` (plain prose).
- */
 
 type FormProposal = {
   name?: string;

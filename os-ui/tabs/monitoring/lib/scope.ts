@@ -1,25 +1,21 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    Monitoring scope resolution — the viewer's read scope from their identity
+ * USER STORY: As a user I want Monitoring to work out what I may see from my role and domains
+ *             so that every lens and the trace drill-down obey the same rule.
+ * ARCHITECTURE:
+ *   - Server-only. `scopeForUser` derives the scope from the identity (role + domains) via
+ *     `deriveScope`; a best-effort OPA call (1.5 s timeout) only sets the `via` marker to
+ *     'opa' or 'identity' and does not change the scope.
+ *   - Re-exports the pure predicates from `scope-core.ts` so callers have one import.
+ *   - `assertInScope` on the trace route stops a user opening another user's trace.
  */
 import 'server-only';
 import { config } from '@core/kernel/config';
 import type { CurrentUser } from '@core/kernel/auth';
 import type { Scope } from '@tabs/monitoring/lib/types';
 import { deriveScope } from '@tabs/monitoring/lib/scope-core';
-
-/**
- * The server-side half of the OPA-scoping spine: resolve the viewer's read scope
- * from their Ory identity (role + domains), with a best-effort OPA cross-check.
- * The PURE predicates (`canSee`/`filterScope`/`assertInScope`) live in
- * `scope-core.ts` so the security invariants are unit-testable without IO.
- *
- *   • user    — own runs / cost / artifacts          → item.owner === principal
- *   • builder — their domains                         → item.domain ∈ domains
- *   • admin   — tenant + cluster (incl. node/heal)    → everything
- *
- * The hard invariant (validation gate): a User MUST NOT open another user's
- * trace — enforced by `assertInScope` (re-exported below) on the drill route.
- */
 
 export async function scopeForUser(user: CurrentUser): Promise<Scope> {
   const via = (await opaConfirms(user.id)) ? 'opa' : 'identity';

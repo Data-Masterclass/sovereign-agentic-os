@@ -1,15 +1,15 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
- */
-/**
- * Monitoring tab — the READ/OBSERVE plane (monitoring-golden-path.md).
  *
- * One contract shared by the five read-only adapters, the OPA-scoped aggregation
- * spine, the trace/lineage correlation, and the UI. Everything here is
- * read-only: Monitoring SHOWS health, WATCHES spend, and TRACES runs — it never
- * sets policy or caps (that is Governance) and never watches business KPIs (that
- * is Dashboards). Each item carries the `owner` + `domain` it belongs to so the
- * SAME scope filter (the viewer's Ory→OPA identity) applies to every lens.
+ * FEATURE:    Monitoring types — the one contract for adapters, aggregation, correlation and UI
+ * USER STORY: As a developer on the Monitoring tab I want one shared shape for health items,
+ *             scope, traces and alerts so that every lens is scoped and rendered the same way.
+ * ARCHITECTURE:
+ *   - Types plus the `LENS_IDS` / `LENS_LABEL` constants; no logic.
+ *   - Read-only plane: Monitoring shows health, watches spend and traces runs; it never sets
+ *     policy or caps (Governance) and never watches business KPIs (Dashboards).
+ *   - Every item carries `owner` + `domain` so the same scope filter applies to every lens;
+ *     `source: 'live' | 'mock'` marks fixture data.
  */
 
 /** Health roll-up. `unknown` = source unreachable AND no mock (kept honest). */

@@ -1,5 +1,15 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    Explore a saved metric — slice it by dimensions, a time grain and filter chips
+ * USER STORY: As an analyst I want to slice a governed metric by its dataset's columns and see
+ *             the SQL behind it so that I can answer follow-up questions without a new metric.
+ * ARCHITECTURE:
+ *   - Client component rendered inside `MetricBuilder`'s View; reads real columns from
+ *     `/api/data/datasets/{id}` and queries `/api/metrics/explore`.
+ *   - Re-runs on every slice, chip or viewer change; the viewer picker (me / DE / FR / US) sends
+ *     `viewerRegion` so the server-side row-level filter can be compared.
+ *   - Filter chips are session state only and are never persisted.
  */
 'use client';
 
