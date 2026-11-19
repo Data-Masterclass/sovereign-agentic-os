@@ -223,22 +223,60 @@ export async function readAppTreeFromGit(
   app: Pick<AppIdentity, 'slug' | 'domain'>,
   opts: { reposDir?: string; ref?: string } = {},
 ): Promise<{ files: ScaffoldFile[]; sha: string; truncated: boolean } | null> {
-  if (!appProjectGitEnabled()) return null;
+  const state = await readAppTreeState(app, opts);
+  return state.kind === 'tree' ? { files: state.files, sha: state.sha, truncated: state.truncated } : null;
+}
+
+/**
+ * What git can say about an app's tree — with "there is none" and "I could not read it" kept
+ * APART. `readAppTreeFromGit` folds both into `null`, which is right for a reader that falls back
+ * to a cache, and wrong for a WRITER: `commitToApp` replaces the whole subtree, so mistaking an
+ * unreadable tree for an absent one would commit the deletion of everything in it.
+ *
+ *   `tree`   — the subtree was read (`truncated` says whether it is complete);
+ *   `none`   — git answered and holds no tree for this app (or the app has no domain repository
+ *              at all: the feature is off, or no domain is assigned);
+ *   `failed` — the read threw. A tree may well exist; nothing may be concluded from its absence.
+ */
+export type AppTreeState =
+  | { kind: 'tree'; files: ScaffoldFile[]; sha: string; truncated: boolean }
+  | { kind: 'none' }
+  | { kind: 'failed'; reason: string };
+
+type SubtreeReader = (
+  domain: string,
+  prefix: string,
+  opts: { reposDir: string; ref?: string },
+) => Promise<{ files: { path: string; content: string }[]; sha: string; truncated: boolean } | null>;
+
+let readerOverride: SubtreeReader | null = null;
+
+/** Test hook: substitute the `@core` subtree read (`null` = the real one). */
+export function __setAppTreeReaderForTests(reader: SubtreeReader | null): void {
+  readerOverride = reader;
+}
+
+export async function readAppTreeState(
+  app: Pick<AppIdentity, 'slug' | 'domain'>,
+  opts: { reposDir?: string; ref?: string } = {},
+): Promise<AppTreeState> {
+  if (!appProjectGitEnabled()) return { kind: 'none' };
   const domain = String(app.domain ?? '').trim();
-  if (!domain) return null;
+  if (!domain) return { kind: 'none' };
   try {
     // REVIEW M-1 + M-5: ONE bounded `@core` read (`readSubtree`) — one tree walk, capped blob
     // reads, and the sha of the commit that last changed THIS APP's prefix (not the repository
     // head, which a dbt or agents commit would otherwise supply as the app's version).
-    const { readSubtree } = await import('@core/infra/git-store');
-    const read = await readSubtree(domain, appSubtreePrefix(app.slug), {
+    const reader: SubtreeReader = readerOverride ?? ((await import('@core/infra/git-store')).readSubtree as SubtreeReader);
+    const read = await reader(domain, appSubtreePrefix(app.slug), {
       reposDir: opts.reposDir ?? config.reposDir,
       ref: opts.ref,
     });
-    if (!read) return null;
-    return { files: read.files as ScaffoldFile[], sha: read.sha, truncated: read.truncated };
+    if (!read) return { kind: 'none' };
+    return { kind: 'tree', files: read.files as ScaffoldFile[], sha: read.sha, truncated: read.truncated };
   } catch (e) {
-    console.warn(`[app-git] read-back of apps/${app.slug} in '${domain}' failed: ${e instanceof Error ? e.message : String(e)}`);
-    return null;
+    const reason = e instanceof Error ? e.message : String(e);
+    console.warn(`[app-git] read-back of apps/${app.slug} in '${domain}' failed: ${reason}`);
+    return { kind: 'failed', reason };
   }
 }
