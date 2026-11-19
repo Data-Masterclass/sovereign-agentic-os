@@ -21,11 +21,13 @@
  * straight from Bronze to Publish without doing Silver/Gold first (a single-table or
  * pass-through Gold is legitimate, and not every dataset needs cleaning or a join).
  * We deliberately do NOT hard-gate navigation: no `enabled` predicate blocks a stage.
- * What stays honest is the ✓ — `completed(ctx)` is each stage's LIVE condition, and a
- * stage shows a ✓ only when the user ALSO worked it this session (tracked by the
- * StageState in the component). So a freshly-opened dataset shows no pre-marked checks,
- * a check clears if the user later invalidates it (e.g. the layer is rebuilt away), and
- * skipping a stage simply leaves it unchecked — never a faked green. Each stage's `hint`
+ * What stays honest is the ✓ — `completed(ctx)` reads the dataset's real layers, so a ✓
+ * means "this layer exists" on every open and for every viewer (core/kernel/stages.ts),
+ * a check clears if the layer is rebuilt away, and skipping a stage simply leaves it
+ * unchecked — never a faked green. NOTE: no screen mounts this model today (the Data
+ * detail retired the staged walk in 0.6.44); it is kept, tested, for a future adoption.
+ * Before it is mounted again: Validate's condition (`materialized`) only says there is
+ * something to validate — it should become "quality checks have been run". Each stage's `hint`
  * says plainly what it does and that the refinement stages are optional.
  */
 

@@ -29,7 +29,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import StageShell from '@core/ui/core/StageShell';
-import { initialStageState, goTo, markDone, type StageState } from '@core/kernel/stages';
+import { initialStageState, goTo, type StageState } from '@core/kernel/stages';
 import BuilderModeToggle from '@core/ui/core/BuilderModeToggle';
 import type { ViewMode } from '@core/kernel/view-mode';
 import CatalogBrowser, { keyOf, type TableRef, type CatalogClassification } from '@tabs/connections/ui/CatalogBrowser';
@@ -271,8 +271,12 @@ export default function ExposePanel({
   }
 
   // --- stage state (owned here, ctx derived fresh each render) ----------------
+  // `stage` is only the position; every ✓ is derived from `ctx` (the exposure being written +
+  // the connection's saved snapshot/classification), never from which stages were visited.
   const [stage, setStage] = useState<StageState<ExposeStageId>>(() => initialStageState(EXPOSE_STAGES));
-  const [organizeVisited, setOrganizeVisited] = useState(false);
+  // Organize is done when the catalog HAS been organized (a classification run is stored for
+  // this connection) — not when the stage was merely opened.
+  const classified = !!classification?.lastRunAt;
 
   const ctx: ExposeCtx = {
     hasSnapshot: !!snapshot,
@@ -280,13 +284,13 @@ export default function ExposePanel({
     selectedCount: selected.size,
     hasName: name.trim().length > 0,
     hasDomains: pickedDomains.size > 0,
-    classified: organizeVisited || selected.size > 0,
+    classified,
+    saved: !!editingId,
   };
 
   function startNew() {
     resetForm();
-    setStage(initialStageState(EXPOSE_STAGES)); // opens at Catalog, empty done-set
-    setOrganizeVisited(false);
+    setStage(initialStageState(EXPOSE_STAGES)); // opens at Catalog
     setFlowOpen(true);
     setMsg('');
   }
@@ -301,13 +305,12 @@ export default function ExposePanel({
     if (s.syncDefaults?.schedule) setSyncSchedule(s.syncDefaults.schedule);
     const sel = new Set(s.tables.map(keyOf));
     setSelected(sel);
-    setOrganizeVisited(true);
     // Enter at Review; every gated stage is reachable (selection + name + domains all set),
-    // and the done-set starts empty so nothing shows a premature ✓.
+    // and the rail ticks what this saved exposure already has.
     const editCtx: ExposeCtx = {
       hasSnapshot: !!snapshot, snapshotStatus: snapshot ? snapshot.status : 'none',
       selectedCount: sel.size, hasName: s.name.trim().length > 0, hasDomains: s.domains.length > 0,
-      classified: true,
+      classified, saved: true,
     };
     setStage(goTo(EXPOSE_STAGES, initialStageState(EXPOSE_STAGES), 'review', editCtx));
     setFlowOpen(true);
@@ -365,7 +368,6 @@ export default function ExposePanel({
   // Classify: jump to Organize, and run the classifier if a taxonomy seed is already chosen
   // (else the Organize stage shows the seed chooser — the run route would error without one).
   const applyClassify = useCallback(() => {
-    setOrganizeVisited(true);
     setStage((s) => goTo(EXPOSE_STAGES, s, 'organize', ctx));
     if (classification?.seed) void organizeWithAi('run');
   }, [classification, organizeWithAi, ctx]);
@@ -377,8 +379,7 @@ export default function ExposePanel({
       for (const k of sug.tables) next.add(k);
       return next;
     });
-    setOrganizeVisited(true);
-    setStage((s) => goTo(EXPOSE_STAGES, s, 'organize', { ...ctx, selectedCount: selected.size + sug.tables.length, classified: true }));
+    setStage((s) => goTo(EXPOSE_STAGES, s, 'organize', { ...ctx, selectedCount: selected.size + sug.tables.length }));
   }, [ctx, selected]);
 
   // Exposure: prefill the Assign form (name/domains/mode/tier) + set the selection from the
@@ -390,14 +391,13 @@ export default function ExposePanel({
     setPickedDomains(new Set(sug.domains));
     if (sug.mode) setMode(sug.mode);
     if (sug.tier) setTier(sug.tier);
-    setOrganizeVisited(true);
     const nextCtx: ExposeCtx = {
       hasSnapshot: !!snapshot, snapshotStatus: snapshot ? snapshot.status : 'none',
       selectedCount: sel.size, hasName: (sug.name ?? name).trim().length > 0, hasDomains: sug.domains.length > 0,
-      classified: true,
+      classified, saved: !!editingId,
     };
     setStage((s) => goTo(EXPOSE_STAGES, s, 'review', nextCtx));
-  }, [snapshot, name]);
+  }, [snapshot, name, classified, editingId]);
 
   const activeSets = sets.filter((s) => !s.revoked);
 
@@ -468,7 +468,7 @@ export default function ExposePanel({
             stages={EXPOSE_STAGES}
             state={stage}
             ctx={ctx}
-            onState={(next) => { if (next.current === 'organize') setOrganizeVisited(true); setStage(next); }}
+            onState={setStage}
             ariaLabel="Exposure stages"
             aside={
               <span className="badge muted" style={{ fontSize: 11 }}>

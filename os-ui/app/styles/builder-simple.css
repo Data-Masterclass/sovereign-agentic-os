@@ -80,6 +80,12 @@
 }
 .sb-step.active .sb-step-n { background: var(--gold); border-color: var(--gold-deep); color: #fff; }
 .sb-step.done .sb-step-n { background: var(--teal); border-color: var(--teal-dim); color: #fff; }
+/* A stage with a specific problem — the same vocabulary as .badge.warn / .badge.err. The
+   glyph (! / ✕) and the button's title carry the meaning too, so it is not colour alone.
+   A warning on the ACTIVE step keeps the active gold fill and shows its "!"; a failure
+   stays red even when active. */
+.sb-step.warn:not(.active) .sb-step-n { background: var(--gold-soft); border-color: var(--gold-line); color: var(--gold-text); }
+.sb-step.error .sb-step-n { background: var(--danger); border-color: var(--danger); color: #fff; }
 .sb-step-label { font-weight: 600; }
 
 /* --- progress stepper (OS-wide determinate stepper + live commentary) ---

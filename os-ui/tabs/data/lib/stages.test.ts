@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  advance, canEnter, initialStageState, isDone, isSatisfied, markDone, stageStatuses,
+  canEnter, initialStageState, isDone, isSatisfied, stageStatuses,
 } from '@core/kernel/stages';
 import { DATA_STAGES, type DataCtx } from '@tabs/data/lib/stages';
 
@@ -12,8 +12,9 @@ import { DATA_STAGES, type DataCtx } from '@tabs/data/lib/stages';
  * The Data guided path (Ingest · Define · Harmonize · Validate · Publish — 5 stages) run
  * through the shared stage model. Stages are VOLUNTARILY SKIPPABLE — every stage is always
  * reachable (no `enabled` gate), so a user can jump straight from Bronze to Publish. What
- * stays honest is the ✓: `completed()` is the live condition and no stage shows a ✓ on
- * first open (or when skipped) even when the dataset is already fully materialized.
+ * stays honest is the ✓: `completed()` reads the dataset's real layers, so a materialized
+ * dataset opens with its built layers ticked and a skipped stage simply stays un-ticked.
+ * (This model is not mounted by any screen today — the Data detail retired the staged walk.)
  */
 const ctx = (over: Partial<DataCtx> = {}): DataCtx => ({
   named: false, bronzeBuilt: false, silverBuilt: false, goldBuilt: false,
@@ -56,38 +57,24 @@ test('completed() is the LIVE condition per stage', () => {
   assert.equal(isSatisfied(DATA_STAGES, 'harmonize', ctx({ silverBuilt: true })), false); // gold not built
 });
 
-test('opens on Ingest with NO pre-marked checks even when the dataset already satisfies stages', () => {
+test('opens on Ingest; an already-materialized dataset shows its built layers ticked', () => {
   const fully = ctx({ named: true, bronzeBuilt: true, silverBuilt: true, goldBuilt: true, refined: true, materialized: true });
   const s = initialStageState(DATA_STAGES);
   assert.equal(s.current, 'ingest');
-  for (const st of stageStatuses(DATA_STAGES, s, fully)) assert.equal(st.done, false);
+  for (const st of stageStatuses(DATA_STAGES, s, fully)) assert.equal(st.done, true, `${st.id} is built`);
+  // A brand-new dataset shows none.
+  for (const st of stageStatuses(DATA_STAGES, s, ctx({ named: true }))) assert.equal(st.done, false);
 });
 
-test('a ✓ shows only after the user worked the stage this session AND it still holds', () => {
-  const full = ctx({ named: true, bronzeBuilt: true, silverBuilt: true, goldBuilt: true, refined: true, materialized: true });
-  let s = initialStageState(DATA_STAGES);   // ingest
-  s = advance(DATA_STAGES, s, full);        // → define, ingest recorded (bronzeBuilt ✓)
-  assert.equal(isDone(DATA_STAGES, s, 'ingest', full), true);
-  assert.equal(isDone(DATA_STAGES, s, 'define', full), false); // not yet
-
-  s = advance(DATA_STAGES, s, full);        // → harmonize, define recorded (silverBuilt ✓)
-  assert.equal(isDone(DATA_STAGES, s, 'define', full), true);
-
-  s = advance(DATA_STAGES, s, full);        // → validate, harmonize recorded (goldBuilt ✓)
-  assert.equal(isDone(DATA_STAGES, s, 'harmonize', full), true);
-
-  // Drop gold → harmonize's recorded ✓ clears because its condition no longer holds.
-  const noGold = ctx({ bronzeBuilt: true, silverBuilt: true, refined: true, materialized: true });
-  assert.equal(isDone(DATA_STAGES, s, 'harmonize', noGold), false);
-});
-
-test('markDone records an in-stage settle (Ingest after a Bronze build)', () => {
-  const bronze = ctx({ named: true, bronzeBuilt: true, materialized: true });
-  let s = initialStageState(DATA_STAGES);
-  s = markDone(s, 'ingest');
-  assert.equal(isDone(DATA_STAGES, s, 'ingest', bronze), true);
-  // Bronze rebuilt away → the ✓ clears.
-  assert.equal(isDone(DATA_STAGES, s, 'ingest', ctx({ named: true })), false);
+test('a skipped layer stays un-ticked, and a ✓ clears when its layer is rebuilt away', () => {
+  const noSilver = ctx({ named: true, bronzeBuilt: true, goldBuilt: true, refined: true, materialized: true });
+  assert.equal(isDone(DATA_STAGES, 'ingest', noSilver), true);
+  assert.equal(isDone(DATA_STAGES, 'define', noSilver), false); // Silver was skipped
+  assert.equal(isDone(DATA_STAGES, 'harmonize', noSilver), true);
+  // Drop gold → the Harmonize ✓ clears because its condition no longer holds.
+  assert.equal(isDone(DATA_STAGES, 'harmonize', { ...noSilver, goldBuilt: false }), false);
+  // Bronze rebuilt away → the Ingest ✓ clears.
+  assert.equal(isDone(DATA_STAGES, 'ingest', ctx({ named: true })), false);
 });
 
 test('Publish is the last stage (index 4) — reachable regardless of refinement', () => {

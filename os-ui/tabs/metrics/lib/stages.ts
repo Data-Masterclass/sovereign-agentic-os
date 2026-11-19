@@ -16,8 +16,10 @@
  *  Publish  — Save + PromoteButton. Gate: (optional) metric saved.
  *  Monitor  — Alerts + Explore-as-viewer. Gate: metric is live (saved).
  *
- * The live `ctx` is derived fresh each render from the builder's real form state;
- * a stage shows a ✓ only when the user also worked it this session.
+ * The live `ctx` is derived fresh each render from the builder's real form state; a ✓
+ * means the stage's condition holds for that state (core/kernel/stages.ts). NOTE: no screen
+ * mounts this model today. Before it is: Monitor's condition is a placeholder (it repeats
+ * Publish's `saved`) — it should become "an alert threshold is set".
  */
 
 import type { StageDef } from '@core/kernel/stages';

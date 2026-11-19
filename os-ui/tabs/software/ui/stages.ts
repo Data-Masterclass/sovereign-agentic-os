@@ -31,11 +31,11 @@
  * purpose before Design; Choose Context opens once a backlog exists; Build is gated on a
  * specced backlog AND a resolved context (the design-before-build + data-need gates); and
  * Test & Publish is blocked until at least one story is ACTUALLY BUILT (real committed
- * story code), not merely that the user clicked into Build. `completed(ctx)` is each
- * stage's LIVE condition; a stage shows a ✓ only when the user ALSO worked it this session
- * (tracked by the StageState in the component). So a freshly-opened app shows no pre-marked
- * checks, opens on the FIRST INCOMPLETE stage (Define for a new app — never Test & Publish),
- * and a check clears if the user later invalidates it.
+ * story code), not merely that the user clicked into Build. `completed(ctx)` is what each
+ * stage's ✓ MEANS, read from the saved app — so an app authored earlier (or by a colleague)
+ * opens with its finished stages ticked, a brand-new app opens with none, and a check clears
+ * the moment its work is invalidated (the contract in core/kernel/stages.ts). The builder
+ * opens on the FIRST INCOMPLETE stage (Define for a new app — never Test & Publish).
  */
 
 import type { StageDef } from '@core/kernel/stages';
@@ -57,7 +57,11 @@ export type SwCtx = {
    * story implies a data need (Choose Context's ✓ condition + Build App's data-need gate).
    */
   contextResolved: boolean;
-  /** The app has a source tree with real generated code (beyond the template seed). */
+  /**
+   * The app has a source tree. NOT a sign of work: every scaffolded app has one from its
+   * template seed (`app.repo.seeded`), so no stage's ✓ reads this — Build App's ✓ reads
+   * `anyStoryBuilt` (coded) / `hasDraftOrSpec` (spec) instead.
+   */
   committed: boolean;
   /**
    * At least one user story is ACTUALLY BUILT — real code committed for it (a story marked
@@ -94,8 +98,10 @@ export type SwCtx = {
  * The five stages. Define App captures purpose + template (always reachable — the front
  * door). Design Epics needs a purpose and is complete only when every story carries a spec.
  * Choose Context opens once a backlog exists and is complete when every data-needing story's
- * context is resolved. Build App is gated on BOTH a specced backlog and a resolved context
- * (the design-before-build + data-need gates), and is complete once code is committed. Test
+ * context is resolved (never before a backlog exists: with no stories there is nothing to
+ * resolve, and "nothing to do yet" must not read as done). Build App is gated on BOTH a specced backlog and a resolved context
+ * (the design-before-build + data-need gates), and is complete once a story is actually built
+ * (coded app) or a spec has been composed (spec app) — a scaffolded template is not a build. Test
  * & Publish is gated on at least one ACTUALLY-BUILT story (not merely a scaffolded repo), and
  * then reports the live status. Each gate reads ACTUAL app state (`app.purpose`, `app.epics`,
  * story specs, granted datasets, `app.repo.seeded`, story build status, release count) — never a
@@ -104,7 +110,7 @@ export type SwCtx = {
 export const SW_STAGES: StageDef<SwStageId, SwCtx>[] = [
   { id: 'define', title: 'Define App', hint: 'Name it, pick a template, and state its purpose.', completed: (c) => c.hasPurpose },
   { id: 'design', title: 'Design Epics', hint: 'Specify each user story — its features, non-functional requirements and rules.', enabled: (c) => c.hasPurpose, completed: (c) => c.designSpecComplete },
-  { id: 'context', title: 'Choose Context', hint: 'Resolve every context need — bind an existing artifact, or create a new dataset (empty or with sample data).', enabled: (c) => c.hasDesign, completed: (c) => c.contextResolved },
-  { id: 'build', title: 'Build App', hint: 'Build a user story with one press; watch the spec tick off as it lands.', enabled: (c) => c.hasDesign && (c.isSpec || c.contextResolved), completed: (c) => c.committed },
+  { id: 'context', title: 'Choose Context', hint: 'Resolve every context need — bind an existing artifact, or create a new dataset (empty or with sample data).', enabled: (c) => c.hasDesign, completed: (c) => c.hasDesign && c.contextResolved, pending: () => 'a story still needs its data' },
+  { id: 'build', title: 'Build App', hint: 'Build a user story with one press; watch the spec tick off as it lands.', enabled: (c) => c.hasDesign && (c.isSpec || c.contextResolved), completed: (c) => (c.isSpec ? c.hasDraftOrSpec : c.anyStoryBuilt), pending: () => 'no story built yet' },
   { id: 'publish', title: 'Test & Publish', hint: 'Test each built story against its spec, then deploy to go live — request go-live, watch the live pod, and manage its lifecycle.', enabled: (c) => c.anyStoryBuilt || (c.isSpec && c.hasDraftOrSpec), completed: (c) => (c.isSpec ? c.specPublished : c.live) },
 ];

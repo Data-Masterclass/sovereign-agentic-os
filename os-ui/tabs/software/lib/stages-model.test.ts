@@ -9,7 +9,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { SW_STAGES, type SwCtx } from '@tabs/software/ui/stages';
-import { canEnter, isSatisfied } from '@core/kernel/stages';
+import { canEnter, initialStageState, isSatisfied, stageStatuses } from '@core/kernel/stages';
 
 const base: SwCtx = {
   named: true,
@@ -93,9 +93,18 @@ test('stages: Design Epics ✓ = every story has a spec (designSpecComplete), no
   assert.equal(isSatisfied(SW_STAGES, 'design', { ...base, designSpecComplete: true }), true);
 });
 
-test('stages: Choose Context ✓ = context resolved; Build App ✓ = committed; Test & Publish ✓ = live', () => {
-  assert.equal(isSatisfied(SW_STAGES, 'context', { ...base, contextResolved: true }), true);
-  assert.equal(isSatisfied(SW_STAGES, 'build', { ...base, committed: true }), true);
+test('stages: Choose Context ✓ = a backlog with its context resolved; Build App ✓ = a story built; Test & Publish ✓ = live', () => {
+  // "Nothing to resolve yet" (no backlog) is not "resolved": a brand-new app must not open
+  // with Choose Context ticked. With a backlog, resolved context ticks it.
+  assert.equal(isSatisfied(SW_STAGES, 'context', { ...base, contextResolved: true }), false);
+  assert.equal(isSatisfied(SW_STAGES, 'context', { ...base, hasDesign: true, contextResolved: true }), true);
+  assert.equal(isSatisfied(SW_STAGES, 'context', { ...base, hasDesign: true, contextResolved: false }), false);
+  // A scaffolded template (a source tree exists) is NOT a build — every new app has one.
+  assert.equal(isSatisfied(SW_STAGES, 'build', { ...base, committed: true }), false);
+  assert.equal(isSatisfied(SW_STAGES, 'build', { ...base, committed: true, anyStoryBuilt: true }), true);
+  // A spec app has no story commits: its Build is done once a spec has been composed.
+  assert.equal(isSatisfied(SW_STAGES, 'build', { ...base, isSpec: true, committed: true }), false);
+  assert.equal(isSatisfied(SW_STAGES, 'build', { ...base, isSpec: true, hasDraftOrSpec: true }), true);
   assert.equal(isSatisfied(SW_STAGES, 'publish', { ...base, live: true }), true);
   // None satisfied on a bare ctx.
   assert.equal(isSatisfied(SW_STAGES, 'context', base), false);
@@ -109,4 +118,15 @@ test('stages: no legacy stage ids remain (preview/operate/test are gone from the
   assert.equal(ids.includes('operate'), false);
   // 'test' is no longer a standalone stage — it merged into 'publish' (Test & Publish).
   assert.equal(ids.includes('test'), false);
+});
+
+test('stages: a brand-new scaffolded app opens with NOTHING ticked; a finished one opens fully ticked', () => {
+  const rail = (c: SwCtx) => stageStatuses(SW_STAGES, initialStageState(SW_STAGES), c).map((r) => r.done);
+  // What a fresh scaffold really looks like: named, a seeded source tree, no data need yet.
+  const fresh: SwCtx = { ...base, named: true, committed: true, contextResolved: true };
+  assert.deepEqual(rail(fresh), [false, false, false, false, false]);
+  const finished: SwCtx = {
+    ...fresh, hasPurpose: true, hasDesign: true, designSpecComplete: true, anyStoryBuilt: true, live: true,
+  };
+  assert.deepEqual(rail(finished), [true, true, true, true, true]);
 });
