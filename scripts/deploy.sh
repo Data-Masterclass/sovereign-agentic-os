@@ -231,6 +231,15 @@ if [ -n "${VALUES_OVERLAY:-}" ]; then
   say "layering VALUES_OVERLAY=$VALUES_OVERLAY over the release values"
 fi
 
+# WHICH VALUES WIN (2026-11-19). The values above come from the live release, so a value the
+# release already pins silently beats a changed chart default — a chart change once did not
+# reach production for exactly that reason. List what changes, what the release overrides and
+# what the chart does not define, BEFORE anything is applied. Information only; secret-looking
+# paths and non-plain values print as `(hidden)` (see scripts/lib/values-diff.py).
+say "which release values change, and which override the chart"
+python3 scripts/lib/values-diff.py "$WORK/live.yaml" "$CHART/values.yaml" "$VALUES" ${VALUES_OVERLAY:+"$VALUES_OVERLAY"} \
+  || echo "   (values diff unavailable — not a deploy failure)"
+
 say "what the upgrade changes"
 helm --kube-context "$CTX" get manifest "$REL" -n "$NS" > "$WORK/before.yaml"
 helm template "$REL" "$CHART" -n "$NS" -f "$VALUES" "${OVERLAY_ARGS[@]+"${OVERLAY_ARGS[@]}"}" --skip-schema-validation > "$WORK/after.yaml"
