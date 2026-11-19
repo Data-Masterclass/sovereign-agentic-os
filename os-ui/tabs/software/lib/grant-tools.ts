@@ -109,8 +109,8 @@ export function dataPlaneToolsFromGrants(grants: ContextGrants): AppTool[] {
  * `list_agent_systems` discovery companion. `run_agent_system` is a WRITE tool (it executes a
  * governed agent that may itself act) — least-privilege keeps it off until an agent is granted.
  * Per-agent runnability is still governed on the Agents side (run-as-user, the agent's own ⊆
- * grants, role gate). The runtime "Run agent" invocation is Phase 4c; this only widens the
- * app's compiled OPA profile so a granted agent is available, matching how data grants compile.
+ * grants, role gate). This only widens the app's compiled OPA profile; the app tool door answers
+ * both names through the OS's own MCP tools, limited to the granted systems (`app-agent-door.ts`).
  * Empty ⇒ [] (fail-closed). Callers MERGE with template + data-plane tools before compiling.
  */
 export function agentToolsFromGrants(agentGrants: AppAgentGrant[]): AppTool[] {

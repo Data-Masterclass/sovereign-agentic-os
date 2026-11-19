@@ -7,6 +7,8 @@ import { getAppForUser } from '@tabs/software/lib/apps';
 import { callAppTool } from '@tabs/software/lib/app-tool-call';
 import { recordActor } from '@tabs/software/lib/app-records';
 import { allActiveAdoptions, adoptionCovers } from '@tabs/connections/lib/action-adoptions';
+import { APP_AGENT_TOOLS, callAppAgentTool, type AppAgentRpc } from '@tabs/software/lib/app-agent-door';
+import { handleRpc } from '@core/mcp/server';
 
 export const dynamic = 'force-dynamic';
 
@@ -49,6 +51,25 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   }
 
   const tool = String(body?.tool ?? '');
+
+  // An agents grant compiles `run_agent_system` + `list_agent_systems` into the app's profile.
+  // They are the OS's own agent tools, not the app's, so they are answered by the OS's MCP tools
+  // of the same name, as the signed-in user, limited to the agent systems this app was granted.
+  if (APP_AGENT_TOOLS.has(tool)) {
+    const rpc: AppAgentRpc = async (name, args) => {
+      const res = await handleRpc(user, { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } });
+      if (!res || 'error' in res && res.error) return { ok: false, message: (res as { error?: { message?: string } })?.error?.message ?? 'no response' };
+      const result = (res as { result?: { content?: { text?: string }[]; isError?: boolean; structuredContent?: { error?: { code?: string; reason?: string } } } }).result ?? {};
+      const text = result.content?.map((c) => c.text ?? '').join('\n') ?? '';
+      if (result.isError) {
+        const err = result.structuredContent?.error;
+        return { ok: false, message: err?.reason ?? text, code: err?.code };
+      }
+      return { ok: true, text };
+    };
+    const { status, body: payload } = await callAppAgentTool(app, tool, body.args, rpc);
+    return NextResponse.json(payload, { status });
+  }
 
   // REVIEW H-2: the DOMAIN-ADOPTION layer is injected HERE, at the composition layer, because a
   // tab may not import another tab and the adoption store is the connections tab's
