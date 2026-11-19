@@ -184,8 +184,8 @@ openmetadata:
 # =============================================================================
 osUI:
   image:
-    repository: ghcr.io/aborek/sovereign-os/os-ui
-    tag: "0.1.0@sha256:5719957f3a78e1f54f28b0a90eaa686a1a244c4b9beab1f903cf1d231996bd36"
+    repository: ghcr.io/data-masterclass/sovereign-os/os-ui
+    tag: "0.9.6@sha256:4b81a0d9c1ddee577400a05ca0f0b955752e72983da796e494e9e1c092e90e8e"
   # Server-side search now hits managed OpenSearch (was in-cluster opensearch:9200).
   opensearchUrl: "https://REPLACE-opensearch-host:9200"
   # Browser-reachable consoles -> the public Ingress hosts (was localhost port-forwards).

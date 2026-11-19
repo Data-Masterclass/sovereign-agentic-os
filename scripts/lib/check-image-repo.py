@@ -11,10 +11,11 @@
 # (`--set osUI.image.tag=<version>@sha256:…`) but takes the image REPOSITORY from the live
 # release's own values — the night-1 rule that the chart owns the tag and the operator owns the
 # repository. Those two halves come from different places, so they can disagree. Concretely:
-# once the owner moves image builds to `ghcr.io/data-masterclass/sovereign-os` (option A) and
-# the release carries that repository, a plain `./scripts/deploy.sh 0.9.6` would still build and
-# push to the DEFAULT `ghcr.io/aborek/sovereign-os`, then pin that digest against the
-# data-masterclass repository. The digest does not exist there, so every os-ui pod goes
+# the default is `ghcr.io/data-masterclass/sovereign-os` (option A, taken 2026-11-19). A release
+# that still carries `ghcr.io/aborek/sovereign-os/os-ui` — one never moved, or one moved back by
+# a local `IMAGE_REPO=ghcr.io/aborek/sovereign-os` build — would have a plain
+# `./scripts/deploy.sh --from-registry 0.9.6` pin the data-masterclass digest against the
+# aborek repository. The digest does not exist there, so every os-ui pod goes
 # ImagePullBackOff — after the backup gate ran, after the image was built and pushed, and with
 # the previous ReplicaSet already scaled down.
 #

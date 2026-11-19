@@ -3,8 +3,10 @@
 # Copyright 2026 Borek Data Ventures UG
 # deploy.sh [--from-registry] [--verify-only] <version> — roll out os-ui to a real cluster.
 #
-#   ./scripts/deploy.sh 0.7.0                     build here, push, upgrade (as always)
 #   ./scripts/deploy.sh --from-registry 0.7.0     use a tag CI already built — no local Docker
+#                                                 (the supported path since 2026-11-19)
+#   ./scripts/deploy.sh 0.7.0                     build here, push, upgrade — needs push rights
+#                                                 on the image repository (see --help)
 #   ./scripts/deploy.sh --help
 #
 # Run it DIRECTLY — never `deploy.sh … | tail`. A pipeline's exit status is the
@@ -47,22 +49,30 @@ usage: deploy.sh [--from-registry] [--verify-only] [--help] <version>
 environment
   IMAGE_FROM_REGISTRY=1     same as --from-registry
   IMAGE_VERIFY_ONLY=1       same as --verify-only
-  IMAGE_REPO=<repo>         os-ui image repository (default ghcr.io/aborek/sovereign-os).
-                            When set, the upgrade also --sets osUI.image.repository.
+  IMAGE_REPO=<repo>         os-ui image repository (default ghcr.io/data-masterclass/sovereign-os).
+                            When set (to anything, the default included), the upgrade also
+                            --sets osUI.image.repository to <repo>/os-ui. It moves os-ui ONLY:
+                            dagster, git-http, git-daemon and minio keep the repository the
+                            live release carries (ghcr.io/aborek/sovereign-os/*).
   SKIP_BUILD=1              reuse an already-built LOCAL image instead of building again
   DEPLOY_REGISTRY_PROBE=<cmd>
                             use `<cmd> <ref>` to read a remote digest instead of
                             crane / skopeo / the registry v2 API. For tests.
   KUBE_CONTEXT NS REL WORK VALUES   as before
 
-images are built in CI — pick ONE of these once (see CONTRIBUTING.md -> "Images: build in CI")
-  A  push to ghcr.io/data-masterclass/sovereign-os (the workflow default, no secret needed):
+the os-ui image is built in CI (see CONTRIBUTING.md -> "Images: build in CI")
+  It lives at ghcr.io/data-masterclass/sovereign-os/os-ui (option A, taken 2026-11-19): the
+  build-images workflow pushes there with the built-in GITHUB_TOKEN, no secret needed.
        git tag os-ui-v<version> && git push public os-ui-v<version>
-       IMAGE_REPO=ghcr.io/data-masterclass/sovereign-os IMAGE_FROM_REGISTRY=1 ./scripts/deploy.sh <version>
-  B  keep ghcr.io/aborek/sovereign-os (repo variables IMAGE_REPO_PREFIX + IMAGE_REGISTRY_USER,
-     secret GHCR_TOKEN):
-       git tag os-ui-v<version> && git push public os-ui-v<version>
-       IMAGE_FROM_REGISTRY=1 ./scripts/deploy.sh <version>
+       ./scripts/deploy.sh --from-registry <version>
+
+  A LOCAL build (no --from-registry) pushes to IMAGE_REPO with YOUR `docker login ghcr.io`.
+  With the default that is the org package, so the push needs write access to it; without it
+  the run ends in PUSH_FAILED — after the backup gate, before any helm upgrade. The other way,
+       IMAGE_REPO=ghcr.io/aborek/sovereign-os ./scripts/deploy.sh <version>
+  pushes to the old namespace AND moves the release's osUI.image.repository back there, so
+  the next plain --from-registry deploy is refused (IMAGE_REPOSITORY_MISMATCH) until it is
+  run once with IMAGE_REPO=ghcr.io/data-masterclass/sovereign-os.
 USAGE
 }
 while [ $# -gt 0 ]; do
@@ -83,10 +93,15 @@ CTX=${KUBE_CONTEXT:-dmagenticos}
 NS=${NS:-agentic-os}
 REL=${REL:-agentic-os}
 CHART=charts/sovereign-agentic-os
-# The DEFAULT is unchanged. IMAGE_REPO is for the day the owner moves the namespace (option A
-# above); when it is set the upgrade below also --sets osUI.image.repository, because the chart
-# would otherwise keep pulling the repository the live release carries.
-IMAGE_REPO_DEFAULT=ghcr.io/aborek/sovereign-os
+# The default is the org namespace CI pushes to (option A, taken 2026-11-19; it was
+# ghcr.io/aborek/sovereign-os before). When IMAGE_REPO is PASSED the upgrade below also --sets
+# osUI.image.repository, because the chart would otherwise keep pulling the repository the live
+# release carries. "Passed" is recorded here, not inferred from the value: comparing against the
+# default made `IMAGE_REPO=<the default>` a no-op, so the repository guard's own advice ("run
+# with IMAGE_REPO=…") could not move a release ONTO the default namespace.
+# IMAGE_REPO names the os-ui repository only — nothing else in this script reads it.
+IMAGE_REPO_DEFAULT=ghcr.io/data-masterclass/sovereign-os
+IMAGE_REPO_GIVEN=${IMAGE_REPO:+1}
 IMAGE_REPO=${IMAGE_REPO:-$IMAGE_REPO_DEFAULT}
 IMG=$IMAGE_REPO/os-ui:$VERSION
 WORK=${WORK:-$(mktemp -d)}
@@ -194,7 +209,7 @@ PY
 # ImagePullBackOff — after the backup gate, after the push, with the old ReplicaSet gone. Only
 # checked when IMAGE_REPO was NOT passed: with it, the upgrade below --sets the repository, so
 # the two agree by construction. See scripts/lib/check-image-repo.py.
-if [ "$IMAGE_REPO" = "$IMAGE_REPO_DEFAULT" ]; then
+if [ -z "$IMAGE_REPO_GIVEN" ]; then
   say "the release's os-ui repository must match the image we are deploying"
   python3 scripts/lib/check-image-repo.py "$VALUES" "$IMAGE_REPO/os-ui" "$CHART/values.yaml"
 fi
@@ -280,7 +295,7 @@ say "helm upgrade"
 # when IMAGE_REPO was passed explicitly do we override it — so a plain `deploy.sh <version>`
 # runs the exact command line it has always run.
 REPO_SET=()
-[ "$IMAGE_REPO" = "$IMAGE_REPO_DEFAULT" ] || REPO_SET=(--set "osUI.image.repository=$IMAGE_REPO/os-ui")
+[ -z "$IMAGE_REPO_GIVEN" ] || REPO_SET=(--set "osUI.image.repository=$IMAGE_REPO/os-ui")
 [ ${#REPO_SET[@]} -eq 0 ] || say "overriding osUI.image.repository=$IMAGE_REPO/os-ui (IMAGE_REPO)"
 helm --kube-context "$CTX" upgrade "$REL" "$CHART" -n "$NS" -f "$VALUES" \
   --set osUI.image.tag="$VERSION@$DIGEST" "${REPO_SET[@]+"${REPO_SET[@]}"}" \

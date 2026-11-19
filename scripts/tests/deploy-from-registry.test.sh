@@ -38,7 +38,9 @@ check "--help names --from-registry" "--from-registry" "$out"
 check "--help names --verify-only"   "--verify-only"   "$out"
 check "--help names IMAGE_REPO"      "IMAGE_REPO"      "$out"
 check "--help names SKIP_BUILD"      "SKIP_BUILD"      "$out"
-check "--help names both options"    "ghcr.io/data-masterclass/sovereign-os" "$out"
+check "--help names the default namespace" "default ghcr.io/data-masterclass/sovereign-os" "$out"
+check "--help names the old namespace too" "IMAGE_REPO=ghcr.io/aborek/sovereign-os" "$out"
+check "--help says a local build needs push rights" "PUSH_FAILED" "$out"
 
 echo "== argument handling"
 out=$(bash scripts/deploy.sh 2>&1); rc=$?
@@ -56,16 +58,17 @@ chmod +x "$probe"
 out=$(DEPLOY_REGISTRY_PROBE=$probe bash scripts/deploy.sh --verify-only 9.9.9-test 2>&1); rc=$?
 [ $rc -eq 0 ] && ok "--verify-only exits 0" || bad "--verify-only exits 0" "exit $rc: $out"
 check "--verify-only prints the default ref" \
-  "ghcr.io/aborek/sovereign-os/os-ui:9.9.9-test" "$out"
+  "ghcr.io/data-masterclass/sovereign-os/os-ui:9.9.9-test" "$out"
 check "--verify-only prints the probed digest" "$DIG" "$out"
 check "--verify-only reports VERIFY_<version>_OK" "VERIFY_9.9.9-test_OK" "$out"
 # The point of --verify-only: it stops before anything can reach a cluster.
 case $out in *kubectl*|*"context "*) bad "--verify-only touches no cluster" "$out" ;; *) ok "--verify-only touches no cluster" ;; esac
 
 echo "== IMAGE_REPO moves the reference"
-out=$(IMAGE_REPO=ghcr.io/data-masterclass/sovereign-os DEPLOY_REGISTRY_PROBE=$probe \
+out=$(IMAGE_REPO=ghcr.io/aborek/sovereign-os DEPLOY_REGISTRY_PROBE=$probe \
       bash scripts/deploy.sh --verify-only 9.9.9-test 2>&1)
-check "IMAGE_REPO changes the ref" "ghcr.io/data-masterclass/sovereign-os/os-ui:9.9.9-test" "$out"
+check "IMAGE_REPO changes the ref" "ghcr.io/aborek/sovereign-os/os-ui:9.9.9-test" "$out"
+case $out in *data-masterclass*) bad "IMAGE_REPO leaves no trace of the default" "$out" ;; *) ok "IMAGE_REPO leaves no trace of the default" ;; esac
 
 echo "== IMAGE_FROM_REGISTRY / IMAGE_VERIFY_ONLY are the env twins of the flags"
 out=$(IMAGE_FROM_REGISTRY=1 IMAGE_VERIFY_ONLY=1 DEPLOY_REGISTRY_PROBE=$probe \
@@ -213,29 +216,83 @@ grep -q 'would be\s*$\|redundant' .dockerignore \
 
 echo "== review M3: a split-namespace deploy is refused"
 vals=$TMP/vals.yaml
-printf 'osUI:\n  image:\n    repository: ghcr.io/data-masterclass/sovereign-os/os-ui\n    tag: "0.9.5"\n' > "$vals"
-out=$(python3 scripts/lib/check-image-repo.py "$vals" ghcr.io/aborek/sovereign-os/os-ui 2>&1); rc=$?
+printf 'osUI:\n  image:\n    repository: ghcr.io/aborek/sovereign-os/os-ui\n    tag: "0.9.5"\n' > "$vals"
+out=$(python3 scripts/lib/check-image-repo.py "$vals" ghcr.io/data-masterclass/sovereign-os/os-ui 2>&1); rc=$?
 [ $rc -ne 0 ] && ok "a mismatched repository refuses" || bad "a mismatched repository refuses" "exit 0"
 check "it names the failure"      "IMAGE_REPOSITORY_MISMATCH" "$out"
-check "it names what the release pulls" "ghcr.io/data-masterclass/sovereign-os/os-ui" "$out"
-check "it offers the IMAGE_REPO fix"    "IMAGE_REPO=ghcr.io/data-masterclass/sovereign-os" "$out"
-out=$(python3 scripts/lib/check-image-repo.py "$vals" ghcr.io/data-masterclass/sovereign-os/os-ui 2>&1); rc=$?
+check "it names what the release pulls" "ghcr.io/aborek/sovereign-os/os-ui" "$out"
+check "it offers the IMAGE_REPO fix"    "IMAGE_REPO=ghcr.io/aborek/sovereign-os" "$out"
+out=$(python3 scripts/lib/check-image-repo.py "$vals" ghcr.io/aborek/sovereign-os/os-ui 2>&1); rc=$?
 [ $rc -eq 0 ] && ok "a matching repository passes" || bad "a matching repository passes" "$out"
 printf 'osUI:\n  enabled: true\n' > "$TMP/norepo.yaml"
-out=$(python3 scripts/lib/check-image-repo.py "$TMP/norepo.yaml" ghcr.io/aborek/sovereign-os/os-ui 2>&1); rc=$?
+out=$(python3 scripts/lib/check-image-repo.py "$TMP/norepo.yaml" ghcr.io/data-masterclass/sovereign-os/os-ui 2>&1); rc=$?
 [ $rc -eq 0 ] && ok "no repository and no chart values passes" || bad "no repository and no chart values passes" "$out"
-out=$(python3 scripts/lib/check-image-repo.py "$TMP/absent.yaml" ghcr.io/aborek/sovereign-os/os-ui 2>&1); rc=$?
+out=$(python3 scripts/lib/check-image-repo.py "$TMP/absent.yaml" ghcr.io/data-masterclass/sovereign-os/os-ui 2>&1); rc=$?
 [ $rc -eq 0 ] && ok "an absent values file passes" || bad "an absent values file passes" "$out"
 # deploy.sh must actually call it, and only when IMAGE_REPO was not given.
 grep -q 'check-image-repo.py' scripts/deploy.sh \
   && ok "deploy.sh runs the repository check" || bad "deploy.sh runs the repository check"
+# "Given" is recorded before the default is applied, never inferred by comparing against it:
+# otherwise IMAGE_REPO=<the default> is a no-op and the guard's advice cannot be followed.
+grep -q '^IMAGE_REPO_GIVEN=\${IMAGE_REPO:+1}$' scripts/deploy.sh \
+  && ok "deploy.sh records whether IMAGE_REPO was given" || bad "deploy.sh records whether IMAGE_REPO was given"
+[ "$(grep -c 'IMAGE_REPO" = "\$IMAGE_REPO_DEFAULT"' scripts/deploy.sh)" = 0 ] \
+  && ok "deploy.sh never infers 'given' from the value" || bad "deploy.sh never infers 'given' from the value"
+[ "$(grep -c '\[ -z "\$IMAGE_REPO_GIVEN" \]' scripts/deploy.sh)" = 2 ] \
+  && ok "the guard and the --set hang off the same switch" || bad "the guard and the --set hang off the same switch"
+# The default itself, and the one place it may appear in a cloud overlay. Only os-ui moved.
+grep -q '^IMAGE_REPO_DEFAULT=ghcr.io/data-masterclass/sovereign-os$' scripts/deploy.sh \
+  && ok "the default is the org namespace" || bad "the default is the org namespace"
+[ "$(grep -c 'ghcr.io/data-masterclass/' values.stackit-managed.yaml)" = 1 ] \
+  && grep -q '^    repository: ghcr.io/data-masterclass/sovereign-os/os-ui$' values.stackit-managed.yaml \
+  && ok "the managed overlay moves os-ui and nothing else" || bad "the managed overlay moves os-ui and nothing else"
+[ "$(grep -c 'ghcr.io/data-masterclass/' charts/sovereign-agentic-os/values.yaml)" = 0 ] \
+  && ok "the chart's own defaults did not move" || bad "the chart's own defaults did not move"
+
+echo "== the guard and the override, driven through deploy.sh with a fake kubectl and helm"
+# deploy.sh up to (not past) `helm get manifest`: the fake helm serves the "live" values and
+# then fails on the manifest read, so nothing later — backup, build, upgrade — can run. The
+# context is one that does not exist, so a REAL kubectl/helm could not reach a cluster either.
+fk=$TMP/fakekube; mkdir -p "$fk"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$fk/kubectl"
+cat > "$fk/helm" <<'FAKE'
+#!/usr/bin/env bash
+case "$*" in
+  *"get values"*)   printf 'osUI:\n  image:\n    repository: %s\n    tag: "0.9.5"\n' "$FAKE_LIVE_REPO" ;;
+  *"get manifest"*) echo reached >> "$FAKE_REACHED"; exit 97 ;;
+  *) echo "fake helm: unexpected: $*" >&2; exit 98 ;;
+esac
+FAKE
+chmod +x "$fk/kubectl" "$fk/helm"
+drive() { # drive <live-repo> [IMAGE_REPO] — sets $out, $rc and $reached
+  rm -f "$TMP/reached"; mkdir -p "$TMP/work"
+  out=$(env -u IMAGE_REPO ${2:+IMAGE_REPO=$2} PATH="$fk:$PATH" KUBE_CONTEXT=no-such-context-test \
+        WORK="$TMP/work" FAKE_LIVE_REPO="$1" FAKE_REACHED="$TMP/reached" DEPLOY_REGISTRY_PROBE=$probe \
+        bash scripts/deploy.sh --from-registry 9.9.9-test 2>&1); rc=$?
+  reached=no; [ -f "$TMP/reached" ] && reached=yes
+}
+drive ghcr.io/aborek/sovereign-os/os-ui
+[ $rc -eq 1 ] && ok "a release still on the old namespace is refused by default" || bad "a release still on the old namespace is refused by default" "exit $rc: $out"
+check "the refusal is the repository guard" "IMAGE_REPOSITORY_MISMATCH" "$out"
+check "it advises the default namespace"    "IMAGE_REPO=ghcr.io/data-masterclass/sovereign-os ./scripts/deploy.sh" "$out"
+[ $reached = no ] && ok "nothing after the guard ran" || bad "nothing after the guard ran"
+# …and that advice must WORK: the default, passed explicitly, is an override, not a no-op.
+drive ghcr.io/aborek/sovereign-os/os-ui ghcr.io/data-masterclass/sovereign-os
+[ $rc -eq 97 ] && [ $reached = yes ] && ok "IMAGE_REPO=<the default> gets past the guard" || bad "IMAGE_REPO=<the default> gets past the guard" "exit $rc: $out"
+case $out in *IMAGE_REPOSITORY_MISMATCH*) bad "an explicit IMAGE_REPO is not second-guessed" "$out" ;; *) ok "an explicit IMAGE_REPO is not second-guessed" ;; esac
+drive ghcr.io/data-masterclass/sovereign-os/os-ui
+[ $rc -eq 97 ] && [ $reached = yes ] && ok "a release on the default namespace passes with nothing set" || bad "a release on the default namespace passes with nothing set" "exit $rc: $out"
+check "the guard ran and agreed" "osUI.image.repository matches the image being deployed (ghcr.io/data-masterclass/sovereign-os/os-ui)" "$out"
+drive ghcr.io/data-masterclass/sovereign-os/os-ui ghcr.io/aborek/sovereign-os
+[ $rc -eq 97 ] && [ $reached = yes ] && ok "IMAGE_REPO=<the old namespace> is honoured too" || bad "IMAGE_REPO=<the old namespace> is honoured too" "exit $rc: $out"
+check "it deploys the old-namespace image" "ghcr.io/aborek/sovereign-os/os-ui:9.9.9-test" "$out"
 
 echo "== review L3: no repository in the release means the CHART DEFAULT applies"
 # The chart default is the laptop/kind profile — a bare `sovereign-os/os-ui` no registry serves.
 # Deploying a ghcr.io digest against it is the same ImagePullBackOff by another route.
 chart=$TMP/chart-values.yaml
 printf 'osUI:\n  image:\n    repository: sovereign-os/os-ui\n    tag: "0.1.0"\n' > "$chart"
-out=$(python3 scripts/lib/check-image-repo.py "$TMP/norepo.yaml" ghcr.io/aborek/sovereign-os/os-ui "$chart" 2>&1); rc=$?
+out=$(python3 scripts/lib/check-image-repo.py "$TMP/norepo.yaml" ghcr.io/data-masterclass/sovereign-os/os-ui "$chart" 2>&1); rc=$?
 [ $rc -ne 0 ] && ok "a ghcr digest against the laptop default refuses" || bad "a ghcr digest against the laptop default refuses" "exit 0"
 check "it names the mismatch"       "IMAGE_REPOSITORY_MISMATCH" "$out"
 check "it names the chart default"  "sovereign-os/os-ui"        "$out"
