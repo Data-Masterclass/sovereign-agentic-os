@@ -59,6 +59,7 @@ import RefinementList, { type RefineHandlers } from '@tabs/software/ui/Refinemen
 import { buildableBatch } from '@tabs/software/ui/refinement-view';
 import StageConversation from '@core/ui/core/StageConversation';
 import { initialStageState, canEnter, isSatisfied, type StageState } from '@core/kernel/stages';
+import { deployStatusOf } from '@tabs/software/lib/deploy-status';
 import { buildStatusRail } from '@tabs/software/lib/build-activity';
 import { type BuildTarget } from '@tabs/software/lib/build-target';
 import { everyStoryHasSpec, specHasContent, storiesMissingSpec, designLadder, type StorySpec } from '@tabs/software/lib/story-spec';
@@ -164,11 +165,9 @@ function visDisplayLabel(v: Visibility): string {
   if (v === 'Certified') return 'Company';
   return v;
 }
-function deployBadge(state: SoftwareApp['deploy']['state']): { cls: string; label: string } {
-  if (state === 'live') return { cls: 'badge ok', label: 'Live' };
-  if (state === 'review') return { cls: 'badge warn', label: 'In review' };
-  if (state === 'preview') return { cls: 'badge muted', label: 'Preview' };
-  return { cls: 'badge muted', label: 'Draft' };
+/** The status word, from what is really served for the app's serve mode (deploy-status.ts). */
+function deployBadge(app: SoftwareApp): { cls: string; label: string } {
+  return deployStatusOf(app);
 }
 function promoteLabel(v: Visibility): string | null {
   if (v === 'Personal') return 'Promote to Domain';
@@ -320,7 +319,7 @@ export default function SoftwareBuilder({
   const canEdit = app.owner === user.id || roleAtLeast(user.role, 'domain_admin');
 
   const surface = app.surface ?? { ui: true, api: true };
-  const dep = deployBadge(app.deploy.state);
+  const dep = deployBadge(app);
   const version = app.deploy.releases > 0 ? `v${app.deploy.releases}` : 'Unpublished';
   const canPromoteUI = promoteLabel(app.visibility);
   const canDemoteUI =
@@ -2131,7 +2130,7 @@ function PublishStage({
   onSetServeMode: (mode: 'image' | 'runtime') => void;
 }) {
   const version = app.deploy.releases > 0 ? `v${app.deploy.releases}` : 'Unpublished';
-  const dep = deployBadge(app.deploy.state);
+  const dep = deployBadge(app);
   const isRuntime = app.serveMode === 'runtime';
   // The OS runtime can only serve Vite-shaped SPAs — the same scope the server enforces.
   const runtimeEligible = app.template === 'sovereign-app' || app.template === 'vite-os' || app.template === 'empty' || app.template === 'website';
