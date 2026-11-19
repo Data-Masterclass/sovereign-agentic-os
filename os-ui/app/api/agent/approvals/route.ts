@@ -3,8 +3,10 @@
  */
 import { NextResponse } from 'next/server';
 import { requireUser } from '@core/kernel/auth';
-import { withRoute } from '@core/kernel/route-server';
-import { decide, getApproval, listApprovals } from '@core/policy/approvals';
+import { errorResponse } from '@core/kernel/route-server';
+import { decide, ensureHydrated, getApproval, listApprovals } from '@core/policy/approvals';
+import { canApprove, canSee, roleLabel } from '@core/policy/roles';
+import { guardAppIntent } from '@core/kernel/app-intent';
 import { curateFact, proposeFact } from '@tabs/agents/lib/agent-memory';
 import { trace } from '@core/infra/agent-governed';
 import {
@@ -20,19 +22,34 @@ import { roleAtLeast } from '@core/kernel/session';
 export const dynamic = 'force-dynamic';
 
 /**
- * Governance approval queue API (golden path §7). Held write-backs (connection
- * writes, knowledge certify, file promotes) surface here for a Builder/Admin.
- *   GET  -> the queue (everyone signed in can watch; UI gates the buttons).
- *   POST { id, decision } -> approve/reject. Approving APPLIES the write
- *     (attributed to the agent + the approving human) and logs it to Langfuse.
+ * The LEGACY approval queue API (golden path §7) — older than the Governance inbox route
+ * (`/api/governance/approvals`), which is the door the UI uses. Kept because a client outside
+ * this repository may still call it; its apply-side effects are unchanged.
+ *
+ * AUTHORISATION IS THE GOVERNANCE ROUTE'S, item by item — the same `canSee` / `canApprove`
+ * (`core/policy/roles.ts`) and the same app-intent guard. This route used to gate on a role
+ * floor alone ("Builder or above"), which let any Builder decide ANY approval: another domain's
+ * item, an admin-only item, and — the one that mattered most — the held call of their OWN
+ * parked agent run, which four-eyes forbids. Its GET listed the whole queue, payloads included,
+ * to anyone signed in.
+ *   GET  -> the queue as the Governance inbox would show it to this user.
+ *   POST { id, decision } -> approve/reject, only for a user `canApprove` clears. Approving
+ *     APPLIES the write (attributed to the agent + the approving human) and logs it to Langfuse.
  */
-export const GET = withRoute(async () => {
-  const all = listApprovals();
+export async function GET() {
+  await ensureHydrated();
+  let user;
+  try {
+    user = await requireUser();
+  } catch (e) {
+    return errorResponse(e);
+  }
+  const visible = listApprovals().filter((a) => canSee(user, a));
   return NextResponse.json({
-    approvals: all,
-    pending: all.filter((a) => a.status === 'pending').length,
+    approvals: visible,
+    pending: visible.filter((a) => a.status === 'pending').length,
   });
-}, { defaultStatus: 401 });
+}
 
 export async function POST(req: Request) {
   let user;
@@ -41,10 +58,15 @@ export async function POST(req: Request) {
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: (e as { status?: number }).status ?? 401 });
   }
-  // Only Builders/Admins clear the queue (§7: Builder is the approval gate).
+  // Only Builders/Admins clear the queue (§7: Builder is the approval gate). This floor is the
+  // cheap first refusal; the per-item gate below is the rule.
   if (!roleAtLeast(user.role, 'builder')) {
     return NextResponse.json({ error: 'Approving governed writes requires a Builder or Administrator' }, { status: 403 });
   }
+  // Deciding an approval is a HUMAN act: a cross-site POST or one presenting an app intent is
+  // refused, exactly as on the Governance route.
+  const intent = guardAppIntent(req.headers, user, 'approval-decide');
+  if (!intent.ok) return NextResponse.json({ error: intent.reason }, { status: intent.status });
 
   let body: { id?: string; decision?: 'approve' | 'reject' };
   try {
@@ -54,10 +76,18 @@ export async function POST(req: Request) {
   }
   const id = (body?.id ?? '').toString();
   const decision = body?.decision === 'reject' ? 'reject' : 'approve';
+  await ensureHydrated();
   const existing = getApproval(id);
   if (!existing) return NextResponse.json({ error: 'Approval not found' }, { status: 404 });
+  if (!canSee(user, existing)) return NextResponse.json({ error: 'Out of scope' }, { status: 403 });
   if (existing.status !== 'pending') {
     return NextResponse.json({ error: `Already ${existing.status}` }, { status: 409 });
+  }
+  // THE PER-ITEM GATE, before any effect runs and for approve AND reject: rank ≥ the item's
+  // approver role, in scope, and never the requester of a parked agent run's own held call.
+  if (!canApprove(user, existing)) {
+    const need = existing.scope === 'tenant' ? 'an Administrator' : `a ${roleLabel(existing.approverRole)} of ${existing.domain}`;
+    return NextResponse.json({ error: `This item needs ${need}` }, { status: 403 });
   }
 
   // A dataset promotion APPLIES the tier move (dataset→asset, into Trino) and is
