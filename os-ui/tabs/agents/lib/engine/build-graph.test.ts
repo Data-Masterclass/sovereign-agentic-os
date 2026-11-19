@@ -396,8 +396,12 @@ test('compile errors: unmapped legacy tools, a disabled entrypoint, a malformed 
   const { ir, deps } = depsFor(TWO_AGENTS, script());
   assert.throws(() => buildGraph(ir, { ...deps, unmappedTools: ['web_fetch'] }), (e: Error) => e instanceof GraphCompileError && /web_fetch/.test(e.message));
   assert.throws(() => buildGraph(ir, { ...deps, disabled: ['a'] }), (e: Error) => e instanceof GraphCompileError && /entrypoint 'a' is disabled/.test(e.message));
-  const bad = depsFor(guarded('a &&'), script());
-  assert.throws(() => buildGraph(bad.ir, bad.deps), (e: Error) => e instanceof GraphCompileError && /handoff a → b/.test(e.message));
+  // The compiler refuses a malformed guard first (edit time); the graph builder still refuses an
+  // IR that carries one, whoever built it.
+  assert.throws(() => depsFor(guarded('a &&'), script()), /handoff 'a' -> 'b'/);
+  const ok = depsFor(guarded('true'), script());
+  const badIr = { ...ok.ir, commands: [{ from: 'a', to: 'b', when: 'a &&' }] };
+  assert.throws(() => buildGraph(badIr, ok.deps), (e: Error) => e instanceof GraphCompileError && /handoff a → b/.test(e.message));
   const shadow = depsFor(TWO_AGENTS.replace('flag: last_value', 'final: last_value'), script());
   assert.throws(() => buildGraph(shadow.ir, shadow.deps), (e: Error) => e instanceof GraphCompileError && /shadows an engine state key/.test(e.message));
 });
@@ -410,9 +414,20 @@ test("a stored team with the old scaffold placeholder `when: step complete` runs
     assert.match(result.warnings[0], /handoff a → b/);
     assert.match(result.warnings[0], /unconditional handoff/);
   }
-  // Only that one literal is forgiven: anything else that is not an expression still fails the build.
-  const other = depsFor(guarded('step done'), script());
-  assert.throws(() => buildGraph(other.ir, other.deps), (e: Error) => e instanceof GraphCompileError && /handoff a → b/.test(e.message));
+  // Only that label shape is forgiven: anything else that is not an expression still fails.
+  assert.throws(() => depsFor(guarded('step done'), script()), /handoff 'a' -> 'b'/);
+});
+
+test('F0: a stored team the proposer wrote (`when: "<role> complete"`) runs as an unconditional handoff, with the same warning', async () => {
+  for (const legacy of ['first complete', 'Pulls the raw campaign data complete', 'Checks margins (after returns) complete']) {
+    const { result } = await run(guarded(legacy), script());
+    assert.deepEqual(result.path, ['a', 'b'], `"${legacy}" never was a condition — b is visited`);
+    assert.equal(result.warnings.length, 1);
+    assert.match(result.warnings[0], /handoff a → b/);
+    assert.match(result.warnings[0], /not a condition — treated as an unconditional handoff/);
+  }
+  // A guard someone wrote as a condition and got wrong is NOT read as "always".
+  assert.throws(() => depsFor(guarded('state.findings_ready && review complete'), script()), /handoff 'a' -> 'b'/);
 });
 
 test('live events arrive in order through the stream writer: node-started → tool-step → node-completed per agent', async () => {

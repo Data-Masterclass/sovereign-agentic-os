@@ -63,3 +63,33 @@ test('whenChannels lists every channel an expression reads, once, in order', () 
   assert.deepEqual(whenChannels(parseWhen("state.a && (b || a) || c == 'x'")), ['a', 'b', 'c']);
   assert.deepEqual(whenChannels(parseWhen('true')), []);
 });
+
+// --- F0: the proposer's old label, read deliberately --------------------------------------------
+
+import { isLegacyUnguardedWhen, whenProblem } from '@tabs/agents/lib/engine/when';
+
+test('isLegacyUnguardedWhen: "<words> complete" that cannot be an expression is the old "then" label', () => {
+  for (const label of ['step complete', ' Step  Complete ', 'research complete', 'Pulls the raw campaign data complete', 'Checks margins (after returns) complete', 'Q&A drafting complete', 'Writes the report. complete']) {
+    assert.equal(isLegacyUnguardedWhen(label), true, label);
+  }
+});
+
+test('isLegacyUnguardedWhen: anything that IS an expression, or was meant as one, is not forgiven', () => {
+  // A real expression is a guard, whatever words it uses.
+  for (const expr of ['complete', 'state.complete', 'done || complete', "status == 'complete'", 'true']) {
+    assert.equal(isLegacyUnguardedWhen(expr), false, expr);
+    assert.doesNotThrow(() => parseWhen(expr));
+  }
+  // A broken guard that someone WROTE as a condition must stay an error — never a silent "always".
+  for (const broken of ['state.done && tests complete', 'reviewed == true complete', 'a || b complete', 'x != y is complete', 'step done', 'complete step', '']) {
+    assert.equal(isLegacyUnguardedWhen(broken), false, broken);
+  }
+});
+
+test('whenProblem: null for no guard, a valid guard and the legacy label; the syntax error otherwise', () => {
+  assert.equal(whenProblem(undefined), null);
+  assert.equal(whenProblem('   '), null);
+  assert.equal(whenProblem('plan_ready && !x' .replace('!x', 'state.ok')), null);
+  assert.equal(whenProblem('research complete'), null);
+  assert.match(whenProblem('research done') ?? '', /unexpected trailing token 'done'/);
+});

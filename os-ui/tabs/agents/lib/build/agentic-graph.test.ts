@@ -214,3 +214,14 @@ test('node status: a Trino-error step → "error"; an OPA-deny step → "denied"
   assert.equal(nodeStatus(result([step({ result: 'TrinoQueryError', isError: true }), step({ result: denied, isError: true })])), 'denied');
   assert.equal(nodeStatus(result([step()]), 'it threw'), 'failed');
 });
+
+// --- F12: the agent's `role` line reaches the model ------------------------------------------
+
+test('nodeSystem: the definition\'s one-line role is sent under the role header; without one the prompt is unchanged', () => {
+  const node = { id: 'checker', kind: 'react' as const, prompt: '# checker\n\nCheck margins.', memory: '', tools: [], model: null, supervisor: false, members: [] };
+  const withRole = nodeSystem('RULES', node, [], undefined, '  Checks margins\n after returns ');
+  assert.match(withRole, /--- YOUR ROLE IN THE TEAM: checker ---\nYour role: Checks margins after returns\n# checker/);
+  const without = nodeSystem('RULES', node, []);
+  assert.doesNotMatch(without, /Your role:/);
+  assert.equal(nodeSystem('RULES', node, [], undefined, '   '), without);
+});

@@ -168,6 +168,11 @@ export type AgenticGraphDeps = {
   callTool: ToolExecutor;
   /** Preamble shared by every node (OS rules + software tab context). */
   preamble: string;
+  /**
+   * An agent's one-line `role` from the definition ("Checks margins after returns"), sent to the
+   * model under its role header. Absent → no role line (the prompt is exactly as before).
+   */
+  roleOf?: (agentId: string) => string | undefined;
   /** Reasoning tier used for every node's PLAN step. */
   reasoningModel: string;
   /** The FAST ACT model an Auto node resolves to when it does read-only gathering. */
@@ -485,9 +490,14 @@ function budgetTranscript(transcript: HandoffEntry[], ceiling: number): HandoffE
  * outputs (via {@link handoffBlock}); the MOST RECENT entry is listed last (the
  * budgeter pins recent messages, so the thing this node most needs survives).
  */
-export function nodeSystem(preamble: string, node: IRNode, transcript: HandoffEntry[], budget?: number): string {
+export function nodeSystem(preamble: string, node: IRNode, transcript: HandoffEntry[], budget?: number, roleLine?: string): string {
   transcript = budgetTranscript(transcript, handoffCeiling(budget));
-  const parts = [preamble, '', `--- YOUR ROLE IN THE TEAM: ${node.id} ---`, node.prompt];
+  // The definition's one-line `role` travels with the agent's own instructions. It used to be
+  // stored and shown in the builder but never sent, so what the author wrote there had no effect.
+  // (It is passed in rather than carried on the IR: the IR is also written to each system's
+  // generated `graph.json`, and this must not rewrite that file for every stored system.)
+  const role = roleLine?.replace(/\s+/g, ' ').trim();
+  const parts = [preamble, '', `--- YOUR ROLE IN THE TEAM: ${node.id} ---`, ...(role ? [`Your role: ${role}`] : []), node.prompt];
   const memory = node.memory?.trim();
   if (memory && memory !== '# Memory') parts.push('', memory);
   if (transcript.length > 0) {
@@ -514,8 +524,8 @@ export async function runNode(
   const node = ir.nodes.find((n) => n.id === nodeId);
   if (!node) throw new Error(`Unknown team node: ${nodeId}`);
   const system = opts.extraGuidance
-    ? `${nodeSystem(deps.preamble, node, [])}\n\n--- THIS TURN ---\n${opts.extraGuidance}`
-    : nodeSystem(deps.preamble, node, []);
+    ? `${nodeSystem(deps.preamble, node, [], undefined, deps.roleOf?.(node.id))}\n\n--- THIS TURN ---\n${opts.extraGuidance}`
+    : nodeSystem(deps.preamble, node, [], undefined, deps.roleOf?.(node.id));
   const routed = resolveNodeModel(node, deps);
   const actModel = routed.model;
   const result = await runAgentic({

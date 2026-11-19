@@ -2,6 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { type AgentSpec, type EdgeType, type NodePosition, type System, SystemError } from '@tabs/agents/lib/system-schema';
+import { whenProblem } from '@tabs/agents/lib/engine/when';
 
 /**
  * Pure, immutable `system.yaml` mutations for the hand-rolled SVG canvas (Task 3,
@@ -85,6 +86,9 @@ export function addHandoffEdge(input: System, from: string, to: string, when?: s
   if (input.edges.some((e) => e.from === from && e.to === to && e.type === 'handoff')) {
     throw new SystemError(`Canvas: '${from}' already hands off to '${to}'`);
   }
+  // A condition is checked where it is written: an invalid `when` is refused at the edit.
+  const problem = whenProblem(when);
+  if (problem) throw new SystemError(`Canvas: ${problem}. Leave the condition empty for a plain hand-off.`);
   const sys = structuredClone(input);
   const edge = when?.trim()
     ? { from, to, type: 'handoff' as EdgeType, when: when.trim() }
