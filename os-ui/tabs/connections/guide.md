@@ -22,12 +22,12 @@ The Connections tab stores named credentials for external systems — databases,
 
 A warehouse connection (Glue/Athena, Databricks, Snowflake, BigQuery, OneLake) brings external tables into the OS through a governed **expose → adopt** flow, not a raw import. The security invariant: an unexposed live external catalog reads ZERO rows for everyone (a fail-closed OPA floor); an exposure set is the gate that opens exactly the named tables to exactly the named domains.
 
-1. **Register + snapshot.** register_warehouse_catalog (Builder+) makes the Trino catalog live, then `refresh_connection_catalog` (admin) caches the schema/table listing. `get_catalog_snapshot` reads it — freshness is "snapshot from <takenAt>", drift is `prevDiff`; never fabricated.
+1. **Register + snapshot.** Registering the Trino catalog in the Connections tab (Builder+; there is no MCP tool for this step) makes it live, then `refresh_connection_catalog` (admin) caches the schema/table listing. `get_catalog_snapshot` reads it — freshness is "snapshot from <takenAt>", drift is `prevDiff`; never fabricated.
 2. **Organize with AI (optional).** `classify_catalog` (admin) groups tables into folders (names-first + a capped column pass). It never invents folders; low-confidence tables land in Unsorted; human moves win permanently. `get_catalog_classification` reads placements + counts + the honest last-run detail — "suggested, not verified".
 3. **Expose (admin).** `create_exposure_set(connId, name, domains[], mode, tier, tables[])` grants tables to domains and compiles straight to OPA. `update_exposure_set` / `revoke_exposure_set` recompile immediately; `list_exposure_sets` reads them.
 4. **Adopt (⛔ domain_admin, in the Data tab).** `list_exposed_tables` then `adopt_exposed_table(exposureId, schema, table, description)` creates a Domain-tier `origin:'connected'` dataset — **live** (federated) or **sync** (a scheduled copy; define metrics on the copy). A description is required.
 
-**Revocation is honest and shared with the UI:** `revoke_exposure_set` withdraws OPA entries (live reads → zero rows) AND freezes every adopted dataset (source-revoked), tears down its sync CronJob, notifies its owner, and traces per dataset — a synced copy keeps its last-landed rows. import_warehouse_table remains for a one-shot personal CTAS copy but points at expose→adopt as the governed path.
+**Revocation is honest and shared with the UI:** `revoke_exposure_set` withdraws OPA entries (live reads → zero rows) AND freezes every adopted dataset (source-revoked), tears down its sync CronJob, notifies its owner, and traces per dataset — a synced copy keeps its last-landed rows.
 
 ## What to consider
 

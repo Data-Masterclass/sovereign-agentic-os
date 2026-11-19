@@ -4,7 +4,7 @@
 import 'server-only';
 import type { CurrentUser } from '@core/kernel/auth';
 import type { ChatArtifact } from '@core/runtime/chat-artifacts';
-import { ROLES, type Role } from '@core/kernel/session';
+import { ROLES, canPromote, type Role } from '@core/kernel/session';
 import { config } from '@core/kernel/config';
 import { ENGINE_UNAVAILABLE, isOfflineMockRefused } from '@core/kernel/offline-mock';
 import { codedAppsEnabled, ensureHydrated as ensureSettingsHydrated } from '@tabs/admin/lib/settings';
@@ -153,25 +153,33 @@ const agentTools: McpTool[] = [
 ];
 
 // --- Discovery (meta) tools — make the OS legible to an AI consumer ------------
-/** A plain-language read of what a role can / cannot do (4 roles: creator <
- * builder < domain_admin < admin — the creator lockdown stays the floor). */
+/**
+ * A plain-language read of what a role can / cannot do (4 roles: creator < builder <
+ * domain_admin < admin). Every sentence is DERIVED from the rule that enforces it, so the
+ * text cannot drift from the gate (`core/mcp/claims.test.ts` pins this):
+ *   - approving a My→Domain promotion and certifying to Company: `canPromote` (session.ts),
+ *     the same predicate the promotion ladder uses;
+ *   - administering users: the tenant Admin only, because every Users & Access route goes
+ *     through `adminCtx()` → `requireAdmin()` (app/api/platform-admin/_ctx.ts).
+ */
 function capabilitySummary(role: Role): { can: string[]; cannot: string[] } {
-  const builder = roleCanUse(role, 'builder');
-  const domainAdmin = roleCanUse(role, 'domain_admin');
-  const admin = roleCanUse(role, 'admin');
+  const approveDomain = canPromote(role, 'Personal');
+  const certify = canPromote(role, 'Shared');
+  const userAdmin = role === 'admin';
   return {
     can: [
       'create datasets, files, knowledge workflows, metrics, dashboards and agent systems in your own domain(s)',
       'build, document and query your own work',
-      ...(builder ? ['promote/publish your work to a SHARED domain asset (dataset/file/workflow/agent)'] : []),
-      ...(domainAdmin && !admin ? ['administer users in your OWN domain(s): invite, edit, deactivate, assign roles up to builder'] : []),
-      ...(admin ? ['certify to the cross-domain marketplace', 'administer users tenant-wide (incl. appointing domain admins)'] : []),
-
+      'file a promotion request (request_promotion) to share your work with your domain',
+      ...(roleCanUse(role, 'builder') ? ['approve software deploys (decide_deploy)'] : []),
+      ...(approveDomain ? ['approve My→Domain promotions in your domain(s) (approve_promotion)'] : []),
+      ...(certify ? ['certify to Company (the cross-domain marketplace)'] : []),
+      ...(userAdmin ? ['administer users tenant-wide, including appointing domain admins'] : []),
     ],
     cannot: [
-      ...(!builder ? ['promote/publish to a shared domain asset — that is Builder+ (ask a Builder, or keep it Personal)'] : []),
-      ...(!domainAdmin ? ['administer users — that is Domain admin+ (in-domain) or Admin (tenant-wide)'] : []),
-      ...(!admin ? ['certify to the marketplace — that is Admin-only', ...(domainAdmin ? ['assign the domain_admin or admin role — only the platform Admin appoints those'] : [])] : []),
+      ...(!approveDomain ? ['approve a My→Domain promotion — a Domain admin of that domain decides it (file the request and hand off)'] : []),
+      ...(!certify ? ['certify to Company — that is Admin-only'] : []),
+      ...(!userAdmin ? ['administer users — that is the tenant Admin (Platform → Users & Access)'] : []),
     ],
   };
 }
@@ -598,7 +606,7 @@ export function structuredError(e: unknown): ToolError {
       hint:
         `${(e as { reason?: string }).reason ?? reason} This deployment refuses to answer with ` +
         'fabricated data, so no figure, row or verdict was invented in place of the real one. ' +
-        'Check the component\u2019s health row in Platform \u2192 Components, then retry \u2014 your ' +
+        'Check the component\u2019s health row in Platform \u2192 Overview & Health, then retry \u2014 your ' +
         'arguments are fine.',
     };
   }
@@ -615,11 +623,11 @@ export function structuredError(e: unknown): ToolError {
       : code === 'not_found'
         ? 'Check the id — call list_capabilities or the tab’s list tool first.'
         : code === 'conflict'
-          ? 'Already in that state — this call is idempotent, so no further action is needed.'
+          ? 'The item is not in a state that allows this call — it may already be done, or it may be blocked. Read `reason` and the item’s current state before telling the user it succeeded.'
           : code === 'bad_request'
             ? 'Check your arguments against the tool’s inputSchema (each carries an example).'
             : code === 'upstream_error'
-              ? 'A component this tool depends on is unreachable (model gateway, warehouse, catalog). Check Platform → Components for its health row, then retry — your arguments are fine.'
+              ? 'A component this tool depends on is unreachable (model gateway, warehouse, catalog). Check Platform → Overview & Health for its health row, then retry — your arguments are fine.'
               : 'Unexpected failure — retry, or inspect `reason`.';
   return { code, reason, hint };
 }
