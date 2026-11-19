@@ -8,7 +8,10 @@
  */
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { __resetApprovals, __resetDecidedHandlers, __simulateRestart, decide, decisionSettled, ensureHydrated, enqueue, enqueueOnce, getApproval, onDecided } from '@core/policy/approvals';
+import { __resetApprovals, __resetDecidedHandlers, __simulateRestart, decide, decisionSettled, ensureHydrated, enqueue, enqueueOnce, getApproval, onDecided, withdraw } from '@core/policy/approvals';
+import { canApprove, canWithdraw } from '@core/policy/roles';
+import { withdrawHeldCall } from '@core/policy/withdraw';
+import { __resetAudit, search as searchAudit } from '@core/policy/audit';
 
 beforeEach(() => { __resetApprovals(); __resetDecidedHandlers(); });
 
@@ -116,4 +119,78 @@ test('L-C: deciding a run approval with NO resume handler registered stamps `res
   const after = getApproval(a.id)!;
   assert.equal(after.resume?.status, 'failed');
   assert.equal(after.resume?.error?.code, 'resume_hook_unregistered');
+});
+
+// --- Withdraw: the requester takes their own run's held call back --------------------------------
+
+const RAE = { id: 'rae', role: 'builder' as const, domains: ['sales'] };
+const DANA = { id: 'dana', role: 'domain_admin' as const, domains: ['sales'] };
+const CARL = { id: 'carl', role: 'creator' as const, domains: ['sales'] };
+const ADMIN = { id: 'ada', role: 'admin' as const, domains: ['platform'] };
+
+test('withdraw: the run\'s initiator withdraws their held call — status `withdrawn`, one resume with decision `withdraw`, audited', async () => {
+  __resetAudit();
+  const calls: { id: string; decision: string }[] = [];
+  onDecided(async (a, d) => { calls.push({ id: a.id, decision: d }); });
+  const a = enqueueOnce({ ...base, approverRole: 'domain_admin', interruptKey: 'run_1:w-1' }).approval;
+  const out = await withdrawHeldCall(RAE, a.id);
+  assert.equal(out.ok, true);
+  const after = getApproval(a.id)!;
+  assert.equal(after.status, 'withdrawn');
+  assert.equal(after.decidedBy, 'rae');
+  assert.ok(after.decidedAt);
+  assert.deepEqual(calls, [{ id: a.id, decision: 'withdraw' }]);
+  const logged = searchAudit({ action: 'approval.withdraw' });
+  assert.equal(logged.length, 1);
+  assert.equal(logged[0].actor, 'rae');
+  assert.equal(logged[0].detail.approvalId, a.id);
+  assert.equal(logged[0].detail.runId, 'run_1');
+});
+
+test('withdraw: nobody else can — not a peer, not a domain admin who could deny it, not a platform admin', async () => {
+  const calls: string[] = [];
+  onDecided(async (_a, d) => { calls.push(d); });
+  const a = enqueueOnce({ ...base, approverRole: 'domain_admin', interruptKey: 'run_1:w-2' }).approval;
+  // A same-domain creator cannot even see it; the deciders can see it and are refused.
+  assert.deepEqual(await withdrawHeldCall(CARL, a.id), { ok: false, status: 404, code: 'not_found', reason: 'Request not found' });
+  for (const other of [DANA, ADMIN]) {
+    assert.equal(canWithdraw(other, a), false);
+    const out = await withdrawHeldCall(other, a.id);
+    assert.equal(out.ok, false);
+    assert.equal(!out.ok && out.code, 'forbidden');
+  }
+  assert.equal(getApproval(a.id)?.status, 'pending', 'still pending, still decidable');
+  assert.deepEqual(calls, []);
+  // The existing rule is untouched: the domain admin may still DENY it, the runner may not approve it.
+  assert.equal(canApprove(DANA, a), true);
+  assert.equal(canApprove({ ...RAE, role: 'domain_admin' as const }, a), false);
+});
+
+test('withdraw: an already decided hold cannot be withdrawn, and a withdrawn one cannot be approved or withdrawn again', async () => {
+  const calls: string[] = [];
+  onDecided(async (_a, d) => { calls.push(d); });
+  for (const [key, decision] of [['w-3', 'approve'], ['w-4', 'reject']] as const) {
+    const a = enqueueOnce({ ...base, interruptKey: `run_1:${key}` }).approval;
+    assert.ok(decide(a.id, decision, 'dana'));
+    const out = await withdrawHeldCall(RAE, a.id);
+    assert.equal(!out.ok && out.code, 'already_decided');
+    assert.equal(withdraw(a.id, 'rae'), null);
+    assert.equal(getApproval(a.id)?.status, decision === 'approve' ? 'approved' : 'rejected');
+    assert.equal(getApproval(a.id)?.decidedBy, 'dana');
+  }
+  const w = enqueueOnce({ ...base, interruptKey: 'run_1:w-5' }).approval;
+  assert.equal((await withdrawHeldCall(RAE, w.id)).ok, true);
+  assert.equal(decide(w.id, 'approve', 'dana'), null, 'a withdrawn call can never be approved');
+  assert.equal(!(await withdrawHeldCall(RAE, w.id)).ok, true);
+  assert.equal(getApproval(w.id)?.status, 'withdrawn');
+  assert.deepEqual(calls, ['approve', 'reject', 'withdraw'], 'exactly one resume per item');
+});
+
+test('withdraw: only a parked agent run\'s call — an ordinary request (no run) is refused and stays pending', async () => {
+  const plain = enqueue({ kind: 'knowledge_certify', title: 't', detail: '', agent: 'a', domain: 'sales', requestedBy: 'rae', tool: 'publish_knowledge' });
+  assert.equal(canWithdraw(RAE, plain), false);
+  const out = await withdrawHeldCall(RAE, plain.id);
+  assert.equal(!out.ok && out.code, 'not_a_held_call');
+  assert.equal(withdraw(plain.id, 'rae'), null);
+  assert.equal(getApproval(plain.id)?.status, 'pending');
 });

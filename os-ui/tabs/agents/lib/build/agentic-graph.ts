@@ -74,7 +74,8 @@ export type ErrorKind = 'policy' | 'exec';
  * EXECUTION error, which is not a policy denial.
  */
 // `rejected` (A2): a human denied the held call in Governance — a policy outcome, not an execution failure.
-const POLICY_ERROR_CODES = new Set(['forbidden', 'held', 'not_found', 'rejected']);
+// `withdrawn_by_requester`: the run's initiator took the held call back — likewise not a failure.
+const POLICY_ERROR_CODES = new Set(['forbidden', 'held', 'not_found', 'rejected', 'withdrawn_by_requester']);
 
 /**
  * Classify an errored step as a POLICY denial vs an EXECUTION error by parsing the

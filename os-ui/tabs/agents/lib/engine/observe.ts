@@ -284,7 +284,7 @@ export function langfuseRunObserver(input: LangfuseObserverInput): RunObserver {
           const out = await fn();
           // A POLICY refusal (`forbidden`/`denied`/`held`/`rejected`) is `denied`; `not_found` is
           // the tool reporting a missing object — an ERROR, not a governance decision.
-          const decision: ToolDecision = out.isError ? (/"code":"(forbidden|denied|held|rejected)"/.test(out.text) ? 'denied' : 'error') : meta.decision;
+          const decision: ToolDecision = out.isError ? (/"code":"(forbidden|denied|held|rejected|withdrawn_by_requester)"/.test(out.text) ? 'denied' : 'error') : meta.decision;
           safe(() => toolSpan?.end({ output: { isError: out.isError, ...boundedResult(out.text, level) }, level: out.isError ? 'WARNING' : 'DEFAULT', metadata: { decision, approvalId: meta.approvalId } }));
           return out;
         } catch (e) {

@@ -556,7 +556,7 @@ function GrantsVsUsage({ granted, usage }: { granted: GrantedIds; usage?: RunCon
 /** A calm one-line "what is happening right now" for the live banner. */
 function liveLine(p: LiveProgress): string {
   if (p.awaiting) return `${p.awaiting.node} · ${p.awaiting.tool} — parked, awaiting approval in Governance → Inbox`;
-  if (!p.node) return p.resumed ? `Resumed after the ${p.resumed.decision === 'approve' ? 'approval' : 'rejection'}…` : 'Starting the team…';
+  if (!p.node) return p.resumed ? `Resumed after the ${p.resumed.decision === 'approve' ? 'approval' : p.resumed.decision === 'withdraw' ? 'withdrawal' : 'rejection'}…` : 'Starting the team…';
   const where = p.index && p.total ? ` (agent ${p.index} of ${p.total})` : '';
   if (!p.tool) return `${p.node} — thinking${where}`;
   const verb = p.stepStatus === 'running' ? 'running' : p.stepStatus ?? 'done';
@@ -777,6 +777,8 @@ export default function BuildRunPanel({
   // Seed from server-persisted lastRun so the panel survives tab-switches.
   const [run, setRun] = useState<RunReport | null>(lastRun ?? null);
   const [runErr, setRunErr] = useState('');
+  /** The approval id of a held call being withdrawn right now ('' when none). */
+  const [withdrawing, setWithdrawing] = useState('');
   // LIVE progress (streaming): the current step line + which agents have started/finished.
   const [live, setLive] = useState<LiveProgress | null>(null);
   // Which agent cards are expanded (drill-down), and which individual tool steps.
@@ -1100,6 +1102,35 @@ export default function BuildRunPanel({
     }
   };
 
+  /**
+   * Take back a call this run is parked on. The server checks that the run is yours; the call is
+   * not executed, and the run resumes without it — so follow it to its end.
+   */
+  const withdrawHeld = async (approvalId: string) => {
+    if (withdrawing) return;
+    setWithdrawing(approvalId);
+    setRunErr('');
+    try {
+      const res = await fetch('/api/governance/approvals', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ id: approvalId, decision: 'withdraw' }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setRunErr(body.error ?? `Could not withdraw the call (HTTP ${res.status}).`);
+        return;
+      }
+      const runId = run?.runId;
+      if (runId) await attachToRun(runId);
+      else onStateChange();
+    } catch (e) {
+      setRunErr((e as Error).message);
+    } finally {
+      setWithdrawing('');
+    }
+  };
+
   const doRun = async (stop = false, resumeRunId?: string) => {
     setRunningNow(true);
     setRunErr('');
@@ -1283,10 +1314,19 @@ export default function BuildRunPanel({
           Parked — awaiting approval of{' '}
           {run.heldApprovals.map((h, i) => (
             <span key={h.approvalId}>
-              {i > 0 ? ', ' : ''}<code>{h.tool}</code> ({h.node})
+              {i > 0 ? ', ' : ''}<code>{h.tool}</code> ({h.node}){' '}
+              <button
+                type="button"
+                className="btn-ghost"
+                title="Take this call back. It will not run, and the run continues without it."
+                onClick={() => void withdrawHeld(h.approvalId)}
+                disabled={runningNow || withdrawing !== ''}
+              >
+                {withdrawing === h.approvalId ? 'withdrawing…' : 'withdraw'}
+              </button>
             </span>
           ))}{' '}
-          in <a href={`/governance?focus=${encodeURIComponent(run.heldApprovals[0].approvalId)}`}>Governance → Inbox</a>. Someone else has to decide it — a domain admin of this system&apos;s domain or a platform admin (the card names who). You cannot approve a call your own run made. Their decision resumes the run as you;{' '}
+          in <a href={`/governance?focus=${encodeURIComponent(run.heldApprovals[0].approvalId)}`}>Governance → Inbox</a>. Someone else has to decide it — a domain admin of this system&apos;s domain or a platform admin (the card names who). You cannot approve a call your own run made, but you can withdraw it: it then does not run and the run continues without it. Their decision resumes the run as you;{' '}
           {run.runId ? (
             <button type="button" className="btn-ghost" onClick={() => void attachToRun(run.runId!)} disabled={runningNow}>
               watch it finish

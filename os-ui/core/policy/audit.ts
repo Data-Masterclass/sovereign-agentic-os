@@ -25,6 +25,8 @@ import { audit as persistAudit } from '@tabs/admin/lib/audit';
 export type AuditAction =
   | 'approve'
   | 'deny'
+  /** A requester took back their own agent run's held call before anyone decided it. */
+  | 'approval.withdraw'
   | 'policy.override'
   | 'cost.cap.set'
   | 'role.change'

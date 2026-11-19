@@ -5,7 +5,8 @@ import { NextResponse } from 'next/server';
 import { requireUser } from '@core/kernel/auth';
 import { errorResponse } from '@core/kernel/route-server';
 import { decide, decisionSettled, ensureHydrated, getApproval, listApprovals, recordEffect } from '@core/policy/approvals';
-import { canApprove, canSee, roleLabel } from '@core/policy/roles';
+import { canApprove, canSee, canWithdraw, roleLabel } from '@core/policy/roles';
+import { withdrawHeldCall } from '@core/policy/withdraw';
 import { applyEffect } from '@core/policy/effects';
 import { buildEffectDeps } from '@core/policy/ladder';
 import { record as audit } from '@core/policy/audit';
@@ -20,6 +21,8 @@ export const dynamic = 'force-dynamic';
  *   POST { id, decision, remember? } -> decide. On approve the platform EXECUTES
  *     the governed effect (deploy/grant/egress/promote/run), records audit, and —
  *     if "approve & remember" — writes a standing policy. An approval IS an action.
+ *   POST { id, decision: 'withdraw' } -> the requester of a parked agent run takes its held
+ *     call back (`withdrawHeldCall`): not executed, the run continues, status `withdrawn`.
  */
 export async function GET() {
   await ensureHydrated();
@@ -32,7 +35,7 @@ export async function GET() {
   }
   const visible = listApprovals().filter((a) => canSee(user, a));
   return NextResponse.json({
-    approvals: visible.map((a) => ({ ...a, mayApprove: canApprove(user, a) })),
+    approvals: visible.map((a) => ({ ...a, mayApprove: canApprove(user, a), mayWithdraw: a.status === 'pending' && canWithdraw(user, a) })),
     pending: visible.filter((a) => a.status === 'pending').length,
     role: roleLabel(user.role),
   });
@@ -55,13 +58,20 @@ export async function POST(req: Request) {
   const intent = guardAppIntent(req.headers, user, 'approval-decide');
   if (!intent.ok) return NextResponse.json({ error: intent.reason }, { status: intent.status });
 
-  let body: { id?: string; decision?: 'approve' | 'reject'; remember?: boolean };
+  let body: { id?: string; decision?: 'approve' | 'reject' | 'withdraw'; remember?: boolean };
   try {
     body = await req.json();
   } catch {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
   }
   const id = String(body?.id ?? '');
+  // WITHDRAW is the requester's own act, not a decision — it has its own rule (`canWithdraw`),
+  // never passes through `canApprove`, and can only ever stop the call.
+  if (body?.decision === 'withdraw') {
+    const out = await withdrawHeldCall({ id: user.id, role: user.role, domains: user.domains }, id);
+    if (!out.ok) return NextResponse.json({ error: out.reason, code: out.code }, { status: out.status });
+    return NextResponse.json({ approval: { ...out.approval }, applied: null, withdrawn: true, resume: out.approval.resume });
+  }
   const decision = body?.decision === 'reject' ? 'reject' : 'approve';
   const existing = getApproval(id);
   if (!existing) return NextResponse.json({ error: 'Approval not found' }, { status: 404 });
