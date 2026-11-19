@@ -694,7 +694,10 @@ test('osPreamble: a FILES folder grant is named in the granted context, and the 
     agents: [{ id: 'reader', role: 'agent', agent_md: 'Read.', memory_md: '' }],
   });
   const text = osPreamble(CREATOR, sys);
-  assert.match(text, /- files folder: \/Invoices \(My files\) — list_files returns exactly these files/);
+  assert.match(text, /- files: only files in \/Invoices \(My files, read-only\) — list_files returns exactly these files/);
+  // The prompt claims a refusal only because the executor makes one (`grant-scope.ts`).
+  assert.match(text, /the engine ENFORCES it/);
+  assert.doesNotMatch(text, /DENIED|ONLY resource ids/);
   assert.match(text, /\n- get_file — Read ONE governed file[^\n]{0,100}(\n|$)/);
   assert.ok(!text.includes('Honesty: `restricted` files'), 'the long description is not in the prompt');
 });

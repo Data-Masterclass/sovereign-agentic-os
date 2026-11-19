@@ -25,6 +25,14 @@ import { config } from '@core/kernel/config';
 import { TAB_FEATURES } from '@core/kernel/tabs';
 import { toolSummary } from '@tabs/agents/lib/build/tool-brief';
 import { shapeForAgent, type AgentResultContext } from '@tabs/agents/lib/build/agent-tool-results';
+import {
+  checkGrantScope,
+  grantScopeOf,
+  type FileLocation,
+  type GrantRefusal,
+  type GrantResolvers,
+  type ResourceKind,
+} from '@tabs/agents/lib/build/grant-scope';
 
 /**
  * THE ONE reusable core that lets an INTERNAL agent (Agents tab) call the SAME
@@ -43,6 +51,11 @@ import { shapeForAgent, type AgentResultContext } from '@tabs/agents/lib/build/a
  *      from the system's own resolved grant-set + the write-tool catalog — it does
  *      NOT depend on a live `os-<systemId>` OPA document (which only a Build writes),
  *      so a scaffolded system runs correctly with no prior Build.
+ *   1a. Resource scope — the THING the call names (a dataset, knowledge item, metric,
+ *      connection, file or plan item) must be inside the system's resource grants, a list or
+ *      search comes back narrowed to them, and free-form SQL may name only granted datasets'
+ *      tables. Decided in one place, `checkGrantScope` (`grant-scope.ts`), from a declarative
+ *      per-tool map; refused calls never reach the hold or the tool.
  *   2. Role floor + governed authority — the actual call runs through
  *      `handleRpc(user, …)`, which re-checks the tool's role floor (`server.ts`)
  *      and runs the governed library under `user:<id>` + domains (OPA/DLS/RLS).
@@ -549,6 +562,11 @@ export type OsToolDeps = {
   handleRpc: typeof realHandleRpc;
   /** Best-effort attribution mirror under the system principal (never throws). */
   trace: typeof realTrace;
+  /**
+   * The two store lookups the resource-grant check needs (where a file lives, which tables a
+   * dataset has). Absent → the real stores, read AS THE RUNNING USER ({@link serverGrantResolvers}).
+   */
+  resolvers?: GrantResolvers;
 };
 
 const defaultDeps: OsToolDeps = {
@@ -560,6 +578,47 @@ const defaultDeps: OsToolDeps = {
 /** A typed, model-readable tool error result (mirrors the MCP `toolError` shape). */
 function errorResult(code: string, reason: string): { text: string; isError: boolean } {
   return { text: JSON.stringify({ error: { code, reason } }), isError: true };
+}
+
+/** The typed refusal of a call outside the system's resource grants: `forbidden`, naming kind and id. */
+function grantRefusalResult(r: GrantRefusal): { text: string; isError: boolean } {
+  return { text: JSON.stringify({ error: { code: r.code, reason: r.reason, ...(r.kind ? { kind: r.kind } : {}), ...(r.id ? { id: r.id } : {}) } }), isError: true };
+}
+
+/**
+ * The REAL {@link GrantResolvers}: both read the running user's own, already DLS-scoped view, so
+ * the resource-grant check can only ever narrow what that user could reach.
+ *   - `fileLocations` — the same `listFiles` listing the Files tab shows, with each file's lane.
+ *   - `datasetTables` — the physical table of every built layer, through `builtLayerFqn`: the one
+ *     governed resolver preview, profile and `get_dataset.queryable` already use. A dataset the
+ *     user cannot see resolves to no table.
+ */
+export function serverGrantResolvers(user: CurrentUser): GrantResolvers {
+  const principal = { id: user.id, domains: user.domains, role: user.role };
+  return {
+    fileLocations: async () => {
+      const { listFiles, ensureHydrated } = await import('@tabs/files/lib/store');
+      await ensureHydrated();
+      const g = listFiles(principal);
+      const lane = (rows: { id: string; folder: string }[], l: FileLocation['lane']): FileLocation[] => rows.map((f) => ({ id: f.id, folder: f.folder, lane: l }));
+      return [...lane(g.mine, 'personal'), ...lane(g.domain, 'domain'), ...lane(g.marketplace, 'company')];
+    },
+    datasetTables: async (datasetId) => {
+      const { getDataset, builtLayerFqn, ensureHydrated } = await import('@tabs/data/lib/store');
+      await ensureHydrated();
+      try {
+        const d = getDataset(datasetId, principal);
+        const out = new Set<string>();
+        for (const layer of ['bronze', 'silver', 'gold'] as const) {
+          const hit = builtLayerFqn(d, principal, layer);
+          if (hit && hit.layer === layer) out.add(hit.fqn);
+        }
+        return [...out];
+      } catch {
+        return []; // not visible to the running user (or gone) → it contributes no table
+      }
+    },
+  };
 }
 
 /**
@@ -600,6 +659,22 @@ export type ExecutorOptions = {
    * trace (id = run id) instead of standalone traces. Threaded here through the deps, never a global.
    */
   traceContext?: RunTraceContext;
+  /**
+   * Ids this run ALREADY created, per kind — how a resumed run gets back the artifacts it made
+   * before it parked (`createdFromSteps` over the checkpointed steps). A fresh run passes nothing.
+   */
+  createdSeed?: Partial<Record<ResourceKind, string[]>>;
+};
+
+/** The agent door for one run: the executor, plus the same resource-grant check asked ahead of time. */
+export type AgentToolGate = {
+  callTool: ToolExecutor;
+  /**
+   * Would the resource grants refuse this call? Returns the typed refusal, or null. The engine
+   * asks before it holds a write for a person, so nobody is asked to approve a call that would be
+   * refused anyway. The executor asks again when it runs the call — this is never the only check.
+   */
+  precheck: (name: string, args: Record<string, unknown>) => Promise<{ text: string; isError: boolean } | null>;
 };
 
 export function grantedToolExecutor(
@@ -609,6 +684,16 @@ export function grantedToolExecutor(
   deps: OsToolDeps = defaultDeps,
   opts: ExecutorOptions = {},
 ): ToolExecutor {
+  return agentToolGate(user, sys, systemId, deps, opts).callTool;
+}
+
+export function agentToolGate(
+  user: CurrentUser,
+  sys: System,
+  systemId: string,
+  deps: OsToolDeps = defaultDeps,
+  opts: ExecutorOptions = {},
+): AgentToolGate {
   const holdHere = (opts.holdAt ?? 'executor') === 'executor';
   const granted = grantedMcpTools(sys);
   const grantedNames = new Set(granted.map((t) => t.name));
@@ -617,10 +702,24 @@ export function grantedToolExecutor(
   // MCP client): `list_files` limited to the system's FILES folder grant(s) and compact, every
   // JSON result without the pretty-printing. See `agent-tool-results.ts`.
   const resultContext: AgentResultContext = {
-    filesFolders: sys.grants.files.map((g) => g.folder).filter((f): f is NonNullable<typeof f> => !!f),
+    filesFolders: sys.grants.files
+      .filter((g) => g.capability !== 'Off' && g.capability !== 'Blocked')
+      .map((g) => g.folder)
+      .filter((f): f is NonNullable<typeof f> => !!f),
+  };
+  // THE RESOURCE GRANTS of this run: which ids of each kind the agents may touch, plus what the
+  // run itself creates. One scope for the whole team; see `grant-scope.ts`.
+  const scope = grantScopeOf(sys, opts.createdSeed);
+  const resolvers = deps.resolvers ?? serverGrantResolvers(user);
+
+  const precheck: AgentToolGate['precheck'] = async (name, args) => {
+    const mcpName = resolveAlias(name);
+    if (agentForbiddenReason(mcpName) || !grantedNames.has(mcpName)) return null; // gates 0 and 1 answer those
+    const verdict = await checkGrantScope(mcpName, args, scope, resolvers);
+    return verdict.allow ? null : grantRefusalResult(verdict.refusal);
   };
 
-  return async (name, args) => {
+  const callTool: ToolExecutor = async (name, args) => {
     const mcpName = resolveAlias(name);
 
     // Gate 0 — CLOSED TO AGENT RUNS. A few writes are operator acts whose effect is not an
@@ -658,6 +757,17 @@ export function grantedToolExecutor(
       const datasetId = typeof a.datasetId === 'string' ? a.datasetId : '';
       const layer = grantedLayerFor(sys, datasetId);
       if (layer && a.layer === undefined) args = { ...a, layer };
+    }
+
+    // Gate 1a — RESOURCE GRANTS. The tool is granted; is the THING it names? A call that targets
+    // a dataset, knowledge item, metric, connection, file or plan item outside the system's
+    // grants is refused here, before the hold and before the tool: a typed `forbidden` the model
+    // can read. Decided in ONE place (`checkGrantScope`) from a declarative map every tool must
+    // be in. It only narrows — gate 2 below still runs the call as the acting user.
+    const verdict = await checkGrantScope(mcpName, args, scope, resolvers);
+    if (!verdict.allow) {
+      await safeTrace(deps, sysPrincipal, mcpName, args, 'deny', verdict.refusal.reason, opts.traceContext);
+      return grantRefusalResult(verdict.refusal);
     }
 
     // Gate 1b — the SCOPE-AWARE Write-approval HOLD, derived IN-PROCESS from the
@@ -723,8 +833,18 @@ export function grantedToolExecutor(
     const result = (res?.result ?? {}) as { content?: { text?: string }[]; isError?: boolean };
     const text = result.content?.map((c) => c.text ?? '').join('\n') ?? '';
     if (result.isError || !text) return { text: text || '(no output)', isError: !!result.isError };
-    return { text: shapeForAgent(mcpName, (args ?? {}) as Record<string, unknown>, text, resultContext), isError: false };
+    // What the call CREATED is the run's own from here on (read from the raw result).
+    verdict.created?.(text);
+    // A list or a search comes back narrowed to the granted items — or not at all.
+    let shown = text;
+    if (verdict.shape) {
+      const shaped = verdict.shape(text);
+      if ('refusal' in shaped) return grantRefusalResult(shaped.refusal);
+      shown = shaped.text;
+    }
+    return { text: shapeForAgent(mcpName, (args ?? {}) as Record<string, unknown>, shown, resultContext), isError: false };
   };
+  return { callTool, precheck };
 }
 
 /** Mirror a step under the system principal for Monitoring; never throws. `note`

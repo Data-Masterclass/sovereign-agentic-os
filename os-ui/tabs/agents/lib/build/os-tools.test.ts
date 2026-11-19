@@ -934,3 +934,166 @@ test('executor: the enqueued card for an always-confirmed call carries the true 
   assert.match(card.detail, /whatever the system's safety preset/);
   assert.doesNotMatch(card.detail, /held by the system's safety preset/);
 });
+
+// --- RESOURCE GRANTS at the executor (gate 1a) — F6 -------------------------------------------
+//
+// The rule itself is unit-tested in `grant-scope.test.ts`. These pin WHERE it sits: in the one
+// executor every agent tool call goes through, before the hold and before the tool, and that the
+// call which does pass still runs as the signed-in user.
+
+import { agentToolGate } from '@tabs/agents/lib/build/os-tools';
+import type { GrantResolvers } from '@tabs/agents/lib/build/grant-scope';
+
+function sysGranting(tools: string[], grants: Record<string, unknown>, preset = 'full-in-scope'): System {
+  return parseSystem({
+    version: '1',
+    system: { name: 'T', domain: 'sales', visibility: 'Personal' },
+    entrypoint: 'a',
+    safety_preset: preset,
+    grants: { tools, ...grants },
+    agents: [{ id: 'a', role: 'agent', agent_md: '', memory_md: '' }],
+  });
+}
+
+const GRANT_RESOLVERS: GrantResolvers = {
+  fileLocations: async () => [
+    { id: 'f_inv', folder: '/Invoices/2026', lane: 'personal' },
+    { id: 'f_hr', folder: '/HR', lane: 'personal' },
+  ],
+  datasetTables: async (id) => (id === 'ds_orders' ? ['iceberg.sales.gold_orders'] : id === 'ds_new' ? ['iceberg.personal_u1.bronze_new'] : []),
+};
+
+/** A spy `handleRpc` that answers each tool with a canned JSON result. */
+function answering(results: Record<string, unknown>) {
+  return spyDeps({
+    resolvers: GRANT_RESOLVERS,
+    handleRpc: (async (_user, req) => {
+      const name = (req.params as { name?: string })?.name ?? '';
+      return { jsonrpc: '2.0', id: 1, result: { content: [{ type: 'text', text: JSON.stringify(results[name] ?? { ran: name }) }] } };
+    }) as OsToolDeps['handleRpc'],
+  });
+}
+
+const errorOf = (r: { text: string }): { code?: string; reason?: string; kind?: string; id?: string } => {
+  try { return (JSON.parse(r.text) as { error?: Record<string, string> }).error ?? {}; } catch { return {}; }
+};
+
+test('F6: a call naming a dataset OUTSIDE the grants is refused before the tool runs — typed forbidden, tool never dispatched', async () => {
+  const sys = sysGranting(['query_data'], { data: [{ id: 'ds_orders', capability: 'Read' }] });
+  const calls: string[] = [];
+  const deps = spyDeps({
+    resolvers: GRANT_RESOLVERS,
+    handleRpc: (async (_u, req) => { calls.push((req.params as { name: string }).name); return { jsonrpc: '2.0', id: 1, result: { content: [{ type: 'text', text: '{"id":"x"}' }] } }; }) as OsToolDeps['handleRpc'],
+  });
+  const exec = grantedToolExecutor(CREATOR, sys, 'sys_g', deps);
+  const no = await exec('get_dataset', { datasetId: 'ds_salaries' });
+  assert.equal(no.isError, true);
+  assert.deepEqual({ code: errorOf(no).code, kind: errorOf(no).kind, id: errorOf(no).id }, { code: 'forbidden', kind: 'data', id: 'ds_salaries' });
+  assert.match(errorOf(no).reason ?? '', /This agent is not granted dataset ds_salaries/);
+  assert.deepEqual(calls, [], 'the tool was never dispatched');
+  const yes = await exec('get_dataset', { datasetId: 'ds_orders' });
+  assert.equal(yes.isError, false);
+  assert.deepEqual(calls, ['get_dataset']);
+});
+
+test('F6: the call that passes still runs AS THE SIGNED-IN USER (the grant check only narrows)', async () => {
+  const sys = sysGranting(['query_data'], { data: [{ id: 'ds_orders', capability: 'Read' }] });
+  const deps = spyDeps({ resolvers: GRANT_RESOLVERS });
+  await grantedToolExecutor(CREATOR, sys, 'sys_g', deps)('get_dataset', { datasetId: 'ds_orders' });
+  const [call] = deps.calls.handleRpc as { user: CurrentUser }[];
+  assert.equal(call.user.id, CREATOR.id);
+});
+
+test('F6: an EXISTING system with no resource grants behaves exactly as before', async () => {
+  const sys = sysGranting(['query_data', 'get_file', 'search_knowledge'], {});
+  const deps = spyDeps({ resolvers: { fileLocations: async () => { throw new Error('not consulted'); }, datasetTables: async () => { throw new Error('not consulted'); } } });
+  const exec = grantedToolExecutor(CREATOR, sys, 'sys_g', deps);
+  for (const [tool, args] of [['get_dataset', { datasetId: 'ds_any' }], ['query_data', { sql: 'select 1 from t' }], ['get_file', { fileId: 'f_any' }], ['search_knowledge', { query: 'q' }]] as const) {
+    const r = await exec(tool, args);
+    assert.equal(r.isError, false, `${tool} is not restricted when nothing is granted`);
+    assert.equal(r.text, `ran ${tool}`, 'and its result is passed through untouched');
+  }
+  assert.equal(deps.calls.handleRpc.length, 4);
+});
+
+test('F6: free-form SQL is checked against the granted datasets\' tables before it runs', async () => {
+  const sys = sysGranting(['query_data'], { data: [{ id: 'ds_orders', capability: 'Read' }] });
+  const deps = answering({ query_data: { rows: [[1]] } });
+  const exec = grantedToolExecutor(CREATOR, sys, 'sys_g', deps);
+  assert.equal((await exec('query_data', { sql: 'SELECT count(*) FROM iceberg.sales.gold_orders' })).isError, false);
+  const no = await exec('query_data', { sql: 'SELECT * FROM iceberg.hr.gold_salaries' });
+  assert.equal(errorOf(no).code, 'forbidden');
+  assert.match(errorOf(no).reason ?? '', /not granted the table iceberg\.hr\.gold_salaries/);
+  const unknown = await exec('query_data', { sql: 'SHOW SCHEMAS' });
+  assert.match(errorOf(unknown).reason ?? '', /cannot be checked/);
+});
+
+test('F6: a FILES folder grant restricts get_file (subfolders included) and search_files', async () => {
+  const sys = sysGranting(['get_file'], { files: [{ folder: { path: '/Invoices', scope: 'personal' }, capability: 'Read' }] });
+  const deps = answering({ get_file: { id: 'f_inv', name: 'a.pdf', text: 'hello' }, search_files: [{ id: 'f_inv', name: 'a.pdf' }, { id: 'f_hr', name: 'pay.pdf' }] });
+  const exec = grantedToolExecutor(CREATOR, sys, 'sys_g', deps);
+  assert.equal((await exec('get_file', { fileId: 'f_inv' })).isError, false);
+  const no = await exec('get_file', { fileId: 'f_hr' });
+  assert.equal(errorOf(no).code, 'forbidden');
+  assert.match(errorOf(no).reason ?? '', /not granted file f_hr/);
+  const found = JSON.parse((await exec('search_files', { query: 'pdf' })).text) as { items: { id: string }[] };
+  assert.deepEqual(found.items.map((i) => i.id), ['f_inv']);
+});
+
+test('F6: search_knowledge and list_datasets come back narrowed to the granted items', async () => {
+  const sys = sysGranting(['search_knowledge', 'query_data'], { knowledge: [{ id: 'wf_ok', capability: 'Read' }], data: [{ id: 'ds_orders', capability: 'Read' }] });
+  const deps = answering({
+    search_knowledge: { decision: 'allow', hits: [{ unit: { id: 'u1', provenance: { workflowId: 'wf_ok' } } }, { unit: { id: 'u2', provenance: { workflowId: 'wf_other' } } }] },
+    list_datasets: { mine: [{ id: 'ds_orders' }, { id: 'ds_private' }], domain: [], marketplace: [] },
+  });
+  const exec = grantedToolExecutor(CREATOR, sys, 'sys_g', deps);
+  const hits = JSON.parse((await exec('search_knowledge', { query: 'x' })).text) as { hits: { unit: { id: string } }[] };
+  assert.deepEqual(hits.hits.map((h) => h.unit.id), ['u1']);
+  const list = JSON.parse((await exec('list_datasets', {})).text) as { mine: { id: string }[] };
+  assert.deepEqual(list.mine.map((d) => d.id), ['ds_orders']);
+});
+
+test('F6: a Read grant refuses a write on that dataset — and nothing is queued for approval', async () => {
+  const sys = sysGranting(['ingest_dataset'], { data: [{ id: 'ds_orders', capability: 'Read' }] }, 'read-only');
+  const deps = spyDeps({ resolvers: GRANT_RESOLVERS });
+  const r = await grantedToolExecutor(CREATOR, sys, 'sys_g', deps)('ingest_dataset', { datasetId: 'ds_orders', content: 'a,b' });
+  assert.equal(errorOf(r).code, 'forbidden');
+  assert.match(errorOf(r).reason ?? '', /read-only/);
+  assert.equal(deps.calls.enqueue.length, 0, 'a refused call is not sent to an approver');
+  assert.equal(deps.calls.handleRpc.length, 0);
+});
+
+test('F6: what the run CREATES is usable afterwards — in the same run, and after a resume through the seed', async () => {
+  const sys = sysGranting(['create_dataset', 'ingest_dataset', 'query_data'], { data: [{ id: 'ds_orders', capability: 'Read' }] });
+  const deps = answering({ create_dataset: { id: 'ds_new', name: 'New' } });
+  const exec = grantedToolExecutor(CREATOR, sys, 'sys_g', deps);
+  assert.equal(errorOf(await exec('get_dataset', { datasetId: 'ds_new' })).code, 'forbidden');
+  assert.equal((await exec('create_dataset', { name: 'New' })).isError, false);
+  assert.equal((await exec('ingest_dataset', { datasetId: 'ds_new', content: 'a,b' })).isError, false);
+  assert.equal((await exec('query_data', { sql: 'select * from iceberg.personal_u1.bronze_new' })).isError, false);
+  // A resumed run builds a NEW executor: the ledger comes back through `createdSeed`.
+  const resumed = grantedToolExecutor(CREATOR, sys, 'sys_g', answering({}), { createdSeed: { data: ['ds_new'] } });
+  assert.equal((await resumed('get_dataset', { datasetId: 'ds_new' })).isError, false);
+});
+
+test('F6: `precheck` gives the same answer ahead of time, and stays silent for calls the other gates answer', async () => {
+  const sys = sysGranting(['ingest_dataset'], { data: [{ id: 'ds_orders', capability: 'Read' }] });
+  const gate = agentToolGate(CREATOR, sys, 'sys_g', spyDeps({ resolvers: GRANT_RESOLVERS }));
+  const no = await gate.precheck('ingest_dataset', { datasetId: 'ds_orders', content: 'a' });
+  assert.equal(errorOf(no!).code, 'forbidden');
+  assert.equal(errorOf((await gate.precheck('ingest_dataset', { datasetId: 'ds_other', content: 'a' }))!).id, 'ds_other');
+  assert.equal(await gate.precheck('create_software', { name: 'x' }), null, 'not granted → the tool-name gate answers, not this one');
+  assert.equal(await gate.precheck('decide_approval', { requestId: 'r', decision: 'approve' }), null, 'closed to agents → gate 0 answers');
+});
+
+test('F6: the agent-forbidden tools stay refused by gate 0 whatever the resource grants say', async () => {
+  const sys = sysGranting(['decide_approval', 'promote_connection'], { connections: [{ id: 'conn_1', capability: 'Write-bounded' }] });
+  const deps = spyDeps({ resolvers: GRANT_RESOLVERS });
+  const exec = grantedToolExecutor(ADMIN_USER, sys, 'sys_g', deps);
+  for (const [tool, args] of [['decide_approval', { requestId: 'r', decision: 'approve' }], ['promote_connection', { connId: 'conn_1' }]] as const) {
+    const r = await exec(tool, args);
+    assert.equal(errorOf(r).code, 'forbidden');
+    assert.match(errorOf(r).reason ?? '', /human decision/);
+  }
+  assert.equal(deps.calls.handleRpc.length, 0);
+});

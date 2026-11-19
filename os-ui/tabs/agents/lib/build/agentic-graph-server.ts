@@ -35,10 +35,11 @@ import { selectCheckpointer, type CheckpointerKind } from '@tabs/agents/lib/engi
 import type { GraphDeps, HeldCall, RouteDecision } from '@tabs/agents/lib/engine/build-graph';
 import { inspectGraphRun, type PendingApproval, type RunFailure, type RunInspection } from '@tabs/agents/lib/engine/run';
 import { holdDecisionFor } from '@tabs/agents/lib/build/hold';
-import { describeFolderGrant } from '@tabs/agents/lib/build/agent-tool-results';
+import { createdFromSteps, grantScopeBrief, type ResourceKind } from '@tabs/agents/lib/build/grant-scope';
 import type { ApprovalDecision, ApprovalPort } from '@tabs/agents/lib/engine/approval-port';
 import { serverApprovalPort } from '@tabs/agents/lib/engine/approvals-bridge';
 import {
+  agentToolGate,
   grantedToolSpecs,
   grantedToolBrief,
   grantedToolExecutor,
@@ -164,41 +165,13 @@ function tabPurpose(tab: McpTab): string {
 }
 
 /**
- * The GRANT-SCOPED context brief: the EXACT governed resource ids the system may use, per
- * kind, built straight from `system.grants` (by run time these are concrete ids — folder
- * grants are already expanded upstream by `resolveFolderGrantsForRun`). It is the data-plane
- * counterpart to {@link grantedToolBrief}: the tool brief says which TOOLS you may call, this
- * says which RESOURCES you may pass them. Empty ⇒ '' (contributes nothing). Ids only (no
- * names/columns — the agent resolves those via its granted get_* discovery companion).
+ * The GRANT-SCOPED context brief: which governed resources the system may use, per kind, and what
+ * the engine does about it — generated from the SAME scope the executor enforces
+ * (`grantScopeOf`, `grant-scope.ts`), so the prompt cannot promise a refusal the engine does not
+ * make, nor stay silent about one it does. Empty ⇒ '' (no resource grant declared).
  */
 function grantedContextBrief(sys: System): string {
-  const g = sys.grants;
-  const rows: string[] = [];
-  const add = (label: string, items: { id?: string }[] | undefined) => {
-    const ids = (items ?? []).map((i) => i.id).filter((id): id is string => !!id && id.length > 0);
-    if (ids.length > 0) rows.push(`- ${label}: ${ids.join(', ')}`);
-  };
-  add('datasets', g.data);
-  add('knowledge', g.knowledge);
-  add('files', g.files);
-  // A FILES folder grant carries no ids (file tools act over the runner's own view), so name the
-  // folder itself: `list_files` returns exactly the files under it for this system.
-  const fileFolders = (g.files ?? []).map((f) => f.folder).filter((f): f is NonNullable<typeof f> => !!f);
-  if (fileFolders.length > 0) {
-    rows.push(`- files folder${fileFolders.length === 1 ? '' : 's'}: ${fileFolders.map(describeFolderGrant).join(', ')} — list_files returns exactly these files; read each with get_file`);
-  }
-  add('metrics', g.metrics);
-  add('connections', g.connections);
-  add('plan (operating-manual)', g.plan);
-
-  if (rows.length === 0) return '';
-  return [
-    'These are the ONLY governed resources you may act on. A discovery/list tool may return',
-    'OTHER ids that exist in the domain — you are NOT authorized to use them and any action on',
-    'them is DENIED. Use ONLY the ids below (resolve their schema with your granted get_* tool):',
-    '',
-    ...rows,
-  ].join('\n');
+  return grantScopeBrief(sys);
 }
 
 /**
@@ -220,14 +193,12 @@ export function osPreamble(user: CurrentUser, sys: System): string {
   if (purposes.length > 0) {
     parts.push('', '--- WORKSPACE (the OS areas your grants touch) ---', ...purposes.map((p) => `- ${p}`));
   }
-  // GRANTED CONTEXT — the EXACT resource ids this system may touch. A discovery tool
-  // (list_datasets/list_knowledge/…) runs as the human owner and can surface OTHER items
-  // in the domain the system was NOT granted; calling an action tool on one of those is
-  // DENIED by OPA. Naming the authorized ids here — the data-plane counterpart to the
-  // grant-scoped tool brief — stops the model wandering onto ungranted context and then
-  // hitting a denial. Fail-open on shape: absent grants contribute nothing.
+  // GRANTED CONTEXT — the resource ids this system may touch, and that the engine enforces it:
+  // a call naming another id is refused by the executor before the tool runs, and a list or a
+  // search comes back narrowed to the granted items (`grant-scope.ts`). Naming the ids here
+  // saves the model the refusal. A kind with no grant is said to be open, because it is.
   const ctx = grantedContextBrief(sys);
-  if (ctx) parts.push('', '--- YOUR GRANTED CONTEXT (the ONLY resource ids you may use) ---', ctx);
+  if (ctx) parts.push('', '--- YOUR GRANTED CONTEXT (enforced: the resources this system may use) ---', ctx);
   parts.push('', '--- YOUR GRANTED TOOLS (your complete, authoritative toolset) ---', grantedToolBrief(user, sys));
   // The build spec names `create_software` as its entry point — inject it only when
   // that tool is genuinely granted, so it never advertises an ungranted capability.
@@ -347,13 +318,16 @@ export async function runOsTeam(input: RunOsTeamInput): Promise<RunOsTeamResult>
   const tracked = trackUsage(input.llm ?? liteLlmCaller(caller));
   // A3 — the run's governance traces nest under the run trace (id = run id) instead of standing alone.
   const traceContext = { traceId: input.runId };
+  // A2: the tools NODE decides the hold (and parks the run); the executor then only sees
+  // non-held and approved calls, so its gate 1b steps aside (it stays the default elsewhere).
+  // A RESUMED run gets back the ids it created before it parked, so they stay usable.
+  const createdSeed = input.resume ? await createdBeforeResume(input.runId) : undefined;
+  const gate = agentToolGate(input.user, sys, input.systemId, input.toolDeps, { holdAt: 'node', traceContext, createdSeed });
   // The deps every node runs on: the gates, the models and the budgets.
   const deps: AgenticGraphDeps = {
     llm: tracked.llm,
     toolSpecsFor: (node) => grantedToolSpecs(input.user, sys, node.tools),
-    // A2: the tools NODE decides the hold (and parks the run); the executor then only sees
-    // non-held and approved calls, so its gate 1b steps aside (it stays the default elsewhere).
-    callTool: grantedToolExecutor(input.user, sys, input.systemId, input.toolDeps, { holdAt: 'node', traceContext }),
+    callTool: gate.callTool,
     embed: embedder.embed,
     embedSource: embedder.lastSource,
     preamble: osPreamble(input.user, sys),
@@ -409,6 +383,8 @@ export async function runOsTeam(input: RunOsTeamInput): Promise<RunOsTeamResult>
         ...graphDeps,
         observe,
         unmappedTools: resolveGrantedTools(sys).unmapped,
+        // Resource grants, asked before a write is held for a person (the executor checks again).
+        precheck: gate.precheck,
         rateLimit: input.rateLimit,
         // X9 — the engine's own guardrails on EVERY tool call: a per-call deadline so a slow
         // upstream (Trino, a connector) cannot hang the superstep, and a bound on the result so a
@@ -485,6 +461,26 @@ export async function peekRunOwner(runId: string): Promise<{ systemId: string; u
   const o = owner as { systemId?: unknown; userId?: unknown; domain?: unknown };
   if (typeof o.systemId !== 'string' || typeof o.userId !== 'string') return null;
   return { systemId: o.systemId, userId: o.userId, domain: typeof o.domain === 'string' ? o.domain : '' };
+}
+
+/**
+ * The ids a run created BEFORE it stopped (parked on an approval, interrupted by a restart), read
+ * from its checkpointed tool steps — so the artifacts the run made stay usable after a resume
+ * under a resource restriction. Best-effort: an unreadable checkpoint yields nothing, and the run
+ * then simply falls back to its declared grants.
+ */
+async function createdBeforeResume(runId: string): Promise<Partial<Record<ResourceKind, string[]>> | undefined> {
+  try {
+    const checkpointer = await selectCheckpointer(config.agentRunsDatabaseUrl);
+    const tuple = await checkpointer.saver.getTuple({ configurable: { thread_id: runId } });
+    const values = (tuple?.checkpoint?.channel_values ?? {}) as { nodeRuns?: { result?: { steps?: AgenticStep[] } }[]; current?: { steps?: AgenticStep[] } | null };
+    const steps: AgenticStep[] = [];
+    for (const r of values.nodeRuns ?? []) steps.push(...(r.result?.steps ?? []));
+    steps.push(...(values.current?.steps ?? []));
+    return createdFromSteps(steps, resolveAlias);
+  } catch {
+    return undefined;
+  }
 }
 
 /** Upper bound on the prompt echoed into the run-summary trace input. */

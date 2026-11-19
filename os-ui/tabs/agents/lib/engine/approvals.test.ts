@@ -24,7 +24,7 @@ import type { JsonRpcRequest, JsonRpcResponse } from '@core/mcp/server';
 import type { LlmCall, LlmRequest } from '@core/runtime/agentic';
 import { parseSystem } from '@tabs/agents/lib/system-schema';
 import { compile } from '@tabs/agents/lib/langgraph-compile';
-import { grantedToolExecutor, grantedToolSpecs, type OsToolDeps } from '@tabs/agents/lib/build/os-tools';
+import { agentToolGate, grantedToolExecutor, grantedToolSpecs, type OsToolDeps } from '@tabs/agents/lib/build/os-tools';
 import { holdDecisionFor } from '@tabs/agents/lib/build/hold';
 import { memoryApprovalPort, type MemoryApprovalPort, type RunOwner } from '@tabs/agents/lib/engine/approval-port';
 import type { GraphDeps, InterruptPayload } from '@tabs/agents/lib/engine/build-graph';
@@ -325,4 +325,40 @@ test('M5: a crash between two executions of one batch re-executes only the call 
   assert.deepEqual(spy.rpc.map((c) => c.tool), ['search_knowledge', 'query_data'], 'search_knowledge executed exactly once across crash + resume');
   assert.deepEqual(r2.runs[0].result.steps.map((s) => s.tool), ['search_knowledge', 'query_data']);
   assert.equal(port.all().length, 0, 'read tools are never held');
+});
+
+// --- RESOURCE GRANTS come before the hold (F6) -------------------------------------------------
+
+/** The held write names a dataset; the system is granted ANOTHER one, read-only. */
+const SCOPED_YAML = HELD_YAML.replace('grants: { data: [],', "grants: { data: [{ id: ds_orders, capability: Read }],");
+
+test('F6: a held write that names a resource outside the grants is REFUSED, not parked — nobody is asked to approve it', async () => {
+  const spy = spyDeps();
+  const port = memoryApprovalPort();
+  const sys = parseSystem(SCOPED_YAML);
+  const gate = agentToolGate(FIXTURE_USER, sys, SYSTEM_ID, { ...spy, resolvers: { fileLocations: async () => [], datasetTables: async () => [] } }, { holdAt: 'node' });
+  const h = harness(SCOPED_YAML, script([{ id: 'c-write', name: 'request_promotion', args: { kind: 'dataset', id: 'ds_salaries' } }]), spy, port);
+  const deps = { ...h.deps, callTool: gate.callTool, precheck: gate.precheck };
+  const steps: { tool: string; result: string; isError: boolean }[] = [];
+  const r = await runGraphEngine({ ...runInput({ ir: h.ir, deps }, 'scoped-a', memoryCheckpointer()), hooks: { onStep: (ev) => steps.push(ev.step) } });
+  assert.equal(r.parked, false, 'nothing is waiting on a person');
+  assert.deepEqual(port.all(), [], 'no approval was filed for a call that would be refused');
+  assert.deepEqual(spy.rpc, [], 'and the tool never ran');
+  assert.equal(steps.length, 1);
+  assert.equal(steps[0].isError, true);
+  assert.match(steps[0].result, /"code":"forbidden"/);
+  assert.match(steps[0].result, /not granted dataset ds_salaries/);
+  assert.equal(r.reachedEnd, true, 'the agent read the refusal and finished its turn');
+});
+
+test('F6: a held write on a GRANTED, writable resource still parks for a person', async () => {
+  const yaml = HELD_YAML.replace('grants: { data: [],', "grants: { data: [{ id: ds_orders, capability: Write-approval }],");
+  const spy = spyDeps();
+  const port = memoryApprovalPort();
+  const sys = parseSystem(yaml);
+  const gate = agentToolGate(FIXTURE_USER, sys, SYSTEM_ID, { ...spy, resolvers: { fileLocations: async () => [], datasetTables: async () => [] } }, { holdAt: 'node' });
+  const h = harness(yaml, script([{ id: 'c-write', name: 'request_promotion', args: { kind: 'dataset', id: 'ds_orders' } }]), spy, port);
+  const r = await runGraphEngine(runInput({ ir: h.ir, deps: { ...h.deps, callTool: gate.callTool, precheck: gate.precheck } }, 'scoped-b', memoryCheckpointer()));
+  assert.equal(r.parked, true);
+  assert.equal(port.all().length, 1);
 });
