@@ -17,6 +17,7 @@
  * granted context (datasets, metrics, knowledge) plus one live sample on boot — so
  * a brand-new app already renders real governed data.
  */
+import { OS_SCOPE, SCOPE_PIN_REGISTRY } from '../scope-pin.ts';
 
 export type ScaffoldFile = { path: string; content: string };
 
@@ -471,12 +472,19 @@ function dockerfile(vendored = false): ScaffoldFile {
       '# Pass the OS API base URL as a build arg so Vite can bake it into the bundle.',
       'ARG OS_API_URL=""',
       'ENV VITE_OS_API=$OS_API_URL',
-      'COPY package.json ./package-lock.json* ./',
+      // The app's `.npmrc` carries the @sovereign-os scope pin; the glob keeps the COPY valid for
+      // an app created before the pin existed.
+      'COPY package.json ./package-lock.json* ./.npmrc* ./',
       // The two OS packages are `file:` dependencies on the vendored tree, so the install
       // needs that tree in place BEFORE it runs (a locked seed only — see scaffold-lock.ts).
       ...(vendored ? ['# The OS packages are file: dependencies on the vendored tree.', 'COPY vendor ./vendor'] : []),
+      `# ${OS_SCOPE}/* packages are vendored, never published. Pin the scope here too, so an install`,
+      '# cannot reach the public registry for it even if the app has no .npmrc: at user level for',
+      '# every later npm call, and in the environment of the install itself, which also wins over',
+      '# a project .npmrc that points the scope somewhere else.',
+      `RUN npm config set "${OS_SCOPE}:registry" "${SCOPE_PIN_REGISTRY}"`,
       '# Use install (not ci) if no lockfile is committed yet; do NOT swallow errors.',
-      'RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi',
+      `RUN if [ -f package-lock.json ]; then env "npm_config_${OS_SCOPE}:registry=${SCOPE_PIN_REGISTRY}" npm ci; else env "npm_config_${OS_SCOPE}:registry=${SCOPE_PIN_REGISTRY}" npm install; fi`,
       'COPY . .',
       'RUN npm run build',
       '',

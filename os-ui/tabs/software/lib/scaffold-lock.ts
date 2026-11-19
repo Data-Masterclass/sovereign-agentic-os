@@ -33,6 +33,12 @@
  *   patched toolchain range was applied to the one shared manifest rather than leaving the plain
  *   scaffold on a range that resolves to a version with a known high advisory.
  *
+ *   EVERY NEW SEED CARRIES THE SCOPE PIN. `@sovereign-os` is not a scope the project owns on the
+ *   public registry, so {@link lockedSeed} adds the `.npmrc` from `scope-pin.ts` to every template
+ *   (locked or not): a registry lookup for the scope fails instead of reaching npmjs.org. `file:`
+ *   dependencies never ask a registry, so the pin changes nothing in the lockfile — the
+ *   regeneration script resolves WITH the pin in place, which is the standing proof.
+ *
  *   No `server-only` import and only relative `.ts` specifiers at runtime, so the regeneration
  *   script can load this file under plain `node`. It reads the vendored source from disk (`fs`),
  *   which keeps it out of any client bundle on its own.
@@ -41,6 +47,7 @@ import type { AppTemplateKey } from '@tabs/software/lib/apps';
 import { viteLockedDockerfile, viteLockedPackageJson, type ScaffoldFile } from './scaffolds/vite-os.ts';
 import { vendorUiForRepo } from './app-ui-vendor.ts';
 import { vendorSdkForRepo } from './app-sdk-vendor.ts';
+import { scopePinNpmrc } from './scope-pin.ts';
 import viteLock from './scaffolds/locks/vite.package-lock.json' with { type: 'json' };
 import apiServiceLock from './scaffolds/locks/api-service.package-lock.json' with { type: 'json' };
 
@@ -111,12 +118,23 @@ export function lockInputs(family: LockFamily, plainScaffold: ScaffoldFile[], sl
 }
 
 /**
+ * Add the `@sovereign-os` scope pin (`.npmrc`) unless the tree already has an `.npmrc`. It is
+ * npm CONFIGURATION, not a resolution input: `lockInputs` stays manifests-only, and the
+ * regeneration script writes this file beside them so the lock is resolved under the same config
+ * a seeded app has.
+ */
+export function withScopePin(files: ScaffoldFile[]): ScaffoldFile[] {
+  const pin = scopePinNpmrc();
+  return files.some((f) => f.path === pin.path) ? files : [...files, pin];
+}
+
+/**
  * The seed a NEW app is created with. A template with a lock family gets its real lockfile (and,
- * for the Vite family, the vendored OS packages its manifest now points at); any other template
- * is returned unchanged.
+ * for the Vite family, the vendored OS packages its manifest now points at). EVERY template,
+ * locked or not, also gets the scope pin (`.npmrc`); nothing else changes for an unlocked one.
  */
 export function lockedSeed(template: AppTemplateKey, files: ScaffoldFile[], slug: string): ScaffoldFile[] {
   const family = lockFamilyOf(template);
-  if (!family) return files;
-  return [...lockedTree(family, files, slug), lockfileFor(family, slug)];
+  if (!family) return withScopePin(files);
+  return withScopePin([...lockedTree(family, files, slug), lockfileFor(family, slug)]);
 }

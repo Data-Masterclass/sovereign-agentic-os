@@ -123,6 +123,15 @@ The drift test also holds every package the lockfiles resolve to Apache-2.0 / MI
 with each exception named in the test (`LICENCE_EXCEPTIONS`). See "A generated app ships a real
 lockfile" in `os-ui/ARCHITECTURE.md` for why the files are named `<family>.package-lock.json`.
 
+**`@sovereign-os/*` never comes from a registry.** The project does not own that scope on the
+public npm registry, so a scaffold may only declare those packages as `file:` dependencies on the
+vendored folder, and every template tree carries the `.npmrc` from
+`os-ui/tabs/software/lib/scope-pin.ts`, which points the scope at a host that cannot resolve. Do
+not remove that file, do not add a version range, URL or git reference for the scope, and do not
+write `npm install @sovereign-os/...` into a Dockerfile or script; the deploy scan blocks a tree
+that would fetch the scope. See "The `@sovereign-os` scope is pinned to nowhere" in
+`os-ui/ARCHITECTURE.md`.
+
 `check-structure.mjs` is a **ratchet**: pre-existing violations are baselined in
 `scripts/structure-baseline.json` and the counts may only go **down**. Pay one down, then run
 it with `--baseline` to lock the new number in. It also requires a

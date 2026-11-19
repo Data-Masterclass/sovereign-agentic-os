@@ -80,6 +80,20 @@ is **not** vulnerability-scanned (no advisory database knows it, and no SAST eng
 compile check type-checks against the OS's current UI/SDK packages, while an image built from the
 app uses the copy frozen under `vendor/` when the app was created.
 
+### `@sovereign-os/*` packages are never downloaded
+
+`@sovereign-os/ui` and `@sovereign-os/app-sdk` are not published to any package registry: they
+ship inside the app under `vendor/` and `package.json` points at them with `file:` paths. A new
+app also carries an `.npmrc` whose one line sends every registry lookup for that scope to a host
+that cannot exist, so `npm install @sovereign-os/anything` fails instead of fetching a stranger's
+package. The scan **blocks** a deploy when `package.json`, a lockfile or the `.npmrc` would fetch
+the scope from anywhere else; point the dependency back at `file:./vendor/@sovereign-os/...`.
+
+An app created before this has no `.npmrc` and is not changed for you: its review card shows a
+note instead (it does not block). To clear it, push an `.npmrc` containing exactly
+`@sovereign-os:registry=https://sovereign-os-is-vendored-not-published.invalid/` with
+`push_app_files` — the only `.npmrc` the OS accepts.
+
 ## What to consider
 
 - **Grant before you author.** A tab that reads a dataset the app wasn't granted, or references a column that doesn't exist, is a BLOCKING validation issue — `set_app_spec` returns a machine-actionable `{ path, reason, fix }` and persists nothing.

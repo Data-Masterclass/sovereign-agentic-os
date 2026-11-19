@@ -2182,6 +2182,64 @@ is the real confirmation that the engine returns a `lang-pkgs` result for these 
 not, the app reads "deps not covered" as before: the coverage claim still rests on the engine's
 own result.
 
+### The `@sovereign-os` scope is pinned to nowhere (dependency confusion)
+
+The vendored packages are named `@sovereign-os/ui` and `@sovereign-os/app-sdk`, and **the project
+does not own that scope on the public npm registry** (neither package nor the organisation existed
+on 2026-11-19; the owner does not want an npm account). Anything that asks a registry for the scope
+would receive whatever a stranger chose to publish there. The lockfile above only protects a tree
+that still has it. `tabs/software/lib/scope-pin.ts` adds two things that do not depend on owning
+the name:
+
+- **Prevention.** Every template tree carries a project `.npmrc` with
+  `@sovereign-os:registry=https://sovereign-os-is-vendored-not-published.invalid/`. `.invalid` is
+  reserved by RFC 6761 and can never be delegated, so the lookup fails closed in any client that
+  honours the line, and the host name is the explanation in the error. The Dockerfiles the
+  scaffolds emit copy that file in before the install, set the same pin at user level
+  (`npm config set`), and run the install with it in the environment — which is the only layer
+  that also beats a project `.npmrc` pointing the scope elsewhere (measured: a user-level value
+  loses to a project file, an environment value wins).
+- **Detection.** `scopePinFindings` runs inside `securityScan`, so on every deploy request and
+  layered onto a live Trivy result. A manifest URL / git reference / `npm:` alias for the scope, a
+  version range in a tree that carries `vendor/@sovereign-os/`, a lockfile entry for the scope
+  that is not a local link, or an `.npmrc` that sets the scope's registry to anything else is a
+  **blocking** `deps` finding.
+
+**What npm really does, measured with npm 11.12.1 on a generated `vite-os` seed** (not assumed):
+`npm ci` and `npm install --offline` install both packages as links into `vendor/` with the pin in
+place, contact only `registry.npmjs.org` for the third-party packages and never for the scope, and
+leave `package-lock.json` byte-identical; resolving the lock inputs with and without the `.npmrc`
+gives the same lockfile hash (`regen-scaffold-locks.mjs` now resolves with it). `npm install
+@sovereign-os/ui@latest` fails with `getaddrinfo ENOTFOUND
+sovereign-os-is-vendored-not-published.invalid` and no request to npmjs.org — also with
+`--registry=https://registry.npmjs.org/` on the command line, because a scope registry outranks
+it. Without the pin the same command asks `registry.npmjs.org` (E404 today).
+
+**It is not fast, and the fast alternative was rejected.** npm retries the failed lookup twice
+with 10 s and 60 s back-off: about 70 s by default, 1 s with `--fetch-retries=0`. A malformed URL
+fails instantly, but only because today's npm throws while parsing it; a client that skips a line
+it cannot parse would fall back to the public registry. Closed-and-slow beats fast-and-maybe-open.
+
+**Existing apps are not rewritten, and the legacy manifest does not block.** The plain
+(pre-lockfile) Vite scaffold declares `"@sovereign-os/ui": "^0.1.0"` with no vendored folder. Every
+coded app created before seeds were locked holds that manifest, and the template fallback a
+*declarative* app's deploy request is scanned over is that tree too — the first version of the
+detection blocked on any version range and the end-to-end test showed a declarative app could no
+longer be approved. So a plain range in a tree **without** `vendor/@sovereign-os/` is reported and
+never blocks: `medium` while the tree has no pin (the exposed state: `npm install` there asks the
+public registry), `info` once it does. The OS itself never installs these trees — it serves them
+from its own source — so the exposure is a build run elsewhere. The remedy is one file, and
+`push_app_files` accepts an `.npmrc` that contains exactly the pin and nothing else (every other
+`.npmrc` is still refused). A stored tree is never changed for the user; only the template
+fallback (an app with no stored tree at all) now includes the file.
+
+**Not covered:** npm run outside the OS on a tree whose `.npmrc` was removed *and* whose manifest
+was edited, without the scaffold Dockerfile; Yarn Berry (it does not read `.npmrc`); `yarn.lock` /
+`pnpm-lock.yaml`, which are only searched for a registry URL naming the scope; the Docker build
+itself, which was not run here (the Dockerfile lines are asserted as text, their npm behaviour was
+measured outside a container). Registering the scope on npmjs.org would close the root cause and
+remains the owner's decision.
+
 ## Which models may be sent images: a list, not a guess
 
 Message content is a plain string everywhere today, and no model call sends an image. Before any

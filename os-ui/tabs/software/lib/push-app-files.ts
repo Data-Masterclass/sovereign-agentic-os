@@ -32,6 +32,7 @@ import type { AppCommitOutcome } from '@tabs/software/lib/git-commit';
 import { config } from '@core/kernel/config';
 import { validateAppDeployFile, isAppDeployPath } from '@tabs/software/lib/native-deploy';
 import { parseAppActions, type ActionParseIssue } from '@tabs/software/lib/app-actions';
+import { isScopePinOnlyNpmrc, SCOPE_PIN_LINE } from '@tabs/software/lib/scope-pin';
 
 export type PushAppFilesInput = {
   appId: string;
@@ -106,7 +107,16 @@ export function assertPushable(files: ScaffoldFile[], slug?: string): void {
             : 'There is no CI runner, image builder or registry in the OS, so a forge or CI directory would describe infrastructure that does not exist.'),
       );
     }
-    if ((FORBIDDEN_ROOT_DOTFILES as readonly string[]).includes(lower)) {
+    // ONE EXCEPTION: an `.npmrc` that does nothing but pin the `@sovereign-os` scope away from
+    // every registry (`scope-pin.ts`). It carries no credential and names no reachable registry,
+    // and it is how an app created before the pin existed adopts it.
+    if (lower === '.npmrc' && !isScopePinOnlyNpmrc(f.content)) {
+      bad(
+        `'${p}' is not pushable: it is a credential or registry file. The only .npmrc an app may carry ` +
+          `is the scope pin, with exactly this one setting: ${SCOPE_PIN_LINE}`,
+      );
+    }
+    if (lower !== '.npmrc' && (FORBIDDEN_ROOT_DOTFILES as readonly string[]).includes(lower)) {
       bad(`'${p}' is not pushable: it is a credential or registry file. Secrets never live in an app's source tree.`);
     }
     const bytes = Buffer.byteLength(f.content, 'utf8');

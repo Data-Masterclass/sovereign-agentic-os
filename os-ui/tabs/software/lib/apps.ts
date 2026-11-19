@@ -45,7 +45,8 @@ import { sovereignAppFiles, sovereignAppGuide } from '@tabs/software/lib/scaffol
 import { websiteFiles, websiteGuide } from '@tabs/software/lib/scaffolds/website';
 import { apiServiceFiles, apiServiceGuide } from '@tabs/software/lib/scaffolds/api-service';
 import { emptyAppFiles, emptyAppGuide } from '@tabs/software/lib/scaffolds/empty-app';
-import { lockedSeed } from '@tabs/software/lib/scaffold-lock';
+import { lockedSeed, withScopePin } from '@tabs/software/lib/scaffold-lock';
+import { OS_SCOPE, SCOPE_PIN_REGISTRY } from '@tabs/software/lib/scope-pin';
 import { snapshotFiles, getSnapshot, hydrateSnapshot, deleteSnapshot } from '@tabs/software/lib/snapshot';
 import { generateAndCompile } from '@tabs/software/lib/auto-mcp';
 import { dataPlaneToolsFromGrants, agentToolsFromGrants } from '@tabs/software/lib/grant-tools';
@@ -523,8 +524,10 @@ function nextjsSupabaseTemplate(): Template {
           'FROM node:22-alpine\n' +
           'WORKDIR /app\n' +
           '# No lockfile is seeded, so use npm install; do NOT swallow errors.\n' +
-          'COPY package.json ./\n' +
-          'RUN npm install\n' +
+          'COPY package.json ./.npmrc* ./\n' +
+          `# ${OS_SCOPE}/* packages are never published: no install may fetch that scope.\n` +
+          `RUN npm config set "${OS_SCOPE}:registry" "${SCOPE_PIN_REGISTRY}"\n` +
+          `RUN env "npm_config_${OS_SCOPE}:registry=${SCOPE_PIN_REGISTRY}" npm install\n` +
           'COPY . .\n' +
           'RUN npm run build\n' +
           '# next start reads PORT/HOSTNAME; the runner probes 8080 on 0.0.0.0.\n' +
@@ -2397,7 +2400,9 @@ export function seedDeployFiles(slug: string, host: string): ScaffoldFile[] {
 
 export function templateFiles(template: AppTemplateKey, name: string, slug: string): { path: string; content: string }[] {
   const tpl = TEMPLATES[template] ?? TEMPLATES['nextjs-supabase'];
-  return tpl.files(name, slug);
+  // The `@sovereign-os` scope pin (`.npmrc`) is part of every template's tree, so this fallback
+  // can stand in for an app seeded with it (`priorTreeForCommit` compares against `repo.seeded`).
+  return withScopePin(tpl.files(name, slug));
 }
 
 /** Mint a prefixed id (shared shape with the rest of the registry). */
