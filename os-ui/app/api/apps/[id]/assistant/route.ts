@@ -13,6 +13,7 @@ import { normalizeAssistantReply } from '@tabs/software/lib/assistant-suggestion
 import { defineContextBlock } from '@tabs/software/lib/define-context';
 import { resolveGrantedContext } from '@tabs/software/lib/grants-context';
 import { CONTEXT_KINDS, type ContextGrants, type ContextKind } from '@core/kernel/context-grants';
+import { readBoundedTurns } from '@core/runtime/turns';
 
 export const dynamic = 'force-dynamic';
 
@@ -60,19 +61,9 @@ function isStructured(stage: Stage): boolean {
   return stage === 'define' || stage === 'design' || stage === 'test';
 }
 
-/** Coerce an arbitrary request `messages` field into a clean, bounded turn list. */
+/** The request's turns, bounded — and told when bounded (`readBoundedTurns`). */
 function readTurns(body: Record<string, unknown>): Turn[] {
-  const raw = Array.isArray(body.messages) ? body.messages : [];
-  const turns: Turn[] = [];
-  for (const m of raw.slice(-12)) {
-    if (!m || typeof m !== 'object') continue;
-    const role = (m as Record<string, unknown>).role;
-    const content = (m as Record<string, unknown>).content;
-    if ((role === 'user' || role === 'assistant') && typeof content === 'string' && content.trim()) {
-      turns.push({ role, content: content.slice(0, 4000) });
-    }
-  }
-  return turns;
+  return readBoundedTurns(body.messages);
 }
 
 /** A compact, id-carrying digest of what the caller can grant, for the Define prompt. */

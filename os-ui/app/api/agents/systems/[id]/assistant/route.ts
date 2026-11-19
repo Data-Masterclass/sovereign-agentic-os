@@ -19,6 +19,7 @@ import {
   AGENT_GRANT_KINDS,
 } from '@tabs/agents/lib/assistant-suggestions';
 import type { Role } from '@core/kernel/session';
+import { readBoundedTurns } from '@core/runtime/turns';
 
 export const dynamic = 'force-dynamic';
 
@@ -96,19 +97,9 @@ function coerceStage(v: unknown): Stage | null {
 
 type Turn = { role: 'user' | 'assistant'; content: string };
 
-/** Coerce a request `messages` field into a clean, bounded turn list (mirrors Software). */
+/** The request's turns, bounded — and told when bounded (`readBoundedTurns`). */
 function readTurns(body: Record<string, unknown>): Turn[] {
-  const raw = Array.isArray(body.messages) ? body.messages : [];
-  const turns: Turn[] = [];
-  for (const m of raw.slice(-12)) {
-    if (!m || typeof m !== 'object') continue;
-    const role = (m as Record<string, unknown>).role;
-    const content = (m as Record<string, unknown>).content;
-    if ((role === 'user' || role === 'assistant') && typeof content === 'string' && content.trim()) {
-      turns.push({ role, content: content.slice(0, 4000) });
-    }
-  }
-  return turns;
+  return readBoundedTurns(body.messages);
 }
 
 /** Whether a stage returns structured suggestions (JSON) or plain prose. */
