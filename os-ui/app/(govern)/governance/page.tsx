@@ -72,10 +72,7 @@ function GovernancePageInner() {
 
   return (
     <>
-      <PageHeader
-        title="Governance"
-        crumb="control plane · approve · policy · roles · egress · audit · cost"
-      />
+      <PageHeader title="Governance" />
       <div className="content">
         <div className="tabstrip" style={{ marginBottom: 24 }}>
           {visible.map((s) => (

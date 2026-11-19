@@ -229,10 +229,8 @@ export default function AgentEditor({
       {sub === 'history' ? (
         <div className="agent-history">
           <p className="hint" style={{ marginTop: 12 }}>
-            Every tool call this agent makes is forced through the governed gateway (LiteLLM → OPA →
-            Langfuse). Run the system or press Build to generate traces; they appear in Monitoring
-            (Langfuse) under principal <span className="mono">{systemId}:{agent.id}</span>. File
-            versions are tracked in the system’s own version history.
+            Every action this agent takes is checked against policy and recorded. See its runs in
+            Monitoring under <span className="mono">{systemId}:{agent.id}</span>.
           </p>
         </div>
       ) : null}

@@ -222,7 +222,7 @@ export default function ComponentsPage() {
 
   return (
     <>
-      <PageHeader title="Components" crumb="the stack, live — one operator surface" />
+      <PageHeader title="Components" />
       <div className="content">
         <div className="row" style={{ justifyContent: 'flex-end', alignItems: 'flex-start' }}>
           <button className="btn ghost" onClick={() => load(true)} disabled={loading}>

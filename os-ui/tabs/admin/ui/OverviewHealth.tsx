@@ -250,13 +250,8 @@ function AdminOverviewHealth() {
 
         <div className="section-title" style={{ marginTop: 22 }}>Components &amp; system</div>
         <p className="lead">
-          The single home for the stack&apos;s infrastructure: component <strong>up/down + versions</strong>,
-          optional-layer enable/disable, <strong>self-heal</strong>, the <strong>platform services</strong> the
-          control plane is wired to, and <strong>system &amp; cluster health</strong> with the dependency/impact
-          chain. Kubernetes restarts crashed pods; there is <strong>no GitOps controller in this
-          stack</strong>, so configuration drift is <strong>not</strong> reverted automatically — a manual
-          edit stays until someone re-runs the chart. Your agents&apos; runs, spend and traces are in{' '}
-          <Link href="/monitoring">Monitoring</Link>.
+          Manual changes made on the cluster are <strong>not</strong> reverted automatically — they stay
+          until someone redeploys.
         </p>
         {error ? <div className="error">{error}</div> : null}
 
