@@ -46,6 +46,7 @@ import { canManageArtifact, type ArtifactScope } from '@core/policy/edit-scope';
 import { promotionGate, gateReason } from '@tabs/files/lib/promotion';
 import { recordLineage } from '@tabs/files/lib/lineage';
 import { osMirror } from '@core/infra/os-mirror';
+import { mirrorRefresher, newMirrorRefresh, MIRROR_REFRESH_MIN_MS, MIRROR_ABSENT_CONFIRMATIONS, type MirrorRefreshState } from '@core/infra/mirror-refresh';
 import { newSeenFields, noteSeen, forgetSeen, writeNew, writeMergedYaml, writesSettled, type SeenFields } from '@core/infra/field-writes';
 import { type ArtifactVersion, versionLog } from '@core/kernel/versioning';
 // The GOVERNED folder registry (Wave 1) — a moved-into folder is upserted as an
@@ -154,16 +155,9 @@ type FilesStoreState = {
   store: Map<string, FileRecord>;
   seeded: boolean;
   hydration: Promise<void> | null;
-  /** This process only READS files another process writes (the run worker). See `refreshFromMirror`. */
-  mirrorRefresh?: boolean;
-  refreshedAt?: number;
-  refreshing?: Promise<void> | null;
-  /** Reader process: ids a mirror listing has contained (so their later absence means "deleted"). */
-  mirrorSeen?: Set<string>;
-  /** Reader process: consecutive COMPLETE listings each such id was absent from. */
-  mirrorMissing?: Map<string, number>;
-  /** Ids this process deleted (confirmed) that a mirror listing must not bring back. See `deleteFile`. */
-  deletedHere?: Set<string>;
+  /** Reader process (the run worker): the shared mirror refresh (`core/infra/mirror-refresh.ts`).
+   *  See `refreshFromMirror`. */
+  refresh: MirrorRefreshState;
   /** What this process last knew the mirror held per file record, and its yaml (see
    *  `core/infra/field-writes.ts` and {@link writeThrough}). */
   seen: SeenFields;
@@ -172,7 +166,7 @@ type FilesStoreState = {
 const FS_KEY = Symbol.for('soa.files.store');
 function fs(): FilesStoreState {
   const g = globalThis as unknown as Record<symbol, FilesStoreState | undefined>;
-  if (!g[FS_KEY]) g[FS_KEY] = { store: new Map(), seeded: false, hydration: null, seen: newSeenFields(), seenYaml: new Map() };
+  if (!g[FS_KEY]) g[FS_KEY] = { store: new Map(), seeded: false, hydration: null, seen: newSeenFields(), seenYaml: new Map(), refresh: newMirrorRefresh() };
   return g[FS_KEY]!;
 }
 
@@ -257,11 +251,11 @@ function noteMirrored(rec: FileRecord): void {
 export async function ensureHydrated(): Promise<void> {
   const s = fs();
   if (!s.hydration) {
-    s.refreshedAt = Date.now(); // the first hydration IS a fresh read
+    s.refresh.refreshedAt = Date.now(); // the first hydration IS a fresh read
     s.hydration = Promise.all([hydrateFiles(), versions.ensureHydrated()]).then(() => {});
   }
   await s.hydration;
-  if (s.mirrorRefresh) await refreshFromMirror();
+  await refresher.beforeRead();
 }
 
 /**
@@ -295,59 +289,28 @@ export async function ensureHydrated(): Promise<void> {
  * So a file deleted in os-ui disappears from `list_files` / `get_file` / `search_files` in the
  * worker after two refreshes (about ten seconds of use), without a restart.
  */
-export const MIRROR_REFRESH_MIN_MS = 5000;
-/** Complete listings in a row an id must be absent from before this process drops its record. */
-export const MIRROR_ABSENT_CONFIRMATIONS = 2;
+export { MIRROR_REFRESH_MIN_MS, MIRROR_ABSENT_CONFIRMATIONS };
+
+/** The shared refresh (`core/infra/mirror-refresh.ts`), applied to the file registry. */
+const refresher = mirrorRefresher<FileRecord>(fileMirror, () => fs().refresh, {
+  label: 'files',
+  size: 2000,
+  accept: (doc) => typeof (doc as Partial<FileRecord>).yaml === 'string',
+  held: (id) => fs().store.get(id),
+  put: (rec) => {
+    fs().store.set(rec.id, rec);
+    noteMirrored(rec);
+  },
+  drop: (id) => fs().store.delete(id),
+});
 
 /** Declare THIS process a reader of files other processes write (called by the worker at boot). */
 export function enableMirrorRefresh(on = true): void {
-  fs().mirrorRefresh = on;
+  refresher.enable(on, { anyProcess: true });
 }
 
-export async function refreshFromMirror(opts: { force?: boolean; nowMs?: number } = {}): Promise<void> {
-  const s = fs();
-  const nowMs = opts.nowMs ?? Date.now();
-  if (s.refreshing) return s.refreshing;
-  if (!opts.force && s.refreshedAt !== undefined && nowMs - s.refreshedAt < MIRROR_REFRESH_MIN_MS) return;
-  s.refreshedAt = nowMs;
-  s.refreshing = (async () => {
-    const listing = await fileMirror.list(2000);
-    if (!listing) return; // mirror down — memory stays exactly as it was
-    const seen = (s.mirrorSeen ??= new Set<string>());
-    const missing = (s.mirrorMissing ??= new Map<string, number>());
-    const listed = new Set<string>();
-    const tombstones = s.deletedHere;
-    for (const rec of listing.docs as FileRecord[]) {
-      if (!rec || !rec.id) continue;
-      listed.add(rec.id); // present in the mirror, whatever its shape
-      // Deleted HERE (confirmed): a listing read before the shared store confirmed the delete
-      // still holds the document and must not put the record back.
-      if (tombstones?.has(rec.id)) continue;
-      seen.add(rec.id);
-      missing.delete(rec.id);
-      if (typeof rec.yaml !== 'string') continue;
-      const held = s.store.get(rec.id);
-      if (!held || String(rec.updatedAt ?? '') > String(held.updatedAt ?? '')) {
-        s.store.set(rec.id, rec);
-        noteMirrored(rec);
-      }
-    }
-    // Only a COMPLETE listing can say what is NOT there.
-    if (!listing.complete) return;
-    // A complete listing without a tombstoned id means the mirror agrees it is gone.
-    if (tombstones) {
-      for (const id of tombstones) if (!listed.has(id)) tombstones.delete(id);
-    }
-    for (const id of seen) {
-      if (listed.has(id)) continue;
-      const n = (missing.get(id) ?? 0) + 1;
-      if (n < MIRROR_ABSENT_CONFIRMATIONS) { missing.set(id, n); continue; }
-      seen.delete(id);
-      missing.delete(id);
-      if (s.store.delete(id)) console.info(`[files] ${id} is gone from the mirror — deleted in another process; dropped here`);
-    }
-  })().finally(() => { s.refreshing = null; });
-  return s.refreshing;
+export function refreshFromMirror(opts: { force?: boolean; nowMs?: number } = {}): Promise<void> {
+  return refresher.refresh(opts);
 }
 
 async function hydrateFiles(): Promise<void> {
@@ -355,7 +318,7 @@ async function hydrateFiles(): Promise<void> {
   const docs = (await fileMirror.hydrate(2000)) ?? [];
   for (const rec of docs as FileRecord[]) {
     // What the mirror held at boot is what a later complete listing may report as deleted.
-    if (rec && rec.id) (s.mirrorSeen ??= new Set<string>()).add(rec.id);
+    if (rec && rec.id) s.refresh.listed.add(rec.id);
     if (rec && rec.id && !s.store.has(rec.id)) {
       s.store.set(rec.id, rec);
       if (typeof rec.yaml === 'string') noteMirrored(rec);
@@ -435,12 +398,7 @@ export function __resetStore(): void {
   s.store.clear();
   s.seeded = false;
   s.hydration = null;
-  s.mirrorRefresh = false;
-  s.refreshedAt = undefined;
-  s.refreshing = null;
-  s.mirrorSeen = undefined;
-  s.mirrorMissing = undefined;
-  s.deletedHere = undefined;
+  s.refresh = newMirrorRefresh();
   s.seen.clear();
   s.seenYaml.clear();
   fileMirror.__reset();
@@ -907,9 +865,7 @@ export async function deleteFile(id: string, user: Principal): Promise<FileRecor
   s.seenYaml.delete(id);
   // A refresh whose listing was read before this delete was confirmed still holds the document;
   // it must not re-add the record (see `refreshFromMirror`). Cleared once a complete listing agrees.
-  (s.deletedHere ??= new Set<string>()).add(id);
-  s.mirrorSeen?.delete(id);
-  s.mirrorMissing?.delete(id);
+  refresher.noteDeleted(id);
   return rec;
 }
 
