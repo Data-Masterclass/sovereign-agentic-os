@@ -44,6 +44,7 @@ import {
   type StageState,
 } from '@core/kernel/stages';
 import { AGENT_STAGES, agentStageCtx, type AgentStageId, type AgentStageCtx } from '@tabs/agents/lib/stages';
+import { useEmptyGrants } from '@tabs/agents/ui/useEmptyGrants';
 import { runChecks, allChecksPass } from '@tabs/agents/lib/build/run-checks';
 import type { DiagRun } from '@tabs/agents/lib/build/run-diagnostics';
 import { dimensionLabel, type JudgeResult } from '@tabs/agents/lib/evaluate-judge';
@@ -198,10 +199,12 @@ export default function SimpleBuilder({
 
   // What the PHASES gates and ✓s read: SAVED state only (the system as committed, its last
   // build, its last run) — see `agentStageCtx`. `checksPass` is asked only when a run exists.
-  // HOOK (PR #106): pass `grantWarning` here once the zero-match folder computation is lifted
-  // out of the grant pickers, and Grant shows an amber "!" with that text.
+  // `emptyGrants` = the folder grants that match nothing today (loaded here, not in the grant
+  // pickers, so the Grant step does not depend on that stage having been opened).
+  const emptyGrants = useEmptyGrants(systemId, system);
   const ctx: AgentStageCtx = agentStageCtx({
     system,
+    emptyGrants,
     lastBuild: buildRun.lastBuild,
     lastRun: buildRun.lastRun,
     checksPass: (run) => allChecksPass(runChecks(lastRunToDiag(run))),

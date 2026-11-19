@@ -282,3 +282,36 @@ export function isOutputFolder(system: System, kind: FolderedGrantKind, f: Folde
     (o) => o.kind === kind && o.folder.scope === f.scope && normaliseFolderPath(o.folder.path) === normaliseFolderPath(f.path),
   );
 }
+
+/** The foldered kinds a folder grant can be counted for, in the Grant stage's order. */
+export const FOLDERED_GRANT_KINDS: FolderedGrantKind[] = ['data', 'knowledge', 'files'];
+
+/** The slice of the `…/grants/available?kind=` feed the zero-match count reads. */
+export type GrantFeedSlice = {
+  items: { id: string; scope: string; folder?: string }[];
+  folders?: { path: string; scope: string; outsideDomain?: boolean }[];
+};
+
+/**
+ * The ENABLED folder grants of a kind that match no item today, each as the sentence the
+ * builder shows ("The grant on … currently contains 0 files. 3 files are in …"). The same
+ * rule the picker applies at its chips, as one pure function so the stage rail can use it
+ * without the picker being mounted: a grant switched Off/Blocked is not counted, nor an
+ * output folder (empty until the first result is written), nor a folder outside the
+ * system's domain (this feed cannot count it — unknown is never reported as empty).
+ */
+export function zeroMatchFolderGrants(system: System, kind: FolderedGrantKind, feed: GrantFeedSlice): string[] {
+  const laneItems: TreeItemRef[] = feed.items
+    .filter((a) => a.scope === 'personal' || a.scope === 'domain')
+    .map((a) => ({ id: a.id, folder: a.folder ?? '/', scope: a.scope as FolderRef['scope'] }));
+  const outside = new Set((feed.folders ?? []).filter((f) => f.outsideDomain).map(keyOf));
+  const out: string[] = [];
+  for (const g of system.grants[kind]) {
+    if (!g.folder || g.capability === 'Off' || g.capability === 'Blocked') continue;
+    const f: FolderRef = { path: g.folder.path, scope: g.folder.scope };
+    if (outside.has(keyOf(f)) || isOutputFolder(system, kind, f)) continue;
+    const warning = zeroMatchWarning(kind, folderGrantCoverage(f, laneItems), 'named');
+    if (warning) out.push(warning);
+  }
+  return out;
+}
