@@ -5,6 +5,7 @@ import 'server-only';
 import { createSign, createPublicKey, createPrivateKey, createHash } from 'crypto';
 import type { Connection } from '@tabs/connections/lib/schema';
 import { getSecretServerSide } from '@core/infra/secrets';
+import { base64url } from '@core/kernel/base64url';
 
 /**
  * Snowflake ACCOUNT_USAGE governance client — the per-connection bridge to a
@@ -64,14 +65,8 @@ const ACCOUNT_USAGE = 'SNOWFLAKE.ACCOUNT_USAGE';
 
 // ------------------------------------------------------------------ JWT ---------
 
-/** base64url of a Buffer/string (no padding) — the JOSE encoding. */
-export function base64url(input: Buffer | string): string {
-  return (typeof input === 'string' ? Buffer.from(input, 'utf8') : input)
-    .toString('base64')
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/, '');
-}
+/** base64url (no padding) — the JOSE encoding; one shared implementation in the kernel. */
+export { base64url };
 
 /**
  * The Snowflake public-key fingerprint: `SHA256:` + base64(sha256(DER-SPKI public
