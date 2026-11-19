@@ -11,6 +11,8 @@ import {
   type ProvenanceSource,
   type Extraction,
   type ExtractionFailureCode,
+  type AutoDocsCode,
+  type AutoDocsGeneration,
   AssetError,
   parseAsset,
   serializeAsset,
@@ -31,6 +33,14 @@ import {
   assertGrantsWithinAuthority,
 } from '@tabs/data/lib/index';
 import { canRead } from '@tabs/files/lib/dls';
+import {
+  AUTO_DOCS_LIMITS,
+  autoDocsEligibility,
+  docsAfterUserEdit,
+  mergeGenerated,
+  normaliseUserTags,
+  suggestedOf,
+} from '@tabs/files/lib/auto-docs';
 import { doclingCanParse } from '@tabs/files/lib/ingest/docling-client';
 import { canManageArtifact, type ArtifactScope } from '@core/policy/edit-scope';
 import { promotionGate, gateReason } from '@tabs/files/lib/promotion';
@@ -110,6 +120,9 @@ export type FileSummary = {
   hasPreview: boolean;
   /** Soft-archived (retained, reversible). Absent/false = live. */
   archived?: boolean;
+  /** Which of the description / tags were written automatically from the file's content
+   *  (absent when none were) — the listing marks them "suggested". */
+  suggested?: { description: boolean; tags: string[] };
 };
 
 export type Facets = {
@@ -440,6 +453,7 @@ function summarise(a: FileAsset, rec: FileRecord): FileSummary {
     status: statusOf(a), bytes: rec.bytes,
     hasPreview: !!rec.object && inlineRenderable(rec.object.contentType),
     archived: rec.archived ?? false,
+    ...(suggestedOf(a) ? { suggested: suggestedOf(a) } : {}),
   };
 }
 
@@ -536,6 +550,8 @@ export type UploadInput = {
   name: string;
   folder?: string;
   tags?: string[];
+  /** What the file is, in the uploader's own words. Recorded as the user's: never regenerated. */
+  description?: string;
   sensitivity?: Sensitivity;
   storage?: Storage;
   /** Mock extracted/preview text (transcript/caption/body). */
@@ -560,6 +576,11 @@ export function createFile(user: Principal, input: UploadInput): FileAsset {
     storage: input.storage, provenanceSource: input.provenanceSource, sourceUri: input.sourceUri, at,
   });
   const text = input.text ?? '';
+  const description = typeof input.description === 'string' ? input.description.trim() : '';
+  if (description) {
+    a.description = description;
+    a.autoDocs = { description: { source: 'user' } };
+  }
   a.indexing.mode = indexingModeFor(a.sensitivity, input.indexing);
   // WHY it is stored-only is recorded with the mode, so a later backfill can tell a choice
   // (never parse) from an absence (parse when possible). See `StoredOnlyReason`.
@@ -654,8 +675,12 @@ export function setDocs(id: string, user: Principal, docs: { description?: strin
   const rec = get(id);
   const a = editOf(rec, user);
   versions.record(rec.id, user.id, snapshotState(rec), 'edit docs');
+  const tags = docs.tags !== undefined ? normaliseUserTags(docs.tags) : undefined;
+  // WHO WROTE IT is recorded with the edit: a changed description becomes the user's, and a
+  // generated tag missing from the new list was removed by them and never comes back.
+  a.autoDocs = docsAfterUserEdit(a, { description: docs.description, tags });
   if (docs.description !== undefined) a.description = docs.description;
-  if (docs.tags !== undefined) a.tags = docs.tags.map((t) => t.trim()).filter(Boolean);
+  if (tags !== undefined) a.tags = tags;
   persist(rec, a);
   return a;
 }
@@ -710,6 +735,7 @@ export function setIndexingMode(id: string, user: Principal, mode: IndexingMode)
   // A choice supersedes an unfinished or failed parse: there is nothing "still extracting" and
   // no failure to retry on a file its owner has taken out of indexing.
   if (a.indexing.mode === 'stored-only' && a.indexing.extraction?.status !== 'extracted') a.indexing.extraction = undefined;
+  if (a.indexing.mode === 'stored-only') dropUnfinishedGeneration(a);
   a.indexing.representations = representationsFor(a.kind, a.indexing.mode);
   persist(rec, a);
   return a;
@@ -726,6 +752,7 @@ export function setSensitivity(id: string, user: Principal, sensitivity: Sensiti
     a.indexing.storedOnlyReason = 'restricted';
     // Policy supersedes an unfinished or failed parse (its result, if it arrives, is discarded).
     if (a.indexing.extraction?.status !== 'extracted') a.indexing.extraction = undefined;
+    dropUnfinishedGeneration(a);
   } else if (a.indexing.storedOnlyReason === 'restricted') {
     // Lifting `restricted` does not make the file searchable by itself (the mode stays
     // stored-only until someone asks); it only stops being a POLICY hold. With no text on
@@ -841,7 +868,9 @@ export function searchFiles(user: Principal, query: string): SearchHit[] {
     const a = parseAsset(rec.yaml);
     if (!canView(a, user)) continue;
     if (a.indexing.mode === 'stored-only') continue; // not indexed → not searchable
-    const hay = `${a.name} ${a.folder} ${a.tags.join(' ')} ${rec.text}`.toLowerCase();
+    // The description is matched like the tags are — whoever wrote it (2026-11-19: until then a
+    // file could not be found by the words of its own description).
+    const hay = `${a.name} ${a.folder} ${a.tags.join(' ')} ${a.description} ${rec.text}`.toLowerCase();
     let score = 0;
     // Exact-substring (names/IDs/phrases) — strong signal.
     if (hay.includes(q)) score += 3;
@@ -1087,6 +1116,109 @@ export function applyExtractedText(id: string, text: string): FileAsset | null {
   a.indexing.extraction = { status: 'extracted', engine: 'docling', at: now(), chars: text.length };
   persist(rec, a);
   return a;
+}
+
+// ------------------------------------ automatic description + tags (server) --
+
+/** A decision (restricted / stored-only by choice) supersedes a generation that has not finished. */
+function dropUnfinishedGeneration(a: FileAsset): void {
+  if (a.autoDocs?.generation && a.autoDocs.generation.status !== 'done') {
+    a.autoDocs = { ...a.autoDocs, generation: undefined };
+  }
+}
+
+/** May this user edit the file? The same gate every edit passes (`editOf`), as a question. */
+export function canEditFile(id: string, user: Principal): boolean {
+  ensureSeeded();
+  const rec = fs().store.get(id);
+  return !!rec && canEdit(parseAsset(rec.yaml), user);
+}
+
+/** What the generator needs about one file — SERVER-INTERNAL, not user-scoped. */
+export function autoDocsSubject(id: string): { asset: FileAsset; text: string; archived: boolean } | null {
+  ensureSeeded();
+  const rec = fs().store.get(id);
+  return rec ? { asset: parseAsset(rec.yaml), text: rec.text, archived: rec.archived ?? false } : null;
+}
+
+/** Every file, for the admin backfill's plan — SERVER-INTERNAL, never handed to a caller as is. */
+export function listAllForAutoDocs(): { asset: FileAsset; text: string; archived: boolean }[] {
+  ensureSeeded();
+  return [...fs().store.values()].map((rec) => ({ asset: parseAsset(rec.yaml), text: rec.text, archived: rec.archived ?? false }));
+}
+
+/**
+ * The tags offered to the model for reuse: the most used tags on the files this file's OWNER can
+ * already see in the file's domain (their own, and what is shared there), most used first.
+ * Restricted files contribute nothing — not even their tags leave the store.
+ */
+export function tagVocabulary(asset: Pick<FileAsset, 'id' | 'owner' | 'domain'>, cap: number = AUTO_DOCS_LIMITS.vocabularyTags): string[] {
+  ensureSeeded();
+  const reader = { id: asset.owner, domains: asset.domain ? [asset.domain] : [] };
+  const counts = new Map<string, number>();
+  for (const rec of fs().store.values()) {
+    if (rec.archived || rec.id === asset.id || rec.domain !== asset.domain) continue;
+    const a = parseAsset(rec.yaml);
+    if (a.sensitivity === 'restricted' || !canRead(a, reader)) continue;
+    for (const t of a.tags) counts.set(t, (counts.get(t) ?? 0) + 1);
+  }
+  return [...counts.entries()].sort((x, y) => y[1] - x[1] || x[0].localeCompare(y[0])).slice(0, cap).map(([t]) => t);
+}
+
+/** Record a generation STATE (pending / failed / skipped). Never touches description or tags. */
+function setGeneration(id: string, generation: AutoDocsGeneration): FileAsset | null {
+  const rec = fs().store.get(id);
+  if (!rec) return null;
+  const a = parseAsset(rec.yaml);
+  const eligibility = autoDocsEligibility(a, rec.text);
+  // A restricted or opted-out file carries no trace of a run that must not have happened.
+  if (!eligibility.eligible && eligibility.code !== 'no-text') return null;
+  a.autoDocs = { ...(a.autoDocs ?? {}), generation };
+  persist(rec, a);
+  return a;
+}
+
+/** The model has been asked and has not answered yet. */
+export function markAutoDocsPending(id: string): FileAsset | null {
+  return setGeneration(id, { status: 'pending', at: now() });
+}
+
+/** No usable result. The file keeps exactly the description and tags it had, plus the reason. */
+export function recordAutoDocsFailure(id: string, code: AutoDocsCode, reason: string): FileAsset | null {
+  return setGeneration(id, { status: 'failed', at: now(), code, reason });
+}
+
+/** The model was deliberately not called (there is no text to describe). */
+export function recordAutoDocsSkipped(id: string, code: AutoDocsCode, reason: string): FileAsset | null {
+  return setGeneration(id, { status: 'skipped', at: now(), code, reason });
+}
+
+/**
+ * Write a validated result onto the file, through the same `persist` the extraction uses — so it
+ * reaches the durable mirror, which is where the run worker's `get_file` / `list_files` read it.
+ *
+ * Everything is RE-CHECKED here, at the write: the model call ran off the request path, and
+ * meanwhile the owner may have restricted the file, opted it out, deleted it, typed their own
+ * description or removed a tag. A file that may no longer be described gets nothing (`null`);
+ * a field the user has taken is left alone (`mergeGenerated`). The original bytes and the text
+ * are never touched.
+ */
+export function applyGeneratedDocs(
+  id: string,
+  result: { description?: string; tags?: string[] },
+  model: string,
+): { asset: FileAsset; wrote: { description: boolean; tags: string[] } } | null {
+  const rec = fs().store.get(id);
+  if (!rec) return null;
+  const a = parseAsset(rec.yaml);
+  if (!autoDocsEligibility(a, rec.text).eligible) return null;
+  const at = now();
+  const merged = mergeGenerated(a, result, { model, at });
+  a.description = merged.description;
+  a.tags = merged.tags;
+  a.autoDocs = { ...merged.autoDocs, generation: { status: 'done', at } };
+  persist(rec, a);
+  return { asset: a, wrote: merged.wrote };
 }
 
 // ------------------------------------------------- index bootstrap (server) --
