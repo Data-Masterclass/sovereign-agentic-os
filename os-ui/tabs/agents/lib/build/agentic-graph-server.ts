@@ -35,6 +35,7 @@ import { selectCheckpointer, type CheckpointerKind } from '@tabs/agents/lib/engi
 import type { GraphDeps, HeldCall, RouteDecision } from '@tabs/agents/lib/engine/build-graph';
 import { inspectGraphRun, type PendingApproval, type RunInspection } from '@tabs/agents/lib/engine/run';
 import { holdDecisionFor } from '@tabs/agents/lib/build/hold';
+import { describeFolderGrant } from '@tabs/agents/lib/build/agent-tool-results';
 import type { ApprovalDecision, ApprovalPort } from '@tabs/agents/lib/engine/approval-port';
 import { serverApprovalPort } from '@tabs/agents/lib/engine/approvals-bridge';
 import {
@@ -180,6 +181,12 @@ function grantedContextBrief(sys: System): string {
   add('datasets', g.data);
   add('knowledge', g.knowledge);
   add('files', g.files);
+  // A FILES folder grant carries no ids (file tools act over the runner's own view), so name the
+  // folder itself: `list_files` returns exactly the files under it for this system.
+  const fileFolders = (g.files ?? []).map((f) => f.folder).filter((f): f is NonNullable<typeof f> => !!f);
+  if (fileFolders.length > 0) {
+    rows.push(`- files folder${fileFolders.length === 1 ? '' : 's'}: ${fileFolders.map(describeFolderGrant).join(', ')} — list_files returns exactly these files; read each with get_file`);
+  }
   add('metrics', g.metrics);
   add('connections', g.connections);
   add('plan (operating-manual)', g.plan);
