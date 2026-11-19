@@ -1,0 +1,132 @@
+{{- $np := (.Values.networkPolicies.dagster | default dict) }}
+{{- if and .Values.dagster.enabled $np.enabled }}
+{{- /*
+  Ingress allowlists for Dagster (defence in depth): the webserver and the code-location gRPC
+  server accept connections only from the OS components that use them. Egress and DNS are
+  unchanged — they stay with templates/base/network/egress-policies.yaml.
+
+  WHO CALLS WHAT (keep in step when a new caller appears):
+    webserver :<dagsterWebserver.service.port> (GraphQL + UI)
+      - os-ui, os-ui-worker            DAGSTER_URL (launches, run status, location reloads)
+      - the Dagster code-server pod    the repo-sync sidecar's reloadRepositoryLocation. Selected
+                                       by `app.kubernetes.io/name: dagster-user-deployments` too:
+                                       launched run pods carry `component: user-deployments`
+                                       (dagster.runLauncher… podTemplateSpecMetadata) but not that
+                                       name, and make no webserver call
+      - the ingress controller         ONLY when the Dagster Ingress renders (ingress.enabled and
+                                       ingress.hosts.dagster set; basic-auth is on that Ingress)
+    code server :<deployment port> (gRPC) and its sidecar ports
+      - webserver, daemon              the workspace's code-location gRPC
+      - code-server and run pods       `component: user-deployments` (both carry it)
+    The code-location policy SELECTS the code-server pod only (name + component), so run pods,
+    which serve nothing, keep their current ingress.
+      - os-ui, os-ui-worker            sidecar ports only (the repo-sync status server)
+
+  `kubectl port-forward` and kubelet probes are not subject to NetworkPolicy, so the local
+  port-forward path to the Dagster UI is unaffected.
+
+  NOTE: kind's default CNI (kindnet) does NOT enforce NetworkPolicies — locally these apply but
+  are inert. On STACKIT they enforce.
+*/}}
+{{- $webPort := ((.Values.dagster.dagsterWebserver | default dict).service | default dict).port | default 80 }}
+{{- $ing := .Values.ingress | default dict }}
+{{- $dagsterHost := "" }}
+{{- if $ing.enabled }}
+{{- $dagsterHost = index ($ing.hosts | default dict) "dagster" | default "" }}
+{{- end }}
+{{- $ud := index .Values.dagster "dagster-user-deployments" | default dict }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: dagster-webserver-ingress
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: dagster
+      component: dagster-webserver
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: os-ui
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: os-ui-worker
+        # The code-server pod only (its repo-sync sidecar calls reloadRepositoryLocation). Launched
+        # run pods share `component: user-deployments` but not this `name` label, and they make no
+        # webserver call, so they are not admitted here.
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: dagster-user-deployments
+              component: user-deployments
+      ports:
+        - { protocol: TCP, port: {{ $webPort }} }
+    {{- if $dagsterHost }}
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $np.ingressNamespace | default "ingress-nginx" | quote }}
+      ports:
+        - { protocol: TCP, port: {{ $webPort }} }
+    {{- end }}
+{{- if and $ud.enabled $ud.deployments }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: dagster-code-location-ingress
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: dagster-user-deployments
+      component: user-deployments
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: dagster
+              component: dagster-webserver
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: dagster
+              component: dagster-daemon
+        - podSelector:
+            matchLabels:
+              component: user-deployments
+      ports:
+        {{- range $ud.deployments }}
+        - { protocol: TCP, port: {{ .port }} }
+        {{- end }}
+    {{- $sidecarPorts := list }}
+    {{- range $ud.deployments }}
+    {{- range (.sidecarContainers | default list) }}
+    {{- range (.ports | default list) }}
+    {{- $sidecarPorts = append $sidecarPorts .containerPort }}
+    {{- end }}
+    {{- end }}
+    {{- end }}
+    {{- if $sidecarPorts }}
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: os-ui
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: os-ui-worker
+      ports:
+        {{- range ($sidecarPorts | uniq) }}
+        - { protocol: TCP, port: {{ . }} }
+        {{- end }}
+    {{- end }}
+{{- end }}
+{{- end }}

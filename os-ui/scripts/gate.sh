@@ -77,6 +77,11 @@ node ../scripts/check-image-allowlist-chart.mjs
 # without a protection annotation must fail the render, and no committed profile may opt in.
 # Same skip rules as above.
 node ../scripts/check-consoles-not-public.mjs
+# The Dagster webserver and code-location ingress policies must select exactly their pods and
+# admit every OS caller (os-ui, os-ui-worker, the code server and its run pods, webserver, daemon)
+# on the right port — and the ingress controller only when a Dagster Ingress renders. Rendered
+# YAML, same skip rules as above.
+node ../scripts/check-dagster-ingress-policy.mjs
 # B3 review H-1/H-5/H-6: the reconciler must run on a DEFAULT install, the Dagster run pod must
 # connect as the user rules.json allows, and the os-ui Role must not grant namespace-wide Secrets.
 # B4 review H-2 rides on the same check: the os-ui Role must carry `batch`/`cronjobs` in EVERY

@@ -27,6 +27,13 @@ global:
 # Secure-by-default network baseline (security.md).
 networkPolicies:
   defaultDeny: true
+  # Ingress allowlists for the Dagster webserver and code-location gRPC server: only the OS
+  # components that use them may connect (templates/base/network/dagster-ingress-policies.yaml).
+  # Rendered only when dagster.enabled. The ingress controller's namespace is admitted to the
+  # webserver only when the Dagster Ingress renders (ingress.enabled + ingress.hosts.dagster).
+  dagster:
+    enabled: true
+    ingressNamespace: ingress-nginx
 
 # Backups (templates/extensions/backup/).
 backup:
