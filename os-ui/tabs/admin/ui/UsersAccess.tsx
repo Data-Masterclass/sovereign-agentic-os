@@ -26,6 +26,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useUser } from '@core/ui/useUser';
 import { roleAtLeast } from '@core/kernel/session';
 import { sectionMinRole } from '@tabs/admin/lib/sections';
+import { assessPasswordStrength } from '@core/kernel/password-strength';
 
 type Role = 'creator' | 'builder' | 'domain_admin' | 'admin';
 type Status = 'active' | 'invited' | 'deactivated';
@@ -43,30 +44,8 @@ const ROLES: Role[] = ['creator', 'builder', 'domain_admin', 'admin'];
 const STATUS_BADGE: Record<Status, string> = { active: 'ok', invited: 'muted', deactivated: 'err' };
 const STATUS_ORDER: Record<Status, number> = { active: 0, invited: 1, deactivated: 2 };
 
-// ---------------------------------------------------------------------------
-// Password strength (mirrors lib/core/password.assessPasswordStrength — the API
-// re-checks server-side; this is live UI feedback only).
-// ---------------------------------------------------------------------------
-type StrengthResult = { ok: boolean; score: number; reasons: string[] };
-function assessClient(pw: string, username = ''): StrengthResult {
-  const reasons: string[] = [];
-  const lower = pw.toLowerCase();
-  if (pw.length < 12) reasons.push('Use at least 12 characters');
-  const classes =
-    Number(/[a-z]/.test(pw)) + Number(/[A-Z]/.test(pw)) +
-    Number(/[0-9]/.test(pw)) + Number(/[^A-Za-z0-9]/.test(pw));
-  if (classes < 3) reasons.push('Mix upper, lower, numbers and symbols (3 of 4)');
-  const common = new Set(['password', 'admin', 'changeme', 'letmein', 'welcome', 'qwerty', '123456']);
-  if (common.has(lower)) reasons.push('That password is too common');
-  if (username && lower.includes(username.trim().toLowerCase()) && username.trim().length >= 3)
-    reasons.push('Do not include the username');
-  let score = 0;
-  if (pw.length >= 12) score++;
-  if (pw.length >= 16) score++;
-  score += Math.max(0, classes - 2);
-  score = Math.min(4, score);
-  return { ok: reasons.length === 0, score, reasons };
-}
+// Password strength: the server's own rule (`@core/kernel/password-strength`). The API still
+// re-checks; this is live feedback, but it is the same function, not a mirror.
 const SCORE_COLOR = ['#dc2626', '#f97316', '#eab308', '#22c55e', '#16a34a'];
 const SCORE_LABEL = ['Very weak', 'Weak', 'Fair', 'Strong', 'Very strong'];
 
@@ -86,7 +65,7 @@ function PasswordField({
   const [show, setShow] = useState(false);
   const [copied, setCopied] = useState(false);
   const [generating, setGenerating] = useState(false);
-  const strength = assessClient(value, username);
+  const strength = assessPasswordStrength(value, username);
 
   async function generate() {
     setGenerating(true);
@@ -431,7 +410,7 @@ function ResetPasswordDialog({
   onReset: (password: string) => void; onCancel: () => void;
 }) {
   const [password, setPassword] = useState('');
-  const strength = assessClient(password, userId);
+  const strength = assessPasswordStrength(password, userId);
   useEffect(() => { if (!open) setPassword(''); }, [open]);
   if (!open) return null;
   return (
@@ -511,7 +490,7 @@ function UsersAccessInner() {
   const invite = useCallback(async () => {
     if (!id.trim() || !name.trim()) return;
     const pw = password.trim();
-    if (pw && !assessClient(pw, id).ok) { setError(assessClient(pw, id).reasons[0] ?? 'Password too weak'); return; }
+    if (pw && !assessPasswordStrength(pw, id).ok) { setError(assessPasswordStrength(pw, id).reasons[0] ?? 'Password too weak'); return; }
     setBusy('invite');
     setError('');
     try {
@@ -624,7 +603,7 @@ function UsersAccessInner() {
   }, [offboardTarget, load]);
 
   const sorted = [...users].sort((a, b) => STATUS_ORDER[a.status] - STATUS_ORDER[b.status] || a.id.localeCompare(b.id));
-  const inviteStrong = !password.trim() || assessClient(password.trim(), id).ok;
+  const inviteStrong = !password.trim() || assessPasswordStrength(password.trim(), id).ok;
 
   return (
     <>

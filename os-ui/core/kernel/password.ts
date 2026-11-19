@@ -100,46 +100,6 @@ async function scryptWith(plain: string, salt: Buffer): Promise<Buffer> {
 }
 
 // ---- Strength ---------------------------------------------------------------
-
-export type Strength = { ok: boolean; score: number; reasons: string[] };
-
-const MIN_LEN = 12;
-
-// A tiny deny-list of the most obvious choices. Not exhaustive — the length +
-// character-class rules do the heavy lifting; this just blocks the worst.
-const COMMON = new Set([
-  'password', 'passw0rd', 'admin', 'administrator', 'changeme', 'letmein',
-  'welcome', 'qwerty', 'qwertyuiop', '111111', '123456', '12345678',
-  '123456789', '1234567890', 'iloveyou', 'monkey', 'dragon', 'sunshine',
-  'password1', 'admin123', 'root', 'toor', 'secret', 'sovereign',
-]);
-
-/**
- * Assess a candidate password. Server-authoritative — the UI mirrors these rules
- * for live feedback but the API re-checks before accepting any password.
- */
-export function assessPasswordStrength(pw: string, username = ''): Strength {
-  const reasons: string[] = [];
-  const lower = pw.toLowerCase();
-
-  if (pw.length < MIN_LEN) reasons.push(`Use at least ${MIN_LEN} characters`);
-  const classes =
-    Number(/[a-z]/.test(pw)) +
-    Number(/[A-Z]/.test(pw)) +
-    Number(/[0-9]/.test(pw)) +
-    Number(/[^A-Za-z0-9]/.test(pw));
-  if (classes < 3) reasons.push('Mix upper, lower, numbers and symbols (3 of 4)');
-  if (COMMON.has(lower)) reasons.push('That password is too common');
-  if (username && lower.includes(username.trim().toLowerCase()) && username.trim().length >= 3)
-    reasons.push('Do not include your username');
-  if (/^(.)\1+$/.test(pw)) reasons.push('Avoid a single repeated character');
-
-  // Score 0..4 for the UI meter.
-  let score = 0;
-  if (pw.length >= MIN_LEN) score++;
-  if (pw.length >= 16) score++;
-  score += Math.max(0, classes - 2);
-  score = Math.min(4, score);
-
-  return { ok: reasons.length === 0, score, reasons };
-}
+// The rule is pure (no node:crypto) so the browser can run the SAME function for live
+// feedback; it lives in `password-strength.ts` and is re-exported here for the server.
+export { assessPasswordStrength, type Strength } from '@core/kernel/password-strength';
