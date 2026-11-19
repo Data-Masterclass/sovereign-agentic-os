@@ -21,6 +21,8 @@ import { reindexTools, jobPayload, planPayload, type ReindexServices } from '@co
 import { roleCanUse } from '@core/mcp/server';
 import {
   UNMARKED_CAVEAT,
+  startOrResume,
+  __resetReindexJobs,
   type ReindexJob,
   type ReindexPlan,
   type ReindexTarget,
@@ -65,6 +67,10 @@ function services(over: {
   run?: { started: boolean; job: ReindexJob; reason?: string };
   onPlan?: (target: ReindexTarget) => void;
   onRun?: (target: ReindexTarget) => void;
+  onRunPlan?: (plan: ReindexPlan | null) => void;
+  onAbandon?: (target: ReindexTarget) => void;
+  abandon?: { abandoned: boolean; job: ReindexJob | null; reason?: string };
+  inFlight?: boolean;
   throwOnRun?: unknown;
   assertAdmin?: boolean;
 } = {}): ReindexServices {
@@ -76,14 +82,23 @@ function services(over: {
       over.onPlan?.(target);
       return over.plan ?? plan({ target });
     },
-    runReindex: async (principal: { role: string }) => {
+    runReindex: async (principal: { role: string }, planArg: ReindexPlan | null) => {
       if (over.assertAdmin !== false && principal.role !== 'admin') {
         throw Object.assign(new Error('Re-indexing a corpus is admin-only'), { status: 403 });
       }
       over.onRun?.(target);
+      over.onRunPlan?.(planArg);
       if (over.throwOnRun) throw over.throwOnRun;
       return over.run ?? { started: true, job: job({ target, status: 'running' }) };
     },
+    abandonReindex: async (principal: { role: string }) => {
+      if (over.assertAdmin !== false && principal.role !== 'admin') {
+        throw Object.assign(new Error('Re-indexing a corpus is admin-only'), { status: 403 });
+      }
+      over.onAbandon?.(target);
+      return over.abandon ?? { abandoned: true, job: job({ target, status: 'failed', error: 'Abandoned by u_admin at 1/3.' }) };
+    },
+    inFlight: () => Boolean(over.inFlight),
   });
   return { files: make('files'), knowledge: make('knowledge') };
 }
@@ -126,7 +141,7 @@ test('MCP: the argument shape is the route’s shape — same target, mode and f
     required: string[];
   };
   assert.deepEqual(schema.properties.target.enum, ['files', 'knowledge']);
-  assert.deepEqual(schema.properties.mode.enum, ['plan', 'run']);
+  assert.deepEqual(schema.properties.mode.enum, ['plan', 'run', 'abandon']);
   assert.deepEqual(schema.properties.filter.enum, ['marked', 'all']);
   assert.deepEqual(schema.required, ['target']);
 });
@@ -297,4 +312,102 @@ test('REGISTRATION: the bundle injects both tab services into the kernel-side to
   // The kernel-side tool module itself must not import a tab — that is the whole point.
   const toolSrc = read('core/mcp/reindex-tools.ts');
   assert.ok(!/@tabs\//.test(toolSrc), 'core/mcp/reindex-tools.ts must know no tab');
+});
+
+// ---------------------------------------------------------------------------
+//  H3 · H2 · M4 at the doors
+// ---------------------------------------------------------------------------
+
+test('H3 (MCP): mode:"abandon" frees the target without planning, probing or writing', async () => {
+  let planned = false;
+  let ran = false;
+  const out = (await tool(services({ onPlan: () => { planned = true; }, onRun: () => { ran = true; } })).call(admin, {
+    target: 'files', mode: 'abandon',
+  })) as { abandoned: boolean; job: { status: string; error: string | null } };
+  assert.equal(planned, false, 'abandon never plans');
+  assert.equal(ran, false, 'and never runs');
+  assert.equal(out.abandoned, true);
+  assert.equal(out.job.status, 'failed');
+  assert.match(out.job.error!, /Abandoned by/);
+});
+
+test('H3 (MCP): abandoning when nothing runs is stated, not pretended', async () => {
+  const out = (await tool(services({ abandon: { abandoned: false, job: null, reason: 'nothing-running' } })).call(admin, {
+    target: 'knowledge', mode: 'abandon',
+  })) as { abandoned: boolean; reason: string; job: unknown };
+  assert.equal(out.abandoned, false);
+  assert.equal(out.reason, 'nothing-running');
+  assert.equal(out.job, null);
+});
+
+test('H3 (MCP): abandon is admin-only in-lib, like every other mode', async () => {
+  await assert.rejects(
+    () => tool().call(builder, { target: 'files', mode: 'abandon' }),
+    (e: Error & { status?: number }) => e.status === 403,
+  );
+});
+
+test('H2 (MCP): status reports inFlight separately from running', async () => {
+  const out = (await tool(services({ inFlight: true })).call(admin, { target: 'files', status: true })) as {
+    running: boolean; inFlight: boolean;
+  };
+  assert.equal(out.inFlight, true, 'the panel needs "a batch is executing" as its own fact');
+  assert.equal(out.running, false, 'no job in this fresh table — the two are different questions');
+});
+
+test('M4 (MCP): a run on a RUNNING job resumes it and does not re-plan', async () => {
+  __resetReindexJobs();
+  // Claim the slot so the tool sees a running job for `files`.
+  startOrResume('files', { filter: 'all', by: 'u_admin', total: 9 });
+  let planned = 0;
+  const seenPlans: (ReindexPlan | null)[] = [];
+  const out = (await tool(
+    services({
+      onPlan: () => { planned += 1; },
+      onRunPlan: (p) => seenPlans.push(p),
+      run: { started: false, job: job({ cursor: 4, total: 9, filter: 'all' }), reason: 'resumed' },
+    }),
+  ).call(admin, { target: 'files', mode: 'run', filter: 'marked' })) as {
+    started: boolean; reason: string; filter: string; job: { done: number };
+  };
+  assert.equal(planned, 0, 'no re-plan: that was a full index read per batch');
+  assert.deepEqual(seenPlans, [null], 'the resume hands the service a null plan');
+  assert.equal(out.started, false);
+  assert.equal(out.reason, 'resumed');
+  assert.equal(out.filter, 'all', 'the RUNNING job’s filter, not the request’s');
+  assert.equal(out.job.done, 4);
+  __resetReindexJobs();
+});
+
+test('M4 (MCP): a bad mode names what it got, including the new one', async () => {
+  await assert.rejects(
+    () => tool().call(admin, { target: 'files', mode: 'nuke' }),
+    (e: Error & { status?: number }) => e.status === 400 && /"plan", "run" or "abandon" \(got "nuke"\)/.test(e.message),
+  );
+});
+
+// ---------------------------------------------------------------------------
+//  The HTTP door, for the same three
+// ---------------------------------------------------------------------------
+
+test('ROUTE: GET reports inFlight so the panel can tell "running" from "busy" (H2)', () => {
+  assert.match(ROUTE, /inFlight: SERVICES\[target\]\.inFlight\(\)/);
+});
+
+test('ROUTE: mode:"abandon" is admin-gated, audited and writes nothing to the index (H3)', () => {
+  assert.match(ROUTE, /body\.mode === 'abandon'/);
+  assert.match(ROUTE, /service\.abandonReindex\(principal\)/);
+  assert.match(ROUTE, /action: 'reindex\.abandon'/);
+  const abandonBlock = ROUTE.slice(ROUTE.indexOf("if (mode === 'abandon')"), ROUTE.indexOf("// RESUME without re-planning"));
+  assert.ok(!/planReindex/.test(abandonBlock), 'abandon must not plan');
+});
+
+test('ROUTE: a run against a RUNNING job resumes without re-planning (M4)', () => {
+  const resumeBlock = ROUTE.slice(ROUTE.indexOf('// RESUME without re-planning'), ROUTE.indexOf('const plan = await service.planReindex'));
+  assert.match(resumeBlock, /runReindex\(principal, null, \{ batch \}\)/);
+  assert.ok(!/planReindex/.test(resumeBlock), 'the resume path must not plan');
+});
+
+test('ROUTE: the audit records the JOB’s filter, not the request’s (low 3)', () => {
+  assert.match(ROUTE, /a \$\{out\.job\.filter\} re-index/);
 });

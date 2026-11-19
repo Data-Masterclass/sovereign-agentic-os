@@ -95,3 +95,31 @@ export const WRITE_TOOL_TABS: Readonly<Record<string, string>> = {
 
 
 export const WRITE_TOOL_NAMES: ReadonlySet<string> = new Set(Object.keys(WRITE_TOOL_TABS));
+
+/**
+ * Writes an UNATTENDED AGENT RUN may not perform at all — name → the reason a caller is told.
+ *
+ * Being in {@link WRITE_TOOL_TABS} makes a tool HELD; it does not make it unavailable, and for
+ * `reindex_corpus` "held" is not enough on its own. Its effect is not an artifact in a lane: it
+ * re-parses and re-embeds EVERY selected row of a tenant's Files or Knowledge index and spends
+ * real embeddings budget doing it. There is no version of that which belongs to an agent loop
+ * deciding on its own that the corpus looks wrong. An admin runs it from Platform → Re-index, the
+ * admin HTTP door, or their own MCP session — all three of which are a person, present, choosing.
+ *
+ * This is the catalog BOTH agent-facing doors consult (`tabs/agents/lib/build/os-tools.ts` for an
+ * agent system's tool calls, `tabs/software/lib/app-tool-call.ts` for an app's tool surface), and
+ * it lives here for the same reason `WRITE_TOOL_TABS` does: a core table neither door can forget,
+ * independent of which bundles happen to be registered.
+ */
+export const AGENT_FORBIDDEN_TOOLS: Readonly<Record<string, string>> = {
+  reindex_corpus:
+    'reindex_corpus is an operator act, not an agent action: it re-parses and re-embeds every ' +
+    'selected row of a tenant corpus and spends real embeddings budget. An unattended run may ' +
+    'not start one. A platform admin runs it from Platform → Re-index, from ' +
+    'POST /api/platform-admin/reindex, or from their own MCP session.',
+};
+
+/** The reason this tool is closed to agent runs, or null when it is not. Fail-closed by name. */
+export function agentForbiddenReason(name: string): string | null {
+  return AGENT_FORBIDDEN_TOOLS[name] ?? null;
+}

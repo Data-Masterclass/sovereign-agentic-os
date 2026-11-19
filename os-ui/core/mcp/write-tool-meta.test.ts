@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { ALL_WRITE_TOOLS } from '@core/mcp/write-tools';
-import { WRITE_TOOL_TABS, WRITE_TOOL_NAMES } from '@core/mcp/write-tool-meta';
+import { WRITE_TOOL_TABS, WRITE_TOOL_NAMES, AGENT_FORBIDDEN_TOOLS, agentForbiddenReason } from '@core/mcp/write-tool-meta';
 
 /**
  * The write tools that do NOT live in `ALL_WRITE_TOOLS`: the PLATFORM-MCP surface
@@ -63,4 +63,23 @@ test('every platform-MCP write listed here is actually held-eligible', () => {
     assert.equal(WRITE_TOOL_TABS[name], tab, `${name} must be in the hold-gate table`);
     assert.ok(WRITE_TOOL_NAMES.has(name));
   }
+});
+
+/**
+ * H1 of the re-index review: being in the write catalog makes a tool HELD, not unavailable, and
+ * for one of them "held" is not the posture we want — an unattended run has no business
+ * re-indexing a tenant corpus. The catalog of agent-closed tools lives next to the write catalog
+ * so neither agent-facing door can forget it, and every entry must ALSO be a classified write:
+ * the hold is the second line of defence behind the refusal, and a tool that is closed but
+ * unclassified would be unheld the moment someone removed the refusal.
+ */
+test('AGENT_FORBIDDEN_TOOLS: every agent-closed tool is also a classified write, and says why', () => {
+  assert.ok(Object.keys(AGENT_FORBIDDEN_TOOLS).length > 0);
+  for (const [name, reason] of Object.entries(AGENT_FORBIDDEN_TOOLS)) {
+    assert.ok(WRITE_TOOL_NAMES.has(name), `${name} must also be in the hold-gate table`);
+    assert.ok(reason.length > 40, `${name} must tell the caller WHY, and where to do it instead`);
+    assert.equal(agentForbiddenReason(name), reason);
+  }
+  assert.equal(agentForbiddenReason('create_dataset'), null, 'an ordinary write is not closed');
+  assert.equal(agentForbiddenReason(''), null);
 });

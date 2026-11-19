@@ -50,8 +50,9 @@ export const REASON_LABELS: Record<ReindexReason, string> = {
 /** What each number means — shown as the row's help text, because a count alone misleads. */
 export const REASON_HELP: Record<ReindexReason, string> = {
   marked:
-    'A persisted label (source / embed_source / mode) naming a stand-in. The Files index never ' +
-    'carried such a field, so 0 here is expected and proves nothing.',
+    'A persisted label (source / embed_source / mode) naming a stand-in. No writer in EITHER ' +
+    'index ever stamped one — Knowledge has a `source` field, but it holds provenance like ' +
+    '`os-ui-ingest` — so 0 here is expected and proves nothing.',
   'missing-representation':
     'A stored file or workflow the index holds nothing for — the parser produced nothing, or a ' +
     'refusal stopped it. Counted in UNITS, not rows: there are no rows to count.',
@@ -74,14 +75,70 @@ export const MARKED_VS_ALL_COPY =
   'field — so a marked count of 0 is not a clean bill of health. Re-index everything is the only ' +
   'complete answer, and it spends real gateway budget.';
 
-/** Why the Run button is disabled, or null when it is not. ONE computation, two uses. */
-export function runDisabledReason(plan: ReindexPlan | null, job: ReindexJob | null, busy = false): string | null {
+/**
+ * Why the Run button is disabled, or null when it is not. ONE computation, two uses (the
+ * `disabled` prop and the `title`), so a disabled control is never silent about why.
+ *
+ * REVIEW H2: this used to disable on `job.status === 'running'`, which greyed Continue out in
+ * exactly the state that needs it — a job left half-done by an interrupted polling loop, a closed
+ * tab or a failed batch is `running` with NOTHING in flight, and that is precisely when an
+ * operator must be able to continue it. The gate is `inFlight` (the server's own `busy()` flag,
+ * read from `GET /api/platform-admin/reindex`): a batch is executing *right now*. A running job
+ * with no batch in flight is CONTINUABLE, and needs no plan — the job's own work list and cursor
+ * are the facts.
+ */
+export function runDisabledReason(
+  plan: ReindexPlan | null,
+  job: ReindexJob | null,
+  busy = false,
+  inFlight = false,
+): string | null {
   if (busy) return 'A request is in flight.';
-  if (job?.status === 'running') return `A re-index of this index is already running (${job.cursor}/${job.total} done). Continue it instead.`;
+  if (inFlight) return 'A batch of this re-index is running right now — it will continue on its own.';
+  if (job?.status === 'running') return null; // continuable: no plan needed, the cursor is the fact
   if (!plan) return 'Run Plan first — a re-index should never start before you have read what it would do.';
   if (!plan.ready) return plan.blockedReason ?? 'This index cannot be re-indexed right now.';
   if (plan.units.length === 0) return 'Nothing selected: this filter found no unit to re-index.';
   return null;
+}
+
+/** Why Abandon is disabled, or null. Only a running job that is not mid-batch may be abandoned. */
+export function abandonDisabledReason(job: ReindexJob | null, busy = false, inFlight = false): string | null {
+  if (busy) return 'A request is in flight.';
+  if (!job || job.status !== 'running') return 'Nothing is running.';
+  if (inFlight) return 'A batch is executing right now — wait for it to finish, then abandon.';
+  return null;
+}
+
+/** The batch sizes the panel offers. Bounded by `MAX_REINDEX_BATCH`; the default is the middle. */
+export const BATCH_CHOICES = [10, 25, 50, 100, 200] as const;
+
+/**
+ * What a run is about to cost, in the operator's terms — units, rows and how many POSTs the panel
+ * will make at the chosen batch size (review M4: the first version looped up to 500 requests with
+ * no estimate and no confirmation, and never sent a batch size at all).
+ */
+export function runEstimate(plan: ReindexPlan | null, batch: number): { units: number; rows: number; batches: number; text: string } {
+  const units = plan?.units.length ?? 0;
+  const rows = plan?.units.reduce((n, u) => n + u.rows, 0) ?? 0;
+  const batches = units === 0 ? 0 : Math.ceil(units / Math.max(1, batch));
+  const text =
+    units === 0
+      ? 'Nothing selected.'
+      : `${units} unit(s) covering ${rows} indexed row(s), in ${batches} batch(es) of up to ${batch}. ` +
+        'Every selected unit is re-parsed and re-embedded through the real services, which costs real gateway budget.';
+  return { units, rows, batches, text };
+}
+
+/**
+ * The sentence the panel must make the operator confirm before `all`. `all` re-does the WHOLE
+ * corpus, including every row that is perfectly fine, so it is the one choice here that spends
+ * budget it may not need to — the operator should be told the number before, not after.
+ */
+export function confirmRunText(plan: ReindexPlan, batch: number): string | null {
+  if (plan.filter !== 'all') return null;
+  const est = runEstimate(plan, batch);
+  return `Re-index EVERYTHING in the ${plan.target} index: ${est.text} Rows that are already correct will be re-parsed and re-embedded too. Continue?`;
 }
 
 /** The label on the primary action, which changes meaning once a job exists. */

@@ -1027,6 +1027,28 @@ store lists no unit while the index holds rows is **blocked**, not reported
 clean, because an unhydrated store looks exactly like a tenant that owns
 nothing.
 
+**The review of that tool then found the same class of mistake twice more, and
+both generalise.** First: **a check after the write is not a check.** The
+re-index read the parse/embed mode off the report it got back — which is one
+statement after `indexAsset` had written the index and `writeOpenSearch` had
+written *and pruned*. Where a deployment still permits a stand-in, an engine
+falling over mid-run would therefore have overwritten good rows before anyone
+looked. The demand moved INTO the pipeline (`requireLive`), raising the typed
+refusal between the embedding and the first write; the caller's check stays as a
+second line. If an invariant is "we never write X", the guard belongs where the
+write is, not where the result is read.
+
+Second: **being in a catalog is not being gated by it.** `WRITE_TOOL_TABS` made
+`reindex_corpus` visible to the agent hold gate, and `writeTargetScope` then
+answered `personal` — its default for "the runner's own work" — so an agent
+could have re-indexed a whole tenant unheld. That is the third time this exact
+shape has cost something (`commit`, `push_app_files`, now this), so the fix is
+both halves: a `company` scope that holds it to an admin under every preset, and
+`AGENT_FORBIDDEN_TOOLS` — an operator act is refused at the agent door outright
+and dropped from the advertised schemas, because a model will try whatever it can
+see. **A new write whose effect is tenant-wide must be classified when it is
+added; the default is "personal", and the default is wrong for it.**
+
 **A picker scoped to "everything the caller may see" is not scoped to the thing being
 edited.** The agent grant picker built its feed from `listDatasets/listWorkflows/
 listPersonalKnowledge/listFiles/listMetrics(principal)` — each of which scopes to

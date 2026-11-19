@@ -20,6 +20,8 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 import {
+  abandonReindex,
+  inFlight,
   MARKER_FIELDS,
   STANDIN_MARKERS,
   markedQuery,
@@ -37,6 +39,8 @@ import {
 import { __resetReindexJobs, jobFor, type EngineProbe, type IndexSnapshot } from '@core/kernel/reindex';
 import { isOfflineMockRefused } from '@core/kernel/offline-mock';
 import { emptyAsset, type FileAsset } from '@tabs/files/lib/asset-schema';
+import { createFile, __resetStore } from '@tabs/files/lib/store';
+import { __resetIndex, indexSize } from '@tabs/files/lib/index-store';
 import type { IndexReport } from '@tabs/files/lib/index-pipeline';
 
 const ADMIN = { id: 'u_admin', domains: ['sales'], role: 'admin' as const };
@@ -494,8 +498,9 @@ const SRC = readFileSync(join(fileURLToPath(new URL('.', import.meta.url)), 'rei
 test('TRIPWIRE (files): the default unit path is the SAME indexAsset call an upload makes, plus the two re-index opts', () => {
   assert.match(
     SRC,
-    /indexAsset\(asset, text, \{ live: true, reembed: true, awaitMirror: true, caller \}\)/,
-    'reembed empties the hash-vector cache; awaitMirror is what makes the prune safe',
+    /indexAsset\(asset, text, \{ live: true, reembed: true, awaitMirror: true, requireLive: true, keepOnEmpty: true, caller \}\)/,
+    'reembed empties the hash-vector cache; awaitMirror is what makes the prune safe; requireLive ' +
+      'refuses a stand-in BEFORE the write; keepOnEmpty leaves existing rows alone',
   );
   assert.match(SRC, /prune: pruneChunksExcept/);
   assert.match(SRC, /probe\('Docling \(document parser\)'/);
@@ -509,4 +514,175 @@ test('TRIPWIRE (files): the service refuses, and can only ever refuse — it nev
 test('FILES REINDEX: the exported service is the contract both doors use', () => {
   assert.equal(typeof filesReindexService.planReindex, 'function');
   assert.equal(typeof filesReindexService.runReindex, 'function');
+});
+
+// ---------------------------------------------------------------------------
+//  H3 — abandoning a job, the only way out of one whose process was killed
+// ---------------------------------------------------------------------------
+
+test('H3 (files): abandon marks the running job failed, names who did it, and frees the target', async () => {
+  const d = deps({ reindexUnit: async () => ({ outcome: 'replaced' }) });
+  const started = await runReindex(ADMIN, PLAN_OF(['a', 'b', 'c']), { batch: 1, deps: d });
+  assert.equal(started.job.status, 'running');
+
+  const out = await abandonReindex(ADMIN);
+  assert.equal(out.abandoned, true);
+  assert.equal(out.job?.status, 'failed');
+  assert.match(out.job!.error!, /Abandoned by u_admin at 1\/3/);
+  assert.match(out.job!.error!, /already replaced are replaced/);
+  assert.equal(inFlight(), false, 'the in-flight flag is cleared — that is the point of the door');
+
+  // …and the target is genuinely free: a fresh plan starts a NEW job rather than reporting the old one.
+  const again = await runReindex(ADMIN, PLAN_OF(['a']), { deps: d });
+  assert.equal(again.started, true);
+  assert.notEqual(again.job.id, started.job.id);
+});
+
+test('H3 (files): abandon with nothing running is honest, and still clears a stale flag', async () => {
+  const out = await abandonReindex(ADMIN);
+  assert.equal(out.abandoned, false);
+  assert.equal(out.reason, 'nothing-running');
+  assert.equal(out.job, null);
+  assert.equal(inFlight(), false);
+});
+
+test('H3 (files): abandon is admin-only', async () => {
+  await assert.rejects(() => abandonReindex(BUILDER), (e: Error & { status?: number }) => e.status === 403);
+});
+
+test('H3 (files): an abandon landing mid-batch stops the batch at the next unit', async () => {
+  const seen: string[] = [];
+  const d = deps({
+    reindexUnit: async (id) => {
+      seen.push(id);
+      return { outcome: 'replaced' };
+    },
+  });
+  await runReindex(ADMIN, PLAN_OF(['a', 'b', 'c', 'd']), {
+    batch: 4,
+    deps: d,
+    onProgress: async () => {
+      if (seen.length === 1) await abandonReindex(ADMIN);
+    },
+  });
+  assert.deepEqual(seen, ['a'], 'the batch stopped instead of spending budget on an abandoned job');
+  assert.equal(jobFor('files')?.status, 'failed');
+});
+
+// ---------------------------------------------------------------------------
+//  M4 — a resume does not re-plan; low 4 — a lost work list fails the job
+// ---------------------------------------------------------------------------
+
+test('M4 (files): a resume (plan=null) continues the job WITHOUT re-planning', async () => {
+  let plans = 0;
+  const d = deps({
+    readSnapshot: async () => {
+      plans += 1;
+      return snapshot();
+    },
+    reindexUnit: async () => ({ outcome: 'replaced' }),
+  });
+  const first = await runReindex(ADMIN, PLAN_OF(['a', 'b', 'c']), { batch: 1, deps: d });
+  assert.equal(plans, 0, 'runReindex never plans — the caller hands it one');
+
+  const resumed = await runReindex(ADMIN, null, { batch: 1, deps: d });
+  assert.equal(resumed.started, false);
+  assert.equal(resumed.reason, 'resumed');
+  assert.equal(resumed.job.id, first.job.id);
+  assert.equal(resumed.job.cursor, 2);
+});
+
+test('M4 (files): a resume with nothing running is a stated 409, not a silent no-op', async () => {
+  await assert.rejects(
+    () => runReindex(ADMIN, null, { deps: deps() }),
+    (e: Error & { status?: number }) => e.status === 409 && /no running files re-index to continue/.test(e.message),
+  );
+});
+
+test('LOW 4 (files): a job whose work list was lost FAILS rather than indexing a stale cursor', async () => {
+  const d = deps({ reindexUnit: async () => ({ outcome: 'replaced' }) });
+  const first = await runReindex(ADMIN, PLAN_OF(['a', 'b', 'c']), { batch: 1, deps: d });
+  assert.equal(first.job.cursor, 1);
+
+  __resetFilesReindex(); // what a process replacement looks like: the job survives, the list does not
+  const out = await runReindex(ADMIN, PLAN_OF(['x', 'y', 'z']), { batch: 1, deps: d });
+  assert.equal(out.reason, 'work-list-lost');
+  assert.equal(out.job.status, 'failed');
+  assert.match(out.job.error!, /Nothing was indexed against it/);
+  assert.match(out.job.error!, /idempotent/);
+});
+
+// ---------------------------------------------------------------------------
+//  M1 — the refusal happens BEFORE the write, through the real wiring
+// ---------------------------------------------------------------------------
+
+test('M1 (files): a stand-in embedding mid-run refuses BEFORE any OpenSearch write, through LIVE_UNIT_DEPS', async () => {
+  __resetStore();
+  __resetIndex();
+  const asset = createFile({ id: 'amir', domains: ['sales'], role: 'admin' }, { name: 'contract.pdf', text: 'Auto renews after twelve months. Price capped at CPI.' });
+  assert.equal(asset.indexing.mode, 'indexed');
+
+  const seen: string[] = [];
+  globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
+    const u = String(url);
+    seen.push(`${(init?.method ?? 'GET').toUpperCase()} ${u}`);
+    // Docling answers for real…
+    if (u.includes('/convert')) {
+      return new Response(JSON.stringify({ document: { texts: [{ text: 'Auto renews after twelve months.' }, { text: 'Price capped at CPI.' }] } }), { status: 200 });
+    }
+    // …and the embeddings gateway falls over MID-RUN, which is the whole scenario.
+    if (u.includes('/v1/embeddings')) return new Response('upstream died', { status: 502 });
+    return new Response('{}', { status: 200 });
+  }) as typeof fetch;
+
+  await assert.rejects(
+    // The REAL unit path: no injected deps, so `indexAsset(..., {requireLive:true})` decides.
+    () => reindexOneFile(asset.id, 'u_admin'),
+    (e: unknown) => {
+      assert.ok(isOfflineMockRefused(e), 'the typed refusal, raised inside the pipeline');
+      assert.match((e as Error).message, /stand-in/);
+      assert.match((e as Error).message, /Nothing was written, removed or pruned/);
+      return true;
+    },
+  );
+
+  const wrote = seen.filter((c) => /_bulk|_delete_by_query|_doc|_update/.test(c));
+  assert.deepEqual(wrote, [], `no OpenSearch write may have happened, saw: ${wrote.join(', ')}`);
+  assert.equal(indexSize(), 0, 'and the in-process index was not touched either');
+});
+
+test('M2 (files): an empty parse KEEPS the file’s existing rows (keepOnEmpty), as the reason claims', async () => {
+  __resetStore();
+  __resetIndex();
+  const asset = createFile({ id: 'amir', domains: ['sales'], role: 'admin' }, { name: 'doc.pdf', text: 'real text that was indexed before' });
+
+  // Seed the index the way a healthy earlier run would have.
+  const { indexAsset } = await import('@tabs/files/lib/index-pipeline');
+  const seed = await indexAsset(asset, 'real text that was indexed before', {
+    adapter: (await import('@tabs/files/lib/ingest/mocks')).mockAdapterFor('doc'),
+    embed: async (texts: string[]) => ({ vectors: texts.map(() => [1, 0, 0]), model: 'm', dim: 3, mode: 'live' as const }),
+  });
+  assert.equal(seed.status, 'searchable');
+  const before = indexSize();
+  assert.ok(before > 0);
+
+  // Now a re-index whose parse yields nothing: the rows must survive.
+  const empty = await indexAsset(asset, '', {
+    adapter: { name: 'x', kinds: ['doc'], apply: async () => ({ adapter: 'x', mode: 'live' as const, representations: [] }), verify: () => false },
+    embed: async () => ({ vectors: [], model: 'm', dim: 3, mode: 'live' as const }),
+    keepOnEmpty: true,
+  });
+  assert.equal(empty.status, 'empty');
+  assert.equal(indexSize(), before, 'keepOnEmpty: "existing rows left in place" is now true');
+
+  // Without the opt, the old behaviour (drop them) is unchanged for every other caller.
+  await indexAsset(asset, '', {
+    adapter: { name: 'x', kinds: ['doc'], apply: async () => ({ adapter: 'x', mode: 'live' as const, representations: [] }), verify: () => false },
+    embed: async () => ({ vectors: [], model: 'm', dim: 3, mode: 'live' as const }),
+  });
+  assert.equal(indexSize(), 0, 'an ordinary empty re-parse still clears the file');
+});
+
+test('TRIPWIRE (files): the live unit path demands live AND keeps rows on an empty parse', () => {
+  assert.match(SRC, /requireLive: true, keepOnEmpty: true/, 'both review fixes are bound in the default deps');
 });

@@ -11,6 +11,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  BATCH_CHOICES,
+  abandonDisabledReason,
+  confirmRunText,
+  runEstimate,
   MARKED_VS_ALL_COPY,
   REASON_HELP,
   REASON_LABELS,
@@ -96,18 +100,67 @@ test('REINDEX PANEL: Run is disabled when the filter selected nothing', () => {
   assert.match(runDisabledReason(plan({ units: [] }), null)!, /Nothing selected/);
 });
 
-test('REINDEX PANEL: a run already in flight is continued, never restarted', () => {
-  const why = runDisabledReason(plan(), job());
-  assert.match(why!, /already running \(3\/10 done\)/);
-  assert.match(why!, /Continue it instead/);
+test('H2: a RUNNING job with no batch in flight is CONTINUABLE — the state that needs the button', () => {
+  // The bug this pins: gating on `job.status === 'running'` greyed Continue out after any
+  // interrupted loop, closed tab or failed batch — exactly when an operator must continue.
+  assert.equal(runDisabledReason(plan(), job(), false, false), null, 'running + not in flight ⇒ enabled');
+  assert.equal(runDisabledReason(null, job(), false, false), null, 'and it needs no fresh plan: the cursor is the fact');
   assert.equal(runButtonLabel(job()), 'Continue (3/10)');
   assert.equal(runButtonLabel(null), 'Run re-index');
   assert.equal(runButtonLabel(job({ status: 'done' })), 'Run re-index');
 });
 
+test('H2: a batch IN FLIGHT is what disables Continue, and says so', () => {
+  const why = runDisabledReason(plan(), job(), false, true);
+  assert.match(why!, /running right now/);
+  assert.match(why!, /continue on its own/);
+});
+
+test('H3: Abandon is offered only for a running job that is not mid-batch', () => {
+  assert.equal(abandonDisabledReason(job(), false, false), null, 'a stuck running job may be abandoned');
+  assert.match(abandonDisabledReason(null)!, /Nothing is running/);
+  assert.match(abandonDisabledReason(job({ status: 'done' }))!, /Nothing is running/);
+  assert.match(abandonDisabledReason(job(), false, true)!, /executing right now/);
+  assert.match(abandonDisabledReason(job(), true, false)!, /in flight/);
+});
+
+test('M4: the operator picks the batch size, and is shown what the run will cost', () => {
+  assert.deepEqual([...BATCH_CHOICES], [10, 25, 50, 100, 200]);
+  const p = plan({
+    units: [
+      { id: 'a', label: 'a', reasons: ['marked'], rows: 4 },
+      { id: 'b', label: 'b', reasons: ['marked'], rows: 6 },
+      { id: 'c', label: 'c', reasons: ['marked'], rows: 0 },
+    ],
+  });
+  const est = runEstimate(p, 2);
+  assert.equal(est.units, 3);
+  assert.equal(est.rows, 10);
+  assert.equal(est.batches, 2, '3 units at 2 per call');
+  assert.match(est.text, /3 unit\(s\) covering 10 indexed row\(s\), in 2 batch\(es\) of up to 2/);
+  assert.match(est.text, /costs real gateway budget/);
+  assert.equal(runEstimate(plan({ units: [] }), 25).batches, 0);
+  assert.match(runEstimate(null, 25).text, /Nothing selected/);
+});
+
+test('M4: `all` must be confirmed with the number in front of the operator; `marked` is not nagged', () => {
+  assert.equal(confirmRunText(plan({ filter: 'marked' }), 25), null, 'the cheap, targeted choice needs no prompt');
+  const ask = confirmRunText(plan({ filter: 'all' }), 25)!;
+  assert.match(ask, /Re-index EVERYTHING in the files index/);
+  assert.match(ask, /already correct will be re-parsed and re-embedded too/);
+  assert.match(ask, /1 unit\(s\)/);
+});
+
 test('REINDEX PANEL: a ready plan with units enables Run — and only then', () => {
   assert.equal(runDisabledReason(plan(), null), null);
   assert.match(runDisabledReason(plan(), null, true)!, /in flight/);
+});
+
+test('M3: the marked help is target-independent — neither index ever stamped such a label', () => {
+  assert.match(REASON_HELP.marked, /No writer in EITHER index ever stamped one/);
+  assert.match(REASON_HELP.marked, /holds provenance like `os-ui-ingest`/);
+  assert.ok(!/The Files index never/.test(REASON_HELP.marked), 'the claim used to single out Files, which read as "Knowledge did"');
+  assert.match(REASON_HELP.marked, /0 here is expected and proves nothing/);
 });
 
 test('REINDEX PANEL: progress is honest about failures and about what is left', () => {
