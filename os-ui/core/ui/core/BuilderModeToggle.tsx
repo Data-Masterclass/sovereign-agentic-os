@@ -1,5 +1,13 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    BuilderModeToggle — the Simple ⇄ Developer view-mode switch for builder tabs
+ * USER STORY: As a builder I want to switch between the guided flow and the raw technical view
+ *             so that I can choose plain language or full control.
+ * ARCHITECTURE:
+ *   - Controlled and presentational. The host owns the `ViewMode` state (`@core/kernel/view-mode`)
+ *     and any persistence. Uses the existing `.mode-toggle` styles.
+ *   - Used by the Metrics, Software, Data, Dashboards and Connections (Expose) builders.
  */
 'use client';
 

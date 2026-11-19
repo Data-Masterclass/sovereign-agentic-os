@@ -1,5 +1,14 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG
+ *
+ * FEATURE:    GuardedConfirm — a typed-confirmation modal for destructive platform-admin actions
+ * USER STORY: As a platform admin I want to type an exact phrase before a restore or a component
+ *             disable so that I never trigger one by accident.
+ * ARCHITECTURE:
+ *   - Used by `tabs/admin/ui/BackupsRestore.tsx` and `tabs/admin/ui/OverviewHealth.tsx`.
+ *   - The UI mirror of the server check in `tabs/admin/lib/guard.ts`; the server still verifies
+ *     the phrase, this modal only makes it explicit.
+ *   - Escape, backdrop click and Cancel dismiss it, except while the action is in flight.
  */
 'use client';
 

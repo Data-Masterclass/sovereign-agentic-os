@@ -1,5 +1,13 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    AppShell — the OS chrome (sidebar, topbar, content column) as one props-driven component
+ * USER STORY: As an app builder I want my generated app to wrap its pages in the OS layout so
+ *             that it looks like part of the OS without a router or framework dependency.
+ * ARCHITECTURE:
+ *   - Part of the `@sovereign-os/ui` package (`core/app-ui/`), re-exported from `index.ts`.
+ *   - Plain `<a>` / `<button>` nav items, no router; styling comes from the `.sb-*` classes in
+ *     `theme.css`, and every class can be overridden via props.
  */
 import * as React from 'react';
 import { cx } from './cx';

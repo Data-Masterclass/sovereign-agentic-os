@@ -1,5 +1,17 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    OAuth token client — code exchange, silent refresh and a live drive probe
+ * USER STORY: As a user connecting my Google Drive or OneDrive I want the OS to exchange and
+ *             refresh my tokens on the server so that my files sync without my credentials
+ *             leaving the server.
+ * ARCHITECTURE:
+ *   - Server-only. The one place the admin-registered client secret is read (via
+ *     `getClientCredentials` in `oauth-apps.ts`) and sent, only to the provider's token endpoint.
+ *   - Builds request bodies with `token-set.ts` and endpoints from `providers.ts`; called by
+ *     `connection-token.ts`, `tabs/connections/lib/store.ts` and the OAuth callback route.
+ *   - Failures throw an Error tagged with an HTTP status; response bodies are never echoed.
+ *   - `probeDrive` calls the provider's cheap read endpoint to check that a token really works.
  */
 import 'server-only';
 import {
@@ -11,14 +23,6 @@ import {
 } from '@core/auth/token-set';
 import { providerConfig, type OAuthProvider } from '@core/auth/providers';
 import { getClientCredentials } from '@core/auth/oauth-apps';
-
-/**
- * The fetch-backed OAuth token client — the ONLY place a client secret leaves
- * Secrets Manager, and it goes ONLY to the provider's token endpoint over TLS,
- * server-side. The secret is never returned, logged, or traced. Both calls throw
- * a tagged Error on failure (never leaking response bodies that might echo a
- * secret) so the caller can decide fall-back vs. surface.
- */
 
 async function postForm(url: string, body: URLSearchParams, ms = 10000): Promise<TokenResponse> {
   const ctrl = new AbortController();

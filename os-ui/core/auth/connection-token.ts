@@ -1,5 +1,15 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    Connection token bridge — store an OAuth token set and resolve a live access token
+ * USER STORY: As a user with a connected drive I want the OS to refresh an expired token on its
+ *             own so that my sync keeps running without reconnecting.
+ * ARCHITECTURE:
+ *   - Server-only. Stores the token set as JSON in Secrets Manager under the connection's existing
+ *     `secretRef`, and re-stores it after a silent refresh (`client.ts` `refreshTokens`, injectable).
+ *   - `resolveAccessToken` returns `live`, `none` (no real token stored, e.g. the offline
+ *     placeholder, so the sync uses the mock client) or `needs-reconnect`.
+ *   - Called by `tabs/connections/lib/store.ts`. The token set never leaves the server.
  */
 import 'server-only';
 import { putSecret, getSecretServerSide, type SecretRef } from '@core/infra/secrets';
@@ -11,17 +21,6 @@ import {
 } from '@core/auth/token-set';
 import { type OAuthProvider } from '@core/auth/providers';
 import { refreshTokens as liveRefresh } from '@core/auth/client';
-
-/**
- * The bridge between a Connection's `secretRef` and a usable Drive/Graph access
- * token. Stores the OAuth token set (JSON) in Secrets Manager under the SAME ref
- * the Connection already holds, and resolves a live access token for the sync —
- * silently REFRESHING it (and re-storing) when it has expired.
- *
- * The token set is the credential: it never leaves the server, never enters a
- * trace, log, or client response. A connection that holds only the offline mock
- * placeholder resolves to `null` → the sync falls back to the mock client.
- */
 
 /** How the resolve step ended, for the caller to update connection health. */
 export type TokenResolution =

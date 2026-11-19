@@ -1,26 +1,22 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    ChooseContextShell — the shared "Choose Context" list of grantable artifact types
+ * USER STORY: As a builder giving an app or agent access to data I want one collapsible row per
+ *             artifact type with "Add existing" and "Create new" so that granting context looks
+ *             the same in every builder.
+ * ARCHITECTURE:
+ *   - Taken out of the Software tab and now used by `tabs/software/ui/SoftwareContextGrants.tsx`
+ *     and `tabs/agents/ui/GrantStage.tsx`.
+ *   - Presentation only. It owns the collapse row, the lazy per-type feed fetch
+ *     (`loadAvailable`) and the re-fetch on window focus for `deep-link` types. The host
+ *     supplies the picker (`renderPicker`) and the create body (`createNew.render`).
+ *   - It has no grant-value or folder→id logic. That stays in the host's picker.
  */
 'use client';
 
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { grantedSummary } from '@core/kernel/choose-context';
-
-/**
- * ChooseContextShell — the SHARED, tab-agnostic "Choose Context" chrome, lifted out
- * of the Software tab (`SoftwareContextGrants` → `TypeSection`) so every builder tab
- * (Software today, Agents next) renders the same calm surface: for EACH grantable
- * type, a collapsed row you expand into TWO unmistakable modes —
- *   • "grantedSummary · ＋ Add existing" — pick governed artifacts you're entitled to
- *     and grant them (the HOST supplies this body via `renderPicker`).
- *   • "＋ Create new" — a fresh artifact (the HOST supplies this body via
- *     `renderCreateNew`; the shell only draws the divider + heading + gate).
- *
- * This component is PRESENTATION-ONLY: it owns the collapse row, the expand
- * animation, the lazy per-type feed fetch, and the deep-link focus-refresh. It holds
- * NO grant-value logic and NO folder→id expansion — those stay in the host's picker
- * body, so a tab that needs late-binding folder grants (Agents) can supply its own.
- */
 
 /** A tab-agnostic descriptor of one Choose-Context type the shell renders. */
 export type ContextTypeDescriptor = {

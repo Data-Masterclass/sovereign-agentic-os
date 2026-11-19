@@ -1,19 +1,17 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    ProgressStepper — the shared progress bar and ordered step list for long operations
+ * USER STORY: As a user waiting on a build, run or pipeline I want a progress bar and a list of
+ *             steps (active, done, failed, pending) so that I can see how far it has got.
+ * ARCHITECTURE:
+ *   - Presentational. The caller owns the state and passes `steps[]` plus `active`, `done` and
+ *     `ok`. Taken from the Agents "Build" stepper.
+ *   - The percentage math and class mapping are in `@core/kernel/progress-stepper` so they can be
+ *     unit-tested without React.
+ *   - Used by `BusyProgress`, `tabs/agents/ui/BuildRunPanel.tsx` and `tabs/software/ui/BuildChat.tsx`.
  */
 'use client';
-
-/**
- * ProgressStepper — the ONE fancy in-flight progress primitive for the whole OS.
- *
- * A determinate bar over an ordered stepper: each step is active (gold shimmer bar + a
- * spinning dot), done (teal ✓), fail (red ✗) or pending (its number). It was extracted
- * verbatim from the Agents "Build" stepper so any long-running OS operation — building a
- * team, running a team, a data pipeline, a dashboard refresh — wears the same calm,
- * Apple-grade progress UX. Purely presentational: callers own the state and just hand it
- * a `steps[]` list plus the settle flags. The pct math + class mapping live in
- * lib/core/progress-stepper.ts so they can be unit-tested away from React.
- */
 
 import {
   barPct,

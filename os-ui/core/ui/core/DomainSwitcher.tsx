@@ -1,5 +1,14 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    DomainSwitcher — the sidebar's active-domain dropdown
+ * USER STORY: As a user in several domains I want to switch my operating domain from the sidebar
+ *             so that my lists and new work move to that domain.
+ * ARCHITECTURE:
+ *   - Rendered by `core/ui/Sidebar.tsx`. POSTs the choice to `/api/session/active-domain`
+ *     (null = all domains), then does a full page reload so the server reads and every tab's
+ *     client fetches use the new scope.
+ *   - Closes on outside click or Escape. Picking the current domain does nothing.
  */
 'use client';
 

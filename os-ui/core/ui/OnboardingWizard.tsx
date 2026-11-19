@@ -1,5 +1,12 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG
+ *
+ * FEATURE:    OnboardingWizard — a four-step, role-aware welcome overlay
+ * USER STORY: As a new user I want a short tour that explains my role, my domains and where to
+ *             start so that I know what I can do in the OS.
+ * ARCHITECTURE:
+ *   - Rendered only by `AuthGate.tsx` for users not yet onboarded; `onDone` lets AuthGate record it.
+ *   - Static content: one blurb per role and the golden-path names; Skip or Escape finishes it.
  */
 'use client';
 

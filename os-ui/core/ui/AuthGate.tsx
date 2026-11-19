@@ -1,5 +1,15 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG
+ *
+ * FEATURE:    AuthGate — the client-side first-run gate after sign-in
+ * USER STORY: As a new user I want to be sent to credential setup or shown a short onboarding
+ *             the first time I sign in so that I start with a secure account and know where to begin.
+ * ARCHITECTURE:
+ *   - Mounted once in `app/layout.tsx`. Reads `/api/auth/me`; the Edge middleware cannot do this
+ *     because it has no store access.
+ *   - `mustChangeCredentials` redirects to `/onboarding/bootstrap`; otherwise, if not onboarded, it
+ *     shows `OnboardingWizard` and POSTs `/api/auth/onboarded` when done.
+ *   - Renders nothing on the public auth pages and never blocks the app shell.
  */
 'use client';
 

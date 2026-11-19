@@ -1,5 +1,17 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    OS Assistant — the global "Ask the OS" chat drawer
+ * USER STORY: As a signed-in user I want one assistant on every tab that knows which tab and
+ *             artifact I am looking at so that I can ask for help or actions without leaving the page.
+ * ARCHITECTURE:
+ *   - Mounted once in `app/layout.tsx`. POSTs the path, messages and page context
+ *     (`usePageContext`) to `/api/assistant/chat`, which runs the plan/act loop through the OS's
+ *     own governed MCP as the user.
+ *   - Shows which tools ran (and which were blocked) and renders the tools' typed artifacts via
+ *     `AskArtifacts`; no model-authored markup is rendered.
+ *   - Other surfaces (e.g. Home "Talk to the OS") open it with the `os-assistant:open` event, so
+ *     there is one instance. Hidden when signed out.
  */
 'use client';
 
@@ -11,27 +23,6 @@ import { usePageContext } from '@core/ui/core/PageContext';
 import Markdown from '@core/ui/Markdown';
 import AskArtifacts from '@core/ui/AskArtifacts';
 import { parseArtifacts, type ChatArtifact } from '@core/runtime/chat-artifacts';
-
-/**
- * THE SOVEREIGN OS ASSISTANT — one overarching, globally-available assistant.
- *
- * Mounted once in the app shell so it rides along on EVERY tab. It is context-
- * aware of the current route (it sends the pathname so the server grounds it in
- * that tab's context and surfaces that tab's tools first) while carrying the
- * whole-OS context — it can reach any governed tool. It POSTs to
- * /api/assistant/chat, which runs the PLAN→ACT harness and dispatches every
- * action through the OS's own governed MCP (same guardrails as external clients).
- *
- * The panel is transparent: each answer shows which governed tools were invoked,
- * flags any the governance layer blocked, and renders the typed ARTIFACTS those
- * tools returned (C9) — the rows, the SQL or metric member behind them, the
- * backend's own truncation banner verbatim, and a chip naming the governed record
- * the answer is grounded in. It never hides what it did.
- *
- * The artifact payload is the tools' own MCP `structuredContent`, so the drawer and
- * an external MCP client render the identical bytes. No model-authored markup is
- * ever rendered: see `core/ui/AskArtifacts.tsx` and its guard test.
- */
 
 // Friendly label for the tab in focus (mirrors the server's path→tab map). Used
 // only for the little "Context:" hint in the header; the server is authoritative.

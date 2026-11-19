@@ -1,5 +1,12 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    Button — the OS button with a primary (gold) and a ghost variant
+ * USER STORY: As an app builder I want an OS-styled button so that actions in my app look and
+ *             behave like the OS's own buttons.
+ * ARCHITECTURE:
+ *   - Part of the `@sovereign-os/ui` package (`core/app-ui/`), re-exported from `index.ts`.
+ *   - Defaults `type` to `button` (not submit); styling via `.sb-btn` classes in `theme.css`.
  */
 import * as React from 'react';
 import { cx } from './cx';

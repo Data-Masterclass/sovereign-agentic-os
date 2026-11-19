@@ -1,21 +1,18 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    Notion OAuth flow store — hold the PKCE verifier between authorize and callback
+ * USER STORY: As a user connecting Notion I want the consent round-trip to stay bound to my
+ *             browser session so that nobody else can complete it.
+ * ARCHITECTURE:
+ *   - Server-only, in-process map pinned on `globalThis`, keyed by the signed-state nonce.
+ *     Written by the Notion authorize route, read once by the callback route.
+ *   - Entries are single-use (deleted on redeem) and expire after 10 minutes; the verifier is
+ *     never placed in the URL, the state or a client response.
+ *   - Nothing is persisted: a flow that outlives a pod restart fails and the user clicks Connect again.
  */
 import 'server-only';
 import type { NotionClientReg } from '@core/auth/notion-mcp';
-
-/**
- * Short-lived, server-side store for an in-flight Notion MCP OAuth flow — the PKCE
- * verifier + the registered client, keyed by the flow's signed-state NONCE. It
- * exists ONLY between authorize (mint) and callback (redeem): the PKCE verifier is
- * a secret that must survive the redirect to Notion and back WITHOUT ever being
- * placed in the URL, the signed state, or any client response. It never leaves the
- * server, is single-use (deleted on redeem), and self-expires after 10 minutes.
- *
- * In-process + globalThis-pinned (same pattern as the OAuth stores). A flow that
- * outlives a pod roll simply fails CSRF and the user re-clicks Connect — no secret
- * is persisted anywhere durable.
- */
 
 export type NotionPendingFlow = {
   connectionId: string;

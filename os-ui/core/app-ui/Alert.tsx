@@ -1,5 +1,13 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    Alert — an inline notice box for errors, warnings and info messages
+ * USER STORY: As an app builder I want a ready-made alert in the OS style so that load errors
+ *             and notices look the same in every generated app.
+ * ARCHITECTURE:
+ *   - Part of the `@sovereign-os/ui` package (`core/app-ui/`), re-exported from `index.ts` and
+ *     vendored into generated apps by `tabs/software/lib/app-ui-vendor.ts`.
+ *   - Inline styles per variant, so it works without `theme.css`; forwards `className` and div props.
  */
 import * as React from 'react';
 import { cx } from './cx';

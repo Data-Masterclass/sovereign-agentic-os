@@ -1,5 +1,15 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    Folder client helpers — browser-side helpers for the folder ••• menu
+ * USER STORY: As a user I want to archive or rename any folder I can see in the rail, even one
+ *             that only exists because I moved items into a path, so that folder actions never dead-end.
+ * ARCHITECTURE:
+ *   - Client-only; calls the governed `/api/folders` routes as the signed-in user. Used by the
+ *     foldered tab browsers (Files, Data, Metrics, Dashboards, Agents, Connections, Software, …).
+ *   - `ensureFolderId` creates the registry row for a synthetic folder on demand (idempotent POST;
+ *     the store returns an existing row). The store applies the edit-scope check.
+ *   - `renamedPath` re-exports the pure path helper from `@core/kernel/folders`.
  */
 'use client';
 
@@ -9,20 +19,6 @@ import type { FolderRef } from '@core/ui/core/FolderTree';
 /** Re-exported so tabs import both folder-client helpers from one place. The pure
  *  path maths lives in `lib/core/folders` (unit-tested there). */
 export const renamedPath = renameLeafPath;
-
-/**
- * Tiny browser-side helpers the foldered tabs (Files, Data, Knowledge, Metrics)
- * share for the folder ••• lifecycle. Kept out of the store (which is server-side,
- * governed) — these only speak to the governed `/api/folders` routes AS the user.
- *
- * The key one is `ensureFolderId`: the rail shows a UNION of real registry folders
- * AND SYNTHETIC folders derived from member-item paths (a folder a user created only
- * by moving files into a path). A synthetic folder has no registry row → no `id` →
- * the lifecycle route (`/api/folders/:id`) has nothing to act on, so Archive/Rename
- * would dead-end. `ensureFolderId` MATERIALISES the row on demand (idempotent POST —
- * the store returns the existing row if one already exists) so ANY folder the user
- * sees can be archived or renamed. Materialisation is itself edit-scoped in the store.
- */
 
 /** Materialise (if needed) the registry row for `ref` and return its id. Idempotent:
  *  a folder that already has a row just returns `ref.id`. Throws with the API error. */

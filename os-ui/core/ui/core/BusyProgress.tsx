@@ -1,5 +1,14 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    BusyProgress — the in-flight indicator for one long single-request operation
+ * USER STORY: As a user saving a metric or dashboard I want to see what the server is doing and
+ *             how long it has taken so that a slow save does not look frozen.
+ * ARCHITECTURE:
+ *   - Wraps `@core/ui/core/ProgressStepper` with ONE active step, a commentary line and an
+ *     elapsed-seconds counter. It shows no fake sub-steps.
+ *   - Used by the Metrics and Dashboards builders and the Software page. The host mounts it while
+ *     the request runs and unmounts it when the request settles.
  */
 'use client';
 

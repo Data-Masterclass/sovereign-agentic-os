@@ -1,5 +1,13 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    AutoGrowTextarea — a textarea that grows with its content from a minimum row count
+ * USER STORY: As a builder writing prose fields (stories, requirements, rules) I want the text box
+ *             to grow as I type so that I do not have to scroll inside a small box.
+ * ARCHITECTURE:
+ *   - Shared core UI, used by the Software tab's story and epic editors.
+ *   - Re-measures height on every `value` change (useLayoutEffect) and on input, by resetting to
+ *     `auto` and then setting it to `scrollHeight`.
  */
 'use client';
 

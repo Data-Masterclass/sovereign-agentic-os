@@ -1,3 +1,14 @@
+/* SPDX-License-Identifier: Apache-2.0
+ * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    PageHeader — the shared page topbar (title, crumb, Studio/Run toggle, MCP button)
+ * USER STORY: As a user on any page I want the page title and the global actions in the same
+ *             place so that I can always find the MCP connect button and the Studio/Run switch.
+ * ARCHITECTURE:
+ *   - Used by the page routes under `app/`. Renders `StudioRunToggle` and `McpDrawer`
+ *     (`tabs/admin/ui/McpDrawer`, targets `/api/mcp`).
+ *   - The "Live cluster" pill is static markup; it does not check cluster status.
+ */
 import McpDrawer from '@tabs/admin/ui/McpDrawer';
 import StudioRunToggle from '@core/ui/lifecycle/StudioRunToggle';
 

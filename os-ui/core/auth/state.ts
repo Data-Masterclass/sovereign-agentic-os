@@ -1,20 +1,15 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
- */
-/**
- * CSRF-hardened OAuth `state` — a compact HMAC-SHA256-signed token, same shape as
- * the session cookie (`base64url(payload).base64url(sig)`), Web-Crypto only so it
- * runs in any runtime. Double-submit defence:
  *
- *   1. The signed state carries {connectionId, userId, provider, nonce, iat}. A
- *      tampered payload fails the signature check.
- *   2. The SAME nonce is also set in an httpOnly cookie at authorize time; the
- *      callback requires cookie.nonce === state.nonce. An attacker who forges a
- *      callback cannot also set our signed cookie, so a cross-site callback is
- *      rejected even if it replays a stolen state.
- *   3. `iat` bounds the flow to a short TTL (default 10 min).
- *
- * The secret is the session secret (server-only). Nothing here is ever logged.
+ * FEATURE:    OAuth `state` — a signed, short-lived CSRF token for the connection flows
+ * USER STORY: As a user connecting a drive or Notion I want the callback to accept only the flow
+ *             I started so that a forged callback cannot attach someone else's account.
+ * ARCHITECTURE:
+ *   - HMAC-SHA256 signed `base64url(payload).base64url(sig)`, same shape as the session cookie;
+ *     Web Crypto only. The key is the server-side session secret.
+ *   - Double submit: the same nonce is set in an httpOnly cookie, and the callback checks
+ *     `nonceMatches(cookie, state.nonce)` after `verifyState`.
+ *   - `iat` limits a flow to a TTL (default 10 minutes). Used by the drive and Notion routes.
  */
 
 import { b64urlDecode, b64urlEncode } from '@core/kernel/base64url';

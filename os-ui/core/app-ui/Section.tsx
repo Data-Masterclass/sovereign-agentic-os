@@ -1,5 +1,12 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    Section and Panel — a titled content block and a plain bordered container
+ * USER STORY: As an app builder I want section headings and panels in the OS style so that my
+ *             app's pages are structured like the OS's own pages.
+ * ARCHITECTURE:
+ *   - Part of the `@sovereign-os/ui` package (`core/app-ui/`), re-exported from `index.ts`.
+ *   - Styling via `.sb-section-title` and `.sb-panel-box` in `theme.css`; forwards div props.
  */
 import * as React from 'react';
 import { cx } from './cx';

@@ -1,21 +1,21 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    Software build spec loader — read the canonical Software build spec from disk
+ * USER STORY: As an agent building software in the OS I want the same build spec in the team
+ *             executor's preamble and in the MCP guide so that every builder follows one set of rules.
+ * ARCHITECTURE:
+ *   - Server-only. Reads `tabs/software/build-spec/software.md` once and caches it; a missing file
+ *     returns '' and the callers still work.
+ *   - Consumers: `tabs/agents/lib/build/agentic-graph-server.ts` (preamble) and
+ *     `tabs/admin/mcp/resources.ts` (`sovereign-os://guide/build-spec/software`).
+ *   - `software.build-spec.test.ts` checks that the file, this loader, the resource and the
+ *     preamble carry identical content.
  */
 import 'server-only';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-/**
- * THE CANONICAL BUILD SPEC (Software). One source of truth with two byte-synced
- * consumers: it is injected into the internal team executor's system preamble
- * (`agentic-graph-server.ts`) AND exposed over the MCP as the guide resource
- * `sovereign-os://guide/build-spec/software` (referenced from the
- * `build_and_ship_software` prompt). The repo-root canonical copy lives at
- * `docs/build-spec/software.md`; `software.build-spec.test.ts` asserts the disk
- * mirror, this loader, the resource and the preamble carry identical content.
- *
- * Read once + cached; a missing file degrades to '' (the surface still works).
- */
 const FILE = join(process.cwd(), 'tabs', 'software', 'build-spec', 'software.md');
 let cached: string | null = null;
 

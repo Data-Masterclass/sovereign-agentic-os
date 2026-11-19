@@ -1,26 +1,20 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    PromoteButton — the "Promote/Propose to Domain" and "Certify to Company" control
+ * USER STORY: As an artifact owner I want one button that promotes my artifact up a scope, or files
+ *             an approval request when I am not an approver, so that sharing never dead-ends.
+ * ARCHITECTURE:
+ *   - Uses the `promoteOrRequest` route contract. POST `promoteUrl`: `{ requested: true }` means a
+ *     request was filed, so the button shows an "awaiting approval" pill and notifies through
+ *     `useApprovalNotifier`. Any other success calls `onDone()`.
+ *   - On mount it GETs `promoteUrl` to restore a pending-request pill after a reload, and disables
+ *     the button with the reason when the server reports a closed `gate`.
+ *   - Certify (Shared → Marketplace) asks for confirmation through `useConfirm()` with an
+ *     informational dependents line. Promote (Personal → Shared) fires directly because it can be
+ *     undone with `DemoteButton`. Labels come from `promoteVerb` in `@core/kernel/scopes`.
  */
 'use client';
-
-/**
- * PromoteButton — the ONE consistent "promote up the ladder" control for every tab.
- * Personal → Shared (Promote) and Shared → Marketplace (Certify), rendered with the
- * same button, copy and states everywhere so a user learns it once.
- *
- * It speaks the governance-ladder contract (`promoteOrRequest`, 0.1.102):
- *   • POST `promoteUrl`. If the response is `{ requested: true }` the caller is a
- *     non-approver OWNER and a request was FILED — we switch to a calm "awaiting a
- *     domain admin's approval" pill instead of dead-ending them.
- *   • Otherwise the item was promoted in one shot → we call `onDone()` so the host
- *     re-fetches (each tab keeps its own success-refresh behaviour).
- *   • On mount we GET `promoteUrl` (which returns `{ request }`, the pending approval
- *     or null) so the pill PERSISTS across a reload.
- *
- * Certify (Shared → Marketplace) is the higher-stakes rung, so it runs behind the
- * shared <ConfirmDialog>. Promote (Personal → Shared) is low-stakes and reversible
- * (Demote), so it fires directly.
- */
 
 import { useCallback, useEffect, useState } from 'react';
 import { useConfirm } from '@core/ui/lifecycle/ConfirmDialog';

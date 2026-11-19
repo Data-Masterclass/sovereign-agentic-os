@@ -1,18 +1,19 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    Per-tab context loader — the short `tabs/<tab>/context.md` brief for agents
+ * USER STORY: As an agent working in a tab I want a short brief of its purpose, tools, golden path
+ *             and constraints so that I act correctly without reading the whole guide.
+ * ARCHITECTURE:
+ *   - Server-only. Served as the per-tab MCP `initialize.instructions` (`app/api/mcp/[tab]`,
+ *     `core/mcp/instructions.ts`) and appended to the in-app helper's system prompt (agent chat).
+ *   - Read once per tab and cached; a missing file returns '' and the surface still works.
+ *   - Maps agent-chat keys to tabs (`contextForAgentKey`, `tabForAgentKey`).
  */
 import 'server-only';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { McpTab } from '@core/mcp/server';
-
-/**
- * Per-tab CONTEXT.md loader. Each `tabs/<tab>/context.md` is a TOKEN-MINIMAL
- * brief (purpose · tools · golden path · constraints) fed to agents building in
- * that tab: it is served as the per-tab MCP `initialize.instructions` and appended
- * to the in-app helper's system prompt. Read once from disk and cached; a missing
- * file degrades to an empty string (the chat/MCP still works, just ungrounded).
- */
 
 const DIR = join(process.cwd(), 'tabs');
 const cache = new Map<McpTab, string>();
