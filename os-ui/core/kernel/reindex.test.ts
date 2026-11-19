@@ -85,8 +85,8 @@ test('REINDEX: one running job per target — a second start reports progress, n
   reset();
   const first = startOrResume('files', { filter: 'marked', by: 'u_admin', total: 10 });
   assert.equal(first.started, true);
-  recordUnit('files', 'replaced');
-  recordUnit('files', 'replaced');
+  recordUnit('files', first.job.id, 'replaced');
+  recordUnit('files', first.job.id, 'replaced');
 
   const second = startOrResume('files', { filter: 'all', by: 'u_other', total: 999 });
   assert.equal(second.started, false, 'a second start must not start a second run');
@@ -102,17 +102,17 @@ test('REINDEX: the two targets are independent — Files and Knowledge may run t
   const k = startOrResume('knowledge', { filter: 'all', by: 'u_admin', total: 5 });
   assert.ok(f.started && k.started);
   assert.notEqual(f.job.id, k.job.id);
-  recordUnit('files', 'replaced');
+  recordUnit('files', f.job.id, 'replaced');
   assert.equal(jobFor('files')?.cursor, 1);
   assert.equal(jobFor('knowledge')?.cursor, 0, 'the knowledge job is untouched');
 });
 
 test('REINDEX: the cursor is the resume point and advances on a failure too', () => {
   reset();
-  startOrResume('files', { filter: 'marked', by: 'u_admin', total: 4 });
-  recordUnit('files', 'replaced');
-  recordUnit('files', 'failed', { unit: 'f_2', reason: 'docling returned nothing usable' });
-  recordUnit('files', 'skipped');
+  const claim = startOrResume('files', { filter: 'marked', by: 'u_admin', total: 4 });
+  recordUnit('files', claim.job.id, 'replaced');
+  recordUnit('files', claim.job.id, 'failed', { unit: 'f_2', reason: 'docling returned nothing usable' });
+  recordUnit('files', claim.job.id, 'skipped');
   const job = jobFor('files')!;
   assert.equal(job.cursor, 3, 'a failed unit still advances the cursor — else a bad row loops forever');
   assert.equal(job.replaced, 1);
@@ -124,9 +124,9 @@ test('REINDEX: the cursor is the resume point and advances on a failure too', ()
 
 test('REINDEX: a finished job frees the slot; a new run starts fresh at cursor 0', () => {
   reset();
-  startOrResume('files', { filter: 'marked', by: 'u_admin', total: 2 });
-  recordUnit('files', 'replaced');
-  recordUnit('files', 'replaced');
+  const two = startOrResume('files', { filter: 'marked', by: 'u_admin', total: 2 });
+  recordUnit('files', two.job.id, 'replaced');
+  recordUnit('files', two.job.id, 'replaced');
   const done = finishJob('files', 'done');
   assert.equal(done?.status, 'done');
   assert.ok(done?.finishedAt, 'a finished job records when');
@@ -140,8 +140,8 @@ test('REINDEX: a finished job frees the slot; a new run starts fresh at cursor 0
 
 test('REINDEX: a job that STOPPED carries its own error, separate from a unit that failed', () => {
   reset();
-  startOrResume('knowledge', { filter: 'marked', by: 'u_admin', total: 9 });
-  recordUnit('knowledge', 'failed', { unit: 'wf_1', reason: 'opensearch write did not land' });
+  const kj = startOrResume('knowledge', { filter: 'marked', by: 'u_admin', total: 9 });
+  recordUnit('knowledge', kj.job.id, 'failed', { unit: 'wf_1', reason: 'opensearch write did not land' });
   const failed = finishJob('knowledge', 'failed', 'ENGINE_UNAVAILABLE: the embeddings gateway went away');
   assert.equal(failed?.status, 'failed');
   assert.match(failed!.error!, /ENGINE_UNAVAILABLE/);
@@ -151,18 +151,42 @@ test('REINDEX: a job that STOPPED carries its own error, separate from a unit th
 
 test('REINDEX: recording against no running job is a no-op, never a crash', () => {
   reset();
-  assert.equal(recordUnit('files', 'replaced'), null);
-  startOrResume('files', { filter: 'marked', by: 'u_admin', total: 1 });
+  assert.equal(recordUnit('files', 'rix_nobody', 'replaced'), null);
+  const one = startOrResume('files', { filter: 'marked', by: 'u_admin', total: 1 });
   finishJob('files', 'done');
-  assert.equal(recordUnit('files', 'replaced'), null, 'a late progress report cannot revive a finished job');
+  assert.equal(recordUnit('files', one.job.id, 'replaced'), null, 'a late progress report cannot revive a finished job');
   assert.equal(jobFor('files')?.replaced, 0);
+});
+
+test('M (re-review): a stale loop can never advance ANOTHER job’s cursor', () => {
+  reset();
+  // Job 1 is abandoned while a unit is still mid-await; job 2 then claims the slot. The in-flight
+  // unit from job 1 resolves afterwards and reports progress. Target-keyed, that report landed on
+  // job 2 — which could then reach `done` with units nobody re-indexed. The job id is what makes
+  // "this progress belongs to that job" a fact rather than an assumption about timing.
+  const first = startOrResume('files', { filter: 'marked', by: 'u_admin', total: 3 });
+  recordUnit('files', first.job.id, 'replaced');
+  finishJob('files', 'failed', 'abandoned');
+
+  const second = startOrResume('files', { filter: 'all', by: 'u_admin', total: 2 });
+  assert.equal(second.started, true);
+  assert.notEqual(second.job.id, first.job.id);
+
+  const landed = recordUnit('files', first.job.id, 'replaced'); // the stale loop, resolving late
+  assert.equal(landed, null, 'a report naming a job that no longer holds the slot is dropped');
+  assert.equal(jobFor('files')!.cursor, 0, 'the NEW job’s cursor is untouched');
+  assert.equal(jobFor('files')!.replaced, 0);
+
+  // …while the owner of the slot is still recorded normally.
+  recordUnit('files', second.job.id, 'replaced');
+  assert.equal(jobFor('files')!.cursor, 1);
 });
 
 test('REINDEX: the failure list is capped so a corpus-wide disaster cannot exhaust memory', () => {
   reset();
-  startOrResume('files', { filter: 'all', by: 'u_admin', total: 500 });
+  const big = startOrResume('files', { filter: 'all', by: 'u_admin', total: 500 });
   for (let i = 0; i < MAX_RECORDED_FAILURES + 25; i++) {
-    recordUnit('files', 'failed', { unit: `f_${i}`, reason: 'parser unreachable' });
+    recordUnit('files', big.job.id, 'failed', { unit: `f_${i}`, reason: 'parser unreachable' });
   }
   const job = jobFor('files')!;
   assert.equal(job.failures.length, MAX_RECORDED_FAILURES);

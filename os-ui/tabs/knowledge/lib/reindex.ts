@@ -496,10 +496,13 @@ export async function runReindex(
   try {
     const slice = work.slice(job.cursor, job.cursor + batchSize(opts.batch));
     for (const unit of slice) {
-      // An ABANDON landing mid-batch stops the batch at the next unit boundary: `recordUnit`
-      // already no-ops on a job that is not running, and continuing to call the gateway for a job
-      // nobody is waiting for would spend budget on an answer no one reads.
-      if (jobFor(TARGET)?.status !== 'running') break;
+      // An ABANDON — or another job claiming the slot after one — stops the batch at the next
+      // unit boundary: continuing to call the gateway for a job nobody is waiting for would spend
+      // budget on an answer no one reads. The guard compares the JOB ID, not just the status
+      // (re-review M): after an abandon frees the slot a NEW job may already hold it, and
+      // `running` would then be true for somebody else's work.
+      const current = jobFor(TARGET);
+      if (!current || current.id !== job.id || current.status !== 'running') break;
       let out: UnitOutcome;
       try {
         out = await deps.reindexUnit(unit.id, principal.id);
@@ -510,6 +513,8 @@ export async function runReindex(
       }
       recordUnit(
         TARGET,
+        // The job this loop belongs to — never "whatever holds the slot now". See `recordUnit`.
+        job.id,
         out.outcome,
         out.outcome === 'replaced' ? undefined : { unit: unit.label, reason: out.reason ?? 'no reason given' },
       );

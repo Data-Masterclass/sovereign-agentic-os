@@ -449,3 +449,38 @@ knowledge service's header and marker docstring were softened the same way.
 The tripwire's REFUSERS list now also holds the two index **writers**, because `requireLive` made
 them refuse: they do not choose a stand-in, they are handed one, and their job is to decline before
 the write.
+
+## 11. Re-review (PR #64, 2026-11-19) — MERGE with two edits
+
+### (1) The catalog's docstring claimed a guard that does not exist. **Fixed.**
+`AGENT_FORBIDDEN_TOOLS` said both agent-facing doors consult it. Only
+`tabs/agents/lib/build/os-tools.ts` does. A comment that overstates a guard is worse than no
+comment — the next reader stops looking — so it now names the one real consumer and states the app
+door as an open FOLLOW-UP, with why the residual exposure is name-squatting only and why this
+branch cannot close it (`tabs/software/**` is owned elsewhere). A test pins the wording so it
+cannot drift back while the follow-up is open.
+
+### (2) New M — a stale loop could advance the NEXT job's cursor. **Fixed.**
+`abandonReindex` clears the in-flight flag so the target can be re-run, but it cannot un-await a
+unit that is already inside the parser or the gateway. A new job then claims the slot; the stale
+unit resolves and reports progress. `recordUnit` was keyed by TARGET only, so that report landed
+on the NEW job — and the loop guard (`status !== 'running'`) passed, because the slot's job really
+was running: somebody else's. The new job could therefore reach `done` with units nobody
+re-indexed, which is the exact class of false claim this branch exists to prevent.
+*How:* `recordUnit(target, jobId, …)` — the caller says which job it believes it is advancing, and
+a report for any other job is **dropped**; both run loops now break on `current.id !== job.id ||
+current.status !== 'running'`. Naming the job is the only way to be right about this: no ordering
+or status check by the caller can be, because the await is already in flight when the slot changes
+hands.
+*Test:* kernel — a report naming a job that no longer holds the slot is dropped and the new job's
+counters are untouched; files — the race end to end (abandon mid-await → a new job takes the slot
+→ the stale unit resolves): the new job stays at 1/2 `running`, the stale unit is not counted, and
+the abandoned loop stops instead of working through its batch.
+
+### Gates for this edit
+
+| Check | Result |
+|---|---|
+| `core/kernel/*` + `core/mcp/*` + the two re-index suites + the panel + os-tools | **exit 0** - 753 tests, 750 pass, **0 fail**, 3 todo |
+| `os-ui/node_modules/.bin/tsc --noEmit -p os-ui` | **exit 0**, no output |
+| `node scripts/check-structure.mjs` | **exit 0** - ratchet unmoved `419 / 1 / 200 / 1230` |

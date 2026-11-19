@@ -386,19 +386,31 @@ export function startOrResume(
 }
 
 /**
- * Record one completed unit. `cursor` only ever advances, and it advances for a FAILURE too: a
- * unit that could not be replaced must not be retried forever inside the same job, or a run over
- * a corpus with one bad document never finishes. The failure is kept (capped) so the operator can
- * see which units need attention, and a fresh `plan` + `run` retries them deliberately.
+ * Record one completed unit AGAINST A NAMED JOB. `cursor` only ever advances, and it advances for
+ * a FAILURE too: a unit that could not be replaced must not be retried forever inside the same
+ * job, or a run over a corpus with one bad document never finishes. The failure is kept (capped)
+ * so the operator can see which units need attention, and a fresh `plan` + `run` retries them
+ * deliberately.
+ *
+ * `jobId` is not decoration (re-review M). The table is keyed by TARGET, so a progress report
+ * identified only by its target lands on whatever job holds the slot *now* — and a job can be
+ * abandoned while one of its units is still mid-`await`. A new job claims the slot, the stale
+ * unit resolves, and its report advances the NEW job's cursor: that job can then reach `done`
+ * with units nobody ever re-indexed, which is precisely the kind of false claim about a corpus
+ * this whole branch exists to prevent. So the caller says which job it believes it is advancing,
+ * and a report for any other job is DROPPED. Naming the job is the only way to be right about
+ * this; no amount of ordering or status-checking by the caller can be.
  */
 export function recordUnit(
   target: ReindexTarget,
+  jobId: string,
   outcome: 'replaced' | 'failed' | 'skipped',
   failure?: ReindexFailure,
   now: string = new Date().toISOString(),
 ): ReindexJob | null {
   const job = jobs().get(target);
   if (!job || job.status !== 'running') return null;
+  if (job.id !== jobId) return null; // a stale loop's report for a job that no longer holds the slot
   job[outcome] += 1;
   job.cursor += 1;
   job.updatedAt = now;
