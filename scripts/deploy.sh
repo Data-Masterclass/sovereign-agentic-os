@@ -522,6 +522,15 @@ say "digest $DIGEST"
 
 fi  # end of the local build-and-push path
 
+# WP-49 (review N1): before the upgrade, every live domain repo's layout, READ-ONLY, and how the
+# Dagster image will wire it (native / legacy os/schedules.yml / refused). A repo that would be
+# refused stops the deploy here; the schedule count is recorded so the rollout can be checked.
+say "dagster: domain repo layouts (read-only)"
+bash scripts/lib/dagster-layout-check.sh layout "$CTX" "$NS" || { echo "DAGSTER_LAYOUT_REFUSED — a domain's data/dagster/definitions.py does not match os/generated.yml"; exit 1; }
+DAGSTER_SCHEDULES_BEFORE=$(bash scripts/lib/dagster-layout-check.sh schedules "$CTX" "$NS") \
+  || { echo "DAGSTER_SCHEDULES_UNREADABLE — cannot record the schedule count before the upgrade"; exit 1; }
+echo "   dagster schedules before the upgrade: $DAGSTER_SCHEDULES_BEFORE"
+
 say "helm upgrade"
 # --skip-schema-validation: the dagster subchart's values.schema.json $ref's a
 # JSON schema on raw.githubusercontent.com. Helm fetches it at upgrade time, and
@@ -552,6 +561,19 @@ kubectl --context "$CTX" -n "$NS" rollout status deploy/os-ui --timeout=15m
 # the chart does not deploy docling.
 if kubectl --context "$CTX" -n "$NS" get deploy/docling >/dev/null 2>&1; then
   kubectl --context "$CTX" -n "$NS" rollout status deploy/docling --timeout=15m
+fi
+
+# WP-49 (review N1): the code location must define at least as many schedules as before. repo-sync
+# parses each domain after the new pod starts, so the count is polled for a bounded time.
+if kubectl --context "$CTX" -n "$NS" get "deploy/$REL-dagster-user-deployments-sovereign" >/dev/null 2>&1; then
+  kubectl --context "$CTX" -n "$NS" rollout status "deploy/$REL-dagster-user-deployments-sovereign" --timeout=15m
+  after=0
+  for _ in $(seq 1 ${DAGSTER_SCHEDULE_POLLS:-40}); do
+    after=$(bash scripts/lib/dagster-layout-check.sh schedules "$CTX" "$NS" 2>/dev/null || echo 0)
+    [ "${after:-0}" -ge "$DAGSTER_SCHEDULES_BEFORE" ] && break
+    sleep "${DAGSTER_SCHEDULE_POLL_SECONDS:-15}"
+  done
+  bash scripts/lib/dagster-layout-check.sh compare "$DAGSTER_SCHEDULES_BEFORE" "${after:-0}" || exit 1
 fi
 
 say "verify"
