@@ -195,10 +195,10 @@ export async function bootWorker(): Promise<WorkerBoot> {
     }
   }
 
-  // The Langfuse singleton (its SIGTERM flush is registered on construction).
+  // The Langfuse writer (OTel export; its SIGTERM flush is registered when it starts).
   try {
-    const { langfuseClient } = await import('@core/infra/langfuse');
-    boot.langfuse = langfuseClient() !== null;
+    const { langfuseEnabled } = await import('@core/infra/langfuse');
+    boot.langfuse = langfuseEnabled();
     if (!boot.langfuse) log('Langfuse not configured — runs execute untraced');
   } catch (err) {
     warn(`Langfuse client unavailable: ${err instanceof Error ? err.message : String(err)}`);

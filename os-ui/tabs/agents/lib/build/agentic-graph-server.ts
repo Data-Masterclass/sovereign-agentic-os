@@ -10,9 +10,8 @@ import type { CurrentUser } from '@core/kernel/auth';
 import { ALL_MCP_TOOLS, isMcpTab, listToolsForRole, toolsForTab, type McpTab } from '@core/mcp/server';
 import { loadTabContext } from '@core/tabs-meta/context';
 import { trace as gvTrace } from '@core/infra/agent-governed';
-import { langfuseClient, traceUrlFor } from '@core/infra/langfuse';
+import { traceUrlFor, withRunTrace } from '@core/infra/langfuse';
 import type { SecretRef } from '@core/infra/secrets';
-import { langfuseRunObserver } from '@tabs/agents/lib/engine/observe';
 import type { RunEnv } from '@core/kernel/object-lifecycle';
 import { tabToolExecutor, liteLlmCaller } from '@core/runtime/runtime';
 import type { CallerContext } from '@core/infra/litellm-credential';
@@ -373,8 +372,8 @@ export async function runOsTeam(input: RunOsTeamInput): Promise<RunOsTeamResult>
     const checkpointer = await selectCheckpointer(config.agentRunsDatabaseUrl);
     const { onNodeStart, onStep, onNodeComplete, tieBreaker: _tb, ...graphDeps } = deps;
     void _tb;
-    // A3 — ONE trace per run: id = run id; a resume continues it (no second trace-create).
-    const observe = langfuseRunObserver({
+    // A3 — ONE trace per run (`createTraceId(runId)`); a resume adds a segment under the same root.
+    const traceInput = {
       runId: input.runId,
       systemId: input.systemId,
       systemName: sys.system.name,
@@ -384,10 +383,11 @@ export async function runOsTeam(input: RunOsTeamInput): Promise<RunOsTeamResult>
       task: input.resume ? undefined : lastUserText(input.messages),
       resume: input.resume,
       environment: input.env ?? 'studio',
-      client: langfuseClient(),
+      principal: principalFor(input.systemId),
       // A3 review M-2: how much of a call reaches the trace (LANGFUSE_REDACTION).
       redaction: config.langfuseRedaction,
-    });
+    };
+    return withRunTrace(traceInput, async (observe) => {
     // Track B — every history trim this run made, for the run report (the model is told in-prompt).
     const trims: (ContextTrim & { node: string })[] = [];
     // WP-26: the governed executor behind the tool-call ledger, so a replayed step never
@@ -435,7 +435,8 @@ export async function runOsTeam(input: RunOsTeamInput): Promise<RunOsTeamResult>
     });
     emitRunSummaryTrace(input, result, tracked, prices, traceContext);
     const warnings = withContextWarnings(result.warnings, result.runs, trims);
-    return { ...result, ...(warnings.length > 0 ? { warnings } : {}), traceUrl: observe.enabled ? traceUrlFor(input.runId) : undefined, traceStoreAvailable: observe.enabled };
+    return { ...result, ...(warnings.length > 0 ? { warnings } : {}), traceUrl: observe.enabled ? await traceUrlFor(input.runId) : undefined, traceStoreAvailable: observe.enabled };
+    });
   }
 }
 
@@ -566,7 +567,9 @@ function emitRunSummaryTrace(
     decision: 'allow',
     tokens: usage?.total,
     costUsd: runCostUsd(usage, tracked.models(), prices),
-    // A3: under the langgraph engine this summary is a span of the run trace, not a trace of its own.
+    // A3: under a run this summary stays in the in-process ring (Monitoring's run tile until the
+    // Langfuse readers move to the read APIs); it is no longer a Langfuse span. Cost of record is
+    // the gateway's generation, never this price-book figure (design 05 W8).
     run,
   });
 }

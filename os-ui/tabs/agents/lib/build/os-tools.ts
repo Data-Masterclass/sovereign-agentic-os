@@ -15,7 +15,7 @@ import type { ArtifactGrant, System, SafetyPreset } from '@tabs/agents/lib/syste
 import { type Effect } from '@tabs/agents/lib/gateway';
 import { principalFor } from '@tabs/agents/lib/build/runtime-contract';
 import { trace as realTrace } from '@core/infra/agent-governed';
-import type { RunTraceContext } from '@core/infra/langfuse';
+import type { RunTraceContext } from '@core/infra/trace-port';
 import { runWithRunId } from '@core/infra/request-surface';
 import { enqueue as realEnqueue } from '@core/policy/approvals';
 import { holdDecision, holdReason, writeTargetScope } from '@tabs/agents/lib/build/hold';

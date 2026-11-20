@@ -15,8 +15,9 @@ import {
 import { type Principal as DlsPrincipal, canSee } from '@tabs/knowledge/lib/retrieve-core';
 import { roleAtLeast } from '@core/kernel/session';
 import type { Provenance } from '@tabs/knowledge/lib/chunk';
-import { langfuseClient, type RunTraceContext } from '@core/infra/langfuse';
 import { decisionMeta, type DecisionMeta } from '@core/infra/opa-decision';
+import { langfuseEnabled, recordObservation } from '@core/infra/langfuse';
+import type { RunTraceContext } from '@core/infra/trace-port';
 
 /**
  * Governed agent-tool spine (Agent golden path §1, §7). Every tool an agent
@@ -33,8 +34,9 @@ import { decisionMeta, type DecisionMeta } from '@core/infra/opa-decision';
  *      marker — consistent with the data spine (`lib/infra/governed.ts`) — so an
  *      OPA outage cannot silently open agent authz. The offline-mock teaching
  *      flow can opt into the built-in policy mirror with OPA_FAIL_OPEN=true.
- *   2. Best-effort Langfuse trace + an in-process ring buffer so every governed
- *      tool call is auditable in Monitoring even with no live Langfuse.
+ *   2. An in-process ring buffer so every governed tool call is visible in Monitoring, plus —
+ *      OUTSIDE a run only — one Langfuse `tool` observation through the one writer
+ *      (`core/infra/langfuse.ts`). Under a run the run's own observer writes the tool observation.
  */
 
 export type ToolName =
@@ -286,7 +288,7 @@ export function authorizeConnectionCall(
   return { effect: d.effect, reason: d.reason, mode: d.mode };
 }
 
-// ------------------------------------------------------------- Langfuse trace --
+// ------------------------------------------------------- governed event trace --
 
 export type TraceEvent = {
   principal: string;
@@ -301,9 +303,10 @@ export type TraceEvent = {
    *  distinctly from a LangGraph run (both trace through the SAME governed door). */
   runtime?: 'langgraph' | 'hermes';
   /**
-   * A3 — the run this governance event belongs to. When present the event is a SPAN under the
-   * run's Langfuse trace (id = run id) instead of a trace of its own, so a run reads as ONE
-   * tree. Threaded through the executor's deps (`os-tools.ts` `traceContext`), never a global.
+   * A3 — the run this governance event belongs to. When present the run's own observer already
+   * writes the call's `tool` observation, so this event goes to the in-process ring only (one
+   * writer per kind of observation, design 05 step 3). Threaded through the executor's deps
+   * (`os-tools.ts` `traceContext`), never a global.
    */
   run?: RunTraceContext;
 };
@@ -311,7 +314,7 @@ export type TraceEvent = {
 export type TraceRecord = TraceEvent & {
   id: string;
   timestamp: string;
-  /** Standalone trace: the ingestion POST was accepted. Under a run: queued to the SDK buffer. */
+  /** Outside a run: handed to the Langfuse exporter. Under a run: the run's observer writes it (true when tracing is on). */
   landed: boolean;
   /** The run trace this event was nested under, when it was. */
   traceId?: string;
@@ -332,62 +335,26 @@ function remember(rec: TraceRecord): TraceRecord {
 }
 
 /**
- * Record one governed event. Under a run (`event.run`) it becomes a span of the run trace via the
- * buffered SDK — never blocking the run; otherwise it is its own trace through direct ingestion,
- * exactly as before, so the Build probes and the agent-chat path keep their standalone records.
+ * Record one governed event in the ring. Outside a run it is also one Langfuse `tool` observation
+ * (its own trace, or nested in the active observation); under a run the run's observer owns the
+ * tool observation, so nothing is written twice.
  */
 export async function trace(event: TraceEvent): Promise<TraceRecord> {
   const id = `os-agent-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const timestamp = new Date().toISOString();
   const runtime = event.runtime ?? 'langgraph';
-  if (event.run) {
-    const client = langfuseClient();
-    if (client) {
-      try {
-        client.span({
-          id,
-          traceId: event.run.traceId,
-          parentObservationId: event.run.parentObservationId,
-          name: `agent.${event.tool}`,
-          startTime: new Date(timestamp),
-          endTime: new Date(timestamp),
-          input: event.input,
-          output: event.output,
-          level: event.decision === 'deny' ? 'WARNING' : 'DEFAULT',
-          metadata: { principal: event.principal, tool: event.tool, decision: event.decision, costUsd: event.costUsd, tokens: event.tokens, runtime, tags: [`tool:${event.tool}`, ...(event.decision ? [`decision:${event.decision}`] : [])] },
-        });
-      } catch {
-        /* observability is best-effort */
-      }
-    }
-    return remember({ ...event, id, timestamp, landed: client !== null, traceId: event.run.traceId });
-  }
-  const auth =
-    'Basic ' +
-    Buffer.from(`${config.langfusePublicKey}:${config.langfuseSecretKey}`).toString('base64');
-  const body = {
-    batch: [
-      {
-        id,
-        type: 'trace-create',
-        timestamp,
-        body: {
-          id,
-          name: `agent.${event.tool}`,
-          metadata: { principal: event.principal, tool: event.tool, decision: event.decision, costUsd: event.costUsd, tokens: event.tokens, runtime: event.runtime ?? 'langgraph' },
-          input: event.input,
-          output: event.output,
-          tags: ['agent-golden-path', `tool:${event.tool}`, `runtime:${event.runtime ?? 'langgraph'}`, ...(event.decision ? [`decision:${event.decision}`] : [])],
-        },
-      },
-    ],
-  };
-  const res = await withTimeout(`${config.langfuseUrl}/api/public/ingestion`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', authorization: auth },
-    body: JSON.stringify(body),
+  // Under a run the call is in Langfuse as the run observer's own `tool` observation.
+  if (event.run) return remember({ ...event, id, timestamp, landed: langfuseEnabled(), traceId: event.run.traceId });
+  const landed = recordObservation({
+    name: `agent.${event.tool}`,
+    asType: 'tool',
+    input: event.input,
+    output: event.output,
+    level: event.decision === 'deny' ? 'WARNING' : 'DEFAULT',
+    metadata: { principal: event.principal, tool: event.tool, decision: event.decision, tokens: event.tokens, runtime },
+    tags: ['agent-golden-path', `tool:${event.tool}`, `runtime:${runtime}`, ...(event.decision ? [`decision:${event.decision}`] : [])],
   });
-  return remember({ ...event, id, timestamp, landed: Boolean(res && res.ok) });
+  return remember({ ...event, id, timestamp, landed });
 }
 
 // ------------------------------------------- Governed metrics/retrieve facts --

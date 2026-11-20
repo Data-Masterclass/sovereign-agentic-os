@@ -646,7 +646,7 @@ litellm:
       # does not reach that copy: the full prompt of every refused call landed in Langfuse
       # (measured on 1.90.0 and 1.108.12). A rate-limited run is exactly the run that carries
       # twelve documents. The OS records a refused or failed call itself, on its own span, at
-      # its own redaction level (tabs/agents/lib/engine/observe.ts), so nothing is lost but the
+      # its own redaction level (os-ui/core/infra/langfuse.ts), so nothing is lost but the
       # gateway's duplicate. `scripts/check-litellm-model-info.mjs` fails the gate if this
       # callback comes back. docs/components/langfuse.md "What the gateway writes".
       drop_params: true

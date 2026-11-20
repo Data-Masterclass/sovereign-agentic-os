@@ -181,11 +181,12 @@ is the `run_jobs` row's status.
 
 ### One Langfuse trace per run, one scoped LiteLLM key
 
-`lib/engine/observe.ts` builds the trace over the SDK client in `core/infra/langfuse.ts`: **trace
-id = run id**, every node a span (`build-graph.ts` `observed()`), every model call a generation
-with token usage, every tool call a span carrying its governance decision. A resume adds to the
-same trace and creates no second one. The run report and `LastRun` carry `traceUrl`
-(`<console>/trace/<runId>`) and `traceStoreAvailable`; the Evaluate judge writes a `judge` score on
+`core/infra/langfuse.ts` (the one Langfuse writer, OTel SDK v5) builds the trace: **trace id =
+`createTraceId(runId)`**, every node a chain observation (`build-graph.ts` `observed()`), every
+model call a `llm.<node>` span under which the gateway's generation — the only one — nests, every
+tool call a tool observation carrying its governance decision. A resume adds a segment under the
+same fixed root id. The run report and `LastRun` carry `traceUrl`
+(`<console>/trace/<createTraceId(runId)>`) and `traceStoreAvailable`; the Evaluate judge writes a `judge` score on
 that trace; the diagnostics route reads Langfuse **by the run's trace id**, owner-gated.
 `LANGFUSE_REDACTION` governs how much of a call reaches the TRACE (`run_events` is exempt by
 design — the panel's own log is written in full).

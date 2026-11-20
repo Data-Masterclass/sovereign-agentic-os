@@ -192,7 +192,7 @@ export async function agentSystemEngineeringView(principal: EngineeringPrincipal
     // Always derived from the CURRENT console URL, never the address stored with the run: a run
     // recorded while Langfuse had a public host would otherwise keep linking to that host after
     // it was taken away.
-    traces: runId ? [{ runId, url: traceUrlFor(runId) ?? null }] : [],
+    traces: runId ? [{ runId, url: (await traceUrlFor(runId)) ?? null }] : [],
     noUrlReason: 'this deployment does not expose the Langfuse console, so the trace exists but has no address to open here',
     unavailable: runId ? undefined : 'this system has not run yet, so there is no Langfuse trace',
     redactions: LANGFUSE_REDACTIONS,
