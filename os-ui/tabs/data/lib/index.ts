@@ -54,3 +54,7 @@ export type { DelegatedToken } from '@tabs/data/lib/identity';
 // Transparency gate (data/transparency.ts) — the same documentation gate the
 // Metrics consistency check enforces before a metric may go live.
 export { transparencyGate, gateReason } from '@tabs/data/lib/transparency';
+
+// dbt semantic model name (data/dbt/semantic/from-measures.ts) — the ONE derivation the emitter
+// and the Metrics tab's repo-path both use (dbt refuses `__`, so it differs from `modelName`).
+export { semanticModelNameFor } from '@tabs/data/lib/dbt/semantic/from-measures';

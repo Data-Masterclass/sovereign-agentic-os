@@ -15,9 +15,8 @@
  */
 import yaml from 'js-yaml';
 import type { Dataset, Measure, MeasureFilter, RollingWindow } from '@tabs/data/lib/index';
-import { MEASURE_TYPES, type MeasureType, viewName, modelName, sanitizeIdent, slug, inferDimType } from '@tabs/data/lib/index';
+import { MEASURE_TYPES, type MeasureType, viewName, modelName, sanitizeIdent, slug, inferDimType, semanticModelNameFor } from '@tabs/data/lib/index';
 import { assertFormulaRefs, compileFormula } from '@tabs/metrics/lib/formula';
-import { semanticModelNameFor } from '@tabs/data/lib/dbt/semantic/from-measures';
 
 export type { MeasureType } from '@tabs/data/lib/index';
 
