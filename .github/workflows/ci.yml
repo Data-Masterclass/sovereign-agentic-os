@@ -838,7 +838,9 @@ jobs:
             node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test --test-concurrency=1 ../tests/domain-delete/dagster.int.test.ts
       - name: Dagster logs (on failure)
         if: failure()
-        run: docker logs --tail 200 soa-dd-dagster || true
+        run: |
+          docker logs soa-dd-dagster 2>&1 | grep -v 'dagster.code_server\|skipped — no validated' | head -150 || true
+          docker exec soa-dd-dagster sh -c 'ls -la /repos /tmp/checkout /tmp/checkout/*; cat /tmp/checkout/.status/*.json /tmp/checkout/status.json; curl -s http://127.0.0.1:8090/' || true
 
   # The opt-in run-launcher lock-down (values.dagster-launcher-lockdown.yaml): parity with the stock
   # launcher judged by dagster-k8s's own code in the image from this commit (+ drifted-overlay twins),
