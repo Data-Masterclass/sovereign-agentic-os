@@ -154,12 +154,20 @@ function mirrorState(index: string): MirrorState {
   return g[key]!;
 }
 
-async function osFetch(path: string, init?: RequestInit): Promise<Response | null> {
+/**
+ * A whole-index read (hydrate / list) returns every record of a store in one response — live
+ * `os-datasets` is ~0.7 MB and took 2.5–5.8 s on 2026-11-20 — so it gets far longer than the
+ * 2.5 s a single-doc call gets. Under the old shared 2.5 s cap the search was ABORTED at boot and
+ * (then) read as an empty index: the 0.9.21 boot loaded zero datasets with OpenSearch healthy.
+ */
+export const WHOLE_INDEX_TIMEOUT_MS = 30_000;
+
+async function osFetch(path: string, init?: RequestInit, timeoutMs = 2500): Promise<Response | null> {
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 2500);
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
     return await opensearchFetch(path, {
-      timeoutMs: 2500,
+      timeoutMs,
       ...init,
       signal: ctrl.signal,
       cache: 'no-store',
@@ -246,13 +254,16 @@ export function osMirror(opts: {
     const res = await osFetch(`/${index}/_search?size=${size}`, {
       method: 'POST',
       body: JSON.stringify({ query: { match_all: {} }, track_total_hits: true }),
-    });
+    }, WHOLE_INDEX_TIMEOUT_MS);
     // A FAILED search (no answer, a non-2xx such as 503 while shards initialise, unreadable JSON,
     // failed shards or a timeout) is "mirror not readable yet" → null, so the store stays
     // un-hydrated and retries. It used to answer [] — indistinguishable from an empty index — and a
     // store then cached "hydrated with zero records" for the life of the pod (0.9.21 boot: the
     // dataset registry empty, 0 governed tables restored to OPA).
-    if (!res) return null;
+    if (!res) {
+      console.error(`[os-mirror] ${index}: hydration search got no answer within ${WHOLE_INDEX_TIMEOUT_MS} ms — not treated as an empty index; the store will retry`);
+      return null;
+    }
     if (!res.ok) {
       console.error(`[os-mirror] ${index}: hydration search failed (HTTP ${res.status}) — not treated as an empty index; the store will retry`);
       return null;
@@ -278,7 +289,7 @@ export function osMirror(opts: {
     const res = await osFetch(`/${index}/_search?size=${size}`, {
       method: 'POST',
       body: JSON.stringify({ query: { match_all: {} }, track_total_hits: true }),
-    });
+    }, WHOLE_INDEX_TIMEOUT_MS);
     if (!res || !res.ok) return { docs: [], complete: false };
     try {
       const data = (await res.json()) as {

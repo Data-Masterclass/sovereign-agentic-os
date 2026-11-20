@@ -458,3 +458,31 @@ test('a hydration search with failed shards is incomplete → null', async () =>
     globalThis.fetch = orig;
   }
 });
+
+test('regression 0.9.21: a whole-index hydration slower than 2.5 s (live os-datasets: 132 records, ~0.7 MB) loads every record', async () => {
+  // Shaped like the live index on 2026-11-20: 99 + 10 archived `dataset`, 19 + 4 archived `asset`.
+  const shape: [string, boolean, number][] = [['dataset', false, 99], ['dataset', true, 10], ['asset', false, 19], ['asset', true, 4]];
+  const live = shape.flatMap(([tier, archived, n]) =>
+    Array.from({ length: n }, (_, i) => ({ id: `ds-${tier}-${archived ? 'a' : 'l'}-${i}`, archived, yaml: `tier: ${tier}\nname: x${i}\n${'# pad\n'.repeat(800)}` })));
+  const orig = globalThis.fetch;
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const path = String(input).replace(/^https?:\/\/[^/]+/, '');
+    const json = (b: unknown) => new Response(JSON.stringify(b), { status: 200, headers: { 'content-type': 'application/json' } });
+    if (path.endsWith('/_count')) return json({ count: live.length });
+    // The search answers after 3 s — slower than the old 2.5 s cap — and honours abort.
+    await new Promise<void>((resolve, reject) => {
+      const t = setTimeout(resolve, 3000);
+      init?.signal?.addEventListener('abort', () => { clearTimeout(t); reject(Object.assign(new Error('aborted'), { name: 'AbortError' })); });
+    });
+    return json({ _shards: { failed: 0 }, hits: { total: { value: live.length }, hits: live.map((_source) => ({ _source })) } });
+  }) as typeof fetch;
+  const m = osMirror({ index: 'os-mirror-test-slow', createBody: {} });
+  m.__reset();
+  try {
+    const docs = await m.hydrate();
+    assert.equal(docs?.length, 132, 'every record of the live-shaped index is loaded, none dropped');
+    assert.equal((docs as { yaml: string }[]).filter((d) => d.yaml.startsWith('tier: asset')).length, 23);
+  } finally {
+    globalThis.fetch = orig;
+  }
+});
