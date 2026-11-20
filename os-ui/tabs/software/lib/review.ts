@@ -243,7 +243,7 @@ export const IMAGE_BUILDING_NOTE =
 
 /**
  * THE DEFECT THIS CLOSES (2026-11-19). A FAIL-CLOSED runner refusal — today the only one is
- * `MissingAppImageError`, which `deployApp` catches and returns as
+ * a WP-54 deploy refusal (no committed k8s/ manifests, image not built), which `deployApp` returns as
  * `{ ok:false, live:false, phase:'failed', detail:<the honest reason> }` — fell through to
  * `PREVIEW_PENDING_NOTE` because that branch keys on `live`. The user was therefore told
  * "Preview runner unreachable … pending until the Kubernetes API is reachable" when the

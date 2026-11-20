@@ -1311,17 +1311,18 @@ softwareRunner:
   enabled: false
   namespace: agentic-apps
   appsDomain: "apps.local"
-  # The shared image for `serveMode: 'image'` apps that carry no image of their own.
-  # EMPTY by default and it must stay that way unless an operator deliberately sets it:
-  # there is no OS image builder, so a non-empty default here serves a THIRD PARTY's
-  # placeholder container on a customer domain. With this empty, `appImageRef` fails
-  # closed and loudly (night-2 S2). Tier-1 ('spec') and Tier-2 ('runtime') apps never
-  # reach the runner at all — the OS serves them itself, same-origin.
-  runnerImage: ""
+  # WP-54: an `image` app deploys its OWN committed `apps/<slug>/k8s/` manifests; the OS builds
+  # no images and generates no objects. imageRegistry is the registry the PLATFORM owns and keeps
+  # (an org-owned registry namespace, never an in-cluster forge that can disappear): an app may
+  # run only `<imageRegistry>/<slug>@sha256:<digest>`. EMPTY = every image deploy is refused.
+  # Pull credentials, when the registry is private: attach a pull secret to the `default`
+  # ServiceAccount of `namespace` (kubectl patch serviceaccount default -p '{"imagePullSecrets":…}').
+  imageRegistry: ""
   ingressClass: ""        # falls back to ingress.className
   tlsIssuer: ""           # falls back to ingress.tlsIssuer
-  # SECURITY (C2): isolate student apps from the platform.
-  podSecurityStandard: baseline
+  # SECURITY (C2): isolate student apps from the platform. Pod Security `restricted` (the scaffolded
+  # k8s/ manifests meet it; a deploy is dry-run against this admission before it is applied).
+  podSecurityStandard: restricted
   networkPolicy:
     enabled: true
     ingressNamespace: ingress-nginx

@@ -48,7 +48,7 @@ test('STATUS POLL: a declarative app in preview is never given a runner Deployme
   const app = await createApp(creator, { name: 'Spec Poll', kind: 'spec' } as Parameters<typeof createApp>[1]);
   app.serveMode = 'spec';
   app.spec = { tabs: [] } as unknown as typeof app.spec;
-  app.runImage = 'registry.example.com/apps/anything:1'; // an image exists — the mode must still decide
+  // WP-54: whatever the app tree holds, the serve mode decides whether the runner is asked at all.
   app.deploy.state = 'preview';
   app.deploy.previewUrl = `/apps/${app.slug}`;
   await persistApp(app);

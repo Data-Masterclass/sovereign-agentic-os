@@ -158,8 +158,10 @@ test('TRIPWIRE: no scaffold seeds a forge CI workflow or a registry login', () =
   }
 });
 
-test('TRIPWIRE: the chart ships NO default runner image — an empty default fails closed', () => {
+test('TRIPWIRE: the chart ships NO default app image or registry — an empty default fails closed', () => {
   const values = readFileSync(join(REPO, 'charts', 'sovereign-agentic-os', 'values.yaml'), 'utf8');
-  assert.match(values, /runnerImage: ""/, 'softwareRunner.runnerImage is empty by default');
+  assert.ok(!/runnerImage:/.test(values), 'no shared runner image exists any more (WP-54: apps deploy their own manifests)');
+  assert.match(values, /imageRegistry: ""/, 'softwareRunner.imageRegistry is empty by default');
+  assert.match(values, /podSecurityStandard: restricted/, 'the apps namespace enforces Pod Security restricted');
   assert.ok(!/whoami/i.test(values), 'no third-party placeholder container is a chart default');
 });
