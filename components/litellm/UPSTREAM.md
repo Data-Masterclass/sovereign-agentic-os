@@ -21,9 +21,11 @@ Upstream, unmodified. Nothing in this folder is ours — see the rule in `compon
 - **Fixes the published advisories** that affect 1.90.0: GHSA-3cv6-jpf6-8222, GHSA-g5ff-637f-6q2m,
   GHSA-w4c7-34wj-hqm8, and GHSA-2rwg-2wh4-7c4f. 1.109.0 is still affected by the last one; its
   fix in the 1.109 line is 1.109.1.
-- **Age:** published 2026-11-12, at least 7 days before it was chosen. 1.109.2, 1.109.3 and
-  1.110.x were 0–2 days old on 2026-11-20 and are candidates for the next bump, through
-  `scripts/tests/litellm-langfuse/run.sh` with `LITELLM_IMAGE=<ref>`.
+- **Age:** published 2026-11-12 02:07 UTC. Under the programme's 14-day age rule the earliest
+  deploy is **Thu 2026-11-26 02:07 UTC** (inside the 11 Dec deadline). No newer ≥ 1.109 release
+  can be 14 days old before then; 1.109.2, 1.109.3 and 1.110.x (0–2 days old on 2026-11-20)
+  are candidates for the next bump, through `scripts/tests/litellm-langfuse/run.sh` with
+  `LITELLM_IMAGE=<ref>`.
 - 1.108.12 (LTS, the earlier PR #104) is superseded: it is below the migration baseline.
 
 ## How the OS uses it for tracing (05 §5.1, 10 F1)
@@ -53,8 +55,15 @@ made with its `traceparent`:
 `full` is chosen because it is the only setting that nests the generation under the caller's span.
 Its cost is ingestion volume into Langfuse (ClickHouse). If that volume is not acceptable, `llm_only`
 is a one-line change (`litellm.envVars.LITELLM_OTEL_LANGFUSE_SPAN_SCOPE`) that keeps one generation
-per call in the right trace but gives up the parent link; `tracing.e2e.test.ts` then fails its
-nesting assertion by design, so the choice has to be made explicitly.
+per call in the right trace but gives up the parent link; `tracing.e2e.test.ts` follows the scope
+(under `llm_only` it asserts the root placement). The post-deploy rule: measure the untagged-trace
+rate for 10 minutes with `deploy/langfuse-idle-rate.sh`; above 0.2 per second, switch to
+`llm_only` (docs/ops/litellm-upgrade.md §1 step 7). Sampling (`parentbased_always_off`) is not
+an option: it drops generations with the rest. Measured in the test rig with
+`deploy/langfuse-idle-rate.sh 1` against the real Langfuse: `full` 0.667 untagged traces per second
+(above the threshold, so the rig itself would switch); `llm_only` 0.000 per second. Under
+`llm_only` the e2e test passes with the root placement (3/3). Production's rate is measured after
+the deploy.
 
 ### Measured on 1.109.1 against Langfuse 3.194.1
 

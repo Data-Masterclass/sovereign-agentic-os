@@ -49,12 +49,17 @@ up() { # $1 image; env file only for an image that knows OTel v2 (harmless other
   docker logs --tail 30 upgw; return 1
 }
 chat() { curl -s -o "$W/data/chat.body" -w '%{http_code}' $GW/v1/chat/completions -H "Authorization: Bearer $KEY" -H 'content-type: application/json' -d '{"model":"sovereign-default","messages":[{"role":"user","content":"hi"}]}'; }
-spend() { curl -s -H "Authorization: Bearer $MASTER" "$GW/key/info?key=$KEY" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("info",{}).get("spend"))'; }
+spend() { curl -s -H "Authorization: Bearer $MASTER" "$GW/key/info?key=$KEY" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("info",{}).get("spend") or 0)'; }
+positive() { python3 -c "import sys; sys.exit(0 if float(sys.argv[1]) > 0 else 1)" "$1"; }
 
 echo "== 1. database initialised and used by OLD"
 migrate "$OLD"; up "$OLD" || { echo "OLD did not start"; exit 1; }
 curl -s -o /dev/null -w '  /key/generate: %{http_code}\n' -H "Authorization: Bearer $MASTER" -H 'content-type: application/json' $GW/key/generate -d '{"key":"'$KEY'","models":["sovereign-default"],"max_budget":5,"budget_duration":"7d"}'
-for i in 1 2 3; do chat >/dev/null; done; sleep 12; S0=$(spend); echo "  OLD: chat $(chat), key spend $S0"
+for i in 1 2 3; do chat >/dev/null; done
+# The gateway books spend asynchronously: poll until it is > 0 (timeout 120 s), never a fixed wait.
+S0=0; for i in $(seq 1 60); do S0=$(spend); positive "$S0" && break; sleep 2; done
+positive "$S0" || { echo "  FAILED: the OLD gateway booked no spend within 120 s"; exit 1; }
+echo "  OLD: chat $(chat), key spend $S0"
 
 echo "== 2. RACE: NEW proxy on the OLD schema (reported)"
 if up "$NEW"; then echo "  NEW on OLD schema: ready; chat HTTP $(chat) $(head -c 160 "$W/data/chat.body")"; else echo "  NEW on OLD schema: did not become ready"; fi

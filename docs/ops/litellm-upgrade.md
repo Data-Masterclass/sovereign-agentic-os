@@ -55,8 +55,9 @@ the 1.109 line inherits) or "release notes".
      If `success_callback` is listed, remove it from the values you deploy with, or the gateway
      logs every call twice (the gate check covers the files in git, not the live values).
    - No long agent run is in flight.
-3. **Back up.** `deploy/pre-upgrade-backup.sh` (pg dump of every database plus the Velero backup
-   of the namespace; it aborts if either fails). The next step already changes the database.
+3. **Back up.** `export KUBECONFIG=~/.kube/config && deploy/pre-upgrade-backup.sh` (pg dump of
+   every database plus the Velero backup of the namespace; it aborts if either fails). The next
+   step already changes the database.
 4. **Migrate first.** `deploy/litellm-premigrate.sh --dry-run`, read what it would create (image
    `…litellm-database:1.109.1@sha256:932c…`, the migration command, database host `pg-rw`), then
    `deploy/litellm-premigrate.sh`. It renders the chart's own migration Job for the live release,
@@ -86,7 +87,30 @@ the 1.109 line inherits) or "release notes".
    exactly one gateway generation per model call, named `chat <model>`, with usage and cost, and
    `metadata` carrying the call id the OS generation records as `litellm_call_id`. Until run ids
    are W3C ids (05 step 2, WP-31) that generation is in its own trace, not inside the run's.
-7. **Afterwards.** `kubectl -n agentic-os delete job litellm-premigrate-<tag>`. Keep the dump until
+7. **Span scope after the deploy** (10 minutes, read-only). The chart ships `full`, the only scope
+   that nests the gateway's generation under the caller's span. It also exports LiteLLM's
+   background work as untagged traces. Measure their rate on the live system:
+   ```bash
+   kubectl --context dmagenticos -n agentic-os port-forward svc/agentic-os-langfuse-web 3000:3000 &
+   # LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY read into the shell without printing them
+   LANGFUSE_URL=http://127.0.0.1:3000 deploy/langfuse-idle-rate.sh 10
+   ```
+   - **Rate ≤ 0.2 per second (exit 0): keep `full`.** Nothing to do.
+   - **Rate > 0.2 per second (exit 3): switch to `llm_only`.**
+     1. Set `litellm.envVars.LITELLM_OTEL_LANGFUSE_SPAN_SCOPE: "llm_only"` in `values.yaml`. Leave
+        `LITELLM_OTEL_BAGGAGE_PROMOTED_KEYS` as it is; it does no harm under `llm_only`.
+     2. Run `scripts/tests/litellm-langfuse/run.sh`. The e2e test reads the scope from the rendered
+        chart and then asserts that the one GENERATION is a **root** observation of the caller's
+        trace, not a child of the caller's span. That is the measured `llm_only` behaviour
+        (`components/litellm/UPSTREAM.md` "Span scope").
+     3. Open a PR, merge, and deploy (gateway restart only). Then run this check again: the
+        untagged rate drops to about 0.
+   - What you give up with `llm_only`: Langfuse no longer shows the generation under the OS's
+     `model-call` span. It stays in the same trace, matched by `litellm_call_id`.
+   - **Do not** reduce the volume with an OTel sampler (`OTEL_TRACES_SAMPLER=parentbased_always_off`
+     or similar). It drops spans by trace, which drops generations too, and the "one generation
+     per call" guarantee goes with them.
+8. **Afterwards.** `kubectl -n agentic-os delete job litellm-premigrate-<tag>`. Keep the dump until
    the next clean week.
 
 ### Rollback

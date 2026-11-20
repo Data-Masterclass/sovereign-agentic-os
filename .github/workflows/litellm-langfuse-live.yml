@@ -25,6 +25,7 @@ on:
       - os-ui/core/runtime/tracing.e2e.test.ts
       - os-ui/core/infra/litellm-credential.ts
       - scripts/tests/litellm-langfuse/**
+      - deploy/litellm-premigrate.sh
       - .github/workflows/litellm-langfuse-live.yml
   push:
     branches: [main]
@@ -76,7 +77,12 @@ jobs:
           LANGFUSE_VERSION: ${{ matrix.langfuse }}
           LITELLM_LANGFUSE_WORKDIR: ${{ runner.temp }}/litellm-langfuse
         run: bash scripts/tests/litellm-langfuse/run.sh
+      - name: Upgrade schema test (1.90.0 -> chart image; pre-migration window and image rollback)
+        env:
+          OLD_IMAGE: ghcr.io/berriai/litellm-database:v1.90.0
+          LITELLM_LANGFUSE_WORKDIR: ${{ runner.temp }}/litellm-upgrade
+        run: bash scripts/tests/litellm-langfuse/upgrade.sh
       - name: Logs (on failure)
         if: failure()
         run: |
-          for f in e2e.log e2e-twin.log migrate.log gw.log lfweb.log; do echo "=== $f"; tail -120 "${{ runner.temp }}/litellm-langfuse/$f" || true; done
+          for f in e2e.log e2e-twin.log migrate.log gw.log lfweb.log ../litellm-upgrade/migrate.log; do echo "=== $f"; tail -120 "${{ runner.temp }}/litellm-langfuse/$f" || true; done
