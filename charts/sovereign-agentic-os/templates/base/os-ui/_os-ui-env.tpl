@@ -355,6 +355,14 @@
   value: {{ (.Values.llmProviders | default dict).accessGroup | default "" | quote }}
 - name: OPA_URL
   value: {{ $u.opaUrl | quote }}
+{{- if .Values.opa.enabled }}
+# The OS reconciler's OPA identity (system.authz: data and policy writes).
+- name: OPA_TOKEN
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "soa.opa.tokenSecret" . }}
+      key: writer
+{{- end }}
 {{- /* The chart-seeded governance principals (the same block the OPA seed reads). os-ui's runtime governance writes merge into them and never drop a seeded clearance. */}}
 - name: OS_OPA_SEED_PRINCIPALS
   value: {{ ((.Values.opa.governance | default dict).principals | default dict) | toJson | quote }}

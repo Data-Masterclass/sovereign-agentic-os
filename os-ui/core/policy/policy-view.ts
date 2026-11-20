@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
+import { opaHeaders } from '@core/adapters/opa/auth';
 import { config } from '@core/kernel/config';
 import type { Role } from '@core/kernel/session';
 import { ROLE_RIGHTS, rightsToTools } from '@core/policy/roles';
@@ -181,7 +182,7 @@ export async function readOpaGrants(): Promise<Record<string, string[]> | null> 
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 2500);
   try {
-    const res = await fetch(`${config.opaUrl}/v1/data/grants`, { cache: 'no-store', signal: ctrl.signal });
+    const res = await fetch(`${config.opaUrl}/v1/data/grants`, { headers: opaHeaders(), cache: 'no-store', signal: ctrl.signal });
     if (!res || !res.ok) return null;
     const data = (await res.json()) as { result?: Record<string, unknown> };
     const out: Record<string, string[]> = {};

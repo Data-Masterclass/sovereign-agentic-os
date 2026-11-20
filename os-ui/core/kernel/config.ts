@@ -564,6 +564,8 @@ export const config = {
   // OPA (Policy): POST {OPA_URL}/v1/data/agentic/authz/allow and
   // GET {OPA_URL}/v1/data/grants for the principal -> tools grant map.
   opaUrl: base(env('OPA_URL', 'http://opa:8181')),
+  // The OS reconciler's OPA bearer token (chart Secret `opa-tokens`, key `writer`); empty = no header.
+  opaToken: env('OPA_TOKEN', ''),
   // Chart-seeded governance principals (values `opa.governance.principals`) — merged, never overwritten.
   opaSeedPrincipals: parseSeedPrincipals(env('OS_OPA_SEED_PRINCIPALS', '{}')),
   // Data-authz FAIL MODE. Default DENY-by-default: if OPA is unreachable/errors

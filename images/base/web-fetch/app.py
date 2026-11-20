@@ -24,13 +24,22 @@ TOOL = os.environ.get("TOOL_NAME", "web_fetch")
 MAX_BYTES = int(os.environ.get("MAX_BYTES", "200000"))
 MAX_CHARS = int(os.environ.get("MAX_CHARS", "4000"))
 PORT = int(os.environ.get("PORT", "8000"))
+# OPA bearer token (chart Secret `opa-tokens`, key `reader`): tool decisions only (system.authz).
+OPA_TOKEN = os.environ.get("OPA_TOKEN", "")
+
+
+def opa_headers() -> dict:
+    h = {"Content-Type": "application/json"}
+    if OPA_TOKEN:
+        h["Authorization"] = "Bearer " + OPA_TOKEN
+    return h
 
 
 def opa_allows(principal: str) -> bool:
     body = json.dumps({"input": {"principal": principal, "tool": TOOL}}).encode()
     req = urllib.request.Request(
         OPA_URL + "/v1/data/agentic/authz/allow",
-        data=body, headers={"Content-Type": "application/json"},
+        data=body, headers=opa_headers(),
     )
     r = json.load(urllib.request.urlopen(req, timeout=10))
     return bool(r.get("result", False))

@@ -1,0 +1,43 @@
+{{- /*
+  Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+  SPDX-License-Identifier: Apache-2.0
+
+  OPA API tokens (OPA `--authentication=token`, https://www.openpolicyagent.org/docs/security).
+  Key `writer`: the OS reconciler (os-ui, os-ui-worker, the principal re-assert hook).
+  Key `reader`: web-fetch (tool decisions only). system.authz (policies/system/authz.rego) reads
+  both from OPA's environment (`opa.runtime().env`), so no token is ever stored as OPA data.
+
+  Resolution order (mirrors docling-api-key.yaml; no secret is committed to git):
+    1. `opa.auth.existingSecret` — an operator- or ExternalSecret-managed Secret with keys
+       `writer` and `reader`; this template then renders nothing, else
+    2. the values already stored in this Secret (kept across `helm upgrade` via `lookup`), else
+    3. fresh 48-char random values on first install.
+  GITOPS CAVEAT: `lookup` is empty under Argo CD / Flux / `helm template`, so those pipelines set
+  `opa.auth.existingSecret`.
+*/}}
+{{- define "soa.opa.tokenSecret" -}}
+{{- (.Values.opa.auth | default dict).existingSecret | default "opa-tokens" -}}
+{{- end }}
+{{- if and .Values.opa.enabled (not (.Values.opa.auth | default dict).existingSecret) }}
+{{- $name := "opa-tokens" }}
+{{- $existing := (lookup "v1" "Secret" .Release.Namespace $name) }}
+{{- $writer := "" }}
+{{- $reader := "" }}
+{{- if and $existing $existing.data }}
+{{- $writer = (index $existing.data "writer" | default "" | b64dec) }}
+{{- $reader = (index $existing.data "reader" | default "" | b64dec) }}
+{{- end }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/resource-policy": keep
+type: Opaque
+stringData:
+  writer: {{ $writer | default (randAlphaNum 48) | quote }}
+  reader: {{ $reader | default (randAlphaNum 48) | quote }}
+{{- end }}

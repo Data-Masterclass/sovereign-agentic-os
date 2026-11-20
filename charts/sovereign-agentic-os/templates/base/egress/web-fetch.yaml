@@ -44,6 +44,14 @@ spec:
               value: "8000"
             - name: OPA_URL
               value: "http://opa:8181"
+            {{- if .Values.opa.enabled }}
+            # Read-only OPA identity: tool decisions only (system.authz).
+            - name: OPA_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "soa.opa.tokenSecret" . }}
+                  key: reader
+            {{- end }}
             - name: PROXY_URL
               value: "http://egress-proxy:3128"
             - name: TOOL_NAME

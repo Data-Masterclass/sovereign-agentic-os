@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
+import { opaHeaders } from '@core/adapters/opa/auth';
 import 'server-only';
 import { config } from '@core/kernel/config';
 import { opensearchTry } from '@core/adapters/opensearch/client';
@@ -146,7 +147,7 @@ function unreachableDecision(principal: string, tool: ToolName): Authz {
 export async function authorize(principal: string, tool: ToolName): Promise<Authz> {
   const res = await withTimeout(`${config.opaUrl}/v1/data/agentic/authz/decision`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: opaHeaders({ 'content-type': 'application/json' }),
     body: JSON.stringify({ input: { principal, tool } }),
   });
   if (!res) return unreachableDecision(principal, tool);

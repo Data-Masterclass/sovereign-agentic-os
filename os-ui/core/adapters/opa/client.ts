@@ -10,6 +10,7 @@
  *     Policy API `PUT/GET /v1/policies/{id}`, Health API `GET /health`.
  *   - Returns the `Fetched` contract; never throws. Callers go through `core/policy/opa-publish.ts`.
  */
+import { opaHeaders } from '@core/adapters/opa/auth';
 import { config } from '@core/kernel/config';
 import type { Fetched, FetchedFailure } from '@core/adapters/_contract';
 
@@ -27,7 +28,7 @@ async function request(path: string, init: RequestInit, timeoutMs: number, baseU
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
-    const res = await fetch(`${baseUrl}${path}`, { ...init, signal: ctrl.signal, cache: 'no-store' });
+    const res = await fetch(`${baseUrl}${path}`, { ...init, headers: opaHeaders((init.headers ?? {}) as Record<string, string>), signal: ctrl.signal, cache: 'no-store' });
     return { ok: true, value: res, at: now() };
   } catch (err) {
     const aborted = err instanceof Error && err.name === 'AbortError';
