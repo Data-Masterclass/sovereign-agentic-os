@@ -104,6 +104,9 @@ node ../scripts/check-litellm-ingress-policy.mjs
 # Platform ingress: default-deny for the namespace plus one allowlist per platform service; every
 # rendered caller is admitted, no other namespace is. Same skip rules as above.
 node ../scripts/check-platform-ingress-policy.mjs
+# Outbound HTTPS: the API-server rule is narrowed, the model gateway uses the egress proxy and
+# every https model host is on its allowlist. Same skip rules as above.
+node ../scripts/check-egress-routing.mjs
 # WP-47 capacity gate: the rendered chart (default and STACKIT profiles) plus the pods outside it
 # must fit the node budget in charts/sovereign-agentic-os/capacity.yaml (requests ≤ 85 % CPU and
 # memory, memory limits ≤ 85 %). Same skip rules as above.

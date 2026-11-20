@@ -38,8 +38,8 @@
     valkey :6379         Langfuse (web, worker), LiteLLM
     clickhouse :8123/9000  Langfuse (web, worker)
     web-fetch :8000      control plane only
-    egress-proxy :3128   web-fetch, OpenSearch and its snapshot/maintenance Jobs (off-cluster
-                         snapshots go through the proxy)
+    egress-proxy :3128   web-fetch, LiteLLM (model providers), OpenSearch and its
+                         snapshot/maintenance Jobs (off-cluster snapshots go through the proxy)
     mock-model :8080     LiteLLM
 
   Kubelet probes and `kubectl port-forward` do not traverse pod-to-pod policy and are unaffected.
@@ -301,7 +301,7 @@ spec:
     - Ingress
   ingress:
     - from:
-        {{- include "soa.np.peers" (dict "components" (list "web-fetch" "opensearch-snapshot-register" "opensearch-snapshot-cron" "opensearch-maintenance") "extra" $opensearchPods) | nindent 8 }}
+        {{- include "soa.np.peers" (dict "components" (list "web-fetch" "opensearch-snapshot-register" "opensearch-snapshot-cron" "opensearch-maintenance") "extra" (concat $opensearchPods $litellmPods)) | nindent 8 }}
       ports:
         - { protocol: TCP, port: 3128 }
 {{- end }}

@@ -82,9 +82,11 @@ spec:
         - podSelector: {}
 ---
 # 4) Allow egress to the Kubernetes API server (operators, run launchers, etc.) — again
-# EXCEPT the agent schedule pods: this rule carries no `to:`, so it allows 443/6443 to ANY
-# destination, and a pod whose whole job is one in-cluster POST has no business there
-# (A5-review-H-3; policy 6 is its complete allowlist).
+# EXCEPT the agent schedule pods (A5-review-H-3; policy 6 is their complete allowlist).
+# The destination is the API server's endpoint addresses only (`networkPolicies.apiserver.cidrs`,
+# else the `kubernetes` EndpointSlice looked up at install/upgrade), so this rule is not a path
+# to the internet. Outbound HTTPS goes through the egress proxy (policy 5), or, for a workload
+# whose client cannot use a proxy yet, policy 5b.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -109,9 +111,36 @@ spec:
   policyTypes:
     - Egress
   egress:
+    {{- $api := (.Values.networkPolicies.apiserver | default dict) }}
+    {{- $cidrs := $api.cidrs | default list }}
+    {{- if not $cidrs }}
+    {{- /* Discover the API server's endpoints at install/upgrade time (the `kubernetes`
+           EndpointSlice in `default`). Calico enforces egress after the Service DNAT, so the
+           endpoint address — not the ClusterIP — is what must be allowed. */}}
+    {{- $slices := lookup "discovery.k8s.io/v1" "EndpointSlice" "default" "" }}
+    {{- range ($slices.items | default list) }}
+    {{- if eq (index (.metadata.labels | default dict) "kubernetes.io/service-name") "kubernetes" }}
+    {{- range (.endpoints | default list) }}
+    {{- range .addresses }}
+    {{- $cidrs = append $cidrs (printf "%s/32" .) }}
+    {{- end }}
+    {{- end }}
+    {{- end }}
+    {{- end }}
+    {{- end }}
     - ports:
         - { protocol: TCP, port: 443 }
         - { protocol: TCP, port: 6443 }
+      {{- if $cidrs }}
+      # The Kubernetes API server only (networkPolicies.apiserver.cidrs, else discovered).
+      to:
+        {{- range ($cidrs | uniq) }}
+        - ipBlock: { cidr: {{ . | quote }} }
+        {{- end }}
+      {{- else }}
+      # No API server address known at render time (`helm template` without a cluster and no
+      # `networkPolicies.apiserver.cidrs`): this rule is NOT narrowed. Set the value for GitOps.
+      {{- end }}
 ---
 # 5) Only the egress proxy may reach the internet (the single chokepoint).
 apiVersion: networking.k8s.io/v1
@@ -155,6 +184,35 @@ spec:
         - { protocol: UDP, port: 8053 }
         - { protocol: TCP, port: 8053 }
 ---
+{{- range $i, $sel := ((.Values.networkPolicies.directHttpsEgress | default dict).workloads | default list) }}
+# 5b) Direct HTTPS for a workload whose client cannot use the egress proxy yet
+# (networkPolicies.directHttpsEgress.workloads). Public addresses on 443 only.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-direct-https-egress-{{ $sel.name }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "soa.labels" $ | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- toYaml $sel.matchLabels | nindent 6 }}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 100.64.0.0/10
+      ports:
+        - { protocol: TCP, port: 443 }
+---
+{{- end }}
 # 6) The agent SCHEDULE pods (REAL lockdown, A5-review-H-3). Each schedule CronJob pod is a
 # `curl` that POSTs ONE endpoint — `http://os-ui:3000/api/agents/scheduled-run` — with the
 # shared bearer; os-ui then files the run on its own queue and the engine executes it
