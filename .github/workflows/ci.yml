@@ -468,6 +468,20 @@ jobs:
           sudo sysctl -w vm.max_map_count=262144
           bash tests/observability/health-up.sh
           cd os-ui && node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test --test-concurrency=1 core/adapters/health/health.int.test.ts
+      - name: Platform rows read each version from the component (live health table)
+        working-directory: os-ui
+        env:
+          PLATFORM_IT: '1'
+          TRINO_HOST: 127.0.0.1
+          TRINO_PORT: '18080'
+          OPENSEARCH_URL: http://127.0.0.1:19200
+          OPA_URL: http://127.0.0.1:18182
+          AGENT_RUNS_DATABASE_URL: postgres://postgres:health-it-not-a-secret@127.0.0.1:15432/postgres
+          VICTORIA_METRICS_URL: http://127.0.0.1:18429
+          VICTORIA_LOGS_URL: http://127.0.0.1:19429
+          OTEL_COLLECTOR_HEALTH_URL: http://127.0.0.1:13134
+          OTEL_COLLECTOR_METRICS_URL: http://127.0.0.1:18889
+        run: node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test tabs/admin/lib/component-health.int.test.ts
       - name: LiteLLM orphan-span filter (on; then off = negative twin)
         run: |
           bash tests/observability/health-up.sh down

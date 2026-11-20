@@ -43,7 +43,7 @@ docker run -d --name $p-trino --network $net -p 127.0.0.1:18080:8080 --memory 16
 docker run -d --name $p-opensearch --network $net -p 127.0.0.1:19200:9200 --memory 1200m \
   -e discovery.type=single-node -e DISABLE_SECURITY_PLUGIN=true -e DISABLE_INSTALL_DEMO_CONFIG=true \
   -e OPENSEARCH_JAVA_OPTS="-Xms512m -Xmx512m" "$OS" >/dev/null
-docker run -d --name $p-pg --network $net -p 127.0.0.1:15432:5432 -e POSTGRES_PASSWORD=health-it-not-a-secret "$PG" >/dev/null
+docker run -d --name $p-pg --network $net -e PGDATA=/tmp/pgdata -p 127.0.0.1:15432:5432 -e POSTGRES_PASSWORD=health-it-not-a-secret "$PG" >/dev/null
 docker run -d --name $p-opa --network $net -p 127.0.0.1:18182:8181 "$OPA" run --server --addr=0.0.0.0:8181 >/dev/null
 docker run -d --name $p-vm --network $net --network-alias victoria-metrics -p 127.0.0.1:18429:8428 "$VM" >/dev/null
 docker run -d --name $p-vl --network $net --network-alias victoria-logs -p 127.0.0.1:19429:9428 "$VL" >/dev/null

@@ -40,20 +40,21 @@ grep -q "filter/litellm_orphan_spans" "$work/collector.yaml" && echo "collector:
 
 docker network create $net >/dev/null
 docker run -d --name $p-sink --network $net --network-alias langfuse-sink -v "$here/sink.yaml:/conf/sink.yaml:ro" -v "$work/out:/out" "$COL" --config=/conf/sink.yaml >/dev/null
-docker run -d --name $p-collector --network $net --network-alias otel-collector -e K8S_NODE_NAME=filter-it -v "$work/collector.yaml:/conf/config.yaml:ro" "$COL" --config=/conf/config.yaml >/dev/null
-docker run -d --name $p-pg --network $net -e POSTGRES_PASSWORD=filter-it-not-a-secret -e POSTGRES_DB=litellm "$PG" >/dev/null
+docker run -d --name $p-collector --network $net --network-alias otel-collector -p 127.0.0.1:18890:8888 -e K8S_NODE_NAME=filter-it -v "$work/collector.yaml:/conf/config.yaml:ro" "$COL" --config=/conf/config.yaml >/dev/null
+docker run -d --name $p-pg --network $net -e PGDATA=/tmp/pgdata -e POSTGRES_PASSWORD=filter-it-not-a-secret -e POSTGRES_DB=litellm "$PG" >/dev/null
 for _ in $(seq 1 60); do docker exec $p-pg pg_isready -U postgres >/dev/null 2>&1 && break; sleep 1; done
 # The env WP-32 ships (litellm.envVars on wp32/litellm-otel), plus the Collector as LiteLLM's
 # Langfuse OTel host — the documented way to put a collector in front of Langfuse.
 docker run -d --name $p-litellm --network $net -p 127.0.0.1:14000:4000 \
   -e DATABASE_URL=postgresql://postgres:filter-it-not-a-secret@$p-pg:5432/litellm \
-  -e LITELLM_MASTER_KEY=sk-filter-it-not-a-secret \
+  -e PROXY_MASTER_KEY=sk-filter-it-not-a-secret \
   -e LITELLM_OTEL_V2=true -e LITELLM_OTEL_LANGFUSE_SPAN_SCOPE=full \
   -e LITELLM_OTEL_BAGGAGE_PROMOTED_KEYS=litellm.team.id,litellm.team.alias,litellm.team.metadata,litellm.api_key.hash \
   -e LANGFUSE_OTEL_HOST=http://otel-collector:4319 \
   -e LANGFUSE_PUBLIC_KEY=pk-lf-filter-it -e LANGFUSE_SECRET_KEY=sk-lf-filter-it-not-a-secret \
   -v "$here/litellm-config.yaml:/app/config.yaml:ro" "$LITELLM_IMAGE" --config /app/config.yaml --port 4000 >/dev/null
-for _ in $(seq 1 180); do curl -fsS -o /dev/null http://127.0.0.1:14000/health/readiness && break; sleep 2; done
-curl -fsS http://127.0.0.1:14000/health/readiness >/dev/null || { docker logs --tail 60 $p-litellm >&2; exit 1; }
+# Ready = the proxy answers AND its database is connected (its background jobs need it).
+for _ in $(seq 1 300); do curl -fsS http://127.0.0.1:14000/health/readiness 2>/dev/null | grep -q '"db":"connected"' && break; sleep 2; done
+curl -fsS http://127.0.0.1:14000/health/readiness | grep -q '"db":"connected"' || { docker logs --tail 60 $p-litellm >&2; exit 1; }
 echo "litellm ready; filter mode=$mode"
 FILTER_IT=1 FILTER_MODE=$mode FILTER_SPANS="$work/out/spans.jsonl" node --test --test-concurrency=1 "$here/filter.int.test.mjs"
