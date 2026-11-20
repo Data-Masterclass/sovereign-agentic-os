@@ -21,8 +21,9 @@ stringData:
   LANGFUSE_INIT_PROJECT_NAME: "Agent Core"
   LANGFUSE_INIT_PROJECT_PUBLIC_KEY: {{ .Values.langfuseInit.publicKey | quote }}
   LANGFUSE_INIT_PROJECT_SECRET_KEY: {{ .Values.langfuseInit.secretKey | quote }}
-  LANGFUSE_INIT_USER_EMAIL: "alex@datamasterclass.com"
-  LANGFUSE_INIT_USER_NAME: "Alex"
+  {{- /* Email and name are overridable (the dev overlay sets them); unset = the old literals. */}}
+  LANGFUSE_INIT_USER_EMAIL: {{ .Values.langfuseInit.userEmail | default "alex@datamasterclass.com" | quote }}
+  LANGFUSE_INIT_USER_NAME: {{ .Values.langfuseInit.userName | default "Alex" | quote }}
   # Applied only when the user is CREATED: Langfuse's headless init never changes the password
   # of an existing user (web/src/initialize.ts). Rotation: docs/ops/secret-rotation.md.
   LANGFUSE_INIT_USER_PASSWORD: {{ .Values.langfuseInit.userPassword | quote }}

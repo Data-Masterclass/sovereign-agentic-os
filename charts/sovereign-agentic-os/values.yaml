@@ -307,6 +307,10 @@ langfuseInit:
   # user; changing it later does not change an existing user's password
   # (docs/ops/secret-rotation.md, "Langfuse admin password").
   userPassword: "langfuse-local-dev-admin"
+  # Optional overrides of the other local-profile literals (unset = the chart's dev literals):
+  # userEmail, userName (the Langfuse init user) and salt, nextauthSecret, encryptionKey
+  # (langfuse-core-secrets; encryptionKey is 64 hex chars). scripts/dev/bootstrap-secrets.sh sets
+  # them, and userPassword, to random values for the dev environment.
 
 # Langfuse v3 (MIT core) — wrapped upstream subchart, wired to OUR backends.
 langfuse:

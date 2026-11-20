@@ -1,0 +1,168 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+#
+# =============================================================================
+# values.dev.yaml — the DEV environment profile (docs/ops/dev-environment.md).
+# =============================================================================
+# Layered on the chart defaults, then the PRIVATE overlay that scripts/dev/bootstrap-secrets.sh
+# generates (random credentials, the synthetic demo users, the dev model key):
+#
+#   scripts/deploy.sh --env dev --from-registry main-<sha>
+#     = helm upgrade --install agentic-os charts/sovereign-agentic-os \
+#         -f values.dev.yaml -f <private overlay from the dev cluster> --set osUI.image.tag=...
+#
+# WHAT DEV IS. The same chart and the same real components as production, at the same pinned
+# images, on ONE smaller node (g2i.8, 8 vCPU / 32 GB). Only sizes are smaller. No component is
+# swapped for an imitation; the only optional stand-in is the model upstream
+# (values.dev.model-stub.yaml), and only when the owner chooses it.
+#
+# DATA. Synthetic only: the Northpeak gold mart (marts, generated in SQL), the Northpeak demo
+# cast and their demo domains (seed/ecommerce, run by scripts/dev/seed.sh). No production data,
+# no real user list, no backup of production is ever restored here.
+#
+# SECRETS. Like production, the chart renders its own Secrets (global.profile: local). EVERY
+# credential literal of values.yaml is replaced by a random value in the private overlay; this
+# file holds none. Capacity: charts/sovereign-agentic-os/capacity.dev.yaml (the dev node budget),
+#   node scripts/check-capacity.mjs --profile default \
+#     --budget charts/sovereign-agentic-os/capacity.dev.yaml --values values.dev.yaml
+# =============================================================================
+
+global:
+  profile: local       # the chart renders its Secrets; the private overlay makes them random
+  storageClass: ""     # SKE CSI default
+  # The bespoke images are private GHCR packages. bootstrap-secrets.sh creates this Secret from a
+  # READ-ONLY token (read:packages) the owner gives it; dev never holds a push credential.
+  imagePullSecrets:
+    - name: registry-pull-secret
+
+# --- Public route: ONE host, in the dev zone ----------------------------------------------------
+# The dev ingress-nginx Service is pinned to the reserved dev IP (scripts/dev/platform.sh), and
+# cert-manager issues the certificate. LiteLLM and Langfuse stay unpublished, as in production.
+ingress:
+  enabled: true
+  className: nginx
+  tlsIssuer: letsencrypt-prod
+  hosts:
+    osUI: os.dev.agentic.datamasterclass.com
+
+osUI:
+  publicUrl: https://os.dev.agentic.datamasterclass.com
+  offlineMock: refuse            # never invented numbers, also on dev
+  allowOfflineUserSeed: false
+  externalConnectorsEnabled: false
+  # The agent worker as its own Deployment, as in production (AT-c deletes it mid-run).
+  worker:
+    enabled: true
+    resources:
+      requests: { cpu: 100m, memory: 384Mi }
+      limits: { cpu: 1, memory: 1Gi }
+  resources:
+    requests: { cpu: 70m, memory: 192Mi }
+    limits: { cpu: 1, memory: 1Gi }
+  # A LOW budget per agent system (production: 5 a week).
+  agentSystemKey:
+    maxBudget: 1
+    budgetDuration: "7d"
+
+# --- Models: the same STACKIT AI Model Serving API, a SEPARATE low-budget key --------------
+# The key is the dev project's own Model Serving token (docs/ops/dev-environment.md "Dev model
+# key"); bootstrap-secrets.sh puts it into the private overlay (stackitPremium.local.apiKey).
+# STACKIT tokens carry no spend limit, so the cap is LiteLLM's: 5 a week for the shared key
+# (production: 25) and 1 a week per agent system (above).
+# As in production, no in-cluster model: the STACKIT API is the upstream.
+mockModel:
+  enabled: false
+
+litellmAgentKey:
+  maxBudget: 5
+  budgetDuration: "7d"
+  maxParallelRequests: 4
+
+# --- Synthetic seed -----------------------------------------------------------------------
+marts:
+  enabled: true          # the Northpeak gold mart, generated in SQL (no real data)
+  rows: 150000
+
+# Seeded state survives a pod restart; `scripts/dev/reset.sh` wipes it on purpose.
+objectStorage:
+  persistence:
+    enabled: true
+    size: 10Gi
+  resources:
+    requests: { cpu: 100m, memory: 384Mi }
+    limits: { cpu: 1, memory: 1Gi }
+
+# --- Reduced sizes ------------------------------------------------------------------------
+# Requests and limits sized to one demo tenant and the acceptance journeys. JVM heaps shrink
+# with their limits so a limit is never below its heap.
+trino:
+  jvm:
+    maxHeap: 1536M
+  query:
+    maxMemory: 1GB
+    maxMemoryPerNode: 640MB
+  resources:
+    requests: { cpu: 500m, memory: 1Gi }
+    limits: { cpu: 2, memory: 2Gi }
+
+opensearch:
+  opensearchJavaOpts: "-Xms512m -Xmx512m"
+  resources:
+    requests: { cpu: 150m, memory: 768Mi }
+    limits: { cpu: 1, memory: 1280Mi }
+
+clickhouse:
+  resources:
+    requests: { cpu: 100m, memory: 768Mi }
+    limits: { cpu: 1, memory: 1280Mi }
+
+docling:
+  resources:
+    requests: { cpu: 250m, memory: 768Mi }
+    limits: { cpu: 2, memory: 1536Mi }
+
+polaris:
+  resources:
+    requests: { cpu: 100m, memory: 384Mi }
+    limits: { cpu: 1, memory: 768Mi }
+
+litellm:
+  resources:
+    requests: { cpu: 100m, memory: 512Mi }
+    limits: { cpu: 1, memory: 1536Mi }
+
+langfuse:
+  langfuse:
+    web:
+      resources:
+        requests: { cpu: 100m, memory: 512Mi }
+        limits: { cpu: 1, memory: 1Gi }
+    worker:
+      resources:
+        requests: { cpu: 100m, memory: 512Mi }
+        limits: { cpu: 1, memory: 768Mi }
+
+postgres:
+  resources:
+    requests: { cpu: 100m, memory: 384Mi }
+    limits: { cpu: 1, memory: 768Mi }
+
+dataRunner:
+  resources:
+    requests: { cpu: 50m, memory: 192Mi }
+    limits: { cpu: 1, memory: 512Mi }
+
+queryTool:
+  resources:
+    requests: { cpu: 50m, memory: 192Mi }
+    limits: { cpu: 1, memory: 512Mi }
+
+dagster:
+  dagsterWebserver:
+    resources:
+      requests: { cpu: 50m, memory: 192Mi }
+      limits: { cpu: 1, memory: 512Mi }
+  dagsterDaemon:
+    resources:
+      requests: { cpu: 50m, memory: 192Mi }
+      limits: { cpu: 1, memory: 512Mi }

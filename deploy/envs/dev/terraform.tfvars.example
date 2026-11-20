@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+#
+# Copy to deploy/envs/dev/terraform.tfvars (gitignored). No secrets here.
+project_id = "00000000-0000-0000-0000-000000000000" # the DEV project — never the production one
+
+# Key of a service account of the DEV project (Editor on that project only). Gitignored.
+service_account_key_path = "../../../stackit/dev-sa-key.json"
+
+# Defaults, shown for review:
+# region                 = "eu01"
+# name_prefix            = "dm-agentic-os-dev"
+# cluster_name           = "dmagosdev"
+# kubernetes_version_min = "1.35"   # = production
+# node_machine_type      = "g2i.8"  # 8 vCPU / 32 GB, EUR 294.60/month
+# node_volume_size_gb    = 100
+# dns_name               = "dev.agentic.datamasterclass.com"   # record added at Cloudflare
+# ingress_subdomains     = ["os"]

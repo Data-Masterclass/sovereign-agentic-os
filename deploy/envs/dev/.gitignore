@@ -1,0 +1,7 @@
+# State and plans carry the kubeconfig and object-storage keys. Never commit them.
+*.tfstate
+*.tfstate.*
+*.tfplan
+.terraform/
+terraform.tfvars
+kubeconfig*.yaml
