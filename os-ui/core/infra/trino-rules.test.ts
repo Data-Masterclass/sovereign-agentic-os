@@ -240,31 +240,50 @@ test('the evaluator matches the WHOLE value, like Trino', () => {
 });
 
 // ---- seed writers: the chart's post-install Jobs on a FRESH install (first dev install, 2026-11-20)
+// The seed schema here is `seed` (no domain owns it yet); `sales` IS a domain in `input`.
 const withWriters: RulesInput = {
   ...input,
   seedWriters: [
-    { user: 'dbt-sales', schema: 'sales' },
-    { user: 'northpeak-marts', schema: 'sales' },
-    { user: 'northpeak-marts', schema: 'sales' }, // a duplicate is written once
+    { user: 'dbt-sales', schema: 'seed' },
+    { user: 'northpeak-marts', schema: 'seed' },
+    { user: 'northpeak-marts', schema: 'seed' }, // a duplicate is written once
     { user: 'dbt-sales', schema: 'personal_amir' }, // a personal lane is never grantable
+    { user: 'northpeak-marts', schema: 'sales' }, // a real DOMAIN's schema is never grantable
   ],
 };
 
 test('NEGATIVE TWIN (the fresh-install bug): without seed writers the enumerated rules deny the hooks CREATE SCHEMA', () => {
   const r = buildTrinoRules(input);
-  assert.equal(schemaOwnerAllowed(r, 'dbt-sales', 'sales'), false);
-  assert.equal(schemaOwnerAllowed(r, 'northpeak-marts', 'sales'), false);
+  assert.equal(schemaOwnerAllowed(r, 'dbt-sales', 'seed'), false);
+  assert.equal(schemaOwnerAllowed(r, 'northpeak-marts', 'seed'), false);
 });
 
 test('a seed writer owns EXACTLY its one schema: create there, nothing anywhere else', () => {
   const r = buildTrinoRules(withWriters);
   for (const u of ['dbt-sales', 'northpeak-marts']) {
-    assert.equal(schemaOwnerAllowed(r, u, 'sales'), true, `${u} may create/own sales`);
-    assert.deepEqual(tablePrivilegesFor(r, u, 'sales'), [...OWNER_PRIVILEGES], `${u} may write tables in sales`);
+    assert.equal(schemaOwnerAllowed(r, u, 'seed'), true, `${u} may create/own seed`);
+    assert.deepEqual(tablePrivilegesFor(r, u, 'seed'), [...OWNER_PRIVILEGES], `${u} may write tables in seed`);
     assert.equal(schemaOwnerAllowed(r, u, 'finance'), false, `${u} may not own finance`);
     assert.equal(schemaOwnerAllowed(r, u, 'marketing'), false, `${u} may not create an unknown schema`);
     assert.deepEqual(tablePrivilegesFor(r, u, 'finance'), ['SELECT'], `${u} keeps only the domain read fallthrough elsewhere`);
   }
+});
+
+test('a seed writer NEVER owns a real domain\'s schema: the domain owns it, the writer rule is not written', () => {
+  const r = buildTrinoRules(withWriters);
+  assert.equal(schemaOwnerAllowed(r, 'northpeak-marts', 'sales'), false);
+  assert.deepEqual(tablePrivilegesFor(r, 'northpeak-marts', 'sales'), ['SELECT'], 'outsider SELECT only');
+  assert.ok(!renderTrinoRules(r).includes('"user": "^northpeak-marts$",\n      "schema": "^sales$"'), 'no writer rule for a domain schema');
+  assert.equal(schemaOwnerAllowed(r, 'amir', 'sales'), true, 'the domain member keeps it');
+});
+
+test('NEGATIVE TWIN: the moment a domain with the seed schema is created, the writer loses it (re-reconcile)', () => {
+  const before = buildTrinoRules(withWriters);
+  assert.equal(schemaOwnerAllowed(before, 'dbt-sales', 'seed'), true, 'no domain owns seed yet');
+  const after = buildTrinoRules({ ...withWriters, domains: [...withWriters.domains, { name: 'seed', schema: 'seed', principals: ['cleo'] }] });
+  assert.equal(schemaOwnerAllowed(after, 'dbt-sales', 'seed'), false, 'a new domain took seed');
+  assert.equal(schemaOwnerAllowed(after, 'northpeak-marts', 'seed'), false);
+  assert.equal(schemaOwnerAllowed(after, 'cleo', 'seed'), true, 'its member owns it');
 });
 
 test('a seed writer can never be granted a personal lane, and the lane stays closed', () => {

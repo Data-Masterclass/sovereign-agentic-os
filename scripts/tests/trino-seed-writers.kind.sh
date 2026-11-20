@@ -19,7 +19,8 @@
 # hooks' statements are run AS the hook users:
 #   1. dbt-sales and northpeak-marts: CREATE SCHEMA IF NOT EXISTS sales, CTAS in it      -> allowed
 #   2. the same users: CREATE SCHEMA in another domain, in a personal lane, an unknown one -> denied
-#   3. a sales member still owns sales; an outsider cannot create it                       -> as before
+#   3. once `sales` is a REAL domain (the directory grows one), the writers lose it: only the
+#      domain's principals own it, the hook users are denied                               -> denied
 #   4. NEGATIVE TWIN: the same directory WITHOUT seed writers (today's main) -> the hook CREATE is denied
 # Own kind cluster and kubeconfig, deleted at the end. Not the full chart: OPA (which already allows
 # these users) is not in the loop; this proves the file rule, which was the one that denied.
@@ -45,14 +46,14 @@ check "the chart renders TRINO_SEED_WRITERS for its seed Jobs" "dbt-sales:sales"
 check "both seed Jobs are listed" "northpeak-marts:sales" "$writers"
 
 # ---- rules.json from the OS's own generator (with, and without, the writers) -----------------
-gen() { # gen <writers or empty> <out>
-  (cd os-ui && SEED_WRITERS="$1" node --import ./scripts/test-setup.mjs --input-type=module -e "
+gen() { # gen <writers or empty> <out> [with-sales-domain]
+  (cd os-ui && SEED_WRITERS="$1" SALES_DOMAIN="${3:-}" node --import ./scripts/test-setup.mjs --input-type=module -e "
     const { buildTrinoRules, renderTrinoRules } = await import('./core/infra/trino-rules.ts');
     const seedWriters = (process.env.SEED_WRITERS || '').split(',').filter(Boolean).map((p) => { const [user, schema] = p.split(':'); return { user, schema }; });
     const cast = ['nova-admin', 'riley-sales', 'sasha-sales', 'kai-mktg'];
     process.stdout.write(renderTrinoRules(buildTrinoRules({
       serviceUsers: ['dbt-runner'], principalPattern: '[A-Za-z0-9][A-Za-z0-9._-]{0,63}',
-      domains: [{ name: 'sales', schema: 'sales', principals: ['nova-admin', 'riley-sales', 'sasha-sales'] },
+      domains: [...(process.env.SALES_DOMAIN ? [{ name: 'sales', schema: 'sales', principals: ['nova-admin', 'riley-sales', 'sasha-sales'] }] : []),
                 { name: 'marketing', schema: 'marketing', principals: ['kai-mktg', 'nova-admin'] }],
       personalLanes: cast.map((uid) => ({ uid, schema: 'personal_' + uid.replace(/-/g, '_') })),
       seedWriters,
@@ -60,6 +61,7 @@ gen() { # gen <writers or empty> <out>
 }
 gen "$writers" "$TMP/rules-fixed.json" || { echo "rules generation failed"; exit 2; }
 gen "" "$TMP/rules-main.json" || { echo "rules generation failed"; exit 2; }
+gen "$writers" "$TMP/rules-domain.json" with-sales-domain || { echo "rules generation failed"; exit 2; }
 
 # ---- a real Trino on kind --------------------------------------------------------------------
 kind create cluster --name "$NAME" --kubeconfig "$KUBECONFIG" --wait 120s >/dev/null 2>&1 || { echo "kind create failed"; exit 2; }
@@ -119,8 +121,17 @@ out=$(sql dbt-sales "CREATE SCHEMA memory.marketing"); check "dbt-sales: another
 out=$(sql northpeak-marts "CREATE SCHEMA memory.personal_nova_admin"); check "northpeak-marts: a personal lane is denied" "Access Denied" "$out"
 out=$(sql dbt-sales "CREATE SCHEMA memory.anything_else"); check "dbt-sales: an unknown schema is denied" "Access Denied" "$out"
 
-echo "== 3. the domain rules are unchanged"
-out=$(sql sasha-sales "CREATE TABLE memory.sales.member_table AS SELECT 1 AS x"); check "a sales member still writes in sales" "CREATE TABLE: 1 row" "$out"
+echo "== 3. once sales is a REAL domain, the seed writers lose it; only its principals own it"
+K create configmap trino-rules --from-file=rules.json="$TMP/rules-domain.json" --dry-run=client -o yaml | K replace -f - >/dev/null
+denied=''
+for _ in $(seq 1 40); do
+  out=$(sql northpeak-marts "CREATE SCHEMA IF NOT EXISTS memory.sales")
+  case $out in *"Access Denied"*) denied=1; break ;; esac
+  sleep 3
+done
+holds "NEGATIVE TWIN: northpeak-marts may not own the sales DOMAIN's schema" [ -n "$denied" ]
+out=$(sql dbt-sales "CREATE TABLE memory.sales.after_domain AS SELECT 1 AS x"); check "dbt-sales may not write tables in the sales domain" "Access Denied" "$out"
+out=$(sql sales "CREATE TABLE memory.sales.by_domain AS SELECT 1 AS x"); check "the domain principal sales still writes there" "CREATE TABLE: 1 row" "$out"
 out=$(sql kai-mktg "CREATE TABLE memory.sales.outsider AS SELECT 1 AS x"); check "an outsider still cannot write in sales" "Access Denied" "$out"
 
 echo "== 4. NEGATIVE TWIN: the same fresh-install directory without seed writers (main before this fix)"

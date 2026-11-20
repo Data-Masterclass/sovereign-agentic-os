@@ -99,7 +99,11 @@ One shape, two renderers, one test that keeps them equal
    happened on the first dev install (2026-11-20). The chart passes them as `TRINO_SEED_WRITERS`
    (`user:schema,…`, rendered only for enabled Jobs). The generator makes each writer the owner of
    **exactly that one schema**, with table privileges in it and nothing else, placed after the
-   personal-lane rules so that a writer can never be granted a `personal_*` schema. Proof: a real
+   personal-lane rules so that a writer can never be granted a `personal_*` schema. **A writer never
+   owns a real domain's schema.** When a domain already owns that schema, or one is created later
+   (every directory write reconciles again), the writer rule is not written, and only the domain's
+   principals own the schema. A seed Job that writes into a real domain runs as that domain's
+   principal instead; `values.dev.yaml` does this with `sales`. Proof: a real
    Trino on kind evaluates the generated file (`scripts/tests/trino-seed-writers.kind.sh`). It
    shows that the Jobs may create and fill `sales` and nothing else, and that they are denied
    without the writers (the negative twin).
