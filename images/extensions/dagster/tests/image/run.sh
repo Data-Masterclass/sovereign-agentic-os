@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Borek Data Ventures UG
 #
-# Dagster image tests against the REAL image (01 §7.1 tests 1–2) plus the eject test.
+# Dagster image tests against the REAL image (01 §7.1 tests 1–2), the eject test and the literal-safety test.
 #   run.sh <image>          e.g. run.sh sovereign-os/dagster:test   (CI builds it first)
 # Needs docker. Starts a stock Trino (tag read from the chart) and a bare python container with
 # ONLY dbt-core + dbt-trino at the versions the image carries — read from the image, not repeated.
@@ -49,3 +49,9 @@ docker run --rm --network "$NET" -v "$REPO:/src:ro" -e SRC=/src -e TRINO_HOST="$
   if pip list 2>/dev/null | grep -iqE '^dagster'; then echo 'dagster must not be present'; exit 1; fi
   python3 /src/images/extensions/dagster/tests/image/eject.py
 "
+
+# Literal safety: real dbt parse + compile IN THE DAGSTER IMAGE on the generator's fuzz project and
+# its legacy-strip twin, with Trino's query log as the side-effect oracle (literal_safety.py).
+echo "== literal-safety: dbt parse + compile in $IMAGE against trinodb/trino:$TRINO_TAG"
+docker run --rm --network "$NET" -v "$REPO:/src:ro" -e SRC=/src -e TRINO_HOST="$TRINO" "$IMAGE" \
+  python3 /src/images/extensions/dagster/tests/image/literal_safety.py
