@@ -14,16 +14,17 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { _reset, createDomain, listDomains } from '@tabs/admin/lib/domains';
 
-for (const name of ['platform', 'Platform', ' PLATFORM ']) {
+for (const name of ['platform', 'Platform', ' PLATFORM ', 'Domain Sales', 'domain_sales', 'User Bob', 'user-abc123', 'Personal Alice', 'personal_alice', 'Personal Finance', 'personal', 'information schema', 'system', 'default', 'global', 'iceberg', 'os']) {
   test(`createDomain refuses the reserved id for "${name}"`, () => {
     _reset();
     assert.throws(() => createDomain({ name, owner: 'admin@example.com' }), (e: Error & { status?: number }) => e.status === 400 && /reserved/i.test(e.message));
-    assert.ok(!listDomains().some((d) => d.id === 'platform'), 'nothing was stored');
+    assert.equal(listDomains().length, 0, 'nothing was stored');
   });
 }
 
-test('TWIN: a name that only contains the word is a valid domain', () => {
-  _reset();
-  const d = createDomain({ name: 'platform-team', owner: 'admin@example.com' });
-  assert.equal(d.id, 'platform-team');
-});
+for (const [name, id] of [['platform-team', 'platform-team'], ['Personalfinance', 'personalfinance'], ['Sales', 'sales'], ['System Ops', 'system-ops']] as const) {
+  test(`TWIN: "${name}" is a valid domain`, () => {
+    _reset();
+    assert.equal(createDomain({ name, owner: 'admin@example.com' }).id, id);
+  });
+}
