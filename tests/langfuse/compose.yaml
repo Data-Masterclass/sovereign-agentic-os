@@ -1,0 +1,160 @@
+# Real Langfuse + LiteLLM for os-ui's tracing e2e test (WP-31, design 05 §7).
+#
+# The Langfuse half is Langfuse's own documented self-host compose
+# (https://github.com/langfuse/langfuse/blob/v3.194.1/docker-compose.yml, MIT), pinned to the server
+# version that runs in production (3.194.1) and to production's ClickHouse (24.8). Only the host
+# ports differ, so the stack can run beside other local stacks; nothing but web (3000) and LiteLLM
+# (4000) is published. The LiteLLM half is the production image and the production callback
+# settings (charts/sovereign-agentic-os/values.yaml `litellm_settings`), with a scripted
+# OpenAI-compatible model that the test process serves on the host (port 18931).
+#
+#   docker compose -f tests/langfuse/compose.yaml -p wp31-langfuse up -d --wait
+#   cd os-ui && TRACING_E2E=1 node --experimental-test-module-mocks --import ./scripts/test-setup.mjs \
+#     --test tabs/agents/lib/engine/tracing.e2e.test.ts
+#   docker compose -f tests/langfuse/compose.yaml -p wp31-langfuse down -v
+#
+# Throwaway credentials: this stack exists for one test run and is never reachable from outside.
+x-langfuse-env: &langfuse-env
+  NEXTAUTH_URL: http://localhost:3000
+  DATABASE_URL: postgresql://postgres:postgres@postgres:5432/postgres
+  SALT: e2e-salt
+  ENCRYPTION_KEY: "0000000000000000000000000000000000000000000000000000000000000000"
+  TELEMETRY_ENABLED: "false"
+  CLICKHOUSE_MIGRATION_URL: clickhouse://clickhouse:9000
+  CLICKHOUSE_URL: http://clickhouse:8123
+  CLICKHOUSE_USER: clickhouse
+  CLICKHOUSE_PASSWORD: clickhouse
+  CLICKHOUSE_CLUSTER_ENABLED: "false"
+  LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
+  LANGFUSE_S3_EVENT_UPLOAD_REGION: auto
+  LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: minio
+  LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: miniosecret
+  LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://minio:9000
+  LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+  LANGFUSE_S3_EVENT_UPLOAD_PREFIX: events/
+  LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: langfuse
+  LANGFUSE_S3_MEDIA_UPLOAD_REGION: auto
+  LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: minio
+  LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: miniosecret
+  LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: http://minio:9000
+  LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: "true"
+  LANGFUSE_S3_MEDIA_UPLOAD_PREFIX: media/
+  REDIS_HOST: redis
+  REDIS_PORT: "6379"
+  REDIS_AUTH: myredissecret
+  # Process ingestion promptly so the test does not wait on the default batching delay.
+  LANGFUSE_INGESTION_QUEUE_DELAY_MS: "0"
+  LANGFUSE_INGESTION_CLICKHOUSE_WRITE_INTERVAL_MS: "200"
+
+x-depends: &depends
+  postgres: { condition: service_healthy }
+  minio: { condition: service_healthy }
+  redis: { condition: service_healthy }
+  clickhouse: { condition: service_healthy }
+
+services:
+  langfuse-worker:
+    restart: always
+    image: docker.io/langfuse/langfuse-worker:3.194.1
+    depends_on: *depends
+    environment: *langfuse-env
+
+  langfuse-web:
+    restart: always
+    image: docker.io/langfuse/langfuse:3.194.1
+    depends_on: *depends
+    ports:
+      - 127.0.0.1:${LANGFUSE_E2E_PORT:-13031}:3000
+    environment:
+      <<: *langfuse-env
+      NEXTAUTH_SECRET: e2e-nextauth
+      AUTH_DISABLE_SIGNUP: "true"
+      LANGFUSE_INIT_ORG_ID: e2e-org
+      LANGFUSE_INIT_ORG_NAME: e2e
+      LANGFUSE_INIT_PROJECT_ID: e2e-project
+      LANGFUSE_INIT_PROJECT_NAME: agent-core
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: pk-lf-e2e-public
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: sk-lf-e2e-secret
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://$$(hostname -i):3000/api/public/health || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+
+  clickhouse:
+    restart: always
+    image: docker.io/clickhouse/clickhouse-server:24.8@sha256:1ffa82edee000a42c09313bd9f1293d94c570aee74babc1b3ca9983a35fa597b
+    user: "101:101"
+    environment:
+      CLICKHOUSE_DB: default
+      CLICKHOUSE_USER: clickhouse
+      CLICKHOUSE_PASSWORD: clickhouse
+    healthcheck:
+      test: wget --no-verbose --tries=1 --spider http://localhost:8123/ping || exit 1
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  minio:
+    restart: always
+    image: cgr.dev/chainguard/minio
+    entrypoint: sh
+    command: -c 'mkdir -p /data/langfuse && minio server --address ":9000" --console-address ":9001" /data'
+    environment:
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: miniosecret
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 2s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    restart: always
+    image: docker.io/redis:7
+    command: --requirepass myredissecret --maxmemory-policy noeviction
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "myredissecret", "ping"]
+      interval: 3s
+      timeout: 10s
+      retries: 10
+
+  postgres:
+    restart: always
+    image: docker.io/postgres:17
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+      TZ: UTC
+      PGTZ: UTC
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  # The production gateway image and callback settings. The model it routes to is the test
+  # process's scripted stub on the host.
+  litellm:
+    restart: always
+    image: ghcr.io/berriai/litellm-database:1.90.0
+    depends_on:
+      langfuse-web: { condition: service_healthy }
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    ports:
+      - 127.0.0.1:${LITELLM_E2E_PORT:-14031}:4000
+    environment:
+      LANGFUSE_PUBLIC_KEY: pk-lf-e2e-public
+      LANGFUSE_SECRET_KEY: sk-lf-e2e-secret
+      LANGFUSE_HOST: http://langfuse-web:3000
+      STUB_API_BASE: http://host.docker.internal:${STUB_MODEL_PORT:-18931}/v1
+    volumes:
+      - ./litellm-config.yaml:/app/config.yaml:ro
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:4000/health/liveliness').status==200 else 1)\""]
+      interval: 5s
+      timeout: 5s
+      retries: 60
