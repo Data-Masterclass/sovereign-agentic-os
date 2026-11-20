@@ -502,3 +502,46 @@ test_unnamed_individual_filtered if {
 	rowFilters == {{"expression": "false"}} with input as rows_of("someone-else", "named")
 		with data.governance as entitle_gov
 }
+
+# --- Delete-domain purge catalog --------------------------------------------
+
+purge_drop_input(user, catalog) := {
+	"context": {"identity": {"user": user}},
+	"action": {
+		"operation": "DropTable",
+		"resource": {"table": {"catalogName": catalog, "schemaName": "personal_jonas", "tableName": "bronze_test"}},
+	},
+}
+
+test_purge_user_drops_on_the_purge_catalog if {
+	allow with input as purge_drop_input("os-domain-delete", "iceberg_purge") with data.governance as mock_data
+}
+
+test_anyone_else_on_the_purge_catalog_is_denied if {
+	not allow with input as purge_drop_input("jonas", "iceberg_purge") with data.governance as mock_data
+	not allow with input as purge_drop_input("alex", "iceberg_purge") with data.governance as mock_data
+}
+
+test_purge_user_outside_the_purge_catalog_is_denied if {
+	not allow with input as purge_drop_input("os-domain-delete", "iceberg") with data.governance as mock_data
+}
+
+test_purge_catalog_hidden_from_others_in_a_catalog_filter if {
+	not allow with input as {
+		"context": {"identity": {"user": "alex"}},
+		"action": {"operation": "FilterCatalogs", "filterResources": [{"catalog": {"name": "iceberg_purge"}}]},
+	}
+		with data.governance as mock_data
+}
+
+test_nobody_impersonates_the_purge_user if {
+	not allow with input as {
+		"context": {"identity": {"user": "dbt-runner"}},
+		"action": {"operation": "ImpersonateUser", "resource": {"user": {"user": "os-domain-delete"}}},
+	}
+		with data.governance as mock_data
+}
+
+test_owner_still_drops_own_personal_table_on_iceberg if {
+	allow with input as purge_drop_input("jonas", "iceberg") with data.governance as mock_data
+}

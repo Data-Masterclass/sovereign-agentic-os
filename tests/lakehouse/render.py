@@ -223,7 +223,7 @@ def main(out, extra):
     write(os.path.join(out, 'env', 'catalog-init.env'), env_file(ci, sec))
     write(os.path.join(out, 'sh', 'catalog-init.sh'), script(ci))
     # The purge-on-drop Job, when the chart renders it (polaris.catalog.purgeOnDrop).
-    purge = [d for d in docs if d.get('kind') == 'Job' and d['metadata']['name'] == 'polaris-catalog-purge']
+    purge = [d for d in docs if d.get('kind') == 'Job' and d['metadata']['name'] == 'polaris-purge']
     if purge:
         pc = purge[0]['spec']['template']['spec']['containers'][0]
         write(os.path.join(out, 'env', 'catalog-purge.env'), env_file(pc, sec))
