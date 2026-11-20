@@ -515,6 +515,25 @@ Promise.all(["/v1/models", "/v1/mcp/tools"].map(p => fetch(u + p, { headers: h }
       case $rc in 0) pass "$line (reads: $secs)" ;; 2) echo "   skip $line" ;; *) fail "$kind1/$d: $line" ;; esac
     done < <(python3 "$REPO/scripts/lib/rotation-checks.py" readers "$rw/all.json" $rotated)
     [ "$found" -gt 0 ] || fail "no workload reads any rotated Secret: the discovery found nothing ($rotated)"
+    # The known readers are a MINIMUM: each must still exist and still name its Secrets.
+    local miss l st un
+    miss=$(printf '%s\n' "Deployment $LITELLM_SVC litellm-credentials" \
+        "Deployment $LANGFUSE_SVC langfuse-core-secrets,langfuse-init" \
+        "Deployment $REL-langfuse-worker langfuse-core-secrets,langfuse-init" \
+        "Deployment os-ui agent-runtime-token,langfuse-init,litellm-credentials" \
+        "Deployment os-ui-worker agent-runtime-token,langfuse-init" \
+        "Deployment $DAGSTER_CODE agent-runtime-token" | python3 "$REPO/scripts/lib/rotation-checks.py" known-missing "$rw/all.json")
+    if [ -n "$miss" ]; then while read -r l; do fail "known reader $l"; done <<<"$miss"; else pass "the 6 known readers exist and still name their Secrets"; fi
+    # Pods and Jobs with no owner (nothing restarts them) must not read a rotated Secret while live.
+    k get pods,jobs -A -o json > "$rw/pj.json" 2>/dev/null || k get pods,jobs -o json > "$rw/pj.json"
+    # shellcheck disable=SC2086
+    un=$(python3 "$REPO/scripts/lib/rotation-checks.py" unowned "$rw/pj.json" "$NS" $rotated)
+    while read -r st l; do
+      [ -n "$st" ] || continue
+      if [ "$st" = live ]; then fail "unowned $l reads a rotated Secret and is still running: no rollout restarts it (delete or re-run it)"
+      else echo "   note finished unowned $l (runs nothing; delete it when convenient)"; fi
+    done <<<"$un"
+    grep -q '^live ' <<<"$un" || pass "no live unowned Pod or Job reads a rotated Secret"
     rm -rf "$rw"
 
     say "Langfuse (port-forward)"
