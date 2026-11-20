@@ -62,9 +62,11 @@ holds "state file holds no value" sh -c "! grep -qF -- '$OLD' '${F%.yaml}.state.
 
 echo "Langfuse encrypted entries present → encryptionKey kept"
 printf 'llm_api_keys|2\n' > "$FAKE/lfenc.txt"
+before=$(ls "$T"/secrets/overlays/ | sort)
 out=$(bash $RS prepare --context fake 2>&1); rc=$?
+rc_is "a second prepare in the same second succeeds (no file name collision)" 0
 check "reported" "encrypted entr(ies) exist → NOT rotated" "$out"
-F2=$(ls -t "$T"/secrets/overlays/rotation-*[0-9].yaml | head -1)
+F2=$(comm -13 <(echo "$before") <(ls "$T"/secrets/overlays/ | sort) | grep -E '^rotation-[0-9-]+-[0-9a-f]+\.yaml$' | head -1); F2=$T/secrets/overlays/$F2
 holds "no encryptionKey in the overlay" test -z "$(G "$F2" langfuseCoreSecrets.encryptionKey)"
 printf 'llm_api_keys|0\n' > "$FAKE/lfenc.txt"
 

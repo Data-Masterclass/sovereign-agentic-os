@@ -169,7 +169,8 @@ state_path() { python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["
 prepare() {
   command -v openssl >/dev/null || die "openssl not found"
   mkdir -p "$SECRETS_DIR"; chmod 700 "$SECRETS_DIR" "$(dirname "$SECRETS_DIR")"
-  local stamp uid ver; stamp=$(date +%Y%m%d-%H%M%S); uid=$(cluster_uid); ver=$(live_version)
+  # A random suffix: two runs in the same second must not collide (the files are created exclusively).
+  local stamp uid ver; stamp=$(date +%Y%m%d-%H%M%S)-$(rand_hex 3); uid=$(cluster_uid); ver=$(live_version)
   say "context $CTX (kube-system uid ${uid:0:8}…) / namespace $NS / release $REL / os-ui $ver"
 
   local old_master old_salt
@@ -481,7 +482,7 @@ sys.exit(0 if all(datetime.fromisoformat(t.replace("Z", "+00:00")) > dep for t i
 password() {
   command -v openssl >/dev/null || die "openssl not found"
   mkdir -p "$SECRETS_DIR"; chmod 700 "$SECRETS_DIR"
-  local stamp f; stamp=$(date +%Y%m%d-%H%M%S); f="$SECRETS_DIR/langfuse-password-$stamp.yaml"
+  local stamp f; stamp=$(date +%Y%m%d-%H%M%S)-$(rand_hex 3); f="$SECRETS_DIR/langfuse-password-$stamp.yaml"
   local pw; pw=$(openssl rand -base64 30 | tr -d '/+=\n' | cut -c1-32)
   pairs new "$pw" old "$(secret_key langfuse-init LANGFUSE_INIT_USER_PASSWORD)" uid "$(cluster_uid)" ns "$NS" rel "$REL" | pairs_json | python3 -c '
 import json, os, sys, yaml
