@@ -152,3 +152,19 @@ test('reportFilename is filesystem-safe and time-stamped', () => {
   assert.match(fn, /^run-campaign-analyst-2026-07-13T09-30\.pdf$/);
   assert.equal(reportFilename('', 0).startsWith('run-run-'), true);
 });
+
+test('per-agent metrics read the gateway generation: LiteLLM keeps the agent under metadata.requester_metadata.node (WP-31)', () => {
+  // The shape a LiteLLM 1.90 legacy-callback generation has in Langfuse (observed in tracing.e2e).
+  const gen = (node: string, total: number) => ({
+    type: 'GENERATION',
+    name: 'litellm-acompletion',
+    usage: { total },
+    calculatedTotalCost: 0.001,
+    metadata: { requester_metadata: { node, tags: ['run:r1'] } },
+  });
+  const m = shapeTraceMetrics([gen('planner', 15), gen('planner', 15), gen('writer', 20)] as never, ['planner', 'writer']);
+  assert.equal(m.perNode.planner?.tokens, 30);
+  assert.equal(m.perNode.writer?.tokens, 20);
+  assert.ok((m.perNode.writer?.costUsd ?? 0) > 0);
+  assert.equal(m.totals.tokens, 50);
+});

@@ -15,11 +15,19 @@ import type { AddressInfo } from 'node:net';
 
 /** A local listener standing in for the Langfuse API: it records every request body. */
 const received: { url: string; body: string }[] = [];
+/** Trace ids this fake Langfuse holds (for the deep-link probe). */
+const existingTraces = new Set<string>();
 const server = createServer((req, res) => {
   let body = '';
   req.on('data', (c) => (body += c));
   req.on('end', () => {
     received.push({ url: req.url ?? '', body });
+    const trace = (req.url ?? '').match(/^\/api\/public\/traces\/([^/?]+)$/);
+    if (trace) {
+      res.writeHead(existingTraces.has(decodeURIComponent(trace[1])) ? 200 : 404, { 'content-type': 'application/json' });
+      res.end('{}');
+      return;
+    }
     res.writeHead(207, { 'content-type': 'application/json' });
     res.end(JSON.stringify({ successes: [], errors: [] }));
   });
@@ -27,6 +35,8 @@ const server = createServer((req, res) => {
 await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
 server.unref();
 process.env.LANGFUSE_URL = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+process.env.LANGFUSE_PUBLIC_KEY = 'pk-test';
+process.env.LANGFUSE_SECRET_KEY = 'sk-test';
 
 const { observationsQuery, traceUrlFor, scoreTrace, flushLangfuse, langfuseTraceId, UnfilteredLangfuseQueryError } = await import('@core/infra/langfuse');
 const { config } = await import('@core/kernel/config');
@@ -62,6 +72,22 @@ test('LANGFUSE-LINK: the trace URL deep-links to ONE run trace, id = createTrace
   assert.match(url!, /\/trace\/[0-9a-f]{32}$/);
   assert.ok(!url!.endsWith('/traces'), 'the A2 link pointed at the list page');
   assert.equal(await traceUrlFor(''), undefined);
+});
+
+test('LANGFUSE-LINK: a run traced before the OTel writer links to its LEGACY trace id; an unknown run gets the new id', async () => {
+  const oldRun = 'run_0ld00000-0000-4000-8000-000000000001';
+  existingTraces.clear();
+  existingTraces.add(oldRun); // pre-switch: trace id = raw run id
+  assert.equal(await traceUrlFor(oldRun), `${config.langfuseConsoleUrl}/trace/${oldRun}`, 'the old run opens its own trace, not a not-found page');
+
+  existingTraces.add(await langfuseTraceId(oldRun)); // resumed after the switch: the mapped trace exists too
+  assert.equal(await traceUrlFor(oldRun), `${config.langfuseConsoleUrl}/trace/${await langfuseTraceId(oldRun)}`);
+
+  const fresh = 'run_new00000-0000-4000-8000-000000000002';
+  assert.equal(await traceUrlFor(fresh), `${config.langfuseConsoleUrl}/trace/${await langfuseTraceId(fresh)}`, 'neither exists yet: the new id');
+  const probes = received.length;
+  assert.equal(await traceUrlFor(fresh, { probe: false }), `${config.langfuseConsoleUrl}/trace/${await langfuseTraceId(fresh)}`);
+  assert.equal(received.length, probes, 'probe:false makes no request');
 });
 
 // ------------------------------------------------------------------ A22 --

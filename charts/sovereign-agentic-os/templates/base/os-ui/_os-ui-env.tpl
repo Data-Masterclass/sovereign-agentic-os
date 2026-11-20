@@ -347,6 +347,19 @@
 {{- $u := .Values.osUI -}}
 {{- $dpg := $u.dataProjectGit | default dict -}}
 {{- $ac := .Values.trino.accessControl | default dict -}}
+# The Langfuse console login the embedded /tools/langfuse proxy uses (tool-sso-langfuse.ts):
+# the admin user Langfuse was initialised with, read from the same Secret as the project keys.
+# os-ui has no built-in default for either in production and refuses to boot without them.
+- name: LANGFUSE_SSO_EMAIL
+  valueFrom:
+    secretKeyRef:
+      name: {{ $u.langfuseSecret.name | quote }}
+      key: LANGFUSE_INIT_USER_EMAIL
+- name: LANGFUSE_SSO_PASSWORD
+  valueFrom:
+    secretKeyRef:
+      name: {{ $u.langfuseSecret.name | quote }}
+      key: LANGFUSE_INIT_USER_PASSWORD
 {{- if $dpg.enabled }}
 # Data products AND agent systems in git (engine rebuild B1, Part D): every dataset
 # change regenerates the domain's dbt project, and every agent-system definition

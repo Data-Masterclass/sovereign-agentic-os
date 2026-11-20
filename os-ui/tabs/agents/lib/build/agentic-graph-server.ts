@@ -435,7 +435,7 @@ export async function runOsTeam(input: RunOsTeamInput): Promise<RunOsTeamResult>
     });
     emitRunSummaryTrace(input, result, tracked, prices, traceContext);
     const warnings = withContextWarnings(result.warnings, result.runs, trims);
-    return { ...result, ...(warnings.length > 0 ? { warnings } : {}), traceUrl: observe.enabled ? await traceUrlFor(input.runId) : undefined, traceStoreAvailable: observe.enabled };
+    return { ...result, ...(warnings.length > 0 ? { warnings } : {}), traceUrl: observe.enabled ? await traceUrlFor(input.runId, { probe: false }) : undefined, traceStoreAvailable: observe.enabled };
     });
   }
 }

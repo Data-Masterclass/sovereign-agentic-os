@@ -125,6 +125,8 @@ export async function getLangfuseSessionCookies(
 ): Promise<string[]> {
   const now = Date.now();
   if (cache && now - cache.at < TTL_MS && cache.cookies.length > 0) return cache.cookies;
+  // No configured console login (development without the chart): Langfuse's own login page.
+  if (!config.langfuseSsoEmail || !config.langfuseSsoPassword) return [];
   try {
     const cookies = await loginLangfuse({
       fetchImpl,

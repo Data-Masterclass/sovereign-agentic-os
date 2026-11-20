@@ -34,7 +34,7 @@ const CHART = join(repo, 'charts', 'sovereign-agentic-os');
 const VALUES = join(repo, 'values.local.yaml');
 
 /** Never on the run path: full gateway admin, session forging, outbound mail. */
-const ADMIN_ONLY = ['LITELLM_MASTER_KEY', 'LITELLM_UI_USERNAME', 'LITELLM_UI_PASSWORD', 'GRAPH_CLIENT_SECRET', 'OS_SESSION_SECRET', 'OS_MCP_TOKEN_SECRET'];
+const ADMIN_ONLY = ['LITELLM_MASTER_KEY', 'LITELLM_UI_USERNAME', 'LITELLM_UI_PASSWORD', 'GRAPH_CLIENT_SECRET', 'OS_SESSION_SECRET', 'OS_MCP_TOKEN_SECRET', 'LANGFUSE_SSO_PASSWORD'];
 /** The run path cannot work without these, so their absence is a broken split, not a safe one. */
 const RUN_PATH = ['LITELLM_AGENT_KEY', 'AGENT_RUNS_DATABASE_URL', 'LANGFUSE_SECRET_KEY', 'OPA_URL'];
 /**

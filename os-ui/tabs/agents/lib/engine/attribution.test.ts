@@ -52,7 +52,7 @@ function stampingObserver(runId: string): RunObserver {
     enabled: true,
     span: (name, metadata) => {
       const h = base.span(name, metadata);
-      return { ...h, llm: (inner) => (req) => inner({ ...req, observe: { traceId: runId, parentObservationId: h.id } }) };
+      return { ...h, llm: (inner) => (req) => inner({ ...req, observe: { traceId: runId, parentObservationId: h.id, node: 'stamped' } }) };
     },
   };
 }
@@ -89,6 +89,7 @@ test('ATTRIBUTION (A27): every model call of a real engine run carries user, dom
     // `trace_id` was dropped — two names for one id invite them to disagree.
     assert.equal(meta.trace_id, undefined, 'only existing_trace_id carries the run trace');
     assert.ok(meta.parent_observation_id, 'parent observation forwarded');
+    assert.equal(meta.node, 'stamped', 'the agent rides along as metadata.node (per-agent diagnostics)');
     assert.equal(meta.trace_user_id, 'rae');
     assert.equal(meta.session_id, 'system:sys-attr', 'the system session (design 05 §5.2)');
   }

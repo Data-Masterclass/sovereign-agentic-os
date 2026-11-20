@@ -132,6 +132,10 @@ export function record(input: {
       action: `governance.${input.action}`,
       target: input.subject,
       detail: `[domain:${input.domain}] ${input.reason}`,
+      // The structured detail and the OPA decision it was enforced on, durably: this store is
+      // the one Governance reads after a restart (the in-process chain above is not).
+      data: detail,
+      ...opa,
     });
   } catch {
     /* never let a mirror failure break the governed action */
