@@ -129,6 +129,9 @@ queryTool:
     limits:   { cpu: 1,   memory: 768Mi }
 
 docling:
+  # scripts/os builds images/extensions/docling and loads it into kind: no registry digest exists.
+  image:
+    localBuild: true
   resources:
     requests: { cpu: 100m, memory: 384Mi }
     limits:   { cpu: 2,    memory: 2Gi }

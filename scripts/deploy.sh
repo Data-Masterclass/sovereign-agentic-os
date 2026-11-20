@@ -345,6 +345,12 @@ helm --kube-context "$CTX" upgrade "$REL" "$CHART" -n "$NS" -f "$VALUES" "${OVER
 
 say "rollout"
 kubectl --context "$CTX" -n "$NS" rollout status deploy/os-ui --timeout=15m
+# Docling rolls in the same upgrade; os-ui's conversions depend on it, so the deploy is not done
+# until the new docling pod has passed /ready (its boot loads the table models). Skipped only when
+# the chart does not deploy docling.
+if kubectl --context "$CTX" -n "$NS" get deploy/docling >/dev/null 2>&1; then
+  kubectl --context "$CTX" -n "$NS" rollout status deploy/docling --timeout=15m
+fi
 
 say "verify"
 kubectl --context "$CTX" -n "$NS" get pods -l app.kubernetes.io/name=os-ui \

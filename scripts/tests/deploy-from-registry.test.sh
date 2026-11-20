@@ -246,8 +246,10 @@ grep -q '^IMAGE_REPO_DEFAULT=ghcr.io/data-masterclass/sovereign-os$' scripts/dep
 [ "$(grep -c 'ghcr.io/data-masterclass/' values.stackit-managed.yaml)" = 1 ] \
   && grep -q '^    repository: ghcr.io/data-masterclass/sovereign-os/os-ui$' values.stackit-managed.yaml \
   && ok "the managed overlay moves os-ui and nothing else" || bad "the managed overlay moves os-ui and nothing else"
-[ "$(grep -c 'ghcr.io/data-masterclass/' charts/sovereign-agentic-os/values.yaml)" = 0 ] \
-  && ok "the chart's own defaults did not move" || bad "the chart's own defaults did not move"
+# The one exception is docling (WP-40): its image is only ever built by build-images.yml, which
+# pushes to the org namespace, and it is pinned by a required digest.
+[ "$(grep -v '^    repository: ghcr.io/data-masterclass/sovereign-os/docling$' charts/sovereign-agentic-os/values.yaml | grep -c 'ghcr.io/data-masterclass/')" = 0 ] \
+  && ok "the chart's own defaults did not move (docling excepted)" || bad "the chart's own defaults did not move (docling excepted)"
 
 echo "== the guard and the override, driven through deploy.sh with a fake kubectl and helm"
 # deploy.sh up to (not past) `helm get manifest`: the fake helm serves the "live" values and

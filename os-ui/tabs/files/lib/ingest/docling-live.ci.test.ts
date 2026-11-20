@@ -68,7 +68,7 @@ test('live docling (a): an invoice table comes back as markdown with its header 
   assert.match(out.text, /early payment discount/i, 'page 2 must be converted too');
 });
 
-test('live docling (a, negative twin): a request for TableFormer v1 is refused by the server', { skip }, async () => {
+test('live docling (a, negative twin): a request for TableFormer v1 is refused by the server', { skip }, async (t) => {
   // ALLOWED_TABLE_STRUCTURE_PRESETS=["tableformer_v2"] in the image: a v1 preset must not convert.
   // If this ever succeeds, the server is willing to run the CDLA-licensed v1 model again.
   const form = new FormData();
@@ -78,6 +78,7 @@ test('live docling (a, negative twin): a request for TableFormer v1 is refused b
   const res = await fetch(`${URL_}/v1/convert/file`, { method: 'POST', body: form, headers: { 'X-Api-Key': KEY } });
   const body = (await res.json().catch(() => null)) as Record<string, unknown> | null;
   const converted = res.status === 200 && (body?.status === 'success' || body?.status === 'partial_success');
+  t.diagnostic(`v1 request: HTTP ${res.status} ${JSON.stringify(body).slice(0, 300)}`);
   assert.ok(!converted, `v1 preset converted: HTTP ${res.status} ${JSON.stringify(body).slice(0, 300)}`);
 });
 
@@ -156,7 +157,7 @@ test('live docling (g): the image refuses to start with an empty or missing API 
   }
 });
 
-test('live docling (h): boot loads the v2 table model — without its weights the server never becomes ready', { skip, timeout: 400_000 }, () => {
+test('live docling (h): boot loads the v2 table model — without its weights the server never becomes ready', { skip, timeout: 400_000 }, (t) => {
   // Positive side: the main container answered /ready only after the boot warm-up
   // (LOAD_MODELS_AT_BOOT, default options = tableformer_v2). Negative twin: hide the v2 weights
   // and the same image must fail its boot instead of reporting ready.
@@ -164,5 +165,6 @@ test('live docling (h): boot loads the v2 table model — without its weights th
   const artifacts = execFileSync('docker', ['run', '--rm', '--entrypoint', 'sh', IMAGE, '-c', 'printf %s "$DOCLING_SERVE_ARTIFACTS_PATH"'], { encoding: 'utf8' }).trim();
   const r = runToExit(['-e', 'DOCLING_SERVE_API_KEY=twin', '--tmpfs', `${artifacts}/docling-project--TableFormerV2`], 300);
   assert.ok(r.exited, `the server stayed up without the v2 weights:\n${r.log}`);
+  t.diagnostic(`boot without v2 weights: exit ${r.code}; ${r.log.trim().split('\n').slice(-3).join(' | ').slice(0, 400)}`);
   assert.notEqual(r.code, 0, r.log);
 });

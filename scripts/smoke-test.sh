@@ -15,7 +15,8 @@
 # READ-ONLY: kubectl get/logs, helm get values, curl. It changes nothing.
 #
 # Checks (any FAIL makes the exit status 1; NOTE lines are information only):
-#   1. Deployments os-ui and os-ui-worker run the expected image tag and are fully Ready.
+#   1. Deployments os-ui and os-ui-worker run the expected image tag and are fully Ready; docling
+#      (when deployed) is fully Ready on its own pinned tag.
 #   2. No pod in the platform namespace is in CrashLoopBackOff / ImagePullBackOff /
 #      ErrImagePull. Pods in the user-apps namespace are LISTED, never failed on: student code
 #      crashing is not a platform fault.
@@ -67,12 +68,12 @@ RELEASE_FACTS=$(helm --kube-context "$CTX" get values "$REL" -n "$NS" -a -o json
   || { echo "SMOKE_FAILED: could not read the release values"; exit 1; }
 HOST=${HOST:-$(fact public_host)}
 
-check_deployment() { # check_deployment <name>
+check_deployment() { # check_deployment <name> [--any-tag]  (--any-tag: the image is not os-ui's, so EXPECT_TAG does not apply)
   local line image ready replicas updated
   line=$(k get deploy "$1" -o jsonpath='{.spec.template.spec.containers[0].image}|{.status.readyReplicas}|{.spec.replicas}|{.status.updatedReplicas}' 2>/dev/null) \
     || { fail "deployment $1 exists"; return; }
   IFS='|' read -r image ready replicas updated <<<"$line"
-  if [ -n "$EXPECT_TAG" ]; then
+  if [ -n "$EXPECT_TAG" ] && [ "${2:-}" != --any-tag ]; then
     case $image in
       *":$EXPECT_TAG" | *":$EXPECT_TAG@"*) pass "$1 runs tag $EXPECT_TAG" ;;
       *) fail "$1 runs tag $EXPECT_TAG (it runs ${image##*/})" ;;
@@ -167,6 +168,8 @@ check_model_info() {
 
 check_deployment os-ui
 check_deployment os-ui-worker
+# Docling serves os-ui's document conversions; its own tag is pinned in the chart.
+if k get deploy docling >/dev/null 2>&1; then check_deployment docling --any-tag; fi
 check_pods
 check_health
 check_consoles_private
