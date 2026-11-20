@@ -15,7 +15,8 @@ bash tests/domain-delete/down.sh >/dev/null 2>&1 || true
 WORK=${DD_WORK:-$(mktemp -d "${DD_WORK_PARENT:-$HOME}/.soa-domain-delete.XXXXXX")}
 rand() { od -An -N"$1" -tx1 /dev/urandom | tr -d ' \n'; }
 export LH_S3_KEY="ci$(rand 8)" LH_S3_SECRET="$(rand 20)" LH_PG_USER=polaris LH_PG_PASSWORD="$(rand 16)"
-python3 tests/lakehouse/render.py "$WORK" "$@"
+# The purge window is OPEN in this harness (the chart default is off).
+python3 tests/lakehouse/render.py "$WORK" --set polaris.purge.enabled=true "$@"
 # The query-tool image is ours: build it under the chart's ref (the purge Job and the query-tool
 # service both run it).
 QT_REF=$(python3 -c "import yaml; v=yaml.safe_load(open('charts/sovereign-agentic-os/values.yaml'))['queryTool']['image']; print(v['repository']+':'+v['tag'])")
@@ -48,6 +49,7 @@ cat > "$WORK/test.env" <<ENV
 DD_IT=1
 LH_TRINO_URL=http://127.0.0.1:${DD_TRINO_PORT:-18580}
 QUERY_TOOL_URL=http://127.0.0.1:${DD_QUERY_TOOL_PORT:-18585}
+DOMAIN_DELETE_PURGE_ENABLED=true
 OPA_URL=http://127.0.0.1:${DD_OPA_PORT:-18581}
 DD_S3_URL=http://127.0.0.1:${DD_MINIO_PORT:-18582}
 DD_S3_KEY=$LH_S3_KEY

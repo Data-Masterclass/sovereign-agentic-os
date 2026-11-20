@@ -201,6 +201,8 @@ const deps = () => ({
   audit: (e: (typeof audit)[number]) => { audit.push(e); },
   backup: async () => ({ ok: false as const, reason: 'no Velero in the harness' }),
   validateTarget: async (id: string) => (await import('@tabs/admin/lib/domain-delete')).assertDeletableDomain(id),
+  // The shipped preflight against the REAL query-tool: it must advertise `domain-delete`.
+  preflight: () => sources.queryToolPreflight(),
   allowRun: true,
 });
 

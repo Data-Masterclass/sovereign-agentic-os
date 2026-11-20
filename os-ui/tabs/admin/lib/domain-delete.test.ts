@@ -39,7 +39,7 @@ const backup = (o: { name?: string; vel?: number; pg?: number; ns?: string[]; po
   spec: { includedNamespaces: o.ns ?? ['agentic-os', 'agentic-apps'] },
   status: { phase: 'Completed', completionTimestamp: iso(o.vel ?? 5) },
 });
-const gate = (items: unknown[]) => veleroBackupCheck({ namespaces: ['agentic-os', 'agentic-apps'], get: async () => ({ status: 200, body: { items } }) })();
+const gate = (items: unknown[]) => veleroBackupCheck({ veleroNamespace: 'velero', namespaces: ['agentic-os', 'agentic-apps'], get: async () => ({ status: 200, body: { items } }) })();
 
 test('the backup gate takes a pre-upgrade-backup.sh PAIR and dates it by its OLDER half', async () => {
   const r = await gate([backup({ vel: 5, pg: 30 })]);
@@ -51,7 +51,7 @@ test('negative twins: no apps namespace, an unverified dump, a plain Velero back
   assert.equal((await gate([backup({ ns: ['agentic-os'] })])).ok, false);
   assert.equal((await gate([backup({ polaris: 'missing' })])).ok, false);
   assert.equal((await gate([backup({ label: 'false' })])).ok, false);
-  const down = await veleroBackupCheck({ get: async () => ({ status: 0, body: {} }) })();
+  const down = await veleroBackupCheck({ veleroNamespace: 'velero', get: async () => ({ status: 0, body: {} }) })();
   assert.equal(down.ok, false);
 });
 

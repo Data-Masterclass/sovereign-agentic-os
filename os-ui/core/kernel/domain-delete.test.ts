@@ -145,3 +145,12 @@ test('an invalid target is refused before anything is planned', async () => {
   await deleteDomain('k', {}, { actor: admin, components: [spy], audit: audits().fn, backup: freshBackup, validateTarget });
   assert.equal(planned, true);
 });
+
+test('a failing preflight (e.g. an old query-tool) refuses the run before anything is removed', async () => {
+  const a = store('a', ['1']);
+  const r = await deleteDomain('k', { dryRun: false, confirm: 'k' }, { actor: admin, components: [a], audit: audits().fn, backup: freshBackup, preflight: async () => 'query-tool too old' });
+  assert.equal(r.status, 'refused');
+  assert.equal(a.live.size, 1);
+  const ok = await deleteDomain('k', { dryRun: false, confirm: 'k' }, { actor: admin, components: [a], audit: audits().fn, backup: freshBackup, preflight: async () => null });
+  assert.equal(ok.status, 'done');
+});

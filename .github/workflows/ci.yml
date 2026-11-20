@@ -422,6 +422,13 @@ jobs:
           helm dependency build charts/sovereign-agentic-os || helm dependency update charts/sovereign-agentic-os
           npm --prefix tests/lakehouse ci
           npm --prefix os-ui ci --no-audit --no-fund
+      # The chart's delete-domain RBAC on a real API server (kind): `kubectl auth can-i` as os-ui.
+      - name: RBAC (kind, kubectl auth can-i as os-ui)
+        run: |
+          curl -sSLo /tmp/kind https://github.com/kubernetes-sigs/kind/releases/download/v0.30.0/kind-linux-amd64
+          echo "517ab7fc89ddeed5fa65abf71530d90648d9638ef0c4cde22c2c11f8097b8889  /tmp/kind" | sha256sum -c -
+          chmod +x /tmp/kind
+          KIND=/tmp/kind bash tests/domain-delete/rbac.kind.sh
       - name: Start the harness
         env:
           DD_WORK_PARENT: ${{ runner.temp }}
