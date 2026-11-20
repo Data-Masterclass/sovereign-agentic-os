@@ -307,6 +307,12 @@ if isinstance(d, dict):
 # older runner ignores the names and lands raw headers. os-ui refuses to register such a landing
 # (typed COLUMN_MAPPING_MISMATCH), so nothing is silently broken, but the upload fails until the
 # runner is forward again. One `helm upgrade` rolls both at once, which satisfies the order.
+# WHY THE FIRST UPGRADE IS SAFE in any roll order: a dataset STORES mapped names only after a
+# runner that applies `columnNames` has landed one of its uploads. Before that first landing no
+# dataset has a mapping, so an os-ui that is briefly ahead of an older runner just records the
+# raw headers it landed (valid quoted names) — there is nothing to flip. The rollback side of the
+# same rule is enforced by scripts/rollback.sh: it refuses to go below that runner while any
+# dataset stores mapped names, unless --allow-runner-downgrade is given.
 # NOTE: the digest pin adds `@sha256:` to the runner's image reference, so the first deploy with
 # it restarts data-runner once on the SAME image bits.
 # The data-runner image follows the same rule (pinned by digest, chart-owned): tag, digest and

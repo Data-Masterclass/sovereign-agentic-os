@@ -45,6 +45,10 @@ metadata:
   labels:
     {{- include "soa.labels" . | nindent 4 }}
     {{- include "soa.selectorLabels" (dict "ctx" . "component" "data-runner") | nindent 4 }}
+  annotations:
+    # Read by scripts/rollback.sh: a rollback from "true" to anything else is refused while any
+    # dataset stores mapped column names (an older runner would land raw headers).
+    sovereign-os/applies-column-names: {{ $dr.appliesColumnNames | default false | quote }}
 spec:
   replicas: 1
   selector:

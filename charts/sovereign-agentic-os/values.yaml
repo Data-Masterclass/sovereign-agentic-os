@@ -1436,6 +1436,11 @@ dataRunner:
     tag: "0.2.2"
     digest: sha256:8f7b8a3287368c915af90ee37e6053dfd77326d98fea450f87b97f4835a2e482
     localBuild: false
+  # Does the pinned image apply os-ui's `columnNames` (so datasets come to STORE mapped column
+  # names)? false for 0.2.2; set true in the SAME change that pins the first build that does.
+  # Rendered as the Deployment annotation sovereign-os/applies-column-names, which
+  # scripts/rollback.sh reads to refuse a rollback below that build while mapped names exist.
+  appliesColumnNames: false
   polaris:
     # Same Polaris REST catalog + warehouse Trino reads/writes.
     uri: "http://polaris:8181/api/catalog"
