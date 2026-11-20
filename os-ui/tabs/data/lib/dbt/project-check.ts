@@ -259,7 +259,11 @@ export function jinjaGrammarIssues(files: Map<string, string>): ProjectIssue[] {
         continue; // rule 1 reports it
       }
       yamlJinjaFindings(doc, null, findings);
-    } else if (/[{}]/.test(content)) findings = [content.slice(content.search(/[{}]/), content.search(/[{}]/) + 40)];
+    } else if (path.endsWith('.md') && /[{}]/.test(content)) {
+      // Markdown: dbt reads `.md` docs blocks in its resource paths; the README is held to it too.
+      findings = [content.slice(content.search(/[{}]/), content.search(/[{}]/) + 40)];
+    }
+    // Any other file type (`.gitignore`, a Dagster `.py` module) is not a dbt input.
     for (const f of findings) {
       issues.push({ datasetId: path.endsWith('.sql') ? ds : yamlDataset(content, path, f), path, reason: `Jinja outside the generator's grammar: ${JSON.stringify(f)}`, rule: 'jinja-grammar' });
     }
