@@ -75,7 +75,10 @@ test('deployApp applies EXACTLY the committed manifests (namespace set, nothing 
   assert.equal(out.url, `https://${HOST}`);
   const real = calls.find((c) => c.method === 'POST' && c.path === DEP)!;
   const committed = yaml.load(APP.tree.kind === 'tree' ? APP.tree.files.find((f) => f.path === 'k8s/deployment.yaml')!.content : '') as any;
-  assert.deepEqual(real.body, { ...committed, metadata: { ...committed.metadata, namespace: NS } });
+  assert.deepEqual(real.body, {
+    ...committed,
+    metadata: { ...committed.metadata, namespace: NS, annotations: { 'sovereign-os.io/applied-commit': 'c0ffee' } },
+  }, 'only the namespace and the applied-commit record are added');
   assert.match(out.detail, /c0ffee/, 'the outcome names the git sha it deployed');
 });
 
