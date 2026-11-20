@@ -62,6 +62,8 @@ dbt:
   image:
     repository: ghcr.io/aborek/sovereign-os/dbt
     tag: "0.2.0@sha256:dcec728155d4ff03f7b999753cb5ec00fd84e37d2cf8be3641a0ee426ae915d5"
+  trino:
+    user: sales     # see "Synthetic seed" below: the fresh-install schema rule
 
 osUI:
   publicUrl: https://dev.sovereign-agentic.com
@@ -107,9 +109,17 @@ litellmAgentKey:
   maxParallelRequests: 4
 
 # --- Synthetic seed -----------------------------------------------------------------------
+# On a FRESH install os-ui writes Trino's rules.json at boot, before the post-install hooks run,
+# and it grants schema `sales` only to the sales domain principals. The two hooks that build the
+# demo (dbt-build, weight 15; northpeak-marts-init, weight 20) both CREATE SCHEMA IF NOT EXISTS
+# iceberg.sales, so as `dbt-sales` / `northpeak-marts` they are denied (first dev install,
+# 2026-11-20). On dev they run as the schema's own domain principal, `sales` (dbt: under its
+# image block above).
 marts:
   enabled: true          # the Northpeak gold mart, generated in SQL (no real data)
   rows: 150000
+  trino:
+    user: sales
 
 # Seeded state survives a pod restart; `scripts/dev/reset.sh` wipes it on purpose.
 objectStorage:
