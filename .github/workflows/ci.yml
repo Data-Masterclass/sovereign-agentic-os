@@ -293,7 +293,7 @@ jobs:
           OPA_URL: http://127.0.0.1:18181
         run: |
           npm ci --no-audit --no-fund
-          node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test --test-concurrency=1 tabs/metrics/lib/build/explore-fqn.trino.test.ts tabs/data/lib/lane-names.trino.test.ts tabs/data/lib/dataset-versions.trino.test.ts core/mcp/trino-sql-error.trino.test.ts
+          node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test --test-concurrency=1 tabs/metrics/lib/build/explore-fqn.trino.test.ts tabs/data/lib/lane-names.trino.test.ts tabs/data/lib/dataset-versions.trino.test.ts core/mcp/trino-sql-error.trino.test.ts ../tests/dashboards/native-render.trino.test.ts
       - name: Logs (on failure)
         if: failure()
         run: docker compose -p soa-lakehouse logs --tail 120 trino opa polaris catalog-init polaris-bootstrap-check data-runner || true
@@ -353,8 +353,8 @@ jobs:
         run: |
           if [ "$EVENT" != pull_request ]; then echo "run=true" >> "$GITHUB_OUTPUT"; echo "a $EVENT run always validates"; exit 0; fi
           changed="$(git diff --name-only "$BASE"...HEAD)"
-          if grep -qE '^(images/extensions/(dagster|dbt)/|os-ui/tabs/data/lib/dbt/|charts/|scripts/glue/|scripts/validate-generated\.sh$|scripts/tests/validate-generated\.test\.sh$|scripts/tests/glue-fixtures/GLUE-6/|tests/policies/|values[^/]*\.yaml$|\.github/workflows/ci\.yml$)' <<<"$changed"; then
-            echo "run=true" >> "$GITHUB_OUTPUT"; echo "validated inputs changed:"; grep -E '^(images/extensions/(dagster|dbt)/|os-ui/tabs/data/lib/dbt/|charts/|scripts/glue/|scripts/validate-generated|scripts/tests/validate-generated|scripts/tests/glue-fixtures/GLUE-6/|tests/policies/|values|\.github/workflows/ci\.yml)' <<<"$changed" | head -20
+          if grep -qE '^(images/extensions/(dagster|dbt)/|os-ui/tabs/data/lib/dbt/|os-ui/tabs/dashboards/lib/git/|charts/|scripts/glue/|scripts/validate-generated\.sh$|scripts/tests/validate-generated\.test\.sh$|scripts/tests/glue-fixtures/GLUE-6/|tests/policies/|values[^/]*\.yaml$|\.github/workflows/ci\.yml$)' <<<"$changed"; then
+            echo "run=true" >> "$GITHUB_OUTPUT"; echo "validated inputs changed:"; grep -E '^(images/extensions/(dagster|dbt)/|os-ui/tabs/data/lib/dbt/|os-ui/tabs/dashboards/lib/git/|charts/|scripts/glue/|scripts/validate-generated|scripts/tests/validate-generated|scripts/tests/glue-fixtures/GLUE-6/|tests/policies/|values|\.github/workflows/ci\.yml)' <<<"$changed" | head -20
           else
             echo "run=false" >> "$GITHUB_OUTPUT"; echo "GLUE-6: this PR touches nothing the component validators check — not run (push and nightly runs always run it)"
           fi
@@ -427,6 +427,44 @@ jobs:
           echo "$files"
           node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test --test-concurrency=1 $files
 
+  # WP-52 eject test: a native dashboard (dbt saved queries + exposure + Vega-Lite v5), with the OS
+  # layer deleted, passes `dbt parse` in the chart's Dagster image, its panel SQL runs on a plain
+  # Trino (the chart's tag, in-memory catalog), and vl-convert renders every spec — plus the twins.
+  dashboards-eject:
+    name: dashboards-eject
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Setup Node.js
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: 22
+      - name: Install (os-ui)
+        run: npm --prefix os-ui ci
+      - name: Pinned images from the chart
+        id: images
+        run: node scripts/glue/validate-generated-lib.mjs images | tee -a "$GITHUB_OUTPUT"
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Build the chart's Dagster image (layer cache)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: images/extensions
+          file: images/extensions/dagster/Dockerfile
+          tags: ${{ steps.images.outputs.DAGSTER_IMAGE }}
+          load: true
+          push: false
+          cache-from: type=gha,scope=glue6-dagster
+      - name: Eject test (dbt parse, plain Trino, vl-convert) + negative twins
+        working-directory: os-ui
+        env:
+          WP52_EJECT: '1'
+          WP52_TMP: ${{ runner.temp }}
+          DAGSTER_IMAGE: ${{ steps.images.outputs.DAGSTER_IMAGE }}
+          TRINO_IMAGE: ${{ steps.images.outputs.TRINO_IMAGE }}
+        run: node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test --test-concurrency=1 ../tests/dashboards/native-eject.docker.test.ts
+
   # `build` is the REQUIRED check. It aggregates: `if: always()` makes it run even when a job it
   # needs failed or was cancelled — GitHub reports a SKIPPED required check as passing, which is how
   # a red test-ui (and with it every glue rule) used to merge. The first step fails unless every
@@ -435,7 +473,7 @@ jobs:
     name: build
     runs-on: ubuntu-latest
     if: ${{ always() }}
-    needs: [test-ui, test-langgraph-pg, test-opensearch, test-lakehouse, tracing-e2e, validate-generated, test-python, dagster-image, git-http-image, test-opa, test-postgres, helm-lint, secret-scan, artifacts-eject]
+    needs: [test-ui, test-langgraph-pg, test-opensearch, test-lakehouse, tracing-e2e, validate-generated, test-python, dagster-image, git-http-image, test-opa, test-postgres, helm-lint, secret-scan, artifacts-eject, dashboards-eject]
     steps:
       - name: Every needed job succeeded (failed, cancelled or skipped fails the build)
         env:
