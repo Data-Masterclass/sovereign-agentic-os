@@ -1,0 +1,57 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+#
+# Domain-delete harness overlay on tests/lakehouse/compose.yaml: the SAME chart Trino, Polaris,
+# OPA and MinIO, plus what the delete-domain proof needs to reach from the test process —
+# OPA's REST API and MinIO's S3 API (to prove Polaris purged the data files) are published on
+# loopback — and the stores' OpenSearch and LiteLLM (with its own Postgres, so teams and keys
+# exist). Images come from the chart / the image we ship, read by up.sh; nothing is pinned here.
+services:
+  opa:
+    ports: ["127.0.0.1:${DD_OPA_PORT:-18581}:8181"]
+  minio:
+    ports: ["127.0.0.1:${DD_MINIO_PORT:-18582}:9000"]
+
+  opensearch:
+    image: ${DD_OPENSEARCH_IMAGE}
+    environment:
+      discovery.type: single-node
+      DISABLE_SECURITY_PLUGIN: "true"
+      DISABLE_INSTALL_DEMO_CONFIG: "true"
+      # A full CI or laptop disk must not flip the indices read-only mid-test (flood-stage block).
+      cluster.routing.allocation.disk.threshold_enabled: "false"
+      OPENSEARCH_JAVA_OPTS: -Xms512m -Xmx512m
+    ports: ["127.0.0.1:${DD_OPENSEARCH_PORT:-18583}:9200"]
+    networks: [lh]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:9200/_cluster/health | grep -qE '\"status\":\"(green|yellow)\"'"]
+      interval: 5s
+      retries: 60
+
+  litellm-db:
+    image: ${LH_PG_IMAGE}
+    environment:
+      POSTGRES_DB: litellm
+      POSTGRES_USER: litellm
+      POSTGRES_PASSWORD: ${DD_LITELLM_DB_PASSWORD}
+    networks: [lh]
+    tmpfs: [/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U litellm -d litellm"]
+      interval: 2s
+      retries: 60
+
+  litellm:
+    image: ${DD_LITELLM_IMAGE}
+    command: ["--port", "4000"]
+    environment:
+      DATABASE_URL: postgresql://litellm:${DD_LITELLM_DB_PASSWORD}@litellm-db:5432/litellm
+      LITELLM_MASTER_KEY: ${DD_LITELLM_MASTER_KEY}
+      STORE_MODEL_IN_DB: "True"
+    ports: ["127.0.0.1:${DD_LITELLM_PORT:-18584}:4000"]
+    networks: [lh]
+    depends_on: { litellm-db: { condition: service_healthy } }
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:4000/health/liveliness').status==200 else 1)\""]
+      interval: 5s
+      retries: 120
