@@ -27,6 +27,6 @@
   "os-ui/tabs/metrics/lib/git-object.ts": 1,
   "os-ui/tabs/software/lib/engineering.ts": 1,
   "os-ui/tabs/software/lib/ingest-from-repo.ts": 2,
-  "os-ui/tabs/software/lib/platform-mcp.ts": 1,
-  "os-ui/tabs/software/lib/runner.ts": 1
+  "os-ui/tabs/software/lib/native-deploy.ts": 1,
+  "os-ui/tabs/software/lib/platform-mcp.ts": 1
 }
