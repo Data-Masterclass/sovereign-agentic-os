@@ -12,7 +12,7 @@ import { getDataset, buildVersion, setDocs } from '@tabs/data/lib/store';
 import { autoDocumentAfterIngest, type IngestGrounding } from '@tabs/data/lib/auto-docs';
 import { autoAdvancePipeline } from '@tabs/data/lib/auto-pipeline';
 import { stageArtifact } from '@tabs/data/lib/panels';
-import { personalSchema, bronzeTarget } from '@tabs/data/lib/store-fqn';
+import { personalSchema, bronzeTarget, laneSlug } from '@tabs/data/lib/store-fqn';
 import { putObject, uploadObjectKey } from '@tabs/data/lib/object-store';
 import { INGEST_OBJECT_KEY, makeLiveAdapters } from '@tabs/data/lib/build/live';
 import { makeRealClients, dataRunnerReachable } from '@tabs/data/lib/build/live-clients';
@@ -176,7 +176,9 @@ export async function ingestAndRegisterBronze(
   const report = await ingestUpload({
     principal: user.id, // session-bound — never the request body
     domains: user.domains,
-    datasetName: dataset.name,
+    // The PHYSICAL name the landing slugs into `bronze_<…>`: the dataset's recorded lane name
+    // (unique per dataset), so a same-named dataset in another domain never shares the table.
+    datasetName: laneSlug(dataset),
     fileName,
     body,
     ...(plan ? { columnNames: plan.columnNames } : {}),

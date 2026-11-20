@@ -4,7 +4,7 @@
 import type { Dataset, Layer } from '@tabs/data/lib/dataset-schema';
 import type { Principal } from '@tabs/data/lib/store';
 import type { ExecuteIdentity } from '@core/infra/governed';
-import { domainSchema, personalSchema, physicalSlug } from '@tabs/data/lib/store-fqn';
+import { domainSchema, laneTable, personalSchema, physicalSlug } from '@tabs/data/lib/store-fqn';
 
 /**
  * PHYSICAL cleanup for a dataset DELETE (never for archive — archive is a
@@ -47,7 +47,9 @@ export function dropPlan(d: Dataset): PhysicalDrop[] {
   const out: PhysicalDrop[] = [];
   for (const layer of LAYERS) {
     if (!d.versions[layer].built) continue;
-    out.push({ fqn: `iceberg.${personal}.${layer}_${s}`, schema: personal, layer });
+    // The lane table by its RECORDED lane name: with legacy name-only lane tables two datasets
+    // could share one, and dropping by name alone deleted the other dataset's data.
+    out.push({ fqn: `iceberg.${personal}.${laneTable(d, layer)}`, schema: personal, layer });
     if (d.tier !== 'dataset') {
       const dom = domainSchema(d.domain);
       // The domain copy is a VIEW under promote-as-view, else the classic physical table.

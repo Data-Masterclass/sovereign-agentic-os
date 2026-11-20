@@ -235,6 +235,13 @@ export function physicalSlug(d: { slug?: string; name: string }): string {
   return d.slug ?? slug(d.name);
 }
 
+/** The slug a dataset's PERSONAL-LANE tables are named with (mirrors store-fqn.laneSlug): the
+ *  recorded `laneSlug` (unique per dataset), else the legacy `physicalSlug` the lane tables of an
+ *  older dataset already carry. Every lane read/write here uses it; domain copies do not. */
+export function laneSlug(d: { laneSlug?: string; slug?: string; name: string }): string {
+  return d.laneSlug ?? physicalSlug(d);
+}
+
 /** The caller's private sandbox schema. MUST match the query-tool guard's
  *  `personal_schema(uid)` exactly, so the compiled target passes its authorization. */
 export function personalSchema(uid: string): string {
@@ -520,13 +527,13 @@ export type SilverPlan = { source: string; target: string; schema: string; sql: 
  * CTAS. Server-authoritative: the route calls this (never trusts a client-sent SQL).
  */
 export function silverPlan(
-  dataset: { name: string; domain: string; tier: string; slug?: string },
+  dataset: { name: string; domain: string; tier: string; slug?: string; laneSlug?: string },
   identity: { uid: string; domains: string[] },
   columns: string[],
   ops: TransformOp[],
 ): SilverPlan {
   const schema = silverSchema(identity.uid);
-  const s = physicalSlug(dataset);
+  const s = laneSlug(dataset);
   const source = `iceberg.${schema}.bronze_${s}`;
   const target = `iceberg.${schema}.silver_${s}`;
   const sql = compileSilver({ source, target, columns, ops });
@@ -541,12 +548,12 @@ export function silverPlan(
  * their (sanitized) domain schema.
  */
 export function layerTarget(
-  dataset: { name: string; domain: string; tier: string; slug?: string },
+  dataset: { name: string; domain: string; tier: string; slug?: string; laneSlug?: string },
   identity: { uid: string; domains: string[] },
   layer: 'bronze' | 'silver' | 'gold',
 ): string {
   const schema = silverSchema(identity.uid);
-  return `iceberg.${schema}.${layer}_${physicalSlug(dataset)}`;
+  return `iceberg.${schema}.${layer}_${laneSlug(dataset)}`;
 }
 
 export type PassThroughPlan = { source: string; target: string; schema: string; sql: string };
@@ -559,12 +566,12 @@ export type PassThroughPlan = { source: string; target: string; schema: string; 
  * schema discipline as {@link silverPlan}; server-authoritative.
  */
 export function passThroughPlan(
-  dataset: { name: string; domain: string; tier: string; slug?: string },
+  dataset: { name: string; domain: string; tier: string; slug?: string; laneSlug?: string },
   identity: { uid: string; domains: string[] },
   layer: 'silver' | 'gold',
 ): PassThroughPlan {
   const schema = silverSchema(identity.uid);
-  const s = physicalSlug(dataset);
+  const s = laneSlug(dataset);
   const prior = layer === 'silver' ? 'bronze' : 'silver';
   const source = `iceberg.${schema}.${prior}_${s}`;
   const target = `iceberg.${schema}.${layer}_${s}`;
@@ -604,7 +611,7 @@ const PASS_THROUGH_PRIORS: Record<'silver' | 'gold', ('bronze' | 'silver')[]> = 
  * governed queryable-probe run AS the caller.
  */
 export async function resolvePassThroughSource(
-  dataset: { name: string; domain: string; tier: string },
+  dataset: { name: string; domain: string; tier: string; slug?: string; laneSlug?: string },
   identity: { uid: string; domains: string[] },
   layer: 'silver' | 'gold',
   probe: (fqn: string) => Promise<boolean>,
@@ -677,6 +684,7 @@ export function publishPlan(
   d: {
     name: string;
     slug?: string;
+    laneSlug?: string;
     domain: string;
     owner: string;
     versions: { silver: { built: boolean }; gold: { built: boolean } };
@@ -685,10 +693,11 @@ export function publishPlan(
 ): PublishPlan {
   const layer = d.versions.gold.built ? 'gold' : d.versions.silver.built ? 'silver' : null;
   if (!layer) throw new TransformError('nothing to publish — build a Silver or Gold version first');
-  const s = physicalSlug(d); // FROZEN — the promotion copies/points at the ACTUAL personal table
+  // The promotion copies FROM the owner's ACTUAL lane table (its recorded lane name) TO the
+  // domain copy, which keeps the dataset's physical slug.
   const sourceSchema = personalSchema(d.owner);
-  const source = `iceberg.${sourceSchema}.${layer}_${s}`;
-  const target = `iceberg.${domainSchema(d.domain)}.${layer}_${s}`;
+  const source = `iceberg.${sourceSchema}.${layer}_${laneSlug(d)}`;
+  const target = `iceberg.${domainSchema(d.domain)}.${layer}_${physicalSlug(d)}`;
   assertFqn(source, 'publish source');
   assertFqn(target, 'publish target');
   const schemaSql = `create schema if not exists iceberg.${domainSchema(d.domain)}`;
@@ -723,7 +732,7 @@ export type GoldJoinPlan = { source: string; target: string; schema: string; sql
  * a publish CTAS copies it to the domain). `baseSource` is validated as an iceberg FQN.
  */
 export function goldJoinPlan(
-  dataset: { name: string; domain: string; tier: string; slug?: string },
+  dataset: { name: string; domain: string; tier: string; slug?: string; laneSlug?: string },
   identity: { uid: string; domains: string[] },
   joins: ResolvedJoin[],
   dimensions: GoldDimension[],
@@ -732,7 +741,7 @@ export function goldJoinPlan(
   baseSource?: string,
 ): GoldJoinPlan {
   const schema = silverSchema(identity.uid);
-  const s = physicalSlug(dataset);
+  const s = laneSlug(dataset);
   // Own frozen Silver is the default base (ref 0); a curated dataset overrides it with an
   // explicit, pre-resolved base FQN (own-silver base stays byte-stable when absent).
   const source = baseSource ? baseSource : `iceberg.${schema}.silver_${s}`;

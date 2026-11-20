@@ -332,6 +332,12 @@ export type Dataset = {
    *  it through `physicalSlug(d)` (store-fqn.ts), never recompute from `name`.
    *  OMITTED from the yaml whenever it still equals `slug(name)` (byte-stable). */
   slug?: string;
+  /** The slug this dataset's PERSONAL-LANE tables are named with (`personal_<owner>.<layer>_<laneSlug>`).
+   *  Recorded at create (`newLaneSlug`: the name slug plus the dataset id, unique per dataset) and
+   *  never recomputed. ABSENT on a dataset created before lane names were unique: it then reads its
+   *  legacy lane tables via `physicalSlug` until the record-lane-names migration stamps it. Read it
+   *  through `laneSlug(d)` (store-fqn.ts). Always written when present. */
+  laneSlug?: string;
   owner: string;
   domain: string;
   tier: Tier;
@@ -815,6 +821,7 @@ export function parseDataset(input: string | Record<string, unknown>): Dataset {
   // name. Absent ⇒ still derivable from the name (`physicalSlug` falls back to
   // `slug(name)`), so every pre-rename record parses with no slug — byte-stable.
   const slugRaw = typeof doc.slug === 'string' && doc.slug.trim() ? doc.slug.trim() : undefined;
+  const laneRaw = typeof doc.laneSlug === 'string' && /^[a-z0-9_]+$/.test(doc.laneSlug.trim()) ? doc.laneSlug.trim() : undefined;
   // #155: absent/false ⇒ legacy un-namespaced view identity (every pre-#155 record).
   // BACK-COMPAT: records written before the semantic-layer removal carry the marker
   // under its old `cubeNamespaced` key — read BOTH so a stored dataset never silently
@@ -844,6 +851,7 @@ export function parseDataset(input: string | Record<string, unknown>): Dataset {
     id: typeof doc.id === 'string' ? doc.id : '',
     name: typeof doc.name === 'string' ? doc.name : 'Untitled dataset',
     ...(slugRaw ? { slug: slugRaw } : {}),
+    ...(laneRaw ? { laneSlug: laneRaw } : {}),
     owner: typeof doc.owner === 'string' ? doc.owner : '',
     domain: typeof doc.domain === 'string' ? doc.domain : '',
     tier,
@@ -896,6 +904,9 @@ export function serializeDataset(d: Dataset): string {
   // name (i.e. it no longer equals `slug(name)`). While still derivable it is OMITTED,
   // so every dataset that has never been renamed serializes byte-identically to before.
   if (d.slug && d.slug !== nameSlug(d.name)) doc.slug = d.slug;
+  // The lane slug is a RECORD of where the lane tables are, so it is written whenever present
+  // (including when it equals the legacy name: that is exactly what the migration records).
+  if (d.laneSlug) doc.laneSlug = d.laneSlug;
   // Omit-when-root (byte-stable, like the `layer !== 'gold'` omit precedent): a
   // dataset at the root serializes exactly as before, so no old record churns.
   if (d.folder && normaliseFolderPath(d.folder) !== '/') doc.folder = normaliseFolderPath(d.folder);

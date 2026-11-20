@@ -30,6 +30,86 @@ export function physicalSlug(d: { slug?: string; name: string }): string {
 }
 
 /**
+ * The longest table name the OS mints in a personal lane: 63 characters, the identifier limit
+ * of PostgreSQL — the tightest one in the stack (Polaris persists on PostgreSQL; Trino and
+ * Iceberg have no shorter limit). Keeping lane names inside it means a name is never truncated
+ * by any component it passes through.
+ */
+export const LANE_TABLE_MAX = 63;
+
+/**
+ * The personal-lane NAME of a NEW dataset: `<slug(name)>_<dataset id without "ds_">`.
+ *
+ * WHY THE ID, NOT THE DOMAIN. A lane is one schema per OWNER (`personal_<owner>`) shared by every
+ * dataset that owner builds, in every domain. Naming its tables after the dataset name alone
+ * (`gold_<slug>`) let two datasets with the same name write the SAME table — seen live: a
+ * personal draft rebuilt the table a domain asset of the same name read. Adding the domain would
+ * still collide for two same-named datasets in one domain (or after a domain move); the dataset id
+ * is unique by construction and never changes, so it is the only suffix that rules a collision
+ * out. The readable name stays in front, so `gold_northpeak_goods_receipts_r0ejqrd65h` is still
+ * recognisable in Trino. The name part is shortened so `bronze_<lane>` fits {@link LANE_TABLE_MAX}.
+ *
+ * Recorded ONCE at create (`Dataset.laneSlug`) and never recomputed — a rename does not move it.
+ */
+export function newLaneSlug(name: string, id: string): string {
+  const tail = sanitizeIdent(id.replace(/^ds_/, ''));
+  const room = LANE_TABLE_MAX - 'bronze_'.length - 1 - tail.length;
+  const base = slug(name).slice(0, Math.max(1, room)).replace(/_+$/, '') || 'dataset';
+  return `${base}_${tail}`;
+}
+
+/**
+ * The slug a dataset's PERSONAL-LANE tables are named with: the recorded `laneSlug` when the
+ * dataset has one (every dataset created since lane names became unique, and every older one the
+ * record-lane-names migration has stamped), else the legacy `physicalSlug` — so the tables an
+ * existing dataset already wrote are read where they are, and nothing is silently renamed.
+ */
+export function laneSlug(d: { laneSlug?: string; slug?: string; name: string }): string {
+  return d.laneSlug ?? physicalSlug(d);
+}
+
+/** The personal-lane TABLE name of one layer (`<layer>_<laneSlug>`), schema not included. */
+export function laneTable(d: { laneSlug?: string; slug?: string; name: string }, layer: Layer): string {
+  return `${layer}_${laneSlug(d)}`;
+}
+
+/** The full personal-lane FQN of one layer: `iceberg.personal_<owner>.<layer>_<laneSlug>`. */
+export function laneFqn(d: { owner: string; laneSlug?: string; slug?: string; name: string }, layer: Layer): string {
+  return `iceberg.${personalSchema(d.owner)}.${laneTable(d, layer)}`;
+}
+
+/** A governed (asset/product) dataset is served ONLY from its domain copy. */
+export function isGoverned(d: { tier: string }): boolean {
+  return d.tier !== 'dataset';
+}
+
+/**
+ * The typed refusal for a governed dataset whose DOMAIN copy does not exist: the registry says it
+ * is served, but there is no table in its domain schema. It is never answered from the owner's
+ * lane instead — that lane is the owner's workspace and may hold something else entirely.
+ */
+export class NotBuiltError extends Error {
+  readonly code = 'not_built';
+  readonly status = 409;
+  readonly datasetId: string;
+  readonly datasetName: string;
+  readonly fqn: string;
+  constructor(datasetId: string, datasetName: string, fqn: string) {
+    super(`“${datasetName}” (${datasetId}) has no domain copy: ${fqn} does not exist. Re-promote the dataset to write it.`);
+    this.name = 'NotBuiltError';
+    this.datasetId = datasetId;
+    this.datasetName = datasetName;
+    this.fqn = fqn;
+  }
+}
+
+/** True when a Trino failure means the named table (or its schema) does not exist. */
+export function isMissingTableError(e: unknown): boolean {
+  const m = (e as Error)?.message ?? '';
+  return /\b(TABLE_NOT_FOUND|SCHEMA_NOT_FOUND)\b/.test(m) || /\b(Table|Schema) '[^']+' does not exist\b/.test(m);
+}
+
+/**
  * Sanitize a principal/uid to a stable identifier — the SAME normalization the
  * data-runner (`slug`) and the query-tool write guard (`personal_schema`) apply, so
  * the object-storage prefix, the Iceberg namespace and the OPA subject stay in
@@ -120,7 +200,7 @@ export function reuseSourceFqn(d: Dataset): string {
   }
   const layer: Layer = d.versions.gold.built ? 'gold' : 'silver';
   if (d.tier === 'dataset') {
-    return `iceberg.${personalSchema(d.owner)}.${layer}_${physicalSlug(d)}`;
+    return laneFqn(d, layer);
   }
   return assetTarget(d);
 }
@@ -186,12 +266,13 @@ export function versionTarget(d: Dataset, layer: Layer, viewer: { id: string }):
   if (d.connected && d.connected.mode === 'sync') {
     return `iceberg.${domainSchema(d.domain)}.${d.connected.tier}_${physicalSlug(d)}`;
   }
-  // FAIL-CLOSED: only the OWNER resolves to the personal lane. Everyone else resolves to
-  // the domain schema — never `personal_<otherUser>` (see readPrincipalFor: the schema and
-  // the read principal must be the identity that owns the schema).
-  const isOwner = viewer.id === d.owner;
-  const schema = isOwner ? personalSchema(d.owner) : domainSchema(d.domain);
-  return `iceberg.${schema}.${layer}_${physicalSlug(d)}`;
+  // A GOVERNED dataset (asset/product) is its DOMAIN copy for every viewer — the owner
+  // included. The owner's lane is their build workspace: it may hold an unpublished rebuild, or
+  // (before lane names were unique) another dataset's table of the same name. A PERSONAL dataset
+  // lives only in its owner's lane; a non-owner resolves to the domain schema, where it does not
+  // exist — fail-closed, never `personal_<otherUser>` (see readPrincipalFor).
+  if (isGoverned(d) || viewer.id !== d.owner) return `iceberg.${domainSchema(d.domain)}.${layer}_${physicalSlug(d)}`;
+  return laneFqn(d, layer);
 }
 
 /**
@@ -238,11 +319,18 @@ export function builtLayerFqn(
     const principal = user.domains[0] ?? user.id;
     return { layer: chosenSync, fqn, principal };
   }
+  if (isGoverned(d)) {
+    // A governed dataset serves ONE layer, the one its promotion published to the domain schema
+    // (Gold when built, else Silver — {@link assetTarget}). Every viewer, the owner included,
+    // reads that copy as their domain principal; bronze is never published.
+    const served: Layer | null = d.versions.gold.built ? 'gold' : d.versions.silver.built ? 'silver' : null;
+    if (!served) return null;
+    return { layer: served, fqn: versionTarget(d, served, { id: user.id }), principal: user.domains[0] ?? user.id };
+  }
   const chosen = layer && d.versions[layer]?.built ? layer : (['gold', 'silver', 'bronze'] as Layer[]).find((l) => d.versions[l].built);
   if (!chosen) return null;
-  // FAIL-CLOSED, owner-aware: only the OWNER resolves to the personal lane and is read AS
-  // the owner; everyone else resolves to the domain schema and is read as the domain
-  // principal. versionTarget encodes the SAME schema rule so the two never drift.
+  // A PERSONAL dataset: only the OWNER resolves to the lane and is read AS the owner; anyone
+  // else resolves to the domain schema (fail-closed) as their domain principal.
   const isOwner = user.id === d.owner;
   const fqn = versionTarget(d, chosen, { id: user.id });
   const principal = isOwner ? user.id : (user.domains[0] ?? user.id);

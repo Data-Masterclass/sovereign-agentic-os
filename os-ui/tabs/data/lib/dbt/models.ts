@@ -24,7 +24,7 @@
  *     ONE dataset out — so one bad dataset can never block a domain's commits.
  */
 import type { Dataset, Layer, DatasetSync } from '@tabs/data/lib/dataset-schema';
-import { physicalSlug, personalSchema, domainSchema, sanitizeIdent } from '@tabs/data/lib/store-fqn';
+import { physicalSlug, personalSchema, domainSchema, sanitizeIdent, laneTable } from '@tabs/data/lib/store-fqn';
 import { DEFAULT_LOOKBACK_MINUTES } from '@tabs/data/lib/sync-sql';
 import { qident, qlit } from '@tabs/data/lib/dbt/emit';
 import { commentText, freeText, jinjaFreeSql, LiteralSafetyError } from '@tabs/data/lib/dbt/literal';
@@ -285,7 +285,7 @@ export function planModels(snap: ProjectSnapshot): ModelPlanSet {
     if (sync.kind === 'external' && d.sync) {
       externals.push({
         dataset: d.id,
-        name: `${d.connected?.tier ?? 'bronze'}_${physicalSlug(d)}`,
+        name: d.connected ? `${d.connected.tier}_${physicalSlug(d)}` : laneTable(d, 'bronze'),
         kind: sync.what,
         connectionId: d.sync.connectionId,
         source: { schema: d.sync.source.schema, table: d.sync.source.table },
@@ -317,11 +317,13 @@ export function planModels(snap: ProjectSnapshot): ModelPlanSet {
     }
     if (outOfBand.length) outOfBandByDataset.set(d.id, outOfBand);
     for (const layer of layers) {
-      let name = `${layer}_${physicalSlug(d)}`;
+      const schema = schemaFor(d, layer, sync);
+      // A model is named after the table it builds: the lane name in a personal lane (unique per
+      // dataset), the physical slug in the domain schema.
+      let name = schema.startsWith('personal_') ? laneTable(d, layer) : `${layer}_${physicalSlug(d)}`;
       if (taken.has(name)) name = `${name}__${sanitizeIdent(d.id)}`; // two datasets, one slug (rename edge case)
       taken.add(name);
-      const schema = schemaFor(d, layer, sync);
-      modelByFqn.set(`${personalSchema(d.owner)}.${layer}_${physicalSlug(d)}`, name);
+      modelByFqn.set(`${personalSchema(d.owner)}.${laneTable(d, layer)}`, name);
       modelByFqn.set(`${domainSchema(d.domain)}.${layer}_${physicalSlug(d)}`, name);
       registered.push({ d: entry, layer, name, schema, sync });
     }
@@ -334,7 +336,7 @@ export function planModels(snap: ProjectSnapshot): ModelPlanSet {
 
   const onSource = (d: Dataset) => (s: { catalog: string; schema: string; table: string }): string => {
     const name = s.catalog === 'iceberg' ? s.schema : `${s.catalog}__${s.schema}`;
-    const own = s.catalog === 'iceberg' && s.schema === personalSchema(d.owner) && s.table === `bronze_${physicalSlug(d)}`;
+    const own = s.catalog === 'iceberg' && s.schema === personalSchema(d.owner) && s.table === laneTable(d, 'bronze');
     return addSource({
       source: name,
       database: s.catalog,
@@ -413,10 +415,10 @@ export function planModels(snap: ProjectSnapshot): ModelPlanSet {
                 source: personalSchema(d.owner),
                 database: 'iceberg',
                 schema: personalSchema(d.owner),
-                table: `bronze_${physicalSlug(d)}`,
+                table: laneTable(d, 'bronze'),
                 description: sourceDescription(d, 'Bronze landing (data-runner, PyIceberg — never written by dbt)'),
                 loadedAt: hasLoadedAt(d),
-              }))}, ${qlit(`bronze_${physicalSlug(d)}`)}) }}`;
+              }))}, ${qlit(laneTable(d, 'bronze'))}) }}`;
         const note = d.versions[r.layer].passThrough
           ? '-- Pass-through: this layer carries the layer below forward unchanged.'
           : '-- No compiled body was recorded for this layer; a pass-through of the layer below is assumed.';
@@ -454,7 +456,7 @@ export function planModels(snap: ProjectSnapshot): ModelPlanSet {
     for (const layer of layers) {
       const sync = syncShape(d, snap.catalogs);
       const schema = schemaFor(d, layer, sync);
-      const table = `${layer}_${physicalSlug(d)}`;
+      const table = schema.startsWith('personal_') ? laneTable(d, layer) : `${layer}_${physicalSlug(d)}`;
       const tested = layer === furthestBuilt;
       const { columns, intentions } = columnDocs(d, tested, resolveRef);
       addSource({

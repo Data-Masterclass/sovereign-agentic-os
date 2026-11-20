@@ -26,7 +26,7 @@ import { loadGuide, isGuidePath, GUIDE_PATHS, type GuidePath } from '@core/tabs-
 import { config } from '@core/kernel/config';
 import { queryRun } from '@core/infra/governed';
 import { routeFor } from '@core/infra/trino-source';
-import { versionTarget } from '@tabs/data/lib/store-fqn';
+import { versionTarget, isGoverned, isMissingTableError, NotBuiltError } from '@tabs/data/lib/store-fqn';
 import { builtLayerFqn } from '@tabs/data/lib/store';
 import type { Layer } from '@tabs/data/lib/index';
 import { LAYERS } from '@tabs/data/lib/index';
@@ -124,7 +124,21 @@ export const readTools: McpTool[] = [
       // explicit arg; Gold is the serving default. Graceful fallback: if the requested
       // layer isn't built we resolve the furthest built one and SAY SO — never crash.
       const requested = (str(args.layer) as Layer) || undefined;
-      const queryable = resolveQueryable(d, user, requested);
+      let queryable: ReturnType<typeof resolveQueryable> & { code?: string } = resolveQueryable(d, user, requested);
+      // PROBE-BEFORE-CLAIM for a governed dataset: its only readable table is the DOMAIN copy, and
+      // the registry can say served while that copy was never written. A missing table is a typed
+      // not_built naming the dataset; any other failure (engine unreachable) leaves the registry
+      // answer as it is rather than guessing either way.
+      if (isGoverned(d) && queryable.available && queryable.fqn) {
+        try {
+          await queryRun(`SELECT 1 FROM ${queryable.fqn} LIMIT 0`, user.domains[0] ?? user.id, routeFor(user, 'data-catalog'));
+        } catch (e) {
+          if (isMissingTableError(e)) {
+            const nb = new NotBuiltError(d.id, d.name, queryable.fqn);
+            queryable = { ...queryable, available: false, code: nb.code, note: nb.message };
+          }
+        }
+      }
       return {
         ...d,
         queryable,
