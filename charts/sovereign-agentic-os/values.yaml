@@ -1929,6 +1929,14 @@ osUI:
   agentGraphModule:
     enabled: false
     domains: []
+  # NATIVE DASHBOARDS (WP-52). `false` (default): dashboards are written in the os.sovereign/v1
+  # format, unchanged. `true`: DASHBOARDS_NATIVE=true — each domain's dashboards/ subtree is
+  # generated as dbt `saved_queries:` + `exposures:` and Vega-Lite v5 panel specs, and drawn back
+  # from those files. The first write in a domain after turning it on regenerates that domain's
+  # dashboards/ (the migration; dry-run plan: os-ui/scripts/dashboards-native-migrate.mjs).
+  # Rollback: set it back to false; the next write regenerates the v1 files (`git revert` the
+  # regeneration commit to restore the exact bytes).
+  dashboardsNative: false
   # THE KEY EACH AGENT SYSTEM GETS AT BUILD (`os-<systemId>`, minted by os-ui's Build with the
   # LiteLLM admin API — not the shared `litellmAgentKey` above, whose values never reached it).
   # These caps are applied on EVERY Build / Rebuild: an existing key is reconciled to them
