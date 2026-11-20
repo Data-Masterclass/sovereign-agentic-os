@@ -2076,3 +2076,26 @@ osUI:
 softwareBuilder:
   mode: "spec"
   coderModel: ""
+
+# WP-10 — platform Secrets through the External Secrets Operator (ESO) from STACKIT Secrets Manager.
+# OFF by default: nothing renders and no Secret changes. Install ESO first
+# (deploy/external-secrets/install.sh); the migration run-book is docs/ops/external-secrets-migration.md.
+externalSecrets:
+  enabled: false
+  store:
+    create: true
+    name: stackit-secrets-manager
+    server: "https://prod.sm.eu01.stackit.cloud"
+    instanceId: ""          # required when enabled: the Secrets Manager instance ID (the KV v2 mount)
+    username: ""            # required when enabled: the READ-ONLY Secrets Manager user
+    authMount: userpass
+    passwordSecret:         # created once by the owner; never rendered by this chart
+      name: stackit-secrets-manager-eso
+      namespace: external-secrets
+      key: password
+  remotePrefix: ""          # remote key = <remotePrefix | release namespace>/<secret name>
+  refreshInterval: 1h
+  # Step 1 (handover release): Secrets the chart still renders, now with helm.sh/resource-policy: keep.
+  handover: []
+  # Step 2: Secrets ESO writes (names from files/external-secrets/catalog.yaml); the chart stops rendering them.
+  managed: []

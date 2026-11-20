@@ -33,6 +33,7 @@
 */}}
 {{- $k := .Values.litellmAgentKey }}
 {{- if eq .Values.global.profile "local" }}
+{{- if not (include "soa.eso.owned" (list $ $k.secretName)) }}
 apiVersion: v1
 kind: Secret
 metadata:
@@ -41,9 +42,14 @@ metadata:
   labels:
     {{- include "soa.labels" . | nindent 4 }}
     {{- include "soa.selectorLabels" (dict "ctx" . "component" "litellm") | nindent 4 }}
+  {{- with include "soa.eso.keep" (list $ $k.secretName) }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
 type: Opaque
 stringData:
   apiKey: {{ $k.local.value | quote }}
+{{- end }}
 ---
 {{- end }}
 apiVersion: batch/v1

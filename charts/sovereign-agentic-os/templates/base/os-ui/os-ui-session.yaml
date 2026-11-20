@@ -22,6 +22,7 @@
 {{- $current := "" }}
 {{- if $existing }}{{ $current = (index $existing.data "OS_SESSION_SECRET" | b64dec) }}{{- end }}
 {{- $secret := .Values.osUI.sessionSecret | default $current | default (randAlphaNum 48) }}
+{{- if not (include "soa.eso.owned" (list $ $name)) }}
 apiVersion: v1
 kind: Secret
 metadata:
@@ -35,4 +36,5 @@ metadata:
 type: Opaque
 stringData:
   OS_SESSION_SECRET: {{ $secret | quote }}
+{{- end }}
 {{- end }}

@@ -5,6 +5,7 @@
 */}}
 {{- $v := .Values.valkey }}
 {{- if eq .Values.global.profile "local" }}
+{{- if not (include "soa.eso.owned" (list $ $v.secretName)) }}
 apiVersion: v1
 kind: Secret
 metadata:
@@ -13,9 +14,14 @@ metadata:
   labels:
     {{- include "soa.labels" . | nindent 4 }}
     {{- include "soa.selectorLabels" (dict "ctx" . "component" "valkey") | nindent 4 }}
+  {{- with include "soa.eso.keep" (list $ $v.secretName) }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
 type: Opaque
 stringData:
   password: {{ $v.local.password | quote }}
+{{- end }}
 ---
 {{- end }}
 apiVersion: apps/v1

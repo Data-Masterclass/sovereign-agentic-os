@@ -40,6 +40,7 @@
 # Local-profile shared token. The runtime presents this on its calls back to the OS UI
 # governed-tool endpoint, the OS UI presents the SAME token to the runtime, and the Dagster
 # user-code pod + repo-sync sidecar present it to the OS repo index — all read `agent-runtime-token`.
+{{- if not (include "soa.eso.owned" (list $ "agent-runtime-token")) }}
 apiVersion: v1
 kind: Secret
 metadata:
@@ -48,7 +49,12 @@ metadata:
   labels:
     {{- include "soa.labels" . | nindent 4 }}
     {{- include "soa.selectorLabels" (dict "ctx" . "component" "agent-runtime") | nindent 4 }}
+  {{- with include "soa.eso.keep" (list $ "agent-runtime-token") }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
 type: Opaque
 stringData:
   token: {{ $r.token | quote }}
+{{- end }}
 {{- end }}

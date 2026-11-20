@@ -10,6 +10,7 @@
 */}}
 {{- $os := .Values.objectStorage }}
 {{- if eq .Values.global.profile "local" }}
+{{- if not (include "soa.eso.owned" (list $ $os.secretName)) }}
 apiVersion: v1
 kind: Secret
 metadata:
@@ -18,10 +19,15 @@ metadata:
   labels:
     {{- include "soa.labels" . | nindent 4 }}
     {{- include "soa.selectorLabels" (dict "ctx" . "component" "object-storage") | nindent 4 }}
+  {{- with include "soa.eso.keep" (list $ $os.secretName) }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
 type: Opaque
 stringData:
   AWS_ACCESS_KEY_ID: {{ $os.local.accessKey | quote }}
   AWS_SECRET_ACCESS_KEY: {{ $os.local.secretKey | quote }}
+{{- end }}
 ---
 {{- end }}
 apiVersion: apps/v1

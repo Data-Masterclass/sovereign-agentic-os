@@ -12,6 +12,7 @@
 */}}
 {{- $pl := .Values.polaris }}
 {{- if eq .Values.global.profile "local" }}
+{{- if not (include "soa.eso.owned" (list $ $pl.secretName)) }}
 apiVersion: v1
 kind: Secret
 metadata:
@@ -20,10 +21,15 @@ metadata:
   labels:
     {{- include "soa.labels" . | nindent 4 }}
     {{- include "soa.selectorLabels" (dict "ctx" . "component" "polaris") | nindent 4 }}
+  {{- with include "soa.eso.keep" (list $ $pl.secretName) }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
 type: Opaque
 stringData:
   # realm,clientId,clientSecret — bootstraps the realm's root principal.
   POLARIS_BOOTSTRAP_CREDENTIALS: "{{ $pl.realm }},{{ $pl.local.rootClientId }},{{ $pl.local.rootClientSecret }}"
+{{- end }}
 ---
 {{- end }}
 apiVersion: apps/v1

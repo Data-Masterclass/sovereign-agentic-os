@@ -24,6 +24,7 @@
 {{- $current := "" }}
 {{- if $existing }}{{ $current = (index $existing.data "SMTP_PASS" | default "" | b64dec) }}{{- end }}
 {{- $pass := .Values.osUI.smtp.password | default $current | default "" }}
+{{- if not (include "soa.eso.owned" (list $ $name)) }}
 apiVersion: v1
 kind: Secret
 metadata:
@@ -37,4 +38,5 @@ metadata:
 type: Opaque
 stringData:
   SMTP_PASS: {{ $pass | quote }}
+{{- end }}
 {{- end }}

@@ -19,6 +19,7 @@
 {{- $current := "" }}
 {{- if $existing }}{{ $current = (index $existing.data "apiKey" | b64dec) }}{{- end }}
 {{- $secret := .Values.docling.apiKey.value | default $current | default (randAlphaNum 48) }}
+{{- if not (include "soa.eso.owned" (list $ $name)) }}
 apiVersion: v1
 kind: Secret
 metadata:
@@ -31,4 +32,5 @@ metadata:
 type: Opaque
 stringData:
   apiKey: {{ $secret | quote }}
+{{- end }}
 {{- end }}
