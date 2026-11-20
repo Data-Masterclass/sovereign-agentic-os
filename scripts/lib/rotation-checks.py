@@ -20,6 +20,14 @@
       the list is `kubectl get deploy,statefulset,daemonset,cronjob -o json`; prints `<Kind> <name>
       <secret,…>` for every workload whose pod template reads one of the rotated Secrets — the
       readers are discovered, never listed by hand, so a new one cannot be missed.
+  rotation-checks.py known-missing <list.json>   (stdin: "<Kind> <name> <secret,…>" lines)
+      prints every known reader that is missing or whose pod spec no longer names its Secrets: the
+      known readers are a MINIMUM next to the discovery, so a reader that silently stops reading
+      its Secret (a renamed key, a dropped envFrom) is caught.
+  rotation-checks.py unowned <pods-and-jobs.json> <namespace> <rotated secret> [...]
+      the list is `kubectl get pods,jobs -A -o json`; prints `live|finished <Kind>/<name> <secrets>`
+      for every Pod or Job WITHOUT an owner that reads a rotated Secret (Secrets are namespaced: only
+      the namespace's objects can). A live one keeps an old value that no rollout restarts.
   rotation-checks.py item <list.json> <Kind> <name>
       prints that one object of the list as JSON.
   rotation-checks.py changed-at <secret.json> [<secret.json>…]
@@ -84,8 +92,10 @@ def env_state(dep_path, name, var, source_paths):
 
 
 def pod_spec(obj):
-    """The pod spec of a Deployment, StatefulSet, DaemonSet, Job or CronJob."""
+    """The pod spec of a Pod, Deployment, StatefulSet, DaemonSet, Job or CronJob."""
     spec = obj.get("spec") or {}
+    if obj.get("kind") == "Pod":
+        return spec
     if obj.get("kind") == "CronJob":
         spec = (spec.get("jobTemplate") or {}).get("spec") or {}
     return (spec.get("template") or {}).get("spec") or {}
@@ -125,6 +135,45 @@ def readers(list_path, rotated):
     return sorted(out)
 
 
+def known_missing(list_path, known):
+    """`known` lines "<Kind> <name> <secret,…>": the minimum readers. Returns every known reader that
+    is missing, or whose pod spec no longer names one of its Secrets."""
+    found = {(o["kind"], o["metadata"]["name"]): set(secrets_of(o)) for o in (load(list_path) or {}).get("items") or []}
+    out = []
+    for line in known:
+        kind, name, secs = line.split()
+        if (kind, name) not in found:
+            out.append(f"{kind}/{name}: missing")
+            continue
+        lost = [s for s in secs.split(",") if s not in found[(kind, name)]]
+        if lost:
+            out.append(f"{kind}/{name}: no longer names {','.join(lost)}")
+    return out
+
+
+def finished(obj):
+    st = obj.get("status") or {}
+    if obj["kind"] == "Pod":
+        return st.get("phase") in ("Succeeded", "Failed")
+    done = any(c.get("type") in ("Complete", "Failed") and c.get("status") == "True" for c in st.get("conditions") or [])
+    return done or (not st.get("active") and bool(st.get("succeeded") or st.get("failed")))
+
+
+def unowned(list_path, namespace, rotated):
+    """Pods and Jobs with no owner that read a rotated Secret, from `kubectl get pods,jobs -A -o json`.
+    Secrets are namespaced, so only objects in <namespace> can read them. Returns `live <Kind>/<name>
+    <secrets>` (verify fails) or `finished …` (runs nothing; reported only)."""
+    out = []
+    for o in (load(list_path) or {}).get("items") or []:
+        md = o["metadata"]
+        if md.get("ownerReferences") or md.get("namespace") != namespace or o.get("kind") not in ("Pod", "Job"):
+            continue
+        hit = [n for n in secrets_of(o) if n in rotated]
+        if hit:
+            out.append(f"{'finished' if finished(o) else 'live'} {o['kind']}/{md['name']} {','.join(hit)}")
+    return sorted(out)
+
+
 def item(list_path, kind, name):
     for obj in (load(list_path) or {}).get("items") or []:
         if obj.get("kind") == kind and obj["metadata"]["name"] == name:
@@ -154,6 +203,10 @@ if __name__ == "__main__":
         print("\n".join(secrets_read(args[0])))
     elif cmd == "readers":
         print("\n".join(readers(args[0], set(args[1:]))))
+    elif cmd == "known-missing":
+        print("\n".join(known_missing(args[0], [l for l in sys.stdin.read().splitlines() if l.strip()])))
+    elif cmd == "unowned":
+        print("\n".join(unowned(args[0], args[1], set(args[2:]))))
     elif cmd == "item":
         print(item(*args[:3]))
     elif cmd == "changed-at":

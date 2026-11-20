@@ -11,6 +11,11 @@
 # secret or projected volume, in containers or init containers, of a Deployment, StatefulSet,
 # DaemonSet or CronJob — including a NEW seventh reader no hand-written list names (the twin: the
 # former hard-coded list misses it). Not found: workloads reading only other Secrets or ConfigMaps.
+# known-missing: the six known readers are a MINIMUM — a known reader that stops naming its Secret or
+# disappears is reported (the twin: discovery alone would silently drop it).
+# unowned: a Pod or Job without an owner that reads a rotated Secret and is still running is reported
+# live (verify fails: no rollout restarts it); a finished one only as a note; owned ones, Jobs of a
+# CronJob, other namespaces and other Secrets are not reported.
 # readers-restarted.py for StatefulSets and DaemonSets: pass when the rollout is complete and every
 # pod is Ready and newer than the Secret change; twins: a stale pod, a not-Ready pod, an incomplete
 # rollout, a stale controller each fail; 0 replicas is a skip.
@@ -53,6 +58,48 @@ check "exactly six readers" "6" "$(grep -c . <<<"$out")"
 OLD_LIST="agentic-os-langfuse-web agentic-os-langfuse-worker agentic-os-litellm os-ui os-ui-worker agentic-os-dagster-user-deployments-sovereign"
 case " $OLD_LIST " in *" brand-new-reader "*) bad "twin setup" ;; *) ok "twin: the former hand-written list does not contain the new reader — discovery does" ;; esac
 check "item extracts one object" '"name": "some-db"' "$(python3 $RC item "$T/all.json" StatefulSet some-db)"
+
+echo "the known readers are a minimum"
+KNOWN=$(printf '%s\n' "Deployment agentic-os-litellm litellm-credentials" "Deployment os-ui langfuse-init" "Deployment brand-new-reader agent-runtime-token")
+check "all known readers present and naming their Secrets: nothing reported" "" "$(python3 $RC known-missing "$T/all.json" <<<"$KNOWN")"
+items2=("${items[@]}"); items2[0]="$(wl Deployment agentic-os-litellm '{"containers":[{"name":"litellm","envFrom":[{"secretRef":{"name":"some-other"}}]}]}')"
+(IFS=,; printf '{"kind":"List","items":[%s]}' "${items2[*]}") > "$T/all2.json"
+out=$(python3 $RC known-missing "$T/all2.json" <<<"$KNOWN")
+check "twin: a known reader that stops naming its Secret is reported" "Deployment/agentic-os-litellm: no longer names litellm-credentials" "$out"
+# shellcheck disable=SC2086
+absent "  ... while discovery alone no longer sees it (why the minimum exists)" "agentic-os-litellm" "$(python3 $RC readers "$T/all2.json" $ROTATED)"
+out=$(python3 $RC known-missing "$T/all.json" <<<"Deployment agentic-os-langfuse-web langfuse-init")
+check "twin: a known reader that is missing is reported" "Deployment/agentic-os-langfuse-web: missing" "$out"
+
+echo "unowned Pods and Jobs (cluster-wide list, the release namespace's Secrets)"
+upod() { # name namespace phase owner(yes|no) secret
+  local own=""; [ "$4" = yes ] && own=',"ownerReferences":[{"kind":"ReplicaSet","uid":"r"}]'
+  printf '{"kind":"Pod","metadata":{"name":"%s","namespace":"%s"%s},"spec":{"containers":[{"name":"c","envFrom":[{"secretRef":{"name":"%s"}}]}]},"status":{"phase":"%s"}}' "$1" "$2" "$own" "$5" "$3"
+}
+ujob() { # name namespace active succeeded owner(yes|no) secret
+  local own=""; [ "$5" = yes ] && own=',"ownerReferences":[{"kind":"CronJob","uid":"c"}]'
+  printf '{"kind":"Job","metadata":{"name":"%s","namespace":"%s"%s},"spec":{"template":{"spec":{"containers":[{"name":"c","env":[{"name":"K","valueFrom":{"secretKeyRef":{"name":"%s","key":"k"}}}]}]}}},"status":{"active":%s,"succeeded":%s}}' "$1" "$2" "$own" "$6" "$3" "$4"
+}
+pj=( "$(upod debug-shell agentic-os Running no litellm-credentials)"
+     "$(ujob one-off-live agentic-os 1 0 no agent-runtime-token)"
+     "$(ujob litellm-agent-key-init agentic-os 0 1 no litellm-credentials)"
+     "$(upod gw-abc agentic-os Running yes litellm-credentials)"
+     "$(ujob cron-run agentic-os 1 0 yes agent-runtime-token)"
+     "$(upod elsewhere other-ns Running no litellm-credentials)"
+     "$(upod unrelated agentic-os Running no postgres-dagster-credentials)" )
+(IFS=,; printf '{"kind":"List","items":[%s]}' "${pj[*]}") > "$T/pj.json"
+# shellcheck disable=SC2086
+out=$(python3 $RC unowned "$T/pj.json" agentic-os $ROTATED)
+check "twin: a live unowned Pod reading a rotated Secret is reported live (verify fails)" "live Pod/debug-shell litellm-credentials" "$out"
+check "twin: a running unowned Job reading one is reported live" "live Job/one-off-live agent-runtime-token" "$out"
+check "a finished unowned Job is reported finished (a note, it runs nothing)" "finished Job/litellm-agent-key-init litellm-credentials" "$out"
+absent "an owned Pod is not unowned" "gw-abc" "$out"
+absent "a Job owned by a CronJob is not unowned" "cron-run" "$out"
+absent "a Pod in another namespace cannot read this namespace's Secret" "elsewhere" "$out"
+absent "an unowned Pod reading only another Secret is not reported" "unrelated" "$out"
+printf '{"kind":"List","items":[%s]}' "$(upod gw-abc agentic-os Running yes litellm-credentials)" > "$T/pj-clean.json"
+# shellcheck disable=SC2086
+check "nothing unowned: nothing reported" "" "$(python3 $RC unowned "$T/pj-clean.json" agentic-os $ROTATED)"
 
 echo "StatefulSet / DaemonSet verdicts"
 SINCE=2026-11-20T15:10:00Z
