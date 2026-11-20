@@ -182,6 +182,7 @@ spec:
 # Local-only dev credentials for the three governance logins (NOT production secrets). On STACKIT
 # these Secrets come from ESO under the same names. The admin Secret is never rendered here: the
 # operator supplies a dedicated one (postgres.governance.adminSecretName).
+{{- if not (include "soa.eso.owned" (list $ $gov.owner.secretName)) }}
 apiVersion: v1
 kind: Secret
 metadata:
@@ -190,11 +191,17 @@ metadata:
   labels:
     {{- include "soa.labels" . | nindent 4 }}
     {{- include "soa.selectorLabels" (dict "ctx" . "component" "postgres") | nindent 4 }}
+  {{- with include "soa.eso.keep" (list $ $gov.owner.secretName) }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
 type: kubernetes.io/basic-auth
 stringData:
   username: {{ $gov.owner.username | quote }}
   password: {{ $gov.owner.localPassword | quote }}
+{{- end }}
 ---
+{{- if not (include "soa.eso.owned" (list $ $gov.runtime.secretName)) }}
 apiVersion: v1
 kind: Secret
 metadata:
@@ -203,11 +210,17 @@ metadata:
   labels:
     {{- include "soa.labels" . | nindent 4 }}
     {{- include "soa.selectorLabels" (dict "ctx" . "component" "postgres") | nindent 4 }}
+  {{- with include "soa.eso.keep" (list $ $gov.runtime.secretName) }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
 type: kubernetes.io/basic-auth
 stringData:
   username: {{ $gov.runtime.username | quote }}
   password: {{ $gov.runtime.localPassword | quote }}
+{{- end }}
 ---
+{{- if not (include "soa.eso.owned" (list $ $gov.queue.secretName)) }}
 apiVersion: v1
 kind: Secret
 metadata:
@@ -216,9 +229,14 @@ metadata:
   labels:
     {{- include "soa.labels" . | nindent 4 }}
     {{- include "soa.selectorLabels" (dict "ctx" . "component" "postgres") | nindent 4 }}
+  {{- with include "soa.eso.keep" (list $ $gov.queue.secretName) }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
 type: kubernetes.io/basic-auth
 stringData:
   username: {{ $gov.queue.username | quote }}
   password: {{ $gov.queue.localPassword | quote }}
+{{- end }}
 {{- end }}
 {{- end }}

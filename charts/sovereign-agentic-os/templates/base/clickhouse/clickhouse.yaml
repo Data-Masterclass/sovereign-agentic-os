@@ -6,6 +6,7 @@
 */}}
 {{- $ch := .Values.clickhouse }}
 {{- if eq .Values.global.profile "local" }}
+{{- if not (include "soa.eso.owned" (list $ $ch.secretName)) }}
 apiVersion: v1
 kind: Secret
 metadata:
@@ -14,9 +15,14 @@ metadata:
   labels:
     {{- include "soa.labels" . | nindent 4 }}
     {{- include "soa.selectorLabels" (dict "ctx" . "component" "clickhouse") | nindent 4 }}
+  {{- with include "soa.eso.keep" (list $ $ch.secretName) }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
 type: Opaque
 stringData:
   password: {{ $ch.local.password | quote }}
+{{- end }}
 ---
 {{- end }}
 apiVersion: apps/v1

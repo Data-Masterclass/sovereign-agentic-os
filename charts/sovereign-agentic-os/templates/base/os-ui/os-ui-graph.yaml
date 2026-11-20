@@ -25,6 +25,7 @@
 {{- $current := "" }}
 {{- if $existing }}{{ $current = (index $existing.data "GRAPH_CLIENT_SECRET" | default "" | b64dec) }}{{- end }}
 {{- $secret := .Values.osUI.graph.clientSecret | default $current | default "" }}
+{{- if not (include "soa.eso.owned" (list $ $name)) }}
 apiVersion: v1
 kind: Secret
 metadata:
@@ -38,4 +39,5 @@ metadata:
 type: Opaque
 stringData:
   GRAPH_CLIENT_SECRET: {{ $secret | quote }}
+{{- end }}
 {{- end }}

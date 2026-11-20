@@ -5,6 +5,7 @@
   the sample agent and LiteLLM can send traces with known keys — no manual UI
   setup. NOT production secrets; on STACKIT projects/keys are managed for real.
 */}}
+{{- if not (include "soa.eso.owned" (list $ "langfuse-init")) }}
 apiVersion: v1
 kind: Secret
 metadata:
@@ -13,6 +14,10 @@ metadata:
   labels:
     {{- include "soa.labels" . | nindent 4 }}
     {{- include "soa.selectorLabels" (dict "ctx" . "component" "langfuse") | nindent 4 }}
+  {{- with include "soa.eso.keep" (list $ "langfuse-init") }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
 type: Opaque
 stringData:
   LANGFUSE_INIT_ORG_ID: "sovereign-os"
@@ -27,4 +32,5 @@ stringData:
   # Applied only when the user is CREATED: Langfuse's headless init never changes the password
   # of an existing user (web/src/initialize.ts). Rotation: docs/ops/secret-rotation.md.
   LANGFUSE_INIT_USER_PASSWORD: {{ .Values.langfuseInit.userPassword | quote }}
+{{- end }}
 {{- end }}

@@ -24,6 +24,7 @@
 {{- $current := "" }}
 {{- if $existing }}{{ $current = (index $existing.data "SERVICE_BEARER_TOKEN" | b64dec) }}{{- end }}
 {{- $secret := .Values.serviceBearer.token | default $current | default (randAlphaNum 48) }}
+{{- if not (include "soa.eso.owned" (list $ $name)) }}
 apiVersion: v1
 kind: Secret
 metadata:
@@ -36,4 +37,5 @@ metadata:
 type: Opaque
 stringData:
   SERVICE_BEARER_TOKEN: {{ $secret | quote }}
+{{- end }}
 {{- end }}
