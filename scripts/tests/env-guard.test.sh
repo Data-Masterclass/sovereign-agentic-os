@@ -124,6 +124,14 @@ deploy env DEV_PRIVATE_VALUES=/nonexistent bash scripts/deploy.sh --env dev --fr
 check "the matching dev deploy passes the guard" "ENV_GUARD_OK env=dev context=dmagosdev" "$out"
 check "and goes on to read its private values" "DEV_PRIVATE_VALUES_MISSING" "$out"
 
+echo "== deploy.sh deploys only the digest it is told (EXPECT_DIGEST)"
+deploy env EXPECT_DIGEST=sha256:4444444444444444444444444444444444444444444444444444444444444444 bash scripts/deploy.sh --env prod --from-registry 9.9.9
+rc_is "NEGATIVE TWIN: a tag that resolves to another digest exits 1" 1
+check "it is refused as not dev-tested" "DIGEST_NOT_DEV_TESTED" "$out"
+absent "before any cluster call" "helm " "$log"
+deploy env EXPECT_DIGEST=sha256:3333333333333333333333333333333333333333333333333333333333333333 bash scripts/deploy.sh --verify-only 9.9.9
+rc_is "the matching digest passes" 0
+
 echo "== smoke-test.sh and rollback.sh use the same guard"
 out=$(PATH="$BIN:$PATH" DEV_KUBE_CONTEXT=dmagenticos bash scripts/smoke-test.sh --env dev 2>&1); rc=$?
 rc_is "NEGATIVE TWIN: smoke --env dev with the production context exits 1" 1
@@ -139,6 +147,17 @@ out=$(E2E_KUBE_CONTEXT=dmagenticos node -e "import('./tests/e2e/kind/lib/kube.mj
 check "NEGATIVE TWIN: E2E_KUBE_CONTEXT=dmagenticos is refused at import" "E2E_REFUSED" "$out"
 out=$(E2E_KUBE_CONTEXT=dmagosdev node -e "import('./tests/e2e/kind/lib/kube.mjs').then(m=>console.log('LOADED', m.CONTEXT))" 2>&1)
 check "the dev context loads" "LOADED dmagosdev" "$out"
+
+echo "== the acceptance harness on a real cluster: guarded, and stub journeys skipped with a reason"
+reset; kube dmagenticos "$PROD"; kube dmagosdev "$DEV" dev
+R=$(mktemp -d "$TMP/rep.XXXX")
+out=$(PATH="$BIN:$PATH" E2E_KUBE_CONTEXT=dmagenticos E2E_REPORT_DIR=$R bash tests/e2e/kind/run.sh journeys/journey-a-knowledge.e2e.mjs 2>&1); rc=$?
+rc_is "NEGATIVE TWIN: run.sh with E2E_KUBE_CONTEXT=dmagenticos exits 1" 1
+check "it is refused before any journey" "E2E_REFUSED" "$out"
+out=$(PATH="$BIN:$PATH" E2E_KUBE_CONTEXT=dmagosdev E2E_REPORT_DIR=$R bash tests/e2e/kind/run.sh journeys/journey-a-knowledge.e2e.mjs journeys/journey-c-approval.e2e.mjs 2>&1); rc=$?
+rc_is "on the marked dev cluster the stub journeys are skipped, exit 0" 0
+check "with the reason in the report" "needs the kind-only scriptable model stub" "$(cat "$R/report.md")"
+check "and counted" "Journeys skipped: 2" "$(cat "$R/report.md")"
 
 finish env-guard.test.sh || exit 1
 echo "ENV_GUARD_TESTS_OK"
