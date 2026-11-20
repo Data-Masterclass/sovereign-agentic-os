@@ -219,11 +219,33 @@ function shapeMetrics(): ProjectSnapshot {
   return { domain: 'sales', datasets: [{ dataset: orders, artifacts: {} }, { dataset: drafts, artifacts: {} }], catalogs: {} };
 }
 
+// ---- Shape (e): the live incident input (track H) — every quality rule recorded twice on one
+// column. Generated output must parse in the real image (images/extensions/dagster/tests/image).
+function shapeDuplicateRule(): ProjectSnapshot {
+  const chk = (id: string, rule: 'not_null' | 'unique' | 'range', column: string, extra: Record<string, unknown> = {}) =>
+    ({ id, name: `${rule} ${column}`, description: '', createdBy: 'amir', createdAt: '2026-11-13T00:00:00.000Z', rule, column, ...extra });
+  const receipts = ds({
+    id: 'ds_receipts1',
+    name: 'Goods Receipts',
+    owner: 'amir',
+    domain: 'sales',
+    columns: [{ name: 'po_number', description: 'PO' }, { name: 'qty', description: 'Qty' }],
+    checks: [
+      chk('c1', 'not_null', 'po_number'), chk('c2', 'unique', 'po_number'),
+      chk('c3', 'not_null', 'po_number'), chk('c4', 'unique', 'po_number'),
+      chk('c5', 'range', 'qty', { min: 0 }), chk('c6', 'range', 'qty', { min: 0 }),
+    ],
+    versions: { bronze: built('bronze/goods_receipts.dlt.yml'), silver: built('silver/goods_receipts.sql', true), gold: built('gold/goods_receipts.sql', true) },
+  });
+  return { domain: 'sales', datasets: [{ dataset: receipts, artifacts: {} }], catalogs: {} };
+}
+
 const SHAPES: Record<string, () => ProjectSnapshot> = {
   'ingested-pass-through': shapeIngested,
   'composition-with-tests': shapeComposition,
   'append-sync-with-cursor': shapeAppendSync,
   'metrics-semantic-layer': shapeMetrics,
+  'duplicate-rule': shapeDuplicateRule,
 };
 
 function toObject(files: Map<string, string>): Record<string, string> {
@@ -295,6 +317,19 @@ test('profiles.yml emits `password:` iff the generator is told auth is ON (B4-re
     // Still one valid YAML document, and the key sits under the same mapping as `user:`.
     assert.match(on, /\n(\s+)user: .*\n\1password: /);
   }
+});
+
+test('profiles.yml has a plain `local` target that needs nothing from the OS (eject)', () => {
+  const doc = yaml.load(generateProject('sales', shapeIngested()).get('profiles.yml')!) as {
+    sovereign: { target: string; outputs: Record<string, Record<string, unknown>> };
+  };
+  assert.equal(doc.sovereign.target, 'trino', 'the OS target stays the default, so an OS run never silently drops impersonation');
+  const local = doc.sovereign.outputs.local;
+  assert.ok(local, 'a local output exists');
+  assert.equal(local.impersonation_user, undefined, 'plain dbt connects as the user it is given');
+  assert.doesNotMatch(JSON.stringify(local), /OS_/, 'no OS-injected variable in the local target');
+  const on = yaml.load(generateProject('sales', shapeIngested(), { trinoAuthMethod: 'ldap' }).get('profiles.yml')!) as typeof doc;
+  assert.equal(on.sovereign.outputs.local.password, "{{ env_var('TRINO_PASSWORD') }}", 'auth on: the local target needs a password too');
 });
 
 test('profiles.yml stays byte-stable for a given auth method (B4-review E-3)', () => {
