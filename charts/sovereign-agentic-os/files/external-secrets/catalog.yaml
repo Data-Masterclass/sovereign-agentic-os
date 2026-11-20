@@ -1,0 +1,65 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+#
+# WP-10 — the platform Secrets External Secrets may own. One entry per Kubernetes Secret: its
+# EXACT name, type and keys. Consumers read these names and keys today (secretKeyRef, envFrom,
+# volumes, scripts/ops/rotate-secrets.sh verify), so an ExternalSecret built from an entry writes
+# the same Secret, with the same type and keys — consumers do not change.
+#
+#   source: chart   — rendered by this chart on the local profile; moving it to ESO needs the
+#                     two-step handover (externalSecrets.handover, then externalSecrets.managed).
+#   source: manual  — created by hand on the cluster today; ESO adopts it directly.
+#   remoteProperty  — the property name in Secrets Manager when it differs from the key (a key that
+#                     starts with "." would be read as a path by the provider).
+#
+# Remote location: <externalSecrets.remotePrefix | release namespace>/<name> in the KV v2 mount
+# (the Secrets Manager instance ID). Values never appear here.
+# scripts/tests/external-secrets-chart.test.sh fails when a chart-rendered Secret has a key that
+# its entry lacks, or a different type.
+secrets:
+  agent-litellm-key:            {source: chart, type: Opaque, keys: [apiKey]}
+  agent-runtime-token:          {source: chart, type: Opaque, keys: [token]}
+  clickhouse-credentials:       {source: chart, type: Opaque, keys: [password]}
+  docling-api-key:              {source: chart, type: Opaque, keys: [apiKey]}
+  langfuse-core-secrets:        {source: chart, type: Opaque, keys: [encryptionKey, nextauthSecret, salt]}
+  langfuse-init:
+    source: chart
+    type: Opaque
+    keys: [LANGFUSE_INIT_ORG_ID, LANGFUSE_INIT_ORG_NAME, LANGFUSE_INIT_PROJECT_ID, LANGFUSE_INIT_PROJECT_NAME,
+           LANGFUSE_INIT_PROJECT_PUBLIC_KEY, LANGFUSE_INIT_PROJECT_SECRET_KEY, LANGFUSE_INIT_USER_EMAIL,
+           LANGFUSE_INIT_USER_NAME, LANGFUSE_INIT_USER_PASSWORD]
+  litellm-credentials:
+    source: chart
+    type: Opaque
+    keys: [LANGFUSE_HOST, LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, LITELLM_SALT_KEY, STACKIT_API_BASE,
+           STACKIT_API_KEY, UI_PASSWORD, UI_USERNAME, masterkey]
+  object-storage-credentials:   {source: chart, type: Opaque, keys: [AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY]}
+  os-ui-graph:                  {source: chart, type: Opaque, keys: [GRAPH_CLIENT_SECRET]}
+  os-ui-session:                {source: chart, type: Opaque, keys: [OS_SESSION_SECRET]}
+  os-ui-smtp:                   {source: chart, type: Opaque, keys: [SMTP_PASS]}
+  polaris-credentials:          {source: chart, type: Opaque, keys: [POLARIS_BOOTSTRAP_CREDENTIALS]}
+  postgres-agent-runs-credentials: {source: chart, type: kubernetes.io/basic-auth, keys: [password, username]}
+  postgres-dagster-credentials:    {source: chart, type: kubernetes.io/basic-auth, keys: [password, username]}
+  postgres-langfuse-credentials:   {source: chart, type: kubernetes.io/basic-auth, keys: [password, username]}
+  postgres-litellm-credentials:    {source: chart, type: kubernetes.io/basic-auth, keys: [password, username]}
+  postgres-polaris-credentials:    {source: chart, type: kubernetes.io/basic-auth, keys: [password, username]}
+  postgres-os-governance-owner-credentials:   {source: chart, type: kubernetes.io/basic-auth, keys: [password, username]}
+  postgres-os-governance-runtime-credentials: {source: chart, type: kubernetes.io/basic-auth, keys: [password, username]}
+  postgres-os-governance-queue-credentials:   {source: chart, type: kubernetes.io/basic-auth, keys: [password, username]}
+  service-bearer-token:         {source: chart, type: Opaque, keys: [SERVICE_BEARER_TOKEN]}
+  trino-catalog-credentials:    {source: chart, type: Opaque, keys: [POLARIS_OAUTH_CREDENTIAL]}
+  valkey-credentials:           {source: chart, type: Opaque, keys: [password]}
+  # Created by hand today (no chart template).
+  ci-runner-token:              {source: manual, type: Opaque, keys: [token]}
+  dagster-basic-auth:           {source: manual, type: Opaque, keys: [auth]}
+  soa-basic-auth:               {source: manual, type: Opaque, keys: [auth]}
+  ghcr-pull:
+    source: manual
+    type: kubernetes.io/dockerconfigjson
+    keys: [.dockerconfigjson]
+    remoteProperty: {.dockerconfigjson: dockerconfigjson}
+  registry-pull-secret:
+    source: manual
+    type: kubernetes.io/dockerconfigjson
+    keys: [.dockerconfigjson]
+    remoteProperty: {.dockerconfigjson: dockerconfigjson}
