@@ -85,9 +85,11 @@ spec:
   failedJobsHistoryLimit: 3
   jobTemplate:
     spec:
-      # A drill is evidence: never retried into a pass.
+      # A drill is evidence: never retried into a pass. Bounded, and gone (with its emptyDirs —
+      # restored data) an hour after it ends; the scripts delete restored data at once anyway.
       backoffLimit: 0
-      ttlSecondsAfterFinished: 604800
+      activeDeadlineSeconds: {{ $d.timeoutSeconds }}
+      ttlSecondsAfterFinished: 3600
       template:
         metadata:
           labels:
@@ -103,7 +105,7 @@ spec:
             runAsGroup: 999
             fsGroup: 999
           volumes:
-            - { name: work, emptyDir: { sizeLimit: 8Gi } }
+            - { name: work, emptyDir: { sizeLimit: 8Gi } }   # dumps + scratch PGDATA are deleted by drill-pg.sh
             - { name: tmp, emptyDir: { sizeLimit: 4Gi } }
             - name: scripts
               configMap: { name: backup-scripts, defaultMode: 0555 }
@@ -137,7 +139,7 @@ spec:
               imagePullPolicy: {{ .Values.global.imagePullPolicy }}
               securityContext:
                 {{- include "soa.containerSecurityContext" . | nindent 16 }}
-              command: ["/bin/sh", "-c", "mkdir -p /work/results && sh /opt/soa/backup/drill-pg-fetch.sh || echo 'pg-fetch crashed (no result => the drill fails)'"]
+              command: ["/bin/sh", "-c", "sh /opt/soa/backup/drill-pg-fetch.sh || echo 'pg-fetch crashed (no result => the drill fails)'"]
               env:
                 # The dump bucket is the chart's object storage (same Secret as the pg-dump CronJob).
                 - { name: S3_ENDPOINT, value: {{ include "soa.s3Endpoint" . | quote }} }
@@ -150,6 +152,7 @@ spec:
                   valueFrom: { secretKeyRef: { name: {{ $os.secretName }}, key: AWS_SECRET_ACCESS_KEY } }
                 - { name: DRILL_DATA, value: /work/data }
                 - { name: RESULTS_DIR, value: /work/results }
+                - { name: PG_DRILL_MAX_AGE_HOURS, value: {{ $d.maxAgeHours | quote }} }
                 - { name: HOME, value: /tmp }
                 {{- if .Values.egressProxy.enabled }}
                 - { name: HTTPS_PROXY, value: "http://egress-proxy:3128" }
@@ -170,6 +173,17 @@ spec:
               env:
                 - { name: DRILL_DATA, value: /work/data }
                 - { name: RESULTS_DIR, value: /work/results }
+                # The LIVE server, for the read-only comparison (default_transaction_read_only).
+                - { name: LIVE_PGHOST, value: {{ include "soa.pgHost" . | quote }} }
+                - { name: LIVE_PGPORT, value: "5432" }
+                - name: LIVE_PGUSER
+                  valueFrom: { secretKeyRef: { name: {{ $pg.secretName }}, key: username } }
+                - name: LIVE_PGPASSWORD
+                  valueFrom: { secretKeyRef: { name: {{ $pg.secretName }}, key: password } }
+                - { name: PG_DRILL_MAX_DRIFT_PCT, value: {{ $d.postgresCompare.maxDriftPct | quote }} }
+                - { name: PG_DRILL_MIN_DRIFT_ROWS, value: {{ $d.postgresCompare.minDriftRows | quote }} }
+                - { name: PG_DRILL_IGNORE_DATABASES, value: {{ join " " $d.postgresCompare.ignoreDatabases | quote }} }
+                - { name: PG_DRILL_CRITICAL_TABLES, value: {{ join " " $d.postgresCompare.criticalTables | quote }} }
               resources:
                 {{- toYaml $d.resources | nindent 16 }}
               volumeMounts:
@@ -184,7 +198,7 @@ spec:
               imagePullPolicy: {{ .Values.global.imagePullPolicy }}
               securityContext:
                 {{- include "soa.containerSecurityContext" . | nindent 16 }}
-              command: ["/bin/sh", "-c", "mkdir -p /work/results && sh /opt/soa/backup/drill-opensearch.sh || echo 'os-drill crashed (no result => the drill fails)'"]
+              command: ["/bin/sh", "-c", "sh /opt/soa/backup/drill-opensearch.sh || echo 'os-drill crashed (no result => the drill fails)'"]
               env:
                 {{- include "soa.opensearchClientEnv" . | nindent 16 }}
                 - { name: OS_LIB, value: /opt/soa/backup/os-curl.sh }
@@ -192,6 +206,7 @@ spec:
                 - { name: OS_DRILL_REPO, value: {{ $d.opensearch.repository | quote }} }
                 - { name: OS_DRILL_INDICES, value: {{ $d.opensearch.indices | quote }} }
                 - { name: OS_DRILL_MAX_DRIFT_PCT, value: {{ $d.opensearch.maxDriftPct | quote }} }
+                - { name: OS_DRILL_MAX_AGE_HOURS, value: {{ $d.maxAgeHours | quote }} }
                 - { name: RESULTS_DIR, value: /work/results }
               resources:
                 {{- toYaml $d.resources | nindent 16 }}
@@ -212,6 +227,7 @@ spec:
                 - { name: RESULTS_DIR, value: /work/results }
                 - { name: BACKUP_WORK, value: /tmp }
                 - { name: DRILL_KIND, value: weekly }
+                - { name: DRILL_DATA, value: /work/data }
                 - { name: DRILL_CHECKS, value: {{ join " " $checks | quote }} }
                 - { name: STATUS_CONFIGMAP, value: {{ $d.statusConfigMap | quote }} }
               resources:

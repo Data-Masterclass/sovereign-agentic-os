@@ -32,6 +32,17 @@ export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0='*'
 
 refs_of "$GITDIR" > "$WORK/refs"
 if [ ! -s "$WORK/refs" ]; then log git-bundle skip repo "$REPO" reason "no commits yet"; exit 0; fi
+# TEMP-SPACE CAP. The bundle is staged in $BACKUP_WORK, an emptyDir with a sizeLimit; exceeding
+# that limit evicts the WHOLE os-ui pod. So a repository bigger than the budget is refused (a
+# red status, never an eviction), and `ulimit -f` makes any write past the budget fail at once.
+BUDGET_MB=${BUNDLE_TMP_BUDGET_MB:-768}
+need_kb=$(du -sk "$GITDIR" | cut -f1)
+free_kb=$(df -Pk "$WORK" | awk 'NR==2 {print $4}')
+if [ "$need_kb" -gt $((BUDGET_MB * 1024)) ] || [ "$need_kb" -gt "${free_kb:-0}" ]; then
+  log git-bundle error repo "$REPO" reason "repository is $((need_kb / 1024)) MiB: above the bundle temp budget (${BUDGET_MB} MiB) or the free temp space ($(( ${free_kb:-0} / 1024 )) MiB); raise backup.gitBundles.tmpBudgetMi and its sizeLimit"
+  exit 1
+fi
+ulimit -f $((BUDGET_MB * 2048)) || { log git-bundle error repo "$REPO" reason "cannot set the file-size limit"; exit 1; }
 HEAD=$(git --git-dir="$GITDIR" rev-parse --verify -q refs/heads/main || head -n1 "$WORK/refs" | cut -d' ' -f1)
 TODAY=$(date -u +%Y-%m-%d)
 

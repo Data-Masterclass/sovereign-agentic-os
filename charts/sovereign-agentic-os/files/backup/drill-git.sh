@@ -13,14 +13,16 @@
 #   4. every restored ref equals the live ref. A live repository may be a commit ahead while
 #      the drill runs: the comparison is retried with the NEWEST pointer ($DRILL_LAG_RETRIES x
 #      $DRILL_LAG_SLEEP s) before it is called a failure.
-# Writes $RESULTS_DIR/git.json. A pass needs at least one repository checked and none failed:
-# nothing found, an unreadable live inventory or a missing bundle can never yield a pass.
+# Writes $RESULTS_DIR/git.json (the directory is created here). A pass needs EXACTLY the live
+# inventory proven: every live repository with commits restored and equal, nothing else in the
+# bucket, no invalid key, at least one repository. Anything less is a failure.
 #
 #   LIVE_INVENTORY_URL  os-ui /api/git/backup-inventory (bearer $LIVE_INVENTORY_TOKEN); file:// in tests
 set -u
 . "${BACKUP_LIB:-/opt/soa/backup/lib.sh}"
 PREFIX=${BUNDLE_PREFIX:-git-bundles}
 OUT=${RESULTS_DIR:?}/git.json
+mkdir -p "$RESULTS_DIR" || { echo "FATAL: cannot create $RESULTS_DIR"; exit 1; }
 W=${BACKUP_WORK:-/tmp}/drill-git.$$; mkdir -p "$W"; trap 'rm -rf "$W"' EXIT
 RETRIES=${DRILL_LAG_RETRIES:-3}; LAG_SLEEP=${DRILL_LAG_SLEEP:-20}
 export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0='*'
@@ -75,7 +77,12 @@ s3api list-objects-v2 --bucket "$S3_BUCKET" --prefix "$PREFIX/" --query 'Content
 
 : > "$W/repos.jsonl"; fails=0
 while read -r k; do
-  valid_repo_key "$k" || continue
+  if ! valid_repo_key "$k"; then
+    fails=$((fails+1))
+    jq -cn --arg repo "$k" '{repo:$repo, status:"fail", reason:"invalid repository key in the bucket (not a repo the OS can have)"}' >> "$W/repos.jsonl"
+    log restore-drill fail check git repo "$k" reason "invalid repository key"
+    continue
+  fi
   inlive=$(jq -r --arg k "$k" 'any(.repos[]; .key==$k)' "$W/live.json")
   try=0; status=fail; reason=""
   while :; do
@@ -99,5 +106,13 @@ while read -r k; do
   log restore-drill "$status" check git repo "$k" reason "$reason"
 done < "$W/all"
 
-if [ "$fails" -eq 0 ]; then finish pass "$(wc -l < "$W/repos.jsonl" | tr -d ' ') repositories restored and equal to live"
+# Exact match: the set of repositories PROVEN equals the set of live repositories with commits.
+jq -r '.repos[] | select((.refs|length)>0) | .key' "$W/live.json" | LC_ALL=C sort -u > "$W/live.keys"
+jq -r 'select(.status=="pass") | .repo' "$W/repos.jsonl" | LC_ALL=C sort -u > "$W/proven.keys"
+nlive=$(wc -l < "$W/live.keys" | tr -d ' '); nproven=$(wc -l < "$W/proven.keys" | tr -d ' ')
+if [ "$nlive" -eq 0 ]; then finish fail "the live inventory has no repository with commits - nothing was proven"; fi
+if ! cmp -s "$W/live.keys" "$W/proven.keys"; then
+  finish fail "proved $nproven of $nlive live repositories (missing: $(comm -23 "$W/live.keys" "$W/proven.keys" | head -n 5 | tr '\n' ' '))"
+fi
+if [ "$fails" -eq 0 ]; then finish pass "$nproven of $nlive live repositories restored and equal to live"
 else finish fail "$fails repository check(s) failed"; fi

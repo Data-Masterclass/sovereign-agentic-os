@@ -6,9 +6,11 @@
   shared template carries one line each; everything else lives in this folder.
 */}}
 
+{{- /* Digest-pinned, always: the default digest is empty, so a feature switched on without the
+       owner's pushed digest refuses to render. */}}
 {{- define "soa.backupToolsImage" -}}
 {{- $i := .Values.backup.gitBundles.image -}}
-{{ $i.repository }}:{{ $i.tag }}{{ if $i.digest }}@{{ $i.digest }}{{ end }}
+{{ $i.repository }}:{{ $i.tag }}@{{ required "backup.gitBundles.image.digest is required when git bundles or a restore drill are enabled (run build-images.yml for backup-tools and set the pushed digest)" $i.digest }}
 {{- end -}}
 
 {{- define "soa.gitBundlesOn" -}}
@@ -97,6 +99,7 @@
     - { name: POLL_SECONDS, value: {{ $g.pollSeconds | quote }} }
     - { name: RESCAN_SECONDS, value: {{ $g.rescanSeconds | quote }} }
     - { name: REFS_RECORD_SECONDS, value: {{ $g.refsRecordSeconds | quote }} }
+    - { name: BUNDLE_TMP_BUDGET_MB, value: {{ $g.tmpBudgetMi | quote }} }
   resources:
     {{- toYaml $g.resources | nindent 4 }}
   volumeMounts:
@@ -112,7 +115,9 @@
 - name: backup-queue
   emptyDir: { sizeLimit: 16Mi }
 - name: git-backup-tmp
-  emptyDir: { sizeLimit: 2Gi }
+  # Above the bundle budget (tmpBudgetMi, enforced by git-bundle.sh) so it is never reached:
+  # an emptyDir over its sizeLimit evicts the WHOLE os-ui pod.
+  emptyDir: { sizeLimit: {{ .Values.backup.gitBundles.tmpSizeLimit | quote }} }
 - name: backup-scripts
   configMap:
     name: backup-scripts

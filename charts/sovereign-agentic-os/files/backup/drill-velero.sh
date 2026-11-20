@@ -20,6 +20,7 @@ set -u
 : "${RESULTS_DIR:?}" "${VELERO_NS:?}" "${VELERO_SCHEDULE:?}" "${SOURCE_NS:?}" "${SCRATCH_NS:?}" "${MODIFIER_CM:?}"
 TIMEOUT=${VELERO_DRILL_TIMEOUT:-3600}
 OUT="$RESULTS_DIR/velero.json"
+mkdir -p "$RESULTS_DIR" || { echo "FATAL: cannot create $RESULTS_DIR"; exit 1; }
 SA=/var/run/secrets/kubernetes.io/serviceaccount
 API=https://kubernetes.default.svc
 W=${BACKUP_WORK:-/tmp}/velero.$$; mkdir -p "$W"

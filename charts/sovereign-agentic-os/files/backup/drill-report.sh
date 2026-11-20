@@ -14,6 +14,8 @@ set -u
 . "${BACKUP_LIB:-/opt/soa/backup/lib.sh}"
 : "${RESULTS_DIR:?}" "${DRILL_CHECKS:?}"
 KIND=${DRILL_KIND:-weekly}
+# Restored data never outlives the check (N3): whatever a crashed step left is deleted here.
+[ -n "${DRILL_DATA:-}" ] && rm -rf "$DRILL_DATA"
 W=${BACKUP_WORK:-/tmp}/report.$$; mkdir -p "$W"
 : > "$W/checks.jsonl"
 for c in $DRILL_CHECKS; do
