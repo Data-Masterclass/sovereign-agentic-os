@@ -64,8 +64,8 @@ class ConcurrencyTests(unittest.TestCase):
         async def go():
             t0 = time.monotonic()
             r1, r2 = await asyncio.gather(
-                app.http_query(_Req({"sql": "select 1"})),
-                app.http_query(_Req({"sql": "select 2"})),
+                app.http_query(_Req({"sql": "select 1", "source": "os-ui/sales/data-query"})),
+                app.http_query(_Req({"sql": "select 2", "source": "os-ui/sales/data-query"})),
             )
             return time.monotonic() - t0, r1, r2
 
@@ -80,6 +80,7 @@ class ConcurrencyTests(unittest.TestCase):
         app.run_execute = _slow_execute
         write = {
             "sql": "CREATE OR REPLACE TABLE iceberg.personal_lena.bronze_x AS SELECT 1 AS a",
+            "source": "os-ui/sales/data-build",
             "principal": "lena", "uid": "lena", "domains": ["sales"], "role": "creator",
         }
 
@@ -87,7 +88,7 @@ class ConcurrencyTests(unittest.TestCase):
             t0 = time.monotonic()
             r1, r2 = await asyncio.gather(
                 app.http_execute(_Req(write)),
-                app.http_query(_Req({"sql": "select 1"})),
+                app.http_query(_Req({"sql": "select 1", "source": "os-ui/sales/data-query"})),
             )
             return time.monotonic() - t0, r1, r2
 

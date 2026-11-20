@@ -342,19 +342,22 @@ def guard(sql: str, uid: str, domains: List[str], role: str) -> ParsedWrite:
     return parsed
 
 
-#: The source of a statement nobody tagged (the MCP tools on this server). No resource-group
-#: selector captures it, so it lands in `global.other`, visibly.
-DEFAULT_SOURCE = "query-tool"
+#: The source of this server's own MCP tools (`query`, `list_tables`, reached through the LiteLLM
+#: MCP gateway as the tool's service user). The chart routes it to `global.other` by name.
+MCP_SOURCE = "query-tool/mcp"
 _SOURCE = re.compile(r"^[A-Za-z0-9._/-]{1,128}$")
 _TAG = re.compile(r"^[A-Za-z0-9._=:-]{1,64}$")
 
 
 def scheduling(body: dict) -> tuple:
     """`(source, client_tags)` from a request body, shape-checked (they become HTTP headers).
-    Raises ExecuteError(400) on a malformed value; absent values pass as None."""
+    `source` is REQUIRED: an untagged statement would fall through to Trino's catch-all resource
+    group, so it is refused with 400 instead. Client tags are optional."""
     source = body.get("source")
     tags = body.get("client_tags")
-    if source is not None and (not isinstance(source, str) or not _SOURCE.match(source)):
+    if source is None:
+        raise ExecuteError(400, "missing source (os-ui sends os-ui/<domain>/<surface>)")
+    if not isinstance(source, str) or not _SOURCE.match(source):
         raise ExecuteError(400, "invalid source")
     if tags is not None and (not isinstance(tags, list) or len(tags) > 8
                              or not all(isinstance(t, str) and _TAG.match(t) for t in tags)):
@@ -403,7 +406,9 @@ def connect_kwargs(
     }
     # The caller's Trino `source` and client tags (os-ui sends `os-ui/<domain>/<surface>`),
     # passed through unchanged: Trino's resource-group selector reads the source (06 §5.5).
-    kwargs["source"] = source or DEFAULT_SOURCE
+    if not source:
+        raise ValueError("connect_kwargs: a Trino source is required (resource-group selection)")
+    kwargs["source"] = source
     if client_tags:
         kwargs["client_tags"] = list(client_tags)
     if request_timeout is not None:

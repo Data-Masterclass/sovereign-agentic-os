@@ -41,37 +41,37 @@ function fakeRun(counts: { existing?: number | Error; incoming?: number | Error 
 
 test('(a) 0-row select over a populated target → ABORT', async () => {
   await assert.rejects(
-    () => assertNoZeroRowReplace(CTAS, 'sales', fakeRun({ existing: 12, incoming: 0 }) as never),
+    () => assertNoZeroRowReplace(CTAS, 'sales', ['sales'], fakeRun({ existing: 12, incoming: 0 }) as never),
     /refusing to replace populated table iceberg\.sales\.gold_orders with a 0-row result/,
   );
 });
 
 test('(b) >0-row select over a populated target → proceeds', async () => {
   await assert.doesNotReject(() =>
-    assertNoZeroRowReplace(CTAS, 'sales', fakeRun({ existing: 12, incoming: 5 }) as never),
+    assertNoZeroRowReplace(CTAS, 'sales', ['sales'], fakeRun({ existing: 12, incoming: 5 }) as never),
   );
 });
 
 test('(c) target does not exist yet (probe throws) → proceeds', async () => {
   await assert.doesNotReject(() =>
-    assertNoZeroRowReplace(CTAS, 'sales', fakeRun({ existing: new Error('TABLE_NOT_FOUND') }) as never),
+    assertNoZeroRowReplace(CTAS, 'sales', ['sales'], fakeRun({ existing: new Error('TABLE_NOT_FOUND') }) as never),
   );
 });
 
 test('empty (0-row) target → proceeds even with a 0-row select (nothing to lose)', async () => {
   await assert.doesNotReject(() =>
-    assertNoZeroRowReplace(CTAS, 'sales', fakeRun({ existing: 0, incoming: 0 }) as never),
+    assertNoZeroRowReplace(CTAS, 'sales', ['sales'], fakeRun({ existing: 0, incoming: 0 }) as never),
   );
 });
 
 test('non-CTAS statement → no-op (nothing to guard)', async () => {
   await assert.doesNotReject(() =>
-    assertNoZeroRowReplace('select * from t', 'sales', fakeRun({ existing: 12, incoming: 0 }) as never),
+    assertNoZeroRowReplace('select * from t', 'sales', ['sales'], fakeRun({ existing: 12, incoming: 0 }) as never),
   );
 });
 
 test('incoming-count probe error → proceeds (never a false abort on a transient probe failure)', async () => {
   await assert.doesNotReject(() =>
-    assertNoZeroRowReplace(CTAS, 'sales', fakeRun({ existing: 12, incoming: new Error('transient') }) as never),
+    assertNoZeroRowReplace(CTAS, 'sales', ['sales'], fakeRun({ existing: 12, incoming: new Error('transient') }) as never),
   );
 });

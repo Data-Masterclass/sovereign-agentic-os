@@ -72,18 +72,18 @@ class HandlerAuthTests(unittest.TestCase):
 
     def test_query_401_without_token_when_enabled(self):
         app.SERVICE_BEARER_TOKEN = "s3cr3t"
-        res = asyncio.run(app.http_query(_Req({"sql": "select 1"}, {})))
+        res = asyncio.run(app.http_query(_Req({"sql": "select 1", "source": "os-ui/sales/data-query"}, {})))
         self.assertEqual(res.status_code, 401)
 
     def test_query_passes_with_valid_token(self):
         app.SERVICE_BEARER_TOKEN = "s3cr3t"
         res = asyncio.run(app.http_query(
-            _Req({"sql": "select 1"}, {"authorization": "Bearer s3cr3t"})))
+            _Req({"sql": "select 1", "source": "os-ui/sales/data-query"}, {"authorization": "Bearer s3cr3t"})))
         self.assertEqual(res.status_code, 200)
 
     def test_query_passes_without_header_when_disabled(self):
         app.SERVICE_BEARER_TOKEN = ""  # fail-open: no header needed
-        res = asyncio.run(app.http_query(_Req({"sql": "select 1"}, {})))
+        res = asyncio.run(app.http_query(_Req({"sql": "select 1", "source": "os-ui/sales/data-query"}, {})))
         self.assertEqual(res.status_code, 200)
 
     def test_execute_401_without_token_when_enabled(self):
