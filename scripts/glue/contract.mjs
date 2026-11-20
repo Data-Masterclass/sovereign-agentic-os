@@ -134,8 +134,24 @@ function sqlFindings(text, hit) {
   });
 }
 
+// A native module imports its tool's packages, Node built-ins and its own relative files — never the
+// OS (`@core/…`, `@tabs/…`, `@/…`, `@sovereign-os/…`). artifact contract 11 §4.1 C1 fixture: "a
+// graph.mjs importing @core/…". A generated graph.mjs also never reads the environment (WP-53).
+const OS_IMPORT = (spec) => /^@(core|tabs|app|lib|components|sovereign-os)\//.test(spec) || spec.startsWith('@/');
 function mjsFindings(path, text, hit) {
   const f = parseTs(path.replace(/\.(mjs|cjs|js)$/, '.ts'), text);
+  const lineOf = (n) => f.sf.getLineAndCharacterOfPosition(n.getStart(f.sf)).line + 1;
+  walk(f, (n) => {
+    const spec = (ts.isImportDeclaration(n) || ts.isExportDeclaration(n)) && n.moduleSpecifier && ts.isStringLiteral(n.moduleSpecifier)
+      ? n.moduleSpecifier.text
+      : ts.isCallExpression(n) && (n.expression.kind === ts.SyntaxKind.ImportKeyword || (ts.isIdentifier(n.expression) && n.expression.text === 'require')) && n.arguments[0] && ts.isStringLiteral(n.arguments[0])
+        ? n.arguments[0].text
+        : null;
+    if (spec !== null && OS_IMPORT(spec)) hit(`OS import \`${spec}\` in native JS`, lineOf(n));
+    if (/(^|\/)graph\.mjs$/.test(path) && ts.isPropertyAccessExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === 'process' && n.name.text === 'env') {
+      hit('`process.env` read in a generated graph.mjs (the module takes its inputs from buildGraph)', lineOf(n));
+    }
+  });
   walk(f, (n) => {
     if ((ts.isPropertyAssignment(n) || ts.isShorthandPropertyAssignment(n)) && n.name && (ts.isIdentifier(n.name) || ts.isStringLiteral(n.name)) && OS_KEY(n.name.text)) {
       hit(`OS key \`${n.name.text}\` in native JS`, f.sf.getLineAndCharacterOfPosition(n.getStart(f.sf)).line + 1);

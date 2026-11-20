@@ -47,6 +47,15 @@ export function validateSystemYaml(file: { path: string; content: string }): str
   }
 }
 
+/** `form: os-layer` — the OS-metadata-only `system.yaml` beside a generated `graph.mjs` (WP-53). */
+export function isOsLayerSystemYaml(content: string): boolean {
+  try {
+    return (load(content) as { form?: unknown } | null)?.form === 'os-layer';
+  } catch {
+    return false;
+  }
+}
+
 type IndexEntry = { slug?: unknown; id?: unknown; path?: unknown };
 
 /** `agents/index.yml` → directory → frozen OS system id. An unreadable index maps nothing. */
@@ -101,6 +110,13 @@ export async function ingestAgentSystems(
       continue;
     }
     const dir = file.path.replace(/\/system\.yaml$/, '');
+    if (isOsLayerSystemYaml(file.content)) {
+      // WP-53: once the team is a generated `graph.mjs`, `system.yaml` holds OS metadata only and
+      // the generated module is refused on push. Applying this file would drop the team's agents.
+      report.skipped += 1;
+      report.notes.push(`${file.path} is the OS-layer metadata of a generated LangGraph module; edit the team in the OS (graph.mjs is generated)`);
+      continue;
+    }
     const existingId = index.get(dir);
     try {
       runWithSurface('git:push', () => {
