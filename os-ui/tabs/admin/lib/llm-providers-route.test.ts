@@ -35,6 +35,11 @@ mock.module('@/app/api/platform-admin/_ctx', {
     },
   },
 });
+let DNS_ANSWER = '20.50.1.2';
+mock.module('node:dns/promises', {
+  namedExports: { lookup: async () => [{ address: DNS_ANSWER, family: 4 }] },
+  defaultExport: { lookup: async () => [{ address: DNS_ANSWER, family: 4 }] },
+});
 let OPA_ALLOWS = true;
 mock.module('@core/infra/governed', {
   namedExports: { authorize: async () => (OPA_ALLOWS ? { allowed: true, policy: 'opa-allow' } : { allowed: false, policy: 'opa-deny' }) },
@@ -64,7 +69,7 @@ const catalog = await import('../../../app/api/platform-admin/providers/route.ts
 const req = (body: unknown) => new Request('http://os/x', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
 const AZURE = { preset: 'azure', name: 'azure-prod', apiBase: 'https://azure-ok.example.test', apiVersion: '2024-10-21', apiKey: 'sk-secret-typed-by-admin' };
 
-beforeEach(() => { OPA_ALLOWS = true; ROLE = 'admin'; CALLS = []; POST_REPLY = () => ({ ok: true, data: {} }); });
+beforeEach(() => { DNS_ANSWER = '20.50.1.2'; OPA_ALLOWS = true; ROLE = 'admin'; CALLS = []; POST_REPLY = () => ({ ok: true, data: {} }); });
 
 test('a non-admin is refused at every step, and the gateway is never called', async () => {
   ROLE = 'builder';
@@ -98,6 +103,14 @@ test('a host that is not on the egress allowlist is refused before anything is s
   assert.equal(body.host, 'acme.openai.azure.com');
   assert.match(body.guidance, /llmProviders\.allowHosts/);
   assert.deepEqual(CALLS.filter((c) => c.method === 'POST'), []); // no credential, no model
+});
+
+test('an allowlisted provider name that RESOLVES to a private address is refused, nothing stored (SSRF)', async () => {
+  DNS_ANSWER = '10.0.0.5';
+  const res = await connections.POST(req(AZURE));
+  assert.equal(res.status, 422);
+  assert.equal((await res.json()).code, 'resolves_internal');
+  assert.deepEqual(CALLS.filter((c) => c.method === 'POST'), []);
 });
 
 test('a connection goes to LiteLLM\'s own credential store; the key is never sent back', async () => {

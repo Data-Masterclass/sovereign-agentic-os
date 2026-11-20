@@ -20,7 +20,14 @@
  *     calls. Phase 2 passing is the "nothing is lost on restart" proof.
  *   - NEGATIVE TWINS: a wrong key; a host off the allowlist (blocked by the proxy, the stub never sees
  *     the request, and the OS refuses it before storing anything); a key WITHOUT the access group (403,
- *     so the group is what grants the model).
+ *     so the group is what grants the model); an HTTPS provider whose certificate is not trusted (the
+ *     TLS handshake fails, the stub never sees a request); an allowlisted name whose DNS answer is a
+ *     private address (refused before anything is stored).
+ *   - HTTPS: one provider is served over TLS on 443, reached through the proxy's CONNECT tunnel, with
+ *     its test CA trusted by the gateway (SSL_CERT_FILE — real providers use public CAs).
+ *   - DNS: in the cluster os-ui resolves provider names with the same DNS as the gateway. Here the
+ *     "internet" is a private Docker network the test process cannot resolve, so the OS check gets a
+ *     stated resolver (LLM_E2E_DNS, public TEST-NET addresses); the traffic itself is real.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -42,10 +49,20 @@ const H = {
   azure: process.env.LLM_E2E_AZURE_HOST ?? 'azure-stub.example.test',
   ollama: process.env.LLM_E2E_OLLAMA_HOST ?? 'ollama',          // in-cluster: NO_PROXY
   blocked: process.env.LLM_E2E_BLOCKED_HOST ?? 'blocked-stub.example.test',
+  tls: process.env.LLM_E2E_TLS_HOST ?? 'tls-stub.example.test',
+  untrusted: process.env.LLM_E2E_UNTRUSTED_HOST ?? 'untrusted-stub.example.test',
+};
+/** The stated resolver for the OS check (see ARCHITECTURE). */
+const DNS: Record<string, string[]> = JSON.parse(process.env.LLM_E2E_DNS ?? '{}');
+const resolve = async (host: string) => {
+  const a = DNS[host];
+  if (!a) throw Object.assign(new Error(`ENOTFOUND ${host}`), { code: 'ENOTFOUND' });
+  return a.map((address) => ({ address, family: address.includes(':') ? 6 : 4 }));
 };
 const RIGHT_KEY = 'sk-stub-right';
 
 const lib = skip ? null : await import('@tabs/admin/lib/llm-providers');
+const io = lib ? { ...lib.defaultIo, resolve } : undefined;
 
 function stubLog(name: string): Record<string, unknown>[] {
   const f = `${STUBS}/${name}.jsonl`;
@@ -65,6 +82,8 @@ const CASES = [
     input: { apiBase: `http://${H.openai}/v1`, apiKey: RIGHT_KEY }, stub: 'openai', expectPath: '/v1/chat/completions', answer: 'STUB-openai answered as stub-model-1' },
   { preset: 'azure', connection: 'e2e-azure', alias: 'e2e-azure-model', model: 'os-gpt-deploy',
     input: { apiBase: `http://${H.azure}`, apiVersion: '2024-10-21', apiKey: RIGHT_KEY }, stub: 'azure', expectPath: '/openai/deployments/os-gpt-deploy/chat/completions', answer: 'STUB-azure answered as os-gpt-deploy' },
+  { preset: 'openai-compatible', connection: 'e2e-tls', alias: 'e2e-tls-model', model: 'tls-model',
+    input: { apiBase: `https://${H.tls}/v1`, apiKey: RIGHT_KEY }, stub: 'tls', expectPath: '/v1/chat/completions', answer: 'STUB-openai answered as tls-model' },
   { preset: 'ollama', connection: 'e2e-ollama', alias: 'e2e-ollama-model', model: 'llama3.2:1b',
     input: { apiBase: `http://${H.ollama}` }, stub: 'ollama', expectPath: '/api/chat', answer: 'STUB-ollama answered as llama3.2:1b' },
 ] as const;
@@ -72,7 +91,7 @@ const CASES = [
 if (PHASE === '1') {
   for (const c of CASES) {
     test(`${c.preset}: connect → test → register → the shared agent key calls it on the provider's own protocol`, { skip }, async () => {
-      const conn = await lib!.connectProvider({ preset: c.preset, name: c.connection, ...c.input });
+      const conn = await lib!.connectProvider({ preset: c.preset, name: c.connection, ...c.input }, io);
       assert.equal(conn.ok, true, JSON.stringify(conn));
       const probe = await lib!.testProviderConnection({ preset: c.preset, connection: c.connection, model: c.model, mode: 'chat' });
       assert.equal(probe.ok, true, JSON.stringify(probe));
@@ -98,7 +117,7 @@ if (PHASE === '1') {
   });
 
   test('NEGATIVE TWIN — a wrong key: LiteLLM\'s test says so in one clear sentence, and nothing is registered', { skip }, async () => {
-    const conn = await lib!.connectProvider({ preset: 'openai-compatible', name: 'e2e-wrong-key', apiBase: `http://${H.openai}/v1`, apiKey: 'sk-WRONG' });
+    const conn = await lib!.connectProvider({ preset: 'openai-compatible', name: 'e2e-wrong-key', apiBase: `http://${H.openai}/v1`, apiKey: 'sk-WRONG' }, io);
     assert.equal(conn.ok, true);
     const probe = await lib!.testProviderConnection({ preset: 'openai-compatible', connection: 'e2e-wrong-key', model: 'stub-model-1', mode: 'chat' });
     assert.equal(probe.ok, false);
@@ -107,7 +126,7 @@ if (PHASE === '1') {
   });
 
   test('NEGATIVE TWIN — a host off the egress allowlist: the OS refuses it with guidance, and the proxy blocks it', { skip }, async () => {
-    const refused = await lib!.connectProvider({ preset: 'openai-compatible', name: 'e2e-blocked', apiBase: `http://${H.blocked}/v1`, apiKey: RIGHT_KEY });
+    const refused = await lib!.connectProvider({ preset: 'openai-compatible', name: 'e2e-blocked', apiBase: `http://${H.blocked}/v1`, apiKey: RIGHT_KEY }, io);
     assert.equal(refused.ok, false);
     assert.equal(refused.ok ? '' : refused.code, 'egress_not_allowed');
     assert.match(refused.ok ? '' : refused.guidance ?? '', /llmProviders\.allowHosts/);
@@ -117,6 +136,24 @@ if (PHASE === '1') {
     assert.equal(direct.ok, false);
     assert.match(direct.ok ? '' : direct.message, /egress|could not reach/i);
     assert.deepEqual(stubLog('blocked'), [], 'the blocked provider never received a request');
+  });
+
+  test('NEGATIVE TWIN — HTTPS with an untrusted certificate: the handshake fails and the provider sees nothing', { skip }, async () => {
+    const conn = await lib!.connectProvider({ preset: 'openai-compatible', name: 'e2e-untrusted', apiBase: `https://${H.untrusted}/v1`, apiKey: RIGHT_KEY }, io);
+    assert.equal(conn.ok, true, JSON.stringify(conn));
+    const probe = await lib!.testProviderConnection({ preset: 'openai-compatible', connection: 'e2e-untrusted', model: 'tls-model', mode: 'chat' });
+    assert.equal(probe.ok, false);
+    assert.match(probe.ok ? '' : probe.message, /certificate/i);
+    assert.deepEqual(stubLog('untrusted'), [], 'no HTTP request crossed a failed handshake');
+  });
+
+  test('NEGATIVE TWIN — an allowlisted name whose DNS answer is private is refused, and nothing is stored', { skip }, async () => {
+    const rebind = { ...io!, resolve: async () => [{ address: '10.0.0.5', family: 4 }] };
+    const r = await lib!.connectProvider({ preset: 'openai-compatible', name: 'e2e-rebind', apiBase: `http://${H.openai}/v1`, apiKey: RIGHT_KEY }, rebind);
+    assert.equal(r.ok, false);
+    assert.equal(r.ok ? '' : r.code, 'resolves_internal');
+    const list = await lib!.listConnections();
+    assert.ok(list.ok && !list.connections.some((c) => c.name === 'e2e-rebind'));
   });
 
   test('NEGATIVE TWIN — a key without the access group cannot call the new model (the group is the grant)', { skip: skip || !NO_GROUP_KEY ? (skip || 'LLM_E2E_NO_GROUP_KEY unset') : false }, async () => {

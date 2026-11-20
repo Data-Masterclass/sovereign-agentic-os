@@ -49,6 +49,11 @@ def osui_env(name):
     c = next(x for x in dep("os-ui")["spec"]["template"]["spec"]["containers"] if x["name"] == "os-ui")
     return next((e.get("value") for e in c.get("env", []) if e["name"] == name), None)
 def filt(): return cm("egress-proxy-config").get("filter", "")
+def np(name): return by.get(("NetworkPolicy", name))
+def np_json(name): return json.dumps(np(name), sort_keys=True)
+def pol4_excludes_gw():
+    exprs = (np("allow-apiserver-egress") or {}).get("spec", {}).get("podSelector", {}).get("matchExpressions", [])
+    return any(e["key"] == "app.kubernetes.io/name" and e["operator"] == "NotIn" and "litellm" in e["values"] for e in exprs)
 def keyjob():
     return "\n".join(json.dumps(d) for (k, n), d in by.items() if k == "Job" and "agent-key" in n)
 print(eval(os.environ["PYEXPR"]))' 2>&1
@@ -95,5 +100,34 @@ echo "NEGATIVE TWIN — egressProxy.enabled=false"
 render --set egressProxy.enabled=false
 rc_is "renders" 0
 check "never points at an absent proxy" "None" "$(inspect 'cm("litellm-egress-env").get("HTTPS_PROXY")')"
+
+echo "NetworkPolicy — the gateway cannot go direct (default profile, proxy on)"
+render
+rc_is "renders" 0
+check "gateway excluded from the any-443 policy" "True" "$(inspect 'pol4_excludes_gw()')"
+check "litellm-egress policy exists" "litellm-egress" "$(inspect 'np("litellm-egress")["metadata"]["name"]')"
+check "selects the gateway pods" '"app.kubernetes.io/name": "litellm"' "$(inspect 'np_json("litellm-egress")')"
+check "allows the egress proxy on 3128" '"port": 3128' "$(inspect 'np_json("litellm-egress")')"
+check "allows the egress proxy pods" '"app.kubernetes.io/component": "egress-proxy"' "$(inspect 'np_json("litellm-egress")')"
+check "allows its database port" '"port": 5432' "$(inspect 'np_json("litellm-egress")')"
+absent "no 443-anywhere for the gateway" '"port": 443' "$(inspect 'np_json("litellm-egress")')"
+
+echo "local model servers (llmProviders.localModels / localModelNamespaces)"
+render --set 'llmProviders.localModels={ollama,vllm.models.svc}' --set 'llmProviders.localModelNamespaces={models}'
+rc_is "renders" 0
+check "local models join NO_PROXY" ",ollama" "$(inspect 'cm("litellm-egress-env").get("NO_PROXY")')"
+check "os-ui gets the local-model list" "ollama,vllm.models.svc" "$(inspect 'osui_env("LLM_LOCAL_MODELS")')"
+check "gateway may reach the model namespace" '"kubernetes.io/metadata.name": "models"' "$(inspect 'np_json("litellm-egress")')"
+
+echo "NEGATIVE TWIN — proxy off: no lock-down (the gateway must reach providers directly again)"
+render --set llmProviders.viaEgressProxy=false
+rc_is "renders" 0
+check "gateway keeps the any-443 policy" "False" "$(inspect 'pol4_excludes_gw()')"
+check "no litellm-egress policy" "None" "$(inspect 'np("litellm-egress")')"
+
+echo "NEGATIVE TWIN — networkPolicies.defaultDeny=false renders no gateway policy"
+render --set networkPolicies.defaultDeny=false
+rc_is "renders" 0
+check "no litellm-egress policy" "None" "$(inspect 'np("litellm-egress")')"
 
 finish llm-providers-chart
