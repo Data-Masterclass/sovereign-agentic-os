@@ -51,7 +51,11 @@ dependencies:
   # fast-follow against CloudNativePG.
   - name: litellm-helm
     alias: litellm
-    version: "1.90.0"
+    # 1.109.1: the first release >= 1.109.0 (the baseline of LiteLLM's langfuse_otel migration
+    # guide) that carries the GHSA-2rwg-2wh4-7c4f fix. The IMAGE is pinned separately, by digest,
+    # in values.yaml `litellm.image`. Why this release, and the upgrade procedure:
+    # components/litellm/UPSTREAM.md and docs/ops/litellm-upgrade.md.
+    version: "1.109.1"
     repository: "oci://ghcr.io/berriai"
     condition: litellm.enabled
   # OpenSearch — the retrieval backbone (hybrid vector + lexical). Single node

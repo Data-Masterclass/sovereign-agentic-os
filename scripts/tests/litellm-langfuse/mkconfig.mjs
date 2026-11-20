@@ -21,6 +21,8 @@ text = text.replace(/^(\s*api_base:\s*).*$/gm, '$1http://stub:8080/v1');
 text = text.replace(/^(\s*url:\s*)http:\/\/query-tool:8000\/mcp\s*$/gm, '$1http://stub:8080/mcp');
 if (flag === '--legacy-twin') {
   if (!/^litellm_settings:\s*$/m.test(text)) throw new Error('rendered config has no top-level litellm_settings');
+  const already = [].concat(yaml.load(text).litellm_settings?.success_callback ?? []);
+  if (already.length) throw new Error(`rendered config already has success_callback ${JSON.stringify(already)}: nothing to add for the twin`);
   text = text.replace(/^litellm_settings:\s*$/m, 'litellm_settings:\n  success_callback: ["langfuse"]');
 }
 writeFileSync(outCfg, text);

@@ -175,7 +175,9 @@ litellm:
         - sovereign-mock: ["sovereign-premium"]
         - sovereign-reasoning: ["sovereign-reasoning-fast"]
     litellm_settings:
-      success_callback: ["langfuse"]
+      # Tracing (`callbacks: ["langfuse_otel"]`) and redaction come from values.yaml; this file
+      # must not add `success_callback: ["langfuse"]` back — the two would merge into one config
+      # and log every call twice (scripts/check-litellm-model-info.mjs fails the gate).
       drop_params: true
     general_settings:
       master_key: os.environ/PROXY_MASTER_KEY
