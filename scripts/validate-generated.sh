@@ -111,7 +111,7 @@ if want dbt && need dbt-parse docker; then
     [ $trino_ready = 1 ] || fail dbt-compile "the chart's Trino image ($TRINO_IMAGE) did not start for dbt compile"
     while read -r domain sha; do
       out="$(docker run --rm --network none -v "$CHECKOUT:/repos-checkout" -w /opt/dagster/app "$DAGSTER_IMAGE" \
-        python os_projects.py --parse "/repos-checkout/$domain/$sha/$DBT_PROJECT_DIR" 2>&1)"
+        python os_projects.py --parse "/repos-checkout/$domain/$sha" 2>&1)"
       rc=$?   # captured IMMEDIATELY: dbt's own exit code decides, together with the manifest it writes
       parsed=0; { [ $rc -eq 0 ] && [ -f "$CHECKOUT/$domain/$sha/$DBT_PROJECT_DIR/target/manifest.json" ]; } && parsed=1
       if is_known "$domain"; then

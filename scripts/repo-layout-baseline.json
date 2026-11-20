@@ -15,7 +15,7 @@
   "os-ui/tabs/dashboards/lib/engineering.ts": 2,
   "os-ui/tabs/dashboards/lib/git/facts.ts": 1,
   "os-ui/tabs/dashboards/lib/git/git-object.ts": 1,
-  "os-ui/tabs/data/lib/dbt/generate.ts": 4,
+  "os-ui/tabs/data/lib/dbt/generate.ts": 3,
   "os-ui/tabs/data/lib/dbt/models.ts": 1,
   "os-ui/tabs/data/lib/dbt/project.ts": 4,
   "os-ui/tabs/data/lib/dbt/read.ts": 1,

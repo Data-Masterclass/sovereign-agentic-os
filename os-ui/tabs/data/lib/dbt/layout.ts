@@ -15,15 +15,20 @@ import {
   dbtRepoPath, dbtProjectPath, layoutMarker, LAYOUT_MARKER_PATH, LAYOUT_V2, DAGSTER_DIR, KNOWLEDGE_DIR,
   CONNECTIONS_DIR, prefixOf, type LayoutVersion,
 } from '@core/infra/repo-layout';
+import { DATA_LAYOUT } from '@core/infra/data-layout';
 
 /** In a v2 repo, the folders other writers own that the dbt whole-tree commit must keep. */
 export const V2_RESERVED_PREFIXES = [prefixOf(DAGSTER_DIR), prefixOf(KNOWLEDGE_DIR), prefixOf(CONNECTIONS_DIR)];
 
 /** Project-relative file map → repo file map for `layout`. Sorted, like the generator's. */
 export function relocateProject(files: Map<string, string>, layout: LayoutVersion): Map<string, string> {
-  if (layout !== LAYOUT_V2) return files;
+  // The generator's Dagster code location (WP-49) is written at its own repo path, not inside the
+  // dbt project, and only into a v2 repo: its module reads the dbt project at the v2 path. A v1 repo
+  // keeps exactly what it had (the Dagster image wires it from `os/schedules.yml` for one release).
+  const isDagster = (p: string): boolean => p.startsWith(prefixOf(DAGSTER_DIR)) || p === DATA_LAYOUT.generatedHashesPath;
+  if (layout !== LAYOUT_V2) return new Map([...files].filter(([p]) => !isDagster(p)));
   const out = new Map<string, string>();
-  for (const [p, c] of files) out.set(dbtRepoPath(p, layout), c);
+  for (const [p, c] of files) out.set(isDagster(p) ? p : dbtRepoPath(p, layout), c);
   out.set(LAYOUT_MARKER_PATH, layoutMarker());
   return new Map([...out.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
 }

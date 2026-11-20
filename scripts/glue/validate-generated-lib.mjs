@@ -86,6 +86,9 @@ if (cmd === 'images') {
       mkdirSync(dirname(target), { recursive: true });
       writeFileSync(target, String(content));
     }
+    // The WP-55 layout marker: without it the image treats the repo as unmigrated (dbt at the root).
+    mkdirSync(join(root, 'os'), { recursive: true });
+    writeFileSync(join(root, 'os/layout.yml'), `version: 2\ndbt_project_dir: ${DBT_PROJECT_DIR}\n`);
     const link = join(out, domain, 'current');
     if (!existsSync(link)) symlinkSync(sha, link);
     console.log(`${domain} ${sha}`);
