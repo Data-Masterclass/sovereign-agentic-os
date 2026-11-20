@@ -62,6 +62,7 @@ jobs:
     timeout-minutes: 120
     permissions:
       contents: read
+      packages: read    # deploy.sh reads the pinned data-runner's capability label (and digests)
     outputs:
       digest: ${{ steps.running.outputs.digest }}
     environment:
@@ -113,6 +114,15 @@ jobs:
           printf '%s' "$DEV_KUBECONFIG" > "$RUNNER_TEMP/dev-kubeconfig.yaml"
           echo "KUBECONFIG=$RUNNER_TEMP/dev-kubeconfig.yaml" >> "$GITHUB_ENV"
           mkdir -p "$E2E_REPORT_DIR"
+
+      # READ-ONLY registry login, exactly as prod.yml: deploy.sh reads the pinned data-runner's OCI
+      # label (scripts/lib/image-label.sh, skopeo inspect --config) and refuses the deploy when it
+      # cannot — so dev must be able to read the org packages before the first new runner pin.
+      - name: Registry login (read)
+        env:
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REGISTRY_USER: ${{ github.actor }}
+        run: printf '%s' "$REGISTRY_TOKEN" | skopeo login ghcr.io -u "$REGISTRY_USER" --password-stdin >/dev/null
 
       - name: Deploy main-<sha> to dev
         run: |
