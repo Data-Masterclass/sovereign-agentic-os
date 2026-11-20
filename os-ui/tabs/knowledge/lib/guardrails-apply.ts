@@ -2,7 +2,9 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
-import { config } from '@core/kernel/config';
+import { opaPolicyLoaded, publishOpa, publishOpaAll, type OpaWrite } from '@core/policy/opa-publish';
+import type { OpaSourceResult } from '@core/policy/opa-reconcile';
+import { ensureHydrated, listAllForIndex } from '@tabs/knowledge/lib/store';
 import { type Workflow } from '@tabs/knowledge/lib/schema';
 import { compileGuardrails, type CompiledGuardrails } from '@tabs/knowledge/lib/guardrails';
 
@@ -36,50 +38,28 @@ export type GuardrailResult = {
 // In-process mock OPA registry (kind-only) — the honest offline mirror.
 const MOCK_POLICIES = new Map<string, CompiledGuardrails>();
 
-async function withTimeout(url: string, init: RequestInit, ms = 2500): Promise<Response | null> {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), ms);
-  try {
-    return await fetch(url, { ...init, signal: ctrl.signal, cache: 'no-store' });
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timer);
-  }
+/** The OPA writes carrying one workflow's compiled guardrails: the Rego module, then its data. */
+function guardrailWrites(compiled: CompiledGuardrails): OpaWrite[] {
+  return [
+    { kind: 'policy', id: `knowledge-${compiled.workflowId}`, rego: compiled.rego },
+    { kind: 'data', path: `${compiled.packagePath.replace(/\./g, '/')}/guardrails`, value: compiled.data.guardrails },
+  ];
 }
 
-/** Live-try: PUT the Rego policy + data to OPA, then verify both are queryable. */
+/** Live-try: PUT the Rego policy + data to OPA, then verify the policy is queryable. */
 async function applyLive(compiled: CompiledGuardrails): Promise<GuardrailApplyRow | null> {
-  const policyId = `knowledge-${compiled.workflowId}`;
-  const policyUrl = `${config.opaUrl}/v1/policies/${policyId}`;
-  const dataUrl = `${config.opaUrl}/v1/data/${compiled.packagePath.replace(/\./g, '/')}/guardrails`;
-
-  // apply: PUT policy (Rego) + PUT data (the structured guardrail mirror).
-  const putPolicy = await withTimeout(policyUrl, {
-    method: 'PUT',
-    headers: { 'content-type': 'text/plain' },
-    body: compiled.rego,
-  });
-  if (!putPolicy) return null; // OPA unreachable → caller falls back to mock
+  const [policy, data] = guardrailWrites(compiled);
+  const putPolicy = await publishOpa(policy, 2500);
+  if (putPolicy.status === null) return null; // OPA unreachable → caller falls back to mock
   if (!putPolicy.ok) {
-    return {
-      applied: false,
-      verified: false,
-      status: 'fail',
-      policy: 'opa-live',
-      detail: 'OPA rejected the policy',
-      error: `OPA ${putPolicy.status}: ${(await putPolicy.text()).slice(0, 200)}`,
-    };
+    return { applied: false, verified: false, status: 'fail', policy: 'opa-live', detail: 'OPA rejected the policy', error: putPolicy.detail };
   }
-  await withTimeout(dataUrl, {
-    method: 'PUT',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(compiled.data.guardrails),
-  });
-
-  // verify: read the policy back.
-  const getPolicy = await withTimeout(policyUrl, { method: 'GET' });
-  const verified = Boolean(getPolicy && getPolicy.ok);
+  const putData = await publishOpa(data, 2500);
+  if (!putData.ok) {
+    return { applied: false, verified: false, status: 'fail', policy: 'opa-live', detail: 'OPA rejected the guardrail data', error: putData.detail };
+  }
+  // verify: read the policy back (Policy API GET).
+  const verified = await opaPolicyLoaded(`knowledge-${compiled.workflowId}`, 2500);
   return {
     applied: true,
     verified,
@@ -90,6 +70,25 @@ async function applyLive(compiled: CompiledGuardrails): Promise<GuardrailApplyRo
       : 'Applied the policy but could not verify it is queryable.',
     ...(verified ? {} : { error: 'verify probe failed' }),
   };
+}
+
+/**
+ * OPA state SOURCE (registered in `instrumentation.ts`): re-apply every live workflow's compiled
+ * guardrails after an OPA restart, with the same writes `applyGuardrails` makes. No mock here —
+ * an unreachable OPA is a failed restore.
+ */
+export async function restoreGuardrails(): Promise<OpaSourceResult> {
+  await ensureHydrated();
+  let workflows = 0;
+  for (const { record, workflow } of listAllForIndex()) {
+    if (record.archived) continue;
+    const compiled = compileGuardrails(workflow);
+    if (compiled.guardrails.length === 0) continue;
+    const r = await publishOpaAll(guardrailWrites(compiled));
+    if (!r.ok) return { ok: false, detail: `workflow ${record.id}: ${r.detail}` };
+    workflows++;
+  }
+  return { ok: true, detail: `${workflows} workflow(s) with guardrails` };
 }
 
 /** Honest offline mock: register in-process, then verify the registration. */

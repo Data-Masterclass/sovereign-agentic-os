@@ -116,6 +116,24 @@ export async function register(): Promise<void> {
   }
   }
 
+  // OPA STATE RECONCILER (interim until WP-11 bundles): OPA holds REST-pushed data in memory only,
+  // so an OPA restart loses every grant, domain principal, governed table, approval hold and
+  // guardrail policy os-ui pushed — and every non-seeded domain is refused. Each tab's restore
+  // SOURCE is registered here via `opa-state-sources.ts` (the kernel never imports a tab) and `startOpaReconciler` restores
+  // them at boot, every five minutes, and as soon as `GET /health` + the canary show OPA lost its
+  // state. Web process only (process-role). A failure is logged and shown in Monitoring as
+  // "Policy state not restored"; it never stops the boot.
+  if (process.env.NEXT_RUNTIME === 'nodejs') {
+    try {
+      const { registerOpaStateSources } = await import('./opa-state-sources.ts');
+      registerOpaStateSources();
+      const { startOpaReconciler } = await import('./core/policy/opa-reconcile.ts');
+      startOpaReconciler();
+    } catch (err) {
+      console.error(`[os-ui] opa state: reconciler NOT started — POLICY STATE WILL NOT BE RESTORED after an OPA restart: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   // TAB GATING warnings (telemetry only): surface typo'd keys and omissions that would
   // 404 the landing page / admin UI. Never fails boot.
   if (process.env.NEXT_RUNTIME === 'nodejs') {

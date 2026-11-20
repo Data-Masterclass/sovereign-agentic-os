@@ -171,6 +171,16 @@ function connectionTools(sys: System): { all: string[]; held: string[] } {
   return { all, held };
 }
 
+/**
+ * The OPA state one system's Build writes: its principal, the granted tool vocabulary, and the
+ * connection writes held for approval. Shared by the Build's `opa` adapter and the OPA state
+ * restore (`opa-state.ts`), so a restore writes exactly what a Build wrote.
+ */
+export async function systemOpaGrants(systemId: string, sys: System): Promise<{ principal: string; tools: string[]; held: string[] }> {
+  const { all, held } = connectionTools(sys);
+  return { principal: principalFor(systemId), tools: await grantVocabulary(sys, all), held };
+}
+
 function ok(detail: string, change?: BuildChange): StepResult {
   return change ? { ok: true, detail, change } : { ok: true, detail };
 }
@@ -221,9 +231,7 @@ export function makeLiveAdapters(deps: LiveDeps): BuildAdapter[] {
   const opa: BuildAdapter = {
     tool: 'opa',
     async apply(ctx) {
-      const principal = principalFor(ctx.systemId ?? 'sys');
-      const { all, held } = connectionTools(ctx.system);
-      const tools = await grantVocabulary(ctx.system, all);
+      const { principal, tools, held } = await systemOpaGrants(ctx.systemId ?? 'sys', ctx.system);
       await deps.opa.putGrants(principal, tools);
       if (held.length > 0) await deps.opa.mergeRequiresApproval(held);
       return ok(`granted ${tools.length} tool(s) to ${principal}${held.length ? `; ${held.length} held for approval` : ''}`, 'reapplied');

@@ -3,6 +3,8 @@
  */
 import 'server-only';
 import { config } from '@core/kernel/config';
+import { publishOpa } from '@core/policy/opa-publish';
+import { mergeRequiresApproval } from '@tabs/agents/lib/build/opa-state';
 import { recentTraces } from '@core/infra/agent-governed';
 import { principalFor } from '@tabs/agents/lib/build/runtime-contract';
 import { type Decision } from '@tabs/agents/lib/gateway';
@@ -45,35 +47,17 @@ async function withTimeout(
 // ---------------------------------------------------------------------- OPA ------
 
 export function realOpa(): OpaClient {
-  const dataUrl = (path: string) => `${config.opaUrl}/v1/data/${path}`;
   return {
     async putGrants(principal, tools) {
-      const res = await withTimeout(dataUrl(`grants/${encodeURIComponent(principal)}`), {
-        method: 'PUT',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(tools),
-      });
-      if (!res || !res.ok) throw new Error(`OPA putGrants failed (${res?.status ?? 'unreachable'})`);
+      // Through the one OPA publisher. The same grants are composed into the whole `grants`
+      // document by the agents grant contributor (`opa-state.ts`), so a recompile or an OPA
+      // restart restores them.
+      const r = await publishOpa({ kind: 'data', path: `grants/${encodeURIComponent(principal)}`, value: tools }, 4000);
+      if (!r.ok) throw new Error(`OPA putGrants failed — ${r.detail}`);
     },
     async mergeRequiresApproval(tools) {
-      // Read-merge-write the global requires_approval list (in-memory data doc).
-      // TODO(merge-to-main): this GET→union→PUT is lost-update racy under concurrent
-      // builds and is GLOBAL (a tool held for one system is held for all). Acceptable
-      // under the locked "OPA grants in-memory for now" decision; move to a
-      // per-principal hold document when OPA grants are persisted.
-      const cur = await withTimeout(dataUrl('requires_approval'), { method: 'GET' });
-      let list: string[] = [];
-      if (cur && cur.ok) {
-        const d = (await cur.json().catch(() => ({}))) as { result?: unknown };
-        if (Array.isArray(d.result)) list = d.result.map(String);
-      }
-      const merged = [...new Set([...list, ...tools])];
-      const res = await withTimeout(dataUrl('requires_approval'), {
-        method: 'PUT',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(merged),
-      });
-      if (!res || !res.ok) throw new Error(`OPA mergeRequiresApproval failed (${res?.status ?? 'unreachable'})`);
+      const r = await mergeRequiresApproval(tools);
+      if (!r.ok) throw new Error(`OPA mergeRequiresApproval failed — ${r.detail}`);
     },
     async decision(principal, tool): Promise<Decision> {
       const res = await withTimeout(`${config.opaUrl}/v1/data/agentic/authz/decision`, {
