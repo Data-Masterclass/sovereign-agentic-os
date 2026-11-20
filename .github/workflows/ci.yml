@@ -294,6 +294,22 @@ jobs:
         run: |
           npm ci --no-audit --no-fund
           node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test --test-concurrency=1 tabs/metrics/lib/build/explore-fqn.trino.test.ts tabs/data/lib/lane-names.trino.test.ts tabs/data/lib/dataset-versions.trino.test.ts core/mcp/trino-sql-error.trino.test.ts ../tests/dashboards/native-render.trino.test.ts
+      # WP-14: TLS + PASSWORD service users + OPA sidecar ImpersonateUser, on the dual-run render
+      # (the steps above are today's plain-HTTP clients, unchanged), then the closed render.
+      - name: WP-14 auth, impersonation, parity (dual-run)
+        env:
+          LH_EXPECT_HTTP: insecure
+        run: node --test --test-concurrency=1 tests/lakehouse/auth.int.test.mjs tests/lakehouse/impersonation.int.test.mjs tests/lakehouse/parity.int.test.mjs
+      - name: WP-14 query-tool connection code over TLS (real trino client)
+        run: |
+          pip install "trino>=0.330,<1"
+          LH_WORK="$(cat "${TMPDIR:-/tmp}/soa-lakehouse.work")" python3 images/extensions/query-tool/tests/test_trino_tls_int.py -v
+      - name: WP-14 closed state (plain HTTP refused), parity against the dual-run answers
+        env:
+          LH_WORK_PARENT: ${{ runner.temp }}
+        run: |
+          bash tests/lakehouse/restrict.sh
+          LH_EXPECT_HTTP=refused node --test --test-concurrency=1 tests/lakehouse/auth.int.test.mjs tests/lakehouse/parity.int.test.mjs
       - name: Logs (on failure)
         if: failure()
         run: docker compose -p soa-lakehouse logs --tail 120 trino opa polaris catalog-init polaris-bootstrap-check data-runner || true
