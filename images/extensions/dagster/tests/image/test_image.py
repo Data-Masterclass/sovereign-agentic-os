@@ -240,5 +240,21 @@ class VerdictCache(unittest.TestCase):
                          "a timeout is never cached as dbt's verdict")
 
 
+    def test_live_tags_are_read_from_git_and_a_retired_tag_is_pruned(self):
+        """WP-51: repo-sync publishes what is live from the `live/*` tags it fetched — and a tag deleted
+        in the repo disappears here too (negative twin: a cached or OS-side record would keep it)."""
+        golden = load(DUPLICATE_RULE)
+        sha = commit_tree(self.work, golden)
+        self.publish()
+        bare = os.path.join(self.base, "sales.git")
+        git("--git-dir", bare, "-c", "user.name=os", "-c", "user.email=os@x.invalid",
+            "tag", "-a", "live/dataset/ds_orders", sha, "-m", "go-live dataset:ds_orders\n\nOS-Ref: rev:0123456789ab", cwd=self.tmp)
+        self.start()
+        s = self.wait_for(lambda s: "dataset/ds_orders" in (s.get("live") or {}))
+        self.assertEqual(s["live"]["dataset/ds_orders"]["commit"], sha, "the commit the tag names, from git")
+        git("--git-dir", bare, "tag", "-d", "live/dataset/ds_orders", cwd=self.tmp)
+        self.wait_for(lambda s: "live" in s and "dataset/ds_orders" not in s["live"])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

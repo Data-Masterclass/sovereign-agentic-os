@@ -344,3 +344,38 @@ test('HONESTY: deleteApp with an unreachable API never claims success', async ()
   assert.equal(out.live, false);
   assert.match(out.detail, /unreachable/i);
 });
+
+// ------------------- WP-51: app-deploy reads `live/app/<id>` from git and records its sha ---
+
+test('WP-51: a deploy records the commit live/app/<id> names in git — and FOLLOWS the tag; no tag is `none`', async () => {
+  const fs = await import('node:fs');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const { execFileSync } = await import('node:child_process');
+  const { commitTree, mainSha } = await import('@core/infra/git-store');
+  const repos = fs.mkdtempSync(path.join(os.tmpdir(), 'wp51-app-'));
+  const env = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' };
+  const tag = (sha: string) =>
+    execFileSync('git', ['--git-dir', path.join(repos, 'sales.git'), '-c', 'user.name=os', '-c', 'user.email=os@x.invalid', 'tag', '-f', '-a', 'live/app/app_1', sha, '-m', 'go-live app:app_1'], { env });
+  const deployed = async () => {
+    const { client, calls } = mockK8s({ [`GET /api/v1/namespaces/${NS}`]: { status: 200 }, GET: { status: 404 }, POST: { status: 201 } });
+    await deployApp({ ...APP, live: { repo: 'sales', id: 'app_1' } }, { ...OPTS, k8s: client, reposDir: repos });
+    return (calls.find((c) => c.method === 'POST' && c.path === DEP)!.body as any).metadata.annotations;
+  };
+  try {
+    await commitTree('sales', new Map([['apps/shop/README.md', 'v1\n']]), { author: { name: 't', email: 't@t.invalid' }, message: 'v1', reposDir: repos });
+    const v1 = (await mainSha('sales', { reposDir: repos }))!;
+    await commitTree('sales', new Map([['apps/shop/README.md', 'v2\n']]), { author: { name: 't', email: 't@t.invalid' }, message: 'v2', reposDir: repos });
+    const v2 = (await mainSha('sales', { reposDir: repos }))!;
+
+    assert.equal((await deployed())['sovereign-os.io/source-sha'], 'none', 'no live tag: said, never guessed');
+    tag(v1);
+    const a1 = await deployed();
+    assert.equal(a1['sovereign-os.io/source-sha'], v1);
+    assert.equal(a1['sovereign-os.io/live-tag'], 'live/app/app_1');
+    tag(v2); // negative twin: move the tag with PLAIN git — the next deploy records what git says
+    assert.equal((await deployed())['sovereign-os.io/source-sha'], v2);
+  } finally {
+    fs.rmSync(repos, { recursive: true, force: true });
+  }
+});

@@ -175,3 +175,51 @@ test('M-3: a scheduled run is attributed env:run — never studio, which would c
   assert.equal(captured.length, 1);
   assert.equal(captured[0].env, 'run', 'the schedule declares the lifecycle its calls are tagged with');
 });
+
+// ------------------------- WP-51: the loader reads the live TAG from git itself ---
+
+test('WP-51: a schedule runs the commit `live/agent/<id>` names — read from git, and it FOLLOWS the tag', async () => {
+  const { commitTree, mainSha } = await import('@core/infra/git-store');
+  const { execFileSync } = await import('node:child_process');
+  const author = { name: 't', email: 't@t.invalid' };
+  const rec = store.createSystem({ id: 'u1', domains: ['sales'], role: 'creator' }, { name: 'Tagged digest', description: 'x' });
+  const p = 'agents/tagged/system.yaml';
+  await commitTree('sales', new Map([[p, 'name: v1\n']]), { author, message: 'v1', reposDir: tempRepos });
+  const v1 = (await mainSha('sales', { reposDir: tempRepos }))!;
+  await commitTree('sales', new Map([[p, 'name: v2\n']]), { author, message: 'v2', reposDir: tempRepos });
+  const v2 = (await mainSha('sales', { reposDir: tempRepos }))!;
+  await pins.setLivePin('agent', rec.id, v1, { id: 'u1' }, 'sales', { reposDir: tempRepos }, p);
+
+  const first = await scheduledSystemYaml(rec.id, { reposDir: tempRepos });
+  assert.equal(first.ok, true, JSON.stringify(first));
+  if (!first.ok) return;
+  assert.equal(first.source, 'tag');
+  assert.equal(first.yaml, 'name: v1\n', 'the live version, not the head');
+  assert.equal(first.ref, v1);
+
+  // Negative twin: move the tag with PLAIN git. A loader that used the OS's own record would still
+  // run v1; one that reads the tag runs what git now says.
+  const env = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' };
+  const bare = join(tempRepos, 'sales.git');
+  execFileSync('git', ['--git-dir', bare, '-c', 'user.name=ops', '-c', 'user.email=ops@x.invalid', 'tag', '-f', '-a', `live/agent/${rec.id}`, v2, '-m', `go-live agent:${rec.id}\n\nOS-Path: ${p}`], { env });
+  const moved = await scheduledSystemYaml(rec.id, { reposDir: tempRepos });
+  assert.equal(moved.ok && moved.yaml, 'name: v2\n', 'the loader follows the tag in git');
+});
+
+test('WP-51 negative twin: a live tag DELETED with plain git refuses the schedule, whatever the index cached', async () => {
+  const { commitTree, mainSha } = await import('@core/infra/git-store');
+  const { execFileSync } = await import('node:child_process');
+  const rec = store.createSystem({ id: 'u1', domains: ['sales'], role: 'creator' }, { name: 'Gone digest', description: 'x' });
+  const p = 'agents/gone/system.yaml';
+  await commitTree('sales', new Map([[p, 'name: gone\n']]), { author: { name: 't', email: 't@t.invalid' }, message: 'v1', reposDir: tempRepos });
+  const v1 = (await mainSha('sales', { reposDir: tempRepos }))!;
+  await pins.setLivePin('agent', rec.id, v1, { id: 'u1' }, 'sales', { reposDir: tempRepos }, p);
+  await pins.lifecycleIndex({ reposDir: tempRepos }); // the index now caches the pin
+  const env = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' };
+  execFileSync('git', ['--git-dir', join(tempRepos, 'sales.git'), 'tag', '-d', `live/agent/${rec.id}`], { env });
+  const res = await scheduledSystemYaml(rec.id, { reposDir: tempRepos });
+  assert.equal(res.ok, false);
+  if (res.ok) return;
+  assert.equal(res.status, 409);
+  assert.match(res.error, /no live\/agent\/.* tag|is not live/);
+});
