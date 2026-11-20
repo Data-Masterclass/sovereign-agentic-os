@@ -8,7 +8,7 @@
   "os-ui/core/mcp/experimental/data-write-tools.ts": 1,
   "os-ui/tabs/admin/mcp/discovery-waveb-tools.ts": 2,
   "os-ui/tabs/agents/lib/engineering.ts": 1,
-  "os-ui/tabs/agents/lib/git/generate.ts": 2,
+  "os-ui/tabs/agents/lib/git/generate.ts": 1,
   "os-ui/tabs/agents/lib/git/ingest.ts": 2,
   "os-ui/tabs/agents/lib/store.ts": 2,
   "os-ui/tabs/agents/ui/AgentEditor.tsx": 2,
