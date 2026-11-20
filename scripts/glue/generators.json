@@ -9,7 +9,8 @@
         "tabs/data/lib/dbt/schedules.ts",
         "tabs/data/lib/dbt/sources.ts",
         "tabs/data/lib/dbt/schema.ts",
-        "tabs/data/lib/dbt/semantic/spec.ts"
+        "tabs/data/lib/dbt/semantic/spec.ts",
+        "core/infra/repo-layout.ts"
       ],
       "component": "dbt + Dagster",
       "validator": "dbt parse; dagster definitions validate",
