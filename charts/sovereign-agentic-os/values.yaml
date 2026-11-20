@@ -84,6 +84,10 @@ ingress:
     nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
   # Per-tool public hostnames. Empty => that tool gets NO Ingress.
   hosts: {}
+  # When the OS UI answers on two hosts (hosts.osUI + hosts.osUIApex), send the one that is NOT
+  # osUI.publicUrl to it with a 308 (path + query kept), so sessions, OAuth nonce cookies and
+  # callbacks always share one origin. The /git route on hosts.osUI is not redirected.
+  redirectAliasToPublicUrl: false
   # RESTRICTED CONSOLES. The model gateway (LiteLLM) and Langfuse get NO public route, even
   # when `hosts.litellm` / `hosts.langfuse` are set. LiteLLM holds the provider credentials and
   # an admin API; Langfuse holds every prompt, completion and tool result of every run. Nothing

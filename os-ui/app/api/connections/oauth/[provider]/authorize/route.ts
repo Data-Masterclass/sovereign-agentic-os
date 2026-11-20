@@ -9,7 +9,7 @@ import { asOAuthProvider, providerForTemplate, providerConfig } from '@core/auth
 import { getOAuthApp, isConfigured, ensureHydrated } from '@core/auth/oauth-apps';
 import { buildAuthorizeUrl } from '@core/auth/token-set';
 import { signState, newNonce, OAUTH_STATE_COOKIE } from '@core/auth/state';
-import { publicBaseUrl, callbackUri } from '@core/auth/redirect';
+import { publicBaseUrl, callbackUri, canonicalStartUrl } from '@core/auth/redirect';
 
 export const dynamic = 'force-dynamic';
 
@@ -20,6 +20,10 @@ export const dynamic = 'force-dynamic';
  * consent screen with the MINIMAL read scopes. The callback finishes the exchange.
  */
 export async function GET(req: Request, ctx: { params: Promise<{ provider: string }> }) {
+  // Start on the canonical origin, so the nonce cookie and the callback share one origin (308).
+  const canonical = canonicalStartUrl(req.url, req.headers.get('host'));
+  if (canonical) return NextResponse.redirect(canonical, 308);
+
   const { provider: raw } = await ctx.params;
   const provider = asOAuthProvider(raw);
   if (!provider) return NextResponse.json({ error: 'Unknown OAuth provider' }, { status: 400 });

@@ -44,6 +44,21 @@
        default or the STACKIT profile ever renders one. See docs/components/litellm.md and
        docs/components/langfuse.md, "Not reachable from the internet". */}}
 {{- $restricted := include "soa.restrictedHosts" $ctx | fromJsonArray }}
+{{- /* ALIAS → CANONICAL (opt-in `ingress.redirectAliasToPublicUrl`). The OS UI answers on two hosts
+       (`hosts.osUI` and the apex `hosts.osUIApex`) but has ONE public URL (`osUI.publicUrl`, the
+       OS_PUBLIC_URL os-ui gets). Sessions, OAuth nonce cookies and callbacks belong to that origin;
+       with this on, the OS UI route of the OTHER host answers every request with a 308 to the
+       canonical URL + the original path and query (ingress-nginx `permanent-redirect`, the same
+       mechanism as `ingress.redirectHosts`). Only os-ui's `/` route is redirected: the `/git`
+       Ingress on the same host is a separate location and is unchanged. */}}
+{{- $canonHost := "" }}
+{{- $canonUrl := ((($.Values.osUI | default dict).publicUrl | default "") | trimSuffix "/") }}
+{{- if and $ing.redirectAliasToPublicUrl (not $canonUrl) }}{{ fail "ingress.redirectAliasToPublicUrl needs osUI.publicUrl (the canonical https origin)" }}{{ end }}
+{{- if $ing.redirectAliasToPublicUrl }}
+{{- if not (regexMatch "^https://[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$" $canonUrl) }}{{ fail (printf "osUI.publicUrl %q must be an https origin (https://<host>, no path) for ingress.redirectAliasToPublicUrl" $canonUrl) }}{{ end }}
+{{- $canonHost = trimPrefix "https://" $canonUrl }}
+{{- end }}
+{{- $aliasRedirect := dict "nginx.ingress.kubernetes.io/permanent-redirect" (printf "%s$request_uri" $canonUrl) "nginx.ingress.kubernetes.io/permanent-redirect-code" "308" }}
 {{- range $key, $route := $routes }}
 {{- $host := index ($ing.hosts | default dict) $key }}
 {{- $extra := dict }}
@@ -53,6 +68,9 @@
 {{- else }}
 {{- $host = "" }}
 {{- end }}
+{{- end }}
+{{- if and $canonHost (eq $key "osUI") $host (ne (toString $host) $canonHost) }}
+{{- $extra = $aliasRedirect }}
 {{- end }}
 {{- if $host }}
 ---
@@ -117,6 +135,9 @@ metadata:
     cert-manager.io/cluster-issuer: {{ $ing.tlsIssuer | quote }}
     {{- with $ing.annotations }}
     {{- toYaml . | nindent 4 }}
+    {{- end }}
+    {{- if and $canonHost (ne (toString $apex) $canonHost) }}
+    {{- toYaml $aliasRedirect | nindent 4 }}
     {{- end }}
 spec:
   ingressClassName: {{ $ing.className }}

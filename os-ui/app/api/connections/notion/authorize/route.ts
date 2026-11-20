@@ -8,7 +8,7 @@ import { getConnectionForUser } from '@tabs/connections/lib/index';
 import { discoverMetadata, registerClient, buildNotionAuthorizeUrl } from '@core/auth/notion-mcp';
 import { createPkcePair } from '@core/auth/pkce';
 import { signState, newNonce, OAUTH_STATE_COOKIE } from '@core/auth/state';
-import { publicBaseUrl } from '@core/auth/redirect';
+import { publicBaseUrl, canonicalStartUrl } from '@core/auth/redirect';
 import { putPendingFlow } from '@core/auth/notion-flow';
 
 export const dynamic = 'force-dynamic';
@@ -23,6 +23,9 @@ const CALLBACK_PATH = '/api/connections/notion/callback';
  * consent screen. The callback finishes the code→token exchange.
  */
 export async function GET(req: Request) {
+  // Start on the canonical origin, so the nonce cookie and the callback share one origin (308).
+  const canonical = canonicalStartUrl(req.url, req.headers.get('host'));
+  if (canonical) return NextResponse.redirect(canonical, 308);
   try {
     const user = await requireUser();
     const url = new URL(req.url);
