@@ -48,4 +48,22 @@ rm "$TMP/s/skopeo"
 out=$(env -u DEPLOY_IMAGE_LABEL_PROBE PATH="$TMP/s" bash scripts/lib/image-label.sh "$REF" "$L" 2>&1); rc=$?
 [ $rc != 0 ] && check "no registry tool: refused" "NO_REGISTRY_TOOL" "$out" || bad "no registry tool: refused" "rc=$rc out=$out"
 
+echo "== the deploy workflows can read the label (read-only registry login before deploy.sh)"
+python3 - .github/workflows/dev.yml .github/workflows/prod.yml <<'PY' && ok "dev.yml and prod.yml log in read-only before deploy.sh, with packages: read" || bad "dev.yml and prod.yml log in read-only before deploy.sh, with packages: read" "see above"
+import sys, yaml
+for path in sys.argv[1:]:
+    wf = yaml.safe_load(open(path))
+    found = False
+    for name, job in (wf.get("jobs") or {}).items():
+        steps = job.get("steps") or []
+        runs = [str(s.get("run", "")) for s in steps]
+        deploy = [i for i, r in enumerate(runs) if "scripts/deploy.sh" in r or "release.sh --phase deploy" in r]
+        if not deploy: continue
+        found = True
+        login = [i for i, r in enumerate(runs) if "skopeo login ghcr.io" in r and "--password-stdin" in r]
+        assert login and login[0] < deploy[0], f"{path}:{name}: no registry login before deploy.sh"
+        assert (job.get("permissions") or {}).get("packages") == "read", f"{path}:{name}: packages must be read"
+    assert found, f"{path}: no job runs deploy.sh"
+PY
+
 finish image-label
