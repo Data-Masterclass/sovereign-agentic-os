@@ -234,7 +234,7 @@ test('a refused push writes NOTHING — no commit AND no mirror cache entry', as
 
 test('WP-54: the app\'s own CI workflow is pushable; its k8s/ manifests pass the deploy rules', () => {
   assert.doesNotThrow(() => assertPushable([{ path: '.github/workflows/image.yml', content: 'name: image\n' }]));
-  const ok = 'apiVersion: v1\nkind: Service\nmetadata:\n  name: app-shop\nspec:\n  ports: [{port: 80}]\n';
+  const ok = 'apiVersion: v1\nkind: Service\nmetadata:\n  name: app-shop\nspec:\n  selector: {app.kubernetes.io/name: app-shop}\n  ports: [{port: 80}]\n';
   assert.doesNotThrow(() => assertPushable([{ path: 'k8s/service.yaml', content: ok }], 'shop'));
   const np = 'apiVersion: networking.k8s.io/v1\nkind: NetworkPolicy\nmetadata:\n  name: app-shop\nspec: {podSelector: {}}\n';
   assert.throws(() => assertPushable([{ path: 'k8s/np.yaml', content: np }], 'shop'), /NetworkPolicy/);

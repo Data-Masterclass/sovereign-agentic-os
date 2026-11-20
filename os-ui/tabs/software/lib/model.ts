@@ -166,6 +166,11 @@ export type ReviewCard = {
   /** First deploy vs a scope-broadening change to an already-live app. */
   reason: 'first-deploy' | 'scope-broadened';
   scan: ScanResult;
+  /**
+   * WP-54: the git commit of the app tree this request is for. An approval applies EXACTLY this
+   * commit's `k8s/` manifests (image apps); a later commit needs its own request. Optional-on-load.
+   */
+  sha?: string | null;
   /** The governed resources the app is asking to use live. */
   requested: DeployEnvelope;
   /** The change diff (file path → +added/-removed line counts), summarised. */

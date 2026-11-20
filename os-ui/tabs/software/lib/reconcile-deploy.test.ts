@@ -152,6 +152,9 @@ test('SELF-HEAL: a live app whose runner is ABSENT is re-provisioned on status p
   // With the app's committed manifests (image built and pinned by digest), the heal applies them.
   const committed = appDeployFiles({ slug: app.slug, host: `${app.slug}.${app.domain}.apps.local`, registry: HEAL_OPTS.registry, digest: `sha256:${'c'.repeat(64)}` });
   __setAppTreeReaderForTests(async () => ({ files: committed, sha: 'f00d', truncated: false }));
+  // WP-54: the heal re-applies only a Builder-APPROVED commit (here: the one the approval recorded).
+  app.deploy.approvedSha = 'f00d';
+  await persistApp(app);
   const { client, calls } = healMockK8s(depPath);
 
   const { status } = await reconcileDeployStatus(appId, creator, { ...HEAL_OPTS, k8s: client });

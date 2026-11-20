@@ -100,7 +100,9 @@ test('GATE: a non-Builder CANNOT approve; a Builder can → live + envelope reco
 });
 
 test('GATE: routine in-envelope update auto-deploys; scope-broadening re-reviews', async () => {
-  const app = await createApp(creator, { name: 'Renewals Tracker R3', template: 'nextjs-supabase' });
+  // WP-54: an OS-served (spec) app. An IMAGE app never auto-applies a commit no Builder approved —
+  // deploy-approval-gate.test.ts pins that, with its negative twin.
+  const app = await createApp(creator, { name: 'Renewals Tracker R3', template: 'nextjs-supabase', kind: 'spec' } as never);
   const r1 = await requestDeploy(app.id, creator);
   assert.equal(r1.kind, 'review');
   if (r1.kind !== 'review') return;
