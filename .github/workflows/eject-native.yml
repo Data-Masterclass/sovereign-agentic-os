@@ -1,0 +1,58 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+#
+# AT-f eject tests that were missing from CI (audit 2026-11-21, AUDIT-artifacts-native.md):
+#   - metrics + dashboards on MetricFlow itself: `mf validate-configs`, `mf query --saved-query`
+#     per panel, vl-convert on the MetricFlow CSV (WP-52 left `mf query --saved-query` unverified;
+#     dashboards-eject runs the OS's own panel SQL instead);
+#   - agent systems from the public npm registry with the committed package-lock.json (the unit
+#     eject links os-ui's node_modules).
+# Both delete the OS layer first and run only upstream tools, each with a negative twin.
+name: eject-native
+
+on:
+  pull_request:
+    paths:
+      - 'os-ui/tabs/data/lib/dbt/**'
+      - 'os-ui/tabs/metrics/**'
+      - 'os-ui/tabs/dashboards/**'
+      - 'os-ui/tabs/agents/lib/module/**'
+      - 'images/extensions/dagster/Dockerfile'
+      - 'tests/eject/**'
+      - '.github/workflows/eject-native.yml'
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  metricflow-eject:
+    name: metricflow-eject
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Setup Node.js
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: 22
+      - name: Install (os-ui)
+        run: npm --prefix os-ui ci --no-audit --no-fund
+      - name: Write the domain repo with the OS's own generators
+        working-directory: os-ui
+        run: node --experimental-strip-types --import ./scripts/test-setup.mjs ../tests/eject/gen-native-dashboard.ts "${{ runner.temp }}/mf-src"
+      - name: Eject (dbt, MetricFlow, vl-convert; no OS) + negative twin
+        run: sh tests/eject/metricflow.sh "${{ runner.temp }}/mf-src" "${{ runner.temp }}/mf-work"
+
+  agents-registry-eject:
+    name: agents-registry-eject
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Eject (npm ci from the committed lockfile, node run.mjs --stub-tools) + negative twin
+        run: sh tests/eject/agents-registry.sh "${{ runner.temp }}/agents-work"
