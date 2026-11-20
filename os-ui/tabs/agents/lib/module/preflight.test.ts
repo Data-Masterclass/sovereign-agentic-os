@@ -20,7 +20,7 @@ import { fileURLToPath } from 'node:url';
 import { commitTree, openOrInit } from '@core/infra/git-store';
 import { parseSystem, serializeSystem } from '@tabs/agents/lib/system-schema';
 import { compile } from '@tabs/agents/lib/langgraph-compile';
-import { identifierProblems } from '@tabs/agents/lib/safe-ids';
+import { identifierProblems, PROMPT_MAX_BYTES } from '@tabs/agents/lib/safe-ids';
 import { preflightDoc, proposeIdMigration } from '@tabs/agents/lib/module/preflight';
 import { runPreflight } from '@tabs/agents/lib/module/preflight-run';
 import { generateAgentModule } from '@tabs/agents/lib/module/generate';
@@ -144,4 +144,12 @@ test('without --repos-only the command refuses to pass when the store did not hy
   });
   assert.equal(r.status, 2, r.stdout + r.stderr);
   assert.match(r.stderr, /store definitions were NOT checked/);
+});
+
+test('preflight also flags a prompt over the 64 KiB cap (the definition would be refused on its next save)', () => {
+  const big = GOOD.replace("agent_md: '# worker'", `agent_md: '${'x'.repeat(PROMPT_MAX_BYTES + 1)}'`);
+  const problems = preflightDoc(big);
+  assert.equal(problems.length, 1, problems.join('; '));
+  assert.match(problems[0], new RegExp(`agent "worker" agent_md is ${PROMPT_MAX_BYTES + 1} bytes \\(at most ${PROMPT_MAX_BYTES}\\)`));
+  assert.deepEqual(preflightDoc(GOOD.replace("agent_md: '# worker'", `agent_md: '${'x'.repeat(PROMPT_MAX_BYTES)}'`)), [], 'at the cap passes');
 });

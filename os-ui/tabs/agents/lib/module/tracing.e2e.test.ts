@@ -197,3 +197,104 @@ test('MODULE TRACING E2E — NEGATIVE TWIN: without the tracer the generations a
     stub.stop();
   }
 });
+
+// ---------------------------------------------------------------- route + summary (WP-53c) --
+
+const TEAM_YAML = `version: '1'
+system: { name: E2E team, domain: sales, visibility: Personal }
+safety_preset: read-only
+entrypoint: lead
+state: { channels: { messages: add_messages } }
+grants: { data: [], knowledge: [], metrics: [], tools: [search_knowledge], connections: [] }
+agents:
+  - { id: lead, role: Routes, agent_md: '# lead', memory_md: '', tools: [], members: [reader] }
+  - { id: reader, role: Reads, agent_md: '# reader', memory_md: '', tools: [search_knowledge] }
+edges:
+  - { from: lead, to: reader, type: supervise }
+`;
+const TEAM_SCRIPT = [
+  { reply: { content: 'Delegating.' } },
+  { reply: { content: '', tool_calls: [{ name: 'route', arguments: { next: 'reader', brief: 'look it up' } }] } },
+  { reply: { content: '', tool_calls: [{ name: 'search_knowledge', arguments: { query: 'sales' } }] } },
+  // The 800-character result crosses 70 % of the 200-token window: the stock summariser's call.
+  { reply: { content: 'SUMMARY: searched once.' } },
+  { reply: { content: 'Sales are on track.' } },
+  { reply: { content: '', tool_calls: [{ name: 'route', arguments: { next: 'END' } }] } },
+];
+
+test('MODULE TRACING E2E — the supervisor route and the summariser calls are joined too: one generation per call, each joined to its llm.<kind>.<agent> span', { skip: !E2E && 'set TRACING_E2E=1 with tests/langfuse/compose.yaml up' }, async () => {
+  const stub = await startStub();
+  try {
+    await fetch(`http://127.0.0.1:${STUB_PORT}/__stub/script`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ steps: TEAM_SCRIPT }) });
+    const teamSys = parseSystem(TEAM_YAML);
+    const reposDir = mkdtempSync(path.join(os.tmpdir(), 'wp53c-trace-'));
+    await openOrInit('sales', { reposDir });
+    const expected = generateAgentModule({ id: 'sys_e2e_team', slug: 'team', sys: teamSys, ...hostModuleInputs() });
+    const { sha } = await commitTree('sales', new Map([...expected.files.entries()].map(([p, c]) => [`agents/team/${p}`, c])), { reposDir, author: { name: 'os', email: 'os@example.invalid' }, message: 'agents' });
+    const at = await readCommittedModule('sales', 'agents/team', sha, { reposDir });
+    const loaded = await loadAgentModule({ committed: at.files, expected: expected.files, commit: sha, cacheRoot: mkdtempSync(path.join(os.tmpdir(), 'wp53c-trace-cache-')) });
+    const runId = `run_${randomUUID()}`;
+    const caller = { userId: FIXTURE_USER.id, domain: 'sales', systemId: 'sys-e2e-team', tab: 'agents', runId, env: 'test' as const };
+    const deps: OsToolDeps = {
+      enqueue: (() => { throw new Error('nothing is held'); }) as unknown as OsToolDeps['enqueue'],
+      handleRpc: (async (_u: unknown, req: { id?: number }) => ({ jsonrpc: '2.0', id: req.id ?? 1, result: { content: [{ type: 'text', text: 'y'.repeat(800) }] } })) as unknown as OsToolDeps['handleRpc'],
+      trace: (async () => undefined) as unknown as OsToolDeps['trace'],
+    };
+    const r = await withRunTrace(
+      { runId, systemId: 'sys-e2e-team', systemName: 'E2E team', userId: FIXTURE_USER.id, domain: 'sales', task: 'How are sales?', environment: 'test', principal: 'os-sys-e2e-team', engine: 'langgraph-module' },
+      async (observe) => {
+        const tracer = moduleTracer(observe);
+        const graph = createOsAgent(loaded.module, {
+          modelFor: (a) => requireGatewayChatModel({ model: 'sovereign-default', caller, writeSystem: false, fetch: tracer.fetchFor('route', a.id) }),
+          specs: grantedToolSpecs(FIXTURE_USER, teamSys),
+          executor: withToolCallLedger(grantedToolExecutor(FIXTURE_USER, teamSys, 'sys-e2e-team', deps, { holdAt: 'node' }), memoryToolCallLedger()),
+          decide: (tool) => holdDecisionFor(teamSys.safetyPreset, tool),
+          holds: memoryHoldStore(),
+          threadId: runId,
+          checkpointer: new MemorySaver(),
+          tracer,
+          context: {
+            summaryModel: (a) => requireGatewayChatModel({ model: 'sovereign-default', caller, writeSystem: false, fetch: tracer.fetchFor('summary', a.id) }),
+            maxInputTokens: () => 200,
+            keepMessages: 2,
+            keepToolResults: 10,
+          },
+        });
+        const out = await runAgentModule({
+          graph: graph as never,
+          runId,
+          owner: { systemId: 'sys-e2e-team', userId: FIXTURE_USER.id, domain: 'sales' },
+          task: 'How are sales?',
+          approvals: memoryApprovalPort(),
+          stamps: memoryModuleRunStamps(),
+          runner: { id: FIXTURE_USER.id, role: FIXTURE_USER.role, domains: FIXTURE_USER.domains },
+          agent: 'os-sys-e2e-team',
+          module: { digest: loaded.digest, commit: loaded.commit },
+          spans: tracer.spans,
+          recursionLimit: 500,
+        });
+        observe.finish({ reachedEnd: out.reachedEnd, parked: out.parked, interrupted: out.interrupted, failed: out.failed, path: out.path, finalChars: out.finalText.length, stepsUsed: out.path.length });
+        return out;
+      },
+    );
+    await flushLangfuse();
+    assert.equal(r.reachedEnd, true);
+    assert.equal(r.finalText, 'Sales are on track.');
+    const calls = await stub.calls();
+    assert.equal(calls, TEAM_SCRIPT.length, 'six model calls: lead, route, reader, summary, reader, route');
+    const t = await settled(await langfuseTraceId(runId), calls);
+    const gens = t.observations.filter((o) => o.type === 'GENERATION');
+    assert.equal(gens.length, calls, 'one generation per model call, the gateway the only writer');
+    const llm = t.observations.filter((o) => o.name.startsWith('llm.'));
+    assert.deepEqual(llm.map((o) => o.name).sort(), ['llm.lead', 'llm.reader', 'llm.reader', 'llm.route.lead', 'llm.route.lead', 'llm.summary.reader']);
+    const byCall = new Map(llm.map((o) => [String((o.metadata as { litellm_call_id?: string } | undefined)?.litellm_call_id ?? ''), o]));
+    for (const g of gens) {
+      const reported = String(((g.metadata as { attributes?: Record<string, unknown> } | undefined)?.attributes ?? {})['litellm.call_id'] ?? '');
+      assert.ok(reported && byCall.has(reported), `generation ${g.id} (call ${reported}) is joined to an llm span`);
+    }
+    for (const kind of ['route.lead', 'summary.reader']) assert.ok(t.observations.some((o) => o.name === kind), `${kind} span present`);
+  } finally {
+    stub.stop();
+  }
+});
+
