@@ -74,6 +74,6 @@ done
 echo "docling-live: /ready answered 200 after $(( $(date +%s) - started ))s (boot loads the default-preset models)"
 
 cd os-ui
-DOCLING_LIVE_URL="http://127.0.0.1:$PORT" DOCLING_LIVE_API_KEY="$KEY" DOCLING_LIVE_IMAGE="$IMAGE" DOCLING_LIVE_REQUIRED=1 \
+DOCLING_LIVE_URL="http://127.0.0.1:$PORT" DOCLING_LIVE_API_KEY="$KEY" DOCLING_LIVE_IMAGE="$IMAGE" DOCLING_LIVE_CONTAINER="$NAME" DOCLING_LIVE_REQUIRED=1 \
   node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test --test-concurrency=1 \
   tabs/files/lib/ingest/docling-live.ci.test.ts
