@@ -24,7 +24,7 @@ const summary = Object.entries(by('journey')).map(([j, rs]) => ({
   red: count(rs, 'red'), green: count(rs, 'green'), unexpectedGreen: count(rs, 'unexpected-green'), failed: count(rs, 'failed'),
 }));
 
-let md = `# Acceptance harness report\n\nRun: ${rows[0]?.at ?? 'n/a'} · cluster \`kind-${process.env.E2E_CLUSTER ?? 'wp02'}\`\n\n`;
+let md = `# Acceptance harness report\n\nRun: ${rows[0]?.at ?? 'n/a'} · cluster \`${process.env.E2E_KUBE_CONTEXT || `kind-${process.env.E2E_CLUSTER ?? 'wp02'}`}\`\n\n`;
 md += 'Status: **red** = expected-fail and red (the target system is not there yet) · **green** · **unexpected-green** = marked expected-fail but passed (remove the marker) · **failed** = not marked and red (harness or regression).\n\n';
 md += '| Journey | Total | red | green | unexpected-green | failed |\n|---|---|---|---|---|---|\n';
 for (const s of summary) md += `| ${s.journey} ${s.title} | ${s.total} | ${s.red} | ${s.green} | ${s.unexpectedGreen} | ${s.failed} |\n`;

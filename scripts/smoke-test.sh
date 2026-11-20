@@ -4,7 +4,7 @@
 # =============================================================================
 # smoke-test.sh — read-only checks that a deployed release is really up.
 # =============================================================================
-#   ./scripts/smoke-test.sh [--expect-tag <version>] [--context <ctx>] [--namespace <ns>]
+#   ./scripts/smoke-test.sh [--env dev|prod] [--expect-tag <version>] [--context <ctx>] [--namespace <ns>]
 #                           [--release <rel>] [--host <public host>]
 #
 # WHY. `deploy.sh` ends when `helm upgrade` and one rollout return. That does not prove the
@@ -31,10 +31,15 @@
 # (`helm get values -a`), read by scripts/lib/smoke-facts.py, which prints only those keys.
 #
 # Environment: KUBE_CONTEXT (dmagenticos), NS (agentic-os), REL (agentic-os) — as deploy.sh.
+# --env dev|prod picks the context like deploy.sh (dev: DEV_KUBE_CONTEXT or dmagosdev) and runs
+# scripts/lib/env-guard.sh on it. Without --env the old behaviour holds (KUBE_CONTEXT / --context).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-CTX=${KUBE_CONTEXT:-dmagenticos}
+CTX=''
+ENV_NAME=''
+CTX_GIVEN=''
+
 NS=${NS:-agentic-os}
 REL=${REL:-agentic-os}
 CHART_VALUES=charts/sovereign-agentic-os/values.yaml
@@ -44,7 +49,8 @@ EXPECT_TAG='' HOST=''
 while [ $# -gt 0 ]; do
   case $1 in
     --expect-tag) EXPECT_TAG=${2:?}; shift ;;
-    --context)    CTX=${2:?}; shift ;;
+    --context)    CTX_GIVEN=${2:?}; shift ;;
+    --env)        ENV_NAME=${2:?}; shift ;;
     --namespace)  NS=${2:?}; shift ;;
     --release)    REL=${2:?}; shift ;;
     --host)       HOST=${2:?}; shift ;;
@@ -54,6 +60,14 @@ while [ $# -gt 0 ]; do
   shift
 done
 
+if [ -n "$ENV_NAME" ]; then
+  if [ "$ENV_NAME" = dev ]; then CTX=${CTX_GIVEN:-${DEV_KUBE_CONTEXT:-dmagosdev}}
+  else CTX=${CTX_GIVEN:-${KUBE_CONTEXT:-dmagenticos}}; fi
+  guard=$(bash scripts/lib/env-guard.sh --env "$ENV_NAME" --context "$CTX" 2>/dev/null) \
+    || { echo "SMOKE_FAILED: ${guard##*$'\n'}"; exit 1; }
+else
+  CTX=${CTX_GIVEN:-${KUBE_CONTEXT:-dmagenticos}}
+fi
 FAILED=()
 pass() { printf '  ok    %s\n' "$1"; }
 fail() { printf '  FAIL  %s\n' "$1"; FAILED+=("$1"); }

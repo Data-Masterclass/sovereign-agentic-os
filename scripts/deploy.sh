@@ -1,7 +1,13 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Borek Data Ventures UG
-# deploy.sh [--from-registry] [--verify-only] <version> — roll out os-ui to a real cluster.
+# deploy.sh [--env dev|prod] [--from-registry] [--verify-only] <version> — roll out os-ui to a real cluster.
+#
+#   --env prod (THE DEFAULT) is production, exactly as before: context dmagenticos, values derived
+#   from the live release, the backup gate. --env dev is the dev cluster (docs/ops/dev-environment.md):
+#   context dmagosdev, values.dev.yaml + the private overlay, `helm upgrade --install`, no backup
+#   (synthetic data; reset = reseed). The context is chosen BY THE ENV, never by the kubeconfig's
+#   current-context, and scripts/lib/env-guard.sh refuses a context that does not belong to the env.
 #
 #   ./scripts/deploy.sh --from-registry 0.7.0     use a tag CI already built — no local Docker
 #                                                 (the supported path since 2026-11-19)
@@ -36,9 +42,15 @@ VERIFY_ONLY=${IMAGE_VERIFY_ONLY:-}
 VERSION=
 usage() {
   cat <<'USAGE'
-usage: deploy.sh [--from-registry] [--verify-only] [--help] <version>
+usage: deploy.sh [--env dev|prod] [--from-registry] [--verify-only] [--help] <version>
 
-  <version>            the os-ui image tag to deploy, e.g. 0.9.0
+  <version>            the os-ui image tag to deploy, e.g. 0.9.0 (dev: main-<sha>)
+
+  --env prod|dev       the environment (default prod). It picks the kube context:
+                       prod -> $KUBE_CONTEXT or dmagenticos; dev -> $DEV_KUBE_CONTEXT or dmagosdev.
+                       scripts/lib/env-guard.sh refuses a mismatch (a dev deploy with the
+                       production context, a prod deploy with the dev context, a "dev" cluster
+                       without the environment=dev marker). KUBE_CONTEXT is a PROD override only.
 
   --from-registry      do NOT build or push. Verify <version> already exists in the registry,
                        read its digest from there, and upgrade. Needs no Docker daemon — use it
@@ -65,7 +77,15 @@ environment
                             `-f`). The one supported way to CHANGE a release value; pass it once,
                             it then lives in the release. Example:
                             deploy/overlays/gateway-model-info.stackit.yaml
-  KUBE_CONTEXT NS REL WORK VALUES   as before
+  KUBE_CONTEXT NS REL WORK VALUES   as before (prod)
+  DEPLOY_ENV=dev|prod       same as --env
+  DEV_KUBE_CONTEXT=<ctx>    dev context (default dmagosdev)
+  DEV_PRIVATE_VALUES=<file> dev: the private overlay (default
+                            ~/.sovereign-os-secrets/dev/values.dev.private.yaml, written by
+                            scripts/dev/bootstrap-secrets.sh). DEV_PRIVATE_VALUES=cluster reads it
+                            from the dev cluster's Secret sovereign-os-dev-values instead (CI).
+  DEV_MODEL=stub            dev: also layer values.dev.model-stub.yaml (no model spend)
+  DEPLOY_RECORD=<file>      write {env, context, release, revisions, image, digest} as JSON there
 
 the os-ui image is built in CI (see CONTRIBUTING.md -> "Images: build in CI")
   It lives at ghcr.io/data-masterclass/sovereign-os/os-ui (option A, taken 2026-11-19): the
@@ -85,6 +105,7 @@ USAGE
 while [ $# -gt 0 ]; do
   case $1 in
     --from-registry) FROM_REGISTRY=1 ;;
+    --env)           DEPLOY_ENV=${2:-}; shift ;;
     --verify-only)   VERIFY_ONLY=1; FROM_REGISTRY=1 ;;
     -h|--help)       usage; exit 0 ;;
     -*)              echo "deploy.sh: unknown option $1" >&2; usage >&2; exit 2 ;;
@@ -96,7 +117,12 @@ done
 [ -n "$VERIFY_ONLY" ] && FROM_REGISTRY=1
 [ -n "$VERSION" ] || { usage >&2; exit 2; }
 
-CTX=${KUBE_CONTEXT:-dmagenticos}
+DEPLOY_ENV=${DEPLOY_ENV:-prod}
+case $DEPLOY_ENV in
+  prod) CTX=${KUBE_CONTEXT:-$(bash scripts/lib/env-guard.sh --env prod --print-default-context)} ;;
+  dev)  CTX=${DEV_KUBE_CONTEXT:-$(bash scripts/lib/env-guard.sh --env dev --print-default-context)} ;;
+  *)    echo "deploy.sh: --env must be dev or prod (got '$DEPLOY_ENV')" >&2; exit 2 ;;
+esac
 NS=${NS:-agentic-os}
 REL=${REL:-agentic-os}
 CHART=charts/sovereign-agentic-os
@@ -158,7 +184,56 @@ if [ -n "$FROM_REGISTRY" ]; then
   fi
 fi
 
-say "context $CTX / namespace $NS"
+say "env $DEPLOY_ENV: context $CTX / namespace $NS"
+# THE ENV/CONTEXT GUARD. Before any cluster read: a dev deploy can never reach production.
+if guard=$(bash scripts/lib/env-guard.sh --env "$DEPLOY_ENV" --context "$CTX" 2>/dev/null); then
+  echo "   ${guard##*$'\n'}"
+else
+  echo "   ${guard##*$'\n'}" >&2
+  echo "DEPLOY_REFUSED — env $DEPLOY_ENV does not match context $CTX; nothing was changed" >&2
+  exit 1
+fi
+
+revision_of() {
+  helm --kube-context "$CTX" history "$REL" -n "$NS" --max 1 -o json 2>/dev/null \
+    | python3 -c 'import json,sys; h=json.load(sys.stdin); print(h[-1]["revision"] if h else "")' 2>/dev/null || true
+}
+REV_BEFORE=$(revision_of)
+write_record() { # write_record <revision after>
+  [ -n "${DEPLOY_RECORD:-}" ] || return 0
+  python3 - "$DEPLOY_RECORD" "$DEPLOY_ENV" "$CTX" "$NS" "$REL" "${REV_BEFORE:-}" "$1" "$IMG" "${DIGEST:-}" <<'PY2'
+import json, sys
+k = ['env', 'context', 'namespace', 'release', 'revision_before', 'revision_after', 'image', 'digest']
+rec = dict(zip(k, sys.argv[2:]))
+rec['rollback'] = (f"scripts/rollback.sh --env {rec['env']} --to {rec['revision_before']}" if rec['revision_before'] else '')
+json.dump(rec, open(sys.argv[1], 'w'), indent=2)
+PY2
+}
+
+OVERLAY_ARGS=()
+if [ "$DEPLOY_ENV" = dev ]; then
+  # DEV VALUES: the committed profile + the private overlay; never derived from a live release
+  # (dev may not have one yet, and it must not inherit anything by accident).
+  say "dev values: values.dev.yaml + the private overlay${DEV_MODEL:+ + values.dev.model-stub.yaml}"
+  PRIVATE=${DEV_PRIVATE_VALUES:-$HOME/.sovereign-os-secrets/dev/values.dev.private.yaml}
+  if [ "$PRIVATE" = cluster ]; then
+    PRIVATE=$WORK/values.dev.private.yaml
+    ( umask 077
+      kubectl --context "$CTX" -n "$NS" get secret sovereign-os-dev-values -o jsonpath='{.data.values\.yaml}' \
+        | base64 -d > "$PRIVATE" ) || { echo "DEV_PRIVATE_VALUES_MISSING — Secret sovereign-os-dev-values not readable on $CTX (scripts/dev/bootstrap-secrets.sh)" >&2; exit 1; }
+  fi
+  [ -s "$PRIVATE" ] || { echo "DEV_PRIVATE_VALUES_MISSING — $PRIVATE is missing or empty (scripts/dev/bootstrap-secrets.sh)" >&2; exit 1; }
+  cp values.dev.yaml "$VALUES"
+  OVERLAY_ARGS=(-f "$PRIVATE")
+  [ "${DEV_MODEL:-}" != stub ] || OVERLAY_ARGS+=(-f values.dev.model-stub.yaml)
+  if [ -n "${VALUES_OVERLAY:-}" ]; then
+    [ -f "$VALUES_OVERLAY" ] || { echo "VALUES_OVERLAY_NOT_FOUND — $VALUES_OVERLAY is not a file" >&2; exit 2; }
+    OVERLAY_ARGS+=(-f "$VALUES_OVERLAY")
+  fi
+  # The repository is always set explicitly on dev (below), so the split-namespace check of the
+  # prod path does not apply.
+  IMAGE_REPO_GIVEN=1
+else
 kubectl --context "$CTX" -n "$NS" get deploy os-ui >/dev/null
 
 say "deriving the values file from the live release"
@@ -238,7 +313,6 @@ fi
 # them short of a hand-run `helm upgrade` that skips the backup gate. What the overlay sets
 # becomes part of the release: the next plain run derives it from there, so it is passed ONCE.
 # It appears in the "what the upgrade changes" list below before anything is applied.
-OVERLAY_ARGS=()
 if [ -n "${VALUES_OVERLAY:-}" ]; then
   [ -f "$VALUES_OVERLAY" ] || { echo "VALUES_OVERLAY_NOT_FOUND — $VALUES_OVERLAY is not a file" >&2; exit 2; }
   OVERLAY_ARGS=(-f "$VALUES_OVERLAY")
@@ -253,9 +327,14 @@ fi
 say "which release values change, and which override the chart"
 python3 scripts/lib/values-diff.py "$WORK/live.yaml" "$CHART/values.yaml" "$VALUES" ${VALUES_OVERLAY:+"$VALUES_OVERLAY"} \
   || echo "   (values diff unavailable — not a deploy failure)"
+fi  # end of the prod values derivation
 
 say "what the upgrade changes"
-helm --kube-context "$CTX" get manifest "$REL" -n "$NS" > "$WORK/before.yaml"
+if [ "$DEPLOY_ENV" = dev ] && [ -z "$REV_BEFORE" ]; then
+  : > "$WORK/before.yaml"   # first install on dev: nothing to compare with
+else
+  helm --kube-context "$CTX" get manifest "$REL" -n "$NS" > "$WORK/before.yaml"
+fi
 helm template "$REL" "$CHART" -n "$NS" -f "$VALUES" "${OVERLAY_ARGS[@]+"${OVERLAY_ARGS[@]}"}" --skip-schema-validation > "$WORK/after.yaml"
 python3 - "$WORK/before.yaml" "$WORK/after.yaml" <<'PY'
 import sys, yaml
@@ -279,8 +358,12 @@ PY
 # deploy run by hand must not put more on the node than it can give. CI=true: a skip (no helm
 # dependencies, no js-yaml) stops the deploy too. Before the backup, so a refusal changes nothing.
 say "capacity gate: the values this upgrade applies must fit the node (scripts/check-capacity.mjs)"
-if CI=true node scripts/check-capacity.mjs --profile default --skip-schema-validation -f "$VALUES" \
-     ${VALUES_OVERLAY:+-f "$VALUES_OVERLAY"} > "$WORK/capacity.txt" 2>&1; then
+if [ "$DEPLOY_ENV" = dev ]; then
+  CAPACITY_ARGS=(--budget "$CHART/capacity.dev.yaml" -f "$VALUES" "${OVERLAY_ARGS[@]}")
+else
+  CAPACITY_ARGS=(-f "$VALUES" ${VALUES_OVERLAY:+-f "$VALUES_OVERLAY"})
+fi
+if CI=true node scripts/check-capacity.mjs --profile default --skip-schema-validation "${CAPACITY_ARGS[@]}" > "$WORK/capacity.txt" 2>&1; then
   grep -E 'percent of allocatable|check-capacity: ok' "$WORK/capacity.txt" | sed 's/^ */   /'
 else
   sed 's/^/   /' "$WORK/capacity.txt" | grep -vE '^   +(Deployment|StatefulSet|DaemonSet|ReplicaSet|Pod)/' >&2
@@ -288,11 +371,16 @@ else
   exit 1
 fi
 
+if [ "$DEPLOY_ENV" = dev ]; then
+  say "no pre-upgrade backup on dev: synthetic data only, a reset reseeds it (docs/ops/dev-environment.md)"
+else
 say "pre-upgrade backup (standing rule — aborts the deploy if it fails)"
-# pre-upgrade-backup.sh uses the AMBIENT kubectl context, so make it explicit —
-# running it against the wrong cluster is how you get a deploy with no backup.
-kubectl config use-context "$CTX" >/dev/null
-KUBECONFIG=${KUBECONFIG:-$HOME/.kube/config} deploy/pre-upgrade-backup.sh
+# pre-upgrade-backup.sh uses the AMBIENT kubectl context. It gets a kubeconfig of its own that
+# holds ONLY $CTX (minified), so it cannot reach another cluster — and the shared kubeconfig's
+# current-context is never changed (it used to be, with `kubectl config use-context`).
+( umask 077; kubectl config view --minify --flatten --context "$CTX" > "$WORK/backup-kubeconfig.yaml" )
+KUBECONFIG=$WORK/backup-kubeconfig.yaml deploy/pre-upgrade-backup.sh
+fi
 
 if [ -n "$FROM_REGISTRY" ]; then
   # Already verified above, and the smoke that follows a local build ran in CI against this
@@ -351,9 +439,12 @@ say "helm upgrade"
 REPO_SET=()
 [ -z "$IMAGE_REPO_GIVEN" ] || REPO_SET=(--set "osUI.image.repository=$IMAGE_REPO/os-ui")
 [ ${#REPO_SET[@]} -eq 0 ] || say "overriding osUI.image.repository=$IMAGE_REPO/os-ui (IMAGE_REPO)"
-helm --kube-context "$CTX" upgrade "$REL" "$CHART" -n "$NS" -f "$VALUES" "${OVERLAY_ARGS[@]+"${OVERLAY_ARGS[@]}"}" \
+INSTALL_ARGS=()
+[ "$DEPLOY_ENV" != dev ] || INSTALL_ARGS=(--install --create-namespace)
+helm --kube-context "$CTX" upgrade "${INSTALL_ARGS[@]+"${INSTALL_ARGS[@]}"}" "$REL" "$CHART" -n "$NS" -f "$VALUES" "${OVERLAY_ARGS[@]+"${OVERLAY_ARGS[@]}"}" \
   --set osUI.image.tag="$VERSION@$DIGEST" "${REPO_SET[@]+"${REPO_SET[@]}"}" \
   --force-conflicts --skip-schema-validation --timeout 20m
+write_record "$(revision_of)"
 # No rollout restart: the image change already rolls os-ui exactly once.
 
 say "rollout"
@@ -373,4 +464,4 @@ kubectl --context "$CTX" -n "$NS" get deploy os-ui \
   | grep -E '^(OS_ENABLED_TABS|EXTERNAL_CONNECTORS_ENABLED|OS_PUBLIC_URL)=' | sed 's/^/   /'
 echo "   not-ready pods: $(kubectl --context "$CTX" -n "$NS" get pods --no-headers | grep -vcE 'Running|Completed')"
 echo "   values file kept at $VALUES (contains secrets — do not commit)"
-echo "DEPLOY_${VERSION}_OK"
+echo "DEPLOY_${VERSION}_OK${DEPLOY_ENV:+ env=$DEPLOY_ENV}"

@@ -6,7 +6,8 @@
  * USER STORY: As a journey I want to reach each component's own API and read its own logs from
  *             the host, exactly as an operator would, without any OS code in between.
  * ARCHITECTURE:
- *   - Shells out to kubectl with --context kind-$E2E_CLUSTER (never the current context, so the
+ *   - Shells out to kubectl with --context kind-$E2E_CLUSTER, or $E2E_KUBE_CONTEXT for the dev
+ *     cluster (never the current context, and never the production context, so the
  *     harness can never touch a real cluster by accident).
  *   - portForward() starts `kubectl port-forward svc/<name> :<port>` (or any `<kind>/<name>` target,
  *     e.g. deployment/trino to reach a sidecar bound to the pod's 127.0.0.1), parses the local port, and
@@ -19,7 +20,14 @@ import { HopError } from './hop.mjs';
 const exec = promisify(execFile);
 export const CLUSTER = process.env.E2E_CLUSTER ?? 'wp02';
 export const NS = process.env.E2E_NAMESPACE ?? 'agentic-os';
-const CONTEXT = `kind-${CLUSTER}`;
+// E2E_KUBE_CONTEXT points the harness at the DEV cluster (.github/workflows/dev.yml, docs/ops/
+// dev-environment.md). It is refused for the production context: the journeys create, delete and
+// scale workloads, so they never run against production.
+const PROD_CONTEXT = process.env.PROD_KUBE_CONTEXT ?? 'dmagenticos';
+export const CONTEXT = process.env.E2E_KUBE_CONTEXT || `kind-${CLUSTER}`;
+if (CONTEXT === PROD_CONTEXT) {
+  throw new Error(`E2E_REFUSED: the acceptance harness never runs against the production context ${PROD_CONTEXT}`);
+}
 
 export async function kubectl(args, { input, timeoutMs = 120000 } = {}) {
   try {
