@@ -159,6 +159,23 @@ Read in `web/src/initialize.ts` at tag `v3.194.1`, which runs on every langfuse-
   a user that already exists"; langfuse.com/self-hosting/administration/headless-initialization:
   resources are created "if they don't already exist").
 
+## Rehearsal
+
+`scripts/tests/secret-rotation/rehearse.sh` runs the whole rotation on the real components:
+
+- the chart's gateway image (LiteLLM 1.109.1 at its pinned digest), config and env, rendered from the
+  chart, on Postgres 17;
+- Langfuse 3.194.1 web and worker on their documented stack.
+
+It uses the same in-container artifacts as `rotate-secrets.sh`: LiteLLM's scan, the encrypted-table
+count, langfuse-web's bcryptjs and the one-row UPDATE. Only the Kubernetes steps are replaced by
+their effect on the containers' environment. On top, the chart test renders the re-key overlays
+through Helm's values merge. It ends `SECRET_ROTATION_REHEARSAL_OK` (44 checks), including the
+negative twins:
+
+- a random salt key alone loses every stored value;
+- an LLM connection makes the encryption count 1.
+
 ## Run-book (production)
 
 Before:
