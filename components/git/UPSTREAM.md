@@ -9,9 +9,14 @@ Upstream, unmodified. Nothing in this folder is ours — see the rule in `compon
   `git http-backend` / `GIT_PROJECT_ROOT` (https://git-scm.com/docs/git-http-backend),
   rename detection behind `git log --follow` (https://git-scm.com/docs/git-log#Documentation/git-log.txt---follow),
   subtree-split semantics (https://git-scm.com/docs/git-subtree).
+  Docs used by WP-51 (lifecycle as tags): annotated tags (https://git-scm.com/docs/git-tag),
+  `git for-each-ref` with `%(trailers:key=…)` (https://git-scm.com/docs/git-for-each-ref),
+  trailers (https://git-scm.com/docs/git-interpret-trailers), `rev-list --before`
+  (https://git-scm.com/docs/git-rev-list).
 - **isomorphic-git** — Licence: MIT. Source: https://github.com/isomorphic-git/isomorphic-git —
   Pinned as: npm `isomorphic-git@1.44.13` (`os-ui/package.json`). Docs used: `writeBlob`,
-  `writeTree`, `writeCommit` (multiple parents = a merge commit), `isDescendent`
+  `writeTree`, `writeCommit` (multiple parents = a merge commit), `isDescendent`,
+  `annotatedTag({ force })` and `deleteRef` (WP-51)
   (https://isomorphic-git.org/docs/en/alphabetic).
 
 **Why the OS ships it:** every artifact the OS builds lands in a real git repository —

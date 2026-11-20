@@ -32,6 +32,7 @@ import { listTags } from '@core/infra/git-store';
 import { repoPaths } from '@core/engineering/repo';
 import { dagsterSection, dbtSection, gitSection, langfuseSection, LANGFUSE_REDACTIONS } from '@core/engineering/sections';
 import { sealView, type EngineeringPrincipal, type EngineeringView } from '@core/engineering/types';
+import { publishedCloneUrl } from '@core/infra/git-clone-published';
 
 const OS_NOUN = 'app';
 /**
@@ -78,7 +79,7 @@ export async function appEngineeringView(principal: EngineeringPrincipal, id: st
   const git = gitSection({
     osNoun: OS_NOUN,
     repo: domain,
-    cloneUrl: null,
+    cloneUrl: publishedCloneUrl(domain),
     head: listed.head,
     files: committed.map((p) => ({ path: p })),
     tracked: new Set(listed.paths),

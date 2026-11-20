@@ -105,5 +105,30 @@ export async function authenticateGitRequest(
       logReason: `token prefix ${resolved.prefix}: ${principal.id} may not read ${target.domain}`,
     };
   }
+  // The token's OWN scope narrows (never widens) what the owner may do (WP-51).
+  if (resolved.repos.length > 0 && !resolved.repos.some((r) => sameRepo(r, target.domain))) {
+    return {
+      ok: false,
+      status: 404,
+      message: 'no such repository',
+      logReason: `token prefix ${resolved.prefix}: not scoped to ${target.domain}`,
+    };
+  }
+  if (target.service === 'receive-pack' && resolved.access === 'read') {
+    return {
+      ok: false,
+      status: 403,
+      message: 'this access token is read-only — create a token with write access to push',
+      logReason: `token prefix ${resolved.prefix}: read-only token attempted a push to ${target.domain}`,
+    };
+  }
   return { ok: true, principal, target, tokenPrefix: resolved.prefix };
+}
+
+/** Two names for one repository: the same name, or the canonical and legacy names of one domain. */
+function sameRepo(a: string, b: string): boolean {
+  if (a === b) return true;
+  const pa = parseRepoName(a);
+  const pb = parseRepoName(b);
+  return Boolean(pa && pb && pa.kind === 'domain' && pb.kind === 'domain' && pa.domain === pb.domain);
 }

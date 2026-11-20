@@ -316,6 +316,9 @@ export const config = {
   // reaches the OS across subdomains (not its own origin). '' locally → apps derive
   // it from their host or run same-origin. Same var the emailed-links path reads.
   osPublicUrl: base(env('OS_PUBLIC_URL', '')),
+  // The chart sets OS_GIT_HTTP=true when the authenticated git-http sidecar + Ingress are rendered
+  // (osUI.dataProjectGit.gitHttp.enabled). Only then is a clone URL published (WP-51).
+  gitHttpEnabled: env('OS_GIT_HTTP', '') === 'true',
   appsBaseDomain: env('OS_APPS_DOMAIN', 'apps.local'),
 
   // Software — the OPTIONAL in-cluster app RUNNER (tabs/software/lib/runner.ts), for

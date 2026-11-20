@@ -41,6 +41,7 @@ import {
 import { readRepoFiles, repoPaths } from '@core/engineering/repo';
 import { dagsterSection, dbtSection, gitSection, langfuseSection, LANGFUSE_REDACTIONS } from '@core/engineering/sections';
 import { sealView, type EngineeringPrincipal, type EngineeringView } from '@core/engineering/types';
+import { publishedCloneUrl } from '@core/infra/git-clone-published';
 
 const OS_NOUN = 'dashboard';
 /** The subtree stream D reserves for dashboard-as-code. Equal to D's `DASHBOARDS_PREFIX`. */
@@ -97,7 +98,7 @@ export async function dashboardEngineeringView(principal: EngineeringPrincipal, 
   const git = gitSection({
     osNoun: OS_NOUN,
     repo: domain,
-    cloneUrl: null,
+    cloneUrl: publishedCloneUrl(domain),
     head: listed.head,
     files: mine.map((p) => ({ path: p })),
     tracked: new Set(listed.paths),

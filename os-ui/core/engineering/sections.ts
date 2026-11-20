@@ -280,6 +280,7 @@ export function gitSection(input: {
     ? [
       { tool: 'git', command: `git clone ${input.cloneUrl}`, description: 'clone the domain repository and read every file, governance metadata included' },
       { tool: 'git', command: `git log --oneline -- ${input.files[0].path}`, description: 'the history of this file' },
+      { tool: 'git', command: "git for-each-ref --format='%(refname:short) %(*objectname:short) %(taggerdate:iso)' refs/tags/live refs/tags/testing", description: 'what is live and what is being tested — the lifecycle the OS shows, read from git tags' },
     ]
     : [{ tool: 'git', command: `git log --oneline -- ${input.files[0].path}`, description: 'the history of this file, in a checkout of the domain repository' }];
   const links: EngineeringLink[] = input.cloneUrl

@@ -23,6 +23,8 @@ type TokenView = {
   prefix: string;
   name: string;
   scope: string;
+  access?: 'read' | 'write';
+  repos?: string[];
   createdAt: number;
   expiresAt: number;
   revokedAt: number;
@@ -34,6 +36,8 @@ const when = (ms: number) => (ms ? new Date(ms).toLocaleDateString() : '—');
 export default function AccessTokens() {
   const [tokens, setTokens] = useState<TokenView[] | null>(null);
   const [name, setName] = useState('');
+  const [access, setAccess] = useState<'read' | 'write'>('read');
+  const [repos, setRepos] = useState('');
   const [fresh, setFresh] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -61,12 +65,17 @@ export default function AccessTokens() {
       const r = await fetch('/api/git/tokens', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ name }),
+        body: JSON.stringify({
+          name,
+          access,
+          repos: repos.split(/[\s,]+/).map((r) => r.trim()).filter(Boolean),
+        }),
       });
       const j = (await r.json()) as { token?: string; error?: string };
       if (!r.ok || !j.token) throw new Error(j.error ?? `HTTP ${r.status}`);
       setFresh(j.token);
       setName('');
+      setRepos('');
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -93,7 +102,8 @@ export default function AccessTokens() {
         A personal access token is how your git client proves it is you. Use it as the password for{' '}
         <code>git clone</code>, <code>git fetch</code> and <code>git push</code> against{' '}
         <code>/git/&lt;domain&gt;.git</code>; any username works. It is stored hashed, shown once, and acts with
-        exactly your own role and domains — never more.
+        exactly your own role and domains — never more. A read-only token cannot push; a token narrowed to some
+        repositories cannot read the others. Revoking a token stops it on its next request.
       </p>
 
       {fresh ? (
@@ -118,6 +128,16 @@ export default function AccessTokens() {
           onChange={(e) => setName(e.target.value)}
           style={{ minWidth: 260 }}
         />
+        <select value={access} onChange={(e) => setAccess(e.target.value === 'write' ? 'write' : 'read')} aria-label="Access">
+          <option value="read">Read only (clone, fetch)</option>
+          <option value="write">Read and push</option>
+        </select>
+        <input
+          placeholder="Only these repositories (optional, comma-separated)"
+          value={repos}
+          onChange={(e) => setRepos(e.target.value)}
+          style={{ minWidth: 260 }}
+        />
         <button onClick={() => void create()} disabled={busy || !name.trim()}>
           {busy ? 'Creating…' : 'Create token'}
         </button>
@@ -135,6 +155,7 @@ export default function AccessTokens() {
             <tr>
               <th>Name</th>
               <th>Prefix</th>
+              <th>Access</th>
               <th>Created</th>
               <th>Expires</th>
               <th>Last used</th>
@@ -148,6 +169,10 @@ export default function AccessTokens() {
                 <td>{t.name}</td>
                 <td>
                   <code>sos_{t.prefix}_…</code>
+                </td>
+                <td>
+                  {t.access === 'read' ? 'read only' : 'read and push'}
+                  {t.repos?.length ? ` · ${t.repos.join(', ')}` : ''}
                 </td>
                 <td>{when(t.createdAt)}</td>
                 <td>{when(t.expiresAt)}</td>

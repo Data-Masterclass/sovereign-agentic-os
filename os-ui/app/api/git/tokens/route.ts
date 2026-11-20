@@ -16,12 +16,24 @@ export const GET = withRoute(async ({ user }) => NextResponse.json({ tokens: lis
   defaultStatus: 500,
 });
 
-export const POST = withRoute<Record<string, string>, { name?: unknown; ttlDays?: unknown }>(
+export const POST = withRoute<Record<string, string>, { name?: unknown; ttlDays?: unknown; access?: unknown; repos?: unknown }>(
   async ({ user, body }) => {
     const name = typeof body.name === 'string' ? body.name.trim() : '';
     if (!name) return NextResponse.json({ error: 'a token needs a name — you will see it in the list, not the token' }, { status: 400 });
     const ttlDays = typeof body.ttlDays === 'number' && Number.isFinite(body.ttlDays) ? body.ttlDays : undefined;
-    const minted = createAccessToken({ userId: user.id, name, ttlDays });
+    if (body.access !== undefined && body.access !== 'read' && body.access !== 'write') {
+      return NextResponse.json({ error: "access is 'read' or 'write'" }, { status: 400 });
+    }
+    if (body.repos !== undefined && !(Array.isArray(body.repos) && body.repos.every((r) => typeof r === 'string'))) {
+      return NextResponse.json({ error: 'repos is a list of repository names' }, { status: 400 });
+    }
+    const minted = createAccessToken({
+      userId: user.id,
+      name,
+      ttlDays,
+      ...(body.access ? { access: body.access as 'read' | 'write' } : {}),
+      ...(Array.isArray(body.repos) ? { repos: body.repos as string[] } : {}),
+    });
     return NextResponse.json({ token: minted.token, record: minted.record, shownOnce: true }, { status: 201 });
   },
   { parse: true, hydrate: ensureHydrated, defaultStatus: 500 },

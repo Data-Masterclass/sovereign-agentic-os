@@ -27,6 +27,7 @@ import { dagsterSection, dbtSection, gitSection, langfuseSection, LANGFUSE_REDAC
 import { sealView, type EngineeringPrincipal, type EngineeringView } from '@core/engineering/types';
 import { dagsterConfigured, modelAssetKey, runsForDataset, sanitizeName, scheduleNameFor } from '@core/infra/dagster';
 import { roleAllowed, TOOLS } from '@core/infra/tool-proxy';
+import { publishedCloneUrl } from '@core/infra/git-clone-published';
 
 const OS_NOUN = 'data product';
 
@@ -164,7 +165,7 @@ export async function datasetEngineeringView(principal: EngineeringPrincipal, id
   const git = gitSection({
     osNoun: OS_NOUN,
     repo: domain,
-    cloneUrl: null,
+    cloneUrl: publishedCloneUrl(domain),
     head: listed.head,
     files: [...wanted].sort().map((p) => ({ path: p })),
     tracked,

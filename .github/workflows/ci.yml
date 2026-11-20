@@ -103,6 +103,9 @@ jobs:
       # WP-55: repository paths come from os-ui/core/infra/repo-layout.ts only (ratchet + twins).
       - name: Repo-layout ratchet
         run: node scripts/check-repo-layout.mjs && node --test scripts/tests/check-repo-layout.test.mjs && bash scripts/tests/repo-layout-chart.test.sh
+      # WP-51: the lifecycle tag migration is dry-run only (plans, writes nothing, refuses --apply).
+      - name: Lifecycle tag migration (dry-run)
+        run: node --test scripts/tests/lifecycle-tags-migrate.test.mjs
 
       # Langfuse web: sign-up off, and the NetworkPolicy admits only the OS's own callers.
       # Renders the chart (the dependencies were built above); CI=true turns a skip into a failure.
@@ -535,6 +538,19 @@ jobs:
         env:
           GIT_HTTP_IMAGE: sovereign-os/git-http:ci
         run: node --test tests/git-http/lighttpd-guard.test.mjs
+      # WP-51 eject test against the IMAGE: the OS writes the lifecycle tags, a plain `git clone`
+      # through the OS's auth decision and this lighttpd + git-http-backend shows the same state.
+      - name: Setup Node.js
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: 22
+      - name: Install (os-ui)
+        run: npm --prefix os-ui ci
+      - name: Lifecycle refs through the built image (eject)
+        env:
+          GIT_HTTP_IMAGE: sovereign-os/git-http:ci
+        working-directory: os-ui
+        run: node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test core/infra/lifecycle-refs-http.test.ts
 
   # OPA policies (04 M0–M1). The policies are plain Rego + JSON data in
   # charts/sovereign-agentic-os/policies with their *_test.rego beside them, so upstream
