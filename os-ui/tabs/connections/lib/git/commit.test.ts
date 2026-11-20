@@ -6,6 +6,7 @@
  * USER STORY: As an operator I want what Trino loads to be what is committed: saving a warehouse
  *             connection commits its catalog file, and registering it reads the file BACK from
  *             git at a sha and applies exactly those bytes, recording the sha (contract C4).
+ * ARCHITECTURE: node:test against the real module (and a real temp git repo where it commits); no mocks.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
