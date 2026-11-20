@@ -66,9 +66,13 @@ test('egress: an external host must be on the proxy allowlist, with the exact ch
   assert.equal(blocked.host, 'acme.openai.azure.com');
   assert.match(blocked.guidance ?? '', /llmProviders\.allowHosts/);
   assert.match(blocked.guidance ?? '', /acme\.openai\.azure\.com/);
-  // In-cluster names are reached directly (NO_PROXY), never through the internet proxy.
-  assert.deepEqual(providerEgress(presetById('ollama')!, 'http://ollama:11434', allow), { ok: true, host: 'ollama', route: 'in-cluster' });
-  assert.equal(providerEgress(presetById('ollama')!, 'http://ollama.models.svc.cluster.local:11434', allow).route, 'in-cluster');
+  // In-cluster names are reached directly (on the gateway's NO_PROXY), never through the internet proxy.
+  assert.deepEqual(providerEgress(presetById('ollama')!, 'http://ollama:11434', allow, ['ollama']), { ok: true, host: 'ollama', route: 'in-cluster' });
+  assert.equal(providerEgress(presetById('ollama')!, 'http://ollama.models.svc.cluster.local:11434', allow, []).route, 'in-cluster');
+  // A bare name the gateway would still send to the proxy is refused, with the two ways to fix it.
+  const bare = providerEgress(presetById('ollama')!, 'http://ollama:11434', allow, []);
+  assert.equal(bare.ok, false);
+  assert.match(bare.guidance ?? '', /llmProviders\.noProxy/);
   // Metadata / loopback / private addresses are refused outright.
   assert.equal(providerEgress(presetById('openai-compatible')!, 'http://169.254.169.254/v1', allow).ok, false);
   assert.equal(providerEgress(presetById('openai-compatible')!, 'http://192.168.1.20:8000/v1', allow).ok, false);
@@ -98,7 +102,7 @@ test('migration dry run: lists every model, its host and route, and what /model/
     { model_name: 'mistral-small', litellm_params: { model: 'openai/mistral-small-latest', api_base: 'https://api.mistral.ai/v1' }, model_info: { id: 'db-1', db_model: true } },
     { model_name: 'azure-gpt', litellm_params: { model: 'azure/os-gpt-deploy', api_base: 'https://acme.openai.azure.com' }, model_info: { id: 'db-2', db_model: true, access_groups: ['os-admin-models'] } },
     { model_name: 'local-llama', litellm_params: { model: 'ollama_chat/llama3', api_base: 'http://ollama:11434' }, model_info: { id: 'db-3', db_model: true } },
-  ], ['onstackit.cloud'], 'os-admin-models');
+  ], ['onstackit.cloud'], 'os-admin-models', ['ollama']);
   const by = Object.fromEntries(plan.rows.map((r) => [r.model, r]));
   assert.equal(by['sovereign-default'].egress, 'allowed');
   assert.equal(by['sovereign-default'].update, null); // seeded: chart-owned, never rewritten

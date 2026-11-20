@@ -1,0 +1,73 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+#
+# llm-providers-live — provider-agnostic LLM setup on the REAL LiteLLM image behind the REAL egress
+# proxy (scripts/tests/llm-providers/run.sh): an OpenAI-compatible, an Azure OpenAI and an Ollama stub
+# connected, tested, registered and called through the shared agent key; a gateway restart; and the
+# negative twins (wrong key, host off the allowlist, key without the access group). Separate from
+# ci.yml because it pulls the gateway image. Actions are pinned to commit SHAs, as ci.yml does.
+name: llm-providers-live
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - charts/sovereign-agentic-os/values.yaml
+      - charts/sovereign-agentic-os/templates/base/_helpers.tpl
+      - charts/sovereign-agentic-os/templates/base/litellm/**
+      - charts/sovereign-agentic-os/templates/base/egress/**
+      - charts/sovereign-agentic-os/templates/base/os-ui/_os-ui-env.tpl
+      - values.stackit-managed.yaml
+      - images/base/egress-proxy/**
+      - os-ui/tabs/admin/lib/llm-provider*.ts
+      - os-ui/core/infra/litellm-write.ts
+      - os-ui/core/infra/litellm-admin.ts
+      - scripts/tests/llm-providers/**
+      - .github/workflows/llm-providers-live.yml
+  push:
+    branches: [main]
+    paths:
+      - charts/sovereign-agentic-os/templates/base/litellm/**
+      - os-ui/tabs/admin/lib/llm-provider*.ts
+      - scripts/tests/llm-providers/**
+      - .github/workflows/llm-providers-live.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: llm-providers-live-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  llm-providers-live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CI: 'true'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Setup Node.js
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: 22
+      - name: Install (os-ui)
+        run: npm --prefix os-ui ci
+      - name: Setup Helm
+        uses: azure/setup-helm@fe7b79cd5ee1e45176fcad797de68ecaf3ca4814 # v4.2.0
+        with:
+          version: v3.16.3
+      - name: Resolve chart dependencies
+        run: |
+          helm dependency build charts/sovereign-agentic-os \
+            || helm dependency update charts/sovereign-agentic-os
+      - name: Providers on the real gateway (with the negative twins and a restart)
+        env:
+          LLM_PROVIDERS_WORKDIR: ${{ runner.temp }}/llm-providers
+        run: bash scripts/tests/llm-providers/run.sh
+      - name: Logs (on failure)
+        if: failure()
+        run: |
+          for f in e2e-1.log e2e-2.log gw.log proxy.log migrate.log; do echo "=== $f"; tail -120 "${{ runner.temp }}/llm-providers/$f" || true; done
