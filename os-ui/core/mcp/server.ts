@@ -2,6 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
+import { trinoSqlError } from '@core/mcp/trino-sql-error';
 import type { CurrentUser } from '@core/kernel/auth';
 import type { ChatArtifact } from '@core/runtime/chat-artifacts';
 import { ROLES, canPromote, type Role } from '@core/kernel/session';
@@ -621,6 +622,10 @@ export function structuredError(e: unknown): ToolError {
       hint: `Change ${typeof field === 'string' ? `\`${field}\`` : 'the value'}: identifiers are letters, digits and underscores; a cron is 5 fields like "0 6 * * *".`,
     };
   }
+  // A Trino SQL error (unknown function, syntax, missing column/table): the caller's SQL is wrong
+  // in Trino's dialect. Typed so an agent can fix and retry instead of reading "Unexpected failure".
+  const sqlError = trinoSqlError(reason);
+  if (sqlError) return { code: sqlError.code, reason, hint: sqlError.hint };
   const code =
     status === 403 ? 'forbidden'
       : status === 404 ? 'not_found'

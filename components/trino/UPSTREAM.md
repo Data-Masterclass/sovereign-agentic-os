@@ -65,3 +65,16 @@ that touch this chart's config:
 - No change to resource groups, the file session-property manager or the OPA plugin config
   that this chart uses (477 adds physical-scan tracking; 479 adds a `queryText` selector; 484
   adds OPA extra-credential forwarding).
+
+## SQL error classes and dialect hints (os-ui `core/mcp/trino-sql-error.ts`)
+
+- Error names come from Trino's `StandardErrorCode`, reported in the client protocol as
+  `errorName` / `errorType` (https://trino.io/docs/476/develop/client-protocol.html). The
+  query-tool forwards the trino-python-client's `TrinoUserError(type=…, name=…, message=…)` text
+  unchanged; os-ui types `FUNCTION_NOT_FOUND`, `FUNCTION_NOT_AGGREGATE`, `SYNTAX_ERROR`,
+  `COLUMN_NOT_FOUND`, `TABLE_NOT_FOUND` and `SCHEMA_NOT_FOUND` (type `USER_ERROR`) as `sql_error`.
+- Functions the hints name, all in Trino 476: `listagg(x, sep) WITHIN GROUP (ORDER BY …)`
+  (https://trino.io/docs/476/functions/aggregate.html#listagg), `array_agg` and `array_join`
+  (https://trino.io/docs/476/functions/array.html), `SHOW FUNCTIONS`.
+- Proven on the chart's Trino 476 by `os-ui/core/mcp/trino-sql-error.trino.test.ts` (CI job
+  `test-lakehouse`).
