@@ -156,6 +156,7 @@ jobs:
           bash scripts/tests/deploy-dagster-image.test.sh
           bash scripts/tests/deploy-data-runner-image.test.sh
           bash scripts/tests/rollback-runner-guard.test.sh
+          bash scripts/tests/image-label.test.sh
 
       # Generates the code map and fails if the generator cannot (a broken
       # manifest, an unreadable tab). Deliberately NOT `--check`: comparing a
@@ -474,6 +475,14 @@ jobs:
         run: pip install -r images/extensions/data-runner/requirements.txt
       - name: pytest (data-runner)
         run: python3 -m pytest -q images/extensions/data-runner/test_app.py images/extensions/data-runner/test_bronze_raw.py
+      # The BUILT data-runner image carries the capability label deploy.sh reads from the registry.
+      - name: data-runner image carries its capability label
+        run: |
+          set -euo pipefail
+          docker build -q -t data-runner:ci images/extensions/data-runner >/dev/null
+          v=$(docker inspect --format '{{ index .Config.Labels "org.sovereign-os.applies-column-names" }}' data-runner:ci)
+          [ "$v" = true ] || { echo "::error::the data-runner image carries org.sovereign-os.applies-column-names='$v', expected 'true'"; exit 1; }
+          echo "label ok: $v"
       # web-fetch: new tests (zero tests previously)
       - name: pytest (web-fetch)
         run: python3 -m pytest -q images/base/web-fetch/test_app.py

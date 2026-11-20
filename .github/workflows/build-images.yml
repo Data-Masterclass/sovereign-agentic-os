@@ -304,6 +304,21 @@ jobs:
           cache-from: type=gha,scope=${{ steps.meta.outputs.image }}
           cache-to: type=gha,mode=max,scope=${{ steps.meta.outputs.image }}
 
+      # The data-runner image must SAY it applies os-ui's `columnNames`: scripts/deploy.sh reads
+      # this label from the registry to decide the runner's capability (and refuses when it can't).
+      # Read back from the pushed digest, so the check is on the published bytes.
+      - name: The pushed data-runner carries its capability label
+        if: steps.meta.outputs.image == 'data-runner'
+        env:
+          REF: ${{ steps.meta.outputs.ref }}
+          DIGEST: ${{ steps.reuse.outputs.digest || steps.push.outputs.digest }}
+          DEPLOY_IMAGE_LABEL_PROBE: ''
+        run: |
+          set -euo pipefail
+          v=$(bash scripts/lib/image-label.sh "${REF%:*}@$DIGEST" org.sovereign-os.applies-column-names)
+          [ "$v" = true ] || { echo "::error::$REF@$DIGEST carries org.sovereign-os.applies-column-names='$v', expected 'true'"; exit 1; }
+          echo "label ok: org.sovereign-os.applies-column-names=$v on $REF@$DIGEST"
+
       # THE PUSHED IMAGE MUST BE THE IMAGE THAT WAS SMOKED (review L6). The smoke runs against
       # a locally loaded build and the push is a SECOND build-push-action call: same context and
       # same cache, so they should be identical — but "should" is not a check, and a cache miss,

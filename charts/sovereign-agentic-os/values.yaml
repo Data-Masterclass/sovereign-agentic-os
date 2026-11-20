@@ -1437,12 +1437,16 @@ dataRunner:
     digest: sha256:8f7b8a3287368c915af90ee37e6053dfd77326d98fea450f87b97f4835a2e482
     localBuild: false
   # Digests of runner builds that do NOT apply os-ui's `columnNames` (built before it existed).
-  # Every other pinned digest does — so the capability follows the pin, with no flag to forget.
+  # An EXTRA guard only: scripts/deploy.sh decides the capability from the pinned image's own OCI
+  # label (org.sovereign-os.applies-column-names, read from the registry, fail closed) and passes
+  # it as dataRunner.verifiedCapability; a digest listed here is "false" whatever its label says.
   # Rendered as the Deployment annotation sovereign-os/applies-column-names, which
   # scripts/rollback.sh and scripts/deploy.sh read (scripts/lib/runner-capability.py) to refuse
   # going below such a build while datasets store mapped column names.
   legacyDigests:
     - sha256:8f7b8a3287368c915af90ee37e6053dfd77326d98fea450f87b97f4835a2e482   # 0.2.2 (hand-built, aborek)
+  # Set by scripts/deploy.sh from the image label; never set it by hand.
+  verifiedCapability: ""
   polaris:
     # Same Polaris REST catalog + warehouse Trino reads/writes.
     uri: "http://polaris:8181/api/catalog"
