@@ -33,7 +33,7 @@ const {
 const { registerLifecycleAdapter, __clearLifecycleAdapters } = await import('./lifecycle-adapters.ts');
 const { lifecycleWordOf, lifecycleOf } = await import('./object-lifecycle.ts');
 const pins = await import('@core/infra/lifecycle-pins');
-const { readBlob, listTree, __clearReservedSubtrees } = await import('@core/infra/git-store');
+const { readBlob, listTree, resolveTag, parseTrailers, commitTree, mainSha, __clearReservedSubtrees } = await import('@core/infra/git-store');
 
 const ACTOR = { id: 'u1', name: 'Alex', email: 'alex@example.com', role: 'creator', domains: ['sales'] };
 const OTHER = { id: 'u2', name: 'Bo', email: 'bo@example.com', role: 'creator', domains: ['sales'] };
@@ -117,7 +117,11 @@ test('V3: go_live pins the head, records it in os/lifecycle/pins.yml and names t
   assert.equal(res.live, SHA_A, 'the head is what gets pinned when no sha is named');
   assert.equal(lifecycleWordOf(res.lifecycle), 'live');
   assert.equal(res.tag.name, 'live/dashboard/obj_1');
-  assert.equal(res.tag.written, false, 'honest: the git tag needs S’s annotatedTag (deviation V-3)');
+  assert.equal(res.tag.written, true, 'the pin IS the annotated tag live/<kind>/<id> (WP-51)');
+  const tag = await resolveTag('sales', 'live/dashboard/obj_1', { reposDir: repos });
+  assert.ok(tag, 'the tag is in the repo');
+  assert.equal(parseTrailers(tag!.message)['OS-Ref'], SHA_A, 'the tag message carries the pinned OS ref');
+  assert.equal(res.tag.version, 'version/dashboard/obj_1/1', 'and the first immutable version tag');
   assert.ok(res.commit && res.commit.changed, 'the pin was committed');
   assert.deepEqual(res.starts, ['everyone in Run sees this version']);
 
@@ -358,18 +362,23 @@ test('V10: the migration pins every existing object and the pin file records the
 
 // ----------------------------------------- Testing is not a managed state ---
 
-test('Testing is a marker, not a state: it is set, read and cleared, and nothing is committed', async () => {
+test('Testing is a marker, not a state: it is the tag testing/<kind>/<id>, set, read and cleared, and nothing is committed', async () => {
   fakeAdapter({ kind: 'metric' });
-  await pins.markTesting('metric', 'obj_1', SHA_B);
+  await commitTree('sales', new Map([['README.md', 'sales\n']]), { author: { name: 't', email: 't@t.invalid' }, message: 'seed', reposDir: repos });
+  const head = await mainSha('sales', { reposDir: repos });
+  await pins.markTesting('metric', 'obj_1', SHA_B, 'sales');
   const status = await lifecycleStatus(ACTOR, 'metric', 'obj_1');
   assert.equal(status.word, 'testing');
   assert.equal(status.lifecycle.testing, SHA_B);
+  assert.ok(await resolveTag('sales', 'testing/metric/obj_1', { reposDir: repos }), 'the marker is a git tag');
 
-  await pins.clearTesting('metric', 'obj_1');
+  await pins.clearTesting('metric', 'obj_1', 'sales');
   assert.equal((await lifecycleStatus(ACTOR, 'metric', 'obj_1')).word, 'draft');
+  assert.equal(await resolveTag('sales', 'testing/metric/obj_1', { reposDir: repos }), null, 'and clearing deletes it');
 
-  // No repo was ever created for a test marker.
-  assert.rejects(() => readBlob('sales', undefined, pins.LIFECYCLE_PIN_PATH, { reposDir: repos }));
+  // No commit was made for a test marker.
+  assert.equal(await mainSha('sales', { reposDir: repos }), head);
+  await assert.rejects(() => readBlob('sales', undefined, pins.LIFECYCLE_PIN_PATH, { reposDir: repos }));
 });
 
 test('H-1: a dependency kind with NO adapter is satisfied with a WARNING, never a dead end', async () => {
