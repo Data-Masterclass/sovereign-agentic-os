@@ -75,10 +75,17 @@ k -n agentic-os rollout status deploy/egress-proxy --timeout=180s >/dev/null || 
 # The chart's LiteLLM proxy env, exactly as rendered on the gateway Deployment.
 envjson=$(helm template agentic-os "$CHART" -n agentic-os --skip-schema-validation 2>/dev/null | python3 -c '
 import sys, yaml, json
-for d in yaml.safe_load_all(sys.stdin):
-    if d and d["kind"] == "Deployment" and d["metadata"]["name"] == "agentic-os-litellm":
-        env = [e for c in d["spec"]["template"]["spec"]["containers"] for e in c.get("env", []) if e["name"].lower() in ("https_proxy", "http_proxy", "no_proxy")]
-        print(json.dumps(env))
+docs = [d for d in yaml.safe_load_all(sys.stdin) if d]
+gw = next((d for d in docs if d["kind"] == "Deployment" and d["metadata"]["name"] == "agentic-os-litellm"), None)
+env = []
+if gw:
+    ctrs = gw["spec"]["template"]["spec"]["containers"]
+    env = [e for c in ctrs for e in c.get("env", []) if "value" in e and e["name"].lower() in ("https_proxy", "http_proxy", "no_proxy")]
+    cms = {f["configMapRef"]["name"] for c in ctrs for f in c.get("envFrom", []) if "configMapRef" in f}
+    for d in docs:
+        if d["kind"] == "ConfigMap" and d["metadata"]["name"] in cms:
+            env += [{"name": k, "value": v} for k, v in (d.get("data") or {}).items() if k.lower() in ("https_proxy", "http_proxy", "no_proxy")]
+print(json.dumps(env))
 ')
 [ -n "$envjson" ] || envjson="[]"
 [ "$(echo "$envjson" | python3 -c 'import sys,json;print(len(json.load(sys.stdin)))')" -ge 3 ] && ok "the chart renders LiteLLM's proxy env" || bad "the chart renders LiteLLM's proxy env"

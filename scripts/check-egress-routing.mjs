@@ -42,7 +42,7 @@ const CIDR = '203.0.113.10/32';
 const failures = [];
 let modelsChecked = 0;
 const render = (...a) => yaml.loadAll(execFileSync('helm', ['template', 'agentic-os', CHART, '-n', 'agentic-os', '--skip-schema-validation', '--set', `networkPolicies.apiserver.cidrs={${CIDR}}`, ...a], { encoding: 'utf8', maxBuffer: 128 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] })).filter(Boolean);
-const IN_CLUSTER = ['agentic-os-langfuse-web', 'query-tool', 'mock-model', 'pg-rw', 'valkey'];
+const IN_CLUSTER = ['agentic-os-langfuse-web', 'query-tool', 'mock-model'];
 
 for (const [profile, args] of Object.entries({ local: ['-f', join(repo, 'values.local.yaml')], stackit: ['-f', join(repo, 'values.stackit-managed.yaml')] })) {
   const objs = render(...args);
@@ -64,7 +64,10 @@ for (const [profile, args] of Object.entries({ local: ['-f', join(repo, 'values.
   }
   const gw = objs.find((d) => d.kind === 'Deployment' && d.metadata.name === 'agentic-os-litellm');
   if (gw) {
-    const env = Object.fromEntries(gw.spec.template.spec.containers.flatMap((c) => c.env ?? []).filter((e) => 'value' in e).map((e) => [e.name, String(e.value)]));
+    // The gateway's proxy env comes from the `litellm-egress-env` ConfigMap (envFrom).
+    const fromCms = gw.spec.template.spec.containers.flatMap((c) => c.envFrom ?? []).map((f) => f.configMapRef?.name).filter(Boolean);
+    const env = Object.assign({}, ...objs.filter((d) => d.kind === 'ConfigMap' && fromCms.includes(d.metadata.name)).map((d) => d.data ?? {}),
+      Object.fromEntries(gw.spec.template.spec.containers.flatMap((c) => c.env ?? []).filter((e) => 'value' in e).map((e) => [e.name, String(e.value)])));
     if (env.HTTPS_PROXY !== 'http://egress-proxy:3128') fail(`LiteLLM HTTPS_PROXY is ${env.HTTPS_PROXY ?? 'unset'}`);
     const np = (env.NO_PROXY ?? '').split(',');
     for (const h of IN_CLUSTER) if (!np.includes(h)) fail(`LiteLLM NO_PROXY misses in-cluster ${h}`);

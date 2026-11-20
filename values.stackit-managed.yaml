@@ -304,8 +304,6 @@ egressProxy:
     - accounts.google.com          # Google OAuth consent/authorize
     - graph.microsoft.com          # OneDrive + Outlook + Teams via Microsoft Graph
     - login.microsoftonline.com    # Microsoft OAuth authorize + token endpoints
-    # Model provider the gateway calls through this proxy (LiteLLM HTTPS_PROXY).
-    - model-serving.eu01.onstackit.cloud
     # Connector wave additions (#176).
     - api.github.com               # GitHub REST + GraphQL (subdomain of github.com; explicit)
     - uploads.github.com           # GitHub release/asset uploads
