@@ -79,7 +79,8 @@ test('OTLP log through the Collector is stored in VictoriaLogs (LogsQL)', { skip
 test('the kubelet_stats receiver puts real pod CPU and memory into VictoriaMetrics', { skip: !on }, async () => {
   const res = await until(() => promql('k8s_pod_memory_working_set_bytes{k8s_pod_name=~"opa-.*"}'), 120_000, 5_000);
   assert.ok(res.length >= 1, 'no k8s_pod_memory_working_set_bytes series for the OPA pod');
-  assert.ok(Number(res[0].value[1]) > 0);
+  // A series per container / pod incarnation; at least one carries the running OPA's real memory.
+  assert.ok(res.some((r) => Number(r.value[1]) > 0), `every series is 0: ${JSON.stringify(res.map((r) => [r.metric, r.value[1]]))}`);
   const cpu = await until(() => promql('k8s_pod_cpu_usage{k8s_pod_name=~"opa-.*"}'), 120_000, 5_000);
   assert.ok(cpu.length >= 1, 'no k8s_pod_cpu_usage series for the OPA pod');
 });
