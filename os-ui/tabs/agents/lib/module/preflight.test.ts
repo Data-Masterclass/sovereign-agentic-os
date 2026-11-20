@@ -132,6 +132,21 @@ test('preflight covers definitions that exist ONLY in the store (never committed
   assert.ok(r.findings.every((f) => f.proposal && 'yaml' in f.proposal && f.proposal.yaml));
 });
 
+test('WP-53d: the preflight reports PER DOMAIN — the answer for one AGENT_GRAPH_MODULE_DOMAINS entry', async () => {
+  const reposDir = mkdtempSync(path.join(os.tmpdir(), 'wp53-preflight-domains-'));
+  await openOrInit('test', { reposDir });
+  await commitTree('test', new Map([['agents/good/system.yaml', GOOD]]), { reposDir, author: { name: 'os', email: 'os@example.invalid' }, message: 'good' });
+  const r = await runPreflight({
+    reposDir,
+    store: [
+      { id: 'sys_good', domain: 'test', yaml: GOOD, archived: false },
+      { id: 'sys_legacy', domain: 'sales', yaml: LEGACY, archived: false },
+    ],
+  });
+  assert.deepEqual(r.byDomain, { sales: { git: 0, store: 1, refused: 1 }, test: { git: 1, store: 1, refused: 0 } });
+  assert.ok(r.findings.every((f) => f.domain === 'sales'));
+});
+
 test('without --repos-only the command refuses to pass when the store did not hydrate from its mirror (exit 2)', () => {
   const reposDir = mkdtempSync(path.join(os.tmpdir(), 'wp53-preflight-nomirror-'));
   // No reachable durable mirror in the test environment: the store cannot be read, so the command
