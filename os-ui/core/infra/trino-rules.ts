@@ -44,7 +44,10 @@ export type RulesInput = {
    * EXISTS` on ONE schema and write tables in it. On a fresh install the OS reconciles this file at
    * boot, BEFORE those hooks run, so without this list both are denied (first dev install,
    * 2026-11-20). Each writer owns exactly its one schema and nothing else; a personal lane is never
-   * grantable (its rules come first and close it).
+   * grantable (its rules come first and close it), and NEITHER IS A DOMAIN'S SCHEMA: once a domain
+   * owns that schema (it exists, or is created later — every directory write re-reconciles), the
+   * writer rule is dropped and only the domain's principals own it. Seed Jobs that write into a
+   * real domain run as that domain's principal instead (values.dev.yaml: `sales`).
    */
   seedWriters?: { user: string; schema: string }[];
 };
@@ -161,10 +164,13 @@ export function buildTrinoRules(input: RulesInput): TrinoRules {
   // (e) the chart's seed writers: owner of exactly their one schema (CREATE SCHEMA, CTAS, DROP in
   // it). AFTER the lanes, so a writer naming a `personal_*` schema matches the lane's close first;
   // filtered here as well so such a rule is never even written.
+  // A writer NEVER owns a real domain's schema (nor a lane's): those belong to the domain's
+  // principals alone, so the writer rule is not written at all once such a domain exists.
+  const taken = new Set([...domains.map((d) => d.schema), ...lanes.map((l) => l.schema)]);
   const writers = [
     ...new Map(
       (input.seedWriters ?? [])
-        .filter((w) => w.user && w.schema && !w.schema.startsWith('personal_'))
+        .filter((w) => w.user && w.schema && !w.schema.startsWith('personal_') && !taken.has(w.schema))
         .map((w) => [`${w.user}\u0000${w.schema}`, w] as const),
     ).values(),
   ].sort((a, b) => a.user.localeCompare(b.user) || a.schema.localeCompare(b.schema));
