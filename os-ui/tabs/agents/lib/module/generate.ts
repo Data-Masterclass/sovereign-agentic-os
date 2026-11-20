@@ -11,7 +11,7 @@
  *   - Input: the parsed definition (`System`), compiled by the UNCHANGED `langgraph-compile.ts`
  *     (`compile` validates it and gives the topology), the disabled agents, and the npm versions
  *     os-ui itself pins (read from `os-ui/package.json` by the caller — nothing is pinned here).
- *   - Output: path → content, relative to the system directory (`core/infra/agent-module-layout.ts`). PURE and
+ *   - Output: path → content, relative to the system directory (`core/infra/repo-layout.ts`). PURE and
  *     byte-stable: the same input gives the same bytes, so the loader can regenerate and compare.
  *   - `graph.mjs` imports ONLY `@langchain/langgraph`, `langchain` and `node:fs` (its prompts). It
  *     exports `TEAM` (the topology as data), `TOOL_NAMES` (the tool interface: names the caller
@@ -36,7 +36,8 @@ import { compile, type IR } from '@tabs/agents/lib/langgraph-compile';
 import { parseWhen, isLegacyUnguardedWhen, type WhenAst } from '@tabs/agents/lib/engine/when';
 import type { System } from '@tabs/agents/lib/system-schema';
 import { resolveAlias, withDiscoveryCompanions } from '@tabs/agents/lib/build/os-tools';
-import { MODULE_EVALS, MODULE_GRAPH, MODULE_PACKAGE, MODULE_RUNNER, promptPath } from '@core/infra/agent-module-layout';
+import { identifierProblems, TOOL_NAME_RE } from '@tabs/agents/lib/safe-ids';
+import { AGENT_EVALS_FILE as MODULE_EVALS, AGENT_GRAPH_FILE as MODULE_GRAPH, AGENT_LOCK_FILE as MODULE_LOCK, AGENT_PACKAGE_FILE as MODULE_PACKAGE, AGENT_RUNNER_FILE as MODULE_RUNNER, agentPromptFile as promptPath, agentMemoryFile as memoryPromptPath } from '@core/infra/repo-layout';
 
 /** The emitted module's format. Bump only when the shape of the generated files changes. */
 export const AGENT_MODULE_FORMAT = 1;
@@ -44,6 +45,19 @@ export const AGENT_MODULE_FORMAT = 1;
 /** The npm packages the module and its ejector need, with the exact versions os-ui runs. */
 export const MODULE_PACKAGES = ['@langchain/core', '@langchain/langgraph', '@langchain/langgraph-checkpoint-postgres', '@langchain/openai', 'langchain'] as const;
 export type ModuleVersions = Record<(typeof MODULE_PACKAGES)[number], string>;
+
+/** The parts of an npm lockfile (v3) the generator reads. */
+export type LockEntry = {
+  version?: string;
+  resolved?: string;
+  integrity?: string;
+  dependencies?: Record<string, string>;
+  optionalDependencies?: Record<string, string>;
+  peerDependencies?: Record<string, string>;
+  peerDependenciesMeta?: Record<string, { optional?: boolean }>;
+  [k: string]: unknown;
+};
+export type HostLock = { lockfileVersion?: number; packages: Record<string, LockEntry> };
 
 export type AgentModuleInput = {
   /** The OS id of the system (header comment only). */
@@ -54,10 +68,12 @@ export type AgentModuleInput = {
   /** Agents switched off in the OS: pruned from the graph exactly as the engine prunes them. */
   disabledAgents?: readonly string[];
   versions: ModuleVersions;
+  /** os-ui's own lockfile: the module's `package-lock.json` is the closure of its packages in it. */
+  hostLock: HostLock;
 };
 
 /** One agent as the module sees it. */
-export type ModuleAgent = { id: string; model: string | null; tools: string[]; members: string[]; sets: string[] };
+export type ModuleAgent = { id: string; model: string | null; tools: string[]; members: string[]; sets: string[]; memory: boolean };
 export type ModuleTeam = {
   name: string;
   entrypoint: string;
@@ -96,13 +112,18 @@ export function moduleTeam(sys: System, ir: IR, disabled: readonly string[] = []
       tools: [...new Set(withDiscoveryCompanions(n.tools.map(resolveAlias)))].sort(),
       members: n.members.filter((m) => !off.has(m)),
       sets: writers.has(n.id) ? writable : [],
+      // `prompts/<id>.memory.md` exists (the agent's durable notes, appended to its prompt).
+      memory: (n.memory ?? '').trim().length > 0,
     }));
   return { name: sys.system.name, entrypoint: ir.entrypoint, agents, handoffs, channels };
 }
 
 /** Every tool name the graph calls, sorted — the tool interface the caller implements. */
 export function moduleToolNames(team: ModuleTeam): string[] {
-  return [...new Set(team.agents.flatMap((a) => a.tools))].sort();
+  const names = [...new Set(team.agents.flatMap((a) => a.tools))].sort();
+  const bad = names.filter((n) => !TOOL_NAME_RE.test(n));
+  if (bad.length) throw new AgentModuleError(`tool name(s) ${JSON.stringify(bad)} are not plain identifiers`);
+  return names;
 }
 
 // ---------------------------------------------------------------- guards ---
@@ -125,7 +146,12 @@ export function compileGuard(when: string | null): string {
 
 // ---------------------------------------------------------------- render ---
 
+/** OS system ids are minted by the store (`sys_…`); anything else never reaches a generated comment. */
+export const SYSTEM_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
+
+/** The 00 §4 header. Its only variable part is the validated system id: no user text in code. */
 function header(id: string, what: string): string {
+  if (!SYSTEM_ID_RE.test(id)) throw new AgentModuleError(`system id ${JSON.stringify(id)} is not a plain identifier`);
   return [
     `// GENERATED by os-ui agent-module@${AGENT_MODULE_FORMAT} from agent-system/${id}. Do not edit; edit the source.`,
     `// ${what}`,
@@ -195,10 +221,10 @@ function writesOf(messages) {
   return out;
 }
 
-const prompt = (id) => readFileSync(new URL('./prompts/' + id + '.md', import.meta.url), 'utf8');
+const prompt = (file) => readFileSync(new URL('./prompts/' + file, import.meta.url), 'utf8').trimEnd();
 
 function systemPromptOf(agent) {
-  const base = prompt(agent.id).trimEnd();
+  const base = prompt(agent.id + '.md') + (agent.memory ? '\n\n' + prompt(agent.id + '.memory.md') : '');
   if (!agent.sets.length) return base;
   return base + '\n\nWhen your part is done, record it with the set_state tool. Channels you may set: ' +
     agent.sets.map((c) => c + ' (' + TEAM.channels[c] + ')').join(', ') + '.';
@@ -271,9 +297,9 @@ export function buildGraph({ model, tools, middleware = [], checkpointer, maxSte
 `;
 
 function renderGraph(input: AgentModuleInput, team: ModuleTeam, toolNames: string[]): string {
-  const guards = team.handoffs.map((h) => `  ${compileGuard(h.when)}, // ${h.from} -> ${h.to}`);
+  const guards = team.handoffs.map((h) => `  ${compileGuard(h.when)},`);
   return [
-    header(input.id, `${team.name}: a LangGraph JS StateGraph with one createAgent per agent. Run it: see README.md.`),
+    header(input.id, 'A LangGraph JS StateGraph with one createAgent per agent; the team is TEAM below. Run it: see README.md.'),
     "import { readFileSync } from 'node:fs';",
     "import { Annotation, Command, END, MessagesAnnotation, START, StateGraph } from '@langchain/langgraph';",
     "import { createAgent, HumanMessage, SystemMessage, tool } from 'langchain';",
@@ -364,20 +390,81 @@ function renderRunner(input: AgentModuleInput): string {
   return `${header(input.id, 'Ejector: runs graph.mjs with an OpenAI-compatible model and local tools, with no OS present.')}${RUNNER}`;
 }
 
-function renderPackage(input: AgentModuleInput): string {
+/** npm's lookup: `<from>/node_modules/<name>`, then each parent `node_modules`, then the root. */
+function resolveInLock(lock: HostLock, from: string, name: string): string | null {
+  let base = from;
+  for (;;) {
+    const cand = `${base ? `${base}/` : ''}node_modules/${name}`;
+    if (lock.packages[cand]) return cand;
+    if (!base) return null;
+    const i = base.lastIndexOf('/node_modules/');
+    base = i >= 0 ? base.slice(0, i) : '';
+  }
+}
+
+/**
+ * `package-lock.json` (v3) for the module: the transitive closure of its dependencies in os-ui's
+ * own lockfile, at the same paths, so `npm ci` reproduces exactly the tree os-ui runs. Pure.
+ */
+function renderLock(input: AgentModuleInput, dependencies: Record<string, string>): string {
+  const lock = input.hostLock;
+  if (!lock?.packages) throw new AgentModuleError('no host lockfile to pin sub-dependencies from');
+  const keep = new Set<string>();
+  const queue: string[] = [];
+  const need = (from: string, name: string, required: boolean) => {
+    const at = resolveInLock(lock, from, name);
+    if (!at) {
+      if (required) throw new AgentModuleError(`the host lockfile has no '${name}' (needed by '${from || 'the module'}')`);
+      return;
+    }
+    if (!keep.has(at)) {
+      keep.add(at);
+      queue.push(at);
+    }
+  };
+  for (const name of Object.keys(dependencies)) need('', name, true);
+  while (queue.length) {
+    const at = queue.shift()!;
+    const e = lock.packages[at];
+    if (e.link) continue; // a workspace link carries no registry package
+    for (const d of Object.keys(e.dependencies ?? {})) need(at, d, true);
+    for (const d of Object.keys(e.optionalDependencies ?? {})) need(at, d, false);
+    for (const d of Object.keys(e.peerDependencies ?? {})) need(at, d, !e.peerDependenciesMeta?.[d]?.optional);
+  }
+  for (const name of Object.keys(dependencies)) {
+    const at = resolveInLock(lock, '', name)!;
+    if (lock.packages[at].version !== dependencies[name]) {
+      throw new AgentModuleError(`the host lockfile pins ${name}@${String(lock.packages[at].version)}, not ${dependencies[name]}`);
+    }
+  }
+  const packages: Record<string, unknown> = { '': { name: `agent-${input.slug}`, dependencies } };
+  for (const at of [...keep].sort()) {
+    const { dev: _dev, devOptional: _devOptional, ...entry } = lock.packages[at];
+    void _dev;
+    void _devOptional;
+    packages[at] = Object.fromEntries(Object.entries(entry).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
+  }
+  return `${JSON.stringify({ name: `agent-${input.slug}`, lockfileVersion: 3, requires: true, packages }, null, 2)}\n`;
+}
+
+function moduleDependencies(input: AgentModuleInput): Record<string, string> {
   const dependencies: Record<string, string> = {};
   for (const p of MODULE_PACKAGES) {
     const v = input.versions[p];
     if (!v || !/^\d+\.\d+\.\d+$/.test(v)) throw new AgentModuleError(`no exact version for ${p} (got '${v ?? ''}')`);
     dependencies[p] = v;
   }
+  return dependencies;
+}
+
+function renderPackage(input: AgentModuleInput): string {
+  const dependencies = moduleDependencies(input);
   return `${JSON.stringify({ name: `agent-${input.slug}`, private: true, type: 'module', scripts: { start: 'node run.mjs' }, dependencies }, null, 2)}\n`;
 }
 
-function renderPrompt(agentMd: string, memoryMd: string): string {
-  const body = (agentMd ?? '').replace(/\s+$/, '');
-  const memory = (memoryMd ?? '').replace(/\s+$/, '');
-  return memory ? `${body}\n\n${memory}\n` : `${body}\n`;
+/** A prompt file holds exactly one definition field, so a pushed file maps back to that field. */
+function renderPromptFile(text: string): string {
+  return `${(text ?? '').replace(/\s+$/, '')}\n`;
 }
 
 function renderEvals(sys: System): string {
@@ -411,6 +498,11 @@ export type AgentModule = { files: Map<string, string>; team: ModuleTeam; toolNa
 
 /** The whole module for one system: path (relative to its directory) → content, sorted. */
 export function generateAgentModule(input: AgentModuleInput): AgentModule {
+  // Identifiers become file names, node names and object keys: refuse anything that is not a plain
+  // token BEFORE a byte is emitted. User TEXT (names, roles, prompts, when-literals) only ever goes
+  // out as JSON data (`JSON.stringify`) or as the content of a prompt file — never into code.
+  const idProblems = identifierProblems(input.sys);
+  if (idProblems.length > 0) throw new AgentModuleError(idProblems.join('; '));
   const ir = compile(input.sys);
   const team = moduleTeam(input.sys, ir, input.disabledAgents);
   const toolNames = moduleToolNames(team);
@@ -418,9 +510,13 @@ export function generateAgentModule(input: AgentModuleInput): AgentModule {
   files.set(MODULE_GRAPH, renderGraph(input, team, toolNames));
   files.set(MODULE_RUNNER, renderRunner(input));
   files.set(MODULE_PACKAGE, renderPackage(input));
+  files.set(MODULE_LOCK, renderLock(input, moduleDependencies(input)));
   files.set(MODULE_EVALS, renderEvals(input.sys));
   for (const a of input.sys.agents) {
-    if (team.agents.some((t) => t.id === a.id)) files.set(promptPath(a.id), renderPrompt(a.agent_md, a.memory_md));
+    const t = team.agents.find((x) => x.id === a.id);
+    if (!t) continue;
+    files.set(promptPath(a.id), renderPromptFile(a.agent_md));
+    if (t.memory) files.set(memoryPromptPath(a.id), renderPromptFile(a.memory_md));
   }
   const sorted = new Map([...files.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
   return { files: sorted, team, toolNames, readmeSection: moduleReadmeSection(team, toolNames) };

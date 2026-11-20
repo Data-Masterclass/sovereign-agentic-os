@@ -118,12 +118,15 @@ export async function sweepRetentionOnce(
     if (config.agentRunsDatabaseUrl) {
       const { agentRunsPool } = await import('@tabs/agents/lib/engine/pg-pool');
       const { deleteRunLedger, selectToolCallLedger } = await import('@tabs/agents/lib/engine/tool-call-ledger');
+      const { deleteModuleThreadRows } = await import('@tabs/agents/lib/module/run');
       await selectToolCallLedger(config.agentRunsDatabaseUrl); // the table exists
       const pool = await agentRunsPool(config.agentRunsDatabaseUrl);
       checkpointer = {
         deleteThread: async (threadId: string) => {
           await saver.deleteThread(threadId);
           await deleteRunLedger(pool as unknown as Parameters<typeof deleteRunLedger>[0], [threadId]);
+          // WP-53: the module run's stamp and hold decisions go with it too.
+          await deleteModuleThreadRows(pool as unknown as Parameters<typeof deleteModuleThreadRows>[0], [threadId]);
         },
       };
     }

@@ -22,6 +22,7 @@ import { createFolder, type FolderScope, type Principal as FolderPrincipal } fro
 // Part D: the pure event seam the git commit hook subscribes to (never git from here — this
 // module is reachable from the client bundle).
 import { emitSystemChange } from '@tabs/agents/lib/system-events';
+import { identifierProblems } from '@tabs/agents/lib/safe-ids';
 import { assertSystemWriteAvailable, isRunWorkerProcess } from '@tabs/agents/lib/write-availability';
 
 /**
@@ -951,6 +952,11 @@ export function createSystem(
   // Starter yaml: an explicit yaml (fork), else a server-authored TEMPLATE (never
   // client yaml), else the default blank assistant.
   const yaml = input.yaml ?? (input.template ? templateYaml(input.template, name, domain, visibility) : starterYaml(name, domain, visibility));
+  if (input.yaml !== undefined) {
+    // A forked or pushed definition: its identifiers become paths and keys in generated code (WP-53).
+    const idProblems = identifierProblems(parseSystem(input.yaml));
+    if (idProblems.length > 0) fail(`system.yaml: ${idProblems.join('; ')}`, 400);
+  }
   const rec = record({
     id: id('sys'),
     name,
@@ -1124,6 +1130,9 @@ export function writeFile(
     // Reject syntactically/structurally invalid YAML so the store never holds
     // garbage; semantic graph errors are surfaced later by Build.
     const parsed = parseSystem(content); // throws SystemError on bad shape
+    // Identifiers become file names, node names and object keys in generated code (WP-53).
+    const idProblems = identifierProblems(parsed);
+    if (idProblems.length > 0) fail(`system.yaml: ${idProblems.join('; ')}`, 400);
     // Governance escalation guard: a direct-write (Write-bounded) grant on any
     // artifact is builder-only. Enforced here at the ONE save chokepoint so a
     // crafted client payload can't grant an agent direct write when its owner is

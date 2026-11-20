@@ -72,6 +72,22 @@ export function postgresModuleRunStamps(db: Queryable): ModuleRunStamps {
   };
 }
 
+/**
+ * RETENTION: drop a run's module rows (its stamp and its hold decisions) with its checkpoint
+ * thread. Tables that were never created (the flag was never on) are skipped, not an error.
+ */
+export async function deleteModuleThreadRows(db: Queryable, threadIds: readonly string[]): Promise<number> {
+  if (threadIds.length === 0) return 0;
+  let n = 0;
+  for (const table of ['agent_module_runs', 'agent_hold_decisions']) {
+    const { rows } = await db.query(`SELECT to_regclass($1) IS NOT NULL AS present`, [table]);
+    if (!rows[0]?.present) continue;
+    const r = await db.query(`DELETE FROM ${table} WHERE thread_id = ANY($1)`, [threadIds]);
+    n += r.rowCount ?? 0;
+  }
+  return n;
+}
+
 /** In-process stamps (memory checkpointer, tests). */
 export function memoryModuleRunStamps(): ModuleRunStamps {
   const rows = new Map<string, ModuleRunStamp>();

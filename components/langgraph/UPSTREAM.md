@@ -36,6 +36,34 @@ Versions as above (the generated `agents/<system>/package.json` pins exactly the
 - Tools (`tool()` with a JSON schema): https://docs.langchain.com/oss/javascript/langchain/tools
 - `ChatOpenAI` against an OpenAI-compatible endpoint (`configuration.baseURL`): https://docs.langchain.com/oss/javascript/integrations/chat/openai
 
+### Revision of component-design 03 (WP-53, 2026-11-20)
+
+These two points override 03 Revision 1 (the `holds` channel) and 03 §5.4 / Revision 6 (the owner
+stamp in graph state) for the module engine. Both were measured against the installed packages.
+
+1. **The once-per-call hold decision lives in the OS table `agent_hold_decisions`, not in a graph
+   state channel.**
+   - Measured in `langchain` 1.6.7: with `createAgent({ version: 'v2' })` each tool call is a `Send`
+     task. The request that `wrapToolCall`, and so the stock HITL `when`, receives carries only
+     `messages` in `state`, not middleware channels (`ReactAgent.js:179`). `version: 'v1'` throws
+     for per-call HITL (`ReactAgent.js:169`). `runtime.context` is per-invoke input and cannot hold
+     a mid-run decision.
+   - Mechanism:
+     - `holdDecider` (`afterModel`) records `{held, approverRole}` per `<thread>:<toolCallId>`. The
+       first write wins, before any tool of the turn runs.
+     - The HITL `when` reads only that row; a missing row is held for an admin.
+     - Retention deletes the rows with the thread.
+   - Alternative considered: the decision in the AI message's `response_metadata`. It was verified
+     to work, but it is not adopted. It writes OS governance data into the native transcript, which
+     `run.mjs` and any LangGraph tool would then carry, and contract C2 keeps OS metadata out of
+     native state. Revisit it if checkpoint time travel must replay holds.
+2. **The run's owner and module stamp live in the OS table `agent_module_runs`.**
+   - Measured in LangGraph JS 1.7.5: `config.metadata` is not copied into checkpoint metadata, which
+     holds `source, step, parents` only.
+   - The stamp holds: owner (system, user, domain), the module digest and the commit.
+   - A resume loads the module from the stamped commit and verifies it against the stamped digest,
+     so it never uses the repo HEAD. A run without a stamp started on the v1 graph and resumes there.
+
 Measured in `langchain` 1.6.7 (not stated in the docs): with `version: 'v2'`, the request a
 `wrapToolCall` middleware (and the HITL `when` predicate) receives carries only `messages` in its
 `state`, not middleware state channels. The OS therefore keeps its once-per-call hold decision in
