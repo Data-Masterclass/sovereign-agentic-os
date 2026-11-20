@@ -9,7 +9,8 @@
  *             lands a source file with no explanation of what it does.
  * ARCHITECTURE:
  *   - Pure filesystem + regex checks, no dependencies, no network. Exits 1 on any violation.
- *   - Seven rules (below). Each prints every offending path, not just the first. The header rule
+ *   - Rules below (tab/kernel import isolation moved to dependency-cruiser: scripts/check-glue.mjs).
+ *     Seven rules originally. Each prints every offending path, not just the first. The header rule
  *     also covers os-ui/worker/ (the worker entrypoint, outside core/ and tabs/).
  *   - Runs before the layout migration too: missing core//tabs/ is reported, not crashed on.
  *   - `os-ui/vendor/**` (attributed third-party source) is EXCLUDED from the FEATURE / USER STORY /
@@ -54,25 +55,18 @@ if (!existsSync(coreDir) || !existsSync(tabsDir)) {
 } else {
   const tabs = readdirSync(tabsDir).filter((t) => statSync(join(tabsDir, t)).isDirectory());
 
-  // rule 2: a tab imports only @core/* and its own folder
+  // rule 2: a tab imports no legacy `@/lib|app|components` path.
+  // Rules 2b (TAB-ISOLATION: a tab never imports another tab) and 3 (CORE-INDEPENDENCE: the kernel
+  // never imports a tab) MOVED to dependency-cruiser as GLUE-9-KERNEL-TAB-ISOLATION
+  // (os-ui/.dependency-cruiser.cjs, run and ratcheted by scripts/check-glue.mjs) — design 00 §8.3:
+  // import rules belong to dependency-cruiser, not to a hand-written checker.
   const importRe = /(?:from|import|require\()\s*['"]([^'"]+)['"]/g;
   for (const tab of tabs) {
     for (const f of walk(join(tabsDir, tab)).filter(code)) {
       const text = readFileSync(f, 'utf8');
       for (const m of text.matchAll(importRe)) {
-        const spec = m[1];
-        const other = spec.match(/^@tabs\/([^/'"]+)/);
-        if (other && other[1] !== tab) fail('TAB-ISOLATION', f, `imports @tabs/${other[1]} — cross-tab needs go through @core`);
-        if (/^@\/(lib|app|components)\//.test(spec)) fail('LEGACY-IMPORT', f, `${spec} — use @core/* or a path inside this tab`);
+        if (/^@\/(lib|app|components)\//.test(m[1])) fail('LEGACY-IMPORT', f, `${m[1]} — use @core/* or a path inside this tab`);
       }
-    }
-  }
-
-  // rule 3: the kernel never depends on a tab
-  for (const f of walk(coreDir).filter(code)) {
-    const text = readFileSync(f, 'utf8');
-    for (const m of text.matchAll(importRe)) {
-      if (m[1].startsWith('@tabs/')) fail('CORE-INDEPENDENCE', f, `imports ${m[1]} — the kernel must not know its tabs`);
     }
   }
 
@@ -187,14 +181,15 @@ const HARD = ['COMPONENT-UPSTREAM-ONLY', 'TAB-MANIFEST', 'VENDOR-LICENCE-HEADER'
 const baseline = existsSync(BASELINE_FILE) ? JSON.parse(readFileSync(BASELINE_FILE, 'utf8')) : {};
 
 if (process.argv.includes('--baseline')) {
-  writeFileSync(BASELINE_FILE, JSON.stringify(counts, null, 2) + '\n');
+  // Keep the `glue` block: it belongs to scripts/check-glue.mjs, which writes it with its own --baseline.
+  writeFileSync(BASELINE_FILE, JSON.stringify({ ...counts, ...(baseline.glue ? { glue: baseline.glue } : {}) }, null, 2) + '\n');
   console.log('check-structure: baseline written', JSON.stringify(counts));
   process.exit(0);
 }
 
 const show = (rule) => problems.filter((p) => p.trim().startsWith(rule)).slice(0, 10);
 let failed = false;
-for (const rule of new Set([...HARD, ...Object.keys(counts), ...Object.keys(baseline)])) {
+for (const rule of new Set([...HARD, ...Object.keys(counts), ...Object.keys(baseline).filter((k) => typeof baseline[k] === 'number')])) {
   const now = counts[rule] ?? 0;
   const was = HARD.includes(rule) ? 0 : (baseline[rule] ?? 0);
   if (now > was) {
@@ -208,7 +203,7 @@ for (const rule of new Set([...HARD, ...Object.keys(counts), ...Object.keys(base
   }
 }
 if (failed) {
-  console.error('\nRules: components/ is upstream-only · a tab imports only @core and itself · core never imports a tab · every tab has a manifest · every source file carries a FEATURE / USER STORY / ARCHITECTURE header · every os-ui/vendor file keeps its upstream licence header plus a `Modified from … @ <sha>` notice \u00b7 no iCloud/Finder `* 2` conflict copy under os-ui/ charts/ scripts/ docs/ (hard in CI, a warning locally).\n');
+  console.error('\nRules: components/ is upstream-only · a tab uses no legacy @/lib|app|components import (tab/kernel isolation is GLUE-9 in check-glue.mjs) · every tab has a manifest · every source file carries a FEATURE / USER STORY / ARCHITECTURE header · every os-ui/vendor file keeps its upstream licence header plus a `Modified from … @ <sha>` notice \u00b7 no iCloud/Finder `* 2` conflict copy under os-ui/ charts/ scripts/ docs/ (hard in CI, a warning locally).\n');
   process.exit(1);
 }
 console.log('check-structure: ok (no new violations)');
