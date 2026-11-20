@@ -145,7 +145,7 @@ async function runnerAppFor(app: App, ref?: string): Promise<RunnerApp> {
         ? { kind: 'failed', reason: 'the app tree is larger than one bounded read; it was not deployed from a partial tree' }
         : { kind: 'tree', files: state.files, sha: ref ?? state.sha }
       : state;
-  return { slug: app.slug, host: appHost(app), tree };
+  return { slug: app.slug, host: appHost(app), tree, ...(app.domain ? { live: { repo: app.domain, id: app.id } } : {}) };
 }
 
 /** The commit an image app's tree is at right now (pinned on a deploy request). */

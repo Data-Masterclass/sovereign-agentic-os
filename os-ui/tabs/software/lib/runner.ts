@@ -3,6 +3,7 @@
  */
 import { config } from '@core/kernel/config';
 import { k8s as liveK8s } from '@core/infra/k8s';
+import { readLiveRef } from '@core/infra/lifecycle-refs';
 import { planAppDeploy, runnerName, APP_K8S_DIR } from '@tabs/software/lib/native-deploy';
 
 export { runnerName };
@@ -43,6 +44,8 @@ export type RunnerApp = {
   host: string;
   /** The app subtree (`apps/<slug>/`, paths relative to it) as read from git. */
   tree: RunnerTree;
+  /** Where the app's `live/app/<id>` tag lives (WP-51): read from git at every deploy and recorded. */
+  live?: { repo: string; id: string };
 };
 
 /** Real pod-driven phase — `deploying → running → failed`, plus stop/absent/offline. */
@@ -82,7 +85,20 @@ export type RunnerOpts = {
   /** The ingress class / cert-manager issuer an app's Ingress must match (default: the chart's). */
   ingressClass?: string;
   tlsIssuer?: string;
+  /** The bare repos the live tag is read from (default: the configured root). */
+  reposDir?: string;
 };
+
+/** Read the app's live tag straight from git (WP-51). An unreadable repo is logged and recorded as none. */
+async function liveSource(live: { repo: string; id: string }, reposDir?: string): Promise<{ tag: string; sha: string } | null> {
+  try {
+    const ref = await readLiveRef(live.repo, 'app', live.id, { reposDir: reposDir ?? config.reposDir });
+    return ref ? { tag: ref.tag, sha: ref.commit } : null;
+  } catch (e) {
+    console.error(`[runner] could not read live/app/${live.id} in '${live.repo}': ${(e as Error).message} — recorded as none`);
+    return null;
+  }
+}
 
 const UNREACHABLE =
   'Kubernetes API unreachable — the app runner was not provisioned; no live URL is served until connectivity is restored.';
@@ -167,10 +183,18 @@ export async function deployApp(app: RunnerApp, options: RunnerOpts = {}): Promi
   });
   if (!plan.ok) return refuse(plan.reason);
 
-  const objects: Record<string, unknown>[] = plan.objects.map((obj) => ({
-    ...obj,
-    metadata: { ...(obj.metadata as Record<string, unknown>), namespace: o.namespace },
-  }));
+  // The runtime records what it ran (artifact contract C4) on the Deployment's own metadata, an
+  // OS extension point (C2): the applied commit, and the commit `live/app/<id>` names (WP-51).
+  const source = app.live ? await liveSource(app.live, options.reposDir) : undefined;
+  const record: Record<string, string> = {
+    'sovereign-os.io/applied-commit': sha || 'none',
+    ...(source !== undefined ? { 'sovereign-os.io/source-sha': source?.sha ?? 'none', 'sovereign-os.io/live-tag': source?.tag ?? 'none' } : {}),
+  };
+  const objects: Record<string, unknown>[] = plan.objects.map((obj) => {
+    const meta = obj.metadata as Record<string, unknown>;
+    const annotations = obj.kind === 'Deployment' ? { annotations: { ...((meta.annotations ?? {}) as Record<string, string>), ...record } } : {};
+    return { ...obj, metadata: { ...meta, namespace: o.namespace, ...annotations } };
+  });
 
   const nsRes = await ensureNamespace(o.k8s, o.namespace);
   if (!nsRes.reachable) return refuse(UNREACHABLE, 'offline');
