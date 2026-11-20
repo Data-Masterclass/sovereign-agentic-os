@@ -25,7 +25,6 @@
  *         to recompile instead, and the change reaches OPA on its next poll. Paths outside the
  *         roots (promotion releases, knowledge guardrails, the canary) are still written.
  */
-import { AsyncLocalStorage } from 'node:async_hooks';
 import { config } from '@core/kernel/config';
 import { opaDeleteData, opaGetData, opaGetPolicy, opaHealth, opaPutData, opaPutPolicy } from '@core/adapters/opa/client';
 
@@ -51,7 +50,18 @@ export function ownedByOsDataBundle(path: string): boolean {
 }
 
 type Tree = Record<string, unknown>;
-const capture = new AsyncLocalStorage<{ tree: Tree }>();
+/**
+ * The active capture, if any. The AsyncLocalStorage lives in `opa-capture.ts` (server-only), which
+ * publishes it on this symbol, so this module stays importable from code that a client bundle
+ * reaches (no `node:` import here).
+ */
+export const OPA_CAPTURE_KEY = Symbol.for('soa.policy.opa-capture');
+const capture = {
+  getStore(): { tree: Tree } | undefined {
+    const als = (globalThis as unknown as Record<symbol, { getStore(): { tree: Tree } | undefined } | undefined>)[OPA_CAPTURE_KEY];
+    return als?.getStore();
+  },
+};
 
 function isObj(v: unknown): v is Tree {
   return !!v && typeof v === 'object' && !Array.isArray(v);
@@ -82,17 +92,6 @@ function treeGet(tree: Tree, segs: string[]): { defined: boolean; value?: unknow
     node = node[seg];
   }
   return { defined: true, value: structuredClone(node) };
-}
-
-/**
- * Run `fn` with every `publishOpa` / `readOpaData` call inside it applied to `base` (a copy)
- * instead of OPA, and return the resulting document tree. A policy write inside a capture is
- * refused: the data bundle carries data only.
- */
-export async function captureOpaWrites<T>(base: Tree, fn: () => Promise<T>): Promise<{ result: T; tree: Tree }> {
-  const ctx = { tree: structuredClone(base) };
-  const result = await capture.run(ctx, fn);
-  return { result, tree: ctx.tree };
 }
 
 type BundledWriteListener = (path: string) => void;
