@@ -73,6 +73,7 @@ node ../scripts/check-image-allowlist-chart.mjs
 # WP-53d: `osUI.agentGraphModule` renders the same on both pods — off by default, a list or a
 # comma-separated string of domains, "*" only explicitly, and `enabled` with no domains refuses.
 node ../scripts/check-agent-module-chart.mjs
+node ../scripts/check-dashboards-native-chart.mjs
 # The model gateway (LiteLLM) and Langfuse must have NO public route: one holds the provider
 # credentials and an admin API, the other every prompt and completion. Renders the default and
 # the STACKIT profile and fails on any Ingress whose backend is either Service; a bare
