@@ -1,0 +1,30 @@
+# LiteLLM for the tracing e2e test. The callback block is production's
+# (charts/sovereign-agentic-os/values.yaml `litellm_settings`): the legacy Langfuse callback with
+# message logging off and no failure callback. The two aliases are the ones the engine asks for;
+# both route to the test process's scripted OpenAI-compatible stub and carry a price, so the
+# gateway's generation has a real cost.
+model_list:
+  - model_name: sovereign-default
+    litellm_params:
+      model: openai/stub-model
+      api_base: os.environ/STUB_API_BASE
+      api_key: sk-stub-unused
+    model_info:
+      mode: chat
+      input_cost_per_token: 0.00000015
+      output_cost_per_token: 0.00000025
+      supports_function_calling: true
+  - model_name: sovereign-reasoning
+    litellm_params:
+      model: openai/stub-model
+      api_base: os.environ/STUB_API_BASE
+      api_key: sk-stub-unused
+    model_info:
+      mode: chat
+      input_cost_per_token: 0.0000015
+      output_cost_per_token: 0.00000175
+      supports_function_calling: true
+litellm_settings:
+  success_callback: ["langfuse"]
+  turn_off_message_logging: true
+  drop_params: true
