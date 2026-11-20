@@ -186,3 +186,21 @@ test('shapeTraceMetrics on a whole-trace read: a gateway generation counts for t
   assert.equal(metrics.totals.tokens, 30, 'every generation counts in the totals, once');
   assert.equal(metrics.totals.latencyMs, 2000, 'span latencies are not added: generations only');
 });
+
+test('shapeTraceMetrics under span scope llm_only: a root gateway generation counts for the agent whose llm.<node> span recorded its call id', () => {
+  // Measured on LiteLLM 1.109.1 `llm_only`: the generation is a root of the run's trace and carries
+  // the x-litellm-call-id the OS span minted as `metadata.attributes["litellm.call_id"]`.
+  const metrics = shapeTraceMetrics(
+    [
+      { id: 's1', type: 'SPAN', name: 'llm.plan_planner', metadata: { node: 'planner', litellm_call_id: 'c-1' } as never },
+      { id: 's2', type: 'SPAN', name: 'llm.act_reader', metadata: { node: 'reader', litellm_call_id: 'c-2' } as never },
+      { id: 'g1', type: 'GENERATION', parentObservationId: null, name: 'chat sovereign-reasoning', metadata: { attributes: { 'litellm.call_id': 'c-1' } } as never, usage: { total: 15 } },
+      { id: 'g2', type: 'GENERATION', parentObservationId: null, name: 'chat sovereign-default', metadata: { attributes: { 'litellm.call_id': 'c-2' } } as never, usage: { total: 40 } },
+      { id: 'g3', type: 'GENERATION', parentObservationId: null, name: 'chat sovereign-default', metadata: { attributes: { 'litellm.call_id': 'unknown' } } as never, usage: { total: 5 } },
+    ],
+    ['planner', 'reader'],
+  );
+  assert.equal(metrics.perNode.planner?.tokens, 15);
+  assert.equal(metrics.perNode.reader?.tokens, 40);
+  assert.equal(metrics.totals.tokens, 60, 'an unmatched generation still counts in the totals');
+});

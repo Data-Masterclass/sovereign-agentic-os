@@ -24,7 +24,7 @@ the 1.109 line inherits) or "release notes".
 | Advisories | affected by GHSA-3cv6-jpf6-8222, GHSA-g5ff-637f-6q2m, GHSA-w4c7-34wj-hqm8, GHSA-2rwg-2wh4-7c4f | all four fixed | one reason for the upgrade |
 | Langfuse callback | legacy `success_callback: ["langfuse"]` | `callbacks: ["langfuse_otel"]` on OTel v2 (`LITELLM_OTEL_V2=true`) | Langfuse v4 rejects the legacy one (10 F1). Both together: **two generations per call** (measured: the negative twin) |
 | Nesting | body `existing_trace_id` / `parent_observation_id` | W3C `traceparent` header; call id from `x-litellm-call-id` | os-ui sends the headers (`core/runtime/gateway-trace.ts`). Until run ids are W3C ids (05 step 2), the gateway's generation sits in its own trace, linked to the OS generation by `litellm_call_id` |
-| Span scope | — | `full` nests, `llm_only` re-roots the generation | `full` chosen; costs ingestion volume (`components/litellm/UPSTREAM.md` "Span scope") |
+| Span scope | — | `full` nests but exports background polls (0.667/s idle, no setting excludes them); `llm_only` re-roots the generation in the same trace | `llm_only` chosen, joined by call id; `full` returns with WP-05's collector filter (`components/litellm/UPSTREAM.md` "Span scope") |
 | Generation | `litellm:<key alias>`, usage + cost | `chat <model>`, usage + cost (`calculatedTotalCost` from `model_info`), user, session and tags from the request metadata | rename any Langfuse filter on the old name |
 | Message content in Langfuse | redacted by `turn_off_message_logging`; tool-call arguments masked by `mask_output` | not captured at all (V2 default); no prompt or completion text in any gateway observation (measured) | `mask_output` is ignored on V2 and kept only for a rollback to 1.90 |
 | `x-langfuse-ingestion-version: 4` | — | sent by the exporter (measured) | nothing to configure for v4 |
@@ -87,29 +87,27 @@ the 1.109 line inherits) or "release notes".
    exactly one gateway generation per model call, named `chat <model>`, with usage and cost, and
    `metadata` carrying the call id the OS generation records as `litellm_call_id`. Until run ids
    are W3C ids (05 step 2, WP-31) that generation is in its own trace, not inside the run's.
-7. **Span scope after the deploy** (10 minutes, read-only). The chart ships `full`, the only scope
-   that nests the gateway's generation under the caller's span. It also exports LiteLLM's
-   background work as untagged traces. Measure their rate on the live system:
+7. **Span scope after the deploy** (10 minutes, read-only). The chart ships `llm_only`: one
+   generation per call, in the run's trace, joined to the OS's `llm.<node>` span by the call id,
+   and none of LiteLLM's background work (`components/litellm/UPSTREAM.md` "Span scope"). Confirm
+   the background rate on the live system:
    ```bash
    kubectl --context dmagenticos -n agentic-os port-forward svc/agentic-os-langfuse-web 3000:3000 &
    # LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY read into the shell without printing them
    LANGFUSE_URL=http://127.0.0.1:3000 deploy/langfuse-idle-rate.sh 10
    ```
-   - **Rate ≤ 0.2 per second (exit 0): keep `full`.** Nothing to do.
-   - **Rate > 0.2 per second (exit 3): switch to `llm_only`.**
-     1. Set `litellm.envVars.LITELLM_OTEL_LANGFUSE_SPAN_SCOPE: "llm_only"` in `values.yaml`. Leave
-        `LITELLM_OTEL_BAGGAGE_PROMOTED_KEYS` as it is; it does no harm under `llm_only`.
-     2. Run `scripts/tests/litellm-langfuse/run.sh`. The e2e test reads the scope from the rendered
-        chart and then asserts that the one GENERATION is a **root** observation of the caller's
-        trace, not a child of the caller's span. That is the measured `llm_only` behaviour
-        (`components/litellm/UPSTREAM.md` "Span scope").
-     3. Open a PR, merge, and deploy (gateway restart only). Then run this check again: the
-        untagged rate drops to about 0.
-   - What you give up with `llm_only`: Langfuse no longer shows the generation under the OS's
-     `model-call` span. It stays in the same trace, matched by `litellm_call_id`.
+   - **Expected: ≤ 0.2 per second (exit 0).** In the test rig it is 0.
+   - Exit 3 under `llm_only` means something other than the gateway sends untagged traces. Find the
+     sender (trace names in Langfuse); do not change the scope for it.
+   - **The two paths.**
+     - *Now:* `llm_only`. Langfuse does not draw the generation under the `model-call` span, but it
+       sits in the same trace and is matched by `litellm_call_id`. Run diagnostics use that join.
+     - *With WP-05:* `full`, with an OTel Collector `filter` processor between LiteLLM and Langfuse
+       that drops LiteLLM's datastore spans. Only then does Langfuse show the generation nested.
+       The exact steps are in `components/litellm/UPSTREAM.md` "What WP-05 must do". Both e2e
+       tests read the scope and switch their assertions by themselves.
    - **Do not** reduce the volume with an OTel sampler (`OTEL_TRACES_SAMPLER=parentbased_always_off`
-     or similar). It drops spans by trace, which drops generations too, and the "one generation
-     per call" guarantee goes with them.
+     or similar). It drops spans by trace, which drops generations too.
 8. **Afterwards.** `kubectl -n agentic-os delete job litellm-premigrate-<tag>`. Keep the dump until
    the next clean week.
 

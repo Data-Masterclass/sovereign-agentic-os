@@ -182,9 +182,20 @@ function obsLatencyMs(o: RawObservation): number {
  * match a known node name inside the observation name (traces are named
  * `agent.<tool>` and nodes carry their own names). Returns '' when unknown.
  */
-function attributeNode(o: RawObservation, nodeNames: string[], byId?: Map<string, RawObservation>): string {
+/** The gateway's call id on its generation (LiteLLM OTel v2 span attribute `litellm.call_id`). */
+function gatewayCallId(o: RawObservation): string {
+  const id = ((o.metadata as { attributes?: Record<string, unknown> } | null | undefined)?.attributes ?? {})['litellm.call_id'];
+  return typeof id === 'string' ? id : '';
+}
+
+function attributeNode(o: RawObservation, nodeNames: string[], byId?: Map<string, RawObservation>, byCallId?: Map<string, string>): string {
   const meta = o.metadata?.node;
   if (typeof meta === 'string' && meta) return meta;
+  // On a whole-trace read under span scope `llm_only` (the chart's): LiteLLM sends the generation
+  // as a root of the run's trace, so it is matched to the OS `llm.<node>` span that made the call by
+  // the call id both carry (`x-litellm-call-id`; 10 F1 point 3).
+  const viaCall = byCallId?.get(gatewayCallId(o));
+  if (viaCall) return viaCall;
   // On a whole-trace read: the nearest ancestor that names its agent. LiteLLM OTel v2 nests the
   // gateway's generation under its request span under the OS's `llm.<node>` span, which carries
   // `metadata.node`; the generation itself carries no caller metadata (measured on 1.109.1).
@@ -213,6 +224,11 @@ export function shapeTraceMetrics(observations: RawObservation[], nodeNames: str
   const perNode: Record<string, NodeTraceMetric> = {};
   const totals = { tokens: 0, latencyMs: 0, costUsd: 0 };
   const byId = new Map(observations.filter((o) => o.id).map((o) => [o.id as string, o]));
+  const byCallId = new Map<string, string>();
+  for (const o of observations) {
+    const m = o.metadata as { litellm_call_id?: unknown; node?: unknown } | null | undefined;
+    if (typeof m?.litellm_call_id === 'string' && typeof m.node === 'string' && m.node) byCallId.set(m.litellm_call_id, m.node);
+  }
   for (const o of observations) {
     // A whole-trace read also holds spans (the tree); only generations are model calls.
     if (o.type && o.type !== 'GENERATION') continue;
@@ -222,7 +238,7 @@ export function shapeTraceMetrics(observations: RawObservation[], nodeNames: str
     totals.tokens += tokens;
     totals.costUsd += cost;
     totals.latencyMs += latencyMs;
-    const node = attributeNode(o, nodeNames, byId);
+    const node = attributeNode(o, nodeNames, byId, byCallId);
     if (!node) continue;
     const cur = perNode[node] ?? (perNode[node] = { node, tokens: 0, latencyMs: 0, costUsd: 0 });
     cur.tokens += tokens;

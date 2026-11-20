@@ -158,8 +158,7 @@ services:
       LANGFUSE_SECRET_KEY: sk-lf-e2e-secret
       LANGFUSE_HOST: http://langfuse-web:3000
       LITELLM_OTEL_V2: "true"
-      LITELLM_OTEL_LANGFUSE_SPAN_SCOPE: "full"
-      LITELLM_OTEL_BAGGAGE_PROMOTED_KEYS: "litellm.team.id,litellm.team.alias,litellm.team.metadata,litellm.api_key.hash"
+      LITELLM_OTEL_LANGFUSE_SPAN_SCOPE: "llm_only"
       STUB_API_BASE: http://host.docker.internal:${STUB_MODEL_PORT:-18931}/v1
     volumes:
       - ./litellm-config.yaml:/app/config.yaml:ro
