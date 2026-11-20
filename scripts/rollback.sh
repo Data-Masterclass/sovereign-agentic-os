@@ -4,7 +4,7 @@
 # =============================================================================
 # rollback.sh — one command back to the previous Helm revision of an environment.
 # =============================================================================
-#   ./scripts/rollback.sh --env dev|prod [--to <revision>] [--dry-run]
+#   ./scripts/rollback.sh --env dev|prod [--to <revision>] [--dry-run] [--allow-runner-downgrade]
 #
 # Without --to it goes back ONE revision: the newest revision below the current one. Every
 # deploy records the revision it replaced (deploy.sh DEPLOY_RECORD; the dev/prod workflows put
@@ -19,16 +19,26 @@
 # the revision; database rows, object-storage contents and PVCs stay as they are. A migration
 # that changed a schema needs its own restore (docs/backups.md).
 #
+# DATA-RUNNER DOWNGRADE GUARD. A runner that applies os-ui's `columnNames` makes datasets STORE
+# mapped column names (order_date <- "Order Date"); an older runner ignores them and lands raw
+# headers, which os-ui then refuses to register (COLUMN_MAPPING_MISMATCH) — uploads to those
+# datasets fail until the runner is forward again. So going from a revision whose data-runner
+# carries `sovereign-os/applies-column-names: "true"` to one that does not is REFUSED while any
+# dataset stores mapped names (scripts/lib/mapped-columns.sh, read-only), and also when that count
+# cannot be read. `--allow-runner-downgrade` (rollback.yml input `allow_runner_downgrade`) is the
+# explicit override.
+#
 # Last line: ROLLBACK_OK env=<env> <from> -> <to> | ROLLBACK_DRY_RUN env=... | ROLLBACK_REFUSED: <why>
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-ENV_NAME='' TO='' DRY_RUN=''
+ENV_NAME='' TO='' DRY_RUN='' ALLOW_RUNNER_DOWNGRADE=''
 while [ $# -gt 0 ]; do
   case $1 in
     --env)     ENV_NAME=${2:-}; shift ;;
     --to)      TO=${2:-}; shift ;;
     --dry-run) DRY_RUN=1 ;;
+    --allow-runner-downgrade) ALLOW_RUNNER_DOWNGRADE=1 ;;
     -h|--help) sed -n '7p' "$0" | sed 's/^# //'; exit 0 ;;
     *) echo "rollback.sh: unknown argument $1" >&2; exit 2 ;;
   esac
@@ -66,6 +76,27 @@ print(cur, tgt)' "$TO")"
 [ "$TARGET" != "$CURRENT" ] || refuse "revision $TARGET is already the current one"
 
 echo "   $ENV_NAME ($CTX): revision $CURRENT -> $TARGET"
+
+# applies_column_names <revision> — the data-runner annotation of that revision ("true" or not).
+applies_column_names() {
+  helm --kube-context "$CTX" get manifest "$REL" -n "$NS" --revision "$1" 2>/dev/null | python3 -c '
+import sys, yaml
+v = ""
+for d in yaml.safe_load_all(sys.stdin):
+    if isinstance(d, dict) and d.get("kind") == "Deployment" and (d.get("metadata") or {}).get("name") == "data-runner":
+        v = str(((d["metadata"].get("annotations") or {}).get("sovereign-os/applies-column-names", ""))).lower()
+print(v)'
+}
+if [ "$(applies_column_names "$CURRENT")" = true ] && [ "$(applies_column_names "$TARGET")" != true ]; then
+  probe=${ROLLBACK_MAPPED_COLUMNS_PROBE:-scripts/lib/mapped-columns.sh}
+  if mapped=$(bash "$probe" --context "$CTX" --ns "$NS" 2>/dev/null | tail -1) && [[ $mapped =~ ^[0-9]+$ ]]; then :; else mapped=unknown; fi
+  if [ "$mapped" != 0 ]; then
+    if [ -z "$ALLOW_RUNNER_DOWNGRADE" ]; then
+      refuse "revision $TARGET runs a data-runner that does not apply column names, and $mapped dataset(s) store mapped column names — their uploads would fail after this rollback. Roll forward instead, or pass --allow-runner-downgrade to accept it."
+    fi
+    echo "   WARNING: --allow-runner-downgrade: $mapped dataset(s) store mapped column names; their uploads fail until the runner is forward again"
+  fi
+fi
 if [ -n "$DRY_RUN" ]; then echo "ROLLBACK_DRY_RUN env=$ENV_NAME $CURRENT -> $TARGET"; exit 0; fi
 
 if [ "$ENV_NAME" = prod ]; then
