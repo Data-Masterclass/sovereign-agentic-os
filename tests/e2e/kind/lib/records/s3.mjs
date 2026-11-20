@@ -52,7 +52,7 @@ export async function putObject(bucket, key, body, { accessKey = 'agentic-os-loc
   const kSigning = hmac(hmac(hmac(hmac(`AWS4${secretKey}`, date), region), 's3'), 'aws4_request');
   const signature = createHmac('sha256', kSigning).update(toSign).digest('hex');
   const { status } = await request('seaweedfs', `S3 PUT ${bucket}/${key}`, `${base.origin}${path}`, {
-    method: 'PUT', body,
+    method: 'PUT', body, timeoutMs: 60000, // the first write to a bucket makes SeaweedFS grow volumes
     headers: {
       'x-amz-date': now, 'x-amz-content-sha256': payloadHash,
       authorization: `AWS4-HMAC-SHA256 Credential=${accessKey}/${scope}, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=${signature}`,
