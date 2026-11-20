@@ -27,7 +27,7 @@ import { compile } from '@tabs/agents/lib/langgraph-compile';
 import { agentToolGate, grantedToolExecutor, grantedToolSpecs, type OsToolDeps } from '@tabs/agents/lib/build/os-tools';
 import { holdDecisionFor } from '@tabs/agents/lib/build/hold';
 import { memoryApprovalPort, type MemoryApprovalPort, type RunOwner } from '@tabs/agents/lib/engine/approval-port';
-import type { GraphDeps } from '@tabs/agents/lib/engine/build-graph';
+import { buildGraph, type GraphDeps } from '@tabs/agents/lib/engine/build-graph';
 import type { PendingApproval } from '@tabs/agents/lib/engine/run';
 import { memoryCheckpointer, type SelectedCheckpointer } from '@tabs/agents/lib/engine/checkpointer';
 import { inspectGraphRun, ResumeNotFoundError, RunAlreadyFinishedError, runGraphEngine, StaleResumeError, type EngineRunInput } from '@tabs/agents/lib/engine/run';
@@ -385,4 +385,34 @@ test('F6: a held write on a GRANTED, writable resource still parks for a person'
   const r = await runGraphEngine(runInput({ ir: h.ir, deps: { ...h.deps, callTool: gate.callTool, precheck: gate.precheck } }, 'scoped-b', memoryCheckpointer()));
   assert.equal(r.parked, true);
   assert.equal(port.all().length, 1);
+});
+
+// --- WP-26: a call with no stored hold decision FAILS CLOSED ---------------------------------
+
+test('fail closed: a held-capable call whose hold decision is missing from `holds` is HELD for an admin, never executed', async () => {
+  const spy = spyDeps();
+  const port = memoryApprovalPort();
+  const h = harness(HELD_YAML, script(BATCH), spy, port);
+  // The rule says "not held" for everything, so ONLY the fail-closed default can pause the write.
+  const deps = { ...h.deps, hold: { ...h.deps.hold!, decide: () => ({ held: false }) as const } };
+  const cp = memoryCheckpointer();
+  const runId = 'fail-closed';
+  const { graph } = buildGraph(h.ir, { ...deps, checkpointer: cp.saver });
+  const config = { configurable: { thread_id: runId } };
+  // Stop right before the tools node, after `act_writer` stored a decision for each call.
+  await graph.invoke({ messages: [{ role: 'user', content: TASK }], task: TASK, owner: OWNER }, { ...config, interruptBefore: ['tools_writer'] });
+  const before = (await graph.getState(config)).values as { holds: Record<string, unknown> };
+  const writeKey = Object.keys(before.holds).find((k) => k.endsWith(':c-write'));
+  assert.ok(writeKey, 'act_writer stored a decision for the write');
+  assert.ok(Object.keys(before.holds).some((k) => k.endsWith(':c-read')), 'and for the read');
+  // Lose the write's decision (a damaged or partial checkpoint).
+  await graph.updateState(config, { holds: { [writeKey!]: undefined } as unknown as Record<string, never> });
+
+  const r = await runGraphEngine(runInput({ ir: h.ir, deps }, runId, cp, { resume: true }));
+  assert.equal(r.parked, true, 'a missing decision pauses the call');
+  assert.deepEqual(spy.rpc, [], 'and nothing executed — neither the write nor the read of its batch');
+  const cards = port.all();
+  assert.equal(cards.length, 1);
+  assert.equal(cards[0].tool, 'request_promotion');
+  assert.equal(cards[0].approverRole, 'admin', 'held for an ADMIN');
 });

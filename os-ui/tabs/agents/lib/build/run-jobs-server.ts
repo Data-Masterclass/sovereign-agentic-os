@@ -112,7 +112,21 @@ export async function sweepRetentionOnce(
   let checkpointer: ThreadDeleter | null = null;
   try {
     const { selectCheckpointer } = await import('@tabs/agents/lib/engine/checkpointer');
-    checkpointer = (await selectCheckpointer(config.agentRunsDatabaseUrl)).saver;
+    const { saver } = await selectCheckpointer(config.agentRunsDatabaseUrl);
+    checkpointer = saver;
+    // WP-26: a run's tool-call ledger rows go with its checkpoint thread.
+    if (config.agentRunsDatabaseUrl) {
+      const { agentRunsPool } = await import('@tabs/agents/lib/engine/pg-pool');
+      const { deleteRunLedger, selectToolCallLedger } = await import('@tabs/agents/lib/engine/tool-call-ledger');
+      await selectToolCallLedger(config.agentRunsDatabaseUrl); // the table exists
+      const pool = await agentRunsPool(config.agentRunsDatabaseUrl);
+      checkpointer = {
+        deleteThread: async (threadId: string) => {
+          await saver.deleteThread(threadId);
+          await deleteRunLedger(pool as unknown as Parameters<typeof deleteRunLedger>[0], [threadId]);
+        },
+      };
+    }
   } catch (e) {
     log(`retention: no checkpointer to clean (${(e as Error)?.message ?? String(e)}) — sweeping the tables only`);
   }
