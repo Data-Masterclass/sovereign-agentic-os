@@ -55,6 +55,7 @@ echo "ok   node run.mjs --stub-tools reached END from a registry install"
 { echo 'import "@core/kernel/config";'; cat "$DIR/graph.mjs"; } > "$DIR/graph.mjs.twin"
 mv "$DIR/graph.mjs.twin" "$DIR/graph.mjs"
 if run 'node run.mjs --stub-tools --input x --json' >"$WORK/twin.log" 2>&1; then die "negative twin ran"; fi
-grep -q "@core/kernel/config" "$WORK/twin.log" || { tail -5 "$WORK/twin.log"; die "negative twin failed for another reason"; }
+# Node names the missing PACKAGE ('@core/kernel'), not the subpath.
+grep -q "ERR_MODULE_NOT_FOUND" "$WORK/twin.log" && grep -q "'@core/" "$WORK/twin.log" || { tail -12 "$WORK/twin.log"; die "negative twin failed for another reason"; }
 echo "ok   negative twin: graph.mjs importing @core/ does not run"
 echo "agents registry eject: ok"
