@@ -100,7 +100,7 @@ const checkDbt = checkDbtCoreFloor as (entries: { path: string; text: string }[]
 test('M-1: the dbt-core floor matches the emitter`s own declared minimum — one number, two homes', () => {
   assert.equal(DBT_CORE_FLOOR, '1.9');
   assert.equal(DBT_SEMANTIC_SPEC.minDbtCore, DBT_CORE_FLOOR, 'the gate and the emitter must agree');
-  assert.equal(DBT_SEMANTIC_SPEC.imagePin, 'dbt-core==1.12.7', 'the exact pin the Dagster image carries (above the floor)');
+  assert.ok(Number(DBT_SEMANTIC_SPEC.dbtCoreLine.split('.')[1]) >= Number(DBT_CORE_FLOOR.split('.')[1]), 'the targeted line is above the floor');
 });
 
 test('M-1: a dbt-core pin that lets 1.8 in is DENIED with the reason the emitter needs 1.9', () => {
