@@ -10,14 +10,19 @@ Inside our image `sovereign-os/dagster` (`images/extensions/dagster/Dockerfile`)
 
 | Package | Version | Licence | Docs used |
 |---|---|---|---|
-| dagster, dagster-webserver, dagster-graphql | 1.13.11 | Apache-2.0 | https://docs.dagster.io/ |
-| dagster-dbt, dagster-dlt, dagster-k8s, dagster-postgres | 0.29.11 | Apache-2.0 | https://docs.dagster.io/integrations/libraries/dbt |
-| dbt-core | 1.9.11 | Apache-2.0 (https://github.com/dbt-labs/dbt-core) | `dbt parse` https://docs.getdbt.com/reference/commands/parse · `dbt compile` https://docs.getdbt.com/reference/commands/compile · targets https://docs.getdbt.com/docs/core/connect-data-platform/connection-profiles |
-| dbt-trino | 1.9.3 | Apache-2.0 (https://github.com/starburstdata/dbt-trino) | https://docs.getdbt.com/docs/core/connect-data-platform/trino-setup |
+| dagster, dagster-webserver, dagster-graphql | 1.13.31 | Apache-2.0 | https://docs.dagster.io/ |
+| dagster-dbt, dagster-dlt, dagster-k8s, dagster-postgres | 0.29.31 | Apache-2.0 | https://docs.dagster.io/integrations/libraries/dbt |
+| dbt-core | 1.12.7 | Apache-2.0 (https://github.com/dbt-labs/dbt-core) | `dbt parse` https://docs.getdbt.com/reference/commands/parse · `dbt compile` https://docs.getdbt.com/reference/commands/compile · targets https://docs.getdbt.com/docs/core/connect-data-platform/connection-profiles |
+| dbt-trino | 1.12.0 | Apache-2.0 (https://github.com/starburstdata/dbt-trino) | https://docs.getdbt.com/docs/core/connect-data-platform/trino-setup |
+| metricflow | 0.214.0 | Apache-2.0 from 0.209.0 (https://github.com/dbt-labs/metricflow; 0.208.1 and earlier are BSL 1.1 and refused by `scripts/metricflow-floor.mjs`) | semantic layer https://docs.getdbt.com/docs/build/about-metricflow · dbt-core 1.12 depends on it (`metricflow>=0.213.0`) and reads the semantic layer through its `metricflow_semantic_interfaces` |
+| dbt-metricflow[dbt-trino] | 0.16.0 | Apache-2.0 from 0.11.0 (0.10.x and earlier BUSL-1.1, PyPI) | the `mf` CLI: `mf validate-configs`, `mf query` https://docs.getdbt.com/docs/build/metricflow-commands |
 | dlt[sqlalchemy,sql-database], trino[sqlalchemy] | 1.32.0, 0.340.0 | Apache-2.0 | see `components/dlt/UPSTREAM.md` |
 
 `images/extensions/dagster/tests/image/run.sh` reads the dbt versions back from the built image, so
-the tests and the eject check always use what the image actually carries.
+the tests and the eject check always use what the image actually carries. `tests/image/test_metricflow.py`
+checks MetricFlow's floor and licence from its own package metadata and runs `mf validate-configs` on the
+semantic manifest plain dbt wrote (WP-17, 01 M4). The Helm chart stays at 1.13.11 until the 0.4.0 image
+is built and pinned; both move together.
 
 **Why the OS ships it:** Scheduled syncs and pipelines: SQL sources, OneDrive/Google Drive, dbt models, re-indexing.
 
