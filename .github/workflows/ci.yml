@@ -132,6 +132,7 @@ jobs:
           bash scripts/tests/external-secrets-chart.test.sh
           bash scripts/tests/eso-migration-plan.test.sh
           bash scripts/tests/secret-deletion-guard.test.sh
+          bash scripts/tests/helm-version-guard.test.sh
 
       # LLM providers: the gateway behind the egress proxy, provider hosts on its filter, the access
       # group on the shared agent key; twins: proxy off / not deployed renders no proxy env.

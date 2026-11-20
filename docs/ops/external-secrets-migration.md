@@ -29,8 +29,10 @@ Nothing changes until the owner runs the steps below. The chart's default is off
    Skipping release 1 would make Helm DELETE the Secret (Helm checks `keep` on the live object).
    Two guards stop that before anything changes: the chart's `lookup` fails the switch release
    for any Helm-owned live Secret without `keep`, and `scripts/deploy.sh` refuses any upgrade that
-   would delete a live Secret without it (`scripts/lib/secret-deletion-guard.sh`).
-4. Empty values. Every key goes through an ESO template that fails on an empty value. An empty
+   would delete a live Secret without it (`scripts/lib/secret-deletion-guard.sh`). `scripts/rollback.sh`
+   runs the same guard, current revision against target. The guard fails closed: a kubectl error
+   refuses. Both scripts refuse a Helm client below 4.
+4. Empty values. Every key goes through an ESO template that fails on an empty or whitespace-only value. An empty
    property in Secrets Manager leaves the ExternalSecret not Ready and the Secret unchanged; it never
    blanks a credential. Secrets with an empty value live (today `os-ui-graph`, `os-ui-smtp`: the
    features are not configured) are reported EMPTY by the plan and are not moved.

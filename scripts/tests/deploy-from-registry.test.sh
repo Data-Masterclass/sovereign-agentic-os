@@ -264,6 +264,7 @@ fk=$TMP/fakekube; mkdir -p "$fk"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$fk/kubectl"
 cat > "$fk/helm" <<'FAKE'
 #!/usr/bin/env bash
+[ "$1" = version ] && { echo v4.2.2; exit 0; }   # helm-version-guard.sh
 case "$*" in
   *"get values"*)   printf 'osUI:\n  image:\n    repository: %s\n    tag: "0.9.5"\n' "$FAKE_LIVE_REPO" ;;
   *"get manifest"*) echo reached >> "$FAKE_REACHED"; exit 97 ;;

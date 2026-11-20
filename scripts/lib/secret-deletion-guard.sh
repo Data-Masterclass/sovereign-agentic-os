@@ -6,7 +6,7 @@
 # A Secret in the live release manifest (before) and not in the render (after) is deleted by Helm
 # unless the LIVE object carries helm.sh/resource-policy: keep (that is what the External Secrets
 # handover release puts there). Read-only: one `kubectl get secret` per such Secret, the annotation
-# only. Exit 0 when nothing would be deleted, 1 when the upgrade must be refused.
+# only. Fail closed: a kubectl error refuses. Exit 0 when nothing would be deleted, 1 when the upgrade must be refused.
 set -euo pipefail
 CTX="" NS=""
 while [ $# -gt 2 ]; do
@@ -22,14 +22,23 @@ print("\n".join(sorted(secrets(sys.argv[1]) - secrets(sys.argv[2]))))
 PY
 )
 refuse=""
+# FAIL CLOSED: only an explicit NotFound (--ignore-not-found: exit 0, empty output) counts as "not
+# on the cluster". Any kubectl error — unreachable API server, forbidden, timeout — refuses.
+unreadable=""
 for n in $gone; do
-  if ! ann=$(kubectl --context "$CTX" -n "$NS" get secret "$n" -o 'jsonpath={.metadata.annotations.helm\.sh/resource-policy}' 2>/dev/null); then
-    echo "   Secret $n: no longer rendered and not on the cluster — nothing to delete"; continue
+  if ! got=$(kubectl --context "$CTX" -n "$NS" get secret "$n" --ignore-not-found -o 'jsonpath={.metadata.name}|{.metadata.annotations.helm\.sh/resource-policy}' 2>/dev/null); then
+    unreadable="$unreadable $n"; continue
   fi
-  if [ "$ann" = keep ]; then echo "   Secret $n: no longer rendered; the live object carries helm.sh/resource-policy: keep — Helm leaves it"
-  else refuse="$refuse $n"; fi
+  if [ -z "$got" ]; then echo "   Secret $n: no longer rendered and not on the cluster — nothing to delete"
+  elif [ "$got" = "$n|keep" ]; then echo "   Secret $n: no longer rendered; the live object carries helm.sh/resource-policy: keep — Helm leaves it"
+  elif [ "${got%%|*}" = "$n" ]; then refuse="$refuse $n"
+  else unreadable="$unreadable $n"; fi
 done
+if [ -n "$unreadable" ]; then
+  echo "SECRET_DELETION_REFUSED — cannot read the live Secret(s):$unreadable (kubectl failed), and this upgrade would delete them if they exist. Refusing rather than guessing." >&2
+  exit 1
+fi
 if [ -n "$refuse" ]; then
-  echo "SECRET_DELETION_REFUSED — this upgrade would DELETE the live Secret(s):$refuse. For External Secrets, deploy the handover release first (externalSecrets.handover); see docs/ops/external-secrets-migration.md." >&2
+  echo "SECRET_DELETION_REFUSED — this change would DELETE the live Secret(s):$refuse. For External Secrets, deploy the handover release first (externalSecrets.handover); see docs/ops/external-secrets-migration.md." >&2
   exit 1
 fi

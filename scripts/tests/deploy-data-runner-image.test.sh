@@ -37,6 +37,7 @@ BIN=$TMP/bin; mkdir -p "$BIN"
 printf '#!/usr/bin/env bash\necho "kubectl $*" >> "$FAKE_LOG"\n' > "$BIN/kubectl"
 cat > "$BIN/helm" <<STUB
 #!/usr/bin/env bash
+[ "\$1" = version ] && { echo v4.2.2; exit 0; }   # helm-version-guard.sh
 case "\$*" in
   *" get values "*)   cat "\$FAKE_LIVE_VALUES" ;;
   *" get manifest "*) if [ -n "\${FAKE_LIVE_MANIFEST:-}" ]; then cat "\$FAKE_LIVE_MANIFEST"; fi ;;

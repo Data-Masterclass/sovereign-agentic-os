@@ -22,7 +22,8 @@
 #      existing Secret keeps its value (no outage, no partial Secret);
 #   5. negative twin: the "synced by ESO" assertion FAILS on a Secret written by kubectl alone;
 #   6. rollback: deleting an ExternalSecret leaves its Secret in place, unchanged;
-#   7. an EMPTY backend value never blanks a Secret: the ExternalSecret fails, the value stays;
+#   7. an EMPTY or whitespace-only backend value never blanks a Secret: the ExternalSecret fails,
+#      the value stays;
 #   8. REAL `helm upgrade` (a release built from this chart's own Secret, ESO and helper templates):
 #      switching to `managed` WITHOUT the handover release is refused by the chart's lookup guard
 #      before anything is deleted; the twin chart without the guard shows Helm DELETING the Secret;
@@ -207,6 +208,23 @@ st=""; for _ in $(seq 1 30); do
 done
 check "the ExternalSecret refuses the empty value (not Ready)" "False" "$st"
 check "postgres-litellm-credentials keeps its value" "$h" "$(hashes postgres-litellm-credentials)"
+h=$(hashes langfuse-core-secrets)
+python3 - "$TMP" <<'PY'
+import json, sys, yaml
+tmp = sys.argv[1]; p = f"{tmp}/fake-store.yaml"; st = yaml.safe_load(open(p))
+for d in st["spec"]["provider"]["fake"]["data"]:
+    if d["key"] == "agentic-os/langfuse-core-secrets":
+        doc = json.loads(d["value"]); doc["salt"] = "  \n"; d["value"] = json.dumps(doc)
+open(p, "w").write(yaml.safe_dump(st))
+PY
+K apply -f "$TMP/fake-store.yaml" >/dev/null 2>&1
+K -n "$NS" annotate externalsecret langfuse-core-secrets force-sync="$(date +%s)" --overwrite >/dev/null
+st=""; for _ in $(seq 1 30); do
+  st=$(K -n "$NS" get externalsecret langfuse-core-secrets -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}')
+  [ "$st" = False ] && break; sleep 2
+done
+check "a whitespace-only value is refused too (not Ready)" "False" "$st"
+check "langfuse-core-secrets keeps its value" "$h" "$(hashes langfuse-core-secrets)"
 
 echo "== 8. real helm upgrade: the handover guard"
 M=$TMP/mini; C=charts/sovereign-agentic-os

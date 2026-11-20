@@ -58,6 +58,8 @@ NS=${NS:-agentic-os}
 REL=${REL:-agentic-os}
 case $TO in ''|*[!0-9]*) [ -z "$TO" ] || refuse "--to must be a revision number" ;; esac
 
+hv=$(bash scripts/lib/helm-version-guard.sh 2>&1) || refuse "${hv#HELM_VERSION_REFUSED — }"
+echo "$hv"
 guard=$(bash scripts/lib/env-guard.sh --env "$ENV_NAME" --context "$CTX" 2>/dev/null) \
   || refuse "${guard##*$'\n'}"
 echo "   ${guard##*$'\n'}"
@@ -90,7 +92,7 @@ applies_column_names() {
   printf '%s' "$m" | python3 scripts/lib/runner-capability.py - || return 4
 }
 CAPF=$(mktemp)
-trap 'rm -f "$CAPF"' EXIT
+trap 'rm -f "$CAPF" "$CAPF.cur" "$CAPF.tgt"' EXIT
 capability() { # <revision> — writes the value to $CAPF, or refuses (in THIS shell) naming why
   local rc=0
   applies_column_names "$1" > "$CAPF" || rc=$?
@@ -112,6 +114,13 @@ if [ "$CAP_CURRENT" = true ] && [ "$CAP_TARGET" != true ]; then
     echo "   WARNING: --allow-runner-downgrade: $mapped dataset(s) store mapped column names; their uploads fail until the runner is forward again"
   fi
 fi
+# SECRET DELETION GUARD (WP-10): a rollback to a revision that renders fewer Secrets deletes the
+# others unless the live object carries helm.sh/resource-policy: keep. Same guard as deploy.sh,
+# current manifest vs target manifest. Fail closed.
+helm --kube-context "$CTX" get manifest "$REL" -n "$NS" --revision "$CURRENT" > "$CAPF.cur" || refuse "cannot read the manifest of revision $CURRENT (Secret deletion guard)"
+helm --kube-context "$CTX" get manifest "$REL" -n "$NS" --revision "$TARGET" > "$CAPF.tgt" || refuse "cannot read the manifest of revision $TARGET (Secret deletion guard)"
+sg=$(bash scripts/lib/secret-deletion-guard.sh --context "$CTX" --ns "$NS" "$CAPF.cur" "$CAPF.tgt" 2>&1) || refuse "${sg##*SECRET_DELETION_REFUSED — }"
+[ -z "$sg" ] || echo "$sg"
 if [ -n "$DRY_RUN" ]; then echo "ROLLBACK_DRY_RUN env=$ENV_NAME $CURRENT -> $TARGET"; exit 0; fi
 
 if [ "$ENV_NAME" = prod ]; then

@@ -34,6 +34,7 @@ check "the chart renders the capability annotation" 'sovereign-os/applies-column
 BIN=$TMP/bin; mkdir -p "$BIN"
 cat > "$BIN/helm" <<'STUB'
 #!/usr/bin/env bash
+[ "$1" = version ] && { echo "${FAKE_HELM_V:-v4.2.2}"; exit 0; }   # helm-version-guard.sh
 case "$*" in
   *" history "*) echo '[{"revision":7,"status":"superseded"},{"revision":8,"status":"deployed"}]' ;;
   *" get manifest "*"--revision 8"*) [ "${FAKE_MANIFEST_FAIL:-}" = 8 ] && exit 1; cat "$FAKE_DIR/rev8.yaml" ;;
@@ -41,7 +42,13 @@ case "$*" in
   *) echo "unexpected helm $*" >&2; exit 1 ;;
 esac
 STUB
-printf '#!/usr/bin/env bash\nexit 0\n' > "$BIN/kubectl"
+cat > "$BIN/kubectl" <<'STUB'
+#!/usr/bin/env bash
+case " $* " in *" get secret "*)
+  [ -n "${FAKE_KUBECTL_FAIL:-}" ] && exit 1
+  printf '%s' "${FAKE_KUBECTL_OUT:-}" ;; esac
+exit 0
+STUB
 cat > "$BIN/probe" <<'STUB'
 #!/usr/bin/env bash
 echo "probe $*" >> "$FAKE_DIR/probe.log"
@@ -54,9 +61,21 @@ export FAKE_DIR=$TMP
 run() { # <rev8 cap> <rev7 cap> <mapped> [args] — sets out
   cp "$TMP/manifest-$1.yaml" "$TMP/rev8.yaml"; cp "$TMP/manifest-$2.yaml" "$TMP/rev7.yaml"
   : > "$TMP/probe.log"
-  out=$(PATH="$BIN:$PATH" FAKE_MANIFEST_FAIL=${FAKE_MANIFEST_FAIL:-} FAKE_MAPPED=$3 PROD_KUBE_CONTEXT=testprod KUBE_CONTEXT=testprod \
+  out=$(PATH="$BIN:$PATH" FAKE_KUBECTL_OUT=${FAKE_KUBECTL_OUT:-} FAKE_KUBECTL_FAIL=${FAKE_KUBECTL_FAIL:-} FAKE_HELM_V=${FAKE_HELM_V:-} FAKE_MANIFEST_FAIL=${FAKE_MANIFEST_FAIL:-} FAKE_MAPPED=$3 PROD_KUBE_CONTEXT=testprod KUBE_CONTEXT=testprod \
         ROLLBACK_MAPPED_COLUMNS_PROBE="$BIN/probe" bash scripts/rollback.sh --env prod --dry-run "${@:4}" 2>&1)
 }
+
+echo "== WP-10: the Secret deletion guard and the Helm 4 check run on rollbacks too"
+printf -- '---\napiVersion: v1\nkind: Secret\nmetadata:\n  name: x-secret\n' > "$TMP/x-secret.yaml"
+cat "$TMP/manifest-false.yaml" "$TMP/x-secret.yaml" > "$TMP/manifest-sec.yaml"
+FAKE_KUBECTL_OUT='x-secret|' run sec false 0
+check "a rollback that would delete a live Secret without keep is refused" "ROLLBACK_REFUSED: this change would DELETE the live Secret(s): x-secret" "$out"
+FAKE_KUBECTL_OUT='x-secret|keep' run sec false 0
+check "with keep on the live Secret it proceeds" "ROLLBACK_DRY_RUN env=prod 8 -> 7" "$out"
+FAKE_KUBECTL_FAIL=1 run sec false 0
+check "fail closed: a kubectl error refuses the rollback" "ROLLBACK_REFUSED: cannot read the live Secret(s): x-secret" "$out"
+FAKE_HELM_V=v3.16.3 run false false 0
+check "a Helm 3 client is refused" "ROLLBACK_REFUSED: Helm v3.16.3 is below 4" "$out"
 
 echo "== downgrade below the column-name runner while datasets store mapped names"
 run true false 3
