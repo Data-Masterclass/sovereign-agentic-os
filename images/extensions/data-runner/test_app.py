@@ -367,3 +367,43 @@ class TestServiceBearer(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class BadNameArrow(FakeArrow):
+    def __init__(self, name):
+        super().__init__()
+        self.schema = [FakeField("id", "int64"), FakeField(name, "string")]
+
+
+class RefusedUploadKeepsBronzeTests(unittest.TestCase):
+    """A Parquet/JSON file carries its own column names. One the OS cannot register is refused
+    BEFORE any catalog call: an existing Bronze table is neither dropped, replaced nor appended."""
+
+    def _ingest(self, name, mode, exists=True):
+        log = []
+        with mock.patch.object(app, "_s3_client", lambda: FakeS3()), \
+             mock.patch.object(app, "_catalog", lambda: FakeCatalog(log, exists=exists)), \
+             mock.patch.object(app, "_read_to_arrow", lambda p, k: BadNameArrow(name)):
+            with self.assertRaises(ValueError):
+                app.ingest({**BASE, "objectKey": "uploads/lena/orders.parquet", "mode": mode})
+        return log
+
+    def test_existing_bronze_survives_a_refused_replace_or_append(self):
+        for bad in ("a{b", 'a"b', "a\\b", "a\nb", " lead", "x" * 129, "\ud800"):
+            for mode in ("replace", "append"):
+                self.assertEqual(self._ingest(bad, mode), [], f"{bad!r} {mode}: the catalog was touched")
+
+    def test_real_world_names_are_accepted(self):
+        out, log = run_ingest(BASE, exists=True)
+        self.assertTrue(out["ok"])
+        for name in ("Order Date", "größe", "Umsatz (€)"):
+            app.validate_column_names(BadNameArrow(name))
+
+    def test_ingest_rows_refuses_before_any_catalog_call(self):
+        log = []
+        with mock.patch.object(app, "_catalog", lambda: FakeCatalog(log, exists=True)), \
+             mock.patch.object(app, "_read_to_arrow", lambda p, k: BadNameArrow("a}b")):
+            with self.assertRaises(ValueError):
+                app.ingest_rows({"principal": "lena", "dataset": "orders", "rows": [{"id": 1}]})
+        self.assertEqual(log, [])
+

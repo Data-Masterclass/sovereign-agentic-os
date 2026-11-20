@@ -198,7 +198,10 @@ test('the reverse map reads what the OS GENERATOR writes — identity, layer, co
   assert.equal(oc.datasetId, 'ds_oc000001', 'config.meta.os_dataset is the identity the OS wrote');
   assert.equal(oc.layer, 'gold');
   assert.equal(oc.schema, 'personal_amir'); // un-promoted work lives in the personal lane
-  assert.match(oc.description, /^gold layer of OS dataset ds_oc000001/);
+  // The file holds the generator's sentence; only the AUTHOR'S words are read back (a round trip
+  // must not grow the description by one sentence per push).
+  assert.match(oc.rawDescription, /^gold layer of OS dataset ds_oc000001/);
+  assert.doesNotMatch(oc.description, /layer of OS dataset/);
   assert.deepEqual(oc.columns, [
     { name: 'customer_id', description: 'Customer key' },
     { name: 'customer_name', description: '' },
