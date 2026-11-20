@@ -22,7 +22,9 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import pg from 'pg';
+import { PostgresSaver } from '@langchain/langgraph-checkpoint-postgres';
 import { FIXTURE_USER } from '@tabs/agents/lib/engine/parity-harness';
+import { inventoryParked } from '@tabs/agents/lib/engine/parked-inventory';
 import { prepareFixtureTables, step, testDatabaseUrl } from '@tabs/agents/lib/engine/hitl.pg-fixture';
 
 const URL_ = testDatabaseUrl();
@@ -70,6 +72,8 @@ test('pause → worker restart → resume by interrupt id: ONE card, and the wri
   const approvalId = c1[0].approval_id;
   assert.equal(s1.heldApprovals![0].approvalId, approvalId);
   const rowsParked = await checkpointRows(runId);
+  // The read-only parked-run inventory sees it as waiting on a CURRENT interrupt.
+  assert.deepEqual(await inventoryParked(new PostgresSaver(pool), [runId]), [{ runId, kind: 'current', interrupts: 1, batchCalls: 2 }]);
 
   // 2. The worker dies and a NEW one replays the parked job without a decision (the reaper path).
   //    LangGraph re-runs the paused node from its start; the interrupt id is stable, so the card

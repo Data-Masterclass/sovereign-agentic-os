@@ -323,16 +323,19 @@ A write that needs a human **pauses the run**; the decision **resumes it**. Noth
 in between — not the held call, and not the other calls of the same batch.
 
 ```
-act_<id> ──tool calls──▶ tools_<id>  phase 1: holdDecisionFor(preset, tool) for EVERY call
-                            │          held → ApprovalPort.enqueueOnce(<threadId>:<callId>)   (idempotent)
-                            │          pending → interrupt({ approvalId, tool, node, args })  ── run PARKS
-                            │                                                                   SSE approval-required
-   Governance inbox / MCP decide_approval ── decide() ── onDecided hook ── resume.ts
-                            │          runner re-read LIVE (principalById): disabled / role lost / domain lost → refused
-                            │          Command({ resume: { [approvalId]: decision } }) as the RUNNER
-                            ▼          SSE resumed
-                         tools_<id>  phase 2: one call per superstep — approved → grantedToolExecutor(user = runner)
-                                              rejected → {"error":{"code":"rejected","approvalId"}} to the model
+act_<id>   model reply → tool calls; the hold decided ONCE per call → state.holds   (checkpointed)
+   │
+tools_<id>  phase 1: first undecided held call → interrupt({ kind:'os.hold', tool, node, args, approverRole },
+   │                 { responseSchema: { decision, approvalId } })   ── run PARKS (one interrupt per superstep)
+   │  run.ts (the stream loop, NOT the graph): __interrupt__ { id, value }
+   │        → ApprovalPort.enqueueOnce(<threadId>:<interruptId>)   one card per interrupt, idempotent
+   │        → log `parked runId=<id> interrupt=<id>`, SSE approval-required
+Governance inbox / MCP decide_approval ── decide() ── onDecided hook ── resume.ts
+   │        runner re-read LIVE (principalById): disabled / role lost / domain lost → refused
+   │        resume job { decision, approvalId, interruptId } → worker: getState lists interruptId? else 409
+   │        Command({ resume: { [interruptId]: { decision, approvalId } } }) as the RUNNER
+tools_<id>  phase 2: one call per superstep — approved → grantedToolExecutor(user = runner)
+                     rejected → {"error":{"code":"rejected","approvalId"}} to the model
 ```
 
 **Where the hold lives.** The rule is the pure module `tabs/agents/lib/build/hold.ts`
@@ -341,13 +344,31 @@ applied in A1, lifted out so the graph builder (no `server-only`) can call it be
 executes. The executor runs with `holdAt: 'node'` and no longer re-holds; `'executor'` remains its
 DEFAULT as defence in depth for any caller that is not a graph node.
 
-**Idempotency.** LangGraph re-runs an interrupted node from its start on every resume, so the
-node enqueues through `enqueueOnce` keyed on `interruptKey = <threadId>:<callId>` — one approval
-per held call however many times the node re-runs. The **queue is the source of truth**: on every
-re-run the node reads each approval's state back; a decided one never interrupts again, a pending
-one parks again. A resume payload meant for another approval therefore cannot unblock the wrong
-call. Phase 2 executes one call per superstep so a crash between two executions re-executes only
-the call in flight.
+**Idempotency (WP-26: LangGraph's documented interrupt contract).** LangGraph re-runs a paused
+node from its start on resume, so the paused node has no side effect before its `interrupt()`, calls
+it once (never in a loop), and never asks the hold rule: the decision was made once in `act_<id>`
+and checkpointed in the `holds` channel, so a policy change between pause and resume cannot turn a
+held or rejected call into an executed one (a call with no entry fails closed: held for an admin).
+The **card is filed outside the graph**, by the run driver, from the `__interrupt__` chunk, keyed
+on LangGraph's interrupt id — stable across re-runs, so a worker restart never files a second card.
+The **resume is strict**: the worker checks the interrupt id against `getState().tasks[].interrupts`
+and refuses a stale, duplicate or wrong id with a 409 (`StaleResumeError`; a still-parked run stays
+`parked`). Phase 2 executes one call per superstep and every run streams with
+`durability: 'sync'`, so a worker killed between two calls re-executes only the call in flight.
+Proven against the real `PostgresSaver` on Postgres 17, a fresh process per step:
+`engine/hitl.pg.test.ts`, `engine/durability.pg.test.ts` (CI job `test-langgraph-pg`).
+One-release shim: a thread parked before WP-26 (its interrupt value names its approval) resumes
+through its single interrupt; one whose batch held more than one call is refused
+(`legacy_multi_hold`) and settled `failed` visibly. The worker logs a read-only parked-run
+inventory at boot (`parked-inventory …`).
+
+**Where LangGraph ends and the OS begins.** Native LangGraph: the `StateGraph`, its channels
+(including `holds`), `interrupt()` with `responseSchema`, `Command({ resume })`, `PostgresSaver`
+on the shared `pg.Pool` (`engine/pg-pool.ts`), `getState`, `durability`. OS wrapper code, outside
+the graph's mechanics: the hold rule (`build/hold.ts`, passed in as `hold.decide`), the grant
+precheck and governed executor (`build/grant-scope.ts`, `build/os-tools.ts`), identity and the
+runner re-read (`engine/runner-identity.ts`, `engine/resume.ts`), the card projector and strict
+resume (`engine/run.ts`), the queue (`engine/jobs*.ts`) and output saving (`output-saver.ts`).
 
 **Who executes.** The approval record carries `runId`, `threadId`, `interruptKey`, `systemId`,
 `node`, `tool`, `args` and the **runner's principal snapshot**. `core/policy/approvals.ts`

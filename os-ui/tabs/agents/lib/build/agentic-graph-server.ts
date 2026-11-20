@@ -34,7 +34,7 @@ import { liveEmbedder } from '@core/infra/context/librarian-live';
 import { runGraphEngine } from '@tabs/agents/lib/engine/run';
 import { selectCheckpointer, type CheckpointerKind } from '@tabs/agents/lib/engine/checkpointer';
 import type { GraphDeps, HeldCall, RouteDecision } from '@tabs/agents/lib/engine/build-graph';
-import { inspectGraphRun, type PendingApproval, type RunFailure, type RunInspection } from '@tabs/agents/lib/engine/run';
+import { inspectGraphRun, type PendingApproval, type ResumeDecision, type RunFailure, type RunInspection } from '@tabs/agents/lib/engine/run';
 import { holdDecisionFor } from '@tabs/agents/lib/build/hold';
 import { createdFromSteps, grantScopeBrief, type ResourceKind } from '@tabs/agents/lib/build/grant-scope';
 import { outputsBrief } from '@tabs/agents/lib/output-tools';
@@ -248,12 +248,16 @@ export type RunOsTeamInput = {
    * Defaults to `studio`, which is what a run started by hand from the OS actually is.
    */
   env?: RunEnv;
-  /** A2: the Governance decision a resume carries, `{ [approvalId]: decision }`. */
+  /** The Governance decision a resume carries (WP-26: keyed by interrupt id). */
+  resumeDecision?: ResumeDecision;
+  /** ONE-RELEASE SHIM: a pre-WP-26 job's `{ [approvalId]: decision }`. */
   resumeWith?: Record<string, ApprovalDecision>;
+  /** Operator log sink (the worker's console) — `parked runId=… interrupt=…`. */
+  log?: (message: string) => void;
   /** Abort the stream (a client disconnect); the thread stays resumable. */
   signal?: AbortSignal;
   /** A2: fired when a held write PARKS the run (the route's `approval-required`). */
-  onInterrupt?: (ev: { approvalId: string; tool: string; node: string }) => void;
+  onInterrupt?: (ev: { approvalId: string; interruptId: string; tool: string; node: string }) => void;
   /** Fired when an agent WAITS for the model rate limit to reset (the route's `rate-limit-wait`). */
   onRateLimitWait?: (ev: { node: string; attempt: number; maxAttempts: number; waitMs: number; message: string }) => void;
   /** Injected in tests: the rate-limit retry's bounds and clock (`engine/rate-limit.ts`). */
@@ -417,7 +421,9 @@ export async function runOsTeam(input: RunOsTeamInput): Promise<RunOsTeamResult>
       // The owner stamp: this system + this user. Verified on every resume (review H1).
       owner: { systemId: input.systemId, userId: input.user.id, domain: sys.system.domain },
       resume: input.resume,
+      resumeDecision: input.resumeDecision,
       resumeWith: input.resumeWith,
+      log: input.log,
       signal: input.signal,
       checkpointer,
       hooks: { onNodeStart, onStep, onNodeComplete, onInterrupt: input.onInterrupt, onRateLimitWait: input.onRateLimitWait },

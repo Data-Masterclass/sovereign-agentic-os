@@ -62,6 +62,7 @@ import { openRunTopic, publishRunEvent } from '@tabs/agents/lib/engine/run-event
 import { acquireRunLock } from '@tabs/agents/lib/engine/run-lock';
 import { runOutcomeOf } from '@tabs/agents/lib/engine/run-status';
 import type { ApprovalDecision } from '@tabs/agents/lib/engine/approval-port';
+import type { ResumeDecision } from '@tabs/agents/lib/engine/run';
 import type { LivePrincipal } from '@tabs/agents/lib/engine/resume';
 
 type ChatMsg = { role: 'user' | 'assistant'; content: string };
@@ -304,7 +305,12 @@ export type ExecuteTeamRunInput = {
   messages: ChatMsg[];
   runId: string;
   resume?: boolean;
+  /** The Governance decision a resume carries (WP-26: keyed by interrupt id). */
+  resumeDecision?: ResumeDecision;
+  /** ONE-RELEASE SHIM: a pre-WP-26 job's `{ [approvalId]: decision }`. */
   resumeWith?: Record<string, ApprovalDecision>;
+  /** Operator log sink (the worker's console). */
+  log?: (message: string) => void;
   signal?: AbortSignal;
   /** The request's own live channel (SSE `send`); the run topic receives the same events regardless. */
   emit?: (event: string, data: unknown) => void;
@@ -366,7 +372,9 @@ export async function executeTeamRun(input: ExecuteTeamRunInput): Promise<RunRep
       disabledAgents: view.disabledAgents,
       runId,
       resume: input.resume,
+      resumeDecision: input.resumeDecision,
       resumeWith: input.resumeWith,
+      log: input.log,
       signal: input.signal,
       // A3: the system's own LiteLLM key by reference, when Build minted one; else the shared agent key.
       keyRef: view.lastBuild?.litellmKeyRef,
@@ -386,7 +394,7 @@ export async function executeTeamRun(input: ExecuteTeamRunInput): Promise<RunRep
         emit('node-completed', { node: ev.node, status: ev.status, finalTextPreview: summarizeResult(ev.finalText) });
       },
       // A2: a held write parked the run — the panel shows it; the decision in Governance resumes it.
-      onInterrupt: (ev) => emit('approval-required', { approvalId: ev.approvalId, tool: ev.tool, node: ev.node }),
+      onInterrupt: (ev) => emit('approval-required', { approvalId: ev.approvalId, interruptId: ev.interruptId, tool: ev.tool, node: ev.node }),
       // The agent is waiting for the model rate limit to reset — say so, so the run is not silent.
       onRateLimitWait: (ev) => emit('rate-limit-wait', { node: ev.node, attempt: ev.attempt, maxAttempts: ev.maxAttempts, waitSeconds: Math.round(ev.waitMs / 1000), message: ev.message }),
       });

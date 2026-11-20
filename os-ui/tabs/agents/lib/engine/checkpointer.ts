@@ -9,7 +9,8 @@
  *             which one it got, so a memory fallback can never masquerade as durability.
  * ARCHITECTURE:
  *   - One decision: `AGENT_RUNS_DATABASE_URL` (`config.agentRunsDatabaseUrl`) set → `PostgresSaver`
- *     from `@langchain/langgraph-checkpoint-postgres` on that database (its tables are created by
+ *     from `@langchain/langgraph-checkpoint-postgres` on that database, constructed on the
+ *     process-wide `pg.Pool` the run queue also uses (`pg-pool.ts`) (its tables are created by
  *     the idempotent `setup()`, run once per process — also at os-ui boot from
  *     `instrumentation.ts`); unset → LangGraph's `MemorySaver`. The chosen kind travels with the
  *     run report (`checkpointer: 'postgres' | 'memory'`).
@@ -51,7 +52,9 @@ export async function selectCheckpointer(databaseUrl: string | undefined): Promi
   if (!c.postgres || c.postgres.url !== url) {
     const ready = (async (): Promise<SelectedCheckpointer> => {
       const { PostgresSaver } = await import('@langchain/langgraph-checkpoint-postgres');
-      const saver = PostgresSaver.fromConnString(url);
+      const { agentRunsPool } = await import('@tabs/agents/lib/engine/pg-pool');
+      // ONE pool per process, shared with the run queue (`jobs-postgres.ts`).
+      const saver = new PostgresSaver(await agentRunsPool(url));
       await saver.setup(); // idempotent: CREATE TABLE IF NOT EXISTS + versioned migrations
       return { kind: 'postgres', saver };
     })();

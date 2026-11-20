@@ -7,8 +7,10 @@
  *             often LangGraph re-runs me) and to read its decision back — through a port, so the
  *             graph builder stays free of `server-only` and the P3 tests run with a fake queue.
  * ARCHITECTURE:
- *   - `ApprovalPort.enqueueOnce` is idempotent on `interruptKey` (`<threadId>:<callId>`); `status`
- *     reads the decision. The server implementation (`approvals-bridge.ts`) wraps
+ *   - `ApprovalPort.enqueueOnce` is idempotent on `interruptKey` (`<threadId>:<interruptId>`, the
+ *     LangGraph interrupt id — stable across re-runs of the paused node); `status` reads the
+ *     decision; `find` looks a card up by its key without filing one. The run driver (`run.ts`)
+ *     is the only caller: the graph itself never touches the queue. The server implementation (`approvals-bridge.ts`) wraps
  *     `core/policy/approvals.ts`; `memoryApprovalPort()` is the in-process fake tests decide
  *     against (`decide(id, …)`), which also records every call for assertions.
  */
@@ -48,6 +50,8 @@ export type ApprovalPort = {
   enqueueOnce(input: HeldApprovalInput): Promise<{ approvalId: string; status: ApprovalState }>;
   /** The current decision state of an approval. */
   status(approvalId: string): Promise<ApprovalState>;
+  /** The card filed under `interruptKey`, if any — never files one. */
+  find(interruptKey: string): Promise<{ approvalId: string; status: ApprovalState } | null>;
 };
 
 export type MemoryApproval = HeldApprovalInput & { approvalId: string; status: ApprovalState; decidedBy?: string };
@@ -80,6 +84,10 @@ export function memoryApprovalPort(): MemoryApprovalPort {
     },
     async status(approvalId) {
       return byId.get(approvalId)?.status ?? 'unknown';
+    },
+    async find(interruptKey) {
+      const rec = byKey.get(interruptKey);
+      return rec ? { approvalId: rec.approvalId, status: rec.status } : null;
     },
     all: () => [...byId.values()],
     decide(approvalId, decision, by) {

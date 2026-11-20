@@ -208,7 +208,7 @@ const FIXTURE = 'tabs/agents/lib/engine/hitl.pg-fixture.ts';
 
 /** Run one step of a run in a FRESH node process; returns its JSON line and exit status. */
 export function step(input: StepInput): StepOutput & { exitCode: number | null } {
-  const r = spawnSync(process.execPath, ['--import', './scripts/test-setup.mjs', FIXTURE, JSON.stringify(input)], {
+  const r = spawnSync(process.execPath, ['--experimental-strip-types', '--import', './scripts/test-setup.mjs', FIXTURE, JSON.stringify(input)], {
     cwd: OS_UI,
     env: { ...process.env },
     encoding: 'utf8',

@@ -60,7 +60,12 @@ export type RunJobInput = {
   messages: { role: 'user' | 'assistant'; content: string }[];
   /** A fresh run: the prompt recorded on the durable store checkpoint. */
   prompt?: string;
-  /** A resume after a Governance decision: `{ [approvalId]: decision }` plus the approval to stamp. */
+  /**
+   * A resume after a Governance decision (WP-26): the decision, its card, and the LangGraph
+   * interrupt it answers — the worker resumes with `Command({ resume: { [interruptId]: … } })`.
+   */
+  resume?: { decision: ApprovalDecision; approvalId: string; interruptId?: string };
+  /** ONE-RELEASE SHIM: a resume job filed before WP-26 — `{ [approvalId]: decision }`. */
   resumeWith?: Record<string, ApprovalDecision>;
   approvalId?: string;
   decision?: ApprovalDecision;
