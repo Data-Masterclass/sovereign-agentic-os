@@ -68,8 +68,10 @@ spec:
       # starts normally.
       initContainers:
         # 1) Detect whether the realm is already bootstrapped. `to_regclass` returns
-        #    NULL (no error) on a fresh DB where `polaris_schema` does not exist yet, so
-        #    the query is safe pre-bootstrap. Waits for pg-rw first (fresh-install race).
+        #    NULL (no error) on a fresh DB where `polaris_schema` does not exist yet. The
+        #    count runs only after that check: Postgres resolves every table name in a
+        #    statement before running it, so one CASE statement fails on a fresh DB
+        #    (found by tests/lakehouse, WP-13). Waits for pg-rw first (fresh-install race).
         - name: bootstrap-check
           image: "{{ .Values.postgres.plainImage.repository }}:{{ .Values.postgres.plainImage.tag }}{{ if .Values.postgres.plainImage.digest }}@{{ .Values.postgres.plainImage.digest }}{{ end }}"
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
@@ -87,8 +89,13 @@ spec:
                 sleep 2
               done
               if [ -z "$ok" ]; then echo "ERROR: Postgres not reachable"; exit 1; fi
-              cnt=$(psql -h "$PG_HOST" -U "$PG_USER" -d "$PG_DB" -tAc \
-                "select case when to_regclass('polaris_schema.principal_authentication_data') is null then 0 else (select count(*) from polaris_schema.principal_authentication_data where realm_id = '$POLARIS_REALM') end")
+              cnt=0
+              tbl=$(psql -h "$PG_HOST" -U "$PG_USER" -d "$PG_DB" -tAc \
+                "select to_regclass('polaris_schema.principal_authentication_data') is not null")
+              if [ "$(printf '%s' "$tbl" | tr -d '[:space:]')" = "t" ]; then
+                cnt=$(psql -h "$PG_HOST" -U "$PG_USER" -d "$PG_DB" -tAc \
+                  "select count(*) from polaris_schema.principal_authentication_data where realm_id = '$POLARIS_REALM'")
+              fi
               cnt=$(printf '%s' "$cnt" | tr -d '[:space:]')
               if [ "${cnt:-0}" -gt 0 ]; then
                 echo "realm '$POLARIS_REALM' already bootstrapped ($cnt root-principal row(s)) -- skipping bootstrap"

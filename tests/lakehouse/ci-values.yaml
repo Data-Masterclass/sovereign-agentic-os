@@ -1,0 +1,14 @@
+# WP-13 lakehouse harness: the only values the CI stack changes. Everything else is the chart's
+# default (local) profile, so the harness runs the config that ships.
+# A GitHub runner has 7 GB for Trino, Polaris, Postgres, OPA and the store together; Trino's
+# rule (memory per node + 30 % heap headroom below the heap) still holds: 1GB + 0.6GB < 2G.
+trino:
+  jvm:
+    maxHeap: "2G"
+  query:
+    maxMemory: "1GB"
+    maxMemoryPerNode: "1GB"
+# Durable metastore, as on STACKIT (values.stackit-managed.yaml), so the admin-tool bootstrap and
+# the Postgres schema are part of the proof.
+polaris:
+  persistenceType: relational-jdbc

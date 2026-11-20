@@ -1,0 +1,10 @@
+{
+  "name": "soa-lakehouse-harness",
+  "private": true,
+  "description": "WP-13: the npm trino-client proof (design 10 competing-code 21). Test-only; os-ui does not depend on it yet.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "dependencies": {
+    "trino-client": "0.2.9"
+  }
+}
