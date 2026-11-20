@@ -75,6 +75,13 @@ dagster:
         sidecarContainers:
           - name: repo-sync
             image: ghcr.io/aborek/sovereign-os/dagster:0.3.1
+# Release-owned secrets (test-only strings), so deploy.sh's secret preflight passes.
+litellmMasterKey: sk-test-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+agentRuntime:
+  token: rt-test-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+langfuseInit:
+  publicKey: pk-lf-test-cccccccccccccccc
+  secretKey: sk-lf-test-dddddddddddddddd
 YAML
 
 derive_and_render() { # <tree> — sets out, rc, rendered
