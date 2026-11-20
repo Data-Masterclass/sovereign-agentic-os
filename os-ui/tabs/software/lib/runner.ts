@@ -3,6 +3,7 @@
  */
 import { config } from '@core/kernel/config';
 import { k8s as liveK8s } from '@core/infra/k8s';
+import { readLiveRef } from '@core/infra/lifecycle-refs';
 import type { ResourceFootprint } from '@tabs/software/lib/model';
 
 /**
@@ -37,6 +38,8 @@ export type RunnerApp = {
   /** Explicit prebuilt image ref; when unset the platform default image is used. */
   runImage?: string;
   footprint: ResourceFootprint;
+  /** Where the app's `live/app/<id>` tag lives (WP-51): read from git at every deploy. */
+  live?: { repo: string; id: string };
 };
 
 /** True for an immutable, content-addressed image ref (`…@sha256:…`). */
@@ -53,6 +56,12 @@ export type RunnerSpec = {
   memory: string;
   /** Container port the app listens on (scaffolds EXPOSE 8080). */
   port: number;
+  /**
+   * The commit `live/app/<id>` names in git at deploy time, recorded on the Deployment as
+   * `sovereign-os.io/source-sha` (artifact contract C4: the runtime records the sha it ran). `null`
+   * when the app has no live tag — stated as `none`, never guessed.
+   */
+  source?: { tag: string; sha: string } | null;
 };
 
 /** Real pod-driven phase — `deploying → running → failed`, plus stop/absent/offline. */
@@ -91,6 +100,8 @@ export type RunnerOpts = {
   tlsIssuer?: string;
   /** PriorityClass for the app pod (WP-47: the lowest class); empty/absent = no field. */
   priorityClassName?: string;
+  /** The bare repos the live tag is read from (default: the configured root). */
+  reposDir?: string;
 };
 
 const UNREACHABLE =
@@ -195,10 +206,14 @@ export function buildDeploymentManifest(
   // stamp. Only a mutable-tag (`:latest`) serving ref still needs the stamp to force a
   // roll on a same-tag re-deploy (the hack the digest path deletes).
   const stamp = digestPinned ? undefined : deployedAt;
+  const sourceAnnotations =
+    spec.source === undefined
+      ? {}
+      : { annotations: { 'sovereign-os.io/source-sha': spec.source?.sha ?? 'none', 'sovereign-os.io/live-tag': spec.source?.tag ?? 'none' } };
   return {
     apiVersion: 'apps/v1',
     kind: 'Deployment',
-    metadata: { name, namespace, labels: labels(spec) },
+    metadata: { name, namespace, labels: labels(spec), ...sourceAnnotations },
     spec: {
       replicas: 1,
       selector: { matchLabels: sel },
@@ -315,6 +330,17 @@ export function buildIngressManifest(
 
 // ------------------------------------------------------------- Resolve opts ----
 
+/** Read the app's live tag straight from git (WP-51). An unreadable repo is logged and recorded as none. */
+async function liveSource(live: { repo: string; id: string }, reposDir?: string): Promise<{ tag: string; sha: string } | null> {
+  try {
+    const ref = await readLiveRef(live.repo, 'app', live.id, { reposDir: reposDir ?? config.reposDir });
+    return ref ? { tag: ref.tag, sha: ref.commit } : null;
+  } catch (e) {
+    console.error(`[runner] could not read live/app/${live.id} in '${live.repo}': ${(e as Error).message} — recorded as none`);
+    return null;
+  }
+}
+
 function resolveOpts(
   opts: RunnerOpts,
 ): { k8s: RunnerK8s } & Required<Pick<RunnerOpts, 'namespace' | 'ingressClass' | 'tlsIssuer' | 'priorityClassName'>> {
@@ -410,6 +436,7 @@ export async function deployApp(app: RunnerApp, options: RunnerOpts = {}): Promi
       detail: e.message,
     };
   }
+  if (app.live) spec = { ...spec, source: await liveSource(app.live, options.reposDir) };
   const name = runnerName(spec.slug);
   const url = `https://${spec.host}`;
   const c = collections(o.namespace);

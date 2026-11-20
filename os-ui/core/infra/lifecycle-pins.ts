@@ -91,6 +91,11 @@ function dirOf(deps: { reposDir?: string } = {}): string {
   return deps.reposDir ?? (state().testDir || config.reposDir);
 }
 
+/** The repo root the lifecycle reads and writes (for a caller that commits beside a pin). */
+export function lifecycleReposDir(deps: { reposDir?: string } = {}): string {
+  return dirOf(deps);
+}
+
 /** How long a read of the tags is reused before the repos are read again. */
 export const INDEX_TTL_MS = 5_000;
 
@@ -239,6 +244,11 @@ export type PinWriteDeps = {
   commit?: boolean;
   /** `ui:<route>` or `mcp:<tool>` — which door went live. */
   surface?: string;
+  /**
+   * The commit that holds the object's definition, written at go-live by its tab's own git
+   * writer (`LifecycleAdapter.commitDefinition`). The live tag names it (`OS-Definition: rendered`).
+   */
+  definitionCommit?: string;
 };
 
 /**
@@ -287,7 +297,7 @@ export async function setLivePin(
   await ensureTaggable(domain, draftIndex, by, deps);
   const written = await writeLiveRefs(
     domain,
-    { kind, id, ref, tagger: author, actorId: by.id, action: 'go-live', surface: deps.surface, ...(path ? { path } : {}) },
+    { kind, id, ref, tagger: author, actorId: by.id, action: 'go-live', surface: deps.surface, ...(path ? { path } : {}), ...(deps.definitionCommit ? { commit: deps.definitionCommit } : {}) },
     { reposDir },
   );
   invalidate();
@@ -402,6 +412,8 @@ export type PinRow = {
   path?: string;
   /** False for a pre-WP-51 row that no `live/*` tag carries yet. */
   tagged?: boolean;
+  /** What the tagged commit holds: `commit`, `rendered` or `not-in-git` (the tag's `OS-Definition`). */
+  definition?: string;
 };
 
 /**
@@ -472,6 +484,7 @@ export function pinRowsFor(domain: string, index: LifecycleIndex): PinRow[] {
       by: pin.by,
       ...(pin.path ? { path: pin.path } : {}),
       ...(pin.untagged ? { tagged: false } : {}),
+      ...(pin.definition ? { definition: pin.definition } : {}),
     });
   }
   return rows.sort((a, b) => (a.kind === b.kind ? a.id.localeCompare(b.id) : a.kind.localeCompare(b.kind)));
@@ -494,6 +507,9 @@ export function renderPinFile(domain: string, index: LifecycleIndex): string {
     '#   git tag -l "version/*"           every version that went live',
     '#   git show live/<kind>/<id>        who, when, and the commit it runs',
     '# A row with `tagged: false` predates the tags and is carried until it is migrated.',
+    '# `definition` says what the tagged commit holds: `commit` (the pinned commit), `rendered`',
+    '# (written at go-live by its tab), or `not-in-git` (this kind has no git writer yet, so',
+    '# checking the tag out does NOT give you its definition).',
     '#',
     '# Lifecycle (Draft - Testing - Live) is a second axis beside audience (My - Domain -',
     '# Company): this file answers "which version is running", not "who may use it".',

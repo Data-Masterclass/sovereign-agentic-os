@@ -138,6 +138,7 @@ function runnerAppFor(app: App): RunnerApp {
     host: appHost(app),
     runImage: app.runImage,
     footprint: FOOTPRINT[app.template] ?? FOOTPRINT['nextjs-supabase'],
+    ...(app.domain ? { live: { repo: app.domain, id: app.id } } : {}),
   };
 }
 

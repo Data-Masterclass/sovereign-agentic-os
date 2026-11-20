@@ -64,7 +64,16 @@ export type LifecycleAdapter = {
   dependencies?(actor: LifecycleActor, obj: LifecycleObject): Promise<DependencyRef[]>;
   /** What starts running, in the TOOL's own words — the confirm dialog's sentence. */
   consequences?(actor: LifecycleActor, obj: LifecycleObject): Promise<string[]>;
+  /**
+   * For a kind whose version is NOT a git commit (a `rev:`/`spec:` content ref): write the object's
+   * CURRENT definition into its repo with the tab's own git writer and return the commit that holds
+   * it, so the live tag names a commit containing exactly what is live (WP-51). `null` when the
+   * writer is off. A kind without this method is tagged `OS-Definition: not-in-git` — the gap is
+   * stated in the tag, never hidden.
+   */
+  commitDefinition?(actor: LifecycleActor, obj: LifecycleObject, deps?: { reposDir?: string }): Promise<{ sha: string } | null>;
   /** Every object of this kind that exists, for the one-time "everything is Live" migration. */
+
   existing?(): Promise<{ id: string; head: string; domain: string }[]>;
 };
 

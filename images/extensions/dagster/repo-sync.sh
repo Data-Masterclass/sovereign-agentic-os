@@ -232,6 +232,35 @@ os.replace(tmp, os.path.join(root, "status.json"))
 PY
 }
 
+# WP-51: publish what is LIVE in this domain, read from the git tags in the mirror — never from the
+# OS. `live` maps `<kind>/<id>` → the commit `live/<kind>/<id>` names, and `inCurrent` says whether
+# that commit is in the history Dagster loaded (`current`), i.e. whether the code location runs a
+# project that contains the live version. (The project itself follows main's last-good commit:
+# resolution F10 keeps repo-sync the single dbt gate.)
+publish_live() { # domain
+  frag="$CHECKOUT/.status/$1.json"
+  mirror="$CHECKOUT/.mirrors/$1.git"
+  [ -f "$frag" ] && [ -d "$mirror" ] || return 0
+  current="$(readlink "$CHECKOUT/$1/current" 2>/dev/null | xargs -n1 basename 2>/dev/null || true)"
+  python3 - "$frag" "$mirror" "$current" <<'PY'
+import json, subprocess, sys
+frag, mirror, current = sys.argv[1:4]
+out = subprocess.run(["git", "-C", mirror, "for-each-ref", "--format=%(refname:strip=3) %(*objectname)%(objectname)", "refs/tags/live"],
+                     capture_output=True, text=True).stdout
+live = {}
+for line in out.splitlines():
+    name, _, oids = line.partition(" ")
+    commit = oids[:40]  # an annotated tag prints the peeled commit first
+    in_current = bool(current) and subprocess.run(["git", "-C", mirror, "merge-base", "--is-ancestor", commit, current]).returncode == 0
+    live[name] = {"commit": commit, "inCurrent": in_current}
+d = json.load(open(frag))
+d["live"] = live
+tmp = frag + ".tmp"
+json.dump(d, open(tmp, "w"))
+import os; os.replace(tmp, frag)
+PY
+}
+
 reload_location() {
   [ -n "$RELOAD_LOCATION" ] || { log "reloadRepositoryLocation skipped (DAGSTER_RELOAD_LOCATION empty)"; return 0; }
   python3 - "$GRAPHQL" "$RELOAD_LOCATION" <<'PY' || log "reloadRepositoryLocation failed (non-fatal — the daemon reloads on its own schedule)"
@@ -269,7 +298,9 @@ sync_domain() { # domain  (sets REPOINTED=1 when `current` moved)
     git clone --bare --quiet "$BASE/domain-$d.git" "$mirror" 2>/dev/null || rm -rf "$mirror"
     [ -d "$mirror" ] || git clone --bare --quiet "$BASE/$d.git" "$mirror" 2>/dev/null || { write_status "$d" "" "$(readlink "$CHECKOUT/$d/current" 2>/dev/null | xargs -n1 basename 2>/dev/null)" "" "clone failed: $BASE/$d.git unreachable or missing"; return 0; }
   fi
-  if ! git -C "$mirror" fetch --quiet origin "+refs/heads/main:refs/heads/main" 2>/dev/null; then
+  # The lifecycle tags travel with main (WP-51): `live/*` as git has them NOW — pruned, so a retired
+  # object's tag disappears here too.
+  if ! git -C "$mirror" fetch --quiet --prune origin "+refs/heads/main:refs/heads/main" "+refs/tags/live/*:refs/tags/live/*" 2>/dev/null; then
     write_status "$d" "" "$(readlink "$CHECKOUT/$d/current" 2>/dev/null | xargs -n1 basename 2>/dev/null)" "" "fetch failed"
     return 0
   fi
@@ -323,6 +354,7 @@ while true; do
   for d in $all; do
     case "$d" in *..*|*/*) log "ignoring invalid domain name '$d'"; continue ;; esac
     sync_domain "$d" || log "$d: unexpected error (continuing)"
+    publish_live "$d" || log "$d: could not read the live tags (continuing)"
   done
   aggregate_status
   [ "$REPOINTED" = "1" ] && reload_location

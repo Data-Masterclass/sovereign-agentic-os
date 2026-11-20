@@ -222,9 +222,31 @@ async function defaultCapture(domain: string): Promise<SnapshotDashboard[]> {
  * Subscribe the commit path to the store's dashboard-change events. Returns the unsubscribe
  * function. Also RESERVES the `dashboards/` subtree, so the data side's whole-tree commit keeps it.
  */
+/** The deps the running hook was installed with — the ONE writer configuration (WP-51). */
+let installedDeps: HookDeps | null = null;
+
+/**
+ * Go-live (WP-51): settle in-flight hook commits, then commit `dashboards/**` from the CURRENT store
+ * through the same capture the hook uses, so the commit holds exactly the dashboard going live.
+ * Null when the writer is not running.
+ */
+export async function commitDashboardDefinition(
+  domain: string,
+  actor: ActorIdentity,
+  label: { object: string; objectId: string },
+  deps: { reposDir?: string } = {},
+): Promise<{ sha: string } | null> {
+  if (!installedDeps || !dashboardProjectGitEnabled()) return null;
+  await awaitDashboardCommits();
+  const captured = await (installedDeps.capture ? installedDeps.capture(domain) : defaultCapture(domain));
+  const r = await commitDashboards(domain, actor, { action: 'go-live', ...label, surface: 'os:lifecycle' }, { ...installedDeps, ...deps, captured });
+  return r ? { sha: r.sha } : null;
+}
+
 export function installDashboardCommitHook(deps: HookDeps = {}): () => void {
+  installedDeps = deps;
   reserveSubtree(DASHBOARDS_PREFIX);
-  return onDashboardChange((change) => {
+  const off = onDashboardChange((change) => {
     if (!dashboardProjectGitEnabled()) return;
     const surface = currentSurface(); // read synchronously, in the writer's async context
     if (!surface && !warnedSurfaces.has(change.action)) {
@@ -267,4 +289,8 @@ export function installDashboardCommitHook(deps: HookDeps = {}): () => void {
       );
     }
   });
+  return () => {
+    off();
+    if (installedDeps === deps) installedDeps = null;
+  };
 }

@@ -45,8 +45,11 @@ import {
   lifecycleIndex,
   setLivePin,
   clearLivePin,
+  lifecycleReposDir,
   type PinWriteDeps,
 } from '@core/infra/lifecycle-pins';
+
+const SHA_RE = /^[0-9a-f]{40}$/i;
 
 /** A typed failure the MCP layer maps to `bad_request` / `forbidden` / `not_found` / `conflict`. */
 export function lifecycleError(message: string, status: number): Error & { status: number } {
@@ -184,7 +187,12 @@ export type GoLiveResult = {
   /** The pinned ref — what Run serves from now on. */
   live: string;
   /** The git tag the pin carries, and whether it was actually written. */
-  tag: { name: string; written: boolean };
+  tag: { name: string; written: boolean; version?: string };
+  /**
+   * What the tagged commit holds (WP-51): the pinned commit, the definition written at go-live,
+   * or `not-in-git` for a kind whose definition has no git writer yet.
+   */
+  definition: 'commit' | 'rendered' | 'not-in-git' | null;
   /** The commit that recorded the pin in the domain repo, when the repo was writable. */
   commit: { sha: string; changed: boolean } | null;
   /** What now runs, in the tools' own words. */
@@ -222,7 +230,28 @@ export async function goLive(
   const decision = goLiveGuard(dependencies);
   if (!decision.ok) throw lifecycleError(decision.reason, 409);
 
-  const written = await setLivePin(object.kind, object.id, target, actor, object.domain, deps, object.path);
+  // WP-51: the live tag must name a commit that HOLDS what is live. A git sha is that commit. A
+  // content ref (`rev:`/`spec:`) is the object's current store state, so only the CURRENT version
+  // can go live, and the tab's own git writer commits it first.
+  let definitionCommit: string | undefined;
+  if (!SHA_RE.test(target)) {
+    if (target !== object.head) {
+      throw lifecycleError(
+        `${object.kind} “${object.name}” keeps its versions outside git, so only its current version (${object.head}) can go live — not ${target}`,
+        409,
+      );
+    }
+    const written = (await adapter.commitDefinition?.(actor, object, { reposDir: lifecycleReposDir(deps) })) ?? null;
+    if (written?.sha) {
+      const again = await adapter.resolve(actor, id);
+      if (again.head !== object.head) {
+        throw lifecycleError(`${object.kind} “${object.name}” changed while it was going live — try again`, 409);
+      }
+      definitionCommit = written.sha;
+    }
+  }
+
+  const written = await setLivePin(object.kind, object.id, target, actor, object.domain, { ...deps, ...(definitionCommit ? { definitionCommit } : {}) }, object.path);
   const index = await lifecycleIndex();
   const starts = (await adapter.consequences?.(actor, object)) ?? [];
   return {
@@ -233,6 +262,7 @@ export async function goLive(
     lifecycle: lifecycleOf(object.kind, object.id, object.head, index),
     live: written.pin.ref,
     tag: written.tag,
+    definition: written.pin.definition ?? null,
     commit: written.commit ? { sha: written.commit.sha, changed: written.commit.changed } : null,
     starts,
     warnings,

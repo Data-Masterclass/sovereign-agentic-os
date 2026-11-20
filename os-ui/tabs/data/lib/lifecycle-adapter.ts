@@ -19,6 +19,7 @@ import 'server-only';
 import type { LifecycleAdapter, LifecycleActor } from '@core/kernel/lifecycle-adapters';
 import { contentRef } from '@core/infra/content-ref';
 import { getDataset, ensureHydrated, listAllDatasets, type Principal } from '@tabs/data/lib/store';
+import { commitDataDefinition } from '@tabs/data/lib/dbt/commit';
 
 const P = (a: LifecycleActor): Principal => ({ id: a.id, domains: a.domains, role: a.role as Principal['role'] });
 
@@ -46,6 +47,8 @@ export const datasetLifecycleAdapter: LifecycleAdapter = {
     }
     return { ok: false, reason: `only ${d.owner} (or a domain admin in ${d.domain}) may change what runs for “${d.name}”` };
   },
+  // WP-51: the live tag names the commit that holds this dataset's current dbt model.
+  commitDefinition: async (actor, obj, deps) => commitDataDefinition(obj.domain, actor, { object: obj.name, objectId: obj.id }, deps),
   existing: async () => {
     await ensureHydrated();
     return listAllDatasets().map((d) => ({

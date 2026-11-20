@@ -29,6 +29,7 @@ import 'server-only';
 import type { LifecycleAdapter, LifecycleActor, DependencyRef } from '@core/kernel/lifecycle-adapters';
 import { livePin, lifecycleIndex, pinsHydrationState, pinsMigrated } from '@core/infra/lifecycle-pins';
 import { readBlob } from '@core/infra/git-store';
+import { readLiveRef } from '@core/infra/lifecycle-refs';
 import { config } from '@core/kernel/config';
 import { getSystem, listAllSystemsInternal, systemForScheduler, type Principal } from '@tabs/agents/lib/store';
 import { parseSystem, type Grants, type ArtifactGrant } from '@tabs/agents/lib/system-schema';
@@ -71,6 +72,9 @@ export function grantedDependencies(grants: Grants): DependencyRef[] {
 }
 
 export type ScheduledYaml =
+  /** Read from the commit the `live/agent/<id>` tag names in git (WP-51). */
+  | { ok: true; yaml: string; source: 'tag'; ref: string; tag: string }
+  /** A pre-tag pin (`untagged`): its recorded sha, until the tag migration runs. */
   | { ok: true; yaml: string; source: 'pin'; ref: string }
   /** Fail-OPEN: the pin index does not exist yet, so the head runs and the reason is logged. */
   | { ok: true; yaml: string; source: 'head'; ref: null; warning: string }
@@ -113,7 +117,21 @@ export async function scheduledSystemYaml(
       status: 409,
     };
   }
-  const path = pin.path ?? (await systemYamlPath(rec.domain, systemId));
+  // WP-51 (artifact contract A15b/C4): the loader reads the TAG itself from git. The index only
+  // said "live"; what runs is the commit `live/agent/<id>` names in the repo, read here and now. A
+  // pre-tag pin (`untagged`, from a version-1 pins.yml) runs its recorded sha until it is migrated.
+  const reposDir = deps.reposDir ?? config.reposDir;
+  const repo = pin.domain || rec.domain;
+  const live = pin.untagged ? null : await readLiveRef(repo, 'agent', systemId, { reposDir });
+  if (!pin.untagged && !live) {
+    return {
+      ok: false,
+      error: `“${systemId}” has no live/agent/${systemId} tag in '${repo}', so its schedule has nothing pinned to run — go live again`,
+      status: 409,
+    };
+  }
+  const commit = live ? live.commit : pin.ref;
+  const path = live?.path ?? pin.path ?? (await systemYamlPath(rec.domain, systemId));
   if (!path) {
     return {
       ok: false,
@@ -122,12 +140,14 @@ export async function scheduledSystemYaml(
     };
   }
   try {
-    const yaml = await readBlob(rec.domain, pin.ref, path, { reposDir: deps.reposDir ?? config.reposDir });
-    return { ok: true, yaml, source: 'pin', ref: pin.ref };
+    const yaml = await readBlob(repo, commit, path, { reposDir });
+    return live
+      ? { ok: true, yaml, source: 'tag', ref: commit, tag: live.tag }
+      : { ok: true, yaml, source: 'pin', ref: commit };
   } catch (e) {
     return {
       ok: false,
-      error: `the live version of “${systemId}” (${pin.ref}) could not be read from the repo: ${
+      error: `the live version of “${systemId}” (${live ? `${live.tag} → ${commit}` : commit}) could not be read from the repo: ${
         (e as Error).message
       }. The schedule is refused rather than running a different version.`,
       status: 409,

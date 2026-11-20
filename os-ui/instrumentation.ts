@@ -80,7 +80,13 @@ export async function register(): Promise<void> {
     const { connectionLifecycleAdapter } = await import('./tabs/connections/lib/lifecycle-adapter.ts');
     const { appLifecycleAdapter } = await import('./tabs/software/lib/lifecycle-adapter.ts');
     registerLifecycleAdapter(datasetLifecycleAdapter);
-    registerLifecycleAdapter(metricLifecycleAdapter);
+    // WP-51: a metric's semantic YAML is written by the data project's writer, so the metric's
+    // live tag names the commit that writer makes. Wired here: a tab may not import another tab.
+    const { commitDataDefinition } = await import('./tabs/data/lib/dbt/commit.ts');
+    registerLifecycleAdapter({
+      ...metricLifecycleAdapter,
+      commitDefinition: (actor, obj, deps) => commitDataDefinition(obj.domain, actor, { object: obj.name, objectId: `metric:${obj.id}` }, deps),
+    });
     registerLifecycleAdapter(knowledgeLifecycleAdapter);
     registerLifecycleAdapter(connectionLifecycleAdapter);
     registerLifecycleAdapter(appLifecycleAdapter);

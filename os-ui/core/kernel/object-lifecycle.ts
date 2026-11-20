@@ -128,6 +128,11 @@ export type Pin = {
    * `live/<kind>/<id>` tag carries yet. Honoured as Live until the tag migration runs.
    */
   untagged?: boolean;
+  /**
+   * What the tagged commit holds (WP-51 `OS-Definition`): `commit` (the pinned sha), `rendered`
+   * (written at go-live by the tab's git writer) or `not-in-git` (no git writer for this kind yet).
+   */
+  definition?: 'commit' | 'rendered' | 'not-in-git';
 };
 
 /** The in-flight test marker — a ref being exercised from Studio, never a managed state. */
