@@ -80,7 +80,9 @@ echo "== 3. the dev chart, applied as the CI account"
 cat > "$TMP/private.yaml" <<'YAML'
 osUI: { usersSeed: '[{"id":"nova-admin","email":"nova@northpeak.demo","password":"p","domains":["platform"],"role":"admin"}]' }
 YAML
-render() { helm template agentic-os charts/sovereign-agentic-os -n agentic-os --skip-schema-validation "$@" 2>/dev/null; }
+# A pod-security render, not a secrets test: the overlay keeps the chart's default secrets, which the
+# chart refuses for an install with an Ingress (secret-defaults-guard.yaml) — allowed for this render.
+render() { helm template agentic-os charts/sovereign-agentic-os -n agentic-os --skip-schema-validation --set global.allowChartDefaultSecrets=true "$@" 2>/dev/null; }
 render -f values.dev.yaml -f "$TMP/private.yaml" > "$TMP/dev.yaml"
 out=$(K apply --dry-run=server --as "$SA" -n agentic-os -f "$TMP/dev.yaml" 2>&1); rc=$?
 rc_is "the dev render is accepted, as the CI account" 0
