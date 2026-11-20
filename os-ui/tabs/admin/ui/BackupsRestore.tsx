@@ -3,14 +3,14 @@
  */
 /**
  * TAB:        admin
- * FEATURE:    Backups & Restore — what this page can and cannot tell an admin, as a Platform tab
- * USER STORY: As a platform admin I want this page to say plainly that backup status is not
- *             connected to it yet and where the real state and the restore procedure are, instead
- *             of a table of invented "success" rows and a Restore button that restores nothing.
+ * FEATURE:    Backups & Restore — the live state of every backup and restore drill, as a Platform tab
+ * USER STORY: As a platform admin I want to see, per backup, what the tool itself reports — last
+ *             run, result, age, location — red when it failed and amber when it is missing or
+ *             stale, and no Restore button that restores nothing.
  * ARCHITECTURE:
- *   - No reader of the backup jobs exists (lib/backups.ts), so the page shows BACKUP_STATUS_NOTE
- *     and lists only targets the API really returns (none today). The Restore action is removed;
- *     the API refuses one with 501 and records nothing.
+ *   - GET /api/platform-admin/backups → `listBackups()` (lib/backups.ts), the same live read as
+ *     the Monitoring backup alerts. The page renders the rows as returned; it adds no status.
+ *   - Restore stays a runbook procedure (docs/backups.md); the API refuses one with 501.
  *   - The page's `.content` wrapper moved up to platform/page.tsx; the leftover plain <div> is it.
  *   - FAIL-CLOSED gate: Platform is minRole 'builder' (only Overview & Health is builder-readable),
  *     and every section now lives at /platform, so the old pathname gate in platform/layout.tsx no
@@ -26,7 +26,9 @@ import { useEffect, useState } from 'react';
 import { useUser } from '@core/ui/useUser';
 import { roleAtLeast } from '@core/kernel/session';
 import { sectionMinRole } from '@tabs/admin/lib/sections';
-import { BACKUP_STATUS_NOTE, type BackupTarget } from '@tabs/admin/lib/backups';
+import type { BackupRow } from '@tabs/admin/lib/backup-status-core';
+
+const BADGE: Record<BackupRow['health'], string> = { green: 'ok', amber: 'warn', red: 'err' };
 
 export default function BackupsRestore() {
   const { user, loading } = useUser();
@@ -38,7 +40,8 @@ export default function BackupsRestore() {
 }
 
 function BackupsRestoreInner() {
-  const [targets, setTargets] = useState<BackupTarget[]>([]);
+  const [rows, setRows] = useState<BackupRow[] | null>(null);
+  const [checkedAt, setCheckedAt] = useState('');
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -47,31 +50,29 @@ function BackupsRestoreInner() {
         const res = await fetch('/api/platform-admin/backups', { cache: 'no-store' });
         const body = await res.json();
         if (!res.ok) setError(body.error ?? 'Failed to load');
-        else setTargets(body.targets ?? []);
+        else { setRows(body.backups ?? []); setCheckedAt(body.checkedAt ?? ''); }
       } catch (e) { setError((e as Error).message); }
     })();
   }, []);
 
   return (
     <div>
-      {error ? <div className="error">{error}</div> : null}
+      {error ? <div className="error" role="alert">Backup status could not be read: {error}</div> : null}
       <div className="section-title">Backups</div>
-      <p className="hint" role="status" data-testid="backup-status-note">{BACKUP_STATUS_NOTE}</p>
-      {targets.length > 0 ? (
+      <p className="hint">Read live from each tool: Kubernetes (pg-dump, snapshot jobs), Velero, OpenSearch and the restore drills.{checkedAt ? ` Checked ${new Date(checkedAt).toLocaleString()}.` : ''} Restores follow the runbook, docs/backups.md.</p>
+      {rows === null && !error ? <p className="muted">Reading backup status…</p> : null}
+      {rows && rows.length === 0 ? <p className="error" role="status" data-testid="backup-none">This release runs no backup at all.</p> : null}
+      {rows && rows.length > 0 ? (
         <div className="table-wrap">
-          <table>
-            <thead><tr><th>Store</th><th>Method</th><th>Frequency</th><th>Retention</th><th>Last run</th></tr></thead>
+          <table data-testid="backup-rows">
+            <thead><tr><th>Backup</th><th>Status</th><th>Last</th><th>Details</th></tr></thead>
             <tbody>
-              {targets.map((t) => (
-                <tr key={t.id}>
-                  <td><strong>{t.name}</strong></td>
-                  <td className="muted" style={{ fontSize: 12 }}>{t.method}</td>
-                  <td>{t.frequency}</td>
-                  <td>{t.retention}</td>
-                  <td>
-                    <span className={`badge ${t.lastStatus === 'success' ? 'ok' : 'err'}`}>{t.lastStatus}</span>
-                    <div className="muted" style={{ fontSize: 11 }}>{new Date(t.lastRun).toLocaleString()}</div>
-                  </td>
+              {rows.map((r) => (
+                <tr key={r.id} data-health={r.health}>
+                  <td><strong>{r.name}</strong><div className="muted" style={{ fontSize: 11 }}>{r.source}</div></td>
+                  <td><span className={`badge ${BADGE[r.health]}`}>{r.status}</span></td>
+                  <td>{r.lastAt ? new Date(r.lastAt).toLocaleString() : '—'}{r.ageHours !== null ? <div className="muted" style={{ fontSize: 11 }}>{r.ageHours} h ago</div> : null}</td>
+                  <td className="muted" style={{ fontSize: 12 }}>{r.detail}</td>
                 </tr>
               ))}
             </tbody>

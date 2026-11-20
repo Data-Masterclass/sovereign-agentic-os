@@ -41,5 +41,11 @@
   value: {{ $v.namespace | default "" | quote }}
 - name: SOA_BACKUP_ALERT_VELERO_SCHEDULE
   value: {{ $v.scheduleName | default "" | quote }}
+{{- if and .Values.backup.pgDump.enabled .Values.postgres.enabled }}
+- name: SOA_BACKUP_PGDUMP_LOCATION
+  value: {{ printf "s3://%s/%s/" .Values.backup.pgDump.bucket .Values.backup.pgDump.prefix | quote }}
+{{- end }}
+- name: SOA_BACKUP_DRILL_CONFIGMAP
+  value: {{ ((.Values.backup.drill | default dict).statusConfigMap | default "restore-drill-status") | quote }}
 {{- end }}
 {{- end }}

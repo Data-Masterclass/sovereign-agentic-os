@@ -2,33 +2,22 @@
  * Copyright 2026 Borek Data Ventures UG
  */
 /**
- * Backups & Restore adapter.
- *
- * HONEST STATE (2026-11-19). This page used to list five hard-coded backup targets, every one
- * "success" on 30 June 2026, and offered a guarded Restore that wrote an audit row and restored
- * nothing. Nothing in os-ui reads the backup CronJob or Velero yet, so:
- *   • `listTargets()` returns no targets — the page shows `BACKUP_STATUS_NOTE` instead, which
- *     points at the runbook (`docs/backups.md`) where the real state is read with kubectl;
- *   • `restore()` refuses with 501 and writes NO audit row — an audit record of a restore that
- *     did not happen is a false record. Restores are run from the runbook.
- * When a governed reader of the backup jobs exists, it fills `listTargets()` from real status.
+ * FEATURE:    Backups & Restore adapter — the live backup state for Platform → Backups (WP-05).
+ * USER STORY: As a platform admin I want the Backups panel to show each backup's real last run,
+ *             result and age, read from the tool itself, and a restore that is never faked.
+ * ARCHITECTURE:
+ *   - `listBackups()` = `backupRows(readBackupSources())`: the SAME read the Monitoring backup
+ *     alerts use (Kubernetes Jobs, Velero backups, OpenSearch snapshots, the restore-drill
+ *     ConfigMap). No status is invented: a missing, stale or unreadable source is amber, a failed
+ *     backup or drill is red.
+ *   - `restore()` refuses with 501 and writes NO audit row — an audit record of a restore that did
+ *     not happen is a false record. Restores are run from the runbook (docs/backups.md).
  */
+import { config } from '@core/kernel/config';
+import { readBackupSources } from '@core/infra/backup-sources';
+import { backupRows, type BackupRow } from '@tabs/admin/lib/backup-status-core';
 
-export type BackupTarget = {
-  id: string;
-  name: string;
-  method: string;
-  frequency: string;
-  retention: string;
-  lastRun: string;
-  lastStatus: 'success' | 'failed';
-};
-
-/** What the page says while no backup status is read (and where the real state is). */
-export const BACKUP_STATUS_NOTE =
-  'Backup status is not connected to this page yet. The nightly backups (the pg-dump CronJob and ' +
-  'the Velero schedule) and how to check and restore them are described in the runbook, ' +
-  'docs/backups.md in the repository (section "Operations").';
+export type { BackupRow } from '@tabs/admin/lib/backup-status-core';
 
 export const RESTORE_UNAVAILABLE = 'Restore is not available from the UI yet. Follow the runbook, docs/backups.md.';
 
@@ -38,9 +27,10 @@ function fail(message: string, status: number): Error {
   return e;
 }
 
-/** No reader of real backup status exists yet, so no target is listed (never an invented one). */
-export function listTargets(): BackupTarget[] {
-  return [];
+/** Every backup and restore drill of this release, read live. */
+export async function listBackups(now = new Date()): Promise<BackupRow[]> {
+  const src = await readBackupSources();
+  return backupRows(src, now, { pgDumpLocation: config.backupAlerts.pgDumpLocation || undefined, veleroConfigured: !!config.backupAlerts.veleroNamespace });
 }
 
 /** Refused: nothing in the OS performs a restore, so nothing is recorded as one. */

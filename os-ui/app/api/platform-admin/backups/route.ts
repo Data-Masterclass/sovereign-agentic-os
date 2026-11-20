@@ -3,14 +3,14 @@
  */
 import { NextResponse } from 'next/server';
 import { adminCtx, fail } from '../_ctx';
-import { listTargets, restore, BACKUP_STATUS_NOTE } from '@tabs/admin/lib/backups';
+import { listBackups, restore } from '@tabs/admin/lib/backups';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET() {
   try {
     await adminCtx();
-    return NextResponse.json({ targets: listTargets(), note: BACKUP_STATUS_NOTE });
+    return NextResponse.json({ backups: await listBackups(), checkedAt: new Date().toISOString() });
   } catch (e) {
     return fail(e);
   }

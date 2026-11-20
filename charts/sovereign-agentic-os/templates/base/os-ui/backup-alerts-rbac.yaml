@@ -3,37 +3,42 @@
   Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
 
   WP-05 — READ-ONLY grants for the backup failure alerts (_backup-alerts.tpl):
-    - os-ui-backup-jobs: `get,list` on batch/v1 Jobs in this namespace (the pg-dump and
-      opensearch-snapshot CronJobs' Jobs). No create/delete, no pods/exec.
+    - os-ui-backup-status: `get,list` on batch/v1 Jobs in this namespace (the pg-dump and
+      opensearch-snapshot CronJobs' Jobs), and `get` on the ONE restore-drill results ConfigMap
+      (Platform → Backups). No create/delete, no pods/exec, no other ConfigMap, no Secret.
     - os-ui-velero-backups (in the Velero namespace, only when it is set): `get,list` on
       `backups.velero.io`. No restores, no schedules, no write.
 */}}
 {{- $a := (.Values.observability | default dict).backupAlerts | default dict }}
 {{- if $a.enabled }}
-{{- if include "soa.backupAlerts.cronJobs" . }}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: os-ui-backup-jobs
+  name: os-ui-backup-status
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "soa.labels" . | nindent 4 }}
 rules:
+  {{- if include "soa.backupAlerts.cronJobs" . }}
   - apiGroups: ["batch"]
     resources: ["jobs"]
     verbs: ["get", "list"]
+  {{- end }}
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: [{{ ((.Values.backup.drill | default dict).statusConfigMap | default "restore-drill-status") | quote }}]
+    verbs: ["get"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: os-ui-backup-jobs
+  name: os-ui-backup-status
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "soa.labels" . | nindent 4 }}
-roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: os-ui-backup-jobs }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: os-ui-backup-status }
 subjects:
   - { kind: ServiceAccount, name: os-ui, namespace: {{ .Release.Namespace }} }
-{{- end }}
 {{- $v := $a.velero | default dict }}
 {{- if $v.namespace }}
 {{- if not $v.scheduleName }}{{ fail "observability.backupAlerts.velero.namespace needs observability.backupAlerts.velero.scheduleName (the Velero Schedule whose backups are watched)" }}{{ end }}
