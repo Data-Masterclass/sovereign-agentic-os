@@ -940,6 +940,16 @@ opa:
     grants: { longPollingTimeoutSeconds: 30 }
     # 10 F7: the only user attributes that may reach os_data.users[uid].attrs.
     abacAttributes: [region, cost_center]
+    # A small volume for /var/opa so a NEW pod (node roll, eviction, rollout restart) starts from
+    # the last good bundles instead of nothing. Off → emptyDir (container restarts only).
+    persistence:
+      enabled: true
+      size: 1Gi
+      storageClass: ""
+    # Bundle guards (os-ui): a compile with fewer governance tables than the last good bundle, a
+    # missing internal (`iceberg.*`) table, or a relative drop above this in grant principals,
+    # governance principals or tables is refused until an admin acknowledges it.
+    maxDropPercent: 10
   grants:
     sovereign-agents:           # the default agent key — no internet
       - rag_search
@@ -964,8 +974,6 @@ opa:
       - notion_search
       - notion_get_page
       - notion_create_page       # Write-approval (see requiresApproval); delete is Blocked (absent)
-    opa-status-reporter:        # WP-11: OPA's status reports to os-ui (POST /api/opa/status)
-      - opa_status_report
     conn-salesforce-sales-org:  # API connection — reads scoped to Sales, bounded write
       - read_account
       - read_opportunity

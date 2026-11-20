@@ -11,6 +11,7 @@
 import { authorize } from '@core/infra/governed';
 import { opaBearerOk } from '@core/policy/bundle-auth';
 import { opaInstanceStatuses, recordOpaStatus } from '@core/policy/opa-status';
+import { noteActiveOsDataRevision } from '@core/policy/bundle';
 
 export const dynamic = 'force-dynamic';
 
@@ -29,6 +30,7 @@ export async function POST(req: Request): Promise<Response> {
   }
   const instance = recordOpaStatus(body);
   if (!instance) return Response.json({ error: 'not an OPA status report' }, { status: 400 });
+  for (const i of opaInstanceStatuses()) noteActiveOsDataRevision(i.bundles['os-data']?.active_revision);
   return new Response(null, { status: 204 });
 }
 

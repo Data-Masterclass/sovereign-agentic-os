@@ -564,6 +564,17 @@ export const config = {
   get opaBundleInstances(): string[] {
     return (process.env.OS_OPA_INSTANCES ?? 'opa').split(',').map((s) => s.trim()).filter(Boolean);
   },
+  // WP-11: the dedicated bearer OPA presents to the bundle and status routes (Secret
+  // `opa-bundle-token`, web process only). Empty → those routes refuse every caller.
+  get opaBundleToken(): string {
+    return (process.env.OS_OPA_BUNDLE_TOKEN ?? '').trim();
+  },
+  // WP-11 bundle guard: the largest relative drop (percent) a compile may show against the last
+  // good bundle without an admin's acknowledgement.
+  get opaMaxDropPercent(): number {
+    const n = Number(process.env.OS_OPA_MAX_DROP_PERCENT ?? '10');
+    return Number.isFinite(n) && n >= 0 ? n : 10;
+  },
   // 10 F7: the only user attributes that may reach `os_data.users[uid].attrs`.
   get abacAttributes(): string[] {
     return (process.env.OS_ABAC_ATTRIBUTES ?? 'region,cost_center').split(',').map((s) => s.trim()).filter(Boolean);
