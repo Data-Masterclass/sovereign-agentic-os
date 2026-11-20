@@ -42,6 +42,11 @@ export type TrinoPort = {
 /** Resolve an artifact owner's LIVE principal; must throw when the owner cannot act. */
 export type OwnerPrincipal = (ownerId: string) => Promise<Principal>;
 
+/** The delete-domain purge catalog (chart `polaris.purge.catalog`): the same warehouse, reached
+ *  as the dedicated Polaris principal that may purge. Every DROP of this run goes there; reads stay
+ *  on `iceberg`. A Data-tab DROP through `iceberg` cannot purge (Polaris refuses it). */
+export const PURGE_CATALOG = 'iceberg_purge';
+
 const q = (s: string) => `'${s.replace(/'/g, "''")}'`;
 
 export function icebergComponent(deps: {
@@ -123,10 +128,10 @@ export function icebergComponent(deps: {
       const [schema, table, object, who] = item.id.split('|');
       const id = who.startsWith('domain:') ? domainIdentity(domainId, actor.id, actor.role) : await identityFor(who, domainId, actor.role);
       if (object === 'schema') {
-        await deps.trino.execute(`DROP SCHEMA IF EXISTS iceberg.${schema}`, id);
-        return `DROP SCHEMA iceberg.${schema}`;
+        await deps.trino.execute(`DROP SCHEMA IF EXISTS ${PURGE_CATALOG}.${schema}`, id);
+        return `DROP SCHEMA ${PURGE_CATALOG}.${schema}`;
       }
-      const stmt = `DROP ${object === 'view' ? 'VIEW' : 'TABLE'} IF EXISTS iceberg.${schema}.${table}`;
+      const stmt = `DROP ${object === 'view' ? 'VIEW' : 'TABLE'} IF EXISTS ${PURGE_CATALOG}.${schema}.${table}`;
       await deps.trino.execute(stmt, id);
       return stmt;
     },

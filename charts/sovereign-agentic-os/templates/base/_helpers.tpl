@@ -392,3 +392,32 @@ the any-443 policy, so the three can never disagree.
 {{- $llm := .Values.llmProviders | default dict -}}
 {{- if and .Values.egressProxy.enabled (ne ($llm.viaEgressProxy | toString) "false") }}true{{ end -}}
 {{- end }}
+
+{{/*
+The Iceberg REST (Polaris) catalog properties Trino uses, with the OAuth2 credential as an
+argument: `iceberg.properties` passes `${ENV:POLARIS_OAUTH_CREDENTIAL}`; the delete-domain purge
+catalog (polaris-purge Job) passes its own principal's credential.
+*/}}
+{{- define "soa.icebergRestCatalogProps" -}}
+{{- $t := .ctx.Values.trino -}}
+{{- $ice := $t.catalog.iceberg -}}
+connector.name=iceberg
+iceberg.catalog.type=rest
+iceberg.rest-catalog.uri={{ $ice.restUri }}
+iceberg.rest-catalog.warehouse={{ $ice.warehouse }}
+iceberg.rest-catalog.security=OAUTH2
+iceberg.rest-catalog.oauth2.credential={{ .credential }}
+iceberg.rest-catalog.oauth2.scope={{ $ice.oauth2Scope }}
+iceberg.rest-catalog.vended-credentials-enabled={{ $ice.vendedCredentials }}
+{{- with $ice.expireSnapshotsMinRetention }}
+iceberg.expire-snapshots.min-retention={{ . }}
+{{- end }}
+fs.native-s3.enabled=true
+s3.endpoint={{ include "soa.s3Endpoint" .ctx }}
+s3.region={{ $t.s3.region }}
+s3.path-style-access={{ $t.s3.pathStyleAccess }}
+{{- if not $ice.vendedCredentials }}
+s3.aws-access-key=${ENV:AWS_ACCESS_KEY_ID}
+s3.aws-secret-key=${ENV:AWS_SECRET_ACCESS_KEY}
+{{- end }}
+{{- end -}}
