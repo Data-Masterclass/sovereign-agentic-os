@@ -20,6 +20,7 @@
 import { config } from '@core/kernel/config';
 import { emitDirectoryChange } from '@core/kernel/events';
 import { osMirror } from '@core/infra/os-mirror';
+import { domainIdent as domainSchema } from '@core/kernel/domain-ident';
 
 export type DomainLayers = { ml: boolean };
 
@@ -180,6 +181,11 @@ export function createDomain(input: { name: string; owner: string }): Domain {
   const id = slug(input.name);
   if (!id) throw fail('A domain name is required', 400);
   if (domainsState().store.has(id)) throw fail('That domain already exists', 409);
+  // Two ids that sanitize to one identifier would share a schema (`iceberg.<id>`), landing schemas
+  // and a dbt project. Archived domains still hold theirs.
+  const schema = domainSchema(id);
+  const clash = [...domainsState().store.values()].find((x) => domainSchema(x.id) === schema);
+  if (clash) throw fail(`That domain's identifier ${schema} is already used by domain "${clash.id}"; choose a different name`, 409);
   const d: Domain = {
     id,
     name: input.name.trim(),
@@ -191,6 +197,42 @@ export function createDomain(input: { name: string; owner: string }): Domain {
   domainsState().store.set(id, d);
   writeThrough(d); // best-effort durable mirror
   return d;
+}
+
+/**
+ * Every group of domains whose ids sanitize to ONE schema identifier (`a-b` / `a--b` → `a_b`).
+ * Read-only: it inspects the ids it is given and changes nothing. Groups and their ids are sorted.
+ */
+export function domainCollisions(domains: { id: string }[]): { schema: string; domains: string[] }[] {
+  const by = new Map<string, Set<string>>();
+  for (const d of domains) {
+    const k = domainSchema(d.id);
+    if (!by.has(k)) by.set(k, new Set());
+    by.get(k)!.add(d.id);
+  }
+  return [...by.entries()]
+    .filter(([, ids]) => ids.size > 1)
+    .map(([schema, ids]) => ({ schema, domains: [...ids].sort() }))
+    .sort((a, b) => a.schema.localeCompare(b.schema));
+}
+
+/**
+ * The domain ids in an operator's read-only export: the admin API body (`GET
+ * /api/platform-admin/domains` → `{ domains }`), a plain array, or a search response over the
+ * `os-domains` index (`hits.hits[]._source`, falling back to `_id`).
+ */
+export function domainIdsFromJson(text: string): { id: string }[] {
+  const doc = JSON.parse(text) as unknown;
+  const rows: unknown[] = Array.isArray(doc)
+    ? doc
+    : Array.isArray((doc as { domains?: unknown })?.domains)
+      ? (doc as { domains: unknown[] }).domains
+      : Array.isArray((doc as { hits?: { hits?: unknown } })?.hits?.hits)
+        ? (doc as { hits: { hits: { _id?: string; _source?: { id?: string } }[] } }).hits.hits.map((h) => ({ id: h._source?.id ?? h._id }))
+        : [];
+  const ids = rows.map((r) => (r as { id?: unknown })?.id).filter((x): x is string => typeof x === 'string' && x.length > 0);
+  if (!ids.length) throw new Error('no domains found in the export');
+  return ids.map((id) => ({ id }));
 }
 
 export function renameDomain(id: string, name: string): Domain {
