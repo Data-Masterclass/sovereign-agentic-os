@@ -26,6 +26,37 @@ export async function getJson(bucket, key) {
 }
 
 export async function list(bucket, prefix = '') {
-  const { data } = await request('seaweedfs', `LIST ${bucket}/${prefix}`, `${await baseUrl('seaweedfsFiler')}/buckets/${bucket}/${enc(prefix)}?limit=1000`, { headers: { accept: 'application/json' } });
+  const path = bucket ? `/buckets/${bucket}/${enc(prefix)}` : '/buckets/';
+  const { data } = await request('seaweedfs', `LIST ${bucket}/${prefix}`, `${await baseUrl('seaweedfsFiler')}${path}?limit=1000`, { headers: { accept: 'application/json' } });
   return (data.Entries ?? []).map((e) => e.FullPath);
+}
+
+// ---- S3 API (through the S3 gateway, AWS Signature V4) — used by the harness self-test to prove
+// the S3 protocol works end to end, then read back through the filer above.
+// Docs: https://docs.aws.amazon.com/AmazonS3/latest/API/sig-v4-header-based-auth.html
+import { createHash, createHmac } from 'node:crypto';
+
+const sha256 = (d) => createHash('sha256').update(d).digest('hex');
+const hmac = (k, d) => createHmac('sha256', k).update(d).digest();
+
+export async function putObject(bucket, key, body, { accessKey = 'agentic-os-local', secretKey = 'agentic-os-local-secret', region = 'us-east-1' } = {}) {
+  const base = new URL(await baseUrl('seaweedfsS3'));
+  const path = `/${bucket}/${enc(key)}`;
+  const now = new Date().toISOString().replace(/[:-]|\.\d{3}/g, '');
+  const date = now.slice(0, 8);
+  const payloadHash = sha256(body);
+  const host = base.host;
+  const canonical = ['PUT', path, '', `host:${host}`, `x-amz-content-sha256:${payloadHash}`, `x-amz-date:${now}`, '', 'host;x-amz-content-sha256;x-amz-date', payloadHash].join('\n');
+  const scope = `${date}/${region}/s3/aws4_request`;
+  const toSign = ['AWS4-HMAC-SHA256', now, scope, sha256(canonical)].join('\n');
+  const kSigning = hmac(hmac(hmac(hmac(`AWS4${secretKey}`, date), region), 's3'), 'aws4_request');
+  const signature = createHmac('sha256', kSigning).update(toSign).digest('hex');
+  const { status } = await request('seaweedfs', `S3 PUT ${bucket}/${key}`, `${base.origin}${path}`, {
+    method: 'PUT', body,
+    headers: {
+      'x-amz-date': now, 'x-amz-content-sha256': payloadHash,
+      authorization: `AWS4-HMAC-SHA256 Credential=${accessKey}/${scope}, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=${signature}`,
+    },
+  });
+  return status;
 }

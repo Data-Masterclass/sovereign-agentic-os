@@ -15,12 +15,20 @@
 #   2. Object storage is SeaweedFS (manifests/seaweedfs.yaml), not the bundled MinIO. The chart's
 #      own `external` mode is used, so every consumer reads the endpoint from soa.s3Endpoint.
 #   3. The model upstream is the scripted, request-counting stub (model-stub/). It replaces the
-#      mock-model IMAGE only; the Deployment, Service and LiteLLM routing are the chart's.
-#   4. The Northpeak demo seed is off: the journeys bring their own fixtures, and the seed's
+#      mock-model IMAGE only; the Deployment, Service and LiteLLM model list are the chart's. The
+#      chat aliases (sovereign-default, sovereign-reasoning, …) resolve their api_base from
+#      STACKIT_API_BASE, so that one URL points at the stub: LiteLLM keeps its production config
+#      and only the upstream behind it changes (MASTER-PLAN Part 2 §C: "only the model upstream is
+#      a scripted stub").
+#   4. The agent worker runs as its own Deployment (os-ui-worker), as in production, so AT-c can
+#      delete the worker pod mid-run and prove the run resumes from its checkpoint.
+#   5. The Northpeak demo seed is off: the journeys bring their own fixtures, and the seed's
 #      init job depends on the bundled bucket-init hook that external mode does not render.
 
 osUI:
   offlineMock: refuse
+  worker:
+    enabled: true
 
 objectStorage:
   enabled: false
@@ -40,6 +48,11 @@ mockModel:
   image:
     repository: sovereign-os/e2e-model-stub   # built from tests/e2e/kind/model-stub, loaded into kind
     tag: "0.1.0"
+
+stackitPremium:
+  apiBaseUrl: http://mock-model:8080/v1
+  local:
+    apiKey: e2e-model-stub      # the stub ignores it; LiteLLM requires a non-empty key
 
 marts:
   enabled: false

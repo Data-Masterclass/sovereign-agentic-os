@@ -12,9 +12,11 @@ dagster user code, data-runner, query-tool) are under `images/`, not here.
 
 | Component | Licence |
 |---|---|
+| [Calico](calico/UPSTREAM.md) (acceptance harness only) | Apache-2.0 |
     | [ClickHouse](clickhouse/UPSTREAM.md) | Apache-2.0 |
 | [Dagster](dagster/UPSTREAM.md) | Apache-2.0 |
 | [Docling](docling/UPSTREAM.md) | MIT |
+| [kind](kind/UPSTREAM.md) (test clusters only) | Apache-2.0 |
 | [Langfuse](langfuse/UPSTREAM.md) | MIT (core; the upstream `ee/` directory is commercially licensed and not enabled) |
 | [LangGraph JS](langgraph/UPSTREAM.md) | MIT (in-process library, not a deployment) |
 | [LiteLLM](litellm/UPSTREAM.md) | MIT |
@@ -23,5 +25,6 @@ dagster user code, data-runner, query-tool) are under `images/`, not here.
 | [OpenSearch](opensearch/UPSTREAM.md) | Apache-2.0 |
 | [Apache Polaris (incubating)](polaris/UPSTREAM.md) | Apache-2.0 |
 | [PostgreSQL (CloudNativePG)](postgresql/UPSTREAM.md) | PostgreSQL License (server) · Apache-2.0 (CloudNativePG operator) |
+| [SeaweedFS](seaweedfs/UPSTREAM.md) (dev/CI S3) | Apache-2.0 |
 | [Trino](trino/UPSTREAM.md) | Apache-2.0 |
 | [Valkey](valkey/UPSTREAM.md) | BSD-3-Clause |

@@ -8,7 +8,8 @@
  * ARCHITECTURE:
  *   - Shells out to kubectl with --context kind-$E2E_CLUSTER (never the current context, so the
  *     harness can never touch a real cluster by accident).
- *   - portForward() starts `kubectl port-forward svc/<name> :<port>`, parses the local port, and
+ *   - portForward() starts `kubectl port-forward svc/<name> :<port>` (or any `<kind>/<name>` target,
+ *     e.g. deployment/trino to reach a sidecar bound to the pod's 127.0.0.1), parses the local port, and
  *     keeps one forward per service:port for the life of the process.
  */
 import { execFile, spawn } from 'node:child_process';
@@ -53,7 +54,7 @@ export function portForward(service, port, ns = NS) {
   const key = `${ns}/${service}:${port}`;
   if (forwards.has(key)) return forwards.get(key);
   const p = new Promise((resolve, reject) => {
-    const child = spawn('kubectl', ['--context', CONTEXT, '-n', ns, 'port-forward', `svc/${service}`, `:${port}`], { stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn('kubectl', ['--context', CONTEXT, '-n', ns, 'port-forward', service.includes('/') ? service : `svc/${service}`, `:${port}`], { stdio: ['ignore', 'pipe', 'pipe'] });
     child.unref();
     let err = '';
     const timer = setTimeout(() => { child.kill(); reject(new HopError({ component: service, hop: 'port-forward', reason: `no forward after 30s ${err.trim()}` })); }, 30000);
