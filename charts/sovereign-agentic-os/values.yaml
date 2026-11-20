@@ -122,7 +122,7 @@ backup:
       maxDriftPct: 25             # restored vs live row count per table
       minDriftRows: 10
       ignoreDatabases: []         # databases legitimately empty (never the OS's own)
-      criticalTables: []          # "db:schema.table" that must have rows in the restore
+      criticalTables: []          # "db:schema.table" that must have rows in the restore; REQUIRED (render fails) when the postgres check runs
     resources:
       requests: { cpu: 50m, memory: 128Mi }
       limits: { cpu: "1", memory: 1Gi }

@@ -26,6 +26,8 @@ INDICES=${OS_DRILL_INDICES:-*,-.*}
 DRIFT=${OS_DRILL_MAX_DRIFT_PCT:-10}
 OUT="$RESULTS_DIR/opensearch.json"
 MAX_AGE_H=${OS_DRILL_MAX_AGE_HOURS:-26}
+# A snapshot that ENDS in the future (beyond this clock slack) is refused, never taken as fresh.
+CLOCK_SLACK_S=${DRILL_CLOCK_SLACK_SECONDS:-3600}
 mkdir -p "$RESULTS_DIR" || { echo "FATAL: cannot create $RESULTS_DIR"; exit 1; }
 case $PFX in drill-*) ;; *) echo "FATAL: OS_DRILL_PREFIX must start with drill-"; exit 1 ;; esac
 esc() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g' | tr '\n\t' '  '; }
@@ -53,7 +55,10 @@ SNAP=$(os_curl GET "/_cat/snapshots/$OS_DRILL_REPO?h=id,status,end_epoch&s=end_e
 LINE=$(printf '%s\n' "$SNAP" | awk '$2=="SUCCESS"{l=$0} END{print l}')
 SNAP=$(printf '%s' "$LINE" | awk '{print $1}'); END_EPOCH=$(printf '%s' "$LINE" | awk '{print $3}')
 [ -n "$SNAP" ] || result fail "repository '$OS_DRILL_REPO' has no successful snapshot"
-age_h=$(( ($(date -u +%s) - ${END_EPOCH:-0}) / 3600 ))
+case "${END_EPOCH:-}" in ''|*[!0-9]*) result fail "the newest snapshot $SNAP has no readable end time ('${END_EPOCH:-}')";; esac
+age_s=$(( $(date -u +%s) - END_EPOCH ))
+[ "$age_s" -ge "$(( 0 - CLOCK_SLACK_S ))" ] || result fail "the newest snapshot $SNAP ends $(( -age_s / 60 )) min in the future, beyond the ${CLOCK_SLACK_S} s clock slack: its time is wrong"
+age_h=$(( age_s / 3600 ))
 [ "$age_h" -le "$MAX_AGE_H" ] || result fail "the newest snapshot $SNAP is ${age_h} h old, above the ${MAX_AGE_H} h limit: snapshots have stopped"
 
 BODY=$(printf '{"indices":"%s","ignore_unavailable":true,"include_global_state":false,"include_aliases":false,"rename_pattern":"(.+)","rename_replacement":"%s$1"}' "$INDICES" "$PFX")

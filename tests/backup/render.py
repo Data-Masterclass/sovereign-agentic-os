@@ -23,6 +23,7 @@ ON = [
     'backup.gitBundles.enabled=true', 'backup.gitBundles.bucket=soa-bundles',
     'backup.gitBundles.image.digest=sha256:' + '0' * 64,
     'backup.drill.enabled=true', 'backup.pgDump.enabled=true',
+    'backup.drill.postgresCompare.criticalTables={shop:public.orders}',
     'backup.veleroDrill.enabled=true', 'backup.veleroDrill.acceptRestoreCreateRisk=true',
 ]
 

@@ -113,10 +113,21 @@ backup:
   drill:
     enabled: true            # needs backup.pgDump.enabled for the Postgres part,
                              # and the WP-21 S3 snapshot repository for the OpenSearch part
+    postgresCompare:
+      # REQUIRED with the Postgres part (the render refuses an empty list): tables that must
+      # hold rows in the restore, as "database:schema.table". Without them a small table that
+      # restores empty can pass inside the row-drift allowance (minDriftRows).
+      criticalTables: ["<db>:public.<table>", "..."]
   veleroDrill:
     enabled: true            # needs Velero (deploy/velero/) and its schedule's backups
     acceptRestoreCreateRisk: true   # see "Residual risk" below — the render refuses without it
 ```
+
+Monitoring shows each enabled drill as RED, with a critical alert, when its report is
+**missing** (the Job never reached its reporter), **overdue** (older than the schedule
+allows) or **dated in the future**. Run the drill once by hand right after switching it on
+(`kubectl -n agentic-os create job --from=cronjob/restore-drill restore-drill-first`), or it stays red until the
+first scheduled run. A dump or snapshot stamped more than 1 h in the future also fails the drill.
 
 ### Residual risk of the Velero drill (accepted by the flag above)
 

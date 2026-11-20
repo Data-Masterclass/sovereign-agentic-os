@@ -74,6 +74,13 @@ test('NEGATIVE: a snapshot older than the age limit fails', () => {
   assert.match(res.reason, /above the -1 h limit/);
 });
 
+test('NEGATIVE: a snapshot that ends in the future (beyond the clock slack) fails', () => {
+  // A real snapshot ends ~now; a NEGATIVE slack puts "now" behind it, as a wrong clock would.
+  const { res } = drill('future', { DRILL_CLOCK_SLACK_SECONDS: '-86400' });
+  assert.equal(res.status, 'fail', JSON.stringify(res));
+  assert.match(res.reason, /in the future, beyond the -86400 s clock slack/);
+});
+
 test('NEGATIVE: a live index created after the snapshot (missing from it) fails', () => {
   const bulk = '{"index":{"_index":"wp56-new-it","_id":"1"}}\n{"n":1}\n';
   assert.equal(os('POST', '/_bulk?refresh=true', bulk).status, 200);

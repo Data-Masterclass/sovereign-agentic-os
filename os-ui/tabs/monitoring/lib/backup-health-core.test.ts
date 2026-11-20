@@ -51,9 +51,18 @@ test('NEGATIVE: no status, no report, a stale report or a failing repo is never 
   assert.equal(byId(assessBackups(base({ bundler: null })))['bk-bundles'].health, 'red');
   assert.equal(byId(assessBackups(base({ bundlesEnabled: false })))['bk-bundles'].health, 'amber');
   const noReport = byId(assessBackups(base({ drills: [{ kind: 'weekly', enabled: true, maxAgeDays: 8, report: null }] })));
-  assert.equal(noReport['bk-drill-weekly'].health, 'amber');
+  assert.equal(noReport['bk-drill-weekly'].health, 'red', 'an enabled drill that never reported is red');
   const stale = byId(assessBackups(base({ drills: [{ kind: 'weekly', enabled: true, maxAgeDays: 8, report: { kind: 'weekly', at: '2026-11-01T04:00:00Z', status: 'pass', checks: [{ check: 'git', status: 'pass' }] } }] })));
-  assert.equal(stale['bk-drill-weekly'].health, 'amber');
+  assert.equal(stale['bk-drill-weekly'].health, 'red', 'an overdue drill is red');
+  const future = byId(assessBackups(base({ drills: [{ kind: 'weekly', enabled: true, maxAgeDays: 8, report: { kind: 'weekly', at: '2027-11-20T04:00:00Z', status: 'pass', checks: [{ check: 'git', status: 'pass' }] } }] })));
+  assert.equal(future['bk-drill-weekly'].health, 'red', 'a pass dated in the future is not green');
+  const skew = byId(assessBackups(base({ drills: [{ kind: 'weekly', enabled: true, maxAgeDays: 8, report: { kind: 'weekly', at: '2026-11-20T12:10:00Z', status: 'pass', checks: [{ check: 'git', status: 'pass' }] } }] })));
+  assert.equal(skew['bk-drill-weekly'].health, 'green', 'a few minutes of clock skew is allowed');
+  const missingStaleFuture = assessBackups(base({ drills: [
+    { kind: 'weekly', enabled: true, maxAgeDays: 8, report: null },
+    { kind: 'velero', enabled: true, maxAgeDays: 32, report: { kind: 'velero', at: '2026-09-01T05:00:00Z', status: 'pass', checks: [{ check: 'velero', status: 'pass' }] } },
+  ] }));
+  assert.equal(backupAlerts(missingStaleFuture).length, 2, 'a missing and an overdue report each raise a critical alert');
   const unreadable = byId(assessBackups(base({ drills: [{ kind: 'weekly', enabled: true, maxAgeDays: 8, report: null, readError: 'HTTP 403' }] })));
   assert.equal(unreadable['bk-drill-weekly'].health, 'red');
   const failing = assessBackups(base({ bundler: { lastRescanAt: '2026-11-20T11:55:00Z', lastRefsRecordAt: '2026-11-20T11:30:00Z', repos: { sales: { status: 'error', at: '2026-11-20T11:55:00Z', last: { reason: 'bundle verify failed' } } } } }));
