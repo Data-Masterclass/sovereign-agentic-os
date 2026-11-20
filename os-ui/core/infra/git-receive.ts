@@ -40,7 +40,7 @@
 import { createHash } from 'node:crypto';
 import {
   dbtProjectPath, parseRepoName, principalToken, LAYOUT_V1, LAYOUT_V2, OS_DIR, AGENTS_INDEX_PATH, AGENTS_DIR, DASHBOARDS_DIR,
-  configuredDbtProjectDir, prefixOf, AGENT_GENERATED_FILES, AGENT_ID_PATTERN, AGENT_PROMPTS_DIR, DAGSTER_DIR, type LayoutVersion,
+  configuredDbtProjectDir, prefixOf, AGENT_GENERATED_FILES, AGENT_ID_PATTERN, AGENT_PROMPTS_DIR, CONNECTIONS_DIR, DAGSTER_DIR, type LayoutVersion,
 } from '@core/infra/repo-layout';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -73,7 +73,9 @@ export const AUDIENCE_MANAGED = 'audience is managed by the OS; use promotion';
 /** Prefixes the OS owns inside every domain repo. Committed for transparency, never pushable. */
 // `data/dagster/` (WP-49): the generated Dagster module is EXECUTED by the code server, so only the
 // OS writes it; the image also refuses one whose hash differs from `os/generated.yml` (C5).
-export const OS_OWNED_PREFIXES = ['os/', 'macros/', prefixOf(DAGSTER_DIR)] as const;
+// `connections/` (WP-50): Trino LOADS each catalog file with its own environment, so a pushed
+// `connection-url` with `${ENV:<secret>}` would hand that secret to any host; only the OS writes it.
+export const OS_OWNED_PREFIXES = ['os/', 'macros/', prefixOf(DAGSTER_DIR), prefixOf(CONNECTIONS_DIR)] as const;
 
 /**
  * Exact paths the OS owns. `dbt_project.yml` and `macros/**` are not documentation: dbt EXECUTES
@@ -392,6 +394,8 @@ export function decidePath(filePath: string, pusher: Pusher, ctx: PathContext = 
   if (p === OS_DIR || p.startsWith(osPrefix)) return { allowed: false, reason: `'${p}' is ${MANAGED_BY_OS}` };
   // WP-49: `data/dagster/` holds the generated code location the Dagster code server EXECUTES.
   if (p === DAGSTER_DIR || p.startsWith(prefixOf(DAGSTER_DIR))) return { allowed: false, reason: `'${p}' is ${MANAGED_BY_OS}` };
+  // WP-50: `connections/` holds the Trino catalog files Trino loads; the OS writes them from the record.
+  if (p === CONNECTIONS_DIR || p.startsWith(prefixOf(CONNECTIONS_DIR))) return { allowed: false, reason: `'${p}' is ${MANAGED_BY_OS}` };
   if (proj !== null && DBT_OWNED_PREFIXES.some((prefix) => proj === prefix.slice(0, -1) || proj.startsWith(prefix))) {
     return { allowed: false, reason: `'${p}' is ${MANAGED_BY_OS}` };
   }

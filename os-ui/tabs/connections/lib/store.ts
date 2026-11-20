@@ -197,6 +197,7 @@ import { buildImportCtas } from '@tabs/connections/lib/warehouse/import';
 import { catalogRegistration, type CatalogRegistration } from '@tabs/connections/lib/warehouse/registration';
 import { applyLiveRegistration, type RegK8s, type RegisterK8sOutcome, type SecretValues } from '@tabs/connections/lib/warehouse/k8s-registration';
 import { connectionsGitEnabled, queueConnectionsCommit, readCatalogFromGit } from '@tabs/connections/lib/git/commit';
+import { expectedCatalogFile } from '@tabs/connections/lib/git/generate';
 import { executeRoute, executeRun, queryRun, type ExecuteIdentity } from '@core/infra/governed';
 // Data-tab registry seam for the warehouse IMPORT (P0 A2): an import must create a
 // real governed Dataset row pointing at the materialized table, not just a table.
@@ -1431,7 +1432,7 @@ export type RegisterWarehouseResult = RegisterK8sOutcome;
 export async function registerWarehouseCatalog(
   connId: string,
   user: CurrentUser,
-  opts: { k8s?: RegK8s } = {},
+  opts: { k8s?: RegK8s; readCatalog?: typeof readCatalogFromGit } = {},
 ): Promise<RegisterWarehouseResult> {
   const map = await getCache();
   const c = map.get(connId);
@@ -1461,18 +1462,32 @@ export async function registerWarehouseCatalog(
     if (val) values[envVars[i]] = val;
   }
 
-  // WP-50 (contract C4): what Trino loads is what is in git. With the domain repo on, the catalog
-  // is committed first and the COMMITTED bytes are read back and applied, with their sha; a commit
-  // or read-back failure refuses the registration rather than applying an uncommitted render.
+  // WP-50 (contract C4): what Trino loads is what is in git, and git is the RECORD, never an input.
+  // The catalog is committed first; the file is read back at the EXACT sha that commit returned (a
+  // push racing onto HEAD cannot be picked up), and the bytes must equal the OS's own render of
+  // this record — any difference refuses the registration before anything reaches the cluster.
   let committed: { text: string; sha: string } | undefined;
   if (connectionsGitEnabled()) {
+    let back;
     try {
-      await commitConnectionsAfterWrite(map, c, user, 'register catalog');
-      const back = await readCatalogFromGit(c.domain, reg.name);
-      committed = { text: back.text, sha: back.sha };
+      const res = await commitConnectionsAfterWrite(map, c, user, 'register catalog');
+      if (!res?.sha) throw new Error('the commit returned no sha');
+      back = await (opts.readCatalog ?? readCatalogFromGit)(c.domain, reg.name, { ref: res.sha });
     } catch (e) {
       throw withStatus(new Error(`The catalog '${reg.name}' could not be committed to the domain repository, so it was not registered: ${(e as Error).message}`), 409);
     }
+    const expected = expectedCatalogFile(c);
+    if (back.text !== expected) {
+      void trace({
+        principal: c.principal,
+        tool: 'generate',
+        input: { action: 'register_warehouse_catalog', by: user.id, catalog: reg.name, gitSha: back.sha },
+        output: { refused: 'committed catalog does not match the OS render' },
+        decision: 'deny',
+      });
+      throw withStatus(new Error(`The committed catalog '${reg.name}' at ${back.sha.slice(0, 12)} does not match what the OS renders for this connection, so it was not registered.`), 409);
+    }
+    committed = { text: back.text, sha: back.sha };
   }
   const outcome = await applyLiveRegistration(reg, values, { namespace: config.platformNamespace, k8s: opts.k8s, committed });
 
