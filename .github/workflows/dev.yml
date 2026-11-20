@@ -7,12 +7,19 @@
 #   image       build-images.yml (reusable): waits for ci.yml + license-gate.yml to pass on main for
 #               this SHA, then builds os-ui as main-<sha> and pushes it (pinned by digest).
 #   deploy      GitHub Environment `dev`: scripts/deploy.sh --env dev --from-registry main-<sha>
-#               (the env guard refuses any cluster that is not the marked dev cluster), then the
-#               smoke test and the WP-02 acceptance journeys against dev. Results go to the job
-#               summary and the `dev-report` artifact; the Helm revision it replaced goes to the
-#               `deploy-record` artifact (scripts/rollback.sh --env dev --to <it>).
-#   dev-green   the ONE job whose success means "this commit was green on dev". scripts/release.sh
-#               requires it (workflow-status.sh --require-job dev-green) before production.
+#               (the env guard refuses any cluster that is not the marked dev cluster), checks
+#               that the digest RUNNING on dev is the digest the image job built, then the smoke
+#               test and the WP-02 acceptance journeys. Results go to the job summary and the
+#               `dev-report` artifact (with the deploy record: scripts/rollback.sh --env dev --to <rev>).
+#   dev-green   the ONE job whose success means "this commit was green on dev". It records the
+#               tested digest as the artifact `dev-tested-digest`; scripts/release.sh requires
+#               this job (workflow-status.sh --require-job dev-green) and deploys ONLY that digest.
+#
+# WHAT "GREEN ON DEV" MEANS TODAY: built, deployed, the running digest checked, smoke-tested, and
+# the acceptance journeys ran with no UNEXPECTED result. It does not yet mean "the journeys pass":
+# every journey assertion is still marked expected-fail until the work package that closes it
+# lands (the report lists them), and the journeys that drive the kind-only scriptable model stub
+# are skipped on dev with that reason.
 #
 # ENABLING: nothing deploys until the owner sets the repository variable DEV_ENVIRONMENT_ENABLED=true
 # and the `dev` environment secret DEV_KUBECONFIG (scripts/dev/ci-kubeconfig.sh). Until then the
@@ -27,10 +34,9 @@ on:
   push:
     branches: [main]
 
-permissions:
-  contents: read
-  packages: write   # the reusable image build pushes main-<sha>
-  actions: read     # require-green-ci reads this repository's workflow runs
+# Least privilege: nothing at workflow level; each job asks for what it needs. Only the image
+# job can write packages, and it holds no kubeconfig and runs no npm install.
+permissions: {}
 
 jobs:
   image:
@@ -39,6 +45,10 @@ jobs:
     concurrency:
       group: dev-image
       cancel-in-progress: true
+    permissions:
+      contents: read
+      packages: write   # push main-<sha>
+      actions: read     # require-green-ci reads this repository's workflow runs
     uses: ./.github/workflows/build-images.yml
     with:
       image: os-ui
@@ -50,6 +60,10 @@ jobs:
     if: vars.DEV_ENVIRONMENT_ENABLED == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 120
+    permissions:
+      contents: read
+    outputs:
+      digest: ${{ steps.running.outputs.digest }}
     environment:
       name: dev
       url: https://os.dev.agentic.datamasterclass.com
@@ -59,6 +73,7 @@ jobs:
     env:
       DEV_KUBE_CONTEXT: dmagosdev
       DEV_PRIVATE_VALUES: cluster          # read the private overlay from the dev cluster
+      DEV_NODE: ${{ vars.DEV_NODE || 'g2i8' }}   # the node profile the owner chose (g2i8 | m2i4)
       IMAGE_REPO: ${{ vars.IMAGE_REPO_PREFIX || 'ghcr.io/data-masterclass/sovereign-os' }}
       TAG: main-${{ github.sha }}
       DIGEST: ${{ needs.image.outputs.digest }}
@@ -79,8 +94,9 @@ jobs:
         with:
           version: v3.16.3
 
+      # Only js-yaml for the capacity gate: no install scripts run next to the kubeconfig.
       - name: Install os-ui dependencies (capacity gate)
-        run: npm --prefix os-ui ci --no-audit --no-fund
+        run: npm --prefix os-ui ci --no-audit --no-fund --ignore-scripts
 
       - name: Resolve chart dependencies
         run: helm dependency build charts/sovereign-agentic-os
@@ -102,8 +118,23 @@ jobs:
         run: |
           set -euo pipefail
           # The digest the image stage pushed must be the one the registry serves for the tag.
-          echo "image $IMAGE_REPO/os-ui:$TAG@$DIGEST"
-          bash scripts/deploy.sh --env dev --from-registry "$TAG"
+          [ -n "$DIGEST" ] || { echo "::error::the image job reported no digest"; exit 1; }
+          echo "built $IMAGE_REPO/os-ui:$TAG@$DIGEST"
+          # EXPECT_DIGEST: deploy.sh refuses if the tag already resolves to other bytes.
+          EXPECT_DIGEST=$DIGEST bash scripts/deploy.sh --env dev --from-registry "$TAG"
+
+      # The digest dev RUNS (both os-ui Deployments) must be the digest the image job built.
+      - name: The running digest is the built digest
+        id: running
+        run: |
+          set -euo pipefail
+          for d in os-ui os-ui-worker; do
+            img=$(kubectl --context "$DEV_KUBE_CONTEXT" -n agentic-os get deploy "$d" -o jsonpath='{.spec.template.spec.containers[0].image}')
+            run=${img##*@}
+            [ "$run" = "$DIGEST" ] || { echo "::error::$d runs $run, the image job built $DIGEST"; exit 1; }
+            echo "$d runs $run"
+          done
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
 
       - name: Smoke test (dev)
         run: |
@@ -128,6 +159,8 @@ jobs:
 
       # The journeys AT-a … AT-f (not the kind self-test: it proves kind's own CNI and SeaweedFS).
       # Expected-fail markers apply as on kind: the run is green while every red is an expected red.
+      # Exit status: 0 when every result is the expected one (green, or red where marked
+      # expected-fail); non-zero on an UNEXPECTED result (a regression, or an unexpected green).
       - name: WP-02 acceptance suite (dev)
         run: bash tests/e2e/kind/run.sh journeys/journey-*.e2e.mjs
 
@@ -136,6 +169,10 @@ jobs:
         run: |
           {
             echo "## dev: \`main-${GITHUB_SHA:0:12}\`"
+            echo
+            echo "**What green means here:** built, deployed, running digest checked, smoke-tested, and the"
+            echo "acceptance journeys ran with no unexpected result. Expected-fail assertions are counted below;"
+            echo "they turn green as their work packages land. It is not yet a full acceptance pass."
             echo
             if [ -f "$DEPLOY_RECORD" ]; then
               echo "Deploy record (roll back with the command shown):"
@@ -162,11 +199,35 @@ jobs:
     needs: [image, deploy]
     if: always() && vars.DEV_ENVIRONMENT_ENABLED == 'true'
     runs-on: ubuntu-latest
+    permissions: {}
     steps:
-      - name: The image, the deploy, the smoke test and the acceptance suite all passed
+      - name: The image, the deploy, the running digest, the smoke test and the acceptance run all passed
         env:
           IMAGE: ${{ needs.image.result }}
           DEPLOY: ${{ needs.deploy.result }}
+          BUILT: ${{ needs.image.outputs.digest }}
+          RUNNING: ${{ needs.deploy.outputs.digest }}
+          REPO_PREFIX: ${{ vars.IMAGE_REPO_PREFIX || 'ghcr.io/data-masterclass/sovereign-os' }}
         run: |
-          echo "image=$IMAGE deploy=$DEPLOY"
+          set -euo pipefail
+          echo "image=$IMAGE deploy=$DEPLOY built=$BUILT running=$RUNNING"
           [ "$IMAGE" = success ] && [ "$DEPLOY" = success ]
+          [ -n "$BUILT" ] && [ "$BUILT" = "$RUNNING" ]
+          mkdir -p record
+          python3 - "$GITHUB_SHA" "$RUNNING" "$REPO_PREFIX/os-ui" "$GITHUB_RUN_ID" > record/dev-tested-digest.json <<'PY'
+          import json, sys
+          sha, digest, image, run = sys.argv[1:5]
+          print(json.dumps({"sha": sha, "digest": digest, "image": image, "run_id": run}))
+          PY
+          cat record/dev-tested-digest.json
+          { echo "### dev-tested digest"; echo; echo "\`$REPO_PREFIX/os-ui@$RUNNING\` for \`$GITHUB_SHA\`"; } >> "$GITHUB_STEP_SUMMARY"
+
+      # The ONE record production deploys from (scripts/lib/dev-digest.sh). An artifact belongs to
+      # this run and cannot be rewritten in place; a newer tag on main-<sha> does not change it.
+      - name: Record the dev-tested digest
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dev-tested-digest
+          path: record/dev-tested-digest.json
+          if-no-files-found: error
+          retention-days: 90

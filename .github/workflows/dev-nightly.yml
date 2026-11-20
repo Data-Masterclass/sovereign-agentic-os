@@ -2,13 +2,18 @@
 # Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
 #
 # dev-nightly — stage 4 of the pipeline (docs/ops/ci-cd.md): every night, against what runs on dev,
-#   1. the FULL acceptance suite (AT-a … AT-f), with the expected-fail markers dropped
-#      (E2E_IGNORE_XFAIL=1, as WP-48 runs it), so the report shows the real state of every hop;
+#   1. the acceptance journeys (AT-a … AT-f) WITH their expected-fail markers: the step fails only
+#      on an UNEXPECTED result (a regression, or an expected-fail that now passes and must lose
+#      its marker). The summary counts expected-fail vs green vs unexpected, so the night is not
+#      red merely because work packages have not landed yet. Journeys that need the kind-only
+#      model stub are skipped with that reason;
 #   2. the restore drills (WP-56), when the chart on dev has them: each drill CronJob
 #      (restore-drill, velero-drill) is run once as a Job and must complete;
 #   3. the smoke test.
-# Results go to the job summary and the `dev-nightly-report` artifact. A failure opens (or comments
-# on) ONE issue labelled `dev-nightly`, so a red night is visible without anyone watching Actions.
+# Results go to the job summary and the `dev-nightly-report` artifact. ANY failure — including an
+# early one (an expired DEV_KUBECONFIG, the cluster down or hibernated, the env guard refusing) —
+# opens (or comments on) ONE issue labelled `dev-nightly`, so a red night is visible without anyone
+# watching Actions.
 # It only reads and tests dev; it never deploys. Skipped until DEV_ENVIRONMENT_ENABLED=true.
 name: dev-nightly
 
@@ -35,7 +40,6 @@ jobs:
     env:
       DEV_KUBE_CONTEXT: dmagosdev
       E2E_KUBE_CONTEXT: dmagosdev
-      E2E_IGNORE_XFAIL: "1"
       E2E_REPORT_DIR: ${{ github.workspace }}/nightly-report
     steps:
       - name: Checkout
@@ -84,7 +88,7 @@ jobs:
           set -o pipefail
           bash scripts/smoke-test.sh --env dev | tee "$E2E_REPORT_DIR/smoke.txt"
 
-      - name: Full acceptance suite (no expected-fail markers)
+      - name: Acceptance journeys (expected-fail markers on; fails on an unexpected result)
         id: acceptance
         continue-on-error: true
         run: bash tests/e2e/kind/run.sh journeys/journey-*.e2e.mjs
@@ -126,11 +130,15 @@ jobs:
             echo
             echo "| check | outcome |"; echo "|---|---|"
             echo "| smoke test | $SMOKE |"
-            echo "| full acceptance suite (no xfail markers) | $ACCEPTANCE |"
+            echo "| acceptance journeys (fails only on an unexpected result) | $ACCEPTANCE |"
             echo "| restore drills (WP-56) | $DRILLS |"
             echo
             [ ! -f "$E2E_REPORT_DIR/drills.txt" ] || { echo '```'; cat "$E2E_REPORT_DIR/drills.txt"; echo '```'; }
-            [ ! -f "$E2E_REPORT_DIR/report.md" ] || cat "$E2E_REPORT_DIR/report.md"
+            if [ -f "$E2E_REPORT_DIR/report.json" ]; then
+              python3 -c 'import json,sys; t=json.load(open(sys.argv[1]))["totals"]; print(f"**Journeys:** {t[\"expectedRed\"]} expected-fail, {t[\"green\"]} green, {t[\"unexpectedGreen\"] + t[\"failed\"]} unexpected, {t[\"skippedJourneys\"]} journeys skipped (see the report)")' "$E2E_REPORT_DIR/report.json"
+              echo
+              cat "$E2E_REPORT_DIR/report.md"
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload report
@@ -141,8 +149,10 @@ jobs:
           path: nightly-report/
           if-no-files-found: warn
 
-      - name: Open or update the dev-nightly issue on failure
-        if: steps.smoke.outcome == 'failure' || steps.acceptance.outcome == 'failure' || steps.drills.outcome == 'failure'
+      # failure(): any earlier step failed (kubeconfig, env guard, credentials, the report).
+      # The three checks run with continue-on-error, so their outcomes are named explicitly.
+      - name: Open or update the dev-nightly issue on ANY failure
+        if: always() && (failure() || steps.smoke.outcome == 'failure' || steps.acceptance.outcome == 'failure' || steps.drills.outcome == 'failure')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
@@ -151,7 +161,7 @@ jobs:
           DRILLS: ${{ steps.drills.outcome }}
         run: |
           set -euo pipefail
-          body="Dev nightly $(date -u +%F): smoke=$SMOKE, acceptance=$ACCEPTANCE, restore drills=$DRILLS. Run: $RUN_URL"
+          body="Dev nightly $(date -u +%F): smoke=${SMOKE:-not reached}, acceptance=${ACCEPTANCE:-not reached}, restore drills=${DRILLS:-not reached}. An earlier step (kubeconfig, env guard, credentials) fails when all three say 'not reached'. Run: $RUN_URL"
           gh label create dev-nightly --color B60205 --description "dev nightly failures" 2>/dev/null || true
           n=$(gh issue list --label dev-nightly --state open --json number --jq '.[0].number // empty')
           if [ -n "$n" ]; then gh issue comment "$n" --body "$body"
