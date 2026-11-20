@@ -2347,6 +2347,14 @@ externalSecrets:
 # memory pressure observability is evicted first (00 §10.1 decision 2).
 observability:
   enabled: true
+  # Backup FAILURE alerts in Monitoring (templates/base/os-ui/_backup-alerts.tpl), each read from
+  # its own source: the pg-dump / opensearch-snapshot CronJobs' newest Job, the Velero Schedule's
+  # newest Backup, each OpenSearch repository's newest snapshot. Read-only grants.
+  backupAlerts:
+    enabled: true
+    velero:
+      namespace: ""                       # "" = no Velero here; prod: velero (deploy/velero/)
+      scheduleName: velero-daily-agentic-os
   # Ingress allow-lists for the stores and the Collector (templates/extensions/observability/
   # network-policies.yaml): only the Collector writes, only os-ui reads.
   networkPolicy:

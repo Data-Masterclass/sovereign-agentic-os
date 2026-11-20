@@ -84,3 +84,14 @@ kubectl -n velero get schedules,backups
 # the standing rule (deploy/README.md): before EVERY upgrade
 deploy/pre-upgrade-backup.sh
 ```
+
+## Alerts on a failed backup (WP-05)
+
+Monitoring raises a **critical** alert when the newest finished run of a backup failed, read from
+the tool itself: the `pg-dump` and `opensearch-snapshot` CronJobs' newest Job (Kubernetes Job
+condition `Failed`), the Velero schedule's newest Backup (`Failed`, `PartiallyFailed`,
+`FailedValidation`) and each OpenSearch repository's newest snapshot (`FAILED`, `PARTIAL`). A
+source that cannot be read raises a **warning**. Nothing alerts on age alone. The Velero part
+needs `observability.backupAlerts.velero.namespace` (production:
+`VALUES_OVERLAY=deploy/overlays/backup-alerts-velero.stackit.yaml`).
+

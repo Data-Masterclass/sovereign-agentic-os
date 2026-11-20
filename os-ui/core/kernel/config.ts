@@ -820,6 +820,15 @@ export const config = {
   // runs); unset means UNKNOWN ('') and every reader says so — never a made-up default (WP-05).
   osVersion: env('OS_VERSION', ''),
 
+  // ---- Backup failure alerts (WP-05; chart: templates/base/os-ui/_backup-alerts.tpl) ----
+  // What this release really runs; empty = that source is not watched (and says so).
+  backupAlerts: {
+    cronJobs: env('SOA_BACKUP_ALERT_CRONJOBS', '').split(/\s+/).filter(Boolean),
+    snapshotRepos: env('SOA_BACKUP_ALERT_SNAPSHOT_REPOS', '').split(/\s+/).filter(Boolean),
+    veleroNamespace: env('SOA_BACKUP_ALERT_VELERO_NAMESPACE', ''),
+    veleroSchedule: env('SOA_BACKUP_ALERT_VELERO_SCHEDULE', ''),
+  },
+
   // ---- Browser-reachable consoles (opened/linked from the browser, never
   // proxied; each tool has its own auth + session). Default to the local
   // port-forward addresses from docs/components/*.md; override per environment

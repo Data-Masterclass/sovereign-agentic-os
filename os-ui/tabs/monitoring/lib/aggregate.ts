@@ -10,7 +10,8 @@
  *   - `buildOverview` applies the single scope filter (`scope.ts`) to every item, then
  *     `rollup.ts` for lens summaries and the attention list.
  *   - Alerts are operational only (failed/denied runs and cost-cap breaches via
- *     `alerts-derive.ts`), after seeding spend from LiteLLM; business KPI alerts are not here.
+ *     `alerts-derive.ts`, failed backups via `adapters/backup-failures.ts`), after seeding spend
+ *     from LiteLLM; business KPI alerts are not here.
  *   - Exported through `index.ts`.
  */
 import 'server-only';
@@ -28,6 +29,7 @@ import { backupAlerts } from '@tabs/monitoring/lib/backup-health-core';
 import { filterScope, scopeForUser } from '@tabs/monitoring/lib/scope';
 import { pickAttention, summarize } from '@tabs/monitoring/lib/rollup';
 import { deriveAlerts, type AlertTraceInput, type AlertCapInput } from '@tabs/monitoring/lib/alerts-derive';
+import { collectBackupFailureAlerts } from '@tabs/monitoring/lib/adapters/backup-failures';
 import { LENS_IDS, type HealthItem, type LensSummary, type Overview, type Scope } from '@tabs/monitoring/lib/types';
 
 /**
@@ -63,7 +65,12 @@ export async function buildOverview(user: CurrentUser, opts: { runs?: RunListFil
   // on REAL usage (getSpend is otherwise only the test-seeded Map). No-op offline.
   await reconcileSpendFromLiteLLM();
   // WP-56 interim for WP-05's alerting: a failed bundle or drill is a critical alert here.
-  const alerts = [...scopedAlerts(scope), ...filterScope(scope, backupAlerts(visible))];
+  // WP-05: a failed pg-dump / Velero backup / OpenSearch snapshot, read from each tool itself.
+  const alerts = [
+    ...scopedAlerts(scope),
+    ...filterScope(scope, backupAlerts(visible)),
+    ...filterScope(scope, await collectBackupFailureAlerts()),
+  ];
 
   return { scope, lenses, attention, alerts, generatedAt: new Date().toISOString() };
 }
