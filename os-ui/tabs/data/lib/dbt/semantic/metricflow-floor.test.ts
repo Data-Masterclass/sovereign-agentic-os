@@ -19,6 +19,7 @@ import { fileURLToPath } from 'node:url';
 import { DBT_SEMANTIC_SPEC } from '@tabs/data/lib/dbt/semantic/spec';
 import {
   METRICFLOW_FLOOR,
+  DBT_METRICFLOW_FLOOR,
   DBT_CORE_FLOOR,
   FLOOR_ROOTS,
   checkMetricflowFloor,
@@ -51,7 +52,8 @@ test('M14: every way of letting a BSL release in is denied — unpinned, upper-b
     'RUN pip install "metricflow<0.300"',
     'RUN pip install "metricflow>=0.200,<0.300"',
     'metricflow~=0.208.0',
-    'dbt-metricflow[dbt-duckdb]==0.207.0',
+    // dbt-metricflow numbers its own releases: 0.10.x and below are BSL 1.1 (PyPI BUSL-1.1).
+    'dbt-metricflow[dbt-duckdb]==0.10.0',
     'RUN pip install "metricflow>0.209.0rc1"',
   ];
   for (const text of cases) {
@@ -133,4 +135,20 @@ test('M-1: both floors hold across the repository right now', () => {
 test('M-1: the licence gate invokes the combined check', () => {
   const gate = readFileSync(join(REPO, 'scripts', 'license-check.sh'), 'utf8');
   assert.match(gate, /dbt-core >= 1\.9/);
+});
+
+test('WP-17: dbt-metricflow has its own floor, the first Apache-2.0 release 0.11.0 (= metricflow 0.209.0)', () => {
+  assert.equal(DBT_METRICFLOW_FLOOR, '0.11.0');
+  assert.deepEqual(check([{ path: 'images/x/Dockerfile', text: '"dbt-metricflow[dbt-trino]==0.16.0" "metricflow==0.214.0"' }]), []);
+  const bsl = check([{ path: 'images/x/Dockerfile', text: '"dbt-metricflow[dbt-trino]==0.10.0"' }]);
+  assert.equal(bsl.length, 1);
+  assert.match(bsl[0].reason, /Business Source License 1\.1/);
+  assert.equal(check([{ path: 'images/x/Dockerfile', text: 'dbt-metricflow' }]).length, 1, 'unpinned is still denied');
+});
+
+test('WP-17: a # comment is prose, not a pin; the pin on the next continued line is still read', () => {
+  const text = '# MetricFlow is Apache-2.0 from 0.209.0; dbt-metricflow too\nRUN pip install \\\n  # metricflow\n  "metricflow==0.208.1"';
+  const v = check([{ path: 'images/x/Dockerfile', text }]);
+  assert.equal(v.length, 1, JSON.stringify(v));
+  assert.match(v[0].spec, /metricflow ==0\.208\.1/);
 });
