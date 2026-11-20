@@ -27,6 +27,8 @@ const SHA = 'a'.repeat(40);
 
 type Launched = { domain?: string; selection?: string[][]; tags?: Record<string, string>; env?: Record<string, string> };
 let launches: Launched[] = [];
+/** The seeded dataset's recorded lane name (a personal-lane model is named after it). */
+let lane = 'orders';
 let recorded: { id: string; layer: string; run: Record<string, unknown> }[] = [];
 
 function fakeDagster(over: Partial<LaunchDeps['dagster'] & object> = {}) {
@@ -36,8 +38,8 @@ function fakeDagster(over: Partial<LaunchDeps['dagster'] & object> = {}) {
       return { ok: true as const, data: { runId: 'run_1', status: 'QUEUED' as const } };
     },
     assetGraph: async () => ({ ok: true as const, data: [
-      { key: ['sales', 'silver_orders'], dependsOn: [], group: 'sales', description: null },
-      { key: ['sales', 'gold_orders'], dependsOn: [], group: 'sales', description: null },
+      { key: ['sales', `silver_${lane}`], dependsOn: [], group: 'sales', description: null },
+      { key: ['sales', `gold_${lane}`], dependsOn: [], group: 'sales', description: null },
     ] }),
     runsForDataset: async () => ({ ok: true as const, data: [] as DagsterRun[] }),
     ...over,
@@ -61,10 +63,11 @@ function deps(over: Partial<LaunchDeps> = {}): LaunchDeps {
 
 function seedOrders(): string {
   const d = store.createDataset(amir, { name: 'Orders' });
+  lane = d.laneSlug!;
   store.buildVersion(d.id, amir, 'bronze', { quality: 'passing', artifact: 'bronze/orders.dlt.yml' });
   store.buildVersion(d.id, amir, 'silver', {
     quality: 'passing', artifact: 'silver/stg_orders.sql', compiled: true,
-    body: 'create or replace table iceberg.personal_amir.silver_orders as select * from iceberg.personal_amir.bronze_orders',
+    body: `create or replace table iceberg.personal_amir.silver_${lane} as select * from iceberg.personal_amir.bronze_${lane}`,
   });
   return d.id;
 }
@@ -74,6 +77,7 @@ beforeEach(() => {
   __resetProjectListeners();
   launches = [];
   recorded = [];
+  lane = 'orders';
 });
 afterEach(() => __setDataProjectGitForTests(null));
 
@@ -88,7 +92,7 @@ test('launchAfterCommit: ONE run per commit, the dataset subset, the OS tags and
   assert.equal(out.dagsterRunId, 'run_1');
   assert.equal(out.launchError, null);
   assert.equal(out.commit, SHA);
-  assert.deepEqual(launches[0].selection, [['sales', 'silver_orders']]);
+  assert.deepEqual(launches[0].selection, [['sales', `silver_${lane}`]]);
   assert.equal(launches[0].domain, 'sales');
   assert.deepEqual(launches[0].env, { OS_PRINCIPAL: 'amir', OS_PINNED_COMMITS: `sales=${SHA}` });
   assert.deepEqual(launches[0].tags, {

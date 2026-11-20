@@ -64,9 +64,9 @@ test('import creates a governed Dataset row: Bronze lit, personal-lane target, d
 
   // The CTAS landed at the row's CANONICAL personal-lane Bronze target, in the ONLY
   // shape the query-tool write allowlist admits, run AS the uid (owner rule).
-  assert.equal(out.target, 'iceberg.personal_b1.bronze_imported_warehouse_orders');
+  assert.match(out.target, /^iceberg\.personal_b1\.bronze_imported_warehouse_orde_[a-z0-9]+$/, 'lands under the new dataset\u2019s lane name');
   assert.equal(execCalls.length, 1);
-  assert.match(execCalls[0].sql, /^CREATE OR REPLACE TABLE iceberg\.personal_b1\.bronze_imported_warehouse_orders AS SELECT \* FROM glue_sales\.raw\.orders$/);
+  assert.match(execCalls[0].sql, /^CREATE OR REPLACE TABLE iceberg\.personal_b1\.bronze_imported_warehouse_orde_[a-z0-9]+ AS SELECT \* FROM glue_sales\.raw\.orders$/);
   assert.equal(execCalls[0].principal, 'b1', 'personal-lane write runs AS the uid');
   assert.equal(out.rowsAffected, 2);
 });

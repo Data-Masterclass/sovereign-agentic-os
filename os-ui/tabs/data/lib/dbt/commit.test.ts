@@ -218,7 +218,7 @@ test('commitDataProject is a no-op (null) with the flag off and generates a real
     committer: async (_d, files) => { tree = files; return { sha: 'b'.repeat(40), changed: true }; },
   });
   assert.equal(r?.changed, true);
-  assert.ok(tree!.has('models/personal/amir/silver_orders.sql'));
+  assert.ok([...tree!.keys()].some((k) => /^models\/personal\/amir\/silver_orders_[0-9a-f]{32}\.sql$/.test(k)), 'the personal-lane model is named after the lane table');
   assert.ok(tree!.has('dbt_project.yml') && tree!.has('profiles.yml'));
   assert.ok(tree!.has('macros/os_maintenance.sql'));
 });

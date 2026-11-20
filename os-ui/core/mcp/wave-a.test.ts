@@ -208,7 +208,7 @@ test('transform_silver: compiles guided ops server-side, builds as the caller, r
   );
   assert.equal(r.ok, true);
   assert.equal(r.mode, 'offline-mock', 'honest mode label');
-  assert.match(r.sql, /^create or replace table iceberg\.personal_ben\.silver_orders as /, 'the CTAS targets the CALLER’s own schema');
+  assert.match(r.sql, /^create or replace table iceberg\.personal_ben\.silver_orders_[a-z0-9]+ as /, 'the CTAS targets the CALLER’s own schema');
   assert.match(r.sql, /cast\("net_amount" as double\)/);
   assert.ok(!r.sql.includes(';') && !r.sql.includes('--'), 'guard-shaped: one statement, no comments');
   assert.equal(r.dots.silver, true, 'Silver registered on ✓');

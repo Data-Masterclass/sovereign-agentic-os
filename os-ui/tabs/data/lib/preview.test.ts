@@ -41,13 +41,13 @@ test('runPreview runs a bounded SELECT * over the resolved FQN and returns the r
   assert.ok(target, 'a built layer resolves to a physical FQN');
   // A private dataset lives in the caller's OWN personal lane — not a shared schema.
   assert.equal(target!.layer, 'bronze');
-  assert.match(target!.fqn, /^iceberg\.personal_amir\.bronze_orders$/);
+  assert.equal(target!.fqn, `iceberg.personal_amir.bronze_${d.laneSlug}`);
 
   const { query, calls } = fakeQuery([['1', 'x'], ['2', 'y']]);
   const out = await runPreview({ target, limit: 50, query });
 
   assert.equal(calls.length, 1);
-  assert.equal(calls[0], 'select * from iceberg.personal_amir.bronze_orders limit 50');
+  assert.equal(calls[0], `select * from iceberg.personal_amir.bronze_${d.laneSlug} limit 50`);
   assert.equal(out.available, true);
   if (out.available) {
     assert.equal(out.rowCount, 2);
@@ -68,18 +68,21 @@ test('runPreview: a NON-owner peer resolves a promoted asset to its DOMAIN schem
   assert.equal(target!.principal, 'sales');
 });
 
-test('runPreview: the OWNER of a promoted asset reads their OWN personal lane (holds every layer)', async () => {
+test('runPreview: the OWNER of a promoted asset reads the DOMAIN copy too, never their lane', async () => {
   const d = createDataset(amir, { name: 'Orders' });
   buildVersion(d.id, amir, 'silver', { quality: 'passing', artifact: 'silver/stg_orders.sql' });
   transition(d.id, bea, 'promote', { visibility: 'domain' }); // now tier asset (sales)
 
-  // The owner's personal lane physically holds every layer — read it AS the owner. This is
-  // the fix for the live TABLE_NOT_FOUND: an un-promoted (e.g. bronze) layer never lands in
-  // the domain schema, so the owner must resolve to personal_<owner>, not the domain.
-  const target = builtLayerFqn(getDataset(d.id, amir), amir);
-  assert.ok(target);
-  assert.match(target!.fqn, /^iceberg\.personal_amir\.silver_orders$/);
-  assert.equal(target!.principal, 'amir');
+  // A governed dataset is served from its domain copy for everyone. The owner's lane is their
+  // workspace: it may hold an unpublished rebuild or, with legacy name-only lane tables,
+  // another dataset's table of the same name (seen live). Even a bronze request resolves to
+  // the one served layer — bronze is never published.
+  for (const layer of [undefined, 'bronze', 'silver'] as const) {
+    const target = builtLayerFqn(getDataset(d.id, amir), amir, layer);
+    assert.ok(target);
+    assert.equal(target!.fqn, 'iceberg.sales.silver_orders');
+    assert.equal(target!.principal, 'sales');
+  }
 });
 
 test('runPreview: nothing built → calm not-materialized, never a query', async () => {

@@ -48,13 +48,13 @@ test('readProject: 404 before any commit, then tree + log; blob + export at a re
   assert.equal(r1?.changed, true);
   const view = await readProject('sales', amir, { reposDir });
   assert.equal(view.head, r1!.sha);
-  assert.ok(view.tree.some((t) => t.path === 'models/personal/amir/silver_orders.sql'));
+  assert.ok(view.tree.some((t) => t.path === `models/personal/amir/silver_${d.laneSlug}.sql`));
   assert.equal(view.log.length, 1);
   assert.equal(view.log[0].trailers['OS-Request-Id'], 'req_1');
   assert.deepEqual(view.log[0].author, { name: 'Amir', email: 'amir@x.io' });
 
-  const blob = await readProjectBlob('sales', amir, 'main', 'models/personal/amir/silver_orders.sql', { reposDir });
-  assert.match(blob.content, /select \* from \{\{ source\('personal_amir', 'bronze_orders'\) \}\}/);
+  const blob = await readProjectBlob('sales', amir, 'main', `models/personal/amir/silver_${d.laneSlug}.sql`, { reposDir });
+  assert.ok(blob.content.includes(`select * from {{ source('personal_amir', 'bronze_${d.laneSlug}') }}`), 'reads the lane Bronze by its lane name');
   await assert.rejects(readProjectBlob('sales', amir, 'main', '', { reposDir }), (e: unknown) => e instanceof DatasetError && e.status === 400);
 
   const exp = await exportProject('sales', amir, r1!.sha, { reposDir });

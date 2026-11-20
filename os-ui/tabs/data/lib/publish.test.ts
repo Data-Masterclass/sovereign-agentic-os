@@ -86,9 +86,9 @@ test('approval triggers a REAL apply: the promote CTAS is executed with the APPR
   assert.notEqual(write.identity.uid, req.owner);
   assert.equal(principal, 'bea');
   // The CTAS copies the requester's personal gold table into the governed target.
-  assert.equal(
+  assert.match(
     write.transformSql,
-    'create or replace table iceberg.sales.gold_orders as select * from iceberg.personal_amir.gold_orders',
+    /^create or replace table iceberg\.sales\.gold_orders as select \* from iceberg\.personal_amir\.gold_orders_[a-z0-9]+$/, // the owner's lane table, by its recorded lane name
   );
   assert.equal(write.schemaSql, 'create schema if not exists iceberg.sales');
   assert.equal(write.releaseSchema, 'personal_amir');
@@ -100,9 +100,9 @@ test('promote-as-view: with asView the publish emits a VIEW + records domainArti
   const out = await publishApprovedPromotion(req, bea, { ...fb.deps, asView: true });
   assert.equal(out.ok, true);
   // The threaded statement is a governed VIEW over the owner's personal lane — NOT a CTAS copy.
-  assert.equal(
+  assert.match(
     fb.calls[0].write.transformSql,
-    'create or replace view iceberg.sales.gold_orders as select * from iceberg.personal_amir.gold_orders',
+    /^create or replace view iceberg\.sales\.gold_orders as select \* from iceberg\.personal_amir\.gold_orders_[a-z0-9]+$/, // the owner's lane table, by its recorded lane name
   );
   // The dataset records that its domain artifact is a view (demote/reconcile branch on this).
   assert.equal(getDataset(id, amir).domainArtifact, 'view');
@@ -208,7 +208,7 @@ test('a silver-only promotion publishes silver_<slug>', async () => {
   const out = await publishApprovedPromotion(req, bea, fb.deps);
   assert.equal(out.ok, true);
   assert.equal(out.ok && out.fqn, 'iceberg.sales.silver_orders');
-  assert.match(fb.calls[0].write.transformSql, /iceberg\.personal_amir\.silver_orders$/);
+  assert.match(fb.calls[0].write.transformSql, /iceberg\.personal_amir\.silver_orders_[a-z0-9]+$/);
 });
 
 test('separation of duties: the requesting creator cannot approve (no build is even run)', async () => {
@@ -297,9 +297,9 @@ test('re-materialize re-runs the SAME publish CTAS (right FQNs) as the operating
   assert.equal(out.ok && out.fqn, 'iceberg.sales.gold_orders');
   // The refresh CTAS copies the owner's freshly-rebuilt personal gold → the domain schema.
   assert.equal(fb.calls.length, 1);
-  assert.equal(
+  assert.match(
     fb.calls[0].write.transformSql,
-    'create or replace table iceberg.sales.gold_orders as select * from iceberg.personal_amir.gold_orders',
+    /^create or replace table iceberg\.sales\.gold_orders as select \* from iceberg\.personal_amir\.gold_orders_[a-z0-9]+$/, // the owner's lane table, by its recorded lane name
   );
   assert.equal(fb.calls[0].write.identity.uid, 'bea', 'runs AS the operator (Builder write floor)');
   assert.equal(fb.calls[0].write.releaseSchema, 'personal_amir');
