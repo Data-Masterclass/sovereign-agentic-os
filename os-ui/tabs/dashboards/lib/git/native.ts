@@ -386,6 +386,8 @@ export function generateNativeDashboardDir(placed: PlacedDashboard, domain: stri
       ? { metrics: q.metrics, dims: q.dims.map((x) => x.qualified), ...(q.time ? { time: timeColumn(q.time) } : {}) }
       : { metrics: panel.metrics.map((m) => dbtName(leaf(m.member))), dims: panel.dimensions.map((x) => dbtName(leaf(x))), ...(panel.timeDimension ? { time: dbtName(leaf(panel.timeDimension)) } : {}) };
     const spec = vegaLiteSpec(panel, sq ?? savedQueryName(placed, panel.id), fields);
+    // The save gate: the generated spec passes the SAME check a pushed one must.
+    parseVegaLite(JSON.stringify(spec), `${placed.dir}/${NATIVE_PANELS_DIR}/${panel.id}.vl.json`);
     files.set(`${placed.dir}/${NATIVE_PANELS_DIR}/${panel.id}.vl.json`, `${JSON.stringify(spec, null, 2)}\n`);
   }
   return files;
@@ -419,7 +421,29 @@ export function parseVegaLite(text: string, file: string): Record<string, unknow
     if (!VL_TOP_LEVEL.has(k)) bad(`\`${k}\` is not a Vega-Lite top-level property this OS accepts (OS metadata belongs in os.yaml)`, file);
   }
   assertNoQueryKeys(o.encoding, 'encoding', file);
+  assertNoFetch(o, 'spec', file);
   return o;
+}
+
+/**
+ * A spec the OS accepts can never make a renderer fetch anything. Vega-Lite loads `data.url`
+ * (also inside `transform[].from.data`), follows `href` encodings and draws `image` marks from a
+ * URL — and `vl-convert` would do so on eject, from any machine that renders the file. Data comes
+ * ONLY from the named saved query (`data.name`), so all three are refused wherever they appear
+ * (layers, facets, repeats, config). Same check at every door: generation, push, and read.
+ */
+export function assertNoFetch(node: unknown, where: string, file: string): void {
+  if (Array.isArray(node)) {
+    node.forEach((n, i) => assertNoFetch(n, `${where}[${i}]`, file));
+    return;
+  }
+  if (!node || typeof node !== 'object') return;
+  for (const [k, v] of Object.entries(node as Record<string, unknown>)) {
+    if (k === 'url') bad(`\`${where}.url\` is refused: a dashboard chart may not load data or images from a URL — its data is the saved query named in \`data.name\``, file);
+    if (k === 'href') bad(`\`${where}.href\` is refused: a dashboard chart may not carry links a renderer follows`, file);
+    if (k === 'mark' && (v === 'image' || asObj(v).type === 'image')) bad(`\`${where}.mark\` is \`image\`, which loads a picture from a URL; it is refused`, file);
+    assertNoFetch(v, `${where}.${k}`, file);
+  }
 }
 
 const DIM_RE = /^Dimension\('([a-z0-9_]+)'\)$/;

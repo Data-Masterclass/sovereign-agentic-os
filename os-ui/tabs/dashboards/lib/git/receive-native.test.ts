@@ -33,3 +33,26 @@ test('a valid spec passes; an OS block, a bad schema or a foreign semantic key i
   assert.equal(validateDashboardFile({ path: `${D}/semantic.yml`, content: 'version: 2\nsaved_queries: []\n' }), null);
   assert.match(validateDashboardFile({ path: `${D}/os.yaml`, content: 'apiVersion: x\n' }) ?? '', /DashboardLayer/);
 });
+
+test('the commit gate refuses a spec that would make vl-convert fetch: data.url, href, image marks (anywhere)', () => {
+  const p = `${D}/panels/p_x.vl.json`;
+  const bad = [
+    { ...vl, data: { url: 'https://example.invalid/x.csv' } },
+    { ...vl, transform: [{ lookup: 'k', from: { data: { url: 'https://example.invalid/y.json' }, key: 'k' } }] },
+    { ...vl, encoding: { href: { field: 'link' } } },
+    { ...vl, mark: 'image' },
+    { ...vl, mark: { type: 'image' } },
+  ];
+  for (const spec of bad) assert.match(validateDashboardFile({ path: p, content: JSON.stringify(spec) }) ?? '', /refused/, JSON.stringify(spec));
+});
+
+test('NEGATIVE TWIN: the same specs without the fetching part pass the gate', () => {
+  const p = `${D}/panels/p_x.vl.json`;
+  const ok = [
+    vl,
+    { ...vl, data: { name: 'q' } },
+    { ...vl, encoding: { x: { field: 'link', type: 'nominal' } } },
+    { ...vl, mark: { type: 'text' } },
+  ];
+  for (const spec of ok) assert.equal(validateDashboardFile({ path: p, content: JSON.stringify(spec) }), null, JSON.stringify(spec));
+});

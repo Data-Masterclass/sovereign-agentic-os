@@ -188,3 +188,15 @@ test('a filter value that could break out of a MetricFlow where template is neve
   assert.equal(doc.saved_queries, undefined);
   assert.match(out.get('dashboards/inj/os.yaml')!, /pending:/);
 });
+
+test('the reader refuses a committed spec that fetches (data.url / href / image) — the OS never draws it', () => {
+  for (const extra of [{ data: { url: 'https://example.invalid/x.csv' } }, { encoding: { href: { field: 'u' } } }, { mark: { type: 'image' } }]) {
+    const edited = dirFiles();
+    edited.set('panels/p_revenue-by-region.vl.json', JSON.stringify({ ...JSON.parse(edited.get('panels/p_revenue-by-region.vl.json')!), ...extra }));
+    assert.throws(() => parseNativeDashboardDir(edited, index, DIR), (e: Error) => e instanceof DashboardFileError && /refused/.test(e.message));
+  }
+});
+
+test('the save gate: every generated spec passes the no-fetch check (no url, href or image anywhere)', () => {
+  for (const [p, c] of files) if (p.endsWith('.vl.json')) assert.ok(!/"(url|href)"|"image"/.test(c), p);
+});
