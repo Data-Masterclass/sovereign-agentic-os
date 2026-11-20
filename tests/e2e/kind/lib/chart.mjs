@@ -6,7 +6,7 @@
  * USER STORY: As AT-e/AT-f I want the native tools to run in exactly the image the chart pins, so
  *             an eject test can never pass on a newer or older tool than production runs.
  * ARCHITECTURE:
- *   - Merges values.yaml ← values.local.yaml ← tests/e2e/kind/values.e2e.yaml (the install order)
+ *   - Merges values.yaml ← values.local.yaml ← values.e2e.yaml ← values.e2e-limits.yaml (install order)
  *     with python3 + PyYAML (the same dependency scripts/os already has) and prints one dotted path.
  */
 import { execFile } from 'node:child_process';
@@ -23,7 +23,7 @@ def merge(a, b):
         a[k] = merge(a.get(k, {}), v) if isinstance(v, dict) and isinstance(a.get(k), dict) else v
     return a
 v = {}
-for f in ['charts/sovereign-agentic-os/values.yaml', 'values.local.yaml', 'tests/e2e/kind/values.e2e.yaml']:
+for f in ['charts/sovereign-agentic-os/values.yaml', 'values.local.yaml', 'tests/e2e/kind/values.e2e.yaml', 'tests/e2e/kind/values.e2e-limits.yaml']:
     v = merge(v, yaml.safe_load(open(f)))
 for p in sys.argv[1].split('.'):
     v = v[p]

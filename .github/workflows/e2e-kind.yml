@@ -10,10 +10,15 @@
 # (tests/e2e/kind/up.sh), runs the harness self-test and journeys AT-a … AT-f (run.sh), publishes the
 # per-assertion report to the job summary and as an artifact, and always deletes the cluster.
 #
-# Runner and cost: `ubuntu-latest` standard GitHub-hosted runner. For this PUBLIC repository it is
-# 4 vCPU / 16 GB RAM and standard runners are free of charge for public repositories. If the full
-# stack later outgrows it, a larger runner is billed even for public repositories (Linux 8-core
-# $0.022/min: about $2 for a 90-minute run, about $60 a month nightly).
+# Runner and cost (capacity gate, tests/e2e/kind/capacity.e2e*.yaml, with values.e2e-limits.yaml):
+#   - `ubuntu-latest` (public repo: 4 vCPU / 16 GB, free): requests fit (CPU 78 %, memory 57 %),
+#     memory LIMITS do not (128 % of 14.5 GiB, with headroom reserved for the pods WP-05/20/38/42 add).
+#     The gate step below therefore fails on it, loudly, before anything is installed.
+#   - RECOMMENDED: an 8-core larger runner (8 vCPU / 32 GB): limits 62 %, requests 39 % CPU / 27 % memory.
+#     $0.022/min, about $2 per 90-minute run, about $60 a month nightly. Larger runners are not free
+#     even for public repositories and need a paid GitHub plan for the organisation (it is on Free).
+#   Select the runner with the repository variables E2E_RUNNER (runner label) and E2E_CAPACITY_BUDGET
+#   (tests/e2e/kind/capacity.e2e-8core.yaml for the 8-core runner).
 name: e2e-kind
 
 on:
@@ -36,7 +41,7 @@ concurrency:
 jobs:
   acceptance:
     name: acceptance (kind)
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.E2E_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 150
     env:
       E2E_CLUSTER: e2e-${{ github.run_id }}
@@ -73,6 +78,22 @@ jobs:
 
       - name: Harness framework tests (no cluster)
         run: node --test tests/e2e/kind/selftest/journey-framework.test.mjs
+
+      # The capacity gate (WP-47) needs js-yaml from os-ui's lockfile and the subchart tarballs.
+      - name: Install os-ui dependencies (capacity gate)
+        run: npm --prefix os-ui ci --no-audit --no-fund
+
+      - name: Resolve chart dependencies
+        run: helm dependency build charts/sovereign-agentic-os
+
+      # Fails BEFORE anything is installed when the harness does not fit this runner, so a nightly
+      # never reports OOM kills as journey reds.
+      - name: Capacity gate for this runner
+        env:
+          BUDGET: ${{ vars.E2E_CAPACITY_BUDGET || 'tests/e2e/kind/capacity.e2e.yaml' }}
+        run: |
+          node scripts/check-capacity.mjs --profile default --budget "$BUDGET" \
+            --values values.local.yaml --values tests/e2e/kind/values.e2e.yaml --values tests/e2e/kind/values.e2e-limits.yaml
 
       - name: Bring up kind + Calico + SeaweedFS + chart
         run: bash tests/e2e/kind/up.sh

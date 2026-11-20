@@ -1,0 +1,81 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+#
+# values.e2e-limits.yaml — the harness's memory-limit profile, layered after values.e2e.yaml.
+#
+# values.local.yaml sets generous LIMITS so a laptop burst is never throttled; summed, they are
+# about 22 GiB, more than any CI runner. This file trims limits to the working sets a single
+# journey actually needs (one tiny PDF, a five-row source, one agent run at a time), and shrinks
+# the JVM heaps with them so a limit is never below its heap. Requests are untouched, and no
+# component is removed or replaced.
+#
+# Checked by the capacity gate against tests/e2e/kind/capacity.e2e-8core.yaml (the recommended
+# runner) in the workflow, before the cluster comes up.
+
+trino:
+  jvm:
+    maxHeap: 768M
+  query:
+    maxMemory: 512MB
+    maxMemoryPerNode: 256MB
+  resources:
+    limits: { cpu: 2, memory: 1280Mi }
+
+opensearch:
+  opensearchJavaOpts: "-Xms384m -Xmx384m"
+  resources:
+    limits: { cpu: 1, memory: 900Mi }
+
+litellm:
+  # The proxy container; the db-migrate init container keeps the chart's 1536Mi (Prisma needs it),
+  # and the pod's effective limit is the larger of the two.
+  resources:
+    limits: { cpu: 1, memory: 1280Mi }
+
+clickhouse:
+  resources:
+    limits: { cpu: 1, memory: 1Gi }
+
+langfuse:
+  langfuse:
+    web:
+      resources:
+        limits: { cpu: 1, memory: 768Mi }
+    worker:
+      resources:
+        limits: { cpu: 1, memory: 640Mi }
+
+docling:
+  resources:
+    limits: { cpu: 2, memory: 1536Mi }
+
+osUI:
+  resources:
+    limits: { cpu: 2, memory: 1Gi }
+  worker:
+    resources:
+      limits: { cpu: 2, memory: 1Gi }
+
+polaris:
+  resources:
+    limits: { cpu: 1, memory: 640Mi }
+
+postgres:
+  resources:
+    limits: { cpu: 1, memory: 640Mi }
+
+dataRunner:
+  resources:
+    limits: { cpu: 1, memory: 512Mi }
+
+queryTool:
+  resources:
+    limits: { cpu: 1, memory: 384Mi }
+
+dagster:
+  dagsterWebserver:
+    resources:
+      limits: { cpu: 1, memory: 384Mi }
+  dagsterDaemon:
+    resources:
+      limits: { cpu: 1, memory: 384Mi }

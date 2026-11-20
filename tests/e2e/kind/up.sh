@@ -13,6 +13,7 @@
 #      into kind;
 #   4. SeaweedFS + the chart's buckets (manifests/seaweedfs.yaml);
 #   5. the chart: values.local.yaml (laptop sizing) + values.e2e.yaml (harness profile)
+#      + values.e2e-limits.yaml (memory limits that fit a CI runner; checked by the capacity gate)
 #      + $E2E_VALUES (optional extra file, e.g. a laptop file that turns components off).
 # It never waits silently: it ends with a per-workload readiness table and exits non-zero when a
 # workload is not Ready, naming it. E2E_ALLOW_PARTIAL=1 keeps going (laptop runs).
@@ -55,7 +56,7 @@ def merge(a, b):
         a[k] = merge(a.get(k, {}), v) if isinstance(v, dict) and isinstance(a.get(k), dict) else v
     return a
 v = {}
-for f in ['charts/sovereign-agentic-os/values.yaml', 'values.local.yaml', 'tests/e2e/kind/values.e2e.yaml']:
+for f in ['charts/sovereign-agentic-os/values.yaml', 'values.local.yaml', 'tests/e2e/kind/values.e2e.yaml', 'tests/e2e/kind/values.e2e-limits.yaml']:
     v = merge(v, yaml.safe_load(open(f)))
 k = sys.argv[1]
 img = v['dagster']['dagsterWebserver']['image'] if k == 'dagster' else v[k]['image']
@@ -95,13 +96,13 @@ k -n "$NS" wait --for=condition=complete job/seaweedfs-buckets --timeout="${E2E_
 
 [ "${E2E_STOP_AFTER_INFRA:-0}" = 1 ] && { say "stopping after infrastructure (E2E_STOP_AFTER_INFRA=1)"; exit 0; }
 
-say "5. chart ($CHART) with values.local.yaml + values.e2e.yaml${E2E_VALUES:+ + $E2E_VALUES}"
+say "5. chart ($CHART) with values.local.yaml + values.e2e.yaml + values.e2e-limits.yaml${E2E_VALUES:+ + $E2E_VALUES}"
 helm dependency build "$CHART" >/dev/null
 extra=""
 [ -n "${E2E_VALUES:-}" ] && extra="-f $E2E_VALUES"
 # shellcheck disable=SC2086  # $extra is a deliberate flag list
 helm --kube-context "$CTX" upgrade --install "$REL" "$CHART" -n "$NS" \
-  -f values.local.yaml -f "$HERE/values.e2e.yaml" $extra --timeout 30m --wait=false
+  -f values.local.yaml -f "$HERE/values.e2e.yaml" -f "$HERE/values.e2e-limits.yaml" $extra --timeout 30m --wait=false
 
 say "readiness (waits up to ${E2E_READY_TIMEOUT:-1500}s per workload)"
 failed=""

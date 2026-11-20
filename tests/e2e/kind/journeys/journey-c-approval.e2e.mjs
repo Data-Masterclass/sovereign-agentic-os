@@ -162,13 +162,19 @@ J.assertion('c5.1', { hop: 'one root, run segment 1 and 2, approval event with t
 
 // ---------------------------------------------------------------- negative twins
 let deactivate = false;
-J.twin('c-twin-1', { disables: 'U deactivated in Keycloak before approval', record: 'run_jobs + Trino $snapshots', expectedFail: 'WP-38', redReasonMust: /principal_inactive/ }, {
+J.twin('c-twin-1', { disables: 'U deactivated in Keycloak before approval', record: 'run_jobs error + Trino $snapshots + system.runtime.queries', expectedFail: 'WP-38', redReasonMust: /^principal_inactive; table unchanged; 0 writes as u123$/ }, {
   check: async () => {
     const r = await approvedFlow({ deactivateBeforeApproval: deactivate });
-    const errs = await pg.rows('agent_runs', `select error from run_jobs where id = '${r.run.runId}'`);
-    if (r.settled.status !== 'done') throw new HopError({ component: 'os-ui-worker', hop: 'resume', reason: errs[0]?.error ?? r.settled.status });
     const after = (await trino.snapshots(TABLE.catalog, TABLE.schema, TABLE.table)).length;
-    check(after === r.snapsBefore + 1, 'trino', 'the approved write changed the table', { before: r.snapsBefore, after });
+    const writes = await writeQueries(U, r.startedAt, r.supplier);
+    if (r.settled.status !== 'done') {
+      // The design's red is all three at once: the typed refusal, no new snapshot, no write query.
+      const [job] = await pg.rows('agent_runs', `select error from run_jobs where id = '${r.run.runId}'`);
+      const inactive = /principal_inactive/.test(job?.error ?? '');
+      const unchanged = after === r.snapsBefore && writes.length === 0;
+      throw new HopError({ component: 'os-ui-worker', hop: 'resume', reason: inactive && unchanged ? `principal_inactive; table unchanged; 0 writes as ${U}` : `resume failed (${job?.error ?? r.settled.status}); snapshots ${r.snapsBefore}→${after}; ${writes.length} writes as ${U}` });
+    }
+    check(after === r.snapsBefore + 1 && writes.some((q) => q.state === 'FINISHED'), 'trino', 'the approved write changed the table, as u123', { before: r.snapsBefore, after, writes: writes.length });
   },
   disable: async () => { deactivate = true; },
   restore: async () => { deactivate = false; },

@@ -13,7 +13,12 @@
 #     in order. A step may pin `match` (a substring the last message must contain); a mismatch
 #     or an exhausted script is HTTP 409 with a typed error, never a made-up answer.
 #   - With no script loaded, chat answers a fixed, labelled sentence (health probes only).
-#   - Embeddings are deterministic (hashed bag of words, L2-normalised, EMBED_DIM wide).
+#   - Embeddings are deterministic. By default a hashed bag of words (L2-normalised, EMBED_DIM wide),
+#     which carries no meaning. A journey that tests RETRIEVAL loads embedding rules
+#     (POST /__stub/embedding-rules {"rules":[{"contains": "...", "topic": <int>}], "weight": 0.9}):
+#     a text containing a rule's substring is pulled towards the fixed unit vector of its topic, so
+#     a query and its answer can share a topic while sharing no word. Texts that match no rule keep
+#     the hashed vector and land far from every topic.
 #   - Every request is counted and logged (GET /__stub/stats, GET /__stub/requests).
 import hashlib
 import json
@@ -30,11 +35,11 @@ EMBED_DIM = int(os.environ.get("EMBED_DIM", "384"))
 NO_SCRIPT_REPLY = "e2e-model-stub: no script loaded"
 
 _lock = threading.Lock()
-_state = {"script": None, "cursor": 0, "requests": [], "counts": {}}
+_state = {"script": None, "cursor": 0, "requests": [], "counts": {}, "embed_rules": [], "embed_weight": 0.9}
 
 
 def _reset():
-    _state.update({"script": None, "cursor": 0, "requests": [], "counts": {}})
+    _state.update({"script": None, "cursor": 0, "requests": [], "counts": {}, "embed_rules": [], "embed_weight": 0.9})
 
 
 def _count(kind, entry):
@@ -44,13 +49,29 @@ def _count(kind, entry):
         _state["requests"].append(entry)
 
 
-def embed(text):
+def _normalise(vec):
+    norm = math.sqrt(sum(v * v for v in vec)) or 1.0
+    return [v / norm for v in vec]
+
+
+def _hashed(text):
     vec = [0.0] * EMBED_DIM
     for tok in re.findall(r"[a-z0-9]+", (text or "").lower()):
         h = int(hashlib.sha256(tok.encode()).hexdigest(), 16)
         vec[h % EMBED_DIM] += 1.0 if (h >> 8) & 1 else -1.0
-    norm = math.sqrt(sum(v * v for v in vec)) or 1.0
-    return [v / norm for v in vec]
+    return _normalise(vec)
+
+
+def embed(text):
+    base = _hashed(text)
+    with _lock:
+        rules, weight = list(_state["embed_rules"]), _state["embed_weight"]
+    for rule in rules:
+        if rule["contains"] in (text or ""):
+            topic = [0.0] * EMBED_DIM
+            topic[int(rule["topic"]) % EMBED_DIM] = 1.0
+            return _normalise([weight * t + (1 - weight) * b for t, b in zip(topic, base)])
+    return base
 
 
 def _text_of(message):
@@ -151,6 +172,13 @@ class Handler(BaseHTTPRequestHandler):
             with _lock:
                 _state["script"], _state["cursor"] = body, 0
             return self._json(200, {"loaded": len(body["steps"])})
+        if path == "/__stub/embedding-rules":
+            rules = body.get("rules")
+            if not isinstance(rules, list) or not all(isinstance(r, dict) and r.get("contains") and isinstance(r.get("topic"), int) for r in rules):
+                return self._json(400, {"error": {"code": "bad_rules", "message": "rules[] of {contains, topic:int} required"}})
+            with _lock:
+                _state["embed_rules"], _state["embed_weight"] = rules, float(body.get("weight", 0.9))
+            return self._json(200, {"loaded": len(rules)})
         if path == "/__stub/reset":
             with _lock:
                 _reset()

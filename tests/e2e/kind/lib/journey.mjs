@@ -20,8 +20,9 @@
  *     positive check is green first; then it disables one hop and the check MUST turn red. A twin
  *     that stays green means the test cannot see the hop, and fails the run. meta.expect='green'
  *     marks the one twin that must stay green (AT-a, F3: claim before grant propagation);
- *     meta.redReasonMust (RegExp) additionally requires the red to carry a specific typed reason
- *     (AT-b: "metric-compile unreachable" must be a typed reason, never "no data").
+ *     meta.redReasonMust (RegExp) is REQUIRED for every twin that must turn red: the red must carry
+ *     the one reason that proves the hop (e.g. an OPA decision id read back from the decision log),
+ *     so a red for any other reason (a port-forward error, an OS-only refusal) fails the run.
  *   - Every outcome is appended to $E2E_REPORT_DIR/results.jsonl for render-report.mjs.
  */
 import { test, after } from 'node:test';
@@ -96,6 +97,10 @@ export function journey(journeyId, title) {
 
   function twin(id, meta, { check: positive, disable, restore }) {
     const label = `${journeyId} ${id} — twin: ${meta.disables}`;
+    // A red twin must say WHY it is red: any red (a port-forward error, a typo) must not count.
+    if ((meta.expect ?? 'red') === 'red' && !(meta.redReasonMust instanceof RegExp)) {
+      throw new Error(`${label}: a twin that must turn red needs meta.redReasonMust (a RegExp for the one reason that proves the hop)`);
+    }
     test(label, { timeout: TIMEOUT }, async () => {
       const t0 = Date.now();
       const expect = meta.expect ?? 'red';

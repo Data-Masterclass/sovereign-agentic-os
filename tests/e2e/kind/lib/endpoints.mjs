@@ -35,15 +35,23 @@ const DEFAULTS = {
 };
 
 export function serviceOf(key) {
-  const override = process.env[`E2E_SVC_${key.replace(/[A-Z]/g, (c) => `_${c}`).toUpperCase()}`];
+  const override = process.env[`E2E_SVC_${envKey(key)}`];
   const v = override ?? DEFAULTS[key];
   const i = v.lastIndexOf(':');
   const [name, port] = [v.slice(0, i), v.slice(i + 1)];
   return { name, port: Number(port) };
 }
 
-/** Local base URL for a component (starts a port-forward on first use). */
+const envKey = (key) => key.replace(/[A-Z]/g, (c) => `_${c}`).toUpperCase();
+
+/**
+ * Local base URL for a component (starts a port-forward on first use). E2E_URL_<KEY> points a
+ * component at a fixed URL instead; the framework tests use it to run a reader against a fake
+ * that behaves like the documented API.
+ */
 export async function baseUrl(key) {
+  const direct = process.env[`E2E_URL_${envKey(key)}`];
+  if (direct) return direct.replace(/\/$/, '');
   const { name, port } = serviceOf(key);
   return (await portForward(name, port)).url;
 }

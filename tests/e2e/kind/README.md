@@ -24,18 +24,28 @@ components off on a small laptop), `E2E_ALLOW_PARTIAL=1` (carry on when a worklo
 `E2E_BUILD_ONLY="mockModel dagster"`, `E2E_SKIP_BUILD=1`, `E2E_STOP_AFTER_INFRA=1`,
 `E2E_IGNORE_XFAIL=1` (drop every expected-fail marker, as WP-48 runs it).
 
-CI: `.github/workflows/e2e-kind.yml`, on demand and nightly, never on pull requests.
+CI: `.github/workflows/e2e-kind.yml`, on demand and nightly, never on pull requests. Before anything
+is installed it runs the capacity gate (`scripts/check-capacity.mjs`) against the runner's budget.
+On the standard `ubuntu-latest` runner (4 vCPU / 16 GB) the requests fit but the memory limits do not,
+so the gate fails there by design. The recommended runner is an 8-core larger runner, selected with
+the repository variables `E2E_RUNNER` and `E2E_CAPACITY_BUDGET=tests/e2e/kind/capacity.e2e-8core.yaml`.
+It costs $0.022/min (about $2 a run) and needs a paid GitHub plan.
+
+The official all-red baseline is the first nightly run on `main` with the full chart installed. A
+local run on a small laptop only proves the harness itself.
 
 ## Layout
 
 | Path | What |
 |---|---|
 | `cluster.yaml`, `versions.env` | kind with the default CNI off; pins for kind, Calico, SeaweedFS |
+| `values.e2e-limits.yaml`, `capacity.e2e*.yaml` | memory limits sized for CI; the runner budgets the capacity gate checks |
 | `values.e2e.yaml` | the harness profile on top of `values.local.yaml`: no offline mock, SeaweedFS, the stub behind LiteLLM's production model list, the agent worker as its own Deployment |
 | `manifests/seaweedfs.yaml` | SeaweedFS S3 + the chart's buckets |
 | `model-stub/` | scripted, request-counting OpenAI-compatible upstream |
 | `lib/records/*.mjs` | one reader per component record |
-| `lib/journey.mjs` | assertions, negative twins, the expected-fail marker, the report |
+| `lib/journey.mjs` | assertions, negative twins (each red twin must name the one reason that proves its hop: `redReasonMust`), the expected-fail marker, the report |
+| `lib/checks/` | journey judgements as pure functions, tested without a cluster |
 | `journeys/journey-{a..f}-*.e2e.mjs` | AT-a … AT-f |
 | `selftest/` | the harness proving itself (Calico enforces policy, S3, stub, reachability) and the framework's own tests |
 

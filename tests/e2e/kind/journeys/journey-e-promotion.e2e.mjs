@@ -167,11 +167,19 @@ J.twin('e-twin-1', { disables: 'dataset 2 promoted in the same domain', record: 
 });
 
 let approver = A;
-J.twin('e-twin-2', { disables: 'a builder (not the domain admin) approves', record: 'OS refusal carrying the OPA reason', expectedFail: 'WP-29', redReasonMust: /approver_role_required/ }, {
+// The refusal must be OPA's: a deny decision for this approver on promotion approval whose reasons
+// include approver_role_required, read back from the decision log. os-ui's error text alone (a role
+// check hard-coded in TypeScript) is the WRONG reason.
+J.twin('e-twin-2', { disables: 'a builder (not the domain admin) approves', record: 'OPA decision log entry (decision id, result, reason)', expectedFail: 'WP-29', redReasonMust: /^OPA-VERIFIED-DENY decision=\S+ reason=approver_role_required$/ }, {
   check: async () => {
     const ds = await createDataset(`e2e_promo_t${Date.now().toString(36)}`);
     const req = await callTool(U, 'request_promotion', { kind: 'dataset', id: ds.id });
-    await callTool(approver, 'approve_promotion', { approvalId: req.approvalId ?? req.id });
+    try {
+      await callTool(approver, 'approve_promotion', { approvalId: req.approvalId ?? req.id });
+    } catch (err) {
+      const denies = await opa.decisions({ sinceMinutes: 10, match: (e) => e.input?.subject?.id === approver && /promotion/.test(e.input?.action ?? '') && !(e.result === true || e.result?.allow === true) && JSON.stringify(e.result ?? {}).includes('approver_role_required') });
+      throw new HopError({ component: 'os-ui', hop: 'approve_promotion', reason: denies.length ? `OPA-VERIFIED-DENY decision=${denies.at(-1).decision_id} reason=approver_role_required` : `refused (${err.reason ?? err.message}) with no matching OPA deny in the decision log` });
+    }
   },
   disable: async () => { approver = B; },
   restore: async () => { approver = A; },

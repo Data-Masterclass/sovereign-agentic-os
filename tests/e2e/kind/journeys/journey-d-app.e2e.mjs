@@ -155,18 +155,23 @@ J.assertion('d5.2', { hop: 'the app calls the granted agent; Langfuse trace user
   const obs = await langfuse.observations({ traceId: res.data.traceId });
   check(obs.length && obs.every((o) => o.userId === V), 'langfuse', `every observation has userId=${V}`, [...new Set(obs.map((o) => o.userId))]);
   const root = langfuse.roots(obs)[0];
-  check([].concat(root?.tags ?? root?.metadata?.tags ?? []).includes(`app:${SLUG}`), 'langfuse', `trace tagged app:${SLUG}`, root?.tags);
+  check(root, 'langfuse', 'the trace has a root observation', obs.length);
+  check(langfuse.tagsOf(root).includes(`app:${SLUG}`), 'langfuse', `trace tagged app:${SLUG}`, langfuse.tagsOf(root));
 });
 
 // ---------------------------------------------------------------- negative twins
 let systemName = GRANTED_SYSTEM;
-J.twin('d-twin-1', { disables: 'the app calls a system it has no grant for', record: 'HTTP 403 + OPA decision id', expectedFail: 'WP-29', redReasonMust: /403.*decision/i }, {
+// The 403 must be OPA's: the decision id the response names is looked up in OPA's decision log and
+// must be a deny for this viewer and this system. A 403 os-ui produced on its own (no decision, or a
+// decision that allowed) is the WRONG reason. The verdict token is only ever produced after that lookup.
+J.twin('d-twin-1', { disables: 'the app calls a system it has no grant for', record: 'OPA decision log entry (decision id, result)', expectedFail: 'WP-29', redReasonMust: /^OPA-VERIFIED-DENY decision=\S+ for v-viewer-de$/ }, {
   check: async () => {
     const { res } = await viewerCall(systemName);
     if (res.status === 403) {
       const id = res.data?.decisionId;
       const d = id ? await opa.decisionById(id) : null;
-      throw new HopError({ component: 'os-ui', hop: 'agent call', reason: `403 with decision ${id ?? 'missing'} ${d ? 'found in OPA log' : 'NOT in OPA log'}` });
+      const denies = d && !allowed(d) && d.input?.subject?.id === V && JSON.stringify(d.input?.resource ?? {}).includes(systemName);
+      throw new HopError({ component: 'os-ui', hop: 'agent call', reason: denies ? `OPA-VERIFIED-DENY decision=${id} for ${V}` : `403 without a matching OPA deny in the decision log (decisionId=${id ?? 'none'}, found=${Boolean(d)})` });
     }
     check(res.status === 200, 'os-ui', 'granted call succeeds', res.status);
   },
@@ -176,7 +181,7 @@ J.twin('d-twin-1', { disables: 'the app calls a system it has no grant for', rec
 
 const APP_NP = process.env.E2E_APP_NETPOL ?? 'default-deny-egress';
 let savedAppNp;
-J.twin('d-twin-2', { disables: `NetworkPolicy ${APP_NS}/${APP_NP} removed`, record: 'Calico-enforced TCP probe with the app pod labels', expectedFail: 'WP-54' }, {
+J.twin('d-twin-2', { disables: `NetworkPolicy ${APP_NS}/${APP_NP} removed`, record: 'Calico-enforced TCP probe with the app pod labels', expectedFail: 'WP-54', redReasonMust: /^\[calico\] app pod cannot open TCP to Trino :8443 or OpenSearch :9200; record shows .*true/ }, {
   check: async () => {
     await deployed();
     const labels = { 'app.kubernetes.io/name': SLUG };
@@ -195,10 +200,21 @@ J.twin('d-twin-2', { disables: `NetworkPolicy ${APP_NS}/${APP_NP} removed`, reco
   },
 });
 
-J.twin('d-twin-3', { disables: 'trivy-server scaled to zero', record: 'commit_checks + OS refusal', expectedFail: 'WP-42', redReasonMust: /unavailable/i }, {
+// Scanner down: the check must settle as `unavailable` (never `passed`) AND the approval must be
+// refused. An approval that goes through on an unavailable scan, or any other error, is the WRONG reason.
+J.twin('d-twin-3', { disables: 'trivy-server scaled to zero', record: 'commit_checks + OPA deploy.approve decision', expectedFail: 'WP-42', redReasonMust: /^SCAN-UNAVAILABLE; deploy\.approve denied by OPA decision \S+$/ }, {
   check: async () => {
     const r = await pushAndScan('4.17.21');
-    if (r.checks.status !== 'passed') throw new HopError({ component: 'trivy', hop: 'scan', reason: `${r.checks.status}: ${JSON.stringify(r.checks.detail ?? '').slice(0, 200)}` });
+    if (r.checks.status === 'unavailable') {
+      let refused = null;
+      try {
+        const req = await callTool(U, 'request_deploy', { appId: r.app.id, sha: r.sha });
+        await callTool(B, 'decide_deploy', { requestId: req.requestId ?? req.id, decision: 'approve' });
+      } catch (err) { refused = err; }
+      const ds = await opa.decisions({ action: 'deploy.approve', sinceMinutes: 15, match: (e) => JSON.stringify(e.input ?? {}).includes(r.sha) && !allowed(e) });
+      throw new HopError({ component: 'trivy', hop: 'scan', reason: refused && ds.length ? `SCAN-UNAVAILABLE; deploy.approve denied by OPA decision ${ds.at(-1).decision_id}` : `scan unavailable but approval ${refused ? 'refused without an OPA deny' : 'WENT THROUGH'}` });
+    }
+    check(r.checks.status === 'passed', 'postgres', 'commit_checks passed', r.checks.status);
     const req = await callTool(U, 'request_deploy', { appId: r.app.id, sha: r.sha });
     await callTool(B, 'decide_deploy', { requestId: req.requestId ?? req.id, decision: 'approve' });
   },

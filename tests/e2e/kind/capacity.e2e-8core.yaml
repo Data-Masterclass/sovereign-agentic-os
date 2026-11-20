@@ -1,0 +1,49 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+#
+# Node budget for the kind acceptance harness on a GitHub-hosted 8-core larger runner (8 vCPU,
+# 32 GB RAM; the RECOMMENDED runner). Same format as charts/sovereign-agentic-os/capacity.yaml, read by
+#   node scripts/check-capacity.mjs --profile default --budget tests/e2e/kind/capacity.e2e-8core.yaml \
+#     --values values.local.yaml --values tests/e2e/kind/values.e2e.yaml --values tests/e2e/kind/values.e2e-limits.yaml
+# The workflow runs this BEFORE bringing the cluster up, so a harness that no longer fits the runner
+# fails loudly instead of OOM-killing pods.
+node:
+  flavour: github-linux-8-core (8 vCPU / 32 GB, larger runner)
+  count: 1
+  allocatable:
+    cpu: 8000m
+    memory: "32212254720"   # 30 GiB: 32 GB minus the runner OS, Docker and kubelet reserve
+
+thresholds:
+  requests:
+    cpu: 85
+    memory: 85
+  limits:
+    memory: 85
+
+minimumWorkloads: 10
+
+outsideChart:
+  - name: "kind control plane (etcd, apiserver, controller-manager, scheduler, coredns x2, kube-proxy, local-path)"
+    requests: { cpu: 950m, memory: 390Mi }
+    limits: { memory: 340Mi }
+  - name: calico (node + kube-controllers)
+    requests: { cpu: 250m, memory: 64Mi }
+    limits: {}
+  - name: seaweedfs (tests/e2e/kind/manifests/seaweedfs.yaml)
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { cpu: 1000m, memory: 512Mi }
+  # Headroom for the pods the programme adds before WP-48. Reserved now so the gate fails the day the
+  # runner stops fitting, not the day a pod is OOM-killed.
+  - name: "planned: Keycloak (WP-38)"
+    requests: { cpu: 100m, memory: 512Mi }
+    limits: { memory: 1Gi }
+  - name: "planned: OTel Collector + VictoriaLogs/VictoriaMetrics (WP-05)"
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { memory: 512Mi }
+  - name: "planned: trivy-server (WP-42)"
+    requests: { cpu: 50m, memory: 256Mi }
+    limits: { memory: 768Mi }
+  - name: "planned: metric-compile (WP-20)"
+    requests: { cpu: 50m, memory: 256Mi }
+    limits: { memory: 512Mi }
