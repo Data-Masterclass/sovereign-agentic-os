@@ -141,3 +141,14 @@ class SharedColumnRuleTest(unittest.TestCase):
         for name in cases["refuse"]:
             self.assertFalse(app.is_column_name(name), repr(name))
 
+
+class CapabilityLabelTest(unittest.TestCase):
+    """The image says what it does: the Dockerfile label and the code that applies `columnNames`
+    must exist together (the chart marks every non-legacy digest as applying column names)."""
+
+    def test_label_and_code_agree(self):
+        here = os.path.dirname(os.path.abspath(__file__))
+        dockerfile = open(os.path.join(here, "Dockerfile"), encoding="utf-8").read()
+        self.assertIn('LABEL org.sovereign-os.applies-column-names="true"', dockerfile)
+        self.assertTrue(callable(getattr(app, "apply_column_names", None)))
+

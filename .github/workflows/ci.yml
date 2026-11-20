@@ -473,7 +473,7 @@ jobs:
       - name: Install data-runner deps
         run: pip install -r images/extensions/data-runner/requirements.txt
       - name: pytest (data-runner)
-        run: python3 -m pytest -q images/extensions/data-runner/test_app.py
+        run: python3 -m pytest -q images/extensions/data-runner/test_app.py images/extensions/data-runner/test_bronze_raw.py
       # web-fetch: new tests (zero tests previously)
       - name: pytest (web-fetch)
         run: python3 -m pytest -q images/base/web-fetch/test_app.py
