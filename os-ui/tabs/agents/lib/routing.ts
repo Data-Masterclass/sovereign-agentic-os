@@ -137,19 +137,6 @@ export function classifyProviderType(params?: { model?: string; api_base?: strin
   return 'openai-compatible';
 }
 
-/**
- * Build the LiteLLM `litellm_params.model` string for an OpenAI-compatible backend.
- * Both MVP wizard types speak the OpenAI protocol, so the prefix is `openai/`. The
- * KEY STACKIT rule: STACKIT keeps its ORG PREFIX in the model id (e.g.
- * `Qwen/Qwen3-VL-235B…`), so the final value is the DOUBLE prefix `openai/Qwen/…`;
- * a SINGLE prefix 404s at the STACKIT gateway. We never strip a prefix the admin
- * typed — we only add `openai/` when it is absent.
- */
-export function litellmModelString(modelName: string): string {
-  const name = (modelName || '').trim();
-  return name.startsWith('openai/') ? name : `openai/${name}`;
-}
-
 /** Bare host of an api_base URL (no server dep; mirrors secrets.egressHost). */
 function egressHostOf(endpoint: string): string {
   const raw = (endpoint || '').trim();

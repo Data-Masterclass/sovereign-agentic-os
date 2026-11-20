@@ -36,11 +36,7 @@ data:
   {{- /* The OpenSearch snapshot repository's object-storage host joins the allowlist with
          the feature that needs it (WP-21): OpenSearch reaches STACKIT Object Storage ONLY
          through this proxy (s3.client.default.proxy.* in opensearch.yml). */}}
-  {{- $hosts := $p.allowlist }}
-  {{- $s3 := (.Values.opensearchSnapshots | default dict).s3 | default dict }}
-  {{- if and .Values.opensearch.enabled $s3.enabled $s3.endpointHost }}
-  {{- $hosts = append $hosts $s3.endpointHost | uniq }}
-  {{- end }}
+  {{- $hosts := include "soa.egressHosts" . | fromJsonArray }}
   filter: |
     {{- range $hosts }}
     (^|\.){{ . | replace "." "\\." }}$

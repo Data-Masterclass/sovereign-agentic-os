@@ -1,0 +1,35 @@
+{{- if .Values.litellm.enabled }}
+{{- /*
+  litellm-egress-env — the model gateway's outbound path (envFrom, `litellm.environmentConfigMaps`).
+  With the egress proxy deployed and `llmProviders.viaEgressProxy` on, every outbound provider call
+  leaves through the proxy, so a provider host must be on its filter (soa.egressHosts) — the same
+  rule as every other outbound call. In-cluster names the gateway calls (Langfuse OTLP, mock-model,
+  the MCP query tool, any `*.svc` such as an in-cluster Ollama or vLLM) are on NO_PROXY and are
+  reached directly. Proxy env is the documented way for LiteLLM's HTTP clients
+  (https://docs.litellm.ai/docs/proxy/configs — HTTP(S)_PROXY / NO_PROXY).
+  LITELLM_LOCAL_MODEL_COST_MAP: read the price map bundled in the image instead of fetching it from
+  GitHub at start (https://docs.litellm.ai/docs/completion/token_usage — "LITELLM_LOCAL_MODEL_COST_MAP").
+  With the proxy off (or not deployed) the ConfigMap is empty: the gateway is never pointed at a
+  proxy that does not exist.
+*/}}
+{{- $llm := .Values.llmProviders | default dict }}
+{{- $via := and .Values.egressProxy.enabled (ne ($llm.viaEgressProxy | toString) "false") }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: litellm-egress-env
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "litellm") | nindent 4 }}
+data:
+  LITELLM_LOCAL_MODEL_COST_MAP: "True"
+{{- if $via }}
+  HTTPS_PROXY: "http://egress-proxy:3128"
+  HTTP_PROXY: "http://egress-proxy:3128"
+  https_proxy: "http://egress-proxy:3128"
+  http_proxy: "http://egress-proxy:3128"
+  NO_PROXY: {{ include "soa.litellmNoProxy" . | quote }}
+  no_proxy: {{ include "soa.litellmNoProxy" . | quote }}
+{{- end }}
+{{- end }}
