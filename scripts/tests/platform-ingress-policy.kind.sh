@@ -112,6 +112,9 @@ expect refuse "an agentic-apps app pod"   agentic-apps app.kubernetes.io/compone
 expect refuse "an agentic-apps app pod"   agentic-apps app.kubernetes.io/component=software-runner os-ui 3000
 expect refuse "an app pod labelled os-ui" agentic-apps "$UI" opa 8181
 expect refuse "a pod in another namespace" other - pg 5432
+expect refuse "a pod in another namespace" other - trino 8080
+expect refuse "an unlisted platform pod (docling)" agentic-os app.kubernetes.io/component=docling trino 8080
+expect refuse "an unlabelled pod"         agentic-os - trino 8080
 expect refuse "the ingress controller"    ingress-nginx app.kubernetes.io/name=ingress-nginx opa 8181
 expect refuse "a Dagster run pod"         agentic-os component=user-deployments,dagster/run-id=r3 opa 8181
 expect refuse "an unlabelled pod"         agentic-os - opa 8181
