@@ -13,4 +13,7 @@ each file several times.
 - "/policies/governance.json"
 - "/policies/connections.rego"
 - "/policies/system-log.rego"
+{{- if (.Values.opa.guardrailsData | default dict).enabled }}
+- "/policies/guardrails.rego"
+{{- end }}
 {{- end -}}

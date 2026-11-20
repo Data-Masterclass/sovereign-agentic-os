@@ -30,6 +30,10 @@ not here.
   https://www.openpolicyagent.org/docs/management-status
 - Health API (`GET /health?bundles`: 200 only once every bundle is activated):
   https://www.openpolicyagent.org/docs/rest-api#health-api
+- Guardrails eject (WP-30): `opa eval --data <dotted.path>:<file>` loads a JSON file under a
+  prefix of the data document (`-d 'os_data.guardrails.<id>:guardrails.json'`), so a committed
+  data file decides with the platform policy and no OS: https://www.openpolicyagent.org/docs/cli#eval
+  (behaviour checked on 1.22.4 by `tabs/knowledge/lib/guardrails.eject.test.ts`).
 
 ## Upgrade notes 1.4.2 → 1.22.4 (from the release notes)
 - Rego v1 syntax stays the default; every policy here already uses `import rego.v1`/`if`/`contains`.

@@ -48,7 +48,14 @@
 {{- $persist := and $db.enabled ($db.persistence | default dict).enabled }}
 {{- /* The revision of everything OPA loads: policies + chart data. Used for the
   pod-restart checksum and as OPA's `policy_rev` label. */}}
+{{- $guardrails := ($opa.guardrailsData | default dict).enabled }}
+{{- if and $guardrails (not $db.enabled) }}
+{{- fail "opa.guardrailsData.enabled needs opa.dataBundle.enabled: the guardrail data reaches OPA only in the os-data bundle" }}
+{{- end }}
 {{- $policyRev := printf "%s-%s-%s-%s-%s-%s-%s-%s-%s" ($opa.grants | toJson) (($opa.requiresApproval | default list) | toJson) ($gov | toJson) (.Files.Get "policies/authz.rego") (.Files.Get "policies/trino.rego") (.Files.Get "policies/trino_impersonation.rego") (.Files.Get "policies/service_identities.json") (.Files.Get "policies/connections.rego") (.Files.Get "policies/system/log.rego") | sha256sum }}
+{{- if $guardrails }}
+{{- $policyRev = printf "%s-%s" $policyRev (.Files.Get "policies/guardrails.rego") | sha256sum }}
+{{- end }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -94,6 +101,12 @@ data:
   # `mask` erases secret-bearing keys (decision_logs.drop_decision / mask_decision).
   system-log.rego: |
 {{ .Files.Get "policies/system/log.rego" | indent 4 }}
+{{- if $guardrails }}
+  # Knowledge guardrails (package os.guardrails, WP-30): one platform policy that reads the
+  # committed guardrail data at data.os_data.guardrails (os-data bundle); tested beside it.
+  guardrails.rego: |
+{{ .Files.Get "policies/guardrails.rego" | indent 4 }}
+{{- end }}
 ---
 # OPA's own configuration file (--config-file). Decision logs go to the console
 # (OPA's log output, one JSON line per decision); the cluster log pipeline collects them

@@ -362,6 +362,11 @@
   value: {{ join "," ($odb.abacAttributes | default list) | quote }}
 - name: OS_OPA_INSTANCES
   value: "opa"
+{{- if (.Values.opa.guardrailsData | default dict).enabled }}
+# WP-30: guardrails are committed OPA data in the os-data bundle (no runtime policy upload).
+- name: OS_GUARDRAILS_DATA
+  value: "1"
+{{- end }}
 {{- $g := (.Values.postgres.governance | default dict) }}
 {{- if and .Values.postgres.enabled $g.enabled }}
 # The os-grants bundle reads run grants from os_governance as the runtime (DML-only) login.

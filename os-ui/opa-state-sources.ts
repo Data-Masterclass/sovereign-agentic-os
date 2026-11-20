@@ -19,6 +19,9 @@
  *     what the pushes held. Two bundle-only documents join them: `os_data.users` (10 F7, with the
  *     attribute allow-list) and `os_data.app_grants` (10 F17). Each refuses (ok:false) while its
  *     store is not the durable snapshot, so a partial bundle is never compiled.
+ *   - WP-30 (`OS_GUARDRAILS_DATA`): the guardrails are bundled too — `os_data.guardrails`, read from
+ *     every domain repository's committed `guardrails.json` and decided by the chart's platform
+ *     policy `os.guardrails`; no policy module is uploaded. Off = the interim module upload.
  */
 import 'server-only';
 import { registerGrantContributor, registerOpaStateSource } from '@core/policy/opa-reconcile';
@@ -27,6 +30,7 @@ import { agentGrants, restoreRequiresApproval } from '@tabs/agents/lib/build/opa
 import { restoreDataGovernance } from '@tabs/data/lib/policy/opa-state';
 import { recompileExposures } from '@tabs/connections/lib/exposure-policy';
 import { restoreGuardrails } from '@tabs/knowledge/lib/guardrails-apply';
+import { restoreGuardrailsFromGit } from '@tabs/knowledge/lib/guardrails-data';
 import { compilerView, ensureHydrated as ensureDomainsHydrated } from '@tabs/admin/lib/domains';
 import { knownDomains, listUsers, userDirectoryAuthoritative } from '@tabs/admin/lib/users';
 import { appRegistryHydrated, listAllAppsInternal } from '@tabs/software/lib/apps';
@@ -87,7 +91,11 @@ export function registerOpaStateSources(): void {
   registerOpaStateSource({ name: 'approval-holds', bundled: true, restore: restoreRequiresApproval });
   registerOpaStateSource({ name: 'os-data-users', bundled: true, restore: restoreOsDataUsers });
   registerOpaStateSource({ name: 'app-grants', bundled: true, restore: restoreAppGrants });
-  // Not bundled: a policy module (PUT /v1/policies) plus its data, outside the bundle's roots.
-  // WP-30 replaces it with data-driven guardrails in the signed policy bundle.
-  registerOpaStateSource({ name: 'guardrails', restore: restoreGuardrails });
+  if (config.guardrailsData) {
+    // WP-30: committed OPA data from git, in the os-data bundle; the policy is a chart file.
+    registerOpaStateSource({ name: 'guardrails', bundled: true, restore: () => restoreGuardrailsFromGit() });
+  } else {
+    // Interim (rollback): a policy module (PUT /v1/policies) plus its data, outside the bundle's roots.
+    registerOpaStateSource({ name: 'guardrails', restore: restoreGuardrails });
+  }
 }

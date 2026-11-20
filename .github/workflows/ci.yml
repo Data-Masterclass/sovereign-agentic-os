@@ -759,7 +759,7 @@ jobs:
           OS_PG_TEST_URL: postgres://postgres:ci-only-throwaway@127.0.0.1:5432/postgres
           OPA_IT_DIR: ${{ runner.temp }}
         run: |
-          for t in bundle-parity bundle grant-propagation trino-bundle; do
+          for t in bundle-parity bundle grant-propagation trino-bundle guardrails-bundle; do
             node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test ../tests/opa/$t.int.test.ts
           done
       - name: pvc-restart (kind) — a NEW OPA pod starts from the persistent volume with os-ui down
