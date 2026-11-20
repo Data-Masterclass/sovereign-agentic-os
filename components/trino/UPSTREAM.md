@@ -79,3 +79,26 @@ that touch this chart's config:
   (https://trino.io/docs/476/functions/array.html), `SHOW FUNCTIONS`.
 - Proven on the chart's Trino 476 by `os-ui/core/mcp/trino-sql-error.trino.test.ts` (CI job
   `test-lakehouse`).
+
+## Authentication and impersonation (WP-14, design 06 §5.2 / §5.4, 10 F4)
+
+Docs for this pin: TLS https://trino.io/docs/476/security/tls.html , PASSWORD file authenticator
+https://trino.io/docs/476/security/password-file.html , internal communication
+https://trino.io/docs/476/security/internal-communication.html , authentication types
+https://trino.io/docs/476/security/authentication-types.html , OPA access control (incl.
+`ImpersonateUser`) https://trino.io/docs/476/security/opa-access-control.html .
+Clients: trino-python-client `BasicAuthentication` + `verify` (Apache-2.0,
+https://github.com/trinodb/trino-python-client), dbt-trino `method: ldap` + `impersonation_user`
+(https://github.com/starburstdata/dbt-trino, `dbt/adapters/trino/connections.py` at v1.9.3 (live image) and v1.12.0 (main)).
+
+Results on `trinodb/trino:476` (probe, then `tests/lakehouse/{auth,impersonation,parity}.int.test.mjs`):
+
+| Question | Result |
+|---|---|
+| With `http-server.authentication.type=PASSWORD`, what does the plain-HTTP port do? | It refuses every statement with **403** "Authentication over HTTP is not enabled", with or without credentials. `/v1/info` stays 200 (probes keep working). |
+| Can the HTTP port stay open for a dual-run? | **Yes:** with `http-server.authentication.allow-insecure-over-http=true`, plain HTTP stays unauthenticated (header user, as before) and **rejects any password** (401 "Password not allowed for insecure authentication"); TLS still requires the password. This is `trino.auth.insecureHttp`. |
+| PASSWORD on TLS | no credentials → 401, wrong password → 401, a user with no `password.db` entry → 401, an empty password → 401. A client that does not trust the chart CA fails the handshake. |
+| Helm-generated credentials | sprig `htpasswd` writes bcrypt `$2a$`; Trino's file authenticator accepts the same hash as `$2y$` (cost 10). A Helm `genCA`/`genSignedCert` key+chain PEM works as `http-server.https.keystore.path`. |
+| `ImpersonateUser` input | `context.identity.user` = the **authenticated** user, `action.resource.user.user` = the requested `X-Trino-User`; denials and allows are in the sidecar decision log. |
+| `SET SESSION AUTHORIZATION` inside an impersonated session | checked as **session user → new user** (e.g. `dana → dave`), not as the authenticated service user. With OPA rules that allow only `svc-*` users it is always denied. It needs the client capability `SESSION_AUTHORIZATION`. |
+| dbt-trino `method: none` (1.9.3 and 1.12.0) | `TrinoNoneCredentials` sends no `Authorization` and has no `impersonation_user`; the session user is `user`. `method: ldap` sends Basic auth over HTTPS and honours `impersonation_user`. |

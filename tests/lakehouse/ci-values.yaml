@@ -8,6 +8,15 @@ trino:
   query:
     maxMemory: "1GB"
     maxMemoryPerNode: "1GB"
+  # WP-14: the dual-run cut-over state — TLS + PASSWORD service users on 8443, plain HTTP still
+  # open for today's clients (every other harness test runs on it unchanged), and the OPA sidecar
+  # Trino asks. restrict.sh re-renders with `trino.auth.insecureHttp=false` (the closed state).
+  auth:
+    enabled: true
+    insecureHttp: true
+  opa:
+    sidecar:
+      enabled: true
 # Durable metastore, as on STACKIT (values.stackit-managed.yaml), so the admin-tool bootstrap and
 # the Postgres schema are part of the proof.
 polaris:

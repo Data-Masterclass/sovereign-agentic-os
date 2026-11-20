@@ -14,6 +14,9 @@
 {{- $ice := $t.catalog.iceberg }}
 {{- $ac := $t.accessControl | default dict }}
 {{- $acOn := and $ac.enabled $t.opa.enabled }}
+{{- $auth := $t.auth | default dict }}
+{{- $sidecar := and $t.opa.enabled ($t.opa.sidecar | default dict).enabled }}
+{{- $opaUri := ternary "http://127.0.0.1:8181" $t.opa.uri $sidecar }}
 {{- if eq .Values.global.profile "local" }}
 apiVersion: v1
 kind: Secret
@@ -43,6 +46,19 @@ data:
     node-scheduler.include-coordinator=true
     http-server.http.port=8080
     discovery.uri=http://localhost:8080
+    {{- if $auth.enabled }}
+    # WP-14 (06 §5.2): TLS + the PASSWORD file authenticator for every client on the TLS port.
+    # The plain-HTTP port stays for /v1/info and, while `insecureHttp` (dual-run), for the
+    # clients that have not moved: allow-insecure-over-http keeps it unauthenticated there and
+    # never accepts a password on it. With `insecureHttp: false` Trino refuses every statement on
+    # plain HTTP. https://trino.io/docs/476/security/tls.html , password-file.html
+    http-server.https.enabled=true
+    http-server.https.port={{ $auth.httpsPort }}
+    http-server.https.keystore.path=/etc/trino/tls/tls-combined.pem
+    http-server.authentication.type=PASSWORD
+    http-server.authentication.allow-insecure-over-http={{ $auth.insecureHttp }}
+    internal-communication.shared-secret=${ENV:TRINO_INTERNAL_SHARED_SECRET}
+    {{- end }}
     query.max-memory={{ $t.query.maxMemory }}
     query.max-memory-per-node={{ $t.query.maxMemoryPerNode }}
     {{- if $t.query.spillEnabled }}
@@ -70,11 +86,18 @@ data:
     -Djdk.attach.allowAttachSelf=true
   log.properties: |
     io.trino=INFO
+  {{- if $auth.enabled }}
+  password-authenticator.properties: |
+    password-authenticator.name=file
+    # A directory mount of the Secret (not subPath), so a rotated password reaches Trino, which
+    # re-reads the file on its refresh period.
+    file.password-file=/etc/trino/auth/password.db
+  {{- end }}
   {{- if $t.opa.enabled }}
   # Governance = the official Trino->OPA access-control plugin, pointed at the SAME
   # OPA that governs agent tools (package `trino`: row filter by domain + column
   # mask by sensitivity). Tool/domain ACLs stay in package agentic.authz.
-  {{- $opaProps := printf "access-control.name=opa\nopa.policy.uri=%s/v1/data/trino/allow\nopa.policy.row-filters-uri=%s/v1/data/trino/rowFilters\nopa.policy.column-masking-uri=%s/v1/data/trino/columnMask\nopa.policy.batch-column-masking-uri=%s/v1/data/trino/batchColumnMask\n" $t.opa.uri $t.opa.uri $t.opa.uri $t.opa.uri }}
+  {{- $opaProps := printf "access-control.name=opa\nopa.policy.uri=%s/v1/data/trino/allow\nopa.policy.row-filters-uri=%s/v1/data/trino/rowFilters\nopa.policy.column-masking-uri=%s/v1/data/trino/columnMask\nopa.policy.batch-column-masking-uri=%s/v1/data/trino/batchColumnMask\n" $opaUri $opaUri $opaUri $opaUri }}
   {{- if $acOn }}
   # Chained: BOTH files are listed in `access-control.config-files` above.
   access-control-opa.properties: |
@@ -164,6 +187,11 @@ data:
         }
       ],
       "impersonation": [
+        {
+          "original_user": "^(svc-dagster-runner|svc-os-ui|svc-os-worker)$",
+          "new_user": ".*",
+          "allow": true
+        },
         {
           "original_user": "^{{ $ac.serviceUser | default "dbt-runner" }}$",
           "new_user": "^{{ $ac.principalPattern | default "[A-Za-z0-9][A-Za-z0-9._-]{0,63}" }}$",
@@ -286,6 +314,11 @@ spec:
         {{- /* The limits files are subPath mounts, which the kubelet never refreshes, so a
                change to them must roll the pod. */}}
         checksum/limits: {{ printf "%s-%s" ($t.resourceGroups | toJson) ($t.sessionProperties | toJson) | sha256sum }}
+        {{- if or $auth.enabled $sidecar }}
+        {{- /* config.properties and the OPA props are subPath mounts: an auth or sidecar change
+               must roll the pod. Only rendered when one is on, so a default install keeps its hash. */}}
+        checksum/auth: {{ printf "%s-%s" ($auth | toJson) ($t.opa | toJson) | sha256sum }}
+        {{- end }}
         checksum/catalog: {{ printf "%s-%s-%s%s" ($ice | toJson) (include "soa.s3Endpoint" .) ($t.externalCatalogs | toJson) (ternary (printf "-%s" ($t.cloudCatalog | toJson)) "" (ne (dig "provider" "" ($t.cloudCatalog | default dict)) "")) | sha256sum }}
       labels:
         {{- include "soa.labels" . | nindent 8 }}
@@ -335,6 +368,10 @@ spec:
                    PAT, Fabric SP secret …). Each `secretEnv` entry maps a ${ENV:VAR}
                    referenced in the catalog props to a (secretName,key). Glue/BigQuery-
                    Workload-Identity catalogs declare none — keyless via the SA above. */}}
+            {{- if $auth.enabled }}
+            - name: TRINO_INTERNAL_SHARED_SECRET
+              valueFrom: { secretKeyRef: { name: trino-internal-communication, key: shared-secret } }
+            {{- end }}
             {{- range $c := $t.externalCatalogs }}
             {{- range $e := ($c.secretEnv | default list) }}
             - name: {{ $e.name }}
@@ -343,6 +380,9 @@ spec:
             {{- end }}
           ports:
             - { name: http, containerPort: 8080 }
+            {{- if $auth.enabled }}
+            - { name: https, containerPort: {{ $auth.httpsPort }} }
+            {{- end }}
           startupProbe:
             httpGet: { path: /v1/info, port: http }
             periodSeconds: 5
@@ -377,13 +417,40 @@ spec:
             - { name: config, mountPath: /etc/trino/session-property-config.properties, subPath: session-property-config.properties, readOnly: true }
             - { name: config, mountPath: /etc/trino/session-property-config.json, subPath: session-property-config.json, readOnly: true }
             {{- end }}
+            {{- if $auth.enabled }}
+            - { name: config, mountPath: /etc/trino/password-authenticator.properties, subPath: password-authenticator.properties, readOnly: true }
+            - { name: tls, mountPath: /etc/trino/tls, readOnly: true }
+            - { name: service-users, mountPath: /etc/trino/auth, readOnly: true }
+            {{- end }}
             - { name: catalog, mountPath: /etc/trino/catalog, readOnly: true }
             - { name: data, mountPath: /data/trino }
             - { name: tmp, mountPath: /tmp }
+        {{- if $sidecar }}
+        {{- include "soa.trinoOpaSidecar" . | nindent 8 }}
+        {{- end }}
       volumes:
         - name: config
           configMap:
             name: trino-config
+        {{- if $auth.enabled }}
+        - name: tls
+          secret:
+            secretName: {{ $auth.tls.secretName }}
+            items: [{ key: tls-combined.pem, path: tls-combined.pem }]
+        - name: service-users
+          secret:
+            secretName: {{ $auth.passwords.existingSecret | default $auth.passwords.secretName }}
+            # Trino gets the bcrypt hashes only, never a client's password.
+            items: [{ key: password.db, path: password.db }]
+        {{- end }}
+        {{- if $sidecar }}
+        - name: opa-policy
+          configMap:
+            name: opa-policy
+        - name: opa-sidecar-config
+          configMap:
+            name: trino-opa-sidecar-config
+        {{- end }}
         {{- if $acOn }}
         - name: access-rules
           configMap:
@@ -410,4 +477,7 @@ spec:
     {{- include "soa.selectorLabels" (dict "ctx" . "component" "trino") | nindent 4 }}
   ports:
     - { name: http, port: 8080, targetPort: http }
+    {{- if $auth.enabled }}
+    - { name: https, port: {{ $auth.httpsPort }}, targetPort: https }
+    {{- end }}
 {{- end }}

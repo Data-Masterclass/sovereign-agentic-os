@@ -1,0 +1,166 @@
+{{- if and .Values.trino.enabled .Values.trino.auth.enabled }}
+{{- /*
+  WP-14 (design 06 §5.2, T2): what Trino needs to authenticate its clients.
+    - the TLS server certificate + the namespace CA clients trust (Secret `tls.secretName`,
+      keys `tls-combined.pem` = key + chain for Trino's PEM keystore, `ca.crt` for clients);
+    - the service users (Secret `passwords.secretName`): `password.db` in Trino's password-file
+      format (bcrypt, https://trino.io/docs/476/security/password-file.html) and one key per user
+      holding that user's password, mounted by its client only (`secretKeyRef` / `items`);
+    - the internal-communication shared secret, which Trino requires once authentication is on
+      (https://trino.io/docs/476/security/internal-communication.html).
+  Generated values are created ONCE and kept across upgrades (`lookup`, `resource-policy: keep`),
+  like os-ui-session. NO value is ever logged or put in a ConfigMap.
+  GITOPS CAVEAT: `lookup` is empty under `helm template`/Argo — use `passwords.existingSecret`
+  (ESO, WP-10) and `tls.source: certManager` there.
+*/}}
+{{- $a := .Values.trino.auth }}
+{{- $ns := .Release.Namespace }}
+{{- $svcNames := list "trino" (printf "trino.%s" $ns) (printf "trino.%s.svc" $ns) (printf "trino.%s.svc.cluster.local" $ns) "localhost" }}
+{{- if eq $a.tls.source "helm" }}
+{{- $existing := lookup "v1" "Secret" $ns $a.tls.secretName }}
+{{- $pem := "" }}{{- $ca := "" }}
+{{- if and $existing (hasKey ($existing.data | default dict) "tls-combined.pem") (hasKey ($existing.data | default dict) "ca.crt") }}
+{{- $pem = index $existing.data "tls-combined.pem" | b64dec }}
+{{- $ca = index $existing.data "ca.crt" | b64dec }}
+{{- else }}
+{{- $caObj := genCA (printf "trino-ca.%s" $ns) 3650 }}
+{{- $crt := genSignedCert "trino" (list "127.0.0.1") $svcNames 825 $caObj }}
+{{- $pem = printf "%s%s" $crt.Key $crt.Cert }}
+{{- $ca = $caObj.Cert }}
+{{- end }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $a.tls.secretName }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "trino") | nindent 4 }}
+  annotations:
+    "helm.sh/resource-policy": keep
+type: Opaque
+stringData:
+  tls-combined.pem: |
+{{ $pem | indent 4 }}
+  ca.crt: |
+{{ $ca | indent 4 }}
+---
+{{- else if eq $a.tls.source "certManager" }}
+# A namespace CA (self-signed root -> CA Issuer) and Trino's serving certificate, issued by
+# cert-manager. `additionalOutputFormats: CombinedPEM` writes `tls-combined.pem` (key + chain),
+# the single PEM file Trino's keystore reads (https://trino.io/docs/476/security/inspect-pem.html,
+# https://cert-manager.io/docs/usage/certificate/#additional-certificate-output-formats).
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: trino-selfsigned
+  namespace: {{ $ns }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: trino-ca
+  namespace: {{ $ns }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  isCA: true
+  commonName: {{ printf "trino-ca.%s" $ns }}
+  secretName: trino-ca
+  duration: 87600h
+  privateKey: { algorithm: ECDSA, size: 256 }
+  issuerRef: { name: trino-selfsigned, kind: Issuer }
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: trino-ca
+  namespace: {{ $ns }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  ca:
+    secretName: trino-ca
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: trino-tls
+  namespace: {{ $ns }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  secretName: {{ $a.tls.secretName }}
+  duration: {{ $a.tls.certManager.duration }}
+  renewBefore: {{ $a.tls.certManager.renewBefore }}
+  commonName: trino
+  dnsNames:
+    {{- toYaml $svcNames | nindent 4 }}
+  ipAddresses: ["127.0.0.1"]
+  privateKey: { algorithm: RSA, size: 2048, rotationPolicy: Always }
+  additionalOutputFormats:
+    - type: CombinedPEM
+  issuerRef: { name: trino-ca, kind: Issuer }
+---
+{{- else if ne $a.tls.source "existing" }}
+{{- fail (printf "trino.auth.tls.source must be helm, certManager or existing (got %q)" $a.tls.source) }}
+{{- end }}
+{{- if not $a.passwords.existingSecret }}
+{{- $name := $a.passwords.secretName }}
+{{- $existing := lookup "v1" "Secret" $ns $name }}
+{{- $old := ($existing.data | default dict) }}
+{{- $users := concat $a.impersonators $a.directUsers | uniq }}
+{{- $pw := dict }}
+{{- $complete := hasKey $old "password.db" }}
+{{- range $u := $users }}
+{{- if hasKey $old $u }}{{ $_ := set $pw $u (index $old $u | b64dec) }}{{ else }}{{ $complete = false }}{{ $_ := set $pw $u (randAlphaNum 40) }}{{ end }}
+{{- end }}
+{{- $db := "" }}
+{{- if $complete }}
+{{- $db = index $old "password.db" | b64dec }}
+{{- else }}
+{{- /* sprig's htpasswd writes bcrypt `$2a$`; Trino's file authenticator reads bcrypt as `$2y$`
+       (same algorithm, cost 10 >= Trino's minimum of 8). */}}
+{{- range $u := $users }}{{ $db = printf "%s%s\n" $db (htpasswd $u (index $pw $u) | replace "$2a$" "$2y$") }}{{ end }}
+{{- end }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $name }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "trino") | nindent 4 }}
+  annotations:
+    "helm.sh/resource-policy": keep
+type: Opaque
+stringData:
+  password.db: |
+{{ $db | trimSuffix "\n" | indent 4 }}
+  {{- range $u := $users }}
+  {{ $u }}: {{ index $pw $u | quote }}
+  {{- end }}
+---
+{{- end }}
+{{- $iname := "trino-internal-communication" }}
+{{- $iold := lookup "v1" "Secret" $ns $iname }}
+{{- $shared := "" }}
+{{- if and $iold (hasKey ($iold.data | default dict) "shared-secret") }}{{ $shared = index $iold.data "shared-secret" | b64dec }}{{ else }}{{ $shared = randAlphaNum 64 }}{{ end }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $iname }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "trino") | nindent 4 }}
+  annotations:
+    "helm.sh/resource-policy": keep
+type: Opaque
+stringData:
+  shared-secret: {{ $shared | quote }}
+{{- end }}

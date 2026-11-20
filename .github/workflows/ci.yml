@@ -309,10 +309,10 @@ jobs:
           LH_WORK_PARENT: ${{ runner.temp }}
         run: |
           bash tests/lakehouse/restrict.sh
-          LH_EXPECT_HTTP=refused node --test --test-concurrency=1 tests/lakehouse/auth.int.test.mjs tests/lakehouse/parity.int.test.mjs
+          LH_EXPECT_HTTP=refused node --test --test-concurrency=1 tests/lakehouse/auth.int.test.mjs tests/lakehouse/impersonation.int.test.mjs tests/lakehouse/parity.int.test.mjs
       - name: Logs (on failure)
         if: failure()
-        run: docker compose -p soa-lakehouse logs --tail 120 trino opa polaris catalog-init polaris-bootstrap-check data-runner || true
+        run: docker compose -p soa-lakehouse logs --tail 120 trino trino-opa opa polaris catalog-init polaris-bootstrap-check data-runner || true
       - name: Stop
         if: always()
         run: bash tests/lakehouse/down.sh || true

@@ -17,7 +17,7 @@ import { requireSecrets, wp14Skip, runTls, opaPut, opaDelete, sidecarDecisions }
 
 const skip = wp14Skip();
 const pw = (u) => requireSecrets().passwords[u];
-const future = '2999-01-01T00:00:00Z';
+const future = '2200-01-01T00:00:00Z';
 const past = '2000-01-01T00:00:00Z';
 const started = new Date(Date.now() - 1000).toISOString();
 
@@ -88,10 +88,27 @@ test('impersonating the wrong user: no service user may become another service u
   await denied('svc-dagster-runner', 'svc-os-ui');
 });
 
-test('SET SESSION AUTHORIZATION is the same check, against the authenticated user (10 F4 case 4)', { skip }, async () => {
-  // svc-dagster-runner, acting for dana, tries to switch to bob (no grant): denied.
+// The client capability Trino requires before it runs SET SESSION AUTHORIZATION (the protocol's
+// `X-Trino-Client-Capabilities`; trino-python-client and dbt-trino advertise it).
+const SESSION_AUTH = { 'X-Trino-Client-Capabilities': 'SESSION_AUTHORIZATION' };
+
+test('SET SESSION AUTHORIZATION inside an impersonated session is denied, even to a granted user (10 F4 case 4)', { skip }, async () => {
+  // Observed on Trino 476 + the OPA plugin: the switch is checked as SESSION user -> new user
+  // (here dana -> bob, dana -> dave), and dana is not a service user, so OPA denies both. A run
+  // acting for its principal therefore cannot reach any other principal this way, not even one
+  // with a concurrently active grant: stricter than 10 F4 assumed (it expected the authenticated
+  // service user to be checked, leaving the concurrent-grant residual for max_concurrent_runs).
+  const auth = ['svc-dagster-runner', pw('svc-dagster-runner')];
+  for (const target of ['bob@x.com', 'dave@x.com']) {
+    await assert.rejects(
+      runTls(`SET SESSION AUTHORIZATION '${target}'`, { auth, user: 'dana@x.com', extra: SESSION_AUTH }),
+      (e) => e.errorName === 'PERMISSION_DENIED' && e.trinoMessage.includes(`dana@x.com cannot impersonate user ${target}`),
+      target,
+    );
+  }
+  // The authenticated service user itself is still bounded by the grant rule.
   await assert.rejects(
-    runTls("SET SESSION AUTHORIZATION 'bob@x.com'", { auth: ['svc-dagster-runner', pw('svc-dagster-runner')], user: 'dana@x.com' }),
+    runTls("SET SESSION AUTHORIZATION 'bob@x.com'", { auth, extra: SESSION_AUTH }),
     (e) => e.errorName === 'PERMISSION_DENIED',
   );
 });

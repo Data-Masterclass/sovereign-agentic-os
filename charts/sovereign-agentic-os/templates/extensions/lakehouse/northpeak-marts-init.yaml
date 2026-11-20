@@ -46,6 +46,9 @@ data:
     // (POST /v1/statement, then follow nextUri). Node 22 global fetch; no deps.
     const TRINO = process.env.TRINO_URL || 'http://trino:8080';
     const USER = process.env.TRINO_USER || 'northpeak-marts';
+    // WP-14: on Trino's TLS port the job logs in as itself (a direct service user, no
+    // impersonation); Node trusts the chart CA through NODE_EXTRA_CA_CERTS.
+    const AUTH = process.env.TRINO_PASSWORD ? { Authorization: `Basic ${Buffer.from(`${USER}:${process.env.TRINO_PASSWORD}`).toString('base64')}` } : {};
     const CATALOG = process.env.TRINO_CATALOG || 'iceberg';
     const SCHEMA = process.env.TRINO_SCHEMA || 'sales';
     const TABLE = process.env.TRINO_TABLE || 'gold_northpeak_commerce';
@@ -68,7 +71,7 @@ data:
 
     async function runSql(sql, schema) {
       // X-Trino-Source selects the chart's global.system resource group (06 §5.5).
-      const headers = { 'X-Trino-User': USER, 'X-Trino-Source': 'os-seed/northpeak-marts', 'X-Trino-Catalog': CATALOG, 'Content-Type': 'text/plain' };
+      const headers = { ...AUTH, 'X-Trino-User': USER, 'X-Trino-Source': 'os-seed/northpeak-marts', 'X-Trino-Catalog': CATALOG, 'Content-Type': 'text/plain' };
       if (schema) headers['X-Trino-Schema'] = schema;
       const post = await fetch(`${TRINO}/v1/statement`, { method: 'POST', headers, body: sql });
       if (!post.ok) throw new Error(`POST /v1/statement ${post.status}: ${await post.text()}`);
@@ -80,7 +83,7 @@ data:
         if (!j.nextUri) break;
         let r;
         for (let a = 0; ; a++) {
-          r = await fetch(j.nextUri, { headers: { 'X-Trino-User': USER, 'X-Trino-Source': 'os-seed/northpeak-marts' } });
+          r = await fetch(j.nextUri, { headers: { ...AUTH, 'X-Trino-User': USER, 'X-Trino-Source': 'os-seed/northpeak-marts' } });
           if (r.status === 503) { if (a > 600) throw new Error('Trino busy (503) too long'); await sleep(200); continue; }
           break;
         }
@@ -343,7 +346,15 @@ spec:
           command: ["node", "/work/materialize.mjs"]
           env:
             - { name: HOME, value: /tmp }
+            {{- $ta := .Values.trino.auth | default dict }}
+            {{- if and $ta.enabled ($ta.clients | default dict).northpeakMarts }}
+            - { name: TRINO_URL, value: {{ printf "https://%s:%v" $m.trino.host $ta.httpsPort | quote }} }
+            - name: TRINO_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ $ta.passwords.existingSecret | default $ta.passwords.secretName }}, key: {{ $m.trino.user }} } }
+            - { name: NODE_EXTRA_CA_CERTS, value: /etc/trino-ca/ca.crt }
+            {{- else }}
             - { name: TRINO_URL, value: {{ printf "http://%s:%v" $m.trino.host $m.trino.port | quote }} }
+            {{- end }}
             - { name: TRINO_USER, value: {{ $m.trino.user | quote }} }
             - { name: TRINO_CATALOG, value: {{ $m.trino.catalog | quote }} }
             - { name: TRINO_SCHEMA, value: {{ $m.schema | quote }} }
@@ -355,6 +366,9 @@ spec:
           volumeMounts:
             - { name: script, mountPath: /work, readOnly: true }
             - { name: tmp, mountPath: /tmp }
+            {{- if and $ta.enabled ($ta.clients | default dict).northpeakMarts }}
+            - { name: trino-ca, mountPath: /etc/trino-ca, readOnly: true }
+            {{- end }}
           resources:
             requests: { cpu: 50m, memory: 96Mi }
             limits: { cpu: 500m, memory: 256Mi }
@@ -364,4 +378,11 @@ spec:
             name: northpeak-marts-init
         - name: tmp
           emptyDir: {}
+        {{- $ta := .Values.trino.auth | default dict }}
+        {{- if and $ta.enabled ($ta.clients | default dict).northpeakMarts }}
+        - name: trino-ca
+          secret:
+            secretName: {{ $ta.tls.secretName }}
+            items: [{ key: ca.crt, path: ca.crt }]
+        {{- end }}
 {{- end }}

@@ -26,6 +26,7 @@ import trino
 import trino.exceptions
 
 from execute_guard import MCP_SOURCE, ExecuteError, connect_kwargs, guard, guard_read, scheduling
+from trino_login import login_for, tls_client_kwargs
 
 PORT = int(os.environ.get("PORT", "8000"))
 TRINO_HOST = os.environ.get("TRINO_HOST", "trino")
@@ -41,6 +42,11 @@ TRINO_SCHEMA = os.environ.get("TRINO_SCHEMA", "sales")
 # The Trino session user the OPA row/column plugin governs. The gateway authorizes
 # tool access per agent key; the query runs as this governed domain principal.
 TRINO_USER = os.environ.get("TRINO_USER", "query-agent")
+# WP-14: log in to Trino's TLS port as this service user and impersonate the principal (see
+# trino_login.py). Empty = today's unauthenticated plain-HTTP connection.
+TRINO_AUTH_USER = os.environ.get("TRINO_AUTH_USER", "")
+TRINO_PASSWORD_DIR = os.environ.get("TRINO_PASSWORD_DIR", "/etc/trino-users")
+TRINO_CA_FILE = os.environ.get("TRINO_CA_FILE", "")
 
 # ---- READ BUDGET (B4-review E-1). `query_data` used to be unbounded end to end: no
 # `request_timeout`, no `query_max_run_time`, and a `fetchall()` that materialised the whole
@@ -108,23 +114,28 @@ def _connect(
 ):
     """Connect as `principal`, bounded by `max_run_time` (a Trino session property) and a
     matching HTTP `request_timeout`. Pass `max_run_time=""`/`None` for an unbounded statement."""
-    return trino.dbapi.connect(
-        **connect_kwargs(
-            principal,
-            schema or TRINO_SCHEMA,
-            host=TRINO_HOST,
-            port=TRINO_PORT,
-            catalog=TRINO_CATALOG,
-            http_scheme=os.environ.get("TRINO_HTTP_SCHEME", "http"),
-            default_user=TRINO_USER,
-            # +5 s of slack: the client must not give up BEFORE Trino kills the query, or the
-            # query is orphaned on the cluster — the defect this fixes.
-            request_timeout=(_seconds(max_run_time) + 5) if max_run_time else None,
-            max_run_time=max_run_time or None,
-            source=source,
-            client_tags=client_tags,
-        )
+    kwargs = connect_kwargs(
+        principal,
+        schema or TRINO_SCHEMA,
+        host=TRINO_HOST,
+        port=TRINO_PORT,
+        catalog=TRINO_CATALOG,
+        http_scheme=os.environ.get("TRINO_HTTP_SCHEME", "http"),
+        default_user=TRINO_USER,
+        # +5 s of slack: the client must not give up BEFORE Trino kills the query, or the
+        # query is orphaned on the cluster — the defect this fixes.
+        request_timeout=(_seconds(max_run_time) + 5) if max_run_time else None,
+        max_run_time=max_run_time or None,
+        source=source,
+        client_tags=client_tags,
     )
+    # WP-14: the session user stays the principal; the login is the service user (or the
+    # principal itself when it is a direct service user). Off = unchanged.
+    kwargs.update(tls_client_kwargs(
+        login_for(kwargs["user"], auth_user=TRINO_AUTH_USER, password_dir=TRINO_PASSWORD_DIR),
+        ca_file=TRINO_CA_FILE,
+    ))
+    return trino.dbapi.connect(**kwargs)
 
 
 def run_query(sql: str, principal: str | None = None, schema: str | None = None,

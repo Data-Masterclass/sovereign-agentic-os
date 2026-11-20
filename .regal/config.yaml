@@ -19,6 +19,11 @@ rules:
         - data.governance.**
         - data.connections.*
         - data.connections.*.**
+        # The OS bundles Trino's OPA reads (WP-11, design 04 §5.2 / 10 F3).
+        - data.os_data
+        - data.os_data.**
+        - data.os_grants
+        - data.os_grants.**
   testing:
     # The existing agentic.authz and trino tests live in the policy package and use
     # its rules unqualified. New tests use `<pkg>_test` packages.

@@ -162,10 +162,24 @@ http://minio:9000
 
 {{/* Shared env for the governed Trino `query` tool (reads marts THROUGH Trino). */}}
 {{- define "soa.queryToolEnv" -}}
+{{- $ta := .Values.trino.auth | default dict }}
+{{- $tls := and $ta.enabled ($ta.clients | default dict).queryTool }}
 - name: TRINO_HOST
   value: {{ .Values.queryTool.trino.host | quote }}
 - name: TRINO_PORT
-  value: {{ .Values.queryTool.trino.port | quote }}
+  value: {{ ternary $ta.httpsPort .Values.queryTool.trino.port $tls | quote }}
+{{- if $tls }}
+{{- /* WP-14: log in to Trino's TLS port as svc-os-ui and impersonate the principal
+       (images/extensions/query-tool/trino_login.py); passwords and CA from the mounts. */}}
+- name: TRINO_HTTP_SCHEME
+  value: https
+- name: TRINO_AUTH_USER
+  value: svc-os-ui
+- name: TRINO_PASSWORD_DIR
+  value: /etc/trino-users
+- name: TRINO_CA_FILE
+  value: /etc/trino-ca/ca.crt
+{{- end }}
 - name: TRINO_USER
   value: {{ .Values.queryTool.trino.user | quote }}
 - name: TRINO_CATALOG
