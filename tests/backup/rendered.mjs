@@ -31,7 +31,14 @@ export function rendered() {
 
 /** A fresh, empty directory standing in for an emptyDir (writable by the pod uid). */
 export function emptyDir(path) {
-  rmSync(path, { recursive: true, force: true });
+  try {
+    rmSync(path, { recursive: true, force: true });
+  } catch {
+    // Written by the pod uid (999) on a Linux runner: the runner user may not remove it, so the
+    // previous run's emptyDir is removed the way the kubelet would — as root, from a container.
+    const r = spawnSync('docker', ['run', '--rm', '-v', `${dirname(path)}:/p`, 'alpine:3.21', 'rm', '-rf', `/p/${path.split('/').pop()}`], { encoding: 'utf8' });
+    if (r.status !== 0) throw new Error(`cannot empty ${path}: ${r.stderr}`);
+  }
   mkdirSync(path, { recursive: true });
   spawnSync('chmod', ['a+rwx', path]);
   return path;
