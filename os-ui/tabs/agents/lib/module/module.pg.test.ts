@@ -26,6 +26,8 @@ import { commitTree, openOrInit } from '@core/infra/git-store';
 import { FIXTURE_USER } from '@tabs/agents/lib/engine/parity-harness';
 import { prepareFixtureTables } from '@tabs/agents/lib/engine/hitl.pg-fixture';
 import { DOMAIN, SYSTEM_DIR, expectedModule, moduleStep, type ModuleStepInput } from '@tabs/agents/lib/module/fixtures/module.pg-fixture';
+import { HELD_YAML } from '@tabs/agents/lib/engine/hitl.pg-fixture';
+import { deleteModuleThreadRows } from '@tabs/agents/lib/module/run';
 import { python3Available, startModelStub, type ModelStub } from '@tabs/agents/lib/module/fixtures/stub-model';
 
 const URL_ = (process.env.AGENT_RUNS_TEST_DATABASE_URL ?? '').trim();
@@ -157,6 +159,49 @@ test('negative twin: the worker dies right after an approved write — the repla
   assert.equal(s4.reachedEnd, true);
   assert.deepEqual((await effects(runId)).map((e) => e.tool), ['search_knowledge', 'request_promotion'], 'dispatched at most once');
   assert.match(s4.toolResults?.request_promotion ?? '', /unresolved/i, 'the agent is told the outcome is unverified');
+});
+
+test('a parked run resumes on the module stamped at its start — the team edited and the generator upgraded meanwhile', { skip }, async () => {
+  const runId = run('stamped');
+  await stub.script(HELD_SCRIPT);
+  const s1 = moduleStep({ ...base, step: 'start', runId });
+  assert.equal(s1.parked, true, JSON.stringify(s1.error));
+  const interruptId = s1.pendingInterruptIds![0];
+
+  // While it waits: the team is edited (a second agent, new prompt) and the repo HEAD moves on,
+  // and the HEAD graph.mjs is what a NEWER generator emits (a changed body).
+  const edited = HELD_YAML.replace("agent_md: '# writer'", "agent_md: '# writer v2'");
+  const next = expectedModule(edited).files;
+  next.set('graph.mjs', next.get('graph.mjs')!.replace('maxSteps = 12', 'maxSteps = 13'));
+  const tree = new Map([...next.entries()].map(([p, c]) => [`${SYSTEM_DIR}/${p}`, c]));
+  const { sha: head } = await commitTree(DOMAIN, tree, { reposDir: base.reposDir, author: { name: 'os', email: 'os@example.invalid' }, message: 'agents: edit + generator upgrade' });
+  assert.notEqual(head, base.commit);
+
+  // The resume reads the STAMPED commit, verified against the stamped digest — not HEAD.
+  const s2 = moduleStep({ ...base, commit: head, yaml: edited, step: 'resume', runId, resume: { interruptId, decision: 'approve' } });
+  assert.equal(s2.ok, true, JSON.stringify(s2.error));
+  assert.equal(s2.digest, s1.digest, 'the original module, byte for byte');
+  assert.equal(s2.reachedEnd, true);
+  assert.deepEqual((await effects(runId)).map((e) => e.tool), ['search_knowledge', 'request_promotion']);
+
+  // Negative twin: a NEW run against HEAD with the old definition is refused (HEAD is not what
+  // this definition generates) — the check that protects new runs is still in force.
+  const fresh = moduleStep({ ...base, commit: head, step: 'start', runId: run('stamped-new') });
+  assert.equal(fresh.ok, false);
+  assert.match(fresh.error?.message ?? '', /refusing to load graph\.mjs/);
+});
+
+test('retention removes a module run\'s stamp and hold decisions with its thread', { skip }, async () => {
+  const runId = run('retention');
+  await stub.script(HELD_SCRIPT);
+  const s1 = moduleStep({ ...base, step: 'start', runId });
+  assert.equal(s1.parked, true, JSON.stringify(s1.error));
+  const count = async (t: string) => Number((await pool.query(`SELECT count(*)::int AS n FROM ${t} WHERE thread_id = $1`, [runId])).rows[0].n);
+  assert.equal(await count('agent_module_runs'), 1);
+  assert.ok((await count('agent_hold_decisions')) >= 1);
+  assert.ok((await deleteModuleThreadRows(pool, [runId])) >= 2);
+  assert.equal(await count('agent_module_runs'), 0);
+  assert.equal(await count('agent_hold_decisions'), 0);
 });
 
 test('negative twin: a tampered graph.mjs in the commit is refused by the OS before anything runs', { skip }, async () => {

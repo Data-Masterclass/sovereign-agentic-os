@@ -27,13 +27,13 @@ import { fileURLToPath } from 'node:url';
 import { fakeModel, tool } from 'langchain';
 import { parseSystem } from '@tabs/agents/lib/system-schema';
 import { compile } from '@tabs/agents/lib/langgraph-compile';
-import { generateAgentModule, type ModuleVersions } from '@tabs/agents/lib/module/generate';
+import { generateAgentModule } from '@tabs/agents/lib/module/generate';
+import { hostModuleInputs } from '@tabs/agents/lib/module/versions';
 import { AgentModuleIntegrityError, loadAgentModule, moduleDigest, readCommittedModule } from '@core/adapters/agent-module/load';
 import { commitTree, openOrInit } from '@core/infra/git-store';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const OS_UI = path.resolve(HERE, '../../../..');
-const VERSIONS = JSON.parse(readFileSync(path.join(OS_UI, 'package.json'), 'utf8')).dependencies as ModuleVersions;
 const ENGINE_FIXTURES = path.join(HERE, '../engine/fixtures');
 const GOLDEN = path.join(HERE, 'fixtures/revenue-review.golden.json');
 
@@ -44,7 +44,7 @@ const fixtures = readdirSync(ENGINE_FIXTURES)
 
 const revenueYaml = (JSON.parse(readFileSync(path.join(HERE, '../git/fixtures/shared-supervisor-team.golden.json'), 'utf8')) as Record<string, string>)['agents/revenue-review/system.yaml'];
 
-const gen = (yaml: string, id = 'sys_fixture', slug = 'fixture') => generateAgentModule({ id, slug, sys: parseSystem(yaml), versions: VERSIONS });
+const gen = (yaml: string, id = 'sys_fixture', slug = 'fixture') => generateAgentModule({ id, slug, sys: parseSystem(yaml), ...hostModuleInputs() });
 
 const stubTools = (names: string[]) =>
   names.map((name) => tool(async () => 'stub', { name, description: name, schema: { type: 'object', properties: {}, additionalProperties: true } }));

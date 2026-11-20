@@ -28,11 +28,11 @@ import { parseSystem } from '@tabs/agents/lib/system-schema';
 import { generateAgentFiles } from '@tabs/agents/lib/git/generate';
 import type { AgentProjectSnapshot, SnapshotSystem } from '@tabs/agents/lib/git/snapshot';
 import { isOsLayerSystemYaml } from '@tabs/agents/lib/git/ingest';
-import { generateAgentModule, type ModuleVersions } from '@tabs/agents/lib/module/generate';
+import { generateAgentModule } from '@tabs/agents/lib/module/generate';
+import { hostModuleInputs } from '@tabs/agents/lib/module/versions';
 import { loadAgentModule, readCommittedModule } from '@core/adapters/agent-module/load';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const VERSIONS = JSON.parse(readFileSync(path.join(HERE, '../../../../package.json'), 'utf8')).dependencies as ModuleVersions;
 const goldenOf = (f: string) => JSON.parse(readFileSync(path.join(HERE, '../git/fixtures', f), 'utf8')) as Record<string, string>;
 const TEAM_YAML = goldenOf('shared-supervisor-team.golden.json')['agents/revenue-review/system.yaml'];
 const PERSONAL_YAML = goldenOf('personal-single-agent.golden.json')['agents/personal/1574ad62d48a/support-triage/system.yaml'];
@@ -57,7 +57,7 @@ const SNAPSHOT: AgentProjectSnapshot = {
 };
 
 test('flag on: each system directory is the native module; system.yaml holds OS metadata only', () => {
-  const files = generateAgentFiles(SNAPSHOT, { module: { versions: VERSIONS } });
+  const files = generateAgentFiles(SNAPSHOT, { module: hostModuleInputs() });
   const dirs = [...files.keys()].filter((p) => p.endsWith('/graph.mjs')).map((p) => p.replace(/\/graph\.mjs$/, ''));
   assert.equal(dirs.length, 2);
   for (const dir of dirs) {
@@ -97,14 +97,14 @@ test('migration: one commit per repo turns on the module, a regeneration commits
   const author = { name: 'os', email: 'os@example.invalid' };
   await openOrInit('sales', { reposDir });
   const v1 = await commitTree('sales', generateAgentFiles(SNAPSHOT), { reposDir, author, message: 'agents: v1 layout' });
-  const migrated = await commitTree('sales', generateAgentFiles(SNAPSHOT, { module: { versions: VERSIONS } }), { reposDir, author, message: 'agents: native LangGraph modules (WP-53)' });
+  const migrated = await commitTree('sales', generateAgentFiles(SNAPSHOT, { module: hostModuleInputs() }), { reposDir, author, message: 'agents: native LangGraph modules (WP-53)' });
   assert.equal(migrated.changed, true);
   assert.notEqual(migrated.sha, v1.sha);
-  const again = await commitTree('sales', generateAgentFiles(SNAPSHOT, { module: { versions: VERSIONS } }), { reposDir, author, message: 'agents: regenerate' });
+  const again = await commitTree('sales', generateAgentFiles(SNAPSHOT, { module: hostModuleInputs() }), { reposDir, author, message: 'agents: regenerate' });
   assert.equal(again.changed, false, 'an unchanged system regenerates byte-identical files: no commit');
 
   const at = await readCommittedModule('sales', 'agents/revenue-review', migrated.sha, { reposDir });
-  const expected = generateAgentModule({ id: 'sys_bbb222', slug: 'revenue-review', sys: parseSystem(TEAM_YAML), disabledAgents: ['publisher'], versions: VERSIONS });
+  const expected = generateAgentModule({ id: 'sys_bbb222', slug: 'revenue-review', sys: parseSystem(TEAM_YAML), disabledAgents: ['publisher'], ...hostModuleInputs() });
   const loaded = await loadAgentModule({ committed: at.files, expected: expected.files, commit: at.commit, cacheRoot: mkdtempSync(path.join(os.tmpdir(), 'wp53-migrate-cache-')) });
   assert.deepEqual(loaded.module.TEAM.agents.map((a) => a.id), ['lead', 'researcher']);
   assert.equal(loaded.commit, migrated.sha);
