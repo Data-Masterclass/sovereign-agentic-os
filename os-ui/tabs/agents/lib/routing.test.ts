@@ -17,7 +17,6 @@ import {
   provenanceOf,
   classifyProviderType,
   PROVIDER_TYPE_LABELS,
-  litellmModelString,
 } from '@tabs/agents/lib/routing';
 
 test('the default table routes light work to the Standard tier and reasoning to the Reasoning tier', () => {
@@ -170,20 +169,6 @@ test('classifyProviderType: missing/empty params fall back to openai-compatible'
   assert.equal(classifyProviderType(), 'openai-compatible');
   assert.equal(classifyProviderType({}), 'openai-compatible');
   assert.equal(classifyProviderType({ model: 'gpt-4o' }), 'openai-compatible'); // no host, no prefix
-});
-
-test('litellmModelString keeps the STACKIT double prefix (single prefix 404s)', () => {
-  // STACKIT org prefix is preserved, and the openai/ protocol prefix is added →
-  // the DOUBLE prefix the STACKIT gateway requires.
-  assert.equal(
-    litellmModelString('Qwen/Qwen3-VL-235B-A22B-Instruct-FP8'),
-    'openai/Qwen/Qwen3-VL-235B-A22B-Instruct-FP8',
-  );
-  // A plain model id just gets the protocol prefix.
-  assert.equal(litellmModelString('gpt-oss-20b'), 'openai/gpt-oss-20b');
-  // An already-prefixed id is left untouched (never double-add openai/).
-  assert.equal(litellmModelString('openai/Qwen/Qwen3-VL-235B'), 'openai/Qwen/Qwen3-VL-235B');
-  assert.equal(litellmModelString('  Qwen/model  '), 'openai/Qwen/model'); // trims
 });
 
 test('every provider type has a human label', () => {

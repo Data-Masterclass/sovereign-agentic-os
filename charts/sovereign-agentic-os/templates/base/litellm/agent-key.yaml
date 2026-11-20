@@ -114,7 +114,11 @@ spec:
               # (the earlier behaviour) left whatever window the key already had.
               # /key/update with a window sets a new reset time; the spend already
               # counted stays until that reset.
-              MODELS='{{ $k.models | toJson }}'
+              # The access group admin-registered models join (Models & Providers flow, model_info
+              # access_groups): holding the group lets this key call every such model with no values edit.
+              {{- $models := $k.models }}
+              {{- with ($.Values.llmProviders | default dict).accessGroup }}{{ $models = append $models . | uniq }}{{- end }}
+              MODELS='{{ $models | toJson }}'
               PROPS='"models":'"$MODELS"',"max_budget":{{ $k.maxBudget }},"budget_duration":{{ if $k.budgetDuration }}{{ $k.budgetDuration | quote }}{{ else }}null{{ end }},{{ if $k.enterprise }}"model_max_budget":{{ $k.modelMaxBudget | toJson }},{{ end }}"rpm_limit":{{ $k.rpmLimit }},"tpm_limit":{{ $k.tpmLimit }},"max_parallel_requests":{{ $k.maxParallelRequests }}'
               # The allowlist LiteLLM currently holds for this key — ONLY the models
               # field. The /key/info body also carries the key itself and must never

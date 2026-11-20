@@ -129,13 +129,13 @@ test('a wrong key comes back as a clear sentence from LiteLLM\'s own connection 
 });
 
 test('a model is registered by credential name, into the access group the shared agent key holds', async () => {
-  const res = await models.POST(req({ connection: 'azure-prod', preset: 'azure', model: 'os-gpt-deploy', alias: 'azure-gpt', mode: 'chat' }));
+  const res = await models.POST(req({ connection: 'azure-prod', preset: 'azure', model: 'os-gpt-deploy', alias: 'azure-gpt', mode: 'chat', inputPerM: 2, outputPerM: 8 }));
   assert.equal(res.status, 201);
   const post = CALLS.find((c) => c.path === '/model/new');
   assert.deepEqual(post?.body, {
     model_name: 'azure-gpt',
-    litellm_params: { model: 'azure/os-gpt-deploy', litellm_credential_name: 'azure-prod' },
-    model_info: { mode: 'chat', access_groups: ['os-admin-models'], os_preset: 'azure' },
+    litellm_params: { model: 'azure/os-gpt-deploy', litellm_credential_name: 'azure-prod', input_cost_per_token: 0.000002, output_cost_per_token: 0.000008 },
+    model_info: { mode: 'chat', access_groups: ['os-admin-registered'], os_preset: 'azure' },
   });
 });
 

@@ -221,6 +221,33 @@ exceeded for api_key: … Limit type: tokens. Current limit: 1000, Remaining: 0.
 (`tabs/agents/lib/engine/rate-limit.ts`): it waits and retries a rate limit, and reports a spent
 budget as "budget used up" without retrying.
 
+## Adding a provider (Azure, OpenAI-compatible, Ollama, Mistral, STACKIT, any LiteLLM provider)
+
+Platform → Models & Providers → **Add a provider**. Every step is LiteLLM's own admin API; the OS code
+is `os-ui/tabs/admin/lib/llm-providers.ts` (presets: `llm-provider-presets.ts`).
+
+| Step | LiteLLM API | Notes |
+|---|---|---|
+| Provider | `GET /public/providers/fields` | Presets are only a LiteLLM provider id + default endpoint. STACKIT = `openai` + its URL. |
+| Connection | `POST /credentials` | Endpoint, key, `api_version` (Azure). Encrypted in LiteLLM's DB with `LITELLM_SALT_KEY`; `GET /credentials` masks the key. The OS stores no key. |
+| Model | `GET /public/litellm_model_cost_map` | Suggestions for Mistral / other global providers; Azure deployments, Ollama tags, vLLM ids are free text. |
+| Test | `POST /health/test_connection` | `{litellm_params:{model, litellm_credential_name}, mode}`; errors become one sentence. |
+| Register | `POST /model/new` | `model: <provider>/<model>` (native prefix — no forced `openai/`), `litellm_credential_name`, `model_info.access_groups: [llmProviders.accessGroup]`. |
+
+- **Agents can use it at once**: the shared agent key holds the access group (`litellmAgentKey.models`
+  gets `llmProviders.accessGroup` appended by the key-init Job).
+- **Egress**: the gateway's outbound calls go through the egress proxy (`litellm-egress-env`:
+  HTTP(S)_PROXY / NO_PROXY). A provider host must be on `llmProviders.allowHosts` (the STACKIT host is
+  added automatically when `stackitPremium.enabled`). The flow refuses a host that is not, before
+  storing anything, and prints the values change. In-cluster servers: use `<svc>.<ns>.svc` or add the
+  bare name to `llmProviders.noProxy`. Private IPs are not routed.
+- **Dry run before a deploy that turns the proxy on**: `GET /api/platform-admin/providers/migration` lists
+  every model, its host, whether the proxy lets it out (`blockedHosts`) and the `/model/update` that
+  would put a DB model into the access group. It writes nothing.
+- Proof: `scripts/tests/llm-providers/run.sh` (real LiteLLM + the chart's tinyproxy + three provider
+  stubs, a gateway restart, and the wrong-key / blocked-host / no-group twins); chart:
+  `scripts/tests/llm-providers-chart.test.sh`.
+
 ## What the OS reads back (the gateway mirror)
 
 The OS never re-enters what LiteLLM already knows. One admin-only endpoint,
@@ -398,8 +425,8 @@ plus any **admin override** per role in Platform Settings (`modelRoles`, read by
 the next upgrade.
 
 **Models an admin registers at runtime need no Helm change.** Admin → Models & Providers
-(`/api/platform-admin/providers`, and the assistant registration) sends `/model/new` with
-`model_info.access_groups: ["os-admin-registered"]` (`os-ui/tabs/admin/lib/provider-registration.ts`),
+(`/api/platform-admin/providers/*`, see "Adding a provider" above) sends `/model/new` with
+`model_info.access_groups: ["os-admin-registered"]` (`os-ui/tabs/admin/lib/llm-providers.ts`),
 and `litellmAgentKey.models` lists that **access group** — LiteLLM's documented model access
 groups — so the shared key can call every registered alias at once. A cluster whose release
 values carry their own `litellmAgentKey.models` (production) must add `os-admin-registered` there.
@@ -411,9 +438,9 @@ each run, so a role pin reaches agent runs, not only chat.
 
 **Provider traffic through the egress proxy.** LiteLLM honours `HTTPS_PROXY` (verified on 1.109.1:
 its CONNECT appears in the tinyproxy log, and a host that is not on `egressProxy.allowlist` is refused
-with `Proxying refused on filtered domain`). To send provider calls through the proxy, set
-`litellm.envVars.HTTPS_PROXY: http://egress-proxy:3128` with a `NO_PROXY` that covers every
-in-cluster host LiteLLM calls, and put each provider host (STACKIT included) on the allowlist.
+with `Proxying refused on filtered domain`). The chart now does this: `litellm-egress-env` carries
+`HTTP(S)_PROXY` and a `NO_PROXY` for the in-cluster hosts, and provider hosts join the filter through
+`llmProviders.allowHosts` (the STACKIT host automatically) — see "Adding a provider" above.
 
 **Which aliases may be sent images.** Separate from the key allowlist above: the OS keeps an
 explicit list of aliases that may receive images (`os-ui/core/models/capabilities.ts`,

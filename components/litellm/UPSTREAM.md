@@ -135,3 +135,15 @@ through `liteLlmCaller`, `os-ui/tabs/agents/lib/engine/tracing.e2e.test.ts`):
 The deployment that uses this pin lives in the chart
 (`charts/sovereign-agentic-os/templates/`); any glue we wrote belongs there or in the
 owning tab, never here.
+
+## Provider setup APIs (Models & Providers flow)
+
+Read from the 1.109.1 image's own `/openapi.json` and exercised by `scripts/tests/llm-providers/run.sh`:
+`GET /public/providers/fields`, `POST|GET /credentials` (`credential_values` encrypted with
+`LITELLM_SALT_KEY`; values masked on read), `POST /health/test_connection`, `GET
+/public/litellm_model_cost_map`, `POST /model/new` with `litellm_credential_name` and
+`model_info.access_groups`, and a virtual key whose `models` names the access group. Proxy env:
+`HTTP(S)_PROXY`/`NO_PROXY` honoured by the gateway's provider calls (shown against tinyproxy);
+`LITELLM_LOCAL_MODEL_COST_MAP=True` (the bundled price map, no fetch at start).
+Docs: https://docs.litellm.ai/docs/proxy/model_access_groups, https://docs.litellm.ai/docs/providers,
+https://docs.litellm.ai/docs/providers/azure/azure, https://docs.litellm.ai/docs/providers/ollama.

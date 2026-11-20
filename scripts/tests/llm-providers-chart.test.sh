@@ -65,7 +65,7 @@ for n in t-langfuse-web agentic-os-langfuse-web mock-model query-tool .svc .clus
 absent "NO_PROXY has no empty entry" ",," "$NP"
 check "os-ui knows the same NO_PROXY" "mock-model" "$(inspect 'osui_env("LLM_NO_PROXY")')"
 check "price map read locally" "True" "$(inspect 'cm("litellm-egress-env").get("LITELLM_LOCAL_MODEL_COST_MAP")')"
-check "agent key holds the access group" "os-admin-models" "$(inspect 'keyjob()')"
+check "agent key holds the access group" "os-admin-registered" "$(inspect 'keyjob()')"
 absent "no STACKIT host when stackitPremium is off" "onstackit" "$(inspect 'filt()')"
 
 echo "default profile + llmProviders.allowHosts"
@@ -84,7 +84,7 @@ rc_is "renders" 0
 check "proxy filter has the STACKIT model-serving host" 'api\.openai-compat\.model-serving\.eu01\.onstackit\.cloud' "$(inspect 'filt()')"
 check "os-ui pre-check has the STACKIT host" "api.openai-compat.model-serving.eu01.onstackit.cloud" "$(inspect 'osui_env("LLM_EGRESS_ALLOWLIST")')"
 check "gateway proxied on STACKIT too" "http://egress-proxy:3128" "$(inspect 'cm("litellm-egress-env").get("HTTPS_PROXY")')"
-check "agent key holds the access group" "os-admin-models" "$(inspect 'keyjob()')"
+check "agent key holds the access group" "os-admin-registered" "$(inspect 'keyjob()')"
 
 echo "NEGATIVE TWIN — llmProviders.viaEgressProxy=false"
 render --set llmProviders.viaEgressProxy=false

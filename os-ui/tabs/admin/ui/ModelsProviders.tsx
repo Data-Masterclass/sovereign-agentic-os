@@ -3,7 +3,7 @@
  */
 /**
  * TAB:        admin
- * FEATURE:    Models & Providers — the LiteLLM catalog, routing defaults, caps and provider keys, as a Platform tab
+ * FEATURE:    Models & Providers — the LiteLLM catalog, routing defaults, caps and adding providers, as a Platform tab
  * USER STORY: As a platform admin I want to see every model this tenant may call, set the per-role
  *             defaults and caps, and register a provider key, without leaving Platform.
  * ARCHITECTURE:
@@ -28,13 +28,13 @@ import { splitCatalog } from '@tabs/admin/lib/catalog-groups';
 import { useUser } from '@core/ui/useUser';
 import { roleAtLeast } from '@core/kernel/session';
 import { sectionMinRole } from '@tabs/admin/lib/sections';
+import ProviderWizard from '@tabs/admin/ui/ProviderWizard';
 
 type Task = 'chat' | 'reasoning' | 'embedding';
 // `endpoint` is present ONLY on administrator-registered models (a secrets-manager
 // ref + fingerprint, never a raw key) — its presence marks a model as removable
 // when the live gateway can't say (offline). Mirrors lib/platform-admin/catalog-groups.
 type Model = { id: string; label: string; provider: string; task: Task; tier: 'sovereign' | 'premium'; route: string; enabled: boolean; capEUR: number | null; endpoint?: unknown };
-type Key = { provider: string; fingerprint: string; addedBy: string; addedAt: string };
 type ModelReference = { kind: 'role' | 'assistant' | 'agent'; label: string };
 
 // The three per-ROLE defaults are ONE store: the platform-admin settings
@@ -51,32 +51,18 @@ type CatalogModel = { model_name: string; display: string; provenance: 'internal
 type ImageInput = { models: string[]; source: 'default' | 'override'; warnings: string[] };
 
 const PROVIDER_LABELS: Record<ProviderType, string> = {
-  stackit: 'STACKIT managed inference',
+  stackit: 'STACKIT AI Model Serving',
   'openai-compatible': 'OpenAI-compatible',
   'self-hosted': 'self-hosted',
   azure: 'Azure OpenAI',
   bedrock: 'AWS Bedrock',
 };
 
-// "Add provider" wizard — MVP ships OpenAI-compatible + STACKIT; Azure/Bedrock are
-// scaffolded (disabled) so the stepper already has their slot for a later phase.
-type WizardType = { type: ProviderType; label: string; blurb: string; enabled: boolean };
-const WIZARD_TYPES: WizardType[] = [
-  { type: 'openai-compatible', label: 'OpenAI-compatible', blurb: 'Any server that speaks the OpenAI API (vLLM, Ollama, LM Studio, a hosted endpoint).', enabled: true },
-  { type: 'stackit', label: 'STACKIT managed inference', blurb: 'STACKIT-hosted models. Keep the org prefix in the model id (e.g. Qwen/Qwen3-VL-235B…).', enabled: true },
-  { type: 'azure', label: 'Azure OpenAI', blurb: 'Coming soon.', enabled: false },
-  { type: 'bedrock', label: 'AWS Bedrock', blurb: 'Coming soon.', enabled: false },
-];
-const EMPTY_WIZARD = { alias: '', label: '', litellmProvider: '', baseUrl: '', modelName: '', apiKey: '', task: 'chat' as Task, inputPerM: '', outputPerM: '' };
-// A native LiteLLM provider (`mistral`) needs no base URL; OpenAI-compatible (empty / `openai`) does.
-const needsBaseUrl = (w: typeof EMPTY_WIZARD) => !w.litellmProvider.trim() || w.litellmProvider.trim().toLowerCase() === 'openai';
 const ROLE_META: { key: RoleKey; label: string; help: string }[] = [
   { key: 'standard', label: 'Standard', help: 'Assistants, agent execution and light work. Default: sovereign-default.' },
   { key: 'reasoning', label: 'Reasoning', help: 'Planning and deep reasoning across the OS. Default: sovereign-reasoning.' },
   { key: 'embeddings', label: 'Embeddings', help: 'Knowledge + Files vector embeddings. Default: sovereign-embed.' },
 ];
-
-const EMPTY_ASSISTANT = { label: 'STACKIT managed LLM', baseUrl: '', modelName: '', apiKey: '' };
 
 // Token prices (EUR per 1M tokens) — stored beats the deployment-config seed.
 type PriceRow = { inputPerM: number; outputPerM: number; source: 'stored' | 'env' };
@@ -101,7 +87,6 @@ function ModelsPageInner() {
   const [models, setModels] = useState<Model[]>([]);
   const [assistant, setAssistant] = useState('');
   const [assistantExplicit, setAssistantExplicit] = useState(false);
-  const [keys, setKeys] = useState<Key[]>([]);
   // Live gateway catalog (source of truth for the role selectors) + the current
   // modelRoles store (the ONE per-role default store).
   const [catalog, setCatalog] = useState<CatalogModel[]>([]);
@@ -118,13 +103,7 @@ function ModelsPageInner() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState('');
-  const [provider, setProvider] = useState('');
-  const [value, setValue] = useState('');
-  const [reg, setReg] = useState(EMPTY_ASSISTANT);
   const [toast, setToast] = useState('');
-  // "Add provider" wizard: step 1 = pick type, step 2 = fields.
-  const [wizType, setWizType] = useState<ProviderType | null>(null);
-  const [wiz, setWiz] = useState(EMPTY_WIZARD);
 
   const load = useCallback(async () => {
     setLoading(true); setError('');
@@ -137,7 +116,7 @@ function ModelsPageInner() {
       ]);
       const mBody = await mRes.json();
       if (!mRes.ok) { setError(mBody.error ?? 'Failed to load'); return; }
-      setModels(mBody.models ?? []); setAssistant(mBody.assistant ?? ''); setAssistantExplicit(Boolean(mBody.assistantExplicit)); setKeys(mBody.keys ?? []);
+      setModels(mBody.models ?? []); setAssistant(mBody.assistant ?? ''); setAssistantExplicit(Boolean(mBody.assistantExplicit));
       if (cRes.ok) { const c = await cRes.json(); setCatalog(c.models ?? []); setCatalogSource(c.source ?? null); setImageInput(c.imageInput ?? null); }
       if (sRes.ok) { const s = await sRes.json(); if (s.settings?.modelRoles) setModelRoles(s.settings.modelRoles); setStandardFirst(s.settings?.standardFirstEscalation !== false); }
       if (pRes.ok) { const p = await pRes.json(); setPrices(p.prices ?? {}); setPricesMeta({ updatedAt: p.updatedAt, updatedBy: p.updatedBy }); setPriceEdits({}); }
@@ -189,39 +168,6 @@ function ModelsPageInner() {
     } finally { setBusy(''); }
   }, [priceEdits, prices, load]);
 
-  const registerAssistant = useCallback(async () => {
-    if (!reg.label.trim() || !reg.baseUrl.trim() || !reg.modelName.trim() || !reg.apiKey.trim()) return;
-    setBusy('assistant-reg'); setError('');
-    try {
-      const res = await fetch('/api/platform-admin/models/assistant', {
-        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(reg),
-      });
-      const body = await res.json();
-      if (!res.ok) setError(body.error ?? 'Failed to register the assistant model');
-      else {
-        setToast(`Registered ${body.model.label} as the assistant model — key stored in the secrets manager, gateway ${body.gateway}. The raw key was never returned.`);
-        setReg(EMPTY_ASSISTANT); await load();
-      }
-    } finally { setBusy(''); }
-  }, [reg, load]);
-
-  const addProvider = useCallback(async () => {
-    if (!wizType || !wiz.alias.trim() || (needsBaseUrl(wiz) && !wiz.baseUrl.trim()) || !wiz.modelName.trim() || !wiz.apiKey.trim()) return;
-    setBusy('provider'); setError('');
-    try {
-      const res = await fetch('/api/platform-admin/providers', {
-        method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ providerType: wizType, ...wiz }),
-      });
-      const body = await res.json();
-      if (!res.ok) setError(body.error ?? 'Failed to add the provider');
-      else {
-        setToast(`Registered ${body.model.label} under ${body.providerType} — key stored in the secrets manager (${body.fingerprint}), gateway ${body.gateway}. The raw key was never returned.`);
-        setWiz(EMPTY_WIZARD); setWizType(null); await load();
-      }
-    } finally { setBusy(''); }
-  }, [wizType, wiz, load]);
-
   const patch = useCallback(async (id: string, payload: Record<string, unknown>) => {
     setBusy(id); setError('');
     try {
@@ -233,19 +179,6 @@ function ModelsPageInner() {
       else await load();
     } finally { setBusy(''); }
   }, [load]);
-
-  const addKey = useCallback(async () => {
-    if (!provider.trim() || !value.trim()) return;
-    setBusy('key'); setError('');
-    try {
-      const res = await fetch('/api/platform-admin/models', {
-        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ provider, value }),
-      });
-      const body = await res.json();
-      if (!res.ok) setError(body.error ?? 'Failed to store key');
-      else { setToast(`Stored ${provider} key in the secrets manager — fingerprint ${body.key.fingerprint}. The raw value was never returned.`); setProvider(''); setValue(''); await load(); }
-    } finally { setBusy(''); }
-  }, [provider, value, load]);
 
   // Remove an administrator-added model — reference-aware two-step confirm.
   // Usages (role pins, assistant pin, agent per-node pins) are listed in the FIRST
@@ -360,7 +293,7 @@ function ModelsPageInner() {
           Agents &amp; Software build chat, the Big Bets planner, the Knowledge assistant and the Metric
           agent all run on <strong>this one model</strong>, through the governed LiteLLM gateway. By default
           it <strong>follows the Standard role</strong> above, so it just works; override it below to pin a
-          bespoke model (e.g. a registered STACKIT managed LLM).
+          model you added with Add a provider.
         </p>
         <div className="card" style={{ marginBottom: 16 }}>
           <div className="row" style={{ gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -379,83 +312,19 @@ function ModelsPageInner() {
               ))}
             </select>
           </div>
-          <div className="hint" style={{ marginTop: 12, marginBottom: 6 }}>
-            Register the STACKIT managed LLM as an OpenAI-compatible model (base URL + model name + API key).
-            The key is written once to the secrets manager; the catalog keeps only a fingerprint.
-          </div>
-          <div className="row" style={{ gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
-            <input style={{ flex: '1 1 160px' }} value={reg.label} onChange={(e) => setReg({ ...reg, label: e.target.value })} placeholder="label (e.g. STACKIT managed LLM)" />
-            <input style={{ flex: '1 1 220px' }} value={reg.baseUrl} onChange={(e) => setReg({ ...reg, baseUrl: e.target.value })} placeholder="base URL (https://…/v1)" autoComplete="off" />
-            <input style={{ flex: '1 1 160px' }} value={reg.modelName} onChange={(e) => setReg({ ...reg, modelName: e.target.value })} placeholder="model name (upstream)" autoComplete="off" />
-            <input style={{ flex: '1 1 220px' }} type="password" value={reg.apiKey} onChange={(e) => setReg({ ...reg, apiKey: e.target.value })} placeholder="API key value" autoComplete="off" />
-            <button className="btn" onClick={registerAssistant} disabled={busy === 'assistant-reg' || !reg.label.trim() || !reg.baseUrl.trim() || !reg.modelName.trim() || !reg.apiKey.trim()}>
-              {busy === 'assistant-reg' ? <span className="spin" /> : 'Register + set as assistant'}
-            </button>
+          <div className="hint" style={{ marginTop: 10, fontSize: 12 }}>
+            To use a model that is not listed, add it with <strong>Add a provider</strong> below; it then appears here.
           </div>
         </div>
 
         <div className="section-title" style={{ marginTop: 22 }}>Add a provider · connect your own LLM backend</div>
         <p className="hint">
-          Register your own model behind the governed LiteLLM gateway. Pick a provider type,
-          give the minimal details, and the OS stores the key <strong>write-only in the secrets
-          manager</strong> and registers the model with the gateway (durable across restarts).
+          Azure OpenAI, an OpenAI-compatible server (vLLM, LM Studio, EU Router), Ollama, Mistral, STACKIT or any
+          other provider the LiteLLM gateway supports. The connection and the model are stored in the gateway&rsquo;s
+          own database (durable across restarts); the key is kept by the gateway, encrypted, and never shown again.
+          The provider&rsquo;s host must be on the egress allowlist — if it is not, this flow says exactly what to add.
         </p>
-        <div className="card" style={{ marginBottom: 16 }}>
-          {!wizType ? (
-            <>
-              <div className="hint" style={{ marginBottom: 10 }}>Step 1 — choose a provider type</div>
-              <div className="row" style={{ gap: 10, flexWrap: 'wrap' }}>
-                {WIZARD_TYPES.map((t) => (
-                  <button
-                    key={t.type} className="btn ghost" disabled={!t.enabled}
-                    onClick={() => { setWizType(t.type); setWiz({ ...EMPTY_WIZARD, baseUrl: t.type === 'stackit' ? 'https://api.openai-compat.model-serving.eu01.onstackit.cloud/v1' : '' }); }}
-                    style={{ flex: '1 1 220px', textAlign: 'left', opacity: t.enabled ? 1 : 0.5, cursor: t.enabled ? 'pointer' : 'not-allowed' }}
-                    title={t.enabled ? '' : 'Coming in a later phase'}
-                  >
-                    <strong>{t.label}</strong>
-                    <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>{t.blurb}</div>
-                  </button>
-                ))}
-              </div>
-            </>
-          ) : (
-            <>
-              <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-                <div className="hint">Step 2 — <strong>{WIZARD_TYPES.find((t) => t.type === wizType)?.label}</strong> details</div>
-                <button className="btn ghost" onClick={() => { setWizType(null); setWiz(EMPTY_WIZARD); }}>← Back</button>
-              </div>
-              <div className="row" style={{ gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
-                <input style={{ flex: '1 1 150px' }} value={wiz.alias} onChange={(e) => setWiz({ ...wiz, alias: e.target.value })} placeholder="alias (gateway model_name)" autoComplete="off" />
-                <input style={{ flex: '1 1 170px' }} value={wiz.label} onChange={(e) => setWiz({ ...wiz, label: e.target.value })} placeholder="display name (optional)" autoComplete="off" />
-                {wizType === 'openai-compatible' ? (
-                  <input style={{ flex: '0 1 170px' }} value={wiz.litellmProvider} onChange={(e) => setWiz({ ...wiz, litellmProvider: e.target.value })} placeholder="LiteLLM provider (blank = openai)" autoComplete="off" title="Blank: any OpenAI-compatible endpoint (base URL required). A LiteLLM provider name such as mistral uses LiteLLM's native provider; the base URL is then optional." />
-                ) : null}
-                <input style={{ flex: '1 1 230px' }} value={wiz.baseUrl} onChange={(e) => setWiz({ ...wiz, baseUrl: e.target.value })} placeholder={needsBaseUrl(wiz) ? 'api_base (https://…/v1)' : 'api_base (optional)'} autoComplete="off" />
-                <input style={{ flex: '1 1 180px' }} value={wiz.modelName} onChange={(e) => setWiz({ ...wiz, modelName: e.target.value })} placeholder={wizType === 'stackit' ? 'model id (Qwen/Qwen3-VL-235B…)' : 'model id (upstream)'} autoComplete="off" />
-                <select value={wiz.task} onChange={(e) => setWiz({ ...wiz, task: e.target.value as Task })} style={{ flex: '0 1 140px' }}>
-                  <option value="chat">chat</option>
-                  <option value="reasoning">reasoning</option>
-                  <option value="embedding">embedding</option>
-                </select>
-                <input style={{ flex: '1 1 200px' }} type="password" value={wiz.apiKey} onChange={(e) => setWiz({ ...wiz, apiKey: e.target.value })} placeholder="API key value" autoComplete="off" />
-                <input style={{ flex: '0 1 130px' }} type="number" min={0} step="any" value={wiz.inputPerM} onChange={(e) => setWiz({ ...wiz, inputPerM: e.target.value })} placeholder="€ in / 1M tok" title="Input price per 1M tokens. Without prices LiteLLM books this model at 0 and no key budget ever triggers." />
-                <input style={{ flex: '0 1 130px' }} type="number" min={0} step="any" value={wiz.outputPerM} onChange={(e) => setWiz({ ...wiz, outputPerM: e.target.value })} placeholder="€ out / 1M tok" title="Output price per 1M tokens." />
-                <button className="btn" onClick={addProvider} disabled={busy === 'provider' || !wiz.alias.trim() || (needsBaseUrl(wiz) && !wiz.baseUrl.trim()) || !wiz.modelName.trim() || !wiz.apiKey.trim()}>
-                  {busy === 'provider' ? <span className="spin" /> : 'Register model'}
-                </button>
-              </div>
-              {wizType === 'stackit' ? (
-                <div className="hint" style={{ marginTop: 8, fontSize: 12 }}>
-                  STACKIT keeps its org prefix — the gateway needs the double prefix <code>openai/Qwen/…</code>;
-                  a single prefix 404s. Enter the model id <strong>with</strong> its org (e.g. <code>Qwen/Qwen3-VL-235B-A22B-Instruct-FP8</code>); the OS adds the <code>openai/</code> protocol prefix.
-                </div>
-              ) : null}
-              <div className="hint" style={{ marginTop: 8, fontSize: 12 }}>
-                The API key is written once to the secrets manager and handed to the gateway once. The catalog keeps only a <code>sha256</code> fingerprint — the raw key is never shown, logged or returned.
-              </div>
-            </>
-          )}
-        </div>
+        <ProviderWizard onRegistered={(msg) => { setToast(msg); load(); }} />
 
         {(() => {
           // The two catalog groups — the split rule lives in lib/platform-admin/
@@ -496,7 +365,7 @@ function ModelsPageInner() {
                   <div className="muted" style={{ fontSize: 11 }}>{name}{m ? ` · ${m.task}` : ''}{family ? ` · ${family}` : ''}{live?.tier ? ` · ${live.tier} tier` : ''}</div>
                 </td>
                 <td>{live?.tier ? <span className="pa-tag">{live.tier}</span> : (m ? <span className="pa-tag">{m.tier}</span> : <span className="muted">—</span>)}</td>
-                <td>{m?.route ?? (live?.provenance === 'internal' ? 'self-hosted' : 'stackit')}</td>
+                <td>{familyOf(name) || '—'}</td>
                 <td>
                   {m ? (
                     <input
@@ -534,9 +403,9 @@ function ModelsPageInner() {
           };
           return (
             <>
-              <div className="section-title" style={{ marginTop: 22 }}>Managed AI (STACKIT)<span className="count-pill">{managed.length}</span></div>
+              <div className="section-title" style={{ marginTop: 22 }}>Set by the deployment<span className="count-pill">{managed.length}</span></div>
               <div className="hint" style={{ marginBottom: 10 }}>
-                The platform&rsquo;s built-in models, managed by the deployment — always available, not removable here.
+                The role aliases from the deployment&rsquo;s gateway config (<code>litellm.proxy_config.model_list</code>) — always available, not removable here. Which provider stands behind each is the deployment&rsquo;s choice.
                 {catalogSource === 'offline' ? ' LiteLLM is unreachable — showing the install catalog.' : ''}
               </div>
               {imageInput ? (
@@ -555,7 +424,7 @@ function ModelsPageInner() {
               ) : null}
               <div className="table-wrap">
                 <table>
-                  <thead><tr><th>Model</th><th>Tier</th><th>Route</th><th>Cap €/mo</th><th>Enabled</th></tr></thead>
+                  <thead><tr><th>Model</th><th>Tier</th><th>Provider</th><th>Cap €/mo</th><th>Enabled</th></tr></thead>
                   <tbody>{managed.map((name) => row(name, false))}</tbody>
                 </table>
               </div>
@@ -572,7 +441,7 @@ function ModelsPageInner() {
               ) : (
                 <div className="table-wrap">
                   <table>
-                    <thead><tr><th>Model</th><th>Tier</th><th>Route</th><th>Cap €/mo</th><th>Enabled</th><th /></tr></thead>
+                    <thead><tr><th>Model</th><th>Tier</th><th>Provider</th><th>Cap €/mo</th><th>Enabled</th><th /></tr></thead>
                     <tbody>{adminAdded.map((name) => row(name, true))}</tbody>
                   </table>
                 </div>
@@ -583,7 +452,7 @@ function ModelsPageInner() {
 
         <div className="section-title" style={{ marginTop: 22 }}>Token prices · € per 1M tokens</div>
         <div className="hint" style={{ marginBottom: 10 }}>
-          What Monitoring charges a run against, per LiteLLM <code>model_name</code> (STACKIT bills EUR).
+          What Monitoring charges a run against, per LiteLLM <code>model_name</code> (in the currency of your price book).
           Saved prices are durable and apply immediately — no redeploy. Values marked
           <em> seeded from deployment config</em> come from <code>MODEL_PRICES_JSON</code> until you save
           an override; clear both fields to drop an override again. An unpriced model is honest:
@@ -645,37 +514,6 @@ function ModelsPageInner() {
           {busy === 'prices' ? <span className="spin" /> : 'Save prices'}
         </button>
 
-        <div className="section-title" style={{ marginTop: 22 }}>Provider keys</div>
-        <div className="card" style={{ marginBottom: 16 }}>
-          <div className="row" style={{ gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
-            <input style={{ flex: '1 1 160px' }} value={provider} onChange={(e) => setProvider(e.target.value)} placeholder="provider (e.g. openai)" />
-            <input style={{ flex: '1 1 220px' }} type="password" value={value} onChange={(e) => setValue(e.target.value)} placeholder="API key value" autoComplete="off" />
-            <button className="btn" onClick={addKey} disabled={busy === 'key' || !provider.trim() || !value.trim()}>
-              {busy === 'key' ? <span className="spin" /> : 'Store via secrets manager'}
-            </button>
-          </div>
-          <div className="hint" style={{ marginTop: 8 }}>
-            The value is written once to the secrets manager server-side. Only a <code>sha256</code> fingerprint
-            is ever stored in the catalog or shown here.
-          </div>
-        </div>
-        {keys.length === 0 ? <div className="hint">No provider keys stored.</div> : (
-          <div className="table-wrap">
-            <table>
-              <thead><tr><th>Provider</th><th>Fingerprint</th><th>Added by</th><th>When</th></tr></thead>
-              <tbody>
-                {keys.map((k) => (
-                  <tr key={k.provider}>
-                    <td><strong>{k.provider}</strong></td>
-                    <td className="mono" style={{ fontSize: 12 }}>{k.fingerprint}</td>
-                    <td>{k.addedBy}</td>
-                    <td className="muted" style={{ fontSize: 11.5 }}>{new Date(k.addedAt).toLocaleString()}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
         <div className="hint" style={{ marginTop: 14 }}>
           Per-model caps tune the tenant envelope; the envelope and live spend are both in <Link href="/monitoring#spend">Monitoring</Link>.
         </div>

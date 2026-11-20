@@ -336,6 +336,15 @@
 {{- end }}
 - name: LITELLM_URL
   value: {{ $u.litellmUrl | quote }}
+{{- /* Provider flow (Models & Providers): the hosts the egress proxy lets out (the SAME list as its
+       filter, soa.egressHosts) so a provider host is refused before anything is stored, and the
+       access group the shared agent key holds, which every admin-registered model joins. */}}
+- name: LLM_EGRESS_ALLOWLIST
+  value: {{ include "soa.egressHosts" . | fromJsonArray | join "," | quote }}
+- name: LLM_NO_PROXY
+  value: {{ include "soa.litellmNoProxy" . | quote }}
+- name: LLM_ACCESS_GROUP
+  value: {{ (.Values.llmProviders | default dict).accessGroup | default "" | quote }}
 - name: OPA_URL
   value: {{ $u.opaUrl | quote }}
 {{- /* The chart-seeded governance principals (the same block the OPA seed reads). os-ui's runtime governance writes merge into them and never drop a seeded clearance. */}}

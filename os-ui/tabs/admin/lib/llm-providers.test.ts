@@ -38,6 +38,8 @@ test('model strings use LiteLLM\'s native provider prefix, never a forced openai
   assert.equal(modelString('mistral', 'mistral/mistral-small-latest'), 'mistral/mistral-small-latest');
   // … but STACKIT's org prefix is part of the model id and is kept under openai/.
   assert.equal(modelString('openai', 'Qwen/Qwen3-VL-235B-A22B-Instruct-FP8'), 'openai/Qwen/Qwen3-VL-235B-A22B-Instruct-FP8');
+  // EU Router ids contain a slash; under the OpenAI-compatible route they go upstream unchanged.
+  assert.equal(modelString('openai', 'azure/gpt-5.1'), 'openai/azure/gpt-5.1');
   assert.throws(() => modelString('azure', '  '), /model/i);
 });
 
@@ -100,14 +102,14 @@ test('migration dry run: lists every model, its host and route, and what /model/
   const plan = planProviderMigration([
     { model_name: 'sovereign-default', litellm_params: { model: 'openai/gpt-oss-20b', api_base: 'https://api.openai-compat.model-serving.eu01.onstackit.cloud/v1' }, model_info: { id: 'seed-1', db_model: false } },
     { model_name: 'mistral-small', litellm_params: { model: 'openai/mistral-small-latest', api_base: 'https://api.mistral.ai/v1' }, model_info: { id: 'db-1', db_model: true } },
-    { model_name: 'azure-gpt', litellm_params: { model: 'azure/os-gpt-deploy', api_base: 'https://acme.openai.azure.com' }, model_info: { id: 'db-2', db_model: true, access_groups: ['os-admin-models'] } },
+    { model_name: 'azure-gpt', litellm_params: { model: 'azure/os-gpt-deploy', api_base: 'https://acme.openai.azure.com' }, model_info: { id: 'db-2', db_model: true, access_groups: ['os-admin-registered'] } },
     { model_name: 'local-llama', litellm_params: { model: 'ollama_chat/llama3', api_base: 'http://ollama:11434' }, model_info: { id: 'db-3', db_model: true } },
-  ], ['onstackit.cloud'], 'os-admin-models', ['ollama']);
+  ], ['onstackit.cloud'], 'os-admin-registered', ['ollama']);
   const by = Object.fromEntries(plan.rows.map((r) => [r.model, r]));
   assert.equal(by['sovereign-default'].egress, 'allowed');
   assert.equal(by['sovereign-default'].update, null); // seeded: chart-owned, never rewritten
   assert.equal(by['mistral-small'].egress, 'blocked');
-  assert.deepEqual(by['mistral-small'].update, { endpoint: '/model/update', payload: { model_info: { id: 'db-1', access_groups: ['os-admin-models'] } } });
+  assert.deepEqual(by['mistral-small'].update, { endpoint: '/model/update', payload: { model_info: { id: 'db-1', access_groups: ['os-admin-registered'] } } });
   assert.equal(by['azure-gpt'].update, null); // already in the group
   assert.equal(by['local-llama'].egress, 'in-cluster');
   assert.deepEqual(plan.blockedHosts, ['acme.openai.azure.com', 'api.mistral.ai']);

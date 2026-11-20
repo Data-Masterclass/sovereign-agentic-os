@@ -337,3 +337,40 @@ templates/extensions/lakehouse/data-runner.yaml). One definition for every pod t
 {{ $i.repository }}:{{ $i.tag }}@{{ required "dataRunner.image.digest must be set: the digest build-images.yml printed for this tag" $i.digest }}
 {{- end -}}
 {{- end -}}
+
+{{/*
+soa.egressHosts — the ONE list the egress proxy filters on, as a JSON array (fromJsonArray it).
+The chart allowlist, plus each feature's own host joining with the feature that needs it:
+  * the OpenSearch snapshot object-storage host (WP-21);
+  * LLM provider hosts: `llmProviders.allowHosts`, and the STACKIT model-serving host when
+    `stackitPremium.enabled` (its gateway route goes through the proxy like every other provider).
+os-ui receives the SAME list as LLM_EGRESS_ALLOWLIST, so the provider flow refuses exactly what the
+proxy would block, before anything is stored.
+*/}}
+{{- define "soa.egressHosts" -}}
+{{- $hosts := .Values.egressProxy.allowlist | default list }}
+{{- $s3 := (.Values.opensearchSnapshots | default dict).s3 | default dict }}
+{{- if and .Values.opensearch.enabled $s3.enabled $s3.endpointHost }}
+{{- $hosts = append $hosts $s3.endpointHost }}
+{{- end }}
+{{- $llm := .Values.llmProviders | default dict }}
+{{- range ($llm.allowHosts | default list) }}{{- $hosts = append $hosts . }}{{- end }}
+{{- if and (.Values.stackitPremium | default dict).enabled .Values.stackitPremium.apiBaseUrl }}
+{{- $hosts = append $hosts (regexReplaceAll ":[0-9]+$" (urlParse .Values.stackitPremium.apiBaseUrl).host "") }}
+{{- end }}
+{{- $hosts | uniq | toJson }}
+{{- end }}
+
+{{/*
+soa.litellmNoProxy — the in-cluster names the model gateway reaches WITHOUT the egress proxy
+(comma-joined): loopback, every `*.svc` / `*.cluster.local` name, the OS services it calls (Langfuse
+OTLP, mock-model, the MCP query tool, …) and `llmProviders.noProxy` (e.g. a bare Service name such as
+`ollama`). HTTP clients match NO_PROXY by exact name or domain suffix, never by "any dotless name", so a
+bare name must be listed. os-ui gets the same list (LLM_NO_PROXY) to tell in-cluster from external.
+*/}}
+{{- define "soa.litellmNoProxy" -}}
+{{- $lf := regexReplaceAll ":[0-9]+$" (urlParse (.Values.langfuseInit.host | default "http://langfuse-web")).host "" }}
+{{- $names := list "localhost" "127.0.0.1" ".svc" ".cluster.local" $lf (printf "%s-langfuse-web" .Release.Name) "mock-model" "query-tool" "valkey" "pg-rw" "opensearch" "os-ui" }}
+{{- range ((.Values.llmProviders | default dict).noProxy | default list) }}{{ $names = append $names . }}{{- end }}
+{{- $names | compact | uniq | join "," }}
+{{- end }}

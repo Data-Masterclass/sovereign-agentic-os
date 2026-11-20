@@ -133,6 +133,11 @@ jobs:
           bash scripts/tests/eso-migration-plan.test.sh
           bash scripts/tests/secret-deletion-guard.test.sh
 
+      # LLM providers: the gateway behind the egress proxy, provider hosts on its filter, the access
+      # group on the shared agent key; twins: proxy off / not deployed renders no proxy env.
+      - name: LLM providers chart test
+        run: bash scripts/tests/llm-providers-chart.test.sh
+
       # rotate-secrets.sh against a fake kubectl/helm: the re-key overlays, mode 600, no value in the
       # output, and the refusals (another cluster, the wrong step, none-stored while values are stored).
       - name: rotate-secrets.sh test

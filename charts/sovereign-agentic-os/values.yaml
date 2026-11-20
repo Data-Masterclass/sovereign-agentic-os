@@ -462,6 +462,22 @@ stackitPremium:
     remoteKey: stackit-ai-model-serving-key
     property: apiKey
 
+# LLM providers an admin connects in Platform -> Models & Providers (Azure OpenAI, OpenAI-compatible,
+# Ollama, Mistral, STACKIT, any LiteLLM provider). The connections and models live in LiteLLM's own
+# database (`/credentials`, `/model/new`); these values are the deployment-side half.
+llmProviders:
+  # Outbound model calls leave through the egress proxy (needs egressProxy.enabled). In-cluster
+  # names (*.svc, the OS's own services) are reached directly.
+  viaEgressProxy: true
+  # Provider hosts the gateway may reach, joined to the egress proxy filter (subdomains included).
+  # The STACKIT model-serving host joins automatically when stackitPremium.enabled.
+  #   allowHosts: [my-resource.openai.azure.com, api.mistral.ai]
+  allowHosts: []
+  # Extra in-cluster names for the gateway's NO_PROXY (e.g. a bare Service name in this namespace).
+  noProxy: []
+  # Every admin-registered model joins this LiteLLM access group; the shared agent key holds it.
+  accessGroup: os-admin-registered
+
 # LiteLLM master key (admin access to the gateway; os-ui + the key-init Job).
 # Local dev throwaway; external on STACKIT.
 litellmMasterKey: "sk-litellm-local-dev-master"
@@ -599,6 +615,10 @@ litellm:
         # effective limit is the larger of the two, so trimming only the proxy saves nothing.
         requests: { cpu: 100m, memory: 512Mi }
         limits: { cpu: "1", memory: 1536Mi }
+  # The gateway's outbound path (HTTP(S)_PROXY / NO_PROXY) — rendered by templates/base/litellm/egress-env.yaml
+  # from egressProxy + llmProviders below. Empty when the proxy is off.
+  environmentConfigMaps:
+    - litellm-egress-env
   # Master key + Langfuse env come from our local Secret.
   masterkeySecretName: litellm-credentials
   masterkeySecretKey: masterkey

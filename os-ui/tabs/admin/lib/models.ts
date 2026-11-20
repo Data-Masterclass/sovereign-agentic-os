@@ -34,17 +34,20 @@ export type ModelTier = 'sovereign' | 'premium';
 export type ModelRoute = 'self-hosted' | 'stackit';
 
 /**
- * The OpenAI-compatible endpoint of an ADMIN-REGISTERED model (e.g. the STACKIT
- * managed LLM service). It carries ONLY the base URL, the upstream model name and
- * a secrets-manager REFERENCE (+ fingerprint) to its API key — NEVER a raw key.
- * The raw key lives solely in the secrets vault; the LiteLLM gateway reads it once
- * at registration time to proxy the model.
+ * Where an ADMIN-REGISTERED model's provider connection lives. Never a raw key.
+ *  - Current flow (Models & Providers → Add a provider): `credentialName` names the connection in
+ *    LiteLLM's own credential store (`/credentials`, encrypted by LiteLLM) and `litellmModel` is the
+ *    `<provider>/<model>` string LiteLLM routes with. The OS holds no key and no key reference.
+ *  - Legacy rows (registered before 2026-11-21): `baseUrl` + `modelName` + a `keyRef` into the in-process
+ *    vault + `fingerprint`. Still read and removable; no longer written.
  */
 export type ModelEndpoint = {
-  baseUrl: string;
-  modelName: string;
-  keyRef: { name: string; key: string };
-  fingerprint: string;
+  credentialName?: string;
+  litellmModel?: string;
+  baseUrl?: string;
+  modelName?: string;
+  keyRef?: { name: string; key: string };
+  fingerprint?: string;
 };
 
 export type Model = {
@@ -181,15 +184,14 @@ async function hydrateModels(): Promise<void> {
 
 function seed(): void {
   if (modelsState().catalog.size > 0) return;
-  // The LIVE LiteLLM aliases and the STACKIT-managed model behind each. There is no
-  // self-hosted in-box model server anymore, so every route is `stackit`/external.
-  // These ids ARE the gateway model_names, so the catalog can never drift from what
-  // the gateway actually serves (the page also refreshes options from /model/info).
+  // The deployment's role aliases (chart `litellm.proxy_config.model_list`). WHICH provider and model
+  // stand behind each is the deployment's choice (STACKIT, Azure, Ollama, …) and is read live from the
+  // gateway (/model/info) — so the seed names the ROLE, never a vendor or an upstream model.
   const rows: Model[] = [
-    { id: 'sovereign-default', label: 'gpt-oss-20b (standard)', provider: 'stackit', task: 'chat', tier: 'premium', route: 'stackit', enabled: true, capEUR: null },
-    { id: 'sovereign-reasoning', label: 'Qwen3-VL-235B (reasoning)', provider: 'stackit', task: 'reasoning', tier: 'premium', route: 'stackit', enabled: true, capEUR: null },
-    { id: 'sovereign-embed', label: 'Qwen3-VL-Embedding-8B (embeddings)', provider: 'stackit', task: 'embedding', tier: 'premium', route: 'stackit', enabled: true, capEUR: null },
-    { id: 'sovereign-mock', label: 'Mock model (offline only)', provider: 'stackit', task: 'chat', tier: 'sovereign', route: 'stackit', enabled: true, capEUR: null },
+    { id: 'sovereign-default', label: 'Standard (deployment alias)', provider: 'deployment', task: 'chat', tier: 'premium', route: 'stackit', enabled: true, capEUR: null },
+    { id: 'sovereign-reasoning', label: 'Reasoning (deployment alias)', provider: 'deployment', task: 'reasoning', tier: 'premium', route: 'stackit', enabled: true, capEUR: null },
+    { id: 'sovereign-embed', label: 'Embeddings (deployment alias)', provider: 'deployment', task: 'embedding', tier: 'premium', route: 'stackit', enabled: true, capEUR: null },
+    { id: 'sovereign-mock', label: 'Mock model (offline only)', provider: 'deployment', task: 'chat', tier: 'sovereign', route: 'stackit', enabled: true, capEUR: null },
   ];
   for (const m of rows) modelsState().catalog.set(m.id, m);
 }
@@ -282,7 +284,7 @@ export function registerAssistantModel(input: {
   seed();
   const id = (input.id?.trim() || 'stackit-managed-assistant');
   if (!input.label.trim()) throw fail('A model label is required', 400);
-  if (!input.endpoint.baseUrl.trim() || !input.endpoint.modelName.trim()) throw fail('A base URL and model name are required', 400);
+  if (!input.endpoint.baseUrl?.trim() || !input.endpoint.modelName?.trim()) throw fail('A base URL and model name are required', 400);
   if (!input.endpoint.keyRef?.name || !input.endpoint.keyRef?.key) throw fail('A secrets-manager key reference is required', 400);
   const m: Model = {
     id,
@@ -321,9 +323,11 @@ export function registerModel(input: {
   const id = input.id.trim();
   if (!id) throw fail('A model id/alias is required', 400);
   if (!input.label.trim()) throw fail('A model label is required', 400);
-  // A native LiteLLM provider (`mistral/…`) carries no base URL — LiteLLM knows the endpoint.
-  if (!input.endpoint.modelName.trim()) throw fail('A model name is required', 400);
-  if (!input.endpoint.keyRef?.name || !input.endpoint.keyRef?.key) throw fail('A secrets-manager key reference is required', 400);
+  const e = input.endpoint;
+  const viaLiteLlmCredential = Boolean(e.credentialName?.trim() && e.litellmModel?.trim());
+  // Legacy rows: a native LiteLLM provider (`mistral/…`) carries no base URL — LiteLLM knows the endpoint.
+  const legacy = Boolean(e.modelName?.trim() && e.keyRef?.name && e.keyRef?.key);
+  if (!viaLiteLlmCredential && !legacy) throw fail('A LiteLLM connection name and model are required', 400);
   const m: Model = {
     id,
     label: input.label.trim(),
@@ -404,7 +408,7 @@ export function getAssistantModel(): Model | null {
   const id = roleModel('standard');
   const m = modelsState().catalog.get(id);
   if (m) return m.enabled ? m : null;
-  return { id, label: id, provider: 'stackit', task: 'chat', tier: 'premium', route: 'stackit', enabled: true, capEUR: null };
+  return { id, label: id, provider: 'deployment', task: 'chat', tier: 'premium', route: 'stackit', enabled: true, capEUR: null };
 }
 
 /** Clear an explicit assistant override — the assistant follows the STANDARD role again. */
