@@ -56,6 +56,14 @@ privilege model `DROP_TABLE_WITH_PURGE` = `TABLE_DROP` + `TABLE_WRITE_DATA`) and
   DROP_TABLE_WITH_PURGE" (catalog_admin holds only CATALOG_MANAGE_ACCESS + CATALOG_MANAGE_METADATA),
   then "Unable to purge entity … set DROP_WITH_PURGE_ENABLED or polaris.config.drop-with-purge.enabled".
   The DROP failed and the table stayed.
-- `polaris-catalog-init` now grants catalog_admin `TABLE_WRITE_DATA` and sets the catalog property
-  (`polaris.catalog.purgeOnDrop`, default on). Polaris then drops the entity and its
-  `TableCleanupTaskHandler` deletes the data and metadata files asynchronously (seconds in the test).
+- The chart keeps the regular catalog unable to purge: catalog_admin (Trino's `iceberg`) has no
+  `TABLE_WRITE_DATA`, so a Data-tab DROP TABLE is still refused and the table stays.
+- The `polaris-purge` hook Job sets `polaris.config.drop-with-purge.enabled` on the catalog and gives
+  TABLE_DROP + TABLE_WRITE_DATA (+ list/read/namespace/view drop) ONLY to a dedicated principal
+  (`polaris.purge.principal`, catalog role `<principal>-purge`). Its credential is written into the
+  Trino catalog `iceberg_purge` (Secret, optional mount); OPA lets only `os-domain-delete` use that
+  catalog and the query-tool sends only delete-domain drops there. Polaris then drops the entity and
+  its `TableCleanupTaskHandler` deletes the data and metadata files asynchronously.
+- Principal and role APIs used: `POST /principals` (credentials are returned once), `POST
+  /principals/{p}/rotate`, `POST /catalogs/{c}/catalog-roles`, `PUT …/grants`, `POST /principal-roles`,
+  `PUT /principal-roles/{r}/catalog-roles/{c}`, `PUT /principals/{p}/principal-roles`.

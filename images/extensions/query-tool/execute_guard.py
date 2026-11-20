@@ -57,13 +57,18 @@ from dataclasses import dataclass
 from typing import List, Optional
 
 CATALOG = "iceberg"
+#: The delete-domain purge catalog (chart `polaris.purge.catalog`): the same warehouse, reached as
+#: the dedicated Polaris principal that may purge. Only DROP TABLE / DROP VIEW / DROP SCHEMA, only
+#: for the admin delete-domain run, and executed as PURGE_TRINO_USER (the only Trino user OPA lets
+#: touch it).
+PURGE_CATALOG = "iceberg_purge"
 BUILDER_ROLES = {"builder", "domain_admin", "admin"}  # role floor for domain-schema writes (creator<builder<domain_admin<admin)
 
 # A bare, lowercase SQL identifier (no quoting allowed — keeps the surface tight).
 _IDENT = r"[a-z_][a-z0-9_]*"
 
 _RE_DROP_SCHEMA = re.compile(
-    rf"drop\s+schema\s+if\s+exists\s+{CATALOG}\.({_IDENT})",
+    rf"drop\s+schema\s+if\s+exists\s+({CATALOG}|{PURGE_CATALOG})\.({_IDENT})",
     re.IGNORECASE,
 )
 
@@ -83,7 +88,7 @@ _RE_CTAS_IFNE = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 _RE_DROP = re.compile(
-    rf"drop\s+table\s+if\s+exists\s+{CATALOG}\.({_IDENT})\.({_IDENT})",
+    rf"drop\s+table\s+if\s+exists\s+({CATALOG}|{PURGE_CATALOG})\.({_IDENT})\.({_IDENT})",
     re.IGNORECASE,
 )
 # Governed PROMOTE-AS-VIEW: a domain VIEW over the owner's personal-lane table instead
@@ -100,7 +105,7 @@ _RE_CREATE_VIEW = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 _RE_DROP_VIEW = re.compile(
-    rf"drop\s+view\s+if\s+exists\s+{CATALOG}\.({_IDENT})\.({_IDENT})",
+    rf"drop\s+view\s+if\s+exists\s+({CATALOG}|{PURGE_CATALOG})\.({_IDENT})\.({_IDENT})",
     re.IGNORECASE,
 )
 # Incremental sync (append): the inserted rows MUST come from a SELECT — a plain
@@ -234,7 +239,7 @@ class ParsedWrite:
     kind: str            # 'create_schema' | 'ctas' | 'drop_table' | 'insert_select' | 'merge'
                          # | 'delete_batch' | 'expire_snapshots' | 'optimize'
                          # | 'create_view' | 'drop_view' | 'rollback_to_snapshot'
-    catalog: str         # always 'iceberg'
+    catalog: str         # 'iceberg', or 'iceberg_purge' for a delete-domain drop
     schema: str          # target schema (the authorization subject)
     table: Optional[str] # None for create_schema
 
@@ -280,7 +285,7 @@ def parse_statement(sql: str) -> ParsedWrite:
 
     m = _RE_DROP_SCHEMA.fullmatch(s)
     if m:
-        return ParsedWrite("drop_schema", CATALOG, m.group(1), None)
+        return ParsedWrite("drop_schema", m.group(1).lower(), m.group(2), None)
 
     m = _RE_CTAS_REPLACE.fullmatch(s) or _RE_CTAS_IFNE.fullmatch(s)
     if m:
@@ -288,7 +293,7 @@ def parse_statement(sql: str) -> ParsedWrite:
 
     m = _RE_DROP.fullmatch(s)
     if m:
-        return ParsedWrite("drop_table", CATALOG, m.group(1), m.group(2))
+        return ParsedWrite("drop_table", m.group(1).lower(), m.group(2), m.group(3))
 
     m = _RE_CREATE_VIEW.fullmatch(s)
     if m:
@@ -296,7 +301,7 @@ def parse_statement(sql: str) -> ParsedWrite:
 
     m = _RE_DROP_VIEW.fullmatch(s)
     if m:
-        return ParsedWrite("drop_view", CATALOG, m.group(1), m.group(2))
+        return ParsedWrite("drop_view", m.group(1).lower(), m.group(2), m.group(3))
 
     m = _RE_INSERT_SELECT.fullmatch(s)
     if m:
@@ -363,17 +368,24 @@ def authorize_target(parsed: ParsedWrite, uid: str, domains: List[str], role: st
     )
 
 
+def execute_user(parsed: ParsedWrite, principal: str, purge_user: str) -> str:
+    """The Trino session user a guarded write runs as: the caller's principal, except a statement
+    on the purge catalog, which runs as the dedicated purge user (OPA admits only that user)."""
+    return purge_user if parsed.catalog == PURGE_CATALOG else principal
+
+
 def guard(sql: str, uid: str, domains: List[str], role: str, purpose: Optional[str] = None) -> ParsedWrite:
     """Full gate: allowlist + target authorization. Returns the parsed write on OK.
     DROP SCHEMA additionally needs the delete-domain purpose AND the admin role."""
     if not uid or not role:
         raise ExecuteError(400, "missing caller identity (uid/role)")
     parsed = parse_statement(sql)
-    if parsed.kind == "drop_schema":
+    if parsed.kind == "drop_schema" or parsed.catalog == PURGE_CATALOG:
+        what = "DROP SCHEMA" if parsed.kind == "drop_schema" else f"a statement on {PURGE_CATALOG}"
         if purpose != DOMAIN_DELETE_PURPOSE:
-            raise ExecuteError(403, "DROP SCHEMA is allowed only for the governed delete-domain run")
+            raise ExecuteError(403, f"{what} is allowed only for the governed delete-domain run")
         if role != "admin":
-            raise ExecuteError(403, "DROP SCHEMA needs the admin role")
+            raise ExecuteError(403, f"{what} needs the admin role")
     authorize_target(parsed, uid, domains, role)
     return parsed
 

@@ -177,6 +177,67 @@ allow := false if {
 	startswith(schema, "personal_")
 	not is_owned_personal(schema)
 	not released_to_reader(schema)
+	not purge_access
+}
+
+# --- Delete-domain purge catalog (ADDITIVE) ---------------------------------
+# `iceberg_purge` is the same Polaris warehouse as `iceberg`, reached as a DEDICATED Polaris
+# principal that holds the purge privilege (chart `polaris.purge`; Secret-mounted catalog). Only
+# the dedicated Trino user may touch it, that user may touch nothing else, and nobody may
+# impersonate it. The query-tool sends a statement there only for the admin delete-domain run.
+# The names match values.yaml `polaris.purge.{catalog,trinoUser}`.
+purge_catalog := "iceberg_purge"
+
+purge_user := "os-domain-delete"
+
+accessed_catalogs contains c if c := input.action.resource.table.catalogName
+
+accessed_catalogs contains c if c := input.action.resource.schema.catalogName
+
+accessed_catalogs contains c if c := input.action.resource.column.catalogName
+
+accessed_catalogs contains c if c := input.action.resource.catalog.name
+
+accessed_catalogs contains c if c := input.action.targetResource.table.catalogName
+
+accessed_catalogs contains c if c := input.action.targetResource.schema.catalogName
+
+accessed_catalogs contains c if {
+	some fr in input.action.filterResources
+	c := object.get(fr, ["table", "catalogName"], object.get(fr, ["catalog", "name"], object.get(fr, ["schema", "catalogName"], "")))
+	c != ""
+}
+
+# The purge user, on the purge catalog only: exempt from the personal-schema read isolation
+# (it drops other users' personal tables for the delete-domain run, nothing else).
+purge_access if {
+	user == purge_user
+	count(accessed_catalogs) > 0
+	every c in accessed_catalogs {
+		c == purge_catalog
+	}
+}
+
+allow := false if {
+	purge_catalog in accessed_catalogs
+	user != purge_user
+}
+
+allow := false if {
+	user == purge_user
+	some c in accessed_catalogs
+	c != purge_catalog
+}
+
+# Under Trino authentication (WP-14) the query-tool logs in as `svc-os-ui` and impersonates the
+# session user; that is the ONE login that may become the purge user (the query-tool only does so for
+# the admin delete-domain run). Every other impersonation of it is denied.
+purge_impersonator := "svc-os-ui"
+
+allow := false if {
+	input.action.operation == "ImpersonateUser"
+	input.action.resource.user.user == purge_user
+	user != purge_impersonator
 }
 
 # Defense-in-depth on the row-filter entry point: even if a future config only wires

@@ -25,7 +25,7 @@ from starlette.responses import JSONResponse
 import trino
 import trino.exceptions
 
-from execute_guard import MCP_SOURCE, ExecuteError, connect_kwargs, guard, guard_read, scheduling
+from execute_guard import MCP_SOURCE, ExecuteError, connect_kwargs, execute_user, guard, guard_read, scheduling
 from trino_login import login_for, tls_client_kwargs
 
 PORT = int(os.environ.get("PORT", "8000"))
@@ -64,6 +64,8 @@ QUERY_MAX_ROWS = int(os.environ.get("QUERY_MAX_ROWS", "10000") or 10000)
 # EXECUTE_MAX_RUN_TIME (e.g. "900s") to impose one; empty means Trino's own cluster limits are
 # the only bound, which is what the code does today and what the comment on /execute now says.
 EXECUTE_MAX_RUN_TIME = os.environ.get("EXECUTE_MAX_RUN_TIME", "")
+# The Trino user a delete-domain purge statement runs as (chart polaris.purge.trinoUser).
+PURGE_TRINO_USER = os.environ.get("PURGE_TRINO_USER", "os-domain-delete")
 
 
 def _seconds(duration: str, fallback: int = 60) -> int:
@@ -288,7 +290,7 @@ async def http_execute(req: Request):
         # limits end it. That is a deliberate default for writes, which legitimately run for
         # minutes; it is not "the client owns the budget", which this comment used to claim.
         # Reads are bounded by QUERY_MAX_RUN_TIME + QUERY_MAX_ROWS.
-        result = await asyncio.to_thread(run_execute, sql, principal, parsed.schema, source, tags)
+        result = await asyncio.to_thread(run_execute, sql, execute_user(parsed, principal, PURGE_TRINO_USER), parsed.schema, source, tags)
         return JSONResponse(result)
     except trino.exceptions.TrinoUserError as e:
         # A genuine SQL/permission error from Trino (incl. an OPA-denied read) — the

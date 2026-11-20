@@ -1618,10 +1618,18 @@ polaris:
   catalog:
     name: lakehouse
     baseLocation: s3://lakehouse/wh
-    # Let Trino's DROP TABLE purge the table's files: the polaris-catalog-purge hook Job grants
-    # catalog_admin TABLE_WRITE_DATA and sets polaris.config.drop-with-purge.enabled (read back,
-    # fail closed). Off = every DROP TABLE through Trino fails with Polaris 403 and the table stays.
-    purgeOnDrop: true
+  # PURGE (delete domain only). The regular `iceberg` catalog does NOT purge: its principal lacks
+  # TABLE_WRITE_DATA, so a Data-tab DROP TABLE is refused by Polaris and the table stays. The
+  # polaris-purge Job creates a DEDICATED principal holding the purge privilege, writes its Trino
+  # catalog (`catalog`) into the Secret `secretName` (mounted optionally into Trino's catalog dir)
+  # and restarts Trino once when the Secret is first written. OPA lets only `trinoUser` touch that
+  # catalog, and the query-tool runs a statement on it only for the admin delete-domain run.
+  purge:
+    enabled: true
+    principal: os-domain-delete
+    trinoUser: os-domain-delete
+    catalog: iceberg_purge
+    secretName: trino-catalog-iceberg-purge
   local:
     rootClientId: root
     rootClientSecret: polaris-local-dev-secret

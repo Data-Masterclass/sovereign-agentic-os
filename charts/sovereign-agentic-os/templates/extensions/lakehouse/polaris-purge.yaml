@@ -1,0 +1,280 @@
+{{- if and .Values.polaris.enabled .Values.polaris.purge.enabled }}
+{{- /*
+  DELETE-DOMAIN PURGE — a DEDICATED Polaris principal and Trino catalog; the regular `iceberg`
+  catalog never purges.
+
+  Trino's Iceberg REST catalog sends every DROP TABLE as `DELETE …/tables/<t>?purgeRequested=true`.
+  Polaris 1.1 honours it only when (1) the catalog sets `polaris.config.drop-with-purge.enabled` and
+  (2) the CALLER holds TABLE_DROP + TABLE_WRITE_DATA. This Job sets (1) on the catalog and gives (2)
+  ONLY to principal `purge.principal` (catalog role `<principal>-purge`), never to catalog_admin, so a
+  Data-tab DROP through `iceberg` stays refused (403, the table stays) — proven in tests/domain-delete.
+
+  It writes the Trino catalog `purge.catalog` (the same REST props as `iceberg`, with this
+  principal's credential) into Secret `purge.secretName`, which Trino mounts OPTIONALLY into its
+  catalog directory, and restarts Trino once when that Secret is first written or rotated. OPA lets
+  only `purge.trinoUser` touch the catalog; the query-tool sends statements there only for the
+  admin delete-domain run (`purpose: domain-delete`).
+
+  JSON is parsed with Python's json module; every Polaris write is read back. Any failure exits
+  non-zero (fail closed). `PURGE_CATALOG_FILE` (test harness only) writes the catalog file to a path
+  instead of the Kubernetes Secret.
+*/}}
+{{- $pl := .Values.polaris }}
+{{- $pu := $pl.purge }}
+{{- $q := .Values.queryTool }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: polaris-purge
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: polaris-purge
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+rules:
+  # Only its own Secret, and only a restart of Trino.
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: [{{ $pu.secretName | quote }}]
+    verbs: ["get", "update"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    resourceNames: ["trino"]
+    verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: polaris-purge
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: polaris-purge }
+subjects:
+  - { kind: ServiceAccount, name: polaris-purge, namespace: {{ .Release.Namespace }} }
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: polaris-purge
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "polaris-purge") | nindent 4 }}
+  annotations:
+    # After polaris-catalog-init (weight 10): the catalog exists before this runs.
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "11"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 6
+  ttlSecondsAfterFinished: 300
+  template:
+    metadata:
+      labels:
+        {{- include "soa.selectorLabels" (dict "ctx" . "component" "polaris-purge") | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      serviceAccountName: polaris-purge
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- include "soa.podSecurityContext" . | nindent 8 }}
+        runAsUser: 1000
+      containers:
+        - name: catalog-purge
+          image: "{{ $q.image.repository }}:{{ $q.image.tag }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          securityContext:
+            {{- include "soa.containerSecurityContext" . | nindent 12 }}
+          env:
+            {{- if eq .Values.global.profile "local" }}
+            - name: CLIENT_ID
+              value: {{ $pl.local.rootClientId | quote }}
+            - name: CLIENT_SECRET
+              value: {{ $pl.local.rootClientSecret | quote }}
+            {{- else }}
+            - name: BOOTSTRAP_CREDS
+              valueFrom: { secretKeyRef: { name: {{ $pl.secretName }}, key: POLARIS_BOOTSTRAP_CREDENTIALS } }
+            {{- end }}
+            - name: CATALOG
+              value: {{ $pl.catalog.name | quote }}
+            - name: POLARIS_CATALOG_API
+              value: "http://polaris:8181"
+            - name: PURGE_PRINCIPAL
+              value: {{ $pu.principal | quote }}
+            - name: PURGE_TRINO_CATALOG
+              value: {{ $pu.catalog | quote }}
+            - name: PURGE_SECRET
+              value: {{ $pu.secretName | quote }}
+            - name: NAMESPACE
+              value: {{ .Release.Namespace | quote }}
+            # Base64 (one line): the catalog file is several lines.
+            - name: PURGE_CATALOG_PROPS_B64
+              value: {{ include "soa.icebergRestCatalogProps" (dict "ctx" . "credential" "__CREDENTIAL__") | b64enc | quote }}
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              exec python3 - <<'PY'
+              import base64, json, os, ssl, sys, time, urllib.error, urllib.parse, urllib.request
+
+              API = os.environ["POLARIS_CATALOG_API"]
+              CAT = os.environ["CATALOG"]
+              PRINCIPAL = os.environ["PURGE_PRINCIPAL"]
+              ROLE = PRINCIPAL + "-purge"
+              TCAT = os.environ["PURGE_TRINO_CATALOG"]
+              KEY = "polaris.config.drop-with-purge.enabled"
+              PRIVS = ["TABLE_LIST", "TABLE_READ_PROPERTIES", "TABLE_DROP", "TABLE_WRITE_DATA",
+                       "NAMESPACE_LIST", "NAMESPACE_READ_PROPERTIES", "NAMESPACE_DROP", "VIEW_LIST", "VIEW_DROP"]
+              creds = os.environ.get("BOOTSTRAP_CREDS", "").split(",")
+              cid = os.environ.get("CLIENT_ID") or (creds[1] if len(creds) > 2 else "")
+              sec = os.environ.get("CLIENT_SECRET") or (creds[2] if len(creds) > 2 else "")
+              if not cid or not sec:
+                  sys.exit("polaris-purge: no Polaris client credentials")
+
+              def http(method, url, body=None, form=None, headers=None, ctx=None):
+                  h = {"accept": "application/json", **(headers or {})}
+                  data = None
+                  if form is not None:
+                      data = urllib.parse.urlencode(form).encode(); h["content-type"] = "application/x-www-form-urlencoded"
+                  elif body is not None:
+                      data = json.dumps(body).encode(); h["content-type"] = h.get("content-type", "application/json")
+                  req = urllib.request.Request(url, data=data, method=method, headers=h)
+                  try:
+                      with urllib.request.urlopen(req, timeout=30, context=ctx) as r:
+                          raw = r.read().decode()
+                          return r.status, (json.loads(raw) if raw.strip() else None)
+                  except urllib.error.HTTPError as e:
+                      raw = e.read().decode(errors="replace")
+                      try:
+                          return e.code, json.loads(raw)
+                      except ValueError:
+                          return e.code, None
+
+              def must(cond, msg):
+                  if not cond:
+                      sys.exit("polaris-purge: " + msg)
+
+              st, tok = http("POST", API + "/api/catalog/v1/oauth/tokens", form={"grant_type": "client_credentials", "client_id": cid, "client_secret": sec, "scope": "PRINCIPAL_ROLE:ALL"})
+              token = (tok or {}).get("access_token")
+              must(st == 200 and token, f"no Polaris token (HTTP {st})")
+              auth = {"authorization": "Bearer " + token}
+              M = API + "/api/management/v1"
+
+              # 1. The catalog honours purge requests (the CALLER's privileges still decide).
+              cat = None
+              for _ in range(60):
+                  st, cat = http("GET", f"{M}/catalogs/{CAT}", headers=auth)
+                  if st == 200:
+                      break
+                  time.sleep(5)
+              must(st == 200 and isinstance(cat, dict) and isinstance(cat.get("properties"), dict), f"catalog {CAT} not readable (HTTP {st})")
+              base = cat["properties"].get("default-base-location")
+              must(base, f"catalog {CAT} has no default-base-location; refusing to write")
+              if cat["properties"].get(KEY) != "true":
+                  props = dict(cat["properties"]); props[KEY] = "true"
+                  st, _ = http("PUT", f"{M}/catalogs/{CAT}", body={"currentEntityVersion": cat["entityVersion"], "properties": props}, headers=auth)
+                  must(st == 200, f"UpdateCatalog failed (HTTP {st})")
+                  st, after = http("GET", f"{M}/catalogs/{CAT}", headers=auth)
+                  p = (after or {}).get("properties") or {}
+                  lost = sorted(k for k in cat["properties"] if k not in p)
+                  must(st == 200 and p.get(KEY) == "true" and p.get("default-base-location") == base and not lost, f"catalog {CAT} did not keep its properties (lost {lost})")
+
+              # 2. The purge privilege, on a catalog role of its own — NOT on catalog_admin.
+              st, _ = http("GET", f"{M}/catalogs/{CAT}/catalog-roles/{ROLE}", headers=auth)
+              if st == 404:
+                  st, _ = http("POST", f"{M}/catalogs/{CAT}/catalog-roles", body={"catalogRole": {"name": ROLE}}, headers=auth)
+                  must(st in (200, 201), f"create catalog role {ROLE} failed (HTTP {st})")
+              for priv in PRIVS:
+                  st, _ = http("PUT", f"{M}/catalogs/{CAT}/catalog-roles/{ROLE}/grants", body={"grant": {"type": "catalog", "privilege": priv}}, headers=auth)
+                  must(st in (200, 201, 204), f"grant {priv} failed (HTTP {st})")
+              st, g = http("GET", f"{M}/catalogs/{CAT}/catalog-roles/catalog_admin/grants", headers=auth)
+              must(st == 200 and not any(x.get("privilege") == "TABLE_WRITE_DATA" for x in (g or {}).get("grants", [])), "catalog_admin holds TABLE_WRITE_DATA: the regular catalog would purge; revoke it first")
+
+              # 3. The principal and its principal role.
+              st, _ = http("GET", f"{M}/principal-roles/{ROLE}", headers=auth)
+              if st == 404:
+                  st, _ = http("POST", f"{M}/principal-roles", body={"principalRole": {"name": ROLE}}, headers=auth)
+                  must(st in (200, 201), f"create principal role {ROLE} failed (HTTP {st})")
+              st, _ = http("PUT", f"{M}/principal-roles/{ROLE}/catalog-roles/{CAT}", body={"catalogRole": {"name": ROLE}}, headers=auth)
+              must(st in (200, 201, 204), f"assign catalog role failed (HTTP {st})")
+
+              # The credential: written to the Secret (or the harness file) the moment Polaris
+              # returns it. Polaris shows a secret only on create/rotate.
+              out_file = os.environ.get("PURGE_CATALOG_FILE")
+              K8S = "https://kubernetes.default.svc"
+              ns = os.environ.get("NAMESPACE", "")
+              kctx = kh = None
+              if not out_file:
+                  tokp = "/var/run/secrets/kubernetes.io/serviceaccount"
+                  kh = {"authorization": "Bearer " + open(tokp + "/token").read().strip()}
+                  kctx = ssl.create_default_context(cafile=tokp + "/ca.crt")
+              spath = f"{K8S}/api/v1/namespaces/{ns}/secrets/{os.environ['PURGE_SECRET']}"
+
+              def have_credential():
+                  if out_file:
+                      return os.path.isfile(out_file)
+                  st, _ = http("GET", spath, headers=kh, ctx=kctx)
+                  must(st in (200, 404), f"Kubernetes API {st} reading the purge Secret")
+                  return st == 200
+
+              def store(client_id, client_secret):
+                  props = base64.b64decode(os.environ["PURGE_CATALOG_PROPS_B64"]).decode().replace("__CREDENTIAL__", f"{client_id}:{client_secret}")
+                  if out_file:
+                      with open(out_file, "w") as fh:
+                          fh.write(props + "\n")
+                      return
+                  body = {"apiVersion": "v1", "kind": "Secret", "metadata": {"name": os.environ["PURGE_SECRET"], "namespace": ns},
+                          "type": "Opaque", "data": {f"{TCAT}.properties": base64.b64encode((props + "\n").encode()).decode()}}
+                  st, cur = http("GET", spath, headers=kh, ctx=kctx)
+                  if st == 200:
+                      body["metadata"]["resourceVersion"] = cur["metadata"]["resourceVersion"]
+                      st, _ = http("PUT", spath, body=body, headers=kh, ctx=kctx)
+                  else:
+                      st, _ = http("POST", f"{K8S}/api/v1/namespaces/{ns}/secrets", body=body, headers=kh, ctx=kctx)
+                  must(st in (200, 201), f"writing the purge Secret failed (HTTP {st})")
+                  # Trino reads catalogs at start: restart it once so the purge catalog loads.
+                  patch = {"spec": {"template": {"metadata": {"annotations": {"sovereign-os.io/purge-catalog-at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}}}}}
+                  st, _ = http("PATCH", f"{K8S}/apis/apps/v1/namespaces/{ns}/deployments/trino", body=patch, headers={**kh, "content-type": "application/strategic-merge-patch+json"}, ctx=kctx)
+                  must(st == 200, f"restarting Trino failed (HTTP {st})")
+
+              st, pr = http("GET", f"{M}/principals/{PRINCIPAL}", headers=auth)
+              if st == 404:
+                  st, created = http("POST", f"{M}/principals", body={"principal": {"name": PRINCIPAL}, "credentialRotationRequired": False}, headers=auth)
+                  must(st in (200, 201) and (created or {}).get("credentials"), f"create principal {PRINCIPAL} failed (HTTP {st})")
+                  c = created["credentials"]
+                  store(c["clientId"], c["clientSecret"])
+                  print(f"principal {PRINCIPAL} created; Trino catalog {TCAT} written")
+              elif st == 200:
+                  if not have_credential():
+                      st, rot = http("POST", f"{M}/principals/{PRINCIPAL}/rotate", headers=auth)
+                      must(st == 200 and (rot or {}).get("credentials"), f"rotate {PRINCIPAL} failed (HTTP {st})")
+                      c = rot["credentials"]
+                      store(c["clientId"], c["clientSecret"])
+                      print(f"principal {PRINCIPAL} rotated; Trino catalog {TCAT} rewritten")
+                  else:
+                      print(f"principal {PRINCIPAL} and Trino catalog {TCAT} already in place")
+              else:
+                  sys.exit(f"polaris-purge: principal {PRINCIPAL} not readable (HTTP {st})")
+              st, _ = http("PUT", f"{M}/principals/{PRINCIPAL}/principal-roles", body={"principalRole": {"name": ROLE}}, headers=auth)
+              must(st in (200, 201, 204), f"assign principal role failed (HTTP {st})")
+              st, roles = http("GET", f"{M}/principals/{PRINCIPAL}/principal-roles", headers=auth)
+              must(st == 200 and any(r.get("name") == ROLE for r in (roles or {}).get("roles", [])), "principal role not assigned")
+              print("purge principal ready")
+              PY
+          resources:
+            requests: { cpu: 25m, memory: 64Mi }
+            limits: { cpu: 200m, memory: 128Mi }
+{{- end }}
