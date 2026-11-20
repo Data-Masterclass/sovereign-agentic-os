@@ -40,7 +40,7 @@ test('a save commits connections/** as the actor; the catalog reads back from gi
     const res = await commitConnections('sales', ACTOR, { action: 'create connection', object: 'pg_sales' }, { reposDir, captured: [pg()], mirror: false });
     assert.ok(res?.changed);
     const [head] = await log('sales', { reposDir, limit: 1 });
-    assert.equal(head.oid, res!.sha);
+    assert.equal(head.sha, res!.sha);
     assert.match(head.message, /^connections\(sales\): create connection pg_sales — via ui:connections/);
     assert.equal(head.author.email, ACTOR.email);
 

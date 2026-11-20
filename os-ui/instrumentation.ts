@@ -48,6 +48,9 @@ export async function register(): Promise<void> {
         // it does, and `tabs/software/lib/apps-reservation.test.ts` asserts the ORDER, not merely
         // the existence.
         reserveSubtree('apps/');
+        // WP-50: `connections/` holds each warehouse connection's Trino catalog file; the literal
+        // must stay equal to `CONNECTIONS_PREFIX` (`tabs/connections/lib/git/generate.ts`).
+        reserveSubtree('connections/');
       }
     } catch (err) {
       console.error(`[os-ui] projects: could NOT reserve the 'agents/' + 'dashboards/' + 'apps/' subtrees — ${err instanceof Error ? err.message : String(err)}`);
@@ -332,6 +335,14 @@ export async function register(): Promise<void> {
         console.info(`[os-ui] agent projects: committing every agent-system change to ${config.reposDir}/<domain>.git (agents/)`);
       } catch (err) {
         console.error(`[os-ui] agent projects: commit hook NOT installed — ${err instanceof Error ? err.message : String(err)}`);
+      }
+      // 2a. CONNECTIONS (WP-50): commits run from the store's own writers; here they learn the
+      // actor's display name and e-mail from the admin directory.
+      try {
+        const { setConnectionActorResolver } = await import('./tabs/connections/lib/git/commit.ts');
+        setConnectionActorResolver(resolveActor);
+      } catch (err) {
+        console.error(`[os-ui] connections: actor resolver NOT installed — commits carry the id only: ${err instanceof Error ? err.message : String(err)}`);
       }
       // 2b. DASHBOARDS commit hook (night 2 / stream D) — every dashboard write becomes a commit
       // under `dashboards/**`. Installed after the agents hook and BEFORE the data boot reconcile,
@@ -626,6 +637,14 @@ export async function registerGitObjectKindsAtBoot(): Promise<void> {
     console.info('[os-ui] git versioning: lifecycle-pin registered (history, version, diff)');
   } catch (err) {
     console.warn(`[os-ui] git versioning: lifecycle-pin NOT registered — ${err instanceof Error ? err.message : String(err)}`);
+  }
+  try {
+    const { registerGitObject } = await import('./core/infra/git-objects.ts');
+    const { connectionGitObjectResolver } = await import('./tabs/connections/lib/git/git-object.ts');
+    registerGitObject('connection-config', connectionGitObjectResolver);
+    console.info('[os-ui] git versioning: connection-config registered (history, version, diff)');
+  } catch (err) {
+    console.warn(`[os-ui] git versioning: connection-config NOT registered — ${err instanceof Error ? err.message : String(err)}`);
   }
   }
 }

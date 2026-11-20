@@ -161,11 +161,11 @@ test('G1: the kinds that are NOT in git yet say so, and the two that are name a 
   // their reasons: that is the honest remainder, not a gap in this test.
   assert.deepEqual(
     committed,
-    ['dataset', 'metric', 'dashboard', 'agent-system', 'software', 'lifecycle-pin'],
+    ['dataset', 'metric', 'dashboard', 'agent-system', 'software', 'lifecycle-pin', 'connection-config'],
     'these kinds have a landed git writer',
   );
   assert.deepEqual(landing, [], 'night 2 landed every writer it declared');
-  assert.deepEqual(backlog, ['knowledge-workflow', 'connection-config'], 'these are the honest backlog, with reasons');
+  assert.deepEqual(backlog, ['knowledge-workflow'], 'these are the honest backlog, with reasons');
   assert.equal(committed.length + landing.length + backlog.length, GIT_OBJECT_KINDS.length, 'every kind is classified exactly once');
 });
 
@@ -292,7 +292,7 @@ test('G3: each registration stands alone — one failing kind cannot unwire anot
   const step = text.slice(text.indexOf('export async function registerGitObjectKindsAtBoot'));
   const tries = (step.match(/\n  try \{/g) ?? []).length;
   const catches = (step.match(/\n  \} catch \(err\) \{/g) ?? []).length;
-  assert.equal(tries, 6, 'one try/catch per registered kind — a resolver that throws must not take the others with it');
+  assert.equal(tries, 7, 'one try/catch per registered kind — a resolver that throws must not take the others with it');
   assert.equal(catches, tries, 'every try has its own catch');
   assert.ok(!/await registerGitObjectKindsAtBoot/.test(text.slice(0, text.indexOf('export async function registerGitObjectKindsAtBoot'))), 'the boot step is fire-and-forget: it may never fail boot');
 });

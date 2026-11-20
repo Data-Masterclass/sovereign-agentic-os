@@ -59,7 +59,7 @@ import { DATA_LAYOUT } from '@core/infra/data-layout';
 import type { MirrorSignal } from '@core/infra/git-mirror';
 import {
   AGENTS_DIR, AGENTS_INDEX_PATH, OS_EXTERNAL_PATH, OS_LIFECYCLE_PINS_PATH, OS_SCHEDULES_PATH, USER_REPO_PREFIX,
-  configuredDbtProjectDir, prefixOf,
+  configuredDbtProjectDir, connectionCatalogPath, connectionOsPath, prefixOf,
 } from '@core/infra/repo-layout';
 
 // ------------------------------------------------------------- kind table ---
@@ -188,12 +188,11 @@ export const GIT_OBJECT_LAYOUT: Record<GitObjectKind, GitObjectLayout> = {
   'connection-config': {
     kind: 'connection-config',
     label: 'connection configuration',
-    paths: ['connections/<slug>.yml'],
+    // WP-50: a warehouse connection is Trino's own catalog file plus the OS layer beside it; the
+    // credential is never committed (only `${ENV:VAR}` references and the vault secret's name).
+    paths: [connectionCatalogPath('<catalog>'), connectionOsPath('<catalog>')],
     personalLane: null,
-    writer: {
-      state: 'backlog',
-      reason: 'connection CONFIGURATION (never a credential) has no git writer yet (plan: stream G backlog)',
-    },
+    writer: { state: 'committed', via: 'tabs/connections/lib/git/commit.ts', since: 'WP-50' },
   },
 };
 

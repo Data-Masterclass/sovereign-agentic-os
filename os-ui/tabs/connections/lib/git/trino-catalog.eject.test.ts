@@ -107,7 +107,7 @@ test('EJECT: the committed catalog.properties loads in plain Trino and SHOW SCHE
 
     // 3. Upstream containers only.
     docker(['network', 'create', RUN]);
-    docker(['run', '-d', '--name', `${RUN}-pg`, '--network', RUN, '-e', 'POSTGRES_USER=reader', '-e', `POSTGRES_PASSWORD=${password}`, '-e', 'POSTGRES_DB=sales', postgres]);
+    docker(['run', '-d', '--name', `${RUN}-pg`, '--network', RUN, '--tmpfs', '/var/lib/postgresql/data', '-e', 'POSTGRES_USER=reader', '-e', `POSTGRES_PASSWORD=${password}`, '-e', 'POSTGRES_DB=sales', postgres]);
     await until('postgres', 120_000, () => docker(['exec', `${RUN}-pg`, 'pg_isready', '-U', 'reader', '-d', 'sales'], { allowFail: true }).code === 0);
     await until('postgres DDL', 60_000, () => docker(['exec', `${RUN}-pg`, 'psql', '-U', 'reader', '-d', 'sales', '-c', 'CREATE SCHEMA IF NOT EXISTS eject_proof'], { allowFail: true }).code === 0);
 

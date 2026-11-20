@@ -196,6 +196,7 @@ import { providerFor } from '@tabs/connections/lib/warehouse/registry';
 import { buildImportCtas } from '@tabs/connections/lib/warehouse/import';
 import { catalogRegistration, type CatalogRegistration } from '@tabs/connections/lib/warehouse/registration';
 import { applyLiveRegistration, type RegK8s, type RegisterK8sOutcome, type SecretValues } from '@tabs/connections/lib/warehouse/k8s-registration';
+import { connectionsGitEnabled, queueConnectionsCommit, readCatalogFromGit } from '@tabs/connections/lib/git/commit';
 import { executeRoute, executeRun, queryRun, type ExecuteIdentity } from '@core/infra/governed';
 // Data-tab registry seam for the warehouse IMPORT (P0 A2): an import must create a
 // real governed Dataset row pointing at the materialized table, not just a table.
@@ -347,6 +348,24 @@ function snapshotState(c: Connection): { tools: ConnectionTool[] } {
  */
 function writeThrough(c: Connection): void {
   writeChanged(mirror, connState().seen, c.id, c as unknown as Record<string, unknown>);
+}
+
+/**
+ * WP-50: every user-facing write of a connection commits the domain's `connections/**` (Trino
+ * catalog files + `os.yaml`) as that user. The domain's state is captured HERE, synchronously in
+ * the writer's turn. Fire-and-forget callers get a logged failure; `registerWarehouseCatalog`
+ * awaits it, because Trino must load the committed file.
+ */
+function commitConnectionsAfterWrite(map: Map<string, Connection>, c: Connection, user: CurrentUser, action: string, domain: string = c.domain) {
+  const captured = [...map.values()].filter((x) => x.domain === domain);
+  const p = queueConnectionsCommit(
+    domain,
+    { id: user.id, name: user.name },
+    { action, object: c.warehouse?.catalog ?? c.id, objectId: `${c.id} (${c.name})` },
+    captured,
+  );
+  p.catch(() => undefined);
+  return p;
 }
 
 function writeNewConnection(c: Connection): void {
@@ -720,6 +739,7 @@ export async function createConnection(
     map.set(cW.id, cW);
     compileProfile(cW);
     writeNewConnection(cW);
+    commitConnectionsAfterWrite(map, cW, user, 'create connection');
     void trace({
       principal,
       tool: 'generate',
@@ -1442,7 +1462,20 @@ export async function registerWarehouseCatalog(
     if (val) values[envVars[i]] = val;
   }
 
-  const outcome = await applyLiveRegistration(reg, values, { namespace: config.platformNamespace, k8s: opts.k8s });
+  // WP-50 (contract C4): what Trino loads is what is in git. With the domain repo on, the catalog
+  // is committed first and the COMMITTED bytes are read back and applied, with their sha; a commit
+  // or read-back failure refuses the registration rather than applying an uncommitted render.
+  let committed: { text: string; sha: string } | undefined;
+  if (connectionsGitEnabled()) {
+    try {
+      await commitConnectionsAfterWrite(map, c, user, 'register catalog');
+      const back = await readCatalogFromGit(c.domain, reg.name);
+      committed = { text: back.text, sha: back.sha };
+    } catch (e) {
+      throw withStatus(new Error(`The catalog '${reg.name}' could not be committed to the domain repository, so it was not registered: ${(e as Error).message}`), 409);
+    }
+  }
+  const outcome = await applyLiveRegistration(reg, values, { namespace: config.platformNamespace, k8s: opts.k8s, committed });
 
   // Reflect the outcome on the record so the UI can show "registered" honestly.
   if (outcome.ok) {
@@ -1454,7 +1487,7 @@ export async function registerWarehouseCatalog(
     principal: c.principal,
     tool: 'generate',
     input: { action: 'register_warehouse_catalog', by: user.id, catalog: reg.name, envVars }, // env-var NAMES only, never values
-    output: { ok: outcome.ok, live: outcome.live, steps: outcome.steps },
+    output: { ok: outcome.ok, live: outcome.live, steps: outcome.steps, source: outcome.source, gitSha: outcome.gitSha ?? null },
     decision: outcome.ok ? 'allow' : 'deny',
   });
   return outcome;
@@ -2909,6 +2942,7 @@ export async function renameConnection(connId: string, user: CurrentUser, newNam
   c.updatedAt = now();
   map.set(c.id, c);
   writeThrough(c);
+  commitConnectionsAfterWrite(map, c, user, 'rename connection');
   return c;
 }
 
@@ -3046,6 +3080,7 @@ export function setConnectionArchivedSync(connId: string, user: CurrentUser, arc
   c.updatedAt = now();
   syncCache().set(c.id, c);
   writeThrough(c);
+  commitConnectionsAfterWrite(syncCache(), c, user, archived ? 'archive connection' : 'restore connection');
   // Fire-and-forget recompile so a folder-cascade archive/restore withdraws/re-adds the
   // member connection's exposure FQNs from OPA (M3). The sync seam can't await it.
   void recompileAfterArchive(c.id);
@@ -3068,6 +3103,7 @@ export function deleteConnectionSync(connId: string, user: CurrentUser): Connect
   unregisterConnectionProfile(c.principal);
   map.delete(connId);
   writeDeleted(mirror, connState().seen, connId);
+  commitConnectionsAfterWrite(map, c, user, 'delete connection');
   refresher.noteDeleted(connId);
   versions.purge(connId);
   // Physical: purge the credential + OAuth token (+ Notion MCP client) from the vault —
@@ -3087,6 +3123,7 @@ export async function setConnectionArchived(connId: string, user: CurrentUser, a
   c.archived = archived;
   c.updatedAt = now();
   writeThrough(c);
+  commitConnectionsAfterWrite(map, c, user, archived ? 'archive connection' : 'restore connection');
   // Recompile OPA so the archived connection's exposure FQNs drop to the fail-closed floor
   // (and an unarchive re-adds them) — the exposures it fed are frozen while archived (M3).
   await recompileAfterArchive(c.id);
@@ -3145,6 +3182,7 @@ export async function deleteConnection(connId: string, user: CurrentUser): Promi
   unregisterConnectionProfile(c.principal);
   map.delete(connId);
   writeDeleted(mirror, connState().seen, connId);
+  commitConnectionsAfterWrite(map, c, user, 'delete connection');
   refresher.noteDeleted(connId);
   versions.purge(connId);
   // Physical: purge the credential + OAuth token (+ Notion MCP client) from the vault.

@@ -46,6 +46,11 @@ export type RegisterK8sOutcome = {
   /** True only when a real cluster confirmed every applied step. */
   live: boolean;
   catalog: string;
+  /** Where the applied `.properties` bytes came from: the committed file in git (WP-50, contract
+   *  C4), or the in-memory render when the domain repo is off (`DATA_PROJECT_GIT` false). */
+  source: 'git' | 'render';
+  /** The commit whose file was applied (`source: 'git'`). */
+  gitSha?: string;
   /** Which steps ran + their result (for an honest, auditable report). */
   steps: {
     configMap: { applied: boolean; status: number };
@@ -100,9 +105,12 @@ async function mergeCatalogConfigMap(
   ns: string,
   catalog: string,
   properties: string,
+  gitSha?: string,
 ): Promise<{ applied: boolean; status: number }> {
   const key = `${catalog}.properties`;
-  const res = await k8s('PATCH', cmPath(ns), { data: { [key]: properties } });
+  // The sha of the committed file rides on the ConfigMap, so "what runs" names "what is in git".
+  const metadata = gitSha ? { metadata: { annotations: { [`sovereign-os.io/connections-sha.${catalog}`]: gitSha } } } : {};
+  const res = await k8s('PATCH', cmPath(ns), { ...metadata, data: { [key]: properties } });
   return { applied: okStatus(res.status), status: res.status };
 }
 
@@ -210,16 +218,21 @@ async function triggerRollout(
 export async function applyLiveRegistration(
   reg: CatalogRegistration,
   values: SecretValues,
-  opts: { namespace: string; k8s?: RegK8s },
+  opts: { namespace: string; k8s?: RegK8s; committed?: { text: string; sha: string } },
 ): Promise<RegisterK8sOutcome> {
   const k8s = opts.k8s ?? (liveK8s as RegK8s);
   const ns = opts.namespace;
   const catalog = reg.name;
-  const properties = propsToProperties(reg.props);
+  // WP-50: when the catalog is committed, Trino gets exactly the committed bytes.
+  const source: 'git' | 'render' = opts.committed ? 'git' : 'render';
+  const gitSha = opts.committed?.sha;
+  const properties = opts.committed ? opts.committed.text : propsToProperties(reg.props);
+  const base = { source, ...(gitSha ? { gitSha } : {}) };
 
-  const configMap = await mergeCatalogConfigMap(k8s, ns, catalog, properties);
+  const configMap = await mergeCatalogConfigMap(k8s, ns, catalog, properties, gitSha);
   if (!configMap.applied) {
     return {
+      ...base,
       ok: false,
       live: configMap.status !== 0,
       catalog,
@@ -238,6 +251,7 @@ export async function applyLiveRegistration(
   const secret = await materializeSecret(k8s, ns, catalog, reg.envVars, values);
   if (!secret.applied) {
     return {
+      ...base,
       ok: false,
       live: secret.status !== 0,
       catalog,
@@ -252,6 +266,7 @@ export async function applyLiveRegistration(
   const rollout = await triggerRollout(k8s, ns, catalog);
   const ok = configMap.applied && secret.applied && rollout.applied;
   return {
+    ...base,
     ok,
     live: rollout.status !== 0,
     catalog,
