@@ -10,7 +10,7 @@
  *   - Pure: generator + reader + semantic index over the committed dbt YAML. No store, no git.
  *   - The dbt YAML is the golden dbt project `metrics-semantic-layer` (what the data generator
  *     commits today), so the saved queries are written against today's `metrics:` entries.
- *   - The real-tool proof (dbt parse, vl-convert, Trino) is `scripts/tests/dashboards-eject.test.sh`.
+ *   - The real-tool proof (dbt parse, vl-convert, Trino) is `tests/dashboards/native-eject.docker.test.ts`.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

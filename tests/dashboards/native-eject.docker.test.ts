@@ -55,13 +55,13 @@ mock.module('@core/infra/governed', {
   namedExports: {
     queryRun: async (sql: string, principal?: string) => {
       // @ts-ignore -- the harness client is plain JS (tests/lakehouse/lib.mjs)
-      const { run } = await import('../../../../../tests/lakehouse/lib.mjs');
+      const { run } = await import('../lakehouse/lib.mjs');
       const r = await run(sql, { user: principal ?? 'eject', source: 'wp52-eject' });
       return { engine: 'trino', tables: [], columns: r.columns, rows: r.rows.map((row: unknown[]) => row.map((v) => (v === null ? null : String(v)))), rowCount: r.rows.length };
     },
   },
 });
-mock.module('../../../metrics/lib/build/live-clients.ts', { namedExports: { liveMetricsReachable: async () => true } });
+mock.module('../../os-ui/tabs/metrics/lib/build/live-clients.ts', { namedExports: { liveMetricsReachable: async () => true } });
 
 const { generateProject } = await import('@tabs/data/lib/dbt/generate');
 const { viewName } = await import('@tabs/data/lib/index');

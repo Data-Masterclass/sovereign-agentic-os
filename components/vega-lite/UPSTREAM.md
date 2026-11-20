@@ -27,4 +27,4 @@ keeps drawing with Apache ECharts, driven by the spec's mark (`line | area | bar
 it does not bundle Vega or Vega-Lite at run time.
 
 The glue lives in `os-ui/tabs/dashboards/lib/git/native.ts`; the eject proof is
-`os-ui/tabs/dashboards/lib/git/native-eject.docker.test.ts`.
+`tests/dashboards/native-eject.docker.test.ts`.
