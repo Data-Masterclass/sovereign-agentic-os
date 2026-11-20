@@ -38,6 +38,24 @@ on:
       - 'dagster-v*'
       - 'docling-v*'
       - 'opensearch-v*'
+  # The dev stage (.github/workflows/dev.yml) calls this with image=os-ui, version=main-<sha>.
+  workflow_call:
+    inputs:
+      image:
+        description: which image to build
+        required: true
+        type: string
+      version:
+        description: the image tag to push
+        required: true
+        type: string
+    outputs:
+      ref:
+        description: the pushed image reference (repository:tag)
+        value: ${{ jobs.build.outputs.ref }}
+      digest:
+        description: the pushed manifest digest (sha256:...)
+        value: ${{ jobs.build.outputs.digest }}
   workflow_dispatch:
     inputs:
       image:
@@ -110,7 +128,7 @@ jobs:
       image: ${{ steps.meta.outputs.image }}
       version: ${{ steps.meta.outputs.version }}
       ref: ${{ steps.meta.outputs.ref }}
-      digest: ${{ steps.push.outputs.digest }}
+      digest: ${{ steps.reuse.outputs.digest || steps.push.outputs.digest }}
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -129,7 +147,8 @@ jobs:
           PREFIX: ${{ vars.IMAGE_REPO_PREFIX || 'ghcr.io/data-masterclass/sovereign-os' }}
         run: |
           set -euo pipefail
-          if [ "$EVENT" = workflow_dispatch ]; then
+          # A dispatch or a call (dev.yml) names the image and version; a tag push encodes them.
+          if [ "$EVENT" = workflow_dispatch ] || [ -n "$INPUT_IMAGE" ]; then
             image=$INPUT_IMAGE
             version=$INPUT_VERSION
           else
@@ -168,6 +187,32 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           echo "resolved: $image $version -> $PREFIX/$image:$version  ($dockerfile in $context)"
 
+      # NO REBUILD OF A COMMIT DEV ALREADY TESTED (docs/ops/ci-cd.md). An os-ui RELEASE tag
+      # (os-ui-v<version>) on a commit that the dev stage built as main-<sha> gets THAT image:
+      # the same manifest, tagged <version> in the registry, so production runs the bytes dev
+      # ran its acceptance suite on. Only when no main-<sha> exists (a commit older than the dev
+      # stage) does the build below run as before. scripts/lib/promote-image.sh refuses to move
+      # an existing version tag and checks that both tags resolve to one digest.
+      - name: Reuse the dev image of this commit (os-ui release tags)
+        id: reuse
+        if: steps.meta.outputs.image == 'os-ui' && startsWith(github.ref, 'refs/tags/os-ui-v')
+        env:
+          PREFIX: ${{ vars.IMAGE_REPO_PREFIX || 'ghcr.io/data-masterclass/sovereign-os' }}
+          REF: ${{ steps.meta.outputs.ref }}
+          SHA: ${{ github.sha }}
+          REGISTRY_USER: ${{ vars.IMAGE_REGISTRY_USER || github.actor }}
+          REGISTRY_TOKEN: ${{ secrets.GHCR_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$REGISTRY_TOKEN" | skopeo login ghcr.io -u "$REGISTRY_USER" --password-stdin >/dev/null
+          src="$PREFIX/os-ui:main-$SHA"
+          if ! skopeo inspect --format '{{.Digest}}' "docker://$src" >/dev/null 2>&1; then
+            echo "no dev image $src — building this commit as before"
+            exit 0
+          fi
+          bash scripts/lib/promote-image.sh "$src" "$REF"
+          echo "digest=$(skopeo inspect --format '{{.Digest}}' "docker://$REF")" >> "$GITHUB_OUTPUT"
+
       - name: Set up Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
@@ -190,7 +235,7 @@ jobs:
       # graph must be caught here. The second build call is a cache hit and costs seconds.
       - name: Build os-ui locally (for the worker smoke)
         id: load
-        if: steps.meta.outputs.image == 'os-ui'
+        if: steps.meta.outputs.image == 'os-ui' && steps.reuse.outputs.digest == ''
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: ${{ steps.meta.outputs.context }}
@@ -210,7 +255,7 @@ jobs:
       # ERR_UNKNOWN_FILE_EXTENSION at boot, AFTER the deploy. Nothing connects to a database
       # until main() runs, so this needs no cluster and fails loudly on its own.
       - name: Worker smoke — the image can import the worker under --experimental-strip-types
-        if: steps.meta.outputs.image == 'os-ui'
+        if: steps.meta.outputs.image == 'os-ui' && steps.reuse.outputs.digest == ''
         env:
           REF: ${{ steps.meta.outputs.ref }}
         run: |
@@ -226,6 +271,7 @@ jobs:
       # deploy.sh already passes to `docker build`.
       - name: Build and push
         id: push
+        if: steps.reuse.outputs.digest == ''
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: ${{ steps.meta.outputs.context }}
@@ -244,7 +290,7 @@ jobs:
       # the smoked image's config id with the config digest inside the manifest that was pushed;
       # they are the same object, so they must be equal.
       - name: The pushed image is the image that was smoked
-        if: steps.meta.outputs.image == 'os-ui'
+        if: steps.meta.outputs.image == 'os-ui' && steps.reuse.outputs.digest == ''
         env:
           REF: ${{ steps.meta.outputs.ref }}
           DIGEST: ${{ steps.push.outputs.digest }}
@@ -275,7 +321,8 @@ jobs:
           IMAGE: ${{ steps.meta.outputs.image }}
           VERSION: ${{ steps.meta.outputs.version }}
           REF: ${{ steps.meta.outputs.ref }}
-          DIGEST: ${{ steps.push.outputs.digest }}
+          DIGEST: ${{ steps.reuse.outputs.digest || steps.push.outputs.digest }}
+          REUSED: ${{ steps.reuse.outputs.digest != '' }}
           PREFIX: ${{ vars.IMAGE_REPO_PREFIX || 'ghcr.io/data-masterclass/sovereign-os' }}
         run: |
           set -euo pipefail
@@ -287,6 +334,7 @@ jobs:
             echo "| image | \`$IMAGE\` |"
             echo "| version | \`$VERSION\` |"
             echo "| digest | \`$DIGEST\` |"
+            echo "| reused the dev image (no rebuild) | $REUSED |"
             echo
             if [ "$IMAGE" = os-ui ]; then
               echo "Roll it out with no local Docker:"

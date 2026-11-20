@@ -13,6 +13,7 @@ runs them all.
 | 1 | Full CI on every push to `main` | `.github/workflows/ci.yml` (`push: main` + `pull_request`, same jobs) | nothing directly: it produces the green (or red) run the next gates read |
 | 2 | The image build requires that green run | `.github/workflows/build-images.yml`, job `require-green-ci` | an `os-ui-v*` tag on a commit whose `ci.yml` or `license-gate.yml` push run on `main` is not `success` gets **no image** |
 | 3 | The release script | `scripts/release.sh` | every step below |
+| 4 | Green on dev | `.github/workflows/dev.yml`, job `dev-green`; read by `release.sh` | a commit whose dev deploy, smoke test or acceptance run was not green (or never ran) is not released: `NOT_GREEN_ON_DEV`. Until the dev environment exists, a local run passes `--no-dev-gate` (refused in CI). See [`ci-cd.md`](ci-cd.md) and [`dev-environment.md`](dev-environment.md) |
 
 Gates 2 and 3 ask the same question through the same script, `scripts/lib/workflow-status.sh`:
 *did the newest push run of each workflow, on this branch, for this SHA, conclude `success`?*

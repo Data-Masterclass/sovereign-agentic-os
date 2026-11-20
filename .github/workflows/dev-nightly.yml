@@ -1,0 +1,159 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+#
+# dev-nightly — stage 4 of the pipeline (docs/ops/ci-cd.md): every night, against what runs on dev,
+#   1. the FULL acceptance suite (AT-a … AT-f), with the expected-fail markers dropped
+#      (E2E_IGNORE_XFAIL=1, as WP-48 runs it), so the report shows the real state of every hop;
+#   2. the restore drills (WP-56), when the chart on dev has them: each drill CronJob
+#      (restore-drill, velero-drill) is run once as a Job and must complete;
+#   3. the smoke test.
+# Results go to the job summary and the `dev-nightly-report` artifact. A failure opens (or comments
+# on) ONE issue labelled `dev-nightly`, so a red night is visible without anyone watching Actions.
+# It only reads and tests dev; it never deploys. Skipped until DEV_ENVIRONMENT_ENABLED=true.
+name: dev-nightly
+
+on:
+  schedule:
+    - cron: "43 3 * * *"   # 03:43 UTC, after the dev deploys of the day
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  issues: write     # open or comment on the dev-nightly issue
+
+jobs:
+  nightly:
+    name: nightly (dev)
+    if: vars.DEV_ENVIRONMENT_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    environment: dev
+    # Never at the same time as a dev deploy: the journeys scale and delete workloads.
+    concurrency:
+      group: dev-environment
+      cancel-in-progress: false
+    env:
+      DEV_KUBE_CONTEXT: dmagosdev
+      E2E_KUBE_CONTEXT: dmagosdev
+      E2E_IGNORE_XFAIL: "1"
+      E2E_REPORT_DIR: ${{ github.workspace }}/nightly-report
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: 22
+
+      - name: Setup Helm
+        uses: azure/setup-helm@fe7b79cd5ee1e45176fcad797de68ecaf3ca4814 # v4.2.0
+        with:
+          version: v3.16.3
+
+      - name: Dev kubeconfig
+        env:
+          DEV_KUBECONFIG: ${{ secrets.DEV_KUBECONFIG }}
+        run: |
+          set -euo pipefail
+          [ -n "$DEV_KUBECONFIG" ] || { echo "::error::the dev environment secret DEV_KUBECONFIG is not set"; exit 1; }
+          umask 077
+          printf '%s' "$DEV_KUBECONFIG" > "$RUNNER_TEMP/dev-kubeconfig.yaml"
+          echo "KUBECONFIG=$RUNNER_TEMP/dev-kubeconfig.yaml" >> "$GITHUB_ENV"
+          mkdir -p "$E2E_REPORT_DIR"
+          bash scripts/lib/env-guard.sh --env dev --context "$DEV_KUBE_CONTEXT"
+
+      - name: Acceptance credentials (masked)
+        run: |
+          set -euo pipefail
+          get() { kubectl --context "$DEV_KUBE_CONTEXT" -n agentic-os get secret "$1" -o jsonpath="{.data.$2}" | base64 -d; }
+          while read -r var secret key; do
+            v=$(get "$secret" "$key")
+            echo "::add-mask::$v"
+            echo "$var=$v" >> "$GITHUB_ENV"
+          done <<'LIST'
+          E2E_LITELLM_MASTER_KEY litellm-credentials masterkey
+          E2E_LANGFUSE_PUBLIC_KEY litellm-credentials LANGFUSE_PUBLIC_KEY
+          E2E_LANGFUSE_SECRET_KEY litellm-credentials LANGFUSE_SECRET_KEY
+          LIST
+
+      - name: Smoke test (dev)
+        id: smoke
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          bash scripts/smoke-test.sh --env dev | tee "$E2E_REPORT_DIR/smoke.txt"
+
+      - name: Full acceptance suite (no expected-fail markers)
+        id: acceptance
+        continue-on-error: true
+        run: bash tests/e2e/kind/run.sh journeys/journey-*.e2e.mjs
+
+      # WP-56 ships the drills as CronJobs (off by default). Run each one that exists on dev once.
+      - name: Restore drills (WP-56, when present)
+        id: drills
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          ran=0
+          for cj in restore-drill velero-drill; do
+            if ! kubectl --context "$DEV_KUBE_CONTEXT" -n agentic-os get cronjob "$cj" >/dev/null 2>&1; then
+              echo "$cj: not on dev (WP-56 not merged, or backup.drill not enabled in values.dev.yaml)" | tee -a "$E2E_REPORT_DIR/drills.txt"
+              continue
+            fi
+            job="$cj-nightly-$GITHUB_RUN_ID"
+            kubectl --context "$DEV_KUBE_CONTEXT" -n agentic-os create job --from="cronjob/$cj" "$job"
+            ran=1
+            if kubectl --context "$DEV_KUBE_CONTEXT" -n agentic-os wait --for=condition=complete "job/$job" --timeout=45m; then
+              echo "$cj: complete" | tee -a "$E2E_REPORT_DIR/drills.txt"
+            else
+              kubectl --context "$DEV_KUBE_CONTEXT" -n agentic-os logs "job/$job" --all-containers --tail=60 >> "$E2E_REPORT_DIR/drills.txt" 2>&1 || true
+              echo "$cj: FAILED" | tee -a "$E2E_REPORT_DIR/drills.txt"
+              exit 1
+            fi
+          done
+          [ "$ran" = 1 ] || echo "no restore drill ran"
+
+      - name: Report to job summary
+        if: always()
+        env:
+          SMOKE: ${{ steps.smoke.outcome }}
+          ACCEPTANCE: ${{ steps.acceptance.outcome }}
+          DRILLS: ${{ steps.drills.outcome }}
+        run: |
+          {
+            echo "## dev nightly"
+            echo
+            echo "| check | outcome |"; echo "|---|---|"
+            echo "| smoke test | $SMOKE |"
+            echo "| full acceptance suite (no xfail markers) | $ACCEPTANCE |"
+            echo "| restore drills (WP-56) | $DRILLS |"
+            echo
+            [ ! -f "$E2E_REPORT_DIR/drills.txt" ] || { echo '```'; cat "$E2E_REPORT_DIR/drills.txt"; echo '```'; }
+            [ ! -f "$E2E_REPORT_DIR/report.md" ] || cat "$E2E_REPORT_DIR/report.md"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dev-nightly-report
+          path: nightly-report/
+          if-no-files-found: warn
+
+      - name: Open or update the dev-nightly issue on failure
+        if: steps.smoke.outcome == 'failure' || steps.acceptance.outcome == 'failure' || steps.drills.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SMOKE: ${{ steps.smoke.outcome }}
+          ACCEPTANCE: ${{ steps.acceptance.outcome }}
+          DRILLS: ${{ steps.drills.outcome }}
+        run: |
+          set -euo pipefail
+          body="Dev nightly $(date -u +%F): smoke=$SMOKE, acceptance=$ACCEPTANCE, restore drills=$DRILLS. Run: $RUN_URL"
+          gh label create dev-nightly --color B60205 --description "dev nightly failures" 2>/dev/null || true
+          n=$(gh issue list --label dev-nightly --state open --json number --jq '.[0].number // empty')
+          if [ -n "$n" ]; then gh issue comment "$n" --body "$body"
+          else gh issue create --title "dev nightly is red" --label dev-nightly --body "$body"; fi
+          exit 1
