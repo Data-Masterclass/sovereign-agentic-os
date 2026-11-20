@@ -6,6 +6,7 @@
 # secrets. docs/ops/secret-rotation.md is the run-book.
 # =============================================================================
 #   scripts/ops/rotate-secrets.sh prepare  [--path rekey|pin-first|none-stored] [common]
+#   scripts/ops/rotate-secrets.sh baseline [--chart <dir>] [common]
 #   scripts/ops/rotate-secrets.sh plan     --overlay <file> [--chart <dir>] [common]
 #   scripts/ops/rotate-secrets.sh verify   --overlay <file> [--os-ui-exec] [common]
 #   scripts/ops/rotate-secrets.sh password [common]
@@ -40,6 +41,8 @@
 #           master key. Then renders <chart> with the live values + the overlay
 #           (`helm template --dry-run=server`: lookup and the salt-key guard run) and compares it
 #           with the live manifest: objects, Secret keys (by hash) and workloads that roll.
+# baseline  READ-ONLY. The same render as plan without an overlay: the chart checkout you deploy from
+#           must change 0 objects against the live release before any overlay is applied.
 # verify    Post-checks for a step (same cluster check). Old keys → 401, new → 200; LiteLLM's
 #           scan finds every stored value decryptable with the new key and none left under an old
 #           one; stored models served; the shared virtual key; the console password; the Langfuse
@@ -99,7 +102,7 @@ secret_key() {
   k get secret "$1" -o "go-template={{ with index .data \"$2\" }}{{ . }}{{ end }}" 2>/dev/null | base64 -d 2>/dev/null || true
 }
 cluster_uid() { kubectl --context "$CTX" get ns kube-system -o jsonpath='{.metadata.uid}'; }
-# The os-ui version that is live: the image tag, without a digest (…/os-ui:0.9.22@sha256:… → 0.9.22).
+# The os-ui version that is live: the image tag, without a digest (…/os-ui:0.9.23@sha256:… → 0.9.23).
 live_version() { k get deploy os-ui -o jsonpath='{.spec.template.spec.containers[0].image}' | sed -E 's/@.*$//; s/.*:([^:]+)$/\1/'; }
 
 PF_PID="" PF_PORT=""
@@ -318,6 +321,12 @@ plan() {
   if [ "$(state_path "$state")" = pin-first ] && [ "$kind" = final ]; then
     [ "$(h16 "$($FILES get "$OVERLAY" litellmSaltKey.value)")" = "$(state_hash "$state" old_master)" ] || die "pin-first overlay: the salt key is not the live master key"
   fi
+  render_diff "$OVERLAY"
+}
+
+# render_diff [<overlay>] — the base guard, then the chart rendered with the live values (+ the
+# overlay) compared with the live manifest. Read-only.
+render_diff() {
   # The chart must be the live release or newer on its line: refuse a base older than the live tag.
   local live_tag base_dir; live_tag="os-ui-v$(live_version)"; base_dir=$(cd "$CHART" && git rev-parse --show-toplevel 2>/dev/null) || die "the chart at $CHART is not in a git checkout; cannot check its base"
   git -C "$base_dir" rev-parse -q --verify "refs/tags/$live_tag" >/dev/null || die "the chart's checkout does not know the live tag $live_tag (git fetch --tags)"
@@ -329,8 +338,14 @@ plan() {
   helm --kube-context "$CTX" get manifest "$REL" -n "$NS" > "$w/before.yaml"
   say "render $CHART with the live values + the overlay (--dry-run=server: lookup and the salt guard run)"
   helm template "$REL" "$CHART" -n "$NS" --kube-context "$CTX" --dry-run=server --skip-schema-validation \
-    -f "$w/live.yaml" -f "$OVERLAY" > "$w/after.yaml" 2> "$w/err" || { grep -v '^level=INFO' "$w/err" >&2; die "render failed"; }
+    -f "$w/live.yaml" ${1:+-f "$1"} > "$w/after.yaml" 2> "$w/err" || { grep -v '^level=INFO' "$w/err" >&2; die "render failed"; }
   python3 "$REPO/scripts/lib/manifest-diff.py" "$w/before.yaml" "$w/after.yaml"
+}
+
+baseline() {
+  CHART=${CHART:-$REPO/charts/sovereign-agentic-os}
+  say "the chart alone (no overlay) against the live release: it must change 0 objects"
+  render_diff
 }
 
 # ----------------------------------------------------------------------------------------------
@@ -580,6 +595,7 @@ verify_password() {
 case $CMD in
   prepare) prepare ;;
   plan) plan ;;
+  baseline) baseline ;;
   verify) verify ;;
   password) password ;;
   password-db) password_db ;;

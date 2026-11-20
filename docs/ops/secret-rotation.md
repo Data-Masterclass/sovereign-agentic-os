@@ -271,33 +271,36 @@ deploy `<pw>.rollback.yaml` and restart os-ui.
 
 ## Deploying only the secret changes
 
-main carries changes that are not on the live release, for example Trino resource groups and the git
-layout. Do not deploy main's chart with the live image, and do not bundle the rotation with a
-release. Deploy the **live tag** with only the chart support it lacks added. Production runs
-0.9.22, which already contains #166's chart commits (the salt key and `langfuseInit.userPassword`).
-Only the core-secrets template is missing:
+Deploy the **live release tag** with the overlays, and nothing else. Do not bundle the rotation with
+a release, and do not deploy a newer main.
+
+From `os-ui-v0.9.23` the tag already contains every piece of chart support the rotation needs:
+
+- `litellmSaltKey` with its change guard (`templates/base/litellm/_salt-key.tpl`);
+- `langfuseInit.userPassword`;
+- the Langfuse core secrets as `langfuseInit.{salt,nextauthSecret,encryptionKey}`
+  (`templates/base/langfuse/core-secrets.yaml`);
+- `litellmUI.password`;
+- `agentRuntime.token`.
+
+So no cherry-pick and no copied template is needed:
 
 ```bash
 git fetch origin --tags
-git switch -c rotation/0.9.22 os-ui-v0.9.22
-C=$(git log origin/main --format=%h -1 --grep='Langfuse core secrets (salt, nextauthSecret, encryptionKey): validated')
-git show "$C:charts/sovereign-agentic-os/templates/base/langfuse/core-secrets.yaml" > charts/sovereign-agentic-os/templates/base/langfuse/core-secrets.yaml
-git commit -am "Langfuse core secrets from langfuseInit (from $C)"
+git switch --detach os-ui-v0.9.23        # the live release
 helm dependency build charts/sovereign-agentic-os
 ```
 
-That commit changes only that one template. The template reads
-`langfuseInit.{salt,nextauthSecret,encryptionKey}`, falls back to the previous literals itself, and
-refuses an `encryptionKey` that is not 64 hex characters. A plain `git cherry-pick` conflicts on
-the tag, because main changed the same file after 0.9.22, so the file is taken as a whole. Rehearsed
-on `os-ui-v0.9.22`:
-
-- with the default values it renders the same manifests as the tag;
-- the three values reach `langfuse-core-secrets`;
-- a malformed key is refused.
-
 Run `rotate-secrets.sh` from a checkout of main (it needs no chart), with `plan --chart` pointing
-at the rotation branch's `charts/sovereign-agentic-os`. Run deploy.sh from the rotation branch.
+at this checkout's `charts/sovereign-agentic-os`. Run deploy.sh from this checkout with
+`--from-registry 0.9.23`. Two checks before the first overlay:
+
+- `scripts/ops/rotate-secrets.sh baseline --chart charts/sovereign-agentic-os --context dmagenticos`
+  (the tag with no overlay, against the live release) must change **0 objects**;
+- `plan` of each overlay must change only Secrets and env.
+
+This main's `core-secrets.yaml` also refuses an `encryptionKey` that is not 64 hex characters. The
+tag does not, and the rotation does not need it: `prepare` generates the key with `openssl rand -hex 32`.
 
 `plan` **refuses a chart whose checkout does not contain the live release tag**
 (`os-ui-v<live version>`). Deploying such a chart would roll production back. Delete the branch
