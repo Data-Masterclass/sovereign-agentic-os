@@ -504,6 +504,12 @@ jobs:
           OPA_IT_URL: http://127.0.0.1:18181
           OPA_IT_CONTAINER: opa-it
         run: node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test ../tests/opa/decision-log.int.test.ts
+      - name: state-reconcile.int.test (real OPA, restarts the container)
+        working-directory: os-ui
+        env:
+          OPA_IT_URL: http://127.0.0.1:18181
+          OPA_IT_CONTAINER: opa-it
+        run: node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test ../tests/opa/state-reconcile.int.test.ts
       - name: OPA logs (on failure)
         if: failure()
         run: docker logs opa-it || true
