@@ -65,7 +65,9 @@ docker exec "$CLUSTER-control-plane" crictl pull "$LITELLM_IMAGE" >/dev/null || 
 k create namespace agentic-os >/dev/null 2>&1
 API=$(k get endpointslice -n default -l kubernetes.io/service-name=kubernetes -o jsonpath='{.items[0].endpoints[0].addresses[0]}')
 [ -n "$API" ] || { echo "no API server endpoint" >&2; exit 2; }
-render() { helm template agentic-os "$CHART" -n agentic-os --skip-schema-validation --set "networkPolicies.apiserver.cidrs={$API/32}" "$@" 2>/dev/null; }
+# STACKIT AI Model Serving on, as in production: the chart joins its host to the proxy filter.
+PROD=(--set stackitPremium.enabled=true)
+render() { helm template agentic-os "$CHART" -n agentic-os --skip-schema-validation "${PROD[@]}" --set "networkPolicies.apiserver.cidrs={$API/32}" "$@" 2>/dev/null; }
 render --show-only templates/base/network/egress-policies.yaml | k apply -n agentic-os -f - >/dev/null || exit 2
 # The proxy names one of the chart's PriorityClasses; admission refuses the pod without it.
 render --show-only templates/base/priority-classes.yaml | k apply -f - >/dev/null || exit 2
@@ -73,7 +75,7 @@ render --show-only templates/base/egress/proxy.yaml | k apply -n agentic-os -f -
 k -n agentic-os rollout status deploy/egress-proxy --timeout=180s >/dev/null || exit 2
 
 # The chart's LiteLLM proxy env, exactly as rendered on the gateway Deployment.
-envjson=$(helm template agentic-os "$CHART" -n agentic-os --skip-schema-validation 2>/dev/null | python3 -c '
+envjson=$(helm template agentic-os "$CHART" -n agentic-os --skip-schema-validation "${PROD[@]}" 2>/dev/null | python3 -c '
 import sys, yaml, json
 docs = [d for d in yaml.safe_load_all(sys.stdin) if d]
 gw = next((d for d in docs if d["kind"] == "Deployment" and d["metadata"]["name"] == "agentic-os-litellm"), None)
