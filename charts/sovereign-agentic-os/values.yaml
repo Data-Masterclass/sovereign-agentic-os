@@ -303,6 +303,10 @@ langfuseInit:
   publicKey: "pk-lf-localdev0000public"
   secretKey: "sk-lf-localdev0000secret"
   host: "http://agentic-os-langfuse-web:3000"
+  # The init user's password (LANGFUSE_INIT_USER_PASSWORD). Used only when Langfuse CREATES the
+  # user; changing it later does not change an existing user's password
+  # (docs/ops/secret-rotation.md, "Langfuse admin password").
+  userPassword: "langfuse-local-dev-admin"
 
 # Langfuse v3 (MIT core) — wrapped upstream subchart, wired to OUR backends.
 langfuse:
@@ -453,6 +457,18 @@ stackitPremium:
 # LiteLLM master key (admin access to the gateway; os-ui + the key-init Job).
 # Local dev throwaway; external on STACKIT.
 litellmMasterKey: "sk-litellm-local-dev-master"
+
+# LiteLLM salt key (LITELLM_SALT_KEY): encrypts database-stored model credentials. Unset, LiteLLM
+# uses the master key for that, and rotating the master key loses them. ONCE SET, NEVER CHANGE IT.
+# templates/base/litellm/_salt-key.tpl; docs/ops/litellm-salt-key.md; docs/ops/secret-rotation.md.
+litellmSaltKey:
+  # local profile: the value, rendered into litellm-credentials. Set it from a private overlay.
+  value: ""
+  # other profiles (required there): an operator/ESO-managed Secret with key LITELLM_SALT_KEY,
+  # also listed in litellm.environmentSecrets.
+  existingSecret: ""
+  # Only for a rollback or a full re-key: lets a render replace or remove the live salt key.
+  allowChange: false
 
 # LiteLLM admin UI login (DB-backed UI at /ui). Local dev throwaway.
 # UI-only credential for the embedded LiteLLM admin console. os-ui mints a browser

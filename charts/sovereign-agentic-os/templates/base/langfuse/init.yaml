@@ -23,5 +23,7 @@ stringData:
   LANGFUSE_INIT_PROJECT_SECRET_KEY: {{ .Values.langfuseInit.secretKey | quote }}
   LANGFUSE_INIT_USER_EMAIL: "alex@datamasterclass.com"
   LANGFUSE_INIT_USER_NAME: "Alex"
-  LANGFUSE_INIT_USER_PASSWORD: "langfuse-local-dev-admin"
+  # Applied only when the user is CREATED: Langfuse's headless init never changes the password
+  # of an existing user (web/src/initialize.ts). Rotation: docs/ops/secret-rotation.md.
+  LANGFUSE_INIT_USER_PASSWORD: {{ .Values.langfuseInit.userPassword | quote }}
 {{- end }}
