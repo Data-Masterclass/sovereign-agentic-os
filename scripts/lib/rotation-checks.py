@@ -26,8 +26,9 @@
       its Secret (a renamed key, a dropped envFrom) is caught.
   rotation-checks.py unowned <pods-and-jobs.json> <namespace> <rotated secret> [...]
       the list is `kubectl get pods,jobs -A -o json`; prints `live|finished <Kind>/<name> <secrets>`
-      for every Pod or Job WITHOUT an owner that reads a rotated Secret (Secrets are namespaced: only
-      the namespace's objects can). A live one keeps an old value that no rollout restarts.
+      for every Pod or Job WITHOUT an owner that reads a rotated Secret, and `live …` for a CronJob run
+      (its Job, or that Job's Pod) still running with one (Secrets are namespaced: only the namespace's
+      objects can). A live one keeps an old value that no rollout restarts.
   rotation-checks.py item <list.json> <Kind> <name>
       prints that one object of the list as JSON.
   rotation-checks.py changed-at <secret.json> [<secret.json>…]
@@ -163,14 +164,30 @@ def unowned(list_path, namespace, rotated):
     """Pods and Jobs with no owner that read a rotated Secret, from `kubectl get pods,jobs -A -o json`.
     Secrets are namespaced, so only objects in <namespace> can read them. Returns `live <Kind>/<name>
     <secrets>` (verify fails) or `finished …` (runs nothing; reported only)."""
+    items = [o for o in (load(list_path) or {}).get("items") or [] if o["metadata"].get("namespace") == namespace]
+    # Jobs a CronJob started: a run in progress keeps the old value until it ends (no rollout restarts it).
+    cron_jobs = {o["metadata"].get("uid") for o in items if o.get("kind") == "Job" and o["metadata"].get("uid")
+                 and any(r.get("kind") == "CronJob" for r in o["metadata"].get("ownerReferences") or [])}
     out = []
-    for o in (load(list_path) or {}).get("items") or []:
+    for o in items:
         md = o["metadata"]
-        if md.get("ownerReferences") or md.get("namespace") != namespace or o.get("kind") not in ("Pod", "Job"):
+        if o.get("kind") not in ("Pod", "Job"):
+            continue
+        owners = md.get("ownerReferences") or []
+        if not owners:
+            what = ""
+        elif o["kind"] == "Job" and md.get("uid") in cron_jobs:
+            what = " (a CronJob run)"
+        elif o["kind"] == "Pod" and any(r.get("kind") == "Job" and r.get("uid") in cron_jobs for r in owners):
+            what = " (of a CronJob run)"
+        else:
             continue
         hit = [n for n in secrets_of(o) if n in rotated]
-        if hit:
-            out.append(f"{'finished' if finished(o) else 'live'} {o['kind']}/{md['name']} {','.join(hit)}")
+        if not hit:
+            continue
+        if what and finished(o):
+            continue  # a finished CronJob run is history; the next run reads the new value
+        out.append(f"{'finished' if finished(o) else 'live'} {o['kind']}/{md['name']}{what} {','.join(hit)}")
     return sorted(out)
 
 

@@ -14,8 +14,9 @@
 # known-missing: the six known readers are a MINIMUM — a known reader that stops naming its Secret or
 # disappears is reported (the twin: discovery alone would silently drop it).
 # unowned: a Pod or Job without an owner that reads a rotated Secret and is still running is reported
-# live (verify fails: no rollout restarts it); a finished one only as a note; owned ones, Jobs of a
-# CronJob, other namespaces and other Secrets are not reported.
+# live (verify fails: no rollout restarts it); a finished one only as a note; owned ones, other
+# namespaces and other Secrets are not reported. A CronJob run (its Job or that Job's Pod) still
+# running with a rotated Secret is live too; a finished run is not reported.
 # readers-restarted.py for StatefulSets and DaemonSets: pass when the rollout is complete and every
 # pod is Ready and newer than the Secret change; twins: a stale pod, a not-Ready pod, an incomplete
 # rollout, a stale controller each fail; 0 replicas is a skip.
@@ -78,7 +79,7 @@ upod() { # name namespace phase owner(yes|no) secret
 }
 ujob() { # name namespace active succeeded owner(yes|no) secret
   local own=""; [ "$5" = yes ] && own=',"ownerReferences":[{"kind":"CronJob","uid":"c"}]'
-  printf '{"kind":"Job","metadata":{"name":"%s","namespace":"%s"%s},"spec":{"template":{"spec":{"containers":[{"name":"c","env":[{"name":"K","valueFrom":{"secretKeyRef":{"name":"%s","key":"k"}}}]}]}}},"status":{"active":%s,"succeeded":%s}}' "$1" "$2" "$own" "$6" "$3" "$4"
+  printf '{"kind":"Job","metadata":{"name":"%s","uid":"uid-%s","namespace":"%s"%s},"spec":{"template":{"spec":{"containers":[{"name":"c","env":[{"name":"K","valueFrom":{"secretKeyRef":{"name":"%s","key":"k"}}}]}]}}},"status":{"active":%s,"succeeded":%s}}' "$1" "$1" "$2" "$own" "$6" "$3" "$4"
 }
 pj=( "$(upod debug-shell agentic-os Running no litellm-credentials)"
      "$(ujob one-off-live agentic-os 1 0 no agent-runtime-token)"
@@ -94,12 +95,30 @@ check "twin: a live unowned Pod reading a rotated Secret is reported live (verif
 check "twin: a running unowned Job reading one is reported live" "live Job/one-off-live agent-runtime-token" "$out"
 check "a finished unowned Job is reported finished (a note, it runs nothing)" "finished Job/litellm-agent-key-init litellm-credentials" "$out"
 absent "an owned Pod is not unowned" "gw-abc" "$out"
-absent "a Job owned by a CronJob is not unowned" "cron-run" "$out"
+check "a running Job of a CronJob reading one is reported live too" "live Job/cron-run (a CronJob run) agent-runtime-token" "$out"
 absent "a Pod in another namespace cannot read this namespace's Secret" "elsewhere" "$out"
 absent "an unowned Pod reading only another Secret is not reported" "unrelated" "$out"
 printf '{"kind":"List","items":[%s]}' "$(upod gw-abc agentic-os Running yes litellm-credentials)" > "$T/pj-clean.json"
 # shellcheck disable=SC2086
 check "nothing unowned: nothing reported" "" "$(python3 $RC unowned "$T/pj-clean.json" agentic-os $ROTATED)"
+
+echo "CronJob runs still in progress"
+cjob() { # name uid active succeeded secret
+  printf '{"kind":"Job","metadata":{"name":"%s","uid":"%s","namespace":"agentic-os","ownerReferences":[{"kind":"CronJob","uid":"cj"}]},"spec":{"template":{"spec":{"containers":[{"name":"c","envFrom":[{"secretRef":{"name":"%s"}}]}]}}},"status":{"active":%s,"succeeded":%s}}' "$1" "$2" "$5" "$3" "$4"
+}
+cpod() { # name jobUid phase secret
+  printf '{"kind":"Pod","metadata":{"name":"%s","namespace":"agentic-os","ownerReferences":[{"kind":"Job","uid":"%s"}]},"spec":{"containers":[{"name":"c","envFrom":[{"secretRef":{"name":"%s"}}]}]},"status":{"phase":"%s"}}' "$1" "$2" "$4" "$3"
+}
+cj=( "$(cjob sweep-running j-run 1 0 agent-runtime-token)" "$(cpod sweep-running-pod j-run Running agent-runtime-token)"
+     "$(cjob sweep-done j-done 0 1 agent-runtime-token)" "$(cpod sweep-done-pod j-done Succeeded agent-runtime-token)"
+     "$(cjob other-running j-other 1 0 postgres-dagster-credentials)" )
+(IFS=,; printf '{"kind":"List","items":[%s]}' "${cj[*]}") > "$T/cj.json"
+# shellcheck disable=SC2086
+out=$(python3 $RC unowned "$T/cj.json" agentic-os $ROTATED)
+check "a running CronJob run reading a rotated Secret is live (verify fails)" "live Job/sweep-running (a CronJob run) agent-runtime-token" "$out"
+check "  ... and its running Pod too" "live Pod/sweep-running-pod (of a CronJob run) agent-runtime-token" "$out"
+absent "twin: a finished CronJob run is not reported (the next run reads the new value)" "sweep-done" "$out"
+absent "twin: a running CronJob run reading another Secret is not reported" "other-running" "$out"
 
 echo "StatefulSet / DaemonSet verdicts"
 SINCE=2026-11-20T15:10:00Z
