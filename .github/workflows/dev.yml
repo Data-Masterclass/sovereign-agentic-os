@@ -100,7 +100,9 @@ jobs:
         run: npm --prefix os-ui ci --no-audit --no-fund --ignore-scripts
 
       - name: Resolve chart dependencies
-        run: helm dependency build charts/sovereign-agentic-os
+        run: |
+          helm dependency build charts/sovereign-agentic-os \
+            || helm dependency update charts/sovereign-agentic-os
 
       # The dev kubeconfig holds ONE context (dmagosdev, a ServiceAccount of the dev cluster). It is
       # written to a private file and used through KUBECONFIG; nothing else is on this runner.
