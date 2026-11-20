@@ -247,12 +247,18 @@ spec:
           securityContext:
             {{- include "soa.containerSecurityContext" . | nindent 12 }}
             readOnlyRootFilesystem: true
-          command: ["git", "daemon", "--export-all", "--base-path=/repos", "--reuseaddr", "--verbose", "--port=9418", "--informative-errors"]
+          # --access-hook: domain repos only — user-<token> and platform repos are refused here
+          # (no client identity on the git protocol); they are served by the authenticated https
+          # door only. files/git/daemon-access-hook.sh, component design 12.
+          command: ["git", "daemon", "--export-all", "--base-path=/repos", "--reuseaddr", "--verbose", "--port=9418", "--informative-errors", "--access-hook=/hooks/access-hook.sh"]
           ports:
             - { name: git, containerPort: 9418 }
           volumeMounts:
             - name: os-repos
               mountPath: /repos
+              readOnly: true
+            - name: git-daemon-hooks
+              mountPath: /hooks
               readOnly: true
           resources:
             requests: { cpu: 10m, memory: 32Mi }
@@ -261,6 +267,10 @@ spec:
         - name: os-repos
           persistentVolumeClaim:
             claimName: os-repos
+        - name: git-daemon-hooks
+          configMap:
+            name: os-git-daemon-hooks
+            defaultMode: 0555
         {{- if $gh.enabled }}
         - name: git-http-tmp
           emptyDir: { sizeLimit: 2Gi }

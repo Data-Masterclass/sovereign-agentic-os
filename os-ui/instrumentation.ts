@@ -293,6 +293,23 @@ export async function register(): Promise<void> {
         const u = await getPublicUser(id).catch(() => null);
         return { id, name: u?.name, email: u?.email };
       };
+      // 0. REPOSITORY LAYOUT MIGRATION (component design 12), behind `OS_REPO_LAYOUT_MIGRATION`
+      // (chart `osUI.dataProjectGit.layout.migration`, default off). It runs BEFORE every hook and
+      // reconcile so they all regenerate at the v2 paths; `dry-run` logs the plan and writes
+      // nothing. Fail-soft per repo: one repo that cannot migrate stays v1 and is named.
+      try {
+        const { migrationMode, migrateAllRepos } = await import('./core/infra/repo-layout-migrate.ts');
+        const mode = migrationMode();
+        if (mode !== 'off') {
+          for (const r of await migrateAllRepos({ dryRun: mode === 'dry-run' })) {
+            if ('error' in r) console.error(`[os-ui] repo layout ${mode}: ${r.domain} NOT migrated — ${r.error}`);
+            else if (r.alreadyMigrated) console.info(`[os-ui] repo layout ${mode}: ${r.domain} already v2`);
+            else console.info(`[os-ui] repo layout ${mode}: ${r.domain} ${r.from} -> ${r.to}: ${r.moves.length} move(s), ${r.personal.length} personal lane(s) -> ${r.personal.map((x) => x.userRepo).join(', ') || 'none'}, ${r.readmes.length} README(s)${r.sha ? ` — commit ${r.sha.slice(0, 12)}` : ''}`);
+          }
+        }
+      } catch (err) {
+        console.error(`[os-ui] repo layout migration FAILED to run — ${err instanceof Error ? err.message : String(err)}`);
+      }
       // 1. data commit hook
       let dataHookInstalled = false;
       let connectionCatalog: Awaited<typeof import('./tabs/data/lib/sync-run-server.ts')>['connectionCatalogForOwner'] | undefined;

@@ -20,6 +20,7 @@
 import 'server-only';
 import { getMetric } from '@tabs/metrics/lib/store';
 import { readRepoFiles, repoPaths } from '@core/engineering/repo';
+import { dbtProjectDir, dbtProjectPath, layoutOf, LAYOUT_V1 } from '@core/infra/repo-layout';
 import { dagsterSection, dbtSection, gitSection, langfuseSection, LANGFUSE_REDACTIONS } from '@core/engineering/sections';
 import { sealView, type EngineeringPrincipal, type EngineeringView } from '@core/engineering/types';
 
@@ -58,12 +59,18 @@ export async function metricEngineeringView(principal: EngineeringPrincipal, id:
   const member = principal.domains.includes(domain);
 
   const listed = await repoPaths(domain);
-  const semanticPaths = listed.paths.filter(isSemanticYaml);
+  // Project-relative matching, whatever the layout (root in v1, `data/dbt/` in v2 — design 12).
+  const layout = listed.paths.length ? layoutOf(listed.paths) : LAYOUT_V1;
+  const semanticPaths = listed.paths.filter((p) => {
+    const proj = dbtProjectPath(p, layout);
+    return proj !== null && isSemanticYaml(proj);
+  });
   const read = member && semanticPaths.length ? await readRepoFiles(domain, (p) => semanticPaths.includes(p)) : null;
   const mine = (read?.files ?? []).filter((f) => namesMeasure(f.content, measure));
 
   const dbt = dbtSection({
     osNoun: OS_NOUN,
+    projectDir: dbtProjectDir(layout),
     node: null,
     files: mine,
     metrics: [measure],

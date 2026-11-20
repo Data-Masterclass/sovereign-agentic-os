@@ -41,6 +41,35 @@ QUARANTINE_THRESHOLD = 10
 MAINTENANCE_CRON = "0 3 * * 0"
 
 _DOMAIN_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+
+#: Repository layout (component design 12, `os-ui/core/infra/repo-layout.ts`). A repo carrying the
+#: marker `os/layout.yml` is v2, and the marker itself names its dbt project directory
+#: (`dbt_project_dir:`, written by os-ui from its ONE config value `OS_DBT_PROJECT_DIR`, default
+#: `data/dbt`) — so this image reads the setting from the repository, never from a second copy.
+#: Without the marker (v1) the project is at the repo root. `os/` is at the repo root in both.
+LAYOUT_MARKER = os.path.join("os", "layout.yml")
+DOMAIN_REPO_PREFIX = "domain-"
+DEFAULT_DBT_PROJECT_DIR = "data/dbt"
+
+
+def _valid_rel_dir(raw: str) -> str:
+    raw = raw.strip().strip("'\"").strip("/")
+    if not raw or any(seg in ("", ".", "..") for seg in raw.split("/")):
+        raise ValueError(f"dbt project dir {raw!r} is not a repo-relative directory")
+    return raw
+
+
+def dbt_dir(repo_dir: str) -> str:
+    """The dbt project directory of a checked-out repo: the marker's `dbt_project_dir` (v2) or `<repo>` (v1)."""
+    marker = os.path.join(repo_dir, LAYOUT_MARKER)
+    if not os.path.isfile(marker):
+        return repo_dir
+    rel = DEFAULT_DBT_PROJECT_DIR
+    with open(marker, encoding="utf-8") as fh:
+        for line in fh:
+            if line.startswith("dbt_project_dir:"):
+                rel = line.split(":", 1)[1]
+    return os.path.join(repo_dir, _valid_rel_dir(rel))
 _SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 _NAME_RE = re.compile(r"[^A-Za-z0-9_]")
 
@@ -515,9 +544,10 @@ def schemas_from_manifest(manifest_path: str, domain: str) -> Dict[str, str]:
 
 
 def load_project(domain: str, sha_dir: str, sha: str) -> Tuple[Optional[Project], Optional[Skipped]]:
-    manifest = os.path.join(sha_dir, "target", "manifest.json")
+    project_dir = dbt_dir(sha_dir)
+    manifest = os.path.join(project_dir, "target", "manifest.json")
     if not os.path.isfile(manifest):
-        return None, Skipped(domain, f"no target/manifest.json in {sha_dir} (dbt parse did not run or failed)")
+        return None, Skipped(domain, f"no target/manifest.json in {project_dir} (dbt parse did not run or failed)")
     schedules: List[Schedule] = []
     sched_path = os.path.join(sha_dir, "os", "schedules.yml")
     if os.path.isfile(sched_path):
@@ -538,7 +568,7 @@ def load_project(domain: str, sha_dir: str, sha: str) -> Tuple[Optional[Project]
     return (
         Project(
             domain=domain,
-            path=sha_dir,
+            path=project_dir,
             sha=sha,
             manifest=manifest,
             schedules=schedules,
@@ -570,13 +600,17 @@ def ensure_checkout(
         return None, f"refusing to check out '{domain}@{sha}': invalid name or sha"
     dom_dir = os.path.join(checkout, domain)
     sha_dir = os.path.join(dom_dir, sha)
-    if os.path.isfile(os.path.join(sha_dir, "target", "manifest.json")):
+    if os.path.isfile(os.path.join(dbt_dir(sha_dir), "target", "manifest.json")):
         return sha_dir, None
     os.makedirs(dom_dir, exist_ok=True)
     if not os.path.isdir(os.path.join(sha_dir, ".git")):
         tmp = sha_dir + ".tmp"
         run(["rm", "-rf", tmp], None)
-        code, out = run(["git", "clone", "--quiet", "--no-checkout", f"{git_base}/{domain}.git", tmp], None)
+        # The canonical name first (`domain-<domain>`), then the pre-layout alias `<domain>`.
+        code, out = run(["git", "clone", "--quiet", "--no-checkout", f"{git_base}/{DOMAIN_REPO_PREFIX}{domain}.git", tmp], None)
+        if code != 0:
+            run(["rm", "-rf", tmp], None)
+            code, out = run(["git", "clone", "--quiet", "--no-checkout", f"{git_base}/{domain}.git", tmp], None)
         if code != 0:
             return None, f"git clone {domain} failed: {out.strip()[:400]}"
         code, out = run(["git", "-C", tmp, "checkout", "--quiet", "--detach", sha], None)
@@ -586,8 +620,8 @@ def ensure_checkout(
         os.replace(tmp, sha_dir)
     # `dbt parse` renders the repository's Jinja — it runs with an ALLOWLISTED environment
     # (`parse_env`), never this pod's, so no authored `{{ env_var(...) }}` can read a secret.
-    code, out = dbt_parse(sha_dir, run, env)
-    if code != 0 or not os.path.isfile(os.path.join(sha_dir, "target", "manifest.json")):
+    code, out = dbt_parse(dbt_dir(sha_dir), run, env)
+    if code != 0 or not os.path.isfile(os.path.join(dbt_dir(sha_dir), "target", "manifest.json")):
         return None, f"dbt parse failed for {domain}@{sha[:7]}: {out.strip()[-600:]}"
     return sha_dir, None
 
@@ -840,9 +874,13 @@ def _main(argv: Sequence[str]) -> int:
     `repo-sync.sh` calls this instead of keeping its own `env -i` list, so the allowlist lives in
     exactly ONE place (review B2-review-H3).
     """
+    if len(argv) == 3 and argv[1] == "--dbt-dir":
+        sys.stdout.write(dbt_dir(argv[2]) + "\n")
+        return 0
     if len(argv) == 3 and argv[1] == "--parse":
         timeout = float(os.environ.get("REPO_SYNC_PARSE_TIMEOUT") or 600)
-        code, out = dbt_parse(argv[2], run=lambda cmd, cwd=None, env=None: _run(cmd, cwd, env, timeout=timeout))
+        # `argv[2]` is the checked-out REPO; the project dir follows its layout.
+        code, out = dbt_parse(dbt_dir(argv[2]), run=lambda cmd, cwd=None, env=None: _run(cmd, cwd, env, timeout=timeout))
         sys.stdout.write(out)
         if code == 0:
             return PARSE_OK
@@ -853,7 +891,7 @@ def _main(argv: Sequence[str]) -> int:
     if len(argv) == 2 and argv[1] == "--parse-env-names":
         sys.stdout.write("\n".join(sorted(parse_env({}))) + "\n")
         return 0
-    sys.stderr.write("usage: os_projects.py --parse <project-dir> | --error-summary (stdin) | --parse-env-names\n")
+    sys.stderr.write("usage: os_projects.py --parse <repo-dir> | --dbt-dir <repo-dir> | --error-summary (stdin) | --parse-env-names\n")
     return 2
 
 

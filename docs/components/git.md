@@ -28,17 +28,17 @@ see what the OS did.
 
 ## The repo layout — one table, authoritative
 
-One bare repo per domain at `$OS_REPOS_DIR/<domain>.git` (default `/repos`), **`main` only**.
+Three repository kinds under `$OS_REPOS_DIR` (default `/repos`), **`main` only**, one access boundary each (component design 12, WP-55): `domain-<domain>.git` per domain (its members; the pre-layout `<domain>.git` stays as a symlink alias), `user-<token>.git` per person (the My scope: that person and admins), `platform.git` (admins). Every name and path comes from `os-ui/core/infra/repo-layout.ts`. The paths below are the v2 layout; a repo not migrated yet has its dbt project at the root instead of `data/dbt/`.
 This table is mirrored in code as `GIT_OBJECT_LAYOUT` in `os-ui/core/infra/git-objects.ts`, and
 the enumeration test `core/infra/git-objects-kinds.test.ts` fails if the two drift or if a new
 object kind appears without being classified.
 
 | Object kind | Path in the domain repo | Personal lane | Writer |
 |---|---|---|---|
-| `dataset` — dbt project (datasets, compositions, quality rules, schedules) | `dbt_project.yml`, `profiles.yml`, `models/`, `os/schedules.yml`, `os/sources.yml`, `os/external.yml` | `models/personal/<uid>/` | `tabs/data/lib/dbt/commit.ts` — **committed** |
-| `metric` — dbt `semantic_models` + `metrics` | `models/semantic/<model>.yml` | `models/personal/<uid>/semantic/<model>.yml` | `tabs/data/lib/dbt/commit.ts` — **committed** |
+| `dataset` — dbt project (datasets, compositions, quality rules, schedules) | `data/dbt/dbt_project.yml`, `data/dbt/profiles.yml`, `data/dbt/models/`, `os/schedules.yml`, `os/sources.yml`, `os/external.yml` | `data/dbt/models/personal/<uid>/` | `tabs/data/lib/dbt/commit.ts` — **committed** |
+| `metric` — dbt `semantic_models` + `metrics` | `data/dbt/models/semantic/<model>.yml` | `data/dbt/models/personal/<uid>/semantic/<model>.yml` | `tabs/data/lib/dbt/commit.ts` — **committed** |
 | `dashboard` — dashboard-as-code | `dashboards/index.yml`, `dashboards/<slug>/` | `dashboards/personal/<uid>/<slug>/` | `tabs/dashboards/lib/git/commit.ts` — **committed** |
-| `agent-system` — LangGraph system | `agents/index.yml`, `agents/<slug>/` | `agents/personal/<uid>/<slug>/` | `tabs/agents/lib/git/commit.ts` — **committed** |
+| `agent-system` — LangGraph system | `agents/index.yml`, `agents/<slug>/` | `user-<token>: agents/<slug>/` | `tabs/agents/lib/git/commit.ts` — **committed** |
 | `software` — app source tree | `apps/<slug>/` | — | `tabs/software/lib/git-commit.ts` — **committed** |
 | `lifecycle-pin` — lifecycle pins | `os/lifecycle/pins.yml` | — | `core/infra/lifecycle-pins.ts` — **committed** |
 | `knowledge-workflow` — knowledge workflow | `knowledge/<slug>/` | `knowledge/personal/<uid>/<slug>/` | **backlog** — no git writer yet |
@@ -444,3 +444,38 @@ reconciles from that. The hook gates; the repository is the record.
 - **The live clone and push are verified in the cluster, not in CI.** Everything above is covered
   offline by a fake receive (a real bare repo in a temp dir, a synthetic push, the endpoint called
   directly); the real HTTPS round trip is a deploy-time check.
+
+## Repository layout v2 and its migration (WP-55, component design 12)
+
+Every repository name and path comes from `os-ui/core/infra/repo-layout.ts`;
+`scripts/check-repo-layout.mjs` (CI) refuses new hand-built paths (a ratchet over
+`scripts/repo-layout-baseline.json`).
+
+```
+README.md            generated: what is here, who owns it, how to run it without the OS
+data/dbt/            the dbt project (cd data/dbt && dbt build --target local)
+data/dagster/        Dagster definitions (WP-49)
+dashboards/<slug>/   agents/<system>/   apps/<slug>/   connections/<name>/   knowledge/
+os/                  OS layer only; os/layout.yml marks a v2 repo and names the dbt dir
+```
+
+- **Access follows the repo.** git-http serves `user-<token>` to its owner and admins,
+  `domain-<d>` (and its alias `<d>`) to members, `platform` to admins. The in-cluster git daemon
+  serves domain repos only (`--access-hook`, `charts/.../files/git/daemon-access-hook.sh`).
+- **Personal agent systems** live in the owner's `user-<token>` repo under `agents/<system>/`
+  once the domain repo is v2. **Promotion My → Domain is a merge commit** in the domain repo: its
+  second parent is the system folder's own history imported from the user repo (subtree-split
+  semantics: only that folder travels), with trailers `OS-Approval`, `OS-Approved-By`,
+  `OS-Reason: promotion-merge`.
+- **READMEs** are regenerated deterministically on every commit of a v2 repo; a README a writer
+  provides (the dbt project's, an agent system's) is never overwritten.
+- **Migration** (`osUI.dataProjectGit.layout.migration`: `off` | `dry-run` | `apply`, default
+  `off`) runs at os-ui boot, before every hook and reconcile: per domain repo it renames
+  `<d>.git` → `domain-<d>.git` (symlink alias left behind), moves the personal agent lanes to user
+  repos (history imported), then ONE commit with `git mv` semantics (same blobs, new paths) and
+  `OS-Reason: layout-migration`. Idempotent (a repo with `os/layout.yml` is skipped).
+  **Order:** deploy the Dagster image that reads `os/layout.yml` before `apply`.
+  **Rollback:** `git revert <migration sha>` per repo restores the v1 tree (the alias keeps the
+  old name working); set `migration: off` again so new repos are created v1.
+- **Known limit:** personal dbt models (`models/personal/<uid>/`) still live in the domain repo's
+  dbt project; moving them needs a per-user dbt project and Dagster location (follow-up).

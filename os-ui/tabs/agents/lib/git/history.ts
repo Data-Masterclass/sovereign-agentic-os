@@ -33,7 +33,9 @@
  */
 import 'server-only';
 import { config } from '@core/kernel/config';
-import { MAX_LOG_DEPTH, type GitStoreOptions } from '@core/infra/git-store';
+import { MAX_LOG_DEPTH, repoLayout, type GitStoreOptions } from '@core/infra/git-store';
+import { LAYOUT_V2 } from '@core/infra/repo-layout';
+import { userRepoName, userRepoSystemDir } from '@tabs/agents/lib/git/personal-repo';
 import {
   gitInfoForPaths,
   registerGitObject,
@@ -105,6 +107,24 @@ export function systemGitLocation(domain: string, systemId: string, name?: strin
   return { domain, paths: systemRepoPaths(domain, systemId), trailerId: systemId, ...(name ? { name } : {}) };
 }
 
+/**
+ * The location, aware of the repo layout (design 12): in a v2 domain repo a PERSONAL system lives
+ * in its owner's user repo at `agents/<slug>/`, so that is where its history is read.
+ */
+export async function systemGitLocationAsync(domain: string, systemId: string, name?: string, opts: GitStoreOptions = {}): Promise<GitObjectLocation> {
+  const base = systemGitLocation(domain, systemId, name);
+  if (!domain || !systemId) return base;
+  try {
+    if ((await repoLayout(domain, undefined, opts)) !== LAYOUT_V2) return base;
+    const sys = projectSnapshot(domain).systems.find((s) => s.id === systemId);
+    if (!sys || sys.visibility !== 'Personal') return base;
+    const dir = userRepoSystemDir(sys.owner, projectSnapshot(domain).systems, systemId);
+    return { ...base, domain: userRepoName(sys.owner), paths: dir ? [dir] : [] };
+  } catch {
+    return base;
+  }
+}
+
 function toSystemCommit(c: ObjectCommit): SystemCommit {
   return {
     sha: c.sha,
@@ -130,7 +150,7 @@ export async function systemGitInfo(domain: string, systemId: string, opts: Hist
   const reposDir = opts.reposDir ?? config.reposDir;
   const limit = Math.max(1, Math.min(opts.limit ?? DEFAULT_HISTORY, 100));
   const scan = Math.max(limit, Math.min(opts.scan ?? DEFAULT_SCAN, MAX_LOG_DEPTH));
-  const info = await gitInfoForPaths('agent-system', systemId, systemGitLocation(domain, systemId), { reposDir, limit, scan });
+  const info = await gitInfoForPaths('agent-system', systemId, await systemGitLocationAsync(domain, systemId, undefined, { reposDir }), { reposDir, limit, scan });
   return {
     domain,
     head: info.head ? toSystemCommit(info.head) : null,
@@ -149,6 +169,6 @@ export async function systemGitInfo(domain: string, systemId: string, opts: Hist
 export function registerAgentSystemGitObject(): void {
   registerGitObject('agent-system', (user, id) => {
     const view = getSystem(id, user as unknown as Principal);
-    return systemGitLocation(view.domain ?? '', view.id, view.name);
+    return systemGitLocationAsync(view.domain ?? '', view.id, view.name);
   });
 }

@@ -16,7 +16,9 @@ import { metricGitLocation, metricTrailerId, domainLanePath, personalLanePath } 
 test('G3/M-R5.4: both lanes are returned, so a promotion does not truncate the history', () => {
   const loc = metricGitLocation('ds_orders1.revenue', { domain: 'sales', semanticModel: 'sales__orders', ownerUid: 'amir', name: 'Revenue' });
   assert.equal(loc.domain, 'sales');
-  assert.deepEqual(loc.paths, ['models/semantic/sales__orders.yml', 'models/personal/amir/semantic/sales__orders.yml']);
+  const v1 = ['models/semantic/sales__orders.yml', 'models/personal/amir/semantic/sales__orders.yml'];
+  // Both layouts (WP-55): the v1 root and the v2 `data/dbt/`.
+  assert.deepEqual(loc.paths, [...v1, ...v1.map((p) => `data/dbt/${p}`)]);
   assert.equal(loc.name, 'Revenue');
 });
 

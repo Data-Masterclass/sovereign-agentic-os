@@ -34,14 +34,29 @@ def run(cmd, cwd):
     return p.returncode, p.stdout + p.stderr
 
 
+#: The v2 repository layout (component design 12): the dbt project at `data/dbt/`, `os/` at the
+#: root, marked by `os/layout.yml` — what `os-ui/core/infra/repo-layout.ts` `layoutMigrationMoves`
+#: produces. The eject command is then `cd data/dbt && dbt parse`.
+DBT_DIR = "data/dbt"
+
+
+def placed(path, layout):
+    if layout == "v2" and not (path == "os" or path.startswith("os/")):
+        return f"{DBT_DIR}/{path}"
+    return path
+
+
 def main():
     assert GOLDENS, "no goldens found"
     failures = []
-    for g in GOLDENS:
-        name = os.path.basename(g)
+    for g, layout in [(g, layout) for g in GOLDENS for layout in ("v1", "v2")]:
+        name = f"{os.path.basename(g)} [{layout}]"
         with tempfile.TemporaryDirectory() as tmp:
             origin, clone = os.path.join(tmp, "origin"), os.path.join(tmp, "clone")
-            for path, content in json.load(open(g)).items():
+            files = {placed(p, layout): c for p, c in json.load(open(g)).items()}
+            if layout == "v2":
+                files["os/layout.yml"] = f"version: 2\ndbt_project_dir: {DBT_DIR}\n"
+            for path, content in files.items():
                 full = os.path.join(origin, path)
                 os.makedirs(os.path.dirname(full), exist_ok=True)
                 open(full, "w").write(content)
@@ -51,7 +66,7 @@ def main():
             subprocess.run(["git", "clone", "-q", origin, clone], check=True, capture_output=True)
             for step in (["dbt", "parse", "--profiles-dir", ".", "--target", "local", "--no-use-colors"],
                          ["dbt", "compile", "--profiles-dir", ".", "--target", "local", "--no-use-colors"]):
-                code, out = run(step, clone)
+                code, out = run(step, os.path.join(clone, DBT_DIR) if layout == "v2" else clone)
                 verdict = "ok" if code == 0 else "FAIL"
                 print(f"{verdict:4} {name}: {' '.join(step[:2])}")
                 if code != 0:
@@ -59,14 +74,15 @@ def main():
                     print(out[-2500:])
                     break
             else:
-                compiled = glob.glob(os.path.join(clone, "target/compiled/**/*.sql"), recursive=True)
+                project = os.path.join(clone, DBT_DIR) if layout == "v2" else clone
+                compiled = glob.glob(os.path.join(project, "target/compiled/**/*.sql"), recursive=True)
                 if not compiled:
                     failures.append(name)
                     print(f"FAIL {name}: dbt compile wrote no compiled SQL")
     if failures:
-        print(f"eject: {len(failures)} of {len(GOLDENS)} domain repos need the OS to run: {failures}")
+        print(f"eject: {len(failures)} of {2 * len(GOLDENS)} domain repos need the OS to run: {failures}")
         return 1
-    print(f"eject: all {len(GOLDENS)} domain repos parse and compile on plain dbt")
+    print(f"eject: all {2 * len(GOLDENS)} domain repos (v1 + v2 layout) parse and compile on plain dbt")
     return 0
 
 

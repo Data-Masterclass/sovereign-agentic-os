@@ -11,7 +11,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { metricGitFacts } from '@tabs/metrics/lib/git-object-server';
-import { metricGitLocation, domainLanePath, personalLanePath } from '@tabs/metrics/lib/git-object';
+import { metricGitLocation, domainLanePath, personalLanePath, bothLayouts } from '@tabs/metrics/lib/git-object';
 import { semanticModelName, laneUid } from '@tabs/metrics/lib/model';
 
 const USER = { id: 'u1', domains: ['sales'], role: 'creator' };
@@ -47,7 +47,7 @@ test('G3: a metric on a dataset with no domain is not located', () => {
 test('G3: the location carries BOTH lanes, so a promoted metric keeps its earlier history', () => {
   const facts = metricGitFacts(USER, 'ds_1.revenue', () => RECORD)!;
   const loc = metricGitLocation('ds_1.revenue', facts);
-  assert.deepEqual(loc.paths, [domainLanePath(facts.semanticModel), personalLanePath(facts.ownerUid, facts.semanticModel)]);
+  assert.deepEqual(loc.paths, bothLayouts([domainLanePath(facts.semanticModel), personalLanePath(facts.ownerUid, facts.semanticModel)]));
   assert.equal(loc.trailerId, 'metric:ds_1.revenue', 'the dbt commit stamps `OS-Object: metric:<datasetId>.<measure>`');
   assert.equal(loc.domain, 'sales');
 });

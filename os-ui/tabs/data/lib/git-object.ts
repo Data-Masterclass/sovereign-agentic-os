@@ -35,6 +35,7 @@ import type { GitObjectLocation } from '@core/infra/git-objects';
 import { LAYERS, type Dataset } from '@tabs/data/lib/dataset-schema';
 import { physicalSlug, sanitizeIdent } from '@tabs/data/lib/store-fqn';
 import { getDataset, type Principal } from '@tabs/data/lib/store';
+import { dbtRepoPath, LAYOUT_V2 } from '@core/infra/repo-layout';
 
 /** The kind string this tab registers under, in G's `GIT_OBJECT_KINDS`. */
 export const GIT_OBJECT_KIND = 'dataset';
@@ -51,7 +52,9 @@ export function datasetPaths(d: Pick<Dataset, 'name' | 'owner'> & { slug?: strin
     paths.push(`models/${layer}/${layer}_${slug}.sql`);
     paths.push(`models/personal/${uid}/${layer}_${slug}.sql`);
   }
-  return paths;
+  // Both layouts (v1 root, v2 dbt dir — design 12): the layout migration moved every model, and
+  // `git log -- <old> <new>` is how the history reaches across that move.
+  return [...paths, ...paths.map((p) => dbtRepoPath(p, LAYOUT_V2))];
 }
 
 /**

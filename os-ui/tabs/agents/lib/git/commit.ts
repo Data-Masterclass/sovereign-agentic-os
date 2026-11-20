@@ -36,6 +36,12 @@ import {
   authorFor,
   reserveSubtree,
   readBlob,
+  repoLayout,
+  repoExists,
+  ensureV2Repo,
+  listRepos,
+  importFolderHistory,
+  commitSubtreeMerge,
   type CommitResult,
   type CommitTreeOptions,
 } from '@core/infra/git-store';
@@ -45,6 +51,10 @@ import { onSystemChange, type SystemChange } from '@tabs/agents/lib/system-event
 import { systemsForProject } from '@tabs/agents/lib/store';
 import { projectSnapshot, snapshotSystem, type SnapshotSystem } from '@tabs/agents/lib/git/snapshot';
 import { generateAgentFiles, AGENTS_PREFIX, placeSystems } from '@tabs/agents/lib/git/generate';
+import { domainScopeSnapshot, personalOwners, userRepoAgentFiles, userRepoName } from '@tabs/agents/lib/git/personal-repo';
+import { LAYOUT_V2 } from '@core/infra/repo-layout';
+import { currentPromotion, promotionTrailers, type PromotionContext } from '@core/infra/git-promote';
+import { userRepoSystemDir } from '@tabs/agents/lib/git/personal-repo';
 
 /** The surface recorded when a writer ran outside any request-surface scope. */
 export const DEFAULT_SURFACE = 'ui:agents';
@@ -77,6 +87,8 @@ export type CommitMeta = {
    * `boot-reconcile` (B1 spelled the per-write reason `OS-Action`, and that stays the convention).
    */
   reason?: string;
+  /** Set when this write is an approved My → Domain promotion of `systemId` (design 12). */
+  promotion?: PromotionContext & { systemId: string };
   /**
    * X-R1: this commit touched EVERY system in the subtree, not one — so list them all in an
    * `OS-Objects` trailer beside the single-valued `OS-Object`.
@@ -121,6 +133,8 @@ export type CommitDeps = {
   mirror?: boolean;
   /** The store read captured synchronously in the writer's turn (the hook passes it). */
   captured?: SnapshotSystem[];
+  /** Every domain's systems, for a user repo's union (tests inject; default reads the store). */
+  allSystems?: () => Promise<SnapshotSystem[]> | SnapshotSystem[];
 };
 
 /**
@@ -148,9 +162,15 @@ async function previousIndexIds(domain: string, reposDir: string): Promise<strin
  */
 export async function commitAgentSystem(domain: string, actor: ActorIdentity, meta: CommitMeta, deps: CommitDeps = {}): Promise<CommitResult | null> {
   if (!agentProjectGitEnabled()) return null;
-  const snapshot = projectSnapshot(domain, deps.captured);
+  const fullSnapshot = projectSnapshot(domain, deps.captured);
+  const reposDir0 = deps.reposDir ?? config.reposDir;
+  // Design 12: in a v2 domain repo the PERSONAL systems live in their owners' user repos; the
+  // domain repo carries the domain-scope ones only. A v1 repo keeps the legacy personal lane.
+  const v2 = (await repoLayout(domain, undefined, { reposDir: reposDir0 })) === LAYOUT_V2;
+  const snapshot = v2 ? domainScopeSnapshot(fullSnapshot) : fullSnapshot;
   // WP-53 (`AGENT_GRAPH_MODULE`, default off): the native LangGraph module replaces graph.json.
-  const files = generateAgentFiles(snapshot, config.agentGraphModule ? { module: hostModuleInputs() } : {});
+  const genOpts = config.agentGraphModule ? { module: hostModuleInputs() } : {};
+  const files = generateAgentFiles(snapshot, genOpts);
   const object = meta.object ?? domain;
   const message = commitMessage({
     area: 'agents',
@@ -181,7 +201,16 @@ export async function commitAgentSystem(domain: string, actor: ActorIdentity, me
   }
   const { author, synthesized } = authorFor(actor);
   const commit = deps.committer ?? commitSubtree;
-  const result = await commit(domain, AGENTS_PREFIX, files, {
+  const merge = v2 && meta.promotion ? await promotionMergeParent(domain, fullSnapshot, meta.promotion, snapshot, reposDir, deps) : null;
+  const result = await (merge
+    ? commitSubtreeMerge(domain, AGENTS_PREFIX, files, {
+        author,
+        message,
+        mergeParent: merge,
+        trailers: { 'OS-Actor': actor.id, ...promotionTrailers(meta.promotion!), ...(synthesized ? { 'OS-Author-Email': 'synthesized' } : {}) },
+        reposDir,
+      })
+    : commit(domain, AGENTS_PREFIX, files, {
     author,
     message,
     // `OS-Actor` carries the principal id even when the author name is a display name.
@@ -192,12 +221,89 @@ export async function commitAgentSystem(domain: string, actor: ActorIdentity, me
       ...(synthesized ? { 'OS-Author-Email': 'synthesized' } : {}),
     },
     reposDir,
-  });
+  }));
   if (result.changed && deps.mirror !== false && !deps.committer) {
     const { pushMirrorAfterCommit } = await import('@core/infra/git-mirror');
     void pushMirrorAfterCommit(domain, result.sha, { reposDir });
   }
+  if (v2) {
+    await commitPersonalRepos(fullSnapshot, actor, { author, message, reposDir, committer: commit, reason: meta.reason, synthesized, allSystems: deps.allSystems });
+  }
   return result;
+}
+
+/**
+ * The promoted system's folder history, imported from the owner's user repo into the domain repo
+ * (re-rooted at its domain folder), as the merge's second parent. Null when it has none (it was
+ * never committed in a user repo — e.g. created before the migration) — then a plain commit.
+ */
+async function promotionMergeParent(
+  domain: string,
+  full: ReturnType<typeof projectSnapshot>,
+  promotion: PromotionContext & { systemId: string },
+  domainSnapshot: ReturnType<typeof projectSnapshot>,
+  reposDir: string,
+  deps: CommitDeps,
+): Promise<string | null> {
+  const sys = full.systems.find((s) => s.id === promotion.systemId);
+  if (!sys) return null;
+  const all = deps.allSystems ? await deps.allSystems() : await allPersonalSystems(full, reposDir);
+  // Where it WAS: place it as the personal system it was until this approval.
+  const asPersonal = [...all.filter((s) => s.id !== sys.id), { ...sys, visibility: 'Personal' as const }];
+  const fromDir = userRepoSystemDir(sys.owner, asPersonal, sys.id);
+  const placed = placeSystems(domainSnapshot).find((p) => p.system.id === sys.id);
+  if (!fromDir || !placed) return null;
+  const { tip } = await importFolderHistory(userRepoName(sys.owner), fromDir, domain, `${placed.dir}/`, { reposDir });
+  return tip;
+}
+
+/**
+ * Commit each affected owner's user repo: the owner's personal systems from EVERY domain, under
+ * `agents/` (design 12). The acting user is included so a removal of their last personal system
+ * is recorded. An owner with no personal system and no user repo yet gets none created.
+ */
+async function commitPersonalRepos(
+  snapshot: ReturnType<typeof projectSnapshot>,
+  actor: ActorIdentity,
+  o: {
+    author: ReturnType<typeof authorFor>['author'];
+    message: string;
+    reposDir: string;
+    committer: SubtreeCommitter;
+    reason?: string;
+    synthesized: boolean;
+    allSystems?: () => Promise<SnapshotSystem[]> | SnapshotSystem[];
+  },
+): Promise<void> {
+  const owners = new Set(personalOwners(snapshot));
+  owners.add(actor.id);
+  const all = o.allSystems ? await o.allSystems() : await allPersonalSystems(snapshot, o.reposDir);
+  for (const owner of [...owners].sort()) {
+    const repo = userRepoName(owner);
+    const has = all.some((s) => s.owner === owner && s.visibility === 'Personal');
+    if (!has && !repoExists(repo, { reposDir: o.reposDir })) continue;
+    if (!o.committer || o.committer === commitSubtree) await ensureV2Repo(repo, { reposDir: o.reposDir });
+    await o.committer(repo, AGENTS_PREFIX, userRepoAgentFiles(owner, all), {
+      author: o.author,
+      message: o.message,
+      trailers: {
+        'OS-Actor': actor.id,
+        ...(o.reason ? { 'OS-Reason': o.reason } : {}),
+        ...(o.synthesized ? { 'OS-Author-Email': 'synthesized' } : {}),
+      },
+      reposDir: o.reposDir,
+    });
+  }
+}
+
+/** Every domain's systems (the union a user repo is rendered from), plus this snapshot's. */
+async function allPersonalSystems(snapshot: ReturnType<typeof projectSnapshot>, reposDir: string): Promise<SnapshotSystem[]> {
+  const byId = new Map<string, SnapshotSystem>();
+  const domains = new Set((await listRepos({ reposDir })).map((r) => r.name));
+  domains.delete(snapshot.domain);
+  for (const d of domains) for (const s of capture(d)) if (s.visibility === 'Personal') byId.set(s.id, s);
+  for (const s of snapshot.systems) if (s.visibility === 'Personal') byId.set(s.id, s);
+  return [...byId.values()];
 }
 
 export type HookDeps = CommitDeps & {
@@ -266,6 +372,8 @@ export function installAgentProjectCommitHook(deps: HookDeps = {}): () => void {
       requestId: surface?.requestId,
     });
     const resolve = async (): Promise<ActorIdentity> => (deps.resolveActor ? deps.resolveActor(change.actorId) : { id: change.actorId });
+    const promo = currentPromotion(); // read synchronously, in the approver's async context
+    const promotion = promo ? { ...promo, systemId: change.systemId } : undefined;
     // A cross-domain move changes two repos: the OLD one loses the system, the NEW one gains it.
     // Both are committed, each from its own captured state, with the same action and actor.
     for (const domain of [change.previousDomain, change.domain]) {
@@ -275,7 +383,7 @@ export function installAgentProjectCommitHook(deps: HookDeps = {}): () => void {
       queue(
         domain,
         async () => {
-          await commitAgentSystem(domain, await resolve(), meta(labels), { ...deps, captured });
+          await commitAgentSystem(domain, await resolve(), { ...meta(labels), ...(promotion && domain === change.domain ? { promotion } : {}) }, { ...deps, captured });
         },
         `${change.action} on ${change.systemId}`,
       );

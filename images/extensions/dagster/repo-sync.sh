@@ -254,7 +254,9 @@ APP_DIR="${APP_DIR:-$(dirname "$0")}"
 parse_project() { # worktree
   python3 "$APP_DIR/os_projects.py" --parse "$1" 2>&1
   rc=$?
-  if [ "$rc" = 0 ] && [ ! -f "$1/target/manifest.json" ]; then echo "dbt parse exited 0 but wrote no manifest"; return 75; fi
+  # The project dir follows the repo layout (v1 root, v2 $OS_DBT_PROJECT_DIR) — one rule, in os_projects.py.
+  pdir="$(python3 "$APP_DIR/os_projects.py" --dbt-dir "$1" 2>/dev/null || echo "$1")"
+  if [ "$rc" = 0 ] && [ ! -f "$pdir/target/manifest.json" ]; then echo "dbt parse exited 0 but wrote no manifest"; return 75; fi
   case "$rc" in 0|1) return "$rc" ;; *) return 75 ;; esac
 }
 
@@ -263,7 +265,9 @@ sync_domain() { # domain  (sets REPOINTED=1 when `current` moved)
   mirror="$CHECKOUT/.mirrors/$d.git"
   mkdir -p "$CHECKOUT/$d"
   if [ ! -d "$mirror" ]; then
-    git clone --bare --quiet "$BASE/$d.git" "$mirror" 2>/dev/null || { write_status "$d" "" "$(readlink "$CHECKOUT/$d/current" 2>/dev/null | xargs -n1 basename 2>/dev/null)" "" "clone failed: $BASE/$d.git unreachable or missing"; return 0; }
+    # The canonical repo name first (`domain-<domain>`, design 12), then the pre-layout alias.
+    git clone --bare --quiet "$BASE/domain-$d.git" "$mirror" 2>/dev/null || rm -rf "$mirror"
+    [ -d "$mirror" ] || git clone --bare --quiet "$BASE/$d.git" "$mirror" 2>/dev/null || { write_status "$d" "" "$(readlink "$CHECKOUT/$d/current" 2>/dev/null | xargs -n1 basename 2>/dev/null)" "" "clone failed: $BASE/$d.git unreachable or missing"; return 0; }
   fi
   if ! git -C "$mirror" fetch --quiet origin "+refs/heads/main:refs/heads/main" 2>/dev/null; then
     write_status "$d" "" "$(readlink "$CHECKOUT/$d/current" 2>/dev/null | xargs -n1 basename 2>/dev/null)" "" "fetch failed"

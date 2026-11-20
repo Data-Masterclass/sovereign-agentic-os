@@ -100,6 +100,9 @@ jobs:
           fi
           git fetch --no-tags --depth=1 origin "$BASE"
           node scripts/check-glue.mjs --guard FETCH_HEAD
+      # WP-55: repository paths come from os-ui/core/infra/repo-layout.ts only (ratchet + twins).
+      - name: Repo-layout ratchet
+        run: node scripts/check-repo-layout.mjs && node --test scripts/tests/check-repo-layout.test.mjs
 
       # Langfuse web: sign-up off, and the NetworkPolicy admits only the OS's own callers.
       # Renders the chart (the dependencies were built above); CI=true turns a skip into a failure.

@@ -56,6 +56,10 @@ import {
 } from '@core/infra/git-store';
 import { trailersNameObject } from '@core/infra/git-trailers';
 import type { MirrorSignal } from '@core/infra/git-mirror';
+import {
+  AGENTS_DIR, AGENTS_INDEX_PATH, OS_EXTERNAL_PATH, OS_LIFECYCLE_PINS_PATH, OS_SCHEDULES_PATH, OS_SOURCES_PATH, USER_REPO_PREFIX,
+  configuredDbtProjectDir, prefixOf,
+} from '@core/infra/repo-layout';
 
 // ------------------------------------------------------------- kind table ---
 
@@ -104,22 +108,26 @@ export type GitObjectLayout = {
 };
 
 /**
- * THE REPO LAYOUT TABLE — authoritative, and mirrored in `docs/components/git.md`. One bare repo
- * per domain at `<OS_REPOS_DIR>/<domain>.git`, `main` only.
+ * THE REPO LAYOUT TABLE — mirrored in `docs/components/git.md`, paths from
+ * `core/infra/repo-layout.ts` (component design 12, the v2 layout). One bare repo per domain at
+ * `<OS_REPOS_DIR>/domain-<domain>.git` (the pre-layout `<domain>.git` stays as an alias), one per
+ * person (`user-<token>.git`, the My scope), `main` only. A repo not migrated yet has its dbt
+ * project at the root instead of `data/dbt/`.
  */
+const DBT = configuredDbtProjectDir();
 export const GIT_OBJECT_LAYOUT: Record<GitObjectKind, GitObjectLayout> = {
   dataset: {
     kind: 'dataset',
     label: 'dbt model',
-    paths: ['dbt_project.yml', 'profiles.yml', 'models/', 'os/schedules.yml', 'os/sources.yml', 'os/external.yml'],
-    personalLane: 'models/personal/<uid>/',
+    paths: [`${DBT}/dbt_project.yml`, `${DBT}/profiles.yml`, `${DBT}/models/`, OS_SCHEDULES_PATH, OS_SOURCES_PATH, OS_EXTERNAL_PATH],
+    personalLane: `${DBT}/models/personal/<uid>/`,
     writer: { state: 'committed', via: 'tabs/data/lib/dbt/commit.ts', since: 'engine rebuild B1' },
   },
   metric: {
     kind: 'metric',
     label: 'dbt metric',
-    paths: ['models/semantic/<model>.yml'],
-    personalLane: 'models/personal/<uid>/semantic/<model>.yml',
+    paths: [`${DBT}/models/semantic/<model>.yml`],
+    personalLane: `${DBT}/models/personal/<uid>/semantic/<model>.yml`,
     // Night-2 merge: stream M landed the semantic emitter, which writes
     // `models/semantic/<model>.yml` (personal lane `models/personal/<uid>/semantic/`) through the
     // SAME dbt commit module as a dataset, stamping `OS-Object: metric:<datasetId>.<measure>`
@@ -140,8 +148,9 @@ export const GIT_OBJECT_LAYOUT: Record<GitObjectKind, GitObjectLayout> = {
   'agent-system': {
     kind: 'agent-system',
     label: 'LangGraph system',
-    paths: ['agents/index.yml', 'agents/<slug>/'],
-    personalLane: 'agents/personal/<uid>/<slug>/',
+    paths: [AGENTS_INDEX_PATH, `${prefixOf(AGENTS_DIR)}<slug>/`],
+    // Design 12: a personal system lives in its owner's own repository, not in the domain's.
+    personalLane: `${USER_REPO_PREFIX}<token>: ${prefixOf(AGENTS_DIR)}<slug>/`,
     writer: { state: 'committed', via: 'tabs/agents/lib/git/commit.ts', since: 'engine rebuild D' },
   },
   software: {
@@ -161,7 +170,7 @@ export const GIT_OBJECT_LAYOUT: Record<GitObjectKind, GitObjectLayout> = {
     // `os/lifecycle/pins.yml` inside its own reserved subtree (`LIFECYCLE_PIN_PATH`), and the
     // writer is `core/infra/lifecycle-pins.ts` — `core/kernel/lifecycle.ts` reaches no commit
     // primitive. Both corrected here rather than left describing a file nothing writes.
-    paths: ['os/lifecycle/pins.yml'],
+    paths: [OS_LIFECYCLE_PINS_PATH],
     personalLane: null,
     writer: { state: 'committed', via: 'core/infra/lifecycle-pins.ts', since: 'night 2, stream V' },
   },

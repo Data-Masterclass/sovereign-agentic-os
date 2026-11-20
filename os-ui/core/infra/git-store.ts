@@ -36,6 +36,11 @@ import http from 'isomorphic-git/http/node';
 import { config } from '@core/kernel/config';
 import { tarArchive } from '@core/infra/tar';
 import { currentSurface } from '@core/infra/request-surface';
+import {
+  REPO_NAME_RE, isSafeRepoName, parseRepoName, domainRepoName, legacyDomainRepoName, repoDirName, REPO_SUFFIX,
+  LAYOUT_MARKER_PATH, LAYOUT_V1, LAYOUT_V2, README, layoutMarker, type LayoutVersion,
+} from '@core/infra/repo-layout';
+import { generatedReadmes, isGeneratedReadme } from '@core/infra/repo-readme';
 
 export const MAIN = 'refs/heads/main';
 export const COMMITTER = { name: 'Sovereign OS', email: 'os@sovereign.local' } as const;
@@ -70,14 +75,44 @@ export class GitStoreError extends Error {
 
 // ----------------------------------------------------------------- naming ---
 
-const DOMAIN_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+const DOMAIN_RE = REPO_NAME_RE;
 
-/** `<reposDir>/<domain>.git`. A domain must be a safe single path segment (no `/`, no `..`). */
+/**
+ * The directory of a repository, from a repository NAME or a bare DOMAIN (repo layout, design 12).
+ *   - `user-<token>` / `platform` / `domain-<domain>`: that repository (`<name>.git`).
+ *   - a bare `<domain>`: the domain's repository — `domain-<domain>.git` once it exists, else the
+ *     pre-layout `<domain>.git` (the legacy ALIAS), else the name a NEW repo is created under:
+ *     canonical when the v2 layout is on (`OS_REPO_LAYOUT_V2`), legacy otherwise, so a default
+ *     install behaves exactly as before until its migration runs.
+ * Only a safe single path segment is accepted (no `/`, no `..`).
+ */
 export function repoPath(domain: string, opts: GitStoreOptions = {}): string {
-  if (!DOMAIN_RE.test(domain) || domain.includes('..')) {
-    throw new GitStoreError(`invalid repository name '${domain}'`);
-  }
-  return path.join(opts.reposDir ?? config.reposDir, `${domain}.git`);
+  return resolveRepo(domain, opts).dir;
+}
+
+/** The canonical repository name and its on-disk directory. */
+export function resolveRepo(name: string, opts: GitStoreOptions = {}): { canonical: string; dir: string; kind: 'domain' | 'user' | 'platform' } {
+  const parsed = isSafeRepoName(name) ? parseRepoName(name) : null;
+  if (!parsed) throw new GitStoreError(`invalid repository name '${name}'`);
+  const base = opts.reposDir ?? config.reposDir;
+  if (parsed.kind !== 'domain') return { canonical: name, dir: path.join(base, repoDirName(name)), kind: parsed.kind };
+  const canonical = domainRepoName(parsed.domain);
+  const canonDir = path.join(base, repoDirName(canonical));
+  const legacy = legacyDomainRepoName(parsed.domain);
+  const legacyDir = legacy ? path.join(base, repoDirName(legacy)) : null;
+  if (fs.existsSync(path.join(canonDir, 'HEAD'))) return { canonical, dir: canonDir, kind: 'domain' };
+  if (legacyDir && fs.existsSync(path.join(legacyDir, 'HEAD'))) return { canonical, dir: legacyDir, kind: 'domain' };
+  return { canonical, dir: legacyDir && !layoutV2Enabled() ? legacyDir : canonDir, kind: 'domain' };
+}
+
+/** Is the v2 repository layout on for NEW repositories (and the migration)? Default off. */
+export function layoutV2Enabled(): boolean {
+  return (process.env.OS_REPO_LAYOUT_V2 ?? '').trim().toLowerCase() === 'true';
+}
+
+/** The lock key of a repository: its canonical name, so an alias and a rename share one lock. */
+export function repoLockKey(name: string, opts: GitStoreOptions = {}): string {
+  return `${opts.reposDir ?? config.reposDir}::${resolveRepo(name, opts).canonical}`;
 }
 
 /** A repo-relative file path: no leading slash, no `.`/`..` segments, no empty segments. */
@@ -127,7 +162,7 @@ export type RepoLockOptions = GitStoreOptions & { timeoutMs?: number };
 
 /** Take the repository's lock and hold it until the returned function is called. */
 export async function acquireRepoLock(domain: string, opts: RepoLockOptions = {}): Promise<() => void> {
-  const key = repoPath(domain, opts);
+  const key = repoLockKey(domain, opts);
   const timeoutMs = Math.max(1, opts.timeoutMs ?? DEFAULT_REPO_LOCK_TIMEOUT_MS);
   const prev = locks().get(key) ?? Promise.resolve();
   let release!: () => void;
@@ -182,31 +217,90 @@ export function repoExists(domain: string, opts: GitStoreOptions = {}): boolean 
 }
 
 /**
- * Every repository under `reposDir` with its `main` head (null when it has no commit yet). The
- * git protocol cannot enumerate repositories, so this is the index the Dagster `repo-sync` sidecar
+ * Every DOMAIN repository under `reposDir` with its `main` head (null when it has no commit yet),
+ * named by its DOMAIN — so callers that treat the list as "the domains with a repo" read the same
+ * before and after the layout migration. User and platform repositories are not domains and are
+ * not listed here (`listAllRepos`). An alias symlink is skipped, so a domain appears once. The git
+ * protocol cannot enumerate repositories, so this is the index the Dagster `repo-sync` sidecar
  * polls (engine rebuild B2, deviation B1-8). Sorted by name; a missing directory is an empty list.
  */
-export async function listRepos(opts: GitStoreOptions = {}): Promise<{ name: string; head: string | null }[]> {
+export async function listRepos(opts: GitStoreOptions = {}): Promise<{ name: string; head: string | null; repo: string }[]> {
+  const out = new Map<string, { name: string; head: string | null; repo: string }>();
+  for (const r of await listAllRepos(opts)) {
+    if (r.kind !== 'domain' || !r.domain) continue;
+    const prev = out.get(r.domain);
+    // A canonical directory wins over a stray legacy one (resolveRepo reads it first, too).
+    if (prev && prev.repo === r.repo) continue;
+    if (prev && !r.legacy) out.set(r.domain, { name: r.domain, head: r.head, repo: r.repo });
+    if (!prev) out.set(r.domain, { name: r.domain, head: r.head, repo: r.repo });
+  }
+  return [...out.values()].sort((x, y) => (x.name < y.name ? -1 : x.name > y.name ? 1 : 0));
+}
+
+export type RepoListing = {
+  /** The directory name without `.git` (canonical, or a legacy domain name before migration). */
+  repo: string;
+  kind: 'domain' | 'user' | 'platform';
+  domain?: string;
+  legacy: boolean;
+  head: string | null;
+};
+
+/** Every real (non-symlink) repository directory, of every kind. */
+export async function listAllRepos(opts: GitStoreOptions = {}): Promise<RepoListing[]> {
   const dir = opts.reposDir ?? config.reposDir;
   if (!fs.existsSync(dir)) return [];
-  const out: { name: string; head: string | null }[] = [];
+  const out: RepoListing[] = [];
   for (const entry of fs.readdirSync(dir).sort()) {
-    if (!entry.endsWith('.git')) continue;
-    const name = entry.slice(0, -'.git'.length);
-    if (!DOMAIN_RE.test(name) || name.includes('..') || !fs.existsSync(path.join(dir, entry, 'HEAD'))) continue;
-    out.push({ name, head: await headSha(path.join(dir, entry)) });
+    if (!entry.endsWith(REPO_SUFFIX)) continue;
+    const name = entry.slice(0, -REPO_SUFFIX.length);
+    const parsed = isSafeRepoName(name) ? parseRepoName(name) : null;
+    const full = path.join(dir, entry);
+    if (!parsed || fs.lstatSync(full).isSymbolicLink() || !fs.existsSync(path.join(full, 'HEAD'))) continue;
+    out.push({
+      repo: name,
+      kind: parsed.kind,
+      ...(parsed.kind === 'domain' ? { domain: parsed.domain } : {}),
+      legacy: parsed.kind === 'domain' ? parsed.legacy : false,
+      head: await headSha(full),
+    });
   }
   return out;
 }
 
-/** Open the domain's bare repo, creating it (branch `main`) on first use. */
+/**
+ * Open a repository, creating it (branch `main`) on first use. A NEW canonical domain repo also
+ * gets its legacy `<domain>.git` alias (a symlink), so every existing reader of the old URL — the
+ * Dagster repo-sync, a clone an engineer already has — keeps working.
+ */
 export async function openOrInit(domain: string, opts: GitStoreOptions = {}): Promise<{ gitdir: string }> {
-  const gitdir = repoPath(domain, opts);
+  const r = resolveRepo(domain, opts);
+  const gitdir = r.dir;
   if (!fs.existsSync(path.join(gitdir, 'HEAD'))) {
     fs.mkdirSync(gitdir, { recursive: true });
     await git.init({ fs, dir: gitdir, gitdir, bare: true, defaultBranch: 'main' });
+    if (r.kind === 'domain' && path.basename(gitdir) === repoDirName(r.canonical)) ensureLegacyAlias(r.canonical, opts);
   }
   return { gitdir };
+}
+
+/** `<domain>.git → domain-<domain>.git`, when the domain can have an alias and nothing is there. */
+export function ensureLegacyAlias(canonical: string, opts: GitStoreOptions = {}): string | null {
+  const parsed = parseRepoName(canonical);
+  if (!parsed || parsed.kind !== 'domain' || parsed.legacy) return null;
+  const legacy = legacyDomainRepoName(parsed.domain);
+  if (!legacy) return null;
+  const base = opts.reposDir ?? config.reposDir;
+  const link = path.join(base, repoDirName(legacy));
+  let exists = false;
+  try {
+    fs.lstatSync(link);
+    exists = true;
+  } catch {
+    exists = false;
+  }
+  if (!exists) fs.symlinkSync(repoDirName(canonical), link);
+  return link;
 }
 
 async function headSha(gitdir: string): Promise<string | null> {
@@ -241,7 +335,7 @@ async function resolveCommit(gitdir: string, ref: string | undefined): Promise<s
 // --------------------------------------------------------------- messages ---
 
 export type CommitMessageInput = {
-  area: 'data' | 'agents';
+  area: 'data' | 'agents' | 'os';
   domain: string;
   action: string;
   object: string;
@@ -506,8 +600,74 @@ function assertNotDestructive(domain: string, scope: string, tracked: string[], 
   throw err;
 }
 
+/**
+ * In a v2 repository (the `os/layout.yml` marker is in the tree), (re)generate the READMEs of the
+ * root, every top-level folder and every artifact folder (design 12, rule 3). A README the writer
+ * of THIS commit provides, or a committed one without the generated mark, is the writer's and is
+ * kept. Deterministic, so it never makes a commit on its own. A v1 tree is left exactly as passed.
+ */
+async function withGeneratedReadmes(gitdir: string, files: Map<string, Leaf>): Promise<void> {
+  if (!files.has(LAYOUT_MARKER_PATH)) return;
+  const repo = path.basename(gitdir, REPO_SUFFIX);
+  for (const [p, content] of generatedReadmes(files.keys(), repo)) {
+    const leaf = files.get(p);
+    if (leaf && leaf.content !== undefined) continue; // provided by this commit's writer
+    if (leaf && leaf.oid) {
+      const { blob } = await git.readBlob({ fs, gitdir, oid: leaf.oid });
+      if (!isGeneratedReadme(Buffer.from(blob).toString('utf8'))) continue; // the writer's README
+    }
+    files.set(p, { content });
+  }
+  // A generated README whose folder is gone goes with it.
+  for (const [p, leaf] of [...files]) {
+    if (!p.endsWith(`/${README}`) || leaf.content !== undefined) continue;
+    const dir = p.slice(0, -README.length - 1);
+    if ([...files.keys()].some((q) => q !== p && q.startsWith(`${dir}/`))) continue;
+    const { blob } = await git.readBlob({ fs, gitdir, oid: leaf.oid });
+    if (isGeneratedReadme(Buffer.from(blob).toString('utf8'))) files.delete(p);
+  }
+}
+
+/** The `OS-Reason` of the commit that gives a new repository its v2 layout marker. */
+export const LAYOUT_INIT_REASON = 'layout-init';
+
+/**
+ * Make sure a repository exists AND carries the v2 layout marker (user and platform repos are v2
+ * from birth). A repo with no commit gets one: the marker, plus the generated READMEs. A repo that
+ * already has commits is left alone — its layout is the migration's business.
+ */
+export async function ensureV2Repo(name: string, opts: GitStoreOptions = {}): Promise<CommitResult> {
+  const { gitdir } = await openOrInit(name, opts);
+  return withLock(repoLockKey(name, opts), async () => {
+    const head = await headSha(gitdir);
+    if (head) return { sha: head, changed: false };
+    const leaves = new Map<string, Leaf>([[LAYOUT_MARKER_PATH, { content: layoutMarker() }]]);
+    return commitLeaves(gitdir, null, leaves, {
+      author: COMMITTER,
+      message: commitMessage({ area: 'os', domain: name, action: 'initialise repository layout', object: name, surface: 'os:boot', requestId: 'layout-init' }),
+      trailers: { 'OS-Reason': LAYOUT_INIT_REASON },
+    });
+  });
+}
+
+/** The layout version of a repository at `ref` (default main): v2 iff `os/layout.yml` is committed. */
+export async function repoLayout(domain: string, ref?: string, opts: GitStoreOptions = {}): Promise<LayoutVersion> {
+  if (!repoExists(domain, opts)) return layoutV2Enabled() ? LAYOUT_V2 : LAYOUT_V1;
+  const gitdir = repoPath(domain, opts);
+  const head = await headSha(gitdir);
+  if (!head) return layoutV2Enabled() ? LAYOUT_V2 : LAYOUT_V1;
+  try {
+    const oid = await resolveCommit(gitdir, ref);
+    await git.readBlob({ fs, gitdir, oid, filepath: LAYOUT_MARKER_PATH });
+    return LAYOUT_V2;
+  } catch {
+    return LAYOUT_V1;
+  }
+}
+
 /** Write the merged tree and commit iff its hash differs from HEAD's. Call inside the repo lock. */
 async function commitLeaves(gitdir: string, head: string | null, files: Map<string, Leaf>, opts: CommitTreeOptions): Promise<CommitResult> {
+  await withGeneratedReadmes(gitdir, files);
   const tree = await writeDir(gitdir, buildDirTree(files));
   if (head) {
     const { commit } = await git.readCommit({ fs, gitdir, oid: head });
@@ -540,7 +700,7 @@ async function commitLeaves(gitdir: string, head: string | null, files: Map<stri
  */
 export async function commitTree(domain: string, files: Map<string, string>, opts: CommitTreeOptions): Promise<CommitResult> {
   const { gitdir } = await openOrInit(domain, opts);
-  return withLock(gitdir, async () => {
+  return withLock(repoLockKey(domain, opts), async () => {
     const head = await headSha(gitdir);
     const leaves = new Map<string, Leaf>();
     const prefixes = reservedSubtrees();
@@ -567,7 +727,7 @@ export async function commitSubtree(domain: string, prefix: string, files: Map<s
     if (!p.startsWith(pre)) throw new GitStoreError(`'${p}' is outside the subtree '${pre}'`);
   }
   const { gitdir } = await openOrInit(domain, opts);
-  return withLock(gitdir, async () => {
+  return withLock(repoLockKey(domain, opts), async () => {
     const head = await headSha(gitdir);
     const leaves = new Map<string, Leaf>();
     const mine: string[] = [];
@@ -1305,7 +1465,7 @@ export async function annotatedTag(domain: string, name: string, opts: Annotated
   const tag = assertTagName(name);
   if (!repoExists(domain, opts)) throw new GitStoreError(`no repository for '${domain}'`, 404);
   const gitdir = repoPath(domain, opts);
-  return withLock(gitdir, async () => {
+  return withLock(repoLockKey(domain, opts), async () => {
     const existing = await tagOid(gitdir, tag);
     if (existing) throw new GitStoreError(`tag '${tag}' already exists — a release is immutable`, 409);
     const commit = await resolveCommit(gitdir, opts.ref);
@@ -1501,3 +1661,97 @@ export async function readSubtree(
   return { files, sha: mine.entries[0]?.sha ?? '', truncated };
 }
 // ======================= === END S READ-BACK BLOCK === ====================================
+
+// ------------------------------------------------- promotion as a git merge ---
+
+/** The `OS-Reason` of a My → Domain promotion merge commit (design 12). */
+export const PROMOTION_MERGE_REASON = 'promotion-merge';
+
+/**
+ * Copy the history of ONE folder of `fromRepo` into `toRepo`'s object database, re-rooted at
+ * `toDir` — what `git subtree split --prefix=<fromDir>` produces, then fetched. Every commit that
+ * changed the folder becomes a commit whose tree is ONLY that folder (nothing else of the source
+ * repo travels — a user repo's other personal work stays private), with the original author,
+ * committer, timestamps and message, so the result is deterministic. Returns the tip sha (a ref
+ * is NOT written; the caller merges it) or null when the folder has no history.
+ */
+export async function importFolderHistory(
+  fromRepo: string,
+  fromDir: string,
+  toRepo: string,
+  toDir: string,
+  opts: GitStoreOptions = {},
+): Promise<{ tip: string | null; commits: number }> {
+  const from = normalizePrefix(fromDir);
+  const to = normalizePrefix(toDir);
+  if (!repoExists(fromRepo, opts)) return { tip: null, commits: 0 };
+  const src = repoPath(fromRepo, opts);
+  const { gitdir: dst } = await openOrInit(toRepo, opts);
+  const touched = await logPaths(fromRepo, [from], { ...opts, limit: 100, scan: MAX_LOG_DEPTH });
+  let parent: string | null = null;
+  let prevTree: string | null = null;
+  let commits = 0;
+  for (const entry of [...touched.entries].reverse()) {
+    const leaves = new Map<string, Leaf>();
+    for (const [p, leaf] of await entriesAt(src, entry.sha)) {
+      if (!p.startsWith(from) || !leaf.oid) continue;
+      const { blob } = await git.readBlob({ fs, gitdir: src, oid: leaf.oid });
+      const oid = await git.writeBlob({ fs, gitdir: dst, blob });
+      leaves.set(`${to}${p.slice(from.length)}`, { oid, mode: leaf.mode });
+    }
+    const tree = leaves.size ? await writeDir(dst, buildDirTree(leaves)) : await git.writeTree({ fs, gitdir: dst, tree: [] });
+    if (tree === prevTree) continue;
+    const { commit } = await git.readCommit({ fs, gitdir: src, oid: entry.sha });
+    parent = await git.writeCommit({
+      fs,
+      gitdir: dst,
+      commit: { message: commit.message, tree, parent: parent ? [parent] : [], author: commit.author, committer: commit.committer },
+    });
+    prevTree = tree;
+    commits++;
+  }
+  return { tip: parent, commits };
+}
+
+export type MergeOptions = CommitTreeOptions & {
+  /** The second parent: the tip `importFolderHistory` returned. */
+  mergeParent: string;
+};
+
+/**
+ * Replace the subtree `prefix` with `files` (exactly as `commitSubtree`) and record it as a MERGE
+ * commit whose second parent is `mergeParent` — so `git log --graph` shows the promoted folder's
+ * own history joining the domain's. Always writes a commit unless `mergeParent` is already merged.
+ */
+export async function commitSubtreeMerge(domain: string, prefix: string, files: Map<string, string>, opts: MergeOptions): Promise<CommitResult> {
+  const pre = normalizePrefix(prefix);
+  for (const p of files.keys()) {
+    if (!p.startsWith(pre)) throw new GitStoreError(`'${p}' is outside the subtree '${pre}'`);
+  }
+  const { gitdir } = await openOrInit(domain, opts);
+  return withLock(repoLockKey(domain, opts), async () => {
+    const head = await headSha(gitdir);
+    if (head && (head === opts.mergeParent || (await git.isDescendent({ fs, gitdir, oid: head, ancestor: opts.mergeParent, depth: -1 }).catch(() => false)))) {
+      return { sha: head, changed: false };
+    }
+    const leaves = new Map<string, Leaf>();
+    if (head) for (const [p, leaf] of await entriesAt(gitdir, head)) if (!p.startsWith(pre)) leaves.set(p, leaf);
+    for (const [p, content] of files) leaves.set(p, { content });
+    await withGeneratedReadmes(gitdir, leaves);
+    const tree = await writeDir(gitdir, buildDirTree(leaves));
+    const timestamp = opts.timestamp ?? Math.floor(Date.now() / 1000);
+    const sha = await git.writeCommit({
+      fs,
+      gitdir,
+      commit: {
+        message: appendTrailers(opts.message, { 'OS-Reason': PROMOTION_MERGE_REASON, ...(opts.trailers ?? {}) }),
+        tree,
+        parent: head ? [head, opts.mergeParent] : [opts.mergeParent],
+        author: { ...opts.author, timestamp, timezoneOffset: 0 },
+        committer: { ...COMMITTER, timestamp, timezoneOffset: 0 },
+      },
+    });
+    await git.writeRef({ fs, gitdir, ref: MAIN, value: sha, force: true });
+    return { sha, changed: true };
+  });
+}

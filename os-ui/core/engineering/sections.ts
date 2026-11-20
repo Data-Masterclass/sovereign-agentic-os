@@ -66,7 +66,10 @@ export function dbtSection(input: {
   /** Why there are no files — required when `files` is empty. */
   unavailable?: string;
   caveats?: string[];
+  /** The dbt project's directory in the repo ('' = the root, a v1 repo; `data/dbt` in v2). */
+  projectDir?: string;
 }): EngineeringSection {
+  const cd = input.projectDir ? `cd ${input.projectDir} && ` : '';
   const title = input.node
     ? `dbt model \`${input.node}\` (${input.osNoun})`
     : `dbt project files (${input.osNoun})`;
@@ -85,16 +88,16 @@ export function dbtSection(input: {
   const commands: EngineeringCommand[] = [];
   if (input.node) {
     commands.push(
-      { tool: 'dbt', command: `dbt build --select ${input.node}`, description: 'run this model and the tests attached to it' },
-      { tool: 'dbt', command: `dbt test --select ${input.node}`, description: 'run only its tests' },
+      { tool: 'dbt', command: `${cd}dbt build --select ${input.node}`, description: 'run this model and the tests attached to it' },
+      { tool: 'dbt', command: `${cd}dbt test --select ${input.node}`, description: 'run only its tests' },
     );
   } else {
-    commands.push({ tool: 'dbt', command: 'dbt build', description: 'run the whole project' });
+    commands.push({ tool: 'dbt', command: `${cd}dbt build`, description: 'run the whole project' });
   }
   for (const m of input.metrics ?? []) {
     commands.push({
       tool: 'dbt',
-      command: `mf query --metrics ${m} --group-by metric_time__month`,
+      command: `${cd}mf query --metrics ${m} --group-by metric_time__month`,
       description: 'query the dbt metric through MetricFlow, by month',
     });
   }

@@ -34,6 +34,7 @@
  */
 export type { GitObjectLocation as MetricGitLocation } from '@core/infra/git-objects';
 import type { GitObjectLocation as MetricGitLocation } from '@core/infra/git-objects';
+import { dbtRepoPath, LAYOUT_V2 } from '@core/infra/repo-layout';
 
 /** What the tab's own governed read must have resolved before a location can be built. */
 export type MetricGitFacts = {
@@ -69,8 +70,15 @@ export function metricTrailerId(id: string): string {
 export function metricGitLocation(id: string, facts: MetricGitFacts): MetricGitLocation {
   return {
     domain: facts.domain,
-    paths: [domainLanePath(facts.semanticModel), personalLanePath(facts.ownerUid, facts.semanticModel)],
+    // Each lane at BOTH layouts (the v1 root and the v2 dbt dir, design 12): the layout migration
+    // is a move too, and a history that stopped at it would hide everything before it.
+    paths: bothLayouts([domainLanePath(facts.semanticModel), personalLanePath(facts.ownerUid, facts.semanticModel)]),
     trailerId: metricTrailerId(id),
     ...(facts.name ? { name: facts.name } : {}),
   };
+}
+
+/** Every project-relative path at the v1 root and under the v2 dbt directory. */
+export function bothLayouts(paths: string[]): string[] {
+  return [...paths, ...paths.map((p) => dbtRepoPath(p, LAYOUT_V2))];
 }
