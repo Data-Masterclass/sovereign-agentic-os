@@ -15,7 +15,9 @@
 #   * os-ui and os-ui-worker read DOCLING_API_KEY from the SAME Secret the docling pod reads;
 #   * the `docling-allow-os-ui-only` NetworkPolicy selects the docling pod and admits exactly
 #     os-ui and os-ui-worker on TCP 5001; `docling.networkPolicy.enabled=false` removes it;
-#   * `docling.apiKey.existingSecret` switches every reference to that Secret and drops ours.
+#   * `docling.apiKey.existingSecret` switches every reference to that Secret and drops ours;
+#   * `docling.image.localBuild` renders only for a local cluster: it is refused together with the
+#     STACKIT profile, an enabled Ingress, or a public osUI.publicUrl / ingress host.
 # Skips (exit 0) without helm or the subchart .tgz files — but FAILS when CI is set.
 set -uo pipefail
 cd "$(dirname "$0")/../.."
@@ -105,4 +107,17 @@ else echo "docling-chart [no digest] FAIL: rendered without a digest"; rc=1; fi
 # localBuild (values.local.yaml) is the only way to render without one.
 img=$(helm template t "$CHART" -n agentic-os -f values.local.yaml --show-only templates/extensions/docling/docling.yaml 2>/dev/null | sed -n 's/^ *image: "\(.*docling.*\)"$/\1/p')
 case $img in *@*|'') echo "docling-chart [local] FAIL: $img"; rc=1 ;; *) echo "docling-chart [local] ok ($img)";; esac
+# ...and localBuild must never render with a production signal (it is an unpinned image).
+guard() { # guard <label> <want: refuse|render> helm-args...
+  local label=$1 want=$2; shift 2
+  local out; out=$(helm template t "$CHART" -n agentic-os -f values.local.yaml "$@" --show-only templates/extensions/docling/docling.yaml 2>&1)
+  if grep -q 'docling.image.localBuild=true is for a local kind cluster only' <<<"$out"; then got=refuse; else got=render; fi
+  if [ "$got" = "$want" ]; then echo "docling-chart [localBuild $label] ok ($got)"; else echo "docling-chart [localBuild $label] FAIL: wanted $want, got $got"; rc=1; fi
+}
+guard "+ stackit profile"   refuse -f values.stackit-managed.yaml
+guard "+ public URL"        refuse --set osUI.publicUrl=https://os.example.com
+guard "+ ingress enabled"   refuse --set ingress.enabled=true
+guard "+ public ingress host" refuse --set ingress.hosts.osUI=os.example.com
+guard "+ localhost URL"     render --set osUI.publicUrl=http://localhost:8080
+guard "+ *.local URL"       render --set osUI.publicUrl=https://os.example.local
 exit $rc
