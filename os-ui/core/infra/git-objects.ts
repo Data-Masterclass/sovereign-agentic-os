@@ -59,7 +59,7 @@ import { DATA_LAYOUT } from '@core/infra/data-layout';
 import type { MirrorSignal } from '@core/infra/git-mirror';
 import {
   AGENTS_DIR, AGENTS_INDEX_PATH, OS_EXTERNAL_PATH, OS_LIFECYCLE_PINS_PATH, OS_SCHEDULES_PATH, USER_REPO_PREFIX,
-  configuredDbtProjectDir, connectionCatalogPath, connectionOsPath, prefixOf,
+  configuredDbtProjectDir, connectionCatalogPath, connectionOsPath, knowledgeWorkflowDir, prefixOf,
 } from '@core/infra/repo-layout';
 
 // ------------------------------------------------------------- kind table ---
@@ -178,12 +178,11 @@ export const GIT_OBJECT_LAYOUT: Record<GitObjectKind, GitObjectLayout> = {
   'knowledge-workflow': {
     kind: 'knowledge-workflow',
     label: 'knowledge workflow',
-    paths: ['knowledge/<slug>/'],
-    personalLane: 'knowledge/personal/<uid>/<slug>/',
-    writer: {
-      state: 'backlog',
-      reason: 'the knowledge store has no git writer yet; the workflow definition still lives only in the registry (plan: stream G backlog)',
-    },
+    // WP-50: a shared workflow is OKF v0.3 concepts (+ its guardrail OPA data) in the domain's
+    // `knowledge/` bundle. A Personal draft is My scope and never enters the domain repository.
+    paths: [`${knowledgeWorkflowDir('<slug>')}/`],
+    personalLane: null,
+    writer: { state: 'committed', via: 'tabs/knowledge/lib/git/commit.ts', since: 'WP-50' },
   },
   'connection-config': {
     kind: 'connection-config',

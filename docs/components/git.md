@@ -41,7 +41,7 @@ object kind appears without being classified.
 | `agent-system` — LangGraph system | `agents/index.yml`, `agents/<slug>/` | `user-<token>: agents/<slug>/` | `tabs/agents/lib/git/commit.ts` — **committed** |
 | `software` — app source tree | `apps/<slug>/` | — | `tabs/software/lib/git-commit.ts` — **committed** |
 | `lifecycle-pin` — lifecycle pins | `os/lifecycle/pins.yml` | — | `core/infra/lifecycle-pins.ts` — **committed** |
-| `knowledge-workflow` — knowledge workflow | `knowledge/<slug>/` | `knowledge/personal/<uid>/<slug>/` | **backlog** — no git writer yet |
+| `knowledge-workflow` — OKF v0.3 workflow concepts + guardrail data | `knowledge/workflows/<slug>/` | — | `tabs/knowledge/lib/git/commit.ts` — **committed** |
 | `connection-config` — Trino catalog file (**never a credential**) | `connections/<catalog>/catalog.properties`, `connections/<catalog>/os.yaml` | — | `tabs/connections/lib/git/commit.ts` — **committed** |
 | *(not an object kind)* promotion / governance metadata | `os/promotion.yml`, `os/grants.yml` | — | OS-owned, **never pushable** |
 

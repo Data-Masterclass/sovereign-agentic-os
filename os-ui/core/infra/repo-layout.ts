@@ -244,6 +244,13 @@ export function dashboardDir(slug: string): string {
 export function appDir(slug: string): string {
   return `${APPS_DIR}/${seg(slug, 'app')}`;
 }
+/** `knowledge/workflows/<slug>/` — one shared workflow's OKF concepts + guardrail data (WP-50). */
+export const KNOWLEDGE_WORKFLOWS_DIR = `${KNOWLEDGE_DIR}/workflows`;
+export function knowledgeWorkflowDir(slug: string): string {
+  return `${KNOWLEDGE_WORKFLOWS_DIR}/${seg(slug, 'knowledge workflow')}`;
+}
+/** The domain operating manual as an OKF concept (WP-50). */
+export const KNOWLEDGE_MANUAL_PATH = `${KNOWLEDGE_DIR}/manual/domain.md`;
 export function connectionDir(name: string): string {
   return `${CONNECTIONS_DIR}/${seg(name, 'connection')}`;
 }
