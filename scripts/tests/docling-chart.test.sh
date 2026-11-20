@@ -7,7 +7,8 @@
 #   bash scripts/tests/docling-chart.test.sh
 #
 # Renders the chart (no cluster), on the default and STACKIT profiles, and asserts:
-#   * the image tag is a version (not `latest`) of OUR derived image;
+#   * the image tag is a version (not `latest`) of OUR derived image, pinned by a digest that is
+#     REQUIRED (an empty digest fails the render), pulled with global.imagePullSecrets;
 #   * docling-serve's limits and settings are set: 50 MiB, 400 pages, 900 s, one worker,
 #     version info on, and DOCLING_SERVE_API_KEY comes from a Secret (never a literal);
 #   * probes: readiness/startup on /ready, liveness on /livez;
@@ -28,7 +29,7 @@ ls "$CHART"/charts/*.tgz >/dev/null 2>&1 || skip "chart dependencies not built"
 
 check() { # $1 label, rest: helm args
   local label=$1; shift
-  helm template t "$CHART" -n agentic-os --set osUI.worker.enabled=true "$@" \
+  helm template t "$CHART" -n agentic-os --set osUI.worker.enabled=true --set 'global.imagePullSecrets[0].name=registry-pull-secret' "$@" \
     | LABEL="$label" python3 -c '
 import os, sys, yaml
 label = os.environ["LABEL"]
@@ -44,7 +45,11 @@ dep = by.get(("Deployment", "docling"))
 need(dep is not None, "no docling Deployment")
 c = dep["spec"]["template"]["spec"]["containers"][0]
 tag = c["image"].split("@")[0].rsplit(":", 1)[1]
-need(c["image"].split("@")[0].rsplit(":", 1)[0].endswith("/sovereign-os/docling"), "image is not our derived image: " + c["image"])
+need(c["image"].split("@")[0].rsplit(":", 1)[0] == "ghcr.io/data-masterclass/sovereign-os/docling", "image is not our derived image: " + c["image"])
+import re
+need(re.fullmatch(r"sha256:[0-9a-f]{64}", c["image"].split("@", 1)[1] if "@" in c["image"] else "") is not None, "image is not pinned by a real digest: " + c["image"])
+pull = dep["spec"]["template"]["spec"].get("imagePullSecrets")
+need(pull == [{"name": "registry-pull-secret"}], f"imagePullSecrets {pull}")
 need(tag != "latest" and tag[0].isdigit(), "image tag is not a version: " + tag)
 env = {e["name"]: e for e in c["env"]}
 want = {"DOCLING_SERVE_MAX_FILE_SIZE": "52428800", "DOCLING_SERVE_MAX_NUM_PAGES": "400",
@@ -93,4 +98,11 @@ check default || rc=1
 check stackit -f values.stackit-managed.yaml || rc=1
 check "stackit --existing" -f values.stackit-managed.yaml --set docling.apiKey.existingSecret=ops-docling || rc=1
 check "default --no-netpol" --set docling.networkPolicy.enabled=false || rc=1
+# The digest is required: an empty one must fail the render, naming the value to set.
+out=$(helm template t "$CHART" -n agentic-os --set docling.image.digest= 2>&1)
+if [ $? -ne 0 ] && grep -q 'docling.image.digest must be set' <<<"$out"; then echo "docling-chart [no digest] ok (render refused)"
+else echo "docling-chart [no digest] FAIL: rendered without a digest"; rc=1; fi
+# localBuild (values.local.yaml) is the only way to render without one.
+img=$(helm template t "$CHART" -n agentic-os -f values.local.yaml --show-only templates/extensions/docling/docling.yaml 2>/dev/null | sed -n 's/^ *image: "\(.*docling.*\)"$/\1/p')
+case $img in *@*|'') echo "docling-chart [local] FAIL: $img"; rc=1 ;; *) echo "docling-chart [local] ok ($img)";; esac
 exit $rc

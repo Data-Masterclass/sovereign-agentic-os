@@ -26,7 +26,6 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "soa.labels" . | nindent 4 }}
-    {{- include "soa.selectorLabels" (dict "ctx" . "component" "docling") | nindent 4 }}
   annotations:
     "helm.sh/resource-policy": keep
 type: Opaque

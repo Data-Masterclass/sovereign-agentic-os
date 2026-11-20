@@ -17,6 +17,8 @@ on:
     paths:
       - images/extensions/docling/**
       - os-ui/tabs/files/lib/ingest/**
+      - os-ui/tabs/files/lib/pipeline-server.ts
+      - charts/sovereign-agentic-os/templates/base/os-ui/_os-ui-env.tpl
       - charts/sovereign-agentic-os/templates/extensions/docling/**
       - charts/sovereign-agentic-os/templates/base/network/docling-ingress-policy.yaml
       - charts/sovereign-agentic-os/values.yaml
@@ -27,6 +29,8 @@ on:
     paths:
       - images/extensions/docling/**
       - os-ui/tabs/files/lib/ingest/**
+      - os-ui/tabs/files/lib/pipeline-server.ts
+      - charts/sovereign-agentic-os/templates/base/os-ui/_os-ui-env.tpl
       - charts/sovereign-agentic-os/templates/extensions/docling/**
       - charts/sovereign-agentic-os/templates/base/network/docling-ingress-policy.yaml
       - scripts/tests/docling-*
