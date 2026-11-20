@@ -111,7 +111,7 @@ variable "dns_name" {
     this only names the hostnames; the owner adds the record shown by `tofu output dns_record`.
   EOT
   type        = string
-  default     = "dev.agentic.datamasterclass.com"
+  default     = "dev.sovereign-agentic.com"
 
   validation {
     condition     = startswith(var.dns_name, "dev.")
@@ -122,5 +122,5 @@ variable "dns_name" {
 variable "ingress_subdomains" {
   description = "Hostnames under dns_name that point at the dev ingress IP. No litellm, no langfuse (restricted consoles, as in production)."
   type        = list(string)
-  default     = ["os"]
+  default     = [""]
 }
