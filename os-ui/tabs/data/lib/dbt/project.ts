@@ -3,7 +3,8 @@
  *
  * FEATURE:    dbt project scaffold — dbt_project.yml, profiles.yml, macros, generic tests, README
  * USER STORY: As a data engineer I want to clone my domain's repo and run `dbt parse` with only
- *             environment variables set — no inlined credentials, the Trino target the OS uses,
+ *             environment variables set — no inlined credentials, the Trino target the OS uses
+ *             (`trino`) plus a plain one (`local`) that needs nothing from the OS,
  *             and the custom tests the OS's quality rules compile to (checklist D1).
  * ARCHITECTURE:
  *   - Pure renderers. `profiles.yml` uses `env_var()` ONLY; `impersonation_user` =
@@ -79,32 +80,47 @@ export function renderDbtProject(domain: string, plan: ModelPlanSet): string {
  * docs/components/trino.md -> "Enable real impersonation".
  */
 export function renderProfiles(domain: string, trinoAuthMethod: string = 'none'): string {
+  const connection = {
+    type: 'trino',
+    // A literal, not `{{ env_var(...) }}`: it has to agree with whether `password:` below
+    // was emitted at all, and only the generator knows that (B4-review E-3).
+    method: trinoAuthMethod,
+    host: "{{ env_var('TRINO_HOST', 'trino') }}",
+    port: "{{ env_var('TRINO_PORT', '8080') | as_number }}",
+  };
+  const rest = {
+    http_scheme: "{{ env_var('TRINO_HTTP_SCHEME', 'http') }}",
+    catalog: "{{ env_var('TRINO_CATALOG', 'iceberg') }}",
+    schema: domainSchema(domain),
+    threads: 4,
+  };
   const doc = yml({
     [PROFILE_NAME]: {
+      // The OS's runs: the service user impersonates the acting principal, which has NO default.
       target: 'trino',
       outputs: {
         trino: {
-          type: 'trino',
-          // A literal, not `{{ env_var(...) }}`: it has to agree with whether `password:` below
-          // was emitted at all, and only the generator knows that (B4-review E-3).
-          method: trinoAuthMethod,
-          host: "{{ env_var('TRINO_HOST', 'trino') }}",
-          port: "{{ env_var('TRINO_PORT', '8080') | as_number }}",
+          ...connection,
           user: "{{ env_var('TRINO_USER', 'dbt-runner') }}",
           impersonation_user: "{{ env_var('OS_PRINCIPAL') }}",
-          http_scheme: "{{ env_var('TRINO_HTTP_SCHEME', 'http') }}",
-          catalog: "{{ env_var('TRINO_CATALOG', 'iceberg') }}",
-          schema: domainSchema(domain),
-          threads: 4,
+          ...rest,
+        },
+        // Plain dbt with no OS present (`dbt build --target local`): connect as yourself, no
+        // impersonation. dbt renders only the SELECTED output, so the OS target's required
+        // `OS_PRINCIPAL` is never read here (proved by the eject test, images/extensions/dagster/tests/image).
+        local: {
+          ...connection,
+          user: "{{ env_var('TRINO_USER') }}",
+          ...rest,
         },
       },
     },
   });
   if (trinoAuthMethod === 'none') return doc;
-  // Spliced textually (the YAML emitter cannot express a conditional key), after the `user:` line
+  // Spliced textually (the YAML emitter cannot express a conditional key), after each `user:` line
   // and at its own indentation, so the file stays byte-stable and the generator goldens assert it.
   return doc.replace(
-    /^([ \t]*)user: (.*)$/m,
+    /^([ \t]*)user: (.*)$/gm,
     (_whole, indent: string, value: string) =>
       [`${indent}user: ${value}`, `${indent}password: "{{ env_var('TRINO_PASSWORD') }}"`].join('\n'),
   );
@@ -204,14 +220,18 @@ export function renderReadme(domain: string, plan: ModelPlanSet, semantic?: Sema
     '',
     '## Run it',
     '',
+    'Plain dbt, no OS needed — connect to Trino as yourself with the `local` target:',
+    '',
     '```sh',
-    'export TRINO_HOST=trino TRINO_PORT=8080 TRINO_USER=dbt-runner OS_PRINCIPAL=<your-principal>',
-    'dbt parse --profiles-dir .',
-    'dbt build --profiles-dir . --select <model>+',
+    'export TRINO_HOST=<trino-host> TRINO_PORT=8080 TRINO_USER=<you>',
+    'dbt parse --profiles-dir . --target local',
+    'dbt build --profiles-dir . --target local --select <model>+',
     '```',
     '',
-    '`profiles.yml` reads only environment variables. `OS_PRINCIPAL` is the Trino user dbt impersonates;',
-    'Trino→OPA governs that identity exactly as the OS UI does. No credential lives in this repository.',
+    'The default `trino` target is the one the OS runs: a service user (`TRINO_USER`) impersonating',
+    '`OS_PRINCIPAL`, which has no default so a run without a principal fails. Trino→OPA governs either',
+    'identity exactly as the OS UI does. `profiles.yml` reads only environment variables; no credential',
+    'lives in this repository.',
     '',
     '## Layout',
     '',

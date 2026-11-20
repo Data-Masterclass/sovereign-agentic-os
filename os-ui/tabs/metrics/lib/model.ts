@@ -17,6 +17,7 @@ import yaml from 'js-yaml';
 import type { Dataset, Measure, MeasureFilter, RollingWindow } from '@tabs/data/lib/index';
 import { MEASURE_TYPES, type MeasureType, viewName, modelName, sanitizeIdent, slug, inferDimType } from '@tabs/data/lib/index';
 import { assertFormulaRefs, compileFormula } from '@tabs/metrics/lib/formula';
+import { semanticModelNameFor } from '@tabs/data/lib/dbt/semantic/from-measures';
 
 export type { MeasureType } from '@tabs/data/lib/index';
 
@@ -121,12 +122,12 @@ export function measureMember(dataset: Dataset, measure: Measure): string {
 /**
  * The dbt SEMANTIC MODEL name for a dataset — the basename of `models/semantic/<model>.yml`, and
  * therefore half of a metric's repo path (`tabs/metrics/lib/git-object.ts`). It is `modelName(d)`,
- * the dataset's frozen physical identity, and it is reached through this one accessor so the
+ * the dataset's frozen physical identity, in dbt's single-underscore form, and it is reached through this one accessor so the
  * path and the generated file can never be derived two different ways (the emitter uses the same
  * function: `tabs/data/lib/dbt/semantic/from-measures.ts`).
  */
 export function semanticModelName(dataset: Dataset): string {
-  return modelName(dataset);
+  return semanticModelNameFor(dataset);
 }
 
 /**
