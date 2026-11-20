@@ -499,7 +499,7 @@ jobs:
     name: build
     runs-on: ubuntu-latest
     if: ${{ always() }}
-    needs: [test-ui, test-langgraph-pg, test-opensearch, test-lakehouse, tracing-e2e, validate-generated, test-python, dagster-image, git-http-image, test-opa, test-postgres, helm-lint, secret-scan, artifacts-eject, dashboards-eject]
+    needs: [test-ui, test-langgraph-pg, test-opensearch, test-lakehouse, tracing-e2e, validate-generated, test-python, dagster-image, git-http-image, test-opa, test-opa-bundle, test-postgres, helm-lint, secret-scan, artifacts-eject, dashboards-eject]
     steps:
       - name: Every needed job succeeded (failed, cancelled or skipped fails the build)
         env:
@@ -711,6 +711,51 @@ jobs:
       - name: OPA logs (on failure)
         if: failure()
         run: docker logs opa-it || true
+
+  # WP-11: OPA loads its data as bundles from os-ui. Real OPA (the chart's image and config in
+  # bundle mode), real postgres:17 (os_governance) and real Trino 476 (the chart's access control),
+  # all downloading from os-ui's own route handlers: parity with today's push path, restart with
+  # os-ui down, negative twins (partial/empty source, bundle-server outage, database down, no
+  # status), cold start fails closed, and grant propagation p95 < 2 s.
+  test-opa-bundle:
+    name: test-opa-bundle
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17@sha256:5c855ad7b85e68e48a62f34662853f38b57c1c1d80f3a927ab58034fd6d31c5e
+        env:
+          POSTGRES_PASSWORD: ci-only-throwaway
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 2s --health-timeout 5s --health-retries 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Setup Helm
+        uses: azure/setup-helm@fe7b79cd5ee1e45176fcad797de68ecaf3ca4814 # v4.2.0
+        with:
+          version: v3.16.3
+      - name: Setup Node
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: 22
+      - name: Install
+        run: |
+          pip install "pyyaml>=6,<7"
+          helm dependency build charts/sovereign-agentic-os || helm dependency update charts/sovereign-agentic-os
+          npm --prefix os-ui ci
+      - name: bundle-parity + bundle + grant-propagation + trino-bundle (real OPA, Postgres, Trino)
+        working-directory: os-ui
+        env:
+          OS_PG_TEST_URL: postgres://postgres:ci-only-throwaway@127.0.0.1:5432/postgres
+          OPA_IT_DIR: ${{ runner.temp }}
+        run: |
+          for t in bundle-parity bundle grant-propagation trino-bundle; do
+            node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test ../tests/opa/$t.int.test.ts
+          done
+      - name: Container logs (on failure)
+        if: failure()
+        run: for c in $(docker ps -a --format '{{.Names}}' | grep wp11-); do echo "== $c"; docker logs --tail 80 "$c" 2>&1; done
 
   helm-lint:
     name: helm-lint
