@@ -235,6 +235,10 @@ const MASTER_KEY_EXPECTED = [
   'core/infra/litellm-admin.ts',
   'core/infra/litellm-write.ts',
   'core/kernel/config.ts',
+  // The development fallback and the client-bundle scan name the variable to keep it out of the
+  // browser; neither sends it anywhere.
+  'core/kernel/dev-secret-defaults.ts',
+  'scripts/check-client-bundle-secrets.mjs',
   'tabs/agents/lib/build/live-clients.ts',
 ];
 

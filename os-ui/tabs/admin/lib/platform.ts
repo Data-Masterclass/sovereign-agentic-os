@@ -63,7 +63,7 @@ export const REGISTRY: Component[] = [
     summary: 'Traces every agent action; the default Administrator console.' },
   { id: 'litellm', name: 'LiteLLM (model + MCP gateway)', layer: 'Layer 1 — Agent core', kind: 'deploy',
     workload: 'agentic-os-litellm', svc: 'agentic-os-litellm', port: 4000, ui: true, url_path: '/ui',
-    login: 'admin / litellm-admin-local-dev  (master key sk-litellm-local-dev-master)', toggle: true,
+    login: 'the console login and master key (Secret litellm-credentials)', toggle: true,
     summary: 'One governed endpoint for models + MCP tools; per-key cost caps.' },
   { id: 'mock-model', name: 'Mock model (local dev only)', layer: 'Layer 1 — Agent core', kind: 'deploy',
     workload: 'mock-model', svc: 'mock-model', port: 8080, ui: false, login: 'none', toggle: true,
@@ -105,7 +105,7 @@ export const REGISTRY: Component[] = [
     summary: 'Real ingest service: streams uploaded files to object storage, then writes Iceberg Bronze tables through the Polaris catalog. Personal lane only (M1); dlt connector sources (M2).' },
   { id: 'query-tool', name: 'Trino query tool (MCP)', layer: 'Layer 3 — Self-service', kind: 'deploy',
     workload: 'query-tool', svc: 'query-tool', port: 8000, ui: false,
-    login: 'via LiteLLM MCP (sk-litellm-local-dev-master)', toggle: true,
+    login: 'via LiteLLM MCP (gateway keys)', toggle: true,
     summary: 'Governed query engine: Trino over Iceberg; an MCP tool in LiteLLM.' },
   // Security baseline
   { id: 'egress-proxy', name: 'Egress proxy', layer: 'Security baseline', kind: 'deploy', workload: 'egress-proxy',
