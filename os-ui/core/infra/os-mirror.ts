@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
-import { config } from '@core/kernel/config';
+import { opensearchFetch } from '@core/adapters/opensearch/client';
 
 /**
  * The ONE durable-mirror core every in-process store shares (approvals, audit,
@@ -28,7 +28,8 @@ import { config } from '@core/kernel/config';
  *
  * Every path is graceful: an unreachable OpenSearch NEVER throws into a
  * request; the store simply stays in-memory. Kept free of `server-only`/Next
- * imports (only `config` + global `fetch`) so it is directly unit-testable.
+ * imports (only the one OpenSearch client, core/adapters/opensearch/client.ts, over global
+ * `fetch`) so it is directly unit-testable.
  */
 
 /**
@@ -157,7 +158,8 @@ async function osFetch(path: string, init?: RequestInit): Promise<Response | nul
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 2500);
   try {
-    return await fetch(`${config.opensearchUrl}${path}`, {
+    return await opensearchFetch(path, {
+      timeoutMs: 2500,
       ...init,
       signal: ctrl.signal,
       cache: 'no-store',

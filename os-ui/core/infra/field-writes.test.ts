@@ -40,7 +40,7 @@ test('in the run worker a partial write never re-creates a missing record; elsew
     const seen = newSeenFields();
     writeNew(mirror, seen, 'r1', { id: 'r1', name: 'A' });
     await settle();
-    await fetch(`${(await import('@core/kernel/config')).config.opensearchUrl}/os-field-writes-test/_doc/r1`, { method: 'DELETE' });
+    await fetch(`${(await import('@core/adapters/opensearch/client')).opensearchBaseUrl()}/os-field-writes-test/_doc/r1`, { method: 'DELETE' });
 
     markRunWorkerProcess();
     writeChanged(mirror, seen, 'r1', { id: 'r1', name: 'B' });

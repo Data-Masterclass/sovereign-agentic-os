@@ -3,6 +3,7 @@
  */
 import 'server-only';
 import { config } from '@core/kernel/config';
+import { opensearchTry } from '@core/adapters/opensearch/client';
 import { roleAtLeast } from '@core/kernel/session';
 import { authorize } from '@core/infra/agent-governed';
 import { type KnowledgeUnit, type Provenance, type UnitType } from '@tabs/knowledge/lib/chunk';
@@ -46,16 +47,9 @@ export type RetrieveResult = {
   hits: Scored[];
 };
 
-async function withTimeout(url: string, init: RequestInit, ms = 4000): Promise<Response | null> {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), ms);
-  try {
-    return await fetch(url, { ...init, signal: ctrl.signal, cache: 'no-store' });
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timer);
-  }
+/** One OpenSearch call through the one client; `null` = unreachable or timed out. */
+function osTry(path: string, init: RequestInit, ms = 4000): Promise<Response | null> {
+  return opensearchTry(path, { ...init, timeoutMs: ms });
 }
 
 /** Build the DLS grant filter clauses (the query-time grant filter pushed to OS).
@@ -93,7 +87,7 @@ function srcToUnit(id: string, src: Record<string, unknown>): KnowledgeUnit {
 type LiveHit = { id: string; score: number; src: Record<string, unknown> };
 
 async function search(body: unknown): Promise<LiveHit[] | null> {
-  const res = await withTimeout(`${config.opensearchUrl}/${config.knowledgeIndex}/_search`, {
+  const res = await osTry(`/${config.knowledgeIndex}/_search`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', accept: 'application/json' },
     body: JSON.stringify(body),

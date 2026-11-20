@@ -3,6 +3,7 @@
  */
 import 'server-only';
 import { config } from '@core/kernel/config';
+import { opensearchTry } from '@core/adapters/opensearch/client';
 import { grantsForDurable as appGrantsForDurable } from '@core/infra/app-registry';
 import {
   compileConnectionProfile,
@@ -488,7 +489,8 @@ export async function retrieveTool(query: string, principal: DlsPrincipal): Prom
       },
     },
   };
-  const res = await withTimeout(`${config.opensearchUrl}/${config.knowledgeIndex}/_search`, {
+  const res = await opensearchTry(`/${config.knowledgeIndex}/_search`, {
+    timeoutMs: 2500,
     method: 'POST',
     headers: { 'content-type': 'application/json', accept: 'application/json' },
     body: JSON.stringify(body),

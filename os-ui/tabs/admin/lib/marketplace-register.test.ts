@@ -15,7 +15,7 @@ import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { config } from '@core/kernel/config';
+import { opensearchBaseUrl } from '@core/adapters/opensearch/client';
 import { _reset, registerMarketplace } from '@tabs/admin/lib/plugins';
 
 beforeEach(() => _reset());
@@ -27,7 +27,7 @@ test('register records a note that no external marketplace call was made', () =>
   try {
     const reg = registerMarketplace({ partnerId: 'p-123' }) as { note?: string };
     // The only request is the OS's own durable mirror write; nothing goes to a marketplace.
-    assert.deepEqual(urls.filter((u) => !u.startsWith(config.opensearchUrl)), [], 'no request leaves the OS');
+    assert.deepEqual(urls.filter((u) => !u.startsWith(opensearchBaseUrl())), [], 'no request leaves the OS');
     assert.match(String(reg.note), /Marked as registered in this OS; no external marketplace call was made/);
   } finally {
     globalThis.fetch = realFetch;

@@ -31,6 +31,7 @@
  *   - Cost: ONE embedding call per search (the query, a few tokens), billed to the searching user.
  */
 import { config } from '@core/kernel/config';
+import { opensearchFetch } from '@core/adapters/opensearch/client';
 import { reciprocalRankFusion, l2ScoreForCosine } from '@core/kernel/rank-fusion';
 import { compileDls, toIndexDls } from '@tabs/files/lib/dls';
 import { embedQuery } from '@tabs/files/lib/embed';
@@ -83,7 +84,7 @@ async function liveSearch(body: Record<string, unknown>): Promise<OsSearch> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 4000);
   try {
-    const res = await fetch(`${config.opensearchUrl}/${config.filesIndex}/_search`, {
+    const res = await opensearchFetch(`/${config.filesIndex}/_search`, {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body), cache: 'no-store', signal: ctrl.signal,
     });
     // 404 = no `files` index at all: the index is unavailable, not the query wrong.

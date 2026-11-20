@@ -3,6 +3,7 @@
  */
 import 'server-only';
 import { config } from '@core/kernel/config';
+import { opensearchAuthHeaders, opensearchRequestUrl } from '@core/adapters/opensearch/client';
 
 /**
  * Platform-service connectivity probes — the internal control-plane backends the
@@ -20,6 +21,8 @@ type Probe = {
   key: string;
   label: string;
   url: string;
+  /** Extra request headers (OpenSearch: the one client's auth header, empty while security is off). */
+  headers?: () => Record<string, string>;
   // Some backends 401/403 when reachable-but-unauthed; treat those as "up".
   okStatuses?: number[];
 };
@@ -27,7 +30,7 @@ type Probe = {
 const PROBES: Probe[] = [
   { key: 'sample-agent', label: 'Agent core', url: `${config.sampleAgentUrl}/health` },
   { key: 'query-tool', label: 'Lakehouse', url: `${config.queryToolUrl}/health` },
-  { key: 'opensearch', label: 'Retrieval', url: `${config.opensearchUrl}/_cluster/health` },
+  { key: 'opensearch', label: 'Retrieval', url: opensearchRequestUrl('/_cluster/health'), headers: opensearchAuthHeaders },
   { key: 'litellm', label: 'Gateway', url: `${config.litellmUrl}/health/liveliness` },
   { key: 'opa', label: 'Policy', url: `${config.opaUrl}/health` },
   { key: 'dagster', label: 'Orchestration', url: `${config.dagsterUrl}/server_info` },
@@ -39,7 +42,7 @@ async function ping(p: Probe): Promise<ServiceProbe> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 2500);
   try {
-    const res = await fetch(p.url, { cache: 'no-store', signal: ctrl.signal });
+    const res = await fetch(p.url, { cache: 'no-store', signal: ctrl.signal, headers: p.headers?.() });
     const up = okStatuses.includes(res.status) || (res.status >= 200 && res.status < 300);
     return { key: p.key, label: p.label, up, detail: `HTTP ${res.status}` };
   } catch (e) {

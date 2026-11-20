@@ -17,7 +17,7 @@
  *     fire-and-forget writes land. A restart is a process with empty slots.
  *   - Generalised from `tabs/agents/lib/store-two-process.test.ts` (PR #114).
  */
-import { config } from '@core/kernel/config';
+import { opensearchBaseUrl } from '@core/adapters/opensearch/client';
 import { markRunWorkerProcess, __clearRunWorkerProcess } from '@core/kernel/process-role';
 
 type Doc = Record<string, unknown>;
@@ -42,7 +42,7 @@ export function fakeCluster(): FakeCluster {
   const calls: string[] = [];
   const ctl = { mode: 'ok' as FakeCluster['mode'] };
   const orig = globalThis.fetch;
-  const base = config.opensearchUrl.replace(/\/$/, '');
+  const base = opensearchBaseUrl();
   const json = (body: unknown, status = 200) =>
     new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
