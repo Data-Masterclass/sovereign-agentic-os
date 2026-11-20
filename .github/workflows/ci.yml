@@ -445,6 +445,12 @@ jobs:
           pip install "pyyaml>=6,<7"
           helm dependency build charts/sovereign-agentic-os || helm dependency update charts/sovereign-agentic-os
           npm --prefix os-ui ci
+      - name: Chart guard rails (ingress allow-lists, log scope + masking, sizes, OS_VERSION) and their twins
+        env:
+          CI: 'true'
+        run: |
+          node scripts/check-observability-chart.mjs
+          node --test scripts/tests/check-observability-chart.test.mjs
       - name: Stack on kind (Collector, VictoriaMetrics, VictoriaLogs, OPA)
         run: |
           curl -sSLo /tmp/kind https://github.com/kubernetes-sigs/kind/releases/download/v0.30.0/kind-linux-amd64

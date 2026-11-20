@@ -70,8 +70,15 @@ export function promLabel(text: string, metric: string, label: string): string |
   return null;
 }
 
-/** `app_version="victoria-metrics-20261106-175016-tags-v1.156.0-0-g0c1bf87a0c"` → `v1.156.0`. */
-export function vmReleaseTag(text: string): string | null {
-  const m = text.match(/app_version="[^"]*-tags-(v\d+\.\d+\.\d+[^"-]*)-\d+-g[0-9a-f]+"/);
-  return m ? m[1] : null;
+/**
+ * The version a VictoriaMetrics / VictoriaLogs binary states in the `app_version` label of its own
+ * series. A release build (`victoria-metrics-20261106-175016-tags-v1.156.0-0-g0c1bf87a0c`) gives
+ * its tag, `v1.156.0`; an enterprise build gives `v1.156.0-enterprise`. ANY other form (a
+ * heads-master or custom build) is returned VERBATIM — never dropped, never "invalid" (WP-05
+ * review #2). `null` only when the binary exports no `app_version` at all.
+ */
+export function vmVersion(text: string): string | null {
+  const raw = text.match(/app_version="([^"]+)"/)?.[1];
+  if (!raw) return null;
+  return raw.match(/-tags-(v\d+\.\d+\.\d+(?:-[A-Za-z][A-Za-z0-9.]*)*)-\d+-g[0-9a-f]+$/)?.[1] ?? raw;
 }

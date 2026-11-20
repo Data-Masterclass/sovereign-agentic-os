@@ -571,11 +571,8 @@
       "worker/agent-runs.ts :: empty catch: catch { /* nothing to flush */ }"
     ],
     "GLUE-4-HARDCODED-VERSION": [
-      "app/(entry)/settings/page.tsx :: version 15.5.19",
-      "app/(entry)/settings/page.tsx :: version 19.0.0",
       "core/kernel/config.ts :: image curlimages/curl:8.11.1",
       "core/kernel/config.ts :: image aquasec/trivy:0.58.2",
-      "core/kernel/config.ts :: version 1.0.0",
       "tabs/data/lib/dbt/project.ts :: version 1.0.0",
       "tabs/software/lib/app-sdk-vendor.ts :: version 0.1.0",
       "tabs/software/lib/app-ui-vendor.ts :: version 0.1.0",

@@ -11,7 +11,8 @@
  *     component's own endpoint. `ok:false` → `version: null` and the reason in `versionNote`.
  *   - A component with no version endpoint: the running pod's image tag (Kubernetes
  *     `status.containerStatuses[].image`), labelled `versionSource: 'image'`.
- *   - os-ui itself: its own build version (`OS_VERSION`, set by the chart).
+ *   - os-ui itself: the image tag of its own running pod; else `OS_VERSION` (the chart sets it from
+ *     the os-ui image tag); else `version: null`, "unknown" — never a default (WP-05 review #1).
  *   - Not running (off / disabled / n/a): no probe, `version: null` and the status as the note.
  *   - Restarts: the sum of `restartCount` of the workload's pods and the last termination reason.
  *   - Pure over injected readers, so the unit test can prove every version came from health().
@@ -107,7 +108,11 @@ export async function componentRow(c: ComponentView, r: Readers = LIVE): Promise
   const sig = await r.pods(c);
   const selfHeal = restartsOf(sig);
   if (c.id === 'os-ui') {
-    return { ...c, version: r.osVersion, versionSource: 'component', versionNote: 'this build (OS_VERSION)', health: { status: 'ready', detail: 'serving this page', checkedAt: new Date().toISOString() }, selfHeal };
+    const health = { status: 'ready' as const, detail: 'serving this page', checkedAt: new Date().toISOString() };
+    const tag = imageTag(sig?.image ?? null);
+    if (tag) return { ...c, version: tag, versionSource: 'image', versionNote: 'image tag of the running os-ui pod', health, selfHeal };
+    if (r.osVersion) return { ...c, version: r.osVersion, versionSource: 'image', versionNote: 'OS_VERSION, set by the chart from the os-ui image tag', health, selfHeal };
+    return { ...c, version: null, versionSource: 'none', versionNote: 'unknown: no running pod image readable and OS_VERSION is not set', health, selfHeal };
   }
   if (NOT_RUNNING.has(c.status)) {
     return { ...c, version: null, versionSource: 'none', versionNote: `not running (${c.status})`, health: { status: 'not-running', detail: c.status, checkedAt: null }, selfHeal };

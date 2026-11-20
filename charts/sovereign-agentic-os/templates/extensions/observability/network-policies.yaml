@@ -1,0 +1,104 @@
+{{- /*
+  Observability: restrict INGRESS to the stores and the Collector (WP-05 review #9, defence in depth).
+
+    victoria-metrics :8428   from otel-collector (writes OTLP) and os-ui (reads: health, Monitoring)
+    victoria-logs    :9428   from otel-collector (the ONLY writer) and os-ui (reads)
+    otel-collector   :4317/:4318 OTLP and :8888/:13133 self-metrics/health
+                             from os-ui and os-ui-worker; :4319 from litellm only when the
+                             (unsafe, off) litellmLangfuse option is on
+
+  Nothing else — Dagster code locations and run pods (user dbt/Python), data-runner, docling,
+  litellm, other namespaces — may read 7 days of every platform log, call the delete APIs, or post
+  forged "Decision Log" lines. os-ui only READS VictoriaLogs (GET /select, /metrics, /health);
+  `scripts/check-observability-chart.mjs` asserts that no os-ui code calls an insert path.
+  Kubelet probes and `kubectl port-forward` do not traverse pod-to-pod policy.
+
+  Gated by `observability.networkPolicy.enabled` (default true). Checked on the rendered chart by
+  scripts/check-observability-chart.mjs and enforced in tests/observability (kind, kindnet).
+*/}}
+{{- $o := .Values.observability }}
+{{- if and $o.enabled ($o.networkPolicy | default dict).enabled }}
+{{- $ll := $o.collector.litellmLangfuse | default dict }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: victoria-metrics-allow-collector-and-os-ui
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "soa.selectorLabels" (dict "ctx" . "component" "victoria-metrics") | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: otel-collector
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: os-ui
+      ports:
+        - { protocol: TCP, port: 8428 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: victoria-logs-allow-collector-and-os-ui
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "soa.selectorLabels" (dict "ctx" . "component" "victoria-logs") | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: otel-collector
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: os-ui
+      ports:
+        - { protocol: TCP, port: 9428 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: otel-collector-allow-os-only
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "soa.selectorLabels" (dict "ctx" . "component" "otel-collector") | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: os-ui
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: os-ui-worker
+      ports:
+        - { protocol: TCP, port: 4317 }
+        - { protocol: TCP, port: 4318 }
+        - { protocol: TCP, port: 8888 }
+        - { protocol: TCP, port: 13133 }
+    {{- if $ll.enabled }}
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: litellm
+      ports:
+        - { protocol: TCP, port: 4319 }
+    {{- end }}
+{{- end }}
