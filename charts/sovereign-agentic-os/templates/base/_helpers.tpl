@@ -52,6 +52,23 @@ the host/endpoint is indirected — see values.stackit-managed.yaml.
 */}}
 
 {{/* Postgres host: in-cluster `pg-rw` (plain StatefulSet or CNPG), or the managed host. */}}
+{{/*
+The env every OpenSearch client in the chart gets (os-ui, os-ui-worker, the
+wait-for-opensearch initContainer, the maintenance Jobs): the URL and, when
+`opensearchClient.credentialsSecret` is set (WP-22), basic-auth credentials from
+that Secret's `username` / `password` keys. Credentials are added HERE only.
+*/}}
+{{- define "soa.opensearchClientEnv" -}}
+- name: OPENSEARCH_URL
+  value: {{ include "soa.opensearchUrl" . | quote }}
+{{- with (.Values.opensearchClient | default dict).credentialsSecret }}
+- name: OPENSEARCH_USERNAME
+  valueFrom: { secretKeyRef: { name: {{ . | quote }}, key: username } }
+- name: OPENSEARCH_PASSWORD
+  valueFrom: { secretKeyRef: { name: {{ . | quote }}, key: password } }
+{{- end }}
+{{- end -}}
+
 {{- define "soa.pgHost" -}}
 {{- if .Values.postgres.enabled -}}
 pg-rw
@@ -60,10 +77,12 @@ pg-rw
 {{- end -}}
 {{- end -}}
 
-{{/* OpenSearch base URL: bundled `http://opensearch:9200`, or the managed endpoint. */}}
+{{/* OpenSearch base URL: the bundled Service with the subchart's own `protocol`
+     (`http` while the security plugin is off; `https` once WP-22 turns TLS on), or the
+     managed endpoint. The ONE place the chart builds this URL. */}}
 {{- define "soa.opensearchUrl" -}}
 {{- if .Values.opensearch.enabled -}}
-http://opensearch:9200
+{{ .Values.opensearch.protocol | default "http" }}://{{ .Values.opensearch.masterService | default "opensearch" }}:{{ .Values.opensearch.httpPort | default 9200 }}
 {{- else -}}
 {{- $os := .Values.opensearch.external -}}
 {{ $os.protocol | default "https" }}://{{ required "opensearch.external.host is required when opensearch.enabled=false" $os.host }}:{{ $os.port | default "9200" }}

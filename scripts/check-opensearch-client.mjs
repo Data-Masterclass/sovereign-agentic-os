@@ -28,7 +28,7 @@ const ALLOWED = `core${sep}adapters${sep}opensearch${sep}`;
 const SKIP_DIRS = new Set(['node_modules', '.next', '.git', 'vendor']);
 const EXT = /\.(ts|tsx|mjs|js)$/;
 const PATTERNS = [
-  [/\bopensearchUrl\b/, '`opensearchUrl` (use opensearchFetch / opensearchTry / opensearchUrl() from @core/adapters/opensearch/client)'],
+  [/\bopensearchUrl\b/, '`opensearchUrl` (use opensearchFetch / opensearchTry / opensearchRequestUrl() from @core/adapters/opensearch/client)'],
   [/\bOPENSEARCH_(URL|USERNAME|PASSWORD)\b/, 'reads the OpenSearch endpoint/credential env itself'],
   [/:9200\b/, 'a literal OpenSearch port', 'not-in-tests'],
 ];

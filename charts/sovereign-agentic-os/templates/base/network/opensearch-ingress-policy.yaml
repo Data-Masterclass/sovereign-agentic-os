@@ -11,6 +11,8 @@
                                                     policy for why the worker must be listed)
                     register-opensearch-snapshot-repo  (component opensearch-snapshot-register)
                     opensearch-snapshot CronJob        (component opensearch-snapshot-cron)
+                    register-opensearch-s3-repo,
+                    opensearch-orphan-cleanup          (component opensearch-maintenance, WP-21)
     :9200/:9300   between OpenSearch pods themselves (transport; a no-op while single-node,
                   required as soon as `opensearch.replicas` > 1).
 
@@ -61,6 +63,9 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/component: opensearch-snapshot-cron
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: opensearch-maintenance
       ports:
         - { protocol: TCP, port: 9200 }
     # Node-to-node: transport (and REST, used by cluster bootstrap) between OpenSearch pods.

@@ -397,7 +397,7 @@ mockModel:
   image:
     repository: sovereign-os/mock-model   # built locally, loaded into kind
     tag: "0.1.1"                           # 0.1.1 adds poem mode
-  embedDim: 384                            # must match opensearch.knnDimension
+  # EMBED_DIM is retrieval.knnDimension (one source; WP-21 removed mockModel.embedDim).
   resources:
     requests: { cpu: 25m, memory: 64Mi }
     limits: { cpu: 250m, memory: 128Mi }
@@ -735,10 +735,64 @@ opensearchSnapshots:
       requests: { cpu: 50m, memory: 32Mi }
       limits: { cpu: 200m, memory: 64Mi }
 
+  # Off-cluster snapshots (WP-21, design 02 step 3): `repository-s3` (our own image,
+  # images/extensions/opensearch) to STACKIT Object Storage through egress-proxy:3128, plus a
+  # Snapshot Management policy. The s3 CLIENT settings (endpoint, protocol, path-style, proxy)
+  # live in opensearch.yml and the keys in the keystore — both set by the STACKIT overlay
+  # deploy/overlays/opensearch-s3-snapshots.stackit.yaml. The post-install/post-upgrade Job
+  # `register-opensearch-s3-repo` registers the repository, runs `_verify` (a failure fails the
+  # Job) and applies the policy. The fs repository + CronJob above stay on in parallel for one
+  # week after the first verified S3 snapshot, then they are removed.
+  s3:
+    enabled: false                        # on via the STACKIT overlay only
+    repositoryName: stackit-s3
+    bucket: ""                            # required when enabled
+    # Object-storage host. Added to the egress-proxy allowlist when s3 is on; must equal
+    # s3.client.default.endpoint in opensearch.yml (the CI harness renders both and proves it).
+    endpointHost: object.storage.eu01.onstackit.cloud
+    basePath: opensearch                  # key prefix inside the bucket
+    # The Secret the OpenSearch keystore is built from (subchart `keystore`); its keys MUST be
+    # named s3.client.default.access_key and s3.client.default.secret_key. Created by the owner.
+    keystoreSecret: opensearch-s3-keystore
+    policy:
+      name: nightly
+      description: "Nightly snapshot of the OS indices to off-cluster object storage"
+      schedule: "0 3 * * *"
+      timezone: UTC
+      indices: "files*,knowledge*,os-*"
+      maxAge: 30d
+      minCount: 7
+    job:
+      resources:
+        requests: { cpu: 50m, memory: 32Mi }
+        limits: { cpu: 200m, memory: 64Mi }
+
+# The chart's OpenSearch client settings, shared by every caller (os-ui, worker,
+# initContainer, maintenance Jobs) through the helper `soa.opensearchClientEnv`.
+opensearchClient:
+  # Secret with `username` / `password` keys; empty while the security plugin is off.
+  # WP-22 sets it — this is the only place credentials are wired.
+  credentialsSecret: ""
+
+# One-time removal of indices left by components the OS no longer runs (WP-21, design 02
+# step 1): the OpenMetadata `*_search_index_rebuild_<13 digits>` indices, the `di-data-assets-*`
+# data streams and `haystack_knowledge` — exact anchored names, nothing else. A post-install/
+# post-upgrade Job: it snapshots everything first, refuses if more than `maxDelete` match, and
+# is a no-op once they are gone. Script: files/opensearch/cleanup/delete-orphans.sh.
+opensearchCleanup:
+  enabled: true
+  maxDelete: 72                           # 55 + 16 backing indices + 1 on 2026-11-20
+  # Repository for the pre-delete snapshot. Empty = the S3 repository when s3 is on, else the
+  # fs repository when it is on; with neither the Job refuses to delete anything.
+  snapshotRepository: ""
+  dryRun: false
+
 # Shared retrieval settings (knowledge index name + k-NN dimension).
 retrieval:
   indexName: knowledge
-  knnDimension: 384
+  # 4096 = the dimension the live embedding model returns (Qwen3-VL-Embedding-8B) and what
+  # runs live (FILES_EMBED_DIM / KNOWLEDGE_EMBED_DIM). The kind mock-model follows it.
+  knnDimension: 4096
 
 # MCP test agent — proves the OS's own real, governed MCP registry (/api/mcp)
 # Agent schedules + the shared SERVICE BEARER the OS's own CronJobs present to os-ui.
@@ -1616,7 +1670,6 @@ osUI:
   # lakehouse).
   uploadsBucket:  "lakehouse"
   langfuseUrl:    "http://agentic-os-langfuse-web:3000"
-  opensearchUrl:  "http://opensearch:9200"
   knowledgeIndex: "knowledge"
   # Files tab (unstructured context products).
   filesIndex:      "files"

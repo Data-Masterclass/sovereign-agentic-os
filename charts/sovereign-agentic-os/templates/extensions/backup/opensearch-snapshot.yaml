@@ -27,7 +27,7 @@
 {{- if and .Values.opensearch.enabled $snap.enabled }}
 {{- $repoName := $snap.repositoryName | default "sovereign-fs" }}
 {{- $mountPath := $snap.mountPath | default "/usr/share/opensearch/snapshots" }}
-{{- $osUrl := "http://opensearch:9200" }}
+{{- $osUrl := include "soa.opensearchUrl" . }}
 ---
 # PVC that backs the snapshot directory mounted into the OpenSearch pod.
 apiVersion: v1

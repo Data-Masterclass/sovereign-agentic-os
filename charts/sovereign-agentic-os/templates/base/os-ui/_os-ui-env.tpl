@@ -221,8 +221,9 @@
       key: AWS_SECRET_ACCESS_KEY
 - name: LANGFUSE_URL
   value: {{ $u.langfuseUrl | quote }}
-- name: OPENSEARCH_URL
-  value: {{ $u.opensearchUrl | quote }}
+{{- /* OpenSearch URL (+ credentials once WP-22 sets opensearchClient.credentialsSecret):
+       one helper for every client in the chart. */}}
+{{ include "soa.opensearchClientEnv" . }}
 - name: KNOWLEDGE_INDEX
   value: {{ $u.knowledgeIndex | quote }}
 # Knowledge k-NN dimension — sourced from the SINGLE retrieval.knnDimension
