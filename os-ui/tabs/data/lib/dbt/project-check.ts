@@ -195,6 +195,10 @@ export function checkProject(files: Map<string, string>): ProjectIssue[] {
 // ---- rule 8: closed Jinja grammar --------------------------------------------------------------
 
 const ID = "[A-Za-z_][A-Za-z0-9_]*";
+/** The `config()` keys the generator writes (models.ts, semantic/time-spine.ts) — nothing else. */
+export const CONFIG_KEYS = ['materialized', 'incremental_strategy', 'unique_key', 'on_schema_change', 'on_table_exists', 'full_refresh'] as const;
+const CONFIG_VALUE = `(?:'[A-Za-z0-9_+]*'|\\[(?:'${ID}'(?:, '${ID}')*)?\\]|true|false)`;
+const CONFIG_KWARG = `(?:${CONFIG_KEYS.join('|')})=${CONFIG_VALUE}`;
 /** Every Jinja construct the generator writes into a model `.sql` file — nothing else. */
 const SQL_JINJA: RegExp[] = [
   new RegExp(`^\\{\\{ ref\\('${ID}'\\) \\}\\}`),
@@ -203,8 +207,10 @@ const SQL_JINJA: RegExp[] = [
   /^\{% if is_incremental\(\) %\}/,
   /^\{% endif %\}/,
   /^\{\{ var\("os_batch_id", invocation_id\) \}\}/,
-  // A config value is a quoted constant, a list of identifiers, or a bare boolean (`full_refresh=false`).
-  new RegExp(`^\\{\\{ config\\((?:${ID}=(?:'[A-Za-z0-9_+]*'|\\[(?:'${ID}'(?:, '${ID}')*)?\\]|true|false)(?:, )?)+\\) \\}\\}`),
+  // `config(...)`: only the keys the generator emits, each `key=value` with a value that is a quoted
+  // constant, a list of identifiers or a bare boolean, and a real separator (a comma, then optional
+  // whitespace) between kwargs — `a=falseb='x'` or `a='x'b='y'` never matches.
+  new RegExp(`^\\{\\{ config\\(${CONFIG_KWARG}(?:,\\s*${CONFIG_KWARG})*\\) \\}\\}`),
 ];
 /** The only Jinja allowed in a YAML string value outside a semantic `filter`. */
 const YAML_JINJA = /^\{\{ env_var\('[A-Z][A-Z0-9_]*'(?:, '[A-Za-z0-9_.-]*')?\)(?: \| as_number)? \}\}$/;
