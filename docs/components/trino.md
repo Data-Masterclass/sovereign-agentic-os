@@ -103,7 +103,10 @@ One shape, two renderers, one test that keeps them equal
    owns a real domain's schema.** When a domain already owns that schema, or one is created later
    (every directory write reconciles again), the writer rule is not written, and only the domain's
    principals own the schema. A seed Job that writes into a real domain runs as that domain's
-   principal instead; `values.dev.yaml` does this with `sales`. Proof: a real
+   principal instead. **That is the chart default:** `dbt.trino.user` and `marts.trino.user` are
+   `sales`, the domain principal of `sales`, so a fresh install builds the demo with no writer
+   exception at all. The writer rule matters only when an operator points a seed Job at a schema
+   that no domain owns. Proof: a real
    Trino on kind evaluates the generated file (`scripts/tests/trino-seed-writers.kind.sh`). It
    shows that the Jobs may create and fill `sales` and nothing else, and that they are denied
    without the writers (the negative twin).

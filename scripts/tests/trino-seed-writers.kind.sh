@@ -40,7 +40,14 @@ trap cleanup EXIT
 K() { kubectl --context "kind-$NAME" -n seed "$@"; }
 
 # ---- the chart's seed writers, from its own render -------------------------------------------
-writers=$(helm template agentic-os charts/sovereign-agentic-os -n agentic-os --skip-schema-validation 2>/dev/null \
+# The chart's defaults now run both hooks as the DOMAIN principal `sales` (the common case needs no
+# writer exception); the writer mechanism is exercised with the service users an operator may set.
+default_writers=$(helm template agentic-os charts/sovereign-agentic-os -n agentic-os --skip-schema-validation 2>/dev/null \
+  | grep -A1 'name: TRINO_SEED_WRITERS' | sed -n 's/.*value: "\(.*\)"/\1/p' | head -1)
+check "the chart's default hooks run as the sales domain principal" "sales:sales" "$default_writers"
+absent "and no service user by default" "dbt-sales" "$default_writers"
+writers=$(helm template agentic-os charts/sovereign-agentic-os -n agentic-os --skip-schema-validation \
+  --set dbt.trino.user=dbt-sales --set marts.trino.user=northpeak-marts 2>/dev/null \
   | grep -A1 'name: TRINO_SEED_WRITERS' | sed -n 's/.*value: "\(.*\)"/\1/p' | head -1)
 check "the chart renders TRINO_SEED_WRITERS for its seed Jobs" "dbt-sales:sales" "$writers"
 check "both seed Jobs are listed" "northpeak-marts:sales" "$writers"
