@@ -12,6 +12,7 @@
  *     `governanceWrites` the build's push uses.
  */
 import 'server-only';
+import { config } from '@core/kernel/config';
 import { publishOpaAll } from '@core/policy/opa-publish';
 import type { OpaSourceResult } from '@core/policy/opa-reconcile';
 import { compileOpa } from '@tabs/data/lib/policy/compiler';
@@ -25,7 +26,7 @@ export async function restoreDataGovernance(extraDomains: () => Promise<string[]
   const domains = new Set(await extraDomains());
   for (const p of Object.values(roster)) for (const d of p.domains) domains.add(d);
   const bundle = compileOpa(listAllDatasets(), roster, [...domains]);
-  const r = await publishOpaAll(governanceWrites(bundle));
+  const r = await publishOpaAll(governanceWrites(bundle, config.opaSeedPrincipals));
   if (!r.ok) return { ok: false, detail: r.detail };
   return {
     ok: true,

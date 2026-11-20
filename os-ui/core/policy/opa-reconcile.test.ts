@@ -44,3 +44,12 @@ test('no registered sources is "not-restored"', async () => {
   assert.equal(st.state, 'not-restored');
   assert.match(st.detail, /no policy-state sources/);
 });
+
+test('a reconciler that never completed a run is "not-restored" after the boot grace period', async () => {
+  const { NEVER_RUN_GRACE_MS } = await import('@core/policy/opa-reconcile');
+  assert.equal(opaReconcileStatus(NEVER_RUN_GRACE_MS - 1).state, 'never-run', 'no alert during the grace period');
+  const late = opaReconcileStatus(NEVER_RUN_GRACE_MS);
+  assert.equal(late.state, 'not-restored');
+  assert.equal(late.reason, 'never-run');
+  assert.match(late.detail, /no policy-state reconcile has completed/);
+});

@@ -310,6 +310,10 @@
   value: {{ $u.litellmUrl | quote }}
 - name: OPA_URL
   value: {{ $u.opaUrl | quote }}
+{{- /* The chart-seeded governance principals (the same block the OPA seed and the reassert hook
+     read). os-ui's runtime governance writes merge into them and never drop a seeded clearance. */}}
+- name: OS_OPA_SEED_PRINCIPALS
+  value: {{ ((.Values.opa.governance | default dict).principals | default dict) | toJson | quote }}
 - name: DAGSTER_URL
   value: {{ $u.dagsterUrl | quote }}
 # External-warehouse connectors (Glue/Snowflake/BigQuery/Databricks/Fabric).
