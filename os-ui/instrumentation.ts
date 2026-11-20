@@ -164,6 +164,9 @@ export async function register(): Promise<void> {
     try {
       const { registerOpaStateSources } = await import('./opa-state-sources.ts');
       registerOpaStateSources();
+      // Delete domain: the ordered component list both doors read (domain-delete-sources.ts).
+      const { registerDomainDeleteSources } = await import('./domain-delete-sources.ts');
+      registerDomainDeleteSources();
       const { startOpaReconciler } = await import('./core/policy/opa-reconcile.ts');
       startOpaReconciler();
       // WP-11 (OS_OPA_DATA_BUNDLE=1): the same sources compile the os-data bundle OPA downloads

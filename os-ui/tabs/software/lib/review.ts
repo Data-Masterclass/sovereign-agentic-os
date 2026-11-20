@@ -1102,3 +1102,20 @@ export async function listReviewCards(opts: { domain?: string; pendingOnly?: boo
     .filter((c) => (opts.pendingOnly ? c.decision === 'pending' : true))
     .sort((a, b) => b.requestedAt.localeCompare(a.requestedAt));
 }
+
+
+// ------------------------------------------------------------------ delete domain (admin) --
+/** Delete-domain: every software review of a domain, in every state (`core/kernel/domain-delete.ts`). */
+export async function listReviewCardsForDomain(domain: string): Promise<ReviewCard[]> {
+  await ensureCardsHydrated();
+  return [...cards().values()].filter((x) => x.domain === domain);
+}
+
+/** Delete-domain: remove one software review for good. Awaits the durable mirror's confirmation first, so
+ *  the record is never reported gone while the shared store still holds it. */
+export async function purgeReviewCardForDomainDelete(id: string): Promise<'deleted' | 'absent'> {
+  const out = await cardsMirror.deleteConfirmed(id);
+  if (!out.ok) throw Object.assign(new Error(`software review ${id}: the store did not confirm the delete (${out.reason})`), { status: 503 });
+  cards().delete(id);
+  return out.result;
+}

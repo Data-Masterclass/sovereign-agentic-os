@@ -69,3 +69,9 @@ The policies are plain Rego plus JSON data. Without the OS, upstream OPA alone r
     opa eval -d charts/sovereign-agentic-os/policies -i input.json 'data.agentic.authz.decision'
 
 CI's `test-opa` job runs exactly this with the pinned OPA binary.
+
+## Delete domain (2026-11-20)
+
+Data API `GET`/`PUT`/`DELETE /v1/data/governance/{tables,principals}/<key>`
+(https://www.openpolicyagent.org/docs/rest-api#data-api); run against the chart's OPA in
+`tests/domain-delete`.

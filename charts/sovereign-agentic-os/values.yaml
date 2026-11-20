@@ -1618,6 +1618,10 @@ polaris:
   catalog:
     name: lakehouse
     baseLocation: s3://lakehouse/wh
+    # Let Trino's DROP TABLE purge the table's files (polaris-catalog-init grants catalog_admin
+    # TABLE_WRITE_DATA and sets polaris.config.drop-with-purge.enabled). Off = every DROP TABLE
+    # through Trino fails with Polaris 403 and the table stays.
+    purgeOnDrop: true
   local:
     rootClientId: root
     rootClientSecret: polaris-local-dev-secret

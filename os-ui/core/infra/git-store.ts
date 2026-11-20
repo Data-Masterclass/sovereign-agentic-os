@@ -213,6 +213,28 @@ async function withLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
 
 // ------------------------------------------------------------------- repos ---
 
+/**
+ * Delete-domain: remove a domain's bare repository from `reposDir` — the canonical `domain-<d>.git`,
+ * the legacy `<d>.git` and an alias symlink between them. The repo is the domain's system of
+ * record, so this is only ever called by the admin delete-domain run, after a backup. Returns the
+ * paths removed (none = already absent).
+ */
+export function deleteDomainRepo(domain: string, opts: GitStoreOptions = {}): string[] {
+  const base = opts.reposDir ?? config.reposDir;
+  const { canonical } = resolveRepo(domain, opts);
+  const legacy = legacyDomainRepoName(domain);
+  const removed: string[] = [];
+  for (const name of [canonical, legacy].filter((n): n is string => !!n)) {
+    const dir = path.join(base, repoDirName(name));
+    let st: fs.Stats | null = null;
+    try { st = fs.lstatSync(dir); } catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e; }
+    if (!st) continue;
+    fs.rmSync(dir, { recursive: !st.isSymbolicLink(), force: true });
+    removed.push(dir);
+  }
+  return removed;
+}
+
 export function repoExists(domain: string, opts: GitStoreOptions = {}): boolean {
   return fs.existsSync(path.join(repoPath(domain, opts), 'HEAD'));
 }

@@ -101,3 +101,9 @@ The run-grant check (os-ui `core/policy/run-grants.ts`, `app/api/runtime/run-gra
 - Kubernetes TokenReview (`authentication.k8s.io/v1`, `spec.audiences`) and the
   `system:auth-delegator` ClusterRole: https://kubernetes.io/docs/reference/kubernetes-api/authentication-resources/token-review-v1/
   · projected ServiceAccount tokens: https://kubernetes.io/docs/concepts/storage/projected-volumes/#serviceaccounttoken
+
+## Delete domain (2026-11-20)
+
+After the domain repo is removed, GraphQL `reloadRepositoryLocation` (already wrapped by
+`core/infra/dagster.ts reloadLocation`) reloads the code location. Not run against a real
+Dagster in the delete-domain test.

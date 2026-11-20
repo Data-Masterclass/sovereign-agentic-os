@@ -45,3 +45,17 @@ notes read here name no schema-migration step. The JDBC metastore must still be 
 (Velero) before any bump, and the bump needs its own harness run
 (`bash tests/lakehouse/up.sh --set polaris.image.tag=… --set polaris.adminImage.repository=apache/polaris-admin`).
 From 1.9.0 the admin image is `apache/polaris-admin`, not `apache/polaris-admin-tool`.
+
+## Purge on drop (delete domain, 2026-11-20)
+
+From https://polaris.apache.org/ (catalog configuration `polaris.config.drop-with-purge.enabled`,
+privilege model `DROP_TABLE_WITH_PURGE` = `TABLE_DROP` + `TABLE_WRITE_DATA`) and proven on the pinned
+1.1.0 image in `tests/domain-delete`:
+- Trino's Iceberg REST catalog sends every `DROP TABLE` as `DELETE …/tables/<t>?purgeRequested=true`.
+- With the chart's former config Polaris answered 403 twice over: first "not authorized for op
+  DROP_TABLE_WITH_PURGE" (catalog_admin holds only CATALOG_MANAGE_ACCESS + CATALOG_MANAGE_METADATA),
+  then "Unable to purge entity … set DROP_WITH_PURGE_ENABLED or polaris.config.drop-with-purge.enabled".
+  The DROP failed and the table stayed.
+- `polaris-catalog-init` now grants catalog_admin `TABLE_WRITE_DATA` and sets the catalog property
+  (`polaris.catalog.purgeOnDrop`, default on). Polaris then drops the entity and its
+  `TableCleanupTaskHandler` deletes the data and metadata files asynchronously (seconds in the test).

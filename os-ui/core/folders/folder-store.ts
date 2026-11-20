@@ -388,3 +388,20 @@ export function deleteFolderRows(user: Principal, id: string): string[] {
 export function getFolder(id: string): FolderNode | undefined {
   return st().store.get(id);
 }
+
+
+// ------------------------------------------------------------------ delete domain (admin) --
+/** Delete-domain: every folder of a domain, in every state (`core/kernel/domain-delete.ts`). */
+export function listFoldersForDomain(domain: string): FolderNode[] {
+  return [...st().store.values()].filter((x) => x.domain === domain);
+}
+
+/** Delete-domain: remove one folder for good. Awaits the durable mirror's confirmation first, so
+ *  the record is never reported gone while the shared store still holds it. */
+export async function purgeFolderForDomainDelete(id: string): Promise<'deleted' | 'absent'> {
+  const out = await mirror.deleteConfirmed(id);
+  if (!out.ok) throw Object.assign(new Error(`folder ${id}: the store did not confirm the delete (${out.reason})`), { status: 503 });
+  st().store.delete(id);
+  versions.purge(id);
+  return out.result;
+}
