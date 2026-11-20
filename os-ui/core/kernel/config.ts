@@ -250,6 +250,8 @@ export const config = {
   // RESPONSE waits for it before answering "still extracting" and letting it finish in the
   // background — an upload must never sit behind a multi-minute OCR.
   doclingTimeoutMs: Number(env('DOCLING_TIMEOUT_MS', '600000')) || 600000,
+  // docling-serve's API key (chart Secret `docling-api-key`), sent as `X-Api-Key`. Empty → no header.
+  doclingApiKey: env('DOCLING_API_KEY', ''),
   uploadExtractWaitMs: Number(env('UPLOAD_EXTRACT_WAIT_MS', '20000')) || 20000,
   transcribeUrl: base(env('TRANSCRIBE_URL', 'http://whisper:9000')),
   ocrUrl: base(env('OCR_URL', 'http://ocr-caption:8000')),

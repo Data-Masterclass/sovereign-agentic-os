@@ -6,7 +6,7 @@
  *             my cluster, and when that cannot happen I want to be told exactly why — never to be
  *             handed text the document does not contain.
  * ARCHITECTURE:
- *   - THE REAL API, pinned. docling-serve 1.25 (the image the chart ships) has NO `/convert`. Its
+ *   - THE REAL API, pinned. docling-serve (the chart pins 1.38.2) has NO `/convert`. Its
  *     routes are `/v1/convert/file[/async]` (multipart, field `files`), `/v1/status/poll/{id}`
  *     and `/v1/result/{id}`; the reply is `{ document: { md_content }, status, errors }`. The
  *     previous adapter posted JSON `{ source: 's3://…' }` to `/convert` — a route that does not
@@ -62,6 +62,12 @@ export type DoclingOutcome =
 
 export type DoclingOptions = {
   baseUrl: string;
+  /**
+   * docling-serve's `DOCLING_SERVE_API_KEY`, sent as `X-Api-Key` on every call (submit, poll and
+   * result are all key-checked). Unset → no header; a server that requires a key then answers 401,
+   * which surfaces as `parser-unreachable` with "HTTP 401" — never as text.
+   */
+  apiKey?: string;
   /** Whole-conversion deadline: submit + every poll + the result fetch. */
   timeoutMs?: number;
   /** Seconds one long-poll may wait server-side. */
@@ -76,6 +82,14 @@ export const DOCLING_STATUS_PATH = '/v1/status/poll';
 export const DOCLING_RESULT_PATH = '/v1/result';
 /** The multipart field docling-serve reads the upload from (plural — it accepts several). */
 export const DOCLING_FILE_FIELD = 'files';
+/** docling-serve's API-key header (`docling_serve/auth.py`, `APIKeyAuth`). */
+export const DOCLING_API_KEY_HEADER = 'X-Api-Key';
+/**
+ * The table-structure model. TableFormer v2 (`docling-project/TableFormerV2`, Apache-2.0) is baked
+ * into our derived image; the v1 weights (`docling-project/docling-models`, CDLA-Permissive-2.0)
+ * are removed from it, so this choice is also what the licence allowlist requires.
+ */
+export const DOCLING_TABLE_STRUCTURE_PRESET = 'tableformer_v2';
 
 const DONE = new Set(['success', 'partial_success']);
 const FAILED = new Set(['failure', 'skipped']);
@@ -132,6 +146,8 @@ export async function convertWithDocling(doc: DoclingDocument, opts: DoclingOpti
   const timeoutMs = opts.timeoutMs ?? 600_000;
   const pollWait = Math.max(1, Math.min(opts.pollWaitSeconds ?? 20, 60));
   const base = opts.baseUrl.replace(/\/+$/, '');
+  const headers: Record<string, string> = { accept: 'application/json' };
+  if (opts.apiKey) headers[DOCLING_API_KEY_HEADER] = opts.apiKey;
   const started = now();
   const left = () => timeoutMs - (now() - started);
   const secs = () => Math.round((now() - started) / 100) / 10;
@@ -151,9 +167,11 @@ export async function convertWithDocling(doc: DoclingDocument, opts: DoclingOpti
   form.append(DOCLING_FILE_FIELD, new Blob([new Uint8Array(doc.bytes)], { type }), doc.name);
   form.append('to_formats', 'md');
   form.append('do_ocr', 'true');
+  form.append('do_table_structure', 'true');
+  form.append('table_structure_preset', DOCLING_TABLE_STRUCTURE_PRESET);
   // Picture bitmaps are megabytes of base64 nobody reads; a placeholder keeps the reply text-sized.
   form.append('image_export_mode', 'placeholder');
-  const submit = await call(fetchImpl, `${base}${DOCLING_SUBMIT_PATH}`, { method: 'POST', body: form, headers: { accept: 'application/json' } }, Math.min(left(), 120_000));
+  const submit = await call(fetchImpl, `${base}${DOCLING_SUBMIT_PATH}`, { method: 'POST', body: form, headers }, Math.min(left(), 120_000));
   if (submit.status === 422) {
     return fail('parser-error', `The document parser (Docling) rejected the upload${detailOf(submit.json) ? `: ${detailOf(submit.json)}` : ''}.`);
   }
@@ -173,7 +191,7 @@ export async function convertWithDocling(doc: DoclingDocument, opts: DoclingOpti
     const poll = await call(
       fetchImpl,
       `${base}${DOCLING_STATUS_PATH}/${encodeURIComponent(taskId)}?wait=${wait}`,
-      { method: 'GET', headers: { accept: 'application/json' } },
+      { method: 'GET', headers },
       Math.min(left(), wait * 1000 + 10_000),
     );
     if (poll.status === 200 && poll.json) {
@@ -199,7 +217,7 @@ export async function convertWithDocling(doc: DoclingDocument, opts: DoclingOpti
   const result = await call(
     fetchImpl,
     `${base}${DOCLING_RESULT_PATH}/${encodeURIComponent(taskId)}`,
-    { method: 'GET', headers: { accept: 'application/json' } },
+    { method: 'GET', headers },
     Math.max(1000, Math.min(left(), 60_000)),
   );
   if (result.status !== 200 || !result.json) return unreachable('return the converted text', result);

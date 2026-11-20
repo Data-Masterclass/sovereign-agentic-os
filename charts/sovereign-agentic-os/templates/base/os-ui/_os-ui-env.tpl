@@ -244,6 +244,14 @@
 - name: DOCLING_URL
   value: {{ . | quote }}
 {{- end }}
+{{- if .Values.docling.enabled }}
+# docling-serve's API key, sent as X-Api-Key (the same Secret the docling pod reads).
+- name: DOCLING_API_KEY
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "soa.doclingApiKeySecret" . }}
+      key: apiKey
+{{- end }}
 {{- with $u.transcribeUrl }}
 - name: TRANSCRIBE_URL
   value: {{ . | quote }}

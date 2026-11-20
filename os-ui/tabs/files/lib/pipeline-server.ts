@@ -108,7 +108,7 @@ export function runDescribe(principal: BackfillPrincipal, opts: { batch?: number
 
 /** The live extraction wiring: the real Docling, the real object store, the ordinary indexer. */
 export const LIVE_EXTRACT_DEPS: ExtractDeps = {
-  convert: (doc) => convertWithDocling(doc, { baseUrl: config.doclingUrl, timeoutMs: config.doclingTimeoutMs }),
+  convert: (doc) => convertWithDocling(doc, { baseUrl: config.doclingUrl, apiKey: config.doclingApiKey, timeoutMs: config.doclingTimeoutMs }),
   getBlob,
   index: reindexFile,
   // The text exists now (including when it arrived in the background): describe it, off this path.

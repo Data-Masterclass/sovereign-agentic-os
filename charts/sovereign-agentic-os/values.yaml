@@ -869,14 +869,35 @@ opa:
 # Docling — document parsing (docling-serve).
 docling:
   enabled: true
+  # OUR derived image (images/extensions/docling): upstream docling-serve-cpu v1.38.2 plus the
+  # Apache-2.0 TableFormer v2 weights and the MiniLM tokenizer, with the CDLA-licensed TableFormer
+  # v1 weights removed. Built by build-images.yml (`docling-v<tag>`). The tag is
+  # <docling-serve version>-<our build>; set `digest` once the image is pushed.
   image:
-    repository: quay.io/docling-project/docling-serve-cpu
-    tag: "latest"
-    digest: sha256:7b7448d333e0e444adcc3818c65f87bc3e5861bea4f72100e4ac49048d73eae3
-  # 4Gi (was 2Gi): a warmed docling-serve idles near 1.7Gi and one photo-sized image
-  # OOM-killed it at 2Gi (2026-11-19). The request stays small; only the ceiling moves.
+    repository: ghcr.io/data-masterclass/sovereign-os/docling
+    tag: "1.38.2-1"
+    digest: ""
+  # docling-serve settings (docs/configuration.md, v1.38.2), rendered as DOCLING_SERVE_* env.
+  maxFileSize: 52428800        # 50 MiB
+  maxNumPages: 400
+  maxDocumentTimeout: 900      # seconds; os-ui's DOCLING_TIMEOUT_MS (600 s) stays below it
+  resultRemovalDelay: 600      # seconds a fetched result is kept (results are single-use)
+  workers: 1                   # ENG_LOC_NUM_WORKERS: each worker holds its own model set
+  showVersionInfo: true        # exposes GET /version (the deploy's live evidence)
+  # API key (DOCLING_SERVE_API_KEY), sent by os-ui as X-Api-Key. Resolution: `apiKey.existingSecret`
+  # (e.g. created by an ExternalSecret; key `apiKey`) → `apiKey.value` → the value already in the
+  # chart's `docling-api-key` Secret → a random value on first install.
+  apiKey:
+    existingSecret: ""
+    value: ""
+  # Ingress allowlist: only os-ui and os-ui-worker may call :5001
+  # (templates/base/network/docling-ingress-policy.yaml).
+  networkPolicy:
+    enabled: true
+  # Request at the warm idle level so the scheduler does not overcommit the node; the 4Gi ceiling
+  # stays (one photo-sized image OOM-killed it at 2Gi, 2026-11-19).
   resources:
-    requests: { cpu: 100m, memory: 512Mi }
+    requests: { cpu: 500m, memory: 1Gi }
     limits: { cpu: "2", memory: 4Gi }
 
 # Dagster — data orchestrator (subchart).
