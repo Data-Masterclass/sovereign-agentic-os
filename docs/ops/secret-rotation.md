@@ -297,7 +297,18 @@ at this checkout's `charts/sovereign-agentic-os`. Run deploy.sh from this checko
 
 - `scripts/ops/rotate-secrets.sh baseline --chart charts/sovereign-agentic-os --context dmagenticos`
   (the tag with no overlay, against the live release) must change **0 objects**;
-- `plan` of each overlay must change only Secrets and env.
+- `plan` of each overlay must change only Secrets and env. Measured against the live 0.9.23 release
+  with throwaway overlays:
+  - step 1: `Secret litellm-credentials` (masterkey), plus `env` of `Deployment agentic-os-litellm`
+    and of `Job agentic-os-litellm-migrations` (plus its `checksum/config` annotation);
+  - final: the Secrets `litellm-credentials`, `langfuse-init`, `langfuse-core-secrets` and
+    `agent-runtime-token`, plus `env` of agentic-os-litellm, os-ui, os-ui-worker and the
+    migrations Job;
+  - 0 objects added or removed.
+
+  The migrations Job's pod template is immutable, so `plan` refuses while a Job from the previous
+  deploy still exists. It deletes itself 120 s after it finishes: wait that long between step 1
+  and step 2.
 
 This main's `core-secrets.yaml` also refuses an `encryptionKey` that is not 64 hex characters. The
 tag does not, and the rotation does not need it: `prepare` generates the key with `openssl rand -hex 32`.
