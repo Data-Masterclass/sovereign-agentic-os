@@ -9,6 +9,7 @@ import { routeFor } from '@core/infra/trino-source';
 import { ARTIFACT_OUTPUT_SCHEMA, tableArtifact } from '@core/runtime/chat-artifacts';
 import { readPrincipalFor } from '@tabs/data/lib/store-fqn';
 import { sanitizeSingleStatement } from '@tabs/data/lib/sql-guard';
+import { datasetVersionReadTools } from '@tabs/data/mcp/dataset-version-tools';
 
 /** #28: extracted from server.ts so it stops statically importing
  *  `@/lib/experimental/data/{store-fqn,sql-guard}` (data tab, non-base). */
@@ -67,4 +68,6 @@ export const dataQueryTools: McpTool[] = [
       return { principal: trinoPrincipal, authorized: true, policy: authz.policy, traced, ...result };
     },
   },
+  // WP-37: a dataset's DATA versions (its Iceberg snapshots), read as the caller.
+  ...datasetVersionReadTools,
 ];

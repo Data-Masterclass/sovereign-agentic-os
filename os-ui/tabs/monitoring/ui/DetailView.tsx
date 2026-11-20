@@ -12,7 +12,7 @@
  *     404 are shown as plain messages.
  *   - Agent sections: 7-day telemetry, system profile, last-run report, run history (Langfuse +
  *     in-process ring), governed tool calls, errors. Dataset sections: DQ, medallion build,
- *     versions and lineage.
+ *     lineage. (Data versions are the table's Iceberg snapshots, shown in the Data tab.)
  */
 'use client';
 
@@ -67,8 +67,6 @@ type DatasetDetail = {
     sourceLabel?: { text: string; title: string } | null;
   };
   layers: { layer: string; built: boolean; passThrough: boolean; quality: string; updatedAt: string | null }[];
-  versions: { snapshotId: string; at: string; author: string; summary: string }[];
-  versionsNote?: string;
   lineage: { nodes: { id: string; kind: string; label: string; sublabel: string; built: boolean }[]; edges: { from: string; to: string; kind: string }[] };
   links: { data: string };
 };
@@ -460,23 +458,7 @@ function DatasetBody({ d }: { d: DatasetDetail }) {
         ))}
       </div>
 
-      {d.versions.length > 0 && (
-        <>
-          <div className="mon-sub">Versions (Iceberg snapshots)</div>
-          <div className="mon-table">
-            <div className="mon-tr mon-th mon-tr-ver"><span>Snapshot</span><span>When</span><span>By</span><span>Change</span></div>
-            {d.versions.slice(0, 12).map((v) => (
-              <div key={v.snapshotId} className="mon-tr mon-tr-ver">
-                <span className="muted mono" title={v.snapshotId}>{v.snapshotId.slice(-8)}</span>
-                <span className="muted">{ago(v.at)}</span>
-                <span className="ellip">{v.author}</span>
-                <span className="ellip">{v.summary}</span>
-              </div>
-            ))}
-          </div>
-        </>
-      )}
-      {d.versions.length === 0 && d.versionsNote ? <div className="hint">Versions: {d.versionsNote}</div> : null}
+      {/* Data versions are the table's Iceberg snapshots (WP-37): the Data tab's Versions panel. */}
 
       {/* ── Lineage ── */}
       {d.lineage.nodes.length > 0 && (

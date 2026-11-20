@@ -52,17 +52,15 @@ const BUNDLES: BundleSpec[] = [
     feature: 'data',
     name: 'data-write',
     load: async () => {
-      const [write, promo, exposure, read, waveb, versions] = await Promise.all([
+      const [write, promo, exposure, read, waveb] = await Promise.all([
         import('@core/mcp/experimental/data-write-tools'),
         import('@core/mcp/experimental/promotion-write-tools'),
         import('@core/mcp/experimental/exposure-write-tools'),
         import('@tabs/admin/mcp/discovery-read-tools'),
         import('@tabs/admin/mcp/discovery-waveb-tools'),
-        import('@tabs/data/mcp/dataset-version-tools'),
       ]);
       return [
         ...write.dataWriteTools,
-        ...versions.datasetVersionReadTools,
         ...promo.promotionTools,
         ...byTab(exposure.exposureWriteTools, 'data'),
         ...byTab(read.readTools, 'data'),

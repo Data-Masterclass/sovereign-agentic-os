@@ -9,7 +9,7 @@
  *   - Reads: `queryRun` as the viewer's principal (Trino → OPA governs `$snapshots`, `$refs` and
  *     every `FOR VERSION AS OF` read). Restore: `executeRun` (the approved-write path, which admits
  *     `rollback_to_snapshot` with a literal id and applies the same schema/role floor as any write).
- *   - Tags and branches: data-runner `POST /refs` (PyIceberg → Polaris `set-snapshot-ref`), after
+ *   - Tags and branches: `core/adapters/data-runner/refs.ts` (PyIceberg → Polaris `set-snapshot-ref`), after
  *     the OS edit gate here; Trino 476 has no statement that creates a ref.
  *   - The dataset → table rule (one dataset, its own table, never a shared one) is in
  *     `dataset-versions.ts`; this file only supplies the side effects.
@@ -17,8 +17,7 @@
 import 'server-only';
 import { queryRun, executeRun } from '@core/infra/governed';
 import { routeForTable } from '@core/infra/trino-source';
-import { serviceBearerHeader } from '@core/infra/service-bearer';
-import { config } from '@core/kernel/config';
+import { createIcebergRef } from '@core/adapters/data-runner/refs';
 import type { Role } from '@core/kernel/session';
 import { getDataset, listAllDatasets, requireDatasetEditable, type Principal } from '@tabs/data/lib/store';
 import type { Layer } from '@tabs/data/lib/dataset-schema';
@@ -39,16 +38,8 @@ function depsFor(user: Principal): VersionDeps {
       await executeRun(sql, { principal: who.principal, uid: who.uid, domains: who.domains, role: who.role as Role }, routeForTable(fqn, SURFACE, user.domains));
     },
     createRef: async (body) => {
-      const res = await fetch(`${config.dataRunnerUrl}/refs`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', ...serviceBearerHeader() },
-        body: JSON.stringify(body),
-        signal: AbortSignal.timeout(20_000),
-      });
-      const text = await res.text();
-      let data: { ok?: boolean; error?: string } = {};
-      try { data = JSON.parse(text); } catch { throw new Error(`data-runner returned non-JSON: ${text.slice(0, 200)}`); }
-      if (!res.ok || data.ok === false) throw new Error(data.error ?? `data-runner /refs ${res.status}`);
+      const r = await createIcebergRef(body);
+      if (!r.ok) throw Object.assign(new Error(r.detail), { status: r.reason === 'forbidden' ? 403 : r.reason === 'unreachable' || r.reason === 'timeout' ? 503 : 400 });
     },
   };
 }
