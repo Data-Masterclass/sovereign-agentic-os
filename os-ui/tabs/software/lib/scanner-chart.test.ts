@@ -139,7 +139,9 @@ test('the scan pods get DNS + the DB mirror, and are off the in-namespace plane'
   // The blanket namespace allows must EXCLUDE the scanner, or the dedicated policy means nothing
   // (NetworkPolicy is additive).
   const egress = read(EGRESS);
-  const notIn = [...egress.matchAll(/operator: NotIn, values: \[([^\]]*)\]/g)].map((m) => m[1]);
+  // Component-keyed exclusions only: the API-server allow also excludes the model gateway by NAME while
+  // it is behind the egress proxy (its own policy is templates/base/litellm/egress-policy.yaml).
+  const notIn = [...egress.matchAll(/key: app\.kubernetes\.io\/component, operator: NotIn, values: \[([^\]]*)\]/g)].map((m) => m[1]);
   assert.equal(notIn.length, 2, 'the intra-namespace and API-server allows');
   for (const v of notIn) assert.ok(v.includes('software-scanner'), `scanner must be excluded: ${v}`);
 });
