@@ -1,0 +1,25 @@
+# Stands in for Langfuse's OTLP endpoint: accepts only the Basic credentials LiteLLM was given
+# (so a Collector that drops the Authorization header loses every span) and writes what it
+# receives to a file the test reads.
+extensions:
+  basicauth/langfuse:
+    htpasswd:
+      inline: |
+        pk-lf-filter-it:sk-lf-filter-it-not-a-secret
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+        auth:
+          authenticator: basicauth/langfuse
+exporters:
+  file:
+    path: /out/spans.jsonl
+    flush_interval: 1s
+service:
+  extensions: [basicauth/langfuse]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      exporters: [file]
