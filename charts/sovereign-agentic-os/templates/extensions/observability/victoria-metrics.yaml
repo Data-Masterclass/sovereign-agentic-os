@@ -1,0 +1,84 @@
+{{- if .Values.observability.enabled }}
+{{- /*
+  victoria-metrics single-node (WP-05, design 00 §6). Apache-2.0. Fed by the OpenTelemetry Collector over
+  OTLP; queried by os-ui and its own web UI (vmui) over HTTP. Docs: https://docs.victoriametrics.com/victoriametrics/single-server-victoriametrics/
+*/}}
+{{- $v := .Values.observability.victoriaMetrics }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: victoria-metrics
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "victoria-metrics") | nindent 4 }}
+spec:
+  replicas: 1
+  serviceName: victoria-metrics
+  selector:
+    matchLabels:
+      {{- include "soa.selectorLabels" (dict "ctx" . "component" "victoria-metrics") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "soa.labels" . | nindent 8 }}
+        {{- include "soa.selectorLabels" (dict "ctx" . "component" "victoria-metrics") | nindent 8 }}
+    spec:
+      {{- include "soa.priorityClassName" (dict "ctx" . "tier" "observability") | nindent 6 }}
+      securityContext:
+        {{- include "soa.podSecurityContext" . | nindent 8 }}
+        runAsUser: 65534
+        runAsGroup: 65534
+        fsGroup: 65534
+      containers:
+        - name: victoria-metrics
+          image: "{{ $v.image.repository }}:{{ $v.image.tag }}@{{ $v.image.digest }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          args:
+            - "-storageDataPath=/storage"
+            - "-retentionPeriod={{ $v.retentionPeriod }}"
+            - "-httpListenAddr=:8428"
+            - "-loggerFormat=json"
+            # OTLP names to Prometheus names (k8s.pod.memory.working_set -> k8s_pod_memory_working_set_bytes),
+            # so PromQL works without quoting dotted names.
+            - "-opentelemetry.usePrometheusNaming"
+          securityContext:
+            {{- include "soa.containerSecurityContext" . | nindent 12 }}
+            readOnlyRootFilesystem: true
+          ports:
+            - { name: http, containerPort: 8428 }
+          readinessProbe:
+            httpGet: { path: /health, port: http }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            {{- toYaml $v.resources | nindent 12 }}
+          volumeMounts:
+            - { name: storage, mountPath: /storage }
+  volumeClaimTemplates:
+    - metadata:
+        name: storage
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- include "soa.storageClass" . | nindent 8 }}
+        resources:
+          requests:
+            storage: {{ $v.storage }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: victoria-metrics
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "victoria-metrics") | nindent 4 }}
+spec:
+  selector:
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "victoria-metrics") | nindent 4 }}
+  ports:
+    - { name: http, port: 8428, targetPort: http }
+{{- end }}

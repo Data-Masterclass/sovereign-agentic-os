@@ -38,6 +38,10 @@ rules:
   - apiGroups: ["apps"]
     resources: ["deployments", "statefulsets", "deployments/scale", "statefulsets/scale"]
     verbs: ["get", "list", "patch", "update"]
+  # WP-05: the OpenTelemetry Collector is a DaemonSet; its status row is read, never scaled.
+  - apiGroups: ["apps"]
+    resources: ["daemonsets"]
+    verbs: ["get", "list"]
   - apiGroups: ["postgresql.cnpg.io"]
     resources: ["clusters"]
     verbs: ["get", "list"]

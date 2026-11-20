@@ -2330,3 +2330,69 @@ externalSecrets:
   handover: []
   # Step 2: Secrets ESO writes (names from files/external-secrets/catalog.yaml); the chart stops rendering them.
   managed: []
+
+# =============================================================================
+# Observability (WP-05, design 00 §6): an OpenTelemetry Collector feeding VictoriaMetrics and
+# VictoriaLogs, all Apache-2.0 (Grafana and Loki are AGPL-3.0 and excluded). Pins, docs and licences:
+# components/otel-collector/UPSTREAM.md, components/victoriametrics/UPSTREAM.md.
+# Sized for the single node (scripts/check-capacity.mjs), lowest platform priority class: under
+# memory pressure observability is evicted first (00 §10.1 decision 2).
+observability:
+  enabled: true
+  collector:
+    # The Kubernetes distribution (otel/opentelemetry-collector-releases, distributions/otelcol-k8s):
+    # file_log, kubelet_stats, otlp, filter, headers_setter, health_check — nothing else needed.
+    image:
+      repository: otel/opentelemetry-collector-k8s
+      tag: "0.165.0"
+      digest: sha256:ce55d0a38923c83120e4ba613fbdf446786652d2ce9f29d1cd7879e5d869829f
+    resources:
+      requests: { cpu: 50m, memory: 128Mi }
+      limits: { cpu: 500m, memory: 256Mi }
+    # Go soft memory limit, about 85 % of the memory limit above.
+    goMemLimit: 215MiB
+    # Pod CPU / memory from each node's kubelet (/stats/summary).
+    kubeletStats:
+      enabled: true
+      interval: 30s
+    # Container logs of every pod on the node (/var/log/pods), JSON lines parsed into fields, so a
+    # LogsQL query can filter on `decision_id` (OPA) or `trace_id` (os-ui).
+    podLogs:
+      enabled: true
+    # OPTION for WP-32 — LiteLLM's `langfuse_otel` export routed through the Collector.
+    # LiteLLM posts to `<LANGFUSE_OTEL_HOST>/api/public/otel/v1/traces`; with this on, point
+    # LiteLLM's `LANGFUSE_OTEL_HOST` at `http://otel-collector:4319` (litellm.envVars). The
+    # Collector forwards LiteLLM's own Basic-auth header (headers_setter), so it holds no Langfuse key.
+    # Off by default; see docs/ops/litellm-otel-collector-filter.md.
+    litellmLangfuse:
+      enabled: false
+      # Drop LiteLLM spans that have no parent (`IsRootSpan()`): the background DB polls under
+      # LITELLM_OTEL_LANGFUSE_SPAN_SCOPE=full. A generation called with a `traceparent` has a parent
+      # and passes. Caveat: a call WITHOUT `traceparent` is a root too and is dropped as well.
+      dropOrphanSpans: false
+      serviceName: litellm
+      # Langfuse's OTLP base; otlp_http appends /v1/traces.
+      langfuseEndpoint: http://agentic-os-langfuse-web:3000/api/public/otel
+  victoriaMetrics:
+    image:
+      repository: victoriametrics/victoria-metrics
+      tag: v1.156.0
+      digest: sha256:da8a90ac0912f16589be2b96a6441a2fca4bca415c83783d972d92e3b5b66970
+    retentionPeriod: 14d
+    storage: 5Gi
+    resources:
+      requests: { cpu: 50m, memory: 256Mi }
+      limits: { cpu: 500m, memory: 512Mi }
+  victoriaLogs:
+    image:
+      repository: victoriametrics/victoria-logs
+      tag: v1.54.0
+      digest: sha256:ee4e820cac3721f5f5d91641b950c22439593adc4224f9655e5333d5a84c1dfe
+    # OPA decision logs carry principal ids: kept 7 days, then deleted by VictoriaLogs.
+    retentionPeriod: 7d
+    storage: 5Gi
+    # Leave headroom on the PVC: VictoriaLogs drops the oldest data above this.
+    maxDiskSpaceUsageBytes: 4GiB
+    resources:
+      requests: { cpu: 50m, memory: 256Mi }
+      limits: { cpu: 500m, memory: 1Gi }

@@ -16,7 +16,13 @@ export type Fetched<T> =
   | { ok: true; value: T; at: string }
   | { ok: false; reason: FetchedFailure; detail: string; at: string };
 
-export type ComponentHealth = { version: string; status: 'ready' | 'degraded'; detail?: string };
+/**
+ * What a component says about itself (design 00 §6): `status` from its own health endpoint,
+ * `version` from its own version endpoint — `null` only when the component has no version
+ * endpoint (the Platform page then shows the running pod's image tag and says so). The check time
+ * is `Fetched.at`. A component that cannot be reached is `ok:false`, never a version.
+ */
+export type ComponentHealth = { version: string | null; status: 'ready' | 'degraded'; detail?: string };
 
 export interface Adapter {
   readonly id: string;

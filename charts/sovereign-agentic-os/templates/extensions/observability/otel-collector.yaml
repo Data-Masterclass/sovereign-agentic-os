@@ -1,0 +1,325 @@
+{{- if .Values.observability.enabled }}
+{{- /*
+  OpenTelemetry Collector (WP-05, design 00 §6). Apache-2.0.
+  One agent per node (DaemonSet): the file_log receiver reads /var/log/pods and kubelet_stats reads
+  the local kubelet, so each node needs its own Collector — on today's single node that is exactly
+  one pod. Signals:
+    metrics: OTLP + kubelet_stats            -> VictoriaMetrics (OTLP ingestion)
+    logs:    OTLP + file_log (all pods)      -> VictoriaLogs   (OTLP ingestion)
+    traces/langfuse (option, off):  LiteLLM's langfuse_otel export -> [filter] -> Langfuse OTLP
+  OPA decision logs reach VictoriaLogs through the file_log receiver: OPA writes them to its
+  console (decision_logs.console), one JSON line each (design 00 Reconciliation #5).
+  Docs: https://opentelemetry.io/docs/collector/configuration/
+*/}}
+{{- $o := .Values.observability }}
+{{- $c := $o.collector }}
+{{- $ll := $c.litellmLangfuse | default dict }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: otel-collector
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "otel-collector") | nindent 4 }}
+{{- if $c.kubeletStats.enabled }}
+---
+# kubelet_stats with auth_type serviceAccount: the kubelet authorizes GET /stats/summary as
+# `nodes/stats` (https://kubernetes.io/docs/reference/access-authn-authz/kubelet-authn-authz/).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ .Release.Name }}-otel-collector
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["nodes/stats"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ .Release.Name }}-otel-collector
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ .Release.Name }}-otel-collector
+subjects:
+  - kind: ServiceAccount
+    name: otel-collector
+    namespace: {{ .Release.Namespace }}
+{{- end }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: otel-collector
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "otel-collector") | nindent 4 }}
+data:
+  config.yaml: |
+    extensions:
+      health_check:
+        endpoint: 0.0.0.0:13133
+      {{- if $ll.enabled }}
+      # Forwards the Authorization header LiteLLM sent (Basic <public:secret> of Langfuse), so
+      # the Collector never holds a Langfuse key.
+      headers_setter:
+        headers:
+          - action: upsert
+            key: Authorization
+            from_context: authorization
+      {{- end }}
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+      {{- if $ll.enabled }}
+      # LiteLLM's langfuse_otel exporter posts to <host>/api/public/otel/v1/traces.
+      otlp/litellm_langfuse:
+        protocols:
+          http:
+            endpoint: 0.0.0.0:4319
+            include_metadata: true
+            traces_url_path: /api/public/otel/v1/traces
+      {{- end }}
+      {{- if $c.podLogs.enabled }}
+      file_log:
+        include: [/var/log/pods/*/*/*.log]
+        # Not its own logs: a Collector that ships its own output can feed back on itself.
+        exclude: [/var/log/pods/{{ .Release.Namespace }}_otel-collector-*/*/*.log]
+        start_at: end
+        include_file_path: true
+        include_file_name: false
+        operators:
+          # CRI / docker line format + k8s.namespace.name, k8s.pod.name, k8s.container.name from
+          # the path (https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/main/pkg/stanza/docs/operators/container.md).
+          - type: container
+            id: container-parser
+          # A JSON line (OPA decision logs, os-ui) becomes fields, so LogsQL can filter on
+          # decision_id / trace_id. Any other line stays as it is.
+          - type: json_parser
+            id: json-body
+            if: 'body matches "^\\s*\\{"'
+            parse_from: body
+            parse_to: attributes
+            on_error: send_quiet
+      {{- end }}
+      {{- if $c.kubeletStats.enabled }}
+      kubelet_stats:
+        collection_interval: {{ $c.kubeletStats.interval }}
+        auth_type: serviceAccount
+        endpoint: https://${env:K8S_NODE_IP}:10250
+        # The kubelet's serving certificate is self-signed on most distributions (kind, SKE).
+        insecure_skip_verify: true
+        metric_groups: [node, pod, container]
+      {{- end }}
+    processors:
+      memory_limiter:
+        check_interval: 1s
+        limit_percentage: 80
+        spike_limit_percentage: 25
+      batch: {}
+      resource/node:
+        attributes:
+          - key: k8s.node.name
+            value: ${env:K8S_NODE_NAME}
+            action: upsert
+      {{- if $ll.enabled }}
+      # Keep the request's Authorization with its spans through batching (headers_setter reads it).
+      batch/langfuse:
+        metadata_keys: [authorization]
+      {{- if $ll.dropOrphanSpans }}
+      # WP-32: LiteLLM 1.109.1 under span scope `full` exports its background jobs (DB polls)
+      # as root spans. A span without a parent from LiteLLM's service is dropped; a generation of a
+      # call that carried a `traceparent` has a parent and passes.
+      # OTTL: https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/processor/filterprocessor
+      filter/litellm_orphan_spans:
+        error_mode: ignore
+        traces:
+          span:
+            - 'resource.attributes["service.name"] == "{{ $ll.serviceName }}" and IsRootSpan()'
+      {{- end }}
+      {{- end }}
+    exporters:
+      # https://docs.victoriametrics.com/victoriametrics/integrations/opentelemetry/
+      otlp_http/victoriametrics:
+        metrics_endpoint: http://victoria-metrics:8428/opentelemetry/v1/metrics
+      # https://docs.victoriametrics.com/victorialogs/data-ingestion/opentelemetry/
+      otlp_http/victorialogs:
+        logs_endpoint: http://victoria-logs:9428/insert/opentelemetry/v1/logs
+        headers:
+          VL-Stream-Fields: k8s.namespace.name,k8s.pod.name,k8s.container.name
+      {{- if $ll.enabled }}
+      otlp_http/langfuse:
+        endpoint: {{ $ll.langfuseEndpoint }}
+        auth:
+          authenticator: headers_setter
+      {{- end }}
+    service:
+      extensions: [health_check{{ if $ll.enabled }}, headers_setter{{ end }}]
+      telemetry:
+        logs:
+          encoding: json
+        metrics:
+          # The Collector's own metrics; each carries service_version, which os-ui's health() reads.
+          readers:
+            - pull:
+                exporter:
+                  prometheus:
+                    host: 0.0.0.0
+                    port: 8888
+      pipelines:
+        metrics:
+          receivers: [otlp{{ if $c.kubeletStats.enabled }}, kubelet_stats{{ end }}]
+          processors: [memory_limiter, resource/node, batch]
+          exporters: [otlp_http/victoriametrics]
+        logs:
+          receivers: [otlp{{ if $c.podLogs.enabled }}, file_log{{ end }}]
+          processors: [memory_limiter, resource/node, batch]
+          exporters: [otlp_http/victorialogs]
+        {{- if $ll.enabled }}
+        traces/langfuse:
+          receivers: [otlp/litellm_langfuse]
+          processors: [memory_limiter{{ if $ll.dropOrphanSpans }}, filter/litellm_orphan_spans{{ end }}, batch/langfuse]
+          exporters: [otlp_http/langfuse]
+        {{- end }}
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: otel-collector
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "otel-collector") | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "soa.selectorLabels" (dict "ctx" . "component" "otel-collector") | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ toJson $c | sha256sum }}
+      labels:
+        {{- include "soa.labels" . | nindent 8 }}
+        {{- include "soa.selectorLabels" (dict "ctx" . "component" "otel-collector") | nindent 8 }}
+    spec:
+      serviceAccountName: otel-collector
+      {{- include "soa.priorityClassName" (dict "ctx" . "tier" "observability") | nindent 6 }}
+      securityContext:
+        seccompProfile:
+          type: {{ .Values.global.podSecurity.seccompProfile }}
+        {{- if $c.podLogs.enabled }}
+        # /var/log/pods is root-owned (0640 files): reading it needs uid 0. No capabilities, no
+        # privilege escalation, read-only root filesystem, the host paths read-only.
+        runAsUser: 0
+        runAsGroup: 0
+        runAsNonRoot: false
+        {{- else }}
+        runAsNonRoot: true
+        runAsUser: 10001
+        {{- end }}
+      containers:
+        - name: otel-collector
+          image: "{{ $c.image.repository }}:{{ $c.image.tag }}@{{ $c.image.digest }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          args: ["--config=/conf/config.yaml"]
+          securityContext:
+            {{- include "soa.containerSecurityContext" . | nindent 12 }}
+            readOnlyRootFilesystem: true
+          env:
+            - name: K8S_NODE_NAME
+              valueFrom: { fieldRef: { fieldPath: spec.nodeName } }
+            - name: K8S_NODE_IP
+              valueFrom: { fieldRef: { fieldPath: status.hostIP } }
+            # A soft Go heap limit under the container limit (memory_limiter acts first, at 80 %).
+            - name: GOMEMLIMIT
+              value: {{ $c.goMemLimit | quote }}
+          ports:
+            - { name: otlp-grpc, containerPort: 4317 }
+            - { name: otlp-http, containerPort: 4318 }
+            {{- if $ll.enabled }}
+            - { name: otlp-langfuse, containerPort: 4319 }
+            {{- end }}
+            - { name: metrics, containerPort: 8888 }
+            - { name: health, containerPort: 13133 }
+          # Generous timeouts: the first pass over every pod log on the node is CPU-bound, and a
+          # slow answer then must not restart the Collector.
+          readinessProbe:
+            httpGet: { path: /, port: health }
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet: { path: /, port: health }
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            {{- toYaml $c.resources | nindent 12 }}
+          volumeMounts:
+            - { name: config, mountPath: /conf, readOnly: true }
+            {{- if $c.podLogs.enabled }}
+            - { name: varlogpods, mountPath: /var/log/pods, readOnly: true }
+            {{- end }}
+      volumes:
+        - name: config
+          configMap:
+            name: otel-collector
+        {{- if $c.podLogs.enabled }}
+        - name: varlogpods
+          hostPath:
+            path: /var/log/pods
+            type: Directory
+        {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: otel-collector
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "otel-collector") | nindent 4 }}
+spec:
+  selector:
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "otel-collector") | nindent 4 }}
+  ports:
+    - { name: otlp-grpc, port: 4317, targetPort: otlp-grpc }
+    - { name: otlp-http, port: 4318, targetPort: otlp-http }
+    {{- if $ll.enabled }}
+    - { name: otlp-langfuse, port: 4319, targetPort: otlp-langfuse }
+    {{- end }}
+    - { name: metrics, port: 8888, targetPort: metrics }
+    - { name: health, port: 13133, targetPort: health }
+{{- if and .Values.networkPolicies.defaultDeny $c.kubeletStats.enabled }}
+---
+# The kubelet listens on the node's IP (port 10250), which is neither an in-namespace pod nor the
+# API server, so default-deny-egress would block kubelet_stats. Port-only, like the API-server rule.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: otel-collector-kubelet-egress
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "soa.selectorLabels" (dict "ctx" . "component" "otel-collector") | nindent 6 }}
+  policyTypes:
+    - Egress
+  egress:
+    - ports:
+        - { protocol: TCP, port: 10250 }
+{{- end }}
+{{- end }}

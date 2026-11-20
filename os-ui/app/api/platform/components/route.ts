@@ -4,7 +4,7 @@
 import { NextResponse } from 'next/server';
 import { requireAdmin } from '@core/kernel/auth';
 import { listComponentsWithStatus } from '@tabs/admin/lib/platform';
-import { versionFor } from '@tabs/admin/lib/components-extra';
+import { componentRows } from '@tabs/admin/lib/component-health';
 import { config } from '@core/kernel/config';
 
 export const dynamic = 'force-dynamic';
@@ -21,7 +21,9 @@ export const runtime = 'nodejs';
  * The browser only ever talks to THIS route — the k8s token never reaches the
  * client.
  *
- * Nav consolidation: each component also carries `version` and — where the
+ * Each component also carries `version`, `versionSource`, `versionNote` and `health`, read live
+ * from the component's own endpoint (`component-health.ts`, design 00 §6) — never typed in; a
+ * component that cannot be reached carries the reason instead of a version. Where the
  * tool has a browser-reachable native console — `consoleUrl`, resolved from
  * the RUNTIME env (consoleEnv; an explicit empty value on a deploy means "not
  * publicly exposed" and the UI honestly hides the link). This is what the old
@@ -38,9 +40,8 @@ function consoleUrlFor(id: string): string {
 export async function GET() {
   try {
     await requireAdmin();
-    const components = (await listComponentsWithStatus()).map((c) => ({
+    const components = (await componentRows(await listComponentsWithStatus())).map((c) => ({
       ...c,
-      version: versionFor(c.id),
       consoleUrl: consoleUrlFor(c.id),
     }));
     return NextResponse.json({ components });

@@ -40,7 +40,9 @@ type Component = {
   login: string;
   summary: string;
   toggle: boolean;
-  version: string;
+  /** Read live from the component (null when it cannot be reached; the reason is in versionNote). */
+  version: string | null;
+  versionNote: string;
   consoleUrl: string;
 };
 
@@ -270,9 +272,11 @@ export default function ComponentsPage() {
                         >
                           <span className={`comp-dot ${b.cls}`} />
                           <span className="comp-name">{c.name}</span>
-                          {c.version && c.version !== 'n/a' ? (
-                            <span className="comp-ver mono">{c.version}</span>
-                          ) : null}
+                          {c.version ? (
+                            <span className="comp-ver mono" title={c.versionNote}>{c.version}</span>
+                          ) : (
+                            <span className="comp-ver muted" title={c.versionNote}>{c.versionNote}</span>
+                          )}
                           <span className="comp-blurb muted">{subline(c)}</span>
                         </button>
                         <span className={`badge ${b.cls}`}>{b.label}</span>

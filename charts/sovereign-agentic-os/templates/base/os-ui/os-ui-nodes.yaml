@@ -1,0 +1,32 @@
+{{- if .Values.osUI.enabled }}
+{{- /*
+  WP-05 (design 00 §6): the Platform page lists the real nodes from GET /api/v1/nodes
+  (tabs/admin/lib/cluster-nodes.ts). Nodes are cluster-scoped, so this is a ClusterRole: read-only,
+  nodes only — no nodes/proxy, no nodes/stats, nothing else.
+*/}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ .Release.Name }}-os-ui-nodes
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ .Release.Name }}-os-ui-nodes
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ .Release.Name }}-os-ui-nodes
+subjects:
+  - kind: ServiceAccount
+    name: os-ui
+    namespace: {{ .Release.Namespace }}
+{{- end }}

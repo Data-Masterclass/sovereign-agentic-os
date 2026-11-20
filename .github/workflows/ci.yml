@@ -422,6 +422,63 @@ jobs:
         if: always()
         run: docker compose -f tests/langfuse/compose.yaml -p wp31-langfuse down -v
 
+  # WP-05: the observability stack on the real images. The chart's Collector, VictoriaMetrics,
+  # VictoriaLogs and OPA on kind (OTLP in, PromQL/LogsQL out, an OPA decision in VictoriaLogs);
+  # os-ui's health() against real containers (version = the chart's pin; stopped = unreachable);
+  # the LiteLLM orphan-span filter on LiteLLM 1.109.1, with its negative twin (filter off).
+  test-observability:
+    name: test-observability
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Setup Node.js
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: 22
+      - name: Setup Helm
+        uses: azure/setup-helm@fe7b79cd5ee1e45176fcad797de68ecaf3ca4814 # v4.2.0
+        with:
+          version: v3.16.3
+      - name: Chart dependencies + os-ui install
+        run: |
+          pip install "pyyaml>=6,<7"
+          helm dependency build charts/sovereign-agentic-os || helm dependency update charts/sovereign-agentic-os
+          npm --prefix os-ui ci
+      - name: Stack on kind (Collector, VictoriaMetrics, VictoriaLogs, OPA)
+        run: |
+          curl -sSLo /tmp/kind https://github.com/kubernetes-sigs/kind/releases/download/v0.30.0/kind-linux-amd64
+          echo "517ab7fc89ddeed5fa65abf71530d90648d9638ef0c4cde22c2c11f8097b8889  /tmp/kind" | sha256sum -c -
+          chmod +x /tmp/kind && /tmp/kind create cluster --name wp05 --wait 120s
+          bash tests/observability/kind-up.sh
+      - name: stack.int.test (OTLP in; VictoriaMetrics / VictoriaLogs APIs out; OPA decision log)
+        env:
+          OBS_IT: '1'
+        run: node --test --test-concurrency=1 tests/observability/stack.int.test.mjs
+      - name: Stack logs (on failure)
+        if: failure()
+        run: kubectl --context kind-wp05 -n obs-it logs ds/otel-collector --tail 100 || true
+      - name: Remove the kind cluster
+        if: always()
+        run: /tmp/kind delete cluster --name wp05 || true
+      - name: health.int.test (real Trino, OpenSearch, OPA, Postgres, Victoria stack, Collector)
+        env:
+          HEALTH_IT: '1'
+        run: |
+          sudo sysctl -w vm.max_map_count=262144
+          bash tests/observability/health-up.sh
+          cd os-ui && node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test --test-concurrency=1 core/adapters/health/health.int.test.ts
+      - name: LiteLLM orphan-span filter (on; then off = negative twin)
+        run: |
+          bash tests/observability/health-up.sh down
+          bash tests/observability/litellm-filter/run.sh on
+          bash tests/observability/litellm-filter/run.sh off
+      - name: Filter logs (on failure)
+        if: failure()
+        run: |
+          docker logs --tail 80 wp05ll-collector || true
+          docker logs --tail 80 wp05ll-litellm || true
+
   # GLUE-6 + C1: generated config through the component's OWN tool, in containers pinned to the
   # chart's images — dbt parse + dbt compile and dagster definitions validate (the chart's Dagster
   # image, built here with a layer cache; dbt compile against the chart's Trino image), opa check
@@ -564,7 +621,7 @@ jobs:
     name: build
     runs-on: ubuntu-latest
     if: ${{ always() }}
-    needs: [test-ui, test-langgraph-pg, test-opensearch, test-lakehouse, test-dagster-feed, tracing-e2e, validate-generated, test-python, dagster-image, git-http-image, test-opa, test-opa-bundle, test-postgres, helm-lint, secret-scan, artifacts-eject, dashboards-eject, test-backup]
+    needs: [test-ui, test-langgraph-pg, test-opensearch, test-lakehouse, test-dagster-feed, tracing-e2e, validate-generated, test-python, dagster-image, git-http-image, test-opa, test-opa-bundle, test-postgres, helm-lint, secret-scan, artifacts-eject, dashboards-eject, test-backup, test-observability]
     steps:
       - name: Every needed job succeeded (failed, cancelled or skipped fails the build)
         env:
