@@ -546,8 +546,8 @@ test_owner_still_drops_own_personal_table_on_iceberg if {
 	allow with input as purge_drop_input("jonas", "iceberg") with data.governance as mock_data
 }
 
-test_the_query_tool_login_may_become_the_purge_user if {
-	allow with input as {
+test_not_even_the_query_tool_login_impersonates_the_purge_user if {
+	not allow with input as {
 		"context": {"identity": {"user": "svc-os-ui"}},
 		"action": {"operation": "ImpersonateUser", "resource": {"user": {"user": "os-domain-delete"}}},
 	}
