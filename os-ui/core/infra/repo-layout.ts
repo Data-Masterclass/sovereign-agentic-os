@@ -181,11 +181,47 @@ function seg(s: string, what: string): string {
 export function agentSystemDir(system: string): string {
   return `${AGENTS_DIR}/${seg(system, 'agent system')}`;
 }
+// The files of one agent system's native LangGraph module (WP-53), RELATIVE to its directory.
+/** The generated LangGraph JS module (the code that runs). */
+export const AGENT_GRAPH_FILE = 'graph.mjs';
+/** The ejector: runs `graph.mjs` with a model URL and key and local tools, no OS present. */
+export const AGENT_RUNNER_FILE = 'run.mjs';
+/** Pinned npm dependencies, and the lockfile that pins their sub-dependencies. */
+export const AGENT_PACKAGE_FILE = 'package.json';
+export const AGENT_LOCK_FILE = 'package-lock.json';
+/** One system prompt per agent: `prompts/<agent id>.md`. */
+export const AGENT_PROMPTS_DIR = 'prompts';
+/** Example inputs an engineer can replay. */
+export const AGENT_EVALS_FILE = 'evals/cases.json';
+/** Generated files a push may never change (contract C5); prompts are ingested instead. */
+export const AGENT_GENERATED_FILES = [AGENT_GRAPH_FILE, AGENT_RUNNER_FILE, AGENT_PACKAGE_FILE, AGENT_LOCK_FILE] as const;
+
+/** The prompt file of one agent, relative to the system directory. */
+export function agentPromptFile(agentId: string): string {
+  return `${AGENT_PROMPTS_DIR}/${seg(agentId, 'agent')}.md`;
+}
+
+/** An agent's durable memory notes, appended to its prompt: `prompts/<agent id>.memory.md`. */
+export function agentMemoryFile(agentId: string): string {
+  return `${AGENT_PROMPTS_DIR}/${seg(agentId, 'agent')}.memory.md`;
+}
+
+/** `prompts/<id>.md` or `prompts/<id>.memory.md` → which agent and which field, else null. */
+export function parseAgentPromptFile(relPath: string): { agentId: string; field: 'agent_md' | 'memory_md' } | null {
+  const m = /^prompts\/([a-z0-9][a-z0-9_-]{0,63})(\.memory)?\.md$/.exec(relPath);
+  return m ? { agentId: m[1], field: m[2] ? 'memory_md' : 'agent_md' } : null;
+}
+
+/** The files the OS LOADS and therefore hash-verifies before import: the graph and its prompts. */
+export function isLoadedAgentModuleFile(relPath: string): boolean {
+  return relPath === AGENT_GRAPH_FILE || (relPath.startsWith(`${AGENT_PROMPTS_DIR}/`) && relPath.endsWith('.md'));
+}
+
 export function agentGraphPath(system: string): string {
-  return `${agentSystemDir(system)}/graph.mjs`;
+  return `${agentSystemDir(system)}/${AGENT_GRAPH_FILE}`;
 }
 export function agentRunPath(system: string): string {
-  return `${agentSystemDir(system)}/run.mjs`;
+  return `${agentSystemDir(system)}/${AGENT_RUNNER_FILE}`;
 }
 export const AGENTS_INDEX_PATH = `${AGENTS_DIR}/index.yml`;
 

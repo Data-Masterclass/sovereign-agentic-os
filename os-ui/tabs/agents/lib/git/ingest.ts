@@ -24,7 +24,8 @@ import { load } from 'js-yaml';
 import { AUDIENCE_MANAGED, registerRepoKind, type ChangedFile, type IngestReport, type Pusher } from '@core/infra/git-receive';
 import { runWithSurface } from '@core/infra/request-surface';
 import { readBlob } from '@core/infra/git-store';
-import { parseSystem } from '@tabs/agents/lib/system-schema';
+import { parseSystem, serializeSystem } from '@tabs/agents/lib/system-schema';
+import { parseAgentPromptFile } from '@core/infra/repo-layout';
 import { createSystem, getSystem, writeFile, type Principal } from '@tabs/agents/lib/store';
 
 /** The `ingestFromRepo` key for this kind. */
@@ -35,6 +36,14 @@ export const SYSTEM_YAML_RE = /^agents\/(?:personal\/[^/]+\/)?[^/]+\/system\.yam
 
 export function matchesAgentSystem(filePath: string): boolean {
   return SYSTEM_YAML_RE.test(filePath);
+}
+
+/** `agents/[personal/<owner>/]<slug>/prompts/<agent>.md` or `<agent>.memory.md` (WP-53). */
+export const PROMPT_RE = /^(agents\/(?:personal\/[^/]+\/)?[^/]+)\/(prompts\/[^/]+\.md)$/;
+
+export function matchesAgentPrompt(filePath: string): boolean {
+  const m = PROMPT_RE.exec(filePath);
+  return !!m && parseAgentPromptFile(m[2]) !== null;
 }
 
 /** The ONE validator — `parseSystem`, exactly as the builder's save path calls it. */
@@ -109,6 +118,30 @@ export async function ingestAgentSystems(
       report.notes.push(`${file.path} was removed from the repo; retire the system in the OS to delete it`);
       continue;
     }
+    const prompt = PROMPT_RE.exec(file.path);
+    if (prompt) {
+      // WP-53: a pushed prompt is a native source. It is written into the definition through the
+      // governed store, which regenerates the module, so the committed graph and prompts stay
+      // what the OS generates (and hash-verifies) — never a hand edit the loader would refuse.
+      const target = parseAgentPromptFile(prompt[2])!;
+      const systemId = index.get(prompt[1]);
+      try {
+        if (!systemId) throw new Error('no system is registered at this directory in agents/index.yml');
+        runWithSurface('git:push', () => {
+          const current = getSystem(systemId, principal);
+          const sys = parseSystem(current.yaml);
+          const agent = sys.agents.find((a) => a.id === target.agentId);
+          if (!agent) throw new Error(`agent '${target.agentId}' is not in this system`);
+          agent[target.field] = file.content!.replace(/\s+$/, '');
+          writeFile(systemId, principal, { path: 'system.yaml', content: serializeSystem(sys), sha: '' });
+        });
+        report.updated += 1;
+      } catch (e) {
+        report.skipped += 1;
+        report.notes.push(`${file.path}: ${e instanceof Error ? e.message : String(e)}`);
+      }
+      continue;
+    }
     const dir = file.path.replace(/\/system\.yaml$/, '');
     if (isOsLayerSystemYaml(file.content)) {
       // WP-53: once the team is a generated `graph.mjs`, `system.yaml` holds OS metadata only and
@@ -156,8 +189,9 @@ export async function ingestAgentSystems(
 export function registerAgentSystemIngest(): void {
   registerRepoKind({
     kind: AGENT_SYSTEM_KIND,
-    matches: matchesAgentSystem,
-    validate: validateSystemYaml,
+    matches: (p) => matchesAgentSystem(p) || matchesAgentPrompt(p),
+    // A prompt is free text (its size is bounded by the gate); system.yaml goes through parseSystem.
+    validate: (f) => (matchesAgentPrompt(f.path) ? null : validateSystemYaml(f)),
     ingest: ingestAgentSystems,
   });
 }

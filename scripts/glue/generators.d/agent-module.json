@@ -3,7 +3,7 @@
   "generators": [
     {
       "module": "tabs/agents/lib/module/generate.ts",
-      "parts": ["core/infra/agent-module-layout.ts", "core/adapters/agent-module/load.ts", "tabs/agents/lib/git/generate.ts"],
+      "parts": ["core/adapters/agent-module/load.ts", "tabs/agents/lib/git/generate.ts"],
       "component": "LangGraph JS",
       "validator": "node --check; LangGraph getGraph() (tabs/agents/lib/module/module.test.ts)",
       "goldens": [

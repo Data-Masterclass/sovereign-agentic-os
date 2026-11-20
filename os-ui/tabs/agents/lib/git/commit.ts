@@ -28,7 +28,7 @@
  *   - Server-only: reaches node:fs + isomorphic-git through the git store.
  */
 import 'server-only';
-import { installedModuleVersions } from '@tabs/agents/lib/module/versions';
+import { hostModuleInputs } from '@tabs/agents/lib/module/versions';
 import { config } from '@core/kernel/config';
 import {
   commitSubtree,
@@ -150,7 +150,7 @@ export async function commitAgentSystem(domain: string, actor: ActorIdentity, me
   if (!agentProjectGitEnabled()) return null;
   const snapshot = projectSnapshot(domain, deps.captured);
   // WP-53 (`AGENT_GRAPH_MODULE`, default off): the native LangGraph module replaces graph.json.
-  const files = generateAgentFiles(snapshot, config.agentGraphModule ? { module: { versions: installedModuleVersions() } } : {});
+  const files = generateAgentFiles(snapshot, config.agentGraphModule ? { module: hostModuleInputs() } : {});
   const object = meta.object ?? domain;
   const message = commitMessage({
     area: 'agents',

@@ -44,6 +44,7 @@ import { config } from '@core/kernel/config';
 import { acquireRepoLock, listTree, MAIN, repoExists, repoPath, RepoLockTimeoutError, type TreeEntry } from '@core/infra/git-store';
 import * as git from 'isomorphic-git';
 import { redact } from '@core/auth/access-tokens';
+import { AGENT_GENERATED_FILES, AGENTS_DIR } from '@core/infra/repo-layout';
 
 /** The managed-by-the-OS rejection, in the owner's words. Asserted verbatim by the tests. */
 export const MANAGED_BY_OS = 'managed by the OS; change it in Governance or over the MCP';
@@ -75,6 +76,20 @@ export const OS_OWNED_PREFIXES = ['os/', 'macros/'] as const;
  * the connection. `packages.yml` would fetch third-party code into the OS's build.
  */
 export const OS_OWNED_FILES = ['dbt_project.yml', 'profiles.yml', 'packages.yml', 'agents/index.yml'] as const;
+
+/**
+ * GENERATED AGENT CODE (contract C5, WP-53). An agent system's `graph.mjs`, `run.mjs`,
+ * `package.json` and `package-lock.json` are generated from its definition and the OS executes
+ * `graph.mjs` only when it is byte-identical to what it generates. A push to them is refused;
+ * the team's topology is edited in the OS, and its prompts (`prompts/*.md`) are pushable.
+ */
+export const GENERATED_AGENT_CODE = 'generated from the agent system; change the team in the OS or over the MCP (its prompts/*.md are pushable)';
+
+export function isGeneratedAgentCode(p: string): boolean {
+  if (!p.startsWith(`${AGENTS_DIR}/`)) return false;
+  const base = p.slice(p.lastIndexOf('/') + 1);
+  return (AGENT_GENERATED_FILES as readonly string[]).includes(base);
+}
 
 /** Default bounded wait for the per-domain lock before a push is failed rather than hung. */
 export const DEFAULT_LOCK_TIMEOUT_MS = 20_000;
@@ -339,6 +354,9 @@ export function decidePath(filePath: string, pusher: Pusher): PathVerdict {
   }
   if ((OS_OWNED_FILES as readonly string[]).includes(p)) {
     return { allowed: false, reason: `'${p}' is ${MANAGED_BY_OS}` };
+  }
+  if (isGeneratedAgentCode(p)) {
+    return { allowed: false, reason: `'${p}' is ${GENERATED_AGENT_CODE}` };
   }
   if (/(^|\/)grants?\.(ya?ml|json)$/i.test(p)) {
     return { allowed: false, reason: `'${p}' is a grant file — ${MANAGED_BY_OS}` };

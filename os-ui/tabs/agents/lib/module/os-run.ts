@@ -39,7 +39,7 @@ import { generateAgentModule } from '@tabs/agents/lib/module/generate';
 import { AgentModuleIntegrityError, loadAgentModule, readCommittedModule } from '@core/adapters/agent-module/load';
 import { createOsAgent, memoryHoldStore, migrateHoldStore, postgresHoldStore, type HoldStore } from '@tabs/agents/lib/module/os-agent';
 import { memoryModuleRunStamps, migrateModuleRunStamps, postgresModuleRunStamps, runAgentModule, type ModuleRunResult, type ModuleRunStamps } from '@tabs/agents/lib/module/run';
-import { installedModuleVersions } from '@tabs/agents/lib/module/versions';
+import { hostModuleInputs } from '@tabs/agents/lib/module/versions';
 
 type Stores = { kind: 'postgres' | 'memory'; saver: unknown; holds: HoldStore; stamps: ModuleRunStamps };
 
@@ -62,6 +62,32 @@ export async function moduleStores(databaseUrl: string | undefined): Promise<Sto
 /** Did this run start on its module? (A run with no stamp resumes on the v1 engine.) */
 export async function isModuleRun(runId: string, databaseUrl: string | undefined): Promise<boolean> {
   return (await (await moduleStores(databaseUrl)).stamps.get(runId)) !== null;
+}
+
+/**
+ * Which module a run executes. A NEW run: the repo HEAD, verified against what the generator
+ * produces from the current definition. A RESUME: the commit stamped at the run's start, verified
+ * against the stamped digest — never HEAD, so editing a parked team or upgrading os-ui never swaps
+ * the graph under a checkpoint.
+ */
+export async function loadModuleForRun(input: {
+  domain: string;
+  dir: string;
+  stamp: { commit: string | null; digest: string } | null;
+  expected: () => Map<string, string>;
+  cacheRoot: string;
+  /** The ref a NEW run reads (default HEAD). */
+  ref?: string;
+  reposDir?: string;
+}) {
+  const opts = input.reposDir ? { reposDir: input.reposDir } : {};
+  if (input.stamp) {
+    if (!input.stamp.commit) throw new AgentModuleIntegrityError(['the run has no stamped commit to resume from']);
+    const at = await readCommittedModule(input.domain, input.dir, input.stamp.commit, opts);
+    return loadAgentModule({ committed: at.files, expectedDigest: input.stamp.digest, commit: at.commit, cacheRoot: input.cacheRoot });
+  }
+  const head = await readCommittedModule(input.domain, input.dir, input.ref, opts);
+  return loadAgentModule({ committed: head.files, expected: input.expected(), commit: head.commit, cacheRoot: input.cacheRoot });
 }
 
 export type ModuleTeamInput = {
@@ -89,15 +115,14 @@ export async function runOsTeamOnModule(input: ModuleTeamInput): Promise<ModuleR
   const domain = input.sys.system.domain;
   const dir = systemRepoPaths(domain, input.systemId)[0]?.replace(/\/$/, '');
   if (!dir) throw new AgentModuleIntegrityError([`system '${input.systemId}' has no directory in the '${domain}' repository yet`]);
-  const committed = await readCommittedModule(domain, dir, undefined);
-  const expected = generateAgentModule({ id: input.systemId, slug: dir.split('/').pop() ?? input.systemId, sys: input.sys, disabledAgents: input.disabledAgents, versions: installedModuleVersions() });
-  const loaded = await loadAgentModule({
-    committed: committed.files,
-    expected: expected.files,
-    commit: committed.commit,
+  const stores = await moduleStores(input.databaseUrl);
+  const loaded = await loadModuleForRun({
+    domain,
+    dir,
+    stamp: input.task === undefined ? await stores.stamps.get(input.runId) : null,
+    expected: () => generateAgentModule({ id: input.systemId, slug: dir.split('/').pop() ?? input.systemId, sys: input.sys, disabledAgents: input.disabledAgents, ...hostModuleInputs() }).files,
     cacheRoot: config.agentModuleCacheDir || path.join(os.tmpdir(), 'os-agent-modules'),
   });
-  const stores = await moduleStores(input.databaseUrl);
   const writeSystem = loaded.module.TOOL_NAMES.some((t) => isWriteTool(t));
   const graph = createOsAgent(loaded.module, {
     modelFor: (a) => requireGatewayChatModel({ model: a.model ?? roleModel('tools'), caller: input.caller, writeSystem }),

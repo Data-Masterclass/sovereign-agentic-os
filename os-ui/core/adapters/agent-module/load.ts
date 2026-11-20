@@ -9,7 +9,7 @@
  *   - Input: the module files read from the domain repo AT ONE COMMIT (`readCommittedModule`, via
  *     `core/infra/git-store.ts` `readFilesAt`) and the files the generator produces from the
  *     system's definition. Every file the OS loads (`graph.mjs` + `prompts/*.md`, see
- *     `core/infra/agent-module-layout.ts`) must be present in the commit with the SAME sha256; one missing, extra
+ *     `core/infra/repo-layout.ts`) must be present in the commit with the SAME sha256; one missing, extra
  *     or different file is `AgentModuleIntegrityError` and nothing is imported.
  *   - The verified bytes are written to `<cacheRoot>/<digest>/` (content-addressed: the digest is
  *     sha256 over the sorted `path sha256` lines), and imported from there with a dynamic
@@ -25,7 +25,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { readFilesAt, type GitStoreOptions } from '@core/infra/git-store';
 import type { Fetched } from '@core/adapters/_contract';
-import { isLoadedModuleFile, MODULE_GRAPH } from '@core/infra/agent-module-layout';
+import { isLoadedAgentModuleFile as isLoadedModuleFile, AGENT_GRAPH_FILE as MODULE_GRAPH } from '@core/infra/repo-layout';
 
 /** What a loaded `graph.mjs` exports (the generator's contract). */
 export type LoadedGraphModule = {
@@ -113,12 +113,26 @@ const PROBLEM_SEP = '; ';
  */
 export async function tryLoadAgentModule(input: {
   committed: Map<string, string>;
-  expected: Map<string, string>;
+  /**
+   * A NEW run: the files the generator produces from the current definition — every loaded file
+   * must match them. A RESUME passes `expectedDigest` instead: the digest stamped when the run
+   * started, so a parked run continues on exactly the module it began with, even after the team
+   * was edited or os-ui was upgraded.
+   */
+  expected?: Map<string, string>;
+  expectedDigest?: string;
   commit: string | null;
   cacheRoot: string;
 }): Promise<Fetched<LoadedAgentModule>> {
   const at = new Date().toISOString();
-  const problems = moduleIntegrityProblems(input.committed, input.expected);
+  if ((input.expected === undefined) === (input.expectedDigest === undefined)) {
+    return { ok: false, reason: 'invalid', detail: 'give exactly one of expected (new run) or expectedDigest (resume)', at };
+  }
+  const problems = input.expected
+    ? moduleIntegrityProblems(input.committed, input.expected)
+    : moduleDigest(input.committed) === input.expectedDigest
+      ? []
+      : [`the module at ${input.commit ?? 'this commit'} has digest ${moduleDigest(input.committed).slice(0, 12)}, not the stamped ${String(input.expectedDigest).slice(0, 12)}`];
   if (problems.length > 0) return { ok: false, reason: 'conflict', detail: problems.join(PROBLEM_SEP), at };
   const digest = moduleDigest(input.committed);
   mkdirSync(input.cacheRoot, { recursive: true });

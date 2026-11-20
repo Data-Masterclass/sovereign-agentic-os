@@ -42,6 +42,10 @@ ENV NODE_ENV=production \
 # `output: 'standalone'` emits a self-contained server + only the traced deps.
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
+# WP-53: the lockfile beside node_modules. A generated agent module's package-lock.json is the
+# closure of its packages in it (tabs/agents/lib/module/versions.ts), so `npm ci` next to
+# run.mjs installs exactly the tree this image runs.
+COPY --from=deps /app/package-lock.json ./package-lock.json
 
 # The COMPILE GATE (tabs/software/lib/compile-gate.ts) type-checks app commits against
 # the default TS libs + real React types AT RUNTIME. Standalone tracing drops

@@ -34,24 +34,23 @@ import { holdDecisionFor } from '@tabs/agents/lib/build/hold';
 import { migrateToolCallLedger, postgresToolCallLedger, withToolCallLedger } from '@tabs/agents/lib/engine/tool-call-ledger';
 import { FIXTURE_USER } from '@tabs/agents/lib/engine/parity-harness';
 import { HELD_YAML, pgApprovalPort, prepareFixtureTables } from '@tabs/agents/lib/engine/hitl.pg-fixture';
-import { generateAgentModule, type ModuleVersions } from '@tabs/agents/lib/module/generate';
-import { installedModuleVersions } from '@tabs/agents/lib/module/versions';
-import { loadAgentModule, readCommittedModule } from '@core/adapters/agent-module/load';
+import { generateAgentModule } from '@tabs/agents/lib/module/generate';
+import { hostModuleInputs } from '@tabs/agents/lib/module/versions';
 import { createOsAgent, migrateHoldStore, postgresHoldStore } from '@tabs/agents/lib/module/os-agent';
 import { requireGatewayChatModel } from '@core/adapters/litellm/chat-model';
 import { migrateModuleRunStamps, postgresModuleRunStamps, runAgentModule } from '@tabs/agents/lib/module/run';
+import { loadModuleForRun } from '@tabs/agents/lib/module/os-run';
 import type { ApprovalDecision } from '@tabs/agents/lib/engine/approval-port';
 
 export const SYSTEM_ID = 'sys-wp53';
 export const SYSTEM_DIR = 'agents/wp53';
 export const DOMAIN = 'sales';
 const OS_UI = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../../..');
-/** The pins os-ui runs with (read from the installed packages, as production does). */
-export const moduleVersions = (): ModuleVersions => installedModuleVersions();
+
 
 /** The module the OS generates for the fixture system (HELD_YAML: one writer, a held write). */
 export function expectedModule(yaml = HELD_YAML) {
-  return generateAgentModule({ id: SYSTEM_ID, slug: 'wp53', sys: parseSystem(yaml), versions: moduleVersions() });
+  return generateAgentModule({ id: SYSTEM_ID, slug: 'wp53', sys: parseSystem(yaml), ...hostModuleInputs() });
 }
 
 export type ModuleStepInput = {
@@ -64,6 +63,8 @@ export type ModuleStepInput = {
   policy?: 'held' | 'not-held';
   resume?: { interruptId: string; decision: ApprovalDecision };
   crashAfter?: string;
+  /** The definition THIS process holds (default HELD_YAML) — a test edits it while a run is parked. */
+  yaml?: string;
 };
 
 export type ModuleStepOutput = {
@@ -90,9 +91,18 @@ export async function runModuleStep(input: ModuleStepInput): Promise<ModuleStepO
     await migrateModuleRunStamps(pool);
     await migrateHoldStore(pool);
     const sys = parseSystem(HELD_YAML);
-    // What runs is what is in git: the module read at the commit, verified against the generator.
-    const at = await readCommittedModule(DOMAIN, SYSTEM_DIR, input.commit, { reposDir: input.reposDir });
-    const loaded = await loadAgentModule({ committed: at.files, expected: expectedModule().files, commit: at.commit, cacheRoot: input.cacheRoot });
+    // What runs is what is in git. A new run: the module at `commit`, verified against what the
+    // generator produces from the definition. A resume: the commit stamped at the run's start.
+    const stamps = postgresModuleRunStamps(pool);
+    const loaded = await loadModuleForRun({
+      domain: DOMAIN,
+      dir: SYSTEM_DIR,
+      stamp: input.step === 'start' ? null : await stamps.get(input.runId),
+      ref: input.commit,
+      expected: () => expectedModule(input.yaml ?? HELD_YAML).files,
+      cacheRoot: input.cacheRoot,
+      reposDir: input.reposDir,
+    });
     const spy: OsToolDeps = {
       enqueue: (() => { throw new Error('the executor must not hold under holdAt:node'); }) as unknown as OsToolDeps['enqueue'],
       handleRpc: (async (user: CurrentUser, req: JsonRpcRequest): Promise<JsonRpcResponse> => {
@@ -122,7 +132,7 @@ export async function runModuleStep(input: ModuleStepInput): Promise<ModuleStepO
         ...(input.step === 'start' ? { task: 'File the promotion of the Q3 findings.' } : {}),
         ...(input.resume ? { resumeDecision: input.resume } : {}),
         approvals: pgApprovalPort(pool),
-        stamps: postgresModuleRunStamps(pool),
+        stamps,
         runner: { id: FIXTURE_USER.id, role: FIXTURE_USER.role, domains: FIXTURE_USER.domains },
         agent: `os-${SYSTEM_ID}`,
         module: { digest: loaded.digest, commit: loaded.commit },
