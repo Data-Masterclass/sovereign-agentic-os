@@ -229,15 +229,12 @@ allow := false if {
 	c != purge_catalog
 }
 
-# Under Trino authentication (WP-14) the query-tool logs in as `svc-os-ui` and impersonates the
-# session user; that is the ONE login that may become the purge user (the query-tool only does so for
-# the admin delete-domain run). Every other impersonation of it is denied.
-purge_impersonator := "svc-os-ui"
-
+# Nobody impersonates the purge user — not even the query-tool's `svc-os-ui` login. Under Trino
+# authentication (WP-14) the query-tool reaches it only as a DIRECT login (`trino.auth.
+# queryToolDirectUsers` + its password file), which is what a delete window must configure.
 allow := false if {
 	input.action.operation == "ImpersonateUser"
 	input.action.resource.user.user == purge_user
-	user != purge_impersonator
 }
 
 # Defense-in-depth on the row-filter entry point: even if a future config only wires
