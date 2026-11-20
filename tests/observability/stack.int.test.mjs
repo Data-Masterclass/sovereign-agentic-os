@@ -152,7 +152,7 @@ test('file_log reads platform namespaces only, and masks secrets in what it stor
   const stored = JSON.stringify(rows[0]);
   for (const secret of ['hunter2-real-secret', 'abcdefghijklmnop0123', 'sk-litellm-abcdefgh12345678', 's3cr3tpw']) assert.ok(!stored.includes(secret), `secret ${secret} reached VictoriaLogs: ${stored}`);
   assert.equal(rows[0].password, undefined, 'a field named password was stored');
-  assert.match(rows[0].note, /Bearer \*\*\* .*sk-\*\*\*.*postgres:\/\/app:\*\*\*@pg-rw/);
+  assert.match(rows[0].note, /Authorization: \*\*\*.*sk-\*\*\*.*postgres:\/\/app:\*\*\*@pg-rw/);
   assert.equal(String(rows[0]['usage.total_tokens']), '42', 'a token COUNT was masked as if it were a secret');
   // Negative twin: the same kind of line from a non-platform namespace never arrives.
   await sleep(15_000);
