@@ -134,7 +134,7 @@ for (const [shape, make] of Object.entries(SHAPES)) {
     assert.ok(a.endsWith('\n') && !a.endsWith('\n\n'));
   });
 
-  test(`spec-valid: ${shape} has no violation against DSI ${DBT_SEMANTIC_SPEC.dsiVersion}`, () => {
+  test(`spec-valid: ${shape} has no violation against MetricFlow ${DBT_SEMANTIC_SPEC.metricflowVersion}`, () => {
     assert.deepEqual(validateSemanticDoc(make()), []);
   });
 }
@@ -216,13 +216,15 @@ test('the validator refuses what fails dbt parse: unknown enum, missing grain, d
 });
 
 test('the pinned spec version is one constant, and the key whitelists carry no field the floor lacks', () => {
-  assert.equal(DBT_SEMANTIC_SPEC.dsiVersion, '0.7.5');
-  assert.equal(DBT_SEMANTIC_SPEC.dbtCore, '1.9.11');
+  // dbt-core 1.12 carries the semantic interfaces inside MetricFlow (`metricflow_semantic_interfaces`);
+  // the separate dbt-semantic-interfaces package is gone (WP-17, 01 M4).
+  assert.equal(DBT_SEMANTIC_SPEC.metricflowVersion, '0.214.0');
+  assert.equal(DBT_SEMANTIC_SPEC.dbtCore, '1.12.7');
   // `cumulative_type_params` does NOT exist in DSI 0.5.x (dbt 1.8); the floor must therefore be
   // >= 1.9, and the OS images' pin must allow it. If the images move, this is the tripwire.
   assert.equal(DBT_SEMANTIC_SPEC.minDbtCore, '1.9');
   // Raised from `>=1.8` by review M-1: the emitted fields below do not exist on 1.8 at all.
-  assert.equal(DBT_SEMANTIC_SPEC.imagePin, 'dbt-core==1.9.11');
+  assert.equal(DBT_SEMANTIC_SPEC.imagePin, 'dbt-core==1.12.7');
   assert.ok(ALLOWED_KEYS.metricTypeParams.includes('cumulative_type_params'));
   // 1.12 ("Fusion") renames these; none of the 1.12-only spellings may leak into the whitelist.
   for (const list of Object.values(ALLOWED_KEYS)) {
