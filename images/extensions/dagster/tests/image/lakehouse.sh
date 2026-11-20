@@ -156,19 +156,20 @@ bronze="$(q 'select count(*) from iceberg.personal_alice.bronze_shop_orders' | t
 silver="$(q 'select count(*) from iceberg.personal_alice.silver_shop_orders' | tr -d '"')"
 gold="$(q "select customer || ':' || cast(orders as varchar) from iceberg.personal_alice.gold_shop_orders order by 1" | tr -d '"' | tr '\n' ' ')"
 snaps="$(q 'select count(*) from iceberg.personal_alice."silver_shop_orders$snapshots"' | tr -d '"')"
-writer="$(q "select distinct \"user\" from system.runtime.queries where query like 'INSERT INTO%raw_shop_orders%'" | tr -d '"' | tr '\n' ' ')"
+# Trino records the writing user in every Iceberg snapshot summary (`trino_user`).
+writer="$(q "select distinct summary['trino_user'] from iceberg.landing_sales_alice.\"raw_shop_orders\$snapshots\"" | tr -d '"' | tr '\n' ' ')"
 echo "   landing=$landing bronze=$bronze silver=$silver gold=[$gold] silver_snapshots=$snaps dlt_writer=[$writer]"
 [ "$landing" = 5 ] && ok "landing: dlt sql_table loaded 4 rows, then only the 1 new row (incremental cursor)" || bad "landing rows = $landing, want 5"
 [ "$bronze" = 5 ] && ok "bronze: dbt incremental model over the landing, no row twice (5 rows)" || bad "bronze rows = $bronze, want 5"
 [ "$silver" = 4 ] && ok "silver: the authored model rebuilt from bronze (4 rows with amount > 0; the legacy row replaced)" || bad "silver rows = $silver, want 4"
 [ "$gold" = "ann:2 bob:2 " ] && ok "gold: built by dbt from silver" || bad "gold = [$gold]"
 [ "${snaps:-0}" -ge 2 ] && ok "adopted silver kept its Iceberg history ($snaps snapshots)" || bad "silver snapshots = $snaps, want >= 2"
-case "$writer" in *alice*) ok "dlt wrote through Trino as the principal (alice)";; *) bad "dlt writer = [$writer]";; esac
+case "$writer" in alice|"alice ") ok "dlt wrote through Trino as the principal (alice)";; *) bad "dlt writer = [$writer]";; esac
 
 # ---------------------------------------------------------------- 3. negative twin -------------
 python3 "$HERE/repo_v2.py" "$GOLDEN" "$WORK/neg" --tamper-os-read >/dev/null
 rm -rf "$WORK/neg/os" && chmod -R a+rwX "$WORK/neg"
-if docker run --rm --network "$NET" -v "$WORK/neg:/repo" -w /repo/data/dagster $ENV_LOCAL "$IMAGE" sh -c '(cd ../dbt && dbt parse --profiles-dir . -q) && dagster definitions validate -m definitions' >"$WORK/neg.log" 2>&1; then
+if docker run --rm --network "$NET" -v "$WORK/neg:/repo" -w /repo/data/dagster $ENV_LOCAL "$IMAGE" sh -c 'mkdir -p $DAGSTER_HOME && (cd ../dbt && dbt parse --profiles-dir . -q) && dagster definitions validate -m definitions' >"$WORK/neg.log" 2>&1; then
   bad "negative twin: definitions.py reading os/schedules.yml still loaded without the OS"
 else
   grep -q "schedules.yml" "$WORK/neg.log" && ok "negative twin: definitions.py reading os/schedules.yml fails without the OS" || { bad "negative twin failed for another reason"; tail -5 "$WORK/neg.log"; }
