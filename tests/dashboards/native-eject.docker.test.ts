@@ -255,5 +255,7 @@ test('EJECT: each panel’s OS SQL runs on a PLAIN Trino, and vl-convert renders
   const vlPairs = Object.fromEntries(bar.map((r) => [String(r.orders__region), Number(r.revenue)]));
   assert.deepEqual(echartsPairs, vlPairs);
   assert.equal(rendered['p_revenue-eu.vl.json'].marks.text, 1);
-  assert.equal(rendered['p_orders-by-month.vl.json'].marks.line, 1);
+  // A Vega line mark has one scene-graph item per point: one per month the OS query returned.
+  assert.equal(rendered['p_orders-by-month.vl.json'].marks.line, expected['p_orders-by-month.vl.json'].values.length);
+  assert.equal(expected['p_orders-by-month.vl.json'].values.length, 2, 'September and October');
 });
