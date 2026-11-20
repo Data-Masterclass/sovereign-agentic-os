@@ -1,4 +1,5 @@
-{{- if .Values.osUI.enabled }}
+{{- $nr := .Values.osUI.nodesReader | default dict }}
+{{- if and .Values.osUI.enabled (ne $nr.enabled false) }}
 {{- /*
   WP-05 (design 00 §6): the Platform page lists the real nodes from GET /api/v1/nodes
   (tabs/admin/lib/cluster-nodes.ts). Nodes are cluster-scoped, so this is a ClusterRole: read-only,

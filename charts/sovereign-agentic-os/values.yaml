@@ -1945,6 +1945,10 @@ metrics:
 
 # OS UI — the Next.js front door. App shell + live surfaces:
 osUI:
+  # WP-05: a read-only ClusterRole (get/list nodes) for the Platform page's node list
+  # (templates/base/os-ui/os-ui-nodes.yaml). Off = the page says the nodes are not readable.
+  nodesReader:
+    enabled: true
   enabled: true
   # Operational + external connector adoption (Connections tab and its MCP tools).
   # The template reads EXTERNAL_CONNECTORS_ENABLED; keep the key here so an

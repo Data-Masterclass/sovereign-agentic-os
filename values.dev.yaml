@@ -66,6 +66,11 @@ dbt:
     user: sales     # see "Synthetic seed" below: the fresh-install schema rule
 
 osUI:
+  # WP-05: no node-list ClusterRole on dev — the dev CI account deploys namespaced objects only
+  # (scripts/dev/manifests/ci-rbac.yaml) and may not create cluster RBAC. Platform says the nodes
+  # are not readable (403 → forbidden), never an invented list.
+  nodesReader:
+    enabled: false
   publicUrl: https://dev.agentic.datamasterclass.com
   offlineMock: refuse            # never invented numbers, also on dev
   allowOfflineUserSeed: false
@@ -344,3 +349,4 @@ dagster:
 # the dev node (capacity.dev.yaml gate: 85 %). Production runs it. Backup alerts stay on.
 observability:
   enabled: false
+
