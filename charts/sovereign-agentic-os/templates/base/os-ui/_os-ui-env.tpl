@@ -148,17 +148,16 @@
      container-env indentation for every line below. */}}
 {{- include "soa.serviceBearerEnv" . | nindent 0 }}
 {{- if .Values.softwareRunner.enabled }}
-# ---- Software live-app runner (Software tab). The os-ui provisions a
-# real Deployment+Service+Ingress per built app into softwareRunner.namespace
-# (RBAC in templates/os-ui/apps-runner.yaml). Per-app host is
-# <slug>.<domain>.<appsDomain>; runnerImage is the teaching default when a
-# built app has no image of its own. ----
+# ---- Software live-app runner (Software tab). The os-ui applies each app's
+# COMMITTED apps/<slug>/k8s/ manifests into softwareRunner.namespace (RBAC in
+# templates/os-ui/apps-runner.yaml; WP-54). Per-app host is
+# <slug>.<domain>.<appsDomain>; images must come from imageRegistry by digest. ----
 - name: SOFTWARE_RUNNER_NAMESPACE
   value: {{ .Values.softwareRunner.namespace | quote }}
 - name: OS_APPS_DOMAIN
   value: {{ .Values.softwareRunner.appsDomain | quote }}
-- name: SOFTWARE_RUNNER_IMAGE
-  value: {{ .Values.softwareRunner.runnerImage | quote }}
+- name: SOFTWARE_IMAGE_REGISTRY
+  value: {{ .Values.softwareRunner.imageRegistry | default "" | quote }}
 {{- if .Values.priorityClasses.enabled }}
 # WP-47: user apps run in the lowest PriorityClass (never above a platform pod, never preempting).
 - name: SOFTWARE_RUNNER_PRIORITY_CLASS

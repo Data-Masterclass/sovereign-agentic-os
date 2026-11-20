@@ -20,13 +20,12 @@ metadata:
   labels:
     {{- include "soa.labels" . | nindent 4 }}
     soa.dev/purpose: software-runner
-    {{- /* Pod Security Standards: enforce (nil-safe default `baseline` under
-           --reuse-values). Student apps run untrusted code; `baseline` blocks host
-           namespaces / privileged / hostPath. See the follow-up note in values.yaml
-           for the move to `restricted`. */}}
-    pod-security.kubernetes.io/enforce: {{ .Values.softwareRunner.podSecurityStandard | default "baseline" }}
+    {{- /* Pod Security Standards: enforce `restricted` (nil-safe default under
+           --reuse-values). Student apps run untrusted code; every app deploy is a
+           server-side dry run against this admission first (WP-54). */}}
+    pod-security.kubernetes.io/enforce: {{ .Values.softwareRunner.podSecurityStandard | default "restricted" }}
     pod-security.kubernetes.io/enforce-version: latest
-    pod-security.kubernetes.io/warn: {{ .Values.softwareRunner.podSecurityStandard | default "baseline" }}
+    pod-security.kubernetes.io/warn: {{ .Values.softwareRunner.podSecurityStandard | default "restricted" }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -68,11 +67,11 @@ subjects:
 {{- /*
   SECURITY (C2c/C2d): network isolation for the student-apps namespace.
 
-  Apps are UNTRUSTED code. A per-app workload serves one app from an image the
-  OPERATOR supplies (`softwareRunner.runnerImage`, or the app's own `runImage`) --
-  this repo builds no app-runner image and ships none, so with the default empty
-  value nothing is served and `start_preview` says so rather than substituting a
-  placeholder container.
+  Apps are UNTRUSTED code. A per-app workload is the app's OWN committed
+  `apps/<slug>/k8s/` manifests, running an image from `softwareRunner.imageRegistry`
+  pinned by digest (WP-54). This repo builds no app image and ships none; with no
+  registry configured nothing is served and `start_preview` says so. Apps may commit
+  only Deployment, Service and Ingress -- these NetworkPolicies stay the platform's.
 
   NOTE: this template itself deploys NO workload. It is the Namespace + RBAC +
   NetworkPolicy scaffolding that lets the os-ui process create those per-app
