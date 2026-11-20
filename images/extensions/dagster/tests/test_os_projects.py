@@ -15,6 +15,7 @@ ARCHITECTURE:
     the label the os-repos NetworkPolicy admits to the git daemon).
 """
 import json
+import re
 import os
 import sys
 import tempfile
@@ -707,7 +708,8 @@ class ChartContract(unittest.TestCase):
     def test_every_dagster_image_reference_carries_the_same_tag(self):
         """Part F / checklist D10: the OS's Dagster image is referenced in FOUR places in
         values.yaml — the user-deployment image, the repo-sync sidecar's inline
-        `sovereign-os/dagster:<tag>`, and the run launcher's two image blocks. A bump that
+        `<repo>:<tag>@<digest>`, and the webserver and daemon image blocks. Repository, tag and
+        digest must agree in all four. A bump that
         misses one silently runs a code location and its run pods on DIFFERENT images, which is
         exactly the "no driver, 0 runs" failure mode D10 exists to catch. The row claimed this
         was asserted here and it was not; now it is.
@@ -719,29 +721,28 @@ class ChartContract(unittest.TestCase):
         with open(path, encoding="utf-8") as fh:
             values = yaml.safe_load(fh)
 
-        tags = []
+        refs = []  # (where, repository, tag, digest)
         deployment = values["dagster"]["dagster-user-deployments"]["deployments"][0]
-        tags.append(("user-deployment image", deployment["image"]["tag"]))
+        img = deployment["image"]
+        refs.append(("user-deployment image", img["repository"], str(img["tag"]), img.get("digest")))
         sidecar = next(c for c in deployment["sidecarContainers"] if c["name"] == "repo-sync")
-        self.assertTrue(
-            sidecar["image"].startswith("sovereign-os/dagster:"),
-            "the repo-sync sidecar no longer runs the OS's Dagster image: %s" % sidecar["image"],
-        )
-        tags.append(("repo-sync sidecar image", sidecar["image"].split(":", 1)[1]))
+        m = re.match(r"^([^:@]+(?::\d+)?/[^:@]+):([^@]+)(?:@(sha256:[0-9a-f]{64}))?$", sidecar["image"])
+        self.assertIsNotNone(m, "the repo-sync sidecar image is not repo:tag[@digest]: %s" % sidecar["image"])
+        refs.append(("repo-sync sidecar image", m.group(1), m.group(2), m.group(3)))
         for block in ("dagsterWebserver", "dagsterDaemon"):
             image = values["dagster"][block]["image"]
+            refs.append(("%s image" % block, image["repository"], str(image["tag"]), image.get("digest")))
+        self.assertEqual(len(refs), 4, "expected FOUR image references; the chart changed shape")
+        for where, repo, _, _ in refs:
+            self.assertTrue(repo.endswith("/sovereign-os/dagster") or repo == "sovereign-os/dagster",
+                            "%s no longer runs the OS's Dagster image: %s" % (where, repo))
+        for field, idx in (("repository", 1), ("tag", 2), ("digest", 3)):
+            distinct = sorted({str(r[idx]) for r in refs})
             self.assertEqual(
-                image["repository"], "sovereign-os/dagster",
-                "%s no longer runs the OS's Dagster image" % block,
+                len(distinct), 1,
+                "the Dagster image %s disagrees across values.yaml: %s" % (field, ", ".join("%s=%s" % (r[0], r[idx]) for r in refs)),
             )
-            tags.append(("%s image" % block, image["tag"]))
-        self.assertEqual(len(tags), 4, "expected FOUR image references; the chart changed shape")
-
-        distinct = sorted({t for _, t in tags})
-        self.assertEqual(
-            len(distinct), 1,
-            "the Dagster image tag disagrees across values.yaml: %s" % ", ".join("%s=%s" % kv for kv in tags),
-        )
+        distinct = [refs[0][2]]
         # And it must be the OS's own image, never an upstream dagster tag.
         self.assertRegex(distinct[0], r"^\d+\.\d+\.\d+$", "the OS Dagster image tag is not a semver")
 

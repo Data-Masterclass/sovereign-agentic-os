@@ -999,8 +999,11 @@ dagster:
       # `reloadRepositoryLocation` and the OS's `DAGSTER_LOCATION` address (engine rebuild B2).
       - name: sovereign
         image:
-          repository: sovereign-os/dagster
-          tag: "0.3.1"
+          repository: ghcr.io/data-masterclass/sovereign-os/dagster
+          tag: "0.3.2"
+          # Pinned by digest (the subchart renders repository@digest and ignores the tag; the
+          # tag stays for people). Built by build-images.yml from tag dagster-v0.3.2.
+          digest: "sha256:48616a492124cea26c289fcbf2eb7014a98dfa5f940cf223e553addb76c8f9bb"
           pullPolicy: IfNotPresent
         dagsterApiGrpcArgs:
           - "--python-file"
@@ -1070,7 +1073,7 @@ dagster:
             mountPath: /repos-checkout
         sidecarContainers:
           - name: repo-sync
-            image: sovereign-os/dagster:0.3.1
+            image: ghcr.io/data-masterclass/sovereign-os/dagster:0.3.2@sha256:48616a492124cea26c289fcbf2eb7014a98dfa5f940cf223e553addb76c8f9bb
             imagePullPolicy: IfNotPresent
             command: ["/bin/sh", "/opt/dagster/app/repo-sync.sh"]
             env:
@@ -1111,16 +1114,18 @@ dagster:
         # ── dbt.projectSource: git — Dagster user-code from the repo (epic #146 Ph 4)
   dagsterWebserver:
     image:
-      repository: sovereign-os/dagster
-      tag: "0.3.1"
+      repository: ghcr.io/data-masterclass/sovereign-os/dagster
+      tag: "0.3.2"
+      digest: "sha256:48616a492124cea26c289fcbf2eb7014a98dfa5f940cf223e553addb76c8f9bb"
       pullPolicy: IfNotPresent
     resources:
       requests: { cpu: 100m, memory: 256Mi }
       limits: { cpu: 500m, memory: 512Mi }
   dagsterDaemon:
     image:
-      repository: sovereign-os/dagster
-      tag: "0.3.1"
+      repository: ghcr.io/data-masterclass/sovereign-os/dagster
+      tag: "0.3.2"
+      digest: "sha256:48616a492124cea26c289fcbf2eb7014a98dfa5f940cf223e553addb76c8f9bb"
       pullPolicy: IfNotPresent
     resources:
       requests: { cpu: 100m, memory: 256Mi }
