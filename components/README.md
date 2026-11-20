@@ -21,8 +21,10 @@ dagster user code, data-runner, query-tool) are under `images/`, not here.
 | [LangGraph JS](langgraph/UPSTREAM.md) | MIT (in-process library, not a deployment) |
 | [LiteLLM](litellm/UPSTREAM.md) | MIT |
 | [MinIO](minio/UPSTREAM.md) | AGPL-3.0-or-later |
+| [node-pg-migrate](node-pg-migrate/UPSTREAM.md) | MIT |
 | [Open Policy Agent](opa/UPSTREAM.md) | Apache-2.0 |
 | [OpenSearch](opensearch/UPSTREAM.md) | Apache-2.0 |
+| [pg-boss](pg-boss/UPSTREAM.md) | MIT |
 | [Apache Polaris (incubating)](polaris/UPSTREAM.md) | Apache-2.0 |
 | [PostgreSQL (CloudNativePG)](postgresql/UPSTREAM.md) | PostgreSQL License (server) · Apache-2.0 (CloudNativePG operator) |
 | [SeaweedFS](seaweedfs/UPSTREAM.md) (dev/CI S3) | Apache-2.0 |
