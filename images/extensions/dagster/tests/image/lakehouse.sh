@@ -10,7 +10,7 @@
 #               module with the image's pinned Dagster; the platform wrapper (repo.py) loads the
 #               same module from a repo-sync checkout, adds the run-pod env tags, and REFUSES a
 #               tampered copy (C5).
-#   2. eject  : a bare python container with ONLY dagster + dagster-dbt + dbt-trino + dlt at the
+#   2. eject  : a bare python container with ONLY dagster + dagster-dbt + dagster-dlt + dbt-trino + dlt at the
 #               image's versions, a clone with `os/` DELETED, `dagster dev` up, then
 #               `dagster asset materialize`: dlt `sql_table` lands Postgres rows in Iceberg through
 #               Trino as the principal, dbt builds bronze → silver → gold, the adopted silver keeps
@@ -134,7 +134,7 @@ rm -rf "$WORK/clone/os"   # no OS layer at all
 q "create schema if not exists iceberg.personal_alice" >/dev/null
 q "create table iceberg.personal_alice.silver_shop_orders as select 99 as id, 'legacy' as customer, cast(1 as decimal(10,2)) as amount, timestamp '2026-10-01 00:00:00' as updated_at" >/dev/null
 PY_BASE="$(awk '/^FROM /{print $2; exit}' "$REPO/images/extensions/dagster/Dockerfile")"
-PINS="dagster==$DAGSTER dagster-webserver==$DAGSTER dagster-dbt==$(pkg dagster-dbt) dbt-core==$(pkg dbt-core) dbt-trino==$(pkg dbt-trino) dlt[sqlalchemy,sql-database]==$(pkg dlt) trino[sqlalchemy]==$(pkg trino) psycopg2-binary==$(pkg psycopg2-binary) SQLAlchemy==$(pkg SQLAlchemy)"
+PINS="dagster==$DAGSTER dagster-webserver==$DAGSTER dagster-dbt==$(pkg dagster-dbt) dagster-dlt==$(pkg dagster-dlt) dbt-core==$(pkg dbt-core) dbt-trino==$(pkg dbt-trino) dlt[sqlalchemy,sql-database]==$(pkg dlt) trino[sqlalchemy]==$(pkg trino) psycopg2-binary==$(pkg psycopg2-binary) SQLAlchemy==$(pkg SQLAlchemy)"
 echo "== eject: $PY_BASE + $PINS"
 EJECT_ENV="$ENV_LOCAL -e SOURCES__CONN_SHOP__CREDENTIALS=postgresql+psycopg2://postgres:pg@pg:5432/shop -e DESTINATION__SQLALCHEMY__CREDENTIALS=trino://alice@trino:8080/iceberg"
 EJECT_NAME="lakehouse-eject-$$"
