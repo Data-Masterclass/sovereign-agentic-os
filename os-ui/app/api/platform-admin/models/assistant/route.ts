@@ -5,6 +5,7 @@ import { NextResponse } from 'next/server';
 import { adminCtx, fail } from '../../_ctx';
 import { recompile } from '../../_compile';
 import { adminPost } from '@core/infra/litellm-write';
+import { buildProviderModel } from '@tabs/admin/lib/provider-registration';
 import { registerAssistantModel, setAssistantModel, getAssistantModelId } from '@tabs/admin/lib/models';
 import { putSecret, secretFingerprint, getSecretServerSide } from '@core/infra/secrets';
 import { audit } from '@tabs/admin/lib/audit';
@@ -24,13 +25,10 @@ export const dynamic = 'force-dynamic';
  */
 async function registerWithGateway(alias: string, baseUrl: string, modelName: string, apiKey: string): Promise<boolean> {
   // The ONE admin write door (`litellm-write.ts`): master key stays inside it; a failure is a result.
-  const res = await adminPost('/model/new', {
-    model_name: alias,
-    // OpenAI-compatible protocol (openai/…) with the STACKIT api_base; the key
-    // is presented to the gateway once here and never stored in the catalog.
-    litellm_params: { model: `openai/${modelName}`, api_base: baseUrl, api_key: apiKey },
-    model_info: { mode: 'chat' },
-  }, 4000);
+  // OpenAI-compatible protocol (openai/…) with the STACKIT api_base; the key is presented to the
+  // gateway once here and never stored in the catalog. The shared builder adds the admin access
+  // group, so the shared agent key can call this model at once.
+  const res = await adminPost('/model/new', buildProviderModel({ alias, modelName, baseUrl, apiKey, mode: 'chat' }), 4000);
   return res.ok;
 }
 

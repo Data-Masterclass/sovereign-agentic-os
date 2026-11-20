@@ -34,7 +34,8 @@ test('an unreferenced alias has no usages', () => {
 test('an explicit role pin surfaces as "<Role> role pin"', () => {
   updateSettings({ modelRoles: { standard: 'my-cloud-llm' } });
   const refs = modelReferences('my-cloud-llm');
-  assert.deepEqual(refs, [{ kind: 'role', label: 'Standard role pin' }]);
+  // The tools role (agent execution) follows a Standard pin, so removing the alias breaks it too.
+  assert.deepEqual(refs, [{ kind: 'role', label: 'Standard role pin' }, { kind: 'role', label: 'Tools role default' }]);
 });
 
 test('a role RESOLVING to the alias by default also counts (removal breaks it too)', () => {

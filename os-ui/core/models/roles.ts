@@ -92,7 +92,30 @@ export function roleModel(role: ModelRole): string {
   // `coder` has no admin override (it is not an admin-editable role — see AdminModelRole).
   if (role === 'coder') return roleDefault('coder');
   const override = getSettings().modelRoles[role];
-  return override && override.trim().length > 0 ? override : roleDefault(role);
+  if (override && override.trim().length > 0) return override;
+  // TOOLS FOLLOWS STANDARD. The admin UI offers Standard / Reasoning / Embeddings and says
+  // Standard covers "agent execution"; agent nodes run on `tools`. Without this an admin who
+  // points Standard at a newly registered provider sees chat move and every agent node stay on
+  // the shipped alias. An operator who pinned LITELLM_TOOLS_MODEL / LITELLM_EXEC_MODEL keeps it.
+  if (role === 'tools' && !toolsPinnedByEnv()) return roleModel('standard');
+  return roleDefault(role);
+}
+
+/** True when the deployment pinned the tools tier itself (env), so it does not follow Standard. */
+function toolsPinnedByEnv(): boolean {
+  const set = (k: string) => (process.env[k] ?? '').trim().length > 0;
+  return set('LITELLM_TOOLS_MODEL') || set('LITELLM_EXEC_MODEL') || set('LITELLM_CHAT_MODEL');
+}
+
+/**
+ * Make the admin's role choices current before resolving a model for a call. The roles live in
+ * the settings store, which is hydrated from its mirror on demand: a fresh os-ui pod (before any
+ * admin page loaded) and the run worker (which never writes settings) would otherwise resolve
+ * every role to the deployment default and silently ignore what the admin saved.
+ */
+export async function ensureModelRolesFresh(): Promise<void> {
+  // The store is fail-soft itself: an unreadable doc keeps the held values (it never throws).
+  await ensureSettingsHydrated();
 }
 
 /**

@@ -388,7 +388,7 @@ allowed — the overlay now carries its own `litellmAgentKey.models`. The aliase
 | standard (worker) | `config.litellmExecModel` ← `LITELLM_EXEC_MODEL` | `sovereign-default` |
 | chat / offline fallback | `config.litellmChatModel` ← `LITELLM_CHAT_MODEL` | `sovereign-mock` |
 | reasoning | `config.litellmReasoningModel` ← `LITELLM_REASONING_MODEL` | `sovereign-reasoning` |
-| tools | `config.litellmToolsModel` ← `LITELLM_TOOLS_MODEL` | `sovereign-default` |
+| tools | `config.litellmToolsModel` ← `LITELLM_TOOLS_MODEL`; unset → follows the Standard role | `sovereign-default` |
 | knowledge embeddings | `config.embedModel` ← `KNOWLEDGE_EMBED_MODEL` | `sovereign-embed` |
 | files embeddings | `config.filesEmbedModel` ← `FILES_EMBED_MODEL` | `sovereign-embed` |
 
@@ -396,6 +396,24 @@ plus any **admin override** per role in Platform Settings (`modelRoles`, read by
 `core/models/roles.ts`). Renaming an alias or re-pointing a role means updating
 `litellmAgentKey.models` in the same change; the Job will push the new list on
 the next upgrade.
+
+**Models an admin registers at runtime need no Helm change.** Admin → Models & Providers
+(`/api/platform-admin/providers`, and the assistant registration) sends `/model/new` with
+`model_info.access_groups: ["os-admin-registered"]` (`os-ui/tabs/admin/lib/provider-registration.ts`),
+and `litellmAgentKey.models` lists that **access group** — LiteLLM's documented model access
+groups — so the shared key can call every registered alias at once. A cluster whose release
+values carry their own `litellmAgentKey.models` (production) must add `os-admin-registered` there.
+Before this (measured on 1.109.1, 2026-11-20) a registered alias answered `key_model_access_denied`
+(403) on every chat and assistant call until an operator listed the alias by hand. The `tools` role
+(the agents' execution tier) follows the admin's Standard pin unless an env var or an explicit
+`tools` pin says otherwise, and the run worker re-reads the settings doc (at most every 5 s) before
+each run, so a role pin reaches agent runs, not only chat.
+
+**Provider traffic through the egress proxy.** LiteLLM honours `HTTPS_PROXY` (verified on 1.109.1:
+its CONNECT appears in the tinyproxy log, and a host that is not on `egressProxy.allowlist` is refused
+with `Proxying refused on filtered domain`). To send provider calls through the proxy, set
+`litellm.envVars.HTTPS_PROXY: http://egress-proxy:3128` with a `NO_PROXY` that covers every
+in-cluster host LiteLLM calls, and put each provider host (STACKIT included) on the allowlist.
 
 **Which aliases may be sent images.** Separate from the key allowlist above: the OS keeps an
 explicit list of aliases that may receive images (`os-ui/core/models/capabilities.ts`,

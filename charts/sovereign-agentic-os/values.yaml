@@ -511,6 +511,10 @@ litellmAgentKey:
     - sovereign-mock      # back-compat alias -> same standard/worker tier
     - sovereign-reasoning # reasoning tier (STACKIT Qwen3-VL-235B)
     - sovereign-embed     # offline embeddings (mock-model)
+    # LiteLLM model ACCESS GROUP, not an alias: every model an admin registers in
+    # Admin -> Models & Providers joins it (`model_info.access_groups`), so this key can call
+    # it without a Helm change (os-ui tabs/admin/lib/provider-registration.ts).
+    - os-admin-registered
   # HARD COST GUARDRAIL: a dedicated per-model USD cap for the pay-per-token
   # STACKIT routes.
   modelMaxBudget: {}

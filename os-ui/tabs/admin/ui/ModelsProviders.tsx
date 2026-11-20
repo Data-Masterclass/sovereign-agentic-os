@@ -67,7 +67,9 @@ const WIZARD_TYPES: WizardType[] = [
   { type: 'azure', label: 'Azure OpenAI', blurb: 'Coming soon.', enabled: false },
   { type: 'bedrock', label: 'AWS Bedrock', blurb: 'Coming soon.', enabled: false },
 ];
-const EMPTY_WIZARD = { alias: '', baseUrl: '', modelName: '', apiKey: '', task: 'chat' as Task };
+const EMPTY_WIZARD = { alias: '', label: '', litellmProvider: '', baseUrl: '', modelName: '', apiKey: '', task: 'chat' as Task, inputPerM: '', outputPerM: '' };
+// A native LiteLLM provider (`mistral`) needs no base URL; OpenAI-compatible (empty / `openai`) does.
+const needsBaseUrl = (w: typeof EMPTY_WIZARD) => !w.litellmProvider.trim() || w.litellmProvider.trim().toLowerCase() === 'openai';
 const ROLE_META: { key: RoleKey; label: string; help: string }[] = [
   { key: 'standard', label: 'Standard', help: 'Assistants, agent execution and light work. Default: sovereign-default.' },
   { key: 'reasoning', label: 'Reasoning', help: 'Planning and deep reasoning across the OS. Default: sovereign-reasoning.' },
@@ -204,7 +206,7 @@ function ModelsPageInner() {
   }, [reg, load]);
 
   const addProvider = useCallback(async () => {
-    if (!wizType || !wiz.alias.trim() || !wiz.baseUrl.trim() || !wiz.modelName.trim() || !wiz.apiKey.trim()) return;
+    if (!wizType || !wiz.alias.trim() || (needsBaseUrl(wiz) && !wiz.baseUrl.trim()) || !wiz.modelName.trim() || !wiz.apiKey.trim()) return;
     setBusy('provider'); setError('');
     try {
       const res = await fetch('/api/platform-admin/providers', {
@@ -424,7 +426,11 @@ function ModelsPageInner() {
               </div>
               <div className="row" style={{ gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
                 <input style={{ flex: '1 1 150px' }} value={wiz.alias} onChange={(e) => setWiz({ ...wiz, alias: e.target.value })} placeholder="alias (gateway model_name)" autoComplete="off" />
-                <input style={{ flex: '1 1 230px' }} value={wiz.baseUrl} onChange={(e) => setWiz({ ...wiz, baseUrl: e.target.value })} placeholder="api_base (https://…/v1)" autoComplete="off" />
+                <input style={{ flex: '1 1 170px' }} value={wiz.label} onChange={(e) => setWiz({ ...wiz, label: e.target.value })} placeholder="display name (optional)" autoComplete="off" />
+                {wizType === 'openai-compatible' ? (
+                  <input style={{ flex: '0 1 170px' }} value={wiz.litellmProvider} onChange={(e) => setWiz({ ...wiz, litellmProvider: e.target.value })} placeholder="LiteLLM provider (blank = openai)" autoComplete="off" title="Blank: any OpenAI-compatible endpoint (base URL required). A LiteLLM provider name such as mistral uses LiteLLM's native provider; the base URL is then optional." />
+                ) : null}
+                <input style={{ flex: '1 1 230px' }} value={wiz.baseUrl} onChange={(e) => setWiz({ ...wiz, baseUrl: e.target.value })} placeholder={needsBaseUrl(wiz) ? 'api_base (https://…/v1)' : 'api_base (optional)'} autoComplete="off" />
                 <input style={{ flex: '1 1 180px' }} value={wiz.modelName} onChange={(e) => setWiz({ ...wiz, modelName: e.target.value })} placeholder={wizType === 'stackit' ? 'model id (Qwen/Qwen3-VL-235B…)' : 'model id (upstream)'} autoComplete="off" />
                 <select value={wiz.task} onChange={(e) => setWiz({ ...wiz, task: e.target.value as Task })} style={{ flex: '0 1 140px' }}>
                   <option value="chat">chat</option>
@@ -432,7 +438,9 @@ function ModelsPageInner() {
                   <option value="embedding">embedding</option>
                 </select>
                 <input style={{ flex: '1 1 200px' }} type="password" value={wiz.apiKey} onChange={(e) => setWiz({ ...wiz, apiKey: e.target.value })} placeholder="API key value" autoComplete="off" />
-                <button className="btn" onClick={addProvider} disabled={busy === 'provider' || !wiz.alias.trim() || !wiz.baseUrl.trim() || !wiz.modelName.trim() || !wiz.apiKey.trim()}>
+                <input style={{ flex: '0 1 130px' }} type="number" min={0} step="any" value={wiz.inputPerM} onChange={(e) => setWiz({ ...wiz, inputPerM: e.target.value })} placeholder="€ in / 1M tok" title="Input price per 1M tokens. Without prices LiteLLM books this model at 0 and no key budget ever triggers." />
+                <input style={{ flex: '0 1 130px' }} type="number" min={0} step="any" value={wiz.outputPerM} onChange={(e) => setWiz({ ...wiz, outputPerM: e.target.value })} placeholder="€ out / 1M tok" title="Output price per 1M tokens." />
+                <button className="btn" onClick={addProvider} disabled={busy === 'provider' || !wiz.alias.trim() || (needsBaseUrl(wiz) && !wiz.baseUrl.trim()) || !wiz.modelName.trim() || !wiz.apiKey.trim()}>
                   {busy === 'provider' ? <span className="spin" /> : 'Register model'}
                 </button>
               </div>

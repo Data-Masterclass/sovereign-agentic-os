@@ -7,7 +7,8 @@ import {
   callerCredential, runCredentialConfigured, NoRunCredentialError,
   BudgetExceededError, isBudgetRejection,
 } from '@core/infra/litellm-credential';
-import { getAssistantModel } from '@tabs/admin/lib/models';
+import { getAssistantModel, ensureHydrated as ensureModelCatalogHydrated } from '@tabs/admin/lib/models';
+import { ensureModelRolesFresh } from '@core/models/roles';
 import { checkCap } from '@core/policy/cost';
 
 /**
@@ -49,6 +50,17 @@ export class CostCapExceededError extends Error {
     super(`Cost cap reached: ${reason}. Raise the cap in Governance → Cost & limits or wait for the period to reset.`);
     this.name = 'CostCapExceededError';
   }
+}
+
+/**
+ * Make the admin's model choices current before a call resolves one: the role pins (settings) and
+ * the assistant pin (models catalog) are both hydrated on demand, so a fresh pod or the run worker
+ * would otherwise answer on the deployment default and ignore what the admin saved. Both stores
+ * are fail-soft themselves (an unreadable mirror keeps what is held).
+ */
+export async function ensureAssistantModelFresh(): Promise<void> {
+  await ensureModelRolesFresh();
+  await ensureModelCatalogHydrated();
 }
 
 /** Resolve the id of the ONE assistant model, or throw the honest error. */
@@ -184,6 +196,7 @@ export async function assistantComplete(
     tab?: string;
   } = {},
 ): Promise<{ content: string; model: string }> {
+  if (!(opts.model && opts.model.trim().length > 0)) await ensureAssistantModelFresh();
   const model = opts.model && opts.model.trim().length > 0 ? opts.model : resolveAssistantModelId();
   const caller = opts.caller ?? liteLlmAssistantCaller();
   const user = typeof opts.user === 'string' ? opts.user : opts.user?.id;

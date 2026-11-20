@@ -23,7 +23,7 @@ import {
   type ToolSpec,
 } from '@core/runtime/agentic';
 import { ungatedInteractive } from '@core/runtime/confirm-gate';
-import { resolveAssistantModelId } from '@core/runtime/complete';
+import { ensureAssistantModelFresh, resolveAssistantModelId } from '@core/runtime/complete';
 import { gatewayTraceHeaders } from '@core/runtime/gateway-trace';
 import { inputBudget, modelContext } from '@core/models/context-windows';
 
@@ -453,6 +453,7 @@ export async function runTabAgent(input: RunTabAgentInput): Promise<AgenticResul
   // An INJECTED `llm` (tests/advanced) owns model selection, so we leave the
   // config tiers as opaque ids the fake caller ignores.
   const injected = input.llm;
+  if (!injected) await ensureAssistantModelFresh();
   const assistantId = injected ? config.litellmExecModel : resolveAssistantModelId();
   // The model this run ACTUALLY executes on: an explicit override (the Software Build
   // passes the reasoning tier) wins over the platform assistant default. Tests inject
