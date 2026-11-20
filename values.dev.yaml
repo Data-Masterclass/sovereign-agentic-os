@@ -186,9 +186,9 @@ postgres:
     limits: { cpu: 1, memory: 768Mi }
 
 dataRunner:
-  image:
-    repository: ghcr.io/aborek/sovereign-os/data-runner
-    tag: "0.2.2@sha256:8f7b8a3287368c915af90ee37e6053dfd77326d98fea450f87b97f4835a2e482"
+  # The chart pins data-runner itself now (repository, tag AND dataRunner.image.digest); dev only
+  # lowers its resources. A tag carrying the digest again rendered "…@sha256:x@sha256:x"
+  # (InvalidImageName) on the first dev install.
   resources:
     requests: { cpu: 50m, memory: 192Mi }
     limits: { cpu: 1, memory: 512Mi }
@@ -202,6 +202,16 @@ queryTool:
     limits: { cpu: 1, memory: 512Mi }
 
 dagster:
+  # The Dagster subcharts take their OWN pull secrets: global.imagePullSecrets does not reach
+  # them, and the org image is private. The webserver, the daemon, the code location and every
+  # launched run pod need it (first dev install, 2026-11-20: ImagePullBackOff without it).
+  imagePullSecrets: [{ name: registry-pull-secret }]
+  dagster-user-deployments:
+    imagePullSecrets: [{ name: registry-pull-secret }]
+  runLauncher:
+    config:
+      k8sRunLauncher:
+        imagePullSecrets: [{ name: registry-pull-secret }]
   dagsterWebserver:
     resources:
       requests: { cpu: 50m, memory: 192Mi }
