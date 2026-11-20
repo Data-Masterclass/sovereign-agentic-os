@@ -61,6 +61,21 @@ test('negative twin: a container with no memory request fails the gate (it would
   assert.match(r.stderr, /sets no memory request/);
 });
 
+test('negative twin: an empty render (every component off) fails the gate instead of passing on nothing', () => {
+  const r = gate('--values', join(FIX, 'capacity-empty-render.yaml'), '--profile', 'default');
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  assert.match(r.stderr, /default: the render has 0 long-running workloads, fewer than the 10 capacity\.yaml expects/);
+});
+
+test('the gate renders with exactly the values given (deploy.sh passes the live release values)', () => {
+  // The same overlay as the CPU twin, but as the "release values" a deploy applies: the gate
+  // must see it on the default profile alone, with schema validation skipped as deploy.sh does.
+  const r = gate('--profile', 'default', '--skip-schema-validation', '--values', join(FIX, 'capacity-overcommit-cpu.yaml'));
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  assert.doesNotMatch(r.stdout, /profile stackit/);
+  assert.match(r.stderr, /default: CPU requests/);
+});
+
 test('the gate counts the pods outside the chart and the node count from capacity.yaml', () => {
   const one = JSON.parse(gate('--json', '--profile', 'default').stdout);
   const two = JSON.parse(gate('--json', '--profile', 'default', '--budget', join(FIX, 'capacity-two-nodes.yaml')).stdout);
