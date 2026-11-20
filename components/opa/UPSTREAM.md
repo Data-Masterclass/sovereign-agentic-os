@@ -15,7 +15,7 @@ not here.
 
 ## Upstream docs this pin relies on
 - Policy testing, coverage, `opa check --strict`, `opa fmt`: https://www.openpolicyagent.org/docs/policy-testing
-- Decision logs (`decision_logs.console`, `mask_decision`, `system.log.mask`): https://www.openpolicyagent.org/docs/management-decision-logs
+- Decision logs (`decision_logs.console`, `drop_decision`/`mask_decision`, `system.log`): https://www.openpolicyagent.org/docs/management-decision-logs
 - Configuration (`labels`, `decision_logs`): https://www.openpolicyagent.org/docs/configuration
 - REST API (`decision_id` in responses; `GET /v1/config`): https://www.openpolicyagent.org/docs/rest-api
 - Rego v1 is the default in OPA 1.x: https://www.openpolicyagent.org/docs/v0-compatibility
@@ -27,9 +27,10 @@ not here.
 - 1.21.0: YAML is parsed with the 1.2 core schema (`yes`/`no`/`on`/`off` are strings). Our
   config file and data are JSON/YAML without such bare words.
 - 1.22.0: stricter bundle signature filenames — relevant once bundles are signed (later step).
-- 1.22.0: the `_static` binaries/images are deprecated (the default build is statically linked
-  too, https://github.com/open-policy-agent/opa/issues/9431), so the pin uses the default tag
-  instead of `-static`.
+- 1.22.0: the `_static` release **binaries** are deprecated
+  (https://github.com/open-policy-agent/opa/pull/9441). For the `-static` **images** a deprecation
+  was only discussed (https://github.com/open-policy-agent/opa/issues/9431), which also shows the
+  default build is statically linked too. The pin uses the default image tag.
 
 The deployment that uses this pin lives in the chart
 (`charts/sovereign-agentic-os/templates/`); any glue we wrote belongs there or in the

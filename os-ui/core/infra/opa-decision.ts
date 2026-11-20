@@ -1,5 +1,12 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    OPA decision metadata — the `decision_id` and `policy_rev` of each decision
+ * USER STORY: As an auditor I want every governed effect to name the exact OPA decision-log line
+ *             and policy revision behind it, so "why was this allowed?" has an answer.
+ * ARCHITECTURE:
+ *   - `decision_id` comes from the Data API response; `policy_rev` from `GET /v1/config` labels,
+ *     cached (success and failure) so authorise never waits on it.
  */
 import { config } from '@core/kernel/config';
 
@@ -20,12 +27,22 @@ export function decisionIdOf(body: unknown): string | undefined {
   return typeof id === 'string' && id ? id : undefined;
 }
 
+/** A successful read is reused for this long (the label changes only on a pod roll). */
 const REV_TTL_MS = 30_000;
-let revCache: { at: number; rev: string | undefined } | null = null;
+/** After a failed read, skip `policyRev` for this long instead of retrying on every decision. */
+const REV_FAIL_TTL_MS = 30_000;
+let revCache: { until: number; rev: string | undefined } | null = null;
 
-/** The running OPA's `labels.policy_rev`, cached briefly (it changes only on a pod roll). */
+/** The running OPA's `labels.policy_rev`, or undefined when OPA did not provide it. At most one
+ *  `GET /v1/config` per TTL, whether it succeeded or failed, so authorise never waits on it. */
 export async function opaPolicyRev(): Promise<string | undefined> {
-  if (revCache && Date.now() - revCache.at < REV_TTL_MS) return revCache.rev;
+  if (revCache && Date.now() < revCache.until) return revCache.rev;
+  const rev = await readPolicyRev();
+  revCache = { until: Date.now() + (rev ? REV_TTL_MS : REV_FAIL_TTL_MS), rev };
+  return rev;
+}
+
+async function readPolicyRev(): Promise<string | undefined> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 2000);
   try {
@@ -33,13 +50,17 @@ export async function opaPolicyRev(): Promise<string | undefined> {
     if (!res.ok) return undefined;
     const body = (await res.json()) as { result?: { labels?: { policy_rev?: unknown } } };
     const rev = body?.result?.labels?.policy_rev;
-    revCache = { at: Date.now(), rev: typeof rev === 'string' && rev ? rev : undefined };
-    return revCache.rev;
+    return typeof rev === 'string' && rev ? rev : undefined;
   } catch {
     return undefined;
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** Test-only: forget the cached revision. */
+export function __resetPolicyRevCache(): void {
+  revCache = null;
 }
 
 /** Decision metadata for an OPA Data API response body. */
