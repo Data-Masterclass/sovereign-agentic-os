@@ -135,13 +135,14 @@ print("sensors", sorted(x.name for x in repo.defs.sensors))
 # The LEGACY expectation, computed from the repo files alone (not from the loader under test): one
 # schedule per os/schedules.yml entry, one weekly maintenance per schema the manifest writes.
 have = {x.name for x in repo.defs.schedules}
+san = lambda x: re.sub("[^A-Za-z0-9_]", "_", x)
 for d in ("legacy-syncs", "legacy-files"):
     root = os.path.realpath(f"/repos-checkout/{d}/current")
-    dom = re.sub(r"[^A-Za-z0-9_]", "_", d)
+    dom = san(d)
     want = set()
     sched = os.path.join(root, "os", "schedules.yml")
     if os.path.isfile(sched):
-        want |= {f"{dom}__{re.sub(r'[^A-Za-z0-9_]', '_', e['dataset'])}" for e in yaml.safe_load(open(sched))["schedules"]}
+        want |= {dom + "__" + san(e["dataset"]) for e in yaml.safe_load(open(sched))["schedules"]}
     nodes = json.load(open(os.path.join(root, "target", "manifest.json")))["nodes"].values()
     for n in nodes:
         if n.get("resource_type") != "model":
@@ -149,15 +150,15 @@ for d in ("legacy-syncs", "legacy-files"):
         owner = ((n.get("config") or {}).get("meta") or {}).get("os_owner") or (n.get("meta") or {}).get("os_owner")
         if n["schema"].startswith("personal_") and not owner:
             continue
-        want.add(f"{dom}__maintenance__{re.sub(r'[^A-Za-z0-9_]', '_', n['schema'])}_weekly")
+        want.add(dom + "__maintenance__" + san(n["schema"]) + "_weekly")
     got = {x for x in have if x.startswith(dom + "__")}
     print("legacy", d, "want", len(want), "got", len(got), "missing", sorted(want - got))
-PY' 2>&1)"
+PY' 2>&1)" || true   # the checks below judge the output; set -e must not end the run silently
 if echo "$out" | grep -q "schedule env alice alice sales" && echo "$out" | grep -q "differs from the OS-generated"; then
   ok "wrapper loads the repo's definitions, adds the run-pod env, refuses the tampered copy (C5)"
 else bad "platform wrapper"; echo "$out" | tail -25; fi
 for d in legacy-syncs legacy-files; do
-  line="$(echo "$out" | grep "^legacy $d ")"
+  line="$(echo "$out" | grep "^legacy $d " || true)"
   case "$line" in
     *"missing []"*) n="${line#* want }"; n="${n%% got*}"
       [ "$n" -gt 0 ] && ok "unmigrated $d (v1, the live shape): every schedule kept on the legacy path ($line)" || bad "unmigrated $d: expected at least one schedule ($line)";;
