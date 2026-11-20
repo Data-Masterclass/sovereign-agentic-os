@@ -83,8 +83,10 @@ derive_and_render() { # <tree> — sets out, rc, rendered
   local work; work=$(mktemp -d "$TMP/work.XXXX")
   out=$(cd "$1" && PATH="$BIN:$PATH" DEPLOY_REGISTRY_PROBE="$BIN/probe" IMAGE_REPO=registry.example.invalid/sovereign-os \
         WORK="$work" bash scripts/deploy.sh --from-registry 9.9.9-test 2>&1); rc=$?
+  # stdout only: helm prints warnings on stderr, which are not YAML.
   rendered=$("$REAL_HELM" template agentic-os "$1/charts/sovereign-agentic-os" -n agentic-os --skip-schema-validation \
-             -f "$work/release-values.yaml" 2>&1)
+             -f "$work/release-values.yaml" 2>"$TMP/template.err") \
+    || { echo "helm template failed:"; sed 's/^/     | /' "$TMP/template.err"; }
 }
 images_of() { # prints "<component> <image>" for each Dagster container in $rendered
   printf '%s' "$rendered" | python3 -c '
