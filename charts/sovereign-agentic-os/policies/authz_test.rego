@@ -97,3 +97,50 @@ test_deny_effect_intact if {
 		with data.seed_grants as {}
 	e == "deny"
 }
+
+# --- 10. Bare key in the runtime document -> ALLOW ----------------------------
+test_bare_runtime_grant_allows if {
+	allow with input as req("sales-assistant", "metrics")
+		with data.grants as {"sales-assistant": ["metrics"]}
+		with data.seed_grants as {}
+}
+
+# --- 11. Prefixed keys in the seed document -> ALLOW ------------------------
+test_domain_prefixed_seed_grant_allows if {
+	allow with input as req("sales", "query")
+		with data.grants as {}
+		with data.seed_grants as {"domain:sales": ["query"]}
+}
+
+test_user_prefixed_seed_grant_allows if {
+	allow with input as req("aborek", "query")
+		with data.grants as {}
+		with data.seed_grants as {"user:aborek": ["query"]}
+}
+
+# --- 12. The full decision object for each effect ---------------------------
+test_decision_allow if {
+	r := decision with input as req("sales-assistant", "metrics")
+		with data.grants as {}
+		with data.seed_grants as seed
+		with data.requires_approval as []
+	r == {"allow": true, "effect": "allow", "reason": "granted", "principal": "sales-assistant", "tool": "metrics"}
+}
+
+test_decision_requires_approval if {
+	r := decision with input as req("sales-assistant", "knowledge_certify")
+		with data.grants as {}
+		with data.seed_grants as {"sales-assistant": ["knowledge_certify"]}
+		with data.requires_approval as ["knowledge_certify"]
+	r.allow == true
+	r.effect == "requires_approval"
+	r.reason == "high-stakes — human approval required"
+}
+
+test_decision_deny if {
+	r := decision with input as req("nobody", "query")
+		with data.grants as {}
+		with data.seed_grants as {}
+		with data.requires_approval as []
+	r == {"allow": false, "effect": "deny", "reason": "not granted", "principal": "nobody", "tool": "query"}
+}

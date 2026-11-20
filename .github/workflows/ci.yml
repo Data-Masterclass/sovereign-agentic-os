@@ -164,24 +164,65 @@ jobs:
       # agent-runtime: deleted in the engine rebuild (A5) — agent systems execute as a real
       # LangGraph StateGraph inside os-ui, covered by `npm --prefix os-ui test`.
 
-  # OPA policy tests — skipped in CI if the opa binary is unavailable; a comment
-  # explains how to run locally. Adding the full setup-opa action adds ~30s and
-  # OPA is not currently on the required-checks list; add it when policies grow.
-  #
-  # To run locally:
-  #   opa test tests/policies/ --v1-compatible
-  #
-  # Uncomment the block below and add 'test-opa' to required status checks when ready:
-  #
-  # test-opa:
-  #   name: test-opa
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-  #     - uses: open-policy-agent/setup-opa@34a30e8a924d1b03ce2cf70eca3d7d0888cee374 # v2.2.0
-  #       with:
-  #         version: latest
-  #     - run: opa test tests/policies/ --v1-compatible
+  # OPA policies (04 M0–M1). The policies are plain Rego + JSON data in
+  # charts/sovereign-agentic-os/policies with their *_test.rego beside them, so upstream
+  # OPA alone runs them (the eject test). The CLI version is read from the chart's
+  # image pin, never typed here. Then the chart's own OPA config runs in the pinned
+  # container and decision-log.int.test proves one masked log line per decision.
+  test-opa:
+    name: test-opa
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Read the chart's OPA pin
+        id: pin
+        run: |
+          tag=$(yq '.opa.image.tag' charts/sovereign-agentic-os/values.yaml)
+          echo "opa=${tag%%-*}" >> "$GITHUB_OUTPUT"
+      - name: Setup OPA (chart version)
+        uses: open-policy-agent/setup-opa@b2b258e089860efaadaaf71bf6e3aecb4a3eeff1 # v2.4.0
+        with:
+          version: ${{ steps.pin.outputs.opa }}
+      - name: Setup Regal
+        uses: open-policy-agent/setup-regal@761188c3b435761fa254beca508a44875619648f # v2.0.0
+        with:
+          version: v0.43.0
+      - name: opa fmt (no diff)
+        run: opa fmt --list --fail charts/sovereign-agentic-os/policies
+      - name: opa check --strict
+        run: opa check --strict charts/sovereign-agentic-os/policies
+      - name: regal lint
+        run: regal lint charts/sovereign-agentic-os/policies
+      - name: opa test
+        run: opa test charts/sovereign-agentic-os/policies -v
+      - name: opa test coverage >= 90 %
+        run: opa test charts/sovereign-agentic-os/policies --coverage --threshold 90 > /dev/null
+      - name: Setup Helm
+        uses: azure/setup-helm@fe7b79cd5ee1e45176fcad797de68ecaf3ca4814 # v4.2.0
+        with:
+          version: v3.16.3
+      - name: Setup Node
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: 22
+      - name: Install (os-ui)
+        run: npm --prefix os-ui ci
+      - name: Start the chart's OPA (pinned image, chart args and ConfigMaps)
+        run: |
+          pip install "pyyaml>=6,<7"
+          helm dependency build charts/sovereign-agentic-os || helm dependency update charts/sovereign-agentic-os
+          python3 tests/opa/run-chart-opa.py opa-it 18181
+          for i in $(seq 1 30); do curl -fsS http://127.0.0.1:18181/health && break; sleep 1; done
+      - name: decision-log.int.test (real OPA)
+        working-directory: os-ui
+        env:
+          OPA_IT_URL: http://127.0.0.1:18181
+          OPA_IT_CONTAINER: opa-it
+        run: node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test ../tests/opa/decision-log.int.test.ts
+      - name: OPA logs (on failure)
+        if: failure()
+        run: docker logs opa-it || true
 
   helm-lint:
     name: helm-lint
