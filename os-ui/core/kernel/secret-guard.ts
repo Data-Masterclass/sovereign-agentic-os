@@ -12,7 +12,8 @@
  *     secret — `soa.osUI.runEnv` — so it is never asked for one):
  *       os-ui         LITELLM_MASTER_KEY, AGENT_RUNTIME_TOKEN, OS_SESSION_SECRET,
  *                     OS_MCP_TOKEN_SECRET (falls back to OS_SESSION_SECRET, as config.ts does),
- *                     LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, and TERMINAL_BROKER_SECRET when
+ *                     LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, LANGFUSE_SSO_PASSWORD (the Langfuse
+ *                     admin login), and TERMINAL_BROKER_SECRET when
  *                     TERMINAL_ENABLED=true (nothing reads it otherwise);
  *       os-ui-worker  AGENT_RUNTIME_TOKEN, LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY.
  *   - Reads `process.env` directly, NOT `config`: config fills a missing value with its
@@ -55,6 +56,8 @@ export const PUBLIC_DEFAULT_SHA256: Readonly<Record<string, readonly string[]>> 
   // values.yaml `langfuseInit` (config.ts has no Langfuse fallback since WP-31)
   LANGFUSE_PUBLIC_KEY: ['8ad181a220c5109ff0115e85250a33e13ba5f5cabcddb2f758f979f716724f6b'],
   LANGFUSE_SECRET_KEY: ['aef69d589a481ddf96a3a68a4996c4c3f40be57ecd3bb12fe071dbc522ab9c28'],
+  // values.yaml `langfuseInit.userPassword` (the Langfuse admin login os-ui signs in with)
+  LANGFUSE_SSO_PASSWORD: ['68621479951fa360d498f1df8a38bad6fd8037bc0978e75ea3437b1e9243df70'],
 });
 
 /** Secrets whose public default no install may run with, laptop or not. */
