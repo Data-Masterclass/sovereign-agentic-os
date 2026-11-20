@@ -81,3 +81,31 @@ decision := {
 	"principal": input.principal,
 	"tool": input.tool,
 }
+
+# WP-37: a WRITE to a dataset's data versions (restore = rollback_to_snapshot, name = an Iceberg tag
+# or branch). The same ladder as My -> Domain promotion: a personal (My) dataset only by its owner;
+# a Domain (asset) or Company (product) dataset only by a domain_admin of its domain, or an admin.
+# A builder may file a request but never restores a governed table. os-ui asks this rule before the
+# write reaches Trino or the catalog (os-ui/tabs/data/lib/dataset-versions.ts).
+# Input: {"action": "data.version.write", "actor": {"id", "role", "domains"},
+#         "dataset": {"id", "tier": "dataset"|"asset"|"product", "owner", "domain"}}
+default data_version_write := false
+
+data_version_write if {
+	input.action == "data.version.write"
+	input.dataset.tier == "dataset"
+	input.actor.id == input.dataset.owner
+}
+
+data_version_write if {
+	input.action == "data.version.write"
+	input.dataset.tier in {"asset", "product"}
+	input.actor.role == "admin"
+}
+
+data_version_write if {
+	input.action == "data.version.write"
+	input.dataset.tier in {"asset", "product"}
+	input.actor.role == "domain_admin"
+	input.dataset.domain in input.actor.domains
+}

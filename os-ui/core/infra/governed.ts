@@ -8,6 +8,7 @@ import { recordObservation } from '@core/infra/langfuse';
 import type { Role } from '@core/kernel/session';
 import { decisionMeta, type DecisionMeta } from '@core/infra/opa-decision';
 import { trinoClientTags, trinoSource, type TrinoRoute } from '@core/infra/trino-source';
+import { opaDecide } from '@core/adapters/opa/client';
 
 export type { TrinoRoute } from '@core/infra/trino-source';
 
@@ -50,7 +51,20 @@ async function withTimeout(url: string, init: RequestInit, ms = 2500): Promise<R
 /** Ask OPA whether `principal` may call `tool`. Fail-CLOSED (deny) + marked when
  *  OPA is unreachable/errors, unless OPA_FAIL_OPEN is explicitly set for the
  *  offline-mock teaching flow. Aligns with the agent spine's default-deny. */
-export async function authorize(principal: string, tool: string): Promise<Authz> {
+/**
+ * A WRITE decision: one named boolean rule of `agentic.authz`, evaluated on the caller's facts (role,
+ * domains, the target's tier and owner). Unlike the tool grant it is NEVER fail-open: an OPA that
+ * does not answer denies, whatever `OPA_FAIL_OPEN` says.
+ */
+export type WriteDecision = { rule: 'data_version_write'; input: Record<string, unknown> };
+
+export async function authorize(principal: string, tool: string, write?: WriteDecision): Promise<Authz> {
+  if (write) {
+    const r = await opaDecide(`agentic/authz/${write.rule}`, { ...write.input, principal, tool }, 2500);
+    if (!r.ok) return { allowed: false, policy: 'opa-unreachable' };
+    const allowed = r.value.defined && r.value.value === true;
+    return { allowed, policy: allowed ? 'opa-allow' : 'opa-deny' };
+  }
   const unreachable: Authz = { allowed: config.opaFailOpen, policy: 'opa-unreachable' };
   const res = await withTimeout(`${config.opaUrl}/v1/data/agentic/authz/allow`, {
     method: 'POST',

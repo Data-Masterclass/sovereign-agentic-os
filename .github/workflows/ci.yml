@@ -290,6 +290,7 @@ jobs:
         env:
           LH_TRINO_URL: http://127.0.0.1:18080
           LH_RUNNER_URL: http://127.0.0.1:18000
+          OPA_URL: http://127.0.0.1:18181
         run: |
           npm ci --no-audit --no-fund
           node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test --test-concurrency=1 tabs/metrics/lib/build/explore-fqn.trino.test.ts tabs/data/lib/lane-names.trino.test.ts tabs/data/lib/dataset-versions.trino.test.ts core/mcp/trino-sql-error.trino.test.ts

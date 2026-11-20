@@ -458,7 +458,12 @@ function DatasetBody({ d }: { d: DatasetDetail }) {
         ))}
       </div>
 
-      {/* Data versions are the table's Iceberg snapshots (WP-37): the Data tab's Versions panel. */}
+      {/* Data versions are the table's Iceberg snapshots (WP-37), shown in the Data tab's Versions panel. */}
+      <div className="mon-sub">Versions</div>
+      <div className="hint">
+        This dataset's versions are its Iceberg table's snapshots.{' '}
+        <a href={`/data?focus=${encodeURIComponent(d.id)}&panel=versions`}>Open Data → Versions</a>
+      </div>
 
       {/* ── Lineage ── */}
       {d.lineage.nodes.length > 0 && (

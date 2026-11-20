@@ -78,6 +78,20 @@ export async function opaGetData(path: string, timeoutMs: number): Promise<Fetch
   return { ok: true, value: 'result' in body ? { defined: true, value: body.result } : { defined: false }, at: r.at };
 }
 
+/** Evaluate a decision: Data API `POST /v1/data/{path}` with `{input}`. `defined:false` = no rule matched. */
+export async function opaDecide(path: string, input: unknown, timeoutMs: number): Promise<Fetched<{ defined: boolean; value?: unknown }>> {
+  const r = await request(`/v1/data/${path}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ input }) }, timeoutMs);
+  if (!r.ok) return r;
+  if (!r.value.ok) return fail(reasonFor(r.value.status), `POST data/${path}: OPA ${r.value.status}`);
+  let body: { result?: unknown };
+  try {
+    body = (await r.value.json()) as { result?: unknown };
+  } catch (err) {
+    return fail('invalid', `POST data/${path}: unreadable JSON (${String(err)})`);
+  }
+  return { ok: true, value: 'result' in body ? { defined: true, value: body.result } : { defined: false }, at: r.at };
+}
+
 /** OPA's Health API: ok only when `GET /health` answers 200. */
 export async function opaHealth(timeoutMs: number): Promise<Fetched<number>> {
   return expectOk(await request('/health', { method: 'GET' }, timeoutMs), 'GET /health');

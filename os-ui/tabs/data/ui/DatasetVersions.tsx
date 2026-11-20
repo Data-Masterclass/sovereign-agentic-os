@@ -34,6 +34,12 @@ export default function DatasetVersions({ datasetId, name, canEdit, onRestored }
   const [data, setData] = useState<Payload | null>(null);
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
+  const [legacy, setLegacy] = useState<{ available: boolean; reason?: string; versions: { version: number; at: string; author: string; summary: string }[] } | null>(null);
+  const [showLegacy, setShowLegacy] = useState(false);
+  useEffect(() => {
+    if (!showLegacy || legacy) return;
+    void fetch(`${api}?view=legacy`, { cache: 'no-store' }).then((r) => r.json()).then(setLegacy).catch((e: Error) => setLegacy({ available: false, reason: e.message, versions: [] }));
+  }, [showLegacy, legacy, api]);
 
   const load = useCallback(async () => {
     setErr('');
@@ -107,6 +113,27 @@ export default function DatasetVersions({ datasetId, name, canEdit, onRestored }
           ))}
         </ul>
       )}
+      <button type="button" className="btn ghost sm" style={{ marginTop: 8 }} onClick={() => setShowLegacy((v) => !v)} aria-expanded={showLegacy}>
+        {showLegacy ? 'Hide earlier definition history' : 'Earlier definition history (read-only)'}
+      </button>
+      {showLegacy ? (
+        !legacy ? <div className="hint">Loading…</div>
+          : !legacy.available ? <div className="hint">{legacy.reason}</div>
+          : legacy.versions.length === 0 ? <div className="hint">No definition history was kept before versions moved to Iceberg.</div>
+          : (
+            <ul className="lc-version-list">
+              {legacy.versions.map((v) => (
+                <li key={v.version} className="lc-version-row">
+                  <div className="lc-version-meta">
+                    <span className="lc-version-num">v{v.version}</span>
+                    <span className="muted" style={{ fontSize: 12 }}>{when(v.at)} · {v.author}</span>
+                  </div>
+                  <div className="lc-version-summary">{v.summary || '—'}</div>
+                </li>
+              ))}
+            </ul>
+          )
+      ) : null}
     </div>
   );
 }

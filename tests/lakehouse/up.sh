@@ -21,7 +21,7 @@ python3 tests/lakehouse/render.py "$WORK" "$@"
 chmod -R a+rX "$WORK"
 { cat "$WORK/compose.env"; echo "LH_WORK=$WORK"; echo "LH_PG_USER=$LH_PG_USER"; echo "LH_PG_PASSWORD=$LH_PG_PASSWORD"; } > "$WORK/compose.all.env"
 echo "$WORK" > "${TMPDIR:-/tmp}/${LH_PROJECT:-soa-lakehouse}.work"
-if ! docker compose -f tests/lakehouse/compose.yaml --env-file "$WORK/compose.all.env" up -d --wait --wait-timeout 600 trino data-runner; then
+if ! docker compose -f tests/lakehouse/compose.yaml --env-file "$WORK/compose.all.env" up -d --build --wait --wait-timeout 600 trino data-runner; then
   docker compose -f tests/lakehouse/compose.yaml --env-file "$WORK/compose.all.env" ps -a
   docker compose -f tests/lakehouse/compose.yaml --env-file "$WORK/compose.all.env" logs --tail 80
   exit 1

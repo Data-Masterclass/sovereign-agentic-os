@@ -94,6 +94,8 @@ services:
     command: ${LH_OPA_ARGS}
     user: "1000"
     volumes: ["${LH_WORK}/opa/policies:/policies:ro", "${LH_WORK}/opa/config:/config:ro"]
+    # WP-37: os-ui's write decisions (agentic.authz.data_version_write) are asked of THIS OPA.
+    ports: ["127.0.0.1:${LH_OPA_PORT:-18181}:8181"]
     networks: [lh]
 
   trino:

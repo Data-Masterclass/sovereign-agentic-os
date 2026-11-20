@@ -26,10 +26,11 @@ import {
   diffVersions, listVersions, nameVersion, rollbackVersion, VersionTableError, type VersionDeps,
 } from '@tabs/data/lib/dataset-versions';
 import { expireSnapshotsSql } from '@tabs/data/lib/iceberg-sql';
+import { authorize } from '@core/infra/governed';
 // @ts-ignore -- the harness client is plain JS (tests/lakehouse/lib.mjs), no type declarations
 import { run } from '../../../../tests/lakehouse/lib.mjs';
 
-const skip = process.env.LH_TRINO_URL ? false : 'LH_TRINO_URL not set (start tests/lakehouse/up.sh)';
+const skip = process.env.LH_TRINO_URL && process.env.OPA_URL ? false : 'LH_TRINO_URL / OPA_URL not set (start tests/lakehouse/up.sh)';
 const RUNNER = process.env.LH_RUNNER_URL ?? 'http://127.0.0.1:18000';
 const trino = (sql: string, user: string): Promise<{ rows: unknown[][]; columns: string[] }> => run(sql, { user, source: 'os-ui-it' });
 
@@ -39,15 +40,19 @@ const DOM = `it-ver-dom-${sfx}`;
 const owner: Principal = { id: OWNER, domains: [DOM], role: 'creator' };
 const identity = { uid: OWNER, domains: owner.domains };
 
-const deps: VersionDeps = {
+/** The side effects, as `who`: Trino reads/writes, the data-runner ref commit, and the chart's OPA
+ *  (`agentic.authz.data_version_write`) for the write decision — every hop real. */
+const depsAs = (who: Principal): VersionDeps => ({
   query: (sql, principal) => trino(sql, principal),
-  execute: async (sql, who) => { await trino(sql, who.principal); },
+  execute: async (sql, w) => { await trino(sql, w.principal); },
   createRef: async (body) => {
     const res = await fetch(`${RUNNER}/refs`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
     const data = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
     if (!res.ok || data.ok === false) throw new Error(`data-runner /refs ${res.status}: ${data.error ?? ''}`);
   },
-};
+  authorizeWrite: async (input) => (await authorize(`user:${who.id}`, 'data.version.write', { rule: 'data_version_write', input })).allowed,
+});
+const deps = depsAs(owner);
 
 const all = () => listAllDatasets({ includeArchived: true });
 const rowsOf = async (sql: string) => (await trino(sql, OWNER)).rows.map((r) => r.map(String).join('|')).sort();
@@ -159,4 +164,40 @@ test('a table another dataset maps to (an archived sibling too) is never restore
   assert.deepEqual(await rowsOf(`SELECT src, n FROM ${shared}`), ['A|1', 'B|2'], 'the shared table is untouched');
   const [, sch, tbl] = shared.split('.');
   assert.deepEqual((await trino(`SELECT name FROM iceberg.${sch}."${tbl}$refs"`, OWNER)).rows, [['main']], 'no tag was written');
+});
+
+test('a Domain dataset is restored by a domain_admin of its domain, never by a builder (real OPA)', { skip }, async () => {
+  const ID = `ds_govasset${sfx}`;
+  __seedDatasetForTest({ id: ID, name: 'Governed Receipts', owner: OWNER, domain: DOM, tier: 'asset' });
+  buildVersion(ID, owner, 'gold', { quality: 'passing', artifact: `gold/${ID}.sql`, passThrough: true });
+  const table = versionTarget(getDataset(ID, owner), 'gold', owner);
+  assert.match(table, /^iceberg\.it_ver_dom_[a-z0-9_]+\.gold_governed_receipts$/, 'served from the domain copy');
+  const schema = table.split('.').slice(0, 2).join('.');
+  await trino(`CREATE SCHEMA IF NOT EXISTS ${schema}`, OWNER);
+  await trino(`CREATE TABLE ${table} AS SELECT * FROM (VALUES ('v1', 1)) AS t(src, n)`, OWNER);
+  const first = String((await trino(`SELECT CAST(snapshot_id AS varchar) FROM ${table.replace(/\.([a-z0-9_]+)$/, '."$1$snapshots"')} ORDER BY committed_at LIMIT 1`, OWNER)).rows[0][0]);
+  await trino(`INSERT INTO ${table} VALUES ('v2', 2)`, OWNER);
+
+  const builder: Principal = { id: OWNER, domains: [DOM], role: 'builder' }; // the dataset's own owner, a builder
+  const domainAdmin: Principal = { id: `it_dadmin_${sfx}`, domains: [DOM], role: 'domain_admin' };
+  const otherAdmin: Principal = { id: `it_oadmin_${sfx}`, domains: ['elsewhere'], role: 'domain_admin' };
+
+  // Negative twins: a builder (even the owner) and a domain_admin of ANOTHER domain are refused by
+  // OPA, before anything reaches Trino or the catalog.
+  for (const who of [builder, otherAdmin]) {
+    await assert.rejects(rollbackVersion(getDataset(ID, owner), who, all(), depsAs(who), { snapshotId: first }),
+      (e: unknown) => e instanceof VersionTableError && e.code === 'forbidden');
+    await assert.rejects(nameVersion(getDataset(ID, owner), who, all(), depsAs(who), { snapshotId: first, name: 'nope' }),
+      (e: unknown) => e instanceof VersionTableError && e.code === 'forbidden');
+  }
+  assert.deepEqual(await rowsOf(`SELECT src, n FROM ${table}`), ['v1|1', 'v2|2'], 'refused: the table is unchanged');
+  const [, sch, tbl] = table.split('.');
+  assert.deepEqual((await trino(`SELECT name FROM iceberg.${sch}."${tbl}$refs"`, OWNER)).rows, [['main']], 'refused: no tag written');
+
+  // The domain_admin of the dataset's domain may. The OS decision is OPA's (above); the Trino session
+  // runs as the harness user that created this domain schema (the per-person Trino identity is WP-35).
+  const asSchemaOwner = { ...depsAs(domainAdmin), query: (sql: string) => trino(sql, OWNER), execute: async (sql: string) => { await trino(sql, OWNER); } };
+  const ok = await rollbackVersion(getDataset(ID, owner), domainAdmin, all(), asSchemaOwner, { snapshotId: first });
+  assert.equal(ok.current, first);
+  assert.deepEqual(await rowsOf(`SELECT src, n FROM ${table}`), ['v1|1']);
 });

@@ -13,7 +13,9 @@ import {
   __resetStore, __seedDatasetForTest, archiveDataset, buildVersion, createDataset, getDataset, listAllDatasets,
   type Principal,
 } from '@tabs/data/lib/store';
-import { datasetTables, resolveVersionTable, rollbackVersion, VersionTableError, type VersionDeps } from '@tabs/data/lib/dataset-versions';
+import {
+  datasetTables, nameVersion, resolveVersionTable, rollbackVersion, versionWriteInput, VersionTableError, type VersionDeps,
+} from '@tabs/data/lib/dataset-versions';
 import {
   configuredRetention, diffCountsSql, expireSnapshotsSql, parseFqn, readAtVersionSql, refName, retention,
   rollbackSql, snapshotId, snapshotsSql, versionClause,
@@ -70,6 +72,7 @@ test('a refused restore sends NOTHING to Trino (the shared table is never touche
     query: async (sql) => { sent.push(sql); return { rows: [] }; },
     execute: async (sql) => { sent.push(sql); },
     createRef: async () => { sent.push('createRef'); },
+    authorizeWrite: async () => { sent.push('opa'); return true; },
   };
   await assert.rejects(rollbackVersion(getDataset('ds_a1', amir), amir, all(), deps, { snapshotId: '42' }), /also mapped by/);
   assert.deepEqual(sent, []);
@@ -111,4 +114,30 @@ test('retention is configurable and defaults to 7d', () => {
   assert.equal(configuredRetention({}), '7d');
   assert.equal(configuredRetention({ OS_ICEBERG_SNAPSHOT_RETENTION: '30d' }), '30d');
   assert.throws(() => configuredRetention({ OS_ICEBERG_SNAPSHOT_RETENTION: 'forever' }), /retention/);
+});
+
+test('an OPA write denial refuses restore and tag before ANY query or write (negative twin)', async () => {
+  const d = createDataset(amir, { name: 'Orders', domain: 'sales' });
+  built(d.id);
+  const sent: string[] = [];
+  const asked: unknown[] = [];
+  const deps: VersionDeps = {
+    query: async (sql) => { sent.push(sql); return { rows: [] }; },
+    execute: async (sql) => { sent.push(sql); },
+    createRef: async () => { sent.push('createRef'); },
+    authorizeWrite: async (input) => { asked.push(input); return false; },
+  };
+  await assert.rejects(rollbackVersion(getDataset(d.id, amir), amir, all(), deps, { snapshotId: '42' }), (e: unknown) => e instanceof VersionTableError && e.code === 'forbidden' && e.status === 403);
+  await assert.rejects(nameVersion(getDataset(d.id, amir), amir, all(), deps, { snapshotId: '42', name: 'x' }), (e: unknown) => e instanceof VersionTableError && e.code === 'forbidden');
+  assert.deepEqual(sent, [], 'nothing reached Trino or the catalog');
+  assert.equal(asked.length, 2, 'OPA was asked for each write');
+});
+
+test('the OPA input names the actor and the dataset tier, owner and domain', () => {
+  const d = createDataset(amir, { name: 'Orders', domain: 'sales' });
+  assert.deepEqual(versionWriteInput(getDataset(d.id, amir), { id: 'dina', role: 'domain_admin', domains: ['sales'] }), {
+    action: 'data.version.write',
+    actor: { id: 'dina', role: 'domain_admin', domains: ['sales'] },
+    dataset: { id: d.id, tier: 'dataset', owner: 'amir', domain: 'sales' },
+  });
 });
