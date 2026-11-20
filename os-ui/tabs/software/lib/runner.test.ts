@@ -1,18 +1,14 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * WP-54: the runner deploys the app's COMMITTED k8s/ manifests (native-deploy.ts) — dry-run
+ * first, then for real — and builds no object of its own.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import yaml from 'js-yaml';
 import {
   runnerName,
-  appImageRef,
-  MissingAppImageError,
-  isDigestRef,
-  pullPolicyFor,
-  runnerSpec,
-  buildDeploymentManifest,
-  buildServiceManifest,
-  buildIngressManifest,
   deployApp,
   runnerStatus,
   stopApp,
@@ -20,23 +16,28 @@ import {
   type RunnerApp,
   type RunnerK8s,
 } from './runner.ts';
-import { config } from '@core/kernel/config';
+import { appDeployFiles, NOT_BUILT_DIGEST } from './native-deploy.ts';
 
-const OPTS = { namespace: 'agentic-apps', ingressClass: 'nginx', tlsIssuer: 'letsencrypt-prod' };
+const REGISTRY = 'registry.example.com/sovereign-os-apps';
+const DIGEST = `sha256:${'b'.repeat(64)}`;
+const OPTS = { namespace: 'agentic-apps', registry: REGISTRY };
+const HOST = 'shop.ops.apps.example.com';
 
-// An 'image' app MUST carry an image now: with none, `appImageRef` fails closed (night-2 S2),
-// so the manifest/deploy fixtures declare the published image the operator built.
-const APP: RunnerApp = {
-  slug: 'shop',
-  host: 'shop.ops.apps.example.com',
-  runImage: 'registry.example.com/apps/shop:latest',
-  footprint: { cpu: '250m', memory: '256Mi', estMonthlyUsd: 12 },
-};
+function treeOf(digest = DIGEST, extra: { path: string; content: string }[] = []): RunnerApp {
+  const files = [
+    { path: 'Dockerfile', content: 'FROM nginxinc/nginx-unprivileged\n' },
+    ...appDeployFiles({ slug: 'shop', host: HOST, registry: REGISTRY, digest, ingressClass: 'nginx', tlsIssuer: 'le' }),
+    ...extra,
+  ];
+  return { slug: 'shop', host: HOST, tree: { kind: 'tree', files, sha: 'c0ffee' } };
+}
+const APP = treeOf();
 
 const NS = OPTS.namespace;
 const DEP = `/apis/apps/v1/namespaces/${NS}/deployments`;
 const SVC = `/api/v1/namespaces/${NS}/services`;
 const ING = `/apis/networking.k8s.io/v1/namespaces/${NS}/ingresses`;
+const DRY = '?dryRun=All';
 
 /** A recording mock k8s client driven by a per-`METHOD path` table (+ method fallback). */
 function mockK8s(responses: Record<string, { status: number; body?: Record<string, unknown> }>) {
@@ -52,186 +53,86 @@ function mockK8s(responses: Record<string, { status: number; body?: Record<strin
 // --------------------------------------------------------------- Naming --------
 
 test('runnerName is deterministic + RFC1123-safe', () => {
-  assert.equal(runnerName('shop'), 'app-shop');
-  assert.equal(runnerName('My_Cool App'), 'app-my-cool-app');
-  assert.equal(runnerName('shop'), runnerName('shop'));
-  assert.match(runnerName('shop'), /^[a-z0-9-]+$/);
+  assert.equal(runnerName('Shop App'), 'app-shop-app');
+  assert.equal(runnerName('--x--'), 'app-x');
+  assert.ok(runnerName('a'.repeat(80)).length <= 52);
 });
 
-test('appImageRef: the app\u2019s explicit runImage wins; a MISSING image FAILS CLOSED (S2)', () => {
-  assert.equal(appImageRef({ slug: 'shop', runImage: 'ghcr.io/acme/shop:v2' }), 'ghcr.io/acme/shop:v2');
-  // NIGHT-2 S2: there is no OS image builder and `SOFTWARE_RUNNER_IMAGE` is EMPTY by default,
-  // so a missing image is a typed, loud refusal — it used to fall back to the chart's
-  // `traefik/whoami:latest`, serving a STRANGER'S placeholder container on a customer domain.
-  assert.equal(config.softwareRunnerImage, '', 'the shared runner image is unset by default');
-  assert.throws(() => appImageRef({ slug: 'shop' }), MissingAppImageError);
-  assert.throws(() => appImageRef({ slug: 'shop', runImage: '  ' }), MissingAppImageError, 'whitespace is not an image');
-  try {
-    appImageRef({ slug: 'shop' });
-    assert.fail('expected a refusal');
-  } catch (e) {
-    const err = e as MissingAppImageError;
-    assert.equal(err.status, 409);
-    assert.equal(err.code, 'missing_app_image');
-    assert.match(err.message, /shop/, 'names the app');
-    assert.match(err.message, /does not build images/i, 'says why, honestly');
-    assert.match(err.message, /Nothing was provisioned/, 'says nothing was provisioned');
-  }
-});
+// -------------------------------------------------------- What runs is git -----
 
-test('deployApp FAILS CLOSED for an image app with no image — no objects, no URL (S2)', async () => {
-  const { client, calls } = mockK8s({});
-  const out = await deployApp({ ...APP, runImage: undefined }, { k8s: client, namespace: NS });
-  assert.equal(out.ok, false);
-  assert.equal(out.url, null, 'never a URL');
-  assert.equal(out.phase, 'failed');
-  assert.match(out.detail, /no image reference is set/);
-  assert.equal(calls.length, 0, 'not one Kubernetes call — nothing was provisioned');
-});
-
-// ------------------------------------------------------------- Manifests -------
-
-test('deployment manifest: 1 replica, requests+limits, TCP readiness probe, image', () => {
-  const spec = runnerSpec({ ...APP, runImage: 'registry.example.com/apps/shop:latest' });
-  const m = buildDeploymentManifest(spec, NS) as any;
-  assert.equal(m.kind, 'Deployment');
-  assert.equal(m.metadata.namespace, NS);
-  assert.equal(m.spec.replicas, 1);
-  const c = m.spec.template.spec.containers[0];
-  assert.match(c.image, /\/shop:latest$/);
-  assert.deepEqual(c.resources.requests, { cpu: '250m', memory: '256Mi' });
-  assert.equal(c.resources.limits.memory, '256Mi'); // limit >= request
-  assert.ok(c.readinessProbe.tcpSocket, 'has a TCP readiness probe (image-agnostic)');
-  assert.equal(c.ports[0].containerPort, 8080);
-  assert.equal(m.metadata.labels['app.kubernetes.io/managed-by'], 'os-ui');
-  // Container hardening (defence-in-depth for untrusted student apps).
-  assert.equal(c.securityContext.allowPrivilegeEscalation, false, 'no privilege escalation');
-  assert.deepEqual(c.securityContext.capabilities.drop, ['ALL'], 'drops all Linux capabilities');
-  assert.equal(c.securityContext.seccompProfile.type, 'RuntimeDefault', 'seccomp RuntimeDefault');
-  // Pod-level seccomp + non-root assertion (all live apps rebuilt from scaffolds
-  // with numeric image users, so PSS `restricted` admission passes).
-  assert.equal(m.spec.template.spec.securityContext.seccompProfile.type, 'RuntimeDefault');
-  assert.equal(
-    m.spec.template.spec.securityContext.runAsNonRoot,
-    true,
-    'runAsNonRoot enforced — restricted-PSS-ready manifests',
-  );
-});
-
-test('service manifest: port 80 → targetPort 8080, selects the deployment pods', () => {
-  const m = buildServiceManifest(runnerSpec(APP), NS) as any;
-  assert.equal(m.spec.ports[0].port, 80);
-  assert.equal(m.spec.ports[0].targetPort, 8080);
-  assert.deepEqual(m.spec.selector, { app: 'app-shop' });
-});
-
-test('ingress manifest: per-app host, TLS secret, class + cluster-issuer match the chart', () => {
-  const m = buildIngressManifest(runnerSpec(APP), NS, OPTS) as any;
-  assert.equal(m.spec.rules[0].host, 'shop.ops.apps.example.com');
-  assert.equal(m.spec.ingressClassName, 'nginx');
-  assert.equal(m.spec.tls[0].secretName, 'shop.ops.apps.example.com-tls');
-  assert.equal(m.metadata.annotations['cert-manager.io/cluster-issuer'], 'letsencrypt-prod');
-  assert.equal(m.spec.rules[0].http.paths[0].backend.service.port.number, 80);
-});
-
-test('deployment manifest: deployedAt stamps the pod template so a re-deploy ROLLS the pods', () => {
-  const spec = runnerSpec(APP);
-  const stamped = buildDeploymentManifest(spec, NS, '2026-07-26T00:00:00.000Z') as any;
-  assert.equal(
-    stamped.spec.template.metadata.annotations['soa.sovereign-os/deployed-at'],
-    '2026-07-26T00:00:00.000Z',
-    'the per-deploy stamp changes the pod template → a real rollout, not a k8s no-op',
-  );
-  // Always re-pull: `:latest` is mutable, so a restarted pod must fetch the image
-  // CI just published — never keep serving the first-ever pulled (stub) image.
-  assert.equal(stamped.spec.template.spec.containers[0].imagePullPolicy, 'Always');
-  // Without the stamp the manifest stays deterministic (no annotations block).
-  const bare = buildDeploymentManifest(spec, NS) as any;
-  assert.equal(bare.spec.template.metadata.annotations, undefined);
-  assert.equal(bare.spec.template.spec.containers[0].imagePullPolicy, 'Always');
-});
-
-test('deployment manifest: a DIGEST-pinned image drops the roll hack + Always-pull reliance', () => {
-  const digest = 'registry.example.com/apps/shop@sha256:' + 'b'.repeat(64);
-  const spec = runnerSpec({ ...APP, runImage: digest });
-  assert.equal(spec.image, digest, 'the runner serves the exact captured digest');
-  const m = buildDeploymentManifest(spec, NS, '2026-08-04T00:00:00.000Z') as any;
-  const c = m.spec.template.spec.containers[0];
-  assert.equal(c.image, digest);
-  // Immutable content: never re-pull the same digest.
-  assert.equal(c.imagePullPolicy, 'IfNotPresent');
-  // The deployed-at stamp (the roll-on-same-tag hack) is GONE for digest refs — a new
-  // digest IS the pod-template change, so Kubernetes rolls honestly on its own.
-  assert.equal(m.spec.template.metadata.annotations, undefined, 'no roll-hack stamp on a digest-pinned deploy');
-  // A mutable :latest spec still keeps both (unchanged behaviour for the fallback path).
-  const latest = buildDeploymentManifest(runnerSpec({ ...APP, runImage: 'registry.example.com/apps/shop:latest' }), NS, '2026-08-04T00:00:00.000Z') as any;
-  assert.equal(latest.spec.template.spec.containers[0].imagePullPolicy, 'Always');
-  assert.ok(latest.spec.template.metadata.annotations['soa.sovereign-os/deployed-at']);
-});
-
-test('isDigestRef + pullPolicyFor distinguish immutable digests from mutable tags', () => {
-  const digest = 'reg/owner/app@sha256:' + 'c'.repeat(64);
-  assert.equal(isDigestRef(digest), true);
-  assert.equal(isDigestRef('reg/owner/app:latest'), false);
-  assert.equal(isDigestRef('reg/owner/app@sha256:short'), false);
-  assert.equal(pullPolicyFor(digest), 'IfNotPresent');
-  assert.equal(pullPolicyFor('reg/owner/app:latest'), 'Always');
-});
-
-test('deployApp stamps every applied Deployment with a fresh deployed-at annotation', async () => {
+test('deployApp applies EXACTLY the committed manifests (namespace set, nothing else changed)', async () => {
   const { client, calls } = mockK8s({
     [`GET /api/v1/namespaces/${NS}`]: { status: 200 },
     GET: { status: 404 },
-    POST: { status: 201 },
-  });
-  await deployApp(APP, { ...OPTS, k8s: client });
-  const post = calls.find((c) => c.method === 'POST' && c.path === DEP)!;
-  const ann = (post.body as any).spec.template.metadata.annotations;
-  assert.ok(ann && typeof ann['soa.sovereign-os/deployed-at'] === 'string', 'deploy carries the rollout stamp');
-  assert.ok(!Number.isNaN(Date.parse(ann['soa.sovereign-os/deployed-at'])), 'stamp is a real timestamp');
-});
-
-test('WP-47: a user app runs in the priority class the chart names, below every platform pod', async () => {
-  const spec = runnerSpec({ ...APP, runImage: 'registry.example.com/apps/shop:latest' });
-  const m = buildDeploymentManifest(spec, NS, undefined, 'sovereign-os-user-apps') as any;
-  assert.equal(m.spec.template.spec.priorityClassName, 'sovereign-os-user-apps');
-  // No class configured (the chart did not create the classes): no field, or admission would
-  // reject the pod for naming a PriorityClass that does not exist.
-  const bare = buildDeploymentManifest(spec, NS) as any;
-  assert.equal('priorityClassName' in bare.spec.template.spec, false);
-  const { client, calls } = mockK8s({
-    [`GET /api/v1/namespaces/${NS}`]: { status: 200 },
-    GET: { status: 404 },
-    POST: { status: 201 },
-  });
-  await deployApp(APP, { ...OPTS, k8s: client, priorityClassName: 'sovereign-os-user-apps' });
-  const post = calls.find((c) => c.method === 'POST' && c.path === DEP)!;
-  assert.equal((post.body as any).spec.template.spec.priorityClassName, 'sovereign-os-user-apps');
-});
-
-// --------------------------------------------------------------- Deploy --------
-
-test('deployApp CREATES ns + Deployment + Service + Ingress when none exist', async () => {
-  const { client, calls } = mockK8s({
-    [`GET /api/v1/namespaces/${NS}`]: { status: 404 },
-    'POST /api/v1/namespaces': { status: 201 },
-    GET: { status: 404 }, // every object GET → not found → POST-create
     POST: { status: 201 },
   });
   const out = await deployApp(APP, { ...OPTS, k8s: client });
-  assert.equal(out.ok, true);
-  assert.equal(out.live, true);
-  assert.equal(out.action, 'deployed');
-  assert.equal(out.url, 'https://shop.ops.apps.example.com');
-  // Not ready yet (final status GET → 404 → absent) → honest 'deploying', not 'running'.
-  assert.equal(out.phase, 'deploying');
-  // It POSTed a Deployment, a Service and an Ingress.
-  assert.ok(calls.some((c) => c.method === 'POST' && c.path === DEP));
-  assert.ok(calls.some((c) => c.method === 'POST' && c.path === SVC));
-  assert.ok(calls.some((c) => c.method === 'POST' && c.path === ING));
+  assert.equal(out.ok, true, out.detail);
+  assert.equal(out.url, `https://${HOST}`);
+  const real = calls.find((c) => c.method === 'POST' && c.path === DEP)!;
+  const committed = yaml.load(APP.tree.kind === 'tree' ? APP.tree.files.find((f) => f.path === 'k8s/deployment.yaml')!.content : '') as any;
+  assert.deepEqual(real.body, { ...committed, metadata: { ...committed.metadata, namespace: NS } });
+  assert.match(out.detail, /c0ffee/, 'the outcome names the git sha it deployed');
 });
 
-test('deployApp is idempotent — existing objects are REPLACED (PUT), reports running', async () => {
+test('deployApp submits a server-side DRY RUN of every object before the real apply', async () => {
+  const { client, calls } = mockK8s({ [`GET /api/v1/namespaces/${NS}`]: { status: 200 }, GET: { status: 404 }, POST: { status: 201 } });
+  await deployApp(APP, { ...OPTS, k8s: client });
+  const posts = calls.filter((c) => c.method === 'POST').map((c) => c.path);
+  const firstReal = posts.findIndex((p) => !p.endsWith(DRY));
+  assert.deepEqual(posts.slice(0, firstReal).sort(), [`${DEP}${DRY}`, `${ING}${DRY}`, `${SVC}${DRY}`].sort());
+  assert.deepEqual(posts.slice(firstReal).sort(), [DEP, ING, SVC].sort());
+});
+
+test('a dry-run rejection (e.g. Pod Security restricted) applies NOTHING and says why', async () => {
+  const { client, calls } = mockK8s({
+    [`GET /api/v1/namespaces/${NS}`]: { status: 200 },
+    GET: { status: 404 },
+    [`POST ${DEP}${DRY}`]: { status: 403, body: { message: 'violates PodSecurity "restricted:latest"' } },
+    POST: { status: 201 },
+  });
+  const out = await deployApp(APP, { ...OPTS, k8s: client });
+  assert.equal(out.ok, false);
+  assert.equal(out.url, null);
+  assert.match(out.detail, /restricted/);
+  assert.equal(calls.filter((c) => c.method === 'POST' && !c.path.endsWith(DRY)).length, 0, 'no real write');
+});
+
+test('NEGATIVE TWIN: no k8s/ in git → refused with ZERO Kubernetes calls (no in-memory manifests)', async () => {
+  const { client, calls } = mockK8s({ GET: { status: 404 }, POST: { status: 201 } });
+  const out = await deployApp(
+    { slug: 'shop', host: HOST, tree: { kind: 'tree', files: [{ path: 'Dockerfile', content: 'FROM x' }], sha: 'c0ffee' } },
+    { ...OPTS, k8s: client },
+  );
+  assert.equal(out.ok, false);
+  assert.equal(out.phase, 'failed');
+  assert.match(out.detail, /k8s\//);
+  assert.equal(calls.length, 0);
+});
+
+test('an unbuilt image, a foreign registry, or git that cannot answer → refused, zero calls', async () => {
+  const forgejo = treeOf(DIGEST);
+  if (forgejo.tree.kind === 'tree') {
+    forgejo.tree.files = forgejo.tree.files.map((f) =>
+      f.path === 'k8s/deployment.yaml' ? { ...f, content: f.content.replace(`${REGISTRY}/shop@${DIGEST}`, 'forgejo-http:3000/gitea_admin/shop:latest') } : f,
+    );
+  }
+  const cases: [RunnerApp, RegExp][] = [
+    [treeOf(NOT_BUILT_DIGEST), /not been built/],
+    [forgejo, /platform registry/],
+    [{ slug: 'shop', host: HOST, tree: { kind: 'failed', reason: 'pack read error' } }, /git.*pack read error/i],
+    [{ slug: 'shop', host: HOST, tree: { kind: 'none' } }, /k8s\//],
+  ];
+  for (const [app, re] of cases) {
+    const { client, calls } = mockK8s({ GET: { status: 404 }, POST: { status: 201 } });
+    const out = await deployApp(app, { ...OPTS, k8s: client });
+    assert.equal(out.ok, false);
+    assert.match(out.detail, re);
+    assert.equal(calls.length, 0);
+  }
+});
+
+test('deployApp is idempotent — existing objects are REPLACED (PUT with resourceVersion), reports running', async () => {
   const running = { status: 200, body: { spec: { replicas: 1 }, status: { readyReplicas: 1 }, metadata: { resourceVersion: '7' } } };
   const { client, calls } = mockK8s({
     [`GET /api/v1/namespaces/${NS}`]: { status: 200 },
@@ -242,11 +143,9 @@ test('deployApp is idempotent — existing objects are REPLACED (PUT), reports r
   });
   const out = await deployApp(APP, { ...OPTS, k8s: client });
   assert.equal(out.ok, true);
-  assert.equal(out.action, 'deployed');
   assert.equal(out.phase, 'running');
-  assert.equal(out.url, 'https://shop.ops.apps.example.com');
   const put = calls.find((c) => c.method === 'PUT' && c.path === `${DEP}/app-shop`)!;
-  assert.equal((put.body as any).metadata.resourceVersion, '7', 'PUT carries the resourceVersion');
+  assert.equal((put.body as any).metadata.resourceVersion, '7');
 });
 
 test('HONESTY: an unreachable API server never claims a live deploy (status 0)', async () => {
@@ -259,7 +158,7 @@ test('HONESTY: an unreachable API server never claims a live deploy (status 0)',
   assert.match(out.detail, /unreachable/i);
 });
 
-test('HONESTY: a cluster rejection surfaces as a non-ok, no URL', async () => {
+test('HONESTY: a cluster rejection on the real apply surfaces as non-ok, no URL', async () => {
   const { client } = mockK8s({
     [`GET /api/v1/namespaces/${NS}`]: { status: 200 },
     GET: { status: 404 },
