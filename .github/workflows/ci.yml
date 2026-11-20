@@ -184,7 +184,7 @@ jobs:
           sudo sysctl -w vm.max_map_count=262144
           bash tests/opensearch/up.sh
       - name: os-snapshot + os-cleanup (real OpenSearch)
-        run: node --test --test-concurrency=1 tests/opensearch/os-snapshot.int.test.mjs tests/opensearch/os-cleanup.int.test.mjs
+        run: node --test --test-concurrency=1 tests/opensearch/os-snapshot.int.test.mjs tests/opensearch/os-cleanup.int.test.mjs tests/opensearch/os-audit-mapping.int.test.mjs
       - name: Logs (on failure)
         if: failure()
         run: |

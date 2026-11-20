@@ -200,6 +200,12 @@ export function osMirror(opts: {
       const dyn = (body.mappings as { dynamic?: unknown }).dynamic;
       await osFetch(`/${index}/_mapping`, { method: 'PUT', body: JSON.stringify({ dynamic: dyn }) });
     }
+    // Declared field mappings can be ADDED to an existing index (a new field, or a field that
+    // dynamic mapping has not seen yet); a conflicting change is refused by OpenSearch and left as is.
+    const props = (body.mappings as { properties?: unknown } | undefined)?.properties;
+    if (props && typeof props === 'object') {
+      await osFetch(`/${index}/_mapping`, { method: 'PUT', body: JSON.stringify({ properties: props }) });
+    }
   }
 
   async function doProbe(): Promise<boolean> {

@@ -14,6 +14,7 @@
  * unit-testable.
  */
 import { osMirror } from '@core/infra/os-mirror';
+import osAuditIndex from './os-audit-index.json' with { type: 'json' };
 
 export type AuditResult = 'ok' | 'denied' | 'error';
 
@@ -55,7 +56,11 @@ function id(): string {
 
 // Shared durable-mirror core (lib/os-mirror.ts): first write probes the cluster
 // and CREATES the index when missing, so the audit trail persists on a fresh deploy.
-const mirror = osMirror({ index: 'os-audit' });
+// `data` (a governance entry's structured detail) is stored but NOT indexed (`enabled: false`):
+// its shape differs per action, and a field typed one way by an earlier entry must never make
+// OpenSearch reject a later entry whose value has another type.
+export const OS_AUDIT_INDEX_BODY: Record<string, unknown> = osAuditIndex;
+const mirror = osMirror({ index: 'os-audit', createBody: OS_AUDIT_INDEX_BODY });
 
 export async function ensureHydrated(): Promise<void> {
   const s = auditState();
