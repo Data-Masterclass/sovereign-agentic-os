@@ -201,6 +201,13 @@ export function agentPromptFile(agentId: string): string {
   return `${AGENT_PROMPTS_DIR}/${seg(agentId, 'agent')}.md`;
 }
 
+/**
+ * THE agent id token (WP-53): lower case, digits, `_` and `-`, at most 64 characters. Agent ids,
+ * prompt file names and the push allowlist all use this one pattern, so an id the definition
+ * accepts is always an id whose prompt can be pushed.
+ */
+export const AGENT_ID_PATTERN = '[a-z0-9][a-z0-9_-]{0,63}';
+
 /** An agent's durable memory notes, appended to its prompt: `prompts/<agent id>.memory.md`. */
 export function agentMemoryFile(agentId: string): string {
   return `${AGENT_PROMPTS_DIR}/${seg(agentId, 'agent')}.memory.md`;
@@ -208,7 +215,7 @@ export function agentMemoryFile(agentId: string): string {
 
 /** `prompts/<id>.md` or `prompts/<id>.memory.md` → which agent and which field, else null. */
 export function parseAgentPromptFile(relPath: string): { agentId: string; field: 'agent_md' | 'memory_md' } | null {
-  const m = /^prompts\/([a-z0-9][a-z0-9_-]{0,63})(\.memory)?\.md$/.exec(relPath);
+  const m = new RegExp(`^${AGENT_PROMPTS_DIR}/(${AGENT_ID_PATTERN})(\\.memory)?\\.md$`).exec(relPath);
   return m ? { agentId: m[1], field: m[2] ? 'memory_md' : 'agent_md' } : null;
 }
 

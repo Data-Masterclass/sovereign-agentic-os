@@ -23,11 +23,19 @@ import { createMiddleware } from 'langchain';
 import type { LlmCompletion, LlmMessage, LlmRequest } from '@core/runtime/agentic';
 import type { RunObserver, SpanHandle } from '@core/infra/trace-port';
 import type { AgentSpans } from '@tabs/agents/lib/module/run';
+import { tracedModelFetch } from '@core/adapters/litellm/traced-fetch';
 
 export type ModuleTracer = {
   spans: AgentSpans;
   current(): SpanHandle | null;
   middleware(agentId: string): ReturnType<typeof createMiddleware>;
+  /**
+   * The HTTP client for the model calls no middleware sees — the supervisor's `route` call and the
+   * stock summariser's call: each becomes a `route.<agent>` / `summary.<agent>` span with its
+   * `llm.…` model span, sent to the gateway as `traceparent` + `x-litellm-call-id`. A call that
+   * already carries a `traceparent` (an agent call, traced by the middleware) passes through.
+   */
+  fetchFor(kind: 'route' | 'summary', agentId: string): typeof globalThis.fetch;
 };
 
 type AnyMsg = { type?: string; _getType?: () => string; content?: unknown; tool_calls?: { id?: string; name: string; args: Record<string, unknown> }[]; tool_call_id?: string };
@@ -38,13 +46,8 @@ const roleOf = (m: AnyMsg): LlmMessage['role'] => {
   return (t === 'ai' ? 'assistant' : t === 'human' ? 'user' : t === 'tool' ? 'tool' : 'system') as LlmMessage['role'];
 };
 
-/** The traceparent of a span, when both ids are OTel-shaped (as `core/runtime/runtime.ts` builds it). */
-export function traceparentOf(observe: LlmRequest['observe']): string | undefined {
-  if (!observe) return undefined;
-  return /^[0-9a-f]{32}$/.test(observe.traceId) && /^[0-9a-f]{16}$/.test(observe.parentObservationId ?? '')
-    ? `00-${observe.traceId}-${observe.parentObservationId}-01`
-    : undefined;
-}
+export { traceparentOf } from '@core/adapters/litellm/traced-fetch';
+import { traceparentOf } from '@core/adapters/litellm/traced-fetch';
 
 export function moduleTracer(observer: RunObserver | null): ModuleTracer {
   const open = new Map<string, SpanHandle>();
@@ -92,5 +95,6 @@ export function moduleTracer(observer: RunObserver | null): ModuleTracer {
         return ai!;
       },
     });
-  return { spans, current, middleware };
+  const fetchFor = (kind: 'route' | 'summary', agentId: string): typeof globalThis.fetch => tracedModelFetch(observer, kind, agentId);
+  return { spans, current, middleware, fetchFor };
 }

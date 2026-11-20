@@ -32,6 +32,11 @@ export function gatewayChatModel(input: {
   writeSystem: boolean;
   baseURL?: string;
   apiKey?: string;
+  /**
+   * The HTTP client the OpenAI SDK uses (`configuration.fetch`, documented in the SDK's client
+   * options) — the run's tracer passes one that sends the call's trace span as `traceparent`.
+   */
+  fetch?: typeof globalThis.fetch;
 }): Fetched<ChatOpenAI> {
   const at = new Date().toISOString();
   const cred = input.caller ? callerCredential(input.caller) : null;
@@ -40,7 +45,7 @@ export function gatewayChatModel(input: {
   const model = new ChatOpenAI({
     model: input.model,
     apiKey,
-    configuration: { baseURL: input.baseURL ?? `${config.litellmUrl}/v1` },
+    configuration: { baseURL: input.baseURL ?? `${config.litellmUrl}/v1`, ...(input.fetch ? { fetch: input.fetch } : {}) },
     maxRetries: 0,
     timeout: GATEWAY_MODEL_TIMEOUT_MS,
     modelKwargs: {

@@ -140,7 +140,8 @@ export type EngineRunResult = AgenticGraphResult & {
 };
 
 /** The agent a run failed at, and the reason it gave. */
-export type RunFailure = { node: string | null; reason: string };
+/** `code` is the typed cause when the engine knows one (e.g. `model_call_limit`, module engine). */
+export type RunFailure = { node: string | null; reason: string; code?: string };
 
 /** Read a run's failure out of its state: the engine's `failed` channel, else a failed visit. */
 function failureOf(state: Partial<EngineState>): RunFailure | undefined {

@@ -120,6 +120,8 @@ export type ModuleTeamInput = {
   limits?: { modelCalls: number; toolCalls: number };
   /** Agent visits before the team ends (the outer graph's step budget). */
   maxSteps?: number;
+  /** The OS preamble (`osPreamble`) appended to every agent's prompt. */
+  preamble?: string;
 };
 
 export async function runOsTeamOnModule(input: ModuleTeamInput): Promise<ModuleRunResult & { checkpointer: 'postgres' | 'memory' }> {
@@ -137,7 +139,10 @@ export async function runOsTeamOnModule(input: ModuleTeamInput): Promise<ModuleR
   const writeSystem = loaded.module.TOOL_NAMES.some((t) => isWriteTool(t));
   const tracer = moduleTracer(input.observer ?? null);
   const graph = createOsAgent(loaded.module, {
-    modelFor: (a) => requireGatewayChatModel({ model: a.model ?? roleModel('tools'), caller: input.caller, writeSystem }),
+    // Every model call carries its trace span: an agent's own calls through the tracing
+    // middleware, the supervisor's route call and the summary call through `tracer.fetchFor`.
+    modelFor: (a) => requireGatewayChatModel({ model: a.model ?? roleModel('tools'), caller: input.caller, writeSystem, fetch: tracer.fetchFor('route', a.id) }),
+    ...(input.preamble ? { preamble: input.preamble } : {}),
     specs: input.specs,
     executor: input.executor,
     decide: input.decide,
@@ -150,7 +155,7 @@ export async function runOsTeamOnModule(input: ModuleTeamInput): Promise<ModuleR
     // Stock context management (03 §5.6): the window of the agent's own alias (os-ui's model
     // context table, the same budget the v1 engine trims to); summaries on the standard role model.
     context: {
-      summaryModel: () => requireGatewayChatModel({ model: roleModel('standard'), caller: input.caller, writeSystem: false }),
+      summaryModel: (a) => requireGatewayChatModel({ model: roleModel('standard'), caller: input.caller, writeSystem: false, fetch: tracer.fetchFor('summary', a.id) }),
       maxInputTokens: (a) => inputBudget(a.model ?? roleModel('tools')),
     },
     ...(input.limits ? { limits: input.limits } : {}),

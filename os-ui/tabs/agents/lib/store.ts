@@ -1448,6 +1448,16 @@ export function deleteSystem(systemId: string, user: Principal): SystemRecord {
  * generated file is byte-stable. An archived system is deliberately absent: archive leaves the
  * working lists, so it leaves the repo too (and the commit that archives it REMOVES its directory).
  */
+/**
+ * Every definition the registry holds, archived ones included — what a flag-on generation could
+ * ever be asked to generate. For read-only checks (`module/preflight-run.ts`); no identity filter,
+ * so never expose it through a route.
+ */
+export function allSystemDefinitionsInternal(): { id: string; domain: string; yaml: string; archived: boolean }[] {
+  ensureSeeded();
+  return [...state().store.values()].map((r) => ({ id: r.id, domain: r.domain, yaml: r.yaml, archived: !!r.archived })).sort((a, b) => a.id.localeCompare(b.id));
+}
+
 /** Every domain that currently holds a live system — the set the boot reconcile walks. */
 export function projectDomains(): string[] {
   ensureSeeded();
