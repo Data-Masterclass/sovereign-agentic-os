@@ -51,6 +51,23 @@ Rules that hold throughout:
 Secret keys that change (by hash), and which workloads roll by themselves. `verify` checks that every
 reader has a pod started after the deploy.
 
+## The production secret guard and the deploy preflight
+
+In production, os-ui and the run worker refuse to boot when a secret they read is missing or equals
+a development default published in this repository (`os-ui/core/kernel/secret-guard.ts`; it knows
+the defaults only as SHA-256 digests). `scripts/deploy.sh` checks the same thing **before** an
+upgrade (`scripts/lib/check-secrets-not-defaults.py`): it is read-only, compares by hash only, and
+stops with `SECRET_PREFLIGHT_FAILED` and the list of variable names. The rotation on this page is
+what makes that check pass.
+
+| Variable | Read by | Where it comes from | Notes |
+|---|---|---|---|
+| `LITELLM_MASTER_KEY` / `PROXY_MASTER_KEY` | os-ui; the gateway; the `litellm-agent-key-init` Job | Secret `litellm-credentials` → `masterkey` | on `global.profile: local` the chart renders it from `litellmMasterKey` |
+| `AGENT_RUNTIME_TOKEN` | os-ui, os-ui-worker; the Dagster code server and its repo-sync sidecar; agent schedule CronJobs | Secret `agent-runtime-token` → `token` | rendered from `agentRuntime.token` on `local` |
+| `OS_SESSION_SECRET`, `OS_MCP_TOKEN_SECRET` | os-ui | Secret `os-ui-session` | generated per install by the chart; normally nothing to do |
+| `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` | os-ui, os-ui-worker; the gateway (`litellm-credentials`, envFrom) | `langfuseInit.publicKey` (plain env) and Secret `langfuse-init` → `LANGFUSE_INIT_PROJECT_SECRET_KEY`; the same pair in `litellm-credentials` | one value pair, three places, all rendered from `langfuseInit` on `local` |
+| `TERMINAL_BROKER_SECRET` | os-ui, only when `TERMINAL_ENABLED=true` | os-ui env | nothing reads it while the terminal is off; set it in the same change that enables the terminal |
+
 ## LiteLLM: what is encrypted, and the complete re-key
 
 LiteLLM 1.109.1 encrypts **21 columns**. They are listed in
