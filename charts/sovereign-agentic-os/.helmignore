@@ -16,3 +16,4 @@ values.secret.yaml
 *_test.rego
 # Input to scripts/check-capacity.mjs only; no template reads it.
 capacity.yaml
+capacity.dev.yaml

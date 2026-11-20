@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+#
+# values.dev.model-stub.yaml — OPTIONAL: dev without any model spend.
+#
+# Layer it after values.dev.yaml (DEV_MODEL=stub for scripts/deploy.sh --env dev). LiteLLM keeps
+# its production model list; only the upstream behind STACKIT_API_BASE changes, to the chart's
+# own mock-model Deployment (the same image values.stackit-managed.yaml pins). No dev key is
+# needed. Every answer is a labelled mock answer, so a journey that judges model output stays
+# red on purpose: use it for deploy/infra checks, not to judge agent quality.
+stackitPremium:
+  apiBaseUrl: http://mock-model:8080/v1
+mockModel:
+  enabled: true
+  image:
+    repository: ghcr.io/aborek/sovereign-os/mock-model
+    tag: "0.1.1@sha256:fee2cf404759e43ee64b3cf4c169475cb5b96136ee848afa852248caad1369eb"
