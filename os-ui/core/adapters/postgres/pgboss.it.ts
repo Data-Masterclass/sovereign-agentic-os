@@ -50,8 +50,7 @@ describe('pg-boss on the real postgres:17', { timeout: 120_000 }, () => {
     db = await freshDatabase('wp07_boss');
     await migrateGovernance({ databaseUrl: db.url, direction: 'up' });
     pool = new pg.Pool({ connectionString: db.url, max: 5 });
-    // The chart bootstrap creates the schema for the queue role (createSchema: false).
-    await pool.query(`create schema ${PGBOSS_SCHEMA}`);
+    // migrateGovernance created `pgboss` (migration 3) and ran pg-boss's own `migrate` in it.
     markRunWorkerProcess(); // these tests run pg-boss workers, which only the worker process may
     boss = createBoss(db.url);
     boss.on('error', (err) => console.error('pg-boss error', err));

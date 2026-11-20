@@ -11,10 +11,11 @@
  * ARCHITECTURE:
  *   - Executes the SAME SQL files the chart Job `os-governance-bootstrap` mounts
  *     (charts/sovereign-agentic-os/files/os-governance/*.sql), as the superuser, in the Job's order:
- *     session parameters → roles.sql → CREATE DATABASE … OWNER → database-grants.sql →
- *     (connected to the new database) schemas.sql.
- *   - Then node-pg-migrate runs AS THE OWNER, pg-boss starts AS THE QUEUE LOGIN, and the OS's
- *     runtime login appends audit events and sends jobs inside its own transaction.
+ *     session parameters → roles.sql → CREATE DATABASE … OWNER → database-grants.sql.
+ *   - Then the migration step runs AS THE OWNER (node-pg-migrate, then `pg-boss migrate`), so the
+ *     owner owns `pgboss` and every object in it; pg-boss starts AS THE QUEUE LOGIN with
+ *     `migrate: false`; the OS's runtime login appends audit events and sends jobs inside its own
+ *     transaction. Neither OS login can attach a trigger (verifier N1) or create anything.
  *   - The privilege probes are the verifier's (`verify-07-probes/rt.sql`, `owner.sql`,
  *     `shadow.sql`, `fork.mjs`): every refusal is Postgres's own SQLSTATE 42501, and a shadowed
  *     `clock_timestamp` / `pg_advisory_xact_lock` / `sha256` must not change what the chain stores.
@@ -66,13 +67,6 @@ async function bootstrap(): Promise<void> {
   } finally {
     await su.end();
   }
-  const suDb = await adminClient(DB);
-  try {
-    await setParams(suDb, DEFAULT_PARAMS);
-    await suDb.query(await chartSql('schemas.sql'));
-  } finally {
-    await suDb.end();
-  }
 }
 
 async function connect(login: { user: string; password: string }): Promise<pg.Client> {
@@ -114,8 +108,12 @@ describe('clean install as a NOCREATEROLE owner (real postgres:17)', { timeout: 
       for (const row of r.rows) {
         assert.deepEqual([row.rolsuper, row.rolcreaterole, row.rolcreatedb], [false, false, false], row.rolname);
       }
-      const member = await su.query(`select pg_has_role($1, 'os_governance_app', 'member') as rt, pg_has_role($2, 'os_governance_app', 'member') as q`, [RUNTIME.user, QUEUE.user]);
-      assert.deepEqual(member.rows[0], { rt: true, q: false });
+      const member = await su.query(
+        `select pg_has_role($1, 'os_governance_app', 'member') as rt_app, pg_has_role($2, 'os_governance_app', 'member') as q_app,
+                pg_has_role($2, 'os_governance_jobs', 'member') as q_jobs, pg_has_role($1, 'os_governance_jobs', 'member') as rt_jobs`,
+        [RUNTIME.user, QUEUE.user],
+      );
+      assert.deepEqual(member.rows[0], { rt_app: true, q_app: false, q_jobs: true, rt_jobs: false });
       const dbOwner = await su.query(`select pg_get_userbyid(datdba) as o from pg_database where datname = $1`, [DB]);
       assert.equal(dbOwner.rows[0].o, OWNER.user);
       const create = await su.query(
@@ -162,15 +160,27 @@ describe('clean install as a NOCREATEROLE owner (real postgres:17)', { timeout: 
 
   test('the migrations install cleanly AS THE OWNER (no CREATEROLE needed once the role exists)', async () => {
     const ran = await migrateGovernance({ databaseUrl: urlFor(DB, OWNER), direction: 'up' });
-    assert.equal(ran.length, 2);
+    assert.equal(ran.length, 3);
     owner = await connect(OWNER);
     const notOwned = await owner.query(
-      `select tablename from pg_tables where schemaname = 'os_governance' and tableowner <> current_user`,
+      `select n.nspname, c.relname, pg_get_userbyid(c.relowner) as owner
+         from pg_class c join pg_namespace n on n.oid = c.relnamespace
+        where n.nspname in ('os_governance', $1) and c.relowner <> (select oid from pg_roles where rolname = current_user)
+       union all
+       select n.nspname, p.proname, pg_get_userbyid(p.proowner)
+         from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+        where n.nspname in ('os_governance', $1) and p.proowner <> (select oid from pg_roles where rolname = current_user)
+       union all
+       select nspname, '(schema)', pg_get_userbyid(nspowner) from pg_namespace
+        where nspname in ('os_governance', $1) and nspowner <> (select oid from pg_roles where rolname = current_user)`,
+      [PGBOSS_SCHEMA],
     );
-    assert.equal(notOwned.rowCount, 0, 'every os_governance table is owned by the owner role');
+    assert.deepEqual(notOwned.rows, [], 'the owner owns both schemas and every table, sequence, index and function in them');
+    const version = await owner.query(`select version from ${PGBOSS_SCHEMA}.version`);
+    assert.equal(Number(version.rows[0].version), 46, 'pg-boss migrate ran as the owner');
   });
 
-  test('pg-boss migrates its schema AS THE QUEUE LOGIN; the runtime sends inside its own transaction', async () => {
+  test('pg-boss runs AS THE QUEUE LOGIN with migrate: false (DML only); the runtime sends in its own transaction', async () => {
     const boss = createBoss(urlFor(DB, QUEUE));
     boss.on('error', (err) => console.error('pg-boss error', err));
     await boss.start();
@@ -181,6 +191,11 @@ describe('clean install as a NOCREATEROLE owner (real postgres:17)', { timeout: 
       const id = await boss.send('install.check', { n: 1 }, { db: bossDb(runtime as unknown as pg.PoolClient) });
       await runtime.query('commit');
       assert.ok(id && (await boss.getJobById('install.check', id)), 'the runtime-sent job is visible to the queue');
+      const [job] = await boss.fetch('install.check');
+      assert.equal(job?.id, id, 'the queue login fetches it');
+      await boss.complete('install.check', id);
+      assert.equal((await boss.getJobById('install.check', id))?.state, 'completed');
+      await boss.supervise(); // maintenance runs as the queue login without any DDL
     } finally {
       await boss.stop({ graceful: false, timeout: 2000 });
     }
@@ -190,7 +205,7 @@ describe('clean install as a NOCREATEROLE owner (real postgres:17)', { timeout: 
     );
     assert.deepEqual(owners.rows, [
       { nspname: 'os_governance', owner: OWNER.user },
-      { nspname: PGBOSS_SCHEMA, owner: QUEUE.user },
+      { nspname: PGBOSS_SCHEMA, owner: OWNER.user },
     ]);
   });
 
@@ -213,6 +228,46 @@ describe('clean install as a NOCREATEROLE owner (real postgres:17)', { timeout: 
       `update os_governance.audit_events set action = 'x'`,
     ]) {
       await assert.rejects(runtime.query(sql), denied, sql);
+    }
+  });
+
+  // Verifier N1: a trigger planted on pgboss.job would run as the runtime role inside a governance
+  // transaction (send({ db })) and could forge governance rows. Neither OS login may plant one.
+  test('NEGATIVE TWIN (N1): neither the queue nor the runtime login can plant a trigger on pgboss.job', async () => {
+    const queue = await connect(QUEUE);
+    try {
+      for (const [who, c] of [['queue', queue], ['runtime', runtime]] as const) {
+        for (const sql of [
+          `create function pgboss.forge() returns trigger language plpgsql as $$ begin
+             insert into os_governance.run_grants (id, kind, principal_uid, domain, system_id, scopes, issued_by, expires_at)
+             values ('forged', 'run', 'attacker', 'sales', 'sys', '{write}', 'attacker', now() + interval '1 day');
+             return new; end $$`,
+          `create trigger forge after insert on pgboss.job for each row execute function os_governance.bump_row_version()`,
+          `alter table pgboss.job disable trigger all`,
+          `alter table pgboss.job alter column data set default '{}'::jsonb`,
+          `create table pgboss.evil (x int)`,
+          `truncate pgboss.job`,
+        ]) {
+          await assert.rejects(c.query(sql), denied, `${who}: ${sql.slice(0, 60)}`);
+        }
+        const priv = await c.query(
+          `select has_table_privilege(current_user, 'pgboss.job', 'TRIGGER') as trig,
+                  has_table_privilege(current_user, 'pgboss.job', 'TRUNCATE') as trunc,
+                  has_schema_privilege(current_user, 'pgboss', 'CREATE') as create_in_schema,
+                  has_table_privilege(current_user, 'pgboss.job', 'INSERT') as can_send`,
+        );
+        assert.deepEqual(priv.rows[0], { trig: false, trunc: false, create_in_schema: false, can_send: true }, who);
+      }
+      const triggers = await owner.query(
+        `select tgname from pg_trigger t join pg_class c on c.oid = t.tgrelid join pg_namespace n on n.oid = c.relnamespace
+          where n.nspname = $1 and not t.tgisinternal`,
+        [PGBOSS_SCHEMA],
+      );
+      assert.deepEqual(triggers.rows, [], 'no user trigger exists on any pgboss table');
+      const forged = await owner.query(`select count(*)::int as n from os_governance.run_grants where id = 'forged'`);
+      assert.equal(forged.rows[0].n, 0);
+    } finally {
+      await queue.end();
     }
   });
 

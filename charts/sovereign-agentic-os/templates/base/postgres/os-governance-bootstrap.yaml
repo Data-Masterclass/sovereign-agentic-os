@@ -10,7 +10,8 @@
     1. files/os-governance/roles.sql           — os_governance_app (NOLOGIN), owner, runtime, queue
     2. CREATE DATABASE <db> OWNER <owner>      — if missing
     3. files/os-governance/database-grants.sql — CONNECT only; no OS login may CREATE
-    4. files/os-governance/schemas.sql         — schema pgboss owned by the queue login
+  The schemas (`os_governance`, `pgboss`) and everything in them are created by the OWNER in the
+  migration step (node-pg-migrate, then pg-boss's own install), never by this hook.
   The template refuses to render when a name collides with another service (below), and the SQL
   refuses at run time a superuser or a role that owns another database.
   It never runs the migrations: those run as the owner (node-pg-migrate), never as a superuser.
@@ -28,6 +29,23 @@
 {{- end }}
 {{- if or (eq $gov.adminSecretName $pg.secretName) (eq $gov.adminSecretName "postgres-langfuse-credentials") }}
 {{- fail (printf "postgres.governance.adminSecretName %q is another service's credential; use a dedicated Secret" $gov.adminSecretName) }}
+{{- end }}
+{{- /* No credential of another service, by Secret name, for the admin or any governance login. */}}
+{{- $foreignSecrets := list $pg.secretName "postgres-langfuse-credentials" }}
+{{- range $pg.extraDatabases }}
+{{- $foreignSecrets = append $foreignSecrets .secretName }}
+{{- end }}
+{{- $govSecrets := dict "postgres.governance.adminSecretName" $gov.adminSecretName "postgres.governance.owner.secretName" $gov.owner.secretName "postgres.governance.runtime.secretName" $gov.runtime.secretName "postgres.governance.queue.secretName" $gov.queue.secretName }}
+{{- range $key, $val := $govSecrets }}
+{{- if not $val }}
+{{- fail (printf "%s must be set" $key) }}
+{{- end }}
+{{- if has $val $foreignSecrets }}
+{{- fail (printf "%s=%q is another service's credential (%s); use a dedicated Secret" $key $val (join ", " ($foreignSecrets | uniq))) }}
+{{- end }}
+{{- end }}
+{{- if ne (len (values $govSecrets | uniq)) 4 }}
+{{- fail "postgres.governance: the admin, owner, runtime and queue Secrets must be four different Secrets" }}
 {{- end }}
 {{- $reserved := list "langfuse" "postgres" "litellm" "dagster" "polaris" "agent_runs" "os_governance_app" "template0" "template1" }}
 {{- $reserved = append $reserved $pg.username }}
@@ -63,8 +81,6 @@ data:
 {{ .Files.Get "files/os-governance/roles.sql" | indent 4 }}
   database-grants.sql: |
 {{ .Files.Get "files/os-governance/database-grants.sql" | indent 4 }}
-  schemas.sql: |
-{{ .Files.Get "files/os-governance/schemas.sql" | indent 4 }}
 ---
 apiVersion: batch/v1
 kind: Job
@@ -156,16 +172,6 @@ spec:
               select format('CREATE DATABASE %I OWNER %I', :'db', :'owner_role')
                where not exists (select 1 from pg_database where datname = :'db') \gexec
               \i /bootstrap/database-grants.sql
-              \c :db
-              -- A new session: the parameters are set again.
-              select set_config('os_bootstrap.database', :'db', false),
-                     set_config('os_bootstrap.owner_role', :'owner_role', false),
-                     set_config('os_bootstrap.owner_password', :'owner_pw', false),
-                     set_config('os_bootstrap.runtime_role', :'runtime_role', false),
-                     set_config('os_bootstrap.runtime_password', :'runtime_pw', false),
-                     set_config('os_bootstrap.queue_role', :'queue_role', false),
-                     set_config('os_bootstrap.queue_password', :'queue_pw', false) \gset discard_
-              \i /bootstrap/schemas.sql
               SQL
               echo "os-governance-bootstrap: database ${GOV_DB}, owner ${GOV_OWNER}, runtime ${GOV_RUNTIME} reconciled"
           resources:

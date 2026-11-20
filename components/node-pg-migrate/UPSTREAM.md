@@ -21,6 +21,9 @@ DATABASE_URL=postgres://… npx node-pg-migrate up \
   -m os-ui/core/adapters/postgres/migrations \
   --migrations-schema os_migrations --create-migrations-schema \
   --migrations-table governance_migrations
+PGBOSS_DATABASE_URL=postgres://… PGBOSS_SCHEMA=pgboss npx pg-boss migrate   # pg-boss's own CLI, as the same owner
 ```
+
+`migrate.ts` runs exactly these two steps, in this order, as the migration owner.
 
 The glue that uses this pin lives in `os-ui/core/adapters/postgres/`; nothing we wrote belongs here.

@@ -16,9 +16,11 @@ Upstream, unmodified. Nothing in this folder is ours — see the rule in `compon
 - **Why this exact version:** 12.38.2 (10 Nov 2026) fixes "a job waiting for its retry could be deleted before the retry ran" and `publish()` with `{ db }` using pg-boss's own pool. Both touch behaviours the OS relies on (retry, the caller's transaction).
 
 **Why the OS ships it:** the one job queue (design 10 F8). It is installed in its own Postgres
-schema, `pgboss`, of the `os_governance` database, by pg-boss's own `start()` migration, run as a
-dedicated queue login that owns that schema and nothing else (`createSchema: false`; the schema is
-created for it by the chart bootstrap). The OS's runtime login only uses the queue. Own pool `max` 3; workers,
+schema, `pgboss`, of the `os_governance` database, by pg-boss's own CLI (`pg-boss migrate`,
+https://github.com/timgit/pg-boss/blob/12.38.2/docs/cli.md) run AS THE MIGRATION OWNER in the
+migration step only, so the owner owns the schema and every object in it. Every runtime instance
+starts with `migrate: false`, `createSchema: false` and `persistQueueStats: false` (no DDL at run
+time); the queue login and the OS's runtime login have DML only, never TRIGGER, TRUNCATE or CREATE. Own pool `max` 3; workers,
 maintenance and cron only in the worker process. The OS does not write to that schema.
 The behaviours the design relies on are proven against the real `postgres:17` image in
 `os-ui/core/adapters/postgres/pgboss.it.ts` and `install.it.ts`.

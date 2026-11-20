@@ -16,7 +16,9 @@
 --   - owner   : LOGIN, NOSUPERUSER, NOCREATEROLE, NOCREATEDB. Owns the database and the
 --               `os_governance` schema; runs the node-pg-migrate migrations, nothing else.
 --   - runtime : the OS's login. Member of os_governance_app. Owns nothing; cannot create anything.
---   - queue   : pg-boss's login. Owns only the `pgboss` schema (pg-boss migrates it at start()).
+--   - queue   : pg-boss's login, member of os_governance_jobs. Owns NOTHING: the `pgboss` schema
+--               and its objects belong to the owner (migration 3 + pg-boss's install, run by the
+--               migration Job); the queue login only reads and writes rows (DML).
 --   - REFUSES (before changing anything) a reserved or other service's name, two equal names, a
 --     role that is a superuser, and a role that owns any database other than the governance one.
 DO $bootstrap$
@@ -28,7 +30,7 @@ DECLARE
   pw           text;
   r            text;
   reserved     text[] := ARRAY['langfuse', 'postgres', 'litellm', 'dagster', 'polaris', 'agent_runs',
-                               'os_governance_app', 'public', 'template0', 'template1'];
+                               'os_governance_app', 'os_governance_jobs', 'public', 'template0', 'template1'];
   attrs        text := 'LOGIN NOSUPERUSER NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS INHERIT';
 BEGIN
   IF db = ANY (reserved) THEN
@@ -58,6 +60,14 @@ BEGIN
     END;
   END IF;
 
+  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'os_governance_jobs') THEN
+    BEGIN
+      CREATE ROLE os_governance_jobs NOLOGIN;
+    EXCEPTION WHEN duplicate_object OR unique_violation THEN
+      NULL; -- created concurrently
+    END;
+  END IF;
+
   FOREACH r IN ARRAY ARRAY['owner', 'runtime', 'queue'] LOOP
     pw := pg_catalog.current_setting('os_bootstrap.' || r || '_password');
     IF pw = '' THEN
@@ -71,5 +81,6 @@ BEGIN
     END IF;
   END LOOP;
   EXECUTE pg_catalog.format('GRANT os_governance_app TO %I', runtime_role);
+  EXECUTE pg_catalog.format('GRANT os_governance_jobs TO %I', queue_role);
 END
 $bootstrap$;
