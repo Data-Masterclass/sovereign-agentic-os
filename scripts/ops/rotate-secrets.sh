@@ -387,8 +387,17 @@ verify() {
     else fail "no re-encryption outcome in the LiteLLM log yet"; fi
   else
     [ "$(h16 "$(secret_key litellm-credentials LITELLM_SALT_KEY)")" = "$(h16 "$want_salt")" ] && pass "LITELLM_SALT_KEY = this step's" || fail "LITELLM_SALT_KEY is not this step's value"
-    # absent | empty | set (an entry without a value key is empty: the container sees length 0).
-    local mv; mv=$(k get deploy "$LITELLM_SVC" -o json | python3 "$REPO/scripts/lib/rotation-checks.py" env-state /dev/stdin litellm "$MIGRATE")
+    # absent | empty | set, resolved as Kubernetes does: envFrom sources in order, then env (last
+    # entry wins); an entry without a value key is empty (the container sees length 0).
+    local mv mw kind1 name1 srcs=()
+    mw=$(mktemp -d); k get deploy "$LITELLM_SVC" -o json > "$mw/dep.json"
+    while read -r kind1 name1; do
+      [ -n "$kind1" ] || continue
+      k get "$kind1" "$name1" -o json > "$mw/$kind1-$name1.json" 2>/dev/null || : > "$mw/$kind1-$name1.json"
+      srcs+=("$mw/$kind1-$name1.json")
+    done < <(python3 "$REPO/scripts/lib/rotation-checks.py" env-sources "$mw/dep.json" litellm)
+    mv=$(python3 "$REPO/scripts/lib/rotation-checks.py" env-state "$mw/dep.json" litellm "$MIGRATE" ${srcs[@]+"${srcs[@]}"})
+    rm -rf "$mw"
     case $mv in absent|empty) pass "$MIGRATE is $mv on the gateway (the old key is gone from its env)" ;; *) fail "$MIGRATE still holds a value on the gateway" ;; esac
   fi
 
@@ -479,31 +488,27 @@ Promise.all(["/v1/models", "/v1/mcp/tools"].map(p => fetch(u + p, { headers: h }
     # Each reader must serve ONLY from pods started after the deploy: rollout complete, no pod of an
     # earlier ReplicaSet left, every current pod Ready (scripts/lib/readers-restarted.py). A missing
     # Deployment fails; only replicas == 0 is a skip. A one-off Job pod with the same labels is no reader.
-    # Each reader must have started after the Secrets IT reads last changed (their managedFields
-    # time), not after the last deploy: a later deploy that did not touch them must not fail it.
-    local d sel rw since secs
+    # Each reader must have started after the rotated Secrets IT reads last changed (managedFields
+    # time), not after the last deploy. Which Secrets it reads comes from its own pod spec (env
+    # valueFrom, envFrom, volumes), intersected with the Secrets this rotation changes.
+    local d sel rw since secs rotated="litellm-credentials langfuse-init langfuse-core-secrets agent-runtime-token"
     rw=$(mktemp -d)
     for d in "$LANGFUSE_SVC" "$REL-langfuse-worker" "$LITELLM_SVC" os-ui os-ui-worker "$DAGSTER_CODE"; do
-      case $d in
-        "$LANGFUSE_SVC"|"$REL-langfuse-worker") secs="langfuse-core-secrets langfuse-init" ;;
-        "$LITELLM_SVC") secs="litellm-credentials" ;;
-        os-ui) secs="litellm-credentials langfuse-init agent-runtime-token" ;;
-        os-ui-worker) secs="langfuse-init agent-runtime-token" ;;
-        *) secs="agent-runtime-token" ;;
-      esac
-      local sf=() s1
-      for s1 in $secs; do k get secret "$s1" -o json > "$rw/sec-$s1.json" 2>/dev/null || : > "$rw/sec-$s1.json"; sf+=("$rw/sec-$s1.json"); done
-      since=$(python3 "$REPO/scripts/lib/rotation-checks.py" changed-at "${sf[@]}") || { fail "$d: a Secret it reads is missing ($secs)"; continue; }
       [ -n "$d" ] || continue      # DAGSTER_CODE= (empty) leaves the Dagster reader out on an install without Dagster
-      : > "$rw/rs.json"; : > "$rw/pods.json"
+      : > "$rw/rs.json"; : > "$rw/pods.json"; since=1970-01-01T00:00:00Z; secs=""
       if k get deploy "$d" -o json > "$rw/dep.json" 2>/dev/null; then
+        secs=$(python3 "$REPO/scripts/lib/rotation-checks.py" secrets-read "$rw/dep.json" | { grep -xF -f <(tr ' ' '\n' <<<"$rotated") || true; } | tr '\n' ' ')
+        if [ -z "${secs// /}" ]; then fail "$d reads none of the rotated Secrets (its spec names none of: $rotated)"; continue; fi
+        local sf=() s1
+        for s1 in $secs; do k get secret "$s1" -o json > "$rw/sec-$s1.json" 2>/dev/null || : > "$rw/sec-$s1.json"; sf+=("$rw/sec-$s1.json"); done
+        since=$(python3 "$REPO/scripts/lib/rotation-checks.py" changed-at "${sf[@]}") || { fail "$d: a Secret it reads is missing ($secs)"; continue; }
         sel=$(python3 -c 'import json,sys; print(",".join(f"{k}={v}" for k, v in json.load(open(sys.argv[1]))["spec"]["selector"]["matchLabels"].items()))' "$rw/dep.json")
         k get rs -l "$sel" -o json > "$rw/rs.json"; k get pods -l "$sel" -o json > "$rw/pods.json"
       else
         : > "$rw/dep.json"          # missing: the helper FAILS it (a misnamed reader must not pass)
       fi
       local line rc=0; line=$(python3 "$REPO/scripts/lib/readers-restarted.py" "$rw/dep.json" "$rw/rs.json" "$rw/pods.json" "$since") || rc=$?
-      case $rc in 0) pass "$line" ;; 2) echo "   skip $line" ;; *) fail "$d: $line" ;; esac
+      case $rc in 0) pass "$line (reads: ${secs:-?})" ;; 2) echo "   skip $line" ;; *) fail "$d: $line" ;; esac
     done
     rm -rf "$rw"
 

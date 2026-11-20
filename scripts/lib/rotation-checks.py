@@ -3,49 +3,121 @@
 # Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
 """rotation-checks.py — small read-only checks of scripts/ops/rotate-secrets.sh verify, on kubectl JSON.
 
-  rotation-checks.py env-state <deployment.json> <container name> <VAR>
-      prints `absent`, `empty` or `set` for an env entry of the Deployment's pod template. An entry
-      without a `value` key (as the subchart renders `envVars.X: ""`/null) and an entry with an
-      empty value are both `empty`: the container sees a variable of length 0. Never prints the value.
+  rotation-checks.py env-sources <deployment.json> <container>
+      prints one `secret <name>` / `configmap <name>` line per envFrom source of the container, in
+      order — the objects env-state needs to see.
+  rotation-checks.py env-state <deployment.json> <container> <VAR> [<secret|configmap.json> …]
+      prints `absent`, `empty` or `set` for VAR as the container sees it, resolved the way Kubernetes
+      does: the envFrom sources in order (a later source overrides an earlier one; `prefix` applies),
+      then the `env` list, which overrides envFrom, where the LAST entry with that name wins. An env
+      entry without a `value` key is empty (length 0); a valueFrom is `set`. The JSON of each envFrom
+      source is passed after VAR (a missing optional source is an empty file). Never prints a value.
+  rotation-checks.py secrets-read <deployment.json>
+      prints, one per line, every Secret the pod template reads: env valueFrom.secretKeyRef, envFrom
+      secretRef, and volumes (secret, projected secret sources), over all containers and init
+      containers.
   rotation-checks.py changed-at <secret.json> [<secret.json>…]
       prints the latest time any of the Secrets was changed (ISO, UTC): the newest managedFields
       entry time, which the API server sets when a manager adds, changes or removes a field and
       leaves alone when an apply changes nothing — so a later deploy that did not touch the
       Secret does not move it. Falls back to creationTimestamp. A missing (empty) file is an error.
 """
+import base64
 import json
 import sys
 
 
-def env_state(dep_path, container, var):
-    dep = json.load(open(dep_path))
-    containers = dep["spec"]["template"]["spec"]["containers"]
-    c = next((x for x in containers if x.get("name") == container), containers[0])
-    for e in c.get("env") or []:
+def load(path):
+    with open(path) as f:
+        text = f.read().strip()
+    return json.loads(text) if text else None
+
+
+def container(dep, name):
+    spec = dep["spec"]["template"]["spec"]
+    cs = spec.get("containers") or []
+    return next((c for c in cs if c.get("name") == name), cs[0])
+
+
+def env_sources(dep_path, name):
+    for src in container(load(dep_path), name).get("envFrom") or []:
+        if "secretRef" in src:
+            print(f"secret {src['secretRef']['name']}")
+        elif "configMapRef" in src:
+            print(f"configmap {src['configMapRef']['name']}")
+
+
+def source_value(obj, key):
+    """The value of `key` in a Secret/ConfigMap JSON (None when absent)."""
+    if obj is None:
+        return None
+    if obj.get("kind") == "Secret":
+        data = obj.get("data") or {}
+        if key in data:
+            return base64.b64decode(data[key]).decode("utf-8", "replace")
+        return (obj.get("stringData") or {}).get(key)
+    return (obj.get("data") or {}).get(key)
+
+
+def env_state(dep_path, name, var, source_paths):
+    c = container(load(dep_path), name)
+    sources = c.get("envFrom") or []
+    objs = [load(p) for p in source_paths]
+    state = "absent"
+    for src, obj in zip(sources, objs + [None] * (len(sources) - len(objs))):
+        prefix = src.get("prefix") or ""
+        if not var.startswith(prefix):
+            continue
+        value = source_value(obj, var[len(prefix):])
+        if value is not None:  # a later source overrides an earlier one
+            state = "set" if value != "" else "empty"
+    for e in c.get("env") or []:  # env overrides envFrom; the last entry with the name wins
         if e.get("name") == var:
-            if "valueFrom" in e:
-                return "set"
-            return "set" if (e.get("value") or "") != "" else "empty"
-    return "absent"
+            state = "set" if "valueFrom" in e or (e.get("value") or "") != "" else "empty"
+    return state
+
+
+def secrets_read(dep_path):
+    spec = load(dep_path)["spec"]["template"]["spec"]
+    names = []
+    for c in (spec.get("containers") or []) + (spec.get("initContainers") or []):
+        for e in c.get("env") or []:
+            ref = (e.get("valueFrom") or {}).get("secretKeyRef")
+            if ref:
+                names.append(ref["name"])
+        for src in c.get("envFrom") or []:
+            if "secretRef" in src:
+                names.append(src["secretRef"]["name"])
+    for v in spec.get("volumes") or []:
+        if "secret" in v:
+            names.append(v["secret"]["secretName"])
+        for s in (v.get("projected") or {}).get("sources") or []:
+            if "secret" in s:
+                names.append(s["secret"]["name"])
+    return sorted(set(names))
 
 
 def changed_at(paths):
     times = []
     for p in paths:
-        text = open(p).read().strip()
-        if not text:
+        obj = load(p)
+        if obj is None:
             raise SystemExit(f"{p}: no such Secret")
-        md = json.loads(text)["metadata"]
+        md = obj["metadata"]
         times += [m["time"] for m in md.get("managedFields") or [] if m.get("time")]
         times.append(md["creationTimestamp"])
     return max(times)  # RFC 3339 'Z' timestamps compare correctly as text
 
 
 if __name__ == "__main__":
-    cmd = sys.argv[1]
-    if cmd == "env-state":
-        print(env_state(*sys.argv[2:5]))
+    cmd, args = sys.argv[1], sys.argv[2:]
+    if cmd == "env-sources":
+        env_sources(*args[:2])
+    elif cmd == "env-state":
+        print(env_state(args[0], args[1], args[2], args[3:]))
+    elif cmd == "secrets-read":
+        print("\n".join(secrets_read(args[0])))
     elif cmd == "changed-at":
-        print(changed_at(sys.argv[2:]))
+        print(changed_at(args))
     else:
         sys.exit(f"unknown command {cmd}")
