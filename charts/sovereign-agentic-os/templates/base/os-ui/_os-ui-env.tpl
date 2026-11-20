@@ -398,6 +398,19 @@
 {{- $lay := (.Values.osUI.dataProjectGit | default dict).layout | default dict }}
 {{- $mig := $lay.migration | default "off" | toString }}
 {{- if not (has $mig (list "off" "dry-run" "apply")) }}{{ fail (printf "osUI.dataProjectGit.layout.migration must be off, dry-run or apply (got %q)" $mig) }}{{ end }}
+{{- /* DEPLOY ORDER, enforced (WP-55 verifier F9): `apply` renders only when the Dagster code
+  location AND its repo-sync sidecar run an image that reads os/layout.yml (>= layout.dagsterMinVersion).
+  An older image cannot load a migrated repo, and after a pod restart its schedules would vanish. */}}
+{{- if eq $mig "apply" }}
+{{- $min := $lay.dagsterMinVersion | default "0.3.3" | toString }}
+{{- $dep := index ((index (.Values.dagster | default dict) "dagster-user-deployments") | default dict).deployments 0 }}
+{{- $codeTag := (($dep.image | default dict).tag | default "0.0.0") | toString }}
+{{- $sidecarTag := "0.0.0" }}
+{{- range ($dep.sidecarContainers | default list) }}{{- if eq .name "repo-sync" }}{{- $sidecarTag = (regexReplaceAll "@.*$" (regexReplaceAll "^.*:" (regexReplaceAll "@sha256:.*$" .image "") "") "") }}{{- end }}{{- end }}
+{{- range $t := (list $codeTag $sidecarTag) }}
+{{- if not (semverCompare (printf ">=%s" $min) $t) }}{{ fail (printf "osUI.dataProjectGit.layout.migration=apply needs the Dagster code location and its repo-sync sidecar at >= %s (they read os/layout.yml); found code location %s and repo-sync %s — deploy that Dagster image first" $min $codeTag $sidecarTag) }}{{ end }}
+{{- end }}
+{{- end }}
 - name: OS_REPO_LAYOUT_MIGRATION
   value: {{ $mig | quote }}
 - name: OS_REPO_LAYOUT_V2
