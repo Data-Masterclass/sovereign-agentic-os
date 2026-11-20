@@ -268,10 +268,10 @@ test('Pod: env secretKeyRef / envFrom / secret volumes may name only the app\'s 
   refused(edit(DEP, (d) => { pod(d).imagePullSecrets = [{ name: 'app-registry-pull' }]; }), 'invalid', /imagePullSecrets/);
   refused(edit(DEP, (d) => { pod(d).volumes.push({ name: 'h', csi: { driver: 'secrets-store.csi.k8s.io' } }); }), 'invalid', /volume/);
 });
-test('NEGATIVE TWIN: the app\'s own Secret (app-<slug>-*) is allowed', () => {
+test('NEGATIVE TWIN: the app\'s own Secret (app-<slug>.<name>) is allowed', () => {
   const ok = edit(DEP, (d) => {
-    pod(d).containers[0].env = [{ name: 'K', valueFrom: { secretKeyRef: { name: 'app-color-picker-env', key: 'k' } } }];
-    pod(d).volumes.push({ name: 's', secret: { secretName: 'app-color-picker-files' } });
+    pod(d).containers[0].env = [{ name: 'K', valueFrom: { secretKeyRef: { name: 'app-color-picker.env', key: 'k' } } }];
+    pod(d).volumes.push({ name: 's', secret: { secretName: 'app-color-picker.files' } });
   });
   const plan = planAppDeploy(ok, ctx);
   assert.equal(plan.ok, true, plan.ok ? '' : plan.reason);
@@ -284,4 +284,29 @@ test('the receive gate refuses ExternalName and auth-url too (host unknown at re
   assert.match(validateAppDeployFile({ path: `apps/color-picker/${SVC}`, content: svc.content }, REGISTRY) ?? '', /ClusterIP|ExternalName/);
   const ing = edit(ING, (d) => { d.metadata.annotations['nginx.ingress.kubernetes.io/auth-url'] = 'http://x'; }).find((f) => f.path === ING)!;
   assert.match(validateAppDeployFile({ path: `apps/color-picker/${ING}`, content: ing.content }, REGISTRY) ?? '', /annotation/);
+});
+
+test('FOLLOW-UP: app "demo" may not read app "demo-x"\'s Secrets — the prefix has a delimiter slugs cannot contain', () => {
+  const demo: DeployContext = { ...ctx, slug: 'demo', host: 'demo.sales.apps.example.org' };
+  const demoFiles = (secret: string) =>
+    appDeployFiles({ ...demo, digest: DIGEST }).map((f) => {
+      if (f.path !== DEP) return f;
+      const d = yaml.load(f.content) as Record<string, any>;
+      d.spec.template.spec.containers[0].env = [{ name: 'K', valueFrom: { secretKeyRef: { name: secret, key: 'k' } } }];
+      return { path: f.path, content: yaml.dump(d) };
+    });
+  for (const other of ['app-demo-x-env', 'app-demo-x.env', 'app-demox.env', 'app-demo-env']) {
+    const plan = planAppDeploy(demoFiles(other), demo);
+    assert.equal(plan.ok, false, `${other} must be refused for app demo`);
+  }
+  // NEGATIVE TWIN: demo's own Secret, and demo-x's own Secret for demo-x.
+  assert.equal(planAppDeploy(demoFiles('app-demo.env'), demo).ok, true);
+  const demoX: DeployContext = { ...ctx, slug: 'demo-x', host: 'demo-x.sales.apps.example.org' };
+  const xFiles = appDeployFiles({ ...demoX, digest: DIGEST }).map((f) => {
+    if (f.path !== DEP) return f;
+    const d = yaml.load(f.content) as Record<string, any>;
+    d.spec.template.spec.containers[0].env = [{ name: 'K', valueFrom: { secretKeyRef: { name: 'app-demo-x.env', key: 'k' } } }];
+    return { path: f.path, content: yaml.dump(d) };
+  });
+  assert.equal(planAppDeploy(xFiles, demoX).ok, true);
 });
