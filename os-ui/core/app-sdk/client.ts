@@ -35,9 +35,10 @@ import type {
  * call only ever returns what the signed-in user is allowed to see.
  *
  * Auth is the AMBIENT OS session: requests are sent with `credentials:'include'`
- * so the `soa_session` cookie flows on same-origin (the preview case). For a
- * standalone deployed app, pass `baseUrl` to the remote OS (which must permit the
- * origin + credentialed CORS). The SDK never handles secrets or tokens itself.
+ * so the `soa_session` cookie flows on same-origin (preview, `/apps/<slug>`,
+ * `/api/apps/runtime/<slug>`). The OS grants credentialed CORS to its own origin
+ * only, so a cross-origin `baseUrl` gets no session. The SDK never handles secrets
+ * or tokens itself.
  *
  * Errors are mapped honestly (see ./errors): 401 → NotAuthenticated, a governed
  * 403 → Forbidden carrying the server's reason, other non-2xx → OsError. Nothing
@@ -241,8 +242,8 @@ export function createOsClient(opts: OsClientOptions = {}): OsClient {
         method: init?.method ?? 'GET',
         headers,
         body,
-        // AMBIENT SESSION: carry the soa_session cookie (same-origin preview; and
-        // cross-origin when the remote OS opts the app's origin into credentialed CORS).
+        // AMBIENT SESSION: carry the soa_session cookie (same-origin only — the OS
+        // grants credentialed CORS to its own origin and nothing else).
         credentials: 'include',
         cache: 'no-store',
         signal: init?.signal,

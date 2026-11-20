@@ -5,6 +5,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { config as appConfig } from '@core/kernel/config';
 import { SESSION_COOKIE, verifySession } from '@core/kernel/session';
 import { corsHeadersFor } from '@core/kernel/cors';
+import { checkSameOrigin, requestOriginOf } from '@core/kernel/same-origin';
 import { findDisabledTab } from '@core/kernel/tabs';
 
 /**
@@ -15,25 +16,39 @@ import { findDisabledTab } from '@core/kernel/tabs';
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
-  // CREDENTIALED CORS for deployed governed apps calling back into the OS
-  // (identity delegation: os.whoami() etc. from `<slug>.<domain>.<appsDomain>`).
-  // Computed FIRST so it applies to EVERY governed surface — crucially including
-  // the PUBLIC `/api/auth/me` the app SDK's os.whoami() hits BEFORE anything else
-  // (it lives in the always-public block below; without this the credentialed
-  // cross-origin whoami is blocked by the browser → "Load failed"). Reflect ONLY
-  // recognised app/OS origins; same-origin calls carry no Origin and are untouched.
+  // CORS: a credentialed grant ONLY for the OS's own public origin (exact match).
+  // No other origin is ever reflected, so a page on another origin — including a
+  // deployed app on the apps domain — cannot read OS API responses or pass a
+  // non-simple preflight. Same-origin calls carry no cross-origin grant need.
   const cors =
     pathname.startsWith('/api/') || pathname.startsWith('/tools/')
-      ? corsHeadersFor(req.headers.get('origin'), appConfig.osPublicUrl, appConfig.appsBaseDomain)
+      ? corsHeadersFor(req.headers.get('origin'), appConfig.osPublicUrl)
       : null;
-  // Answer the preflight uniformly (a public auth route or a self-guarded API route).
-  if (cors && req.method === 'OPTIONS') {
-    return new NextResponse(null, { status: 204, headers: cors });
-  }
   const withCors = (res: NextResponse): NextResponse => {
     if (cors) for (const [k, v] of Object.entries(cors)) res.headers.set(k, v);
     return res;
   };
+  // Answer the OS-origin preflight uniformly. Any other origin falls through and
+  // gets no CORS headers, which the browser treats as a refusal.
+  if (cors && req.method === 'OPTIONS') {
+    return new NextResponse(null, { status: 204, headers: cors });
+  }
+
+  // SAME-ORIGIN enforcement (CSRF): a request that carries the OS session cookie
+  // must come from the OS's own origin before a state-changing method runs, and
+  // before any admin read. Bearer-token / MCP / webhook clients carry no session
+  // cookie and are unaffected. See core/kernel/same-origin.ts for the exact rules.
+  const verdict = checkSameOrigin({
+    method: req.method,
+    pathname,
+    headers: req.headers,
+    hasSessionCookie: Boolean(req.cookies.get(SESSION_COOKIE)?.value),
+    osPublicUrl: appConfig.osPublicUrl,
+    requestOrigin: requestOriginOf(req.nextUrl, req.headers),
+  });
+  if (!verdict.ok) {
+    return withCors(NextResponse.json({ error: 'forbidden', reason: verdict.reason }, { status: 403 }));
+  }
 
   // Always-public paths.
   if (

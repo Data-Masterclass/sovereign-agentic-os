@@ -65,34 +65,21 @@ export const SESSION_COOKIE = 'soa_session';
 const MAX_AGE_SECONDS = 60 * 60 * 12; // 12h
 
 /**
- * The cookie `Domain` that lets the OS session flow to BOTH the OS host and the
- * per-app subdomains (`<slug>.<domain>.<appsDomain>`) so a deployed governed app's
- * `os.whoami()` carries the session (identity delegation / SSO). We scope the
- * cookie to the SHARED PARENT domain of the OS public host and the apps domain —
- * the longest common dotted suffix that still has ≥2 labels (never a bare TLD).
- *
- * Returns null (→ host-only cookie, the safe default) when:
- *   • no OS public URL is configured (local dev / same-origin), or
- *   • the host and apps domain share no ≥2-label parent (misconfigured / unrelated
- *     deployment) — we must NOT widen the cookie somewhere it doesn't belong.
- *
- * Read at CALL time (never breaks the OS's own login: an empty/mismatching config
- * simply keeps today's host-only behaviour).
- *
- * @param osPublicUrl e.g. `https://agentic.datamasterclass.com`
- * @param appsDomain  e.g. `apps.datamasterclass.com`
+ * The parent `Domain` that releases up to 0.9.x scoped the session cookie to (the
+ * longest common ≥2-label suffix of the OS host and the apps domain). The OS no
+ * longer sets it — the session cookie is HOST-ONLY — but browsers may still hold a
+ * cookie set on that Domain, so login / bootstrap / logout EXPIRE it there too.
+ * Returns null when no such Domain was ever derivable (local dev, unrelated domains).
  */
-export function sessionCookieDomain(
+export function legacySessionCookieDomain(
   osPublicUrl: string | undefined,
   appsDomain: string | undefined,
 ): string | null {
   const osHost = hostOf(osPublicUrl);
   const apps = (appsDomain ?? '').trim().toLowerCase().replace(/\.+$/, '');
   if (!osHost || !apps) return null;
-  // No cross-subdomain scoping needed for local/IP hosts.
   if (osHost === 'localhost' || /^\d+\.\d+\.\d+\.\d+$/.test(osHost)) return null;
   const parent = longestCommonDomainSuffix(osHost, apps);
-  // Require a real parent (≥2 labels, e.g. datamasterclass.com) — never a bare TLD.
   if (!parent || parent.split('.').length < 2) return null;
   return `.${parent}`;
 }
@@ -123,39 +110,51 @@ function longestCommonDomainSuffix(a: string, b: string): string {
   return out.join('.');
 }
 
+function secureByDefault(isProd: boolean | undefined): boolean {
+  // OS_SESSION_COOKIE_INSECURE=true drops `Secure` for plain-http local dev
+  // (the Docker Compose stack): Safari rejects Secure cookies on http://localhost.
+  return (
+    isProd ??
+    (process.env.NODE_ENV === 'production' && process.env.OS_SESSION_COOKIE_INSECURE !== 'true')
+  );
+}
+
 /**
  * The canonical session-cookie options. ONE place so login / bootstrap / logout
- * agree. `Domain` (when derivable) widens the cookie to the shared parent so it
- * flows to deployed governed apps' subdomains. `sameSite:'lax'` still sends the
- * cookie on same-site subdomain XHR (subdomains of one registrable domain are
- * same-site), which is what the app's credentialed `os.whoami()` relies on.
+ * agree. The cookie is HOST-ONLY (no `Domain` attribute), `HttpOnly`, `SameSite=Lax`
+ * and `Secure` in production, so the browser sends it to the OS host and nowhere
+ * else — never to the apps domain or any other subdomain.
  */
-export function sessionCookieOptions(opts: {
-  osPublicUrl?: string;
-  appsDomain?: string;
-  maxAge?: number;
-  isProd?: boolean;
-}): {
+export function sessionCookieOptions(opts: { maxAge?: number; isProd?: boolean } = {}): {
   httpOnly: true;
   sameSite: 'lax';
   secure: boolean;
   path: '/';
   maxAge: number;
-  domain?: string;
 } {
-  const domain = sessionCookieDomain(opts.osPublicUrl, opts.appsDomain);
   return {
     httpOnly: true,
     sameSite: 'lax',
-    // OS_SESSION_COOKIE_INSECURE=true drops `Secure` for plain-http local dev
-    // (the Docker Compose stack): Safari rejects Secure cookies on http://localhost.
-    secure:
-      opts.isProd ??
-      (process.env.NODE_ENV === 'production' && process.env.OS_SESSION_COOKIE_INSECURE !== 'true'),
+    secure: secureByDefault(opts.isProd),
     path: '/',
     maxAge: opts.maxAge ?? MAX_AGE_SECONDS,
-    ...(domain ? { domain } : {}),
   };
+}
+
+/**
+ * A `Set-Cookie` value that expires a session cookie left on the legacy parent
+ * Domain, or null when there is none to clear. Append it next to the host-only
+ * cookie (a separate header: the two cookies differ by Domain, not by name).
+ */
+export function legacySessionCookieExpiry(opts: {
+  osPublicUrl?: string;
+  appsDomain?: string;
+  isProd?: boolean;
+}): string | null {
+  const domain = legacySessionCookieDomain(opts.osPublicUrl, opts.appsDomain);
+  if (!domain) return null;
+  const secure = secureByDefault(opts.isProd) ? '; Secure' : '';
+  return `${SESSION_COOKIE}=; Domain=${domain}; Path=/; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; HttpOnly; SameSite=Lax${secure}`;
 }
 
 const enc = new TextEncoder();
