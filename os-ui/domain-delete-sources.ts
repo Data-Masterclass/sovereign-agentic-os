@@ -31,7 +31,7 @@ import { filesComponent } from '@tabs/files/lib/domain-delete';
 import { connectionsComponent } from '@tabs/connections/lib/domain-delete';
 import { agentsComponent, agentSystemIdsForDomain } from '@tabs/agents/lib/domain-delete';
 import { appsComponent } from '@tabs/software/lib/domain-delete';
-import { opaComponent, litellmComponent, membersComponent, domainRecordComponent, soleMembers, veleroBackupCheck, assertDeletableDomain } from '@tabs/admin/lib/domain-delete';
+import { opaComponent, litellmComponent, membersComponent, domainRecordComponent, soleMembers, veleroBackupCheck, assertDeletableDomain, singleReplicaPreflight } from '@tabs/admin/lib/domain-delete';
 import { recompile } from '@/app/api/platform-admin/_compile';
 import { config } from '@core/kernel/config';
 import { queryToolCapabilities } from '@core/adapters/query-tool/health';
@@ -96,7 +96,7 @@ export function registerDomainDeleteSources(): void {
     components: () => domainDeleteComponents(),
     backup: veleroBackupCheck(),
     validateTarget: assertDeletableDomain,
-    preflight: queryToolPreflight,
+    preflight: async () => (await singleReplicaPreflight()) ?? (await queryToolPreflight()),
     audit: (actor) => (e) => { audit({ tenant: currentTenantId(), actor: actor.id, role: actor.role, guarded: true, ...e }); },
   });
 }

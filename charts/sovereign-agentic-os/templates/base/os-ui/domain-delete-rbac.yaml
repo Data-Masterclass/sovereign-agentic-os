@@ -4,12 +4,13 @@
   rendered RBAC on a real kind cluster (tests/domain-delete/rbac.kind.sh).
 
   - Apps namespace (softwareRunner.namespace): cert-manager Certificates get/list/delete (the run
-    waits for an app's Certificate to be gone before its TLS Secret) and Secrets get/list/delete
-    (the TLS Secret has no owner reference, so nothing else removes it).
+    waits for an app's Certificate to be gone before its TLS Secret) and Secrets DELETE ONLY (the
+    TLS Secret has no owner reference, so nothing else removes it; os-ui deletes it by name and
+    treats 404 as done — it can never read a Secret there).
     WHAT RBAC CANNOT RESTRICT: Kubernetes RBAC has no label selectors and no name prefixes —
     `resourceNames` must list exact names, and an app's TLS Secret name (`<slug>.<domain>.<apps
     domain>-tls`) is only known at run time. So the Secret rule covers every Secret in the apps
-    namespace. The bound is the namespace itself (only app workloads live there, never platform
+    namespace, for delete only. The bound is the namespace itself (only app workloads live there, never platform
     credentials) plus os-ui's code, which deletes only the TLS Secret of an app of the domain being
     deleted, after its Certificate is gone.
   - Velero namespace (domainDelete.veleroNamespace, when set): `backups.velero.io` get/list,
@@ -29,7 +30,7 @@ rules:
     verbs: ["get", "list", "delete"]
   - apiGroups: [""]
     resources: ["secrets"]
-    verbs: ["get", "list", "delete"]
+    verbs: ["delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
