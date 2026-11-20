@@ -23,8 +23,7 @@ import {
   commitTree, reserveSubtree, RECONCILE_REASON, listRepos, repoPath, readBlob, DestructiveReconcileError,
 } from '@core/infra/git-store';
 import { migrateRepoLayout, planLayoutMigration, MIGRATION_REASON } from '@core/infra/repo-layout-migrate';
-import { relocateProject } from '@tabs/data/lib/dbt/layout';
-import { LAYOUT_V2, legacyPersonalAgentLane, userRepoName } from '@core/infra/repo-layout';
+import { LAYOUT_V2, LAYOUT_MARKER_PATH, dbtRepoPath, layoutMarker, legacyPersonalAgentLane, userRepoName } from '@core/infra/repo-layout';
 import { GENERATED_MARK } from '@core/infra/repo-readme';
 
 const author = { name: 'Alice', email: 'alice@example.com' };
@@ -117,7 +116,11 @@ test('apply: one commit of pure moves; git log --follow keeps a model\'s history
   assert.equal(again.sha, null);
   assert.equal(again.alreadyMigrated, true);
   // the next boot reconcile regenerates the SAME tree at the new paths: no guard, no commit
-  const regenerated = relocateProject(project, LAYOUT_V2);
+  // What the data generator commits in a v2 repo (tabs/data/lib/dbt/layout.ts `relocateProject`):
+  // every project path under the dbt dir, plus the marker. Spelled with the core helpers here —
+  // a core test may not import a tab.
+  const regenerated = new Map([...project].map(([p, c]) => [dbtRepoPath(p, LAYOUT_V2), c] as [string, string]));
+  regenerated.set(LAYOUT_MARKER_PATH, layoutMarker());
   const rec = await commitTree('sales', regenerated, { author, message: 'data(sales): reconcile', trailers: { 'OS-Reason': RECONCILE_REASON }, reposDir });
   assert.equal(rec.changed, false, 'the reconcile after migration is a no-op');
   // negative twin: had the generator NOT followed the layout (still writing the root), the guard
