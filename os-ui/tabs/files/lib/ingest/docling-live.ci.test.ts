@@ -75,11 +75,22 @@ test('live docling (a, negative twin): a request for TableFormer v1 is refused b
   form.append('files', new Blob([new Uint8Array(PDF)], { type: 'application/pdf' }), 'invoice-table.pdf');
   form.append('to_formats', 'md');
   form.append('table_structure_preset', 'tableformer_v1_accurate');
-  const res = await fetch(`${URL_}/v1/convert/file`, { method: 'POST', body: form, headers: { 'X-Api-Key': KEY } });
-  const body = (await res.json().catch(() => null)) as Record<string, unknown> | null;
-  const converted = res.status === 200 && (body?.status === 'success' || body?.status === 'partial_success');
-  t.diagnostic(`v1 request: HTTP ${res.status} ${JSON.stringify(body).slice(0, 300)}`);
-  assert.ok(!converted, `v1 preset converted: HTTP ${res.status} ${JSON.stringify(body).slice(0, 300)}`);
+  // Async submit + poll, as the client does, so the server's own failure text is visible.
+  const sub = await fetch(`${URL_}${DOCLING_SUBMIT_PATH}`, { method: 'POST', body: form, headers: { 'X-Api-Key': KEY } });
+  const subBody = (await sub.json().catch(() => null)) as Record<string, unknown> | null;
+  let status = String(subBody?.task_status ?? '');
+  let detail = JSON.stringify(subBody);
+  if (sub.status === 200 && typeof subBody?.task_id === 'string') {
+    for (let i = 0; i < 60 && !['success', 'partial_success', 'failure', 'skipped'].includes(status); i++) {
+      const poll = await fetch(`${URL_}/v1/status/poll/${subBody.task_id}?wait=5`, { headers: { 'X-Api-Key': KEY } });
+      const pb = (await poll.json()) as Record<string, unknown>;
+      status = String(pb.task_status ?? status);
+      detail = JSON.stringify(pb);
+    }
+  }
+  t.diagnostic(`v1 request: HTTP ${sub.status}, task ${status}: ${detail.slice(0, 300)}`);
+  assert.ok(sub.status !== 200 || ['failure', 'skipped'].includes(status), `v1 preset was not refused: ${detail}`);
+  assert.match(detail, /preset|tableformer_v1/i, `the refusal must name the preset: ${detail}`);
 });
 
 test('live docling (e): a call without X-Api-Key is refused with 401, and the client says so', { skip }, async () => {
