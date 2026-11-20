@@ -9,8 +9,10 @@
  *   - `docs.getdbt.com` serves the dbt 1.12 ("Fusion") spec by default and its `?version=` selector
  *     is client-side only, so the prose does NOT describe what dbt Core 1.8-1.10 accepts. The
  *     authoritative source is the `dbt-semantic-interfaces` (DSI) pydantic spec that dbt-core pins:
- *     dbt 1.8 → DSI 0.5.x · dbt 1.9 → DSI 0.7.x · dbt 1.10 → DSI 0.8.x · dbt 1.12 → none (Rust).
- *   - TARGET is what the Dagster image runs: DSI 0.7.5 (= dbt-core 1.9.11, pinned exactly). The
+ *     dbt 1.8 → DSI 0.5.x · dbt 1.9 → DSI 0.7.x · dbt 1.10 → DSI 0.8.x · dbt-core 1.12 (Python) →
+ *     no DSI package: dbt-core depends on `metricflow>=0.213` and reads the semantic layer through
+ *     MetricFlow's own `metricflow_semantic_interfaces` (Apache-2.0). Its enums equal the ones below.
+ *   - TARGET is what the Dagster image runs: dbt-core 1.12.7 + metricflow 0.214.0, pinned exactly (WP-17). The
  *     image test parses every generator golden in that image, so a field or name rule this
  *     whitelist gets wrong fails CI rather than a domain. The images were raised to
  *     `dbt-core>=1.9,<1.10` for exactly this reason (night-2 review M-1): `cumulative_type_params`,
@@ -24,15 +26,15 @@
 
 /** The pinned spec. One constant, named in the generated project's README (checklist M4). */
 export const DBT_SEMANTIC_SPEC = {
-  /** `dbt-semantic-interfaces` version the emitted YAML is validated by: what the Dagster image
-   *  carries (dbt-core 1.9.11 → DSI 0.7.5). The image test asserts this against the image. */
-  dsiVersion: '0.7.5',
-  /** The dbt-core release the Dagster image pins, which pins {@link DBT_SEMANTIC_SPEC.dsiVersion}. */
-  dbtCore: '1.9.11',
+  /** MetricFlow version whose `metricflow_semantic_interfaces` validate the emitted YAML: what the
+   *  Dagster image carries (dbt-core 1.12.7 → metricflow 0.214.0). The image test asserts this. */
+  metricflowVersion: '0.214.0',
+  /** The dbt-core release the Dagster image pins. */
+  dbtCore: '1.12.7',
   /** The lowest dbt-core every emitted field is valid on (the licence/floor gate's number). */
   minDbtCore: '1.9',
   /** The pip specifier the Dagster image carries, recorded so a drift is visible in one place. */
-  imagePin: 'dbt-core==1.9.11',
+  imagePin: 'dbt-core==1.12.7',
   /** The dbt >= 1.9 model property that declares a time spine (NOT the legacy name). */
   timeSpineProperty: 'time_spine',
   /** The legacy, by-name spine model of dbt <= 1.8 — never emitted; named so nobody adds it back. */
