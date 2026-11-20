@@ -7,6 +7,7 @@ import type { CurrentUser } from '@core/kernel/auth';
 import { requirePrincipal } from '@tabs/data/lib/server';
 import { requireDatasetEditable, builtLayerFqn } from '@tabs/data/lib/store';
 import { queryRun, executeRun } from '@core/infra/governed';
+import { routeFor } from '@core/infra/trino-source';
 import { applyFixes, type FixApplyInput } from '@tabs/data/lib/dq-fix-server';
 
 export const dynamic = 'force-dynamic';
@@ -58,11 +59,15 @@ export const POST = withRoute<
   const outcome = await applyFixes(dataset, check, input, {
     fqn: resolved.fqn,
     layer: resolved.layer,
-    queryFn: (sql) => queryRun(sql, resolved.principal),
+    queryFn: (sql) => queryRun(sql, resolved.principal, routeFor(user, 'data-dq', dataset.domain)),
     // The governed WRITE runs AS the signed-in user — identity from the session,
     // never the body; the query-tool re-gates target schema + role floor.
     executeFn: (sql) =>
-      executeRun(sql, { principal: resolved.principal, uid: user.id, domains: user.domains, role: user.role }),
+      executeRun(
+        sql,
+        { principal: resolved.principal, uid: user.id, domains: user.domains, role: user.role },
+        routeFor(user, 'data-dq', dataset.domain),
+      ),
     ranBy: user.id,
     domain: dataset.domain,
   });

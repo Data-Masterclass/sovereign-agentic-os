@@ -4,6 +4,7 @@
 import 'server-only';
 import type { Role } from '@core/kernel/session';
 import { queryRun } from '@core/infra/governed';
+import { routeFor } from '@core/infra/trino-source';
 import type { Dataset } from '@tabs/data/lib/dataset-schema';
 import { getDataset, builtLayerFqn, addCheck } from '@tabs/data/lib/store';
 import { commitLayerVersion } from '@tabs/data/lib/build/server';
@@ -55,16 +56,17 @@ export type PipelineUser = { id: string; domains: string[]; role: Role };
 async function profileBuiltLayer(dataset: Dataset, user: PipelineUser): Promise<Profile | null> {
   const resolved = builtLayerFqn(dataset, user);
   if (!resolved) return null;
+  const route = routeFor(user, 'data-auto-pipeline', dataset.domain);
   try {
-    const describe = await queryRun(`describe ${resolved.fqn}`, resolved.principal);
+    const describe = await queryRun(`describe ${resolved.fqn}`, resolved.principal, route);
     const columns: ProfileColumn[] = parseDescribe(describe);
-    const statsRes = await queryRun(statsSql(resolved.fqn, columns), resolved.principal);
-    const previewRes = await queryRun(previewSql(resolved.fqn, 50), resolved.principal);
+    const statsRes = await queryRun(statsSql(resolved.fqn, columns), resolved.principal, route);
+    const previewRes = await queryRun(previewSql(resolved.fqn, 50), resolved.principal, route);
     let topRes = null;
     if (columns.length > 0 && columns.length <= 40) {
       const sql = topValuesSql(resolved.fqn, columns, 5);
       if (sql) {
-        try { topRes = await queryRun(sql, resolved.principal); } catch { topRes = null; }
+        try { topRes = await queryRun(sql, resolved.principal, route); } catch { topRes = null; }
       }
     }
     return assembleProfile({ fqn: resolved.fqn, layer: resolved.layer, columns, statsRes, topRes, previewRes });

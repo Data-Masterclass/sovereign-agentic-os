@@ -7,6 +7,9 @@ import { serviceBearerHeader } from '@core/infra/service-bearer';
 import { recordObservation } from '@core/infra/langfuse';
 import type { Role } from '@core/kernel/session';
 import { decisionMeta, type DecisionMeta } from '@core/infra/opa-decision';
+import { trinoClientTags, trinoSource, type TrinoRoute } from '@core/infra/trino-source';
+
+export type { TrinoRoute } from '@core/infra/trino-source';
 
 /**
  * Governed data-tool spine. Every data access an agent makes — the `metrics` tool
@@ -102,12 +105,19 @@ export type QueryResult = {
   message?: string;
 };
 
-export async function queryRun(sql: string, principal?: string, schema?: string): Promise<QueryResult> {
+export async function queryRun(
+  sql: string,
+  principal: string | undefined,
+  route: TrinoRoute,
+  schema?: string,
+): Promise<QueryResult> {
   // principal is forwarded so Trino's OPA plugin governs row/column for the right
   // domain identity (the same principal OPA gates tool access on). schema (optional)
   // sets the session schema so an unqualified query targets the caller's own domain
   // instead of the query-tool's fixed default — the Catalog passes the caller's domain.
-  const body: Record<string, string> = { sql };
+  // `route` becomes Trino's `source` + client tags, which select the resource group
+  // `global.domains.<domain>.<user>` (core/infra/trino-source.ts, design 06 §5.5).
+  const body: Record<string, unknown> = { sql, source: trinoSource(route), client_tags: trinoClientTags(route) };
   if (principal) body.principal = principal;
   if (schema) body.schema = schema;
   // 8 s bounds OUR WAIT, and nothing else (B4-review E-1): an abort here ends this fetch, it does
@@ -167,6 +177,12 @@ export type ExecuteIdentity = {
   role: Role;
 };
 
+/** The write path's resource-group route: the target domain when the caller names it, else the
+ *  identity's first domain (core/infra/trino-source.ts). */
+export function executeRoute(identity: ExecuteIdentity, surface: string, targetDomain?: string): TrinoRoute {
+  return { domain: targetDomain ?? identity.domains[0] ?? '', surface };
+}
+
 export type ExecuteResult = { ok: true; rowsAffected: number | null };
 
 /**
@@ -180,6 +196,7 @@ export type ExecuteResult = { ok: true; rowsAffected: number | null };
 export async function executeRun(
   sql: string,
   identity: ExecuteIdentity,
+  route: TrinoRoute,
   schema?: string,
   // Interactive default stays 15s; long-running callers (the scheduled-sync
   // executor — config.syncStatementTimeoutMs) pass their own budget explicitly.
@@ -191,6 +208,8 @@ export async function executeRun(
     uid: identity.uid,
     domains: identity.domains,
     role: identity.role,
+    source: trinoSource(route),
+    client_tags: trinoClientTags(route),
   };
   if (schema) body.schema = schema;
   const res = await withTimeout(

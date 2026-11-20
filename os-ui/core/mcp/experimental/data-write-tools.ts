@@ -40,6 +40,7 @@ import {
 import { proposeFixes, applyFixes, dqComplete, type FixApplyInput } from '@tabs/data/lib/dq-fix-server';
 import { DATA_CHECK_RULES } from '@tabs/data/lib/index';
 import { queryRun, executeRun } from '@core/infra/governed';
+import { routeFor } from '@core/infra/trino-source';
 import { publishPromotionLive } from '@tabs/data/lib/publish-server';
 import { reconcileDomainTablesLive } from '@tabs/data/lib/reconcile-server';
 import { enqueue, getApproval, decide, listApprovals } from '@core/policy/approvals';
@@ -520,7 +521,7 @@ const tools: McpTool[] = [
       return proposeFixes(dataset, check, {
         fqn: resolved?.fqn ?? null,
         layer: resolved?.layer ?? null,
-        queryFn: (sql) => queryRun(sql, resolved?.principal),
+        queryFn: (sql) => queryRun(sql, resolved?.principal, routeFor(user, 'mcp-dq', dataset.domain)),
         complete: dqComplete({ id: user.id, domains: user.domains }),
       });
     },
@@ -591,10 +592,14 @@ const tools: McpTool[] = [
       return applyFixes(dataset, check, input, {
         fqn: resolved.fqn,
         layer: resolved.layer,
-        queryFn: (sql) => queryRun(sql, resolved.principal),
+        queryFn: (sql) => queryRun(sql, resolved.principal, routeFor(user, 'mcp-dq', dataset.domain)),
         // The governed WRITE runs AS the caller — identity from the session, never args.
         executeFn: (sql) =>
-          executeRun(sql, { principal: resolved.principal, uid: user.id, domains: user.domains, role: user.role }),
+          executeRun(
+            sql,
+            { principal: resolved.principal, uid: user.id, domains: user.domains, role: user.role },
+            routeFor(user, 'mcp-dq', dataset.domain),
+          ),
         ranBy: user.id,
         domain: dataset.domain,
       });

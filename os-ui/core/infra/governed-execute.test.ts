@@ -34,6 +34,7 @@ test('executeRun threads the session identity into the request body', async () =
   const r = await executeRun(
     'CREATE OR REPLACE TABLE iceberg.sales.silver_x AS SELECT 1 AS a',
     IDENTITY,
+    { domain: 'sales', surface: 'data-build' },
     'sales',
   );
   assert.equal(r.ok, true);
@@ -43,6 +44,9 @@ test('executeRun threads the session identity into the request body', async () =
   assert.deepEqual(captured.domains, ['sales']);
   assert.equal(captured.role, 'builder');
   assert.equal(captured.schema, 'sales');
+  // WP-13: the scheduling identity Trino's resource groups select on.
+  assert.equal(captured.source, 'os-ui/sales/data-build');
+  assert.deepEqual(captured.client_tags, ['os-ui', 'domain=sales', 'surface=data-build']);
 });
 
 test('executeRun throws on a query-tool rejection (ok:false) — no silent success', async () => {
@@ -51,7 +55,7 @@ test('executeRun throws on a query-tool rejection (ok:false) — no silent succe
     text: async () => JSON.stringify({ ok: false, error: 'write target schema forbidden' }),
   })) as unknown as typeof fetch;
   await assert.rejects(
-    () => executeRun('CREATE OR REPLACE TABLE iceberg.marketing.x AS SELECT 1', IDENTITY),
+    () => executeRun('CREATE OR REPLACE TABLE iceberg.marketing.x AS SELECT 1', IDENTITY, { domain: 'sales', surface: 'data-build' }),
     /write target schema forbidden/,
   );
 });
@@ -61,7 +65,7 @@ test('executeRun throws when the query-tool is unreachable', async () => {
     throw new Error('ECONNREFUSED');
   }) as unknown as typeof fetch;
   await assert.rejects(
-    () => executeRun('DROP TABLE IF EXISTS iceberg.sales.x', IDENTITY),
+    () => executeRun('DROP TABLE IF EXISTS iceberg.sales.x', IDENTITY, { domain: 'sales', surface: 'data-build' }),
     /Could not reach query-tool/,
   );
 });

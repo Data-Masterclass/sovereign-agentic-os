@@ -196,7 +196,7 @@ import { providerFor } from '@tabs/connections/lib/warehouse/registry';
 import { buildImportCtas } from '@tabs/connections/lib/warehouse/import';
 import { catalogRegistration, type CatalogRegistration } from '@tabs/connections/lib/warehouse/registration';
 import { applyLiveRegistration, type RegK8s, type RegisterK8sOutcome, type SecretValues } from '@tabs/connections/lib/warehouse/k8s-registration';
-import { executeRun, queryRun, type ExecuteIdentity } from '@core/infra/governed';
+import { executeRoute, executeRun, queryRun, type ExecuteIdentity } from '@core/infra/governed';
 // Data-tab registry seam for the warehouse IMPORT (P0 A2): an import must create a
 // real governed Dataset row pointing at the materialized table, not just a table.
 import { createDataset, buildVersion, deleteDataset } from '@tabs/data/lib/index';
@@ -1207,7 +1207,7 @@ export async function testConnection(
     }
     const query = provider.testProbe.query(source);
     try {
-      const res = await queryRun(query, c.domain, c.domain);
+      const res = await queryRun(query, c.domain, { domain: c.domain, surface: 'connections' }, c.domain);
       c.mode = 'live';
       c.health = 'healthy';
       c.updatedAt = now();
@@ -1354,13 +1354,13 @@ export async function discoverWarehouse(
   // The SHOW SCHEMAS probe reuses the provider's testProbe (sql); guarded above.
   const schemasQuery = provider.testProbe.kind === 'sql' ? provider.testProbe.query(source) : `SHOW SCHEMAS FROM ${catalog}`;
   try {
-    const schemasRes = await queryRun(schemasQuery, c.domain, c.domain);
+    const schemasRes = await queryRun(schemasQuery, c.domain, { domain: c.domain, surface: 'connections' }, c.domain);
     const schemas = schemasRes.rows.map((r) => String(r[0])).filter(Boolean);
     let tables: string[] = [];
     if (schema) {
       // `discoverTables` validates the schema identifier (throws on bad input).
       const tablesQuery = provider.discoverTables(source, schema);
-      const tablesRes = await queryRun(tablesQuery, c.domain, c.domain);
+      const tablesRes = await queryRun(tablesQuery, c.domain, { domain: c.domain, surface: 'connections' }, c.domain);
       tables = tablesRes.rows.map((r) => String(r[0])).filter(Boolean);
     }
     void trace({
@@ -1525,7 +1525,7 @@ export async function importWarehouseTable(
   identity.principal = user.id;
   let res: { rowsAffected: number | null };
   try {
-    res = await executeRun(sql, identity);
+    res = await executeRun(sql, identity, executeRoute(identity, 'connections-land', targetDomain));
   } catch (e) {
     // The landing failed → do not leave a phantom, empty dataset behind.
     try { deleteDataset(dataset.id, user); } catch { /* best-effort cleanup */ }

@@ -302,8 +302,30 @@ reads, and a build that could read more than its author would be a privilege esc
 steps. `connect_kwargs` in the query-tool is factored out and unit-tested for exactly this
 invariant: the session user is the caller's principal, never the tool's identity.
 
-**Resource groups?** `trino.resourceGroups` renders a static file manager with one subgroup per
-domain plus `shared`, selected by the `domain=<name>` client tag.
+**Resource groups?** `trino.resourceGroups.config` is Trino's own resource-group document
+(file manager, https://trino.io/docs/476/admin/resource-groups.html), rendered unchanged. Groups
+are selected by the client's `source`:
+
+| Source | Group | Limits (concurrent / queued) |
+|---|---|---|
+| `os-ui/<domain>/<surface>` (query-tool, set by os-ui) | `global.domains.<domain>.<user>` | 2 / 10 per user, 8 / 50 per domain, 30 for all domains |
+| `dbt-trino-<version>`, `dagster/<domain>/…`, `os-seed/…` | `global.system` | 6 / 100 |
+| anything else (untagged) | `global.other` | 2 / 20 |
+
+The domain and user groups are created on demand from the named capture and `${USER}`, so a new
+domain needs no edit. `<domain>` is the target domain sanitised like its Iceberg namespace
+(`core/infra/trino-source.ts`). The source is a scheduling input only; who may read what is
+decided by OPA on the session user.
+
+`trino.sessionProperties.rules` is the file session-property manager's document: domain-group
+reads get `query_max_run_time=60s`, `query_max_execution_time=45s` and
+`query_max_scan_physical_bytes=20GB` server-side; `global.system` gets 2 h. Writes are not bounded
+here. These are defaults, which a client may override while OPA allows `SetSystemSessionProperty`
+(the deny is WP-14).
+
+Proof: `tests/lakehouse/limits.int.test.mjs` on the chart's Trino (`bash tests/lakehouse/up.sh`)
+reads `system.runtime.queries.resource_group_id`, the QUEUED state of an over-limit query and
+the session properties from QueryInfo.
 
 ## Licences
 

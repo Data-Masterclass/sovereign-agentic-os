@@ -1485,20 +1485,67 @@ trino:
   opa:
     enabled: true
     uri: "http://opa:8181"          # same OPA instance that governs agent tools
-  # Per-domain resource groups (static JSON file manager).
+  # ADMISSION CONTROL (06 §5.5, WP-13). `config` IS Trino's resource-group document
+  # (https://trino.io/docs/476/admin/resource-groups.html), rendered as JSON unchanged.
+  # Selection is by the client's source (`X-Trino-Source`), first match wins:
+  #   - `dbt-trino-<version>` (the source dbt-trino itself sends), `dagster/...` (the Dagster
+  #     code location) and `os-seed/...` (seed Jobs) → global.system;
+  #   - `os-ui/<domain>/<surface>` (query-tool, set by os-ui) → global.domains.<domain>.<user>,
+  #     created on demand from the named capture and ${USER};
+  #   - anything else → global.other, small on purpose, so an untagged client is visible.
+  # The source is a scheduling input only. WP-14 (T2) adds authentication and moves the system
+  # selector to `authenticatedUser`.
   resourceGroups:
     enabled: true
-    rootSoftMemoryLimit: "80%"
-    rootHardConcurrency: 100
-    rootMaxQueued: 1000
-    # Per-domain cap — low enough that a burst of heavy queries from one domain
-    # QUEUES rather than starving the cluster (the "resource group caps a heavy
-    perDomainSoftMemoryLimit: "30%"
-    perDomainHardConcurrency: 3
-    perDomainMaxQueued: 20
-    domains:
-      - sales
-      - marketing
+    config:
+      rootGroups:
+        - name: global
+          softMemoryLimit: "80%"
+          hardConcurrencyLimit: 40
+          maxQueued: 1000
+          subGroups:
+            - { name: system, softMemoryLimit: "40%", hardConcurrencyLimit: 6, maxQueued: 100 }
+            - name: domains
+              softMemoryLimit: "60%"
+              hardConcurrencyLimit: 30
+              maxQueued: 500
+              subGroups:
+                - name: "${domain}"
+                  softMemoryLimit: "30%"
+                  hardConcurrencyLimit: 8
+                  maxQueued: 50
+                  subGroups:
+                    - name: "${USER}"
+                      softMemoryLimit: "15%"
+                      hardConcurrencyLimit: 2
+                      maxQueued: 10
+                      softCpuLimit: 5m
+                      hardCpuLimit: 10m
+            - { name: other, softMemoryLimit: "10%", hardConcurrencyLimit: 2, maxQueued: 20 }
+      cpuQuotaPeriod: 1m
+      selectors:
+        - { source: '^(dbt-trino-[0-9.]+|dagster/.+|os-seed/.+)$', group: global.system }
+        - { source: '^os-ui/(?<domain>[a-z0-9_]+)/.*', group: 'global.domains.${domain}.${USER}' }
+        - { group: global.other }
+  # SERVER-SIDE QUERY LIMITS (06 §5.5, WP-13): Trino's file session-property manager
+  # (https://trino.io/docs/476/admin/session-property-managers.html). `rules` IS its JSON
+  # document. Reads in the domain groups get the interactive budget; writes (CTAS, syncs) are
+  # not bounded here, matching the query-tool's unbounded `/execute`. These are defaults a
+  # client may override when access control allows it; the OPA deny for `query_max_*` is WP-14.
+  sessionProperties:
+    enabled: true
+    rules:
+      - group: '^global\.domains\..*'
+        queryType: SELECT
+        sessionProperties: { query_max_run_time: 60s, query_max_execution_time: 45s, query_max_scan_physical_bytes: 20GB }
+      - group: '^global\.domains\..*'
+        queryType: DESCRIBE
+        sessionProperties: { query_max_run_time: 60s, query_max_execution_time: 45s }
+      - group: '^global\.domains\..*'
+        queryType: EXPLAIN
+        sessionProperties: { query_max_run_time: 60s, query_max_execution_time: 45s }
+      - group: '^global\.system$'
+        sessionProperties: { query_max_run_time: 2h, query_max_execution_time: 2h }
   # FILE-BASED ACCESS CONTROL, CHAINED AFTER OPA (engine rebuild B3). Trino accepts a
   # LIST of system access controls (`access-control.config-files`) and every one of them
   # must allow — so this file can only ever NARROW what policies/trino.rego permits. It

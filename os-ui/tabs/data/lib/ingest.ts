@@ -3,6 +3,7 @@
  */
 import 'server-only';
 import { queryRun } from '@core/infra/governed';
+import { routeFor } from '@core/infra/trino-source';
 import { offlineMockAllowed, refuseOfflineMock } from '@core/kernel/offline-mock';
 import { assistantComplete } from '@core/runtime/complete';
 import type { Role } from '@core/kernel/session';
@@ -71,6 +72,8 @@ function csvPreview(body: Buffer, limit = 20): Grid {
 
 export async function ingestUpload(input: {
   principal: string; // the SESSION user.id — never from the request body
+  /** The caller's domains: the first schedules the preview read (core/infra/trino-source.ts). */
+  domains: readonly string[];
   datasetName: string;
   fileName: string;
   body: Buffer;
@@ -121,7 +124,7 @@ export async function ingestUpload(input: {
     // Preview the PHYSICAL table through the governed path (proves it's queryable and
     // shows exactly what landed, OPA-masked to the caller).
     try {
-      const q = await queryRun(`SELECT * FROM ${table} LIMIT 20`, input.principal);
+      const q = await queryRun(`SELECT * FROM ${table} LIMIT 20`, input.principal, routeFor({ domains: input.domains }, 'data-ingest'));
       preview = { columns: q.columns, rows: q.rows };
     } catch { /* best-effort: verify already proved queryable */ }
   }
@@ -156,6 +159,7 @@ export async function ingestAndRegisterBronze(
   const dataset = getDataset(datasetId, user); // view/edit-scope guard (throws 403/404)
   const report = await ingestUpload({
     principal: user.id, // session-bound — never the request body
+    domains: user.domains,
     datasetName: dataset.name,
     fileName,
     body,
@@ -238,6 +242,7 @@ export async function landGridAsBronze(
  *  governed query path as the principal; degrades to [] when Trino is unreachable. */
 export async function listPersonalTables(
   principal: string,
+  domains: readonly string[],
 ): Promise<{ id: string; name: string; origin: 'upload'; columns: string[]; rowCount: number | null }[]> {
   const schema = personalSchema(principal);
   try {
@@ -245,6 +250,7 @@ export async function listPersonalTables(
       `SELECT table_name, column_name FROM iceberg.information_schema.columns ` +
         `WHERE table_schema = '${schema}' ORDER BY table_name, ordinal_position`,
       principal,
+      routeFor({ domains }, 'data-sandbox'),
     );
     const byTable = new Map<string, string[]>();
     for (const [t, c] of q.rows) {

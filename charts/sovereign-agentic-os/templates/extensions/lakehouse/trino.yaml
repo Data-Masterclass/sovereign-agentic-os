@@ -91,46 +91,26 @@ data:
   {{- end }}
   {{- end }}
   {{- if $t.resourceGroups.enabled }}
-  {{- $rg := $t.resourceGroups }}
-  # Per-domain isolation via the file resource-group manager (static JSON).
+  # Admission control: Trino's FILE resource-group manager, the document exactly as
+  # https://trino.io/docs/476/admin/resource-groups.html specifies it, written in values
+  # (`trino.resourceGroups.config`). Groups are selected by the client's `source`
+  # (`X-Trino-Source`): os-ui sends `os-ui/<domain>/<surface>`, and the named capture
+  # creates `global.domains.<domain>.<user>` on demand, so a new domain needs no edit.
   resource-groups.properties: |
     resource-groups.configuration-manager=file
     resource-groups.config-file=/etc/trino/resource-groups.json
   resource-groups.json: |
-    {
-      "rootGroups": [
-        {
-          "name": "global",
-          "softMemoryLimit": {{ $rg.rootSoftMemoryLimit | quote }},
-          "hardConcurrencyLimit": {{ $rg.rootHardConcurrency }},
-          "maxQueued": {{ $rg.rootMaxQueued }},
-          "subGroups": [
-            {{- range $i, $d := $rg.domains }}
-            {{- if $i }},{{ end }}
-            {
-              "name": {{ $d | quote }},
-              "softMemoryLimit": {{ $rg.perDomainSoftMemoryLimit | quote }},
-              "hardConcurrencyLimit": {{ $rg.perDomainHardConcurrency }},
-              "maxQueued": {{ $rg.perDomainMaxQueued }}
-            }
-            {{- end }}
-            ,
-            {
-              "name": "shared",
-              "softMemoryLimit": {{ $rg.perDomainSoftMemoryLimit | quote }},
-              "hardConcurrencyLimit": {{ $rg.perDomainHardConcurrency }},
-              "maxQueued": {{ $rg.perDomainMaxQueued }}
-            }
-          ]
-        }
-      ],
-      "selectors": [
-        {{- range $rg.domains }}
-        { "clientTags": [{{ printf "domain=%s" . | quote }}], "group": {{ printf "global.%s" . | quote }} },
-        {{- end }}
-        { "group": "global.shared" }
-      ]
-    }
+{{ $t.resourceGroups.config | toPrettyJson | indent 4 }}
+  {{- end }}
+  {{- if $t.sessionProperties.enabled }}
+  # Server-side session defaults per resource group (file session-property manager,
+  # https://trino.io/docs/476/admin/session-property-managers.html). Later rules override
+  # earlier ones; values are strings.
+  session-property-config.properties: |
+    session-property-config.configuration-manager=file
+    session-property-manager.config-file=/etc/trino/session-property-config.json
+  session-property-config.json: |
+{{ $t.sessionProperties.rules | toPrettyJson | indent 4 }}
   {{- end }}
 {{- if $acOn }}
 ---
@@ -300,6 +280,9 @@ spec:
         {{- /* Fold the managed cloud catalog into the checksum ONLY when one is
                configured, so default (Polaris-only) installs keep the SAME hash and
                do not roll on upgrade. */}}
+        {{- /* The limits files are subPath mounts, which the kubelet never refreshes, so a
+               change to them must roll the pod. */}}
+        checksum/limits: {{ printf "%s-%s" ($t.resourceGroups | toJson) ($t.sessionProperties | toJson) | sha256sum }}
         checksum/catalog: {{ printf "%s-%s-%s%s" ($ice | toJson) (include "soa.s3Endpoint" .) ($t.externalCatalogs | toJson) (ternary (printf "-%s" ($t.cloudCatalog | toJson)) "" (ne (dig "provider" "" ($t.cloudCatalog | default dict)) "")) | sha256sum }}
       labels:
         {{- include "soa.labels" . | nindent 8 }}
@@ -386,6 +369,10 @@ spec:
             {{- if $t.resourceGroups.enabled }}
             - { name: config, mountPath: /etc/trino/resource-groups.properties, subPath: resource-groups.properties, readOnly: true }
             - { name: config, mountPath: /etc/trino/resource-groups.json, subPath: resource-groups.json, readOnly: true }
+            {{- end }}
+            {{- if $t.sessionProperties.enabled }}
+            - { name: config, mountPath: /etc/trino/session-property-config.properties, subPath: session-property-config.properties, readOnly: true }
+            - { name: config, mountPath: /etc/trino/session-property-config.json, subPath: session-property-config.json, readOnly: true }
             {{- end }}
             - { name: catalog, mountPath: /etc/trino/catalog, readOnly: true }
             - { name: data, mountPath: /data/trino }

@@ -7,6 +7,7 @@ import type { CurrentUser } from '@core/kernel/auth';
 import { requirePrincipal } from '@tabs/data/lib/server';
 import { getDataset, builtLayerFqn, setMonitor } from '@tabs/data/lib/store';
 import { queryRun } from '@core/infra/governed';
+import { routeFor } from '@core/infra/trino-source';
 import { dqTrend, latestDqRun } from '@tabs/data/lib/dq-status-server';
 import { suggestChecks } from '@tabs/data/lib/dq-suggest';
 import { MONITOR_KINDS, monitorEnabled, type MonitorConfig, type MonitorKind } from '@tabs/data/lib/dq-monitors';
@@ -74,17 +75,18 @@ export const GET = withRoute<{ id: string }>(async ({ user, params }) => {
     return NextResponse.json({ suggestions: [], trend, latest, monitors, profiled: false, reason: 'no built layer' });
   }
 
+  const route = routeFor(user, 'data-dq', dataset.domain);
   let profile: Profile | null = null;
   try {
-    const describe = await queryRun(`describe ${resolved.fqn}`, resolved.principal);
+    const describe = await queryRun(`describe ${resolved.fqn}`, resolved.principal, route);
     const columns: ProfileColumn[] = parseDescribe(describe);
-    const statsRes = await queryRun(statsSql(resolved.fqn, columns), resolved.principal);
-    const previewRes = await queryRun(previewSql(resolved.fqn, 50), resolved.principal);
+    const statsRes = await queryRun(statsSql(resolved.fqn, columns), resolved.principal, route);
+    const previewRes = await queryRun(previewSql(resolved.fqn, 50), resolved.principal, route);
     let topRes = null;
     if (columns.length > 0 && columns.length <= MAX_TOPVALUE_COLUMNS) {
       const sql = topValuesSql(resolved.fqn, columns, 5);
       if (sql) {
-        try { topRes = await queryRun(sql, resolved.principal); } catch { topRes = null; }
+        try { topRes = await queryRun(sql, resolved.principal, route); } catch { topRes = null; }
       }
     }
     profile = assembleProfile({ fqn: resolved.fqn, layer: resolved.layer, columns, statsRes, topRes, previewRes });

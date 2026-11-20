@@ -67,7 +67,8 @@ data:
     }
 
     async function runSql(sql, schema) {
-      const headers = { 'X-Trino-User': USER, 'X-Trino-Catalog': CATALOG, 'Content-Type': 'text/plain' };
+      // X-Trino-Source selects the chart's global.system resource group (06 §5.5).
+      const headers = { 'X-Trino-User': USER, 'X-Trino-Source': 'os-seed/northpeak-marts', 'X-Trino-Catalog': CATALOG, 'Content-Type': 'text/plain' };
       if (schema) headers['X-Trino-Schema'] = schema;
       const post = await fetch(`${TRINO}/v1/statement`, { method: 'POST', headers, body: sql });
       if (!post.ok) throw new Error(`POST /v1/statement ${post.status}: ${await post.text()}`);
@@ -79,7 +80,7 @@ data:
         if (!j.nextUri) break;
         let r;
         for (let a = 0; ; a++) {
-          r = await fetch(j.nextUri, { headers: { 'X-Trino-User': USER } });
+          r = await fetch(j.nextUri, { headers: { 'X-Trino-User': USER, 'X-Trino-Source': 'os-seed/northpeak-marts' } });
           if (r.status === 503) { if (a > 600) throw new Error('Trino busy (503) too long'); await sleep(200); continue; }
           break;
         }

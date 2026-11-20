@@ -7,6 +7,7 @@ import type { CurrentUser } from '@core/kernel/auth';
 import { requirePrincipal } from '@tabs/data/lib/server';
 import { getDataset, builtLayerFqn } from '@tabs/data/lib/store';
 import { queryRun } from '@core/infra/governed';
+import { routeFor } from '@core/infra/trino-source';
 import { proposeFixes, dqComplete } from '@tabs/data/lib/dq-fix-server';
 
 export const dynamic = 'force-dynamic';
@@ -38,7 +39,7 @@ export const POST = withRoute<{ id: string }, { checkId?: string }>(async ({ use
   const envelope = await proposeFixes(dataset, check, {
     fqn: resolved?.fqn ?? null,
     layer: resolved?.layer ?? null,
-    queryFn: (sql) => queryRun(sql, resolved?.principal),
+    queryFn: (sql) => queryRun(sql, resolved?.principal, routeFor(user, 'data-dq', dataset.domain)),
     complete: dqComplete({ id: user.id, domains: user.domains }),
   });
   return NextResponse.json(envelope);

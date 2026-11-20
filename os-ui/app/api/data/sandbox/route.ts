@@ -4,6 +4,7 @@
 import { NextResponse } from 'next/server';
 import { requireUser } from '@core/kernel/auth';
 import { authorize, queryRun, trace } from '@core/infra/governed';
+import { routeFor } from '@core/infra/trino-source';
 import {
   privatePrefix,
   pullExtract,
@@ -66,7 +67,7 @@ export async function POST(req: Request) {
       // PHYSICAL personal Bronze tables (durable — survive restarts) unioned with the
       // in-session masked extracts. The old in-memory upload rows are gone: uploads are
       // now real Iceberg tables (POST /api/data/sandbox/upload), queryable through Trino.
-      const physical = await listPersonalTables(uid);
+      const physical = await listPersonalTables(uid, user.domains);
       const extracts = listFor(uid).filter((d) => d.origin === 'extract').map(meta);
       return NextResponse.json({ prefix, datasets: [...physical, ...extracts] });
     }
@@ -91,7 +92,7 @@ export async function POST(req: Request) {
           { error: `OPA denied ${principal} → query`, policy: authz.policy }, { status: 403 },
         );
       }
-      const d = await pullExtract({ principal, sql, name, queryFn: queryRun });
+      const d = await pullExtract({ principal, sql, name, queryFn: (q, p) => queryRun(q, p, routeFor(user, 'data-sandbox')) });
       add(uid, d);
       const traced = await trace({ principal, tool: 'query', input: sql, output: d.rows });
       return NextResponse.json({

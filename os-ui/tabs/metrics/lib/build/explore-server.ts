@@ -16,6 +16,7 @@
 import 'server-only';
 import { offlineMockAllowed } from '@core/kernel/offline-mock';
 import { queryRun } from '@core/infra/governed';
+import { routeForTable } from '@core/infra/trino-source';
 import { propagate, type DelegatedToken } from '@core/kernel/identity';
 import type { Dataset, Measure } from '@tabs/data/lib/index';
 import { personalSchema, domainSchema, physicalSlug } from '@tabs/data/lib/store-fqn';
@@ -222,7 +223,7 @@ export async function exploreMetric(
     // Run AS the delegated token's SUBJECT (R3 — the viewer's uid). For a personal dataset the
     // subject owns the `personal_<uid>` schema (OPA `is_owned_personal`); for a governed
     // dataset the subject's groups carry the domain membership OPA gates the domain mart on.
-    const result = await queryRun(sql, identities.trino.user);
+    const result = await queryRun(sql, identities.trino.user, routeForTable(readTarget, 'metrics', [dataset.domain]));
     return {
       ...base,
       sql,

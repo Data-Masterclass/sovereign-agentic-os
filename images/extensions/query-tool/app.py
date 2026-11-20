@@ -25,7 +25,7 @@ from starlette.responses import JSONResponse
 import trino
 import trino.exceptions
 
-from execute_guard import ExecuteError, connect_kwargs, guard, guard_read
+from execute_guard import ExecuteError, connect_kwargs, guard, guard_read, scheduling
 
 PORT = int(os.environ.get("PORT", "8000"))
 TRINO_HOST = os.environ.get("TRINO_HOST", "trino")
@@ -103,6 +103,8 @@ def _connect(
     schema: str | None = None,
     *,
     max_run_time: str | None = QUERY_MAX_RUN_TIME,
+    source: str | None = None,
+    client_tags: list | None = None,
 ):
     """Connect as `principal`, bounded by `max_run_time` (a Trino session property) and a
     matching HTTP `request_timeout`. Pass `max_run_time=""`/`None` for an unbounded statement."""
@@ -119,18 +121,21 @@ def _connect(
             # query is orphaned on the cluster — the defect this fixes.
             request_timeout=(_seconds(max_run_time) + 5) if max_run_time else None,
             max_run_time=max_run_time or None,
+            source=source,
+            client_tags=client_tags,
         )
     )
 
 
-def run_query(sql: str, principal: str | None = None, schema: str | None = None) -> dict:
+def run_query(sql: str, principal: str | None = None, schema: str | None = None,
+              source: str | None = None, client_tags: list | None = None) -> dict:
     # Defence-in-depth: enforce read-only single-statement BEFORE touching Trino, so
     # the read tool can never mutate the lakehouse even if a caller sends write SQL.
     # (Trino's OPA plugin remains the authoritative row/column governance layer.)
     sql = guard_read(sql)
     eff_schema = schema or TRINO_SCHEMA
     try:
-        conn = _connect(principal, eff_schema)
+        conn = _connect(principal, eff_schema, source=source, client_tags=client_tags)
         cur = conn.cursor()
         cur.execute(sql)
         # At most max+1 rows leave Trino's stream: the extra row is how `truncated` is MEASURED
@@ -168,13 +173,15 @@ def run_query(sql: str, principal: str | None = None, schema: str | None = None)
     return result
 
 
-def run_execute(sql: str, principal: str, schema: str) -> dict:
+def run_execute(sql: str, principal: str, schema: str,
+                source: str | None = None, client_tags: list | None = None) -> dict:
     """Execute an already-guarded write DDL as `principal` (so Trino's OPA plugin
     governs the reads inside a CTAS AS THE CALLER). The session schema is set to the
     write target so unqualified refs resolve in the caller's own domain.
 
     Bounded only when EXECUTE_MAX_RUN_TIME is set — see its comment above."""
-    conn = _connect(principal, schema, max_run_time=EXECUTE_MAX_RUN_TIME or None)
+    conn = _connect(principal, schema, max_run_time=EXECUTE_MAX_RUN_TIME or None,
+                    source=source, client_tags=client_tags)
     cur = conn.cursor()
     cur.execute(sql)
     cur.fetchall()  # drain the result stream (CTAS returns a rowcount row)
@@ -222,8 +229,10 @@ async def http_query(req: Request):
         # CONCURRENCY: the Trino DB-API call BLOCKS — run it on a worker thread so
         # one slow statement never serializes the whole async server (effective
         # concurrency of 1 was the scalability-audit finding).
+        # `source` / `client_tags`: os-ui's scheduling identity, passed to Trino unchanged.
+        source, tags = scheduling(body)
         result = await asyncio.to_thread(
-            run_query, sql, body.get("principal"), body.get("schema")
+            run_query, sql, body.get("principal"), body.get("schema"), source, tags
         )
         return JSONResponse(result)
     except ExecuteError as e:
@@ -254,6 +263,7 @@ async def http_execute(req: Request):
         return JSONResponse({"ok": False, "error": "missing principal"}, status_code=400)
     try:
         parsed = guard(sql, uid, domains, role)
+        source, tags = scheduling(body)
     except ExecuteError as e:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=e.status)
     try:
@@ -267,7 +277,7 @@ async def http_execute(req: Request):
         # limits end it. That is a deliberate default for writes, which legitimately run for
         # minutes; it is not "the client owns the budget", which this comment used to claim.
         # Reads are bounded by QUERY_MAX_RUN_TIME + QUERY_MAX_ROWS.
-        result = await asyncio.to_thread(run_execute, sql, principal, parsed.schema)
+        result = await asyncio.to_thread(run_execute, sql, principal, parsed.schema, source, tags)
         return JSONResponse(result)
     except trino.exceptions.TrinoUserError as e:
         # A genuine SQL/permission error from Trino (incl. an OPA-denied read) — the

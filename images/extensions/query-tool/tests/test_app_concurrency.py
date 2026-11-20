@@ -38,12 +38,12 @@ class _Req:
 SLEEP = 0.2
 
 
-def _slow_query(sql, principal=None, schema=None):
+def _slow_query(sql, principal=None, schema=None, source=None, client_tags=None):
     time.sleep(SLEEP)  # a blocking Trino round-trip stand-in
     return {"engine": "trino", "columns": [], "rows": [], "row_count": 0}
 
 
-def _slow_execute(sql, principal, schema):
+def _slow_execute(sql, principal, schema, source=None, client_tags=None):
     time.sleep(SLEEP)
     return {"ok": True, "rowsAffected": 1}
 

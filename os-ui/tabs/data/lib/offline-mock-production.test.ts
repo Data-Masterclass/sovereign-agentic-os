@@ -47,7 +47,7 @@ async function withEnv(nodeEnv: string, flag: string | undefined, body: () => Pr
 test('PRODUCTION + flag unset: ingestUpload REFUSES — no table name, no row count, no preview', async () => {
   await withEnv('production', undefined, async () => {
     await assert.rejects(
-      () => ingestUpload({ principal: 'cara', datasetName: 'Orders', fileName: 'o.csv', body: Buffer.from(CSV) }),
+      () => ingestUpload({ principal: 'cara', domains: [], datasetName: 'Orders', fileName: 'o.csv', body: Buffer.from(CSV) }),
       (e: Error & { code?: string; status?: number }) => {
         assert.equal(e.code, ENGINE_UNAVAILABLE);
         assert.equal(e.status, 503);

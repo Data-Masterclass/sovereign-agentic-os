@@ -23,6 +23,7 @@
 import 'server-only';
 import { roleAtLeast } from '@core/kernel/session';
 import { queryRun, type ExecuteIdentity } from '@core/infra/governed';
+import { routeFor } from '@core/infra/trino-source';
 import type { CurrentUser } from '@core/kernel/auth';
 import { normaliseFolderPath } from '@core/kernel/folders';
 import {
@@ -471,7 +472,7 @@ export async function runQualityChecksService(
   const run = deps.queryFn ?? ambient.queryFn ?? queryRun;
   const outcome = await runAndRecord(dataset, {
     fqn: resolved?.fqn ?? null,
-    queryFn: (sql) => run(sql, resolved?.principal),
+    queryFn: (sql) => run(sql, resolved?.principal, routeFor(user, 'data-dq', dataset.domain)),
     ownerId: user.id,
   });
   return { datasetId, name: dataset.name, ...outcome };

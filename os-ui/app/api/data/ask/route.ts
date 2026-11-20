@@ -7,6 +7,7 @@ import { requirePrincipal, errorResponse } from '@tabs/data/lib/server';
 import { listAskable } from '@tabs/data/lib/store';
 import { readPrincipalFor } from '@tabs/data/lib/store-fqn';
 import { queryRun, trace } from '@core/infra/governed';
+import { routeFor } from '@core/infra/trino-source';
 import { liteLlmCaller } from '@core/runtime/runtime';
 import { runAsk, type AskMessage } from '@tabs/data/lib/ask';
 import { appSlugFromRequest, grantedIdSet } from '@tabs/software/lib/app-origin';
@@ -87,7 +88,7 @@ export async function POST(req: Request) {
       // `personal_<uid>` lane runs AS the owner (that schema is owner-only under OPA
       // `is_owned_personal`, so the domain principal is denied); a governed asset/product
       // read runs as the caller's domain. Derived SERVER-SIDE — never from the body.
-      query: (sql) => queryRun(sql, readPrincipalFor(sql, user)),
+      query: (sql) => queryRun(sql, readPrincipalFor(sql, user), routeFor(user, 'data-ask')),
     });
 
     // The principal the executed SQL actually ran as (owner for a personal-lane read,

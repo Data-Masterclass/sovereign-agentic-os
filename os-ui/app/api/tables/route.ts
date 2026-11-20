@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { requireUser } from '@core/kernel/auth';
 import { errorResponse } from '@tabs/data/lib/server';
 import { queryRun } from '@core/infra/governed';
+import { routeFor } from '@core/infra/trino-source';
 
 export const dynamic = 'force-dynamic';
 
@@ -15,7 +16,7 @@ export async function GET() {
   try {
     const u = await requireUser();
     const principal = u.domains[0] ?? u.id;
-    const data = await queryRun('show tables', principal);
+    const data = await queryRun('show tables', principal, routeFor(u, 'tables'));
     const tables = data.rows.map((r) => String(r[0]));
     return NextResponse.json({ engine: data.engine ?? 'trino', tables });
   } catch (e) {

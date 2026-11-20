@@ -103,14 +103,14 @@ test('GAP 6: the governance policies read gates on the policy.view right', () =>
 test('LOCKDOWN 1: /api/query requires a session AND forwards the caller principal (no raw SQL passthrough)', () => {
   const src = read('app/api/query/route.ts');
   assert.match(src, /requireUser/, 'query must gate on a session');
-  assert.match(src, /queryRun\(sql, principal\)/, 'query must forward the principal to the governed path');
+  assert.match(src, /queryRun\(sql, principal, routeFor\(/, 'query must forward the principal to the governed path');
   assert.doesNotMatch(src, /body\.principal/, 'principal must come from the session, never the body');
 });
 
 test('LOCKDOWN 2: /api/tables requires a session and scopes show tables to the principal', () => {
   const src = read('app/api/tables/route.ts');
   assert.match(src, /requireUser/);
-  assert.match(src, /queryRun\('show tables', principal\)/, 'tables must be scoped via the principal');
+  assert.match(src, /queryRun\('show tables', principal, routeFor\(/, 'tables must be scoped via the principal');
 });
 
 test('LOCKDOWN 3: /api/knowledge/docs gates GET (DLS filter) + POST (session-stamped labels)', () => {
@@ -150,7 +150,7 @@ test('LOCKDOWN 5: the remaining proxy read routes require a session', () => {
   // route would also be caught by the every-route session sweep below.
   assert.equal(existsSync(resolve(OSUI, 'app/api/chat/route.ts')), false, 'app/api/chat/route.ts was removed and must not return');
   // catalog scopes its show-tables to the principal too.
-  assert.match(read('app/api/catalog/route.ts'), /fromQueryTool\(principal\)/);
+  assert.match(read('app/api/catalog/route.ts'), /fromQueryTool\(principal, routeFor\(/);
 });
 
 test('LOCKDOWN 6: the governed DATA authz spine fails CLOSED on OPA-unreachable', () => {
