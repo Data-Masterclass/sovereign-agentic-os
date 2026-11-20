@@ -11,13 +11,13 @@
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { _reset, createDomain, hydrateDomains, listDomains, domainCollisions } from '@tabs/admin/lib/domains';
-import { domainSchema } from '@tabs/data/lib/store-fqn';
+import { domainIdent } from '@core/kernel/domain-ident';
 
 beforeEach(() => _reset());
 
 test('a new domain whose sanitized id collides with an existing domain is refused (409), naming both', () => {
   createDomain({ name: 'a-b', owner: 'admin' });
-  assert.equal(domainSchema('a--b'), domainSchema('a-b'), 'the precondition: both ids map to one schema');
+  assert.equal(domainIdent('a--b'), domainIdent('a-b'), 'the precondition: both ids map to one schema');
   assert.throws(
     () => createDomain({ name: 'a--b', owner: 'admin' }),
     (e: Error & { status?: number }) => e.status === 409 && /a-b/.test(e.message) && /a_b/.test(e.message),
