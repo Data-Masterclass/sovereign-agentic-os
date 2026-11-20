@@ -5,6 +5,7 @@
  * FEATURE:    WP-50 — the DRY-RUN plan that moves existing live workflow records into git
  * USER STORY: As an operator I want to see which OKF files each domain repository would gain, which
  *             records cannot move and why, and that Personal drafts stay out — before any write.
+ * ARCHITECTURE: node:test against the real module (and a real temp git repo where it commits); no mocks.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
