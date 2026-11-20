@@ -47,7 +47,7 @@ async function healthy(): Promise<boolean> {
   }
 }
 
-async function waitHealthy(ms = 30_000): Promise<void> {
+async function waitHealthy(ms = 120_000): Promise<void> {
   const until = Date.now() + ms;
   while (!(await healthy())) {
     if (Date.now() > until) throw new Error('OPA did not become healthy');
