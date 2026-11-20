@@ -24,6 +24,7 @@ import { commitTree, openOrInit } from '@core/infra/git-store';
 import { decidePath, GENERATED_AGENT_CODE, personalAgentLane, type Pusher } from '@core/infra/git-receive';
 import { parseSystem } from '@tabs/agents/lib/system-schema';
 import { ingestAgentSystems, matchesAgentPrompt } from '@tabs/agents/lib/git/ingest';
+import { identifierProblems, PROMPT_MAX_BYTES } from '@tabs/agents/lib/safe-ids';
 import { generateAgentModule } from '@tabs/agents/lib/module/generate';
 import { hostModuleInputs } from '@tabs/agents/lib/module/versions';
 
@@ -117,4 +118,31 @@ test('a pushed prompt is written into the definition, and the regenerated module
   const r2 = await ingestAgentSystems({ domain: 'sales', sha, pusher: amirP, files: [{ path: `${dir}/prompts/ghost.md`, status: 'added', content: 'x' }] }, { reposDir });
   assert.equal(r2.updated, 0);
   assert.match(r2.notes.join(' '), /agent 'ghost' is not in this system/);
+});
+
+test('a prompt larger than PROMPT_MAX_BYTES is refused on push (and on save); one at the cap is taken', async () => {
+  const id = store.createSystem(amir, { name: 'Capped' }).id;
+  const agentId = parseSystem(store.getSystem(id, amir).yaml).agents[0].id;
+  const dir = `${personalAgentLane('amir')}capped`;
+  const { sha } = await commitTree('sales', new Map([['agents/index.yml', `version: 1\ndomain: sales\nsystems:\n  - slug: capped\n    id: ${id}\n    path: ${dir}\n`]]), {
+    reposDir, author: { name: 'Sovereign OS', email: 'os@sovereign.local' }, message: 'index',
+  });
+  const big = `# big\n${'x'.repeat(PROMPT_MAX_BYTES)}`;
+  const r = await ingestAgentSystems({ domain: 'sales', sha, pusher: amirP, files: [{ path: `${dir}/prompts/${agentId}.md`, status: 'modified', content: big }] }, { reposDir });
+  assert.equal(r.updated, 0);
+  assert.match(r.notes.join(' '), new RegExp(`at most ${PROMPT_MAX_BYTES} bytes`));
+  assert.notEqual(parseSystem(store.getSystem(id, amir).yaml).agents[0].agent_md, big.trimEnd(), 'nothing was written');
+  const atCap = 'y'.repeat(PROMPT_MAX_BYTES);
+  const ok = await ingestAgentSystems({ domain: 'sales', sha, pusher: amirP, files: [{ path: `${dir}/prompts/${agentId}.md`, status: 'modified', content: atCap }] }, { reposDir });
+  assert.equal(ok.updated, 1, ok.notes.join(' '));
+});
+
+test('agent ids are lower case everywhere: an upper-case id is refused by the definition check, and its prompt path by the gate', () => {
+  const sys = parseSystem(store.getSystem(store.createSystem(amir, { name: 'Case' }).id, amir).yaml);
+  sys.agents[0].id = 'Lead';
+  sys.entrypoint = 'Lead';
+  assert.ok(identifierProblems(sys).some((p) => p.includes('"Lead"')));
+  assert.equal(decidePath('agents/revenue-review/prompts/Lead.md', builder).allowed, false);
+  assert.equal(matchesAgentPrompt('agents/revenue-review/prompts/Lead.md'), false);
+  assert.equal(decidePath('agents/revenue-review/prompts/lead.md', builder).allowed, true);
 });

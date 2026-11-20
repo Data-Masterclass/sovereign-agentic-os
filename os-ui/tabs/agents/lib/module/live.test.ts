@@ -118,10 +118,10 @@ function recordingObserver() {
   return { observer, log, spanIds };
 }
 
-function osDeps(runId: string, extra: Partial<OsAgentDeps> = {}, rpcText = '{"ok":true}'): OsAgentDeps {
+function osDeps(runId: string, extra: Partial<OsAgentDeps> = {}, rpcText = '{"ok":true}', rpcIsError = false): OsAgentDeps {
   const deps: OsToolDeps = {
     enqueue: (() => { throw new Error('nothing is held'); }) as unknown as OsToolDeps['enqueue'],
-    handleRpc: (async (_u: CurrentUser, req: JsonRpcRequest): Promise<JsonRpcResponse> => ({ jsonrpc: '2.0', id: req.id ?? 1, result: { content: [{ type: 'text', text: rpcText }] } })) as unknown as OsToolDeps['handleRpc'],
+    handleRpc: (async (_u: CurrentUser, req: JsonRpcRequest): Promise<JsonRpcResponse> => ({ jsonrpc: '2.0', id: req.id ?? 1, result: { ...(rpcIsError ? { isError: true } : {}), content: [{ type: 'text', text: rpcText }] } })) as unknown as OsToolDeps['handleRpc'],
     trace: (async () => undefined) as unknown as OsToolDeps['trace'],
   };
   return {
@@ -180,17 +180,21 @@ test('live events and the drill-down: node start, each tool step, node end — i
   assert.deepEqual(r.runs[1].result.steps[0].args, { query: 'orders' });
 });
 
-test('trace spans: one span per agent visit, each model call in its llm span with the span id sent as traceparent, tools in the visit', { skip }, async () => {
+test('trace spans: one span per agent visit, each model call — the supervisor route included — in its llm span, sent as traceparent', { skip }, async () => {
   await stub.script(SCRIPT);
   const { observer, log, spanIds } = recordingObserver();
   const tracer = moduleTracer(observer);
   const before = (await stub.stats()).total;
-  const r = await run(`trace-${Date.now()}`, osDeps('trace', { tracer }), undefined, tracer.spans);
+  const traced = (a: { id: string }) => requireGatewayChatModel({ model: 'stub', baseURL: stub.url, apiKey: 'sk-stub', writeSystem: false, fetch: tracer.fetchFor('route', a.id) });
+  const r = await run(`trace-${Date.now()}`, osDeps('trace', { tracer, modelFor: traced }), undefined, tracer.spans);
   assert.equal(r.reachedEnd, true);
   assert.deepEqual(log, [
     'span agent.lead',
     'llm.lead tools=0',
     'end agent.lead',
+    'span route.lead',
+    'llm.route.lead tools=0',
+    'end route.lead',
     'span agent.researcher',
     'llm.researcher tools=6',
     'tool.search_knowledge',
@@ -198,14 +202,16 @@ test('trace spans: one span per agent visit, each model call in its llm span wit
     'tool.query_data',
     'llm.researcher tools=6',
     'end agent.researcher',
+    'span route.lead',
+    'llm.route.lead tools=0',
+    'end route.lead',
   ]);
-  // The agent calls carried their span as W3C traceparent and the minted call id — the gateway's join keys.
+  // EVERY model call carried its span as W3C traceparent and the minted call id — the gateway's join keys.
   const reqs = ((await (await fetch(stub.url.replace(/\/v1$/, '') + '/__stub/requests')).json()) as { requests: { headers: Record<string, string> }[] }).requests.slice(before);
-  const traced = reqs.filter((q) => q.headers.traceparent);
-  assert.equal(traced.length, 4, 'every agent model call (not the supervisor route) carries traceparent');
-  for (const q of traced) {
-    const m = /^00-a{32}-([0-9a-f]{16})-01$/.exec(q.headers.traceparent);
-    assert.ok(m && spanIds.includes(m[1]), q.headers.traceparent);
+  assert.equal(reqs.length, SCRIPT.length);
+  for (const q of reqs) {
+    const m = /^00-a{32}-([0-9a-f]{16})-01$/.exec(q.headers.traceparent ?? '');
+    assert.ok(m && spanIds.includes(m[1]), `untraced model call: ${JSON.stringify(q.headers)}`);
     assert.match(q.headers['x-litellm-call-id'] ?? '', /^call-\d+$/);
   }
 });
@@ -226,17 +232,86 @@ const LOOP: StubReply[] = [
   { tool_calls: [{ name: 'route', arguments: { next: 'END' } }] },
 ];
 
-test('per-agent call limit (stock modelCallLimitMiddleware): a looping agent stops at the limit; its twin without the limit runs on', { skip }, async () => {
+test('model call limit (stock, exitBehavior error): the visit FAILS with model_call_limit — never an ok answer; twin without the limit runs on', { skip }, async () => {
   await stub.script(LOOP);
-  const limited = await run(`limit-${Date.now()}`, osDeps('limit', { limits: { modelCalls: 3, toolCalls: 50 } }));
-  const researcher = limited.runs.find((x) => x.node === 'researcher')!;
-  assert.equal(researcher.result.steps.length, 3, 'three model calls, three tool rounds, then the limit ends the visit');
-  const msgs = (limited.values.messages as { type?: string; content?: unknown }[]).map((m) => String(m.content));
-  assert.ok(msgs.some((t) => /limit/i.test(t)), 'the limit leaves a readable note in the transcript');
+  const events: string[] = [];
+  const limited = await run(`limit-${Date.now()}`, osDeps('limit', { limits: { modelCalls: 3, toolCalls: 50 } }), { onNodeComplete: (e) => events.push(`${e.node} ${e.status}`) });
+  assert.equal(limited.failed, true);
+  assert.equal(limited.reachedEnd, false);
+  assert.equal(limited.failure?.node, 'researcher');
+  assert.equal(limited.failure?.code, 'model_call_limit');
+  assert.match(limited.failure?.reason ?? '', /limit/i);
+  assert.deepEqual(events, ['lead ok', 'researcher failed']);
+  assert.doesNotMatch(limited.finalText, /limit/i, 'the limit is not the team answer');
+  const visit = limited.runs.find((x) => x.node === 'researcher')!;
+  assert.equal(visit.status, 'failed');
+  assert.match(visit.error ?? '', /^model_call_limit: /);
 
   await stub.script(LOOP);
   const unlimited = await run(`nolimit-${Date.now()}`, osDeps('nolimit'));
+  assert.equal(unlimited.failed, false);
   assert.equal(unlimited.runs.find((x) => x.node === 'researcher')!.result.steps.length, 8, 'without the limit the agent runs all eight rounds');
+});
+
+test('tool call limit (stock, exitBehavior error): FAILS with tool_call_limit — also when the model makes parallel calls at the limit', { skip }, async () => {
+  await stub.script(LOOP);
+  const serial = await run(`toollimit-${Date.now()}`, osDeps('toollimit', { limits: { modelCalls: 50, toolCalls: 2 } }));
+  assert.equal(serial.failed, true);
+  assert.deepEqual([serial.failure?.node, serial.failure?.code], ['researcher', 'tool_call_limit']);
+
+  // Two tool calls in ONE model turn past the limit (with `end` the stock middleware throws an untyped Error here).
+  await stub.script([
+    { content: 'Delegating.' },
+    { tool_calls: [{ name: 'route', arguments: { next: 'researcher' } }] },
+    { tool_calls: [{ name: 'search_knowledge', arguments: { query: 'a' } }, { name: 'search_knowledge', arguments: { query: 'b' } }] },
+    { tool_calls: [{ name: 'search_knowledge', arguments: { query: 'c' } }, { name: 'query_data', arguments: { sql: 'select 1' } }] },
+    { content: 'done' },
+    { tool_calls: [{ name: 'route', arguments: { next: 'END' } }] },
+  ]);
+  const parallel = await run(`parallel-${Date.now()}`, osDeps('parallel', { limits: { modelCalls: 50, toolCalls: 3 } }));
+  assert.equal(parallel.failed, true, JSON.stringify(parallel.failure));
+  assert.deepEqual([parallel.failure?.node, parallel.failure?.code], ['researcher', 'tool_call_limit']);
+});
+
+test('onNodeComplete reports the real status: a refused tool call makes the visit denied, as v1 does', { skip }, async () => {
+  await stub.script([
+    { content: 'Delegating.' },
+    { tool_calls: [{ name: 'route', arguments: { next: 'researcher' } }] },
+    { tool_calls: [{ name: 'search_knowledge', arguments: { query: 'payroll' } }] },
+    { content: 'I was not allowed to read it.' },
+    { tool_calls: [{ name: 'route', arguments: { next: 'END' } }] },
+  ]);
+  const events: string[] = [];
+  // The governed door refuses the call with the typed policy envelope (as OPA/DLS refusals come back).
+  const refusal = JSON.stringify({ error: { code: 'forbidden', reason: 'not granted to this system' } });
+  const r = await run(`denied-${Date.now()}`, osDeps('denied', {}, refusal, true), {
+    onStep: (e) => events.push(`step ${e.step.tool} error=${e.step.isError}`),
+    onNodeComplete: (e) => events.push(`${e.node} ${e.status}`),
+  });
+  assert.deepEqual(events, ['lead ok', 'step search_knowledge error=true', 'researcher denied']);
+  assert.equal(r.runs.find((x) => x.node === 'researcher')?.status, 'denied');
+});
+
+test('the OS preamble (rules + grant brief) reaches every agent model call; the twin without it does not', { skip }, async () => {
+  const bodies: string[] = [];
+  const recording = (_a: { id: string }) => requireGatewayChatModel({
+    model: 'stub', baseURL: stub.url, apiKey: 'sk-stub', writeSystem: false,
+    fetch: async (url, init) => { if (typeof init?.body === 'string') bodies.push(init.body); return globalThis.fetch(url, init); },
+  });
+  const PREAMBLE = 'OS RULES (test): act only through your granted tools. GRANTED: search_knowledge, query_data.';
+  await stub.script(SCRIPT);
+  await run(`preamble-${Date.now()}`, osDeps('preamble', { modelFor: recording, preamble: PREAMBLE }));
+  const agentCalls = bodies.map((b) => JSON.parse(b) as { messages: { role: string; content: unknown }[]; tool_choice?: unknown }).filter((b) => !b.tool_choice || JSON.stringify(b.tool_choice).indexOf('route') < 0);
+  assert.ok(agentCalls.length >= 3);
+  for (const b of agentCalls) {
+    const system = b.messages.filter((m) => m.role === 'system').map((m) => JSON.stringify(m.content)).join(' ');
+    assert.match(system, /OS RULES \(test\)/, 'every agent call carries the preamble');
+    assert.match(system, /# (lead|researcher)/, '...after the agent\'s own prompt');
+  }
+  bodies.length = 0;
+  await stub.script(SCRIPT);
+  await run(`nopreamble-${Date.now()}`, osDeps('nopreamble', { modelFor: recording }));
+  assert.ok(bodies.every((b) => !b.includes('OS RULES (test)')));
 });
 
 const SUMMARY_SCRIPT: StubReply[] = [
@@ -250,6 +325,21 @@ const SUMMARY_SCRIPT: StubReply[] = [
   { tool_calls: [{ name: 'route', arguments: { next: 'END' } }] },
 ];
 
+test('the summary call carries its trace span too (traceparent on the summariser request)', { skip }, async () => {
+  const { observer, log } = recordingObserver();
+  const tracer = moduleTracer(observer);
+  const summaryModel = (a: { id: string }) => requireGatewayChatModel({ model: 'stub', baseURL: stub.url, apiKey: 'sk-stub', writeSystem: false, fetch: tracer.fetchFor('summary', a.id) });
+  const modelFor = (a: { id: string }) => requireGatewayChatModel({ model: 'stub', baseURL: stub.url, apiKey: 'sk-stub', writeSystem: false, fetch: tracer.fetchFor('route', a.id) });
+  await stub.script(SUMMARY_SCRIPT);
+  const before = (await stub.stats()).total;
+  const r = await run(`sumtrace-${Date.now()}`, osDeps('sumtrace', { tracer, modelFor, context: { summaryModel, maxInputTokens: () => 200, keepMessages: 2, keepToolResults: 10 } }, 'y'.repeat(800)), undefined, tracer.spans);
+  assert.equal(r.finalText, 'Found it.');
+  assert.ok(log.includes('span summary.researcher') && log.includes('llm.summary.researcher tools=0'), log.join(' | '));
+  const reqs = ((await (await fetch(stub.url.replace(/\/v1$/, '') + '/__stub/requests')).json()) as { requests: { headers: Record<string, string> }[] }).requests.slice(before);
+  assert.equal(reqs.length, SUMMARY_SCRIPT.length);
+  assert.ok(reqs.every((q) => /^00-a{32}-[0-9a-f]{16}-01$/.test(q.headers.traceparent ?? '')), 'every call — agent, route, summary — carries traceparent');
+});
+
 test('summarisation (stock summarizationMiddleware): past the window trigger the model is asked for a summary before the agent continues; twin without it answers with the summary text', { skip }, async () => {
   const summaryModel = () => requireGatewayChatModel({ model: 'stub', baseURL: stub.url, apiKey: 'sk-stub', writeSystem: false });
   await stub.script(SUMMARY_SCRIPT);
@@ -259,6 +349,13 @@ test('summarisation (stock summarizationMiddleware): past the window trigger the
   assert.equal((await stub.stats()).cursor, SUMMARY_SCRIPT.length, 'every scripted reply was used: one of them by the summary call');
   const msgs = r.values.messages as { type?: string; content?: unknown }[];
   assert.ok(!msgs.some((m) => m.type === 'ai' && /SUMMARY/.test(String(m.content))), 'the summary never became an agent answer');
+  // FORMAT 2, behaviourally: the agent's own summary replaced turns in ITS window only. The team
+  // transcript still holds the task exactly once, the 800-character tool result and the answer,
+  // and no summary message. (With the old `slice(state.messages.length)` this fails.)
+  assert.equal(msgs.filter((m) => m.type === 'human' && m.content === 'How many orders?').length, 1, 'the task, once');
+  assert.ok(msgs.some((m) => m.type === 'tool' && String(m.content) === 'y'.repeat(800)), 'the tool result survives the summary');
+  assert.ok(!msgs.some((m) => /Here is a summary of the conversation/.test(String(m.content))), 'no summary in the team transcript');
+  assert.deepEqual(msgs.map((m) => m.type), ['human', 'ai', 'human', 'ai', 'tool', 'ai'], 'the transcript in order: task, lead, brief, call, result, answer');
 
   // Twin: without the middleware there is no summary call, so the agent's next answer IS that reply.
   await stub.script(SUMMARY_SCRIPT);

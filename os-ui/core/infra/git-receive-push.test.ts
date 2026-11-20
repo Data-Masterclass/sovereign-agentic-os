@@ -46,7 +46,7 @@ const ALEX = {
   id: 'alex',
   name: 'Alex',
   role: 'builder',
-  domains: ['sales', 'greenfield', 'owned', 'noforce', 'invalid', 'notoken', 'destructive'],
+  domains: ['sales', 'greenfield', 'owned', 'noforce', 'invalid', 'notoken', 'destructive', 'symlink', 'gitlink'],
 };
 const lookup = async (id: string) => (id === ALEX.id ? ALEX : null);
 
@@ -275,4 +275,29 @@ test('A REAL PUSH with NO token is refused with the 401 sentence, and never reac
   assert.equal(ingested.length, 0);
   // And the token never appears anywhere in what git printed.
   assert.equal(r.out.includes(token.split('_').slice(2).join('_')), false);
+});
+
+test('A REAL PUSH of a symbolic link is refused by the hook — regular files only (WP-53b)', async (t) => {
+  if (!available) return t.skip('git or curl is not on PATH');
+  const clone = await seedRepo('symlink', base());
+  mkdirSync(join(clone, 'agents/team/prompts'), { recursive: true });
+  await run('ln', ['-s', '/etc/hosts', join(clone, 'agents/team/prompts/lead.md')]);
+  await run('git', ['-C', clone, 'add', '-A'], { env: env() });
+  await run('git', ['-C', clone, 'commit', '-m', 'engineer: a prompt that is a link'], { env: env() });
+  const r = await push(clone);
+  assert.equal(r.ok, false, `the push must be refused — git said:\n${r.out}`);
+  assert.match(r.out, /agents\/team\/prompts\/lead\.md' is a symbolic link; this repository accepts regular files only/);
+  assert.equal(ingested.length, 0);
+});
+
+test('A REAL PUSH of a submodule link is refused by the hook (WP-53b)', async (t) => {
+  if (!available) return t.skip('git or curl is not on PATH');
+  const clone = await seedRepo('gitlink', base());
+  // A gitlink entry, the way `git submodule add` records it, without fetching anything.
+  await run('git', ['-C', clone, 'update-index', '--add', '--cacheinfo', '160000,0123456789abcdef0123456789abcdef01234567,agents/team/vendor'], { env: env() });
+  await run('git', ['-C', clone, 'commit', '-m', 'engineer: a submodule'], { env: env() });
+  const r = await push(clone);
+  assert.equal(r.ok, false, `the push must be refused — git said:\n${r.out}`);
+  assert.match(r.out, /agents\/team\/vendor' is a submodule link; this repository accepts regular files only/);
+  assert.equal(ingested.length, 0);
 });
