@@ -68,6 +68,7 @@ test('the scaffolded Deployment meets Pod Security "restricted" and pins the ima
   assert.deepEqual(c.securityContext.capabilities.drop, ['ALL']);
   assert.equal(pod.automountServiceAccountToken, false);
   assert.equal(pod.priorityClassName, 'user-apps');
+  assert.deepEqual(c.volumeMounts, [{ name: 'tmp', mountPath: '/tmp' }], 'temp files on an in-memory /tmp');
   assert.ok(c.resources.requests.cpu && c.resources.requests.memory && c.resources.limits.memory);
 });
 

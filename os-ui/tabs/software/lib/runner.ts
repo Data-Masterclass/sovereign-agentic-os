@@ -165,16 +165,33 @@ export async function deployApp(app: RunnerApp, options: RunnerOpts = {}): Promi
   if (!nsRes.reachable) return refuse(UNREACHABLE, 'offline');
   if (!nsRes.ok) return refuse(`The runner namespace ${o.namespace} does not exist; it is created by the chart, not by a deploy.`, 'failed', true);
 
-  // 1. Server-side DRY RUN of every object: Kubernetes' schema and Pod Security admission decide.
+  // 1. Server-side DRY RUN of every object: Kubernetes' schema validation decides. Pod Security
+  //    admission judges PODS, not Deployments (a Deployment that violates `restricted` is accepted
+  //    and its pods are then refused), so the Deployment's own pod template is also submitted as a
+  //    dry-run Pod: the namespace's real admission answers before anything is written.
+  const rejected = (what: string, r: Applied) =>
+    refuse(
+      `Kubernetes rejected ${APP_K8S_DIR}/ ${what} '${name}' in a dry run (HTTP ${r.status})${r.message ? `: ${r.message}` : ''}. Nothing was applied.`,
+      'failed',
+      true,
+    );
   for (const obj of objects) {
     const r = await applyObject(o.k8s, COLLECTION[String(obj.kind)](o.namespace), obj, true);
     if (!r.reachable) return refuse(UNREACHABLE, 'offline');
-    if (!r.ok) {
-      return refuse(
-        `Kubernetes rejected ${APP_K8S_DIR}/ ${String(obj.kind)} '${name}' in a dry run (HTTP ${r.status})${r.message ? `: ${r.message}` : ''}. Nothing was applied.`,
-        'failed',
-        true,
-      );
+    if (!r.ok) return rejected(String(obj.kind), r);
+    if (obj.kind === 'Deployment') {
+      const template = ((obj.spec ?? {}) as Record<string, unknown>).template as Record<string, unknown> | undefined;
+      const pod = {
+        apiVersion: 'v1',
+        kind: 'Pod',
+        metadata: { name: `${name}-admission`, namespace: o.namespace, labels: ((template?.metadata ?? {}) as Record<string, unknown>).labels ?? {} },
+        spec: template?.spec ?? {},
+      };
+      const p = await o.k8s('POST', `/api/v1/namespaces/${o.namespace}/pods?dryRun=All`, pod);
+      if (p.status === 0) return refuse(UNREACHABLE, 'offline');
+      if (p.status !== 201 && p.status !== 200) {
+        return rejected('Deployment pod template', { reachable: true, ok: false, status: p.status, message: String(p.body.message ?? '') });
+      }
     }
   }
   // 2. The real apply, same objects.

@@ -80,7 +80,11 @@ test('deployApp submits a server-side DRY RUN of every object before the real ap
   await deployApp(APP, { ...OPTS, k8s: client });
   const posts = calls.filter((c) => c.method === 'POST').map((c) => c.path);
   const firstReal = posts.findIndex((p) => !p.endsWith(DRY));
-  assert.deepEqual(posts.slice(0, firstReal).sort(), [`${DEP}${DRY}`, `${ING}${DRY}`, `${SVC}${DRY}`].sort());
+  const POD = `/api/v1/namespaces/${NS}/pods${DRY}`;
+  assert.deepEqual(posts.slice(0, firstReal).sort(), [`${DEP}${DRY}`, `${ING}${DRY}`, `${SVC}${DRY}`, POD].sort());
+  const podCheck = calls.find((c) => c.path === POD)!;
+  const committed = yaml.load(APP.tree.kind === 'tree' ? APP.tree.files.find((f) => f.path === 'k8s/deployment.yaml')!.content : '') as any;
+  assert.deepEqual((podCheck.body as any).spec, committed.spec.template.spec, 'admission judges the committed pod template');
   assert.deepEqual(posts.slice(firstReal).sort(), [DEP, ING, SVC].sort());
 });
 
@@ -88,7 +92,7 @@ test('a dry-run rejection (e.g. Pod Security restricted) applies NOTHING and say
   const { client, calls } = mockK8s({
     [`GET /api/v1/namespaces/${NS}`]: { status: 200 },
     GET: { status: 404 },
-    [`POST ${DEP}${DRY}`]: { status: 403, body: { message: 'violates PodSecurity "restricted:latest"' } },
+    [`POST /api/v1/namespaces/${NS}/pods${DRY}`]: { status: 403, body: { message: 'violates PodSecurity "restricted:latest"' } },
     POST: { status: 201 },
   });
   const out = await deployApp(APP, { ...OPTS, k8s: client });
@@ -140,6 +144,7 @@ test('deployApp is idempotent — existing objects are REPLACED (PUT with resour
     [`GET ${SVC}/app-shop`]: { status: 200, body: { metadata: { resourceVersion: '3' } } },
     [`GET ${ING}/app-shop`]: { status: 200, body: { metadata: { resourceVersion: '5' } } },
     PUT: { status: 200 },
+    POST: { status: 201 }, // the pod-template admission dry run
   });
   const out = await deployApp(APP, { ...OPTS, k8s: client });
   assert.equal(out.ok, true);
