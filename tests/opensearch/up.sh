@@ -26,7 +26,10 @@ bash tests/opensearch/down.sh >/dev/null 2>&1 || true
 python3 tests/opensearch/render.py "$WORK/render"
 chmod -R a+rX "$WORK"
 
-docker build -q -t soa-opensearch:wp21 images/extensions/opensearch >/dev/null
+# SOA_IT_OPENSEARCH_IMAGE=<ref> runs another image under the same name (the red baseline: the
+# upstream image without repository-s3 must fail os-snapshot).
+if [ -n "${SOA_IT_OPENSEARCH_IMAGE:-}" ]; then docker tag "$SOA_IT_OPENSEARCH_IMAGE" soa-opensearch:wp21
+else docker build -q -t soa-opensearch:wp21 images/extensions/opensearch >/dev/null; fi
 docker build -q -t soa-egress-proxy:wp21 images/base/egress-proxy >/dev/null
 
 docker network create --internal "$P-os" >/dev/null
