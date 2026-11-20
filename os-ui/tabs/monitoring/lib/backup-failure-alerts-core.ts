@@ -14,15 +14,9 @@
  *   - No age rule: a backup that is merely old raises nothing here (that is the drills' job).
  */
 import type { Alert } from '@tabs/monitoring/lib/types';
+import type { CronJobInput, SnapshotRepoInput, VeleroInput } from '@core/infra/backup-sources-parse';
 
-export type JobRead = { name: string; created: string; failed: boolean; complete: boolean; reason?: string; message?: string };
-export type CronJobInput = { cronJob: string; readError?: string; jobs: JobRead[] };
-
-export type VeleroBackupRead = { name: string; created: string; phase: string; failureReason?: string; errors?: number; warnings?: number };
-export type VeleroInput = { namespace: string; schedule: string; readError?: string; backups: VeleroBackupRead[] };
-
-export type SnapshotRead = { id: string; status: string; endEpoch: number };
-export type SnapshotRepoInput = { repository: string; readError?: string; snapshots: SnapshotRead[] };
+export type { CronJobInput, JobRead, SnapshotRead, SnapshotRepoInput, VeleroBackupRead, VeleroInput } from '@core/infra/backup-sources-parse';
 
 export type BackupFailureInputs = { cronJobs: CronJobInput[]; velero: VeleroInput | null; snapshotRepos: SnapshotRepoInput[] };
 

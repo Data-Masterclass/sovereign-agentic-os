@@ -141,6 +141,9 @@ spec:
                   got=$(s3 s3 ls "$DEST/" | wc -l)
                   [ "$got" -eq "$want" ] || { echo "FATAL: uploaded $got/$want files"; exit 1; }
                   echo "upload verified ($got files)"
+                  # The run's location, as this container's Kubernetes termination message: os-ui
+                  # shows it on Platform → Backups from the pod status (no log access needed).
+                  printf '%s/' "$DEST" > /dev/termination-log || true
                   # Retention: prune whole runs older than RETENTION_DAYS.
                   CUTOFF=$(date -u -d "-${RETENTION_DAYS} days" +%Y-%m-%dT%H:%M:%S)
                   OLD=$(s3 s3api list-objects-v2 --bucket "$BUCKET" --prefix "$PREFIX/" \

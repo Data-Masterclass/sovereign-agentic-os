@@ -827,6 +827,9 @@ export const config = {
     snapshotRepos: env('SOA_BACKUP_ALERT_SNAPSHOT_REPOS', '').split(/\s+/).filter(Boolean),
     veleroNamespace: env('SOA_BACKUP_ALERT_VELERO_NAMESPACE', ''),
     veleroSchedule: env('SOA_BACKUP_ALERT_VELERO_SCHEDULE', ''),
+    // WP-56's drill results ConfigMap (backup.drill.statusConfigMap); absent = no drill has run.
+    drillConfigMap: env('SOA_BACKUP_DRILL_CONFIGMAP', 'restore-drill-status'),
+    pgDumpLocation: env('SOA_BACKUP_PGDUMP_LOCATION', ''),
   },
 
   // ---- Browser-reachable consoles (opened/linked from the browser, never

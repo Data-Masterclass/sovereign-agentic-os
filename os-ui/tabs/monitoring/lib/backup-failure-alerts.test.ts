@@ -12,7 +12,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { backupFailureAlerts } from '@tabs/monitoring/lib/backup-failure-alerts-core';
-import { parseJobs, parseSnapshots, parseVeleroBackups } from '@tabs/monitoring/lib/backup-failure-parse';
+import { parseJobs, parseSnapshots, parseVeleroBackups } from '@core/infra/backup-sources-parse';
 import { readCronJobs, readSnapshots, readVelero } from '@tabs/monitoring/lib/adapters/backup-failures';
 
 const job = (name: string, owner: string | null, created: string, cond: 'Complete' | 'Failed' | null, reason = 'BackoffLimitExceeded') => ({
