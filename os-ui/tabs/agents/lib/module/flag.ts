@@ -7,10 +7,13 @@
  *             with every other domain unchanged, and widen it domain by domain.
  * ARCHITECTURE:
  *   - `AGENT_GRAPH_MODULE` is the master switch; `AGENT_GRAPH_MODULE_DOMAINS` (comma-separated)
- *     narrows it. Empty list ⇒ every domain (the flag's original global meaning).
+ *     says which domains it applies to. "*" ⇒ every domain; empty ⇒ NO domain (the chart refuses to
+ *     render `enabled` without domains, so "all" is only ever asked for explicitly).
  *   - Decides only what is NEW: a new run's engine and whether a domain's repo is generated in the
- *     module layout. A RESUME never asks this: it follows the engine stamped when the run started
- *     (`agent_module_runs`), so changing the allowlist never moves a parked run to the other engine.
+ *     module layout. A RESUME never asks either value: it follows the engine stamped when the run
+ *     started (`agent_module_runs`) — so neither narrowing the allowlist nor turning the flag off
+ *     (the documented rollback) moves a parked run to the other engine. When the stamp cannot be
+ *     read the resume FAILS (the lookup throws); it never falls back to the other engine.
  *   - Pure over its inputs (defaults read `config`), so os-ui, the worker and the tests share it.
  */
 import { config } from '@core/kernel/config';
@@ -22,13 +25,14 @@ export function moduleEnabledFor(
   const enabled = opts.enabled ?? config.agentGraphModule;
   const domains = opts.domains ?? config.agentGraphModuleDomains;
   if (!enabled) return false;
-  return domains.length === 0 || domains.includes(domain);
+  return domains.includes('*') || domains.includes(domain);
 }
 
 /**
- * The engine one run executes on. A NEW run: the module path iff the domain is enabled. A RESUME:
- * the engine the run STARTED on — a run with a module stamp resumes on the module, any other on
- * v1 — whatever the allowlist says now.
+ * The engine one run executes on. A NEW run: the module path iff the flag is on and the domain is
+ * allowed. A RESUME: the engine the run STARTED on — a run with a module stamp resumes on the
+ * module, any other on v1 — whatever the flag and the allowlist say now. A failed stamp lookup
+ * rejects (the resume fails visibly); it is never read as "no stamp".
  */
 export async function engineForRun(input: {
   resume: boolean;
@@ -39,7 +43,6 @@ export async function engineForRun(input: {
   enabled?: boolean;
   domains?: readonly string[];
 }): Promise<'module' | 'v1'> {
-  if (!(input.enabled ?? config.agentGraphModule)) return 'v1';
   if (input.resume) return (await input.isModuleRun(input.runId)) ? 'module' : 'v1';
   return moduleEnabledFor(input.domain, { enabled: input.enabled, domains: input.domains }) ? 'module' : 'v1';
 }

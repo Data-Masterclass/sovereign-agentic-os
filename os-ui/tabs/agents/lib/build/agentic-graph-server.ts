@@ -373,7 +373,8 @@ export async function runOsTeam(input: RunOsTeamInput): Promise<RunOsTeamResult>
   // The `agent_runs` database (checkpoints, ledger, hold decisions, run stamps) — read once per run.
   const runsDb = config.agentRunsDatabaseUrl;
   // WP-53d: AGENT_GRAPH_MODULE_DOMAINS narrows NEW runs to the allowed domains; a resume keeps the
-  // engine the run started on (its module stamp), whatever the allowlist says now.
+  // engine stamped on the run whatever the flag and the allowlist say now (flag-off is the
+  // rollback, and it must not move a parked module run to v1). A failed lookup fails the resume.
   const engine = input.runId
     ? await engineForRun({ resume: !!input.resume, domain: sys.system.domain, runId: input.runId, isModuleRun: (id) => isModuleRun(id, runsDb) })
     : 'v1';

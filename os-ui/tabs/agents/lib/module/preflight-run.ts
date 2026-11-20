@@ -83,8 +83,32 @@ export async function runPreflight(input: {
   return { checked: { git, store: input.store ? input.store.length : null }, refused: findings.length, findings, byDomain: sorted };
 }
 
+/**
+ * `--domains test,sales` (or `--domains=test`): the domains about to be put in
+ * AGENT_GRAPH_MODULE_DOMAINS. The report still lists every domain; the EXIT CODE then counts only
+ * refusals in those domains. Absent or "*" ⇒ every domain. `null` = the option was given empty.
+ */
+export function parseDomainsArg(argv: string[]): string[] | 'all' | null {
+  const i = argv.findIndex((a) => a === '--domains' || a.startsWith('--domains='));
+  if (i < 0) return 'all';
+  const raw = argv[i].startsWith('--domains=') ? argv[i].slice('--domains='.length) : (argv[i + 1] ?? '');
+  const list = raw.split(',').map((d) => d.trim()).filter((d) => d && !d.startsWith('--'));
+  if (list.length === 0) return null;
+  return list.includes('*') ? 'all' : list;
+}
+
+/** Refusals that count for the exit code: every domain, or only the ones being enabled. */
+export function refusedIn(report: PreflightReport, domains: string[] | 'all'): number {
+  return domains === 'all' ? report.refused : report.findings.filter((f) => domains.includes(f.domain)).length;
+}
+
 /** The command (`node --experimental-strip-types worker/agent-id-preflight.mjs`). Returns the exit code. */
 export async function main(argv: string[]): Promise<number> {
+  const scope = parseDomainsArg(argv);
+  if (scope === null) {
+    console.error('agent-id-preflight: --domains needs a value (e.g. --domains test, or "*" for every domain)');
+    return 2;
+  }
   const reposOnly = argv.includes('--repos-only');
   let store: { id: string; domain: string; yaml: string; archived: boolean }[] | null = null;
   if (!reposOnly) {
@@ -104,13 +128,18 @@ export async function main(argv: string[]): Promise<number> {
     console.error(`agent-id-preflight: could not read the repositories in ${config.reposDir} (OS_REPOS_DIR): ${e instanceof Error ? e.message : String(e)}`);
     return 2;
   }
-  if (argv.includes('--json')) console.log(JSON.stringify({ reposDir: config.reposDir, ...report }, null, 2));
+  const counted = refusedIn(report, scope);
+  if (argv.includes('--json')) console.log(JSON.stringify({ reposDir: config.reposDir, ...report, scope, refusedInScope: counted }, null, 2));
   else {
     console.log(`agent-id-preflight: ${report.checked.git} committed and ${report.checked.store ?? 'NOT CHECKED'} store definition(s) in ${config.reposDir}; ${report.refused} would be refused`);
     for (const [domain, d] of Object.entries(report.byDomain)) {
       console.log(`  domain ${domain}: ${d.git} committed, ${d.store} in the store — ${d.refused ? `${d.refused} would be refused` : 'ready for AGENT_GRAPH_MODULE_DOMAINS'}`);
     }
     for (const f of report.findings) console.log(`  [${f.source}] ${f.where}: ${f.problems.join('; ')}`);
+    if (scope !== 'all') {
+      const missing = scope.filter((d) => !report.byDomain[d]);
+      console.log(`agent-id-preflight: exit code covers ${scope.join(', ')} only — ${counted} would be refused there${missing.length ? ` (no definitions found in: ${missing.join(', ')})` : ''}`);
+    }
   }
-  return report.refused ? 1 : 0;
+  return counted ? 1 : 0;
 }

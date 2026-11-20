@@ -8,7 +8,7 @@
  *             (from /app), and require exit 0.
  * ARCHITECTURE: registers `worker/resolve-hook.mjs` like `worker/start.mjs`, then runs
  *             `tabs/agents/lib/module/preflight-run.ts` `main()` and exits with its code
- *             (0 pass, 1 refused, 2 could not check). Flags: --repos-only, --propose, --json.
+ *             (0 pass, 1 refused, 2 could not check). Flags: --repos-only, --propose, --json, --domains <list>.
  */
 import { register } from 'node:module';
 

@@ -1772,13 +1772,15 @@ osUI:
   agentRunsRetentionDays: ""
   # AGENT SYSTEMS AS NATIVE LANGGRAPH MODULES (WP-53). `enabled: false` (default): today's engine and
   # git layout, unchanged. `enabled: true`: NEW runs execute the system's committed graph.mjs (after
-  # its hash check) and the domain repo is generated in the module layout. `domains` (comma-separated,
-  # e.g. "test") limits that to those domains; empty = every domain. A parked run always resumes on
-  # the engine it started on. Before turning it on, run the read-only id preflight in the worker pod:
-  #   node --experimental-strip-types src/worker/agent-id-preflight.mjs   (must exit 0)
+  # its hash check) and the domain repo is generated in the module layout — ONLY in the listed
+  # `domains` (a list, e.g. [test], or "test,sales"; "*" = every domain). An empty list means no
+  # domain, so `enabled: true` without domains refuses to render. A parked run ALWAYS resumes on the
+  # engine stamped on it, whatever these values say (turning this off never moves a parked run).
+  # Before turning it on, run the read-only id preflight in the worker pod for those domains:
+  #   node --experimental-strip-types src/worker/agent-id-preflight.mjs --domains test   (exit 0)
   agentGraphModule:
     enabled: false
-    domains: ""
+    domains: []
   # THE KEY EACH AGENT SYSTEM GETS AT BUILD (`os-<systemId>`, minted by os-ui's Build with the
   # LiteLLM admin API — not the shared `litellmAgentKey` above, whose values never reached it).
   # These caps are applied on EVERY Build / Rebuild: an existing key is reconciled to them
