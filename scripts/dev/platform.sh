@@ -6,9 +6,10 @@
 # =============================================================================
 #   scripts/dev/platform.sh
 #
-#   - ingress-nginx: chart 4.11.3 = controller v1.11.3, the image production runs (read
-#     2026-11-20). Its LoadBalancer Service is pinned to the reserved dev IP
-#     (tofu output ingress_public_ip) with lb.stackit.cloud/external-address, as in production.
+#   - ingress-nginx: the chart pinned in platform-versions.env with ingress-nginx-values.yaml
+#     (the same release and values production is upgraded to: components/ingress-nginx/UPSTREAM.md).
+#     Its LoadBalancer Service is pinned to the reserved dev IP (tofu output ingress_public_ip)
+#     with lb.stackit.cloud/external-address, as in production.
 #   - the node sysctl DaemonSet (manifests/node-sysctl.yaml) in kube-system, so OpenSearch needs
 #     no privileged init container in agentic-os;
 #   - cert-manager: v1.16.1 (production), CRDs from the chart, and the ClusterIssuer
@@ -17,17 +18,17 @@
 # outsideChart) is true. Dev cluster only: refuses without the environment=dev marker.
 . "$(dirname "$0")/lib.sh"
 require_marked_dev
+. "$REPO_ROOT/scripts/dev/platform-versions.env"
 ACME_EMAIL=${ACME_EMAIL:-contact@datamasterclass.com}
 IP=$(tf_out ingress_public_ip)
 [ -n "$IP" ] || die "no ingress_public_ip in the dev state"
 
-say "ingress-nginx 4.11.3 (controller v1.11.3) on $IP"
+say "ingress-nginx $INGRESS_NGINX_CHART_VERSION (controller $INGRESS_NGINX_CONTROLLER_VERSION) on $IP"
 helm --kube-context "$CTX" upgrade --install ingress-nginx ingress-nginx \
-  --repo https://kubernetes.github.io/ingress-nginx --version 4.11.3 \
+  --repo https://kubernetes.github.io/ingress-nginx --version "$INGRESS_NGINX_CHART_VERSION" \
   -n ingress-nginx --create-namespace --wait --timeout 10m \
-  --set controller.service.annotations."lb\.stackit\.cloud/external-address"="$IP" \
-  --set controller.resources.requests.cpu=100m --set controller.resources.requests.memory=90Mi \
-  --set controller.resources.limits.memory=256Mi
+  -f "$REPO_ROOT/scripts/dev/ingress-nginx-values.yaml" \
+  --set controller.service.annotations."lb\.stackit\.cloud/external-address"="$IP"
 
 say "cert-manager v1.16.1"
 helm --kube-context "$CTX" upgrade --install cert-manager cert-manager \

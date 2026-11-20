@@ -1527,6 +1527,14 @@ softwareRunner:
   networkPolicy:
     enabled: true
     ingressNamespace: ingress-nginx
+  # Annotation allow-list for app Ingresses, enforced by the API server
+  # (templates/base/os-ui/apps-ingress-admission.yaml). Keep `allowedAnnotations` equal to
+  # os-ui/tabs/software/lib/app-ingress-policy.ts (the gate checks it).
+  ingressPolicy:
+    enabled: true
+    allowedAnnotations: ["cert-manager.io/cluster-issuer"]
+    # cert-manager's controller writes its HTTP-01 solver Ingress into the app namespace.
+    exemptUsers: ["system:serviceaccount:cert-manager:cert-manager"]
 
 # Connections golden path — manually-credentialed Connections (API/MCP/Database/
 # SaaS) a Builder/Admin creates.
