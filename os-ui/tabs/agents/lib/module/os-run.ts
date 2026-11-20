@@ -27,7 +27,6 @@ import type { CurrentUser } from '@core/kernel/auth';
 import { roleModel } from '@core/models/roles';
 import type { CallerContext } from '@core/infra/litellm-credential';
 import { requireGatewayChatModel } from '@core/adapters/litellm/chat-model';
-import { migrateAgentRuns } from '@core/adapters/postgres/migrate';
 import type { ToolExecutor, ToolSpec } from '@core/runtime/agentic';
 import type { System } from '@tabs/agents/lib/system-schema';
 import { isWriteTool, type HoldDecision } from '@tabs/agents/lib/build/hold';
@@ -58,21 +57,10 @@ export async function moduleStores(databaseUrl: string | undefined): Promise<Sto
   // No DDL here (WP-53b N2): the tables are created by `migrateAgentRuns` at boot, and the saver is
   // the process's one checkpointer, set up at boot too (`ensureCheckpointerReady`).
   const pool = await agentRunsPool(databaseUrl);
+  const { rows } = await pool.query(`SELECT to_regclass('agent_module_runs') IS NOT NULL AND to_regclass('agent_hold_decisions') IS NOT NULL AS ready`);
+  if (!rows[0]?.ready) throw new Error('agent_runs is not migrated for agent modules: the os-ui-worker applies the migration at boot (AGENT_GRAPH_MODULE=true)');
   const { saver } = await selectCheckpointer(databaseUrl);
   return { kind: 'postgres', saver, holds: postgresHoldStore(pool), stamps: postgresModuleRunStamps(pool) };
-}
-
-/**
- * BOOT (os-ui and os-ui-worker): with `AGENT_GRAPH_MODULE` on, apply the `agent_runs` migrations
- * (node-pg-migrate, advisory lock) so no run ever creates a table. Off → nothing happens and no
- * table exists. A failed migration throws: module runs must not start without their tables.
- */
-export async function ensureAgentModuleReady(databaseUrl: string | undefined): Promise<'off' | 'memory' | 'postgres'> {
-  if (!config.agentGraphModule) return 'off';
-  if (!databaseUrl) return 'memory';
-  const r = await migrateAgentRuns({ databaseUrl });
-  if (!r.ok) throw new Error(`agent_runs migrations failed: ${r.reason} — ${r.detail}`);
-  return 'postgres';
 }
 
 /** Did this run start on its module? (A run with no stamp resumes on the v1 engine.) */
