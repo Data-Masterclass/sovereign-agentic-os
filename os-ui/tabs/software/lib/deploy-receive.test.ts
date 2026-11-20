@@ -20,7 +20,7 @@ test('the receive gate knows apps/<slug>/k8s/** and refuses a NetworkPolicy, acc
   assert.ok(kind, 'registered');
   assert.equal(kind!.matches('apps/shop/k8s/service.yaml'), true);
   assert.equal(kind!.matches('apps/shop/src/main.tsx'), false);
-  const svc = 'apiVersion: v1\nkind: Service\nmetadata:\n  name: app-shop\nspec:\n  ports: [{port: 80}]\n';
+  const svc = 'apiVersion: v1\nkind: Service\nmetadata:\n  name: app-shop\nspec:\n  selector: {app.kubernetes.io/name: app-shop}\n  ports: [{port: 80}]\n';
   assert.equal(kind!.validate({ path: 'apps/shop/k8s/service.yaml', content: svc }), null);
   const np = 'apiVersion: networking.k8s.io/v1\nkind: NetworkPolicy\nmetadata:\n  name: app-shop\n';
   assert.match(kind!.validate({ path: 'apps/shop/k8s/np.yaml', content: np }) ?? '', /NetworkPolicy/);

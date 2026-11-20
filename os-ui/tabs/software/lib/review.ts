@@ -137,15 +137,40 @@ function isBuilder(user: CurrentUser): boolean {
  * deploy applies the `k8s/` manifests of that tree — never the mirror cache, never a template —
  * so a git read failure is a refusal, not a fallback.
  */
-async function runnerAppFor(app: App): Promise<RunnerApp> {
-  const state = await readAppTreeState(app);
+async function runnerAppFor(app: App, ref?: string): Promise<RunnerApp> {
+  const state = await readAppTreeState(app, ref ? { ref } : {});
   const tree: RunnerApp['tree'] =
     state.kind === 'tree'
       ? state.truncated
         ? { kind: 'failed', reason: 'the app tree is larger than one bounded read; it was not deployed from a partial tree' }
-        : { kind: 'tree', files: state.files, sha: state.sha }
+        : { kind: 'tree', files: state.files, sha: ref ?? state.sha }
       : state;
   return { slug: app.slug, host: appHost(app), tree };
+}
+
+/** The commit an image app's tree is at right now (pinned on a deploy request). */
+async function currentAppSha(app: App): Promise<string | null> {
+  if (serveModeOf(app) !== 'image') return null;
+  const state = await readAppTreeState(app);
+  return state.kind === 'tree' && state.sha ? state.sha : null;
+}
+
+export const APPROVAL_REQUIRED_NOTE =
+  'This app runs its committed k8s/ manifests only after a Builder approved that exact commit: ' +
+  'request_deploy, then a Builder in the domain decides with decide_deploy. Nothing was applied.';
+
+/**
+ * WP-54: THE ONLY door to the runner. It applies the Builder-APPROVED commit's manifests and
+ * nothing else; with no approved commit it refuses with zero Kubernetes calls. A Creator alone
+ * therefore can never put a manifest on the cluster — not by preview, not by re-deploy, not by
+ * the status self-heal.
+ */
+async function deployApproved(app: App, opts: RunnerOpts = {}): Promise<RunnerOutcome> {
+  const sha = app.deploy.approvedSha;
+  if (!sha) {
+    return { ok: false, live: false, action: 'noop', name: `app-${app.slug}`, host: appHost(app), url: null, phase: 'failed', detail: APPROVAL_REQUIRED_NOTE };
+  }
+  return deployApp(await runnerAppFor(app, sha), opts);
 }
 
 /**
@@ -296,7 +321,7 @@ export type PreviewResult = {
   runnerNote: string | null;
 };
 
-export async function startPreview(appId: string, user: CurrentUser): Promise<PreviewResult> {
+export async function startPreview(appId: string, user: CurrentUser, opts: { runner?: RunnerOpts } = {}): Promise<PreviewResult> {
   // EXISTENCE FIRST (F2-1): invisible ⇒ `not_found`, the same answer the read doors give.
   const app = await getAppForUser(appId, user);
   const ownerOrBuilder = app.owner === user.id || (isBuilder(user) && user.domains.includes(app.domain));
@@ -330,7 +355,8 @@ export async function startPreview(appId: string, user: CurrentUser): Promise<Pr
   }
 
   // Provision the real runner; reflect its outcome honestly (no fake URL offline).
-  const runner = await deployApp(await runnerAppFor(app));
+  // WP-54: a preview re-applies the APPROVED commit only; without one it applies nothing.
+  const runner = await deployApproved(app, opts.runner);
   applyRunnerOutcome(app, runner);
   await persistApp(app);
 
@@ -375,7 +401,7 @@ export type DeployRequestResult =
 export async function requestDeploy(
   appId: string,
   user: CurrentUser,
-  opts: { changedFiles?: DiffSummary['files']; scanMode?: ScanMode; scan?: ResolveScanOpts } = {},
+  opts: { changedFiles?: DiffSummary['files']; scanMode?: ScanMode; scan?: ResolveScanOpts; runner?: RunnerOpts } = {},
 ): Promise<DeployRequestResult> {
   // EXISTENCE FIRST (F2-1) — see startPreview.
   const app = await getAppForUser(appId, user);
@@ -428,11 +454,16 @@ export async function requestDeploy(
 
   // Routine update within the approved envelope + a clean scan + NO dataset warning →
   // auto-deploy. An ungranted-dataset reference re-opens the review gate so it is seen.
-  if (app.deploy.state === 'live' && !broadened && scan.passed && warnings.length === 0) {
+  // WP-54: for an IMAGE app only when nothing new was committed (HEAD is the approved commit, so
+  // the re-apply is of approved manifests) — a new commit carries new k8s/ manifests, and only a
+  // Builder's approval of that commit may apply them. Spec/runtime apps are served by the OS.
+  const sha = await currentAppSha(app);
+  const image = serveModeOf(app) === 'image';
+  const approvedCommit = !image || (!!sha && sha === app.deploy.approvedSha);
+  if (approvedCommit && app.deploy.state === 'live' && !broadened && scan.passed && warnings.length === 0) {
     app.deploy.reviewCardId = null;
     app.deploy.releases += 1; // a routine update ships a new release/version.
-    // Roll the new release onto the real runner (idempotent replace).
-    applyRunnerOutcome(app, await deployApp(await runnerAppFor(app)));
+    if (image) applyRunnerOutcome(app, await deployApproved(app, opts.runner));
     await persistApp(app);
     void trace({
       principal: app.mcpPrincipal,
@@ -453,7 +484,8 @@ export async function requestDeploy(
   // Shared / Domain / Company tiers are unaffected: they keep the Builder review gate,
   // and promotion to a higher tier remains separately role-gated.
   if (app.owner === user.id && isBuilder(user) && app.visibility === 'Personal' && scan.passed && warnings.length === 0) {
-    await applyDeployDecisionToApp(app, 'approve', requested);
+    // A Builder approving their OWN Personal app: the same approval, of the commit read just now.
+    await applyDeployDecisionToApp(app, 'approve', requested, sha, opts.runner);
     void trace({
       principal: app.mcpPrincipal,
       tool: 'generate',
@@ -474,6 +506,7 @@ export async function requestDeploy(
     requestedAt: new Date().toISOString(),
     reason: app.deploy.approved ? 'scope-broadened' : 'first-deploy',
     scan,
+    sha,
     requested,
     diff: diffFromFiles(files, opts.changedFiles),
     warnings,
@@ -540,6 +573,8 @@ async function applyDeployDecisionToApp(
   app: App,
   decision: 'approve' | 'deny',
   approvedEnvelope: DeployEnvelope | null,
+  sha?: string | null,
+  runnerOpts: RunnerOpts = {},
 ): Promise<void> {
   if (decision === 'approve') {
     app.deploy.state = 'live';
@@ -551,7 +586,11 @@ async function applyDeployDecisionToApp(
     // pending — the go-live decision is still recorded). `state: 'live'` records the
     // DECISION; the badge says "Live" only once a URL is really served (deploy-status.ts).
     // Only an IMAGE app has a runner: a declarative or runtime app is served by the OS itself.
-    if (serveModeOf(app) === 'image') applyRunnerOutcome(app, await deployApp(await runnerAppFor(app)));
+    // WP-54: the approval covers exactly the commit the request was filed for.
+    if (serveModeOf(app) === 'image') {
+      app.deploy.approvedSha = sha ?? null;
+      applyRunnerOutcome(app, await deployApproved(app, runnerOpts));
+    }
   } else {
     app.deploy.state = 'preview'; // back to the free preview loop to fix it
     app.deploy.reviewCardId = null;
@@ -622,6 +661,8 @@ export const NO_SCAN_REASON_MIN = AUDITED_OVERRIDE_REASON_MIN;
 export type DecideDeployOpts = {
   acknowledgeNoScan?: boolean;
   reason?: string;
+  /** Test seam for the runner (Kubernetes client, namespace, registry). */
+  runner?: RunnerOpts;
 };
 
 /**
@@ -757,7 +798,7 @@ export async function decideDeploy(
       }
     }
     card.decision = 'approved';
-    await applyDeployDecisionToApp(app, 'approve', card.requested);
+    await applyDeployDecisionToApp(app, 'approve', card.requested, card.sha ?? null, opts.runner);
   } else {
     card.decision = 'denied';
     await applyDeployDecisionToApp(app, 'deny', null);
@@ -910,7 +951,7 @@ export async function reconcileDeployApproval(app: App): Promise<boolean> {
 
     if (decided.status === 'approved') {
       const card = cards().get(cardId);
-      await applyDeployDecisionToApp(app, 'approve', card?.requested ?? null);
+      await applyDeployDecisionToApp(app, 'approve', card?.requested ?? null, card?.sha ?? null);
     } else {
       await applyDeployDecisionToApp(app, 'deny', null);
     }
@@ -965,7 +1006,7 @@ export async function reconcileDeployStatus(
   if (serveModeOf(app) !== 'image') return { app, status };
 
   if (status.phase === 'absent' && (app.deploy.state === 'live' || app.deploy.state === 'preview')) {
-    const healed = await deployApp(await runnerAppFor(app), opts);
+    const healed = await deployApproved(app, opts);
     // NIGHT-2 S2: the heal can REFUSE — an `image` app with no published image provisions
     // nothing and says why, instead of serving a placeholder container on the app's own host.
     // Carry that reason onto the status the caller shows; never a silent "still absent".

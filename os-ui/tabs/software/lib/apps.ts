@@ -328,6 +328,11 @@ export type App = {
     reviewCardId: string | null;
     /** Count of successful go-lives — the published release/version number (v{n}). */
     releases: number;
+    /**
+     * WP-54: the git commit a Builder approved (image apps). The runner applies ONLY this commit's
+     * `k8s/` manifests — preview, self-heal and re-deploy included. Absent = nothing approved yet.
+     */
+    approvedSha?: string | null;
   };
   /**
    * REVOCATION flag for the app's OWN records write access (`os.records.add/export`).
