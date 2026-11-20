@@ -927,7 +927,8 @@ def partition_definitions(
 # ---------------------------------------------------------------------- cli --
 
 
-_LOG_NOISE = re.compile(r"keyring module not found|^\s*$|^Encountered an error:?\s*$", re.I)
+# dbt 1.12 prefixes its log lines with the level ("[ERROR]: Encountered an error:"); 1.9 did not.
+_LOG_NOISE = re.compile(r"keyring module not found|^\s*$|^(?:\[[A-Z]+\]:\s*)?Encountered an error:?\s*$", re.I)
 _TS_PREFIX = re.compile(r"^\d\d:\d\d:\d\d\s+")
 
 
