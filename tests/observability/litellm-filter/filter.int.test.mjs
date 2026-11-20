@@ -9,7 +9,9 @@
  *   - Driven by run.sh: real LiteLLM 1.109.1 -> the chart-rendered Collector -> an auth-checking
  *     sink that writes OTLP JSON lines to FILTER_SPANS.
  *   - Idle window: count LiteLLM spans with no parentSpanId that arrived during 30 s of idling.
- *     FILTER_MODE=on: must be 0. FILTER_MODE=off (negative twin): must be > 0.
+ *     FILTER_MODE=on: must be 0 AND the Collector's own counter must show spans received from
+ *     LiteLLM in that window (so "0" cannot mean "nothing was sent"). FILTER_MODE=off (negative
+ *     twin): must be > 0.
  *   - Generation: one /chat/completions with a W3C `traceparent`; its trace must reach the sink in
  *     BOTH modes, with the caller's span as the parent of its top span.
  */
@@ -22,6 +24,13 @@ const on = process.env.FILTER_IT === '1';
 const mode = process.env.FILTER_MODE;
 const FILE = process.env.FILTER_SPANS;
 const LITELLM = 'http://127.0.0.1:14000';
+const COLLECTOR_METRICS = 'http://127.0.0.1:18890/metrics';
+
+/** Sum of a Collector self-metric (Prometheus text), optionally only series matching `filter`. */
+async function selfMetric(name, filter = '') {
+  const text = await (await fetch(COLLECTOR_METRICS)).text();
+  return text.split('\n').filter((l) => l.startsWith(name) && l.includes(filter)).reduce((n, l) => n + Number(l.split(' ').pop()), 0);
+}
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** Every span in the sink file: { service, name, traceId, spanId, parentSpanId, startNs }. */
@@ -42,7 +51,11 @@ function spans() {
 test(`idle LiteLLM poll spans (no parent) are ${mode === 'on' ? 'DROPPED' : 'EXPORTED (negative twin)'}`, { skip: !on }, async () => {
   await sleep(10_000); // let start-up settle
   const from = BigInt(Date.now()) * 1_000_000n;
+  const received0 = await selfMetric('otelcol_receiver_accepted_spans', 'otlp/litellm_langfuse');
   await sleep(30_000);
+  const received = (await selfMetric('otelcol_receiver_accepted_spans', 'otlp/litellm_langfuse')) - received0;
+  console.log(`the Collector accepted ${received} span(s) from LiteLLM in the idle window`);
+  assert.ok(received > 0, 'LiteLLM sent the Collector nothing while idle — the test would prove nothing');
   const all = spans();
   const roots = all.filter((s) => s.startNs >= from && s.service === 'litellm' && !s.parentSpanId);
   const names = [...new Set(roots.map((s) => s.name))].slice(0, 8);

@@ -11,7 +11,8 @@
  *   - Each adapter is called with that URL; its version must equal the chart's tag (VictoriaMetrics
  *     tags carry a leading `v`, which their binaries report too).
  *   - Negative twin: the container is STOPPED and the same adapter must return ok:false
- *     `unreachable`, with no version anywhere in the result. Then it is started again.
+ *     `unreachable`, with no version anywhere in the result. Then it is started again and the
+ *     test waits until it reads ready.
  *   - Run: HEALTH_IT=1 node --import ./scripts/test-setup.mjs --test core/adapters/health/health.int.test.ts
  */
 import { test } from 'node:test';
@@ -64,6 +65,8 @@ for (const [id, probe] of Object.entries(probes)) {
       assert.doesNotMatch(JSON.stringify(h), new RegExp(`"version":"${t.expected.replace(/\./g, '\\.')}"`));
     } finally {
       docker('start', t.container);
+      // Back to ready before the next test (or a re-run) reads it.
+      for (let i = 0; i < 90; i++) { const back = await probe(t); if (back.ok && back.value.status === 'ready') break; await new Promise((r) => setTimeout(r, 2_000)); }
     }
   });
 }

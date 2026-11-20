@@ -27,5 +27,5 @@ Collector, each with its own web UI (vmui). Templates:
 - VictoriaLogs OpenTelemetry ingestion `/insert/opentelemetry/v1/logs`, `VL-Stream-Fields`:
   https://docs.victoriametrics.com/victorialogs/data-ingestion/opentelemetry/
 - LogsQL and `/select/logsql/query`: https://docs.victoriametrics.com/victorialogs/querying/
-- Version: every binary exports `vm_app_version{short_version="v…"}` on `/metrics` — what
-  os-ui's health() reads.
+- Version: every binary labels its own `/metrics` series with `app_version="victoria-…-tags-v<release>-…"`;
+  os-ui's health() reads the release tag from it (checked on both pinned images).

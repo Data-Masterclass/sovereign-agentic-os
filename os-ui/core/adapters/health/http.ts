@@ -10,7 +10,7 @@
  *     with the status and the start of the body. Never throws.
  *   - `readJson(url)` parses on top of it; a body that is not JSON is `invalid`.
  *   - `promLabel(text, metric, label)` reads one label of one metric from a Prometheus text
- *     exposition (VictoriaMetrics / VictoriaLogs `vm_app_version`, the Collector's `service_version`).
+ *     exposition (the Collector's `service_version`).
  */
 import type { Fetched } from '../_contract';
 
@@ -68,4 +68,10 @@ export function promLabel(text: string, metric: string, label: string): string |
     if (m) return m[1];
   }
   return null;
+}
+
+/** `app_version="victoria-metrics-20261106-175016-tags-v1.156.0-0-g0c1bf87a0c"` → `v1.156.0`. */
+export function vmReleaseTag(text: string): string | null {
+  const m = text.match(/app_version="[^"]*-tags-(v\d+\.\d+\.\d+[^"-]*)-\d+-g[0-9a-f]+"/);
+  return m ? m[1] : null;
 }

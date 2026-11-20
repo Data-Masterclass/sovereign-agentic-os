@@ -5,7 +5,7 @@
 # WP-05: the chart's observability stack (OpenTelemetry Collector, VictoriaMetrics, VictoriaLogs)
 # plus the chart's OPA, rendered by `helm template` and applied UNCHANGED to a real Kubernetes
 # cluster (kind), so the Collector's file_log and kubelet_stats receivers read real pod logs and a
-# real kubelet. Then port-forwards the APIs for tests/observability/stack.int.test.mjs.
+# real kubelet, under the chart's own default-deny egress policies (kindnet enforces them). Then port-forwards the APIs for tests/observability/stack.int.test.mjs.
 #   KUBE_CONTEXT   kube context to use (default kind-wp05; the cluster must exist)
 #   OBS_NS         namespace (default obs-it)
 #   EXTRA_SET      extra `--set` flags for helm template (the negative twins)
@@ -21,6 +21,7 @@ rendered="$(mktemp)"
 # shellcheck disable=SC2086
 helm template agentic-os "$chart" --namespace "$ns" \
   --show-only templates/base/priority-classes.yaml \
+  --show-only templates/base/network/egress-policies.yaml \
   --show-only templates/base/opa/opa.yaml \
   --show-only templates/extensions/observability/otel-collector.yaml \
   --show-only templates/extensions/observability/victoria-metrics.yaml \
@@ -30,10 +31,10 @@ echo "rendered $(grep -c '^kind:' "$rendered") objects"
 
 k create namespace "$ns" --dry-run=client -o yaml | k apply -f - >/dev/null
 k apply -n "$ns" -f "$rendered"
-k -n "$ns" rollout status statefulset/victoria-metrics --timeout=180s
-k -n "$ns" rollout status statefulset/victoria-logs --timeout=180s
-k -n "$ns" rollout status daemonset/otel-collector --timeout=180s
-k -n "$ns" rollout status deployment/opa --timeout=180s
+k -n "$ns" rollout status statefulset/victoria-metrics --timeout="${ROLLOUT_TIMEOUT:-600s}"
+k -n "$ns" rollout status statefulset/victoria-logs --timeout="${ROLLOUT_TIMEOUT:-600s}"
+k -n "$ns" rollout status daemonset/otel-collector --timeout="${ROLLOUT_TIMEOUT:-600s}"
+k -n "$ns" rollout status deployment/opa --timeout="${ROLLOUT_TIMEOUT:-600s}"
 
 # Port-forwards for the test (killed by kind-down.sh / the CI job end).
 pids="$here/.port-forward.pids"; : > "$pids"
