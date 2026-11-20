@@ -2,7 +2,8 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  *
  * FEATURE:    GLUE-10 — artifact contract C2 (component-design 11 §4.1): in generated native
- *             files, OS metadata may appear only in the tool's documented extension points.
+ *             files, OS metadata may appear only in the tool's documented extension points; and
+ *             C3's static half: no silver/gold layer is a dbt source built outside dbt (WP-49).
  * USER STORY: As the owner I want every artifact the OS writes to be the tool's own code that runs
  *             without the OS: OS bookkeeping lives in dbt `meta`/`tags`, Dagster `tags`/`metadata`,
  *             OKF `x-sovereign-os-meta`, `sovereign-os.io/*` Kubernetes labels and annotations, or
@@ -111,6 +112,23 @@ function unknownKeys(validate, doc, hit, ext) {
   }
 }
 
+/**
+ * C3 — dbt can rebuild every layer (WP-49): a dataset's silver or gold layer is a dbt MODEL, never a
+ * dbt `source` that a table built outside dbt is read through. The OS's own marks on a source
+ * (`meta.os_layer` silver/gold, `meta.os_built`) are what identify such a layer.
+ */
+function rebuildable(doc, hit) {
+  for (const src of Array.isArray(doc?.sources) ? doc.sources : []) {
+    for (const t of Array.isArray(src?.tables) ? src.tables : []) {
+      const meta = { ...(src?.meta ?? {}), ...(t?.meta ?? {}), ...(t?.config?.meta ?? {}) };
+      const layer = String(meta.os_layer ?? '');
+      if (meta.os_built || layer === 'silver' || layer === 'gold') {
+        hit(`dbt cannot rebuild \`${src.name}.${t.name}\`: a ${layer || 'dataset'} layer emitted as a dbt source built outside dbt (C3 — every silver and gold layer is a dbt model)`);
+      }
+    }
+  }
+}
+
 function sqlFindings(text, hit) {
   let s = text.replace(/\{#[\s\S]*?#\}/g, ' ').replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/--[^\n]*/g, ' ');
   // Remove ONLY the `meta=` argument of a `config(...)` call: dbt's documented extension point.
@@ -183,7 +201,7 @@ export function checkContract(goldens) {
             } else if (p === 'dbt_project.yml') {
               unknownKeys(validators().vDbtProject, doc, hit, DBT_EXT); osKeys(doc, DBT_EXT, hit);
             } else if (DBT_YML(p)) {
-              unknownKeys(validators().vDbtYml, doc, hit, DBT_EXT); osKeys(doc, DBT_EXT, hit);
+              unknownKeys(validators().vDbtYml, doc, hit, DBT_EXT); osKeys(doc, DBT_EXT, hit); rebuildable(doc, hit);
             } else {
               osKeys(doc, DBT_EXT, hit); // profiles.yml, packages.yml, selectors.yml: dbt files without a pinned schema here
             }

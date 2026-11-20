@@ -29,6 +29,13 @@ const repo = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const yaml = createRequire(join(repo, 'os-ui', 'package.json'))('js-yaml');
 const [cmd, ...args] = process.argv.slice(2);
 const die = (msg) => { console.error(`validate-generated-lib: ${msg}`); process.exit(2); };
+// The dbt project directory of a design-12 repo: repo-layout.ts's DEFAULT_DBT_PROJECT_DIR, overridable
+// by OS_DBT_PROJECT_DIR exactly as os-ui and os_projects.py read it. Resolved from the module's text.
+const LAYOUT_TS = readFileSync(join(repo, 'os-ui/core/infra/repo-layout.ts'), 'utf8');
+const DATA_DIR_TS = (LAYOUT_TS.match(/export const DATA_DIR = '([^']+)'/) ?? [])[1];
+const DBT_SUB_TS = (LAYOUT_TS.match(/export const DEFAULT_DBT_PROJECT_DIR = `\$\{DATA_DIR\}\/([^`]+)`/) ?? [])[1];
+if (!DATA_DIR_TS || !DBT_SUB_TS) die('os-ui/core/infra/repo-layout.ts: DATA_DIR / DEFAULT_DBT_PROJECT_DIR not found');
+const DBT_PROJECT_DIR = (process.env.OS_DBT_PROJECT_DIR ?? '').replace(/^\/+|\/+$/g, '') || `${DATA_DIR_TS}/${DBT_SUB_TS}`;
 
 if (cmd === 'images') {
   const v = yaml.load(readFileSync(join(repo, 'charts/sovereign-agentic-os/values.yaml'), 'utf8'));
@@ -47,6 +54,7 @@ if (cmd === 'images') {
   if (!trino?.repository || !trino?.tag) die('values.yaml trino.image needs repository and tag');
   console.log(`TRINO_IMAGE=${trino.repository}:${trino.tag}${trino.digest ? `@${trino.digest}` : ''}`);
   console.log(`KUBERNETES_VERSION=${kc.kubernetesVersion}`);
+  console.log(`DBT_PROJECT_DIR=${DBT_PROJECT_DIR}`);
   // Space-separated fixture names whose dbt parse is a KNOWN refusal (the GLUE-6 ratchet).
   const known = Object.keys(val?.knownRefusals?.["dbt-parse"] ?? {}).filter((k) => !k.startsWith("$"));
   if (known.some((k) => !/^[A-Za-z0-9._-]+$/.test(k))) die("knownRefusals names must be plain fixture names");
@@ -71,7 +79,10 @@ if (cmd === 'images') {
     const sha = createHash('sha1').update(text).digest('hex');
     const root = join(out, domain, sha);
     for (const [p, content] of Object.entries(files)) {
-      const target = join(root, p);
+      // The design-12 repo layout (WP-49/WP-55): the dbt project under `data/dbt/`, the Dagster code
+      // location under `data/dagster/`, the OS layer under `os/`. Goldens are written with the dbt
+      // project at their root, so every other path moves under DBT_PROJECT_DIR here.
+      const target = join(root, p.startsWith('os/') || p.startsWith('data/') ? p : `${DBT_PROJECT_DIR}/${p}`);
       mkdirSync(dirname(target), { recursive: true });
       writeFileSync(target, String(content));
     }

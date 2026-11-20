@@ -1,14 +1,15 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  *
- * FEATURE:    dbt model planner — every OS dataset layer becomes a model, a source or an external asset
+ * FEATURE:    dbt model planner — every OS dataset layer becomes a dbt model (no out-of-band layer)
  * USER STORY: As a data engineer I want each Silver / Gold / sync landing the OS built for my domain
  *             to be a dbt model whose body is the governed projection the OS compiled, with
  *             `{{ ref() }}` between datasets and `{{ source() }}` at the governance boundary — so I
  *             can read the project and recognise my own practice (checklist D1, D4, D6, D13).
  * ARCHITECTURE:
- *   - Pure: `planModels(snapshot)` → models (name, path, schema, SQL), the sources they read, and
- *     the external assets dbt cannot express (Kafka offsets, API-batch sources — Dagster assets).
+ *   - Pure: `planModels(snapshot)` → models (name, path, schema, SQL), the sources they read, the
+ *     dlt ingestions of database syncs, the datasets refused under C3, and the external assets dbt
+ *     cannot express yet (Kafka offsets, API-batch sources).
  *   - Bodies: the compiled CTAS `buildVersion` / `buildGoldJoin` recorded (today's `compileSilver`
  *     / `compileGoldJoin` output) with `create or replace table … as` stripped and every
  *     `iceberg.<schema>.<table>` rewritten — to `ref('<layer>_<slug>')` when the table is a model of
@@ -24,15 +25,14 @@
  *     ONE dataset out — so one bad dataset can never block a domain's commits.
  */
 import type { Dataset, Layer, DatasetSync } from '@tabs/data/lib/dataset-schema';
-import { physicalSlug, personalSchema, domainSchema, sanitizeIdent, laneTable } from '@tabs/data/lib/store-fqn';
+import { physicalSlug, personalSchema, domainSchema, sanitizeIdent, laneTable, laneSlug } from '@tabs/data/lib/store-fqn';
 import { DEFAULT_LOOKBACK_MINUTES } from '@tabs/data/lib/sync-sql';
 import { qident, qlit } from '@tabs/data/lib/dbt/emit';
 import { commentText, freeText, jinjaFreeSql, LiteralSafetyError } from '@tabs/data/lib/dbt/literal';
-import { columnDocs, modelRefResolver } from '@tabs/data/lib/dbt/schema';
 import { freshnessMinutesFor } from '@tabs/data/lib/dbt/source-assets';
 import type { ProjectSnapshot, SnapshotDataset } from '@tabs/data/lib/dbt/snapshot';
 
-export type ModelKind = 'compiled' | 'pass-through' | 'sync-full-refresh' | 'sync-append' | 'sync-merge';
+export type ModelKind = 'compiled' | 'adopted' | 'pass-through' | 'sync-full-refresh' | 'sync-append' | 'sync-merge';
 
 export type ModelPlan = {
   /** `<layer>_<slug>` — equals the physical table name. */
@@ -82,36 +82,43 @@ export type ExternalAsset = {
 };
 
 /**
- * One FEDERATED source table a sync reads, as an OBSERVABLE Dagster asset (`os/sources.yml`,
- * engine rebuild B3). The asset key is `[<domain>, <source>, <table>]` — the key dagster-dbt
- * derives for the dbt source — so the silver model that reads it depends on this very node and the
- * lineage graph has no dangling edge. The Iceberg Bronze landing is deliberately NOT here: it lives
- * in the same lakehouse and carries `_loaded_at` source freshness instead.
+ * One database sync's Bronze INGESTION, as a dlt asset in `data/dagster/definitions.py` (WP-49,
+ * design 01 M5, decision O8). dlt's `sql_table` source reads the connection's table and dlt's
+ * `sqlalchemy` destination writes it through Trino into the owner's landing schema
+ * `landing_<domain>_<owner>` (R8: dlt's own state tables are per owner). The asset KEY is the key
+ * dagster-dbt derives for the dbt source `landing_<…>.<table>`, so the sync model that reads it
+ * depends on this very node: dlt asset → sync model → silver/gold, one contiguous graph.
  */
-export type SourceAssetEntry = {
-  source: string;
-  table: string;
-  database?: string;
-  schema: string;
+export type DltSource = {
   dataset: string;
-  principal: string;
-  /** The model that reads this source (the sync landing) — the downstream edge. */
-  model: string;
+  /** `[<domain>, <landing schema>, <landing table>]`. */
+  key: [string, string, string];
+  connectionId: string;
+  /** The table in the source database. */
+  source: { schema: string; table: string };
+  /** `landing_<domain>_<owner>` — dlt's `dataset_name`. */
+  landingSchema: string;
+  /** `raw_<slug>` — one landing table per dataset. */
+  landingTable: string;
   mode: DatasetSync['mode'];
-  observe: 'max_updated' | 'row_count';
-  /** The timestamp cursor column `max_updated` probes. */
-  updatedColumn?: string;
+  /** dlt's incremental cursor (timestamp / number cursors only). */
+  cursorColumn?: string;
   cron: string;
-  /** Minutes after which the source counts as late; null when the cron shape is unknown. */
   freshnessMinutes: number | null;
   enabled: boolean;
+  principal: string;
 };
+
+/** A dataset the planner REFUSES (artifact contract C3): a built layer dbt could not rebuild. */
+export type RefusedDataset = { dataset: string; reason: string };
 
 export type ModelPlanSet = {
   models: ModelPlan[];
   sources: SourceTable[];
-  /** Federated sync sources as observable assets (`os/sources.yml`). */
-  sourceAssets: SourceAssetEntry[];
+  /** Database syncs ingested by dlt inside Dagster (`data/dagster/definitions.py`). */
+  dltSources: DltSource[];
+  /** Datasets left out because a built layer has no SQL dbt could rebuild it from (C3). */
+  refused: RefusedDataset[];
   externals: ExternalAsset[];
   /** Sanitised uids that own personal-lane models (drives `+schema` in dbt_project.yml). */
   personalUids: string[];
@@ -174,6 +181,11 @@ function sourceDescription(d: Dataset, what: string): string {
   return `${what} of OS dataset ${d.id} ("${freeText(d.name)}").`;
 }
 
+/** `landing_<domain>_<owner>` — the per-owner schema dlt lands a database sync in (R8). */
+export function landingSchema(d: Dataset): string {
+  return `landing_${sanitizeIdent(d.domain)}_${sanitizeIdent(d.owner)}`;
+}
+
 function hasLoadedAt(d: Dataset): boolean {
   return d.columns.some((c) => c.name === '_loaded_at');
 }
@@ -201,10 +213,10 @@ export function stripCtas(sql: string): string {
 }
 
 /** `delete+insert` / `merge` / `table` config for a sync landing. */
-function syncModelSql(d: Dataset, sync: DatasetSync, sourceName: string, name: string): { sql: string; kind: ModelKind } {
-  const src = `{{ source(${qlit(sourceName)}, ${qlit(sync.source.table)}) }}`;
+function syncModelSql(d: Dataset, sync: DatasetSync, sourceName: string, sourceTable: string, name: string): { sql: string; kind: ModelKind } {
+  const src = `{{ source(${qlit(sourceName)}, ${qlit(sourceTable)}) }}`;
   const head = header(d, 'bronze', name, [
-    `-- Scheduled sync of ${commentText(sync.source.schema)}.${commentText(sync.source.table)} (${sync.mode}, cron "${commentText(sync.schedule.cron)}" UTC) — see os/schedules.yml.`,
+    `-- Scheduled sync of ${commentText(sync.source.schema)}.${commentText(sync.source.table)} (${sync.mode}, cron "${commentText(sync.schedule.cron)}" UTC) — scheduled in data/dagster/definitions.py.`,
   ]);
   if (sync.mode === 'full-refresh') {
     return {
@@ -267,9 +279,9 @@ export function planModels(snap: ProjectSnapshot): ModelPlanSet {
   const modelByFqn = new Map<string, string>();
   const registered: Registered[] = [];
   const externals: ExternalAsset[] = [];
-  const sourceAssets: SourceAssetEntry[] = [];
+  const dltSources: DltSource[] = [];
   const sources = new Map<string, SourceTable>();
-  const outOfBandByDataset = new Map<string, Layer[]>();
+  const refused = new Map<string, string>();
 
   const addSource = (s: SourceTable): string => {
     const key = `${s.source}::${s.table}`;
@@ -299,23 +311,42 @@ export function planModels(snap: ProjectSnapshot): ModelPlanSet {
             : 'API-batch source (no Trino catalog); a Dagster external-source asset calls the governed slice executor (B2).',
       });
     }
-    // Which built layers are MODELS: the sync landing, a pass-through the OS copied, or a body the
-    // OS compiled (provenance recorded by the store). A built layer with an authored / unknown body
-    // was materialised out of band: dbt reads it as a SOURCE and never rewrites it — a scheduled
-    // `<model>+` run must not replace a user's table with a copy of the layer below (review M2).
-    const compiled = new Set(entry.compiled ?? []);
+    // Every built layer is a dbt MODEL, so dbt can rebuild all of them (artifact contract C3, no
+    // "out-of-band" layer): the sync landing, a pass-through the OS copied, a body the OS compiled,
+    // or a body a user AUTHORED, committed as it is. A built layer with NO recorded SQL cannot be
+    // rebuilt by anyone; the dataset is refused (its tables stay untouched in Iceberg) with a reason
+    // the OS shows, never emitted as a source dbt only reads (WP-49).
     const layers: Layer[] = [];
-    const outOfBand: Layer[] = [];
     if (sync.kind === 'model') layers.push(sync.layer);
+    const missing: Layer[] = [];
+    const compiledSet = new Set(entry.compiled ?? []);
+    // An AUTHORED body is the user's Trino SQL, not dbt Jinja: one that carries Jinja delimiters
+    // would make dbt execute user text (`env_var`, `run_query`) as the OS's principal, so the
+    // dataset is refused instead (review M2 stays closed).
+    const jinja = (['silver', 'gold'] as Layer[]).filter((l) => {
+      const v = d.versions[l];
+      const body = v.built && v.artifact && !compiledSet.has(v.artifact) ? entry.artifacts[v.artifact] : undefined;
+      return !!body && /\{\{|\{%|\{#/.test(body);
+    });
+    if (jinja.length) {
+      refused.set(d.id, `the authored ${jinja.join(' and ')} SQL contains dbt Jinja ({{ … }} / {% … %}), which the OS does not run as authored SQL; rewrite it as plain SQL`);
+      continue;
+    }
     for (const layer of ['silver', 'gold'] as Layer[]) {
       if (layers.includes(layer)) continue;
       const v = d.versions[layer];
       if (!v.built) continue;
       const body = v.artifact ? entry.artifacts[v.artifact] : undefined;
-      if (v.passThrough || (v.artifact && body && body.trim() && compiled.has(v.artifact))) layers.push(layer);
-      else outOfBand.push(layer);
+      if (v.passThrough || (body && body.trim())) layers.push(layer);
+      else missing.push(layer);
     }
-    if (outOfBand.length) outOfBandByDataset.set(d.id, outOfBand);
+    if (missing.length) {
+      refused.set(
+        d.id,
+        `${missing.join(' and ')} layer${missing.length > 1 ? 's are' : ' is'} built but no SQL is recorded for ${missing.length > 1 ? 'them' : 'it'}, so dbt cannot rebuild ${missing.length > 1 ? 'them' : 'it'}; recover the creating statement (Trino query log) into the dataset definition`,
+      );
+      continue;
+    }
     for (const layer of layers) {
       const schema = schemaFor(d, layer, sync);
       // A model is named after the table it builds: the lane name in a personal lane (unique per
@@ -356,43 +387,56 @@ export function planModels(snap: ProjectSnapshot): ModelPlanSet {
 
     if (r.sync.kind === 'model' && r.sync.layer === r.layer && d.sync) {
       const catalog = r.sync.catalog;
-      const sourceName = catalog ? `${catalog}__${d.sync.source.schema}` : `conn_${sanitizeIdent(d.sync.connectionId)}`;
-      addSource({
-        source: sourceName,
-        ...(catalog ? { database: catalog } : {}),
-        schema: d.sync.source.schema,
-        table: d.sync.source.table,
-        description: `Sync source of OS dataset ${d.id} ("${freeText(d.name)}") through connection ${d.sync.connectionId}.`,
-        loadedAt: false,
-        ...(catalog ? {} : { meta: { os_connection: d.sync.connectionId, os_catalog: 'unresolved' } }),
-      });
-      // The federated table becomes an OBSERVABLE asset (B3). Only when its catalog resolved: a
-      // probe needs a real `catalog.schema.table` to query, and an unresolved connection has none.
+      let sourceName: string;
+      let sourceTable: string;
       if (catalog) {
-        const isTs = d.sync.cursor?.kind === 'timestamp';
-        sourceAssets.push({
+        // A database connection: dlt lands the table in the owner's landing schema (O8); the sync
+        // model reads the landing table, never a federated catalog.
+        const isCursor = d.sync.cursor?.kind === 'timestamp' || d.sync.cursor?.kind === 'number';
+        sourceName = landingSchema(d);
+        sourceTable = `raw_${laneSlug(d)}`; // the dataset's own lane name: unique per dataset (R8)
+        addSource({
           source: sourceName,
-          table: d.sync.source.table,
-          database: catalog,
-          schema: d.sync.source.schema,
+          database: 'iceberg',
+          schema: sourceName,
+          table: sourceTable,
+          description: `Landing of ${d.sync.source.schema}.${d.sync.source.table} for OS dataset ${d.id} ("${freeText(d.name)}"), loaded by dlt (data/dagster/definitions.py).`,
+          loadedAt: false,
+        });
+        dltSources.push({
           dataset: d.id,
-          principal: d.owner,
-          model: r.name,
+          key: [d.domain, sourceName, sourceTable],
+          connectionId: d.sync.connectionId,
+          source: { schema: d.sync.source.schema, table: d.sync.source.table },
+          landingSchema: sourceName,
+          landingTable: sourceTable,
           mode: d.sync.mode,
-          observe: isTs ? 'max_updated' : 'row_count',
-          ...(isTs && d.sync.cursor ? { updatedColumn: d.sync.cursor.column } : {}),
+          ...(isCursor && d.sync.cursor ? { cursorColumn: d.sync.cursor.column } : {}),
           cron: d.sync.schedule.cron,
           freshnessMinutes: freshnessMinutesFor(d.sync.schedule.cron),
           enabled: d.sync.enabled,
+          principal: d.owner,
+        });
+      } else {
+        sourceName = `conn_${sanitizeIdent(d.sync.connectionId)}`;
+        sourceTable = d.sync.source.table;
+        addSource({
+          source: sourceName,
+          schema: d.sync.source.schema,
+          table: d.sync.source.table,
+          description: `Sync source of OS dataset ${d.id} ("${freeText(d.name)}") through connection ${d.sync.connectionId}.`,
+          loadedAt: false,
+          meta: { os_connection: d.sync.connectionId, os_catalog: 'unresolved' },
         });
       }
-      ({ sql, kind } = syncModelSql(d, d.sync, sourceName, r.name));
+      ({ sql, kind } = syncModelSql(d, d.sync, sourceName, sourceTable, r.name));
     } else {
       const artifactPath = d.versions[r.layer].artifact;
       const body = artifactPath ? r.d.artifacts[artifactPath] : undefined;
       if (body && body.trim()) {
         // Jinja-free BEFORE the generator adds its own `ref()` / `source()` calls: a brace in a
         // filter literal becomes a Trino Unicode escape; anything else with a brace is refused.
+        // Compiled and authored bodies alike: both are text the generator did not write.
         let safe: string;
         try {
           safe = jinjaFreeSql(stripCtas(body), `${r.layer} body`);
@@ -401,8 +445,23 @@ export function planModels(snap: ProjectSnapshot): ModelPlanSet {
           throw e;
         }
         const rewritten = rewriteFqns(safe, modelByFqn, onSource(d));
-        sql = [...header(d, r.layer, r.name), '', rewritten].join('\n');
-        kind = 'compiled';
+        if (artifactPath && (r.d.compiled ?? []).includes(artifactPath)) {
+          sql = [...header(d, r.layer, r.name), '', rewritten].join('\n');
+          kind = 'compiled';
+        } else {
+          // An AUTHORED body (C3): committed as it is. The table already exists, so the model ADOPTS
+          // it: `on_table_exists='replace'` rebuilds it with Iceberg's CREATE OR REPLACE TABLE, which
+          // keeps the table's snapshot history, and `full_refresh=false` keeps a --full-refresh run
+          // from dropping it (design 01 R9).
+          sql = [
+            ...header(d, r.layer, r.name, ['-- Authored SQL, committed as written; adopts the existing table (its history is kept).']),
+            '',
+            "{{ config(materialized='table', on_table_exists='replace', full_refresh=false) }}",
+            '',
+            rewritten,
+          ].join('\n');
+          kind = 'adopted';
+        }
       } else {
         // Pass-through: the newest lower layer that exists in this project, else the Bronze source.
         const lower = r.layer === 'gold' ? mine.find((m) => m.layer === 'silver') : undefined;
@@ -435,41 +494,10 @@ export function planModels(snap: ProjectSnapshot): ModelPlanSet {
       kind,
       schema: r.schema,
       dataset: d,
-      // The furthest MODEL carries the tests — unless a higher layer was built out of band (then
-      // the tests attach to that source below, where the data the OS checks actually lives).
-      tested: furthest.name === r.name && !(outOfBandByDataset.get(d.id) ?? []).some((l) => LAYER_ORDER.indexOf(l) > LAYER_ORDER.indexOf(r.layer)),
+      // The furthest model carries the tests (every built layer is a model, C3).
+      tested: furthest.name === r.name,
       sql: sql.replace(/\n+$/, '') + '\n',
     });
-  }
-
-  // Out-of-band layers: declare the physical table as a source; the dataset's quality rules attach
-  // to the furthest such layer as SOURCE tests (dbt build runs them) — never a model that would
-  // rewrite a table the OS did not compile.
-  // Built from the models planned above, so a rule on an out-of-band SOURCE may still reference a
-  // model this project owns (`relationships: to: ref(...)` is valid on a source column too).
-  const resolveRef = modelRefResolver(models);
-  for (const entry of datasets) {
-    const d = entry.dataset;
-    const layers = outOfBandByDataset.get(d.id);
-    if (!layers?.length) continue;
-    const furthestBuilt = [...LAYER_ORDER].reverse().find((l) => d.versions[l].built);
-    for (const layer of layers) {
-      const sync = syncShape(d, snap.catalogs);
-      const schema = schemaFor(d, layer, sync);
-      const table = schema.startsWith('personal_') ? laneTable(d, layer) : `${layer}_${physicalSlug(d)}`;
-      const tested = layer === furthestBuilt;
-      const { columns, intentions } = columnDocs(d, tested, resolveRef);
-      addSource({
-        source: schema,
-        database: 'iceberg',
-        schema,
-        table,
-        description: sourceDescription(d, `${layer} layer built OUT OF BAND (authored body — dbt reads it, never rewrites it)`),
-        loadedAt: false,
-        meta: { os_dataset: d.id, os_layer: layer, os_built: 'out-of-band', ...(intentions.length ? { os_intentions: intentions.join('; ') } : {}) },
-        ...(tested && columns.length ? { columns } : {}),
-      });
-    }
   }
 
   models.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
@@ -477,6 +505,7 @@ export function planModels(snap: ProjectSnapshot): ModelPlanSet {
   const layerDirs = LAYER_ORDER.filter((l) => models.some((m) => m.dir === `models/${l}`));
   const sourceList = [...sources.values()].sort((a, b) => (a.source + '::' + a.table).localeCompare(b.source + '::' + b.table));
   externals.sort((a, b) => a.dataset.localeCompare(b.dataset));
-  sourceAssets.sort((a, b) => `${a.source}::${a.table}`.localeCompare(`${b.source}::${b.table}`));
-  return { models, sources: sourceList, sourceAssets, externals, personalUids, layerDirs };
+  dltSources.sort((a, b) => a.dataset.localeCompare(b.dataset));
+  const refusedList = [...refused.entries()].map(([dataset, reason]) => ({ dataset, reason })).sort((a, b) => a.dataset.localeCompare(b.dataset));
+  return { models, sources: sourceList, dltSources, refused: refusedList, externals, personalUids, layerDirs };
 }

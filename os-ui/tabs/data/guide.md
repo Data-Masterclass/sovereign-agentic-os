@@ -29,11 +29,13 @@ A data product in the OS **is a dbt project in a git repository**, and the tools
 2. **The project is real dbt.** Your dataset's compiled layers become models under
    `models/<layer>/`, referencing each other through dbt's own ref and source functions; your
    quality rules become `schema.yml` **tests** (`not_null`, `unique`, `accepted_values`, …); your
-   sync schedule becomes a row in `os/schedules.yml`; an external sync source becomes a dbt source
-   in `os/sources.yml`. A layer the OS did NOT compile (an authored body, an adopted table) is
-   registered as a dbt *source* — dbt reads and tests it, and never rewrites it.
-3. **Dagster runs it.** One code location (`sovereign`) loads every domain's project from a
-   validated commit; `set_dataset_sync` therefore provisions no Kubernetes CronJob — the schedule is
+   sync schedule becomes a Dagster `ScheduleDefinition` in `data/dagster/definitions.py`; a
+   database sync becomes a dlt ingestion asset there. A layer you wrote yourself (an authored body)
+   is a dbt model too, committed as written, adopting its existing table — so dbt can rebuild every
+   layer. A layer built with no SQL the OS can recover is refused, with the reason.
+3. **Dagster runs it.** One code location (`sovereign`) loads every domain's own
+   `data/dagster/definitions.py` from a validated commit (`cd data/dagster && dagster dev -m definitions`
+   runs the same module from a clone); `set_dataset_sync` therefore provisions no Kubernetes CronJob — the schedule is
    a Dagster schedule over the domain's dbt assets, UTC, missed ticks skipped. A build / a
    composition / `sync_dataset_now` launches that commit's asset selection, tagged `os/dataset`,
    `os/domain`, `os/principal`, `os/user`, `os/action`, `os/commit`, `os/surface`.

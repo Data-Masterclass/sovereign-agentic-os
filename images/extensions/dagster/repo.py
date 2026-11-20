@@ -1,28 +1,29 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Borek Data Ventures UG
-"""Dagster definitions — the `sovereign` code location (engine rebuild B2).
+"""The `sovereign` code location — a platform WRAPPER around each domain repo's own Dagster code (WP-49).
 
-FEATURE:    One code location for every domain's data product: `dbt_assets` per validated commit
-            under `/repos-checkout/<domain>/current/`, schedules from the repo's `os/schedules.yml`,
-            a failure sensor that pauses a schedule after repeated failures (replaces the OS's
-            `isQuarantined`), a sensor that pauses schedules whose principal the OS reports
-            inactive, and a weekly Iceberg maintenance job per schema. `hello_sovereign` stays as
-            the smoke asset.
-USER STORY: As a data engineer I want the OS's datasets to be real Dagster assets scheduled from a
-            git commit I can read, with run history, asset checks (dbt tests) and the next tick
-            visible in Dagster — and the OS reading those instead of keeping its own ledger.
+FEATURE:    Load every migrated domain repo's `data/dagster/definitions.py` (a normal Dagster code
+            location the OS generates: `@dbt_assets`, `@dlt_assets`, freshness checks, schedules, the
+            weekly Iceberg maintenance job), merge them into one location, and add only what a shared
+            deployment needs: the run pod's commit and principal env on every scheduled run, a
+            failure sensor that pauses a schedule after repeated failures, and a sensor that pauses
+            schedules whose principal the OS reports inactive.
+            LEGACY, for one release: a repo that is not migrated to the design-12 layout (no
+            `os/layout.yml`, while `layout.migration` is off) or has no `os/generated.yml` yet is wired
+            exactly as before WP-49 — `dbt_assets` over its manifest, schedules from `os/schedules.yml`,
+            observation from `os/sources.yml`, weekly maintenance per schema — so no schedule vanishes.
+USER STORY: As a data engineer I want Dagster to run exactly the definitions in my repo — the same
+            module `dagster dev -m definitions` runs from a clone — and the OS to read runs, checks
+            and schedules from Dagster instead of keeping its own ledger.
 ARCHITECTURE:
-  - Thin: discovery, YAML, tags and pause decisions live in `os_projects.py` (pure, unit-tested).
-    This file only wires Dagster objects. A domain that fails to load is logged and skipped —
-    one broken repo never takes the location down (per-domain parse gating, concept §2.3).
-  - K8s run pods re-import this file with an EMPTY `/repos-checkout` emptyDir: `OS_PINNED_COMMITS`
-    (baked into every job's `dagster-k8s/config` env, and set by the OS on launch) tells
-    `os_projects.ensure_checkout` which commit to clone from the read-only git daemon and parse.
-    The user-code pod never clones — its sidecar maintains `current`.
-  - `OS_PRINCIPAL` (the Trino user dbt-trino impersonates) is injected per run through the
-    `dagster-k8s/config` tag — the schedule's principal, the maintenance schema's owner, or what the
-    OS passed for an explicit launch. Nothing here runs as a shared service identity.
-  - Asset keys are `[<domain>, <dbt node name>]` (translator prefix); group = the domain.
+  - C5: a definitions module is imported only when its sha256 equals the hash the OS recorded in
+    the repo's OS layer (`os/generated.yml`); `os/**` and `data/dagster/**` are unpushable
+    (`os_projects.native_definitions`). A mismatch skips the domain; it is never wired as legacy.
+  - Per-domain gating: a domain that fails to import or that `Definitions` refuses is logged and
+    skipped — one broken repo never takes the location down (`os_projects.partition_definitions`).
+  - Identity (unchanged mechanism, WP-15 replaces it with run grants): the K8s run launcher reads the
+    run pod's env from the `dagster-k8s/config` tag. Native schedules are re-declared with the
+    platform tags (`os_projects.platform_run_tags`); legacy jobs carry them as before.
 """
 from __future__ import annotations
 
@@ -32,6 +33,8 @@ import os
 from datetime import timedelta
 from pathlib import Path
 from typing import Dict, List, Tuple
+import importlib.util
+import sys
 
 from dagster import (
     AssetKey,
@@ -45,7 +48,6 @@ from dagster import (
     ScheduleDefinition,
     SensorEvaluationContext,
     SkipReason,
-    asset,
     define_asset_job,
     job,
     op,
@@ -64,15 +66,6 @@ GIT_BASE = os.environ.get("REPO_SYNC_GIT_BASE", osp.DEFAULT_GIT_BASE)
 OS_INDEX_URL = os.environ.get("OS_INDEX_URL", "")
 OS_TOKEN = os.environ.get("AGENT_RUNTIME_TOKEN", "")
 QUARANTINE_THRESHOLD = int(os.environ.get("OS_QUARANTINE_THRESHOLD", str(osp.QUARANTINE_THRESHOLD)))
-
-DEMO_DBT_DIR = Path("/opt/dbt/project")
-DEMO_MANIFEST = DEMO_DBT_DIR / "target" / "manifest.json"
-
-
-@asset(group_name="sovereign_os", description="Proof-of-life asset for the orchestrator.")
-def hello_sovereign() -> str:
-    return "hello from the Sovereign Agentic OS orchestrator"
-
 
 class PrefixedTranslator(DagsterDbtTranslator):
     """Asset keys `[<domain>, <node>]`, grouped per domain (`group` = the unique Dagster name)."""
@@ -112,7 +105,7 @@ def _pause_schedule(instance, schedule_name: str, logger) -> bool:
 
 
 def _empty_bundle() -> Dict[str, object]:
-    return {"assets": [], "jobs": [], "schedules": [], "checks": [], "resources": {}, "principals": {}}
+    return {"assets": [], "jobs": [], "schedules": [], "checks": [], "resources": {}, "principals": {}, "defs": []}
 
 
 def _merge_bundles(a: Dict[str, object], b: Dict[str, object]) -> Dict[str, object]:
@@ -123,7 +116,74 @@ def _merge_bundles(a: Dict[str, object], b: Dict[str, object]) -> Dict[str, obje
         "checks": [*a["checks"], *b["checks"]],          # type: ignore[misc]
         "resources": {**a["resources"], **b["resources"]},        # type: ignore[dict-item]
         "principals": {**a["principals"], **b["principals"]},     # type: ignore[dict-item]
+        "defs": [*a["defs"], *b["defs"]],                # type: ignore[misc]
     }
+
+
+# ------------------------------------------------------------ native (WP-49) --
+
+
+def _import_definitions(p: osp.Project) -> Definitions:
+    """Import the repo's own module (already hash-verified by `load_project`) and return its `defs`."""
+    name = f"sovereign_domain_{osp.sanitize(p.domain)}_{p.sha[:12]}"
+    spec = importlib.util.spec_from_file_location(name, p.definitions)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot import {p.definitions}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    defs = getattr(module, "defs", None)
+    if not isinstance(defs, Definitions):
+        raise TypeError(f"{osp.DAGSTER_DEFINITIONS_PATH} defines no `defs = Definitions(...)`")
+    return defs
+
+
+def _job_tags(schedule: ScheduleDefinition) -> Dict[str, object]:
+    job = schedule.job if schedule.has_job else None
+    return dict(getattr(job, "tags", None) or {})
+
+
+def wrap_domain(p: osp.Project, defs: Definitions) -> Tuple[Definitions, Dict[str, str]]:
+    """The repo's definitions with the platform's run tags on every schedule, plus the
+    schedule → principal map the inactive-principal sensor reads."""
+    pinned = osp.pinned_one(p.domain, p.sha)
+    schedules: List[ScheduleDefinition] = []
+    principals: Dict[str, str] = {}
+    for s in defs.schedules or []:
+        job_tags = _job_tags(s)
+        tags = {**(s.tags or {}), **osp.platform_run_tags(p.domain, p.sha, pinned, job_tags)}
+        schedules.append(
+            ScheduleDefinition(
+                name=s.name,
+                cron_schedule=s.cron_schedule,
+                job=s.job,
+                execution_timezone=s.execution_timezone,
+                default_status=s.default_status,
+                description=s.description,
+                tags=tags,
+                metadata=s.metadata,
+            )
+        )
+        principal = str(job_tags.get("os/principal") or "")
+        if principal:
+            principals[s.name] = principal
+    wrapped = Definitions(
+        assets=defs.assets,
+        asset_checks=defs.asset_checks,
+        jobs=defs.jobs,
+        schedules=schedules,
+        sensors=defs.sensors,
+        resources=defs.resources,
+    )
+    return wrapped, principals
+
+
+def _native_bundle(p: osp.Project) -> Dict[str, object]:
+    wrapped, principals = wrap_domain(p, _import_definitions(p))
+    return {**_empty_bundle(), "defs": [wrapped], "principals": principals}
+
+
+# ---------------------------------------------------------------- legacy -----
 
 
 #: Wall-clock bound on the observation probe. BOTH halves are needed (B3-review-M-5): the HTTP
@@ -221,17 +281,7 @@ def build_definitions() -> Definitions:
     # more — every job pins only its own domain's commit (`osp.pinned_one`), so the wide value had
     # no consumer left (B3-review-L-3). `pinned_env` stays in os_projects for the status surface.
 
-    base_assets = [hello_sovereign]
-    base_resources: Dict[str, object] = {}
     schedule_principals: Dict[str, str] = {}
-
-    if DEMO_MANIFEST.is_file():
-        @dbt_assets(manifest=DEMO_MANIFEST, name="sovereign_demo_dbt")
-        def sovereign_dbt(context, dbt: DbtCliResource):
-            yield from dbt.cli(["build"], context=context).stream()
-
-        base_assets.append(sovereign_dbt)
-        base_resources["dbt"] = DbtCliResource(project_dir=str(DEMO_DBT_DIR), profiles_dir=str(DEMO_DBT_DIR))
 
     # `sanitize` is lossy (`sales-eu` and `sales.eu` both give `sales_eu`), and a duplicate job or
     # schedule name makes `Definitions(...)` raise for the WHOLE location — review B2-review-M2.
@@ -240,7 +290,8 @@ def build_definitions() -> Definitions:
     bundles: List[Tuple[str, Dict[str, object]]] = []
     for p in projects:
         try:
-            bundles.append((p.domain, _wire_project(p, dagster_names[p.domain])))
+            # WP-49: the repo's own module when it is migrated and OS-generated; otherwise LEGACY.
+            bundles.append((p.domain, _native_bundle(p) if p.definitions else _wire_project(p, dagster_names[p.domain])))
         except Exception as e:  # noqa: BLE001 — per-domain gating
             log.error("sovereign: domain %s failed to load (%s: %s) — skipped", p.domain, type(e).__name__, e)
 
@@ -283,14 +334,17 @@ def build_definitions() -> Definitions:
         # from the bundle `partition_definitions` finally accepts.
         schedule_principals.clear()
         schedule_principals.update(bundle["principals"])  # type: ignore[arg-type]
-        return Definitions(
-            assets=[*base_assets, *bundle["assets"]],  # type: ignore[misc]
+        legacy = Definitions(
+            assets=bundle["assets"],                    # type: ignore[arg-type]
             asset_checks=bundle["checks"],              # type: ignore[arg-type]
             jobs=bundle["jobs"],                        # type: ignore[arg-type]
             schedules=bundle["schedules"],              # type: ignore[arg-type]
             sensors=[os_quarantine, os_principals],
-            resources={**base_resources, **bundle["resources"]},  # type: ignore[dict-item]
+            resources=bundle["resources"],              # type: ignore[arg-type]
         )
+        merged = Definitions.merge(legacy, *bundle["defs"])  # type: ignore[misc]
+        Definitions.validate_loadable(merged)
+        return merged
 
     defs_, rejected = osp.partition_definitions(bundles, build, _merge_bundles, _empty_bundle)
     for r in rejected:
@@ -427,7 +481,7 @@ def _wire_project(p: osp.Project, dom: str) -> Dict[str, object]:
             )
         )
 
-    return {"assets": assets, "jobs": jobs, "schedules": schedules, "checks": checks, "resources": resources, "principals": schedule_principals}
+    return {"assets": assets, "jobs": jobs, "schedules": schedules, "checks": checks, "resources": resources, "principals": schedule_principals, "defs": []}
 
 
 def _maintenance_job(p: osp.Project, dom: str, schema: str, principal: str, resource_key: str, pinned_env: str):

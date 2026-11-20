@@ -1108,6 +1108,12 @@ dagster:
           # `scripts/check-trino-rules-chart.mjs` (run from os-ui/scripts/gate.sh). B3-review-H-5.
           - { name: TRINO_USER, value: dbt-runner }
           - { name: TRINO_CATALOG, value: iceberg }
+          # dlt's Trino destination for the Bronze ingestion in each repo's data/dagster/definitions.py
+          # (WP-49). The USERNAME is per run: the principal, set with OS_PRINCIPAL (os_projects.run_pod_env).
+          - { name: DESTINATION__SQLALCHEMY__CREDENTIALS__DRIVERNAME, value: trino }
+          - { name: DESTINATION__SQLALCHEMY__CREDENTIALS__HOST, value: trino }
+          - { name: DESTINATION__SQLALCHEMY__CREDENTIALS__PORT, value: "8080" }
+          - { name: DESTINATION__SQLALCHEMY__CREDENTIALS__DATABASE, value: iceberg }
           # The domain schema the marts land in — the SAME value as dbt.trino.schema and
           # marts.schema (`sales`); the old `analytics` literal here had drifted from them.
           - { name: TRINO_SCHEMA, value: sales }

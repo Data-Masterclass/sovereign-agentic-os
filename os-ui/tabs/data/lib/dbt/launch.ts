@@ -149,7 +149,7 @@ export async function launchAfterCommit(input: LaunchInput, deps: LaunchDeps = {
   };
 
   if (!commit) return finish(null, 'no commit on the domain repository yet (DATA_PROJECT_GIT on, nothing committed)');
-  if (selection.length === 0) return finish(null, `no dbt model for ${input.layer} of this dataset (built out of band ⇒ a source, not launched)`);
+  if (selection.length === 0) return finish(null, `no dbt model for ${input.layer} of this dataset (the dataset is refused: dbt cannot rebuild it — the reason is in os/skipped.yml)`);
 
   const ready = await waitForAssets(selection, deps);
   if (ready.error) return finish(null, `commit ${commit.slice(0, 7)} not launched: ${ready.error}`);
@@ -175,7 +175,13 @@ export async function launchAfterCommit(input: LaunchInput, deps: LaunchDeps = {
     domain: d.domain,
     selection,
     tags,
-    env: { OS_PRINCIPAL: input.principal, OS_PINNED_COMMITS: `${d.domain}=${commit}` },
+    // The same run-pod env the platform wrapper puts on a scheduled run (os_projects.run_pod_env):
+    // dbt impersonates OS_PRINCIPAL; dlt writes the landing through Trino as that principal.
+    env: {
+      OS_PRINCIPAL: input.principal,
+      DESTINATION__SQLALCHEMY__CREDENTIALS__USERNAME: input.principal,
+      OS_PINNED_COMMITS: `${d.domain}=${commit}`,
+    },
   });
   if (!launched.ok) return finish(null, `commit ${commit.slice(0, 7)} not launched: ${launched.error}`, batchId);
   return finish(launched.data.runId, null, batchId);

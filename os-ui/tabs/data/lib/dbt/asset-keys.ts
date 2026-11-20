@@ -22,8 +22,10 @@ const ORDER: Layer[] = ['bronze', 'silver', 'gold'];
 export type DatasetAssetKeys = {
   /** Keys of the dataset's own models, lowest layer first. */
   models: { layer: Layer; name: string; key: string[] }[];
-  /** The asset carrying the dataset's quality rules (a model, or the out-of-band source), or null. */
+  /** The asset carrying the dataset's quality rules (its furthest model), or null. */
   tested: string[] | null;
+  /** The dlt ingestion asset of a database sync (`data/dagster/definitions.py`), or null. */
+  ingest: string[] | null;
   /** Models of OTHER datasets in the domain that read this one (direct dependents). */
   dependents: string[][];
 };
@@ -35,16 +37,13 @@ export function datasetAssetKeys(snapshot: ProjectSnapshot, datasetId: string): 
     .sort((a, b) => ORDER.indexOf(a.layer) - ORDER.indexOf(b.layer));
   const models = mine.map((m) => ({ layer: m.layer, name: m.name, key: [snapshot.domain, m.name] }));
   const testedModel = mine.find((m) => m.tested);
-  let tested: string[] | null = testedModel ? [snapshot.domain, testedModel.name] : null;
-  if (!tested) {
-    // The tested layer was built out of band → the planner registered it as a source carrying the tests.
-    const src = plan.sources.find((s) => s.meta?.os_dataset === datasetId && s.meta?.os_built === 'out-of-band' && s.columns);
-    if (src) tested = [snapshot.domain, src.source, src.table];
-  }
+  const tested: string[] | null = testedModel ? [snapshot.domain, testedModel.name] : null;
+  const dlt = plan.dltSources.find((s) => s.dataset === datasetId);
+  const ingest = dlt ? [...dlt.key] : null;
   const dependents = plan.models
     .filter((m) => m.dataset.id !== datasetId && (m.dataset.upstreams ?? []).some((u) => u.datasetId === datasetId))
     .map((m) => [snapshot.domain, m.name]);
-  return { models, tested, dependents };
+  return { models, tested, ingest, dependents };
 }
 
 /** The subset a Build of `layer` launches: that layer, the dataset's higher models, and direct dependents. */
@@ -54,9 +53,9 @@ export function selectionForBuild(keys: DatasetAssetKeys, layer: Layer): string[
   return dedupe([...own, ...keys.dependents]);
 }
 
-/** The subset a sync run launches: every model of the dataset plus direct dependents (`<landing>+`). */
+/** The subset a sync run launches: the dlt ingestion (if any), every model of the dataset, and direct dependents. */
 export function selectionForSync(keys: DatasetAssetKeys): string[][] {
-  return dedupe([...keys.models.map((m) => m.key), ...keys.dependents]);
+  return dedupe([...(keys.ingest ? [keys.ingest] : []), ...keys.models.map((m) => m.key), ...keys.dependents]);
 }
 
 function dedupe(keys: string[][]): string[][] {

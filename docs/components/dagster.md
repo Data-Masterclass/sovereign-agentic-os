@@ -35,86 +35,65 @@ release and then goes.
 One commit, one validated checkout, one run. The OS writes no `os-sync-runs` or `os-dq-results`
 row for anything Dagster executed.
 
-## The `sovereign` code location
+## The domain repo's own code location (WP-49)
 
-`images/extensions/dagster/repo.py` wires Dagster objects; everything decidable without Dagster
-lives in `os_projects.py` (pure, unit-tested with `python3 -m unittest discover -s tests`).
+Every domain repo carries its data products as **plain Dagster code**: the OS generates
+`data/dagster/definitions.py` (`tabs/data/lib/dbt/dagster-definitions.ts`) next to the dbt project
+at `data/dbt/` (component design 12). It is a normal code location — from a clone, with no OS:
+
+```sh
+pip install dagster dagster-webserver dagster-dbt dbt-trino 'dlt[sqlalchemy,sql-database]' 'trino[sqlalchemy]'
+cd data/dagster
+export DBT_TARGET=local TRINO_HOST=localhost TRINO_USER=$USER \
+       DESTINATION__SQLALCHEMY__CREDENTIALS=trino://$USER@localhost:8080/iceberg \
+       SOURCES__<CONNECTION>__CREDENTIALS=postgresql+psycopg2://…   # one per database connection
+dagster dev -m definitions                 # assets, checks, schedules in the UI
+dagster asset materialize -m definitions --select '*'
+```
 
 | Piece | What it is |
 |---|---|
-| `hello_sovereign` | the smoke asset, kept |
-| `<domain>_dbt` | `@dbt_assets` over `/repos-checkout/<domain>/current/target/manifest.json`, keys `[<domain>, <node>]` via a `DagsterDbtTranslator` prefix, group = the domain |
+| `<domain>_dbt` | `@dbt_assets` over `DbtProject(data/dbt)` (`prepare_if_dev()` runs `dbt parse` under `dagster dev`), keys `[<domain>, …]` via a translator prefix, group = the domain, dbt tests on sources as checks (`enable_source_tests_as_checks`) |
+| `[<domain>, landing_<domain>_<owner>, raw_<slug>]` | one **dlt ingestion asset** per database sync (decision O8): `sql_table(credentials=dlt.secrets["sources.<connection>.credentials"], …, incremental=dlt.sources.incremental(<cursor>))` → `dlt.pipeline(pipeline_name=<dataset id>, destination="sqlalchemy", dataset_name=landing_<domain>_<owner>)`. The `sqlalchemy` destination over Trino's dialect makes the landing a Trino write into Iceberg as the principal. Its key is the dbt source's key, so the sync model depends on it; a `build_last_update_freshness_checks` check (two schedule intervals) watches it |
 | `<domain>__all` | the job the OS launches with an explicit **asset subset** (Build, transform, gold join, sync now) |
-| `<domain>__<datasetId>` | one job + `ScheduleDefinition` per entry in the repo's `os/schedules.yml`: `cron_schedule`, `execution_timezone="UTC"`, selection `<model>+`, `default_status` from `enabled` |
-| `<domain>__maintenance__<schema>` | weekly (Sun 03:00 UTC) `dbt run-operation os_maintenance` → `ALTER TABLE … EXECUTE optimize` + `expire_snapshots(retention_threshold => '7d')` for every table/incremental model in that schema, as the schema's owning principal |
-| `os_quarantine` | run-failure **sensor**: after `OS_QUARANTINE_THRESHOLD` (10, the OS's own threshold) consecutive failures of a schedule's job it **pauses the schedule** — this replaces the OS's `isQuarantined` |
-| `os_principals` | **sensor** (5 min): reads `GET /api/data/projects` and pauses the schedules whose principal the OS reports **inactive** (a deactivated owner), rather than running them |
-| `[<domain>, <source>, <table>]` | **observable source asset** per entry in the repo's `os/sources.yml` (engine rebuild B3) — the federated warehouse table a sync reads. See below. |
+| `<domain>__<datasetId>` | one job + `ScheduleDefinition` per sync: the dlt asset and everything downstream (or `<model>+` for a sync dbt reads directly), `execution_timezone="UTC"`, `default_status` from `enabled` |
+| `<domain>__maintenance__<schema>` | weekly (Sun 03:00 UTC) `dbt run-operation os_maintenance` (optimize + `expire_snapshots`), as the schema's owning principal |
+
+**OS metadata only in tags** (artifact contract C2, GLUE-10): `os/domain`, `os/dataset`,
+`os/principal`, `os/schedule`, `os/action`, `os/schema` on jobs; `os/dataset` as asset metadata.
+`os/run_grant` is WP-15's to add as one more tag. The module reads no OS file.
+
+**No out-of-band layer** (C3). Every built silver and gold layer is a dbt model: a body the OS
+compiled, a pass-through, or an **authored** body committed as written. An authored model adopts its
+existing table with `config(materialized='table', on_table_exists='replace', full_refresh=false)`:
+Iceberg's `CREATE OR REPLACE TABLE` keeps the table's snapshot history. A built layer with **no
+recorded SQL**, or authored SQL carrying dbt Jinja, makes the generator refuse the dataset, with the
+reason in `os/skipped.yml`; its tables stay untouched. GLUE-10 fails any generated `sources.yml` that
+declares a silver/gold layer as a source.
+
+## The `sovereign` code location: a platform wrapper
+
+`images/extensions/dagster/repo.py` owns **no asset, job or schedule**. It loads each repo-sync
+checkout's `data/dagster/definitions.py` and merges them (`Definitions.merge`), adding only:
+
+| Piece | What it is |
+|---|---|
+| hash check (C5) | `os_projects.load_project` imports a module only when its sha256 equals `os/generated.yml` (written by the OS; `os/**` and `data/dagster/**` are unpushable). A tampered copy is skipped with the reason |
+| run-pod env | every schedule is re-declared with `dagster-k8s/config`: `OS_PINNED_COMMITS`, and — from the job's own `os/principal` tag — `OS_PRINCIPAL` (dbt impersonation) and `DESTINATION__SQLALCHEMY__CREDENTIALS__USERNAME` (dlt). OS launches pass the same env (`launch.ts`) |
+| `os_quarantine` | run-failure **sensor**: after `OS_QUARANTINE_THRESHOLD` (10) consecutive failures it **pauses the schedule** |
+| `os_principals` | **sensor** (5 min): pauses the schedules whose principal the OS reports **inactive** |
 
 **Tags on every run** — `os/domain`, `os/commit`, `os/pinned`, and where applicable `os/dataset`,
 `os/principal`, `os/schedule`, `os/action`, `os/layer`, `os/user`, `os/surface`, `os/batch_id`,
-`os/full_refresh`. Monitoring and the Data tab find runs by these tags; nothing else is needed.
+`os/full_refresh`. A K8s run pod starts with an **empty** `/repos-checkout`, so
+`os_projects.ensure_checkout` clones the pinned commit and `dbt parse`s `data/dbt` before it imports
+the module.
 
-**`dagster-k8s/config`** carries the run pod's env: `OS_PRINCIPAL` (the Trino user dbt-trino
-impersonates — the schedule's principal, the maintenance schema's owner, or the principal the OS
-passed on launch) and `OS_PINNED_COMMITS` (`<domain>=<sha>,…`). A K8s run pod starts with an
-**empty** `/repos-checkout`, so `os_projects.ensure_checkout` clones the pinned commit from the
-read-only git daemon and `dbt parse`s it before building definitions. Values are principals and
-shas — **never a secret**.
+**Per-domain gating.** A domain without a parsed manifest, without definitions, with a hash
+mismatch, or refused by `Definitions.validate_loadable` is logged and **skipped**.
 
-**Per-domain gating.** A domain whose checkout has no parsed manifest, or whose wiring raises, is
-logged and **skipped**. One broken repository can never take the location down.
-
-**Batch idempotency.** A sync's `delete+insert` model keys on `_batch_id = {{ var("os_batch_id") }}`.
-The OS passes `--vars os_batch_id=<id>` on a **retry** (re-using the failed run's `os/batch_id`), so
-that retry re-covers exactly the same slice. A plain re-run gets dbt's `invocation_id` and therefore
-re-delivers the lookback rows as a new batch — that is the honest semantic, not a bug.
-
-## External sources are assets too (engine rebuild B3)
-
-A sync copies a table the OS does not own — a Postgres/Supabase/Snowflake table mounted as a
-federated Trino catalog through the Connections tab. Before B3 that table was an invisible edge: the
-silver model read `{{ source('wh__public', 'events') }}` and the graph simply started there.
-
-The generator now also writes **`os/sources.yml`** (`tabs/data/lib/dbt/source-assets.ts`), one entry
-per federated sync source, and the code location turns each into an
-`@observable_source_asset`:
-
-| Field | Meaning |
-|---|---|
-| asset key | `[<domain>, <source>, <table>]` — **exactly** the key dagster-dbt derives for the dbt source under the OS's prefixing translator, so the silver model depends on this very node instead of a parallel one |
-| `observe` | `max_updated` when the sync has a **timestamp cursor** (`select max("<cursor>") , count(*)`), else `row_count`. The probe runs **as the entry's `principal`** (the dataset owner) — one statement, Trino→OPA governs it like any other read |
-| `freshness_minutes` | **two schedule intervals**, derived from the sync's own cron by `cronIntervalMinutes` (pure, tested): one missed tick is jitter, two is late. A cron shape the OS's picker does not produce yields **no claim** rather than a wrong one. Rendered as a `build_last_update_freshness_checks` asset check |
-| `downstream` | the model that reads it, so the file is readable on its own |
-
-**Who runs the observation** (review B3-review-M-3/M-4). An observable asset that is in no job and
-no schedule is never observed — so B3's assets were defined and inert, and their freshness checks
-measured a data version that never arrived. The code location now also builds, per domain:
-
-- **one observation job + schedule per DISTINCT cron** among that domain's ENABLED sources, at the
-  source's own cron (which the generator derived from the sync's schedule). The job is named
-  `<domain>__observe_<sha6(cron)>` — stable, so adding or removing an unrelated source never
-  renames an existing schedule;
-- `enabled: false` on an entry keeps the ASSET (the graph and the lineage view still need the node)
-  and leaves it out of the schedule — nothing probes a source whose sync the owner turned off;
-- `os/principal` + `OS_PRINCIPAL` on the run tag only when every source in the group shares one
-  principal, and the inactive-principal sensor only registers such a group — one deactivated owner
-  must not pause other people's observations.
-
-**Bounded** (review B3-review-M-5): the probe connects with `request_timeout` AND a
-`query_max_run_time` session property (`OS_OBSERVE_TIMEOUT_SECONDS`, default 60 s). The HTTP
-timeout bounds one poll; only the session property makes Trino itself abandon a `select count(*)`
-over a source that has gone slow, instead of holding a run pod and a Trino slot indefinitely.
-
-Safety: every identifier in an entry must match `^[A-Za-z_][A-Za-z0-9_$]{0,127}$` or
-`os_projects.parse_source_assets` **drops the entry** — the probe interpolates them into SQL, and a
-half-built probe is worse than none. The `principal` is validated separately against the OS
-principal shape `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$` (a principal is not a SQL identifier — it
-legitimately contains `-` and `.`) and a malformed one DROPS the entry rather than being coerced
-into a different identity (B3-review-L-2); the same bound applies to a schedule's principal, which
-becomes `OS_PRINCIPAL` for the whole build. The Iceberg Bronze landing is deliberately NOT a source asset:
-it lives in the same lakehouse and already carries `_loaded_at` dbt source freshness. Kafka-offset
-and API-batch syncs are still in `os/external.yml` and still not assets — see the FAQ.
+**Batch idempotency.** A sync's `delete+insert` model keys on `_batch_id = {{ var("os_batch_id") }}`;
+the module passes `--vars` from the run's `os/batch_id` tag, so a retry re-covers the same slice.
 
 ## Lineage comes from the manifest (engine rebuild B3)
 
@@ -224,14 +203,14 @@ is served rather than materialised.
 
 **Q: What is NOT a Dagster asset?** Kafka-offset syncs and API-batch sources (Salesforce, Kajabi,
 the Files connectors) — dbt cannot express a per-partition watermark or an API pull. The generator
-lists them honestly in `os/external.yml`. **Federated** sync sources ARE assets since B3
-(`os/sources.yml` → one observable source asset each, with a freshness check derived from the sync's
-own cron); the Kafka/API half stays out, and `repo.py` ignores `os/external.yml`. The Files
+lists them honestly in `os/external.yml`. **Database** syncs are dlt ingestion assets in the repo's
+`data/dagster/definitions.py` since WP-49 (the B3 observation of a federated catalog and
+`os/sources.yml` are gone); the Kafka (WP-17) and SaaS/API (WP-18, dlt `rest_api`) halves stay out. The Files
 connector's old `launchPipelineExecution` call targeted a job that never existed and is now a logged
 no-op with that TODO.
 
 **Q: Where did my CronJob go?** Saving a sync provisions **no** CronJob and removes any pre-B2 one,
-so a slice cannot run twice. The schedule lives in the repo (`os/schedules.yml`) and runs in Dagster.
+so a slice cannot run twice. The schedule lives in the repo (`data/dagster/definitions.py`, WP-49) and runs in Dagster.
 Since **B4** this is not a flag-dependent behaviour but the only behaviour: the provisioning code,
 the two fallback sweep routes (`/api/data/sync-due`, `/api/data/dq/run-all`) and their chart
 CronJobs are deleted. All that survives is the delete-only
@@ -314,6 +293,12 @@ If a run Job stays Running with its main container done, the guard did not fire 
 
 ## Known limits
 
+- **WP-49 needs the WP-55 layout.** The generated module expects the dbt project at `data/dbt/`
+  and repo-sync must `dbt parse` there (`os_projects.DBT_PROJECT_DIR`); until a repo is migrated,
+  the wrapper skips it with "no data/dbt/target/manifest.json". Deploy WP-49 with or after WP-55.
+- **dlt connects to Trino as the principal** (no authentication today, like dbt's `dbt-runner`
+  impersonation). WP-15 moves both to `svc-dagster-runner` with run grants; the module needs no
+  change for that — only the run-pod env and `os/run_grant` tag the platform adds.
 - **`os/external.yml` is written but not read** (live audit 2026-11, track H). Kafka-offset and
   API-batch syncs (Salesforce, Kajabi, OData, Workday — any connection without a Trino catalog)
   are planned as *external assets*: the generator lists them in `os/external.yml`, but neither
@@ -337,7 +322,7 @@ If a run Job stays Running with its main container done, the guard did not fire 
   before it. Visible as the log line `schedule … has no stored state yet`.
 - ~~**Cold start costs one checkout per domain**~~ **CLOSED in B3** (review B2-review-L4). Every
   tag a domain's jobs carry now pins **only that domain** (`os_projects.pinned_one`,
-  `repo.py` `_wire_project`), so a run pod clones and `dbt parse`s exactly what its own job needs
+  `repo.py` `wrap_domain`), so a run pod clones and `dbt parse`s exactly what its own job needs
   and cold start stays flat as domains are added. The location-wide `pinned_env` is still computed
   for the code-server pod, which legitimately loads every domain.
 - ~~**The repo-sync status server binds `0.0.0.0:8089`**~~ **CLOSED in B3** (review B2-review-L5).

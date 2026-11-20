@@ -25,6 +25,7 @@ import {
   type EngineeringSection,
 } from '@core/engineering/types';
 import { graphJson, type EngineeringGraph } from '@core/engineering/graph';
+import { DATA_LAYOUT } from '@core/infra/data-layout';
 import { TOOL_LABELS } from '@core/engineering/vocabulary';
 
 /** One file as it is stored in the domain repository. */
@@ -181,8 +182,8 @@ export function dagsterSection(input: { osNoun: string; facts: DagsterFacts; una
   ];
   const commands: EngineeringCommand[] = facts.assetKeys.map((key) => ({
     tool: 'dagster',
-    command: `dagster asset materialize --select ${assetKeyPath(key)}`,
-    description: 'materialise this asset from a checkout of the code location',
+    command: `cd ${DATA_LAYOUT.dagsterDir} && dagster asset materialize -m definitions --select ${assetKeyPath(key)}`,
+    description: "materialise this asset from a clone of the domain repo (its own Dagster code location, WP-49)",
   }));
   const section: EngineeringSection = { tool: 'dagster', label: TOOL_LABELS.dagster, title, artefacts, links, commands };
   if (input.caveats?.length) section.caveats = input.caveats;

@@ -31,7 +31,13 @@ RUN pip install --no-cache-dir \
       # rebuild change the dbt that judges every domain; the image tests and the eject test
       # (tests/image/) read these versions back from the image instead of repeating them.
       "dbt-core==1.9.11" \
-      "dbt-trino==1.9.3"
+      "dbt-trino==1.9.3" \
+      # WP-49: dlt runs the Bronze ingestion inside Dagster (design 01 M5, decision O8): the
+      # `sql_database` source for database connections and the `sqlalchemy` destination over
+      # Trino's own SQLAlchemy dialect, so a landing is a Trino write as the run's principal into
+      # Iceberg. Exact pins (dlt 1.32.0 released 2026-10-29); licences in components/dlt/UPSTREAM.md.
+      "dlt[sqlalchemy,sql-database]==1.32.0" \
+      "trino[sqlalchemy]==0.340.0"
 
 # git (GPL-2.0, a separate process from a distro package — not linked) for the repo-sync
 # sidecar (engine rebuild B1): fetch each domain's generated dbt project from the OS's
@@ -39,19 +45,15 @@ RUN pip install --no-cache-dir \
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-RUN mkdir -p /opt/dagster/app /opt/dagster/dagster_home /opt/dbt /repos-checkout
+RUN mkdir -p /opt/dagster/app /opt/dagster/dagster_home /repos-checkout
 
-# The dbt project + a pre-parsed manifest (dbt parse needs no DB connection).
-COPY dbt/project /opt/dbt/project
-RUN cd /opt/dbt/project && dbt parse --profiles-dir /opt/dbt/project --target dev || \
-    dbt parse --profiles-dir /opt/dbt/project
-
-# The `sovereign` code location (engine rebuild B2): repo.py wires Dagster; os_projects.py is the
-# pure loader (discovery, os/schedules.yml, tags, quarantine) unit-tested in dagster/tests/.
+# The `sovereign` code location is a PLATFORM WRAPPER only (WP-49): repo.py loads each domain
+# repo's own `data/dagster/definitions.py` from repo-sync's checkout and adds the platform's
+# sensors and run tags. The image carries no asset, job or schedule of its own.
 COPY dagster/repo.py /opt/dagster/app/repo.py
 COPY dagster/os_projects.py /opt/dagster/app/os_projects.py
 COPY dagster/repo-sync.sh /opt/dagster/app/repo-sync.sh
-RUN chmod -R a+rX /opt/dagster /opt/dbt && chmod a+x /opt/dagster/app/repo-sync.sh && chmod a+rwX /repos-checkout
+RUN chmod -R a+rX /opt/dagster && chmod a+x /opt/dagster/app/repo-sync.sh && chmod a+rwX /repos-checkout
 
 ENV DAGSTER_HOME=/opt/dagster/dagster_home
 WORKDIR /opt/dagster/app

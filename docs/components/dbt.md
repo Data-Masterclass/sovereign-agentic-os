@@ -36,7 +36,7 @@ The generated project is what an engineer would write:
 | Sync append (cursor, 15-min lookback, `_batch_id`) | `incremental`, `incremental_strategy: delete+insert`, `unique_key: _batch_id`, `where cursor > (select max(cursor) from {{ this }}) - interval '15' minute` |
 | Sync merge | `incremental`, `incremental_strategy: merge`, `unique_key: [merge keys]`, `on_schema_change: append_new_columns` |
 | Kafka offsets / API-batch sources | **not** faked as models: listed in `os/external.yml`. Still not assets — the Dagster Python asset that calls the OS's governed slice executor is NOT in B4 either; it needs the slice executor's HTTP contract and is a recorded follow-up. These syncs run through the OS executor, triggered manually or by the OS's own path |
-| A federated sync **source** | `os/sources.yml` (engine rebuild B3) → one **observable source asset** per entry, keyed `[<domain>, <source>, <table>]` so the silver model that reads it depends on it. Freshness = two schedule intervals, derived from the sync's own cron; `max_updated` on a timestamp cursor, else `row_count`. See `dagster.md` → "External sources are assets too" |
+| A database sync's **landing** | dlt (WP-49) lands the source table in `landing_<domain>_<owner>.raw_<slug>` (a dbt `source`); the sync model reads it. The dlt asset in `data/dagster/definitions.py` has the source's key, so the model depends on it; freshness = two schedule intervals. See `dagster.md` → "The domain repo's own code location" |
 | Sync schedule | `os/schedules.yml` `{dataset, select: "<model>+", cron, timezone: UTC, principal, enabled}` → one UTC `ScheduleDefinition` in the Dagster `sovereign` location |
 | Iceberg maintenance | `macros/os_maintenance.sql` — `ALTER TABLE … EXECUTE optimize` + `expire_snapshots(retention_threshold => '7d')` per schema, run weekly by Dagster as the schema's owner |
 
@@ -155,7 +155,7 @@ measure, so those metrics are refused by name in the project README and served b
 - Read access + mirror: `tabs/data/lib/dbt/{read,mirror}.ts`; repo index `GET /api/data/projects`.
 - Launch after commit: `tabs/data/lib/dbt/{launch,asset-keys}.ts` over `core/infra/dagster.ts`.
 - Read-back: `tabs/data/lib/{sync-status-server,dq-status-server}.ts`.
-- Source assets: `tabs/data/lib/dbt/source-assets.ts` → `os/sources.yml`;
+- Dagster definitions: `tabs/data/lib/dbt/dagster-definitions.ts` → `data/dagster/definitions.py` (+ its hash in `os/generated.yml`);
   `images/extensions/dagster/os_projects.py` `parse_source_assets` / `observe_sql`.
 - Lineage from the manifest: `tabs/data/lib/dbt/lineage.ts` (pure) +
   `tabs/data/lib/lineage-server.ts` (one `assetGraph()` call, registry fallback).

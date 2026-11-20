@@ -55,9 +55,10 @@ import {
   type RepoSummary,
 } from '@core/infra/git-store';
 import { trailersNameObject } from '@core/infra/git-trailers';
+import { DATA_LAYOUT } from '@core/infra/data-layout';
 import type { MirrorSignal } from '@core/infra/git-mirror';
 import {
-  AGENTS_DIR, AGENTS_INDEX_PATH, OS_EXTERNAL_PATH, OS_LIFECYCLE_PINS_PATH, OS_SCHEDULES_PATH, OS_SOURCES_PATH, USER_REPO_PREFIX,
+  AGENTS_DIR, AGENTS_INDEX_PATH, OS_EXTERNAL_PATH, OS_LIFECYCLE_PINS_PATH, OS_SCHEDULES_PATH, USER_REPO_PREFIX,
   configuredDbtProjectDir, prefixOf,
 } from '@core/infra/repo-layout';
 
@@ -119,7 +120,7 @@ export const GIT_OBJECT_LAYOUT: Record<GitObjectKind, GitObjectLayout> = {
   dataset: {
     kind: 'dataset',
     label: 'dbt model',
-    paths: [`${DBT}/dbt_project.yml`, `${DBT}/profiles.yml`, `${DBT}/models/`, OS_SCHEDULES_PATH, OS_SOURCES_PATH, OS_EXTERNAL_PATH],
+    paths: [`${DBT}/dbt_project.yml`, `${DBT}/profiles.yml`, `${DBT}/models/`, `${DATA_LAYOUT.dagsterDir}/`, DATA_LAYOUT.generatedHashesPath, OS_SCHEDULES_PATH, OS_EXTERNAL_PATH],
     personalLane: `${DBT}/models/personal/<uid>/`,
     writer: { state: 'committed', via: 'tabs/data/lib/dbt/commit.ts', since: 'engine rebuild B1' },
   },

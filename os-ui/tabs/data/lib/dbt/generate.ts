@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  *
- * FEATURE:    `generateProject(domain, snapshot)` — the whole dbt project of a domain as a file map
+ * FEATURE:    `generateProject(domain, snapshot)` — the domain's dbt project and Dagster definitions as a file map
  * USER STORY: As a data engineer I want one deterministic function from OS state to a complete,
  *             parseable dbt project, so regenerating twice gives a byte-identical tree and the git
  *             store commits nothing when nothing changed (checklist D3).
@@ -15,7 +15,9 @@ import { planModels } from '@tabs/data/lib/dbt/models';
 import { renderSources } from '@tabs/data/lib/dbt/sources';
 import { renderSchemas } from '@tabs/data/lib/dbt/schema';
 import { renderSchedules, renderExternal } from '@tabs/data/lib/dbt/schedules';
-import { renderSourceAssets } from '@tabs/data/lib/dbt/source-assets';
+import { createHash } from 'node:crypto';
+import { DATA_LAYOUT } from '@core/infra/data-layout';
+import { renderDagsterDefinitions } from '@tabs/data/lib/dbt/dagster-definitions';
 import { renderSemantic } from '@tabs/data/lib/dbt/semantic/render';
 import { renderDbtProject, renderProfiles, renderMacros, renderGenericTests, renderReadme, renderGitignore } from '@tabs/data/lib/dbt/project';
 import { checkProject, type ProjectIssue } from '@tabs/data/lib/dbt/project-check';
@@ -64,12 +66,20 @@ export function generateProjectReport(
     const issues = datasetLiteralIssues(e.dataset);
     if (issues.length) skipped.set(e.dataset.id, `refused identifier(s): ${issues.map((i) => i.field).join(', ')}`);
   }
-  let files = renderSafely(domain, { ...snapshot, datasets: snapshot.datasets.filter((e) => !skipped.has(e.dataset.id)) }, opts, skipped);
+  const keep = (s: ProjectSnapshot): ProjectSnapshot => ({ ...s, datasets: s.datasets.filter((e) => !skipped.has(e.dataset.id)) });
+  let files = renderSafely(domain, keep(snapshot), opts, skipped);
+  // C3: a dataset the planner refuses (a built layer dbt cannot rebuild) is skipped with its reason.
+  // Planned on the literal-safe set only, which `renderSafely` has just rendered without a refusal.
+  const refused = planModels(keep(snapshot)).refused;
+  if (refused.length) {
+    for (const r of refused) skipped.set(r.dataset, r.reason);
+    files = renderSafely(domain, keep(snapshot), opts, skipped);
+  }
   for (let pass = 0; pass <= snapshot.datasets.length; pass++) {
     const fresh = (opts.check ?? checkProject)(files).filter((i) => i.datasetId && !skipped.has(i.datasetId));
     if (!fresh.length) break;
     for (const i of fresh) if (!skipped.has(i.datasetId!)) skipped.set(i.datasetId!, `${i.reason} (${i.path})`);
-    files = renderSafely(domain, { ...snapshot, datasets: snapshot.datasets.filter((e) => !skipped.has(e.dataset.id)) }, opts, skipped);
+    files = renderSafely(domain, keep(snapshot), opts, skipped);
   }
   // The closed-grammar Jinja rule (`checkProject` rule 8) is the last line: a violation the check
   // could not pin on a dataset means the generator itself emitted foreign Jinja — refuse to return
@@ -128,8 +138,13 @@ function renderProject(domain: string, snapshot: ProjectSnapshot, opts: Generate
   if (schedules) files.set('os/schedules.yml', schedules);
   const external = renderExternal(plan.externals);
   if (external) files.set('os/external.yml', external);
-  const sourceAssets = renderSourceAssets(plan.sourceAssets);
-  if (sourceAssets) files.set('os/sources.yml', sourceAssets);
+  // The Dagster code location (WP-49) and, in the OS layer, the hash the platform checks before it
+  // imports the module (artifact contract C5): what Dagster executes is exactly what the OS wrote.
+  const definitions = renderDagsterDefinitions(domain, plan);
+  if (definitions) {
+    files.set(DATA_LAYOUT.dagsterDefinitionsPath, definitions);
+    files.set(DATA_LAYOUT.generatedHashesPath, yml({ version: 1, sha256: { [DATA_LAYOUT.dagsterDefinitionsPath]: createHash('sha256').update(definitions).digest('hex') } }));
+  }
   // The semantic layer: `models/semantic/<model>.yml` (or the owner's personal lane) plus the time
   // spine. Metrics are dbt artefacts in this project, not an OS-private record (D1, M1).
   for (const [p, c] of semantic.files) files.set(p, c);

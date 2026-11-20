@@ -14,11 +14,17 @@ Inside our image `sovereign-os/dagster` (`images/extensions/dagster/Dockerfile`)
 | dagster-dbt, dagster-k8s, dagster-postgres | 0.29.11 | Apache-2.0 | https://docs.dagster.io/integrations/libraries/dbt |
 | dbt-core | 1.9.11 | Apache-2.0 (https://github.com/dbt-labs/dbt-core) | `dbt parse` https://docs.getdbt.com/reference/commands/parse · `dbt compile` https://docs.getdbt.com/reference/commands/compile · targets https://docs.getdbt.com/docs/core/connect-data-platform/connection-profiles |
 | dbt-trino | 1.9.3 | Apache-2.0 (https://github.com/starburstdata/dbt-trino) | https://docs.getdbt.com/docs/core/connect-data-platform/trino-setup |
+| dlt[sqlalchemy,sql-database], trino[sqlalchemy] | 1.32.0, 0.340.0 | Apache-2.0 | see `components/dlt/UPSTREAM.md` |
 
 `images/extensions/dagster/tests/image/run.sh` reads the dbt versions back from the built image, so
 the tests and the eject check always use what the image actually carries.
 
 **Why the OS ships it:** Scheduled syncs and pipelines: SQL sources, OneDrive/Google Drive, dbt models, re-indexing.
+
+Since WP-49 the image owns no asset, job or schedule: `repo.py` is a platform wrapper that loads each domain repo's own
+`data/dagster/definitions.py` (Dagster API used: `Definitions`, `Definitions.merge`, `Definitions.validate_loadable`,
+`ScheduleDefinition`, `define_asset_job`, `build_last_update_freshness_checks`, `dagster_dbt.DbtProject` / `dbt_assets`;
+https://docs.dagster.io/api/dagster/definitions, https://docs.dagster.io/integrations/libraries/dbt/reference).
 
 The deployment that uses this pin lives in the chart
 (`charts/sovereign-agentic-os/templates/`); any glue we wrote belongs there or in the

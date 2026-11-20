@@ -1,25 +1,28 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Borek Data Ventures UG
-"""Pure helpers for the `sovereign` Dagster code location (engine rebuild B2).
+"""Pure helpers for the `sovereign` Dagster code location — the platform wrapper (WP-49).
 
-FEATURE:    Discover the validated dbt project of every domain, read `os/schedules.yml`, derive
-            the Dagster schedule / job / tag shapes, and decide quarantine + principal pauses —
-            without importing Dagster, so `repo.py` stays a thin wiring file and this module is
-            unit-tested with `python3 -m unittest` on any machine.
-USER STORY: As a data engineer I want my domain's sync schedules to come from the repo
-            (`os/schedules.yml`), run in UTC with Dagster's skip-missed-tick semantics, carry the
-            dataset / principal / commit as run tags, and pause themselves after repeated failures
-            or when the owning principal is deactivated — exactly what I would wire by hand.
+FEATURE:    Find each domain repo's own Dagster code location (`data/dagster/definitions.py`),
+            check it is byte-for-byte what the OS generated, and decide the platform's run tags,
+            quarantine and principal pauses — without importing Dagster, so `repo.py` stays a thin
+            wiring file and this module is unit-tested with `python3 -m unittest` on any machine.
+            For one release, a repo that is NOT migrated to the design-12 layout (no `os/layout.yml`)
+            or carries no `os/generated.yml` keeps the LEGACY path: its schedules come from
+            `os/schedules.yml` exactly as before WP-49, so no domain loses a schedule.
+USER STORY: As a data engineer I want the schedules, assets and checks Dagster runs to be the plain
+            Dagster code in my repo, runnable from a clone with `dagster dev`, while the platform
+            only adds what a shared deployment needs: which commit a run pod checks out, the
+            principal's environment, and pausing a failing or orphaned schedule.
 ARCHITECTURE:
   - `discover()` lists `<checkout>/<domain>/current -> <sha>` (maintained by repo-sync.sh) or the
     commits pinned in `OS_PINNED_COMMITS` (how a K8s run pod, whose emptyDir starts EMPTY, learns
-    which commit to check out — see `ensure_checkout`). A domain without a parsed manifest is
-    skipped with a reason, never fatal: one broken repo cannot take the location down.
-  - Everything here is a pure function of the file tree + env; the only subprocesses are `git`
-    and `dbt parse`, both injected (`run=`) so tests never shell out.
+    which commit to check out — see `ensure_checkout`). A domain without a parsed manifest, or
+    whose definitions do not match the recorded hash, is skipped with a reason, never fatal.
+  - The dbt project directory comes from the repo's layout marker (`dbt_dir`, WP-55); the Dagster
+    module path and the hash record mirror `os-ui/core/infra/data-layout.ts` (a test asserts it).
   - Tag values are strings; `dagster-k8s/config` is JSON — the K8s run launcher reads the run
-    pod's env from it (OS_PRINCIPAL = the Trino user dbt impersonates, OS_PINNED_COMMITS = the
-    commits the run pod must check out).
+    pod's env from it (OS_PRINCIPAL = the Trino user dbt impersonates, the dlt destination user,
+    OS_PINNED_COMMITS = the commit the run pod must check out).
 """
 from __future__ import annotations
 
@@ -50,6 +53,10 @@ _DOMAIN_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 LAYOUT_MARKER = os.path.join("os", "layout.yml")
 DOMAIN_REPO_PREFIX = "domain-"
 DEFAULT_DBT_PROJECT_DIR = "data/dbt"
+#: The repo's own Dagster code location (design 12; os-ui/core/infra/data-layout.ts), WP-49.
+DAGSTER_DEFINITIONS_PATH = "data/dagster/definitions.py"
+#: OS layer: sha256 of every generated native file the platform executes (artifact contract C5).
+GENERATED_PATH = "os/generated.yml"
 
 
 def _valid_rel_dir(raw: str) -> str:
@@ -464,6 +471,10 @@ class Project:
     schemas: Dict[str, str] = field(default_factory=dict)
     #: `os/sources.yml` — the federated tables a sync reads, as OBSERVABLE source assets (B3).
     source_assets: List["SourceAsset"] = field(default_factory=list)
+    #: WP-49: the repo's own `data/dagster/definitions.py`, verified against `os/generated.yml`.
+    #: None ⇒ the LEGACY path (an unmigrated repo, or one the OS has not generated it for yet):
+    #: `schedules` / `source_assets` from `os/*.yml` drive the wiring, as before WP-49.
+    definitions: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -543,11 +554,58 @@ def schemas_from_manifest(manifest_path: str, domain: str) -> Dict[str, str]:
     return dict(sorted(out.items()))
 
 
+def sha256_file(path: str) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        h.update(fh.read())
+    return h.hexdigest()
+
+
+def recorded_hash(repo_dir: str, rel: str = DAGSTER_DEFINITIONS_PATH) -> Optional[str]:
+    """The sha256 the OS recorded for a generated file in `os/generated.yml`, or None."""
+    try:
+        with open(os.path.join(repo_dir, GENERATED_PATH), encoding="utf-8") as fh:
+            doc = _load_yaml(fh.read()) or {}
+    except (OSError, ValueError):
+        return None
+    hashes = doc.get("sha256") if isinstance(doc, dict) else None
+    value = hashes.get(rel) if isinstance(hashes, dict) else None
+    return value if isinstance(value, str) and re.match(r"^[0-9a-f]{64}$", value) else None
+
+
+def is_migrated(repo_dir: str) -> bool:
+    """A v2 (design-12) repo carries the layout marker `os/layout.yml` (WP-55)."""
+    return os.path.isfile(os.path.join(repo_dir, LAYOUT_MARKER))
+
+
+def native_definitions(domain: str, repo_dir: str) -> Tuple[Optional[str], Optional[Skipped]]:
+    """WP-49: the repo's own module when the repo is migrated AND the OS recorded its hash.
+
+    Returns (path, None) for a module to import; (None, None) for the LEGACY path (no marker, no
+    module or no record — the OS has not generated it for this repo yet); (None, Skipped) when a
+    module is present but differs from the record (C5): it is refused, never imported, and the
+    domain is NOT silently put on the legacy path either.
+    """
+    if not is_migrated(repo_dir):
+        return None, None
+    path = os.path.join(repo_dir, DAGSTER_DEFINITIONS_PATH)
+    want = recorded_hash(repo_dir)
+    if not os.path.isfile(path) or not want:
+        return None, None
+    got = sha256_file(path)
+    if got != want:
+        return None, Skipped(domain, f"{DAGSTER_DEFINITIONS_PATH} sha256 {got[:12]} differs from the OS-generated {want[:12]} — refusing to import it")
+    return path, None
+
+
 def load_project(domain: str, sha_dir: str, sha: str) -> Tuple[Optional[Project], Optional[Skipped]]:
     project_dir = dbt_dir(sha_dir)
     manifest = os.path.join(project_dir, "target", "manifest.json")
     if not os.path.isfile(manifest):
         return None, Skipped(domain, f"no target/manifest.json in {project_dir} (dbt parse did not run or failed)")
+    definitions, refused = native_definitions(domain, sha_dir)
+    if refused:
+        return None, refused
     schedules: List[Schedule] = []
     sched_path = os.path.join(sha_dir, "os", "schedules.yml")
     if os.path.isfile(sched_path):
@@ -574,6 +632,7 @@ def load_project(domain: str, sha_dir: str, sha: str) -> Tuple[Optional[Project]
             schedules=schedules,
             schemas=schemas_from_manifest(manifest, domain),
             source_assets=source_assets,
+            definitions=definitions,
         ),
         None,
     )
@@ -670,6 +729,31 @@ def k8s_env_tag(env: Mapping[str, str]) -> str:
         separators=(",", ":"),
         sort_keys=True,
     )
+
+
+def run_pod_env(principal: Optional[str], pinned: str) -> Dict[str, str]:
+    """The run pod's env for a run of one domain: the commit to check out and, when the run has a
+    principal, the identity dbt impersonates (`OS_PRINCIPAL`) and dlt's Trino destination user
+    (dlt resolves `DESTINATION__SQLALCHEMY__CREDENTIALS__USERNAME` from the environment)."""
+    env = {"OS_PINNED_COMMITS": pinned}
+    if principal:
+        env["OS_PRINCIPAL"] = principal
+        env["DESTINATION__SQLALCHEMY__CREDENTIALS__USERNAME"] = principal
+    return env
+
+
+def platform_run_tags(domain: str, sha: str, pinned: str, job_tags: Mapping[str, object]) -> Dict[str, str]:
+    """Tags the platform adds to every SCHEDULED run of a repo's own definitions (WP-49).
+
+    The principal is the one the repo's definitions name in the job's `os/principal` tag (the
+    documented extension point, C2). A malformed principal is dropped, never passed on: it would
+    become a Trino session user.
+    """
+    tags = base_tags(domain, sha, pinned)
+    principal = str(job_tags.get("os/principal") or "")
+    principal = principal if _PRINCIPAL_RE.match(principal) else ""
+    tags["dagster-k8s/config"] = k8s_env_tag(run_pod_env(principal or None, pinned))
+    return tags
 
 
 def base_tags(domain: str, sha: str, pinned: str) -> Dict[str, str]:
