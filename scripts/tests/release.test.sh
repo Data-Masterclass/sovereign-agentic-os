@@ -275,7 +275,10 @@ release 3.0.3
 check "a dev run cancelled by a newer merge is not green" "NOT_GREEN_ON_DEV: dev.yml is RED" "$out"
 
 new_checkout; ci_only; green_build 3.0.4
-release --no-dev-gate 3.0.4
+# A LOCAL run: the test itself runs under CI, so drop the CI markers for this one case.
+out=$(cd "$OP" && env -u CI -u GITHUB_ACTIONS PATH="$BIN:$PATH" WORKFLOW_POLL_SECONDS=0 RELEASE_CI_WAIT_MINUTES=0 \
+      RELEASE_BUILD_WAIT_MINUTES=0 DEPLOY_SCRIPT=deploy.sh SMOKE_SCRIPT=smoke.sh \
+      bash scripts/release.sh --no-dev-gate 3.0.4 2>&1); rc=$?
 rc_is "--no-dev-gate works for a local run while dev does not exist" 0
 check "and says loudly that the gate was skipped" "dev gate SKIPPED" "$out"
 
