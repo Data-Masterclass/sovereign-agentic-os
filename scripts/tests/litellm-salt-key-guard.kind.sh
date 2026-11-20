@@ -8,7 +8,8 @@
 #   SALT_GUARD_CONTEXT=kind-x bash scripts/tests/litellm-salt-key-guard.kind.sh   # reuse a cluster
 #
 # The guard uses `lookup`, which `helm template` without a cluster cannot exercise, so this renders
-# with `helm template --dry-run=server` (lookup on) against kind. It proves:
+# with `helm template --dry-run=server` (lookup on) against kind. Cluster-scoped PriorityClasses are
+# left out so the test also runs on a cluster that already holds a release. It proves:
 #   1. no live salt key yet: setting one renders (the first set is allowed);
 #   2. live salt key = the value passed: renders;
 #   3. negative twins: a DIFFERENT value fails with LITELLM_SALT_KEY_CHANGE_REFUSED, and so does
@@ -37,12 +38,22 @@ k create ns "$NS" >/dev/null
 A="salt-a-$RANDOM$RANDOM"; B="salt-b-$RANDOM$RANDOM"
 render() {
   out=$(helm template t "$CHART" -n "$NS" --kube-context "$CTX" --dry-run=server --skip-schema-validation \
-        --show-only templates/base/litellm/credentials.yaml "$@" 2>&1); rc=$?
+        --set priorityClasses.enabled=false --show-only templates/base/litellm/credentials.yaml "$@" 2>&1); rc=$?
 }
-live() { # $1: salt value or "" for a Secret without the key
+live() { # $1: salt value or "" — a Helm-owned litellm-credentials, as the chart's own Secret is live
   k -n "$NS" delete secret litellm-credentials --ignore-not-found >/dev/null
-  if [ -n "$1" ]; then k -n "$NS" create secret generic litellm-credentials --from-literal=masterkey=m --from-literal=LITELLM_SALT_KEY="$1" >/dev/null
-  else k -n "$NS" create secret generic litellm-credentials --from-literal=masterkey=m >/dev/null; fi
+  { cat <<YAML
+apiVersion: v1
+kind: Secret
+metadata:
+  name: litellm-credentials
+  labels: { app.kubernetes.io/managed-by: Helm }
+  annotations: { meta.helm.sh/release-name: t, meta.helm.sh/release-namespace: $NS }
+stringData:
+  masterkey: m
+YAML
+    [ -n "$1" ] && printf '  LITELLM_SALT_KEY: "%s"\n' "$1"
+  } | k -n "$NS" apply -f - >/dev/null
 }
 
 echo "1. live Secret without a salt key"
