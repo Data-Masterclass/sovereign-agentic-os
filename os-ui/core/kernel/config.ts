@@ -125,6 +125,17 @@ export const DEV_DEFAULT_SECRET = DEV_SECRET_DEFAULTS.sessionSecret;
  */
 export const DEV_DEFAULT_AGENT_RUNTIME_TOKEN = DEV_SECRET_DEFAULTS.agentRuntimeToken;
 
+/**
+ * The secrets each process reads, by variable name — the list the production secret guard
+ * (`core/kernel/secret-guard.ts`) checks at boot. The worker's env deliberately carries no admin
+ * secret (`soa.osUI.runEnv`), so it is never asked for one. TERMINAL_BROKER_SECRET is added by the
+ * guard only when TERMINAL_ENABLED=true (nothing reads it otherwise).
+ */
+export const PRODUCTION_GUARDED_SECRETS = {
+  'os-ui': ['LITELLM_MASTER_KEY', 'AGENT_RUNTIME_TOKEN', 'OS_SESSION_SECRET', 'OS_MCP_TOKEN_SECRET', 'LANGFUSE_PUBLIC_KEY', 'LANGFUSE_SECRET_KEY'],
+  'os-ui-worker': ['AGENT_RUNTIME_TOKEN', 'LANGFUSE_PUBLIC_KEY', 'LANGFUSE_SECRET_KEY'],
+} as const;
+
 export const config = {
   // sample-agent (LangGraph RAG): GET {SAMPLE_AGENT_URL}/ask?q=...
   sampleAgentUrl: base(env('SAMPLE_AGENT_URL', 'http://sample-agent:8000')),
