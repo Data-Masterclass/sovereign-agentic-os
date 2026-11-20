@@ -1645,7 +1645,9 @@ trino:
       secretName: trino-service-users
       existingSecret: ""
     impersonators: [svc-os-ui, svc-os-worker, svc-dagster-runner]
-    directUsers: [northpeak-marts]
+    # `sales`: the seed Job's default Trino user (marts.trino.user, the sales DOMAIN principal) — it
+    # authenticates with its own password here when clients.northpeakMarts is on.
+    directUsers: [northpeak-marts, sales]
     # Direct service users whose password the query-tool also mounts, so it logs in AS them when
     # one is the principal (no impersonation). The delete-domain purge user belongs here once
     # PR #197 is in (`os-domain-delete`, also in `directUsers`).
