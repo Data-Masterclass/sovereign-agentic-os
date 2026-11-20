@@ -9,7 +9,8 @@
  *   - Only `queryRun` is replaced, by a pass-through to that Trino as the chosen principal.
  */
 /**
- * REAL TRINO: a metric reads the SAME physical table `get_dataset.queryable` names.
+ * REAL TRINO: a metric reads the SAME physical table `get_dataset.queryable` names — for a
+ * governed dataset that is its DOMAIN copy, for every viewer including the owner.
  *
  * The live defect (0.9.22): a domain-tier dataset whose Gold lives in its owner's personal lane
  * reported `queryable.fqn = iceberg.personal_<owner>.gold_<slug>`, but `query_metric` compiled
@@ -47,57 +48,61 @@ const { exploreMetric } = await import('./explore-server.ts');
 const sfx = Date.now().toString(36);
 const OWNER = `it_owner_${sfx}`;
 const OTHER = `it_viewer_${sfx}`;
-const DOMAIN = `it-kiekert-${sfx}`; // hyphenated like live domains; no schema of this name is ever created
+const DOMAIN = `it-kiekert-${sfx}`; // hyphenated like live domains (schema it_kiekert_<sfx>)
+const BUILT = `it-built-${sfx}`; // a second domain whose domain copy DOES exist
 
 /** A DOMAIN-tier (asset) dataset whose Gold lives in its owner's personal lane, like ds_i9kls75hdg. */
-const dataset = () =>
-  goldSales({ id: `ds_it_${sfx}`, name: 'Bestellpositionen', owner: OWNER, domain: DOMAIN, tier: 'asset', visibility: 'domain', viewNamespaced: true });
-const tokenFor = (id: string) => viewerToken({ id, domains: [DOMAIN], role: 'creator', attributes: {} });
-// Written out by hand, not computed by the code under test: the owner's lane, and the schema main
-// derived from the domain name (`it-kiekert-…` → `it_kiekert_…`), which never exists here.
+const dataset = (domain = DOMAIN) =>
+  goldSales({ id: `ds_it_${sfx}`, name: 'Bestellpositionen', owner: OWNER, domain, tier: 'asset', visibility: 'domain', viewNamespaced: true });
+const tokenFor = (id: string, domain = DOMAIN) => viewerToken({ id, domains: [domain], role: 'creator', attributes: {} });
+// Written out by hand, not computed by the code under test.
 const personalTable = () => `iceberg.personal_${OWNER}.gold_bestellpositionen`;
-const domainNamedTable = () => `iceberg.it_kiekert_${sfx}.gold_bestellpositionen`;
+const missingDomainTable = () => `iceberg.it_kiekert_${sfx}.gold_bestellpositionen`; // never created
+const builtDomainTable = () => `iceberg.it_built_${sfx}.gold_bestellpositionen`;
 
 before(async () => {
   if (skip) return;
-  // The owner builds their own lane (OPA allows a write to `personal_*` only for its owner).
+  // The owner's lane holds a gold (the live Kiekert shape) …
   await trino(`CREATE SCHEMA iceberg.personal_${OWNER}`, OWNER);
   await trino(`CREATE TABLE ${personalTable()} (order_id integer, order_date date, region varchar, net_amount double)`, OWNER);
-  await trino(
-    `INSERT INTO ${personalTable()} VALUES (1, DATE '2026-11-01', 'DE', 10.5), (2, DATE '2026-11-02', 'FR', 20.0), (3, DATE '2026-11-02', 'DE', 1.5)`,
-    OWNER,
-  );
+  await trino(`INSERT INTO ${personalTable()} VALUES (1, DATE '2026-11-01', 'DE', 10.5), (2, DATE '2026-11-02', 'FR', 20.0), (3, DATE '2026-11-02', 'DE', 1.5)`, OWNER);
+  // … and for the second domain a DOMAIN copy exists, holding DIFFERENT rows than the lane, so a
+  // read of the wrong table gives a different number.
+  await trino(`CREATE SCHEMA iceberg.it_built_${sfx}`, OWNER);
+  await trino(`CREATE TABLE ${builtDomainTable()} (order_id integer, order_date date, region varchar, net_amount double)`, OWNER);
+  await trino(`INSERT INTO ${builtDomainTable()} VALUES (1, DATE '2026-11-01', 'DE', 100.0), (2, DATE '2026-11-02', 'FR', 7.0)`, OWNER);
 });
 
-test('the metric reads queryable.fqn on real Trino and returns the real number (owner)', { skip }, async () => {
-  const d = dataset();
-  const r = await exploreMetric(d, d.measures[0], tokenFor(OWNER));
+test('the OWNER of an asset reads its DOMAIN copy on real Trino, not their lane', { skip }, async () => {
+  const d = dataset(BUILT);
+  const r = await exploreMetric(d, d.measures[0], tokenFor(OWNER, BUILT));
   assert.equal(r.mode, 'live (sql)');
-  assert.ok(r.sql.includes(`FROM ${personalTable()}`), `the metric compiles the real table (queryable.fqn), got:\n${r.sql}`);
-  assert.deepEqual(r.rows, [{ [r.member]: 32 }], 'Trino summed the three real rows');
+  assert.ok(r.sql.includes(`FROM ${builtDomainTable()}`), `the metric compiles the domain copy, got:\n${r.sql}`);
+  assert.deepEqual(r.rows, [{ [r.member]: 107 }], 'the domain copy\u2019s number (the lane would give 32)');
 });
 
-test('a dashboard-style slice (dimension) over the same table also runs on real Trino', { skip }, async () => {
-  const d = dataset();
-  const r = await exploreMetric(d, d.measures[0], tokenFor(OWNER), { dimensions: ['region'] });
+test('a dashboard-style slice over the domain copy also runs on real Trino; another viewer gets the same number', { skip }, async () => {
+  const d = dataset(BUILT);
+  const r = await exploreMetric(d, d.measures[0], tokenFor(OTHER, BUILT), { dimensions: ['region'] });
   const view = r.member.split('.')[0];
   const byRegion = Object.fromEntries(r.rows.map((row) => [row[`${view}.region`], row[r.member]]));
-  assert.deepEqual(byRegion, { DE: 12, FR: 20 });
+  assert.deepEqual(byRegion, { DE: 100, FR: 7 });
 });
 
-test('NEGATIVE TWIN: the old domain-name derivation is SCHEMA_NOT_FOUND on the same Trino', { skip }, async () => {
-  // What main compiled: the schema taken from the domain name. It must fail here, or the fixture
-  // would not reproduce the live defect and the test above would prove nothing.
-  const d = dataset();
-  const sql = previewTrinoSql(d, d.measures[0], exploreSpec(d, d.measures[0], {}), domainNamedTable())!;
-  await assert.rejects(trino(sql, OWNER), (e: TrinoFailure) => e.errorName === 'SCHEMA_NOT_FOUND');
+test('NO domain copy → a typed not_built naming the dataset; never a fallback to the lane', { skip }, async () => {
+  const d = dataset(DOMAIN);
+  await assert.rejects(exploreMetric(d, d.measures[0], tokenFor(OWNER)), (e: Error & { code?: string }) =>
+    e.code === 'not_built' && e.message.includes(d.name) && e.message.includes(d.id) && e.message.includes(missingDomainTable()));
 });
 
-test("another viewer's read still goes through OPA: the owner's lane is denied to them", { skip }, async () => {
-  const d = dataset();
-  // For a non-owner the resolver names the domain copy, never someone else's personal lane, and the
-  // metric runs AS them: they get Trino's answer for THEIR identity, never the owner's rows.
-  await assert.rejects(exploreMetric(d, d.measures[0], tokenFor(OTHER)), (e: Error) => /does not exist/.test(e.message) && !e.message.includes(`personal_${OWNER}`));
-  // OPA itself refuses the owner's table to that viewer.
+test('NEGATIVE TWIN: the lane really holds a different number, and the missing domain copy really is missing', { skip }, async () => {
+  const d = dataset(DOMAIN);
+  const laneSql = previewTrinoSql(d, d.measures[0], exploreSpec(d, d.measures[0], {}), personalTable())!;
+  assert.equal(Number((await trino(laneSql, OWNER)).rows[0][0]), 32, 'reading the lane would give a number — the wrong one');
+  const domSql = previewTrinoSql(d, d.measures[0], exploreSpec(d, d.measures[0], {}), missingDomainTable())!;
+  await assert.rejects(trino(domSql, OWNER), (e: TrinoFailure) => e.errorName === 'SCHEMA_NOT_FOUND');
+});
+
+test("OPA still refuses the owner's lane to another viewer", { skip }, async () => {
   await assert.rejects(trino(`SELECT count(*) FROM ${personalTable()}`, OTHER), (e: TrinoFailure) => e.errorName === 'PERMISSION_DENIED');
 });

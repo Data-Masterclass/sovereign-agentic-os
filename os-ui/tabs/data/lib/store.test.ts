@@ -107,7 +107,7 @@ test('GOVERNANCE: the Gold join picker (listJoinable) is canView-scoped', () => 
   const forKenji = listJoinable(kenji);
   const ledger = forKenji.find((d) => d.name === 'Finance Ledger');
   assert.ok(ledger, 'owner must be able to reuse their own personal dataset as a compose source');
-  assert.equal(ledger!.fqn, `iceberg.${personalSchema('kenji')}.silver_finance_ledger`);
+  assert.match(ledger!.fqn, new RegExp(`^iceberg\\.${personalSchema('kenji')}\\.silver_finance_ledger_[a-z0-9]+$`), 'the lane table carries the dataset id');
 
   // The base dataset is excluded from its own picker.
   assert.ok(!listJoinable(bea, orders).some((d) => d.id === orders));
@@ -693,7 +693,8 @@ test('renameDataset: FQN STABILITY — a rename never moves the physical table',
 
   const before = getDataset(d.id, amir);
   const ownerFqnBefore = versionTarget(before, 'gold', { id: amir.id });
-  assert.equal(ownerFqnBefore, 'iceberg.personal_amir.gold_foo');
+  assert.match(before.laneSlug ?? '', /^foo_[a-z0-9]+$/, 'a new dataset records a lane name: name slug + id');
+  assert.equal(ownerFqnBefore, `iceberg.personal_amir.gold_${before.laneSlug}`);
   assert.equal(modelName(before), 'sales__foo'); // new datasets are namespaced (#155)
 
   // Rename Foo → Bar.
@@ -703,8 +704,9 @@ test('renameDataset: FQN STABILITY — a rename never moves the physical table',
 
   const after = getDataset(d.id, amir);
   // Every physical identity STILL uses slug("Foo") === "foo", NEVER slug("Bar") === "bar".
-  assert.equal(versionTarget(after, 'gold', { id: amir.id }), 'iceberg.personal_amir.gold_foo');
-  assert.equal(versionTarget(after, 'bronze', { id: amir.id }), 'iceberg.personal_amir.bronze_foo');
+  assert.equal(after.laneSlug, before.laneSlug, 'the lane name is recorded once and never moves');
+  assert.equal(versionTarget(after, 'gold', { id: amir.id }), `iceberg.personal_amir.gold_${before.laneSlug}`);
+  assert.equal(versionTarget(after, 'bronze', { id: amir.id }), `iceberg.personal_amir.bronze_${before.laneSlug}`);
   assert.equal(modelName(after), 'sales__foo', 'cube identity is frozen across a rename');
   assert.doesNotMatch(versionTarget(after, 'gold', { id: amir.id }), /_bar/, 'no live table orphaned');
 });

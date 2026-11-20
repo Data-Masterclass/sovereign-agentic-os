@@ -35,16 +35,26 @@ test('governed FQNs for a hyphenated domain contain NO raw hyphen', () => {
   assert.doesNotMatch(vt, /-/, 'no hyphen may reach Trino');
 });
 
-// BUG (data-lane isolation): the OWNER's personal lane physically holds EVERY layer
-// (bronze + un-promoted silver/gold). An owner reading their own dataset must resolve
-// ALL layers to `personal_<owner>` — NOT the domain schema (where only promoted golds
-// live → the live `TABLE_NOT_FOUND` on bronze_northpeak_cac_cos_weekly).
-test('versionTarget: the OWNER reads every layer from their personal lane', () => {
-  const d = ds(); // owner: aborek
+// A GOVERNED dataset is its DOMAIN copy for EVERY viewer, the owner included: the owner's lane
+// is their build workspace and (before lane names were unique) could hold ANOTHER dataset's table
+// of the same name — seen live, a personal draft rebuilt the lane table a domain asset read.
+test('versionTarget: the OWNER of an asset reads the DOMAIN copy, never their lane', () => {
+  const d = ds(); // asset, owner: aborek
+  const owner = { id: 'aborek' };
+  for (const layer of ['bronze', 'silver', 'gold'] as const) {
+    assert.equal(versionTarget(d, layer, owner), `iceberg.agentic_leader_q3_2026.${layer}_campaign_data`);
+  }
+});
+
+// A PERSONAL dataset lives only in its owner's lane, which physically holds every layer.
+test('versionTarget: the OWNER of a personal dataset reads every layer from their lane', () => {
+  const d = ds({ tier: 'dataset', visibility: 'private' });
   const owner = { id: 'aborek' };
   assert.equal(versionTarget(d, 'bronze', owner), 'iceberg.personal_aborek.bronze_campaign_data');
-  assert.equal(versionTarget(d, 'silver', owner), 'iceberg.personal_aborek.silver_campaign_data');
   assert.equal(versionTarget(d, 'gold', owner), 'iceberg.personal_aborek.gold_campaign_data');
+  // With a recorded lane name, the lane tables carry it (the domain copy keeps the slug).
+  const named = ds({ tier: 'dataset', visibility: 'private', laneSlug: 'campaign_data_x1' });
+  assert.equal(versionTarget(named, 'silver', owner), 'iceberg.personal_aborek.silver_campaign_data_x1');
 });
 
 test('versionTarget: a NON-owner reads a promoted layer from the domain schema', () => {
@@ -200,14 +210,15 @@ test('physicalSlug: a frozen slug pins the identity regardless of the display na
 // FQN STABILITY: create "Foo" → its FQNs use slug("Foo"); a rename to "Bar" that FREEZES
 // the slug to `foo` keeps every FQN + Cube/dbt identity on `foo`, never `bar`.
 test('FQN stability: a renamed dataset keeps its ORIGINAL physical FQNs (frozen slug)', () => {
-  const foo = ds({ name: 'Foo', slug: undefined });
+  // The lane assertions use a PERSONAL dataset (an asset reads its domain copy for everyone).
+  const foo = ds({ name: 'Foo', slug: undefined, tier: 'dataset' });
   const owner = { id: 'aborek' };
   // Before rename: derived from slug("Foo") === "foo".
   assert.equal(versionTarget(foo, 'gold', owner), 'iceberg.personal_aborek.gold_foo');
   assert.equal(assetTarget(foo), 'iceberg.agentic_leader_q3_2026.gold_foo');
 
   // Rename to "Bar" pins slug=foo (what renameDataset does). The FQNs must NOT move to bar.
-  const renamed = ds({ name: 'Bar', slug: 'foo' });
+  const renamed = ds({ name: 'Bar', slug: 'foo', tier: 'dataset' });
   assert.equal(versionTarget(renamed, 'gold', owner), 'iceberg.personal_aborek.gold_foo');
   assert.equal(versionTarget(renamed, 'bronze', owner), 'iceberg.personal_aborek.bronze_foo');
   assert.equal(assetTarget(renamed), 'iceberg.agentic_leader_q3_2026.gold_foo');

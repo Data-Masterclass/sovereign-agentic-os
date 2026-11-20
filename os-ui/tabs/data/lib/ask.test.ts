@@ -157,13 +157,15 @@ test('GOVERNANCE: listAskable is canView-scoped and only lists BUILT datasets', 
 
   const forAmir = listAskable(amir);
   const fqns = forAmir.map((d) => d.fqn);
-  assert.deepEqual(fqns.sort(), ['iceberg.personal_amir.bronze_my_orders', 'iceberg.sales.silver_shared_orders']);
+  assert.equal(fqns.length, 2);
+  assert.ok(fqns.includes('iceberg.sales.silver_shared_orders'));
+  assert.ok(fqns.some((f) => /^iceberg\.personal_amir\.bronze_my_orders_[a-z0-9]+$/.test(f)), 'the personal dataset reads its lane table by its lane name');
   // The finance schema/docs can never leak into amir's prompt context.
   const ctx = schemaContext(forAmir.map((d) => ({ ...d, tier: d.tier as string })));
   assert.doesNotMatch(ctx, /SECRET LEDGER|iban|finance/i);
   // kenji sees his own private dataset (his personal schema), not amir's.
   const forKenji = listAskable(kenji);
-  assert.deepEqual(forKenji.map((d) => d.fqn), ['iceberg.personal_kenji.silver_finance_ledger']);
+  assert.deepEqual(forKenji.map((d) => d.fqn), [`iceberg.personal_kenji.silver_${secret.laneSlug}`]);
 });
 
 // BUG 2: a hyphenated-domain dataset must reach the model as a VALID slug FQN, and the

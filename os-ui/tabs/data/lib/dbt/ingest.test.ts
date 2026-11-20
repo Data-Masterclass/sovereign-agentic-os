@@ -92,7 +92,9 @@ afterEach(async () => {
 const ID_RE = /\bds_[A-Za-z0-9_]+/g;
 const ISO = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z/g;
 const CHK_RE = /\bchk_[0-9a-f]+/g;
-const scrub = (t: string) => t.replace(ISO, '<TS>').replace(ID_RE, '<ID>').replace(CHK_RE, '<CHK>');
+// A lane name carries the dataset id (`<slug>_<id hex>`, store-fqn.newLaneSlug): scrubbed like the id.
+const LANE_ID_RE = /_[0-9a-f]{32}\b/g;
+const scrub = (t: string) => t.replace(ISO, '<TS>').replace(ID_RE, '<ID>').replace(LANE_ID_RE, '_<ID>').replace(CHK_RE, '<CHK>');
 
 /** The registry row, with everything random or clock-driven normalised away. */
 function normalisedDataset(id: string): unknown {

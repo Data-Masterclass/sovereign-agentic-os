@@ -31,11 +31,11 @@ test('builtLayerFqn targets the requested built layer (the grant’s medallion c
   const silver = builtLayerFqn(getDataset(d.id, amir), amir, 'silver');
   assert.ok(silver);
   assert.equal(silver!.layer, 'silver');
-  assert.match(silver!.fqn, /^iceberg\.personal_amir\.silver_orders$/);
+  assert.match(silver!.fqn, /^iceberg\.personal_amir\.silver_orders_[a-z0-9]+$/);
 
   const bronze = builtLayerFqn(getDataset(d.id, amir), amir, 'bronze');
   assert.equal(bronze!.layer, 'bronze');
-  assert.match(bronze!.fqn, /^iceberg\.personal_amir\.bronze_orders$/);
+  assert.match(bronze!.fqn, /^iceberg\.personal_amir\.bronze_orders_[a-z0-9]+$/);
 });
 
 test('not-built fallback: a silver request on a bronze-only dataset resolves to bronze', () => {
@@ -47,7 +47,7 @@ test('not-built fallback: a silver request on a bronze-only dataset resolves to 
   const resolved = builtLayerFqn(getDataset(d.id, amir), amir, 'silver');
   assert.ok(resolved, 'a built layer still resolves');
   assert.equal(resolved!.layer, 'bronze', 'fell back to the furthest built layer');
-  assert.match(resolved!.fqn, /bronze_orders$/);
+  assert.match(resolved!.fqn, /bronze_orders_[a-z0-9]+$/);
 });
 
 test('nothing built → null (get_dataset then reports layer-not-built, no doomed FQN)', () => {
