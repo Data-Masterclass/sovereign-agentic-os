@@ -407,6 +407,12 @@
   value: "true"
 - name: OS_REPOS_DIR
   value: /repos
+{{- if ($dpg.gitHttp | default dict).enabled }}
+# The authenticated git-http door is rendered (os-git-http.yaml), so the OS publishes the
+# `git clone https://<os>/git/<repo>.git` URL in its engineering views (WP-51).
+- name: OS_GIT_HTTP
+  value: "true"
+{{- end }}
 {{- /* Repository layout (component design 12). `layout.migration`: off (default) | dry-run |
   apply. `apply` renames each domain repo to domain-<domain>.git (old name kept as an alias),
   moves it to the v2 layout in ONE commit (`OS-Reason: layout-migration`) at boot, moves personal

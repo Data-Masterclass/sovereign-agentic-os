@@ -30,6 +30,7 @@ import { sealView, type EngineeringPrincipal, type EngineeringView } from '@core
 import type { EngineeringGraph, GraphEdge, GraphNode } from '@core/engineering/graph';
 import { langfuseEnabled, traceUrlFor } from '@core/infra/langfuse';
 import { config } from '@core/kernel/config';
+import { publishedCloneUrl } from '@core/infra/git-clone-published';
 
 const OS_NOUN = 'agent system';
 
@@ -153,7 +154,7 @@ export async function agentSystemEngineeringView(principal: EngineeringPrincipal
   const git = gitSection({
     osNoun: OS_NOUN,
     repo: domain,
-    cloneUrl: null,
+    cloneUrl: publishedCloneUrl(domain),
     head: listed.head,
     files: wanted.sort().map((p) => ({ path: p })),
     tracked: new Set(listed.paths),

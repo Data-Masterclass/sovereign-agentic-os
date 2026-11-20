@@ -1755,3 +1755,75 @@ export async function commitSubtreeMerge(domain: string, prefix: string, files: 
     return { sha, changed: true };
   });
 }
+
+// ======================= === WP-51 LIFECYCLE REF BLOCK === ================================
+// The lifecycle (Draft · Testing · Live) as NATIVE git refs (artifact contract A15). A release
+// tag stays immutable (`annotatedTag` above, a 409 on a second write); a LIFECYCLE pointer is
+// not a release — `live/<kind>/<id>` names whatever runs NOW, so going live again MOVES it and
+// retiring DELETES it. Both are plain git ref operations, documented by isomorphic-git
+// (`annotatedTag({ force })`, `deleteRef`) and readable with `git tag -l` / `git for-each-ref`.
+// Additive: no existing export changes.
+// ===========================================================================================
+
+/**
+ * Write (or MOVE) an annotated tag at `ref`. Unlike {@link annotatedTag} an existing tag of the
+ * same name is replaced — the caller decides which names are pointers and which are releases.
+ */
+export async function upsertAnnotatedTag(domain: string, name: string, opts: AnnotatedTagOptions): Promise<TagEntry> {
+  const tag = assertTagName(name);
+  if (!repoExists(domain, opts)) throw new GitStoreError(`no repository for '${domain}'`, 404);
+  const gitdir = repoPath(domain, opts);
+  return withLock(repoLockKey(domain, opts), async () => {
+    const commit = await resolveCommit(gitdir, opts.ref);
+    // A tag must name an object the repository has: a sha from elsewhere is refused, never tagged.
+    try {
+      await git.readCommit({ fs, gitdir, oid: commit });
+    } catch {
+      throw new GitStoreError(`commit '${commit.slice(0, 12)}' is not in '${domain}'`, 409);
+    }
+    const timestamp = opts.timestamp ?? Math.floor(Date.now() / 1000);
+    const message = appendTrailers(opts.message, opts.trailers ?? {});
+    await git.annotatedTag({
+      fs,
+      gitdir,
+      ref: tag,
+      object: commit,
+      message,
+      tagger: { ...opts.tagger, timestamp, timezoneOffset: 0 },
+      force: true,
+    });
+    const oid = (await tagOid(gitdir, tag)) ?? '';
+    if (!oid) throw new GitStoreError(`tag '${tag}' was not written`, 500);
+    return { name: tag, commit, oid, message, tagger: opts.tagger, timestamp };
+  });
+}
+
+/** Delete a tag. `false` when it did not exist (nothing to do — never an error). */
+export async function deleteTag(domain: string, name: string, opts: GitStoreOptions = {}): Promise<boolean> {
+  const tag = assertTagName(name);
+  if (!repoExists(domain, opts)) return false;
+  const gitdir = repoPath(domain, opts);
+  return withLock(repoLockKey(domain, opts), async () => {
+    if (!(await tagOid(gitdir, tag))) return false;
+    await git.deleteRef({ fs, gitdir, ref: tagRef(tag) });
+    return true;
+  });
+}
+
+/** True when `sha` names a commit this repository has. */
+export async function commitExists(domain: string, sha: string, opts: GitStoreOptions = {}): Promise<boolean> {
+  if (!repoExists(domain, opts) || !/^[0-9a-f]{40}$/i.test(sha)) return false;
+  try {
+    await git.readCommit({ fs, gitdir: repoPath(domain, opts), oid: sha.toLowerCase() });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** The commit `main` points at, or null for a repository with no commit yet. */
+export async function mainSha(domain: string, opts: GitStoreOptions = {}): Promise<string | null> {
+  if (!repoExists(domain, opts)) return null;
+  return headSha(repoPath(domain, opts));
+}
+// ======================= === END WP-51 LIFECYCLE REF BLOCK === ============================

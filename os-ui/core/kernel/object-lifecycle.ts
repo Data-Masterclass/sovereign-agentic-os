@@ -123,6 +123,11 @@ export type Pin = {
    * Absent for a kind whose definition is not a file (a dashboard pins a spec digest).
    */
   path?: string;
+  /**
+   * True for a pin recorded only in a pre-WP-51 `os/lifecycle/pins.yml`, which no
+   * `live/<kind>/<id>` tag carries yet. Honoured as Live until the tag migration runs.
+   */
+  untagged?: boolean;
 };
 
 /** The in-flight test marker — a ref being exercised from Studio, never a managed state. */

@@ -23,6 +23,7 @@ import { readRepoFiles, repoPaths } from '@core/engineering/repo';
 import { dbtProjectDir, dbtProjectPath, layoutOf, LAYOUT_V1 } from '@core/infra/repo-layout';
 import { dagsterSection, dbtSection, gitSection, langfuseSection, LANGFUSE_REDACTIONS } from '@core/engineering/sections';
 import { sealView, type EngineeringPrincipal, type EngineeringView } from '@core/engineering/types';
+import { publishedCloneUrl } from '@core/infra/git-clone-published';
 
 const OS_NOUN = 'KPI';
 /** Where the semantic emitter writes a model's `semantic_models:` and `metrics:` blocks. */
@@ -96,7 +97,7 @@ export async function metricEngineeringView(principal: EngineeringPrincipal, id:
   const git = gitSection({
     osNoun: OS_NOUN,
     repo: domain,
-    cloneUrl: null,
+    cloneUrl: publishedCloneUrl(domain),
     head: listed.head,
     files: mine.map((f) => ({ path: f.path })),
     tracked: new Set(listed.paths),
