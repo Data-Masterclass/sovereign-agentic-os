@@ -96,6 +96,11 @@ export const TOOL_RESOURCES: Readonly<Record<string, ToolResourceRule>> = {
   profile_dataset: reads('data', 'datasetId'),
   get_sync_status: reads('data', 'datasetId'),
   propose_quality_fixes: reads('data', 'datasetId'),
+  // WP-37: a dataset's data versions (its Iceberg snapshots, tags and branches).
+  get_dataset_versions: reads('data', 'datasetId'),
+  diff_dataset_data: reads('data', 'datasetId'),
+  rollback_dataset_version: writes('data', 'datasetId'),
+  tag_dataset_version: writes('data', 'datasetId'),
   query_data: { sql: { arg: 'sql' } },
   add_dataset_version: writes('data', 'datasetId'),
   apply_quality_fixes: writes('data', 'datasetId'),

@@ -20,6 +20,7 @@ import QueryError from '@tabs/data/ui/QueryError';
 import { shouldAutoGold } from '@tabs/data/lib/auto-gold';
 import AiAction, { type CleanDraft, type DefineDraft } from '@tabs/data/ui/StageAssistant';
 import LifecycleActions from '@core/ui/lifecycle/LifecycleActions';
+import DatasetVersions from '@tabs/data/ui/DatasetVersions';
 import DemoteButton from '@core/ui/lifecycle/DemoteButton';
 import { ConfirmProvider } from '@core/ui/lifecycle/ConfirmDialog';
 import { useApprovalNotifier } from '@core/ui/lifecycle/useApprovalNotifier';
@@ -554,6 +555,7 @@ export default function DataBuilder({
   // unknown gate must not render as a green one.
   const [gateUnknown, setGateUnknown] = useState(false);
   const [shareErr, setShareErr] = useState('');
+  const [showDataVersions, setShowDataVersions] = useState(false);
   const [shareBusy, setShareBusy] = useState(false);
 
   const load = useCallback(async () => {
@@ -1294,12 +1296,26 @@ export default function DataBuilder({
               archived={!!dataset.archived}
               api={`/api/data/datasets/${dataset.id}`}
               onChanged={() => { if (dataset.archived) onBack(); else void load(); }}
-              showVersions
+              showVersions={false}
               compact
             />
           ) : null}
+          <button
+            type="button"
+            className={`btn ghost sm${showDataVersions ? ' on' : ''}`}
+            onClick={() => setShowDataVersions((v) => !v)}
+            aria-expanded={showDataVersions}
+            title="The dataset's versions are its Iceberg table's snapshots"
+          >
+            {showDataVersions ? 'Hide versions' : 'Versions'}
+          </button>
         </div>
       </div>
+      {showDataVersions ? (
+        <div className="lc-history-panel">
+          <DatasetVersions datasetId={dataset.id} name={dataset.name} canEdit={canEdit} onRestored={() => void load()} />
+        </div>
+      ) : null}
       {shareErr ? <div className="error" style={{ marginTop: -6, marginBottom: 12 }}>{shareErr}</div> : null}
 
 

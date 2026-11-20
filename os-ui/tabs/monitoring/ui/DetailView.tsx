@@ -67,7 +67,8 @@ type DatasetDetail = {
     sourceLabel?: { text: string; title: string } | null;
   };
   layers: { layer: string; built: boolean; passThrough: boolean; quality: string; updatedAt: string | null }[];
-  versions: { version: number; at: string; author: string; summary: string }[];
+  versions: { snapshotId: string; at: string; author: string; summary: string }[];
+  versionsNote?: string;
   lineage: { nodes: { id: string; kind: string; label: string; sublabel: string; built: boolean }[]; edges: { from: string; to: string; kind: string }[] };
   links: { data: string };
 };
@@ -461,12 +462,12 @@ function DatasetBody({ d }: { d: DatasetDetail }) {
 
       {d.versions.length > 0 && (
         <>
-          <div className="mon-sub">Version history</div>
+          <div className="mon-sub">Versions (Iceberg snapshots)</div>
           <div className="mon-table">
-            <div className="mon-tr mon-th mon-tr-ver"><span>#</span><span>When</span><span>Author</span><span>Change</span></div>
+            <div className="mon-tr mon-th mon-tr-ver"><span>Snapshot</span><span>When</span><span>By</span><span>Change</span></div>
             {d.versions.slice(0, 12).map((v) => (
-              <div key={v.version} className="mon-tr mon-tr-ver">
-                <span className="muted">v{v.version}</span>
+              <div key={v.snapshotId} className="mon-tr mon-tr-ver">
+                <span className="muted mono" title={v.snapshotId}>{v.snapshotId.slice(-8)}</span>
                 <span className="muted">{ago(v.at)}</span>
                 <span className="ellip">{v.author}</span>
                 <span className="ellip">{v.summary}</span>
@@ -475,6 +476,7 @@ function DatasetBody({ d }: { d: DatasetDetail }) {
           </div>
         </>
       )}
+      {d.versions.length === 0 && d.versionsNote ? <div className="hint">Versions: {d.versionsNote}</div> : null}
 
       {/* ── Lineage ── */}
       {d.lineage.nodes.length > 0 && (

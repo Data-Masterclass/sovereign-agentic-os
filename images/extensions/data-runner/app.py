@@ -402,6 +402,66 @@ def ingest_rows(body: dict) -> dict:
     }
 
 
+_REF_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
+_IDENT_RE = re.compile(r"^[a-z_][a-z0-9_]*$")
+_SNAPSHOT_RE = re.compile(r"^[0-9]{1,19}$")
+_BUILDER_ROLES = {"builder", "domain_admin", "admin"}
+
+
+def create_ref(body: dict) -> dict:
+    """Name a snapshot: an Iceberg TAG or BRANCH, committed through the Polaris REST catalog.
+
+    Accepts: { principal, uid, role, domains, schema, table, kind: tag|branch, name, snapshotId }
+
+    WP-37 (design 06 §5.6): Trino 476 reads tags and branches (`"t$refs"`, `FOR VERSION AS OF
+    'name'`) but has no statement that creates one, so the commit is PyIceberg's documented
+    `table.manage_snapshots().create_tag(...)` / `create_branch(...)`
+    (https://py.iceberg.apache.org/api/#snapshot-management), i.e. the Iceberg REST update
+    `set-snapshot-ref`. No `max_ref_age_ms` is set: the tag never ages out, so its snapshot is
+    kept by every `expire_snapshots`. os-ui authorizes the caller first; the schema gate below
+    is the same floor as the governed write path (own `personal_<uid>`, or a member domain as a
+    builder+), so this endpoint can never reach a table the caller could not write.
+    """
+    uid = slug(body.get("uid") or body.get("principal") or "")
+    role = (body.get("role") or "").strip()
+    domains = {slug(d) for d in (body.get("domains") or []) if slug(d)}
+    schema = (body.get("schema") or "").strip()
+    table = (body.get("table") or "").strip()
+    kind = (body.get("kind") or "").strip().lower()
+    name = (body.get("name") or "").strip()
+    snap = str(body.get("snapshotId") or "").strip()
+
+    if not uid:
+        raise ValueError("missing principal")
+    if not (_IDENT_RE.match(schema) and _IDENT_RE.match(table)):
+        raise ValueError("schema and table must be bare identifiers")
+    if kind not in ("tag", "branch"):
+        raise ValueError("kind must be 'tag' or 'branch'")
+    if not _REF_RE.match(name) or name == "main":
+        raise ValueError(f"'{name}' is not a valid tag or branch name")
+    if not _SNAPSHOT_RE.match(snap):
+        raise ValueError(f"'{snap}' is not an Iceberg snapshot id")
+
+    own = f"personal_{uid}"
+    if schema != own and not (schema in domains and role in _BUILDER_ROLES):
+        raise PermissionError(f"not allowed to name versions in schema '{schema}'")
+
+    catalog = _catalog()
+    tbl = catalog.load_table((schema, table))
+    if tbl.snapshot_by_id(int(snap)) is None:
+        raise ValueError(f"snapshot {snap} is not in iceberg.{schema}.{table}")
+    if name in (tbl.metadata.refs or {}):
+        raise ValueError(f"'{name}' already names a version of iceberg.{schema}.{table}")
+    ms = tbl.manage_snapshots()
+    (ms.create_tag(int(snap), name) if kind == "tag" else ms.create_branch(int(snap), name)).commit()
+
+    tbl = catalog.load_table((schema, table))
+    ref = tbl.metadata.refs.get(name)
+    if ref is None or str(ref.snapshot_id) != snap:
+        raise RuntimeError(f"the catalog did not record {kind} '{name}'")
+    return {"ok": True, "table": f"iceberg.{schema}.{table}", "kind": kind, "name": name, "snapshotId": snap}
+
+
 class Handler(BaseHTTPRequestHandler):
     def _send(self, code: int, payload: dict):
         body = json.dumps(payload).encode("utf-8")
@@ -420,7 +480,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = self.path.rstrip("/")
-        if path not in ("/ingest", "/ingest-rows"):
+        if path not in ("/ingest", "/ingest-rows", "/refs"):
             self._send(404, {"error": "not found"})
             return
         if not bearer_ok(self.headers.get("Authorization", "")):
@@ -433,7 +493,7 @@ class Handler(BaseHTTPRequestHandler):
             self._send(400, {"ok": False, "error": f"bad request: {e}"})
             return
         try:
-            handler_fn = ingest if path == "/ingest" else ingest_rows
+            handler_fn = {"/ingest": ingest, "/ingest-rows": ingest_rows, "/refs": create_ref}[path]
             self._send(200, handler_fn(body))
         except (ValueError, KeyError) as e:
             self._send(400, {"ok": False, "error": str(e)})
@@ -450,7 +510,7 @@ def main():
     if not SERVICE_BEARER_TOKEN:
         print("[data-runner] WARNING: SERVICE_BEARER_TOKEN unset — service-bearer auth "
               "DISABLED (fail-open; NetworkPolicy is the only boundary).")
-    print(f"[data-runner] /ingest + /ingest-rows + /health on :{PORT} "
+    print(f"[data-runner] /ingest + /ingest-rows + /refs + /health on :{PORT} "
           f"(polaris={POLARIS_URI}, warehouse={POLARIS_WAREHOUSE}, "
           f"s3={S3_ENDPOINT}, uploadsBucket={UPLOADS_BUCKET}, "
           f"bearerAuth={'on' if SERVICE_BEARER_TOKEN else 'off'})")

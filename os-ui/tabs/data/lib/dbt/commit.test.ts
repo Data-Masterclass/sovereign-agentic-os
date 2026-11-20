@@ -40,7 +40,7 @@ const READ_ONLY = new Set([
   'listDatasets', 'getDataset', 'peekDatasetMeta', 'peekDatasetTier', 'peekDatasetColumns', 'peekDatasetMeasureNames',
   'isDatasetArchived', 'requireDatasetEditable', 'builtLayerFqn', 'listGovernedDatasets', 'listAllDatasets',
   'datasetForScheduler', 'datasetsForProject', 'listJoinable', 'listAskable', 'listImported',
-  'listDatasetVersions', 'listFiles', 'readFile', 'assetTarget', 'productTarget',
+  'listFiles', 'readFile', 'assetTarget', 'productTarget',
   'requestPromotion', 'validatePromotion', 'assertPromoteTargetFree', 'assertGrantsWithinAuthority',
   'requireDomainTableMaterialized', 'requestCertification',
 ]);
@@ -132,7 +132,6 @@ const MUTATORS: Record<string, () => void | Promise<void>> = {
   archiveDataset: () => void store.archiveDataset(seedOrders(), amir),
   unarchiveDataset: () => { const id = seedOrders(); store.archiveDataset(id, amir); calls = []; store.unarchiveDataset(id, amir); },
   deleteDataset: () => void store.deleteDataset(seedOrders(), amir),
-  restoreDatasetVersion: () => { const id = seedOrders(); calls = []; store.restoreDatasetVersion(id, amir, 1); },
   writeFile: () => { const id = seedOrders(); const f = store.readFile(id, amir, 'dataset.yaml'); calls = []; store.writeFile(id, amir, { path: 'dataset.yaml', content: f.content.replace('description: ""', 'description: "edited"'), sha: f.sha }); },
 };
 

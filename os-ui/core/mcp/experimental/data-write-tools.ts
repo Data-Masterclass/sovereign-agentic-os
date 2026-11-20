@@ -54,6 +54,7 @@ import type { Granularity } from '@tabs/metrics/lib/explorer';
 import { getMetric } from '@tabs/metrics/lib/store';
 import { governMetric, canPromote as canPromoteMetric } from '@tabs/metrics/lib/governance';
 import { transition as transitionDataset } from '@tabs/data/lib/store';
+import { datasetVersionWriteTools } from '@tabs/data/mcp/dataset-version-tools';
 
 import {
   createWorkflow,
@@ -778,4 +779,5 @@ const tools: McpTool[] = [
  * `mcp:<name>` value, so this layer was a second identical scope — harmless but redundant, and
  * redundant scoping is where a minted-second-request-id bug hides. One door, one scope.
  */
-export const dataWriteTools: McpTool[] = tools;
+// WP-37: restore and name a dataset's data version (Iceberg rollback, tag, branch).
+export const dataWriteTools: McpTool[] = [...tools, ...datasetVersionWriteTools];
