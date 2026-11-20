@@ -261,6 +261,8 @@ jobs:
           /tmp/kind delete cluster --name wp21
           # Dev Pod Security + the dev CI account's limits, by server dry runs (its own kind cluster).
           PATH="/tmp:$PATH" bash scripts/tests/dev-pod-security.kind.sh
+          # A real Trino evaluates the rules a fresh install writes: the seed Jobs may create their schema.
+          PATH="/tmp:$PATH" bash scripts/tests/trino-seed-writers.kind.sh
           # WP-10: the real External Secrets Operator (pinned) takes the chart's Secrets over in place.
           PATH="/tmp:$PATH" bash scripts/tests/external-secrets.kind.sh
       - name: Start the stack (our image, SeaweedFS, egress proxy)

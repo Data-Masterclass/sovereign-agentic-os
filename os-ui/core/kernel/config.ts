@@ -136,6 +136,16 @@ export const PRODUCTION_GUARDED_SECRETS = {
   'os-ui-worker': ['AGENT_RUNTIME_TOKEN', 'LANGFUSE_PUBLIC_KEY', 'LANGFUSE_SECRET_KEY'],
 } as const;
 
+/** `user:schema,user:schema` → pairs; anything not shaped like two identifiers is dropped. */
+function parseSeedWriters(raw: string): { user: string; schema: string }[] {
+  const id = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+  return raw
+    .split(',')
+    .map((p) => p.trim().split(':'))
+    .filter((p) => p.length === 2 && id.test(p[0]) && id.test(p[1]))
+    .map(([user, schema]) => ({ user, schema }));
+}
+
 export const config = {
   // sample-agent (LangGraph RAG): GET {SAMPLE_AGENT_URL}/ask?q=...
   sampleAgentUrl: base(env('SAMPLE_AGENT_URL', 'http://sample-agent:8000')),
@@ -676,6 +686,10 @@ export const config = {
   // `profiles.yml` user (asserted by scripts/check-trino-rules-chart.mjs).
   trinoAccessRules: env('TRINO_ACCESS_RULES', '').toLowerCase() === 'true',
   trinoServiceUser: env('TRINO_DBT_USER', 'dbt-runner'),
+  // The chart's seed writers (TRINO_SEED_WRITERS="user:schema,user:schema"): the post-install Jobs
+  // that create and fill ONE schema each (dbt-build, northpeak-marts-init). The reconciler makes
+  // each the owner of exactly that schema — see core/infra/trino-rules.ts `seedWriters`.
+  trinoSeedWriters: parseSeedWriters(env('TRINO_SEED_WRITERS', '')),
   trinoAccessRulesIntervalMinutes: Number(env('TRINO_ACCESS_RULES_INTERVAL_MINUTES', '10')) || 10,
 
   // Dagster (Orchestration): POST {DAGSTER_URL}/graphql (no auth locally).

@@ -38,6 +38,15 @@ export type RulesInput = {
   personalLanes: { uid: string; schema: string }[];
   /** Users that may read everything (the OS query path reads as the end user, so this stays empty). */
   readAnySchema?: string[];
+  /**
+   * The chart's SEED WRITERS: the post-install Jobs that build the demo (dbt-build as
+   * `dbt.trino.user`, northpeak-marts-init as `marts.trino.user`) each run `CREATE SCHEMA IF NOT
+   * EXISTS` on ONE schema and write tables in it. On a fresh install the OS reconciles this file at
+   * boot, BEFORE those hooks run, so without this list both are denied (first dev install,
+   * 2026-11-20). Each writer owns exactly its one schema and nothing else; a personal lane is never
+   * grantable (its rules come first and close it).
+   */
+  seedWriters?: { user: string; schema: string }[];
 };
 
 export type ImpersonationRule = { original_user: string; new_user: string; allow: boolean };
@@ -149,6 +158,20 @@ export function buildTrinoRules(input: RulesInput): TrinoRules {
     // read and this file must not be the place that re-opens it.
     tables.push({ schema: literal(l.schema), privileges: [] });
   }
+  // (e) the chart's seed writers: owner of exactly their one schema (CREATE SCHEMA, CTAS, DROP in
+  // it). AFTER the lanes, so a writer naming a `personal_*` schema matches the lane's close first;
+  // filtered here as well so such a rule is never even written.
+  const writers = [
+    ...new Map(
+      (input.seedWriters ?? [])
+        .filter((w) => w.user && w.schema && !w.schema.startsWith('personal_'))
+        .map((w) => [`${w.user}\u0000${w.schema}`, w] as const),
+    ).values(),
+  ].sort((a, b) => a.user.localeCompare(b.user) || a.schema.localeCompare(b.schema));
+  for (const w of writers) {
+    schemas.push({ user: literal(w.user), schema: literal(w.schema), owner: true });
+    tables.push({ user: literal(w.user), schema: literal(w.schema), privileges: [...OWNER_PRIVILEGES] });
+  }
   for (const d of domains) {
     const owners = [...new Set([d.name, ...d.principals])].sort();
     schemas.push({ user: alternation(owners), schema: literal(d.schema), owner: true });
@@ -193,6 +216,7 @@ export function rulesInputFromDirectory(input: {
   domains: string[];
   users: RulesDirectoryUser[];
   sanitize: (s: string) => string;
+  seedWriters?: { user: string; schema: string }[];
 }): RulesInput {
   const active = input.users.filter((u) => !u.disabled);
   const members = new Map<string, string[]>();
@@ -210,6 +234,7 @@ export function rulesInputFromDirectory(input: {
       .map(([name, principals]) => ({ name, schema: input.sanitize(name), principals: [...new Set(principals)].sort() }))
       .sort((a, b) => a.name.localeCompare(b.name)),
     personalLanes: active.map((u) => ({ uid: u.id, schema: `personal_${input.sanitize(u.id)}` })).sort((a, b) => a.uid.localeCompare(b.uid)),
+    ...(input.seedWriters?.length ? { seedWriters: input.seedWriters } : {}),
   };
 }
 

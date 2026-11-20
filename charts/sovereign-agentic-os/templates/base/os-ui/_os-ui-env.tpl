@@ -522,6 +522,15 @@
   value: "true"
 - name: TRINO_DBT_USER
   value: {{ $ac.serviceUser | default "dbt-runner" | quote }}
+{{- /* The post-install seed Jobs and the ONE schema each creates and fills (core/infra/trino-rules.ts
+       `seedWriters`): without them a fresh install's boot-time rules deny their CREATE SCHEMA. */}}
+{{- $writers := list }}
+{{- if and .Values.dbt .Values.dbt.enabled }}{{ $writers = append $writers (printf "%s:%s" .Values.dbt.trino.user .Values.dbt.trino.schema) }}{{ end }}
+{{- if and .Values.marts .Values.marts.enabled }}{{ $writers = append $writers (printf "%s:%s" .Values.marts.trino.user .Values.marts.schema) }}{{ end }}
+{{- if $writers }}
+- name: TRINO_SEED_WRITERS
+  value: {{ join "," $writers | quote }}
+{{- end }}
 - name: TRINO_ACCESS_RULES_INTERVAL_MINUTES
   value: {{ $ac.reconcileIntervalMinutes | default 10 | quote }}
 {{- end }}
