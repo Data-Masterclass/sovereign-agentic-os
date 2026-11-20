@@ -29,6 +29,7 @@ spec:
             - { name: OS_SESSION_SECRET, valueFrom: { secretKeyRef: { name: sess, key: s } } }
             - { name: LANGFUSE_PUBLIC_KEY, value: "pk-lf-test-not-a-default" }
             - { name: LANGFUSE_SECRET_KEY, valueFrom: { secretKeyRef: { name: lf, key: sk } } }
+            - { name: LANGFUSE_SSO_PASSWORD, valueFrom: { secretKeyRef: { name: lf, key: pw } } }
 YAML
 # fake kubectl: `get secret <name> -o json` answers from $TMP/secrets/<name>.json
 mkdir -p "$TMP/secrets" "$TMP/bin"
@@ -42,16 +43,17 @@ cat "$f"
 STUB
 chmod +x "$TMP/bin/kubectl"
 put() { printf '{"data":{"%s":"%s"}}' "$2" "$(b64 "$3")" > "$TMP/secrets/$1.json"; }
+putlf() { printf '{"data":{"sk":"%s","pw":"%s"}}' "$(b64 "sk-lf-test-$(printf 'd%.0s' {1..16})")" "$(b64 "lf-admin-test-$(printf 'e%.0s' {1..16})")" > "$TMP/secrets/lf.json"; }
 run() { out=$(SECRETS=$TMP/secrets KUBECTL="$TMP/bin/kubectl" python3 "$CHECK" "$TMP/after.yaml" 2>&1); rc=$?; }
 
 put gw masterkey "sk-test-$(printf 'a%.0s' {1..32})"
 put rt token "rt-test-$(printf 'b%.0s' {1..32})"
 put sess s "session-test-$(printf 'c%.0s' {1..32})"
-put lf sk "sk-lf-test-$(printf 'd%.0s' {1..16})"
+putlf
 
 echo "== cluster Secrets with their own values"
 run; rc_is "clean exits 0" 0
-check "it reports what it checked" "5 guarded values checked by hash" "$out"
+check "it reports what it checked" "6 guarded values checked by hash" "$out"
 
 echo "== the gateway key in the cluster equals the public default (negative twin)"
 put gw masterkey "sk-litellm-local-dev-master"
@@ -76,7 +78,7 @@ out=$(KUBECTL_FAIL=1 SECRETS=$TMP/secrets KUBECTL="$TMP/bin/kubectl" python3 "$C
 rc_is "exits 2 (could not check — the deploy stops too)" 2
 
 echo "== TERMINAL_ENABLED=true makes the broker secret required"
-put lf sk "sk-lf-test-$(printf 'd%.0s' {1..16})"
+putlf
 python3 - "$TMP/after.yaml" <<'PY'
 import sys; p=sys.argv[1]; s=open(p).read()
 s=s.replace('            - { name: LANGFUSE_PUBLIC_KEY', '            - { name: TERMINAL_ENABLED, value: "true" }\n            - { name: LANGFUSE_PUBLIC_KEY')

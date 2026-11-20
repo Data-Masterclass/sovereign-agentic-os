@@ -66,7 +66,19 @@ what makes that check pass.
 | `AGENT_RUNTIME_TOKEN` | os-ui, os-ui-worker; the Dagster code server and its repo-sync sidecar; agent schedule CronJobs | Secret `agent-runtime-token` → `token` | rendered from `agentRuntime.token` on `local` |
 | `OS_SESSION_SECRET`, `OS_MCP_TOKEN_SECRET` | os-ui | Secret `os-ui-session` | generated per install by the chart; normally nothing to do |
 | `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` | os-ui, os-ui-worker; the gateway (`litellm-credentials`, envFrom) | `langfuseInit.publicKey` (plain env) and Secret `langfuse-init` → `LANGFUSE_INIT_PROJECT_SECRET_KEY`; the same pair in `litellm-credentials` | one value pair, three places, all rendered from `langfuseInit` on `local` |
+| `LANGFUSE_SSO_PASSWORD` (the Langfuse admin login) | os-ui (the embedded console sign-in) | Secret `langfuse-init` → `LANGFUSE_INIT_USER_PASSWORD` | rendered from `langfuseInit.userPassword` on `local`; Langfuse applies the init password only when it first creates the user, so the password is changed in Langfuse itself (step 2) |
 | `TERMINAL_BROKER_SECRET` | os-ui, only when `TERMINAL_ENABLED=true` | os-ui env | nothing reads it while the terminal is off; set it in the same change that enables the terminal |
+
+Release values the preflight requires (on `global.profile: local` an unset one renders the
+chart's laptop value, and the preflight names it):
+
+- `litellmMasterKey` (os-ui `LITELLM_MASTER_KEY`, gateway `PROXY_MASTER_KEY`);
+- `agentRuntime.token` (os-ui and worker `AGENT_RUNTIME_TOKEN`; the Dagster code server and the
+  schedule CronJobs);
+- `langfuseInit.publicKey` / `langfuseInit.secretKey` (os-ui, worker, and the gateway's copy);
+- `langfuseInit.userPassword` (os-ui `LANGFUSE_SSO_PASSWORD`, the Langfuse admin login).
+
+`OS_SESSION_SECRET` / `OS_MCP_TOKEN_SECRET` are generated per install and need nothing.
 
 ## LiteLLM: what is encrypted, and the complete re-key
 

@@ -31,7 +31,7 @@ const sha = (s: string) => createHash('sha256').update(s, 'utf8').digest('hex');
 
 /** A strong, unique value per variable (what a correctly configured install has). */
 const real = (name: string) => `real-${name.toLowerCase()}-${'x'.repeat(24)}`;
-const UI_SECRETS = ['LITELLM_MASTER_KEY', 'AGENT_RUNTIME_TOKEN', 'OS_SESSION_SECRET', 'OS_MCP_TOKEN_SECRET', 'LANGFUSE_PUBLIC_KEY', 'LANGFUSE_SECRET_KEY'];
+const UI_SECRETS = ['LITELLM_MASTER_KEY', 'AGENT_RUNTIME_TOKEN', 'OS_SESSION_SECRET', 'OS_MCP_TOKEN_SECRET', 'LANGFUSE_PUBLIC_KEY', 'LANGFUSE_SECRET_KEY', 'LANGFUSE_SSO_PASSWORD'];
 const WORKER_SECRETS = ['AGENT_RUNTIME_TOKEN', 'LANGFUSE_PUBLIC_KEY', 'LANGFUSE_SECRET_KEY'];
 const prodEnv = (names: string[], extra: Record<string, string> = {}): NodeJS.ProcessEnv =>
   ({ NODE_ENV: 'production', ...Object.fromEntries(names.map((n) => [n, real(n)])), ...extra }) as NodeJS.ProcessEnv;
@@ -50,6 +50,7 @@ const DEFAULTS: Record<string, string[]> = {
   OS_MCP_TOKEN_SECRET: [DEV_SECRET_DEFAULTS.sessionSecret],
   TERMINAL_BROKER_SECRET: [DEV_SECRET_DEFAULTS.terminalBrokerSecret],
   LANGFUSE_PUBLIC_KEY: [yamlLiteral(/^langfuseInit:\n {2}publicKey: "([^"]+)"/m)],
+  LANGFUSE_SSO_PASSWORD: [yamlLiteral(/^langfuseInit:\n(?: {2}.*\n)*? {2}userPassword: "([^"]+)"/m)],
   LANGFUSE_SECRET_KEY: [yamlLiteral(/^langfuseInit:\n(?: {2}.*\n)*? {2}secretKey: "([^"]+)"/m)],
 };
 

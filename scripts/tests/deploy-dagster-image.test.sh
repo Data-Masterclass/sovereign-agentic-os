@@ -82,6 +82,7 @@ agentRuntime:
 langfuseInit:
   publicKey: pk-lf-test-cccccccccccccccc
   secretKey: sk-lf-test-dddddddddddddddd
+  userPassword: lf-admin-test-eeeeeeeeeeeeeeee
 YAML
 
 derive_and_render() { # <tree> — sets out, rc, rendered

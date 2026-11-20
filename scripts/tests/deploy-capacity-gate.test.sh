@@ -73,7 +73,7 @@ printf 'osUI:\n  image:\n    repository: registry.example.invalid/sovereign-os/o
 # A release with its own secrets (the secret preflight passes); the values are test-only strings.
 { cat "$TMP/live-defaults.yaml"
   printf 'litellmMasterKey: sk-test-%s\nagentRuntime:\n  token: rt-test-%s\n' "$(printf 'a%.0s' {1..32})" "$(printf 'b%.0s' {1..32})"
-  printf 'langfuseInit:\n  publicKey: pk-lf-test-%s\n  secretKey: sk-lf-test-%s\n' "$(printf 'c%.0s' {1..16})" "$(printf 'd%.0s' {1..16})"
+  printf 'langfuseInit:\n  publicKey: pk-lf-test-%s\n  secretKey: sk-lf-test-%s\n  userPassword: lf-admin-test-%s\n' "$(printf 'c%.0s' {1..16})" "$(printf 'd%.0s' {1..16})" "$(printf 'e%.0s' {1..16})"
 } > "$TMP/live-ok.yaml"
 # The live release itself over-commits: the gate must read the RELEASE values, not chart defaults.
 { cat "$TMP/live-ok.yaml"; cat "$FIX/capacity-overcommit-cpu.yaml"; } > "$TMP/live-overcommit.yaml"
