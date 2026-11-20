@@ -431,9 +431,12 @@ Three rules keep it one tree:
 2. **Everything nests, nothing twice.** A tool call's observation is ACTIVE while the call runs,
    so what the governed call records (a retrieval, a data tool) nests under it by OTel context.
    Under a run `agent-governed.ts` `trace()` writes only to its in-process ring — the observer
-   already wrote the tool observation. The LiteLLM caller forwards `existing_trace_id` +
-   `parent_observation_id` (the `llm.<node>` span id), so the gateway's generation lands under
-   the call's span; the app exports no generation of its own (`exportOsSpan`).
+   already wrote the tool observation. The LiteLLM caller sends a W3C `traceparent` from
+   the `llm.<node>` span's OTel ids and `x-litellm-call-id` (recorded on that span as
+   `litellm_call_id`), which is how LiteLLM's OTel v2 `langfuse_otel` callback nests the call's
+   generation under the span (`core/runtime/gateway-trace.ts`); the legacy body fields
+   `existing_trace_id` / `parent_observation_id` are ignored on V2 and are not sent. The app
+   exports no generation of its own (`exportOsSpan`).
 3. **Every read is filtered.** The diagnostics route reads observations by
    `traceId=createTraceId(runId)`; without a run id, by the caller's user id and a time window.
    `observationsQuery` throws on anything looser, and that rule has a test.
