@@ -51,6 +51,11 @@ elif check == "externalsecrets":
         if t["name"] != n: fail(f"{n}: target name {t['name']}")
         if t.get("creationPolicy") != "Orphan": fail(f"{n}: creationPolicy {t.get('creationPolicy')}")
         if (t.get("template") or {}).get("type") != e["type"]: fail(f"{n}: type {(t.get('template') or {}).get('type')} vs {e['type']}")
+        tdata = (t.get("template") or {}).get("data") or {}
+        if sorted(tdata) != sorted(e["keys"]): fail(f"{n}: template keys {sorted(tdata)} vs {e['keys']}")
+        for k, tv in tdata.items():
+            if f'index . "{k}"' not in tv or "fail" not in tv or 'eq $v ""' not in tv: fail(f"{n}/{k}: no empty-value refusal in the template")
+        if (t.get("template") or {}).get("engineVersion") != "v2": fail(f"{n}: template engine")
         got = [x["secretKey"] for x in s["data"]]
         if sorted(got) != sorted(e["keys"]) or len(got) != len(set(got)): fail(f"{n}: keys {got} vs {e['keys']}")
         rk = {x["remoteRef"]["key"] for x in s["data"]}

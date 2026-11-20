@@ -49,8 +49,8 @@ secrets:
   service-bearer-token:         {source: chart, type: Opaque, keys: [SERVICE_BEARER_TOKEN]}
   trino-catalog-credentials:    {source: chart, type: Opaque, keys: [POLARIS_OAUTH_CREDENTIAL]}
   valkey-credentials:           {source: chart, type: Opaque, keys: [password]}
-  # Created by hand today (no chart template).
-  ci-runner-token:              {source: manual, type: Opaque, keys: [token]}
+  # Created by hand today (no chart template). Not here: ci-runner-token — its writer is outside this
+  # repo (the CI runner's Role can update it), and ESO would revert it at every refresh.
   dagster-basic-auth:           {source: manual, type: Opaque, keys: [auth]}
   soa-basic-auth:               {source: manual, type: Opaque, keys: [auth]}
   ghcr-pull:

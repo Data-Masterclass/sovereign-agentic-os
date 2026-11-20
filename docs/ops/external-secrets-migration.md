@@ -26,6 +26,14 @@ Nothing changes until the owner runs the steps below. The chart's default is off
    only adds `helm.sh/resource-policy: keep` to them. Release 2 (`externalSecrets.managed`) stops
    rendering them: Helm leaves them in place, and ESO overwrites them in place with the same
    values from Secrets Manager. The Secret never disappears, and no pod restarts because of it.
+   Skipping release 1 would make Helm DELETE the Secret (Helm checks `keep` on the live object).
+   Two guards stop that before anything changes: the chart's `lookup` fails the switch release
+   for any Helm-owned live Secret without `keep`, and `scripts/deploy.sh` refuses any upgrade that
+   would delete a live Secret without it (`scripts/lib/secret-deletion-guard.sh`).
+4. Empty values. Every key goes through an ESO template that fails on an empty value. An empty
+   property in Secrets Manager leaves the ExternalSecret not Ready and the Secret unchanged; it never
+   blanks a credential. Secrets with an empty value live (today `os-ui-graph`, `os-ui-smtp`: the
+   features are not configured) are reported EMPTY by the plan and are not moved.
 
 ## 1. What the owner must do (once)
 
@@ -59,7 +67,8 @@ You need: the `stackit` CLI logged in to the project, `kubectl` with context `dm
    deploy/external-secrets/install.sh --context dmagenticos
    ```
 
-   It needs about 30m CPU and 128 MiB memory in requests.
+   It requests 30m CPU and 128 MiB memory, with 512 MiB of memory limits. The capacity gate already
+   counts this (`capacity.yaml` `outsideChart`). The optional `bitwarden-sdk-server` subchart stays off.
 4. **Create the bootstrap Secret** with the reader's password. It cannot come from the store it
    unlocks. Type the password at the prompt; it never lands on a command line:
 
@@ -105,6 +114,16 @@ Put these values in the private overlay, not in the repo.
     managed: [<chart names>, <manual names>]
   ```
 
+Before release 2, check that Secrets Manager is still an exact copy of the live Secrets. A value
+rotated live after the copy would otherwise be replaced by the older copy. Log in as the **reader**
+the same way as the writer above, into its own header file, then run:
+
+```sh
+SM_HEADER=<reader header file> scripts/ops/eso-migration-plan.sh --compare-backend --instance-id <id>
+```
+
+Every Secret must show SAME. The values are compared by sha256 inside the script and are never printed.
+
 ## 4. Verify (read-only)
 
 ```sh
@@ -122,7 +141,8 @@ again from the private overlay. The values in the overlay must still be the curr
 
 ## Rotation after the switch
 
-Write the new value to Secrets Manager with the writer, and then
+Write the new value to Secrets Manager with the writer (never an empty value: ESO refuses it, and
+the old value stays), and then
 `kubectl annotate externalsecret <name> force-sync=$(date +%s) --overwrite`. Without that, ESO
 picks it up within `refreshInterval` (1 h). Restart the readers as `docs/ops/secret-rotation.md`
 describes; `rotate-secrets.sh verify` is unchanged. Not done yet: `rotate-secrets.sh prepare/plan`
@@ -137,3 +157,5 @@ still produce Helm overlays, and they do not cover ESO-managed Secrets.
   (Trino T2, design 06), `trivy-server-token`. They are added to the catalog together with
   their consumers.
 - `dagster-postgresql` (rendered by the Dagster subchart) and the TLS Secrets (cert-manager).
+- `ci-runner-token`: its writer is outside this repo (the CI runner's Role may update it), and ESO
+  would revert it at every refresh. It stays as it is.

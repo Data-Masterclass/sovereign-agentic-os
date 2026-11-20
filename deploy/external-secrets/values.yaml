@@ -4,8 +4,12 @@
 # Values for the upstream External Secrets Operator chart (components/external-secrets/UPSTREAM.md),
 # installed as its own release by deploy/external-secrets/install.sh. Upstream defaults except:
 #   - the image pinned by digest (same tag the chart ships);
-#   - small requests, so the operator fits the capacity budget of the single-node cluster.
+#   - small requests, so the operator fits the capacity budget of the single-node cluster (counted in
+#     charts/sovereign-agentic-os/capacity.yaml outsideChart; external-secrets-chart.test.sh keeps them equal);
+#   - the optional bitwarden-sdk-server subchart stated OFF (it wraps the Bitwarden SDK under its own licence).
 installCRDs: true
+bitwarden-sdk-server:
+  enabled: false
 image:
   repository: ghcr.io/external-secrets/external-secrets
   tag: "v2.15.0@sha256:6888f243e5f8f7592c6d7fae2a5547c9e33531441b47b53807b9093b25a00e31"

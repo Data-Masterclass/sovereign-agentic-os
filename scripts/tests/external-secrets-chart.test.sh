@@ -12,6 +12,8 @@
 #     same name, type and keys, creationPolicy Orphan, through the STACKIT ClusterSecretStore
 #     (vault provider, KV v2, userPass, path = instance ID);
 #   * the connections ESO template uses the served API, external-secrets.io/v1 (v1beta1 is not served);
+#   * every key goes through an ESO template that fails on an empty value (no blanked credential);
+#   * the operator release is counted in capacity.yaml and keeps the bitwarden subchart off;
 #   * failures: no instance ID, no username, a managed name missing from the catalog;
 #   * negative twins: a catalog that drops a key, and a template whose Secret is not guarded, must
 #     each make the corresponding check fail.
@@ -71,6 +73,29 @@ echo "== the connections ESO template uses the served API version"
 render "$CHART" --set connections.externalSecrets.enabled=true
 rc_is "connections ESO render" 0
 check "every ExternalSecret is external-secrets.io/v1" "OK" "$(py api-v1 "$CHART")"
+
+echo "== the operator release: counted by the capacity gate, bitwarden subchart off"
+cap=$(python3 - <<'PY'
+import yaml
+v = yaml.safe_load(open("deploy/external-secrets/values.yaml"))
+def mi(x): return int(str(x).rstrip("Mi")); 
+def m(x): return int(str(x).rstrip("m"))
+parts = [v, v["webhook"], v["certController"]]
+req_cpu = sum(m(p["resources"]["requests"]["cpu"]) for p in parts)
+req_mem = sum(mi(p["resources"]["requests"]["memory"]) for p in parts)
+lim_mem = sum(mi(p["resources"]["limits"]["memory"]) for p in parts)
+c = yaml.safe_load(open("charts/sovereign-agentic-os/capacity.yaml"))["outsideChart"]
+e = [o for o in c if o["name"].startswith("external-secrets")]
+if len(e) != 1: print("no external-secrets entry in capacity.yaml outsideChart"); raise SystemExit
+e = e[0]
+want = (f"{req_cpu}m", f"{req_mem}Mi", f"{lim_mem}Mi")
+got = (e["requests"]["cpu"], e["requests"]["memory"], e["limits"]["memory"])
+print("OK" if got == want else f"capacity.yaml {got} vs values.yaml {want}")
+if v.get("bitwarden-sdk-server", {}).get("enabled") is not False: print("bitwarden-sdk-server not explicitly disabled")
+PY
+)
+check "capacity.yaml counts exactly the operator's requests and memory limits; bitwarden off" "OK" "$cap"
+absent "bitwarden-sdk-server explicitly disabled" "bitwarden" "$cap"
 
 echo "== refusals"
 render "$CHART" --set externalSecrets.enabled=true --set externalSecrets.store.username=u

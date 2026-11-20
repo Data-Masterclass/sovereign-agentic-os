@@ -49,6 +49,11 @@ outsideChart:
   - name: velero (backups)
     requests: { cpu: 200m, memory: 512Mi }
     limits: { cpu: 2000m, memory: 4Gi }
+  # WP-10: External Secrets Operator, its own release (deploy/external-secrets/values.yaml: three pods).
+  # Counted before it is installed, so the gate is never optimistic.
+  - name: external-secrets (ESO operator, webhook, cert controller)
+    requests: { cpu: 30m, memory: 128Mi }
+    limits: { memory: 512Mi }
   - name: ingress-nginx
     requests: { cpu: 100m, memory: 90Mi }
     limits: {}
