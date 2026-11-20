@@ -759,9 +759,9 @@ jobs:
         run: |
           pip install "pyyaml>=6,<7"
           helm dependency build charts/sovereign-agentic-os || helm dependency update charts/sovereign-agentic-os
-          OPA_IT_TOKENS_FILE=$RUNNER_TEMP/opa-tokens.json python3 tests/opa/run-chart-opa.py opa-it 18181
+          OPA_IT_TOKENS_FILE=$RUNNER_TEMP/opa-tokens.json python3 tests/opa/run-chart-opa.py opa-it 18181 --set opa.auth.enforce=true
           # Negative twin for authz.int.test: the same chart with OPA's API protection off.
-          python3 tests/opa/run-chart-opa.py opa-it-open 18182 --set opa.auth.enforce=false
+          python3 tests/opa/run-chart-opa.py opa-it-open 18182
           for p in 18181 18182; do for i in $(seq 1 30); do curl -fsS http://127.0.0.1:$p/health && break; sleep 1; done; done
       - name: authz.int.test (real OPA, token authentication + system.authz)
         working-directory: os-ui

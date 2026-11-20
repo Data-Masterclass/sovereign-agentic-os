@@ -1077,10 +1077,12 @@ opa:
   #   reader  web-fetch: tool decisions under /v1/data/agentic only.
   # Trino's OPA plugin has no bearer setting, so it evaluates `/v1/data/trino/*` (POST) without a
   # token; only the pods `opa-allow-callers` admits can reach OPA at all.
-  # `enforce: false` distributes the tokens but leaves OPA open — the first step of a rollout, so
-  # every client presents its token before OPA starts to require it.
+  # Rollout (docs/ops/opa-api-auth.md): the default `enforce: false` distributes the tokens to
+  # every client but leaves OPA open, so the first release never meets a token-less pod with a
+  # 401. Once every client presents its token (web-fetch on an image that sends it), a follow-up
+  # release sets `enforce: true`.
   auth:
-    enforce: true
+    enforce: false
     # An operator/ExternalSecret-managed Secret with keys `writer` and `reader`; empty = the chart
     # renders `opa-tokens` (random on first install, kept across upgrades via `lookup`).
     existingSecret: ""
