@@ -9,11 +9,11 @@
  * ARCHITECTURE:
  *   - `runPreflight({ reposDir, store })`: every `agents/**\/system.yaml` at HEAD of every domain
  *     repo under `reposDir` (read with `core/infra/git-store.ts`, the same reader the OS uses —
- *     no git binary needed), plus every store definition (`allSystemDefinitionsInternal`), each
+ *     no git binary needed), plus every store definition (`readSystemDefinitionsReadOnly`), each
  *     through `preflightDoc`. A proposal (`proposeIdMigration`) per refused definition that parses.
- *   - `main()` (worker/agent-id-preflight.mjs): reads `config.reposDir` (`OS_REPOS_DIR`), hydrates
- *     the store from its durable mirror and REFUSES to report a pass when the mirror did not answer
- *     (exit 2) — an empty store is not a clean store. `--repos-only` checks git alone and says so.
+ *   - `main()` (worker/agent-id-preflight.mjs): reads `config.reposDir` (`OS_REPOS_DIR`), reads the
+ *     store's durable mirror READ-ONLY (`readSystemDefinitionsReadOnly`: `_count`/`_search` only)
+ *     and REFUSES to report a pass when it did not answer completely (exit 2). `--repos-only` checks git alone and says so.
  *     Exit 0 = every definition passes; 1 = at least one would be refused; 2 = could not check.
  *   - Read-only: nothing is written anywhere.
  */
@@ -76,13 +76,14 @@ export async function main(argv: string[]): Promise<number> {
   const reposOnly = argv.includes('--repos-only');
   let store: { id: string; domain: string; yaml: string; archived: boolean }[] | null = null;
   if (!reposOnly) {
-    const { allSystemDefinitionsInternal, ensureHydrated, hydrationState } = await import('@tabs/agents/lib/store');
-    await ensureHydrated();
-    if (hydrationState() !== 'hydrated') {
-      console.error(`agent-id-preflight: the agent store did not hydrate from its durable mirror (${hydrationState()}) — store definitions were NOT checked. Fix the mirror, or pass --repos-only to check git alone.`);
+    // READ-ONLY: the mirror is read with `_count`/`_search` only — no hydration of a registry, no
+    // crash recovery, no index bootstrap — so running the preflight changes nothing anywhere.
+    const { readSystemDefinitionsReadOnly } = await import('@tabs/agents/lib/store');
+    store = await readSystemDefinitionsReadOnly();
+    if (store === null) {
+      console.error('agent-id-preflight: the agent store\'s durable mirror did not give a complete answer — store definitions were NOT checked. Fix the mirror, or pass --repos-only to check git alone.');
       return 2;
     }
-    store = allSystemDefinitionsInternal();
   }
   let report: PreflightReport;
   try {

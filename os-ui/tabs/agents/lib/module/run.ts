@@ -394,7 +394,8 @@ export async function runAgentModule(input: ModuleRunInput): Promise<ModuleRunRe
     engine: MODULE_ENGINE,
     runId: input.runId,
     path,
-    finalText: textOf(lastAnswer?.content),
+    // A failed run's answer IS the failure — never the previous agent's last answer.
+    finalText: failure ? `The run stopped: agent ${failure.node ?? '(unknown)'} failed (${failure.code ?? 'error'}): ${failure.reason}` : textOf(lastAnswer?.content),
     reachedEnd: !failure && !parked && !interrupted && snap.next.length === 0,
     parked,
     interrupted: interrupted || parked,

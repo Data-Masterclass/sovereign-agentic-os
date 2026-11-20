@@ -1449,13 +1449,18 @@ export function deleteSystem(systemId: string, user: Principal): SystemRecord {
  * working lists, so it leaves the repo too (and the commit that archives it REMOVES its directory).
  */
 /**
- * Every definition the registry holds, archived ones included — what a flag-on generation could
- * ever be asked to generate. For read-only checks (`module/preflight-run.ts`); no identity filter,
- * so never expose it through a route.
+ * Every definition in the durable mirror, read with NO side effect (WP-53b review): no hydration
+ * of this process's registry, no crash recovery (which would mark in-flight runs `interrupted`
+ * and write that back), no index creation — `_count` and `_search` only. `null` → the mirror did
+ * not give a complete answer. For the read-only id preflight.
  */
-export function allSystemDefinitionsInternal(): { id: string; domain: string; yaml: string; archived: boolean }[] {
-  ensureSeeded();
-  return [...state().store.values()].map((r) => ({ id: r.id, domain: r.domain, yaml: r.yaml, archived: !!r.archived })).sort((a, b) => a.id.localeCompare(b.id));
+export async function readSystemDefinitionsReadOnly(): Promise<{ id: string; domain: string; yaml: string; archived: boolean }[] | null> {
+  const docs = await mirror.readOnlyList(2000);
+  if (docs === null) return null;
+  return (docs as Partial<SystemRecord>[])
+    .filter((r) => r && typeof r.id === 'string' && typeof r.yaml === 'string')
+    .map((r) => ({ id: r.id as string, domain: String(r.domain ?? ''), yaml: r.yaml as string, archived: !!r.archived }))
+    .sort((a, b) => a.id.localeCompare(b.id));
 }
 
 /** Every domain that currently holds a live system — the set the boot reconcile walks. */
