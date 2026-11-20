@@ -15,6 +15,7 @@
 */}}
 {{- $v := .Values.backup.veleroDrill }}
 {{- if $v.enabled }}
+{{- if not $v.acceptRestoreCreateRisk }}{{ fail "backup.veleroDrill.enabled needs backup.veleroDrill.acceptRestoreCreateRisk=true: `restores: create` in the Velero namespace can restore any backup into any namespace (docs/runbooks/git-backup-drills.md)" }}{{ end }}
 {{- $sel := dict "app.kubernetes.io/component" "velero-drill" }}
 {{- $check := printf `set -u
 export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0='*' HOME=/tmp
@@ -29,7 +30,20 @@ echo "VELERO-DRILL $(jq -c '{repos:.}' /tmp/r.json)"` }}
       "volumeMounts" (list (dict "name" "os-repos" "mountPath" "/repos" "readOnly" true) (dict "name" "tmp" "mountPath" "/tmp"))
       "resources" $v.resources
       "securityContext" (dict "runAsNonRoot" true "allowPrivilegeEscalation" false "readOnlyRootFilesystem" true "capabilities" (dict "drop" (list "ALL"))) }}
-{{- $volumes := list (dict "name" "os-repos" "persistentVolumeClaim" (dict "claimName" "os-repos")) (dict "name" "tmp" "emptyDir" (dict "sizeLimit" "1Gi")) }}
+{{- /* The os-ui pod's own init containers and its non-PVC, non-emptyDir volumes are deleted by
+       NAME; Velero's `restore-wait` init container (added BEFORE resource modifiers run, Velero
+       v1.15 restore.go) and the fs-restored volumes stay. tests/backup/velero-modifier.test.mjs
+       checks these lists against the rendered os-ui Deployment, so they cannot drift. */}}
+{{- $dropInit := list "wait-for-opensearch" }}
+{{- $dropVolumes := list "backup-scripts" }}
+{{- $initDel := list }}{{ range $dropInit }}{{ $initDel = append $initDel (dict "name" . "$patch" "delete") }}{{ end }}
+{{- $volDel := list }}{{ range $dropVolumes }}{{ $volDel = append $volDel (dict "name" . "$patch" "delete") }}{{ end }}
+{{- $volDel = append $volDel (dict "name" "tmp" "emptyDir" (dict "sizeLimit" "1Gi")) }}
+{{- $patch := dict "spec" (dict
+      "initContainers" $initDel
+      "containers" (list (dict "$patch" "replace") $container)
+      "volumes" $volDel
+      "restartPolicy" "Never" "serviceAccountName" "default" "automountServiceAccountToken" false) }}
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -62,8 +76,11 @@ spec:
   podSelector: {}
   policyTypes: [Ingress, Egress]
 ---
-# Velero resource modifier (https://velero.io/docs/v1.15/restore-resource-modifiers/): the
-# restored os-ui pod becomes the checker. JSON-patch `add` replaces the member when it exists.
+# Velero resource modifier (https://velero.io/docs/v1.15/restore-resource-modifiers/), one
+# STRATEGIC merge patch: the restored os-ui pod becomes the checker. It keeps Velero's own
+# `restore-wait` init container (the node-agent fills the volume only while it runs), drops the
+# os-ui init containers and the ConfigMap/Secret volumes the scratch namespace does not have, and
+# replaces the containers with the one-shot `git fsck`.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -78,13 +95,8 @@ data:
       - conditions:
           groupResource: pods
           namespaces: [{{ .Release.Namespace | quote }}]
-        patches:
-          - { operation: add, path: "/spec/initContainers", value: "[]" }
-          - { operation: add, path: "/spec/containers", value: {{ list $container | toJson | quote }} }
-          - { operation: add, path: "/spec/volumes", value: {{ $volumes | toJson | quote }} }
-          - { operation: add, path: "/spec/restartPolicy", value: "\"Never\"" }
-          - { operation: add, path: "/spec/serviceAccountName", value: "\"default\"" }
-          - { operation: add, path: "/spec/automountServiceAccountToken", value: "false" }
+        strategicPatches:
+          - patchData: {{ $patch | toJson | quote }}
 ---
 apiVersion: v1
 kind: ServiceAccount

@@ -90,6 +90,10 @@ backup:
     pollSeconds: 5                # queue check (markers dropped by os-ui after each commit/push)
     rescanSeconds: 600            # full pass: bundles every repo whose refs moved (lost markers)
     refsRecordSeconds: 3600
+    # Bundle staging space. A repo larger than tmpBudgetMi is refused (red in Monitoring), never
+    # staged: the emptyDir's sizeLimit must stay ABOVE the budget, or the os-ui pod is evicted.
+    tmpBudgetMi: 768
+    tmpSizeLimit: 1Gi
     # Optional explicit per-object retention. Empty = the bucket's DEFAULT retention applies
     # (recommended). Mode COMPLIANCE or GOVERNANCE.
     objectLock: { mode: "", days: 0 }
@@ -112,6 +116,13 @@ backup:
       maxDriftPct: 10             # restored vs live _count; the snapshot is hours older than live
     lagRetries: 3                 # git: re-read the newest bundle before calling a ref mismatch
     lagSleepSeconds: 20
+    timeoutSeconds: 3600          # activeDeadlineSeconds of the drill Job
+    maxAgeHours: 26               # a newer dump / snapshot than this is required (else: stale = fail)
+    postgresCompare:
+      maxDriftPct: 25             # restored vs live row count per table
+      minDriftRows: 10
+      ignoreDatabases: []         # databases legitimately empty (never the OS's own)
+      criticalTables: []          # "db:schema.table" that must have rows in the restore
     resources:
       requests: { cpu: 50m, memory: 128Mi }
       limits: { cpu: "1", memory: 1Gi }
@@ -124,6 +135,10 @@ backup:
     scheduleName: velero-daily-agentic-os   # the Velero Schedule whose newest backup is restored
     scratchNamespace: agentic-os-restore-drill
     timeoutSeconds: 3600
+    # `restores: create` in the Velero namespace lets the holder restore ANY backup into ANY
+    # namespace (Velero has no per-namespace restore permission). The drill only ever maps into
+    # the scratch namespace, but the token could do more. Set true to accept that, knowingly.
+    acceptRestoreCreateRisk: false
     resources:
       requests: { cpu: 50m, memory: 64Mi }
       limits: { cpu: 500m, memory: 512Mi }

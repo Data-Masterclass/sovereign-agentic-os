@@ -9,8 +9,8 @@ and its credential (§1), the image is built (§2), and the values are switched 
 |---|---|---|
 | Bundle after every commit | os-ui drops a marker after each successful commit or push; the `git-backup` sidecar runs git's own `git bundle create` (full on the first bundle of a UTC day, incremental against the previous bundle's tips after that), checks it with `git bundle verify`, and uploads it with its manifest (sha256, complete ref list, chain) and a `latest` pointer | `git-bundles/<repo>/<UTC-stamp>-<head12>.bundle`, `.json`, `latest` |
 | Tamper evidence | Every hour, every repository's ref heads in one hash-chained record (each names the sha256 of the one before). Interim until the WP-08 audit anchor exists | `git-refs/<YYYY>/<MM>/<DD>/<stamp>.json`, `git-refs/latest` |
-| Weekly drill | git: restore each repository's chain into a temp repo, `git fsck --full`, every ref equal to live. Postgres: newest pg-dump into a scratch server inside the drill pod, table count and `count(*)` sanity. OpenSearch: newest snapshot into a temporary index prefix, `_count` against live, then deleted | CronJob `restore-drill` |
-| Monthly Velero drill | newest backup of the Velero schedule, os-ui pod + claims only, mapped into `agentic-os-restore-drill`; a resource modifier turns the restored pod into a one-shot `git fsck --full`; then everything restored is deleted | CronJob `velero-drill` |
+| Weekly drill | git: restore each repository's chain into a temp repo, `git fsck --full`, every ref equal to live, and EXACTLY the live inventory proven. Postgres: the newest pg-dump (at most `maxAgeHours` old) into a scratch server inside the drill pod; database set equal to live, no empty database, per-table row counts within `postgresCompare.maxDriftPct` of live; restored data deleted at once. OpenSearch: the newest snapshot (at most `maxAgeHours` old) into a temporary index prefix; index lists equal both ways, `_count` against live; copies deleted | CronJob `restore-drill` |
+| Monthly Velero drill | newest backup of the Velero schedule, os-ui pod + claims only, mapped into `agentic-os-restore-drill`; a strategic-merge resource modifier keeps Velero's `restore-wait` init container (the node-agent fills the volume only while it runs) and replaces the app containers with a one-shot `git fsck --full`; then everything restored is deleted | CronJob `velero-drill` |
 | Results | ConfigMap `restore-drill-status` (Monitoring reads it), `drills/<kind>/<stamp>.json` and `drills/<kind>/latest` in the bucket, one JSON log line `"event":"restore-drill-report"`, and a Failed Job | Monitoring → pipelines lens + alerts |
 
 The commit never waits for the backup: the marker is written on a later turn of the event loop,
@@ -29,12 +29,20 @@ Constraints from those pages:
 
 - Object Lock can only be set **when the bucket is created**, and never removed.
 - Versioning is switched on automatically with Object Lock, and cannot be suspended.
-- **COMPLIANCE** mode needs the project-level **Compliance Lock** first. While Object Lock buckets
-  exist, the Compliance Lock cannot be disabled and the project cannot be deleted.
-- Without the Compliance Lock only GOVERNANCE retention is possible.
+- **Both modes** (COMPLIANCE and GOVERNANCE) need the project-level **Compliance Lock** first:
+  creating an Object Lock bucket or a retention policy without it returns 409. While Object Lock
+  buckets exist, the Compliance Lock cannot be disabled and the project cannot be deleted.
 
 Recommended: COMPLIANCE, 35 days default retention (a daily full bundle plus 30 days of history,
 the same horizon as Velero's 30-day TTL).
+
+> **Warning — COMPLIANCE is irreversible for the retention period.** A secret or personal data
+> committed by mistake to any OS repository is bundled within seconds, and under COMPLIANCE
+> **nobody** (not the owner, not STACKIT support) can delete that bundle for 35 days — a GDPR
+> erasure request cannot be met from the bucket before then. Every overwrite of a `latest`
+> pointer also leaves a new locked version. Rotate a leaked secret at once (deleting it from the
+> repository does not remove it from locked bundles). If that risk is not acceptable, use
+> GOVERNANCE: a holder of `s3:BypassGovernanceRetention` can then delete early.
 
 ```bash
 REGION=eu01
@@ -85,7 +93,14 @@ kubectl -n agentic-os create secret generic git-backup-s3 \
 ## 2. The image
 
 Run `build-images.yml` for `backup-tools` (tag `backup-tools-v1.0.0`) and put the pushed digest in
-`backup.gitBundles.image.digest`.
+`backup.gitBundles.image.digest`. The default digest is empty on purpose: with any of the three
+features on, the chart **refuses to render** until the digest is set.
+
+**Licence.** The image holds git (GPL-2.0-only) as an unmodified Alpine package. It is a separate
+tool binary that the scripts run as its own process — never linked into OS code (the same as the
+git-daemon and git-http images). The licence gate records it that way: `licenses/components.tsv`
+row "git", and `GPL-2.0-only` is allowlisted for a separate tool binary only
+(`licenses/allowed-licenses.txt`).
 
 ## 3. Switch on (a values overlay, applied with the deploy script)
 
@@ -100,7 +115,21 @@ backup:
                              # and the WP-21 S3 snapshot repository for the OpenSearch part
   veleroDrill:
     enabled: true            # needs Velero (deploy/velero/) and its schedule's backups
+    acceptRestoreCreateRisk: true   # see "Residual risk" below — the render refuses without it
 ```
+
+### Residual risk of the Velero drill (accepted by the flag above)
+
+The drill's ServiceAccount may `create` Velero `Restore` objects in the `velero` namespace.
+Kubernetes RBAC cannot narrow that: Velero itself executes a Restore with its own cluster-wide
+rights, so whoever holds that token could restore any backup into any namespace, or with
+`existingResourcePolicy: update` overwrite live objects. The drill only ever creates a Restore
+with `includedNamespaces: [agentic-os]`, `namespaceMapping: {agentic-os: agentic-os-restore-drill}`,
+`includedResources: [pods, persistentvolumeclaims]`, the os-ui label selector and
+`existingResourcePolicy: none`; the token lives only in the drill Job's pod (no other workload
+uses the ServiceAccount), and the scratch namespace has a quota and a deny-all NetworkPolicy.
+Velero offers no per-namespace restore permission (as of v1.15), so this is an accepted risk —
+not a control. Leave the drill off if that is not acceptable.
 
 The object-storage host joins the egress-proxy allowlist with the feature.
 

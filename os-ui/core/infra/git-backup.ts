@@ -68,7 +68,10 @@ export function notifyCommitted(gitdir: string, opts: NotifyOptions = {}): boole
           const key = repoKeyFor(real, await fs.promises.realpath(reposDir));
           if (!key) throw new Error(`'${gitdir}' resolves outside the repositories root`);
           await fs.promises.mkdir(queue, { recursive: true });
-          await fs.promises.writeFile(path.join(queue, markerName(key)), key);
+          // Atomic: write a dot-file (the sidecar's glob skips dot-files), then rename over the marker.
+          const tmp = path.join(queue, `.${markerName(key)}.${process.pid}.${Date.now()}`);
+          await fs.promises.writeFile(tmp, key);
+          await fs.promises.rename(tmp, path.join(queue, markerName(key)));
         })
         .catch((e: unknown) => {
           console.error(`[git-backup] could not queue '${gitdir}' for bundling (the sidecar's rescan will pick it up): ${e instanceof Error ? e.message : String(e)}`);
