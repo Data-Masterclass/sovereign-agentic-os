@@ -143,6 +143,10 @@ export const KNOWLEDGE_DIR = 'knowledge';
 export const AGENTS_DIR = 'agents';
 /** `apps/<slug>/` — source, Dockerfile, k8s/ (WP-54). */
 export const APPS_DIR = 'apps';
+/** `apps/<slug>/k8s/` — the app's plain Kubernetes manifests, applied as committed (WP-54). */
+export const APP_K8S_DIR = 'k8s';
+/** `apps/<slug>/.github/workflows/image.yml` — the app's own image build (runs on the app's forge). */
+export const APP_CI_WORKFLOW_PATH = '.github/workflows/image.yml';
 /** `connections/<name>/` — catalog.properties for Trino (WP-50). */
 export const CONNECTIONS_DIR = 'connections';
 /** `os/` — the OS layer only: owners, scope, approvals, MCP and UI descriptions, pins. */
