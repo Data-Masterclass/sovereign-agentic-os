@@ -1321,6 +1321,9 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
             callToolGuarded(deps.callTool, call, {
               timeoutMs: deps.toolCallTimeoutMs ?? DEFAULT_TOOL_CALL_TIMEOUT_MS,
               maxChars: deps.toolResultMaxChars ?? DEFAULT_TOOL_RESULT_MAX_CHARS,
+              // WP-26: the same key on every replay of this step, so the governed executor's
+              // ledger (`tool-call-ledger.ts`) can refuse to dispatch a write twice.
+              idempotencyKey: `${String(config.configurable?.thread_id ?? '')}:${holdKey(id, state.nodeRuns.length, cur.iterations, call.id)}`,
             }),
           );
         }

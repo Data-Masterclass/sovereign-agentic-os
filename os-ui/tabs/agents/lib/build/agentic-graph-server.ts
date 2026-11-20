@@ -32,6 +32,7 @@ import { effectiveModelPrices } from '@tabs/admin/lib/model-prices';
 import { runNode, type AgenticGraphResult, type AgenticGraphDeps } from '@tabs/agents/lib/build/agentic-graph';
 import { liveEmbedder } from '@core/infra/context/librarian-live';
 import { runGraphEngine } from '@tabs/agents/lib/engine/run';
+import { selectToolCallLedger, withToolCallLedger } from '@tabs/agents/lib/engine/tool-call-ledger';
 import { selectCheckpointer, type CheckpointerKind } from '@tabs/agents/lib/engine/checkpointer';
 import type { GraphDeps, HeldCall, RouteDecision } from '@tabs/agents/lib/engine/build-graph';
 import { inspectGraphRun, type PendingApproval, type ResumeDecision, type RunFailure, type RunInspection } from '@tabs/agents/lib/engine/run';
@@ -389,10 +390,14 @@ export async function runOsTeam(input: RunOsTeamInput): Promise<RunOsTeamResult>
     });
     // Track B — every history trim this run made, for the run report (the model is told in-prompt).
     const trims: (ContextTrim & { node: string })[] = [];
+    // WP-26: the governed executor behind the tool-call ledger, so a replayed step never
+    // dispatches the same write twice (same database as the checkpointer).
+    const ledger = await selectToolCallLedger(config.agentRunsDatabaseUrl);
     const result = await runGraphEngine({
       ir,
       deps: {
         ...graphDeps,
+        callTool: withToolCallLedger(graphDeps.callTool, ledger),
         observe,
         onContextTrim: (ev) => trims.push(ev),
         unmappedTools: resolveGrantedTools(sys).unmapped,

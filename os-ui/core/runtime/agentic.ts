@@ -125,8 +125,11 @@ export function trackUsage(inner: LlmCall): UsageTracker {
   return { llm, usage: () => sum, models: () => [...models] };
 }
 
-/** Execute one governed tool call; returns the model-readable result text. */
-export type ToolExecutor = (name: string, args: Record<string, unknown>) => Promise<{ text: string; isError: boolean }>;
+/**
+ * Execute one governed tool call; returns the model-readable result text. `ctx.idempotencyKey`
+ * (set by the team engine, WP-26) identifies the call across replays of its step.
+ */
+export type ToolExecutor = (name: string, args: Record<string, unknown>, ctx?: { idempotencyKey?: string }) => Promise<{ text: string; isError: boolean }>;
 
 /**
  * A tool call that was NOT executed because it awaits the present user's confirmation. The

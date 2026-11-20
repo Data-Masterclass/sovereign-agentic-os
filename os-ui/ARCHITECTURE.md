@@ -354,7 +354,14 @@ on LangGraph's interrupt id — stable across re-runs, so a worker restart never
 The **resume is strict**: the worker checks the interrupt id against `getState().tasks[].interrupts`
 and refuses a stale, duplicate or wrong id with a 409 (`StaleResumeError`; a still-parked run stays
 `parked`). Phase 2 executes one call per superstep and every run streams with
-`durability: 'sync'`, so a worker killed between two calls re-executes only the call in flight.
+`durability: 'sync'`, so a worker killed BETWEEN two calls re-executes only the call in flight.
+A death INSIDE the call's superstep replays that call (LangGraph records a step's writes only after
+it returns), so every governed call carries an idempotency key (`<thread>:<node>#<visit>.<round>:<callId>`)
+and goes through the tool-call ledger (`engine/tool-call-ledger.ts`, table `tool_call_ledger`):
+`started` before dispatch, the result after. On a replay, a recorded call is answered from the
+record; a write whose dispatch was cut off is not re-sent (typed `unresolved_previous_call`); a
+read is sent again. The guarantee is therefore: a governed write is dispatched at most once, and
+exactly once when the worker survives the dispatch; reads are at least once.
 Proven against the real `PostgresSaver` on Postgres 17, a fresh process per step:
 `engine/hitl.pg.test.ts`, `engine/durability.pg.test.ts` (CI job `test-langgraph-pg`).
 One-release shim: a thread parked before WP-26 (its interrupt value names its approval) resumes

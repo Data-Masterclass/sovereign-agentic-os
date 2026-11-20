@@ -52,6 +52,25 @@ export function isUnresolved(text: string): boolean {
  * signature is answered with this typed note instead — the model is told to verify by READING,
  * which it may always re-dispatch, rather than writing again.
  */
+/**
+ * The answer to a WRITE whose previous dispatch was cut off by a worker death (WP-26 ledger): it
+ * was sent, the outcome is unknown, and it will not be sent again.
+ */
+export function unresolvedReplay(tool: string): ToolOutput {
+  return {
+    text: JSON.stringify({
+      error: {
+        code: 'unresolved_previous_call' satisfies ToolErrorCode,
+        reason:
+          `${tool} was already sent once for this step, and the worker stopped before its answer was recorded, ` +
+          'so it may well have taken effect. It will NOT be sent again — a repeated write is how one change becomes two. ' +
+          'Verify the current state with a READ first, then act on what you find, or report that the outcome is unverified.',
+      },
+    }),
+    isError: true,
+  };
+}
+
 export function unresolvedWriteRepeat(tool: string): ToolOutput {
   return {
     text: JSON.stringify({
@@ -223,9 +242,9 @@ export function truncationWarnings(runs: { node: string; result: { steps: { tool
  * nothing to resume onto — so it becomes a typed result and the node continues.
  */
 export async function callToolGuarded(
-  callTool: (name: string, args: Record<string, unknown>) => Promise<ToolOutput>,
+  callTool: (name: string, args: Record<string, unknown>, ctx?: { idempotencyKey?: string }) => Promise<ToolOutput>,
   call: { name: string; args: Record<string, unknown> },
-  opts: { timeoutMs?: number; maxChars?: number; clock?: { setTimeout: typeof setTimeout; clearTimeout: typeof clearTimeout } } = {},
+  opts: { timeoutMs?: number; maxChars?: number; clock?: { setTimeout: typeof setTimeout; clearTimeout: typeof clearTimeout }; idempotencyKey?: string } = {},
 ): Promise<ToolOutput> {
   const timeoutMs = Math.max(1, opts.timeoutMs ?? DEFAULT_TOOL_CALL_TIMEOUT_MS);
   const clock = opts.clock ?? { setTimeout, clearTimeout };
@@ -233,7 +252,7 @@ export async function callToolGuarded(
   let out: ToolOutput;
   try {
     out = await Promise.race<ToolOutput>([
-      callTool(call.name, call.args),
+      opts.idempotencyKey ? callTool(call.name, call.args, { idempotencyKey: opts.idempotencyKey }) : callTool(call.name, call.args),
       new Promise<ToolOutput>((resolve) => {
         timer = clock.setTimeout(
           () => resolve(typedToolError('timeout', `${call.name} did not answer within ${timeoutMs} ms — the step was abandoned, not retried. Try a narrower request (fewer rows, a filter, a smaller range).`)),

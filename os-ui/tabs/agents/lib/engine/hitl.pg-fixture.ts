@@ -39,6 +39,7 @@ import { holdDecisionFor } from '@tabs/agents/lib/build/hold';
 import type { ApprovalDecision, ApprovalPort, ApprovalState } from '@tabs/agents/lib/engine/approval-port';
 import type { GraphDeps } from '@tabs/agents/lib/engine/build-graph';
 import { runGraphEngine, type ResumeDecision } from '@tabs/agents/lib/engine/run';
+import { migrateToolCallLedger, postgresToolCallLedger, withToolCallLedger, type ToolCallLedger } from '@tabs/agents/lib/engine/tool-call-ledger';
 import { FIXTURE_USER } from '@tabs/agents/lib/engine/parity-harness';
 
 export const SYSTEM_ID = 'sys-wp26';
@@ -74,6 +75,10 @@ export type StepInput = {
   policy?: 'held' | 'not-held';
   resume?: ResumeDecision;
   crashOn?: string;
+  /** Die AFTER that tool's side effect committed, before its result is recorded anywhere. */
+  crashAfter?: string;
+  /** Die after that tool's result is in the ledger, before LangGraph checkpoints the step. */
+  crashAfterRecorded?: string;
 };
 
 export type StepOutput = {
@@ -151,16 +156,28 @@ export async function runStep(input: StepInput): Promise<StepOutput> {
         const tool = String(req.params?.name ?? '');
         if (input.crashOn === tool) process.exit(137); // a real worker death mid-superstep
         await pool.query(`INSERT INTO wp26_side_effects (run_id, tool, actor, pid) VALUES ($1,$2,$3,$4)`, [input.runId, tool, user.id, process.pid]);
+        if (input.crashAfter === tool) process.exit(137); // the write committed; nothing recorded it yet
         return { jsonrpc: '2.0', id: req.id ?? 1, result: { content: [{ type: 'text', text: JSON.stringify({ ran: tool }) }] } };
       }) as unknown as OsToolDeps['handleRpc'],
       trace: (async () => undefined) as unknown as OsToolDeps['trace'],
     };
     const policy = input.policy ?? 'held';
+    await migrateToolCallLedger(pool);
+    const durable = postgresToolCallLedger(pool);
+    const toolOf = new Map<string, string>();
+    const ledger: ToolCallLedger = {
+      begin: async (key, tool) => { toolOf.set(key, tool); return durable.begin(key, tool); },
+      finish: async (key, result) => {
+        await durable.finish(key, result);
+        if (input.crashAfterRecorded && toolOf.get(key) === input.crashAfterRecorded) process.exit(137);
+      },
+    };
     const toolResults: Record<string, string> = {};
     const deps: Omit<GraphDeps, 'checkpointer'> = {
       llm: statelessModel(input.batch === 'held' ? HELD_BATCH : READ_BATCH),
       toolSpecsFor: (node) => grantedToolSpecs(FIXTURE_USER, sys, node.tools),
-      callTool: grantedToolExecutor(FIXTURE_USER, sys, SYSTEM_ID, spy, { holdAt: 'node' }),
+      // The production wiring: the governed executor behind the durable tool-call ledger.
+      callTool: withToolCallLedger(grantedToolExecutor(FIXTURE_USER, sys, SYSTEM_ID, spy, { holdAt: 'node' }), ledger),
       preamble: 'RULES',
       reasoningModel: 'reasoning',
       execModel: 'fast',
