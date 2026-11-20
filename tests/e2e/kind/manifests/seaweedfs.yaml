@@ -1,0 +1,147 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+#
+# SeaweedFS (Apache-2.0) as the harness's S3 store, in the chart's namespace, under the Service
+# name the chart's external endpoint points at (values.e2e.yaml: http://seaweedfs:8333).
+# up.sh replaces __SEAWEEDFS_IMAGE__ from versions.env and __NAMESPACE__ before applying.
+#
+# Upstream usage only: `weed server -s3` (master + volume + filer + S3 gateway in one process)
+# with the documented S3 identity file, and `weed shell s3.bucket.create` for the buckets.
+# Docs: https://github.com/seaweedfs/seaweedfs/wiki/Amazon-S3-API
+#
+# The credentials are the chart's documented LOCAL dev pair (values.yaml objectStorage.local),
+# written to the Secret name every chart consumer already reads (objectStorage.secretName).
+apiVersion: v1
+kind: Secret
+metadata:
+  name: object-storage-credentials
+  namespace: __NAMESPACE__
+  labels: { app.kubernetes.io/part-of: e2e-harness }
+type: Opaque
+stringData:
+  AWS_ACCESS_KEY_ID: agentic-os-local
+  AWS_SECRET_ACCESS_KEY: agentic-os-local-secret
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: seaweedfs-s3-config
+  namespace: __NAMESPACE__
+  labels: { app.kubernetes.io/part-of: e2e-harness }
+type: Opaque
+stringData:
+  s3.json: |
+    {
+      "identities": [
+        {
+          "name": "agentic-os",
+          "credentials": [
+            { "accessKey": "agentic-os-local", "secretKey": "agentic-os-local-secret" }
+          ],
+          "actions": ["Admin", "Read", "Write", "List", "Tagging"]
+        }
+      ]
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: seaweedfs
+  namespace: __NAMESPACE__
+  labels:
+    app.kubernetes.io/name: seaweedfs
+    app.kubernetes.io/component: object-storage
+    app.kubernetes.io/part-of: e2e-harness
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app.kubernetes.io/name: seaweedfs }
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: seaweedfs
+        app.kubernetes.io/component: object-storage
+        app.kubernetes.io/part-of: e2e-harness
+    spec:
+      containers:
+        - name: seaweedfs
+          image: __SEAWEEDFS_IMAGE__
+          args:
+            - server
+            - -dir=/data
+            - -ip=seaweedfs
+            - -ip.bind=0.0.0.0
+            - -master.volumeSizeLimitMB=64
+            - -volume.max=0
+            - -s3
+            - -s3.port=8333
+            - -s3.config=/etc/seaweedfs/s3.json
+          ports:
+            - { name: s3, containerPort: 8333 }
+            - { name: master, containerPort: 9333 }
+            - { name: master-grpc, containerPort: 19333 }
+            - { name: volume, containerPort: 8080 }
+            - { name: volume-grpc, containerPort: 18080 }
+            - { name: filer, containerPort: 8888 }
+            - { name: filer-grpc, containerPort: 18888 }
+          readinessProbe:
+            tcpSocket: { port: s3 }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { cpu: "1", memory: 512Mi }
+          volumeMounts:
+            - { name: data, mountPath: /data }
+            - { name: s3-config, mountPath: /etc/seaweedfs, readOnly: true }
+      volumes:
+        - name: data
+          emptyDir: {}
+        - name: s3-config
+          secret: { secretName: seaweedfs-s3-config }
+---
+# The master and volume servers advertise `-ip=seaweedfs`, so this Service must expose every
+# port the in-pod components dial each other on, not only S3.
+apiVersion: v1
+kind: Service
+metadata:
+  name: seaweedfs
+  namespace: __NAMESPACE__
+  labels: { app.kubernetes.io/part-of: e2e-harness }
+spec:
+  selector: { app.kubernetes.io/name: seaweedfs }
+  ports:
+    - { name: s3, port: 8333, targetPort: s3 }
+    - { name: master, port: 9333, targetPort: master }
+    - { name: master-grpc, port: 19333, targetPort: master-grpc }
+    - { name: volume, port: 8080, targetPort: volume }
+    - { name: volume-grpc, port: 18080, targetPort: volume-grpc }
+    - { name: filer, port: 8888, targetPort: filer }
+    - { name: filer-grpc, port: 18888, targetPort: filer-grpc }
+---
+# The chart's bucket list (values.yaml objectStorage.buckets), created with SeaweedFS's own shell.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: seaweedfs-buckets
+  namespace: __NAMESPACE__
+  labels: { app.kubernetes.io/part-of: e2e-harness }
+spec:
+  backoffLimit: 20
+  template:
+    metadata:
+      labels: { app.kubernetes.io/part-of: e2e-harness }
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: buckets
+          image: __SEAWEEDFS_IMAGE__
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -e
+              for b in __BUCKETS__; do
+                echo "s3.bucket.create -name $b" | weed shell -master=seaweedfs:9333 -filer=seaweedfs:8888
+              done
+              echo "s3.bucket.list" | weed shell -master=seaweedfs:9333 -filer=seaweedfs:8888
