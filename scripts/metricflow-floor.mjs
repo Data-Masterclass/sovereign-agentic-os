@@ -33,6 +33,17 @@ import { pathToFileURL } from 'node:url';
 export const METRICFLOW_FLOOR = '0.209.0';
 
 /**
+ * `dbt-metricflow` (the `mf` CLI) numbers its releases separately. PyPI: 0.10.x and below are
+ * BUSL-1.1; 0.11.0 (2025-10-14, pins metricflow==0.209.0) is the first Apache-2.0 release.
+ */
+export const DBT_METRICFLOW_FLOOR = '0.11.0';
+
+const FLOOR_OF = (pkg) => (pkg.toLowerCase() === 'dbt-metricflow' ? DBT_METRICFLOW_FLOOR : METRICFLOW_FLOOR);
+
+/** Drop `#` comments (Dockerfile, requirements, pyproject, environment.yml): prose is not a pin. */
+const stripComments = (text) => String(text).split('\n').map((l) => l.replace(/(^|\s)#.*$/, '$1')).join('\n');
+
+/**
  * The lowest dbt-core the generated semantic layer parses on. Must equal
  * `DBT_SEMANTIC_SPEC.minDbtCore` in `os-ui/tabs/data/lib/dbt/semantic/spec.ts`, which the suite
  * asserts — two numbers that must agree are one number with two homes, so the test pins both.
@@ -70,14 +81,15 @@ function cmp(a, b) {
 export function checkMetricflowFloor(entries) {
   const violations = [];
   for (const { path, text } of entries) {
-    for (const m of String(text).matchAll(PIN_RE)) {
+    for (const m of stripComments(text).matchAll(PIN_RE)) {
       const pkg = m[1];
+      const floor = FLOOR_OF(pkg);
       const spec = (m[3] ?? '').trim().replace(/,$/, '');
       if (!spec) {
         violations.push({
           path,
           spec: pkg,
-          reason: `'${pkg}' is UNPINNED — pip may resolve a BSL 1.1 release (<= 0.208.1). Pin '${pkg} >= ${METRICFLOW_FLOOR}'.`,
+          reason: `'${pkg}' is UNPINNED — pip may resolve a BSL 1.1 release (<= 0.208.1). Pin '${pkg} >= ${floor}'.`,
         });
         continue;
       }
@@ -87,17 +99,17 @@ export function checkMetricflowFloor(entries) {
         violations.push({
           path,
           spec: `${pkg} ${spec}`,
-          reason: `'${pkg} ${spec}' sets no lower bound, so a BSL 1.1 release (<= 0.208.1) satisfies it. Add '>= ${METRICFLOW_FLOOR}'.`,
+          reason: `'${pkg} ${spec}' sets no lower bound, so a BSL 1.1 release (<= 0.208.1) satisfies it. Add '>= ${floor}'.`,
         });
         continue;
       }
       const lowest = lower.reduce((acc, x) => (cmp(x.v, acc.v) < 0 ? x : acc));
-      const ok = cmp(lowest.v, METRICFLOW_FLOOR) > 0 || (cmp(lowest.v, METRICFLOW_FLOOR) === 0 && lowest.op !== '>');
+      const ok = cmp(lowest.v, floor) > 0 || (cmp(lowest.v, floor) === 0 && lowest.op !== '>');
       if (!ok) {
         violations.push({
           path,
           spec: `${pkg} ${spec}`,
-          reason: `'${pkg} ${spec}' allows ${lowest.v}, which is Business Source License 1.1 (<= 0.208.1). The floor is >= ${METRICFLOW_FLOOR}, the first Apache-2.0 release; BSL does not relax retroactively.`,
+          reason: `'${pkg} ${spec}' allows ${lowest.v}, which is Business Source License 1.1 (<= 0.208.1). The floor is >= ${floor}, the first Apache-2.0 release; BSL does not relax retroactively.`,
         });
       }
     }
@@ -113,7 +125,7 @@ export function checkMetricflowFloor(entries) {
 export function checkDbtCoreFloor(entries) {
   const violations = [];
   for (const { path, text } of entries) {
-    for (const m of String(text).matchAll(DBT_PIN_RE)) {
+    for (const m of stripComments(text).matchAll(DBT_PIN_RE)) {
       const spec = (m[2] ?? '').trim().replace(/,$/, '');
       const why = `the generated semantic layer emits cumulative_type_params, type_params.time_granularity and the time_spine model property, none of which exist on dbt 1.8 (DSI 0.5.x) — the project would fail \`dbt parse\` for the whole domain`;
       if (!spec) {
