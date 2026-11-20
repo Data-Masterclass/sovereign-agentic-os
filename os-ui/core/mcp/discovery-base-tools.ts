@@ -93,8 +93,8 @@ export const discoveryBaseTools: McpTool[] = [
         runId,
         systemId: seen.systemId,
         engine: 'langgraph',
-        // A3: the run's Langfuse trace (id = run id) — a deep link, never a list.
-        traceUrl: langfuseEnabled() ? traceUrlFor(runId) : undefined,
+        // A3: the run's Langfuse trace (`createTraceId(runId)`) — a deep link, never a list.
+        traceUrl: langfuseEnabled() ? await traceUrlFor(runId) : undefined,
         // `failed` when an agent failed and the run stopped there — read from the run's own
         // state, so it is true even for a job row an older version settled `done`.
         status: reportedJobStatus(jobStatus, { failed: run.failed, parked: run.parked, finished: run.finished }),

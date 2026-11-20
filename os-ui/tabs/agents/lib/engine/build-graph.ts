@@ -67,10 +67,10 @@
  *     and per supervisor decision), so an unguarded handoff cycle between tool-less agents ends at
  *     the step budget, not at the recursion limit after ~1000 model calls; such a cycle is also a
  *     compile warning.
- *   - OBSERVED (A3): every node body runs inside `observed(name, body)`, which opens a Langfuse span
- *     under the run trace (`deps.observe`, see `observe.ts`), hands the body an `LlmCall` that
- *     records each completion as a generation (with the `observe` context the LiteLLM caller
- *     forwards to the gateway) and a `tool()` wrapper that records each governed call with its
+ *   - OBSERVED (A3): every node body runs inside `observed(name, body)`, which opens a Langfuse
+ *     chain observation under the run trace (`deps.observe`, see `core/infra/trace-port.ts`), hands
+ *     the body an `LlmCall` that wraps each call in a `llm.<node>` span (whose id the LiteLLM caller
+ *     forwards, so the gateway's generation nests under it) and a `tool()` wrapper that records each governed call with its
  *     decision. A parked node ends its span as `parked`, a thrown one as an error. No observer →
  *     the no-op port; the graph shape is identical either way.
  */
@@ -148,7 +148,7 @@ import { evaluateWhen, isLegacyUnguardedWhen, parseWhen, whenChannels, WhenSynta
 import type { HoldDecision } from '@tabs/agents/lib/build/hold';
 import type { ApprovalDecision, ApprovalPort, RunOwner, RunnerSnapshot } from '@tabs/agents/lib/engine/approval-port';
 import { z } from 'zod';
-import { noopObserver, type RunObserver, type SpanHandle } from '@tabs/agents/lib/engine/observe';
+import { noopObserver, type RunObserver, type SpanHandle } from '@core/infra/trace-port';
 import { withRateLimitRetry, type RateLimitRetryOptions, type RateLimitWait } from '@tabs/agents/lib/engine/rate-limit';
 import type { ContextTrim, LlmCall } from '@core/runtime/agentic';
 import { estimateTokens } from '@core/infra/context/context-assembler';

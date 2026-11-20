@@ -3,6 +3,7 @@
  */
 import 'server-only';
 import { config } from '@core/kernel/config';
+import { runSessionId } from '@core/infra/trace-port';
 import {
   callerCredential, runCredentialConfigured, NoRunCredentialError,
   BudgetExceededError, GatewayRateLimitedError, isBudgetRejection, type CallerContext,
@@ -200,16 +201,21 @@ export function liteLlmCaller(caller?: CallerContext): LlmCall {
     // and those are model-written values that can quote a document (a `write_file` body, a
     // query predicate). This is the one call path that sends tools, so it asks the gateway to
     // mask its logged output outright. Usage, cost and the trace ids are still logged; the
-    // OS's own generation (observe.ts) records the tool-call structure at the configured
-    // redaction level, and the caller still receives the full response. Measured against
+    // OS's `llm.<node>` span (core/infra/langfuse.ts) records the tool-call structure at the
+    // configured redaction level, and the caller still receives the full response. Measured against
     // 1.90.0 with a recording Langfuse endpoint — see docs/components/langfuse.md.
     const metadata: Record<string, unknown> = { tags: cred.tags, mask_output: true };
     if (req.observe) {
       metadata.existing_trace_id = req.observe.traceId;
       if (req.observe.parentObservationId) metadata.parent_observation_id = req.observe.parentObservationId;
       if (caller?.userId) metadata.trace_user_id = caller.userId;
-      if (caller?.systemId) metadata.session_id = caller.systemId;
+      if (caller?.systemId) metadata.session_id = runSessionId(caller.systemId);
     }
+    // W3C trace context of the same span, for a gateway that links by `traceparent` (LiteLLM's
+    // OTel callback); the legacy callback above ignores it. Only for OTel-shaped ids.
+    const traceparent = req.observe && /^[0-9a-f]{32}$/.test(req.observe.traceId) && /^[0-9a-f]{16}$/.test(req.observe.parentObservationId ?? '')
+      ? `00-${req.observe.traceId}-${req.observe.parentObservationId}-01`
+      : undefined;
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), LLM_TIMEOUT_MS);
     let res: Response;
@@ -221,6 +227,7 @@ export function liteLlmCaller(caller?: CallerContext): LlmCall {
           authorization: `Bearer ${cred.apiKey}`,
           'content-type': 'application/json',
           accept: 'application/json',
+          ...(traceparent ? { traceparent } : {}),
         },
         body: JSON.stringify({ ...body, user: cred.user, metadata }),
         cache: 'no-store',

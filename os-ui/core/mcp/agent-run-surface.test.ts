@@ -170,12 +170,11 @@ test('TRIPWIRE: get_agent_run tails run_events incrementally (afterSeq), not by 
 });
 
 test('TRIPWIRE: no Langfuse run trace is created without a run id, and no link is a LIST', () => {
-  // The observer's trace id IS the run id — there is no other way to construct one.
-  const obs = src('tabs/agents/lib/engine/observe.ts');
-  assert.match(obs, /const traceId = input\.runId;/, 'the trace id is the run id, by construction');
-  assert.match(obs, /client\.trace\(\{\s*id: traceId,/, 'and the only trace-create uses it');
-  // The deep link refuses to build without one, and nothing builds a /traces list link.
+  // The run's trace id is derived from the run id — there is no other way to construct one.
   const lf = src('core/infra/langfuse.ts');
+  assert.match(lf, /const traceId = await langfuseTraceId\(input\.runId\);/, 'the trace id is createTraceId(runId), by construction');
+  assert.match(lf, /return createTraceId\(runId\);/, 'and langfuseTraceId is the SDK mapping');
+  // The deep link refuses to build without one, and nothing builds a /traces list link.
   assert.match(lf, /if \(!base \|\| !runId\) return undefined;/, 'traceUrlFor refuses without a run id');
   for (const file of ['core/infra/langfuse.ts', 'tabs/agents/lib/build/server.ts', 'tabs/agents/lib/build/run-service.ts']) {
     assert.doesNotMatch(src(file), /\/traces(["'`]|\$)/, `${file} must not link to a trace LIST (checklist A20)`);

@@ -119,14 +119,14 @@ export const POST = withRoute<{ id: string }, {
     assistantComplete(messages, { user: { id: user.id, domains: user.domains } }).then((r) => r.content);
 
   const result = await judgeRun({ output, description, tacitKnowledge }, complete);
-  // A3 (checklist A22): the verdict is a Langfuse SCORE on the run's trace (id = run id). Every
+  // A3 (checklist A22): the verdict is a Langfuse SCORE on the run's trace (`createTraceId(runId)`). Every
   // run has such a trace since A5; a run recorded before the rebuild has none, and one whose
   // owner is not the caller is never scored (the gate above) — both keep the verdict in the
   // response alone.
   const runId = targetRunId;
   const scored = scorable
-    ? scoreTrace({
-        traceId: runId,
+    ? await scoreTrace({
+        runId,
         name: 'judge',
         value: result.overall,
         comment: result.scores.map((s) => `${s.dimension}: ${s.score} — ${s.why}`.trim()).join('\n').slice(0, 1000),

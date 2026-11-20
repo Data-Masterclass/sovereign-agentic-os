@@ -4,6 +4,7 @@
 import 'server-only';
 import { config } from '@core/kernel/config';
 import { serviceBearerHeader } from '@core/infra/service-bearer';
+import { recordObservation } from '@core/infra/langfuse';
 import type { Role } from '@core/kernel/session';
 import { decisionMeta, type DecisionMeta } from '@core/infra/opa-decision';
 
@@ -20,7 +21,7 @@ import { decisionMeta, type DecisionMeta } from '@core/infra/opa-decision';
  *      The offline-mock teaching flow can opt into fail-open with OPA_FAIL_OPEN=true.
  *   2. Execution against the SAME governed backend the BI layer uses — the
  *      query-tool (Trino) for metrics and ad-hoc SQL over the Iceberg marts.
- *   3. Best-effort Langfuse trace so every tool call is auditable in Monitoring.
+ *   3. One Langfuse `tool` observation per call, through the one writer (`core/infra/langfuse.ts`).
  *
  * This is the seam the data golden path leans on: because the agent reads the
  * same governed metric + the same Iceberg mart as the dashboards, the numbers can't drift.
@@ -63,40 +64,25 @@ export async function authorize(principal: string, tool: string): Promise<Authz>
   }
 }
 
-/** Fire-and-forget Langfuse trace of a governed tool call. Returns whether it landed. */
+/**
+ * Langfuse record of a governed data tool call, through the one writer (`core/infra/langfuse.ts`):
+ * a `tool` observation inside the active trace when there is one, otherwise its own trace.
+ * Returns whether it was handed to the exporter.
+ */
 export async function trace(event: {
   principal: string;
   tool: ToolName;
   input: unknown;
   output: unknown;
 }): Promise<boolean> {
-  const id = `os-data-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  const auth =
-    'Basic ' +
-    Buffer.from(`${config.langfusePublicKey}:${config.langfuseSecretKey}`).toString('base64');
-  const body = {
-    batch: [
-      {
-        id,
-        type: 'trace-create',
-        timestamp: new Date().toISOString(),
-        body: {
-          id,
-          name: `data.${event.tool}`,
-          metadata: { principal: event.principal, tool: event.tool },
-          input: event.input,
-          output: event.output,
-          tags: ['data-golden-path', `tool:${event.tool}`],
-        },
-      },
-    ],
-  };
-  const res = await withTimeout(`${config.langfuseUrl}/api/public/ingestion`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', authorization: auth },
-    body: JSON.stringify(body),
+  return recordObservation({
+    name: `data.${event.tool}`,
+    asType: 'tool',
+    input: event.input,
+    output: event.output,
+    metadata: { principal: event.principal, tool: event.tool },
+    tags: ['data-golden-path', `tool:${event.tool}`],
   });
-  return Boolean(res && res.ok);
 }
 
 // -------------------------------------------------------------- query-tool ----

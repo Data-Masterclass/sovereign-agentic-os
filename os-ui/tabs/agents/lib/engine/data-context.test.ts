@@ -13,21 +13,21 @@
  *   - The engine shape `SHAPE_GOLD_DATA_YAML` driven through the REAL `buildGraph` /
  *     `grantedToolSpecs` / `grantedToolExecutor` over a memory checkpointer; only the model and
  *     the MCP dispatch are faked (`fixtureToolDeps` handlers), as everywhere in this harness.
- *   - The Langfuse half uses the real SDK with a recording transport (the pattern of
- *     `observe.test.ts`), so nothing leaves the process.
+ *   - The Langfuse half uses the real one writer (`core/infra/langfuse.ts`, NodeSDK +
+ *     LangfuseSpanProcessor) with an in-memory exporter, so nothing leaves the process.
  *   - The deadline/bound live in `engine/tool-result.ts` and apply to EVERY tool; making the real
  *     `query_data` handler itself bound and deadline its Trino read is a follow-up in `tabs/data`.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Langfuse } from 'langfuse';
-import type { LangfuseFetchOptions, LangfuseFetchResponse } from 'langfuse-core';
+import { InMemorySpanExporter } from '@opentelemetry/sdk-trace-base';
 import { parseSystem } from '@tabs/agents/lib/system-schema';
 import { compile } from '@tabs/agents/lib/langgraph-compile';
 import type { AgenticStep, LlmRequest } from '@core/runtime/agentic';
 import { runGraphEngine } from '@tabs/agents/lib/engine/run';
 import { memoryCheckpointer } from '@tabs/agents/lib/engine/checkpointer';
-import { langfuseRunObserver } from '@tabs/agents/lib/engine/observe';
+import { __useSpanExporterForTests, flushLangfuse, langfuseTraceId, withRunTrace } from '@core/infra/langfuse';
+import { runTraceTags } from '@core/infra/trace-port';
 import {
   FIXTURE_TASK,
   FIXTURE_USER,
@@ -50,19 +50,8 @@ import {
 const SYSTEM_ID = 'sys-x9-gold';
 const QUERY = `select order_id, customer_id, amount from ${GOLD_DATASET_FQN}`;
 
-/** The SDK with its transport replaced: every ingestion batch is kept, nothing is sent. */
-class RecordingLangfuse extends Langfuse {
-  events: { id: string; type: string; body: Record<string, unknown> }[] = [];
-  constructor() {
-    super({ publicKey: 'pk-test', secretKey: 'sk-test', baseUrl: 'http://langfuse.test', flushAt: 1000, flushInterval: 60_000 });
-  }
-  override async fetch(_url: string, options: LangfuseFetchOptions): Promise<LangfuseFetchResponse> {
-    const body = JSON.parse(String(options.body ?? '{}')) as { batch?: { id: string; type: string; body: Record<string, unknown> }[] };
-    this.events.push(...(body.batch ?? []));
-    const ok = { successes: (body.batch ?? []).map((e) => ({ id: e.id, status: 201 })), errors: [] };
-    return { status: 207, text: async () => JSON.stringify(ok), json: async () => ok, arrayBuffer: async () => new ArrayBuffer(0) };
-  }
-}
+const exporter = new InMemorySpanExporter();
+__useSpanExporterForTests(exporter);
 
 type RunOut = {
   steps: { node: string; step: AgenticStep }[];
@@ -80,7 +69,7 @@ async function runShape(opts: {
   maxChars?: number;
   timeoutMs?: number;
   runId?: string;
-  client?: RecordingLangfuse;
+  traced?: boolean;
 }): Promise<RunOut> {
   const sys = parseSystem(SHAPE_GOLD_DATA_YAML);
   const ir = compile(sys);
@@ -99,19 +88,7 @@ async function runShape(opts: {
     ...(opts.timeoutMs !== undefined ? { toolCallTimeoutMs: opts.timeoutMs } : {}),
   });
   const steps: { node: string; step: AgenticStep }[] = [];
-  const observe = opts.client
-    ? langfuseRunObserver({
-        runId,
-        systemId: SYSTEM_ID,
-        systemName: sys.system.name,
-        userId: FIXTURE_USER.id,
-        domain: sys.system.domain,
-        engine: 'langgraph',
-        task: FIXTURE_TASK,
-        client: opts.client,
-      })
-    : undefined;
-  const result = await runGraphEngine({
+  const run = (observe?: Parameters<Parameters<typeof withRunTrace>[1]>[0]) => runGraphEngine({
     ir,
     deps: { ...deps, ...(observe ? { observe } : {}) },
     messages: [{ role: 'user', content: FIXTURE_TASK }],
@@ -119,7 +96,10 @@ async function runShape(opts: {
     checkpointer: memoryCheckpointer(),
     hooks: { onStep: (ev) => steps.push({ node: ev.node, step: ev.step }) },
   });
-  if (observe) await observe.flush();
+  const result = opts.traced
+    ? await withRunTrace({ runId, systemId: SYSTEM_ID, systemName: sys.system.name, userId: FIXTURE_USER.id, domain: sys.system.domain, engine: 'langgraph', task: FIXTURE_TASK }, (observe) => run(observe))
+    : await run();
+  if (opts.traced) await flushLangfuse();
   return { steps, dispatches, requests, path: result.path, finalText: result.finalText, reachedEnd: result.reachedEnd };
 }
 
@@ -280,8 +260,7 @@ test('X9 (c3): the deadline is a typed result; a THROWN dispatch still fails the
 
 // ------------------------------------------------------------------ (d) --
 
-test('X9 (d): the data read is a span of the run trace, carrying the dataset and the run tags', async () => {
-  const client = new RecordingLangfuse();
+test('X9 (d): the data read is a tool observation of the run trace, carrying the dataset and the run tags', async () => {
   const runId = 'run_x9-0000-4000-8000-00000000000d';
   await runShape({
     calls: [
@@ -293,27 +272,24 @@ test('X9 (d): the data read is a span of the run trace, carrying the dataset and
       get_dataset: () => ({ id: GOLD_DATASET_ID, fqn: GOLD_DATASET_FQN }),
     },
     runId,
-    client,
+    traced: true,
   });
-  const traces = client.events.filter((e) => e.type === 'trace-create');
-  assert.equal(traces.length, 1, 'one trace per run');
-  assert.equal(traces[0].body.id, runId);
-  assert.deepEqual(traces[0].body.tags, [`domain:sales`, `agent:${SYSTEM_ID}`, `run:${runId}`, 'engine:langgraph']);
+  const traceId = await langfuseTraceId(runId);
+  const spans = exporter.getFinishedSpans().filter((s) => s.spanContext().traceId === traceId);
+  assert.ok(spans.length > 0, 'one trace per run, id = createTraceId(runId)');
+  for (const s of spans) assert.deepEqual(s.attributes['langfuse.trace.tags'], runTraceTags({ domain: 'sales', systemId: SYSTEM_ID, runId, engine: 'langgraph' }));
 
-  const spans = client.events.filter((e) => e.type === 'span-create');
-  const toolSpans = spans.filter((e) => String(e.body.name ?? '').startsWith('tool.'));
-  assert.deepEqual(toolSpans.map((e) => e.body.name), ['tool.query_data', 'tool.get_dataset']);
-  for (const s of toolSpans) assert.equal(s.body.traceId, runId, 'every tool span is under the run trace');
+  const toolSpans = spans.filter((s) => s.attributes['langfuse.observation.type'] === 'tool');
+  assert.deepEqual(toolSpans.map((s) => s.name).sort(), ['tool.get_dataset', 'tool.query_data']);
 
-  // The dataset is identifiable from the span input — the SQL for the query, the id for the read.
-  const inputs = toolSpans.map((e) => JSON.stringify(e.body.input));
-  assert.ok(inputs[0].includes(GOLD_DATASET_FQN), 'the queried gold table is in the span');
-  assert.ok(inputs[1].includes(GOLD_DATASET_ID), 'the dataset id is in the span');
+  // The dataset is identifiable from the observation input — the SQL for the query, the id for the read.
+  const inputOf = (name: string) => String(toolSpans.find((s) => s.name === name)!.attributes['langfuse.observation.input']);
+  assert.ok(inputOf('tool.query_data').includes(GOLD_DATASET_FQN), 'the queried gold table is in the observation');
+  assert.ok(inputOf('tool.get_dataset').includes(GOLD_DATASET_ID), 'the dataset id is in the observation');
 
   // The RESULT is bounded in the trace too (a 160-char preview + the size), so a large read
   // cannot flood Langfuse any more than it can flood the prompt.
-  const updates = client.events.filter((e) => e.type === 'span-update');
-  const output = updates.map((e) => e.body.output).find((o) => o && typeof (o as { chars?: number }).chars === 'number') as { chars: number; preview?: string };
+  const output = JSON.parse(String(toolSpans.find((s) => s.name === 'tool.query_data')!.attributes['langfuse.observation.output'])) as { chars: number; preview?: string };
   assert.ok(output.chars > 0);
   assert.ok((output.preview ?? '').length <= 161);
 });

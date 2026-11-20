@@ -27,7 +27,8 @@ import { assistantComplete } from '@core/runtime/complete';
 import { roleModel } from '@core/models/roles';
 import { trace } from '@core/infra/agent-governed';
 import { currentSurface } from '@core/infra/request-surface';
-import type { RunTraceContext } from '@core/infra/langfuse';
+import type { RunTraceContext } from '@core/infra/trace-port';
+import { recordObservation } from '@core/infra/langfuse';
 import { commitToApp, getSnapshot, hydrateSnapshot } from '@tabs/software/lib/server';
 import { templateFiles, type App } from '@tabs/software/lib/apps';
 import type { BuildTarget } from '@tabs/software/lib/build-target';
@@ -288,6 +289,18 @@ export async function agenticBuild(
       }
     },
     onStep: async (step) => {
+      // Inside an agent run the step is a span of that run's trace: it nests under the active
+      // Build tool observation by OTel context (the one writer, core/infra/langfuse.ts). The
+      // governed `trace()` below then keeps it in the in-process ring only.
+      if (traceContext) {
+        recordObservation({
+          name: `appsmith.${step.kind}`,
+          asType: 'span',
+          input: { appId: app.id, target: label, iteration: step.iteration },
+          output: { ok: step.ok, summary: step.summary },
+          level: step.ok ? 'DEFAULT' : 'WARNING',
+        });
+      }
       await trace({
         principal: user.id,
         tool: `appsmith.${step.kind}`,

@@ -134,7 +134,7 @@ export type EngineRunResult = AgenticGraphResult & {
   failed: boolean;
   /** Which agent failed and why (`node` is null when the failure has no visit on record). */
   failure?: RunFailure;
-  /** A3: the Langfuse trace id (= run id) and whether an observer actually recorded this run. */
+  /** A3: the Langfuse trace id (`createTraceId(runId)` when observed, else the run id) and whether an observer recorded this run. */
   traceId: string;
   observed: boolean;
 };
@@ -427,7 +427,7 @@ function summarize(snap: Snapshot, built: ReturnType<typeof buildGraph>, input: 
     budget: { stepsUsed: budget.stepsUsed, limit: built.stepBudget, exhausted: budget.exhausted },
     failed,
     ...(failure ? { failure } : {}),
-    traceId: input.runId,
+    traceId: input.deps?.observe?.enabled ? input.deps.observe.traceId : input.runId,
     observed: !!input.deps?.observe?.enabled,
   };
 }

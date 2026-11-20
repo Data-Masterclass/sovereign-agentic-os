@@ -20,7 +20,7 @@ import { compile } from '@tabs/agents/lib/langgraph-compile';
 import { runGraphEngine } from '@tabs/agents/lib/engine/run';
 import { memoryCheckpointer } from '@tabs/agents/lib/engine/checkpointer';
 import { FIXTURE_TASK, SHAPE_SUPERVISOR_YAML, graphDeps, scriptedLlm, type HoldSink } from '@tabs/agents/lib/engine/parity-harness';
-import { noopObserver, type RunObserver } from '@tabs/agents/lib/engine/observe';
+import { noopObserver, type RunObserver } from '@core/infra/trace-port';
 
 type Captured = { auth: string; body: Record<string, unknown> };
 
@@ -90,7 +90,7 @@ test('ATTRIBUTION (A27): every model call of a real engine run carries user, dom
     assert.equal(meta.trace_id, undefined, 'only existing_trace_id carries the run trace');
     assert.ok(meta.parent_observation_id, 'parent observation forwarded');
     assert.equal(meta.trace_user_id, 'rae');
-    assert.equal(meta.session_id, 'sys-attr');
+    assert.equal(meta.session_id, 'system:sys-attr', 'the system session (design 05 §5.2)');
   }
 });
 

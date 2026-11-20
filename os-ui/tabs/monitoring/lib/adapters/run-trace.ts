@@ -18,6 +18,7 @@
  */
 import 'server-only';
 import { config } from '@core/kernel/config';
+import { langfuseTraceId } from '@core/infra/langfuse';
 import { recentTraces } from '@core/infra/agent-governed';
 import { readFetch } from '@tabs/monitoring/lib/util';
 import { MOCK_RUNS, mockTrace } from '@tabs/monitoring/lib/mock';
@@ -242,13 +243,14 @@ export function latencyMs(seconds: unknown): number | undefined {
 }
 
 /**
- * What one Langfuse observation is, as a trace step. `observe.ts` writes every governed tool
- * call as a SPAN named `tool.<name>` (and a refused one as a zero-length span of that name), so
- * the name decides it is a tool; other spans (agents, `run.result`) stay spans. A Langfuse
- * EVENT is an event.
+ * What one Langfuse observation is, as a trace step: the observation TYPE decides (`GENERATION`
+ * is the gateway's model call, `TOOL` a governed tool call, `EVENT` an event). Traces written
+ * before the OTel writer recorded tool calls as SPANs named `tool.<name>`, so the name still
+ * decides for those.
  */
 function stepKind(o: Record<string, unknown>): TraceStep['kind'] {
   if (o.type === 'GENERATION') return 'llm';
+  if (o.type === 'TOOL') return 'tool';
   if (o.type === 'EVENT') return 'event';
   return String(o.name ?? '').startsWith('tool.') ? 'tool' : 'span';
 }
@@ -256,9 +258,14 @@ function stepKind(o: Record<string, unknown>): TraceStep['kind'] {
 /** Drill into ONE trace (the core promise). Live Langfuse first, then mock. */
 export async function fetchTrace(id: string): Promise<TraceDetail | null> {
   const auth = Buffer.from(`${config.langfusePublicKey}:${config.langfuseSecretKey}`).toString('base64');
-  const res = await readFetch(`${config.langfuseUrl}/api/public/traces/${encodeURIComponent(id)}`, {
+  const read = (traceId: string) => readFetch(`${config.langfuseUrl}/api/public/traces/${encodeURIComponent(traceId)}`, {
     headers: { authorization: `Basic ${auth}`, accept: 'application/json' },
   });
+  // A run id maps to its trace id (`createTraceId(runId)`); a run traced before the OTel writer
+  // kept the raw run id as its trace id, so that is the second try. A 32-hex id is a trace id.
+  const isTraceId = /^[0-9a-f]{32}$/.test(id);
+  let res = await read(isTraceId ? id : await langfuseTraceId(id));
+  if (!isTraceId && res && res.status === 404) res = await read(id);
   if (res && res.ok) {
     try {
       const t = JSON.parse(await res.text()) as Record<string, unknown>;

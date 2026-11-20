@@ -10,8 +10,8 @@
  *   - Asserts the OUTGOING REQUEST BODY, not an intermediate object: the tag list that
  *     `callerCredential` produces is what `core/runtime/runtime.ts` puts in `metadata.tags`, so
  *     the assertion is on the bytes the gateway receives.
- *   - Asserts the TRACE PAYLOAD by injecting a fake Langfuse client and capturing the
- *     `client.trace({...})` argument — the same seam `observe.test.ts` uses.
+ *   - Asserts the EXPORTED SPANS of the one Langfuse writer (`core/infra/langfuse.ts`) through
+ *     its in-memory exporter seam — the same seam `tabs/agents/lib/engine/run-trace.test.ts` uses.
  *   - A lifecycle that is not set must add NO tag and NO field: an attribution the OS did not
  *     establish is never fabricated.
  */
@@ -21,7 +21,11 @@ import assert from 'node:assert/strict';
 globalThis.fetch = (() => Promise.reject(new Error('offline-stub'))) as typeof fetch;
 
 const { callerCredential, TAG_ENV, TAG_DOMAIN, TAG_RUN } = await import('./litellm-credential.ts');
-const { langfuseRunObserver, runTraceTags } = await import('@tabs/agents/lib/engine/observe');
+const { InMemorySpanExporter } = await import('@opentelemetry/sdk-trace-base');
+const { runTraceTags } = await import('@core/infra/trace-port');
+const { __useSpanExporterForTests, flushLangfuse, langfuseTraceId, withRunTrace } = await import('@core/infra/langfuse');
+const exporter = new InMemorySpanExporter();
+__useSpanExporterForTests(exporter);
 const { runEnvOf, lifecycleBudgetMetadata, RUN_ENVS } = await import('@core/kernel/object-lifecycle');
 
 // ------------------------------------------------- the LiteLLM env: tag ---
@@ -74,61 +78,35 @@ test('V11: per-lifecycle budgets go in the key metadata, and a draft cannot drai
 
 // ------------------------------------------- the Langfuse trace environment ---
 
-type TraceArg = { id?: string; tags?: string[]; environment?: string };
-
-function fakeClient() {
-  const traces: TraceArg[] = [];
-  const client = {
-    trace: (arg: TraceArg) => {
-      traces.push(arg);
-      return {};
-    },
-    span: () => ({}),
-    generation: () => ({}),
-    event: () => ({}),
-    score: () => ({}),
-  };
-  return { client, traces };
+/** Open one run trace segment and return its exported root observation. */
+async function rootSpan(runId: string, environment?: string) {
+  await withRunTrace({ runId, systemId: 's1', systemName: 'Nightly digest', userId: 'u1', domain: 'sales', ...(environment ? { environment } : {}) }, async (observe) => {
+    observe.finish({ reachedEnd: true, parked: false, interrupted: false, failed: false, path: [], finalChars: 0, stepsUsed: 0 });
+  });
+  await flushLangfuse();
+  const traceId = await langfuseTraceId(runId);
+  const roots = exporter.getFinishedSpans().filter((s) => s.spanContext().traceId === traceId && s.attributes['langfuse.observation.type'] === 'agent');
+  assert.equal(roots.length, 1, `${runId}: exactly one run root`);
+  return roots[0];
 }
 
-test('V11: the Langfuse trace environment IS the lifecycle, and the env: tag matches it', () => {
+test('V11: the Langfuse trace environment IS the lifecycle, and the env: tag matches it', async () => {
   for (const env of RUN_ENVS) {
-    const { client, traces } = fakeClient();
-    langfuseRunObserver({
-      runId: `run_${env}`,
-      systemId: 's1',
-      systemName: 'Nightly digest',
-      userId: 'u1',
-      domain: 'sales',
-      environment: env,
-      client: client as never,
-    });
-    assert.equal(traces.length, 1, `${env}: exactly one trace is created`);
-    assert.equal(traces[0].environment, env, `${env}: the trace environment field`);
-    assert.ok(traces[0].tags?.includes(`env:${env}`), `${env}: and the matching tag`);
+    const root = await rootSpan(`run_${env}`, env);
+    assert.equal(root.attributes['langfuse.environment'], env, `${env}: the trace environment field`);
+    assert.ok((root.attributes['langfuse.trace.tags'] as string[]).includes(`env:${env}`), `${env}: and the matching tag`);
   }
 });
 
-test('V11: with no lifecycle the trace carries no environment field at all', () => {
-  const { client, traces } = fakeClient();
-  langfuseRunObserver({
-    runId: 'run_plain',
-    systemId: 's1',
-    systemName: 'x',
-    userId: 'u1',
-    domain: 'sales',
-    client: client as never,
-  });
-  assert.equal('environment' in traces[0], false, 'the field is absent, not an empty string');
-  assert.equal(
-    traces[0].tags?.some((t) => t.startsWith('env:')),
-    false,
-  );
+test('V11: with no lifecycle the trace carries no environment field at all', async () => {
+  const root = await rootSpan('run_plain');
+  assert.equal('langfuse.environment' in root.attributes, false, 'the field is absent, not an empty string');
+  assert.equal((root.attributes['langfuse.trace.tags'] as string[]).some((t) => t.startsWith('env:')), false);
 });
 
 test('V11: runTraceTags keeps every tag Monitoring and the gateway mirror already share', () => {
   const base = runTraceTags({ domain: 'sales', systemId: 's1', runId: 'r1', engine: 'langgraph' });
-  assert.deepEqual(base, ['domain:sales', 'agent:s1', 'run:r1', 'engine:langgraph']);
+  assert.deepEqual(base, ['domain:sales', 'agent:s1', 'system:s1', 'run:r1', 'engine:langgraph']);
   const withEnv = runTraceTags({
     domain: 'sales',
     systemId: 's1',

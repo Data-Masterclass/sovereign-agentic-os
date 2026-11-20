@@ -1,7 +1,6 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
-import { config } from '@core/kernel/config';
 import { audit as persistAudit } from '@tabs/admin/lib/audit';
 
 /**
@@ -15,11 +14,12 @@ import { audit as persistAudit } from '@tabs/admin/lib/audit';
  * audit store (lib/platform-admin/audit.ts → an os-audit ring + durable mirror
  * that hydrates on restart). Platform Admin and Governance therefore read ONE
  * durable, restart-surviving trail; nothing is silently dropped on a restart.
- * The best-effort Langfuse mirror joins these to agent-run traces + lineage.
+ * The audit trail lives in the OS audit store only: Langfuse holds traces, not audit
+ * records (it has no retention or access control in OSS; design 05 W6).
  *
  * Integrity: entries are append-only and hash-chained — each carries the hash of
  * the previous entry, so a tampered/removed record breaks the chain and
- * `verifyChain()` flags it. Pure + testable; the Langfuse mirror is isolated.
+ * `verifyChain()` flags it. Pure + testable.
  */
 
 export type AuditAction =
@@ -72,44 +72,7 @@ function hashOf(s: string): string {
   return (h >>> 0).toString(16).padStart(8, '0');
 }
 
-async function mirrorToLangfuse(e: AuditEntry): Promise<void> {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 2000);
-  try {
-    const auth =
-      'Basic ' +
-      Buffer.from(`${config.langfusePublicKey}:${config.langfuseSecretKey}`).toString('base64');
-    await fetch(`${config.langfuseUrl}/api/public/ingestion`, {
-      method: 'POST',
-      signal: ctrl.signal,
-      cache: 'no-store',
-      headers: { 'content-type': 'application/json', authorization: auth },
-      body: JSON.stringify({
-        batch: [
-          {
-            id: e.id,
-            type: 'trace-create',
-            timestamp: e.at,
-            body: {
-              id: e.id,
-              name: `governance.${e.action}`,
-              metadata: { actor: e.actor, domain: e.domain, subject: e.subject },
-              input: e.detail,
-              output: { reason: e.reason },
-              tags: ['governance', `action:${e.action}`],
-            },
-          },
-        ],
-      }),
-    });
-  } catch {
-    /* best-effort durable mirror */
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-/** Append an audit entry (hash-chained) + mirror to Langfuse. Returns it. */
+/** Append an audit entry (hash-chained) and write it through to the durable Admin store. Returns it. */
 export function record(input: {
   actor: string;
   action: AuditAction;
@@ -173,7 +136,6 @@ export function record(input: {
   } catch {
     /* never let a mirror failure break the governed action */
   }
-  void mirrorToLangfuse(e);
   return e;
 }
 

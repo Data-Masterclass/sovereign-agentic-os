@@ -1,110 +1,375 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  *
- * FEATURE:    The ONE Langfuse client of the OS — buffered ingestion through the official JS SDK,
- *             the run-trace deep link, scores, and the filtered observation read.
- * USER STORY: As an engineer I open a run's trace in Langfuse and see one trace whose id IS the run
- *             id, with nodes, model calls and tool calls nested under it. As a security reviewer I
- *             can confirm that every Langfuse READ the OS performs is filtered by run, user or scope,
- *             so no surface ever lists another user's observations.
- * ARCHITECTURE:
- *   - Wraps `langfuse` (the official SDK, 3.x, MIT) as a process singleton pinned to `globalThis`
- *     (route handlers are bundled separately). Events are buffered by the SDK and flushed in the
- *     background; nothing here blocks a run. `enabled` is false when no keys are configured.
- *   - Observability plumbing lives in `core/infra` because both the kernel (`agent-governed.ts`
- *     `trace()`) and the Agents tab (`tabs/agents/lib/engine/observe.ts`) need it; the kernel never
- *     imports a tab.
- *   - `observationsQuery` is PURE and refuses an unfiltered query (typed error) — the rule the
- *     diagnostics route and its test pin down (checklist A23). `traceUrlFor` builds the SDK's own
- *     `/trace/<id>` deep link (Langfuse redirects it into the project).
- *   - Tests inject a client subclass whose `fetch` records the ingestion batches
- *     (`__setLangfuseClientForTests`); production constructs one from `config`.
+ * FEATURE:    The ONE Langfuse writer of the OS — OpenTelemetry export through the official
+ *             Langfuse JS SDK v5, the run trace, standalone observations, scores, the deep link
+ *             and the filtered observation read.
+ * USER STORY: As an engineer I open a run's trace in Langfuse and see one trace per run: the run,
+ *             its graph nodes, every tool call with its governance decision, and exactly ONE
+ *             generation per model call — the gateway's. As a security reviewer I can confirm that
+ *             no other file in os-ui sends anything to Langfuse, and that every read is filtered.
+ * ARCHITECTURE (design 05 §5.1, steps 1–3 with Revision 1, 3, 6, 8):
+ *   - Export: `NodeSDK` + `LangfuseSpanProcessor` (`@langfuse/otel`), started once per process
+ *     (`globalThis` slot; route handlers are bundled separately). In-cluster `baseUrl`, client-side
+ *     `osMask` (inline media stripped), and `shouldExportSpan` that keeps Langfuse observations and
+ *     DROPS any app-side `generation`: the gateway (LiteLLM) owns the generation of a model call.
+ *   - Writing: `@langfuse/tracing` (`startObservation`, `startActiveObservation`,
+ *     `propagateAttributes`, `createTraceId`). The run trace id is `createTraceId(runId)`; every run
+ *     segment hangs on a FIXED root span id derived from the run id, so a resume in another process
+ *     stays under the same root. `userId` is the runner's bare uid, `sessionId` is `system:<id>`.
+ *   - Model calls: a `llm.<node>` span whose OTel span id the LiteLLM caller forwards as
+ *     `parent_observation_id` (legacy callback) and as `traceparent`; the gateway's generation nests
+ *     under it. The span carries the redacted output, never usage, so tokens are counted once.
+ *   - Standalone observations (`recordObservation`): a governed data tool, a knowledge context pack
+ *     or an agent tool outside a run. Inside an active observation (a run's tool call) it nests
+ *     there by OTel context; otherwise it is its own small trace. Never a raw ingestion POST.
+ *   - Scores through `@langfuse/client` `score.create`. Reads stay filtered (`observationsQuery`).
+ *   - Nothing here throws into a caller: the trace store being down is an expected state.
  */
 import 'server-only';
-import { Langfuse } from 'langfuse';
+import { createHash } from 'node:crypto';
+import { TraceFlags, type SpanContext } from '@opentelemetry/api';
+import { NodeSDK } from '@opentelemetry/sdk-node';
+import type { SpanExporter, ReadableSpan } from '@opentelemetry/sdk-trace-base';
+import { LangfuseSpanProcessor, isDefaultExportSpan } from '@langfuse/otel';
+import { createTraceId, propagateAttributes, startActiveObservation, startObservation, type LangfuseAgent, type LangfuseChain } from '@langfuse/tracing';
+import { LangfuseClient } from '@langfuse/client';
 import { config } from '@core/kernel/config';
+import {
+  DEFAULT_REDACTION,
+  boundedResult,
+  noopObserver,
+  redactArgs,
+  redactCompletion,
+  redactRequest,
+  runSessionId,
+  runTraceTags,
+  type RedactionLevel,
+  type RunObserver,
+  type RunTraceInput,
+  type SpanHandle,
+  type ToolDecision,
+} from '@core/infra/trace-port';
 
-/** Where an observation hangs: the run trace (id = run id) and, optionally, the span it nests under. */
-export type RunTraceContext = { traceId: string; parentObservationId?: string };
+export type { RunTraceContext } from '@core/infra/trace-port';
 
-const CLIENT_KEY = Symbol.for('soa.langfuse.client');
-type ClientSlot = { client: Langfuse | null; override: Langfuse | null | undefined };
-function slot(): ClientSlot {
-  const g = globalThis as unknown as Record<symbol, ClientSlot | undefined>;
-  if (!g[CLIENT_KEY]) g[CLIENT_KEY] = { client: null, override: undefined };
-  return g[CLIENT_KEY]!;
+// ---------------------------------------------------------------- bootstrap --
+
+type TracingSlot = {
+  sdk: NodeSDK | null;
+  processor: LangfuseSpanProcessor | null;
+  client: LangfuseClient | null;
+  /** Tests: export to this exporter instead of the Langfuse OTLP endpoint. */
+  exporter?: SpanExporter;
+};
+const SLOT_KEY = Symbol.for('soa.langfuse.otel');
+function slot(): TracingSlot {
+  const g = globalThis as unknown as Record<symbol, TracingSlot | undefined>;
+  if (!g[SLOT_KEY]) g[SLOT_KEY] = { sdk: null, processor: null, client: null };
+  return g[SLOT_KEY]!;
 }
 
-/** True when ingestion keys are configured; false means every trace call is a no-op. */
+/** True when the keys and URL are configured (or a test exporter is installed). */
 export function langfuseEnabled(): boolean {
-  const s = slot();
-  if (s.override !== undefined) return s.override !== null;
+  if (slot().exporter) return true;
   return config.langfuseUrl.length > 0 && config.langfusePublicKey.length > 0 && config.langfuseSecretKey.length > 0;
 }
 
+/** The OTel attribute that names a Langfuse observation's type. */
+const OBSERVATION_TYPE = 'langfuse.observation.type';
+
 /**
- * The shared SDK client, or null when Langfuse is not configured. Buffered: `flushAt` events or
- * `flushInterval` ms, whichever first; one retry; a short request timeout — the trace store being
- * down is an expected state, never a reason to slow a run.
+ * Export the Langfuse observations the OS writes, and never an app-side GENERATION: one model call
+ * has exactly one generation, written by the gateway. Anything else (foreign instrumentation) is
+ * decided by Langfuse's own default filter.
  */
-export function langfuseClient(): Langfuse | null {
+export function exportOsSpan({ otelSpan }: { otelSpan: ReadableSpan }): boolean {
+  if (otelSpan.attributes[OBSERVATION_TYPE] === 'generation') return false;
+  return isDefaultExportSpan(otelSpan);
+}
+
+const DATA_URI = /data:([\w.+-]+\/[\w.+-]+);base64,([A-Za-z0-9+/=]+)/g;
+
+/**
+ * The client-side mask: inline media (`data:` URIs, e.g. an `image_url` part) is replaced by its
+ * type, size and hash before export, so no media leaves the pod. Text redaction (`structure` /
+ * `strict`) is applied earlier, where the observation is built (`trace-port.ts`).
+ */
+export function osMask({ data }: { data: unknown }): unknown {
+  if (typeof data !== 'string' || !data.includes('data:')) return data;
+  return data.replace(DATA_URI, (_m, mime: string, b64: string) => {
+    const bytes = Math.floor((b64.length * 3) / 4);
+    const sha256 = createHash('sha256').update(b64).digest('hex').slice(0, 16);
+    return `[media ${mime} ${bytes} bytes sha256:${sha256}]`;
+  });
+}
+
+/**
+ * Start the process's tracer once. Returns false when Langfuse is not configured. The SIGTERM hook
+ * hands the export buffer over before a pod stops (rolling restart, worker finishing a superstep).
+ */
+function ensureTracing(): boolean {
   const s = slot();
-  if (s.override !== undefined) return s.override;
-  if (!langfuseEnabled()) return null;
-  if (!s.client) {
-    s.client = new Langfuse({
-      publicKey: config.langfusePublicKey,
-      secretKey: config.langfuseSecretKey,
-      baseUrl: config.langfuseUrl,
-      flushAt: 20,
-      flushInterval: 2_000,
-      requestTimeout: 5_000,
-      fetchRetryCount: 1,
-      sdkIntegration: 'sovereign-os',
+  if (s.processor) return true;
+  if (!langfuseEnabled()) return false;
+  try {
+    const processor = new LangfuseSpanProcessor({
+      ...(s.exporter
+        ? { exporter: s.exporter, exportMode: 'immediate' as const }
+        : { publicKey: config.langfusePublicKey, secretKey: config.langfuseSecretKey, baseUrl: config.langfuseUrl, timeout: 5 }),
+      mask: osMask,
+      shouldExportSpan: exportOsSpan,
+      mediaUploadEnabled: false,
     });
-    // An unreachable trace store must not spam the pod log on every batch: the ring in
-    // `agent-governed.ts` keeps Monitoring legible without Langfuse.
-    s.client.on('error', () => undefined);
-    // A3 review: the SDK buffers (flushAt 20 / flushInterval 2s), so a pod that is told to stop —
-    // a rolling restart, or the agent-run worker finishing its superstep — must hand the buffer
-    // over before it exits, or the last spans of the last run are lost. `shutdownAsync` flushes
-    // and stops the timer; `once` so repeated construction cannot stack listeners.
-    const client = s.client;
-    process.once('SIGTERM', () => void client.shutdownAsync().catch(() => undefined));
+    // No metrics and no logs: this SDK exists to export Langfuse traces only.
+    const sdk = new NodeSDK({ spanProcessors: [processor], metricReaders: [], logRecordProcessors: [], autoDetectResources: false, serviceName: 'os-ui' });
+    sdk.start();
+    s.processor = processor;
+    s.sdk = sdk;
+    process.once('SIGTERM', () => void sdk.shutdown().catch(() => undefined));
+    return true;
+  } catch {
+    return false;
   }
+}
+
+/** Test seam: export every span to `exporter` (an in-memory exporter) instead of Langfuse. Call before the first trace. */
+export function __useSpanExporterForTests(exporter: SpanExporter): void {
+  slot().exporter = exporter;
+}
+
+/** Flush the export buffer (and pending scores). Never throws. */
+export async function flushLangfuse(): Promise<void> {
+  const s = slot();
+  try {
+    await Promise.all([s.processor?.forceFlush(), s.client?.flush()]);
+  } catch {
+    /* the trace store being down is an expected state */
+  }
+}
+
+// ------------------------------------------------------------------ run ids --
+
+/** The Langfuse trace id of a run: `createTraceId(runId)` (32-hex, deterministic). */
+export function langfuseTraceId(runId: string): Promise<string> {
+  return createTraceId(runId);
+}
+
+/** The fixed span id every segment of a run hangs on, so resumes stay under one root. */
+async function runRootSpanId(runId: string): Promise<string> {
+  return (await createTraceId(`root:${runId}`)).slice(0, 16);
+}
+
+/**
+ * The deep link to ONE run's trace: `<console>/trace/<createTraceId(runId)>`, which Langfuse
+ * redirects into the owning project. Undefined when no console URL is configured.
+ */
+export async function traceUrlFor(runId: string): Promise<string | undefined> {
+  const base = config.langfuseConsoleUrl;
+  if (!base || !runId) return undefined;
+  return `${base}/trace/${await langfuseTraceId(runId)}`;
+}
+
+// ---------------------------------------------------------------- run trace --
+
+const TASK_MAX = 500;
+const safe = (fn: () => void): void => {
+  try {
+    fn();
+  } catch {
+    /* observability never fails a run */
+  }
+};
+const message = (e: unknown): string => ((e as Error)?.message ?? String(e)).slice(0, 300);
+
+/** A policy refusal is `denied`; any other error result is `error`. */
+function decisionOf(out: { text: string; isError: boolean }, given: ToolDecision): ToolDecision {
+  if (!out.isError) return given;
+  return /"code":"(forbidden|denied|held|rejected|withdrawn_by_requester)"/.test(out.text) ? 'denied' : 'error';
+}
+
+/**
+ * Run `fn` with the run segment's observer. One trace per run (`createTraceId(runId)`); a fresh
+ * start opens `run <system>`, a resume opens `run segment`, both under the run's fixed root id.
+ * `userId`, `sessionId`, tags, version and trace name are propagated to every observation the
+ * segment writes. With Langfuse unconfigured `fn` gets the no-op observer.
+ */
+export async function withRunTrace<T>(input: RunTraceInput, fn: (observer: RunObserver) => Promise<T>): Promise<T> {
+  if (!ensureTracing()) return fn(noopObserver(input.runId));
+  const traceId = await langfuseTraceId(input.runId);
+  const rootSpanId = await runRootSpanId(input.runId);
+  const level: RedactionLevel = input.redaction ?? DEFAULT_REDACTION;
+  const environment = input.environment;
+  const env = environment ? { environment } : {};
+  const root: SpanContext = { traceId, spanId: rootSpanId, traceFlags: TraceFlags.SAMPLED, isRemote: true };
+
+  return propagateAttributes(
+    {
+      userId: input.userId,
+      sessionId: runSessionId(input.systemId),
+      tags: runTraceTags(input),
+      traceName: `run ${input.systemName}`,
+      ...(input.version ? { version: input.version } : {}),
+      metadata: {
+        runId: input.runId,
+        systemId: input.systemId,
+        domain: input.domain,
+        engine: input.engine ?? 'langgraph',
+        ...(input.principal ? { principal: input.principal } : {}),
+      },
+    },
+    () => {
+      let segment: LangfuseAgent | null = null;
+      safe(() => {
+        segment = startObservation(
+          input.resume ? 'run segment' : `run ${input.systemName}`,
+          {
+            ...env,
+            input: input.task ? { task: input.task.length > TASK_MAX ? `${input.task.slice(0, TASK_MAX)}…` : input.task } : undefined,
+            metadata: { resume: !!input.resume },
+          },
+          { asType: 'agent', parentSpanContext: root },
+        );
+      });
+      const segmentCtx = (): SpanContext => (segment as LangfuseAgent | null)?.otelSpan.spanContext() ?? root;
+
+      const makeSpan = (name: string, metadata?: Record<string, unknown>): SpanHandle => {
+        let node: LangfuseChain | null = null;
+        safe(() => { node = startObservation(name, { ...env, metadata }, { asType: 'chain', parentSpanContext: segmentCtx() }); });
+        const nodeCtx = (): SpanContext => (node as LangfuseChain | null)?.otelSpan.spanContext() ?? segmentCtx();
+        return {
+          id: (node as LangfuseChain | null)?.id ?? rootSpanId,
+          traceId,
+          // ONE span per model call. Its id is what the gateway nests its generation under
+          // (`parent_observation_id`), so the gateway's generation is the call's only generation.
+          llm: (inner, spanName) => (req) =>
+            startActiveObservation(
+              spanName ?? `llm.${name}`,
+              async (span) => {
+                safe(() => span.update({ input: redactRequest(req, level), metadata: { kind: 'model-call', model: req.model, tools: (req.tools ?? []).length, node: metadata?.agent } }));
+                try {
+                  const completion = await inner({ ...req, observe: { traceId, parentObservationId: span.id } });
+                  safe(() => span.update({ output: redactCompletion(completion, level) }));
+                  return completion;
+                } catch (e) {
+                  safe(() => span.update({ level: 'ERROR', statusMessage: message(e) }));
+                  throw e;
+                }
+              },
+              { asType: 'span', parentSpanContext: nodeCtx() },
+            ),
+          // The tool observation is ACTIVE while the call runs, so whatever the governed call
+          // records (a retrieval, a data tool) nests under it by OTel context.
+          tool: (call, meta, run) =>
+            startActiveObservation(
+              `tool.${call.name}`,
+              async (tool) => {
+                safe(() => tool.update({ ...env, input: { tool: call.name, callId: call.id, args: redactArgs(call.args, level) }, metadata: { decision: meta.decision, approvalId: meta.approvalId, redaction: level } }));
+                try {
+                  const out = await run();
+                  safe(() => tool.update({ output: { isError: out.isError, ...boundedResult(out.text, level) }, level: out.isError ? 'WARNING' : 'DEFAULT', metadata: { decision: decisionOf(out, meta.decision), approvalId: meta.approvalId } }));
+                  return out;
+                } catch (e) {
+                  safe(() => tool.update({ level: 'ERROR', statusMessage: message(e), metadata: { decision: 'error', approvalId: meta.approvalId } }));
+                  throw e;
+                }
+              },
+              { asType: 'tool', parentSpanContext: nodeCtx() },
+            ),
+          toolEvent: (call, meta) =>
+            safe(() => {
+              startObservation(
+                `tool.${call.name}`,
+                {
+                  ...env,
+                  input: { tool: call.name, callId: call.id, args: redactArgs(call.args, level) },
+                  output: meta.detail ? { detail: meta.detail } : undefined,
+                  level: meta.decision === 'held' ? 'DEFAULT' : 'WARNING',
+                  metadata: { decision: meta.decision, approvalId: meta.approvalId },
+                },
+                { asType: 'event', parentSpanContext: nodeCtx() },
+              );
+            }),
+          end: (status) =>
+            safe(() => {
+              (node as LangfuseChain | null)?.update({
+                output: status?.output,
+                level: status?.error ? 'ERROR' : 'DEFAULT',
+                statusMessage: status?.error ? status.error.slice(0, 300) : status?.parked ? 'parked on approval' : undefined,
+                metadata: { ...(metadata ?? {}), ...(status?.metadata ?? {}), ...(status?.parked ? { parked: true } : {}) },
+              }).end();
+            }),
+        };
+      };
+
+      const observer: RunObserver = {
+        traceId,
+        enabled: true,
+        span: makeSpan,
+        finish: (outcome) =>
+          safe(() => {
+            startObservation('run.result', { ...env, output: outcome, level: outcome.failed ? 'ERROR' : 'DEFAULT' }, { asType: 'event', parentSpanContext: segmentCtx() });
+            (segment as LangfuseAgent | null)?.update({ output: outcome, level: outcome.failed ? 'ERROR' : 'DEFAULT' }).end();
+          }),
+        flush: flushLangfuse,
+      };
+      return fn(observer);
+    },
+  );
+}
+
+// ---------------------------------------------------- standalone observations --
+
+export type StandaloneObservation = {
+  name: string;
+  asType: 'tool' | 'retriever' | 'span' | 'event';
+  input?: unknown;
+  output?: unknown;
+  metadata?: Record<string, unknown>;
+  level?: 'DEFAULT' | 'WARNING' | 'ERROR';
+  tags?: string[];
+};
+
+/**
+ * Record one observation that is not part of a run's own tree: a governed data tool, a knowledge
+ * context pack, an agent tool called outside a run. Inside an active observation it nests there;
+ * otherwise it is its own trace. Returns whether it was handed to the exporter.
+ */
+export function recordObservation(o: StandaloneObservation): boolean {
+  if (!ensureTracing()) return false;
+  try {
+    const attrs = { input: o.input, output: o.output, metadata: o.metadata, level: o.level };
+    const write = (): void => {
+      // An event ends on creation; the others are point-in-time records, ended at once.
+      if (o.asType === 'event') startObservation(o.name, attrs, { asType: 'event' });
+      else if (o.asType === 'tool') startObservation(o.name, attrs, { asType: 'tool' }).end();
+      else if (o.asType === 'retriever') startObservation(o.name, attrs, { asType: 'retriever' }).end();
+      else startObservation(o.name, attrs).end();
+    };
+    if (o.tags && o.tags.length > 0) propagateAttributes({ tags: o.tags }, write);
+    else write();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// ------------------------------------------------------------------- scores --
+
+function scoreClient(): LangfuseClient | null {
+  const s = slot();
+  if (!langfuseEnabled() || s.exporter) return null;
+  if (!s.client) s.client = new LangfuseClient({ publicKey: config.langfusePublicKey, secretKey: config.langfuseSecretKey, baseUrl: config.langfuseUrl });
   return s.client;
 }
 
-/** Test seam: inject a recording client (or `null` = disabled); `undefined` restores production. */
-export function __setLangfuseClientForTests(client: Langfuse | null | undefined): void {
-  slot().override = client;
-}
-
-/** Flush the buffer in the background. Never throws, never awaited by a run. */
-export function flushLangfuse(): Promise<void> {
-  const c = langfuseClient();
-  if (!c) return Promise.resolve();
-  return c.flushAsync().catch(() => undefined);
-}
-
-/**
- * The deep link to ONE run's trace: `<console>/trace/<runId>` — the SDK's own `getTraceUrl` shape,
- * which Langfuse redirects into the owning project. Empty when no console URL is configured
- * (the chart sets an explicit empty value when the console is not exposed).
- */
-export function traceUrlFor(runId: string): string | undefined {
-  const base = config.langfuseConsoleUrl;
-  if (!base || !runId) return undefined;
-  return `${base}/trace/${encodeURIComponent(runId)}`;
-}
-
-/** Write a numeric score onto a run trace (e.g. the LLM-judge verdict). Buffered; never throws. */
-export function scoreTrace(input: { traceId: string; name: string; value: number; comment?: string; metadata?: Record<string, unknown> }): boolean {
-  const c = langfuseClient();
+/** Write a numeric score onto a run's trace (e.g. the LLM-judge verdict). Buffered; never throws. */
+export async function scoreTrace(input: { runId: string; name: string; value: number; comment?: string; metadata?: Record<string, unknown> }): Promise<boolean> {
+  const c = scoreClient();
   if (!c) return false;
   try {
-    c.score({ traceId: input.traceId, name: input.name, value: input.value, comment: input.comment, metadata: input.metadata });
-    void flushLangfuse();
+    // Queued; the client sends within its flush interval (1 s) or on `flushLangfuse()`.
+    c.score.create({ traceId: await langfuseTraceId(input.runId), name: input.name, value: input.value, comment: input.comment, metadata: input.metadata });
     return true;
   } catch {
     return false;
@@ -153,7 +418,7 @@ export function observationsQuery(f: ObservationFilter): string {
 }
 
 /** One observation row as the public API returns it (the subset the OS reads). */
-export type LangfuseObservation = {
+export type LangfuseObservationRow = {
   id?: string;
   traceId?: string;
   type?: string;
@@ -170,7 +435,7 @@ export type LangfuseObservation = {
  * Read observations through the public API — filtered, always. Returns null when the store cannot
  * be reached (an expected state), throws `UnfilteredLangfuseQueryError` for a leaking filter.
  */
-export async function readObservations(filter: ObservationFilter, timeoutMs = 3_000): Promise<LangfuseObservation[] | null> {
+export async function readObservations(filter: ObservationFilter, timeoutMs = 3_000): Promise<LangfuseObservationRow[] | null> {
   const query = observationsQuery(filter);
   if (!langfuseEnabled()) return null;
   const auth = 'Basic ' + Buffer.from(`${config.langfusePublicKey}:${config.langfuseSecretKey}`).toString('base64');
@@ -183,7 +448,7 @@ export async function readObservations(filter: ObservationFilter, timeoutMs = 3_
       signal: ctrl.signal,
     });
     if (!res.ok) return null;
-    const body = (await res.json().catch(() => null)) as { data?: LangfuseObservation[] } | null;
+    const body = (await res.json().catch(() => null)) as { data?: LangfuseObservationRow[] } | null;
     return Array.isArray(body?.data) ? body!.data : [];
   } catch {
     return null;

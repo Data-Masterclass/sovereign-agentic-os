@@ -19,7 +19,7 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@core/kernel/route-server';
-import { readObservations, UnfilteredLangfuseQueryError } from '@core/infra/langfuse';
+import { langfuseTraceId, readObservations, UnfilteredLangfuseQueryError } from '@core/infra/langfuse';
 import { isRunId } from '@core/kernel/run-id';
 import { assertRunVisible } from '@tabs/agents/lib/engine/run-visibility';
 import { runJobStore } from '@tabs/agents/lib/build/run-jobs-server';
@@ -59,7 +59,7 @@ export const GET = withRoute<{ id: string }>(async ({ req, user, params }) => {
   let observations;
   try {
     observations = await readObservations(
-      runId ? { traceId: runId, type: 'GENERATION' } : { userId: user.id, fromTimestamp, type: 'GENERATION' },
+      runId ? { traceId: await langfuseTraceId(runId), type: 'GENERATION' } : { userId: user.id, fromTimestamp, type: 'GENERATION' },
     );
   } catch (e) {
     if (e instanceof UnfilteredLangfuseQueryError) return NextResponse.json({ error: e.message }, { status: 400 });

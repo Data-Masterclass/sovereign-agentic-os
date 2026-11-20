@@ -78,7 +78,7 @@ COPY docs/components ./docs/components
 # tsconfig path aliases (`@core/*`, `@tabs/*`) and Node (>= 22.6) strips the types.
 #
 # The source lands at /app/src, i.e. ONE level under /app, so bare imports resolve up into the
-# standalone `/app/node_modules` (which already carries `@langchain/langgraph`, `pg`, `langfuse`
+# standalone `/app/node_modules` (which already carries `@langchain/langgraph`, `pg`, `@langfuse/*`
 # and everything else the run path is traced for — they are `serverExternalPackages`).
 # `.ts` sources only, plus the two bootstrap `.mjs` files: no build step, no second node_modules,
 # and the worker executes byte-for-byte the modules the Next build compiles.

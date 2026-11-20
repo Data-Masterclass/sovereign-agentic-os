@@ -7,7 +7,7 @@
  *             steps FAILED — so when every tool call in a healthy run is labelled `error` and the
  *             run header says the owner is `unknown`, the surface is useless and I stop trusting it.
  * ARCHITECTURE:
- *   - The payloads here are the ones `tabs/agents/lib/engine/observe.ts` actually writes: a tool
+ *   - The payloads here are the ones the run observer wrote before the OTel writer (traces older than WP-31): a tool
  *     span's output is `{ isError, text }`, `run.result`'s output is the outcome `{ failed, … }`,
  *     and the acting user is on the TRACE's `userId`, not in `metadata.principal`.
  *   - `fetchTrace` is driven end-to-end over a stubbed `globalThis.fetch` (the adapter's only
@@ -31,7 +31,7 @@ function serve(payload: unknown): void {
 // ----------------------------------------------------------- the status mapping ---
 
 test('X-R3: a SUCCESSFUL tool payload is not an error — the key name "isError" is not a verdict', () => {
-  // This is the exact output `observe.ts` writes for a tool that worked.
+  // This is the exact output the pre-WP-31 observer wrote for a tool that worked.
   assert.equal(outputFailed({ isError: false, text: 'rows: 42' }), false);
   // …and for one that did not.
   assert.equal(outputFailed({ isError: true, text: '{"code":"not_found"}' }), true);
@@ -189,7 +189,7 @@ test('X-R4/M-1: a run that records nobody says so, and is not visible on a guess
 // ------------------------------------- live scenario 05 (2026-11-19): kinds and units ---
 // Langfuse's public API reports an observation's `latency` in SECONDS (langfuse-core
 // ObservationsView: "The latency in seconds."). A live agent run of 156 s with 60 model calls
-// read back as 466 "ms" in total. And `observe.ts` writes every governed tool call as a SPAN
+// read back as 466 "ms" in total. And the pre-WP-31 observer wrote every governed tool call as a SPAN
 // named `tool.<name>`, which was labelled `span`, so no agent-run trace ever had a `tool` step.
 
 const UNITS_TRACE = {

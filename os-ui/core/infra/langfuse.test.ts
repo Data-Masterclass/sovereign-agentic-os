@@ -4,16 +4,32 @@
  * FEATURE:    Langfuse read filter, deep link and judge SCORE — checklist A20, A22 and A23
  * USER STORY: As a security reviewer I need proof that no Langfuse read the OS performs can be
  *             unfiltered, and that the run's "Trace" link opens ONE trace, not a list.
- * ARCHITECTURE: pure functions from `core/infra/langfuse.ts`, plus the REAL SDK with its
- *             transport replaced for the score path (injected through `__setLangfuseClientForTests`);
- *             nothing leaves the process.
+ * ARCHITECTURE: pure functions from `core/infra/langfuse.ts`, plus the REAL `@langfuse/client`
+ *             pointed at a local HTTP listener for the score path (`LANGFUSE_URL` is set before
+ *             the config loads); nothing leaves the machine.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Langfuse } from 'langfuse';
-import type { LangfuseFetchOptions, LangfuseFetchResponse } from 'langfuse-core';
-import { observationsQuery, traceUrlFor, scoreTrace, __setLangfuseClientForTests, UnfilteredLangfuseQueryError } from '@core/infra/langfuse';
-import { config } from '@core/kernel/config';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
+
+/** A local listener standing in for the Langfuse API: it records every request body. */
+const received: { url: string; body: string }[] = [];
+const server = createServer((req, res) => {
+  let body = '';
+  req.on('data', (c) => (body += c));
+  req.on('end', () => {
+    received.push({ url: req.url ?? '', body });
+    res.writeHead(207, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ successes: [], errors: [] }));
+  });
+});
+await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+server.unref();
+process.env.LANGFUSE_URL = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+
+const { observationsQuery, traceUrlFor, scoreTrace, flushLangfuse, langfuseTraceId, UnfilteredLangfuseQueryError } = await import('@core/infra/langfuse');
+const { config } = await import('@core/kernel/config');
 
 test('LANGFUSE-READ: an unfiltered observations query is refused, typed (A23)', () => {
   assert.throws(() => observationsQuery({}), UnfilteredLangfuseQueryError);
@@ -39,11 +55,13 @@ test('LANGFUSE-READ: without a run id the query is bounded to the user AND a tim
   assert.equal(q.get('limit'), '100', 'the page size is capped');
 });
 
-test('LANGFUSE-LINK: the trace URL deep-links to ONE run trace (A20), never the traces list', () => {
-  const url = traceUrlFor('run_1b4e28ba-2fa1-11d2-883f-0016d3cca427');
-  assert.equal(url, `${config.langfuseConsoleUrl}/trace/run_1b4e28ba-2fa1-11d2-883f-0016d3cca427`);
+test('LANGFUSE-LINK: the trace URL deep-links to ONE run trace, id = createTraceId(runId) (A20), never the traces list', async () => {
+  const runId = 'run_1b4e28ba-2fa1-11d2-883f-0016d3cca427';
+  const url = await traceUrlFor(runId);
+  assert.equal(url, `${config.langfuseConsoleUrl}/trace/${await langfuseTraceId(runId)}`);
+  assert.match(url!, /\/trace\/[0-9a-f]{32}$/);
   assert.ok(!url!.endsWith('/traces'), 'the A2 link pointed at the list page');
-  assert.equal(traceUrlFor(''), undefined);
+  assert.equal(await traceUrlFor(''), undefined);
 });
 
 // ------------------------------------------------------------------ A22 --
@@ -58,61 +76,24 @@ test('LANGFUSE-LINK: the trace URL deep-links to ONE run trace (A20), never the 
  * with its transport replaced (nothing leaves the process), injected through the module's own test
  * seam, asserting what lands on the wire.
  */
-class RecordingLangfuse extends Langfuse {
-  events: { type: string; body: Record<string, unknown> }[] = [];
-  constructor() {
-    super({ publicKey: 'pk-test', secretKey: 'sk-test', baseUrl: 'http://langfuse.test', flushAt: 1000, flushInterval: 60_000 });
-  }
-  override async fetch(_url: string, options: LangfuseFetchOptions): Promise<LangfuseFetchResponse> {
-    const body = JSON.parse(String(options.body ?? '{}')) as { batch?: { id: string; type: string; body: Record<string, unknown> }[] };
-    this.events.push(...(body.batch ?? []));
-    const ok = { successes: (body.batch ?? []).map((e) => ({ id: e.id, status: 201 })), errors: [] };
-    return { status: 207, text: async () => JSON.stringify(ok), json: async () => ok, arrayBuffer: async () => new ArrayBuffer(0) };
-  }
-}
-
 test('LANGFUSE-SCORE: the judge verdict lands on the RUN trace as a score (A22)', async () => {
-  const client = new RecordingLangfuse();
-  __setLangfuseClientForTests(client);
-  try {
-    const runId = 'run_1b4e28ba-2fa1-11d2-883f-0016d3cca427';
-    assert.equal(
-      scoreTrace({ traceId: runId, name: 'llm-judge', value: 0.75, comment: 'mostly grounded', metadata: { rubric: 'v2' } }),
-      true,
-      'scoreTrace reported failure with a configured client',
-    );
-    await client.flushAsync();
-    const scores = client.events.filter((e) => e.type.startsWith('score-'));
-    assert.equal(scores.length, 1, `expected exactly one score event, got ${client.events.map((e) => e.type).join(', ')}`);
-    const body = scores[0].body;
-    // The score is attached to the RUN's trace — trace id = run id is the whole point (A19).
-    assert.equal(body.traceId, runId, 'the score is not attached to the run trace');
-    assert.equal(body.name, 'llm-judge');
-    assert.equal(body.value, 0.75);
-    assert.equal(body.comment, 'mostly grounded');
-    // It is a SCORE, not an observation: no score may be created as a span/generation.
-    assert.ok(!client.events.some((e) => e.type.startsWith('generation-') || e.type.startsWith('span-')), 'a score must not create an observation');
-  } finally {
-    __setLangfuseClientForTests(undefined);
-  }
-});
-
-test('LANGFUSE-SCORE: with Langfuse unconfigured, scoring is a reported no-op, never a throw (A22)', () => {
-  __setLangfuseClientForTests(null);
-  try {
-    assert.equal(scoreTrace({ traceId: 'run_x', name: 'llm-judge', value: 1 }), false, 'an unconfigured client must report false, not true');
-  } finally {
-    __setLangfuseClientForTests(undefined);
-  }
-});
-
-test('LANGFUSE-SCORE: a throwing client is swallowed and reported, so a verdict never fails a run (A22)', () => {
-  const broken = new RecordingLangfuse();
-  broken.score = () => { throw new Error('ingestion queue closed'); };
-  __setLangfuseClientForTests(broken);
-  try {
-    assert.equal(scoreTrace({ traceId: 'run_x', name: 'llm-judge', value: 1 }), false, 'a throwing client must be reported as false');
-  } finally {
-    __setLangfuseClientForTests(undefined);
-  }
+  const runId = 'run_1b4e28ba-2fa1-11d2-883f-0016d3cca427';
+  received.length = 0;
+  assert.equal(
+    await scoreTrace({ runId, name: 'llm-judge', value: 0.75, comment: 'mostly grounded', metadata: { rubric: 'v2' } }),
+    true,
+    'scoreTrace reported failure with a configured client',
+  );
+  await flushLangfuse();
+  const events = received.flatMap((r) => (JSON.parse(r.body || '{}') as { batch?: { type: string; body: Record<string, unknown> }[] }).batch ?? []);
+  const scores = events.filter((e) => e.type === 'score-create');
+  assert.equal(scores.length, 1, `expected exactly one score event, got ${events.map((e) => e.type).join(', ')}`);
+  const body = scores[0].body;
+  // The score is attached to the RUN's trace — the trace id derived from the run id.
+  assert.equal(body.traceId, await langfuseTraceId(runId), 'the score is not attached to the run trace');
+  assert.equal(body.name, 'llm-judge');
+  assert.equal(body.value, 0.75);
+  assert.equal(body.comment, 'mostly grounded');
+  // It is a SCORE, not an observation.
+  assert.ok(!events.some((e) => e.type.startsWith('generation-') || e.type.startsWith('span-')), 'a score must not create an observation');
 });

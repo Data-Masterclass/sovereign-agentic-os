@@ -63,31 +63,36 @@ worker and the gateway send traces to the in-cluster Service `agentic-os-langfus
 
 | Concern | Where | What |
 |---|---|---|
-| SDK client | `os-ui/core/infra/langfuse.ts` | the official `langfuse` JS SDK (3.39.2), one buffered client per process (`flushAt` 20 / `flushInterval` 2 s, one retry, 5 s timeout); `langfuseEnabled()`, `traceUrlFor(runId)`, `scoreTrace`, `readObservations` |
-| Run observer | `os-ui/tabs/agents/lib/engine/observe.ts` | `langfuseRunObserver` — the trace, the node spans, the generations, the tool spans; `noopObserver` when no keys are configured |
-| Node instrumentation | `os-ui/tabs/agents/lib/engine/build-graph.ts` `observed(...)` | every `plan_/act_/tools_/route_<id>` node body runs inside a span; the model caller handed to the node records generations; `tools_<id>` records tool spans |
-| Governance spans | `os-ui/core/infra/agent-governed.ts` `trace()` | under a run (`event.run`) a governed tool call is a **span of the run trace**; outside a run (Build probes, the agent-chat path) it is its own trace, exactly as before |
-| Gateway nesting | `os-ui/core/runtime/runtime.ts` `liteLlmCaller` | LiteLLM is told `existing_trace_id` / `parent_observation_id` so **its** Langfuse callback lands inside the run trace, under the OS generation |
-| Scores | `app/api/agents/systems/[id]/evaluate/route.ts` | the judge verdict → `score { traceId: runId, name: 'judge', value: overall, comment }` |
-| Reads | `app/api/agents/systems/[id]/run/diagnostics/route.ts` | observations **by trace id** (`?runId=`) — only after `assertRunVisible` says that run is the caller's and this system's (A5: the trace id IS the run id, so reading by trace id without the owner gate let a guessed id return someone else's generations; foreign and unknown both answer 404). Without a run id — only a run recorded before the rebuild has none — by the caller's user id AND a time window. `observationsQuery` refuses anything looser (typed error) |
-| Deep link | `LastRun.traceUrl`, MCP `run_agent_system` / `get_agent_run` / `resume_agent_run` | `${LANGFUSE_CONSOLE_URL}/trace/<runId>` — the SDK's own URL shape; Langfuse redirects into the project |
+| The one writer | `os-ui/core/infra/langfuse.ts` | the official OpenTelemetry-based Langfuse JS SDK v5 (`@langfuse/otel`, `@langfuse/tracing`, `@langfuse/client` 5.14.0): `NodeSDK` + `LangfuseSpanProcessor` (in-cluster `baseUrl`, `osMask`, `shouldExportSpan` = `exportOsSpan`), `withRunTrace`, `recordObservation`, `traceUrlFor`, `scoreTrace`, `readObservations`. No other os-ui file imports a Langfuse package or names a Langfuse write endpoint (`core/infra/writers.test.ts`) |
+| Port and redaction | `os-ui/core/infra/trace-port.ts` | `RunObserver` / `SpanHandle` (what the engine reports into), `noopObserver`, `redactRequest` / `redactCompletion` / `boundedResult`, `runTraceTags`, `runSessionId` |
+| Node instrumentation | `os-ui/tabs/agents/lib/engine/build-graph.ts` `observed(...)` | every `plan_/act_/tools_/route_<id>` node is a `chain` observation; the model caller handed to the node wraps each call in a `llm.<node>` span; `tools_<id>` records `tool` observations |
+| Governed calls | `core/infra/agent-governed.ts`, `core/infra/governed.ts`, `tabs/knowledge/lib/knowledge-trace.ts` | through `recordObservation` only. Under a run the run's observer writes the tool observation, so an agent tool call is not written twice; a data tool or a context pack nests in the active observation, or is its own small trace outside one. The governance audit is NOT mirrored to Langfuse: audit lives in the OS audit store |
+| Gateway nesting | `os-ui/core/runtime/runtime.ts` `liteLlmCaller` | LiteLLM is told `existing_trace_id` / `parent_observation_id` (= the `llm.<node>` span id), `trace_user_id` (bare uid) and `session_id` (`system:<id>`), and gets a W3C `traceparent` header for the OTel callback (WP-32) |
+| Scores | `app/api/agents/systems/[id]/evaluate/route.ts` | the judge verdict → `score.create { traceId: createTraceId(runId), name: 'judge', value: overall, comment }` |
+| Reads | `app/api/agents/systems/[id]/run/diagnostics/route.ts` | observations **by trace id** (`createTraceId(runId)`) — only after `assertRunVisible` says that run is the caller's and this system's. Without a run id, by the caller's user id AND a time window. `observationsQuery` refuses anything looser (typed error) |
+| Deep link | `LastRun.traceUrl`, MCP `run_agent_system` / `get_agent_run` / `resume_agent_run` | `${LANGFUSE_CONSOLE_URL}/trace/<createTraceId(runId)>` |
 
 ## The trace tree
 
+One model call has exactly ONE generation, and the gateway writes it (design 05 §5.1). The app
+exports no generation: `exportOsSpan` drops any span typed `generation` before export.
+
 ```
-trace  id = runId · name = <system name> · userId = <runner id> · sessionId = <systemId>
-       tags = domain:<d> · agent:<systemId> · run:<runId> · engine:langgraph
-       input = { task }                               (one trace-create per run; a RESUME adds to it)
-├── span plan_<agent>      metadata { agent, kind:'plan', visit, stepsUsed }
-│   └── generation llm.plan_<agent>   model · usage {input,output,total} · input = roles + char counts
-│       └── generation (LiteLLM's callback: full request/response + cost)   ← existing_trace_id
-├── span act_<agent>
-│   └── generation llm.act_<agent>    output = { chars, toolCalls[...] }
-├── span tools_<agent>
-│   ├── span tool.<name>  input { tool, callId, args } · metadata { decision: ok|denied|error|held|dedup|not_advertised, approvalId }
-│   └── span agent.<name> (governance: OPA effect / hold)            ← core/infra/agent-governed.ts
-├── span route_<agent>    (supervisor: generation llm.route_<agent>; routes[] in output)
-└── span run.result       output { reachedEnd, parked, interrupted, failed, path, finalChars, stepsUsed }
+trace  id = createTraceId(runId) · name = run <system name> · userId = <runner uid> · sessionId = system:<systemId>
+       tags = domain:<d> · agent:<systemId> · system:<systemId> · run:<runId> · engine:langgraph [· env:<word>]
+(fixed root span id = createTraceId('root:'+runId)[0:16], never exported: every segment hangs on it)
+└── agent run <system name>        input = { task }        (a RESUME adds a sibling `run segment`)
+    ├── chain plan_<agent>         metadata { agent, kind:'plan', visit, stepsUsed }
+    │   └── span llm.plan_<agent>  input = roles + char counts · output = { chars, toolCalls }
+    │       └── generation (LiteLLM's callback: usage, cost, model; content redacted) ← parent_observation_id
+    ├── chain act_<agent>
+    │   └── span llm.act_<agent>
+    │       └── generation (gateway)
+    ├── chain tools_<agent>
+    │   └── tool tool.<name>  input { tool, callId, args } · metadata { decision, approvalId }
+    │       └── retriever knowledge.context_pack / tool data.<tool>   (nested by OTel context)
+    ├── chain route_<agent>
+    └── event run.result     output { reachedEnd, parked, interrupted, failed, path, finalChars, stepsUsed }
 ```
 
 A held write ends `tools_<agent>` as `parked` (statusMessage) with a `tool.<name>` span whose
@@ -95,7 +100,7 @@ decision is `held`; the decision in Governance resumes the thread and the next s
 reference the same trace id.
 
 **Redaction — two levels, one switch.** `LANGFUSE_REDACTION` (chart: `osUI.langfuseRedaction`;
-code: `config.langfuseRedaction`, applied in `tabs/agents/lib/engine/observe.ts`):
+code: `config.langfuseRedaction`, applied in `os-ui/core/infra/trace-port.ts`):
 
 | Level | Message content | Tool-call arguments | Tool result |
 |---|---|---|---|
@@ -104,12 +109,12 @@ code: `config.langfuseRedaction`, applied in `tabs/agents/lib/engine/observe.ts`
 
 Pick `strict` when tool arguments can carry personal data (a query predicate with an identifier,
 a document body, a customer name): the trace still shows which tool ran with which fields, which
-is what a debugging session needs, without the values. The level is recorded on the generation
-(`input.redaction`) and on each tool span (`metadata.redaction`), so a trace always says how it
-was written.
+is what a debugging session needs, without the values. The level is recorded on the `llm.<node>`
+span (`input.redaction`) and on each tool observation (`metadata.redaction`), so a trace always
+says how it was written.
 
-**What the gateway writes.** LiteLLM's own Langfuse callback creates a second generation
-*nested under* the OS's (A24: same trace, `existing_trace_id` + `parent_observation_id`). It is
+**What the gateway writes.** LiteLLM's own Langfuse callback creates the call's only generation,
+*nested under* the OS's `llm.<node>` span (same trace, `existing_trace_id` + `parent_observation_id`). It is
 the gateway's record of the call — usage, cost, model, latency, tags — and since 2026-11-19 it
 carries **no prompt and no completion** (owner decision: no document or image content in traces
 by default, the gateway's records included):

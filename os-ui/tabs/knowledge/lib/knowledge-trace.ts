@@ -2,14 +2,14 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
-import { config } from '@core/kernel/config';
+import { recordObservation } from '@core/infra/langfuse';
 
 /**
- * Langfuse trace of what entered an agent's context window for a knowledge query:
- * the PINNED items (domain card + workflow steps + hard rules) vs the RETRIEVED
- * tail, plus the tokens and the governance decision. Best-effort POST to Langfuse
- * + an in-process ring buffer so the pinned-vs-retrieved view is inspectable even
- * with no live Langfuse (kind). Mirrors `lib/agent-governed.ts` trace().
+ * What entered an agent's context window for a knowledge query: the PINNED items
+ * (domain card + workflow steps + hard rules) vs the RETRIEVED tail, plus the tokens
+ * and the governance decision. One Langfuse `retriever` observation through the one
+ * writer (`core/infra/langfuse.ts`) — nested in the active trace when there is one —
+ * plus an in-process ring so the view is inspectable with no live Langfuse.
  */
 
 export type ContextTraceEvent = {
@@ -32,58 +32,30 @@ export type ContextTraceRecord = ContextTraceEvent & { id: string; timestamp: st
 const RING: ContextTraceRecord[] = [];
 const RING_MAX = 100;
 
-async function withTimeout(url: string, init: RequestInit, ms = 2500): Promise<Response | null> {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), ms);
-  try {
-    return await fetch(url, { ...init, signal: ctrl.signal, cache: 'no-store' });
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
 export async function traceContext(event: ContextTraceEvent): Promise<ContextTraceRecord> {
   const id = `os-knowledge-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const timestamp = new Date().toISOString();
-  const auth =
-    'Basic ' + Buffer.from(`${config.langfusePublicKey}:${config.langfuseSecretKey}`).toString('base64');
-  const body = {
-    batch: [
-      {
-        id,
-        type: 'trace-create',
-        timestamp,
-        body: {
-          id,
-          name: 'knowledge.context_pack',
-          metadata: {
-            principal: event.principal,
-            workflowId: event.workflowId,
-            pinnedCount: event.pinned.length,
-            retrievedCount: event.retrieved.length,
-            dropped: event.dropped,
-            totalTokens: event.totalTokens,
-            budget: event.budget,
-            decision: event.decision,
-            policy: event.policy,
-            embedSource: event.embedSource,
-            store: event.store,
-          },
-          input: { query: event.query },
-          output: { pinned: event.pinned, retrieved: event.retrieved },
-          tags: ['knowledge-context-layer', `decision:${event.decision}`, `store:${event.store}`],
-        },
-      },
-    ],
-  };
-  const res = await withTimeout(`${config.langfuseUrl}/api/public/ingestion`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', authorization: auth },
-    body: JSON.stringify(body),
+  const landed = recordObservation({
+    name: 'knowledge.context_pack',
+    asType: 'retriever',
+    input: { query: event.query },
+    output: { pinned: event.pinned, retrieved: event.retrieved },
+    metadata: {
+      principal: event.principal,
+      workflowId: event.workflowId,
+      pinnedCount: event.pinned.length,
+      retrievedCount: event.retrieved.length,
+      dropped: event.dropped,
+      totalTokens: event.totalTokens,
+      budget: event.budget,
+      decision: event.decision,
+      policy: event.policy,
+      embedSource: event.embedSource,
+      store: event.store,
+    },
+    tags: ['knowledge-context-layer', `decision:${event.decision}`, `store:${event.store}`],
   });
-  const rec: ContextTraceRecord = { ...event, id, timestamp, landed: Boolean(res && res.ok) };
+  const rec: ContextTraceRecord = { ...event, id, timestamp, landed };
   RING.push(rec);
   if (RING.length > RING_MAX) RING.splice(0, RING.length - RING_MAX);
   return rec;
