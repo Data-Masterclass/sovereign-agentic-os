@@ -222,6 +222,13 @@ def main(out, extra):
     ci = next(c for c in jpod['containers'] if c['name'] == 'catalog-init')
     write(os.path.join(out, 'env', 'catalog-init.env'), env_file(ci, sec))
     write(os.path.join(out, 'sh', 'catalog-init.sh'), script(ci))
+    # The purge-on-drop Job, when the chart renders it (polaris.catalog.purgeOnDrop).
+    purge = [d for d in docs if d.get('kind') == 'Job' and d['metadata']['name'] == 'polaris-catalog-purge']
+    if purge:
+        pc = purge[0]['spec']['template']['spec']['containers'][0]
+        write(os.path.join(out, 'env', 'catalog-purge.env'), env_file(pc, sec))
+        write(os.path.join(out, 'sh', 'catalog-purge.sh'), script(pc))
+        env['LH_PURGE_IMAGE'] = pc['image']
     env['LH_CURL_IMAGE'] = ci['image']
 
     # Object store: the chart's bundled MinIO (its STS is what Polaris 1.1 vends credentials

@@ -12,6 +12,30 @@ services:
   minio:
     ports: ["127.0.0.1:${DD_MINIO_PORT:-18582}:9000"]
 
+  # The chart's purge-on-drop hook Job (polaris-catalog-purge), after catalog-init.
+  catalog-purge:
+    image: ${LH_PURGE_IMAGE}
+    entrypoint: ["/bin/sh", "/harness/catalog-purge.sh"]
+    env_file: ["${LH_WORK}/env/catalog-purge.env"]
+    volumes: ["${LH_WORK}/sh:/harness:ro"]
+    networks: [lh]
+    depends_on: { catalog-init: { condition: service_completed_successfully } }
+
+  trino:
+    depends_on:
+      catalog-purge: { condition: service_completed_successfully }
+
+  # The governed write/read door os-ui uses for every Trino statement (the image we ship).
+  query-tool:
+    image: ${DD_QUERY_TOOL_IMAGE}
+    environment:
+      TRINO_HOST: trino
+      TRINO_PORT: "8080"
+      TRINO_CATALOG: iceberg
+    ports: ["127.0.0.1:${DD_QUERY_TOOL_PORT:-18585}:8000"]
+    networks: [lh]
+    depends_on: { trino: { condition: service_healthy } }
+
   opensearch:
     image: ${DD_OPENSEARCH_IMAGE}
     environment:
