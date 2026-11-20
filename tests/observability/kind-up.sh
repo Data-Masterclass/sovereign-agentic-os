@@ -26,6 +26,7 @@ helm template agentic-os "$chart" --namespace "$ns" \
   --show-only templates/extensions/observability/otel-collector.yaml \
   --show-only templates/extensions/observability/victoria-metrics.yaml \
   --show-only templates/extensions/observability/victoria-logs.yaml \
+  --show-only templates/extensions/observability/network-policies.yaml \
   ${EXTRA_SET:-} > "$rendered"
 echo "rendered $(grep -c '^kind:' "$rendered") objects"
 

@@ -73,6 +73,28 @@ test('restarts are the pods\' real counts and reasons', () => {
   assert.equal(restartsOf(null).state, 'unknown');
 });
 
+test('os-ui shows its running pod\'s image tag, not OS_VERSION or a default (review #1; the verifier\'s fake is the twin)', async () => {
+  // The verifier's fake: 0.9.20 runs while the env says 1.0.0. The row must say 0.9.20.
+  const r = await componentRow(view('os-ui'), { health: {}, pods: pods('registry.example/sovereign-os/os-ui:0.9.20'), osVersion: '1.0.0' });
+  assert.equal(r.version, '0.9.20');
+  assert.equal(r.versionSource, 'image');
+  assert.notEqual(r.versionSource, 'component');
+});
+
+test('os-ui without a readable pod uses OS_VERSION (set by the chart), and without it says unknown', async () => {
+  const fromChart = await componentRow(view('os-ui'), { health: {}, pods: async () => null, osVersion: '0.9.20' });
+  assert.equal(fromChart.version, '0.9.20');
+  assert.match(fromChart.versionNote, /OS_VERSION, set by the chart/);
+  const unknown = await componentRow(view('os-ui'), { health: {}, pods: async () => null, osVersion: '' });
+  assert.equal(unknown.version, null);
+  assert.match(unknown.versionNote, /^unknown/);
+});
+
+test('config: an unset OS_VERSION is unknown (empty), never a default version', async () => {
+  const { config } = await import('@core/kernel/config');
+  if (process.env.OS_VERSION === undefined) assert.equal(config.osVersion, '');
+});
+
 test('imageTag reads the tag, not the digest', () => {
   assert.equal(imageTag('ghcr.io/berriai/litellm-database:1.109.1@sha256:932c'), '1.109.1');
   assert.equal(imageTag('localhost:5000/os-ui:dev'), 'dev');

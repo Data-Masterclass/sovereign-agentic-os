@@ -99,3 +99,63 @@ test('an OPA decision appears in VictoriaLogs with its decision_id (console -> f
   // Negative twin: an id OPA never issued is not found.
   assert.deepEqual(await logsql(`decision_id:"${randomUUID()}"`), []);
 });
+
+// ---- WP-05 review: who may reach the stores, which logs are read, and what is masked ----------
+import { execFileSync } from 'node:child_process';
+
+const CTX = process.env.KUBE_CONTEXT ?? 'kind-wp05';
+const NS = process.env.OBS_NS ?? 'obs-it';
+const CURL = 'curlimages/curl:8.11.1';
+const kc = (...a) => execFileSync('kubectl', ['--context', CTX, ...a], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+/** A long-running pod with the given component label; returns its name. */
+function pod(name, component, ns = NS, image = CURL, command = ['sleep', '3600']) {
+  kc('-n', ns, 'delete', 'pod', name, '--ignore-not-found', '--wait=true');
+  kc('-n', ns, 'run', name, `--image=${image}`, `--labels=app.kubernetes.io/component=${component}`, '--restart=Never', '--command', '--', ...command);
+  kc('-n', ns, 'wait', '--for=condition=Ready', `pod/${name}`, '--timeout=180s');
+  return name;
+}
+/** HTTP status from inside a pod, or 'blocked' when the connection times out. */
+function curlFrom(name, url, method = 'GET') {
+  try {
+    const body = method === 'POST' ? ['-H', 'content-type: application/json', '--data-binary', '{}'] : [];
+    return kc('-n', NS, 'exec', name, '--', 'curl', '-s', '-o', '/dev/null', '-w', '%{http_code}', '-m', '5', '-X', method, ...body, url).trim();
+  } catch (e) {
+    // curl 28 = timed out (the policy drops), 7 = refused (the policy rejects): both are blocked.
+    return e.status === 28 || e.status === 7 || /exit code (28|7)\b/.test(String(e.message)) ? 'blocked' : `error ${e.status}: ${String(e.stderr).slice(0, 160)}`;
+  }
+}
+
+test('ingress: os-ui may read the stores; any other pod (e.g. Dagster user code) can neither read nor write them', { skip: !on }, async () => {
+  const os = pod('wp05-as-os-ui', 'os-ui');
+  const intruder = pod('wp05-as-dagster-code', 'dagster-user-deployments');
+  const VLs = 'http://victoria-logs:9428/select/logsql/query?query=*&limit=1';
+  const VMs = 'http://victoria-metrics:8428/api/v1/query?query=up';
+  assert.equal(curlFrom(os, VLs), '200', 'os-ui cannot read VictoriaLogs');
+  assert.equal(curlFrom(os, VMs), '200', 'os-ui cannot read VictoriaMetrics');
+  assert.equal(curlFrom(os, 'http://otel-collector:13133/'), '200', 'os-ui cannot reach the Collector health');
+  // Negative twins: the same requests from a pod that is not the OS.
+  assert.equal(curlFrom(intruder, VLs), 'blocked', 'a non-OS pod read VictoriaLogs');
+  assert.equal(curlFrom(intruder, VMs), 'blocked', 'a non-OS pod read VictoriaMetrics');
+  assert.equal(curlFrom(intruder, 'http://victoria-logs:9428/insert/jsonline', 'POST'), 'blocked', 'a non-OS pod could write VictoriaLogs');
+  assert.equal(curlFrom(intruder, 'http://otel-collector:4318/v1/logs', 'POST'), 'blocked', 'a non-OS pod could post OTLP logs to the Collector');
+});
+
+test('file_log reads platform namespaces only, and masks secrets in what it stores', { skip: !on }, async () => {
+  const marker = `wp05-scope-${randomUUID().slice(0, 8)}`;
+  const line = JSON.stringify({ msg: marker, password: 'hunter2-real-secret', note: `call with Authorization: Bearer abcdefghijklmnop0123 and key sk-litellm-abcdefgh12345678 db postgres://app:s3cr3tpw@pg-rw:5432/x`, usage: { total_tokens: 42 } });
+  try { kc('create', 'namespace', 'wp05-apps'); } catch { /* exists */ }
+  const echo = ['sh', '-c', `while true; do echo '${line}'; sleep 5; done`];
+  pod('wp05-leaky', 'wp05-leaky', NS, 'busybox:1.37', echo);
+  pod('wp05-user-app', 'user-app', 'wp05-apps', 'busybox:1.37', ['sh', '-c', `while true; do echo '${JSON.stringify({ msg: `${marker}-userapp` })}'; sleep 5; done`]);
+  const rows = await until(() => logsql(`"${marker}" k8s.pod.name:"wp05-leaky"`), 90_000);
+  assert.ok(rows.length >= 1, `the platform pod's line ${marker} is not in VictoriaLogs`);
+  const stored = JSON.stringify(rows[0]);
+  for (const secret of ['hunter2-real-secret', 'abcdefghijklmnop0123', 'sk-litellm-abcdefgh12345678', 's3cr3tpw']) assert.ok(!stored.includes(secret), `secret ${secret} reached VictoriaLogs: ${stored}`);
+  assert.equal(rows[0].password, undefined, 'a field named password was stored');
+  assert.match(rows[0].note, /Bearer \*\*\* .*sk-\*\*\*.*postgres:\/\/app:\*\*\*@pg-rw/);
+  assert.equal(String(rows[0]['usage.total_tokens']), '42', 'a token COUNT was masked as if it were a secret');
+  // Negative twin: the same kind of line from a non-platform namespace never arrives.
+  await sleep(15_000);
+  assert.deepEqual(await logsql(`"${marker}-userapp"`), [], 'a user-app namespace log reached VictoriaLogs');
+  kc('delete', 'namespace', 'wp05-apps', '--wait=false');
+});
