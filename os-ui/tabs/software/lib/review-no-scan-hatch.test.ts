@@ -18,7 +18,25 @@
  *   The decision writes three places: the review card, the Governance approval's effect, and a
  *   hash-chained `core/policy/audit.ts` row.
  */
-import { test } from 'node:test';
+import { test, before, after } from 'node:test';
+import { mkdtempSync as __mkdtemp, rmSync as __rm } from 'node:fs';
+import { tmpdir as __tmpdir } from 'node:os';
+import { join as __join } from 'node:path';
+import { config as __repoCfg } from '@core/kernel/config';
+
+// WP-54 follow-up: a deploy request PINS a git commit before it is scanned, so these tests need a
+// real repos directory (the same arrangement as review.test.ts).
+let __reposDir = '';
+let __priorRepos = '';
+before(() => {
+  __reposDir = __mkdtemp(__join(__tmpdir(), 'os-repos-t-'));
+  __priorRepos = __repoCfg.reposDir;
+  (__repoCfg as { reposDir: string }).reposDir = __reposDir;
+});
+after(() => {
+  (__repoCfg as { reposDir: string }).reposDir = __priorRepos;
+  __rm(__reposDir, { recursive: true, force: true });
+});
 import assert from 'node:assert/strict';
 import type { CurrentUser } from '@core/kernel/auth';
 import { createApp, saveAppFile } from '@tabs/software/lib/apps';
