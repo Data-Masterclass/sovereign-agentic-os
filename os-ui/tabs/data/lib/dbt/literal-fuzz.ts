@@ -43,6 +43,9 @@ export const PAYLOAD_TEMPLATES: string[] = [
   "x\u2028{{ 'LSEVAL' ~ 'UATED_%F' }}\u2029",
   "x\u0085*/ -- {{ 'LSEVAL' ~ 'UATED_%F' }}",
   "' \" ` \\ \u0000 {{ 'LSEVAL' ~ 'UATED_%F' }}",
+  // Invalid Unicode: lone surrogates (legal in a JS / JSON string, refused by dbt's YAML loader).
+  'x \uD800 y %F',
+  'x \uDFFF\uD800 y %F',
   // A nested form that reaches the warehouse: dbt would SEND this query at compile.
   '{}}{ (run_query("select \'LSQ\' || \'RAN_%F\'") if run_query is defined else "") }%}}',
 ];
@@ -261,12 +264,15 @@ export const EVAL_MARKERS = ['LSEVALUATED', 'LSQRAN', 'ls-canary-value'];
 export function fuzzProject(
   gen: (domain: string, s: ProjectSnapshot) => Map<string, string>,
   templates: string[] = IMAGE_TEMPLATES,
+  /** A lone surrogate in the name (the image must still parse the project). Off for the twin, so
+   *  its parse reaches the templates instead of stopping at the YAML loader. */
+  surrogate = true,
 ): Map<string, string> {
   const s = baseSnapshot();
   const o = s.datasets[0].dataset;
   const nested = (f: string) => templates.map((t) => payloadFor(t, f)).join(' ');
   o.slug = 'orders'; // a renamed dataset: the physical name stays put while the name carries payloads
-  o.name = `Orders ${nested('name')}`;
+  o.name = `Orders ${surrogate ? '\uD800 ' : ''}${nested('name')}`;
   o.description = `${nested('description')} ${payloadFor(PAYLOAD_TEMPLATES[2], 'description')} ${payloadFor(PAYLOAD_TEMPLATES[3], 'description')}`;
   o.columns[0].description = nested('coldesc');
   o.checks![2].name = nested('intention');

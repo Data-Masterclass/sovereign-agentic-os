@@ -39,7 +39,7 @@ test('cron: the strict 5-field grammar accepts the shapes the OS and operators w
 });
 
 test('cron: everything else is refused — braces, control characters, extra fields, out-of-range values', () => {
-  for (const bad of ['0 6 * * {{x}}', '{}}{x}%}} 6 * * *', '0\r6 * * *', '0 6 * * *\n', ' 0 6 * * *', '0  6 * * *', '0 6 * *', '0 6 * * * *', '@daily', '0 6 ? * *', '0 6 L * *', '60 * * * *', '0 24 * * *', '0 0 0 * *', '0 0 * 13 *', '0 0 * * 8', '5/10 * * * *', '*/0 * * * *', '0 6 * * MON#2', "0 6 * * '1'", '0 6 * * 1 ']) {
+  for (const bad of ['0 6 * * {{x}}', '{}}{x}%}} 6 * * *', '0\r6 * * *', '0 6 * * *\n', ' 0 6 * * *', '0  6 * * *', '0 6 * *', '0 6 * * * *', '@daily', '0 6 ? * *', '0 6 L * *', '60 * * * *', '0 24 * * *', '0 0 0 * *', '0 0 * 13 *', '0 0 * * 8', '5/10 * * * *', '*/0 * * * *', '0 6 * * MON#2', "0 6 * * '1'", '0 6 * * 1\u2028']) {
     assert.equal(isValidCron(bad), false, JSON.stringify(bad));
   }
 });
@@ -51,7 +51,7 @@ test('identifiers: closed allow-lists, typed refusal naming the field', () => {
   assert.ok(isIdentifier('principal', 'alice.smith@example.com'));
   assert.ok(isIdentifier('connection_id', 'conn-postgres'));
   assert.ok(isIdentifier('dataset_id', 'ds_ab12cd'));
-  for (const bad of ['', '1abc', 'order id', 'a-b', 'x{{y}}', "a'b", 'a"b', 'a\nb', 'a b', 'é', 'a'.repeat(129)]) {
+  for (const bad of ['', '1abc', 'order id', 'a-b', 'x{{y}}', "a'b", 'a"b', 'a\nb', 'a\u2028b', 'é', 'a'.repeat(129)]) {
     assert.equal(isIdentifier('sql', bad), false, JSON.stringify(bad));
   }
   assert.equal(isIdentifier('domain', 'Sales'), false);
@@ -66,7 +66,7 @@ test('freeText: no ASCII brace survives any input, the words stay, and decoding 
     assert.doesNotMatch(out, /[{}]/, s);
     assert.equal(decodeFreeText(out), s);
   }
-  assert.equal(commentText('a\r\nb c d\u0085e{{f}}'), 'a b c d e｛｛f｝｝');
+  assert.equal(commentText('a\r\nb\u2028c\u2029d\u0085e{{f}}'), 'a b c d e｛｛f｝｝');
 });
 
 test('jinjaFreeSql: a braced string literal becomes the equivalent Trino Unicode literal; a stray brace is refused', () => {
@@ -98,7 +98,9 @@ const goodSync = () => ({ connectionId: 'conn-crm', source: { schema: 'crm', tab
 test('write time: setDocs refuses a non-identifier column name with a typed error', () => {
   const id = seeded();
   assert.throws(() => setDocs(id, user, { columns: [{ name: "x {{ log('a') }}", description: '' }] }), isTyped('invalid_identifier', /^columns\[0\]\.name$/));
-  assert.throws(() => setDocs(id, user, { columns: [{ name: 'order id', description: '' }] }), isTyped('invalid_identifier', /columns/));
+  assert.throws(() => setDocs(id, user, { columns: [{ name: 'order "id"', description: '' }] }), isTyped('invalid_identifier', /columns/));
+  // A real-world header is a valid (quoted) physical column name — never refused.
+  setDocs(id, user, { columns: [{ name: 'Order Date', description: '' }, { name: 'größe', description: '' }] });
   // Free text in a description is accepted (it is encoded on the way into dbt).
   setDocs(id, user, { description: '{{ x }}', columns: [{ name: 'order_id', description: '{% do x %}' }] });
 });
@@ -130,14 +132,14 @@ test('preflight: lists every refused value with a plan; a conformant export yiel
   const clean = s.datasets.map((e) => e.dataset);
   assert.deepEqual(preflightDatasets(clean), []);
   const dirty = structuredClone(clean) as Dataset[];
-  dirty[0].columns[0].name = 'Order ID';
+  dirty[0].columns[0].name = 'Order {ID}';
   dirty[1].sync!.schedule.cron = '0  6 * * *';
   const f = preflightDatasets(dirty);
   assert.deepEqual(f.map((x) => [x.dataset, x.field]), [['ds_orders1', 'columns[0].name'], ['ds_synced1', 'sync.schedule.cron']]);
   assert.match(f[0].plan, /rename the column to 'order_id'/);
   assert.match(f[1].plan, /'0 6 \* \* \*'/);
   // The OpenSearch `_search` export shape is read too (store records carry the yaml).
-  const rec = { hits: { hits: [{ _source: { yaml: 'version: "1"\nid: ds_y1\nname: Y\nowner: amir\ndomain: sales\ntier: dataset\nvisibility: private\ndescription: ""\ncolumns:\n  - name: bad col\n    description: ""\n' } }] } };
+  const rec = { hits: { hits: [{ _source: { yaml: 'version: "1"\nid: ds_y1\nname: Y\nowner: amir\ndomain: sales\ntier: dataset\nvisibility: private\ndescription: ""\ncolumns:\n  - name: "bad {col}"\n    description: ""\n' } }] } };
   const parsed = datasetsFromJson(JSON.stringify(rec));
   assert.equal(parsed[0].id, 'ds_y1');
   assert.equal(preflightDatasets(parsed)[0].field, 'columns[0].name');

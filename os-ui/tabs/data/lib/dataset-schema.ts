@@ -7,6 +7,14 @@ import type { Role } from '@core/kernel/session';
 import { normaliseFolderPath } from '@core/kernel/folders';
 import { isValidCron } from '@tabs/agents/lib/cron-util';
 
+/** Replace every lone surrogate in every string (keys included) with U+FFFD. */
+function wellFormedDeep(v: unknown): unknown {
+  if (typeof v === 'string') return v.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '\uFFFD');
+  if (Array.isArray(v)) return v.map(wellFormedDeep);
+  if (v && typeof v === 'object') return Object.fromEntries(Object.entries(v as Record<string, unknown>).map(([k, x]) => [wellFormedDeep(k) as string, wellFormedDeep(x)]));
+  return v;
+}
+
 /**
  * `dataset.yaml` — the SINGLE source of truth for one logical dataset (Data tab).
  * It mirrors the Agents tab's `system.yaml` (Approach A): the guided panels, the
@@ -125,7 +133,14 @@ export type Measure = {
 
 /** A documented column (the documentation form). At least one with a non-empty
  *  description is required by the transparency gate before a dataset can promote. */
-export type ColumnDoc = { name: string; description: string };
+export type ColumnDoc = {
+  /** The PHYSICAL column name (a `normalizeColumnName` identifier for new uploads). */
+  name: string;
+  description: string;
+  /** The ORIGINAL source header when it differs from `name` (e.g. `Order Date` → `order_date`).
+   *  Recorded once at ingest and never re-derived; omitted when equal (byte-stable). */
+  source?: string;
+};
 
 /** The **Certification** trust badge on a Data Product. NOTE: its
  *  Bronze/Silver/Gold levels are a *trust* axis — deliberately DIFFERENT from the
@@ -601,7 +616,9 @@ function parseColumn(raw: unknown, i: number): ColumnDoc {
   if (!isRecord(raw) || typeof raw.name !== 'string' || raw.name.length === 0) {
     throw new DatasetError(`dataset.yaml: columns[${i}] needs a string 'name'`);
   }
-  return { name: raw.name, description: typeof raw.description === 'string' ? raw.description : '' };
+  const col: ColumnDoc = { name: raw.name, description: typeof raw.description === 'string' ? raw.description : '' };
+  if (typeof raw.source === 'string' && raw.source && raw.source !== raw.name) col.source = raw.source;
+  return col;
 }
 
 function parseUpstream(raw: unknown, i: number): DatasetUpstream {
@@ -951,7 +968,9 @@ export function serializeDataset(d: Dataset): string {
   }
   // Omit-unless-ai-auto (byte-stable): human-authored/empty docs serialize exactly as before.
   if (d.docsProvenance === 'ai-auto') doc.docsProvenance = 'ai-auto';
-  return yaml.dump(doc, { lineWidth: 100, noRefs: true });
+  // STORE BOUNDARY: every string is well-formed Unicode (a lone surrogate becomes U+FFFD), so no
+  // record can carry text that YAML — and dbt's loader downstream — would refuse.
+  return yaml.dump(wellFormedDeep(doc), { lineWidth: 100, noRefs: true });
 }
 
 /** A fresh empty version (nothing built yet). */

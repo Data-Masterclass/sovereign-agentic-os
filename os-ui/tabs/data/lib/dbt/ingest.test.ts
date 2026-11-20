@@ -135,7 +135,9 @@ test('the dbt gate refuses what `dbt parse` would refuse — and says which file
   assert.match(String(y('version: 2\nmodels:\n  - description: x\n')), /no `name`/);
   assert.match(String(y('version: 2\nmodels:\n  - name: 9lives\n')), /not a usable dbt identifier/);
   assert.match(String(y('version: 2\nmodels:\n  - name: ok\n    columns:\n      - description: x\n')), /column with no `name`/);
-  assert.match(String(y('version: 2\nmodels:\n  - name: ok\n    columns:\n      - name: "a b"\n')), /not a usable dbt identifier/);
+  // A real-world column name is a usable (quoted) column; one that could open Jinja is not.
+  assert.equal(y('version: 2\nmodels:\n  - name: ok\n    columns:\n      - name: "a b"\n'), null);
+  assert.match(String(y('version: 2\nmodels:\n  - name: ok\n    columns:\n      - name: "a{b"\n')), /not a usable column name/);
   assert.equal(y('version: 2\nmodels:\n  - name: gold_orders\n'), null);
   // A sources-only file is legal dbt.
   assert.equal(y('version: 2\nsources:\n  - name: raw\n'), null);

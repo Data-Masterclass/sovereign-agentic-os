@@ -159,7 +159,13 @@ export function columnDocs(
     const name = c.name.trim();
     if (!name) continue;
     const description = freeText(c.description ?? '');
-    columns.set(name, { name, ...(description ? { description } : {}), ...(needsQuote(name) ? { quote: true } : {}) });
+    columns.set(name, {
+      name,
+      ...(description ? { description } : {}),
+      ...(needsQuote(name) ? { quote: true } : {}),
+      // The original source header, when the physical name was normalised from it at ingest.
+      ...(c.source && c.source !== name ? { meta: { os_source_name: freeText(c.source) } } : {}),
+    });
   }
   let intentions: string[] = [];
   if (withTests) {

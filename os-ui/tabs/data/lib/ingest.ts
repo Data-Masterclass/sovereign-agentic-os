@@ -18,6 +18,9 @@ import { INGEST_OBJECT_KEY, makeLiveAdapters } from '@tabs/data/lib/build/live';
 import { makeRealClients, dataRunnerReachable } from '@tabs/data/lib/build/live-clients';
 import { makeMockAdapters, newMockBackends } from '@tabs/data/lib/build/mocks';
 import { runAdapter } from '@tabs/data/lib/build/adapter';
+import { planUploadColumns, uploadHeaders } from '@tabs/data/lib/upload-columns';
+import { isIdentifier } from '@tabs/data/lib/dbt/literal';
+import type { ColumnDoc } from '@tabs/data/lib/dataset-schema';
 
 /**
  * The Data-tab INGEST orchestration (T3). One physical path for BOTH lanes — the
@@ -63,7 +66,7 @@ function bronzeCtxDataset(name: string, schema: string): Dataset {
  *  previews the physical table itself through the governed query path). */
 function csvPreview(body: Buffer, limit = 20): Grid {
   const text = body.toString('utf8');
-  const lines = text.replace(/^﻿/, '').trim().split(/\r?\n/);
+  const lines = text.replace(/^\uFEFF/, '').trim().split(/\r?\n/);
   if (lines.length === 0 || !lines[0]) return { columns: [], rows: [] };
   const columns = lines.shift()!.split(',').map((c) => c.trim());
   const rows = lines.slice(0, limit).map((l) => l.split(',').map((c) => c.trim()));
@@ -77,6 +80,8 @@ export async function ingestUpload(input: {
   datasetName: string;
   fileName: string;
   body: Buffer;
+  /** Positional column names to land under (`upload-columns.ts`); absent ⇒ the file's own. */
+  columnNames?: string[];
 }): Promise<IngestReport> {
   const schema = personalSchema(input.principal);
   const table = bronzeTarget(schema, input.datasetName);
@@ -102,10 +107,11 @@ export async function ingestUpload(input: {
       dataset, artifacts: { [INGEST_OBJECT_KEY]: objectKey }, principal: input.principal, stage: 'bronze',
     });
     const preview = csvPreview(input.body);
+    const names = input.columnNames && input.columnNames.length === preview.columns.length ? input.columnNames : preview.columns;
     return {
       ok: row.status === 'ok', mode: 'offline-mock', table,
       rowCount: preview.rows.length,
-      columns: preview.columns.map((name) => ({ name, type: 'unknown' })),
+      columns: names.map((name) => ({ name, type: 'unknown' })),
       preview, detail: row.detail, error: row.error,
     };
   }
@@ -114,6 +120,7 @@ export async function ingestUpload(input: {
   // adapter (apply = data-runner /ingest, verify = governed probe SELECT).
   await putObject(objectKey, input.body);
   const deps = await makeRealClients();
+  if (input.columnNames) (deps.dlt as { columnNames?: string[] }).columnNames = input.columnNames;
   const row = await runAdapter(makeLiveAdapters(deps).dlt, {
     dataset, artifacts: { [INGEST_OBJECT_KEY]: objectKey }, principal: input.principal, stage: 'bronze',
   });
@@ -157,14 +164,34 @@ export async function ingestAndRegisterBronze(
   body: Buffer,
 ): Promise<{ ok: boolean; report: IngestReport; dataset: Dataset | null }> {
   const dataset = getDataset(datasetId, user); // view/edit-scope guard (throws 403/404)
+  // COLUMN MAPPING, decided BEFORE anything is written: every header of a delimited upload lands
+  // under a stable identifier (`Order Date` → `order_date`), the original kept as `source`. A
+  // header this dataset already mapped keeps its stored name.
+  const headers = uploadHeaders(fileName, body);
+  const plan = headers && headers.length ? planUploadColumns(headers, dataset.columns) : null;
   const report = await ingestUpload({
     principal: user.id, // session-bound — never the request body
     domains: user.domains,
     datasetName: dataset.name,
     fileName,
     body,
+    ...(plan ? { columnNames: plan.columnNames } : {}),
   });
   if (!report.ok) return { ok: false, report, dataset: null };
+  // The column docs to record — from what LANDED (the runner's own report), with the source
+  // header attached where the mapping renamed it. Checked BEFORE Bronze is registered: a landed
+  // name outside the column allow-list (a self-describing file's own key) refuses the
+  // registration here instead of failing half-way after it.
+  const sourceOf = new Map((plan?.columns ?? []).filter((c) => c.source).map((c) => [c.name, c.source!]));
+  const landed: ColumnDoc[] = report.columns.map((c) => ({ name: c.name, description: '', ...(sourceOf.has(c.name) ? { source: sourceOf.get(c.name)! } : {}) }));
+  const refused = landed.find((c) => !isIdentifier('column', c.name));
+  if (refused) {
+    return {
+      ok: false,
+      report: { ...report, ok: false, error: `column ${JSON.stringify(refused.name.slice(0, 60))} cannot be registered: a column name may hold no brace, double quote, backslash or control character` },
+      dataset: null,
+    };
+  }
   // Verified queryable → NOW register the Bronze version (light the dot).
   const updated = buildVersion(datasetId, user, 'bronze', {
     quality: 'unknown', // raw upload: no dbt tests have run yet — honestly unknown.
@@ -173,10 +200,10 @@ export async function ingestAndRegisterBronze(
   // PRELOAD the parsed columns onto the dataset so the Define (Silver) stage shows
   // them ready to rename/document — but only when the dataset has none yet, so a
   // re-ingest never clobbers columns the user has already documented.
-  const final =
-    updated.columns.length === 0 && report.columns.length > 0
-      ? setDocs(datasetId, user, { columns: report.columns.map((c) => ({ name: c.name, description: '' })) })
-      : updated;
+  // A re-ingest adds only the columns the dataset did not have (the stored mapping is kept).
+  const known = new Set(updated.columns.map((c) => c.name));
+  const added = landed.filter((c) => !known.has(c.name));
+  const final = added.length > 0 ? setDocs(datasetId, user, { columns: [...updated.columns, ...added] }) : updated;
   // AUTO-DOCUMENT after the FIRST successful Bronze: draft the description + column notes
   // from the REAL landed schema + preview, grounded + honest, and fill ONLY empty fields
   // (never a human's words). NON-BLOCKING — the ingest response never waits on the LLM: we
