@@ -386,31 +386,39 @@ test('deleteConfirmed: an unreachable cluster is a failed delete, never a silent
   }
 });
 
-test('a store hydrated below its index size is NOT silent: logged, recorded, and cleared by a full load', async () => {
+test('an index larger than one page is PAGED to completion; one that cannot be read whole is not loaded, and is logged', async () => {
   const { hydrationShortfalls } = await import('@core/infra/os-mirror');
   const orig = globalThis.fetch;
   const errors: string[] = [];
   const origError = console.error;
   console.error = (...a: unknown[]) => { errors.push(a.join(' ')); };
   let total = 2500;
+  let serveAtMost = Infinity; // a server that stops returning hits early (a partial read)
   globalThis.fetch = (async (input: RequestInfo | URL) => {
     const path = String(input).replace(/^https?:\/\/[^/]+/, '');
     const json = (b: unknown) => new Response(JSON.stringify(b), { status: 200, headers: { 'content-type': 'application/json' } });
     if (path.endsWith('/_count')) return json({ count: total });
     const size = Number(/size=(\d+)/.exec(path)?.[1] ?? 10);
-    const n = Math.min(size, total);
-    return json({ hits: { total: { value: total, relation: 'eq' }, hits: Array.from({ length: n }, (_, i) => ({ _source: { id: `d${i}` } })) } });
+    const from = Number(/from=(\d+)/.exec(path)?.[1] ?? 0);
+    const n = Math.max(0, Math.min(size, total - from, serveAtMost - from));
+    return json({ hits: { total: { value: total, relation: 'eq' }, hits: Array.from({ length: n }, (_, i) => ({ _source: { id: `d${from + i}` } })) } });
   }) as typeof fetch;
   const m = osMirror({ index: 'os-mirror-test-shortfall', createBody: {} });
   m.__reset();
   try {
-    const docs = await m.hydrate(2000);
-    assert.equal(docs?.length, 2000);
+    const all = await m.hydrate(2000);
+    assert.equal(all?.length, 2500, 'two pages, every record');
+    assert.equal(new Set((all as { id: string }[]).map((d) => d.id)).size, 2500, 'no page repeated');
+
+    serveAtMost = 2000; // the second page comes back short
+    assert.equal(await m.hydrate(2000), null, 'a short read is NOT the store contents');
     const s = hydrationShortfalls().find((x) => x.index === 'os-mirror-test-shortfall');
     assert.deepEqual(s && { loaded: s.loaded, total: s.total }, { loaded: 2000, total: 2500 });
-    assert.ok(errors.some((e) => /loaded 2000 of 2500 records/.test(e)), 'logged loudly');
+    assert.ok(errors.some((e) => /hydration NOT complete \(loaded 2000 of 2500\)/.test(e)), 'logged loudly');
+
+    serveAtMost = Infinity;
     total = 1500;
-    await m.hydrate(2000);
+    assert.equal((await m.hydrate(2000))?.length, 1500);
     assert.equal(hydrationShortfalls().find((x) => x.index === 'os-mirror-test-shortfall'), undefined, 'a full load clears it');
   } finally {
     globalThis.fetch = orig;

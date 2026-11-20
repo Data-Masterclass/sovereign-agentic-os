@@ -33,6 +33,27 @@ if (!OPA || !CONTAINER) {
 }
 process.env.OPA_URL = OPA;
 
+// The OS stores' durable mirror is OpenSearch. This job has no OpenSearch, and the restore now
+// (rightly) refuses to report governed tables "restored" from an UNREAD registry. A minimal,
+// EMPTY OpenSearch REST fake gives every store a complete, empty read (index exists, 0 hits,
+// all shards answered) and accepts writes — the subject under test here is OPA, not the mirror.
+{
+  const { createServer } = await import('node:http');
+  const srv = createServer((req, res) => {
+    const url = req.url ?? '/';
+    const send = (b: unknown) => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(b)); };
+    req.resume();
+    req.on('end', () => {
+      if (url.includes('/_count')) return send({ count: 0 });
+      if (url.includes('/_search')) return send({ timed_out: false, _shards: { total: 1, successful: 1, failed: 0 }, hits: { total: { value: 0, relation: 'eq' }, hits: [] } });
+      return send({ result: 'ok', acknowledged: true });
+    });
+  });
+  await new Promise<void>((r) => srv.listen(0, '127.0.0.1', () => r()));
+  srv.unref();
+  process.env.OPENSEARCH_URL = `http://127.0.0.1:${(srv.address() as { port: number }).port}`;
+}
+
 const RUNTIME_DOMAIN = 'agentic-leader-autumn-winter-2026-2027';
 const EMPTY_DOMAIN = 'kiekert'; // registered in the domain registry, no users and no datasets
 const PROBE_MS = 500;

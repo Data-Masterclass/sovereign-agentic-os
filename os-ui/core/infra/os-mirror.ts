@@ -161,6 +161,8 @@ function mirrorState(index: string): MirrorState {
  * (then) read as an empty index: the 0.9.21 boot loaded zero datasets with OpenSearch healthy.
  */
 export const WHOLE_INDEX_TIMEOUT_MS = 30_000;
+/** OpenSearch's default `index.max_result_window` — the deepest `from + size` a search may page. */
+export const MAX_RESULT_WINDOW = 10_000;
 
 async function osFetch(path: string, init?: RequestInit, timeoutMs = 2500): Promise<Response | null> {
   const ctrl = new AbortController();
@@ -249,68 +251,84 @@ export function osMirror(opts: {
     return s.probing;
   }
 
-  async function hydrate(size = 1000): Promise<unknown[] | null> {
-    if (!(await probe())) return null;
-    const res = await osFetch(`/${index}/_search?size=${size}`, {
-      method: 'POST',
-      body: JSON.stringify({ query: { match_all: {} }, track_total_hits: true }),
-    }, WHOLE_INDEX_TIMEOUT_MS);
-    // A FAILED search (no answer, a non-2xx such as 503 while shards initialise, unreadable JSON,
-    // failed shards or a timeout) is "mirror not readable yet" → null, so the store stays
-    // un-hydrated and retries. It used to answer [] — indistinguishable from an empty index — and a
-    // store then cached "hydrated with zero records" for the life of the pod (0.9.21 boot: the
-    // dataset registry empty, 0 governed tables restored to OPA).
-    if (!res) {
-      console.error(`[os-mirror] ${index}: hydration search got no answer within ${WHOLE_INDEX_TIMEOUT_MS} ms — not treated as an empty index; the store will retry`);
-      return null;
-    }
-    if (!res.ok) {
-      console.error(`[os-mirror] ${index}: hydration search failed (HTTP ${res.status}) — not treated as an empty index; the store will retry`);
-      return null;
-    }
-    let data: { timed_out?: boolean; _shards?: { failed?: number }; hits?: { total?: { value?: number } | number; hits?: { _source?: unknown }[] } };
-    try {
-      data = (await res.json()) as typeof data;
-    } catch (err) {
-      console.error(`[os-mirror] ${index}: hydration answer unreadable (${String(err)}) — the store will retry`);
-      return null;
-    }
-    if (data?.timed_out || (data?._shards?.failed ?? 0) > 0) {
-      console.error(`[os-mirror] ${index}: hydration search incomplete (timed_out=${Boolean(data?.timed_out)}, failed shards=${data?._shards?.failed ?? 0}) — the store will retry`);
-      return null;
-    }
-    const docs = (data?.hits?.hits ?? []).map((h) => h._source).filter((d) => d !== undefined && d !== null);
-    noteHydration(index, docs.length, totalOf(data?.hits?.total));
-    return docs;
-  }
-
-  async function list(size = 1000): Promise<{ docs: unknown[]; complete: boolean } | null> {
-    if (!(await probe())) return null;
-    const res = await osFetch(`/${index}/_search?size=${size}`, {
-      method: 'POST',
-      body: JSON.stringify({ query: { match_all: {} }, track_total_hits: true }),
-    }, WHOLE_INDEX_TIMEOUT_MS);
-    if (!res || !res.ok) return { docs: [], complete: false };
-    try {
-      const data = (await res.json()) as {
+  /**
+   * Read the WHOLE index, or say it could not. Pages with `from`/`size` (sorted by `_doc`, stable)
+   * up to OpenSearch's default `index.max_result_window` of 10 000 hits. A result is COMPLETE only
+   * when every page answered 2xx, did not time out, every shard answered (`failed` 0 and
+   * `successful` = `total`), `hits.total` is exact (`relation` "eq") and the hits collected equal
+   * it. Anything else is `{ complete:false }` and is never read as the store's contents: a failed
+   * load must not look like an empty or a smaller store (0.9.21: aborted loads cached the dataset
+   * registry and the user directory as near-empty).
+   */
+  async function readWhole(size: number): Promise<{ docs: unknown[]; complete: boolean; why?: string }> {
+    const pageSize = Math.min(Math.max(1, Math.floor(size) || 1000), MAX_RESULT_WINDOW);
+    const out: unknown[] = [];
+    for (let from = 0; ; from += pageSize) {
+      if (from + pageSize > MAX_RESULT_WINDOW && from > 0) {
+        return { docs: out, complete: false, why: `more than ${MAX_RESULT_WINDOW} records — needs search_after paging` };
+      }
+      const res = await osFetch(`/${index}/_search?size=${pageSize}${from > 0 ? `&from=${from}` : ''}`, {
+        method: 'POST',
+        body: JSON.stringify({ query: { match_all: {} }, sort: ['_doc'], track_total_hits: true }),
+      }, WHOLE_INDEX_TIMEOUT_MS);
+      if (!res) return { docs: out, complete: false, why: `no answer within ${WHOLE_INDEX_TIMEOUT_MS} ms` };
+      if (!res.ok) return { docs: out, complete: false, why: `HTTP ${res.status}` };
+      let data: {
         timed_out?: boolean;
         _shards?: { total?: number; successful?: number; failed?: number };
         hits?: { total?: { value?: number; relation?: string } | number; hits?: { _source?: unknown }[] };
       };
+      try {
+        data = (await res.json()) as typeof data;
+      } catch (err) {
+        return { docs: out, complete: false, why: `unreadable answer (${String(err)})` };
+      }
       const hits = data?.hits?.hits;
-      if (!Array.isArray(hits)) return { docs: [], complete: false };
+      if (!Array.isArray(hits)) return { docs: out, complete: false, why: 'no hits array' };
+      if (data.timed_out === true) return { docs: out, complete: false, why: 'search timed out' };
+      const sh = data._shards;
+      if (sh && ((sh.failed ?? 0) > 0 || (typeof sh.total === 'number' && typeof sh.successful === 'number' && sh.successful < sh.total))) {
+        return { docs: out, complete: false, why: `shards answered ${sh.successful ?? '?'} of ${sh.total ?? '?'} (failed ${sh.failed ?? 0})` };
+      }
       const total = typeof data.hits?.total === 'number' ? { value: data.hits.total, relation: 'eq' } : data.hits?.total;
-      const shards = data._shards;
-      const complete =
-        data.timed_out === false &&
-        !!shards && shards.failed === 0 && typeof shards.total === 'number' && shards.successful === shards.total &&
-        !!total && total.relation === 'eq' && total.value === hits.length;
-      const docs = hits.map((h) => h._source).filter((d) => d !== undefined && d !== null);
-      noteHydration(index, docs.length, total?.value);
-      return { docs, complete };
-    } catch {
-      return { docs: [], complete: false };
+      if (total && total.relation && total.relation !== 'eq') return { docs: out, complete: false, why: `hits.total is a lower bound (${total.relation} ${total.value})` };
+      for (const h of hits) if (h._source !== undefined && h._source !== null) out.push(h._source);
+      const expected = total?.value;
+      if (typeof expected !== 'number') return { docs: out, complete: true }; // single page, no total reported
+      if (out.length >= expected) {
+        noteHydration(index, out.length, expected);
+        return out.length === expected ? { docs: out, complete: true } : { docs: out, complete: false, why: `got ${out.length} hits for a total of ${expected}` };
+      }
+      if (hits.length < pageSize) {
+        noteHydration(index, out.length, expected);
+        return { docs: out, complete: false, why: `loaded ${out.length} of ${expected}` };
+      }
     }
+  }
+
+  // ONE in-flight whole-index load per mirror: concurrent callers (several stores hydrating at
+  // boot) share it, so a slow or aborted second load can never overwrite a complete first one.
+  let inflight: Promise<unknown[] | null> | null = null;
+
+  function hydrate(size = 1000): Promise<unknown[] | null> {
+    if (!inflight) {
+      inflight = (async () => {
+        if (!(await probe())) return null;
+        const r = await readWhole(size);
+        if (r.complete) return r.docs;
+        console.error(`[os-mirror] ${index}: hydration NOT complete (${r.why}) — not treated as the store's contents; the store will retry`);
+        return null;
+      })().finally(() => {
+        inflight = null;
+      });
+    }
+    return inflight;
+  }
+
+  async function list(size = 1000): Promise<{ docs: unknown[]; complete: boolean } | null> {
+    if (!(await probe())) return null;
+    const r = await readWhole(size);
+    return r.complete ? { docs: r.docs, complete: true } : { docs: [], complete: false };
   }
 
   async function read(id: string): Promise<MirrorRead> {
@@ -448,6 +466,7 @@ export function osMirror(opts: {
     deleteThrough,
     patchThrough,
     __reset: () => {
+      inflight = null;
       const s = st();
       s.healthy = false;
       s.probed = false;
