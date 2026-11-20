@@ -28,11 +28,7 @@ test('layer 2: the git-http lighttpd refuses the traversal shapes before git-htt
     t.skip(missing);
     return;
   }
-  // Under $HOME (created if missing): a local docker VM (colima, Docker Desktop) shares the home
-  // directory, not the system temp dir; on a CI runner either works.
-  const root = path.join(os.homedir(), '.cache');
-  fs.mkdirSync(root, { recursive: true });
-  const base = fs.mkdtempSync(path.join(root, 'git-http-guard-'));
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'git-http-guard-'));
   const repos = path.join(base, 'repos');
   const src = path.join(base, 'src');
   fs.mkdirSync(repos);
@@ -47,9 +43,17 @@ test('layer 2: the git-http lighttpd refuses the traversal shapes before git-htt
   }
   execFileSync('chmod', ['-R', 'a+rX', base]);
   const name = `git-http-guard-${process.pid}`;
-  const run = spawnSync('docker', ['run', '-d', '--rm', '--name', name, '-p', '127.0.0.1::9419', '-v', `${repos}:/repos:ro`, IMAGE], { encoding: 'utf8' });
-  assert.equal(run.status, 0, run.stderr);
+  // The repos are COPIED into the container and handed to its user (65532), as the PVC is in the
+  // pod: git refuses a repository owned by another uid ("dubious ownership"), which a bind mount
+  // from the runner would be.
+  const create = spawnSync('docker', ['create', '--name', name, '-p', '127.0.0.1::9419', IMAGE], { encoding: 'utf8' });
+  assert.equal(create.status, 0, create.stderr);
   try {
+    const cp = spawnSync('docker', ['cp', `${repos}/.`, `${name}:/repos`], { encoding: 'utf8' });
+    assert.equal(cp.status, 0, cp.stderr);
+    assert.equal(spawnSync('docker', ['start', name], { encoding: 'utf8' }).status, 0);
+    const own = spawnSync('docker', ['exec', '-u', '0', name, 'chown', '-R', '65532:65532', '/repos'], { encoding: 'utf8' });
+    assert.equal(own.status, 0, own.stderr);
     const port = spawnSync('docker', ['port', name, '9419/tcp'], { encoding: 'utf8' }).stdout.trim().split('\n')[0].split(':').pop();
     const code = (p) => {
       for (let i = 0; i < 60; i++) {
