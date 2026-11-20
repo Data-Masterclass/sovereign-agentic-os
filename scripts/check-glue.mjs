@@ -4,224 +4,338 @@
  *
  * AREA:       repo tooling
  * FEATURE:    Glue-discipline CI rules (design 00 §8.3, amended by 10 F8, plus the artifact
- *             contract): the ten rules that make imitation code fail CI, as a ratchet.
+ *             contract C2 of 11 §4.1): the ten rules that make imitation code fail CI.
  * USER STORY: As the owner I want a change that re-codes a component, hides a failure, hard-codes
  *             a version, skips governance, or writes OS metadata into native code to be refused by
- *             CI — while today's known backlog is counted and may only shrink.
+ *             CI — while today's known backlog is recorded finding by finding and may only shrink.
  * ARCHITECTURE:
- *   - Ten rules, one ratchet key each (`GLUE-<n>-<NAME>`). Every finding is `file:line — detail`.
- *     The import rules (1 static imports, 2 transitive reach, 9 kernel/tab) are dependency-cruiser
- *     rules in `os-ui/.dependency-cruiser.cjs`; the text rules are here. Rule 6's dynamic half
- *     (the component's own validator on generated config) is `scripts/validate-generated.sh`; its
- *     static half here demands that every registered generator has a golden fixture.
- *   - Ratchet: counts per rule against `scripts/structure-baseline.json` → `glue`. A count that
- *     GROWS fails; a count that shrinks prints "run --baseline". No rule can be switched off: a
- *     key missing from the baseline means 0 allowed.
- *   - `--root <dir>` runs against another tree (the negative-twin tests build throwaway trees);
- *     dependency-cruiser and js-yaml always come from THIS repo's os-ui/node_modules.
- *   - `--baseline` rewrites only the `glue` block; `--list <KEY>` prints every finding of a rule.
- *   - Pure reads plus one dependency-cruiser child process. No network.
+ *   - Ten rules, `GLUE-<n>-<NAME>`. The code rules read the TypeScript AST (scripts/glue/ast.mjs:
+ *     constant folding, import bindings, export lists), never a grep, so aliasing a global,
+ *     building a string from parts or re-exporting a handler does not hide a finding. The import
+ *     graph rules (1 static imports, 2 transitive reach, 9 kernel/tab) are dependency-cruiser rules
+ *     (`os-ui/.dependency-cruiser.cjs`). GLUE-10 is scripts/glue/contract.mjs. GLUE-6's dynamic
+ *     half (the component's own validator) is scripts/validate-generated.sh.
+ *   - Ratchet BY FINGERPRINT: every finding has a stable fingerprint `<file> :: <normalised source
+ *     snippet>` (no line numbers; ` #n` for repeats in one file). `scripts/structure-baseline.json`
+ *     → `glue` lists today's fingerprints per rule. ANY fingerprint not in the baseline fails, so
+ *     fixing an old finding never makes room for a new one. A rule missing from the baseline = none
+ *     allowed; no rule can be switched off.
+ *   - `--baseline` rewrites the `glue` fingerprints (keeping `$approvedRaise`). `--guard <git-ref>`
+ *     compares the baseline with the one at <ref> and FAILS when this change adds any fingerprint
+ *     or raises any count, unless it also sets a new `glue.$approvedRaise` text — the marker the
+ *     owner sees in the diff.
+ *   - `--root <dir>` runs against another tree (the negative-twin tests); dependency-cruiser,
+ *     typescript, js-yaml and ajv always come from THIS repo's os-ui/node_modules.
+ *   - `--list <RULE>` prints every finding of one rule with its line.
  */
 import { readFileSync, readdirSync, statSync, existsSync, writeFileSync } from 'node:fs';
-import { join, relative, dirname, resolve } from 'node:path';
+import { join, relative, dirname, resolve, posix } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createRequire } from 'node:module';
 import { execFileSync } from 'node:child_process';
+import { parse, fold, ts, globalRefs, lineOf, snippet, walk, exportedNames, functionName, isUseClient, unwrap, isFreeRef } from './glue/ast.mjs';
+import { checkContract } from './glue/contract.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const TOOLS = resolve(HERE, '..', 'os-ui'); // where dependency-cruiser + js-yaml are installed
+const TOOLS = resolve(HERE, '..', 'os-ui');
 const argv = process.argv.slice(2);
 const opt = (name) => { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : undefined; };
 const ROOT = resolve(opt('--root') ?? process.cwd());
 const UI = join(ROOT, 'os-ui');
 const BASELINE_FILE = join(ROOT, 'scripts', 'structure-baseline.json');
-const requireTool = createRequire(join(TOOLS, 'package.json'));
-const yaml = requireTool('js-yaml');
+const K = ts.SyntaxKind;
 
 export const RULES = {
-  'GLUE-1-ADAPTER-DOOR': 'only core/adapters/** may call fetch(, undici, new Pool(, child_process or read a component URL key',
+  'GLUE-1-ADAPTER-DOOR': 'only core/adapters/** may call fetch, open a socket/process/DB client, or read a component URL key',
   'GLUE-2-CREDENTIAL-BOUNDARY': 'the LiteLLM master key / Keycloak admin secret stay in admin adapter modules; runtime, engine and worker never reach them',
-  'GLUE-3-SILENT-FALLBACK': 'no empty catch, no catch returning a success-shaped literal, adapters return Fetched, the offline mock only through its production guard',
-  'GLUE-4-HARDCODED-VERSION': 'no semver / image-tag literal outside charts/ and components/; no exported nodes|pools|versionFor|selfHeal*|VERSIONS',
-  'GLUE-5-RECODED-FEATURE': 'no queue besides pg-boss, no cron parsing outside the Dagster YAML generator, no ranking outside OpenSearch (RRF exception), no password hashing, no OAuth AS endpoints except RFC 9728 metadata',
-  'GLUE-6-VALIDATED-CONFIG': 'every config generator is registered with a golden fixture that scripts/validate-generated.sh runs through the component\'s own tool',
+  'GLUE-3-SILENT-FALLBACK': 'no empty catch, no catch/.catch turning a failure into a success-shaped or empty value, adapters return Fetched, the offline mock only through its production guard',
+  'GLUE-4-HARDCODED-VERSION': 'no semver / image-tag value outside charts/ and components/; no exported nodes|pools|versionFor|selfHeal*|VERSIONS',
+  'GLUE-5-RECODED-FEATURE': 'no queue besides pg-boss, no cron evaluation outside the Dagster YAML generator, no ranking outside OpenSearch (RRF exception), no password hashing, no OAuth AS endpoints except RFC 9728 metadata',
+  'GLUE-6-VALIDATED-CONFIG': 'every native-config generator is registered with golden fixtures that scripts/validate-generated.sh runs through the component\'s own tool',
   'GLUE-7-UNGOVERNED-WRITE': 'every mutating route and MCP tool calls governance authorize() (OPA) before the effect',
   'GLUE-8-SETINTERVAL': 'no setInterval in server code outside core/reconcile/runtime.ts and lease heartbeats',
   'GLUE-9-KERNEL-TAB-ISOLATION': 'the kernel never imports a tab; a tab never imports another tab',
-  'GLUE-10-ARTIFACT-CONTRACT': 'generated native code carries OS metadata only in the tool\'s documented extension points (dbt meta/tags, OPA data, OS-owned os/ files)',
+  'GLUE-10-ARTIFACT-CONTRACT': 'generated native code carries OS metadata only in the tool\'s documented extension points (artifact contract C2)',
 };
 
-const findings = Object.fromEntries(Object.keys(RULES).map((k) => [k, []]));
-const add = (rule, file, line, detail) => findings[rule].push(`${file}${line ? `:${line}` : ''} — ${detail}`);
+const raw = Object.fromEntries(Object.keys(RULES).map((k) => [k, []]));
+/** key = the stable part of the fingerprint (normalised snippet / detail, never a line number). */
+const add = (rule, file, line, key, detail = key) => raw[rule].push({ file, line, key: key.replace(/\s+/g, ' ').trim(), detail });
 
 // ---------------------------------------------------------------- file sets --
-const walk = (dir, out = []) => {
+const walkDir = (dir, out = []) => {
   if (!existsSync(dir)) return out;
   for (const e of readdirSync(dir)) {
     if (e === 'node_modules' || e === '.next' || e === 'public' || e === 'vendor' || (e.startsWith('.') && e !== '.well-known')) continue;
     const p = join(dir, e);
-    statSync(p).isDirectory() ? walk(p, out) : out.push(p);
+    statSync(p).isDirectory() ? walkDir(p, out) : out.push(p);
   }
   return out;
 };
 const SRC = /\.(ts|tsx|mjs|cjs|js)$/;
 const isTest = (rel) => /\.test\.(ts|tsx|mjs)$/.test(rel) || /(^|\/)fixtures\//.test(rel) || rel.startsWith('core/testing/');
 const all = ['core', 'tabs', 'worker', 'app', 'components', 'lib']
-  .flatMap((d) => walk(join(UI, d)))
+  .flatMap((d) => walkDir(join(UI, d)))
   .filter((f) => SRC.test(f) && !f.endsWith('.d.ts'))
-  .map((f) => ({ abs: f, rel: relative(UI, f), text: readFileSync(f, 'utf8') }));
+  .map((f) => { const rel = relative(UI, f).split('\\').join('/'); return parse(rel, readFileSync(f, 'utf8')); });
 const prod = all.filter((f) => !isTest(f.rel));
-const isClient = (f) => /^\s*(\/\*[\s\S]*?\*\/\s*|\/\/[^\n]*\n\s*)*['"]use client['"]/.test(f.text) || /(^|\/)ui\//.test(f.rel) || /^components\//.test(f.rel);
+// Client code = a `'use client'` module, or a React component file (.tsx) under ui/ or components/.
+// A plain .ts under ui/ is NOT client code by location alone.
+const isClient = (f) => isUseClient(f) || (f.rel.endsWith('.tsx') && (/(^|\/)ui\//.test(f.rel) || f.rel.startsWith('components/')));
 const server = prod.filter((f) => !isClient(f));
 const inAdapters = (rel) => rel.startsWith('core/adapters/');
-const lineOf = (text, idx) => text.slice(0, idx).split('\n').length;
-// Strip comments (keeps offsets: comment chars become spaces) so a rule never fires on prose.
-const stripComments = (t) => t.replace(/\/\*[\s\S]*?\*\/|(^|[^:\\'"`])\/\/[^\n]*/g, (m, p1) => (p1 ?? '') + m.slice((p1 ?? '').length).replace(/[^\n]/g, ' '));
-for (const f of all) f.code = stripComments(f.text);
-const each = (files, re, fn) => { for (const f of files) for (const m of f.code.matchAll(re)) fn(f, m, lineOf(f.code, m.index)); };
 
 // ------------------------------------------------- rule 1: adapters only door --
+const R1 = 'GLUE-1-ADAPTER-DOOR';
+const COMPONENT_MODULE = /^(node:)?(child_process|http|https|http2|net|tls|dgram)$|^(pg|pg-pool|undici|postgres|ioredis|redis|kafkajs|trino-client|@opensearch-project\/opensearch|minio|@aws-sdk\/[\w-]+)(\/.*)?$/;
 const NOT_COMPONENT_URL = /^(osPublic\w*|\w*Console\w*)Url$/;
-each(server.filter((f) => !inAdapters(f.rel)), /(?<![\w.$])(?:globalThis\.)?fetch\s*\(/g, (f, _m, l) => add('GLUE-1-ADAPTER-DOOR', f.rel, l, 'fetch( outside core/adapters'));
-each(server.filter((f) => !inAdapters(f.rel)), /\bnew\s+Pool\s*\(/g, (f, _m, l) => add('GLUE-1-ADAPTER-DOOR', f.rel, l, 'new Pool( outside core/adapters'));
-each(server.filter((f) => !inAdapters(f.rel)), /\b(?:import|require)\s*\(\s*['"](?:node:)?(undici|pg|child_process)['"]\s*\)/g, (f, m, l) => add('GLUE-1-ADAPTER-DOOR', f.rel, l, `dynamic import of ${m[1]} outside core/adapters`));
-each(server.filter((f) => !inAdapters(f.rel) && f.rel !== 'core/kernel/config.ts'), /\bconfig\.(\w+Url)\b/g, (f, m, l) => {
-  if (!NOT_COMPONENT_URL.test(m[1])) add('GLUE-1-ADAPTER-DOOR', f.rel, l, `component URL key config.${m[1]} outside core/adapters`);
-});
+for (const f of server.filter((x) => !inAdapters(x.rel))) {
+  for (const n of globalRefs(f, 'fetch')) add(R1, f.rel, lineOf(f, n), `fetch: ${snippet(f, n.parent ?? n)}`, 'fetch outside core/adapters');
+  for (const i of f.imports) {
+    if (i.kind === 'static' || i.kind === 'type') continue; // static imports: dependency-cruiser (below)
+    if (i.spec === null) add(R1, f.rel, lineOf(f, i.node), `non-literal ${i.kind}: ${snippet(f, i.node)}`, `${i.kind}() with a specifier that cannot be resolved statically — the adapter door cannot be verified`);
+    else if (COMPONENT_MODULE.test(i.spec)) add(R1, f.rel, lineOf(f, i.node), `${i.kind} ${i.spec}`, `${i.kind} of ${i.spec} outside core/adapters`);
+  }
+  walk(f, (n) => {
+    if (ts.isNewExpression(n)) {
+      const c = unwrap(n.expression);
+      const name = ts.isIdentifier(c) ? c.text : ts.isPropertyAccessExpression(c) ? c.name.text : '';
+      const b = ts.isIdentifier(c) ? f.bindings.get(c.text) : ts.isPropertyAccessExpression(c) && ts.isIdentifier(c.expression) ? f.bindings.get(c.expression.text) : undefined;
+      if (name === 'Pool' || (b && COMPONENT_MODULE.test(b.module) && /^(Client|Pool|Socket|Agent)$/.test(name))) add(R1, f.rel, lineOf(f, n), `new ${snippet(f, c)}`, `new ${snippet(f, c)}( outside core/adapters`);
+    }
+    const urlKey = (k) => typeof k === 'string' && /Url$/.test(k) && !NOT_COMPONENT_URL.test(k);
+    if (ts.isPropertyAccessExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === 'config' && urlKey(n.name.text) && f.rel !== 'core/kernel/config.ts') add(R1, f.rel, lineOf(f, n), `config.${n.name.text}`, `component URL key config.${n.name.text} outside core/adapters`);
+    if (ts.isElementAccessExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === 'config' && urlKey(fold(f, n.argumentExpression))) add(R1, f.rel, lineOf(f, n), `config[${fold(f, n.argumentExpression)}]`, `component URL key config['${fold(f, n.argumentExpression)}'] outside core/adapters`);
+    if (ts.isVariableDeclaration(n) && ts.isObjectBindingPattern(n.name) && n.initializer && ts.isIdentifier(unwrap(n.initializer)) && unwrap(n.initializer).text === 'config') {
+      for (const el of n.name.elements) { const k = (el.propertyName ?? el.name).getText(f.sf); if (urlKey(k)) add(R1, f.rel, lineOf(f, el), `{ ${k} } = config`, `component URL key ${k} destructured from config outside core/adapters`); }
+    }
+  });
+}
 
 // ---------------------------------------------- rule 2: credential boundary --
-const CRED = /\b(litellmMasterKey|LITELLM_MASTER_KEY|keycloakAdmin\w*|KEYCLOAK_ADMIN\w*)\b/g;
+const R2 = 'GLUE-2-CREDENTIAL-BOUNDARY';
+const CRED_NAME = /^(litellmMasterKey|keycloakAdmin\w*)$/;
+const CRED_VALUE = /^(LITELLM_MASTER_KEY|KEYCLOAK_ADMIN\w*)$/;
 const CRED_OK = /^core\/adapters\/[^/]+\/(read|write|admin)\.ts$|^core\/kernel\/config\.ts$/;
-for (const f of prod) {
-  if (CRED_OK.test(f.rel)) continue;
-  const m = f.code.match(new RegExp(CRED.source));
-  if (m) add('GLUE-2-CREDENTIAL-BOUNDARY', f.rel, lineOf(f.code, m.index), `names ${m[1]} — only an admin adapter module (core/adapters/<c>/{read,write}.ts) may`);
+const CRED_ZONE = /^(core\/runtime|tabs\/agents\/lib\/engine|worker)\//;
+const CRED_MODULE = /(^|\/|@)core\/infra\/litellm-(admin|write)(\.ts)?$|(^|\/|@)core\/adapters\/(litellm|keycloak)\/(write|admin)(\.ts)?$/;
+for (const f of prod.filter((x) => !CRED_OK.test(x.rel))) {
+  walk(f, (n) => {
+    if (ts.isIdentifier(n) && (CRED_NAME.test(n.text) || CRED_VALUE.test(n.text)) && !(ts.isPropertyAssignment(n.parent) && n.parent.name === n)) add(R2, f.rel, lineOf(f, n), `name ${n.text}`, `names ${n.text} — only an admin adapter module (core/adapters/<c>/{read,write}.ts) may`);
+    if ((ts.isStringLiteral(n) || ts.isTemplateExpression(n) || ts.isBinaryExpression(n) || ts.isNoSubstitutionTemplateLiteral(n)) && CRED_VALUE.test(fold(f, n) ?? '')) {
+      add(R2, f.rel, lineOf(f, n), `value ${fold(f, n)}`, `names ${fold(f, n)} — only an admin adapter module may`); return false;
+    }
+  });
+  if (CRED_ZONE.test(f.rel)) for (const i of f.imports) if (i.kind !== 'static' && i.kind !== 'type' && i.spec && CRED_MODULE.test(i.spec)) add(R2, f.rel, lineOf(f, i.node), `${i.kind} ${i.spec}`, `${i.kind} of the admin module ${i.spec} from the runtime/engine/worker`);
 }
 
 // ------------------------------------------------ rule 3: no silent fallback --
-const SUCCESS = String.raw`(?:true|\[\s*\]|\{\s*\}|''|""|\x60\x60|0|\{\s*(?:ok\s*:\s*true|status\s*:\s*['"](?:ok|ready|healthy|up|green)['"])[^{}]*\})`;
-const RET_SUCCESS = new RegExp(String.raw`^return\s+${SUCCESS}\s*;?$`);
-const PROMISE_SWALLOW = new RegExp(String.raw`\.catch\(\s*(?:\(\s*\w*\s*(?::\s*\w+)?\s*\)|\w+)\s*=>\s*(\{\s*\}|\(\s*${SUCCESS}\s*\)|${SUCCESS})\s*\)`, 'g');
-const fallbackScope = prod.filter((f) => f.rel.startsWith('core/') || /^tabs\/[^/]+\/lib\//.test(f.rel));
-for (const f of fallbackScope) {
-  for (const m of f.code.matchAll(/\bcatch\s*(?:\([^)]*\))?\s*\{/g)) {
-    let depth = 1, i = m.index + m[0].length;
-    while (i < f.code.length && depth) { const c = f.code[i++]; if (c === '{') depth++; else if (c === '}') depth--; }
-    const body = f.code.slice(m.index + m[0].length, i - 1).trim();
-    const l = lineOf(f.code, m.index);
-    if (body === '') add('GLUE-3-SILENT-FALLBACK', f.rel, l, 'empty catch — return a typed failure (Fetched ok:false) or rethrow');
-    else if (RET_SUCCESS.test(body)) add('GLUE-3-SILENT-FALLBACK', f.rel, l, `catch returns a success-shaped literal (${body}) — a failure must look like one`);
+const R3 = 'GLUE-3-SILENT-FALLBACK';
+const fallbackLiteral = (e) => {
+  e = unwrap(e);
+  if (!e) return false;
+  if (e.kind === K.TrueKeyword || e.kind === K.NullKeyword) return true;
+  if (ts.isIdentifier(e) && e.text === 'undefined') return true;
+  if (ts.isVoidExpression(e)) return true;
+  if (ts.isArrayLiteralExpression(e) && e.elements.length === 0) return true;
+  if (ts.isObjectLiteralExpression(e) && e.properties.length === 0) return true;
+  if ((ts.isStringLiteral(e) || ts.isNoSubstitutionTemplateLiteral(e)) && e.text === '') return true;
+  if (ts.isNumericLiteral(e) && e.text === '0') return true;
+  if (ts.isNewExpression(e) && ts.isIdentifier(e.expression) && /^(Map|Set|Array)$/.test(e.expression.text) && !(e.arguments?.length)) return true;
+  if (ts.isObjectLiteralExpression(e)) return e.properties.some((p) => ts.isPropertyAssignment(p) && p.name && /^(ok|success|healthy)$/.test(p.name.getText()) && unwrap(p.initializer).kind === K.TrueKeyword || ts.isPropertyAssignment(p) && p.name?.getText() === 'status' && /^['"`](ok|ready|healthy|up|green)['"`]$/.test(p.initializer.getText()));
+  return false;
+};
+const significant = (stmts) => stmts.filter((s) => !ts.isEmptyStatement(s) && !(ts.isExpressionStatement(s) && ts.isVoidExpression(s.expression)));
+const swallowBody = (body) => {
+  if (!body) return false;
+  if (ts.isBlock(body)) {
+    const s = significant(body.statements);
+    return s.length === 0 || (s.length === 1 && ts.isReturnStatement(s[0]) && (!s[0].expression || fallbackLiteral(s[0].expression)));
   }
-  for (const m of f.code.matchAll(PROMISE_SWALLOW)) add('GLUE-3-SILENT-FALLBACK', f.rel, lineOf(f.code, m.index), `promise .catch swallows into ${m[1] || 'a success literal'}`);
+  return fallbackLiteral(body);
+};
+const swallowFn = (f, arg) => {
+  arg = unwrap(arg);
+  if (ts.isIdentifier(arg)) { if (/^(noop|ignore|swallow)$/i.test(arg.text)) return true; arg = unwrap(f.consts.get(arg.text)); }
+  return !!arg && (ts.isArrowFunction(arg) || ts.isFunctionExpression(arg)) && swallowBody(arg.body);
+};
+const fallbackScope = server.filter((f) => /^(core|worker|app)\//.test(f.rel) || /^tabs\/[^/]+\/(lib|mcp)\//.test(f.rel));
+for (const f of fallbackScope) {
+  walk(f, (n) => {
+    if (ts.isCatchClause(n)) {
+      const s = significant(n.block.statements);
+      if (s.length === 0) add(R3, f.rel, lineOf(f, n), `empty catch: ${snippet(f, n, 60)}`, 'empty catch — return a typed failure (Fetched ok:false) or rethrow');
+      else if (s.length === 1 && ts.isReturnStatement(s[0]) && (!s[0].expression || fallbackLiteral(s[0].expression))) add(R3, f.rel, lineOf(f, n), `catch → ${snippet(f, s[0], 60)}`, `catch turns a failure into \`${snippet(f, s[0], 40)}\` — a failure must look like one`);
+    }
+    if (ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression) && n.expression.name.text === 'catch' && n.arguments.length === 1 && swallowFn(f, n.arguments[0])) {
+      add(R3, f.rel, lineOf(f, n), `.catch(${snippet(f, n.arguments[0], 50)})`, `promise .catch(${snippet(f, n.arguments[0], 40)}) swallows the failure`);
+    }
+  });
 }
 for (const f of prod.filter((x) => inAdapters(x.rel) && !/\/_contract\.ts$/.test(x.rel))) {
-  if (!/from\s+['"](?:@core\/adapters\/_contract|(?:\.\.?\/)+_contract)['"]/.test(f.text)) add('GLUE-3-SILENT-FALLBACK', f.rel, 0, 'adapter module does not use the Fetched contract (core/adapters/_contract.ts)');
+  if (!f.imports.some((i) => i.spec && /(^@core\/adapters\/_contract$|(^|\/)_contract(\.ts)?$)/.test(i.spec))) add(R3, f.rel, 0, 'no Fetched contract', 'adapter module does not use the Fetched contract (core/adapters/_contract.ts)');
 }
-each(prod.filter((f) => f.rel !== 'core/kernel/offline-mock.ts'), /\bOS_OFFLINE_MOCK\b/g, (f, _m, l) => add('GLUE-3-SILENT-FALLBACK', f.rel, l, 'reads OS_OFFLINE_MOCK directly — go through core/kernel/offline-mock.ts (refused in production)'));
+for (const f of prod.filter((x) => x.rel !== 'core/kernel/offline-mock.ts')) {
+  walk(f, (n) => { if ((ts.isStringLiteral(n) || ts.isBinaryExpression(n) || ts.isTemplateExpression(n)) && fold(f, n) === 'OS_OFFLINE_MOCK') { add(R3, f.rel, lineOf(f, n), 'reads OS_OFFLINE_MOCK', 'reads OS_OFFLINE_MOCK directly — go through core/kernel/offline-mock.ts (refused in production)'); return false; } if (ts.isPropertyAccessExpression(n) && n.name.text === 'OS_OFFLINE_MOCK') add(R3, f.rel, lineOf(f, n), 'reads OS_OFFLINE_MOCK', 'reads OS_OFFLINE_MOCK directly — go through core/kernel/offline-mock.ts'); });
+}
 const guard = all.find((f) => f.rel === 'core/kernel/offline-mock.ts');
-if (guard && !/NODE_ENV|nodeEnv\s*===\s*['"]production['"]/.test(guard.code)) add('GLUE-3-SILENT-FALLBACK', guard.rel, 0, 'the offline mock guard no longer refuses NODE_ENV=production');
+if (guard && !/nodeEnv\s*===\s*['"]production['"]|NODE_ENV/.test(guard.text)) add(R3, guard.rel, 0, 'guard lost', 'the offline mock guard no longer refuses NODE_ENV=production');
 
 // ------------------------------------------------ rule 4: no hard-coded version --
-const SEMVER = /(['"`])v?\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?\1/g;
-const IMAGE = /(['"`])(?![^'"`\n]*:\/\/)[a-z0-9][a-z0-9.-]*(?::\d+)?\/[a-z0-9._/-]+(?::[A-Za-z0-9_][A-Za-z0-9._-]{0,127}|@sha256:[0-9a-f]{64})\1/g;
-each(prod, SEMVER, (f, m, l) => add('GLUE-4-HARDCODED-VERSION', f.rel, l, `version literal ${m[0]} — read it from the component (adapter.health()) or the chart`));
-each(prod, IMAGE, (f, m, l) => add('GLUE-4-HARDCODED-VERSION', f.rel, l, `image reference literal ${m[0]} — images are pinned in charts/ only`));
-each(prod, /\bexport\s+(?:async\s+)?(?:function\s*\*?\s*|const\s+|let\s+)(nodes|pools|versionFor|selfHeal\w*|VERSIONS)\b/g, (f, m, l) => add('GLUE-4-HARDCODED-VERSION', f.rel, l, `exports ${m[1]} — status and versions come from the component, not a literal table`));
+const R4 = 'GLUE-4-HARDCODED-VERSION';
+const SEMVER = /^v?\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
+const IMAGE = /^(?:([a-z0-9][a-z0-9.-]*(?::\d+)?)\/)?((?:[a-z0-9][a-z0-9._-]*\/)*[a-z0-9][a-z0-9._-]*)(?::([A-Za-z0-9_][A-Za-z0-9._-]{0,127}))?(@sha256:[0-9a-f]{64})?$/;
+const isImage = (s) => {
+  if (s.includes('://') || !/[:@]/.test(s)) return false;
+  const m = s.match(IMAGE); if (!m) return false;
+  const [, , repo, tag, digest] = m;
+  if (digest) return true;
+  if (!tag || !/\d/.test(tag) || /^(sha\d+|md5|ds|v|id)$/.test(repo)) return false;
+  // `name:1234` is a host:port; an image without a registry/path needs a dotted or lettered tag.
+  return s.includes('/') ? true : /[.\-a-zA-Z]/.test(tag) && /\d+\.\d+/.test(tag);
+};
+const STRINGY = (n) => ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n) || ts.isTemplateExpression(n) || (ts.isBinaryExpression(n) && n.operatorToken.kind === K.PlusToken) || (ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression) && n.expression.name.text === 'join');
+for (const f of prod) {
+  walk(f, (n) => {
+    if (ts.isImportDeclaration(n) || ts.isExportDeclaration(n) || ts.isExternalModuleReference(n)) return false;
+    if (ts.isCallExpression(n) && (n.expression.kind === K.ImportKeyword || (ts.isIdentifier(n.expression) && n.expression.text === 'require'))) return false;
+    if (STRINGY(n)) {
+      const v = fold(f, n);
+      if (v !== undefined) {
+        if (SEMVER.test(v)) add(R4, f.rel, lineOf(f, n), `version ${v}`, `version value '${v}' — read it from the component (adapter.health()) or the chart`);
+        else if (isImage(v)) add(R4, f.rel, lineOf(f, n), `image ${v}`, `image reference '${v}' — images are pinned in charts/ only`);
+        return false;
+      }
+    }
+  });
+  for (const e of exportedNames(f)) if (/^(nodes|pools|versionFor|selfHeal\w*|VERSIONS)$/.test(e.name) || /^(nodes|pools|versionFor|selfHeal\w*|VERSIONS)$/.test(e.local)) add(R4, f.rel, lineOf(f, e.node), `export ${e.name}`, `exports ${e.name} — status and versions come from the component, not a literal table`);
+}
 
 // ------------------------------------------------ rule 5: no re-coded feature --
 const R5 = 'GLUE-5-RECODED-FEATURE';
-each(prod, /\bFOR\s+UPDATE\s+SKIP\s+LOCKED\b/gi, (f, _m, l) => add(R5, f.rel, l, 'hand-rolled job queue (SKIP LOCKED) — use pg-boss'));
-each(prod, /\bCREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?[\w."]*\b(outbox|\w*_queue)\b/gi, (f, m, l) => add(R5, f.rel, l, `queue/outbox table ${m[1]} — use pg-boss`));
-each(prod, /\b(?:from|import|require)\s*\(?\s*['"](bull|bullmq|bee-queue|agenda|cron|node-cron|cron-parser|croner|node-schedule|bcrypt|bcryptjs|argon2)['"]/g, (f, m, l) => add(R5, f.rel, l, `imports ${m[1]} — a component owns this (pg-boss / Dagster / Keycloak)`));
+const DENY_MODULE = /^(bull|bullmq|bee-queue|agenda|cron|node-cron|cron-parser|croner|node-schedule|later|bcrypt|bcryptjs|argon2|@node-rs\/(argon2|bcrypt)|scrypt-js)$/;
 const CRON_OK = new Set(['tabs/data/lib/dbt/schedules.ts']); // the Dagster YAML generator (os/schedules.yml)
-each(prod.filter((f) => !CRON_OK.has(f.rel)), /\b(?:function\s+|const\s+|let\s+)(\w*(?:[pP]arse|[nN]ext|[mM]atch|[eE]xpand)\w*[cC]ron\w*|\w*[cC]ron\w*(?:[pP]arse|[nN]ext|[mM]atch|[eE]xpand|Fire|Tick)\w*)\s*[=(<]/g, (f, m, l) => add(R5, f.rel, l, `cron evaluation ${m[1]} — Dagster schedules own this`));
 const RANK_OK = new Set(['core/kernel/rank-fusion.ts']); // RRF until OpenSearch score-ranker-processor (WP-24)
-each(prod.filter((f) => !RANK_OK.has(f.rel)), /\b(?:function\s+|const\s+|let\s+)(\w*(?:rrf|RRF|[rR]ankFusion|[rR]eciprocalRank|[rR]erank|[cC]osineSim\w*)\w*)\s*[=(<]/g, (f, m, l) => add(R5, f.rel, l, `search ranking ${m[1]} — OpenSearch ranks`));
-each(prod, /\b(?:crypto\.)?(scryptSync|pbkdf2Sync|scrypt|pbkdf2)\s*\(/g, (f, m, l) => add(R5, f.rel, l, `password hashing ${m[1]}( — Keycloak owns credentials (until WP-38)`));
+// Matched on the lower-cased declared name. Verbs matter: `teardownCron` manages a CronJob object,
+// `nextCronRun` evaluates an expression; `refuse`/`Langfuse` are not `fuse…`.
+const CRON_FN = /(parse|next|match|expand|eval|compute|due|fire)\w*cron|cron\w*(parse|next|match|expand|eval|fire|due|tick)|nextfire|firetime|nexttick|nextoccurrence|nextrun(at|time)?$|nexttrigger/;
+const RANK_FN = /^rrf|rrf$|rankfusion|reciprocalrank|rerank|^fuse(scores?|ranks?|results?|lists?|hits)?$|^fuse\w*score|bm25score|cosine/;
+const HASH_NAME = /^(scrypt|scryptSync|pbkdf2|pbkdf2Sync|argon2\w*|bcrypt\w*|hashPassword|verifyPassword)$/;
 for (const f of prod) {
+  for (const i of f.imports) if (i.kind !== 'type' && i.spec && DENY_MODULE.test(i.spec)) add(R5, f.rel, lineOf(f, i.node), `import ${i.spec}`, `imports ${i.spec} — a component owns this (pg-boss / Dagster / Keycloak)`);
+  walk(f, (n) => {
+    if (STRINGY(n)) {
+      const v = fold(f, n);
+      if (v !== undefined) {
+        if (/FOR\s+UPDATE\s+SKIP\s+LOCKED/i.test(v)) add(R5, f.rel, lineOf(f, n), `SKIP LOCKED: ${v.replace(/\s+/g, ' ').slice(0, 70)}`, 'hand-rolled job queue (SKIP LOCKED) — use pg-boss');
+        const t = v.match(/CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?[\w."]*?\b(outbox|\w*_queue)\b/i);
+        if (t) add(R5, f.rel, lineOf(f, n), `table ${t[1]}`, `queue/outbox table ${t[1]} — use pg-boss`);
+        return false;
+      }
+    }
+    const fn = functionName(n);
+    if (fn && CRON_FN.test(fn.toLowerCase()) && !CRON_OK.has(f.rel)) add(R5, f.rel, lineOf(f, n), `cron fn ${fn}`, `cron evaluation ${fn} — Dagster schedules own this`);
+    if (fn && RANK_FN.test(fn.toLowerCase()) && !RANK_OK.has(f.rel)) add(R5, f.rel, lineOf(f, n), `rank fn ${fn}`, `search ranking ${fn} — OpenSearch ranks`);
+    // The RRF formula itself, whatever the function is called: 1 / (k + rank) with k = 60.
+    if (ts.isBinaryExpression(n) && n.operatorToken.kind === K.SlashToken && unwrap(n.left).getText(f.sf) === '1' && !RANK_OK.has(f.rel)) {
+      const d = unwrap(n.right);
+      if (ts.isBinaryExpression(d) && d.operatorToken.kind === K.PlusToken && [d.left, d.right].some((x) => /^(60|k|K|RRF_K)$/.test(unwrap(x).getText(f.sf)))) add(R5, f.rel, lineOf(f, n), `rrf ${snippet(f, n, 40)}`, `reciprocal-rank fusion (${snippet(f, n, 30)}) — OpenSearch ranks`);
+    }
+    if (ts.isIdentifier(n) && HASH_NAME.test(n.text) && !(ts.isImportSpecifier(n.parent))) add(R5, f.rel, lineOf(f, n), `hash ${n.text}`, `password hashing ${n.text} — Keycloak owns credentials (until WP-38)`);
+    if (ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression) && n.expression.name.text === 'update' && n.arguments.length && /pass|pwd|\bpw\b|^pw$|secret|credential/i.test(n.arguments[0].getText(f.sf)) && /createHash|createHmac/.test(n.expression.expression.getText(f.sf))) add(R5, f.rel, lineOf(f, n), `hash ${snippet(f, n, 50)}`, 'password hashing via createHash — Keycloak owns credentials (until WP-38)');
+  });
   const route = f.rel.match(/^app\/(.+)\/route\.(ts|tsx)$/);
-  if (!route) continue;
-  const path = route[1].replace(/\([^)]*\)\//g, '');
-  if (/(^|\/)\.well-known\/oauth-protected-resource(\/|$)/.test(path)) continue; // RFC 9728 resource metadata
-  if (/(^|\/)(oauth\/(authorize|token|register|introspect|revoke|jwks)|\.well-known\/(oauth-authorization-server|openid-configuration|jwks\.json))(\/|$)/.test(path)) add(R5, f.rel, 0, 'OAuth authorization-server endpoint — Keycloak is the AS (until WP-38)');
+  if (route) {
+    const path = route[1].replace(/\([^)]*\)\//g, '');
+    if (!/(^|\/)\.well-known\/oauth-protected-resource(\/|$)/.test(path) && /(^|\/)(oauth\/(authorize|token|register|introspect|revoke|jwks)|\.well-known\/(oauth-authorization-server|openid-configuration|jwks\.json))(\/|$)/.test(path)) add(R5, f.rel, 0, 'oauth AS route', 'OAuth authorization-server endpoint — Keycloak is the AS (until WP-38)');
+  }
 }
 
 // -------------------------------- rule 6 (static half): generators registered --
+const R6 = 'GLUE-6-VALIDATED-CONFIG';
 const REG_FILE = join(ROOT, 'scripts', 'glue', 'generators.json');
-const REG_DIR = join(ROOT, 'scripts', 'glue', 'generators.d'); // extra registrations, one file each
+const REG_DIR = join(ROOT, 'scripts', 'glue', 'generators.d');
 const registry = existsSync(REG_FILE) ? JSON.parse(readFileSync(REG_FILE, 'utf8')) : { generators: [] };
-if (existsSync(REG_DIR)) for (const e of readdirSync(REG_DIR).filter((x) => x.endsWith('.json')).sort()) {
-  registry.generators = [...(registry.generators ?? []), ...(JSON.parse(readFileSync(join(REG_DIR, e), 'utf8')).generators ?? [])];
-}
+if (existsSync(REG_DIR)) for (const e of readdirSync(REG_DIR).filter((x) => x.endsWith('.json')).sort()) registry.generators = [...(registry.generators ?? []), ...(JSON.parse(readFileSync(join(REG_DIR, e), 'utf8')).generators ?? [])];
 const registered = new Set();
 for (const g of registry.generators ?? []) {
-  registered.add(g.module);
-  for (const p of g.parts ?? []) registered.add(p);
-  if (!existsSync(join(UI, g.module))) add('GLUE-6-VALIDATED-CONFIG', g.module, 0, 'registered generator does not exist');
-  const goldens = (g.goldens ?? []).filter((p) => existsSync(join(UI, p)));
-  if (!goldens.length) add('GLUE-6-VALIDATED-CONFIG', g.module, 0, `no golden fixture on disk for validator ${g.validator}`);
+  registered.add(g.module); for (const p of g.parts ?? []) registered.add(p);
+  if (!existsSync(join(UI, g.module))) add(R6, g.module, 0, 'missing module', 'registered generator does not exist');
+  if (!(g.goldens ?? []).some((p) => existsSync(join(UI, p)))) add(R6, g.module, 0, 'no golden', `no golden fixture on disk for validator ${g.validator}`);
 }
-// A generator is a module that writes a native artifact: a dbt project, Rego, Dagster YAML or a K8s manifest.
-const EMITS = /(['"`])(dbt_project\.yml|schema\.yml|os\/schedules\.yml|[\w/-]*\.rego)\1|\bapiVersion:\s*['"`]?(apps|batch|networking\.k8s\.io)\//;
-for (const f of prod.filter((x) => /\/lib\//.test(x.rel) || x.rel.startsWith('core/'))) {
-  if (!registered.has(f.rel) && EMITS.test(f.code) && /\b(generate|emit|render|build)\w*\s*\(/.test(f.code)) add('GLUE-6-VALIDATED-CONFIG', f.rel, 0, 'looks like a native-config generator but is not in scripts/glue/generators.json with a golden fixture');
+const NATIVE_FILE = /(^|\/)(dbt_project|schema|sources|kustomization|profiles)\.ya?ml$|\.rego$|\.vl\.json$|(^|\/)graph\.mjs$|(^|\/)definitions\.py$|(^|\/)guardrails\.json$|(^|\/)app\.spec\.json$/;
+for (const f of prod.filter((x) => (/\/lib\//.test(x.rel) || x.rel.startsWith('core/')) && !registered.has(x.rel))) {
+  let found;
+  walk(f, (n) => { if (!found && STRINGY(n)) { const v = fold(f, n); if (v !== undefined) { if (NATIVE_FILE.test(v)) found = v; return false; } } return !found; });
+  if (found) add(R6, f.rel, 0, `native file ${found}`, `writes or names native config '${found}' but is not registered in scripts/glue/generators.json with a golden fixture`);
 }
 
 // ---------------------------------------------- rule 7: every write is governed --
-const AUTHZ = /\b(authorize|authorizeAppTool|authorizeConnectionCall)\s*\(/;
-const AUTHZ_FROM = /from\s+['"]@core\/(governance(\/[\w-]+)?|infra\/governed|infra\/agent-governed)['"]/;
-const governed = (f) => AUTHZ.test(f.code) && (AUTHZ_FROM.test(f.text) || /^core\/(governance|infra\/governed|infra\/agent-governed)/.test(f.rel));
-for (const f of prod) {
-  if (!/^app\/.+\/route\.(ts|tsx)$/.test(f.rel)) continue;
-  const verbs = [...f.code.matchAll(/\bexport\s+(?:async\s+)?(?:function\s+|const\s+)(POST|PUT|PATCH|DELETE)\b/g)].map((m) => m[1]);
-  if (verbs.length && !governed(f)) add('GLUE-7-UNGOVERNED-WRITE', f.rel, 0, `${verbs.join('/')} handler without governance authorize() before the effect`);
+const R7 = 'GLUE-7-UNGOVERNED-WRITE';
+const AUTHZ_FN = new Set(['authorize', 'authorizeAppTool', 'authorizeConnectionCall']);
+const AUTHZ_MODULE = /^@core\/(governance(\/[\w-]+)?|infra\/governed|infra\/agent-governed)$/;
+const isGovernanceModule = (rel) => /^core\/(governance\/|infra\/governed\.ts$|infra\/agent-governed\.ts$)/.test(rel);
+const callsAuthorize = (f) => {
+  let yes = false;
+  walk(f, (n) => {
+    if (yes || !ts.isCallExpression(n)) return !yes;
+    const c = unwrap(n.expression);
+    if (ts.isIdentifier(c)) {
+      const b = f.bindings.get(c.text);
+      if ((b && AUTHZ_MODULE.test(b.module) && AUTHZ_FN.has(b.name)) || (isGovernanceModule(f.rel) && AUTHZ_FN.has(c.text))) yes = true;
+    } else if (ts.isPropertyAccessExpression(c) && ts.isIdentifier(c.expression) && AUTHZ_FN.has(c.name.text)) {
+      const b = f.bindings.get(c.expression.text);
+      if (b && AUTHZ_MODULE.test(b.module)) yes = true;
+    }
+    return !yes;
+  });
+  return yes;
+};
+for (const f of prod.filter((x) => /^app\/.+\/route\.(ts|tsx)$/.test(x.rel))) {
+  const verbs = exportedNames(f).map((e) => e.name).filter((n) => /^(POST|PUT|PATCH|DELETE)$/.test(n));
+  if (verbs.length && !callsAuthorize(f)) add(R7, f.rel, 0, `${verbs.sort().join('/')} ungoverned`, `${verbs.join('/')} handler without a governance authorize() call before the effect`);
 }
 const READ_TOOL = /^(get|list|search|query|preview|diff|whoami|suggest|profile|read|export|use|test|verify|explain|describe|find|check)_/;
 for (const f of prod.filter((x) => /^(core\/mcp|tabs\/[^/]+\/mcp)\//.test(x.rel))) {
-  if (governed(f)) continue;
-  each([f], /\bname:\s*['"]([a-z][a-z0-9_]+)['"]/g, (_f, m, l) => {
-    if (m[1].includes('_') && !READ_TOOL.test(m[1])) add('GLUE-7-UNGOVERNED-WRITE', f.rel, l, `MCP tool ${m[1]} mutates without governance authorize()`);
+  if (callsAuthorize(f)) continue;
+  walk(f, (n) => {
+    if (ts.isPropertyAssignment(n) && n.name.getText(f.sf) === 'name') {
+      const v = fold(f, n.initializer);
+      if (v && /^[a-z][a-z0-9_]+$/.test(v) && v.includes('_') && !READ_TOOL.test(v)) add(R7, f.rel, lineOf(f, n), `tool ${v}`, `MCP tool ${v} mutates without a governance authorize() call`);
+    }
   });
 }
 
 // ------------------------------------------------------- rule 8: setInterval --
-each(server.filter((f) => f.rel !== 'core/reconcile/runtime.ts'), /\bsetInterval\s*\(/g, (f, m, l) => {
-  const near = f.code.split('\n').slice(Math.max(0, l - 4), l + 3).join('\n');
-  if (!/lease|heartbeat/i.test(near)) add('GLUE-8-SETINTERVAL', f.rel, l, 'setInterval in server code — reconcile through core/reconcile/runtime.ts (pg-boss schedule)');
-});
+const R8 = 'GLUE-8-SETINTERVAL';
+const INTERVAL_OK = (rel) => rel === 'core/reconcile/runtime.ts' || /(^|\/)[^/]*lease[^/]*\.ts$/.test(rel); // lease heartbeats live in *lease*.ts
+for (const f of server.filter((x) => !INTERVAL_OK(x.rel))) {
+  for (const n of globalRefs(f, 'setInterval')) add(R8, f.rel, lineOf(f, n), `setInterval: ${snippet(f, n.parent ?? n, 60)}`, 'setInterval in server code — reconcile through core/reconcile/runtime.ts (pg-boss schedule)');
+}
 
-// ------------------------------------------- rule 10: artifact contract (static) --
-const OS_KEY = /^(os|x-os|sovereign)[_-]/i;
-const OS_TEXT = /\bOS (dataset|domain|principal|uid|scope)\b|\bos_(dataset|domain|principal|uid|scope|owner)\b/;
-const walkYaml = (node, path, hit) => {
-  if (Array.isArray(node)) node.forEach((v, i) => walkYaml(v, [...path, i], hit));
-  else if (node && typeof node === 'object') {
-    for (const [k, v] of Object.entries(node)) {
-      const inExt = path.some((p) => p === 'meta' || p === 'tags' || p === 'metadata');
-      if (OS_KEY.test(k) && !inExt) hit(`${[...path, k].join('.')}`);
-      if (k !== 'meta' && k !== 'tags' && k !== 'metadata') walkYaml(v, [...path, k], hit);
-    }
-  }
+// ------------------------- rule 9 (dynamic half): folded import()/require() targets --
+const R9 = 'GLUE-9-KERNEL-TAB-ISOLATION';
+const tabOf = (f, spec) => {
+  if (spec.startsWith('@tabs/')) return spec.split('/')[1];
+  if (spec.startsWith('.')) { const p = posix.normalize(posix.join(posix.dirname(f.rel), spec)); return p.startsWith('tabs/') ? p.split('/')[1] : undefined; }
+  return undefined;
 };
-const goldenFiles = [
-  ...(registry.generators ?? []).flatMap((g) => g.goldens ?? []),
-].filter((p, i, a) => a.indexOf(p) === i && existsSync(join(UI, p)));
-for (const g of goldenFiles) {
-  let files;
-  try { files = JSON.parse(readFileSync(join(UI, g), 'utf8')); } catch (e) { add('GLUE-10-ARTIFACT-CONTRACT', g, 0, `golden fixture is not JSON: ${e.message}`); continue; }
-  for (const [p, content] of Object.entries(files)) {
-    if (p.startsWith('os/') || typeof content !== 'string') continue; // OS-owned files are the OS's own extension point
-    if (/\.ya?ml$/.test(p)) {
-      let doc;
-      try { doc = yaml.load(content); } catch (e) { add('GLUE-10-ARTIFACT-CONTRACT', `${g}#${p}`, 0, `YAML does not parse: ${e.message.split('\n')[0]}`); continue; }
-      walkYaml(doc, [], (where) => add('GLUE-10-ARTIFACT-CONTRACT', `${g}#${p}`, 0, `OS key ${where} outside meta/tags`));
-    } else if (/\.(sql|rego|py)$/.test(p)) {
-      content.split('\n').forEach((line, i) => {
-        if (OS_TEXT.test(line) && !/\bconfig\s*\(.*\bmeta\s*=/.test(line)) add('GLUE-10-ARTIFACT-CONTRACT', `${g}#${p}`, i + 1, `OS metadata in native code (${line.trim().slice(0, 60)}) — use config(meta=…) / OPA data`);
-      });
-    }
+for (const f of all) {
+  for (const i of f.imports) {
+    if (i.kind === 'static' || i.kind === 'type' || !i.spec) continue;
+    const t = tabOf(f, i.spec);
+    if (!t) continue;
+    if (f.rel.startsWith('core/')) add(R9, f.rel, lineOf(f, i.node), `${i.kind} ${i.spec}`, `the kernel ${i.kind}s ${i.spec}`);
+    else if (f.rel.startsWith('tabs/') && f.rel.split('/')[1] !== t) add(R9, f.rel, lineOf(f, i.node), `${i.kind} ${i.spec}`, `a tab ${i.kind}s another tab: ${i.spec}`);
   }
 }
+
+// ------------------------------------------- rule 10: artifact contract (C2) --
+const goldenPaths = [...new Set((registry.generators ?? []).flatMap((g) => g.goldens ?? []))].filter((p) => existsSync(join(UI, p)));
+const goldens = [];
+for (const g of goldenPaths) {
+  try { goldens.push({ id: g, files: JSON.parse(readFileSync(join(UI, g), 'utf8')) }); } catch (e) { add('GLUE-10-ARTIFACT-CONTRACT', g, 0, 'not JSON', `golden fixture is not JSON: ${e.message}`); }
+}
+for (const x of checkContract(goldens)) add('GLUE-10-ARTIFACT-CONTRACT', x.file, x.line, x.key, x.detail);
 
 // ---------------------------------------------- import rules: dependency-cruiser --
 const CRUISE_DIRS = ['core', 'tabs', 'worker', 'app'].filter((d) => existsSync(join(UI, d)));
@@ -233,33 +347,71 @@ if (CRUISE_DIRS.length) {
     out = execFileSync(process.execPath, [bin, '--config', join(TOOLS, '.dependency-cruiser.cjs'), '--output-type', 'json', ...CRUISE_DIRS], { cwd: UI, maxBuffer: 1 << 28, encoding: 'utf8' });
   } catch (e) { out = e.stdout; if (!out) { console.error('check-glue: dependency-cruiser failed\n' + (e.stderr ?? e.message)); process.exit(2); } }
   for (const v of JSON.parse(out).summary.violations) {
-    const rule = v.rule.name;
-    if (!findings[rule]) { console.error(`check-glue: unknown dependency-cruiser rule ${rule}`); process.exit(2); }
-    add(rule, v.from, 0, `imports ${v.to}${v.via?.length ? ` (via ${v.via.map((x) => x.name ?? x).join(' > ')})` : ''}`);
+    if (!raw[v.rule.name]) { console.error(`check-glue: unknown dependency-cruiser rule ${v.rule.name}`); process.exit(2); }
+    // A package edge resolves to wherever node_modules lives on this machine: fingerprint the package name.
+    const pkg = (p) => { const i = p.lastIndexOf('node_modules/'); if (i < 0) return p; const parts = p.slice(i + 13).split('/'); return parts[0].startsWith('@') ? `${parts[0]}/${parts[1]}` : parts[0]; };
+    add(v.rule.name, v.from, 0, `imports ${pkg(v.to)}`, `imports ${pkg(v.to)}${v.via?.length ? ` (via ${v.via.map((x) => x.name ?? x).join(' > ')})` : ''}`);
   }
 }
 
-// -------------------------------------------------------------------- ratchet --
-const counts = Object.fromEntries(Object.entries(findings).map(([k, v]) => [k, v.length]));
-const fullBaseline = existsSync(BASELINE_FILE) ? JSON.parse(readFileSync(BASELINE_FILE, 'utf8')) : {};
+// ------------------------------------------------------- fingerprints + ratchet --
+const findings = {};
+for (const [rule, list] of Object.entries(raw)) {
+  const seen = new Map();
+  findings[rule] = list
+    .sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line || a.key.localeCompare(b.key))
+    .map((x) => { const base = `${x.file} :: ${x.key}`; const n = (seen.get(base) ?? 0) + 1; seen.set(base, n); return { ...x, fp: n > 1 ? `${base} #${n}` : base }; });
+}
+const readJson = (p) => (existsSync(p) ? JSON.parse(readFileSync(p, 'utf8')) : {});
+const fullBaseline = readJson(BASELINE_FILE);
 const baseline = fullBaseline.glue ?? {};
+const fps = (block, rule) => new Set(Array.isArray(block?.[rule]) ? block[rule] : []);
 
-if (opt('--list')) { for (const p of findings[opt('--list')] ?? []) console.log(p); process.exit(0); }
+if (opt('--list')) { for (const x of findings[opt('--list')] ?? []) console.log(`${x.file}${x.line ? `:${x.line}` : ''} — ${x.detail}`); process.exit(0); }
+
 if (argv.includes('--baseline')) {
-  writeFileSync(BASELINE_FILE, JSON.stringify({ ...fullBaseline, glue: counts }, null, 2) + '\n');
-  console.log('check-glue: baseline written', JSON.stringify(counts));
+  const glue = { ...(baseline.$approvedRaise ? { $approvedRaise: baseline.$approvedRaise } : {}) };
+  for (const rule of Object.keys(RULES)) glue[rule] = findings[rule].map((x) => x.fp);
+  writeFileSync(BASELINE_FILE, JSON.stringify({ ...fullBaseline, glue }, null, 2) + '\n');
+  console.log('check-glue: baseline written', JSON.stringify(Object.fromEntries(Object.keys(RULES).map((r) => [r, findings[r].length]))));
   process.exit(0);
 }
+
+if (opt('--guard')) {
+  // The baseline may only shrink. Compare with the baseline at <ref> (the PR's base / the pushed-over commit).
+  const ref = opt('--guard');
+  let base = {};
+  try { base = JSON.parse(execFileSync('git', ['show', `${ref}:scripts/structure-baseline.json`], { cwd: ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })); }
+  catch (e) { console.error(`check-glue --guard: cannot read scripts/structure-baseline.json at ${ref}: ${String(e.stderr ?? e.message).trim()}`); process.exit(2); }
+  const raised = [];
+  for (const rule of Object.keys(RULES)) for (const fp of fps(baseline, rule)) if (!fps(base.glue, rule).has(fp)) raised.push(`${rule}: + ${fp}`);
+  for (const [k, v] of Object.entries(fullBaseline)) if (typeof v === 'number' && v > (typeof base[k] === 'number' ? base[k] : 0)) raised.push(`${k}: ${base[k] ?? 0} → ${v}`);
+  const marker = baseline.$approvedRaise, baseMarker = base.glue?.$approvedRaise;
+  if (!raised.length) { console.log(`check-glue --guard: ok — the baseline did not grow against ${ref}`); process.exit(0); }
+  if (marker && marker !== baseMarker) {
+    console.log(`check-glue --guard: the baseline GROWS by ${raised.length} entr${raised.length === 1 ? 'y' : 'ies'} against ${ref}, approved in this change by:\n  $approvedRaise: ${marker}\nThe owner must see and accept this marker in the diff.`);
+    for (const r of raised.slice(0, 20)) console.log('  ' + r);
+    process.exit(0);
+  }
+  console.error(`check-glue --guard: FAIL — this change raises the baseline by ${raised.length} entr${raised.length === 1 ? 'y' : 'ies'} against ${ref} without a new \`glue.$approvedRaise\` marker:`);
+  for (const r of raised.slice(0, 30)) console.error('  ' + r);
+  console.error('Fix the new findings instead. Raising the baseline needs an explicit, owner-visible `"$approvedRaise": "<why>"` in scripts/structure-baseline.json → glue.');
+  process.exit(1);
+}
+
 let failed = false;
 for (const rule of Object.keys(RULES)) {
-  const now = counts[rule], was = baseline[rule] ?? 0;
-  if (now > was) {
+  const allowed = fps(baseline, rule);
+  const fresh = findings[rule].filter((x) => !allowed.has(x.fp));
+  const now = new Set(findings[rule].map((x) => x.fp));
+  const fixed = [...allowed].filter((fp) => !now.has(fp)).length;
+  if (fresh.length) {
     failed = true;
-    console.error(`\n${rule}: ${now} (baseline ${was}) — ${now - was} new violation(s): ${RULES[rule]}`);
-    for (const p of findings[rule].slice(0, 10)) console.error('  ' + p);
-    if (findings[rule].length > 10) console.error(`  … node scripts/check-glue.mjs --list ${rule}`);
-  } else if (now < was) console.log(`${rule}: ${now} (baseline ${was}) — ${was - now} fewer; run --baseline to lock it in`);
-  else console.log(`${rule}: ${now}${now ? ' (at baseline — known backlog)' : ''}`);
+    console.error(`\n${rule}: ${findings[rule].length} (baseline ${allowed.size}) — ${fresh.length} new violation(s): ${RULES[rule]}`);
+    for (const x of fresh.slice(0, 15)) console.error(`  ${x.file}${x.line ? `:${x.line}` : ''} — ${x.detail}`);
+    if (fresh.length > 15) console.error(`  … and ${fresh.length - 15} more (node scripts/check-glue.mjs --list ${rule})`);
+  } else if (fixed) console.log(`${rule}: ${findings[rule].length} (baseline ${allowed.size}) — ${fixed} fixed; run --baseline to drop them`);
+  else console.log(`${rule}: ${findings[rule].length}${findings[rule].length ? ' (all baselined — known backlog)' : ''}`);
 }
-if (failed) { console.error('\ncheck-glue: FAIL — new glue-discipline violations (design 00 §8.3). Fix them; never raise the baseline.'); process.exit(1); }
+if (failed) { console.error('\ncheck-glue: FAIL — new glue-discipline violations (design 00 §8.3, artifact contract C2). Fix them; never raise the baseline.'); process.exit(1); }
 console.log('check-glue: ok (no new violations)');
