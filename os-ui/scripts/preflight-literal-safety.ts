@@ -7,8 +7,8 @@
  *   node --import ./scripts/test-setup.mjs scripts/preflight-literal-safety.ts <export.json>…
  *
  * An export is any of: an array of dataset objects (MCP `get_dataset` output), an array of store
- * records (`{ yaml }`), or an OpenSearch `_search` response over the datasets index, e.g. taken
- * read-only with `curl "$OPENSEARCH_URL/<datasets index>/_search?size=10000"`. Exit 0 = nothing
+ * records (`{ yaml }`), or a search response over the datasets index exported read-only by an
+ * operator (`hits.hits[]._source.yaml`). This script opens no connection itself. Exit 0 = nothing
  * refused; exit 1 = findings (printed as JSON lines); exit 2 = usage / unreadable input.
  */
 import { readFileSync } from 'node:fs';
