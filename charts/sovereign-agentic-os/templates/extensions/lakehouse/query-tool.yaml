@@ -37,7 +37,7 @@ spec:
         runAsUser: 1000
       containers:
         - name: query-tool
-          image: "{{ $q.image.repository }}:{{ $q.image.tag }}"
+          image: {{ include "soa.queryToolImage" . | quote }}
           imagePullPolicy: IfNotPresent      # locally-built image, loaded into kind
           securityContext:
             {{- include "soa.containerSecurityContext" . | nindent 12 }}
