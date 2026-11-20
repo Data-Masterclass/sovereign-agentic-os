@@ -324,6 +324,12 @@
 - name: AGENT_GRAPH_MODULE_DOMAINS
   value: {{ $ds | quote }}
 {{- end }}
+{{- /* WP-52 — native dashboards (dbt saved queries + Vega-Lite). Unset when off: the code reads
+     unset as off, so the default render is unchanged. */}}
+{{- if $u.dashboardsNative }}
+- name: DASHBOARDS_NATIVE
+  value: "true"
+{{- end }}
 {{- /* X9 (engine rebuild Part D) — the agent engine's guardrails on EVERY tool call. Both are
      RUN-path, so the worker gets them too. Unset ⇒ the code defaults (20 000 chars / 60 s). */}}
 {{- with $u.agentToolResultMaxChars }}
