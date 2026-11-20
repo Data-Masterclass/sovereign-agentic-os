@@ -90,6 +90,10 @@ node ../scripts/check-dagster-ingress-policy.mjs
 # must render by default, select the OpenSearch pods, and admit every rendered workload that calls
 # OpenSearch (a missed client times out once enforced). Same skip rules as above.
 node ../scripts/check-opensearch-ingress-policy.mjs
+# LiteLLM: restrict ingress to OS components (defence in depth). The policy must render by
+# default, select only the gateway pods and admit exactly its callers (os-ui, os-ui-worker, the
+# agent-key Job). Same skip rules as above.
+node ../scripts/check-litellm-ingress-policy.mjs
 # WP-47 capacity gate: the rendered chart (default and STACKIT profiles) plus the pods outside it
 # must fit the node budget in charts/sovereign-agentic-os/capacity.yaml (requests ≤ 85 % CPU and
 # memory, memory limits ≤ 85 %). Same skip rules as above.
