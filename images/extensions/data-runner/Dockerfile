@@ -11,6 +11,10 @@ RUN useradd -u 1000 -m app
 COPY --chown=1000:1000 app.py column_name_rule.json /app/
 USER 1000
 
+# This build applies os-ui's `columnNames` (app.apply_column_names); test_bronze_raw.py holds the
+# label and the code together.
+LABEL org.sovereign-os.applies-column-names="true"
+
 ENV PORT=8000 HOME=/tmp
 EXPOSE 8000
 ENTRYPOINT ["python", "/app/app.py"]

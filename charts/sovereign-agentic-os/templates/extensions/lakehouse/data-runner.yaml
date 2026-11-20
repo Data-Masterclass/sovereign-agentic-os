@@ -48,7 +48,9 @@ metadata:
   annotations:
     # Read by scripts/rollback.sh: a rollback from "true" to anything else is refused while any
     # dataset stores mapped column names (an older runner would land raw headers).
-    sovereign-os/applies-column-names: {{ $dr.appliesColumnNames | default false | quote }}
+    # "true" unless the pinned digest is a known legacy build (dataRunner.legacyDigests); a
+    # localBuild is this repository's source, which applies column names.
+    sovereign-os/applies-column-names: {{ (or $dr.image.localBuild (not (has $dr.image.digest ($dr.legacyDigests | default list)))) | toString | quote }}
 spec:
   replicas: 1
   selector:

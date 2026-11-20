@@ -4,6 +4,8 @@
 # rollback — the one-command rollback (scripts/rollback.sh) from GitHub, per environment.
 # Goes back to the previous Helm revision, or to `to` (the revision_before of a deploy record).
 # prod runs in the `prod` Environment, so it waits for the required reviewer like a release.
+# This (or scripts/rollback.sh) is the ONLY supported rollback path: a manual `helm rollback`
+# skips the backup, the environment guard and the data-runner downgrade guard.
 name: rollback
 
 on:

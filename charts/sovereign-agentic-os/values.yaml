@@ -1436,11 +1436,13 @@ dataRunner:
     tag: "0.2.2"
     digest: sha256:8f7b8a3287368c915af90ee37e6053dfd77326d98fea450f87b97f4835a2e482
     localBuild: false
-  # Does the pinned image apply os-ui's `columnNames` (so datasets come to STORE mapped column
-  # names)? false for 0.2.2; set true in the SAME change that pins the first build that does.
+  # Digests of runner builds that do NOT apply os-ui's `columnNames` (built before it existed).
+  # Every other pinned digest does — so the capability follows the pin, with no flag to forget.
   # Rendered as the Deployment annotation sovereign-os/applies-column-names, which
-  # scripts/rollback.sh reads to refuse a rollback below that build while mapped names exist.
-  appliesColumnNames: false
+  # scripts/rollback.sh and scripts/deploy.sh read (scripts/lib/runner-capability.py) to refuse
+  # going below such a build while datasets store mapped column names.
+  legacyDigests:
+    - sha256:8f7b8a3287368c915af90ee37e6053dfd77326d98fea450f87b97f4835a2e482   # 0.2.2 (hand-built, aborek)
   polaris:
     # Same Polaris REST catalog + warehouse Trino reads/writes.
     uri: "http://polaris:8181/api/catalog"
