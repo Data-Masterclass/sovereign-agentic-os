@@ -93,6 +93,7 @@ services:
     image: ${LH_OPA_IMAGE}
     command: ${LH_OPA_ARGS}
     user: "1000"
+    env_file: ["${LH_WORK}/env/opa.env"]
     volumes: ["${LH_WORK}/opa/policies:/policies:ro", "${LH_WORK}/opa/config:/config:ro"]
     # WP-37: os-ui's write decisions (agentic.authz.data_version_write) are asked of THIS OPA.
     ports: ["127.0.0.1:${LH_OPA_PORT:-18181}:8181"]
@@ -124,6 +125,7 @@ services:
     image: ${LH_OPA_IMAGE}
     command: ${LH_TRINO_OPA_ARGS}
     user: "1000"
+    env_file: ["${LH_WORK}/env/trino-opa.env"]
     volumes: ["${LH_WORK}/trino-opa/policies:/policies:ro", "${LH_WORK}/trino-opa/config:/config:ro"]
     network_mode: "service:trino"
     depends_on: [trino]
