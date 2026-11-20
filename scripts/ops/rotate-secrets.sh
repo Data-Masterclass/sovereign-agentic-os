@@ -270,6 +270,12 @@ print(json.dumps({"path": meta["path"], "cluster": {k: meta[k] for k in ("uid", 
   final=$(awk -F'\t' '$1=="final"{print $2}' <<<"$out"); step1=$(awk -F'\t' '$1=="step1"{print $2}' <<<"$out")
   back=$(awk -F'\t' '$1=="rollback"{print $2}' <<<"$out"); back1=$(awk -F'\t' '$1=="rollback-step1"{print $2}' <<<"$out")
 
+  # The readers of the rotated Secrets, discovered from every workload's pod spec (verify checks each).
+  local rdw; rdw=$(mktemp -d)
+  k get deploy,statefulset,daemonset,cronjob -o json > "$rdw/all.json"
+  say "readers of the rotated Secrets (discovered; each must restart in the final step, CronJobs read at each run)"
+  python3 "$REPO/scripts/lib/rotation-checks.py" readers "$rdw/all.json" litellm-credentials langfuse-init langfuse-core-secrets agent-runtime-token | sed 's/^/     /'
+  rm -rf "$rdw"
   local o="--context $CTX --namespace $NS --release $REL" ck=charts/sovereign-agentic-os
   echo
   echo "NEXT (docs/ops/secret-rotation.md; deploy from the checkout of os-ui-v$ver + the rotation chart support):"
@@ -488,28 +494,27 @@ Promise.all(["/v1/models", "/v1/mcp/tools"].map(p => fetch(u + p, { headers: h }
     # Each reader must serve ONLY from pods started after the deploy: rollout complete, no pod of an
     # earlier ReplicaSet left, every current pod Ready (scripts/lib/readers-restarted.py). A missing
     # Deployment fails; only replicas == 0 is a skip. A one-off Job pod with the same labels is no reader.
-    # Each reader must have started after the rotated Secrets IT reads last changed (managedFields
-    # time), not after the last deploy. Which Secrets it reads comes from its own pod spec (env
-    # valueFrom, envFrom, volumes), intersected with the Secrets this rotation changes.
-    local d sel rw since secs rotated="litellm-credentials langfuse-init langfuse-core-secrets agent-runtime-token"
+    # The readers are DISCOVERED: every Deployment, StatefulSet, DaemonSet and CronJob whose pod spec
+    # reads a rotated Secret (env valueFrom, envFrom, volumes). Each must serve only from pods started
+    # after the Secrets IT reads last changed (managedFields time); a CronJob reads them at each run.
+    local kind1 d secs since sel rw rotated="litellm-credentials langfuse-init langfuse-core-secrets agent-runtime-token" found=0
     rw=$(mktemp -d)
-    for d in "$LANGFUSE_SVC" "$REL-langfuse-worker" "$LITELLM_SVC" os-ui os-ui-worker "$DAGSTER_CODE"; do
-      [ -n "$d" ] || continue      # DAGSTER_CODE= (empty) leaves the Dagster reader out on an install without Dagster
-      : > "$rw/rs.json"; : > "$rw/pods.json"; since=1970-01-01T00:00:00Z; secs=""
-      if k get deploy "$d" -o json > "$rw/dep.json" 2>/dev/null; then
-        secs=$(python3 "$REPO/scripts/lib/rotation-checks.py" secrets-read "$rw/dep.json" | { grep -xF -f <(tr ' ' '\n' <<<"$rotated") || true; } | tr '\n' ' ')
-        if [ -z "${secs// /}" ]; then fail "$d reads none of the rotated Secrets (its spec names none of: $rotated)"; continue; fi
-        local sf=() s1
-        for s1 in $secs; do k get secret "$s1" -o json > "$rw/sec-$s1.json" 2>/dev/null || : > "$rw/sec-$s1.json"; sf+=("$rw/sec-$s1.json"); done
-        since=$(python3 "$REPO/scripts/lib/rotation-checks.py" changed-at "${sf[@]}") || { fail "$d: a Secret it reads is missing ($secs)"; continue; }
-        sel=$(python3 -c 'import json,sys; print(",".join(f"{k}={v}" for k, v in json.load(open(sys.argv[1]))["spec"]["selector"]["matchLabels"].items()))' "$rw/dep.json")
-        k get rs -l "$sel" -o json > "$rw/rs.json"; k get pods -l "$sel" -o json > "$rw/pods.json"
-      else
-        : > "$rw/dep.json"          # missing: the helper FAILS it (a misnamed reader must not pass)
-      fi
+    k get deploy,statefulset,daemonset,cronjob -o json > "$rw/all.json"
+    while read -r kind1 d secs; do
+      [ -n "$kind1" ] || continue
+      found=$((found+1))
+      if [ "$kind1" = CronJob ]; then echo "   ok   CronJob/$d reads ${secs} at each run (no restart needed)"; continue; fi
+      python3 "$REPO/scripts/lib/rotation-checks.py" item "$rw/all.json" "$kind1" "$d" > "$rw/dep.json"
+      local sf=() s1
+      for s1 in ${secs//,/ }; do k get secret "$s1" -o json > "$rw/sec-$s1.json" 2>/dev/null || : > "$rw/sec-$s1.json"; sf+=("$rw/sec-$s1.json"); done
+      since=$(python3 "$REPO/scripts/lib/rotation-checks.py" changed-at "${sf[@]}") || { fail "$kind1/$d: a Secret it reads is missing ($secs)"; continue; }
+      sel=$(python3 -c 'import json,sys; print(",".join(f"{k}={v}" for k, v in json.load(open(sys.argv[1]))["spec"]["selector"]["matchLabels"].items()))' "$rw/dep.json")
+      : > "$rw/rs.json"; [ "$kind1" = Deployment ] && k get rs -l "$sel" -o json > "$rw/rs.json"
+      k get pods -l "$sel" -o json > "$rw/pods.json"
       local line rc=0; line=$(python3 "$REPO/scripts/lib/readers-restarted.py" "$rw/dep.json" "$rw/rs.json" "$rw/pods.json" "$since") || rc=$?
-      case $rc in 0) pass "$line (reads: ${secs:-?})" ;; 2) echo "   skip $line" ;; *) fail "$d: $line" ;; esac
-    done
+      case $rc in 0) pass "$line (reads: $secs)" ;; 2) echo "   skip $line" ;; *) fail "$kind1/$d: $line" ;; esac
+    done < <(python3 "$REPO/scripts/lib/rotation-checks.py" readers "$rw/all.json" $rotated)
+    [ "$found" -gt 0 ] || fail "no workload reads any rotated Secret: the discovery found nothing ($rotated)"
     rm -rf "$rw"
 
     say "Langfuse (port-forward)"

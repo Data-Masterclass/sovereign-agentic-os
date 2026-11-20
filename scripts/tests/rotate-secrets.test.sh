@@ -35,6 +35,7 @@ printf 'a1b2%.0s' 1 > "$FAKE/secrets/langfuse-core-secrets/encryptionKey"
 printf 'agent-old' > "$FAKE/secrets/agent-runtime-token/token"
 echo '{"salt_key_set": false, "columns": {"LiteLLM_Config.param_value": {"rows": 1, "effective": 2}, "LiteLLM_TeamTable.metadata": {"rows": 1, "effective": 1}}, "total": {"effective": 3}}' > "$FAKE/scan.json"
 printf 'llm_api_keys|0\nactions|0\nsso_configs|-1\n' > "$FAKE/lfenc.txt"
+echo '{"items":[{"kind":"Deployment","metadata":{"name":"os-ui"},"spec":{"template":{"spec":{"containers":[{"name":"os-ui","env":[{"name":"T","valueFrom":{"secretKeyRef":{"name":"agent-runtime-token","key":"token"}}}]}]}}}}]}' > "$FAKE/workloads.json"
 RS=scripts/ops/rotate-secrets.sh
 G() { python3 scripts/lib/rotation-files.py get "$1" "$2"; }
 
@@ -44,6 +45,7 @@ rc_is "prepare succeeds" 0
 check "re-key path chosen" "PATH: re-key" "$out"
 check "LiteLLM's scan counted" "values decryptable with the key in use: 3" "$out"
 check "the live version without its digest" "--from-registry 9.9.9" "$out"
+check "prepare lists the discovered readers" "Deployment os-ui agent-runtime-token" "$out"
 S1=$(ls "$T"/secrets/overlays/rotation-*.step1.yaml 2>/dev/null | head -1); F=${S1%.step1.yaml}.yaml
 holds "step-1 and final overlays written" test -f "$S1" -a -f "$F" -a -f "${F%.yaml}.rollback.yaml" -a -f "${F%.yaml}.rollback-step1.yaml" -a -f "${F%.yaml}.state.json"
 modes=$(python3 -c 'import os,sys; print(" ".join(oct(os.stat(f).st_mode & 0o777)[2:] for f in sys.argv[1:]))' "$T"/secrets/overlays/*)

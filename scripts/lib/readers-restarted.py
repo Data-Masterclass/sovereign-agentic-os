@@ -5,7 +5,8 @@
 
   readers-restarted.py <deployment.json> <replicasets.json> <pods.json> <since: ISO time — when the Secrets it reads last changed>
 
-The JSON files are `kubectl get deploy <d> -o json` (EMPTY when the Deployment does not exist),
+The JSON files are `kubectl get deploy <d> -o json` (EMPTY when the Deployment does not exist;
+a StatefulSet or DaemonSet is accepted too, see `pods_verdict`),
 `kubectl get rs -l <selector> -o json` and `kubectl get pods -l <selector> -o json`.
 
 PASS (exit 0) only when ALL hold:
@@ -44,6 +45,8 @@ def verdict(dep, rss, pods, deployed):
         return 1, "the Deployment does not exist (misnamed reader, or it was removed)"
     md, spec, st = dep["metadata"], dep.get("spec") or {}, dep.get("status") or {}
     name = md["name"]
+    if dep.get("kind") in ("StatefulSet", "DaemonSet"):
+        return pods_verdict(dep, pods, deployed)
     want = spec.get("replicas", 1)
     if want == 0:
         return 2, f"{name}: scaled to 0 replicas"
@@ -78,6 +81,41 @@ def verdict(dep, rss, pods, deployed):
     if stale:
         return 1, f"{name}: pod(s) started before the Secrets it reads changed: {', '.join(stale)}"
     return 0, f"{name}: rollout complete, all {len(cur)} pod(s) Ready and started after the Secrets it reads changed{note}"
+
+
+def pods_verdict(obj, pods, since_iso):
+    """StatefulSet / DaemonSet: the rollout is complete and every live pod the workload owns is Ready
+    and started after <since> (a pod started after the Secret changed has read the new value)."""
+    md, spec, st = obj["metadata"], obj.get("spec") or {}, obj.get("status") or {}
+    name = f"{obj['kind']}/{md['name']}"
+    if st.get("observedGeneration") != md.get("generation"):
+        return 1, f"{name}: the controller has not observed the latest spec"
+    if obj["kind"] == "StatefulSet":
+        want = spec.get("replicas", 1)
+        if want == 0:
+            return 2, f"{name}: scaled to 0 replicas"
+        counts = {"replicas": st.get("replicas", 0), "readyReplicas": st.get("readyReplicas", 0),
+                  "updatedReplicas": st.get("updatedReplicas", 0)}
+        if set(counts.values()) != {want} or st.get("currentRevision") != st.get("updateRevision"):
+            return 1, f"{name}: rollout not complete ({', '.join(f'{k}={v}' for k, v in counts.items())}, spec.replicas={want})"
+    else:
+        want = st.get("desiredNumberScheduled", 0)
+        if want == 0:
+            return 2, f"{name}: scheduled on no node"
+        counts = {k: st.get(k, 0) for k in ("currentNumberScheduled", "updatedNumberScheduled", "numberReady", "numberAvailable")}
+        if set(counts.values()) != {want}:
+            return 1, f"{name}: rollout not complete ({', '.join(f'{k}={v}' for k, v in counts.items())}, desired={want})"
+    mine = [p for p in pods if owned_by(p, obj["kind"], {md["uid"]}) and (p.get("status") or {}).get("phase") not in ("Succeeded", "Failed")]
+    if not mine:
+        return 1, f"{name}: no pod"
+    not_ready = [p["metadata"]["name"] for p in mine if not ready(p) or p["metadata"].get("deletionTimestamp")]
+    if not_ready:
+        return 1, f"{name}: pod(s) not Ready or terminating: {', '.join(not_ready)}"
+    since = ts(since_iso)
+    stale = [p["metadata"]["name"] for p in mine if not (p.get("status") or {}).get("startTime") or ts(p["status"]["startTime"]) <= since]
+    if stale:
+        return 1, f"{name}: pod(s) started before the Secrets it reads changed: {', '.join(stale)}"
+    return 0, f"{name}: all {len(mine)} pod(s) Ready and started after the Secrets it reads changed"
 
 
 def load(path):
