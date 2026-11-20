@@ -240,13 +240,52 @@ function shapeDuplicateRule(): ProjectSnapshot {
   return { domain: 'sales', datasets: [{ dataset: receipts, artifacts: {} }], catalogs: {} };
 }
 
+// ---- Shape (f): the live `agentic-leader-q3-2026` failure (commit 56d57fc, 2026-11-20) — a domain
+// dataset with ONE row-count KPI and no label. dbt-core 1.9.11 refused the old output three ways:
+// metric without `label`, `count` measure without `expr`, and a `<domain>__<slug>` semantic model
+// name. The image test parses this golden in the real Dagster image.
+function shapeLiveQ3CountMetric(): ProjectSnapshot {
+  const requests = ds({
+    id: 'ds_ikbxg5h8oy',
+    name: 'Customer Service Requests',
+    owner: 'aborek',
+    domain: 'sales',
+    tier: 'asset',
+    visibility: 'domain',
+    description: 'A record of customer service requests.',
+    columns: [
+      { name: 'case_id', description: 'Case key' },
+      { name: 'case_type', description: 'Category of the request' },
+      { name: 'opened_date', description: 'Date the request was opened' },
+      { name: 'resolved', description: 'Whether the case is resolved' },
+    ],
+    versions: { bronze: built('bronze/csr.dlt.yml'), silver: built('silver/csr.sql', true), gold: built('gold/csr.sql', true) },
+    measures: [{ name: 'service_case_count', type: 'count', sql: '' }],
+  });
+  return { domain: 'sales', datasets: [{ dataset: requests, artifacts: {} }], catalogs: {} };
+}
+
 const SHAPES: Record<string, () => ProjectSnapshot> = {
   'ingested-pass-through': shapeIngested,
   'composition-with-tests': shapeComposition,
   'append-sync-with-cursor': shapeAppendSync,
   'metrics-semantic-layer': shapeMetrics,
   'duplicate-rule': shapeDuplicateRule,
+  'live-q3-count-metric': shapeLiveQ3CountMetric,
 };
+
+test('live q3 regression: a count KPI with no label emits label, expr: 1 and a dunder-free model name', () => {
+  const files = generateProject('sales', shapeLiveQ3CountMetric());
+  const path = [...files.keys()].find((k) => k.startsWith('models/semantic/'))!;
+  assert.equal(path, 'models/semantic/sales_customer_service_requests.yml');
+  const doc = yaml.load(files.get(path)!) as {
+    semantic_models: { name: string; measures: { name: string; agg: string; expr?: string }[] }[];
+    metrics: { name: string; label?: string }[];
+  };
+  assert.equal(doc.semantic_models[0].name, 'sales_customer_service_requests');
+  assert.deepEqual(doc.semantic_models[0].measures, [{ name: 'service_case_count', agg: 'count', expr: '1' }]);
+  assert.equal(doc.metrics[0].label, 'service_case_count');
+});
 
 function toObject(files: Map<string, string>): Record<string, string> {
   return Object.fromEntries([...files.entries()]);
