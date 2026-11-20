@@ -10,9 +10,18 @@
  *     Policy API `PUT/GET /v1/policies/{id}`, Health API `GET /health`.
  *   - Returns the `Fetched` contract; never throws. Callers go through `core/policy/opa-publish.ts`.
  */
-import { opaHeaders } from '@core/adapters/opa/auth';
 import { config } from '@core/kernel/config';
 import type { Fetched, FetchedFailure } from '@core/adapters/_contract';
+
+/**
+ * The OS's identity on OPA's API (`--authentication=token`, https://www.openpolicyagent.org/docs/security):
+ * `Authorization: Bearer <OPA_TOKEN>` (chart Secret `opa-tokens`, key `writer`); the chart's
+ * `system.authz` decides what it may do. No token configured = no header (an OPA without
+ * `--authorization` ignores it, so sending it is always safe).
+ */
+export function opaHeaders(extra: Record<string, string> = {}): Record<string, string> {
+  return config.opaToken ? { ...extra, authorization: `Bearer ${config.opaToken}` } : { ...extra };
+}
 
 const now = () => new Date().toISOString();
 const fail = (reason: FetchedFailure, detail: string): Fetched<never> => ({ ok: false, reason, detail, at: now() });
@@ -90,6 +99,29 @@ export async function opaDecide(path: string, input: unknown, timeoutMs: number,
     body = (await r.value.json()) as { result?: unknown };
   } catch (err) {
     return fail('invalid', `POST data/${path}: unreadable JSON (${String(err)})`);
+  }
+  return { ok: true, value: 'result' in body ? { defined: true, value: body.result } : { defined: false }, at: r.at };
+}
+
+/** Evaluate a decision: `POST /v1/data/{path}` with `{input}`; `defined:false` = no result. */
+export async function opaQuery(path: string, input: unknown, timeoutMs: number): Promise<Fetched<{ defined: boolean; value?: unknown }>> {
+  const r = await request(`/v1/data/${path}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ input }) }, timeoutMs);
+  return readResult(r, `POST data/${path}`);
+}
+
+/** OPA's Config API: `GET /v1/config` (the active configuration, e.g. its labels). */
+export async function opaGetConfig(timeoutMs: number): Promise<Fetched<{ defined: boolean; value?: unknown }>> {
+  return readResult(await request('/v1/config', { method: 'GET' }, timeoutMs), 'GET /v1/config');
+}
+
+async function readResult(r: Fetched<Response>, what: string): Promise<Fetched<{ defined: boolean; value?: unknown }>> {
+  if (!r.ok) return r;
+  if (!r.value.ok) return fail(reasonFor(r.value.status), `${what}: OPA ${r.value.status}`);
+  let body: { result?: unknown };
+  try {
+    body = (await r.value.json()) as { result?: unknown };
+  } catch (err) {
+    return fail('invalid', `${what}: unreadable JSON (${String(err)})`);
   }
   return { ok: true, value: 'result' in body ? { defined: true, value: body.result } : { defined: false }, at: r.at };
 }

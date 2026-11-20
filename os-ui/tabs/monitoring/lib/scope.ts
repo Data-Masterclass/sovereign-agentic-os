@@ -11,9 +11,8 @@
  *   - Re-exports the pure predicates from `scope-core.ts` so callers have one import.
  *   - `assertInScope` on the trace route stops a user opening another user's trace.
  */
-import { opaHeaders } from '@core/adapters/opa/auth';
 import 'server-only';
-import { config } from '@core/kernel/config';
+import { opaQuery } from '@core/adapters/opa/client';
 import type { CurrentUser } from '@core/kernel/auth';
 import type { Scope } from '@tabs/monitoring/lib/types';
 import { deriveScope } from '@tabs/monitoring/lib/scope-core';
@@ -25,25 +24,9 @@ export async function scopeForUser(user: CurrentUser): Promise<Scope> {
 
 /** Best-effort OPA confirmation that the principal may read Monitoring. */
 async function opaConfirms(principal: string): Promise<boolean> {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 1500);
-  try {
-    const res = await fetch(`${config.opaUrl}/v1/data/agentic/authz/allow`, {
-      method: 'POST',
-      headers: opaHeaders({ 'content-type': 'application/json' }),
-      body: JSON.stringify({ input: { principal, tool: 'monitoring_read' } }),
-      signal: ctrl.signal,
-      cache: 'no-store',
-    });
-    if (!res.ok) return false;
-    const data = (await res.json()) as { result?: unknown };
-    return Boolean(data?.result);
-  } catch {
-    // OPA off locally — identity mapping governs; marked via:'identity'.
-    return false;
-  } finally {
-    clearTimeout(timer);
-  }
+  // OPA off locally (unreachable) — identity mapping governs; marked via:'identity'.
+  const r = await opaQuery('agentic/authz/allow', { principal, tool: 'monitoring_read' }, 1500);
+  return r.ok && r.value.defined && Boolean(r.value.value);
 }
 
 // Re-export the pure predicates so app code has one import surface (`./scope`).

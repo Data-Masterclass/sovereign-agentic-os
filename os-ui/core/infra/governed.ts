@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
-import { opaHeaders } from '@core/adapters/opa/auth';
+import { opaHeaders } from '@core/adapters/opa/client';
 import 'server-only';
 import { config } from '@core/kernel/config';
 import { serviceBearerHeader } from '@core/infra/service-bearer';
