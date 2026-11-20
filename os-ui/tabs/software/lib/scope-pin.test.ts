@@ -131,6 +131,22 @@ test('DETECT · a locked seed is clean: file: dependencies and local lock links 
   assert.equal(securityScan(lockedVite(), 'offline-mock').passed, true);
 });
 
+test('DETECT · a package.json or lockfile that cannot be read blocks: an unread manifest is not a clean one', () => {
+  for (const path of ['package.json', 'package-lock.json']) {
+    const tree = replace(lockedVite(), path, (c) => c.slice(0, Math.floor(c.length / 2)));
+    const found = blocking(scopePinFindings(tree));
+    assert.equal(found.length, 1, path);
+    assert.equal(found[0].path, path);
+    assert.match(found[0].title, /could not be checked/);
+    assert.equal(securityScan(tree, 'offline-mock').passed, false, path);
+  }
+  // twin: the same files, intact, produce no finding at all
+  assert.deepEqual(scopePinFindings(lockedVite()), []);
+  // a JSON array is valid JSON but not a manifest: also unreadable for this check
+  const arr = replace(lockedVite(), 'package.json', () => '[]');
+  assert.equal(blocking(scopePinFindings(arr)).length, 1);
+});
+
 test('DETECT · a VERSION RANGE for the scope in a locked app blocks, with a plain message', () => {
   const tree = replace(lockedVite(), 'package.json', editJson((j) => (j.dependencies['@sovereign-os/ui'] = '^0.1.0')));
   const found = blocking(scopePinFindings(tree));

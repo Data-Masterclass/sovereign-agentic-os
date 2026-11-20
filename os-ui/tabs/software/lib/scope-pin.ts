@@ -132,13 +132,30 @@ const RANGE_FIELDS = ['dependencies', 'devDependencies', 'optionalDependencies',
 type Json = Record<string, unknown>;
 const isObj = (v: unknown): v is Json => typeof v === 'object' && v !== null && !Array.isArray(v);
 
-function parseJson(content: string): Json | null {
+/** A manifest or lockfile, read as a JSON object — or the reason it could not be read. */
+type Parsed = { ok: true; value: Json } | { ok: false; reason: string };
+
+function parseJson(content: string): Parsed {
+  let v: unknown;
   try {
-    const v: unknown = JSON.parse(content);
-    return isObj(v) ? v : null;
-  } catch {
-    return null;
+    v = JSON.parse(content);
+  } catch (e) {
+    return { ok: false, reason: `is not valid JSON (${e instanceof Error ? e.message : String(e)})` };
   }
+  return isObj(v) ? { ok: true, value: v } : { ok: false, reason: 'is valid JSON but not an object' };
+}
+
+/** A file the check could not read is reported, never treated as clean. */
+function unreadable(path: string, reason: string): ScanFinding {
+  return {
+    category: 'deps',
+    severity: 'critical',
+    title: `${path} could not be checked for ${OS_SCOPE}/* sources`,
+    detail:
+      `${path} ${reason}, so this scan cannot tell where npm would fetch ${OS_SCOPE}/ packages from. ` +
+      `Fix the file (npm would refuse it too) and request the deploy again.`,
+    path,
+  };
 }
 
 const inScope = (name: string): boolean => name.toLowerCase().startsWith(`${OS_SCOPE}/`);
@@ -283,14 +300,21 @@ export function scopePinFindings(files: ScaffoldFile[]): ScanFinding[] {
 
     if (name === 'package.json') {
       const manifest = parseJson(f.content);
-      if (!manifest) continue;
-      const m = manifestFindings(path, manifest, legacyTree);
+      if (!manifest.ok) {
+        out.push(unreadable(path, manifest.reason));
+        continue;
+      }
+      const m = manifestFindings(path, manifest.value, legacyTree);
       usesScope ||= m.usesScope;
       legacyRanges += m.legacyRanges;
       out.push(...m.findings);
     } else if (NPM_LOCKS.has(name)) {
-      const lock = parseJson(f.content);
-      if (!lock) continue;
+      const parsed = parseJson(f.content);
+      if (!parsed.ok) {
+        out.push(unreadable(path, parsed.reason));
+        continue;
+      }
+      const lock = parsed.value;
       if (isObj(lock.packages)) out.push(...lockPackagesFindings(path, lock.packages));
       else if (isObj(lock.dependencies)) out.push(...lockV1Findings(path, lock.dependencies));
     } else if (TEXT_LOCKS.has(name)) {
