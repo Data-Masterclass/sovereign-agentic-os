@@ -176,8 +176,13 @@ export async function bootWorker(): Promise<WorkerBoot> {
   // The LangGraph checkpoint store — without it a run cannot survive this pod, which is the whole
   // point of the worker.
   const { ensureCheckpointerReady } = await import('@tabs/agents/lib/engine/checkpointer');
-  boot.checkpointer = await ensureCheckpointerReady(config.agentRunsDatabaseUrl);
+  const runsDb = config.agentRunsDatabaseUrl;
+  boot.checkpointer = await ensureCheckpointerReady(runsDb);
   if (boot.checkpointer === 'memory') warn('AGENT_RUNS_DATABASE_URL unset — checkpoints are IN MEMORY; a restart loses in-flight runs');
+
+  // WP-53b: the agent-module tables, by migration (never by a run). Off unless AGENT_GRAPH_MODULE.
+  const { ensureAgentModuleReady } = await import('@tabs/agents/lib/module/os-run');
+  log(`agent modules: ${await ensureAgentModuleReady(runsDb)}`);
 
   // `run_jobs` / `run_events` (idempotent DDL), next to the checkpointer's setup().
   const { ensureRunJobsReady } = await import('@tabs/agents/lib/build/run-jobs-server');

@@ -372,36 +372,59 @@ export async function runOsTeam(input: RunOsTeamInput): Promise<RunOsTeamResult>
   // The `agent_runs` database (checkpoints, ledger, hold decisions, run stamps) — read once per run.
   const runsDb = config.agentRunsDatabaseUrl;
   if (config.agentGraphModule && input.runId && (!input.resume || (await isModuleRun(input.runId, runsDb)))) {
-    const r = await runOsTeamOnModule({
-      user: input.user,
-      sys,
-      systemId: input.systemId,
-      disabledAgents: input.disabledAgents,
+    const traceInput = {
       runId: input.runId,
-      ...(input.resume ? {} : { task: lastUserText(input.messages) ?? '' }),
-      resumeDecision: input.resumeDecision,
-      caller,
-      specs: grantedToolSpecs(input.user, sys),
-      executor: withToolCallLedger(gate.callTool, await selectToolCallLedger(runsDb)),
-      databaseUrl: runsDb,
-      decide: (tool) => holdDecisionFor(sys.safetyPreset, resolveAlias(tool)),
-      approvals: input.approvalPort ?? serverApprovalPort(),
-      runner: { id: input.user.id, role: input.user.role, domains: input.user.allDomains ?? input.user.domains },
-      agent: principalFor(input.systemId),
-      log: input.log,
-      signal: input.signal,
-    });
-    return {
-      path: r.path,
-      runs: [],
-      finalText: r.finalText,
-      reachedEnd: r.reachedEnd,
-      runId: r.runId,
-      checkpointer: r.checkpointer,
-      interrupted: r.interrupted,
-      parked: r.parked,
-      heldApprovals: r.heldApprovals,
+      systemId: input.systemId,
+      systemName: sys.system.name,
+      userId: input.user.id,
+      domain: sys.system.domain,
+      engine: 'langgraph-module',
+      task: input.resume ? undefined : lastUserText(input.messages),
+      resume: input.resume,
+      environment: input.env ?? 'studio',
+      principal: principalFor(input.systemId),
+      redaction: config.langfuseRedaction,
     };
+    return withRunTrace(traceInput, async (observe) => {
+      const r = await runOsTeamOnModule({
+        user: input.user,
+        sys,
+        systemId: input.systemId,
+        disabledAgents: input.disabledAgents,
+        runId: input.runId,
+        ...(input.resume ? {} : { task: lastUserText(input.messages) ?? '' }),
+        resumeDecision: input.resumeDecision,
+        caller,
+        specs: grantedToolSpecs(input.user, sys),
+        executor: withToolCallLedger(gate.callTool, await selectToolCallLedger(runsDb)),
+        databaseUrl: runsDb,
+        decide: (tool) => holdDecisionFor(sys.safetyPreset, resolveAlias(tool)),
+        approvals: input.approvalPort ?? serverApprovalPort(),
+        runner: { id: input.user.id, role: input.user.role, domains: input.user.allDomains ?? input.user.domains },
+        agent: principalFor(input.systemId),
+        log: input.log,
+        signal: input.signal,
+        // The same live hooks the v1 engine feeds the run route (SSE frames unchanged).
+        hooks: { onNodeStart: input.onNodeStart, onStep: input.onStep, onNodeComplete: input.onNodeComplete, onInterrupt: input.onInterrupt },
+        observer: observe,
+        limits: { modelCalls: input.maxIterations ?? config.agentTeamNodeMaxSteps, toolCalls: input.maxIterations ?? config.agentTeamNodeMaxSteps },
+        maxSteps: config.agentTeamRunMaxSteps,
+      });
+      observe.finish({ reachedEnd: r.reachedEnd, parked: r.parked, interrupted: r.interrupted, failed: false, path: r.path, finalChars: r.finalText.length, stepsUsed: r.path.length });
+      return {
+        path: r.path,
+        runs: r.runs,
+        finalText: r.finalText,
+        reachedEnd: r.reachedEnd,
+        runId: r.runId,
+        checkpointer: r.checkpointer,
+        interrupted: r.interrupted,
+        parked: r.parked,
+        heldApprovals: r.heldApprovals,
+        traceUrl: observe.enabled ? await traceUrlFor(input.runId, { probe: false }) : undefined,
+        traceStoreAvailable: observe.enabled,
+      };
+    });
   }
 
   {

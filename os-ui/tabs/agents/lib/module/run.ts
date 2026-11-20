@@ -29,6 +29,8 @@ import { Command, GraphRecursionError } from '@langchain/langgraph';
 import type { ApprovalDecision, ApprovalPort, RunnerSnapshot, RunOwner } from '@tabs/agents/lib/engine/approval-port';
 import { ResumeNotFoundError, RunAlreadyFinishedError, StaleResumeError, type PendingApproval } from '@tabs/agents/lib/engine/run';
 import type { HoldDescription } from '@tabs/agents/lib/module/os-agent';
+import type { AgenticStep } from '@core/runtime/agentic';
+import type { NodeRun, NodeStatus } from '@tabs/agents/lib/build/agentic-graph';
 
 /** The engine name a module run reports. */
 export const MODULE_ENGINE = 'module';
@@ -44,17 +46,6 @@ export type ModuleRunStamps = {
   stamp(threadId: string, s: ModuleRunStamp): Promise<void>;
   get(threadId: string): Promise<ModuleRunStamp | null>;
 };
-
-export async function migrateModuleRunStamps(db: Queryable): Promise<void> {
-  await db.query(`CREATE TABLE IF NOT EXISTS agent_module_runs (
-     thread_id  TEXT PRIMARY KEY,
-     system_id  TEXT NOT NULL,
-     user_id    TEXT NOT NULL,
-     domain     TEXT NOT NULL,
-     digest     TEXT NOT NULL,
-     commit_sha TEXT,
-     started_at TIMESTAMPTZ NOT NULL DEFAULT now())`);
-}
 
 export function postgresModuleRunStamps(db: Queryable): ModuleRunStamps {
   return {
@@ -126,6 +117,27 @@ export type ModuleRunInput = {
   recursionLimit?: number;
   log?: (line: string) => void;
   signal?: AbortSignal;
+  /** How many agents the team has (the `total` of the live node events). */
+  agentCount?: number;
+  /** The model alias an agent ran on (for the drill-down). */
+  modelOf?: (agentId: string) => string;
+  /** Live progress, the same hook signatures the v1 engine feeds the run route's SSE frames. */
+  hooks?: ModuleRunHooks;
+  /** One trace span per agent visit (the WP-31 writer, through `module/observe.ts`). */
+  spans?: AgentSpans;
+};
+
+export type ModuleRunHooks = {
+  onNodeStart?: (ev: { node: string; index: number; total: number }) => void;
+  onStep?: (ev: { node: string; step: AgenticStep; index: number }) => void;
+  onNodeComplete?: (ev: { node: string; status: NodeStatus; finalText: string }) => void;
+  onInterrupt?: (ev: PendingApproval) => void;
+};
+
+/** Opens and closes one span per agent visit; `end` is idempotent. */
+export type AgentSpans = {
+  start(agentId: string, visit: number): void;
+  end(agentId: string, status: { output?: unknown; error?: string; parked?: boolean }): void;
 };
 
 export type ModuleRunResult = {
@@ -139,7 +151,38 @@ export type ModuleRunResult = {
   heldApprovals: PendingApproval[];
   values: Record<string, unknown>;
   module: { digest: string; commit: string | null };
+  /** The run drill-down: one entry per agent visit, rebuilt from the checkpointed transcript. */
+  runs: NodeRun[];
 };
+
+type Msg = { type?: string; name?: string; content?: unknown; status?: string; tool_call_id?: string; tool_calls?: { id?: string; name: string; args: Record<string, unknown> }[] };
+
+/**
+ * The drill-down from the transcript in graph state, so a resumed run reports every visit, not
+ * only the ones this process streamed. A visit starts at an AI message from a different agent;
+ * tool results belong to the visit whose AI message asked for them.
+ */
+export function runsFromMessages(messages: readonly Msg[], modelOf: (agentId: string) => string): NodeRun[] {
+  const runs: NodeRun[] = [];
+  let cur: NodeRun | null = null;
+  const args = new Map<string, Record<string, unknown>>();
+  for (const m of messages) {
+    if (m.type === 'ai' && m.name) {
+      if (!cur || cur.node !== m.name) {
+        cur = { node: m.name, model: modelOf(m.name), status: 'ok', result: { plan: '', steps: [], finalText: '', iterations: 0, toolCallingSupported: true, pending: [] } };
+        runs.push(cur);
+      }
+      cur.result.iterations += 1;
+      for (const c of m.tool_calls ?? []) if (c.id) args.set(c.id, c.args ?? {});
+      if (!(m.tool_calls ?? []).length) cur.result.finalText = textOf(m.content);
+    } else if (m.type === 'tool' && cur && m.name !== 'set_state') {
+      const isError = m.status === 'error';
+      cur.result.steps.push({ tool: String(m.name ?? ''), args: (m.tool_call_id && args.get(m.tool_call_id)) || {}, result: textOf(m.content), isError });
+      if (isError && /"code":"(forbidden|denied)"/.test(textOf(m.content))) cur.status = 'denied';
+    }
+  }
+  return runs;
+}
 
 type ApprovalRequest = { type: 'tool_approval'; tool_call_id: string; name: string; args: Record<string, unknown>; description: string };
 
@@ -201,46 +244,95 @@ export async function runAgentModule(input: ModuleRunInput): Promise<ModuleRunRe
 
   const path: string[] = [];
   const filed: PendingApproval[] = [];
+  const seenInterrupts = new Set<string>();
   let interrupted = false;
+  // Live progress (WP-53b): which agent is running, its tool steps as they finish, its end. The
+  // tool-call args come from the AI message that asked for them (inside the agent's subgraph).
+  const visits = new Map<string, number>();
+  const argsOf = new Map<string, Record<string, unknown>>();
+  const stepIndex = new Map<string, number>();
+  const total = input.agentCount ?? 0;
+  const fileCard = async (it: { id?: string; value?: unknown }) => {
+    if (!it?.id || !isApprovalRequest(it.value) || seenInterrupts.has(it.id)) return;
+    seenInterrupts.add(it.id);
+    const d = describe(it.value);
+    const card = await input.approvals.enqueueOnce({
+      interruptKey: `${input.runId}:${it.id}`,
+      runId: input.runId,
+      threadId: input.runId,
+      systemId: input.owner.systemId,
+      node: it.value.tool_call_id,
+      tool: it.value.name,
+      args: it.value.args,
+      approverRole: d.approverRole,
+      domain: input.owner.domain,
+      runner: input.runner,
+      agent: input.agent,
+    });
+    filed.push({ approvalId: card.approvalId, interruptId: it.id, tool: it.value.name, node: it.value.tool_call_id });
+    input.hooks?.onInterrupt?.(filed[filed.length - 1]);
+    input.log?.(`parked runId=${input.runId} interrupt=${it.id}`);
+  };
   try {
     const stream = await input.graph.stream(streamInput, {
       ...config,
-      streamMode: 'updates',
+      streamMode: ['updates', 'tasks'],
+      subgraphs: true,
       durability: 'sync',
       ...(input.recursionLimit ? { recursionLimit: input.recursionLimit } : {}),
       ...(input.signal ? { signal: input.signal } : {}),
     });
-    for await (const chunk of stream) {
+    for await (const part of stream as AsyncIterable<unknown>) {
+      const [ns, mode, chunk] = part as [string[], string, Record<string, unknown>];
+      const agentNs = ns.find((n) => n.startsWith('agent_'));
+      const agentId = agentNs ? agentNs.slice('agent_'.length).split(':')[0] : null;
+      if (mode === 'tasks') {
+        // A task START event carries `input`; its result event carries `result`.
+        const name = String(chunk.name ?? '');
+        if (ns.length === 0 && name.startsWith('agent_') && 'input' in chunk) {
+          const id = name.slice('agent_'.length);
+          const n = (visits.get(id) ?? 0) + 1;
+          visits.set(id, n);
+          input.spans?.start(id, n);
+          input.hooks?.onNodeStart?.({ node: id, index: path.length, total });
+        }
+        continue;
+      }
       for (const [key, value] of Object.entries(chunk)) {
-        if (key !== '__interrupt__') {
-          if (key.startsWith('agent_')) path.push(key.slice('agent_'.length));
+        if (key === '__interrupt__') {
+          for (const it of (Array.isArray(value) ? value : [value]) as { id?: string; value?: unknown }[]) await fileCard(it);
           continue;
         }
-        for (const it of (Array.isArray(value) ? value : [value]) as { id?: string; value?: unknown }[]) {
-          if (!it?.id || !isApprovalRequest(it.value)) continue;
-          const d = describe(it.value);
-          const card = await input.approvals.enqueueOnce({
-            interruptKey: `${input.runId}:${it.id}`,
-            runId: input.runId,
-            threadId: input.runId,
-            systemId: input.owner.systemId,
-            node: it.value.tool_call_id,
-            tool: it.value.name,
-            args: it.value.args,
-            approverRole: d.approverRole,
-            domain: input.owner.domain,
-            runner: input.runner,
-            agent: input.agent,
-          });
-          filed.push({ approvalId: card.approvalId, interruptId: it.id, tool: it.value.name, node: it.value.tool_call_id });
-          input.log?.(`parked runId=${input.runId} interrupt=${it.id}`);
+        const msgs = ((value as { messages?: unknown[] } | null)?.messages ?? []) as { type?: string; name?: string; content?: unknown; status?: string; tool_call_id?: string; tool_calls?: { id?: string; name: string; args: Record<string, unknown> }[] }[];
+        if (agentId) {
+          // Inside an agent: record the calls the model asked for, report each finished tool step.
+          for (const m of msgs) {
+            for (const c of m.tool_calls ?? []) if (c.id) argsOf.set(c.id, c.args ?? {});
+            if (m.type === 'tool' && m.tool_call_id && m.name !== 'set_state') {
+              const i = stepIndex.get(agentId) ?? 0;
+              stepIndex.set(agentId, i + 1);
+              input.hooks?.onStep?.({ node: agentId, index: i, step: { tool: String(m.name ?? ''), args: argsOf.get(m.tool_call_id) ?? {}, result: textOf(m.content), isError: m.status === 'error' } });
+            }
+          }
+          continue;
+        }
+        if (ns.length === 0 && key.startsWith('agent_')) {
+          const id = key.slice('agent_'.length);
+          path.push(id);
+          const answer = [...msgs].reverse().find((m) => m.type === 'ai' && !(m.tool_calls ?? []).length);
+          const finalText = textOf(answer?.content);
+          input.spans?.end(id, { output: { chars: finalText.length } });
+          input.hooks?.onNodeComplete?.({ node: id, status: 'ok', finalText });
         }
       }
     }
   } catch (e) {
+    for (const id of visits.keys()) input.spans?.end(id, { error: (e as Error)?.message ?? String(e) });
     if (e instanceof GraphRecursionError || (e as Error)?.name === 'AbortError') interrupted = true;
     else throw e;
   }
+  // A node still open here parked on an approval (its span says so; its result comes on resume).
+  for (const id of visits.keys()) input.spans?.end(id, { parked: true });
 
   const snap = await input.graph.getState(config);
   const pending = snap.tasks.flatMap((t) => t.interrupts.filter((i) => isApprovalRequest(i.value)).map((i) => ({ id: String(i.id ?? ''), req: i.value as ApprovalRequest })));
@@ -264,5 +356,6 @@ export async function runAgentModule(input: ModuleRunInput): Promise<ModuleRunRe
     heldApprovals,
     values: snap.values,
     module: input.module,
+    runs: runsFromMessages(messages as Msg[], input.modelOf ?? (() => '')),
   };
 }

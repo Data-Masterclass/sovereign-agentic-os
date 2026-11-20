@@ -40,7 +40,7 @@ import { identifierProblems, TOOL_NAME_RE } from '@tabs/agents/lib/safe-ids';
 import { AGENT_EVALS_FILE as MODULE_EVALS, AGENT_GRAPH_FILE as MODULE_GRAPH, AGENT_LOCK_FILE as MODULE_LOCK, AGENT_PACKAGE_FILE as MODULE_PACKAGE, AGENT_RUNNER_FILE as MODULE_RUNNER, agentPromptFile as promptPath, agentMemoryFile as memoryPromptPath } from '@core/infra/repo-layout';
 
 /** The emitted module's format. Bump only when the shape of the generated files changes. */
-export const AGENT_MODULE_FORMAT = 1;
+export const AGENT_MODULE_FORMAT = 2;
 
 /** The npm packages the module and its ejector need, with the exact versions os-ui runs. */
 export const MODULE_PACKAGES = ['@langchain/core', '@langchain/langgraph', '@langchain/langgraph-checkpoint-postgres', '@langchain/openai', 'langchain'] as const;
@@ -266,7 +266,10 @@ export function buildGraph({ model, tools, middleware = [], checkpointer, maxSte
 
     graph.addNode('agent_' + a.id, async (state, config) => {
       const out = await agent.invoke({ messages: state.messages }, config);
-      const added = out.messages.slice(state.messages.length);
+      // What this visit added, by message id: the agent's own context management (a summary that
+      // replaced older turns in ITS window) never rewrites the team transcript.
+      const known = new Set(state.messages.map((m) => m.id));
+      const added = out.messages.filter((m) => !known.has(m.id));
       return { messages: added, steps: 1, ...writesOf(added) };
     });
 

@@ -248,6 +248,9 @@ export async function register(): Promise<void> {
         // executes the jobs, `inline` (default) means this process does, straight after filing.
         const { ensureRunJobsReady } = await import('./tabs/agents/lib/build/run-jobs-server.ts');
         const jobs = await ensureRunJobsReady();
+        // WP-53b: the agent-module tables by migration (node-pg-migrate); off unless AGENT_GRAPH_MODULE.
+        const { ensureAgentModuleReady } = await import('./tabs/agents/lib/module/os-run.ts');
+        console.info(`[os-ui] agent modules: ${await ensureAgentModuleReady(config.agentRunsDatabaseUrl)}`);
         console.info(`[os-ui] agent runs: run queue ready (${jobs}); AGENTS_WORKER=${config.agentsWorker}`);
         // A5: AGENTS_ENGINE is retired. An environment that still sets it is told, once, that it
         // does nothing — silence would let an operator believe they had pinned the old walker.

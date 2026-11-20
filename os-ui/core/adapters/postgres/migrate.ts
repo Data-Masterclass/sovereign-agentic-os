@@ -41,6 +41,38 @@ export const MIGRATIONS_DIR = fileURLToPath(new URL('./migrations/', import.meta
 export const MIGRATIONS_SCHEMA = 'os_migrations';
 export const MIGRATIONS_TABLE = 'governance_migrations';
 
+/** The `agent_runs` database's own migrations (WP-53b): tables the agent-module runs use. */
+export const AGENT_RUNS_MIGRATIONS_DIR = fileURLToPath(new URL('./agent-runs-migrations/', import.meta.url));
+export const AGENT_RUNS_MIGRATIONS_TABLE = 'agent_runs_migrations';
+
+/**
+ * Apply the `agent_runs` migrations with node-pg-migrate's runner, under its advisory lock
+ * (`wait`), so concurrent boots of os-ui and os-ui-worker serialise: one migrates, the other finds
+ * nothing to do. No pg-boss step (the queue is not in this database).
+ */
+export async function migrateAgentRuns(opts: { databaseUrl: string; direction?: 'up' | 'down'; count?: number }): Promise<Fetched<string[]>> {
+  const databaseUrl = opts.databaseUrl.trim();
+  if (!databaseUrl) throw new Error('migrateAgentRuns: no database URL');
+  try {
+    const ran = await runner({
+      databaseUrl,
+      dir: AGENT_RUNS_MIGRATIONS_DIR,
+      direction: opts.direction ?? 'up',
+      count: opts.count,
+      migrationsSchema: MIGRATIONS_SCHEMA,
+      createMigrationsSchema: true,
+      migrationsTable: AGENT_RUNS_MIGRATIONS_TABLE,
+      checkOrder: true,
+      singleTransaction: true,
+      advisoryLockMode: 'wait',
+      log: () => undefined,
+    });
+    return fetchedOk(ran.map((m) => m.name));
+  } catch (err) {
+    return pgFailure(err);
+  }
+}
+
 export interface MigrateOptions {
   databaseUrl: string;
   direction: 'up' | 'down';
