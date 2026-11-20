@@ -422,6 +422,8 @@ jobs:
           helm dependency build charts/sovereign-agentic-os || helm dependency update charts/sovereign-agentic-os
           npm --prefix tests/lakehouse ci
           npm --prefix os-ui ci --no-audit --no-fund
+      - name: query-tool pin needs a digest outside the local profile (+ twins)
+        run: bash tests/domain-delete/query-tool-pin.test.sh
       # The chart's delete-domain RBAC on a real API server (kind): `kubectl auth can-i` as os-ui.
       - name: RBAC (kind, kubectl auth can-i as os-ui)
         run: |
