@@ -24,8 +24,6 @@ import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { Opa, TOKEN, chartEnv, docker, fakeEmptyMirror, startBundleServer, startChartOpa, until, type BundleServer } from './bundle-it.ts';
 import { seedOsState } from './fixture.ts';
-import { freshDatabase } from '../../os-ui/core/testing/postgres/it-support.ts';
-import { migrateGovernance } from '../../os-ui/core/testing/postgres/unwrapped.ts';
 
 // `pg` resolves from os-ui's own dependencies (this file lives outside os-ui/).
 const pg = createRequire(new URL('../../os-ui/package.json', import.meta.url))('pg') as typeof import('pg');
@@ -47,8 +45,11 @@ process.env.OS_OPA_DATA_BUNDLE = '1';
 process.env.OS_OPA_SEED = chartEnv('OS_OPA_SEED', ['opa.dataBundle.enabled=true']);
 process.env.OS_OPA_SEED_PRINCIPALS = chartEnv('OS_OPA_SEED_PRINCIPALS');
 await fakeEmptyMirror();
+// Imported only now: these load os-ui's config, which must see the env above.
+const { freshDatabase } = await import('../../os-ui/core/testing/postgres/it-support.ts');
+const { migrateGovernance } = await import('../../os-ui/core/testing/postgres/unwrapped.ts');
 
-let db: Awaited<ReturnType<typeof freshDatabase>>;
+let db: { url: string; drop: () => Promise<void> };
 let client: InstanceType<typeof pg.Client>;
 let server: BundleServer | null = null;
 let stopBundle: (() => void) | undefined;

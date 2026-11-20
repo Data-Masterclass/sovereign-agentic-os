@@ -45,8 +45,11 @@ before(async () => {
   startChartOpa(OPA_NAME, OPA_PORT, ['opa.dataBundle.enabled=true', `opa.dataBundle.serviceUrl=http://host.docker.internal:${SERVER_PORT}/api/opa`]);
   server = await startBundleServer(SERVER_PORT);
   spawnRm(TRINO_NAME);
+  // Trino reaches OPA container-to-container (the OPA port is published on the host's loopback
+  // only, which a container cannot reach on Linux).
+  const opaIp = docker('inspect', '-f', '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}', OPA_NAME).trim();
   sh('python3', [fileURLToPath(new URL('./run-chart-trino.py', import.meta.url)), TRINO_NAME, String(TRINO_PORT),
-    '--set', `trino.opa.uri=http://host.docker.internal:${OPA_PORT}`,
+    '--set', `trino.opa.uri=http://${opaIp}:8181`,
     '--set', 'trino.jvm.maxHeap=1536M', '--set', 'trino.query.maxMemory=512MB', '--set', 'trino.query.maxMemoryPerNode=512MB']);
 });
 after(async () => {

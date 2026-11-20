@@ -968,6 +968,8 @@ opa:
       - notion_search
       - notion_get_page
       - notion_create_page       # Write-approval (see requiresApproval); delete is Blocked (absent)
+    opa-status-reporter:        # WP-11: OPA's status reports to os-ui (POST /api/opa/status)
+      - opa_status_report
     conn-salesforce-sales-org:  # API connection — reads scoped to Sales, bounded write
       - read_account
       - read_opportunity
