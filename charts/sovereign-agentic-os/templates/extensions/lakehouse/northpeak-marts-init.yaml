@@ -348,6 +348,9 @@ spec:
             - { name: HOME, value: /tmp }
             {{- $ta := .Values.trino.auth | default dict }}
             {{- if and $ta.enabled ($ta.clients | default dict).northpeakMarts }}
+            {{- if not (has $m.trino.user ($ta.directUsers | default list)) }}
+            {{- fail (printf "marts.trino.user %q authenticates with a password under trino.auth (clients.northpeakMarts), so it must be listed in trino.auth.directUsers" $m.trino.user) }}
+            {{- end }}
             - { name: TRINO_URL, value: {{ printf "https://%s:%v" $m.trino.host $ta.httpsPort | quote }} }
             - name: TRINO_PASSWORD
               valueFrom: { secretKeyRef: { name: {{ $ta.passwords.existingSecret | default $ta.passwords.secretName }}, key: {{ $m.trino.user }} } }
@@ -367,6 +370,9 @@ spec:
             - { name: script, mountPath: /work, readOnly: true }
             - { name: tmp, mountPath: /tmp }
             {{- if and $ta.enabled ($ta.clients | default dict).northpeakMarts }}
+            {{- if not (has $m.trino.user ($ta.directUsers | default list)) }}
+            {{- fail (printf "marts.trino.user %q authenticates with a password under trino.auth (clients.northpeakMarts), so it must be listed in trino.auth.directUsers" $m.trino.user) }}
+            {{- end }}
             - { name: trino-ca, mountPath: /etc/trino-ca, readOnly: true }
             {{- end }}
           resources:

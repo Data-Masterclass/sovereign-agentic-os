@@ -1282,7 +1282,12 @@ dbt:
   trino:
     host: trino
     port: 8080
-    user: dbt-sales
+    # The DOMAIN principal of `schema` below. On a fresh install os-ui's boot-time Trino rules give a
+    # domain's schema to that domain's principals only (core/infra/trino-rules.ts), and this hook
+    # runs CREATE SCHEMA IF NOT EXISTS + CTAS in it — as `dbt-sales` it was denied (first dev
+    # install, 2026-11-20). A service user here is honoured only for a schema NO domain owns
+    # (TRINO_SEED_WRITERS).
+    user: sales
     catalog: iceberg
     # The domain schema the marts land in.
     schema: sales
@@ -1307,7 +1312,10 @@ marts:
   trino:
     host: trino
     port: 8080
-    user: northpeak-marts
+    # The DOMAIN principal of `schema` below, for the same reason as `dbt.trino.user`. With
+    # trino.auth.enabled + clients.northpeakMarts the Job authenticates with a password, so the user
+    # must then also be in trino.auth.directUsers (the chart refuses to render otherwise).
+    user: sales
     catalog: iceberg
   schema: sales
   table: gold_northpeak_commerce

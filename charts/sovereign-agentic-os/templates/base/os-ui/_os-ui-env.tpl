@@ -529,7 +529,7 @@
 {{- if and .Values.marts .Values.marts.enabled }}{{ $writers = append $writers (printf "%s:%s" .Values.marts.trino.user .Values.marts.schema) }}{{ end }}
 {{- if $writers }}
 - name: TRINO_SEED_WRITERS
-  value: {{ join "," $writers | quote }}
+  value: {{ join "," (uniq $writers) | quote }}
 {{- end }}
 - name: TRINO_ACCESS_RULES_INTERVAL_MINUTES
   value: {{ $ac.reconcileIntervalMinutes | default 10 | quote }}
