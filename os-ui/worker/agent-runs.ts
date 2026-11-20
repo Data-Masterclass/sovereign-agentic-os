@@ -86,6 +86,10 @@ export async function bootWorker(): Promise<WorkerBoot> {
   // production a missing key stops the boot (typed). The console login is web-only, not needed here.
   const { assertLangfuseCredentialsInProd } = await import('@core/kernel/config');
   assertLangfuseCredentialsInProd(config, { withSso: false });
+  // What it DOES read at boot is guarded here: the runtime bearer and the Langfuse pair must be set
+  // and must not equal a public development default (core/kernel/secret-guard.ts, worker list).
+  const { assertProductionSecrets } = await import('@core/kernel/secret-guard');
+  assertProductionSecrets('os-ui-worker');
 
   // FAIL CLOSED ON AGENT-SYSTEM WRITES (Part D review H-3). This pod mounts no `os-repos` volume
   // — the PVC is ReadWriteOnce and os-ui owns it — and carries no `DATA_PROJECT_GIT`, so a

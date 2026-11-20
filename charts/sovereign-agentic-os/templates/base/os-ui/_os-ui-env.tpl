@@ -28,6 +28,15 @@
   value: "3000"
 - name: HOSTNAME
   value: "0.0.0.0"
+{{- /* Production secret guard (core/kernel/secret-guard.ts): a production build refuses to boot
+       when a guarded secret is missing or equals its public development default. A LAPTOP
+       install (profile `local` AND no Ingress) renders those defaults from values.yaml on
+       purpose, so it — and only it — is told so. Any install with an Ingress, and every
+       non-local profile, gets no such variable and is guarded. */}}
+{{- if and (eq .Values.global.profile "local") (not (.Values.ingress | default dict).enabled) }}
+- name: OS_ALLOW_PUBLIC_DEV_SECRETS
+  value: "laptop"
+{{- end }}
 {{- /* Model pricing for Monitoring cost facts (EUR per 1M tokens per
      LiteLLM model_name). Nil-safe: absent under --reuse-values ⇒ env
      unset ⇒ cost shows an honest "—". */}}

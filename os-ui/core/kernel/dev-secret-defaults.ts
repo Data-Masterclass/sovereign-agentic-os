@@ -4,12 +4,14 @@
  * AREA:       kernel
  * FEATURE:    Refuse development secret defaults in production (defence in depth)
  * USER STORY: As a developer I want a clone-and-run install to work without secrets, and as an
- *             operator I want those development fallbacks never to reach a browser bundle.
+ *             operator I want those development fallbacks never to reach a browser bundle and
+ *             never to be accepted by a production process.
  * ARCHITECTURE:
  *   - The ONLY place the development fallbacks of the guarded secrets are spelled out.
  *     `core/kernel/config.ts` uses them as `env()` fallbacks. On the server every value is
  *     exactly the literal config.ts used before, so no server-side value changes
- *     (`dev-secret-defaults.test.ts`).
+ *     (`dev-secret-defaults.test.ts`). `core/kernel/secret-guard.ts` knows them only as SHA-256
+ *     digests and refuses them in production.
  *   - Server-only BY CONSTRUCTION: every value is behind `typeof window === 'undefined'`. Next.js
  *     replaces `typeof window` with a constant in each bundle ("object" in the browser build), so
  *     the minifier drops the literal from client chunks even when a client component reaches
