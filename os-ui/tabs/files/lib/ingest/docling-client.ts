@@ -84,12 +84,12 @@ export const DOCLING_RESULT_PATH = '/v1/result';
 export const DOCLING_FILE_FIELD = 'files';
 /** docling-serve's API-key header (`docling_serve/auth.py`, `APIKeyAuth`). */
 export const DOCLING_API_KEY_HEADER = 'X-Api-Key';
-/**
- * The table-structure model. TableFormer v2 (`docling-project/TableFormerV2`, Apache-2.0) is baked
- * into our derived image; the v1 weights (`docling-project/docling-models`, CDLA-Permissive-2.0)
- * are removed from it, so this choice is also what the licence allowlist requires.
+/*
+ * The table-structure model is chosen SERVER-SIDE, not here: our docling image sets docling-serve's
+ * documented DEFAULT_TABLE_STRUCTURE_PRESET=tableformer_v2 and ALLOWED_TABLE_STRUCTURE_PRESETS=
+ * ["tableformer_v2"] (images/extensions/docling). The request names no preset, so this client works
+ * unchanged against the server it is paired with — never asking an older server for a model it lacks.
  */
-export const DOCLING_TABLE_STRUCTURE_PRESET = 'tableformer_v2';
 
 const DONE = new Set(['success', 'partial_success']);
 const FAILED = new Set(['failure', 'skipped']);
@@ -167,8 +167,6 @@ export async function convertWithDocling(doc: DoclingDocument, opts: DoclingOpti
   form.append(DOCLING_FILE_FIELD, new Blob([new Uint8Array(doc.bytes)], { type }), doc.name);
   form.append('to_formats', 'md');
   form.append('do_ocr', 'true');
-  form.append('do_table_structure', 'true');
-  form.append('table_structure_preset', DOCLING_TABLE_STRUCTURE_PRESET);
   // Picture bitmaps are megabytes of base64 nobody reads; a placeholder keeps the reply text-sized.
   form.append('image_export_mode', 'placeholder');
   const submit = await call(fetchImpl, `${base}${DOCLING_SUBMIT_PATH}`, { method: 'POST', body: form, headers }, Math.min(left(), 120_000));

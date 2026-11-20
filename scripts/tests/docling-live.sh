@@ -44,9 +44,26 @@ else
 fi
 echo "docling-live: env ${envargs[*]}"
 
-cleanup() { docker logs "$NAME" > "${DOCLING_LIVE_LOG:-/dev/null}" 2>&1 || true; docker rm -f "$NAME" >/dev/null 2>&1 || true; }
+# The chart's memory limit (docling.resources.limits.memory, 4Gi) is enforced on the container, so
+# an OOM here fails the run exactly as it would kill the pod. Peak usage is sampled every second.
+MEM=${DOCLING_LIVE_MEMORY:-4g}
+PEAK_FILE=$(mktemp)
+cleanup() {
+  [ -n "${SAMPLER:-}" ] && kill "$SAMPLER" 2>/dev/null
+  docker logs "$NAME" > "${DOCLING_LIVE_LOG:-/dev/null}" 2>&1 || true
+  echo "docling-live: OOMKilled=$(docker inspect -f '{{.State.OOMKilled}}' "$NAME" 2>/dev/null || echo '?')"
+  docker rm -f "$NAME" >/dev/null 2>&1 || true
+  echo "docling-live: peak memory $(sort -n "$PEAK_FILE" | tail -1 | awk '{printf "%.0f MiB", $1/1048576}') of limit $MEM"
+  rm -f "$PEAK_FILE"
+}
 trap cleanup EXIT
-docker run -d --name "$NAME" -p "127.0.0.1:$PORT:5001" "${envargs[@]}" -e "DOCLING_SERVE_API_KEY=$KEY" "$IMAGE" >/dev/null
+started=$(date +%s)
+docker run -d --name "$NAME" --memory "$MEM" --memory-swap "$MEM" -p "127.0.0.1:$PORT:5001" "${envargs[@]}" -e "DOCLING_SERVE_API_KEY=$KEY" "$IMAGE" >/dev/null
+( while sleep 1; do
+    docker stats --no-stream --format '{{.MemUsage}}' "$NAME" 2>/dev/null | awk '{ v=$1; u=v; gsub(/[0-9.]/,"",u); n=v; gsub(/[^0-9.]/,"",n);
+        m = (u=="GiB")?1073741824:(u=="MiB")?1048576:(u=="KiB")?1024:1; printf "%.0f\n", n*m }' >> "$PEAK_FILE" || break
+  done ) &
+SAMPLER=$!
 
 for _ in $(seq 1 180); do
   code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/ready" || true)
@@ -54,6 +71,7 @@ for _ in $(seq 1 180); do
   sleep 2
 done
 [ "$code" = 200 ] || { docker logs "$NAME" | tail -50; echo "docling-live: /ready never answered 200" >&2; exit 1; }
+echo "docling-live: /ready answered 200 after $(( $(date +%s) - started ))s (boot loads the default-preset models)"
 
 cd os-ui
 DOCLING_LIVE_URL="http://127.0.0.1:$PORT" DOCLING_LIVE_API_KEY="$KEY" DOCLING_LIVE_IMAGE="$IMAGE" DOCLING_LIVE_REQUIRED=1 \
