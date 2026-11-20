@@ -141,11 +141,11 @@ test('every generated semantic file is spec-valid and carries no live Jinja beyo
   for (const m of text.matchAll(/\{\{(.*?)\}\}/g)) {
     assert.match(m[1], / (?:Dimension|TimeDimension)\('/, `unexpected Jinja in the semantic file: ${m[0]}`);
   }
-  // `stripJinja` strips the DELIMITERS; the call text survives as inert prose, which is the whole
-  // contract (prose has no business being a template, and nothing real is lost).
-  assert.match(text, /description: Orders env_var\('SECRET_TOKEN'\)/);
-  // The smuggled `expr` is stripped the same way, and then REFUSED by the closed grammar — the
-  // quotes and parentheses that survive stripping are not in it — so the measure never lands.
+  // Prose is ENCODED: the ASCII braces become fullwidth braces, so the text reads the same and no
+  // Jinja delimiter can form (`literal.freeText`).
+  assert.match(text, /description: Orders \uFF5B\uFF5B env_var\('SECRET_TOKEN'\) \uFF5D\uFF5D/);
+  // The smuggled `expr` is SQL, which cannot be encoded: the closed grammar REFUSES it, so the
+  // measure never lands.
   // The token NAME survives in the description as inert prose (asserted above); what must not
   // survive anywhere is a live delimiter, and the smuggled measure must not land at all.
   assert.doesNotMatch(text, /- name: smuggled/);
@@ -157,7 +157,7 @@ test('every generated semantic file is spec-valid and carries no live Jinja beyo
   assert.match(files.get('README.md')!, /`smuggled`.*closed expr grammar/);
 });
 
-test('REVIEW M-2: an `expr` carrying Jinja is stripped on emit AND refused by the closed grammar', () => {
+test('REVIEW M-2: an `expr` carrying Jinja is refused by the closed grammar AND by the emitter', () => {
   for (const bad of ["{{ env_var('X') }}", '{% if 1 %}a{% endif %}', "a' or '1'='1", 'a; drop table t', 'a -- comment', 'a /* c */']) {
     assert.equal(isSafeSemanticExpr(bad), false, `should be refused: ${bad}`);
   }
@@ -169,8 +169,8 @@ test('REVIEW M-2: an `expr` carrying Jinja is stripped on emit AND refused by th
   for (const ok of ['net_amount', 'revenue / orders', '(revenue - cost) * 100 / orders', 'coalesce(a, 0)']) {
     assert.equal(isSafeSemanticExpr(ok), true, ok);
   }
-  // Emission strips the delimiters even when a caller hands the model a template directly.
-  const emitted = emitSemanticYaml({
+  // Emission REFUSES a brace even when a caller hands the model a template directly.
+  assert.throws(() => emitSemanticYaml({
     semantic_models: [
       {
         name: 'x',
@@ -182,6 +182,5 @@ test('REVIEW M-2: an `expr` carrying Jinja is stripped on emit AND refused by th
       },
     ],
     metrics: [{ name: 'm', type: 'simple', type_params: { measure: { name: 'm' } } }],
-  });
-  assert.doesNotMatch(emitted, /\{\{|\}\}|\{%|%\}/);
+  }), /may not contain a brace/);
 });

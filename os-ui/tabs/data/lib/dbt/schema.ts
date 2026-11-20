@@ -26,12 +26,14 @@
  *     to a dataset with no model in this project is an intention too: `ref()` on an unknown name
  *     fails `dbt parse`, which would take the whole domain's project down, not just that test.
  *   - SAFETY (review B2-review-H3): dbt renders `schema.yml` AS JINJA before reading it, so an
- *     authored description or name is template input. Every authored string this file emits goes
- *     through `emit.stripJinja` (`{% raw %}` does not protect a YAML scalar, and nothing in a
- *     description needs to survive as a template).
+ *     authored description or name is template input. Every authored string this file emits is
+ *     encoded by `literal.freeText` (no ASCII brace survives, so no Jinja delimiter can form);
+ *     column names are validated identifiers (`literal.datasetLiteralIssues`, run by the generator
+ *     before rendering) and carry dbt's documented `quote: true` when Trino reserves the word.
  */
 import { isSafeCheckValue, type DataCheck, type Dataset } from '@tabs/data/lib/dataset-schema';
-import { stripJinja, yml } from '@tabs/data/lib/dbt/emit';
+import { yml } from '@tabs/data/lib/dbt/emit';
+import { freeText, needsQuote } from '@tabs/data/lib/dbt/literal';
 import type { ModelPlan } from '@tabs/data/lib/dbt/models';
 
 export type TestSpec = string | Record<string, unknown>;
@@ -137,7 +139,7 @@ export function checksToColumnTests(
   for (const check of checks ?? []) {
     const spec = checkToTest(check, resolveRef);
     if (!spec) {
-      intentions.push(stripJinja(check.name));
+      intentions.push(freeText(check.name));
       continue;
     }
     const col = check.column!.trim();
@@ -154,17 +156,17 @@ export function columnDocs(
 ): { columns: Record<string, unknown>[]; intentions: string[] } {
   const columns = new Map<string, Record<string, unknown>>();
   for (const c of d.columns) {
-    const name = stripJinja(c.name).trim();
+    const name = c.name.trim();
     if (!name) continue;
-    const description = stripJinja(c.description ?? '');
-    columns.set(name, { name, ...(description ? { description } : {}) });
+    const description = freeText(c.description ?? '');
+    columns.set(name, { name, ...(description ? { description } : {}), ...(needsQuote(name) ? { quote: true } : {}) });
   }
   let intentions: string[] = [];
   if (withTests) {
     const ct = checksToColumnTests(d.checks, resolveRef);
     intentions = ct.intentions;
     for (const [col, specs] of ct.tests) {
-      const entry = columns.get(col) ?? { name: col };
+      const entry = columns.get(col) ?? { name: col, ...(needsQuote(col) ? { quote: true } : {}) };
       entry.data_tests = specs.reduce(pushUniqueTest, (entry.data_tests as TestSpec[] | undefined) ?? []);
       columns.set(col, entry);
     }
@@ -176,8 +178,8 @@ function modelDoc(m: ModelPlan, resolveRef: (datasetId: string) => string | null
   const d: Dataset = m.dataset;
   const { columns, intentions } = columnDocs(d, m.tested, resolveRef);
   const description = [
-    `${m.layer} layer of OS dataset ${d.id} ("${stripJinja(d.name)}")${d.origin === 'curated' ? ' — a composition of existing datasets' : ''}.`,
-    stripJinja(d.description).trim(),
+    `${m.layer} layer of OS dataset ${d.id} ("${freeText(d.name)}")${d.origin === 'curated' ? ' — a composition of existing datasets' : ''}.`,
+    freeText(d.description).trim(),
   ]
     .filter(Boolean)
     .join(' ');

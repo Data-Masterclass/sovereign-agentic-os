@@ -153,8 +153,19 @@ With the flag on, the OS stops being its own run ledger (checklist D7–D11):
 - **Authored text is inert, not absent.** dbt renders every generated `.yml` **and** `.sql` through
   Jinja before reading it — a `--` comment is no shelter — so a dataset name, a description or a
   column name reading `{{ env_var('…') }}` would be evaluated by `dbt parse`, in a pod that holds
-  the OS's cluster-internal runtime bearer. Every authored string the generator emits therefore
-  passes through `lib/dbt/emit.ts` `stripJinja`, which removes the delimiters and keeps the words.
+  the OS's cluster-internal runtime bearer. So `lib/dbt/literal.ts` admits user input in exactly two
+  forms. IDENTIFIERS (column, schema, table, connection, dataset ids, owner, domain, slug) and the
+  sync cron are validated against closed allow-lists — at write time in the store (typed
+  `invalid_identifier` / `invalid_cron`, the MCP returns those codes) and again by the generator,
+  which leaves a failing dataset out of the project (`os/skipped.yml`). FREE TEXT (names,
+  descriptions, labels, rule names) is encoded: `{` and `}` become their fullwidth forms, which
+  read the same in the YAML, the manifest and dbt docs, and no Jinja delimiter can form (every
+  delimiter starts with an ASCII `{`). A brace inside a compiled filter literal becomes the
+  equivalent Trino `U&'…'` Unicode literal. `project-check.ts` rule 8 refuses any Jinja outside
+  the generator's own grammar as a last line. Proof: `literal-safety.fuzz.test.ts` (every field ×
+  every payload), its twin with the old strip put back, and `literal_safety.py`, which runs real
+  `dbt parse` + `dbt compile` in the Dagster image with Trino's query log as the oracle.
+  Before a deploy, `os-ui/scripts/preflight-literal-safety.ts` lists stored values the rules refuse.
   The MODEL bodies are a separate, stronger rule (provenance, above): authored SQL never becomes a
   model at all.
 - **A quality rule's value set is checked at the gate.** dbt emits each `accepted_values` entry as

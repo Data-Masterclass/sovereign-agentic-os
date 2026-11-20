@@ -14,7 +14,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { checkToTest, checksToColumnTests, columnDocs, renderSchemas } from '@tabs/data/lib/dbt/schema';
-import { stripJinja } from '@tabs/data/lib/dbt/emit';
+import { freeText, decodeFreeText } from '@tabs/data/lib/dbt/literal';
 import { isSafeCheckValue, parseDataset, type DataCheck, type Dataset } from '@tabs/data/lib/dataset-schema';
 import type { ModelPlan } from '@tabs/data/lib/dbt/models';
 
@@ -84,15 +84,16 @@ test('an authored description or name never reaches schema.yml as Jinja', () => 
   const yaml = [...renderSchemas([plan(d)]).values()].join('\n');
   assert.ok(!yaml.includes(payload), 'the verbatim Jinja expression reached schema.yml');
   assert.ok(!yaml.includes('{{') && !yaml.includes('}}'), 'a Jinja delimiter reached schema.yml');
-  assert.ok(yaml.includes("env_var('AGENT_RUNTIME_TOKEN')"), 'the text itself is kept — only the delimiters go');
+  assert.ok(yaml.includes("\uFF5B\uFF5B env_var('AGENT_RUNTIME_TOKEN') \uFF5D\uFF5D"), 'the text is kept, its braces encoded as fullwidth braces');
   const docs = columnDocs(d, true);
   assert.ok(!JSON.stringify(docs).includes('{{'));
 });
 
-test('stripJinja removes every delimiter kind and leaves clean prose alone', () => {
-  assert.equal(stripJinja('{{ a }}{% b %}{# c #}'), ' a  b  c ');
-  assert.equal(stripJinja('Order events, 99% of them.'), 'Order events, 99% of them.');
-  assert.equal(stripJinja(''), '');
+test('freeText encodes every brace (no ASCII brace survives) and leaves clean prose alone', () => {
+  assert.equal(freeText('{{ a }}{% b %}{# c #}'), '\uFF5B\uFF5B a \uFF5D\uFF5D\uFF5B% b %\uFF5D\uFF5B# c #\uFF5D');
+  assert.equal(decodeFreeText(freeText('{}}{ x }%}}')), '{}}{ x }%}}');
+  assert.equal(freeText('Order events, 99% of them.'), 'Order events, 99% of them.');
+  assert.equal(freeText(''), '');
 });
 
 // -------------------------------- D5 follow-up: `reference` → dbt `relationships` --

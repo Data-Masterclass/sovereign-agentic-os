@@ -403,10 +403,16 @@ export type Dataset = {
 
 export class DatasetError extends Error {
   status: number;
-  constructor(message: string, status = 400) {
+  /** A machine-readable reason, when the refusal has one (e.g. `invalid_identifier`, `invalid_cron`). */
+  code?: string;
+  /** The input field the refusal is about, when known. */
+  field?: string;
+  constructor(message: string, status = 400, detail: { code?: string; field?: string } = {}) {
     super(message);
     this.name = 'DatasetError';
     this.status = status;
+    if (detail.code) this.code = detail.code;
+    if (detail.field) this.field = detail.field;
   }
 }
 

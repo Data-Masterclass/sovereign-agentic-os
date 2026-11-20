@@ -610,6 +610,17 @@ export function structuredError(e: unknown): ToolError {
         'arguments are fine.',
     };
   }
+  // A literal-safety refusal (strict identifier / strict cron, tabs/data/lib/dbt/literal.ts) keeps
+  // its own typed code and names the field, so a client can fix exactly that argument.
+  const typed = (e as { code?: unknown; field?: unknown }).code;
+  if (status === 400 && (typed === 'invalid_identifier' || typed === 'invalid_cron')) {
+    const field = (e as { field?: unknown }).field;
+    return {
+      code: typed,
+      reason,
+      hint: `Change ${typeof field === 'string' ? `\`${field}\`` : 'the value'}: identifiers are letters, digits and underscores; a cron is 5 fields like "0 6 * * *".`,
+    };
+  }
   const code =
     status === 403 ? 'forbidden'
       : status === 404 ? 'not_found'

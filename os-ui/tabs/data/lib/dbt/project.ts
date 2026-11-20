@@ -18,6 +18,7 @@
 import { yml, textFile } from '@tabs/data/lib/dbt/emit';
 import { domainSchema } from '@tabs/data/lib/store-fqn';
 import type { ModelPlanSet } from '@tabs/data/lib/dbt/models';
+import { freeText } from '@tabs/data/lib/dbt/literal';
 import { DBT_SEMANTIC_SPEC } from '@tabs/data/lib/dbt/semantic/spec';
 import type { SemanticRender } from '@tabs/data/lib/dbt/semantic/render';
 import { TIME_SPINE_MODEL } from '@tabs/data/lib/dbt/semantic/time-spine';
@@ -208,8 +209,9 @@ export function renderGenericTests(): Map<string, string> {
 
 export function renderReadme(domain: string, plan: ModelPlanSet, semantic?: SemanticRender): string {
   const models = plan.models.map((m) => `- \`${m.path}\` — ${m.kind}, schema \`${m.schema}\``);
-  const metrics = (semantic?.metrics ?? []).map((m) => `- \`${m.name}\` (${m.type}) — OS metric \`${m.osMetric}\`, in \`${m.path}\``);
-  const refused = (semantic?.refusals ?? []).map((r) => `- \`${r.measure}\` on OS dataset \`${r.dataset}\` — ${r.reason}`);
+  const metrics = (semantic?.metrics ?? []).map((m) => `- \`${m.name}\` (${m.type}) — OS metric \`${freeText(m.osMetric)}\`, in \`${m.path}\``);
+  // Authored measure names and expressions appear here: encoded free text, like every other file.
+  const refused = (semantic?.refusals ?? []).map((r) => `- \`${freeText(r.measure)}\` on OS dataset \`${r.dataset}\` — ${freeText(r.reason)}`);
   return textFile([
     `# ${domain} — data product (dbt project)`,
     '',
