@@ -27,8 +27,11 @@ RUN pip install --no-cache-dir \
       "SQLAlchemy>=2.0,<2.1" \
       "dagster-k8s==0.29.11" \
       "dagster-dbt==0.29.11" \
-      "dbt-core>=1.9,<1.10" \
-      "dbt-trino>=1.9,<1.10"
+      # Exact pins: the versions 0.3.1 resolved to and production parsed with. A range let a
+      # rebuild change the dbt that judges every domain; the image tests and the eject test
+      # (tests/image/) read these versions back from the image instead of repeating them.
+      "dbt-core==1.9.11" \
+      "dbt-trino==1.9.3"
 
 # git (GPL-2.0, a separate process from a distro package — not linked) for the repo-sync
 # sidecar (engine rebuild B1): fetch each domain's generated dbt project from the OS's

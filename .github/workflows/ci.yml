@@ -198,6 +198,20 @@ jobs:
       # agent-runtime: deleted in the engine rebuild (A5) — agent systems execute as a real
       # LangGraph StateGraph inside os-ui, covered by `npm --prefix os-ui test`.
 
+  # The Dagster image under test, built from this commit: `dbt parse` of every generator golden,
+  # repo-sync's per-sha verdict cache, and the eject test (plain dbt-core + dbt-trino against a
+  # stock Trino, no OS present). 01 §7.1 tests 1–2; owner acceptance rule.
+  dagster-image:
+    name: dagster-image
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Build the Dagster image
+        run: docker build -f images/extensions/dagster/Dockerfile -t sovereign-os/dagster:ci images/extensions
+      - name: Image tests + eject test
+        run: sh images/extensions/dagster/tests/image/run.sh sovereign-os/dagster:ci
+
   # OPA policies (04 M0–M1). The policies are plain Rego + JSON data in
   # charts/sovereign-agentic-os/policies with their *_test.rego beside them, so upstream
   # OPA alone runs them (the eject test). The CLI version is read from the chart's
