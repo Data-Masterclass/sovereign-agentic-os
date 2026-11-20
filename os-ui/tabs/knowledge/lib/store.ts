@@ -965,7 +965,8 @@ function commitKnowledgeAfterWrite(domain: string, user: Principal, action: stri
     workflows: [...ks().workflows.values()].filter((w) => w.domain === domain).map((w) => ({ ...w })),
     manual: ks().domainKnowledge.get(domain) ? { ...ks().domainKnowledge.get(domain)!, sections: ks().domainKnowledge.get(domain)!.sections.map((x) => ({ ...x })) } : null,
   };
-  queueKnowledgeCommit(domain, { id: user.id }, { action, object, objectId }, captured).catch(() => undefined);
+  // Fire-and-forget: the queue logs a failure and tracks the promise, so it is never unhandled.
+  void queueKnowledgeCommit(domain, { id: user.id }, { action, object, objectId }, captured);
 }
 
 function commitWorkflowAfterWrite(rec: WorkflowRecord, user: Principal, action: string): void {

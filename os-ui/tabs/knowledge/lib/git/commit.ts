@@ -124,20 +124,23 @@ export function queueKnowledgeCommit(domain: string, actor: ActorIdentity, meta:
   const pinned: CommitMeta = { ...meta, surface: meta.surface ?? surface?.surface, requestId: meta.requestId ?? surface?.requestId };
   const prev = chains.get(domain) ?? Promise.resolve();
   const p = prev
-    .catch(() => undefined)
     .then(async () => {
-      const known = await resolveActor(actor.id).catch(() => ({ id: actor.id }));
+      const known = await resolveActor(actor.id).catch((e) => {
+        console.warn(`[knowledge-git] actor ${actor.id}: directory lookup failed, committing with the id only (${e instanceof Error ? e.message : String(e)})`);
+        return { id: actor.id };
+      });
       return commitKnowledge(domain, { ...actor, ...Object.fromEntries(Object.entries(known).filter(([, v]) => v)) }, pinned, { ...deps, captured });
     })
     .catch((e) => {
       console.error(`[knowledge-git] commit failed for '${meta.action}' in ${domain}: ${e instanceof Error ? e.message : String(e)}`);
       throw e;
     });
-  const tracked = p.finally(() => {
+  // `allSettled` HANDLES p (it is logged above and returned to an awaiting caller), so the chain
+  // and a fire-and-forget caller never see an unhandled rejection, and the next commit still runs.
+  const tracked: Promise<unknown> = Promise.allSettled([p]).then(() => {
     inFlight.delete(tracked);
     if (chains.get(domain) === tracked) chains.delete(domain);
   });
-  tracked.catch(() => undefined);
   chains.set(domain, tracked);
   inFlight.add(tracked);
   return p;

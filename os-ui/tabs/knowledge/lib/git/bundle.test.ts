@@ -7,6 +7,7 @@
  *             tacit notes, their hard rules as OPA data and the domain's operating manual as an
  *             Open Knowledge Format bundle any OKF consumer can read, with the OS facts only in
  *             OKF's extension key (design 11 A19–A21, A24, A29).
+ * ARCHITECTURE: node:test against the real module (and a real temp git repo where it commits); no mocks.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

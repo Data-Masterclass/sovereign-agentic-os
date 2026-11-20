@@ -23,8 +23,11 @@ export function knowledgeWorkflowGitObjectResolver(user: CurrentUser, id: string
   let rec;
   try {
     rec = getWorkflow(id, user);
-  } catch {
-    return null;
+  } catch (e) {
+    // The store's own 403/404 means "not yours or not there": the kernel turns null into one
+    // byte-identical not_found. Any other failure is a real error and propagates.
+    if ((e as { status?: number }).status === 404 || (e as { status?: number }).status === 403) return null;
+    throw e;
   }
   if (!rec || rec.visibility === 'Personal' || rec.archived) return null;
   const domainRecords = listAllForIndex().map((x) => x.record).filter((r) => r.domain === rec.domain);

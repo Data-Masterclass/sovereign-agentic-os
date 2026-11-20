@@ -6,6 +6,7 @@
  * USER STORY: As a domain member I want a published workflow and the domain's operating manual to
  *             survive a restart because they are committed to the domain repository, and I want
  *             the store to be rebuilt FROM git, so the repository is the source of truth (A21).
+ * ARCHITECTURE: node:test against the real module (and a real temp git repo where it commits); no mocks.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
