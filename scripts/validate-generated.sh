@@ -90,7 +90,7 @@ if want dbt && need dbt-parse docker; then
     docker build -q -f images/extensions/dagster/Dockerfile -t "$DAGSTER_IMAGE" images/extensions >/dev/null \
       || fail dbt-parse "docker build of $DAGSTER_IMAGE failed"
   fi
-  fixtures=(os-ui/tabs/data/lib/dbt/fixtures/*.golden.json)
+  fixtures=(os-ui/tabs/data/lib/dbt/fixtures/*.golden.json os-ui/tabs/dashboards/lib/git/fixtures/*.golden.json)
   [ -n "$FIXTURES" ] && [ -d "$FIXTURES/dbt" ] && fixtures+=("$FIXTURES"/dbt/*.json)
   if docker image inspect "$DAGSTER_IMAGE" >/dev/null 2>&1; then
     mkdir -p "$CHECKOUT" && chmod 0777 "$CHECKOUT"

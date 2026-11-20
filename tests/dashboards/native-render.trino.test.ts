@@ -25,7 +25,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { Dataset } from '@tabs/data/lib/index';
 // @ts-ignore -- the harness client is plain JS (tests/lakehouse/lib.mjs), no type declarations
-import { run } from '../../../../../tests/lakehouse/lib.mjs';
+import { run } from '../lakehouse/lib.mjs';
 
 const skip = process.env.LH_TRINO_URL ? false : 'LH_TRINO_URL not set (start tests/lakehouse/up.sh)';
 const trino = (sql: string, user: string): Promise<{ columns: string[]; rows: unknown[][] }> => run(sql, { user, source: 'os-ui-it' });
@@ -38,7 +38,7 @@ mock.module('@core/infra/governed', {
     },
   },
 });
-mock.module('../../../metrics/lib/build/live-clients.ts', { namedExports: { liveMetricsReachable: async () => true } });
+mock.module('../../os-ui/tabs/metrics/lib/build/live-clients.ts', { namedExports: { liveMetricsReachable: async () => true } });
 
 const { commitTree } = await import('@core/infra/git-store');
 const { generateProject } = await import('@tabs/data/lib/dbt/generate');

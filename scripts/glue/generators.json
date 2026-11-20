@@ -1,5 +1,5 @@
 {
-  "$comment": "GLUE-6 / GLUE-10 registry (design 00 §8.3 rule 6, artifact contract). Every OS module that writes a component's native config is listed with its golden fixtures (path -> content maps) and the component tool that validates them in CI (scripts/validate-generated.sh). check-glue.mjs counts generators that are not listed.",
+  "$comment": "GLUE-6 / GLUE-10 registry (design 00 \u00a78.3 rule 6, artifact contract). Every OS module that writes a component's native config is listed with its golden fixtures (path -> content maps) and the component tool that validates them in CI (scripts/validate-generated.sh). check-glue.mjs counts generators that are not listed.",
   "generators": [
     {
       "module": "tabs/data/lib/dbt/generate.ts",
@@ -31,6 +31,20 @@
         "tabs/data/lib/dbt/fixtures/sweep-full.golden.json",
         "tabs/data/lib/dbt/fixtures/sweep-labels.golden.json",
         "tabs/data/lib/dbt/fixtures/dlt-lakehouse.golden.json"
+      ]
+    },
+    {
+      "module": "tabs/dashboards/lib/git/native.ts",
+      "parts": [
+        "tabs/dashboards/lib/git/native-git.ts",
+        "tabs/dashboards/lib/git/receive.ts",
+        "tabs/dashboards/lib/git/migrate.ts",
+        "tabs/dashboards/lib/git/commit.ts"
+      ],
+      "component": "dbt (saved queries + exposures) + Vega-Lite v5",
+      "validator": "dbt parse; vl-convert + Vega-Lite v5 JSON Schema (tests/dashboards/native-eject.docker.test.ts)",
+      "goldens": [
+        "tabs/dashboards/lib/git/fixtures/dashboards-native.golden.json"
       ]
     }
   ]
