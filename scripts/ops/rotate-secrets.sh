@@ -93,7 +93,7 @@ trap stop_forward EXIT
 call() {
   local body=${4:-}
   { printf 'header = "Authorization: Bearer %s"\n' "$1"
-    [ -n "$body" ] && printf 'header = "Content-Type: application/json"\ndata = "%s"\n' "${body//\"/\\\"}"
+    if [ -n "$body" ]; then printf 'header = "Content-Type: application/json"\ndata = "%s"\n' "${body//\"/\\\"}"; fi
   } | curl -sS -K - -X "$2" -w '\n%{http_code}' --max-time 60 "http://127.0.0.1:$PF_PORT$3" | { body=$(cat); printf '%s\n%s' "${body##*$'\n'}" "${body%$'\n'*}"; }
 }
 code_of() { head -n1 <<<"$1"; }
@@ -125,7 +125,7 @@ prepare() {
 
   say "inventory of what LiteLLM stores encrypted (step 5 of the rotation order), via a port-forward"
   port_forward "$LITELLM_SVC" 4000
-  local r mi total db_count=unknown cred_count=unknown mcp_count=unknown db_names="[]"
+  local r mi total mcp_config db_count=unknown cred_count=unknown mcp_count=unknown db_names="[]"
   r=$(call "$old_master" GET /model/info)
   if [ "$(code_of "$r")" = 200 ]; then
     mi=$(body_of "$r" | python3 -c '
@@ -145,8 +145,13 @@ print(len(d), len(db), json.dumps(sorted(set(db))))')
   else echo "   GET /credentials answered $(code_of "$r") — count unknown"; fi
   r=$(call "$old_master" GET /v1/mcp/server)
   if [ "$(code_of "$r")" = 200 ]; then
-    mcp_count=$(body_of "$r" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(len(d if isinstance(d,list) else d.get("data") or d.get("servers") or []))')
-    echo "   GET /v1/mcp/server: $mcp_count MCP servers"
+    # Servers from the config file come back with created_at/created_by null; only the ones
+    # added through the API or the console are rows in LiteLLM_MCPServerTable (encrypted).
+    read -r mcp_count mcp_config <<<"$(body_of "$r" | python3 -c 'import json,sys
+d = json.load(sys.stdin); d = d if isinstance(d, list) else (d.get("data") or d.get("servers") or [])
+db = [s for s in d if s.get("created_at") or s.get("created_by")]
+print(len(db), len(d) - len(db))')"
+    echo "   GET /v1/mcp/server: $mcp_count stored in the database, $mcp_config from the config file (not encrypted)"
   else echo "   GET /v1/mcp/server answered $(code_of "$r") — count unknown"; fi
   stop_forward
 
@@ -231,7 +236,7 @@ EOF
 plan() {
   [ -f "$OVERLAY" ] || die "--overlay <file> is required"
   CHART=${CHART:-$REPO/charts/sovereign-agentic-os}
-  local w; w=$(mktemp -d); trap 'stop_forward; rm -rf "$w"' EXIT
+  PLAN_DIR=$(mktemp -d); local w=$PLAN_DIR; trap 'stop_forward; rm -rf "$PLAN_DIR"' EXIT
   say "live release values and manifest (read-only)"
   helm --kube-context "$CTX" get values "$REL" -n "$NS" -o yaml > "$w/live.yaml"
   helm --kube-context "$CTX" get manifest "$REL" -n "$NS" > "$w/before.yaml"

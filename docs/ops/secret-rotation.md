@@ -175,10 +175,10 @@ steps 3–5. The init finds that public key existing and leaves it alone.
 ### 7. Langfuse admin password (separately, after the keys)
 
 The headless init does not change an existing user's password, and the UI cannot without SMTP.
-In the release this run-book was written against, os-ui signs in to the embedded Langfuse console
-with a built-in default password, not with the Secret. Changing the password therefore stops that
-automatic sign-in: the console shows Langfuse's login page. Do this step once the os-ui that reads
-`LANGFUSE_SSO_PASSWORD` from `langfuse-init` is deployed, or accept that change.
+os-ui signs in to the embedded Langfuse console with `LANGFUSE_SSO_PASSWORD`, read from
+`langfuse-init` → `LANGFUSE_INIT_USER_PASSWORD` (from os-ui 0.9.20; an older os-ui used a built-in
+default and would lose the automatic sign-in). So the Secret, the Langfuse user and os-ui must
+agree: change the user, then the Secret, then restart os-ui.
 
 ```bash
 scripts/ops/rotate-secrets.sh password            # writes ~/.sovereign-os-secrets/overlays/langfuse-password-<date>.yaml
@@ -192,7 +192,8 @@ scripts/ops/rotate-secrets.sh password            # writes ~/.sovereign-os-secre
    (`VALUES_OVERLAY=<password overlay> ./scripts/deploy.sh --from-registry <live version>`), then
    `kubectl rollout restart deploy/agentic-os-langfuse-web`. The init now finds no user with that
    e-mail and creates it with the new password, as `OWNER` of the organisation. This replaces
-   their steps 2–3, because sign-up is disabled.
+   their steps 2–3, because sign-up is disabled. Then
+   `kubectl rollout restart deploy/os-ui` so its `LANGFUSE_SSO_PASSWORD` is the new one.
 4. Sign in with the new password. Under Organisation → Members the new user is Owner.
 5. Delete the old user (their step 4): `DELETE FROM users WHERE email = 'rotated-<init user e-mail>';`
    Its memberships go with it (cascade).
@@ -208,7 +209,7 @@ deploy the live release with only the secrets changing:
 ```bash
 cd <checkout at os-ui-v<live version>>
 git switch -c rotation/<live version> os-ui-v<live version>
-git cherry-pick <chart commit of this change>     # applies cleanly on os-ui-v0.9.19
+git cherry-pick <chart commit of this change>     # applies cleanly on os-ui-v0.9.19 and os-ui-v0.9.20
 helm dependency build charts/sovereign-agentic-os  # or copy charts/*.tgz from the tag checkout
 scripts/ops/rotate-secrets.sh plan --overlay … --chart charts/sovereign-agentic-os   # step 2: only Secrets + os-ui roll
 ```
