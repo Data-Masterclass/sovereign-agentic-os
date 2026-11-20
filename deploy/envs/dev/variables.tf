@@ -111,7 +111,7 @@ variable "dns_name" {
     this only names the hostnames; the owner adds the record shown by `tofu output dns_record`.
   EOT
   type        = string
-  default     = "dev.sovereign-agentic.com"
+  default     = "dev.agentic.datamasterclass.com"
 
   validation {
     condition     = startswith(var.dns_name, "dev.")
