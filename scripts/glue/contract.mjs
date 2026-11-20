@@ -77,7 +77,8 @@ const validators = () => {
 const vegaLite = () => { validators(); return (vVegaLite ??= ajv.compile(loadSchema('vega-lite-v5.json'))); };
 
 // `sovereign` alone is the dbt profile NAME (profiles.yml / dbt_project.yml `profile:`), not metadata.
-export const OS_KEY = (k) => /^(os($|[_\-/.:])|x[-_]os[-_]|x[-_]sovereign|sovereign[-_]os)/i.test(k) || /^os[A-Z]/.test(k);
+// dbt's `+` config prefix (`+os_owner` under dbt_project.yml `models:`) is stripped first.
+export const OS_KEY = (key) => { const k = String(key).replace(/^\+/, ''); return /^(os($|[_\-/.:])|x[-_]os[-_]|x[-_]sovereign|sovereign[-_]os)/i.test(k) || /^os[A-Z]/.test(k); };
 const OS_LAYER_FILE = (p) => /^os\/.+\.(ya?ml|json|md|txt)$/.test(p) || /(^|\/)(os|system)\.ya?ml$/.test(p) || p === 'agents/index.yml' || /^apps\/[^/]+\/app\.ya?ml$/.test(p);
 const EXECUTABLE_UNDER_OS = (p) => /^os\/.+\.(py|sql|mjs|cjs|js|ts|rego|sh)$/.test(p);
 const DBT_YML = (p) => /^(models|macros|tests|seeds|snapshots|analyses|semantic_models|metrics)\/.+\.ya?ml$/.test(p);

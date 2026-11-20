@@ -2,7 +2,7 @@
   "LEGACY-IMPORT": 1,
   "FILE-HEADER": 1090,
   "glue": {
-    "$approvedRaise": "WP-01 (PR #154): the initial glue baseline. Every fingerprint is a finding check-glue.mjs reports on origin/main 548624d1 today, recorded with --baseline, never by hand. Merging this PR accepts this backlog; later PRs may only remove entries.",
+    "$approvedRaise": "WP-01 (PR #154): the initial glue baseline. Every fingerprint is a finding check-glue.mjs reports on the PR base (origin/main 9b1b1f4b at the last rebase), recorded with --baseline, never by hand. Merging this PR accepts this backlog; later PRs may only remove entries.",
     "GLUE-1-ADAPTER-DOOR": [
       "app/(entry)/tools/[tool]/[[...path]]/route.ts :: fetch: proxy(req, tool, path ?? [], user, fetch, sessionSso)",
       "app/api/agents/route.ts :: config.sampleAgentUrl",
@@ -536,10 +536,12 @@
       "tabs/files/lib/physical-delete.ts :: empty catch: catch { /* corrupt yaml never blocks the record delete */ }",
       "tabs/files/lib/pipeline-server.ts :: .catch(() => undefined)",
       "tabs/files/lib/retrieve.ts :: catch → return null;",
+      "tabs/files/lib/search.ts :: .then(…, () => null)",
       "tabs/files/lib/store.ts :: empty catch: catch { /* folder-registry mirror is best-effort; the file m",
       "tabs/files/lib/use-as.ts :: catch → return null;",
       "tabs/files/mcp/file-write-tools.ts :: empty catch: catch { /* indexing is best-effort; the upload already succe",
       "tabs/governance/lib/repositories.ts :: catch → return null;",
+      "tabs/knowledge/lib/commit-queue.ts :: .then(…, () => undefined)",
       "tabs/knowledge/lib/embed.ts :: catch → return null;",
       "tabs/knowledge/lib/embed.ts :: .catch(() => '')",
       "tabs/knowledge/lib/embed.ts :: empty catch: catch { /* fall through to offline */ }",

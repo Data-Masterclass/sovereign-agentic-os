@@ -1,0 +1,3 @@
+{
+  "dbt_project.yml": "name: sales\nversion: 1.0.0\nconfig-version: 2\nprofile: sovereign\nmodels:\n  sales:\n    +materialized: table\n    +os_owner: amir\n"
+}

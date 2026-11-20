@@ -32,7 +32,12 @@ export function parse(rel, text) {
   const consts = new Map(); // name -> initializer (first const wins)
   const bindings = new Map(); // local name -> { module, name }  ('default' | '*' | imported name)
   const imports = []; // { spec: string|null, kind, node }
+  const fns = new Map(); // function declaration name -> node
+  const requirers = new Set(); // local names bound to createRequire(...)(…)-style require functions
+  const isCreateRequire = (e) => ts.isCallExpression(e) && ts.isIdentifier(e.expression) && e.expression.text === 'createRequire';
   const visit = (n) => {
+    if (ts.isFunctionDeclaration(n) && n.name && !fns.has(n.name.text)) fns.set(n.name.text, n);
+    if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && n.initializer && isCreateRequire(unwrap(n.initializer))) requirers.add(n.name.text);
     if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && n.initializer && (n.parent.flags & ts.NodeFlags.Const) && !consts.has(n.name.text)) consts.set(n.name.text, n.initializer);
     if (ts.isImportDeclaration(n) && ts.isStringLiteral(n.moduleSpecifier)) {
       const module = n.moduleSpecifier.text;
@@ -45,12 +50,13 @@ export function parse(rel, text) {
     if (ts.isExportDeclaration(n) && n.moduleSpecifier && ts.isStringLiteral(n.moduleSpecifier) && !n.isTypeOnly) imports.push({ spec: n.moduleSpecifier.text, kind: 'static', node: n });
     if (ts.isCallExpression(n)) {
       if (n.expression.kind === K.ImportKeyword) imports.push({ spec: null, kind: 'dynamic', node: n, arg: n.arguments[0] });
-      else if (ts.isIdentifier(n.expression) && n.expression.text === 'require' && n.arguments.length === 1) imports.push({ spec: null, kind: 'require', node: n, arg: n.arguments[0] });
+      else if (ts.isIdentifier(n.expression) && (n.expression.text === 'require' || requirers.has(n.expression.text)) && n.arguments.length === 1) imports.push({ spec: null, kind: 'require', node: n, arg: n.arguments[0] });
+      else if (isCreateRequire(unwrap(n.expression)) && n.arguments.length === 1) imports.push({ spec: null, kind: 'require', node: n, arg: n.arguments[0] });
     }
     ts.forEachChild(n, visit);
   };
   visit(sf);
-  const file = { rel, text, sf, consts, bindings, imports };
+  const file = { rel, text, sf, consts, bindings, imports, fns };
   for (const i of imports) if (i.arg) i.spec = fold(file, i.arg) ?? null;
   return file;
 }
@@ -117,10 +123,12 @@ const GLOBAL_OBJECTS = new Set(['globalThis', 'window', 'self', 'global']);
 /** Every reference to the global `name` (bare, `globalThis.name`, `globalThis['name']`) in the file. */
 export function globalRefs(file, name) {
   const out = [];
+  const globals = new Set(GLOBAL_OBJECTS);
+  for (const [k, init] of file.consts) { const u = unwrap(init); if (ts.isIdentifier(u) && GLOBAL_OBJECTS.has(u.text)) globals.add(k); }
   const visit = (n) => {
     if (ts.isIdentifier(n) && n.text === name && isFreeRef(n)) out.push(n);
-    else if (ts.isPropertyAccessExpression(n) && n.name.text === name && ts.isIdentifier(n.expression) && GLOBAL_OBJECTS.has(n.expression.text)) { out.push(n); return; }
-    else if (ts.isElementAccessExpression(n) && ts.isIdentifier(n.expression) && GLOBAL_OBJECTS.has(n.expression.text) && fold(file, n.argumentExpression) === name) { out.push(n); return; }
+    else if (ts.isPropertyAccessExpression(n) && n.name.text === name && ts.isIdentifier(unwrap(n.expression)) && globals.has(unwrap(n.expression).text)) { out.push(n); return; }
+    else if (ts.isElementAccessExpression(n) && ts.isIdentifier(unwrap(n.expression)) && globals.has(unwrap(n.expression).text) && fold(file, n.argumentExpression) === name) { out.push(n); return; }
     ts.forEachChild(n, visit);
   };
   visit(file.sf);

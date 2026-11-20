@@ -114,7 +114,7 @@ for (const f of server.filter((x) => !inAdapters(x.rel))) {
 // ---------------------------------------------- rule 2: credential boundary --
 const R2 = 'GLUE-2-CREDENTIAL-BOUNDARY';
 const CRED_NAME = /^(litellmMasterKey|keycloakAdmin\w*)$/;
-const CRED_VALUE = /^(LITELLM_MASTER_KEY|KEYCLOAK_ADMIN\w*)$/;
+const CRED_VALUE = /MASTER_KEY|^KEYCLOAK_ADMIN\w*$/; // incl. a scan of process.env for `*MASTER_KEY`
 const CRED_OK = /^core\/adapters\/[^/]+\/(read|write|admin)\.ts$|^core\/kernel\/config\.ts$/;
 const CRED_ZONE = /^(core\/runtime|tabs\/agents\/lib\/engine|worker)\//;
 const CRED_MODULE = /(^|\/|@)core\/infra\/litellm-(admin|write)(\.ts)?$|(^|\/|@)core\/adapters\/(litellm|keycloak)\/(write|admin)(\.ts)?$/;
@@ -130,7 +130,7 @@ for (const f of prod.filter((x) => !CRED_OK.test(x.rel))) {
 
 // ------------------------------------------------ rule 3: no silent fallback --
 const R3 = 'GLUE-3-SILENT-FALLBACK';
-const fallbackLiteral = (e) => {
+const fallbackLiteral = (e, file, seen = new Set()) => {
   e = unwrap(e);
   if (!e) return false;
   if (e.kind === K.TrueKeyword || e.kind === K.NullKeyword) return true;
@@ -141,22 +141,27 @@ const fallbackLiteral = (e) => {
   if ((ts.isStringLiteral(e) || ts.isNoSubstitutionTemplateLiteral(e)) && e.text === '') return true;
   if (ts.isNumericLiteral(e) && e.text === '0') return true;
   if (ts.isNewExpression(e) && ts.isIdentifier(e.expression) && /^(Map|Set|Array)$/.test(e.expression.text) && !(e.arguments?.length)) return true;
+  // `return empty()` where `empty` is a function in this file whose body is itself a fallback.
+  if (ts.isCallExpression(e) && ts.isIdentifier(e.expression) && e.arguments.length === 0 && file) {
+    const target = unwrap(file.consts.get(e.expression.text)) ?? file.fns.get(e.expression.text);
+    if (target && !seen.has(target) && (ts.isArrowFunction(target) || ts.isFunctionExpression(target) || ts.isFunctionDeclaration(target))) { seen.add(target); return swallowBody(target.body, file, seen); }
+  }
   if (ts.isObjectLiteralExpression(e)) return e.properties.some((p) => ts.isPropertyAssignment(p) && p.name && /^(ok|success|healthy)$/.test(p.name.getText()) && unwrap(p.initializer).kind === K.TrueKeyword || ts.isPropertyAssignment(p) && p.name?.getText() === 'status' && /^['"`](ok|ready|healthy|up|green)['"`]$/.test(p.initializer.getText()));
   return false;
 };
 const significant = (stmts) => stmts.filter((s) => !ts.isEmptyStatement(s) && !(ts.isExpressionStatement(s) && ts.isVoidExpression(s.expression)));
-const swallowBody = (body) => {
+const swallowBody = (body, file, seen) => {
   if (!body) return false;
   if (ts.isBlock(body)) {
     const s = significant(body.statements);
-    return s.length === 0 || (s.length === 1 && ts.isReturnStatement(s[0]) && (!s[0].expression || fallbackLiteral(s[0].expression)));
+    return s.length === 0 || (s.length === 1 && ts.isReturnStatement(s[0]) && (!s[0].expression || fallbackLiteral(s[0].expression, file, seen)));
   }
-  return fallbackLiteral(body);
+  return fallbackLiteral(body, file, seen);
 };
 const swallowFn = (f, arg) => {
   arg = unwrap(arg);
   if (ts.isIdentifier(arg)) { if (/^(noop|ignore|swallow)$/i.test(arg.text)) return true; arg = unwrap(f.consts.get(arg.text)); }
-  return !!arg && (ts.isArrowFunction(arg) || ts.isFunctionExpression(arg)) && swallowBody(arg.body);
+  return !!arg && (ts.isArrowFunction(arg) || ts.isFunctionExpression(arg)) && swallowBody(arg.body, f);
 };
 const fallbackScope = server.filter((f) => /^(core|worker|app)\//.test(f.rel) || /^tabs\/[^/]+\/(lib|mcp)\//.test(f.rel));
 for (const f of fallbackScope) {
@@ -164,10 +169,14 @@ for (const f of fallbackScope) {
     if (ts.isCatchClause(n)) {
       const s = significant(n.block.statements);
       if (s.length === 0) add(R3, f.rel, lineOf(f, n), `empty catch: ${snippet(f, n, 60)}`, 'empty catch — return a typed failure (Fetched ok:false) or rethrow');
-      else if (s.length === 1 && ts.isReturnStatement(s[0]) && (!s[0].expression || fallbackLiteral(s[0].expression))) add(R3, f.rel, lineOf(f, n), `catch → ${snippet(f, s[0], 60)}`, `catch turns a failure into \`${snippet(f, s[0], 40)}\` — a failure must look like one`);
+      else if (s.length === 1 && ts.isReturnStatement(s[0]) && (!s[0].expression || fallbackLiteral(s[0].expression, f))) add(R3, f.rel, lineOf(f, n), `catch → ${snippet(f, s[0], 60)}`, `catch turns a failure into \`${snippet(f, s[0], 40)}\` — a failure must look like one`);
     }
     if (ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression) && n.expression.name.text === 'catch' && n.arguments.length === 1 && swallowFn(f, n.arguments[0])) {
       add(R3, f.rel, lineOf(f, n), `.catch(${snippet(f, n.arguments[0], 50)})`, `promise .catch(${snippet(f, n.arguments[0], 40)}) swallows the failure`);
+    }
+    // `.then(onFulfilled, onRejected)`: the rejection handler is a `.catch` too.
+    if (ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression) && n.expression.name.text === 'then' && n.arguments.length === 2 && swallowFn(f, n.arguments[1])) {
+      add(R3, f.rel, lineOf(f, n), `.then(…, ${snippet(f, n.arguments[1], 50)})`, `promise .then(…, ${snippet(f, n.arguments[1], 40)}) swallows the rejection`);
     }
   });
 }
@@ -212,7 +221,7 @@ for (const f of prod) {
 
 // ------------------------------------------------ rule 5: no re-coded feature --
 const R5 = 'GLUE-5-RECODED-FEATURE';
-const DENY_MODULE = /^(bull|bullmq|bee-queue|agenda|cron|node-cron|cron-parser|croner|node-schedule|later|bcrypt|bcryptjs|argon2|@node-rs\/(argon2|bcrypt)|scrypt-js)$/;
+const DENY_MODULE = /^(bull|bullmq|bee-queue|agenda|p-queue|fastq|better-queue|queue|cron|node-cron|cron-parser|croner|node-schedule|later|bcrypt|bcryptjs|argon2|@node-rs\/(argon2|bcrypt)|scrypt-js)$/;
 const CRON_OK = new Set(['tabs/data/lib/dbt/schedules.ts']); // the Dagster YAML generator (os/schedules.yml)
 const RANK_OK = new Set(['core/kernel/rank-fusion.ts']); // RRF until OpenSearch score-ranker-processor (WP-24)
 // Matched on the lower-cased declared name. Verbs matter: `teardownCron` manages a CronJob object,
@@ -310,6 +319,16 @@ const R8 = 'GLUE-8-SETINTERVAL';
 const INTERVAL_OK = (rel) => rel === 'core/reconcile/runtime.ts' || /(^|\/)[^/]*lease[^/]*\.ts$/.test(rel); // lease heartbeats live in *lease*.ts
 for (const f of server.filter((x) => !INTERVAL_OK(x.rel))) {
   for (const n of globalRefs(f, 'setInterval')) add(R8, f.rel, lineOf(f, n), `setInterval: ${snippet(f, n.parent ?? n, 60)}`, 'setInterval in server code — reconcile through core/reconcile/runtime.ts (pg-boss schedule)');
+  // A setTimeout that re-schedules the function it runs in is a setInterval by another name.
+  for (const n of globalRefs(f, 'setTimeout')) {
+    const call = n.parent;
+    if (!call || !ts.isCallExpression(call) || call.expression !== n || !call.arguments.length) continue;
+    let enclosing;
+    for (let p = call.parent; p && !enclosing; p = p.parent) { const nm = functionName(p) ?? (ts.isFunctionDeclaration(p) && p.name?.text); if (nm) enclosing = nm; else if (ts.isArrowFunction(p) || ts.isFunctionExpression(p)) { const v = p.parent; if (ts.isVariableDeclaration(v) && ts.isIdentifier(v.name)) enclosing = v.name.text; } }
+    const cb = unwrap(call.arguments[0]);
+    const callsSelf = enclosing && ((ts.isIdentifier(cb) && cb.text === enclosing) || ((ts.isArrowFunction(cb) || ts.isFunctionExpression(cb)) && cb.body.getText(f.sf).match(new RegExp(`\\b${enclosing}\\s*\\(`))));
+    if (callsSelf) add(R8, f.rel, lineOf(f, call), `self-rescheduling setTimeout: ${enclosing}`, `setTimeout re-schedules ${enclosing}() — a timer loop; reconcile through core/reconcile/runtime.ts (pg-boss schedule)`);
+  }
 }
 
 // ------------------------- rule 9 (dynamic half): folded import()/require() targets --
