@@ -50,7 +50,9 @@ test('UNSAVED draft → governed SQL path: queryRun under the viewer, mode live 
   assert.equal(calls.queryRun.length, 1, 'exactly one governed Trino query');
   assert.equal(calls.queryRun[0].principal, 'amir', "runs under the VIEWER's delegated identity (R3)");
   assert.match(calls.queryRun[0].sql, /SUM\(CAST\(net_amount AS double\)\)/);
-  assert.match(calls.queryRun[0].sql, /iceberg\.sales\.gold_sales/, 'reads the gold mart directly');
+  // amir OWNS this asset, so the shared resolver (builtLayerFqn, also behind get_dataset.queryable)
+  // names his personal lane — the metric reads the SAME table queryable.fqn names.
+  assert.match(calls.queryRun[0].sql, /iceberg\.personal_amir\.gold_sales/, 'reads the table queryable.fqn names');
   assert.equal(r.sql, calls.queryRun[0].sql, 'the surfaced SQL is the SQL that actually ran');
   // Rows come back in the SAME member-keyed shape the Cube path returns.
   assert.deepEqual(r.rows, [{ 'Sales.revenue': 123.5 }]);
@@ -66,8 +68,18 @@ test('SAVED metric → ALSO governed SQL now (Cube off the read path): live (sql
 
   assert.equal(r.mode, 'live (sql)', 'served directly as governed Trino SQL, not via Cube');
   assert.equal(calls.queryRun.length, 1, 'exactly one governed Trino query');
-  assert.match(calls.queryRun[0].sql, /FROM iceberg\.sales\.gold_sales/, 'reads the DOMAIN gold mart');
+  assert.match(calls.queryRun[0].sql, /FROM iceberg\.personal_amir\.gold_sales/, 'the owner reads the table queryable.fqn names');
   assert.deepEqual(r.rows, [{ 'Sales.revenue': 123.5 }]);
+});
+
+test('SAVED metric, NON-owner viewer → the DOMAIN gold mart, run AS that viewer', async () => {
+  calls.queryRun = [];
+  const dataset = goldSales({ owner: 'someone_else' });
+  const r = await exploreMetric(dataset, dataset.measures[0], domainToken());
+
+  assert.equal(r.mode, 'live (sql)');
+  assert.match(calls.queryRun[0].sql, /FROM iceberg\.sales\.gold_sales/, 'a non-owner reads the promoted domain copy');
+  assert.equal(calls.queryRun[0].principal, 'amir', "runs under the VIEWER's delegated identity (R3)");
 });
 
 test('PERSONAL dataset metric → reads the OWNER personal lane, run AS the owner uid', async () => {

@@ -62,6 +62,9 @@ function corpus(): { src: string; text: string }[] {
     out.push({ src: `error:${status}`, text: structuredError(Object.assign(new Error('x'), { status })).hint });
   }
   out.push({ src: 'error:upstream', text: structuredError(new TypeError('fetch failed')).hint });
+  for (const name of ['FUNCTION_NOT_FOUND', 'FUNCTION_NOT_AGGREGATE', 'SYNTAX_ERROR', 'COLUMN_NOT_FOUND', 'TABLE_NOT_FOUND', 'SCHEMA_NOT_FOUND']) {
+    out.push({ src: `error:sql:${name}`, text: structuredError(new Error(`TrinoUserError(type=USER_ERROR, name=${name}, message="x", query_id=x)`)).hint });
+  }
   return out;
 }
 const CORPUS = corpus();
