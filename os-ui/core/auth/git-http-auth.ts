@@ -41,6 +41,7 @@ export const AUTH_FAILED = 'authentication failed — create an OS personal acce
 export function parseGitPath(uri: string): GitRequestTarget | null {
   const pathOnly = String(uri ?? '').split('#')[0];
   const [p, query = ''] = pathOnly.split('?');
+  if (unsafeGitPath(p)) return null;
   const m = /^\/git\/([A-Za-z0-9][A-Za-z0-9._-]{0,63})\.git(\/.*)?$/.exec(p);
   if (!m || m[1].includes('..')) return null;
   const rest = m[2] ?? '';
@@ -50,6 +51,21 @@ export function parseGitPath(uri: string): GitRequestTarget | null {
   // `GET /info/refs` with no service, and the dumb-protocol file paths, are READS.
   else if (rest === '' || rest.startsWith('/info/refs') || rest.startsWith('/objects/') || rest.startsWith('/HEAD')) service = 'upload-pack';
   return { domain: m[1], service };
+}
+
+/**
+ * True when a request path could name a different repository than its first segment once a
+ * server decodes or normalises it. No path this server answers needs a percent-escape (repository
+ * names are `[A-Za-z0-9._-]`; git requests `/info/refs`, `/git-upload-pack`, `/objects/..`), so ANY
+ * `%` is refused — which covers `%2f`, `%5c`, `%2e` and every double encoding — as are a backslash
+ * and an empty, `.` or `..` segment. The decision is made on the repository named first, so such a
+ * path is refused outright (defence in depth; the git-http sidecar's lighttpd refuses the
+ * encoded-separator and dot-segment shapes on its own).
+ */
+export function unsafeGitPath(path: string): boolean {
+  const p = String(path ?? '');
+  if (p.includes('%') || p.includes('\\')) return true;
+  return p.split('/').slice(1).some((s) => s === '' || s === '.' || s === '..');
 }
 
 /**
