@@ -46,7 +46,7 @@ const sara: Principal = { id: 'sara', domains: ['sales', 'finance'], role: 'admi
 /** Exports that only READ (or are test seams). */
 const READ_ONLY = new Set([
   'ensureHydrated', 'refreshSystemFromMirror', '__recordFor', '__resetStore', // memory-only hydration, never a commit
-  'listSystems', 'getSystemsUsingDataset', 'listAllSystemsInternal', 'listOpaGrantedSystemsInternal', 'agentHealthRows', 'markPendingShares',
+  'listSystems', 'getSystemsUsingDataset', 'listAllSystemsInternal', 'allSystemDefinitionsInternal', 'listOpaGrantedSystemsInternal', 'agentHealthRows', 'markPendingShares',
   'getSystem', 'getSystemForEdit', 'canRunCheck', 'getSystemForRun', 'listFiles', 'readFile',
   'listSystemVersions', 'systemForScheduler', 'systemsForProject', 'projectDomains',
   // re-exported for callers that mint a run id beside a store read; not a writer.
