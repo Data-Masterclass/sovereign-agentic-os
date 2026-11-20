@@ -243,7 +243,7 @@ function syncModelSql(d: Dataset, sync: DatasetSync, sourceName: string, sourceT
         ...head,
         `-- Late-data lookback: ${lookback} minute(s) re-delivered each run; merge absorbs the overlap by key.`,
         '',
-        `{{ config(materialized='incremental', incremental_strategy='merge', unique_key=[${keys}], on_schema_change='append_new_columns') }}`,
+        `{{ config(materialized='incremental', incremental_strategy='merge', unique_key=[${keys}], on_schema_change='append_new_columns', full_refresh=false) }}`,
         '',
         `select * from ${src}`,
         ...incremental,
@@ -258,7 +258,10 @@ function syncModelSql(d: Dataset, sync: DatasetSync, sourceName: string, sourceT
       '-- --vars os_batch_id deletes and re-inserts exactly that slice (idempotent); a plain re-run defaults',
       '-- os_batch_id to invocation_id and DUPLICATES the lookback rows — the OS launcher passes the id on retry.',
       '',
-      "{{ config(materialized='incremental', incremental_strategy='delete+insert', unique_key='_batch_id', on_schema_change='append_new_columns') }}",
+      // `full_refresh=false` (design 01 R9, review N2): the bronze table holds history that the dlt
+      // landing does not (it starts at the migration, and the source may have deleted rows), so a
+      // "reset and full re-sync" (`--full-refresh`) must never drop it. dbt then runs it incrementally.
+      "{{ config(materialized='incremental', incremental_strategy='delete+insert', unique_key='_batch_id', on_schema_change='append_new_columns', full_refresh=false) }}",
       '',
       'select',
       '  *,',

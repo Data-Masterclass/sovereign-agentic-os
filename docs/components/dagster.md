@@ -54,10 +54,14 @@ dagster asset materialize -m definitions --select '*'
 | Piece | What it is |
 |---|---|
 | `<domain>_dbt` | `@dbt_assets` over `DbtProject(data/dbt)` (`prepare_if_dev()` runs `dbt parse` under `dagster dev`), keys `[<domain>, …]` via a translator prefix, group = the domain, dbt tests on sources as checks (`enable_source_tests_as_checks`) |
-| `[<domain>, landing_<domain>_<owner>, raw_<slug>]` | one **dlt ingestion asset** per database sync (decision O8): `sql_table(credentials=dlt.secrets["sources.<connection>.credentials"], …, incremental=dlt.sources.incremental(<cursor>))` → `dlt.pipeline(pipeline_name=<dataset id>, destination="sqlalchemy", dataset_name=landing_<domain>_<owner>)`. The `sqlalchemy` destination over Trino's dialect makes the landing a Trino write into Iceberg as the principal. Its key is the dbt source's key, so the sync model depends on it; a `build_last_update_freshness_checks` check (two schedule intervals) watches it |
+| `[<domain>, landing_<domain>_<owner>, raw_<slug>]` | one **dagster-dlt `@dlt_assets`** per database sync (decision O8) over a dlt source that is a credential-free declaration at load time; the run binds `sql_table(credentials=dlt.secrets["sources.<connection>.credentials"], …, incremental=dlt.sources.incremental(<cursor>))` through `DagsterDltResource.run(dlt_source=…)`, into `dlt.pipeline(pipeline_name=<dataset id>, destination="sqlalchemy", dataset_name=landing_<domain>_<owner>)`. The `sqlalchemy` destination over Trino's dialect makes the landing a Trino write into Iceberg as the principal. Its key is the dbt source's key, so the sync model depends on it; a `build_last_update_freshness_checks` check (two schedule intervals) watches it |
 | `<domain>__all` | the job the OS launches with an explicit **asset subset** (Build, transform, gold join, sync now) |
 | `<domain>__<datasetId>` | one job + `ScheduleDefinition` per sync: the dlt asset and everything downstream (or `<model>+` for a sync dbt reads directly), `execution_timezone="UTC"`, `default_status` from `enabled` |
 | `<domain>__maintenance__<schema>` | weekly (Sun 03:00 UTC) `dbt run-operation os_maintenance` (optimize + `expire_snapshots`), as the schema's owning principal |
+
+**User text only as literals.** No dataset name, owner, table, cron, SQL or domain is ever written into a comment or an identifier of the module (`dagster-definitions.fuzz.test.ts`).
+
+**Adopted bronze is guarded.** Sync models carry `full_refresh=false`: "reset and full re-sync" runs them incrementally and never drops bronze history (review N2).
 
 **OS metadata only in tags** (artifact contract C2, GLUE-10): `os/domain`, `os/dataset`,
 `os/principal`, `os/schedule`, `os/action`, `os/schema` on jobs; `os/dataset` as asset metadata.
