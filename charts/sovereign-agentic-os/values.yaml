@@ -932,6 +932,18 @@ opa:
   # One masked JSON line per decision in OPA's log output (decision_logs.console).
   decisionLogs:
     enabled: true
+  # WP-11: OPA loads policy DATA as bundles served by os-ui (`os-data`: grants, approval holds,
+  # governance tables/principals, os_data.users/app_grants; `os-grants`: run grants from the
+  # os_governance database, long-polled), persists them and survives restarts without os-ui.
+  # Off = the interim REST-push path with its reconciler (rollback, one release).
+  dataBundle:
+    enabled: false
+    serviceUrl: http://os-ui:3000/api/opa
+    polling: { minDelaySeconds: 5, maxDelaySeconds: 15 }
+    # os-grants (needs postgres.governance.enabled): HTTP long polling, < 2 s propagation.
+    grants: { longPollingTimeoutSeconds: 30 }
+    # 10 F7: the only user attributes that may reach os_data.users[uid].attrs.
+    abacAttributes: [region, cost_center]
   grants:
     sovereign-agents:           # the default agent key — no internet
       - rag_search

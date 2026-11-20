@@ -14,6 +14,11 @@
  *     self-principal and the user roster), W4 exposure tables, W5 knowledge guardrail policies.
  *     Approved access grants are composed by the kernel itself. Promote releases are transient
  *     (pushed and withdrawn around one CTAS) and deliberately not restored.
+ *   - WP-11: every source but the guardrails is `bundled`: the os-data bundle compiler
+ *     (`core/policy/bundle.ts`) runs exactly these restores in capture mode, so the bundle holds
+ *     what the pushes held. Two bundle-only documents join them: `os_data.users` (10 F7, with the
+ *     attribute allow-list) and `os_data.app_grants` (10 F17). Each refuses (ok:false) while its
+ *     store is not the durable snapshot, so a partial bundle is never compiled.
  */
 import 'server-only';
 import { registerGrantContributor, registerOpaStateSource } from '@core/policy/opa-reconcile';
@@ -23,12 +28,40 @@ import { restoreDataGovernance } from '@tabs/data/lib/policy/opa-state';
 import { recompileExposures } from '@tabs/connections/lib/exposure-policy';
 import { restoreGuardrails } from '@tabs/knowledge/lib/guardrails-apply';
 import { compilerView, ensureHydrated as ensureDomainsHydrated } from '@tabs/admin/lib/domains';
-import { knownDomains } from '@tabs/admin/lib/users';
+import { knownDomains, listUsers, userDirectoryAuthoritative } from '@tabs/admin/lib/users';
+import { appRegistryHydrated, listAllAppsInternal } from '@tabs/software/lib/apps';
+import { normalizeAgentGrants } from '@tabs/software/lib/app-agent-grants';
+import { config } from '@core/kernel/config';
+import { publishOpa } from '@core/policy/opa-publish';
+import { compileOsDataUsers } from '@core/policy/bundle';
+
+async function restoreOsDataUsers() {
+  if (!(await userDirectoryAuthoritative())) {
+    return { ok: false, detail: 'user directory is not the durable snapshot (offline or unloaded) — os_data.users not compiled' };
+  }
+  const users = compileOsDataUsers(await listUsers(), config.abacAttributes);
+  const r = await publishOpa({ kind: 'data', path: 'os_data/users', value: users });
+  return r.ok ? { ok: true, detail: `${Object.keys(users).length} user(s)` } : { ok: false, detail: r.detail };
+}
+
+async function restoreAppGrants() {
+  if (!(await appRegistryHydrated())) {
+    return { ok: false, detail: 'app registry not hydrated — os_data.app_grants not compiled' };
+  }
+  const grants: Record<string, string[]> = {};
+  for (const app of await listAllAppsInternal()) {
+    const ids = normalizeAgentGrants(app.agents).map((g) => g.id);
+    if (ids.length > 0) grants[app.id] = [...new Set(ids)].sort();
+  }
+  const r = await publishOpa({ kind: 'data', path: 'os_data/app_grants', value: grants });
+  return r.ok ? { ok: true, detail: `${Object.keys(grants).length} app(s)` } : { ok: false, detail: r.detail };
+}
 
 export function registerOpaStateSources(): void {
   registerGrantContributor({ name: 'agent-systems', grants: agentGrants });
   registerOpaStateSource({
     name: 'grants',
+    bundled: true,
     restore: async () => {
       const { publish } = await recompile();
       return { ok: publish.status === 'published', detail: publish.detail };
@@ -36,6 +69,7 @@ export function registerOpaStateSources(): void {
   });
   registerOpaStateSource({
     name: 'governance',
+    bundled: true,
     restore: () =>
       restoreDataGovernance(async () => {
         await ensureDomainsHydrated(knownDomains);
@@ -44,11 +78,16 @@ export function registerOpaStateSources(): void {
   });
   registerOpaStateSource({
     name: 'exposures',
+    bundled: true,
     restore: async () => {
       const r = await recompileExposures();
       return { ok: r.ok, detail: r.detail };
     },
   });
-  registerOpaStateSource({ name: 'approval-holds', restore: restoreRequiresApproval });
+  registerOpaStateSource({ name: 'approval-holds', bundled: true, restore: restoreRequiresApproval });
+  registerOpaStateSource({ name: 'os-data-users', bundled: true, restore: restoreOsDataUsers });
+  registerOpaStateSource({ name: 'app-grants', bundled: true, restore: restoreAppGrants });
+  // Not bundled: a policy module (PUT /v1/policies) plus its data, outside the bundle's roots.
+  // WP-30 replaces it with data-driven guardrails in the signed policy bundle.
   registerOpaStateSource({ name: 'guardrails', restore: restoreGuardrails });
 }

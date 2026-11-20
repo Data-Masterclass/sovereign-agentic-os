@@ -93,6 +93,7 @@ export async function opaDecide(path: string, input: unknown, timeoutMs: number)
 }
 
 /** OPA's Health API: ok only when `GET /health` answers 200. */
-export async function opaHealth(timeoutMs: number): Promise<Fetched<number>> {
-  return expectOk(await request('/health', { method: 'GET' }, timeoutMs), 'GET /health');
+export async function opaHealth(timeoutMs: number, bundles = false): Promise<Fetched<number>> {
+  const path = bundles ? '/health?bundles' : '/health';
+  return expectOk(await request(path, { method: 'GET' }, timeoutMs), `GET ${path}`);
 }
