@@ -54,8 +54,8 @@ check "step 1 migrates from the old master key" "$OLD" "$(G "$S1" litellm.envVar
 check "final salt = step-1 master key" "$S" "$(G "$F" litellmSaltKey.value)"
 holds "final master key is new" test "$(G "$F" litellmMasterKey)" != "$S" -a "$(G "$F" litellmMasterKey)" != "$OLD"
 check "final empties the migration variable" "LITELLM_MIGRATE_FROM_MASTER_KEY: ''" "$(cat "$F")"
-holds "in-place secrets in the final overlay" test -n "$(G "$F" agentRuntime.token)" -a -n "$(G "$F" litellmUI.password)" -a -n "$(G "$F" langfuseCoreSecrets.nextauthSecret)" -a -n "$(G "$F" langfuseCoreSecrets.salt)"
-holds "encryptionKey rotated (no encrypted Langfuse entry)" test -n "$(G "$F" langfuseCoreSecrets.encryptionKey)"
+holds "in-place secrets in the final overlay" test -n "$(G "$F" agentRuntime.token)" -a -n "$(G "$F" litellmUI.password)" -a -n "$(G "$F" langfuseInit.nextauthSecret)" -a -n "$(G "$F" langfuseInit.salt)"
+holds "encryptionKey rotated (no encrypted Langfuse entry)" test -n "$(G "$F" langfuseInit.encryptionKey)"
 check "rollback keeps the salt" "$S" "$(G "${F%.yaml}.rollback.yaml" litellmSaltKey.value)"
 leak=""; for v in "$OLD" "$S" "$(G "$F" litellmMasterKey)" "$(G "$F" langfuseInit.secretKey)" "$(G "$F" litellmUI.password)" "$(cat "$FAKE/secrets/litellm-credentials/UI_PASSWORD")"; do case $out in *"$v"*) leak=1 ;; esac; done
 holds "prepare printed no value" test -z "$leak"
@@ -68,7 +68,7 @@ out=$(bash $RS prepare --context fake 2>&1); rc=$?
 rc_is "a second prepare in the same second succeeds (no file name collision)" 0
 check "reported" "encrypted entr(ies) exist → NOT rotated" "$out"
 F2=$(comm -13 <(echo "$before") <(ls "$T"/secrets/overlays/ | sort) | grep -E '^rotation-[0-9-]+-[0-9a-f]+\.yaml$' | head -1); F2=$T/secrets/overlays/$F2
-holds "no encryptionKey in the overlay" test -z "$(G "$F2" langfuseCoreSecrets.encryptionKey)"
+holds "no encryptionKey in the overlay" test -z "$(G "$F2" langfuseInit.encryptionKey)"
 printf 'llm_api_keys|0\n' > "$FAKE/lfenc.txt"
 
 echo "negative twins"

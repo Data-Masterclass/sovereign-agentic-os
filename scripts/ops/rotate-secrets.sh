@@ -447,8 +447,8 @@ Promise.all(["/v1/models", "/v1/mcp/tools"].map(p => fetch(u + p, { headers: h }
   if [ "$kind" = final ] || [ "$kind" = rollback ]; then
     say "in-place secrets (sha256 prefixes) and their readers"
     local pair
-    for pair in "agent-runtime-token token agentRuntime.token" "langfuse-core-secrets salt langfuseCoreSecrets.salt" \
-                "langfuse-core-secrets nextauthSecret langfuseCoreSecrets.nextauthSecret" "langfuse-core-secrets encryptionKey langfuseCoreSecrets.encryptionKey" \
+    for pair in "agent-runtime-token token agentRuntime.token" "langfuse-core-secrets salt langfuseInit.salt" \
+                "langfuse-core-secrets nextauthSecret langfuseInit.nextauthSecret" "langfuse-core-secrets encryptionKey langfuseInit.encryptionKey" \
                 "langfuse-init LANGFUSE_INIT_PROJECT_SECRET_KEY langfuseInit.secretKey" "litellm-credentials UI_PASSWORD litellmUI.password"; do
       set -- $pair
       local want; want=$(ov "$3"); [ -n "$want" ] || continue

@@ -17,8 +17,8 @@
 #     gateway does not read, or with a literal value fails; the local profile with an
 #     existingSecret fails;
 #   * langfuseInit.userPassword reaches langfuse-init as LANGFUSE_INIT_USER_PASSWORD;
-#   * langfuseCoreSecrets (salt, nextauthSecret, encryptionKey) reach langfuse-core-secrets; an
-#     encryptionKey that is not 64 hex characters, or an empty nextauthSecret, fails the render;
+#   * langfuseInit.{salt,nextauthSecret,encryptionKey} reach langfuse-core-secrets (unset = the
+#     previous literals); an encryptionKey that is not 64 hex characters fails the render;
 #   * the re-key overlays of rotate-secrets.sh through Helm's values merge: step 1 adds
 #     LITELLM_MIGRATE_FROM_MASTER_KEY to the gateway with no salt key; step 2 layered over step 1's
 #     values empties it (a null cannot delete a key an earlier values file set), sets the salt key S
@@ -95,21 +95,19 @@ absent "  ... without printing the value" "value=x" "$out"
 render --set litellmSaltKey.existingSecret=litellm-credentials
 rc_is "existingSecret on the local profile fails" 1
 
-echo "Langfuse core secrets from langfuseCoreSecrets"
+echo "Langfuse core secrets from langfuseInit.{salt,nextauthSecret,encryptionKey}"
 render
 check "default salt unchanged" "$(H sovereign-os-local-dev-salt)" "$(H "$(inspect 'sd("langfuse-core-secrets")["salt"]')")"
 EK=$(printf 'k%.0s' 1 | shasum -a 256 | cut -c1-64)
-render --set "langfuseCoreSecrets.salt=s-$SALT" --set "langfuseCoreSecrets.nextauthSecret=n-$SALT" --set "langfuseCoreSecrets.encryptionKey=$EK"
+render --set "langfuseInit.salt=s-$SALT" --set "langfuseInit.nextauthSecret=n-$SALT" --set "langfuseInit.encryptionKey=$EK"
 rc_is "renders with new values" 0
 check "salt follows the value" "$(H "s-$SALT")" "$(H "$(inspect 'sd("langfuse-core-secrets")["salt"]')")"
 check "nextauthSecret follows the value" "$(H "n-$SALT")" "$(H "$(inspect 'sd("langfuse-core-secrets")["nextauthSecret"]')")"
 check "encryptionKey follows the value" "$(H "$EK")" "$(H "$(inspect 'sd("langfuse-core-secrets")["encryptionKey"]')")"
-render --set langfuseCoreSecrets.encryptionKey=not-hex
+render --set langfuseInit.encryptionKey=not-hex
 rc_is "an encryptionKey that is not 64 hex characters fails" 1
 check "  ... saying how to make one" "openssl rand -hex 32" "$out"
 absent "  ... without printing the value" "not-hex" "$out"
-render --set langfuseCoreSecrets.nextauthSecret=
-rc_is "an empty nextauthSecret fails" 1
 
 echo "re-key overlays (as scripts/lib/rotation-files.py writes them) through Helm's values merge"
 OV=$(mktemp -d); trap 'rm -rf "$OV"' EXIT

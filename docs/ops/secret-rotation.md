@@ -44,7 +44,7 @@ Rules that hold throughout:
 | `litellmUI.password` | `litellm-credentials` → `UI_PASSWORD` | LiteLLM console login, os-ui's console sign-in | no |
 | `agentRuntime.token` | `agent-runtime-token` → `token` | os-ui, the Dagster code server (`agentic-os-dagster-user-deployments-sovereign`, code server and repo-sync sidecar), the schedule and catalog CronJobs (read at each run) | no |
 | `langfuseInit.publicKey` / `secretKey` | `langfuse-init`, `litellm-credentials` (`LANGFUSE_*`) | langfuse-web (headless init), LiteLLM, os-ui, os-ui-worker | os-ui and os-ui-worker **yes** (the public key is plain env); the others no |
-| `langfuseCoreSecrets.salt` / `nextauthSecret` / `encryptionKey` | `langfuse-core-secrets` | langfuse-web, langfuse-worker | no |
+| `langfuseInit.salt` / `nextauthSecret` / `encryptionKey` | `langfuse-core-secrets` | langfuse-web, langfuse-worker | no |
 | `langfuseInit.userPassword` | `langfuse-init` → `LANGFUSE_INIT_USER_PASSWORD` | os-ui's Langfuse console sign-in (`LANGFUSE_SSO_PASSWORD`); langfuse-web only when it creates the user | no |
 
 `plan` shows this for the live release before anything is applied: every object that changes, the
@@ -273,21 +273,31 @@ deploy `<pw>.rollback.yaml` and restart os-ui.
 
 main carries changes that are not on the live release, for example Trino resource groups and the git
 layout. Do not deploy main's chart with the live image, and do not bundle the rotation with a
-release. Deploy the **live tag** with only the chart support it lacks cherry-picked. Production runs
+release. Deploy the **live tag** with only the chart support it lacks added. Production runs
 0.9.22, which already contains #166's chart commits (the salt key and `langfuseInit.userPassword`).
-So one commit is missing:
+Only the core-secrets template is missing:
 
 ```bash
 git fetch origin --tags
 git switch -c rotation/0.9.22 os-ui-v0.9.22
-git cherry-pick <feat(chart): Langfuse core secrets (salt, nextauthSecret, encryptionKey) from langfuseCoreSecrets>
+C=$(git log origin/main --format=%h -1 --grep='Langfuse core secrets (salt, nextauthSecret, encryptionKey): validated')
+git show "$C:charts/sovereign-agentic-os/templates/base/langfuse/core-secrets.yaml" > charts/sovereign-agentic-os/templates/base/langfuse/core-secrets.yaml
+git commit -am "Langfuse core secrets from langfuseInit (from $C)"
 helm dependency build charts/sovereign-agentic-os
 ```
 
-It touches only the chart, applies cleanly on `os-ui-v0.9.22`, and with the default values renders
-the same manifests as the tag. Run `rotate-secrets.sh` from a checkout of main (it needs no chart),
-with `plan --chart` pointing at the rotation branch's `charts/sovereign-agentic-os`. Run deploy.sh
-from the rotation branch.
+That commit changes only that one template. The template reads
+`langfuseInit.{salt,nextauthSecret,encryptionKey}`, falls back to the previous literals itself, and
+refuses an `encryptionKey` that is not 64 hex characters. A plain `git cherry-pick` conflicts on
+the tag, because main changed the same file after 0.9.22, so the file is taken as a whole. Rehearsed
+on `os-ui-v0.9.22`:
+
+- with the default values it renders the same manifests as the tag;
+- the three values reach `langfuse-core-secrets`;
+- a malformed key is refused.
+
+Run `rotate-secrets.sh` from a checkout of main (it needs no chart), with `plan --chart` pointing
+at the rotation branch's `charts/sovereign-agentic-os`. Run deploy.sh from the rotation branch.
 
 `plan` **refuses a chart whose checkout does not contain the live release tag**
 (`os-ui-v<live version>`). Deploying such a chart would roll production back. Delete the branch
