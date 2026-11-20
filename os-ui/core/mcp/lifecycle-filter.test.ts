@@ -208,7 +208,7 @@ test('V9: a FLAT array payload is annotated too, taking its audience from each r
 
 test('V9: the filter narrows, in both shapes, and the default narrows nothing', async () => {
   await pins.setLivePin('dashboard', 'd1', SHA, ACTOR, 'sales', { commit: false });
-  await pins.markTesting('dashboard', 'd2', SHA);
+  await pins.markTesting('dashboard', 'd2', SHA, 'sales');
   const grouped = { mine: [{ id: 'd1' }, { id: 'd2' }, { id: 'd3' }] };
 
   const all = (await lifecycleView('dashboard', {}, grouped)) as { mine: { id: string }[] };

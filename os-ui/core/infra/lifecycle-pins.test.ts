@@ -20,7 +20,7 @@ import { join } from 'node:path';
 globalThis.fetch = (() => Promise.reject(new Error('offline-stub'))) as typeof fetch;
 
 const pins = await import('./lifecycle-pins.ts');
-const { commitSubtree, authorFor, __clearReservedSubtrees } = await import('./git-store.ts');
+const { commitSubtree, authorFor, readBlob, __clearReservedSubtrees } = await import('./git-store.ts');
 
 const ACTOR = { id: 'u1', name: 'Alex', email: 'alex@example.com' };
 const SHA = 'a'.repeat(40);
@@ -77,8 +77,9 @@ test('H-3: with NO source answering, the index is empty, reads degrade and every
   assert.deepEqual(index.pins, {}, 'a read degrades to empty — every read path should');
   assert.equal(pins.pinsHydrationState(), 'offline', 'but it says it could not find out');
 
+  // The writes use the same (unreadable) root the index was read from.
   await assert.rejects(
-    () => pins.setLivePin('agent', 's1', SHA, ACTOR, 'sales', { reposDir: repos }),
+    () => pins.setLivePin('agent', 's1', SHA, ACTOR, 'sales'),
     (e: Error & { status?: number }) => {
       assert.equal(e.status, 503);
       assert.match(e.message, /could not be read/);
@@ -86,14 +87,14 @@ test('H-3: with NO source answering, the index is empty, reads degrade and every
     },
   );
   await assert.rejects(
-    () => pins.clearLivePin('agent', 's1', ACTOR, 'sales', { reposDir: repos }),
+    () => pins.clearLivePin('agent', 's1', ACTOR, 'sales'),
     (e: Error & { status?: number }) => {
       assert.equal(e.status, 503);
       return true;
     },
   );
   await assert.rejects(
-    () => pins.applyMigratedIndex({ pins: {} }, ACTOR, { reposDir: repos }),
+    () => pins.applyMigratedIndex({ pins: {} }, ACTOR),
     (e: Error & { status?: number }) => {
       assert.equal(e.status, 503);
       return true;
@@ -114,11 +115,13 @@ test('H-3: an EMPTY but readable repo root is a fact — hydrated, nothing live,
 
 // --------------------------------------------- the git fallback ---
 
-test('H-3: with the mirror dead, the index hydrates from the COMMITTED pin file', async () => {
-  // Arrange: a domain repo that already carries a pin file, as a previous process committed it.
-  const yml = pins.renderPinFile('sales', {
-    pins: { 'agent:s1': { ref: SHA, at: 'then', by: 'u1', domain: 'sales', path: 'agents/x/system.yaml' } },
-  });
+test('H-3 / WP-51: a PRE-TAG pin file (version 1) is still honoured, marked untagged, so nothing stops being Live', async () => {
+  // Arrange: a domain repo that carries a pin file as the pre-WP-51 OS committed it (no tags).
+  const yml = pins
+    .renderPinFile('sales', {
+      pins: { 'agent:s1': { ref: SHA, at: 'then', by: 'u1', domain: 'sales', path: 'agents/x/system.yaml' } },
+    })
+    .replace('version: 2', 'version: 1');
   const { author } = authorFor({ id: 'seed' });
   await commitSubtree('sales', pins.LIFECYCLE_PREFIX, new Map([[pins.LIFECYCLE_PIN_PATH, yml]]), {
     author,
@@ -134,11 +137,32 @@ test('H-3: with the mirror dead, the index hydrates from the COMMITTED pin file'
   assert.equal(index.pins['agent:s1']?.ref, SHA, 'and the pin came back from the bytes in the repo');
   assert.equal(index.pins['agent:s1']?.path, 'agents/x/system.yaml');
   assert.equal(index.pins['agent:s1']?.domain, 'sales', 'the domain comes from the repo it was read from');
+  assert.equal(index.pins['agent:s1']?.untagged, true, 'and it says it has no tag yet');
   assert.equal(pins.pinsMigrated(), true, 'a repo with pins means the migration already happened');
 
-  // And now a write is allowed again.
+  // And now a write is allowed again; the regenerated file CARRIES the untagged row.
   const res = await pins.setLivePin('agent', 's2', SHA, ACTOR, 'sales', { reposDir: repos });
   assert.equal(res.pin.ref, SHA);
+  const after = await readBlob('sales', undefined, pins.LIFECYCLE_PIN_PATH, { reposDir: repos });
+  assert.match(after, /version: 2/);
+  const rows = pins.parsePinFile(after);
+  assert.equal(rows.find((r) => r.id === 's1')?.tagged, false);
+  assert.equal(rows.find((r) => r.id === 's2')?.tagged, undefined, 's2 is tag-backed');
+  pins.__resetLifecyclePins();
+  const again = await pins.hydrateForTests({ reposDir: repos });
+  assert.equal(again.pins['agent:s1']?.untagged, true, 'still Live across a restart until it is migrated');
+  assert.equal(again.pins['agent:s2']?.untagged, undefined);
+});
+
+test('WP-51 negative twin: in a generated (version 2) file, a row whose tag is gone is NOT live', async () => {
+  const yml = pins.renderPinFile('sales', {
+    pins: { 'agent:s1': { ref: SHA, at: 'then', by: 'u1', domain: 'sales' } },
+  });
+  const { author } = authorFor({ id: 'seed' });
+  await commitSubtree('sales', pins.LIFECYCLE_PREFIX, new Map([[pins.LIFECYCLE_PIN_PATH, yml]]), { author, message: 'seed', reposDir: repos });
+  pins.__resetLifecyclePins();
+  const index = await pins.hydrateForTests({ reposDir: repos });
+  assert.equal(index.pins['agent:s1'], undefined, 'the summary is never the source: no tag, not live');
 });
 
 test('H-3: a repo with NO pin file is a tenant with nothing live — hydrated, and writable', async () => {
