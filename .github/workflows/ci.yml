@@ -399,6 +399,32 @@ jobs:
           GLUE6_TEST_BUILD_FLAG: --skip-build
         run: bash scripts/tests/validate-generated.test.sh
 
+  # WP-50 eject tests (design 11 §2 row d, AT-f): an artefact the OS commits runs on the upstream
+  # tool with no OS present — a committed Trino catalog file in the chart's Trino pin, an OKF bundle
+  # through the OKF reference validator. Every `*.eject.test.ts` runs here, in real containers; the
+  # negative twins inside each file must fail for the test to pass.
+  artifacts-eject:
+    name: artifacts-eject
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Setup Node.js
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: 22
+      - name: Install (os-ui)
+        run: npm --prefix os-ui ci --no-audit --no-fund
+      - name: Eject tests (real containers)
+        working-directory: os-ui
+        env:
+          WP50_EJECT: "1"
+        run: |
+          files="$(find tabs core -name '*.eject.test.ts' | sort)"
+          test -n "$files" || { echo "no eject tests found"; exit 1; }
+          echo "$files"
+          node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test --test-concurrency=1 $files
+
   # `build` is the REQUIRED check. It aggregates: `if: always()` makes it run even when a job it
   # needs failed or was cancelled — GitHub reports a SKIPPED required check as passing, which is how
   # a red test-ui (and with it every glue rule) used to merge. The first step fails unless every
@@ -407,7 +433,7 @@ jobs:
     name: build
     runs-on: ubuntu-latest
     if: ${{ always() }}
-    needs: [test-ui, test-langgraph-pg, test-opensearch, test-lakehouse, tracing-e2e, validate-generated, test-python, dagster-image, git-http-image, test-opa, test-postgres, helm-lint, secret-scan]
+    needs: [test-ui, test-langgraph-pg, test-opensearch, test-lakehouse, tracing-e2e, validate-generated, test-python, dagster-image, git-http-image, test-opa, test-postgres, helm-lint, secret-scan, artifacts-eject]
     steps:
       - name: Every needed job succeeded (failed, cancelled or skipped fails the build)
         env:
