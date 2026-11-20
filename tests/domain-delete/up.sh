@@ -40,7 +40,7 @@ PY
 } > "$WORK/compose.all.env"
 echo "$WORK" > "${TMPDIR:-/tmp}/$P.work"
 C="docker compose -p $P -f tests/lakehouse/compose.yaml -f tests/domain-delete/compose.override.yaml --env-file $WORK/compose.all.env"
-if ! $C up -d --wait --wait-timeout 900 trino query-tool opensearch litellm; then
+if ! $C up -d --wait --wait-timeout 900 trino trino-opa query-tool opensearch litellm; then
   $C ps -a; $C logs --tail 80; exit 1
 fi
 val() { sed -n "s/^$1=//p" "$WORK/compose.all.env" | head -1; }
