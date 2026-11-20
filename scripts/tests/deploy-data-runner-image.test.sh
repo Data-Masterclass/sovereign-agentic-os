@@ -55,6 +55,14 @@ osUI:
     repository: registry.example.invalid/sovereign-os/os-ui
 dataRunner:
   image: {repository: registry.example.invalid/hand-built/data-runner, tag: "0.2.1", digest: "sha256:1111111111111111111111111111111111111111111111111111111111111111"}
+# Release-owned secrets (test-only strings), so deploy.sh's secret preflight passes.
+litellmMasterKey: sk-test-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+agentRuntime:
+  token: rt-test-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+langfuseInit:
+  publicKey: pk-lf-test-cccccccccccccccc
+  secretKey: sk-lf-test-dddddddddddddddd
+  userPassword: lf-admin-test-eeeeeeeeeeeeeeee
 YAML
 
 derive_and_render() { # <tree> — sets out, rc, rendered
