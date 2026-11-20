@@ -196,13 +196,8 @@ jobs:
   # settings; the engine runs one traced agent run through the real gateway. The negative twin
   # re-introduces a second writer and must see two generations per call.
   tracing-e2e:
-    name: tracing-e2e (repeat ${{ matrix.repeat }})
+    name: tracing-e2e
     runs-on: ubuntu-latest
-    # TEMPORARY: five independent runs prove the ingestion wait is not flaky; removed before merge.
-    strategy:
-      fail-fast: false
-      matrix:
-        repeat: [1, 2, 3, 4, 5]
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
