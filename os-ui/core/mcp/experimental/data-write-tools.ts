@@ -35,11 +35,13 @@ import {
   runQualityChecksService,
   saveDatasetSyncService,
   syncDatasetNowService,
+  rollbackDatasetLive,
+  nameDatasetVersionLive,
   type QualityRuleInput,
 } from '@tabs/data/lib/mutations-server';
 import { proposeFixes, applyFixes, dqComplete, type FixApplyInput } from '@tabs/data/lib/dq-fix-server';
 import { DATA_CHECK_RULES } from '@tabs/data/lib/index';
-import { queryRun, executeRun } from '@core/infra/governed';
+import { queryRun, executeRun, authorize } from '@core/infra/governed';
 import { routeFor } from '@core/infra/trino-source';
 import { publishPromotionLive } from '@tabs/data/lib/publish-server';
 import { reconcileDomainTablesLive } from '@tabs/data/lib/reconcile-server';
@@ -54,7 +56,6 @@ import type { Granularity } from '@tabs/metrics/lib/explorer';
 import { getMetric } from '@tabs/metrics/lib/store';
 import { governMetric, canPromote as canPromoteMetric } from '@tabs/metrics/lib/governance';
 import { transition as transitionDataset } from '@tabs/data/lib/store';
-import { datasetVersionWriteTools } from '@tabs/data/mcp/dataset-version-tools';
 
 import {
   createWorkflow,
@@ -779,5 +780,75 @@ const tools: McpTool[] = [
  * `mcp:<name>` value, so this layer was a second identical scope — harmless but redundant, and
  * redundant scoping is where a minted-second-request-id bug hides. One door, one scope.
  */
+
+// ------------------------------------------------- WP-37: dataset data versions (writes) --
+const VERSION_LAYER = { type: 'string', enum: ['bronze', 'silver', 'gold'], description: 'Medallion layer; default: the layer the dataset is served from.' } as const;
+const versionLayer = (v: unknown): 'bronze' | 'silver' | 'gold' | undefined => (v === 'bronze' || v === 'silver' || v === 'gold' ? v : undefined);
+function versionDatasetId(args: Record<string, unknown>, tool: string): string {
+  const v = str(args.datasetId).trim();
+  if (!v) fail(`${tool} needs a \`datasetId\``, 400);
+  return v;
+}
+/** OPA first (default-deny): the caller's domain principal must hold the governed data tool, the same
+ *  grant `query_data` checks. The write path then re-gates schema and role (query-tool / data-runner). */
+async function requireDataToolGrant(user: Parameters<typeof P>[0]): Promise<void> {
+  const principal = user.domains[0] ?? user.id;
+  const authz = await authorize(principal, 'query');
+  if (!authz.allowed) fail(`OPA denied ${principal} → query (${authz.policy})`, 403);
+}
+
+const datasetVersionWriteTools: McpTool[] = [
+  {
+    name: 'rollback_dataset_version',
+    tab: 'data',
+    minRole: 'creator',
+    description:
+      'Restore a dataset’s data to an earlier version: Iceberg’s own `ALTER TABLE … EXECUTE rollback_to_snapshot(<id>)` on the dataset’s table, through the governed write path (your own lane, or your domain as a builder+). Nothing is deleted: the newer snapshots stay in the history until expiry, so a restore can itself be undone by rolling forward. Refused on a table another dataset maps to (`shared_table`, archived siblings included) and on a legacy name-only lane table (`legacy_lane`); the refusal touches nothing.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        datasetId: { type: 'string', description: 'Dataset id you can edit.' },
+        snapshotId: { type: 'string', description: 'The snapshot id to make current (from get_dataset_versions).' },
+        layer: VERSION_LAYER,
+      },
+      required: ['datasetId', 'snapshotId'],
+      examples: [{ datasetId: 'ds_ab12cd', snapshotId: '8954597067493422955' }],
+    },
+    call: async (user, args) => {
+      const datasetId = versionDatasetId(args, 'rollback_dataset_version');
+      getDataset(datasetId, P(user)); // visibility first: an absent id is not_found, an unseen one forbidden
+      await requireDataToolGrant(user);
+      return rollbackDatasetLive(datasetId, P(user), { snapshotId: args.snapshotId, layer: versionLayer(args.layer) });
+    },
+  },
+  {
+    name: 'tag_dataset_version',
+    tab: 'data',
+    minRole: 'creator',
+    description:
+      'Name a version of a dataset’s data: an Iceberg TAG (immutable; kept by every snapshot expiry, whatever the retention) or a BRANCH, committed to the Polaris catalog. Any engine then reads it by name: `SELECT * FROM <table> FOR VERSION AS OF \'<name>\'` and lists it in `"<table>$refs"`. Names: letters, digits, `.`, `_`, `-` (not `main`); a taken name is refused, never moved. Same edit gate and shared-table refusal as rollback_dataset_version.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        datasetId: { type: 'string', description: 'Dataset id you can edit.' },
+        snapshotId: { type: 'string', description: 'The snapshot id to name.' },
+        name: { type: 'string', description: 'Tag or branch name.' },
+        kind: { type: 'string', enum: ['tag', 'branch'], description: 'Default tag.' },
+        layer: VERSION_LAYER,
+      },
+      required: ['datasetId', 'snapshotId', 'name'],
+      examples: [{ datasetId: 'ds_ab12cd', snapshotId: '8954597067493422955', name: 'q3-close' }],
+    },
+    call: async (user, args) => {
+      const datasetId = versionDatasetId(args, 'tag_dataset_version');
+      getDataset(datasetId, P(user)); // visibility first: an absent id is not_found, an unseen one forbidden
+      await requireDataToolGrant(user);
+      return nameDatasetVersionLive(datasetId, P(user), {
+        snapshotId: args.snapshotId, name: args.name, kind: args.kind === 'branch' ? 'branch' : 'tag', layer: versionLayer(args.layer),
+      });
+    },
+  },
+];
+
 // WP-37: restore and name a dataset's data version (Iceberg rollback, tag, branch).
 export const dataWriteTools: McpTool[] = [...tools, ...datasetVersionWriteTools];

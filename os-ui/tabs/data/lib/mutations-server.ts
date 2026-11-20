@@ -620,3 +620,7 @@ export async function syncDatasetNowService(
   requireDatasetEditable(datasetId, user); // the manual trigger's edit gate
   return runSyncNow(datasetId, input.reset ? 'reset' : 'manual', user.id);
 }
+
+// WP-37: restore and name a dataset's data version (Iceberg rollback, tag, branch) — the same
+// functions the version route calls, re-exported so the MCP write barrel reaches them here.
+export { rollbackDatasetLive, nameDatasetVersionLive } from '@tabs/data/lib/dataset-versions-server';

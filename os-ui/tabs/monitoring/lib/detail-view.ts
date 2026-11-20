@@ -17,7 +17,6 @@ import type { CurrentUser } from '@core/kernel/auth';
 import { config } from '@core/kernel/config';
 import { getSystem, type Principal } from '@tabs/agents/lib/store';
 import { getDataset, listDatasets, ensureHydrated as ensureDataHydrated } from '@tabs/data/lib/store';
-import { datasetVersionsLive } from '@tabs/data/lib/dataset-versions-server';
 import { latestSyncSignals } from '@tabs/data/lib/sync-status-server';
 import { listWorkflows, ensureHydrated as ensureKnowledgeHydrated } from '@tabs/knowledge/lib/store';
 import { listPersonalKnowledge } from '@tabs/knowledge/lib/personal-store';
@@ -224,9 +223,6 @@ export type DatasetDetail = {
   /** Build/version timeline for the medallion layers (bronze→silver→gold). */
   layers: { layer: Layer; built: boolean; passThrough: boolean; quality: string; updatedAt: string | null }[];
   /** Snapshot version log (newest first): who/when/what. */
-  /** The served table's Iceberg snapshots (WP-37), newest first; `versionsNote` says why when empty. */
-  versions: { snapshotId: string; at: string; author: string; summary: string }[];
-  versionsNote?: string;
   /** Lineage: upstreams + downstream metrics/dashboards. */
   lineage: {
     nodes: { id: string; kind: string; label: string; sublabel: string; built: boolean }[];
@@ -285,20 +281,6 @@ export async function datasetDetail(user: CurrentUser, datasetId: string, nowMs:
   });
 
   const g = lineageFor(d);
-  // Versions are the served table's Iceberg snapshots, read as the viewer (no OS version log).
-  let versions: DatasetDetail['versions'] = [];
-  let versionsNote: string | undefined;
-  try {
-    const v = await datasetVersionsLive(datasetId, principal);
-    versions = v.versions.map((s) => ({
-      snapshotId: s.snapshotId,
-      at: s.committedAt,
-      author: s.trinoUser ?? '—',
-      summary: [s.operation, ...s.refs.map((r) => `${r.type.toLowerCase()} ${r.name}`), s.current ? 'current' : ''].filter(Boolean).join(' · '),
-    }));
-  } catch (e) {
-    versionsNote = (e as Error).message;
-  }
 
   return {
     id: d.id,
@@ -325,8 +307,6 @@ export async function datasetDetail(user: CurrentUser, datasetId: string, nowMs:
       quality: d.versions[l].quality,
       updatedAt: d.versions[l].updatedAt,
     })),
-    versions,
-    ...(versionsNote ? { versionsNote } : {}),
     lineage: {
       nodes: g.nodes.map((n) => ({ id: n.id, kind: n.kind, label: n.label, sublabel: n.sublabel, built: n.built })),
       edges: g.edges.map((e) => ({ from: e.from, to: e.to, kind: e.kind })),

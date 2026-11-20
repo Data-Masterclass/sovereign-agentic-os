@@ -8,6 +8,7 @@ import { requirePrincipal } from '@tabs/data/lib/server';
 import type { Layer } from '@tabs/data/lib/dataset-schema';
 import { VersionTableError } from '@tabs/data/lib/dataset-versions';
 import { VersionInputError } from '@tabs/data/lib/iceberg-sql';
+import { authorize } from '@core/infra/governed';
 import {
   datasetVersionsLive, diffDatasetDataLive, nameDatasetVersionLive, rollbackDatasetLive,
 } from '@tabs/data/lib/dataset-versions-server';
@@ -48,6 +49,11 @@ type Body = { action?: string; snapshotId?: unknown; name?: unknown; from?: unkn
 
 export const POST = withRoute<{ id: string }, Body>(async ({ user, params, body }) => {
   const layer = layerOf(body.layer);
+  // OPA first (default-deny): the same governed data-tool grant `query_data` checks; the write
+  // path then re-gates schema and role (query-tool guard / data-runner floor).
+  const principal = user.domains[0] ?? user.id;
+  const authz = await authorize(principal, 'query');
+  if (!authz.allowed) return NextResponse.json({ error: `OPA denied ${principal} → query (${authz.policy})` }, { status: 403 });
   try {
     switch (body.action) {
       case 'restore':
