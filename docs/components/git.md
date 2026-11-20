@@ -35,7 +35,7 @@ object kind appears without being classified.
 
 | Object kind | Path in the domain repo | Personal lane | Writer |
 |---|---|---|---|
-| `dataset` — dbt project (datasets, compositions, quality rules, schedules) | `data/dbt/dbt_project.yml`, `data/dbt/profiles.yml`, `data/dbt/models/`, `os/schedules.yml`, `os/sources.yml`, `os/external.yml` | `data/dbt/models/personal/<uid>/` | `tabs/data/lib/dbt/commit.ts` — **committed** |
+| `dataset` — dbt project (datasets, compositions, quality rules, schedules) | `data/dbt/dbt_project.yml`, `data/dbt/profiles.yml`, `data/dbt/models/`, `data/dagster/`, `os/generated.yml`, `os/schedules.yml`, `os/external.yml` | `data/dbt/models/personal/<uid>/` | `tabs/data/lib/dbt/commit.ts` — **committed** |
 | `metric` — dbt `semantic_models` + `metrics` | `data/dbt/models/semantic/<model>.yml` | `data/dbt/models/personal/<uid>/semantic/<model>.yml` | `tabs/data/lib/dbt/commit.ts` — **committed** |
 | `dashboard` — dashboard-as-code | `dashboards/index.yml`, `dashboards/<slug>/` | `dashboards/personal/<uid>/<slug>/` | `tabs/dashboards/lib/git/commit.ts` — **committed** |
 | `agent-system` — LangGraph system | `agents/index.yml`, `agents/<slug>/` | `user-<token>: agents/<slug>/` | `tabs/agents/lib/git/commit.ts` — **committed** |

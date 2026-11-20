@@ -40,7 +40,7 @@
 import { createHash } from 'node:crypto';
 import {
   dbtProjectPath, parseRepoName, principalToken, LAYOUT_V1, LAYOUT_V2, OS_DIR, AGENTS_INDEX_PATH, AGENTS_DIR, DASHBOARDS_DIR,
-  configuredDbtProjectDir, prefixOf, AGENT_GENERATED_FILES, AGENT_ID_PATTERN, AGENT_PROMPTS_DIR, type LayoutVersion,
+  configuredDbtProjectDir, prefixOf, AGENT_GENERATED_FILES, AGENT_ID_PATTERN, AGENT_PROMPTS_DIR, DAGSTER_DIR, type LayoutVersion,
 } from '@core/infra/repo-layout';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -71,7 +71,9 @@ export const DESTRUCTIVE_PUSH =
 export const AUDIENCE_MANAGED = 'audience is managed by the OS; use promotion';
 
 /** Prefixes the OS owns inside every domain repo. Committed for transparency, never pushable. */
-export const OS_OWNED_PREFIXES = ['os/', 'macros/'] as const;
+// `data/dagster/` (WP-49): the generated Dagster module is EXECUTED by the code server, so only the
+// OS writes it; the image also refuses one whose hash differs from `os/generated.yml` (C5).
+export const OS_OWNED_PREFIXES = ['os/', 'macros/', prefixOf(DAGSTER_DIR)] as const;
 
 /**
  * Exact paths the OS owns. `dbt_project.yml` and `macros/**` are not documentation: dbt EXECUTES
@@ -388,6 +390,8 @@ export function decidePath(filePath: string, pusher: Pusher, ctx: PathContext = 
   const proj = dbtProjectPath(p, layout);
   const osPrefix = prefixOf(OS_DIR);
   if (p === OS_DIR || p.startsWith(osPrefix)) return { allowed: false, reason: `'${p}' is ${MANAGED_BY_OS}` };
+  // WP-49: `data/dagster/` holds the generated code location the Dagster code server EXECUTES.
+  if (p === DAGSTER_DIR || p.startsWith(prefixOf(DAGSTER_DIR))) return { allowed: false, reason: `'${p}' is ${MANAGED_BY_OS}` };
   if (proj !== null && DBT_OWNED_PREFIXES.some((prefix) => proj === prefix.slice(0, -1) || proj.startsWith(prefix))) {
     return { allowed: false, reason: `'${p}' is ${MANAGED_BY_OS}` };
   }

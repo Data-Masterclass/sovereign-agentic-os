@@ -59,7 +59,7 @@ a call to the data MCP    ─┴─▶ tabs/data/lib/mutations-server.ts   (ONE 
                                  │        core/infra/git-store ◀──  lib/dbt/commit.ts
                                  │        git commit as the acting user in /repos/<domain>.git
                                  │        (the generated dbt project: models, schema.yml tests,
-                                 │         os/schedules.yml, os/sources.yml)
+                                 │         data/dagster/definitions.py, os/generated.yml)
                                  │                                   │
                                  │                      repo-sync sidecar: dbt parse per commit,
                                  │                      reload the `sovereign` code location
@@ -201,12 +201,12 @@ With the flag on (checklist D7, D14, D15, D16):
   `docs/components/trino.md` for the who-runs-as-whom table and for the honest limit: **Trino does
   not authenticate clients today**, so the impersonation rules have no authenticated `original_user`
   to match and the network boundary is still what makes a claimed session user trustworthy.
-- **External sources are assets.** `lib/dbt/source-assets.ts` writes `os/sources.yml` — one entry
-  per federated sync source — and the code location turns each into an observable source asset keyed
-  `[<domain>, <source>, <table>]`, the same key dagster-dbt gives the dbt source, so the silver model
-  depends on it and the lineage graph has no dangling upstream. Freshness is two schedule intervals,
-  derived from the sync's own cron (`cronIntervalMinutes`); an unfamiliar cron shape makes **no
-  claim** instead of a wrong one.
+- **Database syncs are dlt assets (WP-49).** `lib/dbt/dagster-definitions.ts` writes
+  `data/dagster/definitions.py`: per database sync an `@asset` running dlt's `sql_table` into
+  `landing_<domain>_<owner>.raw_<slug>` through Trino, keyed like the dbt source so the sync model
+  depends on it; schedules and freshness checks (two schedule intervals, `cronIntervalMinutes`) in
+  the same module. Its sha256 goes into `os/generated.yml`; the Dagster image refuses a module that
+  does not match.
 - **Lineage is dbt's.** `lib/lineage-server.ts` `datasetLineage` folds Dagster's asset graph (which
   dagster-dbt derives from `manifest.json`'s `parent_map`) into the same `LineageGraph` shape through
   `lib/dbt/lineage.ts`, and falls back to `lib/lineage.ts` — **labelled** `source: 'registry'` —

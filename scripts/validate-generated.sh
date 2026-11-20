@@ -20,7 +20,9 @@
 #     allowlisted environment), with `--network none`: parse needs no warehouse.
 #   - Dagster's loader skips a broken domain and logs it (per-domain gating), so a zero exit from
 #     `definitions validate` alone would pass a project Dagster refused. The step therefore also
-#     FAILS on any "skipped"/"failed to load" line and asserts every domain produced assets.
+#     FAILS on any "skipped"/"failed to load" line and asserts every domain produced assets. The
+#     image loads each repo's own `data/dagster/definitions.py` (WP-49); goldens are materialised in
+#     the design-12 layout (`data/dbt/`, `data/dagster/`, `os/`).
 #   - `--fixtures <dir>` ADDS inputs to the real ones: `<dir>/dbt/*.json` (golden-shaped project
 #     maps), `<dir>/opa/*.rego`, `<dir>/k8s/*.yaml`. This is how the negative twins prove each step
 #     really runs (scripts/tests/validate-generated.test.sh).
@@ -109,9 +111,9 @@ if want dbt && need dbt-parse docker; then
     [ $trino_ready = 1 ] || fail dbt-compile "the chart's Trino image ($TRINO_IMAGE) did not start for dbt compile"
     while read -r domain sha; do
       out="$(docker run --rm --network none -v "$CHECKOUT:/repos-checkout" -w /opt/dagster/app "$DAGSTER_IMAGE" \
-        python os_projects.py --parse "/repos-checkout/$domain/$sha" 2>&1)"
+        python os_projects.py --parse "/repos-checkout/$domain/$sha/$DBT_PROJECT_DIR" 2>&1)"
       rc=$?   # captured IMMEDIATELY: dbt's own exit code decides, together with the manifest it writes
-      parsed=0; { [ $rc -eq 0 ] && [ -f "$CHECKOUT/$domain/$sha/target/manifest.json" ]; } && parsed=1
+      parsed=0; { [ $rc -eq 0 ] && [ -f "$CHECKOUT/$domain/$sha/$DBT_PROJECT_DIR/target/manifest.json" ]; } && parsed=1
       if is_known "$domain"; then
         match="$($LIB known-match "$domain")" || { fail dbt-parse "$domain: knownRefusals entry has no match text"; continue; }
         if [ $parsed = 1 ]; then
@@ -128,11 +130,11 @@ if want dbt && need dbt-parse docker; then
         # profiles.yml pointed at the throwaway Trino above.
         if [ $trino_ready = 1 ]; then
           cout="$(docker run --rm --network "$NET" -v "$CHECKOUT:/repos-checkout" -e HOME=/tmp -e OS_PRINCIPAL=glue6-ci \
-            -e TRINO_HOST=trino -w "/repos-checkout/$domain/$sha" "$DAGSTER_IMAGE" dbt compile --profiles-dir . 2>&1)"
+            -e TRINO_HOST=trino -w "/repos-checkout/$domain/$sha/$DBT_PROJECT_DIR" "$DAGSTER_IMAGE" dbt compile --profiles-dir . 2>&1)"
           crc=$?
         else cout="Trino not available"; crc=99; fi
-        if [ $crc -eq 0 ] && [ -d "$CHECKOUT/$domain/$sha/target/compiled" ]; then
-          ok dbt-compile "$domain ($(find "$CHECKOUT/$domain/$sha/target/compiled" -name '*.sql' | wc -l | tr -d ' ') compiled files)"
+        if [ $crc -eq 0 ] && [ -d "$CHECKOUT/$domain/$sha/$DBT_PROJECT_DIR/target/compiled" ]; then
+          ok dbt-compile "$domain ($(find "$CHECKOUT/$domain/$sha/$DBT_PROJECT_DIR/target/compiled" -name '*.sql' | wc -l | tr -d ' ') compiled files)"
         else
           fail dbt-compile "$domain: dbt compile exited $crc"
           printf '%s\n' "$cout" | grep -v 'keyring module not found' | tail -12 | sed 's/^/    /'
@@ -148,35 +150,33 @@ fi
 
 # ------------------------------------------------------ 2. dagster definitions validate -------
 if want dagster && [ -s "$WORK/domains.txt" ] && docker image inspect "$DAGSTER_IMAGE" >/dev/null 2>&1; then
-  # Every domain is loaded, including one whose parse failed above: Dagster must refuse it too.
-  out="$(docker run --rm --network none -v "$CHECKOUT:/repos-checkout:ro" -w /opt/dagster/app \
-    -e REPO_SYNC_CHECKOUT=/repos-checkout "$DAGSTER_IMAGE" \
-    dagster definitions validate -f /opt/dagster/app/repo.py 2>&1)"
-  code=$?
-  # Assets per domain, read from the SAME Definitions object (asset keys are [<domain>, <node>]).
-  assets="$(docker run --rm --network none -v "$CHECKOUT:/repos-checkout:ro" -w /opt/dagster/app \
-    -e REPO_SYNC_CHECKOUT=/repos-checkout "$DAGSTER_IMAGE" python -c '
-import collections, logging, repo
+  # The image is a WRAPPER that loads each repo's own data/dagster/definitions.py (WP-49). Every
+  # golden is generated for the same domain name, so each is validated in its OWN checkout dir
+  # (in production one domain = one name, and the wrapper merges them).
+  while read -r domain sha; do
+    one="$WORK/one-$domain"; mkdir -p "$one" && cp -R "$CHECKOUT/$domain" "$one/" && chmod -R a+rwX "$one"
+    out="$(docker run --rm --network none -v "$one:/repos-checkout:ro" -w /opt/dagster/app \
+      -e REPO_SYNC_CHECKOUT=/repos-checkout "$DAGSTER_IMAGE" dagster definitions validate -f /opt/dagster/app/repo.py 2>&1)"
+    code=$?
+    assets="$(docker run --rm --network none -v "$one:/repos-checkout:ro" -w /opt/dagster/app \
+      -e REPO_SYNC_CHECKOUT=/repos-checkout "$DAGSTER_IMAGE" python -c '
+import logging, repo
 logging.disable(logging.CRITICAL)
-c = collections.Counter(k.path[0] for k in repo.defs.resolve_all_asset_keys() if len(k.path) > 1)
-print("\n".join(f"{d} {n}" for d, n in sorted(c.items())))' 2>"$WORK/assets.err")"
-  refused="$(printf '%s\n' "$out" | grep -E 'skipped —|failed to load' || true)"
-  # A baselined dbt refusal is necessarily skipped by Dagster too; every OTHER refusal fails.
-  for k in $KNOWN_DBT_REFUSALS; do refused="$(printf '%s\n' "$refused" | grep -v "domain $k skipped" || true)"; done
-  refused="$(printf '%s\n' "$refused" | sed '/^$/d')"
-  if [ $code -ne 0 ]; then
-    fail dagster-definitions-validate "exit $code"; printf '%s\n' "$out" | tail -15 | sed 's/^/    /'
-  elif [ -n "$refused" ]; then
-    fail dagster-definitions-validate "the code location loaded but refused a domain:"; printf '%s\n' "$refused" | sed 's/^/    /'
-  else
-    missing=""
-    while read -r domain _; do is_known "$domain" || grep -q "^$domain [1-9]" <<<"$assets" || missing="$missing $domain"; done < "$WORK/domains.txt"
-    if [ -n "$missing" ]; then
-      fail dagster-definitions-validate "no assets loaded for:$missing"; { printf '%s\n' "$assets"; tail -10 "$WORK/assets.err"; } | sed 's/^/    /'
+print(len([k for k in repo.defs.resolve_all_asset_keys() if len(k.path) > 1]))' 2>"$WORK/assets.err")"
+    refused="$(printf '%s\n' "$out" | grep -E 'skipped —|failed to load|rejected by Definitions' || true)"
+    if is_known "$domain"; then
+      [ -n "$refused" ] && echo "GLUE-6 dagster-definitions-validate: KNOWN-FAIL $domain (its dbt parse is a baselined refusal)" \
+        || fail dagster-definitions-validate "$domain loads although its dbt parse is baselined as refused"
+    elif [ $code -ne 0 ]; then
+      fail dagster-definitions-validate "$domain: exit $code"; printf '%s\n' "$out" | tail -15 | sed 's/^/    /'
+    elif [ -n "$refused" ]; then
+      fail dagster-definitions-validate "$domain: the code location loaded but refused the domain:"; printf '%s\n' "$refused" | sed 's/^/    /'
+    elif ! [ "${assets:-0}" -gt 0 ] 2>/dev/null; then
+      fail dagster-definitions-validate "$domain: no assets loaded"; tail -10 "$WORK/assets.err" | sed 's/^/    /'
     else
-      ok dagster-definitions-validate "assets per domain: $(tr '\n' ',' <<<"$assets" | sed 's/,$//; s/,/, /g')"
+      ok dagster-definitions-validate "$domain ($assets assets from its data/dagster/definitions.py)"
     fi
-  fi
+  done < "$WORK/domains.txt"
 fi
 
 # ---------------------------------------------------------------- 3. OPA -----------------------

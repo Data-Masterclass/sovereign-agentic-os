@@ -155,15 +155,13 @@ class GeneratedHash(unittest.TestCase):
 
 
 class LayoutAgreement(unittest.TestCase):
-    """The image's paths are the ones os-ui's generator writes (os-ui/core/infra/data-layout.ts)."""
+    """The image's paths are design 12's (os-ui/core/infra/repo-layout.ts; data-layout.test.ts checks this file)."""
 
-    def test_the_paths_match_the_ts_constant(self):
-        here = os.path.dirname(os.path.abspath(__file__))
-        with open(os.path.join(here, "..", "..", "..", "..", "os-ui", "core", "infra", "data-layout.ts"), encoding="utf-8") as fh:
-            ts = fh.read()
-        self.assertIn(f"dagsterDefinitionsPath: '{osp.DAGSTER_DEFINITIONS_PATH}'", ts)
-        self.assertIn(f"dbtProjectDir: '{osp.DBT_PROJECT_DIR}'", ts)
-        self.assertIn(f"generatedHashesPath: '{osp.GENERATED_PATH}'", ts)
+    def test_the_paths_are_the_repo_layout(self):
+        self.assertEqual(osp.DAGSTER_DEFINITIONS_PATH, "data/dagster/definitions.py")
+        self.assertEqual(osp.DBT_PROJECT_DIR, os.environ.get("OS_DBT_PROJECT_DIR", "data/dbt").strip("/") or "data/dbt")
+        self.assertEqual(osp.GENERATED_PATH, "os/generated.yml")
+
 
 
 class Pauses(unittest.TestCase):

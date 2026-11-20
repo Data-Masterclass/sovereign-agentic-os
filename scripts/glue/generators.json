@@ -13,7 +13,9 @@
         "tabs/data/lib/dbt/semantic/spec.ts",
         "core/infra/repo-layout.ts",
         "core/infra/repo-readme.ts",
-        "tabs/data/lib/dbt/layout.ts"
+        "tabs/data/lib/dbt/layout.ts",
+        "tabs/data/lib/dbt/dagster-definitions.ts",
+        "core/infra/data-layout.ts"
       ],
       "component": "dbt + Dagster",
       "validator": "dbt parse; dagster definitions validate",
@@ -27,7 +29,8 @@
         "tabs/data/lib/dbt/fixtures/metrics-semantic-layer.golden.json",
         "tabs/data/lib/dbt/fixtures/sweep-element.golden.json",
         "tabs/data/lib/dbt/fixtures/sweep-full.golden.json",
-        "tabs/data/lib/dbt/fixtures/sweep-labels.golden.json"
+        "tabs/data/lib/dbt/fixtures/sweep-labels.golden.json",
+        "tabs/data/lib/dbt/fixtures/dlt-lakehouse.golden.json"
       ]
     }
   ]
