@@ -438,3 +438,54 @@ export function scheduleNameFor(domain: string, datasetId: string, allDomains?: 
 export function modelAssetKey(domain: string, model: string): string[] {
   return [domain, model];
 }
+
+/* ------------------------------------------------------- delete domain (admin) -- */
+
+/** A deleted domain's leftovers in the code location: its jobs (`<dom>__*`, `<dom>_dbt`), its
+ *  schedules (and whether each is RUNNING), and its asset group (`<dom>`). */
+export type DomainDefinitions = {
+  jobs: string[];
+  schedules: { name: string; status: string; stateId: string | null; selectorId: string | null }[];
+  sensors: { name: string; status: string; stateId: string | null; selectorId: string | null }[];
+  assetGroups: string[];
+};
+
+const DOMAIN_DEFS = `query DomainDefs($sel: RepositorySelector!) { repositoryOrError(repositorySelector: $sel) { __typename ... on Repository { jobs { name } schedules { name scheduleState { id selectorId status } } sensors { name sensorState { id selectorId status } } assetGroups { groupName } } ... on RepositoryNotFoundError { message } ... on PythonError { message } } }`;
+
+/** The Dagster-safe name repo.py gives a domain (`os_projects.sanitize`). */
+export function dagsterDomainName(domain: string): string {
+  return (domain || '').replace(/[^A-Za-z0-9_]/g, '_');
+}
+
+export async function domainDefinitions(domain: string, deps: DagsterDeps = {}): Promise<Fetched<DomainDefinitions>> {
+  const r = await gql<{ repositoryOrError: Record<string, unknown> }>(DOMAIN_DEFS, { sel: selector(deps) }, deps);
+  if (!r.ok) return r;
+  const repo = r.data.repositoryOrError ?? {};
+  if (repo.__typename !== 'Repository') return { ok: false, error: describeUnion(repo) };
+  const d = dagsterDomainName(domain);
+  const mine = (name: string) => name === `${d}_dbt` || name.startsWith(`${d}__`);
+  type St = { id?: string; selectorId?: string; status?: string } | null;
+  const state = (s: St) => ({ status: String(s?.status ?? 'UNKNOWN'), stateId: s?.id ?? null, selectorId: s?.selectorId ?? null });
+  return {
+    ok: true,
+    data: {
+      jobs: ((repo.jobs as { name: string }[]) ?? []).map((j) => j.name).filter(mine),
+      schedules: ((repo.schedules as { name: string; scheduleState: St }[]) ?? []).filter((s) => mine(s.name)).map((s) => ({ name: s.name, ...state(s.scheduleState) })),
+      sensors: ((repo.sensors as { name: string; sensorState: St }[]) ?? []).filter((s) => mine(s.name)).map((s) => ({ name: s.name, ...state(s.sensorState) })),
+      assetGroups: ((repo.assetGroups as { groupName: string }[]) ?? []).map((g) => g.groupName).filter((g) => g === d),
+    },
+  };
+}
+
+const STOP_SCHEDULE = `mutation Stop($id: String, $sel: String) { stopRunningSchedule(id: $id, scheduleSelectorId: $sel) { __typename ... on ScheduleStateResult { scheduleState { status } } ... on PythonError { message } ... on UnauthorizedError { message } } }`;
+const STOP_SENSOR = `mutation Stop($id: String, $sel: String) { stopSensor(id: $id, jobSelectorId: $sel) { __typename ... on StopSensorMutationResult { instigationState { status } } ... on PythonError { message } ... on UnauthorizedError { message } } }`;
+
+/** Stop a RUNNING schedule or sensor by its instigation state (Dagster GraphQL). */
+export async function stopInstigator(kind: 'schedule' | 'sensor', s: { stateId: string | null; selectorId: string | null }, deps: DagsterDeps = {}): Promise<Fetched<{ status: string }>> {
+  const r = await gql<Record<string, Record<string, unknown>>>(kind === 'schedule' ? STOP_SCHEDULE : STOP_SENSOR, { id: s.stateId, sel: s.selectorId }, deps);
+  if (!r.ok) return r;
+  const out = (kind === 'schedule' ? r.data.stopRunningSchedule : r.data.stopSensor) ?? {};
+  const st = ((out.scheduleState ?? out.instigationState) as { status?: string } | undefined)?.status;
+  if (st) return { ok: true, data: { status: st } };
+  return { ok: false, error: describeUnion(out) };
+}

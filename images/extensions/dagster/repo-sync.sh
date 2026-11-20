@@ -183,30 +183,58 @@ http.server.ThreadingHTTPServer((bind, port), H).serve_forever()
 PY
 log "status on $BIND:$PORT (auth: $([ -n "$STATUS_TOKEN" ] && echo bearer || echo NONE)), base $BASE, index ${INDEX_URL:-off}, extra domains [$DOMAINS], every ${INTERVAL}s"
 
-# Domains from the OS index (newline-separated). Unreachable ⇒ empty (the explicit list still runs).
+# Domains from the OS index (newline-separated). Unreachable ⇒ empty (the explicit list still runs)
+# and NO .index file is written, so a down index can never look like "every domain was deleted".
+# On an answer, the list is also written to $CHECKOUT/.index (the prune below trusts only that).
 # The index is also written to $CHECKOUT/.os-index.json (atomically, only after a good fetch): the
 # `os_principals` sensor in the user-code container reads that file, so the user-code container —
 # and every run pod, which inherits its env — holds no bearer. A failed fetch leaves the last good
 # file, which the sensor stops trusting once it is older than its max age.
 index_domains() {
+  rm -f "$CHECKOUT/.index"
   [ -n "$INDEX_URL" ] || return 0
-  python3 - "$INDEX_URL" "$TOKEN" "$CHECKOUT/.os-index.json" <<'PY' 2>/dev/null || true
+  python3 - "$INDEX_URL" "$TOKEN" "$CHECKOUT/.index" "$CHECKOUT/.os-index.json" <<'PY' 2>/dev/null || true
 import json, os, sys, urllib.request
-url, token, snapshot = sys.argv[1], sys.argv[2], sys.argv[3]
+url, token, out, snapshot = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 req = urllib.request.Request(url, headers={"accept": "application/json", **({"authorization": "Bearer " + token} if token else {})})
 try:
     doc = json.loads(urllib.request.urlopen(req, timeout=5).read().decode())
-    if isinstance(doc, dict) and isinstance(doc.get("domains"), list):
-        tmp = snapshot + ".tmp"
-        with open(tmp, "w") as f:
-            json.dump(doc, f)
-        os.replace(tmp, snapshot)
-    for d in doc.get("domains", []):
-        if isinstance(d, dict) and d.get("name"):
-            print(d["name"])
 except Exception:
-    pass
+    sys.exit(0)
+if not isinstance(doc, dict) or not isinstance(doc.get("domains"), list):
+    sys.exit(0)
+tmp = snapshot + ".tmp"
+with open(tmp, "w") as fh:
+    json.dump(doc, fh)
+os.replace(tmp, snapshot)
+names = [d["name"] for d in doc["domains"] if isinstance(d, dict) and d.get("name")]
+tmp = out + ".tmp"
+with open(tmp, "w") as fh:
+    fh.write("".join(n + "\n" for n in names))
+os.replace(tmp, out)
+for n in names:
+    print(n)
 PY
+}
+
+# Prune the checkout of every domain the index NO LONGER lists (a deleted domain): its worktrees,
+# mirror, status and verdicts go, so `os_projects.discover` stops loading it, and the location is
+# reloaded. Only when the index ANSWERED this pass (.index exists) and the domain is not in the
+# explicit REPO_SYNC_DOMAINS list. REPO_SYNC_PRUNE=false turns it off.
+prune_removed() { # newline-separated list of domains to keep
+  [ "${REPO_SYNC_PRUNE:-true}" = "true" ] || return 0
+  [ -f "$CHECKOUT/.index" ] || return 0
+  keep="$1"
+  for dir in "$CHECKOUT"/*/; do
+    [ -d "$dir" ] || continue
+    d="$(basename "$dir")"
+    case "$d" in .*) continue ;; esac
+    if ! printf '%s\n' "$keep" | grep -qxF "$d"; then
+      rm -rf "$CHECKOUT/$d" "$CHECKOUT/.mirrors/$d.git" "$CHECKOUT/.status/$d.json" "$CHECKOUT/.verdicts/$d".* "$CHECKOUT/.verdicts/$d"
+      log "$d: no longer in the OS index — checkout pruned (the domain was deleted)"
+      REPOINTED=1
+    fi
+  done
 }
 
 # Write one domain's status fragment (JSON, via python for correct escaping).
@@ -405,6 +433,7 @@ while true; do
     sync_domain "$d" || log "$d: unexpected error (continuing)"
     publish_live "$d" || log "$d: could not read the live tags (continuing)"
   done
+  prune_removed "$all"
   aggregate_status
   [ "$REPOINTED" = "1" ] && reload_location
   sleep "$INTERVAL"

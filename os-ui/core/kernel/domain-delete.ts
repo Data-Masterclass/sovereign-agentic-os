@@ -165,7 +165,16 @@ export async function checkBackup(check: BackupCheck, iHaveABackup: boolean, now
 export async function deleteDomain(
   domainId: string,
   opts: DomainDeleteOptions,
-  deps: { actor: DomainDeleteActor; components: DomainDeleteComponent[]; audit: AuditFn; backup: BackupCheck },
+  deps: {
+    actor: DomainDeleteActor;
+    components: DomainDeleteComponent[];
+    audit: AuditFn;
+    backup: BackupCheck;
+    /** Throws (400/404) unless `domainId` is a registered, non-reserved domain. */
+    validateTarget?: (domainId: string) => Promise<void>;
+    /** False for a door that may only PLAN (the MCP tool): a run is then refused. */
+    allowRun?: boolean;
+  },
 ): Promise<DomainDeleteReport> {
   const { actor, components, audit } = deps;
   const id = (domainId ?? '').trim();
@@ -176,6 +185,18 @@ export async function deleteDomain(
   }
   if (!id) throw err('A domain id is required', 400);
   const dryRun = opts.dryRun !== false;
+  if (!dryRun && deps.allowRun === false) {
+    audit({ action: 'domain.delete', target, detail: 'Refused: this door may only plan; a run needs Admin → Domains in a signed-in session', result: 'denied' });
+    throw err('This door may only plan (dry run). Run the delete from Admin → Domains, signed in, with the typed confirmation.', 403);
+  }
+  if (deps.validateTarget) {
+    try {
+      await deps.validateTarget(id);
+    } catch (e) {
+      audit({ action: 'domain.delete', target, detail: `Refused: ${(e as Error).message}`, result: 'denied' });
+      throw e;
+    }
+  }
   const ctx: PlanContext = { domainId: id, actor };
   const plan = await planDomainDelete(components, ctx, dryRun);
 
@@ -250,6 +271,7 @@ export function planLines(plan: DomainDeletePlan): string[] {
 export type DomainDeleteWiring = {
   components: () => DomainDeleteComponent[];
   backup: BackupCheck;
+  validateTarget: (domainId: string) => Promise<void>;
   /** The platform audit log, bound to the acting admin. */
   audit: (actor: { id: string; role: Role }) => AuditFn;
 };

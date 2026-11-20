@@ -26,6 +26,12 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     if (text.trim()) {
       try { body = JSON.parse(text); } catch (e) { return NextResponse.json({ error: `Invalid JSON body: ${(e as Error).message}` }, { status: 400 }); }
     }
+    const run = body.dryRun === false;
+    // A RUN is a person's act: the cookie session (adminCtx) of a browser on this origin. MCP and
+    // agent bearers never reach this route; the Fetch Metadata header is set by the browser.
+    if (run && req.headers.get('sec-fetch-site') !== 'same-origin') {
+      return NextResponse.json({ error: 'A delete run is accepted only from Admin → Domains in a signed-in browser session' }, { status: 403 });
+    }
     const w = domainDeleteWiring();
     const report = await deleteDomain(
       id,
@@ -35,6 +41,8 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
         components: w.components(),
         backup: w.backup,
         audit: w.audit({ id: user.id, role: user.role }),
+        validateTarget: w.validateTarget,
+        allowRun: true,
       },
     );
     const status = report.status === 'refused' ? 412 : report.status === 'failed' ? 502 : 200;

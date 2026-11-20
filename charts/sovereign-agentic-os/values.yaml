@@ -1618,9 +1618,9 @@ polaris:
   catalog:
     name: lakehouse
     baseLocation: s3://lakehouse/wh
-    # Let Trino's DROP TABLE purge the table's files (polaris-catalog-init grants catalog_admin
-    # TABLE_WRITE_DATA and sets polaris.config.drop-with-purge.enabled). Off = every DROP TABLE
-    # through Trino fails with Polaris 403 and the table stays.
+    # Let Trino's DROP TABLE purge the table's files: the polaris-catalog-purge hook Job grants
+    # catalog_admin TABLE_WRITE_DATA and sets polaris.config.drop-with-purge.enabled (read back,
+    # fail closed). Off = every DROP TABLE through Trino fails with Polaris 403 and the table stays.
     purgeOnDrop: true
   local:
     rootClientId: root
@@ -1636,7 +1636,8 @@ queryTool:
   enabled: true
   image:
     repository: sovereign-os/query-tool     # built locally, loaded into kind
-    tag: "0.6.2"                             # 0.6.2 = ADDS the promote-as-view allowlist
+    tag: "0.6.3"                             # 0.6.3 = ADDS DROP SCHEMA for the governed delete-domain run
+                                             # 0.6.2 = ADDS the promote-as-view allowlist
                                              #         (CREATE OR REPLACE VIEW / DROP VIEW for
                                              #         builder+ into an entitled domain schema)
   trino:

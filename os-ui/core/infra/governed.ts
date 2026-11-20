@@ -216,6 +216,9 @@ export async function executeRun(
   // Interactive default stays 15s; long-running callers (the scheduled-sync
   // executor — config.syncStatementTimeoutMs) pass their own budget explicitly.
   timeoutMs = 15000,
+  /** `'domain-delete'`: the admin delete-domain run — the only caller the query-tool lets
+   *  `DROP SCHEMA` (images/extensions/query-tool/execute_guard.py). */
+  purpose?: 'domain-delete',
 ): Promise<ExecuteResult> {
   const body: Record<string, unknown> = {
     sql,
@@ -227,6 +230,7 @@ export async function executeRun(
     client_tags: trinoClientTags(route),
   };
   if (schema) body.schema = schema;
+  if (purpose) body.purpose = purpose;
   const res = await withTimeout(
     `${config.queryToolUrl}/execute`,
     {

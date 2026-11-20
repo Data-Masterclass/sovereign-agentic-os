@@ -82,14 +82,31 @@ export function domainDropPlan(d: Dataset): PhysicalDrop[] {
   return out;
 }
 
+/** One table a dataset can occupy (its lane or domain copy, one layer). */
+export type Candidate = { fqn: string; schema: string; table: string; object: 'table' | 'view'; owner: string; domain: string; dataset: string };
+
+/** Every table a dataset can occupy, built or not. */
+export function footprint(d: Dataset): Candidate[] {
+  const out: Candidate[] = [];
+  const personal = personalSchema(d.owner);
+  for (const layer of LAYERS) {
+    const t = laneTable(d, layer);
+    out.push({ fqn: `iceberg.${personal}.${t}`, schema: personal, table: t, object: 'table', owner: d.owner, domain: d.domain, dataset: d.id });
+    if (d.tier !== 'dataset') {
+      const dom = domainSchema(d.domain);
+      const dt = `${layer}_${physicalSlug(d)}`;
+      out.push({ fqn: `iceberg.${dom}.${dt}`, schema: dom, table: dt, object: d.domainArtifact === 'view' ? 'view' : 'table', owner: d.owner, domain: d.domain, dataset: d.id });
+    }
+  }
+  return out;
+}
+
 /**
- * The set of physical FQNs some OTHER dataset — live OR ARCHIVED — ALSO occupies (a name/slug collision).
- * Because the physical table is keyed on `physicalSlug` (name-slug), not the id, two datasets
- * with the same slug in one domain resolve to the SAME `iceberg.<domain>.<layer>_<slug>`
- * table. Dropping `target`'s tables would then ORPHAN a still-live sibling. This returns the
- * union of `dropPlan(o)` FQNs for every `o !== target`, so the drop can SKIP (protect) any
- * table a sibling still needs. ARCHIVED datasets are included: archive is reversible, and a
- * restored dataset must find its tables (legacy name-only lane tables can be shared).
+ * The set of physical FQNs some OTHER dataset — live OR ARCHIVED — also occupies, so a drop can
+ * SKIP (protect) it: legacy name-only lane tables can be shared. It is their full physical footprint (every layer, built or not,
+ * archived datasets included), never only the layers their record says are built: an archived
+ * record can list silver+gold while its bronze table still exists, and with purge-on-drop a drop
+ * of that table deletes the sibling's files.
  */
 export function sharedFootprintFqns(
   target: Dataset,
@@ -98,7 +115,7 @@ export function sharedFootprintFqns(
   const out = new Set<string>();
   for (const o of others) {
     if (o.id === target.id) continue;
-    for (const drop of dropPlan(o)) out.add(drop.fqn);
+    for (const c of footprint(o)) out.add(c.fqn);
   }
   return out;
 }

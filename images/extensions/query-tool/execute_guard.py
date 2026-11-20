@@ -16,6 +16,9 @@ Two independent gates, both enforced here BEFORE any SQL reaches Trino:
        * CREATE OR REPLACE VIEW iceberg.<schema>.<view> AS
              SELECT ... FROM iceberg.<schema>.<table>    (governed promote-as-view)
        * DROP VIEW IF EXISTS iceberg.<schema>.<view>
+       * DROP SCHEMA IF EXISTS iceberg.<schema>   (no CASCADE: Trino refuses a non-empty
+             schema) — ONLY for the governed delete-domain run (`purpose: domain-delete`,
+             role admin), on the caller's personal schema or one of its domain schemas
        * INSERT INTO iceberg.<schema>.<table> SELECT ...          (incremental append)
        * MERGE INTO  iceberg.<schema>.<table> USING ... ON ... WHEN ...  (upsert)
        * DELETE FROM iceberg.<schema>.<table> WHERE _batch_id = '<id>'
@@ -58,6 +61,14 @@ BUILDER_ROLES = {"builder", "domain_admin", "admin"}  # role floor for domain-sc
 
 # A bare, lowercase SQL identifier (no quoting allowed — keeps the surface tight).
 _IDENT = r"[a-z_][a-z0-9_]*"
+
+_RE_DROP_SCHEMA = re.compile(
+    rf"drop\s+schema\s+if\s+exists\s+{CATALOG}\.({_IDENT})",
+    re.IGNORECASE,
+)
+
+#: The one purpose that may drop a schema: os-ui's admin delete-domain run.
+DOMAIN_DELETE_PURPOSE = "domain-delete"
 
 _RE_CREATE_SCHEMA = re.compile(
     rf"create\s+schema\s+if\s+not\s+exists\s+{CATALOG}\.({_IDENT})",
@@ -267,6 +278,10 @@ def parse_statement(sql: str) -> ParsedWrite:
     if m:
         return ParsedWrite("create_schema", CATALOG, m.group(1), None)
 
+    m = _RE_DROP_SCHEMA.fullmatch(s)
+    if m:
+        return ParsedWrite("drop_schema", CATALOG, m.group(1), None)
+
     m = _RE_CTAS_REPLACE.fullmatch(s) or _RE_CTAS_IFNE.fullmatch(s)
     if m:
         return ParsedWrite("ctas", CATALOG, m.group(1), m.group(2))
@@ -348,11 +363,17 @@ def authorize_target(parsed: ParsedWrite, uid: str, domains: List[str], role: st
     )
 
 
-def guard(sql: str, uid: str, domains: List[str], role: str) -> ParsedWrite:
-    """Full gate: allowlist + target authorization. Returns the parsed write on OK."""
+def guard(sql: str, uid: str, domains: List[str], role: str, purpose: Optional[str] = None) -> ParsedWrite:
+    """Full gate: allowlist + target authorization. Returns the parsed write on OK.
+    DROP SCHEMA additionally needs the delete-domain purpose AND the admin role."""
     if not uid or not role:
         raise ExecuteError(400, "missing caller identity (uid/role)")
     parsed = parse_statement(sql)
+    if parsed.kind == "drop_schema":
+        if purpose != DOMAIN_DELETE_PURPOSE:
+            raise ExecuteError(403, "DROP SCHEMA is allowed only for the governed delete-domain run")
+        if role != "admin":
+            raise ExecuteError(403, "DROP SCHEMA needs the admin role")
     authorize_target(parsed, uid, domains, role)
     return parsed
 

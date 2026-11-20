@@ -27,12 +27,11 @@
  */
 import type { DomainDeleteComponent, KeptItem, PlanItem } from '@core/kernel/domain-delete';
 import type { Role } from '@core/kernel/session';
-import type { Dataset, Layer } from '@tabs/data/lib/dataset-schema';
 import { listAllDatasets, deleteDataset, ensureHydrated, type Principal } from '@tabs/data/lib/store';
-import { domainSchema, laneTable, personalSchema, physicalSlug } from '@tabs/data/lib/store-fqn';
+import { domainSchema, personalSchema } from '@tabs/data/lib/store-fqn';
+import { footprint, type Candidate } from '@tabs/data/lib/physical-delete';
 import { ensureHydrated as ensureDqHydrated, listDqRunsForDomain, purgeDqRunForDomainDelete } from '@tabs/data/lib/dq-results';
 
-const LAYERS: Layer[] = ['bronze', 'silver', 'gold'];
 
 export type TrinoIdentity = { principal: string; uid: string; domains: string[]; role: Role };
 /** The Trino doors: a governed read returning rows, and a governed statement. */
@@ -43,24 +42,6 @@ export type TrinoPort = {
 /** Resolve an artifact owner's LIVE principal; must throw when the owner cannot act. */
 export type OwnerPrincipal = (ownerId: string) => Promise<Principal>;
 
-type Candidate = { fqn: string; schema: string; table: string; object: 'table' | 'view'; owner: string; domain: string; dataset: string };
-
-/** Every table a dataset can occupy, built or not. */
-export function footprint(d: Dataset): Candidate[] {
-  const out: Candidate[] = [];
-  const personal = personalSchema(d.owner);
-  for (const layer of LAYERS) {
-    const t = laneTable(d, layer);
-    out.push({ fqn: `iceberg.${personal}.${t}`, schema: personal, table: t, object: 'table', owner: d.owner, domain: d.domain, dataset: d.id });
-    if (d.tier !== 'dataset') {
-      const dom = domainSchema(d.domain);
-      const dt = `${layer}_${physicalSlug(d)}`;
-      out.push({ fqn: `iceberg.${dom}.${dt}`, schema: dom, table: dt, object: d.domainArtifact === 'view' ? 'view' : 'table', owner: d.owner, domain: d.domain, dataset: d.id });
-    }
-  }
-  return out;
-}
-
 const q = (s: string) => `'${s.replace(/'/g, "''")}'`;
 
 export function icebergComponent(deps: {
@@ -69,15 +50,15 @@ export function icebergComponent(deps: {
   /** Members for whom this is the only domain (they are deactivated by the delete). */
   soleMembers: (domainId: string) => Promise<string[]>;
 }): DomainDeleteComponent {
-  const identityFor = async (uid: string, domainId: string): Promise<TrinoIdentity> => {
+  // The schema owner's principal is the Trino session user (personal schemas are owned by the
+  // user alone, a domain schema by the domain principal); the ROLE is the acting admin's, the one
+  // the query-tool checks for the governed delete (`purpose: domain-delete`).
+  const identityFor = async (uid: string, domainId: string, actorRole: Role): Promise<TrinoIdentity> => {
     const p = await deps.owner(uid);
-    // Personal schemas are owned by the user alone; a domain schema by the domain principal.
-    return { principal: uid, uid, domains: p.domains.includes(domainId) ? p.domains : [domainId, ...p.domains], role: p.role };
+    return { principal: uid, uid, domains: p.domains.includes(domainId) ? p.domains : [domainId, ...p.domains], role: actorRole };
   };
-  const domainIdentity = async (domainId: string, actorId: string): Promise<TrinoIdentity> => {
-    const p = await deps.owner(actorId);
-    return { principal: domainId, uid: actorId, domains: [domainId], role: p.role };
-  };
+  const domainIdentity = (domainId: string, actorId: string, actorRole: Role): TrinoIdentity =>
+    ({ principal: domainId, uid: actorId, domains: [domainId], role: actorRole });
   const tablesIn = async (schema: string, id: TrinoIdentity): Promise<{ name: string; type: string }[]> => {
     const rows = await deps.trino.query(
       `SELECT table_name, table_type FROM iceberg.information_schema.tables WHERE table_schema = ${q(schema)}`,
@@ -114,7 +95,7 @@ export function icebergComponent(deps: {
       const keep: KeptItem[] = [];
       const schemaDrops: PlanItem[] = [];
       for (const [schema, s] of schemas) {
-        const id = s.kind === 'domain' ? await domainIdentity(domainId, actor.id) : await identityFor(s.uid, domainId);
+        const id = s.kind === 'domain' ? domainIdentity(domainId, actor.id, actor.role) : await identityFor(s.uid, domainId, actor.role);
         if (!(await schemaExists(schema, id))) continue;
         const existing = await tablesIn(schema, id);
         let keptHere = 0;
@@ -123,7 +104,11 @@ export function icebergComponent(deps: {
           const cand = candidates.get(fqn);
           // A table in someone's personal schema that is not this domain's, and whose owner stays
           // a member elsewhere, belongs to that owner's other work: not a candidate at all.
-          if (!cand && !s.sole) { keptHere++; continue; }
+          if (!cand && !s.sole) {
+            keptHere++;
+            keep.push({ component: 'trino', kind: t.type === 'VIEW' ? 'view' : 'table', id: `${schema}|${t.name}`, label: `iceberg.${schema}.${t.name}`, reason: `not a table of ${domainId}: ${s.uid} keeps other domains, so their other work stays` });
+            continue;
+          }
           const object = t.type === 'VIEW' ? 'view' : 'table';
           const item: PlanItem = { component: 'trino', kind: object, id: `${schema}|${t.name}|${object}|${s.kind === 'domain' ? `domain:${domainId}` : s.uid}`, label: fqn, ...(cand ? { detail: `dataset ${cand.dataset}` } : { detail: 'no dataset maps to it' }) };
           const by = protectedBy.get(fqn);
@@ -136,7 +121,7 @@ export function icebergComponent(deps: {
     },
     async remove(item, { domainId, actor }) {
       const [schema, table, object, who] = item.id.split('|');
-      const id = who.startsWith('domain:') ? await domainIdentity(domainId, actor.id) : await identityFor(who, domainId);
+      const id = who.startsWith('domain:') ? domainIdentity(domainId, actor.id, actor.role) : await identityFor(who, domainId, actor.role);
       if (object === 'schema') {
         await deps.trino.execute(`DROP SCHEMA IF EXISTS iceberg.${schema}`, id);
         return `DROP SCHEMA iceberg.${schema}`;
@@ -155,12 +140,15 @@ export function datasetsComponent(deps: { owner: OwnerPrincipal }): DomainDelete
     component: 'os.datasets',
     async plan({ domainId }) {
       await ensureHydrated();
-      const mine = listAllDatasets({ includeArchived: true }).filter((d) => d.domain === domainId);
+      const all = listAllDatasets({ includeArchived: true });
+      const mine = all.filter((d) => d.domain === domainId);
       const remove: PlanItem[] = [];
       const blocked: KeptItem[] = [];
       for (const d of mine) {
         const item = { component: 'os.datasets', kind: 'dataset', id: d.id, label: `${d.id} ${d.name}`, owner: d.owner, ...(d.archived ? { detail: 'archived' } : {}) };
+        const readers = all.filter((o) => o.domain !== domainId && (o.upstreams ?? []).some((u) => u.datasetId === d.id || footprint(d).some((c) => c.fqn === u.fqn)));
         if ((d.imports?.length ?? 0) > 0) blocked.push({ ...item, reason: `imported by ${d.imports!.join(', ')}: remove the subscribers first` });
+        else if (readers.length) blocked.push({ ...item, reason: `joined as an upstream by ${readers.map((o) => `${o.id} (${o.domain})`).join(', ')}: their rebuilds would break` });
         else remove.push(item);
       }
       return { component: 'os.datasets', remove, keep: [], blocked };

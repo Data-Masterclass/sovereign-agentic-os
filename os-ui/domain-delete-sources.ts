@@ -31,7 +31,7 @@ import { filesComponent } from '@tabs/files/lib/domain-delete';
 import { connectionsComponent } from '@tabs/connections/lib/domain-delete';
 import { agentsComponent, agentSystemIdsForDomain } from '@tabs/agents/lib/domain-delete';
 import { appsComponent } from '@tabs/software/lib/domain-delete';
-import { opaComponent, litellmComponent, membersComponent, domainRecordComponent, soleMembers, veleroBackupCheck } from '@tabs/admin/lib/domain-delete';
+import { opaComponent, litellmComponent, membersComponent, domainRecordComponent, soleMembers, veleroBackupCheck, assertDeletableDomain } from '@tabs/admin/lib/domain-delete';
 import { recompile } from '@/app/api/platform-admin/_compile';
 import { audit } from '@tabs/admin/lib/audit';
 import { currentTenantId } from '@tabs/admin/lib/tenant';
@@ -52,11 +52,11 @@ export const governedTrino: TrinoPort = {
     return (await queryRun(sql, id.principal, executeRoute(id, 'domain-delete'))).rows;
   },
   async execute(sql, id) {
-    await executeRun(sql, id, executeRoute(id, 'domain-delete'));
+    await executeRun(sql, id, executeRoute(id, 'domain-delete'), undefined, 60_000, 'domain-delete');
   },
 };
 
-export function domainDeleteComponents(opts: { trino?: TrinoPort; recompile?: () => Promise<void>; reloadDagster?: Parameters<typeof gitRepoComponent>[0] } = {}): DomainDeleteComponent[] {
+export function domainDeleteComponents(opts: { trino?: TrinoPort; recompile?: () => Promise<void>; git?: Parameters<typeof gitRepoComponent>[0] } = {}): DomainDeleteComponent[] {
   const owner = ownerPrincipal;
   return [
     litellmComponent({ agentSystemIds: agentSystemIdsForDomain }),
@@ -74,7 +74,7 @@ export function domainDeleteComponents(opts: { trino?: TrinoPort; recompile?: ()
     foldersComponent(),
     lifecyclePinsComponent(),
     artifactsComponent({ owner: ownerUser }),
-    gitRepoComponent(opts.reloadDagster),
+    gitRepoComponent(opts.git),
     opaComponent(),
     membersComponent(),
     domainRecordComponent({ recompile: opts.recompile ?? (async () => { const r = await recompile(); if (r.publish.status !== 'published') throw new Error(`policy recompile did not publish: ${r.publish.detail}`); }) }),
@@ -85,6 +85,7 @@ export function registerDomainDeleteSources(): void {
   registerDomainDeleteWiring({
     components: () => domainDeleteComponents(),
     backup: veleroBackupCheck(),
+    validateTarget: assertDeletableDomain,
     audit: (actor) => (e) => { audit({ tenant: currentTenantId(), actor: actor.id, role: actor.role, guarded: true, ...e }); },
   });
 }

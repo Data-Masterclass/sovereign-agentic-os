@@ -15,14 +15,14 @@
  *     reload fails the step (re-run to retry); the repo deletion itself is idempotent.
  *   - Pins are cleared without a repo commit: the repo is removed by the next component.
  */
-import type { DomainDeleteComponent, PlanItem } from '@core/kernel/domain-delete';
+import type { DomainDeleteComponent, KeptItem, PlanItem } from '@core/kernel/domain-delete';
 import { ensureHydrated as ensureApprovalsHydrated, listApprovalsForDomain, purgeApprovalForDomainDelete } from '@core/policy/approvals';
 import { ensureHydrated as ensureFoldersHydrated, listFoldersForDomain, purgeFolderForDomainDelete } from '@core/folders/folder-store';
 import { lifecycleIndex, clearLivePin } from '@core/infra/lifecycle-pins';
 import { parsePinKey } from '@core/kernel/object-lifecycle';
 import { allArtifacts, deleteArtifact } from '@core/kernel/artifacts';
 import { deleteDomainRepo, repoExists, resolveRepo } from '@core/infra/git-store';
-import { reloadLocation } from '@core/infra/dagster';
+import { reloadLocation, domainDefinitions, stopInstigator, type DagsterDeps, type DomainDefinitions } from '@core/infra/dagster';
 import type { CurrentUser } from '@core/kernel/auth';
 
 /** Resolve an owner's live principal as a full session user (stores that take `CurrentUser`). */
@@ -89,19 +89,63 @@ export function artifactsComponent(deps: { owner: OwnerUser }): DomainDeleteComp
   };
 }
 
-export function gitRepoComponent(deps: { reload?: () => ReturnType<typeof reloadLocation> } = {}): DomainDeleteComponent {
-  const reload = deps.reload ?? (() => reloadLocation());
+/**
+ * The domain repo and its Dagster definitions. Order inside the component: stop the domain's
+ * RUNNING schedules and sensors (Dagster GraphQL), delete the repo, then VERIFY: reload the
+ * location until GraphQL shows no job, schedule, sensor or asset group of the domain (repo-sync
+ * prunes the removed domain's checkout on its next pass). A timeout fails the step.
+ * `dagster: null` (a harness without Dagster) plans nothing for Dagster and BLOCKS a repo.
+ */
+export function gitRepoComponent(deps: { dagster?: DagsterDeps | null; verifyTimeoutMs?: number; pollMs?: number } = {}): DomainDeleteComponent {
+  const dg = deps.dagster === undefined ? {} : deps.dagster;
+  const timeout = deps.verifyTimeoutMs ?? 180_000;
+  const poll = deps.pollMs ?? 5_000;
+  const leftovers = (d: DomainDefinitions) => d.jobs.length + d.schedules.length + d.sensors.length + d.assetGroups.length;
   return {
     component: 'git',
     async plan({ domainId }) {
-      if (!repoExists(domainId)) return { component: 'git', remove: [], keep: [] };
-      return { component: 'git', remove: [{ component: 'git', kind: 'repo', id: domainId, label: resolveRepo(domainId).dir }], keep: [] };
+      const remove: PlanItem[] = [];
+      const blocked: KeptItem[] = [];
+      const hasRepo = repoExists(domainId);
+      if (dg === null) {
+        if (hasRepo) blocked.push({ component: 'git', kind: 'repo', id: domainId, label: resolveRepo(domainId).dir, reason: 'Dagster is not reachable in this process, so the repo cannot be removed safely' });
+        return { component: 'git', remove, keep: [], blocked };
+      }
+      const defs = await domainDefinitions(domainId, dg);
+      if (!defs.ok) throw new Error(`Dagster GraphQL: ${defs.error}`);
+      for (const s of defs.data.schedules) if (s.status === 'RUNNING') remove.push({ component: 'git', kind: 'stop-schedule', id: JSON.stringify(s), label: `Dagster schedule ${s.name} (RUNNING)` });
+      for (const s of defs.data.sensors) if (s.status === 'RUNNING') remove.push({ component: 'git', kind: 'stop-sensor', id: JSON.stringify(s), label: `Dagster sensor ${s.name} (RUNNING)` });
+      if (hasRepo) remove.push({ component: 'git', kind: 'repo', id: domainId, label: resolveRepo(domainId).dir });
+      if (hasRepo || leftovers(defs.data) > 0) {
+        remove.push({ component: 'git', kind: 'dagster-definitions', id: domainId, label: `Dagster: ${defs.data.jobs.length} jobs, ${defs.data.schedules.length} schedules, ${defs.data.sensors.length} sensors, ${defs.data.assetGroups.length} asset group(s) of ${domainId}` });
+      }
+      return { component: 'git', remove, keep: [] };
     },
     async remove(item) {
-      const removed = deleteDomainRepo(item.id);
-      const r = await reload();
-      if (!r.ok) throw new Error(`repo removed (${removed.join(', ') || 'already absent'}), but the Dagster reload failed: ${r.error}`);
-      return `removed ${removed.join(', ') || '(already absent)'}; Dagster location ${r.data.name} reloaded`;
+      if (item.kind === 'stop-schedule' || item.kind === 'stop-sensor') {
+        const s = JSON.parse(item.id) as { name: string; stateId: string | null; selectorId: string | null };
+        const r = await stopInstigator(item.kind === 'stop-schedule' ? 'schedule' : 'sensor', s, dg ?? {});
+        if (!r.ok) throw new Error(`Dagster could not stop ${s.name}: ${r.error}`);
+        if (r.data.status !== 'STOPPED') throw new Error(`Dagster reports ${s.name} as ${r.data.status} after the stop`);
+        return `stopped ${s.name}`;
+      }
+      if (item.kind === 'repo') {
+        const removed = deleteDomainRepo(item.id);
+        return `removed ${removed.join(', ') || '(already absent)'}`;
+      }
+      // dagster-definitions: reload until GraphQL shows nothing of the domain.
+      const end = Date.now() + timeout;
+      let last = '';
+      while (Date.now() < end) {
+        const rl = await reloadLocation(undefined, dg ?? {});
+        if (!rl.ok) last = `reload failed: ${rl.error}`;
+        const d = await domainDefinitions(item.id, dg ?? {});
+        if (d.ok && leftovers(d.data) === 0) return `Dagster location reloaded; no job, schedule, sensor or asset of ${item.id} remains`;
+        if (d.ok) last = `still loaded: jobs [${d.data.jobs.join(', ')}], schedules [${d.data.schedules.map((x) => x.name).join(', ')}], groups [${d.data.assetGroups.join(', ')}]`;
+        else last = `GraphQL: ${d.error}`;
+        await new Promise((r) => setTimeout(r, poll));
+      }
+      throw new Error(`Dagster still holds ${item.id} after ${Math.round(timeout / 1000)} s (${last}); repo-sync has not pruned its checkout`);
     },
   };
 }
