@@ -14,7 +14,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { config } from '@core/kernel/config';
 import { log, readBlob } from '@core/infra/git-store';
-import { awaitKnowledgeCommits, readKnowledgeFromGit, __setKnowledgeGitForTests } from '@tabs/knowledge/lib/git/commit';
+import { awaitKnowledgeCommits, commitKnowledge, readKnowledgeFromGit, __setKnowledgeGitForTests } from '@tabs/knowledge/lib/git/commit';
 import {
   __resetStore, createWorkflow, getManual, getWorkflow, publishWorkflow, reconcileKnowledgeFromGit, updateManual, updateWorkflow,
 } from '@tabs/knowledge/lib/store';
@@ -60,22 +60,44 @@ test('publish + manual edit commit knowledge/** as the actor; a restart rebuilds
   }
 });
 
-test('git wins over a stale store copy on reconcile', async () => {
+test('git wins when a LATER commit holds other content', async () => {
   __setKnowledgeGitForTests(true);
   try {
     __resetStore();
     const wf = createWorkflow(ADMIN, { title: 'Onboarding', domain: 'sales' });
     publishWorkflow(wf.id, ADMIN);
     await awaitKnowledgeCommits();
-    const committedMd = getWorkflow(wf.id, ADMIN).md;
-    // The store drifts WITHOUT a commit (git off for this one write), then reconciles.
-    __setKnowledgeGitForTests(false);
-    updateWorkflow(wf.id, ADMIN, { md: committedMd.replace('Onboarding', 'Drifted') } as never);
-    __setKnowledgeGitForTests(true);
-    // Make the drift look older than the commit, as a lost write would.
-    (getWorkflow(wf.id, ADMIN) as { updatedAt: string }).updatedAt = '2000-01-01T00:00:00.000Z';
+    const rec = getWorkflow(wf.id, ADMIN);
+    // Another writer commits a newer version of the same workflow (a pushed edit, another replica).
+    const later = { ...rec, md: rec.md.replace('Onboarding', 'Onboarding v2'), title: 'Onboarding v2' };
+    await commitKnowledge('sales', { id: 'other@example.com' }, { action: 'edit workflow' }, {
+      reposDir: config.reposDir, mirror: false, captured: { workflows: [later], manual: null }, timestamp: Math.floor(Date.now() / 1000) + 60,
+    });
     await reconcileKnowledgeFromGit(['sales']);
-    assert.equal(getWorkflow(wf.id, ADMIN).md, committedMd);
+    assert.equal(getWorkflow(wf.id, ADMIN).title, 'Onboarding v2', 'git wins over the older store copy');
+
+  } finally {
+    __setKnowledgeGitForTests(null);
+  }
+});
+
+test('a store copy NEWER than the head commit (a lost commit) is re-committed, never overwritten', async () => {
+  __setKnowledgeGitForTests(true);
+  try {
+    __resetStore();
+    const wf = createWorkflow(ADMIN, { title: 'Invoicing', domain: 'sales' });
+    publishWorkflow(wf.id, ADMIN);
+    await awaitKnowledgeCommits();
+    await new Promise((r) => setTimeout(r, 20));
+    __setKnowledgeGitForTests(false); // this edit's commit is "lost"
+    const cur = getWorkflow(wf.id, ADMIN);
+    updateWorkflow(wf.id, ADMIN, { md: cur.md.replace('Invoicing', 'Invoicing v2') });
+    __setKnowledgeGitForTests(true);
+    await reconcileKnowledgeFromGit(['sales']);
+    await awaitKnowledgeCommits();
+    assert.equal(getWorkflow(wf.id, ADMIN).title, 'Invoicing v2', 'the newer edit is kept');
+    const head = await readKnowledgeFromGit('sales', { reposDir: config.reposDir });
+    assert.equal(head!.workflows.find((w) => w.id === wf.id)!.title, 'Invoicing v2', 'and git now holds it');
   } finally {
     __setKnowledgeGitForTests(null);
   }

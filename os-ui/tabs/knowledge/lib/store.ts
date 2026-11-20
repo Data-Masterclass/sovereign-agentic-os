@@ -25,6 +25,8 @@ import { createFolder, type FolderScope, type Principal as FolderPrincipal } fro
 import { type ManualScope, resolveManual } from '@tabs/knowledge/lib/manual';
 import { EMPTY_LINKS, type WorkflowLinks } from '@tabs/knowledge/lib/links';
 import { resolveKnowledgeLinks, type ResolvedLinks } from '@tabs/knowledge/lib/okf-model';
+import { knowledgeGitEnabled, queueKnowledgeCommit, readKnowledgeFromGit } from '@tabs/knowledge/lib/git/commit';
+import { canonicalMd } from '@tabs/knowledge/lib/git/bundle';
 
 export type { ArtifactVersion };
 export type { ManualScope };
@@ -486,6 +488,7 @@ export function updateWorkflow(
     rec.status = w.status;
     rec.updatedAt = now();
     writeThrough(rec);
+    commitWorkflowAfterWrite(rec, user, 'edit workflow');
   }
 
   return rec;
@@ -512,6 +515,7 @@ export function renameKnowledge(id: string, user: Principal, newTitle: string): 
   rec.title = title; // keep the denormalised (indexed) title in lockstep
   rec.updatedAt = now();
   writeThrough(rec);
+  commitWorkflowAfterWrite(rec, user, 'rename workflow');
   return rec;
 }
 
@@ -537,6 +541,7 @@ export function moveWorkflow(id: string, user: Principal, folder: string): Workf
   rec.folder = normalised;
   rec.updatedAt = now();
   writeThrough(rec);
+  commitWorkflowAfterWrite(rec, user, 'move workflow');
   if (normalised !== '/') {
     const principal: FolderPrincipal = { id: user.id, role: user.role, domains: user.domains };
     try {
@@ -564,6 +569,7 @@ export function deleteWorkflow(id: string, user: Principal): void {
   refresher.noteDeleted(id);
   versions.purge(id);
   ks().workflows.delete(id);
+  commitWorkflowAfterWrite(rec, user, 'delete workflow');
 }
 
 /**
@@ -596,6 +602,7 @@ export function publishWorkflow(id: string, user: Principal): WorkflowRecord {
   rec.publishedBy = user.id;
   rec.updatedAt = now();
   writeThrough(rec);
+  commitWorkflowAfterWrite(rec, user, 'publish workflow');
 
   return rec;
 }
@@ -621,6 +628,7 @@ export function certifyWorkflow(id: string, user: Principal): WorkflowRecord {
   rec.certifiedBy = user.id;
   rec.updatedAt = now();
   writeThrough(rec);
+  commitWorkflowAfterWrite(rec, user, 'certify workflow');
 
   return rec;
 }
@@ -668,6 +676,7 @@ export function updateDomainKnowledge(
   }
 
   ks().domainKnowledge.set(domain, dk);
+  commitKnowledgeAfterWrite(domain, user, 'edit operating manual', 'operating manual');
   return dk;
 }
 
@@ -709,6 +718,7 @@ export function restoreDomainKnowledgeVersion(
   }
   dk.updatedAt = now();
   ks().domainKnowledge.set(domain, dk);
+  commitKnowledgeAfterWrite(domain, user, 'restore operating manual version', 'operating manual');
   return dk;
 }
 
@@ -760,6 +770,7 @@ export function updateManual(
     }
   }
   ks().domainKnowledge.set(r.key, dk);
+  if (r.scope === 'domain') commitKnowledgeAfterWrite(r.key, user, 'edit operating manual', 'operating manual');
   // Always return the reconciled (new 7-section) shape to the caller.
   return reconcileSections(dk);
 }
@@ -810,6 +821,7 @@ export function restoreManualVersion(
   }
   reconciled.updatedAt = now();
   ks().domainKnowledge.set(r.key, reconciled);
+  if (r.scope === 'domain') commitKnowledgeAfterWrite(r.key, user, 'restore operating manual version', 'operating manual');
   return reconciled;
 }
 
@@ -829,6 +841,7 @@ export function updateTacit(id: string, user: Principal, tacit: string): Workflo
   rec.tacit = tacit;
   rec.updatedAt = now();
   writeThrough(rec);
+  commitWorkflowAfterWrite(rec, user, 'edit tacit notes');
   return rec;
 }
 
@@ -845,6 +858,7 @@ export function setWorkflowLinks(id: string, user: Principal, links: WorkflowLin
   rec.links = { datasets: [...links.datasets], metrics: [...links.metrics] };
   rec.updatedAt = now();
   writeThrough(rec);
+  commitWorkflowAfterWrite(rec, user, 'link workflow');
   return rec;
 }
 
@@ -860,6 +874,7 @@ export function archiveWorkflow(id: string, user: Principal): WorkflowRecord {
   rec.archived = true;
   rec.updatedAt = now();
   writeThrough(rec);
+  commitWorkflowAfterWrite(rec, user, 'archive workflow');
   return rec;
 }
 
@@ -869,6 +884,7 @@ export function unarchiveWorkflow(id: string, user: Principal): WorkflowRecord {
   rec.archived = false;
   rec.updatedAt = now();
   writeThrough(rec);
+  commitWorkflowAfterWrite(rec, user, 'restore workflow');
   return rec;
 }
 
@@ -902,6 +918,7 @@ export function restoreWorkflowVersion(id: string, user: Principal, version: num
   rec.status = w.status;
   rec.updatedAt = now();
   writeThrough(rec);
+  commitWorkflowAfterWrite(rec, user, 'restore workflow version');
   return rec;
 }
 
@@ -933,4 +950,83 @@ export function domainsForIndex(): string[] {
   for (const rec of ks().workflows.values()) if (rec.domain) set.add(rec.domain);
   for (const domain of ks().domainKnowledge.keys()) if (domain) set.add(domain);
   return [...set].sort();
+}
+
+// ------------------------------------------------------------ WP-50: git ---
+
+/**
+ * WP-50: every shared-workflow and domain-manual write commits the domain's OKF bundle
+ * (`knowledge/**`) as the acting user. The domain's state is captured HERE, synchronously in the
+ * writer's turn; the commit itself is queued per domain and a failure is logged, never silent.
+ * A Personal draft produces no bundle content, so it never reaches the domain repository.
+ */
+function commitKnowledgeAfterWrite(domain: string, user: Principal, action: string, object: string, objectId?: string): void {
+  const captured = {
+    workflows: [...ks().workflows.values()].filter((w) => w.domain === domain).map((w) => ({ ...w })),
+    manual: ks().domainKnowledge.get(domain) ? { ...ks().domainKnowledge.get(domain)!, sections: ks().domainKnowledge.get(domain)!.sections.map((x) => ({ ...x })) } : null,
+  };
+  queueKnowledgeCommit(domain, { id: user.id }, { action, object, objectId }, captured).catch(() => undefined);
+}
+
+function commitWorkflowAfterWrite(rec: WorkflowRecord, user: Principal, action: string): void {
+  commitKnowledgeAfterWrite(rec.domain, user, action, rec.title, `${rec.id} (${rec.title})`);
+}
+
+export type KnowledgeReconcileReport = { domain: string; sha: string; workflows: number; manual: boolean };
+
+/**
+ * THE READ-BACK (WP-50, design 11 A19–A21): rebuild the store FROM each domain's committed bundle.
+ * A workflow or manual the store lacks is restored from git; one that differs takes git's version,
+ * unless the store's copy is NEWER than the head commit (a write whose commit was lost), which is
+ * re-committed instead — so store and git converge on the newest state and git holds it. Runs at
+ * boot (`instrumentation.ts`) after hydration; one unreadable domain never stops the others.
+ */
+export async function reconcileKnowledgeFromGit(domains: string[]): Promise<KnowledgeReconcileReport[]> {
+  if (!knowledgeGitEnabled()) return [];
+  await ensureHydrated();
+  const out: KnowledgeReconcileReport[] = [];
+  for (const domain of domains) {
+    let bundle;
+    try {
+      bundle = await readKnowledgeFromGit(domain);
+    } catch (e) {
+      console.error(`[knowledge-git] reconcile: cannot read '${domain}': ${e instanceof Error ? e.message : String(e)}`);
+      continue;
+    }
+    if (!bundle) continue;
+    const committedAt = bundle.timestamp * 1000;
+    let heal = false;
+    for (const w of bundle.workflows) {
+      if (w.domain !== domain) continue;
+      const held = ks().workflows.get(w.id);
+      if (!held) {
+        const rec = makeRecord({ id: w.id, domain, owner: w.owner, md: w.md, tacit: w.tacit, title: w.title, visibility: w.visibility as Visibility, status: w.status as WorkflowRecord['status'], folder: w.folder });
+        ks().workflows.set(rec.id, rec);
+        writeNew(mirror, ks().seen, rec.id, rec);
+        continue;
+      }
+      if (canonicalMd(held.md) === w.md && held.tacit === w.tacit) continue;
+      if (Date.parse(held.updatedAt) > committedAt) {
+        heal = true;
+        continue;
+      }
+      held.md = w.md;
+      held.tacit = w.tacit;
+      held.title = w.title;
+      held.visibility = w.visibility as Visibility;
+      held.status = w.status as WorkflowRecord['status'];
+      writeThrough(held);
+    }
+    if (bundle.manual) {
+      const dk = ks().domainKnowledge.get(domain);
+      const same = dk && JSON.stringify(dk.sections.map((s) => [s.id, s.content])) === JSON.stringify(bundle.manual.sections.map((s) => [s.id, s.content]));
+      if (!same) {
+        if (dk && Date.parse(dk.updatedAt) > committedAt) heal = true;
+        else ks().domainKnowledge.set(domain, { domain, sections: bundle.manual.sections, updatedAt: new Date(committedAt).toISOString() });
+      }
+    }
+    if (heal) commitKnowledgeAfterWrite(domain, { id: 'platform', domains: [domain], role: 'admin' }, 'reconcile knowledge', domain);
+    out.push({ domain, sha: bundle.sha, workflows: bundle.workflows.length, manual: Boolean(bundle.manual) });
+  }
+  return out;
 }

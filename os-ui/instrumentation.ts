@@ -51,6 +51,9 @@ export async function register(): Promise<void> {
         // WP-50: `connections/` holds each warehouse connection's Trino catalog file; the literal
         // must stay equal to `CONNECTIONS_PREFIX` (`tabs/connections/lib/git/generate.ts`).
         reserveSubtree('connections/');
+        // WP-50: `knowledge/` is the domain's OKF bundle; the literal must stay equal to
+        // `KNOWLEDGE_PREFIX` (`tabs/knowledge/lib/git/bundle.ts`).
+        reserveSubtree('knowledge/');
       }
     } catch (err) {
       console.error(`[os-ui] projects: could NOT reserve the 'agents/' + 'dashboards/' + 'apps/' subtrees — ${err instanceof Error ? err.message : String(err)}`);
@@ -349,6 +352,20 @@ export async function register(): Promise<void> {
         setConnectionActorResolver(resolveActor);
       } catch (err) {
         console.error(`[os-ui] connections: actor resolver NOT installed — commits carry the id only: ${err instanceof Error ? err.message : String(err)}`);
+      }
+      // 2a-k. KNOWLEDGE (WP-50): commits run from the store's own writers; here they learn the
+      // actor's name and e-mail, and the store is rebuilt FROM each domain's committed bundle
+      // (git is the source of truth; the domain manual had no other persistence).
+      try {
+        const { setKnowledgeActorResolver } = await import('./tabs/knowledge/lib/git/commit.ts');
+        setKnowledgeActorResolver(resolveActor);
+        const { listAllRepos } = await import('./core/infra/git-store.ts');
+        const domains = (await listAllRepos()).filter((r) => r.kind === 'domain' && r.domain).map((r) => r.domain as string);
+        const { reconcileKnowledgeFromGit } = await import('./tabs/knowledge/lib/store.ts');
+        const report = await reconcileKnowledgeFromGit(domains);
+        console.info(`[os-ui] knowledge: read back ${report.length} domain bundle(s) from git`);
+      } catch (err) {
+        console.error(`[os-ui] knowledge: git read-back NOT run — ${err instanceof Error ? err.message : String(err)}`);
       }
       // 2b. DASHBOARDS commit hook (night 2 / stream D) — every dashboard write becomes a commit
       // under `dashboards/**`. Installed after the agents hook and BEFORE the data boot reconcile,
@@ -651,6 +668,14 @@ export async function registerGitObjectKindsAtBoot(): Promise<void> {
     console.info('[os-ui] git versioning: connection-config registered (history, version, diff)');
   } catch (err) {
     console.warn(`[os-ui] git versioning: connection-config NOT registered — ${err instanceof Error ? err.message : String(err)}`);
+  }
+  try {
+    const { registerGitObject } = await import('./core/infra/git-objects.ts');
+    const { knowledgeWorkflowGitObjectResolver } = await import('./tabs/knowledge/lib/git/git-object.ts');
+    registerGitObject('knowledge-workflow', knowledgeWorkflowGitObjectResolver);
+    console.info('[os-ui] git versioning: knowledge-workflow registered (history, version, diff)');
+  } catch (err) {
+    console.warn(`[os-ui] git versioning: knowledge-workflow NOT registered — ${err instanceof Error ? err.message : String(err)}`);
   }
   }
 }
