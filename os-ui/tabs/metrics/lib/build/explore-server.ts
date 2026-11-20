@@ -20,7 +20,7 @@ import { queryRun } from '@core/infra/governed';
 import { routeForTable } from '@core/infra/trino-source';
 import { propagate, type DelegatedToken } from '@core/kernel/identity';
 import type { Dataset, Measure } from '@tabs/data/lib/index';
-import { builtLayerFqn } from '@tabs/data/lib/store';
+import { builtLayerFqn } from '@tabs/data/lib/store-fqn';
 import {
   type ExploreSpec,
   type Granularity,
@@ -70,7 +70,7 @@ function metricsMustBeLive(): boolean {
  * FQN's schema and the Trino user agree and Trino/OPA apply that viewer's row filters and masks.
  */
 function metricReadTarget(dataset: Dataset, token: DelegatedToken): string {
-  const resolved = builtLayerFqn(dataset, { id: token.sub, domains: token.domains, role: token.role }, 'gold');
+  const resolved = builtLayerFqn(dataset, { id: token.sub, domains: token.domains }, 'gold');
   if (!resolved) {
     const e = new Error(`“${dataset.name}” has no built layer to compute a metric from yet — build its Gold first.`) as Error & { status?: number };
     e.status = 409;
