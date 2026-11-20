@@ -90,7 +90,14 @@ test('live docling (a, negative twin): a request for TableFormer v1 is refused b
   }
   t.diagnostic(`v1 request: HTTP ${sub.status}, task ${status}: ${detail.slice(0, 300)}`);
   assert.ok(sub.status !== 200 || ['failure', 'skipped'].includes(status), `v1 preset was not refused: ${detail}`);
-  assert.match(detail, /preset|tableformer_v1/i, `the refusal must name the preset: ${detail}`);
+  // The API masks task errors ("Internal processing error.", DEBUG_ERROR_DETAILS off), so the
+  // reason is read from the server's own log: it must be the preset allowlist, not some other fault.
+  const container = process.env.DOCLING_LIVE_CONTAINER ?? '';
+  assert.ok(container, 'DOCLING_LIVE_CONTAINER must name the running server container');
+  const logs = spawnSync('docker', ['logs', container], { encoding: 'utf8' });
+  const reason = `${logs.stdout}${logs.stderr}`.split('\n').filter((l) => /preset/i.test(l)).slice(-3).join(' | ');
+  t.diagnostic(`server log: ${reason.slice(0, 400)}`);
+  assert.match(reason, /tableformer_v1_accurate/, `the server log must name the refused v1 preset: ${reason}`);
 });
 
 test('live docling (e): a call without X-Api-Key is refused with 401, and the client says so', { skip }, async () => {
