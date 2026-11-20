@@ -22,7 +22,8 @@ import pg from 'pg';
 import { PgBoss, TestClock } from 'pg-boss';
 import { freshDatabase } from './it-support.ts';
 import { migrateGovernance } from './migrate.ts';
-import { PGBOSS_SCHEMA, createBoss } from './boss.ts';
+import { PGBOSS_POOL_MAX, PGBOSS_SCHEMA, createBoss, registerWorker } from './boss.ts';
+import { __clearRunWorkerProcess, markRunWorkerProcess } from '@core/kernel/process-role';
 import { bossDb, withTransaction } from './tx.ts';
 
 let db: Awaited<ReturnType<typeof freshDatabase>>;
@@ -44,16 +45,18 @@ async function waitFor<T>(what: string, fn: () => Promise<T | null | undefined |
   }
 }
 
-describe('pg-boss on the real postgres:17', () => {
+describe('pg-boss on the real postgres:17', { timeout: 120_000 }, () => {
   before(async () => {
     db = await freshDatabase('wp07_boss');
     await migrateGovernance({ databaseUrl: db.url, direction: 'up' });
     pool = new pg.Pool({ connectionString: db.url, max: 5 });
+    markRunWorkerProcess(); // these tests run pg-boss workers, which only the worker process may
     boss = createBoss(db.url);
     boss.on('error', (err) => console.error('pg-boss error', err));
     await boss.start();
   });
   after(async () => {
+    __clearRunWorkerProcess();
     await boss?.stop({ graceful: false, timeout: 2000 }).catch(() => undefined);
     await pool?.end();
     await db?.drop();
@@ -62,6 +65,34 @@ describe('pg-boss on the real postgres:17', () => {
   test('start() installs pg-boss in its own schema (version 46 for 12.38.x)', async () => {
     const r = await pool.query(`select version from ${PGBOSS_SCHEMA}.version`);
     assert.equal(Number(r.rows[0].version), 46);
+  });
+
+  test('pg-boss holds at most PGBOSS_POOL_MAX connections of its own', async () => {
+    const r = await pool.query(
+      `select count(*)::int as n from pg_stat_activity where datname = current_database() and pid <> pg_backend_pid() and application_name = 'pgboss'`,
+    );
+    assert.ok(r.rows[0].n <= PGBOSS_POOL_MAX, `pg-boss opened ${r.rows[0].n} connections`);
+  });
+
+  test('bossDb returns every statement result for a multi-statement text, as pg does (constructor.md `db`)', async () => {
+    await withTransaction(pool, async (client) => {
+      const one = (await bossDb(client).executeSql('select 1 as a')) as unknown as { rows: { a: number }[] };
+      assert.deepEqual(one.rows, [{ a: 1 }]);
+      const many = (await bossDb(client).executeSql('select 1 as a; select 2 as b')) as unknown as { rows: unknown[] }[];
+      assert.ok(Array.isArray(many), 'several statements → an array of results');
+      assert.deepEqual(many.map((r) => r.rows), [[{ a: 1 }], [{ b: 2 }]]);
+    });
+  });
+
+  test('registerWorker refuses outside the worker process; the web process only sends', async () => {
+    __clearRunWorkerProcess();
+    try {
+      await boss.createQueue('web.only');
+      await assert.rejects(registerWorker(boss, 'web.only', {}, async () => undefined), /only in os-ui-worker/);
+      assert.ok(await boss.send('web.only', {}), 'sending from the web process is allowed');
+    } finally {
+      markRunWorkerProcess();
+    }
   });
 
   test('send(…, { db }) rolls back with the caller transaction and commits with it', async () => {
@@ -121,7 +152,7 @@ describe('pg-boss on the real postgres:17', () => {
   test('work() retries a failing job up to retryLimit, then completes it', async () => {
     await boss.createQueue('retry.ok', { retryLimit: 2, retryDelay: 0 });
     const attempts: number[] = [];
-    await boss.work('retry.ok', { pollingIntervalSeconds: 0.5 }, async ([job]) => {
+    await registerWorker(boss, 'retry.ok', { pollingIntervalSeconds: 0.5 }, async ([job]) => {
       attempts.push(job.id.length);
       if (attempts.length === 1) throw new Error('transient');
       return { done: true };
@@ -140,7 +171,7 @@ describe('pg-boss on the real postgres:17', () => {
   test('retryLimit: 0 fails a non-idempotent job at once, with the error as output', async () => {
     await boss.createQueue('retry.none', { retryLimit: 0 });
     let calls = 0;
-    await boss.work('retry.none', { pollingIntervalSeconds: 0.5 }, async () => {
+    await registerWorker(boss, 'retry.none', { pollingIntervalSeconds: 0.5 }, async () => {
       calls++;
       throw new Error('not idempotent');
     });

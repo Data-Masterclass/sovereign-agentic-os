@@ -779,24 +779,40 @@ but not that two materialisations agree row for row. That needs `EXCEPT ALL` bot
 ## Governance state lives in Postgres `os_governance` (WP-07)
 
 `core/adapters/postgres/` is the one home for governance state: approvals, confirmations, grants,
-run grants and their approved writes, notifications, prefs, domain settings, cost caps, commit
-checks, reconciler status, the catalog index, lifecycle pins and exposure sets, plus the
-append-only `audit_events` (design 00 §3.2, §3.5; 10 F2, F3, F8). Users are not here; they go to
-Keycloak.
+run grants and their approved writes, the grant revision, notifications, prefs, domain settings,
+commit checks, reconciler status, the catalog index, lifecycle pins and exposure sets, plus the
+append-only `audit_events` (design 00 §3.2, §3.5; 10 F2, F3, F8). Users are not here (Keycloak),
+and neither are model budgets (LiteLLM owns them; the OS reads its admin API).
 
+- **A separate database, three roles.** `os_governance` (database) is owned by a NOSUPERUSER,
+  NOCREATEROLE role that only runs migrations. The OS runs as a different login that is a member
+  of `os_governance_app` and owns nothing in the schema. Only a superuser can create those roles,
+  so the chart's `os-governance-bootstrap` hook (`postgres.governance.enabled`, off by default)
+  does exactly that, from `charts/sovereign-agentic-os/files/os-governance/*.sql`, and never runs
+  the migrations. Never install as a superuser (live, that is Langfuse's login).
 - **Migrations are node-pg-migrate's**, plain SQL in `migrations/` (`-- Up Migration` /
   `-- Down Migration`). `migrate.ts` only fixes the options for `runner()`. The upstream CLI
   applies the same files with no OS code (`components/node-pg-migrate/UPSTREAM.md`). The applied
   list is kept in `os_migrations`, outside the schema, so dropping the schema is a clean rollback.
+  There is no default-privileges rule: every later migration GRANTs to `os_governance_app` itself.
 - **Row versions:** every table has `version` and `updated_at`, bumped by a trigger. Write with
   `... WHERE version = $n`; 0 rows is a conflict (409), never last-writer-wins.
+- **Grant revision:** every statement that inserts, updates or deletes a grant, run grant or
+  approved write moves `grant_revision.rev` in the same transaction. Read it with the grant rows in
+  one snapshot for the `os-grants` bundle ETag; a bare sequence value is not transactional.
 - **The audit chain is computed in the database.** A BEFORE INSERT trigger takes an advisory lock,
   then sets id, time, `prev_hash` and `hash`, so no client can choose them and concurrent appends
-  stay linear. `os_governance.audit_verify()` is the one verifier (`select * from
-  os_governance.audit_verify()`). The runtime role `os_governance_app` may only insert and read
-  `audit_events`, and triggers reject any rewrite for every role.
-- **pg-boss is the one queue**, in its own schema `pgboss`, installed by its own `start()`. The
-  outbox is `send(…, { db: bossDb(client) })` inside the caller's `withTransaction`.
+  stay linear. It refuses any isolation level but READ COMMITTED (0A000): a snapshot older than the
+  lock would fork the chain. `os_governance.audit_verify()` is the one verifier. The runtime role
+  may only insert and read `audit_events`, and triggers reject any rewrite for every role. Against
+  the owner or a superuser the chain needs an external anchor of `head_hash` + `checked`.
+- **pg-boss is the one queue**, in schema `pgboss` of the same database, installed by its own
+  `start()` as the runtime login. The outbox is `send(…, { db: bossDb(client) })` inside the
+  caller's `withTransaction`; `bossDb` returns `pg`'s result as is (an array for several
+  statements), as pg-boss documents. Workers, maintenance and cron run only in `os-ui-worker`
+  (`registerWorker`, `@core/kernel/process-role`); the web process only sends.
+- **Connection budget** against `max_connections` = 100: per process pg-boss `max` 3 and the
+  governance pool 4, so 14 for web + worker, beside agent_runs' 20.
 - **Proof is `*.it.ts` against the real `postgres:17` digest** (CI job `test-postgres`). They fail,
   never skip, without `OS_PG_TEST_URL`.
 - **Nothing reads these tables yet.** Store moves are WP-09 (dual-write, then one read path behind

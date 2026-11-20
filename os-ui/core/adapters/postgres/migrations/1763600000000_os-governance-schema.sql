@@ -7,25 +7,38 @@
 --             status) in ONE transactional home that both os-ui processes share, so an edit can
 --             never be lost to a stale copy in another process.
 -- ARCHITECTURE:
---   - Design 00 §3.2 / §3.5 and 10 F2, F3, F4, F12. Plain SQL in node-pg-migrate's documented
+--   - Design 00 §3.2 / §3.5 and Reconciliation #19 (commit checks); 10 F2, F3, F4, F12 (tier enum = `scope`). Plain SQL in node-pg-migrate's documented
 --     single-file format (`-- Up Migration` / `-- Down Migration`); no ORM, no OS runner.
 --   - Every table has `version bigint` and `updated_at`. A trigger bumps both on UPDATE, so a
 --     writer only has to say `... WHERE version = $n`; 0 rows means conflict (409), never
 --     last-writer-wins.
---   - `grant_rev` is the one sequence the `os-grants` bundle revision is read from (10 F3). Every
---     insert or update of a grant, run grant or approved write takes the next value.
+--   - `grant_rev` is the sequence grant revisions are drawn from (10 F3). Every insert or update
+--     of a grant, run grant or approved write stamps the row with the next value, and every
+--     statement that inserts, updates OR DELETES any of them moves `grant_revision.rev` (one row)
+--     to a new value in the same transaction. The `os-grants` bundle reads `grant_revision.rev`
+--     with its data in one snapshot, so a hard delete changes the ETag too, and a rolled-back
+--     change never does (a bare sequence `last_value` is not transactional).
 --   - `os_governance_app` is the NOLOGIN group role the runtime login is a member of. Roles are
 --     cluster-wide, so the up step tolerates an existing role and the down step leaves it (a
 --     role with no privileges grants nothing).
 --   - No users table: users, groups and domain roles go to Keycloak (00 §3.2), not here.
+--   - No cost caps table: model budgets and spend stay in LiteLLM (00 §3.2), the OS reads them
+--     through LiteLLM's admin API and keeps no second copy.
 
 -- Up Migration
 
+-- An owner without CREATEROLE installs once an admin has created the role (the chart's
+-- governance bootstrap Job does). The existence check comes BEFORE CREATE ROLE, because
+-- CREATE ROLE without the privilege fails with 42501 before any duplicate check.
 DO $$
 BEGIN
-  CREATE ROLE os_governance_app NOLOGIN;
-EXCEPTION WHEN duplicate_object OR unique_violation THEN
-  NULL; -- exists already, or another database's migration created it concurrently
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'os_governance_app') THEN
+    BEGIN
+      CREATE ROLE os_governance_app NOLOGIN;
+    EXCEPTION WHEN duplicate_object OR unique_violation THEN
+      NULL; -- another database's migration created it concurrently
+    END;
+  END IF;
 END
 $$;
 
@@ -49,6 +62,25 @@ LANGUAGE plpgsql AS $$
 BEGIN
   NEW.grant_rev := nextval('os_governance.grant_rev');
   RETURN NEW;
+END
+$$;
+
+-- The bundle revision: one row, moved by every grant-bearing statement (see the header).
+CREATE TABLE os_governance.grant_revision (
+  id         smallint PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+  rev        bigint NOT NULL DEFAULT 0,
+  version    bigint NOT NULL DEFAULT 1,
+  updated_at timestamptz NOT NULL DEFAULT clock_timestamp()
+);
+INSERT INTO os_governance.grant_revision (id) VALUES (1);
+
+-- SECURITY DEFINER: the runtime role may not write the revision row itself; only this trigger
+-- (running as the schema owner) moves it. search_path is pinned for a definer function.
+CREATE FUNCTION os_governance.advance_grant_revision() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+BEGIN
+  UPDATE os_governance.grant_revision SET rev = nextval('os_governance.grant_rev') WHERE id = 1;
+  RETURN NULL;
 END
 $$;
 
@@ -197,19 +229,8 @@ CREATE TABLE os_governance.domain_settings (
   PRIMARY KEY (domain, key)
 );
 
--- 9. Cost caps (enforced through LiteLLM budgets; this is the OS's record of the decision).
-CREATE TABLE os_governance.cost_caps (
-  scope_kind     text NOT NULL CHECK (scope_kind IN ('tenant', 'domain', 'user', 'agent_system')),
-  scope_id       text NOT NULL,
-  period         text NOT NULL CHECK (period IN ('day', 'month')),
-  cap_eur        numeric(12, 2) NOT NULL CHECK (cap_eur >= 0),
-  set_by         text NOT NULL,
-  version        bigint NOT NULL DEFAULT 1,
-  updated_at     timestamptz NOT NULL DEFAULT clock_timestamp(),
-  PRIMARY KEY (scope_kind, scope_id, period)
-);
-
--- 10. Commit checks: one verdict per (domain, sha, check) — dbt parse, opa test, trivy (10 F12).
+-- 9. Commit checks: one verdict per (domain, sha, check): dbt parse, opa test, Trivy scans
+--    (00 Reconciliation #19; 10 F10 for the dbt-parse verdict).
 CREATE TABLE os_governance.commit_checks (
   domain         text NOT NULL,
   sha            text NOT NULL,
@@ -223,7 +244,7 @@ CREATE TABLE os_governance.commit_checks (
   PRIMARY KEY (domain, sha, check_name)
 );
 
--- 11. Reconciler status, Kubernetes-style conditions (00 §3.4).
+-- 10. Reconciler status, Kubernetes-style conditions (00 §3.4).
 CREATE TABLE os_governance.object_status (
   kind                text NOT NULL,
   id                  text NOT NULL,
@@ -235,7 +256,7 @@ CREATE TABLE os_governance.object_status (
   PRIMARY KEY (kind, id)
 );
 
--- 12. Catalog index of authored artifacts in git (00 §3.2: the file wins, the row is re-derived).
+-- 11. Catalog index of authored artifacts in git (00 §3.2: the file wins, the row is re-derived).
 CREATE TABLE os_governance.catalog_entities (
   kind           text NOT NULL,
   id             text NOT NULL,
@@ -251,7 +272,7 @@ CREATE TABLE os_governance.catalog_entities (
 );
 CREATE INDEX catalog_entities_domain_idx ON os_governance.catalog_entities (domain, kind);
 
--- 13. Lifecycle pins: which git ref is draft / testing / live for an artifact (00 §3.2).
+-- 12. Lifecycle pins: which git ref is draft / testing / live for an artifact (00 §3.2).
 CREATE TABLE os_governance.lifecycle_pins (
   kind           text NOT NULL,
   id             text NOT NULL,
@@ -264,7 +285,7 @@ CREATE TABLE os_governance.lifecycle_pins (
   PRIMARY KEY (kind, id, stage)
 );
 
--- 14. Exposure sets: cross-domain table sharing (11 A11; compiled into OPA data).
+-- 13. Exposure sets: cross-domain table sharing (11 A11; compiled into OPA data).
 CREATE TABLE os_governance.exposure_sets (
   id               text PRIMARY KEY,
   domain           text NOT NULL,
@@ -283,8 +304,8 @@ DECLARE t text;
 BEGIN
   FOREACH t IN ARRAY ARRAY[
     'approvals', 'confirmations', 'grants', 'run_grants', 'run_grant_approved_writes',
-    'notifications', 'prefs', 'domain_settings', 'cost_caps', 'commit_checks',
-    'object_status', 'catalog_entities', 'lifecycle_pins', 'exposure_sets'
+    'notifications', 'prefs', 'domain_settings', 'commit_checks',
+    'object_status', 'catalog_entities', 'lifecycle_pins', 'exposure_sets', 'grant_revision'
   ] LOOP
     EXECUTE format(
       'CREATE TRIGGER %I BEFORE UPDATE ON os_governance.%I FOR EACH ROW EXECUTE FUNCTION os_governance.bump_row_version()',
@@ -294,6 +315,9 @@ BEGIN
     EXECUTE format(
       'CREATE TRIGGER %I BEFORE INSERT OR UPDATE ON os_governance.%I FOR EACH ROW EXECUTE FUNCTION os_governance.take_grant_rev()',
       t || '_grant_rev', t);
+    EXECUTE format(
+      'CREATE TRIGGER %I AFTER INSERT OR UPDATE OR DELETE OR TRUNCATE ON os_governance.%I FOR EACH STATEMENT EXECUTE FUNCTION os_governance.advance_grant_revision()',
+      t || '_grant_revision', t);
   END LOOP;
 END
 $$;
@@ -302,6 +326,8 @@ $$;
 GRANT USAGE ON SCHEMA os_governance TO os_governance_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA os_governance TO os_governance_app;
 GRANT USAGE ON SEQUENCE os_governance.grant_rev TO os_governance_app;
+-- The revision row moves only through the triggers.
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON os_governance.grant_revision FROM os_governance_app;
 
 -- Down Migration
 

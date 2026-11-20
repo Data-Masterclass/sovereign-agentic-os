@@ -1,0 +1,157 @@
+{{- /*
+  os_governance database bootstrap (WP-07). OFF by default: `postgres.governance.enabled`.
+
+  WHY: the governance schema (os-ui/core/adapters/postgres/migrations) must be owned by a role
+  that is NOT a superuser and cannot create roles, and the OS must run as a separate non-owner
+  login, or the audit log's append-only guarantee does not hold against the OS's own credentials.
+  Only a superuser can create those roles, so this one-shot hook runs as the bootstrap superuser
+  (postgres.secretName) and does ONLY that:
+    1. files/os-governance/roles.sql      — os_governance_app (NOLOGIN), the owner, the runtime login
+    2. CREATE DATABASE <db> OWNER <owner> — if missing
+    3. files/os-governance/database-grants.sql — CONNECT for the app role, CREATE for pg-boss
+  It never runs the migrations: those run as the owner (node-pg-migrate), never as a superuser.
+  The same two SQL files are executed by os-ui/core/adapters/postgres/install.it.ts.
+  Idempotent; safe on every upgrade. The pg-dump CronJob picks the new database up by itself.
+*/}}
+{{- if and .Values.postgres.enabled .Values.postgres.governance.enabled }}
+{{- if ne .Values.postgres.engine "plain" }}
+{{- fail "postgres.governance.enabled currently supports postgres.engine=plain only (the bootstrap Job connects as the plain engine's superuser)" }}
+{{- end }}
+{{- $pg := .Values.postgres }}
+{{- $gov := $pg.governance }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: os-governance-bootstrap
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "os-governance-bootstrap") | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "5"
+    "helm.sh/hook-delete-policy": before-hook-creation
+data:
+  roles.sql: |
+{{ .Files.Get "files/os-governance/roles.sql" | indent 4 }}
+  database-grants.sql: |
+{{ .Files.Get "files/os-governance/database-grants.sql" | indent 4 }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: os-governance-bootstrap
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "os-governance-bootstrap") | nindent 4 }}
+  annotations:
+    # After Postgres is up and after pg-extra-databases-reconcile (weight 5).
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "6"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 10
+  ttlSecondsAfterFinished: 300
+  template:
+    metadata:
+      labels:
+        {{- include "soa.selectorLabels" (dict "ctx" . "component" "os-governance-bootstrap") | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- include "soa.podSecurityContext" . | nindent 8 }}
+        runAsUser: 999
+      volumes:
+        - name: sql
+          configMap:
+            name: os-governance-bootstrap
+      containers:
+        - name: bootstrap
+          image: "{{ $pg.plainImage.repository }}:{{ $pg.plainImage.tag }}{{ if $pg.plainImage.digest }}@{{ $pg.plainImage.digest }}{{ end }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          securityContext:
+            {{- include "soa.containerSecurityContext" . | nindent 12 }}
+          volumeMounts:
+            - { name: sql, mountPath: /bootstrap, readOnly: true }
+          env:
+            - name: PGHOST
+              value: {{ include "soa.pgHost" . | quote }}
+            - name: PGPORT
+              value: "5432"
+            - name: PGUSER
+              valueFrom: { secretKeyRef: { name: {{ $pg.secretName }}, key: username } }
+            - name: PGPASSWORD
+              valueFrom: { secretKeyRef: { name: {{ $pg.secretName }}, key: password } }
+            - name: GOV_DB
+              value: {{ $gov.database | quote }}
+            - name: GOV_OWNER
+              value: {{ $gov.owner.username | quote }}
+            - name: GOV_OWNER_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ $gov.owner.secretName }}, key: password } }
+            - name: GOV_RUNTIME
+              value: {{ $gov.runtime.username | quote }}
+            - name: GOV_RUNTIME_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ $gov.runtime.secretName }}, key: password } }
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              set -euo pipefail
+              for i in $(seq 1 60); do
+                pg_isready -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -q && break
+                sleep 5
+              done
+              # One psql session; values travel as psql variables (:'name'), never spliced into
+              # SQL by the shell. CREATE DATABASE runs outside a transaction via \gexec.
+              psql -v ON_ERROR_STOP=1 --dbname postgres -q \
+                -v db="$GOV_DB" -v owner_role="$GOV_OWNER" -v owner_pw="$GOV_OWNER_PASSWORD" \
+                -v runtime_role="$GOV_RUNTIME" -v runtime_pw="$GOV_RUNTIME_PASSWORD" <<'SQL'
+              select set_config('os_bootstrap.database', :'db', false),
+                     set_config('os_bootstrap.owner_role', :'owner_role', false),
+                     set_config('os_bootstrap.owner_password', :'owner_pw', false),
+                     set_config('os_bootstrap.runtime_role', :'runtime_role', false),
+                     set_config('os_bootstrap.runtime_password', :'runtime_pw', false) \gset discard_
+              \i /bootstrap/roles.sql
+              select format('CREATE DATABASE %I OWNER %I', :'db', :'owner_role')
+               where not exists (select 1 from pg_database where datname = :'db') \gexec
+              \i /bootstrap/database-grants.sql
+              SQL
+              echo "os-governance-bootstrap: database ${GOV_DB}, owner ${GOV_OWNER}, runtime ${GOV_RUNTIME} reconciled"
+          resources:
+            requests: { cpu: 25m, memory: 64Mi }
+            limits: { cpu: 200m, memory: 128Mi }
+{{- if eq .Values.global.profile "local" }}
+---
+# Local-only dev credentials (NOT production secrets). On STACKIT these Secrets come from ESO
+# under the same names.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $gov.owner.secretName }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "postgres") | nindent 4 }}
+type: kubernetes.io/basic-auth
+stringData:
+  username: {{ $gov.owner.username | quote }}
+  password: {{ $gov.owner.localPassword | quote }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $gov.runtime.secretName }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "postgres") | nindent 4 }}
+type: kubernetes.io/basic-auth
+stringData:
+  username: {{ $gov.runtime.username | quote }}
+  password: {{ $gov.runtime.localPassword | quote }}
+{{- end }}
+{{- end }}

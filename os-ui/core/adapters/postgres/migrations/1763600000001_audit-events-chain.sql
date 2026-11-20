@@ -22,9 +22,14 @@
 --     its predecessor's hash (a row removed, inserted or reordered).
 --   - Append-only twice over: `os_governance_app` has INSERT + SELECT only (no UPDATE, DELETE,
 --     TRUNCATE), and triggers reject UPDATE / DELETE / TRUNCATE for every role, the owner included.
+--   - Appends are refused outside READ COMMITTED (SQLSTATE 0A000): a higher isolation level
+--     would read a stale head and fork the chain.
+--   - Any login can hold the same advisory lock at session level and so stall appends; the
+--     separate `os_governance` database keeps the key space to this schema alone.
 --   - Limit (documented, not hidden): removing the newest rows leaves a shorter valid chain.
 --     `audit_verify()` returns the head hash and the count so an external anchor (the nightly
---     export of 00 §3.2) can detect that.
+--     export of 00 §3.2) can detect that. The same anchor is needed against the schema owner or a
+--     superuser, who can disable the triggers and re-hash every row from a tampered one onward.
 
 -- Up Migration
 
@@ -79,7 +84,18 @@ LANGUAGE plpgsql AS $$
 DECLARE
   head text;
 BEGIN
-  -- One appender at a time, until this transaction ends.
+  -- READ COMMITTED only. Under REPEATABLE READ or SERIALIZABLE the head below would be read from
+  -- the transaction's snapshot, taken BEFORE the lock, so a concurrent append committed in
+  -- between would be invisible and the chain would fork for good (the table is append-only).
+  -- Refuse instead of forking.
+  IF current_setting('transaction_isolation') <> 'read committed' THEN
+    RAISE EXCEPTION 'os_governance.audit_events: append only under READ COMMITTED (this transaction is %)',
+      current_setting('transaction_isolation')
+      USING ERRCODE = 'feature_not_supported',
+            HINT = 'Record the audit event in a READ COMMITTED transaction.';
+  END IF;
+  -- One appender at a time, until this transaction ends. In READ COMMITTED the SELECT below
+  -- takes a fresh snapshot after the lock, so it sees the last committed head.
   PERFORM pg_advisory_xact_lock(hashtext('os_governance.audit_events'));
   SELECT a.hash INTO head FROM os_governance.audit_events a ORDER BY a.id DESC LIMIT 1;
   NEW.id := nextval('os_governance.audit_events_id_seq');

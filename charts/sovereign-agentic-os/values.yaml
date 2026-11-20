@@ -196,6 +196,21 @@ postgres:
       secretName: postgres-agent-runs-credentials
       createdb: false
       localPassword: agent-runs-local-dev
+  # Governance store (WP-07): a SEPARATE database for os_governance + pg-boss, owned by a
+  # NOSUPERUSER/NOCREATEROLE role, with the OS running as a distinct non-owner login. When
+  # enabled, the os-governance-bootstrap hook (as the superuser) creates only the roles and the
+  # database; the migrations run as the owner. OFF until a WP wires the migrator and the readers.
+  governance:
+    enabled: false
+    database: os_governance
+    owner:
+      username: os_governance
+      secretName: postgres-os-governance-owner-credentials
+      localPassword: os-governance-owner-local-dev
+    runtime:
+      username: os_governance_rt
+      secretName: postgres-os-governance-runtime-credentials
+      localPassword: os-governance-rt-local-dev
   # CLOUD-DURABLE CNPG extras (engine:cnpg ONLY).
   cnpg:
     # Durable zonal CSI storage class for the Postgres data volume (a zonal disk

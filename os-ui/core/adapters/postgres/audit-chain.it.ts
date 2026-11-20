@@ -49,7 +49,7 @@ async function tamper(sql: string, params: unknown[] = []): Promise<void> {
   }
 }
 
-describe('audit_events hash chain (real postgres:17)', () => {
+describe('audit_events hash chain (real postgres:17)', { timeout: 120_000 }, () => {
   before(async () => {
     db = await freshDatabase('wp07_audit');
     await migrateGovernance({ databaseUrl: db.url, direction: 'up' });
@@ -114,6 +114,62 @@ describe('audit_events hash chain (real postgres:17)', () => {
     const v = await verifyAuditChain(app);
     assert.equal(v.ok, true, v.reason ?? '');
     assert.equal(v.checked, 26);
+  });
+
+  test('a READ COMMITTED transaction that rolls back leaves no gap in the chain', async () => {
+    const c = await app.connect();
+    try {
+      await c.query('begin');
+      await appendAuditEvent(c, event(150));
+    } finally {
+      await c.query('rollback').catch(() => undefined);
+      c.release();
+    }
+    await appendAuditEvent(app, event(151));
+    assert.equal((await verifyAuditChain(app)).ok, true);
+  });
+
+  // Verifier probe verify-07-probes/rr.mjs, as a test: A opens a transaction and takes its
+  // snapshot, B appends and commits, then A appends.
+  for (const iso of ['repeatable read', 'serializable'] as const) {
+    test(`two connections: an append under ${iso.toUpperCase()} is refused (0A000) and the chain stays linked`, async () => {
+      const a = await app.connect();
+      const b = await app.connect();
+      try {
+        await a.query(`begin isolation level ${iso}`);
+        await a.query('select count(*) from os_governance.audit_events'); // snapshot taken
+        await appendAuditEvent(b, event(200)); // committed after A's snapshot
+        await assert.rejects(
+          appendAuditEvent(a, event(201)),
+          (err: { code?: string; message?: string }) => err.code === '0A000' && /READ COMMITTED/.test(err.message ?? ''),
+        );
+      } finally {
+        await a.query('rollback').catch(() => undefined); // never return a client with an open tx
+        a.release();
+        b.release();
+      }
+      const v = await verifyAuditChain(app);
+      assert.equal(v.ok, true, v.reason ?? '');
+    });
+  }
+
+  test('two connections: a READ COMMITTED append after a concurrent commit links to it', async () => {
+    const a = await app.connect();
+    const b = await app.connect();
+    try {
+      await a.query('begin isolation level read committed');
+      await a.query('select count(*) from os_governance.audit_events');
+      const fromB = await appendAuditEvent(b, event(300));
+      const fromA = await appendAuditEvent(a, event(301));
+      await a.query('commit');
+      assert.equal(fromA.prevHash, fromB.hash, 'A links to the row B committed after A began');
+    } finally {
+      await a.query('rollback').catch(() => undefined);
+      a.release();
+      b.release();
+    }
+    const v = await verifyAuditChain(app);
+    assert.equal(v.ok, true, v.reason ?? '');
   });
 
   test('NEGATIVE TWIN: a changed payload is detected at that row', async () => {
