@@ -77,6 +77,10 @@ node ../scripts/check-image-allowlist-chart.mjs
 # without a protection annotation must fail the render, and no committed profile may opt in.
 # Same skip rules as above.
 node ../scripts/check-consoles-not-public.mjs
+# WP-07: the os_governance bootstrap hook (a superuser Job) is off by default, connects only with a
+# dedicated admin Secret, and refuses to render against another service's credential, database or
+# role. Rendered YAML, same skip rules as above.
+node ../scripts/check-governance-bootstrap-chart.mjs
 # The Dagster webserver and code-location ingress policies must select exactly their pods and
 # admit every OS caller (os-ui, os-ui-worker, the code server and its run pods, webserver, daemon)
 # on the right port — and the ingress controller only when a Dagster Ingress renders. Rendered

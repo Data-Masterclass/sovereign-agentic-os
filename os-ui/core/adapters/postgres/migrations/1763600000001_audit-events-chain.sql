@@ -57,11 +57,14 @@ CREATE INDEX audit_events_actor_idx ON os_governance.audit_events (actor_uid, oc
 CREATE INDEX audit_events_decision_idx ON os_governance.audit_events (decision_id) WHERE decision_id IS NOT NULL;
 
 -- The one definition of an event's hash, used by the append trigger AND by the verifier.
+-- Every function below pins `search_path` and schema-qualifies its calls (PostgreSQL docs,
+-- "Writing SECURITY DEFINER Functions Safely" applies equally to a trigger any login can fire):
+-- a caller's own schema can then never shadow clock_timestamp, the lock or sha256.
 CREATE FUNCTION os_governance.audit_event_hash(prev text, e os_governance.audit_events) RETURNS text
-LANGUAGE sql STABLE PARALLEL SAFE AS $$
-  SELECT encode(sha256(convert_to(prev || '|' || jsonb_build_object(
+LANGUAGE sql STABLE PARALLEL SAFE SET search_path = pg_catalog, pg_temp AS $$
+  SELECT pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(prev || '|' || pg_catalog.jsonb_build_object(
     'id',          e.id,
-    'occurred_at', to_char(e.occurred_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
+    'occurred_at', pg_catalog.to_char(e.occurred_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
     'actor_uid',   e.actor_uid,
     'actor_kind',  e.actor_kind,
     'action',      e.action,
@@ -77,10 +80,10 @@ LANGUAGE sql STABLE PARALLEL SAFE AS $$
 $$;
 
 CREATE FUNCTION os_governance.audit_genesis_hash() RETURNS text
-LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT repeat('0', 64) $$;
+LANGUAGE sql IMMUTABLE PARALLEL SAFE SET search_path = pg_catalog, pg_temp AS $$ SELECT pg_catalog.repeat('0', 64) $$;
 
 CREATE FUNCTION os_governance.audit_events_chain() RETURNS trigger
-LANGUAGE plpgsql AS $$
+LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
 DECLARE
   head text;
 BEGIN
@@ -88,18 +91,18 @@ BEGIN
   -- the transaction's snapshot, taken BEFORE the lock, so a concurrent append committed in
   -- between would be invisible and the chain would fork for good (the table is append-only).
   -- Refuse instead of forking.
-  IF current_setting('transaction_isolation') <> 'read committed' THEN
+  IF pg_catalog.current_setting('transaction_isolation') <> 'read committed' THEN
     RAISE EXCEPTION 'os_governance.audit_events: append only under READ COMMITTED (this transaction is %)',
-      current_setting('transaction_isolation')
+      pg_catalog.current_setting('transaction_isolation')
       USING ERRCODE = 'feature_not_supported',
             HINT = 'Record the audit event in a READ COMMITTED transaction.';
   END IF;
   -- One appender at a time, until this transaction ends. In READ COMMITTED the SELECT below
   -- takes a fresh snapshot after the lock, so it sees the last committed head.
-  PERFORM pg_advisory_xact_lock(hashtext('os_governance.audit_events'));
+  PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext('os_governance.audit_events'));
   SELECT a.hash INTO head FROM os_governance.audit_events a ORDER BY a.id DESC LIMIT 1;
-  NEW.id := nextval('os_governance.audit_events_id_seq');
-  NEW.occurred_at := clock_timestamp();
+  NEW.id := pg_catalog.nextval('os_governance.audit_events_id_seq');
+  NEW.occurred_at := pg_catalog.clock_timestamp();
   NEW.prev_hash := coalesce(head, os_governance.audit_genesis_hash());
   NEW.hash := os_governance.audit_event_hash(NEW.prev_hash, NEW);
   RETURN NEW;
@@ -107,7 +110,7 @@ END
 $$;
 
 CREATE FUNCTION os_governance.audit_events_reject() RETURNS trigger
-LANGUAGE plpgsql AS $$
+LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
 BEGIN
   RAISE EXCEPTION 'os_governance.audit_events is append-only (% rejected)', TG_OP
     USING ERRCODE = 'insufficient_privilege';
@@ -124,7 +127,7 @@ CREATE TRIGGER audit_events_no_truncate BEFORE TRUNCATE ON os_governance.audit_e
 -- Walk the chain; the first broken row and why, or ok with the head hash and the count.
 CREATE FUNCTION os_governance.audit_verify()
 RETURNS TABLE (ok boolean, checked bigint, first_bad_id bigint, reason text, head_hash text)
-LANGUAGE plpgsql STABLE AS $$
+LANGUAGE plpgsql STABLE SET search_path = pg_catalog, pg_temp AS $$
 DECLARE
   e os_governance.audit_events;
   expected text := os_governance.audit_genesis_hash();

@@ -50,6 +50,8 @@ describe('pg-boss on the real postgres:17', { timeout: 120_000 }, () => {
     db = await freshDatabase('wp07_boss');
     await migrateGovernance({ databaseUrl: db.url, direction: 'up' });
     pool = new pg.Pool({ connectionString: db.url, max: 5 });
+    // The chart bootstrap creates the schema for the queue role (createSchema: false).
+    await pool.query(`create schema ${PGBOSS_SCHEMA}`);
     markRunWorkerProcess(); // these tests run pg-boss workers, which only the worker process may
     boss = createBoss(db.url);
     boss.on('error', (err) => console.error('pg-boss error', err));
@@ -68,9 +70,13 @@ describe('pg-boss on the real postgres:17', { timeout: 120_000 }, () => {
   });
 
   test('pg-boss holds at most PGBOSS_POOL_MAX connections of its own', async () => {
+    await boss.createQueue('load');
+    await Promise.all(Array.from({ length: 40 }, (_, i) => boss.send('load', { i })));
     const r = await pool.query(
-      `select count(*)::int as n from pg_stat_activity where datname = current_database() and pid <> pg_backend_pid() and application_name = 'pgboss'`,
+      `select count(*)::int as n from pg_stat_activity where datname = current_database() and pid <> pg_backend_pid() and application_name like 'pgboss%' and usename = current_user`,
     );
+    // pg-boss names its connections `pgboss:<id>` (40 concurrent sends saturate the pool first).
+    assert.ok(r.rows[0].n >= 1, 'the filter must see pg-boss connections, or this test proves nothing');
     assert.ok(r.rows[0].n <= PGBOSS_POOL_MAX, `pg-boss opened ${r.rows[0].n} connections`);
   });
 
