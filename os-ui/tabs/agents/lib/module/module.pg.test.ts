@@ -18,7 +18,9 @@
  */
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, readFileSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import os from 'node:os';
 import path from 'node:path';
 import pg from 'pg';
@@ -29,12 +31,16 @@ import { DOMAIN, SYSTEM_DIR, expectedModule, moduleStep, type ModuleStepInput } 
 import { HELD_YAML } from '@tabs/agents/lib/engine/hitl.pg-fixture';
 import { deleteModuleThreadRows } from '@tabs/agents/lib/module/run';
 import { python3Available, startModelStub, type ModelStub } from '@tabs/agents/lib/module/fixtures/stub-model';
+import { dropIsolated, isolateAgentRunsDatabase } from '@tabs/agents/lib/module/fixtures/pg-db';
 
+// Parallel-safe: this file gets its own database (fixtures/pg-db.ts) before it reads the URL.
+await isolateAgentRunsDatabase('wp53_module');
 const URL_ = (process.env.AGENT_RUNS_TEST_DATABASE_URL ?? '').trim();
 if (!URL_ && process.env.REQUIRE_PG_TESTS === '1') throw new Error('REQUIRE_PG_TESTS=1 but AGENT_RUNS_TEST_DATABASE_URL is not set');
 if (URL_ && !python3Available() && process.env.REQUIRE_PG_TESTS === '1') throw new Error('REQUIRE_PG_TESTS=1 but python3 (the model stub) is missing');
 const skip = !URL_ ? 'AGENT_RUNS_TEST_DATABASE_URL not set — the WP-53 module tests did not run' : !python3Available() ? 'python3 missing — the model stub cannot start' : false;
 
+const OS_UI = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
 let pool: pg.Pool;
 let stub: ModelStub;
 let base: Omit<ModuleStepInput, 'step' | 'runId'>;
@@ -70,6 +76,7 @@ before(async () => {
 after(async () => {
   stub?.stop();
   await pool?.end();
+  await dropIsolated();
 });
 
 test('run → approval interrupt → worker restart → resume: ONE card, the write runs once as the runner', { skip }, async () => {
@@ -202,6 +209,40 @@ test('retention removes a module run\'s stamp and hold decisions with its thread
   assert.ok((await deleteModuleThreadRows(pool, [runId])) >= 2);
   assert.equal(await count('agent_module_runs'), 0);
   assert.equal(await count('agent_hold_decisions'), 0);
+});
+
+test('N2: two processes booting together migrate the agent_runs database once, both succeed; the run path creates no table', { skip }, async () => {
+  // A fresh database next to this file's: two fresh processes migrate it AT THE SAME TIME.
+  const name = `wp53_race_${process.pid}_${Date.now()}`;
+  await pool.query(`CREATE DATABASE ${name}`);
+  const u = new URL(URL_);
+  u.pathname = `/${name}`;
+  try {
+    const once = () => new Promise<{ code: number | null; out: string }>((resolve) => {
+      const p = spawn(process.execPath, ['--import', './scripts/test-setup.mjs', 'tabs/agents/lib/module/fixtures/migrate-once.ts', u.toString()], { cwd: OS_UI, stdio: ['ignore', 'pipe', 'pipe'] });
+      let out = '';
+      p.stdout.on('data', (d) => (out += d));
+      p.on('exit', (code) => resolve({ code, out }));
+    });
+    const [a, b] = await Promise.all([once(), once()]);
+    assert.equal(a.code, 0, a.out);
+    assert.equal(b.code, 0, b.out);
+    const ran = [a, b].map((x) => (JSON.parse(x.out.trim().split('\n').at(-1)!) as { value: string[] }).value);
+    assert.deepEqual(ran.flat(), ['1763700000000_agent-module-tables'], 'exactly one process applied the migration');
+    const db = new pg.Client({ connectionString: u.toString() });
+    await db.connect();
+    try {
+      const { rows } = await db.query(`SELECT to_regclass('agent_module_runs') IS NOT NULL AS a, to_regclass('agent_hold_decisions') IS NOT NULL AS b`);
+      assert.deepEqual(rows[0], { a: true, b: true });
+    } finally {
+      await db.end();
+    }
+  } finally {
+    await pool.query(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`);
+  }
+  // The run path itself: no CREATE in the module code that runs per run.
+  const src = ['os-run.ts', 'run.ts', 'os-agent.ts'].map((f) => readFileSync(path.join(OS_UI, 'tabs/agents/lib/module', f), 'utf8')).join('\n');
+  assert.equal(/CREATE TABLE/i.test(src), false, 'no DDL in the run path');
 });
 
 test('negative twin: a tampered graph.mjs in the commit is refused by the OS before anything runs', { skip }, async () => {

@@ -58,6 +58,27 @@ test('a push to graph.mjs, run.mjs, package.json or package-lock.json is refused
   assert.equal(decidePath('apps/shop/package.json', builder).allowed, true);
 });
 
+test('N1: the agent folder allowlist — only system.yaml and prompts/<agent>[.memory].md are pushable', () => {
+  const lane = personalAgentLane('amir');
+  const refused = [
+    'GRAPH.MJS', 'Graph.mjs', '.npmrc', 'helper.mjs', 'graph.mjs.bak', 'README.md', 'evals/cases.json', 'graph.json',
+    'agents/lead.md', 'prompts/Lead.md', 'prompts/lead.txt', 'prompts/sub/lead.md', 'prompts/.hidden.md', 'node_modules/x/index.js',
+    'langgraph.json', 'System.yaml',
+  ];
+  for (const f of refused) {
+    for (const [p, who] of [[`agents/revenue-review/${f}`, builder], [`${lane}triage/${f}`, amirP]] as const) {
+      const v = decidePath(p, who);
+      assert.equal(v.allowed, false, `${p} must be refused`);
+      assert.match((v as { reason: string }).reason, /not a pushable agent file|generated from the agent system/);
+    }
+  }
+  for (const f of ['agents/README.md', 'agents/.npmrc', 'agents/x.mjs']) assert.equal(decidePath(f, builder).allowed, false, f);
+  for (const f of ['system.yaml', 'prompts/lead.md', 'prompts/lead.memory.md', 'prompts/data-analyst_2.md']) {
+    assert.equal(decidePath(`agents/revenue-review/${f}`, builder).allowed, true, f);
+    assert.equal(decidePath(`${lane}triage/${f}`, amirP).allowed, true, f);
+  }
+});
+
 test('a pushed prompt is written into the definition, and the regenerated module carries it', async () => {
   const id = store.createSystem(amir, { name: 'Triage' }).id;
   const before = parseSystem(store.getSystem(id, amir).yaml);

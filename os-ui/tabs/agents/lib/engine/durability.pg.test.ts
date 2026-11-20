@@ -17,7 +17,10 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import pg from 'pg';
 import { prepareFixtureTables, step, testDatabaseUrl } from '@tabs/agents/lib/engine/hitl.pg-fixture';
+import { dropIsolated, isolateAgentRunsDatabase } from '@tabs/agents/lib/module/fixtures/pg-db';
 
+// Parallel-safe: this file gets its own database (fixtures/pg-db.ts) before it reads the URL.
+await isolateAgentRunsDatabase('wp26_durability');
 const URL_ = testDatabaseUrl();
 if (!URL_ && process.env.REQUIRE_PG_TESTS === '1') throw new Error('REQUIRE_PG_TESTS=1 but AGENT_RUNS_TEST_DATABASE_URL is not set');
 const skip = URL_ ? false : 'AGENT_RUNS_TEST_DATABASE_URL not set — the real-Postgres durability test did not run';
@@ -28,7 +31,7 @@ before(async () => {
   pool = new pg.Pool({ connectionString: URL_, max: 2 });
   await prepareFixtureTables(pool);
 });
-after(async () => { await pool?.end(); });
+after(async () => { await pool?.end(); await dropIsolated(); });
 
 test('a worker killed between two tool calls: the resumed run does not re-execute the completed call', { skip }, async () => {
   const runId = `wp26-crash-${process.pid}-${Date.now()}`;

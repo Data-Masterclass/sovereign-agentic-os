@@ -36,9 +36,10 @@ import { FIXTURE_USER } from '@tabs/agents/lib/engine/parity-harness';
 import { HELD_YAML, pgApprovalPort, prepareFixtureTables } from '@tabs/agents/lib/engine/hitl.pg-fixture';
 import { generateAgentModule } from '@tabs/agents/lib/module/generate';
 import { hostModuleInputs } from '@tabs/agents/lib/module/versions';
-import { createOsAgent, migrateHoldStore, postgresHoldStore } from '@tabs/agents/lib/module/os-agent';
+import { createOsAgent, postgresHoldStore } from '@tabs/agents/lib/module/os-agent';
+import { migrateAgentRuns } from '@core/adapters/postgres/migrate';
 import { requireGatewayChatModel } from '@core/adapters/litellm/chat-model';
-import { migrateModuleRunStamps, postgresModuleRunStamps, runAgentModule } from '@tabs/agents/lib/module/run';
+import { postgresModuleRunStamps, runAgentModule } from '@tabs/agents/lib/module/run';
 import { loadModuleForRun } from '@tabs/agents/lib/module/os-run';
 import type { ApprovalDecision } from '@tabs/agents/lib/engine/approval-port';
 
@@ -88,8 +89,10 @@ export async function runModuleStep(input: ModuleStepInput): Promise<ModuleStepO
     await saver.setup();
     await prepareFixtureTables(pool);
     await migrateToolCallLedger(pool);
-    await migrateModuleRunStamps(pool);
-    await migrateHoldStore(pool);
+    // What a booting worker does (worker/agent-runs.ts): the agent_runs migrations, once, under
+    // node-pg-migrate's advisory lock — the run path itself creates nothing.
+    const mig = await migrateAgentRuns({ databaseUrl: url });
+    if (!mig.ok) throw new Error(`migrateAgentRuns: ${mig.reason} ${mig.detail}`);
     const sys = parseSystem(HELD_YAML);
     // What runs is what is in git. A new run: the module at `commit`, verified against what the
     // generator produces from the definition. A resume: the commit stamped at the run's start.
