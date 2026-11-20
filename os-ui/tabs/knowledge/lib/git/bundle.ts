@@ -28,7 +28,7 @@
 import yaml from 'js-yaml';
 import { KNOWLEDGE_DIR, KNOWLEDGE_MANUAL_PATH, KNOWLEDGE_WORKFLOWS_DIR, knowledgeWorkflowDir, prefixOf } from '@core/infra/repo-layout';
 import { compileGuardrails } from '@tabs/knowledge/lib/guardrails';
-import { parseWorkflow, serializeWorkflow, type DomainKnowledge, type DomainSection } from '@tabs/knowledge/lib/schema';
+import { parseWorkflow, type DomainKnowledge, type DomainSection } from '@tabs/knowledge/lib/schema';
 
 export const KNOWLEDGE_PREFIX = prefixOf(KNOWLEDGE_DIR);
 export const OS_META_KEY = 'x-sovereign-os-meta';
@@ -220,7 +220,9 @@ export function readKnowledgeBundle(files: Map<string, string>): BundleReadBack 
       version: String(meta.version ?? '1'),
       ...rest,
     };
-    const md = serializeWorkflow(parseWorkflow(`---\n${yaml.dump(original, DUMP)}---\n${body}`));
+    // Body verbatim; frontmatter rebuilt from the OKF keys (never through `serializeWorkflow`).
+    const md = `---\n${yaml.dump(original, DUMP)}---\n${body}`;
+    parseWorkflow(md); // the store must be able to read what it restores
     const tacitText = files.get(`${WORKFLOWS}/${m[1]}/tacit.md`);
     const tacit = tacitText ? splitFrontmatter(tacitText).body.replace(/\n$/, '') : '';
     out.workflows.push({
@@ -240,7 +242,20 @@ export function readKnowledgeBundle(files: Map<string, string>): BundleReadBack 
   return out;
 }
 
-/** The store's canonical form of a workflow `md` (what the inverse returns). */
-export function canonicalMd(md: string): string {
-  return serializeWorkflow(parseWorkflow(md));
+/**
+ * Re-stamp a workflow `md` with GOVERNED fields from the store: the read-back restores text from git,
+ * never an audience or a lifecycle status (those move only through promotion and approval). Only the
+ * two frontmatter keys change; the body is kept VERBATIM (the store's `serializeWorkflow` rebuilds the
+ * body from its steps and would drop free prose, so it is never used on a restore path).
+ */
+export function withGovernance(md: string, gov: { visibility: string; status: string }): string {
+  const { front, body } = splitFrontmatter(md);
+  return `---\n${yaml.dump({ ...front, visibility: gov.visibility, status: gov.status }, DUMP)}---\n${body}`;
+}
+
+/** Same workflow text: equal frontmatter mappings (any YAML style) and a byte-identical body. */
+export function sameWorkflowText(a: string, b: string): boolean {
+  const x = splitFrontmatter(a);
+  const y = splitFrontmatter(b);
+  return x.body === y.body && JSON.stringify(x.front) === JSON.stringify(y.front);
 }
