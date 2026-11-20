@@ -97,6 +97,7 @@ call() {
   } | curl -sS -K - -X "$2" -w '\n%{http_code}' --max-time 60 "http://127.0.0.1:$PF_PORT$3" | { body=$(cat); printf '%s\n%s' "${body##*$'\n'}" "${body%$'\n'*}"; }
 }
 code_of() { head -n1 <<<"$1"; }
+chat_body() { printf '{"model":"%s","messages":[{"role":"user","content":"ping"}],"max_tokens":5}' "$1"; }
 body_of() { tail -n +2 <<<"$1"; }
 # basic <user> <password> <path> — the http code only (Langfuse public API).
 basic() {
@@ -280,7 +281,7 @@ print(json.dumps(sorted({m.get("model_name") for m in d if (m.get("model_info") 
   local want_db; want_db=$(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1]))["db_models"]))' "$state")
   [ "$now_db" = "$want_db" ] && pass "database-stored models still listed: $now_db" || fail "database-stored models now $now_db, before $want_db"
   for m in $(python3 -c 'import json,sys; print(" ".join(json.load(open(sys.argv[1]))["db_models"]))' "$state"); do
-    c=$(code_of "$(call "$new_master" POST /v1/chat/completions "{\"model\":\"$m\",\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}],\"max_tokens\":5}")")
+    r=$(call "$new_master" POST /v1/chat/completions "$(chat_body "$m")"); c=$(code_of "$r")
     [ "$c" = 200 ] && pass "stored model $m served → 200" || fail "stored model $m → $c (400 'Invalid model name' = its credentials no longer decrypt)"
   done
   if [ -n "$agent" ]; then
@@ -290,7 +291,7 @@ print(json.dumps(sorted({m.get("model_name") for m in d if (m.get("model_info") 
 try: print(json.load(sys.stdin)["data"][0]["id"])
 except Exception: print("")')}
     if [ -n "$model" ]; then
-      c=$(code_of "$(call "$agent" POST /v1/chat/completions "{\"model\":\"$model\",\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}],\"max_tokens\":5}")")
+      r=$(call "$agent" POST /v1/chat/completions "$(chat_body "$model")"); c=$(code_of "$r")
       [ "$c" = 200 ] && pass "shared virtual key calls $model → 200" || fail "shared virtual key call $model → $c"
     else fail "shared virtual key sees no model"; fi
   else fail "agent-litellm-key has no apiKey"; fi
