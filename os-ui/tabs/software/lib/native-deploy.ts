@@ -236,8 +236,55 @@ function podContainers(dep: Obj): Obj[] {
 
 type Issue = { code: DeployRefusal['code']; reason: string };
 
+/** Platform settings the Ingress must match when they are known (deploy time). */
+type GateOpts = { ingressClass?: string; tlsIssuer?: string };
+
+/** The ONLY Ingress annotation an app may set. Everything else (auth-url, mirror-*, *-snippet, rewrite …) is refused. */
+export const ALLOWED_INGRESS_ANNOTATIONS: readonly string[] = ['cert-manager.io/cluster-issuer'];
+
+/** The volume types an app pod may use. Anything else (hostPath, csi, nfs, …) is refused. */
+const ALLOWED_VOLUME_TYPES = new Set(['emptyDir', 'configMap', 'secret', 'projected', 'downwardAPI']);
+
+/** An app's own Secrets are named `app-<slug>-<suffix>`; never its TLS secret, a pull secret or another app's. */
+export function isOwnSecret(secretName: unknown, slug: string): boolean {
+  const n = String(secretName ?? '');
+  const prefix = `${runnerName(slug)}-`;
+  return n.startsWith(prefix) && n.length > prefix.length && !n.endsWith('-tls');
+}
+
+function podIssues(pod: Obj | undefined, slug: string, bad: (r: string) => void): void {
+  if (!pod) return;
+  if (pod.imagePullSecrets !== undefined) bad('imagePullSecrets are not allowed (pull credentials belong to the namespace\'s default ServiceAccount)');
+  const own = (n: unknown, what: string) => {
+    if (!isOwnSecret(n, slug)) bad(`${what} names Secret '${String(n ?? '')}'; an app may reference only its own Secrets (${runnerName(slug)}-<name>)`);
+  };
+  for (const v of (pod.volumes ?? []) as Obj[]) {
+    const types = Object.keys(v).filter((k) => k !== 'name');
+    for (const t of types) if (!ALLOWED_VOLUME_TYPES.has(t)) bad(`volume '${String(v.name)}' of type '${t}' is not allowed`);
+    if (v.secret) own((v.secret as Obj).secretName, `volume '${String(v.name)}'`);
+    for (const src of (((v.projected ?? {}) as Obj).sources ?? []) as Obj[]) {
+      if (src.secret) own((src.secret as Obj).name, `projected volume '${String(v.name)}'`);
+      if (src.serviceAccountToken) bad(`projected volume '${String(v.name)}' may not mount a serviceAccountToken`);
+      if (src.clusterTrustBundle) bad(`projected volume '${String(v.name)}' may not mount a clusterTrustBundle`);
+    }
+  }
+  const containers = [...((pod.containers ?? []) as Obj[]), ...((pod.initContainers ?? []) as Obj[]), ...((pod.ephemeralContainers ?? []) as Obj[])];
+  for (const c of containers) {
+    for (const e of (c.env ?? []) as Obj[]) {
+      const ref = ((e.valueFrom ?? {}) as Obj).secretKeyRef as Obj | undefined;
+      if (ref) own(ref.name, `env '${String(e.name)}' of container '${String(c.name)}'`);
+    }
+    for (const f of (c.envFrom ?? []) as Obj[]) {
+      if (f.secretRef) own((f.secretRef as Obj).name, `envFrom of container '${String(c.name)}'`);
+    }
+  }
+}
+
+const sameLabels = (a: unknown, b: Record<string, string>) =>
+  !!a && typeof a === 'object' && JSON.stringify(Object.entries(a as Obj).sort()) === JSON.stringify(Object.entries(b).sort());
+
 /** The OS rules for ONE object. `host` is checked only when known (deploy time). */
-function objectIssues(o: Obj, where: string, slug: string, registry: string, host?: string): Issue[] {
+function objectIssues(o: Obj, where: string, slug: string, registry: string, host?: string, gate: GateOpts = {}): Issue[] {
   const out: Issue[] = [];
   const kind = String(o.kind ?? '');
   const meta = (o.metadata ?? {}) as Obj;
@@ -254,6 +301,14 @@ function objectIssues(o: Obj, where: string, slug: string, registry: string, hos
     const pod = ((((o.spec ?? {}) as Obj).template ?? {}) as Obj).spec as Obj | undefined;
     const sa = pod?.serviceAccountName ?? pod?.serviceAccount;
     if (sa !== undefined && sa !== 'default') bad(`serviceAccountName '${String(sa)}' is not allowed`);
+    const own = { 'app.kubernetes.io/name': name };
+    const spec = (o.spec ?? {}) as Obj;
+    const sel = (spec.selector ?? {}) as Obj;
+    const tplLabels = ((((spec.template ?? {}) as Obj).metadata ?? {}) as Obj).labels as Obj | undefined;
+    if (!sameLabels(sel.matchLabels, own) || sel.matchExpressions !== undefined || tplLabels?.['app.kubernetes.io/name'] !== name) {
+      bad(`the Deployment selector must be exactly the app's own pods (app.kubernetes.io/name: ${name})`);
+    }
+    podIssues(pod, slug, bad);
     const containers = podContainers(o);
     if (containers.length === 0) bad('the Deployment has no containers');
     const repo = appImageRepository(registry, slug);
@@ -282,14 +337,43 @@ function objectIssues(o: Obj, where: string, slug: string, registry: string, hos
       }
     }
   }
-  if (kind === 'Ingress' && host) {
+  if (kind === 'Service') {
     const spec = (o.spec ?? {}) as Obj;
-    const hosts = [
-      ...((spec.rules ?? []) as Obj[]).map((r) => r.host),
-      ...((spec.tls ?? []) as Obj[]).flatMap((t) => (t.hosts ?? []) as unknown[]),
-    ];
-    if (hosts.length === 0 || hosts.some((h) => h !== host)) bad(`the Ingress may serve only the app's host '${host}'`);
-    if ((spec as Obj).defaultBackend) bad('the Ingress may not set a defaultBackend');
+    const allowedKeys = new Set(['type', 'selector', 'ports', 'sessionAffinity', 'ipFamilyPolicy', 'ipFamilies']);
+    if (spec.type !== undefined && spec.type !== 'ClusterIP') bad(`Service type '${String(spec.type)}' is not allowed; only ClusterIP (ExternalName, NodePort and LoadBalancer publish or reach beyond the app)`);
+    for (const k of Object.keys(spec)) {
+      if (!allowedKeys.has(k)) bad(`Service spec.${k} is not allowed${k === 'externalIPs' ? ' (externalIPs)' : ''}`);
+    }
+    if (!sameLabels(spec.selector, { 'app.kubernetes.io/name': name })) bad(`the Service selector must be exactly the app's own pods (app.kubernetes.io/name: ${name})`);
+  }
+  if (kind === 'Ingress') {
+    const spec = (o.spec ?? {}) as Obj;
+    const annotations = (meta.annotations ?? {}) as Obj;
+    for (const a of Object.keys(annotations)) {
+      if (!ALLOWED_INGRESS_ANNOTATIONS.includes(a)) bad(`Ingress annotation '${a}' is not allowed (only ${ALLOWED_INGRESS_ANNOTATIONS.join(', ')})`);
+    }
+    if (gate.tlsIssuer && annotations['cert-manager.io/cluster-issuer'] !== undefined && annotations['cert-manager.io/cluster-issuer'] !== gate.tlsIssuer) {
+      bad(`the cluster-issuer must be the platform's '${gate.tlsIssuer}'`);
+    }
+    if (gate.ingressClass && spec.ingressClassName !== undefined && spec.ingressClassName !== gate.ingressClass) {
+      bad(`ingressClassName must be the platform's '${gate.ingressClass}'`);
+    }
+    if (spec.defaultBackend) bad('the Ingress may not set a defaultBackend');
+    const rules = (spec.rules ?? []) as Obj[];
+    const tls = (spec.tls ?? []) as Obj[];
+    const hosts = [...rules.map((r) => r.host), ...tls.flatMap((t) => (t.hosts ?? []) as unknown[])];
+    const hostOk = (h: unknown) => (host ? h === host : typeof h === 'string' && h.startsWith(`${slug}.`));
+    if (hosts.length === 0 || !hosts.every(hostOk)) bad(`the Ingress may serve only the app's own host${host ? ` '${host}'` : ` (${slug}.…)`}`);
+    for (const t of tls) {
+      const th = ((t.hosts ?? []) as unknown[])[0];
+      if (t.secretName !== `${String(th)}-tls` || ((t.hosts ?? []) as unknown[]).length !== 1) bad(`tls secretName must be the app's own '${String(host ?? th)}-tls'`);
+    }
+    for (const r of rules) {
+      for (const p of ((((r.http ?? {}) as Obj).paths ?? []) as Obj[])) {
+        const svc = ((p.backend ?? {}) as Obj).service as Obj | undefined;
+        if (!svc || svc.name !== name || ((p.backend ?? {}) as Obj).resource !== undefined) bad(`every Ingress backend must be the app's own Service '${name}'`);
+      }
+    }
   }
   return out;
 }
@@ -325,12 +409,16 @@ export function planAppDeploy(files: File[], c: DeployContext): DeployPlan {
       continue;
     }
     for (const d of parsed.docs) {
-      issues.push(...objectIssues(d, f.path, c.slug, c.registry, c.host));
+      issues.push(...objectIssues(d, f.path, c.slug, c.registry, c.host, { ingressClass: c.ingressClass, tlsIssuer: c.tlsIssuer }));
       objects.push(d);
     }
   }
   const deployments = objects.filter((o) => o.kind === 'Deployment');
   if (issues.length === 0 && deployments.length !== 1) issues.push({ code: 'invalid', reason: `exactly one Deployment is required (found ${deployments.length})` });
+  for (const k of ['Service', 'Ingress']) {
+    const n = objects.filter((o) => o.kind === k).length;
+    if (n > 1) issues.push({ code: 'invalid', reason: `at most one ${k} is allowed (found ${n})` });
+  }
   if (issues.length > 0) {
     // Most actionable first: a wrong registry, then "not built", then the rest.
     const order: DeployRefusal['code'][] = ['image_registry', 'invalid', 'image_not_built'];

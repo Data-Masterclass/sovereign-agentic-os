@@ -79,13 +79,18 @@ export type RunnerOpts = {
   namespace?: string;
   /** The platform image registry prefix (defaults to `softwareRunner.imageRegistry`). */
   registry?: string;
+  /** The ingress class / cert-manager issuer an app's Ingress must match (default: the chart's). */
+  ingressClass?: string;
+  tlsIssuer?: string;
 };
 
 const UNREACHABLE =
   'Kubernetes API unreachable — the app runner was not provisioned; no live URL is served until connectivity is restored.';
 
-function resolveOpts(opts: RunnerOpts): { k8s: RunnerK8s; namespace: string; registry: string } {
+function resolveOpts(opts: RunnerOpts): { k8s: RunnerK8s; namespace: string; registry: string; ingressClass: string; tlsIssuer: string } {
   return {
+    ingressClass: opts.ingressClass ?? config.appsIngressClass,
+    tlsIssuer: opts.tlsIssuer ?? config.appsTlsIssuer,
     k8s: opts.k8s ?? (liveK8s as RunnerK8s),
     namespace: opts.namespace ?? config.softwareRunnerNamespace,
     registry: opts.registry ?? config.softwareImageRegistry,
@@ -153,7 +158,13 @@ export async function deployApp(app: RunnerApp, options: RunnerOpts = {}): Promi
   }
   const files = app.tree.kind === 'tree' ? app.tree.files : [];
   const sha = app.tree.kind === 'tree' ? app.tree.sha : '';
-  const plan = planAppDeploy(files, { slug: app.slug, host: app.host, registry: o.registry });
+  const plan = planAppDeploy(files, {
+    slug: app.slug,
+    host: app.host,
+    registry: o.registry,
+    ingressClass: o.ingressClass,
+    tlsIssuer: o.tlsIssuer,
+  });
   if (!plan.ok) return refuse(plan.reason);
 
   const objects: Record<string, unknown>[] = plan.objects.map((obj) => ({
