@@ -32,6 +32,7 @@ import {
   importFolderHistory, listAllRepos, listTree, MAIN, readFilesAt, repoPath, resolveRepo, type GitStoreOptions,
 } from '@core/infra/git-store';
 import { generatedReadmes } from '@core/infra/repo-readme';
+import { notifyCommitted } from '@core/infra/git-backup';
 import {
   AGENTS_DIR, LAYOUT_MARKER_PATH, LEGACY_PERSONAL_DIR, layoutMarker, layoutMigrationMoves, configuredDbtProjectDir,
   repoDirName, USER_REPO_PREFIX, prefixOf, type LayoutMove,
@@ -152,6 +153,7 @@ export async function migrateRepoLayout(domain: string, opts: GitStoreOptions & 
       commit: { message, tree, parent: [head], author: { ...COMMITTER, timestamp, timezoneOffset: 0 }, committer: { ...COMMITTER, timestamp, timezoneOffset: 0 } },
     });
     await git.writeRef({ fs, gitdir, ref: MAIN, value: sha, force: true });
+    notifyCommitted(gitdir, { reposDir }); // WP-56: the migration commit is bundled like any other
     return { ...plan, sha, dryRun: false };
   } finally {
     release();

@@ -69,6 +69,64 @@ backup:
     resources:
       requests: { cpu: 50m, memory: 128Mi }
       limits: { cpu: 500m, memory: 256Mi }
+  # WP-56 — git bundles after every commit, to an object-locked bucket (docs/backups.md
+  # "Git bundles and restore drills"). OFF by default; the OWNER creates the bucket (Object Lock
+  # on) and the Secret first. Runs as the `git-backup` sidecar on the os-ui pod.
+  gitBundles:
+    enabled: false
+    image:
+      # Our own image (images/base/backup-tools): git + aws-cli + jq. Built by build-images.yml.
+      repository: ghcr.io/data-masterclass/sovereign-os/backup-tools
+      tag: "1.0.0"
+      digest: ""
+    endpoint: https://object.storage.eu01.onstackit.cloud
+    endpointHost: object.storage.eu01.onstackit.cloud   # joins the egress-proxy allowlist
+    region: eu01
+    bucket: ""                    # required when enabled (Object Lock + versioning, owner-created)
+    # Secret with AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY for the bucket (owner-created).
+    secretName: git-backup-s3
+    prefix: git-bundles
+    refsPrefix: git-refs          # hourly hash-chained ref-heads records (tamper evidence)
+    pollSeconds: 5                # queue check (markers dropped by os-ui after each commit/push)
+    rescanSeconds: 600            # full pass: bundles every repo whose refs moved (lost markers)
+    refsRecordSeconds: 3600
+    # Optional explicit per-object retention. Empty = the bucket's DEFAULT retention applies
+    # (recommended). Mode COMPLIANCE or GOVERNANCE.
+    objectLock: { mode: "", days: 0 }
+    resources:
+      requests: { cpu: 10m, memory: 32Mi }
+      limits: { cpu: 500m, memory: 256Mi }
+  # WP-56 — weekly restore drill: git (bundles), Postgres (latest pg-dump) and OpenSearch (latest
+  # snapshot). OFF by default. Results: the `restore-drill-status` ConfigMap (Monitoring), the
+  # bucket (drills/weekly/), one JSON log line; a failed drill fails the Job.
+  drill:
+    enabled: false
+    schedule: "0 4 * * 0"         # Sundays 04:00 UTC, after the 02:30 dump and the 03:00 snapshot
+    statusConfigMap: restore-drill-status
+    git: { enabled: true }
+    postgres: { enabled: true }
+    opensearch:
+      enabled: true
+      repository: stackit-s3      # the WP-21 S3 repository (opensearchSnapshots.s3.repositoryName)
+      indices: "files*,knowledge*,os-*"
+      maxDriftPct: 10             # restored vs live _count; the snapshot is hours older than live
+    lagRetries: 3                 # git: re-read the newest bundle before calling a ref mismatch
+    lagSleepSeconds: 20
+    resources:
+      requests: { cpu: 50m, memory: 128Mi }
+      limits: { cpu: "1", memory: 1Gi }
+  # WP-56 — monthly Velero restore into a scratch namespace (os-repos volume), checked with
+  # git fsck, then deleted. OFF by default. Needs Velero (deploy/velero/) and the namespace below.
+  veleroDrill:
+    enabled: false
+    schedule: "0 5 1 * *"         # 1st of the month, 05:00 UTC
+    veleroNamespace: velero
+    scheduleName: velero-daily-agentic-os   # the Velero Schedule whose newest backup is restored
+    scratchNamespace: agentic-os-restore-drill
+    timeoutSeconds: 3600
+    resources:
+      requests: { cpu: 50m, memory: 64Mi }
+      limits: { cpu: 500m, memory: 512Mi }
 
 # Ingress + TLS — OFF by default (Mode A is port-forward only).
 ingress:

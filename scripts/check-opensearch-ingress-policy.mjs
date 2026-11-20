@@ -13,7 +13,8 @@
  *     (1) the default install renders `opensearch-allow-os-clients-only`, Ingress-only;
  *     (2) its podSelector matches the labels of the rendered OpenSearch StatefulSet's pods;
  *     (3) :9200 admits EXACTLY the expected component selectors (os-ui, os-ui-worker,
- *         opensearch-snapshot-register, opensearch-snapshot-cron, opensearch-maintenance);
+ *         opensearch-snapshot-register, opensearch-snapshot-cron, opensearch-maintenance,
+ *         restore-drill);
  *     (4) :9300 is admitted between OpenSearch pods;
  *     (5) every rendered workload that references the in-cluster OpenSearch URL carries a
  *         component label the policy admits (worker + snapshots switched on so they render);
@@ -30,7 +31,7 @@ const repo = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const CHART = join(repo, 'charts', 'sovereign-agentic-os');
 const VALUES = join(repo, 'values.local.yaml');
 const POLICY = 'opensearch-allow-os-clients-only';
-const EXPECTED_REST_PEERS = ['opensearch-maintenance', 'opensearch-snapshot-cron', 'opensearch-snapshot-register', 'os-ui', 'os-ui-worker'];
+const EXPECTED_REST_PEERS = ['opensearch-maintenance', 'opensearch-snapshot-cron', 'opensearch-snapshot-register', 'os-ui', 'os-ui-worker', 'restore-drill'];
 const TAG = 'check-opensearch-ingress-policy';
 
 function skip(why) {

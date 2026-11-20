@@ -1,0 +1,267 @@
+{{- /*
+  SPDX-License-Identifier: Apache-2.0
+  Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+
+  WP-56 — the MONTHLY Velero restore drill (values `backup.veleroDrill`, OFF by default).
+  Restores the os-ui pod's volumes from the newest backup of the Velero schedule into the scratch
+  namespace below, with a Velero resource modifier that turns the restored pod into a one-shot
+  checker (only the os-repos claim, `git fsck --full` per repository), then deletes the restored
+  pod and claims. Script: files/backup/drill-velero.sh; reporter: drill-report.sh (kind velero).
+
+  The scratch namespace is part of the chart, so every grant stays NAMESPACED: it holds nothing
+  between drills, a ResourceQuota caps what a restore can take, and a NetworkPolicy denies all
+  traffic (the checker needs none). Requires Velero >= 1.12 (resource modifiers); the pinned
+  chart 8.1.0 ships 1.15.
+*/}}
+{{- $v := .Values.backup.veleroDrill }}
+{{- if $v.enabled }}
+{{- $sel := dict "app.kubernetes.io/component" "velero-drill" }}
+{{- $check := printf `set -u
+export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0='*' HOME=/tmp
+echo '[]' > /tmp/r.json
+for g in $(find /repos -mindepth 1 -maxdepth 4 -type d -name '*.git' -prune | sort); do
+  [ -f "$g/HEAD" ] || continue
+  if git --git-dir="$g" fsck --full --no-dangling >/tmp/f 2>&1; then s=ok; else s=fail; fi
+  jq --arg r "${g#/repos/}" --arg s "$s" --arg d "$(head -c 300 /tmp/f)" '. + [{repo:$r, fsck:$s, detail:$d}]' /tmp/r.json > /tmp/n && mv /tmp/n /tmp/r.json
+done
+echo "VELERO-DRILL $(jq -c '{repos:.}' /tmp/r.json)"` }}
+{{- $container := dict "name" "velero-drill-check" "image" (include "soa.backupToolsImage" .) "command" (list "/bin/sh" "-c" $check)
+      "volumeMounts" (list (dict "name" "os-repos" "mountPath" "/repos" "readOnly" true) (dict "name" "tmp" "mountPath" "/tmp"))
+      "resources" $v.resources
+      "securityContext" (dict "runAsNonRoot" true "allowPrivilegeEscalation" false "readOnlyRootFilesystem" true "capabilities" (dict "drop" (list "ALL"))) }}
+{{- $volumes := list (dict "name" "os-repos" "persistentVolumeClaim" (dict "claimName" "os-repos")) (dict "name" "tmp" "emptyDir" (dict "sizeLimit" "1Gi")) }}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ $v.scratchNamespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    app.kubernetes.io/component: velero-drill
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: velero-drill
+  namespace: {{ $v.scratchNamespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  hard:
+    pods: "2"
+    persistentvolumeclaims: "2"
+    requests.storage: {{ (.Values.osUI.dataProjectGit | default dict).reposSize | default "2Gi" | quote }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: deny-all
+  namespace: {{ $v.scratchNamespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+# Velero resource modifier (https://velero.io/docs/v1.15/restore-resource-modifiers/): the
+# restored os-ui pod becomes the checker. JSON-patch `add` replaces the member when it exists.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: velero-drill-modifier
+  namespace: {{ $v.veleroNamespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+data:
+  modifier.yaml: |
+    version: v1
+    resourceModifierRules:
+      - conditions:
+          groupResource: pods
+          namespaces: [{{ .Release.Namespace | quote }}]
+        patches:
+          - { operation: add, path: "/spec/initContainers", value: "[]" }
+          - { operation: add, path: "/spec/containers", value: {{ list $container | toJson | quote }} }
+          - { operation: add, path: "/spec/volumes", value: {{ $volumes | toJson | quote }} }
+          - { operation: add, path: "/spec/restartPolicy", value: "\"Never\"" }
+          - { operation: add, path: "/spec/serviceAccountName", value: "\"default\"" }
+          - { operation: add, path: "/spec/automountServiceAccountToken", value: "false" }
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: velero-drill
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+---
+# In the Velero namespace: read backups, create/read/delete its own Restores, read pod-volume restores.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: velero-drill
+  namespace: {{ $v.veleroNamespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["velero.io"]
+    resources: ["backups", "podvolumerestores"]
+    verbs: ["get", "list"]
+  - apiGroups: ["velero.io"]
+    resources: ["restores"]
+    verbs: ["create", "get", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: velero-drill
+  namespace: {{ $v.veleroNamespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: velero-drill }
+subjects:
+  - { kind: ServiceAccount, name: velero-drill, namespace: {{ .Release.Namespace }} }
+---
+# In the scratch namespace: read the checker's log, delete what the restore created.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: velero-drill
+  namespace: {{ $v.scratchNamespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "persistentvolumeclaims"]
+    verbs: ["get", "list", "delete"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: velero-drill
+  namespace: {{ $v.scratchNamespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: velero-drill }
+subjects:
+  - { kind: ServiceAccount, name: velero-drill, namespace: {{ .Release.Namespace }} }
+---
+# The reporter patches the same status ConfigMap as the weekly drill (key velero.json).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: velero-drill-status
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: [{{ .Values.backup.drill.statusConfigMap | quote }}]
+    verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: velero-drill-status
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: velero-drill-status }
+subjects:
+  - { kind: ServiceAccount, name: velero-drill, namespace: {{ .Release.Namespace }} }
+{{- if not .Values.backup.drill.enabled }}
+---
+# The status ConfigMap (the weekly drill's template creates it when that drill is on).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.backup.drill.statusConfigMap }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    app.kubernetes.io/component: restore-drill
+{{- end }}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: velero-drill
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "velero-drill") | nindent 4 }}
+spec:
+  schedule: {{ $v.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: {{ add $v.timeoutSeconds 600 }}
+      ttlSecondsAfterFinished: 2678400
+      template:
+        metadata:
+          labels:
+            {{- include "soa.selectorLabels" (dict "ctx" . "component" "velero-drill") | nindent 12 }}
+          annotations:
+            backup.velero.io/backup-volumes-excludes: work,tmp
+        spec:
+          serviceAccountName: velero-drill
+          restartPolicy: Never
+          securityContext:
+            {{- include "soa.podSecurityContext" . | nindent 12 }}
+            runAsUser: 65532
+            runAsGroup: 65532
+            fsGroup: 65532
+          volumes:
+            - { name: work, emptyDir: { sizeLimit: 64Mi } }
+            - { name: tmp, emptyDir: { sizeLimit: 256Mi } }
+            - name: scripts
+              configMap: { name: backup-scripts, defaultMode: 0555 }
+          initContainers:
+            - name: velero-drill
+              image: {{ include "soa.backupToolsImage" . | quote }}
+              imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+              securityContext:
+                {{- include "soa.containerSecurityContext" . | nindent 16 }}
+              command: ["/bin/sh", "-c", "mkdir -p /work/results && sh /opt/soa/backup/drill-velero.sh || echo 'velero-drill crashed (no result => the drill fails)'"]
+              env:
+                - { name: RESULTS_DIR, value: /work/results }
+                - { name: BACKUP_WORK, value: /tmp }
+                - { name: VELERO_NS, value: {{ $v.veleroNamespace | quote }} }
+                - { name: VELERO_SCHEDULE, value: {{ $v.scheduleName | quote }} }
+                - { name: SOURCE_NS, value: {{ .Release.Namespace | quote }} }
+                - { name: SCRATCH_NS, value: {{ $v.scratchNamespace | quote }} }
+                - { name: MODIFIER_CM, value: velero-drill-modifier }
+                - { name: VELERO_DRILL_TIMEOUT, value: {{ $v.timeoutSeconds | quote }} }
+              resources:
+                {{- toYaml $v.resources | nindent 16 }}
+              volumeMounts:
+                - { name: work, mountPath: /work }
+                - { name: tmp, mountPath: /tmp }
+                - { name: scripts, mountPath: /opt/soa/backup, readOnly: true }
+          containers:
+            - name: report
+              image: {{ include "soa.backupToolsImage" . | quote }}
+              imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+              securityContext:
+                {{- include "soa.containerSecurityContext" . | nindent 16 }}
+              command: ["/bin/sh", "/opt/soa/backup/drill-report.sh"]
+              env:
+                {{- include "soa.gitBundleS3Env" . | nindent 16 }}
+                - { name: RESULTS_DIR, value: /work/results }
+                - { name: BACKUP_WORK, value: /tmp }
+                - { name: DRILL_KIND, value: velero }
+                - { name: DRILL_CHECKS, value: velero }
+                - { name: STATUS_CONFIGMAP, value: {{ .Values.backup.drill.statusConfigMap | quote }} }
+              resources:
+                {{- toYaml $v.resources | nindent 16 }}
+              volumeMounts:
+                - { name: work, mountPath: /work }
+                - { name: tmp, mountPath: /tmp }
+                - { name: scripts, mountPath: /opt/soa/backup, readOnly: true }
+{{- end }}

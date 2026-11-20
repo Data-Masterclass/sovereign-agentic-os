@@ -342,6 +342,7 @@ templates/extensions/lakehouse/data-runner.yaml). One definition for every pod t
 soa.egressHosts — the ONE list the egress proxy filters on, as a JSON array (fromJsonArray it).
 The chart allowlist, plus each feature's own host joining with the feature that needs it:
   * the OpenSearch snapshot object-storage host (WP-21);
+  * the git-bundle bucket host when bundles or a restore drill are on (WP-56);
   * LLM provider hosts: `llmProviders.allowHosts`, and the STACKIT model-serving host when
     `stackitPremium.enabled` (its gateway route goes through the proxy like every other provider).
 os-ui receives the SAME list as LLM_EGRESS_ALLOWLIST, so the provider flow refuses exactly what the
@@ -352,6 +353,11 @@ proxy would block, before anything is stored.
 {{- $s3 := (.Values.opensearchSnapshots | default dict).s3 | default dict }}
 {{- if and .Values.opensearch.enabled $s3.enabled $s3.endpointHost }}
 {{- $hosts = append $hosts $s3.endpointHost }}
+{{- end }}
+{{- /* WP-56: the git-bundle bucket's host, with the feature that needs it. */}}
+{{- $gb := (.Values.backup | default dict).gitBundles | default dict }}
+{{- if and (or (include "soa.gitBundlesOn" .) .Values.backup.drill.enabled .Values.backup.veleroDrill.enabled) $gb.endpointHost }}
+{{- $hosts = append $hosts $gb.endpointHost }}
 {{- end }}
 {{- $llm := .Values.llmProviders | default dict }}
 {{- range ($llm.allowHosts | default list) }}{{- $hosts = append $hosts . }}{{- end }}

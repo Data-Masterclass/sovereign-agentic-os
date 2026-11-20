@@ -41,6 +41,7 @@ import {
   LAYOUT_MARKER_PATH, LAYOUT_V1, LAYOUT_V2, README, layoutMarker, type LayoutVersion,
 } from '@core/infra/repo-layout';
 import { generatedReadmes, isGeneratedReadme } from '@core/infra/repo-readme';
+import { notifyCommitted } from '@core/infra/git-backup';
 
 export const MAIN = 'refs/heads/main';
 export const COMMITTER = { name: 'Sovereign OS', email: 'os@sovereign.local' } as const;
@@ -687,6 +688,8 @@ async function commitLeaves(gitdir: string, head: string | null, files: Map<stri
     },
   });
   await git.writeRef({ fs, gitdir, ref: MAIN, value: sha, force: true });
+  // WP-56: hand the repo to the bundle sidecar. Fire-and-forget — never awaited, never throws.
+  notifyCommitted(gitdir, { reposDir: opts.reposDir });
   return { sha, changed: true };
 }
 
@@ -1752,6 +1755,7 @@ export async function commitSubtreeMerge(domain: string, prefix: string, files: 
       },
     });
     await git.writeRef({ fs, gitdir, ref: MAIN, value: sha, force: true });
+    notifyCommitted(gitdir, { reposDir: opts.reposDir }); // WP-56, fire-and-forget
     return { sha, changed: true };
   });
 }

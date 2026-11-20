@@ -39,6 +39,7 @@ on:
       - 'docling-v*'
       - 'data-runner-v*'
       - 'opensearch-v*'
+      - 'backup-tools-v*'
   # The dev stage (.github/workflows/dev.yml) calls this with image=os-ui, version=main-<sha>.
   workflow_call:
     inputs:
@@ -63,7 +64,7 @@ on:
         description: which image to build
         required: true
         type: choice
-        options: [os-ui, git-http, git-daemon, dagster, docling, data-runner, opensearch]
+        options: [os-ui, git-http, git-daemon, dagster, docling, data-runner, opensearch, backup-tools]
       version:
         description: the image tag to push (e.g. 0.9.0)
         required: true
@@ -183,7 +184,9 @@ jobs:
             data-runner) dockerfile=images/extensions/data-runner/Dockerfile; context=images/extensions/data-runner ;;
             # 3.7.0 + repository-s3 (WP-21); tag e.g. opensearch-v3.7.0-soa.1.
             opensearch) dockerfile=images/extensions/opensearch/Dockerfile; context=images/extensions/opensearch ;;
-            *) echo "::error::unknown image '$image' — expected one of os-ui, git-http, git-daemon, dagster, docling, data-runner, opensearch" >&2; exit 1 ;;
+            # git + aws-cli + jq for the WP-56 bundle sidecar and restore drills.
+            backup-tools) dockerfile=images/base/backup-tools/Dockerfile; context=images/base/backup-tools ;;
+            *) echo "::error::unknown image '$image' — expected one of os-ui, git-http, git-daemon, dagster, docling, data-runner, opensearch, backup-tools" >&2; exit 1 ;;
           esac
           test -f "$dockerfile" || { echo "::error::$dockerfile does not exist" >&2; exit 1; }
           {

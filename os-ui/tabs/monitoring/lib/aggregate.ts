@@ -23,6 +23,8 @@ import type { RunListFilter } from '@tabs/monitoring/lib/adapters/run-store-runs
 import { collectPipelines } from '@tabs/monitoring/lib/adapters/pipeline-health';
 import { collectCost } from '@tabs/monitoring/lib/adapters/cost';
 import { collectArtifacts } from '@tabs/monitoring/lib/adapters/artifact-health';
+import { collectBackups } from '@tabs/monitoring/lib/adapters/backup-health';
+import { backupAlerts } from '@tabs/monitoring/lib/backup-health-core';
 import { filterScope, scopeForUser } from '@tabs/monitoring/lib/scope';
 import { pickAttention, summarize } from '@tabs/monitoring/lib/rollup';
 import { deriveAlerts, type AlertTraceInput, type AlertCapInput } from '@tabs/monitoring/lib/alerts-derive';
@@ -35,14 +37,16 @@ import { LENS_IDS, type HealthItem, type LensSummary, type Overview, type Scope 
  * `collectSystem` directly (so the same adapter is reused, never duplicated).
  */
 export async function collectAll(scope?: Scope, runFilter?: RunListFilter): Promise<HealthItem[]> {
-  const [runs, pipelines, cost, artifacts] = await Promise.all([
+  const [runs, pipelines, cost, artifacts, backups] = await Promise.all([
     // The viewer's scope goes into the run-store read, so their own runs are never crowded out.
     collectRuns({ scope, filter: runFilter }),
     collectPipelines(),
     collectCost(),
     collectArtifacts(),
+    // WP-56: git bundles and restore drills (admin scope; red ⇒ an alert below).
+    collectBackups(),
   ]);
-  return [...runs, ...pipelines, ...cost, ...artifacts];
+  return [...runs, ...pipelines, ...cost, ...artifacts, ...backups];
 }
 
 /** The scoped, attention-first overview the UI renders in one fetch. `runs` filters the runs lens. */
@@ -58,7 +62,8 @@ export async function buildOverview(user: CurrentUser, opts: { runs?: RunListFil
   // Seed the governance spend Map with LIVE LiteLLM spend so cap-breach alerts fire
   // on REAL usage (getSpend is otherwise only the test-seeded Map). No-op offline.
   await reconcileSpendFromLiteLLM();
-  const alerts = scopedAlerts(scope);
+  // WP-56 interim for WP-05's alerting: a failed bundle or drill is a critical alert here.
+  const alerts = [...scopedAlerts(scope), ...filterScope(scope, backupAlerts(visible))];
 
   return { scope, lenses, attention, alerts, generatedAt: new Date().toISOString() };
 }

@@ -341,6 +341,9 @@ const UNAUTHENTICATED_BY_DESIGN = new Set([
   //     by re-resolving the pusher's forwarded token through `authenticateGitRequest`.
   'app/api/git/authenticate/route.ts',
   'app/api/git/receive/route.ts',
+  // WP-56: the restore drill's live repository inventory — service-only, gated by the shared
+  // runtime Bearer (runtimeTokenOk, fail-closed on the dev placeholder); no user path at all.
+  'app/api/git/backup-inventory/route.ts',
 ]);
 
 function allApiRoutes(): string[] {
