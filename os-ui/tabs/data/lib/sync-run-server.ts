@@ -13,7 +13,7 @@ import { executeRun, queryRun, type ExecuteIdentity } from '@core/infra/governed
 import { routeFor } from '@core/infra/trino-source';
 import type { Dataset, DatasetSyncMode, Layer } from '@tabs/data/lib/dataset-schema';
 import { buildVersion, datasetForScheduler } from '@tabs/data/lib/store';
-import { domainSchema, personalSchema, physicalSlug } from '@tabs/data/lib/store-fqn';
+import { domainSchema, laneSlug, laneTable, personalSchema, physicalSlug } from '@tabs/data/lib/store-fqn';
 import { parseDescribe } from '@tabs/data/lib/profile';
 import {
   appendSql,
@@ -269,7 +269,7 @@ export function syncTargetFor(d: Dataset, owner: { id: string }): SyncTarget {
   if (d.connected && d.connected.mode === 'sync') {
     return { schema: domainSchema(d.domain), table: `${d.connected.tier}_${physicalSlug(d)}` };
   }
-  return { schema: personalSchema(owner.id), table: `bronze_${physicalSlug(d)}` };
+  return { schema: personalSchema(owner.id), table: laneTable(d, 'bronze') };
 }
 
 /** A deterministic, guard-safe per-slice batch id (same slice ⇒ same id, so a retry
@@ -501,7 +501,8 @@ export async function runDatasetSync(
         owner,
         mode: mode as 'full-refresh' | 'append',
         watermark: cursorBefore,
-        datasetSlug: physicalSlug(d),
+        // The runner names the landed table `bronze_<datasetSlug>` in the owner's lane: the lane name.
+        datasetSlug: d.connected && d.connected.mode === 'sync' ? physicalSlug(d) : laneSlug(d),
         target,
         identity,
         execute,

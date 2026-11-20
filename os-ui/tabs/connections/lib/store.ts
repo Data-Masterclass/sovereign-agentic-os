@@ -200,7 +200,7 @@ import { executeRoute, executeRun, queryRun, type ExecuteIdentity } from '@core/
 // Data-tab registry seam for the warehouse IMPORT (P0 A2): an import must create a
 // real governed Dataset row pointing at the materialized table, not just a table.
 import { createDataset, buildVersion, deleteDataset } from '@tabs/data/lib/index';
-import { personalSchema, slug } from '@tabs/data/lib/store-fqn';
+import { laneTable, personalSchema, slug } from '@tabs/data/lib/store-fqn';
 import { stageArtifact } from '@tabs/data/lib/panels';
 import { putSecret, secretFingerprint, getSecretServerSide, isEgressAllowed, deleteSecret, hasSecret } from '@core/infra/secrets';
 import { type ArtifactVersion, versionLog } from '@core/kernel/versioning';
@@ -1517,7 +1517,16 @@ export async function importWarehouseTable(
 
   // 1. Registry row first (throws a tagged 409 on a duplicate name in the domain).
   const dataset = createDataset(user, { name, domain: targetDomain });
-  const target = `iceberg.${targetSchema}.${targetTable}`;
+  // Land under the lane name the new dataset RECORDED (unique per dataset), not the bare
+  // name slug compiled above for validation — two same-named imports must not share a table.
+  const laneBronze = laneTable(dataset, 'bronze');
+  if (laneBronze !== targetTable) {
+    sql = buildImportCtas(
+      { domain: targetSchema, name: laneBronze },
+      { catalog: c.warehouse.catalog, schema: input.schema, table: input.table },
+    ).replace(/^CREATE TABLE /, 'CREATE OR REPLACE TABLE ');
+  }
+  const target = `iceberg.${targetSchema}.${laneBronze}`;
 
   // 2. Land the physical copy AS the uid (personal-lane owner rule — Trino→OPA
   //    denies the personal schema under the domain principal).

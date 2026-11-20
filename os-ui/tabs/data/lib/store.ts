@@ -35,7 +35,7 @@ import {
 import { transparencyGate, gateReason } from '@tabs/data/lib/transparency';
 import { CUBE_ARTIFACT, scaffoldMetricYaml, metricSqlReady } from '@tabs/data/lib/metrics';
 import { SEMANTIC_ARTIFACT, scaffoldSemanticYaml } from '@tabs/data/lib/semantic';
-import { assetTarget, productTarget, builtLayerFqn, reuseSourceFqn, composeSourceBlocker, personalSchema, domainSchema, physicalSlug, versionTarget, slug } from '@tabs/data/lib/store-fqn';
+import { assetTarget, productTarget, builtLayerFqn, newLaneSlug, laneTable, reuseSourceFqn, composeSourceBlocker, personalSchema, domainSchema, physicalSlug, versionTarget, slug } from '@tabs/data/lib/store-fqn';
 import { config } from '@core/kernel/config';
 import { osMirror } from '@core/infra/os-mirror';
 import { mirrorRefresher, newMirrorRefresh, type MirrorRefreshState } from '@core/infra/mirror-refresh';
@@ -428,12 +428,14 @@ export function __seedDatasetForTest(input: {
   domain: string;
   tier?: Tier;
   columns?: ColumnDoc[];
+  laneSlug?: string;
 }): void {
   ensureSeeded();
   const d: Dataset = {
     version: '1',
     id: input.id,
     name: input.name,
+    ...(input.laneSlug ? { laneSlug: input.laneSlug } : {}),
     owner: input.owner,
     domain: input.domain,
     tier: input.tier ?? 'dataset',
@@ -857,13 +859,12 @@ export function listAskable(user: Principal): AskableDataset[] {
     if (d.domain && !user.domains.includes(d.domain)) continue;
     const f = furthest(d);
     if (!f.layer) continue; // nothing materialized — nothing to query
-    const schema = d.tier === 'dataset' ? personalSchema(user.id) : domainSchema(d.domain);
     out.push({
       id: d.id,
       name: d.name,
       domain: d.domain,
       tier: d.tier,
-      fqn: `iceberg.${schema}.${f.layer}_${physicalSlug(d)}`,
+      fqn: d.tier === 'dataset' ? `iceberg.${personalSchema(user.id)}.${laneTable(d, f.layer)}` : `iceberg.${domainSchema(d.domain)}.${f.layer}_${physicalSlug(d)}`,
       description: d.description,
       columns: d.columns,
     });
@@ -890,10 +891,15 @@ export function createDataset(user: Principal, input: { name: string; domain?: s
       fail(`A dataset named “${input.name.trim()}” already exists in ${domain} — pick a unique name.`, 409);
     }
   }
+  const id = newId();
+  const name = input.name.trim() || 'Untitled dataset';
   const d: Dataset = {
     version: '1',
-    id: newId(),
-    name: input.name.trim() || 'Untitled dataset',
+    id,
+    name,
+    // A lane name unique to THIS dataset (name + id): the owner's lane is shared by all their
+    // datasets in every domain, so a name-only table would collide with a same-named dataset.
+    laneSlug: newLaneSlug(name, id),
     owner: user.id,
     domain,
     tier: 'dataset',

@@ -20,7 +20,7 @@ import { queryRun } from '@core/infra/governed';
 import { routeForTable } from '@core/infra/trino-source';
 import { propagate, type DelegatedToken } from '@core/kernel/identity';
 import type { Dataset, Measure } from '@tabs/data/lib/index';
-import { builtLayerFqn } from '@tabs/data/lib/store-fqn';
+import { builtLayerFqn, isGoverned, isMissingTableError, NotBuiltError } from '@tabs/data/lib/store-fqn';
 import {
   type ExploreSpec,
   type Granularity,
@@ -231,7 +231,15 @@ export async function exploreMetric(
     // Run AS the delegated token's SUBJECT (R3 — the viewer's uid). When the resolved table is
     // in the viewer's own `personal_<uid>` lane the subject owns it (OPA `is_owned_personal`);
     // otherwise the subject's groups carry the domain membership OPA gates the domain mart on.
-    const result = await queryRun(sql, identities.trino.user, routeForTable(readTarget, 'metrics', [dataset.domain]));
+    let result: Awaited<ReturnType<typeof queryRun>>;
+    try {
+      result = await queryRun(sql, identities.trino.user, routeForTable(readTarget, 'metrics', [dataset.domain]));
+    } catch (e) {
+      // A governed dataset whose DOMAIN copy is missing: a typed not_built naming it — never a
+      // fallback to the owner's lane (their workspace, which may hold a different table).
+      if (isGoverned(dataset) && isMissingTableError(e)) throw new NotBuiltError(dataset.id, dataset.name, readTarget);
+      throw e;
+    }
     return {
       ...base,
       sql,

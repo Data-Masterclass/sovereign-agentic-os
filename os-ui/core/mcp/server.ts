@@ -622,6 +622,11 @@ export function structuredError(e: unknown): ToolError {
       hint: `Change ${typeof field === 'string' ? `\`${field}\`` : 'the value'}: identifiers are letters, digits and underscores; a cron is 5 fields like "0 6 * * *".`,
     };
   }
+  // A governed dataset with no domain copy (`NotBuiltError`, tabs/data/lib/store-fqn.ts): typed, and
+  // named, so a client re-promotes it instead of retrying or querying the owner's lane.
+  if (typed === 'not_built') {
+    return { code: 'not_built', reason, hint: 'The dataset is registered as served but its domain table was never written (or was removed). A domain admin re-promotes it to write the domain copy; until then there is no number to read.' };
+  }
   // A Trino SQL error (unknown function, syntax, missing column/table): the caller's SQL is wrong
   // in Trino's dialect. Typed so an agent can fix and retry instead of reading "Unexpected failure".
   const sqlError = trinoSqlError(reason);

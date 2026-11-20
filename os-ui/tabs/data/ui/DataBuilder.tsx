@@ -144,6 +144,7 @@ type Dataset = {
   name: string;
   /** The FROZEN physical slug (present once a rename decoupled it from the name). */
   slug?: string;
+  laneSlug?: string;
   owner: string;
   domain: string;
   tier: 'dataset' | 'asset' | 'product';
@@ -220,8 +221,9 @@ function physicalSlug(d: Dataset): string {
   return d.slug ?? slug(d.name);
 }
 function physicalFqn(d: Dataset, layer: Layer): string {
-  const schema = d.tier === 'dataset' ? `personal_${slug(d.owner)}` : slug(d.domain);
-  return `iceberg.${schema}.${layer}_${physicalSlug(d)}`;
+  // A personal dataset's lane table carries its recorded lane name (unique per dataset).
+  if (d.tier === 'dataset') return `iceberg.personal_${slug(d.owner)}.${layer}_${d.laneSlug ?? physicalSlug(d)}`;
+  return `iceberg.${slug(d.domain)}.${layer}_${physicalSlug(d)}`;
 }
 
 /** Whether a dataset's governed metric model can be served (mirrors metricDeliverable). */

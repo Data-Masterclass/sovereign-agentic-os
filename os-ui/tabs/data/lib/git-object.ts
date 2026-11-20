@@ -33,7 +33,7 @@
 import 'server-only';
 import type { GitObjectLocation } from '@core/infra/git-objects';
 import { LAYERS, type Dataset } from '@tabs/data/lib/dataset-schema';
-import { physicalSlug, sanitizeIdent } from '@tabs/data/lib/store-fqn';
+import { laneSlug, physicalSlug, sanitizeIdent } from '@tabs/data/lib/store-fqn';
 import { getDataset, type Principal } from '@tabs/data/lib/store';
 import { dbtRepoPath, LAYOUT_V2 } from '@core/infra/repo-layout';
 
@@ -44,13 +44,14 @@ export const GIT_OBJECT_KIND = 'dataset';
  * The repo path selectors for one dataset's generated models — both lanes, every layer. Pure, so
  * the convention is testable without a repository.
  */
-export function datasetPaths(d: Pick<Dataset, 'name' | 'owner'> & { slug?: string }): string[] {
+export function datasetPaths(d: Pick<Dataset, 'name' | 'owner'> & { slug?: string; laneSlug?: string }): string[] {
   const slug = physicalSlug(d);
+  const lane = laneSlug(d); // personal-lane models are named after the lane table
   const uid = sanitizeIdent(d.owner);
   const paths: string[] = [];
   for (const layer of LAYERS) {
     paths.push(`models/${layer}/${layer}_${slug}.sql`);
-    paths.push(`models/personal/${uid}/${layer}_${slug}.sql`);
+    paths.push(`models/personal/${uid}/${layer}_${lane}.sql`);
   }
   // Both layouts (v1 root, v2 dbt dir — design 12): the layout migration moved every model, and
   // `git log -- <old> <new>` is how the history reaches across that move.
