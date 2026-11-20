@@ -21,7 +21,7 @@ import { config } from '@core/kernel/config';
 import { emitDirectoryChange } from '@core/kernel/events';
 import { osMirror } from '@core/infra/os-mirror';
 import { domainIdent as domainSchema } from '@core/kernel/domain-ident';
-import { PLATFORM_REPO } from '@core/infra/repo-layout';
+import { reservedDomainIdReason } from '@core/infra/reserved-domain-ids';
 
 export type DomainLayers = { ml: boolean };
 
@@ -181,9 +181,10 @@ export function createDomain(input: { name: string; owner: string }): Domain {
   seed();
   const id = slug(input.name);
   if (!id) throw fail('A domain name is required', 400);
-  // `platform` is the platform-wide git repository and the platform principal in Trino's access
-  // rules, so a domain may never take that id.
-  if (id === PLATFORM_REPO) throw fail(`"${PLATFORM_REPO}" is a reserved name (the platform repository and access rules use it); choose a different domain name`, 400);
+  // A domain may never take an identity the platform already uses: another repository's name, a
+  // person's lane, or a system name (checked on the id AND on its Trino schema).
+  const reserved = reservedDomainIdReason(id);
+  if (reserved) throw fail(`reserved domain id: ${reserved}; choose a different domain name`, 400);
   if (domainsState().store.has(id)) throw fail('That domain already exists', 409);
   // Two ids that sanitize to one identifier would share a schema (`iceberg.<id>`), landing schemas
   // and a dbt project. Archived domains still hold theirs.
@@ -237,6 +238,17 @@ export function domainIdsFromJson(text: string): { id: string }[] {
   const ids = rows.map((r) => (r as { id?: unknown })?.id).filter((x): x is string => typeof x === 'string' && x.length > 0);
   if (!ids.length) throw new Error('no domains found in the export');
   return ids.map((id) => ({ id }));
+}
+
+/**
+ * READ-ONLY: the live domains whose id is already reserved (a repository name, a personal lane or a
+ * system name). Reported for an operator to decide; nothing is renamed or changed here.
+ */
+export function reservedDomainClashes(domains: { id: string }[]): { id: string; reason: string }[] {
+  return domains
+    .map((d) => ({ id: d.id, reason: reservedDomainIdReason(d.id) }))
+    .filter((x): x is { id: string; reason: string } => x.reason !== null)
+    .sort((a, b) => a.id.localeCompare(b.id));
 }
 
 export function renameDomain(id: string, name: string): Domain {
