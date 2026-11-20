@@ -28,4 +28,5 @@ Collector, each with its own web UI (vmui). Templates:
   https://docs.victoriametrics.com/victorialogs/data-ingestion/opentelemetry/
 - LogsQL and `/select/logsql/query`: https://docs.victoriametrics.com/victorialogs/querying/
 - Version: every binary labels its own `/metrics` series with `app_version="victoria-…-tags-v<release>-…"`;
-  os-ui's health() reads the release tag from it (checked on both pinned images).
+  os-ui's health() shows the release tag of a release build (checked on both pinned images), the
+  `-enterprise` tag of an enterprise build, and any other string verbatim.

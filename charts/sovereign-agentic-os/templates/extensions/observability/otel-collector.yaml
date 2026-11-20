@@ -14,6 +14,11 @@
 {{- $o := .Values.observability }}
 {{- $c := $o.collector }}
 {{- $ll := $c.litellmLangfuse | default dict }}
+{{- $logNs := $c.podLogs.namespaces | default (list .Release.Namespace) }}
+{{- $appsNs := (.Values.softwareRunner | default dict).namespace | default "agentic-apps" }}
+{{- if has $appsNs $logNs }}
+{{- fail (printf "observability.collector.podLogs.namespaces must not include the user-apps namespace %q: user code's logs are not platform logs (WP-05)" $appsNs) }}
+{{- end }}
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -93,7 +98,11 @@ data:
       {{- end }}
       {{- if $c.podLogs.enabled }}
       file_log:
-        include: [/var/log/pods/*/*/*.log]
+        # Platform namespaces only (podLogs.namespaces): /var/log/pods/<namespace>_<pod>_<uid>/.
+        include:
+          {{- range $logNs }}
+          - /var/log/pods/{{ . }}_*/*/*.log
+          {{- end }}
         # Not its own logs: a Collector that ships its own output can feed back on itself.
         exclude: [/var/log/pods/{{ .Release.Namespace }}_otel-collector-*/*/*.log]
         start_at: end
@@ -128,6 +137,25 @@ data:
         limit_percentage: 80
         spike_limit_percentage: 25
       batch: {}
+      # Secret masking on EVERY log record before it is stored (OTTL, transform processor:
+      # https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/processor/transformprocessor).
+      # Parsed JSON fields are flattened first, so a nested `headers.authorization` is reached too;
+      # a field whose NAME says secret is dropped whole. `$$` is a literal `$` in Collector config.
+      transform/redact_secrets:
+        error_mode: ignore
+        log_statements:
+          - context: log
+            statements:
+              - 'flatten(log.attributes)'
+              - 'delete_matching_keys(log.attributes, "(?i)(^|.*\\.)(password|passwd|secret|client_secret|token|access_token|refresh_token|id_token|api[_-]?key|authorization|cookie|set-cookie)$")'
+              - 'replace_pattern(log.body, "(?i)\\b(bearer|basic)\\s+[A-Za-z0-9._~+/=-]{8,}", "$${1} ***")'
+              - 'replace_all_patterns(log.attributes, "value", "(?i)\\b(bearer|basic)\\s+[A-Za-z0-9._~+/=-]{8,}", "$${1} ***")'
+              - 'replace_pattern(log.body, "\\b(sk|pk)-[A-Za-z0-9_-]{8,}", "$${1}-***")'
+              - 'replace_all_patterns(log.attributes, "value", "\\b(sk|pk)-[A-Za-z0-9_-]{8,}", "$${1}-***")'
+              - 'replace_pattern(log.body, "(?i)(\"?(?:password|passwd|pwd|secret|token|api[_-]?key|client[_-]?secret|authorization)\"?\\s*[:=]\\s*\"?)[^\\s\",&}]+", "$${1}***")'
+              - 'replace_all_patterns(log.attributes, "value", "(?i)(\"?(?:password|passwd|pwd|secret|token|api[_-]?key|client[_-]?secret|authorization)\"?\\s*[:=]\\s*\"?)[^\\s\",&}]+", "$${1}***")'
+              - 'replace_pattern(log.body, "([a-z][a-z0-9+.-]*://[^:/@\\s]+:)[^@\\s]+@", "$${1}***@")'
+              - 'replace_all_patterns(log.attributes, "value", "([a-z][a-z0-9+.-]*://[^:/@\\s]+:)[^@\\s]+@", "$${1}***@")'
       resource/node:
         attributes:
           - key: k8s.node.name
@@ -184,7 +212,7 @@ data:
           exporters: [otlp_http/victoriametrics]
         logs:
           receivers: [otlp{{ if $c.podLogs.enabled }}, file_log{{ end }}]
-          processors: [memory_limiter, resource/node, batch]
+          processors: [memory_limiter, resource/node, transform/redact_secrets, batch]
           exporters: [otlp_http/victorialogs]
         {{- if $ll.enabled }}
         traces/langfuse:

@@ -26,6 +26,10 @@
 {{- $u := .Values.osUI -}}
 - name: PORT
   value: "3000"
+{{- /* The build this pod runs: the os-ui image tag (WP-05). Read by the Platform page, Settings
+     and MCP serverInfo; unset reads as "unknown", never a default. */}}
+- name: OS_VERSION
+  value: {{ $u.image.tag | toString | splitList "@" | first | quote }}
 - name: HOSTNAME
   value: "0.0.0.0"
 {{- /* Production secret guard (core/kernel/secret-guard.ts): a production build refuses to boot

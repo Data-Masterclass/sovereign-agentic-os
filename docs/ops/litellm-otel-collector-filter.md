@@ -1,5 +1,21 @@
 # LiteLLM → Collector → Langfuse, with the orphan-span filter (option, off by default)
 
+> **UNSAFE TODAY — KEEP IT OFF.** Do not set `observability.collector.litellmLangfuse.enabled`
+> or `dropOrphanSpans` in any environment until both items below are fixed
+> (`scripts/check-observability-chart.mjs` fails a render that switches it on):
+> 1. **Generations would be dropped silently.** Many OS calls reach LiteLLM without a
+>    `traceparent`, so their generation is a root span and the filter drops it, with its usage and
+>    cost: embeddings (`tabs/knowledge/lib/embed.ts`, `tabs/files/lib/embed.ts`), `/api/classify`,
+>    and every virtual-key call through the LLM Gateway, the tool SSO and MCP. Only
+>    `core/runtime/runtime.ts` sends `traceparent` (via `gatewayTraceHeaders`).
+> 2. **The export would be blocked.** Langfuse's ingress policy (`langfuse-web-allow-os-only`)
+>    admits os-ui, os-ui-worker, litellm and langfuse-worker — not the Collector.
+>
+> Before it could be used: match the poll spans themselves (for example
+> `IsRootSpan() and IsMatch(name, "^postgres\\.")`, or root spans without `gen_ai.*`
+> attributes) instead of every root span, and add the Collector to the Langfuse allow-list.
+> WP-32's `llm_only` span scope is the safe way to avoid the idle traces today.
+
 **Who this is for:** an operator running LiteLLM ≥ 1.109 with the `langfuse_otel` callback and
 `LITELLM_OTEL_LANGFUSE_SPAN_SCOPE=full` (WP-32), who sees LiteLLM's background jobs land in
 Langfuse as a stream of one-span traces.
@@ -41,11 +57,10 @@ Rollback: remove both blocks (LiteLLM exports to Langfuse directly again).
 
 ## The caveat
 A model call that arrives **without** `traceparent` is a root span too, so its generation is
-dropped as well. Before WP-31 every call was like that; after it, calls outside a run (for
-example a direct API call by a user) still are. Turn the filter on only where every call that
-matters carries a `traceparent`, or prefer `llm_only` (WP-32's shipped default) if not.
+dropped as well — see the warning at the top: today that is embeddings, classify and every
+virtual-key call.
 
-## Proof
+## Proof (of the mechanism only — not of safety)
 `tests/observability/litellm-filter/run.sh on` and `run.sh off` (the negative twin) on the real
 LiteLLM 1.109.1 and the chart-rendered Collector. With the filter on, no parentless LiteLLM span
 arrives in 30 s of idling and a traced generation arrives nested under its caller; with it off,

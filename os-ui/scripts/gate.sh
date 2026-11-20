@@ -109,6 +109,9 @@ node ../scripts/check-platform-ingress-policy.mjs
 # Outbound HTTPS: the API-server rule is narrowed, the model gateway uses the egress proxy and
 # every https model host is on its allowlist. Same skip rules as above.
 node ../scripts/check-egress-routing.mjs
+# WP-05 observability: ingress allow-lists on the Victoria stores and the Collector, platform-only
+# pod logs with secret masking, VictoriaLogs <= 512Mi, OS_VERSION = os-ui's image tag. Same skip rules.
+node ../scripts/check-observability-chart.mjs
 # WP-47 capacity gate: the rendered chart (default and STACKIT profiles) plus the pods outside it
 # must fit the node budget in charts/sovereign-agentic-os/capacity.yaml (requests ≤ 85 % CPU and
 # memory, memory limits ≤ 85 %). Same skip rules as above.

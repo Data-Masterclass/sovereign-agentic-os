@@ -2347,6 +2347,10 @@ externalSecrets:
 # memory pressure observability is evicted first (00 §10.1 decision 2).
 observability:
   enabled: true
+  # Ingress allow-lists for the stores and the Collector (templates/extensions/observability/
+  # network-policies.yaml): only the Collector writes, only os-ui reads.
+  networkPolicy:
+    enabled: true
   collector:
     # The Kubernetes distribution (otel/opentelemetry-collector-releases, distributions/otelcol-k8s):
     # file_log, kubelet_stats, otlp, filter, headers_setter, health_check — nothing else needed.
@@ -2363,11 +2367,19 @@ observability:
     kubeletStats:
       enabled: true
       interval: 30s
-    # Container logs of every pod on the node (/var/log/pods), JSON lines parsed into fields, so a
-    # LogsQL query can filter on `decision_id` (OPA) or `trace_id` (os-ui).
+    # Container logs (/var/log/pods) of the PLATFORM namespaces only, JSON lines parsed into fields,
+    # so a LogsQL query can filter on `decision_id` (OPA) or `trace_id` (os-ui). Empty list = the
+    # release namespace alone. The user-apps namespace (softwareRunner.namespace) is refused at
+    # render time: student code's logs are not platform logs. Every line passes the secret-masking
+    # step (otel-collector.yaml `transform/redact_secrets`) before it is stored.
     podLogs:
       enabled: true
-    # OPTION for WP-32 — LiteLLM's `langfuse_otel` export routed through the Collector.
+      namespaces: []
+    # OPTION for WP-32 — UNSAFE TODAY, KEEP OFF (WP-05 review #11). Embeddings, /api/classify and
+    # virtual-key calls send no `traceparent`, so `dropOrphanSpans` would silently drop their
+    # generations (usage and cost); and Langfuse's ingress policy does not admit the Collector.
+    # docs/ops/litellm-otel-collector-filter.md lists what must change first.
+    # LiteLLM's `langfuse_otel` export routed through the Collector.
     # LiteLLM posts to `<LANGFUSE_OTEL_HOST>/api/public/otel/v1/traces`; with this on, point
     # LiteLLM's `LANGFUSE_OTEL_HOST` at `http://otel-collector:4319` (litellm.envVars). The
     # Collector forwards LiteLLM's own Basic-auth header (headers_setter), so it holds no Langfuse key.
@@ -2403,4 +2415,4 @@ observability:
     maxDiskSpaceUsageBytes: 4GiB
     resources:
       requests: { cpu: 50m, memory: 256Mi }
-      limits: { cpu: 500m, memory: 1Gi }
+      limits: { cpu: 500m, memory: 512Mi }

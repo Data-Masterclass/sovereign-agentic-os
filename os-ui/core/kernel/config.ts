@@ -816,7 +816,9 @@ export const config = {
   deploymentNamespace: env('OS_NAMESPACE', 'agentic-os'),
   deploymentTenant: env('OS_TENANT', 'data-masterclass'),
   deploymentDomain: env('OS_DOMAIN', 'data-masterclass'),
-  osVersion: env('OS_VERSION', '1.0.0'),
+  // The os-ui version this pod runs. The chart sets it from the os-ui image tag (the build that
+  // runs); unset means UNKNOWN ('') and every reader says so — never a made-up default (WP-05).
+  osVersion: env('OS_VERSION', ''),
 
   // ---- Browser-reachable consoles (opened/linked from the browser, never
   // proxied; each tool has its own auth + session). Default to the local

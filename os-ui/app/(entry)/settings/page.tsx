@@ -6,6 +6,8 @@ import PageHeader from '@core/ui/PageHeader';
 import StackStatus from '@core/ui/StackStatus';
 import ThemeToggle from '@core/ui/ThemeToggle';
 import { TechnicalDetailsToggle } from '@core/ui/TechnicalDetails';
+import { version as reactVersion } from 'react';
+import nextPackage from 'next/package.json';
 import { config } from '@core/kernel/config';
 
 // Server component: a read-only view of this deployment's configuration. Only
@@ -21,11 +23,12 @@ const DEPLOYMENT = [
   { k: 'Profile', v: config.deploymentProfile },
 ];
 
+// Read from the running process and its installed packages, never typed in (WP-05, GLUE-4).
 const VERSIONS = [
-  { k: 'OS UI', v: config.osVersion },
-  { k: 'Next.js', v: '15.5.19' },
-  { k: 'React', v: '19.0.0' },
-  { k: 'Node', v: '22.x' },
+  { k: 'OS UI', v: config.osVersion || 'unknown' },
+  { k: 'Next.js', v: nextPackage.version },
+  { k: 'React', v: reactVersion },
+  { k: 'Node', v: process.versions.node },
 ];
 
 export default function SettingsPage() {

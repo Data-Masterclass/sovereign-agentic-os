@@ -46,7 +46,8 @@ export const MCP_PROTOCOL_VERSION = '2025-06-18';
 export const MCP_SERVER_INFO = {
   name: 'sovereign-agentic-os',
   title: 'Sovereign Agentic OS',
-  version: config.osVersion,
+  // MCP serverInfo needs a string; an unset build version is said, not invented (WP-05).
+  version: config.osVersion || 'unknown',
 } as const;
 
 export type JsonSchema = {
