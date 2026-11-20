@@ -214,9 +214,9 @@ step "B5. Langfuse nextauthSecret: a session from before the rotation"
 JAR=$W/jar.session
 want "signed in with the default secret" signed-in "$(lf_signin "$PW_OLD" "$JAR")"
 step "B6+7. Langfuse salt, nextauthSecret, encryptionKey and a new key pair, one restart"
-enc=$(for t in llm_api_keys blob_storage_integrations posthog_integrations mixpanel_integrations actions sso_configs slack_integrations web_callout_endpoints; do
+enc=$( { echo "BEGIN TRANSACTION READ ONLY;"; for t in llm_api_keys blob_storage_integrations posthog_integrations mixpanel_integrations actions sso_configs slack_integrations web_callout_endpoints; do
   printf "SELECT '%s', CASE WHEN to_regclass('public.%s') IS NULL THEN -1 ELSE (xpath('/row/c/text()', query_to_xml('SELECT count(*) AS c FROM public.%s', false, true, '')))[1]::text::int END;\n" "$t" "$t" "$t"
-done | docker exec -i lfpgr psql -v ON_ERROR_STOP=1 -U postgres -d langfuse -tA -q)
+done; echo "COMMIT;"; } | docker exec -i lfpgr psql -v ON_ERROR_STOP=1 -U postgres -d langfuse -tA -q)
 echo "$enc" | sed 's/^/   /'
 want "encrypted Langfuse entries (rotate-secrets.sh's count)" 0 "$(awk -F'|' '$2>0{s+=$2} END{print s+0}' <<<"$enc")"
 lf_up "$SALT_NEW" "$NA_NEW" "$EK_NEW" "$LF_PK_NEW" "$LF_SK_NEW" || die "Langfuse (rotated) did not start"

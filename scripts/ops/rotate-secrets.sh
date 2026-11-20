@@ -80,6 +80,8 @@ SECRETS_DIR=${SOVEREIGN_SECRETS_DIR:-$HOME/.sovereign-os-secrets}/overlays
 LITELLM_SVC=${LITELLM_SVC:-$REL-litellm}
 LANGFUSE_SVC=${LANGFUSE_SVC:-$REL-langfuse-web}
 PG_POD=${PG_POD:-pg-0}
+# The Dagster code server reads agent-runtime-token (AGENT_RUNTIME_TOKEN, code server and repo-sync sidecar).
+DAGSTER_CODE=${DAGSTER_CODE:-$REL-dagster-user-deployments-sovereign}
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
 FILES="python3 $REPO/scripts/lib/rotation-files.py"
 MIGRATE=LITELLM_MIGRATE_FROM_MASTER_KEY
@@ -97,7 +99,7 @@ secret_key() {
   k get secret "$1" -o "go-template={{ with index .data \"$2\" }}{{ . }}{{ end }}" 2>/dev/null | base64 -d 2>/dev/null || true
 }
 cluster_uid() { kubectl --context "$CTX" get ns kube-system -o jsonpath='{.metadata.uid}'; }
-# The os-ui version that is live: the image tag, without a digest (…/os-ui:0.9.21@sha256:… → 0.9.21).
+# The os-ui version that is live: the image tag, without a digest (…/os-ui:0.9.22@sha256:… → 0.9.22).
 live_version() { k get deploy os-ui -o jsonpath='{.spec.template.spec.containers[0].image}' | sed -E 's/@.*$//; s/.*:([^:]+)$/\1/'; }
 
 PF_PID="" PF_PORT=""
@@ -149,9 +151,11 @@ asyncio.run(ns["main"](json.loads(params or "{}")))' 2>/dev/null | tail -n1
 psql_db() { k exec -i "$PG_POD" -- sh -c "psql -v ON_ERROR_STOP=1 -U \"\$POSTGRES_USER\" -d $1 -tA -q"; }
 langfuse_encrypted_counts() { # "<table>|<rows>" per table; -1 when the table does not exist
   local t
+  { echo "BEGIN TRANSACTION READ ONLY;"
   for t in $LANGFUSE_ENCRYPTED_TABLES; do
     printf "SELECT '%s', CASE WHEN to_regclass('public.%s') IS NULL THEN -1 ELSE (xpath('/row/c/text()', query_to_xml('SELECT count(*) AS c FROM public.%s', false, true, '')))[1]::text::int END;\n" "$t" "$t" "$t"
-  done | psql_db langfuse
+  done
+  echo "COMMIT;"; } | psql_db langfuse
 }
 
 # check_binding <state> — the overlay must belong to this cluster, namespace and release.
@@ -281,8 +285,8 @@ EOF
     VALUES_OVERLAY=$final ./scripts/deploy.sh --from-registry $ver
     kubectl --context $CTX -n $NS rollout restart deploy/$LANGFUSE_SVC deploy/$REL-langfuse-worker deploy/$LITELLM_SVC
     kubectl --context $CTX -n $NS rollout status deploy/$LANGFUSE_SVC deploy/$REL-langfuse-worker deploy/$LITELLM_SVC --timeout=10m
-    kubectl --context $CTX -n $NS rollout restart deploy/os-ui deploy/os-ui-worker
-    kubectl --context $CTX -n $NS rollout status deploy/os-ui deploy/os-ui-worker --timeout=15m
+    kubectl --context $CTX -n $NS rollout restart deploy/os-ui deploy/os-ui-worker deploy/$DAGSTER_CODE
+    kubectl --context $CTX -n $NS rollout status deploy/os-ui deploy/os-ui-worker deploy/$DAGSTER_CODE --timeout=15m
     scripts/ops/rotate-secrets.sh verify --overlay $final $o --os-ui-exec
   Owner, Langfuse UI: delete the OLD project key pair (public key sha256 $(h16 "$(secret_key langfuse-init LANGFUSE_INIT_PROJECT_PUBLIC_KEY)")…), then verify again.
   Rollback of the final step: VALUES_OVERLAY=$back ./scripts/deploy.sh --from-registry $ver, then the restarts.
@@ -314,6 +318,11 @@ plan() {
   if [ "$(state_path "$state")" = pin-first ] && [ "$kind" = final ]; then
     [ "$(h16 "$($FILES get "$OVERLAY" litellmSaltKey.value)")" = "$(state_hash "$state" old_master)" ] || die "pin-first overlay: the salt key is not the live master key"
   fi
+  # The chart must be the live release or newer on its line: refuse a base older than the live tag.
+  local live_tag base_dir; live_tag="os-ui-v$(live_version)"; base_dir=$(cd "$CHART" && git rev-parse --show-toplevel 2>/dev/null) || die "the chart at $CHART is not in a git checkout; cannot check its base"
+  git -C "$base_dir" rev-parse -q --verify "refs/tags/$live_tag" >/dev/null || die "the chart's checkout does not know the live tag $live_tag (git fetch --tags)"
+  git -C "$base_dir" merge-base --is-ancestor "$live_tag" HEAD || die "the chart's checkout is not based on the live release $live_tag: deploying it would roll production back. Base the rotation branch on $live_tag."
+  echo "   ok   the chart's checkout contains the live release $live_tag"
   PLAN_DIR=$(mktemp -d); local w=$PLAN_DIR; trap 'stop_forward; rm -rf "$PLAN_DIR"' EXIT
   say "live release values and manifest (read-only)"
   helm --kube-context "$CTX" get values "$REL" -n "$NS" -o yaml > "$w/live.yaml"
@@ -447,7 +456,7 @@ Promise.all(["/v1/models", "/v1/mcp/tools"].map(p => fetch(u + p, { headers: h }
     done
     local deployed d sel starts
     deployed=$(helm --kube-context "$CTX" status "$REL" -n "$NS" -o json | python3 -c 'import json,sys; print(json.load(sys.stdin)["info"]["last_deployed"])')
-    for d in "$LANGFUSE_SVC" "$REL-langfuse-worker" "$LITELLM_SVC" os-ui os-ui-worker; do
+    for d in "$LANGFUSE_SVC" "$REL-langfuse-worker" "$LITELLM_SVC" os-ui os-ui-worker "$DAGSTER_CODE"; do
       sel=$(k get deploy "$d" -o go-template='{{range $k,$v := .spec.selector.matchLabels}}{{$k}}={{$v}},{{end}}' 2>/dev/null | sed 's/,$//') || continue
       [ -n "$sel" ] || continue
       starts=$(k get pods -l "$sel" -o jsonpath='{range .items[*]}{.status.startTime}{" "}{end}')

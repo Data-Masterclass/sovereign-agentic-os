@@ -14,7 +14,8 @@
 #   * nothing prepare prints contains any of the old or new values;
 #   * negative twins: --path none-stored is refused while LiteLLM's scan finds a stored value;
 #     plan refuses an overlay prepared for another cluster, and an overlay for the wrong step
-#     (the live master key is not the one it expects) — both before helm is called.
+#     (the live master key is not the one it expects), and a chart checkout that does not contain
+#     the live release tag (older base) — all before helm is called.
 set -uo pipefail
 cd "$(dirname "$0")/../.." || exit 2
 . scripts/tests/assert.sh
@@ -78,6 +79,9 @@ check "  ... saying why" "LiteLLM's scan finds 3 stored value(s)" "$out"
 out=$(bash $RS plan --overlay "$S1" --context fake 2>&1); rc=$?
 check "plan: right cluster, right step passes the binding" "overlay belongs to this cluster" "$out"
 check "  ... and the master-key check" "live master key is the one this step expects" "$out"
+rc_is "  ... and then refuses a chart checkout without the live release tag" 1
+check "  ... naming the tag" "does not know the live tag os-ui-v9.9.9" "$out"
+holds "  ... before helm is called" test ! -s "$FAKE/helm.log"
 echo -n uid-OTHER > "$FAKE/uid"; : > "$FAKE/helm.log"
 out=$(bash $RS plan --overlay "$S1" --context fake 2>&1); rc=$?
 rc_is "plan refuses an overlay from another cluster" 1

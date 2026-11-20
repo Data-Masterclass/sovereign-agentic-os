@@ -3,7 +3,7 @@
 """litellm-stored-secrets.py — what LiteLLM stores encrypted, counted by LiteLLM's own code.
 
 Runs INSIDE the LiteLLM container (scripts/ops/rotate-secrets.sh sends it over stdin to
-`kubectl exec -i … python -c <loader>`). READ-ONLY: it runs only the SELECTs of LiteLLM's own
+`kubectl exec -i … python -c <loader>`). READ-ONLY, inside one `READ ONLY` transaction: it runs only the SELECTs of LiteLLM's own
 re-key scan (litellm/proxy/db/master_key_migration.py: `_secret_columns_in`, `_rows_of`,
 `replace_ciphertexts`) and LiteLLM's own `decrypt_if_encrypted_with`, which returns None unless a
 value is a ciphertext under the given key. No value, plaintext or key is ever printed.
@@ -35,8 +35,12 @@ async def main(params):
     await db.connect()
     try:
         out = {}
-        for col in await m._secret_columns_in(db):
-            rows = await m._rows_of(db, col)
+        # One READ ONLY transaction: Postgres refuses any write inside it.
+        async with db.tx() as tx:
+            await tx.execute_raw("SET TRANSACTION READ ONLY")
+            columns = await m._secret_columns_in(tx)
+            scanned = [(col, await m._rows_of(tx, col)) for col in columns]
+        for col, rows in scanned:
             entry = out.setdefault(f"{col.table}.{col.column}", {"rows": 0, **{label: 0 for label in keys}})
             entry["rows"] += len(rows)
             for row in rows:
