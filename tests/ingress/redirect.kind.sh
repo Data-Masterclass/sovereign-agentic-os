@@ -8,14 +8,14 @@
 # annotation is inert and the controller serves its fake certificate). Then:
 #   - HTTPS  https://platform.../a/b?x=1&y=two  → 308, Location https://os.../a/b?x=1&y=two
 #   - HTTPS  /                                   → 308, Location https://os.../
-#   - the canonical host is NOT redirected (twin: the same request on os.<zone> is not a 308 to
-#     itself), and no request reaches a backend (the backend Service does not exist).
+#   - the canonical host (osUI.publicUrl) and os.<zone> are NOT redirected (twin), and no
+#     request reaches a backend (the backend Service does not exist).
 #   KUBE_CONTEXT  default kind-ingress-redirect (the cluster must exist; KUBECONFIG is honoured)
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"; repo="$(cd "$here/../.." && pwd)"
 ctx="${KUBE_CONTEXT:-kind-ingress-redirect}"
 k() { kubectl --context "$ctx" "$@"; }
-FROM=platform.sovereign-agentic.com; TO=https://os.agentic.datamasterclass.com
+FROM=platform.sovereign-agentic.com; TO=https://agentic.datamasterclass.com   # = osUI.publicUrl below
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
 # upstream's kind manifest schedules the controller on a node labelled ingress-ready=true
@@ -27,7 +27,8 @@ k -n ingress-nginx wait --for=condition=complete job/ingress-nginx-admission-pat
 k create namespace agentic-os --dry-run=client -o yaml | k apply -f - >/dev/null
 helm template agentic-os "$repo/charts/sovereign-agentic-os" -n agentic-os \
   --set ingress.enabled=true --set ingress.hosts.osUI=os.agentic.datamasterclass.com \
-  --set "ingress.redirectHosts[0].host=$FROM" --set "ingress.redirectHosts[0].to=$TO" \
+  --set ingress.hosts.osUIApex=agentic.datamasterclass.com --set "osUI.publicUrl=$TO" \
+  --set "ingress.redirectHosts[0].host=$FROM" \
   --show-only templates/base/ingress-redirects.yaml --show-only templates/base/ingress.yaml > "$here/.rendered.yaml"
 # The admission webhook validates the nginx config of each Ingress — retry until it is up.
 for _ in $(seq 1 30); do k apply -n agentic-os -f "$here/.rendered.yaml" >/dev/null 2>&1 && break; sleep 4; done
@@ -47,7 +48,10 @@ out=$(probe "$FROM" '/'); echo "root: $out"
 [ "$out" = "308 $TO/" ] || fail "root redirect: got '$out'"
 out=$(probe "$FROM" '/api/mcp?session=1'); echo "mcp path: $out"
 [ "$out" = "308 $TO/api/mcp?session=1" ] || fail "MCP path redirect: got '$out'"
-# Twin: the canonical host is served (here: no os-ui pod, so 503), never redirected.
-out=$(probe os.agentic.datamasterclass.com '/a'); echo "canonical: $out"
-[ "${out%% *}" != 308 ] || fail "the canonical host must not redirect: '$out'"
+# Twin: the canonical host and the extra os.* host are served (here: no os-ui pod, so 503),
+# never redirected.
+for h in agentic.datamasterclass.com os.agentic.datamasterclass.com; do
+  out=$(probe "$h" '/a'); echo "served $h: $out"
+  [ "${out%% *}" != 308 ] || fail "$h must not redirect: '$out'"
+done
 echo "PASS: ingress-nginx v1.11.3 answers $FROM with 308 to $TO, path and query kept"

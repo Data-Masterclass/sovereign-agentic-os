@@ -2,9 +2,11 @@
   Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
   SPDX-License-Identifier: Apache-2.0
 
-  Redirect-only hostnames (`ingress.redirectHosts: [{host, to}]`, EMPTY by default). Each entry
+  Redirect-only hostnames (`ingress.redirectHosts: [{host, to?}]`, EMPTY by default). Each entry
   renders ONE ingress-nginx Ingress that answers every request on `host` with a 308 to `to`,
-  keeping the path and the query string, and proxies nothing:
+  keeping the path and the query string, and proxies nothing. `to` defaults to the canonical OS
+  URL, `osUI.publicUrl` (the same value os-ui gets as OS_PUBLIC_URL), so the redirect target can
+  never drift from the URL the OS itself uses:
     - `nginx.ingress.kubernetes.io/permanent-redirect: <to>$request_uri` and
       `permanent-redirect-code: "308"` (ingress-nginx annotations; nginx `return 308 …`, where
       `$request_uri` is nginx's own variable: the original path plus the query string);
@@ -14,7 +16,8 @@
     - the backend is a Service name that exists nowhere (`redirect-only`): the location returns
       before any proxying, and no os-ui route, cookie or session is involved.
   The canonical OS URL (`osUI.publicUrl`) and every other Ingress are unchanged.
-  `to` must be an origin: https://<host>, no path, no query, no trailing slash.
+  `to` (or `osUI.publicUrl`) must be an origin: https://<host>, no path or query (a trailing
+  slash on publicUrl is dropped).
   NOTE: with ingress-nginx `--enable-annotation-validation` on (a later default), the `$` of
   `$request_uri` fails the URL validator and the controller ignores the redirect: keep it off,
   or replace this Ingress, before such an upgrade (docs/runbooks/redirect-hostnames.md).
@@ -26,9 +29,10 @@
 {{- $seen := dict }}
 {{- range $i, $r := $list }}
 {{- $host := $r.host | default "" }}
-{{- $to := $r.to | default "" }}
+{{- $to := $r.to | default ((($.Values.osUI | default dict).publicUrl | default "") | trimSuffix "/") }}
+{{- if not $to }}{{ fail (printf "ingress.redirectHosts[%d] has no `to` and osUI.publicUrl is empty: nothing to redirect to" $i) }}{{ end }}
 {{- if not (regexMatch "^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$" $host) }}{{ fail (printf "ingress.redirectHosts[%d].host %q is not a lower-case DNS name" $i $host) }}{{ end }}
-{{- if not (regexMatch "^https://[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$" $to) }}{{ fail (printf "ingress.redirectHosts[%d].to %q must be an https origin (https://<host>, no path, query or trailing slash)" $i $to) }}{{ end }}
+{{- if not (regexMatch "^https://[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$" $to) }}{{ fail (printf "ingress.redirectHosts[%d].to %q (or osUI.publicUrl) must be an https origin (https://<host>, no path or query)" $i $to) }}{{ end }}
 {{- if eq (trimPrefix "https://" $to) $host }}{{ fail (printf "ingress.redirectHosts[%d] redirects %s to itself" $i $host) }}{{ end }}
 {{- if hasKey $seen $host }}{{ fail (printf "ingress.redirectHosts lists %s twice" $host) }}{{ end }}
 {{- $_ := set $seen $host true }}

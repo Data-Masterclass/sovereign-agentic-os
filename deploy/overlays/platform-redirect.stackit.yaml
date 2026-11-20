@@ -7,12 +7,12 @@
 #   VALUES_OVERLAY=deploy/overlays/platform-redirect.stackit.yaml ./scripts/deploy.sh --from-registry <version>
 #
 # platform.sovereign-agentic.com answers every request with a 308 to the canonical OS URL, the
-# path and query kept (templates/base/ingress-redirects.yaml). The canonical URL
-# (osUI.publicUrl), cookies, links and the MCP URL stay https://os.agentic.datamasterclass.com.
+# path and query kept (templates/base/ingress-redirects.yaml). The target is NOT written here: it
+# is the release's own osUI.publicUrl (live OS_PUBLIC_URL, read 2026-11-20:
+# https://agentic.datamasterclass.com), so cookies, links and the MCP URL stay on that host.
 # `ingress.redirectHosts` is a LIST (Helm replaces a list whole): this file is the whole list.
 # Before applying: the DNS record must exist, or cert-manager's HTTP-01 challenge cannot pass
 # (docs/ops/redirect-hostnames.md).
 ingress:
   redirectHosts:
     - host: platform.sovereign-agentic.com
-      to: https://os.agentic.datamasterclass.com

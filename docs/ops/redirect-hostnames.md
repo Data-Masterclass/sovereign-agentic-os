@@ -3,12 +3,14 @@
 A second hostname can point people at the OS without becoming a second OS address. Every request
 to it gets a **308 Permanent Redirect** to the canonical OS URL, with the path and the query string
 kept: `https://platform.sovereign-agentic.com/a/b?x=1` goes to
-`https://os.agentic.datamasterclass.com/a/b?x=1`. The browser then talks only to the canonical
+`https://agentic.datamasterclass.com/a/b?x=1` (production's `osUI.publicUrl`). The browser then talks only to the canonical
 host, so sign-in cookies, links, the MCP URL and `osUI.publicUrl` do not change.
 
 ## How it works
 
-`ingress.redirectHosts` (default empty) is a list of `{host, to}`. Each entry renders one
+`ingress.redirectHosts` (default empty) is a list of `{host, to}`. `to` is optional and defaults
+to `osUI.publicUrl` — the same value os-ui receives as `OS_PUBLIC_URL` — so the target follows the
+canonical URL and is never typed twice. Each entry renders one
 ingress-nginx Ingress (`templates/base/ingress-redirects.yaml`) with:
 
 - `nginx.ingress.kubernetes.io/permanent-redirect: <to>$request_uri` and
@@ -18,7 +20,8 @@ ingress-nginx Ingress (`templates/base/ingress-redirects.yaml`) with:
   `letsencrypt-prod`) and a `<host>-tls` Secret, solved over HTTP-01;
 - a backend Service that does not exist (`redirect-only`): nothing is proxied, never to os-ui.
 
-The render refuses a `to` that is not a bare `https://<host>` origin, a host that is also served
+The render refuses a target (`to` or `osUI.publicUrl`) that is not a bare `https://<host>` origin, an
+entry with neither, a host that is also served
 under `ingress.hosts`, a duplicate host, and a list without `ingress.enabled`.
 
 Upstream docs: ingress-nginx annotations "Permanent Redirect" and "Permanent Redirect Code"
@@ -43,8 +46,9 @@ new controller version before such an upgrade.
 3. **Check.**
    - `kubectl --context dmagenticos -n agentic-os get certificate platform.sovereign-agentic.com-tls` is `Ready=True`;
    - `curl -sI 'https://platform.sovereign-agentic.com/a/b?x=1'` shows `HTTP/2 308` and
-     `location: https://os.agentic.datamasterclass.com/a/b?x=1`;
-   - `curl -sI https://os.agentic.datamasterclass.com/` is unchanged (no redirect).
+     `location: https://agentic.datamasterclass.com/a/b?x=1`;
+   - `curl -sI https://agentic.datamasterclass.com/` and `https://os.agentic.datamasterclass.com/`
+     are unchanged (no redirect).
 4. **Rollback.** Deploy with an overlay that sets `ingress: { redirectHosts: [] }`; the redirect
    Ingress is removed. Delete the `platform` DNS record if the hostname is given up.
 

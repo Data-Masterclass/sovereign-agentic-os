@@ -86,9 +86,10 @@ ingress:
   hosts: {}
   # Redirect-only hostnames (templates/base/ingress-redirects.yaml). Each entry answers EVERY
   # request on `host` with a 308 to `to` + the original path and query, with its own
-  # cert-manager certificate and no backend. `to` is an https origin (no path). Empty = none.
+  # cert-manager certificate and no backend. `to` defaults to osUI.publicUrl (the canonical OS
+  # URL); set it only to send a host elsewhere (an https origin, no path). Empty = none.
   #   redirectHosts:
-  #     - { host: platform.example.com, to: "https://os.example.com" }
+  #     - { host: platform.example.com }
   redirectHosts: []
   # RESTRICTED CONSOLES. The model gateway (LiteLLM) and Langfuse get NO public route, even
   # when `hosts.litellm` / `hosts.langfuse` are set. LiteLLM holds the provider credentials and
