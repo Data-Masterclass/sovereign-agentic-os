@@ -12,6 +12,11 @@
  *   - `compileOsData()` = the chart's seed files (`OS_OPA_SEED`, rendered by the chart helper that
  *     also renders the push-mode OPA's seed files) + every `bundled` restore source run in CAPTURE mode (`opa-publish.ts`): the very
  *     code the push path runs, so the bundle holds exactly what the pushes held.
+ *   - GUARDS (`bundle-guards.ts`), against what OPA has active: fewer tables, a missing internal
+ *     table, or a drop above `opa.dataBundle.maxDropPercent` is refused until an admin
+ *     acknowledges that exact content (Platform Admin → `/api/platform-admin/opa-bundle`). The
+ *     revision is `<seq>-<hash>`, seq strictly increasing; a bundle older than the revision an OPA
+ *     reports active (its If-None-Match) is never served to it.
  *   - COMPLETE OR NOTHING. A source that fails or reports its store unloaded, a missing seed, or a
  *     result with zero grant principals or zero governance principals rejects the compile. The
  *     last good bundle keeps being served (same bytes, same ETag), and OPA keeps its last good
@@ -29,10 +34,19 @@ import { bundledOpaStateSources } from '@core/policy/opa-reconcile';
 import { OS_DATA_ROOTS, onBundledWrite, opaPathSegments } from '@core/policy/opa-publish';
 import { captureOpaWrites } from '@core/policy/opa-capture';
 import { canonicalJson, tarGz } from '@core/policy/bundle-tar';
+import { guardReasons, revisionSeq, statsOf, type BundleStats } from '@core/policy/bundle-guards';
+import { readOpaData } from '@core/policy/opa-publish';
 
 export type OpaBundle = {
   name: string;
+  /** os-data: `<seq>-<hash>` (seq strictly increasing); os-grants: `grant_rev`. */
   revision: string;
+  /** Content hash of the data (os-data); equal content → equal hash. */
+  hash?: string;
+  seq?: number;
+  stats?: BundleStats;
+  /** The compiled data (os-data), kept to rebuild the file with its sequence number. */
+  data?: Record<string, unknown>;
   etag: string;
   bytes: Buffer;
   compiledAt: string;
@@ -70,11 +84,13 @@ export function compileOsDataUsers(users: DirectoryUser[], allow: string[]): Rec
 /** The tar.gz for `data` under `roots`, its revision being the hash of the canonical data. */
 export function buildBundle(name: string, data: Tree, roots: readonly string[], revision?: string): OpaBundle {
   const json = canonicalJson(data);
-  const rev = revision ?? createHash('sha256').update(json).digest('hex').slice(0, 20);
+  const hash = createHash('sha256').update(json).digest('hex').slice(0, 20);
+  const rev = revision ?? hash;
   const manifest = canonicalJson({ revision: rev, roots: [...roots] });
   return {
     name,
     revision: rev,
+    hash,
     etag: `"${rev}"`,
     bytes: tarGz([{ name: '.manifest', content: manifest }, { name: 'data.json', content: json }]),
     compiledAt: new Date().toISOString(),
@@ -112,10 +128,6 @@ function pickRoots(tree: Tree, roots: readonly string[]): Tree {
   return out;
 }
 
-function countKeys(v: unknown): number {
-  return v && typeof v === 'object' && !Array.isArray(v) ? Object.keys(v).length : 0;
-}
-
 /** Compile the os-data bundle. Never throws; a failure names what was refused. */
 export async function compileOsData(): Promise<CompileResult> {
   let seed: Tree;
@@ -146,23 +158,31 @@ export async function compileOsData(): Promise<CompileResult> {
   } catch (err) {
     return { ok: false, detail: `refused: ${err instanceof Error ? err.message : String(err)}` };
   }
-  const grants = countKeys(data.grants);
-  const principals = countKeys((data.governance as Tree | undefined)?.principals);
-  const tables = countKeys((data.governance as Tree | undefined)?.tables);
-  // Never go to zero: an empty grant map or principal map is a store that did not load.
-  if (grants === 0) return { ok: false, detail: 'refused: the compiled grants document is empty' };
-  if (principals === 0) return { ok: false, detail: 'refused: the compiled governance principals are empty' };
+  const stats = statsOf(data);
+  // Never go to zero (no baseline needed): an empty grant map or principal map is a store that did
+  // not load. The baseline guards run in recompileOsData, against what OPA has active.
+  const zero = guardReasons(stats, null, 100);
+  if (zero.length) return { ok: false, detail: `refused: ${zero.join('; ')}` };
   const bundle = buildBundle('os-data', data, OS_DATA_ROOTS);
-  bundle.detail = `${grants} grant principal(s), ${principals} governance principal(s), ${tables} table(s); ${outcomes.map((o) => `${o.name}: ${o.detail}`).join('; ')}`;
+  bundle.stats = stats;
+  bundle.data = data;
+  bundle.detail = `${stats.grants} grant principal(s), ${stats.principals} governance principal(s), ${stats.tables.length} table(s); ${outcomes.map((o) => `${o.name}: ${o.detail}`).join('; ')}`;
   return { ok: true, bundle };
 }
 
 // ---------------------------------------------------------------- last-good cache --
 
+type Refusal = { hash: string; stats: BundleStats; reasons: string[]; at: string };
+type Ack = { hash: string; by: string; reason: string; at: string };
 type State = {
   last: OpaBundle | null;
   lastError: string | null;
   lastErrorAt: string | null;
+  /** A compile the baseline guards refused; an admin may acknowledge exactly this content. */
+  refused: Refusal | null;
+  ack: Ack | null;
+  /** The highest os-data sequence any OPA has reported active (If-None-Match, status). */
+  highestSeenSeq: number;
   inflight: Promise<CompileResult> | null;
   pending: ReturnType<typeof setTimeout> | null;
   stop: (() => void) | null;
@@ -170,14 +190,64 @@ type State = {
 const KEY = Symbol.for('soa.policy.os-data-bundle');
 function st(): State {
   const g = globalThis as unknown as Record<symbol, State | undefined>;
-  return (g[KEY] ??= { last: null, lastError: null, lastErrorAt: null, inflight: null, pending: null, stop: null });
+  return (g[KEY] ??= { last: null, lastError: null, lastErrorAt: null, refused: null, ack: null, highestSeenSeq: 0, inflight: null, pending: null, stop: null });
 }
 
-/** Recompile now (single-flight). A failure keeps the last good bundle. */
+/** Record an os-data revision an OPA has active (from its If-None-Match or its status report). */
+export function noteActiveOsDataRevision(revision: string | null | undefined): void {
+  const seq = revisionSeq(revision);
+  const s = st();
+  if (seq !== null && seq > s.highestSeenSeq) s.highestSeenSeq = seq;
+}
+
+/**
+ * The baseline a new compile is judged against: what OPA has ACTIVE (read from OPA, so an os-ui
+ * restart does not forget it), else the last good bundle this process served, else none.
+ */
+async function baseline(): Promise<BundleStats | null> {
+  const [g, p, t, rev] = await Promise.all([
+    readOpaData('grants'), readOpaData('governance/principals'), readOpaData('governance/tables'),
+    // OPA keeps each active bundle's manifest at data.system.bundles[<name>].manifest.
+    readOpaData('system/bundles/os-data/manifest/revision'),
+  ]);
+  if (rev.defined) noteActiveOsDataRevision(String(rev.value));
+  if (g.reachable && p.reachable && t.reachable && g.defined) {
+    return statsOf({ grants: g.value, governance: { principals: p.value, tables: t.value } });
+  }
+  return st().last?.stats ?? null;
+}
+
+async function compileGuarded(): Promise<CompileResult> {
+  const s = st();
+  const r = await compileOsData();
+  if (!r.ok) return r;
+  const cand = r.bundle;
+  const base = await baseline();
+  // Same content as the bundle already served: nothing new, keep its revision (so a pod that is
+  // behind stays behind until its content really changes, and never out-numbers the active one).
+  if (s.last && s.last.hash === cand.hash) return { ok: true, bundle: s.last };
+  const reasons = guardReasons(cand.stats!, base, config.opaMaxDropPercent);
+  if (reasons.length) {
+    if (s.ack && s.ack.hash === cand.hash) {
+      console.warn(`[os-ui] os-data bundle: guard override acknowledged by ${s.ack.by} (${s.ack.reason}) — ${reasons.join('; ')}`);
+      s.ack = null;
+    } else {
+      s.refused = { hash: cand.hash!, stats: cand.stats!, reasons, at: new Date().toISOString() };
+      return { ok: false, detail: `refused (needs an admin acknowledgement of ${cand.hash}): ${reasons.join('; ')}` };
+    }
+  }
+  s.refused = null;
+  const seq = Math.max(s.last?.seq ?? 0, s.highestSeenSeq) + 1;
+  const b = buildBundle('os-data', cand.data!, OS_DATA_ROOTS, `${seq}-${cand.hash}`);
+  Object.assign(b, { seq, stats: cand.stats, data: cand.data, detail: cand.detail });
+  return { ok: true, bundle: b };
+}
+
+/** Recompile now (single-flight). A failure or a refusal keeps the last good bundle. */
 export function recompileOsData(reason: string): Promise<CompileResult> {
   const s = st();
   if (!s.inflight) {
-    s.inflight = compileOsData()
+    s.inflight = compileGuarded()
       .then((r) => {
         if (r.ok) {
           if (s.last?.revision !== r.bundle.revision) console.info(`[os-ui] os-data bundle: revision ${r.bundle.revision} (${reason}) — ${r.bundle.detail}`);
@@ -198,6 +268,33 @@ export function recompileOsData(reason: string): Promise<CompileResult> {
   return s.inflight;
 }
 
+/** The compile the guards refused, for the admin's acknowledgement. */
+export function refusedOsDataBundle(): Refusal | null {
+  return st().refused;
+}
+
+/** An admin accepts exactly the refused content `hash` once; the next compile of it passes. */
+export function acknowledgeOsDataBundle(hash: string, by: string, reason: string): { ok: boolean; detail: string } {
+  const s = st();
+  if (!s.refused || s.refused.hash !== hash) return { ok: false, detail: `no refused bundle with content ${hash}` };
+  s.ack = { hash, by, reason, at: new Date().toISOString() };
+  console.warn(`[os-ui] os-data bundle: ${by} acknowledged refused content ${hash} (${reason}) — ${s.refused.reasons.join('; ')}`);
+  return { ok: true, detail: 'acknowledged; recompiling' };
+}
+
+/**
+ * Whether this process may serve its bundle to an OPA whose active revision is `ifNoneMatch`:
+ * never an OLDER bundle than the one that OPA has active (an os-ui pod that is behind, e.g. the
+ * old pod during a rolling update).
+ */
+export function olderThanActive(b: OpaBundle, ifNoneMatch: string | null): boolean {
+  noteActiveOsDataRevision(ifNoneMatch);
+  const active = revisionSeq(ifNoneMatch);
+  if (active === null || b.seq === undefined) return false;
+  if (b.hash && (ifNoneMatch ?? '').includes(`-${b.hash}`)) return false; // same content: a 304
+  return b.seq < active;
+}
+
 /** The bundle to serve: the last good one, compiling once if there is none yet. */
 export async function currentOsDataBundle(): Promise<OpaBundle | null> {
   const s = st();
@@ -205,9 +302,9 @@ export async function currentOsDataBundle(): Promise<OpaBundle | null> {
   return s.last;
 }
 
-export function osDataBundleStatus(): { revision: string | null; compiledAt: string | null; lastError: string | null; lastErrorAt: string | null } {
+export function osDataBundleStatus(): { revision: string | null; compiledAt: string | null; lastError: string | null; lastErrorAt: string | null; refused: Refusal | null } {
   const s = st();
-  return { revision: s.last?.revision ?? null, compiledAt: s.last?.compiledAt ?? null, lastError: s.lastError, lastErrorAt: s.lastErrorAt };
+  return { revision: s.last?.revision ?? null, compiledAt: s.last?.compiledAt ?? null, lastError: s.lastError, lastErrorAt: s.lastErrorAt, refused: s.refused };
 }
 
 /** Start the change listener and the resync (web process, bundle mode). Idempotent. */
@@ -235,6 +332,11 @@ export function startOsDataBundle(opts: { resyncMs?: number; debounceMs?: number
   return s.stop;
 }
 
+/** Test hook: make this process hold `b` as its served bundle (e.g. a pod that is behind). */
+export function __setServedOsDataBundleForTest(b: OpaBundle): void {
+  st().last = b;
+}
+
 /** Test hook. */
 export function __resetOsDataBundle(): void {
   const s = st();
@@ -242,6 +344,9 @@ export function __resetOsDataBundle(): void {
   s.last = null;
   s.lastError = null;
   s.lastErrorAt = null;
+  s.refused = null;
+  s.ack = null;
+  s.highestSeenSeq = 0;
   s.inflight = null;
 }
 

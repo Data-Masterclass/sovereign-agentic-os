@@ -403,6 +403,16 @@
 {{- $u := .Values.osUI -}}
 {{- $dpg := $u.dataProjectGit | default dict -}}
 {{- $ac := .Values.trino.accessControl | default dict -}}
+{{- $odb := (.Values.opa.dataBundle | default dict) -}}
+{{- if $odb.enabled }}
+# WP-11: the dedicated bearer OPA presents on /api/opa/bundles/* and /api/opa/status. Web process
+# only (this list): the run worker and the Dagster pods never hold it.
+- name: OS_OPA_BUNDLE_TOKEN
+  valueFrom:
+    secretKeyRef: { name: opa-bundle-token, key: token }
+- name: OS_OPA_MAX_DROP_PERCENT
+  value: {{ $odb.maxDropPercent | default 10 | quote }}
+{{ end -}}
 # The Langfuse console login the embedded /tools/langfuse proxy uses (tool-sso-langfuse.ts):
 # the admin user Langfuse was initialised with, read from the same Secret as the project keys.
 # os-ui has no built-in default for either in production and refuses to boot without them.
