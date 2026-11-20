@@ -12,8 +12,7 @@
   With the proxy off (or not deployed) the ConfigMap is empty: the gateway is never pointed at a
   proxy that does not exist.
 */}}
-{{- $llm := .Values.llmProviders | default dict }}
-{{- $via := and .Values.egressProxy.enabled (ne ($llm.viaEgressProxy | toString) "false") }}
+{{- $via := include "soa.litellmViaProxy" . }}
 apiVersion: v1
 kind: ConfigMap
 metadata:

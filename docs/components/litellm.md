@@ -239,13 +239,24 @@ is `os-ui/tabs/admin/lib/llm-providers.ts` (presets: `llm-provider-presets.ts`).
 - **Egress**: the gateway's outbound calls go through the egress proxy (`litellm-egress-env`:
   HTTP(S)_PROXY / NO_PROXY). A provider host must be on `llmProviders.allowHosts` (the STACKIT host is
   added automatically when `stackitPremium.enabled`). The flow refuses a host that is not, before
-  storing anything, and prints the values change. In-cluster servers: use `<svc>.<ns>.svc` or add the
-  bare name to `llmProviders.noProxy`. Private IPs are not routed.
-- **Dry run before a deploy that turns the proxy on**: `GET /api/platform-admin/providers/migration` lists
+  storing anything, and prints the values change.
+- **SSRF guard**: an endpoint that names or RESOLVES (os-ui checks the DNS answer, every address) to a
+  cluster-internal or private address — a Service name, `*.svc`, RFC1918, CGNAT, ULA, link-local,
+  metadata — is refused unless the deployment names it in `llmProviders.localModels` (how an in-cluster
+  Ollama or vLLM is connected on purpose; listed names join NO_PROXY). Metadata, loopback and
+  link-local answers are refused always. OS services (`mock-model`, `opensearch`, …) are never providers.
+- **The gateway cannot go direct**: with the proxy on, the gateway leaves the any-443 NetworkPolicy and
+  gets `litellm-egress` (the egress proxy on 3128, its database on 5432, `llmProviders.localModelNamespaces`;
+  DNS and same-namespace services as before). A client inside LiteLLM that ignores HTTPS_PROXY has no path out.
+- **Turning it on in an existing cluster**: deploy with `llmProviders.viaEgressProxy=false`, run the dry
+  run below, put every `blockedHosts` entry on `llmProviders.allowHosts`, then deploy again with the default
+  (`true`).
+- **Dry run (before flipping the proxy on)**: `GET /api/platform-admin/providers/migration` lists
   every model, its host, whether the proxy lets it out (`blockedHosts`) and the `/model/update` that
   would put a DB model into the access group. It writes nothing.
 - Proof: `scripts/tests/llm-providers/run.sh` (real LiteLLM + the chart's tinyproxy + three provider
-  stubs, a gateway restart, and the wrong-key / blocked-host / no-group twins); chart:
+  stubs plus two HTTPS providers through CONNECT, a gateway restart, and the wrong-key / blocked-host /
+  no-group / untrusted-certificate / private-DNS-answer twins); chart:
   `scripts/tests/llm-providers-chart.test.sh`.
 
 ## What the OS reads back (the gateway mirror)

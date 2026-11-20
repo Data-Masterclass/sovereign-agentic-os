@@ -1,0 +1,44 @@
+{{- if and .Values.litellm.enabled .Values.networkPolicies.defaultDeny (include "soa.litellmViaProxy" .) }}
+{{- /*
+  litellm-egress — the model gateway's complete egress allowlist while its provider calls go through
+  the egress proxy. NetworkPolicies are additive, so the gateway is also taken OUT of the any-443
+  policy (allow-apiserver-egress, templates/base/network/egress-policies.yaml); DNS and same-namespace
+  services stay allowed by policies 2 and 3. What this adds:
+    * the egress proxy (3128) — the only way to the internet;
+    * the gateway's database on 5432 (in-cluster `pg-rw`, or a managed Postgres outside the cluster);
+    * the namespaces of local model servers (llmProviders.localModelNamespaces).
+  A client inside LiteLLM that ignores HTTPS_PROXY therefore cannot reach a provider directly.
+  With the proxy off (viaEgressProxy=false) this policy is not rendered and the gateway keeps the
+  any-443 rule, so a rollback restores direct provider calls.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: litellm-egress
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: litellm
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: egress-proxy
+      ports:
+        - { protocol: TCP, port: 3128 }
+    - ports:
+        - { protocol: TCP, port: 5432 }
+    {{- with (.Values.llmProviders | default dict).localModelNamespaces }}
+    - to:
+        {{- range . }}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ . | quote }}
+        {{- end }}
+    {{- end }}
+{{- end }}

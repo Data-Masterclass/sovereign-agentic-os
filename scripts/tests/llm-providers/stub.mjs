@@ -10,9 +10,11 @@
 //   STUB_KIND=ollama  POST /api/chat                   (no auth; Ollama has none)
 // Every request is logged as one JSON line on stdout and, with DATA_DIR set, appended to
 // $DATA_DIR/<STUB_NAME>.jsonl, so the test can read which hop happened (and that a blocked one did not).
-// A wrong key answers 401 with the provider's usual error shape. No dependencies.
+// With TLS_CERT + TLS_KEY set the stub serves HTTPS (the e2e's HTTPS twins: a CA-signed and an
+// untrusted certificate). A wrong key answers 401 with the provider's usual error shape. No dependencies.
 import { createServer } from 'node:http';
-import { appendFileSync } from 'node:fs';
+import { createServer as createTlsServer } from 'node:https';
+import { appendFileSync, readFileSync } from 'node:fs';
 
 const KIND = process.env.STUB_KIND || 'openai';
 const KEY = process.env.STUB_KEY || 'sk-stub-right';
@@ -28,7 +30,9 @@ const completion = (model) => ({
   choices: [{ index: 0, finish_reason: 'stop', message: { role: 'assistant', content: `STUB-${KIND} answered as ${model}` } }],
 });
 
-createServer((req, res) => {
+const TLS = process.env.TLS_CERT && process.env.TLS_KEY
+  ? { cert: readFileSync(process.env.TLS_CERT), key: readFileSync(process.env.TLS_KEY) } : null;
+const handler = (req, res) => {
   const chunks = [];
   req.on('data', (c) => chunks.push(c));
   req.on('end', () => {
@@ -73,4 +77,6 @@ createServer((req, res) => {
     log({ unmatched: true });
     send(res, 404, { error: { message: `stub ${KIND}: no route ${req.method} ${url.pathname}` } });
   });
-}).listen(Number(process.env.PORT || 8080), '0.0.0.0', () => console.log(JSON.stringify({ stub: KIND, listening: true })));
+};
+(TLS ? createTlsServer(TLS, handler) : createServer(handler))
+  .listen(Number(process.env.PORT || 8080), '0.0.0.0', () => console.log(JSON.stringify({ stub: NAME, kind: KIND, tls: Boolean(TLS), listening: true })));

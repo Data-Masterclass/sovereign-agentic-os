@@ -378,5 +378,17 @@ bare name must be listed. os-ui gets the same list (LLM_NO_PROXY) to tell in-clu
 {{- $lf := regexReplaceAll ":[0-9]+$" (urlParse (.Values.langfuseInit.host | default "http://langfuse-web")).host "" }}
 {{- $names := list "localhost" "127.0.0.1" ".svc" ".cluster.local" $lf (printf "%s-langfuse-web" .Release.Name) "mock-model" "query-tool" "valkey" "pg-rw" "opensearch" "os-ui" }}
 {{- range ((.Values.llmProviders | default dict).noProxy | default list) }}{{ $names = append $names . }}{{- end }}
+{{- range ((.Values.llmProviders | default dict).localModels | default list) }}{{ $names = append $names . }}{{- end }}
 {{- $names | compact | uniq | join "," }}
+{{- end }}
+
+{{/*
+soa.litellmViaProxy — "true" when the model gateway's outbound calls go through the egress proxy
+(egressProxy.enabled and llmProviders.viaEgressProxy not false), else "". One definition for the
+proxy env (litellm/egress-env.yaml), the gateway's own egress NetworkPolicy and its exclusion from
+the any-443 policy, so the three can never disagree.
+*/}}
+{{- define "soa.litellmViaProxy" -}}
+{{- $llm := .Values.llmProviders | default dict -}}
+{{- if and .Values.egressProxy.enabled (ne ($llm.viaEgressProxy | toString) "false") }}true{{ end -}}
 {{- end }}
