@@ -68,6 +68,8 @@ osUI:
   offlineMock: refuse            # never invented numbers, also on dev
   allowOfflineUserSeed: false
   externalConnectorsEnabled: false
+  # Same tabs as production, so dev tests what prod runs (an empty value shows only a minimal set).
+  enabledTabs: "home,agents,dashboards,software,data,metrics,files,knowledge,connections,monitoring,governance,admin,workflows"
   # The agent worker as its own Deployment, as in production (AT-c deletes it mid-run).
   worker:
     enabled: true
