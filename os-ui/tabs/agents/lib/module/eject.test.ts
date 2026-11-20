@@ -44,7 +44,7 @@ import { loadAgentModule, readCommittedModule } from '@core/adapters/agent-modul
 import { createOsAgent, memoryHoldStore } from '@tabs/agents/lib/module/os-agent';
 import { requireGatewayChatModel } from '@core/adapters/litellm/chat-model';
 import { memoryModuleRunStamps, runAgentModule } from '@tabs/agents/lib/module/run';
-import { moduleVersions } from '@tabs/agents/lib/module/fixtures/module.pg-fixture';
+import { hostModuleInputs } from '@tabs/agents/lib/module/versions';
 import { python3Available, startModelStub, type ModelStub, type StubReply } from '@tabs/agents/lib/module/fixtures/stub-model';
 
 const OS_UI = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
@@ -98,7 +98,7 @@ let stub: ModelStub;
 let reposDir: string;
 let commit: string;
 const DIR = 'agents/eject-team';
-const expected = () => generateAgentModule({ id: 'sys_eject', slug: 'eject-team', sys: parseSystem(TEAM_YAML), versions: moduleVersions() });
+const expected = () => generateAgentModule({ id: 'sys_eject', slug: 'eject-team', sys: parseSystem(TEAM_YAML), ...hostModuleInputs() });
 
 before(async () => {
   if (skip) return;
@@ -205,3 +205,22 @@ test('negative twin: an OS import in graph.mjs makes the ejected directory fail 
   assert.notEqual(r.status, 0);
   assert.match(r.stderr, /Cannot find (package|module) '@core\/runtime\/agentic'|ERR_MODULE_NOT_FOUND/);
 });
+
+test('package-lock.json pins the whole tree: npm accepts it against package.json, offline', { skip }, async () => {
+  const { files } = await readCommittedModule('sales', DIR, commit, { reposDir });
+  const root = mkdtempSync(path.join(os.tmpdir(), 'wp53-lock-'));
+  for (const f of ['package.json', 'package-lock.json']) writeFileSync(path.join(root, f), files.get(f)!);
+  const lock = JSON.parse(files.get('package-lock.json')!) as { lockfileVersion: number; packages: Record<string, { version?: string; integrity?: string; resolved?: string }> };
+  assert.equal(lock.lockfileVersion, 3);
+  const pkg = JSON.parse(files.get('package.json')!) as { dependencies: Record<string, string> };
+  for (const [name, v] of Object.entries(pkg.dependencies)) assert.equal(lock.packages[`node_modules/${name}`]?.version, v, name);
+  const entries = Object.entries(lock.packages).filter(([k]) => k !== '');
+  assert.ok(entries.length > Object.keys(pkg.dependencies).length, 'sub-dependencies are pinned too');
+  for (const [k, e] of entries) assert.ok(e.integrity && e.resolved, `${k} carries resolved + integrity`);
+  // npm's own consistency check of the lockfile against package.json (no network, no install).
+  const r = spawnSync('npm', ['ls', '--package-lock-only', '--all', '--json'], { cwd: root, encoding: 'utf8', env: { PATH: process.env.PATH ?? '', HOME: root } });
+  assert.equal(r.status, 0, r.stdout.slice(-2000) + r.stderr.slice(-2000));
+  const tree = JSON.parse(r.stdout) as { problems?: string[] };
+  assert.deepEqual(tree.problems ?? [], []);
+});
+
