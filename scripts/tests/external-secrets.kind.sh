@@ -223,7 +223,12 @@ out = {"global": {"profile": "local"}, "osUI": {"enabled": True}, "agentRuntime"
 yaml.safe_dump(out, open(sys.argv[2], "w"))
 PY
 cp -R "$M" "$TMP/mini-noguard"
-sed -i.bak 's/{{- $live := lookup "v1" "Secret" $.Release.Namespace $name }}/{{- $live := dict }}/' "$TMP/mini-noguard/templates/external-secrets.yaml"
+python3 - "$TMP/mini-noguard/templates/external-secrets.yaml" <<'PY'
+import sys
+p = sys.argv[1]; s = open(p).read()
+s = s.replace('{{- $live := lookup "v1" "Secret" $.Release.Namespace $name }}', '{{- $live := dict }}')
+open(p, "w").write(s)
+PY
 grep -q '$live := dict' "$TMP/mini-noguard/templates/external-secrets.yaml" || { echo "twin chart edit failed"; exit 2; }
 SWITCH=(--set externalSecrets.enabled=true --set externalSecrets.store.create=false --set 'externalSecrets.managed={agent-runtime-token}')
 H() { helm --kube-context "$CTX" "$@" --wait --timeout 2m; }
