@@ -96,14 +96,21 @@ test('live docling (e): a call without X-Api-Key is refused with 401, and the cl
   if (!wrong.ok) assert.match(wrong.reason, /HTTP 401/);
 });
 
-test('live docling: a file above DOCLING_SERVE_MAX_FILE_SIZE is refused, never converted', { skip }, async () => {
+test('live docling: a file above DOCLING_SERVE_MAX_FILE_SIZE is refused, never converted', { skip }, async (t) => {
   // The real fixture, padded past 50 MiB after %%EOF (a reader ignores trailing bytes), so the
   // ONLY reason to refuse it is its size.
   const big = Buffer.concat([PDF, Buffer.alloc(MAX_FILE_SIZE + 1024 * 1024 - PDF.length, 0x0a)]);
   const out = await convertWithDocling({ ...invoice, bytes: big }, { baseUrl: URL_, apiKey: KEY, timeoutMs: 300_000 });
   assert.equal(out.ok, false, 'a 51 MiB file must not convert');
   if (out.ok) return;
+  t.diagnostic(`refusal: ${out.code} — ${out.reason}`);
   assert.equal(out.code, 'parser-error', JSON.stringify(out));
+  // Docling's own refusal text must name the size limit (not some unrelated failure).
+  assert.match(out.reason, /size|limit|large|exceed/i, out.reason);
+  // Positive twin: the SAME padding just below the limit converts, so the size alone decided.
+  const under = Buffer.concat([PDF, Buffer.alloc(MAX_FILE_SIZE - 1024 * 1024 - PDF.length, 0x0a)]);
+  const ok = await convertWithDocling({ ...invoice, bytes: under }, { baseUrl: URL_, apiKey: KEY, timeoutMs: 300_000 });
+  assert.equal(ok.ok, true, `49 MiB with the same padding must convert: ${JSON.stringify(ok)}`);
 });
 
 test('live docling (f): the image carries TableFormer v2 and no TableFormer v1 weights', { skip }, () => {
