@@ -35,7 +35,7 @@ echo "VELERO-DRILL $(jq -c '{repos:.}' /tmp/r.json)"` }}
        v1.15 restore.go) and the fs-restored volumes stay. tests/backup/velero-modifier.test.mjs
        checks these lists against the rendered os-ui Deployment, so they cannot drift. */}}
 {{- $dropInit := list "wait-for-opensearch" }}
-{{- $dropVolumes := list "backup-scripts" }}
+{{- $dropVolumes := list "git-daemon-hooks" "backup-scripts" }}
 {{- $initDel := list }}{{ range $dropInit }}{{ $initDel = append $initDel (dict "name" . "$patch" "delete") }}{{ end }}
 {{- $volDel := list }}{{ range $dropVolumes }}{{ $volDel = append $volDel (dict "name" . "$patch" "delete") }}{{ end }}
 {{- $volDel = append $volDel (dict "name" "tmp" "emptyDir" (dict "sizeLimit" "1Gi")) }}

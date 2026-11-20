@@ -85,27 +85,34 @@ export function notifyCommitted(gitdir: string, opts: NotifyOptions = {}): boole
 }
 
 export type InventoryRepo = { key: string; refs: Record<string, string> };
+/** A repository NAME that is a symlink to another repository (a repo-layout alias). */
+export type InventoryAlias = { key: string; target: string };
 
-function findBareRepos(root: string, depth: number, out: string[]): void {
+function findBareRepos(root: string, depth: number, out: string[], aliases?: string[]): void {
   if (depth < 0) return;
   // An unreadable directory is an ERROR: the drill must see "inventory unreadable", never a
   // shorter list that would let a repository silently drop out of the comparison.
   const entries = fs.readdirSync(root, { withFileTypes: true });
   for (const e of entries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))) {
-    if (!e.isDirectory()) continue;
     const p = path.join(root, e.name);
+    if (e.isSymbolicLink() && e.name.endsWith('.git')) {
+      aliases?.push(p);
+      continue;
+    }
+    if (!e.isDirectory()) continue;
     if (e.name.endsWith('.git')) {
       if (fs.existsSync(path.join(p, 'HEAD'))) out.push(p);
     } else if (!e.name.startsWith('.')) {
-      findBareRepos(p, depth - 1, out);
+      findBareRepos(p, depth - 1, out, aliases);
     }
   }
 }
 
 /** Every bare repository under the root with every ref (`refs/heads/*`, `refs/tags/*`, …) and its oid. */
-export async function backupInventory(reposDir: string = config.reposDir): Promise<{ repos: InventoryRepo[] }> {
+export async function backupInventory(reposDir: string = config.reposDir): Promise<{ repos: InventoryRepo[]; aliases: InventoryAlias[] }> {
   const dirs: string[] = [];
-  findBareRepos(reposDir, 3, dirs);
+  const links: string[] = [];
+  findBareRepos(reposDir, 3, dirs, links);
   const repos: InventoryRepo[] = [];
   for (const gitdir of dirs) {
     const key = repoKeyFor(gitdir, reposDir);
@@ -118,5 +125,14 @@ export async function backupInventory(reposDir: string = config.reposDir): Promi
     }
     repos.push({ key, refs });
   }
-  return { repos };
+  // Bundles written under an alias's name before a rename (repo-layout migration) are the same
+  // repository's history; the drill recognises them by this list instead of failing on them.
+  const realRoot = fs.realpathSync(reposDir);
+  const aliases: InventoryAlias[] = [];
+  for (const l of links) {
+    const key = repoKeyFor(l, reposDir);
+    const target = repoKeyFor(fs.realpathSync(l), realRoot);
+    if (key && target) aliases.push({ key, target });
+  }
+  return { repos, aliases };
 }

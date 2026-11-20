@@ -12,7 +12,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync, readdirSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync, readdirSync, symlinkSync, lstatSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { commitTree, repoPath } from '@core/infra/git-store';
@@ -65,16 +65,22 @@ test('NEGATIVE: an unwritable queue never fails or blocks the commit', async () 
   }
 });
 
-test('a legacy alias (symlink to the canonical repo) queues the CANONICAL key only', async () => {
+test('an alias (a symlink to another repo dir, repo-layout) queues the key of the REAL directory only', async () => {
   const reposDir = mkdtempSync(join(tmpdir(), 'wp56-repos-'));
   const queue = join(mkdtempSync(join(tmpdir(), 'wp56-q-')), 'queue');
   await commitTree('domain-sales', new Map([['a.txt', '1']]), { reposDir, author, message: 'one' });
-  symlinkSync(join(reposDir, 'domain-sales.git'), join(reposDir, 'sales.git'));
-  assert.equal(notifyCommitted(join(reposDir, 'sales.git'), { reposDir, queueDir: queue }), true);
-  await until(() => existsSync(join(queue, 'domain-sales')));
-  assert.deepEqual(readdirSync(queue), ['domain-sales']);
+  // Whichever name the store wrote is the real directory; the other name becomes its alias.
+  const isLink = (n: string) => existsSync(join(reposDir, n)) && lstatSync(join(reposDir, n)).isSymbolicLink();
+  const realName = ['domain-sales.git', 'sales.git'].find((n) => existsSync(join(reposDir, n)) && !isLink(n)) as string;
+  const aliasName = realName === 'sales.git' ? 'domain-sales.git' : 'sales.git';
+  if (!existsSync(join(reposDir, aliasName))) symlinkSync(realName, join(reposDir, aliasName));
+  assert.equal(notifyCommitted(join(reposDir, aliasName), { reposDir, queueDir: queue }), true);
+  const realKey = realName.slice(0, -4);
+  await until(() => existsSync(join(queue, realKey)));
+  assert.deepEqual(readdirSync(queue), [realKey]);
   const inv = await backupInventory(reposDir);
-  assert.deepEqual(inv.repos.map((r) => r.key), ['domain-sales'], 'the alias is not a second repository');
+  assert.deepEqual(inv.repos.map((r) => r.key), [realKey], 'the alias is not a second repository');
+  assert.deepEqual(inv.aliases, [{ key: aliasName.slice(0, -4), target: realKey }], 'but it is reported, so an old bundle key is recognised');
 });
 
 test('backups off (no queue dir) ⇒ nothing is scheduled; keys outside the root are refused', () => {

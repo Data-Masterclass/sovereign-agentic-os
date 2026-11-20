@@ -83,6 +83,13 @@ while read -r k; do
     log restore-drill fail check git repo "$k" reason "invalid repository key"
     continue
   fi
+  # A repo-layout ALIAS (a symlink to another repo, after a rename) has old bundles under its
+  # name: recognised and reported, neither a failure nor a proof.
+  target=$(jq -r --arg k "$k" '[.aliases[]? | select(.key==$k) | .target][0] // empty' "$W/live.json")
+  if [ -n "$target" ]; then
+    jq -cn --arg repo "$k" --arg t "$target" '{repo:$repo, status:"alias", reason:("bundles from before a rename; the live repository is " + $t)}' >> "$W/repos.jsonl"
+    continue
+  fi
   inlive=$(jq -r --arg k "$k" 'any(.repos[]; .key==$k)' "$W/live.json")
   try=0; status=fail; reason=""
   while :; do

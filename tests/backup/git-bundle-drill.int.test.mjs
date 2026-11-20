@@ -27,6 +27,9 @@ const inventory = (t) => `set -e; . /opt/soa/backup/lib.sh
   for g in $(find . -name '*.git' -type d -prune | sort); do k=\${g#./}; k=\${k%.git}
     refs_of "$g" | refs_json > /tmp/r.json
     jq --arg k "$k" --slurpfile r /tmp/r.json '.repos += [{key:$k, refs:$r[0]}]' /work/${t}/inv.json > /tmp/i && cp /tmp/i /work/${t}/inv.json
+  done
+  for l in $(find . -name '*.git' -type l | sort); do k=\${l#./}; k=\${k%.git}; tg=$(readlink "$l"); tg=\${tg%.git}
+    jq --arg k "$k" --arg t "$tg" '.aliases += [{key:$k, target:$t}]' /work/${t}/inv.json > /tmp/i && cp /tmp/i /work/${t}/inv.json
   done`;
 const bundle = (t, repo) => `sh /opt/soa/backup/git-bundle.sh /work/${t}/repos/${repo}.git ${repo}`;
 const S3ENV = Object.fromEntries(readFileSync(join(WORK, 's3.env'), 'utf8').trim().split('\n').map((l) => l.split('=')));
@@ -312,4 +315,19 @@ test('NEGATIVE: a repository above the temp budget is refused with a red status,
   assert.match(r.log, /above the bundle temp budget/);
   assert.match(r.log, /rc=1/);
   assert.match(r.log, /^0$/m, 'no staging dir left behind');
+});
+
+test('a repo renamed by the layout migration: old bundles under the alias name are recognised, the drill passes', () => {
+  const t = 'rename';
+  start(t);
+  sh(t, commit(t, 'sales', 'one'));
+  sh(t, bundle(t, 'sales'));
+  // the migration: sales.git -> domain-sales.git, the old name kept as a symlink alias
+  sh(t, `cd /work/${t}/repos && mv sales.git domain-sales.git && ln -s domain-sales.git sales.git`);
+  sh(t, bundle(t, 'domain-sales'));
+  sh(t, inventory(t));
+  drillRendered(t);
+  const res = result(join(WORK, t));
+  assert.equal(res.status, 'pass', JSON.stringify(res));
+  assert.equal(res.repos.find((r) => r.repo === 'sales').status, 'alias');
 });
