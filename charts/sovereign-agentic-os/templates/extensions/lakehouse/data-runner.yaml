@@ -48,9 +48,14 @@ metadata:
   annotations:
     # Read by scripts/rollback.sh: a rollback from "true" to anything else is refused while any
     # dataset stores mapped column names (an older runner would land raw headers).
-    # "true" unless the pinned digest is a known legacy build (dataRunner.legacyDigests); a
-    # localBuild is this repository's source, which applies column names.
-    sovereign-os/applies-column-names: {{ (or $dr.image.localBuild (not (has $dr.image.digest ($dr.legacyDigests | default list)))) | toString | quote }}
+    # The truth comes from the IMAGE: scripts/deploy.sh reads its OCI label from the registry and
+    # passes dataRunner.verifiedCapability. A legacy digest is "false" whatever is passed. Without
+    # a deploy-time value (helm template / lint) the digest rule is the fallback; a localBuild is
+    # this repository's source, which applies column names.
+    {{- $legacy := has $dr.image.digest ($dr.legacyDigests | default list) }}
+    {{- $verified := toString ($dr.verifiedCapability | default "") }}
+    {{- $cap := ternary (and (eq $verified "true") (not $legacy)) (or $dr.image.localBuild (not $legacy)) (ne $verified "") }}
+    sovereign-os/applies-column-names: {{ $cap | toString | quote }}
 spec:
   replicas: 1
   selector:

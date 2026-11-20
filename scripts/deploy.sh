@@ -375,6 +375,35 @@ else
   helm --kube-context "$CTX" get manifest "$REL" -n "$NS" > "$WORK/before.yaml"
 fi
 helm template "$REL" "$CHART" -n "$NS" -f "$VALUES" "${OVERLAY_ARGS[@]+"${OVERLAY_ARGS[@]}"}" --skip-schema-validation > "$WORK/after.yaml"
+# RUNNER CAPABILITY FROM THE IMAGE ITSELF. Does the pinned data-runner apply os-ui's `columnNames`?
+# Decided HERE from the image's own OCI label org.sovereign-os.applies-column-names, read from the
+# registry (scripts/lib/image-label.sh, read-only), never from the chart alone: an old hand-built
+# runner (0.1.x, 0.2.0, 0.2.1) is not on the legacy list but carries no label, so it is NOT capable.
+# A digest on dataRunner.legacyDigests is not capable whatever it says (extra guard, and the one
+# case read without the registry). FAIL CLOSED: an unreadable label refuses the deploy. The value
+# is passed to the chart (dataRunner.verifiedCapability), so the release's annotation — what
+# scripts/rollback.sh reads later — is the image's truth.
+CAP_SET=()
+RUNNER_REF=$(python3 - "$WORK/after.yaml" <<'PY'
+import sys, yaml
+for d in yaml.safe_load_all(open(sys.argv[1])):
+    if isinstance(d, dict) and d.get("kind") == "Deployment" and (d.get("metadata") or {}).get("name") == "data-runner":
+        print(d["spec"]["template"]["spec"]["containers"][0]["image"])
+PY
+) || { echo "RUNNER_CAPABILITY_UNKNOWN — cannot read the data-runner image from the rendered chart" >&2; exit 1; }
+if [ -n "$RUNNER_REF" ]; then
+  LEGACY=$(python3 -c 'import sys,yaml; print(" ".join(((yaml.safe_load(open(sys.argv[1])) or {}).get("dataRunner") or {}).get("legacyDigests") or []))' "$CHART/values.yaml")
+  case " $LEGACY " in
+    *" ${RUNNER_REF##*@} "*) RUNNER_CAP=false; echo "   data-runner $RUNNER_REF: a legacy build (dataRunner.legacyDigests) — does not apply column names" ;;
+    *)
+      label=$(bash scripts/lib/image-label.sh "$RUNNER_REF" org.sovereign-os.applies-column-names) \
+        || { echo "RUNNER_LABEL_UNREADABLE — cannot read the org.sovereign-os.applies-column-names label of $RUNNER_REF from the registry; refusing rather than guessing" >&2; exit 1; }
+      if [ "$label" = true ]; then RUNNER_CAP=true; else RUNNER_CAP=false; fi
+      echo "   data-runner $RUNNER_REF: label org.sovereign-os.applies-column-names='${label}' -> applies column names: $RUNNER_CAP" ;;
+  esac
+  CAP_SET=(--set-string "dataRunner.verifiedCapability=$RUNNER_CAP")
+  helm template "$REL" "$CHART" -n "$NS" -f "$VALUES" "${OVERLAY_ARGS[@]+"${OVERLAY_ARGS[@]}"}" "${CAP_SET[@]}" --skip-schema-validation > "$WORK/after.yaml"
+fi
 # RE-PIN GUARD (data-runner): deploying a runner that does not apply column names over one that
 # does — e.g. re-pinning a legacy digest (dataRunner.legacyDigests) — is refused while any dataset
 # stores mapped column names, exactly as scripts/rollback.sh refuses the same downgrade.
@@ -511,7 +540,7 @@ REPO_SET=()
 INSTALL_ARGS=()
 [ "$DEPLOY_ENV" != dev ] || INSTALL_ARGS=(--install --create-namespace)
 helm --kube-context "$CTX" upgrade "${INSTALL_ARGS[@]+"${INSTALL_ARGS[@]}"}" "$REL" "$CHART" -n "$NS" -f "$VALUES" "${OVERLAY_ARGS[@]+"${OVERLAY_ARGS[@]}"}" \
-  --set osUI.image.tag="$VERSION@$DIGEST" "${REPO_SET[@]+"${REPO_SET[@]}"}" \
+  --set osUI.image.tag="$VERSION@$DIGEST" "${REPO_SET[@]+"${REPO_SET[@]}"}" "${CAP_SET[@]+"${CAP_SET[@]}"}" \
   --force-conflicts --skip-schema-validation --timeout 20m
 write_record "$(revision_of)"
 # No rollout restart: the image change already rolls os-ui exactly once.
