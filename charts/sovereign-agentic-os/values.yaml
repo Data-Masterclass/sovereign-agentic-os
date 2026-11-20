@@ -84,6 +84,12 @@ ingress:
     nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
   # Per-tool public hostnames. Empty => that tool gets NO Ingress.
   hosts: {}
+  # Redirect-only hostnames (templates/base/ingress-redirects.yaml). Each entry answers EVERY
+  # request on `host` with a 308 to `to` + the original path and query, with its own
+  # cert-manager certificate and no backend. `to` is an https origin (no path). Empty = none.
+  #   redirectHosts:
+  #     - { host: platform.example.com, to: "https://os.example.com" }
+  redirectHosts: []
   # RESTRICTED CONSOLES. The model gateway (LiteLLM) and Langfuse get NO public route, even
   # when `hosts.litellm` / `hosts.langfuse` are set. LiteLLM holds the provider credentials and
   # an admin API; Langfuse holds every prompt, completion and tool result of every run. Nothing

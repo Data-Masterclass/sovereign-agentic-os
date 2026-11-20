@@ -636,6 +636,19 @@ jobs:
             || helm dependency update charts/sovereign-agentic-os
       - name: Helm lint
         run: helm lint charts/sovereign-agentic-os
+      # `ingress.redirectHosts`: the redirect Ingress renders, every other object is unchanged, an
+      # empty list renders nothing, unsafe entries refuse; then the real controller answers 308.
+      - name: Redirect hostnames (render + negative twins)
+        run: node --test scripts/tests/ingress-redirects.test.mjs
+      - name: Redirect hostnames on ingress-nginx v1.11.3 (kind)
+        run: |
+          curl -sSLo /tmp/kind https://github.com/kubernetes-sigs/kind/releases/download/v0.30.0/kind-linux-amd64
+          echo "517ab7fc89ddeed5fa65abf71530d90648d9638ef0c4cde22c2c11f8097b8889  /tmp/kind" | sha256sum -c -
+          chmod +x /tmp/kind && /tmp/kind create cluster --name ingress-redirect --wait 120s
+          bash tests/ingress/redirect.kind.sh
+      - name: Remove the kind cluster
+        if: always()
+        run: /tmp/kind delete cluster --name ingress-redirect || true
 
   secret-scan:
     name: secret-scan
