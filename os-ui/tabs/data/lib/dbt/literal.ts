@@ -115,14 +115,31 @@ export function assertCron(field: string, cron: unknown): string {
 const FULLWIDTH_OPEN = '\uFF5B';
 const FULLWIDTH_CLOSE = '\uFF5D';
 
+/** U+2060 WORD JOINER — invisible; marks a fullwidth brace the AUTHOR typed (see below). */
+const MARK = '\u2060';
+
 /**
  * Free text for ANY file dbt renders (YAML description / label / meta value, SQL comment): the
- * ASCII braces become fullwidth braces, so no Jinja delimiter can ever form. Reversible with
- * {@link decodeFreeText} for every text that held no fullwidth brace of its own (the OS store
- * keeps the original either way; this is only the dbt projection).
+ * ASCII braces become fullwidth braces, so no Jinja delimiter can ever form.
+ *
+ * EXACTLY reversible ({@link decodeFreeText}), so a git push → read-back keeps the author's
+ * characters. Three token rules, applied left to right:
+ *   `{` → U+FF5B  ·  `}` → U+FF5D            (the common case: output reads as before)
+ *   U+FF5B → U+FF5B U+2060 · U+FF5D → U+FF5D U+2060   (a fullwidth brace the author typed)
+ *   U+2060 → U+2060 U+2060                    (the marker itself, when the author typed it)
+ * After a fullwidth brace, a run of k markers decodes uniquely: k odd ⇒ the author's fullwidth
+ * brace plus (k−1)/2 markers; k even ⇒ an ASCII brace plus k/2 markers. Elsewhere a run is even.
  */
 export function freeText(text: unknown): string {
-  return wellFormed(String(text ?? '')).replace(/\{/g, FULLWIDTH_OPEN).replace(/\}/g, FULLWIDTH_CLOSE);
+  let out = '';
+  for (const ch of wellFormed(String(text ?? ''))) {
+    if (ch === '{') out += FULLWIDTH_OPEN;
+    else if (ch === '}') out += FULLWIDTH_CLOSE;
+    else if (ch === FULLWIDTH_OPEN || ch === FULLWIDTH_CLOSE) out += ch + MARK;
+    else if (ch === MARK) out += MARK + MARK;
+    else out += ch;
+  }
+  return out;
 }
 
 const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
@@ -145,7 +162,26 @@ export function isWellFormed(text: string): boolean {
 }
 
 export function decodeFreeText(text: string): string {
-  return text.replace(/\uFF5B/g, '{').replace(/\uFF5D/g, '}');
+  let out = '';
+  for (let i = 0; i < text.length; ) {
+    const ch = text[i];
+    let k = 0;
+    while (text[i + 1 + k] === MARK) k++;
+    if (ch === FULLWIDTH_OPEN || ch === FULLWIDTH_CLOSE) {
+      out += k % 2 === 1 ? ch : ch === FULLWIDTH_OPEN ? '{' : '}';
+      out += MARK.repeat(Math.floor(k / 2));
+      i += 1 + k;
+    } else if (ch === MARK) {
+      let run = 1;
+      while (text[i + run] === MARK) run++;
+      out += MARK.repeat(Math.ceil(run / 2));
+      i += run;
+    } else {
+      out += ch;
+      i += 1;
+    }
+  }
+  return out;
 }
 
 /**
