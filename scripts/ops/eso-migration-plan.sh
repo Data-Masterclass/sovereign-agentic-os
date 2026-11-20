@@ -14,8 +14,9 @@
 #       sha256 per key, read with the READER token from the mode-600 header file $SM_HEADER.
 #
 # Per Secret: MATCH (live name, type and keys = the catalog: ESO will write the same Secret),
-# DIFFERS (fix the catalog first — the plan refuses), EMPTY (a key holds an empty value: ESO refuses
-# empty values, so the Secret is not moved until it has one), ABSENT (nothing to move). Exit 0 when
+# DIFFERS (fix the catalog first — the plan refuses), EMPTY (a key holds an empty or whitespace-only
+# value: ESO refuses
+# them, so the Secret is not moved until it has one), ABSENT (nothing to move). Exit 0 when
 # no live Secret differs, 1 when one does, 2 on a usage error. --apply does not exist.
 set -euo pipefail
 CTX=dmagenticos NS=agentic-os INSTANCE="<instance-id>" PREFIX="" NAMES="" COMPARE=""
@@ -59,7 +60,7 @@ while read -r name source type keys rp; do
   live="" empty=""
   read -r live empty < <(kubectl --context "$CTX" -n "$NS" get secret "$name" -o json 2>/dev/null \
     | python3 -c 'import json,sys,base64; d=json.load(sys.stdin); v=d.get("data") or {}
-print((d.get("type") or "Opaque") + "|" + ",".join(sorted(v)), ",".join(k for k in sorted(v) if not base64.b64decode(v[k])) or "-")' 2>/dev/null || true) || true
+print((d.get("type") or "Opaque") + "|" + ",".join(sorted(v)), ",".join(k for k in sorted(v) if not base64.b64decode(v[k]).strip()) or "-")' 2>/dev/null || true) || true
   live=${live/|/ }
   if [ -z "$live" ]; then status=ABSENT detail="not on the cluster — nothing to move"
   elif [ "$live" = "$type $keys" ] && [ "${empty:--}" != "-" ]; then status=EMPTY detail="empty value in: $empty — not moved (ESO refuses empty values)"

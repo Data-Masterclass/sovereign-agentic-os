@@ -61,6 +61,9 @@ absent "twin: no value in the refusal" "VALUE-MARKER" "$out"
 # EMPTY: a key with an empty live value is reported and not moved.
 fx postgres-litellm-credentials kubernetes.io/basic-auth password username
 printf '{"type":"Opaque","metadata":{"name":"os-ui-smtp"},"data":{"SMTP_PASS":""}}' >"$T/fx/os-ui-smtp"
+printf '{"type":"Opaque","metadata":{"name":"os-ui-graph"},"data":{"GRAPH_CLIENT_SECRET":"%s"}}' "$(b64 '  ')" >"$T/fx/os-ui-graph"
+run --names os-ui-graph
+check "a whitespace-only value is EMPTY too" "EMPTY    empty value in: GRAPH_CLIENT_SECRET" "$out"
 run --names os-ui-smtp,postgres-litellm-credentials
 rc_is "an EMPTY Secret is not an error" 0
 check "os-ui-smtp reported EMPTY" "EMPTY    empty value in: SMTP_PASS" "$out"

@@ -45,6 +45,7 @@ echo "kubectl $*" >> "$FAKE_LOG"
 STUB
 cat > "$BIN/helm" <<STUB
 #!/usr/bin/env bash
+[ "\$1" = version ] && { echo v4.2.2; exit 0; }   # helm-version-guard.sh
 case "\$*" in
   *" get values "*)   echo "helm get values" >> "\$FAKE_LOG"; cat "\$FAKE_LIVE_VALUES" ;;
   *" get manifest "*) echo "helm get manifest" >> "\$FAKE_LOG" ;;

@@ -133,6 +133,8 @@ esac
 NS=${NS:-agentic-os}
 REL=${REL:-agentic-os}
 CHART=charts/sovereign-agentic-os
+# Helm 4 or newer (the Secret deletion guard below relies on Helm 4's behaviour). Fail closed.
+bash scripts/lib/helm-version-guard.sh || exit 1
 # The default is the org namespace CI pushes to (option A, taken 2026-11-19; it was
 # ghcr.io/aborek/sovereign-os before). When IMAGE_REPO is PASSED the upgrade below also --sets
 # osUI.image.repository, because the chart would otherwise keep pulling the repository the live
