@@ -9,6 +9,7 @@ type Template = { provider: 'google-drive' | 'onedrive'; label: string; detail: 
 type Source = {
   id: string; provider: string; label: string; scope: string; target: string; mode: string;
   domain: string; landingSensitivity: string; initialDone: boolean; cursor: string | null;
+  paused?: { reason: string; at: string } | null;
 };
 type DriveConnection = { id: string; name: string; provider: Template['provider'] };
 type SyncResult = { cadence: string; clientMode: string; added: number; updated: number; unchanged: number };
@@ -122,8 +123,9 @@ export default function FilesSources({ onSynced }: { onSynced: () => void }) {
               <div className="result" key={s.id}>
                 <div className="result-head">
                   <h4>{s.label} <span className="file-sub">· {s.provider} · {s.scope} · {s.mode === 'copy' ? 'copied in' : 'in place'}</span></h4>
-                  <span className="score">{s.initialDone ? 'synced' : 'never synced'}</span>
+                  <span className="score">{s.paused ? 'paused' : s.initialDone ? 'synced' : 'never synced'}</span>
                 </div>
+                {s.paused ? <div className="hint" style={{ marginTop: 4 }}>Paused: {s.paused.reason}.</div> : null}
                 <div className="preview-row" style={{ marginTop: 6 }}>
                   <button className="btn ghost sm" disabled={busy === s.id} onClick={() => sync(s.id)}>
                     {busy === s.id ? <span className="spin" /> : s.initialDone ? 'Sync now (incremental)' : 'Run first sync (overnight)'}

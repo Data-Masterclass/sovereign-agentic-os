@@ -13,12 +13,15 @@ import {
   getSource,
   runSync,
   ensureSourcesHydrated,
+  requireSourcesLoaded,
+  saveSource,
   addSource,
   listSources,
   removeSource,
 } from '@tabs/files/lib/connectors';
 import { liveClientFor } from '@tabs/files/lib/connectors-live';
-import { createFile, addVersion, attachObject, objectKeyForAsset, type Principal } from '@tabs/files/lib/store';
+import { createHash } from 'node:crypto';
+import { createFile, addVersion, attachObject, objectKeyForAsset, fileExists, type Principal } from '@tabs/files/lib/store';
 import { putBlob } from '@tabs/files/lib/object-store';
 import '@tabs/files/lib/object-store-server'; // registers the durable object-store backend
 import { reindexById, reindexFile, ingestUploaded } from '@tabs/files/lib/pipeline-server';
@@ -42,6 +45,13 @@ function principalFor(source: ConnectorSource): Principal {
  *  text is read from the stored bytes by Docling (`ingestUploaded`). */
 export function isTextLikeFile(name: string, type: string): boolean {
   return /^text\//.test(type) || /json|csv|xml|markdown|yaml/.test(type) || /\.(txt|md|csv|tsv|json|log|xml|yaml|yml)$/i.test(name);
+}
+
+/** One remote item → one Files id, derived from the source and the provider's item id (Graph
+ *  driveItem id). A sync interrupted between creating a file and recording it finds the file on
+ *  the next run instead of importing it twice. */
+export function importedFileId(sourceId: string, remoteId: string): string {
+  return `as_${createHash('sha256').update(`${sourceId}\u0000${remoteId}`).digest('hex').slice(0, 24)}`;
 }
 
 function makeStoreSink(source: ConnectorSource, client: ConnectorClient): SyncSink {
@@ -69,8 +79,10 @@ function makeStoreSink(source: ConnectorSource, client: ConnectorClient): SyncSi
     async upsert(file: RemoteFile, src: ConnectorSource): Promise<UpsertOutcome> {
       // The import ledger lives ON the (persisted) source, so it survives a restart.
       const ledger = (src.imported ??= {});
-      const prev = ledger[file.remoteId];
-      if (prev && prev.hash === file.contentHash) return 'unchanged'; // content-hash skip
+      const fileId = importedFileId(src.id, file.remoteId);
+      // The ledger, or — after a crash before the ledger was written — the deterministic file itself.
+      const prev = ledger[file.remoteId] ?? (fileExists(fileId) ? { fileId, hash: '' } : undefined);
+      if (prev && prev.hash === file.contentHash) return 'unchanged'; // same item, same content hash (quickXorHash / eTag)
       const content = await readContent(file);
       const text = content ? content.text : file.text;
       const bytes = content ? content.bytes.length : file.text?.length;
@@ -79,9 +91,11 @@ function makeStoreSink(source: ConnectorSource, client: ConnectorClient): SyncSi
         if (content) await store(asset, content);
         else await reindexById(prev.fileId);
         ledger[file.remoteId] = { fileId: prev.fileId, hash: file.contentHash };
+        saveSource(src); // the ledger is durable per file, not only at the end of the run
         return 'updated';
       }
       const asset = createFile(principal, {
+        id: fileId,
         name: file.name,
         folder: file.path,
         text,
@@ -92,9 +106,12 @@ function makeStoreSink(source: ConnectorSource, client: ConnectorClient): SyncSi
         provenanceSource: src.provider,
         domain: src.domain,
       });
-      ledger[file.remoteId] = { fileId: asset.id, hash: file.contentHash };
+      ledger[file.remoteId] = { fileId: asset.id, hash: '' }; // recorded now; current once its content landed
+      saveSource(src);
       if (content) await store(asset, content);
       else await reindexFile(asset, file.text ?? '');
+      ledger[file.remoteId] = { fileId: asset.id, hash: file.contentHash };
+      saveSource(src);
       return 'added';
     },
   };
@@ -126,23 +143,48 @@ function triggerDagster(source: ConnectorSource, cadence: string): boolean {
   return false;
 }
 
+/** What a sync needs to know about its owner NOW, on every run (wired by the routes: the live
+ *  principal from `core/kernel/auth.ts` and the token from the owner's Connection). */
+export type SyncEntitlement = {
+  /** The owner as they are now — null when deactivated or gone (`principalById`). */
+  liveOwner: (userId: string) => Promise<{ domains: string[] } | null>;
+  /** The linked connection's Read token. Throws 403/404 when the owner no longer holds the drive
+   *  grant (the connection was deleted, or is no longer theirs); null when it needs a reconnect. */
+  token: () => Promise<string | null>;
+};
+
+function refusal(message: string, status: number, code: string): Error {
+  return Object.assign(new Error(message), { status, code });
+}
+
+/** Stop and pause the source with the reason, durably; the error says why. */
+function pause(source: ConnectorSource, reason: string): never {
+  source.paused = { reason, at: new Date().toISOString() };
+  saveSource(source);
+  throw refusal(`Sync paused: ${reason}. Nothing was read from the drive.`, 403, 'source_paused');
+}
+
 /**
- * Run a sync for a source. `token` is the connection's OAuth Read token (null →
- * the mock client / kind). The first pass is the overnight batch; later passes are
- * incremental. Returns the tally + the cadence + whether the run was live or mock.
+ * Run a sync for a source, as its owner. EVERY run — a click, or a scheduled pass that has no
+ * session — re-checks the owner live first: deactivated, no longer in the source's domain, or no
+ * longer holding the drive grant ⇒ the source is paused and nothing is read. A run by an entitled
+ * owner lifts an earlier pause. The first pass is the overnight batch; later passes are incremental.
  */
-export async function runConnectorSync(sourceId: string, owner: string, token: string | null): Promise<SyncResult> {
-  await ensureSourcesHydrated();
+export async function runConnectorSync(sourceId: string, owner: string, ent: SyncEntitlement): Promise<SyncResult> {
+  await requireSourcesLoaded();
   const source = getSource(sourceId);
-  if (!source) {
-    const err = new Error('Connected source not found');
-    (err as Error & { status?: number }).status = 404;
-    throw err;
-  }
-  if (source.owner !== owner) {
-    const err = new Error('Not permitted to sync this source');
-    (err as Error & { status?: number }).status = 403;
-    throw err;
+  if (!source) throw refusal('Connected source not found', 404, 'not_found');
+  if (source.owner !== owner) throw refusal('Not permitted to sync this source', 403, 'forbidden');
+  const live = await ent.liveOwner(source.owner);
+  if (!live) pause(source, 'the owner is deactivated');
+  if (!live.domains.includes(source.domain)) pause(source, `the owner is no longer a member of ${source.domain}`);
+  let token: string | null;
+  try {
+    token = await ent.token();
+  } catch (e) {
+    const st = (e as { status?: number }).status;
+    if (st === 403 || st === 404) pause(source, 'the owner no longer holds the drive connection');
+    throw e;
   }
   const client = liveClientFor(source.provider, token);
   triggerDagster(source, source.initialDone ? 'incremental' : 'overnight');
@@ -157,15 +199,15 @@ export async function runConnectorSync(sourceId: string, owner: string, token: s
  */
 export async function indexDriveSource(input: {
   connectionId: string; provider: Provider; label: string; owner: string; domain: string; token: string;
-}): Promise<{ sourceId: string; records: number; mode: 'live' | 'mock' }> {
-  await ensureSourcesHydrated();
+}, deps: Pick<SyncEntitlement, 'liveOwner'>): Promise<{ sourceId: string; records: number; mode: 'live' | 'mock' }> {
+  await requireSourcesLoaded();
   const existing = listSources(input.owner).find((s) => s.connectionId === input.connectionId && s.provider === input.provider);
   const source = existing ?? addSource({
     provider: input.provider, label: input.label, scope: 'drive', target: 'root', mode: 'copy',
     owner: input.owner, domain: input.domain, connectionId: input.connectionId,
   });
   try {
-    const r = await runConnectorSync(source.id, input.owner, input.token);
+    const r = await runConnectorSync(source.id, input.owner, { liveOwner: deps.liveOwner, token: async () => input.token });
     return { sourceId: source.id, records: r.added + r.updated + r.unchanged, mode: r.clientMode };
   } catch (e) {
     if (!existing) removeSource(source.id, input.owner);

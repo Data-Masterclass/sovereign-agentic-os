@@ -15,6 +15,7 @@
  */
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { fakeCluster } from '@core/infra/two-process-fixture';
 
 process.env.OS_OFFLINE_MOCK = 'refuse';
 
@@ -28,9 +29,18 @@ let graphStatus = 200;
 let contentStatus: Record<string, number> = {};
 
 const _realFetch = globalThis.fetch;
-globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+// A FRESH fake OpenSearch per test (the stores' mirror — the sources must load), with Graph in front.
+let cluster: ReturnType<typeof fakeCluster> | null = null;
+let clusterFetch: typeof fetch = _realFetch;
+function freshNetwork() {
+  cluster?.restore();
+  cluster = fakeCluster();
+  clusterFetch = globalThis.fetch;
+  globalThis.fetch = graphFetch;
+}
+const graphFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
-  if (!url.startsWith(GRAPH)) throw new Error(`offline-stub: ${url}`);
+  if (!url.startsWith(GRAPH)) return clusterFetch(input, init);
   const auth = new Headers(init?.headers).get('authorization');
   graphCalls.push({ url, auth });
   if (auth !== `Bearer ${REAL_TOKEN}`) return new Response('{"error":{"code":"InvalidAuthenticationToken"}}', { status: 401 });
@@ -57,6 +67,7 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   }
   return new Response('{}', { status: 404 });
 }) as typeof fetch;
+freshNetwork();
 
 const { indexDriveSource } = await import('./connectors-server.ts');
 const { listSources, getSource, __resetConnectors } = await import('./connectors.ts');
@@ -64,6 +75,8 @@ const { listFiles, getFile, objectKeyForAsset, __resetStore } = await import('./
 const { getBlob, __resetBlobs } = await import('./object-store.ts');
 
 const owner = { id: 'aborek', domains: ['sales'], role: 'creator' as const };
+const liveOwner = async (id: string) => (id === owner.id ? { domains: owner.domains } : null);
+const ent = (token: string | null) => ({ liveOwner, token: async () => token });
 const input = { connectionId: 'conn_od1', provider: 'onedrive' as const, label: 'My OneDrive', owner: owner.id, domain: 'sales', token: REAL_TOKEN };
 const NAMES = ['Q3-board-pack.pdf', 'pipeline-notes.md'];
 const driveFiles = () => listFiles(owner).mine.filter((f) => NAMES.includes(f.name));
@@ -71,10 +84,10 @@ const driveFileNames = () => driveFiles().map((f) => f.name).sort();
 const deltaCalls = () => graphCalls.filter((c) => c.url.includes('/delta'));
 const contentCalls = () => graphCalls.filter((c) => c.url.endsWith('/content'));
 
-beforeEach(() => { __resetConnectors(); __resetStore(); __resetBlobs(); graphCalls = []; graphStatus = 200; contentStatus = {}; });
+beforeEach(() => { freshNetwork(); __resetConnectors(); __resetStore(); __resetBlobs(); graphCalls = []; graphStatus = 200; contentStatus = {}; });
 
 test('reads Microsoft Graph delta with the token and lands exactly the files Graph returned', async () => {
-  const r = await indexDriveSource(input);
+  const r = await indexDriveSource(input, { liveOwner });
   assert.equal(deltaCalls().length, 1);
   assert.ok(graphCalls.every((c) => c.auth === `Bearer ${REAL_TOKEN}`), 'every Graph call carries the owner token');
   assert.equal(r.mode, 'live');
@@ -87,7 +100,7 @@ test('reads Microsoft Graph delta with the token and lands exactly the files Gra
 });
 
 test('copy-in reads each file\'s CONTENT through Graph: the bytes are stored and the text is indexed', async () => {
-  await indexDriveSource(input);
+  await indexDriveSource(input, { liveOwner });
   assert.deepEqual(contentCalls().map((c) => c.url.split('/items/')[1]).sort(), ['01ABC/content', '01DEF/content']);
   const notes = driveFiles().find((f) => f.name === 'pipeline-notes.md')!;
   const view = getFile(notes.id, owner);
@@ -102,9 +115,9 @@ test('copy-in reads each file\'s CONTENT through Graph: the bytes are stored and
 });
 
 test('a second Index reuses the linked source (no duplicate source)', async () => {
-  const a = await indexDriveSource(input);
+  const a = await indexDriveSource(input, { liveOwner });
   graphCalls = [];
-  const b = await indexDriveSource(input);
+  const b = await indexDriveSource(input, { liveOwner });
   assert.equal(b.sourceId, a.sourceId);
   assert.equal(graphCalls[0].url, `${GRAPH_DELTA}?token=next`, 'the incremental pass follows the saved deltaLink');
   assert.equal(listSources(owner.id).length, 1);
@@ -114,7 +127,7 @@ test('twin: index-in-place never downloads content', async () => {
   const { addSource } = await import('./connectors.ts');
   const { runConnectorSync } = await import('./connectors-server.ts');
   const src = addSource({ provider: 'onedrive', label: 'Refs', scope: 'drive', target: 'root', mode: 'reference', owner: owner.id, domain: 'sales', connectionId: 'conn_od1' });
-  await runConnectorSync(src.id, owner.id, REAL_TOKEN);
+  await runConnectorSync(src.id, owner.id, ent(REAL_TOKEN));
   assert.equal(contentCalls().length, 0);
   assert.deepEqual(driveFileNames(), [...NAMES].sort());
 });
@@ -124,27 +137,27 @@ test('twin: a file whose content Graph refuses fails the sync loudly, and the ne
   const { runConnectorSync } = await import('./connectors-server.ts');
   const src = addSource({ provider: 'onedrive', label: 'Copy', scope: 'drive', target: 'root', mode: 'copy', owner: owner.id, domain: 'sales', connectionId: 'conn_od1' });
   contentStatus['01DEF'] = 403;
-  await assert.rejects(runConnectorSync(src.id, owner.id, REAL_TOKEN), /Cannot read "pipeline-notes\.md" from OneDrive: Microsoft Graph answered 403/);
+  await assert.rejects(runConnectorSync(src.id, owner.id, ent(REAL_TOKEN)), /Cannot read "pipeline-notes\.md" from OneDrive: Microsoft Graph answered 403/);
   assert.equal(getSource(src.id)!.imported?.['01DEF'], undefined, 'not recorded: nothing half-imported');
   assert.equal(driveFiles().filter((f) => f.name === 'pipeline-notes.md').length, 0, 'no file without its content');
   assert.equal(getSource(src.id)!.initialDone, false, 'the cursor did not advance');
   contentStatus = {};
-  await runConnectorSync(src.id, owner.id, REAL_TOKEN);
+  await runConnectorSync(src.id, owner.id, ent(REAL_TOKEN));
   assert.equal(driveFiles().filter((f) => f.name === 'pipeline-notes.md').length, 1, 'imported once on the retry');
   assert.equal(getSource(src.id)!.imported?.['01DEF']?.hash, 'qx2');
 });
 
 test('twin: Graph refuses the delta (403) — the refusal propagates, no files land, no source is left behind', async () => {
   graphStatus = 403;
-  await assert.rejects(indexDriveSource(input), /Microsoft Graph answered 403/);
+  await assert.rejects(indexDriveSource(input, { liveOwner }), /Microsoft Graph answered 403/);
   assert.equal(deltaCalls().length, 1, 'Graph really was called');
   assert.deepEqual(driveFileNames(), []);
   assert.equal(listSources(owner.id).length, 0);
 });
 
 test('twin: a wrong token is refused by Graph (401) — nothing lands', async () => {
-  await assert.rejects(indexDriveSource({ ...input, token: 'not-the-consented-token' }), /Microsoft Graph answered 401/);
+  await assert.rejects(indexDriveSource({ ...input, token: 'not-the-consented-token' }, { liveOwner }), /Microsoft Graph answered 401/);
   assert.deepEqual(driveFileNames(), []);
 });
 
-test('restore real fetch', () => { globalThis.fetch = _realFetch; });
+test('restore real fetch', () => { cluster?.restore(); globalThis.fetch = _realFetch; });

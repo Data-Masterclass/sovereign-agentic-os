@@ -5,6 +5,7 @@ import { NextResponse } from 'next/server';
 import { withRoute } from '@core/kernel/route-server';
 import { enableDataUsage } from '@tabs/connections/lib/index';
 import { indexDriveSource } from '@tabs/files/lib/connectors-server';
+import { principalById } from '@core/kernel/auth';
 
 export const dynamic = 'force-dynamic';
 
@@ -18,6 +19,6 @@ export const dynamic = 'force-dynamic';
 export const POST = withRoute<{ id: string }, { usage?: string }>(async ({ user, params, body }) => {
     const { id } = params;
     const usage = body?.usage === 'files' ? 'files' : body?.usage === 'bronze' ? 'bronze' : null;
-    const connection = await enableDataUsage(id, user, usage, { indexDrive: indexDriveSource });
+    const connection = await enableDataUsage(id, user, usage, { indexDrive: (input) => indexDriveSource(input, { liveOwner: principalById }) });
     return NextResponse.json({ connection });
 }, { parse: true, defaultStatus: 500 });

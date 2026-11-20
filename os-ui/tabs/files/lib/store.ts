@@ -623,16 +623,26 @@ export type UploadInput = {
   domain?: string;
   /** Explicit index opt-out at upload time (else derived from sensitivity). */
   indexing?: IndexingMode;
+  /** A DETERMINISTIC id (a connector import: one remote item → one file, so a re-run after a
+   *  crash finds it instead of importing it twice). Refused with 409 when the id is taken. */
+  id?: string;
 };
+
+/** Does a file record with this id exist (any owner, archived included)? For idempotent imports. */
+export function fileExists(id: string): boolean {
+  ensureSeeded();
+  return fs().store.has(id);
+}
 
 /** Upload a new file → a private object-store file at v1 (or an in-place reference). */
 export function createFile(user: Principal, input: UploadInput): FileAsset {
   ensureSeeded();
   if (!input.name || !input.name.trim()) fail('a file needs a name', 400);
+  if (input.id !== undefined && (!/^as_[a-z0-9_-]{6,64}$/.test(input.id) || fs().store.has(input.id))) fail(`file id ${input.id} is invalid or already exists`, 409);
   const domain = input.domain && user.domains.includes(input.domain) ? input.domain : user.domains[0] ?? 'platform';
   const at = now();
   const a = emptyAsset({
-    id: newId(), name: input.name.trim(), owner: user.id, domain,
+    id: input.id ?? newId(), name: input.name.trim(), owner: user.id, domain,
     folder: input.folder, tags: input.tags, sensitivity: input.sensitivity,
     storage: input.storage, provenanceSource: input.provenanceSource, sourceUri: input.sourceUri, at,
   });

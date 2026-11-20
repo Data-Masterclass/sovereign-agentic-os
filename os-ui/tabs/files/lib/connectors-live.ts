@@ -92,7 +92,7 @@ function googleDrive(token: string | null): ConnectorClient {
 
 /** OneDrive (Microsoft Graph): delta over the drive root / a folder. */
 function oneDrive(token: string | null): ConnectorClient {
-  return {
+  const client: ConnectorClient = {
     provider: 'onedrive',
     mode: token ? 'live' : 'mock',
     async pull(source: ConnectorSource, sinceCursor: string | null): Promise<Pull> {
@@ -127,6 +127,12 @@ function oneDrive(token: string | null): ConnectorClient {
         return fakeDrive('onedrive', 'the Microsoft Graph response could not be parsed.').pull(source, sinceCursor);
       }
     },
+  };
+  // Content is read only with a token: the tokenless (teaching-flow) pull is the fake drive, whose
+  // items carry their own text — there is no remote content to read.
+  if (!token) return client;
+  return {
+    ...client,
     // Graph `GET /me/drive/items/{id}/content` (https://learn.microsoft.com/graph/api/driveitem-get-content):
     // a 302 to a pre-authenticated download URL, which fetch follows (dropping the bearer on the
     // cross-origin hop, as the spec requires — the download URL carries its own short-lived grant).
@@ -136,7 +142,6 @@ function oneDrive(token: string | null): ConnectorClient {
         e.status = 502;
         throw e;
       };
-      if (!token) return fail('the connection has no Read token.');
       const res = await get(`https://graph.microsoft.com/v1.0/me/drive/items/${encodeURIComponent(file.remoteId)}/content`, token, 30_000);
       if (!res || !res.ok) return fail(`Microsoft Graph answered ${res ? res.status : 'nothing (unreachable/timeout)'}.`);
       const declared = Number(res.headers.get('content-length') ?? '0');
