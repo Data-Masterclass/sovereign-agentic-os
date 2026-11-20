@@ -391,6 +391,6 @@ test('WIRING: both UI upload branches and the MCP upload go through `ingestUploa
   const mcp = readFileSync(`${root}tabs/files/mcp/file-write-tools.ts`, 'utf8');
   assert.match(mcp, /await ingestUploaded\(documented, textArg \?\? '', user\.id\)/);
   const server = readFileSync(`${root}tabs/files/lib/pipeline-server.ts`, 'utf8');
-  assert.match(server, /convert: \(doc\) => convertWithDocling\(doc, \{ baseUrl: config\.doclingUrl, timeoutMs: config\.doclingTimeoutMs \}\)/);
+  assert.match(server, /convert: \(doc\) => convertWithDocling\(doc, \{ baseUrl: config\.doclingUrl, apiKey: config\.doclingApiKey, timeoutMs: config\.doclingTimeoutMs \}\)/, 'the live convert sends the Docling API key');
   assert.match(server, /waitMs: config\.uploadExtractWaitMs/, 'an upload response never waits for the whole conversion');
 });
