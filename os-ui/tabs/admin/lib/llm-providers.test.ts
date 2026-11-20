@@ -88,6 +88,7 @@ test('LiteLLM errors read as a clear sentence: wrong key, blocked host, unknown 
   assert.match(explainGatewayError('litellm.PermissionDeniedError: OpenAIException - <html>Filtered</html> 403 Forbidden by tinyproxy'), /egress/i);
   assert.match(explainGatewayError('litellm.InternalServerError: OpenAIException - Connection error.'), /could not reach/i);
   assert.match(explainGatewayError('litellm.NotFoundError: AzureException - DeploymentNotFound'), /not found/i);
+  assert.match(explainGatewayError('litellm.APIConnectionError: OpenAIException - [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: self-signed certificate'), /certificate/i);
   // Stack traces never reach the admin.
   assert.doesNotMatch(explainGatewayError('litellm.APIError: boom\nstack trace: Traceback (most recent call last): File x'), /Traceback/);
 });
