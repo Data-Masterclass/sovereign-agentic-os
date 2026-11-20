@@ -1853,6 +1853,10 @@ osUI:
       # The first Dagster image whose loader and repo-sync read os/layout.yml (built from WP-55).
       # `migration: apply` refuses to render while the code location or repo-sync is older.
       dagsterMinVersion: "0.3.3"
+      # The sha256 digests of the Dagster images built with that loader (filled when 0.3.3 is
+      # built). `apply` also requires BOTH the code location and repo-sync to run one of these —
+      # a tag can be moved, a digest cannot.
+      dagsterLayoutDigests: []
     gitDaemon:
       image:
         # Our own image (images/base/git-daemon): no stock git image ships `git daemon` — Alpine

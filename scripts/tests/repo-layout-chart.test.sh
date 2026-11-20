@@ -34,17 +34,23 @@ python3 - "$CHART/values.yaml" "$TMP" <<'PY'
 import re, sys, yaml
 v = yaml.safe_load(open(sys.argv[1])); out = sys.argv[2]
 mn = v['osUI']['dataProjectGit']['layout']['dagsterMinVersion']
-def write(name, code, sidecar):
+NEW = 'sha256:' + 'a' * 64
+def write(name, code, sidecar, digests=(NEW,), digest=NEW):
     deps = yaml.safe_load(open(sys.argv[1]))['dagster']['dagster-user-deployments']['deployments']
-    d = deps[0]; d['image']['tag'] = code
+    d = deps[0]; d['image']['tag'] = code; d['image']['digest'] = digest
     for c in d['sidecarContainers']:
         if c['name'] == 'repo-sync':
-            c['image'] = re.sub(r':[^:@/]+@', f':{sidecar}@', c['image'])
-    yaml.safe_dump({'dagster': {'dagster-user-deployments': {'deployments': deps}}, 'osUI': {'dataProjectGit': {'layout': {'migration': 'apply'}}}}, open(f'{out}/{name}.yaml', 'w'))
+            c['image'] = re.sub(r':[^:@/]+@sha256:[0-9a-f]{64}', f':{sidecar}@{digest}', c['image'])
+    layout = {'migration': 'apply', 'dagsterLayoutDigests': list(digests)}
+    yaml.safe_dump({'dagster': {'dagster-user-deployments': {'deployments': deps}}, 'osUI': {'dataProjectGit': {'layout': layout}}}, open(f'{out}/{name}.yaml', 'w'))
 write('new', mn, mn)
 write('oldsidecar', mn, '0.3.2')
+write('unlisted', mn, mn, digests=())
+write('movedtag', mn, mn, digests=('sha256:' + 'b' * 64,))
 PY
 check "apply with both images >= the minimum renders, and makes new repos v2" "helm template t '$CHART' -f '$TMP/new.yaml' 2>/dev/null | grep -A1 'name: OS_REPO_LAYOUT_V2' | grep -q '\"true\"'"
 check "apply with an old repo-sync sidecar FAILS" "! helm template t '$CHART' -f '$TMP/oldsidecar.yaml' >/dev/null 2>&1"
+check "apply with no layout-capable digest recorded FAILS" "! helm template t '$CHART' -f '$TMP/unlisted.yaml' >/dev/null 2>&1"
+check "apply with the right tag but an unlisted digest FAILS (a moved tag)" "! helm template t '$CHART' -f '$TMP/movedtag.yaml' >/dev/null 2>'$TMP/moved.err' && grep -q 'dagsterLayoutDigests' '$TMP/moved.err'"
 check "the ConfigMap carries the tested hook file" "grep -q 'not served over the in-cluster git protocol' '$TMP/off.yaml'"
 [ "$fail" = 0 ] && echo "repo-layout-chart: ok" || { echo "repo-layout-chart: FAILED"; exit 1; }

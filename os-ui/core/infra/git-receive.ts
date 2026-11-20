@@ -40,7 +40,7 @@
 import { createHash } from 'node:crypto';
 import {
   dbtProjectPath, parseRepoName, principalToken, LAYOUT_V1, LAYOUT_V2, OS_DIR, AGENTS_INDEX_PATH, AGENTS_DIR, DASHBOARDS_DIR,
-  configuredDbtProjectDir, prefixOf, type LayoutVersion,
+  configuredDbtProjectDir, prefixOf, AGENT_GENERATED_FILES, type LayoutVersion,
 } from '@core/infra/repo-layout';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -49,7 +49,6 @@ import { acquireRepoLock, listTree, MAIN, readBlob, repoExists, repoLayout, repo
 import { generatedReadmes, isGeneratedReadme } from '@core/infra/repo-readme';
 import * as git from 'isomorphic-git';
 import { redact } from '@core/auth/access-tokens';
-import { AGENT_GENERATED_FILES, AGENTS_DIR } from '@core/infra/repo-layout';
 
 /** The managed-by-the-OS rejection, in the owner's words. Asserted verbatim by the tests. */
 export const MANAGED_BY_OS = 'managed by the OS; change it in Governance or over the MCP';

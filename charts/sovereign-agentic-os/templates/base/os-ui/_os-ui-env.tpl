@@ -410,6 +410,14 @@
 {{- range $t := (list $codeTag $sidecarTag) }}
 {{- if not (semverCompare (printf ">=%s" $min) $t) }}{{ fail (printf "osUI.dataProjectGit.layout.migration=apply needs the Dagster code location and its repo-sync sidecar at >= %s (they read os/layout.yml); found code location %s and repo-sync %s — deploy that Dagster image first" $min $codeTag $sidecarTag) }}{{ end }}
 {{- end }}
+{{- /* A tag can be moved; a digest cannot. The DIGESTS of the images built with the layout-aware
+  loader are recorded in layout.dagsterLayoutDigests when they are built, and BOTH the code
+  location and repo-sync must run one of them. */}}
+{{- $codeDigest := (($dep.image | default dict).digest | default "") | toString }}
+{{- $sidecarDigest := "" }}
+{{- range ($dep.sidecarContainers | default list) }}{{- if eq .name "repo-sync" }}{{- $sidecarDigest = (regexFind "sha256:[0-9a-f]{64}" .image) }}{{- end }}{{- end }}
+{{- $known := $lay.dagsterLayoutDigests | default list }}
+{{- if not (and (has $codeDigest $known) (has $sidecarDigest $known)) }}{{ fail (printf "osUI.dataProjectGit.layout.migration=apply needs the Dagster code location and its repo-sync sidecar pinned to a digest listed in layout.dagsterLayoutDigests (an image built with the layout-aware loader); found code location %q and repo-sync %q" $codeDigest $sidecarDigest) }}{{ end }}
 {{- end }}
 - name: OS_REPO_LAYOUT_MIGRATION
   value: {{ $mig | quote }}
