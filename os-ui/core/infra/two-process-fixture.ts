@@ -72,7 +72,13 @@ export function fakeCluster(): FakeCluster {
       return json({ acknowledged: true });
     }
     if (!docs) return json({ error: 'index_not_found_exception' }, 404);
-    const docId = decodeURIComponent(rest.replace(/^\/_(doc|update)\//, ''));
+    const docId = decodeURIComponent(rest.replace(/^\/_(doc|update|create)\//, ''));
+    // `PUT <index>/_create/<id>`: create-only — 409 when the doc exists, never an overwrite.
+    if (rest.startsWith('/_create/')) {
+      if (docs.has(docId)) return json({ error: 'version_conflict_engine_exception' }, 409);
+      docs.set(docId, body);
+      return json({ result: 'created' }, 201);
+    }
     if (rest.startsWith('/_doc/')) {
       if (method === 'GET') return docs.has(docId) ? json({ _source: docs.get(docId) }) : json({ found: false }, 404);
       if (method === 'DELETE') return docs.delete(docId) ? json({ result: 'deleted' }) : json({ result: 'not_found' }, 404);
