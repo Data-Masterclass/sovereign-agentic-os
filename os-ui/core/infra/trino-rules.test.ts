@@ -20,6 +20,7 @@ import {
   buildTrinoRules,
   renderTrinoRules,
   impersonationAllowed,
+  OPA_IMPERSONATORS,
   schemaOwnerAllowed,
   tablePrivilegesFor,
   anchor,
@@ -152,6 +153,23 @@ test('the chart bootstrap IS this generator with nothing enumerated (one shape, 
     buildTrinoRules({ serviceUsers: [ac.serviceUser], principalPattern: ac.principalPattern, domains: [], personalLanes: [] }),
     'the chart bootstrap and buildTrinoRules({}) must be the same document',
   );
+});
+
+test('WP-14: the three impersonating service users are decided by OPA alone (no second engine)', () => {
+  for (const rules of [buildTrinoRules({ serviceUsers: ['dbt-runner'], principalPattern: OS_PRINCIPAL_PATTERN, domains: [], personalLanes: [] }),
+    buildTrinoRules({ serviceUsers: ['dbt-runner'], principalPattern: OS_PRINCIPAL_PATTERN, domains: [{ name: 'sales', schema: 'sales', principals: ['sales'] }], personalLanes: [{ uid: 'amir', schema: 'personal_amir' }] })]) {
+    // The file passes every pair through; trino_impersonation.rego is the only bound.
+    for (const svc of OPA_IMPERSONATORS) {
+      for (const target of ['amir', 'sales', 'a.b@x.com', 'svc-os-worker', 'os-domain-delete']) {
+        assert.equal(impersonationAllowed(rules, svc, target), true, `${svc} -> ${target} must reach OPA`);
+      }
+    }
+    // A look-alike is not one of them, and nobody else gains anything.
+    assert.equal(impersonationAllowed(rules, 'svc-os-ui2', 'amir'), false);
+    assert.equal(impersonationAllowed(rules, 'xsvc-os-ui', 'amir'), false);
+    assert.equal(impersonationAllowed(rules, 'amir', 'sales'), false);
+  }
+  assert.deepEqual([...OPA_IMPERSONATORS].sort(), ['svc-dagster-runner', 'svc-os-ui', 'svc-os-worker']);
 });
 
 test('anchor and literal cannot be widened by the caller', () => {
