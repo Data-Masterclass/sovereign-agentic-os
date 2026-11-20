@@ -24,6 +24,8 @@ Two independent gates, both enforced here BEFORE any SQL reaches Trino:
              retention_threshold => '<n>d')                       (maintenance)
        * ALTER TABLE iceberg.<schema>.<table> EXECUTE optimize[(file_size_threshold
              => '<n><unit>')]                                     (compaction)
+       * ALTER TABLE iceberg.<schema>.<table> EXECUTE rollback_to_snapshot(<id>)
+             (WP-37 dataset restore: Iceberg's own rollback, a literal snapshot id only)
      The sync shapes exist for SCHEDULED INCREMENTAL SYNC and pass the SAME
      target-schema/role gate as a CTAS. Everything else (plain INSERT ... VALUES,
      UPDATE, arbitrary DELETE, GRANT/CALL/SET, other ALTERs/EXECUTE procs, plain
@@ -130,6 +132,15 @@ _RE_OPTIMIZE = re.compile(
 )
 
 
+# WP-37 dataset restore: Iceberg's own `rollback_to_snapshot` with a LITERAL snapshot id (a
+# positive 64-bit integer). No expression, no named argument, no subquery can ride along.
+_RE_ROLLBACK = re.compile(
+    rf"alter\s+table\s+{CATALOG}\.({_IDENT})\.({_IDENT})\s+execute\s+"
+    r"rollback_to_snapshot\s*\(\s*[0-9]{1,19}\s*\)",
+    re.IGNORECASE,
+)
+
+
 class ExecuteError(Exception):
     """A rejection with an HTTP status (400 = bad statement, 403 = not authorized)."""
 
@@ -211,7 +222,7 @@ def guard_read(sql: str) -> str:
 class ParsedWrite:
     kind: str            # 'create_schema' | 'ctas' | 'drop_table' | 'insert_select' | 'merge'
                          # | 'delete_batch' | 'expire_snapshots' | 'optimize'
-                         # | 'create_view' | 'drop_view'
+                         # | 'create_view' | 'drop_view' | 'rollback_to_snapshot'
     catalog: str         # always 'iceberg'
     schema: str          # target schema (the authorization subject)
     table: Optional[str] # None for create_schema
@@ -292,6 +303,10 @@ def parse_statement(sql: str) -> ParsedWrite:
     if m:
         return ParsedWrite("optimize", CATALOG, m.group(1), m.group(2))
 
+    m = _RE_ROLLBACK.fullmatch(s)
+    if m:
+        return ParsedWrite("rollback_to_snapshot", CATALOG, m.group(1), m.group(2))
+
     raise ExecuteError(
         400,
         "statement not allowed: only CREATE SCHEMA IF NOT EXISTS, "
@@ -299,7 +314,7 @@ def parse_statement(sql: str) -> ParsedWrite:
         "SELECT, DROP TABLE IF EXISTS, CREATE OR REPLACE VIEW ... AS SELECT ... FROM "
         "iceberg.<schema>.<table>, DROP VIEW IF EXISTS, INSERT INTO ... SELECT, MERGE "
         "INTO ... USING ... ON ... WHEN ..., DELETE FROM ... WHERE _batch_id = '<id>', "
-        "and ALTER TABLE ... EXECUTE expire_snapshots(...)/optimize(...) "
+        "and ALTER TABLE ... EXECUTE expire_snapshots(...)/optimize(...)/rollback_to_snapshot(<id>) "
         "against iceberg.<schema>.<table> are permitted",
     )
 

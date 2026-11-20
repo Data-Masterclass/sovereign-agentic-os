@@ -257,6 +257,7 @@ With the flag on (checklist D7, D14, D15, D16):
   | File | Tools |
   |---|---|
   | `core/mcp/experimental/data-write-tools.ts` | `create_dataset` · `add_dataset_version` · `document_dataset` · `ingest_dataset` · `transform_silver` · `build_gold_join` · `define_quality_rules` · `run_quality_checks` · `propose_quality_fixes` · `apply_quality_fixes` · `set_dataset_sync` · `sync_dataset_now` · `retire_dataset` · `reconcile_domain_tables` |
+  | `tabs/data/mcp/dataset-version-tools.ts` | `get_dataset_versions` · `diff_dataset_data` · `rollback_dataset_version` · `tag_dataset_version` — a dataset's DATA versions are its Iceberg snapshots, tags and branches (WP-37; `lib/dataset-versions.ts`). The OS keeps no version record; the definition history is git (`get_history` / `get_version` / `diff_versions`). |
   | `core/mcp/experimental/promotion-write-tools.ts` | `request_promotion` · `approve_promotion` |
   | `core/mcp/experimental/exposure-write-tools.ts` | `list_exposed_tables` · `adopt_exposed_table` |
   | `tabs/admin/mcp/discovery-read-tools.ts` | `list_datasets` · `get_dataset` · `profile_dataset` · `get_sync_status` · `get_dagster_run` |

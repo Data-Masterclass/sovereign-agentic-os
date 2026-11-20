@@ -28,8 +28,6 @@ import {
   addCheck,
   updateCheckDescriptions,
   renameDataset,
-  listDatasetVersions,
-  restoreDatasetVersion,
   assetTarget,
   type Principal,
 } from '@tabs/data/lib/store';
@@ -596,50 +594,25 @@ test('delete is refused while other domains import the product (no orphaned depe
 });
 
 // ---------------------------------------------------------- version history --
+// WP-37: the OS keeps NO version records for datasets. Data versions are the Iceberg table's
+// snapshots (dataset-versions.ts); the definition history is git. Negative twin of the old
+// `os-versions-dataset` log: edits write ONLY the datasets index.
 
-test('VERSIONS: each edit snapshots the PRIOR dataset.yaml, newest first', () => {
-  const d = createDataset(amir, { name: 'Orders' });
-  // A fresh dataset has no history yet — the first edit starts it.
-  assert.equal(listDatasetVersions(d.id, amir).length, 0);
-  buildVersion(d.id, amir, 'bronze', { quality: 'passing', artifact: 'bronze/orders.dlt.yml' });
-  setDocs(d.id, amir, { description: 'first' });
-  setDocs(d.id, amir, { description: 'second' });
-  const hist = listDatasetVersions(d.id, amir);
-  // 3 edits after creation → 3 snapshots of the superseded states, newest first.
-  assert.equal(hist.length, 3);
-  assert.equal(hist[0].summary, 'edit docs');
-  assert.equal(hist[0].author, 'amir');
-  assert.deepEqual(hist.map((v) => v.version), [3, 2, 1]);
-});
-
-test('VERSIONS: restore reverts the definition and is itself an undoable version', () => {
-  const d = createDataset(amir, { name: 'Orders' });
-  setDocs(d.id, amir, { description: 'v1 description' });
-  setDocs(d.id, amir, { description: 'v2 description' });
-  assert.equal(getDataset(d.id, amir).description, 'v2 description');
-  // Version 2 snapshotted the state right before the 2nd edit → description 'v1'.
-  const before = listDatasetVersions(d.id, amir).length;
-  const restored = restoreDatasetVersion(d.id, amir, 2);
-  assert.equal(restored.description, 'v1 description');
-  assert.equal(getDataset(d.id, amir).description, 'v1 description');
-  // Restore snapshotted the live state first, so history GREW (reversible).
-  assert.equal(listDatasetVersions(d.id, amir).length, before + 1);
-  assert.match(listDatasetVersions(d.id, amir)[0].summary, /restore of v2/);
-});
-
-test('VERSIONS: history is view-scoped; a non-viewer is refused', () => {
-  const d = createDataset(amir, { name: 'Orders' });
-  setDocs(d.id, amir, { description: 'private' });
-  // kenji (finance) cannot see amir's private dataset → cannot read its history.
-  assert.throws(() => listDatasetVersions(d.id, kenji), (e: DatasetError) => e.status === 403);
-  // And a creator cannot restore a dataset they cannot edit.
-  assert.throws(() => restoreDatasetVersion(d.id, kenji, 1), (e: DatasetError) => e.status === 403);
-});
-
-test('VERSIONS: a missing version number is refused (404)', () => {
-  const d = createDataset(amir, { name: 'Orders' });
-  setDocs(d.id, amir, { description: 'x' });
-  assert.throws(() => restoreDatasetVersion(d.id, amir, 99), (e: DatasetError) => e.status === 404);
+test('VERSIONS: edits write no OS version record (no os-versions-dataset index)', async () => {
+  const os = fakeOpenSearch();
+  try {
+    await ensureHydrated();
+    const d = createDataset(amir, { name: 'Orders' });
+    buildVersion(d.id, amir, 'bronze', { quality: 'passing', artifact: 'bronze/orders.dlt.yml' });
+    setDocs(d.id, amir, { description: 'first' });
+    setDocs(d.id, amir, { description: 'second' });
+    for (let i = 0; i < 6; i++) await new Promise((r) => setTimeout(r, 0));
+    const indices = new Set([...os.docs.keys()].map((k) => k.split('\n')[0]));
+    assert.ok(indices.has('os-datasets'), 'the dataset itself is mirrored');
+    assert.ok(![...indices].some((i) => i.startsWith('os-versions-')), `no version index written: ${[...indices].join(', ')}`);
+  } finally {
+    os.restore();
+  }
 });
 
 // ------------------------------------------------- auto-docs provenance (setDocs) ---
@@ -650,8 +623,6 @@ test('AUTO-DOCS: setDocs with provenance ai-auto marks the dataset; a human save
   const drafted = setDocs(d.id, amir, { description: 'AI drafted' }, { provenance: 'ai-auto' });
   assert.equal(drafted.docsProvenance, 'ai-auto');
   assert.equal(getDataset(d.id, amir).docsProvenance, 'ai-auto');
-  // The auto write is attributed 'ai-auto-docs' in the version history (honest audit).
-  assert.equal(listDatasetVersions(d.id, amir)[0].author, 'ai-auto-docs');
   // A human save (no provenance option) CLEARS the marker.
   const human = setDocs(d.id, amir, { description: 'human reviewed' });
   assert.equal(human.docsProvenance, undefined);

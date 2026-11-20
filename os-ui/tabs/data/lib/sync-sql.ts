@@ -30,6 +30,7 @@
 import { buildImportCtas } from '@tabs/connections/lib/warehouse/import';
 import { externalTableFqn } from '@tabs/connections/lib/warehouse/catalog-props';
 import { isValidCatalogName, WarehouseError } from '@tabs/connections/lib/warehouse/types';
+import { configuredRetention } from '@tabs/data/lib/iceberg-sql';
 
 /** How a sync keeps the copy current. */
 export type SyncMode = 'full-refresh' | 'append' | 'merge';
@@ -361,9 +362,11 @@ export function kafkaFullLoadSql(input: Omit<KafkaSliceInput, 'before'>): string
   return `CREATE OR REPLACE TABLE ${targetFqn(input.target)} AS ${kafkaSliceSelect({ ...input, before: null })}`;
 }
 
-/** Iceberg snapshot maintenance: expire snapshots older than `retention` (e.g. '7d').
+/** Iceberg snapshot maintenance: expire UNTAGGED snapshots older than `retention` — by default the
+ *  configured one (`OS_ICEBERG_SNAPSHOT_RETENTION`, chart `trino.catalog.iceberg.snapshotRetention`;
+ *  WP-37). Iceberg keeps every snapshot a tag or branch points to, so a named version survives.
  *  Only the literal `<n>d`/`<n>h` forms the query-tool guard admits are accepted. */
-export function expireSnapshotsSql(target: SyncTarget, retention = '7d'): string {
+export function expireSnapshotsSql(target: SyncTarget, retention = configuredRetention()): string {
   if (!/^[0-9]+[dh]$/.test(retention)) {
     throw new WarehouseError(`sync: invalid snapshot retention '${retention}' (use e.g. '7d' or '48h')`);
   }

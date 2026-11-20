@@ -22,11 +22,13 @@ import { freeText } from '@tabs/data/lib/dbt/literal';
 import { DBT_SEMANTIC_SPEC } from '@tabs/data/lib/dbt/semantic/spec';
 import type { SemanticRender } from '@tabs/data/lib/dbt/semantic/render';
 import { TIME_SPINE_MODEL } from '@tabs/data/lib/dbt/semantic/time-spine';
+import { configuredRetention, retention } from '@tabs/data/lib/iceberg-sql';
 
 export const PROFILE_NAME = 'sovereign';
 
-/** `dbt_project.yml` — per-layer and per-personal-lane schemas. */
-export function renderDbtProject(domain: string, plan: ModelPlanSet): string {
+/** `dbt_project.yml` — per-layer and per-personal-lane schemas, and the snapshot retention the
+ *  maintenance macro applies (WP-37: configurable, never expires a tagged version). */
+export function renderDbtProject(domain: string, plan: ModelPlanSet, snapshotRetention: string = configuredRetention()): string {
   const name = domainSchema(domain);
   const layers: Record<string, unknown> = {};
   for (const l of plan.layerDirs) {
@@ -46,6 +48,7 @@ export function renderDbtProject(domain: string, plan: ModelPlanSet): string {
     'macro-paths': ['macros'],
     'test-paths': ['tests'],
     'clean-targets': ['target', 'dbt_packages'],
+    vars: { snapshot_retention: retention(snapshotRetention) },
     models: {
       [name]: {
         '+materialized': 'table',
@@ -149,15 +152,20 @@ export function renderMacros(): Map<string, string> {
         '{#- Sovereign OS Iceberg maintenance: `ALTER TABLE … EXECUTE optimize` + `expire_snapshots` for every',
         '    table / incremental model in `schema` (all schemas when none). Run weekly by the Dagster code',
         '    location as the schema\'s owning principal: `dbt run-operation os_maintenance --args \'{"schema": …}\'`.',
-        '    The retention is fixed (Trino\'s default minimum) — nothing user-controlled is interpolated. -#}',
+        '    Untagged snapshots older than the `snapshot_retention` var (dbt_project.yml) are expired; a',
+        '    snapshot an Iceberg tag or branch points to is always kept. The value must be `<n>d` or `<n>h`. -#}',
         '{% macro os_maintenance(schema=none) %}',
+        "{%- set keep = var('snapshot_retention', '7d') | string -%}",
+        "{%- if not modules.re.match('^[0-9]{1,5}[dh]$', keep) -%}",
+        "{{ exceptions.raise_compiler_error('os_maintenance: snapshot_retention must be <n>d or <n>h, got ' ~ keep) }}",
+        '{%- endif -%}',
         '{%- if execute -%}',
         "{%- for node in graph.nodes.values() | selectattr('resource_type', 'equalto', 'model') -%}",
         "{%- if node.config.materialized in ('table', 'incremental') and (schema is none or node.schema == schema) -%}",
         '{%- set rel = adapter.get_relation(database=node.database, schema=node.schema, identifier=node.alias) -%}',
         '{%- if rel is not none -%}',
         '{%- do run_query("alter table " ~ rel ~ " execute optimize") -%}',
-        '{%- do run_query("alter table " ~ rel ~ " execute expire_snapshots(retention_threshold => \'7d\')") -%}',
+        '{%- do run_query("alter table " ~ rel ~ " execute expire_snapshots(retention_threshold => \'" ~ keep ~ "\')") -%}',
         '{%- do log("os_maintenance: " ~ rel, info=true) -%}',
         '{%- endif -%}',
         '{%- endif -%}',

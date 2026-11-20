@@ -40,7 +40,6 @@ import { config } from '@core/kernel/config';
 import { osMirror } from '@core/infra/os-mirror';
 import { mirrorRefresher, newMirrorRefresh, type MirrorRefreshState } from '@core/infra/mirror-refresh';
 import { newSeenFields, noteSeen, writeDeleted, writeNew, writeMergedYaml, type SeenFields } from '@core/infra/field-writes';
-import { type ArtifactVersion, versionLog } from '@core/kernel/versioning';
 // The GOVERNED folder registry (Wave 1) — a moved-into folder is upserted as an
 // explicit row so it persists even when empty. Reused, never forked (mirrors Files).
 import { createFolder, type FolderScope, type Principal as FolderPrincipal } from '@core/folders/index';
@@ -224,19 +223,11 @@ const DATASET_YAML = {
   serialize: (doc: object): string => serializeDataset(doc as Dataset),
 };
 
-/**
- * Version history for datasets. Datasets are NOT git-backed (no per-dataset Forgejo
- * repo — the medallion builds live in the store + durable mirror), so they ride the
- * SAME append-only snapshot log every non-git artifact shares (files/dashboards/…).
- * Each meaningful edit snapshots the PRIOR `dataset.yaml` before it is overwritten,
- * so "restore a previous version" reverts the dataset definition (and is itself an
- * auditable, reversible version). Its own `os-versions-dataset` mirror.
+/*
+ * No OS version log for datasets (WP-37, design 10 F13). A dataset's DATA versions are its Iceberg
+ * table's snapshots, tags and branches (`dataset-versions.ts`); its DEFINITION history is the
+ * domain repository's git log (`get_history` / `get_version` / `diff_versions`).
  */
-const versions = versionLog('dataset');
-
-function snapshotState(rec: DatasetRecord): { yaml: string } {
-  return { yaml: rec.yaml };
-}
 
 /**
  * Hydrate the in-process cache from the durable mirror, once per process. Awaited
@@ -322,8 +313,6 @@ async function hydrate(): Promise<void> {
       s.seenYaml.set(rec.id, rec.yaml);
     }
   }
-  // Hydrate the snapshot version log alongside the datasets (best-effort).
-  await versions.ensureHydrated();
   s.seeded = true;
 }
 
@@ -409,7 +398,6 @@ export function __resetStore(): void {
   s.hydratedAt = undefined;
   s.refresh = newMirrorRefresh();
   mirror.__reset();
-  versions.__reset();
 }
 
 /**
@@ -537,11 +525,6 @@ function persist(
   snap?: { author: string; summary: string },
   change?: { actor: string; action: string },
 ): DatasetRecord {
-  // Capture the PRIOR dataset.yaml as a version BEFORE overwriting it, so the
-  // history holds every superseded definition (mirrors lib/files/store.ts). Only
-  // user-facing edits pass `snap`; lifecycle/promotion flips (own governance trail)
-  // don't churn the version log.
-  if (snap && rec.yaml) versions.record(rec.id, snap.author, snapshotState(rec), snap.summary);
   rec.yaml = serializeDataset(d);
   rec.owner = d.owner;
   rec.domain = d.domain;
@@ -2082,44 +2065,8 @@ export function deleteDataset(id: string, user: Principal): Dataset {
   ds().seenYaml.delete(id);
   writeDeleted(mirror, ds().seen, id);
   refresher.noteDeleted(id); // a listing read before the delete landed must not bring it back
-  versions.purge(id); // forget + delete-through the snapshot history
   emitProjectChange({ domain: d.domain, datasetId: d.id, action: 'retire', actorId: user.id });
   return d;
-}
-
-// ----------------------------------------------------------- version history --
-
-/** Version history for a dataset, newest first (view-scoped). Snapshot-backed —
- *  datasets are not git-backed, so this is the honest fallback log. */
-export function listDatasetVersions(id: string, user: Principal): ArtifactVersion[] {
-  const rec = get(id);
-  viewOf(rec, user); // view-scoped: any viewer may see the history
-  return versions.list(id);
-}
-
-/**
- * Restore a prior version of a dataset's definition (`dataset.yaml`). Auditable +
- * reversible: the CURRENT state is snapshotted as a new version FIRST, then the
- * chosen version's yaml is validated and applied. Edit-scoped (owner or domain
- * admin) — a governed state change on the same authorize/trace spine as every edit.
- */
-export function restoreDatasetVersion(id: string, user: Principal, version: number): Dataset {
-  const rec = get(id);
-  editOf(rec, user); // edit gate (throws 403 if not permitted)
-  const snap = versions.get(id, version);
-  if (!snap) fail(`Version ${version} not found`, 404);
-  const s = snap.state as { yaml?: string };
-  if (typeof s.yaml !== 'string') fail(`Version ${version} has no restorable source`, 422);
-  const restored = parseDataset(s.yaml); // validate before applying — never go live with corrupt state
-  // Snapshot the live state first so the restore can itself be undone.
-  versions.record(id, user.id, snapshotState(rec), `restore of v${version}`);
-  rec.yaml = s.yaml;
-  rec.owner = restored.owner;
-  rec.domain = restored.domain;
-  rec.updatedAt = now();
-  writeThrough(rec);
-  emitProjectChange({ domain: restored.domain, datasetId: restored.id, action: `restore version ${version}`, actorId: user.id });
-  return restored;
 }
 
 // --------------------------------------------------------------------- files --

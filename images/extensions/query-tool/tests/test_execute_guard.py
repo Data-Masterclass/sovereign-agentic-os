@@ -341,6 +341,40 @@ class SyncWriteTests(unittest.TestCase):
             403,
         )
 
+    # WP-37: a dataset restore is Iceberg's own rollback_to_snapshot, with a literal id only.
+    def test_rollback_to_snapshot_ok(self):
+        p = guard(
+            "ALTER TABLE iceberg.personal_lena.gold_orders_ab12 EXECUTE "
+            "rollback_to_snapshot(8954597067493422955)",
+            **CREATOR,
+        )
+        self.assertEqual(p.kind, "rollback_to_snapshot")
+        self.assertEqual(p.table, "gold_orders_ab12")
+
+    def test_rollback_domain_needs_builder(self):
+        self._reject(
+            "ALTER TABLE iceberg.sales.gold_orders EXECUTE rollback_to_snapshot(123456789)",
+            403, ident=CREATOR,
+        )
+        p = guard("ALTER TABLE iceberg.sales.gold_orders EXECUTE rollback_to_snapshot(123456789)", **BUILDER)
+        self.assertEqual(p.kind, "rollback_to_snapshot")
+
+    def test_rollback_cross_schema_rejected(self):
+        self._reject(
+            "ALTER TABLE iceberg.marketing.gold_orders EXECUTE rollback_to_snapshot(123456789)",
+            403,
+        )
+
+    def test_rollback_non_literal_rejected(self):
+        for bad in (
+            "ALTER TABLE iceberg.personal_lena.t EXECUTE rollback_to_snapshot(1 + 1)",
+            "ALTER TABLE iceberg.personal_lena.t EXECUTE rollback_to_snapshot('1')",
+            "ALTER TABLE iceberg.personal_lena.t EXECUTE rollback_to_snapshot(snapshot_id => (select 1))",
+            "ALTER TABLE iceberg.personal_lena.t EXECUTE rollback_to_snapshot()",
+        ):
+            with self.subTest(bad=bad):
+                self._reject(bad, 400)
+
     def test_optimize_ok(self):
         p = guard("ALTER TABLE iceberg.sales.bronze_orders EXECUTE optimize", **BUILDER)
         self.assertEqual(p.kind, "optimize")
