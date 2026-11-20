@@ -245,18 +245,26 @@ export const ALLOWED_INGRESS_ANNOTATIONS: readonly string[] = ['cert-manager.io/
 /** The volume types an app pod may use. Anything else (hostPath, csi, nfs, …) is refused. */
 const ALLOWED_VOLUME_TYPES = new Set(['emptyDir', 'configMap', 'secret', 'projected', 'downwardAPI']);
 
-/** An app's own Secrets are named `app-<slug>-<suffix>`; never its TLS secret, a pull secret or another app's. */
+/**
+ * An app's own Secrets are named `app-<slug>.<name>`. The `.` is a delimiter a slug can never contain
+ * (slugs are `[a-z0-9-]`), so app `demo` can never claim `app-demo-x.env` of app `demo-x`. Never its
+ * TLS secret, a pull secret or another app's.
+ */
+export function ownSecretPrefix(slug: string): string {
+  return `app-${slug}.`;
+}
+
 export function isOwnSecret(secretName: unknown, slug: string): boolean {
   const n = String(secretName ?? '');
-  const prefix = `${runnerName(slug)}-`;
-  return n.startsWith(prefix) && n.length > prefix.length && !n.endsWith('-tls');
+  const prefix = ownSecretPrefix(slug);
+  return /^[a-z0-9][a-z0-9-]*$/.test(slug) && n.startsWith(prefix) && n.length > prefix.length && !n.slice(prefix.length).includes('.') && !n.endsWith('-tls');
 }
 
 function podIssues(pod: Obj | undefined, slug: string, bad: (r: string) => void): void {
   if (!pod) return;
   if (pod.imagePullSecrets !== undefined) bad('imagePullSecrets are not allowed (pull credentials belong to the namespace\'s default ServiceAccount)');
   const own = (n: unknown, what: string) => {
-    if (!isOwnSecret(n, slug)) bad(`${what} names Secret '${String(n ?? '')}'; an app may reference only its own Secrets (${runnerName(slug)}-<name>)`);
+    if (!isOwnSecret(n, slug)) bad(`${what} names Secret '${String(n ?? '')}'; an app may reference only its own Secrets (${ownSecretPrefix(slug)}<name>)`);
   };
   for (const v of (pod.volumes ?? []) as Obj[]) {
     const types = Object.keys(v).filter((k) => k !== 'name');

@@ -29,7 +29,7 @@ import { resolveSurface } from '@tabs/software/lib/metadata';
 import { ungrantedDatasetWarningForApp } from '@tabs/software/lib/dataset-guard';
 import { getSnapshot, hydrateSnapshot } from '@tabs/software/lib/snapshot';
 import { assertNotSeeded } from '@tabs/software/lib/seeded-evidence';
-import { readAppTreeState } from '@tabs/software/lib/git-commit';
+import { readAppTreeState, appProjectGitEnabled } from '@tabs/software/lib/git-commit';
 import { deployApp, runnerStatus, type RunnerApp, type RunnerOpts, type RunnerOutcome, type RunnerStatus } from '@tabs/software/lib/runner';
 import { roleAtLeast } from '@core/kernel/session';
 import { config } from '@core/kernel/config';
@@ -153,6 +153,43 @@ async function currentAppSha(app: App): Promise<string | null> {
   if (serveModeOf(app) !== 'image') return null;
   const state = await readAppTreeState(app);
   return state.kind === 'tree' && state.sha ? state.sha : null;
+}
+
+/**
+ * PIN FIRST. The commit a deploy request is for: the app's current commit in git; or, when git holds
+ * no tree for the app yet (a fresh scaffold lives only in the file cache), that tree committed now as
+ * the requester, so the review and the deploy both read one commit. `null` when there is no git.
+ */
+async function pinCommitForReview(app: App, user: CurrentUser): Promise<string | null> {
+  if (serveModeOf(app) !== 'image' || !appProjectGitEnabled()) return null;
+  const state = await readAppTreeState(app);
+  if (state.kind === 'tree') return state.sha || null;
+  if (state.kind === 'failed') return null; // pinnedTreeForReview refuses with the reason below
+  const { commitAppTree } = await import('@tabs/software/lib/git-commit');
+  const out = await commitAppTree(app, user, await appFilesForScan(app), { action: 'request_deploy', reason: 'pin the reviewed tree' });
+  return out.ok && out.recorded ? out.sha : null;
+}
+
+/** The app tree at the pinned commit, read from git; a review of anything else is refused. */
+async function pinnedTreeForReview(app: App, sha: string | null): Promise<ScaffoldFile[]> {
+  const state = sha ? await readAppTreeState(app, { ref: sha }) : null;
+  if (!sha || !state || state.kind !== 'tree' || state.truncated) {
+    throw withStatus(
+      new Error(
+        'This app has no readable commit in its domain repository, so there is nothing to review: an image app is ' +
+          'reviewed and deployed only as a git commit. Commit the app (push_app_files), then request the deploy again.',
+      ),
+      409,
+    );
+  }
+  return state.files;
+}
+
+/** True when the app's tree is still at the commit a review was filed for. */
+async function stillAtReviewedCommit(app: App, cardSha: string | null | undefined): Promise<boolean> {
+  // No domain git: nothing is pinned and nothing can deploy (deployApproved needs an approved commit).
+  if (serveModeOf(app) !== 'image' || !appProjectGitEnabled()) return true;
+  return !!cardSha && (await currentAppSha(app)) === cardSha;
 }
 
 export const APPROVAL_REQUIRED_NOTE =
@@ -412,7 +449,14 @@ export async function requestDeploy(
 
   // The files under review: the app's durable source tree (what will actually ship —
   // editor saves + governed commits included).
-  const files = await appFilesForScan(app);
+  // WP-54 follow-up (TOCTOU): PIN THE COMMIT FIRST, then review exactly that commit as git holds
+  // it. For an image app the scan, the diff and the card are built from the git tree at `sha` —
+  // never the OS file cache — so what the Builder reads is byte-identical to what deploys.
+  const sha = await pinCommitForReview(app, user);
+  // With no domain git at all (DATA_PROJECT_GIT off: a laptop or unit harness) there is no commit to
+  // pin and the runner can deploy nothing (it applies only an approved commit); the card then shows
+  // the cache, and says nothing is pinned (`sha: null`).
+  const files = serveModeOf(app) === 'image' && appProjectGitEnabled() ? await pinnedTreeForReview(app, sha) : await appFilesForScan(app);
 
   // Resolve the app's UI/API surface at deploy from the code + manifest the agent
   // wrote (the deploy manifest reveals whether it binds a web server vs only an
@@ -457,7 +501,6 @@ export async function requestDeploy(
   // WP-54: for an IMAGE app only when nothing new was committed (HEAD is the approved commit, so
   // the re-apply is of approved manifests) — a new commit carries new k8s/ manifests, and only a
   // Builder's approval of that commit may apply them. Spec/runtime apps are served by the OS.
-  const sha = await currentAppSha(app);
   const image = serveModeOf(app) === 'image';
   const approvedCommit = !image || (!!sha && sha === app.deploy.approvedSha);
   if (approvedCommit && app.deploy.state === 'live' && !broadened && scan.passed && warnings.length === 0) {
@@ -741,6 +784,17 @@ export async function decideDeploy(
   let uncovered: ScanCategory[] | null = null;
 
   if (decision === 'approve') {
+    // WP-54 follow-up (TOCTOU): the approval is of the commit the Builder reviewed. A new commit
+    // since the scan invalidates it — re-request so the new commit is scanned and reviewed.
+    if (!(await stillAtReviewedCommit(app, card.sha))) {
+      throw withStatus(
+        new Error(
+          `Cannot approve: the app changed since this review (reviewed commit ${String(card.sha ?? 'none').slice(0, 12)}). ` +
+            'Request the deploy again so the new commit is scanned and reviewed. Nothing was deployed.',
+        ),
+        409,
+      );
+    }
     const gate = scanGate(card.scan);
     if (gate.kind !== 'passed') {
       // THREE different facts, and an approver must be told which: something was FOUND, NOTHING
@@ -951,6 +1005,8 @@ export async function reconcileDeployApproval(app: App): Promise<boolean> {
 
     if (decided.status === 'approved') {
       const card = cards().get(cardId);
+      // The same TOCTOU rule: an approval of a commit that is no longer the app's tree applies nothing.
+      if (!(await stillAtReviewedCommit(app, card?.sha))) return false;
       await applyDeployDecisionToApp(app, 'approve', card?.requested ?? null, card?.sha ?? null);
     } else {
       await applyDeployDecisionToApp(app, 'deny', null);
