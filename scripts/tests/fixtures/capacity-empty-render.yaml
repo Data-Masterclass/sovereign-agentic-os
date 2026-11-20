@@ -1,0 +1,58 @@
+# WP-47 negative twin: every component switched off, so the chart renders no long-running
+# workload. A sum of nothing is not a pass; check-capacity.mjs must FAIL on this overlay.
+priorityClasses:
+  enabled: false
+ingress:
+  enabled: false
+objectStorage:
+  enabled: false
+postgres:
+  enabled: false
+valkey:
+  enabled: false
+clickhouse:
+  enabled: false
+langfuse:
+  enabled: false
+mockModel:
+  enabled: false
+stackitPremium:
+  enabled: false
+litellmAgentKey:
+  enabled: false
+litellm:
+  enabled: false
+opensearch:
+  enabled: false
+opensearchSnapshots:
+  enabled: false
+opa:
+  enabled: false
+docling:
+  enabled: false
+dagster:
+  enabled: false
+dbt:
+  enabled: false
+marts:
+  enabled: false
+egressProxy:
+  enabled: false
+webFetch:
+  enabled: false
+softwareRunner:
+  enabled: false
+connections:
+  enabled: false
+polaris:
+  enabled: false
+queryTool:
+  enabled: false
+dataRunner:
+  enabled: false
+serviceBearer:
+  enabled: false
+trino:
+  enabled: false
+osUI:
+  enabled: false
