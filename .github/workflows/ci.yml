@@ -162,6 +162,7 @@ jobs:
           bash scripts/tests/deploy-data-runner-image.test.sh
           bash scripts/tests/rollback-runner-guard.test.sh
           bash scripts/tests/image-label.test.sh
+          bash scripts/tests/dagster-layout-check.test.sh
 
       # Generates the code map and fails if the generator cannot (a broken
       # manifest, an unreadable tab). Deliberately NOT `--check`: comparing a

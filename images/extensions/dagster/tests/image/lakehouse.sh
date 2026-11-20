@@ -112,21 +112,58 @@ CO="$WORK/checkout"; mkdir -p "$CO/sales" "$CO/tampered"
 git clone -q "$WORK/origin" "$CO/sales/$SHA" && ln -s "$SHA" "$CO/sales/current"
 git clone -q "$WORK/origin" "$CO/tampered/$SHA" && ln -s "$SHA" "$CO/tampered/current"
 printf '\nimport os\n' >> "$CO/tampered/$SHA/data/dagster/definitions.py"
+# NOT MIGRATED (every live repo while `layout.migration` is off): the dbt project at the root, no
+# os/layout.yml, no Dagster module. One with syncs in os/schedules.yml, and one shaped like the live
+# kiekert repo (file-upload bronze, pass-through layers, no os/schedules.yml: maintenance only).
+FIX="$REPO/os-ui/tabs/data/lib/dbt/fixtures"
+for pair in "legacy-syncs:append-sync-with-cursor" "legacy-files:ingested-pass-through"; do
+  d="${pair%%:*}"; g="${pair#*:}"
+  lsha="$(python3 "$HERE/repo_v2.py" "$FIX/$g.golden.json" "$WORK/$d-origin" --v1)"
+  mkdir -p "$CO/$d" && git clone -q "$WORK/$d-origin" "$CO/$d/$lsha" && ln -s "$lsha" "$CO/$d/current"
+done
 chmod -R a+rwX "$CO"
 out="$(docker run --rm --network none -v "$CO:/repos-checkout" -w /opt/dagster/app -e HOME=/tmp -e REPO_SYNC_CHECKOUT=/repos-checkout "$IMAGE" sh -c '
-  for d in sales tampered; do python3 os_projects.py --parse /repos-checkout/$d/current/data/dbt >/dev/null || exit 3; done
+  for d in sales tampered legacy-syncs legacy-files; do python3 os_projects.py --parse /repos-checkout/$d/current >/dev/null || exit 3; done
   dagster definitions validate -f repo.py 2>&1 | tail -5
   python3 - <<PY
-import json, logging, repo
+import json, logging, os, re, repo, yaml
 s = repo.defs.get_schedule_def("sales__ds_shop0001")
 env = {e["name"]: e["value"] for e in json.loads(s.tags["dagster-k8s/config"])["container_config"]["env"]}
 print("schedule env", env["OS_PRINCIPAL"], env["DESTINATION__SQLALCHEMY__CREDENTIALS__USERNAME"], env["OS_PINNED_COMMITS"].split("=")[0])
 print("domains", sorted({k.path[0] for k in repo.defs.resolve_all_asset_keys()}))
 print("sensors", sorted(x.name for x in repo.defs.sensors))
+# The LEGACY expectation, computed from the repo files alone (not from the loader under test): one
+# schedule per os/schedules.yml entry, one weekly maintenance per schema the manifest writes.
+have = {x.name for x in repo.defs.schedules}
+for d in ("legacy-syncs", "legacy-files"):
+    root = os.path.realpath(f"/repos-checkout/{d}/current")
+    dom = re.sub(r"[^A-Za-z0-9_]", "_", d)
+    want = set()
+    sched = os.path.join(root, "os", "schedules.yml")
+    if os.path.isfile(sched):
+        want |= {f"{dom}__{re.sub(r'[^A-Za-z0-9_]', '_', e['dataset'])}" for e in yaml.safe_load(open(sched))["schedules"]}
+    nodes = json.load(open(os.path.join(root, "target", "manifest.json")))["nodes"].values()
+    for n in nodes:
+        if n.get("resource_type") != "model":
+            continue
+        owner = ((n.get("config") or {}).get("meta") or {}).get("os_owner") or (n.get("meta") or {}).get("os_owner")
+        if n["schema"].startswith("personal_") and not owner:
+            continue
+        want.add(f"{dom}__maintenance__{re.sub(r'[^A-Za-z0-9_]', '_', n['schema'])}_weekly")
+    got = {x for x in have if x.startswith(dom + "__")}
+    print("legacy", d, "want", len(want), "got", len(got), "missing", sorted(want - got))
 PY' 2>&1)"
-if echo "$out" | grep -q "schedule env alice alice sales" && echo "$out" | grep -q "domains \['sales'\]" && echo "$out" | grep -q "differs from the OS-generated"; then
+if echo "$out" | grep -q "schedule env alice alice sales" && echo "$out" | grep -q "differs from the OS-generated"; then
   ok "wrapper loads the repo's definitions, adds the run-pod env, refuses the tampered copy (C5)"
 else bad "platform wrapper"; echo "$out" | tail -25; fi
+for d in legacy-syncs legacy-files; do
+  line="$(echo "$out" | grep "^legacy $d ")"
+  case "$line" in
+    *"missing []"*) n="${line#* want }"; n="${n%% got*}"
+      [ "$n" -gt 0 ] && ok "unmigrated $d (v1, the live shape): every schedule kept on the legacy path ($line)" || bad "unmigrated $d: expected at least one schedule ($line)";;
+    *) bad "unmigrated $d lost schedules: ${line:-no report}"; echo "$out" | tail -20;;
+  esac
+done
 
 # ---------------------------------------------------------------- 2. eject: dagster dev + materialize
 rm -rf "$WORK/clone/os"   # no OS layer at all

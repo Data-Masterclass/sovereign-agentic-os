@@ -46,7 +46,9 @@ before(() => {
 /** A v1 domain repo: the golden's dbt project at the root + a shared and a personal agent system,
  *  with a SECOND commit that changes one model (so there is history to follow). */
 async function seedV1(domain: string): Promise<{ project: Map<string, string>; model: string }> {
-  const project = golden('composition-with-tests.golden.json');
+  // What the data generator commits into a v1 repo: the golden WITHOUT the WP-49 Dagster module
+  // and its hash record (`relocateProject` writes those only into a v2 repo — they read data/dbt).
+  const project = new Map([...golden('composition-with-tests.golden.json')].filter(([p]) => !p.startsWith('data/dagster/') && p !== 'os/generated.yml'));
   const model = [...project.keys()].find((p) => p.startsWith('models/') && p.endsWith('.sql'))!;
   const lane = legacyPersonalAgentLane('alice@example.com');
   const tree = new Map(project);

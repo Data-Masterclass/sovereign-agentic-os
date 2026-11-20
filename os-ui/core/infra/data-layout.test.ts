@@ -18,6 +18,7 @@ const PY = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', '..'
 test('os_projects.py uses the same definitions, dbt and hash paths as repo-layout.ts', () => {
   assert.equal(DATA_LAYOUT.dagsterDefinitionsPath, 'data/dagster/definitions.py');
   assert.match(PY, new RegExp(`^DAGSTER_DEFINITIONS_PATH = "${DATA_LAYOUT.dagsterDefinitionsPath}"$`, 'm'));
-  assert.match(PY, new RegExp(`os\\.environ\\.get\\("OS_DBT_PROJECT_DIR", "${DATA_LAYOUT.dbtProjectDir}"\\)`));
+  // The image reads the dbt dir from the repo's own layout marker (WP-55); its default is this one.
+  assert.match(PY, new RegExp(`^DEFAULT_DBT_PROJECT_DIR = "${DATA_LAYOUT.dbtProjectDir}"$`, 'm'));
   assert.match(PY, new RegExp(`^GENERATED_PATH = "${DATA_LAYOUT.generatedHashesPath}"$`, 'm'));
 });
