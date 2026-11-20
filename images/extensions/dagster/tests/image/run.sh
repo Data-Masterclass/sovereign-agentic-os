@@ -22,6 +22,7 @@ if [ "$ONLY" = "lakehouse" ]; then exec sh "$REPO/images/extensions/dagster/test
 if [ "$ONLY" != "eject" ]; then
   echo "== image tests in $IMAGE"
   docker run --rm -v "$REPO:/src:ro" -e SRC=/src "$IMAGE" python3 /src/images/extensions/dagster/tests/image/test_image.py
+  docker run --rm -v "$REPO:/src:ro" -e SRC=/src "$IMAGE" python3 /src/images/extensions/dagster/tests/image/test_metricflow.py
 fi
 [ "$ONLY" != "image" ] || exit 0
 
