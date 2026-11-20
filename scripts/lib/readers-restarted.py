@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
-"""readers-restarted.py — does a Deployment now serve ONLY from pods started after the last deploy?
+"""readers-restarted.py — does a Deployment now serve ONLY from pods started after a given time?
 
-  readers-restarted.py <deployment.json> <replicasets.json> <pods.json> <last_deployed ISO time>
+  readers-restarted.py <deployment.json> <replicasets.json> <pods.json> <since: ISO time — when the Secrets it reads last changed>
 
 The JSON files are `kubectl get deploy <d> -o json` (EMPTY when the Deployment does not exist),
 `kubectl get rs -l <selector> -o json` and `kubectl get pods -l <selector> -o json`.
@@ -15,7 +15,7 @@ PASS (exit 0) only when ALL hold:
   * the current ReplicaSet exists (owned by the Deployment, revision == the Deployment's revision);
   * no pod of ANY OTHER ReplicaSet of this Deployment is still Running or Terminating — an old pod
     still serves the old value;
-  * every pod of the current ReplicaSet that is not finished is Ready, and started after the deploy.
+  * every pod of the current ReplicaSet that is not finished is Ready, and started after <since>.
 SKIP (exit 2) only when spec.replicas == 0. Everything else FAILS (exit 1), a missing Deployment
 included. Pods not owned by a ReplicaSet of this Deployment (a one-off Job pod with the same labels)
 are not readers and are ignored; the output says how many. Prints one line.
@@ -76,8 +76,8 @@ def verdict(dep, rss, pods, deployed):
     since = ts(deployed)
     stale = [p["metadata"]["name"] for p in cur if not (p.get("status") or {}).get("startTime") or ts(p["status"]["startTime"]) <= since]
     if stale:
-        return 1, f"{name}: pod(s) started before the last deploy: {', '.join(stale)}"
-    return 0, f"{name}: rollout complete, all {len(cur)} pod(s) Ready and started after the last deploy{note}"
+        return 1, f"{name}: pod(s) started before the Secrets it reads changed: {', '.join(stale)}"
+    return 0, f"{name}: rollout complete, all {len(cur)} pod(s) Ready and started after the Secrets it reads changed{note}"
 
 
 def load(path):
