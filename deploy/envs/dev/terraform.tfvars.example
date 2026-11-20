@@ -14,5 +14,5 @@ service_account_key_path = "../../../stackit/dev-sa-key.json"
 # kubernetes_version_min = "1.35"   # = production
 # node_machine_type      = "g2i.8"  # 8 vCPU / 32 GB, EUR 294.60/month
 # node_volume_size_gb    = 100
-# dns_name               = "dev.agentic.datamasterclass.com"   # record added at Cloudflare
-# ingress_subdomains     = ["os"]
+# dns_name               = "dev.sovereign-agentic.com"   # A record added in Route 53
+# ingress_subdomains     = [""]   # "" = the dns_name itself

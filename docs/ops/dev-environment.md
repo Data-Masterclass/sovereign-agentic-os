@@ -12,7 +12,7 @@ it. Production gets a release only after the same commit was green on dev
 ([`ci-cd.md`](ci-cd.md)).
 
 - **Separate.** Dev has its own STACKIT project, its own SKE cluster with one node, its own
-  network and router, its own public IP and hostname (`os.dev.agentic.datamasterclass.com`), its
+  network and router, its own public IP and hostname (`dev.sovereign-agentic.com`), its
   own bucket and credentials, and its own Terraform state. Nothing peers with or routes to
   production.
 - **Real.** It runs the same chart and the same pinned images as production, with smaller
@@ -33,7 +33,7 @@ merge to main ─▶ ci.yml green ─▶ dev.yml: build os-ui:main-<sha> ─▶ 
 | Piece | File |
 |---|---|
 | Infrastructure (own state, own project) | `deploy/envs/dev/` |
-| DNS: one record at Cloudflare, which serves the public zone (not Terraform; see below) | `tofu -chdir=deploy/envs/dev output dns_record` |
+| DNS: one A record in Route 53, zone `sovereign-agentic.com` (not Terraform; see below) | `tofu -chdir=deploy/envs/dev output dns_record` |
 | Chart profile | `values.dev.yaml`, optionally `values.dev.model-stub.yaml` |
 | Node budget for the capacity gate | `charts/sovereign-agentic-os/capacity.dev.yaml` |
 | The env and context guard (dev can never reach prod) | `scripts/lib/env-guard.sh` |
@@ -98,7 +98,7 @@ apply, replace it with the value from `kubectl --context dmagosdev describe node
 | Public IPv4, ingress | 2.92 |
 | Network Load Balancer, smallest SKU (10k connections; the SKU SKE picks is inferred) | 9.39 |
 | Object storage, about 10 GB at 0.027 per GB (no base fee listed) | 0.27 |
-| DNS: a record in the existing Cloudflare zone | 0 |
+| DNS: a record in the existing Route 53 zone `sovereign-agentic.com` | 0 |
 | **Infrastructure total, `g2i8`** | **≈ 415.63** |
 | Infrastructure total, `m2i4` (node line 194.67) | ≈ 315.70 |
 | Model tokens: LiteLLM caps the dev keys at 5 a week shared plus 1 a week per agent system | at most ≈ 22 at full use |
@@ -136,14 +136,14 @@ tofu -chdir=$D plan \
   -target=stackit_objectstorage_credential.dev \
   -out=dev.tfplan                                  # review: "Plan: 6 to add, 0 to change, 0 to destroy"
 tofu -chdir=$D apply dev.tfplan                    # applies exactly the reviewed, targeted plan
-tofu -chdir=$D output dns_record                   # os.dev.agentic.datamasterclass.com  A  <ip>
+tofu -chdir=$D output dns_record                   # dev.sovereign-agentic.com  A  <ip>
 ```
 
 **DNS is one manual record.** The public zone `datamasterclass.com` is served by **Cloudflare**.
 This was checked on 2026-11-20: `dig NS datamasterclass.com` returns `*.ns.cloudflare.com`, and
 `agentic.datamasterclass.com` is not delegated to STACKIT. So the STACKIT zone in
 `deploy/terraform/dns.tf` is not the one the internet asks, and production's Terraform is not
-touched. In Cloudflare, add `os.dev.agentic.datamasterclass.com`, type **A**, set to the IP
+touched. Dev uses its own domain (owner decision 2026-11-20): in **Route 53**, zone `sovereign-agentic.com`, add `dev.sovereign-agentic.com`, type **A**, set to the IP
 above, as **DNS only** (not proxied, so that cert-manager's HTTP-01 challenge reaches the
 cluster).
 
@@ -280,7 +280,7 @@ data.
 ## Teardown (documented, never run by an agent)
 
 The dev module has its own state, so a teardown can only reach dev resources. First delete the
-Cloudflare record `os.dev.agentic.datamasterclass.com`.
+Route 53 record `dev.sovereign-agentic.com`.
 
 ```bash
 tofu -chdir=deploy/envs/dev destroy \

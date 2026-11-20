@@ -31,13 +31,13 @@ output "ingress_public_ip" {
 }
 
 output "dns_record" {
-  description = "The ONE DNS record the owner adds at Cloudflare (DNS only, not proxied)."
-  value       = "${var.ingress_subdomains[0]}.${var.dns_name}  A  ${stackit_public_ip.ingress.ip}"
+  description = "The ONE DNS record the owner adds in Route 53, zone sovereign-agentic.com."
+  value       = "${var.ingress_subdomains[0] == "" ? var.dns_name : "${var.ingress_subdomains[0]}.${var.dns_name}"}  A  ${stackit_public_ip.ingress.ip}"
 }
 
 output "ingress_hostnames" {
   description = "Fully qualified dev hostnames."
-  value       = { for s in var.ingress_subdomains : s => "${s}.${var.dns_name}" }
+  value       = { for s in var.ingress_subdomains : (s == "" ? "apex" : s) => (s == "" ? var.dns_name : "${s}.${var.dns_name}") }
 }
 
 output "object_storage_endpoint" {
