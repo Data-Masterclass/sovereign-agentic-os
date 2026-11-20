@@ -162,10 +162,24 @@ jobs:
         run: |
           node scripts/check-opensearch-client.mjs
           bash scripts/tests/check-opensearch-client.test.sh
-      - name: Start the stack (our image, SeaweedFS, egress proxy)
+      - name: Chart dependencies
         run: |
           pip install "pyyaml>=6,<7"
           helm dependency build charts/sovereign-agentic-os || helm dependency update charts/sovereign-agentic-os
+      # Cleanup is opt-in (a plain release renders no cleanup Job), placeholders refuse to render,
+      # and `--dry-run=server` checks the keystore Secret's exact keys against a real API server.
+      - name: Chart guards (kind, helm --dry-run=server)
+        env:
+          CI: 'true'
+          WP21_KUBE_CONTEXT: kind-wp21
+        run: |
+          curl -sSLo /tmp/kind https://github.com/kubernetes-sigs/kind/releases/download/v0.30.0/kind-linux-amd64
+          echo "517ab7fc89ddeed5fa65abf71530d90648d9638ef0c4cde22c2c11f8097b8889  /tmp/kind" | sha256sum -c -
+          chmod +x /tmp/kind && /tmp/kind create cluster --name wp21 --wait 120s
+          bash scripts/tests/opensearch-chart.test.sh
+          /tmp/kind delete cluster --name wp21
+      - name: Start the stack (our image, SeaweedFS, egress proxy)
+        run: |
           sudo sysctl -w vm.max_map_count=262144
           bash tests/opensearch/up.sh
       - name: os-snapshot + os-cleanup (real OpenSearch)

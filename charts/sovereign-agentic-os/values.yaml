@@ -775,13 +775,17 @@ opensearchClient:
   credentialsSecret: ""
 
 # One-time removal of indices left by components the OS no longer runs (WP-21, design 02
-# step 1): the OpenMetadata `*_search_index_rebuild_<13 digits>` indices, the `di-data-assets-*`
-# data streams and `haystack_knowledge` — exact anchored names, nothing else. A post-install/
-# post-upgrade Job: it snapshots everything first, refuses if more than `maxDelete` match, and
-# is a no-op once they are gone. Script: files/opensearch/cleanup/delete-orphans.sh.
+# step 1): the OpenMetadata `*_search_index_rebuild_<13 digits>` and
+# `*_report_data_index_rebuild_<13 digits>` indices, the `di-data-assets-*` data streams and
+# `haystack_knowledge` — exact anchored names, nothing else. A post-install/post-upgrade Job: it
+# snapshots everything first, refuses if more than `maxDelete` match, and is a no-op once they
+# are gone. Script: files/opensearch/cleanup/delete-orphans.sh.
+# OFF by default: it deletes data, so it runs only where an operator opts in — the STACKIT
+# overlay deploy/overlays/opensearch-s3-snapshots.stackit.yaml, after the S3 repository is
+# verified. A plain release never renders it (scripts/tests/opensearch-chart.test.sh).
 opensearchCleanup:
-  enabled: true
-  maxDelete: 72                           # 55 + 16 backing indices + 1 on 2026-11-20
+  enabled: false
+  maxDelete: 77                           # 55 + 5 rebuild + 16 backing indices + 1 on 2026-11-20
   # Repository for the pre-delete snapshot. Empty = the S3 repository when s3 is on, else the
   # fs repository when it is on; with neither the Job refuses to delete anything.
   snapshotRepository: ""

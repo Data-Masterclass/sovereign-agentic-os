@@ -55,12 +55,28 @@ data:
         | toPrettyJson | nindent 4 }}
   {{- end }}
 {{- if $s3.enabled }}
-{{- /* Fail the upgrade BEFORE OpenSearch rolls if the keystore Secret is missing: without it
-       the pod cannot start. `lookup` only answers when Helm talks to a cluster; a namespace
-       that exists proves it does, so `helm template` and lint stay usable offline. */}}
+{{- /* Placeholders left in the overlay would roll OpenSearch onto an image that cannot be
+       pulled (it would not come back) or point the repository at no bucket: refuse to render. */}}
+{{- if contains "REPLACE" (toString $s3.bucket) }}
+{{- fail "opensearchSnapshots.s3.bucket still holds a REPLACE placeholder (deploy/overlays/opensearch-s3-snapshots.stackit.yaml)" }}
+{{- end }}
+{{- if contains "REPLACE" (toString ((.Values.opensearch.image | default dict).tag)) }}
+{{- fail "opensearch.image.tag still holds a REPLACE placeholder: set the pushed digest (deploy/overlays/opensearch-s3-snapshots.stackit.yaml)" }}
+{{- end }}
+{{- /* Fail the upgrade BEFORE OpenSearch rolls if the keystore Secret is missing or does not
+       hold EXACTLY the two keystore keys: the subchart turns every key into a keystore entry,
+       and a missing Secret stops the pod from starting. `lookup` answers only when Helm talks
+       to a cluster (a real upgrade, or `helm template --dry-run=server`); a namespace that
+       exists proves it does, so offline `helm template` and lint stay usable. */}}
 {{- if (lookup "v1" "Namespace" "" .Release.Namespace) }}
-{{- if not (lookup "v1" "Secret" .Release.Namespace $s3.keystoreSecret) }}
+{{- $sec := lookup "v1" "Secret" .Release.Namespace $s3.keystoreSecret }}
+{{- $want := list "s3.client.default.access_key" "s3.client.default.secret_key" }}
+{{- if not $sec }}
 {{- fail (printf "opensearchSnapshots.s3.enabled: Secret %s/%s with keys s3.client.default.access_key and s3.client.default.secret_key must exist before this upgrade (see deploy/overlays/opensearch-s3-snapshots.stackit.yaml)" .Release.Namespace $s3.keystoreSecret) }}
+{{- end }}
+{{- $have := keys (default dict $sec.data) | sortAlpha }}
+{{- if ne (toJson $have) (toJson $want) }}
+{{- fail (printf "Secret %s/%s must hold exactly the keys %s; it holds %s" .Release.Namespace $s3.keystoreSecret (toJson $want) (toJson $have)) }}
 {{- end }}
 {{- end }}
 ---
