@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: Apache-2.0
+# CI-only values layered over deploy/overlays/opensearch-s3-snapshots.stackit.yaml (tests/opensearch):
+# the locally built image (subchart render needs a tag), a bucket name and a fast SM schedule.
+# opensearch.yml is NOT overridden: render.py takes the overlay's own and changes exactly one
+# line (`protocol: https` -> `http`), because SeaweedFS in CI answers plain HTTP.
+opensearch:
+  image:
+    repository: soa-opensearch
+    tag: wp21
+opensearchSnapshots:
+  s3:
+    bucket: soa-ci-snapshots
+    policy:
+      schedule: "* * * * *"
