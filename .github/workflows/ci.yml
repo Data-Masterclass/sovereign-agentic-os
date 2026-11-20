@@ -122,6 +122,13 @@ jobs:
       - name: LiteLLM salt key chart test
         run: bash scripts/tests/litellm-salt-key-chart.test.sh
 
+      # WP-10: platform Secrets through External Secrets — the chart renders the same Secret names,
+      # types and keys as ExternalSecrets (with negative twins); the migration plan is dry-run only.
+      - name: External Secrets chart + migration plan tests
+        run: |
+          bash scripts/tests/external-secrets-chart.test.sh
+          bash scripts/tests/eso-migration-plan.test.sh
+
       # rotate-secrets.sh against a fake kubectl/helm: the re-key overlays, mode 600, no value in the
       # output, and the refusals (another cluster, the wrong step, none-stored while values are stored).
       - name: rotate-secrets.sh test
@@ -245,6 +252,8 @@ jobs:
           /tmp/kind delete cluster --name wp21
           # Dev Pod Security + the dev CI account's limits, by server dry runs (its own kind cluster).
           PATH="/tmp:$PATH" bash scripts/tests/dev-pod-security.kind.sh
+          # WP-10: the real External Secrets Operator (pinned) takes the chart's Secrets over in place.
+          PATH="/tmp:$PATH" bash scripts/tests/external-secrets.kind.sh
       - name: Start the stack (our image, SeaweedFS, egress proxy)
         run: |
           sudo sysctl -w vm.max_map_count=262144
