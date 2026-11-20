@@ -19,7 +19,6 @@ import {
   doclingCanParse,
   DOCLING_API_KEY_HEADER,
   DOCLING_FILE_FIELD,
-  DOCLING_TABLE_STRUCTURE_PRESET,
   DOCLING_RESULT_PATH,
   DOCLING_STATUS_PATH,
   DOCLING_SUBMIT_PATH,
@@ -171,13 +170,12 @@ test('no API key configured → no X-Api-Key header at all', async () => {
   for (const c of calls) assert.equal(DOCLING_API_KEY_HEADER in c.headers, false, c.url);
 });
 
-test('the submit asks for TableFormer v2 (the Apache-2.0 table model baked into our image)', async () => {
+test('the submit names no table model: the server default preset (TableFormer v2) decides', async () => {
   const { fetchImpl, calls } = fakeDocling({});
   await convertWithDocling(PDF, opts(fetchImpl));
   const form = calls.find((c) => c.url.endsWith(DOCLING_SUBMIT_PATH))!.form!;
-  assert.equal(DOCLING_TABLE_STRUCTURE_PRESET, 'tableformer_v2');
-  assert.equal(form.get('table_structure_preset'), 'tableformer_v2');
-  assert.equal(form.get('do_table_structure'), 'true');
+  assert.equal(form.get('table_structure_preset'), null);
+  assert.equal(form.get('table_structure_custom_config'), null);
 });
 
 test('a 401 from a key-protected server is a typed parser-unreachable naming HTTP 401', async () => {

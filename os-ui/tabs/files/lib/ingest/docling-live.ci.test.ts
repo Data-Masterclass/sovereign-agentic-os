@@ -24,6 +24,7 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { convertWithDocling, DOCLING_SUBMIT_PATH } from '@tabs/files/lib/ingest/docling-client';
+import { spawnSync } from 'node:child_process';
 
 const URL_ = (process.env.DOCLING_LIVE_URL ?? '').replace(/\/+$/, '');
 const KEY = process.env.DOCLING_LIVE_API_KEY ?? '';
@@ -67,18 +68,17 @@ test('live docling (a): an invoice table comes back as markdown with its header 
   assert.match(out.text, /early payment discount/i, 'page 2 must be converted too');
 });
 
-test('live docling (a, negative twin): the v1 table model is not available to the server', { skip }, async () => {
-  // A request that explicitly asks for TableFormer v1 must fail, because its weights are not in
-  // the image. If this ever succeeds, the image is shipping the CDLA-licensed v1 weights again.
+test('live docling (a, negative twin): a request for TableFormer v1 is refused by the server', { skip }, async () => {
+  // ALLOWED_TABLE_STRUCTURE_PRESETS=["tableformer_v2"] in the image: a v1 preset must not convert.
+  // If this ever succeeds, the server is willing to run the CDLA-licensed v1 model again.
   const form = new FormData();
   form.append('files', new Blob([new Uint8Array(PDF)], { type: 'application/pdf' }), 'invoice-table.pdf');
   form.append('to_formats', 'md');
   form.append('table_structure_preset', 'tableformer_v1_accurate');
   const res = await fetch(`${URL_}/v1/convert/file`, { method: 'POST', body: form, headers: { 'X-Api-Key': KEY } });
   const body = (await res.json().catch(() => null)) as Record<string, unknown> | null;
-  const ok = res.status === 200 && body && (body.status === 'success' || body.status === 'partial_success');
-  const md = String(((body?.document ?? {}) as Record<string, unknown>).md_content ?? '');
-  assert.ok(!(ok && md.includes('| Softshell jacket, women')), `v1 produced a table: HTTP ${res.status} ${String(body?.status)}`);
+  const converted = res.status === 200 && (body?.status === 'success' || body?.status === 'partial_success');
+  assert.ok(!converted, `v1 preset converted: HTTP ${res.status} ${JSON.stringify(body).slice(0, 300)}`);
 });
 
 test('live docling (e): a call without X-Api-Key is refused with 401, and the client says so', { skip }, async () => {
@@ -123,4 +123,46 @@ test('live docling (f): the image carries TableFormer v2 and no TableFormer v1 w
   const dirs = listing.split('\n').map((s) => s.trim()).filter(Boolean);
   assert.ok(!dirs.includes('docling-project--docling-models'), `v1 weights present: ${dirs.join(', ')}`);
   assert.ok(dirs.includes('docling-project--TableFormerV2'), `v2 weights missing: ${dirs.join(', ')}`);
+});
+
+/** Run the image with `args` and wait for it to exit; returns its exit code and log. */
+function runToExit(args: string[], waitSeconds: number): { exited: boolean; code: number | null; log: string } {
+  const name = `docling-twin-${process.pid}-${Math.random().toString(36).slice(2, 8)}`;
+  execFileSync('docker', ['run', '-d', '--name', name, ...args, IMAGE], { encoding: 'utf8' });
+  try {
+    for (let i = 0; i < waitSeconds; i++) {
+      const state = execFileSync('docker', ['inspect', '-f', '{{.State.Status}} {{.State.ExitCode}}', name], { encoding: 'utf8' }).trim();
+      const [status, code] = state.split(' ');
+      if (status === 'exited' || status === 'dead') {
+        const log = spawnSync('docker', ['logs', name], { encoding: 'utf8' });
+        return { exited: true, code: Number(code), log: `${log.stdout}${log.stderr}` };
+      }
+      spawnSync('sleep', ['1']);
+    }
+    const log = spawnSync('docker', ['logs', '--tail', '40', name], { encoding: 'utf8' });
+    return { exited: false, code: null, log: `${log.stdout}${log.stderr}` };
+  } finally {
+    spawnSync('docker', ['rm', '-f', name]);
+  }
+}
+
+test('live docling (g): the image refuses to start with an empty or missing API key', { skip, timeout: 120_000 }, () => {
+  assert.ok(IMAGE, 'DOCLING_LIVE_IMAGE must name the image under test');
+  for (const env of [[], ['-e', 'DOCLING_SERVE_API_KEY='], ['-e', 'DOCLING_SERVE_API_KEY=   ']]) {
+    const r = runToExit(env, 60);
+    assert.ok(r.exited, `the server kept running with ${JSON.stringify(env)}: ${r.log}`);
+    assert.notEqual(r.code, 0);
+    assert.match(r.log, /DOCLING_API_KEY_MISSING/);
+  }
+});
+
+test('live docling (h): boot loads the v2 table model — without its weights the server never becomes ready', { skip, timeout: 400_000 }, () => {
+  // Positive side: the main container answered /ready only after the boot warm-up
+  // (LOAD_MODELS_AT_BOOT, default options = tableformer_v2). Negative twin: hide the v2 weights
+  // and the same image must fail its boot instead of reporting ready.
+  assert.ok(IMAGE, 'DOCLING_LIVE_IMAGE must name the image under test');
+  const artifacts = execFileSync('docker', ['run', '--rm', '--entrypoint', 'sh', IMAGE, '-c', 'printf %s "$DOCLING_SERVE_ARTIFACTS_PATH"'], { encoding: 'utf8' }).trim();
+  const r = runToExit(['-e', 'DOCLING_SERVE_API_KEY=twin', '--tmpfs', `${artifacts}/docling-project--TableFormerV2`], 300);
+  assert.ok(r.exited, `the server stayed up without the v2 weights:\n${r.log}`);
+  assert.notEqual(r.code, 0, r.log);
 });
