@@ -770,11 +770,16 @@ opa:
   enabled: true
   image:
     repository: openpolicyagent/opa
-    tag: "1.4.2-static"
-    digest: sha256:3c995dc8a59f6ddfd92eb7404d2f7ff9fe71cd025d9251199957a8a6afbfd76e
+    # Newest 1.x (components/opa/UPSTREAM.md). The default tag: `-static` is
+    # deprecated upstream since 1.22 and the default build is static too.
+    tag: "1.22.4"
+    digest: sha256:ff50f50332ff9e722ffafe2658c195ced1f9b6d4f3064000c2ecfa8cdf7acccf
   resources:
     requests: { cpu: 25m, memory: 32Mi }
     limits: { cpu: 250m, memory: 128Mi }
+  # One masked JSON line per decision in OPA's log output (decision_logs.console).
+  decisionLogs:
+    enabled: true
   grants:
     sovereign-agents:           # the default agent key — no internet
       - rag_search

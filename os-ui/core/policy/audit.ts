@@ -46,6 +46,11 @@ export type AuditEntry = {
   /** Why / on which inputs (free text + structured detail). */
   reason: string;
   detail: Record<string, unknown>;
+  /** The OPA `decision_id` this effect was enforced on, when an OPA decision gated it.
+   *  It names the matching line in OPA's decision log (04 M1). */
+  decisionId?: string;
+  /** The OPA policy revision (`labels.policy_rev`) that made that decision. */
+  policyRev?: string;
   /** Hash of the previous entry — the tamper-evident chain. */
   prevHash: string;
   hash: string;
@@ -112,12 +117,20 @@ export function record(input: {
   domain: string;
   reason: string;
   detail?: Record<string, unknown>;
+  /** From the OPA decision that gated this effect (`Authz.decisionId` / `policyRev`). */
+  decisionId?: string;
+  policyRev?: string;
 }): AuditEntry {
   const prev = log[log.length - 1];
   const prevHash = prev ? prev.hash : '00000000';
   const at = now();
   const id = `aud_${Math.random().toString(36).slice(2, 9)}${Date.now().toString(36).slice(-4)}`;
   const detail = input.detail ?? {};
+  // Only present when an OPA decision gated the effect, so older entries hash unchanged.
+  const opa = {
+    ...(input.decisionId ? { decisionId: input.decisionId } : {}),
+    ...(input.policyRev ? { policyRev: input.policyRev } : {}),
+  };
   const body = JSON.stringify({
     id,
     at,
@@ -127,6 +140,7 @@ export function record(input: {
     domain: input.domain,
     reason: input.reason,
     detail,
+    ...opa,
     prevHash,
   });
   const e: AuditEntry = {
@@ -138,6 +152,7 @@ export function record(input: {
     domain: input.domain,
     reason: input.reason,
     detail,
+    ...opa,
     prevHash,
     hash: hashOf(body),
   };
@@ -201,6 +216,8 @@ export function verifyChain(): string | null {
       domain: e.domain,
       reason: e.reason,
       detail: e.detail,
+      ...(e.decisionId ? { decisionId: e.decisionId } : {}),
+      ...(e.policyRev ? { policyRev: e.policyRev } : {}),
       prevHash: e.prevHash,
     });
     if (hashOf(body) !== e.hash) return e.id;
