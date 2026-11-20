@@ -1,13 +1,28 @@
 
 # PriorityClasses — protect the data layer under memory pressure.
+# WP-47 ladder (00 §10.1 decision 2), highest first. Under node pressure the kubelet evicts lower
+# first, and the scheduler preempts lower to place higher:
+#   critical (Postgres, OPA, os-ui; Keycloak when it lands) > infra (data backends) > app (the rest)
+#   > 0 (pods of subcharts with no priorityClassName value upstream: Langfuse, LiteLLM, Dagster)
+#   > observability (the Victoria stack) > userApps (Software-tab apps; never preempts).
+# `value` is immutable on a live PriorityClass: change a value by adding a class with a new name.
 priorityClasses:
   enabled: true
+  critical:
+    name: sovereign-os-critical
+    value: 1000000
   infra:
     name: sovereign-os-infra
     value: 100000
   app:
     name: sovereign-os-app
     value: 1000
+  observability:
+    name: sovereign-os-observability
+    value: -10
+  userApps:
+    name: sovereign-os-user-apps
+    value: -100
 
 global:
   # Logical namespace the workloads live in (created via --create-namespace).
@@ -244,6 +259,8 @@ clickhouse:
     # ClickHouse keeps mark/uncompressed caches resident; request reflects real
     # steady-state.
     requests: { cpu: 200m, memory: 2Gi }
+    # 00 §10.1: 6 → 4 Gi only AFTER the Langfuse v4 move, and only if 05's load test agrees.
+    # Not trimmed in WP-47 (the v4 window is 14–18 Dec 2026).
     limits: { cpu: "2", memory: 6Gi }
   # Data volume. 30Gi (was 10Gi): production reached 90% of 10Gi on 2026-11-19 with no
   # retention on trace data or on ClickHouse's own system logs. A larger volume is the
@@ -309,19 +326,21 @@ langfuse:
             echo "ClickHouse is ready."
 
     # via the subchart's shared deployment annotations.
+    # WP-47 (00 §10.1): web 1536 → 1280 Mi and worker 1280 → 1024 Mi (live use 777 / 414 Mi).
     web:
       resources:
         requests: { cpu: 100m, memory: 768Mi }
-        limits: { cpu: "1", memory: 1536Mi }
-      # Node's default old-space cap (~640MB)
+        limits: { cpu: "1", memory: 1280Mi }
+      # Node's default old-space cap (~640MB) is raised to 75 % of the limit, leaving the rest for
+      # buffers and native memory.
       pod:
         additionalEnv:
           - name: NODE_OPTIONS
-            value: "--max-old-space-size=1152"
+            value: "--max-old-space-size=960"
     worker:
       resources:
         requests: { cpu: 100m, memory: 768Mi }
-        limits: { cpu: "1", memory: 1280Mi }
+        limits: { cpu: "1", memory: 1024Mi }
 
   # ---- Postgres: external (CloudNativePG `pg-rw`) ----
   postgresql:
@@ -509,9 +528,10 @@ litellm:
           value: "false"
       resources:
         # Prisma client-generate + `migrate deploy` spikes RAM; 1Gi OOMKills
-        # (exit 137) on a cold DB.
+        # (exit 137) on a cold DB. WP-47: 2 → 1.5 Gi together with the proxy — the pod's
+        # effective limit is the larger of the two, so trimming only the proxy saves nothing.
         requests: { cpu: 100m, memory: 512Mi }
-        limits: { cpu: "1", memory: 2Gi }
+        limits: { cpu: "1", memory: 1536Mi }
   # Master key + Langfuse env come from our local Secret.
   masterkeySecretName: litellm-credentials
   masterkeySecretKey: masterkey
@@ -533,9 +553,9 @@ litellm:
           name: valkey-credentials
           key: password
   resources:
-    # This proxy was OOMKilled during the all-at-once boot.
+    # This proxy was OOMKilled during the all-at-once boot. WP-47 (00 §10.1): 2 → 1.5 Gi.
     requests: { cpu: 100m, memory: 1Gi }
-    limits: { cpu: "1", memory: 2Gi }
+    limits: { cpu: "1", memory: 1536Mi }
   proxy_config:
     model_list:
       # --- Standard / worker tier (STACKIT gpt-oss-20b, pay-per-token)
@@ -1267,11 +1287,14 @@ trino:
   # node.environment label (Trino requires it; lowercase alnum).
   environment: sovereign
   jvm:
-    # Heap for the single coordinator-as-worker.
-    maxHeap: "6G"
+    # Heap for the single coordinator-as-worker. Trino's deployment guide: -Xmx at 70–85 % of the
+    # memory available; 4608M is 75 % of the 6 Gi limit below (WP-47, 00 §10.1).
+    maxHeap: "4608M"
   query:
     # Cluster-wide + per-node memory ceilings; spill to disk keeps big joins alive.
     maxMemory: "4GB"
+    # Set explicitly (06, WP-47): with memory.heap-headroom-per-node at its default 30 % of heap,
+    # 2GB + 1.35GB stays below the 4608M heap, as Trino requires.
     maxMemoryPerNode: "2GB"
     spillEnabled: true
   catalog:
@@ -1347,7 +1370,7 @@ trino:
     reconcileIntervalMinutes: 10
   resources:
     requests: { cpu: "1", memory: 2Gi }
-    limits: { cpu: "4", memory: 8Gi }
+    limits: { cpu: "4", memory: 6Gi }   # WP-47 (00 §10.1): 8 → 6 Gi with the heap above
 
 # Metrics — the alert-evaluator CronJob that drives the builder+ alert-run route
 # (os-ui app/api/metrics/alerts/run) on a schedule.

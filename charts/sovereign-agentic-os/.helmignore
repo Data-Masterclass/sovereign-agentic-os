@@ -12,3 +12,5 @@
 # Local-only overlays and notes never belong in the packaged artifact.
 values.local.yaml
 values.secret.yaml
+# Input to scripts/check-capacity.mjs only; no template reads it.
+capacity.yaml

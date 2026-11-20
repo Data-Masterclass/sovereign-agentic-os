@@ -28,7 +28,7 @@ spec:
   instances: {{ $pg.instances }}
   {{- /* High-priority infra: the kubelet evicts app pods before the DB. */}}
   {{- if .Values.priorityClasses.enabled }}
-  priorityClassName: {{ .Values.priorityClasses.infra.name }}
+  priorityClassName: {{ .Values.priorityClasses.critical.name }}
   {{- end }}
   imageName: "{{ $pg.image.repository }}:{{ $pg.image.tag }}@{{ $pg.image.digest }}"
   # Langfuse owns its schema; superuser access stays off (least privilege).

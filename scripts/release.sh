@@ -13,7 +13,9 @@
 #   1. on `main`, no uncommitted changes to tracked files, `main` fast-forwards to <remote>/main
 #   2. the tag os-ui-v<version> does not exist (or already points at this exact commit: resume)
 #   3. ci.yml AND license-gate.yml passed on a push to main for this SHA (waits while running)
-#   4. node scripts/check-structure.mjs and node scripts/check-consoles-not-public.mjs pass
+#   4. node scripts/check-structure.mjs and node scripts/check-consoles-not-public.mjs pass, and
+#      the capacity gate (scripts/check-capacity.mjs, WP-47) finds the rendered chart within the
+#      node budget in charts/sovereign-agentic-os/capacity.yaml (run with CI=true: no skip)
 #   5. no cloud-sync duplicate (`* 2`, `* 2.*`) anywhere under os-ui/
 #   6. tag the SHA and push the tag; wait for build-images.yml to pass for it
 #   7. ./scripts/deploy.sh --from-registry <version>  (VALUES_OVERLAY is passed through)
@@ -130,6 +132,9 @@ check_tree() {
   echo "   check-structure: ok"
   node scripts/check-consoles-not-public.mjs >/dev/null || stop "node scripts/check-consoles-not-public.mjs fails — run it to see why"
   echo "   check-consoles-not-public: ok"
+  CI=true node scripts/check-capacity.mjs >/dev/null \
+    || stop "node scripts/check-capacity.mjs fails — the chart does not fit the node budget; run it to see why"
+  echo "   check-capacity: ok"
   local strays
   strays=$(find os-ui \( -path '*/node_modules' -o -path '*/.next' \) -prune -o \( -name '* 2' -o -name '* 2.*' \) -print)
   [ -z "$strays" ] || stop "cloud-sync duplicates under os-ui/ (delete them): $(echo "$strays" | paste -sd, -)"

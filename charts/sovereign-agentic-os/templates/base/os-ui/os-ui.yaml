@@ -114,7 +114,7 @@ spec:
         {{- include "soa.labels" . | nindent 8 }}
         {{- include "soa.selectorLabels" (dict "ctx" . "component" "os-ui") | nindent 8 }}
     spec:
-      {{- include "soa.priorityClassName" (dict "ctx" . "tier" "app") | nindent 6 }}
+      {{- include "soa.priorityClassName" (dict "ctx" . "tier" "critical") | nindent 6 }}
       serviceAccountName: os-ui
       {{- with .Values.global.imagePullSecrets }}
       imagePullSecrets:

@@ -159,6 +159,11 @@
   value: {{ .Values.softwareRunner.appsDomain | quote }}
 - name: SOFTWARE_RUNNER_IMAGE
   value: {{ .Values.softwareRunner.runnerImage | quote }}
+{{- if .Values.priorityClasses.enabled }}
+# WP-47: user apps run in the lowest PriorityClass (never above a platform pod, never preempting).
+- name: SOFTWARE_RUNNER_PRIORITY_CLASS
+  value: {{ .Values.priorityClasses.userApps.name | quote }}
+{{- end }}
 - name: OS_APPS_INGRESS_CLASS
   value: {{ .Values.softwareRunner.ingressClass | default .Values.ingress.className | quote }}
 - name: OS_APPS_TLS_ISSUER

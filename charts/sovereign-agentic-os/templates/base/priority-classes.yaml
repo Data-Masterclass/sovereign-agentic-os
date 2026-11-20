@@ -1,40 +1,40 @@
 {{- if .Values.priorityClasses.enabled }}
 {{- /*
-  PriorityClasses for the orchestrated, memory-safe startup (see values.yaml
-  `priorityClasses`). Two tiers:
-    - infra (high value): Postgres/CNPG + the wave-0 backends (OpenSearch,
-      ClickHouse, Valkey, MinIO). Under node memory pressure the kubelet evicts
-      LOWER-priority pods first, so the database is the last thing to go.
-    - app  (low value):  everything else. Evicted/OOMed before infra.
-  Both values sit FAR below the reserved system-cluster-critical /
-  system-node-critical band (2000000000), so these never preempt kube-system.
-  Cluster-scoped objects, but gated by `priorityClasses.enabled` and supported on
-  kind — local Mode A is unaffected. Helm's native install order applies
-  PriorityClass before workloads.
+  PriorityClasses (00 §10.1 decision 2, WP-47). The ladder, highest first:
+    - critical:      Postgres, OPA, os-ui (and Keycloak when it lands). Identity, policy and the
+                     database are what every other component depends on.
+    - infra:         the data backends (OpenSearch, ClickHouse, Valkey, object storage).
+    - app:           every other OS workload.
+    - (no class, 0): pods of subcharts that have no priorityClassName value upstream
+                     (Langfuse, LiteLLM, Dagster).
+    - observability: the Victoria stack. Under memory pressure it goes first among OS pods.
+    - userApps:      Software-tab user apps. Below every platform pod, and never preempts.
+  The kubelet evicts lower-priority pods first under node pressure; the scheduler preempts lower
+  to place higher. All values sit far below the system-cluster-critical / system-node-critical
+  band (2000000000), so none preempts kube-system. None is globalDefault, so pods outside this
+  chart keep their own behaviour. `value` is immutable on a live PriorityClass; a new value needs
+  a new name. Cluster-scoped, gated by `priorityClasses.enabled`; Helm installs PriorityClass
+  before workloads.
+  https://kubernetes.io/docs/concepts/scheduling-eviction/pod-priority-preemption/
 */}}
-apiVersion: scheduling.k8s.io/v1
-kind: PriorityClass
-metadata:
-  name: {{ .Values.priorityClasses.infra.name }}
-  labels:
-    {{- include "soa.labels" . | nindent 4 }}
-value: {{ .Values.priorityClasses.infra.value }}
-globalDefault: false
-preemptionPolicy: PreemptLowerPriority
-description: >-
-  Sovereign Agentic OS infra tier (Postgres + wave-0 backends). Protected from
-  eviction so the data layer survives memory pressure; application pods go first.
+{{- $descriptions := dict
+  "critical" "Sovereign Agentic OS critical tier (Postgres, OPA, os-ui, identity). The last OS pods to be evicted."
+  "infra" "Sovereign Agentic OS infra tier (data backends). Evicted after the app tier, before the critical tier."
+  "app" "Sovereign Agentic OS application tier. Evicted before the infra and critical tiers."
+  "observability" "Sovereign Agentic OS observability tier (Victoria stack). Evicted before every other OS pod."
+  "userApps" "User apps from the Software tab. Lowest priority; never preempts another pod." }}
+{{- range $tier := list "critical" "infra" "app" "observability" "userApps" }}
+{{- $pc := index $.Values.priorityClasses $tier }}
 ---
 apiVersion: scheduling.k8s.io/v1
 kind: PriorityClass
 metadata:
-  name: {{ .Values.priorityClasses.app.name }}
+  name: {{ $pc.name }}
   labels:
-    {{- include "soa.labels" . | nindent 4 }}
-value: {{ .Values.priorityClasses.app.value }}
+    {{- include "soa.labels" $ | nindent 4 }}
+value: {{ $pc.value }}
 globalDefault: false
-preemptionPolicy: PreemptLowerPriority
-description: >-
-  Sovereign Agentic OS application tier. Evicted/OOMed before the infra tier
-  under node memory pressure (never above the database).
+preemptionPolicy: {{ eq $tier "userApps" | ternary "Never" "PreemptLowerPriority" }}
+description: {{ index $descriptions $tier | quote }}
+{{- end }}
 {{- end }}

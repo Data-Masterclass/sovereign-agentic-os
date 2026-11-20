@@ -73,6 +73,12 @@ jobs:
       - name: Langfuse hardening chart test
         run: bash scripts/tests/langfuse-hardening.test.sh
 
+      # WP-47 capacity gate tests: the real chart passes, and the negative twins (2 extra CPU
+      # cores, over-committed memory limits, a container with no memory request) fail; the limit
+      # trims and the PriorityClass ladder are asserted on the rendered chart, both profiles.
+      - name: Capacity gate tests
+        run: node --test scripts/tests/check-capacity.test.mjs
+
       # The registry deploy mode and the widened conflict-copy check. No Docker, no network, no
       # cluster: it drives `deploy.sh --verify-only` against a fake digest probe and runs the
       # real gate.sh / check-structure.mjs inside throwaway trees. It also asserts the CI worker

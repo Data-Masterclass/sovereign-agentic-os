@@ -89,6 +89,8 @@ export type RunnerOpts = {
   namespace?: string;
   ingressClass?: string;
   tlsIssuer?: string;
+  /** PriorityClass for the app pod (WP-47: the lowest class); empty/absent = no field. */
+  priorityClassName?: string;
 };
 
 const UNREACHABLE =
@@ -179,7 +181,12 @@ function labels(spec: RunnerSpec): Record<string, string> {
  * real build. Combined with `imagePullPolicy: Always`, the restarted pod re-pulls
  * the current `:latest` from the registry.
  */
-export function buildDeploymentManifest(spec: RunnerSpec, namespace: string, deployedAt?: string): Record<string, unknown> {
+export function buildDeploymentManifest(
+  spec: RunnerSpec,
+  namespace: string,
+  deployedAt?: string,
+  priorityClassName?: string,
+): Record<string, unknown> {
   const name = runnerName(spec.slug);
   const sel = { app: name };
   const digestPinned = isDigestRef(spec.image);
@@ -201,6 +208,9 @@ export function buildDeploymentManifest(spec: RunnerSpec, namespace: string, dep
           ...(stamp ? { annotations: { 'soa.sovereign-os/deployed-at': stamp } } : {}),
         },
         spec: {
+          // Below every platform pod, and never preempting one (WP-47). Omitted when the chart
+          // created no classes: admission rejects a pod that names a missing PriorityClass.
+          ...(priorityClassName ? { priorityClassName } : {}),
           containers: [
             {
               name: 'app',
@@ -305,12 +315,15 @@ export function buildIngressManifest(
 
 // ------------------------------------------------------------- Resolve opts ----
 
-function resolveOpts(opts: RunnerOpts): { k8s: RunnerK8s } & Required<Pick<RunnerOpts, 'namespace' | 'ingressClass' | 'tlsIssuer'>> {
+function resolveOpts(
+  opts: RunnerOpts,
+): { k8s: RunnerK8s } & Required<Pick<RunnerOpts, 'namespace' | 'ingressClass' | 'tlsIssuer' | 'priorityClassName'>> {
   return {
     k8s: opts.k8s ?? (liveK8s as RunnerK8s),
     namespace: opts.namespace ?? config.softwareRunnerNamespace,
     ingressClass: opts.ingressClass ?? config.appsIngressClass,
     tlsIssuer: opts.tlsIssuer ?? config.appsTlsIssuer,
+    priorityClassName: opts.priorityClassName ?? config.softwareRunnerPriorityClass,
   };
 }
 
@@ -407,7 +420,7 @@ export async function deployApp(app: RunnerApp, options: RunnerOpts = {}): Promi
 
   // Stamp this deploy so the pod template CHANGES → Kubernetes rolls the pods and
   // (with imagePullPolicy Always) re-pulls the current `:latest` the CI published.
-  const dep = await applyObject(o.k8s, c.deployments, name, buildDeploymentManifest(spec, o.namespace, new Date().toISOString()));
+  const dep = await applyObject(o.k8s, c.deployments, name, buildDeploymentManifest(spec, o.namespace, new Date().toISOString(), o.priorityClassName));
   if (!dep.reachable) return { ok: false, live: false, action: 'noop', name, host: spec.host, url: null, phase: 'offline', detail: UNREACHABLE };
   const svc = await applyObject(o.k8s, c.services, name, buildServiceManifest(spec, o.namespace));
   const ing = await applyObject(o.k8s, c.ingresses, name, buildIngressManifest(spec, o.namespace, o));

@@ -145,7 +145,7 @@ spec:
         {{- include "soa.labels" . | nindent 8 }}
         {{- include "soa.selectorLabels" (dict "ctx" . "component" "opa") | nindent 8 }}
     spec:
-      {{- include "soa.priorityClassName" (dict "ctx" . "tier" "app") | nindent 6 }}
+      {{- include "soa.priorityClassName" (dict "ctx" . "tier" "critical") | nindent 6 }}
       securityContext:
         {{- include "soa.podSecurityContext" . | nindent 8 }}
         runAsUser: 1000
