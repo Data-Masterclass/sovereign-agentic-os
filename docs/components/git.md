@@ -42,7 +42,7 @@ object kind appears without being classified.
 | `software` — app source tree | `apps/<slug>/` | — | `tabs/software/lib/git-commit.ts` — **committed** |
 | `lifecycle-pin` — lifecycle pins | `os/lifecycle/pins.yml` | — | `core/infra/lifecycle-pins.ts` — **committed** |
 | `knowledge-workflow` — knowledge workflow | `knowledge/<slug>/` | `knowledge/personal/<uid>/<slug>/` | **backlog** — no git writer yet |
-| `connection-config` — connection configuration (**never a credential**) | `connections/<slug>.yml` | — | **backlog** — no git writer yet |
+| `connection-config` — Trino catalog file (**never a credential**) | `connections/<catalog>/catalog.properties`, `connections/<catalog>/os.yaml` | — | `tabs/connections/lib/git/commit.ts` — **committed** |
 | *(not an object kind)* promotion / governance metadata | `os/promotion.yml`, `os/grants.yml` | — | OS-owned, **never pushable** |
 
 The paths are **selectors**, exactly as the code states them: `a/b/` means everything under that

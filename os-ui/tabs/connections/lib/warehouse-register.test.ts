@@ -9,9 +9,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { config } from '@core/kernel/config';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { readBlob } from '@core/infra/git-store';
 
 // Force external connectors ON for this suite (createConnection gates on it).
 (config as { externalConnectorsEnabled: boolean }).externalConnectorsEnabled = true;
+// WP-50: the registration commits the catalog to the domain repo first, so the suite gets a repo dir.
+(config as { reposDir: string }).reposDir = mkdtempSync(join(tmpdir(), 'os-wh-register-'));
 
 const _realFetch = globalThis.fetch;
 globalThis.fetch = (() => Promise.reject(new Error('offline-stub'))) as typeof fetch;
@@ -53,6 +59,12 @@ test('registerWarehouseCatalog: builder+owner registers Glue live (ConfigMap + r
   assert.equal(out.catalog, 'glue_sales');
   assert.ok(calls.some((x) => x.path.endsWith('/configmaps/trino-catalog')), 'merged the ConfigMap');
   assert.ok(!calls.some((x) => /\/secrets/.test(x.path)), 'keyless — no Secret');
+  // WP-50 (C4): Trino got the COMMITTED bytes, and the ConfigMap names their sha.
+  assert.equal(out.source, 'git');
+  const cm = calls.find((x) => x.path.endsWith('/configmaps/trino-catalog'))!.body as { data: Record<string, string>; metadata: { annotations: Record<string, string> } };
+  const committed = await readBlob('sales', out.gitSha, 'connections/glue_sales/catalog.properties', { reposDir: config.reposDir });
+  assert.equal(cm.data['glue_sales.properties'], committed);
+  assert.equal(cm.metadata.annotations['sovereign-os.io/connections-sha.glue_sales'], out.gitSha);
 });
 
 test('registerWarehouseCatalog gate: a non-owning creator is refused (Personal → 404, no leak)', async () => {

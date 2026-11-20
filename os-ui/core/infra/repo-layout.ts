@@ -247,8 +247,15 @@ export function appDir(slug: string): string {
 export function connectionDir(name: string): string {
   return `${CONNECTIONS_DIR}/${seg(name, 'connection')}`;
 }
+/** Trino's own catalog file (WP-50): mounted as `/etc/trino/catalog/<name>.properties`. */
+export const CONNECTION_CATALOG_FILE = 'catalog.properties';
+/** The OS layer of one connection (id, owner, scope, secret REFERENCE) — never read by Trino. */
+export const CONNECTION_OS_FILE = 'os.yaml';
 export function connectionCatalogPath(name: string): string {
-  return `${connectionDir(name)}/catalog.properties`;
+  return `${connectionDir(name)}/${CONNECTION_CATALOG_FILE}`;
+}
+export function connectionOsPath(name: string): string {
+  return `${connectionDir(name)}/${CONNECTION_OS_FILE}`;
 }
 
 /** `os/<a>/<b>…` — a path in the OS layer. */
