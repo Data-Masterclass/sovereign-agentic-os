@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server';
-import { opaHeaders } from '@core/adapters/opa/auth';
-import { config } from '@core/kernel/config';
+import { opaGetData, opaQuery } from '@core/adapters/opa/client';
 import { requireAdmin } from '@core/kernel/auth';
 import { errorResponse } from '@tabs/data/lib/server';
 
@@ -13,19 +12,8 @@ export const dynamic = 'force-dynamic';
  * actual default-deny decision engine, not just the raw data.
  */
 async function decide(principal: string, tool: string): Promise<boolean> {
-  try {
-    const res = await fetch(`${config.opaUrl}/v1/data/agentic/authz/allow`, {
-      method: 'POST',
-      headers: opaHeaders({ 'content-type': 'application/json' }),
-      body: JSON.stringify({ input: { principal, tool } }),
-      cache: 'no-store',
-    });
-    if (!res.ok) return false;
-    const data = await res.json();
-    return Boolean(data?.result);
-  } catch {
-    return false;
-  }
+  const r = await opaQuery('agentic/authz/allow', { principal, tool }, 5000);
+  return r.ok && r.value.defined && Boolean(r.value.value);
 }
 
 export async function GET() {
@@ -37,20 +25,13 @@ export async function GET() {
     return errorResponse(e);
   }
 
-  let grants: Record<string, string[]> = {};
-  try {
-    const res = await fetch(`${config.opaUrl}/v1/data/grants`, { headers: opaHeaders(), cache: 'no-store' });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
-    const raw = (data?.result ?? {}) as Record<string, unknown>;
-    for (const [k, v] of Object.entries(raw)) {
-      grants[k] = Array.isArray(v) ? v.map(String) : [];
-    }
-  } catch (e) {
-    return NextResponse.json(
-      { error: `Could not reach OPA: ${(e as Error).message}` },
-      { status: 502 },
-    );
+  const grants: Record<string, string[]> = {};
+  const read = await opaGetData('grants', 5000);
+  if (!read.ok) {
+    return NextResponse.json({ error: `Could not reach OPA: ${read.detail}` }, { status: 502 });
+  }
+  for (const [k, v] of Object.entries((read.value.value ?? {}) as Record<string, unknown>)) {
+    grants[k] = Array.isArray(v) ? v.map(String) : [];
   }
 
   const principals = Object.keys(grants).sort();

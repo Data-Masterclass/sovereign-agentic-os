@@ -1,8 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
-import { opaHeaders } from '@core/adapters/opa/auth';
-import { config } from '@core/kernel/config';
+import { opaGetData } from '@core/adapters/opa/client';
 import type { Role } from '@core/kernel/session';
 import { ROLE_RIGHTS, rightsToTools } from '@core/policy/roles';
 import { addAllowlist, listAllowlist, _reset as _resetSecurity } from '@tabs/governance/lib/egress';
@@ -179,20 +178,11 @@ export function policySources(): { name: string; authoredIn: string; compiledTo:
 
 /** Live read of OPA grants (the in-cluster compiled data). Null when OPA is off. */
 export async function readOpaGrants(): Promise<Record<string, string[]> | null> {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 2500);
-  try {
-    const res = await fetch(`${config.opaUrl}/v1/data/grants`, { headers: opaHeaders(), cache: 'no-store', signal: ctrl.signal });
-    if (!res || !res.ok) return null;
-    const data = (await res.json()) as { result?: Record<string, unknown> };
-    const out: Record<string, string[]> = {};
-    for (const [k, v] of Object.entries(data?.result ?? {})) out[k] = Array.isArray(v) ? v.map(String) : [];
-    return out;
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timer);
-  }
+  const r = await opaGetData('grants', 2500);
+  if (!r.ok) return null;
+  const out: Record<string, string[]> = {};
+  for (const [k, v] of Object.entries((r.value.value ?? {}) as Record<string, unknown>)) out[k] = Array.isArray(v) ? v.map(String) : [];
+  return out;
 }
 
 export function __resetPlane(): void {

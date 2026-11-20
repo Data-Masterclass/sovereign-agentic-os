@@ -183,7 +183,7 @@ test('LEAK-FIX 1: /api/policy GET is ADMIN-only (full grants matrix + all princi
   assert.match(src, /await requireAdmin\(\)/, 'policy GET must call requireAdmin');
   // The gate must run before any OPA fetch / data assembly.
   const gateAt = src.indexOf('requireAdmin');
-  const fetchAt = src.indexOf('config.opaUrl');
+  const fetchAt = src.indexOf("opaGetData('grants'"); // the OPA adapter read of the grants document
   assert.ok(gateAt > -1 && gateAt < fetchAt, 'requireAdmin must gate BEFORE reading grants');
   // The thrown 401/403 is surfaced (errorResponse preserves the tagged status).
   assert.match(src, /errorResponse|status.*40[13]/, 'policy GET returns the tagged auth status for anon/non-admin');

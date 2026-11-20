@@ -8,8 +8,7 @@
  *   - `decision_id` comes from the Data API response; `policy_rev` from `GET /v1/config` labels,
  *     cached (success and failure) so authorise never waits on it.
  */
-import { opaHeaders } from '@core/adapters/opa/auth';
-import { config } from '@core/kernel/config';
+import { opaGetConfig } from '@core/adapters/opa/client';
 
 /**
  * What OPA itself says about a decision, so an audit entry can point at the exact
@@ -44,19 +43,10 @@ export async function opaPolicyRev(): Promise<string | undefined> {
 }
 
 async function readPolicyRev(): Promise<string | undefined> {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 2000);
-  try {
-    const res = await fetch(`${config.opaUrl}/v1/config`, { headers: opaHeaders(), signal: ctrl.signal, cache: 'no-store' });
-    if (!res.ok) return undefined;
-    const body = (await res.json()) as { result?: { labels?: { policy_rev?: unknown } } };
-    const rev = body?.result?.labels?.policy_rev;
-    return typeof rev === 'string' && rev ? rev : undefined;
-  } catch {
-    return undefined;
-  } finally {
-    clearTimeout(timer);
-  }
+  const r = await opaGetConfig(2000);
+  if (!r.ok || !r.value.defined) return undefined;
+  const rev = (r.value.value as { labels?: { policy_rev?: unknown } } | undefined)?.labels?.policy_rev;
+  return typeof rev === 'string' && rev ? rev : undefined;
 }
 
 /** Test-only: forget the cached revision. */
