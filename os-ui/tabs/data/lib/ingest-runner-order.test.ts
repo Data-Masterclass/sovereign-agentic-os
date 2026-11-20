@@ -25,14 +25,15 @@ globalThis.fetch = (async (url: string, init?: RequestInit) => {
   return json(200, { ok: true, table: 'iceberg.personal_cara.bronze_b', rowCount: 1, columns: names.map((name) => ({ name, type: 'string' })) });
 }) as typeof fetch;
 
-const { realDlt } = await import('./build/live-clients.ts');
-const { landedColumnDocs, planUploadColumns } = await import('./upload-columns.ts');
+const { realDlt, COLUMN_MAPPING_MISMATCH } = await import('./build/live-clients.ts');
+const { landedColumnDocs, planUploadColumns, rawRetryAllowed } = await import('./upload-columns.ts');
 const { isColumnName } = await import('./dbt/literal.ts');
 
 const plan = planUploadColumns(['Order Date', 'größe'], []);
-async function land(): Promise<{ name: string }[]> {
+async function land(allowRawRetry = true): Promise<{ name: string }[]> {
   const dlt = realDlt();
   dlt.columnNames = plan.columnNames;
+  dlt.allowRawRetry = allowRawRetry;
   await dlt.load('t', 'b', { objectKey: 'uploads/cara/b.csv', principal: 'cara' } as never);
   return dlt.lastIngest!.columns;
 }
@@ -55,7 +56,7 @@ test('new os-ui + NEW runner: the mapped names land, with their source headers',
   assert.deepEqual(calls[0].body.columnNames, ['order_date', 'groesse']);
 });
 
-test('a NEW runner refusing a list that does not fit: retried once under the file\'s own names, never failed', async () => {
+test('a NEW runner refusing a list that does not fit, on a dataset with NO stored mapping: retried once under the file\'s own names', async () => {
   runner = 'new-mismatch';
   calls.length = 0;
   const docs = landedColumnDocs(await land(), plan);
@@ -63,3 +64,28 @@ test('a NEW runner refusing a list that does not fit: retried once under the fil
   assert.ok(calls[0].body.columnNames && !('columnNames' in calls[1].body));
   assert.deepEqual(docs.map((d) => d.name), ['Order Date', 'größe']);
 });
+
+// A dataset that already STORES normalised names (order_date ← Order Date).
+const mapped = [{ name: 'order_date', description: '', source: 'Order Date' }, { name: 'groesse', description: '', source: 'größe' }];
+
+test('the raw-name retry is allowed only without a stored mapping', () => {
+  assert.equal(rawRetryAllowed([]), true, 'nothing stored yet');
+  assert.equal(rawRetryAllowed([{ name: 'Order Date', description: '' }]), true, 'legacy raw names: a retry lands the same names');
+  assert.equal(rawRetryAllowed(mapped), false, 'stored normalised names');
+});
+
+test('a mapped dataset whose file does not fit is REFUSED (typed), never replaced under raw names', async () => {
+  runner = 'new-mismatch';
+  calls.length = 0;
+  await assert.rejects(() => land(rawRetryAllowed(mapped)), (e: Error) => e.message.startsWith(COLUMN_MAPPING_MISMATCH));
+  assert.equal(calls.length, 1, 'no second (raw-name) request reached the runner: Bronze is untouched');
+});
+
+test('negative twin: with the retry allowed on a mapped dataset, Bronze WOULD flip to the raw headers', async () => {
+  runner = 'new-mismatch';
+  calls.length = 0;
+  const flipped = (await land(true)).map((c) => c.name);
+  assert.deepEqual(flipped, ['Order Date', 'größe']);
+  assert.notDeepEqual(flipped, mapped.map((c) => c.name), 'the stored names Silver and Gold read are gone — the guard above is what prevents it');
+});
+
