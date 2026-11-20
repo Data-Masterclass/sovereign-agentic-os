@@ -38,6 +38,7 @@ on:
       - 'dagster-v*'
       - 'docling-v*'
       - 'data-runner-v*'
+      - 'query-tool-v*'
       - 'opensearch-v*'
       - 'backup-tools-v*'
   # The dev stage (.github/workflows/dev.yml) calls this with image=os-ui, version=main-<sha>.
@@ -64,7 +65,7 @@ on:
         description: which image to build
         required: true
         type: choice
-        options: [os-ui, git-http, git-daemon, dagster, docling, data-runner, opensearch, backup-tools]
+        options: [os-ui, git-http, git-daemon, dagster, docling, data-runner, query-tool, opensearch, backup-tools]
       version:
         description: the image tag to push (e.g. 0.9.0)
         required: true
@@ -182,11 +183,13 @@ jobs:
             docling)    dockerfile=images/extensions/docling/Dockerfile; context=images/extensions/docling ;;
             # data-runner: the ingest service (app.py + the shared column_name_rule.json).
             data-runner) dockerfile=images/extensions/data-runner/Dockerfile; context=images/extensions/data-runner ;;
+            # query-tool: the governed Trino read/write door (app.py, execute_guard.py, trino_login.py).
+            query-tool) dockerfile=images/extensions/query-tool/Dockerfile; context=images/extensions/query-tool ;;
             # 3.7.0 + repository-s3 (WP-21); tag e.g. opensearch-v3.7.0-soa.1.
             opensearch) dockerfile=images/extensions/opensearch/Dockerfile; context=images/extensions/opensearch ;;
             # git + aws-cli + jq for the WP-56 bundle sidecar and restore drills.
             backup-tools) dockerfile=images/base/backup-tools/Dockerfile; context=images/base/backup-tools ;;
-            *) echo "::error::unknown image '$image' — expected one of os-ui, git-http, git-daemon, dagster, docling, data-runner, opensearch, backup-tools" >&2; exit 1 ;;
+            *) echo "::error::unknown image '$image' — expected one of os-ui, git-http, git-daemon, dagster, docling, data-runner, query-tool, opensearch, backup-tools" >&2; exit 1 ;;
           esac
           test -f "$dockerfile" || { echo "::error::$dockerfile does not exist" >&2; exit 1; }
           {

@@ -1655,8 +1655,12 @@ queryTool:
   enabled: true
   image:
     repository: sovereign-os/query-tool     # built locally, loaded into kind
-    tag: "0.6.3"                             # 0.6.3 = ADDS DROP SCHEMA for the governed delete-domain run
-                                             # 0.6.2 = ADDS the promote-as-view allowlist
+    tag: "0.6.2"                             # 0.6.2 = ADDS the promote-as-view allowlist
+                                             # NEXT (0.6.3, built by build-images.yml from tag
+                                             # query-tool-v0.6.3 into the org registry): DROP SCHEMA +
+                                             # the purge catalog for the delete-domain run, /health
+                                             # capabilities, trino_login.py. A delete run is refused
+                                             # until a query-tool advertising `domain-delete` is live.
                                              #         (CREATE OR REPLACE VIEW / DROP VIEW for
                                              #         builder+ into an entitled domain schema)
   trino:

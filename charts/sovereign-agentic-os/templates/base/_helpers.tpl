@@ -421,3 +421,18 @@ s3.aws-access-key=${ENV:AWS_ACCESS_KEY_ID}
 s3.aws-secret-key=${ENV:AWS_SECRET_ACCESS_KEY}
 {{- end }}
 {{- end -}}
+
+
+{{/*
+The query-tool image reference. Outside the local profile (where kind loads a local build) the tag
+MUST pin a digest (`<version>@sha256:<64 hex>`): a tag alone can be re-pushed, and a missing image
+must fail the render, not the rollout. The org-built image comes from build-images.yml
+(`query-tool-v<version>` -> ghcr.io/data-masterclass/sovereign-os/query-tool).
+*/}}
+{{- define "soa.queryToolImage" -}}
+{{- $q := .Values.queryTool.image -}}
+{{- if and (ne .Values.global.profile "local") (not (regexMatch "@sha256:[0-9a-f]{64}$" (toString $q.tag))) -}}
+{{- fail (printf "queryTool.image.tag %q must pin a digest (<version>@sha256:<digest>) outside the local profile" (toString $q.tag)) -}}
+{{- end -}}
+{{- printf "%s:%s" $q.repository $q.tag -}}
+{{- end -}}

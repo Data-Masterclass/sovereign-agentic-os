@@ -98,7 +98,7 @@ spec:
         runAsUser: 1000
       containers:
         - name: catalog-purge
-          image: "{{ $q.image.repository }}:{{ $q.image.tag }}"
+          image: {{ include "soa.queryToolImage" . | quote }}
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
           securityContext:
             {{- include "soa.containerSecurityContext" . | nindent 12 }}
