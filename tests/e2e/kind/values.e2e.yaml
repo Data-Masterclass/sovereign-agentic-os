@@ -1,0 +1,45 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+#
+# values.e2e.yaml — the acceptance-harness profile. Layered LAST, after the chart defaults and
+# values.local.yaml (the laptop sizing):
+#
+#   helm upgrade --install agentic-os charts/sovereign-agentic-os \
+#     -f values.local.yaml -f tests/e2e/kind/values.e2e.yaml
+#
+# It changes only what the harness needs to make the evidence honest. Every component stays
+# the real one at the chart's pinned image; nothing here swaps a component for an imitation.
+#   1. No offline mock. values.local.yaml allows the labelled offline mock for the teaching flow;
+#      an acceptance test must never see an invented number, so the chart default (`refuse`) is
+#      restored and an unreachable engine is a typed ENGINE_UNAVAILABLE.
+#   2. Object storage is SeaweedFS (manifests/seaweedfs.yaml), not the bundled MinIO. The chart's
+#      own `external` mode is used, so every consumer reads the endpoint from soa.s3Endpoint.
+#   3. The model upstream is the scripted, request-counting stub (model-stub/). It replaces the
+#      mock-model IMAGE only; the Deployment, Service and LiteLLM routing are the chart's.
+#   4. The Northpeak demo seed is off: the journeys bring their own fixtures, and the seed's
+#      init job depends on the bundled bucket-init hook that external mode does not render.
+
+osUI:
+  offlineMock: refuse
+
+objectStorage:
+  enabled: false
+  mode: external
+  external:
+    endpoint: http://seaweedfs:8333
+
+langfuse:
+  s3:
+    endpoint: http://seaweedfs:8333
+
+polaris:
+  s3:
+    endpoint: http://seaweedfs:8333
+
+mockModel:
+  image:
+    repository: sovereign-os/e2e-model-stub   # built from tests/e2e/kind/model-stub, loaded into kind
+    tag: "0.1.0"
+
+marts:
+  enabled: false
