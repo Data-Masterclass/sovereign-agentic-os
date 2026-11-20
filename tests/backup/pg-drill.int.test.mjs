@@ -23,7 +23,7 @@ function dumpRun(dir, stamp, { corrupt = false } = {}) {
     pg_dumpall --globals-only > "$OUT/globals.sql"
     for db in $DBS; do pg_dump -Fc -d "$db" -f "$OUT/$db.dump"; done
     ${corrupt ? 'head -c 300 "$OUT/shop.dump" > /tmp/t && cat /tmp/t > "$OUT/shop.dump"' : 'true'}
-    ( cd "$OUT" && ls -l ) > "$OUT/MANIFEST"; chmod -R a+rwX /work/${dir}`, {}, { image: PG_IMAGE, user: '999:999' });
+    ( cd "$OUT" && ls -l ) > "$OUT/MANIFEST"; chmod -R a+rwX /work/${dir}/dumps`, {}, { image: PG_IMAGE, user: '999:999' });
   assert.equal(r.code, 0, r.log);
   r = tools(`aws --endpoint-url "$S3_ENDPOINT" s3 cp --recursive --quiet /work/${dir}/dumps/${stamp} s3://${PGDUMP}/${PREFIX}/${stamp}/`, { S3_BUCKET: PGDUMP });
   assert.equal(r.code, 0, r.log);
@@ -33,7 +33,9 @@ function dumpRun(dir, stamp, { corrupt = false } = {}) {
 function runDrill(name) {
   const dir = fresh(name);
   const env = { S3_BUCKET: PGDUMP, PG_DUMP_PREFIX: PREFIX, DRILL_DATA: `/work/${name}/data`, RESULTS_DIR: `/work/${name}/results` };
-  let r = tools(`mkdir -p /work/${name}/results /work/${name}/data && sh /opt/soa/backup/drill-pg-fetch.sh`, env);
+  // In the chart every container of the drill pod runs as uid 999; here two images with two uids share
+  // the work dir, so the results dir is made writable for both.
+  let r = tools(`mkdir -p /work/${name}/results /work/${name}/data && chmod a+rwx /work/${name}/results && sh /opt/soa/backup/drill-pg-fetch.sh`, env);
   assert.equal(r.code, 0, r.log);
   r = tools('bash /opt/soa/backup/drill-pg.sh', env, { image: PG_IMAGE, user: '999:999' });
   assert.equal(r.code, 0, r.log);
