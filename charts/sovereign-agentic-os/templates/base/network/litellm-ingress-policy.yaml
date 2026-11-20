@@ -1,0 +1,86 @@
+{{- /*
+  LiteLLM: restrict ingress to the OS components that use it (defence in depth).
+
+  Selects the LiteLLM proxy pods (the upstream subchart's selector labels,
+  `app.kubernetes.io/name: litellm` + instance) and admits the proxy port
+  (`litellm.service.port`, 4000 by default; the subchart uses it as the containerPort) only from:
+
+    os-ui             (component os-ui)            LITELLM_URL — model calls, the admin reads and
+                                                   writes (keys, budgets, spend), the embedded
+                                                   console behind /tools/litellm
+    os-ui-worker      (component os-ui-worker)     LITELLM_URL — agent-run model calls
+    litellm-agent-key-init Job (component litellm-key-init)
+                                                   registers and reconciles the shared agent key
+    LiteLLM's own pods (name litellm + instance)   the upstream chart's `helm test` pod
+                                                   (`<release>-litellm-test-connection`) carries
+                                                   the proxy's labels; the migrations Job carries
+                                                   them too and serves nothing
+    the ingress controller namespace               ONLY when the restricted LiteLLM Ingress
+                                                   renders (ingress.enabled, ingress.hosts.litellm
+                                                   and ingress.restricted.litellm.expose with a
+                                                   protection annotation — soa.restrictedExposed)
+
+  Nothing else calls the gateway. Langfuse, Dagster (webserver, daemon, code server, run pods),
+  data-runner, query-tool, docling, OpenSearch and the agent schedule CronJobs never do; LiteLLM
+  calls query-tool and Langfuse, not the other way round. Apps built by the OS (namespace
+  `agentic-apps`) get model access through the OS API (os-ui), never from the gateway directly,
+  so no other namespace is admitted. A NEW direct caller must be added here, or its requests time
+  out once the policy is enforced. `scripts/check-litellm-ingress-policy.mjs` asserts this peer
+  list in the gate.
+
+  Kubelet probes and `kubectl port-forward` are unaffected (they do not traverse pod-to-pod
+  policy), so the e2e harness's port-forwards keep working.
+
+  Gated by `networkPolicies.litellmIngress` (default true) and rendered only with
+  `litellm.enabled`. kind's default CNI does not enforce NetworkPolicies — locally this applies
+  but is inert; on STACKIT (Calico) it enforces.
+*/}}
+{{- if and .Values.litellm.enabled .Values.networkPolicies.litellmIngress }}
+{{- $port := ((.Values.litellm.service | default dict).port | default 4000) }}
+{{- $ing := .Values.ingress | default dict }}
+{{- $exposed := false }}
+{{- if and $ing.enabled (index ($ing.hosts | default dict) "litellm") }}
+{{- $exposed = eq (include "soa.restrictedExposed" (dict "ctx" . "key" "litellm")) "true" }}
+{{- end }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: litellm-allow-os-clients-only
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: litellm
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  policyTypes:
+    - Ingress
+  ingress:
+    # The proxy API — only the OS components that call it.
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: os-ui
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: os-ui-worker
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: litellm-key-init
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: litellm
+              app.kubernetes.io/instance: {{ .Release.Name }}
+      ports:
+        - { protocol: TCP, port: {{ $port }} }
+    {{- if $exposed }}
+    # The restricted console route (opt-in, protected by its Ingress annotations).
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ ((.Values.networkPolicies.dagster | default dict).ingressNamespace | default "ingress-nginx") | quote }}
+      ports:
+        - { protocol: TCP, port: {{ $port }} }
+    {{- end }}
+{{- end }}
