@@ -86,6 +86,20 @@ model provider):
   is then refused, which os-ui reads as `BudgetExceededError` (`isBudgetRejection` accepts the
   400, 422 and 429 forms; the HTTP status 1.109.1 uses was not recorded by the test).
 
+Measured with the combined WP-31 + WP-32 code (`tests/langfuse/compose.yaml`, the real engine run
+through `liteLlmCaller`, `os-ui/tabs/agents/lib/engine/tracing.e2e.test.ts`):
+
+- every model call is one GENERATION `chat <model>` → `POST /v1/chat/completions` → the OS's
+  `llm.<node>` span; `litellm.call_id` equals the span's `litellm_call_id`; the second-writer twin
+  is red;
+- **caller metadata is not exported**: with `LITELLM_OTEL_BAGGAGE_METADATA_KEYS` including
+  `requester_metadata.node` (and a probe `requester_metadata.correlation_id`), neither attribute
+  appeared on any span, with the master key or a virtual key, although the OTel v2 page documents
+  it. So the chart does not set it, and run diagnostics attribute a generation to its agent through
+  its `llm.<node>` ancestor instead;
+- **1.109.1 refuses to start without a master key** (`UnsafeMasterKeyError`). The chart always sets
+  one (`PROXY_MASTER_KEY`); the DB-less test stack sets `LITELLM_MASTER_KEY`.
+
 `scripts/tests/litellm-langfuse/upgrade.sh` (1.90.0 → 1.109.1, a database with a key and spend):
 
 - the 1.109.1 proxy on the un-migrated schema reports ready and refuses every call

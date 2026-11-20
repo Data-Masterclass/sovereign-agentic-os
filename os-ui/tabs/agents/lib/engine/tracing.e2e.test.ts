@@ -3,7 +3,7 @@
  *
  * TAB:        agents
  * FEATURE:    Tracing e2e on the REAL Langfuse server (3.194.1) and the REAL gateway (LiteLLM
- *             1.90.0, production callback settings) — WP-31, design 05 §7 (v3 variant)
+ *             1.109.1, `langfuse_otel`, production callback settings) — WP-31/WP-32, design 05 §7 (v3 variant)
  * USER STORY: As the owner I want proof from Langfuse's own API that one agent run is one trace,
  *             that every model call appears exactly ONCE as a generation (the gateway's), nested
  *             under the run's own observation tree, and that the runner and the system session are
@@ -179,12 +179,24 @@ function assertOneWriterTrace(t: Trace, modelCalls: number): void {
   for (const g of gens) assert.match(JSON.stringify(g.metadata ?? {}), /litellm/i, `generation ${g.id} is not the gateway's`);
   const llmSpans = new Map(t.observations.filter((o) => o.name.startsWith('llm.')).map((o) => [o.id, o]));
   assert.equal(llmSpans.size, modelCalls, 'one llm.<node> span per model call');
-  for (const g of gens) assert.ok(g.parentObservationId && llmSpans.has(g.parentObservationId), `generation ${g.id} is not nested under an llm.<node> span`);
+  // LiteLLM 1.109.1, `langfuse_otel`, span scope `full` (the chart's): the generation nests under the
+  // gateway's request span, which `traceparent` nests under the call's llm.<node> span
+  // (components/litellm/UPSTREAM.md "Span scope"). The gateway reports the call id the span recorded.
+  const byId = new Map(t.observations.map((o) => [o.id, o]));
+  for (const g of gens) {
+    const request = g.parentObservationId ? byId.get(g.parentObservationId) : undefined;
+    assert.ok(request && request.name.startsWith('POST /v1/chat/completions'), `generation ${g.id} is not under the gateway's request span`);
+    const llm = request.parentObservationId ? llmSpans.get(request.parentObservationId) : undefined;
+    assert.ok(llm, `generation ${g.id} is not nested under an llm.<node> span`);
+    const sent = (llm.metadata as { litellm_call_id?: string } | undefined)?.litellm_call_id;
+    const reported = ((g.metadata as { attributes?: Record<string, unknown> } | undefined)?.attributes ?? {})['litellm.call_id'];
+    assert.ok(sent && reported === sent, `generation ${g.id}: litellm.call_id ${String(reported)} is not the llm span's litellm_call_id ${String(sent)}`);
+  }
   const total = gens.reduce((n, g) => n + (g.usage?.total ?? 0), 0);
   assert.equal(total, 15 * modelCalls, 'the summed usage equals what the model reported — no doubling');
 }
 
-test('TRACING E2E (Langfuse 3.194.1 + LiteLLM 1.90.0): one trace per run, one generation per call, spans nested, user and session set', { skip: !E2E && 'set TRACING_E2E=1 with tests/langfuse/compose.yaml up' }, async () => {
+test('TRACING E2E (Langfuse 3.194.1 + LiteLLM 1.109.1 langfuse_otel): one trace per run, one generation per call, spans nested, user and session set', { skip: !E2E && 'set TRACING_E2E=1 with tests/langfuse/compose.yaml up' }, async () => {
   const stub = await startStubModel();
   try {
     const runId = `run_${randomUUID()}`;
@@ -212,11 +224,10 @@ test('TRACING E2E (Langfuse 3.194.1 + LiteLLM 1.90.0): one trace per run, one ge
     assert.ok(t.observations.some((o) => o.type === 'CHAIN' && o.name.startsWith('plan_')), 'graph nodes are chain observations');
     assert.ok(t.observations.some((o) => o.type === 'TOOL'), 'the tool call is a tool observation');
 
-    // Per-agent tokens and cost (run diagnostics): the gateway's generation carries the agent as
-    // `metadata.node`, so the diagnostics shaping attributes every generation to its agent.
-    const gens = t.observations.filter((o) => o.type === 'GENERATION');
-    for (const g of gens) assert.equal((g.metadata as { requester_metadata?: { node?: string } } | undefined)?.requester_metadata?.node, 'reader', `generation ${g.id} does not name its agent`);
-    const metrics = shapeTraceMetrics(gens as never, ['reader']);
+    // Per-agent tokens and cost (run diagnostics): LiteLLM OTel v2 puts no caller metadata on the
+    // generation, so diagnostics read the whole trace and attribute each generation to the agent on
+    // its llm.<node> ancestor (run-diagnostics.ts `attributeNode`). Exactly the route's read.
+    const metrics = shapeTraceMetrics(t.observations as never, ['reader']);
     assert.equal(metrics.perNode.reader?.tokens, 15 * calls, 'perNode is filled per agent');
     assert.ok((metrics.perNode.reader?.costUsd ?? 0) > 0, 'and carries the gateway cost');
     assert.equal(t.userId, USER_ID, 'userId is the bare runner uid');

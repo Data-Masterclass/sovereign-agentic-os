@@ -36,7 +36,10 @@
  *        `llm_only`; anything else silently disables OTel v2), and under `full` a
  *        `LITELLM_OTEL_BAGGAGE_PROMOTED_KEYS` without the model keys (else every span of a request
  *        is a GENERATION). Both callbacks together log every call twice (LiteLLM's migration
- *        guide; scripts/tests/litellm-langfuse proves it).
+ *        guide; scripts/tests/litellm-langfuse proves it);
+ *     9. the tracing e2e stack (`tests/langfuse/compose.yaml` + `litellm-config.yaml`) runs the
+ *        chart's gateway: the same image (by digest), the same `LITELLM_OTEL_*` env and the same
+ *        Langfuse callback settings — so the test proves what production runs.
  *   Pure file reads — no helm, no cluster, no network — so it never skips. Wired into
  *   `os-ui/scripts/gate.sh`. docs/components/litellm.md "Prices and budgets" explains the rules.
  */
@@ -178,6 +181,26 @@ const results = [
     images,
   ),
 ];
+// 9. The tracing e2e stack mirrors the chart's gateway.
+{
+  const problems = [];
+  const compose = loadYaml('tests/langfuse/compose.yaml');
+  const svc = compose.services?.litellm ?? {};
+  const img = base.litellm?.image ?? {};
+  const want = `${img.repository}:${img.tag}`;
+  if (svc.image !== want) problems.push(`litellm image is ${JSON.stringify(svc.image)}, the chart runs ${want}`);
+  const chartEnv = Object.fromEntries(Object.entries(base.litellm?.envVars ?? {}).filter(([k]) => k.startsWith('LITELLM_OTEL_')));
+  const testEnv = Object.fromEntries(Object.entries(svc.environment ?? {}).filter(([k]) => k.startsWith('LITELLM_OTEL_')));
+  for (const k of new Set([...Object.keys(chartEnv), ...Object.keys(testEnv)])) {
+    if (String(chartEnv[k]) !== String(testEnv[k])) problems.push(`${k}: chart ${JSON.stringify(chartEnv[k])}, test ${JSON.stringify(testEnv[k])}`);
+  }
+  const ls = loadYaml('tests/langfuse/litellm-config.yaml').litellm_settings ?? {};
+  const cls = base.litellm?.proxy_config?.litellm_settings ?? {};
+  for (const k of ['callbacks', 'success_callback', 'failure_callback', 'turn_off_message_logging']) {
+    if (JSON.stringify(ls[k] ?? null) !== JSON.stringify(cls[k] ?? null)) problems.push(`litellm_settings.${k}: chart ${JSON.stringify(cls[k] ?? null)}, test ${JSON.stringify(ls[k] ?? null)}`);
+  }
+  results.push({ name: 'tests/langfuse (tracing e2e stack vs chart)', problems, aliases: 0 });
+}
 const failed = results.filter((r) => r.problems.length);
 if (failed.length) {
   console.error('check-litellm-model-info FAILED:');
@@ -187,4 +210,4 @@ if (failed.length) {
   }
   process.exit(1);
 }
-console.log(`check-litellm-model-info: ok — ${results.map((r) => `${r.aliases} aliases priced on ${r.name}`).join('; ')}; vision flags match the OS image allowlist; gateway redaction is on; one Langfuse callback (langfuse_otel, OTel v2); the shared key's budget resets`);
+console.log(`check-litellm-model-info: ok — ${results.filter((r) => r.aliases).map((r) => `${r.aliases} aliases priced on ${r.name}`).join('; ')}; the tracing e2e stack runs the chart's gateway; vision flags match the OS image allowlist; gateway redaction is on; one Langfuse callback (langfuse_otel, OTel v2); the shared key's budget resets`);

@@ -4,8 +4,9 @@
 # (https://github.com/langfuse/langfuse/blob/v3.194.1/docker-compose.yml, MIT), pinned to the server
 # version that runs in production (3.194.1) and to production's ClickHouse (24.8). Only the host
 # ports differ, so the stack can run beside other local stacks; nothing but web (3000) and LiteLLM
-# (4000) is published. The LiteLLM half is the production image and the production callback
-# settings (charts/sovereign-agentic-os/values.yaml `litellm_settings`), with a scripted
+# (4000) is published. The LiteLLM half is the production image (1.109.1, by digest) and the
+# production callback settings (charts/sovereign-agentic-os/values.yaml `litellm_settings` and the
+# `LITELLM_OTEL_*` env in `litellm.envVars`; scripts/check-litellm-model-info.mjs keeps them equal), with a scripted
 # OpenAI-compatible model that the test process serves on the host (port 18931).
 #
 #   docker compose -f tests/langfuse/compose.yaml -p wp31-langfuse up -d --wait
@@ -134,11 +135,13 @@ services:
       timeout: 3s
       retries: 10
 
-  # The production gateway image and callback settings. The model it routes to is the test
-  # process's scripted stub on the host.
+  # The production gateway image (charts/sovereign-agentic-os/values.yaml `litellm.image`, by digest)
+  # and its OTel v2 settings (`litellm.envVars`). The model it routes to is the test process's
+  # scripted stub on the host. Runs DB-less: no virtual keys are needed here (key budgets are
+  # proven by scripts/tests/litellm-langfuse).
   litellm:
     restart: always
-    image: ghcr.io/berriai/litellm-database:1.90.0
+    image: ghcr.io/berriai/litellm-database:1.109.1@sha256:932c54440654f8f8466a85887612d95dcfb04ae2fc01257844332f4bf3b96986
     depends_on:
       langfuse-web: { condition: service_healthy }
     command: ["--config", "/app/config.yaml", "--port", "4000"]
@@ -147,9 +150,16 @@ services:
     ports:
       - 127.0.0.1:${LITELLM_E2E_PORT:-14031}:4000
     environment:
+      # 1.109 refuses to start without a master key. This DB-less stack has no virtual keys, so the
+      # master key is the key os-ui's test setup sends (os-ui/scripts/test-setup.mjs
+      # LITELLM_AGENT_KEY). Throwaway; the stack is never reachable from outside.
+      LITELLM_MASTER_KEY: sk-test-scoped-agent-key
       LANGFUSE_PUBLIC_KEY: pk-lf-e2e-public
       LANGFUSE_SECRET_KEY: sk-lf-e2e-secret
       LANGFUSE_HOST: http://langfuse-web:3000
+      LITELLM_OTEL_V2: "true"
+      LITELLM_OTEL_LANGFUSE_SPAN_SCOPE: "full"
+      LITELLM_OTEL_BAGGAGE_PROMOTED_KEYS: "litellm.team.id,litellm.team.alias,litellm.team.metadata,litellm.api_key.hash"
       STUB_API_BASE: http://host.docker.internal:${STUB_MODEL_PORT:-18931}/v1
     volumes:
       - ./litellm-config.yaml:/app/config.yaml:ro

@@ -27,7 +27,7 @@
  *   - Nothing here throws into a caller: the trace store being down is an expected state.
  */
 import 'server-only';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { TraceFlags, type SpanContext } from '@opentelemetry/api';
 import { NodeSDK } from '@opentelemetry/sdk-node';
 import type { SpanExporter, ReadableSpan } from '@opentelemetry/sdk-trace-base';
@@ -263,18 +263,21 @@ export async function withRunTrace<T>(input: RunTraceInput, fn: (observer: RunOb
         return {
           id: (node as LangfuseChain | null)?.id ?? rootSpanId,
           traceId,
-          // ONE span per model call. Its id is what the gateway nests its generation under
-          // (`parent_observation_id`), so the gateway's generation is the call's only generation.
+          // ONE span per model call. The gateway (LiteLLM OTel v2) nests its generation under it by
+          // the W3C `traceparent` built from this span's ids, so the gateway's generation is the
+          // call's only generation. The call id (`x-litellm-call-id`) is minted here and recorded
+          // as `litellm_call_id`: the gateway reports the same id as `litellm.call_id` (10 F1).
           llm: (inner, spanName) => (req) =>
             startActiveObservation(
               spanName ?? `llm.${name}`,
               async (span) => {
-                safe(() => span.update({ input: redactRequest(req, level), metadata: { kind: 'model-call', model: req.model, tools: (req.tools ?? []).length, node: metadata?.agent } }));
+                const callId = randomUUID();
+                safe(() => span.update({ input: redactRequest(req, level), metadata: { kind: 'model-call', model: req.model, tools: (req.tools ?? []).length, node: metadata?.agent, litellm_call_id: callId } }));
                 try {
                   // `node` (the agent) rides to the gateway's generation as metadata, so
                   // per-agent tokens and cost are read straight off the generation.
                   const node = typeof metadata?.agent === 'string' ? metadata.agent : name;
-                  const completion = await inner({ ...req, observe: { traceId, parentObservationId: span.id, node } });
+                  const completion = await inner({ ...req, observe: { traceId, parentObservationId: span.id, node, callId } });
                   safe(() => span.update({ output: redactCompletion(completion, level) }));
                   return completion;
                 } catch (e) {
@@ -461,6 +464,35 @@ export type LangfuseObservationRow = {
  * Read observations through the public API — filtered, always. Returns null when the store cannot
  * be reached (an expected state), throws `UnfilteredLangfuseQueryError` for a leaking filter.
  */
+/**
+ * Every observation of ONE trace (`GET /api/public/traces/{id}`), so a reader can follow the tree:
+ * the gateway's generation hangs under the gateway's request span, which hangs under the OS's
+ * `llm.<node>` span (LiteLLM OTel v2, 10 F1). Scoped to a trace id like `observationsQuery`'s run
+ * reads. Null when the store cannot be reached; [] when the trace does not exist (yet).
+ */
+export async function readTraceObservations(traceId: string, timeoutMs = 3_000): Promise<(LangfuseObservationRow & { parentObservationId?: string | null })[] | null> {
+  if (!traceId.trim()) throw new UnfilteredLangfuseQueryError();
+  if (!langfuseEnabled()) return null;
+  const auth = 'Basic ' + Buffer.from(`${config.langfusePublicKey}:${config.langfuseSecretKey}`).toString('base64');
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const res = await fetch(`${config.langfuseUrl}/api/public/traces/${encodeURIComponent(traceId)}`, {
+      headers: { authorization: auth, accept: 'application/json' },
+      cache: 'no-store',
+      signal: ctrl.signal,
+    });
+    if (res.status === 404) return [];
+    if (!res.ok) return null;
+    const body = (await res.json().catch(() => null)) as { observations?: LangfuseObservationRow[] } | null;
+    return Array.isArray(body?.observations) ? body!.observations : [];
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function readObservations(filter: ObservationFilter, timeoutMs = 3_000): Promise<LangfuseObservationRow[] | null> {
   const query = observationsQuery(filter);
   if (!langfuseEnabled()) return null;
