@@ -475,20 +475,19 @@ Promise.all(["/v1/models", "/v1/mcp/tools"].map(p => fetch(u + p, { headers: h }
       local want; want=$(ov "$3"); [ -n "$want" ] || continue
       [ "$(h16 "$(secret_key "$1" "$2")")" = "$(h16 "$want")" ] && pass "$1/$2 = new" || fail "$1/$2 is not the overlay value"
     done
-    local deployed d sel starts
+    # Only the pods that serve each Deployment now count: Running pods of its current ReplicaSet
+    # (scripts/lib/readers-restarted.py). A completed Job pod with the same labels is not a reader.
+    local deployed d sel rw
     deployed=$(helm --kube-context "$CTX" status "$REL" -n "$NS" -o json | python3 -c 'import json,sys; print(json.load(sys.stdin)["info"]["last_deployed"])')
+    rw=$(mktemp -d)
     for d in "$LANGFUSE_SVC" "$REL-langfuse-worker" "$LITELLM_SVC" os-ui os-ui-worker "$DAGSTER_CODE"; do
-      sel=$(k get deploy "$d" -o go-template='{{range $k,$v := .spec.selector.matchLabels}}{{$k}}={{$v}},{{end}}' 2>/dev/null | sed 's/,$//') || continue
-      [ -n "$sel" ] || continue
-      starts=$(k get pods -l "$sel" -o jsonpath='{range .items[*]}{.status.startTime}{" "}{end}')
-      if [ -z "${starts// /}" ]; then echo "   skip $d (no pods)"; continue; fi
-      if python3 -c '
-import sys
-from datetime import datetime
-dep = datetime.fromisoformat(sys.argv[1].replace("Z", "+00:00"))
-sys.exit(0 if all(datetime.fromisoformat(t.replace("Z", "+00:00")) > dep for t in sys.argv[2].split()) else 1)' "$deployed" "$starts"
-      then pass "$d: every pod started after the last deploy"; else fail "$d has a pod from before the last deploy: restart it"; fi
+      k get deploy "$d" -o json > "$rw/dep.json" 2>/dev/null || continue
+      sel=$(python3 -c 'import json,sys; print(",".join(f"{k}={v}" for k, v in json.load(open(sys.argv[1]))["spec"]["selector"]["matchLabels"].items()))' "$rw/dep.json")
+      k get rs -l "$sel" -o json > "$rw/rs.json"; k get pods -l "$sel" -o json > "$rw/pods.json"
+      local line rc=0; line=$(python3 "$REPO/scripts/lib/readers-restarted.py" "$rw/dep.json" "$rw/rs.json" "$rw/pods.json" "$deployed") || rc=$?
+      case $rc in 0) pass "$line" ;; 2) echo "   skip $line" ;; *) fail "$line: restart it" ;; esac
     done
+    rm -rf "$rw"
 
     say "Langfuse (port-forward)"
     port_forward "$LANGFUSE_SVC" 3000

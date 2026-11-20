@@ -122,7 +122,9 @@ jobs:
       # rotate-secrets.sh against a fake kubectl/helm: the re-key overlays, mode 600, no value in the
       # output, and the refusals (another cluster, the wrong step, none-stored while values are stored).
       - name: rotate-secrets.sh test
-        run: bash scripts/tests/rotate-secrets.test.sh
+        run: |
+          bash scripts/tests/rotate-secrets.test.sh
+          bash scripts/tests/readers-restarted.test.sh
 
       # WP-47 capacity gate tests: the real chart passes, and the negative twins (2 extra CPU
       # cores, over-committed memory limits, a container with no memory request, an empty render)
