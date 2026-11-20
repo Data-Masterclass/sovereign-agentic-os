@@ -46,6 +46,11 @@ let backend = '';
 let available = true;
 const tokens = new Map<string, string>();
 
+/** Percent-decode like the web server (an undecodable path stays as it is). */
+function safeDecode(p: string): string {
+  return /%(?![0-9a-f]{2})/i.test(p) ? p : decodeURIComponent(p);
+}
+
 async function freePort(): Promise<number> {
   return new Promise((resolve) => {
     const s = net.createServer();
@@ -113,7 +118,9 @@ before(async () => {
           ...gitEnv,
           GIT_PROJECT_ROOT: reposDir,
           GIT_HTTP_EXPORT_ALL: '1',
-          PATH_INFO: p.replace(/^\/git/, ''),
+          // As lighttpd 1.4.85 in `git-http:1.0.0` does (measured): percent-decode, then resolve
+          // dot segments — so a path the auth layer did not refuse reaches the repo it decodes to.
+          PATH_INFO: path.posix.normalize(safeDecode(p)).replace(/^\/git/, ''),
           QUERY_STRING: query,
           REQUEST_METHOD: req.method ?? 'GET',
           CONTENT_TYPE: String(req.headers['content-type'] ?? ''),
@@ -189,6 +196,29 @@ test('https: a domain repo is served to its members under the canonical name and
   people.set(outsider.id, outsider);
   tokens.set(outsider.id, createAccessToken({ userId: outsider.id, name: 'laptop' }).token);
   assert.equal((await clone(httpUrl(outsider, 'sales'))).ok, false, 'a non-member is refused');
+});
+
+test('https: an encoded traversal from a repo the caller may read never reaches another repo (verifier F1)', async (t) => {
+  if (!available) return t.skip('git http-backend is not available');
+  const victim = userRepoName(ALICE.id);
+  const variants = [
+    `sales.git/..%2f${victim}`,
+    `sales.git/..%2F${victim}`,
+    `sales.git/%2e%2e%2f${victim}`,
+    `sales.git%2f..%2f${victim}`,
+    `${userRepoName(BOB.id)}.git/..%2f${victim}`,
+    `sales.git/..%2f${PLATFORM_REPO}`,
+    `sales.git/..%5c${victim}`,
+    `sales.git/%252e%252e%252f${victim}`,
+  ];
+  for (const v of variants) {
+    const r = await clone(`http://git:${tokens.get(BOB.id)}@${base.slice('http://'.length)}/git/${v}.git`);
+    assert.equal(r.ok, false, `a member reached ${v}`);
+    const head = await fetch(`${base}/git/${v}.git/info/refs?service=git-upload-pack`, { headers: { authorization: `Basic ${Buffer.from(`git:${tokens.get(BOB.id)}`).toString('base64')}` } });
+    assert.equal(head.status, 404, `${v} must be a 404 at the auth layer`);
+  }
+  // the plain request is still served
+  assert.equal((await clone(httpUrl(BOB, 'sales'))).ok, true);
 });
 
 test('git daemon (in-cluster door): domain repos are served, user and platform repos are refused', async (t) => {
