@@ -34,7 +34,9 @@ function skipReason() {
 }
 
 function render(sets) {
-  const args = ['template', 't', CHART];
+  // A redirect render with the Ingress on keeps the chart's default secrets on purpose, which
+  // templates/base/secret-defaults-guard.yaml refuses for a real install: allow it here only.
+  const args = ['template', 't', CHART, '--set', 'global.allowChartDefaultSecrets=true'];
   for (const s of sets) args.push('--set', s);
   try {
     return { ok: true, out: execFileSync('helm', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 1 << 27 }) };
