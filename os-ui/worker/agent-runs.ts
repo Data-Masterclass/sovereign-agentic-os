@@ -181,7 +181,7 @@ export async function bootWorker(): Promise<WorkerBoot> {
   if (boot.checkpointer === 'memory') warn('AGENT_RUNS_DATABASE_URL unset — checkpoints are IN MEMORY; a restart loses in-flight runs');
 
   // WP-53b: the agent-module tables, by migration (never by a run). Off unless AGENT_GRAPH_MODULE.
-  const { ensureAgentModuleReady } = await import('@tabs/agents/lib/module/os-run');
+  const { ensureAgentModuleReady } = await import('@tabs/agents/lib/module/boot');
   log(`agent modules: ${await ensureAgentModuleReady(runsDb)}`);
 
   // `run_jobs` / `run_events` (idempotent DDL), next to the checkpointer's setup().
