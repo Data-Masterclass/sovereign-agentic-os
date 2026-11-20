@@ -696,6 +696,7 @@
     secretKeyRef:
       name: {{ $u.litellmSecret.name | quote }}
       key: {{ $u.litellmSecret.key | quote }}
+{{- include "soa.backupAlerts.env" . }}
 {{- end }}
 
 # ---------------------------------------------------------------------------

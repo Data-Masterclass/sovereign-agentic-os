@@ -25,6 +25,8 @@ export type Component = {
   layer: string;
   kind: 'deploy' | 'sts' | 'ds' | 'cluster' | 'job';
   workload: string;
+  /** The main container of the workload's pods, when it is not named like the workload. */
+  container?: string;
   svc: string;
   port: number;
   ui: boolean;

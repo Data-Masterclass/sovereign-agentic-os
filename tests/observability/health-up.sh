@@ -41,7 +41,7 @@ docker network create $net >/dev/null 2>&1 || true
 docker rm -f $p-trino $p-opensearch $p-pg $p-opa $p-vm $p-vl $p-collector >/dev/null 2>&1 || true
 docker run -d --name $p-trino --network $net -p 127.0.0.1:18080:8080 --memory 1600m "$TRINO" >/dev/null
 docker run -d --name $p-opensearch --network $net -p 127.0.0.1:19200:9200 --memory 1200m \
-  -e discovery.type=single-node -e DISABLE_SECURITY_PLUGIN=true -e DISABLE_INSTALL_DEMO_CONFIG=true \
+  -e discovery.type=single-node -e DISABLE_SECURITY_PLUGIN=true -e DISABLE_INSTALL_DEMO_CONFIG=true -e path.repo=/tmp/os-snap \
   -e OPENSEARCH_JAVA_OPTS="-Xms512m -Xmx512m" "$OS" >/dev/null
 docker run -d --name $p-pg --network $net -e PGDATA=/tmp/pgdata -p 127.0.0.1:15432:5432 -e POSTGRES_PASSWORD=health-it-not-a-secret "$PG" >/dev/null
 docker run -d --name $p-opa --network $net -p 127.0.0.1:18182:8181 "$OPA" run --server --addr=0.0.0.0:8181 >/dev/null

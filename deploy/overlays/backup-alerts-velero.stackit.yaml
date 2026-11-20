@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+#
+# Backup failure alerts for the Velero schedule (WP-05). Apply it once, through the deploy script:
+#
+#   VALUES_OVERLAY=deploy/overlays/backup-alerts-velero.stackit.yaml ./scripts/deploy.sh --from-registry <version>
+#
+# Grants os-ui `get,list` on backups.velero.io in the Velero namespace (Role os-ui-velero-backups)
+# and makes Monitoring raise a critical alert when the schedule's newest finished Backup is
+# Failed, PartiallyFailed or FailedValidation. The pg-dump and OpenSearch snapshot alerts need no
+# overlay: they follow backup.pgDump / opensearchSnapshots.
+observability:
+  backupAlerts:
+    velero:
+      namespace: velero
+      scheduleName: velero-daily-agentic-os

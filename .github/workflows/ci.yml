@@ -461,6 +461,12 @@ jobs:
         env:
           OBS_IT: '1'
         run: node --test --test-concurrency=1 tests/observability/stack.int.test.mjs
+      - name: Backup failure alerts on real Kubernetes Jobs (a failing and a succeeding CronJob)
+        working-directory: os-ui
+        env:
+          BACKUP_K8S_IT: '1'
+          KUBE_CONTEXT: kind-wp05
+        run: node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test tabs/monitoring/lib/backup-failure-alerts.int.test.ts
       - name: Stack logs (on failure)
         if: failure()
         run: kubectl --context kind-wp05 -n obs-it logs ds/otel-collector --tail 100 || true
@@ -488,6 +494,12 @@ jobs:
           OTEL_COLLECTOR_HEALTH_URL: http://127.0.0.1:13134
           OTEL_COLLECTOR_METRICS_URL: http://127.0.0.1:18889
         run: node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test tabs/admin/lib/component-health.int.test.ts
+      - name: Backup failure alerts on a real OpenSearch snapshot (PARTIAL, then SUCCESS)
+        working-directory: os-ui
+        env:
+          BACKUP_OS_IT: '1'
+          OPENSEARCH_URL: http://127.0.0.1:19200
+        run: node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test tabs/monitoring/lib/backup-failure-alerts.int.test.ts
       - name: LiteLLM orphan-span filter (on; then off = negative twin)
         run: |
           bash tests/observability/health-up.sh down
