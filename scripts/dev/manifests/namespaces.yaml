@@ -1,0 +1,37 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+#
+# The dev namespaces and their Pod Security Standard (Kubernetes Pod Security Admission labels,
+# https://kubernetes.io/docs/concepts/security/pod-security-admission/). Applied by the OPERATOR
+# (scripts/dev/bootstrap-secrets.sh, admin kubeconfig). The CI account cannot change them: it has
+# no write right on namespaces (ci-rbac.yaml).
+#   agentic-os     baseline enforced (no privileged, no hostPath, no host namespaces); restricted
+#                  is only warned and audited, because upstream subcharts run as root.
+#   agentic-apps   restricted, as production labels it.
+#   dev-model-key  restricted; the CI account has no rights here at all.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: agentic-os
+  labels:
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/audit: restricted
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: agentic-apps
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/warn: restricted
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: dev-model-key
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest

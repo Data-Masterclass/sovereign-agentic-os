@@ -60,6 +60,10 @@ YAML
 require_marked_dev
 echo "   ok"
 
+say "2b. namespaces with their Pod Security labels (agentic-os: baseline enforced)"
+k apply -f "$REPO_ROOT/scripts/dev/manifests/namespaces.yaml" >/dev/null
+echo "   ok"
+
 say "3. private overlay in $DEV_PRIVATE_DIR"
 private_dir
 OVERLAY=$DEV_PRIVATE_DIR/values.dev.private.yaml

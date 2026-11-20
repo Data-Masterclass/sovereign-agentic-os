@@ -1,0 +1,38 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+#
+# vm.max_map_count=262144 on every dev node (OpenSearch's documented requirement:
+# https://opensearch.org/docs/latest/install-and-configure/install-opensearch/index/#important-settings).
+# The OpenSearch subchart would set it with a PRIVILEGED init container in agentic-os
+# (opensearch.sysctlInit). Dev turns that off (values.dev.yaml) so agentic-os can enforce the
+# baseline Pod Security Standard, and sets the sysctl here instead: one privileged init container
+# in kube-system, applied by the operator (scripts/dev/platform.sh). The CI account has no right
+# in kube-system.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: sovereign-os-node-sysctl
+  namespace: kube-system
+  labels: { app: sovereign-os-node-sysctl }
+spec:
+  selector: { matchLabels: { app: sovereign-os-node-sysctl } }
+  template:
+    metadata: { labels: { app: sovereign-os-node-sysctl } }
+    spec:
+      automountServiceAccountToken: false
+      priorityClassName: system-node-critical
+      initContainers:
+        - name: max-map-count
+          image: busybox:1.37.0@sha256:a7dbc319b1438115a207e11930dc4bb3e643dcb3ec0bdd694bb36cd8fad289ec
+          command: ["sh", "-c", "c=$(sysctl -n vm.max_map_count); [ \"$c\" -ge 262144 ] || sysctl -w vm.max_map_count=262144"]
+          securityContext: { privileged: true, runAsUser: 0 }
+          resources:
+            requests: { cpu: 5m, memory: 8Mi }
+            limits: { memory: 16Mi }
+      containers:
+        - name: pause
+          image: registry.k8s.io/pause:3.10@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a
+          securityContext: { allowPrivilegeEscalation: false, runAsNonRoot: true, runAsUser: 65535, capabilities: { drop: ["ALL"] } }
+          resources:
+            requests: { cpu: 1m, memory: 4Mi }
+            limits: { memory: 8Mi }
