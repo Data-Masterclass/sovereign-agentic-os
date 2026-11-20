@@ -71,9 +71,13 @@ jobs:
       # Glue-discipline rules (design 00 §8.3 + artifact contract), ratcheted against
       # scripts/structure-baseline.json → glue, then their negative twins: one fixture per rule
       # that must turn the checker red naming that rule.
+      # `!cancelled()`: they are pure static checks, so they report even when an earlier step
+      # failed — a bad PR always sees every glue rule it breaks, by name.
       - name: Glue-discipline ratchet (GLUE-1 … GLUE-10)
+        if: ${{ !cancelled() }}
         run: node scripts/check-glue.mjs
       - name: Glue-discipline negative twins
+        if: ${{ !cancelled() }}
         run: node --test scripts/tests/check-glue.test.mjs
       # GLUE-6 / GLUE-10, the component's own tool: golden generated dbt projects through `dbt parse`
       # and `dagster definitions validate` (the chart's Dagster image, built here), the rendered
