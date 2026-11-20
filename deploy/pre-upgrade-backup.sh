@@ -45,12 +45,21 @@ done
 [ "$complete" = "True" ] || die "pg dump job did not complete within 10 min"
 echo "pg dump complete:"
 kubectl -n "$NS" logs "job/$JOB" -c upload --tail=3 || true
+# The Iceberg catalog lives in Polaris's database: a backup pair without it cannot restore tables.
+PGLOG=$(kubectl -n "$NS" logs "job/$JOB" --all-containers 2>/dev/null || true)
+printf '%s\n' "$PGLOG" | grep -q "dumping polaris" || die "the pg dump did not include the polaris database"
+printf '%s\n' "$PGLOG" | grep -q "upload verified" || die "the pg dump upload was not verified"
+PG_AT=$(kubectl -n "$NS" get job "$JOB" -o jsonpath='{.status.completionTime}')
 
 if $PG_ONLY; then log "PG-ONLY GATE PASSED (Velero step skipped)"; exit 0; fi
 
 # ---- 2. ad-hoc Velero backup ------------------------------------------------------
 kubectl get ns velero >/dev/null 2>&1 || die "velero not installed (deploy/velero/install.sh)"
 NAME="pre-upgrade-$STAMP"
+# The apps namespace too (the delete-domain run removes app Deployments and their TLS Secrets).
+APPS_NS="${APPS_NS:-agentic-apps}"
+NAMESPACES_JSON="\"$NS\""
+kubectl get ns "$APPS_NS" >/dev/null 2>&1 && NAMESPACES_JSON="$NAMESPACES_JSON, \"$APPS_NS\""
 log "running ad-hoc Velero backup: $NAME"
 kubectl apply -f - <<EOF
 apiVersion: velero.io/v1
@@ -58,8 +67,15 @@ kind: Backup
 metadata:
   name: $NAME
   namespace: velero
+  # Read by Admin -> Domains -> Delete (the 2 h backup gate): one marker for the PAIR.
+  labels:
+    sovereign-os.io/pre-upgrade-backup: "true"
+  annotations:
+    sovereign-os.io/pg-dump-job: "$JOB"
+    sovereign-os.io/pg-dump-completed: "$PG_AT"
+    sovereign-os.io/pg-dump-polaris: "verified"
 spec:
-  includedNamespaces: ["$NS"]
+  includedNamespaces: [$NAMESPACES_JSON]
   defaultVolumesToFsBackup: true
   ttl: 240h
   storageLocation: default

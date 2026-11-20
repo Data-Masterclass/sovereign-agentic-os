@@ -1,0 +1,140 @@
+{{- if and .Values.polaris.enabled .Values.polaris.catalog.purgeOnDrop }}
+{{- /*
+  PURGE ON DROP (delete domain, Data delete) — a hook Job that runs AFTER polaris-catalog-init.
+  Trino's Iceberg REST catalog sends every DROP TABLE as `DELETE …/tables/<t>?purgeRequested=true`.
+  Polaris 1.1 refuses it unless (1) the caller holds TABLE_WRITE_DATA (DROP_TABLE_WITH_PURGE =
+  TABLE_DROP + TABLE_WRITE_DATA; catalog_admin has only CATALOG_MANAGE_ACCESS + _METADATA by
+  default) and (2) the catalog sets `polaris.config.drop-with-purge.enabled`. Without both every
+  DROP fails 403 and the table stays (proven in tests/domain-delete).
+
+  JSON is handled with Python's json module (the query-tool image is the chart's pinned Python
+  image), never sed: UpdateCatalog REPLACES the properties map wholesale, so the FULL current map
+  is sent back, and the result is read back and checked — `default-base-location` unchanged and
+  the purge flag true — or the Job FAILS (fail closed). Every call is idempotent.
+*/}}
+{{- $pl := .Values.polaris }}
+{{- $q := .Values.queryTool }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: polaris-catalog-purge
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "polaris-purge") | nindent 4 }}
+  annotations:
+    # After polaris-catalog-init (weight 10): the catalog exists before this runs.
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "11"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 6
+  ttlSecondsAfterFinished: 300
+  template:
+    metadata:
+      labels:
+        {{- include "soa.selectorLabels" (dict "ctx" . "component" "polaris-purge") | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- include "soa.podSecurityContext" . | nindent 8 }}
+        runAsUser: 1000
+      containers:
+        - name: catalog-purge
+          image: "{{ $q.image.repository }}:{{ $q.image.tag }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          securityContext:
+            {{- include "soa.containerSecurityContext" . | nindent 12 }}
+          env:
+            {{- if eq .Values.global.profile "local" }}
+            - name: CLIENT_ID
+              value: {{ $pl.local.rootClientId | quote }}
+            - name: CLIENT_SECRET
+              value: {{ $pl.local.rootClientSecret | quote }}
+            {{- else }}
+            - name: BOOTSTRAP_CREDS
+              valueFrom: { secretKeyRef: { name: {{ $pl.secretName }}, key: POLARIS_BOOTSTRAP_CREDENTIALS } }
+            {{- end }}
+            - name: CATALOG
+              value: {{ $pl.catalog.name | quote }}
+            - name: POLARIS_CATALOG_API
+              value: "http://polaris:8181"
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              exec python3 - <<'PY'
+              import json, os, sys, time, urllib.error, urllib.parse, urllib.request
+
+              API = os.environ["POLARIS_CATALOG_API"]
+              CAT = os.environ["CATALOG"]
+              KEY = "polaris.config.drop-with-purge.enabled"
+              creds = os.environ.get("BOOTSTRAP_CREDS", "").split(",")
+              cid = os.environ.get("CLIENT_ID") or (creds[1] if len(creds) > 2 else "")
+              sec = os.environ.get("CLIENT_SECRET") or (creds[2] if len(creds) > 2 else "")
+              if not cid or not sec:
+                  sys.exit("catalog-purge: no Polaris client credentials")
+
+              def call(method, path, body=None, form=None, token=None):
+                  data = None
+                  headers = {"accept": "application/json"}
+                  if form is not None:
+                      data = urllib.parse.urlencode(form).encode()
+                      headers["content-type"] = "application/x-www-form-urlencoded"
+                  elif body is not None:
+                      data = json.dumps(body).encode()
+                      headers["content-type"] = "application/json"
+                  if token:
+                      headers["authorization"] = "Bearer " + token
+                  req = urllib.request.Request(API + path, data=data, method=method, headers=headers)
+                  try:
+                      with urllib.request.urlopen(req, timeout=30) as r:
+                          raw = r.read().decode()
+                          return r.status, (json.loads(raw) if raw.strip() else None)
+                  except urllib.error.HTTPError as e:
+                      return e.code, None
+
+              st, tok = call("POST", "/api/catalog/v1/oauth/tokens", form={"grant_type": "client_credentials", "client_id": cid, "client_secret": sec, "scope": "PRINCIPAL_ROLE:ALL"})
+              token = (tok or {}).get("access_token")
+              if st != 200 or not token:
+                  sys.exit(f"catalog-purge: no Polaris token (HTTP {st})")
+
+              cat = None
+              for _ in range(60):
+                  st, cat = call("GET", f"/api/management/v1/catalogs/{CAT}", token=token)
+                  if st == 200:
+                      break
+                  time.sleep(5)
+              if st != 200 or not isinstance(cat, dict) or not isinstance(cat.get("properties"), dict):
+                  sys.exit(f"catalog-purge: catalog {CAT} not readable (HTTP {st})")
+              base = cat["properties"].get("default-base-location")
+              if not base:
+                  sys.exit(f"catalog-purge: catalog {CAT} has no default-base-location; refusing to write")
+
+              st, _ = call("PUT", f"/api/management/v1/catalogs/{CAT}/catalog-roles/catalog_admin/grants", body={"grant": {"type": "catalog", "privilege": "TABLE_WRITE_DATA"}}, token=token)
+              if st not in (200, 201, 204):
+                  sys.exit(f"catalog-purge: grant TABLE_WRITE_DATA failed (HTTP {st})")
+
+              if cat["properties"].get(KEY) == "true":
+                  print(f"catalog {CAT} already purges on drop")
+              else:
+                  props = dict(cat["properties"])
+                  props[KEY] = "true"
+                  st, _ = call("PUT", f"/api/management/v1/catalogs/{CAT}", body={"currentEntityVersion": cat["entityVersion"], "properties": props}, token=token)
+                  if st != 200:
+                      sys.exit(f"catalog-purge: UpdateCatalog failed (HTTP {st})")
+                  st, after = call("GET", f"/api/management/v1/catalogs/{CAT}", token=token)
+                  p = (after or {}).get("properties") or {}
+                  lost = sorted(k for k in cat["properties"] if k not in p)
+                  if st != 200 or p.get(KEY) != "true" or p.get("default-base-location") != base or lost:
+                      sys.exit(f"catalog-purge: catalog {CAT} did not keep its properties (lost {lost})")
+                  print(f"catalog {CAT} now purges on drop")
+              PY
+          resources:
+            requests: { cpu: 25m, memory: 64Mi }
+            limits: { cpu: 200m, memory: 128Mi }
+{{- end }}

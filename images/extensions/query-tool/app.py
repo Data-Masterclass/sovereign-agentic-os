@@ -273,7 +273,7 @@ async def http_execute(req: Request):
     if not principal:
         return JSONResponse({"ok": False, "error": "missing principal"}, status_code=400)
     try:
-        parsed = guard(sql, uid, domains, role)
+        parsed = guard(sql, uid, domains, role, body.get("purpose"))
         source, tags = scheduling(body)
     except ExecuteError as e:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=e.status)

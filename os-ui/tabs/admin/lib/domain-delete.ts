@@ -132,21 +132,25 @@ export function litellmComponent(deps: { agentSystemIds: (domainId: string) => P
 export function membersComponent(): DomainDeleteComponent {
   return {
     component: 'users',
-    async plan({ domainId, actor }) {
+    async plan({ domainId }) {
       const users = await listUsers();
       const remove: PlanItem[] = [];
-      const keep: KeptItem[] = [];
+      const blocked: KeptItem[] = [];
       for (const u of users.filter((x) => x.domains.includes(domainId))) {
         const only = u.domains.length === 1;
         const item: PlanItem = { component: 'users', kind: only ? 'deactivate' : 'membership', id: u.id, label: u.id, detail: only ? 'only domain: deactivate, then remove the membership' : `remove "${domainId}", keep ${u.domains.filter((d) => d !== domainId).join(', ')}` };
-        if (only && u.id === actor.id) keep.push({ ...item, reason: 'the acting admin is never deactivated' });
+        // An ADMIN is never deactivated by a domain delete (the acting one or any other): the run
+        // is refused until they get another domain or are demoted by a person.
+        if (only && u.role === 'admin') blocked.push({ ...item, reason: `${u.id} is an admin whose only domain is ${domainId}; admins are never deactivated by a domain delete — give them another domain first` });
         else remove.push(item);
       }
-      return { component: 'users', remove, keep };
+      return { component: 'users', remove, keep: [], blocked };
     },
     async remove(item, { domainId }) {
       await ensureTenantUsersHydrated();
-      if (!(await listUsers()).some((x) => x.id === item.id)) return 'already absent';
+      const u = (await listUsers()).find((x) => x.id === item.id);
+      if (!u) return 'already absent';
+      if (item.kind === 'deactivate' && u.role === 'admin') throw new Error(`${u.id} became an admin after the plan; admins are never deactivated`);
       // Archive (cannot sign in) and drop the membership in ONE confirmed user write.
       await removeDomainFromUser(item.id, domainId, { disable: item.kind === 'deactivate' });
       if (item.kind === 'deactivate') await deactivateUser(item.id);
@@ -174,19 +178,54 @@ export function domainRecordComponent(deps: { recompile: () => Promise<void> }):
 
 // --------------------------------------------------------------------------- backup gate --
 
-type VeleroBackup = { metadata?: { name?: string }; spec?: { includedNamespaces?: string[] }; status?: { phase?: string; completionTimestamp?: string } };
+type VeleroBackup = {
+  metadata?: { name?: string; labels?: Record<string, string>; annotations?: Record<string, string> };
+  spec?: { includedNamespaces?: string[] };
+  status?: { phase?: string; completionTimestamp?: string };
+};
+export type K8sGet = (path: string) => Promise<{ status: number; body: Record<string, unknown> }>;
 
-/** The newest completed Velero Backup covering the platform namespace (`velero.io/v1`). */
-export function veleroBackupCheck(veleroNamespace = 'velero'): BackupCheck {
+/**
+ * The backup gate's evidence: the newest PAIR written by `deploy/pre-upgrade-backup.sh` — a
+ * COMPLETED Velero Backup labelled `sovereign-os.io/pre-upgrade-backup=true` that includes the
+ * platform AND the apps namespace, annotated with a verified pg-dump (Polaris included). The
+ * pair's age is the OLDER of the two, so a fresh Velero backup next to a stale dump does not pass.
+ */
+export function veleroBackupCheck(opts: { veleroNamespace?: string; get?: K8sGet; namespaces?: string[] } = {}): BackupCheck {
+  const ns = opts.veleroNamespace ?? 'velero';
+  const get = opts.get ?? ((path: string) => k8s('GET', path));
   return async () => {
-    const r = await k8s('GET', `/apis/velero.io/v1/namespaces/${veleroNamespace}/backups`);
+    const r = await get(`/apis/velero.io/v1/namespaces/${ns}/backups?labelSelector=${encodeURIComponent('sovereign-os.io/pre-upgrade-backup=true')}`);
     if (r.status !== 200) return { ok: false, reason: `Velero backups unreadable (Kubernetes API ${r.status || 'unreachable'})` };
-    const ns = config.platformNamespace;
-    const items = ((r.body.items as VeleroBackup[]) ?? [])
+    const need = opts.namespaces ?? [config.platformNamespace, config.softwareRunnerNamespace];
+    const pairs = ((r.body.items as VeleroBackup[]) ?? [])
+      .filter((b) => b.metadata?.labels?.['sovereign-os.io/pre-upgrade-backup'] === 'true')
       .filter((b) => b.status?.phase === 'Completed' && b.status.completionTimestamp)
-      .filter((b) => { const inc = b.spec?.includedNamespaces ?? []; return inc.length === 0 || inc.includes('*') || inc.includes(ns); })
-      .sort((a, b) => b.status!.completionTimestamp!.localeCompare(a.status!.completionTimestamp!));
-    if (!items.length) return { ok: false, reason: `no completed Velero backup includes ${ns}` };
-    return { ok: true, name: items[0].metadata?.name ?? '(unnamed)', at: items[0].status!.completionTimestamp! };
+      .filter((b) => { const inc = b.spec?.includedNamespaces ?? []; return need.every((n) => inc.includes(n)); })
+      .filter((b) => b.metadata?.annotations?.['sovereign-os.io/pg-dump-polaris'] === 'verified' && !!b.metadata.annotations['sovereign-os.io/pg-dump-completed'])
+      .map((b) => {
+        const v = b.status!.completionTimestamp!;
+        const pg = b.metadata!.annotations!['sovereign-os.io/pg-dump-completed'];
+        return { name: b.metadata?.name ?? '(unnamed)', at: Date.parse(pg) < Date.parse(v) ? pg : v, pg };
+      })
+      .filter((p) => Number.isFinite(Date.parse(p.at)))
+      .sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
+    if (!pairs.length) return { ok: false, reason: `no completed pre-upgrade-backup.sh pair (Velero ${need.join(' + ')} and a verified pg-dump with Polaris) was found; run deploy/pre-upgrade-backup.sh` };
+    return { ok: true, name: `${pairs[0].name} + pg-dump ${pairs[0].pg}`, at: pairs[0].at };
   };
+}
+
+// ------------------------------------------------------------------------ the target --
+
+/** Names that are never a deletable domain: the platform scope, company scope, user repos. */
+const RESERVED = new Set(['platform', 'company', 'admin', 'system', 'my', 'shared', 'marketplace', 'tenant']);
+
+/** Refuse unless `id` is a REGISTERED domain that cannot be mistaken for anything else: not a
+ *  reserved scope, not a `user-*` repo name, not a user id (its OPA principal would be deleted). */
+export async function assertDeletableDomain(id: string): Promise<void> {
+  const bad = (m: string, status = 400) => { throw Object.assign(new Error(m), { status }); };
+  if (!/^[a-z0-9][a-z0-9-]*$/.test(id)) bad(`"${id}" is not a domain id`);
+  if (RESERVED.has(id) || id.startsWith('user-') || id.startsWith('platform-')) bad(`"${id}" is a reserved name, never a deletable domain`);
+  if (!listDomains().some((d) => d.id === id)) bad(`"${id}" is not a registered domain`, 404);
+  if ((await listUsers()).some((u) => u.id === id)) bad(`"${id}" is also a user id; refusing (its principal would be removed)`);
 }

@@ -14,7 +14,7 @@
  */
 import 'server-only';
 import type { McpTool } from '@core/mcp/server';
-import { fail, str, bool } from '@core/mcp/write-common';
+import { fail, str } from '@core/mcp/write-common';
 import { authorize } from '@core/infra/governed';
 import { deleteDomain, domainDeleteWiring, planLines } from '@core/kernel/domain-delete';
 
@@ -28,19 +28,16 @@ export const domainDeleteTools: McpTool[] = [
       'component\'s own API (OS stores, Trino DROP TABLE with Polaris purge, the domain git repo + ' +
       'Dagster reload, OPA data, LiteLLM team and keys, members, the domain record). DRY RUN BY ' +
       'DEFAULT: returns the plan — every object per component that will be removed, and every ' +
-      'object KEPT because something outside the domain still maps to it. A run needs ' +
-      '`dryRun:false`, `confirm` equal to the domain id, and a Velero backup from the last 2 h (or ' +
-      '`iHaveABackup:true`). Stops at the first failing step; re-run to resume. Every step is audited.',
+      'object KEPT because something outside the domain still maps to it, and every BLOCKED object. ' +
+      'This tool ONLY plans: the run itself is available only to a signed-in admin in Admin → Domains, ' +
+      'with the typed confirmation and a fresh backup (deploy/pre-upgrade-backup.sh). dryRun:false is refused.',
     inputSchema: {
       type: 'object',
       properties: {
         domain: { type: 'string', description: 'The domain id.' },
-        dryRun: { type: 'boolean', description: 'Default true: return the plan, remove nothing.' },
-        confirm: { type: 'string', description: 'For a run: the domain id again.' },
-        iHaveABackup: { type: 'boolean', description: 'Override the 2 h backup check (you state a backup exists).' },
       },
       required: ['domain'],
-      examples: [{ domain: 'sales' }, { domain: 'sales', dryRun: false, confirm: 'sales' }],
+      examples: [{ domain: 'sales' }],
     },
     call: async (user, args) => {
       if (user.role !== 'admin') fail('delete_domain requires an admin', 403);
@@ -51,12 +48,15 @@ export const domainDeleteTools: McpTool[] = [
       const w = domainDeleteWiring();
       const report = await deleteDomain(
         domain,
-        { dryRun: args.dryRun !== false, confirm: str(args.confirm) || undefined, iHaveABackup: bool(args.iHaveABackup) },
+        // DRY RUN ONLY: a run needs a person in Admin → Domains (allowRun:false refuses dryRun:false).
+        { dryRun: args.dryRun !== false },
         {
           actor: { id: user.id, role: user.role, domains: user.allDomains },
           components: w.components(),
           backup: w.backup,
           audit: w.audit({ id: user.id, role: user.role }),
+          validateTarget: w.validateTarget,
+          allowRun: false,
         },
       );
       return { ...report, summary: planLines(report.plan) };
