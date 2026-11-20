@@ -177,6 +177,12 @@ export const FIELDS: Record<string, Mutator> = {
     synced(s).sync!.connectionId = v;
     (s.catalogs as Record<string, string | null>)[v] = 'crm_pg';
   },
+  // A connection whose catalog did not resolve: its id is written into the dbt source (name, meta).
+  // A resolved one reaches only the dlt asset in data/dagster/definitions.py (its own fuzz suite).
+  'sync.connectionId.unresolved': (s, v) => {
+    synced(s).sync!.connectionId = v;
+    (s.catalogs as Record<string, string | null>)[v] = null;
+  },
   'sync.schedule.cron': (s, v) => { synced(s).sync!.schedule.cron = v; },
   'sync.cron.field': (s, v) => { synced(s).sync!.schedule.cron = `0 6 * * ${v}`; },
   'sync.cursor.column': (s, v) => { synced(s).sync!.cursor!.column = v; },

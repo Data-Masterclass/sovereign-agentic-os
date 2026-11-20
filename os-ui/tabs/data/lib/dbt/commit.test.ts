@@ -228,7 +228,7 @@ test('C3 (WP-49): an AUTHORED body is a dbt model adopting its table; one carryi
   const d = store.createDataset(amir, { name: 'Authored' });
   store.buildVersion(d.id, amir, 'bronze', { quality: 'passing', artifact: 'bronze/authored.dlt.yml' });
   // No `compiled: true` — what add_dataset_version / the version route record.
-  store.buildVersion(d.id, amir, 'silver', { quality: 'unknown', artifact: 'silver/stg_authored.sql', body: 'select order_id from iceberg.personal_amir.bronze_authored' });
+  store.buildVersion(d.id, amir, 'silver', { quality: 'unknown', artifact: 'silver/stg_authored.sql', body: `select order_id from iceberg.personal_amir.bronze_${d.laneSlug}` });
   store.addCheck(d.id, amir, { rule: 'not_null', column: 'order_id' });
   const j = store.createDataset(amir, { name: 'Jinja' });
   store.buildVersion(j.id, amir, 'bronze', { quality: 'passing', artifact: 'bronze/jinja.dlt.yml' });
@@ -237,12 +237,14 @@ test('C3 (WP-49): an AUTHORED body is a dbt model adopting its table; one carryi
   await commitDataProject('sales', { id: 'amir' }, { action: 'x' }, {
     committer: async (_d, files) => { tree = files; return { sha: 'b'.repeat(40), changed: true }; },
   });
-  const model = tree!.get('models/personal/amir/silver_authored.sql')!;
+  // Lane names are unique per dataset (`<layer>_<slug>_<dataset id>`).
+  const lane = (name: string) => [...tree!.keys()].find((k) => new RegExp(`^models/personal/amir/${name}_[0-9a-f]{32}\\.sql$`).test(k));
+  const model = tree!.get(lane('silver_authored')!)!;
   assert.match(model, /full_refresh=false/);
   assert.match(model, /select order_id from \{\{ ref\('bronze_authored'\) \}\}|select order_id from \{\{ source\(/);
   assert.match(tree!.get('models/personal/amir/schema.yml')!, /not_null/, 'the rule tests the model');
   assert.doesNotMatch(tree!.get('models/sources.yml') ?? '', /os_built|out-of-band/);
-  assert.equal(tree!.has('models/personal/amir/silver_jinja.sql'), false, 'Jinja in authored SQL is never committed');
+  assert.equal(lane('silver_jinja'), undefined, 'Jinja in authored SQL is never committed');
   for (const content of tree!.values()) assert.ok(!content.includes("env_var('X')"), 'user Jinja reached the tree');
   assert.match(tree!.get('os/skipped.yml')!, /contains dbt Jinja/);
 });
