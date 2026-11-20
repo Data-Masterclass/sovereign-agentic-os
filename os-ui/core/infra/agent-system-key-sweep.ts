@@ -29,10 +29,11 @@
  *
  *   IDEMPOTENT: a second run finds nothing. Runs server-side in os-ui web only — the worker has
  *   no master key, so `liteLlmConfigured()` is false there and the sweep reports "not configured".
- *   `scheduleBootKeySweep` runs it once at boot and retries while the gateway is not reachable
+ *   `scheduleBootKeySweep` runs it once at boot and retries (through `core/reconcile/runtime.ts`) while the gateway is not reachable
  *   yet. Logs carry aliases and counts, never a key or a token id.
  */
 import 'server-only';
+import { scheduleEvery } from '@core/reconcile/runtime';
 import { liteLlmConfigured, readAllKeys, type Fetched, type LiteLlmKeyRow } from '@core/infra/litellm-admin';
 import { adminPost } from '@core/infra/litellm-write';
 import { isLegacyDerivedToken } from '@core/infra/agent-system-keys';
@@ -120,23 +121,28 @@ export async function sweepLegacySystemKeys(): Promise<KeySweepResult> {
   return result;
 }
 
-/** Delays between boot attempts: the gateway is often not up yet when os-ui starts. */
-const BOOT_RETRY_MS = [0, 30_000, 120_000, 600_000];
+/** How often a boot sweep that could not reach the gateway is retried (until it succeeds once). */
+const BOOT_RETRY_MS = 120_000;
 
 /**
- * Run the sweep ONCE per process at boot, retrying while the gateway cannot be listed. Not
- * awaited by the caller — boot never waits on the gateway — and a failure is only ever logged.
+ * Run the sweep ONCE per process at boot. When the gateway cannot be listed yet (it often is not
+ * up when os-ui starts), retry through the one timer module (`core/reconcile/runtime.ts`) until a
+ * sweep completes, then stop. Not awaited by the caller — boot never waits on the gateway — and a
+ * failure is logged by that module, never thrown into boot.
  */
-export function scheduleBootKeySweep(sweep: () => Promise<KeySweepResult> = sweepLegacySystemKeys, delays: readonly number[] = BOOT_RETRY_MS): void {
+export function scheduleBootKeySweep(sweep: () => Promise<KeySweepResult> = sweepLegacySystemKeys, retryMs: number = BOOT_RETRY_MS): void {
   if (slot().booted || !liteLlmConfigured()) return;
   slot().booted = true;
-  const attempt = (i: number) => {
-    const timer = setTimeout(() => {
-      void sweep()
-        .then((r) => { if (r.error && i + 1 < delays.length) attempt(i + 1); })
-        .catch((e) => console.error(`[key-sweep] attempt failed: ${(e as Error)?.message ?? String(e)}`));
-    }, delays[i]);
-    (timer as { unref?: () => void }).unref?.();
+  let stop: (() => void) | undefined;
+  let done = false;
+  const tick = async () => {
+    if (done) return;
+    const r = await sweep();
+    if (!r.error) {
+      done = true;
+      stop?.();
+    }
   };
-  attempt(0);
+  stop = scheduleEvery('agent-system-key-sweep', retryMs, tick);
+  void tick().catch((e) => console.error(`[key-sweep] first attempt failed: ${(e as Error)?.message ?? String(e)}`));
 }

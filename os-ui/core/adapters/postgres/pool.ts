@@ -18,6 +18,10 @@
  *     always propagates; if the ROLLBACK itself fails, the connection is destroyed (never returned
  *     to the pool in an unknown state) and both errors are thrown together.
  *   - `governanceHealth` reports the version the server itself states (GLUE-4).
+ *   - `agentRunsPool(url)`: the ONE process-wide pool for the `agent_runs` database, shared by the
+ *     run queue, LangGraph's `PostgresSaver` (`new PostgresSaver(pool)`) and the agent-system key
+ *     store. `configuredAgentRunsDatabaseUrl()` is the one read of `AGENT_RUNS_DATABASE_URL` for
+ *     callers outside the adapters (GLUE-1).
  */
 import pg from 'pg';
 import type { ComponentHealth, Fetched, FetchedFailure } from '@core/adapters/_contract';
@@ -108,4 +112,28 @@ export async function governanceHealth(db: Queryable): Promise<Fetched<Component
   } catch (err) {
     return pgFailure(err);
   }
+}
+
+// ------------------------------------------------------------- agent_runs ----
+
+/** Connections per process: the worker holds one run at a time; os-ui enqueues, tails and inspects. */
+export const AGENT_RUNS_POOL_MAX = 10;
+
+type PoolSlot = { url: string; pool: Promise<pg.Pool> };
+const runsSlot = globalThis as unknown as { __osAgentRunsPgPool?: PoolSlot };
+
+/** The process-wide pool for `databaseUrl` (created once, cached per URL). */
+export function agentRunsPool(databaseUrl: string): Promise<pg.Pool> {
+  const url = databaseUrl.trim();
+  if (!url) throw new Error('agentRunsPool: no AGENT_RUNS_DATABASE_URL');
+  if (!runsSlot.__osAgentRunsPgPool || runsSlot.__osAgentRunsPgPool.url !== url) {
+    const pool = Promise.resolve(new pg.Pool({ connectionString: url, max: AGENT_RUNS_POOL_MAX }));
+    runsSlot.__osAgentRunsPgPool = { url, pool };
+  }
+  return runsSlot.__osAgentRunsPgPool.pool;
+}
+
+/** The configured `agent_runs` database URL, trimmed; '' when there is none (a laptop: memory). */
+export function configuredAgentRunsDatabaseUrl(): string {
+  return (config.agentRunsDatabaseUrl ?? '').trim();
 }

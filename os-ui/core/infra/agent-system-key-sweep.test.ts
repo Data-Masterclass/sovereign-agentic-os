@@ -101,8 +101,8 @@ test('BOOT: the sweep is not scheduled in a process without gateway admin access
   // schedule runs the injected sweep exactly once and never throws into boot.
   let runs = 0;
   const sweep = async (): Promise<KeySweepResult> => { runs += 1; return { at: 1, ok: true, scanned: 0, deleted: [], failed: [] }; };
-  scheduleBootKeySweep(sweep, [0]);
-  scheduleBootKeySweep(sweep, [0]); // a second call in the same process is a no-op
+  scheduleBootKeySweep(sweep, 60_000);
+  scheduleBootKeySweep(sweep, 60_000); // a second call in the same process is a no-op
   await new Promise((r) => setTimeout(r, 20));
   assert.ok(runs <= 1, 'at most once per process');
 });

@@ -12,25 +12,7 @@
  *     `PostgresSaver` is constructed on it with its documented constructor
  *     (`new PostgresSaver(pool)`), and `jobs-postgres.ts` runs its SQL on it.
  *   - `pg` is imported lazily so a laptop or a pure test never loads it.
+ *   - The pool itself lives in `core/adapters/postgres/pool.ts` (GLUE-1); this module
+ *     re-exports it for the agents tab.
  */
-import type { Pool } from 'pg';
-
-/** Connections per process: the worker holds one run at a time; os-ui enqueues, tails and inspects. */
-export const AGENT_RUNS_POOL_MAX = 10;
-
-type PoolSlot = { url: string; pool: Promise<Pool> };
-const slot = globalThis as unknown as { __osAgentRunsPgPool?: PoolSlot };
-
-/** The process-wide pool for `databaseUrl` (created once, cached per URL). */
-export function agentRunsPool(databaseUrl: string): Promise<Pool> {
-  const url = databaseUrl.trim();
-  if (!url) throw new Error('agentRunsPool: no AGENT_RUNS_DATABASE_URL');
-  if (!slot.__osAgentRunsPgPool || slot.__osAgentRunsPgPool.url !== url) {
-    const pool = (async () => {
-      const { Pool: PgPool } = await import('pg');
-      return new PgPool({ connectionString: url, max: AGENT_RUNS_POOL_MAX });
-    })();
-    slot.__osAgentRunsPgPool = { url, pool };
-  }
-  return slot.__osAgentRunsPgPool.pool;
-}
+export { agentRunsPool, AGENT_RUNS_POOL_MAX } from '@core/adapters/postgres/pool';
