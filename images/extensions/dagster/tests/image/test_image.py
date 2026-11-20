@@ -65,7 +65,9 @@ def load(path):
 
 class GenerateThenParse(unittest.TestCase):
     def test_goldens_present(self):
-        self.assertGreaterEqual(len(GOLDENS), 5, GOLDENS)
+        self.assertGreaterEqual(len(GOLDENS), 9, GOLDENS)
+        for shape in ("sweep-full", "sweep-labels", "sweep-element", "live-q3-count-metric"):
+            self.assertTrue(any(g.endswith(f"/{shape}.golden.json") for g in GOLDENS), shape)
         self.assertIn(DUPLICATE_RULE, GOLDENS, "the duplicate-rule golden is part of the set")
 
     def test_every_golden_parses_in_the_image(self):
@@ -81,6 +83,12 @@ class GenerateThenParse(unittest.TestCase):
                 self.assertEqual(manifest["metadata"]["dbt_version"], DBT_CORE)
                 models = [n for n in manifest["nodes"].values() if n["resource_type"] == "model"]
                 self.assertTrue(models, "the manifest holds the generated models")
+
+    def test_readme_names_the_dbt_and_dsi_versions_this_image_carries(self):
+        readme = load(os.path.join(SRC, "os-ui/tabs/data/lib/dbt/fixtures/metrics-semantic-layer.golden.json"))["README.md"]
+        dsi = importlib.metadata.version("dbt-semantic-interfaces")
+        self.assertIn(f"dbt-semantic-interfaces {dsi}`", readme)
+        self.assertIn(f"(= dbt-core {DBT_CORE})", readme)
 
     def test_pre_fix_duplicate_rule_is_refused_with_dbts_text(self):
         with tempfile.TemporaryDirectory() as d:
@@ -141,7 +149,7 @@ class VerdictCache(unittest.TestCase):
         else:
             git("push", "-q", "-f", bare, "main:main", cwd=self.work)
 
-    def start(self):
+    def start(self, **extra):
         env = {
             "PATH": os.environ["PATH"], "HOME": self.tmp,
             "REPO_SYNC_ENABLED": "true", "POD_NAME": "agentic-os-dagster-user-deployments-test",
@@ -149,6 +157,7 @@ class VerdictCache(unittest.TestCase):
             "REPO_SYNC_GIT_BASE": "file://" + self.base, "REPO_SYNC_CHECKOUT": self.checkout,
             "REPO_SYNC_INTERVAL": str(self.INTERVAL), "REPO_SYNC_STATUS_PORT": "18089",
             "DAGSTER_RELOAD_LOCATION": "", "APP_DIR": APP,
+            **extra,
         }
         self.log = open(self.log_path, "w")
         self.proc = subprocess.Popen(["sh", os.path.join(APP, "repo-sync.sh")], env=env,
@@ -208,6 +217,21 @@ class VerdictCache(unittest.TestCase):
         self.assertEqual(log.count(f"parsing {good}"), 1, log)
         self.assertEqual(log.count(f"parsing {bad}"), 1, log)
         self.assertTrue(os.path.isfile(os.path.join(self.checkout, "sales/current/target/manifest.json")))
+
+    def test_a_timeout_is_retried_never_cached_as_a_refusal(self):
+        """A parse that did not finish (timeout here; an OOM kill behaves the same) must not pin a
+        good commit as failed: no verdict file, an honest 'did not finish' status, and a re-parse."""
+        good = commit_tree(self.work, load(DUPLICATE_RULE))
+        self.publish()
+        self.start(REPO_SYNC_PARSE_TIMEOUT="0.5")
+        s = self.wait_for(lambda s: s.get("head") == good and "did not finish" in (s.get("error") or ""))
+        self.assertIsNone(s["current"])
+        end = time.time() + 120
+        while self.log_text().count(f"parsing {good}") < 2 and time.time() < end:
+            time.sleep(0.5)
+        self.assertGreaterEqual(self.log_text().count(f"parsing {good}"), 2, "a timed-out sha is parsed again")
+        self.assertFalse(os.path.exists(os.path.join(self.checkout, ".verdicts", "sales", good + ".json")),
+                         "a timeout is never cached as dbt's verdict")
 
 
 if __name__ == "__main__":

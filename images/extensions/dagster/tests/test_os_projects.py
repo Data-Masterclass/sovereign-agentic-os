@@ -844,3 +844,23 @@ class PrincipalShape(unittest.TestCase):
             "    principal: bea\n"
         )
         self.assertEqual([s.dataset for s in osp.parse_schedules(yml)], ["ds_b"])
+
+
+class ParseVerdict(unittest.TestCase):
+    """Only dbt's own refusal is cached by repo-sync; anything that did not finish is retried (WP-03)."""
+
+    def test_dbt_refusal_is_cached(self):
+        out = "06:24:58  Encountered an error:\nParsing Error\n  'label' is a required property"
+        self.assertTrue(osp.is_dbt_refusal(2, out))
+        self.assertTrue(osp.is_dbt_refusal(1, "Compilation Error in model x"))
+
+    def test_timeout_signal_and_not_run_are_not_refusals(self):
+        self.assertFalse(osp.is_dbt_refusal(osp.RC_TIMEOUT, "dbt did not finish within 600s (timed out)"))
+        self.assertFalse(osp.is_dbt_refusal(-9, ""), "an OOM kill")
+        self.assertFalse(osp.is_dbt_refusal(osp.RC_NOT_RUN, "[Errno 2] No such file or directory: 'dbt'"))
+        self.assertFalse(osp.is_dbt_refusal(1, ""), "exit 1 with no dbt error text")
+
+    def test_run_reports_a_timeout_as_rc_timeout(self):
+        code, out = osp._run(["sleep", "5"], timeout=0.2)
+        self.assertEqual(code, osp.RC_TIMEOUT)
+        self.assertIn("timed out", out)

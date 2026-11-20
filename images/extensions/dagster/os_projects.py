@@ -49,16 +49,29 @@ _NAME_RE = re.compile(r"[^A-Za-z0-9_]")
 Runner = Callable[..., Tuple[int, str]]
 
 
-def _run(cmd: Sequence[str], cwd: Optional[str] = None, env: Optional[Mapping[str, str]] = None) -> Tuple[int, str]:
-    """Default subprocess runner: (returncode, combined output). Never raises."""
+#: Exit codes `_run` uses for a call that did not END in the tool's own verdict.
+RC_TIMEOUT = 124
+RC_NOT_RUN = 126
+
+
+def _run(
+    cmd: Sequence[str], cwd: Optional[str] = None, env: Optional[Mapping[str, str]] = None, timeout: float = 600,
+) -> Tuple[int, str]:
+    """Default subprocess runner: (returncode, combined output). Never raises.
+
+    A timeout is RC_TIMEOUT and a call that could not start is RC_NOT_RUN, never 1, so a caller can
+    tell "the tool said no" from "the tool did not finish" (a killed process keeps its negative rc).
+    """
     try:
         p = subprocess.run(
-            list(cmd), cwd=cwd, capture_output=True, text=True, timeout=600,
+            list(cmd), cwd=cwd, capture_output=True, text=True, timeout=timeout,
             env=(dict(env) if env is not None else None),
         )
         return p.returncode, (p.stdout or "") + (p.stderr or "")
+    except subprocess.TimeoutExpired:
+        return RC_TIMEOUT, f"{cmd[0]} did not finish within {timeout:g}s (timed out)"
     except Exception as e:  # noqa: BLE001 — a failed tool call is data here, not an exception
-        return 1, str(e)
+        return RC_NOT_RUN, str(e)
 
 
 def sanitize(name: str) -> str:
@@ -142,6 +155,23 @@ def dbt_parse(
         project_dir,
         parse_env(ambient),
     )
+
+
+#: dbt's own "no" — what it prints when it refuses a project (dbt-core 1.9: "Encountered an error",
+#: then the error kind such as "Parsing Error" / "Compilation Error" / "Runtime Error").
+_DBT_REFUSAL = re.compile(r"Encountered an error|^\s*\w+ Error\b", re.M)
+
+
+def is_dbt_refusal(code: int, output: str) -> bool:
+    """True only when dbt itself ran to the end and refused the project: its exit code (1 = error,
+    2 = unhandled/parse failure) AND its error text. A timeout, a signal (an OOM kill is -9) or a
+    tool that never started is NOT a refusal — the same commit may parse on the next pass, so it
+    must never be cached as failed (WP-03 verifier finding 8)."""
+    return code in (1, 2) and bool(_DBT_REFUSAL.search(output or ""))
+
+
+#: `--parse` exit codes for repo-sync: 0 parsed, 1 dbt refused (cache it), 75 did not finish (retry).
+PARSE_OK, PARSE_REFUSED, PARSE_TRANSIENT = 0, 1, 75
 
 
 # ------------------------------------------------------------------ schedules --
@@ -811,9 +841,12 @@ def _main(argv: Sequence[str]) -> int:
     exactly ONE place (review B2-review-H3).
     """
     if len(argv) == 3 and argv[1] == "--parse":
-        code, out = dbt_parse(argv[2])
+        timeout = float(os.environ.get("REPO_SYNC_PARSE_TIMEOUT") or 600)
+        code, out = dbt_parse(argv[2], run=lambda cmd, cwd=None, env=None: _run(cmd, cwd, env, timeout=timeout))
         sys.stdout.write(out)
-        return code
+        if code == 0:
+            return PARSE_OK
+        return PARSE_REFUSED if is_dbt_refusal(code, out) else PARSE_TRANSIENT
     if len(argv) == 2 and argv[1] == "--error-summary":
         sys.stdout.write(parse_error_summary(sys.stdin.read()) + "\n")
         return 0

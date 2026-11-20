@@ -26,7 +26,7 @@
  */
 import type { ModelPlan, ModelPlanSet } from '@tabs/data/lib/dbt/models';
 import { emitSemanticYaml, type SemanticDoc } from '@tabs/data/lib/dbt/semantic/model';
-import { semanticDocFor, semanticNames, type MetricRefusal } from '@tabs/data/lib/dbt/semantic/from-measures';
+import { projectElements, semanticDocFor, semanticNames, type MetricRefusal } from '@tabs/data/lib/dbt/semantic/from-measures';
 import { validateSemanticDoc } from '@tabs/data/lib/dbt/semantic/validate';
 import { renderTimeSpine } from '@tabs/data/lib/dbt/semantic/time-spine';
 
@@ -61,7 +61,10 @@ export function renderSemantic(plan: ModelPlanSet): SemanticRender {
   const files = new Map<string, string>();
   const metrics: EmittedMetric[] = [];
   const refusals: (MetricRefusal & { dataset: string })[] = [];
-  const alloc = semanticNames();
+  // Every name dbt holds project-wide comes from ONE allocator, seeded with every entity and
+  // dimension name the project will emit — so a name never depends on which dataset came first.
+  const semanticModels = plan.models.filter((m) => m.tested && m.dataset.measures.length);
+  const alloc = semanticNames(projectElements(semanticModels.map((m) => m.dataset)));
   let anyTimeDimension = false;
 
   // One semantic model per dataset, on its FURTHEST (tested) model — the gold mart the OS serves
