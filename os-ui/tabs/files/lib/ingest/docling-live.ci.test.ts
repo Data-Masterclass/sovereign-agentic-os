@@ -73,7 +73,7 @@ test('live docling (a, negative twin): the v1 table model is not available to th
   const form = new FormData();
   form.append('files', new Blob([new Uint8Array(PDF)], { type: 'application/pdf' }), 'invoice-table.pdf');
   form.append('to_formats', 'md');
-  form.append('table_structure_preset', 'tableformer_v1');
+  form.append('table_structure_preset', 'tableformer_v1_accurate');
   const res = await fetch(`${URL_}/v1/convert/file`, { method: 'POST', body: form, headers: { 'X-Api-Key': KEY } });
   const body = (await res.json().catch(() => null)) as Record<string, unknown> | null;
   const ok = res.status === 200 && body && (body.status === 'success' || body.status === 'partial_success');
