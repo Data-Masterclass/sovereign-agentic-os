@@ -12,6 +12,8 @@
 #   the `sovereign` code location loads), and ONLY on success repoint /repos-checkout/<domain>/current
 #   → <sha> and reload the Dagster code location once per pass. A commit that fails to parse never
 #   replaces the last good checkout — Dagster keeps scheduling the previous commit (checklist D8).
+#   A commit dbt refused is parsed ONCE: its verdict is cached per (domain, sha) under .verdicts/
+#   and re-published each pass without re-running dbt, until `main` moves.
 #   The outcome of every domain is written to /repos-checkout/status.json and served (that file
 #   ONLY) on REPO_SYNC_STATUS_PORT so os-ui can show "commit abc123 failed dbt parse: … — schedules
 #   still run def456".
@@ -83,7 +85,7 @@ GRAPHQL="${DAGSTER_GRAPHQL_URL:-http://agentic-os-dagster-webserver:80/graphql}"
 
 log() { printf '%s repo-sync: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"; }
 
-mkdir -p "$CHECKOUT/.mirrors" "$CHECKOUT/.status"
+mkdir -p "$CHECKOUT/.mirrors" "$CHECKOUT/.status" "$CHECKOUT/.verdicts"
 
 # A Dagster RUN pod carries this sidecar too (the subchart copies `sidecarContainers` into
 # `run_k8s_config.pod_spec_config.containers`), and a K8s Job only completes when EVERY container
@@ -169,12 +171,44 @@ PY
 }
 
 # Write one domain's status fragment (JSON, via python for correct escaping).
-write_status() { # domain head current lastGood error
-  python3 - "$CHECKOUT/.status/$1.json" "$1" "$2" "$3" "$4" "$5" <<'PY'
+# `error` is dbt's own output (tail, verbatim); `errorSummary` is the one line repo-sync logs.
+write_status() { # domain head current lastGood error [errorSummary] [parsedAt]
+  python3 - "$CHECKOUT/.status/$1.json" "$1" "$2" "$3" "$4" "$5" "${6:-}" "${7:-}" <<'PY'
 import json, sys, time
-path, domain, head, current, last_good, error = sys.argv[1:7]
+path, domain, head, current, last_good, error, summary, parsed_at = sys.argv[1:9]
 json.dump({"domain": domain, "head": head or None, "current": current or None,
            "lastGood": last_good or None, "error": error or None,
+           "errorSummary": summary or None, "parsedAt": parsed_at or None,
+           "checkedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}, open(path, "w"))
+PY
+}
+
+# Verdict cache per (domain, sha): a commit dbt refused is parsed ONCE, not on every pass until
+# `main` moves (01 §5.3, gap G9). The verdict is dbt's own text; a new commit gets a new parse.
+# Lives on the checkout emptyDir, so a pod restart parses each head once more — never stale.
+VERDICTS="$CHECKOUT/.verdicts"
+verdict_file() { printf '%s/%s/%s.json' "$VERDICTS" "$1" "$2"; } # domain sha
+save_verdict() { # domain sha error summary
+  mkdir -p "$VERDICTS/$1"
+  python3 - "$(verdict_file "$1" "$2")" "$3" "$4" <<'PY'
+import json, os, sys, time
+path, error, summary = sys.argv[1:4]
+tmp = path + ".tmp"
+json.dump({"ok": False, "error": error, "errorSummary": summary,
+           "parsedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}, open(tmp, "w"))
+os.replace(tmp, path)
+PY
+}
+cached_status() { # domain head current — re-publish a cached failed verdict; 1 when none
+  f="$(verdict_file "$1" "$2")"
+  [ -f "$f" ] || return 1
+  python3 - "$f" "$CHECKOUT/.status/$1.json" "$1" "$2" "$3" <<'PY'
+import json, sys, time
+f, path, domain, head, current = sys.argv[1:6]
+v = json.load(open(f))
+json.dump({"domain": domain, "head": head, "current": current or None, "lastGood": current or None,
+           "error": "dbt parse failed: " + v["error"], "errorSummary": v.get("errorSummary"),
+           "parsedAt": v.get("parsedAt"),
            "checkedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}, open(path, "w"))
 PY
 }
@@ -235,6 +269,10 @@ sync_domain() { # domain  (sets REPOINTED=1 when `current` moved)
     write_status "$d" "$head" "$current" "$current" ""
     return 0
   fi
+  # Already refused by dbt: publish the cached verdict, do not parse (or log) it again.
+  if cached_status "$d" "$head" "$current"; then
+    return 0
+  fi
   wt="$CHECKOUT/$d/$head"
   if [ ! -d "$wt" ]; then
     git -C "$mirror" worktree prune >/dev/null 2>&1 || true
@@ -243,7 +281,7 @@ sync_domain() { # domain  (sets REPOINTED=1 when `current` moved)
   log "$d: parsing $head"
   if out="$(parse_project "$wt")"; then
     ln -sfn "$head" "$CHECKOUT/$d/current.tmp" && mv -T "$CHECKOUT/$d/current.tmp" "$CHECKOUT/$d/current"
-    write_status "$d" "$head" "$head" "$head" ""
+    write_status "$d" "$head" "$head" "$head" "" "" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     log "$d: current → $head"
     REPOINTED=1
     # Drop older worktrees (keep current + the previous good one).
@@ -253,10 +291,11 @@ sync_domain() { # domain  (sets REPOINTED=1 when `current` moved)
     done
   else
     err="$(printf '%s' "$out" | tail -n 20 | tr '\n' ' ' | cut -c1-900)"
-    write_status "$d" "$head" "$current" "$current" "dbt parse failed: $err"
     # Say WHICH dbt error, not just that there was one (live incident 2026-11, track H).
     why="$(printf '%s' "$out" | python3 "$APP_DIR/os_projects.py" --error-summary 2>/dev/null || echo 'unreadable dbt output')"
-    log "$d: $head failed dbt parse — schedules keep running ${current:-nothing} — $why"
+    save_verdict "$d" "$head" "$err" "$why"
+    cached_status "$d" "$head" "$current"
+    log "$d: $head failed dbt parse — schedules keep running ${current:-nothing} — $why (not parsed again until main moves)"
   fi
 }
 

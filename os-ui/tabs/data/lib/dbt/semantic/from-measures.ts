@@ -13,7 +13,7 @@
  *     bridge and the only place the two vocabularies meet.
  *   - TYPE MAP: OS `count|count_distinct|sum|avg|min|max` → DSI `count|count_distinct|sum|average
  *     |min|max`; `count_distinct_approx` has NO faithful dbt agg, so it emits `count_distinct` plus
- *     `config.meta.os_agg: count_distinct_approx` (D6's one documented exception — dbt's own number
+ *     the metric's `config.meta.os_agg: count_distinct_approx` (D6's one documented exception — dbt's own number
  *     stays exact, the OS compiler keeps `approx_distinct`, and the parity oracle excludes it with
  *     a stated reason); `number` is a metric OVER metrics (`ratio` or `derived`), never a measure.
  *   - NAMES are project-global in dbt: two datasets with a `revenue` measure would make
@@ -37,7 +37,7 @@ import type {
   SemanticMetric,
   SemanticModel,
 } from '@tabs/data/lib/dbt/semantic/model';
-import { METRIC_TIME_WINDOW_RE, SEMANTIC_NAME_RE, type AggregationType, type TimeGranularity } from '@tabs/data/lib/dbt/semantic/spec';
+import { METRIC_TIME_WINDOW_RE, SEMANTIC_NAME_RE, toSemanticName, type AggregationType, type TimeGranularity } from '@tabs/data/lib/dbt/semantic/spec';
 import { isSafeSemanticExpr, isSafeSemanticFilter } from '@tabs/data/lib/dbt/semantic/validate';
 
 /** OS measure type → DSI `AggregationType`. `number` is absent on purpose (it is a metric). */
@@ -61,7 +61,7 @@ export type MetricRefusal = {
 export type SemanticBuild = { doc: SemanticDoc; refusals: MetricRefusal[] };
 
 /** Reserve a project-global dbt name; a collision is qualified with the semantic model's name. */
-export type NameAllocator = (preferred: string, qualifier: string) => string;
+export type NameAllocator = (preferred: string, qualifier: string, reserved?: ReadonlySet<string>) => string;
 
 /**
  * Measure names and metric names are each project-global in dbt, but they are SEPARATE namespaces
@@ -72,17 +72,21 @@ export type SemanticNames = { measure: NameAllocator; metric: NameAllocator };
 
 function allocator(): NameAllocator {
   const taken = new Set<string>();
-  return (preferred, qualifier) => {
+  return (preferred, qualifier, reserved = new Set<string>()) => {
+    // `reserved`: names already used by an entity or dimension of THIS semantic model — dbt-core
+    // 1.9.11 refuses one name used as two element types in a model ("used as types [ENTITY, MEASURE]").
+    const isTaken = (c: string) => taken.has(c) || reserved.has(c);
     // The sanitised base. REVIEW M-3: every later attempt must be built from THIS, not from the
     // raw `preferred` — a non-identifier name (`Revenue %`) colliding twice used to fall back to
     // `<qualifier>__Revenue %__2`, which is not a dbt identifier and fails `dbt parse` for the
     // whole domain. The numbered fallback is the only path that reaches that case, so it was the
     // one place the sanitising was lost.
-    const base = SEMANTIC_NAME_RE.test(preferred) ? preferred : `m_${preferred.replace(/[^a-z0-9_]/gi, '_').toLowerCase()}`;
+    // Single `_` joins: dbt-core 1.9.11 refuses any name containing `__` (proved in the image test).
+    const base = SEMANTIC_NAME_RE.test(preferred) ? preferred : toSemanticName(preferred);
     let candidate = base;
-    if (taken.has(candidate)) candidate = `${qualifier}__${base}`;
+    if (isTaken(candidate)) candidate = `${qualifier}_${base}`;
     let n = 2;
-    while (taken.has(candidate)) candidate = `${qualifier}__${base}__${n++}`;
+    while (isTaken(candidate)) candidate = `${qualifier}_${base}_${n++}`;
     taken.add(candidate);
     return candidate;
   };
@@ -99,10 +103,20 @@ function primaryKeyColumn(columns: ColumnDoc[]): string | null {
   return idCol ? idCol.name : (columns[0]?.name ?? null);
 }
 
+/**
+ * The dbt semantic model name (and file basename) for a dataset. The OS cube name
+ * (`<domain>__<slug>`, `modelName`) is a frozen OS identity; dbt-core 1.9.11 refuses `__` in a
+ * semantic model name, so the dbt name is its single-underscore form. ONE function, used by the
+ * emitter here and by `tabs/metrics/lib/model.ts` `semanticModelName` for the repo path.
+ */
+export function semanticModelNameFor(d: Dataset): string {
+  return toSemanticName(modelName(d));
+}
+
 /** The ENTITY name every `Dimension('<entity>__<dim>')` reference in this model is prefixed with. */
 export function entityNameFor(d: Dataset): string {
   const s = physicalSlug(d);
-  return SEMANTIC_NAME_RE.test(s) ? s : `e_${s.replace(/[^a-z0-9_]/gi, '_').toLowerCase()}`;
+  return SEMANTIC_NAME_RE.test(s) ? s : toSemanticName(s, 'e');
 }
 
 /** The OS `{CUBE}.col op value` predicate shapes, exactly as `metrics/lib/model.ts` emits them. */
@@ -168,7 +182,7 @@ export type SemanticSource = {
 export function semanticDocFor(src: SemanticSource, alloc: SemanticNames = semanticNames()): SemanticBuild {
   const d = src.dataset;
   const refusals: MetricRefusal[] = [];
-  const smName = modelName(d);
+  const smName = semanticModelNameFor(d);
   const entity = entityNameFor(d);
   const cols = goldOutputColumns(d);
   const pk = primaryKeyColumn(cols);
@@ -280,13 +294,17 @@ export function semanticDocFor(src: SemanticSource, alloc: SemanticNames = seman
       cumulative = 'window' in c && c.window ? { window: c.window } : {};
     }
 
-    const dbtMeasure = alloc.measure(m.name, smName);
+    const elementNames = new Set<string>([entity, ...dimensions.map((x) => x.name)]);
+    const dbtMeasure = alloc.measure(m.name, smName, elementNames);
     measureName.set(m.name, dbtMeasure);
     const measure: SemanticMeasure = { name: dbtMeasure, agg };
     if (m.description) measure.description = m.description;
-    if (agg !== 'count') measure.expr = m.sql;
+    // dbt-core 1.9.11 requires an `expr` on a COUNT measure ("Provide 'expr: 1' if a count of all
+    // rows is desired"); an OS `count` with no column is exactly that.
+    measure.expr = agg === 'count' ? m.sql || '1' : m.sql;
     if (m.label && m.label !== m.name) measure.label = m.label;
-    if (m.type === 'count_distinct_approx') measure.config = { meta: { os_agg: 'count_distinct_approx' } };
+    // No `config` on a measure: dbt-core 1.9.11 refuses it ("'config' was unexpected" at `dbt parse`);
+    // `os_agg` travels on the metric's `config.meta` (metaFor) instead.
     model.measures.push(measure);
 
     const dbtMetric = alloc.metric(m.name, smName);
@@ -298,7 +316,9 @@ export function semanticDocFor(src: SemanticSource, alloc: SemanticNames = seman
     };
     if (cumulative && Object.keys(cumulative).length) metric.type_params.cumulative_type_params = cumulative;
     if (filter) metric.filter = filter;
-    if (m.label && m.label !== m.name) metric.label = m.label;
+    // dbt-core 1.9 REQUIRES `label` on every metric ("'label' is a required property" at
+    // `dbt parse`, which takes the whole domain down) — the OS measure name when none was authored.
+    metric.label = m.label || m.name;
     if (m.description) metric.description = m.description;
     metric.config = { meta: metaFor(d, m) };
     metrics.push(metric);
@@ -357,7 +377,7 @@ export function semanticDocFor(src: SemanticSource, alloc: SemanticNames = seman
             metrics: [...new Set(refs)].sort().map((r): MetricInput => ({ name: metricName.get(r)! })),
           },
         };
-    if (m.label && m.label !== m.name) metric.label = m.label;
+    metric.label = m.label || m.name; // required by dbt (see pass 1)
     if (m.description) metric.description = m.description;
     metric.config = { meta: metaFor(d, m) };
     metrics.push(metric);

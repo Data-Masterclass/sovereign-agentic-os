@@ -92,7 +92,8 @@ export const ALLOWED_KEYS = {
   entity: ['name', 'type', 'description', 'role', 'expr', 'label', 'config'],
   dimension: ['name', 'type', 'description', 'is_partition', 'type_params', 'expr', 'label', 'config'],
   dimensionTypeParams: ['time_granularity', 'validity_params'],
-  measure: ['name', 'agg', 'description', 'create_metric', 'expr', 'agg_params', 'non_additive_dimension', 'agg_time_dimension', 'label', 'config'],
+  // No `config`: dbt-core 1.9.11 refuses it on a measure (proved in the Dagster image test).
+  measure: ['name', 'agg', 'description', 'create_metric', 'expr', 'agg_params', 'non_additive_dimension', 'agg_time_dimension', 'label'],
   metric: ['name', 'description', 'type', 'type_params', 'filter', 'label', 'config', 'time_granularity'],
   metricTypeParams: ['measure', 'numerator', 'denominator', 'expr', 'metrics', 'conversion_type_params', 'cumulative_type_params'],
   metricInput: ['name', 'filter', 'alias', 'offset_window', 'offset_to_grain'],
@@ -104,8 +105,18 @@ export const ALLOWED_KEYS = {
 /** `"<count> <granularity>"` — the only form `PydanticMetricTimeWindow` parses. */
 export const METRIC_TIME_WINDOW_RE = new RegExp(`^(\\d+)\\s+(${TIME_GRANULARITIES.join('|')})s?$`);
 
-/** A dbt/MetricFlow identifier: the grammar DSI's name validation accepts. */
-export const SEMANTIC_NAME_RE = /^[a-z_][a-z0-9_]*$/;
+/** A dbt/MetricFlow identifier, as dbt-core 1.9.11 validates it at `dbt parse`: lower-case letters,
+ *  digits and underscores, starting with a letter, not ending with `_`, NO dunder (`__`), at least
+ *  2 characters. `__` is MetricFlow's `entity__dimension` reference separator, hence the ban. */
+export const SEMANTIC_NAME_RE = /^(?!.*__)[a-z][a-z0-9_]*[a-z0-9]$/;
+
+/** Any OS name made into a valid dbt semantic identifier (see {@link SEMANTIC_NAME_RE}). */
+export function toSemanticName(raw: string, prefix = 'm'): string {
+  let s = raw.toLowerCase().replace(/[^a-z0-9_]/g, '_').replace(/_{2,}/g, '_').replace(/^_+|_+$/g, '');
+  if (!/^[a-z]/.test(s)) s = `${prefix}_${s}`.replace(/_+$/g, '');
+  if (s.length < 2) s = `${prefix}_${s}`;
+  return s;
+}
 
 export function isEntityType(v: unknown): v is EntityType {
   return typeof v === 'string' && (ENTITY_TYPES as readonly string[]).includes(v);

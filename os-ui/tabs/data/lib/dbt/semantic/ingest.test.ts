@@ -194,16 +194,16 @@ test('a deleted semantic file is returned as deleted, so its rows can be retired
 test('REVIEW L-6: a file with SEVERAL semantic models attributes each metric to the model that declares its measure', () => {
   const two = [
     'semantic_models:',
-    '  - name: a',
+    '  - name: sm_a',
     "    model: ref('gold_a')",
     '    defaults:',
-    '      agg_time_dimension: d',
+    '      agg_time_dimension: day_a',
     '    entities:',
-    '      - name: a',
+    '      - name: ent_a',
     '        type: primary',
     '        expr: id',
     '    dimensions:',
-    '      - name: d',
+    '      - name: day_a',
     '        type: time',
     '        type_params:',
     '          time_granularity: day',
@@ -211,16 +211,16 @@ test('REVIEW L-6: a file with SEVERAL semantic models attributes each metric to 
     '      - name: m_a',
     '        agg: sum',
     '        expr: amount',
-    '  - name: b',
+    '  - name: sm_b',
     "    model: ref('gold_b')",
     '    defaults:',
-    '      agg_time_dimension: e',
+    '      agg_time_dimension: day_b',
     '    entities:',
-    '      - name: b',
+    '      - name: ent_b',
     '        type: primary',
     '        expr: id',
     '    dimensions:',
-    '      - name: e',
+    '      - name: day_b',
     '        type: time',
     '        type_params:',
     '          time_granularity: day',
@@ -241,13 +241,13 @@ test('REVIEW L-6: a file with SEVERAL semantic models attributes each metric to 
   ].join('\n');
   const { metrics, problems } = ingestFromRepo('metric', new Map<string, string | null>([['models/semantic/two.yml', two]]));
   assert.deepEqual(problems, []);
-  // Reading `semantic_models[0]` only put BOTH metrics on model `a`/`gold_a` — a silently wrong
+  // Reading `semantic_models[0]` only put BOTH metrics on model `sm_a`/`gold_a` — a silently wrong
   // registry row for `met_b`.
   assert.deepEqual(
     metrics.map((m) => [m.name, m.semanticModel, m.model]),
     [
-      ['met_a', 'a', 'gold_a'],
-      ['met_b', 'b', 'gold_b'],
+      ['met_a', 'sm_a', 'gold_a'],
+      ['met_b', 'sm_b', 'gold_b'],
     ],
   );
 });
@@ -255,17 +255,17 @@ test('REVIEW L-6: a file with SEVERAL semantic models attributes each metric to 
 test('REVIEW L-6: a metric naming no measure in a multi-model file is a PROBLEM, not a guess', () => {
   const ambiguous = [
     'semantic_models:',
-    '  - name: a',
+    '  - name: sm_a',
     "    model: ref('gold_a')",
-    '    defaults: {agg_time_dimension: d}',
-    '    entities: [{name: a, type: primary, expr: id}]',
-    '    dimensions: [{name: d, type: time, type_params: {time_granularity: day}}]',
+    '    defaults: {agg_time_dimension: day_a}',
+    '    entities: [{name: ent_a, type: primary, expr: id}]',
+    '    dimensions: [{name: day_a, type: time, type_params: {time_granularity: day}}]',
     '    measures: [{name: m_a, agg: sum, expr: amount}]',
-    '  - name: b',
+    '  - name: sm_b',
     "    model: ref('gold_b')",
-    '    defaults: {agg_time_dimension: e}',
-    '    entities: [{name: b, type: primary, expr: id}]',
-    '    dimensions: [{name: e, type: time, type_params: {time_granularity: day}}]',
+    '    defaults: {agg_time_dimension: day_b}',
+    '    entities: [{name: ent_b, type: primary, expr: id}]',
+    '    dimensions: [{name: day_b, type: time, type_params: {time_granularity: day}}]',
     '    measures: [{name: m_b, agg: sum, expr: amount}]',
     'metrics:',
     '  - name: met_a',

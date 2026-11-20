@@ -47,9 +47,10 @@ const PREDICATE_RE =
  * `+++`, `(((` or `.` — punctuation with nothing to compute — which would be emitted as a dbt
  * `expr` and fail `dbt parse` for the WHOLE domain rather than being refused per-measure, which
  * is precisely the failure mode this module exists to prevent. (The first alternative is a subset
- * of the second and is kept only because it states the common case plainly.)
+ * of the second and is kept only because it states the common case plainly.) The literal `1` is
+ * the one punctuation-free exception: the `expr` dbt requires on a row-COUNT measure.
  */
-export const SAFE_EXPR_RE = /^[A-Za-z_][A-Za-z0-9_]*$|^(?=.*[A-Za-z_])[A-Za-z0-9_ ().,+\-*/]+$/;
+export const SAFE_EXPR_RE = /^[A-Za-z_][A-Za-z0-9_]*$|^(?=.*[A-Za-z_])[A-Za-z0-9_ ().,+\-*/]+$|^1$/;
 
 /** Is this `expr` one the emitter is allowed to write? */
 export function isSafeSemanticExpr(expr: string): boolean {
@@ -75,7 +76,7 @@ function keys(where: string, o: Plain, allowed: readonly string[], out: string[]
 }
 
 function name(where: string, v: unknown, out: string[]): void {
-  if (typeof v !== 'string' || !SEMANTIC_NAME_RE.test(v)) out.push(`${where}: '${String(v)}' is not a dbt identifier (lower-case letters, digits, underscore)`);
+  if (typeof v !== 'string' || !SEMANTIC_NAME_RE.test(v)) out.push(`${where}: '${String(v)}' is not a dbt identifier (lower-case letters, digits, single underscores; starts with a letter, at least 2 characters)`);
 }
 
 function filterOf(where: string, o: Plain, out: string[]): void {

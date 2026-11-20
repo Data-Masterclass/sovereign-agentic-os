@@ -59,7 +59,7 @@ test('a simple metric is `type: simple` over a measure with the right dbt agg an
   assert.deepEqual(validateSemanticDoc(doc), []);
 });
 
-test('each OS aggregation maps to its DSI agg; `count` carries no expr', () => {
+test('each OS aggregation maps to its DSI agg; a row `count` carries `expr: 1` (dbt requires one)', () => {
   const { doc, refusals } = build([
     { name: 'orders', type: 'count', sql: '' },
     { name: 'customers', type: 'count_distinct', sql: 'customer_id' },
@@ -70,8 +70,11 @@ test('each OS aggregation maps to its DSI agg; `count` carries no expr', () => {
   ]);
   assert.deepEqual(refusals, []);
   const byName = new Map(doc.semantic_models[0].measures.map((m) => [m.name, m]));
-  assert.equal(byName.get('orders')!.agg, 'count');
-  assert.equal(byName.get('orders')!.expr, undefined);
+  // The dataset's entity is also `orders`: dbt refuses one name as entity AND measure in a model,
+  // so the measure is qualified with the semantic model name.
+  assert.equal(byName.has('orders'), false);
+  assert.equal(byName.get('orders_orders')!.agg, 'count');
+  assert.equal(byName.get('orders_orders')!.expr, '1');
   assert.equal(byName.get('customers')!.agg, 'count_distinct');
   assert.equal(byName.get('amount_sum')!.agg, 'sum');
   assert.equal(byName.get('amount_avg')!.agg, 'average', 'OS avg → DSI average');
@@ -79,11 +82,11 @@ test('each OS aggregation maps to its DSI agg; `count` carries no expr', () => {
   assert.equal(byName.get('amount_max')!.agg, 'max');
 });
 
-test('count_distinct_approx has no dbt agg: it emits count_distinct + config.meta.os_agg (D6)', () => {
+test('count_distinct_approx has no dbt agg: it emits count_distinct + the metric\'s config.meta.os_agg (D6)', () => {
   const { doc, refusals } = build([{ name: 'visitors', type: 'count_distinct_approx', sql: 'visitor_id' }]);
   assert.deepEqual(refusals, []);
   assert.equal(doc.semantic_models[0].measures[0].agg, 'count_distinct');
-  assert.deepEqual(doc.semantic_models[0].measures[0].config, { meta: { os_agg: 'count_distinct_approx' } });
+  assert.equal(doc.semantic_models[0].measures[0].config, undefined, 'dbt 1.9 refuses config on a measure');
   assert.equal(doc.metrics[0].config?.meta?.os_agg, 'count_distinct_approx');
   assert.deepEqual(validateSemanticDoc(doc), []);
 });
@@ -201,10 +204,10 @@ test('names are project-global: a second dataset reusing `revenue` is qualified,
     alloc,
   );
   assert.equal(a.doc.metrics[0].name, 'revenue');
-  assert.equal(b.doc.metrics[0].name, 'subs__revenue', 'a collision is qualified with the semantic model name');
+  assert.equal(b.doc.metrics[0].name, 'subs_revenue', 'a collision is qualified with the semantic model name (single `_`: dbt refuses `__`)');
   assert.equal(b.doc.metrics[0].config?.meta?.os_metric, 'ds_sub00001.revenue', 'the OS metric id is unchanged');
-  assert.equal(b.doc.semantic_models[0].measures[0].name, 'subs__revenue');
-  assert.deepEqual(b.doc.metrics[0].type_params.measure, { name: 'subs__revenue' });
+  assert.equal(b.doc.semantic_models[0].measures[0].name, 'subs_revenue');
+  assert.deepEqual(b.doc.metrics[0].type_params.measure, { name: 'subs_revenue' });
 });
 
 test('a measure and its metric may share a name (the canonical dbt shape) — separate namespaces', () => {

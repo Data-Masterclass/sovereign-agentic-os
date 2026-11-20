@@ -101,7 +101,10 @@ export async function ingestSemanticMetrics(input: {
           );
         }
         const label = (m.label ?? '').trim();
-        if (label && label !== (measure.label ?? '')) {
+        // A label equal to the measure name on a measure with none is the generator's default
+        // (dbt requires a metric label), not an edit.
+        const isDefault = label === measureName && !measure.label;
+        if (label && !isDefault && label !== (measure.label ?? '')) {
           setMeasureLabel(m.datasetId!, principal, measureName, label);
           report.updated += 1;
         } else {

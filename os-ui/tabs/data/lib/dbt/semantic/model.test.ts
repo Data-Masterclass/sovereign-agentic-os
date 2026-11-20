@@ -32,7 +32,7 @@ function base(): SemanticDoc {
         measures: [
           { name: 'net_amount', agg: 'sum', expr: 'net_amount' },
           { name: 'order_count', agg: 'count' },
-          { name: 'converted', agg: 'count', config: { meta: { os_agg: 'count' } } },
+          { name: 'converted', agg: 'count' },
         ],
       },
     ],
