@@ -124,3 +124,31 @@ test('rule 8: a bare boolean config value (full_refresh=false) is in the grammar
     assert.ok(jinjaGrammarIssues(files).length > 0, `${bad} must be outside the grammar`);
   }
 });
+
+test('rule 8: config kwargs need a real separator and an allow-listed key (negative twins: juxtaposed forms)', () => {
+  const sql = (cfg: string) => new Map([['models/a.sql', `{{ config(${cfg}) }}\nselect 1`]]);
+  // Every form the generator writes is in the grammar (the separator may carry optional whitespace).
+  for (const ok of [
+    "materialized='view'",
+    "materialized='table', on_table_exists='replace', full_refresh=false",
+    "materialized='incremental', incremental_strategy='merge', unique_key=['a', 'b'], on_schema_change='append_new_columns', full_refresh=false",
+    "materialized='incremental',unique_key='_batch_id',   full_refresh=true",
+  ]) assert.deepEqual(jinjaGrammarIssues(sql(ok)), [], ok);
+  // Juxtaposed kwargs (no comma), a stray separator, and keys the generator never writes.
+  for (const bad of [
+    "full_refresh=falsematerialized='x'",
+    "full_refresh=falseb='x'",
+    "materialized='x'unique_key='y'",
+    "unique_key=['a']materialized='x'",
+    "materialized='x' unique_key='y'",
+    "materialized='x';unique_key='y'",
+    "materialized='x',",
+    ", materialized='x'",
+    "materialized='x',, unique_key='y'",
+    "pre_hook='x'",
+    "post_hook='drop'",
+    "sql_header='x'",
+    "materialized='table', alias='x'",
+    "b='x'",
+  ]) assert.ok(jinjaGrammarIssues(sql(bad)).length > 0, `${bad} must be outside the grammar`);
+});
