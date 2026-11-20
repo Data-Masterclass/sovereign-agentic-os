@@ -27,7 +27,7 @@ import pg from 'pg';
 import { adminClient, urlFor } from './it-support.ts';
 import { migrateGovernance } from './migrate.ts';
 import { appendAuditEvent, verifyAuditChain } from './audit.ts';
-import { PGBOSS_SCHEMA, createBoss } from './boss.ts';
+import { PGBOSS_SCHEMA, QueueMigrationRefusedError, createBoss } from './boss.ts';
 import { bossDb } from './tx.ts';
 
 const chartSql = (name: string) =>
@@ -269,6 +269,70 @@ describe('clean install as a NOCREATEROLE owner (real postgres:17)', { timeout: 
     } finally {
       await queue.end();
     }
+  });
+
+  // Verifier N2: `pgboss.bam.command` is SQL a migrating pg-boss executes as the owner, and
+  // `pgboss.version.version` decides which migrations run. Neither OS login may write either.
+  test('NEGATIVE TWIN (N2): neither login can write pgboss.bam or pgboss.version.version', async () => {
+    const queue = await connect(QUEUE);
+    try {
+      for (const [who, c] of [['queue', queue], ['runtime', runtime]] as const) {
+        for (const sql of [
+          `insert into pgboss.bam (name, version, status, table_name, command)
+           values ('evil', 46, 'pending', 'job', 'alter table os_governance.audit_events disable trigger user')`,
+          `update pgboss.bam set command = 'select 1'`,
+          `delete from pgboss.bam`,
+          `update pgboss.version set version = 1`,
+          `insert into pgboss.version (version) values (1)`,
+          `delete from pgboss.version`,
+        ]) {
+          await assert.rejects(c.query(sql), denied, `${who}: ${sql.slice(0, 50)}`);
+        }
+        // What pg-boss needs at run time still works: its interval claims on the version row.
+        const claim = await c.query(`update pgboss.version set cron_on = cron_on, bam_on = bam_on, flow_on = flow_on,
+          reindex_on = reindex_on, monitor_backoff_on = monitor_backoff_on returning version`);
+        assert.equal(claim.rowCount, 1, `${who}: the runtime claim columns stay writable`);
+      }
+    } finally {
+      await queue.end();
+    }
+  });
+
+  test('NEGATIVE TWIN (N2): createBoss refuses migrate: true and createSchema: true with a typed error', () => {
+    for (const opts of [{ migrate: true }, { createSchema: true }]) {
+      assert.throws(
+        () => createBoss(urlFor(DB, QUEUE), opts),
+        (err: unknown) => err instanceof QueueMigrationRefusedError && err.code === 'queue_migration_refused',
+        JSON.stringify(opts),
+      );
+    }
+  });
+
+  test('after a full run (bootstrap, migrate twice, queue work, supervise) every audit trigger is still enabled', async () => {
+    await bootstrap();
+    await migrateGovernance({ databaseUrl: urlFor(DB, OWNER), direction: 'up' });
+    const boss = createBoss(urlFor(DB, QUEUE));
+    boss.on('error', (err) => console.error('pg-boss error', err));
+    await boss.start();
+    try {
+      await boss.send('install.check', { n: 2 });
+      const [job] = await boss.fetch('install.check');
+      if (job) await boss.complete('install.check', job.id);
+      await boss.supervise();
+    } finally {
+      await boss.stop({ graceful: false, timeout: 2000 });
+    }
+    const trig = await owner.query(
+      `select tgname, tgenabled from pg_trigger where tgrelid = 'os_governance.audit_events'::regclass and not tgisinternal order by 1`,
+    );
+    assert.deepEqual(trig.rows, [
+      { tgname: 'audit_events_chain', tgenabled: 'O' },
+      { tgname: 'audit_events_no_truncate', tgenabled: 'O' },
+      { tgname: 'audit_events_no_update', tgenabled: 'O' },
+    ]);
+    const bam = await owner.query(`select count(*)::int as n from pgboss.bam where command ilike '%os_governance%'`);
+    assert.equal(bam.rows[0].n, 0, 'no command touching os_governance was ever queued');
+    assert.equal((await verifyAuditChain(owner)).ok, true);
   });
 
   test('NEGATIVE TWIN: shadowing clock_timestamp / sha256 on search_path cannot backdate or poison a row', async () => {
