@@ -1545,6 +1545,57 @@ trino:
   opa:
     enabled: true
     uri: "http://opa:8181"          # same OPA instance that governs agent tools
+    # WP-14 (04 M8, 06 §5.4): an OPA container in the Trino pod on 127.0.0.1:8181 serves Trino's
+    # checks (same image, policies and config as `opa`), and `uri` above is ignored. Keep OFF
+    # until the `os-data` / `os-grants` bundles (WP-11) are live: os-ui's runtime PUTs reach the
+    # `opa` Service only, so a sidecar without bundles would hold no governance data. `bundles`
+    # is OPA's own `services:` + `bundles:` configuration, appended to the sidecar's config file
+    # unchanged (https://www.openpolicyagent.org/docs/management-bundles).
+    sidecar:
+      enabled: false
+      bundles: {}
+  # AUTHENTICATION (WP-14, design 06 §5.2 option B / T2). Off by default: nothing changes until
+  # the cut-over (docs/components/trino-cutover.md). When on, Trino serves TLS on `httpsPort`
+  # and authenticates every client there with the PASSWORD file authenticator
+  # (https://trino.io/docs/476/security/password-file.html, tls.html, internal-communication.html).
+  # The three `svc-*` users may then act for someone else only as OPA allows
+  # (policies/trino_impersonation.rego); `directUsers` log in as themselves and impersonate nobody.
+  auth:
+    enabled: false
+    httpsPort: 8443
+    # DUAL-RUN. true: the plain-HTTP port keeps serving the clients that have not moved yet,
+    # exactly as today (`http-server.authentication.allow-insecure-over-http=true`: no password
+    # is ever accepted there). false: the closed state — Trino refuses every statement on plain
+    # HTTP (403 "Authentication over HTTP is not enabled"); only /v1/info stays for the probes.
+    insecureHttp: true
+    # The server certificate. `helm`: a namespace CA and certificate generated once by Helm and
+    # kept across upgrades (lookup), for kind, CI and dev. `certManager`: cert-manager issues it
+    # from a namespace CA (Issuer chain below; needs cert-manager >= 1.15 for the CombinedPEM
+    # output Trino's PEM keystore reads). `existing`: a Secret you provide with keys
+    # `tls-combined.pem` (key + chain) and `ca.crt`. Clients trust `ca.crt` only.
+    tls:
+      source: helm
+      secretName: trino-tls
+      certManager:
+        duration: 2160h      # 90 d
+        renewBefore: 360h    # 15 d
+    # Service users and their passwords. Generated once (bcrypt cost 10, kept across upgrades)
+    # into Secret `secretName`: key `password.db` for Trino, one key per user for its client. With
+    # `existingSecret` (ESO, WP-10) the chart renders nothing and mounts that Secret instead; it
+    # must carry the same keys.
+    passwords:
+      secretName: trino-service-users
+      existingSecret: ""
+    impersonators: [svc-os-ui, svc-os-worker, svc-dagster-runner]
+    directUsers: [northpeak-marts]
+    # Direct service users whose password the query-tool also mounts, so it logs in AS them when
+    # one is the principal (no impersonation). The delete-domain purge user belongs here once
+    # PR #197 is in (`os-domain-delete`, also in `directUsers`).
+    queryToolDirectUsers: []
+    # Which clients use the TLS port. Each switches on its own; see the cut-over order.
+    clients:
+      queryTool: false        # needs a query-tool image with trino_login.py (WP-14)
+      northpeakMarts: false
   # ADMISSION CONTROL (06 §5.5, WP-13). `config` IS Trino's resource-group document
   # (https://trino.io/docs/476/admin/resource-groups.html), rendered as JSON unchanged.
   # Selection is by the client's source (`X-Trino-Source`), first match wins:

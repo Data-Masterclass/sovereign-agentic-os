@@ -12,7 +12,7 @@ import rego.v1
 
 import data.trino
 
-future := "2999-01-01T00:00:00Z"
+future := "2200-01-01T00:00:00Z"
 
 past := "2000-01-01T00:00:00Z"
 
@@ -50,42 +50,35 @@ governance := {"principals": {
 	"svc-os-worker": {"domains": [], "clearances": []},
 }}
 
-allowed(original, target) if {
-	trino.allow with input as imp(original, target)
-		with data.os_grants.run_grants as grants
-		with data.os_data as os_data
-		with data.governance as governance
-}
-
 # ---- svc-os-worker: only the principal of an active, unexpired, unrevoked `kind=run` grant ----
 
-test_worker_acts_for_run_grant_principal if allowed("svc-os-worker", "alice@x.com")
+test_worker_acts_for_run_grant_principal if trino.allow with input as imp("svc-os-worker", "alice@x.com") with data.os_grants.run_grants as grants with data.os_data as os_data with data.governance as governance
 
-test_worker_denied_without_grant if not allowed("svc-os-worker", "carol@x.com")
+test_worker_denied_without_grant if not trino.allow with input as imp("svc-os-worker", "carol@x.com") with data.os_grants.run_grants as grants with data.os_data as os_data with data.governance as governance
 
-test_worker_denied_expired_grant if not allowed("svc-os-worker", "erin@x.com")
+test_worker_denied_expired_grant if not trino.allow with input as imp("svc-os-worker", "erin@x.com") with data.os_grants.run_grants as grants with data.os_data as os_data with data.governance as governance
 
-test_worker_denied_revoked_grant if not allowed("svc-os-worker", "rob@x.com")
+test_worker_denied_revoked_grant if not trino.allow with input as imp("svc-os-worker", "rob@x.com") with data.os_grants.run_grants as grants with data.os_data as os_data with data.governance as governance
 
-test_worker_denied_grant_without_expiry if not allowed("svc-os-worker", "nora@x.com")
+test_worker_denied_grant_without_expiry if not trino.allow with input as imp("svc-os-worker", "nora@x.com") with data.os_grants.run_grants as grants with data.os_data as os_data with data.governance as governance
 
 # 10 F4 kind binding: the worker cannot use a Dagster (standing/dataset) grant.
-test_worker_denied_dagster_grant if not allowed("svc-os-worker", "dana@x.com")
+test_worker_denied_dagster_grant if not trino.allow with input as imp("svc-os-worker", "dana@x.com") with data.os_grants.run_grants as grants with data.os_data as os_data with data.governance as governance
 
 # ---- svc-dagster-runner: only a standing|dataset grant with an active run ----
 
-test_dagster_acts_for_standing_grant_in_run if allowed("svc-dagster-runner", "dana@x.com")
+test_dagster_acts_for_standing_grant_in_run if trino.allow with input as imp("svc-dagster-runner", "dana@x.com") with data.os_grants.run_grants as grants with data.os_data as os_data with data.governance as governance
 
-test_dagster_acts_for_dataset_grant_in_run if allowed("svc-dagster-runner", "dave@x.com")
+test_dagster_acts_for_dataset_grant_in_run if trino.allow with input as imp("svc-dagster-runner", "dave@x.com") with data.os_grants.run_grants as grants with data.os_data as os_data with data.governance as governance
 
-test_dagster_denied_standing_grant_between_runs if not allowed("svc-dagster-runner", "ida@x.com")
+test_dagster_denied_standing_grant_between_runs if not trino.allow with input as imp("svc-dagster-runner", "ida@x.com") with data.os_grants.run_grants as grants with data.os_data as os_data with data.governance as governance
 
-test_dagster_denied_empty_run_id if not allowed("svc-dagster-runner", "eve@x.com")
+test_dagster_denied_empty_run_id if not trino.allow with input as imp("svc-dagster-runner", "eve@x.com") with data.os_grants.run_grants as grants with data.os_data as os_data with data.governance as governance
 
-test_dagster_denied_expired_standing_grant if not allowed("svc-dagster-runner", "sam@x.com")
+test_dagster_denied_expired_standing_grant if not trino.allow with input as imp("svc-dagster-runner", "sam@x.com") with data.os_grants.run_grants as grants with data.os_data as os_data with data.governance as governance
 
 # 10 F4 kind binding: the Dagster runner cannot use an agent (kind=run) grant.
-test_dagster_denied_agent_grant if not allowed("svc-dagster-runner", "alice@x.com")
+test_dagster_denied_agent_grant if not trino.allow with input as imp("svc-dagster-runner", "alice@x.com") with data.os_grants.run_grants as grants with data.os_data as os_data with data.governance as governance
 
 # 10 F4: there is no schedule_principals path — a name with no grant is denied.
 test_dagster_no_schedule_principals_path if {
@@ -97,20 +90,20 @@ test_dagster_no_schedule_principals_path if {
 
 # ---- svc-os-ui (interim, removed at T7): the active user, or a declared governance principal ----
 
-test_ui_acts_for_active_user if allowed("svc-os-ui", "carol@x.com")
+test_ui_acts_for_active_user if trino.allow with input as imp("svc-os-ui", "carol@x.com") with data.os_grants.run_grants as grants with data.os_data as os_data with data.governance as governance
 
-test_ui_denied_inactive_user if not allowed("svc-os-ui", "bob@x.com")
+test_ui_denied_inactive_user if not trino.allow with input as imp("svc-os-ui", "bob@x.com") with data.os_grants.run_grants as grants with data.os_data as os_data with data.governance as governance
 
-test_ui_denied_unknown_identity if not allowed("svc-os-ui", "mallory@x.com")
+test_ui_denied_unknown_identity if not trino.allow with input as imp("svc-os-ui", "mallory@x.com") with data.os_grants.run_grants as grants with data.os_data as os_data with data.governance as governance
 
-test_ui_acts_for_declared_domain_principal if allowed("svc-os-ui", "sales")
+test_ui_acts_for_declared_domain_principal if trino.allow with input as imp("svc-os-ui", "sales") with data.os_grants.run_grants as grants with data.os_data as os_data with data.governance as governance
 
-test_ui_acts_for_declared_user_principal if allowed("svc-os-ui", "u-legacy@x.com")
+test_ui_acts_for_declared_user_principal if trino.allow with input as imp("svc-os-ui", "u-legacy@x.com") with data.os_grants.run_grants as grants with data.os_data as os_data with data.governance as governance
 
 # svc-os-ui is interactive only: no grant reaches it, and no service identity is a target.
-test_ui_denied_grant_principal_without_user if not allowed("svc-os-ui", "dana@x.com")
+test_ui_denied_grant_principal_without_user if not trino.allow with input as imp("svc-os-ui", "dana@x.com") with data.os_grants.run_grants as grants with data.os_data as os_data with data.governance as governance
 
-test_ui_denied_service_user_target if not allowed("svc-os-ui", "svc-os-worker")
+test_ui_denied_service_user_target if not trino.allow with input as imp("svc-os-ui", "svc-os-worker") with data.os_grants.run_grants as grants with data.os_data as os_data with data.governance as governance
 
 test_ui_denied_purge_user_target if {
 	not trino.allow with input as imp("svc-os-ui", "os-domain-delete")
@@ -121,11 +114,14 @@ test_ui_denied_purge_user_target if {
 
 # ---- nobody else ----
 
-test_user_cannot_impersonate_user if not allowed("alice@x.com", "carol@x.com")
+test_user_cannot_impersonate_user if not trino.allow with input as imp("alice@x.com", "carol@x.com") with data.os_grants.run_grants as grants with data.os_data as os_data with data.governance as governance
 
-test_direct_service_user_cannot_impersonate if not allowed("os-domain-delete", "alice@x.com")
+# Nobody keeps today's password-less dbt-runner identity as an impersonator (10 F4, WP-14).
+test_legacy_dbt_runner_cannot_impersonate if not trino.allow with input as imp("dbt-runner", "sales") with data.os_grants.run_grants as grants with data.os_data as os_data with data.governance as governance
 
-test_worker_lookalike_denied if not allowed("svc-os-worker2", "alice@x.com")
+test_direct_service_user_cannot_impersonate if not trino.allow with input as imp("os-domain-delete", "alice@x.com") with data.os_grants.run_grants as grants with data.os_data as os_data with data.governance as governance
+
+test_worker_lookalike_denied if not trino.allow with input as imp("svc-os-worker2", "alice@x.com") with data.os_grants.run_grants as grants with data.os_data as os_data with data.governance as governance
 
 test_no_identity_denied if {
 	not trino.allow with input as {"action": {"operation": "ImpersonateUser", "resource": {"user": {"user": "alice@x.com"}}}}

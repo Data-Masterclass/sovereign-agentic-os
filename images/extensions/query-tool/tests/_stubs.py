@@ -130,6 +130,13 @@ def install():
         stub.connects.append(kwargs)
         return _Conn()
 
+    class _BasicAuthentication:
+        def __init__(self, username, password):
+            self.username = username
+            self.password = password
+
+    trino_auth = types.ModuleType("trino.auth")
+    trino_auth.BasicAuthentication = _BasicAuthentication
     trino_mod = types.ModuleType("trino")
     trino_exc = types.ModuleType("trino.exceptions")
     trino_exc.TrinoUserError = TrinoUserError
@@ -138,6 +145,7 @@ def install():
     trino_dbapi.connect = _connect
     trino_mod.exceptions = trino_exc
     trino_mod.dbapi = trino_dbapi
+    trino_mod.auth = trino_auth
 
     # ASSIGN, never `setdefault`: a setdefault is what let the first importer win and left every
     # later module's recorder dead. There is exactly one installer now, so assignment is safe.
@@ -151,6 +159,7 @@ def install():
         ("trino", trino_mod),
         ("trino.exceptions", trino_exc),
         ("trino.dbapi", trino_dbapi),
+        ("trino.auth", trino_auth),
     ):
         sys.modules[name] = mod
 

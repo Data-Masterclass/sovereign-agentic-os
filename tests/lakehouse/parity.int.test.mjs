@@ -109,3 +109,13 @@ test('every viewer gets byte-identical answers on the legacy and the TLS path', 
   assert.deepEqual(now, baseline);
   assert.equal(Object.keys(now).length, VIEWERS.length * Object.keys(QUERIES).length);
 });
+
+test('resource groups (#175) select the same group on the TLS path: global.domains.<d>.<session user>', { skip }, async () => {
+  const ui = ['svc-os-ui', requireSecrets().passwords['svc-os-ui']];
+  const ids = {};
+  for (const v of [ALICE, D1]) ids[v] = (await runTls('SELECT 1', { auth: ui, user: v, source: 'os-ui/parity/query' })).id;
+  const list = Object.values(ids).map((i) => `'${i}'`).join(',');
+  const { rows } = await runTls(`SELECT query_id, "user", resource_group_id FROM system.runtime.queries WHERE query_id IN (${list})`, { auth: ui, source: 'lh-observer' });
+  const got = Object.fromEntries(rows.map(([id, user, rg]) => [id, { user, rg: rg.join('.') }]));
+  for (const [v, id] of Object.entries(ids)) assert.deepEqual(got[id], { user: v, rg: `global.domains.parity.${v}` }, v);
+});

@@ -105,7 +105,7 @@ services:
     env_file: ["${LH_WORK}/env/trino.env"]
     volumes: ["${LH_WORK}/trino/etc:/etc/trino:ro"]
     tmpfs: ["/data/trino:uid=1000", "/tmp:uid=1000,exec"]
-    ports: ["127.0.0.1:${LH_TRINO_PORT:-18080}:8080"]
+    ports: ["127.0.0.1:${LH_TRINO_PORT:-18080}:8080", "127.0.0.1:${LH_TRINO_TLS_PORT:-18443}:8443"]
     networks: [lh]
     depends_on:
       catalog-init: { condition: service_completed_successfully }
@@ -115,6 +115,18 @@ services:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/v1/info | grep -q '\"starting\":false'"]
       interval: 5s
       retries: 60
+
+  # WP-14: the OPA Trino itself asks. With the chart's sidecar (`trino.opa.sidecar`) it runs in
+  # Trino's network namespace on 127.0.0.1, exactly as in the Trino pod, with the sidecar's args;
+  # without it, it runs the central OPA's args there and Trino keeps asking `opa:8181` above.
+  trino-opa:
+    <<: *ro
+    image: ${LH_OPA_IMAGE}
+    command: ${LH_TRINO_OPA_ARGS}
+    user: "1000"
+    volumes: ["${LH_WORK}/trino-opa/policies:/policies:ro", "${LH_WORK}/trino-opa/config:/config:ro"]
+    network_mode: "service:trino"
+    depends_on: [trino]
 
   # WP-37: the data-runner built from this checkout (PyIceberg tag/branch commits through Polaris),
   # with the env the chart renders for it (render.py -> env/data-runner.env).

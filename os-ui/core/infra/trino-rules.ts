@@ -57,6 +57,14 @@ export type TrinoRules = {
  */
 export const OS_PRINCIPAL_PATTERN = '[A-Za-z0-9][A-Za-z0-9._-]{0,63}';
 
+/**
+ * WP-14: the service users that authenticate on Trino's TLS port and act for someone else. Who
+ * each may become is decided by OPA alone (`policies/trino_impersonation.rego`, bound to run
+ * grants and active users), so this file passes them through instead of keeping a second,
+ * drifting copy of that rule. The chart's bootstrap `rules.json` carries the same entry.
+ */
+export const OPA_IMPERSONATORS = ['svc-dagster-runner', 'svc-os-ui', 'svc-os-worker'] as const;
+
 /** Everything a schema owner may do to a table in it. `OWNERSHIP` is what CTAS / DROP need. */
 export const OWNER_PRIVILEGES = ['SELECT', 'INSERT', 'DELETE', 'UPDATE', 'OWNERSHIP'] as const;
 const READ_ONLY = ['SELECT'] as const;
@@ -102,6 +110,8 @@ export function buildTrinoRules(input: RulesInput): TrinoRules {
   const impersonationTarget = known.length ? alternation(known) : anchor(input.principalPattern);
 
   const impersonation: ImpersonationRule[] = [];
+  // (0) the OPA-decided service users (WP-14): passed through, OPA bounds them.
+  impersonation.push({ original_user: alternation(OPA_IMPERSONATORS), new_user: '.*', allow: true });
   for (const u of serviceUsers) {
     // (a) the service user may become an OS principal …
     impersonation.push({ original_user: literal(u), new_user: impersonationTarget, allow: true });

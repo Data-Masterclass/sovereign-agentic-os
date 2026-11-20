@@ -15,6 +15,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { requireSecrets, wp14Skip, runTls, tls, tlsHeaders, httpPost, TRINO_TLS } from './tls.mjs';
+import { run } from './lib.mjs';
 
 const skip = wp14Skip();
 const expectHttp = process.env.LH_EXPECT_HTTP ?? 'insecure';
@@ -64,7 +65,7 @@ if (expectHttp === 'refused') {
     assert.equal(r.status, 403, r.text);
   });
 
-  test('plain HTTP (closed state): the legacy dbt-runner impersonation path is gone', { skip }, async () => {
+  test('plain HTTP (closed state): the Dagster run pod must have moved to TLS', { skip }, async () => {
     const r = await httpPost('SELECT 1', { Authorization: `Basic ${Buffer.from('dbt-runner:').toString('base64')}`, 'X-Trino-User': 'sales' });
     assert.equal(r.status, 403, r.text);
   });
@@ -72,6 +73,20 @@ if (expectHttp === 'refused') {
   test('plain HTTP (dual-run): a legacy client still runs as its X-Trino-User, as today', { skip }, async () => {
     const r = await httpPost('SELECT current_user', { 'X-Trino-User': 'alice@x.com', 'X-Trino-Source': 'lh-wp14' });
     assert.equal(r.status, 200, r.text);
+  });
+
+  test('plain HTTP (dual-run): the Dagster run pod connects as today (dbt-trino method none: no Authorization)', { skip }, async () => {
+    // dbt-trino 1.9.3 `TrinoNoneCredentials` sends no Authorization header and has no
+    // impersonation_user, so the session user is its `user` (TRINO_USER): no impersonation today.
+    const { rows } = await run('SELECT current_user', { user: 'dbt-runner', source: 'dbt-trino-1.9.3' });
+    assert.deepEqual(rows, [['dbt-runner']]);
+  });
+
+  test('plain HTTP (dual-run): a password-less user cannot impersonate there either', { skip }, async () => {
+    await assert.rejects(
+      run('SELECT current_user', { user: 'sales', principal: 'dbt-runner', source: 'dbt-trino-1.9.3' }),
+      (e) => e.errorName === 'PERMISSION_DENIED',
+    );
   });
 
   test('plain HTTP (dual-run): a password is never accepted over plain HTTP', { skip }, async () => {

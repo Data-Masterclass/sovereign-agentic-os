@@ -25,7 +25,7 @@
 {{- end }}
 {{- /* The revision of everything OPA loads: policies + chart data. Used for the
   pod-restart checksum and as OPA's `policy_rev` label. */}}
-{{- $policyRev := printf "%s-%s-%s-%s-%s-%s-%s" ($opa.grants | toJson) (($opa.requiresApproval | default list) | toJson) ($gov | toJson) (.Files.Get "policies/authz.rego") (.Files.Get "policies/trino.rego") (.Files.Get "policies/connections.rego") (.Files.Get "policies/system/log.rego") | sha256sum }}
+{{- $policyRev := printf "%s-%s-%s-%s-%s-%s-%s-%s" ($opa.grants | toJson) (($opa.requiresApproval | default list) | toJson) ($gov | toJson) (.Files.Get "policies/authz.rego") (.Files.Get "policies/trino.rego") (.Files.Get "policies/trino_impersonation.rego") (.Files.Get "policies/connections.rego") (.Files.Get "policies/system/log.rego") | sha256sum }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -51,6 +51,10 @@ data:
   # by sensitivity). Same OPA, different package (`trino`); agentic.authz untouched.
   trino.rego: |
 {{ .Files.Get "policies/trino.rego" | indent 4 }}
+  # Who may set another Trino session user (WP-14): only the three service users, each bounded
+  # by run grants or active users.
+  trino_impersonation.rego: |
+{{ .Files.Get "policies/trino_impersonation.rego" | indent 4 }}
   # Governance data the Trino policy reads (data.governance). In production this is
   # populated from the artifact-registry / OpenMetadata visibility model; locally
   # we seed the Sales worked example so the governance proof runs on kind.
@@ -131,12 +135,7 @@ spec:
             - "--watch"
             # Explicit files, not the dir: ConfigMap volumes add ..data symlinks
             # that make a recursive dir load see each file multiple times.
-            - "/policies/authz.rego"
-            - "/policies/data.json"
-            - "/policies/trino.rego"
-            - "/policies/governance.json"
-            - "/policies/connections.rego"
-            - "/policies/system-log.rego"
+            {{- include "soa.opaPolicyFiles" . | nindent 12 }}
           ports:
             - { name: http, containerPort: 8181 }
           readinessProbe:

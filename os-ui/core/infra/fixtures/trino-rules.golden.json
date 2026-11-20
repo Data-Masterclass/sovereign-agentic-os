@@ -110,6 +110,11 @@
   ],
   "impersonation": [
     {
+      "original_user": "^(svc-dagster-runner|svc-os-ui|svc-os-worker)$",
+      "new_user": ".*",
+      "allow": true
+    },
+    {
       "original_user": "^dbt-runner$",
       "new_user": "^(amir|bea|cleo|finance|sales)$",
       "allow": true

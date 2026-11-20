@@ -1,0 +1,53 @@
+{{- /*
+  WP-14 (design 04 §5.2 / M8, 06 §5.4): the OPA that serves Trino's access-control plugin runs IN
+  the Trino pod, bound to 127.0.0.1, so only Trino can ask it (OPA's system.authz cannot tell
+  callers apart by source, and the Trino plugin sends no token). Same image, same policy files
+  and the same decision-log settings as the `opa` Deployment; its data comes from the bundles in
+  `trino.opa.sidecar.bundles` (WP-11). No probes: the kubelet probes the pod IP, which a
+  127.0.0.1 listener never answers; Trino's own readiness covers the pod.
+*/}}
+{{- define "soa.trinoOpaSidecar" -}}
+{{- $opa := .Values.opa -}}
+- name: opa
+  image: "{{ $opa.image.repository }}:{{ $opa.image.tag }}@{{ $opa.image.digest }}"
+  imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+  securityContext:
+    {{- include "soa.containerSecurityContext" . | nindent 4 }}
+    readOnlyRootFilesystem: true
+  args:
+    - "run"
+    - "--server"
+    - "--addr=127.0.0.1:8181"
+    - "--log-level=info"
+    - "--config-file=/config/opa-config.yaml"
+    - "--watch"
+    {{- include "soa.opaPolicyFiles" . | nindent 4 }}
+  resources:
+    {{- toYaml $opa.resources | nindent 4 }}
+  volumeMounts:
+    - { name: opa-policy, mountPath: /policies, readOnly: true }
+    - { name: opa-sidecar-config, mountPath: /config, readOnly: true }
+{{- end -}}
+{{- if and .Values.trino.enabled .Values.trino.opa.enabled .Values.trino.opa.sidecar.enabled .Values.opa.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: trino-opa-sidecar-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "trino") | nindent 4 }}
+data:
+  opa-config.yaml: |
+    labels:
+      instance: trino-sidecar
+    {{- if .Values.opa.decisionLogs.enabled }}
+    decision_logs:
+      console: true
+      drop_decision: system/log/drop
+      mask_decision: system/log/mask
+    {{- end }}
+    {{- with .Values.trino.opa.sidecar.bundles }}
+{{ toYaml . | indent 4 }}
+    {{- end }}
+{{- end }}

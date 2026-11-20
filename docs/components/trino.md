@@ -25,6 +25,12 @@ applies to the acting person, not to a proxy.
 | Dagster sensors (`os_quarantine`, `os_principals`) | `repo.py` | — | **never touch Trino**: they read the Dagster instance and the OS repo index (runtime bearer) |
 | repo-sync sidecar | `repo-sync.sh` → `os_projects.dbt_parse` | — | **never touches Trino**: `dbt parse` renders the repo under an allowlisted environment with `OS_PRINCIPAL=repo-sync` as a render-only placeholder |
 
+**Authentication (WP-14).** With `trino.auth.enabled` Trino serves TLS on 8443 and authenticates
+clients with the PASSWORD file authenticator; `svc-os-ui`, `svc-os-worker` and
+`svc-dagster-runner` may act for someone else only as OPA's `ImpersonateUser` rules allow
+(`policies/trino_impersonation.rego`). The client-by-client order is in
+[trino-cutover.md](trino-cutover.md).
+
 `profiles.yml` contains **no credential value** — only `env_var()` calls. The run pod's environment
 supplies them; the repository is readable by anyone who can clone it.
 

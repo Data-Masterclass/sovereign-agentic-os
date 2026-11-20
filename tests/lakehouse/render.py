@@ -10,6 +10,8 @@ config files, container commands and env all come from the rendered Deployments 
 harness runs the config that ships. Writes:
 
   compose.env                 image refs + OPA args, read by `docker compose --env-file`
+  test-secrets.json           WP-14: the CA and the service users' passwords the chart generated
+                              for this run (mode 600), for the auth tests; never printed
   trino/etc/...               every file the Trino Deployment mounts, at its mount path under /etc/trino
   opa/<mount>/...             the OPA Deployment's ConfigMaps, at their mount paths
   env/<container>.env         each container's env, secretKeyRefs resolved from the harness secrets
@@ -18,6 +20,7 @@ harness runs the config that ships. Writes:
 The secrets the chart expects from outside (object store keys, the Polaris JDBC user) are
 generated per run by up.sh and passed in through the environment; they exist only in this stack.
 """
+import base64
 import json
 import os
 import subprocess
@@ -59,6 +62,8 @@ def secrets(docs):
     for d in docs:
         if d.get('kind') == 'Secret':
             s[d['metadata']['name']] = dict(d.get('stringData') or {})
+            for k, v in (d.get('data') or {}).items():
+                s[d['metadata']['name']][k] = base64.b64decode(v).decode()
     need = {
         'object-storage-credentials': {'AWS_ACCESS_KEY_ID': 'LH_S3_KEY', 'AWS_SECRET_ACCESS_KEY': 'LH_S3_SECRET'},
         'postgres-polaris-credentials': {'username': 'LH_PG_USER', 'password': 'LH_PG_PASSWORD'},
@@ -96,14 +101,43 @@ def script(ctr):
     return ctr['args'][0]
 
 
-def materialise(pod, ctr, cms, base, strip=''):
-    """Write each ConfigMap-backed mount of `ctr` under `base`, at its mount path minus `strip`."""
+def volume_files(vol, cms, sec):
+    """{relative path: content} of a ConfigMap, Secret or projected volume (None: emptyDir).
+    Honours `items` (key -> path) like the kubelet; an `optional` source that is not rendered
+    contributes nothing (as in the cluster)."""
+    def one(kind, ref):
+        name = ref['name']
+        src = cms[name]['data'] if kind == 'configMap' and name in cms else sec.get(name) if kind == 'secret' else None
+        if src is None:
+            if ref.get('optional'):
+                return {}
+            raise SystemExit(f'render.py: volume source {kind}/{name} not rendered')
+        if ref.get('items'):
+            return {i['path']: src[i['key']] for i in ref['items']}
+        return dict(src)
+    if 'configMap' in vol:
+        return one('configMap', vol['configMap'])
+    if 'secret' in vol:
+        return one('secret', {**vol['secret'], 'name': vol['secret']['secretName']})
+    if 'projected' in vol:
+        out = {}
+        for src in vol['projected']['sources']:
+            kind = next(iter(src))
+            ref = src[kind] if kind == 'configMap' else {**src[kind], 'name': src[kind]['name']}
+            out.update(one(kind, ref))
+        return out
+    return None
+
+
+def materialise(pod, ctr, cms, base, strip='', sec=None):
+    """Write each ConfigMap-, Secret- or projected-backed mount of `ctr` under `base`, at its
+    mount path minus `strip`."""
     vols = {v['name']: v for v in pod.get('volumes', [])}
     for vm in ctr.get('volumeMounts', []):
         vol = vols[vm['name']]
-        if 'configMap' not in vol:
+        data = volume_files(vol, cms, sec or {})
+        if data is None:
             continue  # emptyDir: compose gives a tmpfs
-        data = cms[vol['configMap']['name']]['data']
         rel = vm['mountPath'][len(strip):].lstrip('/') if strip else vm['mountPath'].lstrip('/')
         if vm.get('subPath'):
             write(os.path.join(base, rel), data[vm['subPath']])
@@ -124,21 +158,43 @@ def main(out, extra):
     for vm in trino['volumeMounts']:
         if not (vm['mountPath'].startswith('/etc/trino') or vm['mountPath'] in ('/data/trino', '/tmp')):
             raise SystemExit(f"render.py: unexpected Trino mount {vm['mountPath']}")
-    materialise(tpod, trino, cms, os.path.join(out, 'trino', 'etc'), strip='/etc/trino')
+    materialise(tpod, trino, cms, os.path.join(out, 'trino', 'etc'), strip='/etc/trino', sec=sec)
     write(os.path.join(out, 'env', 'trino.env'), env_file(trino, sec))
     env['LH_TRINO_IMAGE'] = trino['image']
 
-    # OPA: the policies and config the chart mounts, and its exact args.
-    opod = find(docs, 'Deployment', 'opa')['spec']['template']['spec']
-    opa = next(c for c in opod['containers'] if c['name'] == 'opa')
-    mounts = {vm['mountPath'] for vm in opa['volumeMounts']}
-    if mounts != OPA_MOUNTS:
-        raise SystemExit(f'render.py: OPA mounts changed to {sorted(mounts)}; update compose.yaml')
-    materialise(opod, opa, cms, os.path.join(out, 'opa'))
-    if any(' ' in a for a in opa['args']):
-        raise SystemExit('render.py: an OPA arg contains a space')
-    env['LH_OPA_IMAGE'] = opa['image']
-    env['LH_OPA_ARGS'] = ' '.join(opa['args'])
+    # WP-14: the CA and the service users' passwords, for the auth tests only (mode 600).
+    tcfg = cms['trino-config']['data']['config.properties']
+    if 'http-server.authentication.type=PASSWORD' in tcfg:
+        tls_vol = next(v for v in tpod['volumes'] if v['name'] == 'tls')
+        svc_vol = next(v for v in tpod['volumes'] if v['name'] == 'service-users')
+        users = sec[svc_vol['secret']['secretName']]
+        ts = {
+            'ca': sec[tls_vol['secret']['secretName']]['ca.crt'],
+            'passwords': {k: v for k, v in users.items() if k != 'password.db'},
+            'httpMode': 'insecure' if 'allow-insecure-over-http=true' in tcfg else 'refused',
+        }
+        path = os.path.join(out, 'test-secrets.json')
+        write(path, json.dumps(ts, indent=2) + '\n')
+        os.chmod(path, 0o600)
+
+    # OPA: the central `opa` Deployment (os-ui's decisions) and the OPA Trino asks (`trino-opa`):
+    # WP-14's sidecar in the Trino pod when the chart renders one, else the central OPA's own args
+    # (Trino then asks `opa:8181`). Each with its exact args and mounts.
+    cpod = find(docs, 'Deployment', 'opa')['spec']['template']['spec']
+    central = next(c for c in cpod['containers'] if c['name'] == 'opa')
+    side = next((c for c in tpod['containers'] if c['name'] == 'opa'), None)
+    for key, pod, ctr, sub in (('LH_OPA_ARGS', cpod, central, 'opa'),
+                               ('LH_TRINO_OPA_ARGS', tpod if side else cpod, side or central, 'trino-opa')):
+        mounts = {vm['mountPath'] for vm in ctr['volumeMounts']}
+        if mounts != OPA_MOUNTS:
+            raise SystemExit(f'render.py: OPA mounts changed to {sorted(mounts)}; update compose.yaml')
+        materialise(pod, ctr, cms, os.path.join(out, sub), sec=sec)
+        if any(' ' in x for x in ctr['args']):
+            raise SystemExit('render.py: an OPA arg contains a space')
+        env[key] = ' '.join(ctr['args'])
+    if side and side['image'] != central['image']:
+        raise SystemExit('render.py: the Trino OPA sidecar and the central OPA run different images')
+    env['LH_OPA_IMAGE'] = central['image']
 
     # Polaris: the two bootstrap initContainers and the server, as the chart runs them.
     ppod = find(docs, 'Deployment', 'polaris')['spec']['template']['spec']

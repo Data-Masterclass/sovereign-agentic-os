@@ -8,18 +8,19 @@
 // stdout). OPA data goes to the Trino pod's OPA sidecar, which listens on 127.0.0.1 inside the
 // Trino container only, so it is written from inside that container: the same documents os-ui
 // PUTs today and WP-11 will ship as bundles.
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { readFileSync, existsSync } from 'node:fs';
 import { request } from 'node:https';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 export const TRINO_TLS = process.env.LH_TRINO_TLS_URL ?? `https://127.0.0.1:${process.env.LH_TRINO_TLS_PORT ?? '18443'}`;
+const PROJECT = process.env.LH_PROJECT ?? 'soa-lakehouse';
 export const TRINO_HTTP = process.env.LH_TRINO_URL ?? `http://127.0.0.1:${process.env.LH_TRINO_PORT ?? '18080'}`;
 
 /** The harness work dir up.sh recorded, or null when the harness is not running. */
 export function workDir() {
-  const state = join(process.env.TMPDIR ?? tmpdir(), 'soa-lakehouse.work');
+  const state = join(process.env.TMPDIR ?? tmpdir(), `${PROJECT}.work`);
   if (process.env.LH_WORK) return process.env.LH_WORK;
   return existsSync(state) ? readFileSync(state, 'utf8').trim() : null;
 }
@@ -101,7 +102,7 @@ export async function httpPost(sql, headers) {
 }
 
 function trinoContainer() {
-  const id = execFileSync('docker', ['ps', '-q', '--filter', 'label=com.docker.compose.project=soa-lakehouse', '--filter', 'label=com.docker.compose.service=trino'], { encoding: 'utf8' }).trim();
+  const id = execFileSync('docker', ['ps', '-q', '--filter', `label=com.docker.compose.project=${PROJECT}`, '--filter', 'label=com.docker.compose.service=trino'], { encoding: 'utf8' }).trim();
   if (!id) throw new Error('lakehouse Trino container not running');
   return id.split('\n')[0];
 }
@@ -122,9 +123,11 @@ export function opaDelete(path) {
   inTrinoPod(['-o', '/dev/null', '-X', 'DELETE', `http://127.0.0.1:8181/v1/data/${path}`]);
 }
 
-/** The OPA sidecar's decision-log lines (console) since `since` (ISO). */
+/** The decision-log lines of the OPA Trino asks (`trino-opa`, the sidecar) (console) since `since` (ISO). */
 export function sidecarDecisions(since) {
-  const id = execFileSync('docker', ['ps', '-q', '--filter', 'label=com.docker.compose.project=soa-lakehouse', '--filter', 'label=com.docker.compose.service=opa'], { encoding: 'utf8' }).trim();
-  const out = execFileSync('docker', ['logs', '--since', since, id], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 << 20 });
+  const id = execFileSync('docker', ['ps', '-q', '--filter', `label=com.docker.compose.project=${PROJECT}`, '--filter', 'label=com.docker.compose.service=trino-opa'], { encoding: 'utf8' }).trim();
+  // OPA writes its log (decision log included) to stderr.
+  const r = spawnSync('docker', ['logs', '--since', since, id], { encoding: 'utf8', maxBuffer: 64 << 20 });
+  const out = `${r.stdout ?? ''}\n${r.stderr ?? ''}`;
   return out.split('\n').filter(Boolean).map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter((d) => d && d.decision_id);
 }
