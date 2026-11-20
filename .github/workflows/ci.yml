@@ -126,6 +126,7 @@ jobs:
           bash scripts/tests/rotate-secrets.test.sh
           bash scripts/tests/readers-restarted.test.sh
           bash scripts/tests/rotation-checks.test.sh
+          bash scripts/tests/rotation-readers.test.sh
 
       # WP-47 capacity gate tests: the real chart passes, and the negative twins (2 extra CPU
       # cores, over-committed memory limits, a container with no memory request, an empty render)

@@ -12,10 +12,16 @@
       then the `env` list, which overrides envFrom, where the LAST entry with that name wins. An env
       entry without a `value` key is empty (length 0); a valueFrom is `set`. The JSON of each envFrom
       source is passed after VAR (a missing optional source is an empty file). Never prints a value.
-  rotation-checks.py secrets-read <deployment.json>
+  rotation-checks.py secrets-read <workload.json>
       prints, one per line, every Secret the pod template reads: env valueFrom.secretKeyRef, envFrom
       secretRef, and volumes (secret, projected secret sources), over all containers and init
-      containers.
+      containers. A Deployment, StatefulSet, DaemonSet, Job or CronJob.
+  rotation-checks.py readers <list.json> <rotated secret> [<rotated secret> …]
+      the list is `kubectl get deploy,statefulset,daemonset,cronjob -o json`; prints `<Kind> <name>
+      <secret,…>` for every workload whose pod template reads one of the rotated Secrets — the
+      readers are discovered, never listed by hand, so a new one cannot be missed.
+  rotation-checks.py item <list.json> <Kind> <name>
+      prints that one object of the list as JSON.
   rotation-checks.py changed-at <secret.json> [<secret.json>…]
       prints the latest time any of the Secrets was changed (ISO, UTC): the newest managedFields
       entry time, which the API server sets when a manager adds, changes or removes a field and
@@ -77,8 +83,16 @@ def env_state(dep_path, name, var, source_paths):
     return state
 
 
-def secrets_read(dep_path):
-    spec = load(dep_path)["spec"]["template"]["spec"]
+def pod_spec(obj):
+    """The pod spec of a Deployment, StatefulSet, DaemonSet, Job or CronJob."""
+    spec = obj.get("spec") or {}
+    if obj.get("kind") == "CronJob":
+        spec = (spec.get("jobTemplate") or {}).get("spec") or {}
+    return (spec.get("template") or {}).get("spec") or {}
+
+
+def secrets_of(obj):
+    spec = pod_spec(obj)
     names = []
     for c in (spec.get("containers") or []) + (spec.get("initContainers") or []):
         for e in c.get("env") or []:
@@ -95,6 +109,27 @@ def secrets_read(dep_path):
             if "secret" in s:
                 names.append(s["secret"]["name"])
     return sorted(set(names))
+
+
+def secrets_read(path):
+    return secrets_of(load(path))
+
+
+def readers(list_path, rotated):
+    """Every workload in a `kubectl get deploy,sts,ds,cronjob -o json` list that reads a rotated Secret."""
+    out = []
+    for obj in (load(list_path) or {}).get("items") or []:
+        hit = [n for n in secrets_of(obj) if n in rotated]
+        if hit:
+            out.append(f"{obj['kind']} {obj['metadata']['name']} {','.join(hit)}")
+    return sorted(out)
+
+
+def item(list_path, kind, name):
+    for obj in (load(list_path) or {}).get("items") or []:
+        if obj.get("kind") == kind and obj["metadata"]["name"] == name:
+            return json.dumps(obj)
+    raise SystemExit(f"{kind}/{name} not in the list")
 
 
 def changed_at(paths):
@@ -117,6 +152,10 @@ if __name__ == "__main__":
         print(env_state(args[0], args[1], args[2], args[3:]))
     elif cmd == "secrets-read":
         print("\n".join(secrets_read(args[0])))
+    elif cmd == "readers":
+        print("\n".join(readers(args[0], set(args[1:]))))
+    elif cmd == "item":
+        print(item(*args[:3]))
     elif cmd == "changed-at":
         print(changed_at(args))
     else:

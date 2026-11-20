@@ -9,6 +9,7 @@ case $args in
   *" get secret "*)
     name=$(sed -E 's/.* get secret ([^ ]+) .*/\1/' <<<"$args"); key=$(sed -E 's/.*index \.data "([^"]+)".*/\1/' <<<"$args")
     f="$FAKE/secrets/$name/$key"; [ -f "$f" ] && base64 < "$f" | tr -d '\n'; exit 0 ;;
+  *" get deploy,statefulset,daemonset,cronjob "*) [ -f "$FAKE/workloads.json" ] && cat "$FAKE/workloads.json" || echo '{"items":[]}'; exit 0 ;;
   *" get deploy os-ui "*) echo "ghcr.io/x/os-ui:9.9.9@sha256:abc"; exit 0 ;;
   *" get deploy "*) exit 0 ;;
   *" exec -i deploy/"*litellm*) cat >/dev/null; cat "$FAKE/scan.json"; exit 0 ;;
