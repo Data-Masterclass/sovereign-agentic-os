@@ -8,7 +8,8 @@
 #   bash tests/lakehouse/up.sh [extra helm args, e.g. --set trino.image.tag=484]
 #   bash tests/lakehouse/down.sh
 #
-# The work dir (rendered files + keys) is written to ${TMPDIR:-/tmp}/soa-lakehouse.work.
+# The work dir (rendered files + keys) is written to ${TMPDIR:-/tmp}/${LH_PROJECT:-soa-lakehouse}.work.
+# LH_PROJECT (compose project) and LH_TRINO_PORT / LH_RUNNER_PORT let two stacks run side by side.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 bash tests/lakehouse/down.sh >/dev/null 2>&1 || true
@@ -19,8 +20,8 @@ export LH_S3_KEY="ci$(rand 8)" LH_S3_SECRET="$(rand 20)" LH_PG_USER=polaris LH_P
 python3 tests/lakehouse/render.py "$WORK" "$@"
 chmod -R a+rX "$WORK"
 { cat "$WORK/compose.env"; echo "LH_WORK=$WORK"; echo "LH_PG_USER=$LH_PG_USER"; echo "LH_PG_PASSWORD=$LH_PG_PASSWORD"; } > "$WORK/compose.all.env"
-echo "$WORK" > "${TMPDIR:-/tmp}/soa-lakehouse.work"
-if ! docker compose -f tests/lakehouse/compose.yaml --env-file "$WORK/compose.all.env" up -d --wait --wait-timeout 600 trino; then
+echo "$WORK" > "${TMPDIR:-/tmp}/${LH_PROJECT:-soa-lakehouse}.work"
+if ! docker compose -f tests/lakehouse/compose.yaml --env-file "$WORK/compose.all.env" up -d --wait --wait-timeout 600 trino data-runner; then
   docker compose -f tests/lakehouse/compose.yaml --env-file "$WORK/compose.all.env" ps -a
   docker compose -f tests/lakehouse/compose.yaml --env-file "$WORK/compose.all.env" logs --tail 80
   exit 1

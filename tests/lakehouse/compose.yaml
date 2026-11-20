@@ -10,7 +10,7 @@
 # through ${LH_WORK} and ${LH_*_IMAGE}; nothing is pinned here. (SeaweedFS cannot stand in: it has
 # no STS, and Polaris 1.1 vends write credentials through STS.) Keycloak joins this file with T7, once the chart
 # pins a Keycloak image (design 00); there is nothing to pin it to yet.
-name: soa-lakehouse
+name: ${LH_PROJECT:-soa-lakehouse}
 
 x-ro: &ro
   read_only: true
@@ -113,6 +113,19 @@ services:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/v1/info | grep -q '\"starting\":false'"]
       interval: 5s
       retries: 60
+
+  # WP-37: the data-runner built from this checkout (PyIceberg tag/branch commits through Polaris),
+  # with the env the chart renders for it (render.py -> env/data-runner.env).
+  data-runner:
+    build: ../../images/extensions/data-runner
+    env_file: ["${LH_WORK}/env/data-runner.env"]
+    ports: ["127.0.0.1:${LH_RUNNER_PORT:-18000}:8000"]
+    networks: [lh]
+    depends_on: { catalog-init: { condition: service_completed_successfully } }
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 3s
+      retries: 40
 
 volumes:
   bootstrap-state: {}
