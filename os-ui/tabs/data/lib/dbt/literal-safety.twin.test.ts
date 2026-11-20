@@ -61,7 +61,7 @@ test('twin: with the legacy strip, the fuzz oracle finds Jinja the payloads crea
   }
   // The nested forms re-form delimiters in EVERY field the old strip covered, and the
   // fields it never covered carry raw templates.
-  for (const f of ['dataset.name', 'dataset.description', 'column.description', 'check.intention', 'measure.label', 'measure.description', 'sync.source.table', 'sync.schedule.cron', 'sync.connectionId', 'column.name']) {
+  for (const f of ['dataset.name', 'dataset.description', 'column.description', 'check.intention', 'measure.label', 'measure.description', 'sync.source.table', 'sync.schedule.cron', 'sync.connectionId.unresolved', 'column.name']) {
     assert.ok(hits.has(f), `the twin did not catch ${f}: the oracle is blind`);
   }
 });

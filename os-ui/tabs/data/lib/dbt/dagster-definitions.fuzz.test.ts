@@ -20,6 +20,7 @@ import type { Dataset } from '@tabs/data/lib/dataset-schema';
 import { emptyVersions } from '@tabs/data/lib/dataset-schema';
 import { DATA_LAYOUT } from '@core/infra/data-layout';
 import { generateProjectReport } from '@tabs/data/lib/dbt/generate';
+import { LiteralSafetyError } from '@tabs/data/lib/dbt/literal';
 import type { ProjectSnapshot } from '@tabs/data/lib/dbt/snapshot';
 
 const HOSTILE = [
@@ -96,7 +97,16 @@ function shapes(sources: string[]): Record<string, unknown>[] {
 }
 
 test('fuzz: no hostile value in any user field changes the structure of definitions.py', () => {
-  const module = (f: Fields) => generateProjectReport(f.domain, snapshot(f)).files.get(DATA_LAYOUT.dagsterDefinitionsPath);
+  // A value the generator refuses outright (a hostile domain fails the whole tree closed with a
+  // LiteralSafetyError) produces no module at all, which is the safe outcome.
+  const module = (f: Fields) => {
+    try {
+      return generateProjectReport(f.domain, snapshot(f)).files.get(DATA_LAYOUT.dagsterDefinitionsPath);
+    } catch (e) {
+      if (e instanceof LiteralSafetyError) return undefined;
+      throw e;
+    }
+  };
   const baseline = module(BENIGN);
   assert.ok(baseline, 'the benign snapshot generates a module');
   const cases: { label: string; src: string }[] = [];
@@ -106,7 +116,14 @@ test('fuzz: no hostile value in any user field changes the structure of definiti
       if (src !== undefined) cases.push({ label: `${field}=${JSON.stringify(v)}`, src });
     }
   }
-  assert.ok(cases.length > 200, `enough generated modules (${cases.length})`);
+  // Free text (name, description) always reaches the module, so every hostile value there is
+  // exercised; an identifier field (or an authored SQL body with a brace or a lone surrogate)
+  // holding one is refused before rendering by the literal-safety rules, so those cases yield no
+  // module and are proven safe by refusal instead (literal-safety.fuzz.test.ts).
+  for (const field of ['name', 'description'] as const) {
+    for (const v of HOSTILE) assert.ok(cases.some((c) => c.label === `${field}=${JSON.stringify(v)}`), `free text ${field}=${JSON.stringify(v)} generated no module`);
+  }
+  assert.ok(cases.length > 120, `enough generated modules (${cases.length})`);
   const [base, ...rest] = shapes([baseline!, ...cases.map((c) => c.src)]);
   assert.ok(!('error' in base), 'the baseline parses');
   const b = base as { calls: string[] };

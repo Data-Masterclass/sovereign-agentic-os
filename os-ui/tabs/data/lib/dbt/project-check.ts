@@ -203,7 +203,8 @@ const SQL_JINJA: RegExp[] = [
   /^\{% if is_incremental\(\) %\}/,
   /^\{% endif %\}/,
   /^\{\{ var\("os_batch_id", invocation_id\) \}\}/,
-  new RegExp(`^\\{\\{ config\\((?:${ID}=(?:'[A-Za-z0-9_+]*'|\\[(?:'${ID}'(?:, '${ID}')*)?\\])(?:, )?)+\\) \\}\\}`),
+  // A config value is a quoted constant, a list of identifiers, or a bare boolean (`full_refresh=false`).
+  new RegExp(`^\\{\\{ config\\((?:${ID}=(?:'[A-Za-z0-9_+]*'|\\[(?:'${ID}'(?:, '${ID}')*)?\\]|true|false)(?:, )?)+\\) \\}\\}`),
 ];
 /** The only Jinja allowed in a YAML string value outside a semantic `filter`. */
 const YAML_JINJA = /^\{\{ env_var\('[A-Z][A-Z0-9_]*'(?:, '[A-Za-z0-9_.-]*')?\)(?: \| as_number)? \}\}$/;

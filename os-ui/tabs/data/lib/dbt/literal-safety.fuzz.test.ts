@@ -115,3 +115,12 @@ test('golden: literal-safety-fuzz (dbt parse + compile in the Dagster image, lit
   if (process.env.REGEN_GOLDEN === '1' || !existsSync(golden)) writeFileSync(golden, JSON.stringify(actual, null, 2) + '\n');
   assert.deepEqual(actual, JSON.parse(readFileSync(golden, 'utf8')), 'literal-safety-fuzz differs from its golden (REGEN_GOLDEN=1 to accept)');
 });
+
+test('rule 8: a bare boolean config value (full_refresh=false) is in the grammar; any other bare word is not', () => {
+  const ok = new Map([['models/a.sql', "{{ config(materialized='incremental', unique_key='_batch_id', full_refresh=false) }}\nselect 1"]]);
+  assert.deepEqual(jinjaGrammarIssues(ok), []);
+  for (const bad of ['full_refresh=False', 'full_refresh=env_var', "full_refresh=false ~ 'x'"]) {
+    const files = new Map([['models/a.sql', `{{ config(materialized='table', ${bad}) }}\nselect 1`]]);
+    assert.ok(jinjaGrammarIssues(files).length > 0, `${bad} must be outside the grammar`);
+  }
+});

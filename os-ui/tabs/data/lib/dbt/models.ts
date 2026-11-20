@@ -332,7 +332,7 @@ export function planModels(snap: ProjectSnapshot): ModelPlanSet {
       return !!body && /\{\{|\{%|\{#/.test(body);
     });
     if (jinja.length) {
-      refused.set(d.id, `the authored ${jinja.join(' and ')} SQL contains dbt Jinja ({{ … }} / {% … %}), which the OS does not run as authored SQL; rewrite it as plain SQL`);
+      refused.set(d.id, `the authored ${jinja.join(' and ')} SQL contains dbt Jinja tags, which the OS does not run as authored SQL; rewrite it as plain SQL`);
       continue;
     }
     for (const layer of ['silver', 'gold'] as Layer[]) {
