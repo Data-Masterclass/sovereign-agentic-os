@@ -78,6 +78,12 @@ stackitPremium:
 # endpoint. Confirmed catalog ids (STACKIT docs, available-shared-models). Names
 # match the bundled slice so the agents need NO change. `api_key` resolves from
 # the External-Secrets-synced `stackit-ai-model-serving-key` Secret (STACKIT_API_KEY).
+# LITELLM_SALT_KEY comes from the same ESO-managed Secret as the master key (required on this
+# profile; templates/base/litellm/_salt-key.tpl). Add the key there before the first install and
+# never change it afterwards (docs/ops/litellm-salt-key.md).
+litellmSaltKey:
+  existingSecret: litellm-credentials
+
 litellm:
   # Point the gateway's admin/virtual-key DB at managed PostgreSQL (was in-cluster
   # pg-rw). useExisting + the `postgres-litellm-credentials` Secret are unchanged
