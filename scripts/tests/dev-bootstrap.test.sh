@@ -1,0 +1,153 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG
+# =============================================================================
+# dev-bootstrap.test.sh — scripts/dev/bootstrap-secrets.sh and the dev profile, without a cloud.
+# =============================================================================
+#   bash scripts/tests/dev-bootstrap.test.sh
+#
+# tofu and kubectl are stubs (the dev state's outputs; a kubeconfig of two contexts; every
+# `kubectl apply` is logged, its stdin kept). The chart is rendered with the REAL helm.
+#   - it refuses the production context, and a context whose API server is not the dev state's;
+#   - it writes the environment=dev marker and the Secrets to the dev context only;
+#   - the overlay replaces EVERY credential the chart renders: rendering values.dev.yaml + the
+#     generated overlay, no Secret value equals what the chart renders without it (the literals
+#     of values.yaml), and the demo users are the synthetic Northpeak cast;
+#   - no generated value appears in the script's output.
+set -uo pipefail
+cd "$(dirname "$0")/../.." || exit 2
+REPO=$PWD
+# shellcheck source=scripts/tests/assert.sh
+. scripts/tests/assert.sh
+TMP=$(mktemp -d)
+trap 'rm -rf "$TMP"' EXIT
+command -v helm >/dev/null || { echo "helm not on PATH"; exit 2; }
+ls charts/sovereign-agentic-os/charts/*.tgz >/dev/null 2>&1 || { echo "no subchart .tgz (helm dependency build charts/sovereign-agentic-os)"; exit 2; }
+BIN=$TMP/bin; mkdir -p "$BIN"
+export FAKE_LOG=$TMP/calls.log FAKE_APPLIED=$TMP/applied.yaml
+DEV=https://api.dev.example.invalid PROD=https://api.prod.example.invalid
+
+cat > "$BIN/tofu" <<STUB
+#!/usr/bin/env bash
+# tofu -chdir=<dir> output -raw <name>
+case "\$4" in
+  environment) printf dev ;;
+  kubeconfig)  printf 'clusters:\n- cluster: {server: "%s"}\n  name: dmagosdev\n' "\${FAKE_STATE_SERVER:-$DEV}" ;;
+  object_storage_bucket) printf dm-agentic-os-dev-backups ;;
+  object_storage_endpoint) printf https://object.storage.eu01.onstackit.cloud ;;
+  object_storage_access_key) printf AKFAKEDEVKEY ;;
+  object_storage_secret_key) printf SKFAKEDEVSECRETVALUE ;;
+  ingress_public_ip) printf 192.0.2.10 ;;
+esac
+STUB
+cat > "$BIN/kubectl" <<STUB
+#!/usr/bin/env bash
+echo "kubectl \$*" >> "\$FAKE_LOG"
+all="\$*"
+if [ "\$1" = config ]; then
+  case \$all in
+    *'contexts[?(@.name=="dmagosdev")]'*)   printf cl-dev ;;
+    *'contexts[?(@.name=="dmagenticos")]'*) printf cl-prod ;;
+    *'clusters[?(@.name=="cl-dev")]'*)      printf '%s' "$DEV" ;;
+    *'clusters[?(@.name=="cl-prod")]'*)     printf '%s' "$PROD" ;;
+  esac
+  exit 0
+fi
+case \$all in
+  *" apply -f -"*)  cat >> "\$FAKE_APPLIED"; echo --- >> "\$FAKE_APPLIED"
+                    case \$(tail -40 "\$FAKE_APPLIED") in *"environment: dev"*) touch "\$FAKE_LOG.marked" ;; esac ;;
+  *"get configmap sovereign-os-environment"*) [ -f "\$FAKE_LOG.marked" ] && printf dev ;;
+  *"create secret"*" --dry-run=client -o yaml"*)
+    # the REAL kubectl renders the Secret client-side; it needs no cluster and no context
+    args=(); skip=''
+    for a in "\$@"; do
+      if [ -n "\$skip" ]; then skip=''; continue; fi
+      if [ "\$a" = --context ]; then skip=1; continue; fi
+      args+=("\$a")
+    done
+    KUBECONFIG=/dev/null exec "$(command -v kubectl || echo /bin/false)" "\${args[@]}" ;;
+  *"get ns"*) exit 0 ;;
+esac
+STUB
+chmod +x "$BIN"/*
+command -v kubectl >/dev/null || { echo "kubectl not on PATH (client-side dry-run renders the Secrets)"; exit 2; }
+
+run() { # run [env...] — bootstrap with the stubs; sets out, rc
+  rm -f "$FAKE_LOG" "$FAKE_LOG.marked" "$FAKE_APPLIED"; : > "$FAKE_LOG"
+  out=$(env PATH="$BIN:$PATH" TF="$BIN/tofu" DEV_PRIVATE_DIR="$TMP/private" "$@" bash scripts/dev/bootstrap-secrets.sh 2>&1); rc=$?
+}
+
+echo "== refusals"
+run DEV_KUBE_CONTEXT=dmagenticos
+rc_is "NEGATIVE TWIN: the production context is refused" 1
+check "with the reason" "DEV_KUBE_CONTEXT is the production context" "$out"
+absent "nothing is applied" " apply " "$(cat "$FAKE_LOG")"
+run FAKE_STATE_SERVER=$PROD
+rc_is "NEGATIVE TWIN: a context whose server is not the dev state's is refused" 1
+absent "nothing is applied" " apply " "$(cat "$FAKE_LOG")"
+
+echo "== the dev cluster"
+run
+rc_is "bootstrap on the dev context exits 0" 0
+check "it ends OK" "BOOTSTRAP_SECRETS_OK context=dmagosdev" "$out"
+holds "every kubectl call names the dev context" bash -c "! grep -v '^kubectl config' '$FAKE_LOG' | grep -v -- '--context dmagosdev'"
+check "the marker is applied" "environment: dev" "$(cat "$FAKE_APPLIED")"
+check "the overlay Secret is applied" "name: sovereign-os-dev-values" "$(cat "$FAKE_APPLIED")"
+check "the seed credentials are applied" "name: northpeak-seed-credentials" "$(cat "$FAKE_APPLIED")"
+check "the dev bucket credential is applied" "name: dev-backup-s3" "$(cat "$FAKE_APPLIED")"
+OV=$TMP/private/values.dev.private.yaml
+holds "the overlay is mode 600" [ "$(stat -c %a "$OV" 2>/dev/null || stat -f %Lp "$OV")" = 600 ]
+holds "the private dir is mode 700" [ "$(stat -c %a "$TMP/private" 2>/dev/null || stat -f %Lp "$TMP/private")" = 700 ]
+absent "no S3 secret key in the output" "SKFAKEDEVSECRETVALUE" "$out"
+mk=$(python3 -c 'import yaml,sys; print(yaml.safe_load(open(sys.argv[1]))["litellmMasterKey"])' "$OV")
+absent "no generated value in the output" "$mk" "$out"
+
+echo "== the overlay replaces every chart credential"
+H() { helm template agentic-os charts/sovereign-agentic-os -n agentic-os --skip-schema-validation -f values.dev.yaml "$@" 2>/dev/null; }
+H > "$TMP/without.yaml"; H -f "$OV" > "$TMP/with.yaml"
+res=$(python3 - "$TMP/without.yaml" "$TMP/with.yaml" <<'PY'
+import sys, yaml
+def secrets(p):
+    out = {}
+    for d in yaml.safe_load_all(open(p)):
+        if isinstance(d, dict) and d.get('kind') == 'Secret':
+            for k, v in (d.get('stringData') or {}).items():
+                out[(d['metadata']['name'], k)] = str(v)
+    return out
+a, b = secrets(sys.argv[1]), secrets(sys.argv[2])
+# Not credentials: ids, names, hosts, user names, the provider base URL.
+skip = ('_ID', '_NAME', 'HOST', 'username', 'UI_USERNAME', 'STACKIT_API_BASE', 'USER_EMAIL')
+same = [f"{n}/{k}" for (n, k), v in a.items()
+        if not k.endswith(skip) and (n, k) in b and b[(n, k)] == v and v not in ('',)]
+print('SAME:' + ','.join(sorted(same)))
+print('COUNT:%d' % len(b))
+PY
+)
+check "every chart-rendered credential differs from the literal (or is generated per install)" "SAME:" "$res"
+same=$(printf '%s' "$res" | sed -n 's/^SAME://p')
+# os-ui-session / docling-api-key / service-bearer-token are random per render already (lookup+rand).
+leftover=$(printf '%s' "$same" | tr ',' '\n' | grep -vE '^(os-ui-session|docling-api-key|service-bearer-token)/' || true)
+holds "no literal credential is left: [${leftover}]" [ -z "$leftover" ]
+users=$(python3 -c 'import yaml,sys,json; print(" ".join(u["email"] for u in json.loads(yaml.safe_load(open(sys.argv[1]))["osUI"]["usersSeed"])))' "$OV")
+check "the demo users are the synthetic Northpeak cast" "nova@northpeak.demo" "$users"
+holds "and only that cast (every email @northpeak.demo)" bash -c "[ -z \"\$(printf '%s\n' $users | grep -v '@northpeak.demo$')\" ]"
+
+echo "== a second run keeps the overlay; --rotate makes a new one"
+before=$(shasum "$OV" | cut -d' ' -f1)
+run; holds "a second run keeps the overlay" [ "$(shasum "$OV" | cut -d' ' -f1)" = "$before" ]
+rm -f "$FAKE_LOG.marked"; out=$(env PATH="$BIN:$PATH" TF="$BIN/tofu" DEV_PRIVATE_DIR="$TMP/private" bash scripts/dev/bootstrap-secrets.sh --rotate 2>&1)
+holds "--rotate generates new values" [ "$(shasum "$OV" | cut -d' ' -f1)" != "$before" ]
+
+echo "== the dev profile fits the dev node and renders no console Ingress"
+cap=$(CI=true node scripts/check-capacity.mjs --profile default --skip-schema-validation \
+      --budget charts/sovereign-agentic-os/capacity.dev.yaml --values values.dev.yaml --values "$OV" 2>&1); rc=$?
+rc_is "the capacity gate passes for the dev node" 0
+check "it reports the dev flavour budget" "check-capacity: ok" "$cap"
+hosts=$(python3 -c '
+import yaml,sys
+print(" ".join(r["host"] for d in yaml.safe_load_all(open(sys.argv[1])) if isinstance(d,dict) and d.get("kind")=="Ingress" for r in d["spec"]["rules"]))' "$TMP/with.yaml")
+check "os is published in the dev zone" "os.dev.agentic.datamasterclass.com" "$hosts"
+absent "no production hostname" "os.agentic.datamasterclass.com" "$hosts"
+: "$REPO"
+finish dev-bootstrap.test.sh || exit 1
+echo "DEV_BOOTSTRAP_TESTS_OK"

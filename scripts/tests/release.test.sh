@@ -32,6 +32,9 @@ cat > "$BIN/gh" <<'STUB'
 # gh api "repos/<r>/actions/runs?head_sha=..&event=push&branch=<b>&.." --jq ... -> runs-<b>.tsv
 echo "gh $*" >> "$FAKE_LOG"
 [ "${FAKE_GH_FAIL:-}" = 1 ] && exit 1
+# gh api "repos/<r>/actions/runs/<id>/jobs..." --jq ... -> jobs-<id>.txt (the job's conclusion)
+run=$(printf '%s' "$2" | sed -n 's#.*/actions/runs/\([^/?]*\)/jobs.*#\1#p')
+if [ -n "$run" ]; then cat "$FAKE_DIR/jobs-$run.txt" 2>/dev/null || true; exit; fi
 branch=$(printf '%s' "$2" | sed -n 's/.*[?&]branch=\([^&]*\).*/\1/p')
 # A runs-<b>.json fixture is the raw API answer: apply the script's OWN --jq filter to it with
 # jq, so the newest-run-wins sort is tested too. A runs-<b>.tsv is the already-filtered answer.
@@ -71,7 +74,7 @@ new_checkout() {
   git init -q -b main "$OP"
   mkdir -p "$OP/scripts/lib" "$OP/os-ui"
   cp "$REPO/scripts/release.sh" "$OP/scripts/"
-  cp "$REPO/scripts/lib/workflow-status.sh" "$OP/scripts/lib/"
+  cp "$REPO/scripts/lib/workflow-status.sh" "$REPO/scripts/lib/env-guard.sh" "$REPO/scripts/lib/promote-image.sh" "$OP/scripts/lib/"
   echo 'process.exit(Number(process.env.FAKE_STRUCTURE_RC || 0))' > "$OP/scripts/check-structure.mjs"
   echo 'process.exit(Number(process.env.FAKE_CONSOLES_RC || 0))' > "$OP/scripts/check-consoles-not-public.mjs"
   echo 'process.exit(process.env.CI === "true" ? Number(process.env.FAKE_CAPACITY_RC || 0) : 9)' > "$OP/scripts/check-capacity.mjs"
@@ -87,7 +90,11 @@ push_elsewhere() {
    echo b > os-ui/b.ts; git add -A; git commit -qm b; git push -q origin main) \
     || { echo "fixture: push_elsewhere failed" >&2; exit 1; }
 }
-green_ci()    { printf 'ci.yml\tcompleted\tsuccess\tu1\nlicense-gate.yml\tcompleted\tsuccess\tu2\n' > "$FAKE_DIR/runs-main.tsv"; }
+# green_ci: CI AND the dev run are green for main (the normal state before a production release).
+green_ci()    { printf 'ci.yml\tcompleted\tsuccess\tu1\nlicense-gate.yml\tcompleted\tsuccess\tu2\ndev.yml\tcompleted\tsuccess\tu4\t901\n' > "$FAKE_DIR/runs-main.tsv"
+                echo success > "$FAKE_DIR/jobs-901.txt"; }
+# ci_only <dev.yml line or nothing>: CI green, dev as given.
+ci_only()     { printf 'ci.yml\tcompleted\tsuccess\tu1\nlicense-gate.yml\tcompleted\tsuccess\tu2\n%b' "${1:-}" > "$FAKE_DIR/runs-main.tsv"; }
 green_build() { printf 'build-images.yml\tcompleted\tsuccess\tu3\n' > "$FAKE_DIR/runs-os-ui-v$1.tsv"; }
 
 # release <args...> — run the copy in $OP with the stubs; sets $out and $rc.
@@ -111,8 +118,8 @@ release --dry-run 1.0.0
 rc_is "dry run exits 0" 0
 check "dry run ends with DRY_RUN_OK" "RELEASE_1.0.0_DRY_RUN_OK" "$out"
 check "dry run says it would tag" "would git tag os-ui-v1.0.0" "$out"
-check "dry run says it would deploy" "would run deploy.sh --from-registry 1.0.0" "$out"
-check "dry run says it would smoke-test" "would run smoke.sh --expect-tag 1.0.0" "$out"
+check "dry run says it would deploy" "would run deploy.sh --env prod --from-registry 1.0.0" "$out"
+check "dry run says it would smoke-test" "would run smoke.sh --env prod --expect-tag 1.0.0" "$out"
 holds "dry run pushes no tag" [ -z "$(remote_tag 1.0.0)" ]
 absent "dry run does not deploy" "deploy --from-registry" "$(cat "$FAKE_LOG")"
 absent "dry run does not smoke" "smoke " "$(cat "$FAKE_LOG")"
@@ -140,8 +147,8 @@ check "it ends with RELEASE_<v>_OK" "RELEASE_1.1.0_OK" "$(echo "$out" | tail -1)
 holds "local main fast-forwarded to public/main" [ "$(git -C "$OP" rev-parse HEAD)" = "$SHA" ]
 holds "the tag is pushed and points at the tested SHA" [ "$(remote_tag 1.1.0)" = "$SHA" ]
 check "it waits on build-images for the tag" "branch=os-ui-v1.1.0" "$(cat "$FAKE_LOG")"
-check "it deploys from the registry, passing VALUES_OVERLAY" "deploy --from-registry 1.1.0 overlay=deploy/overlays/x.yaml" "$(cat "$FAKE_LOG")"
-check "it smoke-tests the version" "smoke --expect-tag 1.1.0" "$(cat "$FAKE_LOG")"
+check "it deploys from the registry, passing VALUES_OVERLAY" "deploy --env prod --from-registry 1.1.0 overlay=deploy/overlays/x.yaml" "$(cat "$FAKE_LOG")"
+check "it smoke-tests the version" "smoke --env prod --expect-tag 1.1.0" "$(cat "$FAKE_LOG")"
 check "it records the Helm revision to roll back to" "Helm revision 414" "$out"
 
 echo "== re-running after it is live is safe"
@@ -152,7 +159,7 @@ rc_is "a re-run exits 0" 0
 check "a re-run resumes on the existing tag" "already points at" "$out"
 check "a re-run does not deploy again" "already runs 1.1.0" "$out"
 absent "deploy.sh was not called" "deploy --from-registry" "$(cat "$FAKE_LOG")"
-check "the smoke test still runs" "smoke --expect-tag 1.1.0" "$(cat "$FAKE_LOG")"
+check "the smoke test still runs" "smoke --env prod --expect-tag 1.1.0" "$(cat "$FAKE_LOG")"
 
 echo "== the gates stop the release"
 new_checkout; green_ci; echo dirty >> "$OP/os-ui/a.ts"
@@ -238,6 +245,99 @@ absent "a failed deploy is not smoke-tested" "smoke " "$(cat "$FAKE_LOG")"
 new_checkout; green_ci; green_build 2.0.0; FAKE_SMOKE_RC=1 release 2.0.0
 check "a failed smoke test stops" "STOPPED: the smoke test failed" "$out"
 check "and prints the rollback command" "rollback agentic-os 414 -n agentic-os" "$out"
+
+echo "== the dev gate: production gets only a commit that was green on dev (negative twins)"
+new_checkout; green_ci; green_build 3.0.0
+release 3.0.0
+rc_is "a commit green on CI AND dev releases" 0
+check "the dev run of this exact SHA was asked for" "dev environment for ${SHA:0:12}" "$out"
+
+new_checkout; ci_only 'dev.yml\tcompleted\tfailure\tu4\n'; green_build 3.0.1
+release 3.0.1
+rc_is "a commit red on dev exits 1" 1
+check "a commit red on dev is refused" "STOPPED: NOT_GREEN_ON_DEV: dev.yml is RED" "$out"
+holds "a commit red on dev pushes no tag" [ -z "$(remote_tag 3.0.1)" ]
+absent "a commit red on dev deploys nothing" "deploy " "$(cat "$FAKE_LOG")"
+
+new_checkout; ci_only; green_build 3.0.2
+release 3.0.2
+check "a commit that never ran on dev is refused" "STOPPED: NOT_GREEN_ON_DEV: dev.yml has not finished (or never ran)" "$out"
+absent "and deploys nothing" "deploy " "$(cat "$FAKE_LOG")"
+
+new_checkout; ci_only 'dev.yml\tcompleted\tsuccess\tu4\t902\n'; echo skipped > "$FAKE_DIR/jobs-902.txt"; green_build 3.0.6
+release 3.0.6
+check "NEGATIVE TWIN: a dev run whose dev-green job was skipped (dev not enabled) is refused" "NOT_GREEN_ON_DEV: dev.yml is RED" "$out"
+check "and the job is named" "dev.yml job dev-green: skipped" "$out"
+absent "and deploys nothing" "deploy " "$(cat "$FAKE_LOG")"
+
+new_checkout; ci_only 'dev.yml\tcompleted\tcancelled\tu4\n'; green_build 3.0.3
+release 3.0.3
+check "a dev run cancelled by a newer merge is not green" "NOT_GREEN_ON_DEV: dev.yml is RED" "$out"
+
+new_checkout; ci_only; green_build 3.0.4
+release --no-dev-gate 3.0.4
+rc_is "--no-dev-gate works for a local run while dev does not exist" 0
+check "and says loudly that the gate was skipped" "dev gate SKIPPED" "$out"
+
+new_checkout; ci_only; green_build 3.0.5
+out=$(cd "$OP" && PATH="$BIN:$PATH" WORKFLOW_POLL_SECONDS=0 RELEASE_CI_WAIT_MINUTES=0 RELEASE_BUILD_WAIT_MINUTES=0 \
+      DEPLOY_SCRIPT=deploy.sh SMOKE_SCRIPT=smoke.sh GITHUB_ACTIONS=true bash scripts/release.sh --no-dev-gate 3.0.5 2>&1); rc=$?
+rc_is "--no-dev-gate in a workflow exits 1" 1
+check "--no-dev-gate is refused in CI" "is refused in CI" "$out"
+absent "and deploys nothing" "deploy " "$(cat "$FAKE_LOG")"
+
+echo "== RELEASE_PROMOTE_IMAGE=1: the dev digest gets the version tag, no rebuild wait"
+new_checkout; green_ci
+cat > "$BIN/fake-registry" <<'STUB'
+#!/usr/bin/env bash
+# digest <ref> | copy <src> <dst> — a registry in a directory: one file per tag holding its digest.
+reg=$FAKE_DIR/registry; mkdir -p "$reg"
+key() { printf '%s' "$1" | tr '/:' '__'; }
+case $1 in
+  digest) cat "$reg/$(key "$2")" 2>/dev/null || exit 1 ;;
+  copy)   cp "$reg/$(key "$2")" "$reg/$(key "$3")"; echo "copy $2 $3" >> "$FAKE_LOG" ;;
+esac
+STUB
+chmod +x "$BIN/fake-registry"
+mkdir -p "$FAKE_DIR/registry"
+echo sha256:dddd > "$FAKE_DIR/registry/ghcr.io_data-masterclass_sovereign-os_os-ui_main-$SHA"
+out=$(cd "$OP" && PATH="$BIN:$PATH" WORKFLOW_POLL_SECONDS=0 RELEASE_CI_WAIT_MINUTES=0 RELEASE_BUILD_WAIT_MINUTES=0 \
+      DEPLOY_SCRIPT=deploy.sh SMOKE_SCRIPT=smoke.sh RELEASE_PROMOTE_IMAGE=1 PROMOTE_TOOL="$BIN/fake-registry" \
+      bash scripts/release.sh 3.1.0 2>&1); rc=$?
+rc_is "a promoted release exits 0" 0
+check "the dev image is copied to the version tag" "copy ghcr.io/data-masterclass/sovereign-os/os-ui:main-$SHA ghcr.io/data-masterclass/sovereign-os/os-ui:3.1.0" "$(cat "$FAKE_LOG")"
+absent "it does not wait for a rebuild" "branch=os-ui-v3.1.0" "$(cat "$FAKE_LOG")"
+holds "the version tag has the dev digest" [ "$(cat "$FAKE_DIR/registry/ghcr.io_data-masterclass_sovereign-os_os-ui_3.1.0")" = sha256:dddd ]
+
+new_checkout; green_ci; mkdir -p "$FAKE_DIR/registry"
+out=$(cd "$OP" && PATH="$BIN:$PATH" WORKFLOW_POLL_SECONDS=0 RELEASE_CI_WAIT_MINUTES=0 \
+      DEPLOY_SCRIPT=deploy.sh SMOKE_SCRIPT=smoke.sh RELEASE_PROMOTE_IMAGE=1 PROMOTE_TOOL="$BIN/fake-registry" \
+      bash scripts/release.sh 3.1.1 2>&1); rc=$?
+rc_is "no dev image for the commit exits 1" 1
+check "no dev image for the commit stops the promotion" "could not be promoted" "$out"
+absent "and deploys nothing" "deploy " "$(cat "$FAKE_LOG")"
+
+echo "== --sha: release the commit that passed dev while main moved on"
+new_checkout; green_ci; green_build 3.2.0
+old=$SHA
+push_elsewhere
+git -C "$OP" fetch -q public main
+release --sha "$old" 3.2.0
+rc_is "an older commit of main releases with --sha" 0
+holds "the tag points at that commit" [ "$(remote_tag 3.2.0)" = "$old" ]
+new_checkout; green_ci
+echo z > "$OP/os-ui/z.ts"; git -C "$OP" add -A; git -C "$OP" commit -qm unmerged
+release --sha "$(git -C "$OP" rev-parse HEAD)" 3.2.1
+check "--sha of a commit not on main stops" "is not on public/main" "$out"
+
+echo "== --env dev: no tag, deploys main-<sha> to dev"
+new_checkout; green_ci
+release --env dev
+rc_is "a dev release exits 0" 0
+check "it deploys the CI image of this commit to dev" "deploy --env dev --from-registry main-$SHA" "$(cat "$FAKE_LOG")"
+check "it smoke-tests dev" "smoke --env dev --expect-tag main-$SHA" "$(cat "$FAKE_LOG")"
+holds "it pushes no tag" [ -z "$(git -C "$TMP/case/public.git" tag)" ]
+release --env dev 1.0.0; rc_is "--env dev with a version is a usage error" 2
 
 finish release.test.sh || exit 1
 echo "RELEASE_TESTS_OK"

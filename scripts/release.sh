@@ -4,7 +4,13 @@
 # =============================================================================
 # release.sh — the release gate: one commit, tested, tagged, built, deployed, smoke-tested.
 # =============================================================================
-#   ./scripts/release.sh [--dry-run] [--remote <name>] <version>      e.g. 0.9.18
+#   ./scripts/release.sh [--env prod] [--dry-run] [--remote <name>] [--sha <sha>] [--no-dev-gate] <version>
+#   ./scripts/release.sh --env dev [--dry-run] [--remote <name>]       (no version: deploys main-<sha>)
+#
+# --env prod (THE DEFAULT) is the production release below. --env dev runs gates 1, 3 and 4 and
+# then deploys the CI-built image main-<sha> of <remote>/main to the dev cluster and smoke-tests
+# it there: no tag, no build. Every merge to main already does this in .github/workflows/dev.yml;
+# the dev mode is the same thing by hand. The context follows the env (scripts/lib/env-guard.sh).
 #
 # WHY. Releases were gated by a shell sequence typed by hand, and twice a PR merged with a red
 # check went out because the sequence did not look at CI on the merged commit. This script IS
@@ -13,11 +19,18 @@
 #   1. on `main`, no uncommitted changes to tracked files, `main` fast-forwards to <remote>/main
 #   2. the tag os-ui-v<version> does not exist (or already points at this exact commit: resume)
 #   3. ci.yml AND license-gate.yml passed on a push to main for this SHA (waits while running)
+#   3b. prod only: dev.yml passed on a push to main for this SHA — the commit was deployed to dev
+#      and its smoke test and acceptance suite there were green (docs/ops/ci-cd.md). A dev run that
+#      was cancelled (a newer merge replaced it) is not green. --no-dev-gate skips it for a LOCAL
+#      run while dev does not exist yet; it is refused when CI or GITHUB_ACTIONS is set.
 #   4. node scripts/check-structure.mjs and node scripts/check-consoles-not-public.mjs pass, and
 #      the capacity gate (scripts/check-capacity.mjs, WP-47) finds the rendered chart within the
 #      node budget in charts/sovereign-agentic-os/capacity.yaml (run with CI=true: no skip)
 #   5. no cloud-sync duplicate (`* 2`, `* 2.*`) anywhere under os-ui/
-#   6. tag the SHA and push the tag; wait for build-images.yml to pass for it
+#   6. tag the SHA and push the tag; wait for build-images.yml to pass for it. build-images.yml
+#      does not REBUILD when dev already has main-<sha>: it gives that same digest the version tag.
+#      With RELEASE_PROMOTE_IMAGE=1 (the prod workflow, whose tag push starts no other workflow)
+#      this script gives the tag itself (scripts/lib/promote-image.sh) and checks the digest.
 #   7. ./scripts/deploy.sh --from-registry <version>  (VALUES_OVERLAY is passed through)
 #      — skipped when os-ui already runs <version>, so a re-run after a smoke failure is safe
 #   8. ./scripts/smoke-test.sh --expect-tag <version>
@@ -40,10 +53,16 @@ cd "$(dirname "$0")/.."
 REMOTE=${RELEASE_REMOTE:-public}
 DRY_RUN=''
 VERSION=''
+ENV_NAME=prod
+RELEASE_SHA=''
+DEV_GATE=1
 while [ $# -gt 0 ]; do
   case $1 in
     --dry-run) DRY_RUN=1 ;;
     --remote)  REMOTE=${2:?--remote needs a name}; shift ;;
+    --env)     ENV_NAME=${2:?--env needs dev or prod}; shift ;;
+    --sha)     RELEASE_SHA=${2:?--sha needs a commit}; shift ;;
+    --no-dev-gate) DEV_GATE='' ;;
     -h|--help) sed -n '7p' "$0" | sed 's/^# //'; exit 0 ;;
     -*)        echo "release.sh: unknown option $1" >&2; exit 2 ;;
     *)         [ -z "$VERSION" ] || { echo "release.sh: unexpected argument $1" >&2; exit 2; }
@@ -51,10 +70,19 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
+case $ENV_NAME in dev|prod) ;; *) echo "release.sh: --env must be dev or prod" >&2; exit 2 ;; esac
+if [ "$ENV_NAME" = dev ]; then
+  [ -z "$VERSION" ] || { echo "release.sh: --env dev takes no version (it deploys main-<sha>)" >&2; exit 2; }
+  VERSION=dev
+fi
 [ -n "$VERSION" ] || { sed -n '7p' "$0" | sed 's/^# //' >&2; exit 2; }
 
 export WORKFLOW_REPO=${RELEASE_REPO:-Data-Masterclass/sovereign-agentic-os}
-CTX=${KUBE_CONTEXT:-dmagenticos}
+if [ "$ENV_NAME" = dev ]; then
+  CTX=${DEV_KUBE_CONTEXT:-$(bash scripts/lib/env-guard.sh --env dev --print-default-context)}
+else
+  CTX=${KUBE_CONTEXT:-$(bash scripts/lib/env-guard.sh --env prod --print-default-context)}
+fi
 NS=${NS:-agentic-os}
 REL=${REL:-agentic-os}
 DEPLOY_SCRIPT=${DEPLOY_SCRIPT:-./scripts/deploy.sh}
@@ -66,11 +94,20 @@ say()  { printf '\n==> %s\n' "$*"; }
 stop() { echo "RELEASE_${VERSION}_STOPPED: $*${ROLLBACK_HINT:+ — $ROLLBACK_HINT}"; exit 1; }
 would(){ echo "   [dry-run] would $*"; }
 
-case $VERSION in
-  *[!A-Za-z0-9._-]* | [!0-9]*) stop "'$VERSION' is not a version (expected e.g. 0.9.18)" ;;
-esac
+if [ "$ENV_NAME" = prod ]; then
+  case $VERSION in
+    *[!A-Za-z0-9._-]* | [!0-9]*) stop "'$VERSION' is not a version (expected e.g. 0.9.18)" ;;
+  esac
+fi
+if [ -z "$DEV_GATE" ]; then
+  [ "$ENV_NAME" = prod ] || stop "--no-dev-gate applies to --env prod only"
+  if [ -n "${CI:-}" ] || [ -n "${GITHUB_ACTIONS:-}" ]; then
+    stop "--no-dev-gate is refused in CI: a production release from a workflow needs a green dev run"
+  fi
+fi
 
 check_checkout() {
+  if [ -n "$RELEASE_SHA" ]; then check_checkout_sha; return; fi
   say "checkout: on main, clean, fast-forward to $REMOTE/main"
   [ "$(git symbolic-ref --short -q HEAD || true)" = main ] || stop "not on branch main — git checkout main"
   [ -z "$(git status --porcelain --untracked-files=no)" ] || stop "uncommitted changes to tracked files — commit or stash them"
@@ -84,6 +121,19 @@ check_checkout() {
   else
     stop "local main has commits that are not on $REMOTE/main — push them through a PR, or reset main"
   fi
+}
+
+# --sha <sha>: release THIS commit of main rather than main's head (the prod workflow releases the
+# commit that passed dev while main may have moved on). The checkout must BE that commit (the
+# chart deployed is the working tree), it must be clean, and it must be on <remote>/main.
+check_checkout_sha() {
+  say "checkout: commit $RELEASE_SHA, clean, on $REMOTE/main"
+  [ -z "$(git status --porcelain --untracked-files=no)" ] || stop "uncommitted changes to tracked files — commit or stash them"
+  git fetch --quiet "$REMOTE" main || stop "git fetch $REMOTE main failed (is the remote called '$REMOTE'? pass --remote)"
+  SHA=$(git rev-parse -q --verify "$RELEASE_SHA^{commit}") || stop "$RELEASE_SHA is not a commit here"
+  [ "$(git rev-parse HEAD)" = "$SHA" ] || stop "HEAD is not $RELEASE_SHA — git checkout $RELEASE_SHA first"
+  git merge-base --is-ancestor "$SHA" "$REMOTE/main" || stop "${SHA:0:12} is not on $REMOTE/main — only merged commits are released"
+  echo "   releasing ${SHA:0:12} (on $REMOTE/main)"
 }
 
 # tag_commit <where> — the commit os-ui-v<version> points at locally (local) or on the remote.
@@ -126,6 +176,25 @@ check_ci() {
   workflows_green main "ci.yml license-gate.yml" "$([ -n "$DRY_RUN" ] && echo 0 || echo "${RELEASE_CI_WAIT_MINUTES:-45}")" "CI (ci.yml + license-gate.yml)"
 }
 
+# 3b. The commit was green on dev: dev.yml (deploy + smoke + acceptance) concluded `success` on the
+# push to main for this exact SHA. The same query as check_ci, so the two cannot drift.
+check_dev() {
+  if [ -z "$DEV_GATE" ]; then
+    say "dev gate SKIPPED (--no-dev-gate, local run): this commit is NOT known to be green on dev"
+    return
+  fi
+  say "dev environment for ${SHA:0:12} (dev.yml: deploy, smoke test, acceptance suite)"
+  local rc=0
+  bash scripts/lib/workflow-status.sh --sha "$SHA" --branch main --workflows "dev.yml" --require-job dev-green \
+    --wait-minutes "$([ -n "$DRY_RUN" ] && echo 0 || echo "${RELEASE_DEV_WAIT_MINUTES:-${RELEASE_CI_WAIT_MINUTES:-90}}")" || rc=$?
+  case $rc in
+    0) ;;
+    1) stop "NOT_GREEN_ON_DEV: dev.yml is RED for ${SHA:0:12} — production gets only a commit that was green on dev" ;;
+    3) stop "NOT_GREEN_ON_DEV: dev.yml has not finished (or never ran) for ${SHA:0:12} — wait for it, or release a commit that passed dev" ;;
+    *) stop "could not read the workflow runs from GitHub (gh auth status?)" ;;
+  esac
+}
+
 check_tree() {
   say "repository checks"
   node scripts/check-structure.mjs >/dev/null || stop "node scripts/check-structure.mjs fails — run it to see why"
@@ -153,6 +222,14 @@ tag_and_build() {
     git push --quiet "$REMOTE" "refs/tags/$TAG" || stop "git push $REMOTE $TAG failed"
     echo "   pushed $TAG -> ${SHA:0:12}"
   fi
+  if [ -n "${RELEASE_PROMOTE_IMAGE:-}" ]; then
+    # The prod workflow: its tag push starts no other workflow, so give the dev image the version
+    # tag here. Same digest, no rebuild; promote-image.sh refuses if the digests differ.
+    bash scripts/lib/promote-image.sh "${IMAGE_REPO:-ghcr.io/data-masterclass/sovereign-os}/os-ui:main-$SHA" \
+      "${IMAGE_REPO:-ghcr.io/data-masterclass/sovereign-os}/os-ui:$VERSION" \
+      || stop "the dev image main-$SHA could not be promoted to $VERSION — was this commit built on dev?"
+    return
+  fi
   workflows_green "$TAG" build-images.yml "${RELEASE_BUILD_WAIT_MINUTES:-60}" "the image build (build-images.yml)"
 }
 
@@ -169,25 +246,43 @@ deploy() {
       echo "   os-ui already runs $VERSION — not deploying again"; return ;;
   esac
   if [ -n "$DRY_RUN" ]; then
-    would "run $DEPLOY_SCRIPT --from-registry $VERSION${VALUES_OVERLAY:+ (VALUES_OVERLAY=$VALUES_OVERLAY)}"
+    would "run $DEPLOY_SCRIPT --env prod --from-registry $VERSION${VALUES_OVERLAY:+ (VALUES_OVERLAY=$VALUES_OVERLAY)}"
     return
   fi
   revision=$(helm --kube-context "$CTX" history "$REL" -n "$NS" --max 1 -o json 2>/dev/null \
     | python3 -c 'import json,sys; print(json.load(sys.stdin)[-1]["revision"])' 2>/dev/null || true)
   [ -z "$revision" ] || ROLLBACK_HINT="to go back: helm --kube-context $CTX rollback $REL $revision -n $NS (see docs/ops/releasing.md)"
   echo "   live before: ${image:-unknown}, Helm revision ${revision:-unknown}"
-  "$DEPLOY_SCRIPT" --from-registry "$VERSION" || stop "deploy.sh failed — read its output above"
+  "$DEPLOY_SCRIPT" --env prod --from-registry "$VERSION" || stop "deploy.sh failed — read its output above"
+}
+
+deploy_dev() {
+  local tag=main-$SHA
+  say "deploy $tag to dev ($CTX)"
+  VERSION=$tag
+  if [ -n "$DRY_RUN" ]; then would "run $DEPLOY_SCRIPT --env dev --from-registry $tag"; return; fi
+  "$DEPLOY_SCRIPT" --env dev --from-registry "$tag" || stop "deploy.sh --env dev failed — read its output above"
 }
 
 smoke() {
   say "smoke test"
-  if [ -n "$DRY_RUN" ]; then would "run $SMOKE_SCRIPT --expect-tag $VERSION"; return; fi
-  "$SMOKE_SCRIPT" --expect-tag "$VERSION" || stop "the smoke test failed on the live release"
+  if [ -n "$DRY_RUN" ]; then would "run $SMOKE_SCRIPT --env $ENV_NAME --expect-tag $VERSION"; return; fi
+  "$SMOKE_SCRIPT" --env "$ENV_NAME" --expect-tag "$VERSION" || stop "the smoke test failed on the live release"
 }
 
+if [ "$ENV_NAME" = dev ]; then
+  check_checkout
+  check_ci
+  check_tree
+  deploy_dev
+  smoke
+  if [ -n "$DRY_RUN" ]; then echo "RELEASE_dev_DRY_RUN_OK $VERSION"; else echo "RELEASE_dev_OK $VERSION"; fi
+  exit 0
+fi
 check_checkout
 check_tag
 check_ci
+check_dev
 check_tree
 tag_and_build
 deploy
