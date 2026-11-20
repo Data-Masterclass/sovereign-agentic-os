@@ -391,3 +391,75 @@ test('H-1: a dependency kind with NO adapter is satisfied with a WARNING, never 
   const res = await goLive(ACTOR, 'dashboard', 'obj_1', undefined, { reposDir: repos });
   assert.equal(res.warnings.length, 1, 'and the result repeats the unknown rather than hiding it');
 });
+
+// ------------------------ WP-51: the live tag names a commit that HOLDS what is live ---
+
+function contentAdapter(opts: { head: string; write?: (head: string) => Promise<string | null> }) {
+  const st = { head: opts.head };
+  registerLifecycleAdapter({
+    kind: 'dashboard',
+    resolve: async (_a, id) => ({ kind: 'dashboard', id, name: 'Board', domain: 'sales', head: st.head, tier: 'personal' }),
+    canGoLive: async () => ({ ok: true }),
+    ...(opts.write
+      ? { commitDefinition: async () => {
+          const sha = await opts.write!(st.head);
+          return sha ? { sha } : null;
+        } }
+      : {}),
+  });
+  return st;
+}
+
+const author = { name: 't', email: 't@t.invalid' };
+const DEF = 'dashboards/board/dashboard.yaml';
+
+test('WP-51: a content-ref kind is WRITTEN at go-live and the live tag names the commit that holds it', async () => {
+  await commitTree('sales', new Map([[DEF, 'title: stale draft\n']]), { author, message: 'seed', reposDir: repos });
+  contentAdapter({
+    head: 'spec:aaaabbbbcccc',
+    write: async (head) => {
+      const r = await commitTree('sales', new Map([[DEF, `title: Board\nref: ${head}\n`]]), { author, message: 'go-live render', reposDir: repos });
+      return r.sha;
+    },
+  });
+  const res = await goLive(ACTOR, 'dashboard', 'obj_1', undefined, { reposDir: repos });
+  assert.equal(res.definition, 'rendered');
+  const tag = (await resolveTag('sales', 'live/dashboard/obj_1', { reposDir: repos }))!;
+  assert.equal(parseTrailers(tag.message)['OS-Definition'], 'rendered');
+  assert.equal(await readBlob('sales', tag.commit, DEF, { reposDir: repos }), 'title: Board\nref: spec:aaaabbbbcccc\n', 'checkout of the tag IS the live definition');
+});
+
+test('WP-51 negative twin: a kind with NO git writer says `not-in-git` in the tag — the gap is stated', async () => {
+  await commitTree('sales', new Map([['README.md', 'x\n']]), { author, message: 'seed', reposDir: repos });
+  contentAdapter({ head: 'spec:000011112222' });
+  const res = await goLive(ACTOR, 'dashboard', 'obj_1', undefined, { reposDir: repos });
+  assert.equal(res.definition, 'not-in-git');
+  const tag = (await resolveTag('sales', 'live/dashboard/obj_1', { reposDir: repos }))!;
+  assert.equal(parseTrailers(tag.message)['OS-Definition'], 'not-in-git');
+});
+
+test('WP-51 negative twin: an OLD content ref cannot go live — only the current version can be written', async () => {
+  let wrote = 0;
+  contentAdapter({ head: 'spec:cccc', write: async () => (wrote++, null) });
+  await assert.rejects(
+    () => goLive(ACTOR, 'dashboard', 'obj_1', 'spec:an-older-one', { reposDir: repos }),
+    (e: Error & { status?: number }) => e.status === 409 && /only its current version/.test(e.message),
+  );
+  assert.equal(wrote, 0, 'nothing was written for a refused go-live');
+});
+
+test('WP-51 negative twin: an object that changes WHILE its definition is written is refused, not mis-tagged', async () => {
+  await commitTree('sales', new Map([['README.md', 'x\n']]), { author, message: 'seed', reposDir: repos });
+  const st = contentAdapter({
+    head: 'spec:before',
+    write: async () => {
+      st.head = 'spec:after'; // someone saved in between
+      return (await mainSha('sales', { reposDir: repos }))!;
+    },
+  });
+  await assert.rejects(
+    () => goLive(ACTOR, 'dashboard', 'obj_1', undefined, { reposDir: repos }),
+    (e: Error & { status?: number }) => e.status === 409 && /changed while/.test(e.message),
+  );
+  assert.equal(await resolveTag('sales', 'live/dashboard/obj_1', { reposDir: repos }), null);
+});

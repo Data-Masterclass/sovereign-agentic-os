@@ -269,3 +269,55 @@ test('H-1: a dependency whose KIND cannot hold a pin is a WARNING, never a perma
 after(() => {
   for (const d of temps) rmSync(d, { recursive: true, force: true });
 });
+
+// --------------------- WP-51: `git checkout live/dashboard/<id>` IS the live dashboard ---
+
+test('WP-51 eject: going live writes the dashboard with this tab’s own writer; plain git shows exactly that version', async () => {
+  const { execFileSync } = await import('node:child_process');
+  const { installDashboardCommitHook, __setDashboardProjectGitForTests, awaitDashboardCommits } = await import('./git/commit.ts');
+  const env = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' };
+  const bare = join(tempRepos, 'sales.git');
+  const g = (...a: string[]) => execFileSync('git', ['--git-dir', bare, ...a], { env, encoding: 'utf8' });
+  __setDashboardProjectGitForTests(true);
+  const off = installDashboardCommitHook({ reposDir: tempRepos, mirror: false });
+  try {
+    store.saveDashboard(ACTOR, 'dash_other', spec('Another board', 1));
+    store.saveDashboard(ACTOR, 'dash_eject', spec('Revenue live', 2));
+    await awaitDashboardCommits();
+    await pins.setLivePin('metric', 'Orders.revenue', 'x', ACTOR, 'sales', { commit: false });
+    await pins.setLivePin('dataset', 'Orders', 'x', ACTOR, 'sales', { commit: false });
+    const res = await goLive(ACTOR, 'dashboard', 'dash_eject', undefined, {});
+    assert.equal(res.definition, 'rendered');
+
+    const yamls = (ref: string) => g('ls-tree', '-r', '--name-only', ref).split('\n').filter((f) => f.startsWith('dashboards/') && f.endsWith('/dashboard.yaml'));
+    const mine = yamls('live/dashboard/dash_eject').map((f) => ({ f, body: g('show', `live/dashboard/dash_eject:${f}`) })).find((x) => x.body.includes('Revenue live'));
+    assert.ok(mine, `the tagged commit holds the dashboard file (have: ${yamls('live/dashboard/dash_eject').join(', ')})`);
+    assert.equal(yamls('main').length, 2, 'negative twin: going live never empties the rest of dashboards/ on main');
+
+    // The author edits: the DRAFT moves on main, the tagged commit does not.
+    const panels = (t: string) => (t.match(/Panel \d/g) ?? []).length;
+    const livePanels = panels(mine!.body);
+    assert.equal(livePanels, 2, "the live file has its two panels");
+    store.saveDashboard(ACTOR, 'dash_eject', spec('Revenue live', 5));
+    await awaitDashboardCommits();
+    assert.equal(panels(g('show', `live/dashboard/dash_eject:${mine!.f}`)), livePanels, 'git checkout of the tag is still the live version');
+    assert.ok(panels(g('show', `main:${mine!.f}`)) > livePanels, 'while main carries the five-panel draft');
+  } finally {
+    off();
+    __setDashboardProjectGitForTests(null);
+  }
+});
+
+test('WP-51 negative twin: with the dashboards writer not running, the tag SAYS not-in-git', async () => {
+  store.saveDashboard(ACTOR, 'dash_nowriter', spec('No writer', 1));
+  await pins.setLivePin('metric', 'Orders.revenue', 'x', ACTOR, 'sales', { commit: false });
+  await pins.setLivePin('dataset', 'Orders', 'x', ACTOR, 'sales', { commit: false });
+  const { __setDashboardProjectGitForTests } = await import('./git/commit.ts');
+  __setDashboardProjectGitForTests(false);
+  try {
+    const res = await goLive(ACTOR, 'dashboard', 'dash_nowriter', undefined, {});
+    assert.equal(res.definition, 'not-in-git');
+  } finally {
+    __setDashboardProjectGitForTests(null);
+  }
+});
