@@ -336,3 +336,11 @@ dagster:
     resources:
       requests: { cpu: 50m, memory: 192Mi }
       limits: { cpu: 1, memory: 512Mi }
+
+# WP-05: the observability stack (Collector, VictoriaMetrics, VictoriaLogs) is OFF on the dev node.
+# Two hard limits of the dev environment: (1) the dev namespaces enforce Pod Security "baseline"
+# (scripts/dev/manifests/namespaces.yaml), which refuses the Collector's container-log reader
+# (hostPath /var/log/pods, root); (2) with the stack the dev render's memory limits reach 88 % of
+# the dev node (capacity.dev.yaml gate: 85 %). Production runs it. Backup alerts stay on.
+observability:
+  enabled: false
