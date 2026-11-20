@@ -29,6 +29,8 @@
 #   - Ratchet: `knownRefusals.dbt-parse` in scripts/glue/validators.json lists golden fixtures dbt
 #     refuses TODAY (each with its reason). They print KNOWN-FAIL and do not fail; one that starts
 #     to parse FAILS until it is removed from the list, so the list can only shrink.
+#   - dbt compile (C1) runs after every successful parse, in the same image, against the chart's
+#     Trino image with an empty in-memory `iceberg` catalog on a private docker network.
 #   - `--only <dbt|dagster|opa|kubeconform>` (repeatable) runs a subset; dagster implies dbt.
 set -uo pipefail
 cd "$(dirname "$0")/.."
@@ -63,14 +65,15 @@ need() {  # need <step> <binary>
 
 need images node || exit 1
 eval "$($LIB images)" || { echo "GLUE-6 images: FAIL could not read pinned images" ; exit 1; }
-echo "GLUE-6 images: dagster=$DAGSTER_IMAGE opa=$OPA_IMAGE kubeconform=$KUBECONFORM_IMAGE (k8s $KUBERNETES_VERSION)"
+echo "GLUE-6 images: dagster=$DAGSTER_IMAGE trino=$TRINO_IMAGE opa=$OPA_IMAGE kubeconform=$KUBECONFORM_IMAGE (k8s $KUBERNETES_VERSION)"
 
 # Under $HOME, not $TMPDIR: a VM-backed docker (colima, Docker Desktop) shares the home directory
 # with the VM but not macOS's /var/folders temp dir, and a bind mount of an unshared path is
 # silently EMPTY. On a Linux CI runner both work.
 mkdir -p "${GLUE6_TMP:-$HOME/.cache/glue6}"
 WORK="$(mktemp -d "${GLUE6_TMP:-$HOME/.cache/glue6}/run.XXXXXX")"
-trap 'rm -rf "$WORK"' EXIT
+NET="glue6-$$"; TRINO_CTR="glue6-trino-$$"
+trap 'docker rm -f "$TRINO_CTR" >/dev/null 2>&1; docker network rm "$NET" >/dev/null 2>&1; rm -rf "$WORK"' EXIT
 # A container writing target/ into a bind mount runs as the image user; keep the tree writable.
 chmod 0777 "$WORK"
 
@@ -91,18 +94,49 @@ if want dbt && need dbt-parse docker; then
     mkdir -p "$CHECKOUT" && chmod 0777 "$CHECKOUT"
     $LIB materialise "$CHECKOUT" "${fixtures[@]}" > "$WORK/domains.txt" || fail dbt-parse "could not write the fixtures out"
     chmod -R a+rwX "$CHECKOUT"
+    # `dbt compile` (C1) needs a warehouse for what dbt asks at compile time (is_incremental()
+    # looks the relation up). It gets the chart's OWN Trino image with an empty in-memory catalog
+    # named like the profile's (`iceberg`), on a private network: never a mock, never the cluster.
+    trino_ready=0
+    printf 'connector.name=memory\n' > "$WORK/iceberg.properties"; chmod a+r "$WORK/iceberg.properties"
+    if docker network create "$NET" >/dev/null 2>&1 && docker run -d --name "$TRINO_CTR" --network "$NET" --network-alias trino \
+         -v "$WORK/iceberg.properties:/etc/trino/catalog/iceberg.properties:ro" "$TRINO_IMAGE" >/dev/null 2>&1; then
+      for _ in $(seq 1 90); do
+        docker exec "$TRINO_CTR" trino --execute 'SELECT 1' >/dev/null 2>&1 && { trino_ready=1; break; }
+        sleep 2
+      done
+    fi
+    [ $trino_ready = 1 ] || fail dbt-compile "the chart's Trino image ($TRINO_IMAGE) did not start for dbt compile"
     while read -r domain sha; do
       out="$(docker run --rm --network none -v "$CHECKOUT:/repos-checkout" -w /opt/dagster/app "$DAGSTER_IMAGE" \
         python os_projects.py --parse "/repos-checkout/$domain/$sha" 2>&1)"
-      parsed=0; { [ $? -eq 0 ] && [ -f "$CHECKOUT/$domain/$sha/target/manifest.json" ]; } && parsed=1
+      rc=$?   # captured IMMEDIATELY: dbt's own exit code decides, together with the manifest it writes
+      parsed=0; { [ $rc -eq 0 ] && [ -f "$CHECKOUT/$domain/$sha/target/manifest.json" ]; } && parsed=1
       if is_known "$domain"; then
+        match="$($LIB known-match "$domain")" || { fail dbt-parse "$domain: knownRefusals entry has no match text"; continue; }
         if [ $parsed = 1 ]; then
           fail dbt-parse "$domain now parses — remove it from knownRefusals.dbt-parse in scripts/glue/validators.json (ratchet)"
+        elif ! grep -qF -- "$match" <<<"$out"; then
+          fail dbt-parse "$domain is refused for a DIFFERENT reason than the recorded one ($match):"
+          printf '%s\n' "$out" | grep -v 'keyring module not found' | tail -10 | sed 's/^/    /'
         else
-          echo "GLUE-6 dbt-parse: KNOWN-FAIL $domain (baselined in scripts/glue/validators.json knownRefusals; still refused by dbt)"
+          echo "GLUE-6 dbt-parse: KNOWN-FAIL $domain (baselined in scripts/glue/validators.json knownRefusals; still refused with: $match)"
         fi
       elif [ $parsed = 1 ]; then
         ok dbt-parse "$domain"
+        # C1: `dbt compile` renders every model's SQL, in the same image, with the project's own
+        # profiles.yml pointed at the throwaway Trino above.
+        if [ $trino_ready = 1 ]; then
+          cout="$(docker run --rm --network "$NET" -v "$CHECKOUT:/repos-checkout" -e HOME=/tmp -e OS_PRINCIPAL=glue6-ci \
+            -e TRINO_HOST=trino -w "/repos-checkout/$domain/$sha" "$DAGSTER_IMAGE" dbt compile --profiles-dir . 2>&1)"
+          crc=$?
+        else cout="Trino not available"; crc=99; fi
+        if [ $crc -eq 0 ] && [ -d "$CHECKOUT/$domain/$sha/target/compiled" ]; then
+          ok dbt-compile "$domain ($(find "$CHECKOUT/$domain/$sha/target/compiled" -name '*.sql' | wc -l | tr -d ' ') compiled files)"
+        else
+          fail dbt-compile "$domain: dbt compile exited $crc"
+          printf '%s\n' "$cout" | grep -v 'keyring module not found' | tail -12 | sed 's/^/    /'
+        fi
       else
         summary="$(printf '%s' "$out" | docker run --rm -i --network none -w /opt/dagster/app "$DAGSTER_IMAGE" python os_projects.py --error-summary 2>/dev/null)"
         fail dbt-parse "$domain: ${summary:-dbt parse exited non-zero}"
@@ -149,14 +183,15 @@ fi
 if want opa && need opa-check helm && need opa-check docker; then
   POL="$WORK/opa"; mkdir -p "$POL/rendered" "$POL/extra"
   if helm template sov charts/sovereign-agentic-os 2>"$WORK/helm-opa.err" | $LIB opa-extract "$POL/rendered" >/dev/null; then
-    cp charts/sovereign-agentic-os/policies/*.rego "$POL/extra/" 2>/dev/null
-    # trino.rego is rendered from the same file; keep the rendered copy, not a duplicate package.
-    rm -f "$POL/extra/trino.rego"
-    cp tests/policies/*.rego "$POL/extra/"
+    # Every chart policy and its tests, EXCEPT a file the chart also renders into the ConfigMap:
+    # the rendered copy is what OPA runs, so it wins over the source (no duplicate package).
+    cp -R charts/sovereign-agentic-os/policies/. "$POL/extra/"
+    for r in "$POL"/rendered/*; do find "$POL/extra" -name "$(basename "$r")" -delete; done
+    [ -d tests/policies ] && cp tests/policies/*.rego "$POL/extra/" 2>/dev/null
     [ -n "$FIXTURES" ] && [ -d "$FIXTURES/opa" ] && cp "$FIXTURES"/opa/*.rego "$POL/extra/" 2>/dev/null
-    files=(); for f in "$POL"/rendered/* "$POL"/extra/*; do files+=("/p/${f#"$POL"/}"); done
+    files=(); while IFS= read -r f; do files+=("/p/${f#"$POL"/}"); done < <(find "$POL/rendered" "$POL/extra" -type f \( -name '*.rego' -o -name '*.json' \) | sort)
     out="$(docker run --rm --network none -v "$POL:/p:ro" "$OPA_IMAGE" check --strict "${files[@]}" 2>&1)" \
-      && ok opa-check "${#files[@]} files (rendered ConfigMap opa-policy + charts/policies + tests/policies)" \
+      && ok opa-check "${#files[@]} files (rendered ConfigMap opa-policy + charts/sovereign-agentic-os/policies)" \
       || { fail opa-check "opa check --strict refused the policies:"; printf '%s\n' "$out" | head -20 | sed 's/^/    /'; }
     out="$(docker run --rm --network none -v "$POL:/p:ro" "$OPA_IMAGE" test "${files[@]}" 2>&1)" \
       && ok opa-test "$(printf '%s\n' "$out" | grep -E '^PASS' | tail -1)" \

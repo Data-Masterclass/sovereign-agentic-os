@@ -22,7 +22,19 @@ module.exports = {
       comment: 'Only core/adapters/** may import a component client (undici, pg, child_process). 00 §8.3 rule 1.',
       severity: 'error',
       from: { path: '^(core|tabs|worker|app)/', pathNot: ['^core/adapters/', '\\.test\\.tsx?$', '/fixtures/', '^core/testing/'] },
-      to: { path: ['(^|/)node_modules/(undici|pg)/', '^(node:)?child_process$'] },
+      // `path` is the RESOLVED name: `node_modules/pg/…` for an installed package, the bare name for
+      // a core module (`node:http`) or an unresolvable one (`undici` is not installed). Type-only
+      // imports carry no runtime call and are not counted.
+      to: {
+        path: [
+          '^(node:)?(child_process|http|https|http2|net|tls|dgram)$',
+          '(^|/)node_modules/(pg|pg-pool|undici|postgres|ioredis|redis|kafkajs|trino-client|minio)/',
+          '^(pg|pg-pool|undici|postgres|ioredis|redis|kafkajs|trino-client|minio)(/|$)',
+          '(^|/)node_modules/@opensearch-project/opensearch/', '^@opensearch-project/opensearch(/|$)',
+          '(^|/)node_modules/@aws-sdk/[^/]+/', '^@aws-sdk/[^/]+(/|$)',
+        ],
+        dependencyTypesNot: ['type-only'],
+      },
     },
     {
       name: 'GLUE-2-CREDENTIAL-BOUNDARY',
@@ -52,8 +64,10 @@ module.exports = {
     },
   ],
   options: {
+    // node_modules is NOT excluded: excluding it would drop every package edge from the graph (and
+    // with it GLUE-1's `pg`/`undici` rule). doNotFollow keeps the edge, but never walks into the package.
     doNotFollow: { path: 'node_modules' },
-    exclude: { path: '(^|/)(node_modules|\\.next|public|vendor)/' },
+    exclude: { path: '(^|/)(\\.next|public|vendor)/' },
     tsPreCompilationDeps: true,
     tsConfig: { fileName: 'tsconfig.json' },
     enhancedResolveOptions: {
