@@ -1,0 +1,1 @@
+{ "generators": [ { "module": "tabs/zfix/lib/gen.ts", "validator": "dbt parse", "goldens": ["tabs/zfix/golden/zfix.golden.json"] } ] }
