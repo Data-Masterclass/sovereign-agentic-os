@@ -2,8 +2,12 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  *
  * AREA:       runtime
- * FEATURE:    The headers that link a gateway call to the caller's trace (unit; the proof against
- *             the real LiteLLM and Langfuse is tracing.e2e.test.ts via scripts/tests/litellm-langfuse)
+ * FEATURE:    The headers that link a gateway call to the caller's trace
+ * USER STORY: As an engineer I can trust that every gateway call names itself by a call id, and
+ *             nests under the caller's span only when the ids are real W3C ids.
+ * ARCHITECTURE:
+ *   - Unit test of the pure header builder (core/runtime/gateway-trace.ts). The proof against the
+ *     real LiteLLM and Langfuse images is tracing.e2e.test.ts via scripts/tests/litellm-langfuse.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
