@@ -52,7 +52,9 @@ test('definitions.py is generated at the layout path and its sha256 is recorded 
 test('a database sync is a dlt sql_table asset landing in landing_<domain>_<owner>, read by the sync model', () => {
   const { files } = generateProjectReport('sales', snap({ 'silver/shop.sql': 'select * from iceberg.personal_alice.bronze_shop_orders' }));
   const py = files.get(DATA_LAYOUT.dagsterDefinitionsPath)!;
-  assert.match(py, /key=\["sales", "landing_sales_alice", "raw_shop_orders"\]/);
+  // Key = [DOMAIN, the pipeline's dataset_name, the resource name]; lakehouse.sh reads it from `dagster dev`.
+  assert.match(py, /dg\.AssetKey\(\[DOMAIN, data\.pipeline\.dataset_name, data\.resource\.name\]\)/);
+  assert.match(py, /yield dlt\.resource\(\[\], name="raw_shop_orders", write_disposition="append"\)/);
   // The native dagster-dlt integration: `@dlt_assets` over a dlt source. At load time the source is a
   // credential-free declaration; the run binds `sql_table` to the connection's secret.
   assert.match(py, /from dagster_dlt import DagsterDltResource, DagsterDltTranslator, dlt_assets/);
