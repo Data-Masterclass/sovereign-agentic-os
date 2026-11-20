@@ -308,13 +308,20 @@ are selected by the client's `source`:
 
 | Source | Group | Limits (concurrent / queued) |
 |---|---|---|
-| `os-ui/<domain>/<surface>` (query-tool, set by os-ui) | `global.domains.<domain>.<user>` | 2 / 10 per user, 8 / 50 per domain, 30 for all domains |
+| `os-ui/<domain>/<surface>` (query-tool, set by os-ui) | `global.domains.<domain>.<user>` | 2 / 40 per user (sized for a dashboard's fan-out), 8 / 200 per domain, 30 / 1000 for all domains |
+| `query-tool/mcp` (the query-tool's MCP tools) | `global.other` | 2 / 20 |
 | `dbt-trino-<version>`, `dagster/<domain>/…`, `os-seed/…` | `global.system` | 6 / 100 |
 | anything else (untagged) | `global.other` | 2 / 20 |
 
 The domain and user groups are created on demand from the named capture and `${USER}`, so a new
 domain needs no edit. `<domain>` is the target domain sanitised like its Iceberg namespace
-(`core/infra/trino-source.ts`). The source is a scheduling input only; who may read what is
+(`core/infra/trino-source.ts`); a caller with no domain gets `_none`, and a name longer than 48
+characters is shortened to a prefix plus an 8-character hash. No os-ui query falls through to
+`global.other`: the query-tool refuses an untagged `/query` or `/execute` with 400.
+
+**Until WP-35** most Data-tab reads run as the domain principal, not the person, so the "per-user"
+group `global.domains.<d>.<d>` is shared by those reads of the whole domain. Metrics and
+dashboards already run as the viewer. The source is a scheduling input only; who may read what is
 decided by OPA on the session user.
 
 `trino.sessionProperties.rules` is the file session-property manager's document: domain-group

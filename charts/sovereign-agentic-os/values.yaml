@@ -1492,7 +1492,10 @@ trino:
   #     code location) and `os-seed/...` (seed Jobs) → global.system;
   #   - `os-ui/<domain>/<surface>` (query-tool, set by os-ui) → global.domains.<domain>.<user>,
   #     created on demand from the named capture and ${USER};
-  #   - anything else → global.other, small on purpose, so an untagged client is visible.
+  #   - `query-tool/mcp` (the query-tool's MCP tools, its service user) → global.other, by name;
+  #   - anything else → global.other, small on purpose, so an untagged client is visible. No os-ui
+  #     path reaches it: os-ui always sends a captured source (core/infra/trino-source.ts), and the
+  #     query-tool refuses an untagged /query or /execute with 400.
   # The source is a scheduling input only. WP-14 (T2) adds authentication and moves the system
   # selector to `authenticatedUser`.
   resourceGroups:
@@ -1502,23 +1505,28 @@ trino:
         - name: global
           softMemoryLimit: "80%"
           hardConcurrencyLimit: 40
-          maxQueued: 1000
+          maxQueued: 2000
           subGroups:
             - { name: system, softMemoryLimit: "40%", hardConcurrencyLimit: 6, maxQueued: 100 }
             - name: domains
               softMemoryLimit: "60%"
               hardConcurrencyLimit: 30
-              maxQueued: 500
+              maxQueued: 1000
               subGroups:
                 - name: "${domain}"
                   softMemoryLimit: "30%"
                   hardConcurrencyLimit: 8
-                  maxQueued: 50
+                  maxQueued: 200
                   subGroups:
+                    # maxQueued 40: a dashboard fans out one query per measure, all at once
+                    # (tabs/dashboards/lib/build/panel-query.ts Promise.all), so one viewer's
+                    # queue must hold the largest dashboard (WP-13 verifier note 6). A queued
+                    # query costs no memory; a full queue rejects with QUERY_QUEUE_FULL.
+                    # Proven by tests/lakehouse/limits.int.test.mjs (2 running + 40 queued).
                     - name: "${USER}"
                       softMemoryLimit: "15%"
                       hardConcurrencyLimit: 2
-                      maxQueued: 10
+                      maxQueued: 40
                       softCpuLimit: 5m
                       hardCpuLimit: 10m
             - { name: other, softMemoryLimit: "10%", hardConcurrencyLimit: 2, maxQueued: 20 }
@@ -1526,6 +1534,8 @@ trino:
       selectors:
         - { source: '^(dbt-trino-[0-9.]+|dagster/.+|os-seed/.+)$', group: global.system }
         - { source: '^os-ui/(?<domain>[a-z0-9_]+)/.*', group: 'global.domains.${domain}.${USER}' }
+        # The query-tool's own MCP tools (via the LiteLLM MCP gateway, as its service user).
+        - { source: '^query-tool/mcp$', group: global.other }
         - { group: global.other }
   # SERVER-SIDE QUERY LIMITS (06 §5.5, WP-13): Trino's file session-property manager
   # (https://trino.io/docs/476/admin/session-property-managers.html). `rules` IS its JSON

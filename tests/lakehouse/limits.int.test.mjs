@@ -106,3 +106,36 @@ test('session defaults: a domain read gets the 60 s budget server-side; a system
   const other = await run('SELECT 1', { user: 'u-alice' });
   assert.equal((await info(other.id)).session.systemProperties.query_max_run_time, undefined);
 });
+
+test('a caller with no domain is routed explicitly (global.domains._none.<user>), not to global.other', async () => {
+  // os-ui sends `_none` for a domain-less caller (core/infra/trino-source.ts NO_DOMAIN).
+  await assertOwnGroup({ user: 'u-nodomain', source: osui('_none', 'data-sandbox') }, 'global.domains._none.u-nodomain');
+  // A shortened long domain (prefix + 8-hex hash) is captured like any other.
+  await assertOwnGroup({ user: 'u-long', source: osui('agentic_leader_autumn_winter_2026_2027_w_1a2b3c4d') },
+    'global.domains.agentic_leader_autumn_winter_2026_2027_w_1a2b3c4d.u-long');
+});
+
+// Dashboards fan out one query per measure at once (tabs/dashboards/lib/build/panel-query.ts,
+// Promise.all) as the viewer. values.yaml sizes the viewer's group for 2 running + 40 queued.
+const DASHBOARD_FANOUT = 42;
+
+test('the largest dashboard a viewer can open: 42 concurrent measure queries all complete', async () => {
+  const sql = 'SELECT count(*) FROM UNNEST(sequence(1, 10000)) a(x) CROSS JOIN UNNEST(sequence(1, 300)) b(y)';
+  const results = await Promise.allSettled(
+    Array.from({ length: DASHBOARD_FANOUT }, () => run(sql, { user: 'u-viewer', source: osui('sales', 'dashboards') })),
+  );
+  const failed = results.filter((r) => r.status === 'rejected').map((r) => r.reason.message);
+  assert.deepEqual(failed, [], `tiles failed: ${failed.slice(0, 3).join(' | ')}`);
+  assert.ok(results.every((r) => r.value.rows[0][0] === 3000000));
+});
+
+test('NEGATIVE TWIN: the viewer queue holds exactly 2 running + 40 queued; the next is QUEUE_FULL', async () => {
+  const opts = { user: 'u-viewer2', source: osui('sales', 'dashboards') };
+  const running = [await holdQ(opts), await holdQ(opts)];
+  await until(running.map((q) => q.id), (m) => running.every((q) => m[q.id]?.state === 'RUNNING'), 'two running');
+  const queued = await Promise.all(Array.from({ length: DASHBOARD_FANOUT - 2 }, () => holdQ(opts)));
+  const m = await until(queued.map((q) => q.id), (x) => queued.every((q) => x[q.id]?.state === 'QUEUED'), 'forty queued', 60000);
+  assert.equal(Object.values(m).filter((r) => r.state === 'QUEUED').length, DASHBOARD_FANOUT - 2);
+  await assert.rejects(hold(opts), /queued queries|QUEUE_FULL/i);
+  await cancelAll();
+});
