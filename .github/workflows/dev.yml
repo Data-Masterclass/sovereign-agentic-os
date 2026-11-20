@@ -67,7 +67,7 @@ jobs:
       digest: ${{ steps.running.outputs.digest }}
     environment:
       name: dev
-      url: https://dev.sovereign-agentic.com
+      url: https://dev.agentic.datamasterclass.com
     concurrency:
       group: dev-environment
       cancel-in-progress: false

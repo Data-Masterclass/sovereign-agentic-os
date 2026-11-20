@@ -58,7 +58,7 @@ resource "stackit_ske_kubeconfig" "dev" {
 
 # Reserved public IP for the dev ingress LoadBalancer (pinned with the Service annotation
 # lb.stackit.cloud/external-address, as production does in deploy/terraform/publicip.tf). The
-# Route 53 record for dev.sovereign-agentic.com points straight at it.
+# Cloudflare record for dev.agentic.datamasterclass.com points straight at it.
 resource "stackit_public_ip" "ingress" {
   project_id = var.project_id
   labels     = local.labels
@@ -74,7 +74,7 @@ resource "stackit_public_ip" "ingress" {
 # os.agentic.datamasterclass.com is a Cloudflare record pointing at production's reserved IP).
 # The STACKIT zone in deploy/terraform/dns.tf is therefore not authoritative, and a dev zone here
 # would answer nobody. Dev's name is ONE record the owner adds at Cloudflare (DNS only, not
-# proxied): dev.sovereign-agentic.com  A  <tofu output ingress_public_ip>.
+# proxied): dev.agentic.datamasterclass.com  A  <tofu output ingress_public_ip>.
 
 # --- Object storage: ONE bucket and ONE credential, both in the dev project ------------------
 # The off-cluster target for dev backups and restore drills. The credential is project-scoped,

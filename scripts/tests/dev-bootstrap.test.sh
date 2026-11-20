@@ -182,7 +182,7 @@ holds "no laptop-only image (sovereign-os/...) in the dev render: [${local_imgs}
 hosts=$(python3 -c '
 import yaml,sys
 print(" ".join(r["host"] for d in yaml.safe_load_all(open(sys.argv[1])) if isinstance(d,dict) and d.get("kind")=="Ingress" for r in d["spec"]["rules"]))' "$TMP/with.yaml")
-check "os is published in the dev zone" "dev.sovereign-agentic.com" "$hosts"
+check "os is published in the dev zone" "dev.agentic.datamasterclass.com" "$hosts"
 absent "no production hostname" "os.agentic.datamasterclass.com" "$hosts"
 finish dev-bootstrap.test.sh || exit 1
 echo "DEV_BOOTSTRAP_TESTS_OK"

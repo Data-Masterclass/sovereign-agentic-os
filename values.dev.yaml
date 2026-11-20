@@ -43,7 +43,7 @@ ingress:
   className: nginx
   tlsIssuer: letsencrypt-prod
   hosts:
-    osUI: dev.sovereign-agentic.com
+    osUI: dev.agentic.datamasterclass.com
 
 # --- Images: the registry-qualified images production runs ---------------------------------
 # The chart's defaults for these four name the laptop's local builds (`sovereign-os/...`, loaded
@@ -64,7 +64,7 @@ dbt:
     tag: "0.2.0@sha256:dcec728155d4ff03f7b999753cb5ec00fd84e37d2cf8be3641a0ee426ae915d5"
 
 osUI:
-  publicUrl: https://dev.sovereign-agentic.com
+  publicUrl: https://dev.agentic.datamasterclass.com
   offlineMock: refuse            # never invented numbers, also on dev
   allowOfflineUserSeed: false
   externalConnectorsEnabled: false
