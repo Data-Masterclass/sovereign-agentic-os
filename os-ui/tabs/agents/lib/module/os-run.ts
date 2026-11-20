@@ -26,7 +26,7 @@ import { config } from '@core/kernel/config';
 import type { CurrentUser } from '@core/kernel/auth';
 import { roleModel } from '@core/models/roles';
 import type { CallerContext } from '@core/infra/litellm-credential';
-import { requireGatewayChatModel } from '@core/adapters/litellm/chat-model';
+import { requireGatewayChatModel, resolveRunModelKey } from '@core/adapters/litellm/chat-model';
 import type { ToolExecutor, ToolSpec } from '@core/runtime/agentic';
 import type { System } from '@tabs/agents/lib/system-schema';
 import { isWriteTool, type HoldDecision } from '@tabs/agents/lib/build/hold';
@@ -149,10 +149,13 @@ export async function runOsTeamOnModule(input: ModuleTeamInput): Promise<ModuleR
   });
   const writeSystem = loaded.module.TOOL_NAMES.some((t) => isWriteTool(t));
   const tracer = moduleTracer(input.observer ?? null);
+  // The system's OWN key for every model call of this segment; no key → SystemKeyUnavailableError
+  // before anything runs. Never the shared agent key (core/infra/agent-system-keys.ts).
+  const ownKey = await resolveRunModelKey(input.caller);
   const graph = createOsAgent(loaded.module, {
     // Every model call carries its trace span: an agent's own calls through the tracing
     // middleware, the supervisor's route call and the summary call through `tracer.fetchFor`.
-    modelFor: (a) => requireGatewayChatModel({ model: a.model ?? roleModel('tools'), caller: input.caller, writeSystem, fetch: tracer.fetchFor('route', a.id) }),
+    modelFor: (a) => requireGatewayChatModel({ model: a.model ?? roleModel('tools'), caller: input.caller, ownKey, writeSystem, fetch: tracer.fetchFor('route', a.id) }),
     ...(input.preamble ? { preamble: input.preamble } : {}),
     specs: input.specs,
     executor: input.executor,
@@ -166,7 +169,7 @@ export async function runOsTeamOnModule(input: ModuleTeamInput): Promise<ModuleR
     // Stock context management (03 §5.6): the window of the agent's own alias (os-ui's model
     // context table, the same budget the v1 engine trims to); summaries on the standard role model.
     context: {
-      summaryModel: (a) => requireGatewayChatModel({ model: roleModel('standard'), caller: input.caller, writeSystem: false, fetch: tracer.fetchFor('summary', a.id) }),
+      summaryModel: (a) => requireGatewayChatModel({ model: roleModel('standard'), caller: input.caller, ownKey, writeSystem: false, fetch: tracer.fetchFor('summary', a.id) }),
       maxInputTokens: (a) => inputBudget(a.model ?? roleModel('tools')),
     },
     ...(input.limits ? { limits: input.limits } : {}),
