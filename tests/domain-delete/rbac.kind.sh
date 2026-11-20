@@ -31,6 +31,27 @@ yaml.safe_dump_all(keep, open(sys.argv[2], "w"))
 print(f"{len(keep)} RBAC objects from the chart")
 PY
 for ns in agentic-os velero; do kubectl create namespace "$ns" >/dev/null 2>&1 || true; done
+# The two foreign resource types must exist for `auth can-i` to resolve them: minimal CRDs with the
+# upstream group/version/plural (cert-manager.io/v1 Certificate, velero.io/v1 Backup).
+crd() { # group plural kind
+  cat <<YAML | kubectl apply -f - >/dev/null
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata: { name: $2.$1 }
+spec:
+  group: $1
+  scope: Namespaced
+  names: { plural: $2, singular: $(echo "$3" | tr 'A-Z' 'a-z'), kind: $3 }
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      schema: { openAPIV3Schema: { type: object, x-kubernetes-preserve-unknown-fields: true } }
+YAML
+}
+crd cert-manager.io certificates Certificate
+crd velero.io backups Backup
+kubectl wait --for=condition=Established crd/certificates.cert-manager.io crd/backups.velero.io --timeout=60s >/dev/null
 kubectl apply -f "$WORK/rbac.yaml" >/dev/null
 AS=system:serviceaccount:agentic-os:os-ui
 fails=0
@@ -51,7 +72,7 @@ check no update secrets agentic-apps
 check no delete backups.velero.io velero
 check no create backups.velero.io velero
 check no delete certificates.cert-manager.io agentic-os
-check no delete secrets agentic-os
+check no get secrets velero
 check no get backups.velero.io agentic-os
 check no delete secrets kube-system
 [ "$fails" = 0 ] || { echo "rbac.kind.sh: $fails check(s) failed"; exit 1; }
