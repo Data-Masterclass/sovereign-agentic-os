@@ -10,8 +10,8 @@
  *   - usage: node scripts/check-client-bundle-secrets.mjs [<static dir>]   (default .next/static)
  *   - The literals come from their sources, so the list cannot drift: every quoted value in
  *     core/kernel/dev-secret-defaults.ts, plus the secret literals of the chart's values.yaml
- *     (litellmMasterKey, agentRuntime.token, langfuseInit.publicKey/secretKey, litellmUI.password)
- *     and the Langfuse init password in templates/base/langfuse/init.yaml.
+ *     (litellmMasterKey, agentRuntime.token, langfuseInit.publicKey/secretKey/userPassword,
+ *     litellmUI.password).
  *   - Fails (exit 1) when any file under the directory contains one — naming the file and the
  *     setting, not the value — and ALSO when the directory is missing or holds no .js file: an
  *     empty scan proves nothing. `check-client-bundle-secrets.test.mjs` is its negative twin.
@@ -42,10 +42,8 @@ function defaultLiterals() {
   pick('langfuseInit.publicKey', /^langfuseInit:\n {2}publicKey: "([^"]+)"/m);
   pick('langfuseInit.secretKey', /^langfuseInit:\n(?: {2}.*\n)*? {2}secretKey: "([^"]+)"/m);
   pick('litellmUI.password', /^litellmUI:\n(?: {2}.*\n)*? {2}password: "([^"]+)"/m);
-  const init = readFileSync(join(repo, 'charts/sovereign-agentic-os/templates/base/langfuse/init.yaml'), 'utf8');
-  const pw = init.match(/LANGFUSE_INIT_USER_PASSWORD: "([^"]+)"/);
-  if (!pw) throw new Error(`${TAG}: langfuse/init.yaml LANGFUSE_INIT_USER_PASSWORD not found — update this check`);
-  out.push(['langfuse/init.yaml LANGFUSE_INIT_USER_PASSWORD', pw[1]]);
+  // The Langfuse init password (LANGFUSE_INIT_USER_PASSWORD in templates/base/langfuse/init.yaml).
+  pick('langfuseInit.userPassword', /^langfuseInit:\n(?: {2}.*\n)*? {2}userPassword: "([^"]+)"/m);
   return out;
 }
 
