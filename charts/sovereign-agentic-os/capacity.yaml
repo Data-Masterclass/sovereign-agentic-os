@@ -1,0 +1,61 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+#
+# capacity.yaml — the node budget that `scripts/check-capacity.mjs` holds the rendered chart to.
+#
+# The gate renders this chart (`helm template`, default profile and `values.stackit-managed.yaml`),
+# sums the CPU and memory requests and limits of every long-running pod, adds the pods on the node
+# that this chart does not render (`outsideChart`), and fails when a total crosses a threshold.
+# Not read by any template (listed in .helmignore); it is input to the gate only.
+#
+# Update `node` and `outsideChart` from `kubectl describe node` whenever the node pool changes
+# (a second node, a different flavour). The numbers below were read on 2026-11-20 from the single
+# m3i.8 worker.
+
+node:
+  flavour: m3i.8
+  # Nodes the chart can schedule onto. The totals are compared with count × allocatable.
+  count: 1
+  # `kubectl describe node` → Allocatable (not Capacity: kubelet and system reservations are
+  # already taken off).
+  allocatable:
+    cpu: 7910m
+    memory: "56457929034"   # bytes, about 52.6 GiB
+
+# Percent of (count × allocatable). Sources: 10-resolutions F9 (requests, both kinds) and
+# 00 §10.1 decision 1 (memory limits back to about 85 % after the four limit trims).
+# CPU limits are reported, not gated: CPU is compressible, so an over-committed CPU limit throttles
+# a pod instead of killing it.
+thresholds:
+  requests:
+    cpu: 85
+    memory: 85
+  limits:
+    memory: 85
+
+# Pods on the node that this chart does not render, summed per namespace from the live node
+# (container requests and limits; DaemonSets once per node). They occupy the same allocatable, so
+# leaving them out would make the gate optimistic.
+outsideChart:
+  - name: "kube-system (SKE platform: CNI, DNS, CSI, VPN, metrics)"
+    perNode: true      # DaemonSet-dominated: scales with node count
+    requests: { cpu: 1377m, memory: 1621Mi }
+    limits: { cpu: 300m, memory: 2312Mi }
+  - name: velero (backups)
+    requests: { cpu: 200m, memory: 512Mi }
+    limits: { cpu: 2000m, memory: 4Gi }
+  - name: ingress-nginx
+    requests: { cpu: 100m, memory: 90Mi }
+    limits: {}
+  - name: kserve controller
+    requests: { cpu: 200m, memory: 600Mi }
+    limits: { cpu: 200m, memory: 600Mi }
+  - name: demo
+    requests: { cpu: 10m, memory: 16Mi }
+    limits: { cpu: 100m, memory: 64Mi }
+  # User apps from the Software tab (namespace agentic-apps). They grow with use; this is the
+  # live footprint on 2026-11-20 (5 apps). They run at the lowest priority class, so under
+  # pressure they are evicted before any platform pod.
+  - name: agentic-apps (user apps)
+    requests: { cpu: 450m, memory: 512Mi }
+    limits: { cpu: 5000m, memory: 512Mi }

@@ -1,0 +1,5 @@
+# WP-47 negative twin: the real chart with Docling's memory limit raised 4 → 16 Gi.
+# check-capacity.mjs must FAIL on this overlay (memory limits above 85 %).
+docling:
+  resources:
+    limits: { memory: 16Gi }

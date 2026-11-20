@@ -191,6 +191,24 @@ test('deployApp stamps every applied Deployment with a fresh deployed-at annotat
   assert.ok(!Number.isNaN(Date.parse(ann['soa.sovereign-os/deployed-at'])), 'stamp is a real timestamp');
 });
 
+test('WP-47: a user app runs in the priority class the chart names, below every platform pod', async () => {
+  const spec = runnerSpec({ ...APP, runImage: 'registry.example.com/apps/shop:latest' });
+  const m = buildDeploymentManifest(spec, NS, undefined, 'sovereign-os-user-apps') as any;
+  assert.equal(m.spec.template.spec.priorityClassName, 'sovereign-os-user-apps');
+  // No class configured (the chart did not create the classes): no field, or admission would
+  // reject the pod for naming a PriorityClass that does not exist.
+  const bare = buildDeploymentManifest(spec, NS) as any;
+  assert.equal('priorityClassName' in bare.spec.template.spec, false);
+  const { client, calls } = mockK8s({
+    [`GET /api/v1/namespaces/${NS}`]: { status: 200 },
+    GET: { status: 404 },
+    POST: { status: 201 },
+  });
+  await deployApp(APP, { ...OPTS, k8s: client, priorityClassName: 'sovereign-os-user-apps' });
+  const post = calls.find((c) => c.method === 'POST' && c.path === DEP)!;
+  assert.equal((post.body as any).spec.template.spec.priorityClassName, 'sovereign-os-user-apps');
+});
+
 // --------------------------------------------------------------- Deploy --------
 
 test('deployApp CREATES ns + Deployment + Service + Ingress when none exist', async () => {
