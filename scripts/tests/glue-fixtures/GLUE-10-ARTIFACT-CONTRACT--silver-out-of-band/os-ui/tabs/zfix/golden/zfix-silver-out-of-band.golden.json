@@ -1,0 +1,3 @@
+{
+  "models/sources.yml": "version: 2\nsources:\n  - name: sales\n    database: iceberg\n    schema: sales\n    tables:\n      - name: silver_orders\n        description: silver layer built outside dbt.\n        meta:\n          os_dataset: ds_orders\n          os_layer: silver\n          os_built: out-of-band\n"
+}

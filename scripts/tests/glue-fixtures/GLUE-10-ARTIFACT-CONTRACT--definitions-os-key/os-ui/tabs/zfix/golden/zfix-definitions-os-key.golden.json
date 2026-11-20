@@ -1,0 +1,3 @@
+{
+  "data/dagster/definitions.py": "import dagster as dg\n\norders = dg.define_asset_job(name='sales__orders', selection='*', tags={'os/principal': 'amir'})\n# WP-49 negative twin: an OS-only key outside tags= / metadata=.\nsync = dg.ScheduleDefinition(name='sales__orders', job=orders, cron_schedule='0 6 * * *', os_dataset='ds_orders')\n\ndefs = dg.Definitions(jobs=[orders], schedules=[sync])\n"
+}

@@ -94,7 +94,7 @@ test('launchAfterCommit: ONE run per commit, the dataset subset, the OS tags and
   assert.equal(out.commit, SHA);
   assert.deepEqual(launches[0].selection, [['sales', `silver_${lane}`]]);
   assert.equal(launches[0].domain, 'sales');
-  assert.deepEqual(launches[0].env, { OS_PRINCIPAL: 'amir', OS_PINNED_COMMITS: `sales=${SHA}` });
+  assert.deepEqual(launches[0].env, { OS_PRINCIPAL: 'amir', DESTINATION__SQLALCHEMY__CREDENTIALS__USERNAME: 'amir', OS_PINNED_COMMITS: `sales=${SHA}` });
   assert.deepEqual(launches[0].tags, {
     'os/dataset': id, 'os/domain': 'sales', 'os/principal': 'amir', 'os/user': 'amir',
     'os/action': 'transform silver', 'os/layer': 'silver', 'os/commit': SHA, 'os/surface': 'ui:data',
@@ -125,11 +125,11 @@ test('every refusal is RECORDED on the version, never thrown: no commit, no mode
   assert.equal(recorded.length, 3, 'a missing dataset has no version to record on');
 });
 
-test('a layer with no dbt model (built out of band) is not launched, and says why', async () => {
+test('a dataset refused under C3 (no SQL dbt could rebuild it from) is not launched, and says why', async () => {
   __setDataProjectGitForTests(true);
   const d = store.createDataset(amir, { name: 'Authored' });
   store.buildVersion(d.id, amir, 'bronze', { quality: 'passing', artifact: 'bronze/a.yml' });
-  store.buildVersion(d.id, amir, 'silver', { quality: 'unknown', artifact: 'silver/a.sql', body: 'select 1' }); // no `compiled`
+  store.buildVersion(d.id, amir, 'silver', { quality: 'unknown', artifact: 'silver/a.sql' }); // built, no body recorded
   const out = await launchAfterCommit({ datasetId: d.id, layer: 'silver', kind: 'build', actor: { id: 'amir' }, principal: 'amir', action: 'x' }, deps());
   assert.equal(out.dagsterRunId, null);
   assert.match(out.launchError!, /no dbt model for silver/);

@@ -71,16 +71,16 @@ test('a dataset nothing reads has no dependents, and an unknown id selects nothi
   assert.deepEqual(keys.dependents, []);
   assert.deepEqual(keys.tested, ['sales', 'gold_mart']);
   const none = datasetAssetKeys(snapshot(), 'ds_nope');
-  assert.deepEqual(none, { models: [], tested: null, dependents: [] });
+  assert.deepEqual(none, { models: [], tested: null, ingest: null, dependents: [] });
   assert.deepEqual(selectionForSync(none), []);
 });
 
-test('an AUTHORED (non-compiled) layer is a SOURCE: the tested asset is the source key, not a model', () => {
+test('an AUTHORED (non-compiled) layer is a dbt MODEL that dbt can rebuild (C3, WP-49), tested there', () => {
   const snap = snapshot();
   // Same dataset, but the silver body carries no compiled provenance.
   snap.datasets[0] = { dataset: snap.datasets[0].dataset, artifacts: { 'silver/stg_orders.sql': SILVER_BODY }, compiled: [] };
   const keys = datasetAssetKeys(snap, 'ds_orders');
-  assert.deepEqual(keys.models, [], 'an authored layer must never be a dbt model');
-  assert.deepEqual(keys.tested, ['sales', 'personal_amir', 'silver_orders'], 'tests attach to the source');
-  assert.deepEqual(selectionForSync(keys), [['sales', 'gold_mart']], 'only the downstream model is launchable');
+  assert.deepEqual(keys.models.map((m) => m.key), [['sales', 'silver_orders']], 'an authored layer is a dbt model');
+  assert.deepEqual(keys.tested, ['sales', 'silver_orders'], 'tests attach to the model');
+  assert.deepEqual(selectionForSync(keys), [['sales', 'silver_orders'], ['sales', 'gold_mart']]);
 });

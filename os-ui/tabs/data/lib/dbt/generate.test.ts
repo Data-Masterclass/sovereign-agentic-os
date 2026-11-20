@@ -167,6 +167,38 @@ function shapeAppendSync(): ProjectSnapshot {
   return { domain: 'sales', datasets: [{ dataset: events, artifacts: {} }, { dataset: accounts, artifacts: {} }], catalogs: { conn_wh: 'wh' } };
 }
 
+// ---- Shape (e): WP-49 — a database sync ingested by dlt, with an AUTHORED silver and gold. Every
+// layer is a dbt model (C3): dlt lands `landing_sales_alice.raw_shop_orders`, the bronze sync model
+// reads it, and the authored silver/gold adopt their existing tables. The lakehouse image test
+// (images/extensions/dagster/tests/image/lakehouse.sh) runs this golden end to end on Trino + Iceberg.
+function shapeDltLakehouse(): ProjectSnapshot {
+  const shop = ds({
+    id: 'ds_shop0001',
+    name: 'Shop Orders',
+    owner: 'alice',
+    domain: 'sales',
+    description: 'Orders from the shop database.',
+    sync: { connectionId: 'conn_shop', source: { schema: 'public', table: 'orders' }, mode: 'append', cursor: { kind: 'timestamp', column: 'updated_at' }, lookbackMinutes: 0, schedule: { cron: '0 * * * *' }, enabled: true },
+    columns: [{ name: 'id', description: 'Order key' }, { name: 'customer', description: 'Customer' }, { name: 'amount', description: 'Net amount' }, { name: 'updated_at', description: 'Cursor' }],
+    checks: [{ id: 'chk_s1', name: 'not_null(customer)', description: '', createdBy: 'alice', createdAt: '2026-11-13T00:00:00.000Z', rule: 'not_null', column: 'customer' }],
+    versions: { bronze: built(null), silver: built('silver/shop_orders.sql'), gold: built('gold/shop_orders.sql') },
+  });
+  return {
+    domain: 'sales',
+    datasets: [
+      {
+        dataset: shop,
+        artifacts: {
+          // Authored by the user (no compiled provenance): committed as written.
+          'silver/shop_orders.sql': 'create or replace table iceberg.personal_alice.silver_shop_orders as select id, customer, amount, updated_at from iceberg.personal_alice.bronze_shop_orders where amount > 0',
+          'gold/shop_orders.sql': 'select customer, count(*) as orders, sum(amount) as total_amount from iceberg.personal_alice.silver_shop_orders group by customer',
+        },
+      },
+    ],
+    catalogs: { conn_shop: 'shop' },
+  };
+}
+
 // ---- Shape (d): metrics as dbt metrics — a promoted dataset carrying every emittable metric type
 // plus a personal-lane dataset whose semantic file sits in the owner's lane (checklist M1, M5, M9,
 // M12). One refused metric (a leading window) proves nothing unservable is emitted (M6).
@@ -331,6 +363,7 @@ const SHAPES: Record<string, () => ProjectSnapshot> = {
   'sweep-full': shapeSweepFull,
   'sweep-labels': shapeSweepLabels,
   'sweep-element': shapeSweepElement,
+  'dlt-lakehouse': shapeDltLakehouse,
 };
 
 type SemDoc = { semantic_models: { name: string; entities: { name: string }[]; dimensions: { name: string }[]; measures: { name: string; label?: string }[] }[]; metrics: { name: string; label: string }[] };
@@ -428,7 +461,10 @@ for (const [shape, make] of Object.entries(SHAPES)) {
       }
       const withoutEnvVars = v
         .replace(/^\s*(?:password|secret|token)\w*:.*$/gim, '')
-        .replace(/\{[{%][^}]*[}%]\}/g, '');
+        .replace(/\{[{%][^}]*[}%]\}/g, '')
+        // dlt's documented secret LOOKUP (`dlt.secrets["sources.<c>.credentials"]`) is indirection
+        // too: the value comes from the environment at run time, never from the repo.
+        .replace(/dlt\.secrets\["[a-z0-9_.]+"\]/g, '');
       assert.doesNotMatch(withoutEnvVars, /password|secret|token/i, `${k} must not carry credentials`);
       assert.doesNotMatch(v, /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/, `${k} must not carry timestamps`);
     }
@@ -528,13 +564,13 @@ test('shape (b): the composition body equals today\'s compileGoldJoin SELECT aft
   assert.ok(files.has('tests/generic/range.sql') && files.has('tests/generic/not_blank.sql'));
 });
 
-test('shape (c): append = delete+insert on _batch_id with the 15-minute lookback; merge = merge on keys; schedules listed', () => {
+test('shape (c): append = delete+insert on _batch_id with the 15-minute lookback; merge = merge on keys; read from the dlt landing (WP-49)', () => {
   const files = generateProject('sales', shapeAppendSync());
   const append = files.get('models/silver/silver_events.sql')!;
   assert.match(append, /incremental_strategy='delete\+insert', unique_key='_batch_id'/);
   assert.match(append, /where "updated_at" > \(select max\("updated_at"\) from \{\{ this \}\}\) - interval '15' minute/);
   assert.match(append, /'\{\{ var\("os_batch_id", invocation_id\) \}\}' as _batch_id/);
-  assert.match(append, /\{\{ source\('wh__public', 'events'\) \}\}/);
+  assert.match(append, /\{\{ source\('landing_sales_bea', 'raw_events'\) \}\}/);
   const merge = files.get('models/gold/gold_accounts.sql')!;
   assert.match(merge, /incremental_strategy='merge', unique_key=\['account_id'\]/);
   assert.match(merge, /where "version" > \(select max\("version"\) from \{\{ this \}\}\)\n/);
@@ -543,8 +579,9 @@ test('shape (c): append = delete+insert on _batch_id with the 15-minute lookback
     { dataset: 'ds_accts001', name: 'gold_accounts', select: 'gold_accounts+', cron: '0 6 * * *', timezone: 'UTC', principal: 'bea', enabled: false },
     { dataset: 'ds_events01', name: 'silver_events', select: 'silver_events+', cron: '*/15 * * * *', timezone: 'UTC', principal: 'bea', enabled: true },
   ]);
-  const sources = yaml.load(files.get('models/sources.yml')!) as { sources: { name: string; database: string; schema: string }[] };
-  assert.deepEqual(sources.sources.map((s) => [s.name, s.database, s.schema]), [['wh__public', 'wh', 'public']]);
+  // The federated catalog is no longer read by dbt: dlt lands both tables in the owner's landing schema.
+  const sources = yaml.load(files.get('models/sources.yml')!) as { sources: { name: string; database: string; schema: string; tables: { name: string }[] }[] };
+  assert.deepEqual(sources.sources.map((s) => [s.name, s.database, s.schema, s.tables.map((t) => t.name)]), [['landing_sales_bea', 'iceberg', 'landing_sales_bea', ['raw_accounts', 'raw_events']]]);
 });
 
 test('kafka-offset and API-batch syncs are external assets, never faked as models; unresolved catalogs are flagged', () => {

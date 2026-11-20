@@ -87,7 +87,7 @@ test('T4: the Dagster section shows the asset key, job, schedule, last run and t
   assert.equal(dag?.artefacts[0].name, '["ops","gold_orders"]');
   assert.deepEqual(dag?.artefacts[0].facts?.map((f) => f.value), ['["ops","gold_orders"]', 'ops__all', 'ops__ds_1']);
   assert.ok(dag?.artefacts.some((a) => a.noun === 'Dagster run' && a.name === 'run-7'));
-  assert.deepEqual(dag?.commands.map((c) => c.command), ['dagster asset materialize --select ops/gold_orders']);
+  assert.deepEqual(dag?.commands.map((c) => c.command), ['cd data/dagster && dagster asset materialize -m definitions --select ops/gold_orders']);
   assert.ok(dag?.links[0].url?.includes('run-7') || dag?.links[0].unresolvedReason, 'the deep link resolves or says why not');
 });
 
@@ -144,5 +144,5 @@ test('H-3: the link a creator sees on the panel says why, and the command is sti
   const dag = view.sections.find((s) => s.tool === 'dagster');
   assert.equal(dag?.links[0].url, null);
   assert.match(dag?.links[0].unresolvedReason ?? '', /needs builder/);
-  assert.deepEqual(dag?.commands.map((c) => c.command), ['dagster asset materialize --select ops/gold_orders']);
+  assert.deepEqual(dag?.commands.map((c) => c.command), ['cd data/dagster && dagster asset materialize -m definitions --select ops/gold_orders']);
 });

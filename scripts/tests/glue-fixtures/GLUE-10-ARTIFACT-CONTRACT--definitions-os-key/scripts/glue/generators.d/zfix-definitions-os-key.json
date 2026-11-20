@@ -1,0 +1,1 @@
+{ "generators": [ { "module": "tabs/zfix/lib/gen-definitions-os-key.ts", "validator": "C2 negative twin", "goldens": ["tabs/zfix/golden/zfix-definitions-os-key.golden.json"] } ] }
