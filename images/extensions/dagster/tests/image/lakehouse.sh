@@ -73,7 +73,7 @@ i=0; until docker exec "$TRINO" trino --execute 'select 1' >/dev/null 2>&1; do i
 # The domain repo exactly as the OS generates it, in the design-12 layout.
 SHA="$(python3 "$HERE/repo_v2.py" "$GOLDEN" "$WORK/origin")"
 git clone -q "$WORK/origin" "$WORK/clone"
-chmod -R a+rwX "$WORK"
+chmod -R a+rwX "$WORK/origin" "$WORK/clone"   # never the warehouse: Trino owns its files there
 
 DAGSTER="$(docker run --rm "$IMAGE" python3 -c 'import importlib.metadata as m; print(m.version("dagster"))')"
 pkg() { docker run --rm "$IMAGE" python3 -c "import importlib.metadata as m; print(m.version('$1'))"; }
