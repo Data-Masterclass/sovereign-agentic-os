@@ -19,18 +19,34 @@
  *
  * `domain` is the domain whose data the query targets, or the caller's first domain for a
  * personal-lane query (`routeFor`). It is sanitised exactly like the Iceberg namespace
- * (`tabs/data/lib/store-fqn.ts` `sanitizeIdent`), so the group name matches the schema name. A
- * caller with no domain gets the segment `-`, which no selector captures: the query lands in
- * `global.other`, where it is visible in the Trino UI rather than silently sharing a domain's slots.
+ * (`tabs/data/lib/store-fqn.ts` `sanitizeIdent`), so the group name matches the schema name.
+ *
+ * Every os-ui query is routed explicitly; none falls through to `global.other`:
+ *   - a caller with no domain gets the reserved segment `_none` (a sanitised domain never starts
+ *     with `_`), so their queries still get a per-user group, `global.domains._none.<user>`;
+ *   - a domain longer than `MAX_DOMAIN` characters is shortened to a prefix plus an 8-character
+ *     hash of the full name, so `domain=<d>` stays a valid client tag (at most 64 characters) and
+ *     two long domains never share a group.
  */
+import { createHash } from 'node:crypto';
+
 export type TrinoRoute = { domain: string; surface: string };
+
+/** The segment for a caller with no domain. */
+export const NO_DOMAIN = '_none';
+/** The longest domain segment: `domain=` + 48 = 55 ≤ the 64-character client-tag limit. */
+export const MAX_DOMAIN = 48;
 
 const SURFACE = /^[a-z][a-z0-9-]{0,39}$/;
 
-/** `sales`, `agentic-leader-q3-2026` → `agentic_leader_q3_2026`; '' → '-' (no domain). */
+/** `sales`, `agentic-leader-q3-2026` → `agentic_leader_q3_2026`; '' → `_none`; a name longer
+ *  than MAX_DOMAIN → its first 39 characters + `_` + 8 hex of sha256(full sanitised name). */
 export function routeDomain(domain: string | undefined): string {
   const d = (domain ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
-  return d || '-';
+  if (!d) return NO_DOMAIN;
+  if (d.length <= MAX_DOMAIN) return d;
+  const hash = createHash('sha256').update(d).digest('hex').slice(0, 8);
+  return `${d.slice(0, MAX_DOMAIN - 9).replace(/_+$/, '')}_${hash}`;
 }
 
 /** The `X-Trino-Source` value: `os-ui/<domain>/<surface>`. Throws on a malformed surface. */
@@ -54,7 +70,7 @@ export function routeFor(user: { domains: readonly string[] }, surface: string, 
  * namespace (`iceberg.<domain>.<t>`), except a personal lane (`personal_<uid>`), which is
  * scheduled under the caller's first domain.
  */
-export function routeForTable(fqn: string, surface: string, domains: readonly string[] = []): TrinoRoute {
+export function routeForTable(fqn: string, surface: string, domains: readonly string[]): TrinoRoute {
   const schema = fqn.split('.').length >= 3 ? fqn.split('.')[1].replace(/"/g, '') : '';
   const personal = schema === '' || schema.toLowerCase().startsWith('personal_');
   return { domain: personal ? (domains[0] ?? '') : schema, surface };

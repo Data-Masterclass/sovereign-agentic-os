@@ -542,6 +542,7 @@ class PrincipalThreadingTests(unittest.TestCase):
             catalog="iceberg",
             http_scheme="http",
             default_user="query-agent",
+            source="os-ui/sales/data-build",
         )
         self.assertEqual(kw["user"], "sales", "principal must be the Trino session user")
         self.assertNotEqual(kw["user"], "query-agent", "must not fall back to the service user")
@@ -549,7 +550,7 @@ class PrincipalThreadingTests(unittest.TestCase):
     def test_missing_principal_falls_back_to_service_user(self):
         kw = connect_kwargs(
             None, None, host="trino", port=8080, catalog="iceberg",
-            http_scheme="http", default_user="query-agent",
+            http_scheme="http", default_user="query-agent", source="query-tool/mcp",
         )
         self.assertEqual(kw["user"], "query-agent")
 

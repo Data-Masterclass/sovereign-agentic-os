@@ -53,7 +53,9 @@ export async function queryToolReachable(): Promise<boolean> {
 // ----------------------------------------------- dlt / dbt / dbt-trino / trino ---
 
 /** A probe SELECT through the governed query-tool (Trino + OPA). True ⇒ live. */
-export async function probeQueryable(fqn: string, principal?: string, domains: readonly string[] = []): Promise<boolean> {
+/** `domains`: the caller's domains, for a personal-lane target (routeForTable). Pass `[]` only when
+ *  the caller has none to give; the probe is then scheduled in the explicit `_none` group. */
+export async function probeQueryable(fqn: string, principal: string | undefined, domains: readonly string[]): Promise<boolean> {
   try {
     const r = await queryRun(`SELECT 1 FROM ${fqn} LIMIT 1`, principal, routeForTable(fqn, 'data-build', domains));
     return Array.isArray(r.rows);
@@ -65,8 +67,14 @@ export async function probeQueryable(fqn: string, principal?: string, domains: r
 /** Read a single `count(*)` scalar from a governed probe. Returns null when the
  *  query can't run (table absent, not-yet-created, or an OPA/Trino error) so the
  *  guard treats "unknown" as "not a populated target" and proceeds. */
-async function countRows(sql: string, principal: string | undefined, run: typeof queryRun, fqn: string): Promise<number | null> {
-  const r = await run(sql, principal, routeForTable(fqn, 'data-build'));
+async function countRows(
+  sql: string,
+  principal: string | undefined,
+  run: typeof queryRun,
+  fqn: string,
+  domains: readonly string[],
+): Promise<number | null> {
+  const r = await run(sql, principal, routeForTable(fqn, 'data-build', domains));
   const cell = r.rows?.[0]?.[0];
   const n = Number(cell);
   return Number.isFinite(n) ? n : null;
@@ -88,6 +96,7 @@ async function countRows(sql: string, principal: string | undefined, run: typeof
 export async function assertNoZeroRowReplace(
   ctasSql: string,
   principal: string | undefined,
+  domains: readonly string[],
   run: typeof queryRun = queryRun,
 ): Promise<void> {
   const m = /^\s*create\s+or\s+replace\s+table\s+(\S+)\s+as\s+([\s\S]+)$/i.exec(ctasSql);
@@ -95,14 +104,14 @@ export async function assertNoZeroRowReplace(
   const [, fqn, select] = m;
   let existing: number | null;
   try {
-    existing = await countRows(`SELECT count(*) FROM ${fqn}`, principal, run, fqn);
+    existing = await countRows(`SELECT count(*) FROM ${fqn}`, principal, run, fqn, domains);
   } catch {
     return; // target absent / not readable yet → fresh replace, proceed
   }
   if (existing === null || existing <= 0) return; // fresh or empty target → proceed
   let incoming: number | null;
   try {
-    incoming = await countRows(`SELECT count(*) FROM (${select})`, principal, run, fqn);
+    incoming = await countRows(`SELECT count(*) FROM (${select})`, principal, run, fqn, domains);
   } catch {
     return; // can't evaluate the select count → don't block the real CTAS + its verify
   }
@@ -156,7 +165,8 @@ export function realDlt(): DltClient & { lastIngest?: IngestOutcome } {
       if (!ctx?.objectKey) return; // no upload context → nothing to load (verify then ✗).
       self.lastIngest = await postIngest({ principal: ctx.principal, dataset: source, objectKey: ctx.objectKey });
     },
-    async tableExists(table, principal) { return probeQueryable(table, principal); },
+    // The interface carries no domains: a domain table routes by its schema, a personal lane to `_none`.
+    async tableExists(table, principal) { return probeQueryable(table, principal, []); },
   };
   return self;
 }
@@ -173,13 +183,13 @@ export function realDbt(): DbtClient {
     async build(modelFqn, write) {
       if (write) {
         // Guard 1: never let a compiled CTAS zero-out a populated table.
-        await assertNoZeroRowReplace(write.sql, write.identity.principal);
+        await assertNoZeroRowReplace(write.sql, write.identity.principal, write.identity.domains);
         // throws on any rejection/Trino error
         await executeRun(write.sql, write.identity, routeForTable(modelFqn, 'data-build', write.identity.domains));
         const queryable = await probeQueryable(modelFqn, write.identity.principal, write.identity.domains);
         return { testsPassed: queryable, compiledCode: true };
       }
-      const queryable = await probeQueryable(modelFqn);
+      const queryable = await probeQueryable(modelFqn, undefined, []);
       return { testsPassed: queryable, compiledCode: queryable };
     },
   };
@@ -218,20 +228,21 @@ export function realDbtTrino(): DbtTrinoClient {
           const route = routeForTable(fqn, 'data-publish', write.identity.domains);
           if (write.schemaSql) await executeRun(write.schemaSql, write.identity, route);
           // Guard 1: never let the publish CTAS zero-out a populated domain table.
-          await assertNoZeroRowReplace(write.sql, write.identity.principal);
+          await assertNoZeroRowReplace(write.sql, write.identity.principal, write.identity.domains);
           await executeRun(write.sql, write.identity, route);
         } finally {
           if (write.releaseSchema) await withdrawPromoteRelease(write.releaseSchema);
         }
         return { ok: await probeQueryable(fqn, write.identity.principal, write.identity.domains) };
       }
-      return { ok: await probeQueryable(fqn) };
+      return { ok: await probeQueryable(fqn, undefined, []) };
     },
   };
 }
 
 export function realTrino(): TrinoClient {
-  return { async tableQueryable(fqn, principal) { return probeQueryable(fqn, principal); } };
+  // Publish/reconcile probe domain targets, which route by their schema.
+  return { async tableQueryable(fqn, principal) { return probeQueryable(fqn, principal, []); } };
 }
 
 // ------------------------------------------------------------------- policy -------

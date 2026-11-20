@@ -32,7 +32,8 @@ import app  # noqa: E402  (imports against the shared stubs)
 from execute_guard import connect_kwargs  # noqa: E402
 
 
-BASE = dict(host="trino", port=8080, catalog="iceberg", http_scheme="http", default_user="query-agent")
+BASE = dict(host="trino", port=8080, catalog="iceberg", http_scheme="http", default_user="query-agent",
+            source="os-ui/sales/data-query")
 
 
 class ConnectKwargs(unittest.TestCase):
@@ -79,24 +80,24 @@ class ReadIsBounded(unittest.TestCase):
         _stubs.restore_app(app, self._saved)
 
     def test_a_read_carries_both_ceilings(self):
-        app.run_query("select a, b from t", principal="amir", schema="sales")
+        app.run_query("select a, b from t", principal="amir", schema="sales", source="os-ui/sales/data-query")
         self.assertEqual(len(STUB.connects), 1)
         self.assertEqual(STUB.connects[0]["session_properties"], {"query_max_run_time": "60s"})
         self.assertEqual(STUB.connects[0]["request_timeout"], 65)
 
     def test_the_client_never_gives_up_before_trino_does(self):
         # A shorter client timeout would ORPHAN the query on the cluster — the defect.
-        app.run_query("select a, b from t", principal="amir")
+        app.run_query("select a, b from t", principal="amir", source="os-ui/sales/data-query")
         self.assertGreaterEqual(STUB.connects[0]["request_timeout"], app._seconds(app.QUERY_MAX_RUN_TIME))
 
     def test_under_the_limit_is_not_truncated(self):
-        out = app.run_query("select a, b from t", principal="amir")
+        out = app.run_query("select a, b from t", principal="amir", source="os-ui/sales/data-query")
         self.assertEqual(out["row_count"], 2)
         self.assertNotIn("truncated", out)
 
     def test_over_the_limit_truncates_and_says_so(self):
         STUB.rows = [(i, i) for i in range(25)]
-        out = app.run_query("select a, b from t", principal="amir")
+        out = app.run_query("select a, b from t", principal="amir", source="os-ui/sales/data-query")
         self.assertEqual(out["row_count"], 10, "exactly the limit is returned")
         self.assertTrue(out["truncated"])
         self.assertEqual(out["row_limit"], 10)
@@ -105,7 +106,7 @@ class ReadIsBounded(unittest.TestCase):
 
     def test_exactly_the_limit_is_not_called_truncated(self):
         STUB.rows = [(i, i) for i in range(10)]
-        out = app.run_query("select a, b from t", principal="amir")
+        out = app.run_query("select a, b from t", principal="amir", source="os-ui/sales/data-query")
         self.assertEqual(out["row_count"], 10)
         self.assertNotIn("truncated", out, "the +1 row is what measures truncation, so N == limit is exact")
 
@@ -120,13 +121,13 @@ class WriteBudget(unittest.TestCase):
 
     def test_unbounded_by_default(self):
         self.assertEqual(app.EXECUTE_MAX_RUN_TIME, "", "a write ceiling is opt-in")
-        app.run_execute("create table iceberg.sales.x as select 1", "amir", "sales")
+        app.run_execute("create table iceberg.sales.x as select 1", "amir", "sales", "os-ui/sales/data-build")
         self.assertNotIn("session_properties", STUB.connects[0], "a long sync must not be aborted by a guess")
 
     def test_opt_in_ceiling_is_honoured(self):
         prior, app.EXECUTE_MAX_RUN_TIME = app.EXECUTE_MAX_RUN_TIME, "900s"
         try:
-            app.run_execute("create table iceberg.sales.x as select 1", "amir", "sales")
+            app.run_execute("create table iceberg.sales.x as select 1", "amir", "sales", "os-ui/sales/data-build")
             self.assertEqual(STUB.connects[0]["session_properties"], {"query_max_run_time": "900s"})
         finally:
             app.EXECUTE_MAX_RUN_TIME = prior

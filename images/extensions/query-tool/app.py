@@ -25,7 +25,7 @@ from starlette.responses import JSONResponse
 import trino
 import trino.exceptions
 
-from execute_guard import ExecuteError, connect_kwargs, guard, guard_read, scheduling
+from execute_guard import MCP_SOURCE, ExecuteError, connect_kwargs, guard, guard_read, scheduling
 
 PORT = int(os.environ.get("PORT", "8000"))
 TRINO_HOST = os.environ.get("TRINO_HOST", "trino")
@@ -198,13 +198,13 @@ def query(sql: str) -> dict:
     Trino (e.g. `select order_date, revenue from daily_revenue order by 1`).
     Trino enforces row/column governance (OPA) on every read. Returns columns+rows.
     The governed query engine of the Sovereign Agentic OS."""
-    return run_query(sql)
+    return run_query(sql, source=MCP_SOURCE)
 
 
 @mcp.tool()
 def list_tables() -> dict:
     """List the tables available to query in the current Trino schema."""
-    return run_query("show tables")
+    return run_query("show tables", source=MCP_SOURCE)
 
 
 @mcp.custom_route("/health", methods=["GET"])

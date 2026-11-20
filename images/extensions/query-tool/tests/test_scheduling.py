@@ -12,7 +12,7 @@ import _stubs
 
 STUB = _stubs.install()
 
-from execute_guard import DEFAULT_SOURCE, ExecuteError, connect_kwargs, scheduling  # noqa: E402
+from execute_guard import MCP_SOURCE, ExecuteError, connect_kwargs, scheduling  # noqa: E402
 
 BASE = dict(host="trino", port=8080, catalog="iceberg", http_scheme="http", default_user="query-agent")
 
@@ -24,14 +24,17 @@ class Scheduling(unittest.TestCase):
         self.assertEqual(k["source"], "os-ui/sales/data-query")
         self.assertEqual(k["client_tags"], ["os-ui", "domain=sales", "surface=data-query"])
 
-    def test_untagged_gets_the_visible_default(self):
-        k = connect_kwargs("u1", "sales", **BASE)
-        self.assertEqual(k["source"], DEFAULT_SOURCE)
-        self.assertNotIn("client_tags", k)
+    def test_no_silent_fallback(self):
+        # An untagged statement would land in Trino's catch-all group: refused, never defaulted.
+        with self.assertRaises(ValueError):
+            connect_kwargs("u1", "sales", **BASE)
+        with self.assertRaises(ExecuteError) as e:
+            scheduling({"sql": "select 1"})
+        self.assertEqual(e.exception.status, 400)
+        self.assertEqual(MCP_SOURCE, "query-tool/mcp")
 
     def test_body_shape_is_checked(self):
         self.assertEqual(scheduling({"source": "os-ui/sales/x", "client_tags": ["a=b"]}), ("os-ui/sales/x", ["a=b"]))
-        self.assertEqual(scheduling({}), (None, None))
         for bad in ({"source": "os-ui/s\r\nX-Trino-User: root"}, {"source": 5}, {"client_tags": "a"},
                     {"client_tags": ["a,b"]}, {"client_tags": ["x"] * 9}):
             with self.assertRaises(ExecuteError):
