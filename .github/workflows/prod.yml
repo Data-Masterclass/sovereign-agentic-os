@@ -5,14 +5,18 @@
 # of a commit that was green on dev. The owner approves it in GitHub: the `prod` Environment has
 # a required reviewer, so this job waits for that approval before it can read PROD_KUBECONFIG.
 #
-# It runs the SAME gate an operator runs locally, scripts/release.sh, with:
-#   --sha <commit>           the commit to release (default: main's head); it must be on main
-#   --remote origin          this checkout's remote
-#   RELEASE_PROMOTE_IMAGE=1  give the dev image main-<sha> the version tag (same digest, NO rebuild)
-# release.sh then checks CI, AND that dev.yml's dev-green job passed for that SHA (refused
-# otherwise, and --no-dev-gate is refused in CI), the repository gates, tags os-ui-v<version>,
-# deploys with deploy.sh --env prod (backup gate included) and smoke-tests. The Helm revision it
-# replaced is in the job summary and the `deploy-record` artifact (scripts/rollback.sh --env prod).
+# It runs the SAME gate an operator runs locally, scripts/release.sh (--remote origin --sha <commit>),
+# split into three jobs so that no job holds both a write token and a kubeconfig or `npm ci`:
+#   check    (read-only)            --phase check: CI green, dev-green for this SHA, the digest dev
+#                                   RECORDED, main-<sha> still that digest, the repository gates
+#   promote  (contents+packages write, Environment prod = approval 1; no npm, no kubeconfig)
+#                                   --phase promote: tag os-ui-v<version>, copy the RECORDED digest
+#                                   to the version tag (no rebuild)
+#   deploy   (read-only token, Environment prod = approval 2, PROD_KUBECONFIG)
+#                                   --phase deploy: deploy.sh --env prod with EXPECT_DIGEST (refuses
+#                                   any other digest), backup gate included, then the smoke test
+# The Helm revision it replaced is in the summary and the `deploy-record` artifact
+# (scripts/rollback.sh --env prod). Dispatched from any ref but main, every job is skipped.
 #
 # The local path (an operator running scripts/release.sh on a laptop) is unchanged and still works.
 name: prod
@@ -30,71 +34,166 @@ on:
         type: string
         default: ""
 
-permissions:
-  contents: write   # push the os-ui-v<version> tag
-  packages: write   # tag the dev image with the version (no rebuild)
-  actions: read     # read CI and dev runs for the gate
+permissions: {}
 
 concurrency:
   group: prod-release
   cancel-in-progress: false
 
+env:
+  VERSION: ${{ inputs.version }}
+  INPUT_SHA: ${{ inputs.sha }}
+  IMAGE_REPO: ${{ vars.IMAGE_REPO_PREFIX || 'ghcr.io/data-masterclass/sovereign-os' }}
+
 jobs:
-  release:
-    name: release (prod)
+  check:
+    name: check (read-only)
+    # The workflow file of a branch could say anything; only main's copy may release.
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    timeout-minutes: 120
-    environment:
-      name: prod
-      url: https://os.agentic.datamasterclass.com
-    env:
-      VERSION: ${{ inputs.version }}
-      INPUT_SHA: ${{ inputs.sha }}
-      IMAGE_REPO: ${{ vars.IMAGE_REPO_PREFIX || 'ghcr.io/data-masterclass/sovereign-os' }}
-      RELEASE_PROMOTE_IMAGE: "1"
-      KUBE_CONTEXT: dmagenticos
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      DEPLOY_RECORD: ${{ github.workspace }}/prod-report/deploy-record.json
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      actions: read     # CI and dev runs, the dev-tested-digest artifact
+      packages: read    # read main-<sha>'s digest
+    outputs:
+      sha: ${{ steps.select.outputs.sha }}
+      digest: ${{ steps.gate.outputs.digest }}
     steps:
       - name: Checkout main (full history and tags)
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           ref: main
           fetch-depth: 0
-
+          persist-credentials: false
       - name: Select the commit
+        id: select
         run: |
           set -euo pipefail
           case $VERSION in *[!A-Za-z0-9._-]* | '' | [!0-9]*) echo "::error::'$VERSION' is not a version"; exit 1 ;; esac
           sha=${INPUT_SHA:-$(git rev-parse origin/main)}
           case $sha in *[!0-9a-f]* | '') echo "::error::'$sha' is not a commit SHA"; exit 1 ;; esac
           git checkout -q --detach "$sha"
-          echo "RELEASE_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          mkdir -p prod-report
-
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       - name: Setup Node.js
         uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
         with:
           node-version: 22
-
       - name: Setup Helm
         uses: azure/setup-helm@fe7b79cd5ee1e45176fcad797de68ecaf3ca4814 # v4.2.0
         with:
           version: v3.16.3
-
-      - name: Install os-ui dependencies and chart dependencies (gates)
+      - name: Dependencies for the repository gates (no install scripts)
         run: |
-          npm --prefix os-ui ci --no-audit --no-fund
+          npm --prefix os-ui ci --no-audit --no-fund --ignore-scripts
           helm dependency build charts/sovereign-agentic-os
+      - name: Registry login (read)
+        env:
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REGISTRY_USER: ${{ github.actor }}
+        run: printf '%s' "$REGISTRY_TOKEN" | skopeo login ghcr.io -u "$REGISTRY_USER" --password-stdin >/dev/null
+      - name: release.sh --phase check
+        id: gate
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ steps.select.outputs.sha }}
+        run: |
+          set -o pipefail
+          bash scripts/release.sh --phase check --remote origin --sha "$SHA" "$VERSION" | tee check.txt
+          d=$(tail -1 check.txt | sed -n 's/.* digest=\(sha256:[0-9a-f]*\)$/\1/p')
+          [ -n "$d" ] || { echo "::error::no dev-tested digest"; exit 1; }
+          echo "digest=$d" >> "$GITHUB_OUTPUT"
+          { echo "## prod release \`$VERSION\` of \`${SHA:0:12}\`: checked"; echo; echo "dev-tested digest \`$d\`"; } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Registry login (tag the dev image)
+  promote:
+    name: tag + promote the dev digest
+    needs: check
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: prod
+    permissions:
+      contents: write   # push the os-ui-v<version> tag
+      packages: write   # copy the dev-tested digest to the version tag
+      actions: read
+    steps:
+      - name: Checkout main (full history and tags)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Select the checked commit
+        env:
+          SHA: ${{ needs.check.outputs.sha }}
+        run: |
+          set -euo pipefail
+          git checkout -q --detach "$SHA"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+      # No npm install and no kubeconfig in this job: it holds the write tokens.
+      - name: Registry login (write)
         env:
           REGISTRY_USER: ${{ vars.IMAGE_REGISTRY_USER || github.actor }}
           REGISTRY_TOKEN: ${{ secrets.GHCR_TOKEN || secrets.GITHUB_TOKEN }}
         run: printf '%s' "$REGISTRY_TOKEN" | skopeo login ghcr.io -u "$REGISTRY_USER" --password-stdin >/dev/null
+      - name: release.sh --phase promote
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ needs.check.outputs.sha }}
+          CHECKED_DIGEST: ${{ needs.check.outputs.digest }}
+          RELEASE_PROMOTE_IMAGE: "1"
+        run: |
+          set -o pipefail
+          bash scripts/release.sh --phase promote --remote origin --sha "$SHA" "$VERSION" | tee promote.txt
+          tail -1 promote.txt | grep -q " digest=$CHECKED_DIGEST$" \
+            || { echo "::error::the promoted digest is not the one the check job verified"; exit 1; }
 
+  deploy:
+    name: deploy (prod)
+    needs: [check, promote]
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    environment:
+      name: prod
+      url: https://os.agentic.datamasterclass.com
+    permissions:
+      contents: read
+      actions: read
+      packages: read
+    env:
+      KUBE_CONTEXT: dmagenticos
+      DEPLOY_RECORD: ${{ github.workspace }}/prod-report/deploy-record.json
+      SHA: ${{ needs.check.outputs.sha }}
+    steps:
+      - name: Checkout main (full history and tags)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Select the checked commit
+        run: |
+          git checkout -q --detach "$SHA"
+          mkdir -p prod-report
+      - name: Setup Node.js
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: 22
+      - name: Setup Helm
+        uses: azure/setup-helm@fe7b79cd5ee1e45176fcad797de68ecaf3ca4814 # v4.2.0
+        with:
+          version: v3.16.3
+      - name: Dependencies for the capacity gate (no install scripts)
+        run: |
+          npm --prefix os-ui ci --no-audit --no-fund --ignore-scripts
+          helm dependency build charts/sovereign-agentic-os
+      - name: Registry login (read)
+        env:
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REGISTRY_USER: ${{ github.actor }}
+        run: printf '%s' "$REGISTRY_TOKEN" | skopeo login ghcr.io -u "$REGISTRY_USER" --password-stdin >/dev/null
       - name: Prod kubeconfig
         env:
           PROD_KUBECONFIG: ${{ secrets.PROD_KUBECONFIG }}
@@ -104,23 +203,21 @@ jobs:
           umask 077
           printf '%s' "$PROD_KUBECONFIG" > "$RUNNER_TEMP/prod-kubeconfig.yaml"
           echo "KUBECONFIG=$RUNNER_TEMP/prod-kubeconfig.yaml" >> "$GITHUB_ENV"
-
       - name: Helm revision before
         run: |
           helm --kube-context "$KUBE_CONTEXT" history agentic-os -n agentic-os --max 1 -o json \
             > prod-report/revision-before.json || true
-
-      # release.sh is the gate. Its last line is RELEASE_<v>_OK or RELEASE_<v>_STOPPED: <reason>.
-      - name: scripts/release.sh (CI, dev-green, gates, tag, promote, deploy, smoke)
+      - name: release.sh --phase deploy (EXPECT_DIGEST = the dev-tested digest)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -o pipefail
-          bash scripts/release.sh --remote origin --sha "$RELEASE_SHA" "$VERSION" | tee prod-report/release.txt
-
+          bash scripts/release.sh --phase deploy --remote origin --sha "$SHA" "$VERSION" | tee prod-report/release.txt
       - name: Report to job summary
         if: always()
         run: |
           {
-            echo "## prod release \`$VERSION\` of \`${RELEASE_SHA:0:12}\`"
+            echo "## prod release \`$VERSION\` of \`${SHA:0:12}\`"
             echo
             [ ! -f prod-report/release.txt ] || { echo '```'; tail -40 prod-report/release.txt; echo '```'; }
             if [ -f prod-report/revision-before.json ]; then
@@ -128,7 +225,6 @@ jobs:
               [ -z "$rev" ] || { echo; echo "Roll back: \`scripts/rollback.sh --env prod --to $rev\` (or the rollback workflow)"; }
             fi
           } >> "$GITHUB_STEP_SUMMARY"
-
       - name: Upload report
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
