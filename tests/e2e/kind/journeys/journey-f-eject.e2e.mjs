@@ -220,7 +220,7 @@ for (const domain of DOMAINS) {
 // ---------------------------------------------------------------- negative twins (11 §4.2)
 const D0 = DOMAINS[0];
 let dropGold = false;
-J.twin('f-twin-1', { disables: 'one native model file deleted (models/gold/<x>.sql)', record: 'dbt build output', expectedFail: 'WP-49' }, {
+J.twin('f-twin-1', { disables: 'one native model file deleted (models/gold/<x>.sql)', record: 'dbt build output', expectedFail: 'WP-49', redReasonMust: /\[dbt\] dbt built \S+|depends on a node named|was not found/ }, {
   check: async () => {
     const e = await ejected(D0, async (dir) => {
       if (!dropGold) return;
@@ -239,7 +239,7 @@ J.twin('f-twin-1', { disables: 'one native model file deleted (models/gold/<x>.s
 });
 
 let osDependency = false;
-J.twin('f-twin-2', { disables: 'definitions.py made to read os/schedules.yml (an OS-only file)', record: 'dagster definitions validate', expectedFail: 'WP-49' }, {
+J.twin('f-twin-2', { disables: 'definitions.py made to read os/schedules.yml (an OS-only file)', record: 'dagster definitions validate', expectedFail: 'WP-49', redReasonMust: /os\/schedules\.yml/ }, {
   check: async () => {
     const e = await ejected(D0, async (dir) => {
       if (osDependency) await appendFile(join(dir, 'orchestration/definitions.py'), "\n_os_schedules = open('os/schedules.yml').read()\n");
@@ -255,39 +255,51 @@ J.twin('f-twin-2', { disables: 'definitions.py made to read os/schedules.yml (an
   restore: async () => { osDependency = false; },
 });
 
-let invalidMetricYaml = false;
-J.twin('f-twin-3', { disables: 'semantic YAML made invalid while the OS keeps serving the metric', record: 'mf query vs OS answer', expectedFail: 'WP-20' }, {
+// The corruption must land on the commit the eject actually checks out: the live tag is moved to the
+// corrupted commit (and moved back afterwards). The OS is asked for its value at the same time; the
+// comparison must fail because MetricFlow, reading the ejected YAML, cannot produce the value.
+let savedLiveSha = null;
+async function moveLiveTag(sha) {
+  const dir = await git.clone(D0);
+  const tag = LIVE_REF.replace('refs/tags/', '');
+  await git.git(['tag', '-f', tag, sha], dir);
+  await git.git(['push', '-f', 'origin', `refs/tags/${tag}`], dir);
+}
+J.twin('f-twin-3', { disables: 'semantic YAML made invalid at the live tag while the OS keeps serving the metric', record: 'dbt parse / mf query on the ejected live tag vs the OS answer', expectedFail: 'WP-20', redReasonMust: /^EJECTED-METRIC-INVALID: / }, {
   check: async () => {
     for (const d of OS_DEPLOYMENTS) await kubectl(['-n', NS, 'scale', `deployment/${d}`, '--replicas=1']);
     await kubectl(['-n', NS, 'rollout', 'status', 'deployment/os-ui', '--timeout=300s'], { timeoutMs: 320000 });
-    if (invalidMetricYaml) {
-      const dir = await git.clone(D0);
-      const [sm] = await listNative(dir, /^models\/.*semantic.*\.ya?ml$/);
-      if (!sm) throw new HopError({ component: 'git', hop: 'semantic models', reason: 'no semantic model YAML to corrupt' });
-      await writeFile(join(dir, sm), (await readFile(join(dir, sm), 'utf8')).replace(/measures:/, 'measures_broken:'));
-      await git.git(['-c', `user.name=${U}`, '-c', `user.email=${U}@e2e.local`, 'commit', '-qam', 'e2e: invalid semantic YAML'], dir);
-      await git.git(['push', '-q', 'origin', 'HEAD'], dir);
-    }
     const metrics = (await callTool(U, 'list_metrics', { domain: D0 })).items ?? [];
     check(metrics.length > 0, 'os-ui', 'a metric to compare', 0);
-    const osValue = (await callTool(V, 'query_metric', { metricId: metrics[0].id })).rows?.[0]?.value;
+    let osValue;
+    try { osValue = (await callTool(V, 'query_metric', { metricId: metrics[0].id })).rows?.[0]?.value; } catch { osValue = undefined; }
     const e = await ejected(D0);
     await osDown();
     const pod = await dagsterPod(`e2e-eject-twin3-${Date.now().toString(36)}`, e.dir);
     try {
-      await pod.run('dbt parse --profiles-dir .', 'dbt parse');
-      const out = await pod.run(`OS_PRINCIPAL=${V} mf query --metrics ${metrics[0].name} --csv /tmp/m.csv && tail -1 /tmp/m.csv`, 'mf query');
+      let out;
+      try {
+        await pod.run('dbt parse --profiles-dir .', 'dbt parse');
+        out = await pod.run(`OS_PRINCIPAL=${V} mf query --metrics ${metrics[0].name} --csv /tmp/m.csv && tail -1 /tmp/m.csv`, 'mf query');
+      } catch (err) {
+        throw new HopError({ component: 'metricflow', hop: 'ejected metric', reason: `EJECTED-METRIC-INVALID: ${err.reason ?? err.message}` });
+      }
       check(Number(out.trim().split(',').at(-1)) === Number(osValue), 'metricflow', 'mf query equals the OS value', { mf: out.trim(), os: osValue });
     } finally { await pod.remove(); }
   },
-  disable: async () => { invalidMetricYaml = true; },
-  restore: async () => {
-    invalidMetricYaml = false;
+  disable: async () => {
     const dir = await git.clone(D0);
-    const [head] = (await git.git(['log', '-1', '--format=%s'], dir)).split('\n');
-    if (head === 'e2e: invalid semantic YAML') {
-      await git.git(['-c', `user.name=${U}`, '-c', `user.email=${U}@e2e.local`, 'revert', '--no-edit', 'HEAD'], dir);
-      await git.git(['push', '-q', 'origin', 'HEAD'], dir);
-    }
+    const live = (await git.refs(dir, 'refs/tags/')).find((r) => r.ref === LIVE_REF);
+    if (!live) throw new HopError({ component: 'git', hop: `live ref ${LIVE_REF}`, reason: `no ${LIVE_REF} in ${D0}`, wp: 'WP-51' });
+    savedLiveSha = live.sha;
+    await git.git(['checkout', '--quiet', live.sha], dir);
+    const [sm] = await listNative(dir, /^models\/.*semantic.*\.ya?ml$/);
+    if (!sm) throw new HopError({ component: 'git', hop: 'semantic models', reason: 'no semantic model YAML to corrupt' });
+    await writeFile(join(dir, sm), (await readFile(join(dir, sm), 'utf8')).replace(/measures:/, 'measures_broken:'));
+    await git.git(['-c', `user.name=${U}`, '-c', `user.email=${U}@e2e.local`, 'commit', '-qam', 'e2e: invalid semantic YAML'], dir);
+    await moveLiveTag((await git.git(['rev-parse', 'HEAD'], dir)).trim());
+  },
+  restore: async () => {
+    if (savedLiveSha) await moveLiveTag(savedLiveSha);
   },
 });

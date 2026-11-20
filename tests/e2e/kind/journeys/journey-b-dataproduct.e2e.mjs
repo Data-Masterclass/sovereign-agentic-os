@@ -104,6 +104,13 @@ async function tileFor(viewer) {
 const tileV = () => J.step('tile as V', () => tileFor(V));
 const tileW = () => J.step('tile as W', () => tileFor(W));
 
+/** [start, end] in ms of every Dagster run of the dataset, from Dagster's own ledger. */
+async function runWindows(datasetId) {
+  const rs = await dagster.runs({ tags: { 'os/dataset': datasetId }, limit: 200 });
+  return rs.filter((r) => r.startTime).map((r) => ({ runId: r.runId, from: r.startTime * 1000, to: (r.endTime ?? Date.now() / 1000) * 1000 + 5000 }));
+}
+const within = (ts, w) => ts >= w.from && ts <= w.to;
+
 // ---------------------------------------------------------------- 1. Dagster
 J.assertion('b1.1', { hop: 'schedule-launched run SUCCESS, tagged os/principal and os/run_grant', record: 'Dagster GraphQL runsOrError', expectedFail: 'WP-49' }, async () => {
   const { run } = await firstRun();
@@ -130,13 +137,17 @@ J.assertion('b1.3', { hop: `after a null row ${CHECK_NAME} FAILED and the tile t
 });
 
 // ---------------------------------------------------------------- 2. identity
-J.assertion('b2.1', { hop: `ImpersonateUser ${RUNNER_USER} → owner allowed only during the run`, record: 'OPA (Trino sidecar) decision log', expectedFail: 'WP-15' }, async () => {
-  const { run } = await firstRun();
+J.assertion('b2.1', { hop: `ImpersonateUser ${RUNNER_USER} → owner allowed only while a run of the dataset is active`, record: 'OPA (Trino sidecar) decision log + Dagster run ledger', expectedFail: 'WP-15' }, async () => {
+  // Scoped to Dagster's own run windows, not to wall-clock: later schedule ticks are runs too, so
+  // they can never make this red; an allowed impersonation OUTSIDE every run window always does.
+  const { run, p } = await firstRun();
+  const windows = await runWindows(p.ds.id);
+  const first = windows.find((w) => w.runId === run.runId);
+  check(first, 'dagster', `run ${run.runId} in the dataset's run ledger`, windows.map((w) => w.runId));
   const ds = await opa.decisions({ match: (e) => e.input?.action?.operation === 'ImpersonateUser' && e.input?.context?.identity?.user === RUNNER_USER && e.input?.action?.resource?.user?.user === U });
-  check(ds.length > 0, 'opa', `ImpersonateUser decisions ${RUNNER_USER} → ${U}`, 0);
-  const inRun = (e) => Date.parse(e.timestamp) >= run.startTime * 1000 && Date.parse(e.timestamp) <= (run.endTime ?? Date.now() / 1000) * 1000 + 5000;
-  check(ds.filter(inRun).length > 0 && ds.filter(inRun).every(allowed), 'opa', 'every decision inside the run window allowed', ds.filter(inRun).map((e) => e.result));
-  check(ds.filter((e) => !inRun(e)).every((e) => !allowed(e)), 'opa', 'no decision outside the run window allowed', ds.filter((e) => !inRun(e)).length);
+  check(ds.some((e) => within(Date.parse(e.timestamp), first) && allowed(e)), 'opa', `an allowed ImpersonateUser ${RUNNER_USER} → ${U} inside run ${run.runId}`, ds.length);
+  const stray = ds.filter((e) => allowed(e) && !windows.some((w) => within(Date.parse(e.timestamp), w)));
+  check(stray.length === 0, 'opa', 'no allowed impersonation outside every run window of the dataset', stray.map((e) => e.decision_id));
 });
 
 J.assertion('b2.2', { hop: 'after /finish the same impersonation with the runner password is denied', record: 'Trino error + OPA decision log', expectedFail: 'WP-15' }, async () => {
@@ -156,11 +167,18 @@ J.assertion('b2.2', { hop: 'after /finish the same impersonation with the runner
 });
 
 // ---------------------------------------------------------------- 3. Iceberg
-J.assertion('b3.1', { hop: 'gold_po$snapshots gained exactly one row at the run time', record: 'Trino Iceberg $snapshots', expectedFail: 'WP-37' }, async () => {
-  const { run, snapshotsBefore } = await firstRun();
-  const snaps = await trino.snapshots(GOLD.catalog, GOLD.schema, GOLD.table);
-  const inRun = snaps.filter((s) => Date.parse(s.committed_at) >= run.startTime * 1000 && Date.parse(s.committed_at) <= run.endTime * 1000 + 5000);
-  check(snaps.length === snapshotsBefore + 1 && inRun.length === 1, 'trino', 'one new snapshot, committed inside the run window', { before: snapshotsBefore, after: snaps.length, inRun: inRun.length });
+J.assertion('b3.1', { hop: 'the first run committed exactly one gold_po snapshot, and no snapshot exists outside a run', record: 'Trino Iceberg $snapshots + Dagster run ledger', expectedFail: 'WP-37' }, async () => {
+  // Deterministic under later schedule ticks: each snapshot is attributed to the run whose window
+  // holds it (Dagster's ledger); the first run must own exactly one, and none may be orphaned.
+  const { run, p, snapshotsBefore } = await firstRun();
+  const windows = await runWindows(p.ds.id);
+  const first = windows.find((w) => w.runId === run.runId);
+  check(first, 'dagster', `run ${run.runId} in the dataset's run ledger`, windows.map((w) => w.runId));
+  const snaps = (await trino.snapshots(GOLD.catalog, GOLD.schema, GOLD.table)).slice(snapshotsBefore);
+  const inFirst = snaps.filter((s) => within(Date.parse(s.committed_at), first));
+  check(inFirst.length === 1, 'trino', `exactly one snapshot committed inside run ${run.runId}`, inFirst.length);
+  const orphans = snaps.filter((s) => !windows.some((w) => within(Date.parse(s.committed_at), w)));
+  check(orphans.length === 0, 'trino', 'every new snapshot was committed inside some Dagster run of the dataset', orphans.map((s) => s.snapshot_id));
 });
 
 // ---------------------------------------------------------------- 4. metric as the viewer
@@ -177,21 +195,40 @@ J.assertion('b4.1', { hop: "tile query in Trino as V, byte-equal to MetricFlow's
   check(rows.some((q) => q.query === sql), 'trino', 'a query with text byte-equal to metric-compile output', { trino: rows[0].query?.slice(0, 200), compiled: sql.slice(0, 200) });
 });
 
-J.assertion('b4.2', { hop: 'V sees only DE rows, W only FR rows (row filter from user attributes)', record: 'Trino query results as V and W', expectedFail: 'WP-35' }, async () => {
-  const { res: rv } = await tileV();
-  const { res: rw } = await tileW();
-  const regions = (r) => [...new Set((r.rows ?? []).map((x) => x.region))];
-  check(JSON.stringify(regions(rv)) === '["DE"]', 'trino', 'V result has only region DE', regions(rv));
-  check(JSON.stringify(regions(rw)) === '["FR"]', 'trino', 'W result has only region FR', regions(rw));
-  const qv = await trino.runtimeQueries({ user: V, sinceMinutes: 30 });
-  const qw = await trino.runtimeQueries({ user: W, sinceMinutes: 30 });
-  check(qv.some((q) => q.state === 'FINISHED') && qw.some((q) => q.state === 'FINISHED'), 'trino', "both viewers' queries FINISHED in Trino as themselves", { V: qv.length, W: qw.length });
+/**
+ * The rows a viewer ACTUALLY gets from Trino: the exact SQL the viewer's tile ran (Trino's own query
+ * log), re-executed in Trino as that viewer, so Trino + OPA apply the row filter. os-ui's response is
+ * never read: a row filter done in TypeScript leaves Trino's answer unfiltered and turns this red.
+ */
+async function trinoRowsAs(viewer, since) {
+  const ran = (await trino.runtimeQueries({ user: viewer, sinceMinutes: 30 })).filter((q) => q.created >= trinoTs(since) && q.state === 'FINISHED' && /po_count|gold_po/i.test(q.query));
+  check(ran.length > 0, 'trino', `a FINISHED tile query as ${viewer} in system.runtime.queries`, 0);
+  return (await trino.query(ran[0].query, { user: viewer, hop: `tile SQL re-run as ${viewer}` })).rows;
+}
+async function rowFilterDecision(viewer) {
+  const ds = await opa.decisions({ sinceMinutes: 30, match: (e) => e.input?.action?.operation === 'GetRowFilters' && e.input?.context?.identity?.user === viewer && e.input?.action?.resource?.table?.tableName === GOLD.table });
+  check(ds.length > 0, 'opa', `a GetRowFilters decision for ${viewer} on ${GOLD.table}`, 0);
+  return JSON.stringify(ds.at(-1).result);
+}
+
+J.assertion('b4.2', { hop: 'V gets only DE rows, W only FR rows, from Trino with the OPA row filter', record: 'Trino re-execution of each viewer\'s logged tile SQL + OPA GetRowFilters decisions', expectedFail: 'WP-35' }, async () => {
+  const { since: sv } = await tileV();
+  const { since: sw } = await tileW();
+  const regions = (rows) => [...new Set(rows.map((x) => x.region))].sort();
+  const rv = await trinoRowsAs(V, sv);
+  const rw = await trinoRowsAs(W, sw);
+  check(rv.length > 0 && JSON.stringify(regions(rv)) === '["DE"]', 'trino', `Trino returns only region DE to ${V}`, regions(rv));
+  check(rw.length > 0 && JSON.stringify(regions(rw)) === '["FR"]', 'trino', `Trino returns only region FR to ${W}`, regions(rw));
+  const fv = await rowFilterDecision(V);
+  const fw = await rowFilterDecision(W);
+  check(/region/.test(fv) && /'DE'/.test(fv) && !/'FR'/.test(fv), 'opa', `row-filter expression for ${V} is region = 'DE'`, fv);
+  check(/region/.test(fw) && /'FR'/.test(fw) && !/'DE'/.test(fw), 'opa', `row-filter expression for ${W} is region = 'FR'`, fw);
 });
 
 // ---------------------------------------------------------------- negative twins
 const LAUNCH = `mutation L($p: ExecutionParams!) { launchRun(executionParams: $p) { __typename ... on LaunchRunSuccess { run { runId } } ... on PythonError { message } ... on RunConfigValidationInvalid { errors { message } } } }`;
 let principalTag = U;
-J.twin('b-twin-1', { disables: 'os/principal tag tampered (W instead of the owner)', record: 'Dagster run status + Trino system.runtime.queries', expectedFail: 'WP-15' }, {
+J.twin('b-twin-1', { disables: 'os/principal tag tampered (W instead of the owner)', record: 'Dagster run status + Trino system.runtime.queries', expectedFail: 'WP-15', redReasonMust: /^run FAILURE; 0 Trino queries as w-viewer-fr$/ }, {
   check: async () => {
     const { p, run } = await firstRun();
     const since = isoNow();
@@ -200,16 +237,24 @@ J.twin('b-twin-1', { disables: 'os/principal tag tampered (W instead of the owne
     const d = await dagster.gql(LAUNCH, { p: { selector, executionMetadata: { tags } } }, 'launchRun');
     check(d.launchRun.__typename === 'LaunchRunSuccess', 'dagster', 'launchRun accepted', d.launchRun);
     const done = await dagster.waitForRun(d.launchRun.run.runId);
-    check(done.status === 'SUCCESS', 'dagster', 'run SUCCESS', done.status);
-    const q = await trino.runtimeQueries({ user: principalTag, sinceMinutes: 15 });
-    check(q.some((x) => x.created >= trinoTs(since)), 'trino', `queries ran as ${principalTag}`, q.length);
+    const q = (await trino.runtimeQueries({ user: principalTag, sinceMinutes: 15 })).filter((x) => x.created >= trinoTs(since));
+    if (done.status !== 'SUCCESS') {
+      // The design's red: FAILURE *and* not a single Trino query as the tampered principal.
+      throw new HopError({ component: 'dagster', hop: 'tampered run', reason: q.length === 0 ? `run FAILURE; 0 Trino queries as ${principalTag}` : `run FAILURE but ${q.length} Trino queries ran as ${principalTag}` });
+    }
+    check(q.length > 0, 'trino', `queries ran as ${principalTag}`, q.length);
   },
   disable: async () => { principalTag = W; },
   restore: async () => { principalTag = U; },
 });
 
 let preHook = '';
-J.twin('b-twin-2', { disables: 'model pushed with a SET SESSION AUTHORIZATION pre-hook', record: 'git receive (os-repos)', expectedFail: 'WP-14', redReasonMust: /session authorization|rejected|pre-receive/i }, {
+// The receive validator's refusal (10 R4 defence in depth): git reports a declined pre-receive hook,
+// and the hook's own message names the forbidden statement. A non-fast-forward `! [rejected]` or any
+// other refusal is the WRONG reason.
+const RECEIVE_REFUSAL = /pre-receive hook declined/i;
+const RECEIVE_MESSAGE = /remote:.*session authorization/i;
+J.twin('b-twin-2', { disables: 'model pushed with a SET SESSION AUTHORIZATION pre-hook', record: 'git receive (os-repos) output', expectedFail: 'WP-14', redReasonMust: /^RECEIVE-VALIDATOR-REFUSED session authorization$/ }, {
   check: async () => {
     const dir = await git.clone(DOMAIN);
     const cfg = preHook ? `{{ config(pre_hook="${preHook}") }}\n` : '';
@@ -217,7 +262,13 @@ J.twin('b-twin-2', { disables: 'model pushed with a SET SESSION AUTHORIZATION pr
     await writeFile(`${dir}/models/personal/${U}/e2e_probe_${Date.now()}.sql`, `${cfg}select 1 as one\n`);
     await git.git(['add', '.'], dir);
     await git.git(['-c', `user.name=${U}`, '-c', `user.email=${U}@e2e.local`, 'commit', '-qm', 'e2e probe model'], dir);
-    await git.git(['push', '-q', 'origin', 'HEAD'], dir);
+    try {
+      await git.git(['push', 'origin', 'HEAD'], dir);
+    } catch (err) {
+      const out = err.detail ?? err.reason ?? '';
+      if (RECEIVE_REFUSAL.test(out) && RECEIVE_MESSAGE.test(out)) throw new HopError({ component: 'git', hop: 'receive', reason: 'RECEIVE-VALIDATOR-REFUSED session authorization' });
+      throw new HopError({ component: 'git', hop: 'push', reason: `push refused for another reason: ${out.slice(0, 300)}` });
+    }
   },
   disable: async () => { preHook = "SET SESSION AUTHORIZATION 'bob'"; },
   restore: async () => { preHook = ''; },
@@ -225,12 +276,13 @@ J.twin('b-twin-2', { disables: 'model pushed with a SET SESSION AUTHORIZATION pr
 
 const MC_POLICY = process.env.E2E_METRIC_COMPILE_NP ?? 'metric-compile-to-repo-status';
 let savedNp;
-J.twin('b-twin-3', { disables: 'NetworkPolicy admitting metric-compile to the manifest server removed', record: 'OS tile response', expectedFail: 'WP-20', redReasonMust: /metric_compile|manifest|unavailable|ENGINE_UNAVAILABLE/i }, {
+J.twin('b-twin-3', { disables: 'NetworkPolicy admitting metric-compile to the manifest server removed', record: 'OS tile response', expectedFail: 'WP-20', redReasonMust: /^metric_compile_unavailable: / }, {
   check: async () => {
     const { p } = await firstRun();
     let res;
+    // The typed reason the design requires (10 F6): code `metric_compile_unavailable`, never "no data".
     try { res = await callTool(V, 'query_metric', { metricId: p.metric.id, groupBy: ['region'] }); } catch (err) {
-      throw new HopError({ component: 'os-ui', hop: 'query_metric', reason: err.reason ?? err.message });
+      throw new HopError({ component: 'os-ui', hop: 'query_metric', reason: err.detail?.code ? `${err.detail.code}: ${err.detail.reason ?? ''}` : (err.reason ?? err.message) });
     }
     if (!res.rows?.length) throw new HopError({ component: 'os-ui', hop: 'query_metric', reason: `no data (untyped): ${JSON.stringify(res).slice(0, 200)}` });
   },

@@ -19,9 +19,11 @@ import { HopError } from '../hop.mjs';
 
 const exec = promisify(execFile);
 
+/** Run git; on failure the HopError's `detail` holds git's complete stderr (receive-hook output included). */
 export async function git(args, cwd) {
   try { return (await exec('git', args, { cwd, maxBuffer: 32 * 1024 * 1024 })).stdout; } catch (err) {
-    throw new HopError({ component: 'git', hop: `git ${args[0]}`, reason: (err.stderr || err.message).trim().slice(0, 300) });
+    const stderr = String(err.stderr || err.message).trim();
+    throw new HopError({ component: 'git', hop: `git ${args[0]}`, reason: stderr.slice(0, 300), detail: stderr });
   }
 }
 

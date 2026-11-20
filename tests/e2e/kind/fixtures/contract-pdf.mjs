@@ -66,3 +66,41 @@ export function contractPdf() {
   out += `trailer\n<< /Size ${objs.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
   return Buffer.from(out, 'latin1');
 }
+
+// ---- Distractor corpus (AT-a retrieval). Every page USES the query's words and none carries the
+// answer, so (1) a keyword match ranks a distractor first, and (2) the corpus is far larger than any
+// top-k, so the answer chunk at rank 1 can only come from semantic (k-NN) retrieval.
+export const DISTRACTOR_PAGES = 36;
+export const DISTRACTOR_MARKER = 'Kickoff memo';
+export function distractorPdf(pages = DISTRACTOR_PAGES) {
+  const streams = [];
+  for (let i = 1; i <= pages; i++) {
+    streams.push([
+      [72, 740, 16, `${DISTRACTOR_MARKER} ${i}`],
+      [72, 700, 11, `How long before the deal team can leave the kickoff meeting ${i}?`],
+      [72, 682, 11, `I can confirm the deal room stays open; leave requests go to the workstream lead ${i}.`],
+    ].map(text).join('\n'));
+  }
+  const n = streams.length;
+  const objs = ['<< /Type /Catalog /Pages 2 0 R >>', `<< /Type /Pages /Kids [${streams.map((_, i) => `${3 + i} 0 R`).join(' ')}] /Count ${n} >>`];
+  const fontObj = 3 + 2 * n;
+  streams.forEach((_, i) => objs.push(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 ${fontObj} 0 R >> >> /Contents ${3 + n + i} 0 R >>`));
+  streams.forEach((s) => objs.push(`<< /Length ${Buffer.byteLength(s)} >>\nstream\n${s}\nendstream`));
+  objs.push('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>');
+  let out = '%PDF-1.4\n';
+  const offsets = [];
+  objs.forEach((o, i) => { offsets.push(Buffer.byteLength(out)); out += `${i + 1} 0 obj\n${o}\nendobj\n`; });
+  const xref = Buffer.byteLength(out);
+  out += `xref\n0 ${objs.length + 1}\n0000000000 65535 f \n${offsets.map((o) => `${String(o).padStart(10, '0')} 00000 n \n`).join('')}`;
+  out += `trailer\n<< /Size ${objs.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  return Buffer.from(out, 'latin1');
+}
+
+/**
+ * Embedding rules for the model stub: the query and the answer row share topic 1; nothing else
+ * matches a rule, so distractors keep meaningless hashed vectors far from topic 1.
+ */
+export const EMBEDDING_RULES = [
+  { contains: QUERY, topic: 1 },
+  { contains: 'Notice period', topic: 1 },
+];

@@ -20,3 +20,5 @@ export const requests = async () => (await request('model-stub', 'requests', awa
 export async function chatCount() {
   return (await requests()).filter((r) => r.path.endsWith('/chat/completions') && !r.error).length;
 }
+/** Fixed-topic embedding rules (see model-stub/stub.py): texts containing `contains` share a vector direction. */
+export const loadEmbeddingRules = async (rules, weight = 0.9) => (await request('model-stub', 'embedding-rules', await url('/__stub/embedding-rules'), { method: 'POST', body: { rules, weight } })).data;

@@ -13,11 +13,16 @@
  *   - Every assertion reads a component record (Docling log, SeaweedFS object, OpenSearch index /
  *     audit log / ml-commons stats, LiteLLM spend log, git, Langfuse observations, OPA decision
  *     log). The OS is only DRIVEN (lib/os-driver.mjs); its answers are never the proof.
+ *   - Retrieval is real: the stub's embedding rules give the query and the answer row one shared
+ *     topic (they share no word), and a 36-page distractor PDF that USES the query's words is
+ *     uploaded first. The answer must be rank 1, which only k-NN can achieve; a keyword match ranks a
+ *     distractor first (a-twin-5).
  *   - All assertions and twins are expected-fail until the WPs named in each marker land.
  */
 import { journey, check } from '../lib/journey.mjs';
 import { PRINCIPALS, DOMAIN, OTHER_DOMAIN, createTraceId, jwtPayload, waitFor, isoNow } from '../lib/common.mjs';
-import { contractPdf, QUERY, ANSWER_CELL } from '../fixtures/contract-pdf.mjs';
+import { contractPdf, distractorPdf, QUERY, ANSWER_CELL, EMBEDDING_RULES, DISTRACTOR_PAGES } from '../fixtures/contract-pdf.mjs';
+import { toolOutputs, assertTopHitIsAnswer, assertChunkNotVisible } from '../lib/checks/knowledge.mjs';
 import { callTool, uploadFile } from '../lib/os-driver.mjs';
 import * as stub from '../lib/records/stub.mjs';
 import * as docling from '../lib/records/docling.mjs';
@@ -64,12 +69,19 @@ async function modelIdOfPipeline() {
 }
 async function mlPredict() { return osr.mlPredictCount(await modelIdOfPipeline()); }
 
-const upload = () => J.step('upload', () => uploadAndIndex('contract-at-a.pdf'));
+const upload = () => J.step('upload', async () => {
+  await stub.loadEmbeddingRules(EMBEDDING_RULES);
+  const distractors = await uploadFile(U, { name: 'kickoff-memos-at-a.pdf', bytes: distractorPdf() });
+  await waitFor(async () => (await osr.count(FILES_INDEX, { term: { file_id: distractors.id } })) >= DISTRACTOR_PAGES,
+    { component: 'opensearch', hop: `${FILES_INDEX} index`, what: `${DISTRACTOR_PAGES} distractor chunks` });
+  return uploadAndIndex('contract-at-a.pdf');
+});
 // Each principal runs the same assistant in its OWN domain: u999 (marketing) must not reach sales files.
 const systemFor = (uid) => J.step(`system for ${uid}`, () => callTool(uid, 'create_agent_system', { name: `AT-a contracts assistant (${uid})`, domain: uid === OTHER ? OTHER_DOMAIN : DOMAIN, template: 'analyze' }));
 
 async function runAs(uid) {
   await stub.reset();
+  await stub.loadEmbeddingRules(EMBEDDING_RULES);
   await stub.loadScript(SCRIPT(uid));
   const { id: systemId } = await systemFor(uid);
   const startedAt = isoNow();
@@ -85,7 +97,6 @@ async function runAs(uid) {
 const runU = () => J.step('run as u123', async () => { await upload(); return runAs(U); });
 const run999 = () => J.step('run as u999', async () => { await runU(); return runAs(OTHER); });
 
-const toolOutput = (obs, name) => obs.filter((o) => o.type === 'TOOL' && o.name === name).map((o) => JSON.stringify(o.output ?? '')).join('\n');
 
 // ---------------------------------------------------------------- 1. Docling
 J.assertion('a1.1', { hop: 'Docling converts and chunks (two async tasks)', record: 'docling-serve access log', expectedFail: 'WP-41' }, async () => {
@@ -136,11 +147,9 @@ J.assertion('a2.4', { hop: 'embedding went through LiteLLM with key opensearch-i
 });
 
 // ---------------------------------------------------------------- 3. search as the user
-J.assertion('a3.1', { hop: 'the agent run as u123 finds the page-2 table chunk', record: 'Langfuse TOOL observation search_files', expectedFail: 'WP-27' }, async () => {
+J.assertion('a3.1', { hop: 'the agent run as u123 gets the page-2 table chunk at rank 1 (out of 36+ chunks)', record: 'Langfuse TOOL observation search_files (io)', expectedFail: 'WP-27' }, async () => {
   const { obs } = await runU();
-  const out = toolOutput(obs, 'search_files');
-  check(out.includes(ANSWER_CELL), 'langfuse', `search_files output contains "${ANSWER_CELL}"`, out.slice(0, 300));
-  check(/"page(_no)?"\s*:\s*2/.test(out), 'langfuse', 'the hit is on page 2', out.slice(0, 300));
+  assertTopHitIsAnswer(obs, { answer: ANSWER_CELL, page: 2 });
 });
 
 J.assertion('a3.2', { hop: 'OpenSearch audit log: request made AS u123 with an aud=opensearch JWT carrying domain:sales', record: 'security-auditlog-*', expectedFail: 'WP-25' }, async () => {
@@ -164,16 +173,15 @@ J.assertion('a3.3', { hop: 'profile:true replay shows the k-NN sub-query scored 
   check(entry, 'opensearch', 'audit entry with the search request body', null);
   const body = JSON.parse(entry.audit_request_body);
   const res = await osr.search(FILES_INDEX, { ...body, profile: true });
-  const hit = res.hits.hits.find((h) => JSON.stringify(h._source).includes(ANSWER_CELL));
-  check(hit, 'opensearch', 'replayed query returns the page-2 chunk', res.hits.hits.length);
+  check(res.hits.total.value > res.hits.hits.length || res.hits.hits.length < DISTRACTOR_PAGES, 'opensearch', 'top-k is smaller than the corpus', res.hits.total);
+  check(JSON.stringify(res.hits.hits[0]?._source ?? {}).includes(ANSWER_CELL), 'opensearch', 'replayed query ranks the page-2 chunk first', res.hits.hits[0]?._source);
   const types = JSON.stringify(res.profile.shards.map((s) => s.searches.map((x) => x.query.map((q) => q.type))));
   check(/knn/i.test(types), 'opensearch', 'profile contains a KNN query node', types.slice(0, 300));
 });
 
 J.assertion('a3.4', { hop: 'the same query as u999 returns 0 hits (DLS)', record: 'Langfuse TOOL observation + OpenSearch audit log', expectedFail: 'WP-25' }, async () => {
   const { obs, startedAt } = await run999();
-  const out = toolOutput(obs, 'search_files');
-  check(!out.includes(ANSWER_CELL), 'langfuse', 'u999 search_files output does not contain the chunk', out.slice(0, 300));
+  assertChunkNotVisible(obs, { answer: ANSWER_CELL });
   const entries = (await osr.auditEntries({ effectiveUser: OTHER, index: FILES_INDEX })).filter((e) => e['@timestamp'] >= startedAt);
   check(entries.length > 0, 'opensearch', 'the u999 search reached OpenSearch as u999', 0);
 });
@@ -181,7 +189,7 @@ J.assertion('a3.4', { hop: 'the same query as u999 returns 0 hits (DLS)', record
 // ---------------------------------------------------------------- 4. knowledge note
 J.assertion('a4.1', { hop: 'knowledge note committed with author u123', record: 'git log (domain repo)', expectedFail: 'WP-50' }, async () => {
   const { obs } = await runU();
-  const out = toolOutput(obs, 'author_knowledge');
+  const out = toolOutputs(obs, 'author_knowledge').join('\n');
   const path = /knowledge\/[\w/.-]+\.md/.exec(out)?.[0];
   check(path, 'langfuse', 'author_knowledge output names the committed knowledge/** path', out.slice(0, 300));
   const dir = await git.clone(DOMAIN);
@@ -229,7 +237,7 @@ async function freshFileHasVectors() {
   check(n === 0, 'opensearch', 'fresh upload: no document without vector', `${n} without vector`);
 }
 let savedPipeline;
-J.twin('a-twin-1', { disables: `ingest pipeline ${INGEST_PIPELINE} removed`, record: 'OpenSearch files index', expectedFail: 'WP-24' }, {
+J.twin('a-twin-1', { disables: `ingest pipeline ${INGEST_PIPELINE} removed`, record: 'OpenSearch files index', expectedFail: 'WP-24', redReasonMust: /fresh upload: no document without vector|documents for file \S+ not seen/ }, {
   check: freshFileHasVectors,
   disable: async () => {
     savedPipeline = (await osr.ingestPipeline(INGEST_PIPELINE))[INGEST_PIPELINE];
@@ -239,10 +247,10 @@ J.twin('a-twin-1', { disables: `ingest pipeline ${INGEST_PIPELINE} removed`, rec
 });
 
 let savedRole;
-J.twin('a-twin-2', { disables: `DLS clause removed from role ${DLS_ROLE}`, record: 'Langfuse TOOL output for u999', expectedFail: 'WP-25' }, {
+J.twin('a-twin-2', { disables: `DLS clause removed from role ${DLS_ROLE}`, record: 'Langfuse TOOL output for u999', expectedFail: 'WP-25', redReasonMust: /search_files output does not contain "90 days"/ }, {
   check: async () => {
     const { obs } = await runAs(OTHER);
-    check(!toolOutput(obs, 'search_files').includes(ANSWER_CELL), 'langfuse', 'u999 sees no sales chunk', 'u999 saw it');
+    assertChunkNotVisible(obs, { answer: ANSWER_CELL });
   },
   disable: async () => {
     savedRole = (await osr.os(`/_plugins/_security/api/roles/${DLS_ROLE}`))[DLS_ROLE];
@@ -270,7 +278,7 @@ async function patchLitellm(transform) {
   await kubectl(['-n', NS, 'rollout', 'restart', 'deployment/agentic-os-litellm']);
   await kubectl(['-n', NS, 'rollout', 'status', 'deployment/agentic-os-litellm', '--timeout=300s'], { timeoutMs: 320000 });
 }
-J.twin('a-twin-3', { disables: 'LiteLLM on the legacy langfuse callback (not langfuse_otel) against Langfuse v4', record: 'Langfuse Observations v2', expectedFail: 'WP-32' }, {
+J.twin('a-twin-3', { disables: 'LiteLLM on the legacy langfuse callback (not langfuse_otel) against Langfuse v4', record: 'Langfuse Observations v2', expectedFail: 'WP-32', redReasonMust: /GENERATION count equals stub count/ }, {
   check: async () => {
     const { obs, stubChats } = await runAs(U);
     check(langfuse.byType(obs, 'GENERATION').length === stubChats, 'langfuse', 'GENERATION count equals stub count', langfuse.byType(obs, 'GENERATION').length);
@@ -285,7 +293,7 @@ let savedOpa;
 J.twin('a-twin-4', { disables: 'bundle propagation slowed (min_delay 30 s) so the worker claims before the grant arrives', record: 'Langfuse TOOL output for u123', expect: 'green', expectedFail: 'WP-11' }, {
   check: async () => {
     const { obs } = await runAs(U);
-    check(toolOutput(obs, 'search_files').includes(ANSWER_CELL), 'langfuse', 'u123 still finds the chunk', 'not found');
+    assertTopHitIsAnswer(obs, { answer: ANSWER_CELL, page: 2 });
   },
   disable: async () => {
     const cm = JSON.parse(await kubectl(['-n', NS, 'get', 'configmap', OPA_CM, '-o', 'json']));
@@ -300,4 +308,28 @@ J.twin('a-twin-4', { disables: 'bundle propagation slowed (min_delay 30 s) so th
     await kubectl(['-n', NS, 'apply', '-f', '-'], { input: JSON.stringify({ apiVersion: 'v1', kind: 'ConfigMap', metadata: { name: OPA_CM, namespace: NS }, data: savedOpa }) });
     await kubectl(['-n', NS, 'rollout', 'restart', 'deployment/opa']);
   },
+});
+
+// Retrieval replaced by a keyword match: the hybrid search pipeline's weights set to lexical-only
+// (OpenSearch's own score-ranker/normalization processor config). The query shares no word with the
+// answer and every word with the distractors, so rank 1 MUST stop being the answer.
+const SEARCH_PIPELINE = process.env.E2E_SEARCH_PIPELINE ?? 'files-hybrid';
+let savedSearchPipeline;
+J.twin('a-twin-5', { disables: `search pipeline ${SEARCH_PIPELINE} weighted lexical-only (k-NN weight 0)`, record: 'Langfuse TOOL output for u123', expectedFail: 'WP-24', redReasonMust: /rank 1 hit contains "90 days"/ }, {
+  check: async () => {
+    const { obs } = await runAs(U);
+    assertTopHitIsAnswer(obs, { answer: ANSWER_CELL, page: 2 });
+  },
+  disable: async () => {
+    const got = await osr.os(`/_search/pipeline/${SEARCH_PIPELINE}`);
+    savedSearchPipeline = got[SEARCH_PIPELINE];
+    check(savedSearchPipeline, 'opensearch', `search pipeline ${SEARCH_PIPELINE} exists`, Object.keys(got));
+    const lexicalOnly = JSON.parse(JSON.stringify(savedSearchPipeline));
+    for (const proc of lexicalOnly.phase_results_processors ?? []) {
+      const p = proc['normalization-processor'] ?? proc['score-ranker-processor'];
+      if (p) p.combination = { ...(p.combination ?? {}), parameters: { ...(p.combination?.parameters ?? {}), weights: [1.0, 0.0] } };
+    }
+    await osr.os(`/_search/pipeline/${SEARCH_PIPELINE}`, { method: 'PUT', body: lexicalOnly });
+  },
+  restore: async () => { if (savedSearchPipeline) await osr.os(`/_search/pipeline/${SEARCH_PIPELINE}`, { method: 'PUT', body: savedSearchPipeline }); },
 });

@@ -45,7 +45,7 @@ J.assertion('h0.1', { hop: 'Calico is the CNI and its node agent is Ready', reco
   check(!kindnet.items.some((d) => d.metadata.name === 'kindnet'), 'kind', 'kindnet is not installed (disableDefaultCNI)', kindnet.items.map((d) => d.metadata.name));
 });
 
-J.twin('h1', { disables: 'deny-all ingress NetworkPolicy on the target', record: 'TCP probe through Calico' }, {
+J.twin('h1', { disables: 'deny-all ingress NetworkPolicy on the target', record: 'TCP probe through Calico', redReasonMust: /^\[calico\] probe reaches the target; record shows CLOSED$/ }, {
   check: async () => {
     await target();
     const open = await k8s.tcpProbe({ ns: PROBE_NS, labels: { app: 'np-client' }, host: 'np-target', port: 8080 });
