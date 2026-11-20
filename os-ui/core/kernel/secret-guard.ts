@@ -32,8 +32,11 @@
  *     chart generates those per install).
  */
 import { createHash, timingSafeEqual } from 'node:crypto';
+// The variable NAMES live in config.ts, the one kernel module that may name the gateway's admin
+// credential (GLUE-2); this module never reads its value through config.
+import { PRODUCTION_GUARDED_SECRETS } from '@core/kernel/config';
 
-export type GuardedProcess = 'os-ui' | 'os-ui-worker';
+export type GuardedProcess = keyof typeof PRODUCTION_GUARDED_SECRETS;
 
 /** SHA-256 (hex) of every public development default, by the variable that may carry it. */
 export const PUBLIC_DEFAULT_SHA256: Readonly<Record<string, readonly string[]>> = Object.freeze({
@@ -89,9 +92,8 @@ export function isPublicDefault(name: string, value: string): boolean {
 
 /** The variables a process depends on, given its environment. */
 export function guardedSecretsFor(processName: GuardedProcess, env: NodeJS.ProcessEnv): string[] {
-  if (processName === 'os-ui-worker') return ['AGENT_RUNTIME_TOKEN', 'LANGFUSE_PUBLIC_KEY', 'LANGFUSE_SECRET_KEY'];
-  const names = ['LITELLM_MASTER_KEY', 'AGENT_RUNTIME_TOKEN', 'OS_SESSION_SECRET', 'OS_MCP_TOKEN_SECRET', 'LANGFUSE_PUBLIC_KEY', 'LANGFUSE_SECRET_KEY'];
-  if (env.TERMINAL_ENABLED === 'true') names.push('TERMINAL_BROKER_SECRET');
+  const names: string[] = [...PRODUCTION_GUARDED_SECRETS[processName]];
+  if (processName === 'os-ui' && env.TERMINAL_ENABLED === 'true') names.push('TERMINAL_BROKER_SECRET');
   return names;
 }
 
