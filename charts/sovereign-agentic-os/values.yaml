@@ -67,6 +67,19 @@ networkPolicies:
   platformIngress:
     enabled: true
     ingressNamespace: ingress-nginx
+  # The Kubernetes API server's endpoint addresses (CIDRs) for `allow-apiserver-egress`. Empty =
+  # discovered from the `kubernetes` EndpointSlice at install/upgrade (`lookup`); set it for
+  # GitOps renderers, where `lookup` is empty and the rule would otherwise stay un-narrowed.
+  apiserver:
+    cidrs: []
+  # Workloads that still reach public HTTPS directly (their clients do not use the egress
+  # proxy yet): os-ui and its worker (connector APIs and OAuth from Node fetch) and the Dagster
+  # code location and run pods (dlt sources). Everything else goes through the egress proxy.
+  directHttpsEgress:
+    workloads:
+      - { name: os-ui, matchLabels: { app.kubernetes.io/component: os-ui } }
+      - { name: os-ui-worker, matchLabels: { app.kubernetes.io/component: os-ui-worker } }
+      - { name: dagster-user-code, matchLabels: { component: user-deployments } }
 
 # Backups (templates/extensions/backup/).
 backup:
@@ -743,6 +756,14 @@ litellm:
     #       keys, or every span is typed GENERATION (the gate enforces it).
     # Spell the value exactly; an invalid one disables every OTel v2 callback. Never an OTel sampler.
     LITELLM_OTEL_LANGFUSE_SPAN_SCOPE: "llm_only"
+    # Model providers are reached through the egress proxy (its allowlist names each provider
+    # host); in-cluster services are not proxied.
+    HTTPS_PROXY: "http://egress-proxy:3128"
+    HTTP_PROXY: "http://egress-proxy:3128"
+    https_proxy: "http://egress-proxy:3128"
+    http_proxy: "http://egress-proxy:3128"
+    NO_PROXY: "localhost,127.0.0.1,.svc,.cluster.local,agentic-os-langfuse-web,query-tool,mock-model,os-ui,opa,pg-rw,valkey"
+    no_proxy: "localhost,127.0.0.1,.svc,.cluster.local,agentic-os-langfuse-web,query-tool,mock-model,os-ui,opa,pg-rw,valkey"
   # A3: the Valkey password for the response cache (`cache_params.password` above reads it
   # as os.environ/REDIS_PASSWORD). Same Secret Langfuse uses (local: chart-created;
   # STACKIT: external) — one Valkey credential, not two.
@@ -1452,6 +1473,8 @@ egressProxy:
     - accounts.google.com      # Google OAuth consent/authorize
     - graph.microsoft.com      # OneDrive via Microsoft Graph
     - login.microsoftonline.com # Microsoft OAuth authorize + token
+    # Model provider the gateway calls (LiteLLM's HTTPS_PROXY): STACKIT AI Model Serving.
+    - model-serving.eu01.onstackit.cloud
   resources:
     requests: { cpu: 25m, memory: 32Mi }
     limits: { cpu: 250m, memory: 96Mi }
