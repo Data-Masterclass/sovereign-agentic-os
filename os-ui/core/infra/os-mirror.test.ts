@@ -417,3 +417,44 @@ test('a store hydrated below its index size is NOT silent: logged, recorded, and
     console.error = origError;
   }
 });
+
+test('a FAILED hydration search (503 while shards initialise) is "not readable yet" (null), never an empty index', async () => {
+  const orig = globalThis.fetch;
+  let searchStatus = 503;
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const path = String(input).replace(/^https?:\/\/[^/]+/, '');
+    const json = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status, headers: { 'content-type': 'application/json' } });
+    if (path.endsWith('/_count')) return json({ count: 2 });
+    if (path.includes('/_search')) {
+      if (searchStatus !== 200) return json({ error: 'search_phase_execution_exception' }, searchStatus);
+      return json({ _shards: { failed: 0 }, hits: { total: { value: 1 }, hits: [{ _source: { id: 'a' } }] } });
+    }
+    return json({});
+  }) as typeof fetch;
+  const m = osMirror({ index: 'os-mirror-test-503', createBody: {} });
+  m.__reset();
+  try {
+    assert.equal(await m.hydrate(), null, '503 → null, so the store retries instead of caching zero records');
+    searchStatus = 200;
+    assert.deepEqual(await m.hydrate(), [{ id: 'a' }], 'once readable, the real records load');
+  } finally {
+    globalThis.fetch = orig;
+  }
+});
+
+test('a hydration search with failed shards is incomplete → null', async () => {
+  const orig = globalThis.fetch;
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const path = String(input).replace(/^https?:\/\/[^/]+/, '');
+    const json = (b: unknown) => new Response(JSON.stringify(b), { status: 200, headers: { 'content-type': 'application/json' } });
+    if (path.endsWith('/_count')) return json({ count: 5 });
+    return json({ _shards: { failed: 1 }, hits: { total: { value: 0 }, hits: [] } });
+  }) as typeof fetch;
+  const m = osMirror({ index: 'os-mirror-test-shards', createBody: {} });
+  m.__reset();
+  try {
+    assert.equal(await m.hydrate(), null);
+  } finally {
+    globalThis.fetch = orig;
+  }
+});

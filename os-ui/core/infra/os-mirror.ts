@@ -247,15 +247,30 @@ export function osMirror(opts: {
       method: 'POST',
       body: JSON.stringify({ query: { match_all: {} }, track_total_hits: true }),
     });
-    if (!res || !res.ok) return [];
-    try {
-      const data = (await res.json()) as { hits?: { total?: { value?: number } | number; hits?: { _source?: unknown }[] } };
-      const docs = (data?.hits?.hits ?? []).map((h) => h._source).filter((d) => d !== undefined && d !== null);
-      noteHydration(index, docs.length, totalOf(data?.hits?.total));
-      return docs;
-    } catch {
-      return [];
+    // A FAILED search (no answer, a non-2xx such as 503 while shards initialise, unreadable JSON,
+    // failed shards or a timeout) is "mirror not readable yet" → null, so the store stays
+    // un-hydrated and retries. It used to answer [] — indistinguishable from an empty index — and a
+    // store then cached "hydrated with zero records" for the life of the pod (0.9.21 boot: the
+    // dataset registry empty, 0 governed tables restored to OPA).
+    if (!res) return null;
+    if (!res.ok) {
+      console.error(`[os-mirror] ${index}: hydration search failed (HTTP ${res.status}) — not treated as an empty index; the store will retry`);
+      return null;
     }
+    let data: { timed_out?: boolean; _shards?: { failed?: number }; hits?: { total?: { value?: number } | number; hits?: { _source?: unknown }[] } };
+    try {
+      data = (await res.json()) as typeof data;
+    } catch (err) {
+      console.error(`[os-mirror] ${index}: hydration answer unreadable (${String(err)}) — the store will retry`);
+      return null;
+    }
+    if (data?.timed_out || (data?._shards?.failed ?? 0) > 0) {
+      console.error(`[os-mirror] ${index}: hydration search incomplete (timed_out=${Boolean(data?.timed_out)}, failed shards=${data?._shards?.failed ?? 0}) — the store will retry`);
+      return null;
+    }
+    const docs = (data?.hits?.hits ?? []).map((h) => h._source).filter((d) => d !== undefined && d !== null);
+    noteHydration(index, docs.length, totalOf(data?.hits?.total));
+    return docs;
   }
 
   async function list(size = 1000): Promise<{ docs: unknown[]; complete: boolean } | null> {
