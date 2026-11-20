@@ -39,7 +39,7 @@ cat > "$BIN/helm" <<STUB
 #!/usr/bin/env bash
 case "\$*" in
   *" get values "*)   cat "\$FAKE_LIVE_VALUES" ;;
-  *" get manifest "*) ;;
+  *" get manifest "*) if [ -n "\${FAKE_LIVE_MANIFEST:-}" ]; then cat "\$FAKE_LIVE_MANIFEST"; fi ;;
   *" history "*)      echo "[]" ;;
   *" upgrade "*)      echo "helm upgrade" >> "\$FAKE_LOG" ;;
   *)                  exec "$REAL_HELM" "\$@" ;;
@@ -62,7 +62,7 @@ derive_and_render() { # <tree> — sets out, rc, rendered
   : > "$FAKE_LOG"
   local work; work=$(mktemp -d "$TMP/work.XXXX")
   out=$(cd "$1" && PATH="$BIN:$PATH" DEPLOY_REGISTRY_PROBE="$BIN/probe" IMAGE_REPO=registry.example.invalid/sovereign-os \
-        WORK="$work" bash scripts/deploy.sh --from-registry 9.9.9-test 2>&1); rc=$?
+        DEPLOY_MAPPED_COLUMNS_PROBE="$TMP/mapped-probe" WORK="$work" bash scripts/deploy.sh --from-registry 9.9.9-test ${DEPLOY_EXTRA:-} 2>&1); rc=$?
   rendered=$("$REAL_HELM" template agentic-os "$1/charts/sovereign-agentic-os" -n agentic-os --skip-schema-validation \
              -f "$work/release-values.yaml" 2>"$TMP/template.err") \
     || { echo "helm template failed:"; sed 's/^/     | /' "$TMP/template.err"; }
@@ -108,5 +108,41 @@ open(p, "w").write(s)
 PY
 derive_and_render "$TMP/t2"
 check "the live repository is carried with the chart's tag and digest" "registry.example.invalid/hand-built/data-runner:$T@$D" "$(runner_image)"
+
+echo "== re-pin guard: a legacy runner pinned over a column-name runner while mapped names exist"
+cat > "$TMP/mapped-probe" <<'STUB'
+#!/usr/bin/env bash
+echo "probe $*" >> "$FAKE_LOG.probe"
+[ "$FAKE_MAPPED" = fail ] && exit 1
+echo "$FAKE_MAPPED"
+STUB
+chmod +x "$TMP/mapped-probe"
+"$REAL_HELM" template agentic-os charts/sovereign-agentic-os -n agentic-os --skip-schema-validation \
+  --set dataRunner.image.digest=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+  --show-only templates/extensions/lakehouse/data-runner.yaml > "$TMP/live-new-runner.yaml" 2>/dev/null
+check "a non-legacy digest renders applies-column-names true" 'applies-column-names: "true"' "$(cat "$TMP/live-new-runner.yaml")"
+check "the chart's legacy pin renders false" 'applies-column-names: "false"' "$("$REAL_HELM" template x charts/sovereign-agentic-os --skip-schema-validation --show-only templates/extensions/lakehouse/data-runner.yaml 2>/dev/null)"
+tree "$TMP/t3"
+export FAKE_LIVE_MANIFEST=$TMP/live-new-runner.yaml
+FAKE_MAPPED=3 derive_and_render "$TMP/t3"
+check "refused while 3 datasets store mapped names" "RUNNER_DOWNGRADE_REFUSED" "$out"
+absent "...before any helm upgrade" "helm upgrade" "$(cat "$FAKE_LOG")"
+FAKE_MAPPED=fail derive_and_render "$TMP/t3"
+check "refused when the count cannot be read" "unknown dataset(s) store mapped column names" "$out"
+FAKE_MAPPED=3 DEPLOY_EXTRA=--allow-runner-downgrade derive_and_render "$TMP/t3"
+check "the override lets it through" "helm upgrade" "$(cat "$FAKE_LOG")"
+check "...with a warning" "WARNING: --allow-runner-downgrade: 3 dataset(s)" "$out"
+echo "== negative twins"
+FAKE_MAPPED=0 derive_and_render "$TMP/t3"
+check "no mapped dataset: allowed" "helm upgrade" "$(cat "$FAKE_LOG")"
+: > "$FAKE_LOG.probe"
+unset FAKE_LIVE_MANIFEST
+FAKE_MAPPED=3 derive_and_render "$TMP/t3"
+check "the live runner is legacy too: allowed" "helm upgrade" "$(cat "$FAKE_LOG")"
+[ ! -s "$FAKE_LOG.probe" ] && ok "...and the store is not probed" || bad "...and the store is not probed" "$(cat "$FAKE_LOG.probe")"
+echo 'kind: Deployment
+metadata: {name: data-runner' > "$TMP/broken.yaml"
+FAKE_LIVE_MANIFEST=$TMP/broken.yaml FAKE_MAPPED=0 derive_and_render "$TMP/t3"
+check "fail closed: an unparsable live manifest refuses" "RUNNER_CAPABILITY_UNKNOWN" "$out"
 
 finish deploy-data-runner-image
