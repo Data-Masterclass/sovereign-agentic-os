@@ -55,14 +55,14 @@ export class DashboardFileError extends Error {
   }
 }
 
-function bad(message: string, file?: string): never {
+export function bad(message: string, file?: string): never {
   throw new DashboardFileError(message, file);
 }
 
 /** Keys that would be an embedded query. The format has none; a hand edit may not add one. */
-const FORBIDDEN_KEYS = ['sql', 'query', 'rawsql', 'expression', 'adhoc', 'subquery', 'datasource'];
+export const FORBIDDEN_KEYS = ['sql', 'query', 'rawsql', 'expression', 'adhoc', 'subquery', 'datasource'];
 
-function assertNoQueryKeys(node: unknown, where: string, file?: string): void {
+export function assertNoQueryKeys(node: unknown, where: string, file?: string): void {
   if (Array.isArray(node)) {
     node.forEach((n, i) => assertNoQueryKeys(n, `${where}[${i}]`, file));
     return;
@@ -82,18 +82,18 @@ function assertNoQueryKeys(node: unknown, where: string, file?: string): void {
   }
 }
 
-function str(v: unknown, where: string, file?: string): string {
+export function str(v: unknown, where: string, file?: string): string {
   if (typeof v !== 'string' || v.trim() === '') bad(`\`${where}\` must be a non-empty string`, file);
   return (v as string).trim();
 }
 
-function strArr(v: unknown, where: string, file?: string): string[] {
+export function strArr(v: unknown, where: string, file?: string): string[] {
   if (v === undefined || v === null) return [];
   if (!Array.isArray(v)) bad(`\`${where}\` must be a list`, file);
   return (v as unknown[]).map((x, i) => str(x, `${where}[${i}]`, file));
 }
 
-function filters(v: unknown, where: string, file?: string): PanelFilter[] {
+export function filters(v: unknown, where: string, file?: string): PanelFilter[] {
   if (v === undefined || v === null) return [];
   if (!Array.isArray(v)) bad(`\`${where}\` must be a list`, file);
   return (v as unknown[]).map((raw, i) => {
@@ -116,7 +116,7 @@ function filters(v: unknown, where: string, file?: string): PanelFilter[] {
   });
 }
 
-function gridPos(v: unknown, where: string, file?: string): SnapshotPanel['gridPos'] {
+export function gridPos(v: unknown, where: string, file?: string): SnapshotPanel['gridPos'] {
   if (v === undefined || v === null) return undefined;
   if (typeof v !== 'object') bad(`\`${where}\` must be a mapping of x/y/w/h`, file);
   const g = v as Record<string, unknown>;
