@@ -86,8 +86,9 @@ class GenerateThenParse(unittest.TestCase):
 
     def test_readme_names_the_dbt_and_dsi_versions_this_image_carries(self):
         readme = load(os.path.join(SRC, "os-ui/tabs/data/lib/dbt/fixtures/metrics-semantic-layer.golden.json"))["README.md"]
-        dsi = importlib.metadata.version("dbt-semantic-interfaces")
-        self.assertIn(f"dbt-semantic-interfaces {dsi}`", readme)
+        # dbt-core 1.12 reads the semantic layer through MetricFlow's own semantic interfaces.
+        mf = importlib.metadata.version("metricflow")
+        self.assertIn(f"`metricflow {mf}` (its `metricflow_semantic_interfaces`)", readme)
         self.assertIn(f"(= dbt-core {DBT_CORE})", readme)
 
     def test_pre_fix_duplicate_rule_is_refused_with_dbts_text(self):
