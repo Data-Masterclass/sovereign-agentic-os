@@ -1,0 +1,121 @@
+# Lakehouse harness (WP-13, design 06 §7.1): the chart's Trino, Polaris on Postgres 17, the
+# chart's OPA and the chart's MinIO, wired with the chart's own service names (`opa`, `polaris`,
+# `pg-rw`, `minio`), so the rendered config is used unchanged.
+#
+#   bash tests/lakehouse/up.sh       # render the chart, generate throwaway keys, start, wait
+#   node --test tests/lakehouse/*.int.test.mjs
+#   bash tests/lakehouse/down.sh
+#
+# Every image, file, env and command comes from tests/lakehouse/render.py (the rendered chart)
+# through ${LH_WORK} and ${LH_*_IMAGE}; nothing is pinned here. (SeaweedFS cannot stand in: it has
+# no STS, and Polaris 1.1 vends write credentials through STS.) Keycloak joins this file with T7, once the chart
+# pins a Keycloak image (design 00); there is nothing to pin it to yet.
+name: soa-lakehouse
+
+x-ro: &ro
+  read_only: true
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: [ALL]
+
+services:
+  minio:
+    image: ${LH_MINIO_IMAGE}
+    command: ${LH_MINIO_ARGS}
+    env_file: ["${LH_WORK}/env/minio.env"]
+    networks: [lh]
+    tmpfs: [/data]
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 3s
+      retries: 60
+
+  bucket-init:
+    image: ${LH_AWSCLI_IMAGE}
+    entrypoint: ["/bin/sh", "/harness/bucket-init.sh"]
+    env_file: ["${LH_WORK}/env/bucket-init.env"]
+    volumes: ["${LH_WORK}/sh:/harness:ro"]
+    networks: [lh]
+    depends_on: [minio]
+
+  pg-rw:
+    image: ${LH_PG_IMAGE}
+    environment:
+      POSTGRES_DB: polaris
+      POSTGRES_USER: ${LH_PG_USER}
+      POSTGRES_PASSWORD: ${LH_PG_PASSWORD}
+    networks: [lh]
+    tmpfs: [/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${LH_PG_USER} -d polaris"]
+      interval: 2s
+      retries: 60
+
+  polaris-bootstrap-check:
+    image: ${LH_PG_IMAGE}
+    entrypoint: ["/bin/sh", "/harness/polaris-bootstrap-check.sh"]
+    env_file: ["${LH_WORK}/env/polaris-bootstrap-check.env"]
+    volumes: ["${LH_WORK}/sh:/harness:ro", "bootstrap-state:/bootstrap-state"]
+    networks: [lh]
+    depends_on: { pg-rw: { condition: service_healthy } }
+
+  polaris-bootstrap:
+    image: ${LH_POLARIS_ADMIN_IMAGE}
+    entrypoint: ["/bin/sh", "/harness/polaris-bootstrap.sh"]
+    env_file: ["${LH_WORK}/env/polaris-bootstrap.env"]
+    volumes: ["${LH_WORK}/sh:/harness:ro", "bootstrap-state:/bootstrap-state"]
+    networks: [lh]
+    depends_on: { polaris-bootstrap-check: { condition: service_completed_successfully } }
+
+  polaris:
+    image: ${LH_POLARIS_IMAGE}
+    env_file: ["${LH_WORK}/env/polaris.env"]
+    networks: [lh]
+    depends_on:
+      polaris-bootstrap: { condition: service_completed_successfully }
+      bucket-init: { condition: service_completed_successfully }
+    healthcheck:
+      # The chart's probe path (/q/health/ready on the mgmt port), through bash's /dev/tcp
+      # because the image ships no curl.
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8182 && printf 'GET /q/health/ready HTTP/1.0\\r\\n\\r\\n' >&3 && grep -q '200 OK' <&3"]
+      interval: 3s
+      retries: 80
+
+  catalog-init:
+    image: ${LH_CURL_IMAGE}
+    entrypoint: ["/bin/sh", "/harness/catalog-init.sh"]
+    env_file: ["${LH_WORK}/env/catalog-init.env"]
+    volumes: ["${LH_WORK}/sh:/harness:ro"]
+    networks: [lh]
+    depends_on: { polaris: { condition: service_healthy } }
+
+  opa:
+    <<: *ro
+    image: ${LH_OPA_IMAGE}
+    command: ${LH_OPA_ARGS}
+    user: "1000"
+    volumes: ["${LH_WORK}/opa/policies:/policies:ro", "${LH_WORK}/opa/config:/config:ro"]
+    networks: [lh]
+
+  trino:
+    <<: *ro
+    image: ${LH_TRINO_IMAGE}
+    user: "1000"
+    env_file: ["${LH_WORK}/env/trino.env"]
+    volumes: ["${LH_WORK}/trino/etc:/etc/trino:ro"]
+    tmpfs: ["/data/trino:uid=1000", "/tmp:uid=1000,exec"]
+    ports: ["127.0.0.1:${LH_TRINO_PORT:-18080}:8080"]
+    networks: [lh]
+    depends_on:
+      catalog-init: { condition: service_completed_successfully }
+      opa: { condition: service_started }
+    healthcheck:
+      # The chart's probe (/v1/info) and Trino's own "starting" flag.
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/v1/info | grep -q '\"starting\":false'"]
+      interval: 5s
+      retries: 60
+
+volumes:
+  bootstrap-state: {}
+
+networks:
+  lh: {}

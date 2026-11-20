@@ -229,6 +229,41 @@ jobs:
           docker logs --tail 200 soa-it-opensearch || true
           docker logs --tail 50 soa-it-proxy || true
 
+  # WP-13: the chart's Trino, Polaris (on Postgres 17), OPA and an S3 store, every file and image
+  # from the rendered chart (tests/lakehouse/render.py). Resource groups and session defaults
+  # (limits), the npm trino-client headers (client), cross-namespace rename + tag DDL (iceberg).
+  test-lakehouse:
+    name: test-lakehouse
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Setup Node.js
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: 22
+      - name: Setup Helm
+        uses: azure/setup-helm@fe7b79cd5ee1e45176fcad797de68ecaf3ca4814 # v4.2.0
+        with:
+          version: v3.16.3
+      - name: Chart dependencies + harness client
+        run: |
+          pip install "pyyaml>=6,<7"
+          helm dependency build charts/sovereign-agentic-os || helm dependency update charts/sovereign-agentic-os
+          npm --prefix tests/lakehouse ci
+      - name: Start the lakehouse (chart images and config)
+        env:
+          LH_WORK_PARENT: ${{ runner.temp }}
+        run: bash tests/lakehouse/up.sh
+      - name: limits + client + iceberg (real Trino)
+        run: node --test --test-concurrency=1 tests/lakehouse/limits.int.test.mjs tests/lakehouse/client.int.test.mjs tests/lakehouse/iceberg.int.test.mjs
+      - name: Logs (on failure)
+        if: failure()
+        run: docker compose -p soa-lakehouse logs --tail 120 trino opa polaris catalog-init polaris-bootstrap-check || true
+      - name: Stop
+        if: always()
+        run: bash tests/lakehouse/down.sh || true
+
   # WP-31: one Langfuse writer, proven on Langfuse's own API. Langfuse 3.194.1 (the live server)
   # from its documented self-host compose, plus the production LiteLLM image and callback
   # settings; the engine runs one traced agent run through the real gateway. The negative twin
@@ -337,7 +372,7 @@ jobs:
     name: build
     runs-on: ubuntu-latest
     if: ${{ always() }}
-    needs: [test-ui, test-langgraph-pg, test-opensearch, tracing-e2e, validate-generated, test-python, dagster-image, git-http-image, test-opa, test-postgres, helm-lint, secret-scan]
+    needs: [test-ui, test-langgraph-pg, test-opensearch, test-lakehouse, tracing-e2e, validate-generated, test-python, dagster-image, git-http-image, test-opa, test-postgres, helm-lint, secret-scan]
     steps:
       - name: Every needed job succeeded (failed, cancelled or skipped fails the build)
         env:
