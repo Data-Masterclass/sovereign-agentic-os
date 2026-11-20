@@ -20,8 +20,11 @@ import { backupInventory, markerName, notifyCommitted, repoKeyFor } from '@core/
 
 const author = { name: 'A', email: 'a@example.test' };
 const tick = () => new Promise((r) => setImmediate(r));
-const settle = async () => {
-  for (let i = 0; i < 20; i++) await tick();
+/** Wait (bounded, 5 s) until `done()` holds: the marker is written by async fs calls off the commit path. */
+const until = async (done: () => boolean) => {
+  const end = Date.now() + 5000;
+  while (!done() && Date.now() < end) await new Promise((r) => setTimeout(r, 10));
+  await tick();
 };
 
 test('a commit queues its repository AFTER it returns (never awaited), coalesced to one marker', async () => {
@@ -33,10 +36,10 @@ test('a commit queues its repository AFTER it returns (never awaited), coalesced
     assert.equal(r.changed, true);
     // The commit has returned; the marker is written on a LATER turn of the event loop.
     assert.equal(existsSync(join(queue, 'sales')), false, 'the commit must not wait for the queue write');
-    await settle();
+    await until(() => existsSync(join(queue, 'sales')));
     assert.equal(readFileSync(join(queue, 'sales'), 'utf8'), 'sales');
     await commitTree('sales', new Map([['a.txt', '2']]), { reposDir, author, message: 'two' });
-    await settle();
+    await new Promise((r) => setTimeout(r, 200));
     assert.deepEqual(execFileSync('ls', [queue], { encoding: 'utf8' }).trim().split('\n'), ['sales']);
   } finally {
     delete process.env.GIT_BACKUP_QUEUE_DIR;
@@ -54,7 +57,7 @@ test('NEGATIVE: an unwritable queue never fails or blocks the commit', async () 
   try {
     const r = await commitTree('sales', new Map([['a.txt', '1']]), { reposDir, author, message: 'one' });
     assert.equal(r.changed, true);
-    await settle();
+    await until(() => errors.some((e) => e.includes('could not queue')));
     assert.ok(errors.some((e) => e.includes('could not queue')), 'the failure is logged, not raised');
   } finally {
     console.error = orig;
@@ -68,7 +71,7 @@ test('a legacy alias (symlink to the canonical repo) queues the CANONICAL key on
   await commitTree('domain-sales', new Map([['a.txt', '1']]), { reposDir, author, message: 'one' });
   symlinkSync(join(reposDir, 'domain-sales.git'), join(reposDir, 'sales.git'));
   assert.equal(notifyCommitted(join(reposDir, 'sales.git'), { reposDir, queueDir: queue }), true);
-  await settle();
+  await until(() => existsSync(join(queue, 'domain-sales')));
   assert.deepEqual(readdirSync(queue), ['domain-sales']);
   const inv = await backupInventory(reposDir);
   assert.deepEqual(inv.repos.map((r) => r.key), ['domain-sales'], 'the alias is not a second repository');
