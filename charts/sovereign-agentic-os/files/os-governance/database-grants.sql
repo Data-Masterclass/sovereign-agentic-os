@@ -9,7 +9,7 @@
 --   - PUBLIC loses CONNECT and TEMPORARY. os_governance_app and the queue role may CONNECT.
 --   - Nobody but the owner may CREATE in the database: the runtime login can therefore never plant
 --     a schema (and with it a function that shadows a built-in). The `pgboss` schema is created
---     for the queue role by step 4 (schemas.sql), so pg-boss needs no database-level CREATE either.
+--     by the owner's migrations, so pg-boss needs no database-level CREATE either.
 DO $grants$
 DECLARE
   db           text := pg_catalog.current_setting('os_bootstrap.database');

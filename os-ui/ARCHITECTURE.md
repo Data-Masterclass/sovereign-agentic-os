@@ -787,7 +787,11 @@ and neither are model budgets (LiteLLM owns them; the OS reads its admin API).
 - **A separate database, four roles.** `os_governance` (database) is owned by a NOSUPERUSER,
   NOCREATEROLE role that only runs migrations. The OS runs as a different login, a member of
   `os_governance_app`, that owns nothing and may CREATE nothing in the database. pg-boss runs as a
-  third login that owns only schema `pgboss`. Only a superuser can create those roles, so the
+  third login (group `os_governance_jobs`) that also owns nothing: the OWNER owns schema `pgboss`
+  and every object in it, because pg-boss's DDL (`pg-boss migrate`) runs only in the migration
+  step, and every runtime pg-boss starts with `migrate: false`. Neither OS login has TRIGGER,
+  TRUNCATE or CREATE on `pgboss`, so neither can attach code that would run inside a governance
+  transaction. Only a superuser can create those roles, so the
   chart's `os-governance-bootstrap` hook (`postgres.governance.enabled`, off by default) does
   exactly that, from `charts/sovereign-agentic-os/files/os-governance/*.sql`, with a DEDICATED
   admin Secret (`adminSecretName`); it never runs the migrations. The template refuses to render
@@ -813,8 +817,9 @@ and neither are model budgets (LiteLLM owns them; the OS reads its admin API).
   may only insert and read `audit_events`, and triggers reject any rewrite for every role. Against
   the owner or a superuser the chain needs an external anchor of `head_hash` + `checked` (WP-08,
   10 "Amendment from WP-07 verification").
-- **pg-boss is the one queue**, in schema `pgboss` of the same database, migrated by its own
-  `start()` as the queue login (`createSchema: false`); the runtime gets only DML there. The outbox is `send(…, { db: bossDb(client) })` inside the
+- **pg-boss is the one queue**, in schema `pgboss` of the same database, migrated only by its own
+  CLI as the owner (`installQueueSchema` in migrate.ts); runtime instances have DML only. A
+  partitioned queue (`partition: true`) is DDL, so it can only be created in the migration step. The outbox is `send(…, { db: bossDb(client) })` inside the
   caller's `withTransaction`; `bossDb` returns `pg`'s result as is (an array for several
   statements), as pg-boss documents. Workers, maintenance and cron run only in `os-ui-worker`
   (`registerWorker`, `@core/kernel/process-role`); the web process only sends.

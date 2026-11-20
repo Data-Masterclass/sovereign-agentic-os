@@ -16,6 +16,9 @@
  *          passing because nothing renders at all);
  *       3. enabled without adminSecretName, or with postgres.secretName / the Langfuse Secret
  *                                                             → the render FAILS;
+ *       3b. the admin, owner, runtime or queue Secret named like ANY other service's credential
+ *          Secret (postgres.secretName, every extraDatabases[].secretName), or two of them equal
+ *                                                             → the render FAILS, at render time;
  *       4. database / owner / runtime / queue name equal to langfuse, postgres, litellm, dagster,
  *          polaris or agent_runs                              → the render FAILS, for every field;
  *       5. two of owner / runtime / queue equal               → the render FAILS.
@@ -94,6 +97,21 @@ for (const [label, sets, why] of [
   else if (!why.test(r.out)) problems.push(`${label}: failed for the wrong reason:\n${r.out.slice(-400)}`);
 }
 
+// 3b. no governance Secret may be another service's credential Secret, by name
+const FOREIGN_SECRETS = ['postgres-langfuse-credentials', 'postgres-litellm-credentials', 'postgres-dagster-credentials', 'postgres-polaris-credentials', 'postgres-agent-runs-credentials'];
+const SECRET_FIELDS = ['adminSecretName', 'owner.secretName', 'runtime.secretName', 'queue.secretName'];
+for (const field of SECRET_FIELDS) {
+  for (const foreign of FOREIGN_SECRETS) {
+    const r = render([LOCAL], [...ON, `postgres.governance.${field}=${foreign}`]);
+    if (r.ok) problems.push(`postgres.governance.${field}=${foreign}: rendered, must FAIL`);
+    else if (!/another service's credential/.test(r.out)) problems.push(`postgres.governance.${field}=${foreign}: failed for the wrong reason:\n${r.out.slice(-400)}`);
+  }
+}
+{
+  const r = render([LOCAL], [...ON, 'postgres.governance.runtime.secretName=postgres-os-governance-owner-credentials']);
+  if (r.ok || !/four different Secrets/.test(r.out)) problems.push('owner Secret = runtime Secret: must FAIL with "four different Secrets"');
+}
+
 // 4. no field may name another service's database or role
 const FIELDS = ['database', 'owner.username', 'runtime.username', 'queue.username'];
 for (const field of FIELDS) {
@@ -114,4 +132,4 @@ if (problems.length) {
   console.error(`${NAME}: FAIL\n- ${problems.join('\n- ')}`);
   process.exit(1);
 }
-console.log(`${NAME}: ok — off by default on both profiles; when enabled it connects only with the dedicated admin Secret; the Langfuse Secret, a missing admin Secret, any of ${FIELDS.length} names equal to another service's database or role, and two equal roles all fail the render`);
+console.log(`${NAME}: ok — off by default on both profiles; when enabled it connects only with the dedicated admin Secret; the Langfuse Secret, a missing admin Secret, any of ${SECRET_FIELDS.length} Secrets named like another service's credential, shared Secrets, any of ${FIELDS.length} names equal to another service's database or role, and two equal roles all fail the render`);
