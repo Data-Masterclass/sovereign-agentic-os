@@ -12,7 +12,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync, readdirSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { commitTree, repoPath } from '@core/infra/git-store';
@@ -60,6 +60,18 @@ test('NEGATIVE: an unwritable queue never fails or blocks the commit', async () 
     console.error = orig;
     delete process.env.GIT_BACKUP_QUEUE_DIR;
   }
+});
+
+test('a legacy alias (symlink to the canonical repo) queues the CANONICAL key only', async () => {
+  const reposDir = mkdtempSync(join(tmpdir(), 'wp56-repos-'));
+  const queue = join(mkdtempSync(join(tmpdir(), 'wp56-q-')), 'queue');
+  await commitTree('domain-sales', new Map([['a.txt', '1']]), { reposDir, author, message: 'one' });
+  symlinkSync(join(reposDir, 'domain-sales.git'), join(reposDir, 'sales.git'));
+  assert.equal(notifyCommitted(join(reposDir, 'sales.git'), { reposDir, queueDir: queue }), true);
+  await settle();
+  assert.deepEqual(readdirSync(queue), ['domain-sales']);
+  const inv = await backupInventory(reposDir);
+  assert.deepEqual(inv.repos.map((r) => r.key), ['domain-sales'], 'the alias is not a second repository');
 });
 
 test('backups off (no queue dir) ⇒ nothing is scheduled; keys outside the root are refused', () => {

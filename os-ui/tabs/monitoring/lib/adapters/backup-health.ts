@@ -36,12 +36,13 @@ async function readDrills(name: string): Promise<{ data: Record<string, string>;
   return { data: ((body as { data?: Record<string, string> }).data ?? {}) };
 }
 
-function parseReport(raw: string | undefined): DrillReport | null {
-  if (!raw) return null;
+/** A report that does not parse is a read error (red), never "no report yet". */
+function parseReport(raw: string | undefined): { report: DrillReport | null; error?: string } {
+  if (!raw) return { report: null };
   try {
-    return JSON.parse(raw) as DrillReport;
-  } catch {
-    return null;
+    return { report: JSON.parse(raw) as DrillReport };
+  } catch (e) {
+    return { report: null, error: `the stored report is not JSON (${e instanceof Error ? e.message : String(e)})` };
   }
 }
 
@@ -53,9 +54,11 @@ export async function collectBackups(now = new Date()): Promise<HealthItem[]> {
   const veleroOn = on(env.VELERO_DRILL_ENABLED);
   const cm = env.RESTORE_DRILL_STATUS_CONFIGMAP;
   const drillsRead = cm && (weeklyOn || veleroOn) ? await readDrills(cm) : { data: {} as Record<string, string> };
+  const weekly = parseReport(drillsRead.data['weekly.json']);
+  const velero = parseReport(drillsRead.data['velero.json']);
   const drills: DrillInput[] = [
-    { kind: 'weekly', enabled: weeklyOn, maxAgeDays: 8, report: parseReport(drillsRead.data['weekly.json']), readError: weeklyOn ? drillsRead.error : undefined },
-    { kind: 'velero', enabled: veleroOn, maxAgeDays: 32, report: parseReport(drillsRead.data['velero.json']), readError: veleroOn ? drillsRead.error : undefined },
+    { kind: 'weekly', enabled: weeklyOn, maxAgeDays: 8, report: weekly.report, readError: weeklyOn ? drillsRead.error ?? weekly.error : undefined },
+    { kind: 'velero', enabled: veleroOn, maxAgeDays: 32, report: velero.report, readError: veleroOn ? drillsRead.error ?? velero.error : undefined },
   ];
   return assessBackups({
     bundlesEnabled: Boolean(statusFile),

@@ -5,8 +5,8 @@
 # The `git-backup` sidecar on the os-ui pod (WP-56). It mounts the repositories READ-ONLY and
 # never takes part in a commit: os-ui drops a marker into the shared queue directory after a
 # successful commit or push (core/infra/git-backup.ts) and returns at once; this loop picks the
-# marker up and bundles that repository. INTERIM for the pg-boss outbox (WP-07/WP-08): the queue
-# is a directory of marker files, coalesced per repository.
+# marker up and bundles that repository. INTERIM for the pg-boss outbox (WP-07's adapter is
+# merged, but no process runs a queue yet — WP-08): a directory of marker files, one per repo.
 #
 # Three duties, one process (sequential, so one repository is never bundled twice at once):
 #   - every $POLL_SECONDS:        bundle each queued repository           (git-bundle.sh)
