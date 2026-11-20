@@ -46,6 +46,8 @@
 #   REPO_SYNC_CHECKOUT     default /repos-checkout (emptyDir shared with the user-code container).
 #   REPO_SYNC_INTERVAL     seconds between passes (default 15).
 #   REPO_SYNC_STATUS_PORT  port for the status.json server (default 8089).
+#   REPO_SYNC_PARSE_TIMEOUT  seconds before one `dbt parse` is abandoned (default 600; a timeout is
+#                          retried, never cached as a refusal).
 #   POD_IP                 downward-API `status.podIP` (chart-set). The status server binds THIS
 #                          address, not 0.0.0.0, so it is reachable only through the pod's own IP.
 #                          Unset => 127.0.0.1 (inside the pod only) — fail-CLOSED, review B2-review-L5.
@@ -247,8 +249,13 @@ PY
 # `dbt parse` with a scrubbed environment: ONE allowlist, owned by os_projects.py, shared with the
 # run-pod bootstrap (`ensure_checkout`) so the two can never drift. Review B2-review-H3.
 APP_DIR="${APP_DIR:-$(dirname "$0")}"
+# Exit status: 0 parsed (manifest written) · 1 dbt itself refused the commit · 75 did not finish
+# (timeout, killed e.g. by OOM, dbt missing, or no manifest) — only 1 is ever cached.
 parse_project() { # worktree
-  python3 "$APP_DIR/os_projects.py" --parse "$1" 2>&1 && [ -f "$1/target/manifest.json" ]
+  python3 "$APP_DIR/os_projects.py" --parse "$1" 2>&1
+  rc=$?
+  if [ "$rc" = 0 ] && [ ! -f "$1/target/manifest.json" ]; then echo "dbt parse exited 0 but wrote no manifest"; return 75; fi
+  case "$rc" in 0|1) return "$rc" ;; *) return 75 ;; esac
 }
 
 sync_domain() { # domain  (sets REPOINTED=1 when `current` moved)
@@ -279,7 +286,9 @@ sync_domain() { # domain  (sets REPOINTED=1 when `current` moved)
     git -C "$mirror" worktree add --detach --quiet "$wt" "$head" 2>/dev/null || { write_status "$d" "$head" "$current" "$current" "worktree add failed"; return 0; }
   fi
   log "$d: parsing $head"
-  if out="$(parse_project "$wt")"; then
+  prc=0
+  out="$(parse_project "$wt")" || prc=$?
+  if [ "$prc" = 0 ]; then
     ln -sfn "$head" "$CHECKOUT/$d/current.tmp" && mv -T "$CHECKOUT/$d/current.tmp" "$CHECKOUT/$d/current"
     write_status "$d" "$head" "$head" "$head" "" "" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     log "$d: current → $head"
@@ -289,6 +298,11 @@ sync_domain() { # domain  (sets REPOINTED=1 when `current` moved)
       sha="$(basename "$old")"
       case "$sha" in "$head"|"$current"|current|current.tmp) ;; *) git -C "$mirror" worktree remove --force "$old" >/dev/null 2>&1 || rm -rf "$old" ;; esac
     done
+  elif [ "$prc" != 1 ]; then
+    # Not dbt's verdict: never cached, retried next pass (verifier finding 8).
+    err="$(printf '%s' "$out" | tail -n 5 | tr '\n' ' ' | cut -c1-400)"
+    write_status "$d" "$head" "$current" "$current" "dbt parse did not finish (will retry): $err"
+    log "$d: $head — dbt parse did not finish (exit $prc, not cached, retrying next pass) — schedules keep running ${current:-nothing}"
   else
     err="$(printf '%s' "$out" | tail -n 20 | tr '\n' ' ' | cut -c1-900)"
     # Say WHICH dbt error, not just that there was one (live incident 2026-11, track H).

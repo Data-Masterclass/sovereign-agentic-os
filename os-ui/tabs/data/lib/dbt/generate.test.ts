@@ -265,6 +265,62 @@ function shapeLiveQ3CountMetric(): ProjectSnapshot {
   return { domain: 'sales', datasets: [{ dataset: requests, artifacts: {} }], catalogs: {} };
 }
 
+// ---- Shapes (g): the independent verifier's sweep (WP-03 re-verification) — every OS aggregation,
+// filters, ratios, derived, cumulative windows, a name that needs sanitising, a measure named like
+// the entity, across TWO datasets that reuse measure names. dbt-core 1.9.11 refused the cross-dataset
+// cases: duplicate metric LABELS (`validations/labels.py`) and one name used as two element types
+// across semantic models (`validations/element_const.py`). Each golden is parsed in the real image.
+const SWEEP_COLS = [
+  { name: 'order_id', description: 'k' }, { name: 'order_date', description: 'd' }, { name: 'region', description: 'r' },
+  { name: 'net_amount', description: 'a' }, { name: 'customer_id', description: 'c' }, { name: 'status', description: 's' },
+];
+const sweepVersions = (n: string) => ({ bronze: built(`bronze/${n}.dlt.yml`), silver: built(`silver/${n}.sql`, true), gold: built(`gold/${n}.sql`, true) });
+function sweepAll(): Dataset {
+  return ds({
+    id: 'ds_all1', name: 'Orders', owner: 'amir', domain: 'sales', tier: 'asset', visibility: 'domain', description: 'd',
+    columns: SWEEP_COLS, versions: sweepVersions('orders'),
+    measures: [
+      { name: 'rev_sum', type: 'sum', sql: 'net_amount', label: 'Revenue' },
+      { name: 'rev_avg', type: 'avg', sql: 'net_amount' },
+      { name: 'rev_min', type: 'min', sql: 'net_amount' },
+      { name: 'rev_max', type: 'max', sql: 'net_amount' },
+      { name: 'row_count', type: 'count', sql: '' },
+      { name: 'cust_count', type: 'count', sql: 'customer_id' },
+      { name: 'cust_distinct', type: 'count_distinct', sql: 'customer_id' },
+      { name: 'cust_approx', type: 'count_distinct_approx', sql: 'customer_id' },
+      { name: 'rev_eu', type: 'sum', sql: 'net_amount', filters: [{ sql: "{CUBE}.region = 'eu'" }] },
+      { name: 'cnt_open', type: 'count', sql: '', filters: [{ sql: "{CUBE}.status = 'open'" }] },
+      { name: 'aov', type: 'number', sql: '1.0 * {rev_sum} / {row_count}' },
+      { name: 'rev_per_cust', type: 'number', sql: '{rev_sum} / {cust_distinct}', formula: '[rev_sum]/[cust_distinct]' },
+      { name: 'rev_t7d', type: 'sum', sql: 'net_amount', rollingWindow: { trailing: '7 day', offset: 'end' } },
+      { name: 'rows_t1m', type: 'count', sql: '', rollingWindow: { trailing: '1 month' } },
+      { name: 'rev_rt', type: 'sum', sql: 'net_amount', rollingWindow: { trailing: 'unbounded' } },
+      { name: 'orders', type: 'count', sql: '' }, // collides with the entity name
+      { name: 'Revenue %', type: 'sum', sql: 'net_amount' }, // needs sanitising
+      { name: 'rev__x', type: 'sum', sql: 'net_amount', label: 'rev__x' },
+      { name: 'z', type: 'max', sql: 'net_amount' },
+    ],
+  });
+}
+// Same measure names (project-global collision), not namespaced, slug starting with a digit.
+function sweepOther(measures: Dataset['measures']): Dataset {
+  return ds({
+    id: 'ds_oth1', name: '2026 Leads', owner: 'bea', domain: 'sales', tier: 'asset', visibility: 'domain', description: 'd', viewNamespaced: false,
+    columns: [{ name: 'lead_id', description: 'k' }, { name: 'created_at', description: 't' }, { name: 'net_amount', description: 'a' }],
+    versions: sweepVersions('leads'), measures,
+  });
+}
+const OTHER_MEASURES: Dataset['measures'] = [
+  { name: 'rev_sum', type: 'sum', sql: 'net_amount' }, { name: 'row_count', type: 'count', sql: '' }, { name: 'orders', type: 'count', sql: '' },
+];
+const sweepSnap = (...datasets: Dataset[]): ProjectSnapshot => ({ domain: 'sales', datasets: datasets.map((dataset) => ({ dataset, artifacts: {} })), catalogs: {} });
+const withoutOrders = (d: Dataset): Dataset => ({ ...d, measures: d.measures.filter((m) => m.name !== 'orders') });
+const shapeSweepFull = () => sweepSnap(sweepAll(), sweepOther(OTHER_MEASURES));
+// Two datasets, duplicate labels only (`rev_sum`, `row_count` in both).
+const shapeSweepLabels = () => sweepSnap(withoutOrders(sweepAll()), sweepOther(OTHER_MEASURES.filter((m) => m.name !== 'orders')));
+// Two datasets, element-type clash only: entity `orders` in one, measure `orders` in the other.
+const shapeSweepElement = () => sweepSnap(withoutOrders(sweepAll()), sweepOther([{ name: 'orders', type: 'count', sql: '' }]));
+
 const SHAPES: Record<string, () => ProjectSnapshot> = {
   'ingested-pass-through': shapeIngested,
   'composition-with-tests': shapeComposition,
@@ -272,7 +328,52 @@ const SHAPES: Record<string, () => ProjectSnapshot> = {
   'metrics-semantic-layer': shapeMetrics,
   'duplicate-rule': shapeDuplicateRule,
   'live-q3-count-metric': shapeLiveQ3CountMetric,
+  'sweep-full': shapeSweepFull,
+  'sweep-labels': shapeSweepLabels,
+  'sweep-element': shapeSweepElement,
 };
+
+type SemDoc = { semantic_models: { name: string; entities: { name: string }[]; dimensions: { name: string }[]; measures: { name: string; label?: string }[] }[]; metrics: { name: string; label: string }[] };
+const semanticDocs = (files: Map<string, string>): SemDoc[] =>
+  [...files.entries()].filter(([k]) => /\/semantic\/[^/]+\.yml$/.test(k)).map(([, v]) => yaml.load(v) as SemDoc);
+
+test('sweep: metric labels are unique across the whole project (dbt validations/labels.py)', () => {
+  for (const make of [shapeSweepFull, shapeSweepLabels]) {
+    const labels = semanticDocs(generateProject('sales', make())).flatMap((d) => d.metrics.map((m) => m.label));
+    assert.ok(labels.length > 2);
+    assert.equal(new Set(labels).size, labels.length, `duplicate labels: ${labels.join(', ')}`);
+  }
+});
+
+test('sweep: no name is two element types anywhere in the project (dbt validations/element_const.py)', () => {
+  for (const make of [shapeSweepFull, shapeSweepElement]) {
+    const kind = new Map<string, Set<string>>();
+    for (const d of semanticDocs(generateProject('sales', make())))
+      for (const sm of d.semantic_models)
+        for (const [k, list] of [['entity', sm.entities], ['dimension', sm.dimensions], ['measure', sm.measures]] as const)
+          for (const e of list) kind.set(e.name, new Set([...(kind.get(e.name) ?? []), k]));
+    const clashes = [...kind.entries()].filter(([, ks]) => ks.size > 1).map(([n, ks]) => `${n}: ${[...ks].join('+')}`);
+    assert.deepEqual(clashes, []);
+  }
+});
+
+test('sweep: names are deterministic — the same input gives byte-identical files, in either dataset order', () => {
+  const a = generateProject('sales', shapeSweepFull());
+  const snap = shapeSweepFull();
+  const b = generateProject('sales', { ...snap, datasets: [...snap.datasets].reverse() });
+  assert.deepEqual([...a.entries()], [...b.entries()]);
+});
+
+test('a count over an unsafe column expression is refused per measure, not the whole semantic file', () => {
+  const snap = shapeLiveQ3CountMetric();
+  const d = snap.datasets[0].dataset;
+  const bad = { ...d, measures: [...d.measures, { name: 'bad_count', type: 'count' as const, sql: "case_id'; --" }] };
+  const files = generateProject('sales', { ...snap, datasets: [{ dataset: bad, artifacts: {} }] });
+  const docs = semanticDocs(files);
+  assert.equal(docs.length, 1, 'the semantic file is still emitted');
+  assert.deepEqual(docs[0].metrics.map((m) => m.name), ['service_case_count']);
+  assert.match(files.get('README.md')!, /bad_count/, 'the refused measure is named in the README');
+});
 
 test('live q3 regression: a count KPI with no label emits label, expr: 1 and a dunder-free model name', () => {
   const files = generateProject('sales', shapeLiveQ3CountMetric());

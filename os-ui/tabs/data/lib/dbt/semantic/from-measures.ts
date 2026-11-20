@@ -68,7 +68,23 @@ export type NameAllocator = (preferred: string, qualifier: string, reserved?: Re
  * — the canonical dbt shape is a measure `order_total` with a `type: simple` metric of the same
  * name — so one allocator per namespace, shared across the whole project.
  */
-export type SemanticNames = { measure: NameAllocator; metric: NameAllocator };
+/** Reserve a project-unique display label; a collision is qualified with the dataset's name. */
+export type LabelAllocator = (preferred: string, qualifier: string) => string;
+
+/**
+ * The project-wide element names dbt-core 1.9.11 holds to ONE element type across every semantic
+ * model (`validations/element_const.py`): an entity name can never also be a dimension or a
+ * measure anywhere in the project. Computed for the whole project BEFORE any document is built
+ * (`projectElements`), so the names depend only on the input, never on build order.
+ */
+export type ProjectElements = { entities: ReadonlySet<string>; dimensions: ReadonlySet<string> };
+
+/**
+ * ONE project-wide allocator for every name dbt holds project-wide: measure names and metric names
+ * (separate namespaces), metric labels (`validations/labels.py`: unique across the project), and
+ * the reserved entity/dimension names a measure may not reuse.
+ */
+export type SemanticNames = { measure: NameAllocator; metric: NameAllocator; label: LabelAllocator; elements: ProjectElements };
 
 function allocator(): NameAllocator {
   const taken = new Set<string>();
@@ -93,8 +109,55 @@ function allocator(): NameAllocator {
 }
 
 /** A fresh pair of allocators over one project. */
-export function semanticNames(): SemanticNames {
-  return { measure: allocator(), metric: allocator() };
+export function semanticNames(elements: ProjectElements = { entities: new Set(), dimensions: new Set() }): SemanticNames {
+  return { measure: allocator(), metric: allocator(), label: labelAllocator(), elements };
+}
+
+function labelAllocator(): LabelAllocator {
+  const taken = new Set<string>();
+  return (preferred, qualifier) => {
+    let candidate = preferred;
+    if (taken.has(candidate)) candidate = `${preferred} (${qualifier})`;
+    let n = 2;
+    while (taken.has(candidate)) candidate = `${preferred} (${qualifier}) ${n++}`;
+    taken.add(candidate);
+    return candidate;
+  };
+}
+
+type DimensionColumn = { column: string; isTime: boolean; description?: string };
+
+/** The gold columns of `d` that become dimensions (before naming). */
+function dimensionColumnsFor(d: Dataset): DimensionColumn[] {
+  const cols = goldOutputColumns(d);
+  const pk = primaryKeyColumn(cols);
+  const measureNames = new Set(d.measures.map((m) => m.name));
+  const out: DimensionColumn[] = [];
+  for (const c of cols) {
+    if (c.name === pk || measureNames.has(c.name)) continue;
+    const inferred = inferDimType(c.name);
+    if (!SEMANTIC_NAME_RE.test(c.name)) continue; // never interpolate a non-identifier into dbt YAML
+    // REVIEW L-1: a numeric FACT column (`net_amount`, `quantity`) is not something anyone groups
+    // by, and emitting it as `type: categorical` offers an agent a slice that would produce one
+    // row per distinct amount. A key-shaped numeric column (`*_id`) IS a legitimate grouping, so
+    // `inferDimType`'s `number` bucket is split on that test rather than dropped wholesale.
+    if (inferred === 'number' && !/(^|_)id$/i.test(c.name)) continue;
+    out.push({ column: c.name, isTime: inferred === 'time', ...(c.description ? { description: c.description } : {}) });
+  }
+  return out;
+}
+
+/** A dimension's dbt name: the column, unless some semantic model in the project uses it as an entity. */
+function dimensionName(column: string, entities: ReadonlySet<string>): string {
+  return entities.has(column) ? toSemanticName(`${column}_dim`) : column;
+}
+
+/** Every entity and dimension name the project will emit, for the datasets given (in any order). */
+export function projectElements(datasets: Dataset[]): ProjectElements {
+  const entities = new Set(datasets.map((d) => entityNameFor(d)));
+  const dimensions = new Set<string>();
+  for (const d of datasets) for (const c of dimensionColumnsFor(d)) dimensions.add(dimensionName(c.column, entities));
+  return { entities, dimensions };
 }
 
 /** The same primary-key inference the cube and the old semantic scaffold use. */
@@ -127,12 +190,19 @@ const CUBE_CMP_RE = /^\{CUBE\}\.(\w+) (=|<>|>=|<=|>|<) (.+)$/;
  * An OS guided measure filter → the dbt filter syntax, or null when it is not one of the shapes
  * the OS generates (then the whole metric is refused — never emitted with a weaker filter).
  */
-export function dbtFilterFor(predicates: string[], entity: string, timeColumns: Set<string>): string | null {
+export function dbtFilterFor(
+  predicates: string[],
+  entity: string,
+  timeColumns: Set<string>,
+  dimNames: ReadonlyMap<string, string> = new Map(),
+): string | null {
   const parts: string[] = [];
   for (const raw of predicates) {
     const sql = raw.trim();
-    const ref = (col: string): string =>
-      timeColumns.has(col) ? `{{ TimeDimension('${entity}__${col}', 'day') }}` : `{{ Dimension('${entity}__${col}') }}`;
+    const ref = (col: string): string => {
+      const dim = dimNames.get(col) ?? col;
+      return timeColumns.has(col) ? `{{ TimeDimension('${entity}__${dim}', 'day') }}` : `{{ Dimension('${entity}__${dim}') }}`;
+    };
     const nul = CUBE_NULL_RE.exec(sql);
     if (nul) {
       parts.push(`${ref(nul[1])} IS ${nul[2] ?? ''}NULL`);
@@ -186,27 +256,23 @@ export function semanticDocFor(src: SemanticSource, alloc: SemanticNames = seman
   const entity = entityNameFor(d);
   const cols = goldOutputColumns(d);
   const pk = primaryKeyColumn(cols);
-  const measureNames = new Set(d.measures.map((m) => m.name));
-  const dimCols = cols.filter((c) => c.name !== pk && !measureNames.has(c.name));
+  // This document's own entity is reserved even when the caller passed no project-wide set.
+  const entities = new Set([...alloc.elements.entities, entity]);
 
   const dimensions: SemanticDimension[] = [];
   const timeColumns = new Set<string>();
-  for (const c of dimCols) {
-    const inferred = inferDimType(c.name);
-    const isTime = inferred === 'time';
-    if (!SEMANTIC_NAME_RE.test(c.name)) continue; // never interpolate a non-identifier into dbt YAML
-    // REVIEW L-1: a numeric FACT column (`net_amount`, `quantity`) is not something anyone groups
-    // by, and emitting it as `type: categorical` offers an agent a slice that would produce one
-    // row per distinct amount. A key-shaped numeric column (`*_id`) IS a legitimate grouping, so
-    // `inferDimType`'s `number` bucket is split on that test rather than dropped wholesale.
-    if (inferred === 'number' && !/(^|_)id$/i.test(c.name)) continue;
-    const dim: SemanticDimension = { name: c.name, type: isTime ? 'time' : 'categorical' };
+  /** gold column → its dbt dimension name (differs only where the column names an entity). */
+  const dimNames = new Map<string, string>();
+  for (const c of dimensionColumnsFor(d)) {
+    const name = dimensionName(c.column, entities);
+    const dim: SemanticDimension = { name, type: c.isTime ? 'time' : 'categorical' };
     if (c.description) dim.description = c.description;
-    if (isTime) {
+    if (c.isTime) {
       dim.type_params = { time_granularity: 'day' };
-      timeColumns.add(c.name);
+      timeColumns.add(c.column);
     }
-    dim.expr = c.name;
+    dim.expr = c.column;
+    dimNames.set(c.column, name);
     dimensions.push(dim);
   }
   dimensions.sort((a, b) => a.name.localeCompare(b.name));
@@ -247,6 +313,7 @@ export function semanticDocFor(src: SemanticSource, alloc: SemanticNames = seman
   /** OS measure name → the allocated dbt METRIC name (every emitted measure gets a metric). */
   const metricName = new Map<string, string>();
   const metrics: SemanticMetric[] = [];
+  const measureLabels = new Set<string>();
 
   // Pass 1 — the plain aggregates become measures + their metric (simple, or cumulative).
   for (const m of ordered) {
@@ -264,7 +331,7 @@ export function semanticDocFor(src: SemanticSource, alloc: SemanticNames = seman
     // validator — a document that fails validation is dropped whole in `render.ts`, so one
     // smuggled column would take every other metric on the dataset with it. One bad measure
     // should cost one measure.
-    if (agg !== 'count' && !isSafeSemanticExpr(m.sql)) {
+    if ((agg !== 'count' || m.sql.trim()) && !isSafeSemanticExpr(m.sql)) {
       refusals.push({
         measure: m.name,
         reason: `the column expression '${m.sql}' is not in the emitter's closed expr grammar (dbt renders it through Jinja AND as SQL, so quotes, comment markers and template delimiters are refused)`,
@@ -277,6 +344,7 @@ export function semanticDocFor(src: SemanticSource, alloc: SemanticNames = seman
         m.filters.map((x) => x.sql),
         entity,
         timeColumns,
+        dimNames,
       );
       if (!f) {
         refusals.push({ measure: m.name, reason: 'the measure filter is not one of the OS guided-filter shapes, so it has no safe dbt filter form' });
@@ -294,15 +362,22 @@ export function semanticDocFor(src: SemanticSource, alloc: SemanticNames = seman
       cumulative = 'window' in c && c.window ? { window: c.window } : {};
     }
 
-    const elementNames = new Set<string>([entity, ...dimensions.map((x) => x.name)]);
+    // dbt holds one element type per name ACROSS the project, so a measure avoids every entity and
+    // dimension name of every semantic model, not only this one's.
+    const elementNames = new Set<string>([...entities, ...alloc.elements.dimensions, ...dimensions.map((x) => x.name)]);
     const dbtMeasure = alloc.measure(m.name, smName, elementNames);
     measureName.set(m.name, dbtMeasure);
     const measure: SemanticMeasure = { name: dbtMeasure, agg };
     if (m.description) measure.description = m.description;
     // dbt-core 1.9.11 requires an `expr` on a COUNT measure ("Provide 'expr: 1' if a count of all
     // rows is desired"); an OS `count` with no column is exactly that.
-    measure.expr = agg === 'count' ? m.sql || '1' : m.sql;
-    if (m.label && m.label !== m.name) measure.label = m.label;
+    measure.expr = agg === 'count' ? m.sql.trim() || '1' : m.sql;
+    // Measure labels must be unique within a semantic model (`validations/labels.py`): a repeat
+    // label is left off (it is optional on a measure; the metric carries the display label).
+    if (m.label && m.label !== m.name && !measureLabels.has(m.label)) {
+      measure.label = m.label;
+      measureLabels.add(m.label);
+    }
     // No `config` on a measure: dbt-core 1.9.11 refuses it ("'config' was unexpected" at `dbt parse`);
     // `os_agg` travels on the metric's `config.meta` (metaFor) instead.
     model.measures.push(measure);
@@ -318,7 +393,7 @@ export function semanticDocFor(src: SemanticSource, alloc: SemanticNames = seman
     if (filter) metric.filter = filter;
     // dbt-core 1.9 REQUIRES `label` on every metric ("'label' is a required property" at
     // `dbt parse`, which takes the whole domain down) — the OS measure name when none was authored.
-    metric.label = m.label || m.name;
+    metric.label = alloc.label(m.label || m.name, d.name);
     if (m.description) metric.description = m.description;
     metric.config = { meta: metaFor(d, m) };
     metrics.push(metric);
@@ -377,7 +452,7 @@ export function semanticDocFor(src: SemanticSource, alloc: SemanticNames = seman
             metrics: [...new Set(refs)].sort().map((r): MetricInput => ({ name: metricName.get(r)! })),
           },
         };
-    metric.label = m.label || m.name; // required by dbt (see pass 1)
+    metric.label = alloc.label(m.label || m.name, d.name); // required and project-unique (see pass 1)
     if (m.description) metric.description = m.description;
     metric.config = { meta: metaFor(d, m) };
     metrics.push(metric);
