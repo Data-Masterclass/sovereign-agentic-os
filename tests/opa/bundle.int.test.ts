@@ -32,7 +32,8 @@ const opa = new Opa(`http://127.0.0.1:${PORT}`);
 const SETS = ['opa.dataBundle.enabled=true', `opa.dataBundle.serviceUrl=http://host.docker.internal:${SERVER_PORT}/api/opa`];
 
 process.env.OPA_URL = opa.url;
-process.env.AGENT_RUNTIME_TOKEN = TOKEN;
+process.env.OS_OPA_BUNDLE_TOKEN = TOKEN; // the dedicated bundle token (opa-bundle-token)
+process.env.AGENT_RUNTIME_TOKEN = 'a-different-shared-runtime-token'; // never accepted by the bundle routes
 process.env.OS_OPA_DATA_BUNDLE = '1';
 process.env.OS_OPA_SEED = chartEnv('OS_OPA_SEED', ['opa.dataBundle.enabled=true']);
 process.env.OS_OPA_SEED_PRINCIPALS = chartEnv('OS_OPA_SEED_PRINCIPALS');
@@ -128,9 +129,9 @@ test('3. restart with os-ui DOWN: every grant comes back from /var/opa', async (
   server = await startBundleServer(SERVER_PORT);
 });
 
-async function assertKeptLastGood(when: string): Promise<void> {
-  // Two full polling cycles (max 15 s) must pass with OPA unchanged.
-  await new Promise((r) => setTimeout(r, 32_000));
+async function assertKeptLastGood(when: string, waitMs = 32_000): Promise<void> {
+  // Full polling cycles (max 15 s each) must pass with OPA unchanged.
+  await new Promise((r) => setTimeout(r, waitMs));
   assert.equal(await opa.status(), 200, `${when}: OPA still ready`);
   const now = await snapshot(opa);
   assert.deepEqual(now, good, `${when}: OPA kept its last good documents`);
@@ -171,6 +172,73 @@ test('4c. negative twin — bundle-server outage (500s): OPA keeps its last good
   await assertKeptLastGood('bundle-server outage');
   assert.ok(server!.requests.some((q) => q.status === 500 && q.path.endsWith('os-data.tar.gz')), 'OPA really polled during the outage');
   server!.outage = null;
+});
+
+test('4d. negative twin — a large drop (>10 % of grant principals): refused, then applied only after an admin acknowledges it', async () => {
+  const { registerOpaStateSource } = await import('@core/policy/opa-reconcile');
+  const { publishOpa } = await import('@core/policy/opa-publish');
+  const { recompileOsData, osDataBundleStatus, acknowledgeOsDataBundle } = await import('@core/policy/bundle');
+  const before = Object.keys(good.grants as object);
+  const victims = before.filter((k) => k.startsWith('user:u')).slice(0, Math.ceil(before.length * 0.2));
+  registerOpaStateSource({ name: 'it-partial', bundled: true, restore: async () => {
+    for (const v of victims) await publishOpa({ kind: 'delete', path: `grants/${encodeURIComponent(v)}` });
+    return { ok: true, detail: `silently lost ${victims.length} user grants` };
+  } });
+  const r = await recompileOsData('it-drop');
+  assert.equal(r.ok, false);
+  assert.match(r.ok ? '' : r.detail, /grant principals drop/);
+  await assertKeptLastGood('large drop', 17_000);
+  // An admin looks at it and says yes: exactly this content goes through, once.
+  const refused = osDataBundleStatus().refused!;
+  assert.equal(acknowledgeOsDataBundle(refused.hash, 'admin', 'it: cohort archived').ok, true);
+  assert.equal((await recompileOsData('it-ack')).ok, true);
+  const shrunk = await until(async () => Object.keys(((await opa.data('grants')) ?? {}) as object).length, (n) => n === before.length - victims.length, 25_000, 250);
+  assert.equal(shrunk, before.length - victims.length, 'the acknowledged removal reached OPA');
+  // Back to full: growth needs no acknowledgement.
+  registerOpaStateSource({ name: 'it-partial', bundled: true, restore: async () => ({ ok: true, detail: 'healed' }) });
+  assert.equal((await recompileOsData('it-heal')).ok, true);
+  await until(async () => Object.keys(((await opa.data('grants')) ?? {}) as object).length, (n) => n === before.length, 25_000, 250);
+  good = await snapshot(opa);
+  goodRev = osDataBundleStatus().revision!;
+  assert.equal(await until(activeRevision, (v) => v === goodRev, 25_000, 250), goodRev);
+});
+
+test('4e. negative twin — an internal table missing (same table count): refused, OPA unchanged', async () => {
+  const { registerOpaStateSource } = await import('@core/policy/opa-reconcile');
+  const { publishOpa } = await import('@core/policy/opa-publish');
+  const { recompileOsData } = await import('@core/policy/bundle');
+  const tables = Object.keys(good['governance/tables'] as object);
+  const gone = tables.find((t) => t.startsWith('iceberg.'))!;
+  registerOpaStateSource({ name: 'it-partial', bundled: true, restore: async () => {
+    await publishOpa({ kind: 'delete', path: `governance/tables/${encodeURIComponent(gone)}` });
+    await publishOpa({ kind: 'data', path: `governance/tables/${encodeURIComponent('iceberg.it.replacement')}`, value: { domain: 'sales', visibility: 'domain' } });
+    return { ok: true, detail: 'one table swapped for another' };
+  } });
+  const r = await recompileOsData('it-missing-table');
+  assert.equal(r.ok, false);
+  assert.match(r.ok ? '' : r.detail, new RegExp(`internal table\\(s\\) missing.*${gone.replace(/\./g, '\\.')}`));
+  await assertKeptLastGood('missing internal table', 17_000);
+  registerOpaStateSource({ name: 'it-partial', bundled: true, restore: async () => ({ ok: true, detail: 'healed' }) });
+});
+
+test('4f. negative twin — an os-ui that holds an OLDER bundle (a pod behind): 409, OPA unchanged', async () => {
+  const { buildBundle, __setServedOsDataBundleForTest, recompileOsData } = await import('@core/policy/bundle');
+  const { GET } = await import('../../os-ui/app/api/opa/bundles/os-data.tar.gz/route.ts');
+  const stale = buildBundle('os-data', { ...good, grants: { 'user:stale': ['query'] } } as Record<string, unknown>, ['grants'], '1-0123456789abcdef0123');
+  Object.assign(stale, { seq: 1, hash: '0123456789abcdef0123' });
+  __setServedOsDataBundleForTest(stale);
+  const res = await GET(new Request('http://x/api/opa/bundles/os-data.tar.gz', { headers: { authorization: `Bearer ${TOKEN}`, 'if-none-match': `"${goodRev}"` } }));
+  assert.equal(res.status, 409, 'never an older bundle than the active one');
+  await assertKeptLastGood('older bundle', 17_000);
+  await recompileOsData('it-recover');
+});
+
+test('4g. negative twin — the shared runtime token is not the bundle token: 401', async () => {
+  const { GET } = await import('../../os-ui/app/api/opa/bundles/os-data.tar.gz/route.ts');
+  const status = await import('../../os-ui/app/api/opa/status/route.ts');
+  const shared = { authorization: `Bearer ${process.env.AGENT_RUNTIME_TOKEN}` };
+  assert.equal((await GET(new Request('http://x/b', { headers: shared }))).status, 401);
+  assert.equal((await status.POST(new Request('http://x/s', { method: 'POST', headers: shared, body: '{"labels":{"instance":"opa"}}' }))).status, 401, 'a forged status report is refused');
 });
 
 test('5. cold start with no persisted bundle and os-ui down: unready, and os-ui denies', async () => {

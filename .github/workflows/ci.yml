@@ -753,6 +753,14 @@ jobs:
           for t in bundle-parity bundle grant-propagation trino-bundle; do
             node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test ../tests/opa/$t.int.test.ts
           done
+      - name: pvc-restart (kind) — a NEW OPA pod starts from the persistent volume with os-ui down
+        env:
+          OPA_IT_DIR: ${{ runner.temp }}
+        run: |
+          curl -sSLo /tmp/kind https://github.com/kubernetes-sigs/kind/releases/download/v0.30.0/kind-linux-amd64
+          echo "517ab7fc89ddeed5fa65abf71530d90648d9638ef0c4cde22c2c11f8097b8889  /tmp/kind" | sha256sum -c -
+          chmod +x /tmp/kind
+          PATH="/tmp:$PATH" bash tests/opa/pvc-restart.kind.sh
       - name: Container logs (on failure)
         if: failure()
         run: for c in $(docker ps -a --format '{{.Names}}' | grep wp11-); do echo "== $c"; docker logs --tail 80 "$c" 2>&1; done
