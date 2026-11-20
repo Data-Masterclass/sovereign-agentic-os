@@ -36,11 +36,13 @@ import {
   ClearToolUsesEdit,
   contextEditingMiddleware,
   createMiddleware,
+  dynamicSystemPromptMiddleware,
   humanInTheLoopMiddleware,
   modelCallLimitMiddleware,
   summarizationMiddleware,
   tool,
   toolCallLimitMiddleware,
+  ToolMessage,
 } from 'langchain';
 import type { SpanHandle } from '@core/infra/trace-port';
 import type { ModuleTracer } from '@tabs/agents/lib/module/observe';
@@ -121,7 +123,9 @@ export function osTools(input: {
           });
         const span = input.span?.() ?? null;
         const out = span ? await span.tool({ id: callId ?? '', name, args: args ?? {} }, { decision: 'ok' }, run) : await run();
-        return out.text;
+        // A refusal or failure stays readable text for the model, and is marked `error` on the
+        // ToolMessage so the live step, the drill-down and the node status see it (v1 `isError`).
+        return callId ? new ToolMessage({ content: out.text, tool_call_id: callId, name, status: out.isError ? 'error' : 'success' }) : out.text;
       },
       {
         name,
@@ -199,7 +203,9 @@ export type OsAgentDeps = {
    * window (keep the last 20 messages), clear old tool results at 50 % (keep the last 3).
    */
   context?: { summaryModel: (agent: { id: string; model: string | null }) => unknown; maxInputTokens: (agent: { id: string; model: string | null }) => number; keepMessages?: number; keepToolResults?: number };
-  /** Per agent visit: stock call limits; the visit ends with the middleware's own note. */
+  /** The OS preamble (`osPreamble`: rules + the runner's grant brief), appended to every agent's prompt. */
+  preamble?: string;
+  /** Per agent visit: stock call limits; hitting one fails the visit with a typed error. */
   limits?: { modelCalls: number; toolCalls: number };
 };
 
@@ -212,6 +218,12 @@ export function osMiddleware(mod: LoadedGraphModule, deps: OsAgentDeps, agent: {
     osApprovals(mod.TOOL_NAMES, deps.holds, deps.threadId),
   ];
   if (deps.tracer) out.push(deps.tracer.middleware(agent.id));
+  // The OS preamble (rules + this runner's grant brief), the same text the v1 engine grounds every
+  // node in, appended to the agent's own prompt by the stock middleware.
+  if (deps.preamble) {
+    const preamble = deps.preamble;
+    out.push(dynamicSystemPromptMiddleware(() => `\n\n${preamble}`));
+  }
   if (deps.context) {
     const max = Math.max(100, deps.context.maxInputTokens(agent));
     out.push(
@@ -221,8 +233,11 @@ export function osMiddleware(mod: LoadedGraphModule, deps: OsAgentDeps, agent: {
   }
   if (deps.limits) {
     out.push(
-      modelCallLimitMiddleware({ runLimit: deps.limits.modelCalls, exitBehavior: 'end' }),
-      toolCallLimitMiddleware({ runLimit: deps.limits.toolCalls, exitBehavior: 'end' }),
+      // `error`: the stock middleware throws its typed error, which the run driver turns into a
+      // FAILED agent visit (`module/run.ts`), never a successful answer. (`end` would make the
+      // limit note the team's answer, and the tool limit throws an untyped error on parallel calls.)
+      modelCallLimitMiddleware({ runLimit: deps.limits.modelCalls, exitBehavior: 'error' }),
+      toolCallLimitMiddleware({ runLimit: deps.limits.toolCalls, exitBehavior: 'error' }),
     );
   }
   return out;

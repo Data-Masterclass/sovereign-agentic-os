@@ -407,10 +407,12 @@ export async function runOsTeam(input: RunOsTeamInput): Promise<RunOsTeamResult>
         // The same live hooks the v1 engine feeds the run route (SSE frames unchanged).
         hooks: { onNodeStart: input.onNodeStart, onStep: input.onStep, onNodeComplete: input.onNodeComplete, onInterrupt: input.onInterrupt },
         observer: observe,
+        // The same OS rules + grant brief every v1 node is grounded in.
+        preamble: osPreamble(input.user, sys),
         limits: { modelCalls: input.maxIterations ?? config.agentTeamNodeMaxSteps, toolCalls: input.maxIterations ?? config.agentTeamNodeMaxSteps },
         maxSteps: config.agentTeamRunMaxSteps,
       });
-      observe.finish({ reachedEnd: r.reachedEnd, parked: r.parked, interrupted: r.interrupted, failed: false, path: r.path, finalChars: r.finalText.length, stepsUsed: r.path.length });
+      observe.finish({ reachedEnd: r.reachedEnd, parked: r.parked, interrupted: r.interrupted, failed: r.failed, path: r.path, finalChars: r.finalText.length, stepsUsed: r.path.length });
       return {
         path: r.path,
         runs: r.runs,
@@ -421,6 +423,8 @@ export async function runOsTeam(input: RunOsTeamInput): Promise<RunOsTeamResult>
         interrupted: r.interrupted,
         parked: r.parked,
         heldApprovals: r.heldApprovals,
+        failed: r.failed,
+        ...(r.failure ? { failure: r.failure } : {}),
         traceUrl: observe.enabled ? await traceUrlFor(input.runId, { probe: false }) : undefined,
         traceStoreAvailable: observe.enabled,
       };

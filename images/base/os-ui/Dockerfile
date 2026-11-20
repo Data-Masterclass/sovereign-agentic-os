@@ -29,6 +29,9 @@ RUN npm run build
 # were absent — deploy 0.8.0). Trace the worker's import graph and copy exactly those packages,
 # with their declared transitive dependencies, into the standalone node_modules.
 RUN node scripts/worker-deps.mjs --out .next/standalone
+# WP-53b: the agent id preflight is a second worker command (worker/agent-id-preflight.mjs); its
+# packages are traced the same way so it runs from the image as shipped.
+RUN node scripts/worker-deps.mjs --out .next/standalone --entry tabs/agents/lib/module/preflight-run.ts
 
 # ---- runner: minimal runtime, non-root ----
 FROM node:22.13.1-alpine3.21 AS runner

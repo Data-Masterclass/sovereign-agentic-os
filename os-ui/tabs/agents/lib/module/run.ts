@@ -27,10 +27,10 @@
  */
 import { Command, GraphRecursionError } from '@langchain/langgraph';
 import type { ApprovalDecision, ApprovalPort, RunnerSnapshot, RunOwner } from '@tabs/agents/lib/engine/approval-port';
-import { ResumeNotFoundError, RunAlreadyFinishedError, StaleResumeError, type PendingApproval } from '@tabs/agents/lib/engine/run';
+import { ResumeNotFoundError, RunAlreadyFinishedError, StaleResumeError, type PendingApproval, type RunFailure } from '@tabs/agents/lib/engine/run';
 import type { HoldDescription } from '@tabs/agents/lib/module/os-agent';
 import type { AgenticStep } from '@core/runtime/agentic';
-import type { NodeRun, NodeStatus } from '@tabs/agents/lib/build/agentic-graph';
+import { nodeStatus, type NodeRun, type NodeStatus } from '@tabs/agents/lib/build/agentic-graph';
 
 /** The engine name a module run reports. */
 export const MODULE_ENGINE = 'module';
@@ -153,7 +153,41 @@ export type ModuleRunResult = {
   module: { digest: string; commit: string | null };
   /** The run drill-down: one entry per agent visit, rebuilt from the checkpointed transcript. */
   runs: NodeRun[];
+  /** An agent visit FAILED (a call limit): the run stopped there, with a typed reason. */
+  failed: boolean;
+  failure?: RunFailure;
 };
+
+/** The stock limit middleware's typed errors → the run's failure code. */
+const LIMIT_CODES: Record<string, 'model_call_limit' | 'tool_call_limit'> = {
+  ModelCallLimitMiddlewareError: 'model_call_limit',
+  ToolCallLimitExceededError: 'tool_call_limit',
+};
+
+/** The typed call-limit error in `e` (or its causes), if any. */
+export function callLimitError(e: unknown): { code: 'model_call_limit' | 'tool_call_limit'; reason: string } | null {
+  let cur: unknown = e;
+  for (let i = 0; i < 6 && cur; i += 1) {
+    const err = cur as { name?: string; message?: string; cause?: unknown };
+    const code = err.name ? LIMIT_CODES[err.name] : undefined;
+    if (code) return { code, reason: String(err.message ?? code) };
+    cur = err.cause;
+  }
+  return null;
+}
+
+/** The failed visit in the drill-down (the last visit of the failed agent, or a new one). */
+function markFailed(runs: NodeRun[], failure: RunFailure | undefined): NodeRun[] {
+  if (!failure?.node) return runs;
+  const last = [...runs].reverse().find((r) => r.node === failure.node);
+  if (last) {
+    last.status = 'failed';
+    last.error = `${failure.code}: ${failure.reason}`;
+  } else {
+    runs.push({ node: failure.node, model: '', status: 'failed', error: `${failure.code}: ${failure.reason}`, result: { plan: '', steps: [], finalText: '', iterations: 0, toolCallingSupported: true, pending: [] } });
+  }
+  return runs;
+}
 
 type Msg = { type?: string; name?: string; content?: unknown; status?: string; tool_call_id?: string; tool_calls?: { id?: string; name: string; args: Record<string, unknown> }[] };
 
@@ -176,9 +210,8 @@ export function runsFromMessages(messages: readonly Msg[], modelOf: (agentId: st
       for (const c of m.tool_calls ?? []) if (c.id) args.set(c.id, c.args ?? {});
       if (!(m.tool_calls ?? []).length) cur.result.finalText = textOf(m.content);
     } else if (m.type === 'tool' && cur && m.name !== 'set_state') {
-      const isError = m.status === 'error';
-      cur.result.steps.push({ tool: String(m.name ?? ''), args: (m.tool_call_id && args.get(m.tool_call_id)) || {}, result: textOf(m.content), isError });
-      if (isError && /"code":"(forbidden|denied)"/.test(textOf(m.content))) cur.status = 'denied';
+      cur.result.steps.push({ tool: String(m.name ?? ''), args: (m.tool_call_id && args.get(m.tool_call_id)) || {}, result: textOf(m.content), isError: m.status === 'error' });
+      cur.status = nodeStatus(cur.result);
     }
   }
   return runs;
@@ -246,6 +279,8 @@ export async function runAgentModule(input: ModuleRunInput): Promise<ModuleRunRe
   const filed: PendingApproval[] = [];
   const seenInterrupts = new Set<string>();
   let interrupted = false;
+  let current: string | null = null;
+  let failure: RunFailure | undefined;
   // Live progress (WP-53b): which agent is running, its tool steps as they finish, its end. The
   // tool-call args come from the AI message that asked for them (inside the agent's subgraph).
   const visits = new Map<string, number>();
@@ -293,6 +328,7 @@ export async function runAgentModule(input: ModuleRunInput): Promise<ModuleRunRe
           const id = name.slice('agent_'.length);
           const n = (visits.get(id) ?? 0) + 1;
           visits.set(id, n);
+          current = id;
           input.spans?.start(id, n);
           input.hooks?.onNodeStart?.({ node: id, index: path.length, total });
         }
@@ -321,14 +357,23 @@ export async function runAgentModule(input: ModuleRunInput): Promise<ModuleRunRe
           path.push(id);
           const answer = [...msgs].reverse().find((m) => m.type === 'ai' && !(m.tool_calls ?? []).length);
           const finalText = textOf(answer?.content);
-          input.spans?.end(id, { output: { chars: finalText.length } });
-          input.hooks?.onNodeComplete?.({ node: id, status: 'ok', finalText });
+          // The visit's real status, by the v1 rule (`nodeStatus`): a policy refusal → denied, any
+          // other failed tool → error, else ok.
+          const status = runsFromMessages(msgs as Msg[], () => '').at(-1)?.status ?? 'ok';
+          input.spans?.end(id, { output: { chars: finalText.length, status } });
+          input.hooks?.onNodeComplete?.({ node: id, status, finalText });
         }
       }
     }
   } catch (e) {
-    for (const id of visits.keys()) input.spans?.end(id, { error: (e as Error)?.message ?? String(e) });
-    if (e instanceof GraphRecursionError || (e as Error)?.name === 'AbortError') interrupted = true;
+    const limit = callLimitError(e);
+    for (const id of visits.keys()) input.spans?.end(id, { error: limit ? `${limit.code}: ${limit.reason}` : (e as Error)?.message ?? String(e) });
+    if (limit) {
+      // A call limit FAILS the agent visit with a typed reason — it is never the team's answer.
+      failure = { node: current, code: limit.code, reason: limit.reason };
+      if (current) input.hooks?.onNodeComplete?.({ node: current, status: 'failed', finalText: '' });
+      input.log?.(`failed runId=${input.runId} node=${current ?? '-'} code=${limit.code}`);
+    } else if (e instanceof GraphRecursionError || (e as Error)?.name === 'AbortError') interrupted = true;
     else throw e;
   }
   // A node still open here parked on an approval (its span says so; its result comes on resume).
@@ -350,12 +395,14 @@ export async function runAgentModule(input: ModuleRunInput): Promise<ModuleRunRe
     runId: input.runId,
     path,
     finalText: textOf(lastAnswer?.content),
-    reachedEnd: !parked && !interrupted && snap.next.length === 0,
+    reachedEnd: !failure && !parked && !interrupted && snap.next.length === 0,
     parked,
     interrupted: interrupted || parked,
     heldApprovals,
     values: snap.values,
     module: input.module,
-    runs: runsFromMessages(messages as Msg[], input.modelOf ?? (() => '')),
+    runs: markFailed(runsFromMessages(messages as Msg[], input.modelOf ?? (() => '')), failure),
+    failed: !!failure,
+    ...(failure ? { failure } : {}),
   };
 }
