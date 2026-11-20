@@ -199,7 +199,7 @@ test('RUN SERVICE: the run asks for the system\'s key BEFORE the engine starts, 
   const fn = src.slice(src.indexOf('export async function executeTeamRun'));
   const preflight = fn.indexOf('await resolveSystemKey(id, { fresh: true })');
   assert.ok(preflight > 0, 'executeTeamRun must check the system has a usable key');
-  assert.ok(preflight < fn.indexOf('runOsTeam({'), 'the check runs before the engine does');
+  assert.ok(preflight < fn.indexOf('runOsTeam)({'), 'the check runs before the engine does');
   assert.ok(preflight > fn.indexOf('try {'), 'inside the try, so the refusal is published as the run\'s error');
   assert.match(fn, /keyRef: systemKeyRef\(id\)/);
   assert.doesNotMatch(src, /litellmKeyRef/, 'the old in-memory reference is gone from the run path');

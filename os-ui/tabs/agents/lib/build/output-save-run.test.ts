@@ -30,6 +30,7 @@ import { outputDispatchFor, saveRunOutputs } from '@tabs/agents/lib/build/output
 import { executeTeamRun } from '@tabs/agents/lib/build/run-service';
 import { outputFileName, outputSaveSystem, runTag, unsavedOutputs, type OutputResult, type ProducerRun } from '@tabs/agents/lib/output-saver';
 import { createSystem, getSystemForRun, setLastRun, __resetStore } from '@tabs/agents/lib/store';
+import { __setSystemKeyStoreForTests, deploymentKek, memorySystemKeyStore, mintSystemKey, sealSystemKey, systemKeyAlias } from '@core/infra/agent-system-keys';
 
 const USER: CurrentUser = { id: 'alex', name: 'Alex', domains: ['finance'], allDomains: ['finance'], activeDomain: null, role: 'builder' };
 
@@ -375,9 +376,15 @@ test('a crash between landing the rows and recording it: the resumed save finds 
 
 // ---------------------------------------------------------- run service ----
 
-function storedSystem(sys: System) {
+async function storedSystem(sys: System) {
   __resetStore();
-  return createSystem(USER, { name: 'Invoice Desk', domain: 'finance', yaml: serializeSystem(sys) }).id;
+  const id = createSystem(USER, { name: 'Invoice Desk', domain: 'finance', yaml: serializeSystem(sys) }).id;
+  // A built system: a run needs the system's own model key (executeTeamRun refuses without one).
+  const keys = memorySystemKeyStore();
+  __setSystemKeyStoreForTests(keys);
+  const caps = { models: ['m'], maxBudget: 5, budgetDuration: '7d', rpmLimit: 1, tpmLimit: 1, maxParallelRequests: 1 };
+  await keys.put(sealSystemKey({ systemId: id, alias: systemKeyAlias(id), key: mintSystemKey(), caps, createdAt: 1, rotatedAt: null }, deploymentKek()));
+  return id;
 }
 
 async function execute(id: string, w: ReturnType<typeof world>, answers: Record<string, string | Error>, runId: string, resume = false) {
@@ -395,7 +402,7 @@ async function execute(id: string, w: ReturnType<typeof world>, answers: Record<
 }
 
 test('executeTeamRun: the report is on record before the save, and the finished run lists every output', async () => {
-  const id = storedSystem(threeOutputs());
+  const id = await storedSystem(threeOutputs());
   const w = world();
   const runId = newRun();
   const { body, events, lastRun } = await execute(id, w, { reader: ROWS, writer: REPORT }, runId);
@@ -412,7 +419,7 @@ test('executeTeamRun: the report is on record before the save, and the finished 
 });
 
 test('executeTeamRun: a save that fails does not fail the run — it is "completed with unsaved outputs", visibly', async () => {
-  const id = storedSystem(threeOutputs());
+  const id = await storedSystem(threeOutputs());
   const w = world();
   w.failing.set('save_knowledge_note', 'knowledge store unreachable');
   const { body, lastRun } = await execute(id, w, { reader: ROWS, writer: REPORT }, newRun());
@@ -427,7 +434,7 @@ test('executeTeamRun: a save that fails does not fail the run — it is "complet
 });
 
 test('executeTeamRun: resuming a run that finished but died before its save was recorded saves nothing twice', async () => {
-  const id = storedSystem(threeOutputs());
+  const id = await storedSystem(threeOutputs());
   const w = world();
   const runId = newRun();
   const first = await execute(id, w, { reader: ROWS, writer: REPORT }, runId);
