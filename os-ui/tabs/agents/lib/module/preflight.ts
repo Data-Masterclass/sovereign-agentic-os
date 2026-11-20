@@ -21,7 +21,7 @@
  */
 import { load } from 'js-yaml';
 import type { System } from '@tabs/agents/lib/system-schema';
-import { AGENT_ID_RE, CHANNEL_RE, identifierProblems, TOOL_NAME_RE } from '@tabs/agents/lib/safe-ids';
+import { AGENT_ID_RE, CHANNEL_RE, identifierProblems, PROMPT_MAX_BYTES, TOOL_NAME_RE } from '@tabs/agents/lib/safe-ids';
 
 const RESERVED = new Set(['__proto__', 'constructor', 'prototype', 'steps']);
 
@@ -54,6 +54,13 @@ export function preflightDoc(yamlText: string): string[] {
   for (const t of list(doc.grants?.tools)) bad('tool', t, TOOL_NAME_RE);
   for (const c of Object.keys(doc.state?.channels ?? {})) bad('state channel', c, CHANNEL_RE);
   if (doc.entrypoint !== undefined) bad('entrypoint', doc.entrypoint, AGENT_ID_RE);
+  // The prompt cap (`PROMPT_MAX_BYTES`): a definition over it would be refused on its next save.
+  for (const a of list(doc.agents) as { id?: unknown; agent_md?: unknown; memory_md?: unknown }[]) {
+    for (const field of ['agent_md', 'memory_md'] as const) {
+      const bytes = Buffer.byteLength(String(a?.[field] ?? ''), 'utf8');
+      if (bytes > PROMPT_MAX_BYTES) out.push(`agent ${JSON.stringify(String(a?.id ?? ''))} ${field} is ${bytes} bytes (at most ${PROMPT_MAX_BYTES})`);
+    }
+  }
   return out;
 }
 

@@ -84,6 +84,12 @@ export type OsMirror = {
    * `null` → mirror unreachable. This is what lets a reader process DROP what another deleted.
    */
   list(size?: number): Promise<{ docs: unknown[]; complete: boolean } | null>;
+  /**
+   * The WHOLE index for a read-only check, with NO side effect: unlike `list` it never probes
+   * (the probe creates a missing index and reconciles settings/mappings) — only `_count` and
+   * `_search`. `null` → unreachable, missing, or not a complete read (never a partial answer).
+   */
+  readOnlyList(size?: number): Promise<unknown[] | null>;
   /** One doc's `_source`, or null when missing/unreachable. Does NOT probe. */
   getDoc(id: string): Promise<unknown | null>;
   /** Like `getDoc`, but says WHY there is no doc: 'absent' (the mirror answered 404 — the record
@@ -331,6 +337,13 @@ export function osMirror(opts: {
     return r.complete ? { docs: r.docs, complete: true } : { docs: [], complete: false };
   }
 
+  async function readOnlyList(size = 1000): Promise<unknown[] | null> {
+    const ping = await osFetch(`/${index}/_count`);
+    if (!ping || !ping.ok) return null;
+    const r = await readWhole(size);
+    return r.complete ? r.docs : null;
+  }
+
   async function read(id: string): Promise<MirrorRead> {
     // A by-id GET must distinguish "genuinely absent" (404) from a TRANSIENT
     // failure (5xx / auth blip / timeout-with-response). Conflating the two made a
@@ -458,6 +471,7 @@ export function osMirror(opts: {
     probe,
     hydrate,
     list,
+    readOnlyList,
     getDoc,
     read,
     claim,
