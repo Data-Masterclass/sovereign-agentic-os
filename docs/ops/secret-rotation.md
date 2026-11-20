@@ -208,9 +208,11 @@ procedure again with the previous password.
 ## From a release tag
 
 The chart change is two commits, `feat(chart): LITELLM_SALT_KEY with a change guard; langfuseInit.userPassword`
-and `fix(chart): allowChange is for a full re-key only`. Both touch the chart only and apply cleanly on
-`os-ui-v0.9.19` and `os-ui-v0.9.20` (rehearsed). To deploy the live release with only the secrets
-changing:
+and `fix(chart): allowChange is for a full re-key only`. Both touch the chart only. On a tag older than the LiteLLM 1.109.1 change (`os-ui-v0.9.20` and
+before), the first one conflicts on one comment line in `templates/base/litellm/credentials.yaml`:
+keep both sides, the `LITELLM_SALT_KEY` block followed by that tag's comment line. Built that way on
+`os-ui-v0.9.20`, the chart was rehearsed end to end. To deploy the live release with only the
+secrets changing:
 
 ```bash
 cd <checkout at os-ui-v<live version>>
