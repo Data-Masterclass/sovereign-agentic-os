@@ -65,7 +65,13 @@ export function events(log) {
 /** A fresh work sub-directory (inside the shared, container-visible work dir). */
 export function fresh(name) {
   const d = join(WORK, name);
-  rmSync(d, { recursive: true, force: true });
+  try {
+    rmSync(d, { recursive: true, force: true });
+  } catch {
+    // files a container wrote as another uid (Linux runner): remove them as root, in a container
+    const r = spawnSync('docker', ['run', '--rm', '-v', `${WORK}:/p`, 'alpine:3.21', 'rm', '-rf', `/p/${name}`], { encoding: 'utf8' });
+    if (r.status !== 0) throw new Error(`cannot empty ${d}: ${r.stderr}`);
+  }
   mkdirSync(d, { recursive: true });
   spawnSync('chmod', ['-R', 'a+rwX', d]);
   return d;
