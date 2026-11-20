@@ -74,13 +74,14 @@ PW_OLD=langfuse-local-dev-admin; PW_NEW=$(rnd 16); EMAIL=admin@example.invalid
 
 step "the stack: Postgres 17, Langfuse $LFV on its documented stack, a model stub"
 down; docker network create $NET >/dev/null
-docker run -d --name lfpgr --network $NET -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=langfuse postgres:17 >/dev/null
-docker run -d --name lfchr --network $NET --user 101:101 -e CLICKHOUSE_DB=default -e CLICKHOUSE_USER=clickhouse -e CLICKHOUSE_PASSWORD=clickhouse clickhouse/clickhouse-server:24.8 >/dev/null
+# Data on tmpfs: the rehearsal needs no disk (and leaves nothing behind).
+docker run -d --name lfpgr --network $NET --tmpfs /var/lib/postgresql/data:size=1g -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=langfuse postgres:17 >/dev/null
+docker run -d --name lfchr --network $NET --tmpfs /var/lib/clickhouse:size=1g,uid=101,gid=101 --tmpfs /var/log/clickhouse-server:size=256m,uid=101,gid=101 --user 101:101 -e CLICKHOUSE_DB=default -e CLICKHOUSE_USER=clickhouse -e CLICKHOUSE_PASSWORD=clickhouse clickhouse/clickhouse-server:24.8 >/dev/null
 docker run -d --name lfredisr --network $NET --network-alias valkey redis:7 --requirepass redissecret --maxmemory-policy noeviction >/dev/null
-docker run -d --name lfminior --network $NET --entrypoint sh -e MINIO_ROOT_USER=minio -e MINIO_ROOT_PASSWORD=miniosecret cgr.dev/chainguard/minio \
+docker run -d --name lfminior --network $NET --tmpfs /data:size=512m,mode=1777 --entrypoint sh -e MINIO_ROOT_USER=minio -e MINIO_ROOT_PASSWORD=miniosecret cgr.dev/chainguard/minio \
   -c 'mkdir -p /data/langfuse && minio server --address ":9000" /data' >/dev/null
 docker run -d --name stubr --network $NET --network-alias stub --network-alias mock-model -v "$REPO/scripts/tests/litellm-langfuse":/h:ro -e DATA_DIR=/tmp -e PORT=8080 node:22-alpine node /h/stub.mjs >/dev/null
-for i in $(seq 1 60); do
+for i in $(seq 1 120); do
   docker exec lfpgr pg_isready -h 127.0.0.1 -U postgres >/dev/null 2>&1 && docker exec lfchr clickhouse-client --user clickhouse --password clickhouse --query 'SELECT 1' >/dev/null 2>&1 && break; sleep 2
 done
 docker exec lfpgr psql -h 127.0.0.1 -U postgres -q -c 'CREATE DATABASE litellm' || die "create litellm database"
@@ -94,7 +95,7 @@ lf_up() {
     -e LANGFUSE_S3_EVENT_UPLOAD_BUCKET=langfuse -e LANGFUSE_S3_EVENT_UPLOAD_REGION=auto -e LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID=minio
     -e LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY=miniosecret -e LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT=http://lfminior:9000 -e LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE=true)
   docker run -d --name lfworkerr --network $NET "${env[@]}" "langfuse/langfuse-worker:$LFV" >/dev/null
-  docker run -d --name lfwebr --network $NET -p 127.0.0.1:13100:3000 "${env[@]}" -e NEXTAUTH_SECRET="$2" -e AUTH_DISABLE_SIGNUP=true \
+  docker run -d --name lfwebr --restart on-failure:5 --network $NET -p 127.0.0.1:13100:3000 "${env[@]}" -e NEXTAUTH_SECRET="$2" -e AUTH_DISABLE_SIGNUP=true \
     -e LANGFUSE_INIT_ORG_ID=sovereign-os -e LANGFUSE_INIT_ORG_NAME=org -e LANGFUSE_INIT_PROJECT_ID=agent-core -e LANGFUSE_INIT_PROJECT_NAME=agent-core \
     -e LANGFUSE_INIT_PROJECT_PUBLIC_KEY="$4" -e LANGFUSE_INIT_PROJECT_SECRET_KEY="$5" \
     -e LANGFUSE_INIT_USER_EMAIL=$EMAIL -e LANGFUSE_INIT_USER_NAME=admin -e LANGFUSE_INIT_USER_PASSWORD="${LF_INIT_PW:-$PW_OLD}" "langfuse/langfuse:$LFV" >/dev/null
@@ -184,7 +185,8 @@ want "back to the start: values decryptable again" "$N" "$(total "$(scan)" effec
 step "3. re-key step 1: master key S, LITELLM_MIGRATE_FROM_MASTER_KEY=<old>, no salt key"
 gw_up "$S" "" "$OLD" "$UI_OLD" || die "gateway (step 1)"
 docker logs gwr 2>&1 | grep -oE "Done re-encrypting [0-9]+ stored value\(s\)[^.]*" | head -1 | sed 's/^/   LiteLLM: /'
-docker logs gwr 2>&1 | grep -qE "Done re-encrypting $N stored value" && ok "LiteLLM re-encrypted all $N values" || bad "LiteLLM did not log 'Done re-encrypting $N'"
+GWLOG=$(docker logs gwr 2>&1)   # captured first: grep -q on a pipe would SIGPIPE the writer under pipefail
+case $GWLOG in *"Done re-encrypting $N stored value"*) ok "LiteLLM re-encrypted all $N values" ;; *) bad "LiteLLM did not log 'Done re-encrypting $N'" ;; esac
 R1=$(scan "$(printf '%s\0%s\0' old "$OLD" | keys_json)")
 want "per column, decryptable with S" "$BEFORE" "$(per_column "$R1" effective)"
 want "values left under the old master key" 0 "$(total "$R1" old)"

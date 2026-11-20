@@ -346,10 +346,14 @@ verify() {
   local want_salt; want_salt=$(ov litellmSaltKey.value)
   if [ "$kind" = step1 ] || [ "$kind" = rollback-step1 ]; then
     [ -z "$(secret_key litellm-credentials LITELLM_SALT_KEY)" ] && pass "no LITELLM_SALT_KEY yet (the migration only runs without one)" || fail "LITELLM_SALT_KEY is set: LiteLLM will not migrate"
-    k get deploy "$LITELLM_SVC" -o jsonpath='{range .spec.template.spec.containers[0].env[*]}{.name}{"\n"}{end}' | grep -qx "$MIGRATE" \
-      && pass "$MIGRATE is set on the gateway" || fail "$MIGRATE is not set on the gateway"
-    k logs "deploy/$LITELLM_SVC" -c litellm --since=2h 2>/dev/null | grep -qE "Done re-encrypting [0-9]+ stored value|nothing in the database is left to migrate" \
-      && pass "LiteLLM logged the re-encryption outcome" || fail "no re-encryption outcome in the LiteLLM log yet"
+    # Captured first, then matched: `grep -q` on a pipe can SIGPIPE the writer, which pipefail reports as a failure.
+    local envnames gwlog
+    envnames=$(k get deploy "$LITELLM_SVC" -o jsonpath='{range .spec.template.spec.containers[0].env[*]}{.name}{"\n"}{end}')
+    if grep -qx "$MIGRATE" <<<"$envnames"; then pass "$MIGRATE is set on the gateway"; else fail "$MIGRATE is not set on the gateway"; fi
+    gwlog=$(k logs "deploy/$LITELLM_SVC" -c litellm --since=2h 2>/dev/null || true)
+    if grep -qE "Done re-encrypting [0-9]+ stored value|nothing in the database is left to migrate" <<<"$gwlog"; then
+      pass "LiteLLM logged the re-encryption outcome: $(grep -oE 'Done re-encrypting [0-9]+ stored value\(s\)|nothing in the database is left to migrate' <<<"$gwlog" | tail -1)"
+    else fail "no re-encryption outcome in the LiteLLM log yet"; fi
   else
     [ "$(h16 "$(secret_key litellm-credentials LITELLM_SALT_KEY)")" = "$(h16 "$want_salt")" ] && pass "LITELLM_SALT_KEY = this step's" || fail "LITELLM_SALT_KEY is not this step's value"
     local mv; mv=$(k get deploy "$LITELLM_SVC" -o go-template='{{range (index .spec.template.spec.containers 0).env}}{{if eq .name "'"$MIGRATE"'"}}[{{.value}}]{{end}}{{end}}')
