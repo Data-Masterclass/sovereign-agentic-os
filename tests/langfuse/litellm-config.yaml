@@ -1,6 +1,6 @@
 # LiteLLM for the tracing e2e test. The callback block is production's
-# (charts/sovereign-agentic-os/values.yaml `litellm_settings`): the legacy Langfuse callback with
-# message logging off and no failure callback. The two aliases are the ones the engine asks for;
+# (charts/sovereign-agentic-os/values.yaml `litellm_settings`): `langfuse_otel` on OTel v2, message
+# logging off, no legacy `langfuse` in any callback list (scripts/check-litellm-model-info.mjs). The two aliases are the ones the engine asks for;
 # both route to the test process's scripted OpenAI-compatible stub and carry a price, so the
 # gateway's generation has a real cost.
 model_list:
@@ -25,6 +25,6 @@ model_list:
       output_cost_per_token: 0.00000175
       supports_function_calling: true
 litellm_settings:
-  success_callback: ["langfuse"]
+  callbacks: ["langfuse_otel"]
   turn_off_message_logging: true
   drop_params: true

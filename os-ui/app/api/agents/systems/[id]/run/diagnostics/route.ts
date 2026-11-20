@@ -19,7 +19,7 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@core/kernel/route-server';
-import { langfuseTraceId, readObservations, UnfilteredLangfuseQueryError } from '@core/infra/langfuse';
+import { langfuseTraceId, readObservations, readTraceObservations, UnfilteredLangfuseQueryError } from '@core/infra/langfuse';
 import { isRunId } from '@core/kernel/run-id';
 import { assertRunVisible } from '@tabs/agents/lib/engine/run-visibility';
 import { runJobStore } from '@tabs/agents/lib/build/run-jobs-server';
@@ -58,12 +58,14 @@ export const GET = withRoute<{ id: string }>(async ({ req, user, params }) => {
 
   let observations;
   try {
-    observations = await readObservations(
-      runId ? { traceId: await langfuseTraceId(runId), type: 'GENERATION' } : { userId: user.id, fromTimestamp, type: 'GENERATION' },
-    );
+    // A run: the whole trace, so each gateway generation is attributed to the agent on its
+    // `llm.<node>` ancestor (LiteLLM OTel v2 carries no caller metadata onto the generation).
+    observations = runId
+      ? await readTraceObservations(await langfuseTraceId(runId))
+      : await readObservations({ userId: user.id, fromTimestamp, type: 'GENERATION' });
     // A run traced before the OTel writer (20 Nov 2026) kept its raw run id as the trace id.
     if (runId && Array.isArray(observations) && observations.length === 0) {
-      observations = await readObservations({ traceId: runId, type: 'GENERATION' });
+      observations = await readTraceObservations(runId);
     }
   } catch (e) {
     if (e instanceof UnfilteredLangfuseQueryError) return NextResponse.json({ error: e.message }, { status: 400 });

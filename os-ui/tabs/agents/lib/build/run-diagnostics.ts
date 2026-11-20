@@ -139,6 +139,10 @@ export function buildDiagnostics(run: DiagRun, metrics?: TraceMetrics): Diagnost
  * usage + latency and attribute it to a node via the trace name / metadata.
  */
 export type RawObservation = {
+  id?: string;
+  /** Present on a whole-trace read; only GENERATION rows carry tokens and cost. */
+  type?: string;
+  parentObservationId?: string | null;
   name?: string;
   startTime?: string;
   endTime?: string;
@@ -178,9 +182,17 @@ function obsLatencyMs(o: RawObservation): number {
  * match a known node name inside the observation name (traces are named
  * `agent.<tool>` and nodes carry their own names). Returns '' when unknown.
  */
-function attributeNode(o: RawObservation, nodeNames: string[]): string {
+function attributeNode(o: RawObservation, nodeNames: string[], byId?: Map<string, RawObservation>): string {
   const meta = o.metadata?.node;
   if (typeof meta === 'string' && meta) return meta;
+  // On a whole-trace read: the nearest ancestor that names its agent. LiteLLM OTel v2 nests the
+  // gateway's generation under its request span under the OS's `llm.<node>` span, which carries
+  // `metadata.node`; the generation itself carries no caller metadata (measured on 1.109.1).
+  for (let p = o.parentObservationId ? byId?.get(o.parentObservationId) : undefined, hops = 0; p && hops < 8; hops++) {
+    const n = p.metadata?.node;
+    if (typeof n === 'string' && n) return n;
+    p = p.parentObservationId ? byId?.get(p.parentObservationId) : undefined;
+  }
   // The gateway's generation: LiteLLM's Langfuse callback keeps the caller's request metadata
   // under `requester_metadata`, where `liteLlmCaller` puts the agent (`node`).
   const requester = (o.metadata as { requester_metadata?: { node?: unknown } } | undefined)?.requester_metadata?.node;
@@ -200,14 +212,17 @@ export function shapeTraceMetrics(observations: RawObservation[], nodeNames: str
 
   const perNode: Record<string, NodeTraceMetric> = {};
   const totals = { tokens: 0, latencyMs: 0, costUsd: 0 };
+  const byId = new Map(observations.filter((o) => o.id).map((o) => [o.id as string, o]));
   for (const o of observations) {
+    // A whole-trace read also holds spans (the tree); only generations are model calls.
+    if (o.type && o.type !== 'GENERATION') continue;
     const tokens = obsTokens(o);
     const cost = obsCost(o);
     const latencyMs = obsLatencyMs(o);
     totals.tokens += tokens;
     totals.costUsd += cost;
     totals.latencyMs += latencyMs;
-    const node = attributeNode(o, nodeNames);
+    const node = attributeNode(o, nodeNames, byId);
     if (!node) continue;
     const cur = perNode[node] ?? (perNode[node] = { node, tokens: 0, latencyMs: 0, costUsd: 0 });
     cur.tokens += tokens;

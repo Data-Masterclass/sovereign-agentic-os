@@ -168,3 +168,21 @@ test('per-agent metrics read the gateway generation: LiteLLM keeps the agent und
   assert.ok((m.perNode.writer?.costUsd ?? 0) > 0);
   assert.equal(m.totals.tokens, 50);
 });
+
+test('shapeTraceMetrics on a whole-trace read: a gateway generation counts for the agent on its llm.<node> ancestor; spans count nothing', () => {
+  // The shape LiteLLM 1.109.1 `langfuse_otel` (span scope full) produces, measured: the generation
+  // carries no caller metadata and hangs under the gateway's request span, under the OS's llm span.
+  const metrics = shapeTraceMetrics(
+    [
+      { id: 'n1', type: 'CHAIN', name: 'act_reader', metadata: { node: 'reader' }, latency: 2 },
+      { id: 's1', type: 'SPAN', parentObservationId: 'n1', name: 'llm.act_reader', metadata: { node: 'reader' }, latency: 1.5 },
+      { id: 'r1', type: 'SPAN', parentObservationId: 's1', name: 'POST /v1/chat/completions', latency: 1.2 },
+      { id: 'g1', type: 'GENERATION', parentObservationId: 'r1', name: 'chat sovereign-default', usage: { total: 15 }, calculatedTotalCost: 0.0001, latency: 1 },
+      { id: 'g2', type: 'GENERATION', parentObservationId: 'missing', name: 'chat sovereign-default', usage: { total: 15 }, calculatedTotalCost: 0.0001, latency: 1 },
+    ],
+    ['reader'],
+  );
+  assert.equal(metrics.perNode.reader?.tokens, 15, 'the generation is attributed through its ancestors');
+  assert.equal(metrics.totals.tokens, 30, 'every generation counts in the totals, once');
+  assert.equal(metrics.totals.latencyMs, 2000, 'span latencies are not added: generations only');
+});
