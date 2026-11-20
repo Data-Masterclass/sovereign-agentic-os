@@ -2,51 +2,58 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 /**
- * Tests for the credentialed CORS allow-list used by deployed governed apps that
- * call back into the OS (identity delegation). Only the OS's own origin and hosts
- * under the apps domain are reflected — never `*`, never an arbitrary origin.
+ * Credentialed CORS is granted to the OS's OWN public origin only (exact match).
+ * No other origin — apps-domain hosts, look-alikes, other schemes/ports — is ever
+ * reflected, and `*` is never used.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { corsHeadersFor, isAllowedAppOrigin } from '@core/kernel/cors';
 
 const OS = 'https://agentic.datamasterclass.com';
-const APPS = 'apps.datamasterclass.com';
+const APPS = 'apps.agentic.datamasterclass.com';
 
-test('an app subdomain under the apps domain is allowed', () => {
-  assert.equal(isAllowedAppOrigin('https://ops-hub.finance.apps.datamasterclass.com', OS, APPS), true);
-});
-
-test('the apps domain apex itself is allowed', () => {
-  assert.equal(isAllowedAppOrigin('https://apps.datamasterclass.com', OS, APPS), true);
-});
-
-test("the OS's own origin is allowed (host-compare)", () => {
-  assert.equal(isAllowedAppOrigin('https://agentic.datamasterclass.com', OS, APPS), true);
-});
-
-test('an unrelated origin is REJECTED (no wildcard, no arbitrary echo)', () => {
-  assert.equal(isAllowedAppOrigin('https://evil.example.com', OS, APPS), false);
-  // A look-alike suffix that is not actually under the apps domain.
-  assert.equal(isAllowedAppOrigin('https://apps.datamasterclass.com.evil.com', OS, APPS), false);
-});
-
-test('a missing/garbage origin is rejected', () => {
-  assert.equal(isAllowedAppOrigin(null, OS, APPS), false);
-  assert.equal(isAllowedAppOrigin('', OS, APPS), false);
-  assert.equal(isAllowedAppOrigin('not-a-url', OS, APPS), false);
-});
-
-test('corsHeadersFor reflects the exact origin with credentials (never *)', () => {
-  const origin = 'https://ops-hub.finance.apps.datamasterclass.com';
-  const h = corsHeadersFor(origin, OS, APPS);
+test("the OS's own origin gets the credentialed grant", () => {
+  const h = corsHeadersFor(OS, OS);
   assert.ok(h);
-  assert.equal(h!['Access-Control-Allow-Origin'], origin);
-  assert.notEqual(h!['Access-Control-Allow-Origin'], '*');
+  assert.equal(h!['Access-Control-Allow-Origin'], OS);
   assert.equal(h!['Access-Control-Allow-Credentials'], 'true');
   assert.match(h!['Vary'], /Origin/);
 });
 
-test('corsHeadersFor returns null for a disallowed origin (add nothing)', () => {
-  assert.equal(corsHeadersFor('https://evil.example.com', OS, APPS), null);
+test('an app subdomain gets NO CORS grant (no reflection, no credentials)', () => {
+  assert.equal(corsHeadersFor('https://x.apps.agentic.datamasterclass.com', OS), null);
+  assert.equal(corsHeadersFor('https://ops-hub.finance.apps.agentic.datamasterclass.com', OS), null);
+  assert.equal(corsHeadersFor('https://apps.agentic.datamasterclass.com', OS), null);
+});
+
+test('look-alike origins get NO CORS grant', () => {
+  for (const o of [
+    'https://agentic.datamasterclass.com.evil.example',
+    'https://evil-agentic.datamasterclass.com',
+    'http://agentic.datamasterclass.com',
+    'https://agentic.datamasterclass.com:8443',
+    'https://AGENTIC.datamasterclass.com/', // not a serialized Origin
+    'null',
+    '*',
+  ]) {
+    assert.equal(corsHeadersFor(o, OS), null, o);
+  }
+});
+
+test('no OS public URL configured → no CORS grant for anyone', () => {
+  assert.equal(corsHeadersFor('http://localhost:3000', ''), null);
+  assert.equal(corsHeadersFor('http://localhost:3000', undefined), null);
+});
+
+test('missing / garbage origin → null', () => {
+  assert.equal(corsHeadersFor(null, OS), null);
+  assert.equal(corsHeadersFor('', OS), null);
+  assert.equal(corsHeadersFor('not-a-url', OS), null);
+});
+
+test('isAllowedAppOrigin still ATTRIBUTES apps-domain hosts (least-privilege narrowing only)', () => {
+  assert.equal(isAllowedAppOrigin('https://ops-hub.finance.apps.agentic.datamasterclass.com', OS, APPS), true);
+  assert.equal(isAllowedAppOrigin('https://apps.agentic.datamasterclass.com.evil.com', OS, APPS), false);
+  assert.equal(isAllowedAppOrigin(null, OS, APPS), false);
 });
