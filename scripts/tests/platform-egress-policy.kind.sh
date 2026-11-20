@@ -58,15 +58,17 @@ k wait --for=condition=Ready node --all --timeout=300s >/dev/null || exit 2
 
 docker build -q -t sovereign-os/egress-proxy:0.1.0 images/base/egress-proxy >/dev/null || exit 2
 kind load docker-image --name "$CLUSTER" sovereign-os/egress-proxy:0.1.0 >/dev/null || exit 2
-docker image inspect "$LITELLM_IMAGE" >/dev/null 2>&1 || docker pull -q "$LITELLM_IMAGE" >/dev/null || exit 2
-docker tag "$LITELLM_IMAGE" sovereign-os/litellm-under-test:pinned
-kind load docker-image --name "$CLUSTER" sovereign-os/litellm-under-test:pinned >/dev/null || exit 2
+# LiteLLM is pulled by the kind node itself, by the chart's digest (a multi-arch index does not
+# survive `kind load`).
+docker exec "$CLUSTER-control-plane" crictl pull "$LITELLM_IMAGE" >/dev/null || exit 2
 
 k create namespace agentic-os >/dev/null 2>&1
 API=$(k get endpointslice -n default -l kubernetes.io/service-name=kubernetes -o jsonpath='{.items[0].endpoints[0].addresses[0]}')
 [ -n "$API" ] || { echo "no API server endpoint" >&2; exit 2; }
 render() { helm template agentic-os "$CHART" -n agentic-os --skip-schema-validation --set "networkPolicies.apiserver.cidrs={$API/32}" "$@" 2>/dev/null; }
 render --show-only templates/base/network/egress-policies.yaml | k apply -n agentic-os -f - >/dev/null || exit 2
+# The proxy names one of the chart's PriorityClasses; admission refuses the pod without it.
+render --show-only templates/base/priority-classes.yaml | k apply -f - >/dev/null || exit 2
 render --show-only templates/base/egress/proxy.yaml | k apply -n agentic-os -f - >/dev/null || exit 2
 k -n agentic-os rollout status deploy/egress-proxy --timeout=180s >/dev/null || exit 2
 
@@ -81,13 +83,16 @@ for d in yaml.safe_load_all(sys.stdin):
 [ -n "$envjson" ] || envjson="[]"
 [ "$(echo "$envjson" | python3 -c 'import sys,json;print(len(json.load(sys.stdin)))')" -ge 3 ] && ok "the chart renders LiteLLM's proxy env" || bad "the chart renders LiteLLM's proxy env"
 
-k -n agentic-os create configmap litellm-test-config --from-literal=config.yaml="model_list:
+MASTER="sk-$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"   # a throwaway key for this cluster only
+k -n agentic-os delete pod gw gw-noproxy --ignore-not-found >/dev/null 2>&1
+k -n agentic-os create configmap litellm-test-config --dry-run=client -o yaml --from-literal=config.yaml="model_list:
   - model_name: listed
     litellm_params: { model: openai/test, api_base: https://$LISTED/v1, api_key: sk-test-not-a-key }
   - model_name: unlisted
     litellm_params: { model: openai/test, api_base: https://$UNLISTED/v1, api_key: sk-test-not-a-key }
 litellm_settings: { request_timeout: 20, num_retries: 0 }
-" >/dev/null
+general_settings: { master_key: $MASTER }
+" | k apply -n agentic-os -f - >/dev/null
 gateway() { # gateway <name> <env-json>
   cat <<YAML | k apply -n agentic-os -f - >/dev/null
 apiVersion: v1
@@ -98,37 +103,36 @@ metadata:
 spec:
   containers:
     - name: litellm
-      image: sovereign-os/litellm-under-test:pinned
-      imagePullPolicy: Never
+      image: $LITELLM_IMAGE
+      imagePullPolicy: IfNotPresent
       command: ["litellm", "--config", "/c/config.yaml", "--port", "4000"]
       env: $2
       volumeMounts: [{ name: c, mountPath: /c }]
       readinessProbe: { httpGet: { path: /health/liveliness, port: 4000 }, periodSeconds: 3 }
   volumes: [{ name: c, configMap: { name: litellm-test-config } }]
 YAML
-  k -n agentic-os expose pod "$1" --port=4000 >/dev/null
+  k -n agentic-os expose pod "$1" --port=4000 >/dev/null 2>&1 || true
 }
 gateway gw "$envjson"
 gateway gw-noproxy "[]"
 k -n agentic-os wait --for=condition=Ready pod/gw pod/gw-noproxy --timeout=600s >/dev/null || exit 2
 
-n=0
 # run_curl <labels> <args…> — prints curl's stdout; exit = curl's exit code.
 run_curl() {
-  local labels=$1; shift; n=$((n + 1))
-  k -n agentic-os run "p$n" --image="$CURL" --restart=Never --labels="$labels" --command -- curl "$@" >/dev/null
+  local labels=$1 name="p$RANDOM$RANDOM" phase=""; shift
+  k -n agentic-os run "$name" --image="$CURL" --restart=Never --labels="$labels" --command -- curl "$@" >/dev/null || return 2
   for _ in $(seq 1 90); do
-    phase=$(k -n agentic-os get pod "p$n" -o jsonpath='{.status.phase}' 2>/dev/null)
+    phase=$(k -n agentic-os get pod "$name" -o jsonpath='{.status.phase}' 2>/dev/null)
     case $phase in Succeeded|Failed) break ;; esac; sleep 2
   done
-  k -n agentic-os logs "p$n" 2>/dev/null
+  k -n agentic-os logs "$name" 2>/dev/null
   [ "$phase" = Succeeded ]
 }
 # connects <labels> <host> — 0 when a TCP+TLS connection to host:443 opens (any HTTP status).
 connects() { local code; code=$(run_curl "$1" -s -o /dev/null -w '%{http_code}' --connect-timeout 6 -m 10 "https://$2/"); [ -n "$code" ] && [ "$code" != 000 ]; }
 chat() { # chat <svc> <model> — the gateway's response body
   run_curl app.kubernetes.io/component=os-ui -s -m 60 "http://$1.agentic-os.svc.cluster.local:4000/v1/chat/completions" \
-    -H 'content-type: application/json' -d "{\"model\":\"$2\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}"
+    -H 'content-type: application/json' -H "authorization: Bearer $MASTER" -d "{\"model\":\"$2\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}"
 }
 DOC=app.kubernetes.io/component=docling
 echo "== direct HTTPS is closed; the API server stays reachable"
@@ -137,15 +141,17 @@ code=$(run_curl "$DOC" -sk -o /dev/null -w '%{http_code}' --connect-timeout 6 "h
 [ -n "$code" ] && [ "$code" != 000 ] && ok "a platform pod still reaches the API server ($code)" || bad "a platform pod still reaches the API server" "code=$code"
 connects app.kubernetes.io/component=os-ui "$PUBLIC" && ok "os-ui (direct-HTTPS exception) reaches $PUBLIC:443" || bad "os-ui (direct-HTTPS exception) reaches $PUBLIC:443"
 echo "== the model gateway goes through the proxy"
+# A provider answer: the upstream API rejected the test key (STACKIT answers 403, OpenAI 401).
+PROVIDER_ANSWER='OpenAIException - Error code: 40'
 body=$(chat gw listed)
-check "LiteLLM reaches the allowlisted provider $LISTED (the provider rejects the test key)" "401" "$body"
-check "the proxy logged the CONNECT to $LISTED" "$LISTED" "$(k -n agentic-os logs deploy/egress-proxy 2>/dev/null)"
+check "LiteLLM reaches the allowlisted provider $LISTED (the provider rejects the test key)" "$PROVIDER_ANSWER" "$body"
+check "the proxy established the tunnel to $LISTED" "Established connection to host \"$LISTED\"" "$(k -n agentic-os logs deploy/egress-proxy 2>/dev/null)"
 body=$(chat gw unlisted)
-absent "LiteLLM gets no provider answer from $UNLISTED (not on the allowlist)" "invalid_api_key" "$body"
-check "the proxy refused $UNLISTED" "$UNLISTED" "$(k -n agentic-os logs deploy/egress-proxy 2>/dev/null | grep -i -E 'filter|refus|denied|403')"
+absent "LiteLLM gets no provider answer from $UNLISTED (not on the allowlist)" "$PROVIDER_ANSWER" "$body"
+check "the proxy refused $UNLISTED" "Proxying refused on filtered domain \"$UNLISTED\"" "$(k -n agentic-os logs deploy/egress-proxy 2>/dev/null)"
 echo "== negative twins"
 body=$(chat gw-noproxy listed)
-absent "LiteLLM without the proxy env cannot reach the provider" "401" "$body"
+absent "LiteLLM without the proxy env cannot reach the provider" "$PROVIDER_ANSWER" "$body"
 helm template agentic-os "$CHART" -n agentic-os --skip-schema-validation --show-only templates/base/network/egress-policies.yaml 2>/dev/null \
   | python3 -c '
 import sys, yaml
