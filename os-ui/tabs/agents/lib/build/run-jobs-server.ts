@@ -55,6 +55,7 @@ import { runJobStoreFor } from '@tabs/agents/lib/engine/jobs-postgres';
 import { leaseWatch, settlementOf, workerLoop, type LeaseWatch, type WorkerLoopDeps } from '@tabs/agents/lib/engine/worker-loop';
 import { currentUserOf, executeTeamRun, prepareRun, type RunReportBody } from '@tabs/agents/lib/build/run-service';
 import type { LivePrincipal } from '@tabs/agents/lib/engine/resume';
+import { interruptIdOfCard, StaleResumeError, type ResumeDecision } from '@tabs/agents/lib/engine/run';
 import type { ApprovalDecision } from '@tabs/agents/lib/engine/approval-port';
 import type { Approval } from '@core/policy/approvals';
 import { getSystemForRun, refreshSystemFromMirror } from '@tabs/agents/lib/store';
@@ -293,7 +294,9 @@ export async function executeJob(store: RunJobStore, job: RunJob, opts: ExecuteJ
       messages: job.input.messages ?? [],
       runId: job.runId,
       resume: job.kind === 'resume',
+      resumeDecision: job.input.resume,
       resumeWith: job.input.resumeWith,
+      log: opts.log,
       prompt: job.input.prompt,
       // LIFECYCLE (review M-3): the job carries the lifecycle its door established, so a
       // worker-executed scheduled run is attributed env:run exactly like an inline one.
@@ -336,6 +339,13 @@ export async function executeJob(store: RunJobStore, job: RunJob, opts: ExecuteJ
     // `executeTeamRun` publishes `error` itself for a real failure but NOT for a refused resume
     // (404/409) — those never looked like a run, so the tail needs a terminal frame from here.
     if (err?.status === 404 || err?.status === 409) emit('error', { error: message, status: err.status });
+    // WP-26: a stale or duplicate decision leaves a still-parked run PARKED (it waits for the
+    // right interrupt); a pre-WP-26 multi-hold batch is cancelled, visibly, as `failed`.
+    if (e instanceof StaleResumeError) {
+      opts.log?.(`run ${job.runId} resume refused (${e.code}): ${message}`);
+      await settle(e.stillParked ? 'parked' : 'failed', e.stillParked ? undefined : `${e.code}: ${message}`);
+      return;
+    }
     await settle('failed', message);
   }
 }
@@ -465,7 +475,7 @@ export async function resumeQueuedRun(input: {
   systemId: string;
   domain: string;
   runId: string;
-  resumeWith?: Record<string, ApprovalDecision>;
+  resume?: ResumeDecision;
   waitMs?: number;
   signal?: AbortSignal;
 }): Promise<StartedRunReport> {
@@ -476,7 +486,7 @@ export async function resumeQueuedRun(input: {
     requestedBy: input.user.id,
     user: input.user,
     kind: 'resume',
-    input: { messages: [], resumeWith: input.resumeWith },
+    input: { messages: [], ...(input.resume ? { resume: input.resume } : {}) },
   });
   return followRun(queued, { waitMs: input.waitMs, signal: input.signal });
 }
@@ -513,7 +523,11 @@ export async function enqueueResumeAfterDecision(input: { runner: LivePrincipal;
   // events in `seq` order no matter which pod executes them.
   await store.appendEvent(a.runId, 'resumed', { approvalId: a.id, decision: input.decision }).catch(() => undefined);
   publishRunEvent(a.runId, 'resumed', { approvalId: a.id, decision: input.decision });
-  const out = await resumeQueuedRun({ user, systemId: a.systemId, domain, runId: a.runId, resumeWith: { [a.id]: input.decision } });
+  // WP-26: the card is keyed `<thread>:<interruptId>`, so the decision names the interrupt it
+  // answers. A card filed before WP-26 (`<thread>:<callId>`) yields no id: the worker's strict
+  // resume matches it through the one-release shim instead.
+  const interruptId = interruptIdOfCard(a.interruptKey, a.runId);
+  const out = await resumeQueuedRun({ user, systemId: a.systemId, domain, runId: a.runId, resume: { decision: input.decision, approvalId: a.id, ...(interruptId ? { interruptId } : {}) } });
   if (out.error) throw Object.assign(new Error(out.error.message), { status: out.error.status });
   if (!out.body) return { parked: false, reachedEnd: false, queued: true };
   return { parked: out.body.parked, reachedEnd: out.body.reachedEnd, ...(out.body.failed ? { failed: out.body.failure?.reason ?? 'an agent failed' } : {}) };

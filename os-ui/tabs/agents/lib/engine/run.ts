@@ -18,9 +18,18 @@
  *     name the same `{ systemId, userId }` or it is a `ResumeNotFoundError` (the route answers 404,
  *     never confirming the thread exists). A thread with nothing left to run is a typed
  *     `RunAlreadyFinishedError` (409) — resuming it is never a silent no-op that rewrites history.
- *   - Resume = `stream(null | Command({ resume }), sameConfig)`: LangGraph continues from the last
- *     checkpoint of that thread (re-running the superstep that was in flight). `resumeWith` carries
- *     `{ [approvalId]: decision }` after a Governance decision (the node also re-reads the queue).
+ *   - INTERRUPT → CARD (WP-26). The graph never touches the Governance queue. This driver's stream
+ *     loop sees each `__interrupt__` chunk (`{ id, value }`, one per held call) and files ONE card
+ *     per interrupt: `approvals.enqueueOnce({ interruptKey: '<thread>:<interruptId>' })`. The
+ *     interrupt id is LangGraph's, stable across re-runs of the paused node, so a worker restart
+ *     or a replay never files a second card. It logs `parked runId=<id> interrupt=<id>`.
+ *   - Resume = `stream(null | Command({ resume: { [interruptId]: { decision, approvalId } } }))`:
+ *     LangGraph continues from the last checkpoint of that thread. STRICT: before building the
+ *     Command, `getState` must list that interrupt id among the thread's pending interrupts —
+ *     otherwise `StaleResumeError` (409) and nothing runs. A decision that names only its approval
+ *     (a card or job filed before WP-26) is matched through the card, or — the one-release shim —
+ *     to a pre-WP-26 thread's single pending interrupt; a pre-WP-26 batch holding more than one
+ *     call is refused (`legacy_multi_hold`) so it is visibly cancelled, never guessed.
  *   - The result is assembled from GRAPH STATE (`getState`), not from the event stream: path = the
  *     recorded visits, final text = `state.final` (+ the budget note when exhausted); `heldApprovals`
  *     = the interrupts still pending (a PARKED run). An aborted stream or a hit recursion limit
@@ -33,12 +42,16 @@ import type { LlmMessage } from '@core/runtime/agentic';
 import type { AgenticGraphDeps, AgenticGraphResult, NodeRun } from '@tabs/agents/lib/build/agentic-graph';
 import {
   buildGraph,
-  isInterruptPayload,
+  isHoldInterrupt,
+  isLegacyHoldInterrupt,
   type EngineEvent,
   type EngineState,
   type GraphDeps,
   type HeldCall,
-  type InterruptPayload,
+  type HoldAnswer,
+  type HoldDeps,
+  type HoldInterrupt,
+  type LegacyHoldInterrupt,
   type RouteDecision,
 } from '@tabs/agents/lib/engine/build-graph';
 import type { ApprovalDecision, RunOwner } from '@tabs/agents/lib/engine/approval-port';
@@ -46,13 +59,37 @@ import type { CheckpointerKind, SelectedCheckpointer } from '@tabs/agents/lib/en
 
 /** The live hooks — the walker's three, plus A2's interrupt notice (the route's `approval-required`). */
 export type EngineHooks = Pick<AgenticGraphDeps, 'onNodeStart' | 'onStep' | 'onNodeComplete'> & {
-  onInterrupt?: (ev: InterruptPayload) => void;
+  /** A held call paused the run and its card was filed (once per interrupt id). */
+  onInterrupt?: (ev: PendingApproval) => void;
   /** An agent is waiting for the model rate limit to reset (the route's `rate-limit-wait`). */
   onRateLimitWait?: (ev: Extract<EngineEvent, { event: 'rate-limit-wait' }>['data']) => void;
 };
 
-/** An approval a parked run is waiting on. */
-export type PendingApproval = { approvalId: string; tool: string; node: string };
+/** An approval a parked run is waiting on: the card, and the LangGraph interrupt it answers. */
+export type PendingApproval = { approvalId: string; interruptId: string; tool: string; node: string };
+
+/** A Governance decision delivered to a parked run. `interruptId` absent = a pre-WP-26 card or job. */
+export type ResumeDecision = { decision: ApprovalDecision; approvalId: string; interruptId?: string };
+
+/**
+ * The decision names no interrupt this thread is waiting on (a duplicate, a stale card, a wrong
+ * id), or — `legacy_multi_hold` — a pre-WP-26 thread whose parked batch holds more than one call.
+ * 409; nothing runs. `stillParked` = the thread is still waiting on another interrupt.
+ */
+export class StaleResumeError extends Error {
+  runId: string;
+  status: number;
+  code: 'stale_interrupt' | 'legacy_multi_hold';
+  stillParked: boolean;
+  constructor(runId: string, code: 'stale_interrupt' | 'legacy_multi_hold', reason: string, stillParked: boolean) {
+    super(`Run '${runId}': ${reason}`);
+    this.name = 'StaleResumeError';
+    this.runId = runId;
+    this.status = 409;
+    this.code = code;
+    this.stillParked = stillParked;
+  }
+}
 
 export type EngineRunInput = {
   ir: IR;
@@ -65,8 +102,12 @@ export type EngineRunInput = {
   owner?: RunOwner;
   /** Continue the thread `runId` from its last checkpoint instead of starting it. */
   resume?: boolean;
-  /** A2: the decision(s) a resume carries, `{ [approvalId]: 'approve' | 'reject' }`. */
+  /** The Governance decision this resume delivers (WP-26: keyed by interrupt id). */
+  resumeDecision?: ResumeDecision;
+  /** ONE-RELEASE SHIM: a pre-WP-26 job's `{ [approvalId]: decision }` (exactly one entry). */
   resumeWith?: Record<string, ApprovalDecision>;
+  /** Operator log line sink (the worker's console); absent → silent. */
+  log?: (message: string) => void;
   hooks?: EngineHooks;
   /** Abort the stream (a disconnect, a test killing the run) — the thread stays resumable. */
   signal?: AbortSignal;
@@ -132,6 +173,9 @@ export class RunAlreadyFinishedError extends Error {
   }
 }
 
+/** Every run stream is checkpointed synchronously (see `runGraphEngine`). */
+export const RUN_DURABILITY = 'sync' as const;
+
 /** The same phrasing the walker appends — the Evaluate run-check detects it. */
 export const BUDGET_NOTE =
   "\n\n_(The team stopped at the run's tool-step budget — it may not have finished. An admin can raise AGENT_TEAM_RUN_MAX_STEPS.)_";
@@ -152,15 +196,92 @@ function isEngineEvent(v: unknown): v is EngineEvent {
   return !!v && typeof v === 'object' && typeof (v as { event?: unknown }).event === 'string' && 'data' in (v as object);
 }
 
-/** The pending interrupts of a state snapshot, as approvals (any other interrupt value is ignored). */
-function pendingApprovals(snap: { tasks?: { interrupts?: { value?: unknown }[] }[] }): PendingApproval[] {
-  const out: PendingApproval[] = [];
+type HoldPending = { id: string; value: HoldInterrupt | LegacyHoldInterrupt };
+
+/** The thread's pending HOLD interrupts, from LangGraph's own state (`tasks[].interrupts[]`). */
+function pendingHolds(snap: { tasks?: readonly { interrupts?: readonly { id?: string; value?: unknown }[] }[] }): HoldPending[] {
+  const out: HoldPending[] = [];
   for (const t of snap.tasks ?? []) {
     for (const i of t.interrupts ?? []) {
-      if (isInterruptPayload(i.value)) out.push({ approvalId: i.value.approvalId, tool: i.value.tool, node: i.value.node });
+      const v = i.value;
+      if (i.id && (isHoldInterrupt(v) || isLegacyHoldInterrupt(v))) out.push({ id: i.id, value: v });
     }
   }
   return out;
+}
+
+/** The card for one pending interrupt: filed once (`file`), or only looked up (inspection). */
+async function cardFor(runId: string, p: HoldPending, hold: HoldDeps | undefined, file: boolean): Promise<PendingApproval> {
+  const base = { interruptId: p.id, tool: p.value.tool, node: p.value.node };
+  // A pre-WP-26 thread: its card was filed inside the node and the value names it.
+  if (isLegacyHoldInterrupt(p.value)) return { ...base, approvalId: p.value.approvalId };
+  if (!hold) return { ...base, approvalId: '' };
+  const interruptKey = `${runId}:${p.id}`;
+  if (!file) return { ...base, approvalId: (await hold.approvals.find(interruptKey))?.approvalId ?? '' };
+  const v = p.value;
+  const { approvalId } = await hold.approvals.enqueueOnce({
+    interruptKey,
+    runId,
+    threadId: runId,
+    systemId: hold.systemId,
+    node: v.node,
+    tool: v.tool,
+    args: v.args,
+    approverRole: v.approverRole,
+    domain: hold.domain,
+    runner: hold.runner,
+    agent: hold.agent,
+  });
+  return { ...base, approvalId };
+}
+
+/**
+ * The interrupt id a card answers: cards are keyed `<thread>:<interruptId>` (WP-26). A card filed
+ * before WP-26 is keyed `<thread>:<callId>`; its "id" will not match any pending interrupt and the
+ * strict resume refuses it — so callers pass it only as a hint; `resolveResume` decides.
+ */
+export function interruptIdOfCard(interruptKey: string | undefined, threadId: string): string | undefined {
+  if (!interruptKey || !interruptKey.startsWith(`${threadId}:`)) return undefined;
+  const id = interruptKey.slice(threadId.length + 1);
+  // LangGraph interrupt ids are hex digests (XXH3); a pre-WP-26 call id is not.
+  return /^[0-9a-f]{16,}$/.test(id) ? id : undefined;
+}
+
+/**
+ * STRICT RESUME (WP-26): which pending interrupt this decision answers. Throws `StaleResumeError`
+ * rather than resuming anything else. Pure apart from the card lookup.
+ */
+export async function resolveResume(
+  snap: { values?: unknown; tasks?: readonly { interrupts?: readonly { id?: string; value?: unknown }[] }[] },
+  d: ResumeDecision,
+  runId: string,
+  hold: HoldDeps | undefined,
+): Promise<string> {
+  const pending = pendingHolds(snap);
+  const stillParked = pending.length > 0;
+  if (d.interruptId) {
+    if (pending.some((p) => p.id === d.interruptId)) return d.interruptId;
+    throw new StaleResumeError(runId, 'stale_interrupt', `interrupt '${d.interruptId}' is not pending on this run — the decision is stale or for another run; nothing was resumed`, stillParked);
+  }
+  // No interrupt id: a card or job filed before WP-26. (1) A current thread: match via its card.
+  if (hold) {
+    for (const p of pending) {
+      if (!isHoldInterrupt(p.value)) continue;
+      const card = await hold.approvals.find(`${runId}:${p.id}`);
+      if (card?.approvalId === d.approvalId) return p.id;
+    }
+  }
+  // (2) ONE-RELEASE SHIM: a thread parked by the previous engine — its value names the approval.
+  const legacy = pending.filter((p) => isLegacyHoldInterrupt(p.value) && p.value.approvalId === d.approvalId);
+  if (legacy.length === 1) {
+    const cur = (snap.values as Partial<EngineState> | undefined)?.current;
+    const heldInBatch = (cur?.pending ?? []).filter((c) => hold?.decide(c.name).held).length;
+    if (pending.length !== 1 || heldInBatch !== 1) {
+      throw new StaleResumeError(runId, 'legacy_multi_hold', `this run was parked by the previous engine with ${Math.max(heldInBatch, pending.length)} held calls in one batch; it cannot be resumed safely and is cancelled — start it again`, false);
+    }
+    return legacy[0].id;
+  }
+  throw new StaleResumeError(runId, 'stale_interrupt', `approval '${d.approvalId}' answers no interrupt pending on this run; nothing was resumed`, stillParked);
 }
 
 type Snapshot = Awaited<ReturnType<ReturnType<typeof buildGraph>['graph']['getState']>>;
@@ -187,7 +308,7 @@ async function assertResumable(graph: ReturnType<typeof buildGraph>['graph'], co
   // `next` lists only tasks WITHOUT writes; a task re-parked on a second `interrupt()` after a resume
   // already carries its `__resume__` write, so it is absent from `next` but present in `tasks` with
   // its interrupts — still resumable, not finished.
-  if (snap.next.length === 0 && pendingApprovals(snap).length === 0) throw new RunAlreadyFinishedError(runId);
+  if (snap.next.length === 0 && pendingHolds(snap).length === 0) throw new RunAlreadyFinishedError(runId);
   return snap;
 }
 
@@ -198,8 +319,14 @@ export async function runGraphEngine(input: EngineRunInput): Promise<EngineRunRe
 
   let graphInput: Partial<EngineState> | Command | null = null;
   if (input.resume) {
-    await assertResumable(built.graph, config, input.runId, input.owner);
-    if (input.resumeWith) graphInput = new Command({ resume: input.resumeWith });
+    const snap = await assertResumable(built.graph, config, input.runId, input.owner);
+    const decision = input.resumeDecision ?? legacyDecision(input.resumeWith);
+    if (decision) {
+      const interruptId = await resolveResume(snap, decision, input.runId, input.deps.hold);
+      const answer: HoldAnswer = { decision: decision.decision, approvalId: decision.approvalId };
+      graphInput = new Command({ resume: { [interruptId]: answer } });
+      input.log?.(`resume runId=${input.runId} interrupt=${interruptId} decision=${decision.decision}`);
+    }
   } else {
     const messages: LlmMessage[] = input.messages.map((m) => ({ role: m.role, content: m.content }));
     const task = input.messages.filter((m) => m.role === 'user').at(-1)?.content ?? '';
@@ -208,13 +335,24 @@ export async function runGraphEngine(input: EngineRunInput): Promise<EngineRunRe
 
   let recursionHit = false;
   try {
-    const stream = await built.graph.stream(graphInput, { ...config, streamMode: ['custom', 'updates'] });
+    // DURABILITY 'sync' (WP-26): LangGraph awaits each superstep's checkpoint before the next one
+    // starts, so a worker killed mid-run never re-executes a tool call that already completed.
+    // With the default 'async' the write can still be in flight when the process dies (proven by
+    // `durability.pg.test.ts`). One awaited write per superstep is negligible next to a model call.
+    const stream = await built.graph.stream(graphInput, { ...config, streamMode: ['custom', 'updates'], durability: RUN_DURABILITY });
     for await (const chunk of stream) {
       const [mode, data] = chunk as [string, unknown];
       if (mode === 'custom' && isEngineEvent(data)) dispatch(data, input.hooks);
       else if (mode === 'updates' && data && typeof data === 'object' && '__interrupt__' in (data as object)) {
-        const list = (data as { __interrupt__?: { value?: unknown }[] }).__interrupt__ ?? [];
-        for (const i of list) if (isInterruptPayload(i.value)) input.hooks?.onInterrupt?.(i.value);
+        // THE PROJECTOR: one card per LangGraph interrupt, keyed by its id (idempotent).
+        const list = (data as { __interrupt__?: { id?: string; value?: unknown }[] }).__interrupt__ ?? [];
+        for (const i of list) {
+          const v = i.value;
+          if (!i.id || !isHoldInterrupt(v)) continue;
+          const card = await cardFor(input.runId, { id: i.id, value: v }, input.deps.hold, true);
+          input.log?.(`parked runId=${input.runId} interrupt=${i.id} approval=${card.approvalId} tool=${card.tool}`);
+          input.hooks?.onInterrupt?.(card);
+        }
       }
     }
   } catch (e) {
@@ -228,7 +366,9 @@ export async function runGraphEngine(input: EngineRunInput): Promise<EngineRunRe
   }
 
   const snap = await built.graph.getState(config);
-  const result = summarize(snap, built, input, recursionHit);
+  // Every pending interrupt has its card (filed above; `enqueueOnce` answers the existing one).
+  const heldApprovals = await Promise.all(pendingHolds(snap).map((p) => cardFor(input.runId, p, input.deps.hold, true)));
+  const result = summarize(snap, built, input, recursionHit, heldApprovals);
   // A3: close the trace segment and flush in the background — never awaited by the run.
   const observer = input.deps.observe;
   if (observer) {
@@ -246,11 +386,18 @@ export async function runGraphEngine(input: EngineRunInput): Promise<EngineRunRe
   return result;
 }
 
-function summarize(snap: Snapshot, built: ReturnType<typeof buildGraph>, input: Pick<EngineRunInput, 'runId' | 'checkpointer' | 'signal'> & { deps?: Pick<GraphDeps, 'observe'> }, recursionHit: boolean): EngineRunResult {
+/** A pre-WP-26 job's `{ [approvalId]: decision }` as a decision without an interrupt id. */
+function legacyDecision(resumeWith: Record<string, ApprovalDecision> | undefined): ResumeDecision | undefined {
+  const entries = Object.entries(resumeWith ?? {});
+  if (entries.length === 0) return undefined;
+  if (entries.length > 1) throw new Error('resumeWith: a resume delivers exactly one decision');
+  return { approvalId: entries[0][0], decision: entries[0][1] };
+}
+
+function summarize(snap: Snapshot, built: ReturnType<typeof buildGraph>, input: Pick<EngineRunInput, 'runId' | 'checkpointer' | 'signal'> & { deps?: Pick<GraphDeps, 'observe'> }, recursionHit: boolean, heldApprovals: PendingApproval[]): EngineRunResult {
   const state = (snap.values ?? {}) as Partial<EngineState>;
   const runs: NodeRun[] = state.nodeRuns ?? [];
   const budget = state.budget ?? { stepsUsed: 0, exhausted: false };
-  const heldApprovals = pendingApprovals(snap);
   const parked = heldApprovals.length > 0;
   const pending = snap.next.length > 0 || parked;
   const interrupted = pending || !!input.signal?.aborted || recursionHit;
@@ -320,7 +467,8 @@ export async function inspectGraphRun(input: Pick<EngineRunInput, 'ir' | 'deps' 
   if (!threadExists(snap) || !mine) {
     return { exists: false, owner: null, finished: false, parked: false, heldApprovals: [], next: [], path: [], nodes: [], finalText: '', budget: { stepsUsed: 0, limit: built.stepBudget, exhausted: false }, held: [], warnings: built.warnings, failed: false };
   }
-  const s = summarize(snap, built, { runId: input.runId, checkpointer: input.checkpointer }, false);
+  const held = await Promise.all(pendingHolds(snap).map((p) => cardFor(input.runId, p, input.deps.hold, false)));
+  const s = summarize(snap, built, { runId: input.runId, checkpointer: input.checkpointer }, false, held);
   return {
     exists: true,
     owner: recorded,

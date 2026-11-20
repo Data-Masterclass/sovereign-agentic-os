@@ -17,7 +17,7 @@
  *     and file a SECOND approval under the same interruptKey, orphaning the decided one.
  */
 import 'server-only';
-import { ensureHydrated, enqueueOnce, getApproval, type ApprovalStatus } from '@core/policy/approvals';
+import { ensureHydrated, enqueueOnce, getApproval, listApprovals, type ApprovalStatus } from '@core/policy/approvals';
 import type { ApprovalPort, ApprovalState, HeldApprovalInput } from '@tabs/agents/lib/engine/approval-port';
 import { holdReason } from '@tabs/agents/lib/build/hold';
 
@@ -72,6 +72,11 @@ export function serverApprovalPort(): ApprovalPort {
       await ensureHydrated();
       const a = getApproval(approvalId);
       return a ? toState(a.status) : 'unknown';
+    },
+    async find(interruptKey: string) {
+      await ensureHydrated();
+      const a = listApprovals().find((x) => x.interruptKey === interruptKey);
+      return a ? { approvalId: a.id, status: toState(a.status) } : null;
     },
   };
 }

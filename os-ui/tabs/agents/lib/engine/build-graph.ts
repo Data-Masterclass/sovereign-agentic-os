@@ -18,15 +18,17 @@
  *     anything else, e.g. the legacy `last_value`, → an untyped `json` channel), plus the
  *     engine's own keys: `task`, `current` (the agent visit in
  *     flight), `handoffs` (append), `nodeRuns` (append), `routes` (append), `budget`, `held`
- *     (append), `final`, `failed`, `routeNext`. A system channel colliding with an engine key is
+ *     (append), `final`, `failed`, `routeNext`, `holds` (merge: call → hold decision). A system channel colliding with an engine key is
  *     a compile error.
  *   - FOUR NODES PER AGENT: `plan_<id>` (reasoning tier, no tools; budget check; node-started),
  *     `act_<id>` (execution tier with the node's advertised tools; ReAct fallback on
  *     ToolCallingUnsupportedError; dedup / error-streak / cap synthesis exactly as the walker's
  *     harness), `tools_<id>` (NODE-LEVEL NARROWING GATE — only tools this node is advertised
- *     reach the governed executor; A2: the HOLD DECISION for the whole batch is computed here
- *     first (`holdDecisionFor`), every held call is enqueued ONCE (`ApprovalPort.enqueueOnce`,
- *     idempotent on `<threadId>:<callId>`) and then parked on `interrupt()`; only after every
+ *     reach the governed executor; WP-26: the HOLD DECISION for each call is made ONCE in
+ *     `act_<id>` and checkpointed in the `holds` channel; `tools_<id>` pauses on ONE
+ *     `interrupt()` per held call (one per superstep, never in a loop, no queue I/O — the run
+ *     driver turns each `__interrupt__` into a Governance card keyed `<thread>:<interruptId>`
+ *     and resumes with `Command({ resume: { [interruptId]: decision } })`); only after every
  *     decision is known do calls execute — ONE CALL PER SUPERSTEP so each execution is
  *     checkpointed before the next (a crash re-executes at most the call in flight); an
  *     approved call runs through the unchanged executor AS THE RUNNER, a rejected one returns
@@ -144,7 +146,8 @@ import {
 } from '@tabs/agents/lib/build/agentic-graph';
 import { evaluateWhen, isLegacyUnguardedWhen, parseWhen, whenChannels, WhenSyntaxError, type WhenAst } from '@tabs/agents/lib/engine/when';
 import type { HoldDecision } from '@tabs/agents/lib/build/hold';
-import type { ApprovalDecision, ApprovalPort, ApprovalState, RunOwner, RunnerSnapshot } from '@tabs/agents/lib/engine/approval-port';
+import type { ApprovalDecision, ApprovalPort, RunOwner, RunnerSnapshot } from '@tabs/agents/lib/engine/approval-port';
+import { z } from 'zod';
 import { noopObserver, type RunObserver, type SpanHandle } from '@tabs/agents/lib/engine/observe';
 import { withRateLimitRetry, type RateLimitRetryOptions, type RateLimitWait } from '@tabs/agents/lib/engine/rate-limit';
 import type { ContextTrim, LlmCall } from '@core/runtime/agentic';
@@ -228,10 +231,15 @@ export type GraphDeps = Omit<AgenticGraphDeps, 'onNodeStart' | 'onStep' | 'onNod
   rateLimit?: Pick<RateLimitRetryOptions, 'retries' | 'maxWaitMs' | 'now' | 'sleep' | 'jitter'>;
 };
 
-/** What the tools node needs to hold a call: the rule, the queue port and the attribution. */
+/**
+ * The hold. The GRAPH reads only `decide`, once per tool call, in `act_<id>` (the result is
+ * checkpointed in `state.holds`). The rest is OS wrapper data for the run driver (`run.ts`), which
+ * turns each LangGraph `__interrupt__` into ONE Governance card — the graph never touches the queue.
+ */
 export type HoldDeps = {
   /** The pure rule — `holdDecisionFor(preset, tool)` bound to the system's preset. */
   decide: (tool: string) => HoldDecision;
+  /** Read by `run.ts` only: where an interrupt becomes a card, keyed `<thread>:<interruptId>`. */
   approvals: ApprovalPort;
   systemId: string;
   domain: string;
@@ -244,19 +252,68 @@ export type HoldDeps = {
 /** A held write and how it was decided (recorded once the batch executes). */
 export type HeldCall = { node: string; tool: string; callId: string; approvalId: string; decision: ApprovalDecision };
 
-/** The value `interrupt()` parks with — what the inbox card and the SSE `approval-required` event carry. */
-export type InterruptPayload = { approvalId: string; tool: string; node: string; args: Record<string, unknown> };
+/**
+ * The hold decision for ONE tool call, made ONCE in `act_<id>` and checkpointed in the `holds`
+ * channel before any interrupt. `tools_<id>` reads only this — it never re-asks the rule — so a
+ * policy change between pause and resume cannot turn a held or rejected call into an executed one
+ * (LangGraph re-runs the paused node from its start on resume). `refused` = the resource grants
+ * refuse the call (the typed text); it is never held and never executed.
+ */
+export type HoldEntry = { held: boolean; approverRole?: 'domain_admin' | 'admin'; refused?: string; reason: string };
 
-export function isInterruptPayload(v: unknown): v is InterruptPayload {
-  return !!v && typeof v === 'object' && typeof (v as InterruptPayload).approvalId === 'string' && typeof (v as InterruptPayload).tool === 'string';
+/** A call with no `holds` entry while a hold rule is configured: held, for an admin (fail closed). */
+const FAIL_CLOSED_HOLD: HoldEntry = { held: true, approverRole: 'admin', reason: 'no hold decision on record for this call (held for an admin)' };
+
+/** The `holds` key: unique per agent visit, ACT round and call id (model call ids repeat across visits). */
+export function holdKey(node: string, visit: number, round: number, callId: string): string {
+  return `${node}#${visit}.${round}:${callId}`;
 }
 
-/** The decision the node is waiting on, if the resume payload carries it (`{ [approvalId]: decision }`). */
-function decisionFromResume(v: unknown, approvalId: string): ApprovalDecision | undefined {
-  if (!v || typeof v !== 'object') return undefined;
-  const d = (v as Record<string, unknown>)[approvalId];
-  return d === 'approve' || d === 'reject' || d === 'withdraw' ? d : undefined;
+/** Upper bound (chars) on the tool arguments a paused call carries in its interrupt value. */
+const HOLD_ARGS_MAX = 4_000;
+function boundedHoldArgs(args: Record<string, unknown>): Record<string, unknown> {
+  const text = JSON.stringify(args ?? {});
+  return text.length <= HOLD_ARGS_MAX ? args : { _truncated: true, preview: `${text.slice(0, HOLD_ARGS_MAX)}…` };
 }
+
+/**
+ * The value `interrupt()` pauses with — one per held call. The run driver (`run.ts`) turns it into
+ * ONE Governance card keyed `<thread>:<interruptId>`; the SSE `approval-required` event carries it.
+ */
+export type HoldInterrupt = {
+  kind: 'os.hold';
+  tool: string;
+  node: string;
+  callId: string;
+  args: Record<string, unknown>;
+  approverRole: 'domain_admin' | 'admin';
+  reason: string;
+};
+
+export function isHoldInterrupt(v: unknown): v is HoldInterrupt {
+  return !!v && typeof v === 'object' && (v as HoldInterrupt).kind === 'os.hold' && typeof (v as HoldInterrupt).tool === 'string';
+}
+
+/**
+ * ONE-RELEASE SHIM: the value a thread parked under the previous engine carries (the card was
+ * filed inside the node, so the value names its approval). Recognised so such a thread can still
+ * be resumed (`run.ts` `resolveResume`); never produced any more.
+ */
+export type LegacyHoldInterrupt = { approvalId: string; tool: string; node: string; args: Record<string, unknown> };
+
+export function isLegacyHoldInterrupt(v: unknown): v is LegacyHoldInterrupt {
+  return !!v && typeof v === 'object' && !('kind' in v) && typeof (v as LegacyHoldInterrupt).approvalId === 'string' && typeof (v as LegacyHoldInterrupt).tool === 'string';
+}
+
+/**
+ * The resume value a paused call accepts — validated by LangGraph itself (`interrupt`'s
+ * `responseSchema`), so a malformed decision is a ZodError, never a guess.
+ */
+export const HOLD_ANSWER = z.object({
+  decision: z.enum(['approve', 'reject', 'withdraw']),
+  approvalId: z.string().min(1),
+});
+export type HoldAnswer = z.infer<typeof HOLD_ANSWER>;
 
 /** Model-readable typed result for a call a human REJECTED (mirrors os-tools `errorResult`). */
 function rejectedResult(tool: string, approvalId: string): { text: string; isError: boolean } {
@@ -312,10 +369,10 @@ export type AgentCursor = {
   maxIterations: number;
   react: boolean;
   pending: ToolCall[];
-  /** A2: set once the batch's hold decisions are all known (phase 1 done); cleared when the batch is executed. */
+  /** The decisions answered so far for this batch's held calls (call id → decision); cleared when the batch is executed. */
   gate?: {
     decisions: Record<string, { approvalId: string; decision: ApprovalDecision }>;
-    /** Calls the resource grants refuse (call id → the typed refusal text): never held, never executed. */
+    /** Pre-WP-26 checkpoints only: grant refusals computed in the old gate phase. */
     refused?: Record<string, string>;
   };
   finalText: string;
@@ -372,6 +429,8 @@ const FIXED = {
   failed: Annotation<string | null>(lastValue<string | null>(() => null)),
   routeNext: Annotation<string>(lastValue(() => '')),
   owner: Annotation<RunOwner | null>(lastValue<RunOwner | null>(() => null)),
+  /** Each tool call's hold decision, made ONCE in `act_<id>` (merge; see {@link HoldEntry}). */
+  holds: Annotation<Record<string, HoldEntry>>({ reducer: (a, b) => ({ ...a, ...b }), default: () => ({}) }),
 };
 const FIXED_ROOT = Annotation.Root(FIXED);
 
@@ -1074,6 +1133,23 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
             { ...cur, steps, react },
           );
         }
+        // THE HOLD DECISION, ONCE PER CALL (WP-26). Made here, in the superstep that produced the
+        // calls, and checkpointed in `holds` with it — before `tools_<id>` can pause on any of them.
+        // On resume LangGraph re-runs the PAUSED node only, so the decision cannot be re-asked.
+        // Resource grants first: a call the grants refuse is never put in front of an approver.
+        const holds: Record<string, HoldEntry> = {};
+        const advertisedNow = new Set(tools.map((t) => t.name));
+        for (const c of runnable) {
+          if (!advertisedNow.has(c.name) || c.name === SET_STATE_TOOL_NAME) continue;
+          const key = holdKey(id, state.nodeRuns.length, cur.iterations + 1, c.id);
+          const no = deps.precheck ? await deps.precheck(c.name, c.args) : null;
+          if (no) {
+            holds[key] = { held: false, refused: no.text, reason: "outside the system's resource grants" };
+            continue;
+          }
+          const rule = deps.hold ? deps.hold.decide(c.name) : ({ held: false } as const);
+          holds[key] = rule.held ? { held: true, approverRole: rule.approverRole, reason: `held for ${rule.approverRole} approval` } : { held: false, reason: deps.hold ? 'not held by the rule' : 'no hold rule' };
+        }
         return {
           current: {
             ...cur,
@@ -1088,6 +1164,7 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
             again: runnable.length === 0,
           },
           budget: spent,
+          ...(Object.keys(holds).length > 0 ? { holds } : {}),
         };
       } catch (e) {
         if (isGraphBubbleUp(e)) throw e;
@@ -1097,83 +1174,61 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
 
     // --------------------------------------------------------------- tools --
     /**
-     * Two phases, both idempotent under LangGraph's re-run-from-start on resume:
-     *   1. GATE (no `cur.gate` yet): compute the hold decision for EVERY pending call, enqueue each
-     *      held call once, then wait for each decision — a decided approval is read back from the
-     *      queue; a pending one parks the run on `interrupt()`. Nothing executes in this phase.
+     * Two phases, both safe under LangGraph's re-run-from-start on resume:
+     *   1. GATE: the FIRST held call of the batch that has no decision yet pauses the run on ONE
+     *      `interrupt()` (no loop, no queue I/O, no side effect before it). The hold itself was
+     *      decided once in `act_<id>` and is read from `state.holds`; the decision comes back as
+     *      the resume value (validated by `HOLD_ANSWER`) and is recorded in this superstep's
+     *      update, so the next held call pauses in the NEXT superstep — one interrupt each, each
+     *      with its own stable interrupt id. Nothing executes until every held call is decided.
      *   2. EXECUTE one call per superstep (checkpointed before the next): the node-level gate, the
-     *      dedup ledger, a rejected call's typed result, else the governed executor AS THE RUNNER.
+     *      dedup ledger, a refused/rejected call's typed result, else the governed executor AS THE RUNNER.
      */
     const toolsNode: NodeBody = async (state, config, obs) => {
       const cur = state.current;
       if (!cur || cur.node !== id) throw new Error(`tools_${id}: no agent visit in flight`);
       // THE NODE-LEVEL GATE: only the tools THIS node is advertised may reach the executor.
       const advertised = new Set(toolsFor(node).map((t) => t.name));
+      const holds = state.holds ?? {};
+      const roundPrefix = holdKey(id, state.nodeRuns.length, cur.iterations, '');
+      // ONE-RELEASE SHIM: a batch checkpointed by the previous engine has NO `holds` entries at all
+      // (this engine writes one for every gated call of a round). Only for such a batch is the rule
+      // asked here, as the previous engine did; `run.ts` refuses to resume one with more than one
+      // held call. Any other missing entry fails closed.
+      const legacyRound = !Object.keys(holds).some((k) => k.startsWith(roundPrefix));
+      const entryOf = (c: ToolCall): HoldEntry | undefined => {
+        if (!advertised.has(c.name) || c.name === SET_STATE_TOOL_NAME) return undefined;
+        const e = holds[holdKey(id, state.nodeRuns.length, cur.iterations, c.id)];
+        if (e) return e;
+        if (!deps.hold) return undefined;
+        if (!legacyRound) return FAIL_CLOSED_HOLD;
+        const legacyRefused = cur.gate?.refused?.[c.id];
+        if (legacyRefused !== undefined) return { held: false, refused: legacyRefused, reason: "outside the system's resource grants" };
+        const rule = deps.hold.decide(c.name);
+        return rule.held ? { held: true, approverRole: rule.approverRole, reason: `held for ${rule.approverRole} approval` } : { held: false, reason: 'not held by the rule' };
+      };
+      const decisions = cur.gate?.decisions ?? {};
 
-      if (!cur.gate) {
-        const decisions: Record<string, { approvalId: string; decision: ApprovalDecision }> = {};
-        // 0. RESOURCE GRANTS first: a call that names something outside the system's grants is
-        //    refused, so it must not be put in front of an approver either.
-        const refused: Record<string, string> = {};
-        if (deps.precheck) {
-          for (const c of cur.pending) {
-            if (!advertised.has(c.name) || c.name === SET_STATE_TOOL_NAME) continue;
-            const no = await deps.precheck(c.name, c.args);
-            if (no) refused[c.id] = no.text;
-          }
-        }
-        const hold = deps.hold;
-        if (hold) {
-          const threadId = String(config.configurable?.thread_id ?? '');
-          const heldCalls = cur.pending
-            // `os_set_state` writes the team's own state: it is never a governed write, never held.
-            .filter((c) => advertised.has(c.name) && c.name !== SET_STATE_TOOL_NAME && refused[c.id] === undefined)
-            .map((call) => ({ call, rule: hold.decide(call.name) }))
-            .filter((h): h is { call: ToolCall; rule: { held: true; approverRole: 'domain_admin' | 'admin' } } => h.rule.held);
-          const enqueue = (h: { call: ToolCall; rule: { held: true; approverRole: 'domain_admin' | 'admin' } }) =>
-            hold.approvals.enqueueOnce({
-              interruptKey: `${threadId}:${h.call.id}`,
-              runId: threadId,
-              threadId,
-              systemId: hold.systemId,
-              node: id,
-              tool: h.call.name,
-              args: h.call.args,
-              approverRole: h.rule.approverRole,
-              domain: hold.domain,
-              runner: hold.runner,
-              agent: hold.agent,
-            });
-          // 1a. Enqueue the WHOLE batch first so every held call is visible in the inbox at once.
-          const parked: { call: ToolCall; approvalId: string; status: ApprovalState }[] = [];
-          for (const h of heldCalls) {
-            const r = await enqueue(h);
-            parked.push({ call: h.call, approvalId: r.approvalId, status: r.status });
-          }
-          // 1b. Wait for each decision in order. The queue is the source of truth; `interrupt()` is
-          //     how the run parks until it changes. A resume payload `{ [approvalId]: decision }`
-          //     short-cuts the read; a payload for ANOTHER approval is ignored and the queue re-read.
-          for (const h of parked) {
-            let status: ApprovalState = h.status;
-            if (status === 'pending') status = await hold.approvals.status(h.approvalId);
-            while (status !== 'approve' && status !== 'reject' && status !== 'withdraw') {
-              if (status === 'unknown') {
-                // The queue lost the record (e.g. a memory queue after a restart): file it again.
-                const again = await enqueue(heldCalls.find((x) => x.call.id === h.call.id)!);
-                h.approvalId = again.approvalId;
-                status = again.status;
-                if (status !== 'pending') continue;
-              }
-              const payload: InterruptPayload = { approvalId: h.approvalId, tool: h.call.name, node: id, args: h.call.args };
-              // A3: the hold itself is an observation — the run parks here, and the trace says why.
-              obs.toolEvent(h.call, { decision: 'held', approvalId: h.approvalId, detail: `held for ${heldCalls.find((x) => x.call.id === h.call.id)?.rule.approverRole ?? 'admin'} approval` });
-              const resumed = interrupt<InterruptPayload, unknown>(payload);
-              status = decisionFromResume(resumed, h.approvalId) ?? (await hold.approvals.status(h.approvalId));
-            }
-            decisions[h.call.id] = { approvalId: h.approvalId, decision: status };
-          }
-        }
-        return { current: { ...cur, gate: Object.keys(refused).length > 0 ? { decisions, refused } : { decisions } } };
+      // Phase 1 — pause for the next undecided held call (at most ONE interrupt per superstep).
+      const waiting = cur.pending.find((c) => {
+        const e = entryOf(c);
+        return !!e && e.held && e.refused === undefined && decisions[c.id] === undefined;
+      });
+      if (waiting) {
+        const e = entryOf(waiting)!;
+        const payload: HoldInterrupt = {
+          kind: 'os.hold',
+          tool: waiting.name,
+          node: id,
+          callId: waiting.id,
+          args: boundedHoldArgs(waiting.args),
+          approverRole: e.approverRole ?? 'admin',
+          reason: e.reason,
+        };
+        const answer = interrupt<HoldInterrupt, HoldAnswer>(payload, { responseSchema: HOLD_ANSWER });
+        // After the decision: the trace records that the call was held and how it was decided.
+        obs.toolEvent(waiting, { decision: 'held', approvalId: answer.approvalId, detail: `held for ${payload.approverRole} approval — ${answer.decision}` });
+        return { current: { ...cur, gate: { ...(cur.gate ?? {}), decisions: { ...decisions, [waiting.id]: { approvalId: answer.approvalId, decision: answer.decision } } } } };
       }
 
       // Phase 2 — execute exactly ONE pending call this superstep.
@@ -1223,7 +1278,8 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
         record(out.text, true);
         feed(out.text);
       } else {
-        const gate = cur.gate.decisions[call.id];
+        const gate = decisions[call.id];
+        const holdEntry = entryOf(call);
         let out: { text: string; isError: boolean };
         if (!advertised.has(call.name)) {
           out = notAdvertisedResult(id, call.name);
@@ -1242,9 +1298,9 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
             out = { text: JSON.stringify({ ok: true, channel: parsed.channel, value: parsed.value }), isError: false };
             obs.toolEvent(call, { decision: 'ok', detail: `state.${parsed.channel} = ${JSON.stringify(parsed.value)}` });
           }
-        } else if (cur.gate.refused?.[call.id] !== undefined) {
+        } else if (holdEntry?.refused !== undefined) {
           // Outside the system's resource grants: the typed refusal, and the executor is not reached.
-          out = { text: cur.gate.refused[call.id], isError: true };
+          out = { text: holdEntry.refused, isError: true };
           obs.toolEvent(call, { decision: 'denied', detail: 'outside the system\'s resource grants — not executed' });
         } else if (gate && gate.decision === 'reject') {
           out = rejectedResult(call.name, gate.approvalId);

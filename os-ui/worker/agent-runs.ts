@@ -180,6 +180,21 @@ export async function bootWorker(): Promise<WorkerBoot> {
   boot.jobs = await ensureRunJobsReady();
   if (boot.jobs === 'memory') warn('the run queue is IN MEMORY — this process can only execute jobs it filed itself');
 
+  // WP-26 PARKED-RUN INVENTORY (read-only): which parked runs wait on a current interrupt and
+  // which on a pre-WP-26 one — the operator's before/after evidence for the HITL rollout.
+  if (boot.checkpointer === 'postgres' && config.agentRunsDatabaseUrl) {
+    try {
+      const { selectCheckpointer } = await import('@tabs/agents/lib/engine/checkpointer');
+      const { agentRunsPool } = await import('@tabs/agents/lib/engine/pg-pool');
+      const { inventoryParked, inventoryLines, parkedRunIds } = await import('@tabs/agents/lib/engine/parked-inventory');
+      const { saver } = await selectCheckpointer(config.agentRunsDatabaseUrl);
+      const ids = await parkedRunIds(await agentRunsPool(config.agentRunsDatabaseUrl));
+      for (const line of inventoryLines(await inventoryParked(saver, ids))) log(line);
+    } catch (err) {
+      warn(`parked-run inventory not read: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   // The Langfuse singleton (its SIGTERM flush is registered on construction).
   try {
     const { langfuseClient } = await import('@core/infra/langfuse');

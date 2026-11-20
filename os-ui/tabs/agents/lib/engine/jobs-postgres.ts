@@ -394,9 +394,9 @@ export function runJobStoreFor(databaseUrl: string): Promise<RunJobStore> {
   if (!slot.__osRunJobsPool || slot.__osRunJobsPool.url !== url) {
     let pool: SqlClient | undefined;
     const ready = (async (): Promise<RunJobStore> => {
-      const { Pool } = await import('pg');
-      // Small pool: the worker holds one claim at a time; os-ui only enqueues and tails.
-      pool = new Pool({ connectionString: url, max: 6 }) as unknown as SqlClient;
+      // ONE pool per process, shared with LangGraph's PostgresSaver (`checkpointer.ts`).
+      const { agentRunsPool } = await import('@tabs/agents/lib/engine/pg-pool');
+      pool = (await agentRunsPool(url)) as unknown as SqlClient;
       await migrateRunJobs(pool);
       return postgresRunJobStore(pool);
     })();

@@ -27,9 +27,10 @@ import { compile } from '@tabs/agents/lib/langgraph-compile';
 import { agentToolGate, grantedToolExecutor, grantedToolSpecs, type OsToolDeps } from '@tabs/agents/lib/build/os-tools';
 import { holdDecisionFor } from '@tabs/agents/lib/build/hold';
 import { memoryApprovalPort, type MemoryApprovalPort, type RunOwner } from '@tabs/agents/lib/engine/approval-port';
-import type { GraphDeps, InterruptPayload } from '@tabs/agents/lib/engine/build-graph';
+import type { GraphDeps } from '@tabs/agents/lib/engine/build-graph';
+import type { PendingApproval } from '@tabs/agents/lib/engine/run';
 import { memoryCheckpointer, type SelectedCheckpointer } from '@tabs/agents/lib/engine/checkpointer';
-import { inspectGraphRun, ResumeNotFoundError, RunAlreadyFinishedError, runGraphEngine, type EngineRunInput } from '@tabs/agents/lib/engine/run';
+import { inspectGraphRun, ResumeNotFoundError, RunAlreadyFinishedError, runGraphEngine, StaleResumeError, type EngineRunInput } from '@tabs/agents/lib/engine/run';
 import { FIXTURE_USER } from '@tabs/agents/lib/engine/parity-harness';
 
 const SYSTEM_ID = 'sys-held';
@@ -123,7 +124,7 @@ const BATCH: Call[] = [
 test('P3(a)+(d) a held write PARKS the run before anything executes; the non-held call of the same batch waits too', async () => {
   const spy = spyDeps();
   const port = memoryApprovalPort();
-  const interrupts: InterruptPayload[] = [];
+  const interrupts: PendingApproval[] = [];
   const h = harness(HELD_YAML, script(BATCH), spy, port);
   const cp = memoryCheckpointer();
 
@@ -133,7 +134,7 @@ test('P3(a)+(d) a held write PARKS the run before anything executes; the non-hel
   assert.equal(r1.reachedEnd, false);
   assert.deepEqual(r1.heldApprovals.map((x) => ({ tool: x.tool, node: x.node })), [{ tool: 'request_promotion', node: 'writer' }]);
   assert.equal(interrupts.length, 1, 'approval-required fired once');
-  assert.equal(interrupts[0].approvalId, r1.heldApprovals[0].approvalId);
+  assert.deepEqual(interrupts[0], r1.heldApprovals[0], 'the hook carries the card and its interrupt');
   assert.match(r1.finalText, /parked/);
   // NOTHING executed — not the held write, not even the read in the same batch.
   assert.deepEqual(spy.rpc, []);
@@ -142,7 +143,9 @@ test('P3(a)+(d) a held write PARKS the run before anything executes; the non-hel
   assert.equal(all.length, 1);
   assert.equal(all[0].status, 'pending');
   assert.equal(all[0].runId, 'held-a');
-  assert.equal(all[0].interruptKey, 'held-a:c-write');
+  // WP-26: the card is keyed by LangGraph's interrupt id, not by the model's call id.
+  assert.match(r1.heldApprovals[0].interruptId, /^[0-9a-f]{32}$/);
+  assert.equal(all[0].interruptKey, `held-a:${r1.heldApprovals[0].interruptId}`);
   assert.equal(all[0].runner.id, FIXTURE_USER.id);
   assert.equal(all[0].approverRole, 'domain_admin');
 
@@ -173,9 +176,8 @@ test('P3(b)+(d) approve → the held write executes EXACTLY ONCE as the RUNNER (
   assert.deepEqual(spy.rpc.map((c) => c.tool), ['search_knowledge', 'request_promotion'], 'each call executed once, in batch order');
   for (const c of spy.rpc) assert.equal(c.user.id, FIXTURE_USER.id, `executed as the runner, not the approver: ${c.tool}`);
   assert.deepEqual(r2.held, [{ node: 'writer', tool: 'request_promotion', callId: 'c-write', approvalId, decision: 'approve' }]);
-  // The node re-ran from its start on resume: enqueueOnce was asked again, but ONE record exists.
-  assert.ok(port.enqueueCalls >= 2, `enqueueOnce re-asked on the re-run (${port.enqueueCalls})`);
-  assert.equal(port.all().length, 1, 'idempotent on (threadId, callId)');
+  // The card was filed by the run driver from the interrupt, keyed by its id: ONE record.
+  assert.equal(port.all().length, 1, 'idempotent on (threadId, interruptId)');
   const step = r2.runs[0].result.steps.find((s) => s.tool === 'request_promotion')!;
   assert.equal(step.isError, false);
   assert.match(step.result, /"ran":"request_promotion"/);
@@ -192,8 +194,8 @@ test('withdraw → a typed `withdrawn_by_requester` result reaches the model, th
   const approvalId = r1.heldApprovals[0].approvalId;
   assert.ok(port.decide(approvalId, 'withdraw', FIXTURE_USER.id));
 
-  // Resumed WITHOUT a payload too: the node reads the queue, so the outcome does not depend on it.
-  const r2 = await runGraphEngine(runInput(h, 'held-w', cp, { resume: true }));
+  // WP-26: the decision travels IN the resume, keyed by the interrupt it answers (the node never reads the queue).
+  const r2 = await runGraphEngine(runInput(h, 'held-w', cp, { resume: true, resumeDecision: { approvalId, interruptId: r1.heldApprovals[0].interruptId, decision: 'withdraw' } }));
   assert.equal(r2.reachedEnd, true, 'the run continued to END');
   assert.equal(r2.parked, false);
   assert.deepEqual(spy.rpc.map((c) => c.tool), ['search_knowledge'], 'the withdrawn write never reached the executor');
@@ -236,10 +238,9 @@ test('P3(c) reject → a typed `rejected` result reaches the model and the run c
   assert.equal(r2.runs[0].status, 'denied', 'a human rejection is a policy outcome, not an execution failure');
 });
 
-test('P3(e) a racing second decision gets null and resumes nothing; a resume payload for ANOTHER approval does not unblock this one', async () => {
+test('P3(e) two held writes pause ONE AT A TIME (one interrupt, one card each); a stale or duplicate decision is refused with 409', async () => {
   const spy = spyDeps();
   const port = memoryApprovalPort();
-  // Two held writes in one batch plus a read.
   const batch: Call[] = [
     { id: 'c-read', name: 'search_knowledge', args: { query: 'x' } },
     { id: 'c-w1', name: 'request_promotion', args: { kind: 'knowledge', id: 'kn_1' } },
@@ -248,27 +249,50 @@ test('P3(e) a racing second decision gets null and resumes nothing; a resume pay
   const h = harness(HELD_YAML, script(batch), spy, port);
   const cp = memoryCheckpointer();
   const r1 = await runGraphEngine(runInput(h, 'held-e', cp));
-  // Both approvals are filed at once (the inbox shows the whole batch); the run parks on the first.
-  assert.equal(port.all().length, 2);
-  assert.equal(r1.heldApprovals.length, 1);
-  const [a1, a2] = port.all().map((x) => x.approvalId);
-  assert.equal(r1.heldApprovals[0].approvalId, a1);
+  assert.equal(r1.heldApprovals.length, 1, 'one interrupt per superstep');
+  assert.equal(port.all().length, 1, 'one card — for the first held call');
+  const first = r1.heldApprovals[0];
+  assert.ok(port.decide(first.approvalId, 'approve', 'dana'));
+  assert.equal(port.decide(first.approvalId, 'reject', 'eve'), null, 'the racing second decider gets null');
 
-  // Decide the SECOND first; the first stays pending → the run parks again on the first.
-  assert.ok(port.decide(a2, 'approve', 'dana'));
-  assert.equal(port.decide(a2, 'reject', 'eve'), null, 'the racing second decider gets null');
-  const r2 = await runGraphEngine(runInput(h, 'held-e', cp, { resume: true, resumeWith: { [a2]: 'approve' } }));
-  assert.equal(r2.parked, true, 'still parked: the first approval is undecided');
-  assert.equal(r2.heldApprovals[0].approvalId, a1);
+  const r2 = await runGraphEngine(runInput(h, 'held-e', cp, { resume: true, resumeDecision: { approvalId: first.approvalId, interruptId: first.interruptId, decision: 'approve' } }));
+  assert.equal(r2.parked, true, 'parked again — on the second held call');
+  const second = r2.heldApprovals[0];
+  assert.notEqual(second.interruptId, first.interruptId, 'a new interrupt, with its own id');
+  assert.equal(port.all().length, 2, 'and its own card');
   assert.deepEqual(spy.rpc, [], 'nothing executed while any call of the batch is undecided');
 
-  // Now decide the first: both decisions are read back from the queue and the batch executes once.
-  assert.ok(port.decide(a1, 'reject', 'dana'));
-  const r3 = await runGraphEngine(runInput(h, 'held-e', cp, { resume: true, resumeWith: { [a1]: 'reject' } }));
+  // The first decision delivered again (a duplicate) answers nothing pending: refused, nothing runs.
+  await assert.rejects(
+    () => runGraphEngine(runInput(h, 'held-e', cp, { resume: true, resumeDecision: { approvalId: first.approvalId, interruptId: first.interruptId, decision: 'approve' } })),
+    (e: Error) => e instanceof StaleResumeError && e.status === 409 && e.stillParked === true,
+  );
+  assert.deepEqual(spy.rpc, []);
+
+  assert.ok(port.decide(second.approvalId, 'reject', 'dana'));
+  const r3 = await runGraphEngine(runInput(h, 'held-e', cp, { resume: true, resumeDecision: { approvalId: second.approvalId, interruptId: second.interruptId, decision: 'reject' } }));
   assert.equal(r3.parked, false);
   assert.equal(r3.reachedEnd, true);
   assert.deepEqual(spy.rpc.map((c) => c.tool), ['search_knowledge', 'request_promotion'], 'the read once, the approved write once, the rejected write never');
-  assert.deepEqual(r3.held.map((x) => [x.callId, x.decision]), [['c-w1', 'reject'], ['c-w2', 'approve']]);
+  assert.deepEqual(r3.held.map((x) => [x.callId, x.decision]), [['c-w1', 'approve'], ['c-w2', 'reject']]);
+});
+
+test('a decision filed before WP-26 (approval id only, no interrupt id) is matched through its card', async () => {
+  const spy = spyDeps();
+  const port = memoryApprovalPort();
+  const h = harness(HELD_YAML, script(BATCH), spy, port);
+  const cp = memoryCheckpointer();
+  const r1 = await runGraphEngine(runInput(h, 'held-legacy-job', cp));
+  const { approvalId } = r1.heldApprovals[0];
+  await assert.rejects(
+    () => runGraphEngine(runInput(h, 'held-legacy-job', cp, { resume: true, resumeWith: { apr_unknown: 'approve' } })),
+    (e: Error) => e instanceof StaleResumeError && e.code === 'stale_interrupt',
+    'an approval id that matches no card of this run resumes nothing',
+  );
+  assert.deepEqual(spy.rpc, []);
+  const r2 = await runGraphEngine(runInput(h, 'held-legacy-job', cp, { resume: true, resumeWith: { [approvalId]: 'approve' } }));
+  assert.equal(r2.reachedEnd, true);
+  assert.deepEqual(spy.rpc.map((c) => c.tool), ['search_knowledge', 'request_promotion']);
 });
 
 test('H1: a thread can be resumed only by its own system AND runner — anything else is a typed not-found before any execution', async () => {

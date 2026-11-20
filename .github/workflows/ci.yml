@@ -96,6 +96,40 @@ jobs:
       - name: Code map generates cleanly
         run: node scripts/build-docs.mjs
 
+  # WP-26: the agent engine's human-in-the-loop and durability proofs against the REAL LangGraph
+  # library and the REAL PostgresSaver on the chart's Postgres image. Every test step runs in a
+  # fresh node process (a real worker restart). REQUIRE_PG_TESTS=1 makes a missing database fail.
+  test-langgraph-pg:
+    name: test-langgraph-pg
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17@sha256:5c855ad7b85e68e48a62f34662853f38b57c1c1d80f3a927ab58034fd6d31c5e
+        env:
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: agent_runs
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Setup Node.js
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: 22
+      - name: Install (os-ui)
+        run: npm --prefix os-ui ci
+      - name: One copy of @langchain/langgraph and @langchain/core
+        working-directory: os-ui
+        run: node scripts/check-langgraph-single-copy.mjs
+      - name: HITL + durability against Postgres 17
+        working-directory: os-ui
+        env:
+          AGENT_RUNS_TEST_DATABASE_URL: postgres://postgres:ci@127.0.0.1:5432/agent_runs
+          REQUIRE_PG_TESTS: '1'
+        run: node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test --test-concurrency=1 'tabs/**/*.pg.test.ts'
+
   build:
     name: build
     runs-on: ubuntu-latest

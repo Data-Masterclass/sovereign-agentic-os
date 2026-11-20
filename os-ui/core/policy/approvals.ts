@@ -7,7 +7,7 @@
  *             decision can resume that thread — without the kernel knowing the Agents tab exists.
  * ARCHITECTURE:
  *   - In-process singleton queue (globalThis-pinned) with a best-effort OpenSearch write-through.
- *   - A2: `enqueueOnce` is idempotent on `interruptKey` (= `<threadId>:<callId>`), because LangGraph
+ *   - A2: `enqueueOnce` is idempotent on `interruptKey` (= `<threadId>:<interruptId>`, WP-26), because LangGraph
  *     re-runs an interrupted node from its start on every resume. `decide()` fires the registered
  *     `onDecided` handlers for an approval that carries a `runId`; the Agents tab registers the
  *     handler at boot (`tabs/agents/lib/engine/resume-boot.ts`) — a registration, never an import,
@@ -140,7 +140,7 @@ export type Approval = {
   runId?: string;
   /** The checkpointer thread id (today always = runId; kept separate for a future sub-graph namespace). */
   threadId?: string;
-  /** Idempotency key `<threadId>:<callId>` — one approval per held tool call, however often the node re-runs. */
+  /** Idempotency key `<threadId>:<interruptId>` (the LangGraph interrupt id; `<threadId>:<callId>` on cards filed before WP-26) — one approval per held tool call, however often the node re-runs. */
   interruptKey?: string;
   /** The agent system the run belongs to, and the agent node that made the call. */
   systemId?: string;
