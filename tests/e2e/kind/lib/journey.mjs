@@ -24,15 +24,18 @@
  *     (AT-b: "metric-compile unreachable" must be a typed reason, never "no data").
  *   - Every outcome is appended to $E2E_REPORT_DIR/results.jsonl for render-report.mjs.
  */
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { HopError } from './hop.mjs';
+import { closeForwards } from './kube.mjs';
 
 const REPORT_DIR = process.env.E2E_REPORT_DIR ?? join(process.cwd(), 'report');
 const IGNORE_XFAIL = process.env.E2E_IGNORE_XFAIL === '1';
 const TIMEOUT = Number(process.env.E2E_ASSERT_TIMEOUT_MS ?? 15 * 60 * 1000);
 mkdirSync(REPORT_DIR, { recursive: true });
+// Port-forward children keep the event loop alive; end them when the file's tests are done.
+after(() => closeForwards());
 
 function record(entry) {
   appendFileSync(join(REPORT_DIR, 'results.jsonl'), `${JSON.stringify({ at: new Date().toISOString(), ...entry })}\n`);

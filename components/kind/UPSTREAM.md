@@ -5,8 +5,8 @@ Upstream, unmodified. Nothing in this folder is ours — see the rule in `compon
 - **Licence:** Apache-2.0
 - **Source:** https://github.com/kubernetes-sigs/kind
 - **Pinned as:** kind `v0.32.0`, node image
-  `kindest/node:v1.35.5@sha256:ce977ae6d65918d0b58a5f8b5e940429c2ce42fa3a5619ec2bbc60b949c0ac95`
-  (from the v0.32.0 release notes).
+  `kindest/node:v1.36.1@sha256:3489c7674813ba5d8b1a9977baea8a6e553784dab7b84759d1014dbd78f7ebd5`
+  (the v0.32.0 default, from its release notes).
 - **Docs:** https://kind.sigs.k8s.io/docs/user/configuration/
 
 **Why the OS uses it:** test infrastructure only — the cluster of the acceptance harness
