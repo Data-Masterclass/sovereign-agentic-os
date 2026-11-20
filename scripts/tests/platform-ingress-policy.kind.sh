@@ -102,6 +102,7 @@ expect reach  "trino"                     agentic-os app.kubernetes.io/component
 expect reach  "query-tool"                agentic-os app.kubernetes.io/component=query-tool trino 8080
 expect reach  "a Dagster run pod"         agentic-os component=user-deployments,dagster/run-id=r1 trino 8080
 expect reach  "a Dagster run pod"         agentic-os component=user-deployments,dagster/run-id=r2 pg 5432
+expect reach  "polaris (JDBC metastore)"  agentic-os app.kubernetes.io/component=polaris pg 5432
 expect reach  "langfuse"                  agentic-os app.kubernetes.io/name=langfuse,app.kubernetes.io/instance=agentic-os,app.kubernetes.io/component=worker minio 9000
 expect reach  "the ingress controller"    ingress-nginx app.kubernetes.io/name=ingress-nginx os-ui 3000
 expect reach  "an agent schedule pod"     agentic-os app.kubernetes.io/component=agent-schedule os-ui 3000

@@ -56,14 +56,15 @@ const dir = join(CHART, 'charts');
 if (!(existsSync(dir) && readdirSync(dir).some((f) => f.endsWith('.tgz')))) skip('subcharts not built');
 
 // Service name -> why it is covered here. Ports come from the rendered Service.
-const COVERED = ['opa', 'trino', 'polaris', 'pg-rw', 'pg', 'minio', 'valkey', 'clickhouse', 'web-fetch', 'egress-proxy', 'mock-model'];
+const COVERED = ['opa', 'trino', 'polaris', 'pg-rw', 'pg', 'minio', 'valkey', 'clickhouse', 'web-fetch', 'egress-proxy', 'mock-model', 'query-tool', 'data-runner'];
 const POLICIES = ['default-deny-ingress', 'opa-allow-callers', 'trino-allow-callers', 'polaris-allow-callers', 'postgres-allow-callers',
   'object-storage-allow-callers', 'valkey-allow-callers', 'clickhouse-allow-callers', 'web-fetch-allow-callers',
-  'egress-proxy-allow-callers', 'mock-model-allow-callers'];
+  'egress-proxy-allow-callers', 'mock-model-allow-callers', 'query-tool-allow-callers', 'data-runner-allow-callers'];
 // References that are names in text, not calls (each with its reason).
 const NOT_A_CALL = {
   'opa->trino': 'the OPA policy ConfigMap holds the `trino` Rego package',
   'pg->polaris': 'Postgres creates a database named `polaris`',
+  'query-tool->litellm': 'decided: the gateway\'s MCP entry for query-tool is not admitted (agent tools run in os-ui)',
 };
 const OPA_PEERS = ['component=opa-reassert-principals', 'component=os-ui', 'component=os-ui-worker', 'component=trino', 'component=web-fetch'];
 
@@ -182,6 +183,8 @@ const profiles = {
   local: ['-f', join(repo, 'values.local.yaml')],
   dev: ['-f', join(repo, 'values.dev.yaml')],
   stackit: ['-f', join(repo, 'values.stackit-managed.yaml')],
+  // The durable Polaris metastore (production): Polaris and its bootstrap reach Postgres.
+  'dev+polaris-jdbc': ['-f', join(repo, 'values.dev.yaml'), '--set', 'polaris.persistenceType=relational-jdbc'],
 };
 for (const [p, args] of Object.entries(profiles)) {
   const n = analyse(p, render(...args));
