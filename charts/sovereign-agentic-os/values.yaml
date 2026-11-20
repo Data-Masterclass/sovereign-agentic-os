@@ -29,6 +29,10 @@ global:
   namespace: agentic-os
   # Profile: "local" (kind) or "stackit". Templates may branch on this.
   profile: local
+  # Throwaway test renders only: lets a non-laptop render (ingress on, or another profile) keep
+  # the chart's published default secrets (templates/base/secret-defaults-guard.yaml). Never set
+  # it for a real install.
+  allowChartDefaultSecrets: false
   # Empty => use the cluster's default StorageClass (kind: "standard").
   storageClass: ""
   imagePullPolicy: IfNotPresent
