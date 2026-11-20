@@ -62,11 +62,13 @@ check() { # expected verb resource namespace
 # What the run needs.
 for v in get list delete; do
   check yes "$v" certificates.cert-manager.io agentic-apps
-  check yes "$v" secrets agentic-apps
 done
+check yes delete secrets agentic-apps
 check yes get backups.velero.io velero
 check yes list backups.velero.io velero
 # Negative twins: nothing more than that.
+check no get secrets agentic-apps
+check no list secrets agentic-apps
 check no create secrets agentic-apps
 check no update secrets agentic-apps
 check no delete backups.velero.io velero

@@ -11,7 +11,7 @@
  */
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { assertDeletableDomain, veleroBackupCheck, membersComponent } from '@tabs/admin/lib/domain-delete';
+import { assertDeletableDomain, veleroBackupCheck, membersComponent, singleReplicaPreflight } from '@tabs/admin/lib/domain-delete';
 import { createDomain, _reset as resetDomains } from '@tabs/admin/lib/domains';
 import { createUser, __resetUsers } from '@tabs/admin/lib/users';
 
@@ -61,4 +61,12 @@ test('an admin whose only domain is the deleted one is BLOCKED, never deactivate
   const p = await membersComponent().plan({ domainId: 'k', actor: { id: 'other', role: 'admin', domains: ['k'] } });
   assert.deepEqual(p.blocked?.map((b) => b.id), ['boss']);
   assert.deepEqual(p.remove.map((i) => `${i.kind}:${i.id}`), ['deactivate:jo']);
+});
+
+test('a run needs exactly one os-ui replica (spec and live); twins: 2 in spec, 2 live, unreadable', async () => {
+  const dep = (spec: number, live: number) => async () => ({ status: 200, body: { spec: { replicas: spec }, status: { replicas: live } } });
+  assert.equal(await singleReplicaPreflight(dep(1, 1)), null);
+  assert.match((await singleReplicaPreflight(dep(2, 1)))!, /2 replicas/);
+  assert.match((await singleReplicaPreflight(dep(1, 2)))!, /2 replicas/);
+  assert.match((await singleReplicaPreflight(async () => ({ status: 403, body: {} })))!, /could not be read/);
 });
