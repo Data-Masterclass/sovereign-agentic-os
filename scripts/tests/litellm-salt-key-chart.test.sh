@@ -30,7 +30,13 @@ skip() {
 command -v helm >/dev/null 2>&1 || skip "helm not on PATH"
 ls "$CHART"/charts/*.tgz >/dev/null 2>&1 || skip "chart dependencies not built"
 
-render() { out=$(helm template t "$CHART" -n agentic-os --skip-schema-validation "$@" 2>&1); rc=$?; }
+# stdout only is parsed (helm prints warnings on stderr); a failure's message is on stderr.
+render() {
+  local e; e=$(mktemp)
+  out=$(helm template t "$CHART" -n agentic-os --skip-schema-validation "$@" 2>"$e"); rc=$?
+  [ "$rc" -eq 0 ] || out="$out$(cat "$e")"
+  rm -f "$e"
+}
 # inspect <python expression over `by` (kind,name)->doc> — prints the result
 inspect() {
   printf '%s' "$out" | PYEXPR="$1" python3 -c '
