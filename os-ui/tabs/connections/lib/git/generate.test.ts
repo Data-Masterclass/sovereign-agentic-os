@@ -7,6 +7,7 @@
  *             as `connections/<catalog>/catalog.properties` in Trino's own format (secrets only as
  *             `${ENV:…}` references) plus an `os.yaml` with the OS-only facts, so that a plain
  *             Trino can load the catalog with no OS present (design 11 A10, design 12).
+ * ARCHITECTURE: node:test against the real module (and a real temp git repo where it commits); no mocks.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

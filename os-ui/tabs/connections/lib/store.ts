@@ -364,7 +364,6 @@ function commitConnectionsAfterWrite(map: Map<string, Connection>, c: Connection
     { action, object: c.warehouse?.catalog ?? c.id, objectId: `${c.id} (${c.name})` },
     captured,
   );
-  p.catch(() => undefined);
   return p;
 }
 

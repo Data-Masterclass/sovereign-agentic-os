@@ -6,6 +6,7 @@
  * USER STORY: As an operator I want to see, before anything is written, which files every domain
  *             repository would gain from the existing connection records, and which records cannot
  *             be moved and why — with no way for the plan itself to write.
+ * ARCHITECTURE: node:test against the real module (and a real temp git repo where it commits); no mocks.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
