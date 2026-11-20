@@ -463,9 +463,9 @@ export const config = {
   // module and an OS-layer-only `system.yaml`, and NEW runs load the committed `graph.mjs` after
   // its hash check. A run started before the switch resumes on the engine it started on.
   agentGraphModule: env('AGENT_GRAPH_MODULE', 'false').toLowerCase() === 'true',
-  // WP-53d: limit AGENT_GRAPH_MODULE to these domains (comma-separated). Empty ⇒ every domain
-  // (the global meaning of the flag). Only NEW runs and generation follow it; a parked run always
-  // resumes on the engine it started on (`tabs/agents/lib/module/flag.ts`).
+  // WP-53d: the domains AGENT_GRAPH_MODULE applies to (comma-separated; "*" = every domain). Empty ⇒
+  // NO domain. Only NEW runs and generation follow it; a parked run always resumes on the engine
+  // stamped on it, whatever either value says (`tabs/agents/lib/module/flag.ts`).
   agentGraphModuleDomains: env('AGENT_GRAPH_MODULE_DOMAINS', '').split(',').map((d) => d.trim()).filter(Boolean),
   // Where verified module bytes are materialised for import (content-addressed by digest).
   agentModuleCacheDir: env('AGENT_MODULE_CACHE_DIR', ''),

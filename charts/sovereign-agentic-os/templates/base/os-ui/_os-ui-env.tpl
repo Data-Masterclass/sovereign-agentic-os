@@ -297,12 +297,22 @@
   value: {{ $u.agentRunsRetentionDays | quote }}
 {{- end }}
 {{- /* WP-53: agent systems on their native LangGraph module (graph.mjs). RUN-path: os-ui and the
-     worker decide a run's engine with the same two values. Off by default; `domains` narrows it. */}}
+     worker decide a run's engine with the same two values. Off by default. `domains` is a YAML
+     list or a comma-separated string; an EMPTY list means NO domain, so `enabled: true` with no
+     domains refuses to render — every domain must be asked for explicitly with "*". */}}
+{{- $m := $u.agentGraphModule | default dict }}
+{{- $d := $m.domains }}
+{{- $ds := "" }}
+{{- if kindIs "slice" $d }}{{ $ds = join "," $d }}{{ else if $d }}{{ $ds = toString $d }}{{ end }}
+{{- $ds = regexReplaceAll "\\s*,\\s*" (trim $ds) "," | trimAll "," }}
+{{- if and $m.enabled (not $ds) }}
+{{- fail "osUI.agentGraphModule.enabled=true needs osUI.agentGraphModule.domains: list the domains (e.g. [test]), or \"*\" for every domain" }}
+{{- end }}
 - name: AGENT_GRAPH_MODULE
-  value: {{ ternary "true" "false" (default false $u.agentGraphModule.enabled) | quote }}
-{{- with $u.agentGraphModule.domains }}
+  value: {{ ternary "true" "false" (default false $m.enabled) | quote }}
+{{- if $ds }}
 - name: AGENT_GRAPH_MODULE_DOMAINS
-  value: {{ . | quote }}
+  value: {{ $ds | quote }}
 {{- end }}
 {{- /* X9 (engine rebuild Part D) — the agent engine's guardrails on EVERY tool call. Both are
      RUN-path, so the worker gets them too. Unset ⇒ the code defaults (20 000 chars / 60 s). */}}

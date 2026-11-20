@@ -63,8 +63,19 @@ export async function moduleStores(databaseUrl: string | undefined): Promise<Sto
   return { kind: 'postgres', saver, holds: postgresHoldStore(pool), stamps: postgresModuleRunStamps(pool) };
 }
 
-/** Did this run start on its module? (A run with no stamp resumes on the v1 engine.) */
+/**
+ * Did this run start on its module? (A run with no stamp resumes on the v1 engine.) Asked on EVERY
+ * resume, flag on or off. If `agent_module_runs` does not exist no run was ever stamped (the table
+ * is created before the first module run), so the answer is "no". Any other failure — the database
+ * unreachable, a broken query — THROWS: the resume fails visibly rather than guessing an engine.
+ */
 export async function isModuleRun(runId: string, databaseUrl: string | undefined): Promise<boolean> {
+  if (databaseUrl) {
+    const pool = await agentRunsPool(databaseUrl);
+    const { rows } = await pool.query(`SELECT to_regclass('agent_module_runs') IS NOT NULL AS present`);
+    if (!rows[0]?.present) return false;
+    return (await postgresModuleRunStamps(pool).get(runId)) !== null;
+  }
   return (await (await moduleStores(databaseUrl)).stamps.get(runId)) !== null;
 }
 
