@@ -1,0 +1,103 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+#
+# e2e-kind — the programme's acceptance harness (MASTER-PLAN WP-02, gate WP-48).
+#
+# Runs on demand (workflow_dispatch) and nightly. NOT on pull requests: a full install on kind takes
+# about an hour and the journeys are red by design until the work packages they prove land.
+#
+# What it does: builds our images from the commit, brings up kind + Calico + SeaweedFS + the chart
+# (tests/e2e/kind/up.sh), runs the harness self-test and journeys AT-a … AT-f (run.sh), publishes the
+# per-assertion report to the job summary and as an artifact, and always deletes the cluster.
+#
+# Runner and cost: `ubuntu-latest` standard GitHub-hosted runner. For this PUBLIC repository it is
+# 4 vCPU / 16 GB RAM and standard runners are free of charge for public repositories. If the full
+# stack later outgrows it, a larger runner is billed even for public repositories (Linux 8-core
+# $0.022/min: about $2 for a 90-minute run, about $60 a month nightly).
+name: e2e-kind
+
+on:
+  workflow_dispatch:
+    inputs:
+      files:
+        description: "Space-separated files under tests/e2e/kind to run (default: selftest + every journey)"
+        required: false
+        default: ""
+  schedule:
+    - cron: "17 2 * * *"   # 02:17 UTC nightly
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-kind
+  cancel-in-progress: false
+
+jobs:
+  acceptance:
+    name: acceptance (kind)
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    env:
+      E2E_CLUSTER: e2e-${{ github.run_id }}
+      E2E_ALLOW_PARTIAL: "1"            # run the journeys and report even if a workload did not start
+      E2E_REPORT_DIR: ${{ github.workspace }}/e2e-report
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: 22
+
+      - name: Setup Helm
+        uses: azure/setup-helm@fe7b79cd5ee1e45176fcad797de68ecaf3ca4814 # v4.2.0
+        with:
+          version: v3.16.3
+
+      - name: Install kind (pinned, checksum-verified)
+        run: |
+          . tests/e2e/kind/versions.env
+          curl -fsSLo kind "https://github.com/kubernetes-sigs/kind/releases/download/${KIND_VERSION}/kind-linux-amd64"
+          echo "50030de23cf40a18505f20426f6a8506bedf13c6e509244bd1fa9463721b0f54  kind" | sha256sum -c -
+          sudo install -m 0755 kind /usr/local/bin/kind
+
+      # The images (Docling, OpenSearch, Trino, Langfuse, ClickHouse, our builds) need more disk than
+      # a fresh runner leaves free; drop preinstalled toolchains the job does not use.
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          docker system prune -af >/dev/null
+          df -h /
+
+      - name: Harness framework tests (no cluster)
+        run: node --test tests/e2e/kind/selftest/journey-framework.test.mjs
+
+      - name: Bring up kind + Calico + SeaweedFS + chart
+        run: bash tests/e2e/kind/up.sh
+
+      - name: Run self-test and journeys
+        id: run
+        env:
+          FILES: ${{ github.event.inputs.files }}   # passed through env, never interpolated into the script
+        # shellcheck disable=SC2086 — word splitting of the optional file list is intended
+        run: bash tests/e2e/kind/run.sh $FILES
+
+      - name: Report to job summary
+        if: always()
+        run: |
+          if [ -f "$E2E_REPORT_DIR/report.md" ]; then cat "$E2E_REPORT_DIR/report.md" >> "$GITHUB_STEP_SUMMARY"; fi
+          kubectl --context "kind-$E2E_CLUSTER" get pods -A -o wide > "$E2E_REPORT_DIR/pods.txt" 2>&1 || true
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: e2e-kind-report
+          path: e2e-report/
+          if-no-files-found: warn
+
+      - name: Delete the cluster
+        if: always()
+        run: bash tests/e2e/kind/down.sh

@@ -30,11 +30,15 @@ const DEFAULTS = {
   keycloak: 'keycloak:8080',
   metricCompile: 'metric-compile:8080',
   trivyServer: 'trivy-server:4954',
+  // The Trino OPA sidecar listens on the Trino pod's 127.0.0.1 only (06 §5); reach it through the pod.
+  trinoOpaSidecar: 'deployment/trino:8181',
 };
 
 export function serviceOf(key) {
   const override = process.env[`E2E_SVC_${key.replace(/[A-Z]/g, (c) => `_${c}`).toUpperCase()}`];
-  const [name, port] = (override ?? DEFAULTS[key]).split(':');
+  const v = override ?? DEFAULTS[key];
+  const i = v.lastIndexOf(':');
+  const [name, port] = [v.slice(0, i), v.slice(i + 1)];
   return { name, port: Number(port) };
 }
 

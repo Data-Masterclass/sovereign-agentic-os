@@ -19,7 +19,9 @@
  *   - twin(id, meta, {check, disable, restore}): the negative twin. It is meaningful only when the
  *     positive check is green first; then it disables one hop and the check MUST turn red. A twin
  *     that stays green means the test cannot see the hop, and fails the run. meta.expect='green'
- *     marks the one twin that must stay green (AT-a, F3: claim before grant propagation).
+ *     marks the one twin that must stay green (AT-a, F3: claim before grant propagation);
+ *     meta.redReasonMust (RegExp) additionally requires the red to carry a specific typed reason
+ *     (AT-b: "metric-compile unreachable" must be a typed reason, never "no data").
  *   - Every outcome is appended to $E2E_REPORT_DIR/results.jsonl for render-report.mjs.
  */
 import { test } from 'node:test';
@@ -105,6 +107,9 @@ export function journey(journeyId, title) {
         try { await positive(); } catch (err) { stayedGreen = false; redReason = reasonOf(err).reason; }
         finally { await restore?.(); }
         if (expect === 'red' && stayedGreen) throw new Error(`twin stayed GREEN with "${meta.disables}" disabled: the test cannot see this hop`);
+        if (expect === 'red' && meta.redReasonMust && !meta.redReasonMust.test(redReason)) {
+          throw new Error(`twin went red for the wrong reason (must match ${meta.redReasonMust}): ${redReason}`);
+        }
         if (expect === 'green' && !stayedGreen) throw new Error(`must stay green with "${meta.disables}", turned red: ${redReason}`);
         return redReason;
       };
