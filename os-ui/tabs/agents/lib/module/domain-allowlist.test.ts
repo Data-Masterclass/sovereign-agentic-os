@@ -94,9 +94,12 @@ test('a run parked in one engine resumes in the same engine when the allowlist c
   assert.equal(moduleRuns.at(-1)?.resume, true);
 });
 
-test('moduleEnabledFor: the flag is the master switch; an empty list means every domain', () => {
+test('moduleEnabledFor: the flag is the master switch; an empty list means NO domain, "*" every domain', () => {
   assert.equal(moduleEnabledFor('test'), true);
   assert.equal(moduleEnabledFor('sales'), false);
-  assert.equal(moduleEnabledFor('sales', { enabled: true, domains: [] }), true);
+  assert.equal(moduleEnabledFor('sales', { enabled: true, domains: [] }), false);
+  assert.equal(moduleEnabledFor('test', { enabled: true, domains: [] }), false);
+  assert.equal(moduleEnabledFor('sales', { enabled: true, domains: ['*'] }), true);
   assert.equal(moduleEnabledFor('test', { enabled: false, domains: ['test'] }), false);
+  assert.equal(moduleEnabledFor('test', { enabled: false, domains: ['*'] }), false);
 });

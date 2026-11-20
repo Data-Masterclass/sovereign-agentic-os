@@ -22,7 +22,7 @@ import { parseSystem, serializeSystem } from '@tabs/agents/lib/system-schema';
 import { compile } from '@tabs/agents/lib/langgraph-compile';
 import { identifierProblems, PROMPT_MAX_BYTES } from '@tabs/agents/lib/safe-ids';
 import { preflightDoc, proposeIdMigration } from '@tabs/agents/lib/module/preflight';
-import { runPreflight } from '@tabs/agents/lib/module/preflight-run';
+import { parseDomainsArg, refusedIn, runPreflight, type PreflightReport } from '@tabs/agents/lib/module/preflight-run';
 import { generateAgentModule } from '@tabs/agents/lib/module/generate';
 import { hostModuleInputs } from '@tabs/agents/lib/module/versions';
 
@@ -145,6 +145,38 @@ test('WP-53d: the preflight reports PER DOMAIN — the answer for one AGENT_GRAP
   });
   assert.deepEqual(r.byDomain, { sales: { git: 0, store: 1, refused: 1 }, test: { git: 1, store: 1, refused: 0 } });
   assert.ok(r.findings.every((f) => f.domain === 'sales'));
+});
+
+test('WP-53d: --domains scopes the EXIT CODE to the domains being enabled (the report still lists all)', async () => {
+  const reposDir = mkdtempSync(path.join(os.tmpdir(), 'wp53-preflight-scope-'));
+  await openOrInit('test', { reposDir });
+  await commitTree('test', new Map([['agents/good/system.yaml', GOOD]]), { reposDir, author: { name: 'os', email: 'os@example.invalid' }, message: 'good' });
+  await openOrInit('sales', { reposDir });
+  await commitTree('sales', new Map([['agents/old/system.yaml', LEGACY]]), { reposDir, author: { name: 'os', email: 'os@example.invalid' }, message: 'legacy' });
+  const run = (...extra: string[]) => spawnSync(process.execPath, ['--experimental-strip-types', 'worker/agent-id-preflight.mjs', '--repos-only', ...extra], {
+    cwd: OS_UI, encoding: 'utf8', env: { ...process.env, OS_REPOS_DIR: reposDir }, timeout: 60_000,
+  });
+  const scoped = run('--domains', 'test');
+  assert.equal(scoped.status, 0, scoped.stdout + scoped.stderr);
+  assert.match(scoped.stdout, /domain sales: .*1 would be refused/, 'the other domain is still reported');
+  assert.match(scoped.stdout, /exit code covers test only — 0 would be refused/);
+  assert.equal(run('--domains=sales').status, 1);
+  assert.equal(run('--domains', 'test,sales').status, 1);
+  assert.equal(run('--domains', '*').status, 1);
+  assert.equal(run().status, 1, 'no --domains ⇒ every domain counts');
+  assert.equal(run('--domains').status, 2, 'an empty --domains is a usage error, not a pass');
+});
+
+test('parseDomainsArg / refusedIn', () => {
+  assert.equal(parseDomainsArg([]), 'all');
+  assert.deepEqual(parseDomainsArg(['--domains', 'test, sales']), ['test', 'sales']);
+  assert.deepEqual(parseDomainsArg(['--domains=test']), ['test']);
+  assert.equal(parseDomainsArg(['--domains', '*']), 'all');
+  assert.equal(parseDomainsArg(['--domains', '--json']), null);
+  const report = { checked: { git: 0, store: 0 }, refused: 2, byDomain: {}, findings: [{ source: 'git', domain: 'sales', where: 'x', problems: [] }, { source: 'git', domain: 'ops', where: 'y', problems: [] }] } as unknown as PreflightReport;
+  assert.equal(refusedIn(report, 'all'), 2);
+  assert.equal(refusedIn(report, ['test']), 0);
+  assert.equal(refusedIn(report, ['ops', 'test']), 1);
 });
 
 test('without --repos-only the command refuses to pass when the store did not hydrate from its mirror (exit 2)', () => {
