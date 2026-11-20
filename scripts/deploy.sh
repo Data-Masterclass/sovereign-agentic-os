@@ -53,8 +53,10 @@ environment
   IMAGE_REPO=<repo>         os-ui image repository (default ghcr.io/data-masterclass/sovereign-os).
                             When set (to anything, the default included), the upgrade also
                             --sets osUI.image.repository to <repo>/os-ui. It moves os-ui ONLY:
-                            dagster, git-http, git-daemon and minio keep the repository the
-                            live release carries (ghcr.io/aborek/sovereign-os/*).
+                            git-http, git-daemon and minio keep the repository the live
+                            release carries (ghcr.io/aborek/sovereign-os/*). Dagster follows
+                            the CHART once its repository is registry-qualified (0.3.2: the
+                            org registry, pinned by digest).
   SKIP_BUILD=1              reuse an already-built LOCAL image instead of building again
   DEPLOY_REGISTRY_PROBE=<cmd>
                             use `<cmd> <ref>` to read a remote digest instead of
@@ -175,24 +177,34 @@ if 'osUI' in kept and isinstance(kept['osUI'], dict):
 # and keeping those would silently deploy the old Dagster next to the new os-ui — which is what
 # happened on 0.8.0's first rollout. Drop exactly those keys so the chart's defaults apply;
 # everything the operator set (enabled, pull secrets, resources, ingress) is kept.
-# Only the TAG and the code-location list are chart-owned; the image REPOSITORY is the
-# operator's (the chart default is the laptop profile's unprefixed `sovereign-os/dagster`,
-# the cluster pulls `ghcr.io/aborek/sovereign-os/dagster`), so it is carried over.
+# The TAG, the DIGEST and the code-location list are chart-owned. The image REPOSITORY is the
+# operator's while the chart names only the laptop profile's unprefixed `sovereign-os/dagster`.
+# Once the chart names a REGISTRY-QUALIFIED repository (a host in the first segment, e.g.
+# `ghcr.io/data-masterclass/sovereign-os/dagster`, WP-03 0.3.2) the chart owns it too: the
+# digest it pins exists only there, so carrying the live repository would pull a digest that
+# is not in it (ImagePullBackOff). Tested in scripts/tests/deploy-dagster-image.test.sh.
 import copy
 migrated = []
+def qualified(repo):
+    first = str(repo or '').split('/', 1)[0]
+    return '/' in str(repo or '') and ('.' in first or ':' in first or first == 'localhost')
 d = kept.get('dagster')
 if isinstance(d, dict):
     for comp in ('dagsterWebserver', 'dagsterDaemon'):
         img = (d.get(comp) or {}).get('image')
-        if isinstance(img, dict) and img.pop('tag', None) is not None:
-            migrated.append(f'dagster.{comp}.image.tag')
+        chart_img = ((new.get('dagster') or {}).get(comp) or {}).get('image') or {}
+        keys = ('tag', 'digest', 'repository') if qualified(chart_img.get('repository')) else ('tag', 'digest')
+        if isinstance(img, dict):
+            for k in keys:
+                if img.pop(k, None) is not None:
+                    migrated.append(f'dagster.{comp}.image.{k}')
     ud = d.get('dagster-user-deployments')
     if isinstance(ud, dict) and isinstance(ud.get('deployments'), list):
         live_repo = next((e['image']['repository'] for e in ud['deployments']
                           if isinstance(e, dict) and isinstance(e.get('image'), dict) and e['image'].get('repository')), None)
         fresh = copy.deepcopy(new['dagster']['dagster-user-deployments']['deployments'])
-        if live_repo:
-            default_repo = new['dagster']['dagster-user-deployments']['deployments'][0]['image']['repository']
+        default_repo = new['dagster']['dagster-user-deployments']['deployments'][0]['image']['repository']
+        if live_repo and not qualified(default_repo):
             for e in fresh:
                 e.setdefault('image', {})['repository'] = live_repo
                 # sidecars (repo-sync) name the image as one string: swap the laptop repository
@@ -200,7 +212,8 @@ if isinstance(d, dict):
                     if isinstance(sc.get('image'), str) and sc['image'].startswith(default_repo + ':'):
                         sc['image'] = live_repo + sc['image'][len(default_repo):]
         ud['deployments'] = fresh
-        migrated.append('dagster.dagster-user-deployments.deployments (chart list, operator repository)')
+        migrated.append('dagster.dagster-user-deployments.deployments (chart list, '
+                        + ('chart repository' if qualified(default_repo) else 'operator repository') + ')')
 yaml.safe_dump(kept, open(sys.argv[3], 'w'), sort_keys=False)
 dropped = sorted(set(live) - set(kept))
 print(f"   kept {len(kept)} top-level keys; dropped {len(dropped)} for removed components")

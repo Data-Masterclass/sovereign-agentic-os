@@ -342,6 +342,14 @@ dagster:
   # the current push run. Re-enable once the image is rebuilt and pushed.
   # When re-enabling, fill REPLACE-DAGSTER-DIGEST via publish-images.sh --push.
   enabled: false
+  # The OS Dagster image lives in the PRIVATE org registry (ghcr.io/data-masterclass, WP-03 0.3.2):
+  # the webserver/daemon and the user-code pods pull with the same secret as os-ui. `global` does
+  # not reach these pods — the Dagster subchart reads its own two keys.
+  imagePullSecrets:
+    - name: registry-pull-secret
+  dagster-user-deployments:
+    imagePullSecrets:
+      - name: registry-pull-secret
   # Run/event/schedule storage on managed PostgreSQL (was in-cluster pg-rw). The
   # `dagster-postgresql` Secret + username/database are unchanged (values.yaml).
   postgresql:
