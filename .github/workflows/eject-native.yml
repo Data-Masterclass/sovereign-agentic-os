@@ -45,7 +45,7 @@ jobs:
         working-directory: os-ui
         run: node --experimental-strip-types --import ./scripts/test-setup.mjs ../tests/eject/gen-native-dashboard.ts "${{ runner.temp }}/mf-src"
       - name: Eject (dbt, MetricFlow, vl-convert; no OS) + negative twin
-        run: sh tests/eject/metricflow.sh "${{ runner.temp }}/mf-src" "${{ runner.temp }}/mf-work"
+        run: bash tests/eject/metricflow.sh "${{ runner.temp }}/mf-src" "${{ runner.temp }}/mf-work"
 
   agents-registry-eject:
     name: agents-registry-eject
@@ -55,4 +55,4 @@ jobs:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: Eject (npm ci from the committed lockfile, node run.mjs --stub-tools) + negative twin
-        run: sh tests/eject/agents-registry.sh "${{ runner.temp }}/agents-work"
+        run: bash tests/eject/agents-registry.sh "${{ runner.temp }}/agents-work"
