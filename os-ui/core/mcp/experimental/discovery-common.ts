@@ -46,6 +46,8 @@ export function resolveQueryable(
   requested?: Layer,
 ): {
   available: boolean;
+  /** `not_built` when a governed dataset has no readable table for the request. */
+  code?: string;
   requestedLayer: Layer;
   layer?: Layer;
   fqn?: string;
@@ -54,8 +56,22 @@ export function resolveQueryable(
 } {
   const requestedLayer: Layer = requested && LAYERS.includes(requested) ? requested : 'gold';
   const built = LAYERS.filter((l) => d.versions[l].built);
-  const resolved = builtLayerFqn(d, P(user), requestedLayer);
+  // A governed dataset answers only the layer asked for (an explicit layer is never swapped for
+  // another), so it gets the caller's EXPLICIT choice; a personal one keeps the gold default.
+  const explicit = requested && LAYERS.includes(requested) ? requested : undefined;
+  const resolved = builtLayerFqn(d, P(user), d.tier !== 'dataset' ? explicit : requestedLayer);
   if (!resolved) {
+    if (d.tier !== 'dataset') {
+      // A governed dataset: the asked-for layer is not served (and not readable from a lane that
+      // is provably its own) — a typed not_built, never another layer in its place.
+      return {
+        available: false,
+        code: 'not_built',
+        requestedLayer,
+        built,
+        note: `“${d.name}” (${d.id}) has no ${explicit ?? 'served'} layer to read: only its published domain copy is served${explicit ? ', and its owner\u2019s lane cannot be shown as this dataset' : ''}.`,
+      };
+    }
     return {
       available: false,
       requestedLayer,

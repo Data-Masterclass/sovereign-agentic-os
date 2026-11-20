@@ -178,20 +178,18 @@ export const readTools: McpTool[] = [
       const dataset = getDataset(id, P(user)); // canView guard (403/404)
 
       const LAYERS: Layer[] = ['bronze', 'silver', 'gold'];
-      const requested = str(args.layer) as Layer;
-      const built = LAYERS.filter((l) => dataset.versions[l].built);
-      const layer = built.includes(requested) ? requested : built[built.length - 1];
-      if (!layer) {
+      const requested = LAYERS.includes(str(args.layer) as Layer) ? (str(args.layer) as Layer) : undefined;
+      if (!LAYERS.some((l) => dataset.versions[l].built)) {
         return { datasetId: id, name: dataset.name, available: false, reason: 'Nothing built yet — bring in a Bronze version first (ingest_dataset).' };
       }
-
-      // Viewer-aware FQN: the OWNER profiles their personal lane (which holds every
-      // layer, promoted or not); a non-owner profiles the promoted copy in the domain
-      // schema. The read PRINCIPAL must OWN that schema (readPrincipalFor's contract):
-      // the owner's personal lane is read AS the owner, the domain copy AS the domain.
-      const fqn = versionTarget(dataset, layer, { id: user.id });
-      const isOwner = user.id === dataset.owner;
-      const principal = isOwner ? user.id : (user.domains[0] ?? user.id);
+      // The SAME resolver as get_dataset / preview: a governed dataset is its domain copy (an
+      // explicit other layer only from the owner's own lane, else not_built); a personal one is
+      // its owner's lane. The FQN's schema and the read principal always agree.
+      const resolved = builtLayerFqn(dataset, P(user), requested);
+      if (!resolved) {
+        return { datasetId: id, name: dataset.name, ...(requested ? { layer: requested } : {}), available: false, code: 'not_built', reason: `“${dataset.name}” (${id}) has no ${requested ?? 'served'} layer you can read — a governed dataset serves only its published domain copy.` };
+      }
+      const { layer, fqn, principal } = resolved;
       const route = routeFor(user, 'mcp-profile', dataset.domain);
       let columns: ProfileColumn[];
       try {

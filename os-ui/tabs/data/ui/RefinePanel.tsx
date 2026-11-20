@@ -7,8 +7,6 @@ import { useEffect, useMemo, useState } from 'react';
 import type { CleanDraft } from '@tabs/data/ui/StageAssistant';
 import {
   compileSilver,
-  personalSchema,
-  slug,
   CAST_TYPES,
   FILTER_OPS,
   type CastType,
@@ -18,6 +16,7 @@ import {
 import { inferColumnTypes, type TypeSuggestion } from '@tabs/data/lib/infer-types';
 import BuildResultDialog, { type BuildResult } from '@tabs/data/ui/BuildResultDialog';
 import QueryError from '@tabs/data/ui/QueryError';
+import { previewLaneFqn, previewLaneSlug } from '@tabs/data/ui/lane-preview';
 
 type Layer = 'silver' | 'gold';
 type Stage = { layer: Layer; copy: { title: string; subtitle: string; tool: string } };
@@ -65,6 +64,7 @@ function buildOps(cols: string[], ui: Record<string, ColUI>, filters: FilterUI[]
 function SilverBuilder({
   datasetId,
   datasetName,
+  laneSlug,
   owner,
   domain,
   tier,
@@ -77,6 +77,8 @@ function SilverBuilder({
 }: {
   datasetId: string;
   datasetName: string;
+  /** The dataset's recorded lane name (store-fqn laneSlug); absent ⇒ its legacy name slug. */
+  laneSlug?: string;
   owner: string;
   domain: string;
   tier: string;
@@ -183,10 +185,9 @@ function SilverBuilder({
   // Target/source FQNs mirror the server's silverPlan: builds ALWAYS run in the
   // owner's personal lane (Bronze physically lives only there, for every tier); the
   // governed domain copy is refreshed by the publish CTAS after the build.
-  const schema = personalSchema(owner);
-  const s = slug(datasetName);
-  const source = `iceberg.${schema}.bronze_${s}`;
-  const target = `iceberg.${schema}.silver_${s}`;
+  // The recorded lane name (unique per dataset) — the same table the server's silverPlan writes.
+  const source = previewLaneFqn({ owner, datasetName, laneSlug }, 'bronze');
+  const target = previewLaneFqn({ owner, datasetName, laneSlug }, 'silver');
 
   const ops = useMemo(() => buildOps(cols, ui, filters, dedupe), [cols, ui, filters, dedupe]);
   const compiled = useMemo(() => {
@@ -417,7 +418,7 @@ function SilverBuilder({
           <div className="row" style={{ alignItems: 'center', gap: 8 }}>
             <span className="ok-note" style={{ fontWeight: 600 }}>Transformation saved ✓</span>
             <span className="hint" style={{ margin: 0 }}>
-              <code className="mono">silver_{s}</code> is live. Edit above and save again to update it.
+              <code className="mono">silver_{previewLaneSlug({ datasetName, laneSlug })}</code> is live. Edit above and save again to update it.
             </span>
           </div>
         </div>
@@ -439,6 +440,7 @@ function SilverBuilder({
 export default function RefinePanel({
   datasetId,
   datasetName,
+  laneSlug,
   owner,
   domain,
   tier,
@@ -451,6 +453,8 @@ export default function RefinePanel({
 }: {
   datasetId: string;
   datasetName: string;
+  /** The dataset's recorded lane name (store-fqn laneSlug); absent ⇒ its legacy name slug. */
+  laneSlug?: string;
   owner: string;
   domain: string;
   tier: string;
@@ -468,6 +472,7 @@ export default function RefinePanel({
     <SilverBuilder
       datasetId={datasetId}
       datasetName={datasetName}
+      laneSlug={laneSlug}
       owner={owner}
       domain={domain}
       tier={tier}

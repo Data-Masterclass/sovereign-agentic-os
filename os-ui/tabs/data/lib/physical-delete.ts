@@ -83,13 +83,13 @@ export function domainDropPlan(d: Dataset): PhysicalDrop[] {
 }
 
 /**
- * The set of physical FQNs some OTHER live dataset ALSO occupies (a name/slug collision).
+ * The set of physical FQNs some OTHER dataset — live OR ARCHIVED — ALSO occupies (a name/slug collision).
  * Because the physical table is keyed on `physicalSlug` (name-slug), not the id, two datasets
  * with the same slug in one domain resolve to the SAME `iceberg.<domain>.<layer>_<slug>`
  * table. Dropping `target`'s tables would then ORPHAN a still-live sibling. This returns the
- * union of `dropPlan(o)` FQNs for every non-archived `o !== target`, so the drop can SKIP
- * (protect) any table a sibling still needs. Archived datasets are excluded — they hold no
- * live claim (their footprint is reclaimable).
+ * union of `dropPlan(o)` FQNs for every `o !== target`, so the drop can SKIP (protect) any
+ * table a sibling still needs. ARCHIVED datasets are included: archive is reversible, and a
+ * restored dataset must find its tables (legacy name-only lane tables can be shared).
  */
 export function sharedFootprintFqns(
   target: Dataset,
@@ -97,7 +97,7 @@ export function sharedFootprintFqns(
 ): Set<string> {
   const out = new Set<string>();
   for (const o of others) {
-    if (o.id === target.id || o.archived) continue;
+    if (o.id === target.id) continue;
     for (const drop of dropPlan(o)) out.add(drop.fqn);
   }
   return out;

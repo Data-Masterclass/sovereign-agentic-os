@@ -7,7 +7,6 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   compileGoldJoin,
   personalSchema,
-  slug,
   JOIN_TYPES,
   CAST_TYPES,
   MEASURE_OPS,
@@ -25,6 +24,7 @@ import GoldJoinGraph, { type JoinGraphTable, type JoinGraphEdge } from '@tabs/da
 import AiAction from '@tabs/data/ui/StageAssistant';
 import BuildResultDialog, { type BuildResult } from '@tabs/data/ui/BuildResultDialog';
 import QueryError from '@tabs/data/ui/QueryError';
+import { previewLaneFqn, previewLaneSlug } from '@tabs/data/ui/lane-preview';
 
 /**
  * Gold JOIN builder — dataset REUSE (data-tab stage 4). Pick 1..n OTHER datasets you
@@ -119,6 +119,7 @@ function derivedOf(r: DerivedRow): GoldDerived | null {
 export default function GoldJoinPanel({
   datasetId,
   datasetName,
+  laneSlug,
   owner,
   domain,
   tier,
@@ -134,6 +135,8 @@ export default function GoldJoinPanel({
 }: {
   datasetId: string;
   datasetName: string;
+  /** The dataset's recorded lane name (store-fqn laneSlug); absent ⇒ its legacy name slug. */
+  laneSlug?: string;
   owner: string;
   domain: string;
   tier: string;
@@ -278,9 +281,8 @@ export default function GoldJoinPanel({
   const target = useMemo(() => {
     // Builds ALWAYS run in the owner's personal lane (see RefinePanel) — the domain
     // copy is refreshed by the publish CTAS after the build.
-    const schema = personalSchema(owner);
-    return `iceberg.${schema}.gold_${slug(datasetName)}`;
-  }, [owner, datasetName]);
+    return previewLaneFqn({ owner, datasetName, laneSlug }, 'gold');
+  }, [owner, datasetName, laneSlug]);
 
   // Visual join graph: the base + each fully-specified join as nodes, each key as a
   // labelled edge. Pure derivation of the guided state — updates as picks/keys change.
@@ -304,8 +306,8 @@ export default function GoldJoinPanel({
 
   // Assemble the compiler inputs from the guided state (client preview == server plan).
   const spec = useMemo(() => {
+    const s = previewLaneSlug({ datasetName, laneSlug });
     const schema = personalSchema(owner);
-    const s = slug(datasetName);
     // Ref 0 source: a curated compose reads its EXPLICIT base's physical table (from the
     // joinable list, the same FQN the server resolves via assetTarget); an ingested one
     // reads its own frozen Silver. An unpicked curated base yields an empty source, so the
@@ -697,7 +699,7 @@ export default function GoldJoinPanel({
           <div className="row" style={{ alignItems: 'center', gap: 8 }}>
             <span className="ok-note" style={{ fontWeight: 600 }}>{saveLabel ? 'Composition saved ✓' : 'Gold built ✓'}</span>
             <span className="hint" style={{ margin: 0 }}>
-              <code className="mono">gold_{slug(datasetName)}</code> is live. Edit above and save again to update it.
+              <code className="mono">gold_{previewLaneSlug({ datasetName, laneSlug })}</code> is live. Edit above and save again to update it.
             </span>
           </div>
         </div>
