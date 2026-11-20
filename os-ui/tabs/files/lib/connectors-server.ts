@@ -4,6 +4,7 @@
 import 'server-only';
 import {
   type ConnectorSource,
+  type ConnectorClient,
   type RemoteFile,
   type SyncSink,
   type SyncResult,
@@ -11,13 +12,17 @@ import {
   type Provider,
   getSource,
   runSync,
+  ensureSourcesHydrated,
   addSource,
   listSources,
   removeSource,
 } from '@tabs/files/lib/connectors';
 import { liveClientFor } from '@tabs/files/lib/connectors-live';
-import { createFile, addVersion, type Principal } from '@tabs/files/lib/store';
-import { reindexById, reindexFile } from '@tabs/files/lib/pipeline-server';
+import { createFile, addVersion, attachObject, objectKeyForAsset, type Principal } from '@tabs/files/lib/store';
+import { putBlob } from '@tabs/files/lib/object-store';
+import '@tabs/files/lib/object-store-server'; // registers the durable object-store backend
+import { reindexById, reindexFile, ingestUploaded } from '@tabs/files/lib/pipeline-server';
+import type { FileAsset } from '@tabs/files/lib/asset-schema';
 
 /**
  * Server boundary for connected-drive sync. Builds a store-backed sink that
@@ -29,40 +34,67 @@ import { reindexById, reindexFile } from '@tabs/files/lib/pipeline-server';
  * (best-effort trigger; the sync still runs in-process so kind works offline).
  */
 
-// (source.id : remoteId) -> the imported file + its last seen remote hash. The
-// import ledger that powers the incremental skip across syncs.
-const ledger = new Map<string, { fileId: string; hash: string }>();
-
 function principalFor(source: ConnectorSource): Principal {
   return { id: source.owner, domains: [source.domain], role: 'creator' };
 }
 
-function makeStoreSink(source: ConnectorSource): SyncSink {
+/** A text-like file's bytes ARE its text (the same rule as the upload route); a binary document's
+ *  text is read from the stored bytes by Docling (`ingestUploaded`). */
+export function isTextLikeFile(name: string, type: string): boolean {
+  return /^text\//.test(type) || /json|csv|xml|markdown|yaml/.test(type) || /\.(txt|md|csv|tsv|json|log|xml|yaml|yml)$/i.test(name);
+}
+
+function makeStoreSink(source: ConnectorSource, client: ConnectorClient): SyncSink {
   const principal = principalFor(source);
+  // COPY-IN with a client that can read bytes: the file's real content is stored and goes through
+  // the upload pipeline (Docling for binaries, then embeddings), as the OWNER. Otherwise only the
+  // reference is indexed (index-in-place, or a client without a content read).
+  const copyContent = source.mode === 'copy' && typeof client.content === 'function';
+  // The content is read BEFORE anything is written, so a refused read leaves no half-imported file:
+  // a new file is simply not created (the next sync tries again), an update keeps its old version.
+  async function readContent(file: RemoteFile): Promise<{ bytes: Buffer; contentType: string; text: string } | null> {
+    if (!copyContent) return null;
+    const { bytes, contentType } = await client.content!(file);
+    return { bytes, contentType, text: isTextLikeFile(file.name, contentType) ? bytes.toString('utf8') : '' };
+  }
+  async function store(asset: FileAsset, c: { bytes: Buffer; contentType: string; text: string }): Promise<void> {
+    const key = objectKeyForAsset(asset);
+    if (key) {
+      await putBlob(key, c.bytes, c.contentType);
+      attachObject(asset.id, principal, { contentType: c.contentType, bytes: c.bytes.length });
+    }
+    await ingestUploaded(asset, c.text, source.owner); // Docling for binaries, then embeddings — billed to the owner
+  }
   return {
     async upsert(file: RemoteFile, src: ConnectorSource): Promise<UpsertOutcome> {
-      const key = `${src.id}:${file.remoteId}`;
-      const prev = ledger.get(key);
+      // The import ledger lives ON the (persisted) source, so it survives a restart.
+      const ledger = (src.imported ??= {});
+      const prev = ledger[file.remoteId];
       if (prev && prev.hash === file.contentHash) return 'unchanged'; // content-hash skip
+      const content = await readContent(file);
+      const text = content ? content.text : file.text;
+      const bytes = content ? content.bytes.length : file.text?.length;
       if (prev) {
-        addVersion(prev.fileId, principal, { text: file.text, bytes: file.text?.length });
-        ledger.set(key, { fileId: prev.fileId, hash: file.contentHash });
-        await reindexById(prev.fileId);
+        const asset = addVersion(prev.fileId, principal, { text, bytes });
+        if (content) await store(asset, content);
+        else await reindexById(prev.fileId);
+        ledger[file.remoteId] = { fileId: prev.fileId, hash: file.contentHash };
         return 'updated';
       }
       const asset = createFile(principal, {
         name: file.name,
         folder: file.path,
-        text: file.text,
-        bytes: file.text?.length,
+        text,
+        bytes,
         sensitivity: src.landingSensitivity,
         storage: src.mode === 'copy' ? 'object-store' : 'in-place',
         sourceUri: file.url,
         provenanceSource: src.provider,
         domain: src.domain,
       });
-      ledger.set(key, { fileId: asset.id, hash: file.contentHash });
-      await reindexFile(asset, file.text ?? '');
+      ledger[file.remoteId] = { fileId: asset.id, hash: file.contentHash };
+      if (content) await store(asset, content);
+      else await reindexFile(asset, file.text ?? '');
       return 'added';
     },
   };
@@ -100,6 +132,7 @@ function triggerDagster(source: ConnectorSource, cadence: string): boolean {
  * incremental. Returns the tally + the cadence + whether the run was live or mock.
  */
 export async function runConnectorSync(sourceId: string, owner: string, token: string | null): Promise<SyncResult> {
+  await ensureSourcesHydrated();
   const source = getSource(sourceId);
   if (!source) {
     const err = new Error('Connected source not found');
@@ -113,7 +146,7 @@ export async function runConnectorSync(sourceId: string, owner: string, token: s
   }
   const client = liveClientFor(source.provider, token);
   triggerDagster(source, source.initialDone ? 'incremental' : 'overnight');
-  return runSync(source, client, makeStoreSink(source));
+  return runSync(source, client, makeStoreSink(source, client));
 }
 
 /**
@@ -125,6 +158,7 @@ export async function runConnectorSync(sourceId: string, owner: string, token: s
 export async function indexDriveSource(input: {
   connectionId: string; provider: Provider; label: string; owner: string; domain: string; token: string;
 }): Promise<{ sourceId: string; records: number; mode: 'live' | 'mock' }> {
+  await ensureSourcesHydrated();
   const existing = listSources(input.owner).find((s) => s.connectionId === input.connectionId && s.provider === input.provider);
   const source = existing ?? addSource({
     provider: input.provider, label: input.label, scope: 'drive', target: 'root', mode: 'copy',

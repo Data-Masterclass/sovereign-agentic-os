@@ -2,6 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import type { Sensitivity, Storage } from '@tabs/files/lib/asset-schema';
+import { osMirror } from '@core/infra/os-mirror';
 
 /**
  * Connected drives (handover §provisioning). A user connects a source — Google
@@ -17,9 +18,12 @@ import type { Sensitivity, Storage } from '@tabs/files/lib/asset-schema';
  * LIVE-INCREMENTAL pull on change keeps it fresh — detected by content hash so an
  * unchanged file is never re-imported or re-embedded.
  *
- * Pure module: the sync LOGIC + the in-process sync-state live here (testable with
- * a mock client + a fake sink); the live Drive/OneDrive clients + the store-backed
- * sink + the Dagster trigger live in the server modules.
+ * The sync LOGIC + the sync-state live here (testable with a mock client + a fake sink); the
+ * live Drive/OneDrive clients + the store-backed sink + the Dagster trigger live in the server
+ * modules. DURABILITY: every source (with its delta cursor and import ledger) is written through
+ * to the OpenSearch mirror `os-files-sources` and hydrated on first use, the way the other
+ * stores do (`core/infra/os-mirror.ts`): only a COMPLETE read of the index is taken as the
+ * store's contents; a failed or partial read leaves the store un-hydrated and is retried.
  */
 
 export type Provider = 'google-drive' | 'onedrive';
@@ -56,6 +60,9 @@ export type ConnectorSource = {
   /** Whether the first (overnight) pass has run. */
   initialDone: boolean;
   createdAt: string;
+  /** The import ledger: remote file id → the Files asset it became + its last seen hash. Drives
+   *  the incremental skip, and keeps a re-sync after a restart from importing a file twice. */
+  imported?: Record<string, { fileId: string; hash: string }>;
 };
 
 /** A file as seen in the remote drive (what a client's pull returns). */
@@ -81,6 +88,9 @@ export interface ConnectorClient {
   provider: Provider;
   mode: 'live' | 'mock';
   pull(source: ConnectorSource, sinceCursor: string | null): Promise<Pull>;
+  /** The file's BYTES, read with the owner's token (live clients that support a copy-in only).
+   *  Throws when the provider does not answer with the content — never returns a stand-in. */
+  content?(file: RemoteFile): Promise<{ bytes: Buffer; contentType: string }>;
 }
 
 /** What the store-backed sink reports per remote file (the re-govern + index step). */
@@ -104,15 +114,69 @@ export type SyncResult = {
 
 // ----------------------------------------------------------- sync-state store --
 
-const CONN_SOURCES_KEY = Symbol.for('soa.files.connectors');
-function connSources(): Map<string, ConnectorSource> {
-  const g = globalThis as unknown as Record<symbol, Map<string, ConnectorSource> | undefined>;
-  if (!g[CONN_SOURCES_KEY]) g[CONN_SOURCES_KEY] = new Map();
+type SourcesState = {
+  sources: Map<string, ConnectorSource>;
+  hydration: Promise<void> | null;
+  hydratedAt?: number;
+  hydrateFailedAt?: number;
+};
+const CONN_SOURCES_KEY = Symbol.for('soa.files.connectors.state');
+function sourcesState(): SourcesState {
+  const g = globalThis as unknown as Record<symbol, SourcesState | undefined>;
+  if (!g[CONN_SOURCES_KEY]) g[CONN_SOURCES_KEY] = { sources: new Map(), hydration: null };
   return g[CONN_SOURCES_KEY]!;
+}
+function connSources(): Map<string, ConnectorSource> {
+  return sourcesState().sources;
+}
+
+// The ledger keys are remote ids (unbounded), so the index maps only what it filters on and
+// stores the rest as `_source` (dynamic: false) — no field explosion from a large drive.
+const mirror = osMirror({
+  index: 'os-files-sources',
+  createBody: {
+    mappings: {
+      dynamic: false,
+      properties: { id: { type: 'keyword' }, owner: { type: 'keyword' }, connectionId: { type: 'keyword' }, provider: { type: 'keyword' } },
+    },
+  },
+});
+function persist(src: ConnectorSource): void {
+  mirror.writeThrough(src.id, src);
+}
+
+/** Load the sources once from the mirror. Only a complete read counts; a failed read stays
+ *  un-hydrated (recorded) so the next call retries — never cached as "empty". */
+export async function ensureSourcesHydrated(): Promise<void> {
+  const s = sourcesState();
+  if (s.hydratedAt !== undefined) return;
+  if (!s.hydration) {
+    s.hydration = (async () => {
+      const docs = await mirror.hydrate(5000);
+      if (docs === null) { s.hydrateFailedAt = Date.now(); return; }
+      for (const d of docs as ConnectorSource[]) {
+        if (d && d.id && !s.sources.has(d.id)) s.sources.set(d.id, d);
+      }
+      s.hydratedAt = Date.now();
+      delete s.hydrateFailedAt;
+    })().finally(() => { s.hydration = null; });
+  }
+  await s.hydration;
+}
+
+export function sourcesHydrationState(): 'hydrated' | 'failed' | 'pending' {
+  const s = sourcesState();
+  if (s.hydratedAt !== undefined) return 'hydrated';
+  return s.hydrateFailedAt !== undefined ? 'failed' : 'pending';
 }
 
 export function __resetConnectors(): void {
-  connSources().clear();
+  const s = sourcesState();
+  s.sources.clear();
+  s.hydration = null;
+  delete s.hydratedAt;
+  delete s.hydrateFailedAt;
+  mirror.__reset();
 }
 
 function id(): string {
@@ -137,8 +201,10 @@ export function addSource(input: {
     cursor: null,
     initialDone: false,
     createdAt: new Date().toISOString(),
+    imported: {},
   };
   connSources().set(src.id, src);
+  persist(src);
   return src;
 }
 
@@ -155,7 +221,9 @@ export function getSource(sourceId: string): ConnectorSource | null {
 export function removeSource(sourceId: string, owner: string): boolean {
   const s = connSources().get(sourceId);
   if (!s || s.owner !== owner) return false;
-  return connSources().delete(sourceId);
+  connSources().delete(sourceId);
+  mirror.deleteThrough(sourceId);
+  return true;
 }
 
 /** The cadence the NEXT run uses: the first pass is the batched OVERNIGHT job; after
@@ -176,15 +244,21 @@ export async function runSync(source: ConnectorSource, client: ConnectorClient, 
   const cadence = nextCadence(source);
   const { items, cursor } = await client.pull(source, source.cursor);
   let added = 0, updated = 0, unchanged = 0;
-  for (const file of items) {
-    const outcome = await sink.upsert(file, source);
-    if (outcome === 'added') added++;
-    else if (outcome === 'updated') updated++;
-    else unchanged++;
+  try {
+    for (const file of items) {
+      const outcome = await sink.upsert(file, source);
+      if (outcome === 'added') added++;
+      else if (outcome === 'updated') updated++;
+      else unchanged++;
+    }
+  } catch (e) {
+    persist(source); // keep the ledger entries of files already imported; the cursor stays put
+    throw e;
   }
   source.cursor = cursor;
   source.initialDone = true;
   connSources().set(source.id, source);
+  persist(source);
   return { sourceId: source.id, cadence, clientMode: client.mode, added, updated, unchanged, cursor };
 }
 
@@ -214,4 +288,40 @@ export function mockClient(provider: Provider): ConnectorClient {
       return { items: [changed], cursor: `${sinceCursor}+1` };
     },
   };
+}
+
+// ------------------------------------------------- which connection a source uses --
+
+/** A drive connection the caller could link a source to (from the Connections tab). */
+export type SourceConnectionCandidate = { id: string; name: string; owner: string; provider: Provider };
+
+function refuse(message: string, status: number): never {
+  const e = new Error(message) as Error & { status?: number };
+  e.status = status;
+  throw e;
+}
+
+/**
+ * Pick the governed Connection whose OAuth Read token a new source syncs with. A source must be
+ * linked — without one its sync has no token and is refused — so:
+ *   • `requested` must be one of the caller's OWN connections for this provider (403 otherwise);
+ *   • none requested and exactly one such connection → that one;
+ *   • none requested and several → 400 (the form asks which);
+ *   • none at all → 409 "connect it in Connections first", unless `allowUnlinked` (the local
+ *     teaching flow, `offlineMockAllowed()`), where an unlinked source syncs the fake drive.
+ */
+export function chooseSourceConnection(input: {
+  provider: Provider; userId: string; requested?: string | null;
+  candidates: SourceConnectionCandidate[]; allowUnlinked: boolean;
+}): string | null {
+  const own = input.candidates.filter((c) => c.owner === input.userId && c.provider === input.provider);
+  const label = input.provider === 'onedrive' ? 'OneDrive' : 'Google Drive';
+  if (input.requested) {
+    if (!own.some((c) => c.id === input.requested)) refuse(`Choose one of your own ${label} connections`, 403);
+    return input.requested;
+  }
+  if (own.length === 1) return own[0].id;
+  if (own.length > 1) refuse(`You have ${own.length} ${label} connections — choose which one this source uses`, 400);
+  if (input.allowUnlinked) return null;
+  return refuse(`Connect your ${label} in Connections first — a source syncs with that connection's sign-in`, 409);
 }

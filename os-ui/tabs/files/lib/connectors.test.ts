@@ -89,8 +89,8 @@ test('globalThis pin: create survives a fresh connSources() call', () => {
   const s = addSource({ provider: 'google-drive', label: 'Pin test', scope: 'folder', target: 'gd', mode: 'copy', owner: 'amir', domain: 'sales' });
 
   // Confirm entry is visible via the globalThis symbol directly.
-  const pinned = (globalThis as any)[Symbol.for('soa.files.connectors')] as Map<string, unknown>;
-  assert.ok(pinned instanceof Map, 'globalThis pin is a Map');
+  const pinned = ((globalThis as any)[Symbol.for('soa.files.connectors.state')] as { sources: Map<string, unknown> }).sources;
+  assert.ok(pinned instanceof Map, 'globalThis pin holds a Map');
   assert.ok(pinned.has(s.id), 'source id visible via globalThis pin');
 
   // listSources() calls connSources() afresh — must still return the entry.
