@@ -440,3 +440,19 @@ test('updateUser: admin can reset a password and new credential authenticates', 
 
   activeFetch = null;
 });
+
+test('WP-14 B1: a Trino service identity can never become an OS user id (createUser and the bootstrap rename)', async () => {
+  const users = await freshUsers();
+  for (const id of ['svc-os-ui', 'svc-os-worker', 'svc-dagster-runner', 'SVC-new-thing', 'os-domain-delete', 'northpeak-marts', 'dbt-runner', 'query-agent']) {
+    await assert.rejects(
+      users.createUser({ id, password: STRONG, domains: ['sales'], role: 'creator' }),
+      (e: Error & { status?: number }) => e.status === 400 && /reserved/.test(e.message),
+      id,
+    );
+    await assert.rejects(
+      users.setupAdmin({ bootstrapId: 'admin', username: id, email: 'x@example.com', passwordHashReady: await hashPassword(STRONG) }),
+      (e: Error & { status?: number }) => e.status === 400 && /reserved/.test(e.message),
+      `bootstrap rename to ${id}`,
+    );
+  }
+});
