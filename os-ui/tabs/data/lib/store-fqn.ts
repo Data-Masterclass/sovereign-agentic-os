@@ -78,6 +78,16 @@ export function laneFqn(d: { owner: string; laneSlug?: string; slug?: string; na
   return `iceberg.${personalSchema(d.owner)}.${laneTable(d, layer)}`;
 }
 
+/**
+ * Is this dataset's lane name provably its OWN? True only for a lane name minted by
+ * {@link newLaneSlug} (it ends in the dataset's own id). A legacy name (absent, or recorded by
+ * the migration as the old name-only slug) may be shared with a same-named dataset, so it is
+ * never served as this dataset's data.
+ */
+export function laneIsUnique(d: { id: string; laneSlug?: string }): boolean {
+  return !!d.laneSlug && d.laneSlug.endsWith(`_${sanitizeIdent(d.id.replace(/^ds_/, ''))}`);
+}
+
 /** A governed (asset/product) dataset is served ONLY from its domain copy. */
 export function isGoverned(d: { tier: string }): boolean {
   return d.tier !== 'dataset';
@@ -324,8 +334,17 @@ export function builtLayerFqn(
     // (Gold when built, else Silver — {@link assetTarget}). Every viewer, the owner included,
     // reads that copy as their domain principal; bronze is never published.
     const served: Layer | null = d.versions.gold.built ? 'gold' : d.versions.silver.built ? 'silver' : null;
-    if (!served) return null;
-    return { layer: served, fqn: versionTarget(d, served, { id: user.id }), principal: user.domains[0] ?? user.id };
+    if (!layer || layer === served) {
+      return served ? { layer: served, fqn: versionTarget(d, served, { id: user.id }), principal: user.domains[0] ?? user.id } : null;
+    }
+    // An EXPLICIT request for another layer (e.g. the owner previewing their asset's Bronze) is
+    // never answered with a different layer. Only the OWNER may read it, from their lane, and
+    // only when the lane name is provably this dataset's own; otherwise there is nothing to read
+    // (null → the caller's not_built), never the served layer in its place.
+    if (user.id === d.owner && laneIsUnique(d) && d.versions[layer]?.built) {
+      return { layer, fqn: laneFqn(d, layer), principal: user.id };
+    }
+    return null;
   }
   const chosen = layer && d.versions[layer]?.built ? layer : (['gold', 'silver', 'bronze'] as Layer[]).find((l) => d.versions[l].built);
   if (!chosen) return null;

@@ -99,8 +99,8 @@ export const DELETE = withRoute<{ id: string }>(async ({ user, params }) => {
   const dataset = deleteDataset(id, user); // throws 403/409 → nothing is dropped
   // COLLISION SAFETY: never drop a physical table another LIVE dataset still occupies via a
   // name/slug collision (dropping it would orphan the still-served sibling). Compute the
-  // protected footprint from every OTHER live dataset before issuing the drops.
-  const protectedFqns = sharedFootprintFqns(dataset, listAllDatasets());
+  // protected footprint from every OTHER dataset (archived ones too: archive is reversible) before issuing the drops.
+  const protectedFqns = sharedFootprintFqns(dataset, listAllDatasets({ includeArchived: true }));
   const physical = await dropPhysicalTables(
     dataset,
     user,

@@ -745,12 +745,16 @@ export function listGovernedDatasets(): Dataset[] {
  * also protected — the reason `listGovernedDatasets` alone is not enough for the DELETE path.
  * Server-side callers only — never expose through a user-facing route.
  */
-export function listAllDatasets(): Dataset[] {
+export function listAllDatasets(): Dataset[];
+export function listAllDatasets(opts: { includeArchived: true }): (Dataset & { archived?: boolean })[];
+export function listAllDatasets(opts: { includeArchived?: boolean } = {}): (Dataset & { archived?: boolean })[] {
   ensureSeeded();
-  const out: Dataset[] = [];
+  const out: (Dataset & { archived?: boolean })[] = [];
   for (const rec of ds().store.values()) {
-    if (rec.archived) continue;
-    out.push(parseDataset(rec.yaml));
+    if (rec.archived && !opts.includeArchived) continue;
+    // The archived flag lives on the record, not in the yaml: carry it so a caller (the delete
+    // collision guard) can tell — and still protect — an archived, restorable dataset.
+    out.push(rec.archived ? { ...parseDataset(rec.yaml), archived: true } : parseDataset(rec.yaml));
   }
   return out;
 }

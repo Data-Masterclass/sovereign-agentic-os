@@ -1460,7 +1460,7 @@ export default function DataBuilder({
             ) : null}
             {canRefineSilver ? (
               <RefinePanel
-                datasetId={dataset.id} datasetName={dataset.name}
+                datasetId={dataset.id} datasetName={dataset.name} laneSlug={dataset.laneSlug ?? physicalSlug(dataset)}
                 owner={dataset.owner} domain={dataset.domain} tier={dataset.tier}
                 columns={colNames}
                 silverBuilt={canHarmonizeGold}
@@ -1492,7 +1492,7 @@ export default function DataBuilder({
                   </span>
                 </div>
                 <GoldJoinPanel
-                  datasetId={dataset.id} datasetName={dataset.name}
+                  datasetId={dataset.id} datasetName={dataset.name} laneSlug={dataset.laneSlug ?? physicalSlug(dataset)}
                   owner={dataset.owner} domain={dataset.domain} tier={dataset.tier}
                   columns={colNames}
                   silverBuilt={canHarmonizeGold}

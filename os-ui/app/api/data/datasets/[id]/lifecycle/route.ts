@@ -49,7 +49,7 @@ export const POST = withRoute<{ id: string }, { action?: string }>(async ({ user
     // COLLISION SAFETY: never retire a domain table another LIVE dataset still occupies via a
     // name/slug collision — that would orphan the still-served sibling (metadata says served,
     // table gone). Protect the footprint of every OTHER live dataset (`before` is excluded).
-    const protectedFqns = sharedFootprintFqns(before, listAllDatasets());
+    const protectedFqns = sharedFootprintFqns(before, listAllDatasets({ includeArchived: true }));
     physical = await retireDomainTables(
       before,
       user,
