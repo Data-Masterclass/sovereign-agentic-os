@@ -18,7 +18,11 @@
 #     existingSecret fails;
 #   * langfuseInit.userPassword reaches langfuse-init as LANGFUSE_INIT_USER_PASSWORD;
 #   * langfuseCoreSecrets (salt, nextauthSecret, encryptionKey) reach langfuse-core-secrets; an
-#     encryptionKey that is not 64 hex characters, or an empty nextauthSecret, fails the render.
+#     encryptionKey that is not 64 hex characters, or an empty nextauthSecret, fails the render;
+#   * the re-key overlays of rotate-secrets.sh through Helm's values merge: step 1 adds
+#     LITELLM_MIGRATE_FROM_MASTER_KEY to the gateway with no salt key; step 2 layered over step 1's
+#     values empties it (a null cannot delete a key an earlier values file set), sets the salt key S
+#     and the new master key.
 # The `lookup` change guard needs an API server: scripts/tests/litellm-salt-key-guard.kind.sh.
 # Skips (exit 0) without helm or the subchart .tgz files — but FAILS when CI is set.
 set -uo pipefail
@@ -42,7 +46,7 @@ render() {
 # inspect <python expression over `by` (kind,name)->doc> — prints the result
 inspect() {
   printf '%s' "$out" | PYEXPR="$1" python3 -c '
-import os, sys, yaml
+import json, os, sys, yaml
 docs = [d for d in yaml.safe_load_all(sys.stdin) if isinstance(d, dict) and d.get("kind")]
 by = {(d["kind"], d["metadata"]["name"]): d for d in docs}
 def sd(name): return ((by.get(("Secret", name)) or {}).get("stringData") or {})
@@ -106,5 +110,27 @@ check "  ... saying how to make one" "openssl rand -hex 32" "$out"
 absent "  ... without printing the value" "not-hex" "$out"
 render --set langfuseCoreSecrets.nextauthSecret=
 rc_is "an empty nextauthSecret fails" 1
+
+echo "re-key overlays (as scripts/lib/rotation-files.py writes them) through Helm's values merge"
+OV=$(mktemp -d); trap 'rm -rf "$OV"' EXIT
+OLDK="sk-old-$RANDOM"; SK1="sk-salt-$RANDOM$RANDOM"; MK2="sk-new-$RANDOM$RANDOM"
+printf '{"path":"rekey","cluster":{"uid":"u","context":"c","namespace":"agentic-os","release":"t","version":"v"},"counts":{"columns":{},"total":{"effective":0}},"old":{"master":"%s"},"new":{"master":"%s","salt":"%s"}}' "$OLDK" "$MK2" "$SK1" \
+  | python3 scripts/lib/rotation-files.py write "$OV" t >/dev/null
+envnames() { inspect '[e["name"] for d in [x for (k, n), x in by.items() if k == "Deployment" and n.endswith("litellm")] for e in d["spec"]["template"]["spec"]["containers"][0].get("env", [])]'; }
+render -f "$OV/rotation-t.step1.yaml"
+rc_is "step 1 renders" 0
+check "step 1: the gateway gets LITELLM_MIGRATE_FROM_MASTER_KEY" "LITELLM_MIGRATE_FROM_MASTER_KEY" "$(envnames)"
+check "step 1: masterkey = S" "$(H "$SK1")" "$(H "$(inspect 'sd("litellm-credentials")["masterkey"]')")"
+check "step 1: no salt key yet (the migration runs only without one)" "False" "$(inspect '"LITELLM_SALT_KEY" in sd("litellm-credentials")')"
+# deploy.sh layers the overlay over the release values, which after step 1 hold the variable.
+render -f "$OV/rotation-t.step1.yaml" -f "$OV/rotation-t.yaml"
+rc_is "step 2 over step 1's values renders" 0
+check "step 2: the variable is EMPTY on the gateway (the old key is gone from its env)" "['']" "$(inspect '[e.get("value") or "" for d in [x for (k, n), x in by.items() if k == "Deployment" and n.endswith("litellm")] for e in d["spec"]["template"]["spec"]["containers"][0].get("env", []) if e["name"] == "LITELLM_MIGRATE_FROM_MASTER_KEY"]')"
+absent "  ... the old key is nowhere in the gateway Deployment" "$OLDK" "$(inspect 'json.dumps([x for (k, n), x in by.items() if k == "Deployment" and n.endswith("litellm")])' 2>/dev/null || true)"
+check "step 2: salt key = S" "$(H "$SK1")" "$(H "$(inspect 'sd("litellm-credentials")["LITELLM_SALT_KEY"]')")"
+check "step 2: masterkey = M" "$(H "$MK2")" "$(H "$(inspect 'sd("litellm-credentials")["masterkey"]')")"
+render -f "$OV/rotation-t.step1.yaml" -f "$OV/rotation-t.rollback-step1.yaml"
+check "rollback of step 1: migrates back from S" "LITELLM_MIGRATE_FROM_MASTER_KEY" "$(envnames)"
+check "  ... to the old master key" "$(H "$OLDK")" "$(H "$(inspect 'sd("litellm-credentials")["masterkey"]')")"
 
 finish litellm-salt-key-chart
