@@ -35,6 +35,9 @@ import { existsSync, readdirSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+// A test render of policies with the Ingress on: it keeps the chart's published default secrets on
+// purpose, which templates/base/secret-defaults-guard.yaml refuses for a real install.
+const TEST_RENDER = ['--set', 'global.allowChartDefaultSecrets=true'];
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const CHART = join(repo, 'charts', 'sovereign-agentic-os');
@@ -79,7 +82,7 @@ if (!existsSync(deps) || !readdirSync(deps).some((f) => f.endsWith('.tgz'))) {
 }
 
 function render(args) {
-  const text = execFileSync('helm', ['template', RELEASE, CHART, '-n', 'agentic-os', ...args], {
+  const text = execFileSync('helm', ['template', RELEASE, CHART, '-n', 'agentic-os', ...TEST_RENDER, ...args], {
     encoding: 'utf8',
     maxBuffer: 64 * 1024 * 1024,
     stdio: ['ignore', 'pipe', 'pipe'],

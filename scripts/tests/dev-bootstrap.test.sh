@@ -123,7 +123,12 @@ check "LiteLLM may reach it (egress rule in agentic-os)" "name: litellm-egress-m
 
 echo "== the overlay replaces every chart credential"
 H() { helm template agentic-os charts/sovereign-agentic-os -n agentic-os --skip-schema-validation -f values.dev.yaml "$@" 2>/dev/null; }
-H > "$TMP/without.yaml"; H -f "$OV" > "$TMP/with.yaml"
+# The render WITHOUT the overlay keeps the chart's literals on purpose (the comparison needs them),
+# which the chart refuses for an install with an Ingress: allow it for this test render only.
+H --set global.allowChartDefaultSecrets=true > "$TMP/without.yaml"; H -f "$OV" > "$TMP/with.yaml"
+holds "the render without the overlay is not empty (the comparison is real)" [ -s "$TMP/without.yaml" ]
+holds "values.dev.yaml alone, without the overlay, is refused (chart-default secrets)" bash -c '! helm template agentic-os charts/sovereign-agentic-os -n agentic-os --skip-schema-validation -f values.dev.yaml >/dev/null 2>&1'
+holds "values.dev.yaml + the overlay renders" [ -s "$TMP/with.yaml" ]
 res=$(python3 - "$TMP/without.yaml" "$TMP/with.yaml" <<'PY'
 import sys, yaml
 def secrets(p):
