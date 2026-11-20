@@ -1,10 +1,11 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
- */
-/**
- * "Index → Files" on a connected OneDrive (Connections tab) under the PRODUCTION posture
- * (`OS_OFFLINE_MOCK=refuse`).
  *
+ * FEATURE:    "Index → Files" on a connected OneDrive (Connections tab) under the PRODUCTION
+ *             posture (`OS_OFFLINE_MOCK=refuse`).
+ * USER STORY: As a user who connected my OneDrive I want "Index → Files" to bring my real files
+ *             into Files so that search and agents can use them.
+ * ARCHITECTURE:
  * The bug: the button called `enableDataUsage`, which ran the Drive adapter's `sync` with NO
  * client injected — so production always refused it ("Cannot sync this Drive connection:
  * nothing was indexed …"), even for a connection whose owner had completed the Microsoft
