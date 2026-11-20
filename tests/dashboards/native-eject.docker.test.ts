@@ -136,6 +136,8 @@ before(async () => {
 after(() => {
   if (skip) return;
   shOk('docker', ['rm', '-f', CTR]);
+  // dbt and vl-convert wrote `target/`, `logs/` and SVGs as the image user: hand them back first.
+  shOk('docker', ['run', '--rm', '-u', '0', '-v', `${WORK}:/w`, PY_IMAGE, 'chmod', '-R', 'a+rwX', '/w']);
   if (WORK) rmSync(WORK, { recursive: true, force: true });
 });
 
