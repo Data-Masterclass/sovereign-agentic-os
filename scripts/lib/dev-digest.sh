@@ -14,6 +14,10 @@
 # run and cannot be rewritten in place. This script reads it from the NEWEST push run of dev.yml
 # on main for <sha> (the same run workflow-status.sh judged green) and prints its digest.
 #
+# RETENTION: the artifact is kept 90 days (dev.yml retention-days: 90, GitHub's maximum for a
+# public repository). Releases follow merges within days, so that is ample; a commit older than
+# that is re-run through dev.yml first, which builds, deploys, tests and records it again.
+#
 # Exit 0 + the digest; exit 1 + `NO_DEV_DIGEST_RECORD: <why>` (no run, no artifact, a record for
 # another commit, a malformed digest); exit 2 on a usage error. Prints no token.
 set -euo pipefail
@@ -38,7 +42,7 @@ run_id=$(printf '%s\n' "$runs" | awk -F'\t' '$1 == "dev.yml" { print $5; exit }'
 
 dir=$(mktemp -d); trap 'rm -rf "$dir"' EXIT
 gh run download "$run_id" --repo "$REPO" -n dev-tested-digest -D "$dir" >/dev/null 2>&1 \
-  || none "dev.yml run $run_id has no dev-tested-digest artifact (dev-green did not record one)"
+  || none "dev.yml run $run_id has no dev-tested-digest artifact (dev-green did not record one, or the record is older than its 90-day retention: re-run dev.yml for this commit)"
 [ -f "$dir/dev-tested-digest.json" ] || none "the artifact of run $run_id holds no dev-tested-digest.json"
 python3 - "$dir/dev-tested-digest.json" "$SHA" "$run_id" <<'PY' || exit 1
 import json, re, sys

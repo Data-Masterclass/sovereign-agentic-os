@@ -67,7 +67,8 @@ There are two node profiles, and **the owner chooses**. The default is `g2i.8`.
 | **`g2i8` (default)** | `g2i.8`, 8 vCPU / 32 GB | 294.60 | `values.dev.yaml` | CPU requests 49.3 %, memory limits 83.3 %: comfortable |
 | `m2i4` (cheaper) | `m2i.4`, 4 vCPU / 32 GB | 194.67 | `values.dev.yaml` + `values.dev.m2i4.yaml` (Trino 500m → 100m, Docling 250m → 50m CPU requests) | CPU requests 84.5 % of 85 %: passes, thin margin |
 
-To use `m2i4`, apply with `-var node_machine_type=m2i.4` and deploy with `DEV_NODE=m2i4`. Set
+To use `m2i4`, apply with `-var node_machine_type=m2i.4` and deploy with `DEV_NODE=m2i4`.
+`deploy.sh` refuses when `DEV_NODE` and the node's real flavour differ (`DEV_NODE_MISMATCH`). Set
 `DEV_NODE` as a `dev` environment variable for CI. On `m2i4`, Trino and Docling keep their
 limits, so they can burst when the node is idle; under load they are slower. Re-measure
 allocatable after the first apply. Without the request cuts, `m2i.4`, `m3i.4` and `g2i.4` fail
@@ -210,6 +211,22 @@ read the key.
 
 **The image pull token** for the private GHCR packages is a GitHub token with `read:packages`
 only. Put it in `~/.sovereign-os-secrets/dev/ghcr-read-token`, and its login in `ghcr-read-user`.
+
+## Pod Security
+
+The dev namespaces carry Pod Security Admission labels (`scripts/dev/manifests/namespaces.yaml`,
+applied by `bootstrap-secrets.sh`):
+
+| Namespace | Pod Security |
+|---|---|
+| `agentic-os` | `baseline` enforced, `restricted` warned and audited (some upstream subcharts run as root) |
+| `agentic-apps` | `restricted`, as in production |
+| `dev-model-key` | `restricted` |
+
+OpenSearch's `vm.max_map_count` comes from the DaemonSet `sovereign-os-node-sysctl` in
+`kube-system`, so `values.dev.yaml` turns off the subchart's privileged init container. The CI
+account cannot change the labels and cannot create pods in `kube-system`. Proof:
+`scripts/tests/dev-pod-security.kind.sh`.
 
 ## Secrets
 

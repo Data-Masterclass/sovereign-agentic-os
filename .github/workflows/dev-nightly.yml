@@ -22,9 +22,7 @@ on:
     - cron: "43 3 * * *"   # 03:43 UTC, after the dev deploys of the day
   workflow_dispatch: {}
 
-permissions:
-  contents: read
-  issues: write     # open or comment on the dev-nightly issue
+permissions: {}
 
 jobs:
   nightly:
@@ -32,6 +30,8 @@ jobs:
     if: vars.DEV_ENVIRONMENT_ENABLED == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 150
+    permissions:
+      contents: read
     environment: dev
     # Never at the same time as a dev deploy: the journeys scale and delete workloads.
     concurrency:
@@ -118,12 +118,19 @@ jobs:
           done
           [ "$ran" = 1 ] || echo "no restore drill ran"
 
+      - name: LiteLLM budget blocks
+        id: budget
+        if: vars.DEV_MODEL != 'stub'
+        continue-on-error: true
+        run: bash scripts/dev/budget-check.sh
+
       - name: Report to job summary
         if: always()
         env:
           SMOKE: ${{ steps.smoke.outcome }}
           ACCEPTANCE: ${{ steps.acceptance.outcome }}
           DRILLS: ${{ steps.drills.outcome }}
+          BUDGET: ${{ steps.budget.outcome }}
         run: |
           {
             echo "## dev nightly"
@@ -132,6 +139,7 @@ jobs:
             echo "| smoke test | $SMOKE |"
             echo "| acceptance journeys (fails only on an unexpected result) | $ACCEPTANCE |"
             echo "| restore drills (WP-56) | $DRILLS |"
+            echo "| LiteLLM budget blocks | $BUDGET |"
             echo
             [ ! -f "$E2E_REPORT_DIR/drills.txt" ] || { echo '```'; cat "$E2E_REPORT_DIR/drills.txt"; echo '```'; }
             if [ -f "$E2E_REPORT_DIR/report.json" ]; then
@@ -149,21 +157,41 @@ jobs:
           path: nightly-report/
           if-no-files-found: warn
 
-      # failure(): any earlier step failed (kubeconfig, env guard, credentials, the report).
-      # The three checks run with continue-on-error, so their outcomes are named explicitly.
-      - name: Open or update the dev-nightly issue on ANY failure
-        if: always() && (failure() || steps.smoke.outcome == 'failure' || steps.acceptance.outcome == 'failure' || steps.drills.outcome == 'failure')
+      # The checks above run with continue-on-error; their failure must still fail the job, so the
+      # report job below sees it.
+      - name: Fail the job when a check failed
+        if: always()
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           SMOKE: ${{ steps.smoke.outcome }}
           ACCEPTANCE: ${{ steps.acceptance.outcome }}
           DRILLS: ${{ steps.drills.outcome }}
+          BUDGET: ${{ steps.budget.outcome }}
+        run: |
+          echo "smoke=$SMOKE acceptance=$ACCEPTANCE drills=$DRILLS budget=$BUDGET"
+          for o in "$SMOKE" "$ACCEPTANCE" "$DRILLS" "$BUDGET"; do [ "$o" != failure ] || exit 1; done
+
+  # ANY bad end of the nightly opens (or comments on) the dev-nightly issue: a failed step, an early
+  # failure (expired DEV_KUBECONFIG, the cluster down or hibernated, the env guard), a TIMEOUT or a
+  # CANCELLATION. A separate job, so it runs even when the nightly job itself was killed; it holds
+  # no kubeconfig, only `issues: write`.
+  report:
+    name: report failures as an issue
+    needs: nightly
+    if: always() && vars.DEV_ENVIRONMENT_ENABLED == 'true' && (needs.nightly.result == 'failure' || needs.nightly.result == 'cancelled')
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Open or update the dev-nightly issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RESULT: ${{ needs.nightly.result }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
-          body="Dev nightly $(date -u +%F): smoke=${SMOKE:-not reached}, acceptance=${ACCEPTANCE:-not reached}, restore drills=${DRILLS:-not reached}. An earlier step (kubeconfig, env guard, credentials) fails when all three say 'not reached'. Run: $RUN_URL"
+          body="Dev nightly $(date -u +%F): the nightly job ended **$RESULT** (a failed check, an early failure such as an expired kubeconfig or an unreachable cluster, a timeout or a cancellation). Run: $RUN_URL"
           gh label create dev-nightly --color B60205 --description "dev nightly failures" 2>/dev/null || true
           n=$(gh issue list --label dev-nightly --state open --json number --jq '.[0].number // empty')
           if [ -n "$n" ]; then gh issue comment "$n" --body "$body"
           else gh issue create --title "dev nightly is red" --label dev-nightly --body "$body"; fi
-          exit 1

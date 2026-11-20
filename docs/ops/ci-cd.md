@@ -62,11 +62,22 @@ asks for its own.
    - **the running digest is checked**: `os-ui` and `os-ui-worker` must run exactly the digest
      the image job built;
    - `scripts/smoke-test.sh --env dev --expect-tag main-<sha>`;
+   - **`scripts/dev/budget-check.sh`**: LiteLLM must report its database as connected.
+     Budgets are enforced from the database; without it they fail open. A throwaway key with a
+     tiny budget must then be **refused** once spent. This step is skipped with the model stub;
+   - `deploy.sh` refuses when `DEV_NODE` does not match the node's real
+     `node.kubernetes.io/instance-type` (`DEV_NODE_MISMATCH`), so the capacity gate always checks
+     the right node;
    - the WP-02 journeys against dev (`E2E_KUBE_CONTEXT=dmagosdev`; `run.sh` runs the env guard
      first). The step fails only on an **unexpected** result.
 3. **`dev-green`** succeeds only when both jobs succeeded and the running digest equals the
    built one. It then uploads the artifact **`dev-tested-digest`** (`{sha, digest, image,
    run_id}`), **the one record production deploys from**.
+
+   **Retention: 90 days**, GitHub's maximum for a public repository. Releases have followed
+   merges within days (0.9.18 to 0.9.21 in under a week), so 90 days is ample. A commit older
+   than that is refused with `NO_DEV_DIGEST`. Re-run `dev.yml` for it first: the re-run builds,
+   deploys, tests and records it again.
 
 **What "green on dev" means today, plainly.** The commit was built, deployed, the running digest
 checked, it was smoke-tested, and the acceptance journeys showed no *unexpected* result. It does
@@ -145,9 +156,13 @@ It deploys nothing. It runs:
   or "not on dev";
 - the smoke test.
 
-**Any** failure opens one issue labelled `dev-nightly`, or comments on it if it is already open.
-That includes an early failure: an expired `DEV_KUBECONFIG`, the cluster down or hibernated, the
-env guard refusing.
+It also runs the LiteLLM budget check.
+
+**Any** bad end opens one issue labelled `dev-nightly`, or comments on it if it is already open.
+That includes a failed check, an early failure (an expired `DEV_KUBECONFIG`, the cluster down or
+hibernated, the env guard refusing), a **timeout** and a **cancellation**. A separate `report`
+job does this when the nightly job ended `failure` or `cancelled`. It holds only
+`issues: write`, with no kubeconfig.
 
 ## Stage 5: rollback, one command per environment
 
@@ -174,6 +189,19 @@ values), not data.
 
   It has **no rights in `dev-model-key`**. Before writing the credential, the script checks this
   with `kubectl auth can-i` and refuses if the account can read the key.
+- **Pod Security on dev.** `agentic-os` **enforces the baseline Pod Security Standard**, through
+  namespace labels the operator applies (`scripts/dev/manifests/namespaces.yaml`). The other
+  namespaces are restricted. So the CI account cannot create a privileged pod, a hostPath pod or
+  a host-namespace pod there, wearing LiteLLM's label or not.
+  - The CI account cannot change namespace labels and has no rights in `kube-system`.
+  - The one privileged need, OpenSearch's `vm.max_map_count`, is set by a DaemonSet in
+    `kube-system` (`manifests/node-sysctl.yaml`, applied by `platform.sh`), and the subchart's
+    privileged init container is off on dev.
+  - Proved by server dry runs on kind (`scripts/tests/dev-pod-security.kind.sh`, run in CI):
+    - the privileged hostPath pod is refused, while the same pod in an unlabelled namespace is
+      accepted;
+    - the CI account's limits hold;
+    - the dev chart is accepted as the CI account.
 - **The STACKIT model key** lives only in namespace `dev-model-key`. There, a pinned nginx
   reverse proxy adds it to each request from LiteLLM, and only LiteLLM may reach it
   (NetworkPolicy). The chart's gateway holds a placeholder (`held-by-model-key-proxy`).
@@ -239,5 +267,7 @@ create it unprotected.
   - `env-guard.test.sh`: deploy, smoke, rollback, harness and `run.sh` refusals, plus the
     stub-journey skip;
   - `dev-bootstrap.test.sh`: refusals, no chart literal left, the model key only in
-    `dev-model-key`, no laptop-only image, the capacity gate.
+    `dev-model-key`, no laptop-only image, the capacity gate;
+  - `dev-pod-security.kind.sh` (kind, server dry runs): Pod Security and the CI account's limits;
+  - `env-guard.test.sh` also covers the `DEV_NODE` flavour check.
 - **Not verified live.** No dev cluster exists, and no workflow in this change has run on GitHub.
