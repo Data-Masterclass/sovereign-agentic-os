@@ -111,6 +111,11 @@ jobs:
       - name: LiteLLM ingress policy tests
         run: bash scripts/tests/litellm-ingress-policy.test.sh
 
+      # LITELLM_SALT_KEY: rendered into litellm-credentials (local), required as an operator Secret
+      # on other profiles, with negative twins. The lookup change guard: litellm-salt-key-guard.kind.sh.
+      - name: LiteLLM salt key chart test
+        run: bash scripts/tests/litellm-salt-key-chart.test.sh
+
       # WP-47 capacity gate tests: the real chart passes, and the negative twins (2 extra CPU
       # cores, over-committed memory limits, a container with no memory request, an empty render)
       # fail; the limit trims and the PriorityClass ladder are asserted on the rendered chart, both
