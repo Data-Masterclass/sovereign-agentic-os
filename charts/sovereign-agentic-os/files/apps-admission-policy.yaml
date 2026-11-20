@@ -1,0 +1,97 @@
+# WP-54 — admission policies for the user-apps namespace (Kubernetes ValidatingAdmissionPolicy, CEL).
+# They hold for every write the OS makes there, independently of the OS's own gate
+# (tabs/software/lib/native-deploy.ts). Placeholders are replaced by the chart template
+# (templates/base/os-ui/apps-admission.yaml) and by tests/app-eject (sed): __APPS_NAMESPACE__,
+# __OS_UI_USER__. Docs: https://kubernetes.io/docs/reference/access-authn-authz/validating-admission-policy/
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: sovereign-os-apps-objects
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["services", "endpoints"]
+      - apiGroups: ["discovery.k8s.io"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["endpointslices"]
+      - apiGroups: ["networking.k8s.io"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["ingresses"]
+  matchConditions:
+    - name: written-by-os-ui
+      expression: "request.userInfo.username == '__OS_UI_USER__'"
+  validations:
+    - expression: "!(request.resource.resource in ['endpoints', 'endpointslices'])"
+      message: "an app may not write Endpoints or EndpointSlices"
+    - expression: >-
+        request.resource.resource != 'services' ||
+        ((!has(object.spec.type) || object.spec.type == 'ClusterIP') &&
+         !has(object.spec.externalName) &&
+         (!has(object.spec.externalIPs) || size(object.spec.externalIPs) == 0) &&
+         has(object.spec.selector) && size(object.spec.selector) > 0)
+      message: "an app Service must be ClusterIP with a selector (no ExternalName, NodePort, LoadBalancer or externalIPs)"
+    - expression: >-
+        request.resource.resource != 'ingresses' ||
+        !has(object.metadata.annotations) ||
+        object.metadata.annotations.all(k, k == 'cert-manager.io/cluster-issuer')
+      message: "an app Ingress may carry only the cert-manager.io/cluster-issuer annotation"
+    - expression: >-
+        request.resource.resource != 'ingresses' ||
+        (!has(object.spec.defaultBackend) &&
+         (!has(object.spec.tls) || object.spec.tls.all(t, has(t.hosts) && size(t.hosts) == 1 &&
+            has(t.secretName) && t.secretName == t.hosts[0] + '-tls')) &&
+         (!has(object.spec.rules) || object.spec.rules.all(r, !has(r.http) ||
+            r.http.paths.all(p, has(p.backend.service) && p.backend.service.name == object.metadata.name))))
+      message: "an app Ingress may use only its own <host>-tls secret and its own Service as backend"
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: sovereign-os-apps-objects
+spec:
+  policyName: sovereign-os-apps-objects
+  validationActions: ["Deny"]
+  matchResources:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: __APPS_NAMESPACE__
+---
+# os-ui holds `pods: create` in the apps namespace ONLY to submit a Deployment's pod template as a
+# server-side dry run (Pod Security admission judges Pods). RBAC cannot express "dry run only";
+# this policy does: a real Pod create by os-ui there is denied.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: sovereign-os-apps-pods-dry-run-only
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE"]
+        resources: ["pods"]
+  matchConditions:
+    - name: created-by-os-ui
+      expression: "request.userInfo.username == '__OS_UI_USER__'"
+  validations:
+    - expression: "request.dryRun == true"
+      message: "os-ui may create Pods in the apps namespace only as a dry run"
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: sovereign-os-apps-pods-dry-run-only
+spec:
+  policyName: sovereign-os-apps-pods-dry-run-only
+  validationActions: ["Deny"]
+  matchResources:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: __APPS_NAMESPACE__

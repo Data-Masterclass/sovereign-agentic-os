@@ -1323,6 +1323,10 @@ softwareRunner:
   # SECURITY (C2): isolate student apps from the platform. Pod Security `restricted` (the scaffolded
   # k8s/ manifests meet it; a deploy is dry-run against this admission before it is applied).
   podSecurityStandard: restricted
+  # WP-54: ValidatingAdmissionPolicies in `namespace` (files/apps-admission-policy.yaml). They hold
+  # for every write os-ui makes there, independently of the OS's own gate. Kubernetes >= 1.30.
+  admissionPolicy:
+    enabled: true
   networkPolicy:
     enabled: true
     ingressNamespace: ingress-nginx
