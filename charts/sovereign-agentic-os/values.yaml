@@ -1063,6 +1063,13 @@ opa:
     # missing internal (`iceberg.*`) table, or a relative drop above this in grant principals,
     # governance principals or tables is refused until an admin acknowledges it.
     maxDropPercent: 10
+  # WP-30: knowledge guardrails as OPA DATA. Each domain's committed
+  # `knowledge/workflows/<slug>/guardrails.json` reaches OPA in the os-data bundle
+  # (os_data.guardrails) and the platform policy `policies/guardrails.rego` (package
+  # os.guardrails) decides; nothing is uploaded at runtime. Needs dataBundle.enabled.
+  # Off = the interim per-workflow module upload (rollback, one release).
+  guardrailsData:
+    enabled: false
   grants:
     sovereign-agents:           # the default agent key — no internet
       - rag_search

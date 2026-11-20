@@ -577,6 +577,12 @@ export const config = {
   get opaDataBundle(): boolean {
     return ['1', 'true'].includes((process.env.OS_OPA_DATA_BUNDLE ?? '').trim().toLowerCase());
   },
+  // WP-30: knowledge guardrails are OPA DATA from git (each domain's committed
+  // `knowledge/workflows/<slug>/guardrails.json`) in the os-data bundle, read by the chart's platform
+  // policy `os.guardrails`. Off = the interim per-workflow module upload (rollback, one release).
+  get guardrailsData(): boolean {
+    return ['1', 'true'].includes((process.env.OS_GUARDRAILS_DATA ?? '').trim().toLowerCase());
+  },
   // The chart's OPA seed (`soa.opaSeed`: seed_grants, requires_approval, governance), rendered by the
   // same helper as the push-mode OPA's data.json + governance.json: the base of the os-data bundle.
   get opaSeed(): string {

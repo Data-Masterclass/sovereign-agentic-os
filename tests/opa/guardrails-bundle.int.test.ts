@@ -28,11 +28,10 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync, chmodSync, existsSync } from 'node:fs';
+import { copyFileSync, mkdtempSync, readdirSync, rmSync, writeFileSync, chmodSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import yaml from 'js-yaml';
 import { Opa, TOKEN, chartEnv, docker, fakeEmptyMirror, startBundleServer, startChartOpa, until, type BundleServer } from './bundle-it.ts';
 import { seedOsState } from './fixture.ts';
 
@@ -57,8 +56,8 @@ process.env.OS_REPOS_DIR = join(WORK, 'repos');
 process.env.DATA_PROJECT_GIT = 'true';
 await fakeEmptyMirror();
 
-const values = yaml.load(readFileSync(join(ROOT, 'charts/sovereign-agentic-os/values.yaml'), 'utf8')) as { opa: { image: { repository: string; tag: string; digest: string } } };
-const OPA_IMAGE = `${values.opa.image.repository}:${values.opa.image.tag}@${values.opa.image.digest}`;
+// The eject runs in the image the chart's OPA runs (read from the started container).
+let OPA_IMAGE = '';
 
 const REFUND_MD = `---
 id: wf_refund
@@ -90,6 +89,7 @@ before(async () => {
   startChartOpa('wp30-push', PORT_A, []);
   startChartOpa('wp30-bundle', PORT_B, B_SETS);
   await until(() => A.status('/health'), (s) => s === 200, 60_000);
+  OPA_IMAGE = docker('inspect', '--format', '{{.Config.Image}}', 'wp30-bundle').trim();
   server = await startBundleServer(SERVER_PORT);
 });
 after(async () => {

@@ -21,7 +21,7 @@ type ApplyRow = {
   applied: boolean;
   verified: boolean;
   status: 'ok' | 'fail';
-  policy: 'opa-live' | 'opa-mock';
+  policy: 'opa-live' | 'opa-bundle';
   detail: string;
   error?: string;
 };
@@ -145,7 +145,7 @@ export default function RulesPanel({
             <span>
               {result.apply.status === 'ok' ? 'Guardrails enforced' : 'Guardrails failed'}
               {' · '}
-              <span className="muted">{result.apply.policy === 'opa-live' ? 'live OPA' : 'offline mock (no cluster)'}</span>
+              <span className="muted">{result.apply.policy === 'opa-bundle' ? 'OPA, committed guardrails' : 'OPA'}</span>
             </span>
           </div>
           <div className="rp-result-detail">{result.apply.detail}</div>
