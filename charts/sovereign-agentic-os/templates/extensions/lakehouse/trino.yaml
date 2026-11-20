@@ -206,6 +206,9 @@ data:
     iceberg.rest-catalog.oauth2.credential=${ENV:POLARIS_OAUTH_CREDENTIAL}
     iceberg.rest-catalog.oauth2.scope={{ $ice.oauth2Scope }}
     iceberg.rest-catalog.vended-credentials-enabled={{ $ice.vendedCredentials }}
+    {{- with $ice.expireSnapshotsMinRetention }}
+    iceberg.expire-snapshots.min-retention={{ . }}
+    {{- end }}
     fs.native-s3.enabled=true
     s3.endpoint={{ include "soa.s3Endpoint" . }}
     s3.region={{ $t.s3.region }}

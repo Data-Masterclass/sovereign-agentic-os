@@ -176,6 +176,15 @@ def main(out, extra):
     write(os.path.join(out, 'sh', 'bucket-init.sh'), script(bi))
     env['LH_AWSCLI_IMAGE'] = bi['image']
 
+    # data-runner (WP-37): its env as the chart renders it (Polaris client, object store), so the
+    # tag/branch commits in versions.int.test go through the real PyIceberg -> Polaris hop. The
+    # image is built from images/extensions/data-runner (compose.yaml), i.e. the code under test.
+    if 'service-bearer-token' not in sec:
+        sec['service-bearer-token'] = {'SERVICE_BEARER_TOKEN': os.environ.get('LH_BEARER', '')}
+    dpod = find(docs, 'Deployment', 'data-runner')['spec']['template']['spec']
+    dr = next(c for c in dpod['containers'] if c['name'] == 'data-runner')
+    write(os.path.join(out, 'env', 'data-runner.env'), env_file(dr, sec))
+
     write(os.path.join(out, 'compose.env'), ''.join(f'{k}={v}\n' for k, v in sorted(env.items())))
     write(os.path.join(out, 'pins.json'), json.dumps(env, indent=2) + '\n')
 

@@ -199,6 +199,8 @@
 # which writes the physical Iceberg Bronze table. Reuses the SAME
 # object-storage endpoint + `objectStorage.secretName` Secret the lakehouse
 # uses (no new broad creds), and the SAME warehouse bucket for uploads/. ----
+- name: OS_ICEBERG_SNAPSHOT_RETENTION
+  value: {{ (((.Values.trino).catalog).iceberg).snapshotRetention | default "7d" | quote }}
 - name: DATA_RUNNER_URL
   value: {{ $u.dataRunnerUrl | default "http://data-runner:8000" | quote }}
 - name: S3_ENDPOINT

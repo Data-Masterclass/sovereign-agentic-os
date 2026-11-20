@@ -1513,6 +1513,14 @@ trino:
       # local: clientId:clientSecret derived from polaris.local; external: from a
       # Secret named here with key POLARIS_OAUTH_CREDENTIAL (External Secrets).
       oauth2SecretName: ""
+      # Dataset versions are Iceberg snapshots (WP-37). `snapshotRetention` is how long the weekly
+      # maintenance keeps an UNTAGGED snapshot (`expire_snapshots`, `<n>d` or `<n>h`); a tagged or
+      # branched version is kept whatever its age (Iceberg keeps every snapshot a ref points to).
+      # It reaches os-ui as OS_ICEBERG_SNAPSHOT_RETENTION and the dbt project as the
+      # `snapshot_retention` var. `expireSnapshotsMinRetention` is Trino's floor
+      # (`iceberg.expire-snapshots.min-retention`); empty keeps Trino's default (7d).
+      snapshotRetention: 7d
+      expireSnapshotsMinRetention: ""
   s3:
     region: us-east-1
     pathStyleAccess: true
