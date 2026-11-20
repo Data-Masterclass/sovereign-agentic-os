@@ -1,0 +1,172 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+#
+# dev — stage 2 of the pipeline (docs/ops/ci-cd.md): EVERY push to main, once CI is green,
+# is built, deployed to the dev environment and accepted there.
+#
+#   image       build-images.yml (reusable): waits for ci.yml + license-gate.yml to pass on main for
+#               this SHA, then builds os-ui as main-<sha> and pushes it (pinned by digest).
+#   deploy      GitHub Environment `dev`: scripts/deploy.sh --env dev --from-registry main-<sha>
+#               (the env guard refuses any cluster that is not the marked dev cluster), then the
+#               smoke test and the WP-02 acceptance journeys against dev. Results go to the job
+#               summary and the `dev-report` artifact; the Helm revision it replaced goes to the
+#               `deploy-record` artifact (scripts/rollback.sh --env dev --to <it>).
+#   dev-green   the ONE job whose success means "this commit was green on dev". scripts/release.sh
+#               requires it (workflow-status.sh --require-job dev-green) before production.
+#
+# ENABLING: nothing deploys until the owner sets the repository variable DEV_ENVIRONMENT_ENABLED=true
+# and the `dev` environment secret DEV_KUBECONFIG (scripts/dev/ci-kubeconfig.sh). Until then the
+# jobs are skipped, dev-green is skipped, and no commit counts as green on dev.
+#
+# CONCURRENCY: one dev deploy at a time. The image stage of an older push is cancelled by a newer
+# one; a deploy that is RUNNING is never cancelled (a cancelled `helm upgrade` leaves the release
+# pending), but a newer push replaces a deploy still WAITING for it — so stale commits are skipped.
+name: dev
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  packages: write   # the reusable image build pushes main-<sha>
+  actions: read     # require-green-ci reads this repository's workflow runs
+
+jobs:
+  image:
+    name: image (os-ui main-<sha>)
+    if: vars.DEV_ENVIRONMENT_ENABLED == 'true'
+    concurrency:
+      group: dev-image
+      cancel-in-progress: true
+    uses: ./.github/workflows/build-images.yml
+    with:
+      image: os-ui
+      version: main-${{ github.sha }}
+
+  deploy:
+    name: deploy + accept (dev)
+    needs: image
+    if: vars.DEV_ENVIRONMENT_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    environment:
+      name: dev
+      url: https://os.dev.agentic.datamasterclass.com
+    concurrency:
+      group: dev-environment
+      cancel-in-progress: false
+    env:
+      DEV_KUBE_CONTEXT: dmagosdev
+      DEV_PRIVATE_VALUES: cluster          # read the private overlay from the dev cluster
+      IMAGE_REPO: ${{ vars.IMAGE_REPO_PREFIX || 'ghcr.io/data-masterclass/sovereign-os' }}
+      TAG: main-${{ github.sha }}
+      DIGEST: ${{ needs.image.outputs.digest }}
+      E2E_KUBE_CONTEXT: dmagosdev
+      E2E_REPORT_DIR: ${{ github.workspace }}/dev-report
+      DEPLOY_RECORD: ${{ github.workspace }}/dev-report/deploy-record.json
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: 22
+
+      - name: Setup Helm
+        uses: azure/setup-helm@fe7b79cd5ee1e45176fcad797de68ecaf3ca4814 # v4.2.0
+        with:
+          version: v3.16.3
+
+      - name: Install os-ui dependencies (capacity gate)
+        run: npm --prefix os-ui ci --no-audit --no-fund
+
+      - name: Resolve chart dependencies
+        run: helm dependency build charts/sovereign-agentic-os
+
+      # The dev kubeconfig holds ONE context (dmagosdev, a ServiceAccount of the dev cluster). It is
+      # written to a private file and used through KUBECONFIG; nothing else is on this runner.
+      - name: Dev kubeconfig
+        env:
+          DEV_KUBECONFIG: ${{ secrets.DEV_KUBECONFIG }}
+        run: |
+          set -euo pipefail
+          [ -n "$DEV_KUBECONFIG" ] || { echo "::error::the dev environment secret DEV_KUBECONFIG is not set (docs/ops/ci-cd.md, owner checklist)"; exit 1; }
+          umask 077
+          printf '%s' "$DEV_KUBECONFIG" > "$RUNNER_TEMP/dev-kubeconfig.yaml"
+          echo "KUBECONFIG=$RUNNER_TEMP/dev-kubeconfig.yaml" >> "$GITHUB_ENV"
+          mkdir -p "$E2E_REPORT_DIR"
+
+      - name: Deploy main-<sha> to dev
+        run: |
+          set -euo pipefail
+          # The digest the image stage pushed must be the one the registry serves for the tag.
+          echo "image $IMAGE_REPO/os-ui:$TAG@$DIGEST"
+          bash scripts/deploy.sh --env dev --from-registry "$TAG"
+
+      - name: Smoke test (dev)
+        run: |
+          set -o pipefail
+          bash scripts/smoke-test.sh --env dev --expect-tag "$TAG" | tee "$E2E_REPORT_DIR/smoke.txt"
+
+      # The harness reads the gateway and Langfuse keys of THIS deployment from the dev cluster
+      # into masked variables; they are never printed.
+      - name: Acceptance credentials (masked)
+        run: |
+          set -euo pipefail
+          get() { kubectl --context "$DEV_KUBE_CONTEXT" -n agentic-os get secret "$1" -o jsonpath="{.data.$2}" | base64 -d; }
+          while read -r var secret key; do
+            v=$(get "$secret" "$key")
+            echo "::add-mask::$v"
+            echo "$var=$v" >> "$GITHUB_ENV"
+          done <<'LIST'
+          E2E_LITELLM_MASTER_KEY litellm-credentials masterkey
+          E2E_LANGFUSE_PUBLIC_KEY litellm-credentials LANGFUSE_PUBLIC_KEY
+          E2E_LANGFUSE_SECRET_KEY litellm-credentials LANGFUSE_SECRET_KEY
+          LIST
+
+      # The journeys AT-a … AT-f (not the kind self-test: it proves kind's own CNI and SeaweedFS).
+      # Expected-fail markers apply as on kind: the run is green while every red is an expected red.
+      - name: WP-02 acceptance suite (dev)
+        run: bash tests/e2e/kind/run.sh journeys/journey-*.e2e.mjs
+
+      - name: Report to job summary
+        if: always()
+        run: |
+          {
+            echo "## dev: \`main-${GITHUB_SHA:0:12}\`"
+            echo
+            if [ -f "$DEPLOY_RECORD" ]; then
+              echo "Deploy record (roll back with the command shown):"
+              echo; echo '```json'; cat "$DEPLOY_RECORD"; echo '```'; echo
+            fi
+            if [ -f "$E2E_REPORT_DIR/smoke.txt" ]; then
+              echo "### smoke test"; echo; echo '```'; cat "$E2E_REPORT_DIR/smoke.txt"; echo '```'; echo
+            fi
+            [ ! -f "$E2E_REPORT_DIR/report.md" ] || cat "$E2E_REPORT_DIR/report.md"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload report and deploy record
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dev-report
+          path: dev-report/
+          if-no-files-found: warn
+
+  # "Green on dev" = this job succeeded. It is skipped when dev is not enabled and fails when the
+  # deploy, the smoke test or the acceptance suite failed (or was cancelled by a newer push).
+  dev-green:
+    name: dev-green
+    needs: [image, deploy]
+    if: always() && vars.DEV_ENVIRONMENT_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: The image, the deploy, the smoke test and the acceptance suite all passed
+        env:
+          IMAGE: ${{ needs.image.result }}
+          DEPLOY: ${{ needs.deploy.result }}
+        run: |
+          echo "image=$IMAGE deploy=$DEPLOY"
+          [ "$IMAGE" = success ] && [ "$DEPLOY" = success ]

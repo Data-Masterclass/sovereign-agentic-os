@@ -142,6 +142,8 @@ jobs:
       - name: release.sh + smoke-test.sh + values-diff tests
         run: |
           bash scripts/tests/release.test.sh
+          bash scripts/tests/env-guard.test.sh
+          bash scripts/tests/dev-bootstrap.test.sh
           bash scripts/tests/smoke-test.test.sh
           bash scripts/tests/values-diff.test.sh
           bash scripts/tests/deploy-dagster-image.test.sh

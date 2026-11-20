@@ -1,0 +1,64 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+#
+# rollback — the one-command rollback (scripts/rollback.sh) from GitHub, per environment.
+# Goes back to the previous Helm revision, or to `to` (the revision_before of a deploy record).
+# prod runs in the `prod` Environment, so it waits for the required reviewer like a release.
+name: rollback
+
+on:
+  workflow_dispatch:
+    inputs:
+      env:
+        description: environment
+        required: true
+        type: choice
+        options: [dev, prod]
+      to:
+        description: "revision to return to (empty: the previous one)"
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ inputs.env == 'prod' && 'prod-release' || 'dev-environment' }}
+  cancel-in-progress: false
+
+jobs:
+  rollback:
+    name: rollback (${{ inputs.env }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: ${{ inputs.env }}
+    env:
+      ENV_NAME: ${{ inputs.env }}
+      TO: ${{ inputs.to }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Setup Helm
+        uses: azure/setup-helm@fe7b79cd5ee1e45176fcad797de68ecaf3ca4814 # v4.2.0
+        with:
+          version: v3.16.3
+
+      - name: Kubeconfig of the environment
+        env:
+          DEV_KUBECONFIG: ${{ secrets.DEV_KUBECONFIG }}
+          PROD_KUBECONFIG: ${{ secrets.PROD_KUBECONFIG }}
+        run: |
+          set -euo pipefail
+          umask 077
+          if [ "$ENV_NAME" = dev ]; then cfg=$DEV_KUBECONFIG; else cfg=$PROD_KUBECONFIG; fi
+          [ -n "$cfg" ] || { echo "::error::no kubeconfig secret for $ENV_NAME"; exit 1; }
+          printf '%s' "$cfg" > "$RUNNER_TEMP/kubeconfig.yaml"
+          echo "KUBECONFIG=$RUNNER_TEMP/kubeconfig.yaml" >> "$GITHUB_ENV"
+
+      - name: scripts/rollback.sh
+        run: |
+          set -o pipefail
+          bash scripts/rollback.sh --env "$ENV_NAME" ${TO:+--to "$TO"} | tee rollback.txt
+          { echo "## rollback ($ENV_NAME)"; echo '```'; cat rollback.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
