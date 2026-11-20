@@ -26,6 +26,8 @@ if (!OPA || !CONTAINER) {
   throw new Error('decision-log.int.test needs OPA_IT_URL and OPA_IT_CONTAINER (a real OPA container)');
 }
 process.env.OPA_URL = OPA;
+// The writer token (OPA_TOKEN) is set on import, before any OS module reads config.
+const { opaFetch } = await import('./it-auth.ts');
 
 type LogLine = Record<string, unknown> & {
   decision_id?: string;
@@ -97,7 +99,7 @@ test('agent-spine authorize() carries the decision_id of a deny', async () => {
 
 test('secret-bearing fields never reach the decision log, at any depth', async () => {
   const secret = `wp06-secret-${Date.now()}`;
-  const res = await fetch(`${OPA}/v1/data/agentic/authz/decision`, {
+  const res = await opaFetch(`${OPA}/v1/data/agentic/authz/decision`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
@@ -135,10 +137,10 @@ test('secret-bearing fields never reach the decision log, at any depth', async (
 
 test('a plain read of a data document is not logged; a decision on the same path is', async () => {
   const before = decisionLines().length;
-  const read = await fetch(`${OPA}/v1/data/seed_grants`);
+  const read = await opaFetch(`${OPA}/v1/data/seed_grants`);
   const readBody = (await read.json()) as { result?: unknown; decision_id?: string };
   assert.ok(readBody.result, 'the read itself works');
-  const decided = await fetch(`${OPA}/v1/data/agentic/authz/allow`, {
+  const decided = await opaFetch(`${OPA}/v1/data/agentic/authz/allow`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ input: { principal: 'sovereign-agents', tool: 'rag_search' } }),

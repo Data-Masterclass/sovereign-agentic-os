@@ -20,6 +20,7 @@ started by this script starts empty, like a new pod).
 usage: run-chart-opa.py <container-name> <host-port> [extra helm --set ...]
 prints: the container name on success.
 """
+import json
 import os
 import subprocess
 import sys
@@ -33,11 +34,13 @@ CHART = os.path.join(os.path.dirname(__file__), "..", "..", "charts", "sovereign
 def main() -> None:
     name, port, *helm_args = sys.argv[1:]
     rendered = subprocess.run(
-        ["helm", "template", "wp", CHART, "--show-only", "templates/base/opa/opa.yaml", *helm_args],
+        ["helm", "template", "wp", CHART, "--show-only", "templates/base/opa/opa.yaml",
+         "--show-only", "templates/base/opa/opa-tokens.yaml", *helm_args],
         check=True, capture_output=True, text=True,
     ).stdout
     docs = [d for d in yaml.safe_load_all(rendered) if d]
     cms = {d["metadata"]["name"]: d for d in docs if d["kind"] == "ConfigMap"}
+    secrets = {d["metadata"]["name"]: d.get("stringData", {}) for d in docs if d["kind"] == "Secret"}
     dep = next(d for d in docs if d["kind"] == "Deployment" and d["metadata"]["name"] == "opa")
     pod = dep["spec"]["template"]["spec"]
     ctr = next(c for c in pod["containers"] if c["name"] == "opa")
@@ -66,11 +69,22 @@ def main() -> None:
             mounts += ["-v", f"{host}:{vm['mountPath']}"]
         else:
             raise SystemExit(f"run-chart-opa.py: unsupported volume {vm['name']}")
+    # The container's env exactly as the Deployment declares it: values, and secretKeyRefs
+    # resolved from the Secret rendered beside it (the OPA API tokens).
+    env = []
+    for ev in ctr.get("env", []):
+        ref = ev.get("valueFrom", {}).get("secretKeyRef")
+        val = secrets[ref["name"]][ref["key"]] if ref else ev.get("value", "")
+        env += ["-e", f"{ev['name']}={val}"]
+    # OPA_IT_TOKENS_FILE: where the tests read the rendered tokens (never printed).
+    if os.environ.get("OPA_IT_TOKENS_FILE") and "opa-tokens" in secrets:
+        with open(os.environ["OPA_IT_TOKENS_FILE"], "w", encoding="utf-8") as f:
+            f.write(json.dumps(secrets["opa-tokens"]))
     port_arg = next(a for a in ctr["args"] if a.startswith("--addr=")).split(":")[-1]
     subprocess.run(
         ["docker", "run", "-d", "--name", name, "-p", f"127.0.0.1:{port}:{port_arg}",
          *os.environ.get("OPA_IT_DOCKER_ARGS", "").split(), *mounts,
-         ctr["image"], *ctr["args"]],
+         *env, ctr["image"], *ctr["args"]],
         check=True, stdout=subprocess.DEVNULL,
     )
     print(name)

@@ -251,3 +251,28 @@ class EgressProxyTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class OpaTokenTests(unittest.TestCase):
+    """The OPA bearer token (chart Secret `opa-tokens`, key `reader`) is sent when set."""
+
+    def test_header_sent_when_token_set(self):
+        with mock.patch.object(app, "OPA_TOKEN", "r-token"):
+            self.assertEqual(app.opa_headers()["Authorization"], "Bearer r-token")
+
+    def test_no_header_without_token(self):
+        with mock.patch.object(app, "OPA_TOKEN", ""):
+            self.assertNotIn("Authorization", app.opa_headers())
+
+    def test_decision_request_carries_token(self):
+        seen = {}
+
+        def fake_urlopen(req, timeout=None):
+            seen["auth"] = req.get_header("Authorization")
+            return mock.MagicMock()
+
+        with mock.patch.object(app, "OPA_TOKEN", "r-token"), \
+                mock.patch.object(app.urllib.request, "urlopen", fake_urlopen), \
+                mock.patch.object(app.json, "load", lambda _r: {"result": True}):
+            self.assertTrue(app.opa_allows("user:alice"))
+        self.assertEqual(seen["auth"], "Bearer r-token")

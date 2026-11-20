@@ -32,6 +32,8 @@ if (!OPA || !CONTAINER) {
   throw new Error('state-reconcile.int.test needs OPA_IT_URL and OPA_IT_CONTAINER (a real OPA container)');
 }
 process.env.OPA_URL = OPA;
+// The writer token (OPA_TOKEN) is set on import, before any OS module reads config.
+const { opaFetch } = await import('./it-auth.ts');
 
 // The OS stores' durable mirror is OpenSearch. This job has no OpenSearch, and the restore now
 // (rightly) refuses to report governed tables "restored" from an UNREAD registry. A minimal,
@@ -65,7 +67,7 @@ function docker(...args: string[]): void {
 
 async function healthy(): Promise<boolean> {
   try {
-    return (await fetch(`${OPA}/health`)).ok;
+    return (await opaFetch(`${OPA}/health`)).ok;
   } catch {
     return false;
   }
@@ -85,7 +87,7 @@ async function restartOpa(): Promise<void> {
 }
 
 async function allow(principal: string, tool: string): Promise<boolean> {
-  const res = await fetch(`${OPA}/v1/data/agentic/authz/allow`, {
+  const res = await opaFetch(`${OPA}/v1/data/agentic/authz/allow`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ input: { principal, tool } }),
@@ -95,7 +97,7 @@ async function allow(principal: string, tool: string): Promise<boolean> {
 }
 
 async function data(path: string): Promise<unknown> {
-  const body = (await (await fetch(`${OPA}/v1/data/${path}`)).json()) as { result?: unknown };
+  const body = (await (await opaFetch(`${OPA}/v1/data/${path}`)).json()) as { result?: unknown };
   return body.result;
 }
 
