@@ -30,6 +30,7 @@ import {
   listTags,
   mainSha,
   parseTrailers,
+  resolveTag,
   upsertAnnotatedTag,
   MAX_LOG_DEPTH,
   type GitAuthor,
@@ -80,7 +81,22 @@ function pinFromTag(t: TagEntry, repo: string): Pin {
     by: tr['OS-Actor'] || t.tagger.email,
     domain: repo,
     ...(tr['OS-Path'] ? { path: tr['OS-Path'] } : {}),
+    ...(isDefinition(tr['OS-Definition']) ? { definition: tr['OS-Definition'] } : {}),
   };
+}
+
+/**
+ * What the tagged commit holds for the object (`OS-Definition`):
+ *   - `commit`     — the pinned ref IS this commit (a git-backed kind, e.g. an agent system);
+ *   - `rendered`   — the OS wrote the object's current definition with its tab's own git writer at
+ *                    go-live, and the tag names that commit: `git checkout live/<kind>/<id>` is
+ *                    exactly what is live;
+ *   - `not-in-git` — the kind has no git writer yet (a store-only definition): the tag names `main`
+ *                    at go-live, and the definition itself is NOT in the commit. Said, never implied.
+ */
+export type DefinitionState = 'commit' | 'rendered' | 'not-in-git';
+function isDefinition(v: unknown): v is DefinitionState {
+  return v === 'commit' || v === 'rendered' || v === 'not-in-git';
 }
 
 export type RepoLifecycle = {
@@ -142,6 +158,11 @@ export type LifecycleTagInput = {
   action: 'go-live' | 'testing' | 'migrate';
   path?: string;
   surface?: string;
+  /**
+   * The commit that holds the object's definition, when the OS just wrote it (a tab's git writer
+   * at go-live). It must be in the repo; it wins over the ref for choosing what the tag names.
+   */
+  commit?: string;
 };
 
 function tagMessage(input: LifecycleTagInput): { message: string; trailers: Record<string, string> } {
@@ -159,8 +180,21 @@ function tagMessage(input: LifecycleTagInput): { message: string; trailers: Reco
   };
 }
 
-/** The commit a lifecycle tag names: the pinned sha when the repo has it, else `main`. */
-async function tagTarget(repo: string, ref: string, opts: GitStoreOptions): Promise<string> {
+function withDefinition(t: { message: string; trailers: Record<string, string> }, definition: DefinitionState) {
+  return { message: t.message, trailers: { ...t.trailers, 'OS-Definition': definition } };
+}
+
+/** The commit a lifecycle tag names, and what that commit holds for the object. */
+async function tagTarget(repo: string, input: { ref: string; commit?: string }, opts: GitStoreOptions): Promise<{ commit: string; definition: DefinitionState }> {
+  if (input.commit) {
+    if (!(await commitExists(repo, input.commit, opts))) {
+      const e = new Error(`the definition commit ${input.commit.slice(0, 12)} is not in '${repo}'`) as Error & { status: number };
+      e.status = 409;
+      throw e;
+    }
+    return { commit: input.commit.toLowerCase(), definition: 'rendered' };
+  }
+  const ref = input.ref;
   const head = await mainSha(repo, opts);
   if (!head) {
     const e = new Error(`'${repo}' has no commit yet, so there is nothing a lifecycle tag could name`) as Error & { status: number };
@@ -169,15 +203,16 @@ async function tagTarget(repo: string, ref: string, opts: GitStoreOptions): Prom
   }
   // A sha this repo has is tagged itself; any other ref (a content ref, or a sha of another repo)
   // is recorded in `OS-Ref` and the tag names `main` as it was at that moment.
-  return SHA_RE.test(ref) && (await commitExists(repo, ref, opts)) ? ref.toLowerCase() : head;
+  if (SHA_RE.test(ref) && (await commitExists(repo, ref, opts))) return { commit: ref.toLowerCase(), definition: 'commit' };
+  return { commit: head, definition: 'not-in-git' };
 }
 
 /**
  * Go live: move `live/<kind>/<id>` and add the next immutable `version/<kind>/<id>/<n>`.
  */
 export async function writeLiveRefs(repo: string, input: LifecycleTagInput, opts: GitStoreOptions = {}): Promise<{ live: TagEntry; version: TagEntry }> {
-  const target = await tagTarget(repo, input.ref, opts);
-  const { message, trailers } = tagMessage(input);
+  const { commit: target, definition } = await tagTarget(repo, input, opts);
+  const { message, trailers } = withDefinition(tagMessage(input), definition);
   const live = await upsertAnnotatedTag(repo, liveTag(input.kind, input.id), { ...opts, tagger: input.tagger, message, trailers, ref: target });
   const prior = await listTags(repo, `${VERSION_TAG_PREFIX}${input.kind}/${input.id}/`, { ...opts, limit: MAX_LOG_DEPTH });
   const n = prior.reduce((m, t) => Math.max(m, Number(t.name.split('/').pop()) || 0), 0) + 1;
@@ -192,11 +227,38 @@ export async function deleteLiveRef(repo: string, kind: string, id: string, opts
 
 /** A draft is being tested: point `testing/<kind>/<id>` at it. */
 export async function writeTestingRef(repo: string, input: LifecycleTagInput, opts: GitStoreOptions = {}): Promise<TagEntry> {
-  const target = await tagTarget(repo, input.ref, opts);
-  const { message, trailers } = tagMessage({ ...input, action: 'testing' });
+  const { commit: target, definition } = await tagTarget(repo, input, opts);
+  const { message, trailers } = withDefinition(tagMessage({ ...input, action: 'testing' }), definition);
   return upsertAnnotatedTag(repo, testingTag(input.kind, input.id), { ...opts, tagger: input.tagger, message, trailers, ref: target });
 }
 
 export async function deleteTestingRef(repo: string, kind: string, id: string, opts: GitStoreOptions = {}): Promise<boolean> {
   return deleteTag(repo, testingTag(kind, id), opts);
+}
+
+export type LiveRef = {
+  tag: string;
+  /** The commit the tag names — what a loader checks out. */
+  commit: string;
+  /** The OS ref recorded at go-live (`OS-Ref`). */
+  osRef: string;
+  path?: string;
+  definition?: DefinitionState;
+};
+
+/**
+ * Read `live/<kind>/<id>` STRAIGHT FROM GIT — the call every loader makes (artifact contract A15b,
+ * C4). `null` when the repo has no such tag: the object is not live, whatever any summary says.
+ */
+export async function readLiveRef(repo: string, kind: string, id: string, opts: GitStoreOptions = {}): Promise<LiveRef | null> {
+  const t = await resolveTag(repo, liveTag(kind, id), opts);
+  if (!t) return null;
+  const tr = parseTrailers(t.message);
+  return {
+    tag: t.name,
+    commit: t.commit,
+    osRef: tr['OS-Ref'] || t.commit,
+    ...(tr['OS-Path'] ? { path: tr['OS-Path'] } : {}),
+    ...(isDefinition(tr['OS-Definition']) ? { definition: tr['OS-Definition'] } : {}),
+  };
 }

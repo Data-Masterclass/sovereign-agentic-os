@@ -25,6 +25,7 @@ import { createHash } from 'node:crypto';
 
 import type { LifecycleAdapter, LifecycleActor, DependencyRef } from '@core/kernel/lifecycle-adapters';
 import { livePin } from '@core/infra/lifecycle-pins';
+import { commitDashboardDefinition } from '@tabs/dashboards/lib/git/commit';
 import type { ViewSurface } from '@core/kernel/object-lifecycle';
 import {
   getDashboard,
@@ -178,6 +179,9 @@ export const dashboardLifecycleAdapter: LifecycleAdapter = {
       'each panel queries as the person looking at it, so the numbers stay row-level scoped',
     ];
   },
+  // WP-51: commit the dashboards subtree from the CURRENT store (the tab's own writer), so the live
+  // tag names a commit whose dashboards/<slug>/ is exactly this version.
+  commitDefinition: async (actor, obj, deps) => commitDashboardDefinition(obj.domain, actor, { object: obj.name, objectId: obj.id }, deps),
   existing: async () => {
     await ensureHydrated();
     // Review M-1: the internal listing carries no domain, and an empty domain would filter the

@@ -132,6 +132,26 @@ export async function awaitDataProjectCommits(): Promise<void> {
 }
 
 /**
+ * Go-live (WP-51): settle every in-flight hook commit, then regenerate and commit the domain's
+ * project from the CURRENT store, so `main` holds exactly the definition that is going live. Returns
+ * the commit that holds it (unchanged ⇒ the head that already did), or null when the writer is off.
+ */
+export async function commitDataDefinition(
+  domain: string,
+  actor: ActorIdentity,
+  label: { object: string; objectId: string },
+  deps: { reposDir?: string } = {},
+): Promise<{ sha: string } | null> {
+  // Only through the writer that is RUNNING, with its own deps (the connection-catalog resolver
+  // decides source catalogs): a second configuration would render a different project.
+  if (!installedDeps || !dataProjectGitEnabled()) return null;
+  await awaitDataProjectCommits();
+  const captured = datasetsForProject(domain);
+  const r = await commitDataProject(domain, actor, { action: 'go-live', ...label, surface: 'os:lifecycle' }, { ...installedDeps, ...deps, captured });
+  return r ? { sha: r.sha } : null;
+}
+
+/**
  * A metric write, named by the store's own change summary (`define|update|remove|rename metric
  * <name>` — `store.defineMeasure` / `removeMeasure` / `setMeasureLabel`). Metrics are the second
  * object KIND living in this repo, so their commits carry `OS-Object: metric:<datasetId>.<measure>`
@@ -184,8 +204,12 @@ const chains = new Map<string, Promise<unknown>>();
  * and commits are serialised per domain, so two rapid writes produce two commits, each carrying its
  * own author, action and state (review M3). Failures are logged, never thrown into the write.
  */
+/** The deps the running hook was installed with — the ONE writer configuration (WP-51). */
+let installedDeps: HookDeps | null = null;
+
 export function installDataProjectCommitHook(deps: HookDeps = {}): () => void {
-  return onProjectChange((change) => {
+  installedDeps = deps;
+  const off = onProjectChange((change) => {
     if (!dataProjectGitEnabled()) return;
     if (!change.domain) return; // an unassigned dataset has no repo
     const surface = currentSurface(); // read synchronously, in the writer's async context
@@ -204,4 +228,8 @@ export function installDataProjectCommitHook(deps: HookDeps = {}): () => void {
     chains.set(change.domain, p);
     inFlight.add(p);
   });
+  return () => {
+    off();
+    if (installedDeps === deps) installedDeps = null;
+  };
 }

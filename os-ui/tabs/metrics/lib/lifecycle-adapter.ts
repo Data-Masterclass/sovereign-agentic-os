@@ -52,6 +52,8 @@ export const metricLifecycleAdapter: LifecycleAdapter = {
     const m = getMetric(obj.id, P(actor));
     return [{ kind: 'dataset', id: m.dataset.id, name: m.dataset.name }];
   },
+  // WP-51: a metric's semantic YAML is committed by the DATA tab's writer, so `commitDefinition` is
+  // wired in instrumentation.ts (a tab may not import another tab).
   existing: async () => {
     await ensureHydrated();
     // A metric has no store row of its own — it IS a measure on a dataset — so the platform
