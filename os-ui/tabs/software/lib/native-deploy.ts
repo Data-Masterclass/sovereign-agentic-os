@@ -103,12 +103,15 @@ export function appDeployFiles(c: DeployContext & { digest?: string }): File[] {
           ...(c.priorityClassName ? { priorityClassName: c.priorityClassName } : {}),
           automountServiceAccountToken: false,
           securityContext: { runAsNonRoot: true, seccompProfile: { type: 'RuntimeDefault' } },
+          // The web server's temp and pid files go to a small in-memory /tmp, not the node's disk.
+          volumes: [{ name: 'tmp', emptyDir: { medium: 'Memory', sizeLimit: '16Mi' } }],
           containers: [
             {
               name: 'app',
               image,
               imagePullPolicy: 'IfNotPresent',
               ports: [{ name: 'http', containerPort: APP_PORT }],
+              volumeMounts: [{ name: 'tmp', mountPath: '/tmp' }],
               resources: { requests: { cpu: '50m', memory: '64Mi' }, limits: { cpu: '1', memory: '64Mi' } },
               securityContext: {
                 allowPrivilegeEscalation: false,
