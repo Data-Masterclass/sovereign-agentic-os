@@ -387,8 +387,9 @@ verify() {
     else fail "no re-encryption outcome in the LiteLLM log yet"; fi
   else
     [ "$(h16 "$(secret_key litellm-credentials LITELLM_SALT_KEY)")" = "$(h16 "$want_salt")" ] && pass "LITELLM_SALT_KEY = this step's" || fail "LITELLM_SALT_KEY is not this step's value"
-    local mv; mv=$(k get deploy "$LITELLM_SVC" -o go-template='{{range (index .spec.template.spec.containers 0).env}}{{if eq .name "'"$MIGRATE"'"}}[{{.value}}]{{end}}{{end}}')
-    case $mv in ""|"[]") pass "$MIGRATE is absent or empty on the gateway (the old key is gone from its env)" ;; *) fail "$MIGRATE still holds a value on the gateway" ;; esac
+    # absent | empty | set (an entry without a value key is empty: the container sees length 0).
+    local mv; mv=$(k get deploy "$LITELLM_SVC" -o json | python3 "$REPO/scripts/lib/rotation-checks.py" env-state /dev/stdin litellm "$MIGRATE")
+    case $mv in absent|empty) pass "$MIGRATE is $mv on the gateway (the old key is gone from its env)" ;; *) fail "$MIGRATE still holds a value on the gateway" ;; esac
   fi
 
   say "LiteLLM's own scan: every stored value decryptable with the key now in use, none left under an old key"
@@ -478,10 +479,21 @@ Promise.all(["/v1/models", "/v1/mcp/tools"].map(p => fetch(u + p, { headers: h }
     # Each reader must serve ONLY from pods started after the deploy: rollout complete, no pod of an
     # earlier ReplicaSet left, every current pod Ready (scripts/lib/readers-restarted.py). A missing
     # Deployment fails; only replicas == 0 is a skip. A one-off Job pod with the same labels is no reader.
-    local deployed d sel rw
-    deployed=$(helm --kube-context "$CTX" status "$REL" -n "$NS" -o json | python3 -c 'import json,sys; print(json.load(sys.stdin)["info"]["last_deployed"])')
+    # Each reader must have started after the Secrets IT reads last changed (their managedFields
+    # time), not after the last deploy: a later deploy that did not touch them must not fail it.
+    local d sel rw since secs
     rw=$(mktemp -d)
     for d in "$LANGFUSE_SVC" "$REL-langfuse-worker" "$LITELLM_SVC" os-ui os-ui-worker "$DAGSTER_CODE"; do
+      case $d in
+        "$LANGFUSE_SVC"|"$REL-langfuse-worker") secs="langfuse-core-secrets langfuse-init" ;;
+        "$LITELLM_SVC") secs="litellm-credentials" ;;
+        os-ui) secs="litellm-credentials langfuse-init agent-runtime-token" ;;
+        os-ui-worker) secs="langfuse-init agent-runtime-token" ;;
+        *) secs="agent-runtime-token" ;;
+      esac
+      local sf=() s1
+      for s1 in $secs; do k get secret "$s1" -o json > "$rw/sec-$s1.json" 2>/dev/null || : > "$rw/sec-$s1.json"; sf+=("$rw/sec-$s1.json"); done
+      since=$(python3 "$REPO/scripts/lib/rotation-checks.py" changed-at "${sf[@]}") || { fail "$d: a Secret it reads is missing ($secs)"; continue; }
       [ -n "$d" ] || continue      # DAGSTER_CODE= (empty) leaves the Dagster reader out on an install without Dagster
       : > "$rw/rs.json"; : > "$rw/pods.json"
       if k get deploy "$d" -o json > "$rw/dep.json" 2>/dev/null; then
@@ -490,7 +502,7 @@ Promise.all(["/v1/models", "/v1/mcp/tools"].map(p => fetch(u + p, { headers: h }
       else
         : > "$rw/dep.json"          # missing: the helper FAILS it (a misnamed reader must not pass)
       fi
-      local line rc=0; line=$(python3 "$REPO/scripts/lib/readers-restarted.py" "$rw/dep.json" "$rw/rs.json" "$rw/pods.json" "$deployed") || rc=$?
+      local line rc=0; line=$(python3 "$REPO/scripts/lib/readers-restarted.py" "$rw/dep.json" "$rw/rs.json" "$rw/pods.json" "$since") || rc=$?
       case $rc in 0) pass "$line" ;; 2) echo "   skip $line" ;; *) fail "$d: $line" ;; esac
     done
     rm -rf "$rw"
