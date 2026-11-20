@@ -8,8 +8,12 @@ import {
   type SyncSink,
   type SyncResult,
   type UpsertOutcome,
+  type Provider,
   getSource,
   runSync,
+  addSource,
+  listSources,
+  removeSource,
 } from '@tabs/files/lib/connectors';
 import { liveClientFor } from '@tabs/files/lib/connectors-live';
 import { createFile, addVersion, type Principal } from '@tabs/files/lib/store';
@@ -110,4 +114,27 @@ export async function runConnectorSync(sourceId: string, owner: string, token: s
   const client = liveClientFor(source.provider, token);
   triggerDagster(source, source.initialDone ? 'incremental' : 'overnight');
   return runSync(source, client, makeStoreSink(source));
+}
+
+/**
+ * Index a whole connected drive into Files for its owner: reuse the source already linked to the
+ * connection or register one, then sync it now with the connection's OAuth Read token. A failed
+ * FIRST sync leaves no source behind; a provider refusal propagates (the live client refuses
+ * rather than substituting placeholder files). Called by the Connections "Index → Files" route.
+ */
+export async function indexDriveSource(input: {
+  connectionId: string; provider: Provider; label: string; owner: string; domain: string; token: string;
+}): Promise<{ sourceId: string; records: number; mode: 'live' | 'mock' }> {
+  const existing = listSources(input.owner).find((s) => s.connectionId === input.connectionId && s.provider === input.provider);
+  const source = existing ?? addSource({
+    provider: input.provider, label: input.label, scope: 'drive', target: 'root', mode: 'copy',
+    owner: input.owner, domain: input.domain, connectionId: input.connectionId,
+  });
+  try {
+    const r = await runConnectorSync(source.id, input.owner, input.token);
+    return { sourceId: source.id, records: r.added + r.updated + r.unchanged, mode: r.clientMode };
+  } catch (e) {
+    if (!existing) removeSource(source.id, input.owner);
+    throw e;
+  }
 }

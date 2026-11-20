@@ -2042,12 +2042,12 @@ function queueAutonomousReview(c: Connection, tool: string, args: Record<string,
  * dlt → Bronze; Drive → Files index. Runs the adapter's `sync` op; the connection
  * stays a governed agent tool at the same time (one object, two usages).
  */
-export async function enableDataUsage(connId: string, user: CurrentUser, usage: DataUsage): Promise<Connection> {
+export async function enableDataUsage(connId: string, user: CurrentUser, usage: DataUsage, deps: { indexDrive?: DriveFilesIndexer } = {}): Promise<Connection> {
   const map = await getCache();
   const c = map.get(connId);
   if (!c || !visibleToUser(c, user)) throw withStatus(new Error('Connection not found'), 404);
   const oauthDrive = c.type === 'Drive' && c.auth === 'oauth' ? providerForTemplate(c.template) : null;
-  if (oauthDrive && usage !== 'bronze') return indexDriveToFiles(map, c, user, oauthDrive);
+  if (oauthDrive && usage !== 'bronze') return indexDriveToFiles(map, c, user, oauthDrive, deps.indexDrive);
   const adapter = adapterFor(c.connector);
   const sync = await adapter.sync({ template: templateByKey(c.template)!, endpoint: c.endpoint, credentialPresent: c.secretSet });
   const target = usage ?? (sync.data?.target === 'files' ? 'files' : 'bronze');
@@ -2071,40 +2071,38 @@ export async function enableDataUsage(connId: string, user: CurrentUser, usage: 
 }
 
 /**
- * Index a personal OAuth drive (Google Drive / OneDrive) into Files through the Files tab's
- * existing live connector (`tabs/files/lib/connectors-live.ts`): a whole-drive source LINKED to
- * this connection, synced now with the token the OAuth callback stored. No token (consent not
- * given, or it lapsed) is a 409 that says to Connect; a provider error propagates as the
- * connector's own refusal. Nothing is marked indexed unless the real sync returned.
+ * The Files-side half of "Index → Files" for a personal OAuth drive, injected by the usage route
+ * (a tab never imports another tab — GLUE-9). It registers/syncs a whole-drive Files source linked
+ * to the connection through the Files tab's live connector and throws when the provider refuses.
  */
-async function indexDriveToFiles(map: Map<string, Connection>, c: Connection, user: CurrentUser, provider: OAuthProvider): Promise<Connection> {
+export type DriveFilesIndexer = (input: {
+  connectionId: string;
+  provider: ReturnType<typeof filesProviderFor>;
+  label: string;
+  owner: string;
+  domain: string;
+  token: string;
+}) => Promise<{ sourceId: string; records: number; mode: 'live' | 'mock' }>;
+
+/**
+ * Index a personal OAuth drive (Google Drive / OneDrive) into Files with the token the OAuth
+ * callback stored. No token (consent not given, or it lapsed) is a 409 that says to Connect; a
+ * provider error propagates; nothing is marked indexed unless the real sync returned.
+ */
+async function indexDriveToFiles(map: Map<string, Connection>, c: Connection, user: CurrentUser, provider: OAuthProvider, indexDrive: DriveFilesIndexer | undefined): Promise<Connection> {
   const token = await resolveConnectionAccessToken(c.id, user.id); // owner-only (403 otherwise)
   if (!token) {
     throw withStatus(new Error(`Connect your ${providerConfig(provider).label} first — there is no valid sign-in for this connection yet, so nothing can be read.`), 409);
   }
-  const { addSource, listSources, removeSource } = await import('@tabs/files/lib/connectors');
-  const { runConnectorSync } = await import('@tabs/files/lib/connectors-server');
-  const filesProvider = filesProviderFor(provider);
-  const existing = listSources(user.id).find((s) => s.connectionId === c.id && s.provider === filesProvider);
-  const source = existing ?? addSource({
-    provider: filesProvider, label: c.name, scope: 'drive', target: 'root', mode: 'copy',
-    owner: user.id, domain: c.domain, connectionId: c.id,
-  });
-  let result: Awaited<ReturnType<typeof runConnectorSync>>;
-  try {
-    result = await runConnectorSync(source.id, user.id, token);
-  } catch (e) {
-    if (!existing) removeSource(source.id, user.id); // a failed first index leaves no source behind
-    throw e;
-  }
-  const records = result.added + result.updated + result.unchanged;
-  indexToFiles({ connectionId: c.id, name: c.name, items: records, indexedBy: user.id });
+  if (!indexDrive) throw withStatus(new Error('No Files indexer is wired for drive connections on this path.'), 500);
+  const result = await indexDrive({ connectionId: c.id, provider: filesProviderFor(provider), label: c.name, owner: user.id, domain: c.domain, token });
+  indexToFiles({ connectionId: c.id, name: c.name, items: result.records, indexedBy: user.id });
   c.dataUsage = 'files';
-  c.dataUsageMode = result.clientMode === 'live' ? 'live' : 'offline-mock';
+  c.dataUsageMode = result.mode === 'live' ? 'live' : 'offline-mock';
   c.updatedAt = now();
   map.set(c.id, c);
   writeThrough(c);
-  void trace({ principal: c.principal, tool: 'generate', input: { action: 'enable_data_usage', usage: 'files', by: user.id, sourceId: source.id }, output: { mode: c.dataUsageMode, records }, decision: 'allow' });
+  void trace({ principal: c.principal, tool: 'generate', input: { action: 'enable_data_usage', usage: 'files', by: user.id, sourceId: result.sourceId }, output: { mode: c.dataUsageMode, records: result.records }, decision: 'allow' });
   return c;
 }
 

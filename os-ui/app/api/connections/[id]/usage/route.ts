@@ -4,6 +4,7 @@
 import { NextResponse } from 'next/server';
 import { withRoute } from '@core/kernel/route-server';
 import { enableDataUsage } from '@tabs/connections/lib/index';
+import { indexDriveSource } from '@tabs/files/lib/connectors-server';
 
 export const dynamic = 'force-dynamic';
 
@@ -11,10 +12,12 @@ export const dynamic = 'force-dynamic';
  * Register the connection as a DATA SOURCE (the second usage). Database/API/SaaS →
  * dlt → Bronze; Drive → Files. The connection stays a governed agent tool at the
  * same time — one object, two usages. Body: { usage?: 'bronze' | 'files' }.
+ * A personal OAuth drive is indexed through the Files tab's live connector (`indexDriveSource`),
+ * wired here because a tab never imports another tab.
  */
 export const POST = withRoute<{ id: string }, { usage?: string }>(async ({ user, params, body }) => {
     const { id } = params;
     const usage = body?.usage === 'files' ? 'files' : body?.usage === 'bronze' ? 'bronze' : null;
-    const connection = await enableDataUsage(id, user, usage);
+    const connection = await enableDataUsage(id, user, usage, { indexDrive: indexDriveSource });
     return NextResponse.json({ connection });
 }, { parse: true, defaultStatus: 500 });
