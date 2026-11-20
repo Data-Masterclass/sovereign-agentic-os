@@ -585,24 +585,20 @@ litellm:
     # callback (proxy_config.litellm_settings.callbacks below). OTel v2 is off until this flag is
     # set. Docs: https://docs.litellm.ai/docs/observability/langfuse_to_otel_v2_migration
     LITELLM_OTEL_V2: "true"
-    # Which of the gateway's spans reach Langfuse (10 F1 point 4, decided by the test). Measured
-    # on 1.109.1 against Langfuse 3.194.1 (scripts/tests/litellm-langfuse/run.sh;
-    # components/litellm/UPSTREAM.md "Span scope"):
-    #   `llm_only` — one GENERATION in the caller's trace, but as a ROOT observation: it is not
-    #                nested under the caller's span;
-    #   `full`     — the GENERATION nested under the gateway's request span, which is nested under
-    #                the caller's span. Costs ingestion: about 15 non-generation spans per call and
-    #                LiteLLM's background database/cache work as traces of their own (~1 per second
-    #                idle in the test rig).
-    # `full` is what nests. Spell the value exactly; an invalid one disables every OTel v2 callback.
-    LITELLM_OTEL_LANGFUSE_SPAN_SCOPE: "full"
-    # The request identity LiteLLM stamps on EVERY span of a request. The default list includes
-    # `gen_ai.request.model` and `litellm.provider.model`, which makes Langfuse type every span of
-    # the request (route, cache, Redis, the HTTP root) as a GENERATION: 6 generations for one call
-    # under `full`, measured. Without the two model keys only the model-call span is a GENERATION.
-    # Documented: https://docs.litellm.ai/docs/observability/opentelemetry_v2 "Request identity
-    # on every span". The generation itself still carries its model.
-    LITELLM_OTEL_BAGGAGE_PROMOTED_KEYS: "litellm.team.id,litellm.team.alias,litellm.team.metadata,litellm.api_key.hash"
+    # Which of the gateway's spans reach Langfuse (10 F1 point 4, decided by measurement on 1.109.1
+    # against Langfuse 3.194.1; components/litellm/UPSTREAM.md "Span scope"):
+    #   `llm_only` (chosen) — exactly one GENERATION per call, in the caller's trace (the
+    #       `traceparent` trace id), sent as a root observation. The OS links it to its
+    #       `llm.<node>` span by the call id (`x-litellm-call-id` = `litellm.call_id` =
+    #       the span's `litellm_call_id`). Nothing else is exported.
+    #   `full` — nests the generation under the caller's span, but LiteLLM also exports its own
+    #       background database/cache polls as root traces (0.667 per second idle in the rig) and
+    #       has no setting to exclude them from the operator's exporter (`excluded_services` covers
+    #       key/team destinations only). Only an OTel Collector filter in front of Langfuse removes
+    #       them: WP-05. Under `full`, `LITELLM_OTEL_BAGGAGE_PROMOTED_KEYS` must also drop the model
+    #       keys, or every span is typed GENERATION (the gate enforces it).
+    # Spell the value exactly; an invalid one disables every OTel v2 callback. Never an OTel sampler.
+    LITELLM_OTEL_LANGFUSE_SPAN_SCOPE: "llm_only"
   # A3: the Valkey password for the response cache (`cache_params.password` above reads it
   # as os.environ/REDIS_PASSWORD). Same Secret Langfuse uses (local: chart-created;
   # STACKIT: external) — one Valkey credential, not two.

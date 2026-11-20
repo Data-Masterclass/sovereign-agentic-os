@@ -21,10 +21,8 @@ Upstream, unmodified. Nothing in this folder is ours — see the rule in `compon
 - **Fixes the published advisories** that affect 1.90.0: GHSA-3cv6-jpf6-8222, GHSA-g5ff-637f-6q2m,
   GHSA-w4c7-34wj-hqm8, and GHSA-2rwg-2wh4-7c4f. 1.109.0 is still affected by the last one; its
   fix in the 1.109 line is 1.109.1.
-- **Age:** published 2026-11-12 02:07 UTC. Under the programme's 14-day age rule the earliest
-  deploy is **Thu 2026-11-26 02:07 UTC** (inside the 11 Dec deadline). No newer ≥ 1.109 release
-  can be 14 days old before then; 1.109.2, 1.109.3 and 1.110.x (0–2 days old on 2026-11-20)
-  are candidates for the next bump, through `scripts/tests/litellm-langfuse/run.sh` with
+- **Published 2026-11-12.** 1.109.2, 1.109.3 and 1.110.x (0–2 days old on 2026-11-20) are
+  candidates for the next bump, through `scripts/tests/litellm-langfuse/run.sh` with
   `LITELLM_IMAGE=<ref>`.
 - 1.108.12 (LTS, the earlier PR #104) is superseded: it is below the migration baseline.
 
@@ -35,8 +33,8 @@ Upstream, unmodified. Nothing in this folder is ours — see the rule in `compon
 | `litellm_settings.callbacks` | `["langfuse_otel"]` | migration guide, step 2 |
 | `success_callback` / `failure_callback` | never `langfuse` ("running both callbacks logs every request twice") | migration guide, step 2; gate `scripts/check-litellm-model-info.mjs` |
 | `LITELLM_OTEL_V2` | `true` | https://docs.litellm.ai/docs/observability/opentelemetry_v2 |
-| `LITELLM_OTEL_LANGFUSE_SPAN_SCOPE` | `full` (see "Span scope" below) | same page, "Send only the model calls to Langfuse" |
-| `LITELLM_OTEL_BAGGAGE_PROMOTED_KEYS` | the default list without `gen_ai.request.model` and `litellm.provider.model` | same page, "Request identity on every span" |
+| `LITELLM_OTEL_LANGFUSE_SPAN_SCOPE` | `llm_only` (see "Span scope" below) | same page, "Send only the model calls to Langfuse" |
+| `LITELLM_OTEL_BAGGAGE_PROMOTED_KEYS` | not set under `llm_only`; under `full` the default list without `gen_ai.request.model` and `litellm.provider.model` (gate rule 8) | same page, "Request identity on every span" |
 | `LANGFUSE_HOST`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` | in-cluster Langfuse web; the gateway's own key pair (Secret `litellm-credentials`) | migration guide, "Default host" |
 | message content | off (V2's default) plus `turn_off_message_logging: true` | migration guide, "Prompt capture" |
 | nesting | W3C `traceparent` from the caller; `x-litellm-call-id` sets the call id | migration guide, "Field changes"; `os-ui/core/runtime/gateway-trace.ts` |
@@ -48,22 +46,48 @@ made with its `traceparent`:
 
 | Scope | GENERATIONs per call | Where the GENERATION sits | Other gateway observations |
 |---|---|---|---|
-| `llm_only` | 1 | in the caller's trace, but as a **root** (`parentObservationId: null`) — not under the caller's span | none |
+| `llm_only` (**chosen**) | 1 | in the caller's trace, but as a **root** (`parentObservationId: null`); joined to the caller's span by the call id | none: 0 background traces per second |
 | `full`, default baggage | **6** (request, route, cache and Redis spans are typed GENERATION too) | under the gateway request span, under the caller's span | — |
-| `full`, baggage without the two model keys (**chosen**) | 1 | `chat <model>` → `POST /v1/chat/completions` → the caller's span | about 15 SPANs per call (auth, Postgres, Redis, route, cache), and LiteLLM's background database and cache work as traces of their own: 143 traces in 2 idle minutes in the test rig |
+| `full`, baggage without the two model keys (needs WP-05) | 1 | `chat <model>` → `POST /v1/chat/completions` → the caller's span | about 15 SPANs per call (auth, Postgres, Redis, route, cache), and LiteLLM's background database and cache work as traces of their own: 143 traces in 2 idle minutes in the test rig |
 
-`full` is chosen because it is the only setting that nests the generation under the caller's span.
-Its cost is ingestion volume into Langfuse (ClickHouse). If that volume is not acceptable, `llm_only`
-is a one-line change (`litellm.envVars.LITELLM_OTEL_LANGFUSE_SPAN_SCOPE`) that keeps one generation
-per call in the right trace but gives up the parent link; `tracing.e2e.test.ts` follows the scope
-(under `llm_only` it asserts the root placement). The post-deploy rule: measure the untagged-trace
-rate for 10 minutes with `deploy/langfuse-idle-rate.sh`; above 0.2 per second, switch to
-`llm_only` (docs/ops/litellm-upgrade.md §1 step 7). Sampling (`parentbased_always_off`) is not
-an option: it drops generations with the rest. Measured in the test rig with
-`deploy/langfuse-idle-rate.sh 1` against the real Langfuse: `full` 0.667 untagged traces per second
-(above the threshold, so the rig itself would switch); `llm_only` 0.000 per second. Under
-`llm_only` the e2e test passes with the root placement (3/3). Production's rate is measured after
-the deploy.
+**`llm_only` is chosen** (changed from `full` on 2026-11-20 after the idle-rate check):
+
+- Under `full`, LiteLLM exports its own background database and cache polls (`postgres.select
+  LiteLLM_Config`, `postgres.ping`, `redis.set config_params`, …) as trace roots with no parent
+  context: 0.667 per second idle in the test rig, against a 0.2 per second budget.
+- 1.109.1 has **no setting that keeps them from the operator's own exporter** (read in its
+  source, `litellm/integrations/otel`):
+  - `LITELLM_OTEL_EXCLUDED_SERVICES` / `callback_settings.otel.excluded_services` withholds
+    datastore spans from key/team destinations only ("the operator's own exporters still receive
+    them");
+  - the sampling rates are per destination (Arize);
+  - `OTEL_PYTHON_FASTAPI_EXCLUDED_URLS` covers HTTP routes, not background work;
+  - an OTel sampler would drop generations too and is not used.
+- Under `llm_only` the background rate is 0 (measured) and every call is still exactly one
+  GENERATION in the caller's trace. The OS joins it to the `llm.<node>` span that made the call by
+  the call id (`litellm.call_id` = the span's `litellm_call_id`); run diagnostics attribute per-agent
+  cost that way (`run-diagnostics.ts`). What is given up: Langfuse's tree does not show the
+  generation under the span.
+- **Back to `full` (true nesting) only with an OTel Collector filter: WP-05** (below).
+
+#### What WP-05 (OTel Collector) must do before the scope may go back to `full`
+
+1. Run `otel/opentelemetry-collector-contrib` (pinned by digest) in the namespace, with an OTLP HTTP
+   receiver whose traces path is `/api/public/otel/v1/traces`. Point the gateway at it with
+   `LANGFUSE_OTEL_HOST` (LiteLLM's documented override; it appends `/api/public/otel`).
+2. Export with `otlphttp` to `http://agentic-os-langfuse-web:3000/api/public/otel`, forwarding the
+   gateway's `Authorization` (Basic, the gateway key pair) and `x-langfuse-ingestion-version: 4`
+   (`headers_setter` extension, or static headers from a Secret).
+3. Add a `filter` processor that drops LiteLLM's datastore spans, the background polls included:
+   OTTL `span: attributes["db.system.name"] != nil`. It must NOT drop root spans in general: a call
+   without a caller `traceparent` has the gateway's request span as its root and the generation's
+   parent. Verify the attribute name on 1.109.1's spans in WP-05's own test before relying on it.
+4. Then set `LITELLM_OTEL_LANGFUSE_SPAN_SCOPE: "full"` with `LITELLM_OTEL_BAGGAGE_PROMOTED_KEYS`
+   without `gen_ai.request.model` and `litellm.provider.model` (gate rule 8). Then run:
+   - `scripts/tests/litellm-langfuse/run.sh` with the collector in the path, plus
+     `tests/langfuse/compose.yaml`; both e2e tests switch to the nesting assertions by themselves;
+   - `deploy/langfuse-idle-rate.sh`, which must report ≤ 0.2 per second.
+5. Rollback: scope back to `llm_only` and `LANGFUSE_OTEL_HOST` unset (direct export again).
 
 ### Measured on 1.109.1 against Langfuse 3.194.1
 

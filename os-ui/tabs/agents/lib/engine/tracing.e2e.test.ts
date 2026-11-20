@@ -48,6 +48,13 @@ const { shapeTraceMetrics } = await import('@tabs/agents/lib/build/run-diagnosti
 type LlmCall = import('@core/runtime/agentic').LlmCall;
 type LlmRequest = import('@core/runtime/agentic').LlmRequest;
 
+// The gateway's span scope, read from the stack itself (gate rule 9 in
+// scripts/check-litellm-model-info.mjs keeps tests/langfuse/compose.yaml equal to the chart).
+const { readFileSync } = await import('node:fs');
+const yaml = (await import('js-yaml')).default;
+const COMPOSE = yaml.load(readFileSync(new URL('../../../../../tests/langfuse/compose.yaml', import.meta.url), 'utf8')) as { services: { litellm: { environment: Record<string, string> } } };
+const SCOPE = COMPOSE.services.litellm.environment.LITELLM_OTEL_LANGFUSE_SPAN_SCOPE ?? 'full';
+
 const SYSTEM_ID = 'sys-e2e-trace';
 const USER_ID = 'rae';
 
@@ -179,24 +186,30 @@ function assertOneWriterTrace(t: Trace, modelCalls: number): void {
   for (const g of gens) assert.match(JSON.stringify(g.metadata ?? {}), /litellm/i, `generation ${g.id} is not the gateway's`);
   const llmSpans = new Map(t.observations.filter((o) => o.name.startsWith('llm.')).map((o) => [o.id, o]));
   assert.equal(llmSpans.size, modelCalls, 'one llm.<node> span per model call');
-  // LiteLLM 1.109.1, `langfuse_otel`, span scope `full` (the chart's): the generation nests under the
-  // gateway's request span, which `traceparent` nests under the call's llm.<node> span
-  // (components/litellm/UPSTREAM.md "Span scope"). The gateway reports the call id the span recorded.
+  // LiteLLM 1.109.1, `langfuse_otel` (components/litellm/UPSTREAM.md "Span scope"). Either way the
+  // generation is in the run's trace and carries the call id the llm.<node> span minted:
+  //   llm_only (the chart's) — the generation is a ROOT observation of the trace, joined to its
+  //            llm.<node> span by litellm.call_id == litellm_call_id;
+  //   full     — it nests under the gateway's request span, under the llm.<node> span.
   const byId = new Map(t.observations.map((o) => [o.id, o]));
+  const llmByCall = new Map([...llmSpans.values()].map((o) => [String((o.metadata as { litellm_call_id?: string } | undefined)?.litellm_call_id ?? ''), o]));
   for (const g of gens) {
-    const request = g.parentObservationId ? byId.get(g.parentObservationId) : undefined;
-    assert.ok(request && request.name.startsWith('POST /v1/chat/completions'), `generation ${g.id} is not under the gateway's request span`);
-    const llm = request.parentObservationId ? llmSpans.get(request.parentObservationId) : undefined;
-    assert.ok(llm, `generation ${g.id} is not nested under an llm.<node> span`);
-    const sent = (llm.metadata as { litellm_call_id?: string } | undefined)?.litellm_call_id;
-    const reported = ((g.metadata as { attributes?: Record<string, unknown> } | undefined)?.attributes ?? {})['litellm.call_id'];
-    assert.ok(sent && reported === sent, `generation ${g.id}: litellm.call_id ${String(reported)} is not the llm span's litellm_call_id ${String(sent)}`);
+    const reported = String(((g.metadata as { attributes?: Record<string, unknown> } | undefined)?.attributes ?? {})['litellm.call_id'] ?? '');
+    const llm = llmByCall.get(reported);
+    assert.ok(reported && llm, `generation ${g.id}: litellm.call_id ${reported} names no llm.<node> span's litellm_call_id`);
+    if (SCOPE === 'llm_only') {
+      assert.equal(g.parentObservationId, null, `llm_only: generation ${g.id} is a root observation of the run's trace`);
+    } else {
+      const request = g.parentObservationId ? byId.get(g.parentObservationId) : undefined;
+      assert.ok(request && request.name.startsWith('POST /v1/chat/completions'), `generation ${g.id} is not under the gateway's request span`);
+      assert.equal(request.parentObservationId, llm!.id, `generation ${g.id} is not nested under its llm.<node> span`);
+    }
   }
   const total = gens.reduce((n, g) => n + (g.usage?.total ?? 0), 0);
   assert.equal(total, 15 * modelCalls, 'the summed usage equals what the model reported — no doubling');
 }
 
-test('TRACING E2E (Langfuse 3.194.1 + LiteLLM 1.109.1 langfuse_otel): one trace per run, one generation per call, spans nested, user and session set', { skip: !E2E && 'set TRACING_E2E=1 with tests/langfuse/compose.yaml up' }, async () => {
+test(`TRACING E2E (Langfuse 3.194.1 + LiteLLM 1.109.1 langfuse_otel, scope ${SCOPE}): one trace per run, one generation per call, linked to its llm span, user and session set`, { skip: !E2E && 'set TRACING_E2E=1 with tests/langfuse/compose.yaml up' }, async () => {
   const stub = await startStubModel();
   try {
     const runId = `run_${randomUUID()}`;
@@ -216,6 +229,8 @@ test('TRACING E2E (Langfuse 3.194.1 + LiteLLM 1.109.1 langfuse_otel): one trace 
     const rootSpanId = (await langfuseTraceId(`root:${runId}`)).slice(0, 16);
     for (const o of t.observations) {
       assert.equal(o.traceId, traceId);
+      // Under llm_only the gateway's generation is a trace root by design (joined by call id above).
+      if (SCOPE === 'llm_only' && o.type === 'GENERATION') continue;
       assert.ok(o.parentObservationId === rootSpanId || (o.parentObservationId && ids.has(o.parentObservationId)), `${o.type} ${o.name} is not nested under the run`);
     }
     const segment = t.observations.filter((o) => o.parentObservationId === rootSpanId);
