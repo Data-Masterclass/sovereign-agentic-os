@@ -14,3 +14,10 @@
 export function domainIdent(id: string): string {
   return (id || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
 }
+
+/**
+ * The personal-lane schema prefix: a person's private Iceberg namespace is `personal_<ident>`. The
+ * data tab's `store-fqn.personalSchema` builds lane names FROM this constant, and the reserved-domain
+ * check refuses any domain whose schema starts with it, so the two can never drift apart.
+ */
+export const PERSONAL_SCHEMA_PREFIX = 'personal_';

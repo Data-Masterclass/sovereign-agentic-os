@@ -2,6 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import type { Dataset, Layer } from '@tabs/data/lib/dataset-schema';
+import { PERSONAL_SCHEMA_PREFIX } from '@core/kernel/domain-ident';
 
 /**
  * The canonical FQN helpers (the handover contract — one name threaded downstream).
@@ -134,7 +135,7 @@ export function sanitizeIdent(value: string): string {
  *  Bronze uploads land here — un-promoted work lives in the personal lane until a
  *  governed promotion (dbt-trino CTAS) materializes it into the domain schema. */
 export function personalSchema(principal: string): string {
-  return `personal_${sanitizeIdent(principal)}`;
+  return `${PERSONAL_SCHEMA_PREFIX}${sanitizeIdent(principal)}`;
 }
 
 /**

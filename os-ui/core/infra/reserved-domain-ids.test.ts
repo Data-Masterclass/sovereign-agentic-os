@@ -55,5 +55,9 @@ test('DRIFT GUARD: the chart’s Trino catalog and resource-group roots are rese
   assert.ok(roots.length > 0, 'the chart defines resource-group roots');
   for (const r of roots) assert.ok(RESERVED_SCHEMA_NAMES.has(r), `resource-group root '${r}' must be reserved`);
   const trino = readFileSync(join(import.meta.dirname, '..', '..', '..', 'charts', 'sovereign-agentic-os', 'templates', 'extensions', 'lakehouse', 'trino.yaml'), 'utf8');
-  for (const m of trino.matchAll(/^\s{2}([a-z_]+)\.properties: \|/gm)) assert.ok(RESERVED_SCHEMA_NAMES.has(m[1]), `catalog '${m[1]}' must be reserved`);
+  // Only the `trino-catalog` ConfigMap holds catalogs (`config.properties` etc. are node config).
+  const doc = trino.split(/\n---/).find((d) => /kind: ConfigMap/.test(d) && /\n  name: trino-catalog\n/.test(d)) ?? '';
+  const catalogs = [...doc.matchAll(/^\s{2}([a-z_]+)\.properties: \|/gm)].map((m) => m[1]);
+  assert.ok(catalogs.length > 0, 'the chart defines catalogs');
+  for (const c of catalogs) assert.ok(RESERVED_SCHEMA_NAMES.has(c), `catalog '${c}' must be reserved`);
 });
