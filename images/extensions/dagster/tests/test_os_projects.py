@@ -575,6 +575,25 @@ class ParseErrorSummary(unittest.TestCase):
         self.assertIn("not_null_gold_goods_receipts_po_number", got)
         self.assertNotIn("keyring", got)
 
+    # Captured verbatim from `os_projects.py --parse` with dbt-core 1.12.7 + dbt-trino 1.12.0 (WP-17)
+    # on the same duplicate-rule twin: 1.12 prefixes the header with the level, "[ERROR]: ".
+    DBT_112_DUPLICATE_TEST = (
+        "18:44:33  [ERROR]: Encountered an error:\n"
+        "Compilation Error\n"
+        '  dbt found two data_tests with the name "not_null_gold_goods_receipts_po_number" defined on column "po_number" in "models.gold_goods_receipts".\n'
+        "  \n"
+        "  Since these resources have the same name, dbt will be unable to find the correct resource\n"
+        "  when running tests.\n"
+        "INFO:trino.auth:keyring module not found. OAuth2 token will not be stored in keyring.\n"
+    )
+
+    def test_dbt_1_12_level_prefixed_header_is_noise_not_the_summary(self):
+        got = osp.parse_error_summary(self.DBT_112_DUPLICATE_TEST)
+        self.assertTrue(got.startswith("Compilation Error: dbt found two data_tests with the name"), got)
+        self.assertNotIn("Encountered an error", got)
+        self.assertEqual(osp.parse_error_summary("18:44:23  [ERROR]: Encountered an error:\nRuntime Error\n  No dbt_project.yml found at expected path /x/dbt_project.yml\n"),
+                         "Runtime Error: No dbt_project.yml found at expected path /x/dbt_project.yml")
+
     def test_a_one_line_error_and_empty_output(self):
         self.assertEqual(osp.parse_error_summary("12:00:00  Runtime Error: No dbt_project.yml found"), "Runtime Error: No dbt_project.yml found")
         self.assertEqual(osp.parse_error_summary(""), "no output from dbt parse")
