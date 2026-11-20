@@ -125,7 +125,7 @@ async function tracedRun(runId: string, opts: { secondWriter?: boolean } = {}) {
   return result;
 }
 
-type Observation = { id: string; traceId: string; type: string; name: string; parentObservationId: string | null; usage?: { total?: number }; calculatedTotalCost?: number; metadata?: Record<string, unknown> };
+type Observation = { id: string; traceId: string; type: string; name: string; parentObservationId: string | null; endTime?: string | null; usage?: { total?: number }; calculatedTotalCost?: number; metadata?: Record<string, unknown> };
 type Trace = { id: string; userId: string | null; sessionId: string | null; tags: string[]; observations: Observation[] };
 
 async function readTrace(traceId: string): Promise<Trace | null> {
@@ -133,23 +133,43 @@ async function readTrace(traceId: string): Promise<Trace | null> {
   return res.ok ? ((await res.json()) as Trace) : null;
 }
 
-/** Poll Langfuse until the trace has settled (ingestion is asynchronous through the worker). */
-async function settledTrace(traceId: string, ready: (t: Trace) => boolean, timeoutMs = 120_000): Promise<Trace> {
+/**
+ * What a fully ingested run trace looks like, from Langfuse's public API: the trace record carries
+ * the run's `userId` and `sessionId` (trace attributes are written by the worker separately from the
+ * observations), the segment root and the `run.result` event are there, there are at least
+ * `generations` gateway generations each with its usage, and every observation that has a duration
+ * has ended. Returns what is still missing, or [] when complete.
+ */
+function missingFrom(t: Trace | null, generations: number): string[] {
+  if (!t) return ['the trace'];
+  const missing: string[] = [];
+  if (!t.userId) missing.push('trace.userId');
+  if (!t.sessionId) missing.push('trace.sessionId');
+  if (!t.observations.some((o) => o.type === 'AGENT')) missing.push('the AGENT segment root');
+  if (!t.observations.some((o) => o.name === 'run.result')) missing.push('the run.result event');
+  const gens = t.observations.filter((o) => o.type === 'GENERATION');
+  if (gens.length < generations) missing.push(`${generations - gens.length} generation(s)`);
+  if (gens.some((g) => !g.usage?.total)) missing.push('generation usage');
+  const open = t.observations.filter((o) => o.type !== 'EVENT' && !o.endTime).length;
+  if (open > 0) missing.push(`${open} unfinished observation(s)`);
+  return missing;
+}
+
+/**
+ * Poll `GET /api/public/traces/<id>` until the trace is complete ({@link missingFrom}), within a
+ * deadline. Langfuse ingests asynchronously (web → queue → worker → ClickHouse), so the public
+ * API is read until it shows the whole trace; nothing is asserted before that.
+ */
+async function settledTrace(traceId: string, generations: number, timeoutMs = 120_000): Promise<Trace> {
   const deadline = Date.now() + timeoutMs;
-  let last: Trace | null = null;
-  let stableSince = 0;
-  let lastCount = -1;
+  let missing: string[] = ['the trace'];
   while (Date.now() < deadline) {
-    last = await readTrace(traceId);
-    const n = last?.observations.length ?? -1;
-    if (n !== lastCount) {
-      lastCount = n;
-      stableSince = Date.now();
-    }
-    if (last && ready(last) && Date.now() - stableSince > 5_000) return last;
-    await new Promise((r) => setTimeout(r, 1_000));
+    const t = await readTrace(traceId);
+    missing = missingFrom(t, generations);
+    if (missing.length === 0) return t!;
+    await new Promise((r) => setTimeout(r, 500)); // poll cadence, not a wait-before-assert
   }
-  assert.fail(`trace ${traceId} did not settle in ${timeoutMs} ms (last: ${last ? `${last.observations.length} observations` : 'not found'})`);
+  assert.fail(`trace ${traceId} still incomplete after ${timeoutMs} ms: missing ${missing.join(', ')}`);
 }
 
 /** The WP-31 contract, read from Langfuse's own API. Throws on the first broken rule. */
@@ -174,7 +194,7 @@ test('TRACING E2E (Langfuse 3.194.1 + LiteLLM 1.90.0): one trace per run, one ge
     assert.ok(calls >= 3, `the run made its model calls (${calls})`);
 
     const traceId = await langfuseTraceId(runId);
-    const t = await settledTrace(traceId, (x) => x.observations.filter((o) => o.type === 'GENERATION').length >= calls && x.observations.some((o) => o.name === 'run.result'));
+    const t = await settledTrace(traceId, calls);
 
     assertOneWriterTrace(t, calls);
 
@@ -213,7 +233,7 @@ test('TRACING E2E — NEGATIVE TWIN: a second writer re-introduced produces two 
     const runId = `run_${randomUUID()}`;
     await tracedRun(runId, { secondWriter: true });
     const calls = stub.calls();
-    const t = await settledTrace(await langfuseTraceId(runId), (x) => x.observations.filter((o) => o.type === 'GENERATION').length >= 2 * calls);
+    const t = await settledTrace(await langfuseTraceId(runId), 2 * calls);
     assert.equal(t.observations.filter((o) => o.type === 'GENERATION').length, 2 * calls, 'the second writer doubled the generations');
     assert.throws(() => assertOneWriterTrace(t, calls), /one generation per model call/, 'the WP-31 contract must turn red with two writers');
   } finally {
