@@ -203,3 +203,85 @@ test('the receive validator accepts the scaffold and the not-built placeholder, 
   }).find((f) => f.path === `${APP_K8S_DIR}/deployment.yaml`)!;
   assert.match(validateAppDeployFile({ path: `apps/color-picker/${bad.path}`, content: bad.content }, REGISTRY) ?? '', /registry/);
 });
+
+// ------------------------------------------------ verifier REJECT #204: gate holes ---
+
+const SVC = `${APP_K8S_DIR}/service.yaml`;
+const ING = `${APP_K8S_DIR}/ingress.yaml`;
+const DEP = `${APP_K8S_DIR}/deployment.yaml`;
+const extra = (doc: Record<string, unknown>) => [...files(), { path: `${APP_K8S_DIR}/extra.yaml`, content: yaml.dump(doc) }];
+
+test('Service: ExternalName (publishing an internal service) is refused', () => {
+  refused(edit(SVC, (d) => { d.spec = { type: 'ExternalName', externalName: 'opa.agentic-os.svc.cluster.local' }; }), 'invalid', /ClusterIP|ExternalName/);
+});
+test('Service: LoadBalancer and NodePort are refused (public IP, cost)', () => {
+  refused(edit(SVC, (d) => { d.spec.type = 'LoadBalancer'; }), 'invalid', /ClusterIP/);
+  refused(edit(SVC, (d) => { d.spec.type = 'NodePort'; }), 'invalid', /ClusterIP/);
+});
+test('Service: externalIPs, loadBalancerIP and a missing or foreign selector are refused', () => {
+  refused(edit(SVC, (d) => { d.spec.externalIPs = ['10.0.0.1']; }), 'invalid', /externalIPs/);
+  refused(edit(SVC, (d) => { delete d.spec.selector; }), 'invalid', /selector/);
+  refused(edit(SVC, (d) => { d.spec.selector = { 'app.kubernetes.io/component': 'os-ui' }; }), 'invalid', /selector/);
+});
+test('NEGATIVE TWIN: the scaffolded ClusterIP Service with its own selector passes', () => {
+  assert.equal(planAppDeploy(edit(SVC, (d) => { d.spec.type = 'ClusterIP'; }), ctx).ok, true);
+});
+test('manual Endpoints and EndpointSlices are refused', () => {
+  refused(extra({ apiVersion: 'v1', kind: 'Endpoints', metadata: { name: 'app-color-picker' }, subsets: [] }), 'invalid', /Endpoints/);
+  refused(extra({ apiVersion: 'discovery.k8s.io/v1', kind: 'EndpointSlice', metadata: { name: 'app-color-picker' }, addressType: 'IPv4', endpoints: [] }), 'invalid', /EndpointSlice/);
+});
+test('a second Service, Ingress or Deployment is refused', () => {
+  const svc = yaml.load(files().find((f) => f.path === SVC)!.content) as Record<string, unknown>;
+  refused(extra(svc), 'invalid', /one Service/);
+});
+
+test('Ingress: annotations outside the allow-list are refused (auth-url, mirror, snippets)', () => {
+  for (const a of [
+    'nginx.ingress.kubernetes.io/auth-url',
+    'nginx.ingress.kubernetes.io/mirror-target',
+    'nginx.ingress.kubernetes.io/server-snippet',
+    'nginx.ingress.kubernetes.io/configuration-snippet',
+    'nginx.ingress.kubernetes.io/rewrite-target',
+  ]) {
+    refused(edit(ING, (d) => { d.metadata.annotations = { ...(d.metadata.annotations ?? {}), [a]: 'x' }; }), 'invalid', /annotation/);
+  }
+});
+test('NEGATIVE TWIN: the scaffold\'s cert-manager issuer annotation is allowed', () => {
+  assert.equal(planAppDeploy(files(), ctx).ok, true);
+});
+test('Ingress: another TLS secret, another backend, a resource backend or a defaultBackend is refused', () => {
+  refused(edit(ING, (d) => { d.spec.tls[0].secretName = 'other-app.sales.apps.example.org-tls'; }), 'invalid', /secretName/);
+  refused(edit(ING, (d) => { d.spec.rules[0].http.paths[0].backend.service.name = 'app-other'; }), 'invalid', /backend/);
+  refused(edit(ING, (d) => { d.spec.rules[0].http.paths[0].backend = { resource: { apiGroup: 'x', kind: 'Y', name: 'z' } }; }), 'invalid', /backend/);
+  refused(edit(ING, (d) => { d.spec.defaultBackend = { service: { name: 'app-color-picker', port: { number: 80 } } }; }), 'invalid', /defaultBackend/);
+  refused(edit(ING, (d) => { d.spec.ingressClassName = 'internal'; }), 'invalid', /ingressClassName/);
+});
+
+const pod = (d: Record<string, any>) => d.spec.template.spec;
+test('Pod: env secretKeyRef / envFrom / secret volumes may name only the app\'s own Secrets', () => {
+  const otherTls = 'other-app.sales.apps.example.org-tls';
+  refused(edit(DEP, (d) => { pod(d).containers[0].env = [{ name: 'K', valueFrom: { secretKeyRef: { name: otherTls, key: 'tls.key' } } }]; }), 'invalid', /Secret/);
+  refused(edit(DEP, (d) => { pod(d).containers[0].envFrom = [{ secretRef: { name: 'app-registry-pull' } }]; }), 'invalid', /Secret/);
+  refused(edit(DEP, (d) => { pod(d).volumes.push({ name: 's', secret: { secretName: `${ctx.host}-tls` } }); }), 'invalid', /Secret/);
+  refused(edit(DEP, (d) => { pod(d).volumes.push({ name: 'p', projected: { sources: [{ secret: { name: 'os-ui' } }] } }); }), 'invalid', /Secret/);
+  refused(edit(DEP, (d) => { pod(d).volumes.push({ name: 't', projected: { sources: [{ serviceAccountToken: { path: 't' } }] } }); }), 'invalid', /serviceAccountToken/);
+  refused(edit(DEP, (d) => { pod(d).imagePullSecrets = [{ name: 'app-registry-pull' }]; }), 'invalid', /imagePullSecrets/);
+  refused(edit(DEP, (d) => { pod(d).volumes.push({ name: 'h', csi: { driver: 'secrets-store.csi.k8s.io' } }); }), 'invalid', /volume/);
+});
+test('NEGATIVE TWIN: the app\'s own Secret (app-<slug>-*) is allowed', () => {
+  const ok = edit(DEP, (d) => {
+    pod(d).containers[0].env = [{ name: 'K', valueFrom: { secretKeyRef: { name: 'app-color-picker-env', key: 'k' } } }];
+    pod(d).volumes.push({ name: 's', secret: { secretName: 'app-color-picker-files' } });
+  });
+  const plan = planAppDeploy(ok, ctx);
+  assert.equal(plan.ok, true, plan.ok ? '' : plan.reason);
+});
+test('Deployment: a selector that is not the app\'s own pods is refused', () => {
+  refused(edit(DEP, (d) => { d.spec.selector.matchLabels = { 'app.kubernetes.io/component': 'os-ui' }; }), 'invalid', /selector/);
+});
+test('the receive gate refuses ExternalName and auth-url too (host unknown at receive)', () => {
+  const svc = edit(SVC, (d) => { d.spec = { type: 'ExternalName', externalName: 'opa.agentic-os.svc' }; }).find((f) => f.path === SVC)!;
+  assert.match(validateAppDeployFile({ path: `apps/color-picker/${SVC}`, content: svc.content }, REGISTRY) ?? '', /ClusterIP|ExternalName/);
+  const ing = edit(ING, (d) => { d.metadata.annotations['nginx.ingress.kubernetes.io/auth-url'] = 'http://x'; }).find((f) => f.path === ING)!;
+  assert.match(validateAppDeployFile({ path: `apps/color-picker/${ING}`, content: ing.content }, REGISTRY) ?? '', /annotation/);
+});
