@@ -30,7 +30,8 @@
     trino :8080          query-tool, the Dagster code location and its run pods (dbt-trino, dlt),
                          dbt (dbt-build Job), marts-init
     polaris :8181/:8182  trino, data-runner, marts-init, polaris-init
-    postgres :5432       Dagster (webserver, daemon, code location, run pods), Langfuse (web,
+    postgres :5432       Polaris (relational-jdbc metastore: server and its bootstrap initContainers),
+                         polaris-init, Dagster (webserver, daemon, code location, run pods), Langfuse (web,
                          worker), LiteLLM (proxy, migrations), pg-dump, postgres-reconcile,
                          os-governance-bootstrap; CNPG: the operator namespace and the instances
     object storage :9000 trino, polaris, data-runner, Langfuse (web, worker), marts-init,
@@ -41,6 +42,8 @@
     egress-proxy :3128   web-fetch, LiteLLM (model providers), OpenSearch and its
                          snapshot/maintenance Jobs (off-cluster snapshots go through the proxy)
     mock-model :8080     LiteLLM
+    query-tool :8000     control plane only (LiteLLM's MCP entry is not admitted: tools run in os-ui)
+    data-runner :8000    control plane only
 
   Kubelet probes and `kubectl port-forward` do not traverse pod-to-pod policy and are unaffected.
   kind's default CNI does not enforce NetworkPolicies; on STACKIT (Calico) they enforce.
@@ -176,7 +179,7 @@ spec:
     - Ingress
   ingress:
     - from:
-        {{- include "soa.np.peers" (dict "components" (list "pg-dump" "postgres-reconcile" "os-governance-bootstrap") "extra" (concat $dagsterPods $langfusePods $litellmPods)) | nindent 8 }}
+        {{- include "soa.np.peers" (dict "components" (list "polaris" "polaris-init" "pg-dump" "postgres-reconcile" "os-governance-bootstrap") "extra" (concat $dagsterPods $langfusePods $litellmPods)) | nindent 8 }}
       ports:
         - { protocol: TCP, port: 5432 }
     {{- if $cnpg }}
@@ -304,6 +307,34 @@ spec:
         {{- include "soa.np.peers" (dict "components" (list "web-fetch" "opensearch-snapshot-register" "opensearch-snapshot-cron" "opensearch-maintenance") "extra" (concat $opensearchPods $litellmPods)) | nindent 8 }}
       ports:
         - { protocol: TCP, port: 3128 }
+{{- end }}
+
+{{- /* query-tool and data-runner: os-ui-apps-runner.yaml carries the same allowlist, but only with
+       softwareRunner.networkPolicy.enabled; under default-deny they need one on every profile.
+       LiteLLM's MCP entry for query-tool is NOT admitted: agent tools run inside os-ui (A5),
+       which calls query-tool itself, so the gateway has no business on the data plane. */}}
+{{- range $svc := list (dict "on" .Values.queryTool.enabled "c" "query-tool") (dict "on" .Values.dataRunner.enabled "c" "data-runner") }}
+{{- if $svc.on }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $svc.c }}-allow-callers
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "soa.labels" $ | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: {{ $svc.c }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        {{- include "soa.np.peers" (dict) | nindent 8 }}
+      ports:
+        - { protocol: TCP, port: 8000 }
+{{- end }}
 {{- end }}
 
 {{- if .Values.mockModel.enabled }}
