@@ -134,11 +134,12 @@ test('preflight covers definitions that exist ONLY in the store (never committed
 
 test('without --repos-only the command refuses to pass when the store did not hydrate from its mirror (exit 2)', () => {
   const reposDir = mkdtempSync(path.join(os.tmpdir(), 'wp53-preflight-nomirror-'));
-  // An unreachable mirror: the store cannot be read, so the command must not report a pass.
+  // No reachable durable mirror in the test environment: the store cannot be read, so the command
+  // must not report a pass.
   const r = spawnSync(process.execPath, ['--experimental-strip-types', 'worker/agent-id-preflight.mjs'], {
     cwd: OS_UI,
     encoding: 'utf8',
-    env: { ...process.env, OS_REPOS_DIR: reposDir, OPENSEARCH_URL: 'http://127.0.0.1:9', OS_MIRROR: 'opensearch' },
+    env: { ...process.env, OS_REPOS_DIR: reposDir },
     timeout: 60_000,
   });
   assert.equal(r.status, 2, r.stdout + r.stderr);
