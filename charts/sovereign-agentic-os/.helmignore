@@ -17,3 +17,4 @@ values.secret.yaml
 # Input to scripts/check-capacity.mjs only; no template reads it.
 capacity.yaml
 capacity.dev.yaml
+capacity.dev-m2i4.yaml

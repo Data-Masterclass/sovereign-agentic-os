@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+#
+# values.dev.m2i4.yaml — OPTIONAL: dev on the cheaper m2i.4 node (4 vCPU / 32 GB, about
+# EUR 195/month instead of EUR 295). Layered after values.dev.yaml when DEV_NODE=m2i4.
+#
+# Only two CPU REQUESTS change, so the requests fit 4 vCPU (the capacity gate:
+# charts/sovereign-agentic-os/capacity.dev-m2i4.yaml). Limits are unchanged, so Trino and Docling
+# can still burst to 2 CPUs when the node is idle; under load they get less. The margin is thin
+# (CPU requests about 84 % of 85 %): re-measure allocatable after the first apply, and expect
+# slower queries and conversions than on g2i.8. The default stays g2i.8; the owner chooses.
+trino:
+  resources:
+    requests: { cpu: 100m, memory: 1Gi }
+    limits: { cpu: 2, memory: 2Gi }
+docling:
+  resources:
+    requests: { cpu: 50m, memory: 768Mi }
+    limits: { cpu: 2, memory: 1536Mi }

@@ -87,6 +87,8 @@ rc_is "NEGATIVE TWIN: a context whose server is not the dev state's is refused" 
 absent "nothing is applied" " apply " "$(cat "$FAKE_LOG")"
 
 echo "== the dev cluster"
+mkdir -p "$TMP/private"; chmod 700 "$TMP/private"
+( umask 077; printf 'STACKIT-FAKE-MODEL-KEY-0123456789' > "$TMP/private/stackit-model-key" )
 run
 rc_is "bootstrap on the dev context exits 0" 0
 check "it ends OK" "BOOTSTRAP_SECRETS_OK context=dmagosdev" "$out"
@@ -102,6 +104,21 @@ absent "no S3 secret key in the output" "SKFAKEDEVSECRETVALUE" "$out"
 mk=$(python3 -c 'import yaml,sys; print(yaml.safe_load(open(sys.argv[1]))["litellmMasterKey"])' "$OV")
 absent "no generated value in the output" "$mk" "$out"
 
+echo "== the model key: only in dev-model-key, never in the overlay CI reads"
+absent "the model key is not in the private overlay" "STACKIT-FAKE-MODEL-KEY" "$(cat "$OV")"
+absent "the model key is not in the output" "STACKIT-FAKE-MODEL-KEY" "$out"
+key_doc=$(python3 - "$FAKE_APPLIED" <<'PY'
+import sys, yaml
+for d in yaml.safe_load_all(open(sys.argv[1])):
+    if isinstance(d, dict) and d.get("kind") == "Secret" and d["metadata"]["name"] == "stackit-model-key":
+        print(d["metadata"].get("namespace", "?"))
+PY
+)
+check "the key Secret is applied in dev-model-key" "dev-model-key" "$key_doc"
+holds "and nowhere else" [ "$(printf '%s\n' "$key_doc" | grep -vc '^dev-model-key$')" = 0 ]
+check "the proxy that holds it is applied" "name: model-key-proxy" "$(cat "$FAKE_APPLIED")"
+check "LiteLLM may reach it (egress rule in agentic-os)" "name: litellm-egress-model-key-proxy" "$(cat "$FAKE_APPLIED")"
+
 echo "== the overlay replaces every chart credential"
 H() { helm template agentic-os charts/sovereign-agentic-os -n agentic-os --skip-schema-validation -f values.dev.yaml "$@" 2>/dev/null; }
 H > "$TMP/without.yaml"; H -f "$OV" > "$TMP/with.yaml"
@@ -116,7 +133,10 @@ def secrets(p):
     return out
 a, b = secrets(sys.argv[1]), secrets(sys.argv[2])
 # Not credentials: ids, names, hosts, user names, the provider base URL.
-skip = ('_ID', '_NAME', 'HOST', 'username', 'UI_USERNAME', 'STACKIT_API_BASE', 'USER_EMAIL')
+# STACKIT_API_KEY is a placeholder by design: the real key is only in the model-key proxy.
+skip = ('_ID', '_NAME', 'HOST', 'username', 'UI_USERNAME', 'STACKIT_API_BASE', 'USER_EMAIL', 'STACKIT_API_KEY')
+ph = [v for (n, k), v in b.items() if k == 'STACKIT_API_KEY']
+print('PLACEHOLDER:' + ','.join(sorted(set(ph))))
 same = [f"{n}/{k}" for (n, k), v in a.items()
         if not k.endswith(skip) and (n, k) in b and b[(n, k)] == v and v not in ('',)]
 print('SAME:' + ','.join(sorted(same)))
@@ -124,6 +144,7 @@ print('COUNT:%d' % len(b))
 PY
 )
 check "every chart-rendered credential differs from the literal (or is generated per install)" "SAME:" "$res"
+check "the gateway's STACKIT_API_KEY is only the placeholder" "PLACEHOLDER:held-by-model-key-proxy" "$res"
 same=$(printf '%s' "$res" | sed -n 's/^SAME://p')
 # os-ui-session / docling-api-key / service-bearer-token are random per render already (lookup+rand).
 leftover=$(printf '%s' "$same" | tr ',' '\n' | grep -vE '^(os-ui-session|docling-api-key|service-bearer-token)/' || true)
@@ -143,6 +164,20 @@ cap=$(CI=true node scripts/check-capacity.mjs --profile default --skip-schema-va
       --budget charts/sovereign-agentic-os/capacity.dev.yaml --values values.dev.yaml --values "$OV" 2>&1); rc=$?
 rc_is "the capacity gate passes for the dev node" 0
 check "it reports the dev flavour budget" "check-capacity: ok" "$cap"
+local_imgs=$(python3 -c '
+import yaml,sys
+out=set()
+def walk(o):
+    if isinstance(o,dict):
+        for k,v in o.items():
+            if k=="image" and isinstance(v,str): out.add(v)
+            else: walk(v)
+    elif isinstance(o,list):
+        for v in o: walk(v)
+for d in yaml.safe_load_all(open(sys.argv[1])): walk(d)
+# os-ui is set by deploy.sh (--set osUI.image.repository/tag); every other image must be pullable.
+print(" ".join(sorted(i for i in out if i.startswith("sovereign-os/") and not i.startswith("sovereign-os/os-ui:"))))' "$TMP/with.yaml")
+holds "no laptop-only image (sovereign-os/...) in the dev render: [${local_imgs}]" [ -z "$local_imgs" ]
 hosts=$(python3 -c '
 import yaml,sys
 print(" ".join(r["host"] for d in yaml.safe_load_all(open(sys.argv[1])) if isinstance(d,dict) and d.get("kind")=="Ingress" for r in d["spec"]["rules"]))' "$TMP/with.yaml")

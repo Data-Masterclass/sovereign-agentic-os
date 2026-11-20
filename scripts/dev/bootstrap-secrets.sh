@@ -20,7 +20,12 @@
 #        $DEV_PRIVATE_DIR/values.dev.private.yaml   (mode 600; DEV_PRIVATE_DIR=~/.sovereign-os-secrets/dev)
 #        $DEV_PRIVATE_DIR/northpeak-cast.secret.json (the seed's SEED_CREDENTIALS)
 #      --rotate generates new ones; only after scripts/dev/reset.sh (the databases keep the old ones).
-#   4. Writes into the dev cluster (namespace agentic-os):
+#   4. The STACKIT model key goes ONLY into namespace dev-model-key (Secret stackit-model-key),
+#      read by a small reverse proxy (nginx, pinned) that adds it to each request LiteLLM sends.
+#      The CI account has no rights there (ci-kubeconfig.sh checks it with `kubectl auth can-i`),
+#      so neither CI nor anything it deploys can read the key. Two NetworkPolicies: LiteLLM may
+#      reach the proxy; nothing else may.
+#   5. Writes into the dev cluster (namespace agentic-os):
 #        Secret sovereign-os-dev-values      key values.yaml = the private overlay (CI reads it)
 #        Secret northpeak-seed-credentials   key SEED_CREDENTIALS (scripts/dev/seed.sh)
 #        Secret dev-backup-s3                the dev bucket + its dev-only key (tofu outputs)
@@ -74,11 +79,10 @@ else
     writeFileSync(process.argv[2], JSON.stringify(users), { mode: 0o600 });
   ' "$CAST" "$DEV_PRIVATE_DIR/os-users.seed.json"
   ( umask 077
-    python3 - "$REPO_ROOT/charts/sovereign-agentic-os/values.yaml" "$DEV_PRIVATE_DIR/os-users.seed.json" "$MODEL_KEY_FILE" > "$OVERLAY.tmp" <<'PY'
-import json, os, secrets, sys, yaml
+    python3 - "$REPO_ROOT/charts/sovereign-agentic-os/values.yaml" "$DEV_PRIVATE_DIR/os-users.seed.json" > "$OVERLAY.tmp" <<'PY'
+import json, secrets, sys, yaml
 chart = yaml.safe_load(open(sys.argv[1]))
 users = open(sys.argv[2]).read().strip()
-key = open(sys.argv[3]).read().strip() if os.path.exists(sys.argv[3]) else ""
 r = lambda n=32: secrets.token_urlsafe(n)
 pg = chart["postgres"]
 extra = []
@@ -100,7 +104,6 @@ overlay = {
     "objectStorage": {"local": {"accessKey": "dev" + secrets.token_hex(8), "secretKey": r(30)}},
     "postgres": {"local": {"password": r(24)}, "extraDatabases": extra, "governance": gov},
     "polaris": {"local": {"rootClientId": "root", "rootClientSecret": r(24)}},
-    "stackitPremium": {"local": {"apiKey": key}},
     # The synthetic Northpeak cast — demo identities, NO real user list.
     "osUI": {"usersSeed": users},
 }
@@ -112,9 +115,88 @@ PY
   chmod 600 "$OVERLAY" "$CAST"
   echo "   generated $(grep -c ':' "$OVERLAY") overlay lines and $(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))))' "$CAST") demo users"
 fi
-[ -s "$MODEL_KEY_FILE" ] && echo "   dev model key: present" || echo "   dev model key: ABSENT — deploy with DEV_MODEL=stub, or add $MODEL_KEY_FILE and re-run with --rotate after a reset"
+say "4. the model key, in namespace dev-model-key only (CI has no rights there)"
+MK=dev-model-key
+k get ns "$MK" >/dev/null 2>&1 || k create ns "$MK" >/dev/null
+if [ -s "$MODEL_KEY_FILE" ]; then
+  k -n "$MK" create secret generic stackit-model-key --from-file=STACKIT_API_KEY="$MODEL_KEY_FILE" \
+    --dry-run=client -o yaml | k -n "$MK" apply -f - >/dev/null
+  echo "   secret/stackit-model-key (dev-model-key)"
+  k apply -f - >/dev/null <<'YAML'
+apiVersion: v1
+kind: ConfigMap
+metadata: { name: model-key-proxy, namespace: dev-model-key }
+data:
+  # nginx's own envsubst (NGINX_ENVSUBST_FILTER) writes conf.d/default.conf at start.
+  default.conf.template: |
+    server {
+      listen 8080;
+      location = /healthz { return 200 'ok'; }
+      location / {
+        proxy_pass https://api.openai-compat.model-serving.eu01.onstackit.cloud;
+        proxy_ssl_server_name on;
+        proxy_set_header Host api.openai-compat.model-serving.eu01.onstackit.cloud;
+        proxy_set_header Authorization "Bearer ${STACKIT_API_KEY}";
+        proxy_buffering off;
+        proxy_read_timeout 600s;
+        proxy_send_timeout 600s;
+        client_max_body_size 50m;
+      }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: model-key-proxy, namespace: dev-model-key, labels: { app: model-key-proxy } }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: model-key-proxy } }
+  template:
+    metadata: { labels: { app: model-key-proxy } }
+    spec:
+      automountServiceAccountToken: false
+      securityContext: { runAsNonRoot: true, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: nginx
+          image: nginxinc/nginx-unprivileged:1.27.3-alpine@sha256:9e7238f579a54582263a960d1b0094b4a3ecce641342eda3f8e2ff82b1703d2b
+          ports: [{ containerPort: 8080 }]
+          env:
+            - { name: NGINX_ENVSUBST_FILTER, value: "^STACKIT_API_KEY$" }
+            - name: STACKIT_API_KEY
+              valueFrom: { secretKeyRef: { name: stackit-model-key, key: STACKIT_API_KEY } }
+          volumeMounts: [{ name: tpl, mountPath: /etc/nginx/templates }]
+          readinessProbe: { httpGet: { path: /healthz, port: 8080 } }
+          securityContext: { allowPrivilegeEscalation: false, capabilities: { drop: ["ALL"] } }
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits: { memory: 64Mi }
+      volumes: [{ name: tpl, configMap: { name: model-key-proxy } }]
+---
+apiVersion: v1
+kind: Service
+metadata: { name: model-key-proxy, namespace: dev-model-key }
+spec:
+  selector: { app: model-key-proxy }
+  ports: [{ port: 8080, targetPort: 8080 }]
+---
+# Only the gateway (LiteLLM in agentic-os) may call the proxy.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: model-key-proxy-litellm-only, namespace: dev-model-key }
+spec:
+  podSelector: { matchLabels: { app: model-key-proxy } }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: agentic-os } }
+          podSelector: { matchLabels: { app.kubernetes.io/name: litellm } }
+      ports: [{ port: 8080 }]
+YAML
+  echo "   model-key-proxy (dev-model-key): deployment, service, ingress policy"
+else
+  echo "   dev model key: ABSENT — no model-key-proxy; deploy with DEV_MODEL=stub, or add $MODEL_KEY_FILE and re-run"
+fi
 
-say "4. secrets in the dev cluster (namespace $NS)"
+say "5. secrets in the dev cluster (namespace $NS)"
 k get ns "$NS" >/dev/null 2>&1 || k create ns "$NS" >/dev/null
 apply_secret() { # apply_secret <name> <kubectl create secret args...>  (values via files only)
   local name=$1; shift
@@ -141,4 +223,20 @@ PY
 else
   echo "   registry-pull-secret: SKIPPED — no $DEV_PRIVATE_DIR/ghcr-read-token (+ ghcr-read-user); private images will not pull"
 fi
+# The chart's default-deny egress lets LiteLLM reach only its own namespace; this one rule lets it
+# reach the model-key proxy. Not a chart object (helm never prunes it); reset.sh re-runs bootstrap.
+k apply -f - >/dev/null <<'YAML'
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: litellm-egress-model-key-proxy, namespace: agentic-os }
+spec:
+  podSelector: { matchLabels: { app.kubernetes.io/name: litellm } }
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: dev-model-key } }
+          podSelector: { matchLabels: { app: model-key-proxy } }
+      ports: [{ port: 8080 }]
+YAML
+echo "   networkpolicy/litellm-egress-model-key-proxy"
 echo "BOOTSTRAP_SECRETS_OK context=$CTX"

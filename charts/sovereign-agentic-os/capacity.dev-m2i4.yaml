@@ -1,0 +1,54 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+#
+# capacity.dev-m2i4.yaml — the CHEAPER dev node option (docs/ops/dev-environment.md "Sizing"):
+# m2i.4 = 4 vCPU / 32 GB, EUR 0.27037/h = EUR 194.67/month (STACKIT price list 1.0.45). Used
+# with values.dev.m2i4.yaml (Trino and Docling CPU requests cut) and DEV_NODE=m2i4.
+# Same format as capacity.yaml; read by scripts/check-capacity.mjs:
+#
+#   node scripts/check-capacity.mjs --profile default \
+#     --budget charts/sovereign-agentic-os/capacity.dev-m2i4.yaml --values values.dev.yaml --values values.dev.m2i4.yaml
+#
+# scripts/deploy.sh --env dev runs exactly this (plus the private overlay) before any upgrade.
+# Not read by any template (.helmignore).
+
+node:
+  # m2i.4 = 4 vCPU / 32 GB (docs.stackit.cloud .../server/basics/machine-types/).
+  flavour: m2i.4
+  count: 1
+  allocatable:
+    # ESTIMATE until the node exists. CPU: 4 vCPU less the 90m reservation the production m3i.8
+    # (8 vCPU, 7910m allocatable) shows.
+    # Memory: production loses 5.3 GiB of capacity to system/kubelet reservations on 64 GB;
+    # 26 GiB here assumes at least as much on 32 GB. Replace both with
+    # `kubectl --context dmagosdev describe node` -> Allocatable after the first apply.
+    cpu: 3910m
+    memory: "27917287424"   # 26 GiB
+
+thresholds:
+  requests:
+    cpu: 85
+    memory: 85
+  limits:
+    memory: 85
+
+minimumWorkloads: 10
+
+outsideChart:
+  - name: "kube-system (SKE platform: CNI, DNS, CSI, VPN, metrics) — as read on the production node"
+    perNode: true
+    requests: { cpu: 1377m, memory: 1621Mi }
+    limits: { cpu: 300m, memory: 2312Mi }
+  - name: ingress-nginx (scripts/dev/platform.sh)
+    requests: { cpu: 100m, memory: 90Mi }
+    limits: { memory: 256Mi }
+  - name: cert-manager (scripts/dev/platform.sh — controller, webhook, cainjector)
+    requests: { cpu: 30m, memory: 192Mi }
+    limits: { memory: 384Mi }
+  - name: model-key-proxy (namespace dev-model-key, scripts/dev/bootstrap-secrets.sh)
+    requests: { cpu: 10m, memory: 32Mi }
+    limits: { memory: 64Mi }
+  # Apps the acceptance journey AT-d deploys from the Software tab (namespace agentic-apps).
+  - name: agentic-apps (journey AT-d)
+    requests: { cpu: 200m, memory: 256Mi }
+    limits: { cpu: 1000m, memory: 512Mi }
