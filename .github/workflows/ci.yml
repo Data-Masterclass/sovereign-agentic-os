@@ -68,6 +68,14 @@ jobs:
       - name: Structure ratchet (core / tabs / components)
         run: node scripts/check-structure.mjs
 
+      # Glue-discipline rules (design 00 §8.3 + artifact contract), ratcheted against
+      # scripts/structure-baseline.json → glue, then their negative twins: one fixture per rule
+      # that must turn the checker red naming that rule.
+      - name: Glue-discipline ratchet (GLUE-1 … GLUE-10)
+        run: node scripts/check-glue.mjs
+      - name: Glue-discipline negative twins
+        run: node --test scripts/tests/check-glue.test.mjs
+
       # Langfuse web: sign-up off, and the NetworkPolicy admits only the OS's own callers.
       # Renders the chart (the dependencies were built above); CI=true turns a skip into a failure.
       - name: Langfuse hardening chart test

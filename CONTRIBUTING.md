@@ -101,6 +101,7 @@ list and an SPDX line, be recorded in `licenses/components.tsv`, `THIRD-PARTY-LI
 
 ```bash
 node scripts/check-structure.mjs    # structure + file headers (a ratchet — see below)
+node scripts/check-glue.mjs         # glue-discipline rules GLUE-1 … GLUE-10 (a ratchet — see below)
 npm --prefix os-ui test             # the unit suite
 bash os-ui/scripts/gate.sh          # the regression gate
 helm lint charts/sovereign-agentic-os -f values.local.yaml
@@ -127,6 +128,18 @@ lockfile" in `os-ui/ARCHITECTURE.md` for why the files are named `<family>.packa
 it with `--baseline` to lock the new number in. It also requires a
 `FEATURE:` / `USER STORY:` / `ARCHITECTURE:` header on every source file, alongside the SPDX
 header described under Pull requests.
+
+`check-glue.mjs` enforces the glue-discipline rules of design 00 §8.3 the same way (its counts
+are the `glue` block of the same baseline file): only `os-ui/core/adapters/**` talks to a
+component; admin credentials stay in admin adapters; no silent fallback; no hard-coded version;
+no re-coded component feature; every native-config generator is registered in
+`scripts/glue/generators.json` with golden fixtures that the component's own tool validates; every
+mutating route and MCP tool calls governance `authorize()`; no `setInterval` outside the
+reconciler runtime; the kernel never imports a tab and a tab never imports another (checked by
+dependency-cruiser, `os-ui/.dependency-cruiser.cjs`); and generated native code carries OS
+metadata only in the tool's documented extension points. `node scripts/check-glue.mjs --list
+<RULE>` prints every finding of one rule. Each rule has a negative twin in
+`scripts/tests/glue-fixtures/<RULE>/`, run by `node --test scripts/tests/check-glue.test.mjs`.
 
 **Before writing code, read [`os-ui/ARCHITECTURE.md`](os-ui/ARCHITECTURE.md)**, especially
 "Things this codebase will punish you for". It records constraints that have each cost real
