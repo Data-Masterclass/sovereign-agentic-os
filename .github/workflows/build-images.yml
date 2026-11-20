@@ -151,6 +151,11 @@ jobs:
           if [ "$EVENT" = workflow_dispatch ] || [ -n "$INPUT_IMAGE" ]; then
             image=$INPUT_IMAGE
             version=$INPUT_VERSION
+            # main-<sha> belongs to the dev stage (dev.yml calls this workflow on a push). A dispatch
+            # must never write it: that would re-point a tag dev already tested at other bytes.
+            if [ "$EVENT" = workflow_dispatch ]; then
+              case $version in main-*) echo "::error::'main-*' tags are written only by the dev stage (dev.yml), never by a dispatch" >&2; exit 1 ;; esac
+            fi
           else
             # Split on the LAST `-v`, so the version is always what follows it and an image
             # name that itself contains `-v` falls through to the `unknown image` error below
@@ -193,25 +198,38 @@ jobs:
       # ran its acceptance suite on. Only when no main-<sha> exists (a commit older than the dev
       # stage) does the build below run as before. scripts/lib/promote-image.sh refuses to move
       # an existing version tag and checks that both tags resolve to one digest.
-      - name: Reuse the dev image of this commit (os-ui release tags)
+      - name: Reuse the dev-tested image of this commit (os-ui release tags)
         id: reuse
         if: steps.meta.outputs.image == 'os-ui' && startsWith(github.ref, 'refs/tags/os-ui-v')
         env:
           PREFIX: ${{ vars.IMAGE_REPO_PREFIX || 'ghcr.io/data-masterclass/sovereign-os' }}
           REF: ${{ steps.meta.outputs.ref }}
           SHA: ${{ github.sha }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REGISTRY_USER: ${{ vars.IMAGE_REGISTRY_USER || github.actor }}
           REGISTRY_TOKEN: ${{ secrets.GHCR_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           printf '%s' "$REGISTRY_TOKEN" | skopeo login ghcr.io -u "$REGISTRY_USER" --password-stdin >/dev/null
-          src="$PREFIX/os-ui:main-$SHA"
-          if ! skopeo inspect --format '{{.Digest}}' "docker://$src" >/dev/null 2>&1; then
-            echo "no dev image $src — building this commit as before"
+          # The digest dev RECORDED for this commit (dev.yml's dev-tested-digest artifact), not
+          # whatever main-<sha> says today. No record = a commit from before the dev stage: build.
+          if ! rec=$(bash scripts/lib/dev-digest.sh --sha "$SHA" | tail -1); then
+            # A commit that WAS green on dev must ship its tested bytes; never a rebuild.
+            if bash scripts/lib/workflow-status.sh --sha "$SHA" --branch main --workflows dev.yml \
+                 --require-job dev-green --wait-minutes 0 >/dev/null 2>&1; then
+              echo "::error::$SHA is green on dev but its digest record is unreadable ($rec). Refusing to rebuild a tested commit."
+              exit 1
+            fi
+            echo "no dev record for $SHA ($rec) and not green on dev — building this commit as before"
             exit 0
           fi
-          bash scripts/lib/promote-image.sh "$src" "$REF"
-          echo "digest=$(skopeo inspect --format '{{.Digest}}' "docker://$REF")" >> "$GITHUB_OUTPUT"
+          now=$(skopeo inspect --format '{{.Digest}}' "docker://$PREFIX/os-ui:main-$SHA" 2>/dev/null || true)
+          if [ "$now" != "$rec" ]; then
+            echo "::error::MAIN_TAG_MOVED — main-$SHA resolves to '${now:-nothing}', dev tested $rec. Refusing to tag or rebuild."
+            exit 1
+          fi
+          bash scripts/lib/promote-image.sh "$PREFIX/os-ui@$rec" "$REF"
+          echo "digest=$rec" >> "$GITHUB_OUTPUT"
 
       - name: Set up Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
