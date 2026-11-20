@@ -238,3 +238,49 @@ test('the evaluator matches the WHOLE value, like Trino', () => {
   assert.equal(impersonationAllowed(rules, 'dbt-evil', 'sales'), false);
   assert.equal(impersonationAllowed(rules, 'dbt', 'sales-other'), false);
 });
+
+// ---- seed writers: the chart's post-install Jobs on a FRESH install (first dev install, 2026-11-20)
+const withWriters: RulesInput = {
+  ...input,
+  seedWriters: [
+    { user: 'dbt-sales', schema: 'sales' },
+    { user: 'northpeak-marts', schema: 'sales' },
+    { user: 'northpeak-marts', schema: 'sales' }, // a duplicate is written once
+    { user: 'dbt-sales', schema: 'personal_amir' }, // a personal lane is never grantable
+  ],
+};
+
+test('NEGATIVE TWIN (the fresh-install bug): without seed writers the enumerated rules deny the hooks CREATE SCHEMA', () => {
+  const r = buildTrinoRules(input);
+  assert.equal(schemaOwnerAllowed(r, 'dbt-sales', 'sales'), false);
+  assert.equal(schemaOwnerAllowed(r, 'northpeak-marts', 'sales'), false);
+});
+
+test('a seed writer owns EXACTLY its one schema: create there, nothing anywhere else', () => {
+  const r = buildTrinoRules(withWriters);
+  for (const u of ['dbt-sales', 'northpeak-marts']) {
+    assert.equal(schemaOwnerAllowed(r, u, 'sales'), true, `${u} may create/own sales`);
+    assert.deepEqual(tablePrivilegesFor(r, u, 'sales'), [...OWNER_PRIVILEGES], `${u} may write tables in sales`);
+    assert.equal(schemaOwnerAllowed(r, u, 'finance'), false, `${u} may not own finance`);
+    assert.equal(schemaOwnerAllowed(r, u, 'marketing'), false, `${u} may not create an unknown schema`);
+    assert.deepEqual(tablePrivilegesFor(r, u, 'finance'), ['SELECT'], `${u} keeps only the domain read fallthrough elsewhere`);
+  }
+});
+
+test('a seed writer can never be granted a personal lane, and the lane stays closed', () => {
+  const r = buildTrinoRules(withWriters);
+  assert.equal(schemaOwnerAllowed(r, 'dbt-sales', 'personal_amir'), false);
+  assert.deepEqual(tablePrivilegesFor(r, 'dbt-sales', 'personal_amir'), []);
+  assert.ok(!renderTrinoRules(r).includes('"^dbt-sales$",\n      "schema": "^personal_amir$"'), 'no rule for it is written at all');
+  assert.equal(schemaOwnerAllowed(r, 'amir', 'personal_amir'), true, 'the owner keeps their lane');
+});
+
+test('seed writers do not widen impersonation, and the domain members are unchanged', () => {
+  const a = buildTrinoRules(input);
+  const b = buildTrinoRules(withWriters);
+  assert.deepEqual(b.impersonation, a.impersonation);
+  assert.equal(schemaOwnerAllowed(b, 'amir', 'sales'), true);
+  assert.equal(schemaOwnerAllowed(b, 'cleo', 'sales'), false);
+  const once = renderTrinoRules(b).split('"^northpeak-marts$"').length - 1;
+  assert.equal(once, 2, 'the duplicate writer yields one schema rule and one table rule');
+});

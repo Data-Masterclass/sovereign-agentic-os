@@ -542,6 +542,7 @@ export async function register(): Promise<void> {
               domains,
               users: users.map((u) => ({ id: u.id, domains: u.domains, disabled: u.disabled })),
               sanitize: sanitizeIdent,
+              seedWriters: config.trinoSeedWriters,
             });
           },
         });

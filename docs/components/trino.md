@@ -92,6 +92,18 @@ One shape, two renderers, one test that keeps them equal
    SUCCESS is older than twice the repair interval (the loop itself is gone). A failed reconcile is
    not cosmetic: it means the permissive bootstrap is what Trino is enforcing.
 
+   **The chart's seed writers.** The post-install Jobs that build the demo each create and fill ONE
+   schema: `dbt-build` as `dbt.trino.user` in `dbt.trino.schema`, and `northpeak-marts-init` as
+   `marts.trino.user` in `marts.schema`. They run after os-ui has booted and reconciled, so on a
+   **fresh install** the enumerated file would deny their `CREATE SCHEMA IF NOT EXISTS`. This
+   happened on the first dev install (2026-11-20). The chart passes them as `TRINO_SEED_WRITERS`
+   (`user:schema,…`, rendered only for enabled Jobs). The generator makes each writer the owner of
+   **exactly that one schema**, with table privileges in it and nothing else, placed after the
+   personal-lane rules so that a writer can never be granted a `personal_*` schema. Proof: a real
+   Trino on kind evaluates the generated file (`scripts/tests/trino-seed-writers.kind.sh`). It
+   shows that the Jobs may create and fill `sales` and nothing else, and that they are denied
+   without the writers (the negative twin).
+
 What the enumerated file says (`core/infra/trino-rules.ts` `buildTrinoRules`, first match wins):
 
 ```
