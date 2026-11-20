@@ -250,7 +250,10 @@ test('EJECT: each panel’s OS SQL runs on a PLAIN Trino, and vl-convert renders
   assert.equal(rendered['p_revenue-by-region.vl.json'].marks.rect, 3);
   const opt = expected['p_revenue-by-region.vl.json'].echarts as { series: { type: string; data: unknown[] }[] };
   assert.equal(opt.series[0].type, 'bar');
-  assert.deepEqual(opt.series[0].data.map((d) => (typeof d === 'object' && d ? (d as { value: unknown }).value : d)).map(Number).sort((a, b) => a - b), [4, 12, 20]);
+  // ECharts draws [category, value] pairs; the Vega-Lite spec carries the same rows by MetricFlow name.
+  const echartsPairs = Object.fromEntries((opt.series[0].data as [string, number][]).map(([k, v]) => [k, Number(v)]));
+  const vlPairs = Object.fromEntries(bar.map((r) => [String(r.orders__region), Number(r.revenue)]));
+  assert.deepEqual(echartsPairs, vlPairs);
   assert.equal(rendered['p_revenue-eu.vl.json'].marks.text, 1);
   assert.equal(rendered['p_orders-by-month.vl.json'].marks.line, 1);
 });
