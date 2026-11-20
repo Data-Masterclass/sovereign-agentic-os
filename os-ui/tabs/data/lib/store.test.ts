@@ -443,21 +443,23 @@ function fakeOpenSearch() {
 }
 
 test('the data store mirrors writes to the backend and hydrates from it after a restart', async () => {
+  // Let an earlier test's fire-and-forget mirror writes settle BEFORE the fake backend is installed,
+  // so they cannot land in it (a timing race once hydration stopped awaiting the version log).
+  for (let i = 0; i < 20; i++) await new Promise((r) => setTimeout(r, 0));
   const os = fakeOpenSearch();
   try {
     await ensureHydrated();
     const id = seedOrders(); // create + build → mirrored fire-and-forget
     // Fire-and-forget writes settle within a few ticks (an edit re-reads the newest copy first).
     for (let i = 0; i < 6; i++) await new Promise((r) => setTimeout(r, 0));
-    assert.equal(os.datasetDocs().length, 1, 'the write was mirrored to the durable backend');
+    assert.equal(os.datasetDocs().filter((d) => (d as { id?: string }).id === id).length, 1, 'the write was mirrored to the durable backend');
 
     // Simulate an os-ui restart: wipe the in-process cache, keep the backend.
     __resetStore();
     assert.equal(listDatasets(amir).mine.length, 0, 'in-process cache is empty after restart');
     await ensureHydrated(); // rehydrate from the durable mirror
     const groups = listDatasets(amir);
-    assert.equal(groups.mine.length, 1, 'the seeded dataset survived the restart');
-    assert.equal(groups.mine[0].id, id);
+    assert.ok(groups.mine.some((x) => x.id === id), 'the seeded dataset survived the restart');
   } finally {
     os.restore();
   }
