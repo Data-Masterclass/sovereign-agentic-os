@@ -13,7 +13,8 @@
 # last command's, so a failed upgrade reports 0 and looks like success. The
 # 2026-11-04 schema-fetch failure was missed for exactly that reason.
 #
-# Order is deliberate: back up FIRST (the script aborts if the backup gate fails),
+# Order is deliberate: the capacity gate (scripts/check-capacity.mjs, on the values this upgrade
+# applies) and the backup FIRST (the script aborts if either fails),
 # then build for the cluster's architecture, then one helm upgrade.
 #
 # Values: the release's OWN values are the source of truth for a running cluster —
@@ -259,6 +260,20 @@ if risky:
     sys.exit(1)
 print(f"   {len(rm)} deletions, no stateful object among them")
 PY
+
+# CAPACITY GATE (WP-47). The same check CI and release.sh run, but on the values THIS upgrade
+# applies: chart defaults + the live release values + VALUES_OVERLAY, rendered as helm will. A
+# deploy run by hand must not put more on the node than it can give. CI=true: a skip (no helm
+# dependencies, no js-yaml) stops the deploy too. Before the backup, so a refusal changes nothing.
+say "capacity gate: the values this upgrade applies must fit the node (scripts/check-capacity.mjs)"
+if CI=true node scripts/check-capacity.mjs --profile default --skip-schema-validation -f "$VALUES" \
+     ${VALUES_OVERLAY:+-f "$VALUES_OVERLAY"} > "$WORK/capacity.txt" 2>&1; then
+  grep -E 'percent of allocatable|check-capacity: ok' "$WORK/capacity.txt" | sed 's/^ */   /'
+else
+  sed 's/^/   /' "$WORK/capacity.txt" | grep -vE '^   +(Deployment|StatefulSet|DaemonSet|ReplicaSet|Pod)/' >&2
+  echo "CAPACITY_GATE_FAILED — the values this deploy applies do not fit the node budget in $CHART/capacity.yaml; nothing was changed" >&2
+  exit 1
+fi
 
 say "pre-upgrade backup (standing rule — aborts the deploy if it fails)"
 # pre-upgrade-backup.sh uses the AMBIENT kubectl context, so make it explicit —

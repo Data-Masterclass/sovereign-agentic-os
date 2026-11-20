@@ -33,6 +33,11 @@ thresholds:
   limits:
     memory: 85
 
+# A profile that renders fewer long-running workloads than this fails the gate: an empty or
+# near-empty render (wrong values, a broken template) would otherwise pass on a sum of nothing.
+# Today the default profile renders 21 and the STACKIT profile 14.
+minimumWorkloads: 10
+
 # Pods on the node that this chart does not render, summed per namespace from the live node
 # (container requests and limits; DaemonSets once per node). They occupy the same allocatable, so
 # leaving them out would make the gate optimistic.
