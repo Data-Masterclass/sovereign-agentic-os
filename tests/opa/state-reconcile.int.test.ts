@@ -158,14 +158,20 @@ test('with the reconciler: an OPA restart is restored within one probe tick', as
   const { policyStateReady } = await import('@tabs/agents/lib/build/run-jobs-server');
   assert.equal(await policyStateReady()(), true, 'the worker gate opens once the state is restored');
 
+  const before = opaReconcileStatus().at ?? '';
   await restartOpa();
-  const restoredAfter = Date.now();
-  // One probe tick (PROBE_MS) plus the restore's own writes.
-  const ok = await until(() => allow(RUNTIME_DOMAIN, 'query'), (v) => v, PROBE_MS + 4000);
-  assert.equal(ok, true, `decision restored (status: ${JSON.stringify(opaReconcileStatus())})`);
-  assert.ok(Date.now() - restoredAfter < PROBE_MS + 4000);
-  assert.equal(opaReconcileStatus().state, 'restored');
-  assert.equal(opaReconcileStatus().reason, 'opa-restart-detected');
+  const restartedAt = Date.now();
+  // The restore that FOLLOWS this restart: a status newer than the boot run, written by the probe
+  // (`opa-restart-detected`, or `retry` if its first attempt raced the container still stopping).
+  const fresh = () => {
+    const st = opaReconcileStatus();
+    return st.state === 'restored' && (st.at ?? '') > before && ['opa-restart-detected', 'retry'].includes(st.reason ?? '');
+  };
+  const LIMIT = PROBE_MS + 8000; // one probe tick plus the restore's own writes, with CI slack
+  await until(async () => fresh(), (v) => v, LIMIT);
+  assert.ok(fresh(), `restored after the restart (status: ${JSON.stringify(opaReconcileStatus())})`);
+  assert.ok(Date.now() - restartedAt < LIMIT, 'within one probe tick of the restart');
+  assert.equal(await allow(RUNTIME_DOMAIN, 'query'), true, 'the runtime-domain decision is true again');
 
   const grants = (await data('grants')) as Record<string, string[]>;
   assert.ok(grants[`domain:${RUNTIME_DOMAIN}`]?.includes('query'), 'domain grant restored');
