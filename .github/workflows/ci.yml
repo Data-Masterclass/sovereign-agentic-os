@@ -332,7 +332,7 @@ jobs:
     name: build
     runs-on: ubuntu-latest
     if: ${{ always() }}
-    needs: [test-ui, test-langgraph-pg, test-opensearch, tracing-e2e, validate-generated, test-python, dagster-image, test-opa, helm-lint, secret-scan]
+    needs: [test-ui, test-langgraph-pg, test-opensearch, tracing-e2e, validate-generated, test-python, dagster-image, test-opa, test-postgres, helm-lint, secret-scan]
     steps:
       - name: Every needed job succeeded (failed, cancelled or skipped fails the build)
         env:
@@ -380,7 +380,7 @@ jobs:
         working-directory: os-ui
         env:
           OS_PG_TEST_URL: postgres://postgres:ci-only-throwaway@127.0.0.1:5432/postgres
-        run: node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test --test-concurrency=2 core/adapters/postgres/*.it.ts
+        run: node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test --test-concurrency=2 core/testing/postgres/*.it.ts
 
   test-python:
     name: test-python

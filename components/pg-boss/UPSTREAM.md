@@ -25,6 +25,6 @@ and no write at all to `bam` or to `version.version` (only the run-time claim co
 `bam_on`, `flow_on`, `reindex_on`, `monitor_backoff_on`, read from 12.38.2 `dist/plans.js`). Own pool `max` 3; workers,
 maintenance and cron only in the worker process. The OS does not write to that schema.
 The behaviours the design relies on are proven against the real `postgres:17` image in
-`os-ui/core/adapters/postgres/pgboss.it.ts` and `install.it.ts`.
+`os-ui/core/testing/postgres/pgboss.it.ts` and `install.it.ts`.
 
 The glue that uses this pin lives in `os-ui/core/adapters/postgres/`; nothing we wrote belongs here.

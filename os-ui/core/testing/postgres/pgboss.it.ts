@@ -21,10 +21,10 @@ import assert from 'node:assert/strict';
 import pg from 'pg';
 import { PgBoss, TestClock } from 'pg-boss';
 import { freshDatabase } from './it-support.ts';
-import { migrateGovernance } from './migrate.ts';
-import { PGBOSS_POOL_MAX, PGBOSS_SCHEMA, createBoss, registerWorker } from './boss.ts';
+import { migrateGovernance } from './unwrapped.ts';
+import { PGBOSS_POOL_MAX, PGBOSS_SCHEMA, bossDb, createBoss, registerWorker } from '@core/adapters/postgres/boss';
 import { __clearRunWorkerProcess, markRunWorkerProcess } from '@core/kernel/process-role';
-import { bossDb, withTransaction } from './tx.ts';
+import { withTransaction } from '@core/adapters/postgres/pool';
 
 let db: Awaited<ReturnType<typeof freshDatabase>>;
 let pool: pg.Pool;

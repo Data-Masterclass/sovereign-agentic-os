@@ -25,10 +25,10 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import pg from 'pg';
 import { adminClient, urlFor } from './it-support.ts';
-import { migrateGovernance } from './migrate.ts';
-import { appendAuditEvent, verifyAuditChain } from './audit.ts';
-import { PGBOSS_SCHEMA, QueueMigrationRefusedError, createBoss } from './boss.ts';
-import { bossDb } from './tx.ts';
+import { migrateGovernance } from './unwrapped.ts';
+import { appendAuditEvent, verifyAuditChain } from './unwrapped.ts';
+import { PGBOSS_SCHEMA, QueueMigrationRefusedError, bossDb, createBoss } from '@core/adapters/postgres/boss';
+
 
 const chartSql = (name: string) =>
   readFile(new URL(`../../../../charts/sovereign-agentic-os/files/os-governance/${name}`, import.meta.url), 'utf8');

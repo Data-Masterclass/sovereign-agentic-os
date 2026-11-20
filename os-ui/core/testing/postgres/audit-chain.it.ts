@@ -18,8 +18,8 @@ import { after, before, describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import pg from 'pg';
 import { freshDatabase, urlFor } from './it-support.ts';
-import { migrateGovernance } from './migrate.ts';
-import { appendAuditEvent, AUDIT_GENESIS_HASH, verifyAuditChain } from './audit.ts';
+import { migrateGovernance } from './unwrapped.ts';
+import { appendAuditEvent, AUDIT_GENESIS_HASH, verifyAuditChain } from './unwrapped.ts';
 
 let db: Awaited<ReturnType<typeof freshDatabase>>;
 let admin: pg.Client;

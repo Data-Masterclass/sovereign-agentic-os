@@ -18,7 +18,7 @@
  *   - Queues are `partition: false` (pg-boss's default): a partitioned queue needs DDL and so can
  *     only be created by the migration owner.
  *   - Design 10 F8: queues per reconciler, `singletonKey` coalescing, `send(…, { db })` as the
- *     outbox, `schedule()` with `tz`. Proven in `pgboss.it.ts`.
+ *     outbox, `schedule()` with `tz`. Proven in `core/testing/postgres/pgboss.it.ts`.
  *   - WORKER-ONLY WORK: maintenance (`supervise`) and the cron pass (`schedule`) are on only in the
  *     worker process (`@core/kernel/process-role`), and `registerWorker` refuses to call
  *     `boss.work()` anywhere else. The web process may only send.
@@ -28,7 +28,10 @@
  *   - The caller owns `start()` / `stop()` and must listen for `error` (pg-boss's contract).
  */
 import { PgBoss, type ConstructorOptions, type WorkHandler, type WorkOptions } from 'pg-boss';
+import type pg from 'pg';
 import { isRunWorkerProcess } from '@core/kernel/process-role';
+import type { ComponentHealth, Fetched } from '@core/adapters/_contract';
+import { fetchedOk, pgFailure } from './pool.ts';
 
 export const PGBOSS_SCHEMA = 'pgboss';
 export const PGBOSS_POOL_MAX = 3;
@@ -79,4 +82,29 @@ export async function registerWorker<T>(
     throw new Error(`registerWorker(${name}): pg-boss workers run only in os-ui-worker, not in the web process`);
   }
   return boss.work<T>(name, options, handler);
+}
+
+/**
+ * pg-boss's `db` interface over a transaction's client (docs/api/constructor.md `db`, 12.38.2):
+ * some pg-boss texts hold several statements and `executeSql` must then return EVERY statement's
+ * result, as an array, "the way `pg` does". So this returns `pg`'s own result unchanged: one
+ * `Result` for one statement, `Result[]` for several. (pg-boss's published `IDatabase` type says
+ * `{ rows }` only; the documented contract is the wider one.) Passing it as `send(…, { db })` puts
+ * the job insert in the caller's transaction: that is the outbox (10 F8), with no outbox table.
+ */
+export function bossDb(client: pg.PoolClient): { executeSql(text: string, values?: unknown[]): Promise<{ rows: any[] }> } {
+  return {
+    executeSql: (text, values) => client.query(text, values as unknown[] | undefined) as unknown as Promise<{ rows: any[] }>,
+  };
+}
+
+/** The installed pg-boss schema version, as pg-boss's own `version` table states it. */
+export async function queueHealth(boss: PgBoss): Promise<Fetched<ComponentHealth>> {
+  try {
+    const { rows } = await boss.getDb().executeSql(`select version from ${PGBOSS_SCHEMA}.version`);
+    if (rows.length !== 1) return { ...pgFailure(new Error(`${PGBOSS_SCHEMA}.version has ${rows.length} rows`)), reason: 'invalid' };
+    return fetchedOk({ version: String(rows[0].version), status: 'ready' });
+  } catch (err) {
+    return pgFailure(err);
+  }
 }

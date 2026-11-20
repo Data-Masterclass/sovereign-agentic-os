@@ -15,7 +15,7 @@
   The template refuses to render when a name collides with another service (below), and the SQL
   refuses at run time a superuser or a role that owns another database.
   It never runs the migrations: those run as the owner (node-pg-migrate), never as a superuser.
-  The same two SQL files are executed by os-ui/core/adapters/postgres/install.it.ts.
+  The same two SQL files are executed by os-ui/core/testing/postgres/install.it.ts.
   Idempotent; safe on every upgrade. The pg-dump CronJob picks the new database up by itself.
 */}}
 {{- if and .Values.postgres.enabled .Values.postgres.governance.enabled }}

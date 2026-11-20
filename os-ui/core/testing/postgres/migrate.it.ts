@@ -14,7 +14,7 @@ import { after, before, describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import pg from 'pg';
 import { freshDatabase } from './it-support.ts';
-import { migrateGovernance, MIGRATIONS_SCHEMA, MIGRATIONS_TABLE } from './migrate.ts';
+import { migrateGovernance, MIGRATIONS_SCHEMA, MIGRATIONS_TABLE } from './unwrapped.ts';
 
 const EXPECTED_TABLES = [
   'approvals',

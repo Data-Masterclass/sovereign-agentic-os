@@ -828,7 +828,7 @@ and neither are model budgets (LiteLLM owns them; the OS reads its admin API).
   (`registerWorker`, `@core/kernel/process-role`); the web process only sends.
 - **Connection budget** against `max_connections` = 100: per process pg-boss `max` 3 and the
   governance pool 4, so 14 for web + worker, beside agent_runs' 20.
-- **Proof is `*.it.ts` against the real `postgres:17` digest** (CI job `test-postgres`). They fail,
+- **Proof is `core/testing/postgres/*.it.ts` against the real `postgres:17` digest** (CI job `test-postgres`). They fail,
   never skip, without `OS_PG_TEST_URL`.
 - **Nothing reads these tables yet.** Store moves are WP-09 (dual-write, then one read path behind
   a per-store flag, never dual-read).
