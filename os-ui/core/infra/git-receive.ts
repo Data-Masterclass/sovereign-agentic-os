@@ -47,6 +47,7 @@ import path from 'node:path';
 import { config } from '@core/kernel/config';
 import { acquireRepoLock, listTree, MAIN, readBlob, repoExists, repoLayout, repoPath, RepoLockTimeoutError, type TreeEntry } from '@core/infra/git-store';
 import { generatedReadmes, isGeneratedReadme } from '@core/infra/repo-readme';
+import { notifyCommitted } from '@core/infra/git-backup';
 import * as git from 'isomorphic-git';
 import { redact } from '@core/auth/access-tokens';
 
@@ -727,6 +728,8 @@ export async function completeReceive(
   const reposDir = deps.reposDir ?? config.reposDir;
   try {
     const gitdir = repoPath(domain, { reposDir });
+    // WP-56: the push has landed — queue the repo for a bundle before anything can fail below.
+    notifyCommitted(gitdir, { reposDir });
     let fromRepo: ChangedFile[];
     try {
       fromRepo = await diffCommits(gitdir, lease.oldSha, lease.sha, domain, { reposDir });

@@ -48,6 +48,12 @@ that night's Velero backup.
 - **Restore is only proven by drills** — see
   [runbooks/restore-drill.md](runbooks/restore-drill.md). Run one after the
   first Velero backup and after any storage change.
+- **Git repositories (WP-56, off by default)**: Velero's kopia copy of the
+  `os-repos` volume can catch a commit half-written. The consistent path is a
+  `git bundle` per repository after every commit, to an object-locked bucket,
+  plus an hourly hash-chained ref-heads record; a weekly drill restores git,
+  Postgres and OpenSearch, a monthly one restores Velero into a scratch
+  namespace. See [runbooks/git-backup-drills.md](runbooks/git-backup-drills.md).
 
 ## STILL UNPROTECTED (know the gaps)
 

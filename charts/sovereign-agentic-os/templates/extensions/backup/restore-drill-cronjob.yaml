@@ -1,0 +1,223 @@
+{{- /*
+  SPDX-License-Identifier: Apache-2.0
+  Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+
+  WP-56 — the weekly RESTORE DRILL (values `backup.drill`, OFF by default). One Job pod, the
+  checks as initContainers in sequence, the reporter as the main container:
+    git-drill   (backup-tools)  latest bundle chain -> temp repo -> git fsck --full -> refs == live
+                                (live = os-ui /api/git/backup-inventory, service bearer)
+    pg-fetch    (backup-tools)  newest pg-dump run from the dump bucket into an emptyDir
+    pg-drill    (postgres img)  restore into a SCRATCH Postgres inside this pod + sanity queries
+    os-drill    (curl img)      newest snapshot -> temporary index prefix -> _count vs live -> delete
+    report      (backup-tools)  every expected check must have a result; ConfigMap + bucket + log;
+                                exits 1 on any failure (the Job is Failed)
+  Each check ALWAYS exits 0 (`|| true`): its outcome is its result file, and a check that crashed
+  leaves none — which the reporter counts as a FAILURE. So no step can turn a crash into a pass.
+  Scripts: files/backup (ConfigMap backup-scripts), the same files tests/backup runs.
+*/}}
+{{- $b := .Values.backup }}
+{{- $d := $b.drill }}
+{{- if $d.enabled }}
+{{- $pg := .Values.postgres }}
+{{- $os := .Values.objectStorage }}
+{{- $checks := list }}
+{{- if $d.git.enabled }}{{ $checks = append $checks "git" }}{{ end }}
+{{- if and $d.postgres.enabled $b.pgDump.enabled $pg.enabled }}{{ $checks = append $checks "postgres" }}{{ end }}
+{{- if and $d.opensearch.enabled .Values.opensearch.enabled }}{{ $checks = append $checks "opensearch" }}{{ end }}
+{{- if not $checks }}{{ fail "backup.drill.enabled but no check can run (enable git, or postgres with backup.pgDump, or opensearch)" }}{{ end }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: restore-drill
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+automountServiceAccountToken: true
+---
+# The ConfigMap Monitoring reads. Created EMPTY: Helm's three-way merge leaves the data the
+# reporter patched in place on later upgrades.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $d.statusConfigMap }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    app.kubernetes.io/component: restore-drill
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: restore-drill
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+rules:
+  # ONE ConfigMap, patch only (the reporter's merge-patch). Nothing else.
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: [{{ $d.statusConfigMap | quote }}]
+    verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: restore-drill
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: restore-drill }
+subjects:
+  - { kind: ServiceAccount, name: restore-drill, namespace: {{ .Release.Namespace }} }
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: restore-drill
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "restore-drill") | nindent 4 }}
+spec:
+  schedule: {{ $d.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      # A drill is evidence: never retried into a pass.
+      backoffLimit: 0
+      ttlSecondsAfterFinished: 604800
+      template:
+        metadata:
+          labels:
+            {{- include "soa.selectorLabels" (dict "ctx" . "component" "restore-drill") | nindent 12 }}
+          annotations:
+            backup.velero.io/backup-volumes-excludes: work,tmp
+        spec:
+          serviceAccountName: restore-drill
+          restartPolicy: Never
+          securityContext:
+            {{- include "soa.podSecurityContext" . | nindent 12 }}
+            runAsUser: 999
+            runAsGroup: 999
+            fsGroup: 999
+          volumes:
+            - { name: work, emptyDir: { sizeLimit: 8Gi } }
+            - { name: tmp, emptyDir: { sizeLimit: 4Gi } }
+            - name: scripts
+              configMap: { name: backup-scripts, defaultMode: 0555 }
+          initContainers:
+            {{- if has "git" $checks }}
+            - name: git-drill
+              image: {{ include "soa.backupToolsImage" . | quote }}
+              imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+              securityContext:
+                {{- include "soa.containerSecurityContext" . | nindent 16 }}
+              command: ["/bin/sh", "-c", "sh /opt/soa/backup/drill-git.sh || echo 'git-drill crashed (no result => the drill fails)'"]
+              env:
+                {{- include "soa.gitBundleS3Env" . | nindent 16 }}
+                - { name: RESULTS_DIR, value: /work/results }
+                - { name: BACKUP_WORK, value: /tmp }
+                - { name: DRILL_LAG_RETRIES, value: {{ $d.lagRetries | quote }} }
+                - { name: DRILL_LAG_SLEEP, value: {{ $d.lagSleepSeconds | quote }} }
+                - { name: LIVE_INVENTORY_URL, value: "http://os-ui:3000/api/git/backup-inventory" }
+                - name: LIVE_INVENTORY_TOKEN
+                  valueFrom: { secretKeyRef: { name: agent-runtime-token, key: token } }
+              resources:
+                {{- toYaml $d.resources | nindent 16 }}
+              volumeMounts:
+                - { name: work, mountPath: /work }
+                - { name: tmp, mountPath: /tmp }
+                - { name: scripts, mountPath: /opt/soa/backup, readOnly: true }
+            {{- end }}
+            {{- if has "postgres" $checks }}
+            - name: pg-fetch
+              image: {{ include "soa.backupToolsImage" . | quote }}
+              imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+              securityContext:
+                {{- include "soa.containerSecurityContext" . | nindent 16 }}
+              command: ["/bin/sh", "-c", "mkdir -p /work/results && sh /opt/soa/backup/drill-pg-fetch.sh || echo 'pg-fetch crashed (no result => the drill fails)'"]
+              env:
+                # The dump bucket is the chart's object storage (same Secret as the pg-dump CronJob).
+                - { name: S3_ENDPOINT, value: {{ include "soa.s3Endpoint" . | quote }} }
+                - { name: S3_BUCKET, value: {{ $b.pgDump.bucket | quote }} }
+                - { name: PG_DUMP_PREFIX, value: {{ $b.pgDump.prefix | quote }} }
+                - { name: AWS_DEFAULT_REGION, value: {{ $os.region | quote }} }
+                - name: AWS_ACCESS_KEY_ID
+                  valueFrom: { secretKeyRef: { name: {{ $os.secretName }}, key: AWS_ACCESS_KEY_ID } }
+                - name: AWS_SECRET_ACCESS_KEY
+                  valueFrom: { secretKeyRef: { name: {{ $os.secretName }}, key: AWS_SECRET_ACCESS_KEY } }
+                - { name: DRILL_DATA, value: /work/data }
+                - { name: RESULTS_DIR, value: /work/results }
+                - { name: HOME, value: /tmp }
+                {{- if .Values.egressProxy.enabled }}
+                - { name: HTTPS_PROXY, value: "http://egress-proxy:3128" }
+                - { name: NO_PROXY, value: "localhost,127.0.0.1,minio,.svc,.cluster.local" }
+                {{- end }}
+              resources:
+                {{- toYaml $d.resources | nindent 16 }}
+              volumeMounts:
+                - { name: work, mountPath: /work }
+                - { name: tmp, mountPath: /tmp }
+                - { name: scripts, mountPath: /opt/soa/backup, readOnly: true }
+            - name: pg-drill
+              image: "{{ $pg.plainImage.repository }}:{{ $pg.plainImage.tag }}{{ if $pg.plainImage.digest }}@{{ $pg.plainImage.digest }}{{ end }}"
+              imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+              securityContext:
+                {{- include "soa.containerSecurityContext" . | nindent 16 }}
+              command: ["/bin/bash", "-c", "bash /opt/soa/backup/drill-pg.sh || echo 'pg-drill crashed (no result => the drill fails)'"]
+              env:
+                - { name: DRILL_DATA, value: /work/data }
+                - { name: RESULTS_DIR, value: /work/results }
+              resources:
+                {{- toYaml $d.resources | nindent 16 }}
+              volumeMounts:
+                - { name: work, mountPath: /work }
+                - { name: tmp, mountPath: /tmp }
+                - { name: tmp, mountPath: /var/run/postgresql, subPath: run }
+                - { name: scripts, mountPath: /opt/soa/backup, readOnly: true }
+            {{- end }}
+            {{- if has "opensearch" $checks }}
+            - name: os-drill
+              image: "{{ .Values.opensearchSnapshots.registerJob.image.repository }}:{{ .Values.opensearchSnapshots.registerJob.image.tag }}"
+              imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+              securityContext:
+                {{- include "soa.containerSecurityContext" . | nindent 16 }}
+              command: ["/bin/sh", "-c", "mkdir -p /work/results && sh /opt/soa/backup/drill-opensearch.sh || echo 'os-drill crashed (no result => the drill fails)'"]
+              env:
+                {{- include "soa.opensearchClientEnv" . | nindent 16 }}
+                - { name: OS_LIB, value: /opt/soa/backup/os-curl.sh }
+                - { name: OS_STATUS_FILE, value: /tmp/os-curl.status }
+                - { name: OS_DRILL_REPO, value: {{ $d.opensearch.repository | quote }} }
+                - { name: OS_DRILL_INDICES, value: {{ $d.opensearch.indices | quote }} }
+                - { name: OS_DRILL_MAX_DRIFT_PCT, value: {{ $d.opensearch.maxDriftPct | quote }} }
+                - { name: RESULTS_DIR, value: /work/results }
+              resources:
+                {{- toYaml $d.resources | nindent 16 }}
+              volumeMounts:
+                - { name: work, mountPath: /work }
+                - { name: tmp, mountPath: /tmp }
+                - { name: scripts, mountPath: /opt/soa/backup, readOnly: true }
+            {{- end }}
+          containers:
+            - name: report
+              image: {{ include "soa.backupToolsImage" . | quote }}
+              imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+              securityContext:
+                {{- include "soa.containerSecurityContext" . | nindent 16 }}
+              command: ["/bin/sh", "/opt/soa/backup/drill-report.sh"]
+              env:
+                {{- include "soa.gitBundleS3Env" . | nindent 16 }}
+                - { name: RESULTS_DIR, value: /work/results }
+                - { name: BACKUP_WORK, value: /tmp }
+                - { name: DRILL_KIND, value: weekly }
+                - { name: DRILL_CHECKS, value: {{ join " " $checks | quote }} }
+                - { name: STATUS_CONFIGMAP, value: {{ $d.statusConfigMap | quote }} }
+              resources:
+                {{- toYaml $d.resources | nindent 16 }}
+              volumeMounts:
+                - { name: work, mountPath: /work }
+                - { name: tmp, mountPath: /tmp }
+                - { name: scripts, mountPath: /opt/soa/backup, readOnly: true }
+{{- end }}

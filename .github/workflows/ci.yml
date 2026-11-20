@@ -270,6 +270,9 @@ jobs:
           bash tests/opensearch/up.sh
       - name: os-snapshot + os-cleanup (real OpenSearch)
         run: node --test --test-concurrency=1 tests/opensearch/os-snapshot.int.test.mjs tests/opensearch/os-cleanup.int.test.mjs tests/opensearch/os-audit-mapping.int.test.mjs
+      # WP-56: the restore drill's OpenSearch part on the same stack (snapshot -> temp prefix -> counts).
+      - name: os-drill (real OpenSearch, WP-56)
+        run: node --test --test-concurrency=1 tests/backup/os-drill.int.test.mjs
       - name: Logs (on failure)
         if: failure()
         run: |
@@ -335,6 +338,31 @@ jobs:
       - name: Stop
         if: always()
         run: bash tests/lakehouse/down.sh || true
+
+  # WP-56: git bundles and the git + Postgres restore drills, with the chart's own scripts in the
+  # backup-tools image, against real git, a real S3 store (SeaweedFS) and the chart's Postgres 17.
+  # Negative twins: corrupted / missing bundles, a stale backup, a corrupted dump never pass.
+  test-backup:
+    name: test-backup
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Setup Node.js
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: 22
+      - name: Start the stack (SeaweedFS, Postgres 17, backup-tools image)
+        run: |
+          pip install "pyyaml>=6,<7"
+          bash tests/backup/up.sh
+      - name: git bundles + git and Postgres restore drills
+        run: node --test --test-concurrency=1 tests/backup/git-bundle-drill.int.test.mjs tests/backup/pg-drill.int.test.mjs
+      - name: Logs (on failure)
+        if: failure()
+        run: |
+          docker logs --tail 100 soa-bk-s3 || true
+          docker logs --tail 50 soa-bk-pg || true
 
   # WP-31: one Langfuse writer, proven on Langfuse's own API. Langfuse 3.194.1 (the live server)
   # from its documented self-host compose, plus the production LiteLLM image and callback
@@ -508,7 +536,7 @@ jobs:
     name: build
     runs-on: ubuntu-latest
     if: ${{ always() }}
-    needs: [test-ui, test-langgraph-pg, test-opensearch, test-lakehouse, tracing-e2e, validate-generated, test-python, dagster-image, git-http-image, test-opa, test-opa-bundle, test-postgres, helm-lint, secret-scan, artifacts-eject, dashboards-eject]
+    needs: [test-ui, test-langgraph-pg, test-opensearch, test-lakehouse, tracing-e2e, validate-generated, test-python, dagster-image, git-http-image, test-opa, test-opa-bundle, test-postgres, helm-lint, secret-scan, artifacts-eject, dashboards-eject, test-backup]
     steps:
       - name: Every needed job succeeded (failed, cancelled or skipped fails the build)
         env:
