@@ -5,6 +5,8 @@ import 'server-only';
 import { config } from '@core/kernel/config';
 import { executeRun, queryRun } from '@core/infra/governed';
 import { serviceBearerHeader } from '@core/infra/service-bearer';
+import { publishOpa, publishOpaAll } from '@core/policy/opa-publish';
+import { governanceWrites } from '@tabs/data/lib/policy/opa-state-writes';
 import { listUsers as userRoster } from '@tabs/admin/lib/users';
 import {
   type DataLiveDeps,
@@ -191,14 +193,12 @@ export function realDbt(): DbtClient {
  * Trino access-denied, which the adapter reports honestly.
  */
 async function pushPromoteRelease(schema: string, reader: string, fqn: string): Promise<void> {
-  await withTimeout(`${config.opaUrl}/v1/data/governance/releases/${schema}`, {
-    method: 'PUT',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ reader, fqn, at: new Date().toISOString() }),
-  });
+  const r = await publishOpa({ kind: 'data', path: `governance/releases/${schema}`, value: { reader, fqn, at: new Date().toISOString() } });
+  if (!r.ok) console.error(`[os-ui] promote release for ${schema} not written to OPA — ${r.detail}`);
 }
 async function withdrawPromoteRelease(schema: string): Promise<void> {
-  await withTimeout(`${config.opaUrl}/v1/data/governance/releases/${schema}`, { method: 'DELETE' });
+  const r = await publishOpa({ kind: 'delete', path: `governance/releases/${schema}` });
+  if (!r.ok) console.error(`[os-ui] promote release for ${schema} not withdrawn from OPA — ${r.detail}`);
 }
 
 export function realDbtTrino(): DbtTrinoClient {
@@ -234,28 +234,13 @@ export function realTrino(): TrinoClient {
 // ------------------------------------------------------------------- policy -------
 
 export function realPolicy(): PolicyClient {
-  // Push the compiled `data.governance` bundle to OPA (the EXISTING package trino
-  // rego reads it); an unreachable OPA → throw → ✗.
+  // Push the compiled `data.governance` bundle to OPA (the EXISTING package trino rego reads it)
+  // through the one OPA publisher; an unreachable OPA → throw → ✗. The same writes restore the
+  // state after an OPA restart (`tabs/data/lib/policy/opa-state.ts`).
   return {
     async push(opa) {
-      // `tables` is fully recomputed each compile, so a wholesale replace is correct.
-      // `principals` is an UPSERT-per-key merge, NOT a wholesale replace: a full PUT
-      // here used to clobber the statically-seeded domain self-principals (which are
-      // not in the user roster), collapsing every domain-session row filter to []
-      // → ZERO rows (the empty-scorecard bug). Writing each principal to its own path
-      // only ever adds/updates — it can never delete a principal this push didn't compute.
-      const put = async (path: string, body: unknown) => {
-        const res = await withTimeout(`${config.opaUrl}/v1/data/${path}`, {
-          method: 'PUT',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify(body),
-        });
-        if (!res || !res.ok) throw new Error(`OPA governance push failed at ${path} (${res?.status ?? 'unreachable'})`);
-      };
-      await put('governance/tables', opa.tables);
-      for (const [id, p] of Object.entries(opa.principals)) {
-        await put(`governance/principals/${encodeURIComponent(id)}`, p);
-      }
+      const r = await publishOpaAll(governanceWrites(opa));
+      if (!r.ok) throw new Error(`OPA governance push failed — ${r.detail}`);
     },
   };
 }

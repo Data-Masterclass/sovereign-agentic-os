@@ -3,7 +3,7 @@
  */
 import type { Role } from '@core/kernel/session';
 import type { Approval } from '@core/policy/approvals';
-import { config } from '@core/kernel/config';
+import { publishOpa } from '@core/policy/opa-publish';
 import { resolveRoleRights, ensureRoleConfigLoaded } from '@core/policy/role-config';
 
 /**
@@ -266,22 +266,10 @@ export async function writeGrantsToOpa(
   principal: string,
   tools: string[],
 ): Promise<{ live: boolean; principal: string; tools: string[] }> {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 2500);
-  try {
-    const res = await fetch(`${config.opaUrl}/v1/data/grants/${encodeURIComponent(principal)}`, {
-      method: 'PUT',
-      signal: ctrl.signal,
-      cache: 'no-store',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(tools),
-    });
-    return { live: Boolean(res && res.ok), principal, tools };
-  } catch {
-    return { live: false, principal, tools };
-  } finally {
-    clearTimeout(timer);
-  }
+  // Through the one OPA publisher; a failure is reported as `live:false` and logged, never hidden.
+  const r = await publishOpa({ kind: 'data', path: `grants/${encodeURIComponent(principal)}`, value: tools }, 2500);
+  if (!r.ok) console.error(`[os-ui] role grants for ${principal} not written to OPA — ${r.detail}`);
+  return { live: r.ok, principal, tools };
 }
 
 /** Compile + push a user's whole role to OPA. Returns the compiled grant. */

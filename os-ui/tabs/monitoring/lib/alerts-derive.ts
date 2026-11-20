@@ -9,6 +9,8 @@
  *     governed-run ring and the governance cost store.
  *   - Failed/denied runs (capped at 5) and caps at ≥90% (warning) or ≥100% (critical);
  *     returns `[]` when neither source has a signal.
+ *   - "Policy state not restored" (critical, cluster-wide → admin-only) whenever the OPA state
+ *     reconciler (`core/policy/opa-reconcile.ts`) reports its last restore did not complete.
  *   - Output is scope-filtered with `filterScope` from `scope-core.ts`.
  */
 import type { Alert, Scope } from '@tabs/monitoring/lib/types';
@@ -57,12 +59,33 @@ function alertDomain(principal: string): string {
  * Derive operational alerts from real in-process signals. Scope-filtered so
  * users only see alerts for their own principal/domain (same spine as every lens).
  */
+/** The OPA state reconciler's last outcome (subset of `OpaReconcileStatus`). */
+export type AlertPolicyStateInput = { state: 'never-run' | 'restored' | 'not-restored'; detail: string; at?: string; lastRestoredAt?: string };
+
 export function deriveAlerts(
   traces: AlertTraceInput[],
   caps: AlertCapInput[],
   scope: Scope,
+  policyState?: AlertPolicyStateInput,
 ): Alert[] {
   const alerts: Alert[] = [];
+
+  // 0) Runtime OPA state (grants, domain principals, governance) not restored after a restart.
+  if (policyState?.state === 'not-restored') {
+    alerts.push({
+      id: 'al-opa-state-not-restored',
+      severity: 'critical',
+      title: 'Policy state not restored',
+      detail:
+        `OPA is missing runtime policy state, so agents in some domains may be refused. ${policyState.detail}` +
+        (policyState.at ? ` (checked ${policyState.at}` + (policyState.lastRestoredAt ? `, last restored ${policyState.lastRestoredAt})` : ', never restored)') : ''),
+      domain: 'platform',
+      owner: 'platform',
+      cluster: true,
+      disposition: 'notified',
+      source: 'live',
+    });
+  }
 
   // 1) Failed / denied agent runs (capped at 5 to avoid alert storms).
   const failed = traces.filter(isFailedTrace).slice(0, 5);

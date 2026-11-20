@@ -18,11 +18,11 @@
  *  - the egress allowlist compiles to an `egress_allow` resource list;
  *  - model access + caps ride along in the bundle metadata.
  *
- * `compile()` is pure (unit-testable). `publish()` best-effort PUTs the grant
- * map to OPA and is honest when OPA is unreachable (offline kind) — the compiled
- * view still renders so the teaching flow works.
+ * `compile()` is pure (unit-testable). `publish()` writes the grant map to OPA
+ * through the one grants publisher and is honest when OPA is unreachable — the
+ * compiled view still renders.
  */
-import { config } from '@core/kernel/config';
+import { publishGrantsDocument } from '@core/policy/opa-reconcile';
 
 export type Role = 'creator' | 'builder' | 'domain_admin' | 'admin';
 
@@ -122,29 +122,16 @@ export function compile(input: CompileInput): CompiledPolicy {
 export type PublishResult = { status: 'published' | 'opa-unreachable'; detail: string };
 
 /**
- * Best-effort publish of the compiled grant map to OPA's data document
- * (`PUT /v1/data/grants`). OPA hot-reloads it; Governance's policy view then
- * reflects the new rights. Offline (kind, OPA off) we return `opa-unreachable`
- * so the UI is honest — the compiled view still renders from `compile()`.
+ * Publish the compiled grant map as OPA's `grants` document (`PUT /v1/data/grants`) through the
+ * ONE grants publisher (`core/policy/opa-reconcile.ts publishGrantsDocument`), which unions in the
+ * runtime grants other paths own (agent systems, approved access requests) so this whole-document
+ * replace never drops them. The same function restores the document after an OPA restart.
+ * A failure is returned as `opa-unreachable` with the real reason — the compiled view still renders.
  */
 export async function publish(compiled: CompiledPolicy): Promise<PublishResult> {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 2500);
-  try {
-    const res = await fetch(`${config.opaUrl}/v1/data/grants`, {
-      method: 'PUT',
-      headers: { 'content-type': 'application/json' },
-      cache: 'no-store',
-      signal: ctrl.signal,
-      body: JSON.stringify(compiled.grants),
-    });
-    if (!res.ok) return { status: 'opa-unreachable', detail: `OPA ${res.status}` };
-    return { status: 'published', detail: `bundle ${compiled.bundle.version}` };
-  } catch {
-    return { status: 'opa-unreachable', detail: 'OPA not reachable (offline kind) — compiled offline' };
-  } finally {
-    clearTimeout(timer);
-  }
+  const r = await publishGrantsDocument(compiled.grants);
+  if (!r.ok) return { status: 'opa-unreachable', detail: r.detail };
+  return { status: 'published', detail: `bundle ${compiled.bundle.version} (${r.principals} principals)` };
 }
 
 export async function compileAndPublish(input: CompileInput): Promise<{ compiled: CompiledPolicy; publish: PublishResult }> {

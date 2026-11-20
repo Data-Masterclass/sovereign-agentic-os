@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
-import { config } from '@core/kernel/config';
+import { publishOpa } from '@core/policy/opa-publish';
 import { compileExposures, type ExposureGovernanceInput } from '@tabs/data/lib/policy/compiler';
 import { allActiveExposures } from '@tabs/connections/lib/exposures';
 import { getConnectionById } from '@tabs/connections/lib/store';
@@ -19,32 +19,12 @@ import { getConnectionById } from '@tabs/connections/lib/store';
  * recompile. The FULL active set is recompiled every time (not a delta) so the pushed
  * state always reflects the registry.
  *
- * DURABLE SOURCE OF TRUTH = the registry, not OPA. The dataset build's `realPolicy` does a
- * WHOLESALE `PUT governance/tables` with only ITS compiled tables, and OPA state is also
- * seeded from `values.yaml opa.governance.tables` — so OPA's `tables` doc can be
- * transiently overwritten by a dataset build. That is fine and self-healing: the exposure
- * REGISTRY (`os-exposures`, durable across a pod roll like the grants) is authoritative,
- * and this recompile re-pushes the full active set — fire it on every exposure change (as
- * the routes do) and re-run it if OPA is ever reconciled from the registry. Never silently
- * fabricates access: a missing key means the fail-closed floor denies, not allows.
+ * DURABLE SOURCE OF TRUTH = the registry, not OPA. OPA holds this data in memory only, so the
+ * OPA state reconciler (`core/policy/opa-reconcile.ts`, source registered in `instrumentation.ts`)
+ * re-runs this recompile at boot, every five minutes and after an OPA restart. All writes go
+ * through the one OPA publisher (`core/policy/opa-publish.ts`). Never silently fabricates access:
+ * a missing key means the fail-closed floor denies, not allows.
  */
-
-async function opaFetch(path: string, init: RequestInit, ms = 5000): Promise<Response | null> {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), ms);
-  try {
-    return await fetch(`${config.opaUrl}/v1/data/${path}`, {
-      ...init,
-      signal: ctrl.signal,
-      cache: 'no-store',
-      headers: { 'content-type': 'application/json', ...(init.headers ?? {}) },
-    });
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timer);
-  }
-}
 
 /** OPA stores table keys with `.` as a path separator, so encode the FQN as one segment. */
 function tableKeyPath(fqn: string): string {
@@ -109,16 +89,14 @@ export async function recompileExposures(opts: { withdraw?: string[] } = {}): Pr
   // Withdraw first: any explicitly-dropped FQN that is no longer active.
   for (const fqn of opts.withdraw ?? []) {
     if (active.has(fqn)) continue; // still exposed by another set — keep it
-    const res = await opaFetch(tableKeyPath(fqn), { method: 'DELETE' });
-    if (!res) return { ok: false, pushed: 0, detail: `OPA unreachable while withdrawing ${fqn}` };
+    const res = await publishOpa({ kind: 'delete', path: tableKeyPath(fqn) });
+    if (!res.ok) return { ok: false, pushed: 0, detail: `OPA withdraw of ${fqn} failed — ${res.detail}` };
   }
 
   let pushed = 0;
   for (const [fqn, meta] of Object.entries(tables)) {
-    const res = await opaFetch(tableKeyPath(fqn), { method: 'PUT', body: JSON.stringify(meta) });
-    if (!res || !res.ok) {
-      return { ok: false, pushed, detail: `OPA governance push failed at ${fqn} (${res?.status ?? 'unreachable'})` };
-    }
+    const res = await publishOpa({ kind: 'data', path: tableKeyPath(fqn), value: meta });
+    if (!res.ok) return { ok: false, pushed, detail: `OPA governance push failed at ${fqn} — ${res.detail}` };
     pushed++;
   }
   return { ok: true, pushed, detail: `Pushed ${pushed} exposed table(s) to OPA governance.` };

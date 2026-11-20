@@ -67,7 +67,12 @@ export type OpaBundle = {
 
 export type Roster = Record<string, { domains: string[]; clearances?: string[] }>;
 
-export function compileOpa(datasets: Dataset[], roster: Roster): OpaBundle {
+/**
+ * `extraDomains`: further domains that must map to themselves even when they govern no table yet
+ * (every registered domain and every roster member's domain) — the full restore after an OPA
+ * restart passes them so no domain session resolves to zero domains.
+ */
+export function compileOpa(datasets: Dataset[], roster: Roster, extraDomains: string[] = []): OpaBundle {
   const tables: OpaBundle['tables'] = {};
   for (const d of datasets) {
     const g = governanceFor(d);
@@ -89,6 +94,9 @@ export function compileOpa(datasets: Dataset[], roster: Roster): OpaBundle {
     for (const dom of [g.domain, ...(g.shared_with ?? [])]) {
       if (dom && !principals[dom]) principals[dom] = { domains: [dom], clearances: [] };
     }
+  }
+  for (const dom of extraDomains) {
+    if (dom && !principals[dom]) principals[dom] = { domains: [dom], clearances: [] };
   }
   return { tables, principals };
 }

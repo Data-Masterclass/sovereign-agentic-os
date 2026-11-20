@@ -108,6 +108,14 @@ export function listEgress(_domains?: string[]): { endpoint: string; domain: str
   return listAllowlist().map((host) => ({ endpoint: host, domain: 'tenant', approvedBy: 'admin' }));
 }
 
+/** Approved access grants still in force (not revoked) — composed into OPA's `grants` document. */
+export function activeAccessGrants(): { principal: string; tool: string }[] {
+  const pv = pvState();
+  return pv.accessGrants
+    .filter((g) => !pv.overrides.has(revokeKey(g.principal, g.tool)))
+    .map((g) => ({ principal: g.principal, tool: g.tool }));
+}
+
 /** Admin override: revoke a grant from the plane. Returns whether a row matched. */
 export function overrideRevoke(principal: string, tool: string): boolean {
   const pv = pvState();

@@ -815,6 +815,27 @@ export function listAllSystemsInternal(): { id: string; name: string; grants: Sy
   return out;
 }
 
+/**
+ * UNSCOPED: every live agent system whose last Build wrote its OPA grants (the `opa` row
+ * applied), with its parsed definition — the OPA state restore re-grants exactly these after an
+ * OPA restart. Server-side only; never expose through a user-facing route. Unparseable → skipped.
+ */
+export function listOpaGrantedSystemsInternal(): { id: string; system: System }[] {
+  ensureSeeded();
+  const out: { id: string; system: System }[] = [];
+  for (const rec of state().store.values()) {
+    if (rec.archived) continue;
+    if (!rec.lastBuild?.rows.some((r) => r.tool === 'opa' && r.applied)) continue;
+    try {
+      out.push({ id: rec.id, system: parseSystem(rec.yaml) });
+    } catch (err) {
+      // unparseable system — skipped (never fabricate a grant), and said so
+      console.error(`[os-ui] agents: system ${rec.id} not re-granted in OPA — its definition does not parse: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  return out;
+}
+
 /** One agent-system row for Agent Monitoring: identity + last-run health + activity. */
 export type AgentHealthRow = {
   id: string;

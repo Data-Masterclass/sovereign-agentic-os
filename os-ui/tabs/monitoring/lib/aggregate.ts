@@ -17,6 +17,7 @@ import 'server-only';
 import type { CurrentUser } from '@core/kernel/auth';
 import { recentTraces } from '@core/infra/agent-governed';
 import { listCaps, getSpend, reconcileSpendFromLiteLLM } from '@core/policy/index';
+import { opaReconcileStatus } from '@core/policy/opa-reconcile';
 import { collectRuns } from '@tabs/monitoring/lib/adapters/run-trace';
 import type { RunListFilter } from '@tabs/monitoring/lib/adapters/run-store-runs';
 import { collectPipelines } from '@tabs/monitoring/lib/adapters/pipeline-health';
@@ -87,5 +88,5 @@ function scopedAlerts(scope: Scope) {
     spent: getSpend(c.scope, c.subject, c.modelClass),
   }));
 
-  return deriveAlerts(traces, caps, scope);
+  return deriveAlerts(traces, caps, scope, opaReconcileStatus());
 }
