@@ -25,6 +25,7 @@ dagster      images/extensions/dagster/Dockerfile images/extensions
 dbt          -                                    images/extensions/dbt
 dataRunner   -                                    images/extensions/data-runner
 queryTool    -                                    images/extensions/query-tool
+docling      -                                    images/extensions/docling
 '
 image_ref() { # key → repository:tag from values.yaml (dagster lives under dagster.dagsterWebserver.image)
   python3 - "$1" <<'PY'
