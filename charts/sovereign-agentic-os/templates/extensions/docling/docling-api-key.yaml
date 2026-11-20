@@ -1,0 +1,35 @@
+{{- if and .Values.docling.enabled (not .Values.docling.apiKey.existingSecret) }}
+{{- /*
+  docling-serve API key (DOCLING_SERVE_API_KEY). docling-serve checks it on every API route and
+  answers 401 without a matching `X-Api-Key` header (docling_serve/auth.py). os-ui and
+  os-ui-worker read the same Secret as DOCLING_API_KEY (_os-ui-env.tpl).
+
+  Resolution order (mirrors os-ui-session; no secret is committed to git):
+    1. `docling.apiKey.existingSecret` — an operator- or ExternalSecret-managed Secret with key
+       `apiKey`; this template then renders nothing, else
+    2. an explicit `docling.apiKey.value`, else
+    3. the value already stored in this Secret (kept across `helm upgrade` via `lookup`), else
+    4. a fresh 48-char random value on first install.
+
+  GITOPS CAVEAT: `lookup` is empty under Argo CD / Flux / `helm template`, so those pipelines set
+  `docling.apiKey.existingSecret` (an ExternalSecret is ideal) or `docling.apiKey.value`.
+*/}}
+{{- $name := "docling-api-key" }}
+{{- $existing := (lookup "v1" "Secret" .Release.Namespace $name) }}
+{{- $current := "" }}
+{{- if $existing }}{{ $current = (index $existing.data "apiKey" | b64dec) }}{{- end }}
+{{- $secret := .Values.docling.apiKey.value | default $current | default (randAlphaNum 48) }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "docling") | nindent 4 }}
+  annotations:
+    "helm.sh/resource-policy": keep
+type: Opaque
+stringData:
+  apiKey: {{ $secret | quote }}
+{{- end }}

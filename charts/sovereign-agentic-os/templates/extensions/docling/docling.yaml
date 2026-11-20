@@ -4,6 +4,13 @@
   documents (PDF/DOCX/HTML/…) into clean text/markdown for the knowledge index
   (architecture.md: "upload docs (parsed by Docling) -> embedded into OpenSearch").
   Runs as the image's non-root uid 1001; rootfs stays writable for the model cache.
+
+  The image is OUR derived image (images/extensions/docling): upstream docling-serve-cpu with the
+  Apache-2.0 TableFormer v2 weights baked in and the TableFormer v1 weights removed. Settings are
+  docling-serve's own DOCLING_SERVE_* variables (docs/configuration.md). Probes: `/ready` answers
+  503 until the models are loaded; `/livez` is the process check. Ingress is limited to os-ui and
+  os-ui-worker (templates/base/network/docling-ingress-policy.yaml), and every API call needs the
+  key from the `docling-api-key` Secret (docling-api-key.yaml).
 */}}
 {{- $d := .Values.docling }}
 apiVersion: apps/v1
@@ -32,21 +39,39 @@ spec:
         fsGroup: 1001
       containers:
         - name: docling
-          image: "{{ $d.image.repository }}:{{ $d.image.tag }}@{{ $d.image.digest }}"
+          image: "{{ $d.image.repository }}:{{ $d.image.tag }}{{ if $d.image.digest }}@{{ $d.image.digest }}{{ end }}"
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
           securityContext:
             {{- include "soa.containerSecurityContext" . | nindent 12 }}
           ports:
             - { name: http, containerPort: 5001 }
+          env:
+            - name: DOCLING_SERVE_MAX_FILE_SIZE
+              value: {{ $d.maxFileSize | int64 | quote }}
+            - name: DOCLING_SERVE_MAX_NUM_PAGES
+              value: {{ $d.maxNumPages | int64 | quote }}
+            - name: DOCLING_SERVE_MAX_DOCUMENT_TIMEOUT
+              value: {{ $d.maxDocumentTimeout | int64 | quote }}
+            - name: DOCLING_SERVE_RESULT_REMOVAL_DELAY
+              value: {{ $d.resultRemovalDelay | int64 | quote }}
+            - name: DOCLING_SERVE_ENG_LOC_NUM_WORKERS
+              value: {{ $d.workers | int64 | quote }}
+            - name: DOCLING_SERVE_SHOW_VERSION_INFO
+              value: {{ $d.showVersionInfo | quote }}
+            - name: DOCLING_SERVE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "soa.doclingApiKeySecret" . }}
+                  key: apiKey
           startupProbe:
-            httpGet: { path: /health, port: http }
+            httpGet: { path: /ready, port: http }
             periodSeconds: 5
-            failureThreshold: 30
+            failureThreshold: 60
           readinessProbe:
-            httpGet: { path: /health, port: http }
+            httpGet: { path: /ready, port: http }
             periodSeconds: 10
           livenessProbe:
-            httpGet: { path: /health, port: http }
+            httpGet: { path: /livez, port: http }
             periodSeconds: 20
           resources:
             {{- toYaml $d.resources | nindent 12 }}

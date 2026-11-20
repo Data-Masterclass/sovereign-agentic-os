@@ -17,13 +17,15 @@ import assert from 'node:assert/strict';
 import {
   convertWithDocling,
   doclingCanParse,
+  DOCLING_API_KEY_HEADER,
   DOCLING_FILE_FIELD,
+  DOCLING_TABLE_STRUCTURE_PRESET,
   DOCLING_RESULT_PATH,
   DOCLING_STATUS_PATH,
   DOCLING_SUBMIT_PATH,
 } from '@tabs/files/lib/ingest/docling-client';
 
-type Call = { url: string; method: string; form: FormData | null };
+type Call = { url: string; method: string; form: FormData | null; headers: Record<string, string> };
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -35,7 +37,7 @@ function fakeDocling(script: { statuses?: string[]; result?: unknown; resultStat
   const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method ?? 'GET';
-    calls.push({ url, method, form: init?.body instanceof FormData ? init.body : null });
+    calls.push({ url, method, form: init?.body instanceof FormData ? init.body : null, headers: { ...((init?.headers ?? {}) as Record<string, string>) } });
     if (url.endsWith(DOCLING_SUBMIT_PATH)) {
       return script.submit ? script.submit() : json({ task_id: 't-1', task_type: 'convert', task_status: 'pending', task_position: 1 });
     }
@@ -153,4 +155,37 @@ test('doclingCanParse: binary documents only — text-like files, images and leg
   for (const n of ['a.txt', 'a.md', 'a.csv', 'a.json', 'p.png', 'v.mp4', 'old.doc', 'old.xls', 'z.zip']) assert.equal(doclingCanParse(n, 'application/pdf'), false, n);
   assert.equal(doclingCanParse('scan', 'application/pdf'), true, 'no extension ⇒ the stored content-type decides');
   assert.equal(doclingCanParse('blob', 'application/octet-stream'), false);
+});
+
+test('the API key goes out as X-Api-Key on submit, every poll and the result', async () => {
+  const { fetchImpl, calls } = fakeDocling({ statuses: ['started', 'success'] });
+  const out = await convertWithDocling(PDF, opts(fetchImpl, { apiKey: 'k-123' }));
+  assert.equal(out.ok, true);
+  assert.ok(calls.length >= 3);
+  for (const c of calls) assert.equal(c.headers[DOCLING_API_KEY_HEADER], 'k-123', c.url);
+});
+
+test('no API key configured → no X-Api-Key header at all', async () => {
+  const { fetchImpl, calls } = fakeDocling({});
+  await convertWithDocling(PDF, opts(fetchImpl));
+  for (const c of calls) assert.equal(DOCLING_API_KEY_HEADER in c.headers, false, c.url);
+});
+
+test('the submit asks for TableFormer v2 (the Apache-2.0 table model baked into our image)', async () => {
+  const { fetchImpl, calls } = fakeDocling({});
+  await convertWithDocling(PDF, opts(fetchImpl));
+  const form = calls.find((c) => c.url.endsWith(DOCLING_SUBMIT_PATH))!.form!;
+  assert.equal(DOCLING_TABLE_STRUCTURE_PRESET, 'tableformer_v2');
+  assert.equal(form.get('table_structure_preset'), 'tableformer_v2');
+  assert.equal(form.get('do_table_structure'), 'true');
+});
+
+test('a 401 from a key-protected server is a typed parser-unreachable naming HTTP 401', async () => {
+  const { fetchImpl } = fakeDocling({ submit: () => json({ detail: null }, 401) });
+  const out = await convertWithDocling(PDF, opts(fetchImpl));
+  assert.equal(out.ok, false);
+  if (!out.ok) {
+    assert.equal(out.code, 'parser-unreachable');
+    assert.match(out.reason, /HTTP 401/);
+  }
 });

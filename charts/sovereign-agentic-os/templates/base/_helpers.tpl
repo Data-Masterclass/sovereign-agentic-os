@@ -281,3 +281,12 @@ azure.user-assigned-managed-identity-client-id={{ $cc.clientId }}
 {{- fail (printf "trino.cloudCatalog.provider must be one of biglake|glue|s3tables|adls, got %q" $p) -}}
 {{- end -}}
 {{- end -}}
+
+{{/*
+Name of the Secret holding docling-serve's API key (key `apiKey`): the operator's
+`docling.apiKey.existingSecret` (e.g. an ExternalSecret target) or the chart's `docling-api-key`.
+Used by the docling Deployment and by os-ui / os-ui-worker, so the key checked is the key sent.
+*/}}
+{{- define "soa.doclingApiKeySecret" -}}
+{{- .Values.docling.apiKey.existingSecret | default "docling-api-key" -}}
+{{- end -}}
