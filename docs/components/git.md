@@ -474,8 +474,23 @@ os/                  OS layer only; os/layout.yml marks a v2 repo and names the 
   `<d>.git` → `domain-<d>.git` (symlink alias left behind), moves the personal agent lanes to user
   repos (history imported), then ONE commit with `git mv` semantics (same blobs, new paths) and
   `OS-Reason: layout-migration`. Idempotent (a repo with `os/layout.yml` is skipped).
-  **Order:** deploy the Dagster image that reads `os/layout.yml` before `apply`.
-  **Rollback:** `git revert <migration sha>` per repo restores the v1 tree (the alias keeps the
-  old name working); set `migration: off` again so new repos are created v1.
-- **Known limit:** personal dbt models (`models/personal/<uid>/`) still live in the domain repo's
-  dbt project; moving them needs a per-user dbt project and Dagster location (follow-up).
+  **Order (enforced):** `migration: apply` fails the chart render until the Dagster code location
+  AND its repo-sync sidecar run an image `>= layout.dagsterMinVersion` (the loader that reads
+  `os/layout.yml`); deploy that Dagster image first.
+- **Rollback, per repo** (the receive gate refuses a revert as an https push — it touches `os/`,
+  dbt project files and personal lanes — so it lands on the volume, by FETCH):
+  1. set `migration: off` and roll os-ui FIRST — a boot that still says `apply` re-migrates a
+     reverted repo at once;
+  2. in the `git-http` container (it has git and `/repos` writable):
+     `git clone -q /repos/domain-<d>.git /tmp/r && git -C /tmp/r revert --no-edit <migration sha>`
+     then `git -C /repos/domain-<d>.git fetch /tmp/r HEAD:refs/heads/main` (a non-forced fetch
+     refuses if the OS committed meanwhile — redo from step 2);
+  3. check repo-sync's `status.json`: `current == head` for that domain.
+  A revert restores the v1 tree exactly — including the personal agent lanes, which are then
+  readable by the domain again; the user repos keep their (now diverging) copies.
+- **Known limit — personal dbt models** (`models/personal/<uid>/`) still live in the domain repo's
+  dbt project. They cannot simply move: a DOMAIN dataset synced from a warehouse lands its bronze
+  model in the owner's personal schema (`tabs/data/lib/dbt/models.ts` `schemaFor`), so domain
+  models `ref()` personal-lane models. The split needs the landing schema to leave `personal_*`
+  first (artifact contract A1, WP-18/WP-49); then each user repo carries its own dbt project at
+  `data/dbt/`, loaded as one more project in the SAME `sovereign` code location (no extra pod).
