@@ -50,6 +50,7 @@ import { parseSystem, type System, type ArtifactGrant, type AgentSpec } from '@t
 import { compile } from '@tabs/agents/lib/langgraph-compile';
 import type { AgentProjectSnapshot, SnapshotSystem } from '@tabs/agents/lib/git/snapshot';
 import { dump } from 'js-yaml';
+import { AGENTS_DIR, LEGACY_PERSONAL_DIR, agentSystemDir, legacyPersonalAgentLane, prefixOf } from '@core/infra/repo-layout';
 import { generateAgentModule, osLayerSystemDoc, type HostLock, type ModuleVersions } from '@tabs/agents/lib/module/generate';
 
 /**
@@ -70,10 +71,11 @@ const MODULE_FOOTER_TO = [
 ].join('\n');
 
 /** The subtree the Agents tab owns in a domain repo (always with the trailing slash). */
-export const AGENTS_PREFIX = 'agents/';
+/** `agents/` — from the repo layout (design 12, `core/infra/repo-layout.ts`). */
+export const AGENTS_PREFIX = prefixOf(AGENTS_DIR);
 
 /** The directory a PERSONAL system's lane lives under — mirrors `models/personal/<uid>/`. */
-const PERSONAL_DIR = 'personal';
+const PERSONAL_DIR = LEGACY_PERSONAL_DIR;
 
 /**
  * The stable, opaque token that stands for an OS principal in the repository: the first 12 hex
@@ -129,13 +131,16 @@ export function placeSystems(snapshot: AgentProjectSnapshot): PlacedSystem[] {
   });
   for (const system of ordered) {
     const scope: 'personal' | 'domain' = system.visibility === 'Personal' ? 'personal' : 'domain';
-    const parent = scope === 'personal' ? `${AGENTS_PREFIX}${PERSONAL_DIR}/${ownerToken(system.owner)}` : AGENTS_PREFIX.slice(0, -1);
+    // Every folder from the repo layout: `agents/<system>` (`agentSystemDir`), or a v1 repo's
+    // legacy personal lane `agents/personal/<token>/<system>` (`legacyPersonalAgentLane`).
+    const lane = scope === 'personal' ? legacyPersonalAgentLane(system.owner) : '';
+    const dirOf = (slug: string) => (lane ? `${lane}${slug}` : agentSystemDir(slug));
     const base = segment(system.name, 'system');
     const reserved = scope === 'domain' && base === PERSONAL_DIR;
     let slug = reserved ? `${base}-${shortId(system.id)}` : base;
-    if (taken.has(`${parent}/${slug}`)) slug = `${base}-${shortId(system.id)}`;
-    taken.add(`${parent}/${slug}`);
-    out.push({ system, slug, scope, dir: `${parent}/${slug}` });
+    if (taken.has(dirOf(slug))) slug = `${base}-${shortId(system.id)}`;
+    taken.add(dirOf(slug));
+    out.push({ system, slug, scope, dir: dirOf(slug) });
   }
   return out;
 }
