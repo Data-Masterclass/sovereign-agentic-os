@@ -1,0 +1,54 @@
+# Regal (the Rego linter, https://www.openpolicyagent.org/projects/regal) for
+# charts/sovereign-agentic-os/policies. CI: the `test-opa` job runs `regal lint`.
+#
+# Every rule is on at its default level except the ones below. Each exception names
+# why it is off; new policy files must lint clean without adding to this list.
+rules:
+  imports:
+    unresolved-reference:
+      level: error
+      # Base documents loaded as JSON data next to the policies (chart ConfigMap
+      # `opa-policy`), not rules, so the linter cannot resolve them.
+      except-paths:
+        - data.grants
+        - data.grants.**
+        - data.seed_grants
+        - data.seed_grants.**
+        - data.requires_approval
+        - data.governance
+        - data.governance.**
+        - data.connections.*
+        - data.connections.*.**
+  testing:
+    # The existing agentic.authz and trino tests live in the policy package and use
+    # its rules unqualified. New tests use `<pkg>_test` packages.
+    test-outside-test-package:
+      level: ignore
+  idiomatic:
+    # Policy files stay at their chart paths until the policy bundle layout
+    # (os/, trino/, connections/) lands.
+    directory-package-mismatch:
+      level: ignore
+    # The OPA server is queried by path; there is no bundle with entrypoint
+    # annotations yet.
+    no-defined-entrypoint:
+      level: ignore
+  style:
+    # `rowFilters`, `columnMask`, `batchColumnMask` are the rule names the Trino OPA
+    # plugin queries (https://trino.io/docs/current/security/opa-access-control.html).
+    prefer-snake-case:
+      level: ignore
+    # Pre-existing trino.rego / authz.rego structure; rewriting it is out of scope
+    # for the CI gate and is covered by the unit tests instead.
+    messy-rule:
+      level: ignore
+    unconditional-assignment:
+      level: ignore
+    external-reference:
+      level: ignore
+    pointless-reassignment:
+      level: ignore
+    line-length:
+      level: ignore
+    file-length:
+      level: ignore

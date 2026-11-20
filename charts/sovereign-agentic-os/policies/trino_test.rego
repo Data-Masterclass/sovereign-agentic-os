@@ -132,7 +132,7 @@ personal_read_input(user, owner) := {
 		"operation": "SelectFromColumns",
 		"resource": {"table": {
 			"catalogName": "iceberg",
-			"schemaName": sprintf("personal_%s", [owner]),
+			"schemaName": $"personal_{owner}",
 			"tableName": "bronze_x",
 			"columns": ["a", "b"],
 		}},
@@ -146,7 +146,7 @@ personal_write_input(user, owner) := {
 		"operation": "CreateTableAsSelect",
 		"resource": {"table": {
 			"catalogName": "iceberg",
-			"schemaName": sprintf("personal_%s", [owner]),
+			"schemaName": $"personal_{owner}",
 			"tableName": "silver_x",
 		}},
 	},
@@ -369,4 +369,136 @@ test_unexposed_external_missing_identity_zero_rows if {
 		"resource": {"table": {"catalogName": "glue_sales", "schemaName": "public", "tableName": "customers"}},
 	}}
 		with data.governance as expose_data
+}
+
+# --- Write floor: schema-level operations and the domain-to-schema mapping -------
+write_gov := {
+	"tables": {},
+	"principals": {
+		"sales-agent": {"domains": ["sales"], "clearances": []},
+		"leader": {"domains": ["agentic-leader-q3-2026"], "clearances": []},
+	},
+}
+
+schema_op(user, op, schema) := {
+	"context": {"identity": {"user": user}},
+	"action": {"operation": op, "resource": {"schema": {"catalogName": "iceberg", "schemaName": schema}}},
+}
+
+table_op(user, op, schema) := {
+	"context": {"identity": {"user": user}},
+	"action": {"operation": op, "resource": {"table": {
+		"catalogName": "iceberg",
+		"schemaName": schema,
+		"tableName": "t",
+	}}},
+}
+
+test_create_schema_in_own_domain_allowed if {
+	allow with input as schema_op("sales-agent", "CreateSchema", "sales")
+		with data.governance as write_gov
+}
+
+test_create_schema_in_other_domain_denied if {
+	not allow with input as schema_op("sales-agent", "CreateSchema", "marketing")
+		with data.governance as write_gov
+}
+
+test_hyphenated_domain_writes_sanitized_schema if {
+	allow with input as table_op("leader", "CreateTable", "agentic_leader_q3_2026")
+		with data.governance as write_gov
+}
+
+test_governed_principal_writes_own_personal_schema if {
+	allow with input as table_op("sales-agent", "InsertIntoTable", "personal_sales_agent")
+		with data.governance as write_gov
+}
+
+# An identity that sanitizes to nothing owns `personal_user` (sanitize_ident fallback).
+test_symbol_only_identity_owns_personal_user if {
+	allow with input as table_op("---", "SelectFromColumns", "personal_user")
+		with data.governance as write_gov
+}
+
+# --- Personal-schema deny on every path an action can name a schema --------------
+personal_via(action) := {"context": {"identity": {"user": "marketing-agent"}}, "action": action}
+
+test_personal_deny_via_column if {
+	not allow with input as personal_via({
+		"operation": "SelectFromColumns",
+		"resource": {"column": {"catalogName": "iceberg", "schemaName": "personal_bob", "tableName": "t", "columnName": "c"}},
+	})
+		with data.governance as write_gov
+}
+
+test_personal_deny_via_rename_target_table if {
+	not allow with input as personal_via({
+		"operation": "RenameTable",
+		"resource": {"table": {"catalogName": "iceberg", "schemaName": "sales", "tableName": "t"}},
+		"targetResource": {"table": {"catalogName": "iceberg", "schemaName": "personal_bob", "tableName": "t"}},
+	})
+		with data.governance as write_gov
+}
+
+test_personal_deny_via_rename_target_schema if {
+	not allow with input as personal_via({
+		"operation": "RenameSchema",
+		"resource": {"schema": {"catalogName": "iceberg", "schemaName": "sales"}},
+		"targetResource": {"schema": {"catalogName": "iceberg", "schemaName": "personal_bob"}},
+	})
+		with data.governance as write_gov
+}
+
+test_personal_deny_via_filter_resources_table if {
+	not allow with input as personal_via({
+		"operation": "FilterTables",
+		"filterResources": [{"table": {"catalogName": "iceberg", "schemaName": "personal_bob", "tableName": "t"}}],
+	})
+		with data.governance as write_gov
+}
+
+test_personal_deny_via_filter_resources_column if {
+	not allow with input as personal_via({
+		"operation": "FilterColumns",
+		"filterResources": [{"column": {"catalogName": "iceberg", "schemaName": "personal_bob", "tableName": "t", "columnName": "c"}}],
+	})
+		with data.governance as write_gov
+}
+
+# --- Row-filter entitlement: public tables and named individuals ------------------
+entitle_gov := {
+	"tables": {
+		"iceberg.sales.public_kpis": {"domain": "sales", "visibility": "public", "sensitive_columns": {}},
+		"iceberg.sales.named": {
+			"domain": "sales",
+			"visibility": "private",
+			"shared_with_users": ["marketing-agent"],
+			"sensitive_columns": {},
+		},
+	},
+	"principals": {"marketing-agent": {"domains": ["marketing"], "clearances": []}},
+}
+
+rows_of(user, table) := {
+	"context": {"identity": {"user": user}},
+	"action": {"operation": "GetRowFilters", "resource": {"table": {
+		"catalogName": "iceberg",
+		"schemaName": "sales",
+		"tableName": table,
+	}}},
+}
+
+test_public_table_unfiltered_for_everyone if {
+	count(rowFilters) == 0 with input as rows_of("marketing-agent", "public_kpis")
+		with data.governance as entitle_gov
+}
+
+test_named_individual_unfiltered if {
+	count(rowFilters) == 0 with input as rows_of("marketing-agent", "named")
+		with data.governance as entitle_gov
+}
+
+test_unnamed_individual_filtered if {
+	rowFilters == {{"expression": "false"}} with input as rows_of("someone-else", "named")
+		with data.governance as entitle_gov
 }
