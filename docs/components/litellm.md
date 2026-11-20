@@ -277,9 +277,12 @@ any other file that mentions `litellmMasterKey` fails the gate.
 tags `domain:<d>`, `agent:<systemId>`, `tab:<tab>` and, for an engine run, `run:<runId>`.
 That is what makes spend per domain, per agent and **per run** answerable, and it is the
 same vocabulary the gateway mirror reads back (`byDomain`, `byAgent`, `byTab`, `byRun`) and
-Langfuse tags the run trace with. Engine runs also pass `existing_trace_id` /
-`parent_observation_id`, so LiteLLM's own Langfuse callback nests inside the run trace
-(`docs/components/langfuse.md`).
+Langfuse tags the run trace with. The gateway records each call in Langfuse through its
+OpenTelemetry v2 `langfuse_otel` callback (LiteLLM >= 1.109). Every call carries an
+`x-litellm-call-id` header, and a W3C `traceparent` header when the caller's trace ids are W3C
+ids, which nests the gateway's generation inside the caller's trace
+(`os-ui/core/runtime/gateway-trace.ts`; `docs/components/langfuse.md`; proof:
+`scripts/tests/litellm-langfuse/run.sh`).
 
 **Rejections are typed.** A 400 budget message is `BudgetExceededError` (402); any other 4xx
 on an inference call is `GatewayRejectedError` with `code` `forbidden` (model outside the

@@ -67,11 +67,11 @@ worker and the gateway send traces to the in-cluster Service `agentic-os-langfus
 | Port and redaction | `os-ui/core/infra/trace-port.ts` | `RunObserver` / `SpanHandle` (what the engine reports into), `noopObserver`, `redactRequest` / `redactCompletion` / `boundedResult`, `runTraceTags`, `runSessionId` |
 | Node instrumentation | `os-ui/tabs/agents/lib/engine/build-graph.ts` `observed(...)` | every `plan_/act_/tools_/route_<id>` node is a `chain` observation; the model caller handed to the node wraps each call in a `llm.<node>` span; `tools_<id>` records `tool` observations |
 | Governed calls | `core/infra/agent-governed.ts`, `core/infra/governed.ts`, `tabs/knowledge/lib/knowledge-trace.ts` | through `recordObservation` only. Under a run the run's observer writes the tool observation, so an agent tool call is not written twice; a data tool or a context pack nests in the active observation, or is its own small trace outside one. The governance audit is NOT mirrored to Langfuse: audit lives in the OS audit store |
-| Gateway nesting | `os-ui/core/runtime/runtime.ts` `liteLlmCaller` | LiteLLM is told `existing_trace_id` / `parent_observation_id` (= the `llm.<node>` span id), `trace_user_id` (bare uid) and `session_id` (`system:<id>`), and gets a W3C `traceparent` header for the OTel callback (WP-32) |
+| Gateway nesting | `os-ui/core/runtime/runtime.ts` `liteLlmCaller`, `core/runtime/gateway-trace.ts` | LiteLLM ≥ 1.109 records the call's generation through its OTel v2 `langfuse_otel` callback. Every call sends `x-litellm-call-id` (the `llm.<node>` span records it as `litellm_call_id`) and a W3C `traceparent` built from the `llm.<node>` span's OTel ids, so the generation nests under that span (via the gateway's request span; `components/litellm/UPSTREAM.md` "Span scope"). Also sent: `trace_user_id` (bare uid), `session_id` (`system:<id>`), the tags. The legacy `existing_trace_id` / `parent_observation_id` are ignored on V2 and are not sent |
 | Scores | `app/api/agents/systems/[id]/evaluate/route.ts` | the judge verdict → `score.create { traceId: createTraceId(runId), name: 'judge', value: overall, comment }` |
 | Reads | `app/api/agents/systems/[id]/run/diagnostics/route.ts` | observations **by trace id** (`createTraceId(runId)`) — only after `assertRunVisible` says that run is the caller's and this system's. Without a run id, by the caller's user id AND a time window. `observationsQuery` refuses anything looser (typed error) |
 | Deep link | `LastRun.traceUrl`, MCP `run_agent_system` / `get_agent_run` / `resume_agent_run` | `${LANGFUSE_CONSOLE_URL}/trace/<createTraceId(runId)>`; a run traced before the OTel writer (20 Nov 2026) links to its raw run id when only that trace exists (one bounded lookup) |
-| Per-agent cost | `liteLlmCaller` → gateway `metadata.node` | the agent that made a call rides to the gateway's generation, so run diagnostics read per-agent tokens and cost off the generation itself |
+| Per-agent cost | `liteLlmCaller` → gateway `metadata.node` | the agent that made a call rides to the gateway's generation (on OTel v2 through `LITELLM_OTEL_BAGGAGE_METADATA_KEYS` `requester_metadata.node`), so run diagnostics read per-agent tokens and cost off the generation itself |
 | Credentials | `core/kernel/config.ts`, chart `soa.osUI.env` / `adminEnv` | no built-in key or console login: the project keys and `LANGFUSE_SSO_EMAIL` / `LANGFUSE_SSO_PASSWORD` (web only, from `langfuse-init` `LANGFUSE_INIT_USER_*`) come from the chart; a production boot without them stops with `MissingLangfuseCredentialError` |
 
 ## The trace tree
@@ -86,7 +86,8 @@ trace  id = createTraceId(runId) · name = run <system name> · userId = <runner
 └── agent run <system name>        input = { task }        (a RESUME adds a sibling `run segment`)
     ├── chain plan_<agent>         metadata { agent, kind:'plan', visit, stepsUsed }
     │   └── span llm.plan_<agent>  input = roles + char counts · output = { chars, toolCalls }
-    │       └── generation (LiteLLM's callback: usage, cost, model; content redacted) ← parent_observation_id
+    │       └── span POST /v1/chat/completions (the gateway's request span, nested by traceparent)
+    │           └── generation chat <model> (LiteLLM langfuse_otel: usage, cost, model; no content)
     ├── chain act_<agent>
     │   └── span llm.act_<agent>
     │       └── generation (gateway)
@@ -115,9 +116,13 @@ is what a debugging session needs, without the values. The level is recorded on 
 span (`input.redaction`) and on each tool observation (`metadata.redaction`), so a trace always
 says how it was written.
 
-**What the gateway writes.** LiteLLM's own Langfuse callback creates the call's only generation,
-*nested under* the OS's `llm.<node>` span (same trace, `existing_trace_id` + `parent_observation_id`). It is
-the gateway's record of the call — usage, cost, model, latency, tags — and since 2026-11-19 it
+**What the gateway writes.** Since LiteLLM 1.109.1 the gateway writes through its
+OpenTelemetry v2 `langfuse_otel` callback (`LITELLM_OTEL_V2=true`): the call's only generation,
+nested under the OS's `llm.<node>` span by `traceparent` (through the gateway's request span), with
+**no message content** (V2's default; `turn_off_message_logging` stays on). `mask_output` and the
+legacy nesting fields are ignored on V2; what the gateway sends and how it nests is measured in
+`components/litellm/UPSTREAM.md`. The paragraphs below describe the legacy `langfuse` callback of
+1.90.0, which is what a rollback returns to. It is the gateway's record of the call — usage, cost, model, latency, tags — and since 2026-11-19 it
 carries **no prompt and no completion** (owner decision: no document or image content in traces
 by default, the gateway's records included):
 
@@ -229,7 +234,7 @@ kubectl -n agentic-os port-forward svc/agentic-os-langfuse-web 3000:3000
 - Public: `pk-lf-localdev0000public`  ·  Secret: `sk-lf-localdev0000secret`
 - Host (in-cluster): `http://agentic-os-langfuse-web:3000`
 These are injected into os-ui (`LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` / `LANGFUSE_URL`)
-and into LiteLLM (`success_callback: ["langfuse"]`; no failure callback — see "What the gateway writes").
+and into LiteLLM (`callbacks: ["langfuse_otel"]` on OpenTelemetry v2; no `langfuse` in any callback list — see "What the gateway writes").
 
 ## Engineering view ("Under the hood")
 
