@@ -19,7 +19,13 @@
  *       4. no source table is declared twice;
  *       5. no column carries the same test twice (same name + same arguments ⇒ same unique id);
  *       6. every `ref('<model>')` / `source('<s>', '<t>')` a model or test uses exists;
- *       7. no two metrics / semantic models share a name.
+ *       7. no two metrics / semantic models share a name;
+ *       8. CLOSED JINJA GRAMMAR (literal safety, defence in depth): every Jinja construct in every
+ *          file dbt renders is one the generator itself writes — `ref`/`source`/`config`/`this`/
+ *          `is_incremental`/the batch-id `var` in model SQL, `env_var` in profiles, the closed
+ *          semantic `filter` grammar — and no other ASCII brace exists. Free text is encoded and
+ *          identifiers are validated before rendering (`literal.ts`), so this never fires unless a
+ *          generator bug lets input through. Issues carry `rule: 'jinja-grammar'`.
  *   - Attribution: a model file's header names its OS dataset (`OS dataset <id>`), a `schema.yml`
  *     entry carries `config.meta.os_dataset`, a source table `meta.os_dataset` or the id in its
  *     description, a semantic file is attributed through the model it is named after. An issue the
@@ -27,12 +33,16 @@
  *   - The skip loop lives in `generate.ts`; this file only reports.
  */
 import yaml from 'js-yaml';
+import { renderGenericTests, renderMacros } from '@tabs/data/lib/dbt/project';
+import { isSafeSemanticFilter } from '@tabs/data/lib/dbt/semantic/validate';
 
 export type ProjectIssue = {
   /** The OS dataset whose files caused the issue; null when it cannot be attributed. */
   datasetId: string | null;
   path: string;
   reason: string;
+  /** Set for the closed-Jinja-grammar rule, which the generator treats as fail-closed. */
+  rule?: 'jinja-grammar';
 };
 
 type Plain = Record<string, unknown>;
@@ -170,5 +180,101 @@ export function checkProject(files: Map<string, string>): ProjectIssue[] {
   for (const r of testRefs) {
     if (!modelPath.has(r.model)) push(r.ds, r.path, `a relationships test points at ref('${r.model}'), which is not in the project`);
   }
+  for (const i of jinjaGrammarIssues(files)) issues.push(i);
   return issues;
+}
+
+// ---- rule 8: closed Jinja grammar --------------------------------------------------------------
+
+const ID = "[A-Za-z_][A-Za-z0-9_]*";
+/** Every Jinja construct the generator writes into a model `.sql` file — nothing else. */
+const SQL_JINJA: RegExp[] = [
+  new RegExp(`^\\{\\{ ref\\('${ID}'\\) \\}\\}`),
+  new RegExp(`^\\{\\{ source\\('${ID}', '${ID}'\\) \\}\\}`),
+  /^\{\{ this \}\}/,
+  /^\{% if is_incremental\(\) %\}/,
+  /^\{% endif %\}/,
+  /^\{\{ var\("os_batch_id", invocation_id\) \}\}/,
+  new RegExp(`^\\{\\{ config\\((?:${ID}=(?:'[A-Za-z0-9_+]*'|\\[(?:'${ID}'(?:, '${ID}')*)?\\])(?:, )?)+\\) \\}\\}`),
+];
+/** The only Jinja allowed in a YAML string value outside a semantic `filter`. */
+const YAML_JINJA = /^\{\{ env_var\('[A-Z][A-Z0-9_]*'(?:, '[A-Za-z0-9_.-]*')?\)(?: \| as_number)? \}\}$/;
+
+function sqlJinjaFindings(content: string): string[] {
+  const out: string[] = [];
+  let i = 0;
+  while (i < content.length) {
+    const ch = content[i];
+    if (ch === '{') {
+      const rest = content.slice(i);
+      const m = SQL_JINJA.map((re) => re.exec(rest)).find(Boolean);
+      if (m) {
+        i += m[0].length;
+        continue;
+      }
+      out.push(rest.slice(0, 40));
+    } else if (ch === '}') {
+      out.push(content.slice(Math.max(0, i - 20), i + 1));
+    }
+    i += 1;
+  }
+  return out;
+}
+
+function yamlJinjaFindings(node: unknown, key: string | null, out: string[]): void {
+  if (typeof node === 'string') {
+    if (!/[{}]/.test(node)) return;
+    if (key === 'filter' && isSafeSemanticFilter(node)) return;
+    if (YAML_JINJA.test(node)) return;
+    out.push(node.slice(0, 60));
+    return;
+  }
+  if (Array.isArray(node)) {
+    for (const v of node) yamlJinjaFindings(v, key, out);
+    return;
+  }
+  if (node && typeof node === 'object') {
+    for (const [k, v] of Object.entries(node as Plain)) {
+      if (/[{}]/.test(k)) out.push(k.slice(0, 60));
+      yamlJinjaFindings(v, k, out);
+    }
+  }
+}
+
+/** Rule 8 on its own (exported for the literal-safety fuzz suite). */
+export function jinjaGrammarIssues(files: Map<string, string>): ProjectIssue[] {
+  const issues: ProjectIssue[] = [];
+  const fixed = new Map([...renderMacros(), ...renderGenericTests()]);
+  for (const [path, content] of files) {
+    // Generator-owned constant files (macros, generic tests) are exempt only while byte-identical.
+    if (fixed.has(path) && fixed.get(path) === content) continue;
+    const ds = DATASET_IN_TEXT.exec(content)?.[1] ?? null;
+    let findings: string[] = [];
+    if (path.endsWith('.sql')) findings = sqlJinjaFindings(content);
+    else if (path.endsWith('.yml') || path.endsWith('.yaml')) {
+      let doc: unknown;
+      try {
+        doc = yaml.load(content);
+      } catch {
+        continue; // rule 1 reports it
+      }
+      yamlJinjaFindings(doc, null, findings);
+    } else if (/[{}]/.test(content)) findings = [content.slice(content.search(/[{}]/), content.search(/[{}]/) + 40)];
+    for (const f of findings) {
+      issues.push({ datasetId: path.endsWith('.sql') ? ds : yamlDataset(content, path, f), path, reason: `Jinja outside the generator's grammar: ${JSON.stringify(f)}`, rule: 'jinja-grammar' });
+    }
+  }
+  return issues;
+}
+
+/** The dataset a YAML finding belongs to: the `os_dataset` / `OS dataset <id>` nearest above it. */
+function yamlDataset(content: string, _path: string, finding: string): string | null {
+  // A generated description names its dataset FIRST (`… OS dataset <id> ("<name>")`), before any
+  // authored text, so the first id in the finding is the generator's own.
+  const own = DATASET_IN_TEXT.exec(finding)?.[1];
+  if (own) return own;
+  const at = content.indexOf(finding.slice(0, 20));
+  const before = at >= 0 ? content.slice(0, at) : content;
+  const ids = [...before.matchAll(/(?:os_dataset: |OS dataset |dataset: )(ds_[A-Za-z0-9_]+)/g)];
+  return ids.length ? ids[ids.length - 1][1] : null;
 }

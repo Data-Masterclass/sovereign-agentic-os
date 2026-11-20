@@ -20,6 +20,7 @@ import { renderSemantic } from '@tabs/data/lib/dbt/semantic/render';
 import { renderDbtProject, renderProfiles, renderMacros, renderGenericTests, renderReadme, renderGitignore } from '@tabs/data/lib/dbt/project';
 import { checkProject, type ProjectIssue } from '@tabs/data/lib/dbt/project-check';
 import { yml } from '@tabs/data/lib/dbt/emit';
+import { datasetLiteralIssues, freeText, LiteralSafetyError } from '@tabs/data/lib/dbt/literal';
 
 /** What the generator must be TOLD about the deployment (it reads no env of its own). */
 export type GenerateOptions = {
@@ -56,14 +57,29 @@ export function generateProjectReport(
   opts: GenerateOptions = {},
 ): { files: Map<string, string>; skipped: SkippedDataset[] } {
   const skipped = new Map<string, string>();
-  let files = renderProject(domain, snapshot, opts);
+  // LITERAL SAFETY first: a dataset with an identifier or cron outside the allow-lists is never
+  // rendered at all (`literal.ts`). The store refuses these at write time; this catches a record
+  // written before the rules existed, or edited by hand.
+  for (const e of snapshot.datasets) {
+    const issues = datasetLiteralIssues(e.dataset);
+    if (issues.length) skipped.set(e.dataset.id, `refused identifier(s): ${issues.map((i) => i.field).join(', ')}`);
+  }
+  let files = renderSafely(domain, { ...snapshot, datasets: snapshot.datasets.filter((e) => !skipped.has(e.dataset.id)) }, opts, skipped);
   for (let pass = 0; pass <= snapshot.datasets.length; pass++) {
     const fresh = (opts.check ?? checkProject)(files).filter((i) => i.datasetId && !skipped.has(i.datasetId));
     if (!fresh.length) break;
     for (const i of fresh) if (!skipped.has(i.datasetId!)) skipped.set(i.datasetId!, `${i.reason} (${i.path})`);
-    files = renderProject(domain, { ...snapshot, datasets: snapshot.datasets.filter((e) => !skipped.has(e.dataset.id)) }, opts);
+    files = renderSafely(domain, { ...snapshot, datasets: snapshot.datasets.filter((e) => !skipped.has(e.dataset.id)) }, opts, skipped);
   }
-  const list = [...skipped.entries()].map(([dataset, reason]) => ({ dataset, reason })).sort((a, b) => a.dataset.localeCompare(b.dataset));
+  // The closed-grammar Jinja rule (`checkProject` rule 8) is the last line: a violation the check
+  // could not pin on a dataset means the generator itself emitted foreign Jinja — refuse to return
+  // a tree at all rather than commit it.
+  const foreign = (opts.check ?? checkProject)(files).filter((i) => i.rule === 'jinja-grammar');
+  if (foreign.length) {
+    throw new LiteralSafetyError('invalid_identifier', foreign[0].path, '', `generated project carries Jinja outside the generator's grammar: ${foreign[0].reason}`);
+  }
+  // The ids and reasons are free text here: a refused record's id may itself be the refused value.
+  const list = [...skipped.entries()].map(([dataset, reason]) => ({ dataset: freeText(dataset), reason: freeText(reason) })).sort((a, b) => a.dataset.localeCompare(b.dataset));
   if (list.length) {
     files.set(SKIPPED_PATH, yml({ version: 1, skipped: list }));
     files = new Map([...files.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
@@ -74,6 +90,23 @@ export function generateProjectReport(
 /** The complete project tree: path → content. Sorted by path. Invalid datasets are left out. */
 export function generateProject(domain: string, snapshot: ProjectSnapshot, opts: GenerateOptions = {}): Map<string, string> {
   return generateProjectReport(domain, snapshot, opts).files;
+}
+
+/**
+ * One render; a dataset whose compiled body is refused by `jinjaFreeSql` (a `LiteralSafetyError`
+ * thrown while planning) is recorded as skipped and the render is repeated without it.
+ */
+function renderSafely(domain: string, snapshot: ProjectSnapshot, opts: GenerateOptions, skipped: Map<string, string>): Map<string, string> {
+  let datasets = snapshot.datasets;
+  for (;;) {
+    try {
+      return renderProject(domain, { ...snapshot, datasets }, opts);
+    } catch (e) {
+      if (!(e instanceof LiteralSafetyError) || !e.datasetId) throw e;
+      skipped.set(e.datasetId, e.message);
+      datasets = datasets.filter((x) => x.dataset.id !== e.datasetId);
+    }
+  }
 }
 
 /** One render of every dataset in `snapshot`, unchecked. */

@@ -46,6 +46,9 @@ import { type ArtifactVersion, versionLog } from '@core/kernel/versioning';
 import { createFolder, type FolderScope, type Principal as FolderPrincipal } from '@core/folders/index';
 import { normaliseFolderPath } from '@core/kernel/folders';
 import { isValidCron } from '@tabs/agents/lib/cron-util';
+// Literal safety (strict identifiers + strict cron): the SAME predicates the dbt generator applies
+// before rendering, enforced here at write time so a refused value is never stored at all.
+import { assertCron, assertIdentifier, LiteralSafetyError, type IdentifierKind } from '@tabs/data/lib/dbt/literal';
 // Every write announces itself here (pure, sync); the server-only git commit hook subscribes
 // at boot (tabs/data/lib/dbt/commit.ts). The store itself must stay free of node:fs / git —
 // it is reachable from the client bundle through lib/index.ts.
@@ -353,6 +356,35 @@ function sha(content: string): string {
 
 function fail(message: string, status: number): never {
   throw new DatasetError(message, status);
+}
+
+/** Refuse a value outside the literal-safety allow-list with a typed 400 (`code` + `field`). */
+function requireIdentifier(kind: IdentifierKind, field: string, value: unknown): string {
+  try {
+    return assertIdentifier(kind, field, value);
+  } catch (e) {
+    if (e instanceof LiteralSafetyError) throw new DatasetError(e.message, 400, { code: e.code, field: e.field });
+    throw e;
+  }
+}
+
+function requireCron(field: string, value: unknown): string {
+  try {
+    return assertCron(field, value);
+  } catch (e) {
+    if (e instanceof LiteralSafetyError) throw new DatasetError(e.message, 400, { code: e.code, field: e.field });
+    throw e;
+  }
+}
+
+/** Every identifier of a sync config, checked at the write path (the generator re-checks). */
+function requireSyncIdentifiers(sync: DatasetSync): void {
+  requireIdentifier('connection_id', 'sync.connectionId', sync.connectionId);
+  requireIdentifier('sql', 'sync.source.schema', sync.source?.schema);
+  requireIdentifier('sql', 'sync.source.table', sync.source?.table);
+  requireCron('sync.schedule.cron', sync.schedule?.cron);
+  if (sync.cursor) requireIdentifier('sql', 'sync.cursor.column', sync.cursor.column);
+  (sync.mergeKeys ?? []).forEach((k, i) => requireIdentifier('sql', `sync.mergeKeys[${i}]`, k));
 }
 
 // ------------------------------------------------------------------- seeding --
@@ -983,6 +1015,13 @@ export function adoptConnectedDataset(
     }
   }
   const isSync = input.connected.mode === 'sync';
+  if (isSync) {
+    // A synced copy is generated into the domain's dbt project: its source names are identifiers.
+    requireIdentifier('sql', 'connected.source.catalog', input.connected.source.catalog);
+    requireIdentifier('sql', 'connected.source.schema', input.connected.source.schema);
+    requireIdentifier('sql', 'connected.source.table', input.connected.source.table);
+    if (input.sync) requireSyncIdentifiers(input.sync);
+  }
   // LIVE: the declared tier's version is immediately "built" (federated) — the FQN seam
   // resolves the external table. SYNC: no version is built yet — the tier lights (EARNED)
   // only after the first successful landing, so `builtLayerFqn` returns "not synced yet"
@@ -1215,7 +1254,10 @@ export function setDocs(
   const d = editOf(rec, user);
   if (docs.description !== undefined) d.description = docs.description;
   if (docs.columns !== undefined) {
-    d.columns = docs.columns.filter((c) => c.name.trim()).map((c) => ({ name: c.name.trim(), description: c.description ?? '' }));
+    const columns = docs.columns.filter((c) => c.name.trim()).map((c) => ({ name: c.name.trim(), description: c.description ?? '' }));
+    // A column name becomes a dbt `columns:` entry and test SQL: a strict identifier or refused.
+    columns.forEach((c, i) => requireIdentifier('sql', `columns[${i}].name`, c.name));
+    d.columns = columns;
   }
   // PROVENANCE: an AI auto-doc write STAMPS 'ai-auto' (so the UI shows "AI-drafted —
   // review…"). Any OTHER setDocs — every human save through the docs route — CLEARS the
@@ -1355,6 +1397,7 @@ export function addCheck(
     const toColumn = (input.toColumn ?? '').trim();
     const toDataset = (input.toDataset ?? '').trim();
     if (!toDataset) fail('reference needs a `toDataset` (the dataset id the column must exist in)', 400);
+    requireIdentifier('dataset_id', 'toDataset', toDataset);
     if (!toColumn || !SAFE_COLUMN_RE.test(toColumn)) {
       fail(`reference column '${toColumn.slice(0, 60)}' is not a plain identifier (letters, digits, underscore)`, 400);
     }
@@ -1447,7 +1490,7 @@ export function setDatasetSync(id: string, user: Principal, sync: DatasetSync | 
     if (!sync.source?.schema || !sync.source?.table) fail('sync: source schema + table required', 400);
     if (!DATASET_SYNC_MODES.includes(sync.mode)) fail(`sync: invalid mode '${String(sync.mode)}'`, 400);
     if (!isValidCron(sync.schedule?.cron)) {
-      fail('sync: invalid cron expression — expected 5 fields (e.g. "0 6 * * *")', 400);
+      throw new DatasetError('sync: invalid cron expression — expected 5 fields (e.g. "0 6 * * *")', 400, { code: 'invalid_cron', field: 'sync.schedule.cron' });
     }
     if (sync.mode !== 'full-refresh') {
       if (!sync.cursor?.column) fail(`sync: ${sync.mode} mode requires a cursor column`, 400);
@@ -1463,6 +1506,7 @@ export function setDatasetSync(id: string, user: Principal, sync: DatasetSync | 
     if (sync.mode === 'merge' && (!sync.mergeKeys || sync.mergeKeys.length === 0)) {
       fail('sync: merge mode requires at least one merge key', 400);
     }
+    requireSyncIdentifiers(sync);
     d.sync = sync;
   } else {
     delete d.sync;

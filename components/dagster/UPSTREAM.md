@@ -23,3 +23,19 @@ the tests and the eject check always use what the image actually carries.
 The deployment that uses this pin lives in the chart
 (`charts/sovereign-agentic-os/templates/`); any glue we wrote belongs there or in the
 owning tab, never here.
+
+## Literal safety — what dbt renders (docs used)
+
+The dbt generator (`os-ui/tabs/data/lib/dbt/literal.ts`) relies on these upstream facts, checked in
+the image by `images/extensions/dagster/tests/image/literal_safety.py`:
+
+- Model `.sql` files are Jinja templates: https://docs.getdbt.com/docs/build/jinja-macros
+- Properties YAML string values are rendered; descriptions are rendered later, in docs processing
+  (`doc()` is available there): https://docs.getdbt.com/reference/resource-properties/description ·
+  https://docs.getdbt.com/docs/build/documentation · dbt-core 1.9.11 `core/dbt/parser/schema_renderer.py`
+  (https://github.com/dbt-labs/dbt-core/blob/v1.9.11/core/dbt/parser/schema_renderer.py)
+- A column's `quote: true` makes dbt quote the name with the adapter's quoting:
+  https://docs.getdbt.com/reference/resource-properties/quote
+- Trino 476 reserved keywords: https://trino.io/docs/476/language/reserved.html · Unicode string
+  literals `U&'…'`: https://trino.io/docs/476/language/types.html
+

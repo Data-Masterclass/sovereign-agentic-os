@@ -693,7 +693,9 @@ a document with violations and records them as refusals rather than emitting som
 parse. The validator is a key/enum **whitelist**, so an unknown DSI key is a violation.
 `os-ui/tabs/data/lib/dbt/semantic/validate.ts:108`; `render.ts:77-83`; `os-ui/ARCHITECTURE.md:1059-1063`
 
-**dbt renders YAML through Jinja before reading it.** Authored prose goes through `stripJinja`; the one
+**dbt renders YAML through Jinja before reading it.** Authored prose is encoded by `dbt/literal.ts`
+`freeText` (no ASCII brace survives, so no delimiter can form) and identifiers are validated against
+closed allow-lists; the one
 field that must keep its Jinja is `filter:`, so it is held to a closed grammar —
 `{{ Dimension('e__d') }} <op> <literal>`, conjunctions only, no Jinja delimiter in the literal. A
 predicate outside that grammar refuses the whole metric rather than emitting a weaker filter.

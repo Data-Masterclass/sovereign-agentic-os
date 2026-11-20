@@ -1755,8 +1755,9 @@ Four things here have each cost someone real debugging time, in this product or 
   DROPS a document with violations and records them as refusals. The same reflex as
   `dbt/schema.ts`: never emit a weaker version of what the author wrote, and never emit something
   that fails the parse.
-- **dbt renders YAML through Jinja before reading it.** Authored prose goes through `stripJinja`;
-  the one field that must keep its Jinja is `filter:`, so it is held to a closed grammar
+- **dbt renders YAML through Jinja before reading it.** Authored prose is encoded by
+  `dbt/literal.ts` `freeText` (ASCII braces → fullwidth braces, so no delimiter can form);
+  identifiers are validated against closed allow-lists, never cleaned. The one field that must keep its Jinja is `filter:`, so it is held to a closed grammar
   (`{{ Dimension('e__d') }} <op> <literal>`, conjunctions only, no Jinja delimiter in the literal).
   A predicate outside that grammar refuses the whole metric rather than emitting a weaker filter.
 
