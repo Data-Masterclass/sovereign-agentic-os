@@ -95,6 +95,7 @@ test('ONE TRACE PER RUN: trace id = createTraceId(runId); nodes are chains, mode
   const llmIds = new Set(llmSpans.map((s) => s.spanContext().spanId));
   for (const r of seen) {
     assert.equal(r.observe?.traceId, traceId, 'the gateway is told the run trace id');
+    assert.equal(r.observe?.node, 'reader', 'the gateway is told which agent made the call (per-agent diagnostics)');
     assert.ok(llmIds.has(r.observe!.parentObservationId!), 'the gateway nests under the llm span that wrapped the call');
   }
   assert.equal(spans.filter((s) => typeOf(s) === 'generation').length, 0, 'the app writes no generation — the gateway owns it');

@@ -177,16 +177,19 @@ export const config = {
 
   // Langfuse: GET {LANGFUSE_URL}/api/public/traces  (HTTP basic auth)
   langfuseUrl: base(env('LANGFUSE_URL', 'http://agentic-os-langfuse-web:3000')),
-  langfusePublicKey: env('LANGFUSE_PUBLIC_KEY', 'pk-lf-localdev0000public'),
-  langfuseSecretKey: env('LANGFUSE_SECRET_KEY', 'sk-lf-localdev0000secret'),
+  // Project keys and the console login have NO built-in value: the chart provides them in every
+  // profile (local kind included, from `langfuseInit` and the `langfuse-init` Secret). Unset ⇒
+  // empty ⇒ tracing is off in development, and a production boot refuses to start
+  // (`assertLangfuseCredentialsInProd`, called from instrumentation.ts / the worker boot).
+  langfusePublicKey: env('LANGFUSE_PUBLIC_KEY', ''),
+  langfuseSecretKey: env('LANGFUSE_SECRET_KEY', ''),
   // Langfuse SSO service account (server-only). Langfuse authenticates with
   // NextAuth — no trusted-header remote-user mode — so the /tools/langfuse proxy
   // signs in server-side with THIS account and injects the resulting session
   // cookie (lib/tool-sso-langfuse.ts). The password NEVER reaches the browser.
-  // Defaults to the local headless-init user; on STACKIT point these at a
-  // dedicated read-only (VIEWER) Langfuse account via the os-ui Secret.
-  langfuseSsoEmail: env('LANGFUSE_SSO_EMAIL', 'alex@datamasterclass.com'),
-  langfuseSsoPassword: env('LANGFUSE_SSO_PASSWORD', 'langfuse-local-dev-admin'),
+  // The chart reads both from the `langfuse-init` Secret (LANGFUSE_INIT_USER_*).
+  langfuseSsoEmail: env('LANGFUSE_SSO_EMAIL', ''),
+  langfuseSsoPassword: env('LANGFUSE_SSO_PASSWORD', ''),
 
   // OpenSearch: the endpoint and credentials are read by the ONE client,
   // core/adapters/opensearch/client.ts — never here (scripts/check-opensearch-client.mjs).
@@ -761,6 +764,39 @@ export function assertNoDevDefaultSecretsInProd(cfg: {
     );
   }
 }
+/** Thrown at a production boot when a Langfuse credential is not configured. */
+export class MissingLangfuseCredentialError extends Error {
+  readonly code = 'missing_langfuse_credential';
+  readonly missing: string[];
+  constructor(missing: string[]) {
+    super(`Refusing to boot in production without ${missing.join(', ')}: os-ui has no built-in Langfuse credentials. Set them from the langfuse-init Secret.`);
+    this.name = 'MissingLangfuseCredentialError';
+    this.missing = missing;
+  }
+}
+
+/**
+ * Boot-time guard: in production (`NODE_ENV=production`, the same key as
+ * {@link assertNoDevDefaultSecretsInProd}, and for the same reason) every Langfuse credential the
+ * process needs must be configured — there is no default to fall back to. The web server needs the
+ * project keys AND the console login; the run worker needs the project keys only (`withSso: false`).
+ */
+export function assertLangfuseCredentialsInProd(
+  cfg: { langfusePublicKey: string; langfuseSecretKey: string; langfuseSsoEmail: string; langfuseSsoPassword: string } = config,
+  opts: { withSso?: boolean; nodeEnv?: string; phase?: string } = {},
+): void {
+  if ((opts.nodeEnv ?? process.env.NODE_ENV) !== 'production') return;
+  if ((opts.phase ?? process.env.NEXT_PHASE) === 'phase-production-build') return;
+  const missing: string[] = [];
+  if (!cfg.langfusePublicKey) missing.push('LANGFUSE_PUBLIC_KEY');
+  if (!cfg.langfuseSecretKey) missing.push('LANGFUSE_SECRET_KEY');
+  if (opts.withSso !== false) {
+    if (!cfg.langfuseSsoEmail) missing.push('LANGFUSE_SSO_EMAIL');
+    if (!cfg.langfuseSsoPassword) missing.push('LANGFUSE_SSO_PASSWORD');
+  }
+  if (missing.length > 0) throw new MissingLangfuseCredentialError(missing);
+}
+
 // NOTE: the boot assertion is invoked from `instrumentation.ts` `register()` (real
 // server start, nodejs runtime only) — NOT here at module load. Running it at module
 // load also fires during `next build` static prerender (where there is no runtime

@@ -32,6 +32,12 @@ export type AuditEntry = {
   result: AuditResult;
   /** True when the action passed a typed-confirmation guard. */
   guarded?: boolean;
+  /** The structured detail of a governance entry (`core/policy/audit.ts`), kept durably. */
+  data?: Record<string, unknown>;
+  /** The OPA `decision_id` a governance effect was enforced on (names its decision-log line). */
+  decisionId?: string;
+  /** The OPA policy revision that made that decision. */
+  policyRev?: string;
 };
 
 const RING_MAX = 500;
@@ -88,6 +94,9 @@ export function audit(input: {
   detail: string;
   result?: AuditResult;
   guarded?: boolean;
+  data?: Record<string, unknown>;
+  decisionId?: string;
+  policyRev?: string;
 }): AuditEntry {
   const entry: AuditEntry = {
     id: id(),

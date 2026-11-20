@@ -61,6 +61,10 @@ export const GET = withRoute<{ id: string }>(async ({ req, user, params }) => {
     observations = await readObservations(
       runId ? { traceId: await langfuseTraceId(runId), type: 'GENERATION' } : { userId: user.id, fromTimestamp, type: 'GENERATION' },
     );
+    // A run traced before the OTel writer (20 Nov 2026) kept its raw run id as the trace id.
+    if (runId && Array.isArray(observations) && observations.length === 0) {
+      observations = await readObservations({ traceId: runId, type: 'GENERATION' });
+    }
   } catch (e) {
     if (e instanceof UnfilteredLangfuseQueryError) return NextResponse.json({ error: e.message }, { status: 400 });
     throw e;

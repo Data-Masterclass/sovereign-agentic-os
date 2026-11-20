@@ -59,7 +59,7 @@ export const REGISTRY: Component[] = [
   // Layer 1 — agent core
   { id: 'langfuse', name: 'Langfuse (observability)', layer: 'Layer 1 — Agent core', kind: 'deploy',
     workload: 'agentic-os-langfuse-web', svc: 'agentic-os-langfuse-web', port: 3000, ui: true,
-    login: 'admin@datamasterclass.com / langfuse-local-dev-admin', toggle: true,
+    login: 'the admin user from the langfuse-init Secret', toggle: true,
     summary: 'Traces every agent action; the default Administrator console.' },
   { id: 'litellm', name: 'LiteLLM (model + MCP gateway)', layer: 'Layer 1 — Agent core', kind: 'deploy',
     workload: 'agentic-os-litellm', svc: 'agentic-os-litellm', port: 4000, ui: true, url_path: '/ui',

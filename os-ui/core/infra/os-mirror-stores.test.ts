@@ -997,6 +997,35 @@ test('platform audit (os-audit): first audit entry on a fresh cluster bootstraps
   }
 });
 
+test('governance audit: the structured detail, decisionId and policyRev survive a restart in the durable store Governance reads', async () => {
+  const os = fakeCluster();
+  const audit = await import('@tabs/admin/lib/audit');
+  const gov = await import('@core/policy/audit');
+  try {
+    osMirror({ index: 'os-audit' }).__reset();
+    audit._resetAudit();
+    gov.__resetAudit();
+    const detail = { artifactKind: 'dataset', id: 'ds-A', rung: 'domain', from: 'my', to: 'domain', oneShot: true };
+    gov.record({ actor: 'u-admin', action: 'approve', subject: 'dataset:ds-A', domain: 'sales', reason: 'promotion approved', detail, decisionId: 'dec-123', policyRev: 'rev-7' });
+    await settle();
+
+    // Pod roll: both in-process rings are gone; only the cluster holds the trail.
+    audit._resetAudit();
+    gov.__resetAudit();
+    await audit.ensureHydrated();
+    const back = audit.listAudit({ prefix: 'governance.' });
+    assert.equal(back.length, 1);
+    assert.deepEqual(back[0].data, detail, 'the structured detail is durable');
+    assert.equal(back[0].decisionId, 'dec-123');
+    assert.equal(back[0].policyRev, 'rev-7');
+    assert.equal(gov.search().length, 0, 'the in-process chain did not survive — the durable store is what remains');
+  } finally {
+    os.restore();
+    audit._resetAudit();
+    gov.__resetAudit();
+  }
+});
+
 test('agent memory (os-agent-memory): first fact on a fresh cluster bootstraps the index and persists the doc', async () => {
   const os = fakeCluster();
   const mem = await import('@tabs/agents/lib/agent-memory');

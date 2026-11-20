@@ -173,13 +173,18 @@ function obsLatencyMs(o: RawObservation): number {
 }
 
 /**
- * Which node an observation belongs to: explicit metadata.node wins; otherwise
+ * Which node an observation belongs to: explicit metadata.node wins, then the gateway's
+ * `metadata.requester_metadata.node`; otherwise
  * match a known node name inside the observation name (traces are named
  * `agent.<tool>` and nodes carry their own names). Returns '' when unknown.
  */
 function attributeNode(o: RawObservation, nodeNames: string[]): string {
   const meta = o.metadata?.node;
   if (typeof meta === 'string' && meta) return meta;
+  // The gateway's generation: LiteLLM's Langfuse callback keeps the caller's request metadata
+  // under `requester_metadata`, where `liteLlmCaller` puts the agent (`node`).
+  const requester = (o.metadata as { requester_metadata?: { node?: unknown } } | undefined)?.requester_metadata?.node;
+  if (typeof requester === 'string' && requester) return requester;
   const name = o.name ?? '';
   return nodeNames.find((n) => n && name.includes(n)) ?? '';
 }

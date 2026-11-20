@@ -44,6 +44,7 @@ const { memoryCheckpointer } = await import('@tabs/agents/lib/engine/checkpointe
 const { FIXTURE_TASK, SHAPE_SINGLE_READ_YAML, graphDeps, scriptedLlm } = await import('@tabs/agents/lib/engine/parity-harness');
 const { liteLlmCaller } = await import('@core/runtime/runtime');
 const { withRunTrace, flushLangfuse, langfuseTraceId } = await import('@core/infra/langfuse');
+const { shapeTraceMetrics } = await import('@tabs/agents/lib/build/run-diagnostics');
 type LlmCall = import('@core/runtime/agentic').LlmCall;
 type LlmRequest = import('@core/runtime/agentic').LlmRequest;
 
@@ -191,6 +192,13 @@ test('TRACING E2E (Langfuse 3.194.1 + LiteLLM 1.90.0): one trace per run, one ge
     assert.ok(t.observations.some((o) => o.type === 'CHAIN' && o.name.startsWith('plan_')), 'graph nodes are chain observations');
     assert.ok(t.observations.some((o) => o.type === 'TOOL'), 'the tool call is a tool observation');
 
+    // Per-agent tokens and cost (run diagnostics): the gateway's generation carries the agent as
+    // `metadata.node`, so the diagnostics shaping attributes every generation to its agent.
+    const gens = t.observations.filter((o) => o.type === 'GENERATION');
+    for (const g of gens) assert.equal((g.metadata as { requester_metadata?: { node?: string } } | undefined)?.requester_metadata?.node, 'reader', `generation ${g.id} does not name its agent`);
+    const metrics = shapeTraceMetrics(gens as never, ['reader']);
+    assert.equal(metrics.perNode.reader?.tokens, 15 * calls, 'perNode is filled per agent');
+    assert.ok((metrics.perNode.reader?.costUsd ?? 0) > 0, 'and carries the gateway cost');
     assert.equal(t.userId, USER_ID, 'userId is the bare runner uid');
     assert.equal(t.sessionId, `system:${SYSTEM_ID}`, 'sessionId is the system session');
     assert.ok(t.tags.includes(`system:${SYSTEM_ID}`));

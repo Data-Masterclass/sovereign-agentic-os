@@ -8,7 +8,7 @@
  *             its graph nodes, every tool call with its governance decision, and exactly ONE
  *             generation per model call — the gateway's. As a security reviewer I can confirm that
  *             no other file in os-ui sends anything to Langfuse, and that every read is filtered.
- * ARCHITECTURE (design 05 §5.1, steps 1–3 with Revision 1, 3, 6, 8):
+ * ARCHITECTURE: (design 05 §5.1, steps 1–3 with Revision 1, 3, 6, 8)
  *   - Export: `NodeSDK` + `LangfuseSpanProcessor` (`@langfuse/otel`), started once per process
  *     (`globalThis` slot; route handlers are bundled separately). In-cluster `baseUrl`, client-side
  *     `osMask` (inline media stripped), and `shouldExportSpan` that keeps Langfuse observations and
@@ -160,14 +160,37 @@ async function runRootSpanId(runId: string): Promise<string> {
   return (await createTraceId(`root:${runId}`)).slice(0, 16);
 }
 
+/** Does Langfuse hold a trace with this id? Unreachable or slow counts as "no" (bounded wait). */
+async function traceExists(traceId: string, timeoutMs = 1_500): Promise<boolean> {
+  const auth = 'Basic ' + Buffer.from(`${config.langfusePublicKey}:${config.langfuseSecretKey}`).toString('base64');
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const res = await fetch(`${config.langfuseUrl}/api/public/traces/${encodeURIComponent(traceId)}`, { headers: { authorization: auth, accept: 'application/json' }, cache: 'no-store', signal: ctrl.signal });
+    return res.ok;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /**
  * The deep link to ONE run's trace: `<console>/trace/<createTraceId(runId)>`, which Langfuse
- * redirects into the owning project. Undefined when no console URL is configured.
+ * redirects into the owning project. A run traced BEFORE the OTel writer (20 Nov 2026) has its raw
+ * run id as trace id: when the mapped id is not in Langfuse and the raw id is, the link uses the
+ * raw id, so an old run opens its own trace instead of Langfuse's not-found page. `probe: false`
+ * skips the lookup for a run this process has just traced (always the mapped id). Undefined when
+ * no console URL is configured.
  */
-export async function traceUrlFor(runId: string): Promise<string | undefined> {
+export async function traceUrlFor(runId: string, opts: { probe?: boolean } = {}): Promise<string | undefined> {
   const base = config.langfuseConsoleUrl;
   if (!base || !runId) return undefined;
-  return `${base}/trace/${await langfuseTraceId(runId)}`;
+  const mapped = await langfuseTraceId(runId);
+  if (opts.probe !== false && langfuseEnabled() && !(await traceExists(mapped)) && (await traceExists(runId))) {
+    return `${base}/trace/${encodeURIComponent(runId)}`;
+  }
+  return `${base}/trace/${mapped}`;
 }
 
 // ---------------------------------------------------------------- run trace --
@@ -248,7 +271,10 @@ export async function withRunTrace<T>(input: RunTraceInput, fn: (observer: RunOb
               async (span) => {
                 safe(() => span.update({ input: redactRequest(req, level), metadata: { kind: 'model-call', model: req.model, tools: (req.tools ?? []).length, node: metadata?.agent } }));
                 try {
-                  const completion = await inner({ ...req, observe: { traceId, parentObservationId: span.id } });
+                  // `node` (the agent) rides to the gateway's generation as metadata, so
+                  // per-agent tokens and cost are read straight off the generation.
+                  const node = typeof metadata?.agent === 'string' ? metadata.agent : name;
+                  const completion = await inner({ ...req, observe: { traceId, parentObservationId: span.id, node } });
                   safe(() => span.update({ output: redactCompletion(completion, level) }));
                   return completion;
                 } catch (e) {

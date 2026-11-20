@@ -210,6 +210,9 @@ export function liteLlmCaller(caller?: CallerContext): LlmCall {
       if (req.observe.parentObservationId) metadata.parent_observation_id = req.observe.parentObservationId;
       if (caller?.userId) metadata.trace_user_id = caller.userId;
       if (caller?.systemId) metadata.session_id = runSessionId(caller.systemId);
+      // The agent that made the call: LiteLLM's Langfuse callback copies request metadata onto
+      // its generation, which is how run diagnostics attribute tokens and cost per agent.
+      if (req.observe.node) metadata.node = req.observe.node;
     }
     // W3C trace context of the same span, for a gateway that links by `traceparent` (LiteLLM's
     // OTel callback); the legacy callback above ignores it. Only for OTel-shaped ids.

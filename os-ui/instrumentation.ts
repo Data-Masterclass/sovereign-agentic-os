@@ -106,8 +106,10 @@ export async function register(): Promise<void> {
   // and the bad deploy is loud, rather than silently signing forgeable sessions.
   if (process.env.NEXT_RUNTIME === 'nodejs') {
   try {
-    const { config, assertNoDevDefaultSecretsInProd } = await import('./core/kernel/config.ts');
+    const { config, assertNoDevDefaultSecretsInProd, assertLangfuseCredentialsInProd } = await import('./core/kernel/config.ts');
     assertNoDevDefaultSecretsInProd(config);
+    // No built-in Langfuse credentials in production: a missing key or console login stops the boot.
+    assertLangfuseCredentialsInProd(config);
   } catch (err) {
     console.error(`[os-ui] boot secret guard: ${err instanceof Error ? err.message : String(err)}`);
     process.exit(1);

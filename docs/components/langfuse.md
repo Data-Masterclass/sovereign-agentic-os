@@ -70,7 +70,9 @@ worker and the gateway send traces to the in-cluster Service `agentic-os-langfus
 | Gateway nesting | `os-ui/core/runtime/runtime.ts` `liteLlmCaller` | LiteLLM is told `existing_trace_id` / `parent_observation_id` (= the `llm.<node>` span id), `trace_user_id` (bare uid) and `session_id` (`system:<id>`), and gets a W3C `traceparent` header for the OTel callback (WP-32) |
 | Scores | `app/api/agents/systems/[id]/evaluate/route.ts` | the judge verdict → `score.create { traceId: createTraceId(runId), name: 'judge', value: overall, comment }` |
 | Reads | `app/api/agents/systems/[id]/run/diagnostics/route.ts` | observations **by trace id** (`createTraceId(runId)`) — only after `assertRunVisible` says that run is the caller's and this system's. Without a run id, by the caller's user id AND a time window. `observationsQuery` refuses anything looser (typed error) |
-| Deep link | `LastRun.traceUrl`, MCP `run_agent_system` / `get_agent_run` / `resume_agent_run` | `${LANGFUSE_CONSOLE_URL}/trace/<createTraceId(runId)>` |
+| Deep link | `LastRun.traceUrl`, MCP `run_agent_system` / `get_agent_run` / `resume_agent_run` | `${LANGFUSE_CONSOLE_URL}/trace/<createTraceId(runId)>`; a run traced before the OTel writer (20 Nov 2026) links to its raw run id when only that trace exists (one bounded lookup) |
+| Per-agent cost | `liteLlmCaller` → gateway `metadata.node` | the agent that made a call rides to the gateway's generation, so run diagnostics read per-agent tokens and cost off the generation itself |
+| Credentials | `core/kernel/config.ts`, chart `soa.osUI.env` / `adminEnv` | no built-in key or console login: the project keys and `LANGFUSE_SSO_EMAIL` / `LANGFUSE_SSO_PASSWORD` (web only, from `langfuse-init` `LANGFUSE_INIT_USER_*`) come from the chart; a production boot without them stops with `MissingLangfuseCredentialError` |
 
 ## The trace tree
 

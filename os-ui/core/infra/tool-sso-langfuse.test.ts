@@ -3,13 +3,16 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import {
+// The console login has no built-in default; the chart sets it from the langfuse-init Secret.
+process.env.LANGFUSE_SSO_EMAIL = 'viewer@example.test';
+process.env.LANGFUSE_SSO_PASSWORD = 'test-only-password';
+const {
   hasLangfuseSession,
   cookiePair,
   loginLangfuse,
   getLangfuseSessionCookies,
   _resetLangfuseSessionCache,
-} from '@core/infra/tool-sso-langfuse';
+} = await import('@core/infra/tool-sso-langfuse');
 
 /* --------------------------------------------------------------- pure helpers */
 

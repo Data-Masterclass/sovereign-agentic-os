@@ -83,12 +83,12 @@ export type LlmRequest = {
   /** Cap on the model's OWN output (the model window's reserved tail). */
   maxTokens?: number;
   /**
-   * Where this call sits in the run's Langfuse trace (A3): the run trace id and the OS
-   * generation it nests under. The LiteLLM caller forwards it as gateway metadata so the
+   * Where this call sits in the run's Langfuse trace (A3): the run trace id, the `llm.<node>`
+   * span it nests under and the agent (`node`). The LiteLLM caller forwards it as gateway metadata so the
    * gateway's own Langfuse callback lands INSIDE the run trace instead of as a stray trace.
    * Absent on calls outside a run (the assistant, classify).
    */
-  observe?: { traceId: string; parentObservationId?: string };
+  observe?: { traceId: string; parentObservationId?: string; node?: string };
 };
 export type LlmCall = (req: LlmRequest) => Promise<LlmCompletion>;
 
@@ -554,7 +554,7 @@ export async function runAgentic(opts: {
    * unlinked trace per call. Unset ⇒ exactly the prior behaviour (N orphan traces), which
    * is what every caller got before the assistant path started passing one.
    */
-  observe?: { traceId: string; parentObservationId?: string };
+  observe?: { traceId: string; parentObservationId?: string; node?: string };
 }): Promise<AgenticResult> {
   const maxIterations = opts.maxIterations ?? DEFAULT_MAX_ITERATIONS;
   const budget = opts.budget ?? DEFAULT_MESSAGE_BUDGET;

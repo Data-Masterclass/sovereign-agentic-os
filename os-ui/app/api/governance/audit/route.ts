@@ -28,6 +28,8 @@ type ViewEntry = {
   domain: string;
   reason: string;
   detail: unknown;
+  decisionId?: string;
+  policyRev?: string;
 };
 
 const DOMAIN_RE = /^\[domain:([^\]]*)\]\s?/;
@@ -39,6 +41,9 @@ function normalise(e: {
   action: string;
   target: string;
   detail: string;
+  data?: Record<string, unknown>;
+  decisionId?: string;
+  policyRev?: string;
 }): ViewEntry {
   const gov = e.action.startsWith('governance.');
   const m = e.detail.match(DOMAIN_RE);
@@ -52,7 +57,9 @@ function normalise(e: {
     subject: e.target,
     domain,
     reason,
-    detail: {},
+    detail: e.data ?? {},
+    ...(e.decisionId ? { decisionId: e.decisionId } : {}),
+    ...(e.policyRev ? { policyRev: e.policyRev } : {}),
   };
 }
 

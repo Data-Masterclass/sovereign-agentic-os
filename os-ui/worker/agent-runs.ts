@@ -82,6 +82,10 @@ export async function bootWorker(): Promise<WorkerBoot> {
   // out of the run path), so the guard would — and on the first 0.8.0 worker rollout did —
   // refuse to boot a correctly configured worker. The secret this process DOES depend on, the
   // scoped LiteLLM agent key, fails closed per call in core/infra/litellm-credential.ts.
+  // The Langfuse project keys this process exports traces with have no built-in default: in
+  // production a missing key stops the boot (typed). The console login is web-only, not needed here.
+  const { assertLangfuseCredentialsInProd } = await import('@core/kernel/config');
+  assertLangfuseCredentialsInProd(config, { withSso: false });
 
   // FAIL CLOSED ON AGENT-SYSTEM WRITES (Part D review H-3). This pod mounts no `os-repos` volume
   // — the PVC is ReadWriteOnce and os-ui owns it — and carries no `DATA_PROJECT_GIT`, so a
