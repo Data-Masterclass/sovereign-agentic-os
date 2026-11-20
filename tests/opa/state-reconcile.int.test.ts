@@ -14,6 +14,9 @@
  *     probe tick grants and every domain principal are back and the decision is true again.
  *  3. Negative twin: OPA unreachable → status "not-restored" and the Monitoring alert
  *     "Policy state not restored"; OPA back → restored.
+ *  Chart-seeded principals (`opa.governance.principals`, e.g. `test`/`sales` with clearance `pii`)
+ *  keep their EXACT value through a reconcile and an OPA restart, and the run worker's policy
+ *  gate (canary) reads not-ready while the state is lost and ready once it is restored.
  *
  * Run: OPA_IT_URL=http://127.0.0.1:18181 OPA_IT_CONTAINER=opa-it \
  *   node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test ../tests/opa/state-reconcile.int.test.ts
@@ -85,6 +88,15 @@ async function until<T>(fn: () => Promise<T>, ok: (v: T) => boolean, ms: number)
 }
 
 let stop: (() => void) | undefined;
+/** The chart's seeded principals, exactly as the chart's OPA loads them from governance.json. */
+let SEED: Record<string, { domains: string[]; clearances: string[] }> = {};
+
+async function assertSeedsExact(when: string): Promise<void> {
+  const principals = (await data('governance/principals')) as Record<string, unknown>;
+  for (const [id, p] of Object.entries(SEED)) {
+    assert.deepEqual(principals[id], p, `${when}: chart-seeded principal ${id} kept exactly`);
+  }
+}
 after(() => {
   stop?.();
   // Leave the container running for the job's later steps and log dump.
@@ -96,6 +108,12 @@ after(() => {
 test('seed through the OS: a runtime-domain user, a registered empty domain, an agent-system grant', async () => {
   await restartOpa(); // start from the chart's files only
   assert.equal(await allow(RUNTIME_DOMAIN, 'query'), false, 'precondition: not chart-seeded');
+  // os-ui gets the chart's seed through OS_OPA_SEED_PRINCIPALS (_os-ui-env.tpl, the same values
+  // block governance.json is rendered from). Read it from the freshly started chart OPA, BEFORE
+  // the first import of the config.
+  SEED = (await data('governance/principals')) as typeof SEED;
+  assert.deepEqual(SEED.test?.clearances, ['pii'], 'precondition: the chart seeds test with pii');
+  process.env.OS_OPA_SEED_PRINCIPALS = JSON.stringify(SEED);
 
   const { createUser } = await import('@tabs/admin/lib/users');
   await createUser({ id: 'leader-aw', email: 'leader-aw@example.com', password: 'S0me-Long-Passphrase!', domains: [RUNTIME_DOMAIN], role: 'creator' });
@@ -103,6 +121,9 @@ test('seed through the OS: a runtime-domain user, a registered empty domain, an 
   const { knownDomains } = await import('@tabs/admin/lib/users');
   await domains.ensureHydrated(knownDomains);
   domains.createDomain({ name: EMPTY_DOMAIN, owner: 'admin' });
+  // Registered domains that are ALSO chart-seeded principals with a clearance: the restore writes
+  // their self-principal and must not drop the seeded `pii`.
+  for (const d of ['test', 'sales']) if (!domains.listDomains().some((x) => x.id === d)) domains.createDomain({ name: d, owner: 'admin' });
 
   const { registerOpaStateSources } = await import('../../os-ui/opa-state-sources.ts');
   registerOpaStateSources();
@@ -123,6 +144,8 @@ test('negative twin: with the reconciler disabled the decision stays false after
   assert.equal(await data('grants'), undefined, 'OPA lost data.grants on restart');
   await new Promise((r) => setTimeout(r, PROBE_MS * 3)); // well past a probe tick
   assert.equal(await allow(RUNTIME_DOMAIN, 'query'), false);
+  const { policyStateReady } = await import('@tabs/agents/lib/build/run-jobs-server');
+  assert.equal(await policyStateReady()(), false, 'the worker gate holds runs while the state is lost');
 });
 
 test('with the reconciler: an OPA restart is restored within one probe tick', async () => {
@@ -131,6 +154,9 @@ test('with the reconciler: an OPA restart is restored within one probe tick', as
   const boot = await reconcileOpaState('boot'); // joins the boot run started above
   assert.equal(boot.state, 'restored', boot.detail);
   assert.equal(await allow(RUNTIME_DOMAIN, 'query'), true);
+  await assertSeedsExact('after the boot reconcile');
+  const { policyStateReady } = await import('@tabs/agents/lib/build/run-jobs-server');
+  assert.equal(await policyStateReady()(), true, 'the worker gate opens once the state is restored');
 
   await restartOpa();
   const restoredAfter = Date.now();
@@ -151,9 +177,11 @@ test('with the reconciler: an OPA restart is restored within one probe tick', as
   assert.deepEqual(principals[RUNTIME_DOMAIN]?.domains, [RUNTIME_DOMAIN], 'runtime domain self-principal restored');
   assert.deepEqual(principals[EMPTY_DOMAIN]?.domains, [EMPTY_DOMAIN], 'empty registered domain self-principal restored');
   assert.deepEqual(principals['leader-aw']?.domains, [RUNTIME_DOMAIN], 'roster principal restored');
-  for (const seeded of ['agentic-leader-q3-2026', 'sales', 'test']) {
-    assert.ok(principals[seeded], `chart-seeded principal ${seeded} untouched`);
-  }
+  await assertSeedsExact('after an OPA restart and the restore');
+  // A second (periodic) reconcile must not erode them either.
+  const again = await reconcileOpaState('periodic');
+  assert.equal(again.state, 'restored', again.detail);
+  await assertSeedsExact('after a periodic reconcile');
 });
 
 test('negative twin: an unreachable OPA surfaces "Policy state not restored", then recovers', async () => {

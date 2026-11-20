@@ -19,6 +19,9 @@
  *   - GRACEFUL STOP: `stopped()` is checked before each claim, so a SIGTERM never starts a new run;
  *     the in-flight one is aborted at its next superstep boundary by the executor's signal and the
  *     job goes back to `queued` as a `resume`.
+ *   - POLICY GATE (`policyReady`): while OPA's runtime policy state is missing (the canary the
+ *     os-ui OPA reconciler writes is absent), no run is claimed; past `policyGateTimeoutMs` the
+ *     oldest queued run is failed with the typed `policy_state_not_restored` error per tick.
  *   - RETENTION rides the same loop on a much slower cadence (`retentionEveryMs`), injected like
  *     everything else; a loop built without it simply never sweeps.
  *   - A LOST LEASE IS AN ABORT, not a log line (A4-review-H-2): `leaseWatch` flips `lost()` the
@@ -55,14 +58,27 @@ export type WorkerLoopDeps = {
   stopped: () => boolean;
   now?: () => number;
   log?: (message: string) => void;
+  /**
+   * POLICY GATE (OPA state reconcile): is OPA's runtime policy state in place? Injected so the loop
+   * stays pure. While it answers false, no job is claimed (runs stay `queued`); once it has been
+   * false for `policyGateTimeoutMs`, each tick claims the oldest job and fails it with the typed
+   * error `policy_state_not_restored` instead of running an agent against empty OPA state.
+   * Omitted ⇒ no gate (the tests that predate it).
+   */
+  policyReady?: () => Promise<boolean>;
+  policyGateTimeoutMs?: number;
 };
+
+/** The typed failure a run gets when OPA's policy state stays missing past the gate timeout. */
+export const POLICY_STATE_NOT_RESTORED = 'policy_state_not_restored';
+export const DEFAULT_POLICY_GATE_TIMEOUT_MS = 5 * 60_000;
 
 export type TickOutcome = 'ran' | 'idle' | 'stopped';
 
 /** The loop's own clock state: when each periodic chore last ran. `lastRetentionAt` is optional
  *  so a caller that predates retention (and every single-tick test) stays valid — absent means
  *  "never swept", i.e. due now, which is what a freshly started pod should do. */
-export type WorkerLoopState = { lastReapAt: number; lastRetentionAt?: number };
+export type WorkerLoopState = { lastReapAt: number; lastRetentionAt?: number; policyNotReadySince?: number | null };
 
 // --------------------------------------------------------------- lease watch --
 
@@ -156,6 +172,42 @@ export async function workerTick(deps: WorkerLoopDeps, state: WorkerLoopState): 
       for (const id of failed) deps.log?.(`FAILED run ${id}: the lease expired ${deps.maxAttempts} time(s) without completing`);
     } catch (e) {
       deps.log?.(`lease reap failed: ${(e as Error)?.message ?? String(e)}`);
+    }
+  }
+  if (deps.policyReady) {
+    let ready = false;
+    try {
+      ready = await deps.policyReady();
+    } catch (e) {
+      deps.log?.(`policy gate check failed (treated as not restored): ${(e as Error)?.message ?? String(e)}`);
+    }
+    if (ready) {
+      if (state.policyNotReadySince != null) deps.log?.('policy state restored — claiming runs again');
+      state.policyNotReadySince = null;
+    } else {
+      if (state.policyNotReadySince == null) {
+        state.policyNotReadySince = now();
+        deps.log?.('policy state NOT restored in OPA — runs stay queued until it is');
+      }
+      const timeout = deps.policyGateTimeoutMs ?? DEFAULT_POLICY_GATE_TIMEOUT_MS;
+      if (now() - state.policyNotReadySince < timeout) return 'idle';
+      let stale: RunJob | null = null;
+      try {
+        stale = await deps.store.claim(deps.workerId, now());
+      } catch (e) {
+        deps.log?.(`claim failed: ${(e as Error)?.message ?? String(e)}`);
+        return 'idle';
+      }
+      if (!stale) return 'idle';
+      const error = `${POLICY_STATE_NOT_RESTORED}: OPA policy state has not been restored for ${Math.round((now() - state.policyNotReadySince) / 1000)} s — the run was not started`;
+      try {
+        await deps.store.appendEvent(stale.runId, 'error', { error, code: POLICY_STATE_NOT_RESTORED }, now());
+        await deps.store.complete(stale.runId, 'failed', { error, lockedBy: deps.workerId, now: now() });
+      } catch (e) {
+        deps.log?.(`run ${stale.runId}: could not record ${POLICY_STATE_NOT_RESTORED} (${(e as Error)?.message ?? String(e)}); the reaper is the backstop`);
+      }
+      deps.log?.(`FAILED run ${stale.runId}: ${error}`);
+      return 'ran';
     }
   }
   let job: RunJob | null = null;

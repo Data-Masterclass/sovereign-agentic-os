@@ -22,3 +22,13 @@ test('governance writes are per-key upserts and every extra domain maps to itsel
   assert.ok(writes.every((w) => w.kind === 'data' && /^governance\/(tables|principals)\/[^/]+$/.test(w.path)), 'no whole-document replace');
   assert.ok(writes.some((w) => w.kind === 'data' && w.path === 'governance/tables/iceberg.sales.gold_x'));
 });
+
+test('a chart-seeded principal keeps its seeded clearances and domains; runtime only adds', async () => {
+  const { mergeSeed } = await import('@tabs/data/lib/policy/opa-state-writes');
+  const seed = { test: { domains: ['test'], clearances: ['pii'] } };
+  const writes = governanceWrites({ tables: {}, principals: { test: { domains: ['test'], clearances: [] }, other: { domains: ['other'], clearances: [] } } }, seed);
+  const byPath = Object.fromEntries(writes.map((w) => [w.kind === 'data' ? w.path : '', w.kind === 'data' ? w.value : null]));
+  assert.deepEqual(byPath['governance/principals/test'], { domains: ['test'], clearances: ['pii'] });
+  assert.deepEqual(byPath['governance/principals/other'], { domains: ['other'], clearances: [] }, 'non-seeded principals are runtime-authoritative');
+  assert.deepEqual(mergeSeed({ domains: ['x'], clearances: ['fin'] }, { domains: ['test'], clearances: ['pii'] }), { domains: ['test', 'x'], clearances: ['fin', 'pii'] });
+});

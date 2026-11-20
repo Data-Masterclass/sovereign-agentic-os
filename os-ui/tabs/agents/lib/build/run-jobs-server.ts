@@ -31,6 +31,8 @@
  *   - `server-only`: it touches the store, config and the run service. The pure parts it drives
  *     (`engine/jobs.ts`, `engine/worker-loop.ts`) are what the tests exercise.
  */
+import { readOpaData } from '@core/policy/opa-publish';
+import { OPA_CANARY_PATH } from '@core/policy/opa-canary';
 import 'server-only';
 import type { RunEnv } from '@core/kernel/object-lifecycle';
 import { hostname } from 'node:os';
@@ -367,6 +369,22 @@ export async function executeJob(store: RunJobStore, job: RunJob, opts: ExecuteJ
   }
 }
 
+/**
+ * Is OPA's runtime policy state in place? True when the canary the os-ui OPA state reconciler
+ * writes last (`os_state/reconciled`) is defined. A positive answer is cached for 15 s so an idle
+ * worker does not GET OPA every second; a negative one is re-checked every tick.
+ */
+export function policyStateReady(cacheMs = 15_000): () => Promise<boolean> {
+  let okUntil = 0;
+  return async () => {
+    if (Date.now() < okUntil) return true;
+    const r = await readOpaData(OPA_CANARY_PATH, 2500);
+    const ready = r.reachable && r.defined;
+    okUntil = ready ? Date.now() + cacheMs : 0;
+    return ready;
+  };
+}
+
 // ---------------------------------------------------------------- worker --
 
 export type WorkerHandle = { stop: () => void; done: Promise<void> };
@@ -416,6 +434,8 @@ export function startAgentRunsWorker(overrides: Partial<WorkerLoopDeps> = {}): W
           abort = null;
         }
       },
+      // OPA state gate: never run an agent against an OPA that lost its runtime policy state.
+      policyReady: policyStateReady(),
       ...overrides,
     };
     await workerLoop(deps);

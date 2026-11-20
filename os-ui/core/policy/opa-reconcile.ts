@@ -21,6 +21,9 @@
  *     last by every successful reconcile. Healthy but canary undefined ⇒ OPA lost its state ⇒
  *     reconcile now. Unhealthy ⇒ status "not restored".
  *   - Idempotent (every write is an upsert), single-flight, web process only (`process-role.ts`).
+ *   - Never silent: a reconciler that has not completed one run 2 min after boot is reported
+ *     `not-restored` too (Monitoring alert), and the run worker holds runs while the canary is
+ *     missing (`worker-loop.ts` policy gate).
  *   - Interim until WP-11 (OPA bundles) makes OPA load this state itself.
  */
 import { isRunWorkerProcess } from '@core/kernel/process-role';
@@ -28,7 +31,8 @@ import { scheduleEvery } from '@core/reconcile/runtime';
 import { opaHealthy, publishOpa, readOpaData, type OpaWriteResult } from '@core/policy/opa-publish';
 import { activeAccessGrants } from '@core/policy/policy-view';
 
-export const OPA_CANARY_PATH = 'os_state/reconciled';
+import { OPA_CANARY_PATH } from '@core/policy/opa-canary';
+export { OPA_CANARY_PATH };
 
 export type OpaSourceResult = { ok: boolean; detail: string };
 export type OpaStateSource = { name: string; restore(): Promise<OpaSourceResult> };
@@ -73,8 +77,25 @@ export function registerOpaStateSource(src: OpaStateSource): void {
 export function registerGrantContributor(c: GrantContributor): void {
   reg().contributors.set(c.name, c);
 }
-export function opaReconcileStatus(): OpaReconcileStatus {
-  return reg().status;
+/** How long after process start a never-run reconciler counts as "not restored". */
+export const NEVER_RUN_GRACE_MS = 2 * 60_000;
+
+/**
+ * The reconciler's status for Monitoring. A reconciler that has not completed a single run
+ * `NEVER_RUN_GRACE_MS` after os-ui started (it failed to start, or every run is still hanging)
+ * is reported as `not-restored`, so that case raises the alert instead of staying silent.
+ */
+export function opaReconcileStatus(uptimeMs = process.uptime() * 1000): OpaReconcileStatus {
+  const s = reg().status;
+  if (s.state === 'never-run' && uptimeMs >= NEVER_RUN_GRACE_MS) {
+    return {
+      ...s,
+      state: 'not-restored',
+      reason: 'never-run',
+      detail: `no policy-state reconcile has completed in the ${Math.round(uptimeMs / 60_000)} min since os-ui started — the reconciler may not have started (see the os-ui log for "opa state")`,
+    };
+  }
+  return s;
 }
 
 function union(into: Record<string, string[]>, add: Record<string, string[]>): void {

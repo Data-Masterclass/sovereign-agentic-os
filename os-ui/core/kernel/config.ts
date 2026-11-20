@@ -85,6 +85,31 @@ export function parseModelPrices(raw: string): Record<string, ModelPrice> {
   }
 }
 
+/** A chart-seeded OPA governance principal (values `opa.governance.principals`). */
+export type SeedPrincipal = { domains: string[]; clearances: string[] };
+
+/**
+ * Parse OS_OPA_SEED_PRINCIPALS — the chart's `opa.governance.principals`, rendered as JSON by
+ * `_os-ui-env.tpl`. Runtime governance writes MERGE into these (never drop a seeded clearance or
+ * domain). Malformed JSON is logged loudly and treated as "no seeds".
+ */
+export function parseSeedPrincipals(raw: string): Record<string, SeedPrincipal> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw || '{}');
+  } catch (err) {
+    console.error(`[os-ui] OS_OPA_SEED_PRINCIPALS is not valid JSON — chart-seeded clearances cannot be preserved: ${String(err)}`);
+    return {};
+  }
+  const out: Record<string, SeedPrincipal> = {};
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return out;
+  const strs = (v: unknown) => (Array.isArray(v) ? v.map(String) : []);
+  for (const [id, v] of Object.entries(parsed as Record<string, { domains?: unknown; clearances?: unknown } | null>)) {
+    out[id] = { domains: strs(v?.domains), clearances: strs(v?.clearances) };
+  }
+  return out;
+}
+
 /**
  * The insecure placeholder secret shipped for local dev / clone-and-run. It is
  * the fallback for OS_SESSION_SECRET and OS_MCP_TOKEN_SECRET. A boot-time guard
@@ -510,6 +535,8 @@ export const config = {
   // OPA (Policy): POST {OPA_URL}/v1/data/agentic/authz/allow and
   // GET {OPA_URL}/v1/data/grants for the principal -> tools grant map.
   opaUrl: base(env('OPA_URL', 'http://opa:8181')),
+  // Chart-seeded governance principals (values `opa.governance.principals`) — merged, never overwritten.
+  opaSeedPrincipals: parseSeedPrincipals(env('OS_OPA_SEED_PRINCIPALS', '{}')),
   // Data-authz FAIL MODE. Default DENY-by-default: if OPA is unreachable/errors
   // the governed data spine (`lib/governed.ts`) DENIES — consistent with the
   // agent spine. Set OPA_FAIL_OPEN=true ONLY for the offline-mock teaching flow

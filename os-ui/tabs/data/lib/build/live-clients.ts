@@ -239,7 +239,7 @@ export function realPolicy(): PolicyClient {
   // state after an OPA restart (`tabs/data/lib/policy/opa-state.ts`).
   return {
     async push(opa) {
-      const r = await publishOpaAll(governanceWrites(opa));
+      const r = await publishOpaAll(governanceWrites(opa, config.opaSeedPrincipals));
       if (!r.ok) throw new Error(`OPA governance push failed — ${r.detail}`);
     },
   };
