@@ -273,7 +273,8 @@ table_key(r) := sprintf("%s.%s.%s", [r.catalogName, r.schemaName, r.tableName])
 # Purely ADDITIVE: it only ever DENIES, and only for a NON-internal catalog with no entry.
 # `iceberg`/`system` tables are untouched (internal), and any table WITH an entry is
 # governed by the existing rules — so no existing access breaks.
-internal_catalogs := {"iceberg", "system"}
+# `iceberg_purge` is the SAME warehouse as `iceberg` (the delete-domain purge catalog, below).
+internal_catalogs := {"iceberg", "system", purge_catalog}
 
 is_internal_catalog(cat) if cat in internal_catalogs
 
