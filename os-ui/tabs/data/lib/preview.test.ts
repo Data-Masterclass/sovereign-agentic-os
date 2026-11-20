@@ -5,6 +5,7 @@ import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   __resetStore,
+  __seedDatasetForTest,
   createDataset,
   buildVersion,
   getDataset,
@@ -70,19 +71,41 @@ test('runPreview: a NON-owner peer resolves a promoted asset to its DOMAIN schem
 
 test('runPreview: the OWNER of a promoted asset reads the DOMAIN copy too, never their lane', async () => {
   const d = createDataset(amir, { name: 'Orders' });
+  buildVersion(d.id, amir, 'bronze', { quality: 'passing', artifact: 'bronze/orders.dlt.yml' });
   buildVersion(d.id, amir, 'silver', { quality: 'passing', artifact: 'silver/stg_orders.sql' });
   transition(d.id, bea, 'promote', { visibility: 'domain' }); // now tier asset (sales)
 
-  // A governed dataset is served from its domain copy for everyone. The owner's lane is their
-  // workspace: it may hold an unpublished rebuild or, with legacy name-only lane tables,
-  // another dataset's table of the same name (seen live). Even a bronze request resolves to
-  // the one served layer — bronze is never published.
-  for (const layer of [undefined, 'bronze', 'silver'] as const) {
+  // No layer, or the served one: the domain copy, read as the domain — for the owner too.
+  for (const layer of [undefined, 'silver'] as const) {
     const target = builtLayerFqn(getDataset(d.id, amir), amir, layer);
-    assert.ok(target);
     assert.equal(target!.fqn, 'iceberg.sales.silver_orders');
     assert.equal(target!.principal, 'sales');
   }
+});
+
+test('runPreview: the OWNER explicitly asking for an unpublished layer reads their OWN lane (unique name), never another layer', async () => {
+  const d = createDataset(amir, { name: 'Orders' });
+  buildVersion(d.id, amir, 'bronze', { quality: 'passing', artifact: 'bronze/orders.dlt.yml' });
+  buildVersion(d.id, amir, 'silver', { quality: 'passing', artifact: 'silver/stg_orders.sql' });
+  transition(d.id, bea, 'promote', { visibility: 'domain' });
+
+  const bronze = builtLayerFqn(getDataset(d.id, amir), amir, 'bronze');
+  assert.equal(bronze!.layer, 'bronze', 'the layer asked for — never the served silver in its place');
+  assert.equal(bronze!.fqn, `iceberg.personal_amir.bronze_${d.laneSlug}`);
+  assert.equal(bronze!.principal, 'amir', 'the lane is read as its owner');
+  // Not built → nothing (not_built), not the served layer.
+  assert.equal(builtLayerFqn(getDataset(d.id, amir), amir, 'gold'), null);
+  // Another viewer never gets the owner's lane.
+  assert.equal(builtLayerFqn(getDataset(d.id, cara), cara, 'bronze'), null);
+});
+
+test('NEGATIVE TWIN: an asset whose lane name is NOT provably its own (legacy) answers not_built for an unpublished layer', async () => {
+  __seedDatasetForTest({ id: 'ds_legacy', name: 'Orders', owner: 'amir', domain: 'sales', tier: 'asset' });
+  buildVersion('ds_legacy', amir, 'bronze', { quality: 'passing', artifact: 'bronze/orders.dlt.yml' });
+  buildVersion('ds_legacy', amir, 'silver', { quality: 'passing', artifact: 'silver/stg_orders.sql' });
+  // The legacy lane `personal_amir.bronze_orders` may belong to a same-named dataset: never served.
+  assert.equal(builtLayerFqn(getDataset('ds_legacy', amir), amir, 'bronze'), null);
+  assert.equal(builtLayerFqn(getDataset('ds_legacy', amir), amir)!.fqn, 'iceberg.sales.silver_orders');
 });
 
 test('runPreview: nothing built → calm not-materialized, never a query', async () => {

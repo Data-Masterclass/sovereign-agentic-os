@@ -150,13 +150,14 @@ test('sharedFootprintFqns: no collision → empty set', () => {
   assert.ok(!fqns.has('iceberg.sales.gold_orders_a'), 'the target FQN is NOT protected by a differently-named dataset');
 });
 
-test('sharedFootprintFqns: an archived sibling holds no live claim → excluded', () => {
+test('sharedFootprintFqns: an ARCHIVED sibling is protected too — archive is reversible', () => {
   const target = ds({ id: 'ds_a', tier: 'asset', domain: 'sales', visibility: 'domain' });
   target.versions.gold.built = true;
   const archived = { ...ds({ id: 'ds_b', tier: 'asset', domain: 'sales', visibility: 'domain' }), archived: true };
   archived.versions = target.versions; // built too
   const fqns = sharedFootprintFqns(target, [target, archived]);
-  assert.equal(fqns.size, 0);
+  assert.ok(fqns.has('iceberg.sales.gold_web_orders'), 'the domain table a restorable sibling maps to is not dropped');
+  assert.ok(fqns.has('iceberg.personal_amir.gold_web_orders'), 'nor the legacy lane table it shares');
 });
 
 test('retireDomainTables SKIPS a protected FQN (orphaned w/ collision reason) and still drops the rest', async () => {
@@ -185,4 +186,23 @@ test('dropPhysicalTables SKIPS a protected FQN and still drops the non-protected
   assert.equal(report.orphaned.length, 1);
   assert.equal(report.orphaned[0].fqn, 'iceberg.sales.gold_web_orders');
   assert.match(report.orphaned[0].reason, /name\/slug collision/);
+});
+
+test('delete keeps the lane table an ARCHIVED same-named sibling maps to, and drops only its own', async () => {
+  // Two legacy datasets (no recorded lane name) of one owner share `personal_amir.gold_web_orders`;
+  // one is archived (restorable). Deleting the other must not drop the shared lane table.
+  const target = ds({ id: 'ds_a', domain: 'q3' });
+  target.versions.gold.built = true;
+  const archived = { ...ds({ id: 'ds_b', domain: 'aw' }), archived: true };
+  archived.versions = { ...emptyVersions(), gold: { ...emptyVersions().gold, built: true } };
+  const calls: string[] = [];
+  const report = await dropPhysicalTables(target, amir, async (sql) => { calls.push(sql); }, sharedFootprintFqns(target, [target, archived]));
+  assert.ok(!calls.some((c) => c.includes('personal_amir.gold_web_orders')), `no drop of the shared lane table: ${calls.join('; ')}`);
+  assert.ok(report.orphaned.some((o) => o.fqn === 'iceberg.personal_amir.gold_web_orders'), 'the kept table is reported, not silently skipped');
+  // A dataset with its OWN (unique) lane name has nothing shared: its lane table is dropped.
+  const own = ds({ id: 'ds_c', laneSlug: 'web_orders_c' });
+  own.versions.gold.built = true;
+  const ownCalls: string[] = [];
+  await dropPhysicalTables(own, amir, async (sql) => { ownCalls.push(sql); }, sharedFootprintFqns(own, [own, archived]));
+  assert.ok(ownCalls.some((c) => c.includes('personal_amir.gold_web_orders_c')));
 });
