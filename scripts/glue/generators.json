@@ -3,14 +3,26 @@
   "generators": [
     {
       "module": "tabs/data/lib/dbt/generate.ts",
-      "parts": ["tabs/data/lib/dbt/project.ts", "tabs/data/lib/dbt/models.ts", "tabs/data/lib/dbt/schedules.ts", "tabs/data/lib/dbt/sources.ts", "tabs/data/lib/dbt/schema.ts", "tabs/data/lib/dbt/semantic/spec.ts"],
+      "parts": [
+        "tabs/data/lib/dbt/project.ts",
+        "tabs/data/lib/dbt/models.ts",
+        "tabs/data/lib/dbt/schedules.ts",
+        "tabs/data/lib/dbt/sources.ts",
+        "tabs/data/lib/dbt/schema.ts",
+        "tabs/data/lib/dbt/semantic/spec.ts"
+      ],
       "component": "dbt + Dagster",
       "validator": "dbt parse; dagster definitions validate",
       "goldens": [
         "tabs/data/lib/dbt/fixtures/append-sync-with-cursor.golden.json",
         "tabs/data/lib/dbt/fixtures/composition-with-tests.golden.json",
+        "tabs/data/lib/dbt/fixtures/duplicate-rule.golden.json",
         "tabs/data/lib/dbt/fixtures/ingested-pass-through.golden.json",
-        "tabs/data/lib/dbt/fixtures/metrics-semantic-layer.golden.json"
+        "tabs/data/lib/dbt/fixtures/live-q3-count-metric.golden.json",
+        "tabs/data/lib/dbt/fixtures/metrics-semantic-layer.golden.json",
+        "tabs/data/lib/dbt/fixtures/sweep-element.golden.json",
+        "tabs/data/lib/dbt/fixtures/sweep-full.golden.json",
+        "tabs/data/lib/dbt/fixtures/sweep-labels.golden.json"
       ]
     }
   ]

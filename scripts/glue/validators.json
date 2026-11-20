@@ -9,11 +9,7 @@
   },
   "knownRefusals": {
     "$comment": "Ratchet for GLUE-6: golden fixtures a validator refuses TODAY. A listed fixture that fails is reported as KNOWN-FAIL and does not fail CI; a listed fixture that now passes FAILS CI until it is removed here. Only shrink this list. Each entry has `match`: the text dbt's refusal must still contain; a fixture refused for any OTHER reason FAILS.",
-    "dbt-parse": {
-      "metrics-semantic-layer": {
-        "reason": "dbt 1.9 refuses the generated semantic layer. First error: metric `sales__draft_signups__revenue` lacks the required `label`. Behind it (found by GLUE-6 on 2026-11-20 with labels added): measures carry `config` (not allowed in 1.9), COUNT measure `orders` has no `expr`, `orders` is both an entity and a measure, and semantic model / metric names contain dunders (`sales__orders`). Generator fix: WP-20.",
-        "match": "'label' is a required property"
-      }
-    }
+    "dbt-parse": {},
+    "$history": "2026-11-20: metrics-semantic-layer removed — it parses on dbt 1.9 since PR #158 (WP-03) fixed the generator (labels, no measure config, expr on counts, project-wide name allocator, no dunders). The ratchet itself reported 'now parses'."
   }
 }
