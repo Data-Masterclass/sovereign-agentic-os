@@ -213,6 +213,10 @@ jobs:
         run: |
           set -o pipefail
           bash scripts/release.sh --phase deploy --remote origin --sha "$SHA" "$VERSION" | tee prod-report/release.txt
+      # Drop the registry credential as soon as deploy.sh no longer needs it (even if it failed).
+      - name: Registry logout
+        if: always()
+        run: skopeo logout ghcr.io || true
       - name: Report to job summary
         if: always()
         run: |

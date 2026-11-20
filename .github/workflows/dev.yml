@@ -133,6 +133,11 @@ jobs:
           # EXPECT_DIGEST: deploy.sh refuses if the tag already resolves to other bytes.
           EXPECT_DIGEST=$DIGEST bash scripts/deploy.sh --env dev --from-registry "$TAG"
 
+      # Drop the registry credential as soon as deploy.sh no longer needs it (even if it failed).
+      - name: Registry logout
+        if: always()
+        run: skopeo logout ghcr.io || true
+
       # The digest dev RUNS (both os-ui Deployments) must be the digest the image job built.
       - name: The running digest is the built digest
         id: running
