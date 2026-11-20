@@ -337,7 +337,7 @@ jobs:
     name: build
     runs-on: ubuntu-latest
     if: ${{ always() }}
-    needs: [test-ui, test-langgraph-pg, test-opensearch, tracing-e2e, validate-generated, test-python, dagster-image, test-opa, test-postgres, helm-lint, secret-scan]
+    needs: [test-ui, test-langgraph-pg, test-opensearch, tracing-e2e, validate-generated, test-python, dagster-image, git-http-image, test-opa, test-postgres, helm-lint, secret-scan]
     steps:
       - name: Every needed job succeeded (failed, cancelled or skipped fails the build)
         env:
@@ -447,6 +447,21 @@ jobs:
         run: docker build -f images/extensions/dagster/Dockerfile -t sovereign-os/dagster:ci images/extensions
       - name: Image tests + eject test
         run: sh images/extensions/dagster/tests/image/run.sh sovereign-os/dagster:ci
+
+  # The git-http sidecar image, built from the branch: its lighttpd refuses encoded path
+  # separators and dot segments (layer 2 of the path guard; layer 1 is in test-ui).
+  git-http-image:
+    name: git-http-image
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Build the git-http image
+        run: docker build -t sovereign-os/git-http:ci images/base/git-http
+      - name: lighttpd path guard against the built image
+        env:
+          GIT_HTTP_IMAGE: sovereign-os/git-http:ci
+        run: node --test tests/git-http/lighttpd-guard.test.mjs
 
   # OPA policies (04 M0–M1). The policies are plain Rego + JSON data in
   # charts/sovereign-agentic-os/policies with their *_test.rego beside them, so upstream
