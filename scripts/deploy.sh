@@ -302,6 +302,16 @@ if isinstance(d, dict):
         ud['deployments'] = fresh
         migrated.append('dagster.dagster-user-deployments.deployments (chart list, '
                         + ('chart repository' if qualified(default_repo) else 'operator repository') + ')')
+# The data-runner image follows the same rule (pinned by digest, chart-owned): tag, digest and
+# localBuild always come from the chart, and the repository too once the chart's is
+# registry-qualified — so a live hand-built `ghcr.io/aborek/...` value never wins over the pin.
+dr_img = (kept.get('dataRunner') or {}).get('image') if isinstance(kept.get('dataRunner'), dict) else None
+if isinstance(dr_img, dict):
+    chart_dr = ((new.get('dataRunner') or {}).get('image') or {})
+    keys = ('tag', 'digest', 'localBuild', 'repository') if qualified(chart_dr.get('repository')) else ('tag', 'digest', 'localBuild')
+    for k in keys:
+        if dr_img.pop(k, None) is not None:
+            migrated.append(f'dataRunner.image.{k}')
 yaml.safe_dump(kept, open(sys.argv[3], 'w'), sort_keys=False)
 dropped = sorted(set(live) - set(kept))
 print(f"   kept {len(kept)} top-level keys; dropped {len(dropped)} for removed components")

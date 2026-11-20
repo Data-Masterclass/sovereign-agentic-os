@@ -119,6 +119,9 @@ dagster:
       limits:   { cpu: 1,   memory: 512Mi }
 
 dataRunner:
+  # scripts/os builds images/extensions/data-runner and loads it into kind: no registry digest exists.
+  image:
+    localBuild: true
   resources:
     requests: { cpu: 50m, memory: 192Mi }
     limits:   { cpu: 1,   memory: 1Gi }

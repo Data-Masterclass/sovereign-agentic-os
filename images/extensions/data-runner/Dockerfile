@@ -8,7 +8,7 @@ COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
 
 RUN useradd -u 1000 -m app
-COPY --chown=1000:1000 app.py /app/
+COPY --chown=1000:1000 app.py column_name_rule.json /app/
 USER 1000
 
 ENV PORT=8000 HOME=/tmp

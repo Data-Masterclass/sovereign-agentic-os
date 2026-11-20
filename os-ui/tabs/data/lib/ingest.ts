@@ -18,7 +18,7 @@ import { INGEST_OBJECT_KEY, makeLiveAdapters } from '@tabs/data/lib/build/live';
 import { makeRealClients, dataRunnerReachable } from '@tabs/data/lib/build/live-clients';
 import { makeMockAdapters, newMockBackends } from '@tabs/data/lib/build/mocks';
 import { runAdapter } from '@tabs/data/lib/build/adapter';
-import { planUploadColumns, uploadHeaders } from '@tabs/data/lib/upload-columns';
+import { landedColumnDocs, planUploadColumns, uploadHeaders } from '@tabs/data/lib/upload-columns';
 import { isIdentifier } from '@tabs/data/lib/dbt/literal';
 import type { ColumnDoc } from '@tabs/data/lib/dataset-schema';
 
@@ -182,8 +182,7 @@ export async function ingestAndRegisterBronze(
   // header attached where the mapping renamed it. Checked BEFORE Bronze is registered: a landed
   // name outside the column allow-list (a self-describing file's own key) refuses the
   // registration here instead of failing half-way after it.
-  const sourceOf = new Map((plan?.columns ?? []).filter((c) => c.source).map((c) => [c.name, c.source!]));
-  const landed: ColumnDoc[] = report.columns.map((c) => ({ name: c.name, description: '', ...(sourceOf.has(c.name) ? { source: sourceOf.get(c.name)! } : {}) }));
+  const landed: ColumnDoc[] = landedColumnDocs(report.columns, plan);
   const refused = landed.find((c) => !isIdentifier('column', c.name));
   if (refused) {
     return {

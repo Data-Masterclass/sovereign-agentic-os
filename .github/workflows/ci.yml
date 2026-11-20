@@ -152,6 +152,7 @@ jobs:
           bash scripts/tests/smoke-test.test.sh
           bash scripts/tests/values-diff.test.sh
           bash scripts/tests/deploy-dagster-image.test.sh
+          bash scripts/tests/deploy-data-runner-image.test.sh
 
       # Generates the code map and fails if the generator cannot (a broken
       # manifest, an unreadable tab). Deliberately NOT `--check`: comparing a

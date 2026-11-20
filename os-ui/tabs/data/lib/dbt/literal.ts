@@ -53,18 +53,9 @@ export class LiteralSafetyError extends Error {
  * whitespace and control characters, so none of these values can open a Jinja construct, leave a
  * SQL or Jinja string literal, or end a `--` comment.
  */
-export const IDENTIFIER_PATTERNS: Record<IdentifierKind, RegExp> = {
+export const IDENTIFIER_PATTERNS: Record<Exclude<IdentifierKind, 'column'>, RegExp> = {
   /** A Trino column / schema / table name usable unquoted (128 = a safe bound below Trino's). */
   sql: /^[A-Za-z_][A-Za-z0-9_]{0,127}$/,
-  /**
-   * A PHYSICAL column name. New uploads land under `normalizeColumnName` identifiers, but a
-   * table can already hold a header such as `Order Date` or `größe`; such a name is kept as it is
-   * (never renamed, never dropped) and emitted with dbt's `quote: true`. It may hold no brace,
-   * double quote, backslash, control character, line or paragraph separator or lone surrogate,
-   * and no leading or trailing whitespace — so it can neither open Jinja nor leave a quoted
-   * Trino identifier.
-   */
-  column: /^(?=[^\s])(?=[\s\S]*[^\s]$)[^\u0000-\u001f\u007f-\u009f{}"\\\u2028\u2029\ud800-\udfff]{1,128}$/,
   /** `ds_<token>` — the shape `store.newId()` mints. */
   dataset_id: /^ds_[A-Za-z0-9_]{1,64}$/,
   /** A domain id (hyphens allowed; `domainSchema()` maps it to the Trino schema). */
@@ -87,7 +78,36 @@ const KIND_HINT: Record<IdentifierKind, string> = {
   slug: 'lowercase letters, digits and underscores',
 };
 
+/**
+ * THE physical column-name rule — an exact copy of `images/extensions/data-runner/column_name_rule.json`,
+ * the one definition the data-runner loads (`literal-column-rule.test.ts` fails on any drift, and
+ * both sides run the shared `column_name_cases.json`). Code points, inclusive ranges.
+ *
+ * A PHYSICAL column name: new uploads land under `normalizeColumnName` identifiers, but a table can
+ * already hold a header such as `Order Date` or `größe`; such a name is kept (never renamed, never
+ * dropped) and emitted with dbt's `quote: true`. The rule keeps out everything that could open
+ * Jinja, leave a quoted Trino identifier or break YAML: braces, `"`, `\\`, controls, line and
+ * paragraph separators, lone surrogates and the BOM, plus leading / trailing spaces.
+ */
+export const COLUMN_NAME_RULE = {
+  maxCodePoints: 128,
+  forbidden: [[0, 31], [34, 34], [92, 92], [123, 123], [125, 125], [127, 159], [8232, 8233], [55296, 57343], [65279, 65279]],
+  edgeForbidden: [[32, 32], [160, 160], [5760, 5760], [8192, 8202], [8239, 8239], [8287, 8287], [12288, 12288]],
+} as const;
+
+const inRanges = (cp: number, ranges: readonly (readonly [number, number])[]) => ranges.some(([lo, hi]) => lo <= cp && cp <= hi);
+
+/** The column rule over code points (a valid surrogate pair is ONE code point; a lone one is refused). */
+export function isColumnName(value: unknown): value is string {
+  if (typeof value !== 'string') return false;
+  const cps = [...value].map((ch) => ch.codePointAt(0)!);
+  if (cps.length < 1 || cps.length > COLUMN_NAME_RULE.maxCodePoints) return false;
+  if (cps.some((cp) => inRanges(cp, COLUMN_NAME_RULE.forbidden))) return false;
+  return !inRanges(cps[0], COLUMN_NAME_RULE.edgeForbidden) && !inRanges(cps[cps.length - 1], COLUMN_NAME_RULE.edgeForbidden);
+}
+
 export function isIdentifier(kind: IdentifierKind, value: unknown): value is string {
+  if (kind === 'column') return isColumnName(value);
   return typeof value === 'string' && IDENTIFIER_PATTERNS[kind].test(value);
 }
 

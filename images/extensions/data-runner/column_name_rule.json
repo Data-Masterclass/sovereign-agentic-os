@@ -1,0 +1,83 @@
+{
+  "$comment": "THE physical column-name rule, shared by the data-runner (app.py loads this file) and os-ui (tabs/data/lib/dbt/literal.ts COLUMN_NAME_RULE, held equal to this file by literal-column-rule.test.ts). Counted in Unicode CODE POINTS (an emoji is one). A name is 1..maxCodePoints code points, holds no code point inside a 'forbidden' range, and neither starts nor ends with one inside an 'edgeForbidden' range. Ranges are inclusive [first, last].",
+  "maxCodePoints": 128,
+  "forbidden": [
+    [
+      0,
+      31
+    ],
+    [
+      34,
+      34
+    ],
+    [
+      92,
+      92
+    ],
+    [
+      123,
+      123
+    ],
+    [
+      125,
+      125
+    ],
+    [
+      127,
+      159
+    ],
+    [
+      8232,
+      8233
+    ],
+    [
+      55296,
+      57343
+    ],
+    [
+      65279,
+      65279
+    ]
+  ],
+  "forbiddenNames": {
+    "0-31": "C0 controls",
+    "34": "double quote",
+    "92": "backslash",
+    "123": "{",
+    "125": "}",
+    "127-159": "DEL and C1 controls",
+    "8232-8233": "line/paragraph separator",
+    "55296-57343": "lone surrogate",
+    "65279": "BOM / zero-width no-break space"
+  },
+  "edgeForbidden": [
+    [
+      32,
+      32
+    ],
+    [
+      160,
+      160
+    ],
+    [
+      5760,
+      5760
+    ],
+    [
+      8192,
+      8202
+    ],
+    [
+      8239,
+      8239
+    ],
+    [
+      8287,
+      8287
+    ],
+    [
+      12288,
+      12288
+    ]
+  ]
+}

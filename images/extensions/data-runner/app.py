@@ -202,22 +202,38 @@ def apply_column_names(arrow, names):
     return arrow.rename_columns(names)
 
 
-# The OS's physical-column allow-list (os-ui `tabs/data/lib/dbt/literal.ts`, kind `column`): at
-# most 128 characters, no leading/trailing whitespace, and no brace, double quote, backslash,
-# control character (C0/C1/DEL), line/paragraph separator or lone surrogate.
-_COLUMN_BAD = re.compile("[\u0000-\u001f\u007f-\u009f{}\"\\\\\u2028\u2029\ud800-\udfff]")
+# THE physical column-name rule, shared with os-ui: `column_name_rule.json` next to this file is the
+# one definition (os-ui's `literal.ts` holds an identical copy, kept equal by a test). Counted in
+# code points; inclusive ranges.
+with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "column_name_rule.json"), encoding="utf-8") as _fh:
+    COLUMN_NAME_RULE = json.load(_fh)
+
+
+def _in(cp, ranges):
+    return any(lo <= cp <= hi for lo, hi in ranges)
+
+
+def is_column_name(name) -> bool:
+    """True when `name` satisfies column_name_rule.json (the same predicate os-ui applies)."""
+    if not isinstance(name, str):
+        return False
+    cps = [ord(c) for c in name]
+    r = COLUMN_NAME_RULE
+    if not 1 <= len(cps) <= r["maxCodePoints"]:
+        return False
+    if any(_in(cp, r["forbidden"]) for cp in cps):
+        return False
+    return not (_in(cps[0], r["edgeForbidden"]) or _in(cps[-1], r["edgeForbidden"]))
 
 
 def validate_column_names(arrow) -> None:
     """Refuse a file whose column names the OS cannot register — BEFORE any catalog call, so a
     refused upload never drops, replaces or appends to an existing Bronze table."""
     for f in arrow.schema:
-        name = f.name
-        if (not isinstance(name, str) or not 1 <= len(name) <= 128 or name != name.strip()
-                or _COLUMN_BAD.search(name)):
+        if not is_column_name(f.name):
             raise ValueError(
-                f"column {name!r} cannot be registered: a column name is 1-128 characters with no "
-                "leading/trailing space, brace, double quote, backslash or control character; "
+                f"column {f.name!r} cannot be registered: a column name is 1-128 characters with no "
+                "leading/trailing space, brace, double quote, backslash, BOM or control character; "
                 "nothing was written")
 
 

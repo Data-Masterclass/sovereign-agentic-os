@@ -309,3 +309,17 @@ Used by the docling Deployment and by os-ui / os-ui-worker, so the key checked i
 {{- define "soa.doclingApiKeySecret" -}}
 {{- .Values.docling.apiKey.existingSecret | default "docling-api-key" -}}
 {{- end -}}
+
+{{/*
+The data-runner image reference: `repository:tag@digest` (the digest is required and chart-owned),
+or `repository:tag` only with `dataRunner.image.localBuild` (kind; refused in production by
+templates/extensions/lakehouse/data-runner.yaml). One definition for every pod that runs it.
+*/}}
+{{- define "soa.dataRunnerImage" -}}
+{{- $i := .Values.dataRunner.image -}}
+{{- if $i.localBuild -}}
+{{ $i.repository }}:{{ $i.tag }}
+{{- else -}}
+{{ $i.repository }}:{{ $i.tag }}@{{ required "dataRunner.image.digest must be set: the digest build-images.yml printed for this tag" $i.digest }}
+{{- end -}}
+{{- end -}}

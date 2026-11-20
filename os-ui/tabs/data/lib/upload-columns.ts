@@ -59,3 +59,13 @@ export function planUploadColumns(headers: string[], existing: ColumnDoc[]): { c
     columns: plan.map((p) => ({ name: p.name, description: '', ...(p.source !== p.name ? { source: p.source } : {}) })),
   };
 }
+
+/**
+ * The column docs to record from what the runner LANDED. A landed name the plan produced carries
+ * its source header; any other landed name (an older runner that ignored `columnNames`, or the
+ * retry under the file's own names) is recorded as it landed — a valid physical name either way.
+ */
+export function landedColumnDocs(landed: { name: string }[], plan: { columns: ColumnDoc[] } | null): ColumnDoc[] {
+  const sourceOf = new Map((plan?.columns ?? []).filter((c) => c.source).map((c) => [c.name, c.source!]));
+  return landed.map((c) => ({ name: c.name, description: '', ...(sourceOf.has(c.name) ? { source: sourceOf.get(c.name)! } : {}) }));
+}
