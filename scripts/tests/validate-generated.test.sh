@@ -23,7 +23,7 @@ check() {  # check <description> <grep -E pattern> <output>
 real="$(bash scripts/validate-generated.sh ${GLUE6_TEST_BUILD_FLAG:-} 2>&1)"; real_code=$?
 printf '%s\n' "$real" | grep '^GLUE-6' | sed 's/^/  real: /'
 check "real inputs: exit 0" '^0$' "$real_code"
-for step in dbt-parse dagster-definitions-validate opa-check opa-test 'kubeconform\[default\]' 'kubeconform\[stackit\]'; do
+for step in dbt-parse dbt-compile dagster-definitions-validate opa-check opa-test 'kubeconform\[default\]' 'kubeconform\[stackit\]'; do
   check "real inputs: $step ok" "^GLUE-6 $step: ok" "$real"
 done
 check "real inputs: no FAIL line" '^GLUE-6: ok' "$real"
@@ -34,6 +34,12 @@ check "twins: exit non-zero" '^[1-9]' "$twin_code"
 check "twin dbt: dbt-parse FAILs on the duplicate model" '^GLUE-6 dbt-parse: FAIL twin-duplicate-model' "$twin"
 check "twin dbt: the real goldens still parse" '^GLUE-6 dbt-parse: ok — composition-with-tests' "$twin"
 check "twin dbt: Dagster refuses the domain too" '^GLUE-6 dagster-definitions-validate: FAIL' "$twin"
+check "C1 twin: a duplicate test name FAILs dbt-parse" '^GLUE-6 dbt-parse: FAIL twin-duplicate-test' "$twin"
+check "C1 twin: a metric with an unknown measure FAILs dbt-parse" '^GLUE-6 dbt-parse: FAIL twin-unknown-measure' "$twin"
+check "C1 twin: … and dbt names the unknown measure" 'measure `no_such_measure` does not exist' "$twin"
+check "C1 twin: an invalid cron parses in dbt" '^GLUE-6 dbt-parse: ok — twin-invalid-cron' "$twin"
+check "C1 twin: Dagster refuses the invalid-cron domain" 'twin-invalid-cron' "$(printf '%s\n' "$twin" | sed -n '/dagster-definitions-validate: FAIL/,/^GLUE-6 opa/p')"
+check "real goldens: dbt compile ok" '^GLUE-6 dbt-compile: ok — composition-with-tests' "$twin"
 check "twin rego: opa-check FAILs" '^GLUE-6 opa-check: FAIL' "$twin"
 check "twin rego: the reason names the twin file" 'twin_unused_var.rego' "$twin"
 check "twin k8s: kubeconform[default] FAILs" '^GLUE-6 kubeconform\[default\]: FAIL' "$twin"
