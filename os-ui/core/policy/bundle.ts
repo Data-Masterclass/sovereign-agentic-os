@@ -26,7 +26,8 @@ import { createHash } from 'node:crypto';
 import { config } from '@core/kernel/config';
 import { scheduleEvery } from '@core/reconcile/runtime';
 import { bundledOpaStateSources } from '@core/policy/opa-reconcile';
-import { OS_DATA_ROOTS, captureOpaWrites, onBundledWrite, opaPathSegments } from '@core/policy/opa-publish';
+import { OS_DATA_ROOTS, onBundledWrite, opaPathSegments } from '@core/policy/opa-publish';
+import { captureOpaWrites } from '@core/policy/opa-capture';
 import { canonicalJson, tarGz } from '@core/policy/bundle-tar';
 
 export type OpaBundle = {

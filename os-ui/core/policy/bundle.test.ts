@@ -16,7 +16,8 @@ process.env.OS_OPA_SEED = JSON.stringify({ seed_grants: { s: ['q'] }, requires_a
 
 const { __resetOpaReconcile, registerOpaStateSource } = await import('@core/policy/opa-reconcile');
 const { compileOsData, compileOsDataUsers, buildBundle, recompileOsData, osDataBundleStatus, __resetOsDataBundle } = await import('@core/policy/bundle');
-const { publishOpa, readOpaData, ownedByOsDataBundle, captureOpaWrites } = await import('@core/policy/opa-publish');
+const { publishOpa, readOpaData, ownedByOsDataBundle } = await import('@core/policy/opa-publish');
+const { captureOpaWrites } = await import('@core/policy/opa-capture');
 
 beforeEach(() => {
   __resetOpaReconcile();
