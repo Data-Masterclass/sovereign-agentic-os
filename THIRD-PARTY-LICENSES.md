@@ -123,6 +123,7 @@ models, so run tracing is done explicitly with the `langfuse` SDK.
 | Harbor | platform | Apache-2.0 | `licenses/Apache-2.0.txt` | Production registry |
 | Velero | platform | Apache-2.0 | `licenses/Apache-2.0.txt` | Backup/restore |
 | cert-manager | platform | Apache-2.0 | `licenses/Apache-2.0.txt` | TLS certificate management |
+| External Secrets Operator | chart 2.15.0 | Apache-2.0 | `licenses/Apache-2.0.txt` | Secrets from STACKIT Secrets Manager (WP-10). Its own release (`deploy/external-secrets/`); the optional `bitwarden-sdk-server` subchart stays disabled. |
 | Cilium | platform | Apache-2.0 | `licenses/Apache-2.0.txt` | CNI / NetworkPolicy enforcement |
 | Ory | platform | Apache-2.0 | `licenses/Apache-2.0.txt` | Identity / auth federation |
 

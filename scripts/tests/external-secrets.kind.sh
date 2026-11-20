@@ -21,7 +21,13 @@
 #   4. negative twin: a backend entry missing a key → the ExternalSecret is NOT Ready and the
 #      existing Secret keeps its value (no outage, no partial Secret);
 #   5. negative twin: the "synced by ESO" assertion FAILS on a Secret written by kubectl alone;
-#   6. rollback: deleting an ExternalSecret leaves its Secret in place, unchanged.
+#   6. rollback: deleting an ExternalSecret leaves its Secret in place, unchanged;
+#   7. an EMPTY backend value never blanks a Secret: the ExternalSecret fails, the value stays;
+#   8. REAL `helm upgrade` (a release built from this chart's own Secret, ESO and helper templates):
+#      switching to `managed` WITHOUT the handover release is refused by the chart's lookup guard
+#      before anything is deleted; the twin chart without the guard shows Helm DELETING the Secret;
+#      the proper path (handover → managed) has zero DELETED events and ESO owns the values;
+#   9. the operator release runs no bitwarden-sdk-server.
 # Values are random per run, compared by sha256, never printed. Own kubeconfig: never touches
 # ~/.kube/config.
 set -uo pipefail
@@ -41,7 +47,7 @@ CTX=kind-$NAME NS=agentic-os
 K() { kubectl --context "$CTX" "$@"; }
 cleanup() {
   if [ -n "$OWN" ]; then kind delete cluster --name "$NAME" --kubeconfig "$KUBECONFIG" >/dev/null 2>&1
-  else K delete ns "$NS" --wait=false >/dev/null 2>&1; K delete clustersecretstore stackit-secrets-manager >/dev/null 2>&1; fi
+  else for ns in "$NS" agentic-os-helm agentic-os-noguard; do K delete ns "$ns" --wait=false >/dev/null 2>&1; done; K delete clustersecretstore stackit-secrets-manager >/dev/null 2>&1; fi
   rm -rf "$TMP"
 }
 trap cleanup EXIT
@@ -49,7 +55,7 @@ trap cleanup EXIT
 echo "== install the pinned upstream operator"
 bash deploy/external-secrets/install.sh --context "$CTX" >"$TMP/install.log" 2>&1 || { tail -20 "$TMP/install.log"; exit 2; }
 ok "external-secrets $(K -n external-secrets get deploy external-secrets -o jsonpath='{.spec.template.spec.containers[0].image}' | sed 's/@.*//') Available"
-K wait --for=delete "ns/$NS" --timeout=120s >/dev/null 2>&1 || true
+for ns in "$NS" agentic-os-helm agentic-os-noguard; do K wait --for=delete "ns/$ns" --timeout=120s >/dev/null 2>&1 || true; done
 K create ns "$NS" >/dev/null || { echo "namespace $NS"; exit 2; }
 K -n external-secrets create secret generic stackit-secrets-manager-eso --from-literal=password="$(openssl rand -hex 16)" >/dev/null 2>&1 || true
 
@@ -111,6 +117,10 @@ for n in names:
         doc[rp.get(k, k)] = v
         expect.setdefault(n, {})[k] = hashlib.sha256(v.encode()).hexdigest()[:16]
     data.append({"key": f"agentic-os/{n}", "value": json.dumps(doc)})
+for ns in ("agentic-os-helm", "agentic-os-noguard"):
+    v = secrets.token_hex(16)
+    data.append({"key": f"{ns}/agent-runtime-token", "value": json.dumps({"token": v})})
+    expect[f"{ns}/agent-runtime-token"] = {"token": hashlib.sha256(v.encode()).hexdigest()[:16]}
 store = {"apiVersion": "external-secrets.io/v1", "kind": "ClusterSecretStore",
          "metadata": {"name": "stackit-secrets-manager"},
          "spec": {"provider": {"fake": {"data": data}}}}
@@ -178,5 +188,78 @@ h=$(hashes os-ui-session)
 K -n "$NS" delete externalsecret os-ui-session --wait=true >/dev/null
 sleep 5
 check "os-ui-session still exists, unchanged" "$h" "$(hashes os-ui-session 2>&1)"
+
+echo "== 7. an empty backend value never blanks a Secret"
+h=$(hashes postgres-litellm-credentials)
+python3 - "$TMP" <<'PY'
+import json, sys, yaml
+tmp = sys.argv[1]; p = f"{tmp}/fake-store.yaml"; st = yaml.safe_load(open(p))
+for d in st["spec"]["provider"]["fake"]["data"]:
+    if d["key"] == "agentic-os/postgres-litellm-credentials":
+        doc = json.loads(d["value"]); doc["password"] = ""; d["value"] = json.dumps(doc)
+open(p, "w").write(yaml.safe_dump(st))
+PY
+K apply -f "$TMP/fake-store.yaml" >/dev/null 2>&1
+K -n "$NS" annotate externalsecret postgres-litellm-credentials force-sync="$(date +%s)" --overwrite >/dev/null
+st=""; for _ in $(seq 1 30); do
+  st=$(K -n "$NS" get externalsecret postgres-litellm-credentials -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}')
+  [ "$st" = False ] && break; sleep 2
+done
+check "the ExternalSecret refuses the empty value (not Ready)" "False" "$st"
+check "postgres-litellm-credentials keeps its value" "$h" "$(hashes postgres-litellm-credentials)"
+
+echo "== 8. real helm upgrade: the handover guard"
+M=$TMP/mini; C=charts/sovereign-agentic-os
+mkdir -p "$M/templates" "$M/files/external-secrets"
+printf 'apiVersion: v2\nname: sovereign-agentic-os\nversion: 0.0.1\nappVersion: "wp10-kind"\n' >"$M/Chart.yaml"
+cp "$C/templates/base/_helpers.tpl" "$C/templates/base/external-secrets/_eso.tpl" "$C/templates/base/external-secrets/external-secrets.yaml" \
+   "$C/templates/base/agent-runtime/agent-runtime-token.yaml" "$M/templates/"
+cp "$C/files/external-secrets/catalog.yaml" "$M/files/external-secrets/"
+python3 - "$C/values.yaml" "$M/values.yaml" <<'PY'
+import sys, yaml, secrets
+v = yaml.safe_load(open(sys.argv[1]))
+out = {"global": {"profile": "local"}, "osUI": {"enabled": True}, "agentRuntime": {"token": secrets.token_hex(16)},
+       "externalSecrets": v["externalSecrets"]}
+yaml.safe_dump(out, open(sys.argv[2], "w"))
+PY
+cp -R "$M" "$TMP/mini-noguard"
+sed -i.bak 's/{{- $live := lookup "v1" "Secret" $.Release.Namespace $name }}/{{- $live := dict }}/' "$TMP/mini-noguard/templates/external-secrets.yaml"
+grep -q '$live := dict' "$TMP/mini-noguard/templates/external-secrets.yaml" || { echo "twin chart edit failed"; exit 2; }
+SWITCH=(--set externalSecrets.enabled=true --set externalSecrets.store.create=false --set 'externalSecrets.managed={agent-runtime-token}')
+H() { helm --kube-context "$CTX" "$@" --wait --timeout 2m; }
+watch_deletes() { K -n "$1" get secrets --watch-only --output-watch-events -o jsonpath='{.type} {.object.metadata.name}{"\n"}' >"$TMP/events.$1" 2>/dev/null & echo $!; }
+for ns in agentic-os-helm agentic-os-noguard; do K create ns "$ns" >/dev/null; done
+H install wp10mini "$M" -n agentic-os-helm >/dev/null 2>&1 || { echo "mini install failed"; exit 2; }
+H install wp10mini "$TMP/mini-noguard" -n agentic-os-noguard >/dev/null 2>&1 || { echo "mini install failed"; exit 2; }
+w1=$(watch_deletes agentic-os-helm); w2=$(watch_deletes agentic-os-noguard); sleep 2
+h0=$(K -n agentic-os-helm get secret agent-runtime-token -o jsonpath='{.data.token}' | shasum -a 256)
+
+out=$(H upgrade wp10mini "$M" -n agentic-os-helm "${SWITCH[@]}" 2>&1); rc=$?
+rc_is "switch without the handover release is REFUSED by helm upgrade" 1
+check "the refusal names the Secret and the handover" "agent-runtime-token\" is owned by Helm without helm.sh/resource-policy: keep" "$out"
+check "the Secret is still there, unchanged" "$h0" "$(K -n agentic-os-helm get secret agent-runtime-token -o jsonpath='{.data.token}' | shasum -a 256)"
+
+out=$(H upgrade wp10mini "$TMP/mini-noguard" -n agentic-os-noguard "${SWITCH[@]}" 2>&1); rc=$?
+rc_is "twin: the chart without the guard upgrades" 0
+r=""; for _ in $(seq 1 20); do grep -q "DELETED agent-runtime-token" "$TMP/events.agentic-os-noguard" && { r=deleted; break; }; sleep 1; done
+check "twin: without the guard Helm DELETES the Secret (the guard is what prevents it)" "deleted" "$r"
+
+out=$(H upgrade wp10mini "$M" -n agentic-os-helm --set 'externalSecrets.handover={agent-runtime-token}' 2>&1); rc=$?
+rc_is "handover release" 0
+check "handover put keep on the live Secret" "keep" "$(K -n agentic-os-helm get secret agent-runtime-token -o jsonpath='{.metadata.annotations.helm\.sh/resource-policy}')"
+out=$(H upgrade wp10mini "$M" -n agentic-os-helm "${SWITCH[@]}" 2>&1); rc=$?
+rc_is "switch after the handover upgrades" 0
+K -n agentic-os-helm wait externalsecret agent-runtime-token --for=condition=Ready --timeout=90s >/dev/null 2>&1
+sleep 3; kill "$w1" "$w2" 2>/dev/null
+check "proper path: zero DELETED events" "0" "$(grep -c DELETED "$TMP/events.agentic-os-helm")"
+got=$(K -n agentic-os-helm get secret agent-runtime-token -o json | python3 -c '
+import json, sys, base64, hashlib
+s = json.load(sys.stdin); m = s["metadata"]
+ok = (m.get("labels") or {}).get("reconcile.external-secrets.io/managed") == "true"
+print(("eso " if ok else "not-eso ") + hashlib.sha256(base64.b64decode(s["data"]["token"])).hexdigest()[:16])')
+check "proper path: ESO now writes the backend value" "eso $(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["agentic-os-helm/agent-runtime-token"]["token"])' "$TMP/expect.json")" "$got"
+
+echo "== 9. the operator release"
+[ -z "$(K get deploy -A -o name | grep -i bitwarden)" ] && ok "bitwarden-sdk-server absent" || bad "bitwarden-sdk-server absent"
 
 finish external-secrets-kind

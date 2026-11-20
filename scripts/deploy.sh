@@ -440,6 +440,10 @@ if risky:
 print(f"   {len(rm)} deletions, no stateful object among them")
 PY
 
+# SECRET DELETION GUARD (WP-10): Helm deletes a Secret the chart stops rendering unless the live
+# object carries helm.sh/resource-policy: keep. Refuse before anything changes.
+bash scripts/lib/secret-deletion-guard.sh --context "$CTX" --ns "$NS" "$WORK/before.yaml" "$WORK/after.yaml" || exit 1
+
 # CAPACITY GATE (WP-47). The same check CI and release.sh run, but on the values THIS upgrade
 # applies: chart defaults + the live release values + VALUES_OVERLAY, rendered as helm will. A
 # deploy run by hand must not put more on the node than it can give. CI=true: a skip (no helm
