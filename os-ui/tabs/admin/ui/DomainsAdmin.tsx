@@ -152,7 +152,15 @@ function DomainsInner() {
     if (!ok) return;
     setBusy(delPlan.id);
     try {
-      const res = await fetch(`/api/platform-admin/domains/${delPlan.id}/delete`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ dryRun: false, confirm: delPlan.id, iHaveABackup: delBackup }) });
+      // 1. The typed id → a short-lived, single-use token bound to this signed-in session.
+      const c = await fetch(`/api/platform-admin/domains/${delPlan.id}/delete`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'confirm', confirm: delPlan.id }) });
+      const cb = await c.json().catch(() => ({}));
+      if (!c.ok || !cb.token) {
+        setDelPlan({ ...delPlan, status: 'error', message: cb.error ?? 'Confirmation failed' });
+        return;
+      }
+      // 2. The run, with that token.
+      const res = await fetch(`/api/platform-admin/domains/${delPlan.id}/delete`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ dryRun: false, token: cb.token, iHaveABackup: delBackup }) });
       const b = await res.json().catch(() => ({}));
       const message = b.status === 'done' ? `Deleted: ${b.done.length} objects removed.`
         : b.status === 'refused' ? `Refused: ${b.reason}`

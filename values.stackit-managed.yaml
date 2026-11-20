@@ -329,6 +329,10 @@ webFetch:
     repository: ghcr.io/aborek/sovereign-os/web-fetch
     tag: "0.1.0@sha256:1487d74ff0d7e7327793525701720479df21eecf1ce6bb0b11b228deae08686d"
 
+# Delete domain: Velero runs in `velero` on STACKIT (os-ui reads its Backups, read-only).
+domainDelete:
+  veleroNamespace: velero
+
 queryTool:
   image:
     repository: ghcr.io/aborek/sovereign-os/query-tool

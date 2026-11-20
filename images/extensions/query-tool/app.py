@@ -224,7 +224,11 @@ def list_tables() -> dict:
 async def health(_req: Request):
     return JSONResponse({"status": "ok", "engine": "trino",
                          "host": TRINO_HOST, "catalog": TRINO_CATALOG,
-                         "schema": TRINO_SCHEMA})
+                         "schema": TRINO_SCHEMA,
+                         # What this build's write path supports. os-ui refuses a delete-domain run
+                         # against a query-tool that does not advertise `domain-delete` (0.6.3+):
+                         # an older one would refuse DROP SCHEMA and the purge catalog mid-run.
+                         "capabilities": ["domain-delete"]})
 
 
 @mcp.custom_route("/query", methods=["POST"])

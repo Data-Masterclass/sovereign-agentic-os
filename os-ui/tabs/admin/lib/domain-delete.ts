@@ -192,9 +192,10 @@ export type K8sGet = (path: string) => Promise<{ status: number; body: Record<st
  * pair's age is the OLDER of the two, so a fresh Velero backup next to a stale dump does not pass.
  */
 export function veleroBackupCheck(opts: { veleroNamespace?: string; get?: K8sGet; namespaces?: string[] } = {}): BackupCheck {
-  const ns = opts.veleroNamespace ?? 'velero';
+  const ns = opts.veleroNamespace ?? config.veleroNamespace;
   const get = opts.get ?? ((path: string) => k8s('GET', path));
   return async () => {
+    if (!ns) return { ok: false, reason: 'no Velero namespace is configured (chart domainDelete.veleroNamespace)' };
     const r = await get(`/apis/velero.io/v1/namespaces/${ns}/backups?labelSelector=${encodeURIComponent('sovereign-os.io/pre-upgrade-backup=true')}`);
     if (r.status !== 200) return { ok: false, reason: `Velero backups unreadable (Kubernetes API ${r.status || 'unreachable'})` };
     const need = opts.namespaces ?? [config.platformNamespace, config.softwareRunnerNamespace];

@@ -1618,14 +1618,19 @@ polaris:
   catalog:
     name: lakehouse
     baseLocation: s3://lakehouse/wh
-  # PURGE (delete domain only). The regular `iceberg` catalog does NOT purge: its principal lacks
-  # TABLE_WRITE_DATA, so a Data-tab DROP TABLE is refused by Polaris and the table stays. The
-  # polaris-purge Job creates a DEDICATED principal holding the purge privilege, writes its Trino
-  # catalog (`catalog`) into the Secret `secretName` (mounted optionally into Trino's catalog dir)
-  # and restarts Trino once when the Secret is first written. OPA lets only `trinoUser` touch that
-  # catalog, and the query-tool runs a statement on it only for the admin delete-domain run.
+  # PURGE (delete domain only) — OFF BY DEFAULT. Switch it ON only for an announced delete window
+  # (`--set polaris.purge.enabled=true`), run the delete, then switch it OFF again in the next
+  # release; the delete-domain run is refused while it is off. The regular `iceberg` catalog never
+  # purges (its principal lacks TABLE_WRITE_DATA: a Data-tab DROP TABLE is refused, the table stays).
+  # ON: the polaris-purge Job creates a DEDICATED principal holding the purge privilege, writes its
+  # Trino catalog (`catalog`) into Secret `secretName` (mounted optionally into Trino's catalog dir)
+  # and restarts Trino once. OFF: the same Job deletes that principal and Secret. OPA lets only
+  # `trinoUser` touch the catalog; the query-tool sends only admin delete-domain drops there. The
+  # long-term guard is Trino authentication (WP-14) and the default-deny NetworkPolicy package:
+  # until they land, the purge user is a Trino session NAME, which is why the window stays short.
+  # `catalog` and `trinoUser` are also named in policies/trino.rego.
   purge:
-    enabled: true
+    enabled: false
     principal: os-domain-delete
     trinoUser: os-domain-delete
     catalog: iceberg_purge
@@ -1640,6 +1645,12 @@ polaris:
 
 # Governed `query` MCP tool — read-only SQL THROUGH central Trino over the Iceberg
 # marts.
+# Delete domain (Admin -> Domains). `veleroNamespace`: where Velero writes its Backups — os-ui gets
+# read-only get/list on `backups.velero.io` there, and the backup gate reads the
+# deploy/pre-upgrade-backup.sh pair from it. Empty = no Velero: the gate refuses.
+domainDelete:
+  veleroNamespace: ""
+
 queryTool:
   enabled: true
   image:

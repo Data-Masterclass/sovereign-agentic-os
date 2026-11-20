@@ -181,6 +181,11 @@ export const config = {
 
   // query-tool (governed, Trino): POST {QUERY_TOOL_URL}/query  {"sql": "..."}
   queryToolUrl: base(env('QUERY_TOOL_URL', 'http://query-tool:8000')),
+  // Delete domain: the purge window (chart `polaris.purge.enabled`, OFF by default — the run is
+  // refused unless the window is open) and the namespace Velero writes its Backups to (empty = no
+  // Velero: the backup gate refuses).
+  domainDeletePurgeEnabled: env('DOMAIN_DELETE_PURGE_ENABLED', 'false') === 'true',
+  veleroNamespace: env('VELERO_NAMESPACE', ''),
 
   // data-runner (real INGEST): POST {DATA_RUNNER_URL}/ingest {principal, dataset,
   // objectKey} — reads an uploaded file from MinIO and writes a PHYSICAL Iceberg
