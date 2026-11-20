@@ -18,8 +18,10 @@
 
   The change guard (`lookup`) runs on `helm install/upgrade` (and `--dry-run=server`): when the
   live `litellm-credentials` already holds a LITELLM_SALT_KEY, a different value — or none —
-  fails the render. `litellmSaltKey.allowChange=true` is the one deliberate exception: a
-  rollback, or re-creating every stored value under a new salt (litellm-salt-key.md, C).
+  fails the render. `litellmSaltKey.allowChange=true` is the one deliberate exception:
+  re-creating every stored value under a new salt (litellm-salt-key.md, C), passed once with
+  --set, never left in an overlay. A rollback keeps the salt key (docs/ops/secret-rotation.md):
+  Helm does not remove a key from a live Secret's data when it disappears from stringData.
   `helm template` has no cluster, so the guard is inactive there (GitOps renderers likewise).
   No value is ever printed: the messages name keys only.
 */}}
@@ -47,9 +49,9 @@
   {{- end -}}
   {{- if and $current (ne $current $value) (not $s.allowChange) -}}
     {{- if $value -}}
-      {{- fail "LITELLM_SALT_KEY_CHANGE_REFUSED: litellmSaltKey.value differs from the LITELLM_SALT_KEY already in the live litellm-credentials Secret. Once set it must never change: every database-stored model credential would become undecryptable. Keep the current value (docs/ops/secret-rotation.md); only a rollback or a full re-key sets litellmSaltKey.allowChange=true." -}}
+      {{- fail "LITELLM_SALT_KEY_CHANGE_REFUSED: litellmSaltKey.value differs from the LITELLM_SALT_KEY already in the live litellm-credentials Secret. Once set it must never change: every database-stored model credential would become undecryptable. Keep the current value, also in a rollback (docs/ops/secret-rotation.md); only a full re-key sets litellmSaltKey.allowChange=true." -}}
     {{- else -}}
-      {{- fail "LITELLM_SALT_KEY_CHANGE_REFUSED: the live litellm-credentials Secret holds a LITELLM_SALT_KEY but litellmSaltKey.value is empty, which would remove it. Keep passing the current value (deploy.sh carries it over from the live release values); only a rollback sets litellmSaltKey.allowChange=true." -}}
+      {{- fail "LITELLM_SALT_KEY_CHANGE_REFUSED: the live litellm-credentials Secret holds a LITELLM_SALT_KEY but litellmSaltKey.value is empty, which would remove it. Keep passing the current value (deploy.sh carries it over from the live release values); only a full re-key sets litellmSaltKey.allowChange=true." -}}
     {{- end -}}
   {{- end -}}
   {{- $value -}}
