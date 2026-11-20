@@ -125,3 +125,23 @@ test('a component whose plan fails fails the whole plan (no partial plan)', asyn
   const bad: DomainDeleteComponent = { component: 'bad', plan: async () => { throw new Error('unreachable'); }, remove: async () => undefined };
   await assert.rejects(deleteDomain('k', {}, { actor: admin, components: [store('a', ['1']), bad], audit: audits().fn, backup: freshBackup }), /Planning bad failed/);
 });
+
+test('a plan-only door (MCP) refuses a run; the twin with allowRun runs', async () => {
+  const a = store('a', ['1']);
+  await assert.rejects(deleteDomain('k', { dryRun: false, confirm: 'k' }, { actor: admin, components: [a], audit: audits().fn, backup: freshBackup, allowRun: false }), /may only plan/);
+  assert.equal(a.live.size, 1);
+  const ok = await deleteDomain('k', {}, { actor: admin, components: [a], audit: audits().fn, backup: freshBackup, allowRun: false });
+  assert.equal(ok.status, 'planned', 'a dry run is still allowed');
+  const r = await deleteDomain('k', { dryRun: false, confirm: 'k' }, { actor: admin, components: [a], audit: audits().fn, backup: freshBackup, allowRun: true });
+  assert.equal(r.status, 'done');
+});
+
+test('an invalid target is refused before anything is planned', async () => {
+  let planned = false;
+  const spy: DomainDeleteComponent = { component: 's', plan: async () => { planned = true; return { component: 's', remove: [], keep: [] }; }, remove: async () => undefined };
+  const validateTarget = async (id: string) => { if (id === 'platform') throw Object.assign(new Error('reserved'), { status: 400 }); };
+  await assert.rejects(deleteDomain('platform', {}, { actor: admin, components: [spy], audit: audits().fn, backup: freshBackup, validateTarget }), /reserved/);
+  assert.equal(planned, false);
+  await deleteDomain('k', {}, { actor: admin, components: [spy], audit: audits().fn, backup: freshBackup, validateTarget });
+  assert.equal(planned, true);
+});

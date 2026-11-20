@@ -823,6 +823,22 @@ jobs:
         run: docker build -f images/extensions/dagster/Dockerfile -t sovereign-os/dagster:ci images/extensions
       - name: Image tests + eject test
         run: sh images/extensions/dagster/tests/image/run.sh sovereign-os/dagster:ci
+      # Delete domain against the REAL Dagster in this image: schedules stopped, repo removed,
+      # repo-sync prunes the checkout, GraphQL shows nothing of the domain (+ a negative twin).
+      - name: Setup Node.js (delete-domain Dagster proof)
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: 22
+      - name: Delete domain against real Dagster
+        run: |
+          npm --prefix os-ui ci --no-audit --no-fund
+          export DD_REPOS="$RUNNER_TEMP/dd-repos" && mkdir -p "$DD_REPOS"
+          sh images/extensions/dagster/tests/image/domain-prune.sh sovereign-os/dagster:ci "$DD_REPOS" 18590
+          cd os-ui && OS_REPOS_DIR="$DD_REPOS" DD_DAGSTER_URL=http://127.0.0.1:18590 \
+            node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test --test-concurrency=1 ../tests/domain-delete/dagster.int.test.ts
+      - name: Dagster logs (on failure)
+        if: failure()
+        run: docker logs --tail 200 soa-dd-dagster || true
 
   # The opt-in run-launcher lock-down (values.dagster-launcher-lockdown.yaml): parity with the stock
   # launcher judged by dagster-k8s's own code in the image from this commit (+ drifted-overlay twins),

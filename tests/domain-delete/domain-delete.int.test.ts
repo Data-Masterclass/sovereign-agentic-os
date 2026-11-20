@@ -46,11 +46,9 @@ const OPA = process.env.OPA_URL ?? '';
 const LLM = process.env.LITELLM_URL ?? '';
 const MK = process.env.LITELLM_MASTER_KEY ?? '';
 
+// Fixture setup and read-back go to Trino directly; the DELETE itself goes through the shipped
+// door — the governed query-tool (`QUERY_TOOL_URL`), exactly as production does.
 const trino = (sql: string, user: string): Promise<{ rows: unknown[][] }> => run(sql, { user, source: 'domain-delete-it' });
-const trinoPort = {
-  query: async (sql: string, id: { principal: string }) => (await trino(sql, id.principal)).rows,
-  execute: async (sql: string, id: { principal: string }) => { await trino(sql, id.principal); },
-};
 
 async function http(method: string, url: string, body?: unknown, headers: Record<string, string> = {}) {
   const res = await fetch(url, { method, headers: { 'content-type': 'application/json', ...headers }, body: body === undefined ? undefined : JSON.stringify(body) });
@@ -126,7 +124,7 @@ let engine: typeof import('../../os-ui/core/kernel/domain-delete');
 
 before(async () => {
   if (skip) return;
-  for (const [name, v] of Object.entries({ OPENSEARCH_URL: OSURL, OPA_URL: OPA, LITELLM_URL: LLM, LH_TRINO_URL: process.env.LH_TRINO_URL })) {
+  for (const [name, v] of Object.entries({ OPENSEARCH_URL: OSURL, OPA_URL: OPA, LITELLM_URL: LLM, LH_TRINO_URL: process.env.LH_TRINO_URL, QUERY_TOOL_URL: process.env.QUERY_TOOL_URL })) {
     assert.ok(v, `${name} must be set when DD_IT=1`);
   }
   engine = await import('@core/kernel/domain-delete');
@@ -192,10 +190,19 @@ before(async () => {
   await new Promise((r) => setTimeout(r, 1500)); // fire-and-forget mirror writes land
 });
 
-const components = () => sources.domainDeleteComponents({ trino: trinoPort as never });
+// No Dagster in this harness: the git component BLOCKS a repo then (K has none). Dagster is proven
+// in images/extensions/dagster/tests/image/domain-prune.sh against the real image.
+const components = () => sources.domainDeleteComponents({ git: { dagster: null } });
 const adminActor = () => ({ id: ADMIN, role: 'admin' as const, domains: [K, O] });
 const audit: { action: string; target: string; result: string; detail: string }[] = [];
-const deps = () => ({ actor: adminActor(), components: components(), audit: (e: (typeof audit)[number]) => { audit.push(e); }, backup: async () => ({ ok: false as const, reason: 'no Velero in the harness' }) });
+const deps = () => ({
+  actor: adminActor(),
+  components: components(),
+  audit: (e: (typeof audit)[number]) => { audit.push(e); },
+  backup: async () => ({ ok: false as const, reason: 'no Velero in the harness' }),
+  validateTarget: async (id: string) => (await import('@tabs/admin/lib/domain-delete')).assertDeletableDomain(id),
+  allowRun: true,
+});
 
 let before_: { docs: Record<string, string>; o: string; shared: Record<string, string>; opa: string; team: string };
 
@@ -218,8 +225,12 @@ test('dry run (the default) plans every component, KEEPS the shared legacy lane,
     `iceberg.${KS}`, `iceberg.${KS}.gold_teile`,
     `iceberg.personal_${JONAS}`, `iceberg.personal_${JONAS}.bronze_test`, `iceberg.personal_${JONAS}.bronze_test2`,
   ].sort());
-  assert.deepEqual(by.trino.keep.map((k) => k.label).sort(), ['bronze', 'gold', 'silver'].map((l) => `${pa}.${l}_service_centers`));
-  assert.ok(by.trino.keep.every((k) => k.reason.includes(`ds_o1_${sfx}`) && k.reason.includes('archived')));
+  const mapped = by.trino.keep.filter((k) => k.reason.startsWith('still mapped by'));
+  assert.deepEqual(mapped.map((k) => k.label).sort(), ['bronze', 'gold', 'silver'].map((l) => `${pa}.${l}_service_centers`));
+  assert.ok(mapped.every((k) => k.reason.includes(`ds_o1_${sfx}`) && k.reason.includes('archived')));
+  // the admin's other work in their personal schema is LISTED as kept, never silently skipped
+  assert.ok(by.trino.keep.some((k) => k.label === `${pa}.gold_unrelated_${sfx}` && /keeps other domains/.test(k.reason)));
+  assert.ok(!by.trino.remove.concat(by.trino.keep).some((i) => i.label.includes(`iceberg.${OS}.`)), "the other domain's schema is never inspected");
   assert.equal(by['os.datasets'].remove.length, 4);
   assert.equal(by['os.folders'].remove.length, 1);
   assert.deepEqual(by.opa.remove.map((i) => `${i.kind}:${i.id}`).sort(), [`governance-principal-domain:${TOBIAS}`, `governance-principal:${JONAS}`, `governance-principal:${K}`, `governance-table:iceberg.${KS}.gold_teile`].sort());
@@ -229,6 +240,44 @@ test('dry run (the default) plans every component, KEEPS the shared legacy lane,
   // negative twin: nothing was touched
   assert.equal((await tablesOf(`personal_${JONAS}`, JONAS)).length, 2);
   assert.equal(((await llm('/team/list')).json as { team_alias: string }[]).filter((t) => t.team_alias === K).length, 1);
+});
+
+test('the target must be a registered, non-reserved domain that is not a user id', { skip }, async () => {
+  for (const bad of ['platform', `user-${sfx}`, `nope-${sfx}`, ADMIN.replace(/_/g, '-')]) {
+    await assert.rejects(engine.deleteDomain(bad, {}, deps()), /reserved|not a registered|not a domain id|user id/, bad);
+  }
+  const users = await import('@tabs/admin/lib/users');
+  const domains = await import('@tabs/admin/lib/domains');
+  domains.createDomain({ name: TOBIAS.replace(/_/g, '-'), owner: ADMIN });
+  await users.createUser({ id: TOBIAS.replace(/_/g, '-'), password: 'It-Twin-Passw0rd!x', domains: [O], role: 'creator', email: `twin-${sfx}@example.org` });
+  await assert.rejects(engine.deleteDomain(TOBIAS.replace(/_/g, '-'), {}, deps()), /user id/);
+  await domains.removeDomain(TOBIAS.replace(/_/g, '-'));
+});
+
+test('an admin whose only domain is the deleted one is never deactivated: the run is refused', { skip }, async () => {
+  const users = await import('@tabs/admin/lib/users');
+  const ADMIN2 = `it_admin2_${sfx}`;
+  await users.createUser({ id: ADMIN2, password: 'It-Admin2-Passw0rd!x', domains: [K], role: 'admin', email: `${ADMIN2}@example.org` });
+  const r = await engine.deleteDomain(K, { dryRun: false, confirm: K, iHaveABackup: true }, deps());
+  assert.equal(r.status, 'refused');
+  const users_ = r.plan.components.find((c) => c.component === 'users')!;
+  assert.ok((users_.blocked ?? []).some((b) => b.id === ADMIN2 && /admin/.test(b.reason)));
+  assert.ok((await tablesOf(KS, K)).includes('gold_teile'), 'nothing was removed');
+  // a person resolves it (the admin gets another domain); the delete then proceeds in the next test
+  await users.updateUser(ADMIN2, { domains: [O, K] });
+});
+
+test('the MCP door may only plan: a run through it is refused', { skip }, async () => {
+  await assert.rejects(engine.deleteDomain(K, { dryRun: false, confirm: K, iHaveABackup: true }, { ...deps(), allowRun: false }), /may only plan/);
+  assert.ok((await tablesOf(KS, K)).includes('gold_teile'));
+});
+
+test('the query-tool refuses DROP SCHEMA outside the governed delete (twin of the path the run uses)', { skip }, async () => {
+  const gov = await import('@core/infra/governed');
+  const id = { principal: JONAS, uid: JONAS, domains: [K], role: 'admin' as const };
+  await assert.rejects(gov.executeRun(`DROP SCHEMA IF EXISTS iceberg.personal_${JONAS}`, id, gov.executeRoute(id, 'it')), /only for the governed delete-domain run/);
+  await assert.rejects(gov.executeRun(`DROP SCHEMA IF EXISTS iceberg.personal_${JONAS}`, { ...id, role: 'domain_admin' }, gov.executeRoute(id, 'it'), undefined, 15000, 'domain-delete'), /admin role/);
+  assert.equal((await tablesOf(`personal_${JONAS}`, JONAS)).length, 2, 'the schema is still there');
 });
 
 test('a run is refused without the typed id, then without a backup; nothing is removed', { skip }, async () => {
@@ -287,6 +336,7 @@ test('the run removes the domain through each component; the other domain is byt
   const all = await users.listUsers();
   assert.equal(all.find((u) => u.id === JONAS)?.disabled, true);
   assert.ok(all.every((u) => !u.domains.includes(K)));
+  assert.deepEqual(all.find((u) => u.id === `it_admin2_${sfx}`)?.disabled ?? false, false, 'an admin is never deactivated');
   // Every step audited, and the run ended ok.
   const steps = audit.filter((e) => e.action === 'domain.delete.step');
   assert.equal(steps.length, r.status === 'done' ? r.done.length : -1);
