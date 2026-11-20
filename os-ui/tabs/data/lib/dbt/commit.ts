@@ -21,7 +21,8 @@
  */
 import 'server-only';
 import { config } from '@core/kernel/config';
-import { commitTree, commitMessage, authorFor, type CommitResult, type CommitTreeOptions } from '@core/infra/git-store';
+import { commitTree, commitMessage, authorFor, repoLayout, reserveSubtree, type CommitResult, type CommitTreeOptions } from '@core/infra/git-store';
+import { relocateProject, V2_RESERVED_PREFIXES } from '@tabs/data/lib/dbt/layout';
 import { currentSurface, newRequestId } from '@core/infra/request-surface';
 import { onProjectChange, type ProjectChange } from '@tabs/data/lib/project-events';
 import { peekDatasetMeta, datasetsForProject } from '@tabs/data/lib/store';
@@ -80,7 +81,13 @@ export async function commitDataProject(domain: string, actor: ActorIdentity, me
   const snapshot = await projectSnapshot(domain, deps, deps.captured);
   // The generator reads no env: the auth method is handed in, because `profiles.yml`'s
   // `password:` key is a generator decision, not a Jinja-time one (B4-review E-3).
-  const files = generateProject(domain, snapshot, { trinoAuthMethod: config.trinoAuthMethod });
+  const generated = generateProject(domain, snapshot, { trinoAuthMethod: config.trinoAuthMethod });
+  const reposDir0 = deps.reposDir ?? config.reposDir;
+  // The repository's layout decides WHERE the project lands: the root (v1) or `data/dbt/` (v2,
+  // design 12). The generator itself stays project-relative.
+  const layout = await repoLayout(domain, undefined, { reposDir: reposDir0 });
+  if (layout === 2) for (const pre of V2_RESERVED_PREFIXES) reserveSubtree(pre);
+  const files = relocateProject(generated, layout);
   const object = meta.object ?? domain;
   const message = commitMessage({
     area: 'data',

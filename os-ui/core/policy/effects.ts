@@ -22,6 +22,7 @@ import { publishWorkflow, certifyWorkflow } from '@tabs/knowledge/lib/store';
 import { promotePersonalKnowledge, certifyPersonalKnowledge } from '@tabs/knowledge/lib/personal-store';
 import { transitionDashboard } from '@tabs/dashboards/lib/store';
 import { promoteSystem } from '@tabs/agents/lib/store';
+import { runWithPromotion } from '@core/infra/git-promote';
 
 /**
  * The approval-IS-an-action executor (governance-golden-path.md key principle).
@@ -517,7 +518,11 @@ async function applyLadder(
     case 'agent_system': {
       // promoteSystem is a single-step advance (Personal→Shared→Marketplace),
       // role-gated internally exactly like promoteArtifact — sync + in-memory.
-      const rec = promoteSystem(id, approverPrincipal(approver, rung === 'promote' ? 'builder' : 'admin', a.domain));
+      // My → Domain is recorded in git as a MERGE from the owner's user repo (design 12): the
+      // approval travels to the commit hook in the writer's async context. The decision itself
+      // is unchanged — `promoteSystem` gates as before.
+      const promote = () => promoteSystem(id, approverPrincipal(approver, rung === 'promote' ? 'builder' : 'admin', a.domain));
+      const rec = rung === 'promote' ? runWithPromotion({ approvalId: a.id, approverId: approverId(approver) }, promote) : promote();
       return okResult(rec.name, { visibility: rec.visibility });
     }
     case 'metric': {

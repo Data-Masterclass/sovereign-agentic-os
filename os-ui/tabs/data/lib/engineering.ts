@@ -18,6 +18,7 @@
  *   - Dagster is read over GraphQL and may be unreachable; that is a labelled fact on the section
  *     (`lastRunNote`), never a substituted value.
  */
+import { dbtProjectDir, dbtProjectPath, layoutOf, LAYOUT_V1 } from '@core/infra/repo-layout';
 import 'server-only';
 import { getDataset } from '@tabs/data/lib/store';
 import { physicalSlug } from '@tabs/data/lib/store-fqn';
@@ -88,7 +89,13 @@ export async function datasetEngineeringView(principal: EngineeringPrincipal, id
   const member = principal.domains.includes(domain);
 
   // ---- dbt: the bytes in the repository ----------------------------------------
-  const listed = await repoPaths(domain);
+  const listedRepo = await repoPaths(domain);
+  // The repo's layout decides where the dbt project is (root in v1, `data/dbt/` in v2 — design
+  // 12). Everything below reasons in PROJECT paths; the files read back keep their REPO paths, so
+  // the panel shows what `git log -- <path>` takes.
+  const layout = listedRepo.paths.length ? layoutOf(listedRepo.paths) : LAYOUT_V1;
+  const toProject = (p: string) => dbtProjectPath(p, layout);
+  const listed = { ...listedRepo, paths: listedRepo.paths.map(toProject).filter((p): p is string => p !== null) };
   const modelPaths = modelPathsFor(listed.paths, slug);
   const dirs = new Set(modelPaths.map((p) => p.split('/').slice(0, -1).join('/')));
   const tracked = new Set(listed.paths);
@@ -98,11 +105,15 @@ export async function datasetEngineeringView(principal: EngineeringPrincipal, id
   for (const dir of dirs) if (member && tracked.has(`${dir}/schema.yml`)) wanted.add(`${dir}/schema.yml`);
   if (member && tracked.has('models/sources.yml')) wanted.add('models/sources.yml');
   if (member) for (const p of listed.paths) if (p.startsWith('models/semantic/') && modelPaths.some((m) => p.endsWith(`/${nodeOf(m)}.yml`))) wanted.add(p);
-  const read = await readRepoFiles(domain, (p) => wanted.has(p));
+  const read = await readRepoFiles(domain, (p) => {
+    const proj = toProject(p);
+    return proj !== null && wanted.has(proj);
+  });
   const node = preferredNode(modelPaths);
-  const hasSemantic = read.files.some((f) => f.path.startsWith('models/semantic/'));
+  const hasSemantic = read.files.some((f) => (toProject(f.path) ?? '').startsWith('models/semantic/'));
   const dbt = dbtSection({
     osNoun: OS_NOUN,
+    projectDir: dbtProjectDir(layout),
     node,
     files: read.files,
     metrics: hasSemantic ? d.measures.map((m) => m.name) : [],

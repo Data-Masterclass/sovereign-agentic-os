@@ -25,7 +25,7 @@ import fs from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import * as git from 'isomorphic-git';
-import { commitTree, listTree, log, MAIN, openOrInit, repoPath } from '@core/infra/git-store';
+import { commitTree, listTree, log, MAIN, openOrInit, repoPath, repoLockKey } from '@core/infra/git-store';
 import {
   diffCommits,
   __clearRepoKinds,
@@ -479,7 +479,7 @@ test('an OS commit and a push cannot interleave: the gate holds the SAME lock (E
 
 test('a lock the OS holds too long FAILS the push with a readable message, never a hang (E7)', async () => {
   // Hold the lock from outside, exactly as a long OS commit would.
-  const key = repoPath('sales', { reposDir });
+  const key = repoLockKey('sales', { reposDir });
   const map = (globalThis as unknown as Record<symbol, Map<string, Promise<unknown>>>)[Symbol.for('soa.git-store.locks')];
   let releaseHeld!: () => void;
   const held = new Promise<void>((r) => {

@@ -38,10 +38,13 @@
  *   - NOTHING LOGS A TOKEN. Every message out of this module goes through `redact`.
  */
 import { createHash } from 'node:crypto';
+import {
+  dbtProjectPath, parseRepoName, principalToken, LAYOUT_V1, LAYOUT_V2, OS_DIR, AGENTS_INDEX_PATH, prefixOf, type LayoutVersion,
+} from '@core/infra/repo-layout';
 import fs from 'node:fs';
 import path from 'node:path';
 import { config } from '@core/kernel/config';
-import { acquireRepoLock, listTree, MAIN, repoExists, repoPath, RepoLockTimeoutError, type TreeEntry } from '@core/infra/git-store';
+import { acquireRepoLock, listTree, MAIN, repoExists, repoLayout, repoPath, RepoLockTimeoutError, type TreeEntry } from '@core/infra/git-store';
 import * as git from 'isomorphic-git';
 import { redact } from '@core/auth/access-tokens';
 import { AGENT_GENERATED_FILES, AGENTS_DIR } from '@core/infra/repo-layout';
@@ -120,6 +123,12 @@ export type ChangedFile = { path: string; status: 'added' | 'modified' | 'delete
 export type RepoKind = {
   /** `dataset` | `agent-system` | … — the `ingestFromRepo(kind, files)` key. */
   kind: string;
+  /**
+   * `dbt`: this kind's paths are dbt-PROJECT-relative (`models/…`). The gate hands it project
+   * paths, whatever the repository's layout (root in v1, `data/dbt/` in v2 — design 12).
+   * Absent: paths are repo-relative.
+   */
+  root?: 'dbt';
   /** True when this kind owns the path (so its validator and its ingest see it). */
   matches(filePath: string): boolean;
   /**
@@ -232,6 +241,7 @@ type Lease = {
   gated: ChangedFile[];
   oldSha: string | null;
   sha: string;
+  layout: LayoutVersion;
 };
 
 /**
@@ -344,15 +354,31 @@ export type PathVerdict = { allowed: true } | { allowed: false; reason: string }
  *   - the pusher's own personal lane: always.
  *   - a domain path (the shared dbt layers, a shared agent system): builder and above.
  */
-export function decidePath(filePath: string, pusher: Pusher): PathVerdict {
+export type PathContext = {
+  /** The repository's layout (default v1: the dbt project at the root). */
+  layout?: LayoutVersion;
+  /** The repository's kind (default `domain`). In a `user` repo everything not OS-owned is the owner's. */
+  repoKind?: 'domain' | 'user' | 'platform';
+};
+
+/** dbt files the OS owns, relative to the dbt PROJECT (see {@link OS_OWNED_FILES}). */
+const DBT_OWNED_FILES = ['dbt_project.yml', 'profiles.yml', 'packages.yml'];
+const DBT_OWNED_PREFIXES = ['macros/'];
+
+export function decidePath(filePath: string, pusher: Pusher, ctx: PathContext = {}): PathVerdict {
   const p = filePath.replace(/^\/+/, '');
   if (p.split('/').some((s) => s === '' || s === '.' || s === '..')) {
     return { allowed: false, reason: `'${filePath}' is not a path this repository accepts` };
   }
-  if (OS_OWNED_PREFIXES.some((prefix) => p === prefix.slice(0, -1) || p.startsWith(prefix))) {
+  const layout = ctx.layout ?? LAYOUT_V1;
+  // The dbt project's own files, wherever the layout puts the project (null: not in the project).
+  const proj = dbtProjectPath(p, layout);
+  const osPrefix = prefixOf(OS_DIR);
+  if (p === OS_DIR || p.startsWith(osPrefix)) return { allowed: false, reason: `'${p}' is ${MANAGED_BY_OS}` };
+  if (proj !== null && DBT_OWNED_PREFIXES.some((prefix) => proj === prefix.slice(0, -1) || proj.startsWith(prefix))) {
     return { allowed: false, reason: `'${p}' is ${MANAGED_BY_OS}` };
   }
-  if ((OS_OWNED_FILES as readonly string[]).includes(p)) {
+  if ((proj !== null && DBT_OWNED_FILES.includes(proj)) || p === AGENTS_INDEX_PATH) {
     return { allowed: false, reason: `'${p}' is ${MANAGED_BY_OS}` };
   }
   if (isGeneratedAgentCode(p)) {
@@ -361,11 +387,14 @@ export function decidePath(filePath: string, pusher: Pusher): PathVerdict {
   if (/(^|\/)grants?\.(ya?ml|json)$/i.test(p)) {
     return { allowed: false, reason: `'${p}' is a grant file — ${MANAGED_BY_OS}` };
   }
+  // A USER repository is the owner's outright (the gate already refused anyone else).
+  if (ctx.repoKind === 'user') return { allowed: true };
   const lanes = pusher.lanes && pusher.lanes.length ? pusher.lanes : personalLanes(pusher.id);
-  if (lanes.some((lane) => p.startsWith(lane))) return { allowed: true };
+  // Lanes are written in the v1 shape: a data lane is project-relative, an agent lane repo-relative.
+  if (lanes.some((lane) => p.startsWith(lane) || (proj !== null && lane.startsWith('models/') && proj.startsWith(lane)))) return { allowed: true };
   // Someone ELSE's personal lane is never writable, whatever the role — a personal lane is the one
   // place the OS promises is yours.
-  const otherPersonal = /^(models|agents)\/personal\/([^/]+)\//.exec(p);
+  const otherPersonal = /^(models|agents)\/personal\/([^/]+)\//.exec(proj ?? p) ?? /^(agents)\/personal\/([^/]+)\//.exec(p);
   if (otherPersonal) {
     return {
       allowed: false,
@@ -379,6 +408,25 @@ export function decidePath(filePath: string, pusher: Pusher): PathVerdict {
     };
   }
   return { allowed: true };
+}
+
+/** The files a kind sees: project-relative for a `dbt`-rooted kind, repo-relative otherwise. */
+export function filesForKind(kind: RepoKind, files: readonly ChangedFile[], layout: LayoutVersion): ChangedFile[] {
+  const out: ChangedFile[] = [];
+  for (const f of files) {
+    const path = kind.root === 'dbt' ? dbtProjectPath(f.path, layout) : f.path;
+    if (path !== null && kind.matches(path)) out.push(path === f.path ? f : { ...f, path });
+  }
+  return out;
+}
+
+/** May this pusher write to this repository at all? Members for a domain; the owner for a user repo. */
+export function mayPushRepo(repo: string, pusher: Pusher): boolean {
+  const parsed = parseRepoName(repo);
+  if (!parsed) return false;
+  if (parsed.kind === 'user') return principalToken(pusher.id) === parsed.token;
+  if (parsed.kind === 'platform') return pusher.role === 'admin';
+  return pusher.role === 'admin' || pusher.domains.includes(parsed.domain);
 }
 
 // ---------------------------------------------------------------- the gate ---
@@ -406,9 +454,10 @@ export async function beginReceive(
   if (!repoExists(domain, { reposDir })) {
     return { ok: false, status: 404, message: `there is no repository for '${domain}'` };
   }
-  if (!pusher.domains.includes(domain) && pusher.role !== 'admin') {
-    return { ok: false, status: 403, message: `you are not a member of '${domain}'` };
+  if (!mayPushRepo(domain, pusher)) {
+    return { ok: false, status: 403, message: `you may not push to '${domain}'` };
   }
+  const repoKind = parseRepoName(domain)?.kind ?? 'domain';
   const refs = updates.filter((u) => u.ref === MAIN || u.ref === 'refs/heads/main');
   if (refs.length !== updates.length) {
     const other = updates.find((u) => u.ref !== MAIN && u.ref !== 'refs/heads/main')!;
@@ -444,6 +493,15 @@ export async function beginReceive(
     return { ok: false, status: 400, message: 'the receive hook sent no file list — nothing was changed' };
   }
 
+  const oldHead = update.oldSha && update.oldSha !== ZERO ? update.oldSha : undefined;
+  let layout: LayoutVersion = LAYOUT_V1;
+  try {
+    layout = await repoLayout(domain, oldHead, { reposDir });
+  } catch {
+    layout = LAYOUT_V1;
+  }
+  if (changed.some((f) => f.path === 'os/layout.yml' && f.status !== 'deleted')) layout = LAYOUT_V2;
+
   let release: (() => void) | null = null;
   try {
     release = await acquireRepoLock(domain, { reposDir, timeoutMs: deps.lockTimeoutMs ?? DEFAULT_LOCK_TIMEOUT_MS });
@@ -457,7 +515,7 @@ export async function beginReceive(
     // 1 — ownership, 2 — secret-shaped, 3 — the kind's own validator. The FIRST failure is the
     // message, because a developer fixes one thing at a time.
     for (const f of changed) {
-      const verdict = decidePath(f.path, pusher);
+      const verdict = decidePath(f.path, pusher, { layout, repoKind });
       if (!verdict.allowed) return reject(release, 403, verdict.reason);
       const secret = looksSecretShaped(f.path, f.content);
       if (secret) return reject(release, 403, secret);
@@ -480,12 +538,14 @@ export async function beginReceive(
     const unmatched: string[] = [];
     for (const f of changed) {
       if (f.status === 'deleted' || f.content === null) continue;
-      const owners = registeredRepoKinds().filter((k) => k.matches(f.path));
+      const owners = registeredRepoKinds()
+        .map((k) => ({ k, view: filesForKind(k, [f], layout)[0] }))
+        .filter((o) => o.view);
       if (owners.length === 0) unmatched.push(f.path);
-      for (const kind of owners) {
+      for (const { k: kind, view } of owners) {
         let problem: string | null = null;
         try {
-          problem = kind.validate({ path: f.path, content: f.content });
+          problem = kind.validate({ path: view!.path, content: f.content });
         } catch (e) {
           problem = e instanceof Error ? e.message : String(e);
         }
@@ -504,6 +564,7 @@ export async function beginReceive(
       gated: changed,
       oldSha: update.oldSha && update.oldSha !== ZERO ? update.oldSha : null,
       sha: update.newSha,
+      layout,
       timer: setTimeout(() => {
         const l = leases().get(domain);
         if (l && l.id === leaseId) {
@@ -565,7 +626,7 @@ export async function completeReceive(
     }
     const gatedPaths = new Set(lease.gated.map((f) => f.path));
     const ungated = fromRepo.filter((f) => !gatedPaths.has(f.path)).map((f) => f.path);
-    const reports = await ingestChanged(domain, fromRepo, lease.pusher, lease.sha);
+    const reports = await ingestChanged(domain, fromRepo, lease.pusher, lease.sha, lease.layout);
     const notes = ungated.length
       ? ` — NOTE: ${ungated.length} path(s) in the commit were not in the list the gate checked (${ungated.slice(0, 5).join(', ')}); the OS reconciled from the repository`
       : '';
@@ -610,15 +671,21 @@ export async function reconcileFromGit(
   const reposDir = deps.reposDir ?? config.reposDir;
   const gitdir = repoPath(domain, { reposDir });
   const changed = await diffCommits(gitdir, fromSha, toSha, domain, { reposDir });
-  return ingestChanged(domain, changed, pusher, toSha);
+  return ingestChanged(domain, changed, pusher, toSha, await repoLayout(domain, toSha, { reposDir }));
 }
 
-async function ingestChanged(domain: string, changed: ChangedFile[], pusher: Pusher, sha: string): Promise<IngestReport[]> {
+async function ingestChanged(domain: string, changed: ChangedFile[], pusher: Pusher, sha: string, layout: LayoutVersion = LAYOUT_V1): Promise<IngestReport[]> {
   const reports: IngestReport[] = [];
+  // A user repository's files are stored as pushed; the registry ingest of each kind is keyed by a
+  // DOMAIN and does not apply to the My-scope repository yet — say so rather than mis-attribute.
+  if (parseRepoName(domain)?.kind !== 'domain') {
+    return [{ kind: 'repository', created: 0, updated: 0, skipped: changed.length, notes: ['a personal or platform repository: the files are stored; nothing is ingested into a domain registry'] }];
+  }
+  const repoDomain = (parseRepoName(domain) as { domain: string }).domain;
   for (const kind of registeredRepoKinds()) {
-    const mine = changed.filter((f) => kind.matches(f.path));
+    const mine = filesForKind(kind, changed, layout);
     if (mine.length === 0) continue;
-    reports.push(await kind.ingest({ domain, files: mine, pusher, sha }));
+    reports.push(await kind.ingest({ domain: repoDomain, files: mine, pusher, sha }));
   }
   return reports;
 }

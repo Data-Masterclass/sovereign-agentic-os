@@ -8,7 +8,7 @@
  * ARCHITECTURE:
  *   - Pure decision + one injected lookup, so every case is a unit test with no cluster: the
  *     ingress's `auth-url` sub-request and the receive hook's call both reduce to this function.
- *   - READ IS UNCONDITIONAL for a member of the domain — the whole tree, `os/*.yml` included. No
+ *   - READ IS UNCONDITIONAL for whoever may read the repo (its members; a user repo: its owner + admins) — the whole tree, `os/*.yml` included. No
  *     path filter, no per-file ACL: transparency must never require write access.
  *   - It resolves a token to a USER ID and then re-reads the LIVE principal (role and domains as
  *     they are NOW). A token is a credential, never a frozen snapshot of authority — the same
@@ -19,6 +19,7 @@
  */
 import { redact, tokenFromAuthorization } from '@core/auth/access-tokens';
 import { resolveAccessToken } from '@core/auth/access-tokens-store';
+import { mayReadRepo, parseRepoName, REPO_NAME_RE } from '@core/infra/repo-layout';
 
 export type GitService = 'upload-pack' | 'receive-pack' | 'unknown';
 
@@ -42,8 +43,8 @@ export function parseGitPath(uri: string): GitRequestTarget | null {
   const pathOnly = String(uri ?? '').split('#')[0];
   const [p, query = ''] = pathOnly.split('?');
   if (unsafeGitPath(p)) return null;
-  const m = /^\/git\/([A-Za-z0-9][A-Za-z0-9._-]{0,63})\.git(\/.*)?$/.exec(p);
-  if (!m || m[1].includes('..')) return null;
+  const m = /^\/git\/([^/]+)\.git(\/.*)?$/.exec(p);
+  if (!m || !REPO_NAME_RE.test(m[1]) || m[1].includes('..') || !parseRepoName(m[1])) return null;
   const rest = m[2] ?? '';
   let service: GitService = 'unknown';
   if (/(^|&)service=git-receive-pack(&|$)/.test(query) || rest.endsWith('/git-receive-pack')) service = 'receive-pack';
@@ -70,7 +71,7 @@ export function unsafeGitPath(path: string): boolean {
 
 /**
  * Decide one git-over-HTTP request. `lookup` is `principalById` in production.
- * Domain membership is the ONLY gate here; which PATHS a push may change is the receive gate's
+ * The repo boundary (`mayReadRepo`) is the ONLY gate here; which PATHS a push may change is the receive gate's
  * decision (`core/infra/git-receive.ts` `decidePath`), because that needs the files.
  */
 export async function authenticateGitRequest(
@@ -93,14 +94,15 @@ export async function authenticateGitRequest(
   if (!principal) {
     return { ok: false, status: 401, message: AUTH_FAILED, logReason: `token prefix ${resolved.prefix}: the user no longer exists or is disabled` };
   }
-  const member = principal.role === 'admin' || principal.domains.includes(target.domain);
-  if (!member) {
+  // The repo boundary IS the read boundary (design 12): a user repo for its owner and admins, a
+  // domain repo (or its legacy alias) for its members, the platform repo for admins.
+  if (!mayReadRepo(target.domain, principal)) {
     // Not a 403: naming the repository would tell a stranger it exists.
     return {
       ok: false,
       status: 404,
       message: 'no such repository',
-      logReason: `token prefix ${resolved.prefix}: ${principal.id} is not a member of ${target.domain}`,
+      logReason: `token prefix ${resolved.prefix}: ${principal.id} may not read ${target.domain}`,
     };
   }
   return { ok: true, principal, target, tokenPrefix: resolved.prefix };

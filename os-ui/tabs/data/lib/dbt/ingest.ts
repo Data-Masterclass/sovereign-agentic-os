@@ -296,6 +296,7 @@ export async function ingestDbtModels(input: {
 export function registerDbtIngest(): void {
   registerRepoKind({
     kind: DATASET_KIND,
+    root: 'dbt',
     matches: matchesDbt,
     validate: validateDbtFile,
     ingest: ingestDbtModels,

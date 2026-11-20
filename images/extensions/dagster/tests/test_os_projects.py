@@ -142,12 +142,53 @@ class Discovery(unittest.TestCase):
             self.assertEqual(skipped, [])
             self.assertEqual([(p.domain, p.sha) for p in projects], [("sales", SHA_A)])
             clone = [c for c in calls if c[0][:2] == ["git", "clone"]]
-            self.assertEqual(clone[0][0][-2], "git://os-repos/sales.git")
+            # the canonical repo name (design 12) first; it exists here, so no alias fallback
+            self.assertEqual(clone[0][0][-2], "git://os-repos/domain-sales.git")
+            self.assertEqual(len(clone), 1)
             self.assertEqual([c for c in calls if c[0][0] == "dbt"][0][1], os.path.join(root, "sales", SHA_A))
             # second discovery: the checkout exists — no git, no dbt
             calls.clear()
             osp.discover(root, {"sales": SHA_A}, "git://os-repos", fake_run)
             self.assertEqual(calls, [])
+
+    def test_v2_layout_points_dbt_at_data_dbt_and_falls_back_to_the_alias(self):
+        with tempfile.TemporaryDirectory() as root:
+            calls = []
+
+            def fake_run(cmd, cwd=None, env=None):
+                calls.append((list(cmd), cwd))
+                if cmd[:2] == ["git", "clone"]:
+                    if "domain-" in cmd[-2]:
+                        return 128, "not found"  # a repo not migrated yet: only the old name exists
+                    os.makedirs(os.path.join(cmd[-1], ".git"))
+                    os.makedirs(os.path.join(cmd[-1], "os"))
+                    open(os.path.join(cmd[-1], "os", "layout.yml"), "w").write("version: 2\n")
+                    return 0, ""
+                if cmd[0] == "dbt":
+                    os.makedirs(os.path.join(cwd, "target"), exist_ok=True)
+                    with open(os.path.join(cwd, "target", "manifest.json"), "w") as fh:
+                        fh.write(manifest({}))
+                    return 0, ""
+                return 0, ""
+
+            projects, skipped = osp.discover(root, {"sales": SHA_A}, "git://os-repos", fake_run)
+            self.assertEqual(skipped, [])
+            self.assertEqual(projects[0].path, os.path.join(root, "sales", SHA_A, "data", "dbt"))
+            urls = [c[0][-2] for c in calls if c[0][:2] == ["git", "clone"]]
+            self.assertEqual(urls, ["git://os-repos/domain-sales.git", "git://os-repos/sales.git"])
+            self.assertEqual([c for c in calls if c[0][0] == "dbt"][0][1], os.path.join(root, "sales", SHA_A, "data", "dbt"))
+
+    def test_dbt_dir_is_the_root_without_the_marker(self):
+        with tempfile.TemporaryDirectory() as root:
+            self.assertEqual(osp.dbt_dir(root), root)
+            os.makedirs(os.path.join(root, "os"))
+            open(os.path.join(root, "os", "layout.yml"), "w").write("version: 2\n")
+            self.assertEqual(osp.dbt_dir(root), os.path.join(root, "data", "dbt"))
+            open(os.path.join(root, "os", "layout.yml"), "w").write("version: 2\ndbt_project_dir: data/transform\n")
+            self.assertEqual(osp.dbt_dir(root), os.path.join(root, "data", "transform"))
+            open(os.path.join(root, "os", "layout.yml"), "w").write("version: 2\ndbt_project_dir: ../x\n")
+            with self.assertRaises(ValueError):
+                osp.dbt_dir(root)
 
     def test_pinned_parse_failure_is_skipped_not_fatal(self):
         with tempfile.TemporaryDirectory() as root:

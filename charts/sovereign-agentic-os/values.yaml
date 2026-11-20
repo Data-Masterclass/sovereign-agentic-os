@@ -1843,6 +1843,13 @@ osUI:
   dataProjectGit:
     enabled: true
     reposSize: 2Gi
+    # Repository layout (component design 12): user-<token> / domain-<domain> / platform repos,
+    # the dbt project at data/dbt/, os/ for OS metadata, generated READMEs. `migration: apply`
+    # migrates every existing domain repo at boot (one commit each, `git mv` semantics) — deploy
+    # the Dagster image that reads os/layout.yml FIRST. Rollback: `git revert` the migration commit.
+    layout:
+      migration: "off"
+      dbtProjectDir: data/dbt
     gitDaemon:
       image:
         # Our own image (images/base/git-daemon): no stock git image ships `git daemon` — Alpine

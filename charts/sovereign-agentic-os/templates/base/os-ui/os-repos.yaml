@@ -29,6 +29,18 @@ spec:
     requests:
       storage: {{ $dpg.reposSize | default "2Gi" | quote }}
 ---
+{{- /* The git daemon's access hook (design 12): serve domain repositories only. */}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: os-git-daemon-hooks
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+data:
+  access-hook.sh: |
+    {{- .Files.Get "files/git/daemon-access-hook.sh" | nindent 4 }}
+---
 apiVersion: v1
 kind: Service
 metadata:

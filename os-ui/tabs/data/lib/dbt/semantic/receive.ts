@@ -127,6 +127,7 @@ export async function ingestSemanticMetrics(input: {
 export function registerSemanticMetricIngest(): void {
   registerRepoKind({
     kind: METRIC_KIND,
+    root: 'dbt',
     matches: matchesSemantic,
     validate: validateSemanticFile,
     ingest: ingestSemanticMetrics,

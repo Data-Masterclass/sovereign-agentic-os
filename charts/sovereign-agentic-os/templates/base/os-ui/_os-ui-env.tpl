@@ -389,6 +389,21 @@
   value: "true"
 - name: OS_REPOS_DIR
   value: /repos
+{{- /* Repository layout (component design 12). `layout.migration`: off (default) | dry-run |
+  apply. `apply` renames each domain repo to domain-<domain>.git (old name kept as an alias),
+  moves it to the v2 layout in ONE commit (`OS-Reason: layout-migration`) at boot, moves personal
+  agent lanes to user-<token> repos, and creates NEW repos in v2. `dry-run` only logs the plan.
+  `dbtProjectDir` is the ONE dbt project dir setting; it is written into each repo's
+  os/layout.yml, which is where the Dagster image reads it. */}}
+{{- $lay := (.Values.osUI.dataProjectGit | default dict).layout | default dict }}
+{{- $mig := $lay.migration | default "off" | toString }}
+{{- if not (has $mig (list "off" "dry-run" "apply")) }}{{ fail (printf "osUI.dataProjectGit.layout.migration must be off, dry-run or apply (got %q)" $mig) }}{{ end }}
+- name: OS_REPO_LAYOUT_MIGRATION
+  value: {{ $mig | quote }}
+- name: OS_REPO_LAYOUT_V2
+  value: {{ eq $mig "apply" | toString | quote }}
+- name: OS_DBT_PROJECT_DIR
+  value: {{ $lay.dbtProjectDir | default "data/dbt" | quote }}
 {{- end }}
 {{- /*
   Trino FILE-BASED ACCESS CONTROL (engine rebuild B3, fixed in B3-review-H-1/L-5). With this on,

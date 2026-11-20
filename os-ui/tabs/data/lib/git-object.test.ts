@@ -23,14 +23,16 @@ test('G3: the kind string is one of the kernel’s kinds', () => {
 
 test('G3: the selectors are THIS dataset’s model files, in both lanes, and never a shared file', () => {
   const paths = datasetPaths(DATASET);
-  assert.deepEqual(paths, [
+  const v1 = [
     'models/bronze/bronze_orders_q3.sql',
     'models/personal/alex_example_com/bronze_orders_q3.sql',
     'models/silver/silver_orders_q3.sql',
     'models/personal/alex_example_com/silver_orders_q3.sql',
     'models/gold/gold_orders_q3.sql',
     'models/personal/alex_example_com/gold_orders_q3.sql',
-  ]);
+  ];
+  // Both layouts (WP-55): the v1 root and the v2 `data/dbt/`, so history reaches across the migration.
+  assert.deepEqual(paths, [...v1, ...v1.map((p) => `data/dbt/${p}`)]);
   // The two that would make one dataset's history everybody's: the project root and the shared
   // per-directory documentation.
   assert.ok(!paths.includes('models/'), 'a selector of `models/` would attribute every dataset’s commits to this one');
