@@ -44,7 +44,7 @@ dep = by.get(("Deployment", "docling"))
 need(dep is not None, "no docling Deployment")
 c = dep["spec"]["template"]["spec"]["containers"][0]
 tag = c["image"].split("@")[0].rsplit(":", 1)[1]
-need(c["image"].startswith("ghcr.io/data-masterclass/sovereign-os/docling:"), "image is not our derived image: " + c["image"])
+need(c["image"].split("@")[0].rsplit(":", 1)[0].endswith("/sovereign-os/docling"), "image is not our derived image: " + c["image"])
 need(tag != "latest" and tag[0].isdigit(), "image tag is not a version: " + tag)
 env = {e["name"]: e for e in c["env"]}
 want = {"DOCLING_SERVE_MAX_FILE_SIZE": "52428800", "DOCLING_SERVE_MAX_NUM_PAGES": "400",

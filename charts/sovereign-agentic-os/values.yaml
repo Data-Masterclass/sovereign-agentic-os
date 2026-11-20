@@ -871,10 +871,11 @@ docling:
   enabled: true
   # OUR derived image (images/extensions/docling): upstream docling-serve-cpu v1.38.2 plus the
   # Apache-2.0 TableFormer v2 weights and the MiniLM tokenizer, with the CDLA-licensed TableFormer
-  # v1 weights removed. Built by build-images.yml (`docling-v<tag>`). The tag is
+  # v1 weights removed. Built by build-images.yml (`docling-v<tag>`); like the other self-built
+  # extension images the chart default is ghcr.io/aborek (deploy.sh moves only os-ui). The tag is
   # <docling-serve version>-<our build>; set `digest` once the image is pushed.
   image:
-    repository: ghcr.io/data-masterclass/sovereign-os/docling
+    repository: ghcr.io/aborek/sovereign-os/docling
     tag: "1.38.2-1"
     digest: ""
   # docling-serve settings (docs/configuration.md, v1.38.2), rendered as DOCLING_SERVE_* env.
