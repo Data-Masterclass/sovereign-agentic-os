@@ -41,7 +41,7 @@ case "\$*" in
   *" get values "*)   cat "\$FAKE_LIVE_VALUES" ;;
   *" get manifest "*) if [ -n "\${FAKE_LIVE_MANIFEST:-}" ]; then cat "\$FAKE_LIVE_MANIFEST"; fi ;;
   *" history "*)      echo "[]" ;;
-  *" upgrade "*)      echo "helm upgrade" >> "\$FAKE_LOG" ;;
+  *" upgrade "*)      echo "helm upgrade \$*" >> "\$FAKE_LOG" ;;
   *)                  exec "$REAL_HELM" "\$@" ;;
 esac
 STUB
@@ -62,10 +62,14 @@ derive_and_render() { # <tree> — sets out, rc, rendered
   : > "$FAKE_LOG"
   local work; work=$(mktemp -d "$TMP/work.XXXX")
   out=$(cd "$1" && PATH="$BIN:$PATH" DEPLOY_REGISTRY_PROBE="$BIN/probe" IMAGE_REPO=registry.example.invalid/sovereign-os \
-        DEPLOY_MAPPED_COLUMNS_PROBE="$TMP/mapped-probe" WORK="$work" bash scripts/deploy.sh --from-registry 9.9.9-test ${DEPLOY_EXTRA:-} 2>&1); rc=$?
+        DEPLOY_MAPPED_COLUMNS_PROBE="$TMP/mapped-probe" DEPLOY_IMAGE_LABEL_PROBE="$TMP/label-probe" WORK="$work" bash scripts/deploy.sh --from-registry 9.9.9-test ${DEPLOY_EXTRA:-} 2>&1); rc=$?
   rendered=$("$REAL_HELM" template agentic-os "$1/charts/sovereign-agentic-os" -n agentic-os --skip-schema-validation \
              -f "$work/release-values.yaml" 2>"$TMP/template.err") \
     || { echo "helm template failed:"; sed 's/^/     | /' "$TMP/template.err"; }
+  # The annotation the upgrade would write: the same values plus the capability deploy.sh passed.
+  local cap; cap=$(grep -o 'dataRunner.verifiedCapability=[a-z]*' "$FAKE_LOG" | tail -1 || true)
+  rendered_cap=$("$REAL_HELM" template agentic-os "$1/charts/sovereign-agentic-os" -n agentic-os --skip-schema-validation \
+             -f "$work/release-values.yaml" ${cap:+--set-string "$cap"} --show-only templates/extensions/lakehouse/data-runner.yaml 2>/dev/null || true)
 }
 runner_image() { # the data-runner container image in $rendered
   printf '%s' "$rendered" | python3 -c '
@@ -144,5 +148,44 @@ echo 'kind: Deployment
 metadata: {name: data-runner' > "$TMP/broken.yaml"
 FAKE_LIVE_MANIFEST=$TMP/broken.yaml FAKE_MAPPED=0 derive_and_render "$TMP/t3"
 check "fail closed: an unparsable live manifest refuses" "RUNNER_CAPABILITY_UNKNOWN" "$out"
+
+echo "== capability from the IMAGE LABEL (registry), not from the digest alone"
+cat > "$TMP/label-probe" <<'STUB'
+#!/usr/bin/env bash
+echo "label $*" >> "$FAKE_LOG.label"
+case "$FAKE_LABEL" in
+  fail)   exit 1 ;;
+  absent) echo '{"config":{"Labels":{"org.opencontainers.image.title":"data-runner"}}}' ;;
+  *)      echo "{\"config\":{\"Labels\":{\"org.sovereign-os.applies-column-names\":\"$FAKE_LABEL\"}}}" ;;
+esac
+STUB
+chmod +x "$TMP/label-probe"
+tree "$TMP/t4"
+# A runner build that is NOT on the legacy list (an older hand-built 0.2.1, say).
+python3 - "$TMP/t4/$V" <<'PY'
+import sys
+p = sys.argv[1]; s = open(p).read()
+s = s.replace("digest: sha256:8f7b8a3287368c915af90ee37e6053dfd77326d98fea450f87b97f4835a2e482", "digest: sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", 1)
+open(p, "w").write(s)
+PY
+export FAKE_LIVE_MANIFEST=$TMP/live-new-runner.yaml
+: > "$FAKE_LOG.label"
+FAKE_LABEL=absent FAKE_MAPPED=3 derive_and_render "$TMP/t4"
+check "an unlabelled, unlisted runner over a capable one is refused" "RUNNER_DOWNGRADE_REFUSED" "$out"
+check "...because its registry label says it does not apply column names" "label org.sovereign-os.applies-column-names='' -> applies column names: false" "$out"
+check "the label was read from the pinned digest" "label ghcr.io/aborek/sovereign-os/data-runner:0.2.2@sha256:bbbb" "$(cat "$FAKE_LOG.label")"
+FAKE_LABEL=fail FAKE_MAPPED=0 derive_and_render "$TMP/t4"
+check "fail closed: an unreadable label refuses the deploy" "RUNNER_LABEL_UNREADABLE" "$out"
+absent "...before any helm upgrade" "helm upgrade" "$(cat "$FAKE_LOG")"
+FAKE_LABEL=true FAKE_MAPPED=3 derive_and_render "$TMP/t4"
+check "negative twin: a labelled runner is capable and deploys" "helm upgrade" "$(cat "$FAKE_LOG")"
+check "...and the release records the label's verdict" "dataRunner.verifiedCapability=true" "$(cat "$FAKE_LOG")"
+check "...so the release annotation is true" 'applies-column-names: "true"' "$rendered_cap"
+echo "== the legacy list stays an extra guard"
+: > "$FAKE_LOG.label"
+FAKE_LABEL=true FAKE_MAPPED=3 derive_and_render "$TMP/t3"
+check "a legacy digest is not capable even if it claimed the label" "RUNNER_DOWNGRADE_REFUSED" "$out"
+[ ! -s "$FAKE_LOG.label" ] && ok "...and its label is not even read" || bad "...and its label is not even read" "$(cat "$FAKE_LOG.label")"
+unset FAKE_LIVE_MANIFEST
 
 finish deploy-data-runner-image
