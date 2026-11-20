@@ -1,0 +1,82 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+#
+# litellm-langfuse-live — prove the gateway's Langfuse hop against the REAL images (10 F1, WP-32).
+#
+# Renders the chart, takes the LiteLLM image, config and OTel env from the rendered manifests, starts
+# Langfuse on its documented self-hosting stack, and runs os-ui's tracing.e2e.test.ts through
+# scripts/tests/litellm-langfuse/run.sh: one model call = exactly one GENERATION nested under the
+# app span via traceparent, with call id, tokens and cost; a spent virtual-key budget is refused.
+# The run also executes the NEGATIVE TWIN (the legacy `success_callback: ["langfuse"]` added) and
+# fails if that twin passes. Separate from ci.yml because it pulls several GB of images.
+# Actions are pinned to commit SHAs, as ci.yml does.
+name: litellm-langfuse-live
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - charts/sovereign-agentic-os/Chart.yaml
+      - charts/sovereign-agentic-os/Chart.lock
+      - charts/sovereign-agentic-os/values.yaml
+      - values.stackit-managed.yaml
+      - os-ui/core/runtime/runtime.ts
+      - os-ui/core/runtime/gateway-trace.ts
+      - os-ui/core/runtime/tracing.e2e.test.ts
+      - os-ui/core/infra/litellm-credential.ts
+      - scripts/tests/litellm-langfuse/**
+      - .github/workflows/litellm-langfuse-live.yml
+  push:
+    branches: [main]
+    paths:
+      - charts/sovereign-agentic-os/Chart.lock
+      - charts/sovereign-agentic-os/values.yaml
+      - os-ui/core/runtime/gateway-trace.ts
+      - scripts/tests/litellm-langfuse/**
+      - .github/workflows/litellm-langfuse-live.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: litellm-langfuse-live-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  litellm-langfuse-live:
+    name: litellm-langfuse-live (Langfuse ${{ matrix.langfuse }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        langfuse: ['3.194.1']
+    env:
+      CI: 'true'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Setup Node.js
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: 22
+      - name: Install (os-ui)
+        run: npm --prefix os-ui ci
+      - name: Setup Helm
+        uses: azure/setup-helm@fe7b79cd5ee1e45176fcad797de68ecaf3ca4814 # v4.2.0
+        with:
+          version: v3.16.3
+      - name: Resolve chart dependencies
+        run: |
+          helm dependency build charts/sovereign-agentic-os \
+            || helm dependency update charts/sovereign-agentic-os
+      - name: Gateway + Langfuse live test (with the negative twin)
+        env:
+          LANGFUSE_VERSION: ${{ matrix.langfuse }}
+          LITELLM_LANGFUSE_WORKDIR: ${{ runner.temp }}/litellm-langfuse
+        run: bash scripts/tests/litellm-langfuse/run.sh
+      - name: Logs (on failure)
+        if: failure()
+        run: |
+          for f in e2e.log e2e-twin.log migrate.log gw.log lfweb.log; do echo "=== $f"; tail -120 "${{ runner.temp }}/litellm-langfuse/$f" || true; done
