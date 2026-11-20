@@ -110,6 +110,10 @@ export type OsMirror = {
    *  else — unreachable, timeout, 5xx after every attempt — is `ok:false` with the reason, and
    *  the caller must keep the record. Writes queued while the mirror was down go out first. */
   deleteConfirmed(id: string, opts?: { attempts?: number; backoffMs?: number }): Promise<DeleteOutcome>;
+  /** CREATE-ONLY, awaited (OpenSearch `PUT <index>/_create/<id>`): writes the doc only when no doc
+   *  with that id exists. 'created' · 'exists' (409 — an existing doc is NEVER overwritten) ·
+   *  'unreachable' (no answer or any other status — nothing can be concluded). */
+  createDoc(id: string, doc: unknown): Promise<'created' | 'exists' | 'unreachable'>;
   /** Fire-and-forget upsert. While unhealthy, lazily re-probes (throttled) and,
    *  if the mirror healed, persists THIS doc. Earlier dropped writes are NOT
    *  replayed — the in-process store stays authoritative until the next roll. */
@@ -442,6 +446,13 @@ export function osMirror(opts: {
     });
   }
 
+  async function createDoc(id: string, doc: unknown): Promise<'created' | 'exists' | 'unreachable'> {
+    const res = await osFetch(`/${index}/_create/${encodeURIComponent(id)}?refresh=true`, { method: 'PUT', body: JSON.stringify(doc) });
+    if (!res) return 'unreachable';
+    if (res.status === 409) return 'exists';
+    return res.ok ? 'created' : 'unreachable';
+  }
+
   function writeThrough(id: string, doc: unknown): void {
     const body = JSON.stringify(doc);
     sendThrough(() => {
@@ -476,6 +487,7 @@ export function osMirror(opts: {
     read,
     claim,
     deleteConfirmed,
+    createDoc,
     writeThrough,
     deleteThrough,
     patchThrough,

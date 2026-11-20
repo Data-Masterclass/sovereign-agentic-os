@@ -12,7 +12,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import yaml from 'js-yaml';
-import { KNOWLEDGE_PREFIX, canonicalMd, generateKnowledgeFiles, readKnowledgeBundle, splitFrontmatter } from '@tabs/knowledge/lib/git/bundle';
+import { KNOWLEDGE_PREFIX, generateKnowledgeFiles, readKnowledgeBundle, sameWorkflowText, splitFrontmatter, withGovernance } from '@tabs/knowledge/lib/git/bundle';
 import { compileGuardrails } from '@tabs/knowledge/lib/guardrails';
 import { parseWorkflow } from '@tabs/knowledge/lib/schema';
 import { manual, workflowRecord, WF_MD } from '@tabs/knowledge/lib/git/fixtures';
@@ -54,14 +54,15 @@ test('guardrails.json is the OPA data document of the HARD rules, exactly what t
   assert.deepEqual(g.guardrails.map((x: { id: string }) => x.id).sort(), ['sr1', 'wr2']);
 });
 
-test('read-back: the bundle parses back to the store records (md in the store’s canonical form)', () => {
+test('read-back: the bundle parses back to the store records; the body is byte-identical', () => {
   const back = readKnowledgeBundle(files());
   assert.equal(back.workflows.length, 1);
   const w = back.workflows[0];
   assert.equal(w.id, 'wf_bank');
-  assert.equal(w.md, canonicalMd(WF_MD));
-  // A store-written md is already canonical, so it round-trips byte for byte.
-  assert.equal(readKnowledgeBundle(generateKnowledgeFiles('sales', { workflows: [workflowRecord({ md: canonicalMd(WF_MD) })], manual: null })).workflows[0].md, canonicalMd(WF_MD));
+  assert.ok(sameWorkflowText(w.md, WF_MD), w.md);
+  // The free prose before the first step survives (the store's serializeWorkflow would drop it).
+  assert.match(w.md, /Submit the monthly pack to the bank\./);
+  assert.equal(splitFrontmatter(w.md).body, splitFrontmatter(WF_MD).body);
   assert.equal(w.tacit, workflowRecord().tacit);
   assert.equal(w.owner, 'alex@example.com');
   assert.equal(w.visibility, 'Shared');
@@ -99,4 +100,13 @@ test('timestamps and numbers are written as quoted strings (YAML core schema, OK
 
 test('an empty domain writes no bundle at all', () => {
   assert.equal(generateKnowledgeFiles('sales', { workflows: [], manual: null }).size, 0);
+});
+
+test('withGovernance changes only visibility and status; the body stays byte-identical', () => {
+  const out = withGovernance(WF_MD, { visibility: 'Personal', status: 'draft' });
+  const f = splitFrontmatter(out).front as Record<string, unknown>;
+  assert.equal(f.visibility, 'Personal');
+  assert.equal(f.status, 'draft');
+  assert.equal(f.title, 'Bank Submission');
+  assert.equal(splitFrontmatter(out).body, splitFrontmatter(WF_MD).body);
 });

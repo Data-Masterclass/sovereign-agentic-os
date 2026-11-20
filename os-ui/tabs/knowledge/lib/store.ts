@@ -26,7 +26,7 @@ import { type ManualScope, resolveManual } from '@tabs/knowledge/lib/manual';
 import { EMPTY_LINKS, type WorkflowLinks } from '@tabs/knowledge/lib/links';
 import { resolveKnowledgeLinks, type ResolvedLinks } from '@tabs/knowledge/lib/okf-model';
 import { knowledgeGitEnabled, queueKnowledgeCommit, readKnowledgeFromGit } from '@tabs/knowledge/lib/git/commit';
-import { canonicalMd } from '@tabs/knowledge/lib/git/bundle';
+import { sameWorkflowText, withGovernance } from '@tabs/knowledge/lib/git/bundle';
 
 export type { ArtifactVersion };
 export type { ManualScope };
@@ -138,6 +138,9 @@ type KnowledgeStoreState = {
   domainKnowledge: Map<string, DomainKnowledge>;
   seeded: boolean;
   hydration: Promise<void> | null;
+  /** True only when the last hydration read the WHOLE mirror (os-mirror `hydrate` ≠ null). The git
+   *  read-back runs only then: an unreachable or partial read looks like an empty store. */
+  hydrationComplete: boolean;
   /** What this process last knew the mirror held per workflow (see `core/infra/field-writes.ts`). */
   seen: SeenFields;
   /** The run worker re-reads the mirror before serving (`core/infra/mirror-refresh.ts`). */
@@ -146,7 +149,7 @@ type KnowledgeStoreState = {
 const KS_KEY = Symbol.for('soa.knowledge.store');
 function ks(): KnowledgeStoreState {
   const g = globalThis as unknown as Record<symbol, KnowledgeStoreState | undefined>;
-  if (!g[KS_KEY]) g[KS_KEY] = { workflows: new Map(), domainKnowledge: new Map(), seeded: false, hydration: null, seen: newSeenFields(), refresh: newMirrorRefresh() };
+  if (!g[KS_KEY]) g[KS_KEY] = { workflows: new Map(), domainKnowledge: new Map(), seeded: false, hydration: null, hydrationComplete: false, seen: newSeenFields(), refresh: newMirrorRefresh() };
   return g[KS_KEY]!;
 }
 
@@ -223,7 +226,9 @@ export function enableMirrorRefresh(on = true): boolean {
 
 async function hydrate(): Promise<void> {
   const s = ks();
-  const docs = (await mirror.hydrate(2000)) ?? [];
+  const read = await mirror.hydrate(2000);
+  s.hydrationComplete = read !== null;
+  const docs = read ?? [];
   refresher.noteHydrated((docs as WorkflowRecord[]).filter((r) => r && r.id).map((r) => r.id));
   for (const rec of docs as WorkflowRecord[]) {
     if (rec && rec.id && !s.workflows.has(rec.id)) {
@@ -249,6 +254,7 @@ export function __resetStore(): void {
   s.domainKnowledge.clear();
   s.seeded = false;
   s.hydration = null;
+  s.hydrationComplete = false;
   s.seen.clear();
   s.refresh = newMirrorRefresh();
   mirror.__reset();
@@ -976,15 +982,26 @@ function commitWorkflowAfterWrite(rec: WorkflowRecord, user: Principal, action: 
 export type KnowledgeReconcileReport = { domain: string; sha: string; workflows: number; manual: boolean };
 
 /**
- * THE READ-BACK (WP-50, design 11 A19–A21): rebuild the store FROM each domain's committed bundle.
- * A workflow or manual the store lacks is restored from git; one that differs takes git's version,
- * unless the store's copy is NEWER than the head commit (a write whose commit was lost), which is
- * re-committed instead — so store and git converge on the newest state and git holds it. Runs at
- * boot (`instrumentation.ts`) after hydration; one unreadable domain never stops the others.
+ * THE READ-BACK (WP-50, design 11 A19–A21): restore knowledge TEXT from each domain's committed bundle.
+ *   - COMPLETE OR NOTHING. It runs only after a COMPLETE store hydration. If OpenSearch was
+ *     unreachable or the read was partial, the store only LOOKS empty (the store-hydration incident
+ *     class), so it does nothing and says so loudly.
+ *   - TEXT ONLY. Git restores the workflow body, its tacit notes, its title and the domain manual.
+ *     Scope, status, owner, publication, certification and links always come from the store and
+ *     its approval flow; the md frontmatter is re-stamped with the store's audience and status.
+ *   - CREATE-ONLY. A workflow git holds and the store does not is created with OpenSearch
+ *     `_create` (never an overwrite of a document that exists) as a Personal draft of the owner
+ *     the file names, so a restore can never grant an audience.
+ *   - A store copy NEWER than the head commit (a lost commit) is re-committed, never overwritten.
+ * Runs at boot (`instrumentation.ts`); one unreadable domain never stops the others.
  */
 export async function reconcileKnowledgeFromGit(domains: string[]): Promise<KnowledgeReconcileReport[]> {
   if (!knowledgeGitEnabled()) return [];
   await ensureHydrated();
+  if (!ks().hydrationComplete) {
+    console.error('[knowledge-git] git read-back NOT run: the knowledge store hydration was incomplete (OpenSearch unreachable or a partial read) — nothing restored, nothing written; it runs at the next boot with a complete read');
+    return [];
+  }
   const out: KnowledgeReconcileReport[] = [];
   for (const domain of domains) {
     let bundle;
@@ -1001,21 +1018,27 @@ export async function reconcileKnowledgeFromGit(domains: string[]): Promise<Know
       if (w.domain !== domain) continue;
       const held = ks().workflows.get(w.id);
       if (!held) {
-        const rec = makeRecord({ id: w.id, domain, owner: w.owner, md: w.md, tacit: w.tacit, title: w.title, visibility: w.visibility as Visibility, status: w.status as WorkflowRecord['status'], folder: w.folder });
-        ks().workflows.set(rec.id, rec);
-        writeNew(mirror, ks().seen, rec.id, rec);
+        const md = withGovernance(w.md, { visibility: 'Personal', status: 'draft' });
+        const rec = makeRecord({ id: w.id, domain, owner: w.owner, md, tacit: w.tacit, title: w.title, visibility: 'Personal', status: 'draft', folder: '/' });
+        const outcome = await mirror.createDoc(rec.id, rec);
+        if (outcome === 'created') {
+          ks().workflows.set(rec.id, rec);
+          noteSeen(ks().seen, rec.id, rec);
+          console.warn(`[knowledge-git] restored workflow ${rec.id} in '${domain}' from git as a Personal draft of ${rec.owner} (its audience goes through promotion again)`);
+        } else {
+          console.error(`[knowledge-git] workflow ${rec.id} in '${domain}' NOT restored from git: the mirror answered '${outcome}' to a create-only write (an existing document is never overwritten)`);
+        }
         continue;
       }
-      if (canonicalMd(held.md) === w.md && held.tacit === w.tacit) continue;
+      const md = withGovernance(w.md, { visibility: held.visibility, status: held.status });
+      if (sameWorkflowText(held.md, md) && held.tacit === w.tacit) continue;
       if (Date.parse(held.updatedAt) > committedAt) {
         heal = true;
         continue;
       }
-      held.md = w.md;
+      held.md = md;
       held.tacit = w.tacit;
       held.title = w.title;
-      held.visibility = w.visibility as Visibility;
-      held.status = w.status as WorkflowRecord['status'];
       writeThrough(held);
     }
     if (bundle.manual) {

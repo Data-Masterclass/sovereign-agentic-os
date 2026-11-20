@@ -15,6 +15,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { config } from '@core/kernel/config';
 import { log, readBlob } from '@core/infra/git-store';
+import { fakeCluster } from '@core/infra/two-process-fixture';
 import { awaitKnowledgeCommits, commitKnowledge, readKnowledgeFromGit, __setKnowledgeGitForTests } from '@tabs/knowledge/lib/git/commit';
 import {
   __resetStore, createWorkflow, getManual, getWorkflow, publishWorkflow, reconcileKnowledgeFromGit, updateManual, updateWorkflow,
@@ -25,6 +26,7 @@ const ADMIN = { id: 'lead@example.com', name: 'Lead', domains: ['sales'], role: 
 
 test('publish + manual edit commit knowledge/** as the actor; a restart rebuilds both FROM git', async () => {
   __setKnowledgeGitForTests(true);
+  const os = fakeCluster(); // a reachable mirror: the read-back runs only after a COMPLETE hydration
   try {
     __resetStore();
     const wf = createWorkflow(ADMIN, { title: 'Bank Submission', domain: 'sales' });
@@ -57,12 +59,14 @@ test('publish + manual edit commit knowledge/** as the actor; a restart rebuilds
     assert.equal(getWorkflow(wf.id, ADMIN).visibility, 'Shared');
     assert.equal(getManual('domain', ADMIN, 'sales').sections.find((s) => s.id === 'general')?.content, 'We sell to banks.');
   } finally {
+    os.restore();
     __setKnowledgeGitForTests(null);
   }
 });
 
 test('git wins when a LATER commit holds other content', async () => {
   __setKnowledgeGitForTests(true);
+  const os = fakeCluster(); // a reachable mirror: the read-back runs only after a COMPLETE hydration
   try {
     __resetStore();
     const wf = createWorkflow(ADMIN, { title: 'Onboarding', domain: 'sales' });
@@ -78,12 +82,14 @@ test('git wins when a LATER commit holds other content', async () => {
     assert.equal(getWorkflow(wf.id, ADMIN).title, 'Onboarding v2', 'git wins over the older store copy');
 
   } finally {
+    os.restore();
     __setKnowledgeGitForTests(null);
   }
 });
 
 test('a store copy NEWER than the head commit (a lost commit) is re-committed, never overwritten', async () => {
   __setKnowledgeGitForTests(true);
+  const os = fakeCluster(); // a reachable mirror: the read-back runs only after a COMPLETE hydration
   try {
     __resetStore();
     const wf = createWorkflow(ADMIN, { title: 'Invoicing', domain: 'sales' });
@@ -100,6 +106,7 @@ test('a store copy NEWER than the head commit (a lost commit) is re-committed, n
     const head = await readKnowledgeFromGit('sales', { reposDir: config.reposDir });
     assert.equal(head!.workflows.find((w) => w.id === wf.id)!.title, 'Invoicing v2', 'and git now holds it');
   } finally {
+    os.restore();
     __setKnowledgeGitForTests(null);
   }
 });
