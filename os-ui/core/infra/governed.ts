@@ -5,6 +5,7 @@ import 'server-only';
 import { config } from '@core/kernel/config';
 import { serviceBearerHeader } from '@core/infra/service-bearer';
 import type { Role } from '@core/kernel/session';
+import { decisionMeta, type DecisionMeta } from '@core/infra/opa-decision';
 
 /**
  * Governed data-tool spine. Every data access an agent makes — the `metrics` tool
@@ -27,7 +28,8 @@ import type { Role } from '@core/kernel/session';
 
 export type ToolName = 'metrics' | 'query' | 'ask' | 'talk';
 
-export type Authz = { allowed: boolean; policy: 'opa-allow' | 'opa-deny' | 'opa-unreachable' };
+/** `decisionId`/`policyRev` are set when OPA answered (see opa-decision.ts). */
+export type Authz = { allowed: boolean; policy: 'opa-allow' | 'opa-deny' | 'opa-unreachable' } & DecisionMeta;
 
 async function withTimeout(url: string, init: RequestInit, ms = 2500): Promise<Response | null> {
   const ctrl = new AbortController();
@@ -55,7 +57,7 @@ export async function authorize(principal: string, tool: string): Promise<Authz>
   try {
     const data = (await res.json()) as { result?: unknown };
     const allowed = Boolean(data?.result);
-    return { allowed, policy: allowed ? 'opa-allow' : 'opa-deny' };
+    return { allowed, policy: allowed ? 'opa-allow' : 'opa-deny', ...(await decisionMeta(data)) };
   } catch {
     return unreachable;
   }

@@ -16,7 +16,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 
@@ -37,8 +37,11 @@ type LogLine = Record<string, unknown> & {
 };
 
 function rawLogs(): string {
-  // OPA writes console decision logs to stdout and its own logs to stderr.
-  return execFileSync('docker', ['logs', CONTAINER!], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  // The console decision logger writes through OPA's logger (the container's stderr);
+  // read both streams so nothing is missed.
+  const r = spawnSync('docker', ['logs', CONTAINER!], { encoding: 'utf8' });
+  if (r.status !== 0) throw new Error(`docker logs ${CONTAINER} failed: ${r.stderr}`);
+  return `${r.stdout}\n${r.stderr}`;
 }
 
 function decisionLines(): LogLine[] {

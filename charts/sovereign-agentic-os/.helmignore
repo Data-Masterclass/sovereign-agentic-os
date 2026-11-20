@@ -12,5 +12,7 @@
 # Local-only overlays and notes never belong in the packaged artifact.
 values.local.yaml
 values.secret.yaml
+# Policy unit tests run in CI (test-opa), not in the cluster.
+*_test.rego
 # Input to scripts/check-capacity.mjs only; no template reads it.
 capacity.yaml

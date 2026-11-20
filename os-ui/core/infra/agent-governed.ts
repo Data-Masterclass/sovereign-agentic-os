@@ -15,6 +15,7 @@ import { type Principal as DlsPrincipal, canSee } from '@tabs/knowledge/lib/retr
 import { roleAtLeast } from '@core/kernel/session';
 import type { Provenance } from '@tabs/knowledge/lib/chunk';
 import { langfuseClient, type RunTraceContext } from '@core/infra/langfuse';
+import { decisionMeta, type DecisionMeta } from '@core/infra/opa-decision';
 
 /**
  * Governed agent-tool spine (Agent golden path §1, §7). Every tool an agent
@@ -60,7 +61,8 @@ export type Policy =
   // belongs to an auto-generated app connection, not the static chart grants.
   | 'app-grant';
 
-export type Authz = { effect: Effect; policy: Policy; reason: string };
+/** `decisionId`/`policyRev` are set when OPA answered (see opa-decision.ts). */
+export type Authz = { effect: Effect; policy: Policy; reason: string } & DecisionMeta;
 
 /**
  * Offline policy mirror (§7 baseline). Used ONLY when OPA is unreachable so the
@@ -148,10 +150,17 @@ export async function authorize(principal: string, tool: ToolName): Promise<Auth
   try {
     const data = (await res.json()) as { result?: { effect?: Effect; reason?: string } };
     const effect = data?.result?.effect;
-    if (effect === 'allow') return { effect, policy: 'opa-allow', reason: data.result?.reason ?? 'granted' };
+    if (effect === 'allow')
+      return { effect, policy: 'opa-allow', reason: data.result?.reason ?? 'granted', ...(await decisionMeta(data)) };
     if (effect === 'requires_approval')
-      return { effect, policy: 'opa-requires-approval', reason: data.result?.reason ?? 'approval required' };
-    if (effect === 'deny') return { effect, policy: 'opa-deny', reason: data.result?.reason ?? 'denied' };
+      return {
+        effect,
+        policy: 'opa-requires-approval',
+        reason: data.result?.reason ?? 'approval required',
+        ...(await decisionMeta(data)),
+      };
+    if (effect === 'deny')
+      return { effect, policy: 'opa-deny', reason: data.result?.reason ?? 'denied', ...(await decisionMeta(data)) };
     // Old OPA without the decision rule -> treat as unreachable (fail-closed unless OPA_FAIL_OPEN).
     return unreachableDecision(principal, tool);
   } catch {

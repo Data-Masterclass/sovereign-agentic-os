@@ -31,6 +31,7 @@ rule := data.connections[input.principal].tools[input.tool]
 # Restrict-only grant: if an asAgent grant exists, the tool must be in it.
 grant_ok if not input.asAgent
 grant_ok if not data.connections[input.principal].grants[input.asAgent]
+
 grant_ok if {
 	input.asAgent
 	input.tool in data.connections[input.principal].grants[input.asAgent]

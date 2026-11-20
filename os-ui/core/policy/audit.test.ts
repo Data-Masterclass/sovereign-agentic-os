@@ -65,3 +65,27 @@ test('admin search({}) (no domains filter) returns entries for all domains', () 
   const domains = new Set(all.map((e) => e.domain));
   assert.ok(domains.has('sales') && domains.has('finance'), 'admin sees both domains');
 });
+
+test('an OPA-gated entry carries decision_id + policy_rev, and they are part of the chain', () => {
+  const e = record({
+    actor: 'bea',
+    action: 'deny',
+    subject: 'query',
+    domain: 'sales',
+    reason: 'opa-deny',
+    decisionId: 'b7ce3294-1f67-4b54-a7f1-251f8e934306',
+    policyRev: 'ad86f2d9',
+  });
+  assert.equal(e.decisionId, 'b7ce3294-1f67-4b54-a7f1-251f8e934306');
+  assert.equal(e.policyRev, 'ad86f2d9');
+  assert.equal(verifyChain(), null);
+  // Swapping the decision an entry points at breaks the chain.
+  (e as { decisionId?: string }).decisionId = 'another-decision';
+  assert.equal(verifyChain(), e.id);
+});
+
+test('an entry without an OPA decision has no decision fields (never invented)', () => {
+  const e = record({ actor: 'bea', action: 'deploy', subject: 'app1', domain: 'sales', reason: 'approved' });
+  assert.equal('decisionId' in e, false);
+  assert.equal('policyRev' in e, false);
+});
