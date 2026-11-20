@@ -7,8 +7,8 @@
  *             what each running component reports through its own API.
  * ARCHITECTURE:
  *   - The exact function both Platform routes call (`componentRows`) with the LIVE health table
- *     and config: the component URLs come from the same env vars the chart sets (TRINO_HOST,
- *     OPENSEARCH_URL, OPA_URL, AGENT_RUNS_DATABASE_URL, VICTORIA_*_URL, OTEL_COLLECTOR_*_URL),
+ *     and config: the component URLs come from the same env vars the chart sets (listed in the
+ *     CI step `test-observability`; OpenSearch through its one client in core/adapters/opensearch),
  *     pointed at tests/observability/health-up.sh's containers by the CI step.
  *   - Each row's version must equal the chart's pin for that image (.health-it.json `expected`)
  *     and be labelled `component`.
