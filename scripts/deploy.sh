@@ -85,6 +85,10 @@ environment
                             scripts/dev/bootstrap-secrets.sh). DEV_PRIVATE_VALUES=cluster reads it
                             from the dev cluster's Secret sovereign-os-dev-values instead (CI).
   DEV_MODEL=stub            dev: also layer values.dev.model-stub.yaml (no model spend)
+  DEV_NODE=g2i8|m2i4        dev: the node profile (default g2i8). m2i4 layers values.dev.m2i4.yaml
+                            and gates against capacity.dev-m2i4.yaml (the cheaper 4 vCPU node).
+  EXPECT_DIGEST=sha256:...  refuse unless <version> resolves to exactly this digest (the release
+                            gate passes the digest dev recorded; a re-pointed tag is refused)
   DEPLOY_RECORD=<file>      write {env, context, release, revisions, image, digest} as JSON there
 
 the os-ui image is built in CI (see CONTRIBUTING.md -> "Images: build in CI")
@@ -178,6 +182,10 @@ if [ -n "$FROM_REGISTRY" ]; then
        exit 1 ;;
   esac
   say "digest $DIGEST"
+  if [ -n "${EXPECT_DIGEST:-}" ] && [ "$DIGEST" != "$EXPECT_DIGEST" ]; then
+    echo "DIGEST_NOT_DEV_TESTED — $IMG resolves to $DIGEST, but the tested digest is $EXPECT_DIGEST; refusing" >&2
+    exit 1
+  fi
   if [ -n "$VERIFY_ONLY" ]; then
     echo "VERIFY_${VERSION}_OK $IMG $DIGEST"
     exit 0
@@ -226,6 +234,11 @@ if [ "$DEPLOY_ENV" = dev ]; then
   cp values.dev.yaml "$VALUES"
   OVERLAY_ARGS=(-f "$PRIVATE")
   [ "${DEV_MODEL:-}" != stub ] || OVERLAY_ARGS+=(-f values.dev.model-stub.yaml)
+  case ${DEV_NODE:-g2i8} in
+    g2i8) DEV_BUDGET=$CHART/capacity.dev.yaml ;;
+    m2i4) DEV_BUDGET=$CHART/capacity.dev-m2i4.yaml; OVERLAY_ARGS+=(-f values.dev.m2i4.yaml) ;;
+    *)    echo "deploy.sh: DEV_NODE must be g2i8 or m2i4" >&2; exit 2 ;;
+  esac
   if [ -n "${VALUES_OVERLAY:-}" ]; then
     [ -f "$VALUES_OVERLAY" ] || { echo "VALUES_OVERLAY_NOT_FOUND — $VALUES_OVERLAY is not a file" >&2; exit 2; }
     OVERLAY_ARGS+=(-f "$VALUES_OVERLAY")
@@ -359,7 +372,7 @@ PY
 # dependencies, no js-yaml) stops the deploy too. Before the backup, so a refusal changes nothing.
 say "capacity gate: the values this upgrade applies must fit the node (scripts/check-capacity.mjs)"
 if [ "$DEPLOY_ENV" = dev ]; then
-  CAPACITY_ARGS=(--budget "$CHART/capacity.dev.yaml" -f "$VALUES" "${OVERLAY_ARGS[@]}")
+  CAPACITY_ARGS=(--budget "$DEV_BUDGET" -f "$VALUES" "${OVERLAY_ARGS[@]}")
 else
   CAPACITY_ARGS=(-f "$VALUES" ${VALUES_OVERLAY:+-f "$VALUES_OVERLAY"})
 fi

@@ -19,10 +19,19 @@
 #   1. on `main`, no uncommitted changes to tracked files, `main` fast-forwards to <remote>/main
 #   2. the tag os-ui-v<version> does not exist (or already points at this exact commit: resume)
 #   3. ci.yml AND license-gate.yml passed on a push to main for this SHA (waits while running)
-#   3b. prod only: dev.yml passed on a push to main for this SHA — the commit was deployed to dev
-#      and its smoke test and acceptance suite there were green (docs/ops/ci-cd.md). A dev run that
-#      was cancelled (a newer merge replaced it) is not green. --no-dev-gate skips it for a LOCAL
-#      run while dev does not exist yet; it is refused when CI or GITHUB_ACTIONS is set.
+#   3b. prod only: dev.yml's job dev-green passed on a push to main for this SHA — the commit was
+#      built, deployed to dev and smoke-tested there (docs/ops/ci-cd.md). A dev run that was
+#      cancelled (a newer merge replaced it) is not green. AND the digest that run RECORDED
+#      (artifact dev-tested-digest, scripts/lib/dev-digest.sh) is the only digest that may reach
+#      production: main-<sha> must still resolve to it (MAIN_TAG_MOVED otherwise), the promotion
+#      copies that digest, and deploy.sh refuses any other (EXPECT_DIGEST). --no-dev-gate skips
+#      3b for a LOCAL run while dev does not exist yet; it is refused when CI or GITHUB_ACTIONS is set.
+#
+# --phase all|check|promote|deploy (default all). The prod workflow runs the three parts in three
+# jobs so that no job holds both a write token and a kubeconfig or `npm ci`:
+#   check    gates 1-5 + 3b, read-only (needs npm dependencies for the capacity gate)
+#   promote  gates 1-3b again (API only), then 6: the tag and the promotion of the dev digest
+#   deploy   gates 1-3b again (API only), then 7-8 with EXPECT_DIGEST
 #   4. node scripts/check-structure.mjs and node scripts/check-consoles-not-public.mjs pass, and
 #      the capacity gate (scripts/check-capacity.mjs, WP-47) finds the rendered chart within the
 #      node budget in charts/sovereign-agentic-os/capacity.yaml (run with CI=true: no skip)
@@ -56,6 +65,9 @@ VERSION=''
 ENV_NAME=prod
 RELEASE_SHA=''
 DEV_GATE=1
+PHASE=all
+DEV_DIGEST=''
+IMAGE_REPO=${IMAGE_REPO:-ghcr.io/data-masterclass/sovereign-os}
 while [ $# -gt 0 ]; do
   case $1 in
     --dry-run) DRY_RUN=1 ;;
@@ -63,6 +75,7 @@ while [ $# -gt 0 ]; do
     --env)     ENV_NAME=${2:?--env needs dev or prod}; shift ;;
     --sha)     RELEASE_SHA=${2:?--sha needs a commit}; shift ;;
     --no-dev-gate) DEV_GATE='' ;;
+    --phase)   PHASE=${2:?--phase needs all, check, promote or deploy}; shift ;;
     -h|--help) sed -n '7p' "$0" | sed 's/^# //'; exit 0 ;;
     -*)        echo "release.sh: unknown option $1" >&2; exit 2 ;;
     *)         [ -z "$VERSION" ] || { echo "release.sh: unexpected argument $1" >&2; exit 2; }
@@ -71,6 +84,7 @@ while [ $# -gt 0 ]; do
   shift
 done
 case $ENV_NAME in dev|prod) ;; *) echo "release.sh: --env must be dev or prod" >&2; exit 2 ;; esac
+case $PHASE in all|check|promote|deploy) ;; *) echo "release.sh: --phase must be all, check, promote or deploy" >&2; exit 2 ;; esac
 if [ "$ENV_NAME" = dev ]; then
   [ -z "$VERSION" ] || { echo "release.sh: --env dev takes no version (it deploys main-<sha>)" >&2; exit 2; }
   VERSION=dev
@@ -193,6 +207,14 @@ check_dev() {
     3) stop "NOT_GREEN_ON_DEV: dev.yml has not finished (or never ran) for ${SHA:0:12} — wait for it, or release a commit that passed dev" ;;
     *) stop "could not read the workflow runs from GitHub (gh auth status?)" ;;
   esac
+  # The digest dev TESTED, from the dev run's own record — never from the mutable tag.
+  DEV_DIGEST=$(bash scripts/lib/dev-digest.sh --sha "$SHA" | tail -1) \
+    || stop "NO_DEV_DIGEST: ${DEV_DIGEST#NO_DEV_DIGEST_RECORD: } — production gets only the digest dev recorded"
+  echo "   dev tested $IMAGE_REPO/os-ui@$DEV_DIGEST"
+  local now
+  now=$(bash scripts/lib/promote-image.sh --digest "$IMAGE_REPO/os-ui:main-$SHA" 2>/dev/null) || now=''
+  [ "$now" = "$DEV_DIGEST" ] || stop "MAIN_TAG_MOVED: main-$SHA now resolves to ${now:-nothing}, but dev tested $DEV_DIGEST — the tag was overwritten; refusing"
+  echo "   main-$SHA still resolves to the tested digest"
 }
 
 check_tree() {
@@ -225,9 +247,9 @@ tag_and_build() {
   if [ -n "${RELEASE_PROMOTE_IMAGE:-}" ]; then
     # The prod workflow: its tag push starts no other workflow, so give the dev image the version
     # tag here. Same digest, no rebuild; promote-image.sh refuses if the digests differ.
-    bash scripts/lib/promote-image.sh "${IMAGE_REPO:-ghcr.io/data-masterclass/sovereign-os}/os-ui:main-$SHA" \
-      "${IMAGE_REPO:-ghcr.io/data-masterclass/sovereign-os}/os-ui:$VERSION" \
-      || stop "the dev image main-$SHA could not be promoted to $VERSION — was this commit built on dev?"
+    [ -n "$DEV_DIGEST" ] || stop "RELEASE_PROMOTE_IMAGE needs the dev gate (no recorded digest)"
+    bash scripts/lib/promote-image.sh "$IMAGE_REPO/os-ui@$DEV_DIGEST" "$IMAGE_REPO/os-ui:$VERSION" \
+      || stop "the dev-tested digest $DEV_DIGEST could not be promoted to $VERSION"
     return
   fi
   workflows_green "$TAG" build-images.yml "${RELEASE_BUILD_WAIT_MINUTES:-60}" "the image build (build-images.yml)"
@@ -253,7 +275,7 @@ deploy() {
     | python3 -c 'import json,sys; print(json.load(sys.stdin)[-1]["revision"])' 2>/dev/null || true)
   [ -z "$revision" ] || ROLLBACK_HINT="to go back: helm --kube-context $CTX rollback $REL $revision -n $NS (see docs/ops/releasing.md)"
   echo "   live before: ${image:-unknown}, Helm revision ${revision:-unknown}"
-  "$DEPLOY_SCRIPT" --env prod --from-registry "$VERSION" || stop "deploy.sh failed — read its output above"
+  EXPECT_DIGEST=$DEV_DIGEST "$DEPLOY_SCRIPT" --env prod --from-registry "$VERSION" || stop "deploy.sh failed — read its output above"
 }
 
 deploy_dev() {
@@ -279,12 +301,16 @@ if [ "$ENV_NAME" = dev ]; then
   if [ -n "$DRY_RUN" ]; then echo "RELEASE_dev_DRY_RUN_OK $VERSION"; else echo "RELEASE_dev_OK $VERSION"; fi
   exit 0
 fi
-check_checkout
-check_tag
-check_ci
-check_dev
-check_tree
-tag_and_build
-deploy
-smoke
+case $PHASE in
+  check)
+    check_checkout; check_tag; check_ci; check_dev; check_tree
+    echo "RELEASE_${VERSION}_CHECKED sha=$SHA digest=${DEV_DIGEST:-none}"; exit 0 ;;
+  promote)
+    check_checkout; check_tag; check_ci; check_dev; tag_and_build
+    echo "RELEASE_${VERSION}_PROMOTED sha=$SHA digest=${DEV_DIGEST:-none}"; exit 0 ;;
+  deploy)
+    check_checkout; check_ci; check_dev; deploy; smoke ;;
+  all)
+    check_checkout; check_tag; check_ci; check_dev; check_tree; tag_and_build; deploy; smoke ;;
+esac
 if [ -n "$DRY_RUN" ]; then echo "RELEASE_${VERSION}_DRY_RUN_OK"; else echo "RELEASE_${VERSION}_OK"; fi

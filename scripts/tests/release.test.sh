@@ -33,6 +33,12 @@ cat > "$BIN/gh" <<'STUB'
 echo "gh $*" >> "$FAKE_LOG"
 [ "${FAKE_GH_FAIL:-}" = 1 ] && exit 1
 # gh api "repos/<r>/actions/runs/<id>/jobs..." --jq ... -> jobs-<id>.txt (the job's conclusion)
+# gh run download <id> --repo <r> -n dev-tested-digest -D <dir> -> artifact-<id>.json
+if [ "$1" = run ] && [ "$2" = download ]; then
+  dir=''; prev=''; for a in "$@"; do [ "$prev" = -D ] && dir=$a; prev=$a; done
+  [ -f "$FAKE_DIR/artifact-$3.json" ] || exit 1
+  cp "$FAKE_DIR/artifact-$3.json" "$dir/dev-tested-digest.json"; exit 0
+fi
 run=$(printf '%s' "$2" | sed -n 's#.*/actions/runs/\([^/?]*\)/jobs.*#\1#p')
 if [ -n "$run" ]; then cat "$FAKE_DIR/jobs-$run.txt" 2>/dev/null || true; exit; fi
 branch=$(printf '%s' "$2" | sed -n 's/.*[?&]branch=\([^&]*\).*/\1/p')
@@ -53,7 +59,7 @@ case "$*" in *history*) echo '[{"revision":414,"status":"deployed"}]' ;; esac
 STUB
 cat > "$BIN/deploy.sh" <<'STUB'
 #!/usr/bin/env bash
-echo "deploy $* overlay=${VALUES_OVERLAY:-none}" >> "$FAKE_LOG"
+echo "deploy $* overlay=${VALUES_OVERLAY:-none} EXPECT_DIGEST=${EXPECT_DIGEST:-none}" >> "$FAKE_LOG"
 exit "${FAKE_DEPLOY_RC:-0}"
 STUB
 cat > "$BIN/smoke.sh" <<'STUB'
@@ -61,7 +67,31 @@ cat > "$BIN/smoke.sh" <<'STUB'
 echo "smoke $*" >> "$FAKE_LOG"
 exit "${FAKE_SMOKE_RC:-0}"
 STUB
+cat > "$BIN/fake-registry" <<'STUB'
+#!/usr/bin/env bash
+# digest <ref> | copy <src> <dst> — a registry in a directory: one file per tag holding its digest.
+# A ref by digest (<repo>@sha256:...) exists when some tag of the registry holds that digest.
+reg=$FAKE_DIR/registry; mkdir -p "$reg"
+key() { printf '%s' "$1" | tr '/:' '__'; }
+case $1 in
+  digest)
+    case $2 in
+      *@sha256:*) d=${2##*@}; grep -rlx "$d" "$reg" >/dev/null 2>&1 && echo "$d" || exit 1 ;;
+      *) cat "$reg/$(key "$2")" 2>/dev/null || exit 1 ;;
+    esac ;;
+  copy)
+    case $2 in *@sha256:*) echo "${2##*@}" > "$reg/$(key "$3")" ;; *) cp "$reg/$(key "$2")" "$reg/$(key "$3")" ;; esac
+    echo "copy $2 $3" >> "$FAKE_LOG" ;;
+esac
+STUB
 chmod +x "$BIN"/*
+DEV_D=sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+# dev_record <run id> [digest] — the dev run's dev-tested-digest artifact, and main-<SHA> in the registry.
+dev_record() {
+  printf '{"sha": "%s", "digest": "%s", "image": "x", "run_id": "%s"}\n' "$SHA" "${2:-$DEV_D}" "$1" > "$FAKE_DIR/artifact-$1.json"
+  mkdir -p "$FAKE_DIR/registry"
+  echo "${2:-$DEV_D}" > "$FAKE_DIR/registry/ghcr.io_data-masterclass_sovereign-os_os-ui_main-$SHA"
+}
 
 # ---- a fresh operator checkout per case ------------------------------------------------------
 # new_checkout — sets OP (the checkout), SHA (public/main) and resets the fakes.
@@ -74,7 +104,7 @@ new_checkout() {
   git init -q -b main "$OP"
   mkdir -p "$OP/scripts/lib" "$OP/os-ui"
   cp "$REPO/scripts/release.sh" "$OP/scripts/"
-  cp "$REPO/scripts/lib/workflow-status.sh" "$REPO/scripts/lib/env-guard.sh" "$REPO/scripts/lib/promote-image.sh" "$OP/scripts/lib/"
+  cp "$REPO/scripts/lib/workflow-status.sh" "$REPO/scripts/lib/env-guard.sh" "$REPO/scripts/lib/promote-image.sh" "$REPO/scripts/lib/dev-digest.sh" "$OP/scripts/lib/"
   echo 'process.exit(Number(process.env.FAKE_STRUCTURE_RC || 0))' > "$OP/scripts/check-structure.mjs"
   echo 'process.exit(Number(process.env.FAKE_CONSOLES_RC || 0))' > "$OP/scripts/check-consoles-not-public.mjs"
   echo 'process.exit(process.env.CI === "true" ? Number(process.env.FAKE_CAPACITY_RC || 0) : 9)' > "$OP/scripts/check-capacity.mjs"
@@ -92,7 +122,7 @@ push_elsewhere() {
 }
 # green_ci: CI AND the dev run are green for main (the normal state before a production release).
 green_ci()    { printf 'ci.yml\tcompleted\tsuccess\tu1\nlicense-gate.yml\tcompleted\tsuccess\tu2\ndev.yml\tcompleted\tsuccess\tu4\t901\n' > "$FAKE_DIR/runs-main.tsv"
-                echo success > "$FAKE_DIR/jobs-901.txt"; }
+                echo success > "$FAKE_DIR/jobs-901.txt"; dev_record 901; }
 # ci_only <dev.yml line or nothing>: CI green, dev as given.
 ci_only()     { printf 'ci.yml\tcompleted\tsuccess\tu1\nlicense-gate.yml\tcompleted\tsuccess\tu2\n%b' "${1:-}" > "$FAKE_DIR/runs-main.tsv"; }
 green_build() { printf 'build-images.yml\tcompleted\tsuccess\tu3\n' > "$FAKE_DIR/runs-os-ui-v$1.tsv"; }
@@ -101,7 +131,7 @@ green_build() { printf 'build-images.yml\tcompleted\tsuccess\tu3\n' > "$FAKE_DIR
 release() {
   out=$(cd "$OP" && PATH="$BIN:$PATH" WORKFLOW_POLL_SECONDS=0 RELEASE_CI_WAIT_MINUTES=0 \
         RELEASE_BUILD_WAIT_MINUTES=0 DEPLOY_SCRIPT=deploy.sh SMOKE_SCRIPT=smoke.sh \
-        GH_TOKEN=ghp_FAKE_TOKEN_MUST_NOT_PRINT bash scripts/release.sh "$@" 2>&1); rc=$?
+        PROMOTE_TOOL="$BIN/fake-registry" GH_TOKEN=ghp_FAKE_TOKEN_MUST_NOT_PRINT bash scripts/release.sh "$@" 2>&1); rc=$?
 }
 remote_tag() { git -C "$TMP/case/public.git" rev-parse -q --verify "refs/tags/os-ui-v$1" || true; }
 
@@ -140,7 +170,7 @@ push_elsewhere
 SHA=$(git -C "$TMP/case/public.git" rev-parse main)
 green_ci   # CI green for the NEW head
 out=$(cd "$OP" && PATH="$BIN:$PATH" WORKFLOW_POLL_SECONDS=0 RELEASE_CI_WAIT_MINUTES=0 RELEASE_BUILD_WAIT_MINUTES=0 \
-      DEPLOY_SCRIPT=deploy.sh SMOKE_SCRIPT=smoke.sh VALUES_OVERLAY=deploy/overlays/x.yaml \
+      DEPLOY_SCRIPT=deploy.sh SMOKE_SCRIPT=smoke.sh VALUES_OVERLAY=deploy/overlays/x.yaml PROMOTE_TOOL="$BIN/fake-registry" \
       bash scripts/release.sh 1.1.0 2>&1); rc=$?
 rc_is "a green release exits 0" 0
 check "it ends with RELEASE_<v>_OK" "RELEASE_1.1.0_OK" "$(echo "$out" | tail -1)"
@@ -291,34 +321,57 @@ absent "and deploys nothing" "deploy " "$(cat "$FAKE_LOG")"
 
 echo "== RELEASE_PROMOTE_IMAGE=1: the dev digest gets the version tag, no rebuild wait"
 new_checkout; green_ci
-cat > "$BIN/fake-registry" <<'STUB'
-#!/usr/bin/env bash
-# digest <ref> | copy <src> <dst> — a registry in a directory: one file per tag holding its digest.
-reg=$FAKE_DIR/registry; mkdir -p "$reg"
-key() { printf '%s' "$1" | tr '/:' '__'; }
-case $1 in
-  digest) cat "$reg/$(key "$2")" 2>/dev/null || exit 1 ;;
-  copy)   cp "$reg/$(key "$2")" "$reg/$(key "$3")"; echo "copy $2 $3" >> "$FAKE_LOG" ;;
-esac
-STUB
-chmod +x "$BIN/fake-registry"
-mkdir -p "$FAKE_DIR/registry"
-echo sha256:dddd > "$FAKE_DIR/registry/ghcr.io_data-masterclass_sovereign-os_os-ui_main-$SHA"
 out=$(cd "$OP" && PATH="$BIN:$PATH" WORKFLOW_POLL_SECONDS=0 RELEASE_CI_WAIT_MINUTES=0 RELEASE_BUILD_WAIT_MINUTES=0 \
       DEPLOY_SCRIPT=deploy.sh SMOKE_SCRIPT=smoke.sh RELEASE_PROMOTE_IMAGE=1 PROMOTE_TOOL="$BIN/fake-registry" \
       bash scripts/release.sh 3.1.0 2>&1); rc=$?
 rc_is "a promoted release exits 0" 0
-check "the dev image is copied to the version tag" "copy ghcr.io/data-masterclass/sovereign-os/os-ui:main-$SHA ghcr.io/data-masterclass/sovereign-os/os-ui:3.1.0" "$(cat "$FAKE_LOG")"
 absent "it does not wait for a rebuild" "branch=os-ui-v3.1.0" "$(cat "$FAKE_LOG")"
-holds "the version tag has the dev digest" [ "$(cat "$FAKE_DIR/registry/ghcr.io_data-masterclass_sovereign-os_os-ui_3.1.0")" = sha256:dddd ]
+holds "the version tag has the dev digest" [ "$(cat "$FAKE_DIR/registry/ghcr.io_data-masterclass_sovereign-os_os-ui_3.1.0")" = "$DEV_D" ]
+check "it copies BY DIGEST, not from the tag" "copy ghcr.io/data-masterclass/sovereign-os/os-ui@$DEV_D " "$(cat "$FAKE_LOG")"
+check "the deploy is told the tested digest" "EXPECT_DIGEST=$DEV_D" "$(cat "$FAKE_LOG")"
 
-new_checkout; green_ci; mkdir -p "$FAKE_DIR/registry"
-out=$(cd "$OP" && PATH="$BIN:$PATH" WORKFLOW_POLL_SECONDS=0 RELEASE_CI_WAIT_MINUTES=0 \
-      DEPLOY_SCRIPT=deploy.sh SMOKE_SCRIPT=smoke.sh RELEASE_PROMOTE_IMAGE=1 PROMOTE_TOOL="$BIN/fake-registry" \
-      bash scripts/release.sh 3.1.1 2>&1); rc=$?
-rc_is "no dev image for the commit exits 1" 1
-check "no dev image for the commit stops the promotion" "could not be promoted" "$out"
-absent "and deploys nothing" "deploy " "$(cat "$FAKE_LOG")"
+echo "== same digest, ENFORCED: the dev run's record decides, never the mutable tag (negative twins)"
+new_checkout; green_ci; green_build 3.1.1
+echo sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee > "$FAKE_DIR/registry/ghcr.io_data-masterclass_sovereign-os_os-ui_main-$SHA"
+release 3.1.1
+rc_is "NEGATIVE TWIN: main-<sha> overwritten after dev tested it exits 1" 1
+check "it is refused as a moved tag" "MAIN_TAG_MOVED: main-$SHA now resolves to sha256:eeee" "$out"
+holds "no tag is pushed" [ -z "$(remote_tag 3.1.1)" ]
+absent "nothing is deployed" "deploy " "$(cat "$FAKE_LOG")"
+
+new_checkout; green_ci; green_build 3.1.2; rm -f "$FAKE_DIR/artifact-901.json"
+release 3.1.2
+rc_is "NEGATIVE TWIN: a dev-green run without a digest record exits 1" 1
+check "it is refused for want of a record" "NO_DEV_DIGEST" "$out"
+absent "nothing is deployed" "deploy " "$(cat "$FAKE_LOG")"
+
+new_checkout; green_ci; green_build 3.1.3
+printf '{"sha": "0000000000000000000000000000000000000000", "digest": "%s"}\n' "$DEV_D" > "$FAKE_DIR/artifact-901.json"
+release 3.1.3
+check "NEGATIVE TWIN: a record for another commit is refused" "is for 000000000000" "$out"
+
+new_checkout; green_ci; green_build 3.1.4
+release 3.1.4
+rc_is "the local path deploys with the recorded digest" 0
+check "deploy.sh is told the tested digest" "EXPECT_DIGEST=$DEV_D" "$(cat "$FAKE_LOG")"
+
+echo "== --phase: the prod workflow's three jobs"
+new_checkout; green_ci
+release --phase check 3.3.0
+rc_is "check exits 0" 0
+check "check prints the sha and the tested digest" "RELEASE_3.3.0_CHECKED sha=$SHA digest=$DEV_D" "$out"
+holds "check pushes no tag" [ -z "$(remote_tag 3.3.0)" ]
+absent "check deploys nothing" "deploy " "$(cat "$FAKE_LOG")"
+out=$(cd "$OP" && PATH="$BIN:$PATH" WORKFLOW_POLL_SECONDS=0 RELEASE_CI_WAIT_MINUTES=0 DEPLOY_SCRIPT=deploy.sh SMOKE_SCRIPT=smoke.sh \
+      RELEASE_PROMOTE_IMAGE=1 PROMOTE_TOOL="$BIN/fake-registry" bash scripts/release.sh --phase promote 3.3.0 2>&1); rc=$?
+rc_is "promote exits 0" 0
+holds "promote pushes the tag" [ "$(remote_tag 3.3.0)" = "$SHA" ]
+absent "promote deploys nothing" "deploy " "$(cat "$FAKE_LOG")"
+absent "promote runs no repository check (no npm needed)" "check-structure" "$out"
+release --phase deploy 3.3.0
+rc_is "deploy exits 0" 0
+check "deploy deploys the tested digest" "deploy --env prod --from-registry 3.3.0 overlay=none EXPECT_DIGEST=$DEV_D" "$(cat "$FAKE_LOG")"
+release --phase bogus 3.3.0; rc_is "an unknown phase is a usage error" 2
 
 echo "== --sha: release the commit that passed dev while main moved on"
 new_checkout; green_ci; green_build 3.2.0

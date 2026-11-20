@@ -15,10 +15,16 @@
 # Tools, first present wins: crane (`crane copy`), skopeo (`skopeo copy --all --preserve-digests`,
 # preinstalled on GitHub's ubuntu runners). Registry credentials come from the tool's own login
 # (`docker login` / `skopeo login`); nothing here reads or prints a token.
+#   bash scripts/lib/promote-image.sh --digest <ref>   prints the digest <ref> resolves to (read-only)
+# A source given BY DIGEST (<repo>@sha256:...) is copied by digest: what was tested, not what a
+# tag says today.
 # PROMOTE_TOOL=<cmd> replaces the copy-and-digest tool in tests: `<cmd> digest <ref>`, `<cmd> copy <src> <dst>`.
 set -euo pipefail
+DIGEST_ONLY=''
+if [ "${1:-}" = --digest ]; then DIGEST_ONLY=1; shift; fi
 SRC=${1:?usage: promote-image.sh <source ref> <destination ref>}
-DST=${2:?usage: promote-image.sh <source ref> <destination ref>}
+DST=${2:-}
+[ -n "$DIGEST_ONLY" ] || [ -n "$DST" ] || { echo "usage: promote-image.sh <source ref> <destination ref>" >&2; exit 2; }
 
 digest() {
   if [ -n "${PROMOTE_TOOL:-}" ]; then $PROMOTE_TOOL digest "$1"; return; fi
@@ -32,7 +38,14 @@ copy() {
   skopeo copy --all --preserve-digests "docker://$1" "docker://$2"
 }
 
+if [ -n "$DIGEST_ONLY" ]; then
+  d=$(digest "$SRC" 2>/dev/null || true)
+  case $d in sha256:*) echo "$d"; exit 0 ;; *) echo "PROMOTE_SOURCE_MISSING — $SRC does not exist in the registry" >&2; exit 1 ;; esac
+fi
 src_digest=$(digest "$SRC" 2>/dev/null || true)
+case $SRC in
+  *@sha256:*) [ "$src_digest" = "${SRC##*@}" ] || { echo "PROMOTE_SOURCE_MISSING — $SRC is not in the registry" >&2; exit 1; } ;;
+esac
 case $src_digest in
   sha256:*) ;;
   *) echo "PROMOTE_SOURCE_MISSING — $SRC does not exist in the registry" >&2; exit 1 ;;
