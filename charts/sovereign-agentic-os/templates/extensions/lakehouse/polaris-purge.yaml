@@ -1,7 +1,11 @@
-{{- if and .Values.polaris.enabled .Values.polaris.purge.enabled }}
+{{- if .Values.polaris.enabled }}
 {{- /*
   DELETE-DOMAIN PURGE — a DEDICATED Polaris principal and Trino catalog; the regular `iceberg`
-  catalog never purges.
+  catalog never purges. OFF BY DEFAULT (`polaris.purge.enabled: false`): it is switched ON only for
+  an announced delete window and OFF right after. ON, this Job creates the principal and writes
+  the catalog; OFF (every other release), it DELETES the principal and the Secret, so no purge
+  credential exists outside a window. The long-term guard is Trino authentication (WP-14) plus the
+  default-deny NetworkPolicy package; until then the purge user is a session name OPA trusts.
 
   Trino's Iceberg REST catalog sends every DROP TABLE as `DELETE …/tables/<t>?purgeRequested=true`.
   Polaris 1.1 honours it only when (1) the catalog sets `polaris.config.drop-with-purge.enabled` and
@@ -45,7 +49,7 @@ rules:
   - apiGroups: [""]
     resources: ["secrets"]
     resourceNames: [{{ $pu.secretName | quote }}]
-    verbs: ["get", "update"]
+    verbs: ["get", "update", "delete"]
   - apiGroups: ["apps"]
     resources: ["deployments"]
     resourceNames: ["trino"]
@@ -120,6 +124,8 @@ spec:
               value: {{ $pu.secretName | quote }}
             - name: NAMESPACE
               value: {{ .Release.Namespace | quote }}
+            - name: PURGE_MODE
+              value: {{ ternary "on" "off" (eq $pu.enabled true) | quote }}
             # Base64 (one line): the catalog file is several lines.
             - name: PURGE_CATALOG_PROPS_B64
               value: {{ include "soa.icebergRestCatalogProps" (dict "ctx" . "credential" "__CREDENTIAL__") | b64enc | quote }}
@@ -173,6 +179,33 @@ spec:
               auth = {"authorization": "Bearer " + token}
               M = API + "/api/management/v1"
 
+              out_file = os.environ.get("PURGE_CATALOG_FILE")
+              K8S = "https://kubernetes.default.svc"
+              ns = os.environ.get("NAMESPACE", "")
+              kctx = kh = None
+              if not out_file:
+                  tokp = "/var/run/secrets/kubernetes.io/serviceaccount"
+                  kh = {"authorization": "Bearer " + open(tokp + "/token").read().strip()}
+                  kctx = ssl.create_default_context(cafile=tokp + "/ca.crt")
+              spath = f"{K8S}/api/v1/namespaces/{ns}/secrets/{os.environ['PURGE_SECRET']}"
+
+              if os.environ.get("PURGE_MODE") != "on":
+                  # The window is CLOSED: no purge credential may exist. Delete the principal (its
+                  # credential dies with it), its roles, and the Trino catalog Secret.
+                  for path in (f"{M}/principals/{PRINCIPAL}", f"{M}/principal-roles/{ROLE}", f"{M}/catalogs/{CAT}/catalog-roles/{ROLE}"):
+                      st, _ = http("DELETE", path, headers=auth)
+                      must(st in (200, 204, 404), f"DELETE {path} failed (HTTP {st})")
+                  if out_file:
+                      if os.path.exists(out_file):
+                          os.remove(out_file)
+                  else:
+                      st, _ = http("DELETE", spath, headers=kh, ctx=kctx)
+                      must(st in (200, 202, 404), f"deleting the purge Secret failed (HTTP {st})")
+                  st, _ = http("GET", f"{M}/principals/{PRINCIPAL}", headers=auth)
+                  must(st == 404, f"principal {PRINCIPAL} still exists (HTTP {st})")
+                  print("purge window closed: no purge principal, no purge catalog")
+                  sys.exit(0)
+
               # 1. The catalog honours purge requests (the CALLER's privileges still decide).
               cat = None
               for _ in range(60):
@@ -213,15 +246,6 @@ spec:
 
               # The credential: written to the Secret (or the harness file) the moment Polaris
               # returns it. Polaris shows a secret only on create/rotate.
-              out_file = os.environ.get("PURGE_CATALOG_FILE")
-              K8S = "https://kubernetes.default.svc"
-              ns = os.environ.get("NAMESPACE", "")
-              kctx = kh = None
-              if not out_file:
-                  tokp = "/var/run/secrets/kubernetes.io/serviceaccount"
-                  kh = {"authorization": "Bearer " + open(tokp + "/token").read().strip()}
-                  kctx = ssl.create_default_context(cafile=tokp + "/ca.crt")
-              spath = f"{K8S}/api/v1/namespaces/{ns}/secrets/{os.environ['PURGE_SECRET']}"
 
               def have_credential():
                   if out_file:

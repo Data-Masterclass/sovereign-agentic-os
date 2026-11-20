@@ -33,6 +33,8 @@ import { agentsComponent, agentSystemIdsForDomain } from '@tabs/agents/lib/domai
 import { appsComponent } from '@tabs/software/lib/domain-delete';
 import { opaComponent, litellmComponent, membersComponent, domainRecordComponent, soleMembers, veleroBackupCheck, assertDeletableDomain } from '@tabs/admin/lib/domain-delete';
 import { recompile } from '@/app/api/platform-admin/_compile';
+import { config } from '@core/kernel/config';
+import { queryToolCapabilities } from '@core/adapters/query-tool/health';
 import { audit } from '@tabs/admin/lib/audit';
 import { currentTenantId } from '@tabs/admin/lib/tenant';
 
@@ -67,7 +69,7 @@ export function domainDeleteComponents(opts: { trino?: TrinoPort; recompile?: ()
     filesComponent({ owner }),
     connectionsComponent({ owner: ownerUser }),
     metricsComponent({ owner, datasets: datasetMeasuresForDomain }),
-    icebergComponent({ trino: opts.trino ?? governedTrino, owner, soleMembers }),
+    icebergComponent({ trino: opts.trino ?? governedTrino, owner, soleMembers, purgeEnabled: () => config.domainDeletePurgeEnabled }),
     dqResultsComponent(),
     datasetsComponent({ owner }),
     approvalsComponent(),
@@ -81,11 +83,20 @@ export function domainDeleteComponents(opts: { trino?: TrinoPort; recompile?: ()
   ];
 }
 
+/** A run needs the query-tool build that knows the governed delete (0.6.3+: DROP SCHEMA, the
+ *  purge catalog). Refused while an older one is deployed — never failing halfway instead. */
+export async function queryToolPreflight(): Promise<string | null> {
+  const caps = await queryToolCapabilities();
+  if (!caps.ok) return `the query-tool could not be checked (${caps.detail})`;
+  return caps.value.includes('domain-delete') ? null : 'the deployed query-tool is older than 0.6.3 (no domain-delete capability): roll it out before running a delete';
+}
+
 export function registerDomainDeleteSources(): void {
   registerDomainDeleteWiring({
     components: () => domainDeleteComponents(),
     backup: veleroBackupCheck(),
     validateTarget: assertDeletableDomain,
+    preflight: queryToolPreflight,
     audit: (actor) => (e) => { audit({ tenant: currentTenantId(), actor: actor.id, role: actor.role, guarded: true, ...e }); },
   });
 }

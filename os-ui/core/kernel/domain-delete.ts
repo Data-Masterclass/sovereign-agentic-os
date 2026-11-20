@@ -174,6 +174,8 @@ export async function deleteDomain(
     validateTarget?: (domainId: string) => Promise<void>;
     /** False for a door that may only PLAN (the MCP tool): a run is then refused. */
     allowRun?: boolean;
+    /** Run-only preconditions of the deployment (e.g. the query-tool build): a reason refuses. */
+    preflight?: () => Promise<string | null>;
   },
 ): Promise<DomainDeleteReport> {
   const { actor, components, audit } = deps;
@@ -214,6 +216,13 @@ export async function deleteDomain(
     const reason = `${plan.totals.blocked} object(s) have no delete path yet (${kinds.join(', ')}); nothing was removed.`;
     audit({ action: 'domain.delete', target, detail: `Refused: ${reason}`, result: 'denied' });
     return { status: 'refused', reason, plan };
+  }
+  if (deps.preflight) {
+    const why = await deps.preflight();
+    if (why) {
+      audit({ action: 'domain.delete', target, detail: `Refused: ${why}`, result: 'denied' });
+      return { status: 'refused', reason: why, plan };
+    }
   }
   const gate = await checkBackup(deps.backup, opts.iHaveABackup === true);
   if (!gate.ok) {
@@ -272,6 +281,7 @@ export type DomainDeleteWiring = {
   components: () => DomainDeleteComponent[];
   backup: BackupCheck;
   validateTarget: (domainId: string) => Promise<void>;
+  preflight: () => Promise<string | null>;
   /** The platform audit log, bound to the acting admin. */
   audit: (actor: { id: string; role: Role }) => AuditFn;
 };

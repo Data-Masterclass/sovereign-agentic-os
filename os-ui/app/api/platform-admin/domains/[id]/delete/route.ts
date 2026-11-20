@@ -2,17 +2,23 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
+import { cookies } from 'next/headers';
 import { adminCtx, fail } from '../../../_ctx';
 import { deleteDomain, domainDeleteWiring } from '@core/kernel/domain-delete';
 import { authorize } from '@core/infra/governed';
+import { SESSION_COOKIE } from '@core/kernel/session';
+import { assertHumanSession, consumeConfirmToken, issueConfirmToken } from '@tabs/admin/lib/domain-delete-confirm';
 
 export const dynamic = 'force-dynamic';
 
 /**
- * POST → delete a domain (Admin → Domains). `{ dryRun }` defaults to TRUE: the response is the
- * plan (every object per component that will go, and every object KEPT because something outside
- * the domain maps to it). A run needs `{ dryRun:false, confirm:<domain id> }` and a backup from
- * the last 2 h (or `iHaveABackup:true`). Admin only (adminCtx), every step audited.
+ * POST → delete a domain (Admin → Domains). Admin only (adminCtx: the cookie session), OPA asked.
+ *   - `{}` or `{ dryRun: true }`: the plan (what goes, per component; what is KEPT and why;
+ *     what BLOCKS the run).
+ *   - `{ action: 'confirm', confirm: <domain id> }`: the typed id, from the signed-in browser
+ *     session → a 2-minute, single-use token bound to (user, session, domain).
+ *   - `{ dryRun: false, token, iHaveABackup? }`: the run. Needs that token from THIS session; any
+ *     Authorization bearer (MCP, agent, app) is refused; no client-set header is trusted.
  */
 export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
   try {
@@ -22,26 +28,38 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     if (decision.policy === 'opa-deny') return NextResponse.json({ error: 'OPA denied the admin scope' }, { status: 403 });
     const { id } = await ctx.params;
     const text = await req.text();
-    let body: { dryRun?: unknown; confirm?: unknown; iHaveABackup?: unknown } = {};
+    let body: { dryRun?: unknown; confirm?: unknown; iHaveABackup?: unknown; action?: unknown; token?: unknown } = {};
     if (text.trim()) {
       try { body = JSON.parse(text); } catch (e) { return NextResponse.json({ error: `Invalid JSON body: ${(e as Error).message}` }, { status: 400 }); }
     }
-    const run = body.dryRun === false;
-    // A RUN is a person's act: the cookie session (adminCtx) of a browser on this origin. MCP and
-    // agent bearers never reach this route; the Fetch Metadata header is set by the browser.
-    if (run && req.headers.get('sec-fetch-site') !== 'same-origin') {
-      return NextResponse.json({ error: 'A delete run is accepted only from Admin → Domains in a signed-in browser session' }, { status: 403 });
-    }
+    const sessionCookie = (await cookies()).get(SESSION_COOKIE)?.value;
     const w = domainDeleteWiring();
+
+    if (body.action === 'confirm') {
+      assertHumanSession(req.headers, sessionCookie);
+      if (typeof body.confirm !== 'string' || body.confirm.trim() !== id) {
+        return NextResponse.json({ error: `Type the domain id "${id}" to confirm.` }, { status: 400 });
+      }
+      await w.validateTarget(id);
+      return NextResponse.json(issueConfirmToken({ userId: user.id, sessionCookie: sessionCookie!, domainId: id }));
+    }
+
+    const run = body.dryRun === false;
+    if (run) {
+      assertHumanSession(req.headers, sessionCookie);
+      consumeConfirmToken(typeof body.token === 'string' ? body.token : undefined, { userId: user.id, sessionCookie: sessionCookie!, domainId: id });
+    }
     const report = await deleteDomain(
       id,
-      { dryRun: body.dryRun !== false, confirm: typeof body.confirm === 'string' ? body.confirm : undefined, iHaveABackup: body.iHaveABackup === true },
+      // The token proves the typed id; the engine's own confirmation is satisfied by it.
+      { dryRun: !run, confirm: run ? id : undefined, iHaveABackup: body.iHaveABackup === true },
       {
         actor: { id: user.id, role: user.role, domains: user.allDomains },
         components: w.components(),
         backup: w.backup,
         audit: w.audit({ id: user.id, role: user.role }),
         validateTarget: w.validateTarget,
+        preflight: w.preflight,
         allowRun: true,
       },
     );
