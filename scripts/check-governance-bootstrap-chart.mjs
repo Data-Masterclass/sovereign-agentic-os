@@ -23,7 +23,7 @@
  *          polaris or agent_runs                              → the render FAILS, for every field;
  *       5. two of owner / runtime / queue equal               → the render FAILS.
  *     "An existing superuser" cannot be known at render time; roles.sql refuses it at run time,
- *     proven in os-ui/core/adapters/postgres/install.it.ts.
+ *     proven in os-ui/core/testing/postgres/install.it.ts.
  *   - SKIPS loudly without helm or the subchart `.tgz` files; in CI a skip is a FAILURE (same rule
  *     as check-worker-env.mjs). Wired into os-ui/scripts/gate.sh.
  */

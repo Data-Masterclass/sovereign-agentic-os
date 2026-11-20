@@ -31,7 +31,9 @@ import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 import pg from 'pg';
+import type { Fetched } from '@core/adapters/_contract';
 import { PGBOSS_SCHEMA } from './boss.ts';
+import { fetchedOk, pgFailure } from './pool.ts';
 
 const run = promisify(execFile);
 
@@ -46,10 +48,23 @@ export interface MigrateOptions {
   count?: number;
 }
 
-/** Apply the governance migrations. Returns the names node-pg-migrate ran (empty when up to date). */
-export async function migrateGovernance(opts: MigrateOptions): Promise<string[]> {
+/**
+ * Apply the governance migrations (and, on `up`, pg-boss's own migrate). `ok` carries the names
+ * node-pg-migrate ran (empty when up to date); any failure is `ok:false` with Postgres's SQLSTATE
+ * or the tool's own output in `detail` (the adapter contract), never a partial success.
+ */
+export async function migrateGovernance(opts: MigrateOptions): Promise<Fetched<string[]>> {
   const databaseUrl = opts.databaseUrl.trim();
   if (!databaseUrl) throw new Error('migrateGovernance: no database URL');
+  try {
+    const ran = await migrateOrThrow(databaseUrl, opts);
+    return fetchedOk(ran);
+  } catch (err) {
+    return pgFailure(err);
+  }
+}
+
+async function migrateOrThrow(databaseUrl: string, opts: MigrateOptions): Promise<string[]> {
   const ran = await runner({
     databaseUrl,
     dir: MIGRATIONS_DIR,
@@ -68,7 +83,7 @@ export async function migrateGovernance(opts: MigrateOptions): Promise<string[]>
 }
 
 /**
- * pg-boss's own install / migrate of schema `pgboss`, run AS THE MIGRATION OWNER (the caller's
+ * (Throws; `migrateGovernance` reports it.) pg-boss's own install / migrate of schema `pgboss`, run AS THE MIGRATION OWNER (the caller's
  * login) with pg-boss's documented CLI (`pg-boss migrate`, docs/cli.md: "brings the schema up to
  * the latest version … a migration run needs no live worker", async index builds inlined), with
  * the connection in `PGBOSS_DATABASE_URL` / `PGBOSS_SCHEMA` as that page documents. Idempotent.

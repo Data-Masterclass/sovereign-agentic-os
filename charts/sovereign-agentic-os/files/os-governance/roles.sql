@@ -8,7 +8,7 @@
 --             the OS's own credentials, and so the bootstrap can never touch another service's role.
 -- ARCHITECTURE:
 --   - Run by the chart Job `os-governance-bootstrap` (flag `postgres.governance.enabled`) and by
---     `install.it.ts`, from this same file. Idempotent. Parameters are session settings, set by the
+--     `os-ui/core/testing/postgres/install.it.ts`, from this same file. Idempotent. Parameters are session settings, set by the
 --     caller with set_config():
 --       os_bootstrap.database, os_bootstrap.owner_role, os_bootstrap.owner_password,
 --       os_bootstrap.runtime_role, os_bootstrap.runtime_password,

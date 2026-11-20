@@ -2,17 +2,25 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  *
  * AREA:       adapters/postgres
- * FEATURE:    The process-wide `pg` pool for the `os_governance` database
+ * FEATURE:    The process-wide `pg` pool for the `os_governance` database, its transactions, its
+ *             health, and the one mapping from a Postgres error to the adapter contract
  * USER STORY: As an operator I want one bounded connection pool per process for governance state,
- *             shared by every module, so a busy page cannot exhaust the database.
+ *             and a database that is down, refusing or rejecting a write to show up as exactly
+ *             that, with Postgres's own reason, never as an empty result.
  * ARCHITECTURE:
  *   - `pg` (MIT, already pinned 8.23.1), no ORM (00 §3.5).
  *   - One pool per URL, pinned on `globalThis` (Next bundles route handlers separately and dev HMR
  *     re-evaluates modules; a pool per module instance would leak connections). Same pattern as
- *     `tabs/agents/lib/engine/jobs-postgres.ts`.
- *   - No URL → throw. There is no in-memory stand-in for governance state.
+ *     `tabs/agents/lib/engine/jobs-postgres.ts`. No URL → throw: there is no in-memory stand-in.
+ *   - `pgFailure` maps a `pg` error to the `Fetched` contract (`core/adapters/_contract.ts`) by
+ *     SQLSTATE class, keeping the SQLSTATE in `detail` so callers and tests can still see it.
+ *   - `withTransaction` is BEGIN / COMMIT / ROLLBACK on one checked-out client. The caller's error
+ *     always propagates; if the ROLLBACK itself fails, the connection is destroyed (never returned
+ *     to the pool in an unknown state) and both errors are thrown together.
+ *   - `governanceHealth` reports the version the server itself states (GLUE-4).
  */
 import pg from 'pg';
+import type { ComponentHealth, Fetched, FetchedFailure } from '@core/adapters/_contract';
 
 /** What the adapter needs from a pool or a checked-out client: `pg`'s own `query`. */
 export type Queryable = Pick<pg.Pool, 'query'> | Pick<pg.PoolClient, 'query'>;
@@ -37,4 +45,56 @@ export async function closeGovernancePool(): Promise<void> {
   const s = slot.__osGovernancePool;
   delete slot.__osGovernancePool;
   if (s) await s.pool.end();
+}
+
+const now = () => new Date().toISOString();
+
+/** A `pg` error as the contract's failure: reason by SQLSTATE class, SQLSTATE first in `detail`. */
+export function pgFailure(err: unknown): { ok: false; reason: FetchedFailure; detail: string; at: string } {
+  const e = err as { code?: string; message?: string };
+  const code = typeof e?.code === 'string' ? e.code : '';
+  const message = e?.message ?? String(err);
+  let reason: FetchedFailure;
+  if (code === '42501') reason = 'forbidden';
+  else if (code === '28P01' || code === '28000') reason = 'unauthorized';
+  else if (code === '57014') reason = 'timeout';
+  else if (code === '40001' || code === '40P01' || code === '23505') reason = 'conflict';
+  else if (/^[0-9A-Z]{5}$/.test(code) && !code.startsWith('08') && !code.startsWith('57P')) reason = 'invalid';
+  else reason = 'unreachable'; // connection-level (08xxx, 57Pxx) or a socket error without SQLSTATE
+  return { ok: false, reason, detail: code ? `${code} ${message}` : message, at: now() };
+}
+
+export function fetchedOk<T>(value: T): Fetched<T> {
+  return { ok: true, value, at: now() };
+}
+
+export async function withTransaction<T>(pool: pg.Pool, fn: (client: pg.PoolClient) => Promise<T>): Promise<T> {
+  const client = await pool.connect();
+  let broken: unknown;
+  try {
+    await client.query('BEGIN');
+    const out = await fn(client);
+    await client.query('COMMIT');
+    return out;
+  } catch (err) {
+    try {
+      await client.query('ROLLBACK');
+    } catch (rollbackErr) {
+      broken = rollbackErr;
+      throw new AggregateError([err, rollbackErr], 'withTransaction: the transaction failed and so did its ROLLBACK');
+    }
+    throw err;
+  } finally {
+    client.release(broken instanceof Error ? broken : undefined); // an Error destroys the connection
+  }
+}
+
+/** The server's own version string, or why it could not be read. */
+export async function governanceHealth(db: Queryable): Promise<Fetched<ComponentHealth>> {
+  try {
+    const r = await db.query(`select current_setting('server_version') as v`);
+    return fetchedOk({ version: String(r.rows[0].v), status: 'ready' });
+  } catch (err) {
+    return pgFailure(err);
+  }
 }
