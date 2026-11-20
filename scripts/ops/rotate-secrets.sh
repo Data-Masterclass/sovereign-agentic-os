@@ -21,7 +21,7 @@
 #                            values stay decryptable while the master key changes.
 #           Generates the new values on THIS machine (openssl rand) and writes them only to
 #             ~/.sovereign-os-secrets/overlays/rotation-<date>.yaml           (mode 600)
-#             ~/.sovereign-os-secrets/overlays/rotation-<date>.rollback.yaml  (mode 600, previous values)
+#             ~/.sovereign-os-secrets/overlays/rotation-<date>.rollback.yaml  (mode 600, previous master key + Langfuse pair, same salt)
 #             ~/.sovereign-os-secrets/overlays/rotation-<date>.state.json     (no secrets: path, counts, model names, hashes)
 #           Prints the deploy command for the version that is live now, the restarts and the post-checks.
 # plan      READ-ONLY. Renders <chart> with the live release values + the overlay
@@ -188,11 +188,14 @@ print(len(db), len(d) - len(db))')"
     echo "  secretKey: $(q "$new_sk")"
   } > "$out"
   {
-    echo "# rollback for rotation $stamp — the PREVIOUS values. PRIVATE, never commit."
+    echo "# rollback for rotation $stamp — the PREVIOUS master key and Langfuse pair; the salt key stays. PRIVATE, never commit."
     echo "litellmMasterKey: $(q "$old_master")"
+    # The salt key STAYS in a rollback: Helm cannot remove a key from the live Secret anyway (a
+    # key dropped from stringData stays in data), and keeping it is safe on both paths — after
+    # "pin first" it equals the old master key; after "none stored" it is what anything stored
+    # since the rotation is encrypted with. So no allowChange, and the guard stays on.
     echo "litellmSaltKey:"
-    if [ -n "$old_salt" ]; then echo "  value: $(q "$old_salt")"; else echo '  value: ""'; fi
-    echo "  allowChange: true"
+    echo "  value: $(q "$new_salt")"
     echo "langfuseInit:"
     echo "  publicKey: $(q "$old_pk")"
     echo "  secretKey: $(q "$old_sk")"

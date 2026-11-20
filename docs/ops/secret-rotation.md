@@ -42,7 +42,9 @@ every object that changes, the Secret keys that change (by hash), and which work
 - **Never changes once set.** On `helm install/upgrade` the chart reads the live
   `litellm-credentials` (`lookup`). If it already holds a `LITELLM_SALT_KEY`, a different value or
   an empty one fails the render with `LITELLM_SALT_KEY_CHANGE_REFUSED`, before anything is applied.
-  `litellmSaltKey.allowChange: true` is for a rollback or a full re-key only. `helm template`
+  `litellmSaltKey.allowChange: true` is for a full re-key only (`litellm-salt-key.md`, C), passed
+  once on the command line and never left in an overlay: what an overlay sets stays in the
+  release values, and the guard would stay off. `helm template`
   without a cluster cannot look up, so GitOps renderers must keep the value themselves.
 
 ## Langfuse: what the headless init does with changed values (3.194.1)
@@ -94,7 +96,8 @@ Then it chooses the path:
   the salt is what LiteLLM decrypts with once it is set. Follow up with `litellm-salt-key.md`
   procedure C (re-create the stored values under a new random salt and rotate the provider
   credentials they hold): until then the encryption key is the old master key.
-- **salt already set**: the salt key is kept unchanged, only the master key rotates.
+- **salt already set** (also after a rollback): the salt key is kept unchanged, only the master
+  key rotates.
 
 It writes the overlay with `litellmMasterKey`, `litellmSaltKey.value` and a new
 `langfuseInit.publicKey`/`secretKey`, the rollback overlay with the previous values, and prints the
@@ -227,7 +230,16 @@ VALUES_OVERLAY=~/.sovereign-os-secrets/overlays/rotation-<date>.rollback.yaml ./
 ```
 
 Then run step 4 again. The rollback overlay restores the previous master key and Langfuse pair and
-removes the salt key (`allowChange: true`). That is valid only while no model was stored under the
-new salt key: a model stored after the rotation would no longer decrypt. The new Langfuse pair stays
-in Langfuse until it is deleted in the UI. Rehearsed: the stored model was served again and the
-old key was accepted again.
+**keeps the salt key**. The chart could not remove it in any case: a key dropped from a Secret's
+`stringData` stays in the live `data` (measured in the rehearsal). Keeping it is safe on both paths:
+
+- after "pin first" the salt equals the old master key;
+- after "none stored" it is the key that anything stored since the rotation is encrypted with.
+
+So the rollback needs no `allowChange`, and the guard stays on. The new Langfuse pair stays in
+Langfuse until it is deleted in the UI. Rehearsed:
+
+- the old master key was accepted again and the rotated one refused;
+- the stored model was served;
+- the virtual key worked;
+- a rollback overlay that tried to remove the salt was refused by the guard.
