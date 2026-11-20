@@ -30,6 +30,7 @@ import { AUDIENCE_MANAGED, registerRepoKind, type ChangedFile, type IngestReport
 import { runWithSurface } from '@core/infra/request-surface';
 import { createDatasetService, defineQualityRulesService, type QualityRuleInput } from '@tabs/data/lib/mutations-server';
 import { decodeFreeText, isIdentifier } from '@tabs/data/lib/dbt/literal';
+import { authoredDescription } from '@tabs/data/lib/dbt/schema';
 import { getDataset, setDocs, type Principal } from '@tabs/data/lib/store';
 import { SAFE_COLUMN } from '@tabs/data/lib/dbt/schema';
 import { sanitizeIdent } from '@tabs/data/lib/store-fqn';
@@ -62,7 +63,10 @@ export type IngestedModel = {
   layer: Layer;
   /** The Trino/Iceberg schema the model materialises into. */
   schema: string;
+  /** The AUTHOR'S description, decoded — the generator's own sentence removed. */
   description: string;
+  /** The description exactly as the file holds it (encoded), for the exact-prefix strip. */
+  rawDescription: string;
   columns: IngestedColumn[];
   rules: QualityRuleInput[];
   /** Everything the file asked for that could NOT be mapped, in words. */
@@ -221,7 +225,10 @@ export function datasetsFromSchemaYml(filePath: string, content: string, domain:
       declaredTier: typeof meta.os_tier === 'string' && meta.os_tier ? meta.os_tier : null,
       layer: layerOf(filePath, model, meta),
       schema: schemaOf(filePath, domain),
-      description: typeof raw.description === 'string' ? decodeFreeText(raw.description) : '',
+      // Only the AUTHOR'S words: the generator's own sentence is stripped, so a round trip does
+      // not grow the description by one sentence per push.
+      description: typeof raw.description === 'string' ? decodeFreeText(authoredDescription(raw.description)) : '',
+      rawDescription: typeof raw.description === 'string' ? raw.description : '',
       columns,
       rules,
       notes,
@@ -274,7 +281,10 @@ export async function ingestDbtModels(input: {
             if (m.declaredTier && m.declaredTier !== current.tier) {
               throw new Error(`${AUDIENCE_MANAGED} — this file says '${m.declaredTier}' and the OS says '${current.tier}'`);
             }
-            setDocs(datasetId, principal, { description: m.description, columns: m.columns });
+            // The exact current sentence (this dataset's id, name and layer) is stripped too, which
+            // also covers a display name the generic pattern cannot delimit.
+            const own = decodeFreeText(authoredDescription(m.rawDescription, current, m.layer));
+            setDocs(datasetId, principal, { description: own, columns: m.columns });
             report.updated += 1;
           } else {
             const created = createDatasetService(principal, { name: m.name, domain, columns: m.columns });

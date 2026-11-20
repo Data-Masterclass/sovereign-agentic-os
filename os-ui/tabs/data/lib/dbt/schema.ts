@@ -180,11 +180,35 @@ export function columnDocs(
   return { columns: [...columns.values()], intentions };
 }
 
+/** The sentence the generator puts IN FRONT of the author's description (encoded form). */
+export function modelDescriptionPrefix(d: Pick<Dataset, 'id' | 'name' | 'origin'>, layer: string): string {
+  return `${layer} layer of OS dataset ${d.id} ("${freeText(d.name)}")${d.origin === 'curated' ? ' — a composition of existing datasets' : ''}.`;
+}
+
+/** Any generator sentence (this dataset's, or one left by an older name or a previous growth). */
+const GENERATED_SENTENCE = /^(?:bronze|silver|gold) layer of OS dataset ds_[A-Za-z0-9_]+ \("[^\n]*?"\)(?: — a composition of existing datasets)?\.(?:\s+|$)/;
+
+/**
+ * The AUTHOR'S description inside a model description read back from git (still encoded): the
+ * generator's own sentence is removed — the exact current one first, then any older generated
+ * sentence repeated at the front — so a push → read-back → regenerate round trip is stable
+ * instead of prepending the sentence again on every push.
+ */
+export function authoredDescription(raw: string, d?: Pick<Dataset, 'id' | 'name' | 'origin'>, layer?: string): string {
+  let rest = raw.trim();
+  if (d && layer) {
+    const prefix = modelDescriptionPrefix(d, layer);
+    while (rest.startsWith(prefix)) rest = rest.slice(prefix.length).trim();
+  }
+  for (let m = GENERATED_SENTENCE.exec(rest); m; m = GENERATED_SENTENCE.exec(rest)) rest = rest.slice(m[0].length).trim();
+  return rest;
+}
+
 function modelDoc(m: ModelPlan, resolveRef: (datasetId: string) => string | null): Record<string, unknown> {
   const d: Dataset = m.dataset;
   const { columns, intentions } = columnDocs(d, m.tested, resolveRef);
   const description = [
-    `${m.layer} layer of OS dataset ${d.id} ("${freeText(d.name)}")${d.origin === 'curated' ? ' — a composition of existing datasets' : ''}.`,
+    modelDescriptionPrefix(d, m.layer),
     freeText(d.description).trim(),
   ]
     .filter(Boolean)

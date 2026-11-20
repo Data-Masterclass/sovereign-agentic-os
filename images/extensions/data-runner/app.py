@@ -202,6 +202,25 @@ def apply_column_names(arrow, names):
     return arrow.rename_columns(names)
 
 
+# The OS's physical-column allow-list (os-ui `tabs/data/lib/dbt/literal.ts`, kind `column`): at
+# most 128 characters, no leading/trailing whitespace, and no brace, double quote, backslash,
+# control character (C0/C1/DEL), line/paragraph separator or lone surrogate.
+_COLUMN_BAD = re.compile("[\u0000-\u001f\u007f-\u009f{}\"\\\\\u2028\u2029\ud800-\udfff]")
+
+
+def validate_column_names(arrow) -> None:
+    """Refuse a file whose column names the OS cannot register — BEFORE any catalog call, so a
+    refused upload never drops, replaces or appends to an existing Bronze table."""
+    for f in arrow.schema:
+        name = f.name
+        if (not isinstance(name, str) or not 1 <= len(name) <= 128 or name != name.strip()
+                or _COLUMN_BAD.search(name)):
+            raise ValueError(
+                f"column {name!r} cannot be registered: a column name is 1-128 characters with no "
+                "leading/trailing space, brace, double quote, backslash or control character; "
+                "nothing was written")
+
+
 def ingest(body: dict) -> dict:
     principal = (body.get("principal") or "").strip()
     dataset = (body.get("dataset") or "").strip()
@@ -257,6 +276,7 @@ def ingest(body: dict) -> dict:
         tmp.flush()
         arrow = _read_to_arrow(tmp.name, object_key)
     arrow = apply_column_names(arrow, body.get("columnNames"))
+    validate_column_names(arrow)  # before ANY catalog call: a refusal leaves Bronze untouched
 
     # 2) Write the Iceberg Bronze table via Polaris REST.
     catalog = _catalog()
@@ -340,6 +360,7 @@ def ingest_rows(body: dict) -> dict:
             tmp.write(json.dumps(row) + "\n")
         tmp.flush()
         arrow = _read_to_arrow(tmp.name, f"{ds_slug}.ndjson")
+    validate_column_names(arrow)  # before ANY catalog call (same rule as /ingest)
 
     # Write the Iceberg Bronze table via Polaris REST (same logic as /ingest).
     catalog = _catalog()
