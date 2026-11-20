@@ -3,25 +3,25 @@
  */
 import { config } from '@core/kernel/config';
 import { k8s as liveK8s } from '@core/infra/k8s';
-import { readLiveRef } from '@core/infra/lifecycle-refs';
-import type { ResourceFootprint } from '@tabs/software/lib/model';
+import { planAppDeploy, runnerName, APP_K8S_DIR } from '@tabs/software/lib/native-deploy';
+
+export { runnerName };
 
 /**
- * The in-cluster app RUNNER (Software golden path — Phase 2). Until now a deploy
- * built + committed real code but nothing SERVED it: `startPreview`/`decideDeploy`
- * flipped the state machine and honestly left `previewUrl` null (no runner). This
- * module closes that gap: given a built app that resolves to a runnable container
- * IMAGE, it provisions a REAL Kubernetes Deployment (1 replica, sane
- * requests/limits, a readiness probe), a Service, and an Ingress on the app's
- * per-app host — then reports readiness from ACTUAL pod state, not a timer.
+ * The in-cluster app RUNNER for `serveMode: 'image'` apps (WP-54).
  *
- * It deliberately mirrors `lib/agents/schedule-cron.ts`: deterministic names,
- * idempotent upserts (GET → PUT-with-resourceVersion or POST), an injectable k8s
- * client (unit-testable without a cluster), and HONEST degradation — when the API
- * server is unreachable it returns `{ live:false }` and NEVER claims the app is
- * running. Building images in-cluster is out of scope: the image ref is an explicit
- * prebuilt `runImage` (or the platform's SOFTWARE_RUNNER_IMAGE default); a missing
- * image surfaces as `failed`, never a fake URL.
+ * WHAT RUNS IS WHAT IS IN GIT. The runner deploys the app's COMMITTED Kubernetes manifests
+ * (`apps/<slug>/k8s/*.yaml`, read from the domain repository) and nothing else: no object is
+ * built here. `native-deploy.ts` checks the OS's own rules (kinds, names, the platform registry,
+ * digest only); then every object is submitted to the Kubernetes API as a server-side DRY RUN
+ * (`?dryRun=All`), so the API server's schema validation and the namespace's Pod Security
+ * `restricted` admission judge the files before anything is written; only then is each object
+ * applied for real (GET → PUT with resourceVersion, or POST). The only change made to a committed
+ * object is `metadata.namespace`, exactly what `kubectl apply -n <ns> -f k8s/` does.
+ *
+ * Honest by construction: no manifests, an unbuilt image, a foreign registry or a git read failure
+ * is a typed refusal with ZERO Kubernetes calls; an unreachable API server is `offline`, never a
+ * live claim; readiness comes from the Deployment's real status. The OS builds no images.
  */
 
 export type RunnerK8s = (
@@ -30,38 +30,19 @@ export type RunnerK8s = (
   body?: unknown,
 ) => Promise<{ status: number; body: Record<string, unknown> }>;
 
-/** The minimal app shape the runner needs (kept decoupled from the full App). */
+/** What git said about the app's tree (see `readAppTreeState`). */
+export type RunnerTree =
+  | { kind: 'tree'; files: { path: string; content: string }[]; sha: string }
+  | { kind: 'none' }
+  | { kind: 'failed'; reason: string };
+
+/** The minimal app shape the runner needs: its name, its host and its committed tree. */
 export type RunnerApp = {
   slug: string;
-  /** The app's per-app host (App.subdomain: `<slug>.<domain>.<appsDomain>`). */
+  /** The app's per-app host (`<slug>.<domain>.<appsDomain>`). */
   host: string;
-  /** Explicit prebuilt image ref; when unset the platform default image is used. */
-  runImage?: string;
-  footprint: ResourceFootprint;
-  /** Where the app's `live/app/<id>` tag lives (WP-51): read from git at every deploy. */
-  live?: { repo: string; id: string };
-};
-
-/** True for an immutable, content-addressed image ref (`…@sha256:…`). */
-export function isDigestRef(image: string): boolean {
-  return /@sha256:[a-f0-9]{64}$/i.test(image.trim());
-}
-
-/** The concrete runnable spec derived from an app (image + host + resources). */
-export type RunnerSpec = {
-  slug: string;
-  image: string;
-  host: string;
-  cpu: string;
-  memory: string;
-  /** Container port the app listens on (scaffolds EXPOSE 8080). */
-  port: number;
-  /**
-   * The commit `live/app/<id>` names in git at deploy time, recorded on the Deployment as
-   * `sovereign-os.io/source-sha` (artifact contract C4: the runtime records the sha it ran). `null`
-   * when the app has no live tag — stated as `none`, never guessed.
-   */
-  source?: { tag: string; sha: string } | null;
+  /** The app subtree (`apps/<slug>/`, paths relative to it) as read from git. */
+  tree: RunnerTree;
 };
 
 /** Real pod-driven phase — `deploying → running → failed`, plus stop/absent/offline. */
@@ -96,260 +77,18 @@ export type RunnerOpts = {
   /** Injected k8s client (defaults to the live in-cluster client). */
   k8s?: RunnerK8s;
   namespace?: string;
-  ingressClass?: string;
-  tlsIssuer?: string;
-  /** PriorityClass for the app pod (WP-47: the lowest class); empty/absent = no field. */
-  priorityClassName?: string;
-  /** The bare repos the live tag is read from (default: the configured root). */
-  reposDir?: string;
+  /** The platform image registry prefix (defaults to `softwareRunner.imageRegistry`). */
+  registry?: string;
 };
 
 const UNREACHABLE =
   'Kubernetes API unreachable — the app runner was not provisioned; no live URL is served until connectivity is restored.';
 
-/** Deterministic, RFC1123-safe runner object name for an app (one set per app). */
-export function runnerName(slug: string): string {
-  const s = slug
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
-  return `app-${s || 'app'}`.slice(0, 52).replace(/-+$/g, '');
-}
-
-/** The typed, loud refusal of serving an `image` app that has no image (night-2 S2). */
-export class MissingAppImageError extends Error {
-  readonly code = 'missing_app_image';
-  readonly status = 409;
-  readonly slug: string;
-  constructor(slug: string) {
-    super(
-      `App '${slug}' is set to serve a container image but no image reference is set. ` +
-        'The OS does not build images: publish one yourself and set the app\u2019s image reference, ' +
-        'or switch the app to the declarative (spec) or runtime serve mode. ' +
-        'Nothing was provisioned — the OS will not serve a placeholder container on your domain.',
-    );
-    this.name = 'MissingAppImageError';
-    this.slug = slug;
-  }
-}
-
-/**
- * The image the runner serves: the app's explicit prebuilt `runImage` wins; else the
- * operator-set shared image (`SOFTWARE_RUNNER_IMAGE`), which is EMPTY by default.
- *
- * FAILS CLOSED AND LOUDLY when neither is set (night-2 S2 trap fix). It used to fall back to
- * `config.softwareRunnerImage`, whose chart default was `traefik/whoami:latest` — so an app
- * that went live with no image of its own served A STRANGER'S PLACEHOLDER CONTAINER on the
- * customer's own domain, and the deploy reported success. We never BUILD here; a missing image
- * is now a typed 409 that names the app, not a silent substitution.
- */
-export function appImageRef(app: { slug: string; runImage?: string }): string {
-  const explicit = (app.runImage ?? '').trim();
-  if (explicit) return explicit;
-  const shared = (config.softwareRunnerImage ?? '').trim();
-  if (shared) return shared;
-  throw new MissingAppImageError(app.slug);
-}
-
-/** Build the concrete runnable spec from an app (image + host + footprint). */
-export function runnerSpec(app: RunnerApp): RunnerSpec {
-  return {
-    slug: app.slug,
-    image: appImageRef(app),
-    host: app.host,
-    cpu: app.footprint.cpu,
-    memory: app.footprint.memory,
-    port: 8080,
-  };
-}
-
-/**
- * The pull policy for a serving image. A DIGEST ref is content-addressed and immutable,
- * so `IfNotPresent` is correct AND cheaper (never re-pulls the same digest); a mutable
- * tag still needs `Always` to defeat the node cache after a re-push.
- */
-export function pullPolicyFor(image: string): 'IfNotPresent' | 'Always' {
-  return isDigestRef(image) ? 'IfNotPresent' : 'Always';
-}
-
-function labels(spec: RunnerSpec): Record<string, string> {
-  return {
-    'app.kubernetes.io/managed-by': 'os-ui',
-    'app.kubernetes.io/component': 'software-runner',
-    'app.kubernetes.io/name': runnerName(spec.slug),
-    'soa.software-app': runnerName(spec.slug).replace(/^app-/, ''),
-  };
-}
-
-// ------------------------------------------------------------- Manifests -------
-
-/**
- * `deployedAt` (ISO timestamp) is stamped as a POD-TEMPLATE annotation so every
- * re-deploy CHANGES the template and triggers a real rollout. Without it a
- * re-apply of an identical spec (the image ref is the stable `:latest` tag) is a
- * no-op to Kubernetes: the pod keeps running the image it pulled FIRST — which is
- * why apps kept serving the scaffold stub after CI had long since published the
- * real build. Combined with `imagePullPolicy: Always`, the restarted pod re-pulls
- * the current `:latest` from the registry.
- */
-export function buildDeploymentManifest(
-  spec: RunnerSpec,
-  namespace: string,
-  deployedAt?: string,
-  priorityClassName?: string,
-): Record<string, unknown> {
-  const name = runnerName(spec.slug);
-  const sel = { app: name };
-  const digestPinned = isDigestRef(spec.image);
-  // For a DIGEST-pinned image the image ref itself changes on every new build, so the
-  // pod template already changes → Kubernetes rolls honestly WITHOUT the `deployed-at`
-  // stamp. Only a mutable-tag (`:latest`) serving ref still needs the stamp to force a
-  // roll on a same-tag re-deploy (the hack the digest path deletes).
-  const stamp = digestPinned ? undefined : deployedAt;
-  const sourceAnnotations =
-    spec.source === undefined
-      ? {}
-      : { annotations: { 'sovereign-os.io/source-sha': spec.source?.sha ?? 'none', 'sovereign-os.io/live-tag': spec.source?.tag ?? 'none' } };
-  return {
-    apiVersion: 'apps/v1',
-    kind: 'Deployment',
-    metadata: { name, namespace, labels: labels(spec), ...sourceAnnotations },
-    spec: {
-      replicas: 1,
-      selector: { matchLabels: sel },
-      template: {
-        metadata: {
-          labels: { ...labels(spec), ...sel },
-          ...(stamp ? { annotations: { 'soa.sovereign-os/deployed-at': stamp } } : {}),
-        },
-        spec: {
-          // Below every platform pod, and never preempting one (WP-47). Omitted when the chart
-          // created no classes: admission rejects a pod that names a missing PriorityClass.
-          ...(priorityClassName ? { priorityClassName } : {}),
-          containers: [
-            {
-              name: 'app',
-              image: spec.image,
-              // Digest refs are immutable → `IfNotPresent` (never re-pull the same
-              // content); a mutable `:latest` still needs `Always` so a restarted pod
-              // fetches the image CI just published, not the node's stale cache.
-              imagePullPolicy: pullPolicyFor(spec.image),
-              ports: [{ containerPort: spec.port }],
-              resources: {
-                requests: { cpu: spec.cpu, memory: spec.memory },
-                // Memory limit == request (>= request, valid); cpu capped at 1.
-                limits: { cpu: '1', memory: spec.memory },
-              },
-              // Container hardening (defence-in-depth for untrusted student apps).
-              // These are safe for BOTH the current non-root scaffolds (nginx-
-              // unprivileged uid 101 / node uid 1000) AND any older root-nginx image
-              // still deployed: a static file server needs NO Linux capability to bind
-              // 8080 (>1024) or serve files, and never escalates privileges. We do NOT
-              // set `runAsNonRoot` HERE so an old root image already deployed does not
-              // CrashLoop on its next rollout — see the pod-level note below.
-              securityContext: {
-                allowPrivilegeEscalation: false,
-                capabilities: { drop: ['ALL'] },
-                seccompProfile: { type: 'RuntimeDefault' },
-              },
-              // TCP readiness is image-agnostic (an HTTP path may 404 on a
-              // healthy app), so it drives the running/deploying transition
-              // off the process actually LISTENING, not a fabricated timer.
-              readinessProbe: {
-                tcpSocket: { port: spec.port },
-                initialDelaySeconds: 5,
-                periodSeconds: 10,
-                failureThreshold: 6,
-              },
-            },
-          ],
-          // Pod-level hardening. `runAsNonRoot: true` is asserted (set below): all
-          // live apps have been rebuilt from non-root scaffolds with NUMERIC image
-          // users (kubelet can only verify runAsNonRoot against a numeric uid), so
-          // the pod asserts non-root and the namespace can run PSS `restricted`. A
-          // root image reaching this manifest fails admission — by design, not by
-          // accident.
-          securityContext: {
-            seccompProfile: { type: 'RuntimeDefault' },
-            runAsNonRoot: true,
-          },
-        },
-      },
-    },
-  };
-}
-
-export function buildServiceManifest(spec: RunnerSpec, namespace: string): Record<string, unknown> {
-  const name = runnerName(spec.slug);
-  return {
-    apiVersion: 'v1',
-    kind: 'Service',
-    metadata: { name, namespace, labels: labels(spec) },
-    spec: {
-      selector: { app: name },
-      ports: [{ name: 'http', port: 80, targetPort: spec.port }],
-    },
-  };
-}
-
-export function buildIngressManifest(
-  spec: RunnerSpec,
-  namespace: string,
-  opts: Required<Pick<RunnerOpts, 'ingressClass' | 'tlsIssuer'>>,
-): Record<string, unknown> {
-  const name = runnerName(spec.slug);
-  return {
-    apiVersion: 'networking.k8s.io/v1',
-    kind: 'Ingress',
-    metadata: {
-      name,
-      namespace,
-      labels: labels(spec),
-      annotations: { 'cert-manager.io/cluster-issuer': opts.tlsIssuer },
-    },
-    spec: {
-      ingressClassName: opts.ingressClass,
-      tls: [{ hosts: [spec.host], secretName: `${spec.host}-tls` }],
-      rules: [
-        {
-          host: spec.host,
-          http: {
-            paths: [
-              {
-                path: '/',
-                pathType: 'Prefix',
-                backend: { service: { name, port: { number: 80 } } },
-              },
-            ],
-          },
-        },
-      ],
-    },
-  };
-}
-
-// ------------------------------------------------------------- Resolve opts ----
-
-/** Read the app's live tag straight from git (WP-51). An unreadable repo is logged and recorded as none. */
-async function liveSource(live: { repo: string; id: string }, reposDir?: string): Promise<{ tag: string; sha: string } | null> {
-  try {
-    const ref = await readLiveRef(live.repo, 'app', live.id, { reposDir: reposDir ?? config.reposDir });
-    return ref ? { tag: ref.tag, sha: ref.commit } : null;
-  } catch (e) {
-    console.error(`[runner] could not read live/app/${live.id} in '${live.repo}': ${(e as Error).message} — recorded as none`);
-    return null;
-  }
-}
-
-function resolveOpts(
-  opts: RunnerOpts,
-): { k8s: RunnerK8s } & Required<Pick<RunnerOpts, 'namespace' | 'ingressClass' | 'tlsIssuer' | 'priorityClassName'>> {
+function resolveOpts(opts: RunnerOpts): { k8s: RunnerK8s; namespace: string; registry: string } {
   return {
     k8s: opts.k8s ?? (liveK8s as RunnerK8s),
     namespace: opts.namespace ?? config.softwareRunnerNamespace,
-    ingressClass: opts.ingressClass ?? config.appsIngressClass,
-    tlsIssuer: opts.tlsIssuer ?? config.appsTlsIssuer,
-    priorityClassName: opts.priorityClassName ?? config.softwareRunnerPriorityClass,
+    registry: opts.registry ?? config.softwareImageRegistry,
   };
 }
 
@@ -359,111 +98,93 @@ function resolveOpts(
 async function ensureNamespace(k8s: RunnerK8s, ns: string): Promise<{ reachable: boolean; ok: boolean }> {
   const got = await k8s('GET', `/api/v1/namespaces/${ns}`);
   if (got.status === 0) return { reachable: false, ok: false };
-  if (got.status === 200) return { reachable: true, ok: true };
-  // 401/403: the runner's namespaced ServiceAccount cannot read/create a CLUSTER-scoped
-  // Namespace object — but the Helm chart PRE-CREATES the runner namespace, so its
-  // existence is guaranteed. Treat "forbidden" as "it's there, managed externally" and
-  // proceed to the namespaced writes (deployments/services/ingresses) the SA CAN do.
-  if (got.status === 401 || got.status === 403) return { reachable: true, ok: true };
-  if (got.status === 404) {
-    const made = await k8s('POST', '/api/v1/namespaces', {
-      apiVersion: 'v1',
-      kind: 'Namespace',
-      metadata: { name: ns, labels: { 'app.kubernetes.io/managed-by': 'os-ui', 'soa.software-runner': 'true' } },
-    });
-    // A 403 on create also means the chart owns it — proceed.
-    return { reachable: true, ok: made.status === 201 || made.status === 200 || made.status === 409 || made.status === 403 };
-  }
+  // 200: present. 401/403: the os-ui ServiceAccount cannot read a cluster-scoped Namespace, but
+  // the chart pre-creates the runner namespace (with its Pod Security labels), so it is there.
+  if (got.status === 200 || got.status === 401 || got.status === 403) return { reachable: true, ok: true };
+  // The runner never creates the namespace: it would be created WITHOUT the chart's Pod Security
+  // `restricted` labels and NetworkPolicies.
   return { reachable: true, ok: false };
 }
 
-/** Idempotent create-or-replace of one object. `reachable:false` = API down. */
-async function applyObject(
-  k8s: RunnerK8s,
-  collection: string,
-  name: string,
-  manifest: Record<string, unknown>,
-): Promise<{ reachable: boolean; ok: boolean; status: number }> {
-  const object = `${collection}/${name}`;
+const COLLECTION: Record<string, (ns: string) => string> = {
+  Deployment: (ns) => `/apis/apps/v1/namespaces/${ns}/deployments`,
+  Service: (ns) => `/api/v1/namespaces/${ns}/services`,
+  Ingress: (ns) => `/apis/networking.k8s.io/v1/namespaces/${ns}/ingresses`,
+};
+
+type Applied = { reachable: boolean; ok: boolean; status: number; message: string };
+
+/** Create-or-replace one object; `dryRun` submits it with `?dryRun=All` (nothing persisted). */
+async function applyObject(k8s: RunnerK8s, collection: string, manifest: Record<string, unknown>, dryRun: boolean): Promise<Applied> {
+  const meta = manifest.metadata as Record<string, unknown>;
+  const object = `${collection}/${String(meta.name)}`;
+  const q = dryRun ? '?dryRun=All' : '';
+  const msg = (b: Record<string, unknown>) => String(b.message ?? '');
   const existing = await k8s('GET', object);
-  if (existing.status === 0) return { reachable: false, ok: false, status: 0 };
+  if (existing.status === 0) return { reachable: false, ok: false, status: 0, message: '' };
   if (existing.status === 200) {
-    const meta = (existing.body.metadata ?? {}) as Record<string, unknown>;
-    (manifest.metadata as Record<string, unknown>).resourceVersion = meta.resourceVersion;
-    const put = await k8s('PUT', object, manifest);
-    return { reachable: true, ok: put.status === 200 || put.status === 201, status: put.status };
+    const rv = ((existing.body.metadata ?? {}) as Record<string, unknown>).resourceVersion;
+    const body = { ...manifest, metadata: { ...meta, ...(rv !== undefined ? { resourceVersion: rv } : {}) } };
+    const put = await k8s('PUT', `${object}${q}`, body);
+    return { reachable: put.status !== 0, ok: put.status === 200 || put.status === 201, status: put.status, message: msg(put.body) };
   }
   if (existing.status === 404) {
-    const post = await k8s('POST', collection, manifest);
-    return { reachable: true, ok: post.status === 201 || post.status === 200, status: post.status };
+    const post = await k8s('POST', `${collection}${q}`, manifest);
+    return { reachable: post.status !== 0, ok: post.status === 201 || post.status === 200, status: post.status, message: msg(post.body) };
   }
-  return { reachable: true, ok: false, status: existing.status };
-}
-
-function collections(ns: string) {
-  return {
-    deployments: `/apis/apps/v1/namespaces/${ns}/deployments`,
-    services: `/api/v1/namespaces/${ns}/services`,
-    ingresses: `/apis/networking.k8s.io/v1/namespaces/${ns}/ingresses`,
-  };
+  return { reachable: true, ok: false, status: existing.status, message: msg(existing.body) };
 }
 
 // ------------------------------------------------------------- Deploy ----------
 
 /**
- * Provision (or reconcile) the app's Deployment + Service + Ingress. Idempotent:
- * a re-deploy REPLACES the existing objects rather than duplicating them. Never
- * throws; returns an honest outcome. On success the caller surfaces `url`; the
- * `phase` reflects real pod readiness read straight back from the API.
+ * Deploy (or re-deploy) the app's committed `k8s/` manifests. Idempotent; never throws; returns
+ * an honest outcome. On success the caller surfaces `url`; `phase` is real pod readiness.
  */
 export async function deployApp(app: RunnerApp, options: RunnerOpts = {}): Promise<RunnerOutcome> {
   const o = resolveOpts(options);
-  // FAIL CLOSED on a missing image (night-2 S2): no Deployment, no Service, no Ingress, no URL,
-  // and the reason is said out loud. Never a placeholder container on a customer domain.
-  let spec: RunnerSpec;
-  try {
-    spec = runnerSpec(app);
-  } catch (e) {
-    if (!(e instanceof MissingAppImageError)) throw e;
-    return {
-      ok: false,
-      live: false,
-      action: 'noop',
-      name: runnerName(app.slug),
-      host: app.host,
-      url: null,
-      phase: 'failed',
-      detail: e.message,
-    };
+  const name = runnerName(app.slug);
+  const refuse = (detail: string, phase: RunnerPhase = 'failed', live = false): RunnerOutcome => ({
+    ok: false, live, action: 'noop', name, host: app.host, url: null, phase, detail,
+  });
+
+  if (app.tree.kind === 'failed') {
+    return refuse(`The app's deploy manifests are read from git, and git could not be read (${app.tree.reason}). Nothing was deployed.`);
   }
-  if (app.live) spec = { ...spec, source: await liveSource(app.live, options.reposDir) };
-  const name = runnerName(spec.slug);
-  const url = `https://${spec.host}`;
-  const c = collections(o.namespace);
+  const files = app.tree.kind === 'tree' ? app.tree.files : [];
+  const sha = app.tree.kind === 'tree' ? app.tree.sha : '';
+  const plan = planAppDeploy(files, { slug: app.slug, host: app.host, registry: o.registry });
+  if (!plan.ok) return refuse(plan.reason);
+
+  const objects: Record<string, unknown>[] = plan.objects.map((obj) => ({
+    ...obj,
+    metadata: { ...(obj.metadata as Record<string, unknown>), namespace: o.namespace },
+  }));
 
   const nsRes = await ensureNamespace(o.k8s, o.namespace);
-  if (!nsRes.reachable) return { ok: false, live: false, action: 'noop', name, host: spec.host, url: null, phase: 'offline', detail: UNREACHABLE };
-  if (!nsRes.ok) return { ok: false, live: true, action: 'noop', name, host: spec.host, url: null, phase: 'failed', detail: `Could not ensure runner namespace ${o.namespace}.` };
+  if (!nsRes.reachable) return refuse(UNREACHABLE, 'offline');
+  if (!nsRes.ok) return refuse(`The runner namespace ${o.namespace} does not exist; it is created by the chart, not by a deploy.`, 'failed', true);
 
-  // Stamp this deploy so the pod template CHANGES → Kubernetes rolls the pods and
-  // (with imagePullPolicy Always) re-pulls the current `:latest` the CI published.
-  const dep = await applyObject(o.k8s, c.deployments, name, buildDeploymentManifest(spec, o.namespace, new Date().toISOString(), o.priorityClassName));
-  if (!dep.reachable) return { ok: false, live: false, action: 'noop', name, host: spec.host, url: null, phase: 'offline', detail: UNREACHABLE };
-  const svc = await applyObject(o.k8s, c.services, name, buildServiceManifest(spec, o.namespace));
-  const ing = await applyObject(o.k8s, c.ingresses, name, buildIngressManifest(spec, o.namespace, o));
-
-  if (!dep.ok || !svc.ok || !ing.ok) {
-    return {
-      ok: false,
-      live: true,
-      action: 'noop',
-      name,
-      host: spec.host,
-      url: null,
-      phase: 'failed',
-      detail: `Kubernetes rejected part of the deploy (deployment ${dep.status}, service ${svc.status}, ingress ${ing.status}).`,
-    };
+  // 1. Server-side DRY RUN of every object: Kubernetes' schema and Pod Security admission decide.
+  for (const obj of objects) {
+    const r = await applyObject(o.k8s, COLLECTION[String(obj.kind)](o.namespace), obj, true);
+    if (!r.reachable) return refuse(UNREACHABLE, 'offline');
+    if (!r.ok) {
+      return refuse(
+        `Kubernetes rejected ${APP_K8S_DIR}/ ${String(obj.kind)} '${name}' in a dry run (HTTP ${r.status})${r.message ? `: ${r.message}` : ''}. Nothing was applied.`,
+        'failed',
+        true,
+      );
+    }
   }
+  // 2. The real apply, same objects.
+  const failed: string[] = [];
+  for (const obj of objects) {
+    const r = await applyObject(o.k8s, COLLECTION[String(obj.kind)](o.namespace), obj, false);
+    if (!r.reachable) return refuse(UNREACHABLE, 'offline');
+    if (!r.ok) failed.push(`${String(obj.kind)} ${r.status}${r.message ? ` (${r.message})` : ''}`);
+  }
+  if (failed.length) return refuse(`Kubernetes rejected part of the deploy (${failed.join(', ')}).`, 'failed', true);
 
   const st = await statusOfName(o.k8s, o.namespace, name);
   return {
@@ -471,10 +192,10 @@ export async function deployApp(app: RunnerApp, options: RunnerOpts = {}): Promi
     live: true,
     action: 'deployed',
     name,
-    host: spec.host,
-    url,
+    host: app.host,
+    url: `https://${app.host}`,
     phase: st.phase === 'offline' || st.phase === 'absent' ? 'deploying' : st.phase,
-    detail: `Provisioned Deployment+Service+Ingress for ${spec.slug} on ${spec.host} (image ${spec.image}).`,
+    detail: `Applied the committed ${APP_K8S_DIR}/ manifests of ${app.slug} at git ${sha.slice(0, 12)} (image ${plan.image}).`,
   };
 }
 
@@ -537,8 +258,7 @@ export async function stopApp(app: { slug: string }, options: RunnerOpts = {}): 
 export async function deleteApp(app: { slug: string }, options: RunnerOpts = {}): Promise<RunnerOutcome> {
   const o = resolveOpts(options);
   const name = runnerName(app.slug);
-  const c = collections(o.namespace);
-  const targets = [`${c.ingresses}/${name}`, `${c.services}/${name}`, `${c.deployments}/${name}`];
+  const targets = ['Ingress', 'Service', 'Deployment'].map((k) => `${COLLECTION[k](o.namespace)}/${name}`);
   let reachable = true;
   let rejected = 0;
   for (const t of targets) {

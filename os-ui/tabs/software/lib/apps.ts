@@ -3,6 +3,7 @@
  */
 import 'server-only';
 import { config } from '@core/kernel/config';
+import { appDeployFiles, APP_K8S_DIR, APP_CI_WORKFLOW } from '@tabs/software/lib/native-deploy';
 import { emptyContextGrants, normalizeContextGrants, type ContextGrants } from '@core/kernel/context-grants';
 import { emptyAgentGrants, normalizeAgentGrants, type AppAgentGrant } from '@tabs/software/lib/app-agent-grants';
 import type { CurrentUser } from '@core/kernel/auth';
@@ -301,12 +302,6 @@ export type App = {
    */
   repo: { seeded: string[] };
   subdomain: string;
-  /**
-   * Explicit prebuilt container image the in-cluster runner should serve (Phase 2
-   * runner). Optional: when unset the runner uses the SOFTWARE_RUNNER_IMAGE default.
-   * We NEVER build images in-cluster — this is a reference to an already-built one.
-   */
-  runImage?: string;
   /** Markdown captured from the build chat + the template. */
   designDecisions: string;
   dataDescriptions: string;
@@ -1737,7 +1732,16 @@ export async function createApp(
   //    the dependency scan can cover it. `templateFiles()` below deliberately stays the PLAIN
   //    scaffold — it is the fallback tree for an app with no snapshot, i.e. one created before
   //    lockfiles shipped, and that app must keep reading the tree it was actually seeded with.
-  const seedFiles: ScaffoldFile[] = specKind ? [] : lockedSeed(tpl.key, tpl.files(name, slug), slug);
+  const lockedFiles: ScaffoldFile[] = specKind ? [] : lockedSeed(tpl.key, tpl.files(name, slug), slug);
+  // WP-54: a template that ships a Dockerfile is seeded with its NATIVE deploy code as well —
+  // `k8s/` manifests for the app's own host and the image CI workflow. The OS deploys exactly
+  // those committed files; the image digest is pinned into `k8s/deployment.yaml` once built.
+  const seedFiles: ScaffoldFile[] = lockedFiles.some((f) => f.path === 'Dockerfile')
+    ? [
+        ...lockedFiles.filter((f) => !f.path.startsWith(`${APP_K8S_DIR}/`) && f.path !== APP_CI_WORKFLOW),
+        ...seedDeployFiles(slug, subdomain),
+      ]
+    : lockedFiles;
 
   // 3. Auto-register the data as a Personal artifact owned by the creator.
   let dataArtifactId: string | null = null;
@@ -2371,6 +2375,21 @@ export async function persistApp(app: App): Promise<App> {
 }
 
 /** The template's seeded files (for the security scan + diff over a fresh app). */
+/**
+ * WP-54: the native deploy files a coded app is seeded with — `k8s/` manifests for its own host and
+ * the image CI workflow — from the platform's current registry, ingress and priority settings.
+ */
+export function seedDeployFiles(slug: string, host: string): ScaffoldFile[] {
+  return appDeployFiles({
+    slug,
+    host,
+    registry: config.softwareImageRegistry,
+    ingressClass: config.appsIngressClass,
+    tlsIssuer: config.appsTlsIssuer,
+    priorityClassName: config.softwareRunnerPriorityClass,
+  });
+}
+
 export function templateFiles(template: AppTemplateKey, name: string, slug: string): { path: string; content: string }[] {
   const tpl = TEMPLATES[template] ?? TEMPLATES['nextjs-supabase'];
   return tpl.files(name, slug);

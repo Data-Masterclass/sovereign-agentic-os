@@ -190,7 +190,8 @@ test('assertPushable: a path that escapes the app tree is refused — `../../x` 
   refuse('a\\b', /backslash/);
   refuse('.app/release.json', /reserved/);
   refuse('.forgejo/workflows/ci.yml', /reserved/);
-  refuse('.github/workflows/ci.yml', /reserved/);
+  refuse('.github/CODEOWNERS', /reserved/);
+  refuse('.github/actions/x/action.yml', /reserved/);
   refuse('node_modules/left-pad/index.js', /reserved/);
   refuse('.env', /credential or registry file/);
   refuse('.npmrc', /credential or registry file/);
@@ -229,4 +230,14 @@ test('a refused push writes NOTHING — no commit AND no mirror cache entry', as
   );
   assert.equal((await log(app.domain, { reposDir, limit: 50 })).length, before.length, 'no commit');
   assert.deepEqual(getSnapshot(app.id), priorTree, 'the mirror cache is byte-unchanged');
+});
+
+test('WP-54: the app\'s own CI workflow is pushable; its k8s/ manifests pass the deploy rules', () => {
+  assert.doesNotThrow(() => assertPushable([{ path: '.github/workflows/image.yml', content: 'name: image\n' }]));
+  const ok = 'apiVersion: v1\nkind: Service\nmetadata:\n  name: app-shop\nspec:\n  ports: [{port: 80}]\n';
+  assert.doesNotThrow(() => assertPushable([{ path: 'k8s/service.yaml', content: ok }], 'shop'));
+  const np = 'apiVersion: networking.k8s.io/v1\nkind: NetworkPolicy\nmetadata:\n  name: app-shop\nspec: {podSelector: {}}\n';
+  assert.throws(() => assertPushable([{ path: 'k8s/np.yaml', content: np }], 'shop'), /NetworkPolicy/);
+  const foreign = 'apiVersion: v1\nkind: Service\nmetadata:\n  name: os-ui\n  namespace: agentic-os\n';
+  assert.throws(() => assertPushable([{ path: 'k8s/svc.yaml', content: foreign }], 'shop'), /namespace/);
 });

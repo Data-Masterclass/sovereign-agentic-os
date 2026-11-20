@@ -14,6 +14,8 @@ import {
   IMAGE_BUILDING_NOTE,
 } from './review.ts';
 import type { RunnerK8s } from './runner.ts';
+import { appDeployFiles } from './native-deploy.ts';
+import { __setAppProjectGitForTests, __setAppTreeReaderForTests } from './git-commit.ts';
 import { decide, listApprovals, __resetApprovals } from '@core/policy/approvals';
 
 /**
@@ -102,7 +104,7 @@ test('RECONCILE: no-op when the approval is still pending (stays in review)', as
  * Deployment starts as 404 (`absent`) and — after a re-provision (POST-create) —
  * reports a running pod, exactly like a healed transient-unreachable orphan.
  */
-const HEAL_OPTS = { namespace: 'agentic-apps', ingressClass: 'nginx', tlsIssuer: 'letsencrypt-prod' };
+const HEAL_OPTS = { namespace: 'agentic-apps', registry: 'registry.example.com/sovereign-os-apps' };
 
 /** A stateful mock: the Deployment is ABSENT until it is POSTed, then RUNNING. */
 function healMockK8s(depPath: string) {
@@ -133,18 +135,23 @@ test('SELF-HEAL: a live app whose runner is ABSENT is re-provisioned on status p
 
   const depPath = `/apis/apps/v1/namespaces/${HEAL_OPTS.namespace}/deployments/app-${app.slug}`;
 
-  // NIGHT-2 S2 — FAIL CLOSED FIRST: with no published image the heal provisions NOTHING and
-  // says why, instead of serving the chart's `traefik/whoami:latest` on the customer's host.
-  {
-    const { client: noImage, calls: noImageCalls } = healMockK8s(depPath);
-    const out = await reconcileDeployStatus(appId, creator, { ...HEAL_OPTS, k8s: noImage });
-    assert.ok(!noImageCalls.some((c) => c.method === 'POST' && c.path.endsWith('/deployments')), 'no Deployment is created without an image');
-    assert.match(String(out.status.detail ?? ''), /no image reference is set/, 'the reason is said out loud');
+  // WP-54 — FAIL CLOSED FIRST: with no k8s/ manifests committed the heal provisions NOTHING and
+  // says why; the OS never builds a Deployment of its own.
+  __setAppProjectGitForTests(true);
+  if (!app.domain) { app.domain = 'sales'; await persistApp(app); }
+  __setAppTreeReaderForTests(async () => ({ files: [{ path: 'Dockerfile', content: 'FROM x\n' }], sha: 'f00d', truncated: false }));
+  try {
+    const { client: noManifests, calls: noManifestCalls } = healMockK8s(depPath);
+    const out = await reconcileDeployStatus(appId, creator, { ...HEAL_OPTS, k8s: noManifests });
+    assert.ok(!noManifestCalls.some((c) => c.method === 'POST' && c.path.endsWith('/deployments')), 'no Deployment is created without committed manifests');
+    assert.match(String(out.status.detail ?? ''), /k8s\//, 'the reason is said out loud');
+  } finally {
+    __setAppTreeReaderForTests(null);
   }
 
-  // With the image the OPERATOR published, the heal does its job.
-  app.runImage = 'registry.example.com/apps/self-heal:latest';
-  await persistApp(app);
+  // With the app's committed manifests (image built and pinned by digest), the heal applies them.
+  const committed = appDeployFiles({ slug: app.slug, host: `${app.slug}.${app.domain}.apps.local`, registry: HEAL_OPTS.registry, digest: `sha256:${'c'.repeat(64)}` });
+  __setAppTreeReaderForTests(async () => ({ files: committed, sha: 'f00d', truncated: false }));
   const { client, calls } = healMockK8s(depPath);
 
   const { status } = await reconcileDeployStatus(appId, creator, { ...HEAL_OPTS, k8s: client });
@@ -156,6 +163,8 @@ test('SELF-HEAL: a live app whose runner is ABSENT is re-provisioned on status p
   app = await getAppForUser(appId, creator);
   assert.equal(app.deploy.state, 'live', 'the app stays live once the pod runs');
   assert.ok(app.deploy.previewUrl, 'a served URL is now recorded');
+  __setAppTreeReaderForTests(null);
+  __setAppProjectGitForTests(null);
 });
 
 test('SELF-HEAL: offline cluster (status 0) is NOT healed — stays honestly pending', async () => {

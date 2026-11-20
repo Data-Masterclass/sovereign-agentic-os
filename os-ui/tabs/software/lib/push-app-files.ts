@@ -29,6 +29,8 @@ import { getEditableAppForUser, serveModeOf, type App } from '@tabs/software/lib
 import { commitToApp } from '@tabs/software/lib/server';
 import type { ScaffoldFile } from '@tabs/software/lib/model';
 import type { AppCommitOutcome } from '@tabs/software/lib/git-commit';
+import { config } from '@core/kernel/config';
+import { validateAppDeployFile, isAppDeployPath } from '@tabs/software/lib/native-deploy';
 import { parseAppActions, type ActionParseIssue } from '@tabs/software/lib/app-actions';
 
 export type PushAppFilesInput = {
@@ -71,7 +73,7 @@ function bad(message: string): never {
  * through), no NUL, no absolute Windows drive. `package.json` may not introduce lifecycle
  * SCRIPTS, because a scaffold's `npm ci` would run them — an app pushes source, not build hooks.
  */
-export function assertPushable(files: ScaffoldFile[]): void {
+export function assertPushable(files: ScaffoldFile[], slug?: string): void {
   if (files.length === 0) bad('push_app_files needs at least one file ({ path, content }).');
   if (files.length > MAX_PUSH_FILES) bad(`A push may carry at most ${MAX_PUSH_FILES} files; this one has ${files.length}.`);
   let total = 0;
@@ -92,7 +94,10 @@ export function assertPushable(files: ScaffoldFile[]): void {
     if (seen.has(p)) bad(`'${p}' appears twice in this push; send each file once.`);
     seen.add(p);
     const lower = p.toLowerCase();
-    const forbidden = FORBIDDEN_PREFIXES.find((pre) => lower === pre.slice(0, -1) || lower.startsWith(pre));
+    // WP-54: the app's OWN image workflow (`.github/workflows/*.yml`) is native build code that runs
+    // where the app folder is a repository on a forge; the rest of `.github/` stays reserved.
+    const ciWorkflow = /^\.github\/workflows\/[^/]+\.ya?ml$/.test(lower);
+    const forbidden = ciWorkflow ? undefined : FORBIDDEN_PREFIXES.find((pre) => lower === pre.slice(0, -1) || lower.startsWith(pre));
     if (forbidden) {
       bad(
         `'${p}' is not pushable: '${forbidden}' is reserved. ` +
@@ -109,6 +114,10 @@ export function assertPushable(files: ScaffoldFile[]): void {
     total += bytes;
     if (total > MAX_PUSH_BYTES) bad(`This push is over ${MAX_PUSH_BYTES / (1024 * 1024)} MiB in total; split it.`);
     if (lower === 'package.json') assertNoLifecycleScripts(p, f.content);
+    if (slug) {
+      const deployIssue = validateAppDeployFile({ path: `apps/${slug}/${p}`, content: f.content }, config.softwareImageRegistry);
+      if (deployIssue && isAppDeployPath(`apps/${slug}/${p}`)) bad(deployIssue);
+    }
   }
 }
 
@@ -189,7 +198,7 @@ export async function pushAppFiles(input: PushAppFilesInput, user: CurrentUser):
   // writes the mirror cache even when the git commit throws, so a tree refused downstream would
   // otherwise still land in the cache and come back from `read_app_files` as if it had been
   // accepted. Refuse first, write nothing.
-  assertPushable(files);
+  assertPushable(files, app.slug);
   const message = String(input.message ?? '').trim() || `push ${files.length} file${files.length === 1 ? '' : 's'}`;
 
   const { app: after, step, git } = await commitToApp(app.id, user, files, message, {

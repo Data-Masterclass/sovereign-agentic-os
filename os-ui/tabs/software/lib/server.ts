@@ -7,6 +7,7 @@ import {
   getEditableAppForUser,
   persistApp,
   templateFiles,
+  seedDeployFiles,
   withStatus,
   GOVERNED_FRONTEND_TEMPLATES,
   type App,
@@ -112,7 +113,9 @@ async function priorTreeForCommit(app: App, files: ScaffoldFile[]): Promise<Scaf
     );
   }
 
-  const template = templateFiles(app.template, app.name, app.slug);
+  // WP-54: an app seeded with native deploy files gets them back from the same generator.
+  const seededDeploy = seedDeployFiles(app.slug, app.subdomain).filter((f) => app.repo.seeded.includes(f.path));
+  const template = [...templateFiles(app.template, app.name, app.slug), ...seededDeploy];
   const have = new Set([...template, ...files].map((f) => f.path));
   const missing = app.repo.seeded.filter((p) => !have.has(p));
   if (missing.length > 0) {
