@@ -19,7 +19,7 @@
 #   asks for v1 fails loudly rather than loading CDLA-licensed weights.
 #
 # Licences of every weight in the image: components/docling/UPSTREAM.md.
-# Build: docker build -t ghcr.io/data-masterclass/sovereign-os/docling:1.38.2-1 images/extensions/docling
+# Build: docker build -t ghcr.io/aborek/sovereign-os/docling:1.38.2-1 images/extensions/docling
 ARG DOCLING_SERVE_IMAGE=quay.io/docling-project/docling-serve-cpu:v1.38.2@sha256:7a480a1604fa3b42efeddc7db9527690d9f9bc903226136013e2bfe6b1a4dfb0
 FROM ${DOCLING_SERVE_IMAGE}
 

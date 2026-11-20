@@ -6,7 +6,7 @@ Upstream, unmodified. Nothing in this folder is ours — see the rule in `compon
 - **Source:** https://github.com/docling-project/docling-serve (service), https://github.com/docling-project/docling (library)
 - **Pinned as:** base image `quay.io/docling-project/docling-serve-cpu:v1.38.2@sha256:7a480a1604fa3b42efeddc7db9527690d9f9bc903226136013e2bfe6b1a4dfb0`
   (release v1.38.2, published 2026-10-27 — the latest release on 2026-11-20; multi-arch manifest list).
-- **Deployed as:** our derived image `ghcr.io/data-masterclass/sovereign-os/docling:1.38.2-<n>`,
+- **Deployed as:** our derived image `ghcr.io/aborek/sovereign-os/docling:1.38.2-<n>`,
   built from `images/extensions/docling/Dockerfile` (`FROM` the pin above). It adds model weights
   and removes one set; it changes no upstream code.
 
