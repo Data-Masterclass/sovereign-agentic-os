@@ -16,12 +16,12 @@ export const dataQueryTools: McpTool[] = [
   {
     name: 'query_data',
     description:
-      'Run a read-only SQL query over the governed Iceberg marts (Trino). OPA-authorized on your domain and Langfuse-audited, exactly like the UI data tool.',
+      'Run a read-only SQL query over the governed Iceberg marts. The SQL runs on Trino, so write Trino SQL (not PostgreSQL or T-SQL): e.g. listagg(x, \', \') WITHIN GROUP (ORDER BY x) for string aggregation, LIMIT n, and the fully qualified table name from get_dataset → `queryable.fqn`. OPA-authorized on your domain and Langfuse-audited, exactly like the UI data tool. A Trino SQL mistake returns code `sql_error` with a hint.',
     minRole: 'creator',
     tab: 'data',
     inputSchema: {
       type: 'object',
-      properties: { sql: { type: 'string', description: 'A read-only SQL statement.' } },
+      properties: { sql: { type: 'string', description: 'One read-only statement in Trino SQL.' } },
       required: ['sql'],
     },
     // C7 — the typed payload the Ask-the-OS drawer renders and an external MCP client

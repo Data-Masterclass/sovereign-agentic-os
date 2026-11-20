@@ -5,8 +5,9 @@
  * USER STORY: As a viewer I want a metric's number computed over the gold mart under my own identity,
  *             with the SQL shown, and no number at all during an outage, so that every value is real.
  * ARCHITECTURE:
- *   - Server-only. `exploreMetric` compiles the slice (`../explorer`), picks the tier-aware gold table
- *     (personal lane or domain schema) and runs it via `queryRun` as the delegated token's subject.
+ *   - Server-only. `exploreMetric` compiles the slice (`../explorer`), resolves the physical table
+ *     through `builtLayerFqn` — the SAME resolver behind `get_dataset.queryable` — and runs it via
+ *     `queryRun` as the delegated token's subject.
  *   - Labels each result `live (sql)`, `offline-mock` or `unavailable`. The hash-seeded mock is used
  *     only where `offlineMockAllowed()`; elsewhere an unreachable Trino returns no rows.
  *   - Adds loud warnings for dropped slice members, query-tool truncation and bucket-based windows.
@@ -19,7 +20,7 @@ import { queryRun } from '@core/infra/governed';
 import { routeForTable } from '@core/infra/trino-source';
 import { propagate, type DelegatedToken } from '@core/kernel/identity';
 import type { Dataset, Measure } from '@tabs/data/lib/index';
-import { personalSchema, domainSchema, physicalSlug } from '@tabs/data/lib/store-fqn';
+import { builtLayerFqn } from '@tabs/data/lib/store';
 import {
   type ExploreSpec,
   type Granularity,
@@ -56,19 +57,26 @@ function metricsMustBeLive(): boolean {
 }
 
 /**
- * The TIER-AWARE physical gold FQN a metric read targets — the linchpin of personal-dataset
- * metrics (metrics→Trino migration, Phase 1). A PERSONAL dataset (tier 'dataset') has its gold
- * ONLY in the owner's private lane (`iceberg.personal_<owner>.gold_<slug>`); a governed
- * asset/product has it in the domain schema (`iceberg.<domain>.gold_<slug>`). The read runs
- * under the delegated token's SUBJECT (R3): for a personal
- * dataset that subject IS the owner, so Trino/OPA's `is_owned_personal` grants the private
- * lane; for a governed dataset the subject's groups carry the domain membership OPA gates on.
- * TIER, not ownership, decides the schema — a governed dataset's owner still reads the shared
- * domain mart, exactly as every other viewer does (and as the pre-migration preview did).
+ * The physical table a metric read targets, for THIS viewer. It is resolved by `builtLayerFqn`,
+ * the one resolver that also produces `get_dataset.queryable` (and preview, profile and Talk), so
+ * a metric, a dashboard panel and `query_data` on `queryable.fqn` always name the same table.
+ *
+ * There used to be a second derivation here (tier → `personal_<owner>` or `<domain>` schema). It
+ * disagreed with the dataset resolver whenever a domain-tier dataset's Gold lives in its owner's
+ * lane: the metric compiled `iceberg.<domain>.gold_<slug>` while `queryable.fqn` (and the real
+ * table) was `iceberg.personal_<owner>.gold_<slug>`, so Trino answered SCHEMA_NOT_FOUND.
+ *
+ * The viewer is the delegated token's SUBJECT (R3) — the identity the query also runs as, so the
+ * FQN's schema and the Trino user agree and Trino/OPA apply that viewer's row filters and masks.
  */
-function goldReadTarget(dataset: Dataset, token: DelegatedToken): string {
-  const schema = dataset.tier === 'dataset' ? personalSchema(dataset.owner) : domainSchema(dataset.domain);
-  return `iceberg.${schema}.gold_${physicalSlug(dataset)}`;
+function metricReadTarget(dataset: Dataset, token: DelegatedToken): string {
+  const resolved = builtLayerFqn(dataset, { id: token.sub, domains: token.domains, role: token.role }, 'gold');
+  if (!resolved) {
+    const e = new Error(`“${dataset.name}” has no built layer to compute a metric from yet — build its Gold first.`) as Error & { status?: number };
+    e.status = 409;
+    throw e;
+  }
+  return resolved.fqn;
 }
 
 /**
@@ -196,12 +204,12 @@ export async function exploreMetric(
       : {}),
   };
   if (live) {
-    // THE read path: compute the number as ONE governed Trino SELECT over the TIER-AWARE
-    // physical gold mart, under the viewer's delegated identity (R3 — Trino/OPA row/column
+    // THE read path: compute the number as ONE governed Trino SELECT over the physical table
+    // `get_dataset.queryable` names for this viewer, under the viewer's delegated identity (R3 — Trino/OPA row/column
     // security). Serves saved AND unsaved metrics alike, so a personal-dataset metric (read
     // AS its owner from the personal lane) works. Honestly labelled 'live (sql)'.
     const identities = propagate(token); // throws if the token isn't user-delegated (R2/R3)
-    const readTarget = goldReadTarget(dataset, token);
+    const readTarget = metricReadTarget(dataset, token);
     const sql = previewTrinoSql(dataset, measure, spec, readTarget);
     if (!sql) {
       // No faithful SQL form for this slice. A rolling-window / running-total measure serves
@@ -220,9 +228,9 @@ export async function exploreMetric(
         warning: refusal.reason,
       };
     }
-    // Run AS the delegated token's SUBJECT (R3 — the viewer's uid). For a personal dataset the
-    // subject owns the `personal_<uid>` schema (OPA `is_owned_personal`); for a governed
-    // dataset the subject's groups carry the domain membership OPA gates the domain mart on.
+    // Run AS the delegated token's SUBJECT (R3 — the viewer's uid). When the resolved table is
+    // in the viewer's own `personal_<uid>` lane the subject owns it (OPA `is_owned_personal`);
+    // otherwise the subject's groups carry the domain membership OPA gates the domain mart on.
     const result = await queryRun(sql, identities.trino.user, routeForTable(readTarget, 'metrics', [dataset.domain]));
     return {
       ...base,
