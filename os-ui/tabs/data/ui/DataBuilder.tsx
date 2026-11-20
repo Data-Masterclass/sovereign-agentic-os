@@ -555,7 +555,8 @@ export default function DataBuilder({
   // unknown gate must not render as a green one.
   const [gateUnknown, setGateUnknown] = useState(false);
   const [shareErr, setShareErr] = useState('');
-  const [showDataVersions, setShowDataVersions] = useState(false);
+  // `?panel=versions` (the Monitoring detail's link) opens the Versions panel directly.
+  const [showDataVersions, setShowDataVersions] = useState(() => typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('panel') === 'versions');
   const [shareBusy, setShareBusy] = useState(false);
 
   const load = useCallback(async () => {

@@ -135,7 +135,32 @@ export type VersionDeps = {
     principal: string; uid: string; role: string; domains: string[];
     schema: string; table: string; kind: 'tag' | 'branch'; name: string; snapshotId: string;
   }): Promise<void>;
+  /** The OPA WRITE decision (`agentic.authz.data_version_write`); false refuses before any write. */
+  authorizeWrite(input: VersionWriteInput): Promise<boolean>;
 };
+
+/** The facts OPA decides a version write on: who acts, and the dataset's tier, owner and domain. */
+export type VersionWriteInput = {
+  action: 'data.version.write';
+  actor: { id: string; role: string; domains: string[] };
+  dataset: { id: string; tier: string; owner: string; domain: string };
+};
+
+export function versionWriteInput(d: Dataset, editor: VersionViewer & { role: string }): VersionWriteInput {
+  return {
+    action: 'data.version.write',
+    actor: { id: editor.id, role: editor.role, domains: [...editor.domains] },
+    dataset: { id: d.id, tier: d.tier, owner: d.owner, domain: d.domain },
+  };
+}
+
+/** A Domain or Company dataset is restored or tagged by a domain_admin of its domain or an admin
+ *  (the My -> Domain promotion ladder); a personal one by its owner. OPA decides; this only asks. */
+async function requireVersionWrite(d: Dataset, editor: VersionViewer & { role: string }, deps: VersionDeps): Promise<void> {
+  if (await deps.authorizeWrite(versionWriteInput(d, editor))) return;
+  const who = d.tier === 'dataset' ? 'its owner' : `a domain admin of ${d.domain} or an admin`;
+  throw new VersionTableError('forbidden', `Only ${who} may restore or name versions of “${d.name}”. Ask them, or request it through Governance.`, { datasetId: d.id, tier: d.tier });
+}
 
 export type DatasetVersion = SnapshotRow & { current: boolean; refs: { name: string; type: 'TAG' | 'BRANCH' }[] };
 
@@ -209,6 +234,7 @@ export async function rollbackVersion(
 ): Promise<{ datasetId: string; table: string; current: string }> {
   const t = resolveVersionTable(d, editor, all, { layer: input.layer, intent: 'write' });
   const id = snapshotId(input.snapshotId);
+  await requireVersionWrite(d, editor, deps);
   const known = snapshotRows((await deps.query(snapshotsSql(t.fqn), t.principal, t.fqn)).rows);
   if (!known.some((s) => s.snapshotId === id)) {
     throw new VersionTableError('not_built', `snapshot ${id} is not a version of ${t.fqn} (it may have expired)`, { table: t.fqn, snapshotId: id });
@@ -228,6 +254,7 @@ export async function nameVersion(
   const id = snapshotId(input.snapshotId);
   const name = refName(input.name);
   const kind = input.kind === 'branch' ? 'branch' : 'tag';
+  await requireVersionWrite(d, editor, deps);
   const [, schema, table] = t.fqn.split('.');
   const who = identityFor(editor, t);
   await deps.createRef({ principal: who.principal, uid: who.uid, role: who.role, domains: who.domains, schema, table, kind, name, snapshotId: id });

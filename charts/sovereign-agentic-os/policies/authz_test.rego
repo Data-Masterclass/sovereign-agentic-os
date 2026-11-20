@@ -144,3 +144,41 @@ test_decision_deny if {
 		with data.requires_approval as []
 	r == {"allow": false, "effect": "deny", "reason": "not granted", "principal": "nobody", "tool": "query"}
 }
+
+# ---- WP-37: data version writes (restore / tag / branch) ----
+vw(actor, ds) := {"action": "data.version.write", "actor": actor, "dataset": ds}
+
+asset_sales := {"id": "ds_a", "tier": "asset", "owner": "maya", "domain": "sales"}
+
+test_version_write_owner_of_personal_dataset if {
+	data_version_write with input as vw({"id": "lena", "role": "creator", "domains": ["sales"]}, {"id": "ds_p", "tier": "dataset", "owner": "lena", "domain": "sales"})
+}
+
+test_version_write_personal_is_owner_only if {
+	# negative twin: not even an admin or the domain's admin restores someone's personal lane
+	not data_version_write with input as vw({"id": "boss", "role": "admin", "domains": ["sales"]}, {"id": "ds_p", "tier": "dataset", "owner": "lena", "domain": "sales"})
+	not data_version_write with input as vw({"id": "dina", "role": "domain_admin", "domains": ["sales"]}, {"id": "ds_p", "tier": "dataset", "owner": "lena", "domain": "sales"})
+}
+
+test_version_write_domain_admin_of_domain_allowed if {
+	data_version_write with input as vw({"id": "dina", "role": "domain_admin", "domains": ["sales"]}, asset_sales)
+	data_version_write with input as vw({"id": "dina", "role": "domain_admin", "domains": ["sales"]}, object.union(asset_sales, {"tier": "product"}))
+}
+
+test_version_write_admin_allowed if {
+	data_version_write with input as vw({"id": "boss", "role": "admin", "domains": []}, asset_sales)
+}
+
+test_version_write_builder_refused if {
+	# negative twin: a builder of the domain, even the dataset's owner, only files a request
+	not data_version_write with input as vw({"id": "maya", "role": "builder", "domains": ["sales"]}, asset_sales)
+	not data_version_write with input as vw({"id": "lena", "role": "creator", "domains": ["sales"]}, asset_sales)
+}
+
+test_version_write_other_domain_admin_refused if {
+	not data_version_write with input as vw({"id": "fred", "role": "domain_admin", "domains": ["finance"]}, asset_sales)
+}
+
+test_version_write_other_action_refused if {
+	not data_version_write with input as {"action": "data.read", "actor": {"id": "boss", "role": "admin", "domains": []}, "dataset": asset_sales}
+}

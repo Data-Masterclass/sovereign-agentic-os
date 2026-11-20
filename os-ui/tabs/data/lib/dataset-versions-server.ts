@@ -28,8 +28,9 @@ import {
 
 const SURFACE = 'data-versions';
 
-function depsFor(user: Principal): VersionDeps {
+function depsFor(user: Principal, authorizeWrite: VersionDeps['authorizeWrite'] = async () => false): VersionDeps {
   return {
+    authorizeWrite,
     query: async (sql, principal, fqn) => {
       const r = await queryRun(sql, principal, routeForTable(fqn, SURFACE, user.domains));
       return { rows: r.rows, columns: r.columns };
@@ -58,14 +59,18 @@ export function diffDatasetDataLive(
   return diffVersions(getDataset(id, user), user, everyDataset(), depsFor(user), input);
 }
 
-/** Restore: make an earlier snapshot current (edit-scoped). */
-export function rollbackDatasetLive(id: string, user: Principal, input: { snapshotId: unknown; layer?: Layer }) {
-  return rollbackVersion(requireDatasetEditable(id, user), user, everyDataset(), depsFor(user), input);
+/** Restore: make an earlier snapshot current. `authorizeWrite` is the caller's OPA write decision
+ *  (`authorize(…, { rule: 'data_version_write' })`); it is required, and asked before any write. */
+export function rollbackDatasetLive(
+  id: string, user: Principal, input: { snapshotId: unknown; layer?: Layer }, authorizeWrite: VersionDeps['authorizeWrite'],
+) {
+  return rollbackVersion(requireDatasetEditable(id, user), user, everyDataset(), depsFor(user, authorizeWrite), input);
 }
 
-/** Name a version as a tag (kept by every expiry) or a branch (edit-scoped). */
+/** Name a version as a tag (kept by every expiry) or a branch; same OPA write decision as restore. */
 export function nameDatasetVersionLive(
   id: string, user: Principal, input: { snapshotId: unknown; name: unknown; kind?: 'tag' | 'branch'; layer?: Layer },
+  authorizeWrite: VersionDeps['authorizeWrite'],
 ) {
-  return nameVersion(requireDatasetEditable(id, user), user, everyDataset(), depsFor(user), input);
+  return nameVersion(requireDatasetEditable(id, user), user, everyDataset(), depsFor(user, authorizeWrite), input);
 }

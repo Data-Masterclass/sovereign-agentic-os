@@ -18,6 +18,7 @@ import type { McpTool } from '@core/mcp/server';
 import { P, fail, str } from '@core/mcp/write-common';
 import type { Layer } from '@tabs/data/lib/dataset-schema';
 import { datasetVersionsLive, diffDatasetDataLive } from '@tabs/data/lib/dataset-versions-server';
+import { listLegacyDatasetVersions } from '@tabs/data/lib/legacy-versions';
 
 const LAYER = { type: 'string', enum: ['bronze', 'silver', 'gold'], description: 'Medallion layer; default: the layer the dataset is served from.' } as const;
 const layerOf = (v: unknown): Layer | undefined => (v === 'bronze' || v === 'silver' || v === 'gold' ? v : undefined);
@@ -37,11 +38,19 @@ export const datasetVersionReadTools: McpTool[] = [
       'List the DATA versions of a dataset: its Iceberg table’s snapshots, newest first, each with its commit time, operation, row counts and the tags/branches on it; `current` is the snapshot the table reads now. Read as YOU from the table’s own `$snapshots` and `$refs` — the OS stores no version record. Before: get_dataset. After: diff_dataset_data, rollback_dataset_version, tag_dataset_version. For the dataset’s DEFINITION history use get_history/get_version/diff_versions (git). Refusals: `shared_table` when another dataset (archived included) maps to the same table — its history is not this dataset’s alone; `not_built` when there is no table yet.',
     inputSchema: {
       type: 'object',
-      properties: { datasetId: { type: 'string', description: 'Dataset id.' }, layer: LAYER },
+      properties: {
+        datasetId: { type: 'string', description: 'Dataset id.' },
+        layer: LAYER,
+        legacy: { type: 'boolean', description: 'Also return `legacy`: the dataset.yaml snapshots the OS kept before versions became Iceberg snapshots (read-only).' },
+      },
       required: ['datasetId'],
-      examples: [{ datasetId: 'ds_ab12cd' }, { datasetId: 'ds_ab12cd', layer: 'silver' }],
+      examples: [{ datasetId: 'ds_ab12cd' }, { datasetId: 'ds_ab12cd', layer: 'silver' }, { datasetId: 'ds_ab12cd', legacy: true }],
     },
-    call: async (user, args) => datasetVersionsLive(id(args, 'get_dataset_versions'), P(user), layerOf(args.layer)),
+    call: async (user, args) => {
+      const datasetId = id(args, 'get_dataset_versions');
+      const versions = await datasetVersionsLive(datasetId, P(user), layerOf(args.layer));
+      return args.legacy === true ? { ...versions, legacy: await listLegacyDatasetVersions(datasetId, P(user)) } : versions;
+    },
   },
   {
     name: 'diff_dataset_data',

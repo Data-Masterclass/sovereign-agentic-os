@@ -789,13 +789,10 @@ function versionDatasetId(args: Record<string, unknown>, tool: string): string {
   if (!v) fail(`${tool} needs a \`datasetId\``, 400);
   return v;
 }
-/** OPA first (default-deny): the caller's domain principal must hold the governed data tool, the same
- *  grant `query_data` checks. The write path then re-gates schema and role (query-tool / data-runner). */
-async function requireDataToolGrant(user: Parameters<typeof P>[0]): Promise<void> {
-  const principal = user.domains[0] ?? user.id;
-  const authz = await authorize(principal, 'query');
-  if (!authz.allowed) fail(`OPA denied ${principal} → query (${authz.policy})`, 403);
-}
+/** The OPA WRITE decision for a data version (restore, tag, branch): `agentic.authz.data_version_write`
+ *  — owner for a personal dataset; domain_admin of its domain or admin for a Domain/Company one. */
+const versionWriteDecision = (user: Parameters<typeof P>[0]) => async (input: Record<string, unknown>): Promise<boolean> =>
+  (await authorize(`user:${user.id}`, 'data.version.write', { rule: 'data_version_write', input })).allowed;
 
 const datasetVersionWriteTools: McpTool[] = [
   {
@@ -817,8 +814,7 @@ const datasetVersionWriteTools: McpTool[] = [
     call: async (user, args) => {
       const datasetId = versionDatasetId(args, 'rollback_dataset_version');
       getDataset(datasetId, P(user)); // visibility first: an absent id is not_found, an unseen one forbidden
-      await requireDataToolGrant(user);
-      return rollbackDatasetLive(datasetId, P(user), { snapshotId: args.snapshotId, layer: versionLayer(args.layer) });
+      return rollbackDatasetLive(datasetId, P(user), { snapshotId: args.snapshotId, layer: versionLayer(args.layer) }, versionWriteDecision(user));
     },
   },
   {
@@ -842,10 +838,9 @@ const datasetVersionWriteTools: McpTool[] = [
     call: async (user, args) => {
       const datasetId = versionDatasetId(args, 'tag_dataset_version');
       getDataset(datasetId, P(user)); // visibility first: an absent id is not_found, an unseen one forbidden
-      await requireDataToolGrant(user);
       return nameDatasetVersionLive(datasetId, P(user), {
         snapshotId: args.snapshotId, name: args.name, kind: args.kind === 'branch' ? 'branch' : 'tag', layer: versionLayer(args.layer),
-      });
+      }, versionWriteDecision(user));
     },
   },
 ];
