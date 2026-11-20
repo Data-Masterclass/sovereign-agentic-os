@@ -26,6 +26,9 @@ def load(path):
     with open(path) as f:
         for d in yaml.safe_load_all(f):
             if isinstance(d, dict) and d.get('kind') and (d.get('metadata') or {}).get('name'):
+                # Helm hooks (tests, hook Jobs) are not part of `helm get manifest`: skip them.
+                if 'helm.sh/hook' in ((d['metadata'].get('annotations')) or {}):
+                    continue
                 out[(d['kind'], d['metadata']['name'])] = d
     return out
 
