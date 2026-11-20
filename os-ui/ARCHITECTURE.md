@@ -791,7 +791,10 @@ and neither are model budgets (LiteLLM owns them; the OS reads its admin API).
   and every object in it, because pg-boss's DDL (`pg-boss migrate`) runs only in the migration
   step, and every runtime pg-boss starts with `migrate: false`. Neither OS login has TRIGGER,
   TRUNCATE or CREATE on `pgboss`, so neither can attach code that would run inside a governance
-  transaction. Only a superuser can create those roles, so the
+  transaction. They also cannot write `pgboss.bam` (SQL a migrating pg-boss executes) or
+  `pgboss.version.version` (which migrations run); only pg-boss's run-time claim columns of
+  `version` stay writable (`QUEUE_LOCKDOWN_SQL`, applied after every `pg-boss migrate`).
+  `createBoss` refuses `migrate: true` / `createSchema: true` (`QueueMigrationRefusedError`). Only a superuser can create those roles, so the
   chart's `os-governance-bootstrap` hook (`postgres.governance.enabled`, off by default) does
   exactly that, from `charts/sovereign-agentic-os/files/os-governance/*.sql`, with a DEDICATED
   admin Secret (`adminSecretName`); it never runs the migrations. The template refuses to render

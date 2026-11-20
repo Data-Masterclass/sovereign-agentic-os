@@ -27,14 +27,32 @@
  *     4 (`pool.ts`). os-ui web + worker: 2 × (3 + 4) = 14, next to agent_runs' 2 × 10 = 20.
  *   - The caller owns `start()` / `stop()` and must listen for `error` (pg-boss's contract).
  */
-import { PgBoss, type WorkHandler, type WorkOptions } from 'pg-boss';
+import { PgBoss, type ConstructorOptions, type WorkHandler, type WorkOptions } from 'pg-boss';
 import { isRunWorkerProcess } from '@core/kernel/process-role';
 
 export const PGBOSS_SCHEMA = 'pgboss';
 export const PGBOSS_POOL_MAX = 3;
 
+/**
+ * Thrown when a runtime pg-boss instance is asked to migrate or create its schema. A migrating
+ * instance runs pg-boss's async-migration commands (`pgboss.bam`) and DDL; that happens only in
+ * the migration Job (`installQueueSchema`, as the owner), never in os-ui (verifier N2).
+ */
+export class QueueMigrationRefusedError extends Error {
+  readonly code = 'queue_migration_refused';
+  constructor(option: string) {
+    super(`createBoss: ${option} is refused at run time; pg-boss migrates only in the migration Job (installQueueSchema)`);
+    this.name = 'QueueMigrationRefusedError';
+  }
+}
+
+/** Options a runtime instance may set. Schema, connection and the no-DDL flags are fixed here. */
+export type RuntimeBossOptions = Pick<ConstructorOptions, 'migrate' | 'createSchema'>;
+
 /** `databaseUrl` is the queue login's URL (DML only on `pgboss`), never the owner's. */
-export function createBoss(databaseUrl: string): PgBoss {
+export function createBoss(databaseUrl: string, options: RuntimeBossOptions = {}): PgBoss {
+  if (options.migrate === true) throw new QueueMigrationRefusedError('migrate: true');
+  if (options.createSchema === true) throw new QueueMigrationRefusedError('createSchema: true');
   const connectionString = databaseUrl.trim();
   if (!connectionString) throw new Error('createBoss: no database URL');
   const worker = isRunWorkerProcess();

@@ -20,7 +20,9 @@ schema, `pgboss`, of the `os_governance` database, by pg-boss's own CLI (`pg-bos
 https://github.com/timgit/pg-boss/blob/12.38.2/docs/cli.md) run AS THE MIGRATION OWNER in the
 migration step only, so the owner owns the schema and every object in it. Every runtime instance
 starts with `migrate: false`, `createSchema: false` and `persistQueueStats: false` (no DDL at run
-time); the queue login and the OS's runtime login have DML only, never TRIGGER, TRUNCATE or CREATE. Own pool `max` 3; workers,
+time); the queue login and the OS's runtime login have DML only, never TRIGGER, TRUNCATE or CREATE,
+and no write at all to `bam` or to `version.version` (only the run-time claim columns `cron_on`,
+`bam_on`, `flow_on`, `reindex_on`, `monitor_backoff_on`, read from 12.38.2 `dist/plans.js`). Own pool `max` 3; workers,
 maintenance and cron only in the worker process. The OS does not write to that schema.
 The behaviours the design relies on are proven against the real `postgres:17` image in
 `os-ui/core/adapters/postgres/pgboss.it.ts` and `install.it.ts`.

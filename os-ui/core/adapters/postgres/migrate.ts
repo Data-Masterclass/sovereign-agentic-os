@@ -30,6 +30,7 @@ import { execFile } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
+import pg from 'pg';
 import { PGBOSS_SCHEMA } from './boss.ts';
 
 const run = promisify(execFile);
@@ -83,4 +84,33 @@ export async function installQueueSchema(databaseUrl: string): Promise<void> {
     const e = err as { stdout?: string; stderr?: string; message: string };
     throw new Error(`pg-boss migrate failed: ${e.stderr || e.stdout || e.message}`);
   }
+  const c = new pg.Client({ connectionString: databaseUrl });
+  await c.connect();
+  try {
+    await c.query(QUEUE_LOCKDOWN_SQL);
+  } finally {
+    await c.end();
+  }
 }
+
+/**
+ * Applied by the owner after every `pg-boss migrate` (verifier N2). Two pg-boss tables carry
+ * content that a MIGRATING pg-boss instance acts on as the owner:
+ *   - `bam` holds SQL text (`command`) that pg-boss's async-migration runner executes. Only the
+ *     owner's migration writes it (`INSERT INTO … bam` exists only in pg-boss's migration and
+ *     partitioned-queue plans, both DDL the OS logins cannot run anyway), so the OS logins keep
+ *     SELECT only.
+ *   - `version.version` decides which migrations run. At run time pg-boss only stamps its interval
+ *     claims there — `cron_on`, `bam_on`, `flow_on`, `reindex_on` (`trySetTimestamp`) and
+ *     `monitor_backoff_on` — read from pg-boss 12.38.2 `dist/plans.js`. So the OS logins get
+ *     UPDATE on exactly those columns and no INSERT / DELETE.
+ * Idempotent; re-applied after each migrate because a pg-boss migration may recreate a table.
+ */
+export const QUEUE_LOCKDOWN_SQL = `
+  REVOKE INSERT, UPDATE, DELETE ON ${PGBOSS_SCHEMA}.bam FROM os_governance_app, os_governance_jobs;
+  GRANT SELECT ON ${PGBOSS_SCHEMA}.bam TO os_governance_app, os_governance_jobs;
+  REVOKE INSERT, UPDATE, DELETE ON ${PGBOSS_SCHEMA}.version FROM os_governance_app, os_governance_jobs;
+  GRANT SELECT ON ${PGBOSS_SCHEMA}.version TO os_governance_app, os_governance_jobs;
+  GRANT UPDATE (cron_on, bam_on, flow_on, reindex_on, monitor_backoff_on)
+    ON ${PGBOSS_SCHEMA}.version TO os_governance_app, os_governance_jobs;
+`;
