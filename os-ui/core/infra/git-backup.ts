@@ -12,14 +12,17 @@
  *     module never bundles; it only DROPS A MARKER: one file per repository in the queue
  *     directory shared with the sidecar (`GIT_BACKUP_QUEUE_DIR`, an emptyDir). Repeated commits
  *     coalesce into one marker.
- *   - INTERIM for the pg-boss outbox (WP-07/WP-08, not merged): the marker directory is the
- *     queue. A lost marker (pod restart) is covered by the sidecar's periodic rescan, which
+ *   - INTERIM for the pg-boss outbox: WP-07's adapter (`core/adapters/postgres/boss.ts`) is merged,
+ *     but no OS process runs a queue or a worker yet (WP-08), so the marker directory is the queue.
+ *     The swap: `send('git-bundle', { key }, { singletonKey: key })` here, consumed by the sidecar. A lost marker (pod restart) is covered by the sidecar's periodic rescan, which
  *     bundles every repository whose refs moved since its `latest` pointer.
  *   - `notifyCommitted` NEVER throws and is NEVER awaited by the commit: the write is scheduled
  *     with `setImmediate` after the commit returns; a failure is logged, not raised. With the
  *     variable unset (backups off) it does nothing.
- *   - The key is the bare repo's path under the repos root without `.git`, so any repository
- *     kind (domain today, user/platform repos from repo-layout) is covered with no change here.
+ *   - The key is the bare repo's path under the repos root without `.git`, so every repository
+ *     kind of repo-layout.ts (`domain-<d>`, `user-<token>`, `platform`) is covered with no change
+ *     here. A legacy name that is a symlink alias resolves to its canonical repo; the inventory
+ *     and the sidecar skip symlinks, so no repository is bundled twice.
  *   - `backupInventory` lists EVERY bare repository under the root (any depth up to 4) with its
  *     refs — the drill's independent "live" side, served at /api/git/backup-inventory.
  */
@@ -54,15 +57,21 @@ export function notifyCommitted(gitdir: string, opts: NotifyOptions = {}): boole
   try {
     const queue = opts.queueDir === undefined ? process.env.GIT_BACKUP_QUEUE_DIR || null : opts.queueDir;
     if (!queue) return false;
-    const key = repoKeyFor(gitdir, opts.reposDir ?? config.reposDir);
-    if (!key) return false;
+    const reposDir = opts.reposDir ?? config.reposDir;
+    if (!repoKeyFor(gitdir, reposDir)) return false;
     setImmediate(() => {
-      const file = path.join(queue, markerName(key));
+      // Resolved on the later turn: a legacy `<domain>.git` name is a symlink alias of the
+      // canonical repo (repo-layout.ts), and the bundle belongs to the canonical key only.
       fs.promises
-        .mkdir(queue, { recursive: true })
-        .then(() => fs.promises.writeFile(file, key))
+        .realpath(gitdir)
+        .then(async (real) => {
+          const key = repoKeyFor(real, await fs.promises.realpath(reposDir));
+          if (!key) throw new Error(`'${gitdir}' resolves outside the repositories root`);
+          await fs.promises.mkdir(queue, { recursive: true });
+          await fs.promises.writeFile(path.join(queue, markerName(key)), key);
+        })
         .catch((e: unknown) => {
-          console.error(`[git-backup] could not queue '${key}' for bundling (the sidecar's rescan will pick it up): ${e instanceof Error ? e.message : String(e)}`);
+          console.error(`[git-backup] could not queue '${gitdir}' for bundling (the sidecar's rescan will pick it up): ${e instanceof Error ? e.message : String(e)}`);
         });
     });
     return true;
@@ -76,12 +85,9 @@ export type InventoryRepo = { key: string; refs: Record<string, string> };
 
 function findBareRepos(root: string, depth: number, out: string[]): void {
   if (depth < 0) return;
-  let entries: fs.Dirent[];
-  try {
-    entries = fs.readdirSync(root, { withFileTypes: true });
-  } catch {
-    return;
-  }
+  // An unreadable directory is an ERROR: the drill must see "inventory unreadable", never a
+  // shorter list that would let a repository silently drop out of the comparison.
+  const entries = fs.readdirSync(root, { withFileTypes: true });
   for (const e of entries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))) {
     if (!e.isDirectory()) continue;
     const p = path.join(root, e.name);

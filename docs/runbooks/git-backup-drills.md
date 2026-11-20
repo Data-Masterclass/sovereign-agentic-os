@@ -15,8 +15,8 @@ and its credential (§1), the image is built (§2), and the values are switched 
 
 The commit never waits for the backup: the marker is written on a later turn of the event loop,
 and a failure to write it is logged, never raised. A lost marker (pod restart) is caught by the
-sidecar's full pass every `rescanSeconds`. This queue is the **interim** for the pg-boss outbox
-(WP-07/WP-08). Alerts are the **interim** for WP-05: a failed bundle or drill is a red Monitoring
+sidecar's full pass every `rescanSeconds`. This queue is the **interim** for the pg-boss outbox:
+WP-07's pg-boss adapter is merged, but no OS process runs a queue or worker yet (WP-08). Alerts are the **interim** for WP-05: a failed bundle or drill is a red Monitoring
 item and a critical alert in Monitoring, plus the log line and the Failed Job.
 
 ## 1. Owner: the bucket in STACKIT (the repository never creates cloud resources)
