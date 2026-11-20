@@ -30,6 +30,7 @@ const SK = process.env.LANGFUSE_E2E_SECRET_KEY ?? '';
 const GW = (process.env.LITELLM_URL ?? '').replace(/\/+$/, '');
 const MASTER = process.env.LITELLM_E2E_MASTER_KEY ?? '';
 const SCOPE = process.env.LITELLM_E2E_SPAN_SCOPE ?? 'full';
+if (SCOPE !== 'full' && SCOPE !== 'llm_only') throw new Error(`LITELLM_E2E_SPAN_SCOPE must be full or llm_only, got ${SCOPE}`);
 const REQUIRED = process.env.TRACING_E2E_REQUIRED === '1';
 const skip = !LF && !REQUIRED ? 'LANGFUSE_E2E_URL is not set (run scripts/tests/litellm-langfuse/run.sh)' : false;
 
@@ -99,7 +100,7 @@ test('tracing e2e: the environment names Langfuse and the gateway', { skip }, ()
   }
 });
 
-test('tracing e2e: one model call is exactly one GENERATION, nested under the app span, with call id, tokens and cost', { skip, timeout: 240_000 }, async () => {
+test(`tracing e2e: one model call is exactly one GENERATION in the app span's trace (${SCOPE === 'full' ? 'nested under it' : 'as a root'}), with call id, tokens and cost`, { skip, timeout: 240_000 }, async () => {
   const { liteLlmCaller } = await import('@core/runtime/runtime');
   const traceId = hex(16);
   const appSpanId = hex(8);
@@ -124,19 +125,25 @@ test('tracing e2e: one model call is exactly one GENERATION, nested under the ap
   assert.equal(gens.length, 1, `exactly one GENERATION per model call; trace ${traceId} has ${gens.length}:\n  ${summary}`);
   const gen = gens[0];
 
-  // Nesting: the generation's parent chain stays inside this trace and reaches the app span.
+  // Placement depends on the gateway's span scope (measured on 1.109.1; components/litellm/UPSTREAM.md):
+  //   full     — GENERATION -> the gateway request span -> the app span (nested via traceparent);
+  //   llm_only — the GENERATION is in the app span's trace (same trace id, via traceparent) but
+  //              LiteLLM sends it as a root observation: the parent link is given up by design.
   const byId = new Map(obs.map((o) => [o.id, o]));
-  const chain: string[] = [];
-  let cur: Obs | undefined = gen;
-  while (cur?.parentObservationId && chain.length < 10) {
-    chain.push(cur.parentObservationId);
-    if (cur.parentObservationId === appSpanId) break;
-    cur = byId.get(cur.parentObservationId);
-    assert.ok(cur, `the GENERATION's ancestor ${chain.at(-1)} is not in the trace (it points at a span Langfuse never received):\n  ${summary}`);
+  if (SCOPE === 'llm_only') {
+    assert.equal(gen.parentObservationId, null, `llm_only: the GENERATION is a root observation of the app span's trace:\n  ${summary}`);
+  } else {
+    const chain: string[] = [];
+    let cur: Obs | undefined = gen;
+    while (cur?.parentObservationId && chain.length < 10) {
+      chain.push(cur.parentObservationId);
+      if (cur.parentObservationId === appSpanId) break;
+      cur = byId.get(cur.parentObservationId);
+      assert.ok(cur, `the GENERATION's ancestor ${chain.at(-1)} is not in the trace (it points at a span Langfuse never received):\n  ${summary}`);
+    }
+    assert.equal(chain.at(-1), appSpanId, `the GENERATION is nested under the app span via traceparent:\n  ${summary}`);
+    assert.equal(chain.length, 2, 'full: GENERATION -> the gateway request span -> the app span');
   }
-  assert.equal(chain.at(-1), appSpanId, `the GENERATION is nested under the app span via traceparent:\n  ${summary}`);
-  if (SCOPE === 'llm_only') assert.equal(gen.parentObservationId, appSpanId, 'llm_only: the GENERATION is a direct child of the app span');
-  if (SCOPE === 'full') assert.equal(chain.length, 2, 'full: GENERATION -> the gateway request span -> the app span');
 
   // The call id the OS sent (x-litellm-call-id) is the one the gateway reports: LiteLLM OTel v2
   // puts it in the span attribute `litellm.call_id`, which Langfuse keeps under metadata.attributes.
