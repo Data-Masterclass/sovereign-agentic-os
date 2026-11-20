@@ -16,6 +16,23 @@
   key from the `docling-api-key` Secret (docling-api-key.yaml).
 */}}
 {{- $d := .Values.docling }}
+{{- /*
+  `localBuild` (an unpinned image loaded into a local kind cluster by scripts/os) must never reach
+  a real cluster. Refuse to render it together with any production signal: the STACKIT profile, an
+  enabled Ingress, or an os-ui public URL / host that is not localhost, 127.0.0.1 or *.local.
+*/}}
+{{- if $d.image.localBuild }}
+{{- $why := list }}
+{{- if eq (.Values.global.profile | default "") "stackit" }}{{ $why = append $why "global.profile=stackit" }}{{ end }}
+{{- if (.Values.ingress).enabled }}{{ $why = append $why "ingress.enabled=true" }}{{ end }}
+{{- range $name, $raw := dict "osUI.publicUrl" ((.Values.osUI).publicUrl | default "") "ingress.hosts.osUI" (((.Values.ingress).hosts).osUI | default "") }}
+{{- $h := lower (regexReplaceAll "[/:].*$" (regexReplaceAll "^[A-Za-z][A-Za-z0-9+.-]*://" (toString $raw) "") "") }}
+{{- if and $h (not (regexMatch "^(localhost|127\\.0\\.0\\.1)$|\\.local$" $h)) }}{{ $why = append $why (printf "%s=%s" $name $h) }}{{ end }}
+{{- end }}
+{{- if $why }}
+{{- fail (printf "docling.image.localBuild=true is for a local kind cluster only, but this release looks like production (%s). Remove localBuild and set docling.image.digest." (join ", " $why)) }}
+{{- end }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
