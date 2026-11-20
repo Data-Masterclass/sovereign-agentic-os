@@ -246,15 +246,17 @@ grep -q '^IMAGE_REPO_DEFAULT=ghcr.io/data-masterclass/sovereign-os$' scripts/dep
 [ "$(grep -c 'ghcr.io/data-masterclass/' values.stackit-managed.yaml)" = 1 ] \
   && grep -q '^    repository: ghcr.io/data-masterclass/sovereign-os/os-ui$' values.stackit-managed.yaml \
   && ok "the managed overlay moves os-ui and nothing else" || bad "the managed overlay moves os-ui and nothing else"
-# The exceptions are docling (WP-40) and dagster (WP-03 0.3.2): each image is only ever built by
-# build-images.yml, which pushes to the org namespace, and each is pinned by digest. Dagster is
+# The exceptions are docling (WP-40), dagster (WP-03 0.3.2) and backup-tools (WP-56, its digest
+# set by the owner when the feature is switched on): each image is only ever built by
+# build-images.yml, which pushes to the org namespace. Dagster is
 # named in its four places (user-deployment, repo-sync sidecar, webserver, daemon) and nowhere else.
 [ "$(grep -v -e '^    repository: ghcr.io/data-masterclass/sovereign-os/docling$' \
+             -e '^      repository: ghcr.io/data-masterclass/sovereign-os/backup-tools$' \
              -e '^ *repository: ghcr.io/data-masterclass/sovereign-os/dagster$' \
              -e '^ *image: ghcr.io/data-masterclass/sovereign-os/dagster:[0-9.]*@sha256:[0-9a-f]\{64\}$' \
         charts/sovereign-agentic-os/values.yaml | grep -c 'ghcr.io/data-masterclass/')" = 0 ] \
   && [ "$(grep -c 'ghcr.io/data-masterclass/sovereign-os/dagster' charts/sovereign-agentic-os/values.yaml)" = 4 ] \
-  && ok "the chart's own defaults did not move (docling and dagster excepted)" || bad "the chart's own defaults did not move (docling and dagster excepted)"
+  && ok "the chart's own defaults did not move (docling, dagster and backup-tools excepted)" || bad "the chart's own defaults did not move (docling, dagster and backup-tools excepted)"
 
 echo "== the guard and the override, driven through deploy.sh with a fake kubectl and helm"
 # deploy.sh up to (not past) `helm get manifest`: the fake helm serves the "live" values and
