@@ -29,6 +29,7 @@ import { resolveSurface } from '@tabs/software/lib/metadata';
 import { ungrantedDatasetWarningForApp } from '@tabs/software/lib/dataset-guard';
 import { getSnapshot, hydrateSnapshot } from '@tabs/software/lib/snapshot';
 import { assertNotSeeded } from '@tabs/software/lib/seeded-evidence';
+import { readAppTreeState } from '@tabs/software/lib/git-commit';
 import { deployApp, runnerStatus, type RunnerApp, type RunnerOpts, type RunnerOutcome, type RunnerStatus } from '@tabs/software/lib/runner';
 import { roleAtLeast } from '@core/kernel/session';
 import { config } from '@core/kernel/config';
@@ -131,15 +132,20 @@ function isBuilder(user: CurrentUser): boolean {
   return roleAtLeast(user.role, 'builder');
 }
 
-/** The minimal runnable shape the in-cluster runner needs, derived from an app. */
-function runnerAppFor(app: App): RunnerApp {
-  return {
-    slug: app.slug,
-    host: appHost(app),
-    runImage: app.runImage,
-    footprint: FOOTPRINT[app.template] ?? FOOTPRINT['nextjs-supabase'],
-    ...(app.domain ? { live: { repo: app.domain, id: app.id } } : {}),
-  };
+/**
+ * The runner's view of an app: its name, host and its tree AS COMMITTED IN GIT (WP-54). The
+ * deploy applies the `k8s/` manifests of that tree — never the mirror cache, never a template —
+ * so a git read failure is a refusal, not a fallback.
+ */
+async function runnerAppFor(app: App): Promise<RunnerApp> {
+  const state = await readAppTreeState(app);
+  const tree: RunnerApp['tree'] =
+    state.kind === 'tree'
+      ? state.truncated
+        ? { kind: 'failed', reason: 'the app tree is larger than one bounded read; it was not deployed from a partial tree' }
+        : { kind: 'tree', files: state.files, sha: state.sha }
+      : state;
+  return { slug: app.slug, host: appHost(app), tree };
 }
 
 /**
@@ -324,7 +330,7 @@ export async function startPreview(appId: string, user: CurrentUser): Promise<Pr
   }
 
   // Provision the real runner; reflect its outcome honestly (no fake URL offline).
-  const runner = await deployApp(runnerAppFor(app));
+  const runner = await deployApp(await runnerAppFor(app));
   applyRunnerOutcome(app, runner);
   await persistApp(app);
 
@@ -426,7 +432,7 @@ export async function requestDeploy(
     app.deploy.reviewCardId = null;
     app.deploy.releases += 1; // a routine update ships a new release/version.
     // Roll the new release onto the real runner (idempotent replace).
-    applyRunnerOutcome(app, await deployApp(runnerAppFor(app)));
+    applyRunnerOutcome(app, await deployApp(await runnerAppFor(app)));
     await persistApp(app);
     void trace({
       principal: app.mcpPrincipal,
@@ -545,7 +551,7 @@ async function applyDeployDecisionToApp(
     // pending — the go-live decision is still recorded). `state: 'live'` records the
     // DECISION; the badge says "Live" only once a URL is really served (deploy-status.ts).
     // Only an IMAGE app has a runner: a declarative or runtime app is served by the OS itself.
-    if (serveModeOf(app) === 'image') applyRunnerOutcome(app, await deployApp(runnerAppFor(app)));
+    if (serveModeOf(app) === 'image') applyRunnerOutcome(app, await deployApp(await runnerAppFor(app)));
   } else {
     app.deploy.state = 'preview'; // back to the free preview loop to fix it
     app.deploy.reviewCardId = null;
@@ -959,7 +965,7 @@ export async function reconcileDeployStatus(
   if (serveModeOf(app) !== 'image') return { app, status };
 
   if (status.phase === 'absent' && (app.deploy.state === 'live' || app.deploy.state === 'preview')) {
-    const healed = await deployApp(runnerAppFor(app), opts);
+    const healed = await deployApp(await runnerAppFor(app), opts);
     // NIGHT-2 S2: the heal can REFUSE — an `image` app with no published image provisions
     // nothing and says why, instead of serving a placeholder container on the app's own host.
     // Carry that reason onto the status the caller shows; never a silent "still absent".

@@ -218,22 +218,22 @@ test('PREVIEW: a DECLARATIVE app’s preview IS its same-origin URL — no pod i
 });
 
 test('PREVIEW: a MISSING IMAGE says so — it is never reported as a Kubernetes outage', async () => {
-  // `deployApp` catches `MissingAppImageError` and returns an explained `phase:'failed'` outcome.
-  // The note ladder keyed only on `live`, so the honest reason was discarded and the user was
-  // told the Kubernetes API was unreachable.
+  // `deployApp` refuses an app with nothing deployable (WP-54: no committed k8s/ manifests, or an
+  // image not built yet) with an explained `phase:'failed'` outcome. The note ladder keyed only on
+  // `live`, so the honest reason was discarded and the user was told the API was unreachable.
   const { previewNoteForRunner, PREVIEW_PENDING_NOTE } = await import('./review.ts');
   const { deployApp } = await import('./runner.ts');
 
-  const outcome = await deployApp({ slug: 'no-image', host: 'no-image.sales.apps.local', footprint: 'small' });
+  const outcome = await deployApp({ slug: 'no-image', host: 'no-image.sales.apps.local', tree: { kind: 'none' } });
   assert.equal(outcome.ok, false, 'fail-closed: nothing was provisioned');
   assert.equal(outcome.phase, 'failed');
-  assert.match(outcome.detail, /no image reference is set/i, 'and the runner says why');
+  assert.match(outcome.detail, /k8s\//, 'and the runner says why');
 
   const app = await createApp(creator, { name: 'Image preview', template: 'sovereign-app', kind: 'code' });
   const { runnerNote } = await startPreview(app.id, creator);
   assert.ok(runnerNote, 'there is a note');
   assert.notEqual(runnerNote, PREVIEW_PENDING_NOTE, 'and it is NOT the cluster-unreachable blurb');
-  assert.match(runnerNote ?? '', /image/i, 'it names the actual problem');
+  assert.match(runnerNote ?? '', /k8s\/|image|registry/i, 'it names the actual problem');
   assert.doesNotMatch(runnerNote ?? '', /Kubernetes API is reachable/i, 'no wrong-cause diagnosis');
 
   // A genuinely silent cluster still gets the unreachable note — the other branch is intact.

@@ -322,19 +322,15 @@ export const config = {
   appsBaseDomain: env('OS_APPS_DOMAIN', 'apps.local'),
 
   // Software — the OPTIONAL in-cluster app RUNNER (tabs/software/lib/runner.ts), for
-  // `serveMode: 'image'` apps only. Tier-1 ('spec') and Tier-2 ('runtime') apps are
-  // served by the OS itself, same-origin, with no pod and no registry: the runner is
-  // not on their path. There is NO OS image builder, so an 'image' app's image is one
-  // the OPERATOR built and published; `appImageRef` FAILS CLOSED when neither the app's
-  // `runImage` nor SOFTWARE_RUNNER_IMAGE is set, rather than serving someone else's
-  // placeholder container on a customer domain (night-2 S2 trap fix).
-  // SOFTWARE_RUNNER_IMAGE is therefore a deliberate, operator-set shared image and is
-  // EMPTY by default. Ingress class + TLS issuer MATCH the chart's tool ingress
-  // (ingress.className / ingress.tlsIssuer) so per-app hosts get a cert-manager cert
-  // exactly like the consoles. When the k8s API is unreachable the runner degrades
-  // honestly (no URL).
+  // `serveMode: 'image'` apps only. Tier-1 ('spec') and Tier-2 ('runtime') apps are served by the
+  // OS itself, same-origin, with no pod and no registry. WP-54: an 'image' app deploys its OWN
+  // committed `apps/<slug>/k8s/` manifests; the OS builds no images and generates no objects.
+  // SOFTWARE_IMAGE_REGISTRY is the registry the platform owns and keeps: an app may run only
+  // `<registry>/<slug>@sha256:<digest>`. EMPTY = not configured = every image deploy is refused.
+  // Ingress class + TLS issuer go into the SCAFFOLDED ingress.yaml (they match the chart's tool
+  // ingress). When the k8s API is unreachable the runner degrades honestly (no URL).
   softwareRunnerNamespace: env('SOFTWARE_RUNNER_NAMESPACE', 'agentic-apps'),
-  softwareRunnerImage: env('SOFTWARE_RUNNER_IMAGE', ''),
+  softwareImageRegistry: env('SOFTWARE_IMAGE_REGISTRY', '').replace(/\/+$/, ''),
   // WP-47: the PriorityClass user-app pods run in (the chart's `priorityClasses.userApps`, the
   // lowest). Empty = no field, for clusters where the chart did not create the classes.
   softwareRunnerPriorityClass: env('SOFTWARE_RUNNER_PRIORITY_CLASS', ''),
