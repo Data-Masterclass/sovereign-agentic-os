@@ -19,6 +19,17 @@ not here.
 - Configuration (`labels`, `decision_logs`): https://www.openpolicyagent.org/docs/configuration
 - REST API (`decision_id` in responses; `GET /v1/config`): https://www.openpolicyagent.org/docs/rest-api
 - Rego v1 is the default in OPA 1.x: https://www.openpolicyagent.org/docs/v0-compatibility
+- Bundles (WP-11): service + `bundles.<name>.resource`, `.manifest` `revision` and `roots`, a
+  path under a root is owned by that bundle (a `PUT /v1/data` there is refused), ETag /
+  If-None-Match → 304, `persist: true` + `persistence_directory`, HTTP long polling
+  (`polling.long_polling_timeout_seconds`, `Prefer: wait=<s>`, response
+  `Content-Type: application/vnd.openpolicyagent.bundles`):
+  https://www.openpolicyagent.org/docs/management-bundles
+- Bearer credentials for a service (`credentials.bearer.token_path`): https://www.openpolicyagent.org/docs/configuration
+- Status API (`status.service`, `bundles[<name>].active_revision`, POST `<service>/status`):
+  https://www.openpolicyagent.org/docs/management-status
+- Health API (`GET /health?bundles`: 200 only once every bundle is activated):
+  https://www.openpolicyagent.org/docs/rest-api#health-api
 
 ## Upgrade notes 1.4.2 → 1.22.4 (from the release notes)
 - Rego v1 syntax stays the default; every policy here already uses `import rego.v1`/`if`/`contains`.
