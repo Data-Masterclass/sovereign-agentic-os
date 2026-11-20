@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: Apache-2.0
+# GLUE-6 negative twin: kubeconform MUST refuse this manifest (`replicas` is a string, not an integer).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: glue6-twin
+spec:
+  replicas: "two"
+  selector:
+    matchLabels: { app: glue6-twin }
+  template:
+    metadata:
+      labels: { app: glue6-twin }
+    spec:
+      containers:
+        - name: app
+          image: registry.invalid/glue6-twin@sha256:0000000000000000000000000000000000000000000000000000000000000000

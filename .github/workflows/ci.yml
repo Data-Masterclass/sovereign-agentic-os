@@ -75,6 +75,14 @@ jobs:
         run: node scripts/check-glue.mjs
       - name: Glue-discipline negative twins
         run: node --test scripts/tests/check-glue.test.mjs
+      # GLUE-6 / GLUE-10, the component's own tool: golden generated dbt projects through `dbt parse`
+      # and `dagster definitions validate` (the chart's Dagster image, built here), the rendered
+      # policies through `opa check --strict` + `opa test` (the chart's OPA image), both chart
+      # profiles through kubeconform — then the same with the negative twins, which must FAIL.
+      - name: Generated config validated by the component's own tool (GLUE-6) + twins
+        env:
+          CI: 'true'
+        run: bash scripts/tests/validate-generated.test.sh
 
       # Langfuse web: sign-up off, and the NetworkPolicy admits only the OS's own callers.
       # Renders the chart (the dependencies were built above); CI=true turns a skip into a failure.
