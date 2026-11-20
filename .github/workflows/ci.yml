@@ -332,7 +332,7 @@ jobs:
     name: build
     runs-on: ubuntu-latest
     if: ${{ always() }}
-    needs: [test-ui, test-langgraph-pg, test-python, test-opa, helm-lint, secret-scan, validate-generated]
+    needs: [test-ui, test-langgraph-pg, test-python, test-opa, helm-lint, secret-scan, validate-generated, dagster-image]
     steps:
       - name: Every needed job succeeded (failed, cancelled or skipped fails the build)
         env:
