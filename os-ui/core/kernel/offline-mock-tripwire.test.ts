@@ -111,6 +111,8 @@ const DECIDERS = [
   'tabs/connections/lib/store.ts',
   'tabs/monitoring/lib/spend.ts',
   'tabs/files/lib/connectors-live.ts',
+  // An unlinked Files source is allowed only in the teaching flow (it would sync the fake drive).
+  'app/api/files/connectors/route.ts',
   'tabs/files/lib/embed.ts',
   'tabs/files/lib/ingest/live.ts',
   // Re-review: the identical embedder defect on the Knowledge corpus, and the app tool that

@@ -10,6 +10,7 @@ type Source = {
   id: string; provider: string; label: string; scope: string; target: string; mode: string;
   domain: string; landingSensitivity: string; initialDone: boolean; cursor: string | null;
 };
+type DriveConnection = { id: string; name: string; provider: Template['provider'] };
 type SyncResult = { cadence: string; clientMode: string; added: number; updated: number; unchanged: number };
 
 const SENS = ['public', 'internal', 'confidential', 'restricted'] as const;
@@ -17,12 +18,13 @@ const SENS = ['public', 'internal', 'confidential', 'restricted'] as const;
 export default function FilesSources({ onSynced }: { onSynced: () => void }) {
   const [sources, setSources] = useState<Source[]>([]);
   const [templates, setTemplates] = useState<Template[]>([]);
+  const [connections, setConnections] = useState<DriveConnection[]>([]);
   const [err, setErr] = useState('');
   const [results, setResults] = useState<Record<string, SyncResult>>({});
   const [busy, setBusy] = useState<string | null>(null);
 
   // connect form
-  const [draft, setDraft] = useState<{ provider: Template['provider']; scope: 'folder' | 'drive'; label: string; target: string; mode: 'copy' | 'reference'; landingSensitivity: string } | null>(null);
+  const [draft, setDraft] = useState<{ provider: Template['provider']; scope: 'folder' | 'drive'; label: string; target: string; mode: 'copy' | 'reference'; landingSensitivity: string; connectionId: string } | null>(null);
 
   const load = useCallback(async () => {
     setErr('');
@@ -32,6 +34,7 @@ export default function FilesSources({ onSynced }: { onSynced: () => void }) {
       if (!res.ok) { setErr(data.error ?? 'Failed to load sources'); return; }
       setSources(data.sources ?? []);
       setTemplates(data.templates ?? []);
+      setConnections(data.connections ?? []);
     } catch (e) { setErr((e as Error).message); }
   }, []);
   useEffect(() => { load(); }, [load]);
@@ -70,7 +73,7 @@ export default function FilesSources({ onSynced }: { onSynced: () => void }) {
       <div className="section-title">Connect a source</div>
       <div className="file-grid">
         {templates.map((t) => (
-          <button key={t.provider} className="file-card" onClick={() => setDraft({ provider: t.provider, scope: 'folder', label: '', target: '', mode: 'copy', landingSensitivity: 'internal' })}>
+          <button key={t.provider} className="file-card" onClick={() => setDraft({ provider: t.provider, scope: 'folder', label: '', target: '', mode: 'copy', landingSensitivity: 'internal', connectionId: connections.find((c) => c.provider === t.provider)?.id ?? '' })}>
             <div className="file-card-top"><span className="file-name">{t.label}</span><span className="badge ok">{t.capability}</span></div>
             <span className="file-sub">{t.detail}</span>
           </button>
@@ -80,6 +83,14 @@ export default function FilesSources({ onSynced }: { onSynced: () => void }) {
       {draft ? (
         <div className="files-preview" style={{ marginTop: 16, maxWidth: 520 }}>
           <div className="preview-title">Connect {draft.provider === 'google-drive' ? 'Google Drive' : 'OneDrive'}</div>
+          <label className="rail-group-title">Connection</label>
+          {connections.some((c) => c.provider === draft.provider) ? (
+            <select value={draft.connectionId} onChange={(e) => setDraft({ ...draft, connectionId: e.target.value })}>
+              {connections.filter((c) => c.provider === draft.provider).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          ) : (
+            <span className="hint">No {draft.provider === 'google-drive' ? 'Google Drive' : 'OneDrive'} connection yet — add and connect it in Connections first.</span>
+          )}
           <label className="rail-group-title">What to add</label>
           <div className="files-scope">
             <button className={draft.scope === 'folder' ? 'on' : ''} onClick={() => setDraft({ ...draft, scope: 'folder' })}>A folder</button>

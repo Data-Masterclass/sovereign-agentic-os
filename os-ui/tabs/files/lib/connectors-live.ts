@@ -10,6 +10,7 @@ import {
   mockClient,
 } from '@tabs/files/lib/connectors';
 import { offlineMockAllowed, refuseOfflineMock } from '@core/kernel/offline-mock';
+import { config } from '@core/kernel/config';
 
 /**
  * LIVE connector clients — real pulls against Google Drive / Microsoft Graph
@@ -125,6 +126,24 @@ function oneDrive(token: string | null): ConnectorClient {
       } catch {
         return fakeDrive('onedrive', 'the Microsoft Graph response could not be parsed.').pull(source, sinceCursor);
       }
+    },
+    // Graph `GET /me/drive/items/{id}/content` (https://learn.microsoft.com/graph/api/driveitem-get-content):
+    // a 302 to a pre-authenticated download URL, which fetch follows (dropping the bearer on the
+    // cross-origin hop, as the spec requires — the download URL carries its own short-lived grant).
+    async content(file: RemoteFile) {
+      const fail = (why: string): never => {
+        const e = new Error(`Cannot read "${file.name}" from OneDrive: ${why} Nothing was indexed for it.`) as Error & { status?: number };
+        e.status = 502;
+        throw e;
+      };
+      if (!token) return fail('the connection has no Read token.');
+      const res = await get(`https://graph.microsoft.com/v1.0/me/drive/items/${encodeURIComponent(file.remoteId)}/content`, token, 30_000);
+      if (!res || !res.ok) return fail(`Microsoft Graph answered ${res ? res.status : 'nothing (unreachable/timeout)'}.`);
+      const declared = Number(res.headers.get('content-length') ?? '0');
+      if (declared > config.uploadMaxBytes) return fail(`it is larger than the ${Math.round(config.uploadMaxBytes / 1048576)} MB limit.`);
+      const bytes = Buffer.from(await res.arrayBuffer());
+      if (bytes.length > config.uploadMaxBytes) return fail(`it is larger than the ${Math.round(config.uploadMaxBytes / 1048576)} MB limit.`);
+      return { bytes, contentType: res.headers.get('content-type') || file.mimeType || 'application/octet-stream' };
     },
   };
 }

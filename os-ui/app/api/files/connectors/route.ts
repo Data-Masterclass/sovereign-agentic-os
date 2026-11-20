@@ -6,17 +6,30 @@ import { withRoute } from '@core/kernel/route-server';
 import type { CurrentUser } from '@core/kernel/auth';
 import { requirePrincipal } from '@tabs/files/lib/server';
 import { requireUser } from '@core/kernel/auth';
-import { addSource, listSources, CONNECTOR_TEMPLATES, type Provider, type SyncMode, type SyncScope } from '@tabs/files/lib/connectors';
+import { addSource, listSources, ensureSourcesHydrated, chooseSourceConnection, CONNECTOR_TEMPLATES, type Provider, type SyncMode, type SyncScope, type SourceConnectionCandidate } from '@tabs/files/lib/connectors';
 import type { Sensitivity } from '@tabs/files/lib/asset-schema';
-import { getConnectionForUser } from '@tabs/connections/lib/index';
+import { listConnectionsForUser } from '@tabs/connections/lib/index';
+import { offlineMockAllowed } from '@core/kernel/offline-mock';
 import { providerForTemplate, filesProviderFor } from '@core/auth/providers';
+import type { ConnectionTemplateKey } from '@tabs/connections/lib/schema';
 
 export const dynamic = 'force-dynamic';
 
 /** Connected drives: GET lists the user's sources + the available Read templates;
  *  POST connects a new source (a folder or whole drive, copy or reference). */
+/** The caller's OWN personal drive connections, as candidates a source can sync with. */
+async function driveConnections(user: CurrentUser): Promise<SourceConnectionCandidate[]> {
+  const out: SourceConnectionCandidate[] = [];
+  for (const c of await listConnectionsForUser(user)) {
+    const p = c.type === 'Drive' && c.auth === 'oauth' ? providerForTemplate(c.template as ConnectionTemplateKey) : null;
+    if (p && c.owner === user.id) out.push({ id: c.id, name: c.name, owner: c.owner, provider: filesProviderFor(p) });
+  }
+  return out;
+}
+
 export const GET = withRoute(async ({ user }) => {
-  return NextResponse.json({ sources: listSources(user.id), templates: CONNECTOR_TEMPLATES });
+  await ensureSourcesHydrated();
+  return NextResponse.json({ sources: listSources(user.id), templates: CONNECTOR_TEMPLATES, connections: await driveConnections(user) });
 }, { gate: requirePrincipal as () => Promise<CurrentUser> });
 
 export const POST = withRoute<Record<string, string>, {
@@ -26,22 +39,15 @@ export const POST = withRoute<Record<string, string>, {
   if (body.provider !== 'google-drive' && body.provider !== 'onedrive') {
     return NextResponse.json({ error: 'provider must be google-drive or onedrive' }, { status: 400 });
   }
-  // Link to a governed Connection (the OAuth Read profile that holds the token).
-  // Validate it belongs to the caller AND its provider matches this source, so a
-  // source can never be pointed at someone else's credential or the wrong drive.
-  let connectionId: string | null = null;
-  if (body.connectionId) {
-    const cu = await requireUser();
-    const conn = await getConnectionForUser(body.connectionId, cu); // 404 if not visible
-    if (conn.owner !== cu.id) {
-      return NextResponse.json({ error: 'You can only link a connection you own' }, { status: 403 });
-    }
-    const connProvider = providerForTemplate(conn.template);
-    if (!connProvider || filesProviderFor(connProvider) !== body.provider) {
-      return NextResponse.json({ error: 'The linked connection does not match this drive provider' }, { status: 400 });
-    }
-    connectionId = conn.id;
-  }
+  // Link to a governed Connection (the OAuth Read profile that holds the token): one of the
+  // caller's OWN drive connections for this provider — never someone else's credential or the
+  // wrong drive. Without a link the sync has no token, so production refuses an unlinked source.
+  const cu = await requireUser();
+  const connectionId = chooseSourceConnection({
+    provider: body.provider, userId: cu.id, requested: body.connectionId,
+    candidates: await driveConnections(cu), allowUnlinked: offlineMockAllowed(),
+  });
+  await ensureSourcesHydrated();
   const domain = body.domain && user.domains.includes(body.domain) ? body.domain : user.domains[0] ?? 'platform';
   const source = addSource({
     provider: body.provider,
