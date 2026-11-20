@@ -21,6 +21,7 @@ import { config } from '@core/kernel/config';
 import { emitDirectoryChange } from '@core/kernel/events';
 import { osMirror } from '@core/infra/os-mirror';
 import { domainIdent as domainSchema } from '@core/kernel/domain-ident';
+import { PLATFORM_REPO } from '@core/infra/repo-layout';
 
 export type DomainLayers = { ml: boolean };
 
@@ -180,6 +181,9 @@ export function createDomain(input: { name: string; owner: string }): Domain {
   seed();
   const id = slug(input.name);
   if (!id) throw fail('A domain name is required', 400);
+  // `platform` is the platform-wide git repository and the platform principal in Trino's access
+  // rules, so a domain may never take that id.
+  if (id === PLATFORM_REPO) throw fail(`"${PLATFORM_REPO}" is a reserved name (the platform repository and access rules use it); choose a different domain name`, 400);
   if (domainsState().store.has(id)) throw fail('That domain already exists', 409);
   // Two ids that sanitize to one identifier would share a schema (`iceberg.<id>`), landing schemas
   // and a dbt project. Archived domains still hold theirs.
