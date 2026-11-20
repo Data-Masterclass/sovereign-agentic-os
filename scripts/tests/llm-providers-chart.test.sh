@@ -51,6 +51,15 @@ def osui_env(name):
 def filt(): return cm("egress-proxy-config").get("filter", "")
 def np(name): return by.get(("NetworkPolicy", name))
 def np_json(name): return json.dumps(np(name), sort_keys=True)
+def db_rule_to():
+    for r in (np("litellm-egress") or {}).get("spec", {}).get("egress", []):
+        if any(p.get("port") == 5432 for p in r.get("ports", [])): return r.get("to")
+    return "no 5432 rule"
+def proxy_except():
+    for r in (np("allow-egress-proxy-internet") or {}).get("spec", {}).get("egress", []):
+        for t in r.get("to", []):
+            if "ipBlock" in t: return t["ipBlock"].get("except", [])
+    return []
 def pol4_excludes_gw():
     exprs = (np("allow-apiserver-egress") or {}).get("spec", {}).get("podSelector", {}).get("matchExpressions", [])
     return any(e["key"] == "app.kubernetes.io/name" and e["operator"] == "NotIn" and "litellm" in e["values"] for e in exprs)
@@ -111,6 +120,19 @@ check "allows the egress proxy on 3128" '"port": 3128' "$(inspect 'np_json("lite
 check "allows the egress proxy pods" '"app.kubernetes.io/component": "egress-proxy"' "$(inspect 'np_json("litellm-egress")')"
 check "allows its database port" '"port": 5432' "$(inspect 'np_json("litellm-egress")')"
 absent "no 443-anywhere for the gateway" '"port": 443' "$(inspect 'np_json("litellm-egress")')"
+check "5432 only to the in-cluster Postgres pods" "True" "$(inspect 'db_rule_to() == [{"podSelector": {"matchLabels": {"app.kubernetes.io/component": "postgres"}}}]')"
+EXC=$(inspect 'proxy_except()')
+for c in 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 100.64.0.0/10 169.254.0.0/16; do check "egress proxy never reaches $c" "'$c'" "$EXC"; done
+
+echo "managed Postgres: the 5432 rule goes to its CIDR"
+render --set postgres.enabled=false --set postgres.external.host=pg.example.internal --set postgres.external.cidr=10.20.0.5/32
+rc_is "renders" 0
+check "5432 only to the managed database CIDR" "True" "$(inspect 'db_rule_to() == [{"ipBlock": {"cidr": "10.20.0.5/32"}}]')"
+
+echo "NEGATIVE TWIN — managed Postgres without a CIDR fails the render (no 5432-anywhere)"
+render --set postgres.enabled=false --set postgres.external.host=pg.example.internal
+rc_is "fails" 1
+check "says what to set" "postgres.external.cidr" "$out"
 
 echo "local model servers (llmProviders.localModels / localModelNamespaces)"
 render --set 'llmProviders.localModels={ollama,vllm.models.svc}' --set 'llmProviders.localModelNamespaces={models}'
