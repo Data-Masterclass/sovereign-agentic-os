@@ -32,7 +32,8 @@ const TABLE = 'iceberg.sales.gold_northpeak_commerce';
 const DOMAIN = 'agentic-leader-q3-2026';
 
 process.env.OPA_URL = opa.url;
-process.env.AGENT_RUNTIME_TOKEN = TOKEN;
+process.env.OS_OPA_BUNDLE_TOKEN = TOKEN; // the dedicated bundle token (opa-bundle-token)
+process.env.AGENT_RUNTIME_TOKEN = 'a-different-shared-runtime-token'; // never accepted by the bundle routes
 process.env.OS_OPA_DATA_BUNDLE = '1';
 process.env.OS_OPA_SEED = chartEnv('OS_OPA_SEED', ['opa.dataBundle.enabled=true']);
 process.env.OS_OPA_SEED_PRINCIPALS = chartEnv('OS_OPA_SEED_PRINCIPALS');

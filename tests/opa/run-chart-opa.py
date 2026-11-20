@@ -59,7 +59,9 @@ def main() -> None:
                 with open(os.path.join(host, item["path"]), "w", encoding="utf-8") as f:
                     f.write(os.environ.get("OPA_IT_TOKEN", "wp11-it-token"))
             mounts += ["-v", f"{host}:{vm['mountPath']}:ro"]
-        elif "emptyDir" in vol:
+        elif "emptyDir" in vol or "persistentVolumeClaim" in vol:
+            # A PVC is a host dir too: it survives `docker restart`. That a NEW pod keeps it is
+            # Kubernetes behaviour, proven on kind (tests/opa/pvc-restart.kind.sh), not here.
             os.chmod(host, 0o777)
             mounts += ["-v", f"{host}:{vm['mountPath']}"]
         else:

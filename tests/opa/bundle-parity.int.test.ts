@@ -29,7 +29,8 @@ const B = new Opa(`http://127.0.0.1:${PORT_B}`);
 const BUNDLE_SETS = ['opa.dataBundle.enabled=true', `opa.dataBundle.serviceUrl=http://host.docker.internal:${SERVER_PORT}/api/opa`];
 
 process.env.OPA_URL = A.url;
-process.env.AGENT_RUNTIME_TOKEN = TOKEN;
+process.env.OS_OPA_BUNDLE_TOKEN = TOKEN; // the dedicated bundle token (opa-bundle-token)
+process.env.AGENT_RUNTIME_TOKEN = 'a-different-shared-runtime-token'; // never accepted by the bundle routes
 process.env.OS_OPA_DATA_BUNDLE = ''; // push mode: the reconciler PUTs into A
 process.env.OS_OPA_SEED = chartEnv('OS_OPA_SEED', ['opa.dataBundle.enabled=true']);
 process.env.OS_OPA_SEED_PRINCIPALS = chartEnv('OS_OPA_SEED_PRINCIPALS');
@@ -60,7 +61,14 @@ test('parity: the os-data bundle carries exactly what the push path writes, and 
   assert.equal(ready, 200, 'bundle-mode OPA activated os-data');
 
   for (const root of ROOTS) {
-    assert.deepEqual(await B.data(root), await A.data(root), `data.${root.replace(/\//g, '.')} identical`);
+    let b = await B.data(root);
+    if (root === 'seed_grants') {
+      // The one intended difference: bundle mode adds OPA's own status-report grant to the seed.
+      const { ['opa-status-reporter']: reporter, ...rest } = b as Record<string, string[]>;
+      assert.deepEqual(reporter, ['opa_status_report'], 'bundle seed carries the status-report grant');
+      b = rest;
+    }
+    assert.deepEqual(b, await A.data(root), `data.${root.replace(/\//g, '.')} identical`);
   }
   const grants = (await A.data('grants')) as Record<string, string[]>;
   const principals = (await A.data('governance/principals')) as Record<string, unknown>;
@@ -71,7 +79,7 @@ test('parity: the os-data bundle carries exactly what the push path writes, and 
 
   // agentic.authz: every principal × every tool anyone holds (+ one nobody holds).
   const tools = [...new Set([...Object.values(grants), ...Object.values(seedGrants)].flat()), 'web_fetch', 'no_such_tool'];
-  const names = [...new Set([...Object.keys(grants), ...Object.keys(seedGrants), 'nobody'])];
+  const names = [...new Set([...Object.keys(grants), ...Object.keys(seedGrants), 'nobody'])]; // A's seed: no status-report principal
   let n = 0;
   for (const principal of names) {
     for (const tool of tools) {
