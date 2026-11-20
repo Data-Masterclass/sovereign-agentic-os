@@ -30,7 +30,8 @@
 #           every object that changes, the Secret KEYS that change, and which workloads roll by
 #           themselves (pod template changed). Hashes only; never a value.
 # verify    The post-checks: old master key → 401, new master key → 200, the shared virtual key
-#           lists and calls a model, every model that was stored in the database is still served,
+#           lists and calls a model (VERIFY_MODEL, default the first it lists; VERIFY_EMBED_MODEL
+#           calls /v1/embeddings instead), every model that was stored in the database is still served,
 #           the new Langfuse key pair authenticates; with --os-ui-exec also os-ui's own key
 #           (exec into os-ui: the credential it really holds, the two reads /api/gateway makes).
 # password  Writes a new Langfuse init-user password into a separate overlay (mode 600); the steps
@@ -294,7 +295,12 @@ print(json.dumps(sorted({m.get("model_name") for m in d if (m.get("model_info") 
 try: print(json.load(sys.stdin)["data"][0]["id"])
 except Exception: print("")')}
     if [ -n "$model" ]; then
-      r=$(call "$agent" POST /v1/chat/completions "$(chat_body "$model")"); c=$(code_of "$r")
+      if [ -n "${VERIFY_EMBED_MODEL:-}" ]; then   # an embeddings route instead (e.g. a rehearsal without provider keys)
+        model=$VERIFY_EMBED_MODEL; r=$(call "$agent" POST /v1/embeddings "{\"model\":\"$model\",\"input\":\"ping\"}")
+      else
+        r=$(call "$agent" POST /v1/chat/completions "$(chat_body "$model")")
+      fi
+      c=$(code_of "$r")
       [ "$c" = 200 ] && pass "shared virtual key calls $model → 200" || fail "shared virtual key call $model → $c"
     else fail "shared virtual key sees no model"; fi
   else fail "agent-litellm-key has no apiKey"; fi

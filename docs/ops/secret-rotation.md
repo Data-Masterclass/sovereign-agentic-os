@@ -161,7 +161,8 @@ The script checks:
   Admin → LLM Gateway (`--os-ui-exec` runs `node` in the os-ui pod);
 - the new Langfuse pair authenticates.
 
-It ends `ROTATION_VERIFY_OK`. By hand, check that Admin → LLM Gateway opens, that a short agent run
+It ends `ROTATION_VERIFY_OK`. `VERIFY_MODEL=<alias>` picks the chat model for the virtual-key call;
+`VERIFY_EMBED_MODEL=<alias>` uses `/v1/embeddings` instead. By hand, check that Admin → LLM Gateway opens, that a short agent run
 completes, and that its trace arrives in Langfuse.
 
 ### 6. Langfuse UI (the owner)
@@ -206,22 +207,35 @@ procedure again with the previous password.
 
 ## From a release tag
 
-The chart change (salt key and `langfuseInit.userPassword`) is one commit. The coordinator can
-deploy the live release with only the secrets changing:
+The chart change is two commits, `feat(chart): LITELLM_SALT_KEY with a change guard; langfuseInit.userPassword`
+and `fix(chart): allowChange is for a full re-key only`. Both touch the chart only and apply cleanly on
+`os-ui-v0.9.19` and `os-ui-v0.9.20` (rehearsed). To deploy the live release with only the secrets
+changing:
 
 ```bash
 cd <checkout at os-ui-v<live version>>
 git switch -c rotation/<live version> os-ui-v<live version>
-git cherry-pick <chart commit of this change>     # applies cleanly on os-ui-v0.9.19 and os-ui-v0.9.20
-helm dependency build charts/sovereign-agentic-os  # or copy charts/*.tgz from the tag checkout
-scripts/ops/rotate-secrets.sh plan --overlay … --chart charts/sovereign-agentic-os   # step 2: only Secrets + os-ui roll
+git cherry-pick <feat(chart) commit> <fix(chart) commit>
+helm dependency build charts/sovereign-agentic-os   # or copy charts/*.tgz from the tag checkout
+scripts/ops/rotate-secrets.sh plan --overlay … --chart charts/sovereign-agentic-os   # step 2
+VALUES_OVERLAY=… ./scripts/deploy.sh --from-registry <live version>                  # step 3
 ```
 
-The image stays the live one (`--from-registry <live version>`), so only the chart's Secrets change.
-Delete the local branch afterwards; the next release contains the change. Without the chart change
-the salt key cannot be set from values, so the cherry-pick is required on the none-stored path.
-On the pin-first path it is required too. Alternatively, rotate only the master key without a salt
-key, which is safe only when nothing is stored.
+`rotate-secrets.sh` itself can run from any checkout of this change (it needs no chart). The image
+stays the live one (`--from-registry <live version>`). The `plan` output of the rehearsal against
+the 0.9.20 chart was exactly:
+
+```
+change  Deployment os-ui
+change  Deployment os-ui-worker
+change  Secret langfuse-init: keys LANGFUSE_INIT_PROJECT_PUBLIC_KEY, LANGFUSE_INIT_PROJECT_SECRET_KEY
+change  Secret litellm-credentials: keys LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, LITELLM_SALT_KEY, masterkey
+rolls by itself (pod template changed): Deployment/os-ui, Deployment/os-ui-worker
+```
+
+The os-ui and os-ui-worker change is the env `LANGFUSE_PUBLIC_KEY` only. Delete the local branch
+afterwards; the next release contains the change. Without the chart change the salt key cannot be
+set from values.
 
 ## Rollback
 
