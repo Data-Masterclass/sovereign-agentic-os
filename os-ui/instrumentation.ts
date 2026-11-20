@@ -122,6 +122,10 @@ export async function register(): Promise<void> {
     assertNoDevDefaultSecretsInProd(config);
     // No built-in Langfuse credentials in production: a missing key or console login stops the boot.
     assertLangfuseCredentialsInProd(config);
+    // Every secret os-ui depends on: missing, or equal to a public development default, refuses
+    // the boot (compared by SHA-256 in-process; only variable names are logged).
+    const { assertProductionSecrets } = await import('./core/kernel/secret-guard.ts');
+    assertProductionSecrets('os-ui');
   } catch (err) {
     console.error(`[os-ui] boot secret guard: ${err instanceof Error ? err.message : String(err)}`);
     process.exit(1);

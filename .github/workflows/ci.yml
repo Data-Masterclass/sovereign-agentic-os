@@ -114,8 +114,11 @@ jobs:
 
       # LiteLLM: restrict ingress to OS components (defence in depth) — the chart check passes and
       # its four broken twins fail.
-      - name: LiteLLM ingress policy tests
-        run: bash scripts/tests/litellm-ingress-policy.test.sh
+      # The deploy's secret preflight against a fake cluster (refuses defaults and missing values).
+      - name: LiteLLM ingress policy + secret preflight tests
+        run: |
+          bash scripts/tests/litellm-ingress-policy.test.sh
+          bash scripts/tests/secret-preflight.test.sh
 
       # LITELLM_SALT_KEY: rendered into litellm-credentials (local), required as an operator Secret
       # on other profiles, with negative twins. The lookup change guard: litellm-salt-key-guard.kind.sh.
