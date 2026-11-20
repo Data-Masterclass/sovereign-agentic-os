@@ -444,6 +444,18 @@ PY
 # object carries helm.sh/resource-policy: keep. Refuse before anything changes.
 bash scripts/lib/secret-deletion-guard.sh --context "$CTX" --ns "$NS" "$WORK/before.yaml" "$WORK/after.yaml" || exit 1
 
+# SECRET PREFLIGHT (defence in depth). os-ui and the worker refuse to boot in production when a
+# secret they read is missing or equals a public development default (core/kernel/secret-guard.ts),
+# so an upgrade that would hand them such a value must not start. READ-ONLY and BY HASH ONLY: the
+# values the upgrade applies (the render above, else the Secret already in the cluster) are hashed
+# in-process and compared with the published defaults' digests; nothing is printed but names.
+# Before the backup, so a refusal changes nothing. Rotate first: docs/ops/secret-rotation.md.
+say "secret preflight: no guarded secret is missing or a public development default"
+if ! KUBECTL="kubectl --context $CTX -n $NS" python3 scripts/lib/check-secrets-not-defaults.py "$WORK/after.yaml"; then
+  echo "SECRET_PREFLIGHT_FAILED — the secrets above must be rotated BEFORE this upgrade (the new os-ui would refuse to boot)." >&2
+  echo "   Procedure: docs/ops/secret-rotation.md (rotation order for LiteLLM, os-ui, os-ui-worker and Langfuse). Nothing was changed." >&2
+  exit 1
+fi
 # CAPACITY GATE (WP-47). The same check CI and release.sh run, but on the values THIS upgrade
 # applies: chart defaults + the live release values + VALUES_OVERLAY, rendered as helm will. A
 # deploy run by hand must not put more on the node than it can give. CI=true: a skip (no helm

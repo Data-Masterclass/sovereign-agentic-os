@@ -69,7 +69,12 @@ deploy() {
   log=$(cat "$FAKE_LOG")
 }
 FIX=$REPO/scripts/tests/fixtures
-printf 'osUI:\n  image:\n    repository: registry.example.invalid/sovereign-os/os-ui\n' > "$TMP/live-ok.yaml"
+printf 'osUI:\n  image:\n    repository: registry.example.invalid/sovereign-os/os-ui\n' > "$TMP/live-defaults.yaml"
+# A release with its own secrets (the secret preflight passes); the values are test-only strings.
+{ cat "$TMP/live-defaults.yaml"
+  printf 'litellmMasterKey: sk-test-%s\nagentRuntime:\n  token: rt-test-%s\n' "$(printf 'a%.0s' {1..32})" "$(printf 'b%.0s' {1..32})"
+  printf 'langfuseInit:\n  publicKey: pk-lf-test-%s\n  secretKey: sk-lf-test-%s\n' "$(printf 'c%.0s' {1..16})" "$(printf 'd%.0s' {1..16})"
+} > "$TMP/live-ok.yaml"
 # The live release itself over-commits: the gate must read the RELEASE values, not chart defaults.
 { cat "$TMP/live-ok.yaml"; cat "$FIX/capacity-overcommit-cpu.yaml"; } > "$TMP/live-overcommit.yaml"
 
@@ -78,6 +83,16 @@ deploy "$TMP/live-ok.yaml"
 check "the gate runs on the release values" "check-capacity: ok" "$out"
 check "the deploy goes on to the backup" "backup" "$log"
 check "and to helm upgrade" "helm upgrade" "$log"
+
+echo "== a release still on the public development secrets (secret preflight)"
+deploy "$TMP/live-defaults.yaml"
+rc_is "deploy exits 1" 1
+check "it says the secret preflight stopped it" "SECRET_PREFLIGHT_FAILED" "$out"
+check "it names the variable" "LITELLM_MASTER_KEY" "$out"
+check "it points at the rotation procedure" "docs/ops/secret-rotation.md" "$out"
+absent "it prints no secret value" "sk-litellm-local-dev-master" "$out"
+absent "no backup is taken" "backup" "$log"
+absent "no helm upgrade runs" "helm upgrade" "$log"
 
 echo "== live release values that over-commit"
 deploy "$TMP/live-overcommit.yaml"
