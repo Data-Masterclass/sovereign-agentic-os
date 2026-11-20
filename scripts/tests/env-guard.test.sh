@@ -35,6 +35,7 @@ fi
 ctx=''; prev=''
 for a in "$@"; do [ "$prev" = --context ] && ctx=$a; prev=$a; done
 case $all in
+  *"get nodes"*) cat "$FAKE_DIR/flavour-$ctx" 2>/dev/null ;;
   *"get configmap sovereign-os-environment"*)
     [ -f "$FAKE_DIR/marker-$ctx" ] || { echo 'Error from server (NotFound)' >&2; exit 1; }
     cat "$FAKE_DIR/marker-$ctx" ;;
@@ -123,6 +124,19 @@ absent "no helm call" "helm " "$log"
 deploy env DEV_PRIVATE_VALUES=/nonexistent bash scripts/deploy.sh --env dev --from-registry main-abc
 check "the matching dev deploy passes the guard" "ENV_GUARD_OK env=dev context=dmagosdev" "$out"
 check "and goes on to read its private values" "DEV_PRIVATE_VALUES_MISSING" "$out"
+
+echo "== deploy.sh --env dev: DEV_NODE must match the real node flavour"
+printf 'osUI: {}\n' > "$TMP/private.yaml"
+printf 'm2i.4' > "$FAKE_DIR/flavour-dmagosdev"
+deploy env DEV_PRIVATE_VALUES="$TMP/private.yaml" bash scripts/deploy.sh --env dev --from-registry main-abc
+rc_is "NEGATIVE TWIN: DEV_NODE=g2i8 (default) on an m2i.4 node exits 1" 1
+check "it names the mismatch" "DEV_NODE_MISMATCH — DEV_NODE=g2i8 expects g2i.8, the dev node is m2i.4" "$out"
+absent "no helm upgrade" "helm --kube-context dmagosdev upgrade" "$log"
+deploy env DEV_PRIVATE_VALUES="$TMP/private.yaml" DEV_NODE=m2i4 bash scripts/deploy.sh --env dev --from-registry main-abc
+check "DEV_NODE=m2i4 on the m2i.4 node passes the flavour check" "dev node flavour m2i.4 matches DEV_NODE=m2i4" "$out"
+rm -f "$FAKE_DIR/flavour-dmagosdev"
+deploy env DEV_PRIVATE_VALUES="$TMP/private.yaml" bash scripts/deploy.sh --env dev --from-registry main-abc
+check "an unreadable node flavour is refused, not guessed" "DEV_NODE_UNKNOWN" "$out"
 
 echo "== deploy.sh deploys only the digest it is told (EXPECT_DIGEST)"
 deploy env EXPECT_DIGEST=sha256:4444444444444444444444444444444444444444444444444444444444444444 bash scripts/deploy.sh --env prod --from-registry 9.9.9

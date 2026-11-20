@@ -141,6 +141,14 @@ jobs:
           set -o pipefail
           bash scripts/smoke-test.sh --env dev --expect-tag "$TAG" | tee "$E2E_REPORT_DIR/smoke.txt"
 
+      # Budgets must BLOCK: LiteLLM's database is connected, and a throwaway key with a tiny budget
+      # is refused once spent (scripts/dev/budget-check.sh). Skipped with the model stub.
+      - name: LiteLLM budget blocks (dev)
+        if: vars.DEV_MODEL != 'stub'
+        run: |
+          set -o pipefail
+          bash scripts/dev/budget-check.sh | tee "$E2E_REPORT_DIR/budget.txt"
+
       # The harness reads the gateway and Langfuse keys of THIS deployment from the dev cluster
       # into masked variables; they are never printed.
       - name: Acceptance credentials (masked)
@@ -177,6 +185,9 @@ jobs:
             if [ -f "$DEPLOY_RECORD" ]; then
               echo "Deploy record (roll back with the command shown):"
               echo; echo '```json'; cat "$DEPLOY_RECORD"; echo '```'; echo
+            fi
+            if [ -f "$E2E_REPORT_DIR/budget.txt" ]; then
+              echo "### LiteLLM budget"; echo; echo '```'; cat "$E2E_REPORT_DIR/budget.txt"; echo '```'; echo
             fi
             if [ -f "$E2E_REPORT_DIR/smoke.txt" ]; then
               echo "### smoke test"; echo; echo '```'; cat "$E2E_REPORT_DIR/smoke.txt"; echo '```'; echo

@@ -372,6 +372,17 @@ PY
 # dependencies, no js-yaml) stops the deploy too. Before the backup, so a refusal changes nothing.
 say "capacity gate: the values this upgrade applies must fit the node (scripts/check-capacity.mjs)"
 if [ "$DEPLOY_ENV" = dev ]; then
+  # The budget is only true for the node it describes: DEV_NODE must name the flavour the dev
+  # node REALLY is (its node.kubernetes.io/instance-type label), or the gate checks the wrong box.
+  want=$(sed -n 's/^  flavour: *//p' "$DEV_BUDGET" | head -1)
+  have=$(kubectl --context "$CTX" get nodes -o jsonpath='{.items[*].metadata.labels.node\.kubernetes\.io/instance-type}' 2>/dev/null || true)
+  if [ -z "$have" ]; then
+    echo "DEV_NODE_UNKNOWN — the dev nodes carry no instance-type label (or cannot be read); refusing to gate against $want blindly" >&2; exit 1
+  fi
+  for f in $have; do
+    [ "$f" = "$want" ] || { echo "DEV_NODE_MISMATCH — DEV_NODE=${DEV_NODE:-g2i8} expects $want, the dev node is $f; set DEV_NODE to match (docs/ops/dev-environment.md, Sizing)" >&2; exit 1; }
+  done
+  echo "   dev node flavour $have matches DEV_NODE=${DEV_NODE:-g2i8}"
   CAPACITY_ARGS=(--budget "$DEV_BUDGET" -f "$VALUES" "${OVERLAY_ARGS[@]}")
 else
   CAPACITY_ARGS=(-f "$VALUES" ${VALUES_OVERLAY:+-f "$VALUES_OVERLAY"})
