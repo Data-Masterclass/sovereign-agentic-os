@@ -42,6 +42,9 @@ export const NOT_BUILT_DIGEST = `sha256:${'0'.repeat(64)}`;
 /** The port every scaffold's container listens on (the Dockerfiles EXPOSE 8080). */
 export const APP_PORT = 8080;
 
+/** The Kubernetes API group/version of a Deployment (an API version, not a repository path). */
+const K8S_APPS_V1 = 'apps/v1';
+
 type Obj = Record<string, unknown>;
 type File = { path: string; content: string };
 
@@ -91,7 +94,7 @@ export function appDeployFiles(c: DeployContext & { digest?: string }): File[] {
     `# ${what} for app '${c.slug}'. Plain Kubernetes: kubectl apply -n <namespace> -f k8s/\n`;
 
   const deployment = {
-    apiVersion: 'apps/v1',
+    apiVersion: K8S_APPS_V1,
     kind: 'Deployment',
     metadata: { name, labels },
     spec: {
@@ -193,7 +196,7 @@ export function appDeployFiles(c: DeployContext & { digest?: string }): File[] {
 // ------------------------------------------------------------------- validate ---
 
 const ALLOWED_KINDS: Record<string, string> = {
-  Deployment: 'apps/v1',
+  Deployment: K8S_APPS_V1,
   Service: 'v1',
   Ingress: 'networking.k8s.io/v1',
 };
