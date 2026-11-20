@@ -1770,6 +1770,15 @@ osUI:
   # checkpoint IS the run, and deleting it would make the pending decision unresumable.
   # Empty ⇒ the code default of 30 days. `"0"` ⇒ keep everything (your own policy decides).
   agentRunsRetentionDays: ""
+  # AGENT SYSTEMS AS NATIVE LANGGRAPH MODULES (WP-53). `enabled: false` (default): today's engine and
+  # git layout, unchanged. `enabled: true`: NEW runs execute the system's committed graph.mjs (after
+  # its hash check) and the domain repo is generated in the module layout. `domains` (comma-separated,
+  # e.g. "test") limits that to those domains; empty = every domain. A parked run always resumes on
+  # the engine it started on. Before turning it on, run the read-only id preflight in the worker pod:
+  #   node --experimental-strip-types src/worker/agent-id-preflight.mjs   (must exit 0)
+  agentGraphModule:
+    enabled: false
+    domains: ""
   # THE KEY EACH AGENT SYSTEM GETS AT BUILD (`os-<systemId>`, minted by os-ui's Build with the
   # LiteLLM admin API — not the shared `litellmAgentKey` above, whose values never reached it).
   # These caps are applied on EVERY Build / Rebuild: an existing key is reconciled to them

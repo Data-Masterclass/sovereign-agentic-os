@@ -32,6 +32,7 @@ import { runNode, type AgenticGraphResult, type AgenticGraphDeps } from '@tabs/a
 import { liveEmbedder } from '@core/infra/context/librarian-live';
 import { runGraphEngine } from '@tabs/agents/lib/engine/run';
 import { isModuleRun, runOsTeamOnModule } from '@tabs/agents/lib/module/os-run';
+import { engineForRun } from '@tabs/agents/lib/module/flag';
 import { selectToolCallLedger, withToolCallLedger } from '@tabs/agents/lib/engine/tool-call-ledger';
 import { selectCheckpointer, type CheckpointerKind } from '@tabs/agents/lib/engine/checkpointer';
 import type { GraphDeps, HeldCall, RouteDecision } from '@tabs/agents/lib/engine/build-graph';
@@ -371,7 +372,12 @@ export async function runOsTeam(input: RunOsTeamInput): Promise<RunOsTeamResult>
   // on the v1 graph before the switch finishes on the v1 graph.
   // The `agent_runs` database (checkpoints, ledger, hold decisions, run stamps) — read once per run.
   const runsDb = config.agentRunsDatabaseUrl;
-  if (config.agentGraphModule && input.runId && (!input.resume || (await isModuleRun(input.runId, runsDb)))) {
+  // WP-53d: AGENT_GRAPH_MODULE_DOMAINS narrows NEW runs to the allowed domains; a resume keeps the
+  // engine the run started on (its module stamp), whatever the allowlist says now.
+  const engine = input.runId
+    ? await engineForRun({ resume: !!input.resume, domain: sys.system.domain, runId: input.runId, isModuleRun: (id) => isModuleRun(id, runsDb) })
+    : 'v1';
+  if (engine === 'module') {
     const traceInput = {
       runId: input.runId,
       systemId: input.systemId,

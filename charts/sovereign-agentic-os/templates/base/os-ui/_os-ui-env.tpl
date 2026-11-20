@@ -296,6 +296,14 @@
 - name: AGENT_RUNS_RETENTION_DAYS
   value: {{ $u.agentRunsRetentionDays | quote }}
 {{- end }}
+{{- /* WP-53: agent systems on their native LangGraph module (graph.mjs). RUN-path: os-ui and the
+     worker decide a run's engine with the same two values. Off by default; `domains` narrows it. */}}
+- name: AGENT_GRAPH_MODULE
+  value: {{ ternary "true" "false" (default false $u.agentGraphModule.enabled) | quote }}
+{{- with $u.agentGraphModule.domains }}
+- name: AGENT_GRAPH_MODULE_DOMAINS
+  value: {{ . | quote }}
+{{- end }}
 {{- /* X9 (engine rebuild Part D) — the agent engine's guardrails on EVERY tool call. Both are
      RUN-path, so the worker gets them too. Unset ⇒ the code defaults (20 000 chars / 60 s). */}}
 {{- with $u.agentToolResultMaxChars }}
