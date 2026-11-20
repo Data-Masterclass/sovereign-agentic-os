@@ -1,5 +1,10 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG
+ *
+ * FEATURE: tests for the one OpenSearch client (core/adapters/opensearch/client.ts).
+ * USER STORY: an operator enabling OpenSearch auth (WP-22) can trust that credentials set once
+ *   reach every caller, and that a 401 at pod start is named, not looped on silently.
+ * ARCHITECTURE: a real local HTTP server stands in for OpenSearch's REST surface; no fetch mock.
  */
 // The one OpenSearch client: URL from OPENSEARCH_URL only, auth header only when configured,
 // null on a transport failure, and the initContainer's wait loop names a 401 plainly. A real
