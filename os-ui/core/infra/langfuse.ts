@@ -415,6 +415,8 @@ export type ObservationFilter = {
   fromTimestamp?: string;
   type?: 'GENERATION' | 'SPAN' | 'EVENT';
   limit?: number;
+  /** 1-based page of the result (Langfuse public API `page`). */
+  page?: number;
 };
 
 /** Thrown for a Langfuse read that would return observations not scoped to a run or a user. */
@@ -443,6 +445,7 @@ export function observationsQuery(f: ObservationFilter): string {
   }
   if (f.type) q.set('type', f.type);
   q.set('limit', String(Math.min(Math.max(f.limit ?? 100, 1), 100)));
+  if (f.page && f.page > 1) q.set('page', String(Math.floor(f.page)));
   return q.toString();
 }
 
@@ -452,6 +455,7 @@ export type LangfuseObservationRow = {
   traceId?: string;
   type?: string;
   name?: string;
+  parentObservationId?: string | null;
   model?: string;
   startTime?: string;
   endTime?: string;
@@ -461,38 +465,25 @@ export type LangfuseObservationRow = {
 };
 
 /**
+ * Every observation of ONE run's trace, so a reader can relate the gateway's generation to the OS's
+ * `llm.<node>` span that made the call (LiteLLM OTel v2, 10 F1). Pages through the same filtered
+ * read (`traceId`, 100 per page, at most 20 pages). Null when the store cannot be reached.
+ */
+export async function readTraceObservations(traceId: string): Promise<LangfuseObservationRow[] | null> {
+  const all: LangfuseObservationRow[] = [];
+  for (let page = 1; page <= 20; page++) {
+    const rows = await readObservations({ traceId, limit: 100, page });
+    if (rows === null) return null;
+    all.push(...rows);
+    if (rows.length < 100) break;
+  }
+  return all;
+}
+
+/**
  * Read observations through the public API — filtered, always. Returns null when the store cannot
  * be reached (an expected state), throws `UnfilteredLangfuseQueryError` for a leaking filter.
  */
-/**
- * Every observation of ONE trace (`GET /api/public/traces/{id}`), so a reader can follow the tree:
- * the gateway's generation hangs under the gateway's request span, which hangs under the OS's
- * `llm.<node>` span (LiteLLM OTel v2, 10 F1). Scoped to a trace id like `observationsQuery`'s run
- * reads. Null when the store cannot be reached; [] when the trace does not exist (yet).
- */
-export async function readTraceObservations(traceId: string, timeoutMs = 3_000): Promise<(LangfuseObservationRow & { parentObservationId?: string | null })[] | null> {
-  if (!traceId.trim()) throw new UnfilteredLangfuseQueryError();
-  if (!langfuseEnabled()) return null;
-  const auth = 'Basic ' + Buffer.from(`${config.langfusePublicKey}:${config.langfuseSecretKey}`).toString('base64');
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
-  try {
-    const res = await fetch(`${config.langfuseUrl}/api/public/traces/${encodeURIComponent(traceId)}`, {
-      headers: { authorization: auth, accept: 'application/json' },
-      cache: 'no-store',
-      signal: ctrl.signal,
-    });
-    if (res.status === 404) return [];
-    if (!res.ok) return null;
-    const body = (await res.json().catch(() => null)) as { observations?: LangfuseObservationRow[] } | null;
-    return Array.isArray(body?.observations) ? body!.observations : [];
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
 export async function readObservations(filter: ObservationFilter, timeoutMs = 3_000): Promise<LangfuseObservationRow[] | null> {
   const query = observationsQuery(filter);
   if (!langfuseEnabled()) return null;
