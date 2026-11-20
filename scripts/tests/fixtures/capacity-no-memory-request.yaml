@@ -1,0 +1,6 @@
+# WP-47 negative twin: a long-running container with neither a memory request nor a memory limit.
+# The scheduler would place it as if it used nothing; check-capacity.mjs must FAIL on it.
+webFetch:
+  resources:
+    requests: { memory: null }
+    limits: { memory: null }
