@@ -7,8 +7,10 @@
  *             bypassed by a side door.
  * ARCHITECTURE: a source scan of os-ui (no node_modules, no build output). Only
  *             `core/infra/langfuse.ts` may import a Langfuse SDK package or name a Langfuse write
- *             endpoint. The real-server proof lives in `tracing.e2e.test.ts`, whose negative twin
- *             re-introduces a second writer ON PURPOSE — so that one file is the only exemption.
+ *             endpoint. The real-server proofs are exempt, by name: the engine's
+ *             `tracing.e2e.test.ts`, whose negative twin re-introduces a second writer ON PURPOSE,
+ *             and the gateway's `core/runtime/tracing.e2e.test.ts` (WP-32), which plays the app's
+ *             OTLP exporter for one span so the LiteLLM hop is tested on its own.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -18,7 +20,7 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..', '..');
 const WRITER = 'core/infra/langfuse.ts';
-const EXEMPT = new Set([WRITER, 'tabs/agents/lib/engine/tracing.e2e.test.ts', 'core/infra/writers.test.ts']);
+const EXEMPT = new Set([WRITER, 'tabs/agents/lib/engine/tracing.e2e.test.ts', 'core/runtime/tracing.e2e.test.ts', 'core/infra/writers.test.ts']);
 const SKIP_DIRS = new Set(['node_modules', '.next', 'out', 'coverage', '.turbo']);
 
 function sources(dir: string, out: string[] = []): string[] {
