@@ -181,7 +181,7 @@ Building images on a laptop is the most expensive thing this repo asks of a main
 Colima VM reserves 14 GB on a 24 GB host, its DNS has failed mid-build twice, the host has
 OOM-killed runs, and an emulated `linux/amd64` build blocks the machine for 10–15 minutes.
 `.github/workflows/build-images.yml` builds the same Dockerfiles on an amd64 runner instead —
-on a `os-ui-v*` / `git-http-v*` / `dagster-v*` tag, or by hand via **Run workflow** (inputs:
+on a `os-ui-v*` / `git-http-v*` / `dagster-v*` / `docling-v*` / `data-runner-v*` tag, or by hand via **Run workflow** (inputs:
 image, version). For `os-ui` it runs the same worker type-stripping smoke `deploy.sh` runs,
 **before** it pushes.
 

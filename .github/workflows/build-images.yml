@@ -37,6 +37,7 @@ on:
       - 'git-http-v*'
       - 'dagster-v*'
       - 'docling-v*'
+      - 'data-runner-v*'
       - 'opensearch-v*'
   # The dev stage (.github/workflows/dev.yml) calls this with image=os-ui, version=main-<sha>.
   workflow_call:
@@ -62,7 +63,7 @@ on:
         description: which image to build
         required: true
         type: choice
-        options: [os-ui, git-http, git-daemon, dagster, docling, opensearch]
+        options: [os-ui, git-http, git-daemon, dagster, docling, data-runner, opensearch]
       version:
         description: the image tag to push (e.g. 0.9.0)
         required: true
@@ -178,9 +179,11 @@ jobs:
             dagster)    dockerfile=images/extensions/dagster/Dockerfile; context=images/extensions ;;
             # docling: upstream docling-serve-cpu plus the allowlisted model weights (no code).
             docling)    dockerfile=images/extensions/docling/Dockerfile; context=images/extensions/docling ;;
+            # data-runner: the ingest service (app.py + the shared column_name_rule.json).
+            data-runner) dockerfile=images/extensions/data-runner/Dockerfile; context=images/extensions/data-runner ;;
             # 3.7.0 + repository-s3 (WP-21); tag e.g. opensearch-v3.7.0-soa.1.
             opensearch) dockerfile=images/extensions/opensearch/Dockerfile; context=images/extensions/opensearch ;;
-            *) echo "::error::unknown image '$image' — expected one of os-ui, git-http, git-daemon, dagster, docling, opensearch" >&2; exit 1 ;;
+            *) echo "::error::unknown image '$image' — expected one of os-ui, git-http, git-daemon, dagster, docling, data-runner, opensearch" >&2; exit 1 ;;
           esac
           test -f "$dockerfile" || { echo "::error::$dockerfile does not exist" >&2; exit 1; }
           {

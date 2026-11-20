@@ -300,7 +300,7 @@ spec:
         # metadata.properties() to address MinIO (see header comment). Uses the data-runner
         # image (ships PyIceberg) to create THROUGH the Polaris REST catalog.
         - name: ensure-table
-          image: "{{ .Values.dataRunner.image.repository }}:{{ .Values.dataRunner.image.tag }}"
+          image: "{{ include "soa.dataRunnerImage" . }}"
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
           securityContext:
             {{- include "soa.containerSecurityContext" . | nindent 12 }}

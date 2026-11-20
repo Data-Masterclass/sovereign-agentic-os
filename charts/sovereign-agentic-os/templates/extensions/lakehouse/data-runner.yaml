@@ -20,6 +20,23 @@
   Runs in the apps sync-wave with the other lakehouse infra (Polaris/Trino must be up).
 */}}
 {{- $dr := .Values.dataRunner }}
+{{- /*
+  The image is pinned by digest (chart-owned; `dataRunner.image.digest` is required). `localBuild`
+  (an unpinned image loaded into a local kind cluster by scripts/os) must never reach a real
+  cluster: refused together with any production signal, exactly as docling's.
+*/}}
+{{- if $dr.image.localBuild }}
+{{- $why := list }}
+{{- if eq (.Values.global.profile | default "") "stackit" }}{{ $why = append $why "global.profile=stackit" }}{{ end }}
+{{- if (.Values.ingress).enabled }}{{ $why = append $why "ingress.enabled=true" }}{{ end }}
+{{- range $name, $raw := dict "osUI.publicUrl" ((.Values.osUI).publicUrl | default "") "ingress.hosts.osUI" (((.Values.ingress).hosts).osUI | default "") }}
+{{- $h := lower (regexReplaceAll "[/:].*$" (regexReplaceAll "^[A-Za-z][A-Za-z0-9+.-]*://" (toString $raw) "") "") }}
+{{- if and $h (not (regexMatch "^(localhost|127\\.0\\.0\\.1)$|\\.local$" $h)) }}{{ $why = append $why (printf "%s=%s" $name $h) }}{{ end }}
+{{- end }}
+{{- if $why }}
+{{- fail (printf "dataRunner.image.localBuild=true is for a local kind cluster only, but this release looks like production (%s). Remove localBuild and set dataRunner.image.digest." (join ", " $why)) }}
+{{- end }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -49,7 +66,7 @@ spec:
         runAsUser: 1000
       containers:
         - name: data-runner
-          image: "{{ $dr.image.repository }}:{{ $dr.image.tag }}"
+          image: "{{ include "soa.dataRunnerImage" . }}"
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
           securityContext:
             {{- include "soa.containerSecurityContext" . | nindent 12 }}

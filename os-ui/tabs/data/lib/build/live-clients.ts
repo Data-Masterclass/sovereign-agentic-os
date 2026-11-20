@@ -164,7 +164,18 @@ export function realDlt(): DltClient & { lastIngest?: IngestOutcome; columnNames
   const self: DltClient & { lastIngest?: IngestOutcome; columnNames?: string[] } = {
     async load(_table, source, ctx) {
       if (!ctx?.objectKey) return; // no upload context → nothing to load (verify then ✗).
-      self.lastIngest = await postIngest({ principal: ctx.principal, dataset: source, objectKey: ctx.objectKey, ...(self.columnNames ? { columnNames: self.columnNames } : {}) });
+      // DEPLOY-ORDER SAFE (either service may roll first):
+      //  - an OLDER runner ignores `columnNames` and lands the raw headers, which are valid
+      //    physical names (emitted quoted); the ingest flow records what LANDED;
+      //  - a NEWER runner refuses a list that does not fit the file (header parsed differently
+      //    than this side did) BEFORE it writes anything — then the upload is retried once under
+      //    the file's own names, never failed for it.
+      try {
+        self.lastIngest = await postIngest({ principal: ctx.principal, dataset: source, objectKey: ctx.objectKey, ...(self.columnNames ? { columnNames: self.columnNames } : {}) });
+      } catch (e) {
+        if (!self.columnNames || !/^columnNames has \d+ names but the file has \d+ columns/.test((e as Error).message)) throw e;
+        self.lastIngest = await postIngest({ principal: ctx.principal, dataset: source, objectKey: ctx.objectKey });
+      }
     },
     // The interface carries no domains: a domain table routes by its schema, a personal lane to `_none`.
     async tableExists(table, principal) { return probeQueryable(table, principal, []); },

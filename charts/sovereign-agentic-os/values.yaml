@@ -1422,11 +1422,20 @@ queryTool:
 # data-runner — the REAL ingest service.
 dataRunner:
   enabled: true
+  # Pinned by DIGEST, chart-owned (the template refuses to render without one; `localBuild: true`
+  # in values.local.yaml is the only exception). Built by build-images.yml on a
+  # `data-runner-v<version>` tag into ghcr.io/data-masterclass/sovereign-os/data-runner.
+  # TODAY this pins the image that runs live (0.2.2, built by hand into the aborek namespace,
+  # digest read from the running pod 2026-11-20) until the first org build exists; then
+  # repository / tag / digest move together to the org image in one change.
+  # DEPLOY ORDER: none needed. os-ui sends `columnNames`; an older runner ignores them and lands
+  # the raw headers (valid physical names, emitted quoted); a newer runner refuses a list that
+  # does not fit the file BEFORE writing and os-ui retries under the file's own names.
   image:
-    repository: sovereign-os/data-runner     # built locally, loaded into kind
-    tag: "0.2.1"   # 0.2.1 = service-bearer auth (/ingest + /ingest-rows require
-                   #         Authorization: Bearer when SERVICE_BEARER_TOKEN set;
-                   #         /health open; fail-open when unset — netpol primary).
+    repository: ghcr.io/aborek/sovereign-os/data-runner
+    tag: "0.2.2"
+    digest: sha256:8f7b8a3287368c915af90ee37e6053dfd77326d98fea450f87b97f4835a2e482
+    localBuild: false
   polaris:
     # Same Polaris REST catalog + warehouse Trino reads/writes.
     uri: "http://polaris:8181/api/catalog"
