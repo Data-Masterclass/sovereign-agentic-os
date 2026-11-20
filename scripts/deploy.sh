@@ -57,6 +57,8 @@ usage: deploy.sh [--env dev|prod] [--from-registry] [--verify-only] [--help] <ve
                        for a tag built by .github/workflows/build-images.yml.
   --verify-only        resolve the image reference, prove it exists, print its digest, exit.
                        Touches no cluster. Implies --from-registry.
+  --allow-runner-downgrade  accept pinning a data-runner that does not apply column names over one
+                       that does while datasets store mapped names (their uploads fail).
   --help               this text.
 
 environment
@@ -111,6 +113,7 @@ while [ $# -gt 0 ]; do
     --from-registry) FROM_REGISTRY=1 ;;
     --env)           DEPLOY_ENV=${2:-}; shift ;;
     --verify-only)   VERIFY_ONLY=1; FROM_REGISTRY=1 ;;
+    --allow-runner-downgrade) ALLOW_RUNNER_DOWNGRADE=1 ;;
     -h|--help)       usage; exit 0 ;;
     -*)              echo "deploy.sh: unknown option $1" >&2; usage >&2; exit 2 ;;
     *)               [ -z "$VERSION" ] || { echo "deploy.sh: unexpected argument $1" >&2; exit 2; }
@@ -372,6 +375,25 @@ else
   helm --kube-context "$CTX" get manifest "$REL" -n "$NS" > "$WORK/before.yaml"
 fi
 helm template "$REL" "$CHART" -n "$NS" -f "$VALUES" "${OVERLAY_ARGS[@]+"${OVERLAY_ARGS[@]}"}" --skip-schema-validation > "$WORK/after.yaml"
+# RE-PIN GUARD (data-runner): deploying a runner that does not apply column names over one that
+# does — e.g. re-pinning a legacy digest (dataRunner.legacyDigests) — is refused while any dataset
+# stores mapped column names, exactly as scripts/rollback.sh refuses the same downgrade.
+# `--allow-runner-downgrade` is the explicit override. Fail closed: an unreadable manifest refuses.
+CAP_BEFORE=$(python3 scripts/lib/runner-capability.py "$WORK/before.yaml") \
+  || { echo "RUNNER_CAPABILITY_UNKNOWN — cannot read the live data-runner from the release manifest" >&2; exit 1; }
+CAP_AFTER=$(python3 scripts/lib/runner-capability.py "$WORK/after.yaml") \
+  || { echo "RUNNER_CAPABILITY_UNKNOWN — cannot read the data-runner from the rendered chart" >&2; exit 1; }
+if [ "$CAP_BEFORE" = true ] && [ "$CAP_AFTER" != true ]; then
+  probe=${DEPLOY_MAPPED_COLUMNS_PROBE:-scripts/lib/mapped-columns.sh}
+  if mapped=$(bash "$probe" --context "$CTX" --ns "$NS" 2>/dev/null | tail -1) && [[ $mapped =~ ^[0-9]+$ ]]; then :; else mapped=unknown; fi
+  if [ "$mapped" != 0 ]; then
+    if [ -z "${ALLOW_RUNNER_DOWNGRADE:-}" ]; then
+      echo "RUNNER_DOWNGRADE_REFUSED — this deploy pins a data-runner that does not apply column names over one that does, and $mapped dataset(s) store mapped column names; their uploads would fail. Pin a current runner, or pass --allow-runner-downgrade." >&2
+      exit 1
+    fi
+    echo "   WARNING: --allow-runner-downgrade: $mapped dataset(s) store mapped column names"
+  fi
+fi
 python3 - "$WORK/before.yaml" "$WORK/after.yaml" <<'PY'
 import sys, yaml
 def objs(p):

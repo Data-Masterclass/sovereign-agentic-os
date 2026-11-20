@@ -28,6 +28,10 @@
 # cannot be read. `--allow-runner-downgrade` (rollback.yml input `allow_runner_downgrade`) is the
 # explicit override.
 #
+# THIS SCRIPT IS THE ONLY SUPPORTED ROLLBACK PATH. A manual `helm rollback` is NOT guarded: it
+# skips the backup, the environment guard and this data-runner check. Use rollback.sh (or the
+# rollback.yml workflow, which runs it).
+#
 # Last line: ROLLBACK_OK env=<env> <from> -> <to> | ROLLBACK_DRY_RUN env=... | ROLLBACK_REFUSED: <why>
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -77,17 +81,28 @@ print(cur, tgt)' "$TO")"
 
 echo "   $ENV_NAME ($CTX): revision $CURRENT -> $TARGET"
 
-# applies_column_names <revision> — the data-runner annotation of that revision ("true" or not).
+# applies_column_names <revision> — `true` / `false` / `absent` for that revision's data-runner.
+# FAIL CLOSED: a failed `helm get manifest`, a missing PyYAML or an unparsable manifest refuses
+# the rollback rather than skipping the guard.
 applies_column_names() {
-  helm --kube-context "$CTX" get manifest "$REL" -n "$NS" --revision "$1" 2>/dev/null | python3 -c '
-import sys, yaml
-v = ""
-for d in yaml.safe_load_all(sys.stdin):
-    if isinstance(d, dict) and d.get("kind") == "Deployment" and (d.get("metadata") or {}).get("name") == "data-runner":
-        v = str(((d["metadata"].get("annotations") or {}).get("sovereign-os/applies-column-names", ""))).lower()
-print(v)'
+  local m
+  m=$(helm --kube-context "$CTX" get manifest "$REL" -n "$NS" --revision "$1") || return 3
+  printf '%s' "$m" | python3 scripts/lib/runner-capability.py - || return 4
 }
-if [ "$(applies_column_names "$CURRENT")" = true ] && [ "$(applies_column_names "$TARGET")" != true ]; then
+CAPF=$(mktemp)
+trap 'rm -f "$CAPF"' EXIT
+capability() { # <revision> — writes the value to $CAPF, or refuses (in THIS shell) naming why
+  local rc=0
+  applies_column_names "$1" > "$CAPF" || rc=$?
+  case $rc in
+    0) ;;
+    3) refuse "cannot read the manifest of revision $1 to check the data-runner (helm get manifest failed)" ;;
+    *) refuse "cannot read the data-runner capability of revision $1 (PyYAML missing or the manifest does not parse)" ;;
+  esac
+}
+capability "$CURRENT"; CAP_CURRENT=$(cat "$CAPF")
+capability "$TARGET";  CAP_TARGET=$(cat "$CAPF")
+if [ "$CAP_CURRENT" = true ] && [ "$CAP_TARGET" != true ]; then
   probe=${ROLLBACK_MAPPED_COLUMNS_PROBE:-scripts/lib/mapped-columns.sh}
   if mapped=$(bash "$probe" --context "$CTX" --ns "$NS" 2>/dev/null | tail -1) && [[ $mapped =~ ^[0-9]+$ ]]; then :; else mapped=unknown; fi
   if [ "$mapped" != 0 ]; then
