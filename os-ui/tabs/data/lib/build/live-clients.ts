@@ -156,12 +156,16 @@ export async function dataRunnerReachable(): Promise<boolean> {
   return Boolean(res && res.ok);
 }
 
-export function realDlt(): DltClient & { lastIngest?: IngestOutcome; columnNames?: string[] } {
+/** The typed refusal when a mapped dataset's upload cannot land under its stored names. */
+export const COLUMN_MAPPING_MISMATCH = 'COLUMN_MAPPING_MISMATCH';
+
+export function realDlt(): DltClient & { lastIngest?: IngestOutcome; columnNames?: string[]; allowRawRetry?: boolean } {
   // `load` performs the REAL ingest when a file objectKey is present (data-runner
   // writes the physical Bronze table); `tableExists` verifies the RESULT landed in
   // Polaris (a governed probe SELECT as the principal), so a missing table reports ✗.
   // `columnNames` (set by the ingest flow): the positional names the runner lands the columns under.
-  const self: DltClient & { lastIngest?: IngestOutcome; columnNames?: string[] } = {
+  // `allowRawRetry` (set by the ingest flow): true ONLY when the dataset stores no column mapping.
+  const self: DltClient & { lastIngest?: IngestOutcome; columnNames?: string[]; allowRawRetry?: boolean } = {
     async load(_table, source, ctx) {
       if (!ctx?.objectKey) return; // no upload context → nothing to load (verify then ✗).
       // DEPLOY-ORDER SAFE (either service may roll first):
@@ -169,11 +173,19 @@ export function realDlt(): DltClient & { lastIngest?: IngestOutcome; columnNames
       //    physical names (emitted quoted); the ingest flow records what LANDED;
       //  - a NEWER runner refuses a list that does not fit the file (header parsed differently
       //    than this side did) BEFORE it writes anything — then the upload is retried once under
-      //    the file's own names, never failed for it.
+      //    the file's own names, but ONLY for a dataset that stores no column mapping yet. A
+      //    dataset with stored names (`order_date` from `Order Date`) is refused instead: a replace
+      //    under the raw names would flip its Bronze columns and break Silver and Gold.
       try {
         self.lastIngest = await postIngest({ principal: ctx.principal, dataset: source, objectKey: ctx.objectKey, ...(self.columnNames ? { columnNames: self.columnNames } : {}) });
       } catch (e) {
         if (!self.columnNames || !/^columnNames has \d+ names but the file has \d+ columns/.test((e as Error).message)) throw e;
+        if (!self.allowRawRetry) {
+          throw new Error(
+            `${COLUMN_MAPPING_MISMATCH} — this dataset stores column names for its headers, and the file does not fit them ` +
+              `(${(e as Error).message}). Nothing was written; re-upload a file with the same header row.`,
+          );
+        }
         self.lastIngest = await postIngest({ principal: ctx.principal, dataset: source, objectKey: ctx.objectKey });
       }
     },

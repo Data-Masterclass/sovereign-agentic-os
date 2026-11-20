@@ -302,6 +302,13 @@ if isinstance(d, dict):
         ud['deployments'] = fresh
         migrated.append('dagster.dagster-user-deployments.deployments (chart list, '
                         + ('chart repository' if qualified(default_repo) else 'operator repository') + ')')
+# ROLL ORDER — the data-runner goes BEFORE (or with) os-ui, never after, and is never rolled back
+# below the first build that applies `columnNames` while datasets store mapped column names: an
+# older runner ignores the names and lands raw headers. os-ui refuses to register such a landing
+# (typed COLUMN_MAPPING_MISMATCH), so nothing is silently broken, but the upload fails until the
+# runner is forward again. One `helm upgrade` rolls both at once, which satisfies the order.
+# NOTE: the digest pin adds `@sha256:` to the runner's image reference, so the first deploy with
+# it restarts data-runner once on the SAME image bits.
 # The data-runner image follows the same rule (pinned by digest, chart-owned): tag, digest and
 # localBuild always come from the chart, and the repository too once the chart's is
 # registry-qualified — so a live hand-built `ghcr.io/aborek/...` value never wins over the pin.

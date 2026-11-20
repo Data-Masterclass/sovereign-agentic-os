@@ -69,3 +69,14 @@ export function landedColumnDocs(landed: { name: string }[], plan: { columns: Co
   const sourceOf = new Map((plan?.columns ?? []).filter((c) => c.source).map((c) => [c.name, c.source!]));
   return landed.map((c) => ({ name: c.name, description: '', ...(sourceOf.has(c.name) ? { source: sourceOf.get(c.name)! } : {}) }));
 }
+
+/**
+ * May an upload whose name list the runner refused be retried under the file's OWN names? Only
+ * when the dataset stores no column mapping (no column carries a `source`): then raw names are
+ * what it already has, or it has nothing yet. With a mapping, a retry would replace Bronze under
+ * the raw headers (`Order Date` instead of `order_date`) and break every layer built on it.
+ */
+export function rawRetryAllowed(existing: ColumnDoc[]): boolean {
+  return !existing.some((c) => c.source && c.source !== c.name);
+}
+

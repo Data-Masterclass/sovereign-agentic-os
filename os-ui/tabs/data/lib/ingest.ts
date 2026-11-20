@@ -7,7 +7,7 @@ import { routeFor } from '@core/infra/trino-source';
 import { offlineMockAllowed, refuseOfflineMock } from '@core/kernel/offline-mock';
 import { assistantComplete } from '@core/runtime/complete';
 import type { Role } from '@core/kernel/session';
-import { emptyVersions, type Dataset } from '@tabs/data/lib/dataset-schema';
+import { DatasetError, emptyVersions, type Dataset } from '@tabs/data/lib/dataset-schema';
 import { getDataset, buildVersion, setDocs } from '@tabs/data/lib/store';
 import { autoDocumentAfterIngest, type IngestGrounding } from '@tabs/data/lib/auto-docs';
 import { autoAdvancePipeline } from '@tabs/data/lib/auto-pipeline';
@@ -18,7 +18,8 @@ import { INGEST_OBJECT_KEY, makeLiveAdapters } from '@tabs/data/lib/build/live';
 import { makeRealClients, dataRunnerReachable } from '@tabs/data/lib/build/live-clients';
 import { makeMockAdapters, newMockBackends } from '@tabs/data/lib/build/mocks';
 import { runAdapter } from '@tabs/data/lib/build/adapter';
-import { landedColumnDocs, planUploadColumns, uploadHeaders } from '@tabs/data/lib/upload-columns';
+import { landedColumnDocs, planUploadColumns, rawRetryAllowed, uploadHeaders } from '@tabs/data/lib/upload-columns';
+import { COLUMN_MAPPING_MISMATCH } from '@tabs/data/lib/build/live-clients';
 import { isIdentifier } from '@tabs/data/lib/dbt/literal';
 import type { ColumnDoc } from '@tabs/data/lib/dataset-schema';
 
@@ -82,6 +83,8 @@ export async function ingestUpload(input: {
   body: Buffer;
   /** Positional column names to land under (`upload-columns.ts`); absent ⇒ the file's own. */
   columnNames?: string[];
+  /** May a refused name list be retried under the file's own names? Only without a stored mapping. */
+  allowRawRetry?: boolean;
 }): Promise<IngestReport> {
   const schema = personalSchema(input.principal);
   const table = bronzeTarget(schema, input.datasetName);
@@ -121,6 +124,7 @@ export async function ingestUpload(input: {
   await putObject(objectKey, input.body);
   const deps = await makeRealClients();
   if (input.columnNames) (deps.dlt as { columnNames?: string[] }).columnNames = input.columnNames;
+  (deps.dlt as { allowRawRetry?: boolean }).allowRawRetry = input.allowRawRetry ?? false;
   const row = await runAdapter(makeLiveAdapters(deps).dlt, {
     dataset, artifacts: { [INGEST_OBJECT_KEY]: objectKey }, principal: input.principal, stage: 'bronze',
   });
@@ -176,13 +180,29 @@ export async function ingestAndRegisterBronze(
     fileName,
     body,
     ...(plan ? { columnNames: plan.columnNames } : {}),
+    allowRawRetry: rawRetryAllowed(dataset.columns),
   });
+  if (!report.ok && report.error?.includes(COLUMN_MAPPING_MISMATCH)) {
+    throw new DatasetError(report.error, 409, { code: 'column_mapping_mismatch' });
+  }
   if (!report.ok) return { ok: false, report, dataset: null };
   // The column docs to record — from what LANDED (the runner's own report), with the source
   // header attached where the mapping renamed it. Checked BEFORE Bronze is registered: a landed
   // name outside the column allow-list (a self-describing file's own key) refuses the
   // registration here instead of failing half-way after it.
   const landed: ColumnDoc[] = landedColumnDocs(report.columns, plan);
+  // A dataset that stores a mapping must land under exactly those names. A runner older than this
+  // os-ui ignores `columnNames` — then the file landed under its raw headers: say so loudly (typed)
+  // instead of registering a Bronze whose columns no longer match what Silver and Gold read.
+  if (plan && !rawRetryAllowed(dataset.columns) && landed.map((c) => c.name).join('\u0000') !== plan.columnNames.join('\u0000')) {
+    throw new DatasetError(
+      `${COLUMN_MAPPING_MISMATCH} — the ingest service landed the file under ${JSON.stringify(landed.map((c) => c.name).slice(0, 5))}, ` +
+        `not this dataset's stored names ${JSON.stringify(plan.columnNames.slice(0, 5))}: it is older than this os-ui. ` +
+        'Roll the data-runner forward (it deploys before os-ui), then upload again.',
+      409,
+      { code: 'column_mapping_mismatch' },
+    );
+  }
   const refused = landed.find((c) => !isIdentifier('column', c.name));
   if (refused) {
     return {
