@@ -166,7 +166,7 @@ test(`tracing e2e: one model call is exactly one GENERATION in the app span's tr
 
 test('tracing e2e: a virtual key whose budget is spent is refused, and the OS reads it as a spent budget', { skip, timeout: 180_000 }, async () => {
   const { liteLlmCaller } = await import('@core/runtime/runtime');
-  const { putSecret } = await import('@core/infra/secrets');
+  const keys = await import('@core/infra/agent-system-keys');
   const { BudgetExceededError } = await import('@core/infra/litellm-credential');
   const key = `sk-e2e-budget-${hex(6)}`;
   // One call costs 0.000275 at the chart's prices; the second call spends past this budget.
@@ -175,7 +175,12 @@ test('tracing e2e: a virtual key whose budget is spent is refused, and the OS re
     body: JSON.stringify({ key, key_alias: `e2e-budget-${hex(3)}`, models: ['sovereign-default'], max_budget: 0.0004, budget_duration: '7d' }),
   });
   assert.equal(gen.status, 200, `/key/generate: ${(await gen.text()).slice(0, 200)}`);
-  const keyRef = putSecret('e2e-system-key', 'apiKey', key);
+  // The system's own key as Build stores it: sealed in the key store, referenced by system id.
+  const store = keys.memorySystemKeyStore();
+  keys.__setSystemKeyStoreForTests(store);
+  const caps = { models: ['sovereign-default'], maxBudget: 0.0004, budgetDuration: '7d', rpmLimit: 300, tpmLimit: 1_000_000, maxParallelRequests: 8 };
+  await store.put(keys.sealSystemKey({ systemId: 'sys-budget', alias: keys.systemKeyAlias('sys-budget'), key, caps, createdAt: Date.now(), rotatedAt: null }, keys.deploymentKek()));
+  const keyRef = keys.systemKeyRef('sys-budget');
   const call = liteLlmCaller({ userId: 'u-e2e', domain: 'sales', systemId: 'sys-budget', keyRef });
   const req = { model: 'sovereign-default', messages: [{ role: 'user' as const, content: 'spend' }] };
 
