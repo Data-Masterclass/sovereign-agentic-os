@@ -1,0 +1,3 @@
+{
+  "models/schema.yml": "version: 2\nmodels:\n  - name: zfix_orders\n    metadata:\n      os_owner: amir\n"
+}
