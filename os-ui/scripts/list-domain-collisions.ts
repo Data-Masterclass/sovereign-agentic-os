@@ -1,7 +1,11 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  *
- * List the domains whose ids sanitize to one schema identifier (`a-b` / `a--b` → `a_b`). READ-ONLY.
+ * FEATURE:    List the domains whose ids sanitize to one schema identifier (`a-b` / `a--b` → `a_b`).
+ * USER STORY: As an operator I want to see, read-only, whether two live domains already share one
+ *             schema identifier, before any fix is planned.
+ * ARCHITECTURE:
+ *   - Pure over an export file: tabs/admin/lib/domains `domainIdsFromJson` + `domainCollisions`.
  *
  *   node --import ./scripts/test-setup.mjs scripts/list-domain-collisions.ts <export.json>…
  *

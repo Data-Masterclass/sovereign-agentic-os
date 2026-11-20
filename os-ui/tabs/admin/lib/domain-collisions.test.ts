@@ -7,6 +7,9 @@
  *             existing domain already uses (`a-b`, `a--b`, `a_b` all become `a_b`): its schema
  *             (`iceberg.a_b`), its landing schemas and its dbt project would silently be shared.
  *             As an operator I want a read-only list of any such collisions that already exist.
+ * ARCHITECTURE:
+ *   - Real domains store (`_reset` per test); the identifier rule is core/kernel/domain-ident.ts.
+ *   - The operator script is spawned on a temp export file; it must exit 1 / 0 and print JSON lines.
  */
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
