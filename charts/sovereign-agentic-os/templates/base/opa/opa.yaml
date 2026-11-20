@@ -60,7 +60,8 @@ data:
   # (connections_test.rego). Its per-connection data is not published to OPA yet.
   connections.rego: |
 {{ .Files.Get "policies/connections.rego" | indent 4 }}
-  # Decision-log mask (package system.log), read by decision_logs.mask_decision.
+  # Decision-log policy (package system.log): `drop` skips plain data-document reads,
+  # `mask` erases secret-bearing keys (decision_logs.drop_decision / mask_decision).
   system-log.rego: |
 {{ .Files.Get "policies/system/log.rego" | indent 4 }}
 ---
@@ -84,6 +85,7 @@ data:
     {{- if $opa.decisionLogs.enabled }}
     decision_logs:
       console: true
+      drop_decision: system/log/drop
       mask_decision: system/log/mask
     {{- end }}
 ---

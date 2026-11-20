@@ -770,8 +770,9 @@ opa:
   enabled: true
   image:
     repository: openpolicyagent/opa
-    # Newest 1.x (components/opa/UPSTREAM.md). The default tag: `-static` is
-    # deprecated upstream since 1.22 and the default build is static too.
+    # Newest 1.x (components/opa/UPSTREAM.md). The default tag: its binary is
+    # statically linked like `-static` (opa#9431), and upstream deprecated the
+    # `_static` binaries in 1.22.0 (opa#9441); for images it was only discussed.
     tag: "1.22.4"
     digest: sha256:ff50f50332ff9e722ffafe2658c195ced1f9b6d4f3064000c2ecfa8cdf7acccf
   resources:

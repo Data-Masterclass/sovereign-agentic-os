@@ -95,21 +95,59 @@ test('agent-spine authorize() carries the decision_id of a deny', async () => {
   assert.equal((line.result as { effect?: string }).effect, 'deny');
 });
 
-test('masked input fields never reach the decision log', async () => {
+test('secret-bearing fields never reach the decision log, at any depth', async () => {
   const secret = `wp06-secret-${Date.now()}`;
   const res = await fetch(`${OPA}/v1/data/agentic/authz/decision`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ input: { principal: 'sovereign-agents', tool: 'rag_search', token: secret } }),
+    body: JSON.stringify({
+      input: {
+        principal: 'sovereign-agents',
+        tool: 'rag_search',
+        token: secret,
+        password: secret,
+        client_secret: secret,
+        headers: { authorization: `Bearer ${secret}`, cookie: secret, 'x-api-key': secret },
+        args: { nested: [{ api_key: secret }] },
+      },
+    }),
   });
   const body = (await res.json()) as { decision_id?: string };
   assert.ok(body.decision_id);
   const [line] = await linesFor(body.decision_id!);
   assert.ok(line, 'the decision was logged');
   assert.equal(line.input?.principal, 'sovereign-agents', 'unmasked fields stay');
-  assert.equal('token' in (line.input ?? {}), false, 'masked field removed');
-  assert.ok(line.erased?.includes('/input/token'), 'OPA records what it erased');
+  assert.deepEqual(
+    [...(line.erased ?? [])].sort(),
+    [
+      '/input/args/nested/0/api_key',
+      '/input/client_secret',
+      '/input/headers/authorization',
+      '/input/headers/cookie',
+      '/input/headers/x-api-key',
+      '/input/password',
+      '/input/token',
+    ],
+    'OPA records every erased path',
+  );
   assert.equal(rawLogs().includes(secret), false, 'the secret appears nowhere in the OPA output');
+});
+
+test('a plain read of a data document is not logged; a decision on the same path is', async () => {
+  const before = decisionLines().length;
+  const read = await fetch(`${OPA}/v1/data/seed_grants`);
+  const readBody = (await read.json()) as { result?: unknown; decision_id?: string };
+  assert.ok(readBody.result, 'the read itself works');
+  const decided = await fetch(`${OPA}/v1/data/agentic/authz/allow`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ input: { principal: 'sovereign-agents', tool: 'rag_search' } }),
+  });
+  const decidedBody = (await decided.json()) as { decision_id?: string };
+  assert.equal((await linesFor(decidedBody.decision_id!)).length, 1, 'the decision is logged');
+  if (readBody.decision_id) assert.deepEqual(await linesFor(readBody.decision_id, 1000), [], 'the read is dropped');
+  const added = decisionLines().slice(before);
+  assert.equal(added.some((l) => l.path === 'seed_grants'), false, 'no log line for the document read');
 });
 
 test('negative twin: a faked OPA hop leaves no decision-log evidence', async () => {
