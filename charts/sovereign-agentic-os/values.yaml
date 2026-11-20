@@ -473,8 +473,17 @@ llmProviders:
   # The STACKIT model-serving host joins automatically when stackitPremium.enabled.
   #   allowHosts: [my-resource.openai.azure.com, api.mistral.ai]
   allowHosts: []
-  # Extra in-cluster names for the gateway's NO_PROXY (e.g. a bare Service name in this namespace).
+  # Extra in-cluster names for the gateway's NO_PROXY (OS-internal; never accepted as a provider).
   noProxy: []
+  # Local model servers an admin may connect as a provider (an in-cluster Ollama or vLLM): exact
+  # names or ".suffix" entries. They join NO_PROXY. Any other endpoint that names or RESOLVES to a
+  # cluster-internal or private address is refused by the Models & Providers flow (SSRF guard);
+  # metadata, loopback and link-local addresses are refused always.
+  #   localModels: [ollama, vllm.models.svc]
+  localModels: []
+  # Namespaces the gateway may reach for those servers (its egress NetworkPolicy; same namespace
+  # is always allowed).
+  localModelNamespaces: []
   # Every admin-registered model joins this LiteLLM access group; the shared agent key holds it.
   accessGroup: os-admin-registered
 

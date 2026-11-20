@@ -25,6 +25,6 @@ const osui = find('Deployment', (n) => n === 'os-ui').spec.template.spec.contain
 const envOf = (k) => (osui.env ?? []).find((e) => e.name === k)?.value ?? '';
 writeFileSync(`${out}/facts.json`, JSON.stringify({
   image: gw.image, agentKeyModels: JSON.parse(m[1].replace(/\\"/g, '"')),
-  allowlist: envOf('LLM_EGRESS_ALLOWLIST'), accessGroup: envOf('LLM_ACCESS_GROUP'),
+  allowlist: envOf('LLM_EGRESS_ALLOWLIST'), localModels: envOf('LLM_LOCAL_MODELS'), accessGroup: envOf('LLM_ACCESS_GROUP'),
 }, null, 1));
 console.log(readFileSync(`${out}/facts.json`, 'utf8'));

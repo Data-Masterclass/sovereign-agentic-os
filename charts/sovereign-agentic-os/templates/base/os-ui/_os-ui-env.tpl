@@ -343,6 +343,8 @@
   value: {{ include "soa.egressHosts" . | fromJsonArray | join "," | quote }}
 - name: LLM_NO_PROXY
   value: {{ include "soa.litellmNoProxy" . | quote }}
+- name: LLM_LOCAL_MODELS
+  value: {{ (.Values.llmProviders | default dict).localModels | default list | join "," | quote }}
 - name: LLM_ACCESS_GROUP
   value: {{ (.Values.llmProviders | default dict).accessGroup | default "" | quote }}
 - name: OPA_URL

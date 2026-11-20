@@ -70,11 +70,11 @@ test('egress: an external host must be on the proxy allowlist, with the exact ch
   assert.match(blocked.guidance ?? '', /acme\.openai\.azure\.com/);
   // In-cluster names are reached directly (on the gateway's NO_PROXY), never through the internet proxy.
   assert.deepEqual(providerEgress(presetById('ollama')!, 'http://ollama:11434', allow, ['ollama']), { ok: true, host: 'ollama', route: 'in-cluster' });
-  assert.equal(providerEgress(presetById('ollama')!, 'http://ollama.models.svc.cluster.local:11434', allow, []).route, 'in-cluster');
+  assert.equal(providerEgress(presetById('ollama')!, 'http://ollama.models.svc.cluster.local:11434', allow, ['.models.svc.cluster.local']).route, 'in-cluster');
   // A bare name the gateway would still send to the proxy is refused, with the two ways to fix it.
   const bare = providerEgress(presetById('ollama')!, 'http://ollama:11434', allow, []);
   assert.equal(bare.ok, false);
-  assert.match(bare.guidance ?? '', /llmProviders\.noProxy/);
+  assert.match(bare.guidance ?? '', /llmProviders\.localModels/);
   // Metadata / loopback / private addresses are refused outright.
   assert.equal(providerEgress(presetById('openai-compatible')!, 'http://169.254.169.254/v1', allow).ok, false);
   assert.equal(providerEgress(presetById('openai-compatible')!, 'http://192.168.1.20:8000/v1', allow).ok, false);

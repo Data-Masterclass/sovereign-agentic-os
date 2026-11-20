@@ -24,6 +24,7 @@
  *   proven by llm-providers.e2e.test.ts against the real LiteLLM image.
  */
 import 'server-only';
+import { lookup } from 'node:dns/promises';
 import { adminPost } from '@core/infra/litellm-write';
 import { adminGet, readModels, type Fetched, type LiteLlmModelRow } from '@core/infra/litellm-admin';
 import { egressHost, isHardDeniedTarget } from '@core/infra/secrets';
@@ -40,8 +41,14 @@ export type GatewayIo = {
   get: <T>(path: string, timeoutMs?: number) => Promise<Fetched<T>>;
   post: <T>(path: string, body: unknown, timeoutMs?: number) => Promise<Fetched<T>>;
   models: () => Promise<Fetched<LiteLlmModelRow[]>>;
+  /** DNS for the SSRF check — os-ui resolves with the same cluster DNS the gateway uses. */
+  resolve?: Resolver;
 };
-const realIo: GatewayIo = { get: adminGet, post: adminPost, models: readModels };
+export type Resolver = (host: string) => Promise<{ address: string; family: number }[]>;
+const dnsResolve: Resolver = (host) => lookup(host, { all: true, verbatim: true });
+/** The real IO: the one admin door, the read client, and node:dns. */
+export const defaultIo: GatewayIo = { get: adminGet, post: adminPost, models: readModels, resolve: dnsResolve };
+const realIo = defaultIo;
 
 /** The access group the shared agent key holds (chart: llmProviders.accessGroup). */
 export function accessGroup(): string {
@@ -53,6 +60,14 @@ export function egressAllowlist(): string[] {
   return (process.env.LLM_EGRESS_ALLOWLIST ?? '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
 }
 
+/**
+ * Local model servers the deployment names on purpose (chart `llmProviders.localModels`, e.g. an
+ * in-cluster Ollama or vLLM): exact names or `.suffix` entries. Only these may be cluster-internal.
+ */
+export function localModelsList(): string[] {
+  return (process.env.LLM_LOCAL_MODELS ?? '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+}
+
 /** The names the gateway reaches without the proxy — the chart renders the gateway's NO_PROXY here too. */
 export function noProxyList(): string[] {
   return (process.env.LLM_NO_PROXY ?? '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
@@ -60,39 +75,100 @@ export function noProxyList(): string[] {
 
 // ------------------------------------------------------------------------- egress --
 
-export type EgressVerdict = { ok: boolean; host: string; route?: 'egress-proxy' | 'in-cluster'; guidance?: string };
+export type EgressCode = 'no_host' | 'internal_not_listed' | 'egress_not_allowed' | 'unresolvable' | 'resolves_internal';
+export type EgressVerdict = { ok: boolean; host: string; route?: 'egress-proxy' | 'in-cluster'; code?: EgressCode; guidance?: string };
 
-const PRIVATE = /^(10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+)$/;
 const onList = (host: string, list: string[]) => list.some((d) => host === d || host.endsWith(`.${d}`));
 /** NO_PROXY semantics: an exact name, or a suffix entry (".svc"). */
-const bypassesProxy = (host: string, noProxy: string[]) =>
-  /\.(svc|cluster\.local)$/.test(host) || noProxy.some((n) => (n.startsWith('.') ? host.endsWith(n) : host === n));
+const matches = (host: string, names: string[]) => names.some((n) => (n.startsWith('.') ? host.endsWith(n) : host === n));
+const bypassesProxy = (host: string, noProxy: string[]) => /\.(svc|cluster\.local)$/.test(host) || matches(host, noProxy);
+
+/** IPv4 dotted quad → 4 octets, or null. */
+function v4(a: string): number[] | null {
+  const m = a.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  return m ? m.slice(1).map(Number) : null;
+}
+/** The IPv4 inside an IPv4-mapped IPv6 address (`::ffff:10.0.0.1` / `::ffff:a00:1`), else null. */
+function mapped(a: string): string | null {
+  const d = a.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/i);
+  if (d) return d[1];
+  const h = a.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i);
+  if (!h) return null;
+  const hi = parseInt(h[1], 16), lo = parseInt(h[2], 16);
+  return `${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`;
+}
+/** Metadata, loopback, link-local, unspecified: never a provider, whatever the deployment lists. */
+export function isNeverAddress(addr: string): boolean {
+  const a = addr.toLowerCase().replace(/^\[|\]$/g, '');
+  const m = mapped(a); if (m) return isNeverAddress(m);
+  const o = v4(a);
+  if (o) return o[0] === 127 || o[0] === 0 || (o[0] === 169 && o[1] === 254);
+  return a === '::1' || a === '::' || /^fe[89ab][0-9a-f]:/.test(a);
+}
+/** Any address that is not public internet: the above plus RFC1918, CGNAT, ULA, multicast. */
+export function isInternalAddress(addr: string): boolean {
+  if (isNeverAddress(addr)) return true;
+  const a = addr.toLowerCase().replace(/^\[|\]$/g, '');
+  const m = mapped(a); if (m) return isInternalAddress(m);
+  const o = v4(a);
+  if (o) {
+    return o[0] === 10 || (o[0] === 172 && o[1] >= 16 && o[1] <= 31) || (o[0] === 192 && o[1] === 168)
+      || (o[0] === 100 && o[1] >= 64 && o[1] <= 127) || o[0] >= 224;
+  }
+  return /^f[cd][0-9a-f]{2}:/.test(a) || /^ff/.test(a);
+}
+const LOCAL_GUIDANCE = (host: string) => `${host} is inside the cluster or a private network. The gateway reaches such a server only when the deployment names it in llmProviders.localModels:\n  llmProviders:\n    localModels:\n      - ${host}\n(and, for another namespace, llmProviders.localModelNamespaces). Then run this step again.`;
 
 /**
- * May the gateway reach this provider? In-cluster names are reached directly (they are on the
- * gateway's NO_PROXY); every other host leaves through the egress proxy and must be on its filter.
+ * The STRING stage: which route the host would take, before any DNS. Internal-looking names (a bare
+ * Service name, *.svc, *.local, a private or loopback literal) are refused unless listed in
+ * `localModels`; every other host must be on the egress proxy's allowlist.
  */
-export function providerEgress(p: Preset, apiBase: string | undefined, allow: string[], noProxy: string[] = noProxyList()): EgressVerdict {
+export function providerEgress(p: Preset, apiBase: string | undefined, allow: string[], localModels: string[] = localModelsList()): EgressVerdict {
   const base = (apiBase ?? '').trim() || p.defaultApiBase || '';
-  const host = base ? egressHost(base) : (p.defaultHost ?? '');
-  if (!host) {
-    return { ok: false, host: '', guidance: 'Give the provider\'s base URL, so its host can be checked against the egress allowlist.' };
+  const host = (base ? egressHost(base) : (p.defaultHost ?? '')).replace(/^\[|\]$/g, '');
+  if (!host) return { ok: false, host: '', code: 'no_host', guidance: 'Give the provider\'s base URL, so its host can be checked against the egress allowlist.' };
+  if (isNeverAddress(host) || isHardDeniedTarget(base || host)) {
+    return { ok: false, host, code: 'resolves_internal', guidance: `${host} is a loopback, link-local or metadata address; it can never be a provider.` };
   }
-  if (isHardDeniedTarget(base || host) || host === 'localhost') {
-    return { ok: false, host, guidance: `${host} is a loopback or metadata address. The gateway runs in its own pod: use the provider's Service name or its real host.` };
-  }
-  if (PRIVATE.test(host)) {
-    return { ok: false, host, guidance: `${host} is a private network address. The egress proxy does not route private ranges; expose the server as a Service in the cluster (for example http://ollama:11434) and use that name.` };
-  }
-  if (bypassesProxy(host, noProxy)) return { ok: true, host, route: 'in-cluster' };
-  if (!host.includes('.')) {
-    return { ok: false, host, guidance: `${host} looks like an in-cluster Service, but the gateway would send it to the egress proxy. Use its full name (${host}.<namespace>.svc), or add it to llmProviders.noProxy in the deployment values and upgrade.` };
-  }
+  if (matches(host, localModels)) return { ok: true, host, route: 'in-cluster' };
+  const internalName = host === 'localhost' || !host.includes('.') || /\.(svc|cluster\.local|local|internal)$/.test(host) || isInternalAddress(host);
+  if (internalName) return { ok: false, host, code: 'internal_not_listed', guidance: LOCAL_GUIDANCE(host) };
   if (onList(host, allow)) return { ok: true, host, route: 'egress-proxy' };
   return {
-    ok: false, host,
+    ok: false, host, code: 'egress_not_allowed',
     guidance: `${host} is not on the egress allowlist, so the gateway cannot reach it. An operator adds it to llmProviders.allowHosts in the deployment values and upgrades:\n  llmProviders:\n    allowHosts:\n      - ${host}\nthen run this step again. (The allowlist is reviewed deployment config; it cannot be changed from this page.)`,
   };
+}
+
+/**
+ * The full check: the string stage, then DNS. A name passes only if EVERY address it resolves to is
+ * acceptable: public for an external provider; never metadata/loopback/link-local even for a listed
+ * local model. So an allowlisted public name that answers with 10.x (or rebinds to it) is refused.
+ */
+export async function checkProviderEndpoint(
+  p: Preset, apiBase: string | undefined,
+  opts: { allow?: string[]; localModels?: string[]; noProxy?: string[]; resolve?: Resolver } = {},
+): Promise<EgressVerdict> {
+  const local = opts.localModels ?? localModelsList();
+  const v = providerEgress(p, apiBase, opts.allow ?? egressAllowlist(), local);
+  if (!v.ok) return v;
+  let addrs: { address: string }[];
+  if (v4(v.host) || v.host.includes(':')) addrs = [{ address: v.host }];
+  else {
+    try { addrs = await (opts.resolve ?? dnsResolve)(v.host); } catch (e) {
+      return { ok: false, host: v.host, code: 'unresolvable', guidance: `${v.host} does not resolve (${(e as { code?: string }).code ?? 'DNS error'}). Check the base URL.` };
+    }
+  }
+  if (addrs.length === 0) return { ok: false, host: v.host, code: 'unresolvable', guidance: `${v.host} has no address.` };
+  const bad = addrs.find((a) => (v.route === 'in-cluster' ? isNeverAddress(a.address) : isInternalAddress(a.address)));
+  if (bad) {
+    return { ok: false, host: v.host, code: 'resolves_internal',
+      guidance: v.route === 'in-cluster'
+        ? `${v.host} resolves to ${bad.address}, a loopback, link-local or metadata address; it can never be a provider.`
+        : `${v.host} resolves to ${bad.address}, which is not a public address. ${LOCAL_GUIDANCE(v.host)}` };
+  }
+  return v;
 }
 
 // ------------------------------------------------------------------------- errors --
@@ -101,6 +177,9 @@ export function providerEgress(p: Preset, apiBase: string | undefined, allow: st
 export function explainGatewayError(raw: string): string {
   const text = String(raw ?? '');
   const first = text.split(/\nstack trace:|\nTraceback/)[0].split('\n')[0].trim();
+  if (/CERTIFICATE_VERIFY_FAILED|certificate verify failed|self[- ]signed certificate|unable to get local issuer|SSLCertVerificationError/i.test(text)) {
+    return 'The provider\'s TLS certificate is not trusted by the gateway. Public providers use public CAs; for a private CA, give the gateway that CA (SSL_CERT_FILE) in the deployment.';
+  }
   if (/AuthenticationError|invalid[_ ]api[_ ]key|Incorrect API key|invalid subscription key|\b401\b/i.test(text)) {
     return 'The provider rejected the API key. Check the key (for Azure: that it belongs to this resource), save the connection again and test.';
   }
@@ -156,9 +235,9 @@ export async function connectProvider(input: ConnectInput, io: GatewayIo = realI
   }
   let values: Record<string, string>;
   try { values = credentialValues(p, input); } catch (e) { return refuse(400, 'missing_field', (e as Error).message); }
-  const egress = providerEgress(p, values.api_base, egressAllowlist());
+  const egress = await checkProviderEndpoint(p, values.api_base, { resolve: io.resolve ?? dnsResolve });
   if (!egress.ok) {
-    return refuse(422, 'egress_not_allowed', `The gateway may not reach ${egress.host || 'this provider'}.`, { host: egress.host, guidance: egress.guidance ?? '' });
+    return refuse(422, egress.code ?? 'egress_not_allowed', `The gateway may not reach ${egress.host || 'this provider'}.`, { host: egress.host, guidance: egress.guidance ?? '' });
   }
   const r = await io.post('/credentials', {
     credential_name: name,
