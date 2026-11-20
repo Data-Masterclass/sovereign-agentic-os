@@ -207,9 +207,18 @@ apply_secret() { # apply_secret <name> <kubectl create secret args...>  (values 
   k -n "$NS" create secret "$@" "$name" --dry-run=client -o yaml | k -n "$NS" apply -f - >/dev/null
   echo "   secret/$name"
 }
-apply_secret sovereign-os-dev-values generic --from-file=values.yaml="$OVERLAY"
-apply_secret northpeak-seed-credentials generic --from-file=SEED_CREDENTIALS="$CAST"
 S3=$(mktemp -d); trap 'rm -rf "$S3"' EXIT
+apply_secret sovereign-os-dev-values generic --from-file=values.yaml="$OVERLAY"
+# Dagster reads its database password from `dagster-postgresql` (key postgresql-password,
+# dagster.global.postgresqlSecretName), which the chart does not render on a fresh install. It is
+# the SAME password as the dagster role (postgres.extraDatabases[dagster].localPassword above).
+python3 - "$OVERLAY" > "$S3/postgresql-password" <<'PY'
+import sys, yaml
+o = yaml.safe_load(open(sys.argv[1]))
+print(next(d["localPassword"] for d in o["postgres"]["extraDatabases"] if d["name"] == "dagster"), end="")
+PY
+apply_secret dagster-postgresql generic --from-file=postgresql-password="$S3/postgresql-password"
+apply_secret northpeak-seed-credentials generic --from-file=SEED_CREDENTIALS="$CAST"
 ( umask 077
   tf_out object_storage_bucket > "$S3/BUCKET"
   tf_out object_storage_endpoint > "$S3/ENDPOINT"

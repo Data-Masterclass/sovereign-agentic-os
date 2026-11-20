@@ -17,13 +17,10 @@ node:
   flavour: m2i.4
   count: 1
   allocatable:
-    # ESTIMATE until the node exists. CPU: 4 vCPU less the 90m reservation the production m3i.8
-    # (8 vCPU, 7910m allocatable) shows.
-    # Memory: production loses 5.3 GiB of capacity to system/kubelet reservations on 64 GB;
-    # 26 GiB here assumes at least as much on 32 GB. Replace both with
-    # `kubectl --context dmagosdev describe node` -> Allocatable after the first apply.
-    cpu: 3910m
-    memory: "27917287424"   # 26 GiB
+    # MEASURED on the dev node (2026-11-20, `kubectl --context dmagosdev get nodes`, m2i.4,
+    # Kubernetes 1.35.9): allocatable 3920m CPU, 29710845384 bytes (27.67 GiB).
+    cpu: 3920m
+    memory: "29710845384"
 
 thresholds:
   requests:
