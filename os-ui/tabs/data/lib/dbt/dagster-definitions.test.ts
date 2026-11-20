@@ -53,8 +53,13 @@ test('a database sync is a dlt sql_table asset landing in landing_<domain>_<owne
   const { files } = generateProjectReport('sales', snap({ 'silver/shop.sql': 'select * from iceberg.personal_alice.bronze_shop_orders' }));
   const py = files.get(DATA_LAYOUT.dagsterDefinitionsPath)!;
   assert.match(py, /key=\["sales", "landing_sales_alice", "raw_shop_orders"\]/);
-  assert.match(py, /sql_table\(\n\s+credentials=dlt\.secrets\["sources\.conn_shop\.credentials"\],\n\s+schema="public",\n\s+table="orders", incremental=dlt\.sources\.incremental\("updated_at"\),/);
-  assert.match(py, /dlt\.pipeline\(pipeline_name="ds_shop0001", destination="sqlalchemy", dataset_name="landing_sales_alice"\)/);
+  // The native dagster-dlt integration: `@dlt_assets` over a dlt source. At load time the source is a
+  // credential-free declaration; the run binds `sql_table` to the connection's secret.
+  assert.match(py, /from dagster_dlt import DagsterDltResource, DagsterDltTranslator, dlt_assets/);
+  assert.match(py, /@dlt_assets\(\n\s+dlt_source=sales__ingest__ds_shop0001_source\(\),\n\s+dlt_pipeline=dlt\.pipeline\(pipeline_name="ds_shop0001", destination="sqlalchemy", dataset_name="landing_sales_alice"\),/);
+  assert.match(py, /yield sql_table\(credentials=credentials, schema="public", table="orders", incremental=dlt\.sources\.incremental\("updated_at"\)\)\.apply_hints\(table_name="raw_shop_orders"\)/);
+  assert.match(py, /credentials = dlt\.secrets\["sources\.conn_shop\.credentials"\]\n\s+yield from dlt_sales\.run\(context=context, dlt_source=sales__ingest__ds_shop0001_source\(credentials\), write_disposition="append"\)/);
+  assert.doesNotMatch(py, /@dg\.asset\(/, 'no hand-rolled asset around dlt');
   assert.match(py, /cron_schedule="0 \* \* \* \*"/);
   assert.match(py, /"os\/principal": "alice"/);
   const bronze = files.get('models/personal/alice/bronze_shop_orders.sql')!;
@@ -92,4 +97,20 @@ test('NEGATIVE: a silver built outside dbt with no recorded SQL is refused with 
   assert.ok(![...files.keys()].some((k) => k.includes('shop_orders')), 'the refused dataset contributes no file');
   assert.doesNotMatch(files.get('models/sources.yml') ?? '', /silver_shop_orders/, 'never emitted as a source');
   assert.match(files.get('os/skipped.yml')!, /ds_shop0001/);
+});
+
+test('N2: an adopted bronze sync model is never dropped by a full re-sync (full_refresh=false), append and merge', () => {
+  const { files } = generateProjectReport('sales', snap({ 'silver/shop.sql': 'select 1' }));
+  assert.match(files.get('models/personal/alice/bronze_shop_orders.sql')!, /incremental_strategy='delete\+insert'.*full_refresh=false/);
+  const merge = dbSync();
+  merge.sync = { ...merge.sync!, mode: 'merge', mergeKeys: ['id'] };
+  const m = generateProjectReport('sales', snap({ 'silver/shop.sql': 'select 1' }, merge)).files.get('models/personal/alice/bronze_shop_orders.sql')!;
+  assert.match(m, /incremental_strategy='merge'.*full_refresh=false/);
+});
+
+test('the header comment carries no user text (a newline in a name can never become code)', () => {
+  const evil = 'x\nimport os; os.system("id")\n#';
+  const py = generateProjectReport(evil, { ...snap({ 'silver/shop.sql': 'select 1' }), domain: evil }).files.get(DATA_LAYOUT.dagsterDefinitionsPath)!;
+  for (const line of py.split('\n')) if (line.trimStart().startsWith('#')) assert.ok(!line.includes('import os'), line);
+  assert.ok(!py.split('\n').some((l) => /^import os\b/.test(l)), 'no injected top-level statement');
 });
