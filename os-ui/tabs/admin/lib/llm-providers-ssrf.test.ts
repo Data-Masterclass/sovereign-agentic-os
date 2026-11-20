@@ -74,3 +74,25 @@ test('the string rules still apply first: off the allowlist is refused without a
   assert.equal(v.code, 'egress_not_allowed');
   assert.equal(looked, false);
 });
+
+test('IPv6 forms that embed an IPv4 address are refused outright: IPv4-compatible, NAT64, SIIT, mapped', async () => {
+  const forms = [
+    '::10.0.0.5', '::a00:5',                 // IPv4-compatible (::/96, deprecated)
+    '64:ff9b::a00:5', '64:ff9b::10.0.0.5',   // NAT64 well-known prefix (64:ff9b::/96)
+    '64:ff9b::203.0.113.7',                  // … even with a public IPv4 inside: the translator decides, not us
+    '64:ff9b:1::a00:5',                      // NAT64 local-use prefix (64:ff9b:1::/48)
+    '::ffff:0:a00:5', '::ffff:0:10.0.0.5',   // SIIT (::ffff:0:0/96)
+    '::ffff:203.0.113.7',                    // IPv4-mapped: also never a provider address
+    '0:0:0:0:0:ffff:a9fe:a9fe',              // mapped metadata, uncompressed
+  ];
+  for (const addr of forms) {
+    const v = await checkProviderEndpoint(compat, 'https://evil.example.com/v1', { ...base, resolve: answers({ 'evil.example.com': [addr] }) });
+    assert.equal(v.ok, false, addr);
+    assert.equal(v.code, 'resolves_internal', addr);
+    const local = await checkProviderEndpoint(ollama, 'http://ollama:11434', { ...base, resolve: answers({ ollama: [addr] }) });
+    assert.equal(local.ok, false, `${addr} (listed local model)`);
+  }
+  // A plain public IPv6 answer still passes.
+  const ok = await checkProviderEndpoint(compat, 'https://evil.example.com/v1', { ...base, resolve: answers({ 'evil.example.com': ['2001:db8:1::7'] }) });
+  assert.equal(ok.ok, true);
+});
