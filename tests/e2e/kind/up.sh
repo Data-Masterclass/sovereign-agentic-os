@@ -44,7 +44,7 @@ got=$( (sha256sum "$manifest" 2>/dev/null || shasum -a 256 "$manifest") | cut -d
 [ "$got" = "$CALICO_MANIFEST_SHA256" ] || { echo "calico manifest sha256 $got != pinned $CALICO_MANIFEST_SHA256" >&2; exit 1; }
 k apply -f "$manifest" >/dev/null
 rm -f "$manifest"
-k -n kube-system rollout status daemonset/calico-node --timeout=600s
+k -n kube-system rollout status daemonset/calico-node --timeout="${E2E_CALICO_TIMEOUT:-1200}s"
 k wait --for=condition=Ready node --all --timeout=300s
 
 say "3. images (built from this checkout, loaded into kind)"
@@ -90,8 +90,8 @@ say "4. SeaweedFS ($SEAWEEDFS_IMAGE) and the chart's buckets"
 k create namespace "$NS" --dry-run=client -o yaml | k apply -f - >/dev/null
 buckets=$(python3 -c "import yaml;print(' '.join(yaml.safe_load(open('$CHART/values.yaml'))['objectStorage']['buckets']))")
 sed -e "s|__SEAWEEDFS_IMAGE__|$SEAWEEDFS_IMAGE|g" -e "s|__NAMESPACE__|$NS|g" -e "s|__BUCKETS__|$buckets|g" "$HERE/manifests/seaweedfs.yaml" | k apply -f - >/dev/null
-k -n "$NS" rollout status deployment/seaweedfs --timeout=300s
-k -n "$NS" wait --for=condition=complete job/seaweedfs-buckets --timeout=300s
+k -n "$NS" rollout status deployment/seaweedfs --timeout="${E2E_PULL_TIMEOUT:-1200}s"
+k -n "$NS" wait --for=condition=complete job/seaweedfs-buckets --timeout="${E2E_PULL_TIMEOUT:-1200}s"
 
 [ "${E2E_STOP_AFTER_INFRA:-0}" = 1 ] && { say "stopping after infrastructure (E2E_STOP_AFTER_INFRA=1)"; exit 0; }
 
