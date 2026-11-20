@@ -127,3 +127,17 @@ class ColumnNamesTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 app.apply_column_names(arrow, bad)
 
+
+class SharedColumnRuleTest(unittest.TestCase):
+    """The shared cases (column_name_cases.json) against THIS implementation; os-ui runs the
+    same file through its own (literal-column-rule.test.ts), so the two cannot drift."""
+
+    def test_shared_cases(self):
+        import json as _json
+        here = os.path.dirname(os.path.abspath(__file__))
+        cases = _json.load(open(os.path.join(here, "column_name_cases.json"), encoding="utf-8"))
+        for name in cases["accept"]:
+            self.assertTrue(app.is_column_name(name), repr(name))
+        for name in cases["refuse"]:
+            self.assertFalse(app.is_column_name(name), repr(name))
+
