@@ -142,21 +142,26 @@ export type KeyCaps = {
 export type GatewayFallbacks = { fallbacks: Record<string, string[]>; default: string[] };
 
 /**
- * Parse the chart-rendered fallback map (`AGENT_SYSTEM_KEY_FALLBACKS_JSON`). Anything malformed
- * reads as "no fallbacks known" — the run then names the refused model if the gateway does fall back.
+ * Parse the chart-rendered fallback map (`AGENT_SYSTEM_KEY_FALLBACKS_JSON`). Empty means "no
+ * fallbacks configured". Text that is not JSON is a deployment error and throws: a key built
+ * without the gateway's fallback targets would be refused exactly when the gateway falls back.
+ * Non-string entries inside valid JSON are dropped.
  */
 export function parseGatewayFallbacks(json: string): GatewayFallbacks {
   const out: GatewayFallbacks = { fallbacks: {}, default: [] };
   if (!json.trim()) return out;
+  let raw: { fallbacks?: unknown; default?: unknown };
   try {
-    const raw = JSON.parse(json) as { fallbacks?: unknown; default?: unknown };
+    raw = JSON.parse(json) as { fallbacks?: unknown; default?: unknown };
+  } catch (e) {
+    throw new Error(`AGENT_SYSTEM_KEY_FALLBACKS_JSON is not valid JSON (${(e as Error).message}) — check the chart's litellm router_settings rendering`);
+  }
+  {
     const strings = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && x.length > 0) : []);
     if (raw.fallbacks && typeof raw.fallbacks === 'object' && !Array.isArray(raw.fallbacks)) {
       for (const [from, targets] of Object.entries(raw.fallbacks as Record<string, unknown>)) out.fallbacks[from] = strings(targets);
     }
     out.default = strings(raw.default);
-  } catch {
-    /* malformed → none known */
   }
   return out;
 }
@@ -456,9 +461,14 @@ export function makeLiveAdapters(deps: LiveDeps): BuildAdapter[] {
         await deps.litellm.generateKey(want, key);
       } catch (e) {
         // The old key is gone and there is no new one: do not leave a record that claims otherwise.
-        await deps.keys.store.delete(want.systemId).catch(() => undefined);
+        let stale = '';
+        try {
+          await deps.keys.store.delete(want.systemId);
+        } catch (d) {
+          stale = `; its stored record could not be removed either (${(d as Error).message})`;
+        }
         forgetSystemKey(want.systemId);
-        throw new Error(`${(e as Error).message} — this system has NO model key now; press Build again`);
+        throw new Error(`${(e as Error).message} — this system has NO model key now${stale}; press Build again`);
       }
       const at = now();
       try {
@@ -467,8 +477,13 @@ export function makeLiveAdapters(deps: LiveDeps): BuildAdapter[] {
         );
       } catch (e) {
         // A key nobody can read back is useless and unaccounted for: take it out of the gateway again.
-        await deps.litellm.deleteKey(tokenIdOf(key)).catch(() => undefined);
-        throw new Error(`the new key could not be stored (${(e as Error).message}) — it was removed from the gateway again; press Build again`);
+        let removed = 'it was removed from the gateway again';
+        try {
+          await deps.litellm.deleteKey(tokenIdOf(key));
+        } catch (d) {
+          removed = `removing it from the gateway again ALSO failed (${(d as Error).message}); run "Remove old guessable keys now" or press Build again`;
+        }
+        throw new Error(`the new key could not be stored (${(e as Error).message}) — ${removed}; press Build again`);
       }
       forgetSystemKey(want.systemId);
       const what = `${want.models.length} model(s), ${describeCaps(want)}`;

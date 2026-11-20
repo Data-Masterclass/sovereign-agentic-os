@@ -14,9 +14,13 @@
  *   counts. POST takes an ACTION NAME and a system id only — never an endpoint or a payload —
  *   so the route cannot be used as a proxy for the gateway's admin API. Rotation goes through
  *   `getSystemForEdit` with the admin's own identity, so the agents tab's edit rule still applies.
+ *   POST is a write at the gateway: OPA must allow `admin` for the caller before either action
+ *   runs (`authorize`, fatal here; `adminCtx` alone treats it as defense-in-depth). A body that
+ *   is not JSON is a 400, never read as an empty action.
  */
 import { NextResponse } from 'next/server';
 import { adminCtx, fail } from '../../_ctx';
+import { authorize } from '@core/infra/governed';
 import { lastKeySweep, sweepLegacySystemKeys } from '@core/infra/agent-system-key-sweep';
 import { ensureHydrated, getSystemForEdit, listAllSystemsInternal } from '@tabs/agents/lib/store';
 import { governYamlForOwner } from '@tabs/agents/lib/build/owner-grants';
@@ -43,7 +47,14 @@ export async function POST(req: Request) {
   } catch (e) {
     return fail(e);
   }
-  const body = (await req.json().catch(() => ({}))) as { action?: unknown; systemId?: unknown };
+  const authz = await authorize(`user:${ctx.user.id}`, 'admin');
+  if (!authz.allowed) return NextResponse.json({ error: 'not allowed by policy', policy: authz.policy }, { status: 403 });
+  let body: { action?: unknown; systemId?: unknown };
+  try {
+    body = (await req.json()) as { action?: unknown; systemId?: unknown };
+  } catch {
+    return NextResponse.json({ error: 'the body must be JSON: {"action":"sweep"} or {"action":"rotate","systemId":"…"}' }, { status: 400 });
+  }
   if (body.action === 'sweep') {
     return NextResponse.json({ sweep: await sweepLegacySystemKeys(), by: ctx.user.id });
   }

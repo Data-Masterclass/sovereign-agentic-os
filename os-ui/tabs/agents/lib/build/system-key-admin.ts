@@ -60,17 +60,28 @@ export async function removeSystemKeyWith(systemId: string, deps: Pick<LiveDeps,
   } catch (e) {
     gateway = `gateway key NOT deleted: ${(e as Error).message}`;
   }
-  await deps.keys.store.delete(systemId).catch(() => undefined);
+  let stored = 'stored copy removed';
+  try {
+    await deps.keys.store.delete(systemId);
+  } catch (e) {
+    stored = `stored copy NOT removed: ${(e as Error).message}`;
+  }
   forgetSystemKey(systemId);
-  return { ok: !gateway.includes('NOT deleted'), detail: `${gateway}; stored copy removed` };
+  return { ok: !gateway.includes('NOT deleted') && !stored.includes('NOT removed'), detail: `${gateway}; ${stored}` };
 }
 
 export async function removeSystemKey(systemId: string): Promise<{ ok: boolean; detail: string }> {
   if (!(await gatewayAdminReachable())) {
     // No gateway (a laptop, or an outage). A system that never had a stored key has nothing to
     // clean up; one that had is reported, because its key is still registered at the gateway.
-    const had = await durableSystemKeyStore.get(systemId).catch(() => null);
-    await durableSystemKeyStore.delete(systemId).catch(() => undefined);
+    let had: unknown;
+    try {
+      had = await durableSystemKeyStore.get(systemId);
+      await durableSystemKeyStore.delete(systemId);
+    } catch (e) {
+      forgetSystemKey(systemId);
+      return { ok: false, detail: `the gateway is unreachable and the key store could not be read or updated (${(e as Error).message}); key os-${systemId} may still be registered — remove it once both are back` };
+    }
     forgetSystemKey(systemId);
     return had
       ? { ok: false, detail: `the gateway is unreachable, so key os-${systemId} was NOT deleted there; its stored copy was removed` }

@@ -43,6 +43,7 @@
 import 'server-only';
 import { createCipheriv, createDecipheriv, createHash, hkdfSync, randomBytes } from 'crypto';
 import { config } from '@core/kernel/config';
+import { agentRunsPool, configuredAgentRunsDatabaseUrl } from '@core/adapters/postgres/pool';
 
 // ------------------------------------------------------------------ the value --
 
@@ -299,14 +300,14 @@ const slot = (): Slot => (g.__osAgentSystemKeys ??= {});
 /** The key store of this process: Postgres when the agent-runs database is configured, else in-memory. */
 export function systemKeyStore(): Promise<SystemKeyStore> {
   const s = slot();
-  const url = (config.agentRunsDatabaseUrl ?? '').trim();
+  const url = configuredAgentRunsDatabaseUrl();
   if (!s.store || s.url !== url) {
     s.url = url;
     const ready = url
       ? (async (): Promise<SystemKeyStore> => {
-          const { Pool } = await import('pg');
-          // A tiny pool: one primary-key read per model call (cached), one write per build.
-          const pool = new Pool({ connectionString: url, max: 2 }) as unknown as SqlClient;
+          // The process's one agent_runs pool: one primary-key read per model call (cached), one
+          // write per build.
+          const pool = (await agentRunsPool(url)) as unknown as SqlClient;
           await migrateSystemKeys(pool);
           return postgresSystemKeyStore(pool);
         })()
@@ -329,7 +330,7 @@ export const durableSystemKeyStore: SystemKeyStore = {
 /** Tests only: put a store (or nothing) in this process's slot and drop the read cache. */
 export function __setSystemKeyStoreForTests(store: SystemKeyStore | null): void {
   const s = slot();
-  s.url = (config.agentRunsDatabaseUrl ?? '').trim();
+  s.url = configuredAgentRunsDatabaseUrl();
   s.store = store ? Promise.resolve(store) : undefined;
   s.cache = undefined;
 }
@@ -341,7 +342,7 @@ export function __setSystemKeyStoreForTests(store: SystemKeyStore | null): void 
  */
 export function deploymentKek(secret: string = config.agentKeyEncryptionKey): Kek {
   if (secret.length > 0) return deriveKek(secret);
-  if ((config.agentRunsDatabaseUrl ?? '').trim().length > 0) throw new SystemKeyUnavailableError('not-configured');
+  if (configuredAgentRunsDatabaseUrl().length > 0) throw new SystemKeyUnavailableError('not-configured');
   const s = slot();
   s.ephemeralKek ??= { id: 'ephemeral', key: randomBytes(32) };
   return s.ephemeralKek;

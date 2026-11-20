@@ -507,10 +507,10 @@ test('ALLOWLIST: the key allows the run\'s role models (the plan step\'s reasoni
   assert.equal(d.litellm.keys.get('os-sys_live')!.maxParallelRequests, 8, 'max_parallel_requests is set on a system key');
 });
 
-test('withFallbackTargets / parseGatewayFallbacks: transitive, cycle-safe, and malformed input means "none known"', () => {
+test('withFallbackTargets / parseGatewayFallbacks: transitive, cycle-safe, and empty means "none", text that is not JSON throws', () => {
   assert.deepEqual(withFallbackTargets(['a'], { fallbacks: { a: ['b'], b: ['a', 'c'] }, default: [] }).sort(), ['a', 'b', 'c']);
   assert.deepEqual(withFallbackTargets(['a'], undefined), ['a']);
-  assert.deepEqual(parseGatewayFallbacks('not json'), { fallbacks: {}, default: [] });
+  assert.throws(() => parseGatewayFallbacks('not json'), /AGENT_SYSTEM_KEY_FALLBACKS_JSON is not valid JSON/);
   assert.deepEqual(parseGatewayFallbacks(''), { fallbacks: {}, default: [] });
   assert.deepEqual(parseGatewayFallbacks('{"fallbacks":{"a":["b",3]},"default":"x"}'), { fallbacks: { a: ['b'] }, default: [] });
 });
