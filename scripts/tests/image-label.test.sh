@@ -48,8 +48,8 @@ rm "$TMP/s/skopeo"
 out=$(env -u DEPLOY_IMAGE_LABEL_PROBE PATH="$TMP/s" bash scripts/lib/image-label.sh "$REF" "$L" 2>&1); rc=$?
 [ $rc != 0 ] && check "no registry tool: refused" "NO_REGISTRY_TOOL" "$out" || bad "no registry tool: refused" "rc=$rc out=$out"
 
-echo "== the deploy workflows can read the label (read-only registry login before deploy.sh)"
-python3 - .github/workflows/dev.yml .github/workflows/prod.yml <<'PY' && ok "dev.yml and prod.yml log in read-only before deploy.sh, with packages: read" || bad "dev.yml and prod.yml log in read-only before deploy.sh, with packages: read" "see above"
+echo "== the deploy workflows: read-only registry login before deploy.sh, logout right after"
+python3 - .github/workflows/dev.yml .github/workflows/prod.yml <<'PY' && ok "dev.yml and prod.yml log in read-only before deploy.sh (packages: read) and log out right after it, always" || bad "dev.yml and prod.yml log in read-only before deploy.sh (packages: read) and log out right after it, always" "see above"
 import sys, yaml
 for path in sys.argv[1:]:
     wf = yaml.safe_load(open(path))
@@ -63,6 +63,10 @@ for path in sys.argv[1:]:
         login = [i for i, r in enumerate(runs) if "skopeo login ghcr.io" in r and "--password-stdin" in r]
         assert login and login[0] < deploy[0], f"{path}:{name}: no registry login before deploy.sh"
         assert (job.get("permissions") or {}).get("packages") == "read", f"{path}:{name}: packages must be read"
+        # The credential is dropped right after the deploy, whatever happened.
+        nxt = steps[deploy[-1] + 1] if deploy[-1] + 1 < len(steps) else {}
+        assert "skopeo logout ghcr.io" in str(nxt.get("run", "")), f"{path}:{name}: no registry logout right after the deploy"
+        assert str(nxt.get("if", "")).strip() == "always()", f"{path}:{name}: the logout must run if: always()"
     assert found, f"{path}: no job runs deploy.sh"
 PY
 
