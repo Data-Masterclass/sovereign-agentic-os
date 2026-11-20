@@ -21,6 +21,7 @@
  */
 import pg from 'pg';
 import type { ComponentHealth, Fetched, FetchedFailure } from '@core/adapters/_contract';
+import { config } from '@core/kernel/config';
 
 /** What the adapter needs from a pool or a checked-out client: `pg`'s own `query`. */
 export type Queryable = Pick<pg.Pool, 'query'> | Pick<pg.PoolClient, 'query'>;
@@ -39,6 +40,16 @@ export function governancePool(databaseUrl: string, max = GOVERNANCE_POOL_MAX): 
     slot.__osGovernancePool = { url, pool };
   }
   return slot.__osGovernancePool.pool;
+}
+
+/**
+ * The runtime pool from `OS_GOVERNANCE_DATABASE_URL` (chart: the DML-only runtime login), used by
+ * the os-grants OPA bundle (WP-11). Unset → throw: there is no in-memory stand-in.
+ */
+export function governanceRuntimePool(): pg.Pool {
+  const url = config.governanceDatabaseUrl;
+  if (!url) throw new Error('OS_GOVERNANCE_DATABASE_URL is not set — the governance database is not configured');
+  return governancePool(url);
 }
 
 export async function closeGovernancePool(): Promise<void> {

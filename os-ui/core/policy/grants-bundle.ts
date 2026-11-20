@@ -21,8 +21,7 @@
  *     (persisted) bundle.
  */
 import type pg from 'pg';
-import { governancePool, withTransaction } from '@core/adapters/postgres/pool';
-import { config } from '@core/kernel/config';
+import { governanceRuntimePool, withTransaction } from '@core/adapters/postgres/pool';
 import { buildBundle, type OpaBundle } from '@core/policy/bundle';
 
 export const OS_GRANTS_ROOTS = ['os_grants'] as const;
@@ -35,9 +34,7 @@ type GrantRow = {
 type WriteRow = { grant_id: string; table_fqn: string; op: string; approval_id: string; expires_at: Date };
 
 export function grantsPool(): pg.Pool {
-  const url = config.governanceDatabaseUrl;
-  if (!url) throw new Error('OS_GOVERNANCE_DATABASE_URL is not set — the os-grants bundle has no source');
-  return governancePool(url);
+  return governanceRuntimePool();
 }
 
 export async function grantRevision(pool: pg.Pool = grantsPool()): Promise<string> {
@@ -111,9 +108,10 @@ function watch(pool: pg.Pool): void {
           s.rev = rev;
           for (const w of [...s.waiters]) w();
         }
-      } catch {
-        // A read failure wakes nobody; the waiting request answers 304 at its deadline and OPA
-        // keeps its active bundle. The next request surfaces the error as a 503.
+      } catch (err) {
+        // A read failure wakes nobody: the waiting request answers 304 at its deadline, OPA keeps
+        // its active bundle, and the next request surfaces the error as a 503.
+        console.error(`[os-ui] os-grants bundle: grant revision not readable — ${err instanceof Error ? err.message : String(err)}`);
       }
       await new Promise((r) => setTimeout(r, WATCH_MS));
     }

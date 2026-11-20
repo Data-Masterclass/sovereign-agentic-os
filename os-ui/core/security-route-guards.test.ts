@@ -326,6 +326,12 @@ const UNAUTHENTICATED_BY_DESIGN = new Set([
   'app/api/mcp/route.ts',
   'app/api/mcp/[tab]/route.ts',
   'app/api/agents/scheduled-run/route.ts',
+  // WP-11: OPA's own bundle-service and status calls. The caller is the OPA server, not a person:
+  // each route checks the shared service Bearer (`opaBearerOk`, OPA's `credentials.bearer`), and
+  // the status POST is additionally an OPA decision (`opa_status_report`).
+  'app/api/opa/bundles/os-data.tar.gz/route.ts',
+  'app/api/opa/bundles/os-grants.tar.gz/route.ts',
+  'app/api/opa/status/route.ts',
   // Stream E, the engineer's door: both carry their OWN authentication, which is an OS personal
   // access token rather than the session cookie, because the caller is a git client or the repo's
   // own pre-receive hook — neither has a session.
