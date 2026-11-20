@@ -42,11 +42,13 @@ def dump(path, tree, title):
 def others(v):
     """The secrets that change in place in the final step (absent keys are left alone)."""
     out = {}
+    init = {}
     if v.get("pk"):
-        out["langfuseInit"] = {"publicKey": v["pk"], "secretKey": v["sk"]}
-    core = {k: v[f"lf_{k}"] for k in ("salt", "nextauthSecret", "encryptionKey") if v.get(f"lf_{k}")}
-    if core:
-        out["langfuseCoreSecrets"] = core
+        init.update({"publicKey": v["pk"], "secretKey": v["sk"]})
+    # Langfuse core secrets: langfuseInit.{salt,nextauthSecret,encryptionKey} (templates/base/langfuse/core-secrets.yaml).
+    init.update({k: v[f"lf_{k}"] for k in ("salt", "nextauthSecret", "encryptionKey") if v.get(f"lf_{k}")})
+    if init:
+        out["langfuseInit"] = init
     if v.get("agent_token"):
         out["agentRuntime"] = {"token": v["agent_token"]}
     if v.get("ui_password"):
