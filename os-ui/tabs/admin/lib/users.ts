@@ -98,6 +98,9 @@ type UsersCacheState = {
    *  and, once reachable, replaces it — the mirror is the source of truth. */
   offline: boolean;
   lastHydrateAttempt: number;
+  /** The ONE in-flight directory load. Concurrent callers share it (0.9.21: two boot loads raced
+   *  and the later, aborted one replaced a complete 92-user directory with a near-empty one). */
+  loading?: Promise<Map<string, StoredUser>> | null;
 };
 const USERS_STATE_KEY = Symbol.for('soa.users.cache');
 function usersState(): UsersCacheState {
@@ -314,6 +317,17 @@ async function buildFromDocs(s: UsersCacheState, docs: unknown[]): Promise<Map<s
 }
 
 async function getCache(): Promise<Map<string, StoredUser>> {
+  const s = usersState();
+  if (s.cache && !s.offline) return s.cache;
+  if (!s.loading) {
+    s.loading = loadCache().finally(() => {
+      s.loading = null;
+    });
+  }
+  return s.loading;
+}
+
+async function loadCache(): Promise<Map<string, StoredUser>> {
   const s = usersState();
   if (s.cache && !s.offline) return s.cache;
 
@@ -762,6 +776,7 @@ export async function resetPasswordWithRecovery(
 export function __resetUsers(): void {
   const s = usersState();
   s.cache = null;
+  s.loading = null;
   s.offline = false;
   s.lastHydrateAttempt = 0;
   s.meta = {};
