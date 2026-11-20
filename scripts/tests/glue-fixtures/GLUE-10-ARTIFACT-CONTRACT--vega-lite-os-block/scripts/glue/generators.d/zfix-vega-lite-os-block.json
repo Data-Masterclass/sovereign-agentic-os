@@ -1,0 +1,1 @@
+{ "generators": [ { "module": "tabs/zfix/lib/gen-vega-lite-os-block.ts", "validator": "C2 negative twin", "goldens": ["tabs/zfix/golden/zfix-vega-lite-os-block.golden.json"] } ] }
