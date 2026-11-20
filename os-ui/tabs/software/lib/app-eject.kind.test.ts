@@ -24,6 +24,7 @@ import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { readFileSync } from 'node:fs';
 import yaml from 'js-yaml';
 import { websiteFiles } from './scaffolds/website.ts';
 import { lockedSeed } from './scaffold-lock.ts';
@@ -36,6 +37,16 @@ const REGISTRY = `localhost:${REG_PORT}/sovereign-os-apps`;
 const SLUG = 'eject-site';
 const HOST = 'eject-site.eject.apps.test';
 const skip = KUBECONFIG ? false : 'APP_EJECT_KUBECONFIG not set (run tests/app-eject/up.sh)';
+const OS_UI = 'system:serviceaccount:agentic-os:os-ui';
+const POLICY = join(import.meta.dirname, '..', '..', '..', '..', 'charts', 'sovereign-agentic-os', 'files', 'apps-admission-policy.yaml');
+
+/** The chart's runner Role (templates/base/os-ui/apps-runner.yaml) for the os-ui identity in `ns`. */
+function bindOsUi(ns: string) {
+  kubectl(['-n', ns, 'create', 'role', 'os-ui-apps-runner', '--verb=create,get,list,watch,update,patch,delete', '--resource=deployments.apps,deployments.apps/scale,services,ingresses.networking.k8s.io']);
+  kubectl(['-n', ns, 'create', 'role', 'os-ui-apps-pods', '--verb=get,list,watch,create', '--resource=pods']);
+  for (const r of ['os-ui-apps-runner', 'os-ui-apps-pods']) kubectl(['-n', ns, 'create', 'rolebinding', r, `--role=${r}`, '--serviceaccount=agentic-os:os-ui']);
+}
+const asOsUi = (args: string[], input?: string) => kubectl([`--as=${OS_UI}`, ...args], input);
 
 const kubectl = (args: string[], input?: string) =>
   execFileSync('kubectl', ['--kubeconfig', KUBECONFIG, ...args], { encoding: 'utf8', input, stdio: ['pipe', 'pipe', 'pipe'] });
@@ -112,7 +123,15 @@ test('EJECT: kubectl apply -f k8s/ into a restricted namespace with no OS presen
 });
 
 test('OS DEPLOY: deployApp applies the same committed files through the API (dry run first) → running', { skip, timeout: 300_000 }, async () => {
-  const proxy = spawn('kubectl', ['--kubeconfig', KUBECONFIG, 'proxy', '--port=18054'], { stdio: 'pipe' });
+  // The chart's admission policies, bound to os-apps, and the runner's RBAC for the os-ui identity.
+  restrictedNamespace('os-apps');
+  restrictedNamespace('os-neg');
+  bindOsUi('os-apps');
+  bindOsUi('os-neg');
+  kubectl(['apply', '-f', '-'], readFileSync(POLICY, 'utf8').replaceAll('__APPS_NAMESPACE__', 'os-apps').replaceAll('__OS_UI_USER__', OS_UI));
+  await new Promise((r) => setTimeout(r, 3000)); // policy compilation
+  // The OS talks to the API AS os-ui (impersonated), exactly as in production.
+  const proxy = spawn('kubectl', ['--kubeconfig', KUBECONFIG, `--as=${OS_UI}`, 'proxy', '--port=18054'], { stdio: 'pipe' });
   try {
     await waitFor(proxy, /Starting to serve/);
     const k8s: RunnerK8s = async (method, path, body) => {
@@ -128,7 +147,6 @@ test('OS DEPLOY: deployApp applies the same committed files through the API (dry
         return { status: 0, body: {} };
       }
     };
-    restrictedNamespace('os-apps');
     const tree = { kind: 'tree' as const, files: [...seed, ...deployFiles], sha: 'eject' };
     const out = await deployApp({ slug: SLUG, host: HOST, tree }, { k8s, namespace: 'os-apps', registry: REGISTRY });
     assert.equal(out.ok, true, out.detail);
@@ -142,8 +160,23 @@ test('OS DEPLOY: deployApp applies the same committed files through the API (dry
     assert.equal(live.spec.template.spec.containers[0].image, image, 'the cluster runs the committed digest');
     assert.equal(await viaPortForward('os-apps', `app-${SLUG}`).then((b) => /<div id="root">/.test(b)), true);
 
+    // ADMISSION POLICY: as os-ui, the hostile objects the OS gate refuses are refused by Kubernetes too.
+    const externalName = yaml.dump({ apiVersion: 'v1', kind: 'Service', metadata: { name: 'probe-ext' }, spec: { type: 'ExternalName', externalName: 'opa.agentic-os.svc.cluster.local' } });
+    assert.throws(() => asOsUi(['-n', 'os-apps', 'create', '-f', '-'], externalName), /ClusterIP/);
+    const authUrl = yaml.dump({
+      apiVersion: 'networking.k8s.io/v1', kind: 'Ingress',
+      metadata: { name: 'probe-ing', annotations: { 'nginx.ingress.kubernetes.io/auth-url': 'http://x' } },
+      spec: { rules: [{ host: HOST, http: { paths: [{ path: '/', pathType: 'Prefix', backend: { service: { name: 'probe-ing', port: { number: 80 } } } }] } }] },
+    });
+    assert.throws(() => asOsUi(['-n', 'os-apps', 'create', '-f', '-'], authUrl), /annotation/);
+    const realPod = yaml.dump({ apiVersion: 'v1', kind: 'Pod', metadata: { name: 'probe-pod' }, spec: (JSON.parse(kubectl(['-n', 'os-apps', 'get', 'deployment', `app-${SLUG}`, '-o', 'json'])).spec.template.spec) });
+    assert.throws(() => asOsUi(['-n', 'os-apps', 'create', '-f', '-'], realPod), /dry run/);
+    assert.doesNotThrow(() => asOsUi(['-n', 'os-apps', 'create', '--dry-run=server', '-f', '-'], realPod), 'the dry-run Pod is allowed');
+    // NEGATIVE TWIN: the same ExternalName as cluster-admin is admitted — the POLICY refused it above.
+    assert.doesNotThrow(() => kubectl(['-n', 'os-apps', 'create', '-f', '-'], externalName));
+    kubectl(['-n', 'os-apps', 'delete', 'service', 'probe-ext']);
+
     // NEGATIVE TWIN: the insecure tree is refused in the dry run by the real admission; nothing exists.
-    restrictedNamespace('os-neg');
     const neg = await deployApp(
       { slug: SLUG, host: HOST, tree: { kind: 'tree', files: [...seed, ...insecure(deployFiles)], sha: 'neg' } },
       { k8s, namespace: 'os-neg', registry: REGISTRY },
