@@ -113,10 +113,25 @@ test('a3.4 judgement cannot pass vacuously: without the io field group it throws
   } finally { fake.close(); delete process.env.E2E_URL_LANGFUSE; }
 });
 
-test('a3.1 judgement: the answer must be rank 1 — a keyword-ranked distractor first is red', async () => {
+// The verifier's simulation of the designed hybrid search (BM25 + k-NN fused by RRF, k=60): the answer
+// is found only by k-NN (rank 1 there), a distractor is rank 1 in BM25 and rank 2 in k-NN.
+test('a3.1/a3.3 judgements under RRF: fused rank 1 is a distractor, answer in top N, k-NN rank 1', async () => {
   const { checks } = await loadAtA();
-  const keyword = JSON.stringify({ hits: [{ text: 'How long before the deal team can leave the kickoff meeting 3?', page: 3 }, { text: 'Notice period | 90 days', page: 2 }] });
-  const semantic = JSON.stringify({ hits: [{ text: 'Notice period | 90 days', page: 2 }, { text: 'Kickoff memo 3', page: 3 }] });
-  assert.throws(() => checks.assertTopHitIsAnswer(obsWith(keyword), { answer: '90 days', page: 2 }), /rank 1 hit contains "90 days"/);
-  assert.doesNotThrow(() => checks.assertTopHitIsAnswer(obsWith(semantic), { answer: '90 days', page: 2 }));
+  const bm25 = ['d3', 'd7', 'd1', 'd9', 'd4'];
+  const knn = ['answer', 'd3', 'd12', 'd20', 'd5'];
+  const fused = checks.rrfFuse([bm25, knn]);
+  assert.equal(fused[0].id, 'd3');
+  assert.ok(Math.abs(fused[0].score - (1 / 61 + 1 / 62)) < 1e-12);          // 0.0325
+  const answer = fused.find((f) => f.id === 'answer');
+  assert.ok(Math.abs(answer.score - 1 / 61) < 1e-12);                        // 0.0164
+  const text = (id) => (id === 'answer' ? { text: 'Notice period | 90 days', page: 2 } : { text: `How long before the deal team can leave ${id}`, page: 3 });
+  const hybridOut = JSON.stringify({ hits: fused.map((f) => text(f.id)) });
+  // A rank-1 demand on the fused list would be red for a CORRECT system …
+  assert.throws(() => checks.assertFirstIsAnswer(fused.map((f) => text(f.id)), { answer: '90 days', list: 'hybrid result' }), /rank 1 of the hybrid result/);
+  // … the designed judgements are green: the answer is in the top N, and first in the k-NN list.
+  assert.equal(checks.assertAnswerInTopN(obsWith(hybridOut), { answer: '90 days', page: 2, n: 5 }), 2);
+  assert.doesNotThrow(() => checks.assertFirstIsAnswer(knn.map(text), { answer: '90 days', list: 'k-NN sub-query' }));
+  // Keyword-only search (a-twin-5): only BM25 contributes, the answer is absent from the top N.
+  const keywordOnly = JSON.stringify({ hits: checks.rrfFuse([bm25]).map((f) => text(f.id)) });
+  assert.throws(() => checks.assertAnswerInTopN(obsWith(keywordOnly), { answer: '90 days', page: 2, n: 5 }), /hit containing "90 days" is within the top 5 hits/);
 });

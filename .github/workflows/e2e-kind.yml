@@ -91,9 +91,29 @@ jobs:
       - name: Capacity gate for this runner
         env:
           BUDGET: ${{ vars.E2E_CAPACITY_BUDGET || 'tests/e2e/kind/capacity.e2e.yaml' }}
+          RUNNER: ${{ vars.E2E_RUNNER || 'ubuntu-latest' }}
         run: |
+          set +e
           node scripts/check-capacity.mjs --profile default --budget "$BUDGET" \
-            --values values.local.yaml --values tests/e2e/kind/values.e2e.yaml --values tests/e2e/kind/values.e2e-limits.yaml
+            --values values.local.yaml --values tests/e2e/kind/values.e2e.yaml --values tests/e2e/kind/values.e2e-limits.yaml \
+            > capacity.txt 2>&1
+          status=$?
+          set -e
+          cat capacity.txt
+          if [ "$status" -ne 0 ]; then
+            {
+              echo "## e2e-kind: the harness does not fit this runner"
+              echo
+              echo "Runner \`$RUNNER\`, budget \`$BUDGET\`. Nothing was installed."
+              echo "Recommended: an 8-core larger runner (repository variables \`E2E_RUNNER\` and"
+              echo "\`E2E_CAPACITY_BUDGET=tests/e2e/kind/capacity.e2e-8core.yaml\`; \$0.022/min, about \$2 a run)."
+              echo
+              echo '```'
+              grep -E 'check-capacity|percent of allocatable|node total|FAILED|^  - ' capacity.txt
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit "$status"
 
       - name: Bring up kind + Calico + SeaweedFS + chart
         run: bash tests/e2e/kind/up.sh
