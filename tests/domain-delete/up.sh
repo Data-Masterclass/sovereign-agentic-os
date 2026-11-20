@@ -21,6 +21,7 @@ python3 tests/lakehouse/render.py "$WORK" "$@"
 QT_REF=$(python3 -c "import yaml; v=yaml.safe_load(open('charts/sovereign-agentic-os/values.yaml'))['queryTool']['image']; print(v['repository']+':'+v['tag'])")
 docker build -q -t "$QT_REF" images/extensions/query-tool >/dev/null
 chmod -R a+rX "$WORK"
+chmod a+rwx "$WORK/trino/etc/catalog"   # the polaris-purge Job writes the purge catalog here
 # Images from what ships: OpenSearch = the FROM line of the image we build; LiteLLM = the chart pin.
 OS_IMAGE=$(sed -n 's/^FROM //p' images/extensions/opensearch/Dockerfile | head -1)
 LITELLM_IMAGE=$(python3 - <<'PY'

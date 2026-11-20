@@ -344,7 +344,28 @@ test('the run removes the domain through each component; the other domain is byt
   assert.equal(audit.at(-1)!.result, 'ok');
 });
 
-test('re-running a finished delete is a no-op plan (idempotent)', { skip }, async () => {
-  const r = await engine.deleteDomain(K, {}, deps());
+test('a finished delete: the domain is gone (refused as unregistered) and nothing is left to plan', { skip }, async () => {
+  await assert.rejects(engine.deleteDomain(K, {}, deps()), /not a registered domain/);
+  const r = await engine.deleteDomain(K, {}, { ...deps(), validateTarget: undefined });
   assert.equal(r.plan.totals.remove, 0, engine.planLines(r.plan).join('\n'));
+});
+
+test('a Data-tab DROP (the iceberg catalog) cannot purge; the twin through the purge catalog does', { skip }, async () => {
+  const gov = await import('@core/infra/governed');
+  const pa = `personal_${ADMIN}`;
+  await trino(`CREATE TABLE iceberg.${pa}.purge_probe AS SELECT * FROM (VALUES (1)) t(n)`, ADMIN);
+  const loc = await tableLocation(`iceberg.${pa}.purge_probe`, ADMIN);
+  const id = { principal: ADMIN, uid: ADMIN, domains: [O], role: 'admin' as const };
+  // The Data-tab door: the governed DROP on `iceberg`. Polaris refuses the purge (403).
+  await assert.rejects(gov.executeRun(`DROP TABLE IF EXISTS iceberg.${pa}.purge_probe`, id, gov.executeRoute(id, 'data-delete')));
+  assert.ok((await tablesOf(pa, ADMIN)).includes('purge_probe'), 'the table stays');
+  assert.ok((await s3Count(loc)) > 0, 'and its files stay');
+  // Nobody but the purge user may use the purge catalog, not even an admin directly on Trino.
+  await assert.rejects(trino(`SELECT count(*) FROM iceberg_purge.${pa}.purge_probe`, ADMIN), /denied|Access/i);
+  // Twin: the delete-domain door (purpose + admin) on the purge catalog drops AND purges.
+  await gov.executeRun(`DROP TABLE IF EXISTS iceberg_purge.${pa}.purge_probe`, id, gov.executeRoute(id, 'domain-delete'), undefined, 60_000, 'domain-delete');
+  assert.ok(!(await tablesOf(pa, ADMIN)).includes('purge_probe'));
+  let n = 1;
+  for (let i = 0; i < 30 && n > 0; i++) { n = await s3Count(loc); if (n) await new Promise((r) => setTimeout(r, 1000)); }
+  assert.equal(n, 0, 'Polaris purged the files');
 });

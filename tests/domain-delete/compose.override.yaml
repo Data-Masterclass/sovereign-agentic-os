@@ -12,12 +12,15 @@ services:
   minio:
     ports: ["127.0.0.1:${DD_MINIO_PORT:-18582}:9000"]
 
-  # The chart's purge-on-drop hook Job (polaris-catalog-purge), after catalog-init.
+  # The chart's polaris-purge hook Job, after catalog-init: the dedicated purge principal. Here it
+  # writes the Trino purge catalog to Trino's catalog dir (the Secret mount in the cluster).
   catalog-purge:
     image: ${LH_PURGE_IMAGE}
     entrypoint: ["/bin/sh", "/harness/catalog-purge.sh"]
     env_file: ["${LH_WORK}/env/catalog-purge.env"]
-    volumes: ["${LH_WORK}/sh:/harness:ro"]
+    environment:
+      PURGE_CATALOG_FILE: /out/iceberg_purge.properties
+    volumes: ["${LH_WORK}/sh:/harness:ro", "${LH_WORK}/trino/etc/catalog:/out"]
     networks: [lh]
     depends_on: { catalog-init: { condition: service_completed_successfully } }
 

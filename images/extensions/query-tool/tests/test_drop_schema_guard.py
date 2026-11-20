@@ -51,3 +51,30 @@ class DropSchemaGuard(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PurgeCatalogGuard(unittest.TestCase):
+    """The purge catalog: only drops, only the delete-domain run, run as the purge user."""
+
+    def test_delete_domain_drop_on_the_purge_catalog_runs_as_the_purge_user(self):
+        from execute_guard import execute_user
+        p = guard("DROP TABLE IF EXISTS iceberg_purge.personal_jonas.bronze_test", "jonas", ["k"], "admin", "domain-delete")
+        self.assertEqual((p.kind, p.catalog), ("drop_table", "iceberg_purge"))
+        self.assertEqual(execute_user(p, "jonas", "os-domain-delete"), "os-domain-delete")
+
+    def test_twin_a_data_tab_drop_stays_on_iceberg_as_the_caller(self):
+        from execute_guard import execute_user
+        p = guard("DROP TABLE IF EXISTS iceberg.personal_jonas.bronze_test", "jonas", ["k"], "creator")
+        self.assertEqual(p.catalog, "iceberg")
+        self.assertEqual(execute_user(p, "jonas", "os-domain-delete"), "jonas")
+
+    def test_twin_the_purge_catalog_without_the_purpose_or_admin_is_refused(self):
+        for args in (("jonas", ["k"], "admin"), ("jonas", ["k"], "creator", "domain-delete")):
+            with self.assertRaises(ExecuteError) as e:
+                guard("DROP TABLE IF EXISTS iceberg_purge.personal_jonas.bronze_test", *args)
+            self.assertEqual(e.exception.status, 403)
+
+    def test_no_other_statement_reaches_the_purge_catalog(self):
+        with self.assertRaises(ExecuteError) as e:
+            guard("CREATE OR REPLACE TABLE iceberg_purge.personal_jonas.t AS SELECT 1", "jonas", ["k"], "admin", "domain-delete")
+        self.assertEqual(e.exception.status, 400)
