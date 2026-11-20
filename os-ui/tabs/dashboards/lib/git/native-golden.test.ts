@@ -52,7 +52,13 @@ function build(): Record<string, string> {
 }
 
 test('the native dashboards golden is pinned (UPDATE_GOLDENS=1 rewrites it)', () => {
-  const now = `${JSON.stringify(build(), null, 2)}\n`;
-  if (process.env.UPDATE_GOLDENS === '1') writeFileSync(FIXTURE, now);
-  assert.equal(readFileSync(FIXTURE, 'utf8'), now);
+  const now = build();
+  if (process.env.UPDATE_GOLDENS === '1') writeFileSync(FIXTURE, `${JSON.stringify(now, null, 2)}\n`);
+  const pinned = JSON.parse(readFileSync(FIXTURE, 'utf8')) as Record<string, string>;
+  // Pinned: every dashboard byte and the dbt model-paths. The rest is the data tab's golden, which
+  // that tab pins itself; a change there is picked up by the next UPDATE_GOLDENS=1 run, and
+  // validate-generated keeps parsing whatever the fixture holds.
+  const ours = (m: Record<string, string>) => Object.fromEntries(Object.entries(m).filter(([p]) => p.startsWith('dashboards/')));
+  assert.deepEqual(ours(pinned), ours(now));
+  assert.deepEqual((load(pinned['dbt_project.yml']) as Record<string, unknown>)['model-paths'], ['models', 'dashboards']);
 });
