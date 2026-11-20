@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Fake helm for scripts/tests/rotate-secrets.test.sh: plan must refuse BEFORE it calls helm.
+echo "HELM_CALLED $*" >> "$FAKE/helm.log"; exit 0

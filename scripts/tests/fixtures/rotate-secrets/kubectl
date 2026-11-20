@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Fake kubectl for scripts/tests/rotate-secrets.test.sh. State comes from $FAKE (a directory):
+#   uid               the kube-system namespace UID
+#   secrets/<name>/<key>  Secret values (plain text)
+#   scan.json         what LiteLLM's scan prints; lfenc.txt  the Langfuse table counts
+args=" $* "
+case $args in
+  *" get ns kube-system "*) cat "$FAKE/uid"; exit 0 ;;
+  *" get secret "*)
+    name=$(sed -E 's/.* get secret ([^ ]+) .*/\1/' <<<"$args"); key=$(sed -E 's/.*index \.data "([^"]+)".*/\1/' <<<"$args")
+    f="$FAKE/secrets/$name/$key"; [ -f "$f" ] && base64 < "$f" | tr -d '\n'; exit 0 ;;
+  *" get deploy os-ui "*) echo "ghcr.io/x/os-ui:9.9.9@sha256:abc"; exit 0 ;;
+  *" get deploy "*) exit 0 ;;
+  *" exec -i deploy/"*litellm*) cat >/dev/null; cat "$FAKE/scan.json"; exit 0 ;;
+  *" exec -i pg-0 "*) cat >/dev/null; cat "$FAKE/lfenc.txt"; exit 0 ;;
+  *" port-forward "*) echo "Forwarding from 127.0.0.1:9 -> 4000"; exec sleep 30 ;;
+  *" logs "*) exit 0 ;;
+esac
+echo "fake kubectl: unhandled: $*" >&2; exit 1
