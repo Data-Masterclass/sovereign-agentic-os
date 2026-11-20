@@ -13,30 +13,24 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
-import { mkdirSync, readFileSync, rmSync } from 'node:fs';
-import { join, resolve, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { mkdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { os, runJob, P, WORK } from '../opensearch/harness.mjs';
+import { runRendered, emptyDir } from './rendered.mjs';
 
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
-const FILES = join(ROOT, 'charts', 'sovereign-agentic-os', 'files');
 const REPO = 'stackit-s3';
 
+/** The RENDERED os-drill initContainer: its command, env, uid, read-only root, EMPTY /work and /tmp. */
 function drill(name, extra = {}) {
-  const res = join(WORK, 'wp56', name);
-  rmSync(res, { recursive: true, force: true });
-  mkdirSync(res, { recursive: true });
-  spawnSync('chmod', ['-R', 'a+rwX', join(WORK, 'wp56')]);
-  const args = ['run', '--rm', '--network', `${P}-os`, '--user', '100:100',
-    '-v', `${join(FILES, 'opensearch', 'lib')}:/opt/soa/lib:ro`, '-v', `${join(FILES, 'backup')}:/opt/soa/backup:ro`, '-v', `${res}:/results`,
-    '-e', 'OPENSEARCH_URL=http://opensearch:9200', '-e', 'OS_WAIT_TRIES=5', '-e', 'RESULTS_DIR=/results', '-e', `OS_DRILL_REPO=${REPO}`,
-    '-e', 'OS_DRILL_INDICES=wp56-*'];
-  for (const [k, v] of Object.entries(extra)) args.push('-e', `${k}=${v}`);
-  args.push('--entrypoint', '/bin/sh', 'curlimages/curl:8.8.0', '/opt/soa/backup/drill-opensearch.sh');
-  const r = spawnSync('docker', args, { encoding: 'utf8' });
-  assert.equal(r.status, 0, r.stdout + r.stderr);
-  return { res: JSON.parse(readFileSync(join(res, 'opensearch.json'), 'utf8')), log: r.stdout + r.stderr };
+  const base = join(WORK, 'wp56', name);
+  const work = emptyDir(join(base, 'work'));
+  const r = runRendered('os-drill', {
+    network: `${P}-os`,
+    dirs: { '/work': work, '/tmp': emptyDir(join(base, 'tmp')) },
+    env: { OPENSEARCH_URL: 'http://opensearch:9200', OS_WAIT_TRIES: '5', OS_DRILL_INDICES: 'wp56-*', ...extra },
+  });
+  assert.equal(r.code, 0, r.log);
+  return { res: JSON.parse(readFileSync(join(work, 'results', 'opensearch.json'), 'utf8')), log: r.log };
 }
 
 test('setup: the S3 repository registered by the chart script', () => {
@@ -72,6 +66,35 @@ test('the newest snapshot restores under a temporary prefix; counts equal live; 
   assert.equal(by['wp56-files-it'].restored, 7);
   const left = os('GET', '/_cat/indices/drill-*?format=json');
   assert.deepEqual(left.body, [], 'the temporary indices are deleted');
+});
+
+test('NEGATIVE: a snapshot older than the age limit fails', () => {
+  const { res } = drill('stale', { OS_DRILL_MAX_AGE_HOURS: '-1' });
+  assert.equal(res.status, 'fail');
+  assert.match(res.reason, /above the -1 h limit/);
+});
+
+test('NEGATIVE: a live index created after the snapshot (missing from it) fails', () => {
+  const bulk = '{"index":{"_index":"wp56-new-it","_id":"1"}}\n{"n":1}\n';
+  assert.equal(os('POST', '/_bulk?refresh=true', bulk).status, 200);
+  const { res } = drill('newlive');
+  assert.equal(res.status, 'fail', JSON.stringify(res));
+  assert.match(JSON.stringify(res.indices), /wp56-new-it.*missing from snapshot/);
+  os('DELETE', '/wp56-new-it');
+});
+
+test('NEGATIVE TWIN: a renamed index (old name now an alias of the new one) fails both ways', () => {
+  assert.equal(os('POST', '/_reindex?refresh=true', { source: { index: 'wp56-os-it' }, dest: { index: 'wp56-os-v2' } }).status, 200);
+  assert.equal(os('DELETE', '/wp56-os-it').status, 200);
+  assert.equal(os('POST', '/_aliases', { actions: [{ add: { index: 'wp56-os-v2', alias: 'wp56-os-it' } }] }).status, 200);
+  const { res } = drill('renamed');
+  assert.equal(res.status, 'fail', JSON.stringify(res));
+  const by = Object.fromEntries(res.indices.map((i) => [i.index, i]));
+  assert.match(by['wp56-os-it'].reason, /no longer a concrete live index/);
+  assert.match(by['wp56-os-v2'].reason, /missing from snapshot/);
+  os('DELETE', '/wp56-os-v2'); // the alias goes with it; put the original index back
+  const bulk = Array.from({ length: 25 }, (_, i) => `{"index":{"_index":"wp56-os-it","_id":"${i}"}}\n{"n":${i}}`).join('\n') + '\n';
+  assert.equal(os('POST', '/_bulk?refresh=true', bulk).status, 200);
 });
 
 test('NEGATIVE: a live index missing since the snapshot fails the drill', () => {

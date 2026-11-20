@@ -59,6 +59,13 @@ test('NEGATIVE: no status, no report, a stale report or a failing repo is never 
   const failing = assessBackups(base({ bundler: { lastRescanAt: '2026-11-20T11:55:00Z', lastRefsRecordAt: '2026-11-20T11:30:00Z', repos: { sales: { status: 'error', at: '2026-11-20T11:55:00Z', last: { reason: 'bundle verify failed' } } } } }));
   assert.equal(byId(failing)['bk-bundle-sales'].health, 'red');
   assert.equal(byId(failing)['bk-bundles'], undefined, 'no green roll-up while a repo fails');
-  const stalled = byId(assessBackups(base({ bundler: { lastRescanAt: '2026-11-20T09:00:00Z', lastRefsRecordAt: '2026-11-20T11:30:00Z', repos: {} } })));
-  assert.equal(stalled['bk-bundles-stale'].health, 'amber');
+  const stalledItems = assessBackups(base({ bundler: { lastRescanAt: '2026-11-20T09:00:00Z', lastRefsRecordAt: 'garbage', repos: {} } }));
+  const stalled = byId(stalledItems);
+  assert.equal(stalled['bk-bundles-stale'].health, 'red', 'a stalled sidecar is red');
+  assert.equal(stalled['bk-refs-record'].health, 'red', 'an unreadable record time is never fresh');
+  assert.equal(backupAlerts(stalledItems).length, 2, 'and both raise an alert');
+  const empty = byId(assessBackups(base({ drills: [{ kind: 'weekly', enabled: true, maxAgeDays: 8, report: { kind: 'weekly', at: '2026-11-19T04:00:00Z', status: 'pass', checks: [] } }] })));
+  assert.equal(empty['bk-drill-weekly'].health, 'red', 'a pass with no check proves nothing');
+  const nan = byId(assessBackups(base({ drills: [{ kind: 'weekly', enabled: true, maxAgeDays: 8, report: { kind: 'weekly', at: 'not-a-date', status: 'pass', checks: [{ check: 'git', status: 'pass' }] } }] })));
+  assert.equal(nan['bk-drill-weekly'].health, 'red', 'an unreadable report time is not green');
 });

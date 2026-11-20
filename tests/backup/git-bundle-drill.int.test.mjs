@@ -13,7 +13,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { tools, events, fresh, s3cat } from './harness.mjs';
+import { tools, events, fresh, s3cat, P, WORK } from './harness.mjs';
+import { runRendered, emptyDir } from './rendered.mjs';
 
 // Shell building blocks, run inside backup-tools (paths are container paths under /work).
 const commit = (t, repo, msg, branch = 'main') => `set -e
@@ -28,10 +29,27 @@ const inventory = (t) => `set -e; . /opt/soa/backup/lib.sh
     jq --arg k "$k" --slurpfile r /tmp/r.json '.repos += [{key:$k, refs:$r[0]}]' /work/${t}/inv.json > /tmp/i && cp /tmp/i /work/${t}/inv.json
   done`;
 const bundle = (t, repo) => `sh /opt/soa/backup/git-bundle.sh /work/${t}/repos/${repo}.git ${repo}`;
-const drill = (t) => `mkdir -p /work/${t}/results && sh /opt/soa/backup/drill-git.sh`;
+const S3ENV = Object.fromEntries(readFileSync(join(WORK, 's3.env'), 'utf8').trim().split('\n').map((l) => l.split('=')));
+/**
+ * The RENDERED `git-drill` initContainer (command, env, uid 999, read-only root), its /work and
+ * /tmp fresh EMPTY dirs exactly like the pod's emptyDirs. Only the stack endpoints are swapped.
+ */
+function drillRendered(t, extra = {}) {
+  const work = emptyDir(join(WORK, t, 'drill-work'));
+  const r = runRendered('git-drill', {
+    network: P, image: 'soa-backup-tools:wp56',
+    dirs: { '/work': work, '/tmp': emptyDir(join(WORK, t, 'drill-tmp')) },
+    volumes: [`${join(WORK, t)}:/live:ro`],
+    secrets: { AWS_ACCESS_KEY_ID: S3ENV.AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY: S3ENV.AWS_SECRET_ACCESS_KEY, LIVE_INVENTORY_TOKEN: 'ci' },
+    env: { S3_ENDPOINT: S3ENV.S3_ENDPOINT, S3_BUCKET: 'soa-bundles', BUNDLE_PREFIX: `t-${t}`, HTTPS_PROXY: null, NO_PROXY: null,
+      LIVE_INVENTORY_URL: `file:///live/inv.json`, DRILL_LAG_RETRIES: '0', ...extra },
+  });
+  return r;
+}
+const drill = (t) => `__rendered__${t}`;
 const env = (t, extra = {}) => ({ BUNDLE_PREFIX: `t-${t}`, RESULTS_DIR: `/work/${t}/results`, LIVE_INVENTORY_URL: `file:///work/${t}/inv.json`, DRILL_LAG_RETRIES: '0', ...extra });
-const result = (dir) => JSON.parse(readFileSync(join(dir, 'results', 'git.json'), 'utf8'));
-const run = (t, script, extra) => tools(script, env(t, extra));
+const result = (dir) => JSON.parse(readFileSync(join(dir, 'drill-work', 'results', 'git.json'), 'utf8'));
+const run = (t, script, extra) => (script.startsWith('__rendered__') ? drillRendered(t, extra) : tools(script, env(t, extra)));
 /** A fresh test: its work dir AND its bucket prefixes are emptied (the store outlives a run). */
 const start = (t) => {
   const d = fresh(t);
@@ -186,7 +204,7 @@ test('NEGATIVE TWIN: a drill can never pass on a missing bundle, an unbacked liv
   // e) the live inventory is unreadable
   t = 'noinv';
   dir = start(t);
-  run(t, drill(t), { LIVE_INVENTORY_URL: 'file:///work/noinv/absent.json' });
+  run(t, drill(t), { LIVE_INVENTORY_URL: 'file:///live/absent.json' });
   res = result(dir);
   assert.equal(res.status, 'fail');
   assert.match(res.reason, /inventory unreadable/);
@@ -222,4 +240,76 @@ test('tamper evidence: the hourly ref record is hash-chained to the one before i
   const rec = JSON.parse(s3cat(`t-${t}-refs/latest`));
   assert.equal(rec.prev.sha256, firstSha);
   assert.ok(rec.repos.sales['refs/heads/main']);
+});
+
+test('B1: the rendered git-drill creates its own results dir on an EMPTY /work and its log matches its result', () => {
+  const t = 'b1';
+  start(t);
+  sh(t, commit(t, 'sales', 'one'));
+  sh(t, bundle(t, 'sales'));
+  sh(t, inventory(t));
+  const r = drillRendered(t);
+  const res = result(join(WORK, t));
+  assert.equal(res.status, 'pass', r.log);
+  const logged = events(r.log).filter((e) => e.event === 'restore-drill' && e.check === 'git' && !e.repo);
+  assert.equal(logged.at(-1).status, res.status, 'the log line and the written result agree');
+});
+
+test('B2 NEGATIVE: invalid bucket keys only, nothing live with commits ⇒ fail (0 proven is never a pass)', () => {
+  const t = 'b2';
+  start(t);
+  tools(`mkdir -p /work/${t}/repos && git init -q --bare /work/${t}/repos/empty.git`, env(t));
+  sh(t, inventory(t));
+  const r = tools(`echo '{"chain":[]}' > /tmp/l && aws --endpoint-url "$S3_ENDPOINT" s3 cp /tmp/l s3://soa-bundles/t-${t}/_evil/latest --quiet`, env(t));
+  assert.equal(r.code, 0, r.log);
+  drillRendered(t);
+  const res = result(join(WORK, t));
+  assert.equal(res.status, 'fail', JSON.stringify(res));
+  assert.match(JSON.stringify(res), /invalid repository key/);
+});
+
+test('B2 NEGATIVE: fewer repositories proven than the live inventory holds ⇒ fail', () => {
+  const t = 'b2b';
+  start(t);
+  sh(t, commit(t, 'a', 'one'));
+  sh(t, commit(t, 'b', 'one'));
+  sh(t, bundle(t, 'a'));
+  sh(t, bundle(t, 'b'));
+  sh(t, inventory(t));
+  // b's pointer vanishes from the bucket listing AND from the live inventory's view? No: only from the bucket.
+  assert.equal(tools(`aws --endpoint-url "$S3_ENDPOINT" s3 rm --recursive --quiet s3://soa-bundles/t-${t}/b/`, env(t)).code, 0);
+  drillRendered(t);
+  const res = result(join(WORK, t));
+  assert.equal(res.status, 'fail');
+  assert.match(JSON.stringify(res), /no latest pointer|proved 1 of 2/);
+});
+
+test('the RENDERED git-backup sidecar (one full pass) bundles every repository, nested and aliased ones once', () => {
+  const t = 'side';
+  start(t);
+  sh(t, commit(t, 'domain-sales', 'one'));
+  sh(t, commit(t, 'user-abc123', 'mine'));
+  tools(`ln -s domain-sales.git /work/${t}/repos/sales.git`, env(t));
+  const q = emptyDir(join(WORK, t, 'queue'));
+  const r = runRendered('sidecar', {
+    network: P, image: 'soa-backup-tools:wp56',
+    dirs: { '/repos': join(WORK, t, 'repos'), '/backup-queue': q, '/tmp': emptyDir(join(WORK, t, 'side-tmp')) },
+    secrets: { AWS_ACCESS_KEY_ID: S3ENV.AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY: S3ENV.AWS_SECRET_ACCESS_KEY },
+    env: { S3_ENDPOINT: S3ENV.S3_ENDPOINT, S3_BUCKET: 'soa-bundles', BUNDLE_PREFIX: `t-${t}`, REFS_PREFIX: `t-${t}-refs`, HTTPS_PROXY: null, NO_PROXY: null, BUNDLER_ONCE: '1' },
+  });
+  assert.equal(r.code, 0, r.log);
+  const ok = events(r.log).filter((e) => e.event === 'git-bundle' && e.status === 'ok').map((e) => e.repo).sort();
+  assert.deepEqual(ok, ['domain-sales', 'user-abc123'], r.log);
+  const status = JSON.parse(readFileSync(join(q, 'status.json'), 'utf8'));
+  assert.ok(status.lastRescanAt && status.lastRefsRecordAt, JSON.stringify(status));
+});
+
+test('NEGATIVE: a repository above the temp budget is refused with a red status, nothing staged', () => {
+  const t = 'budget';
+  start(t);
+  sh(t, commit(t, 'sales', 'one'));
+  const r = tools(`${bundle(t, 'sales')}; echo rc=$?; ls /tmp | grep -c bundle || true`, env(t, { BUNDLE_TMP_BUDGET_MB: '0' }));
+  assert.match(r.log, /above the bundle temp budget/);
+  assert.match(r.log, /rc=1/);
+  assert.match(r.log, /^0$/m, 'no staging dir left behind');
 });
