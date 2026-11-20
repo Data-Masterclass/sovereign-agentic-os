@@ -43,7 +43,7 @@ const { runGraphEngine } = await import('@tabs/agents/lib/engine/run');
 const { memoryCheckpointer } = await import('@tabs/agents/lib/engine/checkpointer');
 const { FIXTURE_TASK, SHAPE_SINGLE_READ_YAML, graphDeps, scriptedLlm } = await import('@tabs/agents/lib/engine/parity-harness');
 const { liteLlmCaller } = await import('@core/runtime/runtime');
-const { withRunTrace, flushLangfuse, langfuseTraceId } = await import('@core/infra/langfuse');
+const { withRunTrace, flushLangfuse, langfuseTraceId, readTraceObservations } = await import('@core/infra/langfuse');
 const { shapeTraceMetrics } = await import('@tabs/agents/lib/build/run-diagnostics');
 type LlmCall = import('@core/runtime/agentic').LlmCall;
 type LlmRequest = import('@core/runtime/agentic').LlmRequest;
@@ -244,6 +244,10 @@ test(`TRACING E2E (Langfuse 3.194.1 + LiteLLM 1.109.1 langfuse_otel, scope ${SCO
     // its llm.<node> ancestor (run-diagnostics.ts `attributeNode`). Exactly the route's read.
     const metrics = shapeTraceMetrics(t.observations as never, ['reader']);
     assert.equal(metrics.perNode.reader?.tokens, 15 * calls, 'perNode is filled per agent');
+    // The diagnostics route's own read (paged public observations by trace id) gives the same answer.
+    const routeRows = await readTraceObservations(traceId);
+    assert.ok(routeRows && routeRows.length === t.observations.length, `readTraceObservations returned ${routeRows?.length} of ${t.observations.length} observations`);
+    assert.equal(shapeTraceMetrics(routeRows as never, ['reader']).perNode.reader?.tokens, 15 * calls, 'the route read attributes the same tokens');
     assert.ok((metrics.perNode.reader?.costUsd ?? 0) > 0, 'and carries the gateway cost');
     assert.equal(t.userId, USER_ID, 'userId is the bare runner uid');
     assert.equal(t.sessionId, `system:${SYSTEM_ID}`, 'sessionId is the system session');
