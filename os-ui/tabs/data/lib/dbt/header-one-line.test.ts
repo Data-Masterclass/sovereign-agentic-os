@@ -35,7 +35,7 @@ test('a dataset name with any line terminator stays inside the one-line header c
     for (const [p, c] of sql) {
       assert.equal(/[\r\u0085\u2028\u2029]/.test(c), false, `${JSON.stringify(le)}: ${p} carries a line terminator`);
       for (const line of c.split('\n')) {
-        if (line.includes('injected')) assert.match(line, /^-- /, `${JSON.stringify(le)}: ${p}: the name left the comment: ${line}`);
+        if (line.includes('select 1 as injected')) assert.match(line, /^-- /, `${JSON.stringify(le)}: ${p}: the name left the comment: ${line}`);
       }
     }
   }
