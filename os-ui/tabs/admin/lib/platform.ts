@@ -11,7 +11,7 @@
  * does this directly — no cross-pod fetch.
  *
  * Registry fields:
- *   kind:   deploy | sts | cluster | job   (how to read/scale it)
+ *   kind:   deploy | sts | ds | cluster | job   (how to read/scale it)
  *   toggle: whether the UI may scale it 0<->1 (false = core / not a workload)
  */
 import { config } from '@core/kernel/config';
@@ -23,7 +23,7 @@ export type Component = {
   id: string;
   name: string;
   layer: string;
-  kind: 'deploy' | 'sts' | 'cluster' | 'job';
+  kind: 'deploy' | 'sts' | 'ds' | 'cluster' | 'job';
   workload: string;
   svc: string;
   port: number;
@@ -114,6 +114,16 @@ export const REGISTRY: Component[] = [
   { id: 'web-fetch', name: 'Governed web_fetch tool', layer: 'Security baseline', kind: 'deploy',
     workload: 'web-fetch', svc: 'web-fetch', port: 8000, ui: false, login: 'none (OPA-gated)', toggle: true,
     summary: 'The only sanctioned path to the web: OPA-authorized, proxied, sanitized.' },
+  // Observability (WP-05, design 00 §6): Apache-2.0 metrics and logs, the lowest priority class.
+  { id: 'otel-collector', name: 'OpenTelemetry Collector', layer: 'Observability', kind: 'ds', workload: 'otel-collector',
+    svc: 'otel-collector', port: 4318, ui: false, login: 'none (in-cluster OTLP)', toggle: false,
+    summary: 'Receives OTLP, reads every pod log and the kubelet; ships metrics and logs to the Victoria stores.' },
+  { id: 'victoria-metrics', name: 'VictoriaMetrics (metrics)', layer: 'Observability', kind: 'sts', workload: 'victoria-metrics',
+    svc: 'victoria-metrics', port: 8428, ui: true, url_path: '/vmui', login: 'none (in-cluster)', toggle: true,
+    summary: 'Metrics store; PromQL/MetricsQL over HTTP and its own vmui.' },
+  { id: 'victoria-logs', name: 'VictoriaLogs (logs)', layer: 'Observability', kind: 'sts', workload: 'victoria-logs',
+    svc: 'victoria-logs', port: 9428, ui: true, url_path: '/select/vmui', login: 'none (in-cluster)', toggle: true,
+    summary: 'Log store for every pod log and the OPA decision logs; LogsQL over HTTP and its own UI.' },
   // Platform / front door
   { id: 'os-ui', name: 'OS UI (front door)', layer: 'Platform', kind: 'deploy', workload: 'os-ui',
     svc: 'os-ui', port: 3000, ui: true, login: 'none (open locally)', toggle: false,
@@ -126,7 +136,7 @@ export const BY_ID: Record<string, Component> = Object.fromEntries(
 
 // --- k8s helpers -----------------------------------------------------------
 function workloadPath(c: Component, scale = false): string | null {
-  const kind = c.kind === 'deploy' ? 'deployments' : c.kind === 'sts' ? 'statefulsets' : null;
+  const kind = c.kind === 'deploy' ? 'deployments' : c.kind === 'sts' ? 'statefulsets' : c.kind === 'ds' && !scale ? 'daemonsets' : null;
   if (!kind) return null;
   const p = `/apis/apps/v1/namespaces/${NS}/${kind}/${c.workload}`;
   return scale ? `${p}/scale` : p;
@@ -166,6 +176,12 @@ export async function statusOf(c: Component): Promise<string> {
   if (status !== 200) return 'unknown';
   const spec = (body.spec ?? {}) as Record<string, unknown>;
   const st = (body.status ?? {}) as Record<string, unknown>;
+  if (c.kind === 'ds') {
+    const desired = Number(st.desiredNumberScheduled ?? 0) || 0;
+    const ready = Number(st.numberReady ?? 0) || 0;
+    if (desired === 0) return 'off';
+    return ready >= desired ? 'running' : 'starting';
+  }
   const replicas = Number(spec.replicas ?? 0) || 0;
   const ready = Number(st.readyReplicas ?? 0) || 0;
   if (replicas === 0) return 'off';

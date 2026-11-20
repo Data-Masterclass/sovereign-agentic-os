@@ -54,10 +54,11 @@ type Cockpit = {
   recentAudit: { id: string; ts: string; actor: string; action: string; detail: string }[];
 };
 
-type SelfHeal = { restarts: number; driftReverted?: boolean; state: 'healthy' | 'healing' | 'degraded'; note: string };
-type Comp = { id: string; name: string; layer: string; status: string; version: string; toggle: boolean; summary: string; selfHeal: SelfHeal };
-type Node = { name: string; ready: boolean; role: string; cpu: string; mem: string; pods: number };
-type Pool = { name: string; min: number; max: number; current: number; autoRepair: boolean };
+// Live readings (tabs/admin/lib/component-health.ts, cluster-nodes.ts): versions from each component's
+// own endpoint, restarts from its pods, nodes from the Kubernetes API — never typed in.
+type SelfHeal = { restarts: number; state: 'healthy' | 'healing' | 'degraded' | 'unknown'; note: string };
+type Comp = { id: string; name: string; layer: string; status: string; version: string | null; versionSource: 'component' | 'image' | 'none'; versionNote: string; toggle: boolean; summary: string; selfHeal: SelfHeal };
+type Node = { name: string; ready: boolean; roles: string; pool: string | null; cpu: string; mem: string; kubelet: string };
 type ServiceProbe = { key: string; label: string; up: boolean; detail: string };
 type Health = 'red' | 'amber' | 'green' | 'unknown';
 type SysItem = { id: string; title: string; health: Health; detail: string; selfHeal?: string; source: 'live' | 'mock' };
@@ -127,7 +128,7 @@ function BuilderOverview() {
 function AdminOverviewHealth() {
   const [components, setComponents] = useState<Comp[]>([]);
   const [nodes, setNodes] = useState<Node[]>([]);
-  const [pools, setPools] = useState<Pool[]>([]);
+  const [nodesError, setNodesError] = useState<{ reason: string; detail: string } | null>(null);
   const [services, setServices] = useState<ServiceProbe[]>([]);
   const [servicesSummary, setServicesSummary] = useState<{ up: number; total: number } | null>(null);
   const [systemHealth, setSystemHealth] = useState<SysItem[]>([]);
@@ -150,7 +151,7 @@ function AdminOverviewHealth() {
       else {
         setComponents(body.components ?? []);
         setNodes(body.nodes ?? []);
-        setPools(body.pools ?? []);
+        setNodesError(body.nodesError ?? null);
         setServices(body.services ?? []);
         setServicesSummary(body.servicesSummary ?? null);
         setSystemHealth(body.systemHealth ?? []);
@@ -256,20 +257,14 @@ function AdminOverviewHealth() {
         </p>
         {error ? <div className="error">{error}</div> : null}
 
-        <div className="section-title">Cluster<span className="count-pill">{nodes.length} node</span></div>
+        <div className="section-title">Cluster<span className="count-pill">{nodes.length} node{nodes.length === 1 ? '' : 's'}</span></div>
+        {nodesError ? <div className="error">Nodes not readable ({nodesError.reason}): {nodesError.detail}</div> : null}
         <div className="pa-kpis">
           {nodes.map((n) => (
             <div className="card pa-kpi" key={n.name}>
               <span className="k-label">{n.name}</span>
               <span className="k-value" style={{ fontSize: 18 }}>{n.ready ? 'Ready' : 'NotReady'}</span>
-              <span className="k-sub">{n.role} · {n.cpu} cpu · {n.mem} · {n.pods} pods</span>
-            </div>
-          ))}
-          {pools.map((p) => (
-            <div className="card pa-kpi" key={p.name}>
-              <span className="k-label">Pool · {p.name}</span>
-              <span className="k-value" style={{ fontSize: 18 }}>{p.current} / {p.min}–{p.max}</span>
-              <span className="k-sub">{p.autoRepair ? 'auto-repair on' : 'auto-repair off'}</span>
+              <span className="k-sub">{n.roles}{n.pool ? ` · pool ${n.pool}` : ''} · {n.cpu} cpu · {n.mem} · kubelet {n.kubelet}</span>
             </div>
           ))}
         </div>
@@ -372,13 +367,14 @@ function AdminOverviewHealth() {
                     return (
                       <tr key={c.id}>
                         <td><strong>{c.name}</strong><div className="muted" style={{ fontSize: 11 }}>{c.summary}</div></td>
-                        <td className="mono" style={{ fontSize: 12 }}>{c.version}</td>
+                        <td className="mono" style={{ fontSize: 12 }} title={c.versionNote}>
+                          {c.version ?? '—'}
+                          <div className="muted" style={{ fontSize: 11, fontFamily: 'inherit' }}>{c.versionSource === 'component' ? 'reported by the component' : c.versionNote}</div>
+                        </td>
                         <td><span className={`comp-dot ${statusClass(c.status)}`} style={{ display: 'inline-block', marginRight: 6 }} />{statusLabel(c.status)}</td>
                         <td>
-                          <span className={`badge ${c.selfHeal.state === 'healthy' ? 'ok' : c.selfHeal.state === 'healing' ? 'muted' : 'err'}`}>{c.selfHeal.state}</span>
-                          <div className="muted" style={{ fontSize: 11 }}>
-                            {c.selfHeal.restarts > 0 ? `${c.selfHeal.restarts} restart(s)` : 'no restarts'}
-                          </div>
+                          <span className={`badge ${c.selfHeal.state === 'healthy' ? 'ok' : c.selfHeal.state === 'degraded' ? 'err' : 'muted'}`}>{c.selfHeal.state}</span>
+                          <div className="muted" style={{ fontSize: 11 }}>{c.selfHeal.note}</div>
                         </td>
                         <td style={{ textAlign: 'right' }}>
                           {!c.toggle ? (

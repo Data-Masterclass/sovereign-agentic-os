@@ -4,7 +4,9 @@
 import { NextResponse } from 'next/server';
 import { adminCtx, fail } from '../_ctx';
 import { listComponentsWithStatus, statusOf, toggleComponent, BY_ID } from '@tabs/admin/lib/platform';
-import { selfHealFor, versionFor, nodes, pools, OPTIONAL_LAYERS, trinoAccessRulesRow, gitMirrorRow, dataProductsGitRow } from '@tabs/admin/lib/components-extra';
+import { OPTIONAL_LAYERS, trinoAccessRulesRow, gitMirrorRow, dataProductsGitRow } from '@tabs/admin/lib/components-extra';
+import { componentRows } from '@tabs/admin/lib/component-health';
+import { readNodes } from '@tabs/admin/lib/cluster-nodes';
 import { config } from '@core/kernel/config';
 import { lastReconcileOutcome, DEFAULT_RECONCILE_PERIOD_MS } from '@core/infra/trino-rules-server';
 import { assertGuarded } from '@tabs/admin/lib/guard';
@@ -31,14 +33,17 @@ export async function GET() {
   try {
     const { user } = await adminCtx();
 
-    let components;
+    // Version, health and restarts come from each component and from its pods (design 00 §6).
+    // Without a cluster the status reads 'unknown' and each component's own endpoint still answers
+    // (or gives its reason) — nothing is filled in.
+    let raw;
     try {
-      const raw = await listComponentsWithStatus();
-      components = raw.map((c) => ({ ...c, version: versionFor(c.id), selfHeal: selfHealFor(c.id, c.status) }));
-    } catch {
-      // Offline / no cluster: degrade to the registry with unknown status.
-      components = Object.values(BY_ID).map((c) => ({ ...c, ns: '', lport: c.port, status: 'unknown', version: versionFor(c.id), selfHeal: selfHealFor(c.id, 'unknown') }));
+      raw = await listComponentsWithStatus();
+    } catch (e) {
+      raw = Object.values(BY_ID).map((c) => ({ ...c, ns: '', lport: c.port, status: 'unknown', statusNote: (e as Error).message }));
     }
+    const components = await componentRows(raw);
+    const nodes = await readNodes();
 
     let services: ServicesStatus = { services: [], up: 0, total: 0 };
     try { services = await probeServices(); } catch { /* degrade to empty */ }
@@ -150,8 +155,8 @@ export async function GET() {
 
     return NextResponse.json({
       components,
-      nodes: nodes(),
-      pools: pools(),
+      nodes: nodes.ok ? nodes.value : [],
+      nodesError: nodes.ok ? null : { reason: nodes.reason, detail: nodes.detail },
       optionalLayers: OPTIONAL_LAYERS,
       services: services.services,
       servicesSummary: { up: services.up, total: services.total },

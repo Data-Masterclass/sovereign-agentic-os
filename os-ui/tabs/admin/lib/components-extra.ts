@@ -1,78 +1,15 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG
  */
-import { config } from '@core/kernel/config';
-
 /**
- * Components & System — the self-heal + node/pool augmentation over the existing
- * native component registry (`lib/platform.ts`). The route reads live component
- * status from `lib/platform.ts` (k8s) and merges these signals:
- *  - self-heal: restart counts / CrashLoop / last-healed (from
- *    `monitoring-and-healing.md`'s L1 Kubernetes self-heal — there is no L2 GitOps layer);
- *  - node/pool view: the single-node demo's node + pool min/max.
+ * Components & System — the rows the Platform page adds beside the component registry
+ * (`lib/platform.ts`). Versions, health, restarts and nodes are NOT here: they are read live from
+ * each component and from Kubernetes (`component-health.ts`, `cluster-nodes.ts`; design 00 §6,
+ * WP-05). The typed-in self-heal, node, pool and version tables that used to stand here were
+ * deleted: they showed a node and restart counts that did not exist.
  *
- * Pure (live signals are injected by the route from k8s/Prometheus where
- * available); unit-testable. Toggles act only on already-provisioned workloads
- * (no provisioning).
+ * Pure: the route injects every live signal; unit-testable.
  */
-
-export type SelfHeal = {
-  /** Pod restarts in the last window (Kubernetes liveness/readiness heals). */
-  restarts: number;
-  /**
-   * Whether a GitOps controller reverted drift recently. ALWAYS false: there is no
-   * GitOps controller (no Argo CD, no Flux) in this stack, so nothing reverts drift
-   * automatically — Kubernetes restarting a crashed pod is the only self-heal there is
-   * (night-2 S1: the Admin UI claimed otherwise over deterministic offline data).
-   */
-  driftReverted: false;
-  state: 'healthy' | 'healing' | 'degraded';
-  note: string;
-};
-
-export type NodeView = {
-  name: string;
-  ready: boolean;
-  role: string;
-  cpu: string;
-  mem: string;
-  pods: number;
-};
-
-export type Pool = { name: string; min: number; max: number; current: number; autoRepair: boolean };
-
-/** Deterministic self-heal signal per component (offline demo). A couple of
- * components show a recent heal so "a pod self-healing" is visible in the gate. */
-export function selfHealFor(componentId: string, status: string): SelfHeal {
-  if (status === 'starting') {
-    return { restarts: 2, driftReverted: false, state: 'healing', note: 'Liveness probe restarted the pod; rescheduling.' };
-  }
-  if (componentId === 'opensearch') {
-    return { restarts: 1, driftReverted: false, state: 'healthy', note: 'Liveness probe restarted the pod once; pod healthy.' };
-  }
-  if (status === 'off' || status === 'disabled') {
-    return { restarts: 0, driftReverted: false, state: 'degraded', note: 'Optional layer disabled by an Admin.' };
-  }
-  return { restarts: 0, driftReverted: false, state: 'healthy', note: 'Steady; Kubernetes maintaining desired replicas.' };
-}
-
-export function nodes(): NodeView[] {
-  return [{ name: 'kind-control-plane', ready: true, role: 'control-plane,worker', cpu: '4', mem: '12Gi', pods: 38 }];
-}
-
-export function pools(): Pool[] {
-  return [{ name: 'default-pool', min: 1, max: 1, current: 1, autoRepair: true }];
-}
-
-/**
- * The version shown per component. os-ui's is the one this install really runs (`OS_VERSION`,
- * set by the chart). Nothing reads the other components' image tags yet, so they say so — a
- * typed-in table used to stand here and drifted from what was deployed (it showed os-ui v0.5.14).
- */
-export function versionFor(id: string): string {
-  if (id === 'os-ui') return config.osVersion.startsWith('v') ? config.osVersion : `v${config.osVersion}`;
-  return 'not reported';
-}
 
 /** Optional layers the Admin can enable/disable per the component registry. */
 export const OPTIONAL_LAYERS = ['Layer 4 — Science'];

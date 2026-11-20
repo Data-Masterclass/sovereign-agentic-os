@@ -592,6 +592,13 @@ export const config = {
   opaToken: env('OPA_TOKEN', ''),
   // Chart-seeded governance principals (values `opa.governance.principals`) — merged, never overwritten.
   opaSeedPrincipals: parseSeedPrincipals(env('OS_OPA_SEED_PRINCIPALS', '{}')),
+  // Observability stack (WP-05, design 00 §6): the chart's Services of the same names. Read by the
+  // health adapters (core/adapters/<component>/health.ts) for each component's own version.
+  victoriaMetricsUrl: base(env('VICTORIA_METRICS_URL', 'http://victoria-metrics:8428')),
+  victoriaLogsUrl: base(env('VICTORIA_LOGS_URL', 'http://victoria-logs:9428')),
+  // The Collector's health_check extension and its own metrics endpoint (service_version label).
+  otelCollectorHealthUrl: base(env('OTEL_COLLECTOR_HEALTH_URL', 'http://otel-collector:13133')),
+  otelCollectorMetricsUrl: base(env('OTEL_COLLECTOR_METRICS_URL', 'http://otel-collector:8888')),
   // Data-authz FAIL MODE. Default DENY-by-default: if OPA is unreachable/errors
   // the governed data spine (`lib/governed.ts`) DENIES — consistent with the
   // agent spine. Set OPA_FAIL_OPEN=true ONLY for the offline-mock teaching flow
