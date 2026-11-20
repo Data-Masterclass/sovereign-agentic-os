@@ -475,17 +475,23 @@ Promise.all(["/v1/models", "/v1/mcp/tools"].map(p => fetch(u + p, { headers: h }
       local want; want=$(ov "$3"); [ -n "$want" ] || continue
       [ "$(h16 "$(secret_key "$1" "$2")")" = "$(h16 "$want")" ] && pass "$1/$2 = new" || fail "$1/$2 is not the overlay value"
     done
-    # Only the pods that serve each Deployment now count: Running pods of its current ReplicaSet
-    # (scripts/lib/readers-restarted.py). A completed Job pod with the same labels is not a reader.
+    # Each reader must serve ONLY from pods started after the deploy: rollout complete, no pod of an
+    # earlier ReplicaSet left, every current pod Ready (scripts/lib/readers-restarted.py). A missing
+    # Deployment fails; only replicas == 0 is a skip. A one-off Job pod with the same labels is no reader.
     local deployed d sel rw
     deployed=$(helm --kube-context "$CTX" status "$REL" -n "$NS" -o json | python3 -c 'import json,sys; print(json.load(sys.stdin)["info"]["last_deployed"])')
     rw=$(mktemp -d)
     for d in "$LANGFUSE_SVC" "$REL-langfuse-worker" "$LITELLM_SVC" os-ui os-ui-worker "$DAGSTER_CODE"; do
-      k get deploy "$d" -o json > "$rw/dep.json" 2>/dev/null || continue
-      sel=$(python3 -c 'import json,sys; print(",".join(f"{k}={v}" for k, v in json.load(open(sys.argv[1]))["spec"]["selector"]["matchLabels"].items()))' "$rw/dep.json")
-      k get rs -l "$sel" -o json > "$rw/rs.json"; k get pods -l "$sel" -o json > "$rw/pods.json"
+      [ -n "$d" ] || continue      # DAGSTER_CODE= (empty) leaves the Dagster reader out on an install without Dagster
+      : > "$rw/rs.json"; : > "$rw/pods.json"
+      if k get deploy "$d" -o json > "$rw/dep.json" 2>/dev/null; then
+        sel=$(python3 -c 'import json,sys; print(",".join(f"{k}={v}" for k, v in json.load(open(sys.argv[1]))["spec"]["selector"]["matchLabels"].items()))' "$rw/dep.json")
+        k get rs -l "$sel" -o json > "$rw/rs.json"; k get pods -l "$sel" -o json > "$rw/pods.json"
+      else
+        : > "$rw/dep.json"          # missing: the helper FAILS it (a misnamed reader must not pass)
+      fi
       local line rc=0; line=$(python3 "$REPO/scripts/lib/readers-restarted.py" "$rw/dep.json" "$rw/rs.json" "$rw/pods.json" "$deployed") || rc=$?
-      case $rc in 0) pass "$line" ;; 2) echo "   skip $line" ;; *) fail "$line: restart it" ;; esac
+      case $rc in 0) pass "$line" ;; 2) echo "   skip $line" ;; *) fail "$d: $line" ;; esac
     done
     rm -rf "$rw"
 
