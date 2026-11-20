@@ -2,32 +2,97 @@
 SPDX-License-Identifier: Apache-2.0
 Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
 -->
-# Rotating the LiteLLM master key, the salt key and the Langfuse credentials
+# Rotating the platform's default secrets
 
-The run-book for step 5 (LiteLLM master key and salt key) and step 7 i–ii (Langfuse project keys,
-init-user password) of the rotation order in `docs/ops/litellm-upgrade.md` §3.2. The background
-is in `docs/ops/litellm-salt-key.md`. Tooling: `scripts/ops/rotate-secrets.sh`.
+The run-book for replacing every credential the chart renders from a literal in `values.yaml` on
+the `local` profile:
+
+- the LiteLLM master key, and a salt key with it;
+- the LiteLLM console password;
+- the agent-runtime token;
+- the Langfuse project key pair;
+- the Langfuse core secrets (`salt`, `nextauthSecret`, `encryptionKey`);
+- separately, the Langfuse admin password.
+
+It implements steps 2, 5 and 7 of the rotation order in `docs/ops/litellm-upgrade.md` §3.2. The
+LiteLLM background is in `docs/ops/litellm-salt-key.md`. Tooling: `scripts/ops/rotate-secrets.sh`
+(header: every subcommand).
 
 Rules that hold throughout:
 
-- New values are generated on the operator's machine (`openssl rand`) and live only in a private
-  overlay outside git: `~/.sovereign-os-secrets/overlays/rotation-<date>.yaml`, mode 600. Next to
-  it, the previous values (`….rollback.yaml`) and a state file with names, counts and sha256
-  prefixes only (`….state.json`).
-- Nothing prints a value. Keys travel in shell variables; curl reads them from stdin.
-- Deploy the os-ui version that is **already live**, so the only change is the secrets.
+- New values are generated on the operator's machine (`openssl rand`). They are written only to
+  private files outside git, mode 600: `~/.sovereign-os-secrets/overlays/`. Add that directory to
+  any git work tree's ignore file it sits in (for example `~/.gitignore` when `~` is one).
+- Nothing prints a value. Values travel in shell variables and reach curl, psql, node and python
+  on stdin.
+- Every overlay is **bound** to the cluster it was prepared on (the kube-system namespace UID),
+  to the namespace and release, and to the live master key it expects before it is applied.
+  `plan` and `verify` refuse any other cluster, release or step. So run `prepare` against
+  production immediately before the window and use that run's files.
+- Deploy the os-ui version that is **already live**, with only the rotation chart support added
+  ("Deploying only the secret changes" below).
+- deploy.sh leaves its derived `release-values.yaml` (it holds the new values) in its temporary
+  directory, which it prints at the end. Delete it after the window. Keep the rollback overlays.
 
 ## What changes, and what restarts
 
-| Value | Secret → key | Readers | Restarts by itself on the deploy? |
+| Value (overlay) | Secret → key | Readers | Restarts by itself on the deploy? |
 |---|---|---|---|
-| `litellmMasterKey` | `litellm-credentials` → `masterkey` | LiteLLM (`PROXY_MASTER_KEY`), os-ui (`LITELLM_MASTER_KEY`), the key-init Job | no — restart LiteLLM, os-ui |
-| `litellmSaltKey.value` | `litellm-credentials` → `LITELLM_SALT_KEY` | LiteLLM (envFrom) | no — restart LiteLLM |
-| `langfuseInit.publicKey` / `secretKey` | `langfuse-init` (`LANGFUSE_INIT_PROJECT_*`), `litellm-credentials` (`LANGFUSE_*`) | langfuse-web (headless init), LiteLLM, os-ui, os-ui-worker | os-ui and os-ui-worker **yes** (the public key is a plain env value in their pod template); langfuse-web and LiteLLM no |
-| `langfuseInit.userPassword` | `langfuse-init` → `LANGFUSE_INIT_USER_PASSWORD` | langfuse-web, only when it creates the user | no, and a restart does not change an existing user (below) |
+| `litellmMasterKey` | `litellm-credentials` → `masterkey` | LiteLLM (`PROXY_MASTER_KEY`), os-ui (`LITELLM_MASTER_KEY`), the key-init Job | no — except when `litellm.envVars` changes too (both re-key steps), which rolls LiteLLM |
+| `litellmSaltKey.value` | `litellm-credentials` → `LITELLM_SALT_KEY` | LiteLLM | no |
+| `litellm.envVars.LITELLM_MIGRATE_FROM_MASTER_KEY` (re-key step 1 only) | — (pod env) | LiteLLM at boot | **yes**, LiteLLM |
+| `litellmUI.password` | `litellm-credentials` → `UI_PASSWORD` | LiteLLM console login, os-ui's console sign-in | no |
+| `agentRuntime.token` | `agent-runtime-token` → `token` | os-ui, the schedule and catalog CronJobs (read at each run) | no |
+| `langfuseInit.publicKey` / `secretKey` | `langfuse-init`, `litellm-credentials` (`LANGFUSE_*`) | langfuse-web (headless init), LiteLLM, os-ui, os-ui-worker | os-ui and os-ui-worker **yes** (the public key is plain env); the others no |
+| `langfuseCoreSecrets.salt` / `nextauthSecret` / `encryptionKey` | `langfuse-core-secrets` | langfuse-web, langfuse-worker | no |
+| `langfuseInit.userPassword` | `langfuse-init` → `LANGFUSE_INIT_USER_PASSWORD` | os-ui's Langfuse console sign-in (`LANGFUSE_SSO_PASSWORD`); langfuse-web only when it creates the user | no |
 
-`scripts/ops/rotate-secrets.sh plan` shows this for the live release before anything is applied:
-every object that changes, the Secret keys that change (by hash), and which workloads roll.
+`plan` shows this for the live release before anything is applied: every object that changes, the
+Secret keys that change (by hash), and which workloads roll by themselves. `verify` checks that every
+reader has a pod started after the deploy.
+
+## LiteLLM: what is encrypted, and the complete re-key
+
+LiteLLM 1.109.1 encrypts **21 columns**. They are listed in
+`litellm/proxy/db/master_key_migration.py` `_SECRET_COLUMNS`:
+
+- stored models and credentials;
+- `LiteLLM_Config` (console env vars and settings);
+- guardrails, SSO and cache config, config overrides;
+- MCP servers (4 columns), MCP OAuth clients, MCP user credentials and env vars, SSO identity assertions;
+- search tools;
+- the `callback_vars` in team, key, user and deleted-team/key metadata.
+
+The key is `get_salt_key()`: `LITELLM_SALT_KEY`, or the master key when that is unset.
+
+`prepare` counts them with **LiteLLM's own scan**. `scripts/ops/litellm-stored-secrets.py` runs in the
+LiteLLM container through a read-only `kubectl exec`. It uses `_secret_columns_in`, `_rows_of`,
+`replace_ciphertexts` and `decrypt_if_encrypted_with`, SELECT only, and prints counts only.
+`verify` runs the same scan after each step. It requires every column to hold as many values
+decryptable with the key now in use as before, and none decryptable with the retired master key.
+The HTTP endpoints `/model/info`, `/credentials` and `/v1/mcp/server` see 3 of the 21 columns.
+`/credentials/migrate-encryption/check` cannot tell a lost value from plaintext. So neither is used.
+
+**The complete re-key (the default path while no salt key is set).** LiteLLM 1.109.1 re-encrypts
+every stored value at boot when `LITELLM_MIGRATE_FROM_MASTER_KEY` names the previous master key.
+This happens only while `LITELLM_SALT_KEY` is absent from its environment, and the target is the
+master key (`migrate_if_requested`, `_migrate`). Hence two deploys:
+
+1. **Step 1:**
+   - Set: `litellmMasterKey` = a new random S and `litellm.envVars.LITELLM_MIGRATE_FROM_MASTER_KEY` = the old key. No salt key yet.
+   - LiteLLM rolls by itself and logs `Done re-encrypting N stored value(s)`.
+   - `verify`: every value is now decryptable with S, and none with the old key.
+2. **Step 2:**
+   - Set: `litellmSaltKey.value` = S, `litellmMasterKey` = a new random M, and the variable set to `null` (removed).
+   - The in-place secrets change in the same deploy.
+   - S is the encryption key from then on, and no longer accepted as a master key (401).
+
+This leaves no published value as the encryption key and needs no re-creation of stored values. The
+alternatives stay available with `--path`:
+
+- `pin-first` keeps the old master key as the salt. It needs procedure C of `litellm-salt-key.md`
+  afterwards, and that procedure must then cover all 21 columns.
+- `none-stored` is refused unless LiteLLM's scan finds no stored value at all.
 
 ## The salt key in the chart
 
@@ -47,6 +112,33 @@ every object that changes, the Secret keys that change (by hash), and which work
   release values, and the guard would stay off. `helm template`
   without a cluster cannot look up, so GitOps renderers must keep the value themselves.
 
+## Langfuse core secrets (3.194.1)
+
+Read in the Langfuse source at tag `v3.194.1`:
+
+- **`nextauthSecret`** signs the sessions. While it is a public value, anyone who can reach
+  langfuse-web can forge an admin session, so rotating the password alone does not close Langfuse
+  admin access. Rotating it signs everyone out once.
+- **`salt`** is used only for the API keys' fast lookup hash (`web/src/features/public-api/server/apiAuth.ts`,
+  `packages/shared/src/server/auth/apiKeys.ts`). After a change the fast lookup misses. Langfuse then
+  verifies the secret against the key's bcrypt hash (`hashedSecretKey`, which does not depend on the
+  salt), looked up by public key, and writes the new fast hash. **No key pair stops working,
+  including the old one**, so the owner must still delete the old pair in the UI. The salt rotates
+  in the same deploy as the new pair. The headless init creates that pair under the new salt.
+  Rehearsed: the old and new pairs both answered 200 after the salt change, and the old one
+  answered 401 after its deletion.
+- **`encryptionKey`** encrypts, at rest, the secrets of the LLM connections (`llm_api_keys`), the
+  integrations (`blob_storage_integrations`, `posthog_integrations`, `mixpanel_integrations`,
+  `slack_integrations`), automations (`actions`), SSO (`sso_configs`) and callouts
+  (`web_callout_endpoints`). These are all the tables written through `encrypt()` in
+  `web/src` and `packages/shared`. `prepare` counts their rows (psql in pg-0, read-only) and
+  rotates the key **only when all are 0**. Otherwise it keeps the current key and says so. To
+  rotate it then:
+  1. note each such entry (Langfuse UI: Settings → LLM Connections, Integrations, Automations);
+  2. delete it;
+  3. run `prepare` again (the key is now rotated) and the run-book;
+  4. re-enter the entries.
+
 ## Langfuse: what the headless init does with changed values (3.194.1)
 
 Read in `web/src/initialize.ts` at tag `v3.194.1`, which runs on every langfuse-web start:
@@ -63,199 +155,124 @@ Read in `web/src/initialize.ts` at tag `v3.194.1`, which runs on every langfuse-
   a user that already exists"; langfuse.com/self-hosting/administration/headless-initialization:
   resources are created "if they don't already exist").
 
-Changing a password in the Langfuse UI needs transactional e-mail (`SMTP_CONNECTION_URL`) and a
-verified e-mail address (`web/src/pages/auth/reset-password.tsx`, `credentialsRouter.resetPassword`).
-This deployment has no SMTP, so the UI offers no password change. Langfuse's documented procedure
-for that case (langfuse.com/self-hosting/security/authentication-and-sso#password-reset) edits the
-`users` table; with sign-up disabled, the headless init takes the place of "sign up again".
-The procedure is below and was rehearsed.
+## Run-book (production)
 
-## Run-book
+Before:
 
-Before: a fresh `deploy/pre-upgrade-backup.sh`, a maintenance window (LiteLLM, Langfuse and os-ui
-restart; everyone is signed out of the LiteLLM console once), no long agent run in flight.
+- a fresh `deploy/pre-upgrade-backup.sh`;
+- a maintenance window (LiteLLM, Langfuse and os-ui restart; everyone is signed out of both consoles);
+- no long agent run in flight;
+- the checkout described in "Deploying only the secret changes".
 
-### 1. Prepare (read-only on the cluster)
+1. **Prepare** (read-only; two read-only exec steps, named before they run):
+   ```bash
+   scripts/ops/rotate-secrets.sh prepare --context dmagenticos
+   ```
+   It prints:
+   - the encrypted columns that hold values, and the path (`re-key` while no salt key is set);
+   - whether the Langfuse `encryptionKey` rotates;
+   - the files it wrote, and the exact commands that follow, with the live version filled in.
+2. **Re-key step 1** (re-key path only):
+   ```bash
+   scripts/ops/rotate-secrets.sh plan --overlay <…>.step1.yaml --chart charts/sovereign-agentic-os --context dmagenticos
+   VALUES_OVERLAY=<…>.step1.yaml ./scripts/deploy.sh --from-registry <live version>
+   scripts/ops/rotate-secrets.sh verify --overlay <…>.step1.yaml --context dmagenticos
+   ```
+   `plan` must show only:
+   - `Secret litellm-credentials: keys masterkey`;
+   - `Deployment agentic-os-litellm`, which rolls by itself.
+
+   `verify` must end `ROTATION_VERIFY_OK (step1)`, with every column at its full count under the
+   new key and 0 values under the old one. Between this step and the next, os-ui's admin reads answer
+   401 (it still holds the old key). Model calls on virtual keys are not affected.
+3. **Final step:**
+   ```bash
+   scripts/ops/rotate-secrets.sh plan --overlay <…>.yaml --chart charts/sovereign-agentic-os --context dmagenticos
+   VALUES_OVERLAY=<…>.yaml ./scripts/deploy.sh --from-registry <live version>
+   kubectl --context dmagenticos -n agentic-os rollout restart deploy/agentic-os-langfuse-web deploy/agentic-os-langfuse-worker deploy/agentic-os-litellm
+   kubectl --context dmagenticos -n agentic-os rollout status  deploy/agentic-os-langfuse-web deploy/agentic-os-langfuse-worker deploy/agentic-os-litellm --timeout=10m
+   kubectl --context dmagenticos -n agentic-os rollout restart deploy/os-ui deploy/os-ui-worker
+   kubectl --context dmagenticos -n agentic-os rollout status  deploy/os-ui deploy/os-ui-worker --timeout=15m
+   scripts/ops/rotate-secrets.sh verify --overlay <…>.yaml --context dmagenticos --os-ui-exec
+   ```
+   `plan` must show only:
+   - the Secrets `litellm-credentials`, `langfuse-init`, `langfuse-core-secrets` and `agent-runtime-token`;
+   - the Deployments `agentic-os-litellm` (the variable removed), os-ui and os-ui-worker.
+
+   `verify` must end `ROTATION_VERIFY_OK (final)`. Besides the step-1 checks, it covers:
+   - the old master key and S are refused;
+   - the stored models are served;
+   - the virtual key works;
+   - the console password: new 200, old 401;
+   - the new Langfuse pair is accepted;
+   - every reader restarted after the deploy;
+   - os-ui's own credential is accepted.
+
+   By hand:
+   - Admin → LLM Gateway opens;
+   - a short agent run completes and its trace arrives in Langfuse;
+   - `kubectl logs deploy/agentic-os-litellm | grep -iE 'decrypt|salt|Invalid model'` shows nothing new.
+4. **Owner, Langfuse UI:** project *Agent Core* → Settings → API keys. Delete the **old** pair (the
+   new one is listed as "Provisioned API Key"). Run `verify` again: the old pair must now get 401.
+5. **Langfuse admin password**: see below.
+6. Delete deploy.sh's `release-values.yaml`. Keep the overlays (mode 600).
+
+### Langfuse admin password (the one database write; the owner approves it)
+
+The headless init never changes an existing user's password, and the UI cannot change it without
+SMTP. The minimal and reversible path is to write a new bcrypt hash into the one `users` row. This
+is the same write that Langfuse's own `updateUserPassword` does, at cost 12. The user's id and every
+membership stay the same.
 
 ```bash
-scripts/ops/rotate-secrets.sh prepare --context dmagenticos
+scripts/ops/rotate-secrets.sh password --context dmagenticos                      # new password overlay + rollback + state
+scripts/ops/rotate-secrets.sh password-db --overlay <pw>.yaml --context dmagenticos   # DRY RUN: shows the steps
+scripts/ops/rotate-secrets.sh password-db --overlay <pw>.yaml --context dmagenticos --apply   # owner's approval
+VALUES_OVERLAY=<pw>.yaml ./scripts/deploy.sh --from-registry <live version>
+kubectl --context dmagenticos -n agentic-os rollout restart deploy/os-ui && kubectl --context dmagenticos -n agentic-os rollout status deploy/os-ui
+scripts/ops/rotate-secrets.sh verify-password --overlay <pw>.yaml --context dmagenticos
 ```
 
-It inventories, through a short-lived port-forward and with the current master key read from the
-Secret into a shell variable:
+`--apply` does the following:
 
-- `GET /model/info`, the deployments with `model_info.db_model: true`;
-- `GET /credentials`, stored credentials;
-- `GET /v1/mcp/server`, MCP servers.
+1. It makes the hash with langfuse-web's own `bcryptjs` at cost 12. The password reaches `node` on stdin.
+2. It saves the current hash next to the overlay (`<pw>.old-hash`, mode 600).
+3. It runs one `UPDATE users SET password = … WHERE email = <init e-mail> AND password = <saved hash>`
+   through `kubectl exec pg-0 -- psql`. The command must answer `UPDATE 1`.
 
-Then it chooses the path:
+The deploy then puts the same password into `langfuse-init`, so os-ui's console sign-in
+(`LANGFUSE_SSO_PASSWORD`) matches. `verify-password` signs in through NextAuth: the new password
+must work and the old one must be refused.
 
-- **none stored** (all three 0): a new random salt key together with the new master key.
-- **pin first** (anything stored, or a count it could not read): `LITELLM_SALT_KEY` = the current
-  master key, so the stored values stay decryptable while the master key changes. In one deploy:
-  the salt is what LiteLLM decrypts with once it is set. Follow up with `litellm-salt-key.md`
-  procedure C (re-create the stored values under a new random salt and rotate the provider
-  credentials they hold): until then the encryption key is the old master key.
-- **salt already set** (also after a rollback): the salt key is kept unchanged, only the master
-  key rotates.
+Rollback: `password-db --overlay <pw>.yaml --rollback --apply` restores the saved hash. Then
+deploy `<pw>.rollback.yaml` and restart os-ui.
 
-It writes the overlay with `litellmMasterKey`, `litellmSaltKey.value` and a new
-`langfuseInit.publicKey`/`secretKey`, the rollback overlay with the previous values, and prints the
-next commands with the live version filled in.
+## Deploying only the secret changes
 
-### 2. Plan (read-only)
+main carries changes that are not on the live release (for example Trino resource groups and the
+git layout). Do not deploy main's chart with the live image, and do not bundle the rotation with a
+release. Deploy the **live tag** with only the rotation chart support cherry-picked:
 
 ```bash
-scripts/ops/rotate-secrets.sh plan --overlay ~/.sovereign-os-secrets/overlays/rotation-<date>.yaml \
-  --chart <checkout>/charts/sovereign-agentic-os --context dmagenticos
-```
-
-It renders the chart with the live release values plus the overlay using `helm template --dry-run=server`, so the
-salt guard runs as in the upgrade, and compares the result with `helm get manifest`. Expected:
-`change Secret litellm-credentials: keys LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, LITELLM_SALT_KEY, masterkey`,
-`change Secret langfuse-init: keys LANGFUSE_INIT_PROJECT_PUBLIC_KEY, LANGFUSE_INIT_PROJECT_SECRET_KEY`,
-the os-ui and os-ui-worker Deployments (the public key), and nothing else.
-Anything else means the checkout is not the live chart: stop.
-
-### 3. Deploy
-
-From the checkout of the live release with the chart change applied (see "From a release tag"):
-
-```bash
-VALUES_OVERLAY=~/.sovereign-os-secrets/overlays/rotation-<date>.yaml ./scripts/deploy.sh --from-registry <live version>
-```
-
-deploy.sh prints which release values change. For this overlay that is `litellmMasterKey`,
-`litellmSaltKey.value`, `langfuseInit.publicKey` and `langfuseInit.secretKey`, all `(hidden)`.
-Then it takes the backup and runs the upgrade. os-ui and os-ui-worker roll during the deploy and
-pick up the new master key. Until LiteLLM restarts, their admin reads answer 401. Model calls on
-virtual keys are not affected. The `litellm-agent-key-init` Job runs with the new master key
-against the old gateway: it retries (backoff) and succeeds once LiteLLM has restarted.
-
-### 4. Restart the readers that do not roll by themselves
-
-```bash
-kubectl --context dmagenticos -n agentic-os rollout restart deploy/agentic-os-langfuse-web deploy/agentic-os-litellm
-kubectl --context dmagenticos -n agentic-os rollout status  deploy/agentic-os-langfuse-web deploy/agentic-os-litellm --timeout=10m
-kubectl --context dmagenticos -n agentic-os rollout restart deploy/os-ui deploy/os-ui-worker   # harmless if they already rolled
-kubectl --context dmagenticos -n agentic-os rollout status  deploy/os-ui deploy/os-ui-worker --timeout=15m
-```
-
-langfuse-web first: its start creates the new key pair (headless init), so the clients that already
-send with it are accepted. Traces sent between the os-ui roll and this restart are rejected.
-The OS drops them without failing a run.
-
-### 5. Post-checks
-
-```bash
-scripts/ops/rotate-secrets.sh verify --overlay ~/.sovereign-os-secrets/overlays/rotation-<date>.yaml --context dmagenticos --os-ui-exec
-```
-
-The script checks:
-
-- the Secrets hold the new values (by hash);
-- the old master key gets 401 and the new one 200;
-- the database-stored models from step 1 are still listed and each answers a chat call;
-- the shared virtual key lists models and completes a call;
-- os-ui's own `LITELLM_MASTER_KEY` reads `/v1/models` and `/v1/mcp/tools`, the two reads behind
-  Admin → LLM Gateway (`--os-ui-exec` runs `node` in the os-ui pod);
-- the new Langfuse pair authenticates.
-
-It ends `ROTATION_VERIFY_OK`. `VERIFY_MODEL=<alias>` picks the chat model for the virtual-key call;
-`VERIFY_EMBED_MODEL=<alias>` uses `/v1/embeddings` instead. By hand, check that Admin → LLM Gateway opens, that a short agent run
-completes, and that its trace arrives in Langfuse.
-
-### 6. Langfuse UI (the owner)
-
-1. Port-forward to `agentic-os-langfuse-web` and sign in. Go to project *Agent Core* → Settings →
-   API keys. The new pair is listed with the note "Provisioned API Key", next to the old one.
-2. **Delete the old pair.** It is the one whose public key the prepare step printed by hash and
-   that is not the new one. Run `verify` again: the old pair must now get 401.
-
-Alternatively, create the second pair in the UI (Create new API key). Then put it into a
-hand-written overlay as `langfuseInit.publicKey`/`secretKey` instead of the generated one, and do
-steps 3–5. The init finds that public key existing and leaves it alone.
-
-### 7. Langfuse admin password (separately, after the keys)
-
-The headless init does not change an existing user's password, and the UI cannot without SMTP.
-os-ui signs in to the embedded Langfuse console with `LANGFUSE_SSO_PASSWORD`, read from
-`langfuse-init` → `LANGFUSE_INIT_USER_PASSWORD` (from os-ui 0.9.20; an older os-ui used a built-in
-default and would lose the automatic sign-in). So the Secret, the Langfuse user and os-ui must
-agree: change the user, then the Secret, then restart os-ui.
-
-```bash
-scripts/ops/rotate-secrets.sh password            # writes ~/.sovereign-os-secrets/overlays/langfuse-password-<date>.yaml
-```
-
-1. Back up (`deploy/pre-upgrade-backup.sh`).
-2. Move the existing user aside, as Langfuse's documented reset does (step 1 of their procedure).
-   Run as the database owner in the `langfuse` database:
-   `UPDATE users SET email = 'rotated-' || email WHERE email = '<init user e-mail>';`
-3. Deploy with the password overlay
-   (`VALUES_OVERLAY=<password overlay> ./scripts/deploy.sh --from-registry <live version>`), then
-   `kubectl rollout restart deploy/agentic-os-langfuse-web`. The init now finds no user with that
-   e-mail and creates it with the new password, as `OWNER` of the organisation. This replaces
-   their steps 2–3, because sign-up is disabled. Then
-   `kubectl rollout restart deploy/os-ui` so its `LANGFUSE_SSO_PASSWORD` is the new one.
-4. Sign in with the new password. Under Organisation → Members the new user is Owner.
-5. Delete the old user (their step 4): `DELETE FROM users WHERE email = 'rotated-<init user e-mail>';`
-   Its memberships go with it (cascade).
-
-Rollback before step 5: set the e-mails back (delete the new user first). After step 5: run the
-procedure again with the previous password.
-
-## From a release tag
-
-The chart change is two commits, `feat(chart): LITELLM_SALT_KEY with a change guard; langfuseInit.userPassword`
-and `fix(chart): allowChange is for a full re-key only`. Both touch the chart only. On a tag older than the LiteLLM 1.109.1 change (`os-ui-v0.9.20` and
-before), the first one conflicts on one comment line in `templates/base/litellm/credentials.yaml`:
-keep both sides, the `LITELLM_SALT_KEY` block followed by that tag's comment line. Built that way on
-`os-ui-v0.9.20`, the chart was rehearsed end to end. To deploy the live release with only the
-secrets changing:
-
-```bash
-cd <checkout at os-ui-v<live version>>
+git fetch origin --tags
 git switch -c rotation/<live version> os-ui-v<live version>
-git cherry-pick <feat(chart) commit> <fix(chart) commit>
-helm dependency build charts/sovereign-agentic-os   # or copy charts/*.tgz from the tag checkout
-scripts/ops/rotate-secrets.sh plan --overlay … --chart charts/sovereign-agentic-os   # step 2
-VALUES_OVERLAY=… ./scripts/deploy.sh --from-registry <live version>                  # step 3
+git cherry-pick <feat(chart): LITELLM_SALT_KEY…> <fix(chart): allowChange…> <feat(chart): Langfuse core secrets…>
+helm dependency build charts/sovereign-agentic-os
 ```
 
-`rotate-secrets.sh` itself can run from any checkout of this change (it needs no chart). The image
-stays the live one (`--from-registry <live version>`). The `plan` output of the rehearsal against
-the 0.9.20 chart was exactly:
-
-```
-change  Deployment os-ui
-change  Deployment os-ui-worker
-change  Secret langfuse-init: keys LANGFUSE_INIT_PROJECT_PUBLIC_KEY, LANGFUSE_INIT_PROJECT_SECRET_KEY
-change  Secret litellm-credentials: keys LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, LITELLM_SALT_KEY, masterkey
-rolls by itself (pod template changed): Deployment/os-ui, Deployment/os-ui-worker
-```
-
-The os-ui and os-ui-worker change is the env `LANGFUSE_PUBLIC_KEY` only. Delete the local branch
-afterwards; the next release contains the change. Without the chart change the salt key cannot be
-set from values.
+Those three commits touch only the chart. On `os-ui-v0.9.21` they apply cleanly (rehearsed),
+and with the default values they render the same manifests as the tag. Run `rotate-secrets.sh` from a
+checkout of main (it needs no chart). Point `plan --chart` at the rotation branch's
+`charts/sovereign-agentic-os`, and run deploy.sh from the rotation branch. Delete the branch
+afterwards. The next release contains the change, and the overlay values stay in the release values.
 
 ## Rollback
 
-```bash
-VALUES_OVERLAY=~/.sovereign-os-secrets/overlays/rotation-<date>.rollback.yaml ./scripts/deploy.sh --from-registry <live version>
-```
+| From | Overlay | Then |
+|---|---|---|
+| re-key step 1 | `<…>.rollback-step1.yaml`: the old master key with `LITELLM_MIGRATE_FROM_MASTER_KEY` = S, so LiteLLM re-encrypts S → old | LiteLLM rolls by itself. Afterwards deploy an overlay setting the variable to `null` |
+| the final step | `<…>.rollback.yaml`: the previous master key, console password, agent token, Langfuse pair and core secrets; **the salt key stays** | the restarts of step 3 |
+| the password | `password-db --rollback --apply`, then `<pw>.rollback.yaml` | restart os-ui |
 
-Then run step 4 again. The rollback overlay restores the previous master key and Langfuse pair and
-**keeps the salt key**. The chart could not remove it in any case: a key dropped from a Secret's
-`stringData` stays in the live `data` (measured in the rehearsal). Keeping it is safe on both paths:
-
-- after "pin first" the salt equals the old master key;
-- after "none stored" it is the key that anything stored since the rotation is encrypted with.
-
-So the rollback needs no `allowChange`, and the guard stays on. The new Langfuse pair stays in
-Langfuse until it is deleted in the UI. Rehearsed:
-
-- the old master key was accepted again and the rotated one refused;
-- the stored model was served;
-- the virtual key worked;
-- a rollback overlay that tried to remove the salt was refused by the guard.
+The salt key stays because Helm cannot remove a key from a live Secret's `data` when it disappears
+from `stringData` (measured), and because every stored value is encrypted with it.

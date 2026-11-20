@@ -79,6 +79,11 @@ Rollback: remove `LITELLM_SALT_KEY` from the Secret and restart. Nothing was re-
 
 ## Procedure C — a real re-key (the old master key leaked)
 
+> **On LiteLLM 1.109.1 use the complete re-key instead** (`docs/ops/secret-rotation.md`, "LiteLLM:
+> what is encrypted, and the complete re-key"): `LITELLM_MIGRATE_FROM_MASTER_KEY` re-encrypts all
+> 21 encrypted columns at boot, while no salt key is set. The list below covers only 3 of those 21
+> (models, credentials, MCP servers) and is kept for versions without that variable.
+
 Procedure A leaves the old master key value in use as the salt key. That is fine while it is
 only a retired admin credential; it is **not** fine if it leaked, because whoever has it can
 decrypt the stored credentials from a database copy. Without the Enterprise rotation endpoint
