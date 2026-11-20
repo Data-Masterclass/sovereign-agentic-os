@@ -12,7 +12,8 @@
  *     dbt 1.8 → DSI 0.5.x · dbt 1.9 → DSI 0.7.x · dbt 1.10 → DSI 0.8.x · dbt-core 1.12 (Python) →
  *     no DSI package: dbt-core depends on `metricflow>=0.213` and reads the semantic layer through
  *     MetricFlow's own `metricflow_semantic_interfaces` (Apache-2.0). Its enums equal the ones below.
- *   - TARGET is what the Dagster image runs: dbt-core 1.12.7 + metricflow 0.214.0, pinned exactly (WP-17). The
+ *   - TARGET is the dbt-core LINE the Dagster image runs (1.12) with MetricFlow at or above its floor. The
+ *     exact pins live ONLY in images/extensions/dagster/Dockerfile (GLUE-4: no version repeated here). The
  *     image test parses every generator golden in that image, so a field or name rule this
  *     whitelist gets wrong fails CI rather than a domain. The images were raised to
  *     `dbt-core>=1.9,<1.10` for exactly this reason (night-2 review M-1): `cumulative_type_params`,
@@ -26,15 +27,13 @@
 
 /** The pinned spec. One constant, named in the generated project's README (checklist M4). */
 export const DBT_SEMANTIC_SPEC = {
-  /** MetricFlow version whose `metricflow_semantic_interfaces` validate the emitted YAML: what the
-   *  Dagster image carries (dbt-core 1.12.7 → metricflow 0.214.0). The image test asserts this. */
-  metricflowVersion: '0.214.0',
-  /** The dbt-core release the Dagster image pins. */
-  dbtCore: '1.12.7',
+  /** The MetricFlow floor whose `metricflow_semantic_interfaces` validate the emitted YAML (master
+   *  plan O10). The image test asserts the image's MetricFlow is at or above it. */
+  metricflowFloor: '0.213',
+  /** The dbt-core line the Dagster image runs. The image test asserts the image is on it. */
+  dbtCoreLine: '1.12',
   /** The lowest dbt-core every emitted field is valid on (the licence/floor gate's number). */
   minDbtCore: '1.9',
-  /** The pip specifier the Dagster image carries, recorded so a drift is visible in one place. */
-  imagePin: 'dbt-core==1.12.7',
   /** The dbt >= 1.9 model property that declares a time spine (NOT the legacy name). */
   timeSpineProperty: 'time_spine',
   /** The legacy, by-name spine model of dbt <= 1.8 — never emitted; named so nobody adds it back. */
