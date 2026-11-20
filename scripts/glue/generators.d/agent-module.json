@@ -1,0 +1,15 @@
+{
+  "$comment": "WP-53: the agent system → native LangGraph JS module generator (graph.mjs, run.mjs, prompts/). GLUE-10 checks its goldens for OS keys and OS imports; module.test.ts runs node --check and LangGraph's getGraph() over every shipped template.",
+  "generators": [
+    {
+      "module": "tabs/agents/lib/module/generate.ts",
+      "parts": ["core/infra/agent-module-layout.ts", "core/adapters/agent-module/load.ts", "tabs/agents/lib/git/generate.ts"],
+      "component": "LangGraph JS",
+      "validator": "node --check; LangGraph getGraph() (tabs/agents/lib/module/module.test.ts)",
+      "goldens": [
+        "tabs/agents/lib/module/fixtures/revenue-review.golden.json",
+        "tabs/agents/lib/module/fixtures/agents-module-domain.golden.json"
+      ]
+    }
+  ]
+}

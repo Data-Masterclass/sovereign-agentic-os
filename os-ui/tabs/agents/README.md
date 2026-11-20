@@ -296,6 +296,27 @@ agents/<slug>/README.md                 # purpose, members, grants, channels, ed
 agents/personal/<owner-token>/<slug>/…  # a Personal system, in its owner's lane
 ```
 
+**Native LangGraph module (WP-53, `AGENT_GRAPH_MODULE=true`; default off).** With the flag on, each
+system directory is the team as plain LangGraph JS, and `system.yaml` keeps OS metadata only:
+
+```
+agents/<slug>/graph.mjs        # GENERATED LangGraph JS: StateGraph + one createAgent per agent (lib/module/generate.ts)
+agents/<slug>/run.mjs          # ejector: node run.mjs --input "…" --stub-tools  (OPENAI_BASE_URL, OPENAI_API_KEY, OPENAI_MODEL)
+agents/<slug>/package.json     # the exact @langchain/* and langchain versions os-ui runs
+agents/<slug>/prompts/<id>.md  # each agent's system prompt (replaces agents/<id>.md)
+agents/<slug>/evals/cases.json # sample inputs
+agents/<slug>/system.yaml      # form: os-layer — owner, scope, grants, preset, schedule, outputs; no topology
+```
+
+`graph.json` is not written in this form. A new run loads the committed `graph.mjs` from the repo
+HEAD only after `core/adapters/agent-module/load.ts` has regenerated it from the definition and
+found every loaded file byte-identical (otherwise the run is refused, `agent_module_tampered`), then
+`lib/module/os-agent.ts` injects the governed tools (grant scope, `handleRpc` as the runner, the
+tool-call ledger), the hold decision (stored once per call in `agent_hold_decisions`) and the stock
+`humanInTheLoopMiddleware` (per call). A run that started on the v1 graph resumes on the v1 graph
+(`agent_module_runs` stamps which runs are module runs). Proof: `lib/module/*.test.ts`
+(`module.pg.test.ts` against Postgres 17, `eject.test.ts` compares `node run.mjs` with the OS run).
+
 **Run the artefact from a plain checkout** (checklist A4). `system.yaml` is not a file only the OS
 can interpret — one command compiles it with the OS's own `parseSystem` → `compile` → `buildGraph`
 and executes it, with the LiteLLM gateway replaced by a deterministic scripted model, the governed

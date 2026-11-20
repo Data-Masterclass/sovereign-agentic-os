@@ -433,6 +433,13 @@ export const config = {
   // (tests, a laptop without the DB) → an in-memory checkpointer, and every run report says so
   // (`checkpointer: 'memory'`) — a fallback must never pass for durability.
   agentRunsDatabaseUrl: env('AGENT_RUNS_DATABASE_URL', ''),
+  // WP-53: agent systems as native LangGraph modules (`agents/<system>/graph.mjs` + `run.mjs`).
+  // Off (default): today's engine and git layout, unchanged. On: the git generator writes the
+  // module and an OS-layer-only `system.yaml`, and NEW runs load the committed `graph.mjs` after
+  // its hash check. A run started before the switch resumes on the engine it started on.
+  agentGraphModule: env('AGENT_GRAPH_MODULE', 'false').toLowerCase() === 'true',
+  // Where verified module bytes are materialised for import (content-addressed by digest).
+  agentModuleCacheDir: env('AGENT_MODULE_CACHE_DIR', ''),
   // WHO executes a queued agent run (engine rebuild, Phase A4). `inline` (default): the process
   // that enqueues the job in `run_jobs` also executes it at once — a laptop / kind install with
   // one os-ui pod behaves exactly as before and tests need no worker. `worker`: os-ui only

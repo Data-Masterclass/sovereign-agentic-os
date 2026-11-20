@@ -31,6 +31,7 @@ import { effectiveModelPrices } from '@tabs/admin/lib/model-prices';
 import { runNode, type AgenticGraphResult, type AgenticGraphDeps } from '@tabs/agents/lib/build/agentic-graph';
 import { liveEmbedder } from '@core/infra/context/librarian-live';
 import { runGraphEngine } from '@tabs/agents/lib/engine/run';
+import { isModuleRun, runOsTeamOnModule } from '@tabs/agents/lib/module/os-run';
 import { selectToolCallLedger, withToolCallLedger } from '@tabs/agents/lib/engine/tool-call-ledger';
 import { selectCheckpointer, type CheckpointerKind } from '@tabs/agents/lib/engine/checkpointer';
 import type { GraphDeps, HeldCall, RouteDecision } from '@tabs/agents/lib/engine/build-graph';
@@ -365,11 +366,49 @@ export async function runOsTeam(input: RunOsTeamInput): Promise<RunOsTeamResult>
     onNodeComplete: input.onNodeComplete,
   };
 
+  // WP-53 (`AGENT_GRAPH_MODULE`, default off): a NEW run executes the system's committed
+  // `graph.mjs` (hash-verified); a resume follows the engine the run STARTED on, so a run parked
+  // on the v1 graph before the switch finishes on the v1 graph.
+  // The `agent_runs` database (checkpoints, ledger, hold decisions, run stamps) — read once per run.
+  const runsDb = config.agentRunsDatabaseUrl;
+  if (config.agentGraphModule && input.runId && (!input.resume || (await isModuleRun(input.runId, runsDb)))) {
+    const r = await runOsTeamOnModule({
+      user: input.user,
+      sys,
+      systemId: input.systemId,
+      disabledAgents: input.disabledAgents,
+      runId: input.runId,
+      ...(input.resume ? {} : { task: lastUserText(input.messages) ?? '' }),
+      resumeDecision: input.resumeDecision,
+      caller,
+      specs: grantedToolSpecs(input.user, sys),
+      executor: withToolCallLedger(gate.callTool, await selectToolCallLedger(runsDb)),
+      databaseUrl: runsDb,
+      decide: (tool) => holdDecisionFor(sys.safetyPreset, resolveAlias(tool)),
+      approvals: input.approvalPort ?? serverApprovalPort(),
+      runner: { id: input.user.id, role: input.user.role, domains: input.user.allDomains ?? input.user.domains },
+      agent: principalFor(input.systemId),
+      log: input.log,
+      signal: input.signal,
+    });
+    return {
+      path: r.path,
+      runs: [],
+      finalText: r.finalText,
+      reachedEnd: r.reachedEnd,
+      runId: r.runId,
+      checkpointer: r.checkpointer,
+      interrupted: r.interrupted,
+      parked: r.parked,
+      heldApprovals: r.heldApprovals,
+    };
+  }
+
   {
     // ENGINE REBUILD A1: the real StateGraph. Thread id = run id; checkpointed to the
     // `agent_runs` database when AGENT_RUNS_DATABASE_URL is set, else in memory (reported).
     if (!input.runId) throw new Error('runOsTeam: a run needs a runId (thread id)');
-    const checkpointer = await selectCheckpointer(config.agentRunsDatabaseUrl);
+    const checkpointer = await selectCheckpointer(runsDb);
     const { onNodeStart, onStep, onNodeComplete, tieBreaker: _tb, ...graphDeps } = deps;
     void _tb;
     // A3 — ONE trace per run (`createTraceId(runId)`); a resume adds a segment under the same root.
@@ -392,7 +431,7 @@ export async function runOsTeam(input: RunOsTeamInput): Promise<RunOsTeamResult>
     const trims: (ContextTrim & { node: string })[] = [];
     // WP-26: the governed executor behind the tool-call ledger, so a replayed step never
     // dispatches the same write twice (same database as the checkpointer).
-    const ledger = await selectToolCallLedger(config.agentRunsDatabaseUrl);
+    const ledger = await selectToolCallLedger(runsDb);
     const result = await runGraphEngine({
       ir,
       deps: {
