@@ -24,7 +24,7 @@ import { appDeployFiles, NOT_BUILT_DIGEST } from './native-deploy.ts';
 
 const REGISTRY = 'registry.example.com/sovereign-os-apps';
 const DIGEST = `sha256:${'b'.repeat(64)}`;
-const OPTS = { namespace: 'agentic-apps', registry: REGISTRY };
+const OPTS = { namespace: 'agentic-apps', registry: REGISTRY, ingressClass: 'nginx', tlsIssuer: 'le' };
 const HOST = 'shop.ops.apps.example.com';
 
 function treeOf(digest = DIGEST, extra: { path: string; content: string }[] = []): RunnerApp {
