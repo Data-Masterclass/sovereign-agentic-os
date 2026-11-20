@@ -29,6 +29,7 @@
  */
 import 'server-only';
 import { hostModuleInputs } from '@tabs/agents/lib/module/versions';
+import { moduleEnabledFor } from '@tabs/agents/lib/module/flag';
 import { config } from '@core/kernel/config';
 import {
   commitSubtree,
@@ -169,7 +170,7 @@ export async function commitAgentSystem(domain: string, actor: ActorIdentity, me
   const v2 = (await repoLayout(domain, undefined, { reposDir: reposDir0 })) === LAYOUT_V2;
   const snapshot = v2 ? domainScopeSnapshot(fullSnapshot) : fullSnapshot;
   // WP-53 (`AGENT_GRAPH_MODULE`, default off): the native LangGraph module replaces graph.json.
-  const genOpts = config.agentGraphModule ? { module: hostModuleInputs() } : {};
+  const genOpts = moduleEnabledFor(domain) ? { module: hostModuleInputs() } : {};
   const files = generateAgentFiles(snapshot, genOpts);
   const object = meta.object ?? domain;
   const message = commitMessage({
