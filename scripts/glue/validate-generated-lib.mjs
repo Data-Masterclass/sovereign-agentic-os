@@ -43,11 +43,20 @@ if (cmd === 'images') {
   console.log(`DAGSTER_IMAGE=${dep.image.repository}:${dep.image.tag}`);
   console.log(`OPA_IMAGE=${opa.repository}:${opa.tag}@${opa.digest}`);
   console.log(`KUBECONFORM_IMAGE=${kc.image}`);
+  const trino = v?.trino?.image;
+  if (!trino?.repository || !trino?.tag) die('values.yaml trino.image needs repository and tag');
+  console.log(`TRINO_IMAGE=${trino.repository}:${trino.tag}${trino.digest ? `@${trino.digest}` : ''}`);
   console.log(`KUBERNETES_VERSION=${kc.kubernetesVersion}`);
   // Space-separated fixture names whose dbt parse is a KNOWN refusal (the GLUE-6 ratchet).
   const known = Object.keys(val?.knownRefusals?.["dbt-parse"] ?? {}).filter((k) => !k.startsWith("$"));
   if (known.some((k) => !/^[A-Za-z0-9._-]+$/.test(k))) die("knownRefusals names must be plain fixture names");
   console.log(`KNOWN_DBT_REFUSALS="${known.join(" ")}"`);
+} else if (cmd === 'known-match') {
+  // The text a KNOWN dbt refusal must still contain (validators.json knownRefusals.dbt-parse.<name>.match).
+  const val = JSON.parse(readFileSync(join(repo, 'scripts/glue/validators.json'), 'utf8'));
+  const m = val?.knownRefusals?.['dbt-parse']?.[args[0]]?.match;
+  if (!m) die(`knownRefusals.dbt-parse.${args[0]} has no \`match\` text`);
+  process.stdout.write(m);
 } else if (cmd === 'materialise') {
   // <outDir>/<domain>/<sha>/… + <outDir>/<domain>/current -> <sha>: the layout repo-sync.sh
   // leaves and os_projects.discover() reads. The domain is the fixture's file name; the "sha" is

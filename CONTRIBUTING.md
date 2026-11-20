@@ -129,17 +129,25 @@ it with `--baseline` to lock the new number in. It also requires a
 `FEATURE:` / `USER STORY:` / `ARCHITECTURE:` header on every source file, alongside the SPDX
 header described under Pull requests.
 
-`check-glue.mjs` enforces the glue-discipline rules of design 00 §8.3 the same way (its counts
-are the `glue` block of the same baseline file): only `os-ui/core/adapters/**` talks to a
-component; admin credentials stay in admin adapters; no silent fallback; no hard-coded version;
-no re-coded component feature; every native-config generator is registered in
-`scripts/glue/generators.json` with golden fixtures that the component's own tool validates; every
-mutating route and MCP tool calls governance `authorize()`; no `setInterval` outside the
-reconciler runtime; the kernel never imports a tab and a tab never imports another (checked by
-dependency-cruiser, `os-ui/.dependency-cruiser.cjs`); and generated native code carries OS
-metadata only in the tool's documented extension points. `node scripts/check-glue.mjs --list
-<RULE>` prints every finding of one rule. Each rule has a negative twin in
-`scripts/tests/glue-fixtures/<RULE>/`, run by `node --test scripts/tests/check-glue.test.mjs`.
+`check-glue.mjs` enforces the glue-discipline rules of design 00 §8.3 and the artifact contract
+(C2, component-design 11 §4.1): only `os-ui/core/adapters/**` talks to a component; admin
+credentials stay in admin adapters; no silent fallback; no hard-coded version; no re-coded
+component feature; every native-config generator is registered in `scripts/glue/generators.json`
+with golden fixtures that the component's own tool validates (`scripts/validate-generated.sh`);
+every mutating route and MCP tool calls governance `authorize()`; no `setInterval` outside the
+reconciler runtime; the kernel never imports a tab and a tab never imports another; and generated
+native code carries OS metadata only in the tool's documented extension points. The rules read the
+TypeScript AST (and dependency-cruiser, ajv with the tools' JSON schemas, Python's `ast`), not a grep.
+
+Its ratchet is **by fingerprint**, not by count: `scripts/structure-baseline.json` → `glue` lists
+each known finding (`<file> :: <normalised snippet>`), and any finding not listed fails — fixing an
+old one never makes room for a new one. Fix a finding, then run `node scripts/check-glue.mjs
+--baseline` to drop it. The baseline may only shrink: CI's guard (`--guard <base>`) fails any change
+that adds a fingerprint unless the same change sets a new `glue.$approvedRaise` text, which the owner
+sees in the diff. `--list <RULE>` prints every finding of one rule. Each rule has negative twins in
+`scripts/tests/glue-fixtures/<RULE>[--<variant>]/`, and the cases an independent review used to evade
+the rules are kept in `scripts/tests/check-glue-evasions.test.mjs`:
+`node --test scripts/tests/check-glue.test.mjs scripts/tests/check-glue-evasions.test.mjs`.
 
 **Before writing code, read [`os-ui/ARCHITECTURE.md`](os-ui/ARCHITECTURE.md)**, especially
 "Things this codebase will punish you for". It records constraints that have each cost real

@@ -19,6 +19,11 @@ on:
     branches: [main]
   push:
     branches: [main]
+  # Nightly: the GLUE-6 component validators run unconditionally (a PR only runs them when it
+  # touches what they validate). A schedule run is never a release candidate: workflow-status.sh
+  # accepts only PUSH runs.
+  schedule:
+    - cron: '23 2 * * *'
 
 permissions:
   contents: read
@@ -26,8 +31,10 @@ permissions:
 # One group per ref: a newer push to main cancels the older main run (its commit then has no
 # green run and cannot be released — release the newer one), and a PR's group is its own
 # `refs/pull/<n>/merge`, so PR runs and main runs never cancel each other.
+# The nightly run has its OWN group, so it can never cancel a push run on main (whose green run
+# is what a release needs).
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.event_name == 'schedule' && 'nightly' || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -76,17 +83,23 @@ jobs:
       - name: Glue-discipline ratchet (GLUE-1 … GLUE-10)
         if: ${{ !cancelled() }}
         run: node scripts/check-glue.mjs
-      - name: Glue-discipline negative twins
+      - name: Glue-discipline negative twins + the verifier's evasion cases
         if: ${{ !cancelled() }}
-        run: node --test scripts/tests/check-glue.test.mjs
-      # GLUE-6 / GLUE-10, the component's own tool: golden generated dbt projects through `dbt parse`
-      # and `dagster definitions validate` (the chart's Dagster image, built here), the rendered
-      # policies through `opa check --strict` + `opa test` (the chart's OPA image), both chart
-      # profiles through kubeconform — then the same with the negative twins, which must FAIL.
-      - name: Generated config validated by the component's own tool (GLUE-6) + twins
+        run: node --test scripts/tests/check-glue.test.mjs scripts/tests/check-glue-evasions.test.mjs
+      # The baseline may only shrink. A change that adds a fingerprint (or raises a check-structure
+      # count) fails unless it also sets a new `glue.$approvedRaise` — the marker the owner sees in
+      # the diff. PRs compare with their base, pushes with the commit they replace.
+      - name: Glue baseline never grows without an owner-visible marker
+        if: ${{ !cancelled() }}
         env:
-          CI: 'true'
-        run: bash scripts/tests/validate-generated.test.sh
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          if [ "$EVENT" = schedule ] || [ -z "$BASE" ] || [ "$BASE" = 0000000000000000000000000000000000000000 ]; then
+            echo "glue baseline guard: a $EVENT run has no base commit to compare with — PR and push runs compare"; exit 0
+          fi
+          git fetch --no-tags --depth=1 origin "$BASE"
+          node scripts/check-glue.mjs --guard FETCH_HEAD
 
       # Langfuse web: sign-up off, and the NetworkPolicy admits only the OS's own callers.
       # Renders the chart (the dependencies were built above); CI=true turns a skip into a failure.
@@ -160,11 +173,93 @@ jobs:
           REQUIRE_PG_TESTS: '1'
         run: node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test --test-concurrency=1 'tabs/**/*.pg.test.ts'
 
+  # GLUE-6 + C1: generated config through the component's OWN tool, in containers pinned to the
+  # chart's images — dbt parse + dbt compile and dagster definitions validate (the chart's Dagster
+  # image, built here with a layer cache; dbt compile against the chart's Trino image), opa check
+  # --strict + opa test (the chart's OPA image), helm template | kubeconform on both profiles — and
+  # then the negative twins, which must FAIL. Its own job, in parallel with test-ui. On a PR it runs
+  # only when the PR touches what it validates; push and nightly runs always run it.
+  validate-generated:
+    name: validate-generated
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+      - name: Path filter (PRs only)
+        id: filter
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ "$EVENT" != pull_request ]; then echo "run=true" >> "$GITHUB_OUTPUT"; echo "a $EVENT run always validates"; exit 0; fi
+          changed="$(git diff --name-only "$BASE"...HEAD)"
+          if grep -qE '^(images/extensions/(dagster|dbt)/|os-ui/tabs/data/lib/dbt/|charts/|scripts/glue/|scripts/validate-generated\.sh$|scripts/tests/validate-generated\.test\.sh$|scripts/tests/glue-fixtures/GLUE-6/|tests/policies/|values[^/]*\.yaml$|\.github/workflows/ci\.yml$)' <<<"$changed"; then
+            echo "run=true" >> "$GITHUB_OUTPUT"; echo "validated inputs changed:"; grep -E '^(images/extensions/(dagster|dbt)/|os-ui/tabs/data/lib/dbt/|charts/|scripts/glue/|scripts/validate-generated|scripts/tests/validate-generated|scripts/tests/glue-fixtures/GLUE-6/|tests/policies/|values|\.github/workflows/ci\.yml)' <<<"$changed" | head -20
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"; echo "GLUE-6: this PR touches nothing the component validators check — not run (push and nightly runs always run it)"
+          fi
+      - name: Setup Node.js
+        if: steps.filter.outputs.run == 'true'
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: 22
+      - name: Install (os-ui) — js-yaml for reading the chart's pinned images
+        if: steps.filter.outputs.run == 'true'
+        run: npm --prefix os-ui ci
+      - name: Pinned images from the chart
+        if: steps.filter.outputs.run == 'true'
+        id: images
+        run: node scripts/glue/validate-generated-lib.mjs images | tee -a "$GITHUB_OUTPUT"
+      - name: Setup Docker Buildx
+        if: steps.filter.outputs.run == 'true'
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Build the chart's Dagster image (layer cache)
+        if: steps.filter.outputs.run == 'true'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: images/extensions
+          file: images/extensions/dagster/Dockerfile
+          tags: ${{ steps.images.outputs.DAGSTER_IMAGE }}
+          load: true
+          push: false
+          cache-from: type=gha,scope=glue6-dagster
+          cache-to: type=gha,scope=glue6-dagster,mode=max
+      - name: Setup Helm
+        if: steps.filter.outputs.run == 'true'
+        uses: azure/setup-helm@fe7b79cd5ee1e45176fcad797de68ecaf3ca4814 # v4.2.0
+        with:
+          version: v3.16.3
+      - name: Resolve chart dependencies
+        if: steps.filter.outputs.run == 'true'
+        run: |
+          helm dependency build charts/sovereign-agentic-os \
+            || helm dependency update charts/sovereign-agentic-os
+      - name: Generated config validated by the component's own tool (GLUE-6, C1) + twins
+        if: ${{ !cancelled() && steps.filter.outputs.run == 'true' }}
+        env:
+          CI: 'true'
+          GLUE6_TEST_BUILD_FLAG: --skip-build
+        run: bash scripts/tests/validate-generated.test.sh
+
+  # `build` is the REQUIRED check. It aggregates: `if: always()` makes it run even when a job it
+  # needs failed or was cancelled — GitHub reports a SKIPPED required check as passing, which is how
+  # a red test-ui (and with it every glue rule) used to merge. The first step fails unless every
+  # needed job succeeded; only then does it build.
   build:
     name: build
     runs-on: ubuntu-latest
-    needs: test-ui
+    if: ${{ always() }}
+    needs: [test-ui, test-langgraph-pg, test-python, test-opa, helm-lint, secret-scan, validate-generated]
     steps:
+      - name: Every needed job succeeded (failed, cancelled or skipped fails the build)
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          echo "$NEEDS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          echo "$NEEDS" | jq -e 'to_entries | all(.value.result == "success")' >/dev/null \
+            || { echo "::error::build: a needed job did not succeed — see the list above"; exit 1; }
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: Setup Node.js
