@@ -11,6 +11,9 @@ set -u
 . "${BACKUP_LIB:-/opt/soa/backup/lib.sh}"
 : "${PG_DUMP_PREFIX:?}" "${DRILL_DATA:?}" "${RESULTS_DIR:?}"
 MAX_AGE_H=${PG_DRILL_MAX_AGE_HOURS:-26}
+# A run stamped in the FUTURE (beyond this clock slack) is refused: as the "newest" run it would
+# otherwise hide a dump job that stopped.
+CLOCK_SLACK_S=${DRILL_CLOCK_SLACK_SECONDS:-3600}
 mkdir -p "$RESULTS_DIR" || { echo "FATAL: cannot create $RESULTS_DIR"; exit 1; }
 D="$DRILL_DATA/pg"; mkdir -p "$D"
 fail() {
@@ -27,7 +30,9 @@ STAMP=$(jq -r '.[]? // empty' "$D/keys.json" | sed -n "s#^$PG_DUMP_PREFIX/\([^/]
 when=$(printf '%s' "$STAMP" | sed -n 's/^\([0-9-]*\)T\([0-9][0-9]\)-\([0-9][0-9]\)-\([0-9][0-9]\)Z$/\1 \2:\3:\4/p')
 [ -n "$when" ] || fail "unreadable run stamp '$STAMP'"
 epoch=$(date -u -d "$when" +%s 2>/dev/null) || fail "unreadable run stamp '$STAMP'"
-age_h=$(( ($(date -u +%s) - epoch) / 3600 ))
+age_s=$(( $(date -u +%s) - epoch ))
+[ "$age_s" -ge "$(( 0 - CLOCK_SLACK_S ))" ] || fail "the newest pg-dump run ($STAMP) is dated $(( -age_s / 60 )) min in the future, beyond the ${CLOCK_SLACK_S} s clock slack: its stamp is wrong"
+age_h=$(( age_s / 3600 ))
 [ "$age_h" -le "$MAX_AGE_H" ] || fail "the newest pg-dump run ($STAMP) is ${age_h} h old, above the ${MAX_AGE_H} h limit: the dump job is not producing backups"
 for key in $(jq -r '.[]' "$D/keys.json" | grep "^$PG_DUMP_PREFIX/$STAMP/"); do
   get_file "$key" "$D/$(basename "$key")" || fail "download of $key failed"

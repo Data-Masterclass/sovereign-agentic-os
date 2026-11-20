@@ -11,8 +11,9 @@
  *   - INTERIM for WP-05's alerting (not merged): a failed bundle or drill is a RED Monitoring item
  *     and a critical operational alert; the drill Job also exits non-zero and logs one JSON line.
  *   - Evidence rules: no status → not green; a stalled sidecar or ref record → RED (an alert); a
- *     report with no check or an unreadable time → red; a drill report older than its schedule
- *     allows → amber "overdue"; a feature that is off says so (amber bundles, unknown drills).
+ *     report with no check or an unreadable time → red; an enabled drill with NO report, a report
+ *     older than its schedule allows ("overdue") or dated in the future → red (an alert); a feature
+ *     that is off says so (amber bundles, unknown drills).
  *   - Every item is `cluster: true` (admin scope) on the pipelines lens.
  */
 import type { Alert, Health, HealthItem } from '@tabs/monitoring/lib/types';
@@ -89,12 +90,17 @@ export function assessBundles(i: BackupInputs): HealthItem[] {
   return out;
 }
 
+/** A report dated further ahead than this is refused (clock skew allowance). */
+const CLOCK_SLACK_SECONDS = 3600;
+
 export function assessDrill(d: DrillInput, now: Date): HealthItem {
   const id = `bk-drill-${d.kind}`;
   const title = DRILL_TITLE[d.kind];
   if (!d.enabled) return item(id, title, 'unknown', 'Off (the drill CronJob is disabled): no restore has been proven by this OS.');
   if (d.readError) return item(id, title, 'red', `The drill status is unreadable: ${d.readError}.`);
-  if (!d.report) return item(id, title, 'amber', 'Enabled, but no drill has reported yet.');
+  // RED (and so an alert): an enabled drill with no report means its Job never reached the
+  // reporter (image pull, deadline, node loss) or the status write failed — no restore is proven.
+  if (!d.report) return item(id, `${title} missing`, 'red', 'Enabled, but no drill has reported: the drill Job has not reached its reporter, so no restore is proven. Run the drill once by hand after enabling it.');
   const checks = Array.isArray(d.report.checks) ? d.report.checks : [];
   if (checks.length === 0) return item(id, `${title} FAILED`, 'red', `The drill report of ${d.report.at} holds no check: nothing was proven.`, d.report.at);
   const failed = checks.filter((c) => c.status !== 'pass');
@@ -104,8 +110,13 @@ export function assessDrill(d: DrillInput, now: Date): HealthItem {
   if (!Number.isFinite(Date.parse(d.report.at))) {
     return item(id, `${title} FAILED`, 'red', `The drill report's time '${String(d.report.at).slice(0, 40)}' is unreadable.`);
   }
-  if (ageSeconds(d.report.at, now) > d.maxAgeDays * 86400) {
-    return item(id, `${title} overdue`, 'amber', `The last passing drill was ${d.report.at}, more than ${d.maxAgeDays} days ago.`, d.report.at);
+  const age = ageSeconds(d.report.at, now);
+  if (age < -CLOCK_SLACK_SECONDS) {
+    return item(id, `${title} FAILED`, 'red', `The drill report is dated ${d.report.at}, in the future: its time is wrong, so it proves nothing about now.`, d.report.at);
+  }
+  // RED (and so an alert): a report older than the schedule allows means the drill stopped running.
+  if (age > d.maxAgeDays * 86400) {
+    return item(id, `${title} overdue`, 'red', `The last passing drill was ${d.report.at}, more than ${d.maxAgeDays} days ago: the drill has stopped reporting.`, d.report.at);
   }
   return item(id, title, 'green', `Passed at ${d.report.at}: ${checks.map((c) => c.check).join(', ')} restored and checked.`, d.report.at);
 }

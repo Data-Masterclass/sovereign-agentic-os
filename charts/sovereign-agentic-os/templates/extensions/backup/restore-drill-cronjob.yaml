@@ -24,6 +24,7 @@
 {{- if $d.git.enabled }}{{ $checks = append $checks "git" }}{{ end }}
 {{- if and $d.postgres.enabled $b.pgDump.enabled $pg.enabled }}{{ $checks = append $checks "postgres" }}{{ end }}
 {{- if and $d.opensearch.enabled .Values.opensearch.enabled }}{{ $checks = append $checks "opensearch" }}{{ end }}
+{{- if and (has "postgres" $checks) (not $d.postgresCompare.criticalTables) }}{{ fail "backup.drill postgres check needs backup.drill.postgresCompare.criticalTables (\"db:schema.table\" entries that must hold rows in the restore): without them a small table that restores empty can pass inside the drift allowance (docs/backups.md)" }}{{ end }}
 {{- if not $checks }}{{ fail "backup.drill.enabled but no check can run (enable git, or postgres with backup.pgDump, or opensearch)" }}{{ end }}
 apiVersion: v1
 kind: ServiceAccount

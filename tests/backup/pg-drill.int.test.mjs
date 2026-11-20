@@ -8,7 +8,7 @@
  * s3://<bucket>/<prefix>/<UTC-stamp>/). The drill restores into a SCRATCH server inside its own
  * container and compares with the live server read-only.
  *
- * Negative twins: no run, a stale run, a corrupted dump, a database with no table, a table whose
+ * Negative twins: no run, a stale run, a run stamped in the future, a corrupted dump, a database with no table, a table whose
  * restored row count is far from live, a database missing from the dump. And: the downloaded
  * dumps (role password hashes included) are gone the moment the check ends.
  */
@@ -125,6 +125,15 @@ test('NEGATIVE: a stale newest run fails on its age', () => {
   const { res } = drill('pg-old');
   assert.equal(res.status, 'fail');
   assert.match(res.reason, /h old, above the 26 h limit/);
+});
+
+test('NEGATIVE: a newest run stamped in the FUTURE fails, and never hides an older good run', () => {
+  cleanBucket();
+  dumpRun('pg-ok3-dump', stamp(1));
+  dumpRun('pg-future-dump', stamp(-24 * 365));
+  const { res } = drill('pg-future');
+  assert.equal(res.status, 'fail', JSON.stringify(res));
+  assert.match(res.reason, /in the future, beyond the 3600 s clock slack/);
 });
 
 test('NEGATIVE: a corrupted dump in the NEWEST run fails the drill', () => {

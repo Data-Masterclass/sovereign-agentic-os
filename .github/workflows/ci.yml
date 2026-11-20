@@ -362,7 +362,7 @@ jobs:
           pip install "pyyaml>=6,<7"
           helm dependency build charts/sovereign-agentic-os || helm dependency update charts/sovereign-agentic-os
       - name: Velero drill modifier (kubectl strategic merge on the rendered os-ui pod)
-        run: node --test tests/backup/velero-modifier.test.mjs
+        run: node --test tests/backup/velero-modifier.test.mjs tests/backup/render-guards.test.mjs
       - name: Start the stack (SeaweedFS, Postgres 17, backup-tools image)
         run: bash tests/backup/up.sh
       - name: git bundles + git and Postgres restore drills
