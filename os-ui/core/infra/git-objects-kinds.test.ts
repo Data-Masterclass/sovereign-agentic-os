@@ -158,10 +158,10 @@ test('G1: the kinds that are NOT in git yet say so, and the two that are name a 
   // `tabs/dashboards/lib/git/commit.ts`, S's `tabs/software/lib/git-commit.ts` and V's
   // `core/infra/lifecycle-pins.ts` — so all four rows moved from `landing` to `committed`
   // (step 2 of the FLIP STEP above) and NOTHING is landing any more. The two backlog kinds keep
-  // their reasons: that is the honest remainder, not a gap in this test.
+  // their reasons until WP-50 gave both a writer; nothing is backlog any more.
   assert.deepEqual(
     committed,
-    ['dataset', 'metric', 'dashboard', 'agent-system', 'software', 'lifecycle-pin', 'connection-config', 'knowledge-workflow'],
+    ['dataset', 'metric', 'dashboard', 'agent-system', 'software', 'lifecycle-pin', 'knowledge-workflow', 'connection-config'],
     'these kinds have a landed git writer',
   );
   assert.deepEqual(landing, [], 'night 2 landed every writer it declared');
