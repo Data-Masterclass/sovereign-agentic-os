@@ -45,6 +45,10 @@ outsideChart:
   - name: cert-manager (scripts/dev/platform.sh — controller, webhook, cainjector)
     requests: { cpu: 30m, memory: 192Mi }
     limits: { memory: 384Mi }
+  - name: node sysctl DaemonSet (kube-system, scripts/dev/manifests/node-sysctl.yaml)
+    perNode: true
+    requests: { cpu: 1m, memory: 4Mi }
+    limits: { memory: 8Mi }
   - name: model-key-proxy (namespace dev-model-key, scripts/dev/bootstrap-secrets.sh)
     requests: { cpu: 10m, memory: 32Mi }
     limits: { memory: 64Mi }

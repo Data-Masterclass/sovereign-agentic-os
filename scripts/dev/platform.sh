@@ -9,6 +9,8 @@
 #   - ingress-nginx: chart 4.11.3 = controller v1.11.3, the image production runs (read
 #     2026-11-20). Its LoadBalancer Service is pinned to the reserved dev IP
 #     (tofu output ingress_public_ip) with lb.stackit.cloud/external-address, as in production.
+#   - the node sysctl DaemonSet (manifests/node-sysctl.yaml) in kube-system, so OpenSearch needs
+#     no privileged init container in agentic-os;
 #   - cert-manager: v1.16.1 (production), CRDs from the chart, and the ClusterIssuer
 #     letsencrypt-prod (HTTP-01 via nginx) that values.dev.yaml's ingress uses.
 # Requests are set so the gate's budget (charts/sovereign-agentic-os/capacity.dev.yaml
@@ -35,6 +37,10 @@ helm --kube-context "$CTX" upgrade --install cert-manager cert-manager \
   --set resources.requests.cpu=10m --set resources.requests.memory=64Mi --set resources.limits.memory=128Mi \
   --set webhook.resources.requests.cpu=10m --set webhook.resources.requests.memory=64Mi --set webhook.resources.limits.memory=128Mi \
   --set cainjector.resources.requests.cpu=10m --set cainjector.resources.requests.memory=64Mi --set cainjector.resources.limits.memory=128Mi
+
+say "vm.max_map_count for OpenSearch, from kube-system (agentic-os stays baseline)"
+k apply -f "$REPO_ROOT/scripts/dev/manifests/node-sysctl.yaml" >/dev/null
+k -n kube-system rollout status ds/sovereign-os-node-sysctl --timeout=5m
 
 say "ClusterIssuer letsencrypt-prod"
 k apply -f - <<YAML

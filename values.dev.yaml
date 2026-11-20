@@ -134,6 +134,10 @@ trino:
     limits: { cpu: 2, memory: 2Gi }
 
 opensearch:
+  # No privileged init container in agentic-os (it enforces the baseline Pod Security Standard on
+  # dev): vm.max_map_count is set by a DaemonSet in kube-system (scripts/dev/manifests/node-sysctl.yaml).
+  sysctlInit:
+    enabled: false
   opensearchJavaOpts: "-Xms512m -Xmx512m"
   resources:
     requests: { cpu: 150m, memory: 768Mi }

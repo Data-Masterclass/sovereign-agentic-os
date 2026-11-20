@@ -94,6 +94,7 @@ rc_is "bootstrap on the dev context exits 0" 0
 check "it ends OK" "BOOTSTRAP_SECRETS_OK context=dmagosdev" "$out"
 holds "every kubectl call names the dev context" bash -c "! grep -v '^kubectl config' '$FAKE_LOG' | grep -v -- '--context dmagosdev'"
 check "the marker is applied" "environment: dev" "$(cat "$FAKE_APPLIED")"
+check "the namespaces are applied with their Pod Security labels" "apply -f $REPO/scripts/dev/manifests/namespaces.yaml" "$(cat "$FAKE_LOG")"
 check "the overlay Secret is applied" "name: sovereign-os-dev-values" "$(cat "$FAKE_APPLIED")"
 check "the seed credentials are applied" "name: northpeak-seed-credentials" "$(cat "$FAKE_APPLIED")"
 check "the dev bucket credential is applied" "name: dev-backup-s3" "$(cat "$FAKE_APPLIED")"
@@ -183,6 +184,5 @@ import yaml,sys
 print(" ".join(r["host"] for d in yaml.safe_load_all(open(sys.argv[1])) if isinstance(d,dict) and d.get("kind")=="Ingress" for r in d["spec"]["rules"]))' "$TMP/with.yaml")
 check "os is published in the dev zone" "os.dev.agentic.datamasterclass.com" "$hosts"
 absent "no production hostname" "os.agentic.datamasterclass.com" "$hosts"
-: "$REPO"
 finish dev-bootstrap.test.sh || exit 1
 echo "DEV_BOOTSTRAP_TESTS_OK"

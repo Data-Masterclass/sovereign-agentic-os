@@ -8,11 +8,10 @@
 #
 # A ServiceAccount `sovereign-os-ci` in namespace sovereign-os-ci of the DEV cluster, with a
 # long-lived token Secret, and a NAMESPACED deploy role — NOT cluster-admin:
-#   - Role sovereign-os-ci-deploy (everything) in agentic-os and agentic-apps only: what helm
-#     installs there, and what the acceptance journeys create, exec into, scale and delete;
-#   - ClusterRole sovereign-os-ci-cluster: the ONE cluster-scoped kind the chart renders
-#     (PriorityClass), plus get on namespaces (helm --create-namespace checks they exist);
-#   - Role sovereign-os-ci-marker: get on kube-public/sovereign-os-environment (the env guard).
+#   - the manifest scripts/dev/manifests/ci-rbac.yaml: everything in agentic-os and agentic-apps,
+#     PriorityClasses, read on namespaces and nodes, the marker — and nothing else;
+#   - Pod Security Admission (manifests/namespaces.yaml: baseline enforced on agentic-os) refuses
+#     privileged, hostPath and host-namespace pods there, whoever creates them.
 # It has NO rights in dev-model-key, so it cannot read the STACKIT model key, which lives only
 # there (bootstrap-secrets.sh). The platform add-ons, the namespaces and the marker are the
 # operator's (admin kubeconfig), never CI's.
@@ -25,70 +24,22 @@
 require_marked_dev
 private_dir
 OUT=$DEV_PRIVATE_DIR/ci-kubeconfig.yaml
-k apply -f - >/dev/null <<'YAML'
-apiVersion: v1
-kind: Namespace
-metadata: { name: sovereign-os-ci }
----
-apiVersion: v1
-kind: ServiceAccount
-metadata: { name: sovereign-os-ci, namespace: sovereign-os-ci }
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata: { name: sovereign-os-ci-cluster }
-rules:
-  - { apiGroups: [scheduling.k8s.io], resources: [priorityclasses], verbs: ["*"] }
-  - { apiGroups: [""], resources: [namespaces], verbs: [get, list] }
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata: { name: sovereign-os-ci-cluster }
-roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: sovereign-os-ci-cluster }
-subjects: [{ kind: ServiceAccount, name: sovereign-os-ci, namespace: sovereign-os-ci }]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata: { name: sovereign-os-ci-marker, namespace: kube-public }
-rules:
-  - { apiGroups: [""], resources: [configmaps], resourceNames: [sovereign-os-environment], verbs: [get] }
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata: { name: sovereign-os-ci-marker, namespace: kube-public }
-roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: sovereign-os-ci-marker }
-subjects: [{ kind: ServiceAccount, name: sovereign-os-ci, namespace: sovereign-os-ci }]
----
-apiVersion: v1
-kind: Secret
-metadata:
-  name: sovereign-os-ci-token
-  namespace: sovereign-os-ci
-  annotations: { kubernetes.io/service-account.name: sovereign-os-ci }
-type: kubernetes.io/service-account-token
-YAML
-for ns in agentic-os agentic-apps; do
-  k get ns "$ns" >/dev/null 2>&1 || k create ns "$ns" >/dev/null
-  k apply -f - >/dev/null <<YAML
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata: { name: sovereign-os-ci-deploy, namespace: $ns }
-rules:
-  - { apiGroups: ["*"], resources: ["*"], verbs: ["*"] }
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata: { name: sovereign-os-ci-deploy, namespace: $ns }
-roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: sovereign-os-ci-deploy }
-subjects: [{ kind: ServiceAccount, name: sovereign-os-ci, namespace: sovereign-os-ci }]
-YAML
-done
+# Namespaces with their Pod Security labels first (operator-owned), then the account.
+k apply -f "$REPO_ROOT/scripts/dev/manifests/namespaces.yaml" >/dev/null
+k apply -f "$REPO_ROOT/scripts/dev/manifests/ci-rbac.yaml" >/dev/null
 # Proof, from the API server itself: the CI account cannot read the model key.
 SA=system:serviceaccount:sovereign-os-ci:sovereign-os-ci
 if k auth can-i get secret/stackit-model-key -n dev-model-key --as "$SA" >/dev/null 2>&1; then
   die "the CI account CAN read dev-model-key/stackit-model-key — refusing to hand out this credential"
 fi
 echo "   checked: $SA cannot get secrets in dev-model-key"
+for probe in "create pods -n kube-system" "patch namespace/agentic-os" "update namespaces" "create pods -n dev-model-key"; do
+  # shellcheck disable=SC2086  # the probe is a verb and a resource, split on purpose
+  if k auth can-i $probe --as "$SA" >/dev/null 2>&1; then
+    die "the CI account can '$probe' — refusing to hand out this credential"
+  fi
+done
+echo "   checked: $SA cannot create pods in kube-system or dev-model-key, nor change namespace labels"
 k delete clusterrolebinding sovereign-os-ci-dev-admin --ignore-not-found >/dev/null   # the earlier cluster-admin binding
 for _ in $(seq 1 30); do
   k -n sovereign-os-ci get secret sovereign-os-ci-token -o jsonpath='{.data.token}' 2>/dev/null | grep -q . && break
