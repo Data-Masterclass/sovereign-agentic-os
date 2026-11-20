@@ -60,14 +60,22 @@ change touches production.
 
 ## Sizing and cost
 
-**Node: one `g2i.8` (8 vCPU, 32 GB).** It is the smallest flavour that passes the capacity gate
-with `values.dev.yaml`:
+There are two node profiles, and **the owner chooses**. The default is `g2i.8`.
+
+| Profile | Node | EUR / month (node) | Values | Capacity gate |
+|---|---|---|---|---|
+| **`g2i8` (default)** | `g2i.8`, 8 vCPU / 32 GB | 294.60 | `values.dev.yaml` | CPU requests 49.3 %, memory limits 83.3 %: comfortable |
+| `m2i4` (cheaper) | `m2i.4`, 4 vCPU / 32 GB | 194.67 | `values.dev.yaml` + `values.dev.m2i4.yaml` (Trino 500m → 100m, Docling 250m → 50m CPU requests) | CPU requests 84.5 % of 85 %: passes, thin margin |
+
+To use `m2i4`, apply with `-var node_machine_type=m2i.4` and deploy with `DEV_NODE=m2i4`. Set
+`DEV_NODE` as a `dev` environment variable for CI. On `m2i4`, Trino and Docling keep their
+limits, so they can burst when the node is idle; under load they are slower. Re-measure
+allocatable after the first apply. Without the request cuts, `m2i.4`, `m3i.4` and `g2i.4` fail
+the gate at 99.5 % CPU requests.
 
 ```
 node scripts/check-capacity.mjs --profile default --budget charts/sovereign-agentic-os/capacity.dev.yaml --values values.dev.yaml
-  g2i.8:  CPU requests 49.2 %, memory requests 38.5 %, memory limits 83.1 %   -> ok
-  m3i.4 (4 vCPU / 32 GB): CPU requests 99.5 %                                  -> FAILED
-  g2i.4 (4 vCPU / 16 GB): CPU requests 99.5 %, memory limits 180 %             -> FAILED
+node scripts/check-capacity.mjs --profile default --budget charts/sovereign-agentic-os/capacity.dev-m2i4.yaml --values values.dev.yaml --values values.dev.m2i4.yaml
 ```
 
 The node's allocatable memory (26 GiB) is an estimate until the node exists. After the first
@@ -90,10 +98,13 @@ apply, replace it with the value from `kubectl --context dmagosdev describe node
 | Network Load Balancer, smallest SKU (10k connections; the SKU SKE picks is inferred) | 9.39 |
 | Object storage, about 10 GB at 0.027 per GB (no base fee listed) | 0.27 |
 | DNS: a record in the existing Cloudflare zone | 0 |
-| **Infrastructure total** | **≈ 415.63** |
+| **Infrastructure total, `g2i8`** | **≈ 415.63** |
+| Infrastructure total, `m2i4` (node line 194.67) | ≈ 315.70 |
 | Model tokens: LiteLLM caps the dev keys at 5 a week shared plus 1 a week per agent system | at most ≈ 22 at full use |
 
-The total is about **€416 a month** for infrastructure, plus model spend capped at about €22.
+The total is about **€416 a month** on `g2i8` and **€316** on `m2i4`, plus model spend. LiteLLM
+caps that spend at **20 per 30 days in total** (`litellm_settings.max_budget`), so at most about
+€20 a month.
 GitHub-hosted runners are free for this public repository.
 
 To save money, SKE hibernation (nights and weekends) stops the node line. It does not stop the
@@ -106,7 +117,8 @@ configured here; it is the owner's call.
 
 - A new STACKIT project for dev that is **not** in the production network area.
 - A service account of that project only (Editor), with its key at `stackit/dev-sa-key.json`
-  (gitignored).
+  (gitignored). `service_account_key_path` is **required**, with no fallback to
+  `STACKIT_SERVICE_ACCOUNT_KEY_PATH`, which may hold the production key.
 - `cp deploy/envs/dev/terraform.tfvars.example deploy/envs/dev/terraform.tfvars`, then set
   `project_id`.
 
@@ -143,7 +155,7 @@ scripts/dev/bootstrap-secrets.sh                  # marker + random secrets + pr
 scripts/dev/platform.sh                           # ingress-nginx 4.11.3 on the dev IP, cert-manager v1.16.1
 scripts/deploy.sh --env dev --from-registry main-<sha of origin/main>   # first install
 scripts/dev/seed.sh                               # the Northpeak demo
-scripts/dev/ci-kubeconfig.sh                      # the CI credential for the `dev` environment
+scripts/dev/ci-kubeconfig.sh                      # the CI credential: a namespaced deploy role, no access to the model key
 ```
 
 Then complete the owner checklist in [`ci-cd.md`](ci-cd.md#owner-checklist-github-settings). It
@@ -152,17 +164,29 @@ sets `DEV_ENVIRONMENT_ENABLED=true`, after which every merge deploys to dev.
 **What was checked offline (no credentials).**
 
 - `tofu -chdir=deploy/envs/dev validate` passes. The production root is unchanged.
-- `tofu plan -refresh=false` with a dummy token and a placeholder project lists exactly the 6
-  resources above.
+- `tofu plan -refresh=false` with a throwaway, locally generated key file and a placeholder
+  project lists exactly the 6 resources above. A key path containing `prod` is refused.
 - The same plan with the production project id fails with `DEV_IN_PROD_PROJECT`.
 
 ## Dev model key
 
 STACKIT AI Model Serving tokens carry no spend limit
-(<https://docs.stackit.cloud/products/data-and-ai/ai-model-serving/how-tos/manage-auth-tokens/>),
-so the budget is enforced in LiteLLM: `values.dev.yaml` caps the shared key at 5 a week and each
-agent system at 1 a week. The token is still a separate one, in the dev project, so its spend
-appears on the dev project's bill.
+(<https://docs.stackit.cloud/products/data-and-ai/ai-model-serving/how-tos/manage-auth-tokens/>).
+The budget is therefore enforced in LiteLLM:
+
+- a **total** of 20 per 30 days across every key, the master key included
+  (`litellm_settings.max_budget` / `budget_duration`, LiteLLM's global proxy budget);
+- under it, 5 a week for the shared key and 1 a week per agent system.
+
+The token is a separate one, in the dev project, so its spend appears on the dev project's bill.
+Add a budget alert there as the backstop.
+
+**Where the key lives.** It is only in namespace `dev-model-key`, Secret `stackit-model-key`.
+There, a pinned nginx reverse proxy (`model-key-proxy`) adds it to each request. LiteLLM calls
+`http://model-key-proxy.dev-model-key.svc.cluster.local:8080/v1`, and its own `STACKIT_API_KEY`
+is the placeholder `held-by-model-key-proxy`. NetworkPolicies allow only LiteLLM to reach the
+proxy. The CI account has no rights in that namespace, so neither CI nor anything it deploys can
+read the key.
 
 **The owner:**
 
@@ -176,8 +200,10 @@ appears on the dev project's bill.
    pbpaste > ~/.sovereign-os-secrets/dev/stackit-model-key     # or paste with an editor; never echo it
    ```
 
-3. Run `scripts/dev/bootstrap-secrets.sh`. The key goes into the private overlay. If bootstrap
-   ran earlier without a key, run `scripts/dev/reset.sh --yes-wipe-dev` instead, which rotates.
+3. Run `scripts/dev/bootstrap-secrets.sh` with the admin kubeconfig. The key goes into
+   `dev-model-key` and nowhere else. It is never in the private overlay, and never in the
+   Secret CI reads. Re-running bootstrap after rotating the token is enough; no reset is
+   needed.
 
 **Without a key**, deploy with the model stub: `DEV_MODEL=stub scripts/deploy.sh --env dev …`
 (`values.dev.model-stub.yaml`). Every answer is then a labelled mock answer.
@@ -196,7 +222,8 @@ only. Put it in `~/.sovereign-os-secrets/dev/ghcr-read-token`, and its login in 
 - ClickHouse, Valkey, MinIO and Polaris;
 - the agent-runtime token.
 
-It also generates the Northpeak cast with random passwords. These values are written to
+It also generates the Northpeak cast with random passwords. The **model key is not among
+them**: it lives only in `dev-model-key` (see "Dev model key"). These values are written to
 **two places only**:
 
 - `~/.sovereign-os-secrets/dev/values.dev.private.yaml` (mode 600; the directory is mode 700);
