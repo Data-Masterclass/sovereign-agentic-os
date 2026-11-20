@@ -61,6 +61,12 @@ networkPolicies:
   # templates/base/network/litellm-ingress-policy.yaml; rendered only with litellm.enabled.
   # Lives here, not under `litellm:`, which is the upstream subchart's own value tree.
   litellmIngress: true
+  # Default-deny INGRESS for every pod in the release namespace, plus one allowlist per platform
+  # service naming exactly its callers (templates/base/network/platform-ingress-policies.yaml).
+  # os-ui :3000 admits this namespace and the ingress controller only (os-repos.yaml).
+  platformIngress:
+    enabled: true
+    ingressNamespace: ingress-nginx
 
 # Backups (templates/extensions/backup/).
 backup:

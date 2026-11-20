@@ -1,0 +1,330 @@
+{{- /*
+  Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+  SPDX-License-Identifier: Apache-2.0
+
+  Platform ingress: default-deny INGRESS for every pod in the release namespace, plus one
+  allowlist per platform service that names exactly the workloads that call it.
+
+  Kubernetes NetworkPolicy is additive (https://kubernetes.io/docs/concepts/services-networking/network-policies/):
+  a pod selected by ANY ingress policy accepts only what the union of those policies admits.
+  `default-deny-ingress` selects every pod, so a pod accepts nothing unless a policy below, or a
+  component's own policy, admits the caller:
+    dagster-ingress-policies.yaml, docling-ingress-policy.yaml, litellm-ingress-policy.yaml,
+    opensearch-ingress-policy.yaml, langfuse/web-ingress-policy.yaml, os-ui/os-repos.yaml (os-ui),
+    os-ui/apps-runner.yaml (query-tool, data-runner), os-ui/software-scanner.yaml.
+  Pods that serve nothing (os-ui-worker, dagster-daemon, langfuse-worker, Jobs, CronJobs) get no
+  allow rule at all.
+
+  No other namespace is admitted to any service below. Apps in `agentic-apps` have no in-cluster
+  path to a platform service: the browser reaches os-ui through the public ingress. The ingress
+  controller is admitted only where a chart Ingress routes to (os-ui, git-http and the opt-in
+  consoles in their own policies).
+
+  THE CONTROL PLANE: os-ui and os-ui-worker are admitted on every platform service. They are the
+  governed API every other path goes through, and the admin Platform page probes each component.
+
+  WHO CALLS WHAT (keep in step when a new caller appears; scripts/check-platform-ingress-policy.mjs
+  asserts these lists in the gate, scripts/tests/platform-ingress-policy.kind.sh enforces them on
+  a real CNI):
+    opa :8181            web-fetch (tool decisions), trino (access control), opa-reassert-principals
+    trino :8080          query-tool, the Dagster code location and its run pods (dbt-trino, dlt),
+                         dbt (dbt-build Job), marts-init
+    polaris :8181/:8182  trino, data-runner, marts-init, polaris-init
+    postgres :5432       Dagster (webserver, daemon, code location, run pods), Langfuse (web,
+                         worker), LiteLLM (proxy, migrations), pg-dump, postgres-reconcile,
+                         os-governance-bootstrap; CNPG: the operator namespace and the instances
+    object storage :9000 trino, polaris, data-runner, Langfuse (web, worker), marts-init,
+                         polaris-init, object-storage-init, pg-dump, OpenSearch (snapshot repo)
+    valkey :6379         Langfuse (web, worker), LiteLLM
+    clickhouse :8123/9000  Langfuse (web, worker)
+    web-fetch :8000      control plane only
+    egress-proxy :3128   web-fetch, OpenSearch and its snapshot/maintenance Jobs (off-cluster
+                         snapshots go through the proxy)
+    mock-model :8080     LiteLLM
+
+  Kubelet probes and `kubectl port-forward` do not traverse pod-to-pod policy and are unaffected.
+  kind's default CNI does not enforce NetworkPolicies; on STACKIT (Calico) they enforce.
+  Gated by `networkPolicies.platformIngress.enabled` (default true).
+*/}}
+{{- define "soa.np.peers" -}}
+{{- /* .components: list of app.kubernetes.io/component values; .rel: release name;
+       .extra: list of raw matchLabels dicts. Always includes the control plane. */ -}}
+- podSelector:
+    matchLabels:
+      app.kubernetes.io/component: os-ui
+- podSelector:
+    matchLabels:
+      app.kubernetes.io/component: os-ui-worker
+{{- range (.components | default list) }}
+- podSelector:
+    matchLabels:
+      app.kubernetes.io/component: {{ . }}
+{{- end }}
+{{- range (.extra | default list) }}
+- podSelector:
+    matchLabels:
+      {{- toYaml . | nindent 6 }}
+{{- end }}
+{{- end }}
+{{- $pi := (.Values.networkPolicies | default dict).platformIngress | default dict }}
+{{- if $pi.enabled }}
+{{- $rel := .Release.Name }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+{{- $dagsterPods := list
+      (dict "app.kubernetes.io/name" "dagster" "app.kubernetes.io/instance" $rel)
+      (dict "component" "user-deployments") }}
+{{- $langfusePods := list (dict "app.kubernetes.io/name" "langfuse" "app.kubernetes.io/instance" $rel) }}
+{{- $litellmPods := list (dict "app.kubernetes.io/name" "litellm" "app.kubernetes.io/instance" $rel) }}
+{{- $opensearchPods := list (dict "app.kubernetes.io/name" "opensearch" "app.kubernetes.io/instance" $rel) }}
+
+{{- if .Values.opa.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: opa-allow-callers
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: opa
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        {{- include "soa.np.peers" (dict "components" (list "web-fetch" "trino" "opa-reassert-principals")) | nindent 8 }}
+      ports:
+        - { protocol: TCP, port: 8181 }
+{{- end }}
+
+{{- if .Values.trino.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: trino-allow-callers
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: trino
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        {{- include "soa.np.peers" (dict "components" (list "query-tool" "dbt" "marts-init") "extra" (list (dict "component" "user-deployments"))) | nindent 8 }}
+      ports:
+        - { protocol: TCP, port: 8080 }
+{{- end }}
+
+{{- if .Values.polaris.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: polaris-allow-callers
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: polaris
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        {{- include "soa.np.peers" (dict "components" (list "trino" "data-runner" "marts-init" "polaris-init")) | nindent 8 }}
+      ports:
+        - { protocol: TCP, port: 8181 }
+        - { protocol: TCP, port: 8182 }
+{{- end }}
+
+{{- if .Values.postgres.enabled }}
+{{- $cnpg := eq (.Values.postgres.engine | default "plain") "cnpg" }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: postgres-allow-callers
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- if $cnpg }}
+      cnpg.io/cluster: {{ .Values.postgres.clusterName | default "pg" }}
+      {{- else }}
+      app.kubernetes.io/component: postgres
+      {{- end }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        {{- include "soa.np.peers" (dict "components" (list "pg-dump" "postgres-reconcile" "os-governance-bootstrap") "extra" (concat $dagsterPods $langfusePods $litellmPods)) | nindent 8 }}
+      ports:
+        - { protocol: TCP, port: 5432 }
+    {{- if $cnpg }}
+    # CloudNativePG: the operator probes each instance's status endpoint and the instances
+    # replicate among themselves (https://cloudnative-pg.io/documentation/current/networking/).
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $pi.cnpgOperatorNamespace | default "cnpg-system" | quote }}
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: {{ .Values.postgres.clusterName | default "pg" }}
+      ports:
+        - { protocol: TCP, port: 5432 }
+        - { protocol: TCP, port: 8000 }
+    {{- end }}
+{{- end }}
+
+{{- if .Values.objectStorage.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: object-storage-allow-callers
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: object-storage
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        {{- include "soa.np.peers" (dict "components" (list "trino" "polaris" "data-runner" "marts-init" "polaris-init" "object-storage-init" "pg-dump") "extra" (concat $langfusePods $opensearchPods)) | nindent 8 }}
+      ports:
+        - { protocol: TCP, port: 9000 }
+{{- end }}
+
+{{- if .Values.valkey.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: valkey-allow-callers
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: valkey
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        {{- include "soa.np.peers" (dict "extra" (concat $langfusePods $litellmPods)) | nindent 8 }}
+      ports:
+        - { protocol: TCP, port: 6379 }
+{{- end }}
+
+{{- if .Values.clickhouse.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: clickhouse-allow-callers
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: clickhouse
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        {{- include "soa.np.peers" (dict "extra" $langfusePods) | nindent 8 }}
+      ports:
+        - { protocol: TCP, port: 8123 }
+        - { protocol: TCP, port: 9000 }
+{{- end }}
+
+{{- if .Values.webFetch.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: web-fetch-allow-callers
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: web-fetch
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        {{- include "soa.np.peers" (dict) | nindent 8 }}
+      ports:
+        - { protocol: TCP, port: 8000 }
+{{- end }}
+
+{{- if .Values.egressProxy.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: egress-proxy-allow-callers
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: egress-proxy
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        {{- include "soa.np.peers" (dict "components" (list "web-fetch" "opensearch-snapshot-register" "opensearch-snapshot-cron" "opensearch-maintenance") "extra" $opensearchPods) | nindent 8 }}
+      ports:
+        - { protocol: TCP, port: 3128 }
+{{- end }}
+
+{{- if .Values.mockModel.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mock-model-allow-callers
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: mock-model
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        {{- include "soa.np.peers" (dict "extra" $litellmPods) | nindent 8 }}
+      ports:
+        - { protocol: TCP, port: 8080 }
+{{- end }}
+{{- end }}

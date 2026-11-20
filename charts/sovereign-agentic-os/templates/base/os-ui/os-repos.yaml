@@ -71,9 +71,22 @@ spec:
   policyTypes:
     - Ingress
   ingress:
-    # The UI itself stays reachable exactly as before (no ingress policy selected os-ui until now).
+    # The UI/API on :3000. With `networkPolicies.platformIngress.enabled` (default) only pods in
+    # this namespace (os-ui authenticates every route itself) and the ingress controller are
+    # admitted; no other namespace (agentic-apps included). Off: reachable as before.
+    {{- $pi := (.Values.networkPolicies | default dict).platformIngress | default dict }}
+    {{- if $pi.enabled }}
+    - from:
+        - podSelector: {}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $pi.ingressNamespace | default "ingress-nginx" | quote }}
+      ports:
+        - { protocol: TCP, port: 3000 }
+    {{- else }}
     - ports:
         - { protocol: TCP, port: 3000 }
+    {{- end }}
     # The git protocol: ONLY the Dagster user-code pods (the subchart labels them
     # `component: user-deployments`) — the repo-sync sidecar lives there.
     - from:
