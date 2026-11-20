@@ -7,7 +7,10 @@ import { withRoute } from '@core/kernel/route-server';
 import type { CurrentUser } from '@core/kernel/auth';
 import { ensureHydrated, setDashboardArchived, deleteDashboard, getDashboard, renameDashboard } from '@tabs/dashboards/lib/store';
 import { normalizePanel } from '@tabs/dashboards/lib/model';
-import { dashboardForSurface } from '@tabs/dashboards/lib/lifecycle-adapter';
+import { dashboardForSurface, specRef } from '@tabs/dashboards/lib/lifecycle-adapter';
+import { dashboardsNativeEnabled } from '@core/infra/repo-layout';
+import { awaitDashboardCommits } from '@tabs/dashboards/lib/git/commit';
+import { nativeSpecForView } from '@tabs/dashboards/lib/git/native-git';
 import { isViewSurface } from '@core/kernel/object-lifecycle';
 
 export const dynamic = 'force-dynamic';
@@ -31,6 +34,27 @@ export const GET = withRoute<{ id: string }>(async ({ user, params, req }) => {
   const surface = isViewSurface(requested) ? requested : 'studio';
   const read = await dashboardForSurface(id, user, surface);
   const dash = getDashboard(id, user);
+  // WP-52: native dashboards are DRAWN FROM GIT — the current version's panels are read back from
+  // the committed saved queries + Vega-Lite specs. An older pinned version (Run) keeps its own spec.
+  if (dashboardsNativeEnabled() && read.spec && dash.domain && read.ref === specRef(dash.spec)) {
+    await awaitDashboardCommits();
+    const native = await nativeSpecForView(dash.domain, id);
+    if ('unavailable' in native) {
+      return NextResponse.json({ id: dash.id, name: dash.spec.name, view: dash.spec.view, tier: dash.tier, surface, live: read.live, panels: [], unavailable: native.unavailable });
+    }
+    return NextResponse.json({
+      id: dash.id,
+      name: native.spec.name,
+      view: native.spec.view,
+      tier: dash.tier,
+      surface,
+      ref: read.ref,
+      live: read.live,
+      source: { kind: 'git', sha: native.sha, dir: native.dir },
+      panels: native.spec.charts.map(normalizePanel),
+      ...(native.spec.filters?.length ? { filters: native.spec.filters } : {}),
+    });
+  }
   if (!read.spec) {
     return NextResponse.json({
       id: dash.id,

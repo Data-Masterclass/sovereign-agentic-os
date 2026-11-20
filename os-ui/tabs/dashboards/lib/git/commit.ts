@@ -43,6 +43,9 @@ import { currentSurface, newRequestId } from '@core/infra/request-surface';
 import { onDashboardChange, type DashboardChange } from '@tabs/dashboards/lib/dashboard-events';
 import { DASHBOARDS_PREFIX, generateDashboardFiles, placeDashboards } from '@tabs/dashboards/lib/git/generate';
 import { projectSnapshot, type SnapshotDashboard } from '@tabs/dashboards/lib/git/snapshot';
+import { dashboardsNativeEnabled } from '@core/infra/repo-layout';
+import { generateNativeDashboardFiles, type SemanticIndex } from '@tabs/dashboards/lib/git/native';
+import { readSemanticIndex } from '@tabs/dashboards/lib/git/native-git';
 
 /** The surface recorded when a writer ran outside any request-surface scope. */
 export const DEFAULT_SURFACE = 'ui:dashboards';
@@ -117,6 +120,8 @@ export type CommitDeps = {
   mirror?: boolean;
   /** The store read captured synchronously in the writer's turn (the hook passes it). */
   captured?: SnapshotDashboard[];
+  /** WP-52: the dbt semantic index to bind panels with (default: read from the repo's main). */
+  semanticIndex?: SemanticIndex;
 };
 
 /**
@@ -131,7 +136,10 @@ export async function commitDashboards(
 ): Promise<CommitResult | null> {
   if (!dashboardProjectGitEnabled()) return null;
   const snapshot = projectSnapshot(domain, deps.captured ?? []);
-  const files = generateDashboardFiles(snapshot);
+  // WP-52: native dashboards bind each panel to the dbt metrics committed in THIS repo.
+  const files = dashboardsNativeEnabled()
+    ? generateNativeDashboardFiles(snapshot, deps.semanticIndex ?? (await readSemanticIndex(domain, { reposDir: deps.reposDir })))
+    : generateDashboardFiles(snapshot);
   const object = meta.object ?? domain;
   const message = dashboardCommitMessage({
     domain,

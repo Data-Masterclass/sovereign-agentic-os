@@ -347,3 +347,24 @@ export function layoutMigrationMoves(paths: Iterable<string>, dbtDir: string = c
   }
   return out;
 }
+
+// ------------------------------------------------------- dashboards (WP-52) ---
+
+/**
+ * Are dashboards written natively — dbt `saved_queries:` + `exposures:` and Vega-Lite v5 specs —
+ * and drawn back from those files (WP-52)? Default OFF: turning it on is the migration, and the
+ * first boot with it on commits one regeneration per domain (see the dry-run migration plan).
+ */
+export function dashboardsNativeEnabled(): boolean {
+  return (process.env.DASHBOARDS_NATIVE ?? '').trim().toLowerCase() === 'true';
+}
+
+/**
+ * The dbt `model-paths` entry that makes the dbt project read `dashboards/**\/semantic.yml`, so
+ * `dbt parse` validates every saved query and exposure against the project's metrics. Relative to
+ * the dbt project: `dashboards` at the root (v1), `../../dashboards` from `data/dbt` (v2).
+ */
+export function dashboardsModelPath(layout: LayoutVersion, dbtDir: string = configuredDbtProjectDir()): string {
+  const dir = dbtProjectDir(layout, dbtDir);
+  return dir ? `${'../'.repeat(dir.split('/').length)}${DASHBOARDS_DIR}` : DASHBOARDS_DIR;
+}
