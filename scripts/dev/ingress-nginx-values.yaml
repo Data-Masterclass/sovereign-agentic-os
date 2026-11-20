@@ -24,6 +24,20 @@ controller:
     annotations-risk-level: "High"
     # Path values are validated against their pathType (upstream default since v1.12).
     strict-validate-path-type: "true"
+  # Two controller pods and a PodDisruptionBudget, so a controller upgrade or a node drain
+  # never leaves zero pods serving (chart: controller.replicaCount / controller.minAvailable,
+  # the PDB renders when replicaCount > 1). Spread across nodes when there are several; on a
+  # single node both pods run there (ScheduleAnyway), which still covers a rolling upgrade.
+  replicaCount: 2
+  minAvailable: 1
+  topologySpreadConstraints:
+    - maxSkew: 1
+      topologyKey: kubernetes.io/hostname
+      whenUnsatisfiable: ScheduleAnyway
+      labelSelector:
+        matchLabels:
+          app.kubernetes.io/name: ingress-nginx
+          app.kubernetes.io/component: controller
   service:
     type: LoadBalancer
   resources:

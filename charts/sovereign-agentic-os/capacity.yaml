@@ -49,8 +49,8 @@ outsideChart:
   - name: velero (backups)
     requests: { cpu: 200m, memory: 512Mi }
     limits: { cpu: 2000m, memory: 4Gi }
-  - name: ingress-nginx
-    requests: { cpu: 100m, memory: 90Mi }
+  - name: ingress-nginx (2 replicas, PDB minAvailable 1)
+    requests: { cpu: 200m, memory: 180Mi }
     limits: {}
   - name: kserve controller
     requests: { cpu: 200m, memory: 600Mi }
