@@ -1,0 +1,7 @@
+{
+  "mappings": {
+    "properties": {
+      "data": { "type": "object", "enabled": false }
+    }
+  }
+}

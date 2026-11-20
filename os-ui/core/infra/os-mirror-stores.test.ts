@@ -33,6 +33,8 @@ type FakeIndex = { docs: Map<string, unknown> };
 function fakeCluster() {
   const indices = new Map<string, FakeIndex>();
   const log: string[] = [];
+  /** Every request body, for the index-creation / mapping assertions. */
+  const bodies: { method: string; path: string; body: unknown }[] = [];
   /** How the next searches answer: a real envelope, a shard failure, a truncated page, or a 503. */
   const search = { mode: 'ok' as 'ok' | 'shard-failed' | 'truncated' | 'error' };
   const orig = globalThis.fetch;
@@ -47,6 +49,7 @@ function fakeCluster() {
     const path = m[1];
     const [, indexName, rest] = path.match(/^\/([^/?]+)(.*)$/) ?? [];
     log.push(`${method} ${path.split('?')[0]}`);
+    if (init?.body) { try { bodies.push({ method, path: path.split('?')[0], body: JSON.parse(String(init.body)) }); } catch { /* not json */ } }
     const idx = indices.get(indexName);
     if (rest?.startsWith('/_count')) {
       return idx ? json({ count: idx.docs.size }) : json({ error: 'index_not_found_exception' }, 404);
@@ -99,6 +102,7 @@ function fakeCluster() {
   return {
     indices,
     log,
+    bodies,
     search,
     docsOf: (index: string) => indices.get(index)?.docs ?? new Map<string, unknown>(),
     seed(index: string, id: string, doc: unknown) {
@@ -1023,6 +1027,39 @@ test('governance audit: the structured detail, decisionId and policyRev survive 
     os.restore();
     audit._resetAudit();
     gov.__resetAudit();
+  }
+});
+
+test('os-audit: `data` is stored but not indexed — added to an EXISTING index, and part of a fresh index', async () => {
+  const audit = await import('@tabs/admin/lib/audit');
+  const MAPPING = { properties: { data: { type: 'object', enabled: false } } };
+  // An index that already exists (live): the mapping is added once per process, best-effort.
+  let os = fakeCluster();
+  try {
+    os.seed('os-audit', 'old', { id: 'old', ts: '2026-01-01T00:00:00Z', action: 'x', target: 't', detail: '' });
+    // A new mirror instance = a new process (the reconcile runs once per process), with the
+    // exact index body the audit store uses.
+    const m = osMirror({ index: 'os-audit', createBody: audit.OS_AUDIT_INDEX_BODY });
+    m.__reset();
+    m.writeThrough('new', { id: 'new', ts: '2026-11-20T00:00:00Z', action: 'governance.approve', target: 'x', detail: 'd', data: { rung: 'domain' } });
+    await settle();
+    await settle();
+    assert.deepEqual(os.bodies.find((b) => b.method === 'PUT' && b.path === '/os-audit/_mapping')?.body, MAPPING);
+  } finally {
+    os.restore();
+    audit._resetAudit();
+  }
+  // A fresh cluster: the create body carries the mapping.
+  os = fakeCluster();
+  try {
+    osMirror({ index: 'os-audit' }).__reset();
+    audit._resetAudit();
+    audit.audit({ tenant: 't', actor: 'a', role: 'admin', action: 'governance.approve', target: 'x', detail: 'd', data: { rung: 'domain' } });
+    await settle();
+    assert.deepEqual(os.bodies.find((b) => b.method === 'PUT' && b.path === '/os-audit')?.body, { mappings: MAPPING });
+  } finally {
+    os.restore();
+    audit._resetAudit();
   }
 });
 
