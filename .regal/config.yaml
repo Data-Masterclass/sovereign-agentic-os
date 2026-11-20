@@ -24,6 +24,9 @@ rules:
         - data.os_data.**
         - data.os_grants
         - data.os_grants.**
+        # policies/service_identities.json (WP-14), loaded beside the policies.
+        - data.service_identities
+        - data.service_identities.**
   testing:
     # The existing agentic.authz and trino tests live in the policy package and use
     # its rules unqualified. New tests use `<pkg>_test` packages.

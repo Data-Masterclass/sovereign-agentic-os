@@ -1592,6 +1592,14 @@ trino:
     # one is the principal (no impersonation). The delete-domain purge user belongs here once
     # PR #197 is in (`os-domain-delete`, also in `directUsers`).
     queryToolDirectUsers: []
+    # Who may reach which Trino port while the cut-over runs (templates/.../trino-network-policy.yaml).
+    # 8443: any pod in the namespace. 8080 (dual-run only): the query-tool and the seed Job until
+    # their flags move them, plus `legacyHttpClients` — the Dagster code server and run pods
+    # (`component: user-deployments`) until WP-15 moves them to svc-dagster-runner.
+    networkPolicy:
+      enabled: true
+      legacyHttpClients:
+        - { component: user-deployments }
     # Which clients use the TLS port. Each switches on its own; see the cut-over order.
     clients:
       queryTool: false        # needs a query-tool image with trino_login.py (WP-14)

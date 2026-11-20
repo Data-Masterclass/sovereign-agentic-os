@@ -9,6 +9,7 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 import { hashPassword, verifyPassword, isHashed } from '@core/kernel/password';
 import { emitDirectoryChange } from '@core/kernel/events';
 import { emailVerificationEnabled, sendVerificationEmail } from '@core/infra/mailer';
+import { isServiceIdentity } from '@core/infra/trino-service-identities';
 
 /**
  * User directory — a pragmatic, self-hosted identity store (the seam Ory would
@@ -118,8 +119,10 @@ function isValidEmail(s: string): boolean {
   return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(s.trim());
 }
 
+// WP-14 B1: a Trino service identity (svc-*, the direct and legacy service users) is never an OS
+// user id, so no run grant can ever name one (core/infra/trino-service-identities.ts).
 function isReserved(id: string): boolean {
-  return RESERVED_IDS.has(id) || id.startsWith('__');
+  return RESERVED_IDS.has(id) || id.startsWith('__') || isServiceIdentity(id);
 }
 
 /**

@@ -9,6 +9,7 @@ each file several times.
 - "/policies/data.json"
 - "/policies/trino.rego"
 - "/policies/trino_impersonation.rego"
+- "/policies/service_identities.json"
 - "/policies/governance.json"
 - "/policies/connections.rego"
 - "/policies/system-log.rego"

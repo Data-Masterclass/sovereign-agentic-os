@@ -1,0 +1,46 @@
+{{- if and .Values.trino.enabled .Values.trino.auth.enabled (.Values.trino.auth.networkPolicy | default dict).enabled }}
+{{- /*
+  WP-14: who may reach Trino, while the cut-over runs.
+    - the TLS port: every pod in the namespace (each still needs a service user's password there);
+    - the plain-HTTP port (dual-run only, `insecureHttp: true`): ONLY the clients that have not
+      moved yet, because plain HTTP carries no authentication at all. A client drops out of this
+      list the moment its `trino.auth.clients.<x>` flag moves it to TLS. With `insecureHttp: false`
+      nobody may reach plain HTTP (Trino refuses statements there anyway).
+  Kubelet probes are not pod traffic and are unaffected. Operators' in-pod CLI uses localhost.
+*/}}
+{{- $a := .Values.trino.auth }}
+{{- $c := $a.clients | default dict }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: trino-ingress
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "soa.selectorLabels" (dict "ctx" . "component" "trino") | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector: {}
+      ports:
+        - { protocol: TCP, port: {{ $a.httpsPort }} }
+    {{- $legacy := list }}
+    {{- if not $c.queryTool }}{{ $legacy = append $legacy (dict "app.kubernetes.io/component" "query-tool") }}{{ end }}
+    {{- if not $c.northpeakMarts }}{{ $legacy = append $legacy (dict "app.kubernetes.io/component" "marts-init") }}{{ end }}
+    {{- range ($a.networkPolicy.legacyHttpClients | default list) }}{{ $legacy = append $legacy . }}{{ end }}
+    {{- /* An empty `from` would admit EVERY source: render the rule only with at least one. */}}
+    {{- if and $a.insecureHttp (gt (len $legacy) 0) }}
+    - from:
+        {{- range $legacy }}
+        - podSelector:
+            matchLabels:
+              {{- toYaml . | nindent 14 }}
+        {{- end }}
+      ports:
+        - { protocol: TCP, port: 8080 }
+    {{- end }}
+{{- end }}
