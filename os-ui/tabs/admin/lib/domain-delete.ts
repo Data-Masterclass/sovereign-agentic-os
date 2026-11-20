@@ -230,3 +230,20 @@ export async function assertDeletableDomain(id: string): Promise<void> {
   if (!listDomains().some((d) => d.id === id)) bad(`"${id}" is not a registered domain`, 404);
   if ((await listUsers()).some((u) => u.id === id)) bad(`"${id}" is also a user id; refusing (its principal would be removed)`);
 }
+
+// ------------------------------------------------------------------- one replica only --
+
+/**
+ * A run needs ONE os-ui replica: the confirmation nonce is spent in process memory and there is no
+ * cross-pod per-domain lock yet, so two replicas could replay a token or run one domain twice. Read
+ * from the os-ui Deployment itself (spec AND ready status); unreadable = refused.
+ */
+export async function singleReplicaPreflight(get: (path: string) => Promise<{ status: number; body: Record<string, unknown> }> = (p) => k8s('GET', p)): Promise<string | null> {
+  const r = await get(`/apis/apps/v1/namespaces/${config.platformNamespace}/deployments/os-ui`);
+  if (r.status !== 200) return `the os-ui replica count could not be read (Kubernetes API ${r.status || 'unreachable'}); a delete run needs exactly one replica`;
+  const spec = Number((r.body.spec as { replicas?: number } | undefined)?.replicas ?? 1);
+  const live = Number((r.body.status as { replicas?: number } | undefined)?.replicas ?? spec);
+  if (spec > 1 || live > 1) return `os-ui runs ${Math.max(spec, live)} replicas; a delete run needs exactly one until the confirmation nonce is spent globally and a per-domain lock exists`;
+  return null;
+}
+

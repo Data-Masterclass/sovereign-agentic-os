@@ -53,11 +53,11 @@ export function appsComponent(deps: { owner: (id: string) => Promise<CurrentUser
           if (i >= 24) throw new Error(`Certificate ${item.id} still exists 2 min after its Ingress was deleted; not deleting its Secret`);
           await new Promise((r) => setTimeout(r, 5000));
         }
+        // Delete by NAME only: os-ui may not get or list Secrets here. 404 = already absent (done).
         const r = await k8s('DELETE', secretPath(item.id));
-        if (r.status !== 404 && (r.status < 200 || r.status >= 300)) throw new Error(`Kubernetes API ${r.status || 'unreachable'} deleting Secret ${item.id}`);
-        const after = await k8s('GET', secretPath(item.id));
-        if (after.status !== 404) throw new Error(`Secret ${item.id} still present after the delete (HTTP ${after.status})`);
-        return r.status === 404 ? 'already absent (Certificate gone)' : `DELETE Secret ${ns()}/${item.id} after its Certificate was gone`;
+        if (r.status === 404) return 'already absent (Certificate gone)';
+        if (r.status < 200 || r.status >= 300) throw new Error(`Kubernetes API ${r.status || 'unreachable'} deleting Secret ${item.id}`);
+        return `DELETE Secret ${ns()}/${item.id} after its Certificate was gone`;
       }
       if (item.kind === 'review') return `os-software-reviews ${await purgeReviewCardForDomainDelete(item.id)}`;
       const exists = (await listAllAppsInternal()).some((a) => a.id === item.id);
