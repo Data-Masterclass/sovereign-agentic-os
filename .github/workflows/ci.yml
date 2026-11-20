@@ -354,6 +354,34 @@ jobs:
       - name: License gate (os-ui)
         run: npm --prefix os-ui run check:licenses
 
+  # The governance schema, the audit chain and pg-boss, against the postgres:17 digest that runs
+  # live (components/postgresql/UPSTREAM.md). Never mocked; the tests fail if OS_PG_TEST_URL is unset.
+  test-postgres:
+    name: test-postgres
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17@sha256:5c855ad7b85e68e48a62f34662853f38b57c1c1d80f3a927ab58034fd6d31c5e
+        env:
+          POSTGRES_PASSWORD: ci-only-throwaway
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 2s --health-timeout 5s --health-retries 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Setup Node.js
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: 22
+      - name: Install (os-ui)
+        run: npm --prefix os-ui ci
+      - name: Real-Postgres tests (migrations, audit chain, pg-boss)
+        working-directory: os-ui
+        env:
+          OS_PG_TEST_URL: postgres://postgres:ci-only-throwaway@127.0.0.1:5432/postgres
+        run: node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test --test-concurrency=2 core/adapters/postgres/*.it.ts
+
   test-python:
     name: test-python
     runs-on: ubuntu-latest

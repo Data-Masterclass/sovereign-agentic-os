@@ -776,6 +776,32 @@ a model body IS the recorded CTAS after rewriting, the test proves the translati
 invertible — and catches any future change to the rewriter, the stripper or the lane/FQN mapping —
 but not that two materialisations agree row for row. That needs `EXCEPT ALL` both ways on a cluster.
 
+## Governance state lives in Postgres `os_governance` (WP-07)
+
+`core/adapters/postgres/` is the one home for governance state: approvals, confirmations, grants,
+run grants and their approved writes, notifications, prefs, domain settings, cost caps, commit
+checks, reconciler status, the catalog index, lifecycle pins and exposure sets, plus the
+append-only `audit_events` (design 00 §3.2, §3.5; 10 F2, F3, F8). Users are not here; they go to
+Keycloak.
+
+- **Migrations are node-pg-migrate's**, plain SQL in `migrations/` (`-- Up Migration` /
+  `-- Down Migration`). `migrate.ts` only fixes the options for `runner()`. The upstream CLI
+  applies the same files with no OS code (`components/node-pg-migrate/UPSTREAM.md`). The applied
+  list is kept in `os_migrations`, outside the schema, so dropping the schema is a clean rollback.
+- **Row versions:** every table has `version` and `updated_at`, bumped by a trigger. Write with
+  `... WHERE version = $n`; 0 rows is a conflict (409), never last-writer-wins.
+- **The audit chain is computed in the database.** A BEFORE INSERT trigger takes an advisory lock,
+  then sets id, time, `prev_hash` and `hash`, so no client can choose them and concurrent appends
+  stay linear. `os_governance.audit_verify()` is the one verifier (`select * from
+  os_governance.audit_verify()`). The runtime role `os_governance_app` may only insert and read
+  `audit_events`, and triggers reject any rewrite for every role.
+- **pg-boss is the one queue**, in its own schema `pgboss`, installed by its own `start()`. The
+  outbox is `send(…, { db: bossDb(client) })` inside the caller's `withTransaction`.
+- **Proof is `*.it.ts` against the real `postgres:17` digest** (CI job `test-postgres`). They fail,
+  never skip, without `OS_PG_TEST_URL`.
+- **Nothing reads these tables yet.** Store moves are WP-09 (dual-write, then one read path behind
+  a per-store flag, never dual-read).
+
 ## Things this codebase will punish you for
 
 Hard-won, each from a real failure. Read before writing a route, a test, or an

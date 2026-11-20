@@ -68,6 +68,8 @@ the os-ui image. Per-package copyright notices: `licenses/notices/os-ui-agent-en
 | @langchain/langgraph-checkpoint-postgres | 1.1.3 | MIT | `licenses/MIT.txt` | Run checkpoints in the existing CNPG Postgres (`agent_runs` database) |
 | @langchain/core (JS) | 1.4.0 | MIT | `licenses/MIT.txt` | Peer dependency of the two above, pinned explicitly |
 | pg (node-postgres) | 8.23.1 | MIT | `licenses/MIT.txt` | Postgres driver used by the checkpointer |
+| pg-boss | 12.38.2 | MIT | `licenses/MIT.txt` | The one job queue (reconcilers, outbox, schedules), installed in its own Postgres schema `pgboss` |
+| node-pg-migrate | 9.0.0 | MIT | `licenses/MIT.txt` | Applies the plain-SQL migrations of the Postgres `os_governance` schema |
 | langfuse (JS SDK v3) | 3.39.2 | MIT | `licenses/MIT.txt` | One Langfuse trace per run (trace id = run id). The npm tarball ships no LICENSE file; `package.json` declares MIT and the upstream text is reproduced in the NOTICE file |
 
 #### os-ui git store — npm library (engine rebuild, Phase B1)
