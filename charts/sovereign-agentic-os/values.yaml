@@ -1424,7 +1424,7 @@ dataRunner:
   enabled: true
   # Pinned by DIGEST, chart-owned (the template refuses to render without one; `localBuild: true`
   # in values.local.yaml is the only exception). Built by build-images.yml on a
-  # `data-runner-v<version>` tag into ghcr.io/data-masterclass/sovereign-os/data-runner.
+  # `data-runner-v<version>` tag into the org registry namespace (as dagster and docling).
   # TODAY this pins the image that runs live (0.2.2, built by hand into the aborek namespace,
   # digest read from the running pod 2026-11-20) until the first org build exists; then
   # repository / tag / digest move together to the org image in one change.

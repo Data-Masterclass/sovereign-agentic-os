@@ -110,7 +110,9 @@ case $img in *@*|'') echo "docling-chart [local] FAIL: $img"; rc=1 ;; *) echo "d
 # ...and localBuild must never render with a production signal (it is an unpinned image).
 guard() { # guard <label> <want: refuse|render> helm-args...
   local label=$1 want=$2; shift 2
-  local out; out=$(helm template t "$CHART" -n agentic-os -f values.local.yaml "$@" --show-only templates/extensions/docling/docling.yaml 2>&1)
+  # dataRunner.image.localBuild off: its own (identical) production refusal would stop the render
+  # before docling's is reached; it has its own test (deploy-data-runner-image.test.sh).
+  local out; out=$(helm template t "$CHART" -n agentic-os -f values.local.yaml --set dataRunner.image.localBuild=false "$@" --show-only templates/extensions/docling/docling.yaml 2>&1)
   if grep -q 'docling.image.localBuild=true is for a local kind cluster only' <<<"$out"; then got=refuse; else got=render; fi
   if [ "$got" = "$want" ]; then echo "docling-chart [localBuild $label] ok ($got)"; else echo "docling-chart [localBuild $label] FAIL: wanted $want, got $got"; rc=1; fi
 }
