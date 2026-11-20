@@ -47,6 +47,9 @@ export class Session {
       headers: {
         'content-type': 'application/json',
         cookie: this.cookie,
+        // The OS refuses a cookie-authenticated write without same-origin provenance;
+        // a non-browser client states the origin it is calling.
+        origin: new URL(this.baseUrl).origin,
       },
       body: body === undefined ? undefined : JSON.stringify(body),
     });

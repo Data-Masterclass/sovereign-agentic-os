@@ -191,39 +191,6 @@ export async function register(): Promise<void> {
   }
   }
 
-  // CROSS-ORIGIN SESSION guard (telemetry only, 0.6.115): deployed apps carry the OS
-  // session cookie ONLY when the OS host and the apps domain share one registrable parent
-  // domain. If OS_PUBLIC_URL is a real (non-local) https host yet no such parent exists,
-  // `sessionCookieDomain` returns null → a host-only cookie → deployed apps get NO session
-  // → silent 401 → "builds but shows no data". Warn LOUDLY so it is diagnosable. This does
-  // NOT change the cookie logic — it only surfaces the misconfiguration. Never fails boot.
-  if (process.env.NEXT_RUNTIME === 'nodejs') {
-  try {
-    const { config } = await import('./core/kernel/config.ts');
-    const { sessionCookieDomain } = await import('./core/kernel/session.ts');
-    const osUrl = config.osPublicUrl;
-    const apps = config.appsBaseDomain;
-    let osHost = '';
-    try {
-      osHost = osUrl ? new URL(osUrl).hostname : '';
-    } catch {
-      /* malformed OS_PUBLIC_URL — treated as unset (local) below */
-    }
-    const isLocal = !osHost || osHost === 'localhost' || /^\d+\.\d+\.\d+\.\d+$/.test(osHost);
-    if (!isLocal && sessionCookieDomain(osUrl, apps) === null) {
-      console.warn(
-        `[os-ui] SESSION SCOPE WARNING: OS host "${osHost}" and apps domain "${apps}" share no ` +
-          'registrable parent domain, so the OS session cookie is host-only. DEPLOYED APPS WILL NOT ' +
-          'CARRY THE OS SESSION (their os.whoami / os.datasets calls get 401 → no data). Put the OS and ' +
-          'apps domains under one registrable domain (align OS_PUBLIC_URL + OS_APPS_DOMAIN).',
-      );
-    }
-  } catch (err) {
-    // Telemetry must never break boot — a slip here is silently downgraded to a note.
-    console.warn(`[os-ui] session-scope check skipped: ${err instanceof Error ? err.message : String(err)}`);
-  }
-  }
-
   // Boot-time DECLARATIVE DEMO-APP seed (fire-and-forget, guarded, idempotent): stand up
   // ONE clickable AppSpec example (the Northpeak Product Catalog demo) so the OS ships a
   // live example of the declarative-app model with zero manual authoring. The seed itself
