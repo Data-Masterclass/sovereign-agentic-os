@@ -74,10 +74,14 @@ jobs:
         run: bash scripts/tests/langfuse-hardening.test.sh
 
       # WP-47 capacity gate tests: the real chart passes, and the negative twins (2 extra CPU
-      # cores, over-committed memory limits, a container with no memory request) fail; the limit
-      # trims and the PriorityClass ladder are asserted on the rendered chart, both profiles.
+      # cores, over-committed memory limits, a container with no memory request, an empty render)
+      # fail; the limit trims and the PriorityClass ladder are asserted on the rendered chart, both
+      # profiles. The deploy test runs the real deploy.sh with a faked cluster: over-committing
+      # release values or VALUES_OVERLAY stop it before the backup and `helm upgrade`.
       - name: Capacity gate tests
-        run: node --test scripts/tests/check-capacity.test.mjs
+        run: |
+          node --test scripts/tests/check-capacity.test.mjs
+          bash scripts/tests/deploy-capacity-gate.test.sh
 
       # The registry deploy mode and the widened conflict-copy check. No Docker, no network, no
       # cluster: it drives `deploy.sh --verify-only` against a fake digest probe and runs the

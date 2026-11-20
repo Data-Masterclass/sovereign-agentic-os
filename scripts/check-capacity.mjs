@@ -21,14 +21,19 @@
  *   - Fails (exit 1) when, for any profile, requests (CPU or memory) or memory limits exceed their
  *     threshold, or when a long-running container sets no memory request (it would be invisible to
  *     the scheduler and to this gate).
+ *   - Fails when a profile renders fewer long-running workloads than `minimumWorkloads` in
+ *     capacity.yaml: an empty render (wrong values, a broken template) must not pass on nothing.
  *   - `--values <file>` (repeatable) adds an overlay to every profile; `--profile <name>` limits the
- *     run to one profile; `--json` prints the totals as JSON.
+ *     run to one profile; `--json` prints the totals as JSON; `--skip-schema-validation` is passed
+ *     to `helm template` (deploy.sh renders that way). deploy.sh runs `--profile default` with the
+ *     live release values and VALUES_OVERLAY, i.e. exactly what its `helm upgrade` applies.
  *   - `--compare-live <context>` (read-only: `kubectl get pods -A -o json`) prints the live node
  *     totals next to the prediction and fails if they differ by more than 5 % — the WP-47 live
  *     evidence. Use it with the live release's values as `--values`.
  *   - SKIPS (exit 0, loudly) without helm, the subchart `.tgz` files or js-yaml; in CI
  *     (`process.env.CI`) a skip is a FAILURE, as in `check-consoles-not-public.mjs`.
- *   - Wired into `os-ui/scripts/gate.sh` (CI) and `scripts/release.sh` (release gate).
+ *   - Wired into `os-ui/scripts/gate.sh` (CI), `scripts/release.sh` (release gate) and
+ *     `scripts/deploy.sh` (before the backup and `helm upgrade`).
  */
 import { execFileSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
@@ -48,6 +53,7 @@ const overlays = [];
 let only = null;
 let asJson = false;
 let liveContext = null;
+let skipSchema = false;
 let budgetFile = join(CHART, 'capacity.yaml');
 for (let i = 0; i < args.length; i++) {
   const a = args[i];
@@ -58,13 +64,14 @@ for (let i = 0; i < args.length; i++) {
   if (a === '--values' || a === '-f') overlays.push(resolve(next()));
   else if (a === '--profile') only = next();
   else if (a === '--json') asJson = true;
+  else if (a === '--skip-schema-validation') skipSchema = true;
   else if (a === '--compare-live') liveContext = next();
   else if (a === '--budget') budgetFile = resolve(next());
   else if (a === '-h' || a === '--help') usage();
   else usage(`unknown argument ${a}`);
 }
 function usage(err) {
-  const text = 'usage: node scripts/check-capacity.mjs [--profile default|stackit] [--values <file>]... [--json] [--compare-live <kube-context>] [--budget <capacity.yaml>]';
+  const text = 'usage: node scripts/check-capacity.mjs [--profile default|stackit] [--values <file>]... [--json] [--skip-schema-validation] [--compare-live <kube-context>] [--budget <capacity.yaml>]';
   if (err) { console.error(`${NAME}: ${err}\n${text}`); process.exit(2); }
   console.log(text); process.exit(0);
 }
@@ -160,6 +167,12 @@ for (const o of budget.outsideChart ?? []) {
   const r = { rc: quantity(o.requests?.cpu), rm: quantity(o.requests?.memory), lc: quantity(o.limits?.cpu), lm: quantity(o.limits?.memory) };
   outside = add(outside, r, o.perNode ? nodes : 1);
 }
+// A render with (almost) no workloads sums to (almost) nothing and would pass: fail it instead.
+const minimumWorkloads = Number(budget.minimumWorkloads ?? 1);
+if (!(Number.isInteger(minimumWorkloads) && minimumWorkloads >= 1)) {
+  console.error(`${NAME}: ${budgetFile} minimumWorkloads must be an integer ≥ 1, got ${budget.minimumWorkloads}`);
+  process.exit(2);
+}
 const capacity = { rc: alloc.cpu * nodes, rm: alloc.memory * nodes, lc: alloc.cpu * nodes, lm: alloc.memory * nodes };
 
 // ---- render and sum -----------------------------------------------------------------------
@@ -168,7 +181,8 @@ const TRANSIENT = new Set(['Job', 'CronJob']);
 
 function render(files) {
   const flags = files.flatMap((f) => ['-f', f]);
-  const text = execFileSync('helm', ['template', RELEASE, CHART, '-n', 'agentic-os', ...flags], {
+  const extra = skipSchema ? ['--skip-schema-validation'] : [];
+  const text = execFileSync('helm', ['template', RELEASE, CHART, '-n', 'agentic-os', ...flags, ...extra], {
     encoding: 'utf8',
     maxBuffer: 64 * 1024 * 1024,
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -228,6 +242,9 @@ for (const [profile, files] of Object.entries(PROFILES)) {
   const p = { rc: pct(grand.rc, capacity.rc), rm: pct(grand.rm, capacity.rm), lc: pct(grand.lc, capacity.lc), lm: pct(grand.lm, capacity.lm) };
   results[profile] = { chart: s.total, outside, total: grand, percent: p, rows: s.rows, transient: s.transient };
   for (const msg of s.problems) failures.push(`${profile}: ${msg}`);
+  if (s.rows.length < minimumWorkloads) {
+    failures.push(`${profile}: the render has ${s.rows.length} long-running workloads, fewer than the ${minimumWorkloads} capacity.yaml expects — a sum of nothing is not a pass (wrong values, or a chart that renders nothing)`);
+  }
   const label = { rc: 'CPU requests', rm: 'memory requests', lm: 'memory limits' };
   for (const k of Object.keys(thresholds)) {
     if (p[k] > thresholds[k]) {
