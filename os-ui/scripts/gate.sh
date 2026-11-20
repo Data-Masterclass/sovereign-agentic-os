@@ -101,6 +101,9 @@ node ../scripts/check-opensearch-ingress-policy.mjs
 # default, select only the gateway pods and admit exactly its callers (os-ui, os-ui-worker, the
 # agent-key Job). Same skip rules as above.
 node ../scripts/check-litellm-ingress-policy.mjs
+# Platform ingress: default-deny for the namespace plus one allowlist per platform service; every
+# rendered caller is admitted, no other namespace is. Same skip rules as above.
+node ../scripts/check-platform-ingress-policy.mjs
 # WP-47 capacity gate: the rendered chart (default and STACKIT profiles) plus the pods outside it
 # must fit the node budget in charts/sovereign-agentic-os/capacity.yaml (requests ≤ 85 % CPU and
 # memory, memory limits ≤ 85 %). Same skip rules as above.
