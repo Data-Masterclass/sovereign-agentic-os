@@ -47,20 +47,23 @@ CREATE SCHEMA os_governance;
 CREATE SEQUENCE os_governance.grant_rev AS bigint;
 
 -- Bump version and updated_at on every UPDATE (optimistic concurrency, 00 §3.5 condition 2).
+-- Every function in this schema pins `search_path` and schema-qualifies its calls, per the
+-- PostgreSQL docs' guidance for functions that must not be redirected by a caller-controlled
+-- search_path (https://www.postgresql.org/docs/17/sql-createfunction.html#SQL-CREATEFUNCTION-SECURITY).
 CREATE FUNCTION os_governance.bump_row_version() RETURNS trigger
-LANGUAGE plpgsql AS $$
+LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
 BEGIN
   NEW.version := OLD.version + 1;
-  NEW.updated_at := clock_timestamp();
+  NEW.updated_at := pg_catalog.clock_timestamp();
   RETURN NEW;
 END
 $$;
 
 -- Take the next grant revision on every grant-bearing write (10 F3: the bundle ETag/revision).
 CREATE FUNCTION os_governance.take_grant_rev() RETURNS trigger
-LANGUAGE plpgsql AS $$
+LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
 BEGIN
-  NEW.grant_rev := nextval('os_governance.grant_rev');
+  NEW.grant_rev := pg_catalog.nextval('os_governance.grant_rev');
   RETURN NEW;
 END
 $$;
@@ -70,7 +73,7 @@ CREATE TABLE os_governance.grant_revision (
   id         smallint PRIMARY KEY DEFAULT 1 CHECK (id = 1),
   rev        bigint NOT NULL DEFAULT 0,
   version    bigint NOT NULL DEFAULT 1,
-  updated_at timestamptz NOT NULL DEFAULT clock_timestamp()
+  updated_at timestamptz NOT NULL DEFAULT pg_catalog.clock_timestamp()
 );
 INSERT INTO os_governance.grant_revision (id) VALUES (1);
 
@@ -79,7 +82,7 @@ INSERT INTO os_governance.grant_revision (id) VALUES (1);
 CREATE FUNCTION os_governance.advance_grant_revision() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
 BEGIN
-  UPDATE os_governance.grant_revision SET rev = nextval('os_governance.grant_rev') WHERE id = 1;
+  UPDATE os_governance.grant_revision SET rev = pg_catalog.nextval('os_governance.grant_rev') WHERE id = 1;
   RETURN NULL;
 END
 $$;
@@ -95,7 +98,7 @@ CREATE TABLE os_governance.approvals (
   subject_id     text NOT NULL,
   domain         text NOT NULL,
   requested_by   text NOT NULL,
-  requested_at   timestamptz NOT NULL DEFAULT clock_timestamp(),
+  requested_at   timestamptz NOT NULL DEFAULT pg_catalog.clock_timestamp(),
   status         text NOT NULL DEFAULT 'pending'
                    CHECK (status IN ('pending', 'approved', 'rejected', 'cancelled', 'expired')),
   approver_uid   text,
@@ -105,7 +108,7 @@ CREATE TABLE os_governance.approvals (
   policy_rev     text,
   payload        jsonb NOT NULL DEFAULT '{}',
   version        bigint NOT NULL DEFAULT 1,
-  updated_at     timestamptz NOT NULL DEFAULT clock_timestamp(),
+  updated_at     timestamptz NOT NULL DEFAULT pg_catalog.clock_timestamp(),
   CONSTRAINT approvals_decided CHECK (
     (status IN ('approved', 'rejected')) = (approver_uid IS NOT NULL AND decided_at IS NOT NULL)
   ),
@@ -123,12 +126,12 @@ CREATE TABLE os_governance.confirmations (
   subject_id     text NOT NULL,
   token_hash     text NOT NULL,
   status         text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'confirmed', 'declined', 'expired')),
-  created_at     timestamptz NOT NULL DEFAULT clock_timestamp(),
+  created_at     timestamptz NOT NULL DEFAULT pg_catalog.clock_timestamp(),
   expires_at     timestamptz NOT NULL,
   confirmed_at   timestamptz,
   payload        jsonb NOT NULL DEFAULT '{}',
   version        bigint NOT NULL DEFAULT 1,
-  updated_at     timestamptz NOT NULL DEFAULT clock_timestamp(),
+  updated_at     timestamptz NOT NULL DEFAULT pg_catalog.clock_timestamp(),
   CONSTRAINT confirmations_expiry CHECK (expires_at > created_at)
 );
 CREATE INDEX confirmations_principal_idx ON os_governance.confirmations (principal_uid, status);
@@ -144,12 +147,12 @@ CREATE TABLE os_governance.grants (
   capability     text NOT NULL,
   scope          os_governance.scope NOT NULL,
   granted_by     text NOT NULL,
-  granted_at     timestamptz NOT NULL DEFAULT clock_timestamp(),
+  granted_at     timestamptz NOT NULL DEFAULT pg_catalog.clock_timestamp(),
   expires_at     timestamptz,
   revoked_at     timestamptz,
   grant_rev      bigint NOT NULL,
   version        bigint NOT NULL DEFAULT 1,
-  updated_at     timestamptz NOT NULL DEFAULT clock_timestamp(),
+  updated_at     timestamptz NOT NULL DEFAULT pg_catalog.clock_timestamp(),
   CONSTRAINT grants_unique UNIQUE (subject_kind, subject_id, resource_kind, resource_id, capability)
 );
 CREATE INDEX grants_resource_idx ON os_governance.grants (resource_kind, resource_id);
@@ -167,13 +170,13 @@ CREATE TABLE os_governance.run_grants (
   selection_hash text,
   commit         text,
   issued_by      text NOT NULL,
-  issued_at      timestamptz NOT NULL DEFAULT clock_timestamp(),
+  issued_at      timestamptz NOT NULL DEFAULT pg_catalog.clock_timestamp(),
   expires_at     timestamptz NOT NULL,
   revoked_at     timestamptz,
   active_run_id  text,
   grant_rev      bigint NOT NULL,
   version        bigint NOT NULL DEFAULT 1,
-  updated_at     timestamptz NOT NULL DEFAULT clock_timestamp(),
+  updated_at     timestamptz NOT NULL DEFAULT pg_catalog.clock_timestamp(),
   CONSTRAINT run_grants_target CHECK ((system_id IS NULL) <> (dataset IS NULL)),
   CONSTRAINT run_grants_expiry CHECK (expires_at > issued_at)
 );
@@ -189,7 +192,7 @@ CREATE TABLE os_governance.run_grant_approved_writes (
   expires_at     timestamptz NOT NULL,
   grant_rev      bigint NOT NULL,
   version        bigint NOT NULL DEFAULT 1,
-  updated_at     timestamptz NOT NULL DEFAULT clock_timestamp(),
+  updated_at     timestamptz NOT NULL DEFAULT pg_catalog.clock_timestamp(),
   PRIMARY KEY (grant_id, table_fqn, op)
 );
 
@@ -202,10 +205,10 @@ CREATE TABLE os_governance.notifications (
   body           text,
   link           text,
   payload        jsonb NOT NULL DEFAULT '{}',
-  created_at     timestamptz NOT NULL DEFAULT clock_timestamp(),
+  created_at     timestamptz NOT NULL DEFAULT pg_catalog.clock_timestamp(),
   read_at        timestamptz,
   version        bigint NOT NULL DEFAULT 1,
-  updated_at     timestamptz NOT NULL DEFAULT clock_timestamp()
+  updated_at     timestamptz NOT NULL DEFAULT pg_catalog.clock_timestamp()
 );
 CREATE INDEX notifications_unread_idx ON os_governance.notifications (recipient_uid, created_at DESC) WHERE read_at IS NULL;
 
@@ -215,7 +218,7 @@ CREATE TABLE os_governance.prefs (
   key            text NOT NULL,
   value          jsonb NOT NULL,
   version        bigint NOT NULL DEFAULT 1,
-  updated_at     timestamptz NOT NULL DEFAULT clock_timestamp(),
+  updated_at     timestamptz NOT NULL DEFAULT pg_catalog.clock_timestamp(),
   PRIMARY KEY (principal_uid, key)
 );
 
@@ -225,7 +228,7 @@ CREATE TABLE os_governance.domain_settings (
   key            text NOT NULL,
   value          jsonb NOT NULL,
   version        bigint NOT NULL DEFAULT 1,
-  updated_at     timestamptz NOT NULL DEFAULT clock_timestamp(),
+  updated_at     timestamptz NOT NULL DEFAULT pg_catalog.clock_timestamp(),
   PRIMARY KEY (domain, key)
 );
 
@@ -238,9 +241,9 @@ CREATE TABLE os_governance.commit_checks (
   status         text NOT NULL CHECK (status IN ('pending', 'passed', 'failed', 'error')),
   artifact_digest text,
   details        jsonb NOT NULL DEFAULT '{}',
-  checked_at     timestamptz NOT NULL DEFAULT clock_timestamp(),
+  checked_at     timestamptz NOT NULL DEFAULT pg_catalog.clock_timestamp(),
   version        bigint NOT NULL DEFAULT 1,
-  updated_at     timestamptz NOT NULL DEFAULT clock_timestamp(),
+  updated_at     timestamptz NOT NULL DEFAULT pg_catalog.clock_timestamp(),
   PRIMARY KEY (domain, sha, check_name)
 );
 
@@ -252,7 +255,7 @@ CREATE TABLE os_governance.object_status (
   observed_generation bigint,
   conditions          jsonb NOT NULL DEFAULT '[]' CHECK (jsonb_typeof(conditions) = 'array'),
   version             bigint NOT NULL DEFAULT 1,
-  updated_at          timestamptz NOT NULL DEFAULT clock_timestamp(),
+  updated_at          timestamptz NOT NULL DEFAULT pg_catalog.clock_timestamp(),
   PRIMARY KEY (kind, id)
 );
 
@@ -267,7 +270,7 @@ CREATE TABLE os_governance.catalog_entities (
   path           text NOT NULL,
   title          text,
   version        bigint NOT NULL DEFAULT 1,
-  updated_at     timestamptz NOT NULL DEFAULT clock_timestamp(),
+  updated_at     timestamptz NOT NULL DEFAULT pg_catalog.clock_timestamp(),
   PRIMARY KEY (kind, id)
 );
 CREATE INDEX catalog_entities_domain_idx ON os_governance.catalog_entities (domain, kind);
@@ -281,7 +284,7 @@ CREATE TABLE os_governance.lifecycle_pins (
   sha            text NOT NULL,
   pinned_by      text NOT NULL,
   version        bigint NOT NULL DEFAULT 1,
-  updated_at     timestamptz NOT NULL DEFAULT clock_timestamp(),
+  updated_at     timestamptz NOT NULL DEFAULT pg_catalog.clock_timestamp(),
   PRIMARY KEY (kind, id, stage)
 );
 
@@ -295,7 +298,7 @@ CREATE TABLE os_governance.exposure_sets (
   status           text NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'pending', 'active', 'revoked')),
   approval_id      text REFERENCES os_governance.approvals (id),
   version          bigint NOT NULL DEFAULT 1,
-  updated_at       timestamptz NOT NULL DEFAULT clock_timestamp()
+  updated_at       timestamptz NOT NULL DEFAULT pg_catalog.clock_timestamp()
 );
 
 -- Row-version triggers on every table above.

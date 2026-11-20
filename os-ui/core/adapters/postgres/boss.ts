@@ -7,9 +7,11 @@
  *             runs) on one durable queue in the database we already back up, not on timers that
  *             die with a pod, and run only by the worker so the web app's latency is not spent on it.
  * ARCHITECTURE:
- *   - `new PgBoss({ connectionString, schema, max, supervise, schedule })` exactly as
- *     docs/api/constructor.md documents it. pg-boss installs and migrates its own schema
- *     (`pgboss`) at `start()`; the OS never writes to it and does not wrap its API.
+ *   - `new PgBoss({ connectionString, schema, createSchema: false, max, supervise, schedule })`
+ *     exactly as docs/api/constructor.md documents it. `connectionString` is the QUEUE login, which
+ *     owns the `pgboss` schema (created for it by the chart bootstrap, `files/os-governance/
+ *     schemas.sql`); pg-boss installs and migrates its own objects there at `start()`. The OS's
+ *     runtime login only uses the queue (DML through `send(…, { db })`), never owns it.
  *   - Design 10 F8: queues per reconciler, `singletonKey` coalescing, `send(…, { db })` as the
  *     outbox, `schedule()` with `tz`. Proven in `pgboss.it.ts`.
  *   - WORKER-ONLY WORK: maintenance (`supervise`) and the cron pass (`schedule`) are on only in the
@@ -26,6 +28,7 @@ import { isRunWorkerProcess } from '@core/kernel/process-role';
 export const PGBOSS_SCHEMA = 'pgboss';
 export const PGBOSS_POOL_MAX = 3;
 
+/** `databaseUrl` is the queue login's URL (the owner of schema `pgboss`), not the runtime's. */
 export function createBoss(databaseUrl: string): PgBoss {
   const connectionString = databaseUrl.trim();
   if (!connectionString) throw new Error('createBoss: no database URL');
@@ -33,6 +36,7 @@ export function createBoss(databaseUrl: string): PgBoss {
   return new PgBoss({
     connectionString,
     schema: PGBOSS_SCHEMA,
+    createSchema: false,
     max: PGBOSS_POOL_MAX,
     supervise: worker,
     schedule: worker,

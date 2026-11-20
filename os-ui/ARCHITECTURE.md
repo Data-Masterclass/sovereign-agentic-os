@@ -784,12 +784,18 @@ commit checks, reconciler status, the catalog index, lifecycle pins and exposure
 append-only `audit_events` (design 00 §3.2, §3.5; 10 F2, F3, F8). Users are not here (Keycloak),
 and neither are model budgets (LiteLLM owns them; the OS reads its admin API).
 
-- **A separate database, three roles.** `os_governance` (database) is owned by a NOSUPERUSER,
-  NOCREATEROLE role that only runs migrations. The OS runs as a different login that is a member
-  of `os_governance_app` and owns nothing in the schema. Only a superuser can create those roles,
-  so the chart's `os-governance-bootstrap` hook (`postgres.governance.enabled`, off by default)
-  does exactly that, from `charts/sovereign-agentic-os/files/os-governance/*.sql`, and never runs
-  the migrations. Never install as a superuser (live, that is Langfuse's login).
+- **A separate database, four roles.** `os_governance` (database) is owned by a NOSUPERUSER,
+  NOCREATEROLE role that only runs migrations. The OS runs as a different login, a member of
+  `os_governance_app`, that owns nothing and may CREATE nothing in the database. pg-boss runs as a
+  third login that owns only schema `pgboss`. Only a superuser can create those roles, so the
+  chart's `os-governance-bootstrap` hook (`postgres.governance.enabled`, off by default) does
+  exactly that, from `charts/sovereign-agentic-os/files/os-governance/*.sql`, with a DEDICATED
+  admin Secret (`adminSecretName`); it never runs the migrations. The template refuses to render
+  with the Langfuse Secret or with a name another service uses
+  (`scripts/check-governance-bootstrap-chart.mjs`), and the SQL refuses an existing superuser.
+- **Every function pins `search_path = pg_catalog, pg_temp`** and schema-qualifies its calls
+  (PostgreSQL's documented guidance), so no caller's schema can shadow `clock_timestamp`, the
+  advisory lock or `sha256` inside the chain.
 - **Migrations are node-pg-migrate's**, plain SQL in `migrations/` (`-- Up Migration` /
   `-- Down Migration`). `migrate.ts` only fixes the options for `runner()`. The upstream CLI
   applies the same files with no OS code (`components/node-pg-migrate/UPSTREAM.md`). The applied
@@ -805,9 +811,10 @@ and neither are model budgets (LiteLLM owns them; the OS reads its admin API).
   stay linear. It refuses any isolation level but READ COMMITTED (0A000): a snapshot older than the
   lock would fork the chain. `os_governance.audit_verify()` is the one verifier. The runtime role
   may only insert and read `audit_events`, and triggers reject any rewrite for every role. Against
-  the owner or a superuser the chain needs an external anchor of `head_hash` + `checked`.
-- **pg-boss is the one queue**, in schema `pgboss` of the same database, installed by its own
-  `start()` as the runtime login. The outbox is `send(…, { db: bossDb(client) })` inside the
+  the owner or a superuser the chain needs an external anchor of `head_hash` + `checked` (WP-08,
+  10 "Amendment from WP-07 verification").
+- **pg-boss is the one queue**, in schema `pgboss` of the same database, migrated by its own
+  `start()` as the queue login (`createSchema: false`); the runtime gets only DML there. The outbox is `send(…, { db: bossDb(client) })` inside the
   caller's `withTransaction`; `bossDb` returns `pg`'s result as is (an array for several
   statements), as pg-boss documents. Workers, maintenance and cron run only in `os-ui-worker`
   (`registerWorker`, `@core/kernel/process-role`); the web process only sends.

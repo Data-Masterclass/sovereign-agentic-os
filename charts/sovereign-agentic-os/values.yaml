@@ -203,6 +203,10 @@ postgres:
   governance:
     enabled: false
     database: os_governance
+    # REQUIRED when enabled: a DEDICATED Secret (keys `username`, `password`) for a superuser the
+    # bootstrap hook uses to create the roles and the database. Never postgres.secretName (live,
+    # that is Langfuse's own login); the template refuses it.
+    adminSecretName: ""
     owner:
       username: os_governance
       secretName: postgres-os-governance-owner-credentials
@@ -211,6 +215,10 @@ postgres:
       username: os_governance_rt
       secretName: postgres-os-governance-runtime-credentials
       localPassword: os-governance-rt-local-dev
+    queue:              # pg-boss's own login: owns only schema `pgboss`
+      username: os_governance_queue
+      secretName: postgres-os-governance-queue-credentials
+      localPassword: os-governance-queue-local-dev
   # CLOUD-DURABLE CNPG extras (engine:cnpg ONLY).
   cnpg:
     # Durable zonal CSI storage class for the Postgres data volume (a zonal disk
