@@ -24,6 +24,7 @@ import {
 } from '@core/runtime/agentic';
 import { ungatedInteractive } from '@core/runtime/confirm-gate';
 import { resolveAssistantModelId } from '@core/runtime/complete';
+import { gatewayTraceHeaders } from '@core/runtime/gateway-trace';
 import { inputBudget, modelContext } from '@core/models/context-windows';
 
 /**
@@ -190,35 +191,25 @@ export function liteLlmCaller(caller?: CallerContext): LlmCall {
       body.tools = req.tools;
       body.tool_choice = 'auto';
     }
-    // A3 — ONE trace per run: when the call belongs to a run, LiteLLM's own Langfuse callback is
-    // told to log INTO that trace (existing_trace_id) under the OS generation that recorded this
-    // call (parent_observation_id), so the gateway's generation nests instead of starting a
-    // second, unlinked trace. Vocabulary is LiteLLM's (docs: Langfuse integration metadata).
+    // ONE trace per run (05 §5.1, 10 F1). The gateway records each call's generation through
+    // LiteLLM's OpenTelemetry v2 `langfuse_otel` callback, which nests it by the W3C `traceparent`
+    // header and names it by `x-litellm-call-id` (core/runtime/gateway-trace.ts). The legacy body
+    // fields `existing_trace_id` / `parent_observation_id` are ignored on OTel v2 and are no
+    // longer sent. `trace_user_id`, `session_id` and `tags` are still read on OTel v2.
     //
-    // `mask_output` — the gateway's own Langfuse record of this call must not carry what the
-    // model wrote. The chart sets `turn_off_message_logging`, which redacts the prompt and the
-    // completion TEXT; on LiteLLM 1.90 it leaves the completion's tool-call ARGUMENTS in place,
-    // and those are model-written values that can quote a document (a `write_file` body, a
-    // query predicate). This is the one call path that sends tools, so it asks the gateway to
-    // mask its logged output outright. Usage, cost and the trace ids are still logged; the
-    // OS's `llm.<node>` span (core/infra/langfuse.ts) records the tool-call structure at the
-    // configured redaction level, and the caller still receives the full response. Measured against
-    // 1.90.0 with a recording Langfuse endpoint — see docs/components/langfuse.md.
+    // `mask_output` is read only by the legacy `langfuse` callback, i.e. by a gateway rolled back
+    // to 1.90 (docs/ops/litellm-upgrade.md "Rollback"): there it keeps model-written tool-call
+    // arguments out of the gateway's record. On OTel v2 the gateway captures no message content
+    // at all (its default, with `turn_off_message_logging`).
     const metadata: Record<string, unknown> = { tags: cred.tags, mask_output: true };
     if (req.observe) {
-      metadata.existing_trace_id = req.observe.traceId;
-      if (req.observe.parentObservationId) metadata.parent_observation_id = req.observe.parentObservationId;
       if (caller?.userId) metadata.trace_user_id = caller.userId;
       if (caller?.systemId) metadata.session_id = runSessionId(caller.systemId);
       // The agent that made the call: LiteLLM's Langfuse callback copies request metadata onto
       // its generation, which is how run diagnostics attribute tokens and cost per agent.
       if (req.observe.node) metadata.node = req.observe.node;
     }
-    // W3C trace context of the same span, for a gateway that links by `traceparent` (LiteLLM's
-    // OTel callback); the legacy callback above ignores it. Only for OTel-shaped ids.
-    const traceparent = req.observe && /^[0-9a-f]{32}$/.test(req.observe.traceId) && /^[0-9a-f]{16}$/.test(req.observe.parentObservationId ?? '')
-      ? `00-${req.observe.traceId}-${req.observe.parentObservationId}-01`
-      : undefined;
+    const trace = gatewayTraceHeaders(req.observe);
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), LLM_TIMEOUT_MS);
     let res: Response;
@@ -230,7 +221,7 @@ export function liteLlmCaller(caller?: CallerContext): LlmCall {
           authorization: `Bearer ${cred.apiKey}`,
           'content-type': 'application/json',
           accept: 'application/json',
-          ...(traceparent ? { traceparent } : {}),
+          ...trace.headers,
         },
         body: JSON.stringify({ ...body, user: cred.user, metadata }),
         cache: 'no-store',
@@ -265,7 +256,8 @@ export function liteLlmCaller(caller?: CallerContext): LlmCall {
     // Surface the gateway's reported token usage so a run path can aggregate it
     // (the Monitoring run-summary trace). Absent/malformed usage stays undefined.
     const usage = parseLlmUsage(data.usage);
-    return usage ? { ...completion, usage } : completion;
+    const traced = { ...completion, gatewayCallId: trace.callId };
+    return usage ? { ...traced, usage } : traced;
   };
 }
 

@@ -47,7 +47,8 @@ command -v docker >/dev/null && docker info >/dev/null 2>&1 || die "docker is no
 step "render the chart and derive the gateway image, config and env"
 helm template agentic-os "$CHART" -n agentic-os -f "$PROFILE" > "$W/rendered.yaml" 2>"$W/helm.err" || { cat "$W/helm.err"; die "helm template failed (helm dependency build first?)"; }
 node "$HERE/mkconfig.mjs" "$W/rendered.yaml" "$W/config.yaml" "$W/otel.env" "$YAML_DIR" || die "mkconfig"
-node "$HERE/mkconfig.mjs" "$W/rendered.yaml" "$W/config-twin.yaml" "$W/otel-twin.env" "$YAML_DIR" --legacy-twin >/dev/null || die "mkconfig twin"
+# The twin can only be built from a config that does not already use the legacy callback.
+TWIN=1; node "$HERE/mkconfig.mjs" "$W/rendered.yaml" "$W/config-twin.yaml" "$W/otel-twin.env" "$YAML_DIR" --legacy-twin >/dev/null 2>"$W/twin.err" || { TWIN=; echo "negative twin not built: $(tail -1 "$W/twin.err")"; }
 IMAGE=${LITELLM_IMAGE:-$(node -e '
 const y=require(process.argv[2]);const d=y.loadAll(require("fs").readFileSync(process.argv[1],"utf8")).filter(Boolean)
  .find(x=>x.kind==="Deployment"&&/-litellm$/.test(x.metadata.name));console.log(d.spec.template.spec.containers[0].image)' "$W/rendered.yaml" "$YAML_DIR")}
@@ -65,8 +66,13 @@ docker run -d --name lfredis --network $NET --network-alias valkey redis:7 --req
 docker run -d --name lfminio --network $NET --entrypoint sh -e MINIO_ROOT_USER=minio -e MINIO_ROOT_PASSWORD=miniosecret cgr.dev/chainguard/minio \
   -c 'mkdir -p /data/langfuse && minio server --address ":9000" /data' >/dev/null
 docker run -d --name lfstub --network $NET --network-alias stub -v "$HERE":/h:ro -v "$W/data":/data -e DATA_DIR=/data node:22-alpine node /h/stub.mjs >/dev/null
-for i in $(seq 1 60); do docker exec lfpg pg_isready -U postgres >/dev/null 2>&1 && docker exec lfch wget -q --spider http://localhost:8123/ping 2>/dev/null && break; sleep 2; done
-docker exec lfpg psql -U postgres -q -c 'CREATE DATABASE litellm' || die "create litellm database"
+# Langfuse migrates ClickHouse over the native port at start: wait for it, not only for HTTP.
+for i in $(seq 1 60); do
+  docker exec lfpg pg_isready -h 127.0.0.1 -U postgres >/dev/null 2>&1 \
+    && docker exec lfch clickhouse-client --user clickhouse --password clickhouse --query 'SELECT 1' >/dev/null 2>&1 && break
+  sleep 2
+done
+docker exec lfpg psql -h 127.0.0.1 -U postgres -q -c 'CREATE DATABASE litellm' || die "create litellm database"
 LFENV=(-e DATABASE_URL=postgresql://postgres:postgres@lfpg:5432/postgres -e SALT=mysalt -e NEXTAUTH_URL=http://localhost:3000
   -e ENCRYPTION_KEY=0000000000000000000000000000000000000000000000000000000000000000 -e TELEMETRY_ENABLED=false
   -e CLICKHOUSE_MIGRATION_URL=clickhouse://lfch:9000 -e CLICKHOUSE_URL=http://lfch:8123 -e CLICKHOUSE_USER=clickhouse
@@ -74,8 +80,8 @@ LFENV=(-e DATABASE_URL=postgresql://postgres:postgres@lfpg:5432/postgres -e SALT
   -e LANGFUSE_S3_EVENT_UPLOAD_BUCKET=langfuse -e LANGFUSE_S3_EVENT_UPLOAD_REGION=auto -e LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID=minio
   -e LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY=miniosecret -e LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT=http://lfminio:9000
   -e LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE=true -e LANGFUSE_S3_EVENT_UPLOAD_PREFIX=events/)
-docker run -d --name lfworker --network $NET "${LFENV[@]}" "langfuse/langfuse-worker:$LANGFUSE_VERSION" >/dev/null
-docker run -d --name lfweb --network $NET -p 127.0.0.1:13000:3000 "${LFENV[@]}" -e NEXTAUTH_SECRET=mysecret \
+docker run -d --name lfworker --restart always --network $NET "${LFENV[@]}" "langfuse/langfuse-worker:$LANGFUSE_VERSION" >/dev/null
+docker run -d --name lfweb --restart always --network $NET -p 127.0.0.1:13000:3000 "${LFENV[@]}" -e NEXTAUTH_SECRET=mysecret \
   -e LANGFUSE_INIT_ORG_ID=org-test -e LANGFUSE_INIT_ORG_NAME=test -e LANGFUSE_INIT_PROJECT_ID=agent-core -e LANGFUSE_INIT_PROJECT_NAME=agent-core \
   -e LANGFUSE_INIT_PROJECT_PUBLIC_KEY=$PK -e LANGFUSE_INIT_PROJECT_SECRET_KEY=$SK \
   -e LANGFUSE_INIT_USER_EMAIL=test@example.invalid -e LANGFUSE_INIT_USER_NAME=test -e LANGFUSE_INIT_USER_PASSWORD=test-password-1 \
@@ -111,9 +117,15 @@ docker run --rm --network $NET --entrypoint python -w /app -e DATABASE_URL=postg
   -e DISABLE_SCHEMA_UPDATE=false "$IMAGE" litellm/proxy/prisma_migration.py > "$W/migrate.log" 2>&1 || { tail -30 "$W/migrate.log"; die "migration failed"; }
 tail -2 "$W/migrate.log"
 gw_up "$W/config.yaml" "$W/otel.env" || die "the gateway did not start"
-VERSION=$(curl -s $GW/health/readiness | python3 -c 'import json,sys; print(json.load(sys.stdin).get("litellm_version",""))')
-echo "gateway ready, /health/readiness litellm_version=$VERSION"
-[ -n "$VERSION" ] || die "/health/readiness reports no litellm_version"
+# 1.109.1 reports its version and the callbacks it loaded on /health/readiness/details (admin).
+readiness() { curl -s -H "Authorization: Bearer $MASTER" $GW/health/readiness/details > "$W/readiness.json"; python3 - "$W/readiness.json" <<'PY'
+import json,sys
+d=json.load(open(sys.argv[1])); cb=d.get('success_callbacks') or []
+print(f"gateway ready: litellm_version={d.get('litellm_version','(absent)')}; Langfuse callbacks loaded: {[c for c in cb if 'angfuse' in c] or '(none)'}")
+PY
+}
+readiness
+VERSION=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("litellm_version","unknown"))' "$W/readiness.json")
 curl -sS -o /dev/null -w 'shared agent key: HTTP %{http_code}\n' -H "Authorization: Bearer $MASTER" -H 'content-type: application/json' \
   $GW/key/generate -d '{"key":"'$AGENT_KEY'","key_alias":"sovereign-agents","models":["sovereign-default"],"max_budget":25,"budget_duration":"7d"}'
 
@@ -141,8 +153,10 @@ h=rows[0]['headers']
 print('OTLP', rows[0]['method'], rows[0]['url'], 'content-type', h.get('content-type'), 'x-langfuse-ingestion-version', h.get('x-langfuse-ingestion-version','(absent)'))
 PY
 
+[ -n "$TWIN" ] || die "the negative twin could not be built from this chart's config (it already uses the legacy callback)"
 step "NEGATIVE TWIN: success_callback [\"langfuse\"] added — the test must fail on the generation count"
 gw_up "$W/config-twin.yaml" "$W/otel-twin.env" || die "gateway (twin) did not start"
+readiness
 run_test "$W/e2e-twin.log"; trc=$?
 grep -E '^# (pass|fail)|^not ok|GENERATION' "$W/e2e-twin.log" | head -20
 [ $trc != 0 ] || die "the negative twin PASSED — the test cannot tell one generation from two"

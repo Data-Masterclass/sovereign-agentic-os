@@ -104,5 +104,16 @@ test('RUN-CRED: a budget rejection is recognised from LiteLLM 400 and 429', () =
   assert.equal(isBudgetRejection(429, 'budget exceeded for key'), true);
   assert.equal(isBudgetRejection(400, 'model does not support tools'), false);
   assert.equal(isBudgetRejection(500, 'max_budget'), false);
+  // The exact bodies two real gateway versions return for a spent key (measured, see
+  // docs/ops/litellm-upgrade.md). 1.108 moved the status from 429 to 422.
+  const spent190 = '{"error":{"message":"Budget has been exceeded! Current cost: 0.002375, Max budget: 0.001","type":"budget_exceeded","param":null,"code":"429"}}';
+  const spent1108 = '{"error":{"message":"Budget has been exceeded! Key=os-bud-sys-1 (sk-...5389) Current cost: 0.002375, Max budget: 0.001","type":"budget_exceeded","param":null,"code":"422"}}';
+  assert.equal(isBudgetRejection(429, spent190), true);
+  assert.equal(isBudgetRejection(422, spent1108), true, 'LiteLLM 1.108 answers a spent budget with 422');
+  // …and the look-alikes that must NOT become "budget used up":
+  const limited = '{"error":{"message":"Rate limit exceeded for api_key: e3e5. Limit type: tokens. Current limit: 1000, Remaining: 0. Limit resets at: 2026-11-19 18:55:46 UTC","type":"throttling_error","param":null,"code":"429"}}';
+  assert.equal(isBudgetRejection(429, limited), false, 'a rate limit is waited out, never reported as a spent budget');
+  assert.equal(isBudgetRejection(422, '{"detail":[{"type":"missing","loc":["body","messages"],"msg":"Field required"}]}'), false);
+  assert.equal(isBudgetRejection(403, spent1108), false);
   assert.equal(new BudgetExceededError('x').code, 'budget_exceeded');
 });

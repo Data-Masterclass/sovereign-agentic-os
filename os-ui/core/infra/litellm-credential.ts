@@ -169,11 +169,19 @@ export class GatewayRateLimitedError extends Error {
 }
 
 /**
- * Is this LiteLLM rejection a budget problem? LiteLLM answers 400 with a
- * message rather than a typed code, so the UI would otherwise show a raw 400.
+ * Is this LiteLLM rejection a budget problem? The STATUS has moved between versions while the
+ * body kept saying so, which is why the body decides and the status only bounds it:
+ *   • 1.90.0   — 429 `{"error":{"message":"Budget has been exceeded! Current cost: …, Max budget: …","type":"budget_exceeded","code":"429"}}`
+ *   • 1.108.12 — 422 `{"error":{"message":"Budget has been exceeded! Key=<alias> (sk-...xxxx) Current cost: …, Max budget: …","type":"budget_exceeded","code":"422"}}`
+ *   • older    — 400 with `ExceededBudget` / `max_budget` wording.
+ * (Both newer bodies measured against real containers; docs/ops/litellm-upgrade.md.) A 422 that
+ * is not about a budget — a validation error — must stay a plain rejection, so the wording is
+ * still required, and a rate-limit 429 ("Rate limit exceeded … Limit resets at: …") never
+ * matches it.
  */
 export function isBudgetRejection(status: number, body: string): boolean {
-  return (status === 400 || status === 429) && /budget|exceeded.*spend|max_budget/i.test(body);
+  if (status !== 400 && status !== 422 && status !== 429) return false;
+  return /"type"\s*:\s*"budget_exceeded"/.test(body) || /budget|exceeded.*spend|max_budget/i.test(body);
 }
 
 /** How the gateway refused a call — a 4xx the OS must surface, never paper over. */
@@ -181,7 +189,7 @@ export type GatewayRejectionCode = 'unauthorized' | 'forbidden' | 'budget_exceed
 
 /**
  * Thrown when LiteLLM answers an inference call with a 4xx: the key is wrong (401), the model is
- * outside the key's allowlist (403), the budget is spent (400 budget / 429), or the request is
+ * outside the key's allowlist (403), the budget is spent (400 / 422 / 429 with budget wording), or the request is
  * malformed (400). A 4xx is a decision about THIS caller, so it is never a reason to fall back to
  * substitute data — the embedders throw it instead of indexing hash vectors (checklist A31).
  */

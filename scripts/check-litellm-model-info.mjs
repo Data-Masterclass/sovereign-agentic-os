@@ -29,7 +29,14 @@
  *        `litellm_settings.failure_callback` does not send to Langfuse (a request the proxy
  *        refuses is logged with its full body, which the redaction switch does not cover);
  *     7. the shared key has a positive `maxBudget` AND a `budgetDuration` (a lifetime cap ends in
- *        a permanent outage).
+ *        a permanent outage);
+ *     8. the gateway traces through ONE Langfuse callback: `litellm_settings.callbacks` holds
+ *        `langfuse_otel`, no callback list holds the legacy `langfuse`, `litellm.envVars` sets
+ *        `LITELLM_OTEL_V2: "true"` and a valid `LITELLM_OTEL_LANGFUSE_SPAN_SCOPE` (`full` |
+ *        `llm_only`; anything else silently disables OTel v2), and under `full` a
+ *        `LITELLM_OTEL_BAGGAGE_PROMOTED_KEYS` without the model keys (else every span of a request
+ *        is a GENERATION). Both callbacks together log every call twice (LiteLLM's migration
+ *        guide; scripts/tests/litellm-langfuse proves it).
  *   Pure file reads — no helm, no cluster, no network — so it never skips. Wired into
  *   `os-ui/scripts/gate.sh`. docs/components/litellm.md "Prices and budgets" explains the rules.
  */
@@ -127,6 +134,26 @@ function check(name, values, images) {
   if (failureCallbacks.some((c) => /^langfuse/.test(String(c)))) {
     problems.push(`litellm_settings.failure_callback contains ${JSON.stringify(failureCallbacks)} — for a request the proxy refuses (rate limit, budget, model not allowed) LiteLLM logs the full request body to Langfuse, and turn_off_message_logging does not redact it`);
   }
+  const callbackLists = { callbacks: pc.litellm_settings?.callbacks, success_callback: pc.litellm_settings?.success_callback, failure_callback: pc.litellm_settings?.failure_callback };
+  for (const [field, v] of Object.entries(callbackLists)) {
+    if ([].concat(v ?? []).some((c) => String(c) === 'langfuse')) {
+      problems.push(`litellm_settings.${field} contains the legacy "langfuse" callback — next to "langfuse_otel" every model call is logged twice, and Langfuse v4 rejects it`);
+    }
+  }
+  if (![].concat(pc.litellm_settings?.callbacks ?? []).includes('langfuse_otel')) {
+    problems.push('litellm_settings.callbacks does not contain "langfuse_otel" — the gateway would record no generation in Langfuse');
+  }
+  const env = values.litellm?.envVars ?? {};
+  if (String(env.LITELLM_OTEL_V2) !== 'true') problems.push(`litellm.envVars.LITELLM_OTEL_V2 must be "true" (got ${JSON.stringify(env.LITELLM_OTEL_V2)}) — without it langfuse_otel runs on the older OTel integration`);
+  if (!['full', 'llm_only'].includes(String(env.LITELLM_OTEL_LANGFUSE_SPAN_SCOPE))) {
+    problems.push(`litellm.envVars.LITELLM_OTEL_LANGFUSE_SPAN_SCOPE must be "full" or "llm_only" (got ${JSON.stringify(env.LITELLM_OTEL_LANGFUSE_SPAN_SCOPE)}) — an invalid value stops every OTel v2 callback from loading`);
+  }
+  if (String(env.LITELLM_OTEL_LANGFUSE_SPAN_SCOPE) === 'full') {
+    const promoted = env.LITELLM_OTEL_BAGGAGE_PROMOTED_KEYS;
+    const keys = promoted === undefined ? ['gen_ai.request.model', 'litellm.provider.model'] : String(promoted).split(',').map((k) => k.trim());
+    const modelKeys = keys.filter((k) => k === 'gen_ai.request.model' || k === 'litellm.provider.model');
+    if (modelKeys.length) problems.push(`litellm.envVars.LITELLM_OTEL_BAGGAGE_PROMOTED_KEYS ${promoted === undefined ? 'is unset (LiteLLM\'s default list)' : 'contains'} ${modelKeys.join(', ')} — under span scope "full" every span of a request then becomes a GENERATION in Langfuse (6 per call, measured on 1.109.1)`);
+  }
   if (pc.general_settings?.store_prompts_in_spend_logs === true || String(pc.general_settings?.store_prompts_in_spend_logs).toLowerCase() === 'true') {
     problems.push('general_settings.store_prompts_in_spend_logs is true — prompts would be stored in the gateway database');
   }
@@ -160,4 +187,4 @@ if (failed.length) {
   }
   process.exit(1);
 }
-console.log(`check-litellm-model-info: ok — ${results.map((r) => `${r.aliases} aliases priced on ${r.name}`).join('; ')}; vision flags match the OS image allowlist; gateway redaction is on; the shared key's budget resets`);
+console.log(`check-litellm-model-info: ok — ${results.map((r) => `${r.aliases} aliases priced on ${r.name}`).join('; ')}; vision flags match the OS image allowlist; gateway redaction is on; one Langfuse callback (langfuse_otel, OTel v2); the shared key's budget resets`);

@@ -73,6 +73,8 @@ export type LlmCompletion = {
   refusal?: string;
   /** Present only when the backend actually REPORTED usage — never fabricated. */
   usage?: LlmUsage;
+  /** The call id the gateway reports for this call (`x-litellm-call-id`), when it went through the gateway. */
+  gatewayCallId?: string;
 };
 
 export type LlmRequest = {
@@ -88,7 +90,7 @@ export type LlmRequest = {
    * gateway's own Langfuse callback lands INSIDE the run trace instead of as a stray trace.
    * Absent on calls outside a run (the assistant, classify).
    */
-  observe?: { traceId: string; parentObservationId?: string; node?: string };
+  observe?: { traceId: string; parentObservationId?: string; node?: string; callId?: string };
 };
 export type LlmCall = (req: LlmRequest) => Promise<LlmCompletion>;
 
@@ -554,7 +556,7 @@ export async function runAgentic(opts: {
    * unlinked trace per call. Unset ⇒ exactly the prior behaviour (N orphan traces), which
    * is what every caller got before the assistant path started passing one.
    */
-  observe?: { traceId: string; parentObservationId?: string; node?: string };
+  observe?: { traceId: string; parentObservationId?: string; node?: string; callId?: string };
 }): Promise<AgenticResult> {
   const maxIterations = opts.maxIterations ?? DEFAULT_MAX_ITERATIONS;
   const budget = opts.budget ?? DEFAULT_MESSAGE_BUDGET;

@@ -11,7 +11,7 @@
                   session (core/infra/langfuse.ts, governed.ts, agent-governed.ts,
                   policy/audit.ts, tool-sso-langfuse.ts, tool-proxy.ts)
     os-ui-worker  the same run-path env (`soa.osUI.runEnv`): ingestion from agent runs
-    LiteLLM       `success_callback: ["langfuse"]` -> LANGFUSE_HOST
+    LiteLLM       `callbacks: ["langfuse_otel"]` (OTLP) -> LANGFUSE_HOST
     langfuse      the subchart's own worker (same release), admitted so the pair stays
                   self-contained if a future version calls back into web
 

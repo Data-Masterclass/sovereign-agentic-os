@@ -84,11 +84,13 @@ async function observationsOf(traceId: string, appSpanId: string): Promise<Obs[]
     }
     await sleep(2000);
   }
-  // A second generation (the legacy callback) can arrive a few seconds after the first.
+  // A second generation (the legacy callback) can arrive a few seconds after the first. Keep every
+  // observation seen in any read: the trace read is eventually consistent.
   await sleep(10_000);
+  const seen = new Map(last.map((o) => [o.id, o]));
   const res = await fetch(`${LF}/api/public/traces/${traceId}`, { headers: { authorization: basic } });
-  if (res.ok) last = ((await res.json()) as { observations?: Obs[] }).observations ?? [];
-  return last;
+  if (res.ok) for (const o of ((await res.json()) as { observations?: Obs[] }).observations ?? []) seen.set(o.id, o);
+  return [...seen.values()];
 }
 
 test('tracing e2e: the environment names Langfuse and the gateway', { skip }, () => {
@@ -136,11 +138,10 @@ test('tracing e2e: one model call is exactly one GENERATION, nested under the ap
   if (SCOPE === 'llm_only') assert.equal(gen.parentObservationId, appSpanId, 'llm_only: the GENERATION is a direct child of the app span');
   if (SCOPE === 'full') assert.equal(chain.length, 2, 'full: GENERATION -> the gateway request span -> the app span');
 
-  // The call id the OS sent is the one the gateway reports.
-  assert.ok(
-    gen.id === completion.gatewayCallId || JSON.stringify(gen.metadata ?? {}).includes(completion.gatewayCallId!),
-    `the GENERATION carries the x-litellm-call-id ${completion.gatewayCallId} (id ${gen.id}, metadata ${JSON.stringify(gen.metadata).slice(0, 400)})`,
-  );
+  // The call id the OS sent (x-litellm-call-id) is the one the gateway reports: LiteLLM OTel v2
+  // puts it in the span attribute `litellm.call_id`, which Langfuse keeps under metadata.attributes.
+  const attrs = ((gen.metadata ?? {}) as { attributes?: Record<string, unknown> }).attributes ?? {};
+  assert.equal(attrs['litellm.call_id'], completion.gatewayCallId, `the GENERATION carries the x-litellm-call-id (metadata ${JSON.stringify(gen.metadata).slice(0, 300)})`);
 
   // Tokens and cost: the provider's usage once (no doubling) and the chart's price.
   const usage = gen.usageDetails ?? {};

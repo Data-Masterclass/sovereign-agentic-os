@@ -114,7 +114,9 @@ test('C-R3.2: liteLlmCaller forwards observe as LiteLLM Langfuse metadata and ta
     (config as { litellmAgentKey: string }).litellmAgentKey = origKey;
   }
   const metadata = (seen.body?.metadata ?? {}) as Record<string, unknown>;
-  assert.equal(metadata.existing_trace_id, 'ask-xyz', 'without existing_trace_id the gateway starts a stray trace');
+  // LiteLLM OTel v2 ignores the legacy nesting fields; the trace link is the `traceparent` /
+  // `x-litellm-call-id` headers (gateway-trace.test.ts), so the body no longer carries them.
+  assert.equal(metadata.existing_trace_id, undefined, 'the legacy nesting field is not sent (ignored on OTel v2)');
   assert.equal(metadata.trace_user_id, 'u-42');
   const tags = metadata.tags as string[];
   assert.ok(tags.includes(`tab:${ASK_COST_TAB}`), `Ask-surface cost must be readable back; saw ${tags.join(',')}`);

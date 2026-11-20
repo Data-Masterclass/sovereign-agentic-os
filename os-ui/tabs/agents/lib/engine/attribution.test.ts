@@ -22,7 +22,7 @@ import { memoryCheckpointer } from '@tabs/agents/lib/engine/checkpointer';
 import { FIXTURE_TASK, SHAPE_SUPERVISOR_YAML, graphDeps, scriptedLlm, type HoldSink } from '@tabs/agents/lib/engine/parity-harness';
 import { noopObserver, type RunObserver } from '@core/infra/trace-port';
 
-type Captured = { auth: string; body: Record<string, unknown> };
+type Captured = { auth: string; body: Record<string, unknown>; callId?: string };
 
 const realFetch = globalThis.fetch;
 afterEach(() => { globalThis.fetch = realFetch; });
@@ -32,7 +32,8 @@ function gatewayStub(captured: Captured[]) {
   const script = scriptedLlm(FIXTURE_TASK);
   return (async (_input: RequestInfo | URL, init?: RequestInit) => {
     const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
-    captured.push({ auth: String((init?.headers as Record<string, string>)?.authorization ?? ''), body });
+    const headers = (init?.headers ?? {}) as Record<string, string>;
+    captured.push({ auth: String(headers.authorization ?? ''), body, callId: headers['x-litellm-call-id'] });
     const req: LlmRequest = { model: String(body.model), messages: body.messages as LlmRequest['messages'], tools: body.tools as LlmRequest['tools'] };
     const out = await script(req);
     const message = {
@@ -74,7 +75,8 @@ test('ATTRIBUTION (A27): every model call of a real engine run carries user, dom
   assert.equal(result.reachedEnd, true);
   assert.ok(captured.length >= 5, `a supervisor + two members make several model calls (saw ${captured.length})`);
 
-  for (const { auth, body } of captured) {
+  for (const { auth, body, callId } of captured) {
+    assert.match(String(callId), /^[0-9a-f-]{36}$/, 'every call carries its gateway call id');
     assert.equal(auth, `Bearer ${config.litellmAgentKey}`, 'the scoped agent key, exactly');
     assert.notEqual(auth, `Bearer ${config.litellmMasterKey}`, 'the MASTER key reached an inference call');
     assert.equal(body.user, 'os-rae');
@@ -83,12 +85,11 @@ test('ATTRIBUTION (A27): every model call of a real engine run carries user, dom
     assert.ok(meta.tags.includes(`${TAG_AGENT}sys-attr`), 'agent tag');
     assert.ok(meta.tags.includes(`${TAG_RUN}${runId}`), 'run tag');
     assert.ok(meta.tags.includes(`${TAG_TAB}agents`), 'tab tag');
-    // A24: the gateway's own Langfuse callback is told to log INTO the run trace, under the OS generation.
-    assert.equal(meta.existing_trace_id, runId);
-    // A4 review: `existing_trace_id` is the key LiteLLM's Langfuse callback reads. The duplicate
-    // `trace_id` was dropped — two names for one id invite them to disagree.
-    assert.equal(meta.trace_id, undefined, 'only existing_trace_id carries the run trace');
-    assert.ok(meta.parent_observation_id, 'parent observation forwarded');
+    // 10 F1: LiteLLM OTel v2 ignores the legacy nesting fields; the OS names each call with
+    // `x-litellm-call-id` (and nests by `traceparent` once run ids are W3C ids).
+    assert.equal(meta.existing_trace_id, undefined, 'legacy nesting field not sent');
+    assert.equal(meta.trace_id, undefined);
+    assert.equal(meta.parent_observation_id, undefined, 'legacy nesting field not sent');
     assert.equal(meta.node, 'stamped', 'the agent rides along as metadata.node (per-agent diagnostics)');
     assert.equal(meta.trace_user_id, 'rae');
     assert.equal(meta.session_id, 'system:sys-attr', 'the system session (design 05 §5.2)');
