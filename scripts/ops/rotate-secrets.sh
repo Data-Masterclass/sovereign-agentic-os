@@ -530,10 +530,10 @@ Promise.all(["/v1/models", "/v1/mcp/tools"].map(p => fetch(u + p, { headers: h }
     un=$(python3 "$REPO/scripts/lib/rotation-checks.py" unowned "$rw/pj.json" "$NS" $rotated)
     while read -r st l; do
       [ -n "$st" ] || continue
-      if [ "$st" = live ]; then fail "unowned $l reads a rotated Secret and is still running: no rollout restarts it (delete or re-run it)"
+      if [ "$st" = live ]; then fail "$l reads a rotated Secret and is still running: no rollout restarts it (let it finish or delete it, then verify again)"
       else echo "   note finished unowned $l (runs nothing; delete it when convenient)"; fi
     done <<<"$un"
-    grep -q '^live ' <<<"$un" || pass "no live unowned Pod or Job reads a rotated Secret"
+    grep -q '^live ' <<<"$un" || pass "no live unowned Pod/Job or running CronJob run reads a rotated Secret"
     rm -rf "$rw"
 
     say "Langfuse (port-forward)"
