@@ -43,6 +43,7 @@ esac
 STUB
 cat > "$BIN/helm" <<'STUB'
 #!/usr/bin/env bash
+[ "$1" = version ] && { echo v4.2.2; exit 0; }   # helm-version-guard.sh
 echo "helm $*" >> "$FAKE_LOG"
 case "$*" in *history*) echo '[]' ;; esac
 STUB

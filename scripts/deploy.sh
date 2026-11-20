@@ -196,9 +196,6 @@ if [ -n "$FROM_REGISTRY" ]; then
 fi
 
 say "env $DEPLOY_ENV: context $CTX / namespace $NS"
-# Helm 4 or newer, before any Helm call (the Secret deletion guard below relies on Helm 4's
-# behaviour). --verify-only above uses no Helm. Fail closed.
-bash scripts/lib/helm-version-guard.sh || exit 1
 # THE ENV/CONTEXT GUARD. Before any cluster read: a dev deploy can never reach production.
 if guard=$(bash scripts/lib/env-guard.sh --env "$DEPLOY_ENV" --context "$CTX" 2>/dev/null); then
   echo "   ${guard##*$'\n'}"
@@ -207,6 +204,9 @@ else
   echo "DEPLOY_REFUSED — env $DEPLOY_ENV does not match context $CTX; nothing was changed" >&2
   exit 1
 fi
+# Helm 4 or newer, before any other Helm call (the Secret deletion guard below relies on Helm 4's
+# behaviour). After the env guard, so a wrong context is refused first. Fail closed.
+bash scripts/lib/helm-version-guard.sh || exit 1
 
 revision_of() {
   helm --kube-context "$CTX" history "$REL" -n "$NS" --max 1 -o json 2>/dev/null \

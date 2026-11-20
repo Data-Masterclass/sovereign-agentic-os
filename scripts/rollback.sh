@@ -58,11 +58,11 @@ NS=${NS:-agentic-os}
 REL=${REL:-agentic-os}
 case $TO in ''|*[!0-9]*) [ -z "$TO" ] || refuse "--to must be a revision number" ;; esac
 
-hv=$(bash scripts/lib/helm-version-guard.sh 2>&1) || refuse "${hv#HELM_VERSION_REFUSED — }"
-echo "$hv"
 guard=$(bash scripts/lib/env-guard.sh --env "$ENV_NAME" --context "$CTX" 2>/dev/null) \
   || refuse "${guard##*$'\n'}"
 echo "   ${guard##*$'\n'}"
+hv=$(bash scripts/lib/helm-version-guard.sh 2>&1) || refuse "${hv#HELM_VERSION_REFUSED — }"
+echo "$hv"
 
 history=$(helm --kube-context "$CTX" history "$REL" -n "$NS" --max 20 -o json) || refuse "helm history failed on $CTX"
 read -r CURRENT TARGET <<<"$(printf '%s' "$history" | python3 -c '
