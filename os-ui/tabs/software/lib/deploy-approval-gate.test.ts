@@ -23,6 +23,7 @@ const builder: CurrentUser = testUser({ id: 'wp54-ben', name: 'Ben', domains: ['
 const REGISTRY = 'registry.example.com/sovereign-os-apps';
 
 let headSha = 'a'.repeat(40);
+let extraFiles: { path: string; content: string }[] = [];
 const refsRead: (string | undefined)[] = [];
 
 function counting() {
@@ -48,7 +49,7 @@ async function imageApp(name: string) {
   __setAppProjectGitForTests(true);
   __setAppTreeReaderForTests(async (_d, _p, opts) => {
     refsRead.push(opts.ref);
-    return { files, sha: headSha, truncated: false };
+    return { files: [...files, ...extraFiles], sha: headSha, truncated: false };
   });
   return a;
 }
@@ -77,12 +78,11 @@ test('request_deploy pins the commit; decide_deploy by a Builder applies EXACTLY
   // A Creator cannot approve their own request.
   await assert.rejects(decideDeploy((res as { card: { id: string } }).card.id, creator, 'approve', undefined, { runner: req.runner }), /Builder|Administrator/);
 
-  headSha = 'c'.repeat(40); // HEAD moves after the request: the approval still covers the requested commit only
   refsRead.length = 0;
   const dec = counting();
   await decideDeploy((res as { card: { id: string } }).card.id, builder, 'approve', undefined, { runner: dec.runner });
   assert.ok(dec.calls.some((c) => c.startsWith('POST') && c.endsWith('/deployments')), 'the approved commit is applied');
-  assert.deepEqual([...new Set(refsRead)], ['b'.repeat(40)], 'the deploy read the pinned commit, not HEAD');
+  assert.deepEqual([...new Set(refsRead.filter(Boolean))], ['b'.repeat(40)], 'the deploy read the pinned commit');
 });
 
 test('a routine request_deploy on a LIVE image app never auto-applies new manifests', async () => {
@@ -103,4 +103,48 @@ test('a routine request_deploy on a LIVE image app never auto-applies new manife
   await reconcileDeployStatus(app.id, creator, prev.runner);
   assert.ok(refsRead.length > 0, 'the approved tree was read');
   assert.deepEqual([...new Set(refsRead)], ['e'.repeat(40)], 'only the approved commit');
+});
+
+test('FOLLOW-UP: the review scans the PINNED commit from git — not the OS file cache', async () => {
+  headSha = '1'.repeat(40);
+  const app = await imageApp('Gate Scan Git');
+  refsRead.length = 0;
+  extraFiles = [{ path: 'src/leak.ts', content: 'export const k = "AKIAIOSFODNN7EXAMPLE";\n' }]; // only in git
+  try {
+    const res = await requestDeploy(app.id, creator, { runner: counting().runner });
+    assert.equal(res.kind, 'review');
+    if (res.kind !== 'review') return;
+    assert.equal(res.card.sha, headSha, 'the commit is pinned on the card');
+    assert.ok(refsRead.includes(headSha), 'the scanned tree was read at the pinned commit');
+    assert.equal(res.card.scan.passed, false, 'the secret that exists only in git is what the Builder sees');
+    assert.ok(res.card.diff.files.some((f) => f.path === 'src/leak.ts'), 'the diff is of the git tree');
+  } finally {
+    extraFiles = [];
+  }
+  // NEGATIVE TWIN: the same app without the git-only file scans clean.
+  const clean = await requestDeploy((await imageApp('Gate Scan Clean')).id, creator, { runner: counting().runner });
+  assert.equal(clean.kind === 'review' && clean.card.scan.passed, true);
+});
+
+test('FOLLOW-UP: a commit between scan and approval INVALIDATES the approval — nothing deploys', async () => {
+  headSha = '2'.repeat(40);
+  const app = await imageApp('Gate TOCTOU');
+  const res = await requestDeploy(app.id, creator, { runner: counting().runner });
+  assert.equal(res.kind, 'review');
+  if (res.kind !== 'review') return;
+  headSha = '3'.repeat(40); // a new commit lands after the scan
+  const dec = counting();
+  await assert.rejects(
+    decideDeploy(res.card.id, builder, 'approve', undefined, { runner: dec.runner }),
+    (e: Error & { status?: number }) => e.status === 409 && /changed|commit/i.test(e.message),
+  );
+  assert.equal(dec.calls.length, 0, 'nothing applied');
+  const after = await getAppForUser(app.id, creator);
+  assert.notEqual(after.deploy.state, 'live');
+  assert.equal(after.deploy.approvedSha ?? null, null, 'no commit was approved');
+  // NEGATIVE TWIN: back at the scanned commit, the same approval goes through.
+  headSha = '2'.repeat(40);
+  const ok = counting();
+  await decideDeploy(res.card.id, builder, 'approve', undefined, { runner: ok.runner });
+  assert.ok(ok.calls.some((c) => c.startsWith('POST') && c.endsWith('/deployments')));
 });
