@@ -43,6 +43,9 @@ outsideChart:
   - name: cert-manager (scripts/dev/platform.sh — controller, webhook, cainjector)
     requests: { cpu: 30m, memory: 192Mi }
     limits: { memory: 384Mi }
+  - name: model-key-proxy (namespace dev-model-key, scripts/dev/bootstrap-secrets.sh)
+    requests: { cpu: 10m, memory: 32Mi }
+    limits: { memory: 64Mi }
   # Apps the acceptance journey AT-d deploys from the Software tab (namespace agentic-apps).
   - name: agentic-apps (journey AT-d)
     requests: { cpu: 200m, memory: 256Mi }

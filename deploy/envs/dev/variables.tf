@@ -30,9 +30,17 @@ variable "region" {
 }
 
 variable "service_account_key_path" {
-  description = "Path to a service-account key of the DEV project (gitignored). Null = STACKIT_SERVICE_ACCOUNT_KEY_PATH."
+  description = <<-EOT
+    Path to a service-account key of the DEV project only (gitignored). REQUIRED, with no
+    fallback to STACKIT_SERVICE_ACCOUNT_KEY_PATH: on an operator machine that variable may hold the
+    production key, and a key of the dev project is the real separation (it cannot act on prod).
+  EOT
   type        = string
-  default     = null
+
+  validation {
+    condition     = length(var.service_account_key_path) > 0 && !can(regex("prod", var.service_account_key_path))
+    error_message = "service_account_key_path must name the DEV project's key file (and not a prod one)."
+  }
 }
 
 variable "name_prefix" {

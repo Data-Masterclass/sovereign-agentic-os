@@ -45,6 +45,24 @@ ingress:
   hosts:
     osUI: os.dev.agentic.datamasterclass.com
 
+# --- Images: the registry-qualified images production runs ---------------------------------
+# The chart's defaults for these four name the laptop's local builds (`sovereign-os/...`, loaded
+# into kind), which a real cluster cannot pull. These are the images production runs (read
+# 2026-11-20 with `kubectl get deploy`), pinned here by digest. (data-runner and query-tool: under
+# their resource blocks below; one YAML key per component.)
+egressProxy:
+  image:
+    repository: ghcr.io/aborek/sovereign-os/egress-proxy
+    tag: "0.1.0@sha256:8426ee9d0cfe297e6fe961bab6a3a9854e1b97cb6ae713158e826f84f456f9ee"
+webFetch:
+  image:
+    repository: ghcr.io/aborek/sovereign-os/web-fetch
+    tag: "0.1.0@sha256:1487d74ff0d7e7327793525701720479df21eecf1ce6bb0b11b228deae08686d"
+dbt:
+  image:
+    repository: ghcr.io/aborek/sovereign-os/dbt
+    tag: "0.2.0@sha256:dcec728155d4ff03f7b999753cb5ec00fd84e37d2cf8be3641a0ee426ae915d5"
+
 osUI:
   publicUrl: https://os.dev.agentic.datamasterclass.com
   offlineMock: refuse            # never invented numbers, also on dev
@@ -66,9 +84,19 @@ osUI:
 
 # --- Models: the same STACKIT AI Model Serving API, a SEPARATE low-budget key --------------
 # The key is the dev project's own Model Serving token (docs/ops/dev-environment.md "Dev model
-# key"); bootstrap-secrets.sh puts it into the private overlay (stackitPremium.local.apiKey).
-# STACKIT tokens carry no spend limit, so the cap is LiteLLM's: 5 a week for the shared key
-# (production: 25) and 1 a week per agent system (above).
+# key"). It is NOT in this namespace: scripts/dev/bootstrap-secrets.sh puts it into the
+# namespace dev-model-key, where a small reverse proxy adds it to each request. The CI account
+# has no rights in that namespace, so it cannot read the key. LiteLLM calls the proxy, and its
+# own api_key below is a placeholder.
+stackitPremium:
+  apiBaseUrl: http://model-key-proxy.dev-model-key.svc.cluster.local:8080/v1
+  local:
+    apiKey: held-by-model-key-proxy
+# STACKIT tokens carry no spend limit, so the caps are LiteLLM's:
+#   - a TOTAL proxy budget (`litellm_settings.max_budget` + `budget_duration`, LiteLLM "Global
+#     proxy budget": https://docs.litellm.ai/docs/proxy/users#global-proxy). It covers every key,
+#     the master key included: 20 per 30 days (in the price book's currency, EUR).
+#   - the shared agent key at 5 a week (production: 25) and 1 a week per agent system (above).
 # As in production, no in-cluster model: the STACKIT API is the upstream.
 mockModel:
   enabled: false
@@ -127,6 +155,10 @@ polaris:
     limits: { cpu: 1, memory: 768Mi }
 
 litellm:
+  proxy_config:
+    litellm_settings:
+      max_budget: 20
+      budget_duration: 30d
   resources:
     requests: { cpu: 100m, memory: 512Mi }
     limits: { cpu: 1, memory: 1536Mi }
@@ -148,11 +180,17 @@ postgres:
     limits: { cpu: 1, memory: 768Mi }
 
 dataRunner:
+  image:
+    repository: ghcr.io/aborek/sovereign-os/data-runner
+    tag: "0.2.2@sha256:8f7b8a3287368c915af90ee37e6053dfd77326d98fea450f87b97f4835a2e482"
   resources:
     requests: { cpu: 50m, memory: 192Mi }
     limits: { cpu: 1, memory: 512Mi }
 
 queryTool:
+  image:
+    repository: ghcr.io/aborek/sovereign-os/query-tool
+    tag: "0.6.2@sha256:3abffd091adf1a53c8d4fddd245f065f5da94625623e66b511c01855b92a8976"
   resources:
     requests: { cpu: 50m, memory: 192Mi }
     limits: { cpu: 1, memory: 512Mi }
