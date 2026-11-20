@@ -3,6 +3,10 @@
  *
  * WP-54: the runner deploys the app's COMMITTED k8s/ manifests (native-deploy.ts) — dry-run
  * first, then for real — and builds no object of its own.
+ *
+ * FEATURE:    WP-54 runner tests — the committed k8s/ manifests are applied, dry run first
+ * USER STORY: As a Builder I want the approved deploy to apply exactly what is in git
+ * ARCHITECTURE: A recording mock Kubernetes client; the real-cluster proof is app-eject.kind.test.ts.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

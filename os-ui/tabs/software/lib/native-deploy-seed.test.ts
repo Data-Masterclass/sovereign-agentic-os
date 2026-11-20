@@ -3,6 +3,10 @@
  *
  * WP-54: a NEW coded app is seeded with its native deploy code — k8s/ manifests for its own host
  * and the image CI workflow — next to the template's Dockerfile.
+ *
+ * FEATURE:    WP-54 seed test — a new coded app gets k8s/ manifests and the image workflow
+ * USER STORY: As an engineer I want a new app to arrive with native build and deploy code
+ * ARCHITECTURE: createApp through the real store; reads the seeded snapshot.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

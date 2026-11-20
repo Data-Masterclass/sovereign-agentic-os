@@ -3,6 +3,10 @@
  *
  * WP-54: a `git push` of `apps/<slug>/k8s/*.yaml` passes the SAME deploy rules as push_app_files —
  * one validator, registered with the receive gate.
+ *
+ * FEATURE:    WP-54 receive-gate kind for apps/<slug>/k8s/**
+ * USER STORY: As a Builder I want a git push of deploy files checked by the same rules as push_app_files
+ * ARCHITECTURE: Registers the kind through registerRepoKind and calls its validate/ingest.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

@@ -6,6 +6,10 @@
  * generate objects of its own. These tests pin the OS-side rules (which kinds, which names, which
  * registry, digest only). Kubernetes' own schema and Pod Security admission are checked by the API
  * server (dry-run), not here — see app-eject.kind.test.ts for that real-cluster proof.
+ *
+ * FEATURE:    WP-54 native deploy contract tests
+ * USER STORY: As a Builder I want the OS's deploy rules (kinds, names, platform registry, digest only) pinned by tests
+ * ARCHITECTURE: Pure unit tests over native-deploy.ts; Kubernetes schema and Pod Security are proven on kind in app-eject.kind.test.ts.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
