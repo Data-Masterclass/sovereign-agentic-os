@@ -35,6 +35,10 @@ test('one README for the root, each present top-level folder and each artifact f
   assert.match(a.get('data/dbt/README.md')!, /cd data\/dbt && dbt parse/);
   assert.match(a.get('agents/triage/README.md')!, /node agents\/triage\/run\.mjs/);
   assert.ok(!a.has('apps/README.md'), 'no README for a folder that does not exist');
+  assert.doesNotMatch(a.get('data/README.md')!, /dagster/, 'no Dagster command without data/dagster/');
+  const withDagster = generatedReadmes([...tree, 'data/dagster/definitions.py'], 'domain-sales');
+  assert.match(withDagster.get('data/README.md')!, /dagster dev -f data\/dagster\/definitions\.py/);
+  assert.ok(withDagster.has('data/dagster/README.md'));
   assert.match(generatedReadmes(tree, userRepoName('a@b.c')).get('README.md')!, /Only they and the platform admins/);
 });
 

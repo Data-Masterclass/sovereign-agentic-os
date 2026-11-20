@@ -40,13 +40,20 @@ const DOCS = {
   git: 'https://git-scm.com/docs/git-clone',
 };
 
-function folders(dbtDir: string): Record<string, Folder> {
+function folders(dbtDir: string, hasDagster: boolean): Record<string, Folder> {
   return {
-    [DATA_DIR]: {
-      what: 'Data products: a complete dbt project and the Dagster definitions that schedule it.',
-      run: [`cd ${dbtDir} && dbt parse && dbt build --target local`, `dagster dev -f ${DAGSTER_DIR}/definitions.py`],
-      docs: [DOCS.dbt, DOCS.dagster],
-    },
+    [DATA_DIR]: hasDagster
+      ? {
+          what: 'Data products: a complete dbt project and the Dagster definitions that schedule it.',
+          run: [`cd ${dbtDir} && dbt parse && dbt build --target local`, `dagster dev -f ${DAGSTER_DIR}/definitions.py`],
+          docs: [DOCS.dbt, DOCS.dagster],
+        }
+      : {
+          // Only what is THERE: the Dagster command appears once `data/dagster/` exists (WP-49).
+          what: 'Data products: a complete dbt project.',
+          run: [`cd ${dbtDir} && dbt parse && dbt build --target local`],
+          docs: [DOCS.dbt],
+        },
     [dbtDir]: {
       what: 'The dbt project (models/{bronze,silver,gold}, tests, semantic models, macros).',
       run: [`cd ${dbtDir} && dbt parse`, `cd ${dbtDir} && dbt build --target local`, `cd ${dbtDir} && mf validate-configs`],
@@ -135,7 +142,7 @@ export function generatedReadmes(paths: Iterable<string>, repo: string, dbtDir: 
     const parts = p.split('/');
     for (let i = 1; i < parts.length; i++) dirs.add(parts.slice(0, i).join('/'));
   }
-  const f = folders(dbtDir);
+  const f = folders(dbtDir, dirs.has(DAGSTER_DIR));
   const owner = ownerLine(repo);
   const out = new Map<string, string>();
   const present = TOP_LEVEL_DIRS.filter((d) => dirs.has(d));

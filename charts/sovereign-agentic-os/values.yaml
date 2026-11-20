@@ -1793,6 +1793,9 @@ osUI:
     layout:
       migration: "off"
       dbtProjectDir: data/dbt
+      # The first Dagster image whose loader and repo-sync read os/layout.yml (built from WP-55).
+      # `migration: apply` refuses to render while the code location or repo-sync is older.
+      dagsterMinVersion: "0.3.3"
     gitDaemon:
       image:
         # Our own image (images/base/git-daemon): no stock git image ships `git daemon` — Alpine
