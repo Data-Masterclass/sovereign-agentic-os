@@ -16,6 +16,7 @@ dagster user code, data-runner, query-tool) are under `images/`, not here.
 | [Dagster](dagster/UPSTREAM.md) | Apache-2.0 |
 | [Docling](docling/UPSTREAM.md) | MIT |
 | [Langfuse](langfuse/UPSTREAM.md) | MIT (core; the upstream `ee/` directory is commercially licensed and not enabled) |
+| [LangGraph JS](langgraph/UPSTREAM.md) | MIT (in-process library, not a deployment) |
 | [LiteLLM](litellm/UPSTREAM.md) | MIT |
 | [MinIO](minio/UPSTREAM.md) | AGPL-3.0-or-later |
 | [Open Policy Agent](opa/UPSTREAM.md) | Apache-2.0 |
