@@ -1,0 +1,13 @@
+# WP-05 filter test: LiteLLM's own config, minimal. One model answered by LiteLLM's documented
+# `mock_response` (no provider call), and the gateway's Langfuse OTel callback as WP-32 ships it.
+model_list:
+  - model_name: sovereign-default
+    litellm_params:
+      model: openai/mock-model
+      api_key: not-a-secret
+      mock_response: "ok"
+litellm_settings:
+  callbacks: ["langfuse_otel"]
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  database_url: os.environ/DATABASE_URL
