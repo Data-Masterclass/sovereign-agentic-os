@@ -56,3 +56,5 @@ trino:
   enabled: false
 osUI:
   enabled: false
+observability:
+  enabled: false
