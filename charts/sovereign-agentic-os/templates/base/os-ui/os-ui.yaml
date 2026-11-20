@@ -147,25 +147,17 @@ spec:
           resources:
             requests: { cpu: 20m, memory: 48Mi }
             limits: { cpu: 200m, memory: 128Mi }
+          {{- /* The SAME client os-ui uses (core/adapters/opensearch/client.ts), run with Node's
+               type stripping straight from the image's source tree: one code path, so the
+               credentials WP-22 adds reach the initContainer too, and a 401 is logged as
+               "credentials missing or wrong" instead of looping silently. */}}
           env:
-            - name: OPENSEARCH_URL
-              value: {{ include "soa.opensearchUrl" . | quote }}
-          command: ["node", "-e"]
+            {{- include "soa.opensearchClientEnv" . | nindent 12 }}
+          command: ["node", "--experimental-strip-types", "--no-warnings", "--input-type=module", "-e"]
           args:
             - |
-              const url = process.env.OPENSEARCH_URL + '/_cluster/health?wait_for_status=yellow&timeout=5s';
-              const deadline = Date.now() + 10 * 60 * 1000;
-              (async () => {
-                for (;;) {
-                  try {
-                    const r = await fetch(url);
-                    if (r.ok) { console.log('opensearch ready'); process.exit(0); }
-                    console.log('opensearch not ready: HTTP ' + r.status);
-                  } catch (e) { console.log('opensearch unreachable: ' + e.message); }
-                  if (Date.now() > deadline) { console.error('gave up waiting for opensearch'); process.exit(1); }
-                  await new Promise((r) => setTimeout(r, 3000));
-                }
-              })();
+              const m = await import('/app/src/core/adapters/opensearch/client.ts');
+              process.exit((await m.waitForOpenSearch()) ? 0 : 1);
       {{- end }}
       containers:
         - name: os-ui

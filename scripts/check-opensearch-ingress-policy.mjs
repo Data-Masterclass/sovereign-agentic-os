@@ -13,7 +13,7 @@
  *     (1) the default install renders `opensearch-allow-os-clients-only`, Ingress-only;
  *     (2) its podSelector matches the labels of the rendered OpenSearch StatefulSet's pods;
  *     (3) :9200 admits EXACTLY the expected component selectors (os-ui, os-ui-worker,
- *         opensearch-snapshot-register, opensearch-snapshot-cron);
+ *         opensearch-snapshot-register, opensearch-snapshot-cron, opensearch-maintenance);
  *     (4) :9300 is admitted between OpenSearch pods;
  *     (5) every rendered workload that references the in-cluster OpenSearch URL carries a
  *         component label the policy admits (worker + snapshots switched on so they render);
@@ -30,7 +30,7 @@ const repo = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const CHART = join(repo, 'charts', 'sovereign-agentic-os');
 const VALUES = join(repo, 'values.local.yaml');
 const POLICY = 'opensearch-allow-os-clients-only';
-const EXPECTED_REST_PEERS = ['opensearch-snapshot-cron', 'opensearch-snapshot-register', 'os-ui', 'os-ui-worker'];
+const EXPECTED_REST_PEERS = ['opensearch-maintenance', 'opensearch-snapshot-cron', 'opensearch-snapshot-register', 'os-ui', 'os-ui-worker'];
 const TAG = 'check-opensearch-ingress-policy';
 
 function skip(why) {
@@ -132,7 +132,7 @@ if (!policy) {
 // (5) No missed client: every rendered workload that points at the in-cluster OpenSearch must be
 // admitted. Worker + snapshots on, so every known client renders.
 {
-  const full = render('-f', VALUES, '--set', 'osUI.worker.enabled=true', '--set', 'opensearchSnapshots.enabled=true', '--set', 'opensearchSnapshots.cronJob.enabled=true');
+  const full = render('-f', VALUES, '--set', 'osUI.worker.enabled=true', '--set', 'opensearchSnapshots.enabled=true', '--set', 'opensearchSnapshots.cronJob.enabled=true', '--set', 'opensearchSnapshots.s3.enabled=true', '--set', 'opensearchSnapshots.s3.bucket=ci-check', '--set', 'opensearchCleanup.enabled=true');
   const pol = findPolicy(full);
   const admitted = new Set(pol ? ingressRules(pol).flatMap((r) => r.peers.map((p) => p['app.kubernetes.io/component'])).filter(Boolean) : []);
   const seen = new Set();
@@ -148,7 +148,7 @@ if (!policy) {
       problems.push(`${kind}/${name} references the OpenSearch URL but its component label [${comps.join(', ') || 'none'}] is not admitted by ${POLICY}`);
     }
   }
-  for (const must of ['Deployment/os-ui', 'Deployment/os-ui-worker', 'Job/register-opensearch-snapshot-repo', 'CronJob/opensearch-snapshot']) {
+  for (const must of ['Deployment/os-ui', 'Deployment/os-ui-worker', 'Job/register-opensearch-snapshot-repo', 'CronJob/opensearch-snapshot', 'Job/register-opensearch-s3-repo', 'Job/opensearch-orphan-cleanup']) {
     if (!seen.has(must)) problems.push(`expected OpenSearch client ${must} was not found in the render — update this check if it moved`);
   }
 }

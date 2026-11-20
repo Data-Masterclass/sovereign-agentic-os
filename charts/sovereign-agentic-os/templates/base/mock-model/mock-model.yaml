@@ -41,7 +41,7 @@ spec:
             - name: PORT
               value: "8080"
             - name: EMBED_DIM
-              value: {{ $m.embedDim | quote }}
+              value: {{ .Values.retrieval.knnDimension | quote }}
           ports:
             - { name: http, containerPort: 8080 }
           readinessProbe:

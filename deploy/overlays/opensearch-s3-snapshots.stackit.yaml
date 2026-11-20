@@ -1,0 +1,65 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+#
+# OpenSearch: our own image (repository-s3) and off-cluster snapshots to STACKIT Object Storage
+# (WP-21, design 02 step 3). Apply it once, through the deploy script:
+#
+#   VALUES_OVERLAY=deploy/overlays/opensearch-s3-snapshots.stackit.yaml ./scripts/deploy.sh --from-registry <os-ui version>
+#
+# From then on it is part of the live release values and later plain deploys carry it.
+#
+# BEFORE APPLYING (the upgrade refuses to render while the Secret is missing):
+#   1. A STACKIT Object Storage bucket (fill `opensearchSnapshots.s3.bucket` below) and a
+#      dedicated credential for it.
+#   2. Secret `opensearch-s3-keystore` in the release namespace with EXACTLY these two keys
+#      (the subchart turns each key into an OpenSearch keystore entry of the same name):
+#        s3.client.default.access_key   s3.client.default.secret_key
+#   3. The image: run build-images.yml for `opensearch` (tag `opensearch-v3.7.0-soa.1`) and put
+#      the pushed digest in `opensearch.image.tag` below.
+#
+# WHY A FILE AND NOT CHART DEFAULTS. `opensearch.config."opensearch.yml"` is one string and
+# `opensearch.extraEnvs` is a list: Helm replaces both whole, and the live release already
+# carries its own copies (path.repo for the fs repository). So the full values live here.
+# The live fs repository settings (path.repo, the snapshots volume) are kept: the fs CronJob
+# runs in parallel for one week after the first verified S3 snapshot.
+#
+# The CI harness (tests/opensearch) renders THIS file and runs the real image with the
+# resulting opensearch.yml and proxy allowlist; only protocol (http to SeaweedFS) differs.
+opensearch:
+  # The subchart derives the major version from image.tag with `semver`; a digest-pinned tag
+  # is not a semver, so it is stated here (upstream value `majorVersion`).
+  majorVersion: "3"
+  image:
+    repository: ghcr.io/data-masterclass/sovereign-os/opensearch
+    tag: "3.7.0-soa.1@sha256:REPLACE-WITH-PUSHED-DIGEST"
+  imagePullSecrets:
+    - name: registry-pull-secret
+  config:
+    opensearch.yml: |
+      cluster.name: opensearch
+      network.host: 0.0.0.0
+      path.repo: ["/usr/share/opensearch/snapshots"]
+      s3.client.default.endpoint: object.storage.eu01.onstackit.cloud
+      s3.client.default.protocol: https
+      s3.client.default.path_style_access: true
+      s3.client.default.region: eu01
+      s3.client.default.proxy.type: http
+      s3.client.default.proxy.host: egress-proxy
+      s3.client.default.proxy.port: 3128
+  extraEnvs:
+    - name: DISABLE_INSTALL_DEMO_CONFIG
+      value: "true"
+    - name: DISABLE_SECURITY_PLUGIN
+      value: "true"
+    # repository-s3 must not probe the EC2 instance-metadata endpoint off AWS.
+    - name: AWS_EC2_METADATA_DISABLED
+      value: "true"
+  keystore:
+    - secretName: opensearch-s3-keystore
+
+opensearchSnapshots:
+  enabled: true
+  s3:
+    enabled: true
+    bucket: "REPLACE-WITH-BUCKET"
+    endpointHost: object.storage.eu01.onstackit.cloud

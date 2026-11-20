@@ -140,6 +140,42 @@ jobs:
           REQUIRE_PG_TESTS: '1'
         run: node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test --test-concurrency=1 'tabs/**/*.pg.test.ts'
 
+  # WP-21: OpenSearch snapshots and cleanup against the REAL image we ship
+  # (images/extensions/opensearch), a REAL S3 store (SeaweedFS) and the chart's own egress proxy,
+  # configured from the rendered chart + deploy/overlays/opensearch-s3-snapshots.stackit.yaml.
+  # Plus the one-client check and its negative twin.
+  test-opensearch:
+    name: test-opensearch
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Setup Node.js
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: 22
+      - name: Setup Helm
+        uses: azure/setup-helm@fe7b79cd5ee1e45176fcad797de68ecaf3ca4814 # v4.2.0
+        with:
+          version: v3.16.3
+      - name: One OpenSearch client in os-ui (+ negative twin)
+        run: |
+          node scripts/check-opensearch-client.mjs
+          bash scripts/tests/check-opensearch-client.test.sh
+      - name: Start the stack (our image, SeaweedFS, egress proxy)
+        run: |
+          pip install "pyyaml>=6,<7"
+          helm dependency build charts/sovereign-agentic-os || helm dependency update charts/sovereign-agentic-os
+          sudo sysctl -w vm.max_map_count=262144
+          bash tests/opensearch/up.sh
+      - name: os-snapshot + os-cleanup (real OpenSearch)
+        run: node --test --test-concurrency=1 tests/opensearch/os-snapshot.int.test.mjs tests/opensearch/os-cleanup.int.test.mjs
+      - name: Logs (on failure)
+        if: failure()
+        run: |
+          docker logs --tail 200 soa-it-opensearch || true
+          docker logs --tail 50 soa-it-proxy || true
+
   build:
     name: build
     runs-on: ubuntu-latest

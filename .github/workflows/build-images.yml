@@ -37,13 +37,14 @@ on:
       - 'git-http-v*'
       - 'dagster-v*'
       - 'docling-v*'
+      - 'opensearch-v*'
   workflow_dispatch:
     inputs:
       image:
         description: which image to build
         required: true
         type: choice
-        options: [os-ui, git-http, git-daemon, dagster, docling]
+        options: [os-ui, git-http, git-daemon, dagster, docling, opensearch]
       version:
         description: the image tag to push (e.g. 0.9.0)
         required: true
@@ -153,7 +154,9 @@ jobs:
             dagster)    dockerfile=images/extensions/dagster/Dockerfile; context=images/extensions ;;
             # docling: upstream docling-serve-cpu plus the allowlisted model weights (no code).
             docling)    dockerfile=images/extensions/docling/Dockerfile; context=images/extensions/docling ;;
-            *) echo "::error::unknown image '$image' — expected one of os-ui, git-http, git-daemon, dagster, docling" >&2; exit 1 ;;
+            # 3.7.0 + repository-s3 (WP-21); tag e.g. opensearch-v3.7.0-soa.1.
+            opensearch) dockerfile=images/extensions/opensearch/Dockerfile; context=images/extensions/opensearch ;;
+            *) echo "::error::unknown image '$image' — expected one of os-ui, git-http, git-daemon, dagster, docling, opensearch" >&2; exit 1 ;;
           esac
           test -f "$dockerfile" || { echo "::error::$dockerfile does not exist" >&2; exit 1; }
           {

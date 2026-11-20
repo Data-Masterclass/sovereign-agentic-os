@@ -42,6 +42,10 @@ postgres:
     secretName: postgres-credentials
 
 # --- OpenSearch -> STACKIT managed OpenSearch --------------------------------
+# NOT WHAT RUNS LIVE (2026-11-20): the live cluster runs the BUNDLED subchart
+# (opensearch.enabled: true) with our own image and S3 snapshots — see
+# deploy/overlays/opensearch-s3-snapshots.stackit.yaml. Managed OpenSearch is an open
+# owner decision (design 02 D6); this block is kept for that option only.
 opensearch:
   enabled: false # no in-cluster OpenSearch subchart
   external:
@@ -222,8 +226,8 @@ osUI:
   image:
     repository: ghcr.io/data-masterclass/sovereign-os/os-ui
     tag: "0.9.6@sha256:4b81a0d9c1ddee577400a05ca0f0b955752e72983da796e494e9e1c092e90e8e"
-  # Server-side search now hits managed OpenSearch (was in-cluster opensearch:9200).
-  opensearchUrl: "https://REPLACE-opensearch-host:9200"
+  # OPENSEARCH_URL is derived by the chart helper `soa.opensearchUrl` from
+  # `opensearch.external` below (osUI.opensearchUrl was removed in WP-21).
   # Browser-reachable consoles -> the public Ingress hosts (was localhost port-forwards).
   supersetUrl: "https://superset.REPLACE-DNS-NAME"
   # No langfuseConsoleUrl: Langfuse has no public route, so the OS shows no "open in Langfuse"

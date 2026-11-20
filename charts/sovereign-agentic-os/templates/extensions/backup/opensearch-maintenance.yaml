@@ -1,0 +1,167 @@
+{{- /*
+  OpenSearch maintenance (WP-21, design 02 steps 1 and 3). Rendered only with the bundled
+  OpenSearch (`opensearch.enabled`).
+
+  1. ConfigMap `opensearch-maintenance` (a plain release resource, so it exists before the
+     hooks run) — the chart's one shell client (files/opensearch/lib/
+     os-curl.sh), the two scripts below, and the rendered repository and SM policy bodies.
+     The CI harness (tests/opensearch) renders this same ConfigMap and runs the same scripts
+     against the real image, so what is tested is what deploys.
+
+  2. Job `register-opensearch-s3-repo` (opensearchSnapshots.s3.enabled; hook weight 2, after
+     the fs registration at 1): PUT the `s3` repository, POST `_verify` (failure = Job failure),
+     create or update the SM policy. Idempotent.
+
+  3. Job `opensearch-orphan-cleanup` (opensearchCleanup.enabled; hook weight 3): snapshot, then
+     delete exactly the documented orphan indices and data streams. Idempotent; a no-op once
+     they are gone.
+
+  Both Jobs carry component `opensearch-maintenance`, admitted to :9200 by
+  `opensearch-allow-os-clients-only`; their env comes from `soa.opensearchClientEnv`.
+*/}}
+{{- if .Values.opensearch.enabled }}
+{{- $snap := .Values.opensearchSnapshots }}
+{{- $s3 := $snap.s3 | default dict }}
+{{- $cl := .Values.opensearchCleanup | default dict }}
+{{- if or $s3.enabled $cl.enabled }}
+{{- $pol := $s3.policy | default dict }}
+{{- $curl := $snap.registerJob.image }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: opensearch-maintenance
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    app.kubernetes.io/component: opensearch-maintenance
+data:
+  os-curl.sh: |
+    {{- .Files.Get "files/opensearch/lib/os-curl.sh" | nindent 4 }}
+  register-s3.sh: |
+    {{- .Files.Get "files/opensearch/snapshot/register-s3.sh" | nindent 4 }}
+  delete-orphans.sh: |
+    {{- .Files.Get "files/opensearch/cleanup/delete-orphans.sh" | nindent 4 }}
+  {{- if $s3.enabled }}
+  s3-repository.json: |
+    {{- dict "type" "s3" "settings" (dict "bucket" (required "opensearchSnapshots.s3.bucket is required when opensearchSnapshots.s3.enabled" $s3.bucket) "base_path" ($s3.basePath | default "opensearch") "client" "default") | toPrettyJson | nindent 4 }}
+  sm-policy.json: |
+    {{- dict
+          "description" ($pol.description | default "Nightly snapshot")
+          "enabled" true
+          "snapshot_config" (dict "repository" $s3.repositoryName "indices" $pol.indices "ignore_unavailable" true "include_global_state" false "partial" false)
+          "creation" (dict "schedule" (dict "cron" (dict "expression" $pol.schedule "timezone" ($pol.timezone | default "UTC"))))
+          "deletion" (dict "condition" (dict "max_age" $pol.maxAge "min_count" ($pol.minCount | int)))
+        | toPrettyJson | nindent 4 }}
+  {{- end }}
+{{- if $s3.enabled }}
+{{- /* Fail the upgrade BEFORE OpenSearch rolls if the keystore Secret is missing: without it
+       the pod cannot start. `lookup` only answers when Helm talks to a cluster; a namespace
+       that exists proves it does, so `helm template` and lint stay usable offline. */}}
+{{- if (lookup "v1" "Namespace" "" .Release.Namespace) }}
+{{- if not (lookup "v1" "Secret" .Release.Namespace $s3.keystoreSecret) }}
+{{- fail (printf "opensearchSnapshots.s3.enabled: Secret %s/%s with keys s3.client.default.access_key and s3.client.default.secret_key must exist before this upgrade (see deploy/overlays/opensearch-s3-snapshots.stackit.yaml)" .Release.Namespace $s3.keystoreSecret) }}
+{{- end }}
+{{- end }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: register-opensearch-s3-repo
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    app.kubernetes.io/component: opensearch-maintenance
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "2"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        {{- include "soa.selectorLabels" (dict "ctx" . "component" "opensearch-maintenance") | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      securityContext:
+        {{- include "soa.podSecurityContext" . | nindent 8 }}
+        runAsUser: 100
+        runAsGroup: 100
+      containers:
+        - name: register
+          image: "{{ $curl.repository }}:{{ $curl.tag }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          securityContext:
+            {{- include "soa.containerSecurityContext" . | nindent 12 }}
+          resources:
+            {{- toYaml ($s3.job | default dict).resources | nindent 12 }}
+          env:
+            {{- include "soa.opensearchClientEnv" . | nindent 12 }}
+            - { name: OS_LIB, value: /opt/soa/os-curl.sh }
+            - { name: OS_S3_REPO, value: {{ $s3.repositoryName | quote }} }
+            - { name: OS_S3_REPO_BODY_FILE, value: /opt/soa/s3-repository.json }
+            - { name: OS_SM_POLICY_NAME, value: {{ $pol.name | quote }} }
+            - { name: OS_SM_POLICY_FILE, value: /opt/soa/sm-policy.json }
+          command: ["/bin/sh", "/opt/soa/register-s3.sh"]
+          volumeMounts:
+            - { name: scripts, mountPath: /opt/soa, readOnly: true }
+      volumes:
+        - name: scripts
+          configMap: { name: opensearch-maintenance }
+{{- end }}
+{{- if $cl.enabled }}
+{{- $repo := $cl.snapshotRepository }}
+{{- if not $repo }}
+{{- if $s3.enabled }}{{ $repo = $s3.repositoryName }}{{ else if $snap.enabled }}{{ $repo = $snap.repositoryName | default "sovereign-fs" }}{{ end }}
+{{- end }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: opensearch-orphan-cleanup
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    app.kubernetes.io/component: opensearch-maintenance
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "3"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  backoffLimit: 2
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        {{- include "soa.selectorLabels" (dict "ctx" . "component" "opensearch-maintenance") | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      securityContext:
+        {{- include "soa.podSecurityContext" . | nindent 8 }}
+        runAsUser: 100
+        runAsGroup: 100
+      containers:
+        - name: cleanup
+          image: "{{ $curl.repository }}:{{ $curl.tag }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          securityContext:
+            {{- include "soa.containerSecurityContext" . | nindent 12 }}
+          resources:
+            {{- toYaml $snap.registerJob.resources | nindent 12 }}
+          env:
+            {{- include "soa.opensearchClientEnv" . | nindent 12 }}
+            - { name: OS_LIB, value: /opt/soa/os-curl.sh }
+            - { name: OS_CLEANUP_MAX_DELETE, value: {{ $cl.maxDelete | default 72 | quote }} }
+            - { name: OS_CLEANUP_SNAPSHOT_REPO, value: {{ $repo | quote }} }
+            - { name: OS_CLEANUP_DRY_RUN, value: {{ $cl.dryRun | default false | quote }} }
+          command: ["/bin/sh", "/opt/soa/delete-orphans.sh"]
+          volumeMounts:
+            - { name: scripts, mountPath: /opt/soa, readOnly: true }
+      volumes:
+        - name: scripts
+          configMap: { name: opensearch-maintenance }
+{{- end }}
+{{- end }}
+{{- end }}
