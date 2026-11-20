@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
+import { opaHeaders } from '@core/adapters/opa/auth';
 import 'server-only';
 import { config } from '@core/kernel/config';
 import { publishOpa } from '@core/policy/opa-publish';
@@ -62,7 +63,7 @@ export function realOpa(): OpaClient {
     async decision(principal, tool): Promise<Decision> {
       const res = await withTimeout(`${config.opaUrl}/v1/data/agentic/authz/decision`, {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: opaHeaders({ 'content-type': 'application/json' }),
         body: JSON.stringify({ input: { principal, tool } }),
       });
       if (!res || !res.ok) throw new Error(`OPA decision failed (${res?.status ?? 'unreachable'})`);

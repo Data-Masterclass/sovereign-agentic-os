@@ -51,6 +51,17 @@ The deployment that uses this pin lives in the chart
 (`charts/sovereign-agentic-os/templates/`); any glue we wrote belongs there or in the
 owning tab, never here.
 
+## API protection (token authentication + `system.authz`)
+- Docs: https://www.openpolicyagent.org/docs/security ("Authentication and Authorization"),
+  same pinned version (1.22.4, Apache-2.0). Flags `--authentication=token --authorization=basic`;
+  OPA evaluates `data.system.authz.allow` with `input.identity` = the bearer token.
+- Built-in `opa.runtime()` (https://www.openpolicyagent.org/docs/policy-reference/builtins/opa)
+  exposes the process environment; `policies/system/authz.rego` reads the two tokens from there,
+  so no token is stored as OPA data.
+- Trino's OPA access control (https://trino.io/docs/current/security/opa-access-control.html)
+  has no bearer-token property; its decision paths are therefore admitted without a token
+  (POST under `/v1/data/trino/`), network-restricted to the callers in `opa-allow-callers`.
+
 ## Eject test
 The policies are plain Rego plus JSON data. Without the OS, upstream OPA alone runs them:
 

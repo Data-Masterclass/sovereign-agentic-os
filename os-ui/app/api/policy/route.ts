@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { opaHeaders } from '@core/adapters/opa/auth';
 import { config } from '@core/kernel/config';
 import { requireAdmin } from '@core/kernel/auth';
 import { errorResponse } from '@tabs/data/lib/server';
@@ -15,7 +16,7 @@ async function decide(principal: string, tool: string): Promise<boolean> {
   try {
     const res = await fetch(`${config.opaUrl}/v1/data/agentic/authz/allow`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: opaHeaders({ 'content-type': 'application/json' }),
       body: JSON.stringify({ input: { principal, tool } }),
       cache: 'no-store',
     });
@@ -38,7 +39,7 @@ export async function GET() {
 
   let grants: Record<string, string[]> = {};
   try {
-    const res = await fetch(`${config.opaUrl}/v1/data/grants`, { cache: 'no-store' });
+    const res = await fetch(`${config.opaUrl}/v1/data/grants`, { headers: opaHeaders(), cache: 'no-store' });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     const raw = (data?.result ?? {}) as Record<string, unknown>;

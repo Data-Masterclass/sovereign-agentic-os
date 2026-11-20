@@ -52,7 +52,7 @@
 {{- if and $guardrails (not $db.enabled) }}
 {{- fail "opa.guardrailsData.enabled needs opa.dataBundle.enabled: the guardrail data reaches OPA only in the os-data bundle" }}
 {{- end }}
-{{- $policyRev := printf "%s-%s-%s-%s-%s-%s-%s-%s-%s" ($opa.grants | toJson) (($opa.requiresApproval | default list) | toJson) ($gov | toJson) (.Files.Get "policies/authz.rego") (.Files.Get "policies/trino.rego") (.Files.Get "policies/trino_impersonation.rego") (.Files.Get "policies/service_identities.json") (.Files.Get "policies/connections.rego") (.Files.Get "policies/system/log.rego") | sha256sum }}
+{{- $policyRev := printf "%s-%s-%s-%s-%s-%s-%s-%s-%s-%s" ($opa.grants | toJson) (($opa.requiresApproval | default list) | toJson) ($gov | toJson) (.Files.Get "policies/authz.rego") (.Files.Get "policies/trino.rego") (.Files.Get "policies/trino_impersonation.rego") (.Files.Get "policies/service_identities.json") (.Files.Get "policies/connections.rego") (.Files.Get "policies/system/log.rego") (.Files.Get "policies/system/authz.rego") | sha256sum }}
 {{- if $guardrails }}
 {{- $policyRev = printf "%s-%s" $policyRev (.Files.Get "policies/guardrails.rego") | sha256sum }}
 {{- end }}
@@ -101,6 +101,10 @@ data:
   # `mask` erases secret-bearing keys (decision_logs.drop_decision / mask_decision).
   system-log.rego: |
 {{ .Files.Get "policies/system/log.rego" | indent 4 }}
+  # OPA's own API authorization (package system.authz): who may write data and policies and
+  # who may ask for which decision. Active with `opa.auth.enforce` (--authorization=basic).
+  system-authz.rego: |
+{{ .Files.Get "policies/system/authz.rego" | indent 4 }}
 {{- if $guardrails }}
   # Knowledge guardrails (package os.guardrails, WP-30): one platform policy that reads the
   # committed guardrail data at data.os_data.guardrails (os-data bundle); tested beside it.
@@ -191,9 +195,9 @@ spec:
       annotations:
         checksum/policy: {{ $policyRev }}
         {{- if $db.enabled }}
-        checksum/config: {{ list $opa.decisionLogs $db $grantsBundle | toJson | sha256sum }}
+        checksum/config: {{ list $opa.decisionLogs $db $grantsBundle ($opa.auth | default dict).enforce | toJson | sha256sum }}
         {{- else }}
-        checksum/config: {{ $opa.decisionLogs | toJson | sha256sum }}
+        checksum/config: {{ list $opa.decisionLogs ($opa.auth | default dict).enforce | toJson | sha256sum }}
         {{- end }}
       labels:
         {{- include "soa.labels" . | nindent 8 }}
@@ -216,6 +220,11 @@ spec:
             - "--addr=0.0.0.0:8181"
             - "--log-level=info"
             - "--config-file=/config/opa-config.yaml"
+            {{- if ($opa.auth | default dict).enforce }}
+            # Bearer tokens + the system.authz policy (https://www.openpolicyagent.org/docs/security).
+            - "--authentication=token"
+            - "--authorization=basic"
+            {{- end }}
             - "--watch"
             # Explicit files, not the dir: ConfigMap volumes add ..data symlinks
             # that make a recursive dir load see each file multiple times.
@@ -226,6 +235,18 @@ spec:
             {{- else }}
             {{- include "soa.opaPolicyFiles" . | nindent 12 }}
             {{- end }}
+          # system.authz reads the two tokens from here (opa.runtime().env).
+          env:
+            - name: OPA_WRITER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "soa.opa.tokenSecret" . }}
+                  key: writer
+            - name: OPA_READER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "soa.opa.tokenSecret" . }}
+                  key: reader
           ports:
             - { name: http, containerPort: 8181 }
           readinessProbe:

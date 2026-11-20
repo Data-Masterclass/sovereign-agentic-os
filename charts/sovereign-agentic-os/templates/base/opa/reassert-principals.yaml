@@ -70,6 +70,13 @@ spec:
             {{- include "soa.containerSecurityContext" . | nindent 12 }}
           resources:
             {{- toYaml $reg.resources | nindent 12 }}
+          env:
+            # The OS reconciler's OPA identity (system.authz admits data writes only with it).
+            - name: OPA_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "soa.opa.tokenSecret" . }}
+                  key: writer
           command: ["/bin/sh", "-c"]
           args:
             - |
@@ -89,6 +96,7 @@ spec:
               # PUT logs a warning and never fails the release.
               {{- range $id, $p := $selfPrincipals }}
               curl -sf -X PUT "$OPA/v1/data/governance/principals/{{ $id }}" \
+                -H "Authorization: Bearer $OPA_TOKEN" \
                 -H 'Content-Type: application/json' \
                 -d {{ dict "domains" ($p.domains | default list) "clearances" ($p.clearances | default list) | toJson | quote }} \
                 && echo "re-asserted principal {{ $id }}" \

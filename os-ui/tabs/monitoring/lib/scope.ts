@@ -11,6 +11,7 @@
  *   - Re-exports the pure predicates from `scope-core.ts` so callers have one import.
  *   - `assertInScope` on the trace route stops a user opening another user's trace.
  */
+import { opaHeaders } from '@core/adapters/opa/auth';
 import 'server-only';
 import { config } from '@core/kernel/config';
 import type { CurrentUser } from '@core/kernel/auth';
@@ -29,7 +30,7 @@ async function opaConfirms(principal: string): Promise<boolean> {
   try {
     const res = await fetch(`${config.opaUrl}/v1/data/agentic/authz/allow`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: opaHeaders({ 'content-type': 'application/json' }),
       body: JSON.stringify({ input: { principal, tool: 'monitoring_read' } }),
       signal: ctrl.signal,
       cache: 'no-store',

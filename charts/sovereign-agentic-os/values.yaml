@@ -1070,6 +1070,20 @@ opa:
   # Off = the interim per-workflow module upload (rollback, one release).
   guardrailsData:
     enabled: false
+  # OPA's own API protection: `--authentication=token --authorization=basic` with the chart's
+  # `system.authz` policy (policies/system/authz.rego; https://www.openpolicyagent.org/docs/security).
+  # Two bearer tokens in the Secret `opa-tokens` (keys `writer`, `reader`):
+  #   writer  os-ui and os-ui-worker (the OS reconciler): data and policy writes, every read;
+  #   reader  web-fetch: tool decisions under /v1/data/agentic only.
+  # Trino's OPA plugin has no bearer setting, so it evaluates `/v1/data/trino/*` (POST) without a
+  # token; only the pods `opa-allow-callers` admits can reach OPA at all.
+  # `enforce: false` distributes the tokens but leaves OPA open — the first step of a rollout, so
+  # every client presents its token before OPA starts to require it.
+  auth:
+    enforce: true
+    # An operator/ExternalSecret-managed Secret with keys `writer` and `reader`; empty = the chart
+    # renders `opa-tokens` (random on first install, kept across upgrades via `lookup`).
+    existingSecret: ""
   grants:
     sovereign-agents:           # the default agent key — no internet
       - rag_search
