@@ -1,5 +1,12 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * FEATURE:    Real-Trino proof of the typed `sql_error` and its Trino-dialect hints
+ * USER STORY: As an agent whose SQL Trino rejected I want a hint that names Trino's own function,
+ *             so that I can fix the query instead of giving up.
+ * ARCHITECTURE:
+ *   - Runs on the lakehouse harness (tests/lakehouse) through its own client (lib.mjs).
+ *   - Feeds Trino's real error class through `structuredError` (./server.ts).
  */
 /**
  * REAL TRINO: a Trino SQL error reaches an agent as a typed `sql_error` with a Trino-dialect hint,
@@ -12,9 +19,12 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { LH_TRINO_URL, trino, type TrinoFailure } from '@core/infra/trino-rest.test-helper';
+// @ts-ignore -- the harness client is plain JS (tests/lakehouse/lib.mjs), no type declarations
+import { run } from '../../../tests/lakehouse/lib.mjs';
 
-const skip = LH_TRINO_URL ? false : 'LH_TRINO_URL not set (start tests/lakehouse/up.sh)';
+type TrinoFailure = Error & { errorName?: string; errorType?: string; trinoMessage?: string };
+const trino = (sql: string, user: string): Promise<{ rows: unknown[][] }> => run(sql, { user, source: 'os-ui-it' });
+const skip = process.env.LH_TRINO_URL ? false : 'LH_TRINO_URL not set (start tests/lakehouse/up.sh)';
 const { structuredError } = await import('./server.ts');
 const USER = 'it-sql-agent';
 
@@ -24,7 +34,7 @@ async function failure(sql: string): Promise<{ name: string; asForwarded: Error 
     await trino(sql, USER);
   } catch (e) {
     const f = e as TrinoFailure;
-    const message = f.message.slice(f.message.indexOf(': ') + 2);
+    const message = f.trinoMessage;
     return { name: f.errorName!, asForwarded: new Error(`TrinoUserError(type=${f.errorType}, name=${f.errorName}, message="${message}", query_id=x)`) };
   }
   throw new Error(`Trino accepted: ${sql}`);

@@ -35,7 +35,7 @@ import {
 import { transparencyGate, gateReason } from '@tabs/data/lib/transparency';
 import { CUBE_ARTIFACT, scaffoldMetricYaml, metricSqlReady } from '@tabs/data/lib/metrics';
 import { SEMANTIC_ARTIFACT, scaffoldSemanticYaml } from '@tabs/data/lib/semantic';
-import { assetTarget, productTarget, reuseSourceFqn, composeSourceBlocker, personalSchema, domainSchema, physicalSlug, versionTarget, slug } from '@tabs/data/lib/store-fqn';
+import { assetTarget, productTarget, builtLayerFqn, reuseSourceFqn, composeSourceBlocker, personalSchema, domainSchema, physicalSlug, versionTarget, slug } from '@tabs/data/lib/store-fqn';
 import { config } from '@core/kernel/config';
 import { osMirror } from '@core/infra/os-mirror';
 import { mirrorRefresher, newMirrorRefresh, type MirrorRefreshState } from '@core/infra/mirror-refresh';
@@ -55,7 +55,7 @@ import { assertCron, assertIdentifier, LiteralSafetyError, type IdentifierKind }
 import { emitProjectChange } from '@tabs/data/lib/project-events';
 
 // Re-export the FQN helpers so existing consumers keep importing them from the store.
-export { assetTarget, productTarget } from '@tabs/data/lib/store-fqn';
+export { assetTarget, productTarget, builtLayerFqn } from '@tabs/data/lib/store-fqn';
 
 /**
  * The dataset registry — the MOCK store behind the Data tab (kind-only, in-process;
@@ -716,60 +716,6 @@ export function requireDatasetEditable(id: string, user: Principal): Dataset {
   return editOf(get(id), user);
 }
 
-/**
- * The physical Trino FQN of a dataset's built medallion layer, resolved VIEWER-AWARE
- * (the SAME rule as {@link versionTarget}, so preview/profile target the exact table the
- * ask/query surface would): the OWNER reads EVERY layer from their own `personal_<uid>`
- * lane — that lane physically holds bronze plus any un-promoted silver/gold, so an
- * un-promoted layer read must NOT target the domain schema (TABLE_NOT_FOUND); a non-owner
- * reads the promoted copy from the domain schema (bronze is never shared there → it simply
- * won't resolve, fail-closed). The FQN's schema and the returned principal ALWAYS agree —
- * the read runs AS the identity that owns the schema (personal lane ⇒ owner, domain ⇒
- * domain principal). We NEVER build a `personal_<otherUser>` FQN for a non-owner. Returns
- * null when the requested layer (or, absent one, the furthest built layer) isn't built —
- * the caller then answers "not materialized yet" instead of building a doomed FQN.
- */
-export function builtLayerFqn(
-  d: Dataset,
-  user: Principal,
-  layer?: Layer,
-): { layer: Layer; fqn: string; principal: string } | null {
-  // CONNECTED · LIVE branch FIRST (lakehouse-import-exposure.md, Phase 2). An adopted live
-  // dataset federates its ONE declared tier straight to the external `catalog.schema.table`;
-  // there is no bronze and no domain/personal copy. A revoked source resolves to NO fqn
-  // (null) so preview/profile/Talk answer a calm "source revoked" instead of a doomed read.
-  // The principal is ALWAYS the viewer's domain principal — the personal lane never applies.
-  if (d.connected && d.connected.mode === 'live') {
-    if (d.connected.status === 'source-revoked') return null;
-    const chosenLive: Layer = d.connected.tier;
-    const fqn = versionTarget(d, chosenLive, { id: user.id });
-    const principal = user.domains[0] ?? user.id;
-    return { layer: chosenLive, fqn, principal };
-  }
-  // CONNECTED · SYNC branch (lakehouse-import-exposure.md, Phase 3). An adopted sync dataset
-  // reads its GOVERNED COPY at the declared tier from the domain schema (`versionTarget`
-  // resolves it) — but ONLY once the FIRST landing has verified (earned status: the tier
-  // version is `built`). Before that there is no table yet → null (calm "not synced yet").
-  // A source-revoked sync dataset KEEPS its last-landed copy (sovereign data): it still
-  // resolves so preview/Talk/metrics read the frozen table — the UI banners the freeze. The
-  // read runs AS the viewer's domain principal, matching the domain-schema copy.
-  if (d.connected && d.connected.mode === 'sync') {
-    const chosenSync: Layer = d.connected.tier;
-    if (!d.versions[chosenSync]?.built) return null;
-    const fqn = versionTarget(d, chosenSync, { id: user.id });
-    const principal = user.domains[0] ?? user.id;
-    return { layer: chosenSync, fqn, principal };
-  }
-  const chosen = layer && d.versions[layer]?.built ? layer : furthest(d).layer;
-  if (!chosen) return null;
-  // FAIL-CLOSED, owner-aware: only the OWNER resolves to the personal lane and is read AS
-  // the owner; everyone else resolves to the domain schema and is read as the domain
-  // principal. versionTarget encodes the SAME schema rule so the two never drift.
-  const isOwner = user.id === d.owner;
-  const fqn = versionTarget(d, chosen, { id: user.id });
-  const principal = isOwner ? user.id : (user.domains[0] ?? user.id);
-  return { layer: chosen, fqn, principal };
-}
 
 /**
  * All governed datasets (shared assets + certified products), UNSCOPED — the source

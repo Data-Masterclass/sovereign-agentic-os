@@ -24,15 +24,18 @@ async function json(res, what) {
   return JSON.parse(text);
 }
 
-/** Run a statement to completion and return its rows. Throws on a Trino error. */
+/** Run a statement to completion and return its rows and column names. Throws on a Trino error,
+ *  carrying Trino's own `errorName` / `errorType` / `trinoMessage`. */
 export async function run(sql, opts = {}) {
   const h = headers(opts);
   let r = await json(await fetch(`${TRINO}/v1/statement`, { method: 'POST', headers: h, body: sql }), 'POST /v1/statement');
   const rows = [];
+  let columns = [];
   while (true) {
-    if (r.error) throw new Error(`Trino: ${r.error.message}`);
+    if (r.error) throw Object.assign(new Error(`Trino: ${r.error.message}`), { errorName: r.error.errorName, errorType: r.error.errorType, trinoMessage: r.error.message });
+    if (r.columns) columns = r.columns.map((c) => c.name);
     if (r.data) rows.push(...r.data);
-    if (!r.nextUri) return { id: r.id, rows };
+    if (!r.nextUri) return { id: r.id, rows, columns };
     r = await json(await fetch(r.nextUri, { headers: h }), 'GET nextUri');
   }
 }
