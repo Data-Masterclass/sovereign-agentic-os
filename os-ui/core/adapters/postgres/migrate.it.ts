@@ -22,9 +22,9 @@ const EXPECTED_TABLES = [
   'catalog_entities',
   'commit_checks',
   'confirmations',
-  'cost_caps',
   'domain_settings',
   'exposure_sets',
+  'grant_revision',
   'grants',
   'lifecycle_pins',
   'notifications',
@@ -44,7 +44,7 @@ async function tables(): Promise<string[]> {
   return r.rows.map((x) => x.table_name as string);
 }
 
-describe('os_governance migrations (real postgres:17)', () => {
+describe('os_governance migrations (real postgres:17)', { timeout: 120_000 }, () => {
   before(async () => {
     db = await freshDatabase('wp07_migrate');
     client = new pg.Client({ connectionString: db.url });
@@ -141,6 +141,36 @@ describe('os_governance migrations (real postgres:17)', () => {
       /check constraint/,
       'op is limited to create|insert|merge|delete|drop',
     );
+  });
+
+  test('grant_revision.rev advances on insert, update AND delete; a rolled-back change leaves it', async () => {
+    const rev = async () => BigInt((await client.query(`select rev from os_governance.grant_revision`)).rows[0].rev);
+    const r0 = await rev();
+    await client.query(
+      `insert into os_governance.grants (id, subject_kind, subject_id, resource_kind, resource_id, domain, capability, scope, granted_by)
+       values ('gr1', 'user', 'u2', 'dataset', 'ds1', 'sales', 'read', 'domain', 'u1')`,
+    );
+    const r1 = await rev();
+    assert.ok(r1 > r0, 'insert advances');
+    await client.query(`update os_governance.grants set revoked_at = now() where id = 'gr1'`);
+    const r2 = await rev();
+    assert.ok(r2 > r1, 'update advances');
+    await client.query(`delete from os_governance.grants where id = 'gr1'`);
+    const r3 = await rev();
+    assert.ok(r3 > r2, 'a hard delete must advance the bundle revision (WP-11 ETag)');
+    await client.query(`delete from os_governance.run_grant_approved_writes where grant_id = 'g1'`);
+    const r4 = await rev();
+    assert.ok(r4 > r3, 'delete on run_grant_approved_writes advances');
+
+    await client.query('begin');
+    await client.query(`delete from os_governance.run_grants where id = 'g1'`);
+    await client.query('rollback');
+    assert.equal(await rev(), r4, 'a rolled-back change is invisible to the revision');
+    assert.equal((await client.query(`select count(*)::int as n from os_governance.run_grants where id = 'g1'`)).rows[0].n, 1);
+  });
+
+  test('there is no cost caps table: budgets stay in LiteLLM', async () => {
+    assert.equal((await tables()).includes('cost_caps'), false);
   });
 
   test('approvals: the requester can never be the approver', async () => {

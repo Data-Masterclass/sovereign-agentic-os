@@ -20,7 +20,10 @@ export type Queryable = Pick<pg.Pool, 'query'> | Pick<pg.PoolClient, 'query'>;
 type Slot = { url: string; pool: pg.Pool };
 const slot = globalThis as unknown as { __osGovernancePool?: Slot };
 
-export function governancePool(databaseUrl: string, max = 8): pg.Pool {
+/** Small on purpose: see the connection budget in `boss.ts`. */
+export const GOVERNANCE_POOL_MAX = 4;
+
+export function governancePool(databaseUrl: string, max = GOVERNANCE_POOL_MAX): pg.Pool {
   const url = databaseUrl.trim();
   if (!url) throw new Error('governancePool: no database URL');
   if (!slot.__osGovernancePool || slot.__osGovernancePool.url !== url) {

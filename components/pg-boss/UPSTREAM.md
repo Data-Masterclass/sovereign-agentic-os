@@ -12,11 +12,14 @@ Upstream, unmodified. Nothing in this folder is ours — see the rule in `compon
   - Queue policies (`standard`, `short`, `singleton`, `stately`, …): https://github.com/timgit/pg-boss/blob/master/docs/api/queues.md
   - `schedule(name, cron, data, { tz })`, `getSchedules()`: https://github.com/timgit/pg-boss/blob/master/docs/api/scheduling.md
   - `work(name, options, handler)`: https://github.com/timgit/pg-boss/blob/master/docs/api/workers.md
+- **Age rule:** 12.38.2 was published on 10 Nov 2026. It must **not be deployed before 24 Nov 2026** (14 days).
 - **Why this exact version:** 12.38.2 (10 Nov 2026) fixes "a job waiting for its retry could be deleted before the retry ran" and `publish()` with `{ db }` using pg-boss's own pool. Both touch behaviours the OS relies on (retry, the caller's transaction).
 
 **Why the OS ships it:** the one job queue (design 10 F8). It is installed in its own Postgres
-schema, `pgboss`, by pg-boss's own `start()` migration. The OS does not write to that schema.
+schema, `pgboss`, of the `os_governance` database, by pg-boss's own `start()` migration (run as the
+runtime login, which therefore owns that schema and nothing else). Own pool `max` 3; workers,
+maintenance and cron only in the worker process. The OS does not write to that schema.
 The behaviours the design relies on are proven against the real `postgres:17` image in
-`os-ui/core/adapters/postgres/pgboss.it.ts`.
+`os-ui/core/adapters/postgres/pgboss.it.ts` and `install.it.ts`.
 
 The glue that uses this pin lives in `os-ui/core/adapters/postgres/`; nothing we wrote belongs here.
