@@ -8,7 +8,7 @@
  * ARCHITECTURE:
  *   - Pure unit tests of `literal.ts` and the core cron grammar, the store write paths (setDocs,
  *     setDatasetSync, addCheck) and the read-only preflight. The MCP half is in
- *     core/mcp/literal-safety-tools.test.ts.
+ *     tabs/data/lib/dbt/literal-mcp.test.ts.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

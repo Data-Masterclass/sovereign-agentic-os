@@ -13,9 +13,9 @@ import type { CurrentUser } from '@core/kernel/auth';
 
 globalThis.fetch = (() => Promise.reject(new Error('offline-stub'))) as typeof fetch;
 
-const { handleRpc } = await import('./server.ts');
-type JsonRpcResponse = import('./server.ts').JsonRpcResponse;
-type ToolError = import('./server.ts').ToolError;
+const { handleRpc } = await import('@core/mcp/server');
+type JsonRpcResponse = import('@core/mcp/server').JsonRpcResponse;
+type ToolError = import('@core/mcp/server').ToolError;
 const { __resetStore } = await import('@tabs/data/lib/store');
 const { __setDataProjectGitForTests } = await import('@tabs/data/lib/dbt/commit');
 __setDataProjectGitForTests(false);
