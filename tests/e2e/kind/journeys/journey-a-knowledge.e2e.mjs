@@ -15,14 +15,15 @@
  *     log). The OS is only DRIVEN (lib/os-driver.mjs); its answers are never the proof.
  *   - Retrieval is real: the stub's embedding rules give the query and the answer row one shared
  *     topic (they share no word), and a 36-page distractor PDF that USES the query's words is
- *     uploaded first. The answer must be rank 1, which only k-NN can achieve; a keyword match ranks a
- *     distractor first (a-twin-5).
+ *     uploaded first. The answer must be in the hybrid top N (RRF fusion puts distractors found by both
+ *     lists above it, so fused rank 1 is not demanded) and rank 1 of the k-NN sub-query alone (a3.3);
+ *     with keyword-only search it must drop out of the top N (a-twin-5).
  *   - All assertions and twins are expected-fail until the WPs named in each marker land.
  */
 import { journey, check } from '../lib/journey.mjs';
 import { PRINCIPALS, DOMAIN, OTHER_DOMAIN, createTraceId, jwtPayload, waitFor, isoNow } from '../lib/common.mjs';
 import { contractPdf, distractorPdf, QUERY, ANSWER_CELL, EMBEDDING_RULES, DISTRACTOR_PAGES } from '../fixtures/contract-pdf.mjs';
-import { toolOutputs, assertTopHitIsAnswer, assertChunkNotVisible } from '../lib/checks/knowledge.mjs';
+import { toolOutputs, assertAnswerInTopN, assertFirstIsAnswer, assertChunkNotVisible, TOP_N } from '../lib/checks/knowledge.mjs';
 import { callTool, uploadFile } from '../lib/os-driver.mjs';
 import * as stub from '../lib/records/stub.mjs';
 import * as docling from '../lib/records/docling.mjs';
@@ -147,9 +148,9 @@ J.assertion('a2.4', { hop: 'embedding went through LiteLLM with key opensearch-i
 });
 
 // ---------------------------------------------------------------- 3. search as the user
-J.assertion('a3.1', { hop: 'the agent run as u123 gets the page-2 table chunk at rank 1 (out of 36+ chunks)', record: 'Langfuse TOOL observation search_files (io)', expectedFail: 'WP-27' }, async () => {
+J.assertion('a3.1', { hop: `the agent run as u123 gets the page-2 table chunk in the hybrid top ${TOP_N} (out of 36+ chunks)`, record: 'Langfuse TOOL observation search_files (io)', expectedFail: 'WP-27' }, async () => {
   const { obs } = await runU();
-  assertTopHitIsAnswer(obs, { answer: ANSWER_CELL, page: 2 });
+  assertAnswerInTopN(obs, { answer: ANSWER_CELL, page: 2 });
 });
 
 J.assertion('a3.2', { hop: 'OpenSearch audit log: request made AS u123 with an aud=opensearch JWT carrying domain:sales', record: 'security-auditlog-*', expectedFail: 'WP-25' }, async () => {
@@ -167,14 +168,19 @@ J.assertion('a3.2', { hop: 'OpenSearch audit log: request made AS u123 with an a
   check(info.user_name === U && info.backend_roles.includes(`domain:${DOMAIN}`), 'opensearch', 'security plugin resolves that token to u123 with backend role domain:sales', info);
 });
 
-J.assertion('a3.3', { hop: 'profile:true replay shows the k-NN sub-query scored the hit', record: 'OpenSearch search profile', expectedFail: 'WP-24' }, async () => {
+J.assertion('a3.3', { hop: 'the k-NN sub-query alone ranks the page-2 chunk first; profile shows the KNN node', record: 'OpenSearch search (k-NN sub-query replay) + profile', expectedFail: 'WP-24' }, async () => {
   const { startedAt } = await runU();
   const entry = (await osr.auditEntries({ effectiveUser: U, index: FILES_INDEX })).find((e) => e['@timestamp'] >= startedAt && e.audit_request_body);
   check(entry, 'opensearch', 'audit entry with the search request body', null);
   const body = JSON.parse(entry.audit_request_body);
+  // The k-NN sub-query of the recorded hybrid query, replayed on its own (the same index, the same
+  // vector OpenSearch embedded): its list, not the fused one, must have the answer first.
+  const knn = (body.query?.hybrid?.queries ?? []).find((q) => q.knn);
+  check(knn, 'opensearch', 'the recorded search is a hybrid query with a k-NN sub-query', Object.keys(body.query ?? {}));
+  const knnOnly = await osr.search(FILES_INDEX, { size: TOP_N, query: knn, _source: { excludes: ['vector'] } });
+  check(knnOnly.hits.total.value > TOP_N, 'opensearch', `the corpus is larger than the top ${TOP_N}`, knnOnly.hits.total);
+  assertFirstIsAnswer(knnOnly.hits.hits.map((h) => h._source), { answer: ANSWER_CELL, list: 'k-NN sub-query' });
   const res = await osr.search(FILES_INDEX, { ...body, profile: true });
-  check(res.hits.total.value > res.hits.hits.length || res.hits.hits.length < DISTRACTOR_PAGES, 'opensearch', 'top-k is smaller than the corpus', res.hits.total);
-  check(JSON.stringify(res.hits.hits[0]?._source ?? {}).includes(ANSWER_CELL), 'opensearch', 'replayed query ranks the page-2 chunk first', res.hits.hits[0]?._source);
   const types = JSON.stringify(res.profile.shards.map((s) => s.searches.map((x) => x.query.map((q) => q.type))));
   check(/knn/i.test(types), 'opensearch', 'profile contains a KNN query node', types.slice(0, 300));
 });
@@ -293,7 +299,7 @@ let savedOpa;
 J.twin('a-twin-4', { disables: 'bundle propagation slowed (min_delay 30 s) so the worker claims before the grant arrives', record: 'Langfuse TOOL output for u123', expect: 'green', expectedFail: 'WP-11' }, {
   check: async () => {
     const { obs } = await runAs(U);
-    assertTopHitIsAnswer(obs, { answer: ANSWER_CELL, page: 2 });
+    assertAnswerInTopN(obs, { answer: ANSWER_CELL, page: 2 });
   },
   disable: async () => {
     const cm = JSON.parse(await kubectl(['-n', NS, 'get', 'configmap', OPA_CM, '-o', 'json']));
@@ -311,14 +317,14 @@ J.twin('a-twin-4', { disables: 'bundle propagation slowed (min_delay 30 s) so th
 });
 
 // Retrieval replaced by a keyword match: the hybrid search pipeline's weights set to lexical-only
-// (OpenSearch's own score-ranker/normalization processor config). The query shares no word with the
-// answer and every word with the distractors, so rank 1 MUST stop being the answer.
-const SEARCH_PIPELINE = process.env.E2E_SEARCH_PIPELINE ?? 'files-hybrid';
+// (OpenSearch's own score-ranker-processor config). The query shares no word with the answer and every
+// word with 36 distractors, so the answer MUST drop out of the top N.
+const SEARCH_PIPELINE = process.env.E2E_SEARCH_PIPELINE ?? 'hybrid-rrf';
 let savedSearchPipeline;
-J.twin('a-twin-5', { disables: `search pipeline ${SEARCH_PIPELINE} weighted lexical-only (k-NN weight 0)`, record: 'Langfuse TOOL output for u123', expectedFail: 'WP-24', redReasonMust: /rank 1 hit contains "90 days"/ }, {
+J.twin('a-twin-5', { disables: `search pipeline ${SEARCH_PIPELINE} weighted lexical-only (k-NN weight 0)`, record: 'Langfuse TOOL output for u123', expectedFail: 'WP-24', redReasonMust: /hit containing "90 days" is within the top \d+ hits/ }, {
   check: async () => {
     const { obs } = await runAs(U);
-    assertTopHitIsAnswer(obs, { answer: ANSWER_CELL, page: 2 });
+    assertAnswerInTopN(obs, { answer: ANSWER_CELL, page: 2 });
   },
   disable: async () => {
     const got = await osr.os(`/_search/pipeline/${SEARCH_PIPELINE}`);

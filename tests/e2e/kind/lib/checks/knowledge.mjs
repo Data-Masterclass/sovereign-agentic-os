@@ -31,13 +31,34 @@ export function hitsOf(output) {
   return arr;
 }
 
-/** The first hit of the (last) search is the answer chunk, on the given page. */
-export function assertTopHitIsAnswer(obs, { answer, page }) {
+/**
+ * Top-N of the hybrid result. The designed search fuses BM25 and k-NN with reciprocal rank fusion
+ * (RRF, k=60): a chunk found ONLY by k-NN at rank 1 scores 1/61 = 0.0164, while a distractor found by
+ * BOTH lists scores about 1/61 + 1/62 = 0.0325 and ranks above it. Fused rank 1 is therefore not a
+ * property of correct retrieval; presence in the top N is. Rank 1 is demanded of the k-NN list alone
+ * (assertFirstIsAnswer on the k-NN sub-query, a3.3).
+ */
+export const TOP_N = Number(process.env.E2E_TOP_N ?? 5);
+export function assertAnswerInTopN(obs, { answer, page, n = TOP_N }) {
   const hits = hitsOf(toolOutputs(obs, 'search_files').at(-1));
-  check(hits.length > 0, 'langfuse', 'search_files returned hits', 0);
-  const top = JSON.stringify(hits[0]);
-  check(top.includes(answer), 'langfuse', `rank 1 hit contains "${answer}"`, top.slice(0, 200));
-  check(new RegExp(`"page(_no)?"\\s*:\\s*${page}\\b`).test(top), 'langfuse', `rank 1 hit is on page ${page}`, top.slice(0, 200));
+  const top = hits.slice(0, n).map((h) => JSON.stringify(h));
+  const at = top.findIndex((t) => t.includes(answer) && new RegExp(`"page(_no)?"\\s*:\\s*${page}\\b`).test(t));
+  check(at >= 0, 'langfuse', `the page-${page} hit containing "${answer}" is within the top ${n} hits`, top.map((t) => t.slice(0, 60)));
+  return at + 1;
+}
+
+/** The first of an ordered list of hits (tool hits or OpenSearch `_source`s) contains the answer. */
+export function assertFirstIsAnswer(hits, { answer, list }) {
+  check(hits.length > 0, 'opensearch', `${list} returned hits`, 0);
+  const first = JSON.stringify(hits[0]);
+  check(first.includes(answer), 'opensearch', `rank 1 of the ${list} contains "${answer}"`, first.slice(0, 200));
+}
+
+/** Reciprocal rank fusion as OpenSearch's score-ranker-processor defines it (rank_constant k). */
+export function rrfFuse(lists, k = 60) {
+  const score = new Map();
+  for (const list of lists) list.forEach((id, i) => score.set(id, (score.get(id) ?? 0) + 1 / (k + i + 1)));
+  return [...score.entries()].sort((a, b) => b[1] - a[1]).map(([id, s]) => ({ id, score: s }));
 }
 
 /** No search hit anywhere contains the answer (DLS: the other user must not see the chunk). */
