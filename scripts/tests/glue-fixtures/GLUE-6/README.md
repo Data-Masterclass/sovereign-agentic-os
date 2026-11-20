@@ -6,5 +6,8 @@ step reports `FAIL` for its twin, which proves the step really runs the tool.
 
 - `dbt/twin-duplicate-model.json`: two models named `gold_orders`. `dbt parse` refuses it, and so
   does `dagster definitions validate`, because the code location skips the domain.
+- `dbt/twin-invalid-cron.json`: a generated `data/dagster/definitions.py` whose schedule has the
+  cron `61 25 * * *` (its OS-recorded hash matches). dbt parses it; `dagster definitions validate`
+  refuses the domain.
 - `opa/twin_unused_var.rego`: an assigned variable that is never used. `opa check --strict` refuses it.
 - `k8s/twin-bad-deployment.yaml`: `replicas: "two"`. kubeconform refuses it.

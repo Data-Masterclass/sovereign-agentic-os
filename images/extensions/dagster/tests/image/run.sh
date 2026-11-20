@@ -17,7 +17,8 @@ TRINO="trino-$$"
 cleanup() { docker rm -f "$TRINO" >/dev/null 2>&1 || true; docker network rm "$NET" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 
-ONLY="${ONLY:-}" # image | eject | empty = both
+ONLY="${ONLY:-}" # image | eject | lakehouse | empty = all
+if [ "$ONLY" = "lakehouse" ]; then exec sh "$REPO/images/extensions/dagster/tests/image/lakehouse.sh" "$IMAGE"; fi
 if [ "$ONLY" != "eject" ]; then
   echo "== image tests in $IMAGE"
   docker run --rm -v "$REPO:/src:ro" -e SRC=/src "$IMAGE" python3 /src/images/extensions/dagster/tests/image/test_image.py
@@ -55,3 +56,6 @@ docker run --rm --network "$NET" -v "$REPO:/src:ro" -e SRC=/src -e TRINO_HOST="$
 echo "== literal-safety: dbt parse + compile in $IMAGE against trinodb/trino:$TRINO_TAG"
 docker run --rm --network "$NET" -v "$REPO:/src:ro" -e SRC=/src -e TRINO_HOST="$TRINO" "$IMAGE" \
   python3 /src/images/extensions/dagster/tests/image/literal_safety.py
+
+# WP-49: the repo's own Dagster code location on Trino + Iceberg, the wrapper, the eject (lakehouse.sh).
+[ "$ONLY" = "eject" ] || sh "$REPO/images/extensions/dagster/tests/image/lakehouse.sh" "$IMAGE"

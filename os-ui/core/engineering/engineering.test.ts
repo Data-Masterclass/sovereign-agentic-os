@@ -227,7 +227,7 @@ test('T4: the Dagster section carries asset keys, job, schedule, the last run an
   assert.equal(asset.name, '["ops","gold_orders"]');
   assert.deepEqual(asset.facts?.map((f) => f.label), ['asset key', 'Dagster job', 'Dagster schedule']);
   assert.equal(s.links[0].url, '/tools/dagster/runs/run-7');
-  assert.deepEqual(s.commands.map((c) => c.command), ['dagster asset materialize --select ops/gold_orders']);
+  assert.deepEqual(s.commands.map((c) => c.command), ['cd data/dagster && dagster asset materialize -m definitions --select ops/gold_orders']);
   assert.ok(s.artefacts.some((a) => a.noun === 'Dagster run' && a.name === 'run-7'));
 });
 

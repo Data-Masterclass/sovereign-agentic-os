@@ -223,24 +223,30 @@ test('commitDataProject is a no-op (null) with the flag off and generates a real
   assert.ok(tree!.has('macros/os_maintenance.sql'));
 });
 
-test('review M2: an AUTHORED body never becomes a model — the layer is a dbt source, tested there', async () => {
+test('C3 (WP-49): an AUTHORED body is a dbt model adopting its table; one carrying Jinja is refused, never run', async () => {
   __setDataProjectGitForTests(true);
   const d = store.createDataset(amir, { name: 'Authored' });
   store.buildVersion(d.id, amir, 'bronze', { quality: 'passing', artifact: 'bronze/authored.dlt.yml' });
   // No `compiled: true` — what add_dataset_version / the version route record.
-  store.buildVersion(d.id, amir, 'silver', { quality: 'unknown', artifact: 'silver/stg_authored.sql', body: "{{ exceptions.raise_compiler_error(env_var('X')) }}" });
+  store.buildVersion(d.id, amir, 'silver', { quality: 'unknown', artifact: 'silver/stg_authored.sql', body: 'select order_id from iceberg.personal_amir.bronze_authored' });
   store.addCheck(d.id, amir, { rule: 'not_null', column: 'order_id' });
+  const j = store.createDataset(amir, { name: 'Jinja' });
+  store.buildVersion(j.id, amir, 'bronze', { quality: 'passing', artifact: 'bronze/jinja.dlt.yml' });
+  store.buildVersion(j.id, amir, 'silver', { quality: 'unknown', artifact: 'silver/stg_jinja.sql', body: "{{ exceptions.raise_compiler_error(env_var('X')) }}" });
   let tree: Map<string, string> | null = null;
   await commitDataProject('sales', { id: 'amir' }, { action: 'x' }, {
     committer: async (_d, files) => { tree = files; return { sha: 'b'.repeat(40), changed: true }; },
   });
-  assert.equal(tree!.has('models/personal/amir/silver_authored.sql'), false, 'authored body rendered as a model');
-  for (const content of tree!.values()) assert.ok(!content.includes("env_var('X')"), 'user text reached the tree');
-  const sources = tree!.get('models/sources.yml')!;
-  assert.match(sources, /silver_authored/);
-  assert.match(sources, /os_built: out-of-band/);
-  assert.match(sources, /not_null/); // the rule tests the source
+  const model = tree!.get('models/personal/amir/silver_authored.sql')!;
+  assert.match(model, /full_refresh=false/);
+  assert.match(model, /select order_id from \{\{ ref\('bronze_authored'\) \}\}|select order_id from \{\{ source\(/);
+  assert.match(tree!.get('models/personal/amir/schema.yml')!, /not_null/, 'the rule tests the model');
+  assert.doesNotMatch(tree!.get('models/sources.yml') ?? '', /os_built|out-of-band/);
+  assert.equal(tree!.has('models/personal/amir/silver_jinja.sql'), false, 'Jinja in authored SQL is never committed');
+  for (const content of tree!.values()) assert.ok(!content.includes("env_var('X')"), 'user Jinja reached the tree');
+  assert.match(tree!.get('os/skipped.yml')!, /contains dbt Jinja/);
 });
+
 
 test('review M1: a rule column that is not a plain identifier is refused at the store gate', () => {
   const id = seedOrders();
