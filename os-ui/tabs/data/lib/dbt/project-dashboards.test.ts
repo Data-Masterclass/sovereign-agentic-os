@@ -15,7 +15,7 @@ import { renderDbtProject } from '@tabs/data/lib/dbt/project';
 import { dashboardsModelPath } from '@core/infra/repo-layout';
 
 const plan = { models: [], sources: [], layerDirs: [], personalUids: [] } as unknown as Parameters<typeof renderDbtProject>[1];
-const paths = (p?: string) => (load(renderDbtProject('sales', plan, p)) as { 'model-paths': string[] })['model-paths'];
+const paths = (p?: string) => (load(renderDbtProject('sales', plan, undefined, p)) as { 'model-paths': string[] })['model-paths'];
 
 test('flag off: model-paths is [models] exactly as before', () => {
   assert.deepEqual(paths(), ['models']);
