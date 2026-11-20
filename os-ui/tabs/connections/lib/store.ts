@@ -242,7 +242,7 @@ import {
 } from '@core/policy/governance';
 import { registerBronzeSource, indexToFiles } from '@tabs/data/lib/data-handoff';
 import { logEgress } from '@tabs/connections/lib/egress-requests';
-import { providerForTemplate, providerConfig, type OAuthProvider } from '@core/auth/providers';
+import { providerForTemplate, providerConfig, filesProviderFor, type OAuthProvider } from '@core/auth/providers';
 import { storeTokens, readTokens, resolveAccessToken } from '@core/auth/connection-token';
 import { probeDrive } from '@core/auth/client';
 import { isExpired, type TokenSet } from '@core/auth/token-set';
@@ -2046,6 +2046,8 @@ export async function enableDataUsage(connId: string, user: CurrentUser, usage: 
   const map = await getCache();
   const c = map.get(connId);
   if (!c || !visibleToUser(c, user)) throw withStatus(new Error('Connection not found'), 404);
+  const oauthDrive = c.type === 'Drive' && c.auth === 'oauth' ? providerForTemplate(c.template) : null;
+  if (oauthDrive && usage !== 'bronze') return indexDriveToFiles(map, c, user, oauthDrive);
   const adapter = adapterFor(c.connector);
   const sync = await adapter.sync({ template: templateByKey(c.template)!, endpoint: c.endpoint, credentialPresent: c.secretSet });
   const target = usage ?? (sync.data?.target === 'files' ? 'files' : 'bronze');
@@ -2065,6 +2067,44 @@ export async function enableDataUsage(connId: string, user: CurrentUser, usage: 
   map.set(c.id, c);
   writeThrough(c);
   void trace({ principal: c.principal, tool: 'generate', input: { action: 'enable_data_usage', usage: target, by: user.id }, output: { mode: sync.mode, records: sync.data?.records }, decision: 'allow' });
+  return c;
+}
+
+/**
+ * Index a personal OAuth drive (Google Drive / OneDrive) into Files through the Files tab's
+ * existing live connector (`tabs/files/lib/connectors-live.ts`): a whole-drive source LINKED to
+ * this connection, synced now with the token the OAuth callback stored. No token (consent not
+ * given, or it lapsed) is a 409 that says to Connect; a provider error propagates as the
+ * connector's own refusal. Nothing is marked indexed unless the real sync returned.
+ */
+async function indexDriveToFiles(map: Map<string, Connection>, c: Connection, user: CurrentUser, provider: OAuthProvider): Promise<Connection> {
+  const token = await resolveConnectionAccessToken(c.id, user.id); // owner-only (403 otherwise)
+  if (!token) {
+    throw withStatus(new Error(`Connect your ${providerConfig(provider).label} first — there is no valid sign-in for this connection yet, so nothing can be read.`), 409);
+  }
+  const { addSource, listSources, removeSource } = await import('@tabs/files/lib/connectors');
+  const { runConnectorSync } = await import('@tabs/files/lib/connectors-server');
+  const filesProvider = filesProviderFor(provider);
+  const existing = listSources(user.id).find((s) => s.connectionId === c.id && s.provider === filesProvider);
+  const source = existing ?? addSource({
+    provider: filesProvider, label: c.name, scope: 'drive', target: 'root', mode: 'copy',
+    owner: user.id, domain: c.domain, connectionId: c.id,
+  });
+  let result: Awaited<ReturnType<typeof runConnectorSync>>;
+  try {
+    result = await runConnectorSync(source.id, user.id, token);
+  } catch (e) {
+    if (!existing) removeSource(source.id, user.id); // a failed first index leaves no source behind
+    throw e;
+  }
+  const records = result.added + result.updated + result.unchanged;
+  indexToFiles({ connectionId: c.id, name: c.name, items: records, indexedBy: user.id });
+  c.dataUsage = 'files';
+  c.dataUsageMode = result.clientMode === 'live' ? 'live' : 'offline-mock';
+  c.updatedAt = now();
+  map.set(c.id, c);
+  writeThrough(c);
+  void trace({ principal: c.principal, tool: 'generate', input: { action: 'enable_data_usage', usage: 'files', by: user.id, sourceId: source.id }, output: { mode: c.dataUsageMode, records }, decision: 'allow' });
   return c;
 }
 
