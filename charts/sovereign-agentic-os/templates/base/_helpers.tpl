@@ -193,10 +193,11 @@ header). Mounted identically in all three so the token compared is the token sen
 {{- end -}}
 
 {{/*
-priorityClassName line for a tier ("infra" high / "app" low), gated by
+priorityClassName line for a tier (critical, infra, app, observability; see values.yaml
+`priorityClasses` for the ladder), gated by
 `priorityClasses.enabled`. Renders nothing when disabled so local-kind installs
 that don't create the PriorityClass objects still admit every pod. Place under a
-pod `spec:`. Args: dict "ctx" $ "tier" "<infra|app>".
+pod `spec:`. Args: dict "ctx" $ "tier" "<critical|infra|app|observability>".
 */}}
 {{- define "soa.priorityClassName" -}}
 {{- if .ctx.Values.priorityClasses.enabled -}}

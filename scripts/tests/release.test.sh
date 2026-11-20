@@ -10,8 +10,9 @@
 # remote, so the git half is REAL git on real commits and tags (a stubbed git would only prove
 # the script calls the commands it calls). gh, kubectl, helm, deploy.sh and smoke-test.sh are
 # stubs that log their arguments: gh answers the workflow-run query from a file per branch, so
-# a test decides what CI "said". check-structure.mjs and check-consoles-not-public.mjs are stubs
-# in the throwaway tree, steered by FAKE_STRUCTURE_RC / FAKE_CONSOLES_RC.
+# a test decides what CI "said". check-structure.mjs, check-consoles-not-public.mjs and
+# check-capacity.mjs are stubs in the throwaway tree, steered by FAKE_STRUCTURE_RC /
+# FAKE_CONSOLES_RC / FAKE_CAPACITY_RC (the capacity stub fails unless release.sh sets CI=true).
 set -uo pipefail
 cd "$(dirname "$0")/../.." || exit 2
 REPO=$PWD
@@ -73,6 +74,7 @@ new_checkout() {
   cp "$REPO/scripts/lib/workflow-status.sh" "$OP/scripts/lib/"
   echo 'process.exit(Number(process.env.FAKE_STRUCTURE_RC || 0))' > "$OP/scripts/check-structure.mjs"
   echo 'process.exit(Number(process.env.FAKE_CONSOLES_RC || 0))' > "$OP/scripts/check-consoles-not-public.mjs"
+  echo 'process.exit(process.env.CI === "true" ? Number(process.env.FAKE_CAPACITY_RC || 0) : 9)' > "$OP/scripts/check-capacity.mjs"
   echo 'export {}' > "$OP/os-ui/a.ts"
   git -C "$OP" add -A && git -C "$OP" commit -qm init
   git -C "$OP" remote add public "$TMP/case/public.git"
@@ -216,6 +218,8 @@ new_checkout; green_ci; FAKE_STRUCTURE_RC=1 release 2.0.0
 check "check-structure failing stops" "STOPPED: node scripts/check-structure.mjs fails" "$out"
 new_checkout; green_ci; FAKE_CONSOLES_RC=1 release 2.0.0
 check "check-consoles-not-public failing stops" "STOPPED: node scripts/check-consoles-not-public.mjs fails" "$out"
+new_checkout; green_ci; FAKE_CAPACITY_RC=1 release 2.0.0
+check "the capacity gate failing stops (WP-47)" "STOPPED: node scripts/check-capacity.mjs fails" "$out"
 
 new_checkout; green_ci; mkdir -p "$OP/os-ui/tabs"; echo x > "$OP/os-ui/tabs/page 2.tsx"
 release 2.0.0; check "a '* 2.*' duplicate under os-ui stops" "os-ui/tabs/page 2.tsx" "$out"

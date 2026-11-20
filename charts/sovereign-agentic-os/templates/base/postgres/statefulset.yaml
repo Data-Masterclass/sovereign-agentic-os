@@ -131,7 +131,7 @@ spec:
         backup.velero.io/backup-volumes-excludes: data
     spec:
       {{- /* High-priority infra: the kubelet evicts app pods before the DB. */}}
-      {{- include "soa.priorityClassName" (dict "ctx" . "tier" "infra") | nindent 6 }}
+      {{- include "soa.priorityClassName" (dict "ctx" . "tier" "critical") | nindent 6 }}
       securityContext:
         {{- include "soa.podSecurityContext" . | nindent 8 }}
         runAsUser: 999

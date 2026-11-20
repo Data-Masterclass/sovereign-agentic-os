@@ -86,6 +86,10 @@ node ../scripts/check-dagster-ingress-policy.mjs
 # must render by default, select the OpenSearch pods, and admit every rendered workload that calls
 # OpenSearch (a missed client times out once enforced). Same skip rules as above.
 node ../scripts/check-opensearch-ingress-policy.mjs
+# WP-47 capacity gate: the rendered chart (default and STACKIT profiles) plus the pods outside it
+# must fit the node budget in charts/sovereign-agentic-os/capacity.yaml (requests ≤ 85 % CPU and
+# memory, memory limits ≤ 85 %). Same skip rules as above.
+node ../scripts/check-capacity.mjs | tail -1   # the table is long; failures go to stderr in full
 # B3 review H-1/H-5/H-6: the reconciler must run on a DEFAULT install, the Dagster run pod must
 # connect as the user rules.json allows, and the os-ui Role must not grant namespace-wide Secrets.
 # B4 review H-2 rides on the same check: the os-ui Role must carry `batch`/`cronjobs` in EVERY

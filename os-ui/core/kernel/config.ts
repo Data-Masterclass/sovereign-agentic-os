@@ -302,6 +302,9 @@ export const config = {
   // honestly (no URL).
   softwareRunnerNamespace: env('SOFTWARE_RUNNER_NAMESPACE', 'agentic-apps'),
   softwareRunnerImage: env('SOFTWARE_RUNNER_IMAGE', ''),
+  // WP-47: the PriorityClass user-app pods run in (the chart's `priorityClasses.userApps`, the
+  // lowest). Empty = no field, for clusters where the chart did not create the classes.
+  softwareRunnerPriorityClass: env('SOFTWARE_RUNNER_PRIORITY_CLASS', ''),
   appsIngressClass: env('OS_APPS_INGRESS_CLASS', 'nginx'),
   appsTlsIssuer: env('OS_APPS_TLS_ISSUER', 'letsencrypt-prod'),
 
