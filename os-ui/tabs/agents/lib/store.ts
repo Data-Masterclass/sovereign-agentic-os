@@ -1541,3 +1541,10 @@ export function systemForScheduler(
   // rights (delegated identity) — never a service principal.
   return { yaml: rec.yaml, domain: rec.domain, owner: rec.owner, disabledAgents: rec.disabledAgents };
 }
+
+// ------------------------------------------------------------------ delete domain (admin) --
+/** Delete-domain: every agent system of a domain, archived included. */
+export function listSystemsForDomain(domain: string): { id: string; name: string; owner: string; archived: boolean }[] {
+  ensureSeeded();
+  return [...state().store.values()].filter((r) => r.domain === domain).map((r) => ({ id: r.id, name: r.name, owner: r.owner, archived: !!r.archived }));
+}

@@ -147,3 +147,10 @@ Read from the 1.109.1 image's own `/openapi.json` and exercised by `scripts/test
 `LITELLM_LOCAL_MODEL_COST_MAP=True` (the bundled price map, no fetch at start).
 Docs: https://docs.litellm.ai/docs/proxy/model_access_groups, https://docs.litellm.ai/docs/providers,
 https://docs.litellm.ai/docs/providers/azure/azure, https://docs.litellm.ai/docs/providers/ollama.
+
+## Delete domain (2026-11-20)
+
+Admin API, master key: `GET /team/list`, `GET /key/list`, `POST /team/delete {team_ids}`,
+`POST /key/delete {keys}` (https://docs.litellm.ai/docs/proxy/team_based_routing,
+https://docs.litellm.ai/docs/proxy/virtual_keys). Run against the pinned image with its own
+Postgres in `tests/domain-delete`.

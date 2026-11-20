@@ -477,3 +477,19 @@ export function __simulateRestart(): void {
 export function __resetDecidedHandlers(): void {
   hookState().handlers.clear();
 }
+
+
+// ------------------------------------------------------------------ delete domain (admin) --
+/** Delete-domain: every approval of a domain, in every state (`core/kernel/domain-delete.ts`). */
+export function listApprovalsForDomain(domain: string): Approval[] {
+  return [...queueMap().values()].filter((x) => x.domain === domain);
+}
+
+/** Delete-domain: remove one approval for good. Awaits the durable mirror's confirmation first, so
+ *  the record is never reported gone while the shared store still holds it. */
+export async function purgeApprovalForDomainDelete(id: string): Promise<'deleted' | 'absent'> {
+  const out = await mirror.deleteConfirmed(id);
+  if (!out.ok) throw Object.assign(new Error(`approval ${id}: the store did not confirm the delete (${out.reason})`), { status: 503 });
+  queueMap().delete(id);
+  return out.result;
+}

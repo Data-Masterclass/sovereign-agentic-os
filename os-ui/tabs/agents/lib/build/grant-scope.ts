@@ -147,6 +147,7 @@ export const TOOL_RESOURCES: Readonly<Record<string, ToolResourceRule>> = {
   get_file: reads('files', 'fileId'),
   upload_file: { folderWrite: { arg: 'folder' }, creates: ['files'] },
   reindex_corpus: { broad: { kinds: ['files', 'knowledge'], why: 'it re-indexes a whole tenant corpus' } },
+  delete_domain: { broad: { kinds: ['data', 'knowledge', 'metrics', 'connections', 'files'], why: 'it deletes a whole domain (admin only, closed to agent runs)' } },
   // ----------------------------------------------------------- connections --
   list_connections: lists('connections'),
   get_connection: reads('connections', 'connId'),

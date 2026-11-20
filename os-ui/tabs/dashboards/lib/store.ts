@@ -611,3 +611,9 @@ function status(message: string, code: number): Error & { status: number } {
   e.status = code;
   return e;
 }
+
+// ------------------------------------------------------------------ delete domain (admin) --
+/** Delete-domain: every dashboard of a domain, archived included (`core/kernel/domain-delete.ts`). */
+export function listDashboardsForDomain(domain: string): { id: string; name: string; owner: string; archived: boolean }[] {
+  return dashState().dashboards.filter((d) => d.domain === domain).map((d) => ({ id: d.id, name: d.spec.name, owner: d.owner, archived: !!d.archived }));
+}

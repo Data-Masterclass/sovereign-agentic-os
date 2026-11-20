@@ -160,6 +160,8 @@ export const WRITE_TOOL_TABS: Readonly<Record<string, string>> = {
   // not import one — so it is classified here deliberately, for exactly the reason H-1 classified
   // `commit`: an unclassified write answers "not a write" for every preset and would run unheld.
   reindex_corpus: 'files',
+  // Delete domain (admin): removes a domain and everything in it — the hold gate must see a write.
+  delete_domain: 'governance',
   // 2026-11-19 — THE NINE-TOOL BACKLOG, DECIDED. These were in the MCP registry and in no hold
   // table (they are not in `ALL_WRITE_TOOLS`, and `build_software` declares `write: false`), so
   // the gate answered "not a write" for each under every preset. The registry ratchet in
@@ -252,6 +254,9 @@ export const WRITE_TOOL_NAMES: ReadonlySet<string> = new Set(Object.keys(WRITE_T
  * parks the call for a platform admin instead of running it.
  */
 export const AGENT_FORBIDDEN_TOOLS: Readonly<Record<string, string>> = {
+  delete_domain:
+    'delete_domain is an operator act, not an agent action: it removes a whole domain and every ' +
+    'artifact in it. A platform admin runs it from Admin → Domains or their own MCP session.',
   reindex_corpus:
     'reindex_corpus is an operator act, not an agent action: it re-parses and re-embeds every ' +
     'selected row of a tenant corpus and spends real embeddings budget. An unattended run may ' +

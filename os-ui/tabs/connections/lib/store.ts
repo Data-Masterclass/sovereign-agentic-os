@@ -3259,3 +3259,9 @@ export function __resetConnections(): void {
 }
 
 export type { Connection };
+
+// ------------------------------------------------------------------ delete domain (admin) --
+/** Delete-domain: every connection of a domain, archived included. */
+export function listConnectionsForDomain(domain: string): { id: string; name: string; owner: string }[] {
+  return [...syncCache().values()].filter((c) => c.domain === domain).map((c) => ({ id: c.id, name: c.name, owner: c.owner }));
+}

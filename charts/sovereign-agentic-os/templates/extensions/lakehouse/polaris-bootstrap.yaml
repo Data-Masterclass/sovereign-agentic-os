@@ -125,6 +125,9 @@ spec:
               # registrations) — existing tables keep their metadata; only NEW creates pick up
               # the endpoint/path-style. Idempotent: once pathStyleAccess=true is present,
               # subsequent Argo syncs are a no-op.
+              # The catalog step runs in a subshell: its `exit 0` short-circuits end THAT step
+              # only, so the purge step below runs on every sync, for new and existing catalogs.
+              (
               existing=$(curl -s -w '\n%{http_code}' \
                 -H "Authorization: Bearer $TOKEN" \
                 "$POLARIS_CATALOG_API/api/management/v1/catalogs/$CATALOG")
@@ -200,6 +203,41 @@ spec:
                   }
                 }'
               echo "catalog $CATALOG registered"
+              )
+{{- if $pl.catalog.purgeOnDrop }}
+
+              # PURGE ON DROP (domain delete, Data delete). Trino's Iceberg REST catalog sends
+              # every DROP TABLE as `DELETE …/tables/<t>?purgeRequested=true`. Polaris refuses
+              # it unless (1) the caller holds TABLE_WRITE_DATA (DROP_TABLE_WITH_PURGE needs
+              # TABLE_DROP + TABLE_WRITE_DATA; catalog_admin has only CATALOG_MANAGE_ACCESS +
+              # CATALOG_MANAGE_METADATA by default) and (2) the catalog sets
+              # `polaris.config.drop-with-purge.enabled`. With both, Polaris drops the entity
+              # and its TableCleanupTaskHandler deletes the table's data and metadata files.
+              # Without them a DROP fails with 403 and the table stays (proven in
+              # tests/domain-delete). Both PUTs are idempotent.
+              echo "ensuring purge-on-drop for $CATALOG ..."
+              curl -fsS -o /dev/null -X PUT \
+                -H "Authorization: Bearer $TOKEN" \
+                -H "Content-Type: application/json" \
+                "$POLARIS_CATALOG_API/api/management/v1/catalogs/$CATALOG/catalog-roles/catalog_admin/grants" \
+                -d '{"grant":{"type":"catalog","privilege":"TABLE_WRITE_DATA"}}'
+              cur=$(curl -fsS -H "Authorization: Bearer $TOKEN" "$POLARIS_CATALOG_API/api/management/v1/catalogs/$CATALOG")
+              if printf '%s' "$cur" | grep -q '"polaris.config.drop-with-purge.enabled":"true"'; then
+                echo "catalog $CATALOG already purges on drop"
+              else
+                ver=$(printf '%s' "$cur" | sed -n 's/.*"entityVersion":\([0-9]*\).*/\1/p')
+                props=$(printf '%s' "$cur" | sed -n 's/.*"properties":{\([^}]*\)}.*/\1/p')
+                props=$(printf '%s' "$props" | sed 's/"polaris\.config\.drop-with-purge\.enabled":"[^"]*"//g; s/,,*/,/g; s/^,//; s/,$//')
+                if [ -n "$props" ]; then props="$props,"; fi
+                # UpdateCatalog replaces the properties map wholesale: send the FULL current map.
+                curl -fsS -o /dev/null -X PUT \
+                  -H "Authorization: Bearer $TOKEN" \
+                  -H "Content-Type: application/json" \
+                  "$POLARIS_CATALOG_API/api/management/v1/catalogs/$CATALOG" \
+                  -d '{"currentEntityVersion": '"$ver"', "properties": {'"$props"'"polaris.config.drop-with-purge.enabled":"true"}}'
+                echo "catalog $CATALOG now purges on drop"
+              fi
+{{- end }}
           resources:
             requests: { cpu: 25m, memory: 64Mi }
             limits: { cpu: 200m, memory: 128Mi }

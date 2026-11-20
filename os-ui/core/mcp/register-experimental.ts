@@ -46,6 +46,8 @@ const BUNDLES: BundleSpec[] = [
   // #28 step 1: server.ts's former inline tools (platform, query_data,
   // search_knowledge) — extracted but still unconditional.
   { name: 'platform-tools', load: async () => (await import('@core/mcp/experimental/platform-tools')).platformTools },
+  // Admin → Domains → Delete, as an admin-only MCP tool (the wiring is registered at boot).
+  { name: 'domain-delete', load: async () => (await import('@core/mcp/domain-delete-tools')).domainDeleteTools },
   { name: 'data-query', load: async () => (await import('@tabs/data/mcp/data-query-tools')).dataQueryTools },
   { name: 'knowledge-search', load: async () => (await import('@tabs/knowledge/mcp/knowledge-search-tools')).knowledgeSearchTools },
   {

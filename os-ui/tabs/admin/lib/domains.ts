@@ -265,6 +265,16 @@ export function setArchived(id: string, archived: boolean): Domain {
   return d;
 }
 
+/** Remove a domain RECORD (the last delete-domain step). Absent = done. Durable through the
+ *  mirror's delete; the directory event re-derives Iceberg schema ownership. */
+export async function removeDomain(id: string): Promise<'deleted' | 'absent'> {
+  const out = await mirror.deleteConfirmed(id);
+  if (!out.ok) throw fail(`The domain registry did not confirm the delete of "${id}": ${out.reason}`, 503);
+  const had = domainsState().store.delete(id);
+  emitDirectoryChange(`domain ${id} deleted`);
+  return had || out.result === 'deleted' ? 'deleted' : 'absent';
+}
+
 export function transferDomain(id: string, owner: string): Domain {
   const d = getDomain(id);
   const next = owner.trim();

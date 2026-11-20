@@ -123,6 +123,48 @@ function DomainsInner() {
     }
   }, [load]);
 
+  // Delete domain: a dry run first (the plan), then a typed-confirmation run. Admin-only, audited.
+  type DelItem = { kind: string; label: string; reason?: string };
+  type DelPlan = { totals: { remove: number; keep: number; blocked: number }; components: { component: string; remove: DelItem[]; keep: DelItem[]; blocked?: DelItem[] }[] };
+  const [delPlan, setDelPlan] = useState<{ id: string; plan: DelPlan; status?: string; message?: string } | null>(null);
+  const [delBackup, setDelBackup] = useState(false);
+  const planDelete = useCallback(async (d: Domain) => {
+    setBusy(d.id);
+    setError('');
+    try {
+      const res = await fetch(`/api/platform-admin/domains/${d.id}/delete`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ dryRun: true }) });
+      const b = await res.json().catch(() => ({}));
+      if (!res.ok) setError(b.error ?? 'Could not plan the delete');
+      else { setDelBackup(false); setDelPlan({ id: d.id, plan: b.plan }); }
+    } finally {
+      setBusy('');
+    }
+  }, []);
+  const runDelete = useCallback(async () => {
+    if (!delPlan) return;
+    const ok = await confirm({
+      title: `Delete domain “${delPlan.id}” and everything in it?`,
+      body: `${delPlan.plan.totals.remove} objects are removed from every component, for every owner. ${delPlan.plan.totals.keep} are kept because something outside the domain still maps to them. This cannot be undone except from a backup.`,
+      confirmLabel: 'Delete domain',
+      danger: true,
+      confirmPhrase: delPlan.id,
+    });
+    if (!ok) return;
+    setBusy(delPlan.id);
+    try {
+      const res = await fetch(`/api/platform-admin/domains/${delPlan.id}/delete`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ dryRun: false, confirm: delPlan.id, iHaveABackup: delBackup }) });
+      const b = await res.json().catch(() => ({}));
+      const message = b.status === 'done' ? `Deleted: ${b.done.length} objects removed.`
+        : b.status === 'refused' ? `Refused: ${b.reason}`
+        : b.status === 'failed' ? `Stopped at ${b.failed.label}: ${b.failed.error}. ${b.remaining.length} left — run again to resume.`
+        : (b.error ?? 'Delete failed');
+      setDelPlan({ ...delPlan, plan: b.plan ?? delPlan.plan, status: b.status ?? 'error', message });
+      await load();
+    } finally {
+      setBusy('');
+    }
+  }, [delPlan, delBackup, confirm, load]);
+
   const startRename = useCallback((d: Domain) => {
     setRenaming(d.id);
     setRenameDraft(d.name);
@@ -350,6 +392,11 @@ function DomainsInner() {
                     <button className="btn ghost" style={{ padding: '4px 10px' }} disabled={busy === d.id}
                       onClick={() => patch(d, { op: 'archive', archived: !d.archived })}>
                       {busy === d.id ? <span className="spin" /> : d.archived ? 'Unarchive' : 'Archive'}
+                    </button>{' '}
+                    <button className="btn ghost danger" style={{ padding: '4px 10px' }} disabled={busy === d.id}
+                      title="Plan (dry run) the deletion of this domain and everything in it"
+                      onClick={() => planDelete(d)}>
+                      Delete…
                     </button>
                   </td>
                 </tr>
@@ -357,6 +404,38 @@ function DomainsInner() {
             </tbody>
           </table>
         </div>
+        {delPlan ? (
+          <div className="card" style={{ marginTop: 16 }} data-testid="domain-delete-plan">
+            <div className="section-title">Delete “{delPlan.id}” — plan (dry run)</div>
+            <div className="hint">
+              {delPlan.plan.totals.remove} to remove, {delPlan.plan.totals.keep} kept
+              {delPlan.plan.totals.blocked ? `, ${delPlan.plan.totals.blocked} blocked (no delete path: the run is refused)` : ''}.
+            </div>
+            <table>
+              <thead><tr><th>Component</th><th>Remove</th><th>Kept, and why</th></tr></thead>
+              <tbody>
+                {delPlan.plan.components.filter((c) => c.remove.length || c.keep.length || c.blocked?.length).map((c) => (
+                  <tr key={c.component}>
+                    <td className="mono">{c.component}</td>
+                    <td title={c.remove.map((i) => i.label).join('\n')}>{c.remove.length}</td>
+                    <td>{[...c.keep, ...(c.blocked ?? [])].map((k) => <div key={k.label} className="mono" style={{ fontSize: 11 }}>{k.label} — {k.reason}</div>)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <label className="row" style={{ gap: 6, marginTop: 8 }}>
+              <input type="checkbox" checked={delBackup} onChange={(e) => setDelBackup(e.target.checked)} />
+              I have a backup (skip the check for a Velero backup from the last 2 hours)
+            </label>
+            {delPlan.message ? <div className={delPlan.status === 'done' ? 'hint' : 'error'}>{delPlan.message}</div> : null}
+            <div className="row" style={{ gap: 8, marginTop: 8 }}>
+              <button className="btn danger" disabled={busy === delPlan.id || delPlan.plan.totals.remove === 0} onClick={runDelete}>
+                {busy === delPlan.id ? <span className="spin" /> : 'Delete domain…'}
+              </button>
+              <button className="btn ghost" onClick={() => setDelPlan(null)}>Close</button>
+            </div>
+          </div>
+        ) : null}
         <GatewayPanel variant="budgets" />
 
       </div>

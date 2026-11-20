@@ -102,3 +102,9 @@ Results on `trinodb/trino:476` (probe, then `tests/lakehouse/{auth,impersonation
 | `ImpersonateUser` input | `context.identity.user` = the **authenticated** user, `action.resource.user.user` = the requested `X-Trino-User`; denials and allows are in the sidecar decision log. |
 | `SET SESSION AUTHORIZATION` inside an impersonated session | checked as **session user → new user** (e.g. `dana → dave`), not as the authenticated service user. With OPA rules that allow only `svc-*` users it is always denied. It needs the client capability `SESSION_AUTHORIZATION`. |
 | dbt-trino `method: none` (1.9.3 and 1.12.0) | `TrinoNoneCredentials` sends no `Authorization` and has no `impersonation_user`; the session user is `user`. `method: ldap` sends Basic auth over HTTPS and honours `impersonation_user`. |
+
+## Delete domain (2026-11-20)
+
+`DROP TABLE|VIEW IF EXISTS`, `DROP SCHEMA IF EXISTS` and `information_schema.{tables,schemata}`
+(https://trino.io/docs/current/sql/drop-table.html), run as the schema owner's principal on the
+chart's Trino in `tests/domain-delete`.

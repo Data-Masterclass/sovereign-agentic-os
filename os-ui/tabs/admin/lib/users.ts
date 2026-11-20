@@ -597,6 +597,41 @@ export async function deleteUser(id: string): Promise<void> {
   emitDirectoryChange(`user ${id} deleted`);
 }
 
+/**
+ * Remove ONE domain from a user's memberships (the delete-domain step), optionally disabling the
+ * account in the SAME write (a member whose only domain it was). Unlike `updateUser`, an empty list
+ * is allowed, but only for a disabled account: a member of a deleted domain must not keep naming
+ * it, or the domain registry would re-derive the deleted domain from them. ONE write, then read
+ * back from the durable mirror until it holds the change: two quick fire-and-forget writes of the
+ * same record can land out of order.
+ */
+export async function removeDomainFromUser(id: string, domain: string, opts: { disable?: boolean } = {}): Promise<PublicUser> {
+  const map = await getCache();
+  if (isReserved(id)) throw err('User not found', 404);
+  const u = map.get(id);
+  if (!u) throw err('User not found', 404);
+  const next = u.domains.filter((d) => d !== domain);
+  if (opts.disable && u.role === 'admin') {
+    const activeAdmins = visible(map).filter((x) => x.role === 'admin' && !x.disabled && x.id !== id);
+    if (activeAdmins.length === 0) throw err('Cannot disable the last active admin', 400);
+  }
+  const disabled = u.disabled || opts.disable === true;
+  if (next.length === 0 && !disabled) throw err(`Deactivate ${id} first: "${domain}" is their only domain`, 409);
+  if (next.length !== u.domains.length || disabled !== !!u.disabled) {
+    u.domains = next;
+    u.disabled = disabled;
+    u.updatedAt = Date.now();
+    map.set(id, u);
+    writeThrough(u);
+  }
+  for (let i = 0; i < 20; i++) {
+    const doc = (await mirror.getDoc(id)) as StoredUser | null;
+    if (doc && !doc.domains.includes(domain) && !!doc.disabled === disabled) return publicOf(u);
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  throw err(`The user directory did not confirm ${id} without "${domain}"`, 503);
+}
+
 /** Distinct domains across all users — drives domain pickers. */
 export async function knownDomains(): Promise<string[]> {
   const map = await getCache();

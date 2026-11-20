@@ -481,3 +481,14 @@ export function unsharePersonalKnowledge(id: string, user: Principal): PersonalK
   writeThrough(rec);
   return rec;
 }
+
+// ------------------------------------------------------------------ delete domain (admin) --
+/** Delete-domain: every personal note of a domain, archived included. */
+export function listPersonalKnowledgeForDomain(domain: string): { id: string; owner: string }[] {
+  return [...st().entries.values()].filter((e) => e.domain === domain).map((e) => ({ id: e.id, owner: e.owner }));
+}
+
+/** Delete-domain: is this personal note still in the store? */
+export function personalKnowledgeExists(id: string): boolean {
+  return st().entries.has(id);
+}

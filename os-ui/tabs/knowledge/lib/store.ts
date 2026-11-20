@@ -1053,4 +1053,18 @@ export async function reconcileKnowledgeFromGit(domains: string[]): Promise<Know
     out.push({ domain, sha: bundle.sha, workflows: bundle.workflows.length, manual: Boolean(bundle.manual) });
   }
   return out;
+
+
+// ------------------------------------------------------------------ delete domain (admin) --
+/** Delete-domain: does the domain have an operating manual (the live one or any version)? */
+export function hasDomainKnowledge(domain: string): boolean {
+  ensureSeeded();
+  return ks().domainKnowledge.has(domain) || domainVersions.list(domain).length > 0;
+}
+
+/** Delete-domain: forget a domain's operating manual and purge its version history (the search
+ *  chunks are purged by the caller through `purgeKnowledgeUnits('domain:<id>')`). */
+export function purgeDomainKnowledgeForDomainDelete(domain: string): void {
+  ks().domainKnowledge.delete(domain);
+  domainVersions.purge(domain);
 }

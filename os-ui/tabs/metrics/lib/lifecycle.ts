@@ -286,3 +286,17 @@ export function restoreMetricVersion(metricId: string, user: Principal, version:
   setFlag(metricId, false);
   return { id: metricId };
 }
+
+// ------------------------------------------------------------------ delete domain (admin) --
+/** Delete-domain: the metric overlay rows (archive flag, folder) of these datasets. */
+export function listMetricOverlaysFor(datasetIds: Set<string>): { id: string; datasetId: string; measure: string }[] {
+  return [...lc().flags.values()].filter((f) => datasetIds.has(f.datasetId)).map((f) => ({ id: f.id, datasetId: f.datasetId, measure: f.measure }));
+}
+
+/** Delete-domain: remove one overlay row whose measure is already gone (confirmed mirror delete). */
+export async function purgeMetricOverlayForDomainDelete(id: string): Promise<'deleted' | 'absent'> {
+  const out = await mirror.deleteConfirmed(id);
+  if (!out.ok) throw Object.assign(new Error(`metric overlay ${id}: the store did not confirm the delete (${out.reason})`), { status: 503 });
+  lc().flags.delete(id);
+  return out.result;
+}

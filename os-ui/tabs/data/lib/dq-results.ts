@@ -195,3 +195,19 @@ export function __resetDqResults(): void {
   const g = globalThis as unknown as Record<symbol, DqStoreState | undefined>;
   g[DQ_RESULTS_KEY] = { runs: new Map(), hydration: null };
 }
+
+
+// ------------------------------------------------------------------ delete domain (admin) --
+/** Delete-domain: every data-quality run of a domain, in every state (`core/kernel/domain-delete.ts`). */
+export function listDqRunsForDomain(domain: string): DqRunRecord[] {
+  return [...dqStoreState().runs.values()].filter((x) => x.domain === domain);
+}
+
+/** Delete-domain: remove one data-quality run for good. Awaits the durable mirror's confirmation first, so
+ *  the record is never reported gone while the shared store still holds it. */
+export async function purgeDqRunForDomainDelete(id: string): Promise<'deleted' | 'absent'> {
+  const out = await mirror.deleteConfirmed(id);
+  if (!out.ok) throw Object.assign(new Error(`data-quality run ${id}: the store did not confirm the delete (${out.reason})`), { status: 503 });
+  dqStoreState().runs.delete(id);
+  return out.result;
+}
