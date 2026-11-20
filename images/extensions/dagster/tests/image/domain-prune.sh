@@ -7,7 +7,8 @@
 # user-code pod does. The OS repo index is stood in by a 10-line server that lists the bare repos
 # in $DD_REPOS (the directory os-ui's `OS_REPOS_DIR` points at), which is what os-ui's
 # /api/data/projects answers from. Deleting a repo there is therefore seen by repo-sync as a
-# deleted domain.
+# deleted domain. The container runs as the caller's uid so the bare repos it reads are its own
+# (git refuses a repository owned by another user).
 #
 #   sh images/extensions/dagster/tests/image/domain-prune.sh <image> <repos-dir> [port]   # start
 #   docker rm -f soa-dd-dagster                                                           # stop
@@ -18,7 +19,7 @@ PORT="${3:-18590}"
 NAME="${DD_DAGSTER_NAME:-soa-dd-dagster}"
 docker rm -f "$NAME" >/dev/null 2>&1 || true
 chmod -R a+rwX "$REPOS"
-docker run -d --name "$NAME" -p "127.0.0.1:$PORT:3000" -v "$REPOS:/repos" \
+docker run -d --name "$NAME" --user "$(id -u):$(id -g)" -p "127.0.0.1:$PORT:3000" -v "$REPOS:/repos" \
   -e REPO_SYNC_ENABLED=true -e REPO_SYNC_GIT_BASE=file:///repos -e REPO_SYNC_INTERVAL=3 \
   -e REPO_SYNC_INDEX_URL=http://127.0.0.1:8090/ -e REPO_SYNC_CHECKOUT=/tmp/checkout \
   -e DAGSTER_GRAPHQL_URL=http://127.0.0.1:3000/graphql -e DAGSTER_RELOAD_LOCATION=sovereign \
