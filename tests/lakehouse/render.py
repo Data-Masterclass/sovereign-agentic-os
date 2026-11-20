@@ -192,9 +192,13 @@ def main(out, extra):
         if any(' ' in x for x in ctr['args']):
             raise SystemExit('render.py: an OPA arg contains a space')
         env[key] = ' '.join(ctr['args'])
+        # The container's env (the OPA API tokens system.authz reads), from the rendered Secret.
+        write(os.path.join(out, 'env', f'{sub}.env'), env_file(ctr, sec))
     if side and side['image'] != central['image']:
         raise SystemExit('render.py: the Trino OPA sidecar and the central OPA run different images')
     env['LH_OPA_IMAGE'] = central['image']
+    # The reconciler's writer token for the os-ui tests (a file in the work dir, never printed).
+    write(os.path.join(out, 'opa-writer-token'), sec['opa-tokens']['writer'])
 
     # Polaris: the two bootstrap initContainers and the server, as the chart runs them.
     ppod = find(docs, 'Deployment', 'polaris')['spec']['template']['spec']

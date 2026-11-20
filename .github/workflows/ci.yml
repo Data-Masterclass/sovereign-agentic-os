@@ -330,6 +330,8 @@ jobs:
           OPA_URL: http://127.0.0.1:18181
         run: |
           npm ci --no-audit --no-fund
+          # os-ui presents the reconciler's OPA token, as in the cluster (render.py wrote it).
+          export OPA_TOKEN="$(cat "$(cat "${TMPDIR:-/tmp}/soa-lakehouse.work")/opa-writer-token")"
           node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test --test-concurrency=1 tabs/metrics/lib/build/explore-fqn.trino.test.ts tabs/data/lib/lane-names.trino.test.ts tabs/data/lib/dataset-versions.trino.test.ts core/mcp/trino-sql-error.trino.test.ts ../tests/dashboards/native-render.trino.test.ts
       # WP-14: TLS + PASSWORD service users + OPA sidecar ImpersonateUser, on the dual-run render
       # (the steps above are today's plain-HTTP clients, unchanged), then the closed render.
