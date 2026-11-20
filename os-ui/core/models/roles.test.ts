@@ -71,3 +71,47 @@ test('roleModels returns the effective map for all four roles', () => {
   assert.equal(m.embeddings, roleDefault('embeddings'));
   assert.equal(m.tools, roleDefault('tools'));
 });
+
+// ---- TOOLS FOLLOWS STANDARD (config-only external provider, 2026-11-20) ----------------------
+// Agent nodes run on `tools`; the admin UI offers only Standard/Reasoning/Embeddings and says
+// Standard covers "agent execution". Pointing Standard at a newly registered provider must move
+// the agent nodes too — reproduced end to end: before this, chat moved and every node stayed on
+// `sovereign-default`.
+
+const TOOLS_ENVS = ['LITELLM_TOOLS_MODEL', 'LITELLM_EXEC_MODEL', 'LITELLM_CHAT_MODEL'] as const;
+function withoutToolsEnv(fn: () => void): void {
+  const saved = TOOLS_ENVS.map((k) => [k, process.env[k]] as const);
+  for (const k of TOOLS_ENVS) delete process.env[k];
+  try { fn(); } finally { for (const [k, v] of saved) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } }
+}
+
+test('tools follows an admin Standard pin when no deployment env pins the tools tier', () => {
+  withoutToolsEnv(() => {
+    updateSettings({ modelRoles: { reasoning: '', standard: 'mistral-small', tools: '', embeddings: '' } });
+    assert.equal(roleModel('tools'), 'mistral-small');
+  });
+});
+
+test('with no Standard pin, tools keeps the shipped default (no behaviour change out of the box)', () => {
+  withoutToolsEnv(() => {
+    assert.equal(roleModel('tools'), roleModel('standard'));
+    assert.equal(roleModel('tools'), 'sovereign-default');
+  });
+});
+
+test('an explicit tools pin still wins over Standard', () => {
+  withoutToolsEnv(() => {
+    updateSettings({ modelRoles: { reasoning: '', standard: 'mistral-small', tools: 'sovereign-reasoning', embeddings: '' } });
+    assert.equal(roleModel('tools'), 'sovereign-reasoning');
+  });
+});
+
+test('an operator env pin on the tools tier is kept, not overridden by the Standard pin', () => {
+  withoutToolsEnv(() => {
+    process.env.LITELLM_TOOLS_MODEL = 'sovereign-reasoning';
+    try {
+      updateSettings({ modelRoles: { reasoning: '', standard: 'mistral-small', tools: '', embeddings: '' } });
+      assert.equal(roleModel('tools'), roleDefault('tools'));
+    } finally { delete process.env.LITELLM_TOOLS_MODEL; }
+  });
+});

@@ -15,7 +15,7 @@ import { __resetCost, setCap, addSpend } from '@core/policy/cost';
  * test stays offline. The gateway transport is injected (never hit).
  */
 mock.module('@tabs/admin/lib/models', {
-  namedExports: { getAssistantModel: () => ({ id: 'test-model' }) },
+  namedExports: { getAssistantModel: () => ({ id: 'test-model' }), ensureHydrated: async () => {} },
 });
 
 let assistantComplete: typeof import('@core/runtime/complete').assistantComplete;

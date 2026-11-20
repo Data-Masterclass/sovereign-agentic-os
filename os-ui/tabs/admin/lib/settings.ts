@@ -27,6 +27,7 @@
  * adapter import-light while still fully durable.
  */
 import type { OsMirror } from '@core/infra/os-mirror';
+import { isRunWorkerProcess } from '@core/kernel/process-role';
 
 export type Settings = {
   sso: { enabled: boolean; provider: string; issuerUrl: string; scim: boolean };
@@ -111,7 +112,22 @@ function defaults(): Settings {
 // Authoritative value pinned to globalThis so every separately-bundled route
 // handler shares ONE settings singleton (and it survives dev HMR). `hydration`
 // dedupes the one-time load from the mirror. Same shape as model-prices.ts.
-type SettingsState = { settings: Settings; hydration: Promise<void> | null };
+type SettingsState = {
+  settings: Settings;
+  hydration: Promise<void> | null;
+  /** When this process last read the mirror doc (boot hydration or a worker re-read). */
+  refreshedAt?: number;
+  /** The in-flight worker re-read, shared by concurrent callers. */
+  refreshing?: Promise<void> | null;
+};
+
+/**
+ * The run WORKER never writes settings; os-ui does. Without a re-read the worker keeps the values
+ * it booted with forever, so an admin who points a model role at a new provider sees chat follow
+ * it while every agent run stays on the old model. The worker re-reads the ONE settings doc at most
+ * this often, on the next `ensureHydrated()` (same cadence as `core/infra/mirror-refresh.ts`).
+ */
+export const SETTINGS_REFRESH_MIN_MS = 5000;
 const STATE_KEY = Symbol.for('soa.platform.settings');
 function settingsState(): SettingsState {
   const g = globalThis as unknown as Record<symbol, SettingsState | undefined>;
@@ -156,17 +172,25 @@ async function getMirror(): Promise<OsMirror> {
 export async function ensureHydrated(): Promise<void> {
   const s = settingsState();
   if (!s.hydration) s.hydration = hydrateSettings();
-  return s.hydration;
+  await s.hydration;
+  // The run worker is a READER of os-ui's writes: re-read when stale (os-ui never does — it is
+  // the writer, and its in-process value is authoritative).
+  if (isRunWorkerProcess() && Date.now() - (s.refreshedAt ?? 0) >= SETTINGS_REFRESH_MIN_MS) {
+    if (!s.refreshing) s.refreshing = hydrateSettings().finally(() => { s.refreshing = null; });
+    await s.refreshing;
+  }
 }
 
 async function hydrateSettings(): Promise<void> {
   const s = settingsState();
   const mirror = await getMirror();
   const doc = (await mirror.getDoc(DOC_ID)) as { settings?: unknown } | null;
+  s.refreshedAt = Date.now();
   if (doc && doc.settings && typeof doc.settings === 'object') {
     // Merge THROUGH updateSettings' semantics so the stored partial only sets the
     // fields it carries (nil-safe): a stored doc from before a field existed keeps
-    // that field at its current default rather than blanking it.
+    // that field at its current default rather than blanking it. An unreadable doc
+    // (null) keeps what is held — a re-read never resets settings to defaults.
     s.settings = mergeSettings(defaults(), doc.settings as Record<string, unknown>);
   }
 }
@@ -258,6 +282,8 @@ export function _reset(): void {
   const s = settingsState();
   s.settings = defaults();
   s.hydration = null;
+  s.refreshedAt = undefined;
+  s.refreshing = null;
   // Reset the mirror's probe state if it was already loaded (a fresh-process sim).
   if (mirrorPromise) void mirrorPromise.then((m) => m.__reset()).catch(() => {});
 }

@@ -61,6 +61,7 @@ import { interruptIdOfCard, StaleResumeError, type ResumeDecision } from '@tabs/
 import type { ApprovalDecision } from '@tabs/agents/lib/engine/approval-port';
 import type { Approval } from '@core/policy/approvals';
 import { getSystemForRun, refreshSystemFromMirror } from '@tabs/agents/lib/store';
+import { ensureModelRolesFresh } from '@core/models/roles';
 import { publishRunEvent } from '@tabs/agents/lib/engine/run-events';
 import { sweepRetention, RETENTION_EVERY_MS, type RetentionOutcome, type ThreadDeleter } from '@tabs/agents/lib/engine/retention';
 
@@ -302,6 +303,9 @@ export async function executeJob(store: RunJobStore, job: RunJob, opts: ExecuteJ
   try {
     // Worker: the registry here is a read-only mirror — fetch THIS system fresh (no-op in os-ui).
     await refreshSystemFromMirror(job.systemId);
+    // The admin's model-role pins (Standard/Reasoning/tools) as saved NOW — the worker never writes
+    // settings, so without this every node resolves to the deployment default.
+    await ensureModelRolesFresh();
     const view = getSystemForRun(job.systemId, user);
     const { yaml, warnings: definitionWarnings } = await prepareRun(user, view, job.systemId);
     const body = await executeTeamRun({

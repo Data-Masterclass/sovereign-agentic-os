@@ -321,7 +321,8 @@ export function registerModel(input: {
   const id = input.id.trim();
   if (!id) throw fail('A model id/alias is required', 400);
   if (!input.label.trim()) throw fail('A model label is required', 400);
-  if (!input.endpoint.baseUrl.trim() || !input.endpoint.modelName.trim()) throw fail('A base URL and model name are required', 400);
+  // A native LiteLLM provider (`mistral/…`) carries no base URL — LiteLLM knows the endpoint.
+  if (!input.endpoint.modelName.trim()) throw fail('A model name is required', 400);
   if (!input.endpoint.keyRef?.name || !input.endpoint.keyRef?.key) throw fail('A secrets-manager key reference is required', 400);
   const m: Model = {
     id,

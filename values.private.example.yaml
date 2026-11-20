@@ -119,3 +119,4 @@ litellmAgentKey:
     - sovereign-premium
     - private-self-hosted-a
     - private-self-hosted-b
+    - os-admin-registered   # access group of models registered in Admin -> Models & Providers

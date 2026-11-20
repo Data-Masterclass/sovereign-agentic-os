@@ -6,7 +6,9 @@ import { adminCtx, fail } from '../_ctx';
 import { recompile } from '../_compile';
 import { adminPost } from '@core/infra/litellm-write';
 import { registerModel } from '@tabs/admin/lib/models';
-import { classifyProviderType, litellmModelString, PROVIDER_TYPE_LABELS, type ProviderType } from '@tabs/agents/lib/routing';
+import { classifyProviderType, PROVIDER_TYPE_LABELS, type ProviderType } from '@tabs/agents/lib/routing';
+import { buildProviderModel, normaliseProvider, type ProviderModelPayload } from '@tabs/admin/lib/provider-registration';
+import { ensureHydrated as ensurePricesHydrated, setModelPrices } from '@tabs/admin/lib/model-prices';
 import { putSecret, secretFingerprint, getSecretServerSide } from '@core/infra/secrets';
 import { audit } from '@tabs/admin/lib/audit';
 
@@ -27,15 +29,13 @@ export const dynamic = 'force-dynamic';
  */
 const SUPPORTED: ProviderType[] = ['openai-compatible', 'stackit'];
 
-async function registerWithGateway(alias: string, model: string, baseUrl: string, apiKey: string, mode: string): Promise<boolean> {
+async function registerWithGateway(payload: ProviderModelPayload): Promise<boolean> {
   // The ONE admin write door (`litellm-write.ts`): master key stays inside it; a failure is a result.
-  const res = await adminPost('/model/new', {
-    model_name: alias,
-    litellm_params: { model, api_base: baseUrl, api_key: apiKey },
-    model_info: { mode },
-  }, 4000);
+  const res = await adminPost('/model/new', payload, 4000);
   return res.ok;
 }
+
+const num = (v: unknown): number | null => (v === undefined || v === null || v === '' ? null : Number(v));
 
 export async function POST(req: Request) {
   try {
@@ -46,6 +46,10 @@ export async function POST(req: Request) {
     const baseUrl = String(body?.baseUrl ?? '').trim();
     const modelName = String(body?.modelName ?? '').trim();
     const apiKey = String(body?.apiKey ?? '');
+    const label = String(body?.label ?? '').trim();
+    const litellmProvider = String(body?.litellmProvider ?? '').trim();
+    const inputPerM = num(body?.inputPerM);
+    const outputPerM = num(body?.outputPerM);
     const task = (['chat', 'reasoning', 'embedding'].includes(String(body?.task)) ? String(body?.task) : 'chat') as 'chat' | 'reasoning' | 'embedding';
 
     if (!SUPPORTED.includes(providerType)) {
@@ -54,12 +58,12 @@ export async function POST(req: Request) {
         { status: 400 },
       );
     }
-    if (!alias || !baseUrl || !modelName || !apiKey) {
-      return NextResponse.json({ error: 'An alias, base URL, model id and API key are all required' }, { status: 400 });
-    }
-
-    const model = litellmModelString(modelName);
     const mode = task === 'embedding' ? 'embedding' : 'chat';
+    // Validate the whole LiteLLM body BEFORE the key touches the secrets store (400 on a gap).
+    // The real key goes in after the vault write; this probe carries a placeholder.
+    const native = normaliseProvider(litellmProvider);
+    const probe = buildProviderModel({ alias, modelName, baseUrl, apiKey: apiKey ? '-' : '', mode, litellmProvider: native, inputPerM, outputPerM });
+    const model = probe.litellm_params.model;
 
     // 1) Raw key → secrets manager (ONCE). Catalog keeps only ref + fingerprint.
     const keyRef = putSecret(`model-${alias}`, 'api_key', apiKey);
@@ -71,7 +75,7 @@ export async function POST(req: Request) {
     const classified = classifyProviderType({ model, api_base: baseUrl });
     const catalogModel = registerModel({
       id: alias,
-      label: `${modelName} (${PROVIDER_TYPE_LABELS[providerType]})`,
+      label: label || `${modelName} (${native ? `LiteLLM ${native}` : PROVIDER_TYPE_LABELS[providerType]})`,
       task,
       providerType: classified,
       endpoint: { baseUrl, modelName, keyRef, fingerprint },
@@ -81,7 +85,13 @@ export async function POST(req: Request) {
     // 3) Register with the LiteLLM gateway so it proxies the model (raw key used ONCE,
     //    then dropped). store_model_in_db makes this durable across pod restarts.
     const raw = getSecretServerSide(keyRef) ?? apiKey;
-    const gatewayOk = await registerWithGateway(alias, model, baseUrl, raw, mode);
+    const gatewayOk = await registerWithGateway({ ...probe, litellm_params: { ...probe.litellm_params, api_key: raw } });
+
+    // 4) The same prices in the OS price book, so Monitoring shows the cost LiteLLM books.
+    if (inputPerM !== null && outputPerM !== null) {
+      await ensurePricesHydrated();
+      setModelPrices({ [alias]: { inputPerM, outputPerM } }, user.id);
+    }
 
     audit({
       tenant: tenant.id,
@@ -90,7 +100,7 @@ export async function POST(req: Request) {
       action: 'model.provider-register',
       target: `model:${alias}`,
       // fingerprint-only — the raw key never appears in the audit trail.
-      detail: `Registered ${providerType} model ${alias} (${model} @ ${baseUrl}, task=${task}) via secrets manager (${fingerprint}); gateway=${gatewayOk ? 'registered' : 'unreachable'}. Raw key never surfaced.`,
+      detail: `Registered ${providerType} model ${alias} (${model} @ ${baseUrl || 'provider default endpoint'}, task=${task}, access group ${probe.model_info.access_groups.join(',')}${probe.litellm_params.input_cost_per_token !== undefined ? ', priced' : ', unpriced'}) via secrets manager (${fingerprint}); gateway=${gatewayOk ? 'registered' : 'unreachable'}. Raw key never surfaced.`,
     });
 
     const { publish } = await recompile();

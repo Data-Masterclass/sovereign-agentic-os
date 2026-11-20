@@ -20,7 +20,7 @@ import { ASK_RULES_BLOCK } from '@core/runtime/ask-rules';
 import { parseArtifacts, truncationBanner, type ChatArtifact } from '@core/runtime/chat-artifacts';
 import { WRITE_TOOL_NAMES } from '@core/mcp/write-tool-meta';
 import { liteLlmCaller } from '@core/runtime/runtime';
-import { resolveAssistantModelId } from '@core/runtime/complete';
+import { ensureAssistantModelFresh, resolveAssistantModelId } from '@core/runtime/complete';
 import { inputBudget, modelContext } from '@core/models/context-windows';
 import { renderPageContext, type PageContext } from '@core/runtime/page-context';
 
@@ -316,6 +316,7 @@ export async function runOsAssistant(input: RunOsAssistantInput): Promise<OsAssi
   const artifacts: ChatArtifact[] = [];
   // Production: the ONE assistant model for both plan + act. Tests inject `llm`
   // and own model selection, so the config tier ids are opaque placeholders.
+  if (!injected) await ensureAssistantModelFresh();
   const assistantId = injected ? config.litellmExecModel : resolveAssistantModelId();
   const ctx = modelContext(assistantId);
   const result = await runAgentic({
