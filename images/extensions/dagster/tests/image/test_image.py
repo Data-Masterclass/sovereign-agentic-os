@@ -87,9 +87,14 @@ class GenerateThenParse(unittest.TestCase):
     def test_readme_names_the_dbt_and_dsi_versions_this_image_carries(self):
         readme = load(os.path.join(SRC, "os-ui/tabs/data/lib/dbt/fixtures/metrics-semantic-layer.golden.json"))["README.md"]
         # dbt-core 1.12 reads the semantic layer through MetricFlow's own semantic interfaces.
-        mf = importlib.metadata.version("metricflow")
-        self.assertIn(f"`metricflow {mf}` (its `metricflow_semantic_interfaces`)", readme)
-        self.assertIn(f"(= dbt-core {DBT_CORE})", readme)
+        # The README names the LINE (GLUE-4: exact pins live only in the Dockerfile); the image must
+        # be on that dbt-core line and at or above that MetricFlow floor.
+        line = ".".join(DBT_CORE.split(".")[:2])
+        self.assertIn(f"dbt-core `{line}`", readme)
+        floor = re.search(r"MetricFlow `>= (\d+\.\d+)`", readme)
+        self.assertIsNotNone(floor, readme)
+        mf = tuple(int(x) for x in importlib.metadata.version("metricflow").split(".")[:2])
+        self.assertGreaterEqual(mf, tuple(int(x) for x in floor.group(1).split(".")))
 
     def test_pre_fix_duplicate_rule_is_refused_with_dbts_text(self):
         with tempfile.TemporaryDirectory() as d:
