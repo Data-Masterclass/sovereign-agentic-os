@@ -78,7 +78,7 @@ test('twin: with the legacy strip, the generator guard (rule 8) still leaves the
 
 test('twin fixture: literal-safety-legacy-twin.json (the image twin must see the payload execute)', () => {
   const path = join(HERE, 'fixtures', 'literal-safety-legacy-twin.json');
-  const actual = Object.fromEntries(fuzzProject((d, s) => generateProject(d, { ...s, datasets: s.datasets.filter((e) => e.dataset.id !== 'ds_refused1') }, noCheck), TWIN_TEMPLATES));
+  const actual = Object.fromEntries(fuzzProject((d, s) => generateProject(d, { ...s, datasets: s.datasets.filter((e) => e.dataset.id !== 'ds_refused1') }, noCheck), TWIN_TEMPLATES, false));
   if (process.env.REGEN_GOLDEN === '1' || !existsSync(path)) writeFileSync(path, JSON.stringify(actual, null, 2) + '\n');
   assert.deepEqual(actual, JSON.parse(readFileSync(path, 'utf8')), 'the twin fixture differs (REGEN_GOLDEN=1 to accept)');
   // The reassembled delimiters really are in it.

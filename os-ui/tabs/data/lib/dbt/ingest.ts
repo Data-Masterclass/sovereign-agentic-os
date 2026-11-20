@@ -29,6 +29,7 @@ import { load } from 'js-yaml';
 import { AUDIENCE_MANAGED, registerRepoKind, type ChangedFile, type IngestReport, type Pusher } from '@core/infra/git-receive';
 import { runWithSurface } from '@core/infra/request-surface';
 import { createDatasetService, defineQualityRulesService, type QualityRuleInput } from '@tabs/data/lib/mutations-server';
+import { decodeFreeText, isIdentifier } from '@tabs/data/lib/dbt/literal';
 import { getDataset, setDocs, type Principal } from '@tabs/data/lib/store';
 import { SAFE_COLUMN } from '@tabs/data/lib/dbt/schema';
 import { sanitizeIdent } from '@tabs/data/lib/store-fqn';
@@ -143,7 +144,7 @@ export function validateDbtFile(file: { path: string; content: string }): string
     for (const c of columns) {
       const cn = typeof c?.name === 'string' ? c.name.trim() : '';
       if (!cn) return `model '${name}' has a column with no \`name\``;
-      if (!SAFE_COLUMN.test(cn)) return `column '${cn}' of model '${name}' is not a usable dbt identifier`;
+      if (!isIdentifier('column', cn)) return `column '${cn}' of model '${name}' is not a usable column name (no brace, double quote, backslash or control character)`;
     }
   }
   return null;
@@ -195,7 +196,9 @@ export function datasetsFromSchemaYml(filePath: string, content: string, domain:
     for (const c of rawColumns) {
       const name = typeof c?.name === 'string' ? c.name.trim() : '';
       if (!name) continue;
-      columns.push({ name, description: typeof c.description === 'string' ? c.description : '' });
+      // The OS wrote its free text encoded (`literal.freeText`); reading it back decodes it, so a
+      // push → read-back round trip is lossless.
+      columns.push({ name, description: typeof c.description === 'string' ? decodeFreeText(c.description) : '' });
       const tests = c.data_tests ?? c.tests; // `tests:` is the pre-1.8 spelling; accept both on read
       for (const spec of Array.isArray(tests) ? tests : []) {
         const mapped = testToRule(name, spec);
@@ -204,7 +207,7 @@ export function datasetsFromSchemaYml(filePath: string, content: string, domain:
       }
     }
     for (const intention of Array.isArray(meta.os_intentions) ? (meta.os_intentions as unknown[]) : []) {
-      rules.push({ name: String(intention), description: '' });
+      rules.push({ name: decodeFreeText(String(intention)), description: '' });
     }
     out.push({
       model,
@@ -218,7 +221,7 @@ export function datasetsFromSchemaYml(filePath: string, content: string, domain:
       declaredTier: typeof meta.os_tier === 'string' && meta.os_tier ? meta.os_tier : null,
       layer: layerOf(filePath, model, meta),
       schema: schemaOf(filePath, domain),
-      description: typeof raw.description === 'string' ? raw.description : '',
+      description: typeof raw.description === 'string' ? decodeFreeText(raw.description) : '',
       columns,
       rules,
       notes,

@@ -100,3 +100,30 @@ class RawBronzeReaderTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class ColumnNamesTest(unittest.TestCase):
+    """The OS's positional column names are applied before Bronze is written, or refused."""
+
+    def _arrow(self, text):
+        return app._read_to_arrow(_write(".csv", text), "uploads/u/x.csv")
+
+    def test_headers_land_under_the_mapped_identifiers(self):
+        a = app.apply_column_names(self._arrow("Order Date,größe,kunden-nr\n2024-01-01,1,A7\n"), ["order_date", "groesse", "kunden_nr"])
+        self.assertEqual(a.column_names, ["order_date", "groesse", "kunden_nr"])
+        self.assertEqual(a.column("groesse").to_pylist(), ["1"])
+
+    def test_a_recorded_header_may_keep_its_own_name(self):
+        a = app.apply_column_names(self._arrow("Order Date,x\n1,2\n"), ["Order Date", "x"])
+        self.assertEqual(a.column_names, ["Order Date", "x"])
+
+    def test_absent_means_the_file_names(self):
+        a = app.apply_column_names(self._arrow("a,b\n1,2\n"), None)
+        self.assertEqual(a.column_names, ["a", "b"])
+
+    def test_a_list_that_does_not_fit_is_refused_before_any_write(self):
+        arrow = self._arrow("a,b\n1,2\n")
+        for bad in (["a"], ["a", "b", "c"], ["a", "x{{y}}"], ["a", "A"], "a,b", [1, 2]):
+            with self.assertRaises(ValueError):
+                app.apply_column_names(arrow, bad)
+

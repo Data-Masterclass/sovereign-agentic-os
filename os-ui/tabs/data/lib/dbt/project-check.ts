@@ -19,7 +19,8 @@
  *       4. no source table is declared twice;
  *       5. no column carries the same test twice (same name + same arguments ⇒ same unique id);
  *       6. every `ref('<model>')` / `source('<s>', '<t>')` a model or test uses exists;
- *       7. no two metrics / semantic models share a name;
+ *       7. no two metrics / semantic models share a name, and every file is well-formed Unicode
+ *          (dbt's YAML loader refuses a lone surrogate);
  *       8. CLOSED JINJA GRAMMAR (literal safety, defence in depth): every Jinja construct in every
  *          file dbt renders is one the generator itself writes — `ref`/`source`/`config`/`this`/
  *          `is_incremental`/the batch-id `var` in model SQL, `env_var` in profiles, the closed
@@ -35,6 +36,7 @@
 import yaml from 'js-yaml';
 import { renderGenericTests, renderMacros } from '@tabs/data/lib/dbt/project';
 import { isSafeSemanticFilter } from '@tabs/data/lib/dbt/semantic/validate';
+import { isWellFormed } from '@tabs/data/lib/dbt/literal';
 
 export type ProjectIssue = {
   /** The OS dataset whose files caused the issue; null when it cannot be attributed. */
@@ -126,6 +128,12 @@ export function checkProject(files: Map<string, string>): ProjectIssue[] {
       }
     }
   };
+
+  // Well-formed Unicode in every file: a lone surrogate is legal in a JS string and js-yaml writes
+  // it, but dbt's YAML loader refuses the file — and with it the whole domain's `dbt parse`.
+  for (const [path, content] of files) {
+    if (!isWellFormed(content)) push(DATASET_IN_TEXT.exec(content)?.[1] ?? null, path, 'holds a lone UTF-16 surrogate (not valid Unicode); dbt cannot read the file');
+  }
 
   for (const [path, content] of files) {
     if (!path.endsWith('.yml') || !path.startsWith('models/')) continue;

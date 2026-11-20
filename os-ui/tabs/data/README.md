@@ -166,6 +166,16 @@ With the flag on, the OS stops being its own run ledger (checklist D7–D11):
   every payload), its twin with the old strip put back, and `literal_safety.py`, which runs real
   `dbt parse` + `dbt compile` in the Dagster image with Trino's query log as the oracle.
   Before a deploy, `os-ui/scripts/preflight-literal-safety.ts` lists stored values the rules refuse.
+- **Column names never need renaming.** A CSV / TSV upload's headers land under identifiers from the
+  documented `literal.normalizeColumnName` (transliterate ä→ae, ö→oe, ü→ue, ß→ss; NFKD; lowercase;
+  non-alphanumeric runs → `_`; leading digit → `c_`; collisions `_2`, `_3`): `Order Date` →
+  `order_date`. `lib/upload-columns.ts` decides the names BEFORE anything is written, the
+  data-runner lands them positionally (`columnNames`) or refuses the list, and the original header
+  is recorded once as the column's `source` (dbt `meta.os_source_name`) and never re-derived — a
+  re-upload reuses the stored names. An existing table that already holds a header such as
+  `Order Date` keeps it: the `column` allow-list accepts it and dbt gets `quote: true`. Every string
+  is well-formed Unicode at the store boundary (a lone surrogate becomes U+FFFD), and the git
+  read-back decodes the encoded braces, so a push round trip is lossless.
   The MODEL bodies are a separate, stronger rule (provenance, above): authored SQL never becomes a
   model at all.
 - **A quality rule's value set is checked at the gate.** dbt emits each `accepted_values` entry as

@@ -179,6 +179,29 @@ def _read_to_arrow(local_path: str, object_key: str):
     return pacsv.read_csv(local_path, parse_options=parse, convert_options=convert)
 
 
+_IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
+
+
+def apply_column_names(arrow, names):
+    """Land the columns under the OS's positional `columnNames` (its documented header
+    normalisation, os-ui `upload-columns.ts`). Validated BEFORE anything is written: the list must
+    fit the file, each name must be an identifier or the header itself (a name the dataset already
+    recorded), and no two may collide. Absent -> the file's own names, unchanged."""
+    if names is None:
+        return arrow
+    if not isinstance(names, list) or not all(isinstance(n, str) for n in names):
+        raise ValueError("columnNames must be a list of strings")
+    current = arrow.column_names
+    if len(names) != len(current):
+        raise ValueError(f"columnNames has {len(names)} names but the file has {len(current)} columns")
+    for target, header in zip(names, current):
+        if target != header and not _IDENT.match(target):
+            raise ValueError(f"columnNames: {target!r} is not an identifier")
+    if len({n.lower() for n in names}) != len(names):
+        raise ValueError("columnNames: two columns would share a name")
+    return arrow.rename_columns(names)
+
+
 def ingest(body: dict) -> dict:
     principal = (body.get("principal") or "").strip()
     dataset = (body.get("dataset") or "").strip()
@@ -233,6 +256,7 @@ def ingest(body: dict) -> dict:
         tmp.write(data)
         tmp.flush()
         arrow = _read_to_arrow(tmp.name, object_key)
+    arrow = apply_column_names(arrow, body.get("columnNames"))
 
     # 2) Write the Iceberg Bronze table via Polaris REST.
     catalog = _catalog()

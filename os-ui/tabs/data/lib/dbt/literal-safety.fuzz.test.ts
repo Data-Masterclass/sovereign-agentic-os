@@ -22,6 +22,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { generateProject, generateProjectReport } from '@tabs/data/lib/dbt/generate';
 import { jinjaGrammarIssues } from '@tabs/data/lib/dbt/project-check';
+import { isWellFormed } from '@tabs/data/lib/dbt/literal';
 import { FIELDS, PAYLOAD_TEMPLATES, baseSnapshot, fuzzProject, newJinja, payloadFor, randomPayloads } from '@tabs/data/lib/dbt/literal-fuzz';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -54,6 +55,8 @@ test('fuzz: no payload in any user-controlled field adds a Jinja construct to th
       }
       for (const c of newJinja(files, baseline)) findings.push(`${field} ${JSON.stringify(value)}: new Jinja ${c}`);
       for (const i of jinjaGrammarIssues(files)) findings.push(`${field} ${JSON.stringify(value)}: rule 8 ${i.path} ${i.reason}`);
+      // Well-formed Unicode in every file (dbt's YAML loader refuses a lone surrogate).
+      for (const [p, c] of files) if (!isWellFormed(c)) findings.push(`${field} ${JSON.stringify(value)}: ${p} holds a lone surrogate`);
       // One bad dataset never takes the domain down: the other dataset is still generated.
       const other = field.startsWith('sync.') ? 'ds_orders1' : 'ds_synced1';
       assert.ok([...files.values()].some((c) => c.includes(other)), `${field}: ${other} vanished from the project`);

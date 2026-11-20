@@ -1254,9 +1254,16 @@ export function setDocs(
   const d = editOf(rec, user);
   if (docs.description !== undefined) d.description = docs.description;
   if (docs.columns !== undefined) {
-    const columns = docs.columns.filter((c) => c.name.trim()).map((c) => ({ name: c.name.trim(), description: c.description ?? '' }));
-    // A column name becomes a dbt `columns:` entry and test SQL: a strict identifier or refused.
-    columns.forEach((c, i) => requireIdentifier('sql', `columns[${i}].name`, c.name));
+    // The ORIGINAL source header recorded at ingest is kept: a docs save never re-derives it.
+    const sourceOf = new Map(d.columns.filter((c) => c.source).map((c) => [c.name, c.source!]));
+    const columns: ColumnDoc[] = docs.columns.filter((c) => c.name.trim()).map((c) => {
+      const name = c.name.trim();
+      const source = c.source ?? sourceOf.get(name);
+      return { name, description: c.description ?? '', ...(source && source !== name ? { source } : {}) };
+    });
+    // A column name becomes a dbt `columns:` entry: a physical name in the `column` allow-list
+    // (plain identifiers, and existing headers such as `Order Date`, emitted quoted) or refused.
+    columns.forEach((c, i) => requireIdentifier('column', `columns[${i}].name`, c.name));
     d.columns = columns;
   }
   // PROVENANCE: an AI auto-doc write STAMPS 'ai-auto' (so the UI shows "AI-drafted —

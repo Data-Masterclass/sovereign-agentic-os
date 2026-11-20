@@ -128,13 +128,13 @@ export type IngestOutcome = { table: string; rowCount: number; columns: { name: 
 /** POST the upload to the data-runner /ingest. principal + objectKey come from the
  *  caller (session-derived); the runner independently forces the personal_<uid>
  *  schema + the uploads/<uid>/ prefix, so a spoofed value can't cross users. */
-async function postIngest(input: { principal?: string; dataset: string; objectKey: string }): Promise<IngestOutcome> {
+async function postIngest(input: { principal?: string; dataset: string; objectKey: string; columnNames?: string[] }): Promise<IngestOutcome> {
   const res = await withTimeout(
     `${config.dataRunnerUrl}/ingest`,
     {
       method: 'POST',
       headers: { 'content-type': 'application/json', ...serviceBearerHeader() },
-      body: JSON.stringify({ principal: input.principal, dataset: input.dataset, objectKey: input.objectKey }),
+      body: JSON.stringify({ principal: input.principal, dataset: input.dataset, objectKey: input.objectKey, ...(input.columnNames ? { columnNames: input.columnNames } : {}) }),
     },
     60_000, // large files: DuckDB read + PyIceberg write can take a while.
   );
@@ -156,14 +156,15 @@ export async function dataRunnerReachable(): Promise<boolean> {
   return Boolean(res && res.ok);
 }
 
-export function realDlt(): DltClient & { lastIngest?: IngestOutcome } {
+export function realDlt(): DltClient & { lastIngest?: IngestOutcome; columnNames?: string[] } {
   // `load` performs the REAL ingest when a file objectKey is present (data-runner
   // writes the physical Bronze table); `tableExists` verifies the RESULT landed in
   // Polaris (a governed probe SELECT as the principal), so a missing table reports ✗.
-  const self: DltClient & { lastIngest?: IngestOutcome } = {
+  // `columnNames` (set by the ingest flow): the positional names the runner lands the columns under.
+  const self: DltClient & { lastIngest?: IngestOutcome; columnNames?: string[] } = {
     async load(_table, source, ctx) {
       if (!ctx?.objectKey) return; // no upload context → nothing to load (verify then ✗).
-      self.lastIngest = await postIngest({ principal: ctx.principal, dataset: source, objectKey: ctx.objectKey });
+      self.lastIngest = await postIngest({ principal: ctx.principal, dataset: source, objectKey: ctx.objectKey, ...(self.columnNames ? { columnNames: self.columnNames } : {}) });
     },
     // The interface carries no domains: a domain table routes by its schema, a personal lane to `_none`.
     async tableExists(table, principal) { return probeQueryable(table, principal, []); },

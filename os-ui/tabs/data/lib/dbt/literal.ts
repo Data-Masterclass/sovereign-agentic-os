@@ -30,7 +30,7 @@
 import type { Dataset } from '@tabs/data/lib/dataset-schema';
 import { isValidCron } from '@core/kernel/cron-util';
 
-export type IdentifierKind = 'sql' | 'dataset_id' | 'domain' | 'principal' | 'connection_id' | 'slug';
+export type IdentifierKind = 'sql' | 'column' | 'dataset_id' | 'domain' | 'principal' | 'connection_id' | 'slug';
 
 /** A refused identifier or cron expression, with the field it came from. */
 export class LiteralSafetyError extends Error {
@@ -56,6 +56,15 @@ export class LiteralSafetyError extends Error {
 export const IDENTIFIER_PATTERNS: Record<IdentifierKind, RegExp> = {
   /** A Trino column / schema / table name usable unquoted (128 = a safe bound below Trino's). */
   sql: /^[A-Za-z_][A-Za-z0-9_]{0,127}$/,
+  /**
+   * A PHYSICAL column name. New uploads land under `normalizeColumnName` identifiers, but a
+   * table can already hold a header such as `Order Date` or `größe`; such a name is kept as it is
+   * (never renamed, never dropped) and emitted with dbt's `quote: true`. It may hold no brace,
+   * double quote, backslash, control character, line or paragraph separator or lone surrogate,
+   * and no leading or trailing whitespace — so it can neither open Jinja nor leave a quoted
+   * Trino identifier.
+   */
+  column: /^(?=[^\s])(?=[\s\S]*[^\s]$)[^\u0000-\u001f\u007f-\u009f{}"\\\u2028\u2029\ud800-\udfff]{1,128}$/,
   /** `ds_<token>` — the shape `store.newId()` mints. */
   dataset_id: /^ds_[A-Za-z0-9_]{1,64}$/,
   /** A domain id (hyphens allowed; `domainSchema()` maps it to the Trino schema). */
@@ -70,6 +79,7 @@ export const IDENTIFIER_PATTERNS: Record<IdentifierKind, RegExp> = {
 
 const KIND_HINT: Record<IdentifierKind, string> = {
   sql: 'letters, digits and underscores, not starting with a digit, at most 128 characters',
+  column: 'at most 128 characters with no brace, double quote, backslash or control character',
   dataset_id: "'ds_' followed by letters, digits or underscores",
   domain: 'lowercase letters, digits, underscores and hyphens',
   principal: 'letters, digits and . _ @ -',
@@ -112,7 +122,26 @@ const FULLWIDTH_CLOSE = '\uFF5D';
  * keeps the original either way; this is only the dbt projection).
  */
 export function freeText(text: unknown): string {
-  return String(text ?? '').replace(/\{/g, FULLWIDTH_OPEN).replace(/\}/g, FULLWIDTH_CLOSE);
+  return wellFormed(String(text ?? '')).replace(/\{/g, FULLWIDTH_OPEN).replace(/\}/g, FULLWIDTH_CLOSE);
+}
+
+const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
+
+/**
+ * Well-formed Unicode: every lone surrogate becomes U+FFFD. A lone surrogate is legal in a JS (and
+ * JSON) string but not in YAML text, and dbt's YAML loader refuses the whole file — one name would
+ * then fail `dbt parse` for the entire domain. The store normalises at write time; free text and
+ * the generator's checks normalise / refuse again.
+ */
+export function wellFormed(text: string): string {
+  return text.replace(LONE_SURROGATE, '\uFFFD');
+}
+
+export function isWellFormed(text: string): boolean {
+  LONE_SURROGATE.lastIndex = 0;
+  const bad = LONE_SURROGATE.test(text);
+  LONE_SURROGATE.lastIndex = 0;
+  return !bad;
 }
 
 export function decodeFreeText(text: string): string {
@@ -201,8 +230,70 @@ export const TRINO_RESERVED = new Set([
   'values', 'when', 'where', 'with',
 ]);
 
+/** A column dbt must quote: a Trino reserved word, or a physical name that is no plain identifier. */
 export function needsQuote(column: string): boolean {
-  return TRINO_RESERVED.has(column.toLowerCase());
+  return TRINO_RESERVED.has(column.toLowerCase()) || !IDENTIFIER_PATTERNS.sql.test(column);
+}
+
+// ------------------------------------------------------------- column name mapping ---
+
+const TRANSLIT: Record<string, string> = { ä: 'ae', ö: 'oe', ü: 'ue', ß: 'ss', Ä: 'ae', Ö: 'oe', Ü: 'ue', ẞ: 'ss', æ: 'ae', Æ: 'ae', ø: 'oe', Ø: 'oe', å: 'aa', Å: 'aa', œ: 'oe', Œ: 'oe', þ: 'th', ð: 'd', ł: 'l', Ł: 'l', '€': 'eur', '%': 'pct', '#': 'nr', '&': 'and' };
+
+/**
+ * The documented normalisation from a source column header to a Trino identifier:
+ *   1. transliterate German / Nordic letters (ä→ae, ö→oe, ü→ue, ß→ss, …) and `€ % # &`;
+ *   2. Unicode NFKD, combining marks dropped (é→e);
+ *   3. lowercase; every run of characters outside `[a-z0-9]` becomes one `_`; `_` trimmed;
+ *   4. a leading digit gets the prefix `c_`; an empty result is `column`; at most 120 characters.
+ * `Order Date` → `order_date`, `größe` → `groesse`, `kunden-nr` → `kunden_nr`, `Umsatz (€)` →
+ * `umsatz_eur`, `2024` → `c_2024`. Collisions are resolved by {@link allocateColumnNames}.
+ */
+export function normalizeColumnName(raw: string): string {
+  const t = [...wellFormed(String(raw ?? ''))].map((ch) => TRANSLIT[ch] ?? ch).join('');
+  const core = t
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 120)
+    .replace(/_+$/, '');
+  if (!core) return 'column';
+  return /^[0-9]/.test(core) ? `c_${core}` : core;
+}
+
+/**
+ * Map every header of an upload to a STABLE, unique identifier. A header the dataset already
+ * knows (its stored `source`, or a stored name equal to the header) keeps its stored name —
+ * the mapping is recorded once and never re-derived. A new header is normalised; a collision
+ * with a stored or an earlier name gets `_2`, `_3`, … in header order. Deterministic.
+ */
+export function allocateColumnNames(
+  headers: string[],
+  existing: { name: string; source?: string }[] = [],
+): { source: string; name: string }[] {
+  const known = new Map<string, string>();
+  for (const c of existing) {
+    known.set(c.source ?? c.name, c.name);
+    if (!known.has(c.name)) known.set(c.name, c.name);
+  }
+  const taken = new Set(existing.map((c) => c.name.toLowerCase()));
+  const out: { source: string; name: string }[] = [];
+  for (const h of headers) {
+    const stored = known.get(h);
+    if (stored !== undefined) {
+      out.push({ source: h, name: stored });
+      taken.add(stored.toLowerCase());
+      continue;
+    }
+    const base = normalizeColumnName(h);
+    let name = base;
+    for (let i = 2; taken.has(name.toLowerCase()); i++) name = `${base.slice(0, 120 - String(i).length - 1)}_${i}`;
+    taken.add(name.toLowerCase());
+    known.set(h, name);
+    out.push({ source: h, name });
+  }
+  return out;
 }
 
 // ------------------------------------------------------------------ dataset validation ---
@@ -227,7 +318,7 @@ export function datasetLiteralIssues(d: Dataset): LiteralIssue[] {
   check(() => assertIdentifier('domain', 'domain', d.domain));
   check(() => assertIdentifier('principal', 'owner', d.owner));
   if (d.slug != null) check(() => assertIdentifier('slug', 'slug', d.slug));
-  (d.columns ?? []).forEach((c, i) => check(() => assertIdentifier('sql', `columns[${i}].name`, c.name)));
+  (d.columns ?? []).forEach((c, i) => check(() => assertIdentifier('column', `columns[${i}].name`, c.name)));
   (d.checks ?? []).forEach((c, i) => {
     if (!c.rule) return; // a free-text intention: its name is free text, no identifier
     if (c.column !== undefined) check(() => assertIdentifier('sql', `checks[${i}].column`, c.column));
