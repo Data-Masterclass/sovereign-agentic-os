@@ -22,12 +22,12 @@ import 'server-only';
 import os from 'node:os';
 import path from 'node:path';
 import { MemorySaver } from '@langchain/langgraph';
-import { PostgresSaver } from '@langchain/langgraph-checkpoint-postgres';
 import { config } from '@core/kernel/config';
 import type { CurrentUser } from '@core/kernel/auth';
 import { roleModel } from '@core/models/roles';
 import type { CallerContext } from '@core/infra/litellm-credential';
 import { requireGatewayChatModel } from '@core/adapters/litellm/chat-model';
+import { migrateAgentRuns } from '@core/adapters/postgres/migrate';
 import type { ToolExecutor, ToolSpec } from '@core/runtime/agentic';
 import type { System } from '@tabs/agents/lib/system-schema';
 import { isWriteTool, type HoldDecision } from '@tabs/agents/lib/build/hold';
@@ -37,8 +37,12 @@ import { StaleResumeError, type ResumeDecision } from '@tabs/agents/lib/engine/r
 import { systemRepoPaths } from '@tabs/agents/lib/git/history';
 import { generateAgentModule } from '@tabs/agents/lib/module/generate';
 import { AgentModuleIntegrityError, loadAgentModule, readCommittedModule } from '@core/adapters/agent-module/load';
-import { createOsAgent, memoryHoldStore, migrateHoldStore, postgresHoldStore, type HoldStore } from '@tabs/agents/lib/module/os-agent';
-import { memoryModuleRunStamps, migrateModuleRunStamps, postgresModuleRunStamps, runAgentModule, type ModuleRunResult, type ModuleRunStamps } from '@tabs/agents/lib/module/run';
+import { createOsAgent, memoryHoldStore, postgresHoldStore, type HoldStore } from '@tabs/agents/lib/module/os-agent';
+import { selectCheckpointer } from '@tabs/agents/lib/engine/checkpointer';
+import { memoryModuleRunStamps, postgresModuleRunStamps, runAgentModule, type ModuleRunHooks, type ModuleRunResult, type ModuleRunStamps } from '@tabs/agents/lib/module/run';
+import { moduleTracer } from '@tabs/agents/lib/module/observe';
+import type { RunObserver } from '@core/infra/trace-port';
+import { inputBudget } from '@core/models/context-windows';
 import { hostModuleInputs } from '@tabs/agents/lib/module/versions';
 
 type Stores = { kind: 'postgres' | 'memory'; saver: unknown; holds: HoldStore; stamps: ModuleRunStamps };
@@ -51,12 +55,24 @@ export async function moduleStores(databaseUrl: string | undefined): Promise<Sto
     slot.__osModuleMemoryStores ??= { kind: 'memory', saver: new MemorySaver(), holds: memoryHoldStore(), stamps: memoryModuleRunStamps() };
     return slot.__osModuleMemoryStores;
   }
+  // No DDL here (WP-53b N2): the tables are created by `migrateAgentRuns` at boot, and the saver is
+  // the process's one checkpointer, set up at boot too (`ensureCheckpointerReady`).
   const pool = await agentRunsPool(databaseUrl);
-  await migrateHoldStore(pool);
-  await migrateModuleRunStamps(pool);
-  const saver = new PostgresSaver(pool);
-  await saver.setup();
+  const { saver } = await selectCheckpointer(databaseUrl);
   return { kind: 'postgres', saver, holds: postgresHoldStore(pool), stamps: postgresModuleRunStamps(pool) };
+}
+
+/**
+ * BOOT (os-ui and os-ui-worker): with `AGENT_GRAPH_MODULE` on, apply the `agent_runs` migrations
+ * (node-pg-migrate, advisory lock) so no run ever creates a table. Off → nothing happens and no
+ * table exists. A failed migration throws: module runs must not start without their tables.
+ */
+export async function ensureAgentModuleReady(databaseUrl: string | undefined): Promise<'off' | 'memory' | 'postgres'> {
+  if (!config.agentGraphModule) return 'off';
+  if (!databaseUrl) return 'memory';
+  const r = await migrateAgentRuns({ databaseUrl });
+  if (!r.ok) throw new Error(`agent_runs migrations failed: ${r.reason} — ${r.detail}`);
+  return 'postgres';
 }
 
 /** Did this run start on its module? (A run with no stamp resumes on the v1 engine.) */
@@ -109,6 +125,13 @@ export type ModuleTeamInput = {
   agent: string;
   log?: (line: string) => void;
   signal?: AbortSignal;
+  hooks?: ModuleRunHooks;
+  /** The run segment's observer (`withRunTrace`); absent → no spans. */
+  observer?: RunObserver;
+  /** Stock call limits per agent visit. */
+  limits?: { modelCalls: number; toolCalls: number };
+  /** Agent visits before the team ends (the outer graph's step budget). */
+  maxSteps?: number;
 };
 
 export async function runOsTeamOnModule(input: ModuleTeamInput): Promise<ModuleRunResult & { checkpointer: 'postgres' | 'memory' }> {
@@ -124,6 +147,7 @@ export async function runOsTeamOnModule(input: ModuleTeamInput): Promise<ModuleR
     cacheRoot: config.agentModuleCacheDir || path.join(os.tmpdir(), 'os-agent-modules'),
   });
   const writeSystem = loaded.module.TOOL_NAMES.some((t) => isWriteTool(t));
+  const tracer = moduleTracer(input.observer ?? null);
   const graph = createOsAgent(loaded.module, {
     modelFor: (a) => requireGatewayChatModel({ model: a.model ?? roleModel('tools'), caller: input.caller, writeSystem }),
     specs: input.specs,
@@ -134,6 +158,15 @@ export async function runOsTeamOnModule(input: ModuleTeamInput): Promise<ModuleR
     checkpointer: stores.saver,
     toolCallTimeoutMs: config.agentToolCallTimeoutMs,
     toolResultMaxChars: config.agentToolResultMaxChars,
+    tracer,
+    // Stock context management (03 §5.6): the window of the agent's own alias (os-ui's model
+    // context table, the same budget the v1 engine trims to); summaries on the standard role model.
+    context: {
+      summaryModel: () => requireGatewayChatModel({ model: roleModel('standard'), caller: input.caller, writeSystem: false }),
+      maxInputTokens: (a) => inputBudget(a.model ?? roleModel('tools')),
+    },
+    ...(input.limits ? { limits: input.limits } : {}),
+    ...(input.maxSteps ? { maxSteps: input.maxSteps } : {}),
   });
   if (input.task === undefined && input.resumeDecision && !input.resumeDecision.interruptId) {
     throw new StaleResumeError(input.runId, 'stale_interrupt', 'a module run is resumed by interrupt id', true);
@@ -152,6 +185,14 @@ export async function runOsTeamOnModule(input: ModuleTeamInput): Promise<ModuleR
     module: { digest: loaded.digest, commit: loaded.commit },
     log: input.log,
     signal: input.signal,
+    hooks: input.hooks,
+    spans: tracer.spans,
+    // Room for every agent's own loop (model + tools + middleware nodes per call) under the team's
+    // step budget; the call limits and maxSteps are the real bounds, this only keeps LangGraph's
+    // backstop above them.
+    recursionLimit: (input.maxSteps ?? 12) * ((input.limits?.modelCalls ?? 25) * 8 + 10),
+    agentCount: loaded.module.TEAM.agents.length,
+    modelOf: (id) => loaded.module.TEAM.agents.find((a) => a.id === id)?.model ?? roleModel('tools'),
   });
   input.log?.(`module-run runId=${input.runId} commit=${loaded.commit ?? '-'} digest=${loaded.digest.slice(0, 12)} parked=${r.parked}`);
   return { ...r, checkpointer: stores.kind };

@@ -69,3 +69,11 @@ Measured in `langchain` 1.6.7 (not stated in the docs): with `version: 'v2'`, th
 `state`, not middleware state channels. The OS therefore keeps its once-per-call hold decision in
 its own table, not in a middleware channel. LangGraph JS 1.7.5 does not copy `config.metadata`
 into checkpoint metadata, so the module run's owner stamp is an OS table too.
+
+## WP-53b: what the module path uses for flag-on
+
+- Context management: stock `summarizationMiddleware` (trigger at 70 % of the agent's input window, keep 20 messages) and `contextEditingMiddleware` + `ClearToolUsesEdit` (50 %, keep 3): https://docs.langchain.com/oss/javascript/langchain/middleware (built-in). Note (read in `langchain` 1.6.7 source): the summary message reuses the first message's id, so the team transcript keeps the original turn while the agent's own window holds the summary.
+- Per-agent call limit: stock `modelCallLimitMiddleware({ runLimit, exitBehavior: 'end' })` and `toolCallLimitMiddleware` — `runLimit` counts one agent visit (one `invoke` of its `createAgent` graph).
+- Live events: `graph.stream(…, { streamMode: ['updates', 'tasks'], subgraphs: true })` (https://docs.langchain.com/oss/javascript/langgraph/streaming): task start events per `agent_<id>`, the agent subgraph's updates for each tool result.
+- Per-call request headers for the gateway's trace join (`traceparent`, `x-litellm-call-id`): middleware `modelSettings` → `bindTools` call options → `ChatOpenAI` `options.headers` (read in `langchain` 1.6.7 `AgentNode.js` and `@langchain/openai` 1.8.4 `completions.js`).
+- Migrations of the `agent_runs` database: node-pg-migrate 9.0.0 runner (WP-07's), separate migrations table `os_migrations.agent_runs_migrations`.

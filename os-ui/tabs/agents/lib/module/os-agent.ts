@@ -32,7 +32,18 @@
  *   - MODEL: `deps.modelFor` — production passes `core/adapters/litellm/chat-model.ts`
  *     `gatewayChatModel` (ChatOpenAI → LiteLLM, scoped key, no client retries).
  */
-import { tool, createMiddleware, humanInTheLoopMiddleware } from 'langchain';
+import {
+  ClearToolUsesEdit,
+  contextEditingMiddleware,
+  createMiddleware,
+  humanInTheLoopMiddleware,
+  modelCallLimitMiddleware,
+  summarizationMiddleware,
+  tool,
+  toolCallLimitMiddleware,
+} from 'langchain';
+import type { SpanHandle } from '@core/infra/trace-port';
+import type { ModuleTracer } from '@tabs/agents/lib/module/observe';
 import type { ToolExecutor, ToolSpec } from '@core/runtime/agentic';
 import type { HoldDecision } from '@tabs/agents/lib/build/hold';
 import { callToolGuarded } from '@tabs/agents/lib/engine/tool-result';
@@ -49,16 +60,6 @@ export type HoldStore = {
   record(key: string, hold: StoredHold): Promise<StoredHold>;
   get(key: string): Promise<StoredHold | null>;
 };
-
-export async function migrateHoldStore(db: Queryable): Promise<void> {
-  await db.query(`CREATE TABLE IF NOT EXISTS agent_hold_decisions (
-     call_key      TEXT PRIMARY KEY,
-     thread_id     TEXT NOT NULL,
-     held          BOOLEAN NOT NULL,
-     approver_role TEXT,
-     decided_at    TIMESTAMPTZ NOT NULL DEFAULT now())`);
-  await db.query(`CREATE INDEX IF NOT EXISTS agent_hold_decisions_thread ON agent_hold_decisions (thread_id)`);
-}
 
 export function postgresHoldStore(db: Queryable): HoldStore {
   const row = (r: Record<string, unknown> | undefined): StoredHold | null =>
@@ -103,6 +104,8 @@ export function osTools(input: {
   threadId: string;
   timeoutMs?: number;
   maxChars?: number;
+  /** The open agent visit's span: each governed call runs inside its tool observation. */
+  span?: () => SpanHandle | null;
 }) {
   const specOf = new Map(input.specs.map((s) => [s.name, s]));
   return input.names.map((name) => {
@@ -110,11 +113,14 @@ export function osTools(input: {
     return tool(
       async (args: Record<string, unknown>, config: { toolCall?: { id?: string } }) => {
         const callId = config?.toolCall?.id;
-        const out = await callToolGuarded(input.executor, { name, args: args ?? {} }, {
-          timeoutMs: input.timeoutMs,
-          maxChars: input.maxChars,
-          ...(callId ? { idempotencyKey: `${input.threadId}:${callId}` } : {}),
-        });
+        const run = () =>
+          callToolGuarded(input.executor, { name, args: args ?? {} }, {
+            timeoutMs: input.timeoutMs,
+            maxChars: input.maxChars,
+            ...(callId ? { idempotencyKey: `${input.threadId}:${callId}` } : {}),
+          });
+        const span = input.span?.() ?? null;
+        const out = span ? await span.tool({ id: callId ?? '', name, args: args ?? {} }, { decision: 'ok' }, run) : await run();
         return out.text;
       },
       {
@@ -186,7 +192,41 @@ export type OsAgentDeps = {
   maxSteps?: number;
   toolCallTimeoutMs?: number;
   toolResultMaxChars?: number;
+  /** Langfuse spans through the WP-31 writer (`module/observe.ts`); absent → no tracing. */
+  tracer?: ModuleTracer;
+  /**
+   * Context management with the stock middleware (03 §5.6): summarise at 70 % of the agent's input
+   * window (keep the last 20 messages), clear old tool results at 50 % (keep the last 3).
+   */
+  context?: { summaryModel: (agent: { id: string; model: string | null }) => unknown; maxInputTokens: (agent: { id: string; model: string | null }) => number; keepMessages?: number; keepToolResults?: number };
+  /** Per agent visit: stock call limits; the visit ends with the middleware's own note. */
+  limits?: { modelCalls: number; toolCalls: number };
 };
+
+/** The OS middleware for one agent, in order: hold decision, approval gate, tracing, context, limits. */
+export function osMiddleware(mod: LoadedGraphModule, deps: OsAgentDeps, agent: { id: string; model: string | null }) {
+  const out: unknown[] = [
+    // `set_state` is the module's own tool (team state, no OS data): never held.
+    holdDecider((t, a) => (t === 'set_state' ? { held: false } : deps.decide(t, a)), deps.holds, deps.threadId),
+    // Listed before everything else that wraps tool calls, as the HITL docs require.
+    osApprovals(mod.TOOL_NAMES, deps.holds, deps.threadId),
+  ];
+  if (deps.tracer) out.push(deps.tracer.middleware(agent.id));
+  if (deps.context) {
+    const max = Math.max(100, deps.context.maxInputTokens(agent));
+    out.push(
+      summarizationMiddleware({ model: deps.context.summaryModel(agent) as never, trigger: { tokens: Math.floor(max * 0.7) }, keep: { messages: deps.context.keepMessages ?? 20 } }),
+      contextEditingMiddleware({ edits: [new ClearToolUsesEdit({ trigger: { tokens: Math.floor(max * 0.5) }, keep: { messages: deps.context.keepToolResults ?? 3 } })] }),
+    );
+  }
+  if (deps.limits) {
+    out.push(
+      modelCallLimitMiddleware({ runLimit: deps.limits.modelCalls, exitBehavior: 'end' }),
+      toolCallLimitMiddleware({ runLimit: deps.limits.toolCalls, exitBehavior: 'end' }),
+    );
+  }
+  return out;
+}
 
 /** The module's own graph, with the OS's tools and middleware injected. */
 export function createOsAgent(mod: LoadedGraphModule, deps: OsAgentDeps) {
@@ -197,11 +237,13 @@ export function createOsAgent(mod: LoadedGraphModule, deps: OsAgentDeps) {
     threadId: deps.threadId,
     timeoutMs: deps.toolCallTimeoutMs,
     maxChars: deps.toolResultMaxChars,
+    span: deps.tracer ? () => deps.tracer!.current() : undefined,
   });
-  // `set_state` is the module's own tool (team state, no OS data): never held.
-  const middleware = [
-    holdDecider((t, a) => (t === 'set_state' ? { held: false } : deps.decide(t, a)), deps.holds, deps.threadId),
-    osApprovals(mod.TOOL_NAMES, deps.holds, deps.threadId),
-  ];
-  return mod.buildGraph({ model: deps.modelFor, tools, middleware, checkpointer: deps.checkpointer, maxSteps: deps.maxSteps });
+  return mod.buildGraph({
+    model: deps.modelFor,
+    tools,
+    middleware: (agent: { id: string; model?: string | null }) => osMiddleware(mod, deps, { id: agent.id, model: agent.model ?? null }),
+    checkpointer: deps.checkpointer,
+    maxSteps: deps.maxSteps,
+  });
 }
