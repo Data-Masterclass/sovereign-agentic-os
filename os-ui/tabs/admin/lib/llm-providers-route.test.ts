@@ -35,7 +35,12 @@ mock.module('@/app/api/platform-admin/_ctx', {
     },
   },
 });
+let OPA_ALLOWS = true;
+mock.module('@core/infra/governed', {
+  namedExports: { authorize: async () => (OPA_ALLOWS ? { allowed: true, policy: 'opa-allow' } : { allowed: false, policy: 'opa-deny' }) },
+});
 mock.module('@tabs/admin/lib/audit', { namedExports: { audit: () => undefined } });
+mock.module('@/app/api/platform-admin/_compile', { namedExports: { recompile: async () => ({ publish: 'skipped' }) } });
 mock.module('@core/infra/litellm-write', {
   namedExports: {
     adminPost: async (path: string, body: unknown) => { CALLS.push({ method: 'POST', path, body }); return POST_REPLY(path, body); },
@@ -59,7 +64,7 @@ const catalog = await import('../../../app/api/platform-admin/providers/route.ts
 const req = (body: unknown) => new Request('http://os/x', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
 const AZURE = { preset: 'azure', name: 'azure-prod', apiBase: 'https://azure-ok.example.test', apiVersion: '2024-10-21', apiKey: 'sk-secret-typed-by-admin' };
 
-beforeEach(() => { ROLE = 'admin'; CALLS = []; POST_REPLY = () => ({ ok: true, data: {} }); });
+beforeEach(() => { OPA_ALLOWS = true; ROLE = 'admin'; CALLS = []; POST_REPLY = () => ({ ok: true, data: {} }); });
 
 test('a non-admin is refused at every step, and the gateway is never called', async () => {
   ROLE = 'builder';
@@ -72,6 +77,16 @@ test('a non-admin is refused at every step, and the gateway is never called', as
     await migration.GET(),
   ];
   for (const r of responses) assert.equal(r.status, 403);
+  assert.deepEqual(CALLS, []);
+});
+
+test('an admin the policy (OPA) does not allow is refused before any gateway write', async () => {
+  OPA_ALLOWS = false;
+  for (const r of [
+    await connections.POST(req(AZURE)),
+    await testRoute.POST(req({ connection: 'azure-prod', preset: 'azure', model: 'd1' })),
+    await models.POST(req({ connection: 'azure-prod', preset: 'azure', model: 'd1', alias: 'azure-gpt', mode: 'chat' })),
+  ]) assert.equal(r.status, 403);
   assert.deepEqual(CALLS, []);
 });
 
@@ -88,7 +103,7 @@ test('a host that is not on the egress allowlist is refused before anything is s
 test('a connection goes to LiteLLM\'s own credential store; the key is never sent back', async () => {
   const res = await connections.POST(req(AZURE));
   assert.equal(res.status, 201);
-  const text = await res.text();
+  const text = JSON.stringify(await res.json());
   assert.doesNotMatch(text, /sk-secret-typed-by-admin/);
   const post = CALLS.find((c) => c.method === 'POST');
   assert.equal(post?.path, '/credentials');

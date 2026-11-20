@@ -62,13 +62,17 @@ check "HTTPS_PROXY is the egress proxy" "http://egress-proxy:3128" "$(inspect 'c
 check "HTTP_PROXY is the egress proxy" "http://egress-proxy:3128" "$(inspect 'cm("litellm-egress-env").get("HTTP_PROXY")')"
 NP=$(inspect 'cm("litellm-egress-env").get("NO_PROXY")')
 for n in t-langfuse-web agentic-os-langfuse-web mock-model query-tool .svc .cluster.local localhost; do check "NO_PROXY has $n" "$n" "$NP"; done
+absent "NO_PROXY has no empty entry" ",," "$NP"
+check "os-ui knows the same NO_PROXY" "mock-model" "$(inspect 'osui_env("LLM_NO_PROXY")')"
 check "price map read locally" "True" "$(inspect 'cm("litellm-egress-env").get("LITELLM_LOCAL_MODEL_COST_MAP")')"
 check "agent key holds the access group" "os-admin-models" "$(inspect 'keyjob()')"
 absent "no STACKIT host when stackitPremium is off" "onstackit" "$(inspect 'filt()')"
 
 echo "default profile + llmProviders.allowHosts"
-render --set 'llmProviders.allowHosts={acme.openai.azure.com,api.mistral.ai}'
+render --set 'llmProviders.allowHosts={acme.openai.azure.com,api.mistral.ai}' --set 'llmProviders.noProxy={ollama}'
 rc_is "renders" 0
+check "a bare in-cluster Service joins NO_PROXY" ",ollama" "$(inspect 'cm("litellm-egress-env").get("NO_PROXY")')"
+check "… and os-ui's copy" ",ollama" "$(inspect 'osui_env("LLM_NO_PROXY")')"
 check "proxy filter has the Azure host" 'acme\.openai\.azure\.com' "$(inspect 'filt()')"
 check "proxy filter has the Mistral host" 'api\.mistral\.ai' "$(inspect 'filt()')"
 check "os-ui pre-check list = proxy list" "acme.openai.azure.com" "$(inspect 'osui_env("LLM_EGRESS_ALLOWLIST")')"
