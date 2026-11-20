@@ -153,7 +153,7 @@ cluster).
 scripts/dev/kubeconfig.sh                         # -> ~/.kube/dmagosdev.yaml, never ~/.kube/config
 export KUBECONFIG=~/.kube/dmagosdev.yaml          # this shell only
 scripts/dev/bootstrap-secrets.sh                  # marker + random secrets + private overlay
-scripts/dev/platform.sh                           # ingress-nginx 4.11.3 on the dev IP, cert-manager v1.16.1
+scripts/dev/platform.sh                           # ingress-nginx (platform-versions.env) on the dev IP, cert-manager v1.16.1
 scripts/deploy.sh --env dev --from-registry main-<sha of origin/main>   # first install
 scripts/dev/seed.sh                               # the Northpeak demo
 scripts/dev/ci-kubeconfig.sh                      # the CI credential: a namespaced deploy role, no access to the model key

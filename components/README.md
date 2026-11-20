@@ -16,6 +16,7 @@ dagster user code, data-runner, query-tool) are under `images/`, not here.
     | [ClickHouse](clickhouse/UPSTREAM.md) | Apache-2.0 |
 | [Dagster](dagster/UPSTREAM.md) | Apache-2.0 |
 | [Docling](docling/UPSTREAM.md) | MIT |
+| [ingress-nginx](ingress-nginx/UPSTREAM.md) (cluster add-on, beside the chart) | Apache-2.0 |
 | [kind](kind/UPSTREAM.md) (test clusters only) | Apache-2.0 |
 | [Langfuse](langfuse/UPSTREAM.md) | MIT (core; the upstream `ee/` directory is commercially licensed and not enabled) |
 | [LangGraph JS](langgraph/UPSTREAM.md) | MIT (in-process library, not a deployment) |

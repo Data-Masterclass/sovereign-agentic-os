@@ -4,6 +4,7 @@
 import { config } from '@core/kernel/config';
 import { k8s as liveK8s } from '@core/infra/k8s';
 import { readLiveRef } from '@core/infra/lifecycle-refs';
+import { appIngressViolations } from '@tabs/software/lib/app-ingress-policy';
 import type { ResourceFootprint } from '@tabs/software/lib/model';
 
 /**
@@ -441,6 +442,14 @@ export async function deployApp(app: RunnerApp, options: RunnerOpts = {}): Promi
   const url = `https://${spec.host}`;
   const c = collections(o.namespace);
 
+  // The app Ingress carries only allow-listed annotations and the configured class (checked here
+  // before any object is written; the chart's admission policy enforces the same in the API server).
+  const ingress = buildIngressManifest(spec, o.namespace, o);
+  const refused = appIngressViolations(ingress, o.ingressClass);
+  if (refused.length) {
+    return { ok: false, live: false, action: 'noop', name, host: spec.host, url: null, phase: 'failed', detail: `App Ingress refused: ${refused.join('; ')}.` };
+  }
+
   const nsRes = await ensureNamespace(o.k8s, o.namespace);
   if (!nsRes.reachable) return { ok: false, live: false, action: 'noop', name, host: spec.host, url: null, phase: 'offline', detail: UNREACHABLE };
   if (!nsRes.ok) return { ok: false, live: true, action: 'noop', name, host: spec.host, url: null, phase: 'failed', detail: `Could not ensure runner namespace ${o.namespace}.` };
@@ -450,7 +459,7 @@ export async function deployApp(app: RunnerApp, options: RunnerOpts = {}): Promi
   const dep = await applyObject(o.k8s, c.deployments, name, buildDeploymentManifest(spec, o.namespace, new Date().toISOString(), o.priorityClassName));
   if (!dep.reachable) return { ok: false, live: false, action: 'noop', name, host: spec.host, url: null, phase: 'offline', detail: UNREACHABLE };
   const svc = await applyObject(o.k8s, c.services, name, buildServiceManifest(spec, o.namespace));
-  const ing = await applyObject(o.k8s, c.ingresses, name, buildIngressManifest(spec, o.namespace, o));
+  const ing = await applyObject(o.k8s, c.ingresses, name, ingress);
 
   if (!dep.ok || !svc.ok || !ing.ok) {
     return {

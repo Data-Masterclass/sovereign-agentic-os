@@ -1,0 +1,78 @@
+{{- /*
+  Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+  SPDX-License-Identifier: Apache-2.0
+
+  App Ingress allow-list, enforced by the API server (Kubernetes ValidatingAdmissionPolicy,
+  admissionregistration.k8s.io/v1, GA since Kubernetes 1.30:
+  https://kubernetes.io/docs/reference/access-authn-authz/validating-admission-policy/).
+
+  For every CREATE and UPDATE of an Ingress in the software runner's namespace, the API server
+  refuses one that
+    - carries an annotation outside `softwareRunner.ingressPolicy.allowedAnnotations`
+      (default: the cert-manager issuer, the only annotation the runner sets), or
+    - names an ingressClassName other than the class the runner uses
+      (softwareRunner.ingressClass, else ingress.className, else "nginx").
+  Plus one fixed bookkeeping key, `kubectl.kubernetes.io/last-applied-configuration`, which
+  `kubectl apply` stamps on every object it writes and which the ingress controller never reads;
+  without it an operator's `kubectl apply` of a valid app Ingress would be refused.
+  It applies to EVERY writer in that namespace, not only os-ui, except the identities in
+  `softwareRunner.ingressPolicy.exemptUsers` — by default cert-manager's controller, whose HTTP-01
+  solver creates its own short-lived Ingress there while it issues an app's certificate.
+
+  The runner checks the same list before it writes (os-ui/tabs/software/lib/app-ingress-policy.ts);
+  `scripts/check-app-ingress-policy.mjs` (OS gate) fails when the two lists differ. Status updates
+  by the ingress controller go to the `ingresses/status` subresource, which this does not match.
+
+  Gated by `softwareRunner.ingressPolicy.enabled` (default true) and rendered only with
+  `softwareRunner.enabled`. Test: scripts/tests/app-ingress-admission.kind.sh.
+*/}}
+{{- $sr := .Values.softwareRunner | default dict }}
+{{- $ip := $sr.ingressPolicy | default dict }}
+{{- if and $sr.enabled (ne (toString $ip.enabled) "false") }}
+{{- $class := $sr.ingressClass | default (.Values.ingress | default dict).className | default "nginx" }}
+{{- $allowed := $ip.allowedAnnotations | default (list "cert-manager.io/cluster-issuer") }}
+{{- $admitted := concat $allowed (list "kubectl.kubernetes.io/last-applied-configuration") | uniq }}
+{{- $exempt := $ip.exemptUsers | default list }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: app-ingress-allowlist
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: {{ $sr.namespace | quote }}
+    resourceRules:
+      - apiGroups: ["networking.k8s.io"]
+        apiVersions: ["*"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["ingresses"]
+  {{- if $exempt }}
+  matchConditions:
+    - name: not-an-exempt-identity
+      expression: '!(request.userInfo.username in {{ $exempt | toJson }})'
+  {{- end }}
+  variables:
+    - name: allowed
+      expression: '{{ $admitted | toJson }}'
+  validations:
+    - expression: '!has(object.metadata.annotations) || object.metadata.annotations.all(k, k in variables.allowed)'
+      messageExpression: '"app-ingress-allowlist: annotations outside the allow-list: " + (has(object.metadata.annotations) ? object.metadata.annotations.filter(k, !(k in variables.allowed)).join(", ") : "")'
+      reason: Forbidden
+    - expression: 'has(object.spec.ingressClassName) && object.spec.ingressClassName == {{ $class | quote }}'
+      message: 'app-ingress-allowlist: spec.ingressClassName must be {{ $class }}'
+      reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: app-ingress-allowlist
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  policyName: app-ingress-allowlist
+  validationActions: ["Deny"]
+{{- end }}
