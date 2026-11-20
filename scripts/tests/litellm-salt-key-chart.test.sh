@@ -16,7 +16,9 @@
 #   * negative twins: a non-local profile with no existingSecret, with an existingSecret the
 #     gateway does not read, or with a literal value fails; the local profile with an
 #     existingSecret fails;
-#   * langfuseInit.userPassword reaches langfuse-init as LANGFUSE_INIT_USER_PASSWORD.
+#   * langfuseInit.userPassword reaches langfuse-init as LANGFUSE_INIT_USER_PASSWORD;
+#   * langfuseCoreSecrets (salt, nextauthSecret, encryptionKey) reach langfuse-core-secrets; an
+#     encryptionKey that is not 64 hex characters, or an empty nextauthSecret, fails the render.
 # The `lookup` change guard needs an API server: scripts/tests/litellm-salt-key-guard.kind.sh.
 # Skips (exit 0) without helm or the subchart .tgz files — but FAILS when CI is set.
 set -uo pipefail
@@ -88,5 +90,21 @@ check "  ... saying where it belongs" "rendered only on the local profile" "$out
 absent "  ... without printing the value" "value=x" "$out"
 render --set litellmSaltKey.existingSecret=litellm-credentials
 rc_is "existingSecret on the local profile fails" 1
+
+echo "Langfuse core secrets from langfuseCoreSecrets"
+render
+check "default salt unchanged" "$(H sovereign-os-local-dev-salt)" "$(H "$(inspect 'sd("langfuse-core-secrets")["salt"]')")"
+EK=$(printf 'k%.0s' 1 | shasum -a 256 | cut -c1-64)
+render --set "langfuseCoreSecrets.salt=s-$SALT" --set "langfuseCoreSecrets.nextauthSecret=n-$SALT" --set "langfuseCoreSecrets.encryptionKey=$EK"
+rc_is "renders with new values" 0
+check "salt follows the value" "$(H "s-$SALT")" "$(H "$(inspect 'sd("langfuse-core-secrets")["salt"]')")"
+check "nextauthSecret follows the value" "$(H "n-$SALT")" "$(H "$(inspect 'sd("langfuse-core-secrets")["nextauthSecret"]')")"
+check "encryptionKey follows the value" "$(H "$EK")" "$(H "$(inspect 'sd("langfuse-core-secrets")["encryptionKey"]')")"
+render --set langfuseCoreSecrets.encryptionKey=not-hex
+rc_is "an encryptionKey that is not 64 hex characters fails" 1
+check "  ... saying how to make one" "openssl rand -hex 32" "$out"
+absent "  ... without printing the value" "not-hex" "$out"
+render --set langfuseCoreSecrets.nextauthSecret=
+rc_is "an empty nextauthSecret fails" 1
 
 finish litellm-salt-key-chart

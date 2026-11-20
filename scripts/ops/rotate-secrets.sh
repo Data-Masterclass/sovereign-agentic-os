@@ -2,49 +2,63 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
 # =============================================================================
-# rotate-secrets.sh — prepare, plan and verify the rotation of the LiteLLM master key (with a
-# salt key) and the Langfuse project key pair. docs/ops/secret-rotation.md is the run-book.
+# rotate-secrets.sh — prepare, plan and verify the rotation of the platform's chart-default
+# secrets. docs/ops/secret-rotation.md is the run-book.
 # =============================================================================
-#   scripts/ops/rotate-secrets.sh prepare  [common options]
-#   scripts/ops/rotate-secrets.sh plan     --overlay <file> [--chart <dir>] [common options]
-#   scripts/ops/rotate-secrets.sh verify   --overlay <file> [--os-ui-exec] [common options]
-#   scripts/ops/rotate-secrets.sh password [common options]
+#   scripts/ops/rotate-secrets.sh prepare  [--path rekey|pin-first|none-stored] [common]
+#   scripts/ops/rotate-secrets.sh plan     --overlay <file> [--chart <dir>] [common]
+#   scripts/ops/rotate-secrets.sh verify   --overlay <file> [--os-ui-exec] [common]
+#   scripts/ops/rotate-secrets.sh password [common]
+#   scripts/ops/rotate-secrets.sh password-db --overlay <password overlay> [--apply | --rollback] [common]
+#   scripts/ops/rotate-secrets.sh verify-password --overlay <password overlay> [common]
 #   common: --context <kube context> (dmagenticos) --namespace <ns> (agentic-os) --release <name> (agentic-os)
 #
-# prepare   READ-ONLY on the cluster. Inventories what LiteLLM stores encrypted in its database
-#           (GET /model/info → db_model: true, GET /credentials, GET /v1/mcp/server) through a
-#           short-lived port-forward, with the CURRENT master key read from the Secret into a shell
-#           variable. Chooses the path:
-#             none stored  → a new random LITELLM_SALT_KEY together with the new master key;
-#             some stored, or the inventory could not be read
-#                          → "pin first": LITELLM_SALT_KEY = the current master key, so the stored
-#                            values stay decryptable while the master key changes.
-#           Generates the new values on THIS machine (openssl rand) and writes them only to
-#             ~/.sovereign-os-secrets/overlays/rotation-<date>.yaml           (mode 600)
-#             ~/.sovereign-os-secrets/overlays/rotation-<date>.rollback.yaml  (mode 600, previous master key + Langfuse pair, same salt)
-#             ~/.sovereign-os-secrets/overlays/rotation-<date>.state.json     (no secrets: path, counts, model names, hashes)
-#           Prints the deploy command for the version that is live now, the restarts and the post-checks.
-# plan      READ-ONLY. Renders <chart> with the live release values + the overlay
-#           (`helm template --dry-run=server`, so `lookup` and the salt-key guard run as in the
-#           upgrade) and compares it with the live manifest object by object. Prints kind/name of
-#           every object that changes, the Secret KEYS that change, and which workloads roll by
-#           themselves (pod template changed). Hashes only; never a value.
-# verify    The post-checks: old master key → 401, new master key → 200, the shared virtual key
-#           lists and calls a model (VERIFY_MODEL, default the first it lists; VERIFY_EMBED_MODEL
-#           calls /v1/embeddings instead), every model that was stored in the database is still served,
-#           the new Langfuse key pair authenticates; with --os-ui-exec also os-ui's own key
-#           (exec into os-ui: the credential it really holds, the two reads /api/gateway makes).
-# password  Writes a new Langfuse init-user password into a separate overlay (mode 600); the steps
-#           that make Langfuse use it are in the run-book (headless init never changes an existing
-#           user's password).
+# What rotates: the LiteLLM master key and salt key, the Langfuse project key pair, the Langfuse
+# core secrets (salt, nextauthSecret, encryptionKey), agentRuntime.token, the LiteLLM console
+# password (litellmUI.password) and, separately, the Langfuse init user's password.
 #
-# No value is ever printed, logged or put on a command line: keys travel in shell variables and
-# reach curl through a config on stdin (`curl -K -`). Output shows names, counts and sha256 prefixes.
+# prepare   READ-ONLY. Two read-only `kubectl exec` steps, named before they run:
+#             * LiteLLM's own scan of every column it encrypts (litellm/proxy/db/master_key_migration.py
+#               `_SECRET_COLUMNS`, 21 on 1.109.1), run in the LiteLLM container
+#               (scripts/ops/litellm-stored-secrets.py; SELECT only, counts only);
+#             * a row count of every Langfuse table that holds values encrypted with its
+#               encryptionKey, run with psql in pg-0 (SELECT count(*) only).
+#           The LiteLLM path:
+#             salt key already set → only the master key rotates (the salt never changes);
+#             rekey (DEFAULT while no salt is set) → LiteLLM's documented complete re-key, two
+#               deploys: step 1 sets the master key to a new random S with
+#               LITELLM_MIGRATE_FROM_MASTER_KEY=<old>, so LiteLLM re-encrypts every stored value
+#               to S at boot; step 2 sets LITELLM_SALT_KEY=S, a new master key M, drops the variable;
+#             pin-first (--path) → LITELLM_SALT_KEY = the current master key, one deploy;
+#             none-stored (--path) → a random salt in one deploy, REFUSED unless LiteLLM's scan
+#               finds no stored value at all.
+#           The Langfuse encryptionKey rotates only if no encrypted Langfuse entry exists.
+#           Writes the overlays (mode 600) under ~/.sovereign-os-secrets/overlays/ and a state
+#           file binding them to this cluster (kube-system UID), namespace, release and the live
+#           master key's hash.
+# plan      READ-ONLY. Refuses an overlay that does not belong to the live cluster, release and
+#           master key. Then renders <chart> with the live values + the overlay
+#           (`helm template --dry-run=server`: lookup and the salt-key guard run) and compares it
+#           with the live manifest: objects, Secret keys (by hash) and workloads that roll.
+# verify    Post-checks for a step (same cluster check). Old keys → 401, new → 200; LiteLLM's
+#           scan finds every stored value decryptable with the new key and none left under an old
+#           one; stored models served; the shared virtual key; the console password; the Langfuse
+#           pair; every reader restarted after the deploy; --os-ui-exec: os-ui's own credential.
+# password  A new Langfuse init-user password into a separate overlay + its rollback (mode 600).
+# password-db  The one DATABASE WRITE (owner approval: --apply): bcrypt cost 12 made by
+#           langfuse-web's own bcryptjs (password on stdin), the current hash saved (mode 600),
+#           then ONE `UPDATE users SET password` row in the langfuse database via `kubectl exec
+#           pg-0 -- psql`. Without --apply it only shows what it would do. --rollback restores
+#           the saved hash.
+# verify-password  Langfuse sign-in through NextAuth: the new password works, the previous one not.
+#
+# No value is printed, logged or put on a command line: values travel in shell variables, reach
+# curl / psql / node / python on stdin. Output shows names, counts and sha256 prefixes.
 set -euo pipefail
 umask 077
 
 CTX=dmagenticos NS=agentic-os REL=agentic-os
-OVERLAY="" CHART="" OS_UI_EXEC=""
+OVERLAY="" CHART="" OS_UI_EXEC="" FORCE_PATH="" APPLY="" ROLLBACK=""
 CMD=${1:-}; [ $# -gt 0 ] && shift
 while [ $# -gt 0 ]; do
   case $1 in
@@ -53,8 +67,11 @@ while [ $# -gt 0 ]; do
     --release) REL=$2; shift ;;
     --overlay) OVERLAY=$2; shift ;;
     --chart) CHART=$2; shift ;;
+    --path) FORCE_PATH=$2; shift ;;
     --os-ui-exec) OS_UI_EXEC=1 ;;
-    -h|--help) sed -n '2,40p' "$0"; exit 0 ;;
+    --apply) APPLY=1 ;;
+    --rollback) ROLLBACK=1 ;;
+    -h|--help) sed -n '2,62p' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
   shift
@@ -62,19 +79,28 @@ done
 SECRETS_DIR=${SOVEREIGN_SECRETS_DIR:-$HOME/.sovereign-os-secrets}/overlays
 LITELLM_SVC=${LITELLM_SVC:-$REL-litellm}
 LANGFUSE_SVC=${LANGFUSE_SVC:-$REL-langfuse-web}
+PG_POD=${PG_POD:-pg-0}
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
+FILES="python3 $REPO/scripts/lib/rotation-files.py"
+MIGRATE=LITELLM_MIGRATE_FROM_MASTER_KEY
+# Every Langfuse 3.194.1 table with values encrypted by ENCRYPTION_KEY (packages/shared/src/encryption,
+# callers in web/src and packages/shared): LLM connections, integrations, automations, SSO, callouts.
+LANGFUSE_ENCRYPTED_TABLES="llm_api_keys blob_storage_integrations posthog_integrations mixpanel_integrations actions sso_configs slack_integrations web_callout_endpoints"
 
 say() { printf '==> %s\n' "$*"; }
 die() { printf 'ROTATE_FAILED — %s\n' "$*" >&2; exit 1; }
 k() { kubectl --context "$CTX" -n "$NS" "$@"; }
 h16() { printf '%s' "$1" | shasum -a 256 | cut -c1-16; }
+rand_hex() { openssl rand -hex "$1"; }
 # secret_key <secret> <key> — the decoded value, for a shell variable only (empty when absent).
 secret_key() {
   k get secret "$1" -o "go-template={{ with index .data \"$2\" }}{{ . }}{{ end }}" 2>/dev/null | base64 -d 2>/dev/null || true
 }
+cluster_uid() { kubectl --context "$CTX" get ns kube-system -o jsonpath='{.metadata.uid}'; }
+# The os-ui version that is live: the image tag, without a digest (…/os-ui:0.9.21@sha256:… → 0.9.21).
+live_version() { k get deploy os-ui -o jsonpath='{.spec.template.spec.containers[0].image}' | sed -E 's/@.*$//; s/.*:([^:]+)$/\1/'; }
 
 PF_PID="" PF_PORT=""
-# port_forward <svc> <port> — a short-lived port-forward on a free local port.
 port_forward() {
   local log; log=$(mktemp)
   k port-forward "svc/$1" ":$2" >"$log" 2>&1 &
@@ -87,160 +113,206 @@ port_forward() {
   done
   cat "$log" >&2; rm -f "$log"; die "port-forward to svc/$1 did not start"
 }
-stop_forward() { [ -n "$PF_PID" ] && kill "$PF_PID" 2>/dev/null; wait "$PF_PID" 2>/dev/null || true; PF_PID=""; }
+stop_forward() { if [ -n "$PF_PID" ]; then kill "$PF_PID" 2>/dev/null || true; wait "$PF_PID" 2>/dev/null || true; fi; PF_PID=""; }
 trap stop_forward EXIT
 
-# call <bearer> <method> <path> [json body] — prints "<http code>\n<body>" ; the bearer goes in on stdin.
+# call <bearer> <method> <path> [json body] — prints "<http code>\n<body>"; the bearer goes in on stdin.
 call() {
   local body=${4:-}
   { printf 'header = "Authorization: Bearer %s"\n' "$1"
     if [ -n "$body" ]; then printf 'header = "Content-Type: application/json"\ndata = "%s"\n' "${body//\"/\\\"}"; fi
-  } | curl -sS -K - -X "$2" -w '\n%{http_code}' --max-time 60 "http://127.0.0.1:$PF_PORT$3" | { body=$(cat); printf '%s\n%s' "${body##*$'\n'}" "${body%$'\n'*}"; }
+  } | { curl -sS -K - -X "$2" -w '\n%{http_code}' --max-time 60 "http://127.0.0.1:$PF_PORT$3" || true; } | { b=$(cat); printf '%s\n%s' "${b##*$'\n'}" "${b%$'\n'*}"; }
 }
 code_of() { head -n1 <<<"$1"; }
-chat_body() { printf '{"model":"%s","messages":[{"role":"user","content":"ping"}],"max_tokens":5}' "$1"; }
 body_of() { tail -n +2 <<<"$1"; }
-# basic <user> <password> <path> — the http code only (Langfuse public API).
-basic() {
-  printf 'user = "%s:%s"\n' "$1" "$2" | curl -sS -K - -o /dev/null -w '%{http_code}' --max-time 30 "http://127.0.0.1:$PF_PORT$3" || true
+chat_body() { printf '{"model":"%s","messages":[{"role":"user","content":"ping"}],"max_tokens":5}' "$1"; }
+basic() { printf 'user = "%s:%s"\n' "$1" "$2" | curl -sS -K - -o /dev/null -w '%{http_code}' --max-time 30 "http://127.0.0.1:$PF_PORT$3" || true; }
+# pairs k1 v1 k2 v2 … | pairs_json — a JSON object, with the values never on a command line
+# (printf is a builtin; python reads the NUL-separated pairs from stdin).
+pairs() { printf '%s\0' "$@"; }
+pairs_json() { python3 -c 'import json,sys; p=sys.stdin.buffer.read().split(b"\0")[:-1]; print(json.dumps({p[i].decode(): p[i+1].decode() for i in range(0, len(p), 2)}))'; }
+# login_code <path> <username> <password> — http code of a JSON login POST; the body goes in on stdin.
+login_code() { pairs username "$2" password "$3" | pairs_json | curl -sS -o /dev/null -w '%{http_code}' --max-time 30 -H 'Content-Type: application/json' --data-binary @- "http://127.0.0.1:$PF_PORT$1" || true; }
+
+# litellm_scan [<json params>] — LiteLLM's own count of stored encrypted values (read-only exec).
+# params: {"keys": {"label": "<key>"}}, sent on stdin with the probe; output: counts JSON.
+litellm_scan() {
+  local params=${1:-'{}'}
+  { printf '%s\n' "$params"; cat "$REPO/scripts/ops/litellm-stored-secrets.py"; } \
+    | k exec -i "deploy/$LITELLM_SVC" -c litellm -- python -c '
+import sys, json, asyncio
+params = sys.stdin.readline(); code = sys.stdin.read()
+ns = {"__name__": "litellm_stored_secrets"}; exec(code, ns)
+asyncio.run(ns["main"](json.loads(params or "{}")))' 2>/dev/null | tail -n1
+}
+# psql_db <db> — SQL on stdin (variables as \\set lines in it), in the Postgres pod as its owner.
+psql_db() { k exec -i "$PG_POD" -- sh -c "psql -v ON_ERROR_STOP=1 -U \"\$POSTGRES_USER\" -d $1 -tA -q"; }
+langfuse_encrypted_counts() { # "<table>|<rows>" per table; -1 when the table does not exist
+  local t
+  for t in $LANGFUSE_ENCRYPTED_TABLES; do
+    printf "SELECT '%s', CASE WHEN to_regclass('public.%s') IS NULL THEN -1 ELSE (xpath('/row/c/text()', query_to_xml('SELECT count(*) AS c FROM public.%s', false, true, '')))[1]::text::int END;\n" "$t" "$t" "$t"
+  done | psql_db langfuse
 }
 
-live_version() {
-  k get deploy os-ui -o jsonpath='{.spec.template.spec.containers[0].image}' | sed -E 's/.*:([^:@]+)(@.*)?$/\1/'
+# check_binding <state> — the overlay must belong to this cluster, namespace and release.
+check_binding() {
+  local state=$1 want got
+  want=$(python3 -c 'import json,sys; c=json.load(open(sys.argv[1]))["cluster"]; print(c["uid"], c["namespace"], c["release"])' "$state")
+  got="$(cluster_uid) $NS $REL"
+  [ "$want" = "$got" ] || die "this overlay was prepared for another cluster/namespace/release (state: uid ${want%% *}…, live: uid ${got%% *}…, --namespace $NS --release $REL). Run prepare against this cluster."
+  echo "   ok   overlay belongs to this cluster (kube-system uid), namespace $NS and release $REL"
 }
+state_hash() { python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["sha256_16"][sys.argv[2]])' "$1" "$2"; }
+state_path() { python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["path"])' "$1"; }
 
 # ----------------------------------------------------------------------------------------------
 prepare() {
   command -v openssl >/dev/null || die "openssl not found"
   mkdir -p "$SECRETS_DIR"; chmod 700 "$SECRETS_DIR" "$(dirname "$SECRETS_DIR")"
-  local stamp; stamp=$(date +%Y%m%d-%H%M%S)
-  local out="$SECRETS_DIR/rotation-$stamp.yaml" back="$SECRETS_DIR/rotation-$stamp.rollback.yaml" state="$SECRETS_DIR/rotation-$stamp.state.json"
+  local stamp uid ver; stamp=$(date +%Y%m%d-%H%M%S); uid=$(cluster_uid); ver=$(live_version)
+  say "context $CTX (kube-system uid ${uid:0:8}…) / namespace $NS / release $REL / os-ui $ver"
 
-  say "context $CTX / namespace $NS / release $REL"
-  local old_master old_salt old_pk old_sk
+  local old_master old_salt
   old_master=$(secret_key litellm-credentials masterkey)
   [ -n "$old_master" ] || die "litellm-credentials has no masterkey"
   old_salt=$(secret_key litellm-credentials LITELLM_SALT_KEY)
-  old_pk=$(secret_key langfuse-init LANGFUSE_INIT_PROJECT_PUBLIC_KEY)
-  old_sk=$(secret_key langfuse-init LANGFUSE_INIT_PROJECT_SECRET_KEY)
-  echo "   current master key sha256 $(h16 "$old_master")…; salt key in the Secret: $([ -n "$old_salt" ] && echo "yes, sha256 $(h16 "$old_salt")…" || echo no)"
+  echo "   master key sha256 $(h16 "$old_master")…; salt key in the Secret: $([ -n "$old_salt" ] && echo "yes, sha256 $(h16 "$old_salt")…" || echo no)"
 
-  say "inventory of what LiteLLM stores encrypted (step 5 of the rotation order), via a port-forward"
-  port_forward "$LITELLM_SVC" 4000
-  local r mi total mcp_config db_count=unknown cred_count=unknown mcp_count=unknown db_names="[]"
-  r=$(call "$old_master" GET /model/info)
-  if [ "$(code_of "$r")" = 200 ]; then
-    mi=$(body_of "$r" | python3 -c '
+  say "read-only exec 1/2: LiteLLM's own scan of every column it encrypts (in the LiteLLM container)"
+  local scan; scan=$(litellm_scan)
+  [ -n "$scan" ] || die "the LiteLLM scan returned nothing (exec into deploy/$LITELLM_SVC failed?)"
+  python3 - "$scan" <<'PY'
 import json, sys
-d = json.load(sys.stdin).get("data", [])
-db = [m.get("model_name") for m in d if (m.get("model_info") or {}).get("db_model")]
-print(len(d), len(db), json.dumps(sorted(set(db))))')
-    read -r total db_count db_names <<<"$mi"
-    echo "   GET /model/info: $total deployments, db_model=true: $db_count $db_names"
-  else
-    echo "   GET /model/info answered $(code_of "$r") — count unknown"
-  fi
-  r=$(call "$old_master" GET /credentials)
-  if [ "$(code_of "$r")" = 200 ]; then
-    cred_count=$(body_of "$r" | python3 -c 'import json,sys; print(len(json.load(sys.stdin).get("credentials") or []))')
-    echo "   GET /credentials: $cred_count stored credentials"
-  else echo "   GET /credentials answered $(code_of "$r") — count unknown"; fi
-  r=$(call "$old_master" GET /v1/mcp/server)
-  if [ "$(code_of "$r")" = 200 ]; then
-    # Servers from the config file come back with created_at/created_by null; only the ones
-    # added through the API or the console are rows in LiteLLM_MCPServerTable (encrypted).
-    read -r mcp_count mcp_config <<<"$(body_of "$r" | python3 -c 'import json,sys
-d = json.load(sys.stdin); d = d if isinstance(d, list) else (d.get("data") or d.get("servers") or [])
-db = [s for s in d if s.get("created_at") or s.get("created_by")]
-print(len(db), len(d) - len(db))')"
-    echo "   GET /v1/mcp/server: $mcp_count stored in the database, $mcp_config from the config file (not encrypted)"
-  else echo "   GET /v1/mcp/server answered $(code_of "$r") — count unknown"; fi
+d = json.loads(sys.argv[1])
+cols = d["columns"]
+print(f"   {len(cols)} encrypted columns scanned; values decryptable with the key in use: {d['total']['effective']}")
+for name, c in sorted(cols.items()):
+    if c["rows"] or c["effective"]:
+        print(f"     {name}: {c['rows']} row(s), {c['effective']} value(s)")
+PY
+  local stored; stored=$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["total"]["effective"])' "$scan")
+
+  # Names of the database-stored models, for the functional post-check (served after the rotation).
+  port_forward "$LITELLM_SVC" 4000
+  local r db_names="[]"
+  r=$(call "$old_master" GET /model/info)
+  [ "$(code_of "$r")" = 200 ] && db_names=$(body_of "$r" | python3 -c 'import json,sys; d=json.load(sys.stdin).get("data",[]); print(json.dumps(sorted({m.get("model_name") for m in d if (m.get("model_info") or {}).get("db_model")})))')
   stop_forward
 
-  local path new_salt
+  say "read-only exec 2/2: Langfuse tables encrypted with its encryptionKey (psql in $PG_POD, count only)"
+  local lfenc lfenc_total
+  lfenc=$(langfuse_encrypted_counts) || die "could not count the Langfuse encrypted tables"
+  lfenc_total=$(awk -F'|' '$2>0{s+=$2} END{print s+0}' <<<"$lfenc")
+  awk -F'|' '{printf "     %s: %s\n", $1, ($2<0?"(no table)":$2" row(s)")}' <<<"$lfenc"
+
+  local path
   if [ -n "$old_salt" ]; then
-    path=salt-already-set; new_salt=$old_salt
-    echo "   a salt key is already set: it is kept as it is (it must never change); only the master key rotates"
-  elif [ "$db_count" = 0 ] && [ "$cred_count" = 0 ] && [ "$mcp_count" = 0 ]; then
-    path=none-stored; new_salt=$(openssl rand -hex 32)
-    echo "   PATH: none stored — a new random salt key together with the new master key"
+    path=salt-already-set
+    [ -z "$FORCE_PATH" ] || die "a salt key is already set; --path does not apply (it must never change)"
   else
-    path=pin-first; new_salt=$old_master
-    echo "   PATH: pin first — the salt key is pinned to the CURRENT master key so the stored values stay readable"
-    echo "         (db models: $db_count, credentials: $cred_count, MCP servers: $mcp_count). Follow up with"
-    echo "         docs/ops/litellm-salt-key.md procedure C: re-create them under a new random salt."
+    path=${FORCE_PATH:-rekey}
   fi
+  case $path in
+    rekey) echo "   PATH: re-key (2 deploys) — LiteLLM re-encrypts all $stored stored value(s) to a new random salt key" ;;
+    pin-first) echo "   PATH: pin first — the salt key becomes the CURRENT master key (stored values stay readable; the old key stays their key)" ;;
+    none-stored)
+      [ "$stored" = 0 ] || die "--path none-stored refused: LiteLLM's scan finds $stored stored value(s); a new salt would make them undecryptable. Use the default re-key path."
+      echo "   PATH: none stored (LiteLLM's scan: 0 values) — a new random salt key with the new master key" ;;
+    salt-already-set) echo "   PATH: salt already set — kept unchanged; only the master key rotates" ;;
+    *) die "unknown --path $path" ;;
+  esac
 
-  local new_master new_pk new_sk
-  new_master="sk-$(openssl rand -hex 32)"
-  new_pk="pk-lf-$(openssl rand -hex 16)"
-  new_sk="sk-lf-$(openssl rand -hex 32)"
-  [ "$new_master" != "$old_master" ] || die "generated master key equals the current one"
+  local rotate_enc=""
+  if [ "$lfenc_total" = 0 ]; then rotate_enc=1; echo "   Langfuse encryptionKey: no encrypted entry exists → rotated"
+  else echo "   Langfuse encryptionKey: $lfenc_total encrypted entr(ies) exist → NOT rotated (docs/ops/secret-rotation.md, 'Langfuse encryptionKey')"; fi
 
-  # yaml: double-quoted scalars; the generated values are hex, the carried ones are checked.
-  q() { case $1 in *[\"\\]*) die "a value contains a quote or backslash; refusing to write YAML for it" ;; esac; printf '"%s"' "$1"; }
-  {
-    echo "# rotation $stamp ($path) — PRIVATE, never commit. Generated by scripts/ops/rotate-secrets.sh."
-    echo "litellmMasterKey: $(q "$new_master")"
-    echo "litellmSaltKey:"
-    echo "  value: $(q "$new_salt")"
-    echo "langfuseInit:"
-    echo "  publicKey: $(q "$new_pk")"
-    echo "  secretKey: $(q "$new_sk")"
-  } > "$out"
-  {
-    echo "# rollback for rotation $stamp — the PREVIOUS master key and Langfuse pair; the salt key stays. PRIVATE, never commit."
-    echo "litellmMasterKey: $(q "$old_master")"
-    # The salt key STAYS in a rollback: Helm cannot remove a key from the live Secret anyway (a
-    # key dropped from stringData stays in data), and keeping it is safe on both paths — after
-    # "pin first" it equals the old master key; after "none stored" it is what anything stored
-    # since the rotation is encrypted with. So no allowChange, and the guard stays on.
-    echo "litellmSaltKey:"
-    echo "  value: $(q "$new_salt")"
-    echo "langfuseInit:"
-    echo "  publicKey: $(q "$old_pk")"
-    echo "  secretKey: $(q "$old_sk")"
-  } > "$back"
-  chmod 600 "$out" "$back"
-  python3 - "$state" <<PY
+  local new_salt
+  case $path in
+    rekey|none-stored) new_salt="sk-salt-$(rand_hex 32)" ;;
+    pin-first) new_salt=$old_master ;;
+    salt-already-set) new_salt=$old_salt ;;
+  esac
+  # All values go to the helper on stdin (NUL-separated pairs; old, a separator, new).
+  local meta out
+  meta=$(pairs path "$path" uid "$uid" context "$CTX" namespace "$NS" release "$REL" version "$ver" \
+           scan "$scan" db_names "$db_names" lfenc "$lfenc" rotate_enc "$rotate_enc" | pairs_json)
+  out=$( { pairs master "$old_master" pk "$(secret_key langfuse-init LANGFUSE_INIT_PROJECT_PUBLIC_KEY)" sk "$(secret_key langfuse-init LANGFUSE_INIT_PROJECT_SECRET_KEY)" \
+             lf_salt "$(secret_key langfuse-core-secrets salt)" lf_nextauthSecret "$(secret_key langfuse-core-secrets nextauthSecret)" \
+             lf_encryptionKey "$(secret_key langfuse-core-secrets encryptionKey)" agent_token "$(secret_key agent-runtime-token token)" \
+             ui_password "$(secret_key litellm-credentials UI_PASSWORD)"
+           printf -- '--NEW--\0'
+           pairs master "sk-$(rand_hex 32)" salt "$new_salt" pk "pk-lf-$(rand_hex 16)" sk "sk-lf-$(rand_hex 32)" \
+             lf_salt "$(rand_hex 32)" lf_nextauthSecret "$(openssl rand -base64 48 | tr -d '\n')" lf_encryptionKey "$(rand_hex 32)" \
+             agent_token "$(rand_hex 32)" ui_password "$(openssl rand -base64 30 | tr -d '/+=\n' | cut -c1-32)"
+         } | python3 -c '
 import json, sys
-json.dump({"path": "$path", "db_models": $db_names, "counts": {"db_model": "$db_count", "credentials": "$cred_count", "mcp_servers": "$mcp_count"},
-           "sha256_16": {"old_master": "$(h16 "$old_master")", "new_master": "$(h16 "$new_master")", "salt": "$(h16 "$new_salt")",
-                         "old_langfuse_pk": "$(h16 "$old_pk")", "new_langfuse_pk": "$(h16 "$new_pk")"}},
-          open(sys.argv[1], "w"), indent=1)
-PY
-  chmod 600 "$state"
-  echo "   wrote $out (mode $(stat -f %Lp "$out" 2>/dev/null || stat -c %a "$out"))"
-  echo "   wrote $back (the previous values, for the rollback)"
-  echo "   new master key sha256 $(h16 "$new_master")…, salt sha256 $(h16 "$new_salt")…, Langfuse public key sha256 $(h16 "$new_pk")…"
+meta = json.loads(sys.argv[1])
+raw = sys.stdin.buffer.read().split(b"\0")[:-1]
+i = raw.index(b"--NEW--")
+def m(p): return {p[j].decode(): p[j + 1].decode() for j in range(0, len(p), 2)}
+old, new = m(raw[:i]), m(raw[i + 1:])
+if not meta["rotate_enc"]:
+    new.pop("lf_encryptionKey", None); old.pop("lf_encryptionKey", None)
+enc = {l.split("|")[0]: int(l.split("|")[1]) for l in meta["lfenc"].splitlines() if "|" in l}
+print(json.dumps({"path": meta["path"], "cluster": {k: meta[k] for k in ("uid", "context", "namespace", "release", "version")},
+                  "counts": json.loads(meta["scan"]), "db_models": json.loads(meta["db_names"]), "langfuse_encrypted": enc,
+                  "old": old, "new": new}))' "$meta" | $FILES write "$SECRETS_DIR" "$stamp")
+  echo "$out" | sed 's/^/   wrote /'
+  local final step1 back back1
+  final=$(awk -F'\t' '$1=="final"{print $2}' <<<"$out"); step1=$(awk -F'\t' '$1=="step1"{print $2}' <<<"$out")
+  back=$(awk -F'\t' '$1=="rollback"{print $2}' <<<"$out"); back1=$(awk -F'\t' '$1=="rollback-step1"{print $2}' <<<"$out")
 
-  local ver; ver=$(live_version)
+  local o="--context $CTX --namespace $NS --release $REL" ck=charts/sovereign-agentic-os
+  echo
+  echo "NEXT (docs/ops/secret-rotation.md; deploy from the checkout of os-ui-v$ver + the rotation chart support):"
+  if [ -n "$step1" ]; then
+    cat <<EOF
+  STEP 1 (re-key):
+    scripts/ops/rotate-secrets.sh plan --overlay $step1 --chart $ck $o
+    VALUES_OVERLAY=$step1 ./scripts/deploy.sh --from-registry $ver        # rolls LiteLLM (new env) by itself
+    scripts/ops/rotate-secrets.sh verify --overlay $step1 $o               # every stored value re-encrypted
+    (rollback of step 1: VALUES_OVERLAY=$back1 ./scripts/deploy.sh --from-registry $ver)
+  STEP 2 (final):
+EOF
+  else echo "  FINAL:"; fi
   cat <<EOF
-
-NEXT (docs/ops/secret-rotation.md has the full run-book):
-  1. plan, read-only — only Secrets may change:
-       scripts/ops/rotate-secrets.sh plan --overlay $out --context $CTX
-  2. deploy the version that is live now, so only the secrets change:
-       VALUES_OVERLAY=$out ./scripts/deploy.sh --from-registry $ver
-  3. restart the readers that do not roll by themselves (a Secret change restarts nothing):
-       kubectl --context $CTX -n $NS rollout restart deploy/$LANGFUSE_SVC deploy/$LITELLM_SVC
-       kubectl --context $CTX -n $NS rollout status deploy/$LANGFUSE_SVC deploy/$LITELLM_SVC --timeout=10m
-       kubectl --context $CTX -n $NS rollout restart deploy/os-ui deploy/os-ui-worker
-       kubectl --context $CTX -n $NS rollout status deploy/os-ui deploy/os-ui-worker --timeout=15m
-  4. post-checks:
-       scripts/ops/rotate-secrets.sh verify --overlay $out --context $CTX [--os-ui-exec]
-     then by hand: Admin → LLM Gateway opens (everyone is signed out of the console once), a
-     short agent run completes, and its trace arrives in Langfuse.
-  5. Langfuse UI: delete the OLD project key pair (public key sha256 $(h16 "$old_pk")…), then
-       scripts/ops/rotate-secrets.sh verify --overlay $out --context $CTX   (old pair → 401)
-  Rollback: VALUES_OVERLAY=$back ./scripts/deploy.sh --from-registry $ver, then step 3 again.
+    scripts/ops/rotate-secrets.sh plan --overlay $final --chart $ck $o
+    VALUES_OVERLAY=$final ./scripts/deploy.sh --from-registry $ver
+    kubectl --context $CTX -n $NS rollout restart deploy/$LANGFUSE_SVC deploy/$REL-langfuse-worker deploy/$LITELLM_SVC
+    kubectl --context $CTX -n $NS rollout status deploy/$LANGFUSE_SVC deploy/$REL-langfuse-worker deploy/$LITELLM_SVC --timeout=10m
+    kubectl --context $CTX -n $NS rollout restart deploy/os-ui deploy/os-ui-worker
+    kubectl --context $CTX -n $NS rollout status deploy/os-ui deploy/os-ui-worker --timeout=15m
+    scripts/ops/rotate-secrets.sh verify --overlay $final $o --os-ui-exec
+  Owner, Langfuse UI: delete the OLD project key pair (public key sha256 $(h16 "$(secret_key langfuse-init LANGFUSE_INIT_PROJECT_PUBLIC_KEY)")…), then verify again.
+  Rollback of the final step: VALUES_OVERLAY=$back ./scripts/deploy.sh --from-registry $ver, then the restarts.
 EOF
 }
 
 # ----------------------------------------------------------------------------------------------
+# The live master key an overlay expects to find before it is applied.
+expected_before() {
+  local state=$1 kind=$2 path; path=$(state_path "$state")
+  case $kind in
+    step1) state_hash "$state" old_master ;;
+    final) if [ "$path" = rekey ]; then state_hash "$state" step1_master; else state_hash "$state" old_master; fi ;;
+    rollback) state_hash "$state" new_master ;;
+    rollback-step1) state_hash "$state" step1_master ;;
+  esac
+}
+
 plan() {
   [ -f "$OVERLAY" ] || die "--overlay <file> is required"
   CHART=${CHART:-$REPO/charts/sovereign-agentic-os}
+  local kind state live want; kind=$($FILES kind "$OVERLAY"); state=$($FILES state "$OVERLAY")
+  [ -f "$state" ] || die "no state file next to $OVERLAY ($state): only overlays written by prepare are accepted"
+  say "the overlay belongs here ($kind of a $(state_path "$state") rotation)"
+  check_binding "$state"
+  live=$(h16 "$(secret_key litellm-credentials masterkey)"); want=$(expected_before "$state" "$kind")
+  [ "$live" = "$want" ] || die "the live master key (sha256 ${live}…) is not the one this $kind overlay expects before it is applied (${want}…): wrong step, already applied, or prepared against other values"
+  echo "   ok   live master key is the one this step expects (sha256 ${live}…)"
+  if [ "$(state_path "$state")" = pin-first ] && [ "$kind" = final ]; then
+    [ "$(h16 "$($FILES get "$OVERLAY" litellmSaltKey.value)")" = "$(state_hash "$state" old_master)" ] || die "pin-first overlay: the salt key is not the live master key"
+  fi
   PLAN_DIR=$(mktemp -d); local w=$PLAN_DIR; trap 'stop_forward; rm -rf "$PLAN_DIR"' EXIT
   say "live release values and manifest (read-only)"
   helm --kube-context "$CTX" get values "$REL" -n "$NS" -o yaml > "$w/live.yaml"
@@ -254,56 +326,99 @@ plan() {
 # ----------------------------------------------------------------------------------------------
 verify() {
   [ -f "$OVERLAY" ] || die "--overlay <file> is required"
-  local back=${OVERLAY%.yaml}.rollback.yaml state=${OVERLAY%.yaml}.state.json
-  [ -f "$back" ] && [ -f "$state" ] || die "the rollback and state files next to $OVERLAY are missing"
-  local new_master old_master agent new_pk new_sk old_pk old_sk
-  ov() { python3 -c 'import sys,yaml; d=yaml.safe_load(open(sys.argv[1]));
-for p in sys.argv[2].split("."): d=(d or {}).get(p)
-print(d or "")' "$1" "$2"; }
-  new_master=$(ov "$OVERLAY" litellmMasterKey); old_master=$(ov "$back" litellmMasterKey)
-  new_pk=$(ov "$OVERLAY" langfuseInit.publicKey); new_sk=$(ov "$OVERLAY" langfuseInit.secretKey)
-  old_pk=$(ov "$back" langfuseInit.publicKey); old_sk=$(ov "$back" langfuseInit.secretKey)
-  agent=$(secret_key "${AGENT_KEY_SECRET:-agent-litellm-key}" apiKey)
+  local kind state path; kind=$($FILES kind "$OVERLAY"); state=$($FILES state "$OVERLAY")
+  [ -f "$state" ] || die "no state file next to $OVERLAY"
+  path=$(state_path "$state")
   local fails=0 r c
   pass() { echo "   ok   $1"; }
   fail() { echo "   FAIL $1"; fails=$((fails+1)); }
+  ov() { $FILES get "$OVERLAY" "$1"; }
+  bak() { $FILES get "${OVERLAY%.yaml}.rollback.yaml" "$1" 2>/dev/null || true; }
+  base=${OVERLAY%.yaml}; base=${base%.step1}; base=${base%.rollback-step1}; base=${base%.rollback}
+  local old_master="" s_key=""
+  old_master=$($FILES get "$base.rollback.yaml" litellmMasterKey)
+  [ "$path" = rekey ] && s_key=$($FILES get "$base.yaml" litellmSaltKey.value)
 
-  say "the Secrets hold the new values (sha256 prefixes only)"
-  [ "$(h16 "$(secret_key litellm-credentials masterkey)")" = "$(h16 "$new_master")" ] && pass "litellm-credentials masterkey = new" || fail "litellm-credentials masterkey is not the new value"
-  [ "$(h16 "$(secret_key litellm-credentials LITELLM_SALT_KEY)")" = "$(h16 "$(ov "$OVERLAY" litellmSaltKey.value)")" ] && pass "litellm-credentials LITELLM_SALT_KEY = overlay" || fail "LITELLM_SALT_KEY is not the overlay value"
-  [ "$(h16 "$(secret_key langfuse-init LANGFUSE_INIT_PROJECT_SECRET_KEY)")" = "$(h16 "$new_sk")" ] && pass "langfuse-init secret key = new" || fail "langfuse-init secret key is not the new value"
+  say "the overlay belongs here ($kind of a $path rotation)"
+  check_binding "$state"
+  local new_master; new_master=$(ov litellmMasterKey)
+  [ "$(h16 "$(secret_key litellm-credentials masterkey)")" = "$(h16 "$new_master")" ] && pass "litellm-credentials masterkey = this step's" || fail "litellm-credentials masterkey is not this step's value"
+  local want_salt; want_salt=$(ov litellmSaltKey.value)
+  if [ "$kind" = step1 ] || [ "$kind" = rollback-step1 ]; then
+    [ -z "$(secret_key litellm-credentials LITELLM_SALT_KEY)" ] && pass "no LITELLM_SALT_KEY yet (the migration only runs without one)" || fail "LITELLM_SALT_KEY is set: LiteLLM will not migrate"
+    k get deploy "$LITELLM_SVC" -o jsonpath='{range .spec.template.spec.containers[0].env[*]}{.name}{"\n"}{end}' | grep -qx "$MIGRATE" \
+      && pass "$MIGRATE is set on the gateway" || fail "$MIGRATE is not set on the gateway"
+    k logs "deploy/$LITELLM_SVC" -c litellm --since=2h 2>/dev/null | grep -qE "Done re-encrypting [0-9]+ stored value|nothing in the database is left to migrate" \
+      && pass "LiteLLM logged the re-encryption outcome" || fail "no re-encryption outcome in the LiteLLM log yet"
+  else
+    [ "$(h16 "$(secret_key litellm-credentials LITELLM_SALT_KEY)")" = "$(h16 "$want_salt")" ] && pass "LITELLM_SALT_KEY = this step's" || fail "LITELLM_SALT_KEY is not this step's value"
+    if k get deploy "$LITELLM_SVC" -o jsonpath='{range .spec.template.spec.containers[0].env[*]}{.name}{"\n"}{end}' | grep -qx "$MIGRATE"; then
+      fail "$MIGRATE is still set on the gateway"; else pass "$MIGRATE is not set"; fi
+  fi
+
+  say "LiteLLM's own scan: every stored value decryptable with the key now in use, none left under an old key"
+  local params scan
+  params=$( { if [ -n "$old_master" ]; then pairs old "$old_master"; fi; if [ -n "$s_key" ]; then pairs s "$s_key"; fi; } | pairs_json | python3 -c 'import json,sys; print(json.dumps({"keys": json.load(sys.stdin)}))')
+  scan=$(litellm_scan "$params")
+  [ -n "$scan" ] || fail "the LiteLLM scan returned nothing"
+  if [ -n "$scan" ]; then
+    python3 - "$scan" "$state" "$kind" "$path" <<'PY' || fails=$((fails+1))
+import json, sys
+now = json.loads(sys.argv[1]); state = json.load(open(sys.argv[2])); kind, path = sys.argv[3], sys.argv[4]
+before = state["counts_before"]["columns"]
+bad = 0
+for name, b in sorted(before.items()):
+    n = now["columns"].get(name, {"effective": 0})
+    want = b["effective"]
+    if b["effective"] or n.get("effective"):
+        ok = n["effective"] == want
+        bad += not ok
+        print(f"   {'ok  ' if ok else 'FAIL'} {name}: {n['effective']}/{want} decryptable with the key in use")
+# Under the retired master key, nothing may remain — except on pin-first, where it IS the salt.
+key_retired = path in ("rekey", "none-stored", "salt-already-set") and kind in ("step1", "final")
+if key_retired and "old" in now["total"]:
+    ok = now["total"]["old"] == 0
+    bad += not ok
+    print(f"   {'ok  ' if ok else 'FAIL'} values still decryptable with the old master key: {now['total']['old']}")
+print(f"   total: {now['total']['effective']} decryptable now, {state['counts_before']['total']['effective']} before")
+sys.exit(1 if bad else 0)
+PY
+  fi
 
   say "LiteLLM (port-forward)"
   port_forward "$LITELLM_SVC" 4000
-  c=$(code_of "$(call "$old_master" GET /model/info)"); [ "$c" = 401 ] && pass "old master key → 401" || fail "old master key → $c (want 401)"
-  r=$(call "$new_master" GET /model/info); c=$(code_of "$r"); [ "$c" = 200 ] && pass "new master key → 200" || fail "new master key → $c (want 200)"
-  local now_db; now_db=$(body_of "$r" | python3 -c '
-import json, sys
-try: d = json.load(sys.stdin).get("data", [])
-except Exception: d = []
-print(json.dumps(sorted({m.get("model_name") for m in d if (m.get("model_info") or {}).get("db_model")})))')
-  local want_db; want_db=$(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1]))["db_models"]))' "$state")
-  [ "$now_db" = "$want_db" ] && pass "database-stored models still listed: $now_db" || fail "database-stored models now $now_db, before $want_db"
+  if [ "$kind" != rollback ] && [ "$kind" != rollback-step1 ]; then
+    c=$(code_of "$(call "$old_master" GET /model/info)"); [ "$c" = 401 ] && pass "old master key → 401" || fail "old master key → $c (want 401)"
+    if [ -n "$s_key" ] && [ "$kind" = final ]; then
+      c=$(code_of "$(call "$s_key" GET /model/info)"); [ "$c" = 401 ] && pass "step-1 master key (now the salt) → 401" || fail "step-1 master key → $c (want 401)"
+    fi
+  fi
+  r=$(call "$new_master" GET /model/info); c=$(code_of "$r"); [ "$c" = 200 ] && pass "this step's master key → 200" || fail "this step's master key → $c"
+  local m
   for m in $(python3 -c 'import json,sys; print(" ".join(json.load(open(sys.argv[1]))["db_models"]))' "$state"); do
     r=$(call "$new_master" POST /v1/chat/completions "$(chat_body "$m")"); c=$(code_of "$r")
-    [ "$c" = 200 ] && pass "stored model $m served → 200" || fail "stored model $m → $c (400 'Invalid model name' = its credentials no longer decrypt)"
+    [ "$c" = 200 ] && pass "stored model $m served → 200" || fail "stored model $m → $c"
   done
+  local agent; agent=$(secret_key "${AGENT_KEY_SECRET:-agent-litellm-key}" apiKey)
   if [ -n "$agent" ]; then
-    r=$(call "$agent" GET /v1/models); c=$(code_of "$r")
-    [ "$c" = 200 ] && pass "shared virtual key lists models → 200" || fail "shared virtual key /v1/models → $c"
+    r=$(call "$agent" GET /v1/models); c=$(code_of "$r"); [ "$c" = 200 ] && pass "shared virtual key lists models → 200" || fail "shared virtual key /v1/models → $c"
     local model; model=${VERIFY_MODEL:-$(body_of "$r" | python3 -c 'import json,sys
 try: print(json.load(sys.stdin)["data"][0]["id"])
 except Exception: print("")')}
-    if [ -n "$model" ]; then
-      if [ -n "${VERIFY_EMBED_MODEL:-}" ]; then   # an embeddings route instead (e.g. a rehearsal without provider keys)
-        model=$VERIFY_EMBED_MODEL; r=$(call "$agent" POST /v1/embeddings "{\"model\":\"$model\",\"input\":\"ping\"}")
-      else
-        r=$(call "$agent" POST /v1/chat/completions "$(chat_body "$model")")
-      fi
-      c=$(code_of "$r")
-      [ "$c" = 200 ] && pass "shared virtual key calls $model → 200" || fail "shared virtual key call $model → $c"
-    else fail "shared virtual key sees no model"; fi
-  else fail "agent-litellm-key has no apiKey"; fi
+    if [ -n "${VERIFY_EMBED_MODEL:-}" ]; then model=$VERIFY_EMBED_MODEL; r=$(call "$agent" POST /v1/embeddings "{\"model\":\"$model\",\"input\":\"ping\"}")
+    else r=$(call "$agent" POST /v1/chat/completions "$(chat_body "$model")"); fi
+    c=$(code_of "$r"); [ "$c" = 200 ] && pass "shared virtual key calls $model → 200" || fail "shared virtual key call $model → $c"
+  fi
+  local ui_user ui_new ui_old
+  ui_user=$(secret_key litellm-credentials UI_USERNAME); ui_new=$(ov litellmUI.password); ui_old=$(bak litellmUI.password)
+  if [ -n "$ui_new" ] && [ -n "$ui_user" ]; then
+    c=$(login_code /v2/login "$ui_user" "$ui_new")
+    [ "$c" = 200 ] && pass "console login with the new password → 200" || fail "console login with the new password → $c"
+    if [ -n "$ui_old" ] && [ "$kind" = final ]; then
+      c=$(login_code /v2/login "$ui_user" "$ui_old")
+      [ "$c" = 401 ] && pass "console login with the old password → 401" || fail "console login with the old password → $c (want 401)"
+    fi
+  fi
   stop_forward
 
   if [ -n "$OS_UI_EXEC" ]; then
@@ -315,28 +430,137 @@ Promise.all(["/v1/models", "/v1/mcp/tools"].map(p => fetch(u + p, { headers: h }
     case $r in *"/v1/models=200"*) pass "os-ui → LiteLLM with its LITELLM_MASTER_KEY: $r" ;; *) fail "os-ui → LiteLLM: $r" ;; esac
   fi
 
-  say "Langfuse (port-forward)"
-  port_forward "$LANGFUSE_SVC" 3000
-  c=$(basic "$new_pk" "$new_sk" /api/public/projects); [ "$c" = 200 ] && pass "new Langfuse key pair → 200" || fail "new Langfuse key pair → $c (did langfuse-web restart after the deploy?)"
-  c=$(basic "$old_pk" "$old_sk" /api/public/projects)
-  case $c in 401) pass "old Langfuse key pair → 401 (deleted in the UI)" ;; 200) echo "   todo old Langfuse key pair still → 200: delete it in the Langfuse UI, then run verify again" ;; *) fail "old Langfuse key pair → $c" ;; esac
-  stop_forward
+  if [ "$kind" = final ] || [ "$kind" = rollback ]; then
+    say "in-place secrets (sha256 prefixes) and their readers"
+    local pair
+    for pair in "agent-runtime-token token agentRuntime.token" "langfuse-core-secrets salt langfuseCoreSecrets.salt" \
+                "langfuse-core-secrets nextauthSecret langfuseCoreSecrets.nextauthSecret" "langfuse-core-secrets encryptionKey langfuseCoreSecrets.encryptionKey" \
+                "langfuse-init LANGFUSE_INIT_PROJECT_SECRET_KEY langfuseInit.secretKey" "litellm-credentials UI_PASSWORD litellmUI.password"; do
+      set -- $pair
+      local want; want=$(ov "$3"); [ -n "$want" ] || continue
+      [ "$(h16 "$(secret_key "$1" "$2")")" = "$(h16 "$want")" ] && pass "$1/$2 = new" || fail "$1/$2 is not the overlay value"
+    done
+    local deployed d sel starts
+    deployed=$(helm --kube-context "$CTX" status "$REL" -n "$NS" -o json | python3 -c 'import json,sys; print(json.load(sys.stdin)["info"]["last_deployed"])')
+    for d in "$LANGFUSE_SVC" "$REL-langfuse-worker" "$LITELLM_SVC" os-ui os-ui-worker; do
+      sel=$(k get deploy "$d" -o go-template='{{range $k,$v := .spec.selector.matchLabels}}{{$k}}={{$v}},{{end}}' 2>/dev/null | sed 's/,$//') || continue
+      [ -n "$sel" ] || continue
+      starts=$(k get pods -l "$sel" -o jsonpath='{range .items[*]}{.status.startTime}{" "}{end}')
+      if [ -z "${starts// /}" ]; then echo "   skip $d (no pods)"; continue; fi
+      if python3 -c '
+import sys
+from datetime import datetime
+dep = datetime.fromisoformat(sys.argv[1].replace("Z", "+00:00"))
+sys.exit(0 if all(datetime.fromisoformat(t.replace("Z", "+00:00")) > dep for t in sys.argv[2].split()) else 1)' "$deployed" "$starts"
+      then pass "$d: every pod started after the last deploy"; else fail "$d has a pod from before the last deploy: restart it"; fi
+    done
+
+    say "Langfuse (port-forward)"
+    port_forward "$LANGFUSE_SVC" 3000
+    local new_pk new_sk old_pk old_sk
+    new_pk=$(ov langfuseInit.publicKey); new_sk=$(ov langfuseInit.secretKey); old_pk=$(bak langfuseInit.publicKey); old_sk=$(bak langfuseInit.secretKey)
+    if [ -n "$new_pk" ]; then
+      c=$(basic "$new_pk" "$new_sk" /api/public/projects); [ "$c" = 200 ] && pass "new Langfuse key pair → 200" || fail "new Langfuse key pair → $c (did langfuse-web restart after the deploy?)"
+    fi
+    if [ -n "$old_pk" ] && [ "$kind" = final ]; then
+      c=$(basic "$old_pk" "$old_sk" /api/public/projects)
+      case $c in 401) pass "old Langfuse key pair → 401 (deleted in the UI)" ;; 200) echo "   todo old Langfuse key pair still → 200: the owner deletes it in the Langfuse UI, then verify again" ;; *) fail "old Langfuse key pair → $c" ;; esac
+    fi
+    stop_forward
+  fi
 
   echo
-  [ "$fails" -eq 0 ] && echo "ROTATION_VERIFY_OK" || { echo "ROTATION_VERIFY_FAILED ($fails)"; exit 1; }
+  [ "$fails" -eq 0 ] && echo "ROTATION_VERIFY_OK ($kind)" || { echo "ROTATION_VERIFY_FAILED ($fails, $kind)"; exit 1; }
 }
 
 # ----------------------------------------------------------------------------------------------
 password() {
   command -v openssl >/dev/null || die "openssl not found"
   mkdir -p "$SECRETS_DIR"; chmod 700 "$SECRETS_DIR"
-  local f; f="$SECRETS_DIR/langfuse-password-$(date +%Y%m%d-%H%M%S).yaml"
-  local pw; pw=$(openssl rand -base64 30 | tr -d '/+=' | cut -c1-32)
-  { echo "# Langfuse init-user password — PRIVATE, never commit. Run-book: docs/ops/secret-rotation.md"
-    echo "langfuseInit:"
-    echo "  userPassword: \"$pw\""
-  } > "$f"; chmod 600 "$f"
-  echo "   wrote $f (password sha256 $(h16 "$pw")…). Next: docs/ops/secret-rotation.md, 'Langfuse admin password'."
+  local stamp f; stamp=$(date +%Y%m%d-%H%M%S); f="$SECRETS_DIR/langfuse-password-$stamp.yaml"
+  local pw; pw=$(openssl rand -base64 30 | tr -d '/+=\n' | cut -c1-32)
+  pairs new "$pw" old "$(secret_key langfuse-init LANGFUSE_INIT_USER_PASSWORD)" uid "$(cluster_uid)" ns "$NS" rel "$REL" | pairs_json | python3 -c '
+import json, os, sys, yaml
+f = sys.argv[1]; d = json.load(sys.stdin)
+def w(path, tree, title, as_json=False):
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "w") as out:
+        if as_json: json.dump(tree, out); return
+        out.write(f"# {title} — PRIVATE, never commit. Run-book: docs/ops/secret-rotation.md\n")
+        yaml.safe_dump(tree, out)
+w(f, {"langfuseInit": {"userPassword": d["new"]}}, "Langfuse init-user password")
+w(f[:-5] + ".rollback.yaml", {"langfuseInit": {"userPassword": d["old"]}}, "previous Langfuse init-user password")
+w(f[:-5] + ".state.json", {"path": "langfuse-password", "cluster": {"uid": d["uid"], "namespace": d["ns"], "release": d["rel"]}}, "", True)' "$f"
+  echo "   wrote $f (password sha256 $(h16 "$pw")…), its rollback and state"
+  echo "   next: scripts/ops/rotate-secrets.sh password-db --overlay $f --context $CTX   (shows the DB step; --apply runs it)"
+}
+
+password_db() {
+  [ -f "$OVERLAY" ] || die "--overlay <password overlay> is required"
+  local state="${OVERLAY%.yaml}.state.json" hashf="${OVERLAY%.yaml}.old-hash"
+  [ -f "$state" ] || die "no state file next to $OVERLAY"
+  check_binding "$state"
+  local email pw newhash oldhash rows
+  email=$(secret_key langfuse-init LANGFUSE_INIT_USER_EMAIL); [ -n "$email" ] || die "langfuse-init has no LANGFUSE_INIT_USER_EMAIL"
+  pw=$($FILES get "$OVERLAY" langfuseInit.userPassword); [ -n "$pw" ] || die "no langfuseInit.userPassword in $OVERLAY"
+  sqlvars() { printf "\\\\set e '%s'\n" "$email"; [ -z "${1:-}" ] || printf "\\\\set h '%s'\n" "$1"; [ -z "${2:-}" ] || printf "\\\\set o '%s'\n" "$2"; }
+  case $email in *"'"*) die "the init e-mail contains a quote" ;; esac
+  rows=$( { sqlvars; printf "SELECT count(*) FROM users WHERE email = :'e';\n"; } | psql_db langfuse)
+  [ "$rows" = 1 ] || die "expected exactly 1 Langfuse user with the init e-mail, found '$rows'"
+  echo "   1 user with the init e-mail (langfuse database, table users)"
+  if [ -n "$ROLLBACK" ]; then
+    [ -f "$hashf" ] || die "no saved hash ($hashf)"
+    [ -n "$APPLY" ] || { echo "   DRY RUN: would restore the saved hash with one UPDATE (exec $PG_POD psql). Add --apply."; return 0; }
+    oldhash=$(cat "$hashf")
+    r=$( { sqlvars "$oldhash"; printf "UPDATE users SET password = :'h' WHERE email = :'e';\n"; } | k exec -i "$PG_POD" -- sh -c "psql -v ON_ERROR_STOP=1 -U \"\$POSTGRES_USER\" -d langfuse -tA")
+    [ "$r" = "UPDATE 1" ] || die "rollback UPDATE answered '$r'"
+    echo "   restored the previous password hash (1 row). Deploy the password rollback overlay and restart os-ui."
+    return 0
+  fi
+  if [ -z "$APPLY" ]; then
+    cat <<EOF
+   DRY RUN. With --apply (the owner's approval) this does, in order:
+     1. bcrypt cost 12 of the new password with langfuse-web's own bcryptjs
+        (kubectl exec -i deploy/$LANGFUSE_SVC -- node; the password goes in on stdin);
+     2. saves the current hash to ${hashf##*/} (mode 600) — the rollback;
+     3. ONE row: kubectl exec -i $PG_POD -- psql -d langfuse:
+          UPDATE users SET password = <new hash> WHERE email = <init e-mail> AND password = <saved hash>;
+        (must answer UPDATE 1).
+   Then deploy the password overlay (so os-ui's LANGFUSE_SSO_PASSWORD matches) and restart os-ui.
+EOF
+    return 0
+  fi
+  [ ! -e "$hashf" ] || die "$hashf exists: this password was applied already (use --rollback to undo)"
+  oldhash=$( { sqlvars; printf "SELECT password FROM users WHERE email = :'e';\n"; } | psql_db langfuse)
+  [ -n "$oldhash" ] || die "could not read the current hash"
+  ( umask 077; printf '%s' "$oldhash" > "$hashf" ); chmod 600 "$hashf"
+  newhash=$(printf '%s' "$pw" | k exec -i "deploy/$LANGFUSE_SVC" -c langfuse-web -- sh -c 'cd /app/web 2>/dev/null || cd /app; node -e "let p=\"\";process.stdin.on(\"data\",d=>p+=d).on(\"end\",async()=>console.log(await require(\"bcryptjs\").hash(p,12)))"')
+  case $newhash in '$2'[aby]'$12$'*) ;; *) die "langfuse-web did not return a bcrypt cost-12 hash" ;; esac
+  r=$( { sqlvars "$newhash" "$oldhash"; printf "UPDATE users SET password = :'h' WHERE email = :'e' AND password = :'o';\n"; } | k exec -i "$PG_POD" -- sh -c "psql -v ON_ERROR_STOP=1 -U \"\$POSTGRES_USER\" -d langfuse -tA")
+  [ "$r" = "UPDATE 1" ] || die "UPDATE answered '$r' (nothing changed if 0); the saved hash stays in $hashf"
+  echo "   password hash replaced (1 row, bcrypt cost 12 by langfuse-web's bcryptjs); previous hash saved to ${hashf##*/}"
+  echo "   next: VALUES_OVERLAY=$OVERLAY ./scripts/deploy.sh --from-registry $(live_version); kubectl rollout restart deploy/os-ui; then verify-password"
+}
+
+verify_password() {
+  [ -f "$OVERLAY" ] || die "--overlay <password overlay> is required"
+  check_binding "${OVERLAY%.yaml}.state.json"
+  local email new old fails=0
+  email=$(secret_key langfuse-init LANGFUSE_INIT_USER_EMAIL); new=$($FILES get "$OVERLAY" langfuseInit.userPassword); old=$($FILES get "${OVERLAY%.yaml}.rollback.yaml" langfuseInit.userPassword)
+  [ "$(h16 "$(secret_key langfuse-init LANGFUSE_INIT_USER_PASSWORD)")" = "$(h16 "$new")" ] && echo "   ok   langfuse-init holds the new password (os-ui's LANGFUSE_SSO_PASSWORD)" || { echo "   FAIL langfuse-init does not hold the new password"; fails=$((fails+1)); }
+  port_forward "$LANGFUSE_SVC" 3000
+  signin() { # <password> → signed-in | refused  (NextAuth credentials flow; values on stdin)
+    local jar; jar=$(mktemp)
+    local csrf; csrf=$(curl -s -c "$jar" "http://127.0.0.1:$PF_PORT/api/auth/csrf" | python3 -c 'import json,sys; print(json.load(sys.stdin)["csrfToken"])')
+    printf 'data-urlencode = "email=%s"\ndata-urlencode = "password=%s"\ndata-urlencode = "csrfToken=%s"\ndata-urlencode = "json=true"\n' "$email" "$1" "$csrf" \
+      | curl -s -K - -b "$jar" -c "$jar" -o /dev/null "http://127.0.0.1:$PF_PORT/api/auth/callback/credentials"
+    curl -s -b "$jar" "http://127.0.0.1:$PF_PORT/api/auth/session" | python3 -c 'import json,sys; print("signed-in" if json.load(sys.stdin).get("user") else "refused")'
+    rm -f "$jar"
+  }
+  [ "$(signin "$new")" = signed-in ] && echo "   ok   Langfuse sign-in with the new password" || { echo "   FAIL Langfuse sign-in with the new password"; fails=$((fails+1)); }
+  if [ -n "$old" ]; then [ "$(signin "$old")" = refused ] && echo "   ok   the previous password is refused" || { echo "   FAIL the previous password still signs in"; fails=$((fails+1)); }; fi
+  stop_forward
+  [ "$fails" -eq 0 ] && echo "PASSWORD_VERIFY_OK" || { echo "PASSWORD_VERIFY_FAILED ($fails)"; exit 1; }
 }
 
 case $CMD in
@@ -344,5 +568,7 @@ case $CMD in
   plan) plan ;;
   verify) verify ;;
   password) password ;;
-  *) sed -n '2,40p' "$0"; exit 2 ;;
+  password-db) password_db ;;
+  verify-password) verify_password ;;
+  *) sed -n '2,62p' "$0"; exit 2 ;;
 esac
