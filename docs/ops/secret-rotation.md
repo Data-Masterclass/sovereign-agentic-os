@@ -42,7 +42,7 @@ Rules that hold throughout:
 | `litellmSaltKey.value` | `litellm-credentials` → `LITELLM_SALT_KEY` | LiteLLM | no |
 | `litellm.envVars.LITELLM_MIGRATE_FROM_MASTER_KEY` (re-key: the old key in step 1, `""` in step 2) | — (pod env) | LiteLLM at boot | **yes**, LiteLLM |
 | `litellmUI.password` | `litellm-credentials` → `UI_PASSWORD` | LiteLLM console login, os-ui's console sign-in | no |
-| `agentRuntime.token` | `agent-runtime-token` → `token` | os-ui, the schedule and catalog CronJobs (read at each run) | no |
+| `agentRuntime.token` | `agent-runtime-token` → `token` | os-ui, the Dagster code server (`agentic-os-dagster-user-deployments-sovereign`, code server and repo-sync sidecar), the schedule and catalog CronJobs (read at each run) | no |
 | `langfuseInit.publicKey` / `secretKey` | `langfuse-init`, `litellm-credentials` (`LANGFUSE_*`) | langfuse-web (headless init), LiteLLM, os-ui, os-ui-worker | os-ui and os-ui-worker **yes** (the public key is plain env); the others no |
 | `langfuseCoreSecrets.salt` / `nextauthSecret` / `encryptionKey` | `langfuse-core-secrets` | langfuse-web, langfuse-worker | no |
 | `langfuseInit.userPassword` | `langfuse-init` → `LANGFUSE_INIT_USER_PASSWORD` | os-ui's Langfuse console sign-in (`LANGFUSE_SSO_PASSWORD`); langfuse-web only when it creates the user | no |
@@ -185,7 +185,8 @@ Before:
 - no long agent run in flight;
 - the checkout described in "Deploying only the secret changes".
 
-1. **Prepare** (read-only; two read-only exec steps, named before they run):
+1. **Prepare** (read-only). It runs two exec steps, named before they run. Each one reads inside a
+   `READ ONLY` transaction, so Postgres refuses any write:
    ```bash
    scripts/ops/rotate-secrets.sh prepare --context dmagenticos
    ```
@@ -212,8 +213,8 @@ Before:
    VALUES_OVERLAY=<…>.yaml ./scripts/deploy.sh --from-registry <live version>
    kubectl --context dmagenticos -n agentic-os rollout restart deploy/agentic-os-langfuse-web deploy/agentic-os-langfuse-worker deploy/agentic-os-litellm
    kubectl --context dmagenticos -n agentic-os rollout status  deploy/agentic-os-langfuse-web deploy/agentic-os-langfuse-worker deploy/agentic-os-litellm --timeout=10m
-   kubectl --context dmagenticos -n agentic-os rollout restart deploy/os-ui deploy/os-ui-worker
-   kubectl --context dmagenticos -n agentic-os rollout status  deploy/os-ui deploy/os-ui-worker --timeout=15m
+   kubectl --context dmagenticos -n agentic-os rollout restart deploy/os-ui deploy/os-ui-worker deploy/agentic-os-dagster-user-deployments-sovereign
+   kubectl --context dmagenticos -n agentic-os rollout status  deploy/os-ui deploy/os-ui-worker deploy/agentic-os-dagster-user-deployments-sovereign --timeout=15m
    scripts/ops/rotate-secrets.sh verify --overlay <…>.yaml --context dmagenticos --os-ui-exec
    ```
    `plan` must show only:
@@ -270,22 +271,27 @@ deploy `<pw>.rollback.yaml` and restart os-ui.
 
 ## Deploying only the secret changes
 
-main carries changes that are not on the live release (for example Trino resource groups and the
-git layout). Do not deploy main's chart with the live image, and do not bundle the rotation with a
-release. Deploy the **live tag** with only the rotation chart support cherry-picked:
+main carries changes that are not on the live release, for example Trino resource groups and the git
+layout. Do not deploy main's chart with the live image, and do not bundle the rotation with a
+release. Deploy the **live tag** with only the chart support it lacks cherry-picked. Production runs
+0.9.22, which already contains #166's chart commits (the salt key and `langfuseInit.userPassword`).
+So one commit is missing:
 
 ```bash
 git fetch origin --tags
-git switch -c rotation/<live version> os-ui-v<live version>
-git cherry-pick <feat(chart): LITELLM_SALT_KEY…> <fix(chart): allowChange…> <feat(chart): Langfuse core secrets…>
+git switch -c rotation/0.9.22 os-ui-v0.9.22
+git cherry-pick <feat(chart): Langfuse core secrets (salt, nextauthSecret, encryptionKey) from langfuseCoreSecrets>
 helm dependency build charts/sovereign-agentic-os
 ```
 
-Those three commits touch only the chart. On `os-ui-v0.9.21` they apply cleanly (rehearsed),
-and with the default values they render the same manifests as the tag. Run `rotate-secrets.sh` from a
-checkout of main (it needs no chart). Point `plan --chart` at the rotation branch's
-`charts/sovereign-agentic-os`, and run deploy.sh from the rotation branch. Delete the branch
-afterwards. The next release contains the change, and the overlay values stay in the release values.
+It touches only the chart, applies cleanly on `os-ui-v0.9.22`, and with the default values renders
+the same manifests as the tag. Run `rotate-secrets.sh` from a checkout of main (it needs no chart),
+with `plan --chart` pointing at the rotation branch's `charts/sovereign-agentic-os`. Run deploy.sh
+from the rotation branch.
+
+`plan` **refuses a chart whose checkout does not contain the live release tag**
+(`os-ui-v<live version>`). Deploying such a chart would roll production back. Delete the branch
+afterwards: the next release contains the change, and the overlay values stay in the release values.
 
 ## Rollback
 
