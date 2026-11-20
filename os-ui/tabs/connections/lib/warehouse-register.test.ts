@@ -124,7 +124,7 @@ async function pgConn(owner = builder) {
     template: 'warehouse',
     endpoint: '',
     credential: '',
-    warehouse: { platform: 'postgresql', catalog: 'pg_race', fields: { host: 'db.internal', database: 'sales', username: 'reader', password: 'not-in-git' } },
+    warehouse: { platform: 'postgresql', catalog: 'pg_race', fields: { host: 'db.internal', database: 'sales', username: 'reader', 'postgresql-password': 'not-in-git' } },
   });
 }
 

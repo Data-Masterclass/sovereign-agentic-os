@@ -128,6 +128,17 @@ function rootReadme(domain: string, catalogs: string[]): string {
   ].join('\n');
 }
 
+/**
+ * The exact `catalog.properties` bytes the OS renders for ONE connection — what git must hold at the
+ * sha a registration applies. The registration compares the committed bytes against this and
+ * refuses on any difference, so git is the record of what ran, never an input to it.
+ */
+export function expectedCatalogFile(c: SnapshotConnection): string {
+  const text = generateConnectionFiles(c.domain, [{ ...c, archived: false }]).get(connectionCatalogPath(c.warehouse!.catalog));
+  if (!text) throw new Error(`connection ${c.id} is not a catalog connection`);
+  return text;
+}
+
 /** Generate `domain`'s complete `connections/**` subtree from its stored connections. */
 export function generateConnectionFiles(domain: string, connections: SnapshotConnection[]): Map<string, string> {
   const files = new Map<string, string>();
