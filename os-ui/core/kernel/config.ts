@@ -13,6 +13,7 @@
 import { parseEnabledTabs } from '@core/kernel/tabs';
 import { parseAgentsWorkerMode } from '@core/kernel/agents-worker';
 import { parseRetentionDays } from '@core/kernel/agent-run-retention';
+import { DEV_SECRET_DEFAULTS } from '@core/kernel/dev-secret-defaults';
 
 function env(name: string, fallback: string): string {
   const v = process.env[name];
@@ -90,14 +91,14 @@ export function parseModelPrices(raw: string): Record<string, ModelPrice> {
  * (`assertNoDevDefaultSecretsInProd`) REFUSES to start with this value under
  * NODE_ENV=production — see below.
  */
-export const DEV_DEFAULT_SECRET = 'dev-only-insecure-session-secret-change-me-in-prod';
+export const DEV_DEFAULT_SECRET = DEV_SECRET_DEFAULTS.sessionSecret;
 
 /**
  * The insecure placeholder for the shared in-cluster runtime bearer, shipped so a clone-and-run
  * install works without secrets. `runtimeBearerAuthAllowed` (below) refuses to honour it under a
  * production runtime — the bearer grants un-narrowed, cross-domain reads.
  */
-export const DEV_DEFAULT_AGENT_RUNTIME_TOKEN = 'dev-only-insecure-agent-runtime-token';
+export const DEV_DEFAULT_AGENT_RUNTIME_TOKEN = DEV_SECRET_DEFAULTS.agentRuntimeToken;
 
 export const config = {
   // sample-agent (LangGraph RAG): GET {SAMPLE_AGENT_URL}/ask?q=...
@@ -360,7 +361,7 @@ export const config = {
   // LiteLLM gateway (Models & Tools): GET {LITELLM_URL}/v1/models +
   // {LITELLM_URL}/v1/mcp/tools  (Bearer master key).
   litellmUrl: base(env('LITELLM_URL', 'http://agentic-os-litellm:4000')),
-  litellmMasterKey: env('LITELLM_MASTER_KEY', 'sk-litellm-local-dev-master'),
+  litellmMasterKey: env('LITELLM_MASTER_KEY', DEV_SECRET_DEFAULTS.litellmMasterKey),
   // UI-ONLY credential for the embedded LiteLLM admin console. Deliberately NOT the
   // proxy master key: the tool-proxy mints a browser session from this, and a leaked
   // UI session must not equal full API access. Empty => the gateway tile says
@@ -528,7 +529,7 @@ export const config = {
     .split(',')
     .map((r) => r.trim())
     .filter(Boolean),
-  terminalBrokerSecret: env('TERMINAL_BROKER_SECRET', 'dev-only-insecure-terminal-secret-change-me'),
+  terminalBrokerSecret: env('TERMINAL_BROKER_SECRET', DEV_SECRET_DEFAULTS.terminalBrokerSecret),
   // consoleEnv (NOT env): when ingress is on but ingress.hosts.terminal is unset,
   // the chart renders TERMINAL_BROKER_WS="" (soa.terminalWsUrl). That explicit
   // empty must surface as "not reachable on this deployment" — not silently fall
