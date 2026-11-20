@@ -22,6 +22,8 @@
  *     only ever narrow what `policies/trino.rego` already permits.
  */
 
+import { IMPERSONATING_SERVICE_USERS } from '@core/infra/trino-service-identities';
+
 export type RulesInput = {
   /** Users allowed to impersonate an OS principal (the dbt runner). */
   serviceUsers: string[];
@@ -63,7 +65,7 @@ export const OS_PRINCIPAL_PATTERN = '[A-Za-z0-9][A-Za-z0-9._-]{0,63}';
  * grants and active users), so this file passes them through instead of keeping a second,
  * drifting copy of that rule. The chart's bootstrap `rules.json` carries the same entry.
  */
-export const OPA_IMPERSONATORS = ['svc-dagster-runner', 'svc-os-ui', 'svc-os-worker'] as const;
+export const OPA_IMPERSONATORS = IMPERSONATING_SERVICE_USERS;
 
 /** Everything a schema owner may do to a table in it. `OWNERSHIP` is what CTAS / DROP need. */
 export const OWNER_PRIVILEGES = ['SELECT', 'INSERT', 'DELETE', 'UPDATE', 'OWNERSHIP'] as const;

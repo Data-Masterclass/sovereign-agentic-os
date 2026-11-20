@@ -7,8 +7,9 @@
 # authenticated user in `context.identity.user` and the requested one in
 # `action.resource.user.user` (https://trino.io/docs/476/security/opa-access-control.html).
 # `SET SESSION AUTHORIZATION` inside an impersonated session is asked as SESSION user -> new user
-# (observed on 476, tests/lakehouse/impersonation.int.test.mjs), so it is always denied below:
-# the session user is never one of the three service users.
+# (observed on 476, tests/lakehouse/impersonation.int.test.mjs). Because no service identity can
+# ever BE the session user of an impersonated session (reserved_target, for every impersonator),
+# that second hop is always denied.
 #
 # Exactly three service users may act for someone else, each only for whom the OS says:
 #   svc-os-worker      -> the principal of an active, unexpired, unrevoked `kind=run` grant
@@ -26,11 +27,21 @@ import rego.v1
 
 dagster_grant_kinds := {"standing", "dataset"}
 
-# Identities that are never an impersonation target: the service users themselves and the direct
-# service users that log in with their own password (the delete-domain purge user).
-reserved_target(p) if startswith(p, "svc-")
+# Identities that are never an impersonation target, whoever asks (WP-14 verifier B1): the `svc-`
+# prefix and every service name in `data.service_identities` — the chart's data file
+# policies/service_identities.json, rendered from os-ui core/infra/trino-service-identities.ts,
+# the same list createUser refuses as an OS user id. `svc-` is also fixed here as a floor.
+reserved_target(p) if startswith(lower(p), "svc-")
 
-reserved_target("os-domain-delete")
+reserved_target(p) if {
+	some prefix in data.service_identities.prefixes
+	startswith(lower(p), prefix)
+}
+
+reserved_target(p) if lower(p) in {n | some n in data.service_identities.names}
+
+# Without the reserved list (the data file not loaded) nobody impersonates anyone.
+reserved_list_loaded if count(data.service_identities.names) > 0
 
 is_impersonation if input.action.operation == "ImpersonateUser"
 
@@ -39,6 +50,14 @@ impersonation_target := input.action.resource.user.user
 allow := false if {
 	is_impersonation
 	not impersonation_allowed
+}
+
+# The single gate every impersonator passes: the reserved list is loaded and the target is not a
+# service identity. A run grant that names a service user therefore grants nothing.
+impersonation_allowed if {
+	reserved_list_loaded
+	not reserved_target(impersonation_target)
+	grant_or_user_allows
 }
 
 # A grant is live when it is not revoked and its `expires_at` (RFC 3339) is in the future. A grant
@@ -53,7 +72,7 @@ run_in_progress(g) if {
 	g.active_run_id != ""
 }
 
-impersonation_allowed if {
+grant_or_user_allows if {
 	user == "svc-os-worker"
 	some g in data.os_grants.run_grants
 	g.kind == "run"
@@ -61,7 +80,7 @@ impersonation_allowed if {
 	grant_live(g)
 }
 
-impersonation_allowed if {
+grant_or_user_allows if {
 	user == "svc-dagster-runner"
 	some g in data.os_grants.run_grants
 	g.kind in dagster_grant_kinds
@@ -70,9 +89,8 @@ impersonation_allowed if {
 	grant_live(g)
 }
 
-impersonation_allowed if {
+grant_or_user_allows if {
 	user == "svc-os-ui"
-	not reserved_target(impersonation_target)
 	interactive_principal(impersonation_target)
 }
 
@@ -84,4 +102,11 @@ interactive_principal(p) if data.os_data.users[p].active == true
 # tabs/data/lib/policy/compiler.ts, chart opa.governance.principals). Bounding svc-os-ui to that
 # set keeps today's queries byte-identical (tests/lakehouse/parity.int.test.mjs). WP-35 deletes
 # the domain self-principals and this rule with them.
-interactive_principal(p) if data.governance.principals[p]
+# An explicitly INACTIVE user (`os_data.users[p].active == false`) is refused even with a
+# leftover principal entry (verifier note).
+interactive_principal(p) if {
+	data.governance.principals[p]
+	not explicitly_inactive(p)
+}
+
+explicitly_inactive(p) if data.os_data.users[p].active == false

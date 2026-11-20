@@ -1,0 +1,21 @@
+{
+  "service_identities": {
+    "prefixes": [
+      "svc-"
+    ],
+    "names": [
+      "svc-dagster-runner",
+      "svc-os-ui",
+      "svc-os-worker",
+      "dbt-runner",
+      "northpeak-marts",
+      "os-domain-delete",
+      "query-agent"
+    ],
+    "impersonators": [
+      "svc-dagster-runner",
+      "svc-os-ui",
+      "svc-os-worker"
+    ]
+  }
+}

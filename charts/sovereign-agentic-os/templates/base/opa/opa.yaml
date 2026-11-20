@@ -25,7 +25,7 @@
 {{- end }}
 {{- /* The revision of everything OPA loads: policies + chart data. Used for the
   pod-restart checksum and as OPA's `policy_rev` label. */}}
-{{- $policyRev := printf "%s-%s-%s-%s-%s-%s-%s-%s" ($opa.grants | toJson) (($opa.requiresApproval | default list) | toJson) ($gov | toJson) (.Files.Get "policies/authz.rego") (.Files.Get "policies/trino.rego") (.Files.Get "policies/trino_impersonation.rego") (.Files.Get "policies/connections.rego") (.Files.Get "policies/system/log.rego") | sha256sum }}
+{{- $policyRev := printf "%s-%s-%s-%s-%s-%s-%s-%s-%s" ($opa.grants | toJson) (($opa.requiresApproval | default list) | toJson) ($gov | toJson) (.Files.Get "policies/authz.rego") (.Files.Get "policies/trino.rego") (.Files.Get "policies/trino_impersonation.rego") (.Files.Get "policies/service_identities.json") (.Files.Get "policies/connections.rego") (.Files.Get "policies/system/log.rego") | sha256sum }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -55,6 +55,9 @@ data:
   # by run grants or active users.
   trino_impersonation.rego: |
 {{ .Files.Get "policies/trino_impersonation.rego" | indent 4 }}
+  # The service identities no one may impersonate (os-ui core/infra/trino-service-identities.ts).
+  service_identities.json: |
+{{ .Files.Get "policies/service_identities.json" | indent 4 }}
   # Governance data the Trino policy reads (data.governance). In production this is
   # populated from the artifact-registry / OpenMetadata visibility model; locally
   # we seed the Sales worked example so the governance proof runs on kind.
