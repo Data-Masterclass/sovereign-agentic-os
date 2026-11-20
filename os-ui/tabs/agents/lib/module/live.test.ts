@@ -242,7 +242,9 @@ test('model call limit (stock, exitBehavior error): the visit FAILS with model_c
   assert.equal(limited.failure?.code, 'model_call_limit');
   assert.match(limited.failure?.reason ?? '', /limit/i);
   assert.deepEqual(events, ['lead ok', 'researcher failed']);
-  assert.doesNotMatch(limited.finalText, /limit/i, 'the limit is not the team answer');
+  // The run's answer is the failure itself â€” not the lead's earlier "Delegating." and not the limit note as an answer.
+  assert.match(limited.finalText, /^The run stopped: agent researcher failed \(model_call_limit\): /);
+  assert.doesNotMatch(limited.finalText, /Delegating/);
   const visit = limited.runs.find((x) => x.node === 'researcher')!;
   assert.equal(visit.status, 'failed');
   assert.match(visit.error ?? '', /^model_call_limit: /);
@@ -258,6 +260,7 @@ test('tool call limit (stock, exitBehavior error): FAILS with tool_call_limit â€
   const serial = await run(`toollimit-${Date.now()}`, osDeps('toollimit', { limits: { modelCalls: 50, toolCalls: 2 } }));
   assert.equal(serial.failed, true);
   assert.deepEqual([serial.failure?.node, serial.failure?.code], ['researcher', 'tool_call_limit']);
+  assert.match(serial.finalText, /^The run stopped: agent researcher failed \(tool_call_limit\): /);
 
   // Two tool calls in ONE model turn past the limit (with `end` the stock middleware throws an untyped Error here).
   await stub.script([
