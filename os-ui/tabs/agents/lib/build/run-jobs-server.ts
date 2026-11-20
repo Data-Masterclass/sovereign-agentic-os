@@ -31,7 +31,7 @@
  *   - `server-only`: it touches the store, config and the run service. The pure parts it drives
  *     (`engine/jobs.ts`, `engine/worker-loop.ts`) are what the tests exercise.
  */
-import { readOpaData } from '@core/policy/opa-publish';
+import { opaBundlesActive, readOpaData } from '@core/policy/opa-publish';
 import { OPA_CANARY_PATH } from '@core/policy/opa-canary';
 import 'server-only';
 import type { RunEnv } from '@core/kernel/object-lifecycle';
@@ -382,8 +382,10 @@ export function policyStateReady(cacheMs = 15_000): () => Promise<boolean> {
   let okUntil = 0;
   return async () => {
     if (Date.now() < okUntil) return true;
-    const r = await readOpaData(OPA_CANARY_PATH, 2500);
-    const ready = r.reachable && r.defined;
+    // Bundle mode (WP-11): OPA's own readiness — every bundle activated (`GET /health?bundles`).
+    const ready = config.opaDataBundle
+      ? await opaBundlesActive(2500)
+      : await readOpaData(OPA_CANARY_PATH, 2500).then((r) => r.reachable && r.defined);
     okUntil = ready ? Date.now() + cacheMs : 0;
     return ready;
   };

@@ -319,6 +319,20 @@ async function buildFromDocs(s: UsersCacheState, docs: unknown[]): Promise<Map<s
   return map;
 }
 
+/**
+ * True only when the directory in memory IS the durable mirror's snapshot (not an offline seed and
+ * not unloaded). The os-data OPA bundle refuses to compile from anything less (WP-11).
+ */
+export async function userDirectoryAuthoritative(): Promise<boolean> {
+  try {
+    await getCache();
+  } catch {
+    return false;
+  }
+  const s = usersState();
+  return !!s.cache && !s.offline;
+}
+
 async function getCache(): Promise<Map<string, StoredUser>> {
   const s = usersState();
   if (s.cache && !s.offline) return s.cache;

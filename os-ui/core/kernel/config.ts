@@ -546,6 +546,28 @@ export const config = {
   // on a laptop with no OPA; a LIVE cluster must leave this unset so an OPA
   // outage cannot silently open every metrics/query authz.
   opaFailOpen: env('OPA_FAIL_OPEN', '').toLowerCase() === 'true',
+  // WP-11: OPA loads its data from os-ui's bundles (`/api/opa/bundles/*`) instead of REST pushes.
+  // Off = the interim push path (rollback). Read on every call so one process can test both.
+  get opaDataBundle(): boolean {
+    return ['1', 'true'].includes((process.env.OS_OPA_DATA_BUNDLE ?? '').trim().toLowerCase());
+  },
+  // The chart's OPA seed (`soa.opaSeed`: seed_grants, requires_approval, governance), rendered by the
+  // same helper as the push-mode OPA's data.json + governance.json: the base of the os-data bundle.
+  get opaSeed(): string {
+    return (process.env.OS_OPA_SEED ?? '').trim();
+  },
+  // The `os_governance` database (WP-07) the os-grants bundle reads run grants from.
+  get governanceDatabaseUrl(): string {
+    return (process.env.OS_GOVERNANCE_DATABASE_URL ?? '').trim();
+  },
+  // OPA instances (their `labels.instance`) that must report a grant revision before a run starts.
+  get opaBundleInstances(): string[] {
+    return (process.env.OS_OPA_INSTANCES ?? 'opa').split(',').map((s) => s.trim()).filter(Boolean);
+  },
+  // 10 F7: the only user attributes that may reach `os_data.users[uid].attrs`.
+  get abacAttributes(): string[] {
+    return (process.env.OS_ABAC_ATTRIBUTES ?? 'region,cost_center').split(',').map((s) => s.trim()).filter(Boolean);
+  },
 
   // Platform / Components surface — namespace the stack workloads live in. The
   // OS UI server reads their status + scales them 0<->1 NATIVELY via the

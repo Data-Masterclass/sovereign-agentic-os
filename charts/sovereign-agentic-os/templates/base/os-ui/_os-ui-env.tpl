@@ -329,10 +329,34 @@
   value: {{ $u.litellmUrl | quote }}
 - name: OPA_URL
   value: {{ $u.opaUrl | quote }}
-{{- /* The chart-seeded governance principals (the same block the OPA seed and the reassert hook
-     read). os-ui's runtime governance writes merge into them and never drop a seeded clearance. */}}
+{{- /* The chart-seeded governance principals (the same block the OPA seed reads). os-ui's runtime governance writes merge into them and never drop a seeded clearance. */}}
 - name: OS_OPA_SEED_PRINCIPALS
   value: {{ ((.Values.opa.governance | default dict).principals | default dict) | toJson | quote }}
+{{- $odb := (.Values.opa.dataBundle | default dict) }}
+{{- if $odb.enabled }}
+# WP-11: OPA loads its data as bundles from this process (/api/opa/bundles/*); nothing is pushed.
+- name: OS_OPA_DATA_BUNDLE
+  value: "1"
+# The chart seed, rendered by the SAME helper as OPA's data.json + governance.json.
+- name: OS_OPA_SEED
+  value: {{ include "soa.opaSeed" . | quote }}
+- name: OS_ABAC_ATTRIBUTES
+  value: {{ join "," ($odb.abacAttributes | default list) | quote }}
+- name: OS_OPA_INSTANCES
+  value: "opa"
+{{- $g := (.Values.postgres.governance | default dict) }}
+{{- if and .Values.postgres.enabled $g.enabled }}
+# The os-grants bundle reads run grants from os_governance as the runtime (DML-only) login.
+- name: OS_GOVERNANCE_DB_USERNAME
+  valueFrom:
+    secretKeyRef: { name: {{ $g.runtime.secretName }}, key: username }
+- name: OS_GOVERNANCE_DB_PASSWORD
+  valueFrom:
+    secretKeyRef: { name: {{ $g.runtime.secretName }}, key: password }
+- name: OS_GOVERNANCE_DATABASE_URL
+  value: postgresql://$(OS_GOVERNANCE_DB_USERNAME):$(OS_GOVERNANCE_DB_PASSWORD)@pg-rw/{{ $g.database }}
+{{- end }}
+{{- end }}
 - name: DAGSTER_URL
   value: {{ $u.dagsterUrl | quote }}
 # External-warehouse connectors (Glue/Snowflake/BigQuery/Databricks/Fabric).

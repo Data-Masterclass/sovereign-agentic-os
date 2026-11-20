@@ -24,10 +24,14 @@
  *   - Never silent: a reconciler that has not completed one run 2 min after boot is reported
  *     `not-restored` too (Monitoring alert), and the run worker holds runs while the canary is
  *     missing (`worker-loop.ts` policy gate).
- *   - Interim until WP-11 (OPA bundles) makes OPA load this state itself.
+ *   - WP-11: a source marked `bundled` is part of the `os-data` bundle (`core/policy/bundle.ts`
+ *     runs it in capture mode to compile the bundle). With `OS_OPA_DATA_BUNDLE=1` this reconciler
+ *     restores only the sources that are NOT bundled (knowledge guardrails, until WP-30); OPA
+ *     loads everything else itself and keeps it across restarts (`persist`).
  */
 import { isRunWorkerProcess } from '@core/kernel/process-role';
 import { scheduleEvery } from '@core/reconcile/runtime';
+import { config } from '@core/kernel/config';
 import { opaHealthy, publishOpa, readOpaData, type OpaWriteResult } from '@core/policy/opa-publish';
 import { activeAccessGrants } from '@core/policy/policy-view';
 
@@ -35,7 +39,8 @@ import { OPA_CANARY_PATH } from '@core/policy/opa-canary';
 export { OPA_CANARY_PATH };
 
 export type OpaSourceResult = { ok: boolean; detail: string };
-export type OpaStateSource = { name: string; restore(): Promise<OpaSourceResult> };
+/** `bundled`: its documents live under the os-data bundle's roots (compiled, never pushed, in bundle mode). */
+export type OpaStateSource = { name: string; bundled?: boolean; restore(): Promise<OpaSourceResult> };
 export type GrantContributor = { name: string; grants(): Promise<Record<string, string[]>> };
 
 export type OpaReconcileStatus = {
@@ -76,6 +81,15 @@ export function registerOpaStateSource(src: OpaStateSource): void {
 }
 export function registerGrantContributor(c: GrantContributor): void {
   reg().contributors.set(c.name, c);
+}
+/** The sources the os-data bundle compiles (registration order). */
+export function bundledOpaStateSources(): OpaStateSource[] {
+  return [...reg().sources.values()].filter((s) => s.bundled);
+}
+/** The sources this reconciler pushes: all of them, or only the unbundled ones in bundle mode. */
+function pushedSources(): OpaStateSource[] {
+  const all = [...reg().sources.values()];
+  return config.opaDataBundle ? all.filter((s) => !s.bundled) : all;
 }
 /** How long after process start a never-run reconciler counts as "not restored". */
 export const NEVER_RUN_GRACE_MS = 2 * 60_000;
@@ -139,14 +153,15 @@ async function runReconcile(reason: string): Promise<OpaReconcileStatus> {
   const r = reg();
   const at = new Date().toISOString();
   const lastRestoredAt = r.status.lastRestoredAt;
-  if (r.sources.size === 0) {
+  const toRestore = pushedSources();
+  if (toRestore.length === 0) {
     return setStatus({ state: 'not-restored', reason, at, lastRestoredAt, detail: 'no policy-state sources are registered', sources: [] });
   }
   if (!(await opaHealthy())) {
     return setStatus({ state: 'not-restored', reason, at, lastRestoredAt, detail: 'OPA is unreachable (GET /health failed)', sources: [] });
   }
   const sources: OpaReconcileStatus['sources'] = [];
-  for (const src of r.sources.values()) {
+  for (const src of toRestore) {
     try {
       const out = await src.restore();
       sources.push({ name: src.name, ok: out.ok, detail: out.detail });

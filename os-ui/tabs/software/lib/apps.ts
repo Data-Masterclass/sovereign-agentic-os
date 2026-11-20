@@ -2354,6 +2354,12 @@ export async function getAppBySlugInternal(slug: string): Promise<App | null> {
   return null;
 }
 
+/** True once the app registry holds the durable mirror's snapshot (WP-11: complete-or-nothing). */
+export async function appRegistryHydrated(): Promise<boolean> {
+  await getCache();
+  return appCacheState().hydrated;
+}
+
 /** Every app in the store (no visibility filter) — for the lineage check. */
 export async function listAllAppsInternal(): Promise<App[]> {
   const map = await getCache();

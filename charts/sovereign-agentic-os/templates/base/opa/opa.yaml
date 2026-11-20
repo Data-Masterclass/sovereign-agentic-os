@@ -1,3 +1,20 @@
+{{- /* WP-11: the chart's governance seed (values `opa.governance` plus the optional dagster-analytics
+     warehouse principal), computed exactly as `$gov` below, and the whole seed (data.json +
+     governance.json) as one JSON document: os-ui's os-data bundle base (OS_OPA_SEED). */}}
+{{- define "soa.opaGovernance" -}}
+{{- $wp := (.Values.dagsterAnalytics | default dict).warehousePrincipal | default dict }}
+{{- $gov := (.Values.opa.governance | default dict) }}
+{{- if $wp.enabled }}
+{{-   $gov = deepCopy $gov }}
+{{-   $princ := (dig "principals" dict $gov) }}
+{{-   $princ = merge (dict) $princ (dict $wp.name (dict "domains" ($wp.domains | default (list "sales")) "clearances" ($wp.clearances | default list))) }}
+{{-   $_ := set $gov "principals" $princ }}
+{{- end }}
+{{- $gov | toJson }}
+{{- end }}
+{{- define "soa.opaSeed" -}}
+{{- dict "seed_grants" .Values.opa.grants "requires_approval" (.Values.opa.requiresApproval | default list) "governance" (include "soa.opaGovernance" . | fromJson) | toJson }}
+{{- end }}
 {{- if .Values.opa.enabled }}
 {{- /*
   OPA — policy-as-code at the MCP/tool boundary (Layer 2 / security.md).
@@ -23,6 +40,10 @@
 {{-   $princ = merge (dict) $princ (dict $wp.name (dict "domains" ($wp.domains | default (list "sales")) "clearances" ($wp.clearances | default list))) }}
 {{-   $_ := set $gov "principals" $princ }}
 {{- end }}
+{{- $db := $opa.dataBundle | default dict }}
+{{- $govDb := (.Values.postgres.governance | default dict) }}
+{{- $grantsBundle := and $db.enabled .Values.postgres.enabled $govDb.enabled }}
+{{- $persist := and $db.enabled ($db.persistence | default dict).enabled }}
 {{- /* The revision of everything OPA loads: policies + chart data. Used for the
   pod-restart checksum and as OPA's `policy_rev` label. */}}
 {{- $policyRev := printf "%s-%s-%s-%s-%s-%s-%s-%s-%s" ($opa.grants | toJson) (($opa.requiresApproval | default list) | toJson) ($gov | toJson) (.Files.Get "policies/authz.rego") (.Files.Get "policies/trino.rego") (.Files.Get "policies/trino_impersonation.rego") (.Files.Get "policies/service_identities.json") (.Files.Get "policies/connections.rego") (.Files.Get "policies/system/log.rego") | sha256sum }}
@@ -89,6 +110,41 @@ data:
   opa-config.yaml: |
     labels:
       policy_rev: {{ $policyRev | quote }}
+    {{- if $db.enabled }}
+      instance: opa
+    # WP-11: policy DATA comes from os-ui's bundles, which OPA downloads, activates atomically and
+    # persists itself (https://www.openpolicyagent.org/docs/management-bundles). Nothing is pushed.
+    # The bearer is the dedicated `opa-bundle-token`, held only by OPA and the os-ui web process.
+    services:
+      osui:
+        url: {{ $db.serviceUrl | quote }}
+        credentials:
+          bearer:
+            token_path: /var/run/opa/bundle-token/token
+    bundles:
+      os-data:
+        service: osui
+        resource: bundles/os-data.tar.gz
+        persist: true
+        polling:
+          min_delay_seconds: {{ $db.polling.minDelaySeconds }}
+          max_delay_seconds: {{ $db.polling.maxDelaySeconds }}
+      {{- if $grantsBundle }}
+      os-grants:
+        service: osui
+        resource: bundles/os-grants.tar.gz
+        persist: true
+        polling:
+          long_polling_timeout_seconds: {{ $db.grants.longPollingTimeoutSeconds }}
+      {{- end }}
+    # With `persist: true`, a restarted OPA (and, with the PVC, a NEW pod) activates the last good
+    # bundles from here even while os-ui is down (bundle persistence).
+    persistence_directory: /var/opa
+    # Each activation is reported to os-ui (POST /api/opa/status), so a run can wait until its
+    # grant is active (https://www.openpolicyagent.org/docs/management-status).
+    status:
+      service: osui
+    {{- end }}
     {{- if $opa.decisionLogs.enabled }}
     decision_logs:
       console: true
@@ -106,6 +162,12 @@ metadata:
     {{- include "soa.selectorLabels" (dict "ctx" . "component" "opa") | nindent 4 }}
 spec:
   replicas: 1
+  {{- if $persist }}
+  # One ReadWriteOnce volume: the old pod releases it before the new one starts (no multi-attach).
+  # The new pod is ready within seconds from the persisted bundle.
+  strategy:
+    type: Recreate
+  {{- end }}
   selector:
     matchLabels:
       {{- include "soa.selectorLabels" (dict "ctx" . "component" "opa") | nindent 6 }}
@@ -113,7 +175,11 @@ spec:
     metadata:
       annotations:
         checksum/policy: {{ $policyRev }}
+        {{- if $db.enabled }}
+        checksum/config: {{ list $opa.decisionLogs $db $grantsBundle | toJson | sha256sum }}
+        {{- else }}
         checksum/config: {{ $opa.decisionLogs | toJson | sha256sum }}
+        {{- end }}
       labels:
         {{- include "soa.labels" . | nindent 8 }}
         {{- include "soa.selectorLabels" (dict "ctx" . "component" "opa") | nindent 8 }}
@@ -138,11 +204,22 @@ spec:
             - "--watch"
             # Explicit files, not the dir: ConfigMap volumes add ..data symlinks
             # that make a recursive dir load see each file multiple times.
+            {{- if $db.enabled }}
+            # Bundle mode: the seed data files are in the os-data bundle, not loaded here (a file
+            # under a bundle root would conflict with it).
+            {{- regexReplaceAll "(?m)^- \"/policies/(data|governance)\\.json\"\n?" (include "soa.opaPolicyFiles" .) "" | trimSuffix "\n" | nindent 12 }}
+            {{- else }}
             {{- include "soa.opaPolicyFiles" . | nindent 12 }}
+            {{- end }}
           ports:
             - { name: http, containerPort: 8181 }
           readinessProbe:
+            {{- if $db.enabled }}
+            # Ready only once every bundle is activated: a cold OPA takes no traffic (fail closed).
+            httpGet: { path: "/health?bundles", port: http }
+            {{- else }}
             httpGet: { path: /health, port: http }
+            {{- end }}
             initialDelaySeconds: 3
             periodSeconds: 5
           livenessProbe:
@@ -154,6 +231,10 @@ spec:
           volumeMounts:
             - { name: policy, mountPath: /policies, readOnly: true }
             - { name: config, mountPath: /config, readOnly: true }
+            {{- if $db.enabled }}
+            - { name: bundle-token, mountPath: /var/run/opa/bundle-token, readOnly: true }
+            - { name: bundle-persist, mountPath: /var/opa }
+            {{- end }}
       volumes:
         - name: policy
           configMap:
@@ -161,6 +242,20 @@ spec:
         - name: config
           configMap:
             name: opa-config
+        {{- if $db.enabled }}
+        - name: bundle-token
+          secret:
+            secretName: opa-bundle-token
+            items: [{ key: token, path: token }]
+        - name: bundle-persist
+          {{- if $persist }}
+          persistentVolumeClaim:
+            claimName: opa-bundles
+          {{- else }}
+          # Survives a container restart only; a new pod starts unready until os-ui serves a bundle.
+          emptyDir: { sizeLimit: 64Mi }
+          {{- end }}
+        {{- end }}
 ---
 apiVersion: v1
 kind: Service
@@ -175,4 +270,45 @@ spec:
     {{- include "soa.selectorLabels" (dict "ctx" . "component" "opa") | nindent 4 }}
   ports:
     - { name: http, port: 8181, targetPort: http }
+{{- if $db.enabled }}
+---
+# WP-11: the bundle-service bearer, for OPA and the os-ui web process ONLY (not the run worker, not
+# Dagster). Generated in the cluster on first install and kept across upgrades; never in values.
+{{- $existing := lookup "v1" "Secret" .Release.Namespace "opa-bundle-token" }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: opa-bundle-token
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "opa") | nindent 4 }}
+  annotations:
+    helm.sh/resource-policy: keep
+type: Opaque
+data:
+  token: {{ if $existing }}{{ index $existing.data "token" }}{{ else }}{{ randAlphaNum 48 | b64enc }}{{ end }}
+{{- if $persist }}
+---
+# The last good bundles survive a new pod (node roll, eviction, rollout restart).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: opa-bundles
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "opa") | nindent 4 }}
+  annotations:
+    helm.sh/resource-policy: keep
+spec:
+  accessModes: [ReadWriteOnce]
+  {{- with $db.persistence.storageClass }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ $db.persistence.size }}
+{{- end }}
+{{- end }}
 {{- end }}

@@ -141,6 +141,14 @@ export async function register(): Promise<void> {
       registerOpaStateSources();
       const { startOpaReconciler } = await import('./core/policy/opa-reconcile.ts');
       startOpaReconciler();
+      // WP-11 (OS_OPA_DATA_BUNDLE=1): the same sources compile the os-data bundle OPA downloads
+      // and persists itself; the reconciler above then pushes only the unbundled guardrails.
+      const { config: cfg } = await import('./core/kernel/config.ts');
+      const { isRunWorkerProcess } = await import('./core/kernel/process-role.ts');
+      if (cfg.opaDataBundle && !isRunWorkerProcess()) {
+        const { startOsDataBundle } = await import('./core/policy/bundle.ts');
+        startOsDataBundle();
+      }
     } catch (err) {
       console.error(`[os-ui] opa state: reconciler NOT started — POLICY STATE WILL NOT BE RESTORED after an OPA restart: ${err instanceof Error ? err.message : String(err)}`);
     }
