@@ -30,3 +30,4 @@ dagster user code, data-runner, query-tool) are under `images/`, not here.
 | [SeaweedFS](seaweedfs/UPSTREAM.md) (dev/CI S3) | Apache-2.0 |
 | [Trino](trino/UPSTREAM.md) | Apache-2.0 |
 | [Valkey](valkey/UPSTREAM.md) | BSD-3-Clause |
+| [Vega-Lite + vl-convert](vega-lite/UPSTREAM.md) (file format; renderer in CI only) | BSD-3-Clause |
