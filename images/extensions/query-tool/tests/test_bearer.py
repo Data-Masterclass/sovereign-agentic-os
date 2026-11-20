@@ -32,7 +32,7 @@ class _Req:
         return self._body
 
 
-def _ok_query(sql, principal=None, schema=None):
+def _ok_query(sql, principal=None, schema=None, source=None, client_tags=None):
     return {"engine": "trino", "columns": [], "rows": [], "row_count": 0}
 
 

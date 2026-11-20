@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { requireUser } from '@core/kernel/auth';
 import { errorResponse } from '@tabs/data/lib/server';
 import { queryRun } from '@core/infra/governed';
+import { routeFor } from '@core/infra/trino-source';
 import { readPrincipalFor } from '@tabs/data/lib/store-fqn';
 
 export const dynamic = 'force-dynamic';
@@ -33,7 +34,7 @@ export async function POST(req: Request) {
     // for the owner's own table); every other read runs as the caller's domain. Derived
     // SERVER-SIDE from the session + SQL — never trusted from the request body.
     const principal = readPrincipalFor(sql, u);
-    const result = await queryRun(sql, principal);
+    const result = await queryRun(sql, principal, routeFor(u, 'query'));
     return NextResponse.json(result);
   } catch (e) {
     // 401 for anon (thrown by requireUser); otherwise surface a 400/502.

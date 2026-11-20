@@ -9,7 +9,7 @@ import { getDataset, transition, listAllDatasets } from '@tabs/data/lib/store';
 import { stepperStages } from '@tabs/data/lib/panels';
 import { retireDomainTables, sharedFootprintFqns } from '@tabs/data/lib/physical-delete';
 import { dependentsOf } from '@core/kernel/dependents';
-import { executeRun } from '@core/infra/governed';
+import { executeRoute, executeRun } from '@core/infra/governed';
 
 export const dynamic = 'force-dynamic';
 
@@ -50,7 +50,12 @@ export const POST = withRoute<{ id: string }, { action?: string }>(async ({ user
     // name/slug collision — that would orphan the still-served sibling (metadata says served,
     // table gone). Protect the footprint of every OTHER live dataset (`before` is excluded).
     const protectedFqns = sharedFootprintFqns(before, listAllDatasets());
-    physical = await retireDomainTables(before, user, executeRun, protectedFqns);
+    physical = await retireDomainTables(
+      before,
+      user,
+      (sql, identity) => executeRun(sql, identity, executeRoute(identity, 'data-lifecycle', before.domain)),
+      protectedFqns,
+    );
     dependents = await dependentsOf(id).catch(() => []);
   }
   return NextResponse.json({ dataset, stages: stepperStages(dataset), ...(physical ? { physical } : {}), ...(dependents ? { dependents } : {}) });

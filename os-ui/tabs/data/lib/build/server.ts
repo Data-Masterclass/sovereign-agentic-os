@@ -121,7 +121,7 @@ export async function commitLayerVersion(
   let write: { transformSql?: string; identity?: ExecuteIdentity; targetFqn?: string };
   if (passThrough && (await queryToolReachable())) {
     const res = await resolvePassThroughSource(dataset, identity, layer as 'silver' | 'gold', (fqn) =>
-      probeQueryable(fqn, identity.principal),
+      probeQueryable(fqn, identity.principal, identity.domains),
     );
     if (res.kind === 'none') {
       const lower = layer === 'gold' ? 'Bronze or Silver' : 'Bronze';

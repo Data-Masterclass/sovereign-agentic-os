@@ -6,6 +6,7 @@ import { requireUser } from '@core/kernel/auth';
 import { errorResponse } from '@tabs/data/lib/server';
 import { ensureHydrated, listDatasets, type Principal } from '@tabs/data/lib/store';
 import { queryRun } from '@core/infra/governed';
+import { routeFor, type TrinoRoute } from '@core/infra/trino-source';
 import {
   assembleCatalog,
   registryAssets,
@@ -28,11 +29,11 @@ export const dynamic = 'force-dynamic';
  */
 
 /** Physical Iceberg tables in the caller's own domain schema (Trino via query-tool). */
-async function fromQueryTool(principal: string): Promise<CatalogAsset[]> {
+async function fromQueryTool(principal: string, route: TrinoRoute): Promise<CatalogAsset[]> {
   // Forward the principal (Trino's OPA plugin scopes the listing to the caller) AND
   // the caller's domain as the session schema, so we list the RIGHT catalog.schema
   // instead of a dead literal. `show tables` is unqualified → resolves in `principal`.
-  const data = await queryRun('show tables', principal, principal);
+  const data = await queryRun('show tables', principal, route, principal);
   return data.rows.map((r) => {
     const name = String(r[0]);
     return {
@@ -64,7 +65,7 @@ export async function GET() {
   const result = await assembleCatalog({
     schema: principal,
     registry,
-    trino: () => fromQueryTool(principal),
+    trino: () => fromQueryTool(principal, routeFor(user, 'catalog')),
   });
   return NextResponse.json(result);
 }

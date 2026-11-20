@@ -8,6 +8,7 @@ import { requirePrincipal } from '@tabs/data/lib/server';
 import { getDataset } from '@tabs/data/lib/store';
 import { builtLayerFqn } from '@tabs/data/lib/store';
 import { queryRun } from '@core/infra/governed';
+import { routeFor } from '@core/infra/trino-source';
 import type { Layer } from '@tabs/data/lib/index';
 import {
   assembleProfile,
@@ -85,10 +86,11 @@ export const GET = withRoute<{ id: string }>(async ({ user, params, req }) => {
   // The principal Trino's OPA plugin governs row/column on — the OWNER for a personal
   // dataset (personal_<uid> ownership), else the caller's domain. NEVER from the body.
   const principal = resolved?.principal ?? (user.domains[0] ?? user.id);
+  const route = routeFor(user, 'data-profile', dataset.domain);
 
   let columns: ProfileColumn[];
   try {
-    const describe = await queryRun(`describe ${fqn}`, principal);
+    const describe = await queryRun(`describe ${fqn}`, principal, route);
     columns = parseDescribe(describe);
   } catch (e) {
     // The registry knows this version, but its physical table isn't queryable
@@ -110,8 +112,8 @@ export const GET = withRoute<{ id: string }>(async ({ user, params, req }) => {
   const isLiveConnected = dataset.connected?.mode === 'live';
   const statsFrom = isLiveConnected ? sampledSource(fqn) : fqn;
 
-  const statsRes = await queryRun(statsSql(statsFrom, columns), principal);
-  const previewRes = await queryRun(previewSql(fqn, 50), principal);
+  const statsRes = await queryRun(statsSql(statsFrom, columns), principal, route);
+  const previewRes = await queryRun(previewSql(fqn, 50), principal, route);
   // Top values are best-effort: a wide table or a heavy scan must not fail the
   // whole profile (the count + null% acceptance rides on stats/preview).
   let topRes = null;
@@ -119,7 +121,7 @@ export const GET = withRoute<{ id: string }>(async ({ user, params, req }) => {
     const sql = topValuesSql(statsFrom, columns, 5);
     if (sql) {
       try {
-        topRes = await queryRun(sql, principal);
+        topRes = await queryRun(sql, principal, route);
       } catch {
         topRes = null;
       }

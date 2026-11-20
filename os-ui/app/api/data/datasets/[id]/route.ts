@@ -9,7 +9,7 @@ import { runWithSurface, uiSurfaceFor } from '@core/infra/request-surface';
 import { peekDatasetMeta, getDataset, isDatasetArchived, archiveDataset, unarchiveDataset, deleteDataset, renameDataset, listAllDatasets } from '@tabs/data/lib/store';
 import { dropPhysicalTables, sharedFootprintFqns } from '@tabs/data/lib/physical-delete';
 import { domainTableMissing } from '@tabs/data/lib/reconcile-server';
-import { executeRun } from '@core/infra/governed';
+import { executeRoute, executeRun } from '@core/infra/governed';
 import { stepperStages } from '@tabs/data/lib/panels';
 import { goldOutputColumns } from '@tabs/data/lib/metrics';
 import { appSlugFromRequest, checkAppGrant } from '@tabs/software/lib/app-origin';
@@ -101,6 +101,11 @@ export const DELETE = withRoute<{ id: string }>(async ({ user, params }) => {
   // name/slug collision (dropping it would orphan the still-served sibling). Compute the
   // protected footprint from every OTHER live dataset before issuing the drops.
   const protectedFqns = sharedFootprintFqns(dataset, listAllDatasets());
-  const physical = await dropPhysicalTables(dataset, user, executeRun, protectedFqns);
+  const physical = await dropPhysicalTables(
+    dataset,
+    user,
+    (sql, identity) => executeRun(sql, identity, executeRoute(identity, 'data-delete', dataset.domain)),
+    protectedFqns,
+  );
   return NextResponse.json({ ok: true, physical });
 }, { gate: requirePrincipal as () => Promise<CurrentUser> });

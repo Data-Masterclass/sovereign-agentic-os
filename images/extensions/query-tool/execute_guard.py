@@ -342,6 +342,26 @@ def guard(sql: str, uid: str, domains: List[str], role: str) -> ParsedWrite:
     return parsed
 
 
+#: The source of a statement nobody tagged (the MCP tools on this server). No resource-group
+#: selector captures it, so it lands in `global.other`, visibly.
+DEFAULT_SOURCE = "query-tool"
+_SOURCE = re.compile(r"^[A-Za-z0-9._/-]{1,128}$")
+_TAG = re.compile(r"^[A-Za-z0-9._=:-]{1,64}$")
+
+
+def scheduling(body: dict) -> tuple:
+    """`(source, client_tags)` from a request body, shape-checked (they become HTTP headers).
+    Raises ExecuteError(400) on a malformed value; absent values pass as None."""
+    source = body.get("source")
+    tags = body.get("client_tags")
+    if source is not None and (not isinstance(source, str) or not _SOURCE.match(source)):
+        raise ExecuteError(400, "invalid source")
+    if tags is not None and (not isinstance(tags, list) or len(tags) > 8
+                             or not all(isinstance(t, str) and _TAG.match(t) for t in tags)):
+        raise ExecuteError(400, "invalid client_tags")
+    return source, tags
+
+
 def connect_kwargs(
     principal: Optional[str],
     schema: Optional[str],
@@ -353,6 +373,8 @@ def connect_kwargs(
     default_user: str,
     request_timeout: Optional[int] = None,
     max_run_time: Optional[str] = None,
+    source: Optional[str] = None,
+    client_tags: Optional[list] = None,
 ):
     """Build the Trino connection kwargs. Factored out (and unit-tested) so the key
     invariant is provable without a live Trino: the session `user` is the CALLER's
@@ -379,6 +401,11 @@ def connect_kwargs(
         "schema": schema,
         "http_scheme": http_scheme,
     }
+    # The caller's Trino `source` and client tags (os-ui sends `os-ui/<domain>/<surface>`),
+    # passed through unchanged: Trino's resource-group selector reads the source (06 §5.5).
+    kwargs["source"] = source or DEFAULT_SOURCE
+    if client_tags:
+        kwargs["client_tags"] = list(client_tags)
     if request_timeout is not None:
         kwargs["request_timeout"] = request_timeout
     if max_run_time:

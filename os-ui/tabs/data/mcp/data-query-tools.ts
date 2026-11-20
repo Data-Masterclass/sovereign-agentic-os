@@ -5,6 +5,7 @@ import 'server-only';
 import type { McpTool } from '@core/mcp/server';
 import { fail, str } from '@core/mcp/write-common';
 import { authorize, queryRun, trace } from '@core/infra/governed';
+import { routeFor } from '@core/infra/trino-source';
 import { ARTIFACT_OUTPUT_SCHEMA, tableArtifact } from '@core/runtime/chat-artifacts';
 import { readPrincipalFor } from '@tabs/data/lib/store-fqn';
 import { sanitizeSingleStatement } from '@tabs/data/lib/sql-guard';
@@ -61,7 +62,7 @@ export const dataQueryTools: McpTool[] = [
       const trinoPrincipal = readPrincipalFor(sql, { id: user.id, domains: user.domains });
       const authz = await authorize(domainPrincipal, 'query');
       if (!authz.allowed) fail(`OPA denied ${domainPrincipal} → query (${authz.policy})`, 403);
-      const result = await queryRun(sql, trinoPrincipal);
+      const result = await queryRun(sql, trinoPrincipal, routeFor(user, 'data-query'));
       const traced = await trace({ principal: trinoPrincipal, tool: 'query', input: sql, output: result.rows });
       return { principal: trinoPrincipal, authorized: true, policy: authz.policy, traced, ...result };
     },

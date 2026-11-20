@@ -236,10 +236,10 @@ export async function refreshCatalogSnapshotService(
     try {
       if (!opts.schema) {
         const q = provider.testProbe.kind === 'sql' ? provider.testProbe.query(source) : `SHOW SCHEMAS FROM ${catalog}`;
-        const res = await query(q, c.domain, c.domain);
+        const res = await query(q, c.domain, { domain: c.domain, surface: 'connections' }, c.domain);
         return { ok: true, schemas: res.rows.map((r) => String(r[0])).filter(Boolean), tables: [] };
       }
-      const res = await query(provider.discoverTables(source, opts.schema), c.domain, c.domain);
+      const res = await query(provider.discoverTables(source, opts.schema), c.domain, { domain: c.domain, surface: 'connections' }, c.domain);
       return { ok: true, schemas: [], tables: res.rows.map((r) => String(r[0])).filter(Boolean) };
     } catch {
       return { ok: false, schemas: [], tables: [] };
@@ -300,7 +300,7 @@ export async function describeTable(
   }
   const fqn = `${c.warehouse.catalog}.${input.schema}.${input.table}`;
   const query = deps.query ?? queryRun;
-  const res = await query(`DESCRIBE ${fqn}`, c.domain, c.domain);
+  const res = await query(`DESCRIBE ${fqn}`, c.domain, { domain: c.domain, surface: 'connections' }, c.domain);
   // Trino DESCRIBE returns Column, Type, Extra, Comment. Keep name+type and carry the
   // Comment (4th column) through additively — the Phase-B classifier reads it; older
   // metastores that omit it just yield an absent comment (never fabricated).

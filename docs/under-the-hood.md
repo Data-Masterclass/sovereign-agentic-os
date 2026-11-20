@@ -583,8 +583,9 @@ SELECT * FROM iceberg.sales.gold_orders LIMIT 10;
 > - **`sanitizeIdent` collides, and the Trino side has no withhold.** Two principals whose ids differ
 >   only in punctuation or case share one Iceberg namespace *and* one `models/personal/<uid>/`
 >   directory. `os-ui/tabs/data/lib/store-fqn.ts:38-41`; gap-report §4
-> - **The resource-group selectors expect a client tag nothing sets.** `trino.yaml:127-132` selects on
->   `domain=<d>`, and no `X-Trino-Source` or client-tag header is set anywhere in the tree.
+> - **The resource-group selectors expected a client tag nothing set** (fixed in WP-13: selection is
+>   now by `X-Trino-Source`, which os-ui, the Dagster probe and the seed Job send; see
+>   [`docs/components/trino.md`](components/trino.md)).
 > - **`os/external.yml` is written and never read.** Zero references in `repo.py` or `os_projects.py`;
 >   [`docs/components/dagster.md`](components/dagster.md)`:229` admits it. The Kafka-offset and
 >   API-batch sources are *listed rather than faked*, which is the honest choice, but no asset
@@ -2799,7 +2800,7 @@ because several capabilities people assume are chart-gated are not.
 | Trino | `trino.enabled` | true `:1149` | `extensions/lakehouse/trino.yaml`; co-gates the os-ui rules-reconcile RBAC |
 | Trino OPA plugin | `trino.opa.enabled` | true `:1193` | the first of the two chained access controls |
 | Trino file ACL | `trino.accessControl.enabled` | true `:1221` | the `rules.json` ConfigMap, chained *after* OPA |
-| Trino resource groups | `trino.resourceGroups.enabled` | true `:1197` | selectors keyed on a client tag nothing sets |
+| Trino resource groups | `trino.resourceGroups.enabled` | true | selected by `X-Trino-Source` (`os-ui/<domain>/<surface>` → `global.domains.<domain>.<user>`), WP-13 |
 | Trino client auth | *`trinoAuthMethod` / `TRINO_AUTH_METHOD`* | **NOT FOUND** | no chart value exists, so `config.trinoAuthMethod` stays `'none'` — `os-ui/core/kernel/config.ts:513` |
 | Langfuse | `langfuse.enabled` | true `:233` | subchart v1.5.36 — web + worker. Its four backends are `deploy: false` each `:290`, `:303`, `:313`, `:326`; telemetry off `:246` |
 | LiteLLM | `litellm.enabled` | true `:411` | litellm-helm v1.109.1 proxy Deployment |

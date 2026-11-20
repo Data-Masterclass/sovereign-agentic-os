@@ -4,6 +4,7 @@
 import { NextResponse } from 'next/server';
 import { requireUser } from '@core/kernel/auth';
 import { authorize, queryRun, trace } from '@core/infra/governed';
+import { routeFor } from '@core/infra/trino-source';
 
 export const dynamic = 'force-dynamic';
 
@@ -50,7 +51,7 @@ export async function POST(req: Request) {
   try {
     const sql = (body.sql ?? '').toString().trim();
     if (!sql) return NextResponse.json({ error: 'query tool needs sql' }, { status: 400 });
-    const result = await queryRun(sql, principal);
+    const result = await queryRun(sql, principal, routeFor(user, 'data-tool'));
     const traced = await trace({ principal, tool, input: sql, output: result.rows });
     return NextResponse.json({ tool, principal, authorized: true, policy: authz.policy, traced, ...result });
   } catch (e) {

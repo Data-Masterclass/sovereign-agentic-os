@@ -45,6 +45,7 @@ export async function POST(req: Request) {
     const body = Buffer.from(await file.arrayBuffer());
     const report = await ingestUpload({
       principal: user.id, // session-bound — never the request body
+      domains: user.domains,
       datasetName: name || file.name || 'upload',
       fileName: file.name || 'upload.csv',
       body,

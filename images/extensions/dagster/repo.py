@@ -134,12 +134,15 @@ def _merge_bundles(a: Dict[str, object], b: Dict[str, object]) -> Dict[str, obje
 OBSERVE_TIMEOUT_SECONDS = int(os.environ.get("OS_OBSERVE_TIMEOUT_SECONDS", "60") or 60)
 
 
-def _trino_rows(sql: str, principal: str, timeout_seconds: int = OBSERVE_TIMEOUT_SECONDS):
+def _trino_rows(sql: str, principal: str, domain: str, timeout_seconds: int = OBSERVE_TIMEOUT_SECONDS):
     """Run ONE read on Trino as `principal` (the observation probe, engine rebuild B3).
 
     The same identity contract as everything else here: the session user IS the OS principal, so
     Trino->OPA governs the probe exactly as it governs the model that reads the table. The
     connection parameters come from the run pod's env (the chart), never from the repo.
+
+    `source` is Trino's documented client source: `dagster/<domain>/observe` selects the chart's
+    `global.system` resource group (trino.resourceGroups.config, design 06 §5.5).
     """
     import trino  # dbt-trino's own dependency — always present in this image
 
@@ -147,6 +150,8 @@ def _trino_rows(sql: str, principal: str, timeout_seconds: int = OBSERVE_TIMEOUT
         host=os.environ.get("TRINO_HOST", "trino"),
         port=int(os.environ.get("TRINO_PORT", "8080")),
         user=principal,
+        source=f"dagster/{domain}/observe",
+        client_tags=["dagster", f"domain={domain}"],
         catalog=os.environ.get("TRINO_CATALOG", "iceberg"),
         http_scheme=os.environ.get("TRINO_HTTP_SCHEME", "http"),
         request_timeout=timeout_seconds,
@@ -185,7 +190,7 @@ def _source_assets(p: osp.Project, dom: str) -> Tuple[List[object], List[object]
                 metadata={"os/dataset": a.dataset, "os/principal": a.principal, "os/observe": a.observe, "os/downstream": a.downstream},
             )
             def _observed():
-                rows = _trino_rows(sql, a.principal)
+                rows = _trino_rows(sql, a.principal, dom)
                 row = rows[0] if rows else ()
                 meta: Dict[str, object] = {"os/observed_at": None}
                 if a.observe == "max_updated" and len(row) >= 2:

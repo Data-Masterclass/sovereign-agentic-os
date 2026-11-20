@@ -4,6 +4,7 @@
 import { NextResponse } from 'next/server';
 import { requireUser } from '@core/kernel/auth';
 import { authorize, queryRun, trace } from '@core/infra/governed';
+import { routeFor } from '@core/infra/trino-source';
 import { privatePrefix } from '@tabs/data/lib/personal-lane';
 import { claimsFromUser } from '@tabs/data/lib/identity';
 import { runAgentTool, type AgentScope, type Executors } from '@tabs/data/lib/agent-tools';
@@ -34,7 +35,7 @@ export async function POST(req: Request) {
   const executors: Executors = {
     authorize: (principal, tool) => authorize(principal, tool),
     async trinoQuery(sql, principal) {
-      const r = await queryRun(sql, principal);
+      const r = await queryRun(sql, principal, routeFor(user, 'data-agent'));
       return { columns: r.columns, rows: r.rows };
     },
     trace: (event) => trace({ principal: String(event.principal), tool: 'query', input: event, output: {} }),

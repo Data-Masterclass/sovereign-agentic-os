@@ -7,6 +7,7 @@ import type { CurrentUser } from '@core/kernel/auth';
 import { requirePrincipal } from '@tabs/data/lib/server';
 import { getDataset, builtLayerFqn, peekDatasetMeta } from '@tabs/data/lib/store';
 import { queryRun } from '@core/infra/governed';
+import { routeFor } from '@core/infra/trino-source';
 import { runPreview } from '@tabs/data/lib/preview';
 import type { Layer } from '@tabs/data/lib/index';
 import { appSlugFromRequest, checkAppGrant } from '@tabs/software/lib/app-origin';
@@ -52,7 +53,7 @@ export const GET = withRoute<{ id: string }>(async ({ user, params, req }) => {
   const outcome = await runPreview({
     target,
     limit,
-    query: (sql) => queryRun(sql, principal),
+    query: (sql) => queryRun(sql, principal, routeFor(user, 'data-preview', dataset.domain)),
   });
 
   return NextResponse.json({ datasetId: id, name: dataset.name, ...outcome });

@@ -10,6 +10,7 @@ import type { WorkdaySliceArgs } from '@tabs/connections/lib/workday-raas';
 import type { OperationalPlatform } from '@tabs/connections/lib/operational-platform';
 import { config } from '@core/kernel/config';
 import { executeRun, queryRun, type ExecuteIdentity } from '@core/infra/governed';
+import { routeFor } from '@core/infra/trino-source';
 import type { Dataset, DatasetSyncMode, Layer } from '@tabs/data/lib/dataset-schema';
 import { buildVersion, datasetForScheduler } from '@tabs/data/lib/store';
 import { domainSchema, personalSchema, physicalSlug } from '@tabs/data/lib/store-fqn';
@@ -345,12 +346,13 @@ export async function runDatasetSync(
 
   const mode: DatasetSyncMode = trigger === 'reset' ? 'full-refresh' : sync.mode;
   const cursorBefore = trigger === 'reset' ? null : (deps.watermark ?? currentWatermark)(datasetId);
-  const query = deps.query ?? ((sql: string, principal?: string) => queryRun(sql, principal));
+  const syncRoute = routeFor(owner, 'data-sync', d.domain);
+  const query = deps.query ?? ((sql: string, principal?: string) => queryRun(sql, principal, syncRoute));
   // Sync slices routinely outlive the interactive 15s default — the executor runs
   // with its own statement budget (SYNC_STATEMENT_TIMEOUT_MS, well below the lease).
   const execute =
     deps.execute ??
-    ((sql: string, identity: ExecuteIdentity) => executeRun(sql, identity, undefined, config.syncStatementTimeoutMs));
+    ((sql: string, identity: ExecuteIdentity) => executeRun(sql, identity, syncRoute, undefined, config.syncStatementTimeoutMs));
   // A CONNECTED · SYNC dataset lands its governed copy AS its adopting DOMAIN principal
   // (entitled to its domain schema by the trino.rego write floor); every other sync lands
   // in the owner's personal lane AS the owner. The identity's principal must own the target

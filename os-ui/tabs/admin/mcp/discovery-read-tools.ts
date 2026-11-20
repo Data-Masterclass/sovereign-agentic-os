@@ -25,6 +25,7 @@ import { viewName, metricSqlReady } from '@tabs/data/lib/metrics';
 import { loadGuide, isGuidePath, GUIDE_PATHS, type GuidePath } from '@core/tabs-meta/guides';
 import { config } from '@core/kernel/config';
 import { queryRun } from '@core/infra/governed';
+import { routeFor } from '@core/infra/trino-source';
 import { versionTarget } from '@tabs/data/lib/store-fqn';
 import { builtLayerFqn } from '@tabs/data/lib/store';
 import type { Layer } from '@tabs/data/lib/index';
@@ -177,23 +178,24 @@ export const readTools: McpTool[] = [
       const fqn = versionTarget(dataset, layer, { id: user.id });
       const isOwner = user.id === dataset.owner;
       const principal = isOwner ? user.id : (user.domains[0] ?? user.id);
+      const route = routeFor(user, 'mcp-profile', dataset.domain);
       let columns: ProfileColumn[];
       try {
-        columns = parseDescribe(await queryRun(`describe ${fqn}`, principal));
+        columns = parseDescribe(await queryRun(`describe ${fqn}`, principal, route));
       } catch (e) {
         // Registered but not physically queryable (or the stack is offline) — answer
         // calmly with the honest reason rather than a crash.
         return { datasetId: id, name: dataset.name, layer, fqn, available: false, reason: `This ${layer} version isn't queryable right now (${(e as Error).message}).` };
       }
-      const statsRes = await queryRun(statsSql(fqn, columns), principal);
-      const previewRes = await queryRun(previewSql(fqn, 25), principal);
+      const statsRes = await queryRun(statsSql(fqn, columns), principal, route);
+      const previewRes = await queryRun(previewSql(fqn, 25), principal, route);
       // Top values are best-effort — a wide table or heavy scan never fails the profile.
       let topRes = null;
       if (columns.length > 0 && columns.length <= 40) {
         const sql = topValuesSql(fqn, columns, 5);
         if (sql) {
           try {
-            topRes = await queryRun(sql, principal);
+            topRes = await queryRun(sql, principal, route);
           } catch {
             topRes = null;
           }
