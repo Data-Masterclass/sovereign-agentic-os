@@ -28,8 +28,10 @@ const grants = {
   'it-standing-active': { principal_uid: 'dana@x.com', kind: 'standing', active_run_id: 'dg-run-1', expires_at: future },
   'it-dataset-active': { principal_uid: 'dave@x.com', kind: 'dataset', active_run_id: 'dg-run-2', expires_at: future },
   'it-standing-idle': { principal_uid: 'ida@x.com', kind: 'standing', active_run_id: null, expires_at: future },
+  // WP-14 verifier B1: a live run grant that names a SERVICE user (an OS user created with that id).
+  'it-b1-svc-ui': { principal_uid: 'svc-os-ui', kind: 'run', active_run_id: null, expires_at: future, revoked: false },
 };
-const users = { 'alice@x.com': { active: true }, 'carol@x.com': { active: true }, 'bob@x.com': { active: false } };
+const users = { 'alice@x.com': { active: true }, 'carol@x.com': { active: true }, 'bob@x.com': { active: false }, admin: { active: true }, 'svc-os-ui': { active: true } };
 
 before(() => {
   if (skip) return;
@@ -121,4 +123,35 @@ test('the sidecar decision log records ImpersonateUser with the requested user',
   assert.ok(hit, 'the decision names the authenticated service user and the requested user');
   assert.equal(hit.result, true);
   assert.ok(d.some((x) => x.result === false), 'denials are logged too');
+});
+
+test('B1 twin: the verifier\'s escalation chain ends in PERMISSION_DENIED at every hop', { skip }, async () => {
+  const worker = ['svc-os-worker', pw('svc-os-worker')];
+  // Hop 1: svc-os-worker, holding a live run grant for "svc-os-ui", asks to BE svc-os-ui.
+  await assert.rejects(
+    runTls('SELECT current_user', { auth: worker, user: 'svc-os-ui' }),
+    (e) => e.errorName === 'PERMISSION_DENIED' && e.trinoMessage.includes('cannot impersonate user svc-os-ui'),
+  );
+  // Hop 2: inside that would-be session, SET SESSION AUTHORIZATION 'admin'.
+  await assert.rejects(
+    runTls("SET SESSION AUTHORIZATION 'admin'", { auth: worker, user: 'svc-os-ui', extra: SESSION_AUTH }),
+    (e) => e.errorName === 'PERMISSION_DENIED',
+  );
+  // Hop 3: the client's follow-up request after a switch (X-Trino-Original-User: svc-os-ui,
+  // X-Trino-User: admin) is refused too; current_user is never admin.
+  await assert.rejects(
+    runTls('SELECT current_user', { auth: worker, user: 'admin', extra: { 'X-Trino-Original-User': 'svc-os-ui' } }),
+    (e) => e.errorName === 'PERMISSION_DENIED',
+  );
+  // The same pair from svc-os-ui itself (an active user, admin) stays allowed by design.
+  assert.equal(await as('svc-os-ui', 'admin'), 'admin');
+});
+
+test('svc-os-ui refuses an INACTIVE user even with a leftover governance principal', { skip }, async () => {
+  opaPut(`governance/principals/${encodeURIComponent('bob@x.com')}`, { domains: ['sales'], clearances: [] });
+  try {
+    await denied('svc-os-ui', 'bob@x.com');
+  } finally {
+    opaDelete(`governance/principals/${encodeURIComponent('bob@x.com')}`);
+  }
 });

@@ -138,3 +138,38 @@ test_no_grant_bundle_fails_closed if {
 test_execute_query_unaffected if {
 	trino.allow with input as {"context": {"identity": {"user": "alice@x.com"}}, "action": {"operation": "ExecuteQuery"}}
 }
+
+# ---- WP-14 verifier B1: no service identity is ever a target, whoever asks ----
+
+b1_grants := {
+	"g-svc-ui": {"principal_uid": "svc-os-ui", "kind": "run", "expires_at": future, "revoked": false},
+	"g-svc-dg": {"principal_uid": "svc-os-worker", "kind": "standing", "active_run_id": "r9", "expires_at": future},
+	"g-purge": {"principal_uid": "os-domain-delete", "kind": "run", "expires_at": future},
+	"g-np": {"principal_uid": "northpeak-marts", "kind": "dataset", "active_run_id": "r8", "expires_at": future},
+}
+
+test_b1_worker_cannot_become_svc_os_ui_through_a_grant if not trino.allow with input as imp("svc-os-worker", "svc-os-ui") with data.os_grants.run_grants as b1_grants with data.os_data as os_data
+
+test_b1_worker_cannot_become_purge_user_through_a_grant if not trino.allow with input as imp("svc-os-worker", "os-domain-delete") with data.os_grants.run_grants as b1_grants with data.os_data as os_data
+
+test_b1_dagster_cannot_become_a_service_user_through_a_grant if not trino.allow with input as imp("svc-dagster-runner", "svc-os-worker") with data.os_grants.run_grants as b1_grants with data.os_data as os_data
+
+test_b1_dagster_cannot_become_direct_user_through_a_grant if not trino.allow with input as imp("svc-dagster-runner", "northpeak-marts") with data.os_grants.run_grants as b1_grants with data.os_data as os_data
+
+# The chain's second hop: once a session WERE svc-os-ui, it could not become admin either way,
+# because the first hop is denied; and svc-os-ui itself still acts for an active admin by design.
+test_b1_ui_still_acts_for_active_admin if trino.allow with input as imp("svc-os-ui", "admin") with data.os_data as {"users": {"admin": {"active": true}}}
+
+# The reserved list is the chart's data file (os-ui core/infra/trino-service-identities.ts).
+test_b1_every_listed_service_name_is_reserved if {
+	every n in data.service_identities.names {
+		not trino.allow with input as imp("svc-os-ui", n) with data.os_data as {"users": {n: {"active": true}}} with data.governance as {"principals": {n: {"domains": []}}}
+	}
+}
+
+# Without the reserved list, nobody impersonates anyone (fail closed).
+test_b1_no_reserved_list_fails_closed if not trino.allow with input as imp("svc-os-ui", "carol@x.com") with data.os_data as os_data with data.service_identities as {}
+
+# ---- verifier note: an INACTIVE user with a leftover governance principal is refused ----
+
+test_ui_denied_inactive_user_with_leftover_principal if not trino.allow with input as imp("svc-os-ui", "bob@x.com") with data.os_data as os_data with data.governance as {"principals": {"bob@x.com": {"domains": ["sales"], "clearances": []}}}
