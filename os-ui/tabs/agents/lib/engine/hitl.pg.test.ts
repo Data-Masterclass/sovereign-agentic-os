@@ -26,7 +26,10 @@ import { PostgresSaver } from '@langchain/langgraph-checkpoint-postgres';
 import { FIXTURE_USER } from '@tabs/agents/lib/engine/parity-harness';
 import { inventoryParked } from '@tabs/agents/lib/engine/parked-inventory';
 import { prepareFixtureTables, step, testDatabaseUrl } from '@tabs/agents/lib/engine/hitl.pg-fixture';
+import { dropIsolated, isolateAgentRunsDatabase } from '@tabs/agents/lib/module/fixtures/pg-db';
 
+// Parallel-safe: this file gets its own database (fixtures/pg-db.ts) before it reads the URL.
+await isolateAgentRunsDatabase('wp26_hitl');
 const URL_ = testDatabaseUrl();
 if (!URL_ && process.env.REQUIRE_PG_TESTS === '1') throw new Error('REQUIRE_PG_TESTS=1 but AGENT_RUNS_TEST_DATABASE_URL is not set');
 const skip = URL_ ? false : 'AGENT_RUNS_TEST_DATABASE_URL not set — the real-Postgres HITL tests did not run';
@@ -52,7 +55,7 @@ before(async () => {
   pool = new pg.Pool({ connectionString: URL_, max: 2 });
   await prepareFixtureTables(pool);
 });
-after(async () => { await pool?.end(); });
+after(async () => { await pool?.end(); await dropIsolated(); });
 
 test('pause → worker restart → resume by interrupt id: ONE card, and the write runs EXACTLY ONCE as the runner', { skip }, async () => {
   const runId = run('approve');

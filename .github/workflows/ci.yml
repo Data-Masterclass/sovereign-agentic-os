@@ -185,7 +185,7 @@ jobs:
         env:
           AGENT_RUNS_TEST_DATABASE_URL: postgres://postgres:ci@127.0.0.1:5432/agent_runs
           REQUIRE_PG_TESTS: '1'
-        run: node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test --test-concurrency=1 'tabs/**/*.pg.test.ts'
+        run: node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test --test-concurrency=4 'tabs/**/*.pg.test.ts'
 
   # WP-21: OpenSearch snapshots and cleanup against the REAL image we ship
   # (images/extensions/opensearch), a REAL S3 store (SeaweedFS) and the chart's own egress proxy,
@@ -294,7 +294,7 @@ jobs:
         working-directory: os-ui
         env:
           TRACING_E2E: "1"
-        run: node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test tabs/agents/lib/engine/tracing.e2e.test.ts
+        run: node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test --test-concurrency=1 tabs/agents/lib/engine/tracing.e2e.test.ts tabs/agents/lib/module/tracing.e2e.test.ts
       - name: Stack logs on failure
         if: failure()
         run: docker compose -f tests/langfuse/compose.yaml -p wp31-langfuse logs --tail 200
