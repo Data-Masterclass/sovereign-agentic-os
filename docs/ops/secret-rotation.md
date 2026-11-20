@@ -40,7 +40,7 @@ Rules that hold throughout:
 |---|---|---|---|
 | `litellmMasterKey` | `litellm-credentials` → `masterkey` | LiteLLM (`PROXY_MASTER_KEY`), os-ui (`LITELLM_MASTER_KEY`), the key-init Job | no — except when `litellm.envVars` changes too (both re-key steps), which rolls LiteLLM |
 | `litellmSaltKey.value` | `litellm-credentials` → `LITELLM_SALT_KEY` | LiteLLM | no |
-| `litellm.envVars.LITELLM_MIGRATE_FROM_MASTER_KEY` (re-key step 1 only) | — (pod env) | LiteLLM at boot | **yes**, LiteLLM |
+| `litellm.envVars.LITELLM_MIGRATE_FROM_MASTER_KEY` (re-key: the old key in step 1, `""` in step 2) | — (pod env) | LiteLLM at boot | **yes**, LiteLLM |
 | `litellmUI.password` | `litellm-credentials` → `UI_PASSWORD` | LiteLLM console login, os-ui's console sign-in | no |
 | `agentRuntime.token` | `agent-runtime-token` → `token` | os-ui, the schedule and catalog CronJobs (read at each run) | no |
 | `langfuseInit.publicKey` / `secretKey` | `langfuse-init`, `litellm-credentials` (`LANGFUSE_*`) | langfuse-web (headless init), LiteLLM, os-ui, os-ui-worker | os-ui and os-ui-worker **yes** (the public key is plain env); the others no |
@@ -83,7 +83,11 @@ master key (`migrate_if_requested`, `_migrate`). Hence two deploys:
    - LiteLLM rolls by itself and logs `Done re-encrypting N stored value(s)`.
    - `verify`: every value is now decryptable with S, and none with the old key.
 2. **Step 2:**
-   - Set: `litellmSaltKey.value` = S, `litellmMasterKey` = a new random M, and the variable set to `null` (removed).
+   - Set: `litellmSaltKey.value` = S, `litellmMasterKey` = a new random M, and the variable to `""`.
+     A `null` cannot delete it: deploy.sh layers the overlay over the release values, which set it
+     in step 1, and the subchart renders every `envVars` key. With the value empty, LiteLLM does
+     nothing at boot (`_migrate`: a salt key is set; and nothing is encrypted under an empty key).
+     The old key is no longer in the gateway's env (rehearsed, and asserted by the chart test).
    - The in-place secrets change in the same deploy.
    - S is the encryption key from then on, and no longer accepted as a master key (401).
 
@@ -197,7 +201,7 @@ Before:
    ```
    `plan` must show only:
    - the Secrets `litellm-credentials`, `langfuse-init`, `langfuse-core-secrets` and `agent-runtime-token`;
-   - the Deployments `agentic-os-litellm` (the variable removed), os-ui and os-ui-worker.
+   - the Deployments `agentic-os-litellm` (the variable emptied), os-ui and os-ui-worker.
 
    `verify` must end `ROTATION_VERIFY_OK (final)`. Besides the step-1 checks, it covers:
    - the old master key and S are refused;
@@ -270,7 +274,7 @@ afterwards. The next release contains the change, and the overlay values stay in
 
 | From | Overlay | Then |
 |---|---|---|
-| re-key step 1 | `<…>.rollback-step1.yaml`: the old master key with `LITELLM_MIGRATE_FROM_MASTER_KEY` = S, so LiteLLM re-encrypts S → old | LiteLLM rolls by itself. Afterwards deploy an overlay setting the variable to `null` |
+| re-key step 1 | `<…>.rollback-step1.yaml`: the old master key with `LITELLM_MIGRATE_FROM_MASTER_KEY` = S, so LiteLLM re-encrypts S → old | LiteLLM rolls by itself. Afterwards deploy an overlay setting the variable to `""` |
 | the final step | `<…>.rollback.yaml`: the previous master key, console password, agent token, Langfuse pair and core secrets; **the salt key stays** | the restarts of step 3 |
 | the password | `password-db --rollback --apply`, then `<pw>.rollback.yaml` | restart os-ui |
 

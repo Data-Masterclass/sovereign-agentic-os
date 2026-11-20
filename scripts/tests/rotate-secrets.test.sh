@@ -52,7 +52,7 @@ S=$(G "$S1" litellmMasterKey)
 check "step 1 migrates from the old master key" "$OLD" "$(G "$S1" litellm.envVars.LITELLM_MIGRATE_FROM_MASTER_KEY)"
 check "final salt = step-1 master key" "$S" "$(G "$F" litellmSaltKey.value)"
 holds "final master key is new" test "$(G "$F" litellmMasterKey)" != "$S" -a "$(G "$F" litellmMasterKey)" != "$OLD"
-check "final drops the migration variable (null)" "LITELLM_MIGRATE_FROM_MASTER_KEY: null" "$(cat "$F")"
+check "final empties the migration variable" "LITELLM_MIGRATE_FROM_MASTER_KEY: ''" "$(cat "$F")"
 holds "in-place secrets in the final overlay" test -n "$(G "$F" agentRuntime.token)" -a -n "$(G "$F" litellmUI.password)" -a -n "$(G "$F" langfuseCoreSecrets.nextauthSecret)" -a -n "$(G "$F" langfuseCoreSecrets.salt)"
 holds "encryptionKey rotated (no encrypted Langfuse entry)" test -n "$(G "$F" langfuseCoreSecrets.encryptionKey)"
 check "rollback keeps the salt" "$S" "$(G "${F%.yaml}.rollback.yaml" litellmSaltKey.value)"

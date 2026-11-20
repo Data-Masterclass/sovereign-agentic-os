@@ -66,8 +66,11 @@ def write(directory, stamp):
         step1 = {"litellmMasterKey": new["salt"], "litellm": {"envVars": {MIGRATE: old["master"]}}}
         dump(base + ".step1.yaml", step1, f"rotation {stamp}, step 1 of 2 (re-key)")
         files["step1"] = base + ".step1.yaml"
-        # Step 2 drops the migration variable again (null deletes it from the release values).
-        final["litellm"] = {"envVars": {MIGRATE: None}}
+        # Step 2 empties the migration variable. A null cannot delete a key that an earlier values
+        # file set (deploy.sh layers the overlay over the release values), and the subchart renders
+        # every envVars key, so the variable stays with an EMPTY value: LiteLLM then does nothing
+        # (with a salt key set, and with an empty key there is nothing encrypted under it).
+        final["litellm"] = {"envVars": {MIGRATE: ""}}
         back1 = {"litellmMasterKey": old["master"], "litellm": {"envVars": {MIGRATE: new["salt"]}}}
         dump(base + ".rollback-step1.yaml", back1, f"rollback of step 1, rotation {stamp}")
         files["rollback-step1"] = base + ".rollback-step1.yaml"

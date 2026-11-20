@@ -28,7 +28,7 @@
 #             rekey (DEFAULT while no salt is set) → LiteLLM's documented complete re-key, two
 #               deploys: step 1 sets the master key to a new random S with
 #               LITELLM_MIGRATE_FROM_MASTER_KEY=<old>, so LiteLLM re-encrypts every stored value
-#               to S at boot; step 2 sets LITELLM_SALT_KEY=S, a new master key M, drops the variable;
+#               to S at boot; step 2 sets LITELLM_SALT_KEY=S, a new master key M, empties the variable;
 #             pin-first (--path) → LITELLM_SALT_KEY = the current master key, one deploy;
 #             none-stored (--path) → a random salt in one deploy, REFUSED unless LiteLLM's scan
 #               finds no stored value at all.
@@ -352,8 +352,8 @@ verify() {
       && pass "LiteLLM logged the re-encryption outcome" || fail "no re-encryption outcome in the LiteLLM log yet"
   else
     [ "$(h16 "$(secret_key litellm-credentials LITELLM_SALT_KEY)")" = "$(h16 "$want_salt")" ] && pass "LITELLM_SALT_KEY = this step's" || fail "LITELLM_SALT_KEY is not this step's value"
-    if k get deploy "$LITELLM_SVC" -o jsonpath='{range .spec.template.spec.containers[0].env[*]}{.name}{"\n"}{end}' | grep -qx "$MIGRATE"; then
-      fail "$MIGRATE is still set on the gateway"; else pass "$MIGRATE is not set"; fi
+    local mv; mv=$(k get deploy "$LITELLM_SVC" -o go-template='{{range (index .spec.template.spec.containers 0).env}}{{if eq .name "'"$MIGRATE"'"}}[{{.value}}]{{end}}{{end}}')
+    case $mv in ""|"[]") pass "$MIGRATE is absent or empty on the gateway (the old key is gone from its env)" ;; *) fail "$MIGRATE still holds a value on the gateway" ;; esac
   fi
 
   say "LiteLLM's own scan: every stored value decryptable with the key now in use, none left under an old key"
@@ -534,7 +534,7 @@ EOF
   oldhash=$( { sqlvars; printf "SELECT password FROM users WHERE email = :'e';\n"; } | psql_db langfuse)
   [ -n "$oldhash" ] || die "could not read the current hash"
   ( umask 077; printf '%s' "$oldhash" > "$hashf" ); chmod 600 "$hashf"
-  newhash=$(printf '%s' "$pw" | k exec -i "deploy/$LANGFUSE_SVC" -c langfuse-web -- sh -c 'cd /app/web 2>/dev/null || cd /app; node -e "let p=\"\";process.stdin.on(\"data\",d=>p+=d).on(\"end\",async()=>console.log(await require(\"bcryptjs\").hash(p,12)))"')
+  newhash=$(printf '%s' "$pw" | k exec -i "deploy/$LANGFUSE_SVC" -c langfuse-web -- sh -c 'node -e "const fs=require(\"fs\"),d=\"/app/node_modules/.pnpm\",p=fs.readdirSync(d).find(x=>/^bcryptjs@/.test(x)),b=require(d+\"/\"+p+\"/node_modules/bcryptjs\");let s=\"\";process.stdin.on(\"data\",c=>s+=c).on(\"end\",async()=>console.log(await b.hash(s,12)))"')
   case $newhash in '$2'[aby]'$12$'*) ;; *) die "langfuse-web did not return a bcrypt cost-12 hash" ;; esac
   r=$( { sqlvars "$newhash" "$oldhash"; printf "UPDATE users SET password = :'h' WHERE email = :'e' AND password = :'o';\n"; } | k exec -i "$PG_POD" -- sh -c "psql -v ON_ERROR_STOP=1 -U \"\$POSTGRES_USER\" -d langfuse -tA")
   [ "$r" = "UPDATE 1" ] || die "UPDATE answered '$r' (nothing changed if 0); the saved hash stays in $hashf"
