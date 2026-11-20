@@ -62,7 +62,10 @@ spec:
   template:
     metadata:
       annotations:
-        checksum/config: {{ printf "%s-%s-tinyproxy" ($p.allowlist | toJson) (((.Values.opensearchSnapshots | default dict).s3 | default dict) | toJson) | sha256sum }}
+        {{- /* Hash of the rendered allowlist only: byte-identical to the previous annotation
+               whenever the host list is unchanged, so a release that adds nothing does not
+               restart the proxy. */}}
+        checksum/config: {{ printf "%s-tinyproxy" ($hosts | toJson) | sha256sum }}
       labels:
         {{- include "soa.labels" . | nindent 8 }}
         {{- include "soa.selectorLabels" (dict "ctx" . "component" "egress-proxy") | nindent 8 }}

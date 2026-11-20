@@ -6,11 +6,11 @@
 # Run by the `opensearch-orphan-cleanup` Job on install/upgrade and by `tests/opensearch`.
 #
 # EXACTLY these, matched as whole names (anchored), nothing else:
-#   OpenMetadata reindex leftovers   ^[a-z0-9_]+_search_index_rebuild_[0-9]{13}$   DELETE /<index>
+#   OpenMetadata reindex leftovers   ^[a-z0-9_]+_(search|report_data)_index_rebuild_[0-9]{13}$   DELETE /<index>
 #   OpenMetadata data streams        ^di-data-assets-[a-z0-9]+$                     DELETE /_data_stream/<name>
 #                                    (removes the backing .ds-di-data-assets-*-NNNNNN indices)
 #   Haystack (removed component)     ^haystack_knowledge$                          DELETE /<index>
-# Live on 2026-11-20 that is 55 + 16 backing indices + 1 = 72. Names are deleted one by one;
+# Live on 2026-11-20 that is 55 + 5 rebuild indices + 16 backing indices + 1 = 77. Names are deleted one by one;
 # no wildcard is ever sent to a DELETE.
 #
 # Order: list -> nothing matched? exit 0 (idempotent, a re-run is a no-op) -> more than
@@ -19,11 +19,11 @@
 # refuses to delete: rollback is "restore from that snapshot".
 set -eu
 . "${OS_LIB:-/opt/soa/lib/os-curl.sh}"
-MAX=${OS_CLEANUP_MAX_DELETE:-72}
+MAX=${OS_CLEANUP_MAX_DELETE:-77}
 REPO=${OS_CLEANUP_SNAPSHOT_REPO:-}
 DRY=${OS_CLEANUP_DRY_RUN:-false}
 
-INDEX_RE='^([a-z0-9_]+_search_index_rebuild_[0-9]{13}|haystack_knowledge)$'
+INDEX_RE='^([a-z0-9_]+_(search|report_data)_index_rebuild_[0-9]{13}|haystack_knowledge)$'
 STREAM_RE='^di-data-assets-[a-z0-9]+$'
 
 os_wait_ready "${OS_WAIT_TRIES:-60}"

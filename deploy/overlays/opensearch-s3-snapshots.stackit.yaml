@@ -8,7 +8,8 @@
 #
 # From then on it is part of the live release values and later plain deploys carry it.
 #
-# BEFORE APPLYING (the upgrade refuses to render while the Secret is missing):
+# BEFORE APPLYING (the chart refuses to render while a REPLACE placeholder is left, and — with
+# `helm --dry-run=server` / a real upgrade — while the Secret is missing or its keys are wrong):
 #   1. A STACKIT Object Storage bucket (fill `opensearchSnapshots.s3.bucket` below) and a
 #      dedicated credential for it.
 #   2. Secret `opensearch-s3-keystore` in the release namespace with EXACTLY these two keys
@@ -16,6 +17,17 @@
 #        s3.client.default.access_key   s3.client.default.secret_key
 #   3. The image: run build-images.yml for `opensearch` (tag `opensearch-v3.7.0-soa.1`) and put
 #      the pushed digest in `opensearch.image.tag` below.
+#
+# DURING AND AFTER THE DEPLOY:
+#   - os-ui MUST be released from this commit or later: the os-ui `wait-for-opensearch`
+#     initContainer imports /app/src/core/adapters/opensearch/client.ts from the os-ui image.
+#   - The first full snapshot (cleanup Job, hook weight 3) may outlast `deploy.sh`'s
+#     `helm --timeout 20m`. Helm then reports the upgrade as failed while the Job keeps running.
+#     Do NOT retry blindly: read `kubectl -n agentic-os logs job/register-opensearch-s3-repo` and
+#     `… logs job/opensearch-orphan-cleanup` first. A snapshot still in progress finishes on its
+#     own (the Job polls for up to 1 h); re-run the deploy only after the Job has ended.
+#   - MANDATORY check after the first 03:00 UTC: `GET _plugins/_sm/policies/nightly/_explain`
+#     reports the last creation as success (command in ~/Sovereign-OS-Reports/wp/WP-21.md).
 #
 # WHY A FILE AND NOT CHART DEFAULTS. `opensearch.config."opensearch.yml"` is one string and
 # `opensearch.extraEnvs` is a list: Helm replaces both whole, and the live release already
@@ -63,3 +75,11 @@ opensearchSnapshots:
     enabled: true
     bucket: "REPLACE-WITH-BUCKET"
     endpointHost: object.storage.eu01.onstackit.cloud
+
+# The one-time orphan cleanup (77 indices on 2026-11-20: 60 OpenMetadata rebuild indices, 16
+# di-data-assets backing indices, haystack_knowledge). Opt-in here only: it runs after the
+# S3 repository Job (hook weight 2 < 3) and snapshots to the S3 repository, never to the
+# in-cluster fs one. The chart refuses to render while a REPLACE placeholder is left above.
+opensearchCleanup:
+  enabled: true
+  snapshotRepository: stackit-s3

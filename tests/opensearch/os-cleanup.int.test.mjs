@@ -3,7 +3,7 @@
  *
  * os-cleanup.int.test (WP-21, design 02 step 1) — the chart's `opensearch-orphan-cleanup` Job
  * script against the REAL image, with the live orphan shapes AND look-alike decoys:
- *   - only `<x>_search_index_rebuild_<13 digits>`, the `di-data-assets-<type>` data streams
+ *   - only `<x>_search_index_rebuild_<13 digits>`, `<x>_report_data_index_rebuild_<13 digits>`, the `di-data-assets-<type>` data streams
  *     (with their `.ds-*` backing indices) and `haystack_knowledge` are deleted;
  *   - every decoy and every OS index survives;
  *   - a snapshot is taken first (SUCCESS, in the S3 repository) and the orphans are in it;
@@ -16,9 +16,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { os, runJob, setProxy } from './harness.mjs';
 
-const ORPHAN_INDICES = ['table_search_index_rebuild_1792888201314', 'ai_agent_search_index_rebuild_1792888201315', 'haystack_knowledge'];
+const ORPHAN_INDICES = ['table_search_index_rebuild_1792888201314', 'ai_agent_search_index_rebuild_1792888201315', 'entity_report_data_index_rebuild_1792888206368', 'haystack_knowledge'];
 const ORPHAN_STREAMS = ['di-data-assets-table', 'di-data-assets-glossaryterm'];
-const DECOY_INDICES = ['os-users', 'files', 'knowledge', 'haystack_knowledge_v2', 'table_search_index_rebuild', 'x_search_index_rebuild_123', 'my-table_search_index_rebuild_1792888201314'];
+const DECOY_INDICES = ['os-users', 'files', 'knowledge', 'haystack_knowledge_v2', 'table_search_index_rebuild', 'x_search_index_rebuild_123', 'my-table_search_index_rebuild_1792888201314', 'entity_report_data_index_rebuild', 'entity_report_data_rebuild_1792888206368', 'os-report_data_index_rebuild_1792888206368'];
 const DECOY_STREAMS = ['logs-di-data-assets-table', 'di-data-assets-a-b'];
 const ENV = 'opensearch-orphan-cleanup.env';
 
