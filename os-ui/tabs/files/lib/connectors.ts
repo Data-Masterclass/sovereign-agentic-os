@@ -63,6 +63,9 @@ export type ConnectorSource = {
   /** The import ledger: remote file id → the Files asset it became + its last seen hash. Drives
    *  the incremental skip, and keeps a re-sync after a restart from importing a file twice. */
   imported?: Record<string, { fileId: string; hash: string }>;
+  /** Set when a sync found the owner no longer entitled (deactivated, left the domain, lost the
+   *  drive grant). A paused source does not sync; a sync by an entitled owner lifts it. */
+  paused?: { reason: string; at: string } | null;
 };
 
 /** A file as seen in the remote drive (what a client's pull returns). */
@@ -164,6 +167,29 @@ export async function ensureSourcesHydrated(): Promise<void> {
   await s.hydration;
 }
 
+/** The typed refusal while the sources could not be loaded: never an empty list, a re-add or a
+ *  sync on a partial view (which would import a source's files a second time). */
+export class SourcesNotLoadedError extends Error {
+  readonly code = 'store_not_loaded';
+  readonly status = 503;
+  constructor() {
+    super('Connected sources could not be loaded from the store yet — nothing was listed, added or synced. Retry shortly.');
+    this.name = 'SourcesNotLoadedError';
+  }
+}
+
+/** Hydrate, then refuse (typed, 503) unless the sources are loaded. Every route entry calls this. */
+export async function requireSourcesLoaded(): Promise<void> {
+  await ensureSourcesHydrated();
+  if (sourcesHydrationState() === 'failed') throw new SourcesNotLoadedError();
+}
+
+/** Persist a source mid-sync (the ledger after each imported file). */
+export function saveSource(src: ConnectorSource): void {
+  connSources().set(src.id, src);
+  persist(src);
+}
+
 export function sourcesHydrationState(): 'hydrated' | 'failed' | 'pending' {
   const s = sourcesState();
   if (s.hydratedAt !== undefined) return 'hydrated';
@@ -187,6 +213,7 @@ export function addSource(input: {
   provider: Provider; label: string; scope: SyncScope; target: string; mode: SyncMode;
   owner: string; domain: string; connectionId?: string | null; landingSensitivity?: Sensitivity;
 }): ConnectorSource {
+  if (sourcesHydrationState() === 'failed') throw new SourcesNotLoadedError();
   const src: ConnectorSource = {
     id: id(),
     provider: input.provider,
@@ -220,6 +247,7 @@ export function getSource(sourceId: string): ConnectorSource | null {
 
 export function removeSource(sourceId: string, owner: string): boolean {
   const s = connSources().get(sourceId);
+  if (sourcesHydrationState() === 'failed') throw new SourcesNotLoadedError();
   if (!s || s.owner !== owner) return false;
   connSources().delete(sourceId);
   mirror.deleteThrough(sourceId);
@@ -257,6 +285,7 @@ export async function runSync(source: ConnectorSource, client: ConnectorClient, 
   }
   source.cursor = cursor;
   source.initialDone = true;
+  source.paused = null;
   connSources().set(source.id, source);
   persist(source);
   return { sourceId: source.id, cadence, clientMode: client.mode, added, updated, unchanged, cursor };

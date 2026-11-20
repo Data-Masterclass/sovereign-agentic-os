@@ -6,7 +6,7 @@ import { withRoute } from '@core/kernel/route-server';
 import type { CurrentUser } from '@core/kernel/auth';
 import { requirePrincipal } from '@tabs/files/lib/server';
 import { requireUser } from '@core/kernel/auth';
-import { addSource, listSources, ensureSourcesHydrated, chooseSourceConnection, CONNECTOR_TEMPLATES, type Provider, type SyncMode, type SyncScope, type SourceConnectionCandidate } from '@tabs/files/lib/connectors';
+import { addSource, listSources, requireSourcesLoaded, chooseSourceConnection, CONNECTOR_TEMPLATES, type Provider, type SyncMode, type SyncScope, type SourceConnectionCandidate } from '@tabs/files/lib/connectors';
 import type { Sensitivity } from '@tabs/files/lib/asset-schema';
 import { listConnectionsForUser } from '@tabs/connections/lib/index';
 import { offlineMockAllowed } from '@core/kernel/offline-mock';
@@ -28,7 +28,7 @@ async function driveConnections(user: CurrentUser): Promise<SourceConnectionCand
 }
 
 export const GET = withRoute(async ({ user }) => {
-  await ensureSourcesHydrated();
+  await requireSourcesLoaded();
   return NextResponse.json({ sources: listSources(user.id), templates: CONNECTOR_TEMPLATES, connections: await driveConnections(user) });
 }, { gate: requirePrincipal as () => Promise<CurrentUser> });
 
@@ -47,7 +47,7 @@ export const POST = withRoute<Record<string, string>, {
     provider: body.provider, userId: cu.id, requested: body.connectionId,
     candidates: await driveConnections(cu), allowUnlinked: offlineMockAllowed(),
   });
-  await ensureSourcesHydrated();
+  await requireSourcesLoaded();
   const domain = body.domain && user.domains.includes(body.domain) ? body.domain : user.domains[0] ?? 'platform';
   const source = addSource({
     provider: body.provider,

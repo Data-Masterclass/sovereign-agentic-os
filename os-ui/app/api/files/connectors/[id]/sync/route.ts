@@ -6,7 +6,8 @@ import { withRoute } from '@core/kernel/route-server';
 import type { CurrentUser } from '@core/kernel/auth';
 import { requirePrincipal } from '@tabs/files/lib/server';
 import { runConnectorSync } from '@tabs/files/lib/connectors-server';
-import { getSource, ensureSourcesHydrated } from '@tabs/files/lib/connectors';
+import { getSource, requireSourcesLoaded } from '@tabs/files/lib/connectors';
+import { principalById } from '@core/kernel/auth';
 import { resolveConnectionAccessToken } from '@tabs/connections/lib/index';
 
 export const dynamic = 'force-dynamic';
@@ -24,11 +25,12 @@ export const POST = withRoute<{ id: string }>(async ({ user, params }) => {
   const { id } = params;
   // Resolve the real OAuth token from the linked Connection (owner-gated inside;
   // silent refresh; null → mock). The token never leaves this server path.
-  await ensureSourcesHydrated();
+  await requireSourcesLoaded();
   const source = getSource(id);
-  const token = source?.connectionId
-    ? await resolveConnectionAccessToken(source.connectionId, user.id)
-    : null;
-  const result = await runConnectorSync(id, user.id, token);
+  // The owner's live status, domain and drive grant are re-checked inside, on every run.
+  const result = await runConnectorSync(id, user.id, {
+    liveOwner: principalById,
+    token: async () => (source?.connectionId ? resolveConnectionAccessToken(source.connectionId, user.id) : null),
+  });
   return NextResponse.json(result);
 }, { gate: requirePrincipal as () => Promise<CurrentUser> });
