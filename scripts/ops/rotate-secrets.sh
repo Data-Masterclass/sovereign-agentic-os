@@ -321,6 +321,12 @@ plan() {
   if [ "$(state_path "$state")" = pin-first ] && [ "$kind" = final ]; then
     [ "$(h16 "$($FILES get "$OVERLAY" litellmSaltKey.value)")" = "$(state_hash "$state" old_master)" ] || die "pin-first overlay: the salt key is not the live master key"
   fi
+  # The LiteLLM migrations Job carries the gateway env (subchart): a Job's pod template is immutable,
+  # so the upgrade must create it afresh. It deletes itself 120 s after finishing (ttlSecondsAfterFinished).
+  if k get job "$LITELLM_SVC-migrations" >/dev/null 2>&1; then
+    die "Job $LITELLM_SVC-migrations still exists: this overlay changes its env, and a Job's pod template is immutable. Wait for its TTL (120 s after it finished), then plan again."
+  fi
+  echo "   ok   no $LITELLM_SVC-migrations Job left from a previous deploy"
   render_diff "$OVERLAY"
 }
 
