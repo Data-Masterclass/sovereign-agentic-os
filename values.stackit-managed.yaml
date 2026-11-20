@@ -38,6 +38,7 @@ postgres:
   enabled: false # no in-cluster CloudNativePG cluster
   external:
     host: "REPLACE-postgres-flex-host" # render-values.sh <- output postgres_host
+    cidr: "REPLACE-postgres-flex-cidr" # its address as a CIDR (x.x.x.x/32): the model gateway's 5432 egress
     port: "5432"
     secretName: postgres-credentials
 

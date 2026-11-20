@@ -88,34 +88,62 @@ function v4(a: string): number[] | null {
   const m = a.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
   return m ? m.slice(1).map(Number) : null;
 }
-/** The IPv4 inside an IPv4-mapped IPv6 address (`::ffff:10.0.0.1` / `::ffff:a00:1`), else null. */
-function mapped(a: string): string | null {
-  const d = a.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/i);
-  if (d) return d[1];
-  const h = a.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i);
-  if (!h) return null;
-  const hi = parseInt(h[1], 16), lo = parseInt(h[2], 16);
-  return `${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`;
+/** An IPv6 address as 8 hextets (an embedded dotted IPv4 tail is folded in), or null. */
+function v6(a: string): number[] | null {
+  let x = a.toLowerCase().replace(/^\[|\]$/g, '').split('%')[0];
+  if (!x.includes(':')) return null;
+  const tail = x.match(/(\d+\.\d+\.\d+\.\d+)$/);
+  if (tail) {
+    const o = v4(tail[1]);
+    if (!o || o.some((n) => n > 255)) return null;
+    x = x.slice(0, -tail[1].length) + `${((o[0] << 8) | o[1]).toString(16)}:${((o[2] << 8) | o[3]).toString(16)}`;
+  }
+  const halves = x.split('::');
+  if (halves.length > 2) return null;
+  const part = (h: string) => (h ? h.split(':') : []);
+  const head = part(halves[0]), rest = halves.length === 2 ? part(halves[1]) : [];
+  const fill = halves.length === 2 ? 8 - head.length - rest.length : 0;
+  if (fill < 0 || (halves.length === 1 && head.length !== 8)) return null;
+  const all = [...head, ...Array(fill).fill('0'), ...rest];
+  if (all.length !== 8 || all.some((h) => !/^[0-9a-f]{1,4}$/.test(h))) return null;
+  return all.map((h) => parseInt(h, 16));
 }
-/** Metadata, loopback, link-local, unspecified: never a provider, whatever the deployment lists. */
+/**
+ * IPv6 forms that carry an IPv4 address the network may translate or route internally: IPv4-mapped
+ * (::ffff:0:0/96), SIIT (::ffff:0:0:0/96), IPv4-compatible (::/96), NAT64 (64:ff9b::/96 and the
+ * local-use 64:ff9b:1::/48). Refused outright — whatever IPv4 is inside, a translator decides where it
+ * goes, so the guard cannot vouch for it.
+ */
+function embedsIPv4(h: number[]): boolean {
+  const zero = (from: number, to: number) => h.slice(from, to).every((n) => n === 0);
+  if (zero(0, 5) && h[5] === 0xffff) return true;                       // ::ffff:a.b.c.d (mapped)
+  if (zero(0, 4) && h[4] === 0xffff && h[5] === 0) return true;          // ::ffff:0:a.b.c.d (SIIT)
+  if (zero(0, 6) && (h[6] !== 0 || h[7] > 1)) return true;               // ::a.b.c.d (IPv4-compatible)
+  if (h[0] === 0x64 && h[1] === 0xff9b && zero(2, 6)) return true;       // 64:ff9b::/96 (NAT64)
+  if (h[0] === 0x64 && h[1] === 0xff9b && h[2] === 1) return true;       // 64:ff9b:1::/48 (NAT64 local)
+  return false;
+}
+/** Metadata, loopback, link-local, unspecified, embedded-IPv4 IPv6: never a provider, whatever is listed. */
 export function isNeverAddress(addr: string): boolean {
-  const a = addr.toLowerCase().replace(/^\[|\]$/g, '');
-  const m = mapped(a); if (m) return isNeverAddress(m);
-  const o = v4(a);
+  const o = v4(addr.replace(/^\[|\]$/g, ''));
   if (o) return o[0] === 127 || o[0] === 0 || (o[0] === 169 && o[1] === 254);
-  return a === '::1' || a === '::' || /^fe[89ab][0-9a-f]:/.test(a);
+  const h = v6(addr);
+  if (!h) return false;
+  if (h.every((n) => n === 0) || (h.slice(0, 7).every((n) => n === 0) && h[7] === 1)) return true; // :: and ::1
+  if ((h[0] & 0xffc0) === 0xfe80) return true;                                                    // fe80::/10
+  return embedsIPv4(h);
 }
-/** Any address that is not public internet: the above plus RFC1918, CGNAT, ULA, multicast. */
+/** Any address that is not public internet: the above plus RFC1918, CGNAT, multicast, ULA. */
 export function isInternalAddress(addr: string): boolean {
   if (isNeverAddress(addr)) return true;
-  const a = addr.toLowerCase().replace(/^\[|\]$/g, '');
-  const m = mapped(a); if (m) return isInternalAddress(m);
-  const o = v4(a);
+  const o = v4(addr.replace(/^\[|\]$/g, ''));
   if (o) {
     return o[0] === 10 || (o[0] === 172 && o[1] >= 16 && o[1] <= 31) || (o[0] === 192 && o[1] === 168)
       || (o[0] === 100 && o[1] >= 64 && o[1] <= 127) || o[0] >= 224;
   }
-  return /^f[cd][0-9a-f]{2}:/.test(a) || /^ff/.test(a);
+  const h = v6(addr);
+  if (!h) return true; // unparseable: not vouched for
+  return (h[0] & 0xfe00) === 0xfc00 || (h[0] & 0xff00) === 0xff00;  // fc00::/7 ULA, ff00::/8 multicast
 }
 const LOCAL_GUIDANCE = (host: string) => `${host} is inside the cluster or a private network. The gateway reaches such a server only when the deployment names it in llmProviders.localModels:\n  llmProviders:\n    localModels:\n      - ${host}\n(and, for another namespace, llmProviders.localModelNamespaces). Then run this step again.`;
 
@@ -132,7 +160,7 @@ export function providerEgress(p: Preset, apiBase: string | undefined, allow: st
     return { ok: false, host, code: 'resolves_internal', guidance: `${host} is a loopback, link-local or metadata address; it can never be a provider.` };
   }
   if (matches(host, localModels)) return { ok: true, host, route: 'in-cluster' };
-  const internalName = host === 'localhost' || !host.includes('.') || /\.(svc|cluster\.local|local|internal)$/.test(host) || isInternalAddress(host);
+  const internalName = host === 'localhost' || !host.includes('.') || /\.(svc|cluster\.local|local|internal)$/.test(host) || ((v4(host) !== null || v6(host) !== null) && isInternalAddress(host));
   if (internalName) return { ok: false, host, code: 'internal_not_listed', guidance: LOCAL_GUIDANCE(host) };
   if (onList(host, allow)) return { ok: true, host, route: 'egress-proxy' };
   return {

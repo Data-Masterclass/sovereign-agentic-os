@@ -155,6 +155,9 @@ postgres:
   # When enabled:false (Mode B), no in-cluster Postgres is created and the PG
   external:
     host: ""                   # managed PostgreSQL host (e.g. STACKIT PostgreSQL Flex)
+    # Its address range (e.g. "10.20.0.5/32"): the model gateway's egress NetworkPolicy allows 5432 to
+    # this CIDR only (templates/base/litellm/egress-policy.yaml). Required with a managed Postgres.
+    cidr: ""
   clusterName: pg              # creates services pg-rw / pg-ro / pg-r
   instances: 1                 # local: single instance (3 in production for HA)
   database: langfuse

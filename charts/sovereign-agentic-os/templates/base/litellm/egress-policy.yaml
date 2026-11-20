@@ -5,7 +5,7 @@
   policy (allow-apiserver-egress, templates/base/network/egress-policies.yaml); DNS and same-namespace
   services stay allowed by policies 2 and 3. What this adds:
     * the egress proxy (3128) — the only way to the internet;
-    * the gateway's database on 5432 (in-cluster `pg-rw`, or a managed Postgres outside the cluster);
+    * the gateway's database on 5432 — the in-cluster Postgres pods, or the managed Postgres CIDR;
     * the namespaces of local model servers (llmProviders.localModelNamespaces).
   A client inside LiteLLM that ignores HTTPS_PROXY therefore cannot reach a provider directly.
   With the proxy off (viaEgressProxy=false) this policy is not rendered and the gateway keeps the
@@ -31,7 +31,23 @@ spec:
               app.kubernetes.io/component: egress-proxy
       ports:
         - { protocol: TCP, port: 3128 }
-    - ports:
+    # Its database, and only its database: the in-cluster Postgres pods, or the managed Postgres CIDR
+    # (`postgres.external.cidr`; a NetworkPolicy cannot name a host).
+    - to:
+        {{- if .Values.postgres.enabled }}
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: postgres
+        {{- if eq (.Values.postgres.engine | default "plain") "cnpg" }}
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: {{ .Values.postgres.clusterName | default "pg" | quote }}
+        {{- end }}
+        {{- else }}
+        - ipBlock:
+            cidr: {{ required "postgres.external.cidr is required when the model gateway is behind the egress proxy with a managed Postgres (its egress NetworkPolicy allows 5432 to that CIDR only) — or set llmProviders.viaEgressProxy=false" (.Values.postgres.external | default dict).cidr | quote }}
+        {{- end }}
+      ports:
         - { protocol: TCP, port: 5432 }
     {{- with (.Values.llmProviders | default dict).localModelNamespaces }}
     - to:
