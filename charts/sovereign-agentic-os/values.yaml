@@ -467,7 +467,8 @@ litellmSaltKey:
   # other profiles (required there): an operator/ESO-managed Secret with key LITELLM_SALT_KEY,
   # also listed in litellm.environmentSecrets.
   existingSecret: ""
-  # Only for a rollback or a full re-key: lets a render replace or remove the live salt key.
+  # Only for a full re-key (docs/ops/litellm-salt-key.md, C), once with --set: lets a render
+  # replace the live salt key. A rollback keeps it.
   allowChange: false
 
 # LiteLLM admin UI login (DB-backed UI at /ui). Local dev throwaway.
