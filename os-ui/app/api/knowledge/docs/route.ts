@@ -3,6 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { config } from '@core/kernel/config';
+import { opensearchFetch } from '@core/adapters/opensearch/client';
 import { requireUser } from '@core/kernel/auth';
 import { errorResponse } from '@tabs/data/lib/server';
 import { dlsFilter } from '@tabs/knowledge/lib/retrieve';
@@ -23,10 +24,10 @@ export const dynamic = 'force-dynamic';
  *          markdown lands here the same way.)
  *
  * Both require a session (401 for anon). All OpenSearch access stays server-side;
- * the index URL never reaches the browser.
+ * the index URL never reaches the browser. Every call goes through the one client.
  */
 
-const base = () => `${config.opensearchUrl}/${config.knowledgeIndex}`;
+const base = () => `/${config.knowledgeIndex}`;
 
 type Doc = { id: string; title: string; excerpt: string; source: string; ingestedAt: string | null };
 
@@ -59,7 +60,7 @@ export async function GET(req: Request) {
     query: { bool: { must: [{ match_all: {} }], filter: [dlsFilter(principal)] } },
   };
   try {
-    const res = await fetch(`${base()}/_search`, {
+    const res = await opensearchFetch(`${base()}/_search`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', accept: 'application/json' },
       body: JSON.stringify(body),
@@ -143,7 +144,7 @@ export async function POST(req: Request) {
   };
 
   try {
-    const res = await fetch(`${base()}/_doc?refresh=true`, {
+    const res = await opensearchFetch(`${base()}/_doc?refresh=true`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', accept: 'application/json' },
       body: JSON.stringify(doc),

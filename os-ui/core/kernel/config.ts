@@ -188,9 +188,8 @@ export const config = {
   langfuseSsoEmail: env('LANGFUSE_SSO_EMAIL', 'alex@datamasterclass.com'),
   langfuseSsoPassword: env('LANGFUSE_SSO_PASSWORD', 'langfuse-local-dev-admin'),
 
-  // OpenSearch (Knowledge / Search): GET/POST {OPENSEARCH_URL}/knowledge/_search
-  // Security plugin is disabled locally (no auth); on STACKIT enable security+TLS.
-  opensearchUrl: base(env('OPENSEARCH_URL', 'http://opensearch:9200')),
+  // OpenSearch: the endpoint and credentials are read by the ONE client,
+  // core/adapters/opensearch/client.ts — never here (scripts/check-opensearch-client.mjs).
   knowledgeIndex: env('KNOWLEDGE_INDEX', 'knowledge'),
   // Knowledge context layer (Knowledge tab). The `sovereign-embed` LiteLLM model
   // (mock-model on kind) emits deterministic 384-dim vectors; the dim MUST match

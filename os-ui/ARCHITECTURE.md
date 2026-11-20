@@ -16,6 +16,7 @@ core/      The kernel. Everything every tab depends on; it never imports a tab.
   mcp/       the ONE dispatcher (handleRpc), the tool registry, token minting
   runtime/   the agent/assistant loop, LiteLLM model calls, tool dispatch
   infra/     external-service clients + the OpenSearch mirror (os-* indexes)
+  adapters/  opensearch/client.ts — the ONE OpenSearch client (URL, credentials, timeouts)
   auth/      OAuth app + token plumbing for Connections
   ui/        the app shell: Sidebar, PageHeader, AuthGate, OsAssistant, theme
   app-sdk/   the client SDK vendored INTO generated apps  (keep imports relative)
@@ -773,6 +774,14 @@ but not that two materialisations agree row for row. That needs `EXCEPT ALL` bot
 
 Hard-won, each from a real failure. Read before writing a route, a test, or an
 OAuth flow.
+
+**Every OpenSearch call goes through `core/adapters/opensearch/client.ts` (WP-21).** It is the
+only reader of `OPENSEARCH_URL` and of the credentials WP-22 adds (`OPENSEARCH_USERNAME` /
+`OPENSEARCH_PASSWORD`); `opensearchFetch` throws on a transport failure, `opensearchTry` returns
+`null`. A module that builds its own `fetch` to OpenSearch keeps working while security is off
+and then 401s forever the day it is turned on — `scripts/check-opensearch-client.mjs` fails CI
+on it. The pod's `wait-for-opensearch` initContainer imports the same file with plain
+`node --experimental-strip-types`, so the file must stay import-free and erasable-only TS.
 
 **Two processes hold two copies of every store, so a whole-record write erases the other
 process's edits.** `os-ui` (web) and `os-ui-worker` (agent runs) each load their own in-process

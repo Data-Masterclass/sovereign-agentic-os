@@ -3,6 +3,7 @@
  */
 import 'server-only';
 import { config } from '@core/kernel/config';
+import { opensearchTry } from '@core/adapters/opensearch/client';
 import { type Workflow, type DomainKnowledge } from '@tabs/knowledge/lib/schema';
 import { chunkWorkflow, chunkDomain, chunkNote, type KnowledgeUnit } from '@tabs/knowledge/lib/chunk';
 import { embed, type EmbedCaller } from '@tabs/knowledge/lib/embed';
@@ -26,16 +27,9 @@ export type IndexReport = {
   scope: string;
 };
 
-async function withTimeout(url: string, init: RequestInit, ms = 6000): Promise<Response | null> {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), ms);
-  try {
-    return await fetch(url, { ...init, signal: ctrl.signal, cache: 'no-store' });
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timer);
-  }
+/** One OpenSearch call through the one client; `null` = unreachable or timed out. */
+function osTry(path: string, init: RequestInit, ms = 6000): Promise<Response | null> {
+  return opensearchTry(path, { ...init, timeoutMs: ms });
 }
 
 function toIndexed(units: KnowledgeUnit[], vectors: number[][]): IndexedUnit[] {
@@ -54,7 +48,7 @@ function toIndexed(units: KnowledgeUnit[], vectors: number[][]): IndexedUnit[] {
 export async function purgeKnowledgeUnits(scope: string): Promise<boolean> {
   removeUnits(scope); // offline mirror — always
   const delBody = { query: { bool: { should: [{ term: { workflow_id: scope } }, { term: { _id: scope } }] } } };
-  const res = await withTimeout(`${config.opensearchUrl}/${config.knowledgeIndex}/_delete_by_query?refresh=true`, {
+  const res = await osTry(`/${config.knowledgeIndex}/_delete_by_query?refresh=true`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(delBody),
@@ -94,9 +88,9 @@ export function knowledgeIndexMapping(dim = config.embedDim): Record<string, unk
  *  Without this the index auto-creates with NO `embedding` field → writes fail and
  *  retrieval silently falls back to the in-memory mirror. Mirrors `ensureFilesIndex`. */
 export async function ensureKnowledgeIndex(): Promise<boolean> {
-  const head = await withTimeout(`${config.opensearchUrl}/${config.knowledgeIndex}`, { method: 'HEAD' });
+  const head = await osTry(`/${config.knowledgeIndex}`, { method: 'HEAD' });
   if (head && head.ok) return true;
-  const res = await withTimeout(`${config.opensearchUrl}/${config.knowledgeIndex}`, {
+  const res = await osTry(`/${config.knowledgeIndex}`, {
     method: 'PUT',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(knowledgeIndexMapping()),
@@ -141,7 +135,7 @@ async function writeOpenSearch(scope: string, indexed: IndexedUnit[]): Promise<b
       ingested_at: u.indexedAt,
     }));
   }
-  const res = await withTimeout(`${config.opensearchUrl}/${config.knowledgeIndex}/_bulk?refresh=true`, {
+  const res = await osTry(`/${config.knowledgeIndex}/_bulk?refresh=true`, {
     method: 'POST',
     headers: { 'content-type': 'application/x-ndjson' },
     body: lines.join('\n') + '\n',
@@ -182,7 +176,7 @@ async function pruneScopeExcept(scope: string, keepIds: string[]): Promise<boole
       },
     },
   };
-  const res = await withTimeout(`${config.opensearchUrl}/${config.knowledgeIndex}/_delete_by_query?refresh=true`, {
+  const res = await osTry(`/${config.knowledgeIndex}/_delete_by_query?refresh=true`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),

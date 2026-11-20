@@ -20,7 +20,7 @@
  *     down; a resume (`plan === null`) never re-plans; a lost work list fails the job instead of
  *     indexing against the wrong list; an abandon or a new job stops the batch at the next unit.
  */
-import { config } from '@core/kernel/config';
+import { opensearchFetch } from '@core/adapters/opensearch/client';
 import {
   assertReindexAdmin,
   batchSize,
@@ -253,7 +253,8 @@ export async function osJson(path: string, init?: RequestInit, ms = 6000): Promi
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), ms);
   try {
-    const res = await fetch(`${config.opensearchUrl}${path}`, {
+    const res = await opensearchFetch(path, {
+      timeoutMs: ms,
       ...init,
       headers: { 'content-type': 'application/json', accept: 'application/json', ...(init?.headers ?? {}) },
       signal: ctrl.signal,

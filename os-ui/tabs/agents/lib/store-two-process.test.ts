@@ -18,7 +18,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { config } from '@core/kernel/config';
+import { opensearchBaseUrl } from '@core/adapters/opensearch/client';
 import * as store from '@tabs/agents/lib/store';
 import type { LastRun, Principal } from '@tabs/agents/lib/store';
 import { markRunWorkerProcess, __clearRunWorkerProcess } from '@tabs/agents/lib/write-availability';
@@ -28,7 +28,7 @@ import { markRunWorkerProcess, __clearRunWorkerProcess } from '@tabs/agents/lib/
 function fakeCluster() {
   const indices = new Map<string, Map<string, Record<string, unknown>>>();
   const orig = globalThis.fetch;
-  const base = config.opensearchUrl.replace(/\/$/, '');
+  const base = opensearchBaseUrl();
   const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);

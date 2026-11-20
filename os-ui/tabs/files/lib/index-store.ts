@@ -2,6 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { config } from '@core/kernel/config';
+import { opensearchFetch } from '@core/adapters/opensearch/client';
 import { type DlsFilter, evaluateDls, toIndexDls, type DocMeta } from '@tabs/files/lib/dls';
 import { cosine } from '@tabs/files/lib/embed';
 
@@ -128,7 +129,7 @@ async function osFetch(path: string, init: RequestInit, ms = 4000): Promise<Resp
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), ms);
   try {
-    return await fetch(`${config.opensearchUrl}${path}`, { ...init, signal: ctrl.signal, cache: 'no-store' });
+    return await opensearchFetch(path, { ...init, signal: ctrl.signal, timeoutMs: ms });
   } catch {
     return null;
   } finally {

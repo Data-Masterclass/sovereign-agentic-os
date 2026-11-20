@@ -3,6 +3,7 @@
  */
 import 'server-only';
 import { config } from '@core/kernel/config';
+import { opensearchFetch } from '@core/adapters/opensearch/client';
 import { getFile, type Principal } from '@tabs/files/lib/store';
 import { recordLineage } from '@tabs/files/lib/lineage';
 import { createDataset, buildVersion } from '@tabs/data/lib/index';
@@ -23,7 +24,7 @@ async function ingestKnowledge(title: string, text: string): Promise<string | nu
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 3000);
   try {
-    const res = await fetch(`${config.opensearchUrl}/${config.knowledgeIndex}/_doc?refresh=true`, {
+    const res = await opensearchFetch(`/${config.knowledgeIndex}/_doc?refresh=true`, {
       method: 'POST', headers: { 'content-type': 'application/json' }, cache: 'no-store', signal: ctrl.signal,
       body: JSON.stringify({ title, text, source: 'files-use-as', ingested_at: new Date().toISOString() }),
     });

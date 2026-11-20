@@ -3,6 +3,7 @@
  */
 import 'server-only';
 import { config } from '@core/kernel/config';
+import { opensearchFetch } from '@core/adapters/opensearch/client';
 import { authorize, trace } from '@core/infra/agent-governed';
 import { compileDls, type Reader } from '@tabs/files/lib/dls';
 import { embedQuery } from '@tabs/files/lib/embed';
@@ -37,7 +38,7 @@ async function liveSearch(queryVector: number[], queryText: string, filter: Retu
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 4000);
   try {
-    const res = await fetch(`${config.opensearchUrl}/${config.filesIndex}/_search`, {
+    const res = await opensearchFetch(`/${config.filesIndex}/_search`, {
       method: 'POST', headers: { 'content-type': 'application/json' }, cache: 'no-store', signal: ctrl.signal,
       body: JSON.stringify(buildOpenSearchQuery(queryVector, queryText, filter, k)),
     });
