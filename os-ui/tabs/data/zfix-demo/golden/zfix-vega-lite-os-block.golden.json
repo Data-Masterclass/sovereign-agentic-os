@@ -1,0 +1,3 @@
+{
+  "dashboards/orders/panels/revenue.vl.json": "{\"$schema\": \"https://vega.github.io/schema/vega-lite/v5.json\", \"mark\": \"bar\", \"os\": {\"owner\": \"amir\"}, \"encoding\": {\"x\": {\"field\": \"a\", \"type\": \"nominal\"}}}\n"
+}

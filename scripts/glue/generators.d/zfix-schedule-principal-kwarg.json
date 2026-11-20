@@ -1,0 +1,1 @@
+{ "generators": [ { "module": "tabs/data/zfix-demo/lib/gen-schedule-principal-kwarg.ts", "validator": "C2 negative twin", "goldens": ["tabs/data/zfix-demo/golden/zfix-schedule-principal-kwarg.golden.json"] } ] }

@@ -1,0 +1,1 @@
+{ "generators": [ { "module": "tabs/data/zfix-demo/lib/gen-fake-metadata-block.ts", "validator": "C2 negative twin", "goldens": ["tabs/data/zfix-demo/golden/zfix-fake-metadata-block.golden.json"] } ] }
