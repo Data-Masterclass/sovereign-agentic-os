@@ -160,7 +160,7 @@ describe('pg-boss on the real postgres:17', () => {
     await boss.schedule('agents.sys_1.run', '0 3 * * *', { systemId: 'sys_1' }, { tz: 'Europe/Berlin' });
     const [s] = await boss.getSchedules('agents.sys_1.run');
     assert.equal(s.cron, '0 3 * * *');
-    assert.equal(s.timezone ?? (s as unknown as { tz?: string }).tz, 'Europe/Berlin');
+    assert.equal(s.timezone, 'Europe/Berlin');
     await assert.rejects(boss.schedule('agents.sys_1.run', '0 3 * * *', null, { tz: 'Europe/Berlinn' }));
   });
 
