@@ -32,7 +32,7 @@ import type { AppCommitOutcome } from '@tabs/software/lib/git-commit';
 import { config } from '@core/kernel/config';
 import { validateAppDeployFile, isAppDeployPath } from '@tabs/software/lib/native-deploy';
 import { parseAppActions, type ActionParseIssue } from '@tabs/software/lib/app-actions';
-import { isScopePinOnlyNpmrc, SCOPE_PIN_LINE } from '@tabs/software/lib/scope-pin';
+import { isScopePinOnlyNpmrc, scopeConfigIssue, SCOPE_PIN_LINE } from '@tabs/software/lib/scope-pin';
 
 export type PushAppFilesInput = {
   appId: string;
@@ -118,6 +118,15 @@ export function assertPushable(files: ScaffoldFile[], slug?: string): void {
     }
     if (lower !== '.npmrc' && (FORBIDDEN_ROOT_DOTFILES as readonly string[]).includes(lower)) {
       bad(`'${p}' is not pushable: it is a credential or registry file. Secrets never live in an app's source tree.`);
+    }
+    // Yarn Berry and Bun ignore `.npmrc`: their own per-scope registry settings may not name the scope.
+    const scopeConfig = scopeConfigIssue(p, f.content);
+    if (scopeConfig) {
+      bad(
+        scopeConfig.reason === 'unreadable'
+          ? `'${p}' is not pushable: it ${scopeConfig.detail}, so it could not be read for @sovereign-os registry settings.`
+          : `'${p}' is not pushable: it ${scopeConfig.detail}. @sovereign-os packages are vendored in the app; no registry may be configured for them.`,
+      );
     }
     // Below the root the same files are refused outright — npm reads an `.npmrc` in a workspace
     // package too, and the one accepted `.npmrc` (the scope pin) belongs at the root only.
