@@ -23,7 +23,7 @@ skip() {
 command -v helm >/dev/null 2>&1 || skip "helm not on PATH"
 ls "$CHART"/charts/*.tgz >/dev/null 2>&1 || skip "chart dependencies not built"
 render() { out=$(helm template t "$CHART" "$@" 2>/dev/null); rc=$?; }
-HOSTS=(--set osUI.publicUrl=https://agentic.example.test --set ingress.hosts.osUI=os.agentic.example.test --set ingress.hosts.osUIApex=agentic.example.test)
+HOSTS=(--set global.allowChartDefaultSecrets=true --set ingress.enabled=true --set osUI.publicUrl=https://agentic.example.test --set ingress.hosts.osUI=os.agentic.example.test --set ingress.hosts.osUIApex=agentic.example.test)
 
 echo "1. aliases from the ingress hosts"
 render "${HOSTS[@]}" --show-only templates/base/os-ui/os-ui.yaml
@@ -34,6 +34,8 @@ absent "the public URL itself is not an alias" 'https://agentic.example.test"' "
 
 echo "2. negative twin: alias redirected at the ingress → no aliases"
 render "${HOSTS[@]}" --set ingress.redirectAliasToPublicUrl=true --show-only templates/base/os-ui/os-ui.yaml
+rc_is "renders" 0
+check "still has the public URL" "OS_PUBLIC_URL" "$out"
 absent "no OS_PUBLIC_URL_ALIASES" "OS_PUBLIC_URL_ALIASES" "$out"
 
 echo "3. the alert CronJob states the configured public origin"
