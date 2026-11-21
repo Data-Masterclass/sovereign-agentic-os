@@ -64,8 +64,11 @@ mock.module('@core/policy/approvals', {
     ...(await real('@core/policy/approvals')),
     ensureHydrated: async () => {},
     listApprovals: () => [
-      { id: 'ap1', systemId: 'sysA', title: 'Write CRM', tool: 'crm_write', createdAt: '2026-11-21T09:00:00Z', status: 'pending' },
-      { id: 'ap2', systemId: 'sysZ', title: 'Other', tool: 'x', createdAt: '2026-11-21T09:00:00Z', status: 'pending' },
+      { id: 'ap1', systemId: 'sysA', title: 'Write CRM', tool: 'crm_write', createdAt: '2026-11-21T09:00:00Z', status: 'pending', requestedBy: 'ada', domain: 'sales' },
+      { id: 'ap2', systemId: 'sysZ', title: 'Other', tool: 'x', createdAt: '2026-11-21T09:00:00Z', status: 'pending', requestedBy: 'ada', domain: 'sales' },
+      // On the SAME (shared) system: another creator's request in ada's domain, and one from another domain.
+      { id: 'ap-bob', systemId: 'sysA', title: 'Write CRM to customer jane@acme.example', tool: 'crm_write', createdAt: '2026-11-21T09:00:00Z', status: 'pending', requestedBy: 'bob', domain: 'sales' },
+      { id: 'ap-hr', systemId: 'sysA', title: 'HR export', tool: 'hr_write', createdAt: '2026-11-21T09:00:00Z', status: 'pending', requestedBy: 'carl', domain: 'hr' },
     ],
   },
 });
@@ -73,7 +76,7 @@ mock.module('@core/policy/approvals', {
 const { registerMonitoringSources } = await import('./sources');
 // The Agents store's scoped list, as monitoring-sources.ts hands it over: ada sees sysA only.
 registerMonitoringSources({
-  agentSystems: async (p) => (p.id === 'ada' ? [{ id: 'sysA', name: 'A', scope: 'mine' }] : []),
+  agentSystems: async (p) => (p.id === 'ada' || p.id === 'ben' ? [{ id: 'sysA', name: 'A', scope: 'mine' }] : []),
   datasets: async () => [],
   latestTests: async () => new Map(),
   assetKeys: async () => new Map(),
@@ -115,4 +118,29 @@ test('a down upstream is unavailable with its reason, and its fields are absent 
 
 test('Platform refuses a non-admin before reading anything', async () => {
   await assert.rejects(platformView(ada), (e) => e instanceof PlatformForbiddenError && (e as { status: number }).status === 403);
+});
+
+const ben = { id: 'ben', name: 'Ben', domains: ['sales'], allDomains: ['sales'], activeDomain: null, role: 'builder' } as never;
+
+test('approvals waiting follow the governance rule canSee — a creator sees only their own request', async () => {
+  const v = await agentsView(ada);
+  assert.deepEqual(v.systems[0].approvalsWaiting!.map((x) => x.id), ['ap1']);
+  // Negative twin: bob's request on the same shared system — title and all — never reaches ada.
+  assert.ok(!JSON.stringify(v).includes('jane@acme.example'));
+  assert.ok(!JSON.stringify(v).includes('ap-hr'));
+});
+
+test('approvals waiting: a builder sees their own domain\'s requests, never another domain\'s', async () => {
+  scopeLevel = 'builder';
+  const v = await agentsView(ben);
+  assert.deepEqual(v.systems[0].approvalsWaiting!.map((x) => x.id).sort(), ['ap-bob', 'ap1']);
+  assert.ok(!JSON.stringify(v).includes('HR export'), 'the hr request must not reach a sales builder');
+});
+
+test('the MCP door get_monitoring_panels applies the same approval rule', async () => {
+  const { MONITORING_TOOLS } = await import('@core/mcp/monitoring-tools');
+  const tool = MONITORING_TOOLS.find((t) => t.name === 'get_monitoring_panels')!;
+  const v = (await tool.call(ada, { view: 'agents' })) as Awaited<ReturnType<typeof agentsView>>;
+  assert.deepEqual(v.systems[0].approvalsWaiting!.map((x) => x.id), ['ap1']);
+  assert.ok(!JSON.stringify(v).includes('jane@acme.example'));
 });

@@ -9,7 +9,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ago, compact, money } from '@tabs/monitoring/ui/format';
+import { ago, compact, money, usd } from '@tabs/monitoring/ui/format';
 
 test('ago: absent and unparseable are a dash, then minutes, hours, days, months', () => {
   const now = Date.now();
@@ -35,4 +35,11 @@ test('compact: thousands get one decimal and a k', () => {
   assert.equal(compact(999), '999');
   assert.equal(compact(1000), '1.0k');
   assert.equal(compact(12345), '12.3k');
+});
+
+test('usd: LiteLLM's ledger unit — a dollar sign, zero is $0.00 (a real zero, not "unknown"), never €', () => {
+  assert.equal(usd(0), '$0.00');
+  assert.equal(usd(1.25), '$1.25');
+  assert.equal(usd(0.0123), '$0.012');
+  assert.ok(!usd(3).includes('€'));
 });
