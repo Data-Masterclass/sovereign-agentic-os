@@ -142,7 +142,12 @@ export async function assetHealth(key: string[], deps: Omit<Deps, 'token'> = {})
       cache: 'no-store',
       signal: ctrl.signal,
     });
-    const body = (await res.json().catch(() => ({}))) as { data?: { assetNodeOrError?: Record<string, unknown> }; errors?: { message?: string }[] };
+    let body: { data?: { assetNodeOrError?: Record<string, unknown> }; errors?: { message?: string }[] };
+    try {
+      body = (await res.json()) as typeof body;
+    } catch (e) {
+      return fail('invalid', `Dagster answered HTTP ${res.status} without JSON: ${e instanceof Error ? e.message : String(e)}`);
+    }
     if (body.errors?.length) return fail('invalid', body.errors.map((e) => e.message ?? '').join('; '));
     if (!res.ok) return fail('invalid', `Dagster answered HTTP ${res.status}`);
     const n = body.data?.assetNodeOrError ?? {};

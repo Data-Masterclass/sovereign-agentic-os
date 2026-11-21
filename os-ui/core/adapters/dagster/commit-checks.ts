@@ -15,6 +15,7 @@
 import type pg from 'pg';
 import type { Fetched } from '@core/adapters/_contract';
 import { repoStatus, repoVerdict } from '@core/adapters/dagster/graphql-read';
+import { scheduleEvery } from '@core/reconcile/runtime';
 
 export const DBT_PARSE_CHECK = 'dbt-parse';
 
@@ -42,24 +43,10 @@ export async function copyDbtParseVerdicts(pool: pg.Pool, deps: Parameters<typeo
   return { ok: true, value: out, at: new Date().toISOString() };
 }
 
-const KEY = Symbol.for('soa.adapters.dagster.commit-checks');
-/** Copy the verdicts every `everyMs` (web process; only with the feed and the governance DB). */
+/** Copy the verdicts every `everyMs` through the one reconcile timer (core/reconcile/runtime.ts). */
 export function startDbtParseVerdictCopy(pool: () => pg.Pool, everyMs = 30_000): () => void {
-  const g = globalThis as unknown as Record<symbol, NodeJS.Timeout | undefined>;
-  if (g[KEY]) return () => {};
-  const tick = async () => {
-    try {
-      const r = await copyDbtParseVerdicts(pool());
-      if (!r.ok) console.error(`[os-ui] dbt-parse verdicts not copied — ${r.reason}: ${r.detail}`);
-    } catch (e) {
-      console.error(`[os-ui] dbt-parse verdicts not copied — ${e instanceof Error ? e.message : String(e)}`);
-    }
-  };
-  g[KEY] = setInterval(tick, everyMs);
-  g[KEY]!.unref?.();
-  void tick();
-  return () => {
-    clearInterval(g[KEY]);
-    g[KEY] = undefined;
-  };
+  return scheduleEvery('dbt-parse-verdicts', everyMs, async () => {
+    const r = await copyDbtParseVerdicts(pool());
+    if (!r.ok) throw new Error(`dbt-parse verdicts not copied — ${r.reason}: ${r.detail}`);
+  });
 }
