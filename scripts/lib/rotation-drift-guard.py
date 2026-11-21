@@ -14,7 +14,8 @@ For every Secret key that the cluster records as managed by `rotate-secrets` (ma
 value in <render.yaml> (what this deploy/rollback applies) is compared with the cluster's, by
 sha256. A difference REFUSES (exit 1), naming the key, both fingerprints and the private overlay
 whose value is the cluster's (under $SOVEREIGN_SECRETS_DIR/overlays, default
-~/.sovereign-os-secrets/overlays). ROTATION_IN_PROGRESS=<anything> turns the refusal into a warning.
+~/.sovereign-os-secrets/overlays). ROTATION_IN_PROGRESS=<anything> turns the refusal into a warning —
+for an operator only: inside a CI pipeline (GITHUB_ACTIONS=true) it is refused as well.
 
 Not compared: keys `rotate-secrets` does not manage, and Secrets the render does not carry (this
 deploy cannot overwrite them). FAIL CLOSED: the Secrets cannot be read (kubectl fails or answers
@@ -147,6 +148,13 @@ def main(argv):
         ov = overlay_for(name, key, live, overlays_dir)
         lines.append(f"     {name}/{key}: cluster {live}…, this {what} would apply {new}… — "
                      + (f"deploy with VALUES_OVERLAY={ov}" if ov else f"no overlay under {overlays_dir} holds the cluster's value"))
+    if os.environ.get("ROTATION_IN_PROGRESS") and os.environ.get("GITHUB_ACTIONS") == "true":
+        # The override is an operator's decision in the rotation window, never a pipeline's: a CI
+        # deploy (dev.yml, prod.yml) that carried it would undo a rotation without anyone looking.
+        print("ROTATION_DRIFT_REFUSED — ROTATION_IN_PROGRESS is set inside a CI pipeline (GITHUB_ACTIONS=true); "
+              "the override is for an operator in the rotation window only.", file=sys.stderr)
+        print("\n".join(lines), file=sys.stderr)
+        return 1
     if os.environ.get("ROTATION_IN_PROGRESS"):
         print(f"   WARNING ROTATION_IN_PROGRESS is set: this {what} replaces {len(drift)} key(s) rotate-secrets.sh wrote:")
         print("\n".join(lines))

@@ -62,7 +62,7 @@ export FAKE_DIR=$TMP
 run() { # <rev8 cap> <rev7 cap> <mapped> [args] — sets out
   cp "$TMP/manifest-$1.yaml" "$TMP/rev8.yaml"; cp "$TMP/manifest-$2.yaml" "$TMP/rev7.yaml"
   : > "$TMP/probe.log"
-  out=$(PATH="$BIN:$PATH" FAKE_SECRETS_JSON=${FAKE_SECRETS_JSON:-} ROTATION_IN_PROGRESS=${ROTATION_IN_PROGRESS:-} FAKE_KUBECTL_OUT=${FAKE_KUBECTL_OUT:-} FAKE_KUBECTL_FAIL=${FAKE_KUBECTL_FAIL:-} FAKE_HELM_V=${FAKE_HELM_V:-} FAKE_MANIFEST_FAIL=${FAKE_MANIFEST_FAIL:-} FAKE_MAPPED=$3 PROD_KUBE_CONTEXT=testprod KUBE_CONTEXT=testprod \
+  out=$(PATH="$BIN:$PATH" FAKE_SECRETS_JSON=${FAKE_SECRETS_JSON:-} ROTATION_IN_PROGRESS=${ROTATION_IN_PROGRESS:-} GITHUB_ACTIONS=${GITHUB_ACTIONS:-} FAKE_KUBECTL_OUT=${FAKE_KUBECTL_OUT:-} FAKE_KUBECTL_FAIL=${FAKE_KUBECTL_FAIL:-} FAKE_HELM_V=${FAKE_HELM_V:-} FAKE_MANIFEST_FAIL=${FAKE_MANIFEST_FAIL:-} FAKE_MAPPED=$3 PROD_KUBE_CONTEXT=testprod KUBE_CONTEXT=testprod \
         ROLLBACK_MAPPED_COLUMNS_PROBE="$BIN/probe" bash scripts/rollback.sh --env prod --dry-run "${@:4}" 2>&1)
 }
 
@@ -87,7 +87,7 @@ check "refused: the target revision would put the older Valkey password back" "R
 check "...naming the key" "valkey-credentials/password" "$out"
 absent "...printing no value" "older-than-the-rotation" "$out"
 absent "...nor the cluster's" "rotated-in-the-cluster" "$out"
-FAKE_SECRETS_JSON=$TMP/secrets-rotated.json ROTATION_IN_PROGRESS=1 run false vk 0
+FAKE_SECRETS_JSON=$TMP/secrets-rotated.json ROTATION_IN_PROGRESS=1 GITHUB_ACTIONS= run false vk 0
 check "ROTATION_IN_PROGRESS lets it through" "ROLLBACK_DRY_RUN env=prod 8 -> 7" "$out"
 check "...with a warning" "WARNING ROTATION_IN_PROGRESS is set: this rollback replaces 1 key(s)" "$out"
 printf '{"items":[{"metadata":{"name":"valkey-credentials","managedFields":[{"manager":"helm","fieldsV1":{"f:data":{"f:password":{}}}}]},"data":{"password":"%s"}}]}' "$(printf rotated-in-the-cluster | base64)" > "$TMP/secrets-helm.json"

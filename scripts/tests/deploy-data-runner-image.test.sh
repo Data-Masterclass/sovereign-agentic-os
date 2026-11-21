@@ -231,7 +231,8 @@ absent "...printing no value" "rotated-in-the-cluster" "$out"
 printf 'valkey:\n  local:\n    password: rotated-in-the-cluster\n' > "$TMP/r2.yaml"
 FAKE_SECRETS_JSON=$TMP/secrets-rotated.json VALUES_OVERLAY=$TMP/r2.yaml derive_and_render "$TMP/t6"
 check "negative twin: with the round-2 overlay (the cluster's value) it deploys" "helm upgrade" "$(cat "$FAKE_LOG")"
-FAKE_SECRETS_JSON=$TMP/secrets-rotated.json ROTATION_IN_PROGRESS=1 derive_and_render "$TMP/t6"
+# An operator's run (this test may itself run in GitHub Actions, where the override is refused).
+FAKE_SECRETS_JSON=$TMP/secrets-rotated.json ROTATION_IN_PROGRESS=1 GITHUB_ACTIONS= derive_and_render "$TMP/t6"
 check "ROTATION_IN_PROGRESS lets it through" "helm upgrade" "$(cat "$FAKE_LOG")"
 check "...with a warning" "WARNING ROTATION_IN_PROGRESS is set" "$out"
 

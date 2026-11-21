@@ -60,7 +60,7 @@ printf 'valkey:\n  local:\n    password: %s\n' "$LIVE_PW" > "$SD/overlays/datast
 printf '{"path":"datastores","items":[["valkey","valkey-credentials","password","valkey.local.password","",""]]}' > "$SD/overlays/datastores-20261121T000000Z.state.json"
 printf 'valkey:\n  local:\n    password: %s\n' "$OTHER" > "$SD/overlays/datastores-20261120T000000Z.yaml"
 printf '{"path":"datastores","items":[["valkey","valkey-credentials","password","valkey.local.password","",""]]}' > "$SD/overlays/datastores-20261120T000000Z.state.json"
-guard() { out=$(KUBECTL="$T/kubectl" SOVEREIGN_SECRETS_DIR="$SD" ROTATION_IN_PROGRESS=${RIP:-} FAKE_FAIL=${FAKE_FAIL:-} $G --what "${WHAT:-deploy}" "$T/render.yaml" 2>&1); rc=$?; }
+guard() { out=$(KUBECTL="$T/kubectl" SOVEREIGN_SECRETS_DIR="$SD" ROTATION_IN_PROGRESS=${RIP:-} GITHUB_ACTIONS=${GHA:-} FAKE_FAIL=${FAKE_FAIL:-} $G --what "${WHAT:-deploy}" "$T/render.yaml" 2>&1); rc=$?; }
 
 echo "red: the render would put the older value back into a key ds-rekey wrote"
 render "$OLD_PW" "$OTHER" > "$T/render.yaml"; guard
@@ -81,6 +81,16 @@ RIP=1 guard
 rc_is "passes" 0
 check "  loudly" "WARNING" "$out"
 check "  naming the key" "valkey-credentials/password" "$out"
+
+echo "never from a pipeline: ROTATION_IN_PROGRESS inside CI (GITHUB_ACTIONS=true) is refused"
+RIP=1 GHA=true guard
+rc_is "refused" 1
+check "  saying why" "ROTATION_IN_PROGRESS is set inside a CI pipeline" "$out"
+GHA=true render "$LIVE_PW" "$OTHER" > "$T/render.yaml"; RIP=1 GHA=true guard
+rc_is "  twin: in CI without drift, nothing to override: passes" 0
+render "$OLD_PW" "$OTHER" > "$T/render.yaml"
+wf=$(grep -rln 'ROTATION_IN_PROGRESS' .github/ 2>/dev/null || true)
+holds "no workflow sets or passes ROTATION_IN_PROGRESS (dev.yml, prod.yml, …): [${wf}]" [ -z "$wf" ]
 
 echo "negative twins"
 render "$LIVE_PW" "$OTHER" > "$T/render.yaml"; guard
