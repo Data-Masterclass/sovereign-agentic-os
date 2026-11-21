@@ -124,6 +124,17 @@ check "an Ingress to the gateway fails, whatever the hostname" "FAIL  no Ingress
 healthy; echo 200 > "$FAKE/code-langfuse.example.test"; smoke
 check "a served Langfuse hostname fails" "FAIL  https://langfuse.example.test is not served (it answers 200)" "$out"
 
+# The operator route (#276): Langfuse behind nginx basic auth from a Secret passes; an open one fails.
+healthy; printf '||os-ui,\nbasic|langfuse-basic-auth|agentic-os-langfuse-web,\n' > "$FAKE/ingress"; echo 401 > "$FAKE/code-langfuse.example.test"; smoke
+check "Langfuse behind basic auth (operator route) passes" "ok    agentic-os-langfuse-web is routed only behind basic auth (operator route)" "$out"
+check "its host answering 401 passes" "ok    https://langfuse.example.test asks for credentials (operator route)" "$out"
+healthy; printf '||os-ui,\n||agentic-os-langfuse-web,\n' > "$FAKE/ingress"; smoke
+check "an open Ingress to Langfuse fails" "FAIL  no Ingress routes to agentic-os-langfuse-web without basic auth" "$out"
+healthy; printf '||os-ui,\nbasic||agentic-os-langfuse-web,\n' > "$FAKE/ingress"; smoke
+check "basic auth without a Secret still fails" "FAIL  no Ingress routes to agentic-os-langfuse-web without basic auth" "$out"
+healthy; echo 401 > "$FAKE/code-langfuse.example.test"; smoke
+check "a 401 on the Langfuse host without the operator route fails" "FAIL  https://langfuse.example.test is not served (it answers 401)" "$out"
+
 healthy; echo 'boot: checkpointer=postgres systems=failed' > "$FAKE/worker-log"; smoke
 check "a worker without systems=hydrated fails" "FAIL  os-ui-worker logged its boot line with systems=hydrated" "$out"
 

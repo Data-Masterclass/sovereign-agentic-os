@@ -141,11 +141,25 @@ check_health() {
 
 check_consoles_private() {
   local backends name host code
-  backends=$(k get ingress -o jsonpath='{range .items[*].spec.rules[*].http.paths[*]}{.backend.service.name}{"\n"}{end}')
-  for name in "$REL-litellm" "$REL-langfuse-web"; do
-    if printf '%s\n' "$backends" | grep -qxF "$name"; then fail "no Ingress routes to $name"
-    else pass "no Ingress routes to $name"; fi
-  done
+  # One line per Ingress: "<auth-type>|<auth-secret>|<backend>,<backend>,…". The gateway
+  # (LiteLLM) must never be routed. Langfuse may be routed ONLY by the operator route (#276),
+  # i.e. behind nginx basic auth from a Secret; any other route to it fails.
+  backends=$(k get ingress -o jsonpath='{range .items[*]}{.metadata.annotations.nginx\.ingress\.kubernetes\.io/auth-type}{"|"}{.metadata.annotations.nginx\.ingress\.kubernetes\.io/auth-secret}{"|"}{range .spec.rules[*].http.paths[*]}{.backend.service.name}{","}{end}{"\n"}{end}')
+  local line atype asecret svcs lf_protected=0 lf_open=0 gw_routed=0
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    case $line in *"|"*) atype=${line%%|*}; line=${line#*|}; asecret=${line%%|*}; svcs=${line#*|} ;; *) atype=''; asecret=''; svcs=$line ;; esac
+    case ",$svcs," in *",$REL-litellm,"*) gw_routed=1 ;; esac
+    case ",$svcs," in *",$REL-langfuse-web,"*)
+      if [ "$atype" = basic ] && [ -n "$asecret" ]; then lf_protected=1; else lf_open=1; fi ;;
+    esac
+  done <<EOF_ING
+$(printf '%s\n' "$backends")
+EOF_ING
+  if [ "$gw_routed" = 1 ]; then fail "no Ingress routes to $REL-litellm"; else pass "no Ingress routes to $REL-litellm"; fi
+  if [ "$lf_open" = 1 ]; then fail "no Ingress routes to $REL-langfuse-web without basic auth"
+  elif [ "$lf_protected" = 1 ]; then pass "$REL-langfuse-web is routed only behind basic auth (operator route)"
+  else pass "no Ingress routes to $REL-langfuse-web"; fi
   for host in "$(fact gateway_host)" "$(fact langfuse_host)"; do
     [ -n "$host" ] || continue
     # -k: an unrouted host gets the controller's default certificate. Verifying it would fail
@@ -153,6 +167,8 @@ check_consoles_private() {
     code=$(curl -k -sS -o /dev/null -w '%{http_code}' --max-time 15 "https://$host/" 2>/dev/null || true)
     case $code in
       404|000|'') pass "https://$host is not served (${code:-no answer})" ;;
+      401) if [ "$host" = "$(fact langfuse_host)" ] && [ "$lf_protected" = 1 ]; then pass "https://$host asks for credentials (operator route)"
+           else fail "https://$host is not served (it answers 401)"; fi ;;
       *) fail "https://$host is not served (it answers $code)" ;;
     esac
   done
