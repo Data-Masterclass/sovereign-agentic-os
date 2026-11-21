@@ -489,6 +489,11 @@ export const config = {
   agentGraphModuleDomains: env('AGENT_GRAPH_MODULE_DOMAINS', '').split(',').map((d) => d.trim()).filter(Boolean),
   // Where verified module bytes are materialised for import (content-addressed by digest).
   agentModuleCacheDir: env('AGENT_MODULE_CACHE_DIR', ''),
+  // WP-53e: os-ui's package-lock.json — the exact versions a generated module pins. A KNOWN PATH,
+  // never a module resolution (`require.resolve` returns a webpack module id in the bundled
+  // server). The image sets it (/app/package-lock.json, images/base/os-ui/Dockerfile); unset ⇒
+  // `<cwd>/package-lock.json` (a checkout, the tests).
+  agentModuleHostLockfile: env('OS_UI_LOCKFILE', '') || `${process.cwd()}/package-lock.json`,
   // WHO executes a queued agent run (engine rebuild, Phase A4). `inline` (default): the process
   // that enqueues the job in `run_jobs` also executes it at once — a laptop / kind install with
   // one os-ui pod behaves exactly as before and tests need no worker. `worker`: os-ui only

@@ -20,9 +20,9 @@
  */
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, renameSync, symlinkSync, writeFileSync } from 'node:fs';
-import { createRequire } from 'node:module';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { config } from '@core/kernel/config';
 import { readFilesAt, type GitStoreOptions } from '@core/infra/git-store';
 import type { Fetched } from '@core/adapters/_contract';
 import { isLoadedAgentModuleFile as isLoadedModuleFile, AGENT_GRAPH_FILE as MODULE_GRAPH } from '@core/infra/repo-layout';
@@ -88,11 +88,17 @@ export async function readCommittedModule(domain: string, dir: string, ref: stri
   return { commit: read.sha, files };
 }
 
-/** os-ui's `node_modules` (where `@langchain/langgraph` resolves from this file). */
-function hostNodeModules(): string {
-  const req = createRequire(import.meta.url);
-  const pkg = req.resolve('@langchain/langgraph/package.json');
-  return pkg.slice(0, pkg.lastIndexOf(`${path.sep}node_modules${path.sep}`) + `${path.sep}node_modules`.length);
+/**
+ * os-ui's `node_modules`: beside its lockfile, a KNOWN PATH (`OS_UI_LOCKFILE`; /app in the image).
+ * Never a module resolution — in the bundled server `require.resolve` yields a webpack module id
+ * (WP-53e), so an inline module run would have failed exactly like the generator did.
+ */
+export function hostNodeModules(): string {
+  const dir = path.join(path.dirname(config.agentModuleHostLockfile), 'node_modules');
+  if (!existsSync(path.join(dir, '@langchain', 'langgraph', 'package.json'))) {
+    throw new AgentModuleIntegrityError([`os-ui's node_modules not found at ${dir} (beside OS_UI_LOCKFILE) — a module cannot import @langchain/langgraph`]);
+  }
+  return dir;
 }
 
 function ensureLink(cacheRoot: string): void {
