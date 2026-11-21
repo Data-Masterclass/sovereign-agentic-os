@@ -189,9 +189,14 @@ spec:
   replicas: 1
   {{- if $persist }}
   # One ReadWriteOnce volume: the old pod releases it before the new one starts (no multi-attach).
-  # The new pod is ready within seconds from the persisted bundle.
+  # The new pod is ready within seconds from the persisted bundle. maxSurge 0 does that without
+  # changing `type`: an upgrade from a release whose Deployment holds `rollingUpdate` (the API
+  # server's default) is refused when `type` becomes Recreate (scripts/tests/opa-strategy.test.sh).
   strategy:
-    type: Recreate
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
   {{- end }}
   selector:
     matchLabels:

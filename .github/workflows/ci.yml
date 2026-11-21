@@ -196,6 +196,7 @@ jobs:
           bash scripts/tests/release.test.sh
           bash scripts/tests/env-guard.test.sh
           bash scripts/tests/dev-bootstrap.test.sh
+          bash scripts/tests/opa-strategy.test.sh
           bash scripts/tests/smoke-test.test.sh
           bash scripts/tests/apiserver-egress.test.sh
           bash scripts/tests/values-diff.test.sh
