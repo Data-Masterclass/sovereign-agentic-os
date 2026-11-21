@@ -54,18 +54,48 @@ async function sweep() {
   return (await res.json()) as { evaluated: number; breached: number; results: { ruleId: string; owner: string; value: number | null; status: string; reason?: string }[] };
 }
 
-test('a builder sees only their own alerts’ results, while every alert is still evaluated and delivered', async () => {
+test('a builder evaluates ONLY their own alerts: another owner’s rule is neither run nor delivered', async () => {
   const body = await sweep();
-  assert.deepEqual(evaluatedFor.sort(), ['r-amir', 'r-bea', 'r-gone'], 'the sweep still runs every rule');
-  assert.deepEqual(delivered.sort(), ['amir', 'bea'], 'each breach is delivered to its own owner');
+  assert.deepEqual(evaluatedFor.sort(), ['r-amir', 'r-gone'], 'only the caller’s own rules run');
+  assert.deepEqual(delivered, ['amir']);
   assert.deepEqual(body.results.map((r) => r.ruleId).sort(), ['r-amir', 'r-gone']);
   assert.ok(!body.results.some((r) => r.value === 999), 'another owner’s value is not in the answer');
+});
+
+test('the scheduler’s identity (OS_ALERTS_SCHEDULER_PRINCIPAL) evaluates and delivers every alert', async () => {
+  process.env.OS_ALERTS_SCHEDULER_PRINCIPAL = 'svc-alerts';
+  CALLER = { ...CALLER, id: 'svc-alerts', role: 'builder' };
+  try {
+    const body = await sweep();
+    assert.deepEqual(evaluatedFor.sort(), ['r-amir', 'r-bea', 'r-gone']);
+    assert.deepEqual(delivered.sort(), ['amir', 'bea']);
+    assert.equal(body.results.length, 3);
+  } finally {
+    delete process.env.OS_ALERTS_SCHEDULER_PRINCIPAL;
+    CALLER = { ...CALLER, id: 'amir', role: 'builder' };
+  }
+});
+
+test('TWIN: with no scheduler configured, nobody but an admin evaluates every alert; a creator is refused', async () => {
+  process.env.OS_ALERTS_SCHEDULER_PRINCIPAL = '';
+  CALLER = { ...CALLER, id: 'svc-alerts', role: 'builder' };
+  try {
+    await sweep();
+    assert.deepEqual(evaluatedFor, [], 'svc-alerts owns no rule and is not the scheduler');
+    CALLER = { ...CALLER, id: 'amir', role: 'creator' };
+    const res = await GET(new Request('http://os.local/api/metrics/alerts/run'), { params: Promise.resolve({}) } as never);
+    assert.equal(res.status, 403);
+  } finally {
+    delete process.env.OS_ALERTS_SCHEDULER_PRINCIPAL;
+    CALLER = { ...CALLER, id: 'amir', role: 'builder' };
+  }
 });
 
 test('an admin sees every alert’s result', async () => {
   CALLER = { ...CALLER, id: 'root', role: 'admin' };
   const body = await sweep();
   assert.equal(body.results.length, 3);
+  assert.deepEqual(evaluatedFor.sort(), ['r-amir', 'r-bea', 'r-gone'], 'an admin runs every rule');
   CALLER = { ...CALLER, id: 'amir', role: 'builder' };
 });
 

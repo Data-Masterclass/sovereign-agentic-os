@@ -117,3 +117,18 @@ test('MIGRATION DRY RUN: an os-alert-rules _search export plans files per domain
   assert.deepEqual(plan.pending.map((p) => p.id), ['no_metric']);
   assert.deepEqual(plan.refused.map((r) => r.id), ['broken']);
 });
+
+test('NEGATIVE TWIN: a committed alert whose owner token is not the store owner\'s is refused and never launched', async () => {
+  const dir = await repoWithProject();
+  try {
+    // bea's rule committed under amir's name: e.g. a file edited to point at amir's owner token.
+    await commitDomainAlerts('sales', [rule({ owner: 'bea' })], { id: 'bea' }, { reposDir: dir });
+    const f = fakeDagster({ status: 'ok', value: 1, breached: false });
+    const e = await evaluateCommittedAlert(rule({ owner: 'amir' }), { dagster: f.dagster as never, owner, reposDir: dir, sleep: async () => {} });
+    assert.equal(e.status, 'refused');
+    assert.match(e.status === 'refused' ? e.reason : '', /owner/);
+    assert.equal(f.launches.length, 0, 'it never runs as the store owner');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
