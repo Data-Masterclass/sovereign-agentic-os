@@ -328,6 +328,9 @@ async function saveNote(input: SaveOutputsInput, o: DeclaredOutput, text: string
     title: outputNoteTitle(o, input.at),
     md: `${text.trim()}\n\n---\n_Result of the agent system “${sys.system.name}”${producer ? ` · agent ${producer}` : ''} · run ${input.runId} · ${readableStamp(input.at)}_\n`,
     folder: path,
+    // The SYSTEM's domain, not the tool default (the runner's first domain): a runner in several
+    // domains would otherwise get the note filed where the system and its folder grants are not.
+    domain: sys.system.domain,
     // The tool returns the note already saved under this key instead of writing a second one.
     sourceKey: saveKey(input.systemId, input.runId, o),
   };
@@ -364,7 +367,8 @@ async function saveTable(input: SaveOutputsInput, o: DeclaredOutput, text: strin
   }
   let id = existing ? str(existing.id) : '';
   if (!id) {
-    const res = await dispatch('create_dataset', { name, folder: path });
+    // In the SYSTEM's domain (see saveNote): the rows are then landed where the system can see them.
+    const res = await dispatch('create_dataset', { name, folder: path, domain: input.system.system.domain });
     if (res.isError) return { ok: false, state: 'failed', reason: errorReason(res.text), retry: 'again' };
     const made = parse(res.text);
     id = isRecord(made) ? str(made.id) : '';

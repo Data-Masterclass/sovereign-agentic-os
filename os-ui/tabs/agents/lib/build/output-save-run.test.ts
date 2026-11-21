@@ -458,3 +458,14 @@ test('executeTeamRun: resuming a run that finished but died before its save was 
   // Once the save IS recorded, a further resume is the conflict it always was.
   await assert.rejects(() => execute(id, w, { reader: ROWS, writer: REPORT }, runId, true), /already finished/);
 });
+
+// Prod, 21 Nov 2026: a runner whose FIRST domain is not the system's domain got the note and the
+// dataset filed in that first domain (the tools' default) — the note "saved" where nobody looked,
+// and the rows then failed "Dataset not found". The saver names the system's own domain.
+test('outputs are filed in the agent system\'s domain, not the runner\'s first domain', async () => {
+  const { w } = await runAndSave(threeOutputs(), { reader: `Here are the rows:\n\n${ROWS}`, writer: REPORT });
+  const note = w.calls.find((c) => c.name === 'save_knowledge_note')!;
+  const made = w.calls.find((c) => c.name === 'create_dataset')!;
+  assert.equal((note.args as Record<string, unknown>).domain, 'finance');
+  assert.equal((made.args as Record<string, unknown>).domain, 'finance');
+});
