@@ -64,7 +64,7 @@ metadata: { name: bundle-srv }
 spec: { selector: { app: bundle-srv }, ports: [{ port: 8080 }] }
 YAML
 
-render() { helm template wp "$ROOT/charts/sovereign-agentic-os" --namespace $NS --show-only templates/base/opa/opa.yaml "${SETS[@]}" "$@"; }
+render() { helm template wp "$ROOT/charts/sovereign-agentic-os" --namespace $NS --show-only templates/base/opa/opa.yaml --show-only templates/base/opa/opa-tokens.yaml "${SETS[@]}" "$@"; }
 
 opa_data() { # $1 = path; via a port-forward to the current OPA pod
   local pod; pod="$($K get pod -l app.kubernetes.io/component=opa -o jsonpath='{.items[0].metadata.name}')"
