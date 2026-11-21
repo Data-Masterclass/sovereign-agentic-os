@@ -11,7 +11,10 @@
 #   d. an extra OPA caller (the Dagster code location and its run pods);
 #   e. a rule with no `from` on object storage (admits every namespace);
 #   f. the Polaris JDBC metastore no longer admitted to Postgres;
-#   g. cert-manager's HTTP-01 solver no longer reachable from the ingress controller on :8089.
+#   g. cert-manager's HTTP-01 solver no longer reachable from the ingress controller on :8089;
+#   h. the OTel Collector no longer admitted to VictoriaLogs (WP-05: logs would stop under default-deny);
+#   i. os-ui no longer admitted to VictoriaMetrics (Monitoring and Platform health would go dark);
+#   j. another namespace admitted to the Collector.
 # Needs helm, js-yaml (os-ui/node_modules) and the subchart .tgz files.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
@@ -25,9 +28,9 @@ grep -q 'check-platform-ingress-policy: OK' <<<"$out" || fail "the check did not
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 twin() { # twin <label> <expected message regex> <python mutation of the template text `s`>
-  local label=$1 want=$2 mutation=$3
+  local label=$1 want=$2 mutation=$3 tpl=${TWIN_TPL:-$TPL}
   rm -rf "$WORK/chart" && cp -R charts/sovereign-agentic-os "$WORK/chart"
-  python3 - "$WORK/chart/$TPL" "$mutation" <<'PY'
+  python3 - "$WORK/chart/$tpl" "$mutation" <<'PY'
 import sys
 p, code = sys.argv[1], sys.argv[2]
 s = open(p).read()
@@ -55,4 +58,11 @@ twin "d (extra OPA caller)" 'opa-allow-callers admits .*user-deployments' \
   "s.replace('(list \"web-fetch\" \"trino\" \"opa-reassert-principals\"))', '(list \"web-fetch\" \"trino\" \"opa-reassert-principals\") \"extra\" (list (dict \"component\" \"user-deployments\")))', 1)"
 twin "e (no from)" 'object-storage-allow-callers: a rule with no .from.' \
   "s.replace('      ports:\n        - { protocol: TCP, port: 9000 }\n', '    - ports:\n        - { protocol: TCP, port: 9000 }\n', 1)"
-echo "platform-ingress-policy: ok — the check passes the committed chart and refuses all seven broken twins"
+OBS=templates/extensions/observability/network-policies.yaml
+TWIN_TPL=$OBS twin "h (Collector cut off from VictoriaLogs)" 'DaemonSet otel-collector calls victoria-logs:9428 but no ingress policy admits it' \
+  "s.replace('              app.kubernetes.io/component: otel-collector\n        - podSelector:\n            matchLabels:\n              app.kubernetes.io/component: os-ui\n      ports:\n        - { protocol: TCP, port: 9428 }', '              app.kubernetes.io/component: os-ui\n      ports:\n        - { protocol: TCP, port: 9428 }', 1)"
+TWIN_TPL=$OBS twin "i (os-ui cut off from VictoriaMetrics)" 'os-ui calls victoria-metrics:8428 but no ingress policy admits it' \
+  "s.replace('              app.kubernetes.io/component: os-ui\n      ports:\n        - { protocol: TCP, port: 8428 }', '              app.kubernetes.io/component: os-ui-gone\n      ports:\n        - { protocol: TCP, port: 8428 }', 1)"
+TWIN_TPL=$OBS twin "j (another namespace at the Collector)" 'otel-collector-allow-os-only: admits another namespace' \
+  "s.replace('              app.kubernetes.io/component: os-ui-worker\n', '              app.kubernetes.io/component: os-ui-worker\n        - namespaceSelector:\n            matchLabels:\n              kubernetes.io/metadata.name: agentic-apps\n', 1)"
+echo "platform-ingress-policy: ok — the check passes the committed chart and refuses all ten broken twins"

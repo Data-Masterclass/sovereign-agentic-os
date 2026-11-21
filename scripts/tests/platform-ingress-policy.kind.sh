@@ -23,6 +23,10 @@
 #      pod; without its policy default-deny cuts it off (the renewal outage it prevents);
 #   4. negative twin: with the policies deleted, the app pod reaches OPA — so the refusal in 2
 #      is the policy's doing, not a broken probe.
+#   5. WP-05 observability (rendered ON, as in production; dev turns it off): the Collector reaches
+#      VictoriaMetrics and VictoriaLogs, os-ui reaches both and the Collector's health port; a
+#      Dagster run pod, an app pod and an unlabelled pod are refused at VictoriaLogs; twin: without
+#      its allowlist the Collector is cut off from VictoriaLogs by default-deny.
 set -uo pipefail
 cd "$(dirname "$0")/../.." || exit 2
 . scripts/tests/assert.sh
@@ -51,7 +55,8 @@ k wait --for=condition=Ready node --all --timeout=300s >/dev/null || exit 2
 
 for ns in agentic-os agentic-apps ingress-nginx other; do k create namespace "$ns" >/dev/null 2>&1; done
 rendered=$(mktemp)
-helm template agentic-os "$CHART" -n agentic-os --skip-schema-validation --set global.allowChartDefaultSecrets=true -f values.dev.yaml > "$rendered" 2>/dev/null || exit 2
+helm template agentic-os "$CHART" -n agentic-os --skip-schema-validation --set global.allowChartDefaultSecrets=true -f values.dev.yaml \
+  --set observability.enabled=true > "$rendered" 2>/dev/null || exit 2
 python3 - "$rendered" > "$rendered.np" <<'PY' || exit 2
 import sys, yaml
 docs = [d for d in yaml.safe_load_all(open(sys.argv[1])) if d]
@@ -72,7 +77,10 @@ serve trino 8080 app.kubernetes.io/component=trino,app.kubernetes.io/name=trino,
 serve pg 5432 app.kubernetes.io/component=postgres,app.kubernetes.io/name=postgres,app.kubernetes.io/instance=agentic-os
 serve minio 9000 app.kubernetes.io/component=object-storage,app.kubernetes.io/name=object-storage,app.kubernetes.io/instance=agentic-os
 serve os-ui 3000 app.kubernetes.io/component=os-ui,app.kubernetes.io/name=os-ui,app.kubernetes.io/instance=agentic-os
-k -n agentic-os wait --for=condition=Ready pod/opa pod/trino pod/pg pod/minio pod/os-ui --timeout=180s >/dev/null || exit 2
+serve victoria-metrics 8428 app.kubernetes.io/component=victoria-metrics,app.kubernetes.io/name=victoria-metrics,app.kubernetes.io/instance=agentic-os
+serve victoria-logs 9428 app.kubernetes.io/component=victoria-logs,app.kubernetes.io/name=victoria-logs,app.kubernetes.io/instance=agentic-os
+serve otel-collector 13133 app.kubernetes.io/component=otel-collector,app.kubernetes.io/name=otel-collector,app.kubernetes.io/instance=agentic-os
+k -n agentic-os wait --for=condition=Ready pod/opa pod/trino pod/pg pod/minio pod/os-ui pod/victoria-metrics pod/victoria-logs pod/otel-collector --timeout=180s >/dev/null || exit 2
 
 n=0
 # probe <ns> <labels|-> <svc> <port> — 0 when the stand-in answers, 1 when refused/timed out.
@@ -144,6 +152,18 @@ acme ingress-nginx app.kubernetes.io/name=ingress-nginx && ok "the ingress contr
 acme agentic-apps app.kubernetes.io/component=software-runner; [ $? -eq 1 ] && ok "an app pod is refused at the HTTP-01 solver" || bad "an app pod is refused at the HTTP-01 solver"
 k -n agentic-os delete networkpolicy acme-http01-solver-allow-controller >/dev/null
 acme ingress-nginx app.kubernetes.io/name=ingress-nginx; [ $? -eq 1 ] && ok "twin: without its policy the solver is cut off by default-deny (renewals would fail)" || bad "twin: solver cut off without its policy"
+echo "== WP-05 observability under default-deny"
+COL=app.kubernetes.io/component=otel-collector
+expect reach  "the OTel Collector"        agentic-os "$COL" victoria-metrics 8428
+expect reach  "the OTel Collector"        agentic-os "$COL" victoria-logs 9428
+expect reach  "os-ui"                     agentic-os "$UI" victoria-metrics 8428
+expect reach  "os-ui"                     agentic-os "$UI" victoria-logs 9428
+expect reach  "os-ui"                     agentic-os "$UI" otel-collector 13133
+expect refuse "a Dagster run pod"         agentic-os component=user-deployments,dagster/run-id=r4 victoria-logs 9428
+expect refuse "an agentic-apps app pod"   agentic-apps app.kubernetes.io/component=software-runner victoria-logs 9428
+expect refuse "an unlabelled pod"         agentic-os - otel-collector 13133
+k -n agentic-os delete networkpolicy victoria-logs-allow-collector-and-os-ui >/dev/null
+expect refuse "twin: the OTel Collector without its allowlist" agentic-os "$COL" victoria-logs 9428
 echo "== negative twin: without the policies the app pod gets through"
 k -n agentic-os delete networkpolicy default-deny-ingress opa-allow-callers >/dev/null
 expect reach  "an agentic-apps app pod (policies deleted)" agentic-apps app.kubernetes.io/component=software-runner opa 8181
