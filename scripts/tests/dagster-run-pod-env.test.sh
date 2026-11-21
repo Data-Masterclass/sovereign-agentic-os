@@ -25,7 +25,9 @@ for d in yaml.safe_load_all(sys.stdin):
     uc = next(c for c in pod["containers"] if c["name"] != "repo-sync")
     env = uc.get("env", [])
     for e in env:
-        if e["name"] == "DAGSTER_CLI_API_GRPC_CONTAINER_CONTEXT":
+        # The subchart names it DAGSTER_CONTAINER_CONTEXT for `dagster code-server start`
+        # (codeServerArgs) and DAGSTER_CLI_API_GRPC_CONTAINER_CONTEXT for `dagster api grpc`.
+        if e["name"] in ("DAGSTER_CONTAINER_CONTEXT", "DAGSTER_CLI_API_GRPC_CONTAINER_CONTEXT"):
             ctx = json.loads(e["value"])["k8s"]
             for x in ctx.get("env", []):
                 if "valueFrom" in x or SECRETISH.search(x["name"]):
@@ -39,6 +41,8 @@ for d in yaml.safe_load_all(sys.stdin):
         elif SECRETISH.search(e["name"]):
             bad.append("user-code env " + e["name"])
     names = {e["name"] for e in env}
+    if not names & {"DAGSTER_CONTAINER_CONTEXT", "DAGSTER_CLI_API_GRPC_CONTAINER_CONTEXT"}:
+        bad.append("no container context env: run pods would get nothing to check (or the check would pass on nothing)")
     if "OS_INDEX_FILE" not in names:
         bad.append("user-code env has no OS_INDEX_FILE (the principals sensor would read nothing)")
     side = [c for c in pod["containers"] if c["name"] == "repo-sync"]

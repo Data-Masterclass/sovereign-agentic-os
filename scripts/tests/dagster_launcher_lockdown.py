@@ -10,7 +10,7 @@ Run INSIDE the Dagster image (it imports the dagster_k8s the image ships):
 with `-f values.dagster-launcher-lockdown.yaml`. Exit 0 only when ALL of these hold:
 
   A. render parity: the two renders differ in nothing but the instance ConfigMap's `run_launcher`,
-     the code location's DAGSTER_CLI_API_GRPC_CONTAINER_CONTEXT env (the lock-down turns
+     the code location's DAGSTER_CONTAINER_CONTEXT env (the lock-down turns
      `includeConfigInLaunchedRuns` off) and the pods' checksum annotations;
   B. config parity: the lock-down launcher is dagster_k8s.K8sRunLauncher with EVERY stock config key
      at its stock value, plus the two documented `only_allow_*` keys at exactly the allowed values,
@@ -49,7 +49,9 @@ import os_projects  # noqa: E402
 
 INSTANCE_CM = "agentic-os-dagster-instance"
 CODE_LOCATION = "agentic-os-dagster-user-deployments-sovereign"
-CONTEXT_ENV = "DAGSTER_CLI_API_GRPC_CONTAINER_CONTEXT"
+# The name the Dagster subchart gives the container-context env for `dagster code-server start`
+# (`codeServerArgs`); `dagster api grpc` read DAGSTER_CLI_API_GRPC_CONTAINER_CONTEXT instead.
+CONTEXT_ENV = "DAGSTER_CONTAINER_CONTEXT"
 DAGSTER_PODS = {CODE_LOCATION, "agentic-os-dagster-webserver", "agentic-os-dagster-daemon"}
 
 # The contract: what a run tag may still set. `container_config.env` + `.resources`, and env names
