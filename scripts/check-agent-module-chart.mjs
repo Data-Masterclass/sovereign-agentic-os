@@ -11,6 +11,8 @@
  * ARCHITECTURE:
  *   - Renders the chart (worker enabled) for each case and reads AGENT_GRAPH_MODULE and
  *     AGENT_GRAPH_MODULE_DOMAINS from BOTH Deployments; the refusal cases must fail `helm template`.
+ *   - WP-53e: with modules on, the worker mounts the os-repos PVC READ-ONLY at /repos and is
+ *     scheduled onto os-ui's node (the PVC is ReadWriteOnce); with modules off it mounts nothing.
  *   - Same skip rules as the other chart checks: loud skip on a laptop without helm or subcharts,
  *     a hard failure in CI. Manual: `helm template charts/sovereign-agentic-os --set-json
  *     'osUI.agentGraphModule={"enabled":true,"domains":["test"]}' | grep -A1 AGENT_GRAPH_MODULE`.
@@ -98,9 +100,27 @@ for (const c of [
   else if (!/agentGraphModule\.domains/.test(r.stderr)) problems.push(`${c.name}: failed for another reason: ${r.stderr.trim().slice(0, 300)}`);
 }
 
+// WP-53e: a module run reads committed graph.mjs files, so the worker needs the repos — read-only.
+{
+  const reposMount = (doc) => doc.match(/- name: os-repos\n\s+mountPath: (\S+)(\n\s+readOnly: (\w+))?/);
+  const on = deployments(execFileSync('helm', args({ enabled: true, domains: ['test'] }), { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })).get('os-ui-worker') ?? '';
+  const m = reposMount(on);
+  if (!m) problems.push('modules on: os-ui-worker does not mount os-repos (runs fail with "no repository")');
+  else {
+    if (m[1] !== '/repos') problems.push(`modules on: os-ui-worker mounts os-repos at ${m[1]}, expected /repos`);
+    if (m[3] !== 'true') problems.push('modules on: os-ui-worker mounts os-repos WRITABLE — it must be readOnly (os-ui is the one writer)');
+  }
+  if (!/claimName: os-repos\n\s+readOnly: true/.test(on)) problems.push('modules on: the os-ui-worker os-repos volume is not a read-only claim');
+  if (!/podAffinity:\n\s+requiredDuringSchedulingIgnoredDuringExecution:[\s\S]*?app\.kubernetes\.io\/component: os-ui\n[\s\S]*?topologyKey: kubernetes\.io\/hostname/.test(on)) {
+    problems.push('modules on: os-ui-worker has no required pod affinity to os-ui (the RWO volume attaches to one node)');
+  }
+  const off = deployments(execFileSync('helm', args(undefined), { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })).get('os-ui-worker') ?? '';
+  if (/os-repos/.test(off) || /podAffinity/.test(off)) problems.push('modules off: os-ui-worker must mount no repos and carry no affinity');
+}
+
 if (problems.length) {
   console.error('check-agent-module-chart FAILED:');
   for (const p of problems) console.error(`  - ${p}`);
   process.exit(1);
 }
-console.log(`check-agent-module-chart: ok — ${cases.length} renders agree on both pods; enabled with no domains refuses to render`);
+console.log(`check-agent-module-chart: ok — ${cases.length} renders agree on both pods; enabled with no domains refuses to render; the worker reads /repos read-only with modules on`);

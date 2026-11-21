@@ -165,6 +165,11 @@ test('WP-53d: --domains scopes the EXIT CODE to the domains being enabled (the r
   assert.equal(run('--domains', '*').status, 1);
   assert.equal(run().status, 1, 'no --domains ⇒ every domain counts');
   assert.equal(run('--domains').status, 2, 'an empty --domains is a usage error, not a pass');
+  // WP-53e: a requested domain with no entry was not checked — never a pass.
+  const absent = run('--domains', 'tset');
+  assert.equal(absent.status, 1, absent.stdout + absent.stderr);
+  assert.match(absent.stderr, /no definitions found for tset/);
+  assert.equal(run('--domains', 'test,ops').status, 1, 'one absent domain in the list fails the run');
 });
 
 test('parseDomainsArg / refusedIn', () => {
