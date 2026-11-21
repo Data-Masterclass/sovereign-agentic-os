@@ -19,6 +19,11 @@
 #      (plus the apex alias and both restricted consoles) and the alias redirect — with every
 #      auth Secret they name present, so the controller parses their auth annotations;
 #      twins: a non-ASCII auth-realm and a `$request_uri` permanent-redirect are refused;
+#      plus the Langfuse operator route (`ingress.restricted.langfuse.operatorIngress`, the
+#      values.dev.yaml shape): admitted, its twin with a non-ASCII auth-realm refused; and, live,
+#      it answers 401 without or with wrong basic-auth credentials and 200 with the right ones
+#      (a busybox httpd stands in for the Langfuse Service); twin: the same Ingress with its
+#      auth annotations removed answers 200 without credentials — so the 401s are the gate's;
 #   2. the chart's rendered app-Ingress admission policy is applied;
 #   3. admitted: the Ingress the runner builds (cert-manager issuer only, class nginx), one with
 #      no annotations, and the cert-manager ACME solver identity creating its own Ingress;
@@ -32,7 +37,7 @@ cd "$(dirname "$0")/../.." || exit 2
 . scripts/tests/assert.sh
 . tests/e2e/kind/versions.env
 . scripts/dev/platform-versions.env
-CLUSTER=wpnetsecc
+CLUSTER=${KIND_CLUSTER:-wpnetsecc}
 KEEP=${1:-}
 WORK=$(mktemp -d)
 KCFG=${KIND_TEST_KUBECONFIG:-$WORK/kubeconfig}
@@ -90,6 +95,21 @@ ingress:
         nginx.ingress.kubernetes.io/auth-secret: console-basic-auth
         nginx.ingress.kubernetes.io/auth-realm: "Consoles - operators only"
 YAML
+# The Langfuse operator route as values.dev.yaml turns it on (host given literally: the guard
+# compares it with NEXTAUTH_URL at render time).
+cat > "$WORK/langfuse-operator.yaml" <<'YAML'
+ingress:
+  hosts:
+    langfuse: langfuse.example.com
+  restricted:
+    langfuse:
+      operatorIngress:
+        enabled: true
+langfuse:
+  langfuse:
+    nextauth:
+      url: https://langfuse.example.com
+YAML
 printf 'ingress:\n  redirectAliasToPublicUrl: true\nosUI:\n  publicUrl: https://os.example.com\n' > "$WORK/alias.yaml"
 # render_ingresses <out> <helm -f args…> — the rendered Ingresses only, hosts filled in.
 render_ingresses() {
@@ -142,19 +162,70 @@ render_ingresses "$WORK/alias.ing" -f "$WORK/every-route.yaml" -f "$WORK/alias.y
 check "alias-redirect render: the alias answers with a permanent redirect" "nginx.ingress.kubernetes.io/permanent-redirect:" "$(cat "$WORK/alias.ing")"
 admits_all "alias-redirect" "$WORK/alias.ing"
 
+render_ingresses "$WORK/lfop.ing" -f "$WORK/langfuse-operator.yaml" || exit 2
+check "Langfuse operator render: its Ingress has basic auth from langfuse-basic-auth" "nginx.ingress.kubernetes.io/auth-secret: langfuse-basic-auth" "$(cat "$WORK/lfop.ing")"
+check "Langfuse operator render: on its own host" "host: langfuse.example.com" "$(cat "$WORK/lfop.ing")"
+admits_all "Langfuse-operator" "$WORK/lfop.ing"
+
 echo "== twins: the controller refuses what production refused"
-# twin_refused <label> <python mutation of the Dagster Ingress `d` (dict)>
+# twin_refused <label> <js mutation of the Ingress `d`> [<ingress name> <rendered file>]
+# (default: the Dagster Ingress of the STACKIT render)
 twin_refused() {
-  local label=$1 code=$2 out
+  local label=$1 code=$2 name=${3:-agentic-os-dagster-webserver-ingress} src=${4:-$WORK/stackit.ing} out
   out=$(node -e '
 const y=require(process.argv[2]); const fs=require("fs");
-const d=y.loadAll(fs.readFileSync(process.argv[1],"utf8")).find(x=>x&&x.metadata.name==="agentic-os-dagster-webserver-ingress");
+const d=y.loadAll(fs.readFileSync(process.argv[1],"utf8")).find(x=>x&&x.metadata.name===process.argv[4]);
 d.metadata.name="twin-"+Math.random().toString(36).slice(2,8); eval(process.argv[3]);
-process.stdout.write(y.dump(d));' "$WORK/stackit.ing" "$PWD/os-ui/node_modules/js-yaml" "$code" | k apply --dry-run=server -f - 2>&1)
+process.stdout.write(y.dump(d));' "$src" "$PWD/os-ui/node_modules/js-yaml" "$code" "$name" | k apply --dry-run=server -f - 2>&1)
   [ $? -ne 0 ] && ok "$label is refused by the controller" || bad "$label is refused by the controller" "admitted: ${out:0:200}"
 }
 twin_refused "a non-ASCII auth-realm (with its Secret present)" 'd.metadata.annotations["nginx.ingress.kubernetes.io/auth-realm"]="Dagster \u2014 operators only";'
 twin_refused 'a permanent-redirect carrying $request_uri' 'd.metadata.annotations["nginx.ingress.kubernetes.io/permanent-redirect"]="https://os.example.com$request_uri";'
+twin_refused "the Langfuse operator Ingress with a non-ASCII auth-realm" 'd.metadata.annotations["nginx.ingress.kubernetes.io/auth-realm"]="Langfuse \u2014 operators only";' \
+  agentic-os-langfuse-web-ingress "$WORK/lfop.ing"
+
+echo "== live: the Langfuse operator route is gated by basic auth"
+# A stand-in for the Langfuse web Service (same name and port), so the route has a backend.
+k -n agentic-os apply -f - >/dev/null <<'YAML'
+apiVersion: v1
+kind: Pod
+metadata: { name: lf-stub, labels: { app: lf-stub } }
+spec:
+  containers:
+    - name: httpd
+      image: busybox:1.36
+      command: ["sh", "-c", "mkdir -p /www && echo langfuse-stub > /www/index.html && exec httpd -f -p 3000 -h /www"]
+      ports: [{ containerPort: 3000 }]
+---
+apiVersion: v1
+kind: Service
+metadata: { name: agentic-os-langfuse-web }
+spec:
+  selector: { app: lf-stub }
+  ports: [{ port: 3000, targetPort: 3000 }]
+YAML
+k -n agentic-os wait --for=condition=Ready pod/lf-stub --timeout=180s >/dev/null || exit 2
+# The real htpasswd Secret, with a password only this run knows (replaces the CI one, if any).
+LFPW=$(openssl rand -hex 12)
+k -n agentic-os delete secret langfuse-basic-auth >/dev/null 2>&1
+k -n agentic-os create secret generic langfuse-basic-auth --from-literal=auth="op:$(openssl passwd -apr1 "$LFPW")" >/dev/null || exit 2
+node -e '
+const y=require(process.argv[2]); const fs=require("fs");
+process.stdout.write(y.dump(y.loadAll(fs.readFileSync(process.argv[1],"utf8")).find(x=>x&&x.metadata.name==="agentic-os-langfuse-web-ingress")));' \
+  "$WORK/lfop.ing" "$PWD/os-ui/node_modules/js-yaml" | k apply -f - >/dev/null || exit 2
+k -n ingress-nginx port-forward svc/ingress-nginx-controller 18443:443 >/dev/null 2>&1 &
+PF=$!
+code() { curl -sk -o /dev/null -w '%{http_code}' --resolve langfuse.example.com:18443:127.0.0.1 "$@" https://langfuse.example.com:18443/; }
+for _ in $(seq 1 60); do [ "$(code -u "op:$LFPW")" = 200 ] && break; sleep 2; done
+check "no credentials: 401"        401 "$(code)"
+check "wrong password: 401"        401 "$(code -u op:wrong)"
+check "the operator password: 200" 200 "$(code -u "op:$LFPW")"
+k -n agentic-os annotate ingress agentic-os-langfuse-web-ingress nginx.ingress.kubernetes.io/auth-type- \
+  nginx.ingress.kubernetes.io/auth-secret- nginx.ingress.kubernetes.io/auth-realm- >/dev/null
+for _ in $(seq 1 30); do [ "$(code)" = 200 ] && break; sleep 2; done
+check "twin: without the auth annotations the same route answers 200 with no credentials" 200 "$(code)"
+k -n agentic-os delete ingress agentic-os-langfuse-web-ingress >/dev/null
+kill "$PF" 2>/dev/null
 
 echo "== app-Ingress admission policy"
 if ! helm template agentic-os charts/sovereign-agentic-os -n agentic-os --skip-schema-validation \
