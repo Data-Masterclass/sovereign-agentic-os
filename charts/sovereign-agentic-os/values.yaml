@@ -81,6 +81,16 @@ networkPolicies:
       - { name: os-ui-worker, matchLabels: { app.kubernetes.io/component: os-ui-worker } }
       - { name: dagster-user-code, matchLabels: { component: user-deployments } }
 
+# Dagster run-pod shape, enforced by the API server (templates/extensions/dagster/run-pod-admission.yaml):
+# Pods and Jobs written by the Dagster ServiceAccounts must look like a run pod (run labels only,
+# pinned images, the run ServiceAccount, no host access, not privileged). Empty lists = the
+# subchart's names for this release.
+dagsterPodAdmission:
+  enabled: true
+  launcherServiceAccounts: []
+  runServiceAccounts: []
+  extraImages: []
+
 # Backups (templates/extensions/backup/).
 backup:
   pgDump:

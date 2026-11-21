@@ -59,3 +59,11 @@ the image by `images/extensions/dagster/tests/image/literal_safety.py`:
 - Trino 476 reserved keywords: https://trino.io/docs/476/language/reserved.html · Unicode string
   literals `U&'…'`: https://trino.io/docs/476/language/types.html
 
+
+## Run-pod shape (ValidatingAdmissionPolicy)
+- Kubernetes ValidatingAdmissionPolicy, `admissionregistration.k8s.io/v1` (GA since 1.30; STACKIT runs 1.35):
+  https://kubernetes.io/docs/reference/access-authn-authz/validating-admission-policy/ — CEL with optional
+  map access (`m[?'key'].orValue(...)`), `matchConditions` on `request.userInfo.username`.
+- The run pod's labels are dagster-k8s's own (`get_common_labels`, `component="run_worker"`, `dagster/*`;
+  dagster_k8s/job.py and launcher.py at 1.13.11) plus the chart's `podTemplateSpecMetadata`.
+- Chart: `templates/extensions/dagster/run-pod-admission.yaml`, values `dagsterPodAdmission`.
