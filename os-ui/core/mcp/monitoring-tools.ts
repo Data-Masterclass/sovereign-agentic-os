@@ -5,10 +5,9 @@ import 'server-only';
 import type { McpTool, JsonSchema } from '@core/mcp/server';
 
 // --- The EXACT governed monitoring spine the Monitoring tab + /api/monitoring call
-import { buildOverview, scopeForUser, filterScope, fetchTrace, assertInScope } from '@tabs/monitoring/lib/index';
+import { buildOverview, scopeForUser, filterScope, fetchTrace, assertInScope, isPanelView, monitoringPanels, PANEL_VIEWS } from '@tabs/monitoring/lib/index';
 import { collectRunList, isRunListStatus, RUN_LIST_STATUSES } from '@tabs/monitoring/lib/adapters/run-trace';
 import { isRunId } from '@core/kernel/run-id';
-import { isPanelView, monitoringPanels, PANEL_VIEWS } from '@tabs/monitoring/lib/panels/index';
 
 /**
  * THE MONITORING MCP SURFACE (mcp-v2 P4) — READ-ONLY and HARD-SCOPED. Three thin

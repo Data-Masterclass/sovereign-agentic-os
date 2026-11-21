@@ -34,8 +34,8 @@ export type PlatformView = {
   components: ComponentProbe[];
   pressure: { state: SourceState; nodes: NodePressure[]; topMemory: PodUse[]; topCpu: PodUse[]; queries: typeof PROMQL };
   errorLogs: { state: SourceState; rows: ErrorLogRow[]; query: string };
-  backups: HealthItem[];
-  alerts: Alert[];
+  backups: { state: SourceState; items: HealthItem[] };
+  alerts: { state: SourceState; items: Alert[] };
   notUpstream: NotUpstream[];
 };
 
@@ -69,8 +69,8 @@ export async function platformView(user: CurrentUser, nowMs = Date.now()): Promi
     promInstant(PROMQL.topPodMemory),
     promInstant(PROMQL.topPodCpu),
     logsQuery(ERROR_LOG_QUERY),
-    collectBackups(new Date(nowMs)).catch(() => [] as HealthItem[]),
-    buildOverview(user).catch(() => null),
+    collectBackups(new Date(nowMs)).then((items) => ({ ok: true as const, items }), (e: Error) => ({ ok: false as const, error: e.message })),
+    buildOverview(user).then((ov) => ({ ok: true as const, alerts: ov.alerts }), (e: Error) => ({ ok: false as const, error: e.message })),
   ]);
   const vmFail = [mem, disk, topMem, topCpu].find((r) => !r.ok);
   return {
@@ -85,8 +85,8 @@ export async function platformView(user: CurrentUser, nowMs = Date.now()): Promi
       queries: PROMQL,
     },
     errorLogs: { state: logs.ok ? live : unavailable(`VictoriaLogs: ${logs.detail}`), rows: logs.ok ? errorLogRows(logs.value) : [], query: ERROR_LOG_QUERY },
-    backups,
-    alerts: overview?.alerts ?? [],
+    backups: { state: backups.ok ? live : unavailable(`backups: ${backups.error}`), items: backups.ok ? backups.items : [] },
+    alerts: { state: overview.ok ? live : unavailable(`alerts: ${overview.error}`), items: overview.ok ? overview.alerts : [] },
     notUpstream: NOT_UPSTREAM,
   };
 }

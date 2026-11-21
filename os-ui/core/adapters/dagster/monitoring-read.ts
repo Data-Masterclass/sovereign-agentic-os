@@ -6,14 +6,20 @@
  * USER STORY: As a data engineer I want each dataset's job and schedule health, its quality trend and
  *             the assets impacted downstream, all as Dagster records them.
  * ARCHITECTURE:
- *   - GraphQL through the one typed client (`gql` in core/infra/dagster.ts), READ-ONLY:
+ *   - GraphQL through the one typed client (`gql` in core/infra/dagster.ts), READ-ONLY, answering
+ *     the adapter contract (`Fetched`, core/adapters/_contract.ts):
  *     `assetCheckExecutions(assetKey, checkName, limit)` and `assetNodes { dependedByKeys }`
  *     (https://docs.dagster.io/api/graphql).
  *   - `jobHealthOf` groups `runsOrError` rows (already read by `recentOsRuns`) by the run's own
  *     `os/dataset` tag, job name and `dagster/schedule_name` tag, for the asked datasets only.
  *   - `downstreamOf` is the transitive closure of `dependedByKeys` — Dagster's lineage, not the OS's.
  */
-import { gql, type DagsterDeps, type DagsterRun, type Fetched } from '@core/infra/dagster';
+import { gql, type DagsterDeps, type DagsterRun } from '@core/infra/dagster';
+import type { Fetched } from '../_contract';
+import { failed, fetched } from '../health/http';
+
+/** The typed client's `{ok:false, error}` → the adapter contract's failure (Dagster down, GraphQL error). */
+const failure = <T>(error: string): Fetched<T> => failed(/timeout|did not answer/i.test(error) ? 'timeout' : /HTTP 4\d\d|GraphQL|Error:/.test(error) ? 'invalid' : 'unreachable', `Dagster: ${error}`);
 
 export type CheckExecution = { runId: string; at: string; passed: boolean | null; status: string };
 
@@ -22,14 +28,13 @@ const EXECUTIONS = `query Ex($key: AssetKeyInput!, $name: String!, $limit: Int!)
 /** A check's executions, newest first. `passed` null while it has no evaluation (in progress / skipped). */
 export async function checkExecutions(key: string[], checkName: string, limit = 10, deps: DagsterDeps = {}): Promise<Fetched<CheckExecution[]>> {
   const r = await gql<{ assetCheckExecutions: Record<string, unknown>[] }>(EXECUTIONS, { key: { path: key }, name: checkName, limit }, deps);
-  if (!r.ok) return r;
-  return {
-    ok: true,
-    data: (r.data.assetCheckExecutions ?? []).map((e) => {
+  if (!r.ok) return failure(r.error);
+  return fetched(
+    (r.data.assetCheckExecutions ?? []).map((e) => {
       const ev = e.evaluation as { success?: boolean } | null;
       return { runId: String(e.runId ?? ''), at: new Date(Number(e.timestamp) * 1000).toISOString(), passed: typeof ev?.success === 'boolean' ? ev.success : null, status: String(e.status ?? '') };
     }),
-  };
+  );
 }
 
 export type DependedBy = Map<string, string[][]>;
@@ -40,13 +45,13 @@ const GRAPH = `query DependedBy { assetNodes { assetKey { path } dependedByKeys 
 /** Every asset → the assets that read it (Dagster's own lineage). */
 export async function dependedByGraph(deps: DagsterDeps = {}): Promise<Fetched<DependedBy>> {
   const r = await gql<{ assetNodes: Record<string, unknown>[] }>(GRAPH, {}, deps);
-  if (!r.ok) return r;
+  if (!r.ok) return failure(r.error);
   const out: DependedBy = new Map();
   for (const n of r.data.assetNodes ?? []) {
     const path = (n.assetKey as { path?: string[] })?.path ?? [];
     out.set(k(path), ((n.dependedByKeys as { path?: string[] }[]) ?? []).map((d) => d.path ?? []));
   }
-  return { ok: true, data: out };
+  return fetched(out);
 }
 
 /** The assets transitively downstream of `from` (excluding `from` itself), sorted by key. */

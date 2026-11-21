@@ -47,17 +47,18 @@ test('job and schedule health per dataset from Dagster runs; another dataset is 
 test('check executions come back newest first with pass/fail from Dagster', { skip: !on }, async () => {
   const ex = await checkExecutions(['sales', 'orders'], 'not_null_orders_id', 10, deps);
   assert.ok(ex.ok, JSON.stringify(ex));
-  assert.ok(ex.data.length >= 2);
-  assert.equal(ex.data[0].passed, false, 'the newest execution failed');
-  assert.equal(ex.data.at(-1)!.passed, true, 'the oldest execution passed');
-  assert.ok(ex.data.every((e) => e.runId && e.at));
+  assert.ok(ex.value.length >= 2);
+  assert.equal(ex.value[0].passed, false, 'the newest execution failed');
+  assert.equal(ex.value.at(-1)!.passed, true, 'the oldest execution passed');
+  assert.ok(ex.value.every((e) => e.runId && e.at));
 });
 
 test('downstream assets are the transitive closure of Dagster’s dependedByKeys', { skip: !on }, async () => {
   const g = await dependedByGraph(deps);
   assert.ok(g.ok, JSON.stringify(g));
-  assert.deepEqual(downstreamOf(g.data, [['sales', 'stg_orders']]), [['sales', 'orders'], ['sales', 'orders_mart']]);
-  assert.deepEqual(downstreamOf(g.data, [['sales', 'orders_mart']]), []);
+  assert.deepEqual(downstreamOf(g.value, [['sales', 'stg_orders']]), [['sales', 'orders'], ['sales', 'orders_mart']]);
+  assert.deepEqual(downstreamOf(g.value, [['sales', 'orders_mart']]), []);
   const down = await dependedByGraph({ url: 'http://127.0.0.1:1', timeoutMs: 1000 });
   assert.equal(down.ok, false);
+  assert.equal(!down.ok && down.reason, 'unreachable');
 });

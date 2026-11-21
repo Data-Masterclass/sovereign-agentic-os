@@ -16,3 +16,4 @@ export { buildOverview, collectAll } from '@tabs/monitoring/lib/aggregate';
 export { correlate } from '@tabs/monitoring/lib/correlate';
 export { scopeForUser, canSee, filterScope, assertInScope } from '@tabs/monitoring/lib/scope';
 export { fetchTrace } from '@tabs/monitoring/lib/adapters/run-trace';
+export { monitoringPanels, isPanelView, PANEL_VIEWS, type PanelView } from '@tabs/monitoring/lib/panels/index';
