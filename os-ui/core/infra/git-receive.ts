@@ -45,6 +45,7 @@ import {
 import fs from 'node:fs';
 import path from 'node:path';
 import { config } from '@core/kernel/config';
+import { DATA_LAYOUT } from '@core/infra/data-layout';
 import { acquireRepoLock, listTree, MAIN, readBlob, repoExists, repoLayout, repoPath, RepoLockTimeoutError, type TreeEntry } from '@core/infra/git-store';
 import { generatedReadmes, isGeneratedReadme } from '@core/infra/repo-readme';
 import { notifyCommitted } from '@core/infra/git-backup';
@@ -659,7 +660,7 @@ export async function beginReceive(
     if (oldHead) {
       let generated: Record<string, string | null> = {};
       try {
-        const doc = (await import('js-yaml')).load(await readBlob(domain, oldHead, 'os/generated.yml', { reposDir })) as { files?: Record<string, string | null> } | null;
+        const doc = (await import('js-yaml')).load(await readBlob(domain, oldHead, DATA_LAYOUT.generatedHashesPath, { reposDir })) as { files?: Record<string, string | null> } | null;
         generated = doc && typeof doc === 'object' && doc.files && typeof doc.files === 'object' ? doc.files : {};
       } catch {
         generated = {};
