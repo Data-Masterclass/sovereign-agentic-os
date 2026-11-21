@@ -12,7 +12,7 @@
  *     than impersonating the domain (concept §3). The sidecar sets a non-entitled principal to parse.
  *   - `generate_schema_name` returns the custom schema verbatim so `+schema: personal_<uid>`
  *     lands in `personal_<uid>`, not `<target>_personal_<uid>` (dbt's default concatenation).
- *   - `tests/generic/range.sql` and `not_blank.sql` carry the predicates of `dq.ts` so the same
+ *   - `macros/generic/range.sql` and `not_blank.sql` (OS-owned `macros/`: a pushed `tests/generic/<name>.sql` would override a dbt built-in) carry the predicates of `dq.ts` so the same
  *     row counts as a violation in the OS and in `dbt test`.
  */
 import { yml, textFile } from '@tabs/data/lib/dbt/emit';
@@ -198,7 +198,7 @@ export function renderMacros(): Map<string, string> {
 export function renderGenericTests(): Map<string, string> {
   return new Map([
     [
-      'tests/generic/range.sql',
+      'macros/generic/range.sql',
       textFile([
         '{#- Sovereign OS quality rule `range`: a NON-NULL value outside [min, max] is a violation',
         '    (one-sided when only min or max is set). Same predicate as tabs/data/lib/dq.ts. -#}',
@@ -218,7 +218,7 @@ export function renderGenericTests(): Map<string, string> {
       ]),
     ],
     [
-      'tests/generic/not_blank.sql',
+      'macros/generic/not_blank.sql',
       textFile([
         '{#- Sovereign OS quality rule `not_blank`: NULL or an empty / whitespace-only string is a',
         '    violation. Same predicate as tabs/data/lib/dq.ts. -#}',
@@ -265,7 +265,7 @@ export function renderReadme(domain: string, plan: ModelPlanSet, semantic?: Sema
     '- `models/sources.yml` — Bronze landings and federated tables dbt reads but never writes',
     '- `models/silver/`, `models/gold/` — promoted (domain) layers; `models/personal/<uid>/` — personal lane',
     '- `models/**/schema.yml` — descriptions and the quality rules as tests',
-    '- `tests/generic/` — the `range` and `not_blank` tests the OS rules compile to',
+    '- `macros/generic/` — the `range` and `not_blank` tests the OS rules compile to',
     '- `macros/os_maintenance.sql` — weekly Iceberg `optimize` + `expire_snapshots`, run by Dagster per schema',
     '- `os/schedules.yml` — sync schedules (cron, UTC, principal) for the Dagster code location',
     '- `os/external.yml` — sources dbt cannot model (Kafka offsets, API batch); Dagster assets',

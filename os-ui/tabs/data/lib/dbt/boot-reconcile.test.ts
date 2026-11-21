@@ -124,6 +124,26 @@ test('first boot with the flag on: every existing dataset gets its initial commi
   }
 });
 
+test('every domain\'s boot commit carries os/owned-files.yml, and a domain whose head lacks it gets one (the receive gate fails closed without it)', async () => {
+  seed();
+  const run = () => reconcileDataProjectsAtBoot({ committer, hydrate: async () => {}, hydration: () => 'hydrated' as const, domains: async () => ['sales', 'finance'] });
+  await run();
+  for (const call of calls) {
+    const owned = call.files.get('os/owned-files.yml');
+    assert.ok(owned, `${call.domain}: the commit carries the OS's list of generated files`);
+    assert.match(owned!, /files:/);
+  }
+  // A domain committed BEFORE the file existed: its head is today's tree minus the file.
+  const sales = calls.find((c) => c.domain === 'sales')!;
+  const old = new Map(sales.files);
+  old.delete('os/owned-files.yml');
+  heads.set('sales', hash(old));
+  calls = [];
+  await run();
+  assert.deepEqual(calls.map((c) => c.domain), ['sales'], 'only the stale domain is re-committed, and it gets the file');
+  assert.ok(calls[0].files.has('os/owned-files.yml'));
+});
+
 test('a second boot that changed nothing commits nothing', async () => {
   seed();
   await reconcileDataProjectsAtBoot({ committer, hydrate: async () => {}, hydration: () => 'hydrated' as const, domains: async () => ['sales', 'finance'] });

@@ -573,7 +573,8 @@ test('shape (b): the composition body equals today\'s compileGoldJoin SELECT aft
     'reference(customer_id -> ds_elsewhere.customer_id)',
   ]);
   assert.deepEqual(gold.config.meta.os_upstreams, ['ds_cust0001', 'ds_orders1']);
-  assert.ok(files.has('tests/generic/range.sql') && files.has('tests/generic/not_blank.sql'));
+  assert.ok(files.has('macros/generic/range.sql') && files.has('macros/generic/not_blank.sql'), 'the OS\'s generic tests live in OS-owned macros/');
+  assert.ok(![...files.keys()].some((k) => k.startsWith('tests/generic/')), 'no pushable generic-test path is generated');
 });
 
 test('shape (c): append = delete+insert on _batch_id with the 15-minute lookback; merge = merge on keys; read from the dlt landing (WP-49)', () => {

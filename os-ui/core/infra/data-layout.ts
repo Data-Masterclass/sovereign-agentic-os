@@ -23,4 +23,6 @@ export const DATA_LAYOUT = {
   dagsterDefinitionsPath: DAGSTER_DEFINITIONS_PATH,
   /** OS layer: sha256 of each generated native file the platform executes (artifact contract C5). */
   generatedHashesPath: osPath('generated.yml'),
+  /** OS layer, ALWAYS written: every generated model/test file with its owner. The receive gate reads it. */
+  ownedFilesPath: osPath('owned-files.yml'),
 } as const;

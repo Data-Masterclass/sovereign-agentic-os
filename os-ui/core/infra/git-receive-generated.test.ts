@@ -13,7 +13,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { abortReceive, beginReceive, decidePath, generatedFileViolation, type Pusher } from '@core/infra/git-receive';
+import { abortReceive, beginReceive, decidePath, failClosedViolation, generatedFileViolation, type Pusher } from '@core/infra/git-receive';
 import { commitTree, MAIN } from '@core/infra/git-store';
 
 const pusher = (id: string, role: Pusher['role']): Pusher => ({ id, role, domains: ['sales'] });
@@ -39,7 +39,7 @@ test('NEGATIVE TWINS: a generated file with no owner (a shared yml) is for admin
 });
 
 test('a builder may not push tests, seeds or snapshots into a shared path; a domain admin and an own-lane push may', () => {
-  for (const p of ['tests/orders_positive.sql', 'seeds/countries.csv', 'snapshots/orders_snap.sql']) {
+  for (const p of ['tests/orders_positive.sql', 'tests/generic/not_null.sql', 'seeds/countries.csv', 'snapshots/orders_snap.sql']) {
     const v = decidePath(p, pusher('bob', 'builder'));
     assert.equal(v.allowed, false, p);
     assert.match(v.allowed ? '' : v.reason, /run as their owner|domain admin/, p);
@@ -54,7 +54,7 @@ test('the receive gate refuses a push that changes a generated file of another o
   const head = await commitTree('sales', new Map([
     ['dbt_project.yml', 'name: s\n'],
     ['models/silver/silver_orders.sql', 'select 1\n'],
-    ['os/generated.yml', 'version: 1\nfiles:\n  models/silver/silver_orders.sql: alice\n'],
+    ['os/owned-files.yml', 'version: 1\nfiles:\n  models/silver/silver_orders.sql: alice\n'],
   ]), { author: writer, message: 'v1', reposDir });
   const upd = [{ ref: MAIN, oldSha: head.sha, newSha: 'f'.repeat(40), fastForward: true }];
   const change = (p: string) => [{ path: p, status: 'modified' as const, content: 'select 2\n' }];
@@ -66,5 +66,29 @@ test('the receive gate refuses a push that changes a generated file of another o
   abortReceive('sales');
   const other = await beginReceive({ domain: 'sales', pusher: pusher('bob', 'builder'), updates: upd, changed: [{ path: 'models/silver/silver_new.sql', status: 'added', content: 'select 1\n' }] }, { reposDir });
   assert.equal(other.ok, true, 'a new file is not an OS-generated one');
+  abortReceive('sales');
+});
+
+test('fail closed: without the OS\'s list of generated files, builders and creators may not push models or tests (admins and the own lane may)', () => {
+  for (const p of ['models/silver/x.sql', 'tests/x.sql']) {
+    assert.match(failClosedViolation(p, pusher('bob', 'builder')) ?? '', /until the OS regenerates/, p);
+    assert.ok(failClosedViolation(p, pusher('bob', 'creator')), p);
+    assert.equal(failClosedViolation(p, pusher('dora', 'domain_admin')), null);
+  }
+  assert.equal(failClosedViolation('models/personal/bob/x.sql', pusher('bob', 'builder')), null, 'own lane');
+  assert.equal(failClosedViolation('docs/readme.md', pusher('bob', 'builder')), null, 'only models/ and tests/ are held');
+});
+
+test('the receive gate fails closed when the old head has no os/owned-files.yml, and opens once it has', async () => {
+  const reposDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lane-fc-'));
+  const writer = { name: 'Writer', email: 'writer@os.invalid' };
+  const bare = await commitTree('sales', new Map([['dbt_project.yml', 'name: s\n'], ['models/silver/silver_orders.sql', 'select 1\n']]), { author: writer, message: 'v1', reposDir });
+  const push = (sha: string, p: string) => beginReceive({ domain: 'sales', pusher: pusher('bob', 'builder'), updates: [{ ref: MAIN, oldSha: sha, newSha: 'f'.repeat(40), fastForward: true }], changed: [{ path: p, status: 'added', content: 'select 1\n' }] }, { reposDir });
+  const refused = await push(bare.sha, 'models/silver/new.sql');
+  assert.equal(refused.ok, false);
+  assert.match(refused.ok === false ? refused.message : '', /until the OS regenerates/);
+  const withList = await commitTree('sales', new Map([['dbt_project.yml', 'name: s\n'], ['models/silver/silver_orders.sql', 'select 1\n'], ['os/owned-files.yml', 'version: 1\nfiles:\n  models/silver/silver_orders.sql: alice\n']]), { author: writer, message: 'v2', reposDir });
+  const ok = await push(withList.sha, 'models/silver/new.sql');
+  assert.equal(ok.ok, true, ok.ok ? '' : ok.message);
   abortReceive('sales');
 });
