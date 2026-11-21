@@ -575,3 +575,38 @@ test('NO KEY IN THE OUTPUT: the build report and the rotation outcome carry no k
   for (const value of d.litellm.values) assert.ok(!text.includes(value), 'a key value reached the build output');
   assert.doesNotMatch(text, /sk-[A-Za-z0-9_-]{20,}/, 'nothing shaped like a key in the build output');
 });
+
+// A declared output's write tool (here `save_knowledge_note` for a Knowledge output) is handed to
+// the producing agent at RUN time (withOutputTools). The system's model key must allow the same
+// tools, or LiteLLM refuses the run with tool_access_denied (prod, 21 Nov 2026).
+const OUTPUT_YAML = `
+system: { name: Invoices, domain: sales, visibility: Personal }
+entrypoint: reader
+grants:
+  knowledge:
+    - id: ''
+      capability: Write-bounded
+      folder: { path: /results, scope: personal }
+  tools: [list_files]
+outputs:
+  - { kind: knowledge, name: Result, folder: { path: /results, scope: personal } }
+agents:
+  - { id: reader, role: r, agent_md: "# Reader", memory_md: "", tools: [list_files] }
+`;
+
+test('the system key allows the write tool of every declared output (save_knowledge_note)', async () => {
+  const d = deps();
+  await orchestrateBuild({ yaml: OUTPUT_YAML, systemId: 'sys_out', adapters: makeLiveAdapters(d), probe: 'p' });
+  const info = d.litellm.keys.get('os-sys_out')!;
+  assert.ok(info, 'key registered');
+  assert.ok(info.allowedTools.includes('save_knowledge_note'), `allowed tools: ${info.allowedTools.join(',')}`);
+  assert.ok(info.allowedTools.includes('list_files'));
+});
+
+test('negative twin: a system with no declared output gets no output write tool on its key', async () => {
+  const d = deps();
+  const noOut = OUTPUT_YAML.replace(/outputs:\n.*\n/, '');
+  await orchestrateBuild({ yaml: noOut, systemId: 'sys_noout', adapters: makeLiveAdapters(d), probe: 'p' });
+  const info = d.litellm.keys.get('os-sys_noout')!;
+  assert.ok(!info.allowedTools.includes('save_knowledge_note'));
+});
