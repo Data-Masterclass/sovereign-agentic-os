@@ -295,6 +295,26 @@ If a run Job stays Running with its main container done, the guard did not fire 
 `includeConfigInLaunchedRuns.enabled: false` on the deployment and move the run pods' `volumes`,
 `volumeMounts` and env to `dagster.runLauncher.config.k8sRunLauncher` instead.
 
+## Status from dbt and Dagster, one parse gate (WP-16)
+
+Off by default (`dagsterRepoStatus.enabled`). repo-sync stays the single dbt gate (10 F10); its
+status server is the feed, through Service `dagster-repo-status:8089` (bearer: the runtime token;
+NetworkPolicy: os-ui, os-ui-worker, metric-compile):
+
+- `GET /status.json` — every domain's head, the commit Dagster runs (`current`), dbt's error.
+- `GET /verdicts/<domain>/<sha>.json` — dbt's verdict for that commit, `{ok:true}` or the refusal
+  with dbt's own text. A refused sha is parsed once until `main` moves.
+- `GET /manifests/<domain>/<sha>/{manifest,semantic_manifest}.json` — dbt's own artifacts of a
+  commit that parsed (the current and the previous good one), for metric-compile and lineage.
+
+os-ui reads them in `core/adapters/dagster/graphql-read.ts` (`repoStatus`, `repoVerdict`,
+`repoManifest`) and copies each head's verdict into `os_governance.commit_checks(domain, sha,
+'dbt-parse')` every 30 s (`commit-checks.ts`). `assetHealth(key)` reads each asset check's
+execution for the latest materialization from Dagster GraphQL; Dagster OSS 1.13 serves no
+`assetHealth` rollup (`dagster_asset_health_queries_supported()` is False outside Dagster+).
+repo.py's translator turns dbt source tests into asset checks on the source asset
+(`enable_source_tests_as_checks=True`, 01 R6). Proof: `tests/dagster/repo-status.int.test.ts`.
+
 ## Known limits
 
 - **WP-49 needs the WP-55 layout.** The generated module expects the dbt project at `data/dbt/`

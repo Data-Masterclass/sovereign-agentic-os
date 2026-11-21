@@ -55,7 +55,7 @@ from dagster import (
     sensor,
 )
 from dagster import DataVersion, ObserveResult, build_last_update_freshness_checks, observable_source_asset
-from dagster_dbt import DagsterDbtTranslator, DbtCliResource, build_dbt_asset_selection, dbt_assets
+from dagster_dbt import DagsterDbtTranslator, DagsterDbtTranslatorSettings, DbtCliResource, build_dbt_asset_selection, dbt_assets
 
 import os_projects as osp
 
@@ -71,7 +71,9 @@ class PrefixedTranslator(DagsterDbtTranslator):
     """Asset keys `[<domain>, <node>]`, grouped per domain (`group` = the unique Dagster name)."""
 
     def __init__(self, domain: str, group: str | None = None):
-        super().__init__()
+        # WP-16 (01 R6): a quality rule on a source (a dbt source test) is an asset check on the
+        # source asset too, not only model tests — dagster-dbt's own setting (default False).
+        super().__init__(settings=DagsterDbtTranslatorSettings(enable_source_tests_as_checks=True))
         self._domain = domain
         self._group = group or osp.sanitize(domain)
 

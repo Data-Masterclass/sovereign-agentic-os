@@ -1,0 +1,28 @@
+{{- /*
+  WP-16 (design 01 M2; 10 F6, F10): Service `dagster-repo-status` in front of repo-sync's read-only
+  feed on the code-server pod (status.json, per-commit dbt verdicts, dbt's manifests). The pod
+  serves it on its own IP behind the runtime bearer (images/extensions/dagster/repo-sync.sh); the
+  NetworkPolicy dagster-code-location-ingress admits only os-ui, os-ui-worker and metric-compile.
+  Selected by the code server's own labels: launched run pods carry `component: user-deployments`
+  but not `app.kubernetes.io/name: dagster-user-deployments`, so they are never endpoints.
+  Off by default (`dagsterRepoStatus.enabled`).
+*/}}
+{{- if and .Values.dagster.enabled (.Values.dagsterRepoStatus | default dict).enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: dagster-repo-status
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: dagster-user-deployments
+    component: user-deployments
+    deployment: {{ .Values.dagsterRepoStatus.location | default "sovereign" }}
+  ports:
+    - name: repo-status
+      port: {{ .Values.dagsterRepoStatus.port | default 8089 }}
+      targetPort: repo-status
+{{- end }}
