@@ -2850,6 +2850,9 @@ button.card.tile:focus-visible { outline: 2px solid var(--gold-line); outline-of
   font-weight: 600;
   letter-spacing: 0.2px;
   color: var(--text);
+  /* Shrink beside the badges without running under them: a long word breaks inside the title. */
+  min-width: 0;
+  overflow-wrap: break-word;
 }
 .tile-meta { display: flex; align-items: center; gap: 7px; font-size: 12px; }
 .dot-sep { color: var(--border-strong); }
