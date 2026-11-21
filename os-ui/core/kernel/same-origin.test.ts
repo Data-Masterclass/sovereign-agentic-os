@@ -12,7 +12,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { checkSameOrigin, needsSameOriginCheck, requestOriginOf } from '@core/kernel/same-origin';
+import { canonicalApiPath, checkSameOrigin, needsSameOriginCheck, requestOriginOf } from '@core/kernel/same-origin';
 
 const OS = 'https://agentic.datamasterclass.com';
 const APP = 'https://x.apps.agentic.datamasterclass.com';
@@ -151,4 +151,60 @@ test('requestOriginOf prefers the forwarded host + scheme (ingress)', () => {
     'https://agentic.datamasterclass.com',
   );
   assert.equal(requestOriginOf(u, new Headers({})), 'http://10.0.0.5:3000');
+});
+
+// ---------------------------------------------------------------- audited state-changing GETs
+
+test('REFUSED: state-changing / credential-minting GETs from an apps subdomain', () => {
+  for (const p of [
+    '/api/metrics/alerts/run',
+    '/api/mcp/token',
+    '/api/connections/oauth/github/authorize',
+    '/api/connections/notion/authorize',
+  ]) {
+    assert.equal(req('GET', p, { origin: APP, 'sec-fetch-site': 'same-site' }).ok, false, p);
+    assert.equal(req('GET', p, {}).ok, false, `${p} (no provenance)`);
+  }
+});
+
+test('WORKS: the same GETs from the OS UI, and the alert cron with its Origin', () => {
+  for (const p of ['/api/metrics/alerts/run', '/api/mcp/token', '/api/connections/notion/authorize']) {
+    assert.equal(req('GET', p, { 'sec-fetch-site': 'same-origin' }).ok, true, p);
+  }
+  assert.equal(
+    req('GET', '/api/metrics/alerts/run', { origin: 'http://os-ui:3000' }, { requestOrigin: 'http://os-ui:3000' }).ok,
+    true,
+  );
+});
+
+test('the OAuth callbacks and the e-mail verify link stay unchecked GETs (cross-site by design)', () => {
+  for (const p of ['/api/connections/oauth/github/callback', '/api/connections/notion/callback', '/api/auth/verify']) {
+    assert.equal(needsSameOriginCheck('GET', p), false, p);
+  }
+});
+
+// ---------------------------------------------------------------- tool proxy writes
+
+test('REFUSED: a cookie-carrying write through the tool proxy from an apps subdomain', () => {
+  assert.equal(req('POST', '/tools/dagster/graphql', { origin: APP }).ok, false);
+  assert.equal(req('POST', '/tools/dagster/graphql', { origin: OS }).ok, true);
+  assert.equal(needsSameOriginCheck('GET', '/tools/dagster/'), false);
+});
+
+// ---------------------------------------------------------------- path tricks
+
+test('path spellings of admin routes are judged as the admin route', () => {
+  for (const p of [
+    '/API/platform-admin/settings',
+    '/Api/Platform-Admin/settings',
+    '/api//platform-admin/settings',
+    '/api/platform-admin%2Fsettings',
+    '/api/platform-admin%2fsettings',
+    '/api%2Fplatform-admin/settings',
+    '/api/platform-admin%5Csettings',
+  ]) {
+    assert.equal(needsSameOriginCheck('GET', p), true, p);
+    assert.equal(req('GET', p, { origin: APP }).ok, false, p);
+  }
+  assert.equal(canonicalApiPath('/API//platform-admin%2Fx'), '/api/platform-admin/x');
 });
