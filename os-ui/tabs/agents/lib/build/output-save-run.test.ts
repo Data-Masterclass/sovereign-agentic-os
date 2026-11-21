@@ -468,4 +468,22 @@ test('outputs are filed in the agent system\'s domain, not the runner\'s first d
   const made = w.calls.find((c) => c.name === 'create_dataset')!;
   assert.equal((note.args as Record<string, unknown>).domain, 'finance');
   assert.equal((made.args as Record<string, unknown>).domain, 'finance');
+  const file = w.calls.find((c) => c.name === 'upload_file')!;
+  assert.equal((file.args as Record<string, unknown>).domain, 'finance');
+});
+
+test('a runner outside the system\'s domain gets every output refused with the reason — nothing is filed elsewhere', async () => {
+  const outsider: CurrentUser = { ...USER, id: 'olga', domains: ['sales'], allDomains: ['sales'] };
+  const w = world();
+  const run = withOutputTools(threeOutputs());
+  const outputs = await saveRunOutputs({
+    user: outsider, system: run, systemId: 'sys-inv', runId: newRun(), at: AT, status: 'done',
+    nodes: [{ node: 'reader', status: 'ok', finalText: `rows:\n\n${ROWS}` }, { node: 'writer', status: 'ok', finalText: REPORT }], ...w.door,
+  });
+  assert.equal(outputs.length, 3);
+  for (const o of outputs) {
+    assert.equal(o.state, 'not_saved');
+    assert.match(o.reason ?? '', /not a member of the domain “finance”/);
+  }
+  assert.deepEqual(w.writes(), [], 'not one write was dispatched');
 });
