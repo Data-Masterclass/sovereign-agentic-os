@@ -43,11 +43,12 @@ test('the native schedule selects the landing\'s downstream only inside the owne
   const { files } = generateProjectReport('sales', snap());
   const py = files.get(DATA_LAYOUT.dagsterDefinitionsPath)!;
   const alice = py.split('\n').find((l) => /sales__ds_alice001 = dg\.define_asset_job/.test(l))!;
-  assert.match(alice, /\.downstream\(\) & dg\.AssetSelection\.assets\(/, alice);
-  const owned = alice.slice(alice.indexOf('& dg.AssetSelection.assets('));
-  assert.match(owned, /"sales", "silver_orders"|\["sales", "silver_orders"\]/);
+  // a database sync: the dlt landing's downstream, intersected with (the landing | the owner's dbt models by name)
+  assert.match(alice, /\.downstream\(\) & \(dg\.AssetSelection\.assets\(\[[^)]*\]\) \| build_dbt_asset_selection\(\[sales_dbt\], dbt_select="/, alice);
+  const owned = alice.slice(alice.indexOf('| build_dbt_asset_selection'));
+  assert.match(owned, /dbt_select="bronze_orders gold_orders silver_orders"/);
   assert.doesNotMatch(owned, /events/, 'bob\'s models are not in alice\'s set');
-  assert.doesNotMatch(py, /dbt_select=/, 'no author-writable selector (`meta`, `tag`) selects models');
+  assert.doesNotMatch(py, /dbt_select="[^"]*(config\.|meta|tag:|path:)/, 'no author-writable selector (`meta`, `config`, `tag`) selects models');
 });
 
 test('os/generated.yml (unpushable) records which owner each generated model belongs to', () => {
