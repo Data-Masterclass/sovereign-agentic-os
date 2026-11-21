@@ -1,0 +1,44 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+#
+# scaffold-build — the `vite-os` seed is installed from the public npm registry with its committed
+# lockfile and built with its own `npm run build` (tsc -b && vite build). Negative twin: the same
+# tree without src/vite-env.d.ts must fail tsc on ImportMeta.env.
+name: scaffold-build
+
+on:
+  pull_request:
+    paths:
+      - "os-ui/tabs/software/lib/scaffolds/**"
+      - "os-ui/tabs/software/lib/scaffold-lock.ts"
+      - "os-ui/core/app-ui/**"
+      - "os-ui/core/app-sdk/**"
+      - ".github/workflows/scaffold-build.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  vite-os:
+    name: vite-os seed builds
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: 22
+
+      - name: os-ui dependencies
+        working-directory: os-ui
+        run: npm ci --no-audit --no-fund
+
+      - name: Seed → npm ci → npm run build; negative twin
+        working-directory: os-ui
+        env:
+          SCAFFOLD_BUILD: "1"
+        run: node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test tabs/software/lib/scaffolds/vite-os.build.test.ts
