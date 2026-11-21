@@ -588,8 +588,8 @@ test('shape (c): append = delete+insert on _batch_id with the 15-minute lookback
   assert.match(merge, /where "version" > \(select max\("version"\) from \{\{ this \}\}\)\n/);
   const schedules = yaml.load(files.get('os/schedules.yml')!) as { schedules: Record<string, unknown>[] };
   assert.deepEqual(schedules.schedules, [
-    { dataset: 'ds_accts001', name: 'gold_accounts', select: 'gold_accounts+', cron: '0 6 * * *', timezone: 'UTC', principal: 'bea', enabled: false },
-    { dataset: 'ds_events01', name: 'silver_events', select: 'silver_events+', cron: '*/15 * * * *', timezone: 'UTC', principal: 'bea', enabled: true },
+    { dataset: 'ds_accts001', name: 'gold_accounts', select: 'gold_accounts+,config.meta.os_owner:bea', exclude: 'path:models/personal', cron: '0 6 * * *', timezone: 'UTC', principal: 'bea', enabled: false },
+    { dataset: 'ds_events01', name: 'silver_events', select: 'silver_events+,config.meta.os_owner:bea', exclude: 'path:models/personal', cron: '*/15 * * * *', timezone: 'UTC', principal: 'bea', enabled: true },
   ]);
   // The federated catalog is no longer read by dbt: dlt lands both tables in the owner's landing schema.
   const sources = yaml.load(files.get('models/sources.yml')!) as { sources: { name: string; database: string; schema: string; tables: { name: string }[] }[] };

@@ -193,7 +193,7 @@ export function renderDagsterDefinitions(domain: string, plan: ModelPlanSet): st
     const dltSrc = dltByDataset.get(e.dataset);
     const selection = dltSrc
       ? `dg.AssetSelection.assets(${pyList(dltSrc.key)}).downstream()`
-      : `build_dbt_asset_selection([${dbtAssets}], dbt_select=${py(e.select)})`;
+      : `build_dbt_asset_selection([${dbtAssets}], dbt_select=${py(e.select)}${e.exclude ? `, dbt_exclude=${py(e.exclude)}` : ''})`;
     const tags = { 'os/domain': domain, 'os/dataset': e.dataset, 'os/principal': e.principal, 'os/schedule': name, 'os/action': 'scheduled sync' };
     push(
       '',

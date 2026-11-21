@@ -254,6 +254,8 @@ class Schedule:
     principal: str
     enabled: bool
     timezone: str = "UTC"
+    #: dbt `--exclude` of the selection (a domain-lane schedule excludes every personal lane).
+    exclude: str = ""
     #: The schedule's standing run grant (WP-15), written by the OS; '' when the OS issued none.
     run_grant: str = ""
 
@@ -302,6 +304,7 @@ def parse_schedules(text: str) -> List[Schedule]:
                 principal=principal,
                 enabled=_as_bool(e.get("enabled", True)),
                 timezone=str(e.get("timezone") or "UTC"),
+                exclude=str(e.get("exclude") or "").strip(),
                 run_grant=_grant_id(e.get("run_grant")),
             )
         )
@@ -553,6 +556,53 @@ def current_sha(domain_dir: str) -> Optional[str]:
         return None
     sha = os.path.basename(target.rstrip("/"))
     return sha if _SHA_RE.match(sha) else None
+
+
+def _personal_dir(principal: str) -> str:
+    """`models/personal/<uid>/`: the owner's own lane (os-ui store-fqn `sanitizeIdent`)."""
+    uid = re.sub(r"[^a-z0-9]+", "_", principal.lower()).strip("_") or "user"
+    return f"models/personal/{uid}/"
+
+
+def out_of_lane_models(manifest_path: str, selected: Iterable[str], principal: str) -> Optional[List[str]]:
+    """Which of the `selected` dbt models were authored outside `principal`'s lane (sorted).
+
+    A run acts as its owner; a model another person put downstream of the owner's landing table, or
+    code of unknown author in a shared path, would run with the owner's rights. A model is in the
+    lane when its `meta.os_owner` is the principal AND, if it lives under `models/personal/`, in the
+    principal's own directory (a forged owner in another's directory is outside). None when the
+    manifest cannot be read: the caller must say so rather than report "clean".
+    """
+    try:
+        with open(manifest_path, encoding="utf-8") as fh:
+            nodes = (json.load(fh).get("nodes") or {}).values()
+    except (OSError, ValueError):
+        return None
+    wanted = set(selected)
+    own = _personal_dir(principal)
+    out = set()
+    for node in nodes:
+        name = node.get("name")
+        if node.get("resource_type") != "model" or name not in wanted:
+            continue
+        path = str(node.get("original_file_path") or "").replace(os.sep, "/")
+        owner = str((node.get("meta") or {}).get("os_owner") or "")
+        if owner != principal or (path.startswith("models/personal/") and not path.startswith(own)):
+            out.add(name)
+    return sorted(out)
+
+
+def lane_check_for_run(checkout: str, tags: Mapping[str, object], selected: Iterable[str]) -> Optional[List[str]]:
+    """`out_of_lane_models` for one run, read from the manifest of the commit it pinned
+    (`<checkout>/<domain>/<sha>`, written by repo-sync's parse). None = cannot judge."""
+    domain, sha, principal = (str(tags.get(k) or "") for k in ("os/domain", "os/commit", "os/principal"))
+    if not (_DOMAIN_RE.match(domain) and ".." not in domain and _SHA_RE.match(sha) and _PRINCIPAL_RE.match(principal)):
+        return None
+    try:
+        manifest = os.path.join(dbt_dir(os.path.join(checkout, domain, sha)), "target", "manifest.json")
+    except (OSError, ValueError):
+        return None
+    return out_of_lane_models(manifest, selected, principal)
 
 
 def schemas_from_manifest(manifest_path: str, domain: str) -> Dict[str, str]:
