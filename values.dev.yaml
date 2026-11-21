@@ -161,10 +161,9 @@ opensearch:
     limits: { cpu: 1, memory: 1280Mi }
 
 clickhouse:
-  # 1280Mi OOM-killed ClickHouse 44x in 7h on the m2i4 dev node (Langfuse trace inserts + merges).
   resources:
-    requests: { cpu: 100m, memory: 1Gi }
-    limits: { cpu: 1, memory: 3Gi }
+    requests: { cpu: 100m, memory: 768Mi }
+    limits: { cpu: 1, memory: 1280Mi }
 
 docling:
   resources:
