@@ -451,18 +451,21 @@ spec:
             name: trino-access-rules
         {{- end }}
         - name: catalog
+          {{- if and .Values.polaris.enabled .Values.polaris.purge.enabled }}
+          # The purge window is OPEN: the catalog dir also holds the delete-domain purge catalog,
+          # written by the polaris-purge Job. Optional: until the Job has run, Trino starts without
+          # it and a purge statement fails closed. Window closed = a plain ConfigMap, as always.
           projected:
             sources:
               - configMap:
                   name: trino-catalog
-              {{- if and .Values.polaris.enabled .Values.polaris.purge.enabled }}
-              # The delete-domain purge catalog, written by the polaris-purge Job, ONLY while the purge
-              # window is open. Optional: until the Job has run, Trino starts without it and a purge
-              # statement fails closed. Window closed = this source is not rendered at all.
               - secret:
                   name: {{ .Values.polaris.purge.secretName }}
                   optional: true
-              {{- end }}
+          {{- else }}
+          configMap:
+            name: trino-catalog
+          {{- end }}
         - name: data
           emptyDir: {}
         - name: tmp
