@@ -600,6 +600,21 @@
 - name: DAGSTER_REPO_STATUS_URL
   value: {{ printf "http://dagster-repo-status:%v" (.Values.dagsterRepoStatus.port | default 8089) | quote }}
 {{- end }}
+{{- $ri := .Values.dagsterRunIdentity | default dict }}
+{{- if $ri.enabled }}
+{{- /* WP-15: run grants for Dagster (core/policy/run-grants.ts, /api/runtime/run-grants/*). */}}
+- name: OS_DAGSTER_RUN_GRANTS
+  value: "1"
+- name: OS_RUN_GRANT_START_SA
+  value: {{ printf "system:serviceaccount:%s:%s" .Release.Namespace $ri.runServiceAccount | quote }}
+- name: OS_RUN_GRANT_FINISH_SA
+  value: {{ printf "system:serviceaccount:%s:%s" .Release.Namespace $ri.codeServiceAccount | quote }}
+- name: OS_RUN_GRANT_OPA_INSTANCES
+  value: {{ join "," $ri.opaInstances | quote }}
+# The generated profiles.yml connects as svc-dagster-runner with a password over TLS.
+- name: TRINO_AUTH_METHOD
+  value: "ldap"
+{{- end }}
 # Session-signing secret (HMAC-SHA256 for the auth cookie). Sourced
 # from the generated `os-ui-session` Secret — NEVER the in-code
 # dev fallback, which would let anyone forge an admin session.

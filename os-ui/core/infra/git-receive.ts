@@ -337,6 +337,24 @@ export function looksSecretShaped(filePath: string, content: string | null): str
 }
 
 /**
+ * WP-15 (10 F4, defence in depth): a pushed dbt file that tries to switch the Trino identity —
+ * `SET SESSION AUTHORIZATION`, `RESET SESSION AUTHORIZATION`, `SET ROLE` — in model SQL, a
+ * `config(pre_hook|post_hook=…)` or a YAML hook. Trino 476 already refuses the switch inside a
+ * run that acts for its owner; this keeps such code out of the repository. SQL and Jinja comments
+ * are stripped first, so a comment can neither hide the words nor trigger on a mention. String
+ * literals are NOT exempt: a hook statement is itself a string.
+ */
+export function identitySwitchShaped(filePath: string, content: string | null): string | null {
+  if (!content || !/\.(sql|ya?ml)$/i.test(filePath)) return null;
+  const code = content
+    .replace(/\{#[\s\S]*?#\}/g, ' ')
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/--[^\n]*/g, ' ');
+  const hit = /\bsession\s+authorization\b|\bset\s+role\b/i.exec(code);
+  return hit ? `'${filePath}' switches the Trino identity (${hit[0].replace(/\s+/g, ' ').toUpperCase()}) — a run always acts as its owner; remove it` : null;
+}
+
+/**
  * Directories this push would leave with no files at all. Grouped at the TOP level and at the
  * OBJECT level (the second segment), because that is the granularity an object occupies —
  * `dashboards/`, `dashboards/<id>/`, `agents/<slug>/`, `models/gold/`. A directory counts as
@@ -608,6 +626,8 @@ export async function beginReceive(
       if (!verdict.allowed) return reject(release, 403, verdict.reason);
       const secret = looksSecretShaped(f.path, f.content);
       if (secret) return reject(release, 403, secret);
+      const identity = config.dagsterRunGrants ? identitySwitchShaped(f.path, f.content) : null;
+      if (identity) return reject(release, 403, identity);
     }
     // A push to a path the OS regenerates would be overwritten silently by the next OS commit:
     // refuse it with the reason. The OLD tree is readable here (only new objects are quarantined).

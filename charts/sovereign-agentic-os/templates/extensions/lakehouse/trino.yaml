@@ -456,6 +456,12 @@ spec:
         - name: opa-sidecar-config
           configMap:
             name: trino-opa-sidecar-config
+        {{- if include "soa.trinoOpaSidecarBundleToken" . }}
+        - name: opa-bundle-token
+          secret:
+            secretName: opa-bundle-token
+            items: [{ key: token, path: token }]
+        {{- end }}
         {{- end }}
         {{- if $acOn }}
         - name: access-rules

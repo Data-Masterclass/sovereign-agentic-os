@@ -634,6 +634,29 @@ export const config = {
   get opaBundleInstances(): string[] {
     return (process.env.OS_OPA_INSTANCES ?? 'opa').split(',').map((s) => s.trim()).filter(Boolean);
   },
+  // WP-15 (01 R1–R3, 10 F3/F4): Dagster runs act as the run's owner, bounded by a run grant the
+  // OS checks at run start. Off = today's path (dbt-trino `method: none`, no grant). Read on every
+  // call so one process can test both.
+  get dagsterRunGrants(): boolean {
+    return ['1', 'true'].includes((process.env.OS_DAGSTER_RUN_GRANTS ?? '').trim().toLowerCase());
+  },
+  // The OPA instances (`labels.instance`) that judge Trino's ImpersonateUser: /start returns only
+  // once each has activated the os-grants revision that holds the run's activation (10 F3).
+  get runGrantOpaInstances(): string[] {
+    return (process.env.OS_RUN_GRANT_OPA_INSTANCES ?? 'trino-sidecar').split(',').map((s) => s.trim()).filter(Boolean);
+  },
+  // The ServiceAccounts whose projected token (audience `os-ui`) each run-grant route accepts,
+  // as TokenReview names them: `system:serviceaccount:<namespace>:<name>`.
+  get runGrantStartSubject(): string {
+    return (process.env.OS_RUN_GRANT_START_SA ?? '').trim();
+  },
+  get runGrantFinishSubject(): string {
+    return (process.env.OS_RUN_GRANT_FINISH_SA ?? '').trim();
+  },
+  // The audience a run pod's projected token is minted for.
+  get runGrantAudience(): string {
+    return (process.env.OS_RUN_GRANT_AUDIENCE ?? 'os-ui').trim();
+  },
   // WP-11: the dedicated bearer OPA presents to the bundle and status routes (Secret
   // `opa-bundle-token`, web process only). Empty → those routes refuse every caller.
   get opaBundleToken(): string {

@@ -86,16 +86,19 @@ export function renderDbtProject(domain: string, plan: ModelPlanSet, snapshotRet
  * docs/components/trino.md -> "Enable real impersonation".
  */
 export function renderProfiles(domain: string, trinoAuthMethod: string = 'none'): string {
+  const password = trinoAuthMethod !== 'none';
   const connection = {
     type: 'trino',
     // A literal, not `{{ env_var(...) }}`: it has to agree with whether `password:` below
     // was emitted at all, and only the generator knows that (B4-review E-3).
     method: trinoAuthMethod,
     host: "{{ env_var('TRINO_HOST', 'trino') }}",
-    port: "{{ env_var('TRINO_PORT', '8080') | as_number }}",
+    port: password ? "{{ env_var('TRINO_PORT', '8443') | as_number }}" : "{{ env_var('TRINO_PORT', '8080') | as_number }}",
   };
+  // dbt-trino's password methods are HTTPS only (the credentials class fixes the scheme), so the
+  // key is written for `none` alone.
+  const scheme = password ? {} : { http_scheme: "{{ env_var('TRINO_HTTP_SCHEME', 'http') }}" };
   const rest = {
-    http_scheme: "{{ env_var('TRINO_HTTP_SCHEME', 'http') }}",
     catalog: "{{ env_var('TRINO_CATALOG', 'iceberg') }}",
     schema: domainSchema(domain),
     threads: 4,
@@ -105,31 +108,43 @@ export function renderProfiles(domain: string, trinoAuthMethod: string = 'none')
       // The OS's runs: the service user impersonates the acting principal, which has NO default.
       target: 'trino',
       outputs: {
-        trino: {
-          ...connection,
-          user: "{{ env_var('TRINO_USER', 'dbt-runner') }}",
-          impersonation_user: "{{ env_var('OS_PRINCIPAL') }}",
-          ...rest,
-        },
+        trino: password
+          ? {
+              // WP-15 (01 R1): the Dagster runner service user, its password under a
+              // DBT_ENV_SECRET_ name (dbt renders those in profiles.yml / packages.yml only, so
+              // authored model Jinja cannot print it), the chart CA as a FILE path, and the run's
+              // owner as the session user. Trino's OPA decides whether the runner may act for them.
+              // Own variable names, so the chart adds them to the run pods without colliding with
+              // today's TRINO_PORT / TRINO_USER (which keep serving the flag-off path).
+              ...connection,
+              port: "{{ env_var('TRINO_TLS_PORT', '8443') | as_number }}",
+              user: "{{ env_var('TRINO_RUNNER_USER', 'svc-dagster-runner') }}",
+              password: "{{ env_var('DBT_ENV_SECRET_TRINO_PASSWORD') }}",
+              impersonation_user: "{{ env_var('OS_PRINCIPAL') }}",
+              cert: "{{ env_var('TRINO_CA_FILE') }}",
+              ...rest,
+            }
+          : {
+              ...connection,
+              user: "{{ env_var('TRINO_USER', 'dbt-runner') }}",
+              impersonation_user: "{{ env_var('OS_PRINCIPAL') }}",
+              ...scheme,
+              ...rest,
+            },
         // Plain dbt with no OS present (`dbt build --target local`): connect as yourself, no
         // impersonation. dbt renders only the SELECTED output, so the OS target's required
         // `OS_PRINCIPAL` is never read here (proved by the eject test, images/extensions/dagster/tests/image).
         local: {
           ...connection,
           user: "{{ env_var('TRINO_USER') }}",
+          ...(password ? { password: "{{ env_var('TRINO_PASSWORD') }}" } : {}),
+          ...scheme,
           ...rest,
         },
       },
     },
   });
-  if (trinoAuthMethod === 'none') return doc;
-  // Spliced textually (the YAML emitter cannot express a conditional key), after each `user:` line
-  // and at its own indentation, so the file stays byte-stable and the generator goldens assert it.
-  return doc.replace(
-    /^([ \t]*)user: (.*)$/gm,
-    (_whole, indent: string, value: string) =>
-      [`${indent}user: ${value}`, `${indent}password: "{{ env_var('TRINO_PASSWORD') }}"`].join('\n'),
-  );
+  return doc;
 }
 
 export function renderMacros(): Map<string, string> {

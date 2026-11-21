@@ -13,6 +13,7 @@
  */
 import { yml } from '@tabs/data/lib/dbt/emit';
 import type { ModelPlan, ExternalAsset } from '@tabs/data/lib/dbt/models';
+import { standingGrantId } from '@core/policy/run-grant-ids';
 
 export type ScheduleEntry = {
   dataset: string;
@@ -22,6 +23,8 @@ export type ScheduleEntry = {
   timezone: 'UTC';
   principal: string;
   enabled: boolean;
+  /** WP-15: the schedule's standing run grant id, when the deployment runs Dagster with run grants. */
+  run_grant?: string;
 };
 
 /** One schedule per sync-landing model (the dbt selection `<model>+` rebuilds everything downstream). */
@@ -42,8 +45,15 @@ export function scheduleEntries(models: ModelPlan[]): ScheduleEntry[] {
   return out.sort((a, b) => a.dataset.localeCompare(b.dataset));
 }
 
-export function renderSchedules(models: ModelPlan[]): string | null {
-  const entries = scheduleEntries(models);
+/**
+ * `domain` + `runGrants` (WP-15): each ENABLED entry names its standing grant id, which the
+ * Dagster wrapper stamps on the run as `os/run_grant`; the OS creates the grant rows on commit
+ * (`reconcileStandingGrants`). Without `runGrants` the file is byte-identical to before.
+ */
+export function renderSchedules(models: ModelPlan[], opts: { domain?: string; runGrants?: boolean } = {}): string | null {
+  const entries = scheduleEntries(models).map((e) =>
+    opts.runGrants && opts.domain && e.enabled ? { ...e, run_grant: standingGrantId(opts.domain, e.dataset, e.principal, e.name) } : e,
+  );
   if (entries.length === 0) return null;
   return yml({ version: 1, schedules: entries });
 }

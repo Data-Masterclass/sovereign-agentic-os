@@ -21,12 +21,26 @@
     - "--log-level=info"
     - "--config-file=/config/opa-config.yaml"
     - "--watch"
+    {{- if hasKey ((.Values.trino.opa.sidecar.bundles | default dict).bundles | default dict) "os-data" }}
+    # WP-15: with the os-data bundle the seed files are in the bundle, exactly as on `opa`
+    # (a file under a bundle root would conflict with it).
+    {{- regexReplaceAll "(?m)^- \"/policies/(data|governance)\\.json\"\n?" (include "soa.opaPolicyFiles" .) "" | trimSuffix "\n" | nindent 4 }}
+    {{- else }}
     {{- include "soa.opaPolicyFiles" . | nindent 4 }}
+    {{- end }}
   resources:
     {{- toYaml $opa.resources | nindent 4 }}
   volumeMounts:
     - { name: opa-policy, mountPath: /policies, readOnly: true }
     - { name: opa-sidecar-config, mountPath: /config, readOnly: true }
+    {{- if include "soa.trinoOpaSidecarBundleToken" . }}
+    # WP-15: the dedicated bundle bearer (WP-11), for `token_path` in `trino.opa.sidecar.bundles`.
+    - { name: opa-bundle-token, mountPath: /var/run/opa/bundle-token, readOnly: true }
+    {{- end }}
+{{- end -}}
+{{- /* The sidecar downloads os-ui bundles: it holds the bundle bearer only then (WP-15). */ -}}
+{{- define "soa.trinoOpaSidecarBundleToken" -}}
+{{- if and (.Values.opa.dataBundle | default dict).enabled .Values.trino.opa.sidecar.bundles }}true{{ end -}}
 {{- end -}}
 {{- if and .Values.trino.enabled .Values.trino.opa.enabled .Values.trino.opa.sidecar.enabled .Values.opa.enabled }}
 apiVersion: v1

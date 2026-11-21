@@ -1,0 +1,95 @@
+# WP-15 overlay: Dagster runs act as the run's owner, bounded by run grants (design 01 R1–R3,
+# 10 F3/F4). Apply ON TOP of the profile you deploy (e.g. -f values.stackit-managed.yaml -f this),
+# only at cut-over step 5 (docs/components/trino-cutover.md), after steps 0–4 are live.
+# Rollback: drop this file from the deploy (every key returns to the profile's value).
+#
+# The parent chart's half renders from `dagsterRunIdentity.enabled` (templates/extensions/dagster/
+# run-identity.yaml + os-ui env). The Dagster SUBCHART's half is here, because a subchart's values
+# cannot be templated from the parent: run pods run as `dagster-run`, get a projected token for
+# os-ui, the runner's Trino password file (only that one key of `trino-service-users`) and the
+# chart CA, and the daemon queues runs so one data run is in flight at a time (owner decision O1).
+dagsterRunIdentity:
+  enabled: true
+postgres:
+  governance:
+    enabled: true
+opa:
+  dataBundle:
+    enabled: true
+trino:
+  auth:
+    enabled: true
+  opa:
+    sidecar:
+      enabled: true
+      # The sidecar downloads the bundles and reports its revisions, so /start waits on proof
+      # (10 F3). The token file is the dedicated opa-bundle-token (WP-11). Not persisted yet: a new
+      # sidecar with os-ui down starts with no data and denies (fail closed; WP-12).
+      bundles:
+        services:
+          osui:
+            url: http://os-ui:3000/api/opa
+            credentials:
+              bearer:
+                token_path: /var/run/opa/bundle-token/token
+        bundles:
+          # The same two bundles as `opa` (WP-11), so the sidecar judges Trino with the live
+          # governance and the live grants; its seed files are dropped from its args then.
+          os-data:
+            service: osui
+            resource: bundles/os-data.tar.gz
+            polling:
+              min_delay_seconds: 5
+              max_delay_seconds: 15
+          os-grants:
+            service: osui
+            resource: bundles/os-grants.tar.gz
+            polling:
+              min_delay_seconds: 5
+              max_delay_seconds: 15
+              long_polling_timeout_seconds: 30
+        status:
+          service: osui
+dagster:
+  dagsterDaemon:
+    # https://docs.dagster.io/guides/deploy/execution/run-coordinators — 10 F4: with one data run
+    # in flight, a model can reach no other owner's grant. Raise only with the owner's O1 decision.
+    runCoordinator:
+      enabled: true
+      type: QueuedRunCoordinator
+      config:
+        queuedRunCoordinator:
+          maxConcurrentRuns: 1
+          tagConcurrencyLimits:
+            - key: os/run_grant
+              limit: 1
+  runLauncher:
+    config:
+      k8sRunLauncher:
+        runK8sConfig:
+          podSpecConfig:
+            serviceAccountName: dagster-run
+            automountServiceAccountToken: false
+            volumes:
+              - name: os-ui-token
+                projected:
+                  sources:
+                    - serviceAccountToken: { audience: os-ui, expirationSeconds: 3600, path: token }
+              - name: dagster-runner-trino
+                secret:
+                  secretName: trino-service-users
+                  items: [{ key: svc-dagster-runner, path: password }]
+              - name: trino-ca
+                secret:
+                  secretName: trino-tls
+                  items: [{ key: ca.crt, path: ca.crt }]
+          containerConfig:
+            volumeMounts:
+              - { name: os-ui-token, mountPath: /var/run/secrets/os-ui, readOnly: true }
+              - { name: dagster-runner-trino, mountPath: /var/run/secrets/dagster-runner-trino, readOnly: true }
+              - { name: trino-ca, mountPath: /var/run/secrets/trino-ca, readOnly: true }
+            env:
+              - { name: TRINO_TLS_PORT, value: "8443" }
+              - { name: TRINO_RUNNER_USER, value: svc-dagster-runner }
+              - { name: TRINO_CA_FILE, value: /var/run/secrets/trino-ca/ca.crt }
+              - { name: OS_UI_URL, value: "http://os-ui:3000" }

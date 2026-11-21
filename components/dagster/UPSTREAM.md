@@ -79,3 +79,25 @@ the image by `images/extensions/dagster/tests/image/literal_safety.py`:
   (`create_for_run`, `_validate_user_k8s_config`, `_filter_user_defined_env_vars`) and
   `dagster_k8s/launcher.py` (`_launch_k8s_job_with_args`: the run image is the code location's).
 
+
+## Run identity (WP-15) — docs used
+
+The run-grant check (os-ui `core/policy/run-grants.ts`, `app/api/runtime/run-grants/*`, image
+`os_projects.run_identity_env`, `repo.py act_as_owner`) uses only these documented features:
+
+- Dagster run coordinators — `QueuedRunCoordinator` with `max_concurrent_runs` and
+  `tag_concurrency_limits` (Dagster 1.13): https://docs.dagster.io/guides/deploy/execution/run-coordinators
+  · Helm `dagsterDaemon.runCoordinator`: https://docs.dagster.io/deployment/oss/deployment-options/kubernetes/deploying-to-kubernetes
+- Run status sensors (`@run_status_sensor`, Dagster 1.13): https://docs.dagster.io/guides/automate/sensors/run-status-sensors
+- K8s run launcher `run_k8s_config` (`pod_spec_config.service_account_name`, `volumes`,
+  `container_config.volume_mounts`/`env`), dagster-k8s 0.29: https://docs.dagster.io/deployment/oss/deployment-options/kubernetes/customizing-your-deployment
+- GraphQL `runOrError(runId)` (tags, `assetSelection`, status) and `logsForRun`:
+  https://docs.dagster.io/api/graphql
+- dbt `DBT_ENV_SECRET_` variables are rendered only in `profiles.yml` / `packages.yml`:
+  https://docs.getdbt.com/reference/dbt-jinja-functions/env_var#secrets
+- dbt-trino 1.12.0 `method: ldap` (`user`, `password`, `impersonation_user`, `cert`; HTTPS only) —
+  read in `dbt/adapters/trino/connections.py` (`TrinoLdapCredentials`; `TrinoNoneCredentials` has
+  no `impersonation_user`, so today's `method: none` connects as `user`): https://github.com/starburstdata/dbt-trino/blob/v1.12.0/dbt/adapters/trino/connections.py
+- Kubernetes TokenReview (`authentication.k8s.io/v1`, `spec.audiences`) and the
+  `system:auth-delegator` ClusterRole: https://kubernetes.io/docs/reference/kubernetes-api/authentication-resources/token-review-v1/
+  · projected ServiceAccount tokens: https://kubernetes.io/docs/concepts/storage/projected-volumes/#serviceaccounttoken

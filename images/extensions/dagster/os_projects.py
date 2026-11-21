@@ -33,6 +33,7 @@ import re
 import subprocess
 import sys
 import time
+import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
 from typing import Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
@@ -164,6 +165,10 @@ PARSE_ENV_FIXED: Dict[str, str] = {
     "TRINO_PORT": "8080",
     "TRINO_USER": "dbt-runner",
     "TRINO_CATALOG": "iceberg",
+    # WP-15: a password-method profile names these with no default. `dbt parse` renders the
+    # profile but never connects, so placeholders are enough — no credential reaches a parse.
+    "DBT_ENV_SECRET_TRINO_PASSWORD": "parse-only-placeholder",
+    "TRINO_CA_FILE": "/dev/null",
 }
 
 
@@ -248,6 +253,8 @@ class Schedule:
     principal: str
     enabled: bool
     timezone: str = "UTC"
+    #: The schedule's standing run grant (WP-15), written by the OS; '' when the OS issued none.
+    run_grant: str = ""
 
 
 def _as_bool(v: object) -> bool:
@@ -294,6 +301,7 @@ def parse_schedules(text: str) -> List[Schedule]:
                 principal=principal,
                 enabled=_as_bool(e.get("enabled", True)),
                 timezone=str(e.get("timezone") or "UTC"),
+                run_grant=_grant_id(e.get("run_grant")),
             )
         )
     return sorted(out, key=lambda s: s.dataset)
@@ -802,6 +810,8 @@ def schedule_tags(domain: str, s: Schedule, sha: str, pinned: str, schedule: Opt
             "dagster-k8s/config": k8s_env_tag({"OS_PRINCIPAL": s.principal, "OS_PINNED_COMMITS": pinned}),
         }
     )
+    if s.run_grant:
+        tags["os/run_grant"] = s.run_grant
     return tags
 
 
@@ -865,6 +875,113 @@ def consecutive_failures(statuses_newest_first: Iterable[str]) -> int:
 
 def should_pause(statuses_newest_first: Iterable[str], threshold: int = QUARANTINE_THRESHOLD) -> bool:
     return consecutive_failures(statuses_newest_first) >= threshold
+
+
+# -------------------------------------------------------------- run identity --
+#
+# WP-15 (design 01 R1–R3, 10 F3/F4). A run acts as its owner only after os-ui's
+# `POST /api/runtime/run-grants/<id>/start` accepted it: os-ui verifies the caller's projected
+# ServiceAccount token (TokenReview), reads the run back from Dagster by id, compares it with the
+# grant, checks the owner still has access, activates the grant and waits until Trino's OPA holds
+# the activation. Only then does dbt get the principal and the runner's Trino password.
+#
+# Identity mode is ON exactly when the chart mounted the runner's password file: without the
+# password a run cannot authenticate as `svc-dagster-runner` at all, so there is nothing to switch
+# off. With it, every run is checked — enforcement is not a run-config option.
+
+_GRANT_ID_RE = re.compile(r"^rg_[a-z]+_[0-9a-f]{16,64}$")
+PASSWORD_FILE = "/var/run/secrets/dagster-runner-trino/password"
+RUN_TOKEN_FILE = "/var/run/secrets/os-ui/token"
+DEFAULT_OS_UI_URL = "http://os-ui:3000"
+START_TIMEOUT_SECONDS = 30.0
+
+
+class UnauthorisedLaunch(Exception):
+    """The run has no grant os-ui accepts: it must fail before any Trino query."""
+
+    def __init__(self, reason: str):
+        super().__init__(f"unauthorised launch: {reason}")
+
+
+def _grant_id(v: object) -> str:
+    s = str(v or "").strip()
+    return s if _GRANT_ID_RE.match(s) else ""
+
+
+def _env(env: Optional[Mapping[str, str]]) -> Mapping[str, str]:
+    return os.environ if env is None else env
+
+
+def run_identity_enabled(env: Optional[Mapping[str, str]] = None) -> bool:
+    return os.path.isfile(_env(env).get("OS_TRINO_PASSWORD_FILE") or PASSWORD_FILE)
+
+
+def _read(path: str) -> str:
+    with open(path, "r", encoding="utf-8") as f:
+        return f.read().strip()
+
+
+def _post_grant(grant: str, action: str, run_id: str, token_file: str, env: Mapping[str, str]) -> Tuple[int, dict]:
+    base = (env.get("OS_UI_URL") or DEFAULT_OS_UI_URL).rstrip("/")
+    body = json.dumps({"run_id": run_id}).encode("utf-8")
+    req = urllib.request.Request(
+        f"{base}/api/runtime/run-grants/{grant}/{action}",
+        data=body,
+        method="POST",
+        headers={"content-type": "application/json", "authorization": f"Bearer {_read(token_file)}"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=START_TIMEOUT_SECONDS) as res:  # noqa: S310 — cluster-internal URL
+            return res.status, json.loads(res.read().decode("utf-8") or "{}")
+    except urllib.error.HTTPError as e:
+        try:
+            return e.code, json.loads(e.read().decode("utf-8") or "{}")
+        except Exception:  # noqa: BLE001
+            return e.code, {}
+
+
+def run_identity_env(run_id: str, tags: Mapping[str, str], env: Optional[Mapping[str, str]] = None) -> Dict[str, str]:
+    """The env dbt needs to act as the run's owner, after os-ui accepted the run grant.
+
+    `{}` when identity mode is off (today's path). Raises `UnauthorisedLaunch` for a run without a
+    grant, a refusal, an os-ui that cannot be reached, or an answer naming another principal than
+    the run's tag. The principal is os-ui's answer (the grant row), never the tag alone.
+    """
+    e = _env(env)
+    if not run_identity_enabled(e):
+        return {}
+    grant = _grant_id(tags.get("os/run_grant"))
+    if not grant:
+        raise UnauthorisedLaunch("the run carries no run grant (tag os/run_grant)")
+    try:
+        status, body = _post_grant(grant, "start", run_id, e.get("OS_RUN_TOKEN_FILE") or RUN_TOKEN_FILE, e)
+    except Exception as ex:  # noqa: BLE001 — unreachable, timeout, no token: fail closed
+        raise UnauthorisedLaunch(f"os-ui could not check the run grant ({type(ex).__name__}: {ex})") from None
+    if status != 200:
+        raise UnauthorisedLaunch(f"{body.get('error') or status}: {body.get('reason') or 'refused'}")
+    principal = str(body.get("principal") or "")
+    if not _PRINCIPAL_RE.match(principal) or principal != str(tags.get("os/principal") or ""):
+        raise UnauthorisedLaunch("os-ui named another principal than the run")
+    return {"OS_PRINCIPAL": principal, "DBT_ENV_SECRET_TRINO_PASSWORD": _read(e.get("OS_TRINO_PASSWORD_FILE") or PASSWORD_FILE)}
+
+
+def _code_token_file(e: Mapping[str, str]) -> str:
+    return e.get("OS_CODE_TOKEN_FILE") or RUN_TOKEN_FILE
+
+
+def finish_enabled(env: Optional[Mapping[str, str]] = None) -> bool:
+    """The code server holds a projected token for os-ui (identity mode in the chart)."""
+    return os.path.isfile(_code_token_file(_env(env)))
+
+
+def finish_run_grant(run_id: str, tags: Mapping[str, str], env: Optional[Mapping[str, str]] = None) -> bool:
+    """End a finished run's activation (the run-status sensor). False when there is nothing to end."""
+    e = _env(env)
+    grant = _grant_id(tags.get("os/run_grant"))
+    if not grant:
+        return False
+    status, _ = _post_grant(grant, "finish", run_id, _code_token_file(e), e)
+    return status == 200
 
 
 # ---------------------------------------------------------------- principals --
