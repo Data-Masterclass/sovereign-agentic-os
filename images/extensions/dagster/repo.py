@@ -67,8 +67,8 @@ log = logging.getLogger("sovereign")
 
 CHECKOUT = os.environ.get("REPO_SYNC_CHECKOUT", osp.DEFAULT_CHECKOUT)
 GIT_BASE = os.environ.get("REPO_SYNC_GIT_BASE", osp.DEFAULT_GIT_BASE)
-OS_INDEX_URL = os.environ.get("OS_INDEX_URL", "")
-OS_TOKEN = os.environ.get("AGENT_RUNTIME_TOKEN", "")
+# The OS index snapshot repo-sync writes (the sidecar holds the bearer; this container does not).
+OS_INDEX_FILE = os.environ.get("OS_INDEX_FILE", "")
 QUARANTINE_THRESHOLD = int(os.environ.get("OS_QUARANTINE_THRESHOLD", str(osp.QUARANTINE_THRESHOLD)))
 
 class ScrubbedDbtCliResource(DbtCliResource):
@@ -355,11 +355,11 @@ def build_definitions() -> Definitions:
     @sensor(name="os_principals", minimum_interval_seconds=300, default_status=DefaultSensorStatus.RUNNING)
     def os_principals(context: SensorEvaluationContext):
         """Pause schedules whose principal the OS reports inactive (deactivated owner — concept §6)."""
-        if not OS_INDEX_URL:
-            return SkipReason("OS_INDEX_URL unset — principal activity is not checked")
-        index = osp.fetch_index(OS_INDEX_URL, OS_TOKEN)
+        if not OS_INDEX_FILE:
+            return SkipReason("OS_INDEX_FILE unset — principal activity is not checked")
+        index = osp.read_index_file(OS_INDEX_FILE)
         if index is None:
-            return SkipReason("OS index unreachable")
+            return SkipReason(f"no fresh OS index snapshot at {OS_INDEX_FILE} (repo-sync writes it)")
         to_pause = osp.schedules_to_pause(schedule_principals, osp.inactive_principals(index))
         paused = [n for n in to_pause if _pause_schedule(context.instance, n, context.log)]
         return SkipReason(f"paused {len(paused)} schedule(s) for inactive principals" if paused else "all principals active")

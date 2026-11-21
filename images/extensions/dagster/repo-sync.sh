@@ -184,14 +184,23 @@ PY
 log "status on $BIND:$PORT (auth: $([ -n "$STATUS_TOKEN" ] && echo bearer || echo NONE)), base $BASE, index ${INDEX_URL:-off}, extra domains [$DOMAINS], every ${INTERVAL}s"
 
 # Domains from the OS index (newline-separated). Unreachable ⇒ empty (the explicit list still runs).
+# The index is also written to $CHECKOUT/.os-index.json (atomically, only after a good fetch): the
+# `os_principals` sensor in the user-code container reads that file, so the user-code container —
+# and every run pod, which inherits its env — holds no bearer. A failed fetch leaves the last good
+# file, which the sensor stops trusting once it is older than its max age.
 index_domains() {
   [ -n "$INDEX_URL" ] || return 0
-  python3 - "$INDEX_URL" "$TOKEN" <<'PY' 2>/dev/null || true
-import json, sys, urllib.request
-url, token = sys.argv[1], sys.argv[2]
+  python3 - "$INDEX_URL" "$TOKEN" "$CHECKOUT/.os-index.json" <<'PY' 2>/dev/null || true
+import json, os, sys, urllib.request
+url, token, snapshot = sys.argv[1], sys.argv[2], sys.argv[3]
 req = urllib.request.Request(url, headers={"accept": "application/json", **({"authorization": "Bearer " + token} if token else {})})
 try:
     doc = json.loads(urllib.request.urlopen(req, timeout=5).read().decode())
+    if isinstance(doc, dict) and isinstance(doc.get("domains"), list):
+        tmp = snapshot + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(doc, f)
+        os.replace(tmp, snapshot)
     for d in doc.get("domains", []):
         if isinstance(d, dict) and d.get("name"):
             print(d["name"])
