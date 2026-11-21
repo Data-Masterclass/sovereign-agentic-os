@@ -34,6 +34,7 @@ import { pushMirrorAfterCommit } from '@tabs/data/lib/dbt/mirror';
 import yaml from 'js-yaml';
 import { governanceRuntimePool } from '@core/adapters/postgres/pool';
 import { reconcileStandingGrants, type StandingEntry } from '@core/policy/run-grants';
+import { scheduleNameFor } from '@core/infra/dagster';
 
 /** The surface recorded when a writer ran outside any request-surface scope. */
 export const DEFAULT_SURFACE = 'ui:data';
@@ -139,7 +140,8 @@ type StandingReconciler = (domain: string, entries: StandingEntry[], issuedBy: s
 
 async function reconcileStandingGrantsFor(domain: string, schedulesYml: string | null, issuedBy: string, injected?: StandingReconciler): Promise<void> {
   const doc = (schedulesYml ? yaml.load(schedulesYml) : null) as { schedules?: { dataset: string; name: string; principal: string; enabled: boolean }[] } | null;
-  const entries: StandingEntry[] = (doc?.schedules ?? []).map((e) => ({ dataset: e.dataset, principal: e.principal, schedule: e.name, enabled: e.enabled !== false }));
+  // The grant is bound to the schedule's Dagster job (repo.py names it `<domain>__<dataset>`).
+  const entries: StandingEntry[] = (doc?.schedules ?? []).map((e) => ({ dataset: e.dataset, principal: e.principal, schedule: e.name, enabled: e.enabled !== false, job: scheduleNameFor(domain, e.dataset) }));
   try {
     await (injected ?? ((d, e, by) => reconcileStandingGrants(governanceRuntimePool(), d, e, by)))(domain, entries, issuedBy);
   } catch (e) {

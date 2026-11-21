@@ -160,10 +160,15 @@ export async function launchAfterCommit(input: LaunchInput, deps: LaunchDeps = {
   const ready = await waitForAssets(selection, deps);
   if (ready.error) return finish(null, `commit ${commit.slice(0, 7)} not launched: ${ready.error}`);
 
+  // WP-15: with run grants a build acts as the PERSON who launched it (the launching user's own
+  // rights, a domain-lane write included), never as a domain self-principal: a grant names a
+  // person whose access /start can check. A sync acts as the dataset owner (the caller passes it).
+  const runGrants = deps.runGrants ?? config.dagsterRunGrants;
+  const principal = runGrants && input.kind === 'build' ? input.actor.id : input.principal;
   const tags: Record<string, string> = {
     'os/dataset': d.id,
     'os/domain': d.domain,
-    'os/principal': input.principal,
+    'os/principal': principal,
     'os/user': input.actor.id,
     'os/action': input.action,
     'os/layer': input.layer,
@@ -179,10 +184,10 @@ export async function launchAfterCommit(input: LaunchInput, deps: LaunchDeps = {
   }
   // WP-15: the run acts as the principal only inside this grant, bound to the commit and the exact
   // selection; the run pod has os-ui check it at start (`/api/runtime/run-grants/<id>/start`).
-  if (deps.runGrants ?? config.dagsterRunGrants) {
+  if (runGrants) {
     try {
       const issue = deps.issueGrant ?? ((g) => issueDatasetGrant(governanceRuntimePool(), g));
-      tags['os/run_grant'] = await issue({ principal: input.principal, domain: d.domain, dataset: d.id, commit, selection, issuedBy: input.actor.id });
+      tags['os/run_grant'] = await issue({ principal, domain: d.domain, dataset: d.id, commit, selection, issuedBy: input.actor.id });
     } catch (e) {
       return finish(null, `commit ${commit.slice(0, 7)} not launched: the run grant could not be issued (${e instanceof Error ? e.message : String(e)})`, batchId);
     }
@@ -194,8 +199,8 @@ export async function launchAfterCommit(input: LaunchInput, deps: LaunchDeps = {
     // The same run-pod env the platform wrapper puts on a scheduled run (os_projects.run_pod_env):
     // dbt impersonates OS_PRINCIPAL; dlt writes the landing through Trino as that principal.
     env: {
-      OS_PRINCIPAL: input.principal,
-      DESTINATION__SQLALCHEMY__CREDENTIALS__USERNAME: input.principal,
+      OS_PRINCIPAL: principal,
+      DESTINATION__SQLALCHEMY__CREDENTIALS__USERNAME: principal,
       OS_PINNED_COMMITS: `${d.domain}=${commit}`,
     },
   });

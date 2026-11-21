@@ -114,3 +114,17 @@ interactive_principal(p) if {
 }
 
 explicitly_inactive(p) if data.os_data.users[p].active == false
+
+# WP-15 verifier P1: the service users that only ever act FOR someone have no rights of their
+# own. As the session user (no impersonation) they may ask `ImpersonateUser` and nothing else —
+# no query, no catalog or schema listing, no read, no write — and see no rows. Once Trino has
+# switched the session to the principal, every check is that principal's. (svc-os-ui is not in
+# this set: the query-tool still runs its own system queries until T7.)
+impersonate_only := {"svc-dagster-runner", "svc-os-worker"}
+
+allow := false if {
+	user in impersonate_only
+	not is_impersonation
+}
+
+rowFilters contains {"expression": "false"} if user in impersonate_only

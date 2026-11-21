@@ -40,6 +40,8 @@ export type RunGrantRow = {
   revoked_at: Date | null;
   active_run_id: string | null;
   active_until: Date | null;
+  /** `dagster-job:<name>` binds a standing grant to its schedule's job (and so its selection). */
+  scopes: string[];
 };
 
 /** What /start compares: the run as DAGSTER reports it, never as the caller describes it. */
@@ -87,11 +89,13 @@ export function verifyRun(grant: RunGrantRow, run: RunView, now: Date, commitKno
     if (!/^[0-9a-f]{40}$/.test(sha)) return no('the run pins no commit');
     if (commitKnown && !commitKnown(sha)) return no('the run pins a commit that is not on the domain repository');
     if (!t['os/schedule']) return no('a standing grant starts scheduled runs only');
+    const job = grant.scopes.find((x) => x.startsWith('dagster-job:'))?.slice('dagster-job:'.length);
+    if (job && (run.jobName !== job || t['os/schedule'] !== job)) return no('the run is another job than the grant\'s schedule');
   }
   return { ok: true };
 }
 
-const COLS = 'id, kind, principal_uid, domain, dataset, selection_hash, commit, expires_at, revoked_at, active_run_id, active_until';
+const COLS = 'id, kind, principal_uid, domain, dataset, selection_hash, commit, expires_at, revoked_at, active_run_id, active_until, scopes';
 
 export async function getRunGrant(pool: pg.Pool, id: string): Promise<RunGrantRow | null> {
   const r = await pool.query<RunGrantRow>(`SELECT ${COLS} FROM os_governance.run_grants WHERE id = $1`, [id]);
@@ -111,7 +115,8 @@ export async function issueDatasetGrant(pool: pg.Pool, g: {
   return id;
 }
 
-export type StandingEntry = { dataset: string; principal: string; schedule: string; enabled: boolean };
+/** `job`: the schedule's Dagster job name (the grant is bound to it, and so to its selection). */
+export type StandingEntry = { dataset: string; principal: string; schedule: string; enabled: boolean; job?: string };
 
 /**
  * Make the domain's standing grants equal its ENABLED schedules: upsert one per entry (renewing
@@ -123,12 +128,13 @@ export async function reconcileStandingGrants(pool: pg.Pool, domain: string, ent
   return withTransaction(pool, async (c) => {
     for (const e of want) {
       await c.query(
-        `INSERT INTO os_governance.run_grants (id, kind, principal_uid, domain, dataset, issued_by, expires_at)
-         VALUES ($1, 'standing', $2, $3, $4, $5, pg_catalog.clock_timestamp() + $6 * interval '1 millisecond')
-         ON CONFLICT (id) DO UPDATE SET revoked_at = NULL, expires_at = EXCLUDED.expires_at
+        `INSERT INTO os_governance.run_grants (id, kind, principal_uid, domain, dataset, scopes, issued_by, expires_at)
+         VALUES ($1, 'standing', $2, $3, $4, $7::text[], $5, pg_catalog.clock_timestamp() + $6 * interval '1 millisecond')
+         ON CONFLICT (id) DO UPDATE SET revoked_at = NULL, expires_at = EXCLUDED.expires_at, scopes = EXCLUDED.scopes
            WHERE os_governance.run_grants.revoked_at IS NOT NULL
+              OR os_governance.run_grants.scopes IS DISTINCT FROM EXCLUDED.scopes
               OR os_governance.run_grants.expires_at < pg_catalog.clock_timestamp() + interval '30 days'`,
-        [e.id, e.principal, domain, e.dataset, issuedBy, STANDING_GRANT_TTL_MS],
+        [e.id, e.principal, domain, e.dataset, issuedBy, STANDING_GRANT_TTL_MS, e.job ? [`dagster-job:${e.job}`] : []],
       );
     }
     await c.query(
@@ -147,6 +153,15 @@ export async function revokeRunGrant(pool: pg.Pool, id: string): Promise<boolean
     [id],
   );
   return (r.rowCount ?? 0) > 0;
+}
+
+/**
+ * The end of a run's activation window. A run's further steps re-check the grant but never move the
+ * window: one run gets at most ACTIVE_WINDOW_MS from its first activation, and never past the grant.
+ */
+export function activeUntil(row: Pick<RunGrantRow, 'active_run_id' | 'active_until' | 'expires_at'>, runId: string, now: Date): Date {
+  if (row.active_run_id === runId && row.active_until) return row.active_until;
+  return new Date(Math.min(now.getTime() + ACTIVE_WINDOW_MS, row.expires_at.getTime()));
 }
 
 export type Activation =
@@ -172,7 +187,7 @@ export async function activateRunGrant(pool: pg.Pool, id: string, run: RunView, 
     if (row.kind === 'dataset' && row.active_run_id && row.active_run_id !== run.runId) {
       return { ok: false, code: 'unauthorised_launch', reason: 'a launched grant starts one run only' };
     }
-    const until = new Date(Math.min(t + ACTIVE_WINDOW_MS, row.expires_at.getTime()));
+    const until = activeUntil(row, run.runId, now());
     await c.query(`UPDATE os_governance.run_grants SET active_run_id = $2, active_until = $3 WHERE id = $1`, [id, run.runId, until]);
     const rev = (await c.query<{ rev: string }>('SELECT rev::text AS rev FROM os_governance.grant_revision WHERE id = 1')).rows[0].rev;
     return { ok: true, rev, principal: row.principal_uid, activeUntil: until.toISOString() };
