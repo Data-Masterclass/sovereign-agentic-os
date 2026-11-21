@@ -34,6 +34,7 @@ secrets:
     keys: [LANGFUSE_HOST, LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, LITELLM_SALT_KEY, STACKIT_API_BASE,
            STACKIT_API_KEY, UI_PASSWORD, UI_USERNAME, masterkey]
   object-storage-credentials:   {source: chart, type: Opaque, keys: [AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY]}
+  os-ui-agent-key-encryption:   {source: chart, type: Opaque, keys: [AGENT_KEY_ENCRYPTION_KEY]}
   os-ui-graph:                  {source: chart, type: Opaque, keys: [GRAPH_CLIENT_SECRET]}
   os-ui-session:                {source: chart, type: Opaque, keys: [OS_MCP_TOKEN_SECRET, OS_SESSION_SECRET]}
   os-ui-smtp:                   {source: chart, type: Opaque, keys: [SMTP_PASS]}

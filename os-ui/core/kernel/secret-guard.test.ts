@@ -31,8 +31,9 @@ const sha = (s: string) => createHash('sha256').update(s, 'utf8').digest('hex');
 
 /** A strong, unique value per variable (what a correctly configured install has). */
 const real = (name: string) => `real-${name.toLowerCase()}-${'x'.repeat(24)}`;
-const UI_SECRETS = ['LITELLM_MASTER_KEY', 'AGENT_RUNTIME_TOKEN', 'OS_SESSION_SECRET', 'OS_MCP_TOKEN_SECRET', 'LANGFUSE_PUBLIC_KEY', 'LANGFUSE_SECRET_KEY', 'LANGFUSE_SSO_PASSWORD'];
-const WORKER_SECRETS = ['AGENT_RUNTIME_TOKEN', 'LANGFUSE_PUBLIC_KEY', 'LANGFUSE_SECRET_KEY'];
+// AGENT_KEY_ENCRYPTION_KEY has no public default (no code fallback, the chart generates it): it is guarded for 'missing'.
+const UI_SECRETS = ['LITELLM_MASTER_KEY', 'AGENT_RUNTIME_TOKEN', 'OS_SESSION_SECRET', 'OS_MCP_TOKEN_SECRET', 'LANGFUSE_PUBLIC_KEY', 'LANGFUSE_SECRET_KEY', 'LANGFUSE_SSO_PASSWORD', 'AGENT_KEY_ENCRYPTION_KEY'];
+const WORKER_SECRETS = ['AGENT_RUNTIME_TOKEN', 'LANGFUSE_PUBLIC_KEY', 'LANGFUSE_SECRET_KEY', 'AGENT_KEY_ENCRYPTION_KEY'];
 const prodEnv = (names: string[], extra: Record<string, string> = {}): NodeJS.ProcessEnv =>
   ({ NODE_ENV: 'production', ...Object.fromEntries(names.map((n) => [n, real(n)])), ...extra }) as NodeJS.ProcessEnv;
 
@@ -79,7 +80,7 @@ test('a correctly configured production os-ui and worker boot (the twin of every
 
 for (const name of UI_SECRETS) {
   test(`os-ui refuses a production boot when ${name} equals a public default, and when it is missing`, () => {
-    for (const literal of DEFAULTS[name]) {
+    for (const literal of DEFAULTS[name] ?? []) {
       const env = prodEnv(UI_SECRETS, { [name]: literal });
       assert.throws(() => assertProductionSecrets('os-ui', env), (err: unknown) => {
         assert.ok(err instanceof InsecureProductionSecretError);
@@ -114,7 +115,7 @@ test('os-ui guards TERMINAL_BROKER_SECRET only when the terminal is enabled', ()
 
 for (const name of WORKER_SECRETS) {
   test(`the worker refuses a production boot when ${name} equals a public default, and when it is missing`, () => {
-    for (const literal of DEFAULTS[name]) {
+    for (const literal of DEFAULTS[name] ?? []) {
       assert.throws(() => assertProductionSecrets('os-ui-worker', prodEnv(WORKER_SECRETS, { [name]: literal })), new RegExp(`${name} \\(equals`));
     }
     const env = prodEnv(WORKER_SECRETS);

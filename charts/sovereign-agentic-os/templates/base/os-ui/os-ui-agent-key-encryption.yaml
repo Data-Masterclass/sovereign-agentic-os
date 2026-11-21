@@ -20,6 +20,9 @@
     3. the value already stored in this Secret (preserved across `helm upgrade` via `lookup`),
        else
     4. a freshly generated 64-character random value on first install.
+  5. With External Secrets (`externalSecrets.managed` lists `os-ui-agent-key-encryption`; catalog
+     entry in files/external-secrets/catalog.yaml) ESO owns this Secret and the chart renders none.
+     Move it with the two-step handover so the VALUE is carried over, never re-generated.
   `helm.sh/resource-policy: keep` — an uninstall or a values change that stops rendering this
   Secret does not delete the value the stored keys depend on.
 
@@ -39,6 +42,7 @@
 {{- if lt (len $secret) 32 }}
 {{- fail "osUI.agentKeyEncryption.secret must be at least 32 characters" }}
 {{- end }}
+{{- if not (include "soa.eso.owned" (list $ $name)) }}
 apiVersion: v1
 kind: Secret
 metadata:
@@ -52,5 +56,6 @@ metadata:
 type: Opaque
 stringData:
   AGENT_KEY_ENCRYPTION_KEY: {{ $secret | quote }}
+{{- end }}
 {{- end }}
 {{- end }}

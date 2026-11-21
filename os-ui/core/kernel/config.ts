@@ -132,8 +132,10 @@ export const DEV_DEFAULT_AGENT_RUNTIME_TOKEN = DEV_SECRET_DEFAULTS.agentRuntimeT
  * guard only when TERMINAL_ENABLED=true (nothing reads it otherwise).
  */
 export const PRODUCTION_GUARDED_SECRETS = {
-  'os-ui': ['LITELLM_MASTER_KEY', 'AGENT_RUNTIME_TOKEN', 'OS_SESSION_SECRET', 'OS_MCP_TOKEN_SECRET', 'LANGFUSE_PUBLIC_KEY', 'LANGFUSE_SECRET_KEY', 'LANGFUSE_SSO_PASSWORD'],
-  'os-ui-worker': ['AGENT_RUNTIME_TOKEN', 'LANGFUSE_PUBLIC_KEY', 'LANGFUSE_SECRET_KEY'],
+  'os-ui': ['LITELLM_MASTER_KEY', 'AGENT_RUNTIME_TOKEN', 'OS_SESSION_SECRET', 'OS_MCP_TOKEN_SECRET', 'LANGFUSE_PUBLIC_KEY', 'LANGFUSE_SECRET_KEY', 'LANGFUSE_SSO_PASSWORD', 'AGENT_KEY_ENCRYPTION_KEY'],
+  // AGENT_KEY_ENCRYPTION_KEY: the agent-system model keys are sealed under it (agent-system-keys.ts);
+  // without it no system can read its key, so both processes refuse to boot in production.
+  'os-ui-worker': ['AGENT_RUNTIME_TOKEN', 'LANGFUSE_PUBLIC_KEY', 'LANGFUSE_SECRET_KEY', 'AGENT_KEY_ENCRYPTION_KEY'],
 } as const;
 
 /** `user:schema,user:schema` → pairs; anything not shaped like two identifiers is dropped. */
