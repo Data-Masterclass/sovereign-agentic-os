@@ -7,7 +7,8 @@
  *             how fast and how expensive they were, why the failed ones failed and what is waiting
  *             on a human — each number from the component that holds it, for my systems only.
  * ARCHITECTURE:
- *   - Server-only, READ-ONLY. Systems = the Agents store's own scoped list (`agentHealthRows`).
+ *   - Server-only, READ-ONLY. Systems = the Agents store's own scoped list (`agentHealthRows`,
+ *     injected through `sources.ts` — a tab never imports another tab).
  *     Every upstream read is narrowed to those ids IN the request (design:
  *     docs/superpowers/plans/2026-11-21-monitoring.md):
  *       run store (Postgres)  → `runStats` with the `list_runs` scope predicate
@@ -21,7 +22,6 @@
 import 'server-only';
 import type { CurrentUser } from '@core/kernel/auth';
 import { config } from '@core/kernel/config';
-import { agentHealthRows, ensureHydrated as ensureAgentsHydrated } from '@tabs/agents/lib/store';
 import { agentRunsPool, configuredAgentRunsDatabaseUrl } from '@core/adapters/postgres/pool';
 import { systemTraceStats, type SystemTraceStats } from '@core/adapters/langfuse/metrics';
 import { logsQuery } from '@core/adapters/victoria-logs/query';
@@ -29,6 +29,7 @@ import { readAllKeys } from '@core/infra/litellm-admin';
 import { traceUrlFor } from '@core/infra/langfuse';
 import { listApprovals, ensureHydrated as ensureApprovalsHydrated } from '@core/policy/approvals';
 import { scopeForUser } from '@tabs/monitoring/lib/scope';
+import { monitoringSources, SOURCES_MISSING } from '@tabs/monitoring/lib/panels/sources';
 import { visibleToOf } from '@tabs/monitoring/lib/adapters/run-store-runs';
 import { runStats, type DayCounts, type RunFailure } from '@tabs/monitoring/lib/adapters/run-stats';
 import { foldDecisions, keySpendBySystem, live, opaDecisionQuery, unavailable, type NotUpstream, type PolicyCounts, type SourceState } from '@tabs/monitoring/lib/panels/panels-core';
@@ -45,7 +46,8 @@ export type AgentSystemPanel = {
   traces?: SystemTraceStats | null;
   keySpendUsd?: number | null;
   policy?: PolicyCounts | null;
-  approvalsWaiting: { id: string; title: string; tool: string; createdAt: string; node?: string }[];
+  /** Absent when the approvals store could not be read (sources.approvals says why). */
+  approvalsWaiting?: { id: string; title: string; tool: string; createdAt: string; node?: string }[];
 };
 
 export type AgentsView = {
@@ -53,7 +55,7 @@ export type AgentsView = {
   generatedAt: string;
   windowDays: number;
   runWindowDays: number;
-  sources: { runStore: SourceState; langfuse: SourceState; litellm: SourceState; opaDecisionLog: SourceState };
+  sources: { inventory: SourceState; runStore: SourceState; langfuse: SourceState; litellm: SourceState; opaDecisionLog: SourceState; approvals: SourceState };
   links: { langfuse?: string };
   systems: AgentSystemPanel[];
   notUpstream: NotUpstream[];
@@ -68,8 +70,11 @@ const NOT_UPSTREAM: NotUpstream[] = [
 
 export async function agentsView(user: CurrentUser, nowMs = Date.now()): Promise<AgentsView> {
   const scope = await scopeForUser(user);
-  await ensureAgentsHydrated();
-  const rows = agentHealthRows({ id: user.id, domains: user.domains, role: user.role });
+  const src = monitoringSources();
+  const listed = src
+    ? await src.agentSystems({ id: user.id, domains: user.domains, role: user.role }).then((rows) => ({ ok: true as const, rows }), (e: Error) => ({ ok: false as const, error: e.message }))
+    : { ok: false as const, error: SOURCES_MISSING };
+  const rows = listed.ok ? listed.rows : [];
   const ids = rows.map((r) => r.id);
   const now = new Date(nowMs);
   const since = new Date(nowMs - AGENT_WINDOW_DAYS * 86_400_000);
@@ -97,9 +102,12 @@ export async function agentsView(user: CurrentUser, nowMs = Date.now()): Promise
   const spend = keys.ok ? keySpendBySystem(keys.data, ids) : null;
   const policy = decisions.ok ? foldDecisions(decisions.value, ids) : null;
 
-  await ensureApprovalsHydrated().catch(() => {});
   const asked = new Set(ids);
-  const pending = listApprovals({ status: 'pending' }).filter((a) => a.systemId && asked.has(a.systemId));
+  const approvals = await ensureApprovalsHydrated().then(
+    () => ({ ok: true as const, pending: listApprovals({ status: 'pending' }).filter((a) => a.systemId && asked.has(a.systemId)) }),
+    (e: Error) => ({ ok: false as const, error: e.message }),
+  );
+  const pending = approvals.ok ? approvals.pending : [];
 
   const systems: AgentSystemPanel[] = [];
   for (const r of rows) {
@@ -109,7 +117,7 @@ export async function agentsView(user: CurrentUser, nowMs = Date.now()): Promise
           s.lastFailures.map(async (f) => ({
             ...f,
             runUrl: `/monitoring?agent=${encodeURIComponent(r.id)}`,
-            traceUrl: await traceUrlFor(f.runId, { probe: false }).catch(() => undefined),
+            traceUrl: await traceUrlFor(f.runId, { probe: false }),
           })),
         )
       : [];
@@ -122,9 +130,9 @@ export async function agentsView(user: CurrentUser, nowMs = Date.now()): Promise
       ...(traces.ok ? { traces: traces.value.get(r.id) ?? null } : {}),
       ...(spend ? { keySpendUsd: spend.has(r.id) ? spend.get(r.id)! : null } : {}),
       ...(policy ? { policy: policy.get(r.id) ?? null } : {}),
-      approvalsWaiting: pending
-        .filter((a) => a.systemId === r.id)
-        .map((a) => ({ id: a.id, title: a.title, tool: a.tool, createdAt: a.createdAt, ...(a.node ? { node: a.node } : {}) })),
+      ...(approvals.ok
+        ? { approvalsWaiting: pending.filter((a) => a.systemId === r.id).map((a) => ({ id: a.id, title: a.title, tool: a.tool, createdAt: a.createdAt, ...(a.node ? { node: a.node } : {}) })) }
+        : {}),
     });
   }
 
@@ -133,7 +141,7 @@ export async function agentsView(user: CurrentUser, nowMs = Date.now()): Promise
     generatedAt: now.toISOString(),
     windowDays: AGENT_WINDOW_DAYS,
     runWindowDays: RUN_WINDOW_DAYS,
-    sources: { runStore: runs.state, langfuse: traceState, litellm: keyState, opaDecisionLog: opaState },
+    sources: { inventory: listed.ok ? live : unavailable(`agent systems: ${listed.error}`), runStore: runs.state, langfuse: traceState, litellm: keyState, opaDecisionLog: opaState, approvals: approvals.ok ? live : unavailable(`approvals: ${approvals.error}`) },
     links: config.langfuseConsoleUrl ? { langfuse: config.langfuseConsoleUrl } : {},
     systems,
     notUpstream: NOT_UPSTREAM,

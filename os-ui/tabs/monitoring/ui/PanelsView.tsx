@@ -124,14 +124,14 @@ function AgentCard({ s, v }: { s: AgentSystemPanel; v: AgentsView }) {
         )}
         {runs && <span className={`badge${runs.failureClasses.budget_exceeded ? ' err' : ' muted'}`} title="LiteLLM budget_exceeded">budget exceeded · {runs.failureClasses.budget_exceeded}</span>}
         {runs && <span className={`badge${runs.failureClasses.other ? ' err' : ' muted'}`}>other failure · {runs.failureClasses.other}</span>}
-        <span className={`badge${s.approvalsWaiting.length ? ' warn' : ' muted'}`}>approvals waiting · {s.approvalsWaiting.length}</span>
+        {s.approvalsWaiting && <span className={`badge${s.approvalsWaiting.length ? ' warn' : ' muted'}`}>approvals waiting · {s.approvalsWaiting.length}</span>}
       </div>
       {s.policy && s.policy.byTool.filter((x) => x.effect !== 'allow').length > 0 && (
         <p className="hint" style={{ margin: '2px 0 6px' }}>
           Denied / held tools: {s.policy.byTool.filter((x) => x.effect !== 'allow').slice(0, 4).map((x) => `${x.tool} (${x.effect} ×${x.n})`).join(' · ')}
         </p>
       )}
-      {s.approvalsWaiting.length > 0 && (
+      {s.approvalsWaiting && s.approvalsWaiting.length > 0 && (
         <p className="hint" style={{ margin: '2px 0 6px' }}>
           Waiting: {s.approvalsWaiting.slice(0, 3).map((a) => `${a.title} (${ago(a.createdAt)})`).join(' · ')} — <a href="/governance">decide in Governance</a>
         </p>
@@ -292,18 +292,20 @@ function PlatformPanels({ v }: { v: PlatformView }) {
       )}
 
       <div className="mon-sub">Backups</div>
-      {v.backups.length === 0 ? <p className="hint">No backup signal readable.</p> : (
+      <Sources sources={{ backups: v.backups.state }} />
+      {v.backups.state.state === 'live' && v.backups.items.length === 0 ? <p className="hint">No backup signal readable.</p> : v.backups.items.length > 0 && (
         <div className="mon-table">
-          {v.backups.map((b) => (
+          {v.backups.items.map((b) => (
             <div key={b.id} className={`mon-tr mon-tr-pfail${b.health === 'red' ? ' err' : ''}`}><span>{b.health}</span><span className="ellip" title={b.detail}>{b.title} — {b.detail}</span><span className="muted">{b.ts ? ago(b.ts) : ''}</span></div>
           ))}
         </div>
       )}
 
       <div className="mon-sub">Alerts firing now</div>
-      {v.alerts.length === 0 ? <p className="hint">No operational alert is firing.</p> : (
+      <Sources sources={{ alerts: v.alerts.state }} />
+      {v.alerts.state.state === 'live' && v.alerts.items.length === 0 ? <p className="hint">No operational alert is firing.</p> : v.alerts.items.length > 0 && (
         <div className="mon-table">
-          {v.alerts.map((a) => (
+          {v.alerts.items.map((a) => (
             <div key={a.id} className={`mon-tr mon-tr-pfail${a.severity === 'critical' ? ' err' : ''}`}><span>{a.severity}</span><span className="ellip" title={a.detail}>{a.title} — {a.detail}</span><span className="muted">{a.disposition}</span></div>
           ))}
         </div>

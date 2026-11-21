@@ -28,13 +28,6 @@ mock.module('@tabs/monitoring/lib/scope', {
   namedExports: {
     ...(await real('@tabs/monitoring/lib/scope')), scopeForUser: async (u: { id: string; domains: string[] }) => ({ level: scopeLevel, principal: u.id, domains: u.domains, cluster: scopeLevel === 'admin', via: 'identity' }) },
 });
-mock.module('@tabs/agents/lib/store', {
-  namedExports: {
-    ...(await real('@tabs/agents/lib/store')),
-    ensureHydrated: async () => {},
-    agentHealthRows: (p: { id: string }) => (p.id === 'ada' ? [{ id: 'sysA', name: 'A', scope: 'mine', agentCount: 1, running: false, scheduled: false, lastRunAt: null, lastRunOk: null, held: 0, health: 'grey' }] : []),
-  },
-});
 mock.module('@tabs/monitoring/lib/adapters/run-stats', {
   namedExports: {
     ...(await real('@tabs/monitoring/lib/adapters/run-stats')),
@@ -77,6 +70,14 @@ mock.module('@core/policy/approvals', {
   },
 });
 
+const { registerMonitoringSources } = await import('./sources');
+// The Agents store's scoped list, as monitoring-sources.ts hands it over: ada sees sysA only.
+registerMonitoringSources({
+  agentSystems: async (p) => (p.id === 'ada' ? [{ id: 'sysA', name: 'A', scope: 'mine' }] : []),
+  datasets: async () => [],
+  latestTests: async () => new Map(),
+  assetKeys: async () => new Map(),
+});
 const { agentsView } = await import('./agents-panel');
 const { platformView, PlatformForbiddenError } = await import('./platform-panel');
 
@@ -98,7 +99,7 @@ test('every upstream read is narrowed to the viewer’s systems; foreign rows ar
   const a = v.systems[0];
   assert.equal(a.keySpendUsd, 1.25);
   assert.equal(a.policy!.denies, 2);
-  assert.deepEqual(a.approvalsWaiting.map((x) => x.id), ['ap1']);
+  assert.deepEqual(a.approvalsWaiting!.map((x) => x.id), ['ap1']);
   assert.equal(a.runs!.lastFailures[0].traceUrl, 'https://lf.example/trace/run_1');
   assert.ok(!JSON.stringify(v).includes('sysZ'), 'nothing about sysZ reaches the payload');
 });

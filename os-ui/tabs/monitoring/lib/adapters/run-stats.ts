@@ -16,7 +16,8 @@
  *     it); every other failure is `other`. Policy denials and approval holds are not run failures —
  *     they come from OPA's decision log (agent-panel.ts).
  */
-import type { SqlClient } from '@tabs/agents/lib/engine/jobs-postgres';
+/** The query surface of a `pg` Pool/Client (structurally the run store's `SqlClient`). */
+export type SqlClient = { query(text: string, values?: unknown[]): Promise<{ rows: Record<string, unknown>[] }> };
 
 export type DayCounts = { day: string; done: number; failed: number; held: number; active: number; other: number };
 export type RunFailure = { runId: string; at: string; requestedBy: string; node: string | null; reason: string };

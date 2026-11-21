@@ -11,14 +11,16 @@
  *     `enqueue` / `complete` / `appendEvent`.
  *   - Negative twin: a run of the same system filed in another domain by another user is not
  *     counted for a creator, and is counted for an admin.
- *   - Run: MON_IT=1 node --import ./scripts/test-setup.mjs --test tabs/monitoring/lib/adapters/run-stats.int.test.ts
+ *   - Lives beside instrumentation.ts because it needs two tabs: the Agents run store writes the rows,
+ *     the Monitoring reader counts them (a tab never imports another tab, GLUE-9).
+ *   - Run: MON_IT=1 node --import ./scripts/test-setup.mjs --test monitoring-run-stats.int.test.ts
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { migrateRunJobs, postgresRunJobStore } from '@tabs/agents/lib/engine/jobs-postgres';
-import { runStats } from './run-stats';
+import { runStats } from '@tabs/monitoring/lib/adapters/run-stats';
 
 const on = process.env.MON_IT === '1';
 const URL_ = process.env.MON_PG_URL ?? 'postgres://postgres:monit-not-a-secret@127.0.0.1:15532/postgres';
