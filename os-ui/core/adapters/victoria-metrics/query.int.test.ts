@@ -84,3 +84,4 @@ test('logsQuery returns VictoriaLogs rows and stats; a line nobody sent is not f
   const down = await logsQuery('*', { base: 'http://127.0.0.1:1', start: '1h' });
   assert.equal(down.ok, false);
 });
+
