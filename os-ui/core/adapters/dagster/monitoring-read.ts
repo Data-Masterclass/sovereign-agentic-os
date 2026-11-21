@@ -71,6 +71,22 @@ export function downstreamOf(g: DependedBy, from: string[][]): string[][] {
 }
 
 export type RunGroupHealth = { name: string; runs: number; failures: number; lastStatus: string; lastRunAt: string | null; lastSuccessAt: string | null; lastFailureRunId: string | null; runIds: string[] };
+export type LaneAlert = { runId: string; models: string[]; principal: string; at: string | null };
+
+/** Runs the code location tagged `os/lane_violation` (a model outside its owner's lane was selected), per asked dataset, newest first. */
+export function laneAlertsOf(runs: readonly DagsterRun[], datasetIds: readonly string[]): Map<string, LaneAlert[]> {
+  const asked = new Set(datasetIds);
+  const out = new Map<string, LaneAlert[]>();
+  for (const r of runs) {
+    const ds = r.tags['os/dataset'];
+    const v = r.tags['os/lane_violation'];
+    if (!ds || !v || !asked.has(ds)) continue;
+    if (!out.has(ds)) out.set(ds, []);
+    out.get(ds)!.push({ runId: r.runId, models: v.split(',').filter(Boolean), principal: r.tags['os/principal'] ?? '', at: r.startedAt });
+  }
+  return out;
+}
+
 export type DatasetRunHealth = { datasetId: string; jobs: RunGroupHealth[]; schedules: RunGroupHealth[] };
 
 function fold(groups: Map<string, RunGroupHealth>, name: string, r: DagsterRun): void {

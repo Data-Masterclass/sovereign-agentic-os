@@ -24,7 +24,7 @@ import 'server-only';
 import type { CurrentUser } from '@core/kernel/auth';
 import { config } from '@core/kernel/config';
 import { recentOsRuns } from '@core/infra/dagster';
-import { checkExecutions, dependedByGraph, downstreamOf, jobHealthOf, type RunGroupHealth } from '@core/adapters/dagster/monitoring-read';
+import { checkExecutions, dependedByGraph, downstreamOf, jobHealthOf, laneAlertsOf, type LaneAlert, type RunGroupHealth } from '@core/adapters/dagster/monitoring-read';
 import { monitoringSources, SOURCES_MISSING, type MonitoringSources } from '@tabs/monitoring/lib/panels/sources';
 import { live, qualityTrend, splitDownstream, unavailable, type NotUpstream, type SourceState, type TrendPoint } from '@tabs/monitoring/lib/panels/panels-core';
 
@@ -40,6 +40,8 @@ export type DatasetPanel = {
   dataUrl: string;
   jobs?: (RunGroupHealth & { lastFailureUrl?: string })[];
   schedules?: RunGroupHealth[];
+  /** Runs that selected a model outside their owner's lane (alert; the model names are the viewer's own domain's). */
+  laneAlerts?: (LaneAlert & { url?: string })[];
   /** Newest successful run end of any job of this dataset (Dagster), or null. */
   lastSuccessAt?: string | null;
   tests?: { source: 'dagster' | 'os' | null; ranAt: string | null; total: number; failing: { name: string; violations: number | null }[]; notRun: number };
@@ -83,6 +85,7 @@ export async function dataView(user: CurrentUser, nowMs = Date.now()): Promise<D
     dependedByGraph({ timeoutMs: 5000 }),
   ]);
   const health = runs.ok ? jobHealthOf(runs.data, ids) : null;
+  const laneAlerts = runs.ok ? laneAlertsOf(runs.data, ids) : new Map<string, LaneAlert[]>();
 
   // The dataset's own asset keys (the generated dbt project). Unreadable ⇒ lineage unavailable.
   const keys = await src.assetKeys(all.map(({ d }) => ({ id: d.id, domain: d.domain }))).then((m) => ({ ok: true as const, m }), (e: Error) => ({ ok: false as const, error: e.message }));
@@ -103,6 +106,7 @@ export async function dataView(user: CurrentUser, nowMs = Date.now()): Promise<D
       p.schedules = h?.schedules ?? [];
       p.lastSuccessAt = (h?.jobs ?? []).map((j) => j.lastSuccessAt).filter((x): x is string => !!x).sort().at(-1) ?? null;
     }
+    if (laneAlerts.has(d.id)) p.laneAlerts = laneAlerts.get(d.id)!.map((a) => ({ ...a, ...(dagsterUi ? { url: `${dagsterUi}/runs/${encodeURIComponent(a.runId)}` } : {}) }));
     if (dq.ok) {
       const results = rec?.results ?? [];
       p.tests = {

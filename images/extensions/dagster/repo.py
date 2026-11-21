@@ -417,10 +417,11 @@ def build_definitions() -> Definitions:
             context.log.warning("run %s: grant finish failed (%s: %s)", run.run_id, type(e).__name__, e)
 
     def _lane_check(context: RunStatusSensorContext):
-        """WP-16 detective: a run acts as its owner, so a model authored outside the owner's lane in its
-        selection is flagged — the run is tagged `os/lane_violation` (visible in Dagster and to the OS's
-        run reads) and an error is logged. A selection the OS generated cannot reach another lane
-        (schedules intersect the owner's lane); this catches a hand-launched or older run that does."""
+        """WP-16 detective: a run acts as its owner, so a model in its selection that is not one of the
+        OS-generated models of that owner (`os/generated.yml` `owners`, unpushable; a model's own meta is
+        never read) is flagged: the run is tagged `os/lane_violation`, which Monitoring → Data shows as an
+        alert, and an error is logged. Schedules and OS launches already intersect with the same set;
+        this catches a hand-launched or older run that goes beyond it."""
         run = context.dagster_run
         keys = run.asset_selection or set()
         names = [k.path[-1] for k in keys]
@@ -563,7 +564,9 @@ def _wire_project(p: osp.Project, dom: str) -> Dict[str, object]:
     # os/schedules.yml → one schedule per sync landing (`<model>+`), UTC, Dagster does not fire missed ticks.
     for s in p.schedules:
         name = osp.schedule_name(dom, s.dataset)
-        selection = build_dbt_asset_selection([domain_assets], dbt_select=s.select, **({"dbt_exclude": s.exclude} if s.exclude else {}))
+        selection = build_dbt_asset_selection([domain_assets], dbt_select=s.select)
+        if s.models:  # the OS-written list of the owner's models: the downstream is intersected with it
+            selection = selection & AssetSelection.assets(*[AssetKey([p.domain, n]) for n in s.models])
         sync_job = define_asset_job(name=name, selection=selection, tags=osp.schedule_tags(p.domain, s, p.sha, pinned_env, name))
         jobs.append(sync_job)
         # The repo's own `timezone` is honoured when `zoneinfo` knows it, else UTC with a log

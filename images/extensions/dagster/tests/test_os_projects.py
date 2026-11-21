@@ -1059,62 +1059,45 @@ class RunTagEnv(unittest.TestCase):
 
 
 class ScheduleLane(unittest.TestCase):
-    """A schedule selects only its owner's lane; a detective flags a run that still reaches beyond it."""
+    """A schedule selects only the OS-generated models of its owner; a detective flags a run that reaches beyond them."""
 
-    def test_the_schedule_file_carries_the_exclusion_and_an_absent_one_is_empty(self):
+    OWNERS = {"bronze_a": "bea", "silver_a2": "bea", "silver_b": "amir"}
+
+    def test_the_legacy_schedule_file_carries_the_owners_models(self):
         text = """
 version: 1
 schedules:
-  - {dataset: ds_a, name: silver_a, select: "silver_a+,config.meta.os_owner:bea", exclude: "path:models/personal", cron: "0 * * * *", principal: bea, enabled: true}
-  - {dataset: ds_b, name: bronze_b, select: "bronze_b+,path:models/personal/bea", cron: "0 * * * *", principal: bea, enabled: true}
+  - {dataset: ds_a, name: silver_a, select: "silver_a+", models: [bronze_a, silver_a, "bad name; drop"], cron: "0 * * * *", principal: bea, enabled: true}
+  - {dataset: ds_b, name: bronze_b, select: "bronze_b+", cron: "0 * * * *", principal: bea, enabled: true}
 """
         a, b = osp.parse_schedules(text)
-        self.assertEqual((a.select, a.exclude), ("silver_a+,config.meta.os_owner:bea", "path:models/personal"))
-        self.assertEqual((b.select, b.exclude), ("bronze_b+,path:models/personal/bea", ""))
+        self.assertEqual(a.models, ("bronze_a", "silver_a"), "a malformed name is dropped, never guessed")
+        self.assertEqual(b.models, ())
 
-    def _manifest(self, nodes):
-        import json, tempfile
-        d = tempfile.mkdtemp()
-        path = os.path.join(d, "manifest.json")
-        with open(path, "w") as fh:
-            json.dump({"nodes": {f"model.p.{n}": {"resource_type": "model", "name": n, "original_file_path": p, "meta": ({"os_owner": o} if o else {})}
-                                 for n, p, o in nodes}}, fh)
-        return path
+    def test_a_selection_inside_the_owners_generated_models_raises_no_flag(self):
+        self.assertEqual(osp.out_of_lane_models(self.OWNERS, ["bronze_a", "silver_a2"], "bea"), [])
 
-    NODES = [
-        ("bronze_a", "models/personal/bea/bronze_a.sql", "bea"),
-        ("silver_b", "models/personal/amir/silver_b.sql", "amir"),
-        ("silver_c", "models/silver/silver_c.sql", "amir"),
-        ("silver_d", "models/silver/silver_d.sql", "bea"),
-        ("silver_e", "models/silver/silver_e.sql", None),
-        ("forged", "models/personal/amir/forged.sql", "bea"),
-    ]
+    def test_a_model_of_another_owner_is_flagged(self):
+        self.assertEqual(osp.out_of_lane_models(self.OWNERS, ["bronze_a", "silver_b"], "bea"), ["silver_b"])
 
-    def test_a_selection_inside_the_owners_lane_raises_no_flag(self):
-        m = self._manifest(self.NODES)
-        self.assertEqual(osp.out_of_lane_models(m, ["bronze_a", "silver_d"], "bea"), [])
+    def test_NEGATIVE_TWIN_a_model_the_OS_did_not_generate_is_flagged_whatever_its_own_meta_says(self):
+        # An author-pushed model that labels itself `meta.os_owner: bea` is not in the OS-written map.
+        self.assertEqual(osp.out_of_lane_models(self.OWNERS, ["bronze_a", "author_added_model"], "bea"), ["author_added_model"])
 
-    def test_a_model_authored_outside_the_owners_lane_is_flagged(self):
-        m = self._manifest(self.NODES)
-        self.assertEqual(osp.out_of_lane_models(m, ["bronze_a", "silver_b", "silver_c"], "bea"), ["silver_b", "silver_c"])
-
-    def test_NEGATIVE_TWINS_a_model_without_an_owner_and_a_forged_owner_in_anothers_directory_are_flagged(self):
-        m = self._manifest(self.NODES)
-        self.assertEqual(osp.out_of_lane_models(m, ["silver_e"], "bea"), ["silver_e"], "no os_owner: shared-path code of unknown author")
-        self.assertEqual(osp.out_of_lane_models(m, ["forged"], "bea"), ["forged"], "meta says bea but the file is in amir's directory")
-
-    def test_an_unreadable_manifest_flags_nothing_it_cannot_judge_but_says_so(self):
-        self.assertIsNone(osp.out_of_lane_models("/nonexistent/manifest.json", ["x"], "bea"))
-
-    def test_a_run_is_checked_against_the_manifest_of_its_own_commit(self):
-        import json, tempfile
+    def _checkout(self, owners):
+        import tempfile
         co = tempfile.mkdtemp()
-        tgt = os.path.join(co, "sales", SHA_A, "target")
-        os.makedirs(tgt)
-        with open(os.path.join(tgt, "manifest.json"), "w") as fh:
-            json.dump({"nodes": {"model.p.m1": {"resource_type": "model", "name": "m1", "original_file_path": "models/silver/m1.sql", "meta": {"os_owner": "amir"}}}}, fh)
+        os_dir = os.path.join(co, "sales", SHA_A, "os")
+        os.makedirs(os_dir)
+        with open(os.path.join(os_dir, "generated.yml"), "w") as fh:
+            fh.write("version: 1\nsha256: {}\n" + ("owners:\n" + "".join(f"  {k}: {v}\n" for k, v in owners.items()) if owners is not None else ""))
+        return co
+
+    def test_a_run_is_judged_against_the_owner_map_of_its_own_commit(self):
+        co = self._checkout(self.OWNERS)
         tags = {"os/principal": "bea", "os/domain": "sales", "os/commit": SHA_A}
-        self.assertEqual(osp.lane_check_for_run(co, tags, ["m1"]), ["m1"])
-        self.assertEqual(osp.lane_check_for_run(co, {**tags, "os/principal": "amir"}, ["m1"]), [])
-        self.assertIsNone(osp.lane_check_for_run(co, {**tags, "os/commit": SHA_B}, ["m1"]), "no manifest for that commit: cannot judge")
-        self.assertIsNone(osp.lane_check_for_run(co, {"os/domain": "sales"}, ["m1"]), "a run without a principal is not an owner's run")
+        self.assertEqual(osp.lane_check_for_run(co, tags, ["bronze_a", "silver_b", "forged"]), ["forged", "silver_b"])
+        self.assertEqual(osp.lane_check_for_run(co, {**tags, "os/principal": "amir"}, ["silver_b"]), [])
+        self.assertIsNone(osp.lane_check_for_run(co, {**tags, "os/commit": SHA_B}, ["bronze_a"]), "no such commit: cannot judge")
+        self.assertIsNone(osp.lane_check_for_run(self._checkout(None), tags, ["bronze_a"]), "no owner map (not a native repo): cannot judge")
+        self.assertIsNone(osp.lane_check_for_run(co, {"os/domain": "sales"}, ["bronze_a"]), "a run without a principal is not an owner's run")
