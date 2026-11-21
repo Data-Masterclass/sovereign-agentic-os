@@ -84,6 +84,8 @@ const pg = createRequire(new URL('../../os-ui/package.json', import.meta.url))('
 type Rows = unknown[][];
 const pw = (u: string) => (tls.requireSecrets() as { passwords: Record<string, string> }).passwords[u];
 const OWNERS = ['alice15', 'carol15', 'bob15'] as const;
+// WP-15 review: a domain-lane model (the domain schema, not a personal lane).
+const DOMAIN_MODEL = 'orders_domain15';
 const lane = (o: string) => `personal_${o}`;
 
 let db: { url: string; drop: () => Promise<void> };
@@ -243,13 +245,14 @@ before(async () => {
     ['profiles.yml', renderProfiles(DOMAIN, 'ldap')],
     ...renderMacros(),
     ...OWNERS.map((o): [string, string] => [`models/orders_${o}.sql`, `{{ config(schema='${lane(o)}') }}\nselect id, region, email from ${SRC}\n`]),
+    [`models/${DOMAIN_MODEL}.sql`, `{{ config(schema='${DOMAIN}') }}\nselect id, region from ${SRC}\n`],
     ['os/schedules.yml', `version: 1\nschedules:\n  - dataset: ds_alice15\n    name: orders_alice15\n    select: orders_alice15\n    cron: "* * * * *"\n    timezone: UTC\n    principal: alice15\n    enabled: true\n    run_grant: ${standingId}\n`],
   ]);
   const c = await commitTree(DOMAIN, files, { author: { name: 'alice15', email: 'alice15@wp15.example' }, message: 'wp15 fixture', reposDir: process.env.OS_REPOS_DIR });
   sha = c.sha;
   const { reconcileStandingGrants } = await import('@core/policy/run-grants');
   const { governanceRuntimePool } = await import('@core/adapters/postgres/pool');
-  await reconcileStandingGrants(governanceRuntimePool(), DOMAIN, [{ dataset: 'ds_alice15', principal: 'alice15', schedule: 'orders_alice15', enabled: true }], 'alice15');
+  await reconcileStandingGrants(governanceRuntimePool(), DOMAIN, [{ dataset: 'ds_alice15', principal: 'alice15', schedule: 'orders_alice15', enabled: true, job: 'wp15__ds_alice15' }], 'alice15');
 
   // repo-sync's checkout (<domain>/<sha> + current) and the manifest, parsed in the image.
   const co = join(H, RUN, 'checkout');
@@ -291,7 +294,9 @@ before(async () => {
     IMAGE, 'sh', '-c', 'mkdir -p $DAGSTER_HOME && cp /wp15/dagster.yaml $DAGSTER_HOME/ && (dagster-daemon run -w /wp15/workspace.yaml > /tmp/daemon.log 2>&1 &) && exec dagster-webserver -w /wp15/workspace.yaml -h 0.0.0.0 -p 3000']);
   const nodes = await until(
     () => gql<{ assetNodes: { assetKey: { path: string[] } }[] }>('{ assetNodes { assetKey { path } } }'),
-    (d) => d.assetNodes.length >= OWNERS.length, 180_000, 'the sovereign location loads the domain', 3000);
+    (d) => d.assetNodes.length >= OWNERS.length + 1, 180_000, 'the sovereign location loads the domain', 3000);
+  keys.domain = nodes.assetNodes.map((n) => n.assetKey.path).find((p) => p[p.length - 1] === DOMAIN_MODEL)!;
+  assert.ok(keys.domain, 'the domain-lane asset');
   for (const o of OWNERS) {
     const k = nodes.assetNodes.map((n) => n.assetKey.path).find((p) => p[p.length - 1] === `orders_${o}`);
     assert.ok(k, `asset for ${o}`);
@@ -338,7 +343,7 @@ test('1. a scheduled run under its standing grant acts as its owner, and only wh
   // schedule's next tick (it still fires) is refused before any query.
   const { reconcileStandingGrants } = await import('@core/policy/run-grants');
   const { governanceRuntimePool } = await import('@core/adapters/postgres/pool');
-  await reconcileStandingGrants(governanceRuntimePool(), DOMAIN, [{ dataset: 'ds_alice15', principal: 'alice15', schedule: 'orders_alice15', enabled: false }], 'alice15');
+  await reconcileStandingGrants(governanceRuntimePool(), DOMAIN, [{ dataset: 'ds_alice15', principal: 'alice15', schedule: 'orders_alice15', enabled: false, job: 'wp15__ds_alice15' }], 'alice15');
   const tRevoked = Date.now() / 1000;
   const failed = await until(
     () => gql<{ runsOrError: { results: { runId: string; status: string; startTime: number | null }[] } }>(
@@ -445,4 +450,38 @@ test('6. one data run at a time: a second launch waits in the queue', async () =
   assert.ok(seen);
   const end = await until(async () => [await runState(a), await runState(b)], (s) => s.every(finished), 300_000, 'both finished', 2000);
   assert.deepEqual(end.map((s) => s.status), ['SUCCESS', 'SUCCESS']);
+});
+
+test('7. P1 on real Trino: the runner and the agent worker have no rights of their own, only impersonation', async () => {
+  // Ungoverned table the harness user writes (so a denial below is the rule, not a missing table).
+  await lib.run('CREATE SCHEMA IF NOT EXISTS iceberg.wp15_free', { user: 'lh-setup', source: 'lh-setup' });
+  await lib.run('CREATE OR REPLACE TABLE iceberg.wp15_free.t AS SELECT 42 AS v', { user: 'lh-setup', source: 'lh-setup' });
+  assert.deepEqual((await legacy('SELECT v FROM iceberg.wp15_free.t', 'lh-setup')).rows, [[42]], 'twin: the table is there and readable by an ordinary user');
+  const self = (svc: string, sql: string) => tls.runTls(sql, { auth: [svc, pw(svc)], source: 'lh-wp15-p1' }).then(() => 'allowed', (e: { errorName?: string }) => e.errorName ?? 'error');
+  for (const svc of ['svc-dagster-runner', 'svc-os-worker']) {
+    for (const sql of [
+      'SELECT 1',
+      'SHOW CATALOGS',
+      'SHOW SCHEMAS FROM iceberg',
+      'SELECT v FROM iceberg.wp15_free.t',
+      `SELECT count(*) FROM ${SRC}`,
+      'CREATE SCHEMA iceberg.wp15_planted',
+      `CREATE TABLE iceberg.wp15_src.planted_${svc.replace(/-/g, '_')} AS SELECT 42 AS v`,
+      'DESCRIBE iceberg.wp15_free.t',
+    ]) assert.equal(await self(svc, sql), 'PERMISSION_DENIED', `${svc} as itself: ${sql}`);
+  }
+  assert.equal((await legacy("SELECT count(*) FROM iceberg.information_schema.tables WHERE table_name LIKE 'planted%'", 'lh-setup')).rows?.[0]?.[0], 0, 'nothing was planted');
+});
+
+test('8. a domain-lane build acts as the person who launched it; a domain self-principal is refused', async () => {
+  const { issueDatasetGrant } = await import('@core/policy/run-grants');
+  const { governanceRuntimePool } = await import('@core/adapters/postgres/pool');
+  const grant = (principal: string) => issueDatasetGrant(governanceRuntimePool(), { principal, domain: DOMAIN, dataset: 'ds_domain15', commit: sha, selection: [keys.domain], issuedBy: 'carol15' });
+  const tags = (principal: string, g: string) => ({ 'os/principal': principal, 'os/dataset': 'ds_domain15', 'os/run_grant': g, 'os/user': 'carol15', 'os/action': 'transform silver' });
+  const ok = await launchAndWait(tags('carol15', await grant('carol15')), [keys.domain]);
+  assert.equal(ok.status, 'SUCCESS', ok.messages.slice(-1500));
+  assert.ok(ok.queries.length > 0 && ok.queries.every((x) => x.user === 'carol15'), 'every dbt query ran as the launching user');
+  assert.deepEqual((await legacy(`SELECT id, region FROM iceberg.${DOMAIN}.${DOMAIN_MODEL} ORDER BY id`, 'carol15')).rows, [[1, 'north'], [2, 'south'], [3, 'east']]);
+  // Twin: today's domain self-principal as the run's principal is not a person — refused at start.
+  await refused('domain self-principal', tags(DOMAIN, await grant(DOMAIN)), [keys.domain], /owner lost access: wp15 is not an OS user/, [DOMAIN]);
 });
