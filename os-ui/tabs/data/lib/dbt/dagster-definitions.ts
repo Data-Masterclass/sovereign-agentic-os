@@ -193,9 +193,11 @@ export function renderDagsterDefinitions(domain: string, plan: ModelPlanSet): st
     const dltSrc = dltByDataset.get(e.dataset);
     // Only the OS-generated models of the schedule's owner can be selected: the downstream of the landing
     // INTERSECTED with that set. A model another person added downstream is not in it, whatever its meta.
-    const ownerKeys = [...(dltSrc ? [pyList(dltSrc.key)] : []), ...(e.models ?? []).map((n) => pyList([domain, n]))];
-    const start = dltSrc ? pyList(dltSrc.key) : pyList([domain, e.name]);
-    const selection = `dg.AssetSelection.assets(${start}).downstream() & dg.AssetSelection.assets(${ownerKeys.join(', ')})`;
+    // (dagster-dbt resolves the model NAMES to asset keys; the names are the OS-generated ones.)
+    const owned = `build_dbt_asset_selection([${dbtAssets}], dbt_select=${py((e.models ?? [e.name]).join(' '))})`;
+    const selection = dltSrc
+      ? `dg.AssetSelection.assets(${pyList(dltSrc.key)}).downstream() & (dg.AssetSelection.assets(${pyList(dltSrc.key)}) | ${owned})`
+      : `build_dbt_asset_selection([${dbtAssets}], dbt_select=${py(`${e.name}+`)}) & ${owned}`;
     const tags = { 'os/domain': domain, 'os/dataset': e.dataset, 'os/principal': e.principal, 'os/schedule': name, 'os/action': 'scheduled sync' };
     push(
       '',
