@@ -12,6 +12,7 @@
     dagster-ingress-policies.yaml, docling-ingress-policy.yaml, litellm-ingress-policy.yaml,
     opensearch-ingress-policy.yaml, langfuse/web-ingress-policy.yaml, os-ui/os-repos.yaml (os-ui),
     os-ui/apps-runner.yaml (query-tool, data-runner), os-ui/software-scanner.yaml.
+  cert-manager's HTTP-01 solver pods admit the ingress controller on :8089 (renewals).
   Pods that serve nothing (os-ui-worker, dagster-daemon, langfuse-worker, Jobs, CronJobs) get no
   allow rule at all.
 
@@ -83,6 +84,31 @@ spec:
   podSelector: {}
   policyTypes:
     - Ingress
+---
+# cert-manager's ACME HTTP-01 solver pods: cert-manager creates one per pending Challenge in the
+# Certificate's namespace, labelled `acme.cert-manager.io/http01-solver: "true"`, and the ingress
+# controller proxies `/.well-known/acme-challenge/` to it on :8089
+# (https://cert-manager.io/docs/configuration/acme/http01/). Without this, renewals fail.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: acme-http01-solver-allow-controller
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      acme.cert-manager.io/http01-solver: "true"
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $pi.ingressNamespace | default "ingress-nginx" | quote }}
+      ports:
+        - { protocol: TCP, port: 8089 }
 {{- $dagsterPods := list
       (dict "app.kubernetes.io/name" "dagster" "app.kubernetes.io/instance" $rel)
       (dict "component" "user-deployments") }}
