@@ -24,13 +24,17 @@ import 'server-only';
 import type { CurrentUser } from '@core/kernel/auth';
 import { config } from '@core/kernel/config';
 import { recentOsRuns } from '@core/infra/dagster';
-import { checkExecutions, dependedByGraph, downstreamOf, jobHealthOf, laneAlertsOf, type LaneAlert, type RunGroupHealth } from '@core/adapters/dagster/monitoring-read';
+import { checkExecutions, dependedByGraph, downstreamOf, jobHealthOf, laneAlertsOf, visibleModels, type LaneAlert, type RunGroupHealth } from '@core/adapters/dagster/monitoring-read';
 import { monitoringSources, SOURCES_MISSING, type MonitoringSources } from '@tabs/monitoring/lib/panels/sources';
 import { live, qualityTrend, splitDownstream, unavailable, type NotUpstream, type SourceState, type TrendPoint } from '@tabs/monitoring/lib/panels/panels-core';
 
 /** Dagster reads per page are bounded: runs scanned, datasets given a trend. */
 const RUN_SCAN = 200;
 const TREND_DATASETS = 25;
+const ALERT_SCAN = 1000;
+
+/** An alert with the model names the viewer may see; `hidden` counts the ones withheld. */
+export type LaneAlertView = { runId: string; models: string[]; hidden: number; principal: string; at: string | null; url?: string };
 
 export type DatasetPanel = {
   id: string;
@@ -41,7 +45,7 @@ export type DatasetPanel = {
   jobs?: (RunGroupHealth & { lastFailureUrl?: string })[];
   schedules?: RunGroupHealth[];
   /** Runs that selected a model outside their owner's lane (alert; the model names are the viewer's own domain's). */
-  laneAlerts?: (LaneAlert & { url?: string })[];
+  laneAlerts?: LaneAlertView[];
   /** Newest successful run end of any job of this dataset (Dagster), or null. */
   lastSuccessAt?: string | null;
   tests?: { source: 'dagster' | 'os' | null; ranAt: string | null; total: number; failing: { name: string; violations: number | null }[]; notRun: number };
@@ -59,6 +63,8 @@ export type DataView = {
   sources: { inventory: SourceState; dagsterRuns: SourceState; tests: SourceState; lineage: SourceState };
   links: { dagster?: string };
   datasets: DatasetPanel[];
+  /** Hand-launched runs (no dataset) of the viewer's domains that reached beyond their owner's lane. */
+  laneAlerts: LaneAlertView[];
   notUpstream: NotUpstream[];
 };
 
@@ -85,7 +91,9 @@ export async function dataView(user: CurrentUser, nowMs = Date.now()): Promise<D
     dependedByGraph({ timeoutMs: 5000 }),
   ]);
   const health = runs.ok ? jobHealthOf(runs.data, ids) : null;
-  const laneAlerts = runs.ok ? laneAlertsOf(runs.data, ids) : new Map<string, LaneAlert[]>();
+  // Alerts are scanned wider than the health rows (an older violation must not fall off the page).
+  const alertRuns = ids.length || user.domains.length ? await recentOsRuns(ALERT_SCAN, { timeoutMs: 8000 }) : { ok: true as const, data: [] };
+  const laneAlerts = alertRuns.ok ? laneAlertsOf(alertRuns.data, ids, user.domains) : new Map<string, LaneAlert[]>();
 
   // The dataset's own asset keys (the generated dbt project). Unreadable ⇒ lineage unavailable.
   const keys = await src.assetKeys(all.map(({ d }) => ({ id: d.id, domain: d.domain }))).then((m) => ({ ok: true as const, m }), (e: Error) => ({ ok: false as const, error: e.message }));
@@ -93,6 +101,11 @@ export async function dataView(user: CurrentUser, nowMs = Date.now()): Promise<D
 
   // The asset keys of every dataset in the viewer's scope — the only downstream names they may see.
   const visibleKeys = [...keysOf.values()].flatMap((k) => k.models);
+  const visibleNames = new Set(visibleKeys.map((k) => k[k.length - 1]));
+  const view = (a: LaneAlert): LaneAlertView => {
+    const v = visibleModels(a, visibleNames);
+    return { runId: a.runId, models: v.models, hidden: v.hidden, principal: a.principal, at: a.at, ...(dagsterUi ? { url: `${dagsterUi}/runs/${encodeURIComponent(a.runId)}` } : {}) };
+  };
 
   const datasets: DatasetPanel[] = [];
   let trends = 0;
@@ -106,7 +119,7 @@ export async function dataView(user: CurrentUser, nowMs = Date.now()): Promise<D
       p.schedules = h?.schedules ?? [];
       p.lastSuccessAt = (h?.jobs ?? []).map((j) => j.lastSuccessAt).filter((x): x is string => !!x).sort().at(-1) ?? null;
     }
-    if (laneAlerts.has(d.id)) p.laneAlerts = laneAlerts.get(d.id)!.map((a) => ({ ...a, ...(dagsterUi ? { url: `${dagsterUi}/runs/${encodeURIComponent(a.runId)}` } : {}) }));
+    if (laneAlerts.has(d.id)) p.laneAlerts = laneAlerts.get(d.id)!.map(view);
     if (dq.ok) {
       const results = rec?.results ?? [];
       p.tests = {
@@ -144,6 +157,7 @@ export async function dataView(user: CurrentUser, nowMs = Date.now()): Promise<D
     },
     links: dagsterUi ? { dagster: dagsterUi } : {},
     datasets,
+    laneAlerts: [...laneAlerts].filter(([k]) => k.startsWith('domain:')).flatMap(([, v]) => v.map(view)),
     notUpstream: NOT_UPSTREAM,
   };
 }

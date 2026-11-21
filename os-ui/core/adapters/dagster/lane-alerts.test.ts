@@ -10,7 +10,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { laneAlertsOf } from './monitoring-read';
+import { laneAlertsOf, visibleModels } from './monitoring-read';
 import type { DagsterRun } from '@core/infra/dagster';
 
 const run = (runId: string, tags: Record<string, string>): DagsterRun => ({ runId, status: 'SUCCESS', jobName: 'sales__all', startedAt: '2026-11-21T10:00:00.000Z', endedAt: null, tags, assetSelection: [] });
@@ -30,4 +30,20 @@ test('NEGATIVE TWINS: a clean run, an unasked dataset and a run without a datase
     run('n', { 'os/lane_violation': 'x' }),
   ], ['ds_a']);
   assert.equal(a.size, 0);
+});
+
+test('a hand-launched run without os/dataset is an alert on its domain, for viewers of that domain only', () => {
+  const runs = [run('h', { 'os/domain': 'sales', 'os/lane_violation': 'silver_b', 'os/principal': 'bea' }), run('x', { 'os/domain': 'hr', 'os/lane_violation': 'y' })];
+  const a = laneAlertsOf(runs, [], ['sales']);
+  assert.deepEqual(a.get('domain:sales')?.map((x) => x.runId), ['h']);
+  assert.equal(a.has('domain:hr'), false, 'another domain\'s run is not shown');
+  assert.equal(laneAlertsOf(runs, [], []).size, 0, 'no domains, no alerts');
+});
+
+test('model names are filtered to what the viewer may see; the rest is a count', () => {
+  const alert = { runId: 'r', models: ['silver_b', 'secret_model', 'forged'], principal: 'bea', at: null };
+  const seen = visibleModels(alert, new Set(['silver_b']));
+  assert.deepEqual(seen.models, ['silver_b']);
+  assert.equal(seen.hidden, 2, 'two names withheld, only counted');
+  assert.deepEqual(visibleModels(alert, new Set()).models, []);
 });
