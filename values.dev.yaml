@@ -90,6 +90,19 @@ osUI:
   agentSystemKey:
     maxBudget: 1
     budgetDuration: "7d"
+  # NATIVE LAYOUTS, dev first (docs: values.yaml osUI.dataProjectGit.layout and
+  # osUI.agentGraphModule). ONE domain, `sales`: its repo moves to the v2 layout at boot (dbt at
+  # data/dbt/, Dagster definitions at data/dagster/, one `OS-Reason: layout-migration` commit) and
+  # its agent systems are generated and run as LangGraph modules (graph.mjs). Every other dev domain
+  # keeps its v1 repo. NEW repos are created v2. Rollback: `migration: "off"` and
+  # `agentGraphModule.enabled: false`, then `git revert` the migration commit in sales.
+  dataProjectGit:
+    layout:
+      migration: apply
+      migrationDomains: [sales]
+  agentGraphModule:
+    enabled: true
+    domains: [sales]
 
 # --- Models: the same STACKIT AI Model Serving API, a SEPARATE low-budget key --------------
 # The key is the dev project's own Model Serving token (docs/ops/dev-environment.md "Dev model
