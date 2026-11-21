@@ -19,8 +19,11 @@ export type ScheduleEntry = {
   dataset: string;
   name: string;
   select: string;
-  /** dbt `--exclude` of the selection (a domain-lane landing never selects a personal lane). */
-  exclude?: string;
+  /**
+   * The OS-generated models of this schedule's owner: the only models the run may select (the legacy
+   * loader intersects the downstream with it). Not author-writable, unlike a model's own `meta`.
+   */
+  models?: string[];
   cron: string;
   timezone: 'UTC';
   principal: string;
@@ -29,23 +32,16 @@ export type ScheduleEntry = {
   run_grant?: string;
 };
 
-/**
- * One schedule per sync-landing model: the dbt selection `<model>+` rebuilds everything downstream,
- * but only inside the OWNER'S lane. A personal-lane landing is intersected with its own directory
- * (`<model>+,path:models/personal/<uid>`); a domain-lane landing keeps only models whose `meta.os_owner` is
- * the owner and excludes every personal directory.
- * A model another person put downstream of this landing table needs its own schedule and owner.
- */
+/** One schedule per sync-landing model (the dbt selection `<model>+` rebuilds everything downstream). */
 export function scheduleEntries(models: ModelPlan[]): ScheduleEntry[] {
   const out: ScheduleEntry[] = [];
   for (const m of models) {
     if (!m.kind.startsWith('sync-') || !m.dataset.sync) continue;
-    const personal = m.schema.startsWith('personal_');
     out.push({
       dataset: m.dataset.id,
       name: m.name,
-      select: personal ? `${m.name}+,path:${m.dir}` : `${m.name}+,config.meta.os_owner:${m.dataset.owner}`,
-      ...(personal ? {} : { exclude: 'path:models/personal' }),
+      select: `${m.name}+`,
+      models: models.filter((x) => x.dataset.owner === m.dataset.owner).map((x) => x.name).sort(),
       cron: m.dataset.sync.schedule.cron,
       timezone: 'UTC',
       principal: m.dataset.owner,

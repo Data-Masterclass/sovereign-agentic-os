@@ -1,40 +1,46 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Borek Data Ventures UG
-"""A sync schedule selects only models in its owner's lane — judged by the real dbt in the image.
+"""A sync schedule selects only the OS-generated models of its owner — judged by the real Dagster in the image.
 
-Run IN the Dagster image (run.sh): real dbt-core resolves the selection strings the OS generates
-(os-ui tabs/data/lib/dbt/schedules.ts: `<model>+,path:<owner's dir>` for a personal-lane landing;
-`<model>+,config.meta.os_owner:<owner>` with `--exclude path:models/personal` for a domain-lane one).
-  - personal landing of bea: her own lane only (not amir's personal model, not a shared model);
-  - domain landing of bea: only bea's shared-path models (not amir's shared model, no personal lane);
-  - Twin: the plain `<model>+` selects another owner's personal AND shared models downstream.
+Run IN the Dagster image (run.sh). The selection the OS generates (os-ui tabs/data/lib/dbt/
+dagster-definitions.ts) is `AssetSelection.assets(<landing>).downstream() & AssetSelection.assets(<the
+owner's OS-generated models>)`; this resolves it on a real asset graph that holds an author-added model
+downstream of the landing table which labels itself with the owner in its own metadata.
+  - the selection contains the owner's models and neither another owner's model nor the author-added one;
+  - Twin: the plain downstream selection contains the author-added model (the case this prevents);
+  - the detective (os_projects.out_of_lane_models) flags exactly the models the selection excludes.
 """
-import os
-import subprocess
-import tempfile
+import sys
 
-P = tempfile.mkdtemp()
-for d in ("models/personal/bea", "models/personal/amir", "models/silver"):
-    os.makedirs(os.path.join(P, d))
-w = lambda rel, text: open(os.path.join(P, rel), "w").write(text)  # noqa: E731
-w("dbt_project.yml", "name: lane\nversion: '1.0.0'\nconfig-version: 2\nprofile: p\nmodel-paths: [models]\n")
-w("profiles.yml", "p:\n  target: t\n  outputs:\n    t: {type: trino, method: none, host: h, port: 8080, user: u, database: iceberg, schema: s, threads: 1}\n")
-w("models/personal/bea/bronze_a.sql", "select 1 as x\n")
-for rel in ("models/personal/bea/silver_a2.sql", "models/personal/amir/silver_b.sql", "models/silver/silver_c.sql", "models/silver/silver_d.sql"):
-    w(rel, "select * from {{ ref('bronze_a') }}\n")
-w("models/schema.yml", "version: 2\nmodels:\n" + "".join(
-    f"  - {{name: {n}, meta: {{os_owner: {o}}}}}\n" for n, o in
-    (("bronze_a", "bea"), ("silver_a2", "bea"), ("silver_b", "amir"), ("silver_c", "amir"), ("silver_d", "bea"))))
-ENV = {**os.environ, "DBT_PROFILES_DIR": P, "DBT_SEND_ANONYMOUS_USAGE_STATS": "false", "HOME": "/tmp"}
+sys.path.insert(0, "/opt/dagster/app")
+import dagster as dg  # noqa: E402
+
+import os_projects as osp  # noqa: E402
+
+K = lambda n: dg.AssetKey(["sales", n])  # noqa: E731
 
 
-def ls(select: str, exclude: str = "") -> set:
-    cmd = ["dbt", "ls", "--resource-type", "model", "--output", "name", "--project-dir", P, "--select", select]
-    if exclude:
-        cmd += ["--exclude", exclude]
-    out = subprocess.run(cmd, env=ENV, capture_output=True, text=True, check=True).stdout
-    return {line.strip() for line in out.splitlines() if line.strip() in {"bronze_a", "silver_a2", "silver_b", "silver_c", "silver_d"}}
+@dg.asset(key=K("bronze_a"))
+def bronze_a(): ...
 
+
+@dg.asset(key=K("silver_a2"), deps=[K("bronze_a")])
+def silver_a2(): ...
+
+
+@dg.asset(key=K("silver_b"), deps=[K("bronze_a")])  # another owner's model
+def silver_b(): ...
+
+
+# Added by an author in a shared path; its own metadata claims the owner.
+@dg.asset(key=K("author_added_model"), deps=[K("bronze_a")], metadata={"os_owner": "bea"})
+def author_added_model(): ...
+
+
+graph = dg.Definitions(assets=[bronze_a, silver_a2, silver_b, author_added_model]).resolve_asset_graph()
+OWNERS = {"bronze_a": "bea", "silver_a2": "bea", "silver_b": "amir"}  # os/generated.yml `owners`
+mine = [K(n) for n, o in OWNERS.items() if o == "bea"]
+names = lambda sel: {k.path[-1] for k in sel.resolve(graph)}  # noqa: E731
 
 fails = []
 
@@ -46,11 +52,11 @@ def check(name, got, want):
         fails.append(name)
 
 
-check("personal landing of bea selects her own lane only", ls("bronze_a+,path:models/personal/bea"), {"bronze_a", "silver_a2"})
-check("domain landing of bea selects only bea's shared-path models",
-      ls("bronze_a+,config.meta.os_owner:bea", "path:models/personal"), {"silver_d"})
-check("TWIN: the plain <model>+ also selects amir's personal and shared models",
-      ls("bronze_a+"), {"bronze_a", "silver_a2", "silver_b", "silver_c", "silver_d"})
-check("TWIN: without the exclusion a domain landing would still take bea's personal models",
-      ls("bronze_a+,config.meta.os_owner:bea"), {"bronze_a", "silver_a2", "silver_d"})
+selected = names(dg.AssetSelection.assets(K("bronze_a")).downstream() & dg.AssetSelection.assets(*mine))
+check("the owner's schedule selects only her OS-generated models", selected, {"bronze_a", "silver_a2"})
+twin = names(dg.AssetSelection.assets(K("bronze_a")).downstream())
+check("TWIN: the plain downstream also takes another owner's model and the author-added one", twin, {"bronze_a", "silver_a2", "silver_b", "author_added_model"})
+check("the detective flags exactly what the selection leaves out of the twin (meta is never read)",
+      set(osp.out_of_lane_models(OWNERS, twin, "bea")), {"silver_b", "author_added_model"})
+check("the detective is silent for the generated selection", osp.out_of_lane_models(OWNERS, selected, "bea"), [])
 raise SystemExit(1 if fails else 0)

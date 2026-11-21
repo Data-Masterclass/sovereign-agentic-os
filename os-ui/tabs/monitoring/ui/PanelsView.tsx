@@ -196,6 +196,12 @@ function DatasetCard({ d, v }: { d: DatasetPanel; v: DataView }) {
           {d.tests.source === 'os' ? ' — OS probe, no dbt test has run yet' : ''}
         </p>
       )}
+      {(d.laneAlerts?.length ?? 0) > 0 && (
+        <div className="mon-tr err" role="alert" style={{ marginTop: 6 }}>
+          <span>Alert: {d.laneAlerts!.length} run(s) selected a model outside the owner&apos;s lane. Latest: {d.laneAlerts![0].models.join(', ')}
+            {d.laneAlerts![0].url ? <> <a className="mon-xlink" href={d.laneAlerts![0].url} target="_blank" rel="noreferrer">run ↗</a></> : null}</span>
+        </div>
+      )}
       {(d.jobs?.length ?? 0) + (d.schedules?.length ?? 0) > 0 && (
         <div className="mon-table" style={{ marginTop: 6 }}>
           <div className="mon-tr mon-th mon-tr-pjob"><span>Job / schedule</span><span>Last</span><span>Last success</span><span>Fails</span></div>

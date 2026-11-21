@@ -1,49 +1,75 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  *
- * FEATURE:    A sync schedule selects only models in its owner's own lane
- * USER STORY: As a data owner I want my schedule to run my models, not another person's: a model that
- *             another person put downstream of my landing table needs its own schedule and owner.
+ * FEATURE:    A sync schedule selects only the models the OS generated for its owner
+ * USER STORY: As a data owner I want my schedule to run my models, not code another person added
+ *             downstream of my landing table: that code needs its own schedule and owner.
  * ARCHITECTURE:
- *   - `scheduleEntries` writes the dbt selection of each sync schedule. A personal-lane landing is
- *     intersected with its own directory (`<model>+,path:models/personal/<uid>`); a domain-lane landing
- *     keeps the owner's models (`config.meta.os_owner:<uid>`) and excludes every personal directory
- *     (`dbt_exclude`, dagster-dbt's `build_dbt_asset_selection`). Selection semantics were checked with
- *     `dbt ls` 1.9.11 in the Dagster image (images/extensions/dagster/tests/image/lane_select.sh).
- *   - The native generator and the legacy `os/schedules.yml` carry the same two fields.
+ *   - The allowed set is the OS-generated models of the schedule's owner, known from the dataset
+ *     definitions, NOT from anything an author can write (a model's own `meta` is author-writable).
+ *   - Native definitions (hash-checked, unpushable) select `<landing>.downstream() & <owner's models>`;
+ *     `os/generated.yml` (unpushable) records the same owner-per-model map, which the run detective reads.
+ *   - The legacy `os/schedules.yml` carries `models:` (the same list).
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { scheduleEntries } from '@tabs/data/lib/dbt/schedules';
-import type { ModelPlan } from '@tabs/data/lib/dbt/models';
+import yaml from 'js-yaml';
+import type { Dataset } from '@tabs/data/lib/dataset-schema';
+import { emptyVersions } from '@tabs/data/lib/dataset-schema';
+import { DATA_LAYOUT } from '@core/infra/data-layout';
+import { generateProjectReport } from '@tabs/data/lib/dbt/generate';
+import type { ProjectSnapshot } from '@tabs/data/lib/dbt/snapshot';
+import { datasetAssetKeys, selectionForSync, selectionForBuild } from '@tabs/data/lib/dbt/asset-keys';
 
-function plan(over: Partial<ModelPlan> & { owner: string }): ModelPlan {
-  const { owner, ...rest } = over;
-  return {
-    name: 'silver_events', path: 'models/silver/silver_events.sql', dir: 'models/silver', layer: 'silver', kind: 'sync-append',
-    schema: 'sales', tested: true, sql: '',
-    dataset: { id: 'ds_events01', owner, sync: { schedule: { cron: '0 * * * *' }, enabled: true } },
-    ...rest,
-  } as unknown as ModelPlan;
+const built = (artifact: string | null, passThrough = false) => ({ built: true, passThrough, quality: 'unknown' as const, updatedAt: '2026-11-13T00:00:00.000Z', artifact });
+function ds(input: Partial<Dataset> & { id: string; name: string; owner: string; domain: string }): Dataset {
+  return { version: '1', tier: 'dataset', visibility: 'private', folder: '/', description: '', versions: emptyVersions(), grants: [], measures: [], columns: [], viewNamespaced: true, ...input };
 }
-
-test('a personal-lane landing selects only its own lane directory', () => {
-  const [e] = scheduleEntries([plan({ owner: 'bea', name: 'bronze_events', dir: 'models/personal/bea', path: 'models/personal/bea/bronze_events.sql', schema: 'personal_bea', layer: 'bronze' })]);
-  assert.equal(e.select, 'bronze_events+,path:models/personal/bea');
-  assert.equal(e.exclude, undefined);
+const sync = (id: string, owner: string, table: string) => ds({
+  id, name: table, owner, domain: 'sales',
+  sync: { connectionId: 'conn_shop', source: { schema: 'public', table }, mode: 'append', cursor: { kind: 'timestamp', column: 'updated_at' }, schedule: { cron: '0 * * * *' }, enabled: true },
+  versions: { bronze: built(null), silver: built('silver/x.sql'), gold: built(null, true) },
+});
+const snap = (): ProjectSnapshot => ({
+  domain: 'sales',
+  datasets: [
+    { dataset: sync('ds_alice001', 'alice', 'orders'), artifacts: { 'silver/x.sql': 'select 1' } },
+    { dataset: sync('ds_bob00001', 'bob', 'events'), artifacts: { 'silver/x.sql': 'select 1' } },
+  ],
+  catalogs: { conn_shop: 'shop' },
 });
 
-test('a domain-lane landing keeps only the owner\'s models and excludes every personal lane', () => {
-  const [e] = scheduleEntries([plan({ owner: 'bea' })]);
-  assert.equal(e.select, 'silver_events+,config.meta.os_owner:bea');
-  assert.equal(e.exclude, 'path:models/personal');
+test('the native schedule selects the landing\'s downstream only inside the owner\'s generated models', () => {
+  const { files } = generateProjectReport('sales', snap());
+  const py = files.get(DATA_LAYOUT.dagsterDefinitionsPath)!;
+  const alice = py.split('\n').find((l) => /sales__ds_alice001 = dg\.define_asset_job/.test(l))!;
+  assert.match(alice, /\.downstream\(\) & dg\.AssetSelection\.assets\(/, alice);
+  const owned = alice.slice(alice.indexOf('& dg.AssetSelection.assets('));
+  assert.match(owned, /"sales", "silver_orders"|\["sales", "silver_orders"\]/);
+  assert.doesNotMatch(owned, /events/, 'bob\'s models are not in alice\'s set');
+  assert.doesNotMatch(py, /dbt_select=/, 'no author-writable selector (`meta`, `tag`) selects models');
 });
 
-test('NEGATIVE TWIN: another owner\'s personal lane is never inside either selection', () => {
-  const mine = scheduleEntries([plan({ owner: 'bea', name: 'bronze_a', dir: 'models/personal/bea', path: 'models/personal/bea/bronze_a.sql', schema: 'personal_bea', layer: 'bronze' })])[0];
-  assert.doesNotMatch(mine.select, /personal\/amir/);
-  assert.match(mine.select, /,path:models\/personal\/bea$/, 'an intersection with the owner\'s own directory');
-  const dom = scheduleEntries([plan({ owner: 'bea' })])[0];
-  assert.equal(dom.exclude, 'path:models/personal', 'models/personal/amir is under the excluded path');
-  assert.match(dom.select, /,config\.meta\.os_owner:bea$/, 'a shared-path model of another owner is outside the selection');
+test('os/generated.yml (unpushable) records which owner each generated model belongs to', () => {
+  const { files } = generateProjectReport('sales', snap());
+  const rec = yaml.load(files.get(DATA_LAYOUT.generatedHashesPath)!) as { owners?: Record<string, string> };
+  assert.equal(rec.owners?.silver_orders, 'alice');
+  assert.equal(rec.owners?.silver_events, 'bob');
+  assert.equal(Object.keys(rec.owners ?? {}).includes('author_added_model'), false, 'only OS-generated models are listed');
+});
+
+test('the legacy schedules file lists the owner\'s models too', () => {
+  const sched = yaml.load(generateProjectReport('sales', snap()).files.get('os/schedules.yml')!) as { schedules: { dataset: string; models?: string[] }[] };
+  const a = sched.schedules.find((s) => s.dataset === 'ds_alice001')!;
+  assert.deepEqual(a.models, ['bronze_orders', 'gold_orders', 'silver_orders']);
+});
+
+test('NEGATIVE TWIN: a launch from the OS never selects another owner\'s dependent model', () => {
+  const s: ProjectSnapshot = snap();
+  // bob's dataset reads alice's: it is a dependent of alice's dataset, owned by someone else.
+  s.datasets[1].dataset.upstreams = [{ datasetId: 'ds_alice001' } as never];
+  const keys = datasetAssetKeys(s, 'ds_alice001');
+  assert.deepEqual(keys.dependents, [], 'bob\'s model is not a dependent of alice\'s run');
+  assert.ok(!selectionForSync(keys).some((k) => k.join('/').includes('events')));
+  assert.ok(!selectionForBuild(keys, 'silver').some((k) => k.join('/').includes('events')));
 });

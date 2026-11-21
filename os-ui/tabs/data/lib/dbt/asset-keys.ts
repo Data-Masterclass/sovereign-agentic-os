@@ -40,8 +40,11 @@ export function datasetAssetKeys(snapshot: ProjectSnapshot, datasetId: string): 
   const tested: string[] | null = testedModel ? [snapshot.domain, testedModel.name] : null;
   const dlt = plan.dltSources.find((s) => s.dataset === datasetId);
   const ingest = dlt ? [...dlt.key] : null;
+  // Only the SAME owner's dependents: a run acts as its owner, so another owner's model downstream needs
+  // its own schedule and owner.
+  const owner = mine[0]?.dataset.owner;
   const dependents = plan.models
-    .filter((m) => m.dataset.id !== datasetId && (m.dataset.upstreams ?? []).some((u) => u.datasetId === datasetId))
+    .filter((m) => m.dataset.id !== datasetId && m.dataset.owner === owner && (m.dataset.upstreams ?? []).some((u) => u.datasetId === datasetId))
     .map((m) => [snapshot.domain, m.name]);
   return { models, tested, ingest, dependents };
 }

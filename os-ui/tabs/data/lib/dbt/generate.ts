@@ -151,7 +151,13 @@ function renderProject(domain: string, snapshot: ProjectSnapshot, opts: Generate
   const definitions = renderDagsterDefinitions(domain, plan);
   if (definitions) {
     files.set(DATA_LAYOUT.dagsterDefinitionsPath, definitions);
-    files.set(DATA_LAYOUT.generatedHashesPath, yml({ version: 1, sha256: { [DATA_LAYOUT.dagsterDefinitionsPath]: createHash('sha256').update(definitions).digest('hex') } }));
+    files.set(DATA_LAYOUT.generatedHashesPath, yml({
+      version: 1,
+      sha256: { [DATA_LAYOUT.dagsterDefinitionsPath]: createHash('sha256').update(definitions).digest('hex') },
+      // Which owner each OS-generated model belongs to. `os/**` is unpushable, so no author can add a
+      // model here: the run detective (images/extensions/dagster) judges a run against this map.
+      owners: Object.fromEntries([...plan.models].sort((a, b) => a.name.localeCompare(b.name)).map((m) => [m.name, m.dataset.owner])),
+    }));
   }
   // The semantic layer: `models/semantic/<model>.yml` (or the owner's personal lane) plus the time
   // spine. Metrics are dbt artefacts in this project, not an OS-private record (D1, M1).
