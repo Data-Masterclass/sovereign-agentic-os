@@ -765,6 +765,20 @@ class ChartContract(unittest.TestCase):
         self.assertIn("component: user-deployments", text)
         self.assertEqual(labels.get("component"), "user-deployments")
 
+    def test_the_code_location_runs_a_reloadable_code_server(self):
+        """repo-sync's reloadRepositoryLocation only takes effect on `dagster code-server start`
+        (the subchart's `codeServerArgs`); `dagster api grpc` keeps its boot definitions."""
+        import yaml
+
+        root = self._repo_root()
+        for rel in (("charts", "sovereign-agentic-os", "values.yaml"), ("values.dagster-launcher-lockdown.yaml",)):
+            with open(os.path.join(root, *rel), encoding="utf-8") as fh:
+                values = yaml.safe_load(fh)
+            for d in values["dagster"]["dagster-user-deployments"]["deployments"]:
+                self.assertNotIn("dagsterApiGrpcArgs", d, f"{'/'.join(rel)}: {d['name']} uses dagster api grpc")
+                self.assertEqual(d.get("codeServerArgs"), ["--python-file", "/opt/dagster/app/repo.py"], "/".join(rel))
+                self.assertLessEqual(int(d.get("replicaCount", 1)), 1)
+
     def test_every_dagster_image_reference_carries_the_same_tag(self):
         """Part F / checklist D10: the OS's Dagster image is referenced in FOUR places in
         values.yaml — the user-deployment image, the repo-sync sidecar's inline
