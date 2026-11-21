@@ -64,5 +64,8 @@ docker run --rm --network "$NET" -v "$REPO:/src:ro" -e SRC=/src -e TRINO_HOST="$
 docker run --rm --network "$NET" -v "$REPO:/src:ro" -e HOME=/tmp -e DBT_SEND_ANONYMOUS_USAGE_STATS=false -e REAL_TRINO_HOST="$TRINO" "$IMAGE" \
   python3 /src/images/extensions/dagster/tests/image/dbt_env.py
 
+# The principals sensor reads the index snapshot the real repo-sync writes (no bearer in user code).
+[ "$ONLY" = "eject" ] || sh "$REPO/images/extensions/dagster/tests/image/index_file.sh" "$IMAGE"
+
 # WP-49: the repo's own Dagster code location on Trino + Iceberg, the wrapper, the eject (lakehouse.sh).
 [ "$ONLY" = "eject" ] || sh "$REPO/images/extensions/dagster/tests/image/lakehouse.sh" "$IMAGE"
