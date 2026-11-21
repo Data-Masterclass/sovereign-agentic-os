@@ -114,7 +114,7 @@ for doc in yaml.safe_load_all(sys.stdin):
 
 D=$(python3 -c 'import yaml;print(yaml.safe_load(open("charts/sovereign-agentic-os/values.yaml"))["dagster"]["dagsterWebserver"]["image"]["digest"])')
 WANT="ghcr.io/data-masterclass/sovereign-os/dagster@$D"
-SIDECAR="ghcr.io/data-masterclass/sovereign-os/dagster:0.3.2@$D"
+SIDECAR="ghcr.io/data-masterclass/sovereign-os/dagster:0.4.0@$D"
 
 echo "== the chart's org-registry image wins over the live aborek/0.3.1 pins"
 tree "$TMP/t1"
