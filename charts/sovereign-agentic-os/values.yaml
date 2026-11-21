@@ -1282,7 +1282,13 @@ dagster:
           # tag stays for people). Built by build-images.yml from tag dagster-v0.4.0.
           digest: "sha256:b919d55fe9161128ace6a22894c43f2569f77b7639cd4d92e486f0e34734cea3"
           pullPolicy: IfNotPresent
-        dagsterApiGrpcArgs:
+        # `dagster code-server start`, not `dagster api grpc`: only a code server reloads its
+        # definitions in place when repo-sync calls reloadRepositoryLocation after a domain commit.
+        # `dagster api grpc` logs "Reloading definitions ... without restarting the process is not
+        # currently supported" and keeps what it loaded at boot (the subchart's documented
+        # `codeServerArgs`; test: images/extensions/dagster/tests/image/code-server-reload.sh).
+        # One replica only: the subchart refuses codeServerArgs with replicaCount > 1.
+        codeServerArgs:
           - "--python-file"
           - "/opt/dagster/app/repo.py"
         port: 3030

@@ -101,7 +101,8 @@ v = swap(v)
 irepo, itag = sys.argv[3].rsplit(":", 1)
 v["busybox"] = {"image": {"repository": irepo, "tag": itag, "pullPolicy": "IfNotPresent"}}
 for d in v["dagster-user-deployments"]["deployments"]:
-    d["dagsterApiGrpcArgs"] = ["--python-file", "/opt/dagster/app/wp15lock_defs.py"]
+    d.pop("dagsterApiGrpcArgs", None)
+    d["codeServerArgs"] = ["--python-file", "/opt/dagster/app/wp15lock_defs.py"]
 # The OPERATOR additions WP-15 makes (values.dagster-run-identity.yaml): env + volume + mount.
 env = {"name": "WP15LOCK_OPERATOR_ENV", "value": "from-the-operator"}
 vol = {"name": "wp15lock-operator", "emptyDir": {}}

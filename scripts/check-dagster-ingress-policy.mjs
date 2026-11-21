@@ -148,7 +148,7 @@ if (!web) problems.push(`default render has no ${WEB_POLICY}`);
 if (!grpc) problems.push(`default render has no ${GRPC_POLICY}`);
 if (web && grpc && !problems.length) {
   const webPort = ports(W.web)[0];
-  // The user-code container declares no containerPort (it is `dagster api grpc -p <port>`), so
+  // The user-code container declares no containerPort (it is `dagster code-server start -p <port>`), so
   // the gRPC port is the one the code location's Service — the address the workspace dials — targets.
   const codeSvc = docs.find((d) => d.kind === 'Service' && matches({ matchLabels: d.spec?.selector ?? {} }, podLabels(W.code)));
   const grpcPort = codeSvc?.spec?.ports?.[0]?.targetPort ?? codeSvc?.spec?.ports?.[0]?.port;
