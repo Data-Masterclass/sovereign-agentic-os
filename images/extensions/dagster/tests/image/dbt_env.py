@@ -22,7 +22,9 @@ open(os.path.join(PROJECT, "profiles.yml"), "w").write(
     "p:\n  target: t\n  outputs:\n    t:\n      type: trino\n      method: none\n"
     "      host: \"{{ env_var('TRINO_HOST') }}\"\n      port: 8080\n      user: u\n      catalog: iceberg\n      schema: s\n"
 )
-LEAKS = {"DAGSTER_PG_PASSWORD": "pg-s3cret-value", "AGENT_RUNTIME_TOKEN": "bearer-s3cret-value", "AWS_SECRET_ACCESS_KEY": "aws-s3cret-value", "SOME_API_KEY": "key-s3cret-value"}
+LEAKS = {"DAGSTER_PG_PASSWORD": "pg-s3cret-value", "AGENT_RUNTIME_TOKEN": "bearer-s3cret-value", "AWS_SECRET_ACCESS_KEY": "aws-s3cret-value", "SOME_API_KEY": "key-s3cret-value",
+         # Names that look like a dbt or Trino setting: only exact names pass.
+         "TRINO_PASSWORD": "trino-s3cret-value", "DBT_ENV_CUSTOM_ENV_SECRET": "dbt-custom-s3cret-value"}
 model = "".join(f"{{{{ log('ENV {k}=' ~ env_var('{k}', 'absent'), info=True) }}}}\n" for k in LEAKS)
 model += "{{ log('ENV TRINO_HOST=' ~ env_var('TRINO_HOST', 'absent'), info=True) }}\nselect 1 as x\n"
 open(os.path.join(PROJECT, "models", "m.sql"), "w").write(model)
