@@ -58,6 +58,7 @@ RUN mkdir -p /opt/dagster/app /opt/dagster/dagster_home /repos-checkout
 # sensors and run tags. The image carries no asset, job or schedule of its own.
 COPY dagster/repo.py /opt/dagster/app/repo.py
 COPY dagster/os_projects.py /opt/dagster/app/os_projects.py
+COPY dagster/os_alerts.py /opt/dagster/app/os_alerts.py
 COPY dagster/repo-sync.sh /opt/dagster/app/repo-sync.sh
 RUN chmod -R a+rX /opt/dagster && chmod a+x /opt/dagster/app/repo-sync.sh && chmod a+rwX /repos-checkout
 

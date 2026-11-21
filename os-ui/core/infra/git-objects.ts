@@ -59,7 +59,7 @@ import { DATA_LAYOUT } from '@core/infra/data-layout';
 import type { MirrorSignal } from '@core/infra/git-mirror';
 import {
   AGENTS_DIR, AGENTS_INDEX_PATH, OS_EXTERNAL_PATH, OS_LIFECYCLE_PINS_PATH, OS_SCHEDULES_PATH, USER_REPO_PREFIX,
-  configuredDbtProjectDir, connectionCatalogPath, connectionOsPath, knowledgeWorkflowDir, prefixOf,
+  METRICS_ALERTS_DIR, configuredDbtProjectDir, connectionCatalogPath, connectionOsPath, knowledgeWorkflowDir, prefixOf,
 } from '@core/infra/repo-layout';
 
 // ------------------------------------------------------------- kind table ---
@@ -79,6 +79,7 @@ export const GIT_OBJECT_KINDS = [
   'lifecycle-pin',
   'knowledge-workflow',
   'connection-config',
+  'metric-alert',
 ] as const;
 export type GitObjectKind = (typeof GIT_OBJECT_KINDS)[number];
 
@@ -192,6 +193,15 @@ export const GIT_OBJECT_LAYOUT: Record<GitObjectKind, GitObjectLayout> = {
     paths: [connectionCatalogPath('<catalog>'), connectionOsPath('<catalog>')],
     personalLane: null,
     writer: { state: 'committed', via: 'tabs/connections/lib/git/commit.ts', since: 'WP-50' },
+  },
+  'metric-alert': {
+    kind: 'metric-alert',
+    label: 'metric alert rule',
+    // WP-50: one dbt saved query per alert (MetricFlow runs it); the threshold and recipients are
+    // the OS layer in its `config.meta.os_alert`. Written only with OS_ALERTS_NATIVE on.
+    paths: [`${METRICS_ALERTS_DIR}/<name>.yml`],
+    personalLane: null,
+    writer: { state: 'committed', via: 'tabs/metrics/lib/git/alerts-commit.ts', since: 'WP-50' },
   },
 };
 

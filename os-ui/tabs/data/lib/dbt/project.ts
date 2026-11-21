@@ -28,8 +28,9 @@ export const PROFILE_NAME = 'sovereign';
 
 /** `dbt_project.yml` — per-layer and per-personal-lane schemas, and the snapshot retention the
  *  maintenance macro applies (WP-37: configurable, never expires a tagged version), and (WP-52) the
- *  dashboards' saved-query path when dashboards are native. */
-export function renderDbtProject(domain: string, plan: ModelPlanSet, snapshotRetention: string = configuredRetention(), dashboardsModelPath?: string): string {
+ *  dashboards' saved-query path when dashboards are native, and (WP-50) the alerts' saved-query
+ *  path when alerts are native. */
+export function renderDbtProject(domain: string, plan: ModelPlanSet, snapshotRetention: string = configuredRetention(), dashboardsModelPath?: string, alertsModelPath?: string): string {
   const name = domainSchema(domain);
   const layers: Record<string, unknown> = {};
   for (const l of plan.layerDirs) {
@@ -45,7 +46,7 @@ export function renderDbtProject(domain: string, plan: ModelPlanSet, snapshotRet
     version: '1.0.0',
     'config-version': 2,
     profile: PROFILE_NAME,
-    'model-paths': dashboardsModelPath ? ['models', dashboardsModelPath] : ['models'],
+    'model-paths': ['models', ...(dashboardsModelPath ? [dashboardsModelPath] : []), ...(alertsModelPath ? [alertsModelPath] : [])],
     'macro-paths': ['macros'],
     'test-paths': ['tests'],
     'clean-targets': ['target', 'dbt_packages'],

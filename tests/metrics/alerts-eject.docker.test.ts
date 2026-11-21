@@ -17,6 +17,8 @@
  *     job runs) reads the committed file, runs the same `mf query`, and compares with the file's
  *     threshold. PARITY: its value equals today's OS value (`exploreMetric` → the same Trino), and
  *     its breach decision equals the OS's `evaluateAlert` for that value.
+ *   - DAGSTER: the image's own alert job (`repo.py` `_alert_job`, what os-ui launches with the owner
+ *     as OS_PRINCIPAL) is executed by Dagster (`execute_in_process`) and outputs the same result.
  *   - NEGATIVE TWINS: an alert naming a metric the project lacks fails `dbt parse`; editing the
  *     committed threshold flips the evaluator's decision (it reads git, not the store).
  *   - Runs when WP52_EJECT=1 (CI job `dashboards-eject`, which builds the image); skipped otherwise.
@@ -64,6 +66,7 @@ const { exploreMetric } = await import('@tabs/metrics/lib/build/explore-server')
 const { evaluateAlert } = await import('@tabs/metrics/lib/alerts');
 const { generateAlertFiles } = await import('@tabs/metrics/lib/git/alerts-native');
 const { alertsModelPath } = await import('@core/infra/repo-layout');
+const { ALERT_RESULT_QUERY } = await import('@tabs/metrics/lib/build/alert-eval-metricflow');
 const { ORDERS } = await import('@tabs/metrics/lib/git/alerts-fixtures');
 
 const V = viewName(ORDERS);
@@ -154,4 +157,36 @@ test('NEGATIVE TWINS: an unknown metric fails dbt parse; an edited committed thr
   const parse = inImage(twin, ['dbt', 'parse', '--no-partial-parse']);
   assert.equal(parse.ok, false, 'dbt must refuse an alert on a metric the project lacks');
   assert.match(parse.out, /no_such_metric/);
+});
+
+test('DAGSTER: the image\'s alert job, run by Dagster as the owner, outputs the MetricFlow result', { skip, timeout: 600_000 }, () => {
+  const py = [
+    'import json, os_projects as osp, repo',
+    "p = osp.Project(domain='sales', path='/p', sha='a' * 40, manifest='/p/target/manifest.json')",
+    "a = [x for x in __import__('os_alerts').load_alerts('/p') if x['id'] == 'rev_low'][0]",
+    "j = repo._alert_job(p, 'sales', a, osp.pinned_one('sales', 'a' * 40))",
+    'r = j.execute_in_process(raise_on_error=False)',
+    "outs = [e for e in r.all_events if e.event_type_value == 'STEP_OUTPUT']",
+    "meta = {k: v.value for k, v in outs[0].event_specific_data.metadata.items()} if outs else {}",
+    "print(json.dumps({'job': j.name, 'success': r.success, 'tags': j.tags, 'out': r.output_for_node(j.name + '_op') if r.success else None, 'meta': meta}))",
+  ].join('\n');
+  const r = shOk('docker', ['run', '--rm', '--network', NET, '-v', `${REPO()}:/p`, '-w', '/opt/dagster/app', '-e', 'HOME=/tmp', '-e', 'REPO_SYNC_CHECKOUT=/tmp/none', '-e', 'DBT_PROFILES_DIR=/p', '-e', `TRINO_HOST=${CTR}`, '-e', 'OS_PRINCIPAL=amir', '-e', 'TRINO_USER=dbt-runner', DAGSTER_IMAGE, 'python3', '-c', py]);
+  assert.ok(r.ok, r.out.slice(-3000));
+  const out = JSON.parse(r.out.trim().split('\n').pop()!) as { job: string; success: boolean; tags: Record<string, string>; out: Evaluated & { status: string }; meta: Record<string, unknown> };
+  assert.equal(out.job, 'sales__alert_rev_low');
+  assert.equal(out.success, true);
+  assert.equal(out.tags['os/alert'], 'rev_low');
+  assert.equal(out.tags['os/principal'], undefined, 'no principal of its own: os-ui sets the owner per launch');
+  assert.equal(out.out.status, 'ok');
+  assert.equal(out.out.value, 36);
+  assert.equal(out.out.breached, true);
+  assert.deepEqual(out.meta.os_alert_result, out.out, 'the step output carries the os_alert_result metadata os-ui reads');
+});
+
+test('DAGSTER GRAPHQL: the query os-ui reads the result with is valid against the image\'s Dagster schema (and a typo is not)', { skip, timeout: 300_000 }, () => {
+  const py = 'import sys\nfrom dagster_graphql.schema import create_schema\nfrom graphql import parse, validate\ns = create_schema()\nq = sys.argv[1]\nprint(len(validate(s.graphql_schema, parse(q))))';
+  const ok = sh('docker', ['run', '--rm', DAGSTER_IMAGE, 'python3', '-c', py, ALERT_RESULT_QUERY]).trim();
+  assert.equal(ok, '0');
+  const typo = sh('docker', ['run', '--rm', DAGSTER_IMAGE, 'python3', '-c', py, ALERT_RESULT_QUERY.replace('jsonString', 'jsonStrin')]).trim();
+  assert.notEqual(typo, '0');
 });

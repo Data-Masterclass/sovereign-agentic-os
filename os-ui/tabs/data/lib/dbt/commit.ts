@@ -23,7 +23,7 @@ import 'server-only';
 import { config } from '@core/kernel/config';
 import { commitTree, commitMessage, authorFor, repoLayout, reserveSubtree, type CommitResult, type CommitTreeOptions } from '@core/infra/git-store';
 import { relocateProject, V2_RESERVED_PREFIXES } from '@tabs/data/lib/dbt/layout';
-import { dashboardsModelPath, dashboardsNativeEnabled } from '@core/infra/repo-layout';
+import { alertsModelPath, alertsNativeEnabled, dashboardsModelPath, dashboardsNativeEnabled } from '@core/infra/repo-layout';
 import { currentSurface, newRequestId } from '@core/infra/request-surface';
 import { onProjectChange, type ProjectChange } from '@tabs/data/lib/project-events';
 import { peekDatasetMeta, datasetsForProject } from '@tabs/data/lib/store';
@@ -90,6 +90,7 @@ export async function commitDataProject(domain: string, actor: ActorIdentity, me
   const generated = generateProject(domain, snapshot, {
     trinoAuthMethod: config.trinoAuthMethod,
     ...(dashboardsNativeEnabled() ? { dashboardsModelPath: dashboardsModelPath(layout) } : {}),
+    ...(alertsNativeEnabled() ? { alertsModelPath: alertsModelPath(layout) } : {}),
   });
   if (layout === 2) for (const pre of V2_RESERVED_PREFIXES) reserveSubtree(pre);
   const files = relocateProject(generated, layout);

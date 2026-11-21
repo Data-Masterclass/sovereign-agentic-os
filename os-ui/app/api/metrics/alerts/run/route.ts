@@ -11,6 +11,7 @@ import { listAlertRules, recordEvaluation, ensureHydrated } from '@tabs/metrics/
 import { deliverAlert } from '@tabs/dashboards/lib/delivery';
 import { getPublicUser } from '@tabs/admin/lib/users';
 import { resolveAlertValue } from '@tabs/metrics/lib/build/alert-eval';
+import { alertsNativeEnabled } from '@core/infra/repo-layout';
 
 export const dynamic = 'force-dynamic';
 
@@ -28,6 +29,10 @@ export const dynamic = 'force-dynamic';
  * charts/sovereign-agentic-os/templates/metrics-alert-cronjob.yaml (chart follow-up).
  * A schedule of `* /5 * * * *` (every 5 minutes) is a reasonable starting point.
  *
+ * WP-50 (`OS_ALERTS_NATIVE` on): the rule is read from its COMMITTED `metrics/alerts/*.yml` and the
+ * number is MetricFlow's (`mf query --saved-query`, the Dagster image's alert job, run as the
+ * owner). The OS's metric compiler is not called; the committed threshold decides.
+ *
  * Governance: Builder+ only (same as single-rule evaluation).
  */
 export const GET = withRoute(async ({ user }) => {
@@ -44,8 +49,10 @@ export const GET = withRoute(async ({ user }) => {
 
   for (const rule of rules) {
     try {
-      // Resolve the value AS THE RULE'S OWNER through the governed-SQL path.
-      const resolved = await resolveAlertValue(rule);
+      // Resolve the value AS THE RULE'S OWNER: MetricFlow on the committed rule (WP-50), else the
+      // governed-SQL path (interim).
+      const native = alertsNativeEnabled() ? await (await import('@tabs/metrics/lib/build/alert-eval-metricflow')).evaluateCommittedAlert(rule) : null;
+      const resolved = native ?? (await resolveAlertValue(rule));
       if (resolved.status !== 'ok') {
         // Unavailable (Trino outage) or pending (no number yet): SKIP — never fabricate, never
         // fire. Both are honest non-evaluations; the next tick retries.
@@ -53,7 +60,12 @@ export const GET = withRoute(async ({ user }) => {
         continue;
       }
 
-      const evald = evaluateAlert(rule, resolved.value);
+      const evald = native && native.status === 'ok'
+        ? evaluateAlert({ ...rule, comparator: native.committed.comparator, threshold: native.committed.threshold }, resolved.value)
+        : evaluateAlert(rule, resolved.value);
+      if (native && native.status === 'ok' && native.breached !== evald.breached) {
+        throw new Error(`MetricFlow job and the committed threshold disagree for ${rule.id}`);
+      }
       recordEvaluation(rule.id, resolved.value, evald.breached);
       evaluated++;
 
