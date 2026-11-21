@@ -87,8 +87,11 @@ ship inside the app under `vendor/` and `package.json` points at them with `file
 app also carries an `.npmrc` whose one line sends every registry lookup for that scope to a host
 that cannot exist, so `npm install @sovereign-os/anything` fails instead of fetching a stranger's
 package. The scan **blocks** a deploy when `package.json` (its dependencies, or its `overrides`,
-`resolutions` or `pnpm.overrides`), a lockfile, the `.npmrc` or a Dockerfile step would fetch the
-scope from anywhere else; point the dependency back at `file:./vendor/@sovereign-os/...`.
+`resolutions` or `pnpm.overrides`, or a script), a lockfile, the `.npmrc`, a `.yarnrc.yml`
+(`npmScopes`), a `bunfig.toml` (`[install.scopes]`) or a Dockerfile step (npm, pnpm, yarn, bun,
+npx, bunx, pnpx) would fetch the scope from anywhere else; point the dependency back at
+`file:./vendor/@sovereign-os/...`. Yarn Berry and Bun do not read `.npmrc`, so a `.yarnrc.yml` or
+`bunfig.toml` that names the scope is also refused by `push_app_files`.
 
 An app created before this has no `.npmrc` and is not changed for you: its review card shows a
 note instead (it does not block). To clear it, push an `.npmrc` containing exactly
