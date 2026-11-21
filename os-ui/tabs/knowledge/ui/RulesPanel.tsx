@@ -65,6 +65,7 @@ export default function RulesPanel({
         setResult(data);
         const applied = (data as ApplyResult).apply;
         if (applied?.status === 'ok') toast.success('Guardrails compiled & applied');
+        else if (applied?.status === 'none') toast.success('Nothing to enforce: this workflow has no hard rules');
         else toast.error(applied?.error ?? applied?.detail ?? 'Guardrails did not verify');
       }
     } catch (e) {
