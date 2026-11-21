@@ -70,18 +70,29 @@ spec:
               args:
                 - |
                   set -eu
-                  JAR=/tmp/cookies.txt
+                  # The OS origin this job calls (scheme://host[:port]); sent as Origin because
+                  # the OS refuses a cookie-authenticated alert run without same-origin provenance.
+                  ORIGIN=$(printf '%s' "$OS_UI" | sed -E 's#^(https?://[^/]+).*#\1#')
                   # 1. Log in as the builder+ service principal -> signed session cookie.
-                  CODE=$(curl -s -o /tmp/login.json -w "%{http_code}" -c "$JAR" \
+                  CODE=$(curl -s -o /tmp/login.json -D /tmp/login.hdr -w "%{http_code}" \
                     -X POST "$OS_UI/api/auth/login" \
                     -H "Content-Type: application/json" \
+                    -H "Origin: $ORIGIN" \
                     -d "{\"username\":\"$PRINCIPAL_USER\",\"password\":\"$PRINCIPAL_PASS\"}")
                   if [ "$CODE" != "200" ]; then
                     echo "FATAL: login returned $CODE" >&2
                     exit 1
                   fi
+                  # The session cookie is `__Host-` (Secure); a cookie jar would not replay a
+                  # Secure cookie over the in-cluster http URL, so pass it explicitly.
+                  COOKIE=$(grep -i '^set-cookie: __Host-soa_session=' /tmp/login.hdr | head -n 1 | sed -e 's/^[^:]*: //' -e 's/;.*//' | tr -d '\r')
+                  if [ -z "$COOKIE" ]; then
+                    echo "FATAL: login returned no session cookie" >&2
+                    exit 1
+                  fi
                   # 2. Evaluate all alert rules with that session (route enforces builder+).
-                  CODE=$(curl -s -o /tmp/run.json -w "%{http_code}" -b "$JAR" \
+                  CODE=$(curl -s -o /tmp/run.json -w "%{http_code}" \
+                    -H "Cookie: $COOKIE" -H "Origin: $ORIGIN" \
                     "$OS_UI/api/metrics/alerts/run")
                   echo "alert-run -> $CODE"
                   cat /tmp/run.json 2>/dev/null || true

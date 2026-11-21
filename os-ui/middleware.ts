@@ -3,7 +3,12 @@
  */
 import { NextResponse, type NextRequest } from 'next/server';
 import { config as appConfig } from '@core/kernel/config';
-import { SESSION_COOKIE, verifySession } from '@core/kernel/session';
+import {
+  LEGACY_SESSION_COOKIE,
+  legacySessionCookieExpiries,
+  sessionTokenFrom,
+  verifySession,
+} from '@core/kernel/session';
 import { corsHeadersFor } from '@core/kernel/cors';
 import { checkSameOrigin, requestOriginOf } from '@core/kernel/same-origin';
 import { findDisabledTab } from '@core/kernel/tabs';
@@ -24,10 +29,20 @@ export async function middleware(req: NextRequest) {
     pathname.startsWith('/api/') || pathname.startsWith('/tools/')
       ? corsHeadersFor(req.headers.get('origin'), appConfig.osPublicUrl)
       : null;
-  const withCors = (res: NextResponse): NextResponse => {
-    if (cors) for (const [k, v] of Object.entries(cors)) res.headers.set(k, v);
+  // The legacy `soa_session` is never read. Whenever a browser still sends one (an
+  // old login, or a copy a parent-domain host planted), expire it on the response.
+  const expireLegacy = req.cookies.has(LEGACY_SESSION_COOKIE)
+    ? legacySessionCookieExpiries({ osPublicUrl: appConfig.osPublicUrl, appsDomain: appConfig.appsBaseDomain })
+    : [];
+  const finish = (res: NextResponse): NextResponse => {
+    for (const c of expireLegacy) res.headers.append('Set-Cookie', c);
     return res;
   };
+  const withCors = (res: NextResponse): NextResponse => {
+    if (cors) for (const [k, v] of Object.entries(cors)) res.headers.set(k, v);
+    return finish(res);
+  };
+  const sessionToken = sessionTokenFrom((n) => req.cookies.get(n)?.value);
   // Answer the OS-origin preflight uniformly. Any other origin falls through and
   // gets no CORS headers, which the browser treats as a refusal.
   if (cors && req.method === 'OPTIONS') {
@@ -42,7 +57,7 @@ export async function middleware(req: NextRequest) {
     method: req.method,
     pathname,
     headers: req.headers,
-    hasSessionCookie: Boolean(req.cookies.get(SESSION_COOKIE)?.value),
+    hasSessionCookie: Boolean(sessionToken),
     osPublicUrl: appConfig.osPublicUrl,
     requestOrigin: requestOriginOf(req.nextUrl, req.headers),
   });
@@ -85,20 +100,19 @@ export async function middleware(req: NextRequest) {
     return new NextResponse('Not found', { status: 404 });
   }
 
-  const token = req.cookies.get(SESSION_COOKIE)?.value;
-  const claims = await verifySession(token, appConfig.sessionSecret);
+  const claims = await verifySession(sessionToken, appConfig.sessionSecret);
   if (!claims) {
     const url = req.nextUrl.clone();
     url.pathname = '/signin';
     url.searchParams.set('next', pathname);
-    return NextResponse.redirect(url);
+    return finish(NextResponse.redirect(url));
   }
   // Expose the request pathname to server layouts/pages (Next.js does not surface
   // it to a layout otherwise). The Platform-Admin layout reads it to keep every
   // /platform sub-page admin-only while the /platform overview is builder-visible.
   const headers = new Headers(req.headers);
   headers.set('x-pathname', pathname);
-  return NextResponse.next({ request: { headers } });
+  return finish(NextResponse.next({ request: { headers } }));
 }
 
 export const config = {

@@ -534,14 +534,14 @@
       name: os-ui-session
       key: OS_SESSION_SECRET
 # Signs the per-user bearer token for the remote MCP endpoint
-# (/api/mcp). Sourced from the same os-ui-session Secret so it works
-# out of the box; repoint to its own Secret/key later to rotate MCP
-# tokens independently of session cookies.
+# (/api/mcp). Its OWN key in os-ui-session, so rotating OS_SESSION_SECRET
+# (browser sessions) leaves issued MCP tokens valid, and vice versa. An
+# ExternalSecret that owns os-ui-session must supply this key too.
 - name: OS_MCP_TOKEN_SECRET
   valueFrom:
     secretKeyRef:
       name: os-ui-session
-      key: OS_SESSION_SECRET
+      key: OS_MCP_TOKEN_SECRET
 {{- if .Values.osUI.graph.enabled }}
 # GRAPH_CLIENT_SECRET — outbound mail is an HTTP-path concern (verification links,
 # invitations); a run never sends mail.

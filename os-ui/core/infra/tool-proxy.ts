@@ -3,7 +3,7 @@
  */
 import 'server-only';
 import { config } from '@core/kernel/config';
-import { ROLES, SESSION_COOKIE, type Role } from '@core/kernel/session';
+import { ALL_SESSION_COOKIE_NAMES, ROLES, type Role } from '@core/kernel/session';
 
 /**
  * Same-origin, server-proxied tool embedding.
@@ -386,7 +386,7 @@ function filterCookies(cookie: string): string {
   return cookie
     .split(';')
     .map((c) => c.trim())
-    .filter((c) => c.length > 0 && !c.startsWith(`${SESSION_COOKIE}=`))
+    .filter((c) => c.length > 0 && !ALL_SESSION_COOKIE_NAMES.some((n) => c.startsWith(`${n}=`)))
     .join('; ');
 }
 

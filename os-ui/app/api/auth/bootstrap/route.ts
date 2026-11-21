@@ -6,7 +6,7 @@ import { config } from '@core/kernel/config';
 import { currentUser } from '@core/kernel/auth';
 import { completeFirstLogin, getPublicUser, setupAdmin } from '@tabs/admin/lib/users';
 import { assessPasswordStrength, hashPassword } from '@core/kernel/password';
-import { SESSION_COOKIE, SESSION_MAX_AGE, legacySessionCookieExpiry, sessionCookieOptions, signSession } from '@core/kernel/session';
+import { sessionCookieName, SESSION_MAX_AGE, legacySessionCookieExpiries, sessionCookieOptions, signSession } from '@core/kernel/session';
 
 export const dynamic = 'force-dynamic';
 
@@ -75,14 +75,15 @@ export async function POST(req: Request) {
     );
     const res = NextResponse.json({ user });
     res.cookies.set(
-      SESSION_COOKIE,
+      sessionCookieName(),
       token,
       // Host-only (no Domain): the session cookie is sent to the OS host only.
       sessionCookieOptions({ maxAge: SESSION_MAX_AGE }),
     );
-    // Expire any session cookie an older release left on a parent Domain.
-    const legacy = legacySessionCookieExpiry({ osPublicUrl: config.osPublicUrl, appsDomain: config.appsBaseDomain });
-    if (legacy) res.headers.append('Set-Cookie', legacy);
+    // Expire the legacy `soa_session` (host-only and on any parent Domain an older release used).
+    for (const c of legacySessionCookieExpiries({ osPublicUrl: config.osPublicUrl, appsDomain: config.appsBaseDomain })) {
+      res.headers.append('Set-Cookie', c);
+    }
     return res;
   } catch (e) {
     const status = (e as { status?: number })?.status ?? 500;

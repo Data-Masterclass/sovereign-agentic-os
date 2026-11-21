@@ -61,7 +61,39 @@ export function canPromote(role: Role, from: 'Personal' | 'Shared'): boolean {
   return role === 'admin';
 }
 
-export const SESSION_COOKIE = 'soa_session';
+/**
+ * The OS session cookie. The `__Host-` prefix makes the BROWSER enforce Secure,
+ * Path=/ and no Domain (RFC 6265bis §4.1.3.2): a cookie of this name can only ever
+ * have been set by the OS host itself, so a sibling or child host (a deployed app)
+ * cannot plant ("toss") one that the OS would read.
+ */
+export const SESSION_COOKIE = '__Host-soa_session';
+/**
+ * The name used ONLY when the operator opts out of `Secure` for plain-http local dev
+ * (OS_SESSION_COOKIE_INSECURE=true / non-production): a `__Host-` cookie without
+ * Secure is rejected by the browser, so it cannot carry the prefix.
+ */
+export const INSECURE_SESSION_COOKIE = 'soa_session_insecure';
+/** The pre-0.9.23 name. Never read; expired wherever the OS sees it. */
+export const LEGACY_SESSION_COOKIE = 'soa_session';
+/** Every name the OS session has ever used — for stripping before a proxy hop. */
+export const ALL_SESSION_COOKIE_NAMES: readonly string[] = [SESSION_COOKIE, INSECURE_SESSION_COOKIE, LEGACY_SESSION_COOKIE];
+
+/** The cookie name this deployment WRITES and READS (one name, decided by `Secure`). */
+export function sessionCookieName(isProd?: boolean): string {
+  return secureByDefault(isProd) ? SESSION_COOKIE : INSECURE_SESSION_COOKIE;
+}
+
+/**
+ * The session token from a request's cookies — read from `sessionCookieName()` ONLY.
+ * A legacy `soa_session` (which any parent-domain host could have set) is ignored.
+ */
+export function sessionTokenFrom(
+  get: (name: string) => string | undefined,
+  isProd?: boolean,
+): string | undefined {
+  return get(sessionCookieName(isProd)) || undefined;
+}
 const MAX_AGE_SECONDS = 60 * 60 * 12; // 12h
 
 /**
@@ -142,19 +174,21 @@ export function sessionCookieOptions(opts: { maxAge?: number; isProd?: boolean }
 }
 
 /**
- * A `Set-Cookie` value that expires a session cookie left on the legacy parent
- * Domain, or null when there is none to clear. Append it next to the host-only
- * cookie (a separate header: the two cookies differ by Domain, not by name).
+ * `Set-Cookie` values that expire every session cookie an older release could have
+ * left behind: the legacy `soa_session` host-only, and on the legacy parent Domain
+ * (when one was derivable). Append each as its own header next to the live cookie.
  */
-export function legacySessionCookieExpiry(opts: {
+export function legacySessionCookieExpiries(opts: {
   osPublicUrl?: string;
   appsDomain?: string;
   isProd?: boolean;
-}): string | null {
-  const domain = legacySessionCookieDomain(opts.osPublicUrl, opts.appsDomain);
-  if (!domain) return null;
+}): string[] {
   const secure = secureByDefault(opts.isProd) ? '; Secure' : '';
-  return `${SESSION_COOKIE}=; Domain=${domain}; Path=/; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; HttpOnly; SameSite=Lax${secure}`;
+  const base = `${LEGACY_SESSION_COOKIE}=; Path=/; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; HttpOnly; SameSite=Lax${secure}`;
+  const out = [base];
+  const domain = legacySessionCookieDomain(opts.osPublicUrl, opts.appsDomain);
+  if (domain) out.push(base.replace('; Path=/', `; Domain=${domain}; Path=/`));
+  return out;
 }
 
 const enc = new TextEncoder();

@@ -2072,6 +2072,10 @@ osUI:
     key: masterkey
   # Auth session-signing secret (HMAC-SHA256 for the login cookie). Leave EMPTY:
   sessionSecret: ""
+  # MCP bearer-token signing key (OS_MCP_TOKEN_SECRET). Leave EMPTY: it is kept across
+  # upgrades (first upgrade: the previous session secret, so issued MCP tokens survive).
+  # Set it only to rotate MCP tokens, or under GitOps renderers without `lookup`.
+  mcpTokenSecret: ""
   # Optional operator pre-seed of REAL users as a JSON array, e.g.
   usersSeed: ""
   # ---- Outbound email (OPTIONAL).
