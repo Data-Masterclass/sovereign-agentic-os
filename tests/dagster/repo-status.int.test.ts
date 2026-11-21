@@ -101,7 +101,7 @@ before(async () => {
   pool = new pg.Pool({ connectionString: db.url });
   good = await commit(await project("select id from {{ source('raw', 'orders') }}\n"), 'wp16 good');
   const { repoPath } = await import('@core/infra/git-store');
-  const origin = repoPath(DOMAIN, { reposDir: REPOS });
+  void repoPath(DOMAIN, { reposDir: REPOS });
   execFileSync('chmod', ['-R', 'a+rwX', REPOS]);
   const co = join(W, 'checkout');
   mkdirSync(co, { recursive: true });
@@ -110,7 +110,8 @@ before(async () => {
   // repo-sync exactly as the chart runs the sidecar, but reading the repo from a mounted path
   // (git clone takes a path like a git:// URL) and bound to 0.0.0.0 so the host can reach it.
   execFileSync('docker', ['run', '-d', '--name', SYNC, '-p', `127.0.0.1:${FEED_PORT}:8089`,
-    '-v', `${origin}:/origin/${DOMAIN}.git:ro`, '-v', `${co}:/repos-checkout`,
+    // The whole repos dir, as the git daemon serves it (canonical `domain-<d>.git` and the alias).
+    '-v', `${REPOS}:/origin:ro`, '-v', `${co}:/repos-checkout`,
     // The mounted bare repo belongs to the host user, not the container's: git's ownership check
     // would refuse it on Linux (in the cluster the repo comes over git:// and this does not apply).
     '-e', 'GIT_CONFIG_COUNT=1', '-e', 'GIT_CONFIG_KEY_0=safe.directory', '-e', 'GIT_CONFIG_VALUE_0=*',
@@ -128,7 +129,8 @@ after(async () => {
 });
 
 test('1. the feed serves dbt\'s own verdict and manifests for the commit Dagster runs', async () => {
-  const st = await until(() => feed.repoStatus(), (r) => r.ok && r.value[DOMAIN]?.current === good, 180_000, 'repo-sync parsed the good head');
+  const st = await until(() => feed.repoStatus(), (r) => r.ok && r.value[DOMAIN]?.current === good, 180_000, 'repo-sync parsed the good head')
+    .catch((e) => { throw new Error(`${e instanceof Error ? e.message : String(e)}\nrepo-sync log:\n${logs(SYNC).slice(-3000)}`); });
   assert.ok(st.ok);
   assert.equal(st.value[DOMAIN].error, null);
   const v = await feed.repoVerdict(DOMAIN, good);
