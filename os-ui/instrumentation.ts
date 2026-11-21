@@ -174,6 +174,12 @@ export async function register(): Promise<void> {
         const { startOsDataBundle } = await import('./core/policy/bundle.ts');
         startOsDataBundle();
       }
+      // WP-16 (10 F10): dbt's parse verdict per commit, from repo-sync, into commit_checks.
+      if (cfg.dagsterRepoStatusUrl && cfg.governanceDatabaseUrl && !isRunWorkerProcess()) {
+        const { startDbtParseVerdictCopy } = await import('./core/adapters/dagster/commit-checks.ts');
+        const { governanceRuntimePool } = await import('./core/adapters/postgres/pool.ts');
+        startDbtParseVerdictCopy(governanceRuntimePool);
+      }
     } catch (err) {
       console.error(`[os-ui] opa state: reconciler NOT started — POLICY STATE WILL NOT BE RESTORED after an OPA restart: ${err instanceof Error ? err.message : String(err)}`);
     }

@@ -584,6 +584,11 @@
 - name: TRINO_ACCESS_RULES_INTERVAL_MINUTES
   value: {{ $ac.reconcileIntervalMinutes | default 10 | quote }}
 {{- end }}
+{{- if and .Values.dagster.enabled (.Values.dagsterRepoStatus | default dict).enabled }}
+# WP-16: repo-sync's status, verdict and manifest feed (core/adapters/dagster/graphql-read.ts).
+- name: DAGSTER_REPO_STATUS_URL
+  value: {{ printf "http://dagster-repo-status:%v" (.Values.dagsterRepoStatus.port | default 8089) | quote }}
+{{- end }}
 # Session-signing secret (HMAC-SHA256 for the auth cookie). Sourced
 # from the generated `os-ui-session` Secret — NEVER the in-code
 # dev fallback, which would let anyone forge an admin session.

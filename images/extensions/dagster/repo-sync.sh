@@ -14,9 +14,12 @@
 #   replaces the last good checkout — Dagster keeps scheduling the previous commit (checklist D8).
 #   A commit dbt refused is parsed ONCE: its verdict is cached per (domain, sha) under .verdicts/
 #   and re-published each pass without re-running dbt, until `main` moves.
-#   The outcome of every domain is written to /repos-checkout/status.json and served (that file
-#   ONLY) on REPO_SYNC_STATUS_PORT so os-ui can show "commit abc123 failed dbt parse: … — schedules
-#   still run def456".
+#   The outcome of every domain is written to /repos-checkout/status.json and served on
+#   REPO_SYNC_STATUS_PORT so os-ui can show "commit abc123 failed dbt parse: … — schedules
+#   still run def456". WP-16 (01 M2, 10 F6/F10) — the feed: the same server also answers, read-only,
+#   `/verdicts/<domain>/<sha>.json` (dbt's verdict for that commit, passed or refused) and
+#   `/manifests/<domain>/<sha>/{manifest,semantic_manifest}.json` (dbt's own artifacts of a commit
+#   that parsed), so os-ui and metric-compile read the commit Dagster runs instead of re-parsing.
 #
 # WHY A SIDECAR: the code location must load from a VALIDATED commit, not from whatever the OS last
 #   wrote. Commit first, validate second; the gate is deployment, as in any CI.
@@ -116,14 +119,35 @@ if [ "$ENABLED" != "true" ]; then
   exit 0
 fi
 
-# Serve status.json — and ONLY status.json — bound to the POD's own IP (never 0.0.0.0) and behind a
+# Serve status.json and the read-only feed below — nothing else — bound to the POD's own IP (never 0.0.0.0) and behind a
 # bearer when one is configured. Review B2-review-L5: the file names every domain and its parse
 # errors — not secret, but not public either, and a wildcard bind is a wider surface than the job
-# needs. No Service exposes this port today and os-ui does not read it (docs/components/dagster.md
-# -> "Known limits").
-python3 - "$CHECKOUT" "$PORT" "$BIND" "$STATUS_TOKEN" <<'PY' >/dev/null 2>&1 &
-import hmac, http.server, os, sys
-root, port, bind, token = sys.argv[1], int(sys.argv[2]), sys.argv[3], sys.argv[4]
+# needs. WP-16: Service `dagster-repo-status` exposes it when `dagsterRepoStatus.enabled`, and the
+# NetworkPolicy dagster-code-location-ingress admits only os-ui, os-ui-worker and metric-compile.
+python3 - "$CHECKOUT" "$PORT" "$BIND" "$STATUS_TOKEN" "$(dirname "$0")" <<'PY' >/dev/null 2>&1 &
+import hmac, http.server, os, re, sys
+root, port, bind, token, app = sys.argv[1], int(sys.argv[2]), sys.argv[3], sys.argv[4], sys.argv[5]
+sys.path.insert(0, app)
+import os_projects  # noqa: E402 — the one place that knows where a repo's dbt project lives
+DOMAIN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+SHA = re.compile(r"^[0-9a-f]{40}$")
+ARTIFACTS = ("manifest.json", "semantic_manifest.json")
+
+
+def resolve(path):
+    """The file a feed path names, or None. Only names the regexes admit; never a `..`."""
+    if path in ("/", "/status.json"):
+        return os.path.join(root, "status.json")
+    parts = path.strip("/").split("/")
+    if len(parts) == 3 and parts[0] == "verdicts" and DOMAIN.match(parts[1]) and parts[2].endswith(".json") and SHA.match(parts[2][:-5]):
+        return os.path.join(root, ".verdicts", parts[1], parts[2])
+    if len(parts) == 4 and parts[0] == "manifests" and DOMAIN.match(parts[1]) and SHA.match(parts[2]) and parts[3] in ARTIFACTS:
+        repo = os.path.join(root, parts[1], parts[2])
+        try:
+            return os.path.join(os_projects.dbt_dir(repo), "target", parts[3])
+        except Exception:
+            return None
+    return None
 if token == "dev-only-insecure-agent-runtime-token":
     token = ""  # the shipped placeholder is not a credential
 
@@ -137,13 +161,17 @@ class H(http.server.BaseHTTPRequestHandler):
         return bool(got) and hmac.compare_digest(got, token)
 
     def do_GET(self):
-        if self.path.split("?")[0] not in ("/", "/status.json"):
+        path = self.path.split("?")[0]
+        f = resolve(path)
+        if f is None:
             self.send_response(404); self.end_headers(); return
         if not self._authed():
             self.send_response(401); self.send_header("www-authenticate", "Bearer"); self.end_headers(); return
         try:
-            body = open(os.path.join(root, "status.json"), "rb").read()
+            body = open(f, "rb").read()
         except OSError:
+            if path not in ("/", "/status.json"):
+                self.send_response(404); self.end_headers(); return
             body = b'{"enabled": true, "domains": {}}'
         self.send_response(200); self.send_header("content-type", "application/json")
         self.send_header("content-length", str(len(body))); self.end_headers(); self.wfile.write(body)
@@ -201,9 +229,20 @@ json.dump({"ok": False, "error": error, "errorSummary": summary,
 os.replace(tmp, path)
 PY
 }
+save_ok_verdict() { # domain sha — the commit parsed: os-ui records it as a passed check (10 F10)
+  mkdir -p "$VERDICTS/$1"
+  python3 - "$(verdict_file "$1" "$2")" <<'PY'
+import json, os, sys, time
+path = sys.argv[1]
+tmp = path + ".tmp"
+json.dump({"ok": True, "parsedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}, open(tmp, "w"))
+os.replace(tmp, path)
+PY
+}
 cached_status() { # domain head current — re-publish a cached failed verdict; 1 when none
   f="$(verdict_file "$1" "$2")"
   [ -f "$f" ] || return 1
+  grep -q '"ok": false' "$f" || return 1   # only a refusal is re-published; a passed sha is `current`
   python3 - "$f" "$CHECKOUT/.status/$1.json" "$1" "$2" "$3" <<'PY'
 import json, sys, time
 f, path, domain, head, current = sys.argv[1:6]
@@ -326,6 +365,7 @@ sync_domain() { # domain  (sets REPOINTED=1 when `current` moved)
   if [ "$prc" = 0 ]; then
     ln -sfn "$head" "$CHECKOUT/$d/current.tmp" && mv -T "$CHECKOUT/$d/current.tmp" "$CHECKOUT/$d/current"
     write_status "$d" "$head" "$head" "$head" "" "" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    save_ok_verdict "$d" "$head"
     log "$d: current → $head"
     REPOINTED=1
     # Drop older worktrees (keep current + the previous good one).

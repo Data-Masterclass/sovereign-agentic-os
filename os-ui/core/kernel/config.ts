@@ -729,6 +729,11 @@ export const config = {
   trinoSeedWriters: parseSeedWriters(env('TRINO_SEED_WRITERS', '')),
   trinoAccessRulesIntervalMinutes: Number(env('TRINO_ACCESS_RULES_INTERVAL_MINUTES', '10')) || 10,
 
+  // WP-16 (01 M2, 10 F6/F10): repo-sync's status + verdict + manifest feed (Service
+  // `dagster-repo-status`, bearer = AGENT_RUNTIME_TOKEN). Empty = off: nothing reads it.
+  get dagsterRepoStatusUrl(): string {
+    return (process.env.DAGSTER_REPO_STATUS_URL ?? '').trim().replace(/\/+$/, '');
+  },
   // Dagster (Orchestration): POST {DAGSTER_URL}/graphql (no auth locally).
   dagsterUrl: base(env('DAGSTER_URL', 'http://agentic-os-dagster-webserver:80')),
   // The `sovereign` code location (engine rebuild B2): one location for every domain's dbt

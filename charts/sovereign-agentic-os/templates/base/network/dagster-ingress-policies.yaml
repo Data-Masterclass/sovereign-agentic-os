@@ -21,7 +21,8 @@
                                        the code server's health check dials localhost)
     The code-location policy SELECTS the code-server pod only (name + component), so run pods,
     which serve nothing, keep their current ingress.
-      - os-ui, os-ui-worker            sidecar ports only (the repo-sync status server)
+      - os-ui, os-ui-worker            sidecar ports only (the repo-sync status server and, WP-16,
+        (+ metric-compile, WP-16)      its verdict + manifest feed via Service dagster-repo-status)
 
   `kubectl port-forward` and kubelet probes are not subject to NetworkPolicy, so the local
   port-forward path to the Dagster UI is unaffected.
@@ -124,6 +125,12 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/component: os-ui-worker
+        {{- if ($.Values.dagsterRepoStatus | default dict).enabled }}
+        # WP-16 (10 F6): the metric compiler reads the manifests of the commit Dagster runs.
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: metric-compile
+        {{- end }}
       ports:
         {{- range ($sidecarPorts | uniq) }}
         - { protocol: TCP, port: {{ . }} }

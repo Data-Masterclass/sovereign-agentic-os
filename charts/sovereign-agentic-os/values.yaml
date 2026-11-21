@@ -1423,6 +1423,14 @@ dbt:
     # The domain schema the marts land in.
     schema: sales
 
+# WP-16 (design 01 M2; 10 F6, F10): os-ui reads dbt's verdict per commit and dbt's manifests from
+# repo-sync (Service dagster-repo-status) and copies the verdicts into os_governance.commit_checks.
+# OFF by default.
+dagsterRepoStatus:
+  enabled: false
+  location: sovereign
+  port: 8089
+
 # dagster-analytics — dedicated Trino/OPA warehouse principal for Dagster runs
 # (epic #146 Phase 4).
 dagsterAnalytics:
