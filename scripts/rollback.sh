@@ -121,6 +121,11 @@ helm --kube-context "$CTX" get manifest "$REL" -n "$NS" --revision "$CURRENT" > 
 helm --kube-context "$CTX" get manifest "$REL" -n "$NS" --revision "$TARGET" > "$CAPF.tgt" || refuse "cannot read the manifest of revision $TARGET (Secret deletion guard)"
 sg=$(bash scripts/lib/secret-deletion-guard.sh --context "$CTX" --ns "$NS" "$CAPF.cur" "$CAPF.tgt" 2>&1) || refuse "${sg##*SECRET_DELETION_REFUSED — }"
 [ -z "$sg" ] || echo "$sg"
+# ROTATION DRIFT GUARD (docs/ops/WP-secret-rotation.md): the target revision must not put older
+# values back into Secret keys rotate-secrets.sh changed, unless ROTATION_IN_PROGRESS is set.
+dg=$(KUBECTL="kubectl --context $CTX -n $NS" python3 scripts/lib/rotation-drift-guard.py --what rollback "$CAPF.tgt" 2>&1) \
+  || refuse "${dg#*ROTATION_DRIFT_REFUSED — }"
+[ -z "$dg" ] || echo "$dg"
 if [ -n "$DRY_RUN" ]; then echo "ROLLBACK_DRY_RUN env=$ENV_NAME $CURRENT -> $TARGET"; exit 0; fi
 
 if [ "$ENV_NAME" = prod ]; then

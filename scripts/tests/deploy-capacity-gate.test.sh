@@ -42,6 +42,8 @@ BIN=$TMP/bin; mkdir -p "$BIN"
 cat > "$BIN/kubectl" <<'STUB'
 #!/usr/bin/env bash
 echo "kubectl $*" >> "$FAKE_LOG"
+# The rotation drift guard lists the Secrets: none is managed by rotate-secrets.sh here.
+case "$*" in *"get secrets -o json"*) echo '{"items":[]}' ;; esac
 STUB
 cat > "$BIN/helm" <<STUB
 #!/usr/bin/env bash

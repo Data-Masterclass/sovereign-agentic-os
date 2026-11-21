@@ -44,6 +44,7 @@ esac
 STUB
 cat > "$BIN/kubectl" <<'STUB'
 #!/usr/bin/env bash
+case " $* " in *" get secrets -o json "*) if [ -n "${FAKE_SECRETS_JSON:-}" ]; then cat "$FAKE_SECRETS_JSON"; else echo '{"items":[]}'; fi; exit 0 ;; esac   # the rotation drift guard
 case " $* " in *" get secret "*)
   [ -n "${FAKE_KUBECTL_FAIL:-}" ] && exit 1
   printf '%s' "${FAKE_KUBECTL_OUT:-}" ;; esac
@@ -61,7 +62,7 @@ export FAKE_DIR=$TMP
 run() { # <rev8 cap> <rev7 cap> <mapped> [args] — sets out
   cp "$TMP/manifest-$1.yaml" "$TMP/rev8.yaml"; cp "$TMP/manifest-$2.yaml" "$TMP/rev7.yaml"
   : > "$TMP/probe.log"
-  out=$(PATH="$BIN:$PATH" FAKE_KUBECTL_OUT=${FAKE_KUBECTL_OUT:-} FAKE_KUBECTL_FAIL=${FAKE_KUBECTL_FAIL:-} FAKE_HELM_V=${FAKE_HELM_V:-} FAKE_MANIFEST_FAIL=${FAKE_MANIFEST_FAIL:-} FAKE_MAPPED=$3 PROD_KUBE_CONTEXT=testprod KUBE_CONTEXT=testprod \
+  out=$(PATH="$BIN:$PATH" FAKE_SECRETS_JSON=${FAKE_SECRETS_JSON:-} ROTATION_IN_PROGRESS=${ROTATION_IN_PROGRESS:-} FAKE_KUBECTL_OUT=${FAKE_KUBECTL_OUT:-} FAKE_KUBECTL_FAIL=${FAKE_KUBECTL_FAIL:-} FAKE_HELM_V=${FAKE_HELM_V:-} FAKE_MANIFEST_FAIL=${FAKE_MANIFEST_FAIL:-} FAKE_MAPPED=$3 PROD_KUBE_CONTEXT=testprod KUBE_CONTEXT=testprod \
         ROLLBACK_MAPPED_COLUMNS_PROBE="$BIN/probe" bash scripts/rollback.sh --env prod --dry-run "${@:4}" 2>&1)
 }
 
@@ -76,6 +77,22 @@ FAKE_KUBECTL_FAIL=1 run sec false 0
 check "fail closed: a kubectl error refuses the rollback" "ROLLBACK_REFUSED: cannot read the live Secret(s): x-secret" "$out"
 FAKE_HELM_V=v3.16.3 run false false 0
 check "a Helm 3 client is refused" "ROLLBACK_REFUSED: Helm v3.16.3 is below 4" "$out"
+
+echo "== the rotation drift guard: a rollback must not undo a rotation in progress"
+printf -- '---\napiVersion: v1\nkind: Secret\nmetadata:\n  name: valkey-credentials\nstringData:\n  password: older-than-the-rotation\n' > "$TMP/valkey-old.yaml"
+cat "$TMP/manifest-false.yaml" "$TMP/valkey-old.yaml" > "$TMP/manifest-vk.yaml"
+printf '{"items":[{"metadata":{"name":"valkey-credentials","managedFields":[{"manager":"rotate-secrets","fieldsV1":{"f:data":{"f:password":{}}}}]},"data":{"password":"%s"}}]}' "$(printf rotated-in-the-cluster | base64)" > "$TMP/secrets-rotated.json"
+FAKE_SECRETS_JSON=$TMP/secrets-rotated.json run false vk 0
+check "refused: the target revision would put the older Valkey password back" "ROLLBACK_REFUSED: this rollback would put OLDER values back into 1 Secret key(s)" "$out"
+check "...naming the key" "valkey-credentials/password" "$out"
+absent "...printing no value" "older-than-the-rotation" "$out"
+absent "...nor the cluster's" "rotated-in-the-cluster" "$out"
+FAKE_SECRETS_JSON=$TMP/secrets-rotated.json ROTATION_IN_PROGRESS=1 run false vk 0
+check "ROTATION_IN_PROGRESS lets it through" "ROLLBACK_DRY_RUN env=prod 8 -> 7" "$out"
+check "...with a warning" "WARNING ROTATION_IN_PROGRESS is set: this rollback replaces 1 key(s)" "$out"
+printf '{"items":[{"metadata":{"name":"valkey-credentials","managedFields":[{"manager":"helm","fieldsV1":{"f:data":{"f:password":{}}}}]},"data":{"password":"%s"}}]}' "$(printf rotated-in-the-cluster | base64)" > "$TMP/secrets-helm.json"
+FAKE_SECRETS_JSON=$TMP/secrets-helm.json run false vk 0
+check "negative twin: the same difference in a key rotate-secrets does not manage rolls back" "ROLLBACK_DRY_RUN env=prod 8 -> 7" "$out"
 
 echo "== downgrade below the column-name runner while datasets store mapped names"
 run true false 3

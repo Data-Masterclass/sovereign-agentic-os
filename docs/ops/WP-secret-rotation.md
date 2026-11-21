@@ -85,7 +85,14 @@ After `ds-rekey`, the deploy:
 - lets the hook re-assert the same passwords (idempotent);
 - lets key-init create the new agent key.
 
-**Between `ds-rekey` and the deploy, nobody deploys from older values.** Such a deploy would put the defaults back.
+**Between `ds-rekey` and the deploy, nobody deploys from older values.** Such a deploy would put the defaults back. This is enforced, not only written here:
+- `deploy.sh` and `rollback.sh` run `scripts/lib/rotation-drift-guard.py` before the backup and before any Helm call;
+- it takes every Secret key the cluster records as written by `rotate-secrets` (field manager), and compares it by sha256 with what the deploy or rollback would apply;
+- on a difference it refuses (`ROTATION_DRIFT_REFUSED`), names the key, both fingerprints, and the private overlay whose value is the cluster's ("deploy with `VALUES_OVERLAY=…`");
+- `ROTATION_IN_PROGRESS=1` turns the refusal into a warning, for when you know why;
+- it fails closed when the Secrets cannot be read.
+
+The keys stay co-managed by `rotate-secrets` after the overlay deploy, which is harmless: from then on the render carries the same value. A later change of such a key through values alone is refused until it goes through `ds-rekey` (or `ROTATION_IN_PROGRESS=1`).
 
 ## Run-book (production; the owner approves the window)
 
