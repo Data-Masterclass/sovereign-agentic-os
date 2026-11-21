@@ -168,21 +168,27 @@ PARSE_ENV_FIXED: Dict[str, str] = {
 
 #: What a dbt RUN (build, run-operation) inherits from the run pod: dbt's own settings, the Trino
 #: connection the generated profiles.yml reads, the principal, and what a process needs to start.
-#: Nothing else — the pod also holds the Dagster instance-database login and other credentials,
+#: Exact names, never a prefix. Nothing else — the pod also holds the Dagster instance-database login and other credentials,
 #: and a model can render any variable with `env_var()`. dagster-dbt adds its own `DBT_*` and
 #: `DAGSTER_DBT_CLI` on top (dagster_dbt.core.resource.DbtCliResource.cli).
 DBT_RUN_ENV_NAMES: Tuple[str, ...] = (
-    "PATH", "HOME", "LANG", "LANGUAGE", "TZ", "TMPDIR", "USER", "PWD",
+    # A process's basics.
+    "PATH", "HOME", "LANG", "LANGUAGE", "LC_ALL", "LC_CTYPE", "TZ", "TMPDIR", "USER", "PWD",
     "SSL_CERT_FILE", "SSL_CERT_DIR", "REQUESTS_CA_BUNDLE",
+    # dbt's own settings a run passes.
+    "DBT_PROFILES_DIR", "DBT_PROJECT_DIR", "DBT_TARGET", "DBT_SEND_ANONYMOUS_USAGE_STATS",
+    # Exactly the variables the OS-generated profiles.yml reads (os-ui tabs/data/lib/dbt/project.ts),
+    # by name: a new TRINO_* or DBT_ENV_* variable stays invisible until it is added here.
+    "TRINO_HOST", "TRINO_PORT", "TRINO_USER", "TRINO_CATALOG", "TRINO_HTTP_SCHEME",
+    "TRINO_TLS_PORT", "TRINO_RUNNER_USER", "TRINO_CA_FILE", "DBT_ENV_SECRET_TRINO_PASSWORD",
     "OS_PRINCIPAL",
 )
-DBT_RUN_ENV_PREFIXES: Tuple[str, ...] = ("DBT_", "TRINO_", "LC_")
 
 
 def dbt_run_env(ambient: Optional[Mapping[str, str]] = None) -> Dict[str, str]:
     """The allowlisted subset of `ambient` (default: this process's env) a dbt run may see."""
     src = os.environ if ambient is None else ambient
-    return {k: v for k, v in src.items() if k in DBT_RUN_ENV_NAMES or k.startswith(DBT_RUN_ENV_PREFIXES)}
+    return {k: v for k, v in src.items() if k in DBT_RUN_ENV_NAMES}
 
 
 def parse_env(ambient: Optional[Mapping[str, str]] = None) -> Dict[str, str]:

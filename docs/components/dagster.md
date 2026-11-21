@@ -171,7 +171,7 @@ credentials from the **run pod's** env instead.
 
 dbt runs through `repo.py ScrubbedDbtCliResource` (the legacy wiring and, swapped in, a repo's own
 native `DbtCliResource`). It is dagster-dbt's resource unchanged, except that the dbt process gets
-only `os_projects.dbt_run_env()`: `DBT_*`, `TRINO_*`, `LC_*`, `OS_PRINCIPAL` and the process basics
+only `os_projects.dbt_run_env()`: an exact list of names — the variables the generated `profiles.yml` reads, dbt's own run settings, `OS_PRINCIPAL` and the process basics
 (`PATH`, `HOME`, `LANG`, `TZ`, CA bundles). Nothing else the run pod holds reaches dbt. Proof:
 `tests/image/dbt_env.py` (real dagster-dbt + dbt-core: credentials render as their default, a Trino
 setting passes, `dbt build` works on a real Trino; the stock resource is the negative twin).
