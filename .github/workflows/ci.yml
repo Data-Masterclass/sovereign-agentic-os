@@ -669,7 +669,7 @@ jobs:
       - name: Install dagster-test deps
         run: pip install "pyyaml>=6,<7"
       - name: pytest (dagster extension)
-        run: python3 -m pytest -q images/extensions/dagster/tests/test_os_projects.py images/extensions/dagster/tests/test_os_alerts.py
+        run: python3 -m pytest -q images/extensions/dagster/tests/test_os_projects.py images/extensions/dagster/tests/test_dbt_env.py images/extensions/dagster/tests/test_os_alerts.py
       # agent-runtime: deleted in the engine rebuild (A5) — agent systems execute as a real
       # LangGraph StateGraph inside os-ui, covered by `npm --prefix os-ui test`.
 
