@@ -15,6 +15,12 @@
 {{- define "soa.opaSeed" -}}
 {{- /* Bundle mode adds one seed grant: OPA's own status reports to os-ui are an OPA decision. */}}
 {{- $grants := merge (dict "opa-status-reporter" (list "opa_status_report")) (deepCopy (.Values.opa.grants | default dict)) }}
+{{- /* WP-15: the Dagster pods' run-grant calls are an OPA decision too, per ServiceAccount. */}}
+{{- $ri := .Values.dagsterRunIdentity | default dict }}
+{{- if $ri.enabled }}
+{{- $_ := set $grants (printf "system:serviceaccount:%s:%s" .Release.Namespace $ri.runServiceAccount) (list "run_grant_start") }}
+{{- $_ := set $grants (printf "system:serviceaccount:%s:%s" .Release.Namespace $ri.codeServiceAccount) (list "run_grant_finish") }}
+{{- end }}
 {{- dict "seed_grants" $grants "requires_approval" (.Values.opa.requiresApproval | default list) "governance" (include "soa.opaGovernance" . | fromJson) | toJson }}
 {{- end }}
 {{- if .Values.opa.enabled }}

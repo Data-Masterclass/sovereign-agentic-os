@@ -9,7 +9,8 @@
  * ARCHITECTURE:
  *   - Caller identity: the pod's projected ServiceAccount token (audience `os-ui`), checked by the
  *     API server (TokenReview). /start accepts only the run pods' SA (`dagster-run`), /finish only
- *     the code server's SA (`dagster-code`, the run-status sensor). No shared bearer.
+ *     the code server's SA (`dagster-code`, the run-status sensor). No shared bearer. Then an OPA
+ *     decision for that SA (`run_grant_start` / `run_grant_finish`, chart seed grants).
  *   - The run is READ BACK from Dagster GraphQL by id (`core/infra/dagster.ts run()`); the caller's
  *     body names only the run id.
  *   - Access at start: the principal is an active OS user who is still in the grant's domain (or a
@@ -32,21 +33,27 @@ import { listUsers } from '@tabs/admin/lib/users';
 type Ctx = { params: Promise<{ id: string }> };
 const json = (status: number, body: Record<string, unknown>) => Response.json(body, { status });
 
-async function caller(req: Request, want: string): Promise<Response | null> {
-  if (!want) return json(503, { error: 'not_configured', reason: 'the accepted ServiceAccount is not configured' });
+/** The caller is the ServiceAccount `want` (TokenReview), or the response that says why not. */
+export async function reviewCaller(req: Request, want: string): Promise<{ ok: true; username: string } | { ok: false; res: Response }> {
+  if (!want) return { ok: false, res: json(503, { error: 'not_configured', reason: 'the accepted ServiceAccount is not configured' }) };
   const r = await reviewToken(bearerOf(req), config.runGrantAudience);
-  if (!r.ok) return json(r.status, { error: 'unauthenticated', reason: r.reason });
-  if (r.username !== want) return json(403, { error: 'forbidden', reason: 'this ServiceAccount may not call this route' });
-  return null;
+  if (!r.ok) return { ok: false, res: json(r.status, { error: 'unauthenticated', reason: r.reason }) };
+  if (r.username !== want) return { ok: false, res: json(403, { error: 'forbidden', reason: 'this ServiceAccount may not call this route' }) };
+  return { ok: true, username: r.username };
 }
 
-async function runId(req: Request): Promise<string | null> {
+export const forbidden = (policy: string) => json(403, { error: 'forbidden', reason: `OPA: ${policy}` });
+export const notFound = () => json(404, { error: 'not_found' });
+
+type RunIdBody = { ok: true; runId: string } | { ok: false; reason: string };
+async function runId(req: Request): Promise<RunIdBody> {
+  let b: { run_id?: unknown };
   try {
-    const b = (await req.json()) as { run_id?: unknown };
-    return typeof b.run_id === 'string' && /^[A-Za-z0-9-]{1,64}$/.test(b.run_id) ? b.run_id : null;
-  } catch {
-    return null;
+    b = (await req.json()) as { run_id?: unknown };
+  } catch (e) {
+    return { ok: false, reason: `body is not JSON (${e instanceof Error ? e.message : String(e)})` };
   }
+  return typeof b?.run_id === 'string' && /^[A-Za-z0-9-]{1,64}$/.test(b.run_id) ? { ok: true, runId: b.run_id } : { ok: false, reason: 'body must be {"run_id": "<dagster run id>"}' };
 }
 
 async function principalAccess(uid: string, domain: string): Promise<string | null> {
@@ -57,13 +64,12 @@ async function principalAccess(uid: string, domain: string): Promise<string | nu
   return null;
 }
 
+/** After the route checked the caller (reviewCaller + the OPA decision `run_grant_start`). */
 export async function start(req: Request, ctx: Ctx): Promise<Response> {
-  if (!config.dagsterRunGrants) return json(404, { error: 'not_found' });
-  const denied = await caller(req, config.runGrantStartSubject);
-  if (denied) return denied;
   const { id } = await ctx.params;
-  const rid = await runId(req);
-  if (!rid) return json(400, { error: 'bad_request', reason: 'body must be {"run_id": "<dagster run id>"}' });
+  const body = await runId(req);
+  if (!body.ok) return json(400, { error: 'bad_request', reason: body.reason });
+  const rid = body.runId;
   const pool = governanceRuntimePool();
   const grant = await getRunGrant(pool, id);
   if (!grant) return json(404, { error: 'unauthorised_launch', reason: `no run grant ${id}` });
@@ -87,13 +93,12 @@ export async function start(req: Request, ctx: Ctx): Promise<Response> {
   return json(200, { principal: act.principal, grant_rev: act.rev, active_until: act.activeUntil, propagated_ms: seen.ms });
 }
 
+/** After the route checked the caller (reviewCaller + the OPA decision `run_grant_finish`). */
 export async function finish(req: Request, ctx: Ctx): Promise<Response> {
-  if (!config.dagsterRunGrants) return json(404, { error: 'not_found' });
-  const denied = await caller(req, config.runGrantFinishSubject);
-  if (denied) return denied;
   const { id } = await ctx.params;
-  const rid = await runId(req);
-  if (!rid) return json(400, { error: 'bad_request', reason: 'body must be {"run_id": "<dagster run id>"}' });
+  const body = await runId(req);
+  if (!body.ok) return json(400, { error: 'bad_request', reason: body.reason });
+  const rid = body.runId;
   // Only a run Dagster reports as finished may end its activation (a forged early /finish would
   // only shorten the owner's own run, but there is no reason to accept it).
   const read = await dagster.run(rid);

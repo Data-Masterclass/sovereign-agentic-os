@@ -211,8 +211,11 @@ before(async () => {
 
   // The chart's seed grant for OPA's status reports (opa.yaml soa.opaSeed), on the push-mode OPA
   // os-ui asks; the sidecar reports there through os-ui's status route.
-  const put = await fetch(`${process.env.OPA_URL}/v1/data/grants/opa-status-reporter`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: '["opa_status_report"]' });
-  assert.equal(put.status, 204);
+  // …and the run-grant routes' decisions per ServiceAccount (opa.yaml, with dagsterRunIdentity).
+  for (const [p, tools] of [['opa-status-reporter', ['opa_status_report']], [`system:serviceaccount:${NS}:dagster-run`, ['run_grant_start']], [`system:serviceaccount:${NS}:dagster-code`, ['run_grant_finish']]] as const) {
+    const put = await fetch(`${process.env.OPA_URL}/v1/data/grants/${encodeURIComponent(p)}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(tools) });
+    assert.equal(put.status, 204, p);
+  }
   const { opaInstanceStatuses } = await import('@core/policy/opa-status');
   await until(async () => opaInstanceStatuses(), (s) => s.some((i) => i.instance === 'trino-sidecar' && !!i.bundles['os-grants']?.active_revision), 90_000, 'the sidecar activated os-grants and reported it');
 
