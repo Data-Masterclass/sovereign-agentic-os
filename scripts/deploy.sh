@@ -480,6 +480,15 @@ if ! KUBECTL="kubectl --context $CTX -n $NS" python3 scripts/lib/check-secrets-n
   echo "   Procedure: docs/ops/secret-rotation.md (rotation order for LiteLLM, os-ui, os-ui-worker and Langfuse). Nothing was changed." >&2
   exit 1
 fi
+# ROTATION DRIFT GUARD (docs/ops/WP-secret-rotation.md). Between `rotate-secrets.sh ds-rekey` and
+# the overlay deploy, the cluster holds rotated credentials the release values do not have yet; a
+# deploy from older values would put them back and silently undo the rotation. Every Secret key the
+# cluster records as written by rotate-secrets must equal the render — by fingerprint — unless
+# ROTATION_IN_PROGRESS is set. Read-only, before the backup; the refusal names the overlay to use.
+say "rotation drift guard: no Secret key that rotate-secrets.sh changed goes back to an older value"
+if ! KUBECTL="kubectl --context $CTX -n $NS" python3 scripts/lib/rotation-drift-guard.py --what deploy "$WORK/after.yaml"; then
+  exit 1
+fi
 # CAPACITY GATE (WP-47). The same check CI and release.sh run, but on the values THIS upgrade
 # applies: chart defaults + the live release values + VALUES_OVERLAY, rendered as helm will. A
 # deploy run by hand must not put more on the node than it can give. CI=true: a skip (no helm

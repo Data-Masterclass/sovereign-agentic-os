@@ -34,7 +34,8 @@ tree() { # <dir> — a throwaway operator tree with this chart
   chmod +x "$T/deploy/pre-upgrade-backup.sh"
 }
 BIN=$TMP/bin; mkdir -p "$BIN"
-printf '#!/usr/bin/env bash\necho "kubectl $*" >> "$FAKE_LOG"\n' > "$BIN/kubectl"
+# The rotation drift guard lists the Secrets: none is managed by rotate-secrets.sh here.
+printf '#!/usr/bin/env bash\necho "kubectl $*" >> "$FAKE_LOG"\ncase "$*" in *"get secrets -o json"*) if [ -n "${FAKE_SECRETS_JSON:-}" ]; then cat "$FAKE_SECRETS_JSON"; else echo "{\\"items\\":[]}"; fi ;; esac\n' > "$BIN/kubectl"
 cat > "$BIN/helm" <<STUB
 #!/usr/bin/env bash
 [ "\$1" = version ] && { echo v4.2.2; exit 0; }   # helm-version-guard.sh
@@ -215,5 +216,23 @@ printf 'global:\n  allowChartDefaultSecrets: false\n' > "$TMP/deny.yaml"
 VALUES_OVERLAY=$TMP/deny.yaml derive_and_render "$TMP/t5"
 check "negative twin: explicitly false deploys" "helm upgrade" "$(cat "$FAKE_LOG")"
 check "...and says so" "test-render switch: global.allowChartDefaultSecrets must not be set" "$out"
+
+echo "== the rotation drift guard: a deploy from older values must not undo a rotation in progress"
+tree "$TMP/t6"
+# The cluster: valkey-credentials/password written by rotate-secrets.sh ds-rekey; the release still
+# renders the chart default.
+printf '{"items":[{"metadata":{"name":"valkey-credentials","managedFields":[{"manager":"rotate-secrets","fieldsV1":{"f:data":{"f:password":{}}}}]},"data":{"password":"%s"}}]}' "$(printf rotated-in-the-cluster | base64)" > "$TMP/secrets-rotated.json"
+FAKE_SECRETS_JSON=$TMP/secrets-rotated.json derive_and_render "$TMP/t6"
+check "refused" "ROTATION_DRIFT_REFUSED — this deploy would put OLDER values back" "$out"
+check "...naming the key" "valkey-credentials/password" "$out"
+absent "...before any helm upgrade" "helm upgrade" "$(cat "$FAKE_LOG")"
+absent "...and before the backup" "backup " "$(cat "$FAKE_LOG")"
+absent "...printing no value" "rotated-in-the-cluster" "$out"
+printf 'valkey:\n  local:\n    password: rotated-in-the-cluster\n' > "$TMP/r2.yaml"
+FAKE_SECRETS_JSON=$TMP/secrets-rotated.json VALUES_OVERLAY=$TMP/r2.yaml derive_and_render "$TMP/t6"
+check "negative twin: with the round-2 overlay (the cluster's value) it deploys" "helm upgrade" "$(cat "$FAKE_LOG")"
+FAKE_SECRETS_JSON=$TMP/secrets-rotated.json ROTATION_IN_PROGRESS=1 derive_and_render "$TMP/t6"
+check "ROTATION_IN_PROGRESS lets it through" "helm upgrade" "$(cat "$FAKE_LOG")"
+check "...with a warning" "WARNING ROTATION_IN_PROGRESS is set" "$out"
 
 finish deploy-data-runner-image
