@@ -8,6 +8,7 @@ import type { McpTool, JsonSchema } from '@core/mcp/server';
 import { buildOverview, scopeForUser, filterScope, fetchTrace, assertInScope } from '@tabs/monitoring/lib/index';
 import { collectRunList, isRunListStatus, RUN_LIST_STATUSES } from '@tabs/monitoring/lib/adapters/run-trace';
 import { isRunId } from '@core/kernel/run-id';
+import { isPanelView, monitoringPanels, PANEL_VIEWS } from '@tabs/monitoring/lib/panels/index';
 
 /**
  * THE MONITORING MCP SURFACE (mcp-v2 P4) — READ-ONLY and HARD-SCOPED. Three thin
@@ -43,6 +44,23 @@ export const MONITORING_TOOLS: McpTool[] = [
       'Read the attention-first monitoring overview scoped to YOU: the few things needing attention (worst-first, not a wall of green), the per-lens roll-ups (runs · pipelines · cost · artifacts), and operational alerts. Purpose: one read of "is my work healthy" — the same overview the Monitoring tab renders. Before: whoami. After: list_runs / get_run_trace to drill in. Governance: read-only; scope is derived server-side from your identity (creator = own · builder = your domain · admin = tenant + cluster) — you never receive out-of-scope signals. HONESTY: each item carries a `source` ("live" | "mock"); pipeline/cost/artifact lenses include mock adapters today (as the UI shows), runs are live Langfuse + fallback.',
     inputSchema: NO_ARGS,
     call: async (user) => buildOverview(user),
+  },
+  {
+    name: 'get_monitoring_panels',
+    tab: 'monitoring',
+    minRole: 'creator',
+    description:
+      'Read one Monitoring view — the same payload the Monitoring tab renders. `agents`: per agent system you can see — runs per day (done · failed · held for approval) from the run store, p50/p95 latency, traces and tokens from the Langfuse Metrics API, the system key\'s spend from LiteLLM, OPA denials and approval holds from OPA\'s decision log (VictoriaLogs), the last failures with Langfuse deep links, and approvals waiting. `data`: per dataset you can see — Dagster run health and last success per job and schedule, dbt test / source-test results with the failing ones, the quality trend (Dagster check executions) and the assets impacted downstream (Dagster lineage). `platform` (admin only): component probes, node and pod pressure (VictoriaMetrics), error-log counts (VictoriaLogs), backups and the alerts firing now. Purpose: the first look for an operator, an agentic engineer or a data engineer. Before: whoami. After: list_runs / get_run_trace / get_dagster_run to drill in. Governance: read-only; every upstream read is narrowed server-side to your systems and datasets; `platform` answers forbidden below admin. HONESTY: `sources.*.state` says whether each component answered (`unavailable` + reason otherwise — its numbers are then absent, never zero); `notUpstream` lists what the components do not offer.',
+    inputSchema: {
+      type: 'object',
+      properties: { view: { type: 'string', enum: [...PANEL_VIEWS], description: 'agents (default) · data · platform (admin only).' } },
+      examples: [{ view: 'agents' }, { view: 'data' }, { view: 'platform' }],
+    },
+    call: async (user, args) => {
+      const view = str(args.view).trim() || 'agents';
+      if (!isPanelView(view)) fail(`get_monitoring_panels: \`view\` must be one of ${PANEL_VIEWS.join(', ')}`, 400);
+      return monitoringPanels(user, view);
+    },
   },
   {
     name: 'list_runs',
