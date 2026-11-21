@@ -39,6 +39,8 @@ export type GenerateOptions = {
   /** WP-50: the dbt `model-paths` entry for the alerts' saved queries (`alertsModelPath(layout)`),
    *  or absent when alerts are not native. */
   alertsModelPath?: string;
+  /** WP-15: write each enabled schedule's standing run-grant id into `os/schedules.yml`. */
+  runGrants?: boolean;
 };
 
 /** A dataset the generator LEFT OUT of the project because its files would fail `dbt parse`. */
@@ -140,7 +142,7 @@ function renderProject(domain: string, snapshot: ProjectSnapshot, opts: Generate
   if (sources) files.set('models/sources.yml', sources);
   for (const m of plan.models) files.set(m.path, m.sql);
   for (const [p, c] of renderSchemas(plan.models)) files.set(p, c);
-  const schedules = renderSchedules(plan.models);
+  const schedules = renderSchedules(plan.models, { domain, runGrants: opts.runGrants });
   if (schedules) files.set('os/schedules.yml', schedules);
   const external = renderExternal(plan.externals);
   if (external) files.set('os/external.yml', external);

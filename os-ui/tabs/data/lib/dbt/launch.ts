@@ -30,6 +30,8 @@ import { datasetAssetKeys, selectionForBuild, selectionForSync } from '@tabs/dat
 import { syncLandingLayer } from '@tabs/data/lib/dbt/models';
 import { removeSyncCronJob, type SyncCronOutcome } from '@tabs/data/lib/sync-cron-removal';
 import { runDatasetSync } from '@tabs/data/lib/sync-run-server';
+import { governanceRuntimePool } from '@core/adapters/postgres/pool';
+import { issueDatasetGrant } from '@core/policy/run-grants';
 
 export type { SyncCronOutcome };
 
@@ -72,6 +74,10 @@ export type LaunchDeps = SnapshotDeps & {
   pollMs?: number;
   now?: () => Date;
   sleep?: (ms: number) => Promise<void>;
+  /** WP-15: issue the launch's run grant (tests); default Postgres `issueDatasetGrant`. */
+  issueGrant?: (g: { principal: string; domain: string; dataset: string; commit: string; selection: string[][]; issuedBy: string }) => Promise<string>;
+  /** WP-15: launch with run grants (default `config.dagsterRunGrants`). */
+  runGrants?: boolean;
 };
 
 async function headOf(domain: string, reposDir?: string): Promise<string | null> {
@@ -170,6 +176,16 @@ export async function launchAfterCommit(input: LaunchInput, deps: LaunchDeps = {
     const prior = await dg.runsForDataset(d.id, 5);
     batchId = await batchIdForRetry(d.id, prior.ok ? prior.data : [], now());
     tags['os/batch_id'] = batchId;
+  }
+  // WP-15: the run acts as the principal only inside this grant, bound to the commit and the exact
+  // selection; the run pod has os-ui check it at start (`/api/runtime/run-grants/<id>/start`).
+  if (deps.runGrants ?? config.dagsterRunGrants) {
+    try {
+      const issue = deps.issueGrant ?? ((g) => issueDatasetGrant(governanceRuntimePool(), g));
+      tags['os/run_grant'] = await issue({ principal: input.principal, domain: d.domain, dataset: d.id, commit, selection, issuedBy: input.actor.id });
+    } catch (e) {
+      return finish(null, `commit ${commit.slice(0, 7)} not launched: the run grant could not be issued (${e instanceof Error ? e.message : String(e)})`, batchId);
+    }
   }
   const launched = await dg.launchRun({
     domain: d.domain,

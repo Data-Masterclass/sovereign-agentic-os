@@ -377,6 +377,45 @@ execution for the latest materialization from Dagster GraphQL; Dagster OSS 1.13 
 repo.py's translator turns dbt source tests into asset checks on the source asset
 (`enable_source_tests_as_checks=True`, 01 R6). Proof: `tests/dagster/repo-status.int.test.ts`.
 
+## Runs act as the owner, bounded by run grants (WP-15)
+
+Off by default. With `-f values.dagster-run-identity.yaml` (cut-over step 5,
+`docs/components/trino-cutover.md`):
+
+1. **A grant per run.** A launch the OS makes (Build, transform, gold join, Sync now) gets a
+   `dataset` grant bound to its commit and exact asset selection, valid one hour, one run
+   (`tabs/data/lib/dbt/launch.ts`). A schedule gets a `standing` grant per (domain, dataset,
+   owner, schedule) whose id the generator writes into `os/schedules.yml` (`run_grant:`); the
+   commit hook makes the rows equal the enabled schedules (`reconcileStandingGrants`), so a
+   disabled sync or a changed owner revokes it. The wrapper stamps the id as `os/run_grant`.
+2. **Checked at run start.** Before its first Trino query each dbt step calls
+   `POST /api/runtime/run-grants/<id>/start` with the run pod's projected ServiceAccount token
+   (`dagster-run`, audience `os-ui`). os-ui verifies the token by TokenReview, reads the run back
+   from Dagster's GraphQL by id and compares tags, commit and selection with the grant, checks the
+   owner is still an active member of the domain, sets `active_run_id` + `active_until` (≤ 6 h) and
+   waits until the Trino OPA sidecar reports the os-grants revision that carries it (10 F3). Any
+   mismatch fails the run as "unauthorised launch" with no Trino query.
+3. **dbt acts as the owner.** Only then does dbt get `OS_PRINCIPAL` (from os-ui's answer) and the
+   `svc-dagster-runner` password as `DBT_ENV_SECRET_TRINO_PASSWORD` (dbt refuses that name outside
+   `profiles.yml`). The generated profile is `method: ldap`, `user: svc-dagster-runner`,
+   `impersonation_user: OS_PRINCIPAL`, the chart CA, port 8443. Trino's OPA allows
+   `ImpersonateUser svc-dagster-runner → owner` only while the activation is live
+   (`policies/trino_impersonation.rego`).
+4. **Ended when the run ends.** os-ui's finisher reads each active grant's run from Dagster and
+   ends the activation once it is terminal (one-shot grants are revoked); the code server's
+   run-status sensors call `/finish` too when its token is mounted. A missed end closes itself in
+   OPA at `active_until`.
+5. **One data run at a time** (owner decision O1): `QueuedRunCoordinator` with
+   `max_concurrent_runs: 1` and a limit of 1 per `os/run_grant`.
+6. **Defence in depth at push time:** `SET/RESET SESSION AUTHORIZATION` and `SET ROLE` in a pushed
+   model, hook or `dbt_project.yml` are refused (`git-receive.ts identitySwitchShaped`).
+
+Proof: `tests/dagster/run-identity.int.test.ts` (real Dagster image, Trino 476 + the chart's OPA
+sidecar, postgres:17, kind API server). Not covered yet, and failing closed with the overlay on:
+the observation probe (`_trino_rows`) and dlt landings still connect as the principal on 8080,
+and the weekly Iceberg maintenance jobs carry no grant ("unauthorised launch") — each needs its
+own standing grant first, so 8080 must not close (cut-over step 7) before that follow-up.
+
 ## Known limits
 
 - **WP-49 needs the WP-55 layout.** The generated module expects the dbt project at `data/dbt/`

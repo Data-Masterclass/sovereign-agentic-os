@@ -1440,6 +1440,18 @@ dagsterRepoStatus:
   location: sovereign
   port: 8089
 
+# WP-15 (design 01 R1–R3, 10 F3/F4): Dagster runs act as the run's OWNER in Trino, bounded by a
+# run grant os-ui checks when the run starts. OFF by default: Dagster keeps today's path. Turning it
+# on is the cut-over step "Dagster -> svc-dagster-runner" (docs/components/trino-cutover.md, step 5)
+# and needs the overlay values.dagster-run-identity.yaml (the Dagster subchart's half), plus
+# postgres.governance, opa.dataBundle, trino.auth and trino.opa.sidecar (with the os-grants bundle).
+dagsterRunIdentity:
+  enabled: false
+  runServiceAccount: dagster-run
+  codeServiceAccount: dagster-code
+  # The OPA instances (`labels.instance`) /start waits on: the one that judges Trino.
+  opaInstances: [trino-sidecar]
+
 # dagster-analytics — dedicated Trino/OPA warehouse principal for Dagster runs
 # (epic #146 Phase 4).
 dagsterAnalytics:

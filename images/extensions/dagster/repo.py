@@ -21,9 +21,11 @@ ARCHITECTURE:
     (`os_projects.native_definitions`). A mismatch skips the domain; it is never wired as legacy.
   - Per-domain gating: a domain that fails to import or that `Definitions` refuses is logged and
     skipped — one broken repo never takes the location down (`os_projects.partition_definitions`).
-  - Identity (unchanged mechanism, WP-15 replaces it with run grants): the K8s run launcher reads the
-    run pod's env from the `dagster-k8s/config` tag. Native schedules are re-declared with the
-    platform tags (`os_projects.platform_run_tags`); legacy jobs carry them as before.
+  - Identity. Off (no runner password mounted): the K8s run launcher reads the run pod's env from
+    the `dagster-k8s/config` tag, as before. On (WP-15): every dbt step first has os-ui accept its
+    run grant (`act_as_owner`, `GrantedDbtCliResource` for native definitions), and only then gets
+    the owner as OS_PRINCIPAL and the runner's Trino password; three run-status sensors end the
+    activation. Observation probes and dlt landings are not covered yet (see docs/components/dagster.md).
 """
 from __future__ import annotations
 
@@ -46,6 +48,8 @@ from dagster import (
     DefaultScheduleStatus,
     DefaultSensorStatus,
     Definitions,
+    Failure,
+    RunStatusSensorContext,
     RunFailureSensorContext,
     RunsFilter,
     ScheduleDefinition,
@@ -55,6 +59,7 @@ from dagster import (
     job,
     op,
     run_failure_sensor,
+    run_status_sensor,
     sensor,
 )
 from dagster import DataVersion, ObserveResult, build_last_update_freshness_checks, observable_source_asset
@@ -96,6 +101,41 @@ def _scrubbed_resources(resources) -> Dict[str, object]:
         if isinstance(v, DbtCliResource) and not isinstance(v, ScrubbedDbtCliResource):
             fields = {f: getattr(v, f) for f in type(v).model_fields if getattr(v, f, None) is not None}
             v = ScrubbedDbtCliResource(**fields)
+        out[k] = v
+    return out
+
+
+def act_as_owner(context) -> None:
+    """WP-15: before the first Trino query of this step, have os-ui accept the run grant; then dbt
+    (a subprocess of this process) gets the owner as `OS_PRINCIPAL` and the runner's password as
+    `DBT_ENV_SECRET_TRINO_PASSWORD`. A no-op while identity mode is off (no password file)."""
+    try:
+        os.environ.update(osp.run_identity_env(context.run.run_id, dict(context.run.tags)))
+    except osp.UnauthorisedLaunch as e:
+        context.log.error(str(e))
+        raise Failure(description=str(e)) from None
+
+
+class GrantedDbtCliResource(ScrubbedDbtCliResource):
+    """A repo's own `DbtCliResource` with the narrowed dbt environment of `ScrubbedDbtCliResource`,
+    except that every `cli()` with a run context first passes the run-grant check (WP-15). The
+    principal and the runner's password it adds are on the dbt allowlist; nothing else is. The
+    platform wrapper swaps it in for native definitions."""
+
+    def cli(self, args, *, context=None, **kwargs):  # type: ignore[override]
+        if context is not None:
+            act_as_owner(context)
+        elif osp.run_identity_enabled():
+            raise Failure(description="unauthorised launch: dbt was called without a run context")
+        return super().cli(args, context=context, **kwargs)
+
+
+def _granted_resources(resources) -> Dict[str, object]:
+    out: Dict[str, object] = {}
+    for k, v in dict(resources or {}).items():
+        if isinstance(v, DbtCliResource) and not isinstance(v, GrantedDbtCliResource):
+            fields = {f: getattr(v, f) for f in type(v).model_fields if getattr(v, f, None) is not None}
+            v = GrantedDbtCliResource(**fields)
         out[k] = v
     return out
 
@@ -208,7 +248,7 @@ def wrap_domain(p: osp.Project, defs: Definitions) -> Tuple[Definitions, Dict[st
         jobs=defs.jobs,
         schedules=schedules,
         sensors=defs.sensors,
-        resources=_scrubbed_resources(defs.resources),
+        resources=_granted_resources(defs.resources),
     )
     return wrapped, principals
 
@@ -364,6 +404,23 @@ def build_definitions() -> Definitions:
         paused = [n for n in to_pause if _pause_schedule(context.instance, n, context.log)]
         return SkipReason(f"paused {len(paused)} schedule(s) for inactive principals" if paused else "all principals active")
 
+    def _finish(context: RunStatusSensorContext):
+        """WP-15: a finished run ends its grant's activation (os-ui /finish), so Trino's OPA stops
+        letting the runner act as the owner; `active_until` closes it anyway if this is missed."""
+        run = context.dagster_run
+        if not run.tags.get("os/run_grant"):
+            return
+        try:
+            done = osp.finish_run_grant(run.run_id, dict(run.tags))
+            context.log.info("run %s: grant %s finished=%s", run.run_id, run.tags.get("os/run_grant"), done)
+        except Exception as e:  # noqa: BLE001 — the activation window closes it regardless
+            context.log.warning("run %s: grant finish failed (%s: %s)", run.run_id, type(e).__name__, e)
+
+    finish_sensors = [
+        run_status_sensor(run_status=st, name=f"os_run_grant_finish_{st.value.lower()}", default_status=DefaultSensorStatus.RUNNING, minimum_interval_seconds=5)(_finish)
+        for st in (DagsterRunStatus.SUCCESS, DagsterRunStatus.FAILURE, DagsterRunStatus.CANCELED)
+    ] if osp.finish_enabled() else []
+
     def build(bundle: Dict[str, object]) -> Definitions:
         # The sensor's schedule→principal map must describe what ACTUALLY loaded, so it is rebuilt
         # from the bundle `partition_definitions` finally accepts.
@@ -374,7 +431,7 @@ def build_definitions() -> Definitions:
             asset_checks=bundle["checks"],              # type: ignore[arg-type]
             jobs=bundle["jobs"],                        # type: ignore[arg-type]
             schedules=bundle["schedules"],              # type: ignore[arg-type]
-            sensors=[os_quarantine, os_principals],
+            sensors=[os_quarantine, os_principals, *finish_sensors],
             resources=bundle["resources"],              # type: ignore[arg-type]
         )
         merged = Definitions.merge(legacy, *bundle["defs"])  # type: ignore[misc]
@@ -425,6 +482,7 @@ def _wire_project(p: osp.Project, dom: str) -> Dict[str, object]:
             args += ["--vars", json.dumps(dbt_vars)]
         if tags.get("os/full_refresh") == "true":
             args.append("--full-refresh")
+        act_as_owner(context)
         yield from dbt.cli(args, context=context).stream()
 
     assets.append(domain_assets)
@@ -555,6 +613,7 @@ def _maintenance_job(p: osp.Project, dom: str, schema: str, principal: str, reso
         dbt = getattr(context.resources, resource_key)
         # `os_maintenance` (macros/os_maintenance.sql, generated) runs `ALTER TABLE … EXECUTE optimize`
         # and `expire_snapshots(retention_threshold => '7d')` for every table model in `schema`.
+        act_as_owner(context)
         context.log.info("os_maintenance for schema %s as %s", schema, principal)
         dbt.cli(["run-operation", "os_maintenance", "--args", json.dumps({"schema": schema})]).wait()
 

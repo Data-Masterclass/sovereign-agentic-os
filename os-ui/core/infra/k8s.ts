@@ -17,17 +17,18 @@
 import https from 'node:https';
 import { readFileSync } from 'node:fs';
 
-const SA = '/var/run/secrets/kubernetes.io/serviceaccount';
-const API = process.env.KUBERNETES_API ?? 'https://kubernetes.default.svc';
+// Both are read per call: a test against a real API server (kind) points them at that cluster.
+const sa = () => process.env.OS_K8S_SA_DIR ?? '/var/run/secrets/kubernetes.io/serviceaccount';
+const api = () => process.env.KUBERNETES_API ?? 'https://kubernetes.default.svc';
 
 export type K8sResult = { status: number; body: Record<string, unknown> };
 
 function readToken(): string {
-  return readFileSync(`${SA}/token`, 'utf8').trim();
+  return readFileSync(`${sa()}/token`, 'utf8').trim();
 }
 
 function readCa(): Buffer {
-  return readFileSync(`${SA}/ca.crt`);
+  return readFileSync(`${sa()}/ca.crt`);
 }
 
 /**
@@ -67,7 +68,7 @@ export function k8s(
       headers['Content-Length'] = Buffer.byteLength(data).toString();
     }
 
-    const url = new URL(API + path);
+    const url = new URL(api() + path);
     const req = https.request(
       {
         hostname: url.hostname,
@@ -123,7 +124,7 @@ export function k8sText(path: string): Promise<K8sTextResult> {
       resolve({ status: 0, text: '' });
       return;
     }
-    const url = new URL(API + path);
+    const url = new URL(api() + path);
     const req = https.request(
       {
         hostname: url.hostname,

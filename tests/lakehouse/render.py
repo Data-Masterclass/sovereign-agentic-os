@@ -34,6 +34,8 @@ CI = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'ci-values.yaml')
 
 # Where compose.yaml mounts things. A chart change that moves them must fail here, loudly.
 OPA_MOUNTS = {'/policies', '/config'}
+# WP-15: a sidecar that downloads os-ui bundles also mounts the bundle bearer here.
+OPA_OPTIONAL_MOUNTS = {'/var/run/opa/bundle-token'}
 
 
 def render(extra):
@@ -185,7 +187,7 @@ def main(out, extra):
     side = next((c for c in tpod['containers'] if c['name'] == 'opa'), None)
     for key, pod, ctr, sub in (('LH_OPA_ARGS', cpod, central, 'opa'),
                                ('LH_TRINO_OPA_ARGS', tpod if side else cpod, side or central, 'trino-opa')):
-        mounts = {vm['mountPath'] for vm in ctr['volumeMounts']}
+        mounts = {vm['mountPath'] for vm in ctr['volumeMounts']} - OPA_OPTIONAL_MOUNTS
         if mounts != OPA_MOUNTS:
             raise SystemExit(f'render.py: OPA mounts changed to {sorted(mounts)}; update compose.yaml')
         materialise(pod, ctr, cms, os.path.join(out, sub), sec=sec)
@@ -194,6 +196,7 @@ def main(out, extra):
         env[key] = ' '.join(ctr['args'])
         # The container's env (the OPA API tokens system.authz reads), from the rendered Secret.
         write(os.path.join(out, 'env', f'{sub}.env'), env_file(ctr, sec))
+    os.makedirs(os.path.join(out, 'trino-opa', 'var', 'run', 'opa', 'bundle-token'), exist_ok=True)
     if side and side['image'] != central['image']:
         raise SystemExit('render.py: the Trino OPA sidecar and the central OPA run different images')
     env['LH_OPA_IMAGE'] = central['image']

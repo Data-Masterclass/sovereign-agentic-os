@@ -11,7 +11,7 @@
  *     on every grant-bearing write in the same transaction (10 F3). One REPEATABLE READ, READ ONLY
  *     transaction reads the revision and the rows together, so the bytes always match the revision.
  *   - Content: `os_grants.run_grants[id] = {kind, principal_uid, domain, system_id, dataset,
- *     scopes, expires_at, active_run_id, approved_writes[]}` for every grant not revoked. Expiry is
+ *     scopes, expires_at, active_run_id, active_until, approved_writes[]}` for every grant not revoked. Expiry is
  *     time, not a revision, so consumers compare `expires_at` themselves (Rego `time.now_ns()`).
  *   - Long polling (https://www.openpolicyagent.org/docs/management-bundles#http-long-polling):
  *     OPA sends `If-None-Match` and `Prefer: wait=<s>`; the route holds the request until the
@@ -29,7 +29,7 @@ export const BUNDLE_CONTENT_TYPE = 'application/vnd.openpolicyagent.bundles';
 
 type GrantRow = {
   id: string; kind: string; principal_uid: string; domain: string; system_id: string | null; dataset: string | null;
-  scopes: string[]; expires_at: Date; active_run_id: string | null;
+  scopes: string[]; expires_at: Date; active_run_id: string | null; active_until: Date | null;
 };
 type WriteRow = { grant_id: string; table_fqn: string; op: string; approval_id: string; expires_at: Date };
 
@@ -50,7 +50,7 @@ export async function compileOsGrants(pool: pg.Pool = grantsPool()): Promise<Opa
     const rev = (await c.query<{ rev: string }>('SELECT rev::text AS rev FROM os_governance.grant_revision WHERE id = 1')).rows[0]?.rev;
     if (rev === undefined) throw new Error('os_governance.grant_revision has no row');
     const grants = (await c.query<GrantRow>(
-      `SELECT id, kind, principal_uid, domain, system_id, dataset, scopes, expires_at, active_run_id
+      `SELECT id, kind, principal_uid, domain, system_id, dataset, scopes, expires_at, active_run_id, active_until
          FROM os_governance.run_grants WHERE revoked_at IS NULL ORDER BY id`,
     )).rows;
     const writes = (await c.query<WriteRow>(
@@ -64,6 +64,7 @@ export async function compileOsGrants(pool: pg.Pool = grantsPool()): Promise<Opa
       run_grants[g.id] = {
         kind: g.kind, principal_uid: g.principal_uid, domain: g.domain, system_id: g.system_id, dataset: g.dataset,
         scopes: [...g.scopes].sort(), expires_at: g.expires_at.toISOString(), active_run_id: g.active_run_id,
+        active_until: g.active_until ? g.active_until.toISOString() : null,
         approved_writes: [] as unknown[],
       };
     }

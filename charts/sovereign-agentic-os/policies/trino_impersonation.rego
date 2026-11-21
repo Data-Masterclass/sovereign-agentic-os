@@ -14,7 +14,8 @@
 # Exactly three service users may act for someone else, each only for whom the OS says:
 #   svc-os-worker      -> the principal of an active, unexpired, unrevoked `kind=run` grant
 #   svc-dagster-runner -> the principal of a `kind=standing|dataset` grant while a run is active
-#                         (`active_run_id` set between /start and /finish); there is no
+#                         (`active_run_id` set between /start and /finish, until
+#                         `active_until`); there is no
 #                         schedule-principals path (10 F4)
 #   svc-os-ui          -> an active OS user, interactive only (interim, removed at T7 when users
 #                         reach Trino with their own Keycloak token)
@@ -67,9 +68,12 @@ grant_live(g) if {
 	time.parse_rfc3339_ns(g.expires_at) > time.now_ns()
 }
 
+# WP-15: /start sets `active_run_id` and `active_until` (at most 6 h ahead), /finish clears both.
+# A missed /finish therefore closes itself here, with no OS process running (10 F4 backstop).
 run_in_progress(g) if {
 	is_string(g.active_run_id)
 	g.active_run_id != ""
+	time.parse_rfc3339_ns(g.active_until) > time.now_ns()
 }
 
 grant_or_user_allows if {

@@ -1,0 +1,51 @@
+{{- /*
+  WP-15 (design 01 R1–R3, 10 F3/F4): Dagster runs act as the run's owner, bounded by a run grant
+  os-ui checks at run start. Off by default; nothing here renders until
+  `dagsterRunIdentity.enabled`. The Dagster subchart's half (the run pods' ServiceAccount, the
+  projected token, the runner's password file, the run coordinator) is in
+  values.dagster-run-identity.yaml, because a subchart's values cannot be templated from here.
+
+  - ServiceAccounts `dagster-run` (run pods: /start) and `dagster-code` (code server: /finish).
+    Neither has any RBAC: their projected token (audience os-ui) only proves who they are.
+  - os-ui's ServiceAccount gets `system:auth-delegator`, the built-in ClusterRole that allows
+    TokenReview (https://kubernetes.io/docs/reference/access-authn-authz/rbac/#other-component-roles).
+*/}}
+{{- $ri := .Values.dagsterRunIdentity | default dict }}
+{{- if $ri.enabled }}
+{{- $g := .Values.postgres.governance | default dict }}
+{{- if not (and .Values.postgres.enabled $g.enabled) }}
+{{- fail "dagsterRunIdentity.enabled needs postgres.governance.enabled (run grants live in os_governance.run_grants)" }}
+{{- end }}
+{{- if not (.Values.opa.dataBundle | default dict).enabled }}
+{{- fail "dagsterRunIdentity.enabled needs opa.dataBundle.enabled (the os-grants bundle carries the activation to Trino's OPA)" }}
+{{- end }}
+{{- if not (and .Values.trino.auth.enabled .Values.trino.opa.sidecar.enabled) }}
+{{- fail "dagsterRunIdentity.enabled needs trino.auth.enabled and trino.opa.sidecar.enabled (svc-dagster-runner over TLS, judged by the sidecar)" }}
+{{- end }}
+{{- range $sa := list $ri.runServiceAccount $ri.codeServiceAccount }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $sa }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "soa.labels" $ | nindent 4 }}
+automountServiceAccountToken: false
+{{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ .Release.Namespace }}-os-ui-auth-delegator
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:auth-delegator
+subjects:
+  - kind: ServiceAccount
+    name: os-ui
+    namespace: {{ .Release.Namespace }}
+{{- end }}

@@ -180,6 +180,11 @@ export async function register(): Promise<void> {
         const { governanceRuntimePool } = await import('./core/adapters/postgres/pool.ts');
         startDbtParseVerdictCopy(governanceRuntimePool);
       }
+      // WP-15: grants whose Dagster run finished stop letting Dagster act as their owner.
+      if (cfg.dagsterRunGrants && !isRunWorkerProcess()) {
+        const { startRunGrantFinisher } = await import('./core/policy/run-grant-finisher.ts');
+        startRunGrantFinisher();
+      }
     } catch (err) {
       console.error(`[os-ui] opa state: reconciler NOT started — POLICY STATE WILL NOT BE RESTORED after an OPA restart: ${err instanceof Error ? err.message : String(err)}`);
     }

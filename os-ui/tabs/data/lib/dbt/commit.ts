@@ -31,6 +31,9 @@ import { slug } from '@tabs/data/lib/store-fqn';
 import { projectSnapshot, type SnapshotDeps, type SnapshotDataset } from '@tabs/data/lib/dbt/snapshot';
 import { generateProject } from '@tabs/data/lib/dbt/generate';
 import { pushMirrorAfterCommit } from '@tabs/data/lib/dbt/mirror';
+import yaml from 'js-yaml';
+import { governanceRuntimePool } from '@core/adapters/postgres/pool';
+import { reconcileStandingGrants, type StandingEntry } from '@core/policy/run-grants';
 
 /** The surface recorded when a writer ran outside any request-surface scope. */
 export const DEFAULT_SURFACE = 'ui:data';
@@ -72,6 +75,8 @@ export type CommitDeps = SnapshotDeps & {
   mirror?: boolean;
   /** The store read captured synchronously in the writer's turn (the hook passes it — review M3). */
   captured?: SnapshotDataset[];
+  /** WP-15: the standing-grant reconciler (tests); default Postgres `reconcileStandingGrants`. */
+  standingGrants?: (domain: string, entries: StandingEntry[], issuedBy: string) => Promise<unknown>;
 };
 
 /**
@@ -87,11 +92,17 @@ export async function commitDataProject(domain: string, actor: ActorIdentity, me
   // design 12). The generator itself stays project-relative.
   const layout = await repoLayout(domain, undefined, { reposDir: reposDir0 });
   // WP-52: with native dashboards the dbt project also reads `dashboards/**/semantic.yml`.
+  const runGrants = config.dagsterRunGrants;
   const generated = generateProject(domain, snapshot, {
     trinoAuthMethod: config.trinoAuthMethod,
     ...(dashboardsNativeEnabled() ? { dashboardsModelPath: dashboardsModelPath(layout) } : {}),
     ...(alertsNativeEnabled() ? { alertsModelPath: alertsModelPath(layout) } : {}),
+    ...(runGrants ? { runGrants: true } : {}),
   });
+  // WP-15: the standing grant rows equal the ENABLED schedules this commit writes, BEFORE the
+  // commit lands, so a schedule tick never names a grant the OS has not issued. A database error
+  // is logged, not thrown: the run then fails closed at /start ("no run grant"), visibly.
+  if (runGrants) await reconcileStandingGrantsFor(domain, generated.get('os/schedules.yml') ?? null, actor.id, deps.standingGrants);
   if (layout === 2) for (const pre of V2_RESERVED_PREFIXES) reserveSubtree(pre);
   const files = relocateProject(generated, layout);
   const object = meta.object ?? domain;
@@ -122,6 +133,18 @@ export async function commitDataProject(domain: string, actor: ActorIdentity, me
     void pushMirrorAfterCommit(domain, result.sha, { reposDir });
   }
   return result;
+}
+
+type StandingReconciler = (domain: string, entries: StandingEntry[], issuedBy: string) => Promise<unknown>;
+
+async function reconcileStandingGrantsFor(domain: string, schedulesYml: string | null, issuedBy: string, injected?: StandingReconciler): Promise<void> {
+  const doc = (schedulesYml ? yaml.load(schedulesYml) : null) as { schedules?: { dataset: string; name: string; principal: string; enabled: boolean }[] } | null;
+  const entries: StandingEntry[] = (doc?.schedules ?? []).map((e) => ({ dataset: e.dataset, principal: e.principal, schedule: e.name, enabled: e.enabled !== false }));
+  try {
+    await (injected ?? ((d, e, by) => reconcileStandingGrants(governanceRuntimePool(), d, e, by)))(domain, entries, issuedBy);
+  } catch (e) {
+    console.error(`[data-projects] standing run grants for ${domain} not reconciled: ${e instanceof Error ? e.message : String(e)}`);
+  }
 }
 
 export type HookDeps = CommitDeps & {
