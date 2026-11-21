@@ -136,3 +136,24 @@ export function qualityTrend(executions: readonly { runId: string; at: string; p
   }
   return [...byRun.values()].sort((a, b) => a.at.localeCompare(b.at)).slice(-points);
 }
+
+/**
+ * Downstream assets split by visibility: names only for assets of datasets the viewer can see
+ * (`visibleKeys` = their models' keys); every other asset is only COUNTED, per its domain (the
+ * asset key's first segment) — another domain's asset names never reach the payload.
+ */
+export function splitDownstream(keys: readonly string[][], visibleKeys: readonly string[][]): { visible: string[][]; hiddenCount: number; hiddenByDomain: Record<string, number> } {
+  const seen = new Set(visibleKeys.map((k) => k.join('/')));
+  const visible: string[][] = [];
+  const hiddenByDomain: Record<string, number> = {};
+  let hiddenCount = 0;
+  for (const k of keys) {
+    if (seen.has(k.join('/'))) visible.push(k);
+    else {
+      hiddenCount += 1;
+      const d = k[0] ?? '?';
+      hiddenByDomain[d] = (hiddenByDomain[d] ?? 0) + 1;
+    }
+  }
+  return { visible, hiddenCount, hiddenByDomain };
+}

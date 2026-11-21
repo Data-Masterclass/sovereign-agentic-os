@@ -14,7 +14,8 @@
  *     tests are the Data tab's `latestDqRuns` (Dagster asset checks — dagster-dbt maps each dbt test
  *     and source test to one — with the labelled OS fallback); the trend is
  *     `assetCheckExecutions` of the dataset's tested asset; downstream is the closure of Dagster's
- *     `dependedByKeys` from the dataset's own models.
+ *     `dependedByKeys` from the dataset's own models — named only when the asset belongs to a dataset in
+ *     the viewer's scope, otherwise counted per domain.
  *   - Not available upstream (said in the payload): freshness vs an SLA (no Dagster FreshnessPolicy
  *     is declared on OS assets), Trino query errors (no read path to `system.runtime.queries` yet),
  *     storage growth (kubelet_stats runs without the volume group).
@@ -25,7 +26,7 @@ import { config } from '@core/kernel/config';
 import { recentOsRuns } from '@core/infra/dagster';
 import { checkExecutions, dependedByGraph, downstreamOf, jobHealthOf, type RunGroupHealth } from '@core/adapters/dagster/monitoring-read';
 import { monitoringSources, SOURCES_MISSING, type MonitoringSources } from '@tabs/monitoring/lib/panels/sources';
-import { live, qualityTrend, unavailable, type NotUpstream, type SourceState, type TrendPoint } from '@tabs/monitoring/lib/panels/panels-core';
+import { live, qualityTrend, splitDownstream, unavailable, type NotUpstream, type SourceState, type TrendPoint } from '@tabs/monitoring/lib/panels/panels-core';
 
 /** Dagster reads per page are bounded: runs scanned, datasets given a trend. */
 const RUN_SCAN = 200;
@@ -43,7 +44,10 @@ export type DatasetPanel = {
   lastSuccessAt?: string | null;
   tests?: { source: 'dagster' | 'os' | null; ranAt: string | null; total: number; failing: { name: string; violations: number | null }[]; notRun: number };
   trend?: TrendPoint[];
+  /** Downstream assets of datasets the viewer can see, by name. */
   downstream?: { key: string; url?: string }[];
+  /** Downstream assets the viewer cannot see: a count per domain only, never their names. */
+  downstreamHidden?: { count: number; byDomain: Record<string, number> };
   testedAssetUrl?: string;
 };
 
@@ -84,6 +88,9 @@ export async function dataView(user: CurrentUser, nowMs = Date.now()): Promise<D
   const keys = await src.assetKeys(all.map(({ d }) => ({ id: d.id, domain: d.domain }))).then((m) => ({ ok: true as const, m }), (e: Error) => ({ ok: false as const, error: e.message }));
   const keysOf = keys.ok ? keys.m : new Map<string, { tested: string[] | null; models: string[][] }>();
 
+  // The asset keys of every dataset in the viewer's scope — the only downstream names they may see.
+  const visibleKeys = [...keysOf.values()].flatMap((k) => k.models);
+
   const datasets: DatasetPanel[] = [];
   let trends = 0;
   for (const { d, scope } of all) {
@@ -115,7 +122,9 @@ export async function dataView(user: CurrentUser, nowMs = Date.now()): Promise<D
       }
     }
     if (graph.ok && dk) {
-      p.downstream = downstreamOf(graph.value, dk.models).map((k) => ({ key: k.join('/'), url: assetUrl(k) }));
+      const split = splitDownstream(downstreamOf(graph.value, dk.models), visibleKeys);
+      p.downstream = split.visible.map((k) => ({ key: k.join('/'), url: assetUrl(k) }));
+      if (split.hiddenCount) p.downstreamHidden = { count: split.hiddenCount, byDomain: split.hiddenByDomain };
     }
     datasets.push(p);
   }

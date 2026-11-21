@@ -37,7 +37,7 @@ test('compact: thousands get one decimal and a k', () => {
   assert.equal(compact(12345), '12.3k');
 });
 
-test('usd: LiteLLM's ledger unit — a dollar sign, zero is $0.00 (a real zero, not "unknown"), never €', () => {
+test('usd: the LiteLLM ledger unit — a dollar sign, zero is $0.00 (a real zero, not unknown), never €', () => {
   assert.equal(usd(0), '$0.00');
   assert.equal(usd(1.25), '$1.25');
   assert.equal(usd(0.0123), '$0.012');

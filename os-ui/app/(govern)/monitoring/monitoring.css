@@ -696,3 +696,33 @@ a.mon-tr:hover {
     grid-template-columns: 1fr 1fr;
   }
 }
+
+/* Narrow screens (390 px): nothing in the panels may run off the right edge. */
+.mon-panels {
+  max-width: 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.mon-panels .badge {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  max-width: 100%;
+}
+.mon-panels .mon-tr > * {
+  min-width: 0;
+}
+.mon-panels .mon-tile-grid {
+  grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr));
+}
+.mon-panels .mon-table {
+  max-width: 100%;
+}
+@media (max-width: 640px) {
+  .mon-panels .mon-tr-pfail {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+  .mon-panels .mon-tr .ellip {
+    white-space: normal;
+  }
+}
