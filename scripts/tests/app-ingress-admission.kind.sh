@@ -14,8 +14,11 @@
 # cluster).
 #   1. ingress-nginx at the pin in scripts/dev/platform-versions.env (chart sha256-verified) is
 #      installed with scripts/dev/ingress-nginx-values.yaml, the values platform.sh uses; the
-#      chart's rendered platform Ingresses (STACKIT profile: os-ui, git-http) pass the
-#      controller's admission webhook (server-side dry run);
+#      chart's rendered platform Ingresses pass the controller's admission webhook (server-side
+#      dry run) for three renders — the STACKIT profile (os-ui, git-http, Dagster), every route
+#      (plus the apex alias and both restricted consoles) and the alias redirect — with every
+#      auth Secret they name present, so the controller parses their auth annotations;
+#      twins: a non-ASCII auth-realm and a `$request_uri` permanent-redirect are refused;
 #   2. the chart's rendered app-Ingress admission policy is applied;
 #   3. admitted: the Ingress the runner builds (cert-manager issuer only, class nginx), one with
 #      no annotations, and the cert-manager ACME solver identity creating its own Ingress;
@@ -60,24 +63,98 @@ check "annotation risk level is High"     '"annotations-risk-level":"High"' "$cm
 check "strict path-type validation is on" '"strict-validate-path-type":"true"' "$cmv"
 
 k create namespace agentic-os >/dev/null 2>&1
-helm template agentic-os charts/sovereign-agentic-os -n agentic-os --skip-schema-validation \
-  -f values.stackit-managed.yaml > "$WORK/stackit.yaml" 2>"$WORK/render.err" || { cat "$WORK/render.err" >&2; exit 2; }
-# The profile's hosts are REPLACE-… tokens (render-values.sh fills them); give them a real name.
-sed -i.bak 's/REPLACE-DNS-NAME/example.com/g' "$WORK/stackit.yaml"
-node -e '
-const y=require(process.argv[2]); const fs=require("fs");
-const docs=y.loadAll(fs.readFileSync(process.argv[1],"utf8")).filter(d=>d&&d.kind==="Ingress");
-process.stdout.write(docs.map(d=>y.dump(d)).join("---\n"));' "$WORK/stackit.yaml" "$PWD/os-ui/node_modules/js-yaml" > "$WORK/platform-ingresses.yaml" || exit 2
-n=$(grep -c '^kind: Ingress' "$WORK/platform-ingresses.yaml")
-[ "$n" -ge 2 ] && ok "the STACKIT profile renders $n platform Ingresses" || bad "the STACKIT profile renders the platform Ingresses" "found $n"
-check "git-http's auth sub-request Ingress is among them" "nginx.ingress.kubernetes.io/auth-url" "$(cat "$WORK/platform-ingresses.yaml")"
 for _ in $(seq 1 60); do
   k -n ingress-nginx get endpointslices -l kubernetes.io/service-name=ingress-nginx-controller-admission \
     -o jsonpath='{.items[0].endpoints[0].conditions.ready}' 2>/dev/null | grep -q true && break
   sleep 2
 done
-out=$(k apply --dry-run=server -f "$WORK/platform-ingresses.yaml" 2>&1); rc=$?
-rc_is "the controller's admission webhook admits every platform Ingress" 0
+# Every route the chart can publish: the apex alias and both restricted consoles (basic auth,
+# their documented protection), on top of the STACKIT profile's os-ui, git-http and Dagster.
+cat > "$WORK/every-route.yaml" <<'YAML'
+ingress:
+  hosts:
+    osUIApex: example.com
+    litellm: litellm.example.com
+    langfuse: langfuse.example.com
+  restricted:
+    litellm:
+      expose: true
+      annotations:
+        nginx.ingress.kubernetes.io/auth-type: basic
+        nginx.ingress.kubernetes.io/auth-secret: console-basic-auth
+        nginx.ingress.kubernetes.io/auth-realm: "Consoles - operators only"
+    langfuse:
+      expose: true
+      annotations:
+        nginx.ingress.kubernetes.io/auth-type: basic
+        nginx.ingress.kubernetes.io/auth-secret: console-basic-auth
+        nginx.ingress.kubernetes.io/auth-realm: "Consoles - operators only"
+YAML
+printf 'ingress:\n  redirectAliasToPublicUrl: true\nosUI:\n  publicUrl: https://os.example.com\n' > "$WORK/alias.yaml"
+# render_ingresses <out> <helm -f args…> — the rendered Ingresses only, hosts filled in.
+render_ingresses() {
+  local out=$1; shift
+  helm template agentic-os charts/sovereign-agentic-os -n agentic-os --skip-schema-validation \
+    -f values.stackit-managed.yaml "$@" > "$WORK/render.yaml" 2>"$WORK/render.err" || { cat "$WORK/render.err" >&2; return 2; }
+  # The profile's hosts are REPLACE-… tokens (render-values.sh fills them); give them a real name.
+  sed -i.bak 's/REPLACE-DNS-NAME/example.com/g' "$WORK/render.yaml"
+  node -e '
+const y=require(process.argv[2]); const fs=require("fs");
+const docs=y.loadAll(fs.readFileSync(process.argv[1],"utf8")).filter(d=>d&&d.kind==="Ingress");
+process.stdout.write(docs.map(d=>y.dump(d)).join("---\n"));' "$WORK/render.yaml" "$PWD/os-ui/node_modules/js-yaml" > "$out"
+}
+# auth_secrets <file> — create every Secret the Ingresses' auth annotations name (htpasswd, key
+# `auth`). The controller only parses an auth annotation set (auth-realm included) once its Secret
+# exists, so without them a bad value would pass this test and fail in production.
+auth_secrets() {
+  local line ns name
+  for line in $(node -e '
+const y=require(process.argv[2]); const fs=require("fs");
+for (const d of y.loadAll(fs.readFileSync(process.argv[1],"utf8")).filter(Boolean)) {
+  const a=(d.metadata||{}).annotations||{};
+  for (const k of ["nginx.ingress.kubernetes.io/auth-secret","nginx.ingress.kubernetes.io/auth-tls-secret"]) if (a[k]) {
+    const [ns,name]=a[k].includes("/")?a[k].split("/"):[d.metadata.namespace||"agentic-os",a[k]]; console.log(ns+"/"+name);
+  }
+}' "$1" "$PWD/os-ui/node_modules/js-yaml" | sort -u); do
+    ns=${line%%/*}; name=${line#*/}
+    k -n "$ns" get secret "$name" >/dev/null 2>&1 && continue
+    k -n "$ns" create secret generic "$name" --from-literal=auth="ci:$(openssl passwd -apr1 ci-only)" >/dev/null || return 2
+    echo "$ns/$name"
+  done
+}
+admits_all() { # admits_all <label> <file>
+  local label=$1 f=$2 n made
+  n=$(grep -c '^kind: Ingress' "$f")
+  made=$(auth_secrets "$f" | tr '\n' ' ')
+  out=$(k apply --dry-run=server -f "$f" 2>&1); rc=$?
+  rc_is "the controller's admission webhook admits every $label Ingress ($n; auth Secrets: ${made:-none new})" 0
+}
+render_ingresses "$WORK/stackit.ing" || exit 2
+n=$(grep -c '^kind: Ingress' "$WORK/stackit.ing")
+[ "$n" -ge 3 ] && ok "the STACKIT profile renders $n platform Ingresses" || bad "the STACKIT profile renders the platform Ingresses" "found $n"
+check "git-http's auth sub-request Ingress is among them" "nginx.ingress.kubernetes.io/auth-url" "$(cat "$WORK/stackit.ing")"
+check "Dagster's basic-auth Ingress is among them" "nginx.ingress.kubernetes.io/auth-secret: dagster-basic-auth" "$(cat "$WORK/stackit.ing")"
+admits_all "STACKIT-profile" "$WORK/stackit.ing"
+render_ingresses "$WORK/every.ing" -f "$WORK/every-route.yaml" || exit 2
+check "every-route render: the apex and both restricted consoles" "agentic-os-langfuse-web" "$(cat "$WORK/every.ing")"
+admits_all "every-route" "$WORK/every.ing"
+render_ingresses "$WORK/alias.ing" -f "$WORK/every-route.yaml" -f "$WORK/alias.yaml" || exit 2
+check "alias-redirect render: the alias answers with a permanent redirect" "nginx.ingress.kubernetes.io/permanent-redirect:" "$(cat "$WORK/alias.ing")"
+admits_all "alias-redirect" "$WORK/alias.ing"
+
+echo "== twins: the controller refuses what production refused"
+# twin_refused <label> <python mutation of the Dagster Ingress `d` (dict)>
+twin_refused() {
+  local label=$1 code=$2 out
+  out=$(node -e '
+const y=require(process.argv[2]); const fs=require("fs");
+const d=y.loadAll(fs.readFileSync(process.argv[1],"utf8")).find(x=>x&&x.metadata.name==="agentic-os-dagster-webserver-ingress");
+d.metadata.name="twin-"+Math.random().toString(36).slice(2,8); eval(process.argv[3]);
+process.stdout.write(y.dump(d));' "$WORK/stackit.ing" "$PWD/os-ui/node_modules/js-yaml" "$code" | k apply --dry-run=server -f - 2>&1)
+  [ $? -ne 0 ] && ok "$label is refused by the controller" || bad "$label is refused by the controller" "admitted: ${out:0:200}"
+}
+twin_refused "a non-ASCII auth-realm (with its Secret present)" 'd.metadata.annotations["nginx.ingress.kubernetes.io/auth-realm"]="Dagster \u2014 operators only";'
+twin_refused 'a permanent-redirect carrying $request_uri' 'd.metadata.annotations["nginx.ingress.kubernetes.io/permanent-redirect"]="https://os.example.com$request_uri";'
 
 echo "== app-Ingress admission policy"
 if ! helm template agentic-os charts/sovereign-agentic-os -n agentic-os --skip-schema-validation \
