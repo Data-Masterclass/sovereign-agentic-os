@@ -59,7 +59,7 @@ if (!(existsSync(dir) && readdirSync(dir).some((f) => f.endsWith('.tgz')))) skip
 const COVERED = ['opa', 'trino', 'polaris', 'pg-rw', 'pg', 'minio', 'valkey', 'clickhouse', 'web-fetch', 'egress-proxy', 'mock-model', 'query-tool', 'data-runner'];
 const POLICIES = ['default-deny-ingress', 'opa-allow-callers', 'trino-allow-callers', 'polaris-allow-callers', 'postgres-allow-callers',
   'object-storage-allow-callers', 'valkey-allow-callers', 'clickhouse-allow-callers', 'web-fetch-allow-callers',
-  'egress-proxy-allow-callers', 'mock-model-allow-callers', 'query-tool-allow-callers', 'data-runner-allow-callers'];
+  'egress-proxy-allow-callers', 'mock-model-allow-callers', 'query-tool-allow-callers', 'data-runner-allow-callers', 'acme-http01-solver-allow-controller'];
 // References that are names in text, not calls (each with its reason).
 const NOT_A_CALL = {
   'opa->trino': 'the OPA policy ConfigMap holds the `trino` Rego package',
@@ -128,12 +128,22 @@ function analyse(profile, objs) {
     for (const r of np.spec.ingress ?? []) {
       if (!r.from || r.from.length === 0) fail(`[${profile}] ${name}: a rule with no \`from\` admits every namespace`);
       for (const p of r.from ?? []) {
-        if (p.namespaceSelector && !(name === 'postgres-allow-callers' && p.namespaceSelector.matchLabels?.['kubernetes.io/metadata.name'] === 'cnpg-system'))
+        const nsName = p.namespaceSelector?.matchLabels?.['kubernetes.io/metadata.name'];
+        const allowedNs = (name === 'postgres-allow-callers' && nsName === 'cnpg-system') || (name === 'acme-http01-solver-allow-controller' && nsName === 'ingress-nginx');
+        if (p.namespaceSelector && !allowedNs)
           fail(`[${profile}] ${name}: admits another namespace (${JSON.stringify(p.namespaceSelector)})`);
         if (p.ipBlock) fail(`[${profile}] ${name}: admits an ipBlock`);
       }
     }
   }
+
+  // cert-manager's HTTP-01 solver pods (created in this namespace for each platform Certificate)
+  // must be reachable from the ingress controller on :8089, or certificate renewals fail.
+  const solverLabels = { 'acme.cert-manager.io/http01-solver': 'true' };
+  const controllerNs = { 'kubernetes.io/metadata.name': 'ingress-nginx' };
+  const solverAdmitted = nps.some((n) => (matches(n.spec.podSelector, solverLabels)) && (n.spec.ingress ?? []).some((r) =>
+    portMatches(r.ports, 8089) && (r.from ?? []).some((p) => p.namespaceSelector && matches(p.namespaceSelector, controllerNs) && !p.podSelector)));
+  if (!solverAdmitted) fail(`[${profile}] cert-manager HTTP-01 solver pods are not reachable from the ingress controller on :8089`);
 
   const opa = nps.find((n) => n.metadata.name === 'opa-allow-callers');
   if (opa) {
