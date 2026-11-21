@@ -30,7 +30,8 @@
     opa :8181            web-fetch (tool decisions), trino (access control), opa-reassert-principals
     trino :8080          query-tool, the Dagster code location and its run pods (dbt-trino, dlt),
                          dbt (dbt-build Job), marts-init
-    polaris :8181/:8182  trino, data-runner, marts-init, polaris-init
+    polaris :8181/:8182  trino, data-runner, marts-init, polaris-init, polaris-purge (delete domain:
+                         its own principal and catalog role, when lakehouse purge is on)
     postgres :5432       Polaris (relational-jdbc metastore: server and its bootstrap initContainers),
                          polaris-init, Dagster (webserver, daemon, code location, run pods), Langfuse (web,
                          worker), LiteLLM (proxy, migrations), pg-dump, postgres-reconcile,
@@ -177,7 +178,7 @@ spec:
     - Ingress
   ingress:
     - from:
-        {{- include "soa.np.peers" (dict "components" (list "trino" "data-runner" "marts-init" "polaris-init")) | nindent 8 }}
+        {{- include "soa.np.peers" (dict "components" (list "trino" "data-runner" "marts-init" "polaris-init" "polaris-purge")) | nindent 8 }}
       ports:
         - { protocol: TCP, port: 8181 }
         - { protocol: TCP, port: 8182 }
