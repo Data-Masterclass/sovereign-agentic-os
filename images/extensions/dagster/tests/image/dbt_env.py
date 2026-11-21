@@ -66,6 +66,18 @@ stock = rendered(DbtCliResource(project_dir=PROJECT, profiles_dir=PROJECT))
 if stock.get("DAGSTER_PG_PASSWORD") != LEAKS["DAGSTER_PG_PASSWORD"]:
     fail.append(f"negative twin: the stock resource did not render the credential ({stock}) — the test cannot see a leak")
 
+# WP-15: the run-grant resource IS the scrubbed one (identity mode off here: no runner password
+# file, so cli() goes straight to the narrowed dbt call).
+if not issubclass(repo.GrantedDbtCliResource, repo.ScrubbedDbtCliResource):
+    fail.append("GrantedDbtCliResource does not extend ScrubbedDbtCliResource")
+granted = rendered(repo.GrantedDbtCliResource(project_dir=PROJECT, profiles_dir=PROJECT))
+for k in LEAKS:
+    if granted.get(k) != "absent":
+        fail.append(f"GrantedDbtCliResource: dbt rendered {k} (got {granted.get(k)!r})")
+swapped_g = repo._granted_resources({"dbt": DbtCliResource(project_dir=PROJECT, profiles_dir=PROJECT)})
+if not isinstance(swapped_g["dbt"], repo.ScrubbedDbtCliResource):
+    fail.append("native definitions under WP-15: the swapped resource is not scrubbed")
+
 native = Definitions(resources={"dbt": DbtCliResource(project_dir=PROJECT, profiles_dir=PROJECT)})
 swapped = repo._scrubbed_resources(native.resources)
 if not isinstance(swapped["dbt"], repo.ScrubbedDbtCliResource) or swapped["dbt"].project_dir != PROJECT:
