@@ -93,9 +93,8 @@ class Schedules(unittest.TestCase):
         self.assertEqual(tags["os/domain"], "sales")
         self.assertEqual(tags["os/commit"], SHA_A)
         self.assertEqual(tags["os/schedule"], "sales__ds_events01")
-        k8s = json.loads(tags["dagster-k8s/config"])
-        env = {e["name"]: e["value"] for e in k8s["container_config"]["env"]}
-        self.assertEqual(env, {"OS_PRINCIPAL": "bea", "OS_PINNED_COMMITS": f"sales={SHA_A}"})
+        self.assertNotIn("dagster-k8s/config", tags, "no pod config in a tag: the launcher lock-down refuses it")
+        self.assertEqual(osp.run_tag_env(tags), {"OS_PRINCIPAL": "bea", "DESTINATION__SQLALCHEMY__CREDENTIALS__USERNAME": "bea", "OS_PINNED_COMMITS": f"sales={SHA_A}"})
         for v in tags.values():
             self.assertIsInstance(v, str)
 
@@ -427,10 +426,9 @@ class PerSchedulePinning(unittest.TestCase):
     def test_the_run_tag_of_a_schedule_carries_only_its_own_domain(self):
         s = osp.Schedule(dataset="ds_1", model="silver_x", select="silver_x+", cron="0 6 * * *", principal="bea", enabled=True)
         tags = osp.schedule_tags("sales", s, "c" * 40, osp.pinned_one("sales", "c" * 40))
-        env = json.loads(tags["dagster-k8s/config"])["container_config"]["env"]
-        pinned = [e["value"] for e in env if e["name"] == "OS_PINNED_COMMITS"][0]
-        self.assertEqual(osp.parse_pinned(pinned), {"sales": "c" * 40}, "one domain per run pod")
-        self.assertEqual([e["value"] for e in env if e["name"] == "OS_PRINCIPAL"], ["bea"])
+        env = osp.run_tag_env(tags)
+        self.assertEqual(osp.parse_pinned(env["OS_PINNED_COMMITS"]), {"sales": "c" * 40}, "one domain per run pod")
+        self.assertEqual(env["OS_PRINCIPAL"], "bea")
 
     def test_repo_py_pins_per_domain_not_per_workspace(self):
         """A source tripwire: `_wire_project` must derive its pin from its OWN project."""
@@ -472,15 +470,15 @@ class Maintenance(unittest.TestCase):
         self.assertEqual(tags["os/principal"], "amir")
         self.assertEqual(tags["os/schema"], "personal_amir")
         self.assertEqual(tags["os/action"], "iceberg maintenance")
-        env = json.loads(tags["dagster-k8s/config"])["container_config"]["env"]
-        self.assertEqual({e["name"]: e["value"] for e in env}, {"OS_PRINCIPAL": "amir", "OS_PINNED_COMMITS": f"sales={SHA_A}"})
+        self.assertNotIn("dagster-k8s/config", tags)
+        self.assertEqual(osp.run_tag_env(tags), {"OS_PRINCIPAL": "amir", "DESTINATION__SQLALCHEMY__CREDENTIALS__USERNAME": "amir", "OS_PINNED_COMMITS": f"sales={SHA_A}"})
         self.assertEqual(osp.MAINTENANCE_CRON, "0 3 * * 0")
 
     def test_the_os_launched_job_carries_no_principal_of_its_own(self):
         tags = osp.all_job_tags("sales", SHA_A, f"sales={SHA_A}")
         self.assertNotIn("os/principal", tags)
-        env = json.loads(tags["dagster-k8s/config"])["container_config"]["env"]
-        self.assertEqual([e["name"] for e in env], ["OS_PINNED_COMMITS"])
+        self.assertNotIn("dagster-k8s/config", tags)
+        self.assertEqual(list(osp.run_tag_env(tags)), ["OS_PINNED_COMMITS"])
         self.assertEqual(osp.all_job_name("sales"), "sales__all")
 
 
@@ -868,14 +866,15 @@ class SourceObservation(unittest.TestCase):
                               downstream="silver_b", observe="row_count", cron="0 * * * *")
         same = osp.observe_tags("sales", [one], "deadbeef", "sales=deadbeef", "sales__observe_x")
         self.assertEqual(same["os/principal"], "bea")
-        self.assertIn('"OS_PRINCIPAL"', same["dagster-k8s/config"])
+        self.assertNotIn("dagster-k8s/config", same)
+        self.assertEqual(osp.run_tag_env(same)["OS_PRINCIPAL"], "bea")
         self.assertEqual(same["os/action"], "observe external sources")
         self.assertEqual(same["os/sources"], "wh__public.a")
 
         mixed = osp.observe_tags("sales", [one, two], "deadbeef", "sales=deadbeef", "sales__observe_x")
         self.assertNotIn("os/principal", mixed, "two owners in one group ⇒ claim neither")
-        self.assertNotIn('"OS_PRINCIPAL"', mixed["dagster-k8s/config"])
-        self.assertIn('"OS_PINNED_COMMITS"', mixed["dagster-k8s/config"])
+        self.assertNotIn("OS_PRINCIPAL", osp.run_tag_env(mixed))
+        self.assertEqual(mixed["os/pinned"], "sales=deadbeef")
 
 
 class PrincipalShape(unittest.TestCase):
@@ -1008,7 +1007,8 @@ class NativeOrLegacy(unittest.TestCase):
 class PlatformRunTags(unittest.TestCase):
     def test_the_platform_run_tag_carries_only_its_own_domain_and_the_jobs_principal(self):
         tags = osp.platform_run_tags("sales", "c" * 40, osp.pinned_one("sales", "c" * 40), {"os/principal": "bea"})
-        env = {e["name"]: e["value"] for e in json.loads(tags["dagster-k8s/config"])["container_config"]["env"]}
+        self.assertNotIn("dagster-k8s/config", tags)
+        env = osp.run_tag_env(tags)
         self.assertEqual(osp.parse_pinned(env["OS_PINNED_COMMITS"]), {"sales": "c" * 40}, "one domain per run pod")
         self.assertEqual(env["OS_PRINCIPAL"], "bea")
         self.assertEqual(env["DESTINATION__SQLALCHEMY__CREDENTIALS__USERNAME"], "bea", "dlt writes as the same principal")
@@ -1017,8 +1017,7 @@ class PlatformRunTags(unittest.TestCase):
     def test_a_malformed_principal_is_dropped_never_passed_on(self):
         for bad in ("bea admin", "-bea", "bea'", "x" * 65, ""):
             tags = osp.platform_run_tags("sales", SHA_A, osp.pinned_one("sales", SHA_A), {"os/principal": bad})
-            env = {e["name"] for e in json.loads(tags["dagster-k8s/config"])["container_config"]["env"]}
-            self.assertEqual(env, {"OS_PINNED_COMMITS"}, bad)
+            self.assertEqual(set(osp.run_tag_env(tags)), {"OS_PINNED_COMMITS"}, bad)
 
 
 class LayoutAgreement(unittest.TestCase):
@@ -1032,3 +1031,28 @@ class LayoutAgreement(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RunTagEnv(unittest.TestCase):
+    """The run pod's env comes from the run's TAGS (nothing in a tag can reference a Secret)."""
+
+    def test_only_valid_values_become_env(self):
+        t = {"os/pinned": f"sales={SHA_A},../x={SHA_A},bad", "os/principal": "bea"}
+        self.assertEqual(osp.run_tag_env(t)["OS_PINNED_COMMITS"], f"sales={SHA_A}")
+        for bad in ("bea admin", "-bea", "x" * 65):
+            self.assertNotIn("OS_PRINCIPAL", osp.run_tag_env({"os/principal": bad}))
+        self.assertEqual(osp.run_tag_env({}), {})
+
+    def test_the_run_id_is_found_in_the_arguments_dagster_gives_the_run_worker(self):
+        self.assertEqual(osp.run_id_from_argv(["dagster", "api", "execute_run", json.dumps({"run_id": "r-1", "instance_ref": None})]), "r-1")
+        self.assertEqual(osp.run_id_from_argv(["dagster", "api", "execute_step", json.dumps({"run_id": "r-2"})]), "r-2")
+        # the shape dagster's serdes writes for ExecuteRunArgs / ExecuteStepArgs (legacy field name)
+        self.assertEqual(osp.run_id_from_argv(["dagster", "api", "execute_run", json.dumps({"__class__": "ExecuteRunArgs", "pipeline_run_id": "r-3"})]), "r-3")
+        for other in (["dagster", "dev"], ["python", "x.py"], ["dagster", "api", "execute_run", "not json"], []):
+            self.assertIsNone(osp.run_id_from_argv(other), other)
+
+    def test_apply_run_tag_env_sets_only_what_is_missing_and_never_overrides_a_set_value(self):
+        env = {"OS_PRINCIPAL": "already"}
+        osp.apply_run_tag_env({"os/principal": "bea", "os/pinned": f"sales={SHA_A}"}, env)
+        self.assertEqual(env["OS_PRINCIPAL"], "bea", "the run's tag is the source; a pod env cannot widen it")
+        self.assertEqual(env["OS_PINNED_COMMITS"], f"sales={SHA_A}")

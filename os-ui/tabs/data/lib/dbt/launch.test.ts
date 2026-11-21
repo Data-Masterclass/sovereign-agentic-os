@@ -94,10 +94,10 @@ test('launchAfterCommit: ONE run per commit, the dataset subset, the OS tags and
   assert.equal(out.commit, SHA);
   assert.deepEqual(launches[0].selection, [['sales', `silver_${lane}`]]);
   assert.equal(launches[0].domain, 'sales');
-  assert.deepEqual(launches[0].env, { OS_PRINCIPAL: 'amir', DESTINATION__SQLALCHEMY__CREDENTIALS__USERNAME: 'amir', OS_PINNED_COMMITS: `sales=${SHA}` });
+  assert.equal('env' in launches[0], false, 'no pod env: the run reads its principal and pin from the tags');
   assert.deepEqual(launches[0].tags, {
     'os/dataset': id, 'os/domain': 'sales', 'os/principal': 'amir', 'os/user': 'amir',
-    'os/action': 'transform silver', 'os/layer': 'silver', 'os/commit': SHA, 'os/surface': 'ui:data',
+    'os/action': 'transform silver', 'os/layer': 'silver', 'os/commit': SHA, 'os/pinned': `sales=${SHA}`, 'os/surface': 'ui:data',
   });
   assert.deepEqual(recorded, [{ id, layer: 'silver', run: { commit: SHA, dagsterRunId: 'run_1', launchError: null } }]);
 });
@@ -214,7 +214,7 @@ test('runSyncNow with the flag on launches Dagster as the OWNER and writes no le
   assert.equal(launches[0].tags!['os/user'], 'bea');
   assert.equal(launches[0].tags!['os/full_refresh'], 'true');
   assert.match(launches[0].tags!['os/batch_id'], /^b_ds_/);
-  assert.equal(launches[0].env!.OS_PRINCIPAL, 'amir');
+  assert.equal(launches[0].tags!['os/principal'], 'amir');
 });
 
 test('setVersionRun survives the dataset.yaml round trip; a cleared launchError disappears', () => {
@@ -272,7 +272,6 @@ test('WP-15: a domain-lane build launched with run grants acts as the launching 
   assert.equal(out.launchError, null);
   assert.equal(issued[0].principal, 'amir', 'the grant names the person');
   assert.equal(launches[0].tags?.['os/principal'], 'amir');
-  assert.equal(launches[0].env?.OS_PRINCIPAL, 'amir');
   // Flag off: unchanged (today's governed write identity).
   launches = [];
   await launchAfterCommit({ datasetId: id, layer: 'silver', kind: 'build', actor: { id: 'amir' }, principal: 'sales', action: 'x' }, deps({ runGrants: false }));

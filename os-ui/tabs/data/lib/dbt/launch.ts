@@ -10,9 +10,9 @@
  *   - Behind `DATA_PROJECT_GIT`. Order: await the hook's in-flight commits for the domain → read the
  *     head → compute the asset selection with the generator's own planner (`asset-keys.ts`) → wait
  *     (bounded) until Dagster's location exposes every key (repo-sync parses + reloads the location
- *     within ~15 s; a NEW model is unknown until then) → `launchRun` with the OS tags and the run-pod
- *     env `OS_PRINCIPAL` (the runner's principal) + `OS_PINNED_COMMITS` (so the run pod checks out
- *     this exact commit) → `setVersionRun({commit, dagsterRunId | launchError})`.
+ *     within ~15 s; a NEW model is unknown until then) → `launchRun` with the OS tags,
+ *     among them `os/principal` (the runner's principal) + `os/pinned` (so the run pod checks out
+ *     this exact commit; the run worker reads both from its tags) → `setVersionRun({commit, dagsterRunId | launchError})`.
  *   - Sync retries re-use the failed run's `os/batch_id` so `delete+insert` re-covers the same slice
  *     (review L8); a first run mints one.
  *   - Every dependency is injectable; nothing here throws into a route — `launchDatasetBuild` is
@@ -173,6 +173,8 @@ export async function launchAfterCommit(input: LaunchInput, deps: LaunchDeps = {
     'os/action': input.action,
     'os/layer': input.layer,
     'os/commit': commit,
+    // The run worker takes its pinned commit and principal from these tags (no pod config in a tag).
+    'os/pinned': `${d.domain}=${commit}`,
     ...(input.surface ? { 'os/surface': input.surface } : {}),
     ...(input.fullRefresh ? { 'os/full_refresh': 'true' } : {}),
   };
@@ -196,13 +198,6 @@ export async function launchAfterCommit(input: LaunchInput, deps: LaunchDeps = {
     domain: d.domain,
     selection,
     tags,
-    // The same run-pod env the platform wrapper puts on a scheduled run (os_projects.run_pod_env):
-    // dbt impersonates OS_PRINCIPAL; dlt writes the landing through Trino as that principal.
-    env: {
-      OS_PRINCIPAL: principal,
-      DESTINATION__SQLALCHEMY__CREDENTIALS__USERNAME: principal,
-      OS_PINNED_COMMITS: `${d.domain}=${commit}`,
-    },
   });
   if (!launched.ok) return finish(null, `commit ${commit.slice(0, 7)} not launched: ${launched.error}`, batchId);
   return finish(launched.data.runId, null, batchId);

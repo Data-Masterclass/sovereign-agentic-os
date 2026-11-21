@@ -127,8 +127,10 @@ out="$(docker run --rm --network none -v "$CO:/repos-checkout" -w /opt/dagster/a
   dagster definitions validate -f repo.py 2>&1 | tail -5
   python3 - <<PY
 import json, logging, os, re, repo, yaml
+import os_projects as osp
 s = repo.defs.get_schedule_def("sales__ds_shop0001")
-env = {e["name"]: e["value"] for e in json.loads(s.tags["dagster-k8s/config"])["container_config"]["env"]}
+assert "dagster-k8s/config" not in s.tags
+env = osp.run_tag_env(s.tags)
 print("schedule env", env["OS_PRINCIPAL"], env["DESTINATION__SQLALCHEMY__CREDENTIALS__USERNAME"], env["OS_PINNED_COMMITS"].split("=")[0])
 print("domains", sorted({k.path[0] for k in repo.defs.resolve_all_asset_keys()}))
 print("sensors", sorted(x.name for x in repo.defs.sensors))

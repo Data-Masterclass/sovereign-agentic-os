@@ -73,7 +73,8 @@ test('evaluation launches the committed alert\'s MetricFlow job as the owner, at
     assert.deepEqual(e.status === 'ok' ? [e.value, e.breached, e.committed.threshold] : [], [36, true, 100]);
     assert.equal(f.launches.length, 1);
     assert.equal(f.launches[0].jobName, 'sales__alert_rev_low');
-    assert.deepEqual(f.launches[0].env, { OS_PRINCIPAL: 'amir', OS_PINNED_COMMITS: `sales=${c.commit!.sha}` });
+    assert.equal('env' in f.launches[0], false);
+    assert.equal(f.launches[0].tags?.['os/pinned'], `sales=${c.commit!.sha}`);
     assert.equal(f.launches[0].tags?.['os/principal'], 'amir');
   } finally {
     rmSync(dir, { recursive: true, force: true });

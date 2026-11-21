@@ -17,13 +17,15 @@
 # Both get the same OPERATOR run_k8s_config additions WP-15's overlay makes (one env entry, one
 # volume + mount), at the place each launcher reads them.
 #
-#   STOCK      i.   a normal OS run (tag env OS_PINNED_COMMITS, OS_PRINCIPAL + PYTHONPATH) -> SUCCESS
+#   STOCK      i.   a normal OS run (run tags os/principal + os/pinned only; the run worker derives
+#                   OS_PRINCIPAL / OS_PINNED_COMMITS from them, the op fails if it did not) -> SUCCESS
 #              ii.  a tag setting container_config.image/command, pod_spec_config.volumes (hostPath)
 #                   and .service_account_name -> a Job IS created with that spec (the twin)
-#              iii. PYTHONPATH from the tag IS in the run pod (the twin)
-#   LOCK-DOWN  i.   the same normal run -> SUCCESS; its Job spec equals the stock one (but PYTHONPATH)
-#              ii.  each of the four tags alone -> the run fails "violated the allowed list", no Job
-#              iii. PYTHONPATH is NOT in the run pod; the operator env + volume ARE
+#              iii. env, valueFrom env and large resources from the tag ARE in the run pod (twins)
+#   LOCK-DOWN  i.   the same normal run -> SUCCESS; its Job spec equals the stock one
+#              ii.  each of env, valueFrom env, resources, image, command, volumes and service
+#                   account alone -> the run fails "violated the allowed list", no Job
+#              iii. the operator env + volume ARE in the run pod
 set -uo pipefail
 cd "$(dirname "$0")/../.." || exit 2
 # shellcheck source=scripts/tests/assert.sh
@@ -52,11 +54,26 @@ K() { kubectl --context "kind-$NAME" -n "$NS" "$@"; }
 # ── the code location: one op that does nothing, in an image built FROM this checkout's image ──
 mkdir -p "$TMP/img"
 cat > "$TMP/img/wp15lock_defs.py" <<'EOF'
-from dagster import Definitions, job, op
+import os
+import sys
+
+sys.path.insert(0, "/opt/dagster/app")
+import os_projects as osp  # the image's own module: the run worker reads its pin/principal from the run's tags
+
+osp.apply_run_env_from_tags()  # what repo.py does at import
+
+from dagster import Definitions, Failure, job, op
 
 
 @op
 def probe(context):
+    # In a run pod the env the OS used to put in a `dagster-k8s/config` tag must come from the TAGS.
+    if context.run.tags.get("os/principal") == "alice":
+        want = {"OS_PRINCIPAL": "alice", "DESTINATION__SQLALCHEMY__CREDENTIALS__USERNAME": "alice",
+                "OS_PINNED_COMMITS": "sales=0123456789abcdef0123456789abcdef01234567"}
+        got = {k: os.environ.get(k) for k in want}
+        if got != want:
+            raise Failure(description=f"the run worker did not derive its env from the run tags: {got}")
     context.log.info("wp15lock run pod")
 
 
@@ -184,9 +201,9 @@ install() {  # $1 stock|lock
   return 1
 }
 LAUNCH='mutation($p: ExecutionParams!) { launchRun(executionParams: $p) { __typename ... on LaunchRunSuccess { run { runId } } ... on PythonError { message } } }'
-launch() {  # $1 = dagster-k8s/config tag JSON -> run id on stdout
+launch() {  # $1 = run tags as a JSON object -> run id on stdout
   local vars
-  vars=$(python3 -c 'import json,sys; print(json.dumps({"p": {"selector": {"repositoryLocationName": "sovereign", "repositoryName": "__repository__", "jobName": "wp15lock_job"}, "executionMetadata": {"tags": [{"key": "dagster-k8s/config", "value": sys.argv[1]}]}}}))' "$1")
+  vars=$(python3 -c 'import json,sys; print(json.dumps({"p": {"selector": {"repositoryLocationName": "sovereign", "repositoryName": "__repository__", "jobName": "wp15lock_job"}, "executionMetadata": {"tags": [{"key": k, "value": v} for k, v in json.loads(sys.argv[1]).items()]}}}))' "$1")
   gql "$LAUNCH" "$vars" | python3 -c 'import json,sys; r=json.load(sys.stdin)["data"]["launchRun"]; print(r["run"]["runId"] if r["__typename"]=="LaunchRunSuccess" else "ERR:"+json.dumps(r))'
 }
 status() { gql 'query($id: ID!) { runOrError(runId: $id) { ... on Run { status } } }' "{\"id\":\"$1\"}" \
@@ -220,7 +237,12 @@ print(json.dumps({"labels":labels,"spec":s}, sort_keys=True))'
 }
 envnames() { python3 -c 'import json,sys; print(" ".join(e["name"] for e in json.load(sys.stdin)["spec"]["template"]["spec"]["containers"][0].get("env",[])))'; }
 
-NORMAL='{"container_config":{"env":[{"name":"OS_PINNED_COMMITS","value":"sales=0123456789abcdef0123456789abcdef01234567"},{"name":"OS_PRINCIPAL","value":"alice"},{"name":"PYTHONPATH","value":"/tmp/wp15lock-not-allowed"}]}}'
+k8s() { python3 -c 'import json,sys; print(json.dumps({"dagster-k8s/config": sys.argv[1]}))' "$1"; }
+# What the OS sends: run tags only (no dagster-k8s/config). The run worker derives its env from them.
+NORMAL='{"os/principal":"alice","os/pinned":"sales=0123456789abcdef0123456789abcdef01234567","os/domain":"sales"}'
+T_ENV='{"container_config":{"env":[{"name":"PYTHONPATH","value":"/tmp/wp15lock-not-allowed"}]}}'
+T_SECRET='{"container_config":{"env":[{"name":"OS_PRINCIPAL","valueFrom":{"secretKeyRef":{"name":"agent-runtime-token","key":"token"}}}]}}'
+T_RES='{"container_config":{"resources":{"limits":{"cpu":"64","memory":"512Gi"},"requests":{"memory":"60Gi"}}}}'
 T_IMAGE='{"container_config":{"image":"busybox:1.36"}}'
 T_COMMAND='{"container_config":{"command":["/bin/sh","-c","true"]}}'
 T_VOLUME='{"pod_spec_config":{"volumes":[{"name":"host","host_path":{"path":"/"}}]}}'
@@ -232,14 +254,21 @@ install stock || { bad "stock install"; finish dagster-launcher-lockdown.kind; e
 rid=$(launch "$NORMAL"); case $rid in ERR:*) bad "stock i. launchRun" "$rid";; esac
 st=$(wait_final "$rid")
 check "stock i. a normal OS run succeeds" "SUCCESS" "$st"
+[ "$st" = SUCCESS ] || echo "   events: $(events "$rid" | head -c 1800)"
 STOCK_SPEC=""
 if wait_job "$rid"; then
   STOCK_SPEC=$(job_json "$rid" | spec_of)
   names=$(job_json "$rid" | envnames)
-  check "stock iii. (twin) PYTHONPATH from the tag IS in the run pod" "PYTHONPATH" "$names"
+  absent "stock: no tag env is needed: the pod holds no OS_PRINCIPAL env" "OS_PRINCIPAL" "$names"
   check "stock: the operator env (WP-15-style) reaches the run pod" "WP15LOCK_OPERATOR_ENV" "$names"
 else bad "stock i. a Job was created"; fi
-rid=$(launch "$T_ALL")
+rid=$(launch "$(k8s "$T_ENV")")
+wait_job "$rid" && check "stock iii. (twin) PYTHONPATH from the tag IS in the run pod" "PYTHONPATH" "$(job_json "$rid" | envnames)"
+rid=$(launch "$(k8s "$T_SECRET")")
+wait_job "$rid" && check "stock iii. (twin) a valueFrom env from the tag IS in the run pod" "secretKeyRef" "$(job_json "$rid")"
+rid=$(launch "$(k8s "$T_RES")")
+wait_job "$rid" && check "stock iii. (twin) the large resources from the tag ARE on the run container" "512Gi" "$(job_json "$rid")"
+rid=$(launch "$(k8s "$T_ALL")")
 if wait_job "$rid"; then
   j=$(job_json "$rid")
   check "stock ii. (twin) the tag's image is the run container's" '"image": "busybox:1.36"' "$(echo "$j" | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["spec"]["template"]["spec"]["containers"][0]))')"
@@ -257,11 +286,12 @@ install lock || { bad "lock-down install"; finish dagster-launcher-lockdown.kind
 rid=$(launch "$NORMAL"); case $rid in ERR:*) bad "lock i. launchRun" "$rid";; esac
 st=$(wait_final "$rid")
 check "lock i. a normal OS run succeeds" "SUCCESS" "$st"
+[ "$st" = SUCCESS ] || echo "   events: $(events "$rid" | head -c 1800)"
 if wait_job "$rid"; then
   j=$(job_json "$rid"); names=$(echo "$j" | envnames)
   absent "lock iii. PYTHONPATH from the tag is NOT in the run pod" "PYTHONPATH" "$names"
-  check "lock: OS_PINNED_COMMITS from the tag reaches the run pod" "OS_PINNED_COMMITS" "$names"
-  check "lock: OS_PRINCIPAL from the tag reaches the run pod" "OS_PRINCIPAL" "$names"
+  absent "lock: no pod env carries the pin (the run worker read it from the run's tags; the op checked it)" "OS_PINNED_COMMITS" "$names"
+  absent "lock: no pod env carries the principal (read from the run's tags too)" "OS_PRINCIPAL" "$names"
   check "lock: the operator env (WP-15-style) reaches the run pod" "WP15LOCK_OPERATOR_ENV" "$names"
   check "lock: the operator volume (WP-15-style) is in the run pod" '"name": "wp15lock-operator"' "$j"
   check "lock: the image is the code location's (DAGSTER_CURRENT_IMAGE)" "\"image\": \"$TEST_IMAGE\"" "$j"
@@ -277,10 +307,10 @@ def d(x,y,p=""):
     else: print(p, json.dumps(x)[:300], "|", json.dumps(y)[:300])
 d(a,b)' "$STOCK_SPEC" "$LOCK_SPEC")"; fi
 else bad "lock i. a Job was created" "$(events "$rid" | head -c 800)"; fi
-for t in "container_config.image:$T_IMAGE" "container_config.command:$T_COMMAND" \
+for t in "container_config.env:$T_ENV" "container_config.env:$T_SECRET" "container_config.resources:$T_RES" "container_config.image:$T_IMAGE" "container_config.command:$T_COMMAND" \
          "pod_spec_config.volumes:$T_VOLUME" "pod_spec_config.service_account_name:$T_SA"; do
   field=${t%%:*}; tag=${t#*:}
-  rid=$(launch "$tag")
+  rid=$(launch "$(k8s "$tag")")
   st=$(wait_final "$rid")
   check "lock ii. a tag setting $field: the run fails" "FAILURE" "$st"
   check "lock ii. ... refused by the launcher (\"violated the allowed list: $field\")" "violated the allowed list: $field" "$(events "$rid")"
