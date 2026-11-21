@@ -273,3 +273,59 @@ test('PUSH · the scope pin is the ONE .npmrc an app may push; anything more is 
     assert.throws(() => assertPushable([{ path: '.npmrc', content }]), /credential or registry file/, JSON.stringify(content));
   }
 });
+
+// ------------------------------------------------------------ follow-ups (overrides, Dockerfile, nested .npmrc) --
+
+test('DETECT · `overrides` / `resolutions` / `pnpm.overrides` that send the scope to a registry block; file: overrides pass', () => {
+  const cases: [string, (j: any) => void][] = [
+    ['npm overrides, direct', (j) => { j.overrides = { '@sovereign-os/ui': '1.0.0' }; }],
+    ['npm overrides, nested under a parent', (j) => { j.overrides = { 'some-lib': { '@sovereign-os/app-sdk': '^2.0.0' } }; }],
+    ['npm overrides, an alias onto the scope', (j) => { j.overrides = { 'left-pad': 'npm:@sovereign-os/ui@1' }; }],
+    ['yarn resolutions, a path selector', (j) => { j.resolutions = { 'some-lib/@sovereign-os/ui': '1.0.0' }; }],
+    ['pnpm overrides, a parent>child selector', (j) => { j.pnpm = { overrides: { 'some-lib>@sovereign-os/ui': 'https://evil.example/ui.tgz' } }; }],
+  ];
+  for (const [label, edit] of cases) {
+    const found = blocking(scopePinFindings(replace(lockedVite(), 'package.json', editJson(edit))));
+    assert.equal(found.length, 1, label);
+    assert.match(found[0].detail, /overrides|resolutions/, label);
+  }
+  // twin: an override that keeps the scope on the vendored folder is fine, as is one on another package.
+  const ok = replace(lockedVite(), 'package.json', editJson((j) => { j.overrides = { '@sovereign-os/ui': 'file:./vendor/@sovereign-os/ui', 'left-pad': '1.3.0' }; }));
+  assert.deepEqual(blocking(scopePinFindings(ok)), []);
+});
+
+test('DETECT · a Dockerfile that installs the scope by name, or points it at a registry, blocks; the scaffold Dockerfiles pass', () => {
+  const dockerfile = (tree: ScaffoldFile[]) => tree.find((f) => f.path === 'Dockerfile')!.content;
+  const bad = [
+    'RUN npm install @sovereign-os/ui@latest',
+    'RUN npm i -g @sovereign-os/app-sdk',
+    'RUN yarn add @sovereign-os/ui',
+    'RUN pnpm add @sovereign-os/ui',
+    'RUN npm ci --@sovereign-os:registry=https://registry.npmjs.org/',
+    'RUN npm config set @sovereign-os:registry https://registry.npmjs.org/',
+    'ENV npm_config_@sovereign-os:registry=https://registry.npmjs.org/',
+  ];
+  for (const line of bad) {
+    const tree = replace(lockedVite(), 'Dockerfile', (c) => `${c.trimEnd()}\n${line}\n`);
+    const found = blocking(scopePinFindings(tree));
+    assert.equal(found.length, 1, line);
+    assert.equal(found[0].path, 'Dockerfile', line);
+  }
+  // twins: every scaffold Dockerfile (they set the pin themselves) is clean, and an unrelated install is fine.
+  for (const template of ALL_TEMPLATES) {
+    const tree = lockedSeed(template, templateFiles(template, 'App', SLUG), SLUG);
+    assert.deepEqual(blocking(scopePinFindings(tree)), [], template);
+  }
+  const unrelated = replace(lockedVite(), 'Dockerfile', (c) => `${c.trimEnd()}\nRUN npm install -g serve@14.2.4\n`);
+  assert.deepEqual(blocking(scopePinFindings(unrelated)), []);
+  assert.ok(dockerfile(lockedVite()).length > 0);
+});
+
+test('PUSH · an .npmrc anywhere below the root is refused, even the pin; the root pin is still accepted', () => {
+  for (const path of ['sub/.npmrc', 'packages/a/.npmrc', 'src/.NPMRC']) {
+    assert.throws(() => assertPushable([{ path, content: SCOPE_PIN_LINE + '\n' }]), /\.npmrc/i, path);
+    assert.throws(() => assertPushable([{ path, content: '//registry.npmjs.org/:_authToken=abc\n' }]), /\.npmrc/i, path);
+  }
+  // twin
+  assert.doesNotThrow(() => assertPushable([{ path: '.npmrc', content: SCOPE_PIN_LINE + '\n' }]));
+});
