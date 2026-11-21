@@ -33,6 +33,7 @@ case "$*" in
   *"logs deploy/os-ui-worker"*) cat "$FAKE/worker-log" ;;
   *"get pvc clickhouse-data"*)  cat "$FAKE/pvc" ;;
   *"get configmap agentic-os-litellm-config"*) cat "$FAKE/configmap" 2>/dev/null || exit 1 ;;
+  *"exec deploy/agentic-os-dagster-daemon"*) cat "$FAKE/daemon-probe" 2>/dev/null || exit 1 ;;
   *"port-forward svc/agentic-os-langfuse-web"*)
                         [ -f "$FAKE/langfuse-health" ] || { echo "error: no such service" >&2; exit 1; }
                         echo "Forwarding from 127.0.0.1:41234 -> 3000"; exec sleep 30 ;;
@@ -75,6 +76,8 @@ JSON
   echo 200 > "$FAKE/code-os.example.test"
   echo 404 > "$FAKE/code-litellm.example.test"
   printf '{"status":"OK","version":"3.194.1"}\n200' > "$FAKE/langfuse-health"
+  echo "ghcr.io/x/dagster:0.4.0|1|1|1" > "$FAKE/deploy-agentic-os-dagster-daemon"
+  echo "connected api.example.internal 443" > "$FAKE/daemon-probe"
 }
 smoke() { out=$(PATH="$BIN:$PATH" bash scripts/smoke-test.sh "$@" 2>&1); rc=$?; }
 
@@ -153,6 +156,18 @@ check "no port-forward fails" "FAIL  Langfuse reachable through kubectl port-for
 healthy; sed -i.bak 's/"langfuse": {"enabled": true}/"langfuse": {"enabled": false}/' "$FAKE/values.json"; rm "$FAKE/langfuse-health"; smoke
 rc_is "Langfuse off: nothing to check" 0
 check "and it is noted" "Langfuse is off: no trace store to check" "$out"
+
+echo "== the Dagster daemon reaches the API server address its pod uses"
+healthy; smoke
+check "a connected daemon passes" "Dagster daemon reaches the API server (api.example.internal 443)" "$out"
+healthy; echo "refused api.example.internal 443 TimeoutError" > "$FAKE/daemon-probe"; smoke
+rc_is "a daemon that cannot connect fails the smoke test" 1
+check "and the value to fix is named" "FAIL  Dagster daemon reaches the API server (api.example.internal 443 TimeoutError; networkPolicies.apiserver.extraCidrs)" "$out"
+healthy; rm "$FAKE/daemon-probe"; smoke
+check "no answer from exec fails" "FAIL  Dagster daemon reaches the API server (kubectl exec gave no answer)" "$out"
+healthy; rm "$FAKE/deploy-agentic-os-dagster-daemon" "$FAKE/daemon-probe"; smoke
+rc_is "no Dagster at all: nothing to check" 0
+check "and it is noted" "no Dagster daemon: no run launcher to check" "$out"
 
 echo "== arguments"
 smoke --nonsense; rc_is "an unknown argument exits 2" 2
