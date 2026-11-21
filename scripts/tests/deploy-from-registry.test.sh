@@ -263,7 +263,8 @@ echo "== the guard and the override, driven through deploy.sh with a fake kubect
 # then fails on the manifest read, so nothing later — backup, build, upgrade — can run. The
 # context is one that does not exist, so a REAL kubectl/helm could not reach a cluster either.
 fk=$TMP/fakekube; mkdir -p "$fk"
-printf '#!/usr/bin/env bash\nexit 0\n' > "$fk/kubectl"
+# apiserver-cidrs.py reads the pods: none carries an injected KUBERNETES_SERVICE_HOST here.
+printf '#!/usr/bin/env bash\ncase "$*" in *"get pods -o json"*) echo "{\\"items\\":[]}" ;; esac\nexit 0\n' > "$fk/kubectl"
 cat > "$fk/helm" <<'FAKE'
 #!/usr/bin/env bash
 [ "$1" = version ] && { echo v4.2.2; exit 0; }   # helm-version-guard.sh

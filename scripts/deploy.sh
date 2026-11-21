@@ -371,6 +371,22 @@ python3 scripts/lib/values-diff.py "$WORK/live.yaml" "$CHART/values.yaml" "$VALU
   || echo "   (values diff unavailable — not a deploy failure)"
 fi  # end of the prod values derivation
 
+# THE API SERVER ADDRESS THE PODS USE (both environments). On Gardener (STACKIT SKE) a webhook sets
+# every pod's KUBERNETES_SERVICE_HOST to the API server's domain, so in-cluster clients connect to
+# the address it resolves to, which `allow-apiserver-egress` must admit next to the endpoint
+# (networkPolicies.apiserver.extraCidrs). Read from the running pods and resolved here, per cluster,
+# on every deploy; a host that does not resolve stops the deploy (run launches would time out).
+APISERVER_OVERLAY=$WORK/apiserver-extra.yaml
+set +e
+python3 scripts/lib/apiserver-cidrs.py --context "$CTX" --namespace "$NS" > "$APISERVER_OVERLAY"
+api_rc=$?
+set -e
+case $api_rc in
+  0) OVERLAY_ARGS+=(-f "$APISERVER_OVERLAY"); say "API server egress: adding $(sed -n 's/^ *extraCidrs: //p' "$APISERVER_OVERLAY") (the pods' KUBERNETES_SERVICE_HOST)" ;;
+  1) say "API server egress: no injected KUBERNETES_SERVICE_HOST in $NS; the endpoint addresses suffice" ;;
+  *) echo "APISERVER_HOST_UNRESOLVED — see the line above; fix DNS or set networkPolicies.apiserver.extraCidrs" >&2; exit 1 ;;
+esac
+
 # TEST-RENDER SWITCH (templates/base/secret-defaults-guard.yaml). global.allowChartDefaultSecrets lets
 # a throwaway test render keep the chart's published default secrets; a real deploy must never
 # carry it, whatever set it (the chart default, the live release, the dev values, VALUES_OVERLAY).

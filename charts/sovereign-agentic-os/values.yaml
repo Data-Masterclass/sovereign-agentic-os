@@ -72,6 +72,13 @@ networkPolicies:
   # GitOps renderers, where `lookup` is empty and the rule would otherwise stay un-narrowed.
   apiserver:
     cidrs: []
+    # Addresses ADDED to the rule above: the address the pods' KUBERNETES_SERVICE_HOST resolves to
+    # when the platform injects a domain there. Gardener (STACKIT SKE) does, through the
+    # gardener-resource-manager webhook `kubernetes-service-host.resources.gardener.cloud`, so the
+    # Dagster run launcher and other in-cluster clients connect to that address, not the endpoint.
+    # scripts/deploy.sh fills it per cluster from the running pods (scripts/lib/apiserver-cidrs.py);
+    # set it yourself for GitOps.
+    extraCidrs: []
   # Workloads that still reach public HTTPS directly (their clients do not use the egress
   # proxy yet): os-ui and its worker (connector APIs and OAuth from Node fetch) and the Dagster
   # code location and run pods (dlt sources). Everything else goes through the egress proxy.
