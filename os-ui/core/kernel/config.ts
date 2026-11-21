@@ -496,7 +496,9 @@ export const config = {
   // never a module resolution (`require.resolve` returns a webpack module id in the bundled
   // server). The image sets it (/app/package-lock.json, images/base/os-ui/Dockerfile); unset ⇒
   // `<cwd>/package-lock.json` (a checkout, the tests).
-  agentModuleHostLockfile: env('OS_UI_LOCKFILE', '') || `${process.cwd()}/package-lock.json`,
+  // Empty = `<cwd>/package-lock.json`, resolved by the Node-only reader (tabs/agents/lib/module/
+  // versions.ts): config.ts is imported by the Edge middleware, where process.cwd() throws.
+  agentModuleHostLockfile: env('OS_UI_LOCKFILE', ''),
   // WHO executes a queued agent run (engine rebuild, Phase A4). `inline` (default): the process
   // that enqueues the job in `run_jobs` also executes it at once — a laptop / kind install with
   // one os-ui pod behaves exactly as before and tests need no worker. `worker`: os-ui only

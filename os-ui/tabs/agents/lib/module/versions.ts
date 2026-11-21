@@ -16,11 +16,11 @@
  *     so `npm ci` beside `run.mjs` installs exactly the tree os-ui runs. Nothing is hard-coded.
  */
 import { existsSync, readFileSync } from 'node:fs';
-import { config } from '@core/kernel/config';
+import { hostLockfilePath } from '@core/kernel/host-lockfile';
 import { MODULE_PACKAGES, type HostLock, type ModuleVersions } from '@tabs/agents/lib/module/generate';
 
 /** os-ui's lockfile, from its known path. Throws (naming the path) when it is missing or unreadable. */
-export function hostLockfile(file: string = config.agentModuleHostLockfile): HostLock {
+export function hostLockfile(file: string = hostLockfilePath()): HostLock {
   if (!existsSync(file)) throw new Error(`no package-lock.json at ${file} (OS_UI_LOCKFILE) — the module's dependencies cannot be pinned`);
   const lock = JSON.parse(readFileSync(file, 'utf8')) as HostLock;
   if (!lock || typeof lock.packages !== 'object' || lock.packages === null) throw new Error(`${file} is not an npm lockfile (no "packages")`);
