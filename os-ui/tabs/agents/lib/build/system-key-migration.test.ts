@@ -32,6 +32,7 @@ import {
 } from '@core/infra/agent-system-keys';
 import type { LiteLlmClient, LiteLlmKeyInput, LiteLlmKeyState, LiveDeps } from '@tabs/agents/lib/build/live';
 import { runKeyMigration, type KeyMigrationIo, type MigrationSystem } from '@tabs/agents/lib/build/system-key-migration';
+import { RETIRE_GRACE_SECONDS } from '@tabs/agents/lib/build/live';
 
 const YAML = `
 system: { name: Desk, domain: sales, visibility: Personal }
@@ -42,11 +43,14 @@ agents:
   - { id: worker, role: w, agent_md: "# Worker", memory_md: "", tools: [retrieve], model: sovereign-default }
 `;
 
-type Crash = 'rename' | 'generate' | 'put' | 'delete' | 'clear' | null;
+type Crash = 'rename' | 'generate' | 'put' | 'expire' | 'clear' | null;
 
 /** A LiteLLM-shaped gateway: unique aliases, bearer → SHA-256 token id. */
 function gateway() {
   const byAlias = new Map<string, LiteLlmKeyState>();
+  /** LiteLLM's own key expiry (`/key/update` with `duration`): token id → epoch ms after which the key is refused. */
+  const expires = new Map<string, number>();
+  let clock = 1_000_000;
   const state = (input: LiteLlmKeyInput, tokenId: string): LiteLlmKeyState => ({
     tokenId, models: [...input.models], maxBudget: input.maxBudget, budgetDuration: input.budgetDuration,
     rpmLimit: input.rpmLimit, tpmLimit: input.tpmLimit, maxParallelRequests: input.maxParallelRequests, allowedTools: [...input.allowedTools],
@@ -73,16 +77,26 @@ function gateway() {
       await afterEach();
     },
     async deleteKey(tokenId) {
-      await crash('delete');
       for (const [a, k] of [...byAlias]) if (k.tokenId === tokenId) byAlias.delete(a);
+      await afterEach();
+    },
+    async expireKey(tokenId, seconds) {
+      await crash('expire');
+      expires.set(tokenId, clock + seconds * 1000);
       await afterEach();
     },
     async models() { return []; },
   };
   /** Inference: 200 when the bearer is a key the gateway holds, else 401 (as LiteLLM answers). */
-  const call = (bearer: string): number => ([...byAlias.values()].some((k) => k.tokenId === tokenIdOf(bearer)) ? 200 : 401);
+  const call = (bearer: string): number => {
+    const t = tokenIdOf(bearer);
+    if (![...byAlias.values()].some((k) => k.tokenId === t)) return 401;
+    const until = expires.get(t);
+    return until !== undefined && clock >= until ? 401 : 200;
+  };
   return {
-    byAlias, admin, call,
+    byAlias, admin, call, expires,
+    advance: (ms: number) => { clock += ms; },
     crashOn: (s: Crash) => { crashAt = s; },
     watch: (f: () => Promise<void>) => { afterEach = f; },
   };
@@ -149,23 +163,34 @@ test('AN EXISTING SYSTEM KEEPS RUNNING: at every gateway step the key a run woul
   assert.ok(!JSON.stringify(audits).includes(tokenIdOf(old)) && !JSON.stringify(audits).includes('sk-'), 'no key or token id in the audit');
 });
 
-test('THE OLD KEY IS DEAD AFTERWARDS: the guessable value gets 401, the new key is budgeted, and a second pass changes nothing', async () => {
-  const { gw, store, io } = setup([{ id: 'sys_a', domain: 'sales', owner: 'u1', yaml: YAML }]);
+test('THE OLD KEY EXPIRES AFTER THE GRACE PERIOD (LiteLLM key expiry): still 200 right after the move, 401 once the grace has passed; a second pass changes nothing', async () => {
+  const { gw, io } = setup([{ id: 'sys_a', domain: 'sales', owner: 'u1', yaml: YAML }]);
   const old = withLegacy(gw, 'sys_a');
   assert.equal(gw.call(old), 200, 'precondition: the guessable key works before the migration');
   await runKeyMigration(io);
-  assert.equal(gw.call(old), 401);
+  assert.equal(gw.call(old), 200, 'a run that still holds the old value keeps working during the grace period');
+  assert.ok(gw.expires.has(tokenIdOf(old)), 'the old key was given an expiry, not deleted at once');
+  gw.advance(RETIRE_GRACE_SECONDS * 1000 + 1);
+  assert.equal(gw.call(old), 401, 'after the grace period the gateway refuses the old key');
   const key = gw.byAlias.get('os-sys_a')!;
   assert.ok(key.maxBudget > 0, 'the new key carries a budget');
-  assert.equal(gw.byAlias.size, 1, 'no retiring key is left behind');
   const value = (await resolveSystemKey('sys_a', { fresh: true })).key;
+  assert.equal(gw.call(value), 200);
   const again = await runKeyMigration(io);
   assert.deepEqual([again.migrated, again.alreadyFine], [[], 1], 'idempotent');
   assert.equal((await resolveSystemKey('sys_a', { fresh: true })).key, value, 'the second pass did not mint again');
-  void store;
 });
 
-for (const step of ['rename', 'generate', 'put', 'delete', 'clear'] as const) {
+test('negative twin: with the grace period set to zero the old key is deleted at once — the grace is what keeps a holder of the old value working', async () => {
+  const { gw, io, deps } = setup([{ id: 'sys_a', domain: 'sales', owner: 'u1', yaml: YAML }]);
+  deps.keys.retireGraceSeconds = 0;
+  const old = withLegacy(gw, 'sys_a');
+  await runKeyMigration(io);
+  assert.equal(gw.call(old), 401);
+  assert.equal(gw.expires.size, 0);
+});
+
+for (const step of ['rename', 'generate', 'put', 'expire', 'clear'] as const) {
   test(`A CRASH DURING '${step}' IS SAFE: the system keeps a working key, and the re-run finishes with ONE new value`, async () => {
     const { gw, store, journal, io, deps } = setup([{ id: 'sys_a', domain: 'sales', owner: 'u1', yaml: YAML }]);
     const old = withLegacy(gw, 'sys_a');
@@ -189,8 +214,9 @@ for (const step of ['rename', 'generate', 'put', 'delete', 'clear'] as const) {
     const second = await runKeyMigration(io);
     assert.equal(second.ok, true, JSON.stringify(second.failed));
     assert.equal(second.done, true);
-    assert.equal(gw.call(old), 401, 'the old key is gone after the re-run');
-    assert.equal(gw.byAlias.size, 1, 'exactly one key for the system');
+    gw.advance(RETIRE_GRACE_SECONDS * 1000 + 1);
+    assert.equal(gw.call(old), 401, 'the old key is refused once its grace has passed after the re-run');
+    assert.equal(gw.byAlias.get('os-sys_a')!.tokenId !== tokenIdOf(old), true, 'the alias names the new key');
     const now = (await resolveSystemKey('sys_a', { fresh: true, awaitMigration: false })).key;
     assert.equal(gw.call(now), 200);
     assert.equal(gw.byAlias.get('os-sys_a')!.tokenId, tokenIdOf(now), 'the stored value is the one registered');

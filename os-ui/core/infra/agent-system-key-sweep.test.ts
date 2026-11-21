@@ -126,3 +126,14 @@ test('KEY LISTING is read page by page to the end; a failed page fails the whole
   const broken = (async (path: string) => (path.includes('page=2') ? { ok: false, error: 'HTTP 500' } : { ok: true, data: { keys: page(100) } })) as unknown as Parameters<typeof readAllKeys>[0];
   assert.deepEqual(await readAllKeys(broken), { ok: false, error: 'HTTP 500' });
 });
+
+test('SWEEP PLAN: a retiring key whose LiteLLM expiry has PASSED is removed; one still in its grace period, or with no expiry, is kept', () => {
+  const now = Date.parse('2026-11-21T12:00:00Z');
+  const rows: LiteLlmKeyRow[] = [
+    { key_alias: 'os-sys_a.retiring.0123456789ab', token: 't1', expires: '2026-11-21T11:59:00Z' },
+    { key_alias: 'os-sys_b.retiring.0123456789ab', token: 't2', expires: '2026-11-21T12:05:00Z' },
+    { key_alias: 'os-sys_c.retiring.0123456789ab', token: 't3', expires: null },
+    { key_alias: 'os-sys_d', token: 't4', expires: '2026-11-21T11:00:00Z' }, // an expired key that is NOT a retiring one: not ours to judge
+  ];
+  assert.deepEqual(planKeySweep(rows, new Set(['os-sys_a', 'os-sys_b', 'os-sys_c', 'os-sys_d']), now).map((t) => [t.alias, t.reason]), [['os-sys_a.retiring.0123456789ab', 'expired-retiring']]);
+});
