@@ -329,3 +329,53 @@ test('PUSH · an .npmrc anywhere below the root is refused, even the pin; the ro
   // twin
   assert.doesNotThrow(() => assertPushable([{ path: '.npmrc', content: SCOPE_PIN_LINE + '\n' }]));
 });
+
+// -------------------------------------------- follow-ups 2: tools that do not read .npmrc (Yarn Berry, Bun) --
+
+const YARNRC_SCOPE = 'npmScopes:\n  sovereign-os:\n    npmRegistryServer: "https://registry.example/"\n';
+const BUNFIG_SCOPES = [
+  '[install.scopes]\n"@sovereign-os" = "https://registry.example/"\n',
+  '[install.scopes]\nsovereign-os = { url = "https://registry.example/" }\n',
+  '[install.scopes."@sovereign-os"]\nurl = "https://registry.example/"\n',
+  '[install]\nscopes = { "@sovereign-os" = "https://registry.example/" }\n',
+];
+
+test('DETECT · a .yarnrc.yml npmScopes entry or a bunfig.toml install.scopes entry for the scope blocks (they ignore .npmrc)', () => {
+  for (const [path, content] of [['.yarnrc.yml', YARNRC_SCOPE], ['web/.yarnrc.yml', YARNRC_SCOPE.replace('sovereign-os:', '"@sovereign-os":')], ...BUNFIG_SCOPES.map((c) => ['bunfig.toml', c])]) {
+    const found = blocking(scopePinFindings([...lockedVite(), { path, content }]));
+    assert.equal(found.length, 1, `${path}: ${content}`);
+    assert.equal(found[0].path, path);
+  }
+  // twins: the same files configuring another scope, or nothing about scopes, are clean.
+  const other = [
+    { path: '.yarnrc.yml', content: 'nodeLinker: node-modules\nnpmScopes:\n  acme:\n    npmRegistryServer: "https://npm.acme.example/"\n' },
+    { path: 'bunfig.toml', content: '[install.scopes]\n"@acme" = "https://npm.acme.example/"\n[install]\nfrozenLockfile = true\n' },
+  ];
+  assert.deepEqual(blocking(scopePinFindings([...lockedVite(), ...other])), []);
+});
+
+test('PUSH · a .yarnrc.yml or bunfig.toml that configures the scope is refused; one for another scope is accepted', () => {
+  assert.throws(() => assertPushable([{ path: '.yarnrc.yml', content: YARNRC_SCOPE }]), /@sovereign-os/);
+  for (const content of BUNFIG_SCOPES) assert.throws(() => assertPushable([{ path: 'bunfig.toml', content }]), /@sovereign-os/, content);
+  assert.throws(() => assertPushable([{ path: '.yarnrc.yml', content: 'npmScopes: [not: valid' }]), /could not be read/);
+  // twins
+  assert.doesNotThrow(() => assertPushable([{ path: '.yarnrc.yml', content: 'nodeLinker: node-modules\n' }]));
+  assert.doesNotThrow(() => assertPushable([{ path: 'bunfig.toml', content: '[install]\nfrozenLockfile = true\n' }]));
+});
+
+test('DETECT · bun add, bunx and pnpx of the scope in a Dockerfile block; so do scope installs in package.json scripts', () => {
+  for (const line of ['RUN bun add @sovereign-os/ui', 'RUN bunx @sovereign-os/cli', 'RUN pnpx @sovereign-os/cli', 'RUN npx -y @sovereign-os/cli', 'RUN yarn dlx @sovereign-os/cli']) {
+    const tree = replace(lockedVite(), 'Dockerfile', (c) => `${c.trimEnd()}\n${line}\n`);
+    assert.equal(blocking(scopePinFindings(tree)).length, 1, line);
+  }
+  for (const script of ['yarn dlx @sovereign-os/cli init', 'bunx @sovereign-os/cli', 'npx -y @sovereign-os/cli', 'pnpx @sovereign-os/cli', 'bun add @sovereign-os/ui', 'npm i @sovereign-os/ui@latest']) {
+    const tree = replace(lockedVite(), 'package.json', editJson((j) => { j.scripts = { ...(j.scripts ?? {}), setup: script }; }));
+    const found = blocking(scopePinFindings(tree));
+    assert.equal(found.length, 1, script);
+    assert.match(found[0].detail, /scripts/, script);
+  }
+  // twins: the scaffold scripts and an unrelated bunx are clean.
+  assert.deepEqual(blocking(scopePinFindings(lockedVite())), []);
+  const unrelated = replace(lockedVite(), 'package.json', editJson((j) => { j.scripts = { ...(j.scripts ?? {}), fmt: 'bunx prettier@3.3.3 --write .' }; }));
+  assert.deepEqual(blocking(scopePinFindings(unrelated)), []);
+});
