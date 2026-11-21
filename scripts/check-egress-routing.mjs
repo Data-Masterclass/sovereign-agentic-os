@@ -41,7 +41,7 @@ if (!(existsSync(sub) && readdirSync(sub).some((f) => f.endsWith('.tgz')))) skip
 const CIDR = '203.0.113.10/32';
 const failures = [];
 let modelsChecked = 0;
-const render = (...a) => yaml.loadAll(execFileSync('helm', ['template', 'agentic-os', CHART, '-n', 'agentic-os', '--skip-schema-validation', '--set', `networkPolicies.apiserver.cidrs={${CIDR}}`, ...a], { encoding: 'utf8', maxBuffer: 128 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] })).filter(Boolean);
+const render = (...a) => yaml.loadAll(execFileSync('helm', ['template', 'agentic-os', CHART, '-n', 'agentic-os', '--skip-schema-validation', '--set', 'global.allowChartDefaultSecrets=true', '--set', `networkPolicies.apiserver.cidrs={${CIDR}}`, ...a], { encoding: 'utf8', maxBuffer: 128 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] })).filter(Boolean);
 const IN_CLUSTER = ['agentic-os-langfuse-web', 'query-tool', 'mock-model'];
 
 for (const [profile, args] of Object.entries({ local: ['-f', join(repo, 'values.local.yaml')], stackit: ['-f', join(repo, 'values.stackit-managed.yaml')] })) {

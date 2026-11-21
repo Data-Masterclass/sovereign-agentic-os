@@ -72,7 +72,7 @@ const failures = [];
 const fail = (m) => failures.push(m);
 
 const render = (...args) =>
-  yaml.loadAll(execFileSync('helm', ['template', 'agentic-os', CHART, '-n', NS, '--skip-schema-validation', ...args], {
+  yaml.loadAll(execFileSync('helm', ['template', 'agentic-os', CHART, '-n', NS, '--skip-schema-validation', '--set', 'global.allowChartDefaultSecrets=true', ...args], {
     encoding: 'utf8', maxBuffer: 128 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'],
   })).filter(Boolean);
 
