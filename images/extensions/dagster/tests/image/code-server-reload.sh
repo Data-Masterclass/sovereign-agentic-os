@@ -52,9 +52,11 @@ YAML
 chmod -R a+rwX "$WORK"
 
 # One container, no network: the code server and the webserver, as the chart runs them in two pods.
+# Each gets its own DAGSTER_HOME: two processes creating one SQLite instance at once race on its
+# schema migration (alembic "more than one head"); in the chart both use the Postgres instance.
 docker run -d --name "$NAME" --network none -v "$WORK:/w" -w /opt/dagster/app \
   -e HOME=/tmp -e DAGSTER_HOME=/tmp/dh -e REPO_SYNC_CHECKOUT=/w/checkout -e DBT_SEND_ANONYMOUS_USAGE_STATS=false \
-  "$IMAGE" sh -c "mkdir -p /tmp/dh && ($SERVER >/tmp/server.log 2>&1 &) && exec dagster-webserver -h 127.0.0.1 -p 3070 -w /w/workspace.yaml >/tmp/web.log 2>&1" >/dev/null
+  "$IMAGE" sh -c "mkdir -p /tmp/dh /tmp/dh-server && (DAGSTER_HOME=/tmp/dh-server $SERVER >/tmp/server.log 2>&1 &) && exec dagster-webserver -h 127.0.0.1 -p 3070 -w /w/workspace.yaml >/tmp/web.log 2>&1" >/dev/null
 
 gql() { docker exec -i "$NAME" python3 - "$1" <<'PY'
 import json, sys, time, urllib.request
