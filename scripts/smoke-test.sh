@@ -12,7 +12,7 @@
 # restricted consoles stayed private. Each of those has gone wrong once. `scripts/release.sh`
 # runs this after every deploy; it can also be run by hand at any time.
 #
-# READ-ONLY: kubectl get/logs, helm get values, curl. It changes nothing.
+# READ-ONLY: kubectl get/logs/port-forward, helm get values, curl. It changes nothing.
 #
 # Checks (any FAIL makes the exit status 1; NOTE lines are information only):
 #   1. Deployments os-ui and os-ui-worker run the expected image tag and are fully Ready; docling
@@ -26,6 +26,13 @@
 #   5. The worker's log has its boot line with `systems=hydrated`.
 #   6. The ClickHouse PVC is at least the size the chart's values.yaml asks for.
 #   7. Every model in the LiteLLM ConfigMap carries `model_info` (prices; budgets need them).
+#   8. Langfuse can read its ClickHouse tables: upstream `GET /api/public/health` with
+#      `failIfDatabaseUnavailable=true&failIfNoRecentEvents=true`, through `kubectl port-forward`
+#      (Langfuse is never published, and the API-server proxy is outside the default-deny policy).
+#      That check queries the `traces` table, so a ClickHouse that lost its tables answers
+#      503 "Couldn't fetch recent events" (dev, 21 Nov 2026: every trace read was a 500 while the
+#      plain health answered 200). 503 "No traces within the last 3 minutes" means the tables
+#      answer and nothing was traced lately: that passes.
 #
 # Hostnames, sizes and the apps namespace come from the release's computed values
 # (`helm get values -a`), read by scripts/lib/smoke-facts.py, which prints only those keys.
@@ -180,6 +187,36 @@ check_model_info() {
   else fail "all LiteLLM models carry model_info (models: ${count:-0}; missing: ${missing:-none})"; fi
 }
 
+check_langfuse_traces() {
+  local svc="$REL-langfuse-web" log pf port='' resp code body status i
+  if [ "$(fact langfuse_enabled)" != true ]; then note "Langfuse is off: no trace store to check"; return; fi
+  log=$(mktemp)
+  k port-forward "svc/$svc" :3000 >"$log" 2>&1 &
+  pf=$!
+  for i in $(seq 1 40); do
+    port=$(sed -n 's/^Forwarding from 127\.0\.0\.1:\([0-9]*\).*/\1/p' "$log" | head -1)
+    [ -n "$port" ] && break
+    kill -0 "$pf" 2>/dev/null || break
+    sleep 0.25
+  done
+  if [ -z "$port" ]; then
+    kill "$pf" 2>/dev/null || true; wait "$pf" 2>/dev/null || true; rm -f "$log"
+    fail "Langfuse reachable through kubectl port-forward (svc/$svc)"; return
+  fi
+  resp=$(curl -sS --max-time 30 -w '\n%{http_code}' "http://127.0.0.1:$port/api/public/health?failIfDatabaseUnavailable=true&failIfNoRecentEvents=true" 2>/dev/null || true)
+  kill "$pf" 2>/dev/null || true; wait "$pf" 2>/dev/null || true; rm -f "$log"
+  code=${resp##*$'\n'}; body=${resp%$'\n'*}
+  status=$(printf '%s' "$body" | python3 -c 'import json,sys
+try: d=json.load(sys.stdin); print(d.get("status",""), "|", d.get("version",""))
+except Exception: print("|")' 2>/dev/null || echo '|')
+  case "$code:${status%% |*}" in
+    200:*) pass "Langfuse reads ClickHouse: ${status%% |*} (Langfuse ${status##*| })" ;;
+    503:"No traces within"*|503:"No observations within"*|503:"No events within"*)
+      pass "Langfuse reads ClickHouse: the tables answer, no trace in the last 3 minutes" ;;
+    *) fail "Langfuse reads ClickHouse (${code:-no answer}: ${status%% |*})" ;;
+  esac
+}
+
 check_deployment os-ui
 check_deployment os-ui-worker
 # Docling serves os-ui's document conversions; its own tag is pinned in the chart.
@@ -190,6 +227,7 @@ check_consoles_private
 check_worker_boot
 check_clickhouse_volume
 check_model_info
+check_langfuse_traces
 
 if [ ${#FAILED[@]} -eq 0 ]; then echo "SMOKE_OK"; exit 0; fi
 echo "SMOKE_FAILED (${#FAILED[@]}): $(printf '%s; ' "${FAILED[@]}")"
