@@ -788,6 +788,11 @@ jobs:
           OPA_IT_CONTAINER: opa-it
           OPA_IT_TOKENS_FILE: ${{ runner.temp }}/opa-tokens.json
         run: node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test ../tests/opa/state-reconcile.int.test.ts
+      - name: guardrails-push.int.test (real OPA, today's push path)
+        working-directory: os-ui
+        env:
+          OPA_IT_URL: http://127.0.0.1:18181
+        run: node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test ../tests/opa/guardrails-push.int.test.ts
       - name: OPA logs (on failure)
         if: failure()
         run: docker logs opa-it || true
