@@ -1337,8 +1337,11 @@ dagster:
           # and authored dbt reads env with env_var(). The bearer lives only in the repo-sync
           # sidecar below (scripts/tests/dagster-run-pod-env.test.sh).
         resources:
-          requests: { cpu: 50m, memory: 384Mi }
-          limits: { cpu: "1", memory: 1Gi }   # headroom for dbt materializations
+          # `dagster code-server start` holds the loaded definitions in a child server (about
+          # 530 MiB measured with the dev domains, against 294 MiB for `dagster api grpc`), and a
+          # reload builds every domain again. Limit 1.5Gi for that headroom; the request stays modest.
+          requests: { cpu: 50m, memory: 512Mi }
+          limits: { cpu: "1", memory: 1536Mi }
         # ── Data products in git (engine rebuild B1/B2): the validated-commit checkout the
         # `sovereign` code location loads from. `repo-sync` (same image, `git` added) discovers
         # domains from the OS index, fetches git://os-repos/<domain>.git, runs `dbt parse` in a
