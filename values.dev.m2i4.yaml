@@ -17,3 +17,10 @@ docling:
   resources:
     requests: { cpu: 50m, memory: 768Mi }
     limits: { cpu: 2, memory: 1536Mi }
+
+# ClickHouse (Langfuse traces): 1280Mi was OOM-killed 44x in 7h on the m2i.4 dev node (21 Nov
+# 2026, caught by the dev smoke test). The node has 32 GB; memory is not the scarce resource here.
+clickhouse:
+  resources:
+    requests: { cpu: 100m, memory: 1Gi }
+    limits: { cpu: 1, memory: 3Gi }
