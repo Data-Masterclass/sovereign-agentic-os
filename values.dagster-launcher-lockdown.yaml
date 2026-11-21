@@ -77,8 +77,8 @@ dagster:
                 - {name: OS_INDEX_FILE, value: /repos-checkout/.os-index.json}
                 - {name: OS_QUARANTINE_THRESHOLD, value: '10'}
               resources:
-                requests: {cpu: 50m, memory: 384Mi}
-                limits: {cpu: '1', memory: 1Gi}
+                requests: {cpu: 50m, memory: 512Mi}
+                limits: {cpu: '1', memory: 1536Mi}
               volume_mounts:
                 - {name: repos-checkout, mountPath: /repos-checkout}
             pod_spec_config:
@@ -182,8 +182,8 @@ dagster:
           - { name: OS_INDEX_FILE, value: "/repos-checkout/.os-index.json" }
           - { name: OS_QUARANTINE_THRESHOLD, value: "10" }
         resources:
-          requests: { cpu: 50m, memory: 384Mi }
-          limits: { cpu: "1", memory: 1Gi }
+          requests: { cpu: 50m, memory: 512Mi }
+          limits: { cpu: "1", memory: 1536Mi }
         volumes:
           - name: repos-checkout
             emptyDir: {}

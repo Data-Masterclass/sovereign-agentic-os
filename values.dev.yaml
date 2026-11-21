@@ -133,9 +133,11 @@ objectStorage:
   persistence:
     enabled: true
     size: 10Gi
+  # 512Mi limit (was 1Gi): MinIO uses about 135Mi on dev (kubectl top, 21 Nov 2026). The 512Mi
+  # makes room for the Dagster code server's 1.5Gi limit under the dev memory-limit gate (85 %).
   resources:
-    requests: { cpu: 100m, memory: 384Mi }
-    limits: { cpu: 1, memory: 1Gi }
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { cpu: 1, memory: 512Mi }
 
 # --- Reduced sizes ------------------------------------------------------------------------
 # Requests and limits sized to one demo tenant and the acceptance journeys. JVM heaps shrink
