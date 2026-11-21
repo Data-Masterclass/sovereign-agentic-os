@@ -31,6 +31,11 @@ class DbtRunEnv(unittest.TestCase):
                "LC_SECRET": "x", "DBT_ENV_SECRET_TRINO_PASSWORD": "dbt-guards-this"}
         self.assertEqual(sorted(osp.dbt_run_env(pod)), ["DBT_ENV_SECRET_TRINO_PASSWORD", "TRINO_HOST"])
 
+    def test_the_run_identity_variables_reach_dbt(self):
+        # WP-15: act_as_owner sets these two; the profile reads them, so they must pass.
+        self.assertEqual(sorted(osp.dbt_run_env({"OS_PRINCIPAL": "bea", "DBT_ENV_SECRET_TRINO_PASSWORD": "pw", "TRINO_TLS_PORT": "8443", "TRINO_RUNNER_USER": "svc", "TRINO_CA_FILE": "/c"})),
+                         ["DBT_ENV_SECRET_TRINO_PASSWORD", "OS_PRINCIPAL", "TRINO_CA_FILE", "TRINO_RUNNER_USER", "TRINO_TLS_PORT"])
+
 
 if __name__ == "__main__":
     unittest.main()
