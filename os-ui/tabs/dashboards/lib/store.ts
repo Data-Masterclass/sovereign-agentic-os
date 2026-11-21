@@ -393,8 +393,29 @@ export function getDashboardForGovernance(id: string, user: Principal): Stored {
   throw status('not authorized to view this dashboard', 403);
 }
 
+/** The pseudo-domain of platform-wide configuration. It has a repository, but never a dashboard. */
+export const PLATFORM_DOMAIN = 'platform';
+
+/**
+ * The domain a NEW dashboard belongs to. `requested` must be one of the caller's own domains
+ * (403 otherwise) and never `platform` (400); with none requested it is the caller's HOME domain —
+ * the first of their domains that is not `platform`. A caller with no such domain is refused (400)
+ * rather than defaulted into the platform repository.
+ */
+export function dashboardDomainFor(user: Principal, requested?: string): string {
+  const want = (requested ?? '').trim();
+  if (want === PLATFORM_DOMAIN) throw status(`a dashboard cannot belong to '${PLATFORM_DOMAIN}' — choose one of your domains: ${user.domains.filter((d) => d !== PLATFORM_DOMAIN).join(', ') || '(none)'}`, 400);
+  if (want) {
+    if (!user.domains.includes(want)) throw status(`you are not a member of domain '${want}' — choose one of your domains: ${user.domains.filter((d) => d !== PLATFORM_DOMAIN).join(', ') || '(none)'}`, 403);
+    return want;
+  }
+  const home = user.domains.find((d) => d && d !== PLATFORM_DOMAIN);
+  if (!home) throw status(`you belong to no domain a dashboard can live in (only '${PLATFORM_DOMAIN}') — ask an admin to add you to a domain`, 400);
+  return home;
+}
+
 /** Create (or replace) a dashboard the user owns — both build modes land here. */
-export function saveDashboard(user: Principal, id: string, spec: DashboardSpec): Stored {
+export function saveDashboard(user: Principal, id: string, spec: DashboardSpec, opts: { domain?: string } = {}): Stored {
   // M-7: the STORE is the boundary, so the servability gate lives here and not only in the MCP
   // tool. Every door — the tab's save route, `create_dashboard`, a `git push` ingest — lands in
   // this function, and a panel whose filter operator or time grain the governed path cannot serve
@@ -404,6 +425,11 @@ export function saveDashboard(user: Principal, id: string, spec: DashboardSpec):
   if (existing) {
     // Fail-closed edit-scope: owner, domain_admin of the owning domain, or admin.
     if (!canManageArtifact(user, manageArg(existing))) throw status('only the owner, an in-domain domain admin, or an admin can edit this dashboard', 403);
+    // A replace never MOVES a dashboard: that is the governed cross-domain move, not a save.
+    if (opts.domain && opts.domain.trim() && opts.domain.trim() !== existing.domain) {
+      throw status(`dashboard '${id}' belongs to domain '${existing.domain}'; a save does not move it to '${opts.domain.trim()}' (use the governed domain move)`, 400);
+    }
+    if (existing.domain) spec = { ...spec, domain: existing.domain };
     // Snapshot the PRIOR spec before overwriting so the edit is restorable.
     versions.record(existing.id, user.id, snapshotState(existing), 'edit');
     existing.spec = spec;
@@ -411,7 +437,8 @@ export function saveDashboard(user: Principal, id: string, spec: DashboardSpec):
     announce(existing, user.id, 'edit dashboard');
     return existing;
   }
-  const rec: Stored = { ...dashboardRecord(id, spec, user.id, 'personal'), domain: user.domains[0] ?? 'sales', updatedAt: new Date().toISOString() };
+  const domain = dashboardDomainFor(user, opts.domain);
+  const rec: Stored = { ...dashboardRecord(id, { ...spec, domain }, user.id, 'personal'), domain, updatedAt: new Date().toISOString() };
   dashState().dashboards.push(rec);
   writeNew(mirror, dashState().seen, rec.id, rec as unknown as Record<string, unknown>);
   announce(rec, user.id, 'create dashboard');

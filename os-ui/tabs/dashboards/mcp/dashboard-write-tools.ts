@@ -95,7 +95,7 @@ import { reindexFile } from '@tabs/files/lib/pipeline-server';
 import { putBlob } from '@tabs/files/lib/object-store';
 import type { Sensitivity } from '@tabs/files/lib/asset-schema';
 
-import { saveDashboard, refreshDashboardFromMirror, hasDashboard } from '@tabs/dashboards/lib/store';
+import { saveDashboard, refreshDashboardFromMirror, hasDashboard, dashboardDomainFor } from '@tabs/dashboards/lib/store';
 import { isRunWorkerProcess } from '@core/kernel/process-role';
 import { VIZ_TYPES, assertServableFilters, fromTiles, missingPanelMembers, type ChartSpec } from '@tabs/dashboards/lib/model';
 import { panelViewsFor, type RegistryViewDims } from '@tabs/dashboards/lib/panel-views';
@@ -128,6 +128,7 @@ export const dashboardWriteTools: McpTool[] = [
         id: { type: 'string', description: 'Stable id (to replace an existing one you own); auto-generated if omitted.' },
         name: { type: 'string', description: 'Dashboard name, e.g. "Sales Overview".' },
         view: { type: 'string', description: 'The governed view (one gold dataset’s view) the charts bind to.' },
+        domain: { type: 'string', description: 'The domain the dashboard belongs to — one of YOUR domains (see whoami). Omit for your home domain (your first domain). Never `platform`. Ignored when replacing by `id`, except that a different domain is refused.' },
         charts: {
           type: 'array',
           description: 'At least one chart on a governed metric member.',
@@ -166,7 +167,11 @@ export const dashboardWriteTools: McpTool[] = [
       // render at VIEW time (Apache ECharts on the governed metric layer, per-viewer RLS) —
       // there is no external import step, so create_dashboard is persist-only (mirrors
       // /api/dashboards/build).
-      const spec = fromTiles(name, view, charts, user.domains[0]);
+      // The domain is chosen, never guessed from the first entry of the caller's list: that used to
+      // be `platform` for platform admins, so their dashboards landed in the platform repository.
+      const requested = str(args.domain).trim() || undefined;
+      const domain = str(args.id).trim() && hasDashboard(str(args.id).trim()) ? requested : dashboardDomainFor(P(user), requested);
+      const spec = fromTiles(name, view, charts, domain);
       // REPLACE-BY-ID reads the newest copy first, so the store's edit-scope check sees the
       // dashboard as it really is — this process (often the run worker) may not know a dashboard
       // someone else created after it booted, and must not overwrite it as if it were new. If, in
@@ -178,7 +183,7 @@ export const dashboardWriteTools: McpTool[] = [
           fail(`cannot check whether dashboard '${id}' exists right now (the shared store did not answer) — nothing was written; retry, or omit \`id\` to create a new one`, 503);
         }
       }
-      const rec = saveDashboard(P(user), id, spec);
+      const rec = saveDashboard(P(user), id, spec, { domain: requested });
       // FLAG AT CREATE, never silently degrade (Northpeak fix): check every chart's
       // requested members against the served model (registry fallback). The dashboard IS
       // created with its full spec — but any member the served model lacks is reported
