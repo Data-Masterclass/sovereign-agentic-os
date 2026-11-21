@@ -90,6 +90,7 @@ function fakeGateway() {
     async generateKey(input, key) { keys.set(input.alias, state(input, tokenIdOf(key))); },
     async updateKey(tokenId, input) { keys.set(input.alias, state(input, tokenId)); },
     async deleteKey(tokenId) { for (const [a, k] of keys) if (k.tokenId === tokenId) keys.delete(a); },
+    async expireKey() { /* not reached with a grace of 0 */ },
     async renameKey(tokenId, alias) { for (const [a, k] of [...keys]) if (k.tokenId === tokenId) { keys.delete(a); keys.set(alias, k); } },
     async models() { return []; },
   };
@@ -124,7 +125,8 @@ function deployment() {
     opa: { putGrants: async () => undefined, mergeRequiresApproval: async () => undefined, decision: async (_p, tool) => ({ effect: tool === 'connection_ghost' ? 'deny' : 'allow', reason: '' }) },
     litellm: gw.admin,
     langfuse: { ensureProject: async () => undefined, tracesFor: async () => 0 },
-    keys: { store: postgresSystemKeyStore(db), journal: memorySystemKeyJournal(), kek: () => deploymentKek() },
+    // Grace 0: the old value must be refused right after the rotation here (the grace is tested in system-key-migration.test.ts).
+    keys: { store: postgresSystemKeyStore(db), journal: memorySystemKeyJournal(), kek: () => deploymentKek(), retireGraceSeconds: 0 },
     // The models this run will actually ask for: the role models the engine resolves.
     runModels: () => [config.litellmReasoningModel, config.litellmToolsModel, 'sovereign-mock'],
   };

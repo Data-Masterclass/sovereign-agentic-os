@@ -60,6 +60,7 @@ after(async () => { for (const p of pools) await p.end(); await dropIsolated(); 
 
 function gateway(crashOnGenerate: { once: boolean }) {
   const byAlias = new Map<string, LiteLlmKeyState>();
+  const expiring = new Set<string>();
   const admin: LiteLlmClient = {
     async keysByAlias(alias) { const k = byAlias.get(alias); return k ? [{ ...k }] : []; },
     async generateKey(input, key) {
@@ -73,9 +74,10 @@ function gateway(crashOnGenerate: { once: boolean }) {
       for (const [a, k] of [...byAlias]) if (k.tokenId === tokenId) { byAlias.delete(a); byAlias.set(alias, k); }
     },
     async deleteKey(tokenId) { for (const [a, k] of [...byAlias]) if (k.tokenId === tokenId) byAlias.delete(a); },
+    async expireKey(tokenId) { expiring.add(tokenId); },
     async models() { return []; },
   };
-  return { byAlias, admin };
+  return { byAlias, admin, expiring };
 }
 
 function deps(sql: SqlClient, litellm: LiteLlmClient): LiveDeps {
@@ -107,9 +109,8 @@ test('a crash after STAGE is finished by the NEXT process from Postgres, with th
   assert.equal(done.ok, true, JSON.stringify(done.failed));
   const record = (await postgresSystemKeyStore(second.sql).get('sys_pg'))!;
   assert.equal(record.tokenId, staged!.record.tokenId, 'the second process used the value the first one staged');
-  assert.equal(gw.byAlias.size, 1);
   assert.equal(gw.byAlias.get('os-sys_pg')!.tokenId, tokenIdOf(openSystemKey(record, KEK)));
-  assert.ok(![...gw.byAlias.values()].some((k) => k.tokenId === tokenIdOf(old)), 'the old key is gone');
+  assert.ok(gw.expiring.has(tokenIdOf(old)), 'the old key was given its expiry (grace period), after the new one was stored');
   assert.equal(await postgresSystemKeyJournal(second.sql).staged('sys_pg'), null);
 
   const worker = await process_();

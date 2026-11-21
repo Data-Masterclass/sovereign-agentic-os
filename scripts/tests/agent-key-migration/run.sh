@@ -10,7 +10,9 @@
 #   - registers a system's OLD guessable key the way old releases did, and checks it works (200);
 #   - migrates through os-ui's real LiteLLM admin client (`realLitellm`): stage → rename aside →
 #     register → store → delete, polling the gateway's inference auth between steps;
-#   - checks the old value is answered 401 afterwards, the new one 200, and a re-run is a no-op;
+#   - checks the old value still works during its grace period (LiteLLM key expiry), is answered
+#     401 `expired_key` after it, the new one 200, the sweep removes the expired key, and a re-run
+#     is a no-op;
 #   - crashes the pass after the rename, re-runs, and checks one new value and no leftover key.
 # Negative twin, in the same file: a made-up key must be 401 (the gateway really authenticates).
 set -euo pipefail

@@ -139,6 +139,8 @@ export type LiteLlmKeyRow = {
   team_id?: string | null;
   user_id?: string | null;
   metadata?: Record<string, unknown> | null;
+  /** When LiteLLM stops accepting the key (ISO time), or null for no expiry. */
+  expires?: string | null;
 };
 
 /** `/guardrails/list` — PII and safety scanners at the gateway edge. */
