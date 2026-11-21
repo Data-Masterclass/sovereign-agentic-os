@@ -88,7 +88,7 @@ dagster:
                 - {name: repos-checkout, emptyDir: {}}
               containers:
                 - name: repo-sync
-                  image: ghcr.io/data-masterclass/sovereign-os/dagster:0.3.2@sha256:48616a492124cea26c289fcbf2eb7014a98dfa5f940cf223e553addb76c8f9bb
+                  image: ghcr.io/data-masterclass/sovereign-os/dagster:0.4.0@sha256:b919d55fe9161128ace6a22894c43f2569f77b7639cd4d92e486f0e34734cea3
                   imagePullPolicy: IfNotPresent
                   command:
                   - /bin/sh
@@ -153,8 +153,8 @@ dagster:
       - name: sovereign
         image:
           repository: ghcr.io/data-masterclass/sovereign-os/dagster
-          tag: "0.3.2"
-          digest: "sha256:48616a492124cea26c289fcbf2eb7014a98dfa5f940cf223e553addb76c8f9bb"
+          tag: "0.4.0"
+          digest: "sha256:b919d55fe9161128ace6a22894c43f2569f77b7639cd4d92e486f0e34734cea3"
           pullPolicy: IfNotPresent
         dagsterApiGrpcArgs:
           - "--python-file"
@@ -192,7 +192,7 @@ dagster:
             mountPath: /repos-checkout
         sidecarContainers:
           - name: repo-sync
-            image: ghcr.io/data-masterclass/sovereign-os/dagster:0.3.2@sha256:48616a492124cea26c289fcbf2eb7014a98dfa5f940cf223e553addb76c8f9bb
+            image: ghcr.io/data-masterclass/sovereign-os/dagster:0.4.0@sha256:b919d55fe9161128ace6a22894c43f2569f77b7639cd4d92e486f0e34734cea3
             imagePullPolicy: IfNotPresent
             command: ["/bin/sh", "/opt/dagster/app/repo-sync.sh"]
             env:
