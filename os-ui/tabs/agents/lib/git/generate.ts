@@ -59,7 +59,11 @@ import { generateAgentModule, osLayerSystemDoc, type HostLock, type ModuleVersio
  * README and an OS-layer-only `system.yaml`; `graph.json` and `agents/<id>.md` are not written,
  * because `graph.mjs` and `prompts/` replace them.
  */
-export type GenerateOptions = { module?: { versions: ModuleVersions; hostLock: HostLock } };
+export type GenerateOptions = {
+  module?: { versions: ModuleVersions; hostLock: HostLock };
+  /** Which systems get the module (decided by the system's own domain). Absent: every system. */
+  moduleFor?: (s: SnapshotSystem) => boolean;
+};
 
 /** The README footer of a module-form directory; its file names come from the repo layout. */
 const MODULE_FOOTER = [
@@ -344,7 +348,7 @@ export function generateSystemFiles(placed: PlacedSystem, opts: GenerateOptions 
     sys = null; // recorded in the README; the source is still committed above
   }
   let graphError: string | null = null;
-  if (sys && opts.module) {
+  if (sys && opts.module && (opts.moduleFor?.(s) ?? true)) {
     try {
       const mod = generateAgentModule({ id: s.id, slug: placed.slug, sys, disabledAgents: s.disabledAgents, versions: opts.module.versions, hostLock: opts.module.hostLock });
       files.set(`${placed.dir}/system.yaml`, dump(osLayerSystemDoc(sys), { lineWidth: 100, noRefs: true }));
