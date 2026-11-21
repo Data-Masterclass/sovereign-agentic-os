@@ -28,7 +28,10 @@ check "default: new repos stay v1" "grep -A1 'name: OS_REPO_LAYOUT_V2' '$TMP/off
 check "git daemon has the access hook" "grep -q -- '--access-hook=/hooks/access-hook.sh' '$TMP/off.yaml'"
 check "the hook refuses user and platform repos" "grep -q 'user-\*|platform)' '$TMP/off.yaml'"
 check "an unknown migration value fails" "! helm template t '$CHART' --set osUI.dataProjectGit.layout.migration=bogus >/dev/null 2>&1"
-check "apply with today's Dagster image FAILS (deploy order)" "! helm template t '$CHART' --set osUI.dataProjectGit.layout.migration=apply >/dev/null 2>'$TMP/apply.err' && grep -q 'deploy that Dagster image first' '$TMP/apply.err'"
+# Deploy order: an image older than layout.dagsterMinVersion is refused. The chart's own image is now
+# 0.4.0 (>= 0.3.3), so the "too old" case is simulated by raising the minimum above it.
+check "apply with a Dagster image below dagsterMinVersion FAILS (deploy order)" "! helm template t '$CHART' --set osUI.dataProjectGit.layout.migration=apply --set osUI.dataProjectGit.layout.dagsterMinVersion=9.9.9 >/dev/null 2>'$TMP/apply.err' && grep -q 'deploy that Dagster image first' '$TMP/apply.err'"
+check "apply with today's Dagster image still FAILS while no layout digest is recorded" "! helm template t '$CHART' --set osUI.dataProjectGit.layout.migration=apply >/dev/null 2>&1"
 
 python3 - "$CHART/values.yaml" "$TMP" <<'PY'
 import re, sys, yaml
