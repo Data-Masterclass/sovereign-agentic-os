@@ -35,7 +35,7 @@ secrets:
            STACKIT_API_KEY, UI_PASSWORD, UI_USERNAME, masterkey]
   object-storage-credentials:   {source: chart, type: Opaque, keys: [AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY]}
   os-ui-graph:                  {source: chart, type: Opaque, keys: [GRAPH_CLIENT_SECRET]}
-  os-ui-session:                {source: chart, type: Opaque, keys: [OS_SESSION_SECRET]}
+  os-ui-session:                {source: chart, type: Opaque, keys: [OS_MCP_TOKEN_SECRET, OS_SESSION_SECRET]}
   os-ui-smtp:                   {source: chart, type: Opaque, keys: [SMTP_PASS]}
   polaris-credentials:          {source: chart, type: Opaque, keys: [POLARIS_BOOTSTRAP_CREDENTIALS]}
   postgres-agent-runs-credentials: {source: chart, type: kubernetes.io/basic-auth, keys: [password, username]}
