@@ -829,6 +829,7 @@ jobs:
         working-directory: os-ui
         env:
           OPA_IT_URL: http://127.0.0.1:18181
+          OPA_IT_TOKENS_FILE: ${{ runner.temp }}/opa-tokens.json
         run: node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test ../tests/opa/guardrails-push.int.test.ts
       - name: OPA logs (on failure)
         if: failure()

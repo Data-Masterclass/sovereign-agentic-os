@@ -9,7 +9,9 @@
  *     the test can tell the fixed module from the old one;
  *   - the boot reconcile (`restoreGuardrails`, the registered OPA state source) re-uploads the
  *     module, replacing an old live one, and the call is denied afterwards;
- *   - the Rules panel's "applied" row is `ok` only when OPA really denies a violating call.
+ *   - the Rules panel's "applied" row is `ok` only when OPA really denies a violating call;
+ *   - with OPA's API authentication on (#217), os-ui's upload goes through the shared OPA client with
+ *     its token; TWIN: the same upload without a token is refused.
  *
  * Run: OPA_IT_URL=http://127.0.0.1:18181 node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test ../tests/opa/guardrails-push.int.test.ts
  */
@@ -20,6 +22,8 @@ const OPA = process.env.OPA_IT_URL;
 if (!OPA) throw new Error('guardrails-push.int.test needs OPA_IT_URL (a real OPA container)');
 process.env.OPA_URL = OPA;
 process.env.OS_OPA_DATA_BUNDLE = '';
+// The writer token os-ui presents in the cluster (#217); set before config is read.
+const { opaFetch, tokens } = await import('./it-auth.ts');
 {
   const { createServer } = await import('node:http');
   const srv = createServer((req, res) => {
@@ -44,11 +48,11 @@ const store = await import('@tabs/knowledge/lib/store');
 const { WF_MD } = await import('@tabs/knowledge/lib/git/fixtures');
 
 async function allow(pkg: string, violations: string[]): Promise<unknown> {
-  const res = await fetch(`${OPA}/v1/data/${pkg.replace(/\./g, '/')}/allow`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ input: { violations } }) });
+  const res = await opaFetch(`${OPA}/v1/data/${pkg.replace(/\./g, '/')}/allow`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ input: { violations } }) });
   return ((await res.json()) as { result?: unknown }).result;
 }
 async function putPolicy(id: string, rego: string): Promise<void> {
-  const r = await fetch(`${OPA}/v1/policies/${id}`, { method: 'PUT', headers: { 'content-type': 'text/plain' }, body: rego });
+  const r = await opaFetch(`${OPA}/v1/policies/${id}`, { method: 'PUT', headers: { 'content-type': 'text/plain' }, body: rego });
   assert.equal(r.status, 200, await r.text());
 }
 
@@ -88,4 +92,12 @@ test('the Rules panel ticks "enforced" only when OPA really denies a violating c
   const ok = await applyGuardrails(wf);
   assert.equal(ok.apply.verified, true);
   assert.match(ok.apply.detail, /denies a call that reports a violated guardrail/);
+});
+
+test('TWIN: under OPA API authentication, a policy upload without the token is refused', { skip: tokens.writer ? false : 'OPA_IT_TOKENS_FILE not set (OPA without API authentication)' }, async () => {
+  const c = compileGuardrails(parseWorkflow(WF_MD));
+  const r = await fetch(`${OPA}/v1/policies/knowledge-${c.workflowId}`, { method: 'PUT', headers: { 'content-type': 'text/plain' }, body: c.rego });
+  assert.ok(r.status === 401 || r.status === 403, `no token → refused, got ${r.status}`);
+  const d = await fetch(`${OPA}/v1/data/${c.packagePath.replace(/\./g, '/')}/guardrails`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: '[]' });
+  assert.ok(d.status === 401 || d.status === 403, `no token → data write refused, got ${d.status}`);
 });
