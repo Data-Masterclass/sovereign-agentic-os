@@ -82,24 +82,18 @@ test('PIN · every template a NEW app can be seeded from carries the pin, locked
   }
 });
 
-test('PIN · the Dockerfiles that run an install set the pin themselves, and copy the .npmrc in first', () => {
+test('PIN · the Dockerfiles that run an install REQUIRE the app\'s .npmrc (the pin) before it, and never name the scope', () => {
   for (const template of ['vite-os', 'sovereign-app', 'website', 'empty', 'nextjs-supabase'] as AppTemplateKey[]) {
     for (const tree of [templateFiles(template, 'App', SLUG), lockedSeed(template, templateFiles(template, 'App', SLUG), SLUG)]) {
-      const lines = tree.find((f) => f.path === 'Dockerfile')!.content.split('\n');
-      const installs = lines.filter((l) => /^RUN .*npm (ci|install)/.test(l));
-      assert.ok(installs.length > 0, `${template}: has an install step`);
-      for (const l of installs) {
-        // Every `npm ci` / `npm install` on the line runs with the pin in its environment.
-        assert.equal(
-          (l.match(/npm (ci|install)/g) ?? []).length,
-          (l.match(new RegExp(`env "npm_config_@sovereign-os:registry=${SCOPE_PIN_REGISTRY}" npm (ci|install)`, 'g')) ?? []).length,
-          `${template}: ${l}`,
-        );
-      }
-      const copy = lines.findIndex((l) => /^COPY .*\.npmrc\*/.test(l));
+      const text = tree.find((f) => f.path === 'Dockerfile')!.content;
+      const lines = text.split('\n');
       const install = lines.findIndex((l) => /^RUN .*npm (ci|install)/.test(l));
-      assert.ok(copy >= 0 && copy < install, `${template}: the .npmrc is copied before the install`);
-      assert.ok(lines.includes(`RUN npm config set "@sovereign-os:registry" "${SCOPE_PIN_REGISTRY}"`), `${template}: user-level pin`);
+      assert.ok(install >= 0, `${template}: has an install step`);
+      // A plain `.npmrc` (no glob): the build fails without the pin instead of installing unpinned.
+      const copy = lines.findIndex((l) => /^COPY /.test(l) && l.split(/\s+/).includes('.npmrc'));
+      assert.ok(copy >= 0 && copy < install, `${template}: the .npmrc is copied, required, before the install`);
+      assert.ok(tree.some((f) => f.path === '.npmrc' && hasScopePin(f.content)), `${template}: the tree carries the pin`);
+      assert.doesNotMatch(text, /sovereign-os/i, `${template}: the Dockerfile never names the scope (the scan flags any mention)`);
     }
   }
 });
@@ -346,15 +340,15 @@ test('DETECT · a .yarnrc.yml npmScopes entry or a bunfig.toml install.scopes en
     assert.equal(found.length, 1, `${path}: ${content}`);
     assert.equal(found[0].path, path);
   }
-  // twins: the same files configuring another scope, or nothing about scopes, are clean.
+  // twins: the same files with no scope registry at all are clean.
   const other = [
-    { path: '.yarnrc.yml', content: 'nodeLinker: node-modules\nnpmScopes:\n  acme:\n    npmRegistryServer: "https://npm.acme.example/"\n' },
-    { path: 'bunfig.toml', content: '[install.scopes]\n"@acme" = "https://npm.acme.example/"\n[install]\nfrozenLockfile = true\n' },
+    { path: '.yarnrc.yml', content: 'nodeLinker: node-modules\n' },
+    { path: 'bunfig.toml', content: '[install]\nfrozenLockfile = true\n' },
   ];
   assert.deepEqual(blocking(scopePinFindings([...lockedVite(), ...other])), []);
 });
 
-test('PUSH · a .yarnrc.yml or bunfig.toml that configures the scope is refused; one for another scope is accepted', () => {
+test('PUSH · a .yarnrc.yml or bunfig.toml that configures the scope is refused; one without scope registries is accepted', () => {
   assert.throws(() => assertPushable([{ path: '.yarnrc.yml', content: YARNRC_SCOPE }]), /@sovereign-os/);
   for (const content of BUNFIG_SCOPES) assert.throws(() => assertPushable([{ path: 'bunfig.toml', content }]), /@sovereign-os/, content);
   assert.throws(() => assertPushable([{ path: '.yarnrc.yml', content: 'npmScopes: [not: valid' }]), /could not be read/);
@@ -377,5 +371,63 @@ test('DETECT · bun add, bunx and pnpx of the scope in a Dockerfile block; so do
   // twins: the scaffold scripts and an unrelated bunx are clean.
   assert.deepEqual(blocking(scopePinFindings(lockedVite())), []);
   const unrelated = replace(lockedVite(), 'package.json', editJson((j) => { j.scripts = { ...(j.scripts ?? {}), fmt: 'bunx prettier@3.3.3 --write .' }; }));
+  assert.deepEqual(blocking(scopePinFindings(unrelated)), []);
+});
+
+// ----------------------------------- follow-ups 3: parse the config files for real; any scope mention in a Dockerfile --
+
+test('SCOPE CONFIG · any scope registry in bunfig.toml, .yarnrc or .yarnrc.yml is refused (scan and push) — parsed, not matched', () => {
+  const refused: [string, string][] = [
+    // bunfig.toml (TOML: dotted keys, quoted keys with escapes, any scope)
+    ['bunfig.toml', '[install]\nscopes."@sovereign-os" = "https://registry.example/"\n'],
+    ['bunfig.toml', 'install.scopes."@sovereign-os" = "https://registry.example/"\n'],
+    ['bunfig.toml', '[install]\n"sc\\u006fpes" = { "@x" = "https://registry.example/" }\n'],
+    ['bunfig.toml', '[install.scopes]\n"@acme" = "https://npm.acme.example/"\n'],
+    // Yarn 1 .yarnrc
+    ['.yarnrc', '"@sovereign-os:registry" "https://registry.example/"\n'],
+    ['.yarnrc', '@acme:registry https://npm.acme.example/\n'],
+    ['web/.yarnrc', '"@sovereign-os:regis\\u0074ry" "https://registry.example/"\n'],
+    // Yarn Berry .yarnrc.yml, any scope
+    ['.yarnrc.yml', 'npmScopes:\n  acme:\n    npmRegistryServer: "https://npm.acme.example/"\n'],
+  ];
+  for (const [path, content] of refused) {
+    assert.equal(blocking(scopePinFindings([...lockedVite(), { path, content }])).length, 1, `scan: ${path}: ${content}`);
+    assert.throws(() => assertPushable([{ path, content }]), /scope registr|could not be read/, `push: ${path}: ${content}`);
+  }
+  // Files that cannot be parsed are refused as unreadable.
+  for (const [path, content] of [['bunfig.toml', '[install\nscopes = '], ['.yarnrc', '"unterminated value\n']] as const) {
+    assert.throws(() => assertPushable([{ path, content }]), /could not be read/, path);
+    assert.equal(blocking(scopePinFindings([...lockedVite(), { path, content }])).length, 1, path);
+  }
+  // twins: the same files without any scope registry are accepted and clean.
+  const fine: [string, string][] = [
+    ['bunfig.toml', '[install]\nfrozenLockfile = true\n# scopes are not configured here\n'],
+    ['.yarnrc', '--install.frozen-lockfile true\nnetwork-timeout 600000\n'],
+    ['.yarnrc.yml', 'nodeLinker: node-modules\n'],
+  ];
+  for (const [path, content] of fine) {
+    assert.doesNotThrow(() => assertPushable([{ path, content }]), path);
+    assert.deepEqual(blocking(scopePinFindings([...lockedVite(), { path, content }])), [], path);
+  }
+});
+
+test('DOCKERFILE · any mention of the scope blocks, including an ARG/ENV value used later, and a URL-encoded one', () => {
+  const bad = [
+    'ARG P=@sovereign-os/ui\nRUN bun add $P',
+    'ENV S=@sovereign-os\nRUN npm i $S/ui',
+    'RUN npm install https://registry.example/%40sovereign-os%2fui/-/ui-1.0.0.tgz',
+    'LABEL x="@Sovereign-OS/ui"',
+  ];
+  for (const extra of bad) {
+    const tree = replace(lockedVite(), 'Dockerfile', (c) => `${c.trimEnd()}\n${extra}\n`);
+    const found = blocking(scopePinFindings(tree));
+    assert.equal(found.length, 1, extra);
+    assert.equal(found[0].path, 'Dockerfile', extra);
+  }
+  // twins: every scaffold Dockerfile is clean, and so is an unrelated ARG/ENV.
+  for (const template of ALL_TEMPLATES) {
+    assert.deepEqual(blocking(scopePinFindings(lockedSeed(template, templateFiles(template, 'App', SLUG), SLUG))), [], template);
+  }
+  const unrelated = replace(lockedVite(), 'Dockerfile', (c) => `${c.trimEnd()}\nARG P=serve@14.2.4\nRUN npm install -g $P\n`);
   assert.deepEqual(blocking(scopePinFindings(unrelated)), []);
 });
