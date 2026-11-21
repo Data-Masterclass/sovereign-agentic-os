@@ -12,6 +12,12 @@
 #   scripts/ops/rotate-secrets.sh password [common]
 #   scripts/ops/rotate-secrets.sh password-db --overlay <password overlay> [--apply | --rollback] [common]
 #   scripts/ops/rotate-secrets.sh verify-password --overlay <password overlay> [common]
+#   ROUND 2 — the datastores and the shared agent key (docs/ops/WP-secret-rotation.md):
+#   scripts/ops/rotate-secrets.sh ds-prepare [--only postgres,clickhouse,valkey,minio,litellm-master,agent-key] [common]
+#   scripts/ops/rotate-secrets.sh ds-plan    --overlay <file> [--chart <dir>] [common]
+#   scripts/ops/rotate-secrets.sh ds-rekey   <postgres|clickhouse|valkey|minio|litellm-master|agent-key> --overlay <file> [--apply] [--rollback] [common]
+#   scripts/ops/rotate-secrets.sh ds-verify  --overlay <file> [--component <c>] [common]   (DS_FINISHED=1 after ds-finish)
+#   scripts/ops/rotate-secrets.sh ds-finish  --overlay <file> [--apply] [common]
 #   common: --context <kube context> (dmagenticos) --namespace <ns> (agentic-os) --release <name> (agentic-os)
 #
 # What rotates: the LiteLLM master key and salt key, the Langfuse project key pair, the Langfuse
@@ -63,8 +69,12 @@ umask 077
 CTX=dmagenticos NS=agentic-os REL=agentic-os
 OVERLAY="" CHART="" OS_UI_EXEC="" FORCE_PATH="" APPLY="" ROLLBACK=""
 CMD=${1:-}; [ $# -gt 0 ] && shift
+DS_COMPONENT="" DS_ONLY=""
+if [ "$CMD" = ds-rekey ] && [ $# -gt 0 ] && [ "${1#--}" = "$1" ]; then DS_COMPONENT=$1; shift; fi
 while [ $# -gt 0 ]; do
   case $1 in
+    --only) DS_ONLY=$2; shift ;;
+    --component) DS_COMPONENT=$2; shift ;;
     --context) CTX=$2; shift ;;
     --namespace) NS=$2; shift ;;
     --release) REL=$2; shift ;;
@@ -74,7 +84,7 @@ while [ $# -gt 0 ]; do
     --os-ui-exec) OS_UI_EXEC=1 ;;
     --apply) APPLY=1 ;;
     --rollback) ROLLBACK=1 ;;
-    -h|--help) sed -n '2,62p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,70p' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
   shift
@@ -119,7 +129,15 @@ port_forward() {
   cat "$log" >&2; rm -f "$log"; die "port-forward to svc/$1 did not start"
 }
 stop_forward() { if [ -n "$PF_PID" ]; then kill "$PF_PID" 2>/dev/null || true; wait "$PF_PID" 2>/dev/null || true; fi; PF_PID=""; }
-trap stop_forward EXIT
+# bash 3.2 (macOS /bin/bash) ends a run that hits an unset variable with exit status 0 when an
+# EXIT trap is set. A run that did not reach the end of its command is therefore a FAILURE here.
+RS_DONE="" PLAN_DIR=""
+rs_exit() {
+  local s=$?
+  stop_forward; if [ -n "$PLAN_DIR" ]; then rm -rf "$PLAN_DIR"; fi
+  if [ "$s" = 0 ] && [ -z "$RS_DONE" ]; then echo "ROTATE_FAILED — the run stopped before its end (an unset variable or an internal error, above)" >&2; exit 1; fi
+}
+trap rs_exit EXIT
 
 # call <bearer> <method> <path> [json body] — prints "<http code>\n<body>"; the bearer goes in on stdin.
 call() {
@@ -340,11 +358,15 @@ plan() {
 # overlay) compared with the live manifest. Read-only.
 render_diff() {
   # The chart must be the live release or newer on its line: refuse a base older than the live tag.
+  if k get deploy os-ui >/dev/null 2>&1; then
   local live_tag base_dir; live_tag="os-ui-v$(live_version)"; base_dir=$(cd "$CHART" && git rev-parse --show-toplevel 2>/dev/null) || die "the chart at $CHART is not in a git checkout; cannot check its base"
   git -C "$base_dir" rev-parse -q --verify "refs/tags/$live_tag" >/dev/null || die "the chart's checkout does not know the live tag $live_tag (git fetch --tags)"
   git -C "$base_dir" merge-base --is-ancestor "$live_tag" HEAD || die "the chart's checkout is not based on the live release $live_tag: deploying it would roll production back. Base the rotation branch on $live_tag."
   echo "   ok   the chart's checkout contains the live release $live_tag"
-  PLAN_DIR=$(mktemp -d); local w=$PLAN_DIR; trap 'stop_forward; rm -rf "$PLAN_DIR"' EXIT
+  else
+    echo "   NOTE this release has NO os-ui Deployment, so there is no live tag to compare the chart's base with (a rehearsal cluster, not production): base check skipped"
+  fi
+  PLAN_DIR=$(mktemp -d); local w=$PLAN_DIR
   say "live release values and manifest (read-only)"
   helm --kube-context "$CTX" get values "$REL" -n "$NS" -o yaml > "$w/live.yaml"
   helm --kube-context "$CTX" get manifest "$REL" -n "$NS" > "$w/before.yaml"
@@ -644,7 +666,13 @@ verify_password() {
   [ "$fails" -eq 0 ] && echo "PASSWORD_VERIFY_OK" || { echo "PASSWORD_VERIFY_FAILED ($fails)"; exit 1; }
 }
 
+. "$REPO/scripts/lib/rotate-datastores.sh"
 case $CMD in
+  ds-prepare) ds_prepare ;;
+  ds-plan) ds_plan ;;
+  ds-rekey) ds_rekey ;;
+  ds-verify) ds_verify ;;
+  ds-finish) ds_finish ;;
   prepare) prepare ;;
   plan) plan ;;
   baseline) baseline ;;
@@ -652,5 +680,6 @@ case $CMD in
   password) password ;;
   password-db) password_db ;;
   verify-password) verify_password ;;
-  *) sed -n '2,62p' "$0"; exit 2 ;;
+  *) sed -n '2,70p' "$0"; RS_DONE=1; exit 2 ;;
 esac
+RS_DONE=1
