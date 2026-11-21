@@ -167,6 +167,15 @@ credentials from the **run pod's** env instead.
   `DAGSTER_RELOAD_LOCATION=sovereign`, `OS_INDEX_URL`/`REPO_SYNC_INDEX_URL` point at os-ui,
   `OS_QUARANTINE_THRESHOLD=10`. The Admin Console's version string now reads the real 1.13.11.
 
+## What a dbt run sees
+
+dbt runs through `repo.py ScrubbedDbtCliResource` (the legacy wiring and, swapped in, a repo's own
+native `DbtCliResource`). It is dagster-dbt's resource unchanged, except that the dbt process gets
+only `os_projects.dbt_run_env()`: `DBT_*`, `TRINO_*`, `LC_*`, `OS_PRINCIPAL` and the process basics
+(`PATH`, `HOME`, `LANG`, `TZ`, CA bundles). Nothing else the run pod holds reaches dbt. Proof:
+`tests/image/dbt_env.py` (real dagster-dbt + dbt-core: credentials render as their default, a Trino
+setting passes, `dbt build` works on a real Trino; the stock resource is the negative twin).
+
 ## Access (UI)
 ```bash
 kubectl -n agentic-os port-forward svc/agentic-os-dagster-webserver 3070:80

@@ -166,6 +166,25 @@ PARSE_ENV_FIXED: Dict[str, str] = {
 }
 
 
+#: What a dbt RUN (build, run-operation) inherits from the run pod: dbt's own settings, the Trino
+#: connection the generated profiles.yml reads, the principal, and what a process needs to start.
+#: Nothing else — the pod also holds the Dagster instance-database login and other credentials,
+#: and a model can render any variable with `env_var()`. dagster-dbt adds its own `DBT_*` and
+#: `DAGSTER_DBT_CLI` on top (dagster_dbt.core.resource.DbtCliResource.cli).
+DBT_RUN_ENV_NAMES: Tuple[str, ...] = (
+    "PATH", "HOME", "LANG", "LANGUAGE", "TZ", "TMPDIR", "USER", "PWD",
+    "SSL_CERT_FILE", "SSL_CERT_DIR", "REQUESTS_CA_BUNDLE",
+    "OS_PRINCIPAL",
+)
+DBT_RUN_ENV_PREFIXES: Tuple[str, ...] = ("DBT_", "TRINO_", "LC_")
+
+
+def dbt_run_env(ambient: Optional[Mapping[str, str]] = None) -> Dict[str, str]:
+    """The allowlisted subset of `ambient` (default: this process's env) a dbt run may see."""
+    src = os.environ if ambient is None else ambient
+    return {k: v for k, v in src.items() if k in DBT_RUN_ENV_NAMES or k.startswith(DBT_RUN_ENV_PREFIXES)}
+
+
 def parse_env(ambient: Optional[Mapping[str, str]] = None) -> Dict[str, str]:
     """The COMPLETE environment `dbt parse` runs with — an allowlist, never the inherited one."""
     src = os.environ if ambient is None else ambient

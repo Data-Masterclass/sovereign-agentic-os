@@ -71,6 +71,35 @@ OS_INDEX_URL = os.environ.get("OS_INDEX_URL", "")
 OS_TOKEN = os.environ.get("AGENT_RUNTIME_TOKEN", "")
 QUARANTINE_THRESHOLD = int(os.environ.get("OS_QUARANTINE_THRESHOLD", str(osp.QUARANTINE_THRESHOLD)))
 
+class ScrubbedDbtCliResource(DbtCliResource):
+    """dagster-dbt's `DbtCliResource`, unchanged, except that the dbt process it starts sees only
+    `os_projects.dbt_run_env()` — dbt's and dbt-trino's settings, never a credential of the run pod
+    (a model can render any variable with `env_var()`). dagster-dbt builds the subprocess env from
+    `os.environ` inside `cli()`, so the environment is narrowed for exactly that call and restored
+    afterwards; the run worker itself keeps everything it needs."""
+
+    def cli(self, args, *args_, **kwargs):  # type: ignore[override]
+        keep = dict(os.environ)
+        try:
+            os.environ.clear()
+            os.environ.update(osp.dbt_run_env(keep))
+            return super().cli(args, *args_, **kwargs)
+        finally:
+            os.environ.clear()
+            os.environ.update(keep)
+
+
+def _scrubbed_resources(resources) -> Dict[str, object]:
+    """A repo's own resources with every `DbtCliResource` swapped for `ScrubbedDbtCliResource`."""
+    out: Dict[str, object] = {}
+    for k, v in dict(resources or {}).items():
+        if isinstance(v, DbtCliResource) and not isinstance(v, ScrubbedDbtCliResource):
+            fields = {f: getattr(v, f) for f in type(v).model_fields if getattr(v, f, None) is not None}
+            v = ScrubbedDbtCliResource(**fields)
+        out[k] = v
+    return out
+
+
 class PrefixedTranslator(DagsterDbtTranslator):
     """Asset keys `[<domain>, <node>]`, grouped per domain (`group` = the unique Dagster name)."""
 
@@ -179,7 +208,7 @@ def wrap_domain(p: osp.Project, defs: Definitions) -> Tuple[Definitions, Dict[st
         jobs=defs.jobs,
         schedules=schedules,
         sensors=defs.sensors,
-        resources=defs.resources,
+        resources=_scrubbed_resources(defs.resources),
     )
     return wrapped, principals
 
@@ -375,7 +404,7 @@ def _wire_project(p: osp.Project, dom: str) -> Dict[str, object]:
     resources: Dict[str, object] = {}
     schedule_principals: Dict[str, str] = {}
     resource_key = f"dbt_{dom}"
-    resources[resource_key] = DbtCliResource(project_dir=p.path, profiles_dir=p.path)
+    resources[resource_key] = ScrubbedDbtCliResource(project_dir=p.path, profiles_dir=p.path)
 
     @dbt_assets(
         manifest=Path(p.manifest),
