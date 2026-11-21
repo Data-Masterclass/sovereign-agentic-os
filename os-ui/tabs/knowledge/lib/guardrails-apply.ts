@@ -19,7 +19,8 @@ import { compileGuardrails, type CompiledGuardrails } from '@tabs/knowledge/lib/
 export type GuardrailApplyRow = {
   applied: boolean;
   verified: boolean;
-  status: 'ok' | 'fail';
+  /** ok = OPA enforces them; fail = not enforced; none = the workflow has no hard rules. */
+  status: 'ok' | 'fail' | 'none';
   /** opa-live = uploaded to OPA (interim); opa-bundle = committed data in the os-data bundle (WP-30). */
   policy: 'opa-live' | 'opa-bundle';
   detail: string;
@@ -103,6 +104,12 @@ export async function restoreGuardrails(): Promise<OpaSourceResult> {
 /** Compile a workflow's hard rules and apply→verify them to OPA (interim upload path). */
 export async function applyGuardrails(workflow: Workflow): Promise<GuardrailResult> {
   const compiled = compileGuardrails(workflow);
+  if (compiled.guardrails.length === 0) return { compiled, apply: nothingToEnforce('opa-live') };
   return { compiled, apply: await applyLive(compiled) };
+}
+
+/** A workflow with no hard rules: nothing is uploaded or checked, and the row says exactly that. */
+export function nothingToEnforce(policy: GuardrailApplyRow['policy']): GuardrailApplyRow {
+  return { applied: false, verified: false, status: 'none', policy, detail: 'This workflow has no hard rules, so there is nothing to enforce.' };
 }
 

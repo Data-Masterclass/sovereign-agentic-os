@@ -31,7 +31,7 @@ import { KNOWLEDGE_WORKFLOWS_DIR, knowledgeWorkflowDir } from '@core/infra/repo-
 import { OS_META_KEY, splitFrontmatter } from '@tabs/knowledge/lib/git/bundle';
 import { knowledgeGitEnabled } from '@tabs/knowledge/lib/git/commit';
 import { compileGuardrails } from '@tabs/knowledge/lib/guardrails';
-import type { GuardrailResult } from '@tabs/knowledge/lib/guardrails-apply';
+import { nothingToEnforce, type GuardrailResult } from '@tabs/knowledge/lib/guardrails-apply';
 import type { Workflow } from '@tabs/knowledge/lib/schema';
 
 export type GuardrailDecision = { allow: boolean; reason: string; violated: string[]; guardrails: string[] };
@@ -126,6 +126,7 @@ export async function decideGuardrails(workflowId: string, violations: string[],
 export async function verifyGuardrails(workflow: Workflow, opts: { waitMs?: number } = {}): Promise<GuardrailResult> {
   const compiled = compileGuardrails(workflow);
   const want = [...new Set(compiled.guardrails.map((g) => g.id))].sort();
+  if (want.length === 0) return { compiled, apply: nothingToEnforce('opa-bundle') };
   const { awaitKnowledgeCommits } = await import('@tabs/knowledge/lib/git/commit');
   await awaitKnowledgeCommits();
   const { recompileOsData } = await import('@core/policy/bundle');
