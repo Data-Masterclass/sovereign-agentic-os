@@ -64,10 +64,11 @@ const { builtLayerFqn } = await import('@tabs/data/lib/store-fqn');
 const { viewerToken } = await import('@tabs/metrics/lib/fixtures');
 const { exploreMetric } = await import('@tabs/metrics/lib/build/explore-server');
 const { evaluateAlert } = await import('@tabs/metrics/lib/alerts');
-const { generateAlertFiles } = await import('@tabs/metrics/lib/git/alerts-native');
+const { generateAlertFiles, dbtMetricsByMember } = await import('@tabs/metrics/lib/git/alerts-native');
+const { committedDbt } = await import('@tabs/metrics/lib/git/alerts-fixtures');
 const { alertsModelPath } = await import('@core/infra/repo-layout');
 const { ALERT_RESULT_QUERY } = await import('@tabs/metrics/lib/build/alert-eval-metricflow');
-const { ORDERS } = await import('@tabs/metrics/lib/git/alerts-fixtures');
+const { ORDERS } = await import('./alerts-fixture-dataset.ts');
 
 const V = viewName(ORDERS);
 const RULES = [
@@ -79,6 +80,8 @@ const REPO = () => path.join(WORK, 'repo');
 before(async () => {
   if (skip) return;
   const repo = new Map(generateProject('sales', { domain: 'sales', datasets: [{ dataset: ORDERS, artifacts: {} }], catalogs: {} }, { alertsModelPath: alertsModelPath('v1') }));
+  // The unit tests' literal fixture names the same metrics the real generator commits.
+  assert.deepEqual([...dbtMetricsByMember(repo)], [...dbtMetricsByMember(committedDbt())]);
   const { files, pending } = generateAlertFiles('sales', RULES, repo);
   assert.deepEqual(pending, []);
   for (const [p, c] of files) repo.set(p, c);
