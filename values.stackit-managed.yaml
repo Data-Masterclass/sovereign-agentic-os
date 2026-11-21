@@ -452,3 +452,13 @@ trino:
     iceberg:
       oauth2SecretName: polaris-trino-oauth   # External Secrets -> Secrets Manager
       vendedCredentials: true                 # STACKIT Object Storage vends creds
+
+# --- Observability (WP-05) -----------------------------------------------------
+observability:
+  collector:
+    kubeletStats:
+      # The SKE node network: deploy/terraform/network.tf gives the cluster one /24
+      # (ipv4_prefix_length = 24); live it is 10.0.0.0/24 (node InternalIP 10.0.0.35, Calico
+      # projectcalico.org/IPv4Address 10.0.0.35/24). The Collector's kubelet egress (:10250) is
+      # narrowed to it. Change it with the network.
+      nodeCidrs: ["10.0.0.0/24"]

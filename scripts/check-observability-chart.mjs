@@ -18,7 +18,11 @@
  *     (4) VictoriaLogs' memory limit is at most 512Mi;
  *     (5) os-ui (and os-ui-worker when rendered) get OS_VERSION equal to their own image tag;
  *     (6) the LiteLLM orphan-span option is off by default;
- *     (7) no os-ui source calls a Victoria write or delete path (os-ui only reads).
+ *     (7) no os-ui source calls a Victoria write or delete path (os-ui only reads);
+ *     (8) the Collector's kubelet egress (`otel-collector-kubelet-egress`, rendered under default-deny)
+ *         reaches only TCP 10250 on the node network: every rule has a `to` of ipBlocks only (the
+ *         STACKIT profile sets observability.collector.kubeletStats.nodeCidrs), never any address;
+ *         a laptop render without a node network may stay port-only.
  *   - `--rendered <file>` checks a given manifest stream instead (the negative twins mutate a real
  *     render: scripts/tests/check-observability-chart.test.mjs).
  *   - Loud skip without helm or the subcharts on a laptop; a skip FAILS in CI.
@@ -52,7 +56,7 @@ const EXPECT = {
   'otel-collector-allow-os-only': { target: 'otel-collector', rules: [{ peers: ['os-ui', 'os-ui-worker'], ports: [4317, 4318, 8888, 13133] }] },
 };
 
-export function check(text, { appsNamespace = 'agentic-apps' } = {}) {
+export function check(text, { appsNamespace = 'agentic-apps', nodeNetwork = false } = {}) {
   const docs = yaml.loadAll(text).filter(Boolean);
   const errs = [];
   const byKind = (k, n) => docs.find((d) => d.kind === k && d.metadata?.name === n);
@@ -108,6 +112,15 @@ export function check(text, { appsNamespace = 'agentic-apps' } = {}) {
     if (!env) errs.push(`(5) ${n} has no OS_VERSION`);
     else if (env.value !== tag) errs.push(`(5) ${n} OS_VERSION=${env.value} but it runs image tag ${tag}`);
   }
+  // (8) kubelet egress narrowed to the node network
+  const kp = byKind('NetworkPolicy', 'otel-collector-kubelet-egress');
+  for (const r of kp?.spec?.egress ?? []) {
+    const ports = (r.ports ?? []).map((x) => `${x.protocol ?? 'TCP'}/${x.port}`);
+    if (JSON.stringify(ports) !== '["TCP/10250"]') errs.push(`(8) otel-collector-kubelet-egress: a rule allows ${JSON.stringify(ports)}, expected exactly TCP/10250`);
+    if (!r.to || r.to.length === 0) { if (nodeNetwork) errs.push('(8) otel-collector-kubelet-egress: :10250 to ANY address (set observability.collector.kubeletStats.nodeCidrs)'); }
+    else if (r.to.some((t) => !t.ipBlock || t.podSelector || t.namespaceSelector)) errs.push('(8) otel-collector-kubelet-egress: a destination that is not a node-network ipBlock');
+    else if (r.to.some((t) => /^0\.0\.0\.0\/0$|^::\/0$/.test(t.ipBlock.cidr))) errs.push('(8) otel-collector-kubelet-egress: 0.0.0.0/0 is any address');
+  }
   // (6) LiteLLM option off
   if (cm && yaml.load(cm.data['config.yaml']).service?.pipelines?.['traces/langfuse']) errs.push('(6) the LiteLLM orphan-span option is ON in this render (unsafe today; keep it off)');
   return errs;
@@ -137,8 +150,9 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   else {
     try { execFileSync('helm', ['version'], { stdio: 'ignore' }); } catch { skip('helm not installed'); }
     if (!existsSync(join(CHART, 'charts')) || !readdirSync(join(CHART, 'charts')).some((f) => f.endsWith('.tgz'))) skip('subcharts missing (helm dependency build)');
-    for (const [label, extra] of [['default', []], ['default + worker', ['--set', 'osUI.worker.enabled=true']], ['stackit', ['-f', join(repo, 'values.stackit-managed.yaml')]]]) {
-      errs.push(...check(render(extra)).map((e) => `${label}: ${e}`));
+    // (8) a production (STACKIT) render must narrow the kubelet egress to the node network.
+    for (const [label, extra, nodeNetwork] of [['default', [], false], ['default + worker', ['--set', 'osUI.worker.enabled=true'], false], ['stackit', ['-f', join(repo, 'values.stackit-managed.yaml')], true]]) {
+      errs.push(...check(render(extra), { nodeNetwork }).map((e) => `${label}: ${e}`));
     }
     // (2) a render that names the user-apps namespace must FAIL.
     try {
@@ -150,5 +164,5 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     for (const f of osUiWrites()) errs.push(`(7) os-ui source calls a Victoria write/delete path: ${f}`);
   }
   if (errs.length) { console.error(`${TAG}: FAIL\n  ${errs.join('\n  ')}`); process.exit(1); }
-  console.log(`${TAG}: ok — ingress allow-lists exact, file_log platform-only with secret masking, VictoriaLogs ≤ 512Mi, OS_VERSION = image tag, LiteLLM option off, os-ui only reads`);
+  console.log(`${TAG}: ok — ingress allow-lists exact, file_log platform-only with secret masking, VictoriaLogs ≤ 512Mi, OS_VERSION = image tag, LiteLLM option off, os-ui only reads, kubelet egress on the node network only`);
 }

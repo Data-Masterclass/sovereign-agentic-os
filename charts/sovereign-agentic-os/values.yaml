@@ -2371,6 +2371,10 @@ observability:
     kubeletStats:
       enabled: true
       interval: 30s
+      # Where the kubelets listen (:10250): the node network, as CIDRs. Under default-deny egress the
+      # Collector may reach :10250 ONLY there. Empty = not narrowed (port-only rule; a laptop / kind
+      # render that does not know its node network). values.stackit-managed.yaml sets SKE's.
+      nodeCidrs: []
     # Container logs (/var/log/pods) of the PLATFORM namespaces only, JSON lines parsed into fields,
     # so a LogsQL query can filter on `decision_id` (OPA) or `trace_id` (os-ui). Empty list = the
     # release namespace alone. The user-apps namespace (softwareRunner.namespace) is refused at

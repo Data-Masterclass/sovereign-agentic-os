@@ -9,7 +9,8 @@
  *     render); the clean render passes; each twin edits the parsed manifests (js-yaml) and re-dumps.
  *   - Twins: an extra ingress peer, a wildcard namespace selector, a missing policy, a wildcard and
  *     a user-apps file_log path, no masking step, VictoriaLogs back at 1Gi, a typed-in OS_VERSION
- *     (the verifier's 1.0.0 vs 0.9.20 fake), and the LiteLLM option switched on.
+ *     (the verifier's 1.0.0 vs 0.9.20 fake), and the LiteLLM option switched on; on the STACKIT
+ *     profile the kubelet egress without a node network, to 0.0.0.0/0, to a pod or on an extra port.
  *   - The os-ui write-path scan is checked on a throwaway tree with one offending file.
  *   - Run: node --test scripts/tests/check-observability-chart.test.mjs (needs helm, subcharts, os-ui deps).
  */
@@ -94,4 +95,33 @@ test('twin: os-ui code posting to VictoriaLogs is found (7)', () => {
     writeFileSync(join(root, 'core', 'z', 'ok.ts'), "// select/insert/update are SQL words here, not a path\nexport const ok = 1;\n");
     assert.deepEqual(osUiWrites(root), [join('core', 'z', 'forge.ts')]);
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+// (8) the Collector's kubelet egress on the production (STACKIT) profile: node network only.
+const STACKIT = (...extra) => execFileSync('helm', ['template', 'agentic-os', join(REPO, 'charts', 'sovereign-agentic-os'), '-f', join(REPO, 'values.stackit-managed.yaml'), ...extra], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 });
+const STACKIT_RENDER = STACKIT();
+const kubeletRule = (docs) => find(docs, 'NetworkPolicy', 'otel-collector-kubelet-egress').spec.egress[0];
+const mutateStackit = (fn) => {
+  const docs = yaml.loadAll(STACKIT_RENDER).filter(Boolean);
+  fn(docs);
+  return docs.map((d) => yaml.dump(d, { lineWidth: -1 })).join('---\n');
+};
+const failsProd = (text, re) => {
+  const errs = check(text, { nodeNetwork: true });
+  assert.ok(errs.some((e) => re.test(e)), `expected ${re}, got ${JSON.stringify(errs)}`);
+};
+
+test('the STACKIT render narrows the kubelet egress to the SKE node network and passes (8)', () => {
+  assert.deepEqual(kubeletRule(yaml.loadAll(STACKIT_RENDER).filter(Boolean)).to, [{ ipBlock: { cidr: '10.0.0.0/24' } }]);
+  assert.deepEqual(check(STACKIT_RENDER, { nodeNetwork: true }), []);
+});
+
+test('twin: the STACKIT render with no node network (nodeCidrs=[]) reaches :10250 anywhere and fails (8)', () => {
+  failsProd(STACKIT('--set', 'observability.collector.kubeletStats.nodeCidrs=null'), /\(8\) otel-collector-kubelet-egress: :10250 to ANY address/);
+});
+
+test('twin: 0.0.0.0/0, a pod destination or an extra port on the kubelet rule fails (8)', () => {
+  failsProd(mutateStackit((d) => { kubeletRule(d).to = [{ ipBlock: { cidr: '0.0.0.0/0' } }]; }), /\(8\) .*0\.0\.0\.0\/0 is any address/);
+  failsProd(mutateStackit((d) => { kubeletRule(d).to.push({ podSelector: {} }); }), /\(8\) .*not a node-network ipBlock/);
+  failsProd(mutateStackit((d) => { kubeletRule(d).ports.push({ protocol: 'TCP', port: 22 }); }), /\(8\) .*expected exactly TCP\/10250/);
 });
