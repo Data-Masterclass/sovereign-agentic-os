@@ -12,9 +12,7 @@
  *      into the os-data bundle that OPA downloads.
  * Asserted:
  *   - PARITY: for every fixture workflow × call (no violation, each guardrail, all, a foreign id),
- *     B's `os.guardrails.decision.allow` equals A's generated `allow` for every call that reports no
- *     violated guardrail. For a call that does, today's module allows (it reads `data.guardrails`,
- *     an absolute path, never the path it is PUT at) and B denies; the test asserts both sides;
+ *     B's `os.guardrails.decision.allow` equals A's generated `allow` for every call;
  *   - EJECT: `opa eval` in the chart's OPA image, on a plain `git clone` of the domain repo with the
  *     platform `guardrails.rego`, returns B's decision for every call;
  *   - B has no runtime-uploaded policy module (`GET /v1/policies`);
@@ -159,8 +157,6 @@ test('parity with today, eject equals the OS, no runtime policy module, and git 
   rmSync(join(clone, '.git'), { recursive: true, force: true });
 
   let n = 0;
-  let same = 0;
-  let differ = 0;
   for (const [r, slug] of [[bank, 'bank-submission'], [refund, 'refund-approval']] as const) {
     const compiled = compileGuardrails(parseWorkflow(r.md));
     const ids = compiled.guardrails.map((x) => x.id);
@@ -168,22 +164,13 @@ test('parity with today, eject equals the OS, no runtime policy module, and git 
     for (const violations of calls(ids)) {
       const today = (await A.eval(`${compiled.packagePath.replace(/\./g, '/')}/allow`, { violations })) === true;
       const os = (await B.eval('os/guardrails/decision', { workflow_id: r.id, violations })) as Decision;
-      if (os.violated.length === 0) {
-        assert.equal(os.allow, today, `${r.id} ${JSON.stringify(violations)}: bundle ${os.allow} vs today ${today}`);
-        same++;
-      } else {
-        // Today's generated module reads data.guardrails (absolute), not the path it is PUT at, so
-        // it allows a call that reports a violated guardrail. The platform policy denies it.
-        assert.equal(today, true, 'today allows a reported violation (the defect)');
-        assert.equal(os.allow, false, 'the platform policy denies a reported violation');
-        differ++;
-      }
+      assert.equal(os.allow, today, `${r.id} ${JSON.stringify(violations)}: bundle ${os.allow} vs today ${today}`);
       assert.deepEqual(ejectDecision(clone, r.id, slug, violations), os, `${r.id} ${JSON.stringify(violations)}: eject = OS`);
       assert.deepEqual(await decideGuardrails(r.id, violations, { opaUrl: B.url }), os, 'os-ui asks OPA and relays its decision');
       n++;
     }
   }
-  console.log(`[wp30] ${n} calls over 2 workflows at ${sha.slice(0, 12)}: eject = OS for all ${n}; today = OS for ${same}; ${differ} differ (a reported violation: today allows, the platform policy denies)`);
+  console.log(`[wp30] ${n} calls over 2 workflows at ${sha.slice(0, 12)}: today = bundle = eject for all ${n}`);
 
   const policies = ((await (await fetch(`${B.url}/v1/policies`)).json()) as { result: { id: string }[] }).result.map((p) => p.id);
   assert.ok(policies.some((p) => p.endsWith('guardrails.rego')), `the platform policy is loaded from the chart: ${policies.join(', ')}`);
