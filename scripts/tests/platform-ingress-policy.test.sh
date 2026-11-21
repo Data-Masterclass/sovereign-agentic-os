@@ -14,7 +14,8 @@
 #   g. cert-manager's HTTP-01 solver no longer reachable from the ingress controller on :8089;
 #   h. the OTel Collector no longer admitted to VictoriaLogs (WP-05: logs would stop under default-deny);
 #   i. os-ui no longer admitted to VictoriaMetrics (Monitoring and Platform health would go dark);
-#   j. another namespace admitted to the Collector.
+#   j. another namespace admitted to the Collector;
+#   k. the delete-domain purge Job (polaris-purge) no longer admitted to Polaris.
 # Needs helm, js-yaml (os-ui/node_modules) and the subchart .tgz files.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
@@ -65,4 +66,6 @@ TWIN_TPL=$OBS twin "i (os-ui cut off from VictoriaMetrics)" 'os-ui calls victori
   "s.replace('              app.kubernetes.io/component: os-ui\n      ports:\n        - { protocol: TCP, port: 8428 }', '              app.kubernetes.io/component: os-ui-gone\n      ports:\n        - { protocol: TCP, port: 8428 }', 1)"
 TWIN_TPL=$OBS twin "j (another namespace at the Collector)" 'otel-collector-allow-os-only: admits another namespace' \
   "s.replace('              app.kubernetes.io/component: os-ui-worker\n', '              app.kubernetes.io/component: os-ui-worker\n        - namespaceSelector:\n            matchLabels:\n              kubernetes.io/metadata.name: agentic-apps\n', 1)"
-echo "platform-ingress-policy: ok — the check passes the committed chart and refuses all ten broken twins"
+twin "k (purge Job cut off from Polaris)" 'Job polaris-purge calls polaris:8181 but no ingress policy admits it' \
+  "s.replace('\"polaris-init\" \"polaris-purge\"))', '\"polaris-init\"))', 1)"
+echo "platform-ingress-policy: ok — the check passes the committed chart and refuses all eleven broken twins"
