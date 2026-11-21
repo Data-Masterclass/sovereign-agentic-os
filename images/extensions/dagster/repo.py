@@ -416,6 +416,29 @@ def build_definitions() -> Definitions:
         except Exception as e:  # noqa: BLE001 — the activation window closes it regardless
             context.log.warning("run %s: grant finish failed (%s: %s)", run.run_id, type(e).__name__, e)
 
+    def _lane_check(context: RunStatusSensorContext):
+        """WP-16 detective: a run acts as its owner, so a model authored outside the owner's lane in its
+        selection is flagged — the run is tagged `os/lane_violation` (visible in Dagster and to the OS's
+        run reads) and an error is logged. A selection the OS generated cannot reach another lane
+        (schedules intersect the owner's lane); this catches a hand-launched or older run that does."""
+        run = context.dagster_run
+        keys = run.asset_selection or set()
+        names = [k.path[-1] for k in keys]
+        if not names or not run.tags.get("os/principal"):
+            return
+        try:
+            flagged = osp.lane_check_for_run(CHECKOUT, dict(run.tags), names)
+        except Exception as e:  # noqa: BLE001 — a detective failing must not stop the run
+            context.log.warning("run %s: lane check failed (%s: %s)", run.run_id, type(e).__name__, e)
+            return
+        if flagged is None:
+            context.log.warning("run %s: lane check skipped — no manifest for its commit", run.run_id)
+        elif flagged:
+            context.log.error("run %s (owner %s): models authored outside the owner's lane: %s", run.run_id, run.tags.get("os/principal"), ", ".join(flagged))
+            context.instance.add_run_tags(run.run_id, {"os/lane_violation": ",".join(flagged)[:900]})
+
+    lane_sensor = run_status_sensor(run_status=DagsterRunStatus.STARTED, name="os_lane_check", default_status=DefaultSensorStatus.RUNNING, minimum_interval_seconds=5)(_lane_check)
+
     finish_sensors = [
         run_status_sensor(run_status=st, name=f"os_run_grant_finish_{st.value.lower()}", default_status=DefaultSensorStatus.RUNNING, minimum_interval_seconds=5)(_finish)
         for st in (DagsterRunStatus.SUCCESS, DagsterRunStatus.FAILURE, DagsterRunStatus.CANCELED)
@@ -431,7 +454,7 @@ def build_definitions() -> Definitions:
             asset_checks=bundle["checks"],              # type: ignore[arg-type]
             jobs=bundle["jobs"],                        # type: ignore[arg-type]
             schedules=bundle["schedules"],              # type: ignore[arg-type]
-            sensors=[os_quarantine, os_principals, *finish_sensors],
+            sensors=[os_quarantine, os_principals, lane_sensor, *finish_sensors],
             resources=bundle["resources"],              # type: ignore[arg-type]
         )
         merged = Definitions.merge(legacy, *bundle["defs"])  # type: ignore[misc]
@@ -540,7 +563,7 @@ def _wire_project(p: osp.Project, dom: str) -> Dict[str, object]:
     # os/schedules.yml → one schedule per sync landing (`<model>+`), UTC, Dagster does not fire missed ticks.
     for s in p.schedules:
         name = osp.schedule_name(dom, s.dataset)
-        selection = build_dbt_asset_selection([domain_assets], dbt_select=s.select)
+        selection = build_dbt_asset_selection([domain_assets], dbt_select=s.select, **({"dbt_exclude": s.exclude} if s.exclude else {}))
         sync_job = define_asset_job(name=name, selection=selection, tags=osp.schedule_tags(p.domain, s, p.sha, pinned_env, name))
         jobs.append(sync_job)
         # The repo's own `timezone` is honoured when `zoneinfo` knows it, else UTC with a log
