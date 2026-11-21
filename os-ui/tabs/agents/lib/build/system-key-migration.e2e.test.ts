@@ -11,7 +11,8 @@
  *     chart's LiteLLM image, postgres:17). Without them the suite SKIPS, saying so; with
  *     AGENT_KEY_MIGRATION_E2E_REQUIRED=1 a missing gateway is a FAILURE.
  *   - Admin calls go through os-ui's real client (`realLitellm`: /key/list, /key/generate with a
- *     caller-supplied key, /key/update with key_alias, /key/delete). "Does this key work" is the
+ *     caller-supplied key, /key/update with key_alias, /key/update with duration = LiteLLM's own key
+ *     expiry for the old key's grace period, /key/delete by the sweep once it has expired). "Does this key work" is the
  *     gateway's own inference auth: GET /v1/models with the key as bearer (200 or 401).
  *   - The store and journal are the in-memory implementations (the Postgres ones are proven in
  *     system-key-migration.pg.test.ts); what this file proves is the gateway side.
@@ -42,6 +43,16 @@ if (REQUIRED && (!GW || !MASTER)) throw new Error('AGENT_KEY_MIGRATION_E2E_REQUI
 const skip = GW && MASTER && REQUIRED ? false : 'run scripts/tests/agent-key-migration/run.sh (needs the real LiteLLM image)';
 
 const KEK = deriveKek('e2e-key-encryption-secret-0123456789abcdef');
+const GRACE_S = 3;
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** The sweep against the real gateway: what removes a retiring key once LiteLLM has expired it. */
+async function sweepExpired(id: string) {
+  const { runKeySweep } = await import('@core/infra/agent-system-key-sweep');
+  const { readAllKeys } = await import('@core/infra/litellm-admin');
+  const { adminPost } = await import('@core/infra/litellm-write');
+  return runKeySweep({ keep: new Set([`os-${id}`]), list: () => readAllKeys(), deleteKey: (t) => adminPost('/key/delete', { keys: [t] }, 8000), log: () => undefined });
+}
 const YAML = `
 system: { name: Desk, domain: sales, visibility: Personal }
 entrypoint: worker
@@ -87,7 +98,8 @@ function wire(id: string, litellm: LiteLlmClient) {
     opa: { putGrants: async () => undefined, mergeRequiresApproval: async () => undefined, decision: async () => ({ effect: 'allow', reason: '' }) },
     litellm,
     langfuse: { ensureProject: async () => undefined, tracesFor: async () => 0 },
-    keys: { store, journal, kek: () => KEK },
+    // A short grace so the test can watch LiteLLM's own expiry refuse the old key.
+    keys: { store, journal, kek: () => KEK, retireGraceSeconds: GRACE_S },
     caps: { maxBudget: 5, budgetDuration: '7d', modelMaxBudget: {}, rpmLimit: 300, tpmLimit: 1_000_000, maxParallelRequests: 8 },
     runModels: () => ['sovereign-default'],
   };
@@ -125,17 +137,22 @@ test('REAL GATEWAY: the system keeps a working key at every step; afterwards the
     generateKey: async (i, k) => { await real.generateKey(i, k); await check('generate'); },
     renameKey: async (t, a) => { await real.renameKey(t, a); await check('rename'); },
     deleteKey: async (t) => { await real.deleteKey(t); await check('delete'); },
+    expireKey: async (t, sec) => { await real.expireKey(t, sec); await check('expire'); },
   };
 
   const out = await runKeyMigration(io);
   assert.equal(out.ok, true, JSON.stringify(out.failed));
-  assert.ok(seen.some((s) => s.startsWith('rename')) && seen.some((s) => s.startsWith('generate')) && seen.some((s) => s.startsWith('delete')), seen.join(' '));
+  assert.ok(seen.some((s) => s.startsWith('rename')) && seen.some((s) => s.startsWith('generate')) && seen.some((s) => s.startsWith('expire')), seen.join(' '));
   assert.deepEqual(seen.filter((s) => !s.endsWith(':200')), [], `a run had no working key at: ${seen.join(' ')}`);
 
   const rec = (await store.get(id))!;
   const fresh = openSystemKey(rec, KEK);
-  assert.equal(await auth(old), 401, 'the old guessable key is refused by the real gateway');
+  assert.equal(await auth(old), 200, 'during the grace period a run still holding the old value keeps working');
   assert.equal(await auth(fresh), 200, 'the new key works');
+  await sleep(GRACE_S * 1000 + 2500);
+  assert.equal(await auth(old), 401, 'after the grace period the real gateway refuses the old key (LiteLLM key expiry)');
+  const swept = await sweepExpired(id);
+  assert.equal(swept.ok, true, JSON.stringify(swept));
   const left = await keysOf(id);
   assert.deepEqual(left.map((k) => k.alias), [`os-${id}`], 'one key for the system, no retiring key left behind');
   assert.equal(left[0].token, tokenIdOf(fresh));
@@ -165,7 +182,9 @@ test('REAL GATEWAY: a pass killed right after moving the old key aside is finish
   assert.equal(done.ok, true, JSON.stringify(done.failed));
   const fresh = openSystemKey((await store.get(id))!, KEK);
   assert.equal(tokenIdOf(fresh), staged.record.tokenId, 'the staged value, not a second one');
-  assert.equal(await auth(old), 401);
   assert.equal(await auth(fresh), 200);
+  await sleep(GRACE_S * 1000 + 2500);
+  assert.equal(await auth(old), 401);
+  await sweepExpired(id);
   assert.deepEqual((await keysOf(id)).map((k) => k.alias), [`os-${id}`]);
 });
