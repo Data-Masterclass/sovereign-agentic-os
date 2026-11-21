@@ -26,9 +26,13 @@ KUBECTL=${KUBECTL:-kubectl}
 CODE_LABEL=${DAGSTER_CODE_LABEL:-component=user-deployments}
 WEB_LABEL=${DAGSTER_WEB_LABEL:-component=dagster-webserver}
 
-pod() { # <ctx> <ns> <label>
-  "$KUBECTL" --context "$1" -n "$2" get pods -l "$3" --field-selector=status.phase=Running \
-    -o jsonpath='{.items[0].metadata.name}'
+pod() { # <ctx> <ns> <label> — the first Running pod, or nothing (first install: no pod yet)
+  # `{.items[*]}`, not `{.items[0]}`: kubectl fails the latter on an empty list, and under
+  # `set -e` that aborted the deploy before its first install.
+  local names
+  names=$("$KUBECTL" --context "$1" -n "$2" get pods -l "$3" --field-selector=status.phase=Running \
+    -o jsonpath='{.items[*].metadata.name}') || return 1
+  printf '%s' "${names%% *}"
 }
 
 layout() { # <ctx> <ns>
