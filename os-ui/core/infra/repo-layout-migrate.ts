@@ -193,11 +193,21 @@ export function migrationMode(): 'off' | 'dry-run' | 'apply' {
   return v === 'apply' || v === 'dry-run' ? v : 'off';
 }
 
-/** Every domain repo, one result each; one failing repo never stops the others. */
-export async function migrateAllRepos(opts: GitStoreOptions & { dryRun?: boolean } = {}): Promise<(MigrationResult | { domain: string; error: string })[]> {
+/** The domains the migration is limited to, from `OS_REPO_LAYOUT_MIGRATION_DOMAINS` (chart
+ *  `osUI.dataProjectGit.layout.migrationDomains`, comma-separated). Unset or empty = every domain,
+ *  the contract `migration` has always had; a list lets an operator move one domain first. */
+export function migrationDomains(): string[] | undefined {
+  const list = (process.env.OS_REPO_LAYOUT_MIGRATION_DOMAINS ?? '').split(',').map((d) => d.trim()).filter(Boolean);
+  return list.length ? list : undefined;
+}
+
+/** Every domain repo (or only `domains`), one result each; one failing repo never stops the others. */
+export async function migrateAllRepos(opts: GitStoreOptions & { dryRun?: boolean; domains?: string[] } = {}): Promise<(MigrationResult | { domain: string; error: string })[]> {
   const out: (MigrationResult | { domain: string; error: string })[] = [];
+  const only = opts.domains ? new Set(opts.domains) : null;
   for (const r of await listAllRepos(opts)) {
     if (r.kind !== 'domain' || !r.domain || !r.head) continue;
+    if (only && !only.has(r.domain)) continue;
     try {
       out.push(await migrateRepoLayout(r.domain, opts));
     } catch (e) {

@@ -346,10 +346,12 @@ export async function register(): Promise<void> {
       // reconcile so they all regenerate at the v2 paths; `dry-run` logs the plan and writes
       // nothing. Fail-soft per repo: one repo that cannot migrate stays v1 and is named.
       try {
-        const { migrationMode, migrateAllRepos } = await import('./core/infra/repo-layout-migrate.ts');
+        const { migrationMode, migrationDomains, migrateAllRepos } = await import('./core/infra/repo-layout-migrate.ts');
         const mode = migrationMode();
         if (mode !== 'off') {
-          for (const r of await migrateAllRepos({ dryRun: mode === 'dry-run' })) {
+          const domains = migrationDomains();
+          console.info(`[os-ui] repo layout ${mode}: ${domains ? `domains ${domains.join(', ')} only` : 'every domain'}`);
+          for (const r of await migrateAllRepos({ dryRun: mode === 'dry-run', domains })) {
             if ('error' in r) console.error(`[os-ui] repo layout ${mode}: ${r.domain} NOT migrated — ${r.error}`);
             else if (r.alreadyMigrated) console.info(`[os-ui] repo layout ${mode}: ${r.domain} already v2`);
             else console.info(`[os-ui] repo layout ${mode}: ${r.domain} ${r.from} -> ${r.to}: ${r.moves.length} move(s), ${r.personal.length} personal lane(s) -> ${r.personal.map((x) => x.userRepo).join(', ') || 'none'}, ${r.readmes.length} README(s)${r.sha ? ` — commit ${r.sha.slice(0, 12)}` : ''}`);

@@ -564,6 +564,16 @@
 {{- end }}
 - name: OS_REPO_LAYOUT_MIGRATION
   value: {{ $mig | quote }}
+{{- /* `migrationDomains`: limit the boot migration to these domains (a list or "a,b"); empty =
+  every domain. Repos outside the list stay v1 (each repo's own os/layout.yml decides its layout). */}}
+{{- $md := $lay.migrationDomains }}
+{{- $mds := "" }}
+{{- if kindIs "slice" $md }}{{ $mds = join "," $md }}{{ else if $md }}{{ $mds = toString $md }}{{ end }}
+{{- $mds = regexReplaceAll "\\s*,\\s*" (trim $mds) "," | trimAll "," }}
+{{- if $mds }}
+- name: OS_REPO_LAYOUT_MIGRATION_DOMAINS
+  value: {{ $mds | quote }}
+{{- end }}
 - name: OS_REPO_LAYOUT_V2
   value: {{ eq $mig "apply" | toString | quote }}
 - name: OS_DBT_PROJECT_DIR
