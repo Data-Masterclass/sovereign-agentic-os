@@ -20,7 +20,7 @@ export const manifest: TabManifest = {
   // stays `adminCtx()`-gated — the gate is correct either way, and moving the file
   // would have broken nothing and gained nothing.
   api: ["/api/monitoring", "/api/traces", "/api/status", "/api/platform-admin/billing"],
-  mcpTools: [],
+  mcpTools: ["monitoring"],
   policies: [],
   services: ["langfuse", "clickhouse", "opensearch"],
 };

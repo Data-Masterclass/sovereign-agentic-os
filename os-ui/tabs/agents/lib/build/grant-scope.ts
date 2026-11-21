@@ -221,7 +221,7 @@ export const NO_GRANTED_RESOURCE: Readonly<Record<string, string>> = {
   // meta
   whoami: META, list_capabilities: META, get_guide: META,
   // monitoring / orchestration telemetry
-  get_monitoring_overview: MONITORING, get_run_trace: MONITORING, list_runs: MONITORING, get_dagster_run: MONITORING,
+  get_monitoring_overview: MONITORING, get_monitoring_panels: MONITORING, get_run_trace: MONITORING, list_runs: MONITORING, get_dagster_run: MONITORING,
   // connections
   list_connection_templates: 'lists the connection templates the OS ships; names no connection',
   list_exposed_tables: 'lists the tables exposure sets published to the running user\'s domains; an exposure is not a grant kind, and adopting one creates a NEW dataset',
