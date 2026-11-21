@@ -28,6 +28,13 @@
 */}}
 {{- $u := .Values.osUI }}
 {{- $w := $u.worker }}
+{{- /* WP-53e: a module run loads the team's committed graph.mjs from its domain repo, so with
+     agent modules on the worker READS the repos. The os-repos PVC is ReadWriteOnce: it attaches to
+     ONE NODE, and any number of pods on that node may mount it — so the worker mounts it READ-ONLY
+     and is scheduled onto os-ui's node (required pod affinity). os-ui stays the only writer (the
+     git store's in-process lock still covers every write); the worker only reads commits by SHA,
+     whose objects never change. Off ⇒ no mount and no affinity, exactly as before. */}}
+{{- $readRepos := and ($u.dataProjectGit | default dict).enabled ($u.agentGraphModule | default dict).enabled }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -59,6 +66,15 @@ spec:
         {{- include "soa.podSecurityContext" . | nindent 8 }}
         runAsUser: 1000
       terminationGracePeriodSeconds: {{ $w.terminationGracePeriodSeconds | default 420 }}
+      {{- if $readRepos }}
+      affinity:
+        podAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  {{- include "soa.selectorLabels" (dict "ctx" . "component" "os-ui") | nindent 18 }}
+              topologyKey: kubernetes.io/hostname
+      {{- end }}
       containers:
         - name: os-ui-worker
           image: "{{ $u.image.repository }}:{{ $u.image.tag }}"
@@ -108,9 +124,21 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
+            {{- if $readRepos }}
+            # Read-only: the worker loads committed graph.mjs files (config.reposDir = /repos).
+            - name: os-repos
+              mountPath: /repos
+              readOnly: true
+            {{- end }}
           resources:
             {{- toYaml ($w.resources | default $u.resources) | nindent 12 }}
       volumes:
         - name: tmp
           emptyDir: {}
+        {{- if $readRepos }}
+        - name: os-repos
+          persistentVolumeClaim:
+            claimName: os-repos
+            readOnly: true
+        {{- end }}
 {{- end }}

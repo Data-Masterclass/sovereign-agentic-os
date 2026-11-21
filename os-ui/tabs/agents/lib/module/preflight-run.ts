@@ -129,7 +129,10 @@ export async function main(argv: string[]): Promise<number> {
     return 2;
   }
   const counted = refusedIn(report, scope);
-  if (argv.includes('--json')) console.log(JSON.stringify({ reposDir: config.reposDir, ...report, scope, refusedInScope: counted }, null, 2));
+  // A requested domain with NO entry was not checked at all (a typo, a domain with no repo and no
+  // definitions): that is not a pass for the domain about to be enabled.
+  const absent = scope === 'all' ? [] : scope.filter((d) => !report.byDomain[d]);
+  if (argv.includes('--json')) console.log(JSON.stringify({ reposDir: config.reposDir, ...report, scope, refusedInScope: counted, absentDomains: absent }, null, 2));
   else {
     console.log(`agent-id-preflight: ${report.checked.git} committed and ${report.checked.store ?? 'NOT CHECKED'} store definition(s) in ${config.reposDir}; ${report.refused} would be refused`);
     for (const [domain, d] of Object.entries(report.byDomain)) {
@@ -137,9 +140,12 @@ export async function main(argv: string[]): Promise<number> {
     }
     for (const f of report.findings) console.log(`  [${f.source}] ${f.where}: ${f.problems.join('; ')}`);
     if (scope !== 'all') {
-      const missing = scope.filter((d) => !report.byDomain[d]);
-      console.log(`agent-id-preflight: exit code covers ${scope.join(', ')} only — ${counted} would be refused there${missing.length ? ` (no definitions found in: ${missing.join(', ')})` : ''}`);
+      console.log(`agent-id-preflight: exit code covers ${scope.join(', ')} only — ${counted} would be refused there`);
     }
+  }
+  if (absent.length) {
+    console.error(`agent-id-preflight: no definitions found for ${absent.join(', ')} — nothing was checked there (check the domain name and OS_REPOS_DIR)`);
+    return 1;
   }
   return counted ? 1 : 0;
 }

@@ -451,6 +451,9 @@
 # start the worker or pin it to os-ui's node, and two processes writing one bare repo
 # is exactly what the git store's IN-PROCESS lock cannot protect.
 #
+# (WP-53e: with agent modules on, the worker mounts os-repos READ-ONLY, co-scheduled onto os-ui's
+# node — it loads committed graph.mjs files and never writes; see os-ui-worker.yaml.)
+#
 # So the worker does not write repos, and it does not pretend to: `worker/agent-runs.ts`
 # marks the process, and an agent-system DEFINITION write there fails closed with a
 # typed `SystemWriteUnavailableError` instead of landing in the mirror uncommitted.

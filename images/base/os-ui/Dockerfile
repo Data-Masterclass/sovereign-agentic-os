@@ -49,6 +49,9 @@ COPY --from=builder /app/.next/static ./.next/static
 # closure of its packages in it (tabs/agents/lib/module/versions.ts), so `npm ci` next to
 # run.mjs installs exactly the tree this image runs.
 COPY --from=deps /app/package-lock.json ./package-lock.json
+# WP-53e: the KNOWN PATH both entrypoints read it from (the server's cwd is /app, the worker's
+# /app/src) — never resolved through a module lookup, which the bundled server cannot do.
+ENV OS_UI_LOCKFILE=/app/package-lock.json
 
 # The COMPILE GATE (tabs/software/lib/compile-gate.ts) type-checks app commits against
 # the default TS libs + real React types AT RUNTIME. Standalone tracing drops

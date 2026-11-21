@@ -116,6 +116,27 @@ export async function register(): Promise<void> {
   // module-load assertion would bake the error into a prerendered page (unclearable by
   // a runtime secret rotation). Fail-closed: exit the process so the pod crash-loops
   // and the bad deploy is loud, rather than silently signing forgeable sessions.
+  // WP-53e: with AGENT_GRAPH_MODULE on, the generator's host inputs (exact versions + lockfile) are
+  // read once at boot, in THIS bundle, so a server that cannot generate a graph.mjs says so here —
+  // not on the first agent-definition commit. `scripts/check-built-module-inputs.mjs` boots the
+  // BUILT server and requires the "ok" line. Before the secret guard: it is read-only, and a boot the
+  // guard stops still reports whether this bundle can generate modules.
+  if (process.env.NEXT_RUNTIME === 'nodejs') {
+    try {
+      const { config } = await import('./core/kernel/config.ts');
+      if (config.agentGraphModule) {
+        const { hostModuleInputs } = await import('./tabs/agents/lib/module/versions.ts');
+        const { hostNodeModules } = await import('./core/adapters/agent-module/load.ts');
+        const { versions } = hostModuleInputs();
+        // An inline module run links its cache to these node_modules — the same known path.
+        const nodeModules = hostNodeModules();
+        console.log(`[os-ui] agent modules: host inputs ok — @langchain/langgraph ${versions['@langchain/langgraph']}, lockfile ${config.agentModuleHostLockfile}, node_modules ${nodeModules}`);
+      }
+    } catch (err) {
+      console.error(`[os-ui] agent modules: host inputs NOT readable — no graph.mjs can be generated: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   if (process.env.NEXT_RUNTIME === 'nodejs') {
   try {
     const { config, assertNoDevDefaultSecretsInProd, assertLangfuseCredentialsInProd } = await import('./core/kernel/config.ts');
