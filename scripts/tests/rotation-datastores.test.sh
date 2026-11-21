@@ -77,6 +77,7 @@ echo "rotate-secrets.sh: a run that stops early never exits 0 (bash 3.2 + EXIT t
 mkdir -p "$T/rs/scripts/ops"; ln -s "$PWD/scripts/lib" "$T/rs/scripts/lib"
 sed 's/^  ds-plan) ds_plan ;;$/  ds-plan) echo "$unset_for_this_test" ;;/' scripts/ops/rotate-secrets.sh > "$T/rs/scripts/ops/rotate-secrets.sh"
 holds "  the twin really changed the dispatcher" grep -q unset_for_this_test "$T/rs/scripts/ops/rotate-secrets.sh"
+# shellcheck disable=SC2034  # rc is read by rc_is (assert.sh)
 out=$(/bin/bash "$T/rs/scripts/ops/rotate-secrets.sh" ds-plan 2>&1); rc=$?
 rc_is "  an unset variable mid-run exits 1" 1
 check "  ... and says the run stopped before its end" "stopped before its end" "$out"

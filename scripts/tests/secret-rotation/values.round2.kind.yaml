@@ -20,6 +20,10 @@ postgres:
   storageSize: 1Gi
 llmProviders:
   viaEgressProxy: false
+# The gateway's standard routes go to the in-cluster model stub (as in values.e2e.yaml).
+stackitPremium:
+  apiBaseUrl: http://mock-model:8080/v1
+  local: { apiKey: rehearsal-model-stub }
 # OpenSearch is on: os-ui waits for it at start and keeps its store there. Small heap.
 opensearch:
   opensearchJavaOpts: "-Xms384m -Xmx384m"

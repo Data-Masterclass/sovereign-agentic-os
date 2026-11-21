@@ -50,6 +50,12 @@ helm template agentic-os "$CHART" -n agentic-os --skip-schema-validation -f "$RE
 docker build -q -t sovereign-os/mock-model:0.1.1 "$REPO/images/base/mock-model" >/dev/null
 docker build -q -t sovereign-os/os-ui:0.1.0 -f "$REPO/images/base/os-ui/Dockerfile" "$REPO" >/dev/null
 kind load docker-image sovereign-os/os-ui:0.1.0 --name "$CLUSTER" >/dev/null
+# os-ui's git sidecars, from this checkout under the names the chart pins.
+for g in git-daemon git-http; do
+  ref=$(sed -nE "s|^ *image: \"(ghcr.io/[^\"]*/$g:[^\"]*)\"$|\1|p" "$R" | head -n1)
+  [ -n "$ref" ] || continue
+  docker build -q -t "$ref" "$REPO/images/base/$g" >/dev/null && kind load docker-image "$ref" --name "$CLUSTER" >/dev/null
+done
 # Only the locally built image is loaded. A digest reference must be pulled by the node itself:
 # `kind load` of one leaves an `import-<date>@sha256` record that containerd's CRI then fails to
 # resolve ("failed to check if this is a checkpoint image").
