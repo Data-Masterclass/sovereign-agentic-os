@@ -67,5 +67,12 @@ docker run --rm --network "$NET" -v "$REPO:/src:ro" -e HOME=/tmp -e DBT_SEND_ANO
 # The principals sensor reads the index snapshot the real repo-sync writes (no bearer in user code).
 [ "$ONLY" = "eject" ] || sh "$REPO/images/extensions/dagster/tests/image/index_file.sh" "$IMAGE"
 
+# The code location reloads a domain commit in place (`dagster code-server start`), and the old
+# `dagster api grpc` mode does not (negative twin: it must stay stale, or the test proves nothing).
+if [ "$ONLY" != "eject" ]; then
+  sh "$REPO/images/extensions/dagster/tests/image/code-server-reload.sh" "$IMAGE" code-server
+  sh "$REPO/images/extensions/dagster/tests/image/code-server-reload.sh" "$IMAGE" api-grpc
+fi
+
 # WP-49: the repo's own Dagster code location on Trino + Iceberg, the wrapper, the eject (lakehouse.sh).
 [ "$ONLY" = "eject" ] || sh "$REPO/images/extensions/dagster/tests/image/lakehouse.sh" "$IMAGE"
