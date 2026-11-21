@@ -27,6 +27,7 @@ import { recentTraces } from '@core/infra/agent-governed';
 import { lineageFor } from '@tabs/data/lib/lineage';
 import { latestDqRun, dqTrend, dqSourceLabel } from '@tabs/data/lib/dq-status-server';
 import { agentTelemetryFor, type AgentRunRecord } from '@tabs/monitoring/lib/adapters/agent-telemetry';
+import { runTraceLink } from '@tabs/monitoring/lib/trace-link';
 import {
   buildProfile,
   lastRunReport,
@@ -62,8 +63,9 @@ export type AgentDetail = {
   /** Per-day cost + token series for the trend chart (oldest→newest). */
   costSeries: { day: number; value: number }[];
   tokenSeries: { day: number; value: number }[];
-  /** Run history, newest first (time · status · cost · tokens · model · duration). */
-  runs: AgentRunRecord[];
+  /** Run history, newest first (time · status · cost · tokens · model · duration). `traceUrl`:
+   *  that run's own trace on the Langfuse console host (runTraceLink), when there is one. */
+  runs: (AgentRunRecord & { traceUrl?: string })[];
   /** Recent error/warning log lines derived from the run history. */
   issues: { at: number; name: string; health: 'warn' | 'error'; detail: string }[];
   /**
@@ -167,7 +169,10 @@ export async function agentDetail(user: CurrentUser, systemId: string, nowMs: nu
     telemetry,
     costSeries,
     tokenSeries,
-    runs: tele.runs.slice(0, 100),
+    runs: tele.runs.slice(0, 100).map((r) => {
+      const traceUrl = runTraceLink(config.langfuseConsoleUrl, r);
+      return traceUrl ? { ...r, traceUrl } : r;
+    }),
     issues,
     profile,
     lastRun,
