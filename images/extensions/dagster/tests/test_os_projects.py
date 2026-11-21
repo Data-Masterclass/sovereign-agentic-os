@@ -1067,12 +1067,14 @@ class ScheduleLane(unittest.TestCase):
         text = """
 version: 1
 schedules:
-  - {dataset: ds_a, name: silver_a, select: "silver_a+", models: [bronze_a, silver_a, "bad name; drop"], cron: "0 * * * *", principal: bea, enabled: true}
+  - {dataset: ds_a, name: silver_a, select: "silver_a+", models: [bronze_a, silver_a, "bad name; drop"], paths: [models/silver/silver_a.sql, "../x.sql", "models/a b.sql", "models/p/bronze_a.sql"], cron: "0 * * * *", principal: bea, enabled: true}
   - {dataset: ds_b, name: bronze_b, select: "bronze_b+", cron: "0 * * * *", principal: bea, enabled: true}
 """
         a, b = osp.parse_schedules(text)
         self.assertEqual(a.models, ("bronze_a", "silver_a"), "a malformed name is dropped, never guessed")
+        self.assertEqual(a.paths, ("models/silver/silver_a.sql", "models/p/bronze_a.sql"), "only exact model file paths; traversal and odd names are dropped")
         self.assertEqual(b.models, ())
+        self.assertEqual(b.paths, ())
 
     def test_a_selection_inside_the_owners_generated_models_raises_no_flag(self):
         self.assertEqual(osp.out_of_lane_models(self.OWNERS, ["bronze_a", "silver_a2"], "bea"), [])

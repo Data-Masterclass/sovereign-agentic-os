@@ -565,8 +565,8 @@ def _wire_project(p: osp.Project, dom: str) -> Dict[str, object]:
     for s in p.schedules:
         name = osp.schedule_name(dom, s.dataset)
         selection = build_dbt_asset_selection([domain_assets], dbt_select=s.select)
-        if s.models:  # the OS-written list of the owner's models: the downstream is intersected with it
-            selection = selection & build_dbt_asset_selection([domain_assets], dbt_select=" ".join(s.models))
+        if s.paths:  # the OS-written list of the owner's model files: the downstream is intersected with it
+            selection = selection & build_dbt_asset_selection([domain_assets], dbt_select=" ".join(f"path:{p_}" for p_ in s.paths))
         sync_job = define_asset_job(name=name, selection=selection, tags=osp.schedule_tags(p.domain, s, p.sha, pinned_env, name))
         jobs.append(sync_job)
         # The repo's own `timezone` is honoured when `zoneinfo` knows it, else UTC with a log

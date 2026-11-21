@@ -24,6 +24,8 @@ export type ScheduleEntry = {
    * loader intersects the downstream with it). Not author-writable, unlike a model's own `meta`.
    */
   models?: string[];
+  /** The same models as exact project file paths: what the selection uses (a bare name equal to a directory selects the directory). */
+  paths?: string[];
   cron: string;
   timezone: 'UTC';
   principal: string;
@@ -42,6 +44,7 @@ export function scheduleEntries(models: ModelPlan[]): ScheduleEntry[] {
       name: m.name,
       select: `${m.name}+`,
       models: models.filter((x) => x.dataset.owner === m.dataset.owner).map((x) => x.name).sort(),
+      paths: models.filter((x) => x.dataset.owner === m.dataset.owner).map((x) => x.path).sort(),
       cron: m.dataset.sync.schedule.cron,
       timezone: 'UTC',
       principal: m.dataset.owner,

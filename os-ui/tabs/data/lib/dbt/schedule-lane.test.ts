@@ -46,9 +46,11 @@ test('the native schedule selects the landing\'s downstream only inside the owne
   // a database sync: the dlt landing's downstream, intersected with (the landing | the owner's dbt models by name)
   assert.match(alice, /\.downstream\(\) & \(dg\.AssetSelection\.assets\(\[[^)]*\]\) \| build_dbt_asset_selection\(\[sales_dbt\], dbt_select="/, alice);
   const owned = alice.slice(alice.indexOf('| build_dbt_asset_selection'));
-  assert.match(owned, /dbt_select="bronze_orders gold_orders silver_orders"/);
+  // exact FILE paths, never bare names (a model named like a directory must not select the directory)
+  assert.match(owned, /dbt_select="path:models\/personal\/alice\/bronze_orders\.sql path:models\/personal\/alice\/gold_orders\.sql path:models\/personal\/alice\/silver_orders\.sql"/);
+  assert.doesNotMatch(owned, /dbt_select="[^"]*(^|\s)[a-z_]+(\s|")/, 'no bare model name');
   assert.doesNotMatch(owned, /events/, 'bob\'s models are not in alice\'s set');
-  assert.doesNotMatch(py, /dbt_select="[^"]*(config\.|meta|tag:|path:)/, 'no author-writable selector (`meta`, `config`, `tag`) selects models');
+  assert.doesNotMatch(py, /dbt_select="[^"]*(config\.|meta|tag:)/, 'no author-writable selector (`meta`, `config`, `tag`) selects models');
 });
 
 test('os/generated.yml (unpushable) records which owner each generated model belongs to', () => {
@@ -57,12 +59,18 @@ test('os/generated.yml (unpushable) records which owner each generated model bel
   assert.equal(rec.owners?.silver_orders, 'alice');
   assert.equal(rec.owners?.silver_events, 'bob');
   assert.equal(Object.keys(rec.owners ?? {}).includes('author_added_model'), false, 'only OS-generated models are listed');
+  const f = (rec as { files?: Record<string, string | null> }).files ?? {};
+  assert.equal(f['models/personal/alice/silver_orders.sql'], 'alice', 'every generated model file names its owner (the receive gate reads this)');
+  assert.ok(Object.prototype.hasOwnProperty.call(f, 'models/sources.yml'), 'shared generated files are listed with no owner');
+  assert.equal(f['models/sources.yml'], null);
+  assert.equal(Object.keys(f).some((k) => k.startsWith('os/') || k.startsWith('data/')), false, 'the unpushable OS layer is not listed here');
 });
 
 test('the legacy schedules file lists the owner\'s models too', () => {
   const sched = yaml.load(generateProjectReport('sales', snap()).files.get('os/schedules.yml')!) as { schedules: { dataset: string; models?: string[] }[] };
   const a = sched.schedules.find((s) => s.dataset === 'ds_alice001')!;
   assert.deepEqual(a.models, ['bronze_orders', 'gold_orders', 'silver_orders']);
+  assert.deepEqual((a as { paths?: string[] }).paths, ['models/personal/alice/bronze_orders.sql', 'models/personal/alice/gold_orders.sql', 'models/personal/alice/silver_orders.sql']);
 });
 
 test('NEGATIVE TWIN: a launch from the OS never selects another owner\'s dependent model', () => {

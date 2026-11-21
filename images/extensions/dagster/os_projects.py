@@ -256,6 +256,9 @@ class Schedule:
     timezone: str = "UTC"
     #: The OS-generated models of the schedule's owner (written by the OS): the run may select only these.
     models: Tuple[str, ...] = ()
+    #: The same models as exact project file paths: what the selection uses. A bare model name that
+    #: equals a directory name would select the whole directory (dbt's name/fqn method).
+    paths: Tuple[str, ...] = ()
     #: The schedule's standing run grant (WP-15), written by the OS; '' when the OS issued none.
     run_grant: str = ""
 
@@ -305,6 +308,7 @@ def parse_schedules(text: str) -> List[Schedule]:
                 enabled=_as_bool(e.get("enabled", True)),
                 timezone=str(e.get("timezone") or "UTC"),
                 models=tuple(n for n in (str(x).strip() for x in (e.get("models") or [])) if re.match(r"^[A-Za-z0-9_]+$", n)),
+                paths=tuple(p for p in (str(x).strip() for x in (e.get("paths") or [])) if re.match(r"^models/[A-Za-z0-9_./-]+\.sql$", p) and ".." not in p),
                 run_grant=_grant_id(e.get("run_grant")),
             )
         )

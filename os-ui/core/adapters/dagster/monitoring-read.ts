@@ -74,17 +74,28 @@ export type RunGroupHealth = { name: string; runs: number; failures: number; las
 export type LaneAlert = { runId: string; models: string[]; principal: string; at: string | null };
 
 /** Runs the code location tagged `os/lane_violation` (a model outside its owner's lane was selected), per asked dataset, newest first. */
-export function laneAlertsOf(runs: readonly DagsterRun[], datasetIds: readonly string[]): Map<string, LaneAlert[]> {
+export function laneAlertsOf(runs: readonly DagsterRun[], datasetIds: readonly string[], domains: readonly string[] = []): Map<string, LaneAlert[]> {
   const asked = new Set(datasetIds);
+  const mine = new Set(domains);
   const out = new Map<string, LaneAlert[]>();
   for (const r of runs) {
-    const ds = r.tags['os/dataset'];
     const v = r.tags['os/lane_violation'];
-    if (!ds || !v || !asked.has(ds)) continue;
-    if (!out.has(ds)) out.set(ds, []);
-    out.get(ds)!.push({ runId: r.runId, models: v.split(',').filter(Boolean), principal: r.tags['os/principal'] ?? '', at: r.startedAt });
+    if (!v) continue;
+    // A run launched by hand carries no os/dataset: it belongs to its domain, shown to that domain's viewers.
+    const ds = r.tags['os/dataset'];
+    const dom = r.tags['os/domain'];
+    const key = ds && asked.has(ds) ? ds : !ds && dom && mine.has(dom) ? `domain:${dom}` : null;
+    if (!key) continue;
+    if (!out.has(key)) out.set(key, []);
+    out.get(key)!.push({ runId: r.runId, models: v.split(',').filter(Boolean), principal: r.tags['os/principal'] ?? '', at: r.startedAt });
   }
   return out;
+}
+
+/** The model names of an alert the viewer may see (the others are only counted). */
+export function visibleModels(alert: LaneAlert, visible: ReadonlySet<string>): { models: string[]; hidden: number } {
+  const models = alert.models.filter((m) => visible.has(m));
+  return { models, hidden: alert.models.length - models.length };
 }
 
 export type DatasetRunHealth = { datasetId: string; jobs: RunGroupHealth[]; schedules: RunGroupHealth[] };

@@ -198,7 +198,7 @@ function DatasetCard({ d, v }: { d: DatasetPanel; v: DataView }) {
       )}
       {(d.laneAlerts?.length ?? 0) > 0 && (
         <div className="mon-tr err" role="alert" style={{ marginTop: 6 }}>
-          <span>Alert: {d.laneAlerts!.length} run(s) selected a model outside the owner&apos;s lane. Latest: {d.laneAlerts![0].models.join(', ')}
+          <span>Alert: {d.laneAlerts!.length} run(s) selected a model outside the owner&apos;s lane. Latest: {d.laneAlerts![0].models.join(', ')}{d.laneAlerts![0].hidden ? ` (+${d.laneAlerts![0].hidden} not visible to you)` : ''}
             {d.laneAlerts![0].url ? <> <a className="mon-xlink" href={d.laneAlerts![0].url} target="_blank" rel="noreferrer">run ↗</a></> : null}</span>
         </div>
       )}
@@ -245,6 +245,12 @@ function DataPanels({ v }: { v: DataView }) {
     <div className="mon-panels">
       <div className="mon-sub">Datasets <span className="mon-sub-note">Dagster runs · asset checks (dbt tests) · Dagster lineage</span></div>
       <Sources sources={v.sources} />
+      {v.laneAlerts.map((a) => (
+        <div key={a.runId} className="mon-tr err" role="alert">
+          <span>Alert: a hand-launched run selected a model outside its owner&apos;s lane{a.models.length ? `: ${a.models.join(', ')}` : ''}{a.hidden ? ` (+${a.hidden} not visible to you)` : ''}
+            {a.url ? <> <a className="mon-xlink" href={a.url} target="_blank" rel="noreferrer">run ↗</a></> : null}</span>
+        </div>
+      ))}
       {sorted.length === 0 ? <p className="hint">No datasets in your scope.</p> : <div className="mon-tile-grid">{sorted.map((d) => <DatasetCard key={d.id} d={d} v={v} />)}</div>}
       <NotOffered items={v.notUpstream} />
     </div>
