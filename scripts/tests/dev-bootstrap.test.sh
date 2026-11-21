@@ -67,6 +67,9 @@ case \$all in
     done
     KUBECONFIG=/dev/null exec "$(command -v kubectl || echo /bin/false)" "\${args[@]}" ;;
   *"get ns"*) exit 0 ;;
+  *"get secret postgres-governance-admin"*) [ -s "\$FAKE_GOV_SECRET" ] && cat "\$FAKE_GOV_SECRET" ;;
+  *"get pod pg-0"*) [ -n "\${FAKE_PG_READY:-}" ] && printf true ;;
+  *"exec -i pg-0"*) cat > "\$FAKE_LOG.psql" ;;
 esac
 STUB
 chmod +x "$BIN"/*
@@ -105,6 +108,32 @@ holds "the private dir is mode 700" [ "$(stat -c %a "$TMP/private" 2>/dev/null |
 absent "no S3 secret key in the output" "SKFAKEDEVSECRETVALUE" "$out"
 mk=$(python3 -c 'import yaml,sys; print(yaml.safe_load(open(sys.argv[1]))["litellmMasterKey"])' "$OV")
 absent "no generated value in the output" "$mk" "$out"
+
+echo "== the Postgres governance admin (postgres.governance.adminSecretName), idempotent"
+gov=$(python3 - "$FAKE_APPLIED" <<'PY2'
+import sys, yaml
+for d in yaml.safe_load_all(open(sys.argv[1])):
+    if isinstance(d, dict) and d.get("kind") == "Secret" and d["metadata"]["name"] == "postgres-governance-admin":
+        import base64
+        print(d.get("type"), base64.b64decode(d["data"]["username"]).decode(), base64.b64decode(d["data"]["password"]).decode())
+PY2
+)
+check "the admin Secret is applied, basic-auth, user os_governance_admin" "kubernetes.io/basic-auth os_governance_admin " "$gov"
+govpw=${gov##* }
+holds "its password is generated (not empty)" [ -n "$govpw" ]
+absent "the admin password is not in the output" "$govpw" "$out"
+check "Postgres not running yet: the role is named as pending, not invented" "role os_governance_admin: Postgres is not running yet" "$out"
+holds "and no psql ran" [ ! -f "$FAKE_LOG.psql" ]
+# A second run with Postgres up and the Secret present: the SAME password, and the role is ensured.
+printf '%s' "$govpw" | base64 > "$TMP/gov.b64"; export FAKE_GOV_SECRET=$TMP/gov.b64
+run FAKE_PG_READY=1
+check "with Postgres up the role is ensured" "role os_governance_admin ensured (superuser" "$out"
+check "the SQL creates or alters exactly that role" "CREATE ROLE os_governance_admin LOGIN SUPERUSER" "$(cat "$FAKE_LOG.psql" 2>/dev/null)"
+check "with the password the Secret already holds (idempotent)" "$govpw" "$(cat "$FAKE_LOG.psql" 2>/dev/null)"
+check "the existing Secret is kept" "kept secret/postgres-governance-admin" "$out"
+absent "the admin password is not in the output" "$govpw" "$out"
+holds "the password never appears on a command line" bash -c "! grep -F -- '$govpw' '$FAKE_LOG'"
+unset FAKE_GOV_SECRET
 
 echo "== the model key: only in dev-model-key, never in the overlay CI reads"
 absent "the model key is not in the private overlay" "STACKIT-FAKE-MODEL-KEY" "$(cat "$OV")"

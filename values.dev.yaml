@@ -167,6 +167,12 @@ trino:
     requests: { cpu: 500m, memory: 1Gi }
     limits: { cpu: 2, memory: 2Gi }
 
+# Trino cut-over prerequisite (a): OPA pulls its data as bundles from os-ui (os-data, os-grants;
+# WP-11) instead of the reconciler's pushes. The bundle volume keeps the last good bundles.
+opa:
+  dataBundle:
+    enabled: true
+
 opensearch:
   # No privileged init container in agentic-os (it enforces the baseline Pod Security Standard on
   # dev): vm.max_map_count is set by a DaemonSet in kube-system (scripts/dev/manifests/node-sysctl.yaml).
@@ -325,6 +331,12 @@ langfuse:
         limits: { cpu: 1, memory: 768Mi }
 
 postgres:
+  # Trino cut-over prerequisite (a), dev first (docs/components/trino-cutover.md): the governance
+  # database (WP-07) the OPA bundles and the run grants read. The admin Secret and its role are
+  # created by scripts/dev/bootstrap-secrets.sh; the three role passwords are in the private overlay.
+  governance:
+    enabled: true
+    adminSecretName: postgres-governance-admin
   resources:
     requests: { cpu: 100m, memory: 384Mi }
     limits: { cpu: 1, memory: 768Mi }
