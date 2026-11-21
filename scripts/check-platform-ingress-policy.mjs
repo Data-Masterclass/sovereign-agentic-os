@@ -19,6 +19,11 @@
  *     Service's target port; (3) no covered service admits a namespaceSelector or an empty `from`
  *     (except the CloudNativePG operator namespace); (4) OPA admits exactly its documented callers;
  *     (5) `networkPolicies.platformIngress.enabled=false` renders none of the policies.
+ *   - The observability stack (WP-05: VictoriaMetrics, VictoriaLogs, the OTel Collector) lives under
+ *     the same default-deny: its own allowlists (templates/extensions/observability/
+ *     network-policies.yaml, switch `observability.networkPolicy.enabled`) must admit the Collector
+ *     (found from its mounted config) and os-ui, whose URLs are config.ts defaults and therefore
+ *     listed in OS_UI_CALLS, and must not admit another namespace.
  *   - CHART_DIR overrides the chart path (negative twin in scripts/tests/platform-ingress-policy.test.sh).
  *   - Loud skip on a laptop without helm / subcharts, hard failure in CI.
  */
@@ -56,7 +61,13 @@ const dir = join(CHART, 'charts');
 if (!(existsSync(dir) && readdirSync(dir).some((f) => f.endsWith('.tgz')))) skip('subcharts not built');
 
 // Service name -> why it is covered here. Ports come from the rendered Service.
-const COVERED = ['opa', 'trino', 'polaris', 'pg-rw', 'pg', 'minio', 'valkey', 'clickhouse', 'web-fetch', 'egress-proxy', 'mock-model', 'query-tool', 'data-runner'];
+const COVERED = ['opa', 'trino', 'polaris', 'pg-rw', 'pg', 'minio', 'valkey', 'clickhouse', 'web-fetch', 'egress-proxy', 'mock-model', 'query-tool', 'data-runner',
+  'victoria-metrics', 'victoria-logs', 'otel-collector'];
+// WP-05 observability allowlists (their own switch, observability.networkPolicy.enabled).
+const OBS_POLICIES = ['victoria-metrics-allow-collector-and-os-ui', 'victoria-logs-allow-collector-and-os-ui', 'otel-collector-allow-os-only'];
+// os-ui's observability calls come from config.ts defaults (VICTORIA_METRICS_URL, VICTORIA_LOGS_URL,
+// OTEL_COLLECTOR_HEALTH_URL, OTEL_COLLECTOR_METRICS_URL), not from its pod spec, so they are listed.
+const OS_UI_CALLS = [['victoria-metrics', 8428], ['victoria-logs', 9428], ['otel-collector', 13133], ['otel-collector', 8888]];
 const POLICIES = ['default-deny-ingress', 'opa-allow-callers', 'trino-allow-callers', 'polaris-allow-callers', 'postgres-allow-callers',
   'object-storage-allow-callers', 'valkey-allow-callers', 'clickhouse-allow-callers', 'web-fetch-allow-callers',
   'egress-proxy-allow-callers', 'mock-model-allow-callers', 'query-tool-allow-callers', 'data-runner-allow-callers', 'acme-http01-solver-allow-controller'];
@@ -122,7 +133,7 @@ function analyse(profile, objs) {
   if (!deny) fail(`[${profile}] default-deny-ingress is not rendered`);
   else if (Object.keys(deny.spec.podSelector ?? {}).length || deny.spec.ingress?.length) fail(`[${profile}] default-deny-ingress must select every pod and admit nothing`);
 
-  for (const name of POLICIES.slice(1)) {
+  for (const name of [...POLICIES.slice(1), ...OBS_POLICIES]) {
     const np = nps.find((n) => n.metadata.name === name);
     if (!np) continue;
     for (const r of np.spec.ingress ?? []) {
@@ -152,6 +163,21 @@ function analyse(profile, objs) {
   }
 
   let checked = 0;
+  // os-ui's listed observability calls (only where the target service is rendered).
+  const ui = workloads.find((w) => w.d.kind === 'Deployment' && w.t.metadata?.labels?.['app.kubernetes.io/component'] === 'os-ui');
+  for (const [svcName, port] of OS_UI_CALLS) {
+    const svc = svcs.get(svcName);
+    if (!svc || !ui) continue;
+    const sp = (svc.spec.ports ?? []).find((x) => x.port === port);
+    for (const tgt of workloads.filter((w) => matches({ matchLabels: svc.spec.selector }, w.t.metadata?.labels ?? {}))) {
+      const tLabels = tgt.t.metadata.labels ?? {};
+      const cp = (tgt.t.spec.containers ?? []).flatMap((c) => c.ports ?? []).find((p) => p.name === sp?.targetPort || p.containerPort === sp?.targetPort);
+      const selecting = nps.filter((n) => matches(n.spec.podSelector, tLabels) || Object.keys(n.spec.podSelector ?? {}).length === 0);
+      checked++;
+      const admitted = selecting.some((n) => (n.spec.ingress ?? []).some((r) => portMatches(r.ports, cp?.containerPort ?? port, cp?.name) && (!r.from || r.from.some((p) => peerAdmits(p, ui.t.metadata.labels)))));
+      if (!admitted) fail(`[${profile}] os-ui calls ${svcName}:${port} but no ingress policy admits it`);
+    }
+  }
   for (const svcName of COVERED) {
     const svc = svcs.get(svcName);
     if (!svc) continue;
@@ -195,6 +221,8 @@ const profiles = {
   stackit: ['-f', join(repo, 'values.stackit-managed.yaml')],
   // The durable Polaris metastore (production): Polaris and its bootstrap reach Postgres.
   'dev+polaris-jdbc': ['-f', join(repo, 'values.dev.yaml'), '--set', 'polaris.persistenceType=relational-jdbc'],
+  // The observability stack is off on the dev node but on in production: check it under dev's policies too.
+  'dev+observability': ['-f', join(repo, 'values.dev.yaml'), '--set', 'observability.enabled=true'],
 };
 for (const [p, args] of Object.entries(profiles)) {
   const n = analyse(p, render(...args));
