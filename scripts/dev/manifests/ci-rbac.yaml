@@ -4,8 +4,9 @@
 # The CI account of the dev cluster (scripts/dev/ci-kubeconfig.sh) — a namespaced deploy role:
 #   - everything in agentic-os and agentic-apps (what helm installs; what the journeys create,
 #     exec into, scale and delete). Pod Security Admission still applies there (namespaces.yaml);
-#   - cluster-wide: PriorityClasses (the one cluster-scoped kind the chart renders), and READ on
-#     namespaces and nodes (helm's namespace check; deploy.sh's DEV_NODE flavour check);
+#   - cluster-wide: PriorityClasses and the chart's ValidatingAdmissionPolicy (+ binding; change or
+#     delete only by the chart's names), and READ on namespaces and nodes (helm's namespace check;
+#     deploy.sh's DEV_NODE flavour check);
 #   - get on the environment marker.
 # NOT granted: any write on namespaces (so no Pod Security label can be changed), anything in
 # kube-system (no pod there), anything in dev-model-key (the model key).
@@ -23,6 +24,16 @@ metadata: { name: sovereign-os-ci-cluster }
 rules:
   - { apiGroups: [scheduling.k8s.io], resources: [priorityclasses], verbs: ["*"] }
   - { apiGroups: [""], resources: [namespaces, nodes], verbs: [get, list] }
+  # The chart's admission policies (templates/extensions/dagster/run-pod-admission.yaml). A
+  # ValidatingAdmissionPolicy can only refuse requests, so creating one never widens access;
+  # changing or deleting one is limited to the chart's own names.
+  - apiGroups: [admissionregistration.k8s.io]
+    resources: [validatingadmissionpolicies, validatingadmissionpolicybindings]
+    verbs: [get, list, watch, create]
+  - apiGroups: [admissionregistration.k8s.io]
+    resources: [validatingadmissionpolicies, validatingadmissionpolicybindings]
+    resourceNames: [agentic-os-dagster-run-pod-shape]
+    verbs: [update, patch, delete]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
