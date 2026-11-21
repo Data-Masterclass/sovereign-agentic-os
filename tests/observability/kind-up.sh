@@ -23,6 +23,7 @@ helm template agentic-os "$chart" --namespace "$ns" \
   --show-only templates/base/priority-classes.yaml \
   --show-only templates/base/network/egress-policies.yaml \
   --show-only templates/base/opa/opa.yaml \
+  --show-only templates/base/opa/opa-tokens.yaml \
   --show-only templates/extensions/observability/otel-collector.yaml \
   --show-only templates/extensions/observability/victoria-metrics.yaml \
   --show-only templates/extensions/observability/victoria-logs.yaml \
