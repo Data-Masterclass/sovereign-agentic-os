@@ -11,17 +11,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { load } from 'js-yaml';
-import { generateProject } from '@tabs/data/lib/dbt/generate';
-import { viewName } from '@tabs/data/lib/index';
 import { dbtMetricsByMember, generateAlertFiles, readAlertFiles, alertOwnerToken, AlertFileError } from '@tabs/metrics/lib/git/alerts-native';
 import type { AlertRuleRecord } from '@tabs/metrics/lib/alert-store';
-import { ORDERS } from '@tabs/metrics/lib/git/alerts-fixtures';
+import { VIEW, committedDbt } from '@tabs/metrics/lib/git/alerts-fixtures';
 
 function repo(): Map<string, string> {
-  return new Map(generateProject('sales', { domain: 'sales', datasets: [{ dataset: ORDERS, artifacts: {} }], catalogs: {} }, {}));
+  return committedDbt();
 }
 
-const V = viewName(ORDERS);
+const V = VIEW;
 const rule = (over: Partial<AlertRuleRecord> = {}): AlertRuleRecord => ({
   id: 'alert_rev_low', member: `${V}.revenue`, comparator: 'lt', threshold: 100, notify: ['in_app'],
   owner: 'amir@acme.example', domain: 'sales', createdAt: '2026-11-20T10:00:00.000Z', ...over,

@@ -17,19 +17,17 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { commitSubtree } from '@core/infra/git-store';
-import { generateProject } from '@tabs/data/lib/dbt/generate';
-import { viewName } from '@tabs/data/lib/index';
-import { ORDERS } from '@tabs/metrics/lib/git/alerts-fixtures';
+import { VIEW, committedDbt } from '@tabs/metrics/lib/git/alerts-fixtures';
 import { commitDomainAlerts } from '@tabs/metrics/lib/git/alerts-commit';
 import { committedAlerts, evaluateCommittedAlert } from '@tabs/metrics/lib/build/alert-eval-metricflow';
 import type { AlertRuleRecord } from '@tabs/metrics/lib/alert-store';
 
-const V = viewName(ORDERS);
+const V = VIEW;
 const rule = (over: Partial<AlertRuleRecord> = {}): AlertRuleRecord => ({ id: 'rev_low', member: `${V}.revenue`, comparator: 'lt', threshold: 100, notify: ['in_app'], owner: 'amir', domain: 'sales', createdAt: '2026-11-20T10:00:00.000Z', ...over });
 
 async function repoWithProject(): Promise<string> {
   const dir = mkdtempSync(join(tmpdir(), 'wp50-alerts-'));
-  const models = new Map([...generateProject('sales', { domain: 'sales', datasets: [{ dataset: ORDERS, artifacts: {} }], catalogs: {} }, {})].filter(([p]) => p.startsWith('models/')));
+  const models = committedDbt();
   await commitSubtree('sales', 'models/', models, { reposDir: dir, author: { name: 'amir', email: 'amir@example.com' }, message: 'dbt project' });
   return dir;
 }
@@ -112,7 +110,7 @@ test('MIGRATION DRY RUN: an os-alert-rules _search export plans files per domain
   const { alertRulesFromJson, planAlertMigration } = await import('@tabs/metrics/lib/git/alerts-migrate-plan');
   const exp = JSON.stringify({ hits: { hits: [{ _source: rule() }, { _source: rule({ id: 'no_metric', member: `${V}.margin` }) }, { _source: { id: 'broken', member: 7 } }] } });
   const { rules, refused } = alertRulesFromJson(exp);
-  const dbt = new Map([...generateProject('sales', { domain: 'sales', datasets: [{ dataset: ORDERS, artifacts: {} }], catalogs: {} }, {})].filter(([p]) => p.startsWith('models/')));
+  const dbt = committedDbt();
   const plan = planAlertMigration(rules, refused, () => dbt);
   assert.equal(plan.mode, 'dry-run');
   assert.deepEqual(plan.domains, [{ domain: 'sales', files: ['metrics/alerts/rev_low.yml'], dbtFiles: dbt.size }]);
