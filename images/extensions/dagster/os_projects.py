@@ -792,6 +792,18 @@ def maintenance_tags(domain: str, schema: str, principal: str, sha: str, pinned:
     return tags
 
 
+def alert_job_name(domain: str, saved_query: str) -> str:
+    """WP-50: the OS-launched job that evaluates one committed alert with MetricFlow."""
+    return f"{sanitize(domain)}__alert_{sanitize(saved_query)}"
+
+
+def alert_job_tags(domain: str, alert_id: str, sha: str, pinned: str) -> Dict[str, str]:
+    """Like the `__all` job: no principal of its own — os-ui sets the owner's OS_PRINCIPAL per launch."""
+    tags = base_tags(domain, sha, pinned)
+    tags.update({"os/alert": alert_id, "os/action": "alert evaluation", "dagster-k8s/config": k8s_env_tag({"OS_PINNED_COMMITS": pinned})})
+    return tags
+
+
 def all_job_tags(domain: str, sha: str, pinned: str) -> Dict[str, str]:
     """The OS-launched job carries no principal of its own: the OS sets OS_PRINCIPAL per launch."""
     tags = base_tags(domain, sha, pinned)

@@ -10,7 +10,9 @@ import { roleAtLeast } from '@core/kernel/session';
 import { getPublicUser } from '@tabs/admin/lib/users';
 import { type AlertRule, evaluateAlert } from '@tabs/metrics/lib/alerts';
 import { deliverAlert } from '@tabs/dashboards/lib/delivery';
-import { saveAlertRule } from '@tabs/metrics/lib/alert-store';
+import { listAlertRules, saveAlertRule } from '@tabs/metrics/lib/alert-store';
+import type { AlertCommit } from '@tabs/metrics/lib/git/alerts-commit';
+import { alertsNativeEnabled } from '@core/infra/repo-layout';
 import { resolveAlertValue } from '@tabs/metrics/lib/build/alert-eval';
 
 export const dynamic = 'force-dynamic';
@@ -58,9 +60,13 @@ export const POST = withRoute<Record<string, string>, any>(async ({ user, body }
     resolvedValue = resolved.value;
   }
 
-  // Persist the rule (default: yes)
+  // Persist the rule (default: yes). WP-50: with OS_ALERTS_NATIVE on, the domain's alerts are
+  // committed to metrics/alerts/ (the dbt saved queries MetricFlow evaluates), authored as the user.
+  let git: AlertCommit | null = null;
   if (body.persist !== false) {
-    saveAlertRule(body.rule as AlertRule, user.id, user.domains[0] ?? 'default');
+    const domain = user.domains[0] ?? 'default';
+    saveAlertRule(body.rule as AlertRule, user.id, domain);
+    if (alertsNativeEnabled()) git = await (await import('@tabs/metrics/lib/git/alerts-commit')).commitDomainAlerts(domain, listAlertRules().filter((r) => r.domain === domain), user);
   }
 
   const evald = evaluateAlert(body.rule as AlertRule, resolvedValue);
@@ -77,5 +83,5 @@ export const POST = withRoute<Record<string, string>, any>(async ({ user, body }
     }));
   }
   const saved = body.persist !== false;
-  return NextResponse.json({ ...evald, delivery, traced, requestedBy: user.id, ...(saved ? { saved: true } : {}) });
+  return NextResponse.json({ ...evald, delivery, traced, requestedBy: user.id, ...(saved ? { saved: true } : {}), ...(git ? { git: { sha: git.commit?.sha ?? null, pending: git.pending } } : {}) });
 }, { gate: requirePrincipal as () => Promise<CurrentUser>, parse: true });

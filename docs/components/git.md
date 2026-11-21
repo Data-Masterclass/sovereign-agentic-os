@@ -43,6 +43,7 @@ object kind appears without being classified.
 | `lifecycle-pin` — lifecycle pins | `os/lifecycle/pins.yml` | — | `core/infra/lifecycle-pins.ts` — **committed** |
 | `knowledge-workflow` — OKF v0.3 workflow concepts + guardrail data | `knowledge/workflows/<slug>/` | — | `tabs/knowledge/lib/git/commit.ts` — **committed** |
 | `connection-config` — Trino catalog file (**never a credential**) | `connections/<catalog>/catalog.properties`, `connections/<catalog>/os.yaml` | — | `tabs/connections/lib/git/commit.ts` — **committed** |
+| `metric-alert` — dbt saved query MetricFlow runs; threshold in `config.meta.os_alert` | `metrics/alerts/<name>.yml` | — | `tabs/metrics/lib/git/alerts-commit.ts` — **committed** |
 | *(not an object kind)* promotion / governance metadata | `os/promotion.yml`, `os/grants.yml` | — | OS-owned, **never pushable** |
 
 The paths are **selectors**, exactly as the code states them: `a/b/` means everything under that

@@ -36,7 +36,7 @@ export type AlertValue =
  *  the owner as the user directory has them NOW (role, active domains). `null` when the owner
  *  no longer exists or is deactivated — the alert then does not run at all, rather than run
  *  under an identity assembled from what the rule remembered. */
-async function ownerPrincipal(rule: AlertRuleRecord): Promise<Principal | null> {
+export async function ownerPrincipal(rule: AlertRuleRecord): Promise<Principal | null> {
   const pub = await getPublicUser(rule.owner);
   if (!pub || pub.disabled) return null;
   return { id: rule.owner, domains: liveDomains(pub.domains), role: pub.role };

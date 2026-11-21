@@ -38,6 +38,7 @@ const EXPECTED_KINDS: GitObjectKind[] = [
   'lifecycle-pin',
   'knowledge-workflow',
   'connection-config',
+  'metric-alert',
 ];
 
 /**
@@ -161,7 +162,7 @@ test('G1: the kinds that are NOT in git yet say so, and the two that are name a 
   // their reasons until WP-50 gave both a writer; nothing is backlog any more.
   assert.deepEqual(
     committed,
-    ['dataset', 'metric', 'dashboard', 'agent-system', 'software', 'lifecycle-pin', 'knowledge-workflow', 'connection-config'],
+    ['dataset', 'metric', 'dashboard', 'agent-system', 'software', 'lifecycle-pin', 'knowledge-workflow', 'connection-config', 'metric-alert'],
     'these kinds have a landed git writer',
   );
   assert.deepEqual(landing, [], 'night 2 landed every writer it declared');
@@ -292,7 +293,7 @@ test('G3: each registration stands alone — one failing kind cannot unwire anot
   const step = text.slice(text.indexOf('export async function registerGitObjectKindsAtBoot'));
   const tries = (step.match(/\n  try \{/g) ?? []).length;
   const catches = (step.match(/\n  \} catch \(err\) \{/g) ?? []).length;
-  assert.equal(tries, 8, 'one try/catch per registered kind — a resolver that throws must not take the others with it');
+  assert.equal(tries, 9, 'one try/catch per registered kind — a resolver that throws must not take the others with it');
   assert.equal(catches, tries, 'every try has its own catch');
   assert.ok(!/await registerGitObjectKindsAtBoot/.test(text.slice(0, text.indexOf('export async function registerGitObjectKindsAtBoot'))), 'the boot step is fire-and-forget: it may never fail boot');
 });

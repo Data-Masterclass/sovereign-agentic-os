@@ -139,6 +139,9 @@ export const DAGSTER_DEFINITIONS_PATH = `${DAGSTER_DIR}/definitions.py`;
 export const DASHBOARDS_DIR = 'dashboards';
 /** `knowledge/` — the OKF v0.3 bundle (WP-50, WP-44). */
 export const KNOWLEDGE_DIR = 'knowledge';
+/** WP-50: metric alert rules, one dbt saved query per file (`metrics/alerts/<name>.yml`). */
+export const METRICS_DIR = 'metrics';
+export const METRICS_ALERTS_DIR = `${METRICS_DIR}/alerts`;
 /** `agents/<system>/` — graph.mjs, run.mjs, prompts/, evals/, README.md (WP-53). */
 export const AGENTS_DIR = 'agents';
 /** `apps/<slug>/` — source, Dockerfile, k8s/ (WP-54). */
@@ -332,7 +335,7 @@ export function isOsLayerPath(p: string): boolean {
 // ------------------------------------------------------------- migration ---
 
 /** Top-level entries of a v1 tree that are NOT the dbt project (they keep their place). */
-export const V1_NON_DBT_TOP_LEVEL: readonly string[] = [AGENTS_DIR, DASHBOARDS_DIR, APPS_DIR, KNOWLEDGE_DIR, CONNECTIONS_DIR, OS_DIR, DATA_DIR];
+export const V1_NON_DBT_TOP_LEVEL: readonly string[] = [AGENTS_DIR, DASHBOARDS_DIR, APPS_DIR, KNOWLEDGE_DIR, CONNECTIONS_DIR, METRICS_DIR, OS_DIR, DATA_DIR];
 
 export type LayoutMove = { from: string; to: string };
 
@@ -371,4 +374,21 @@ export function dashboardsNativeEnabled(): boolean {
 export function dashboardsModelPath(layout: LayoutVersion, dbtDir: string = configuredDbtProjectDir()): string {
   const dir = dbtProjectDir(layout, dbtDir);
   return dir ? `${'../'.repeat(dir.split('/').length)}${DASHBOARDS_DIR}` : DASHBOARDS_DIR;
+}
+
+// ----------------------------------------------------------- alerts (WP-50) ---
+
+/**
+ * Are metric alert rules written natively — one dbt saved query per alert in `metrics/alerts/` —
+ * and evaluated by MetricFlow (`mf query --saved-query`) instead of the OS's metric compiler?
+ * Default OFF (env `OS_ALERTS_NATIVE`); the dry-run plan is `scripts/wp50-alerts-to-git.ts`.
+ */
+export function alertsNativeEnabled(): boolean {
+  return ['1', 'true'].includes((process.env.OS_ALERTS_NATIVE ?? '').trim().toLowerCase());
+}
+
+/** The dbt `model-paths` entry that makes the dbt project read `metrics/alerts/*.yml`. */
+export function alertsModelPath(layout: LayoutVersion, dbtDir: string = configuredDbtProjectDir()): string {
+  const dir = dbtProjectDir(layout, dbtDir);
+  return dir ? `${'../'.repeat(dir.split('/').length)}${METRICS_ALERTS_DIR}` : METRICS_ALERTS_DIR;
 }

@@ -36,6 +36,9 @@ export type GenerateOptions = {
   /** WP-52: the dbt `model-paths` entry for the dashboards' saved queries + exposures
    *  (`dashboardsModelPath(layout)`), or absent when dashboards are not native. */
   dashboardsModelPath?: string;
+  /** WP-50: the dbt `model-paths` entry for the alerts' saved queries (`alertsModelPath(layout)`),
+   *  or absent when alerts are not native. */
+  alertsModelPath?: string;
 };
 
 /** A dataset the generator LEFT OUT of the project because its files would fail `dbt parse`. */
@@ -126,7 +129,7 @@ function renderSafely(domain: string, snapshot: ProjectSnapshot, opts: GenerateO
 function renderProject(domain: string, snapshot: ProjectSnapshot, opts: GenerateOptions): Map<string, string> {
   const plan = planModels(snapshot);
   const files = new Map<string, string>();
-  files.set('dbt_project.yml', renderDbtProject(domain, plan, undefined, opts.dashboardsModelPath));
+  files.set('dbt_project.yml', renderDbtProject(domain, plan, undefined, opts.dashboardsModelPath, opts.alertsModelPath));
   files.set('profiles.yml', renderProfiles(domain, opts.trinoAuthMethod ?? 'none'));
   const semantic = renderSemantic(plan);
   files.set('README.md', renderReadme(domain, plan, semantic));

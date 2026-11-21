@@ -37,6 +37,9 @@ import importlib.util
 import sys
 
 from dagster import (
+    Failure,
+    JsonMetadataValue,
+    Output,
     AssetKey,
     AssetSelection,
     DagsterRunStatus,
@@ -58,6 +61,7 @@ from dagster import DataVersion, ObserveResult, build_last_update_freshness_chec
 from dagster_dbt import DagsterDbtTranslator, DagsterDbtTranslatorSettings, DbtCliResource, build_dbt_asset_selection, dbt_assets
 
 import os_projects as osp
+import os_alerts
 
 log = logging.getLogger("sovereign")
 
@@ -483,7 +487,35 @@ def _wire_project(p: osp.Project, dom: str) -> Dict[str, object]:
             )
         )
 
+    # WP-50 (alerts): one OS-launched job per committed alert (`metrics/alerts/*.yml`). MetricFlow
+    # runs the saved query as the principal os-ui sets per launch (the alert's owner); off unless
+    # OS_ALERTS_METRICFLOW is on.
+    if os.environ.get("OS_ALERTS_METRICFLOW", "").strip().lower() in ("1", "true"):
+        try:
+            for a in os_alerts.load_alerts(p.path):
+                jobs.append(_alert_job(p, dom, a, pinned_env))
+        except os_alerts.AlertFileError as e:
+            log.error("alerts of %s at %s not wired: %s", p.domain, p.sha[:12], e)
+
     return {"assets": assets, "jobs": jobs, "schedules": schedules, "checks": checks, "resources": resources, "principals": schedule_principals, "defs": []}
+
+
+def _alert_job(p: osp.Project, dom: str, alert: Dict[str, object], pinned_env: str):
+    name = osp.alert_job_name(dom, str(alert["saved_query"]))
+
+    @op(name=f"{name}_op")
+    def alert_op(context):
+        res = os_alerts.evaluate(p.path, str(alert["id"]))
+        context.log.info("alert %s at %s: %s", alert["id"], p.sha[:12], json.dumps(res, sort_keys=True)[:2000])
+        if res.get("status") != "ok":
+            raise Failure(description=str(res.get("reason")), metadata={"os_alert_result": JsonMetadataValue(res)})
+        yield Output(res, metadata={"os_alert_result": JsonMetadataValue(res)})
+
+    @job(name=name, tags=osp.alert_job_tags(p.domain, str(alert["id"]), p.sha, pinned_env))
+    def alert_job():
+        alert_op()
+
+    return alert_job
 
 
 def _maintenance_job(p: osp.Project, dom: str, schema: str, principal: str, resource_key: str, pinned_env: str):

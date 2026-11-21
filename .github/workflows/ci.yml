@@ -554,7 +554,7 @@ jobs:
           WP52_TMP: ${{ runner.temp }}
           DAGSTER_IMAGE: ${{ steps.images.outputs.DAGSTER_IMAGE }}
           TRINO_IMAGE: ${{ steps.images.outputs.TRINO_IMAGE }}
-        run: node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test --test-concurrency=1 ../tests/dashboards/native-eject.docker.test.ts
+        run: node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test --test-concurrency=1 ../tests/dashboards/native-eject.docker.test.ts ../tests/metrics/alerts-eject.docker.test.ts
 
   # `build` is the REQUIRED check. It aggregates: `if: always()` makes it run even when a job it
   # needs failed or was cancelled — GitHub reports a SKIPPED required check as passing, which is how
@@ -669,7 +669,7 @@ jobs:
       - name: Install dagster-test deps
         run: pip install "pyyaml>=6,<7"
       - name: pytest (dagster extension)
-        run: python3 -m pytest -q images/extensions/dagster/tests/test_os_projects.py
+        run: python3 -m pytest -q images/extensions/dagster/tests/test_os_projects.py images/extensions/dagster/tests/test_os_alerts.py
       # agent-runtime: deleted in the engine rebuild (A5) — agent systems execute as a real
       # LangGraph StateGraph inside os-ui, covered by `npm --prefix os-ui test`.
 

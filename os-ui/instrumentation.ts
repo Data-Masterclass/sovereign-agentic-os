@@ -699,6 +699,14 @@ export async function registerGitObjectKindsAtBoot(): Promise<void> {
   }
   try {
     const { registerGitObject } = await import('./core/infra/git-objects.ts');
+    const { metricAlertGitObjectResolver } = await import('./tabs/metrics/lib/git/alerts-git-object.ts');
+    registerGitObject('metric-alert', metricAlertGitObjectResolver);
+    console.info('[os-ui] git versioning: metric-alert registered (history, version, diff)');
+  } catch (err) {
+    console.warn(`[os-ui] git versioning: metric-alert NOT registered — ${err instanceof Error ? err.message : String(err)}`);
+  }
+  try {
+    const { registerGitObject } = await import('./core/infra/git-objects.ts');
     const { knowledgeWorkflowGitObjectResolver } = await import('./tabs/knowledge/lib/git/git-object.ts');
     registerGitObject('knowledge-workflow', knowledgeWorkflowGitObjectResolver);
     console.info('[os-ui] git versioning: knowledge-workflow registered (history, version, diff)');

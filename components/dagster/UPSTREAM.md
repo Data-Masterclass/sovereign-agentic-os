@@ -35,6 +35,15 @@ The deployment that uses this pin lives in the chart
 (`charts/sovereign-agentic-os/templates/`); any glue we wrote belongs there or in the
 owning tab, never here.
 
+## Metric alerts (WP-50) — docs used
+- An alert is a dbt saved query (`metrics/alerts/<name>.yml`, https://docs.getdbt.com/docs/build/saved-queries)
+  with the threshold in its `config.meta` (https://docs.getdbt.com/reference/resource-configs/meta).
+- `mf query --saved-query <name> --csv <file>` runs it (https://docs.getdbt.com/docs/build/metricflow-commands).
+  `mf` reads `target/semantic_manifest.json`, so `os_alerts.py` runs `dbt parse` first (observed on 0.214.0 /
+  dbt-metricflow 0.16.0: without the artifact `mf` refuses with "Unable to load the semantic manifest").
+- The OS-launched job per alert outputs `os_alert_result` as Dagster JSON metadata
+  (https://docs.dagster.io/api/dagster/metadata), read through `runOrError.eventConnection` (Dagster GraphQL).
+
 ## Literal safety — what dbt renders (docs used)
 
 The dbt generator (`os-ui/tabs/data/lib/dbt/literal.ts`) relies on these upstream facts, checked in
