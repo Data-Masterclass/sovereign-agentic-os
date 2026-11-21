@@ -3,6 +3,7 @@
  */
 import 'server-only';
 import { opaPolicyLoaded, publishOpa, publishOpaAll, type OpaWrite } from '@core/policy/opa-publish';
+import { opaDecide } from '@core/adapters/opa/client';
 import type { OpaSourceResult } from '@core/policy/opa-reconcile';
 import { ensureHydrated, listAllForIndex } from '@tabs/knowledge/lib/store';
 import { type Workflow } from '@tabs/knowledge/lib/schema';
@@ -52,18 +53,32 @@ async function applyLive(compiled: CompiledGuardrails): Promise<GuardrailApplyRo
   if (!putData.ok) {
     return { applied: false, verified: false, status: 'fail', policy: 'opa-live', detail: 'OPA rejected the guardrail data', error: putData.detail };
   }
-  // verify: read the policy back (Policy API GET).
-  const verified = await opaPolicyLoaded(`knowledge-${compiled.workflowId}`, 2500);
+  // verify: the policy is loaded AND OPA enforces it — a clean call is allowed and a call that
+  // reports the first guardrail as violated is denied. Only then is the row "enforced".
+  const loaded = await opaPolicyLoaded(`knowledge-${compiled.workflowId}`, 2500);
+  const enforced = loaded && (await enforces(compiled));
   return {
     applied: true,
-    verified,
-    status: verified ? 'ok' : 'fail',
+    verified: enforced,
+    status: enforced ? 'ok' : 'fail',
     policy: 'opa-live',
-    detail: verified
-      ? `Loaded ${compiled.guardrails.length} guardrail(s) into OPA and verified the policy is live.`
-      : 'Applied the policy but could not verify it is queryable.',
-    ...(verified ? {} : { error: 'verify probe failed' }),
+    detail: enforced
+      ? `Loaded ${compiled.guardrails.length} guardrail(s) into OPA; OPA allows a clean call and denies a call that reports a violated guardrail.`
+      : loaded
+        ? 'The policy is loaded, but OPA did not deny a call that reports a violated guardrail: not enforced.'
+        : 'Applied the policy but could not verify it is queryable.',
+    ...(enforced ? {} : { error: loaded ? 'not enforced' : 'verify probe failed' }),
   };
+}
+
+/** Ask OPA itself: clean call → true, a reported violation of the first guardrail → false. */
+async function enforces(compiled: CompiledGuardrails): Promise<boolean> {
+  const first = compiled.guardrails[0]?.id;
+  if (!first) return false;
+  const path = `${compiled.packagePath.replace(/\./g, '/')}/allow`;
+  const clean = await opaDecide(path, { violations: [] }, 2500);
+  const violated = await opaDecide(path, { violations: [first] }, 2500);
+  return clean.ok && clean.value.value === true && violated.ok && violated.value.defined && violated.value.value === false;
 }
 
 /**
