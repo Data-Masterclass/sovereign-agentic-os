@@ -21,6 +21,7 @@ secrets:
   agent-runtime-token:          {source: chart, type: Opaque, keys: [token]}
   clickhouse-credentials:       {source: chart, type: Opaque, keys: [password]}
   docling-api-key:              {source: chart, type: Opaque, keys: [apiKey]}
+  opa-tokens:                   {source: chart, type: Opaque, keys: [reader, writer]}
   langfuse-core-secrets:        {source: chart, type: Opaque, keys: [encryptionKey, nextauthSecret, salt]}
   langfuse-init:
     source: chart

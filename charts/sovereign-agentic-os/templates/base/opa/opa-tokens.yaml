@@ -8,6 +8,8 @@
   both from OPA's environment (`opa.runtime().env`), so no token is ever stored as OPA data.
 
   Resolution order (mirrors docling-api-key.yaml; no secret is committed to git):
+    0. WP-10: listed in files/external-secrets/catalog.yaml; External Secrets can own it
+       (externalSecrets.handover / managed), else
     1. `opa.auth.existingSecret` — an operator- or ExternalSecret-managed Secret with keys
        `writer` and `reader`; this template then renders nothing, else
     2. the values already stored in this Secret (kept across `helm upgrade` via `lookup`), else
@@ -27,6 +29,7 @@
 {{- $writer = (index $existing.data "writer" | default "" | b64dec) }}
 {{- $reader = (index $existing.data "reader" | default "" | b64dec) }}
 {{- end }}
+{{- if not (include "soa.eso.owned" (list $ $name)) }}
 apiVersion: v1
 kind: Secret
 metadata:
@@ -34,10 +37,13 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "soa.labels" . | nindent 4 }}
+  {{- with include "soa.eso.keep" (list $ $name) }}
   annotations:
-    "helm.sh/resource-policy": keep
+    {{- . | nindent 4 }}
+  {{- end }}
 type: Opaque
 stringData:
   writer: {{ $writer | default (randAlphaNum 48) | quote }}
   reader: {{ $reader | default (randAlphaNum 48) | quote }}
+{{- end }}
 {{- end }}
