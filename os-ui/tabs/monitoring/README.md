@@ -12,14 +12,14 @@ The authoritative contract is [`manifest.ts`](./manifest.ts) — this file expla
 
 **APIs**
 
-- `/api/monitoring`
+- `/api/monitoring` (incl. `/api/monitoring/panels?view=agents|data|platform`)
 - `/api/traces`
 - `/api/status`
 - `/api/platform-admin/billing`
 
-**MCP tools**
+**MCP tools** (`core/mcp/monitoring-tools.ts`)
 
-_No MCP tools yet. Every user-facing action should grow one — the MCP server is a front door to the same governed code, not a back door around it._
+- `get_monitoring_overview`, `get_monitoring_panels` (`view`: agents · data · platform), `list_runs`, `get_run_trace`
 
 **Needs deployed**
 
@@ -60,6 +60,24 @@ _No MCP tools yet. Every user-facing action should grow one — the MCP server i
   Dagster path, which is when the data actually landed. An unreadable dataset is `unknown: true`,
   distinct from "never synced" — a read that failed is not a fact.
 - **Agent run traces** still come from Langfuse / the in-process ring (Part A of the engine rebuild).
+
+## The Agents · Data · Platform panels (2026-11-21)
+
+Design and the per-panel upstream table: [`docs/superpowers/plans/2026-11-21-monitoring.md`](../../../docs/superpowers/plans/2026-11-21-monitoring.md).
+`lib/panels/` builds them; every number is read from the component that holds it:
+
+- **Agents** — run store (Postgres `run_jobs`, `adapters/run-stats.ts`), Langfuse Metrics API
+  (`core/adapters/langfuse/metrics.ts`), LiteLLM `/key/list` (alias `os-<id>`), OPA's decision log in
+  VictoriaLogs (`core/adapters/victoria-logs/query.ts`), the approvals store.
+- **Data** — Dagster runs, asset checks, `assetCheckExecutions` and `dependedByKeys`
+  (`core/adapters/dagster/monitoring-read.ts`).
+- **Platform** (admin only) — `COMPONENT_HEALTH` probes, VictoriaMetrics PromQL
+  (`core/adapters/victoria-metrics/query.ts`), VictoriaLogs LogsQL, backups, alerts firing now.
+- Each upstream read is narrowed to the viewer's systems / datasets in the request; a source that
+  does not answer is `unavailable` with its reason; what no component offers is listed in
+  `notUpstream` (freshness SLA, Trino query errors, storage growth, guardrails per agent, alert history).
+- Real-component tests: `tests/monitoring/up.sh` (VictoriaMetrics, VictoriaLogs, Postgres 17,
+  dagster-webserver) with `MON_IT=1`; Langfuse via `tests/langfuse/compose.yaml` with `TRACING_E2E=1`.
 
 ## Rules that apply here
 
