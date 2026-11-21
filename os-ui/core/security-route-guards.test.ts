@@ -332,6 +332,12 @@ const UNAUTHENTICATED_BY_DESIGN = new Set([
   'app/api/opa/bundles/os-data.tar.gz/route.ts',
   'app/api/opa/bundles/os-grants.tar.gz/route.ts',
   'app/api/opa/status/route.ts',
+  // WP-15: the Dagster run-grant start/finish calls. The caller is a Dagster pod, not a person:
+  // each request carries the pod's projected ServiceAccount token (audience os-ui), which the
+  // Kubernetes API verifies (TokenReview), and only the configured ServiceAccount is accepted
+  // (app/api/runtime/run-grants/_handlers.ts). Off (404) unless OS_DAGSTER_RUN_GRANTS.
+  'app/api/runtime/run-grants/[id]/start/route.ts',
+  'app/api/runtime/run-grants/[id]/finish/route.ts',
   // Stream E, the engineer's door: both carry their OWN authentication, which is an OS personal
   // access token rather than the session cookie, because the caller is a git client or the repo's
   // own pre-receive hook — neither has a session.
