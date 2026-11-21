@@ -2271,10 +2271,17 @@ osUI:
       # The first Dagster image whose loader and repo-sync read os/layout.yml (built from WP-55).
       # `migration: apply` refuses to render while the code location or repo-sync is older.
       dagsterMinVersion: "0.3.3"
-      # The sha256 digests of the Dagster images built with that loader (filled when 0.3.3 is
-      # built). `apply` also requires BOTH the code location and repo-sync to run one of these —
-      # a tag can be moved, a digest cannot.
-      dagsterLayoutDigests: []
+      # The sha256 digests of the Dagster images built with that loader. `apply` also requires
+      # BOTH the code location and repo-sync to run one of these — a tag can be moved, a digest
+      # cannot. 0.4.0 (built from main with the WP-55 loader): its loader reads os/layout.yml and
+      # keeps unmigrated v1 repos on the legacy path (images/extensions/dagster/tests/image/lakehouse.sh
+      # run on this digest, 21 Nov 2026).
+      dagsterLayoutDigests:
+        - "sha256:b919d55fe9161128ace6a22894c43f2569f77b7639cd4d92e486f0e34734cea3"
+      # Limit `migration` (dry-run or apply) to these domains, e.g. [sales], to move one domain
+      # first. Empty = every domain. With `apply`, NEW repos are created v2 either way; a repo not
+      # in the list keeps its v1 layout until it is listed.
+      migrationDomains: []
     gitDaemon:
       image:
         # Our own image (images/base/git-daemon): no stock git image ships `git daemon` — Alpine

@@ -31,7 +31,10 @@ check "an unknown migration value fails" "! helm template t '$CHART' --set osUI.
 # Deploy order: an image older than layout.dagsterMinVersion is refused. The chart's own image is now
 # 0.4.0 (>= 0.3.3), so the "too old" case is simulated by raising the minimum above it.
 check "apply with a Dagster image below dagsterMinVersion FAILS (deploy order)" "! helm template t '$CHART' --set osUI.dataProjectGit.layout.migration=apply --set osUI.dataProjectGit.layout.dagsterMinVersion=9.9.9 >/dev/null 2>'$TMP/apply.err' && grep -q 'deploy that Dagster image first' '$TMP/apply.err'"
-check "apply with today's Dagster image still FAILS while no layout digest is recorded" "! helm template t '$CHART' --set osUI.dataProjectGit.layout.migration=apply >/dev/null 2>&1"
+check "apply with today's Dagster image (0.4.0, its digest recorded) renders and makes new repos v2" "helm template t '$CHART' --set osUI.dataProjectGit.layout.migration=apply 2>/dev/null | grep -A1 'name: OS_REPO_LAYOUT_V2' | grep -q '\"true\"'"
+check "the chart's code location and repo-sync digests are both in dagsterLayoutDigests" "python3 -c \"import yaml,sys; v=yaml.safe_load(open('$CHART/values.yaml')); d=v['dagster']['dagster-user-deployments']['deployments'][0]; k=v['osUI']['dataProjectGit']['layout']['dagsterLayoutDigests']; s=[c['image'].split('@')[1] for c in d['sidecarContainers'] if c['name']=='repo-sync'][0]; sys.exit(0 if d['image']['digest'] in k and s in k else 1)\""
+check "default: no migration domain list is rendered" "! grep -q 'OS_REPO_LAYOUT_MIGRATION_DOMAINS' '$TMP/off.yaml'"
+check "migrationDomains renders as a comma list" "helm template t '$CHART' --set osUI.dataProjectGit.layout.migration=apply --set 'osUI.dataProjectGit.layout.migrationDomains={sales, ops}' 2>/dev/null | grep -A1 'name: OS_REPO_LAYOUT_MIGRATION_DOMAINS' | grep -q '\"sales,ops\"'"
 
 python3 - "$CHART/values.yaml" "$TMP" <<'PY'
 import re, sys, yaml
