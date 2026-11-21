@@ -25,7 +25,7 @@
 {{- $dagsterAnno = dict
       "nginx.ingress.kubernetes.io/auth-type" "basic"
       "nginx.ingress.kubernetes.io/auth-secret" .
-      "nginx.ingress.kubernetes.io/auth-realm" "Dagster — operators only"
+      "nginx.ingress.kubernetes.io/auth-realm" "Dagster - operators only"
 }}
 {{- end }}
 {{- $routes := dict
