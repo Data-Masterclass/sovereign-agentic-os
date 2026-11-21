@@ -15,7 +15,7 @@
  *     which is a deterministic string map, so regeneration stays byte-stable.
  *   - Every repo name and path comes from `core/infra/repo-layout.ts`.
  */
-import { generateAgentFiles, placeSystems } from '@tabs/agents/lib/git/generate';
+import { generateAgentFiles, placeSystems, type GenerateOptions } from '@tabs/agents/lib/git/generate';
 import type { AgentProjectSnapshot, SnapshotSystem } from '@tabs/agents/lib/git/snapshot';
 import { AGENTS_DIR, legacyPersonalAgentLane, prefixOf, principalToken, userRepoName } from '@core/infra/repo-layout';
 
@@ -50,10 +50,10 @@ export function rerootPersonal(files: Map<string, string>, owner: string): Map<s
  * domain (`systems` is the union; other owners' systems are ignored). `domain` in the index is
  * the user repo's name — this repo is not any one domain's.
  */
-export function userRepoAgentFiles(owner: string, systems: readonly SnapshotSystem[]): Map<string, string> {
+export function userRepoAgentFiles(owner: string, systems: readonly SnapshotSystem[], opts: GenerateOptions = {}): Map<string, string> {
   const mine = systems.filter((s) => isPersonal(s) && s.owner === owner);
   const snapshot: AgentProjectSnapshot = { domain: userRepoName(owner), systems: [...mine].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)) };
-  return rerootPersonal(generateAgentFiles(snapshot), owner);
+  return rerootPersonal(generateAgentFiles(snapshot, opts), owner);
 }
 
 /** Where a personal system's folder is in its owner's user repo (`agents/<slug>/`), or null. */

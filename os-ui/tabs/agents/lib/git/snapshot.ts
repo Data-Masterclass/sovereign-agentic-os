@@ -21,6 +21,8 @@ import { systemsForProject, type SystemRecord } from '@tabs/agents/lib/store';
 export type SnapshotSystem = {
   id: string;
   name: string;
+  /** The system's OWN domain (`system.domain` of its source): the module flag is decided by it. */
+  domain: string;
   owner: string;
   visibility: SystemRecord['visibility'];
   origin: SystemRecord['origin'];
@@ -48,6 +50,7 @@ export function snapshotSystem(rec: SystemRecord, version: number): SnapshotSyst
   return {
     id: rec.id,
     name: rec.name,
+    domain: rec.domain,
     owner: rec.owner,
     visibility: rec.visibility,
     origin: rec.origin,

@@ -51,7 +51,7 @@ import { currentSurface, newRequestId } from '@core/infra/request-surface';
 import { onSystemChange, type SystemChange } from '@tabs/agents/lib/system-events';
 import { systemsForProject } from '@tabs/agents/lib/store';
 import { projectSnapshot, snapshotSystem, type SnapshotSystem } from '@tabs/agents/lib/git/snapshot';
-import { generateAgentFiles, AGENTS_PREFIX, placeSystems } from '@tabs/agents/lib/git/generate';
+import { generateAgentFiles, AGENTS_PREFIX, placeSystems, type GenerateOptions } from '@tabs/agents/lib/git/generate';
 import { domainScopeSnapshot, personalOwners, userRepoAgentFiles, userRepoName } from '@tabs/agents/lib/git/personal-repo';
 import { LAYOUT_V2 } from '@core/infra/repo-layout';
 import { currentPromotion, promotionTrailers, type PromotionContext } from '@core/infra/git-promote';
@@ -158,6 +158,16 @@ async function previousIndexIds(domain: string, reposDir: string): Promise<strin
 }
 
 /**
+ * The ONE module rule, for the domain repo and every user repo: a system is generated as its native
+ * LangGraph module iff the flag is on for the system's OWN domain. A lane can therefore hold module
+ * and plain systems side by side. No system enabled: no module inputs are read at all.
+ */
+function moduleGenOptions(systems: readonly SnapshotSystem[]): GenerateOptions {
+  if (!systems.some((s) => moduleEnabledFor(s.domain))) return {};
+  return { module: hostModuleInputs(), moduleFor: (s) => moduleEnabledFor(s.domain) };
+}
+
+/**
  * Regenerate `domain`'s `agents/**` subtree and commit it iff it changed. Returns null when the
  * flag is off. Never throws into a writer: the caller (the hook) logs.
  */
@@ -170,8 +180,7 @@ export async function commitAgentSystem(domain: string, actor: ActorIdentity, me
   const v2 = (await repoLayout(domain, undefined, { reposDir: reposDir0 })) === LAYOUT_V2;
   const snapshot = v2 ? domainScopeSnapshot(fullSnapshot) : fullSnapshot;
   // WP-53 (`AGENT_GRAPH_MODULE`, default off): the native LangGraph module replaces graph.json.
-  const genOpts = moduleEnabledFor(domain) ? { module: hostModuleInputs() } : {};
-  const files = generateAgentFiles(snapshot, genOpts);
+  const files = generateAgentFiles(snapshot, moduleGenOptions(snapshot.systems));
   const object = meta.object ?? domain;
   const message = commitMessage({
     area: 'agents',
@@ -284,7 +293,7 @@ async function commitPersonalRepos(
     const has = all.some((s) => s.owner === owner && s.visibility === 'Personal');
     if (!has && !repoExists(repo, { reposDir: o.reposDir })) continue;
     if (!o.committer || o.committer === commitSubtree) await ensureV2Repo(repo, { reposDir: o.reposDir });
-    await o.committer(repo, AGENTS_PREFIX, userRepoAgentFiles(owner, all), {
+    await o.committer(repo, AGENTS_PREFIX, userRepoAgentFiles(owner, all, moduleGenOptions(all)), {
       author: o.author,
       message: o.message,
       trailers: {
