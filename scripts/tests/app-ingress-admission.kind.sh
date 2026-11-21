@@ -171,12 +171,16 @@ echo "== twins: the controller refuses what production refused"
 # twin_refused <label> <js mutation of the Ingress `d`> [<ingress name> <rendered file>]
 # (default: the Dagster Ingress of the STACKIT render)
 twin_refused() {
-  local label=$1 code=$2 name=${3:-agentic-os-dagster-webserver-ingress} src=${4:-$WORK/stackit.ing} out
-  out=$(node -e '
+  local label=$1 code=$2 name=${3:-agentic-os-dagster-webserver-ingress} src=${4:-$WORK/stackit.ing} out twin
+  # A missing source Ingress is a failure, never a vacuous "refused".
+  twin=$(node -e '
 const y=require(process.argv[2]); const fs=require("fs");
 const d=y.loadAll(fs.readFileSync(process.argv[1],"utf8")).find(x=>x&&x.metadata.name===process.argv[4]);
+if (!d) process.exit(3);
 d.metadata.name="twin-"+Math.random().toString(36).slice(2,8); eval(process.argv[3]);
-process.stdout.write(y.dump(d));' "$src" "$PWD/os-ui/node_modules/js-yaml" "$code" "$name" | k apply --dry-run=server -f - 2>&1)
+process.stdout.write(y.dump(d));' "$src" "$PWD/os-ui/node_modules/js-yaml" "$code" "$name") \
+    || { bad "$label is refused by the controller" "no Ingress $name in the render"; return; }
+  out=$(printf '%s\n' "$twin" | k apply --dry-run=server -f - 2>&1)
   [ $? -ne 0 ] && ok "$label is refused by the controller" || bad "$label is refused by the controller" "admitted: ${out:0:200}"
 }
 twin_refused "a non-ASCII auth-realm (with its Secret present)" 'd.metadata.annotations["nginx.ingress.kubernetes.io/auth-realm"]="Dagster \u2014 operators only";'
