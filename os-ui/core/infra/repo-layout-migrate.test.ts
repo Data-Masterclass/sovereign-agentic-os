@@ -22,7 +22,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import {
   commitTree, reserveSubtree, RECONCILE_REASON, listRepos, repoPath, readBlob, DestructiveReconcileError,
 } from '@core/infra/git-store';
-import { migrateRepoLayout, planLayoutMigration, MIGRATION_REASON } from '@core/infra/repo-layout-migrate';
+import { migrateAllRepos, migrateRepoLayout, migrationDomains, planLayoutMigration, MIGRATION_REASON } from '@core/infra/repo-layout-migrate';
 import { LAYOUT_V2, LAYOUT_MARKER_PATH, dbtRepoPath, layoutMarker, legacyPersonalAgentLane, userRepoName } from '@core/infra/repo-layout';
 import { GENERATED_MARK } from '@core/infra/repo-readme';
 
@@ -209,4 +209,27 @@ test('Dagster loads the migrated project: repo-sync reports "current", the code 
   assert.equal(status.domains.sales.error, null);
   assert.match(out, /PROJECTS=sales@\/tmp\/co\/sales\/[0-9a-f]{40}\/data\/dbt/, 'the Dagster loader points dbt at data/dbt');
   assert.match(out, /ASSET=.*silver_customers/, `the code location lists the migrated project's dbt assets:\n${out.slice(-2000)}`);
+});
+
+test('migrationDomains limits apply to the listed domains; the others stay v1 and untouched', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wp55-migrate-domains-'));
+  const seed = async (d: string) => commitTree(d, golden('composition-with-tests.golden.json'), { author, message: `data(${d}): first`, reposDir: dir, timestamp: 1_700_000_000 });
+  await seed('north');
+  await seed('south');
+  const southBefore = gitc(['--git-dir', repoPath('south', { reposDir: dir }), 'rev-parse', 'main']).trim();
+  const out = await migrateAllRepos({ reposDir: dir, domains: ['north'] });
+  assert.deepEqual(out.map((r) => r.domain), ['north']);
+  assert.ok(fs.existsSync(path.join(dir, 'domain-north.git')));
+  assert.ok(!fs.existsSync(path.join(dir, 'domain-south.git')), 'south is not renamed');
+  assert.equal(gitc(['--git-dir', repoPath('south', { reposDir: dir }), 'rev-parse', 'main']).trim(), southBefore, 'south gets no commit');
+  // The env form the chart renders (osUI.dataProjectGit.layout.migrationDomains).
+  const prev = process.env.OS_REPO_LAYOUT_MIGRATION_DOMAINS;
+  try {
+    process.env.OS_REPO_LAYOUT_MIGRATION_DOMAINS = ' sales, ops ,';
+    assert.deepEqual(migrationDomains(), ['sales', 'ops']);
+    process.env.OS_REPO_LAYOUT_MIGRATION_DOMAINS = '';
+    assert.equal(migrationDomains(), undefined, 'unset or empty = every domain (the existing contract)');
+  } finally {
+    if (prev === undefined) delete process.env.OS_REPO_LAYOUT_MIGRATION_DOMAINS; else process.env.OS_REPO_LAYOUT_MIGRATION_DOMAINS = prev;
+  }
 });
