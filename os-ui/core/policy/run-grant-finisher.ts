@@ -18,6 +18,7 @@ import { config } from '@core/kernel/config';
 import { governanceRuntimePool } from '@core/adapters/postgres/pool';
 import * as dagster from '@core/infra/dagster';
 import { finishRunGrant } from '@core/policy/run-grants';
+import { scheduleEvery } from '@core/reconcile/runtime';
 
 const TERMINAL = new Set(['SUCCESS', 'FAILURE', 'CANCELED']);
 
@@ -35,18 +36,8 @@ export async function finishTerminalRunGrants(pool: pg.Pool, readRun: typeof dag
   return done;
 }
 
-const KEY = Symbol.for('soa.policy.run-grant-finisher');
+/** Every `everyMs` through the one reconcile timer (core/reconcile/runtime.ts). */
 export function startRunGrantFinisher(everyMs = 15_000): () => void {
-  const g = globalThis as unknown as Record<symbol, NodeJS.Timeout | undefined>;
-  if (!config.dagsterRunGrants || g[KEY]) return () => {};
-  const tick = () =>
-    finishTerminalRunGrants(governanceRuntimePool()).catch((e) =>
-      console.error(`[os-ui] run grants: finisher pass failed — ${e instanceof Error ? e.message : String(e)}`),
-    );
-  g[KEY] = setInterval(tick, everyMs);
-  g[KEY]!.unref?.();
-  return () => {
-    clearInterval(g[KEY]);
-    g[KEY] = undefined;
-  };
+  if (!config.dagsterRunGrants) return () => {};
+  return scheduleEvery('run-grant-finisher', everyMs, () => finishTerminalRunGrants(governanceRuntimePool()));
 }
