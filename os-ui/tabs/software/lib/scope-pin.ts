@@ -228,6 +228,72 @@ function manifestFindings(
   return { findings, usesScope, legacyRanges };
 }
 
+/** Does an override selector target a package of the scope? (`@sovereign-os/ui`, `a>@sovereign-os/ui@1`, a glob path ending in `/@sovereign-os/ui`) */
+const selectorTargetsScope = (key: string): boolean => new RegExp(`(^|[>/*\\s])${OS_SCOPE}/`, 'i').test(key.trim());
+
+/**
+ * npm `overrides`, Yarn `resolutions` and pnpm `pnpm.overrides` replace a dependency's specifier
+ * wherever it appears, so they can send the scope to a registry even when `dependencies` says
+ * `file:`. An override for the scope must be a `file:` path (or a `$name` reference, which npm
+ * resolves to the root dependency's own specifier); an override of any package onto an `npm:` alias of the scope is blocked too.
+ */
+function overrideFindings(path: string, manifest: Json): ScanFinding[] {
+  const out: ScanFinding[] = [];
+  const walk = (field: string, table: Json, depth: number, parentTargets: boolean) => {
+    if (depth > 20) return;
+    for (const [key, value] of Object.entries(table)) {
+      const targets = key === '.' ? parentTargets : selectorTargetsScope(key);
+      if (isObj(value)) {
+        walk(field, value, depth + 1, targets);
+        continue;
+      }
+      if (typeof value !== 'string') continue;
+      if (aliasesScope(value)) {
+        out.push(blocking(path, value.trim().slice(4), `overrides "${key}" with "${value}" in ${field}, an alias that resolves the scope from a registry`));
+      } else if (targets && !isLocalSpec(value) && !value.trim().startsWith('$')) {
+        out.push(blocking(path, key, `overrides "${key}" with "${value}" in ${field}, which is not a local file: path`));
+      }
+    }
+  };
+  if (isObj(manifest.overrides)) walk('overrides', manifest.overrides, 0, false);
+  if (isObj(manifest.resolutions)) walk('resolutions', manifest.resolutions, 0, false);
+  if (isObj(manifest.pnpm) && isObj(manifest.pnpm.overrides)) walk('pnpm.overrides', manifest.pnpm.overrides, 0, false);
+  return out;
+}
+
+/** A Dockerfile / Containerfile, by name. */
+const isDockerfile = (name: string): boolean => /^(dockerfile|containerfile)(\..+)?$/i.test(name) || /\.(dockerfile|containerfile)$/i.test(name);
+/** A package manager asked to fetch a package of the scope BY NAME. */
+const INSTALLS_SCOPE = new RegExp(`\\b(npm|pnpm|yarn|npx)\\b[^\\n]*\\s(install|i|add|ci|exec|dlx)\\b[^\\n]*\\s["']?${OS_SCOPE}/`, 'i');
+const INSTALLS_SCOPE_SHORT = new RegExp(`\\b(npm|pnpm|yarn)\\s+(install|i|add)\\b[^\\n]*\\s["']?${OS_SCOPE}/`, 'i');
+/** Any place a Dockerfile line sets the scope's registry: `--@sovereign-os:registry=`, `npm config set …`, `npm_config_@sovereign-os:registry=`. */
+const SETS_SCOPE_REGISTRY = new RegExp(`${OS_SCOPE}:registry["']?(?:\\s*=\\s*|\\s+)["']?([^\\s"']+)`, 'gi');
+
+/**
+ * The scaffold Dockerfiles set the pin themselves; a hand-edited one could still fetch the scope.
+ * Blocking when a line installs a package of the scope by name (whatever the registry config, a
+ * named install of a package that is not published anywhere is a request to a registry), or sets
+ * the scope's registry to anything but the pin. Continuation lines are joined first.
+ */
+function dockerfileFindings(path: string, content: string): ScanFinding[] {
+  const out: ScanFinding[] = [];
+  const lines = content.replace(/\\\r?\n/g, ' ').split(/\r?\n/);
+  for (const line of lines) {
+    if (/^\s*#/.test(line)) continue;
+    if (INSTALLS_SCOPE.test(line) || INSTALLS_SCOPE_SHORT.test(line)) {
+      out.push(blocking(path, `${OS_SCOPE}/*`, `has a build step that installs a package of the scope by name (${line.trim().slice(0, 120)})`));
+      continue;
+    }
+    for (const m of line.matchAll(SETS_SCOPE_REGISTRY)) {
+      if (!sameRegistry(m[1], SCOPE_PIN_REGISTRY)) {
+        out.push(blocking(path, `${OS_SCOPE}/*`, `points the scope at ${m[1]} in a build step; the only accepted value is ${SCOPE_PIN_REGISTRY}`));
+        break;
+      }
+    }
+  }
+  return out;
+}
+
 /** npm lockfileVersion 2/3: every installed copy of a scoped package must be a link to a local folder. */
 function lockPackagesFindings(path: string, packages: Json): ScanFinding[] {
   const out: ScanFinding[] = [];
@@ -280,8 +346,10 @@ const SCOPE_URL = new RegExp(`[a-z][a-z0-9+.-]*://[^\\s"']*${OS_SCOPE}(?:/|%2f)[
  * the app's own vendored folder, as review-card findings.
  *
  *   BLOCKING (`critical`): a manifest URL / git reference / alias for the scope, or a version range
- *   in a tree that carries `vendor/@sovereign-os/`; a lockfile entry for the scope that is not a
- *   local link; an `.npmrc` pointing the scope at another registry.
+ *   in a tree that carries `vendor/@sovereign-os/`; an `overrides` / `resolutions` /
+ *   `pnpm.overrides` entry that does the same; a lockfile entry for the scope that is not a local
+ *   link; an `.npmrc` pointing the scope at another registry; a Dockerfile line that installs the
+ *   scope by name or points it at another registry.
  *   NEVER BLOCKING: a version range in a legacy tree (no vendored folder) — `info` per dependency;
  *   and "the tree uses the scope but its root `.npmrc` does not pin it" — `medium` when such a
  *   range exists (the exposed state), `info` otherwise.
@@ -307,7 +375,7 @@ export function scopePinFindings(files: ScaffoldFile[]): ScanFinding[] {
       const m = manifestFindings(path, manifest.value, legacyTree);
       usesScope ||= m.usesScope;
       legacyRanges += m.legacyRanges;
-      out.push(...m.findings);
+      out.push(...m.findings, ...overrideFindings(path, manifest.value));
     } else if (NPM_LOCKS.has(name)) {
       const parsed = parseJson(f.content);
       if (!parsed.ok) {
@@ -317,6 +385,8 @@ export function scopePinFindings(files: ScaffoldFile[]): ScanFinding[] {
       const lock = parsed.value;
       if (isObj(lock.packages)) out.push(...lockPackagesFindings(path, lock.packages));
       else if (isObj(lock.dependencies)) out.push(...lockV1Findings(path, lock.dependencies));
+    } else if (isDockerfile(name)) {
+      out.push(...dockerfileFindings(path, f.content));
     } else if (TEXT_LOCKS.has(name)) {
       const hit = SCOPE_URL.exec(f.content);
       if (hit) out.push(blocking(path, `${OS_SCOPE}/*`, `resolves a package of the scope from ${hit[0]}`));
