@@ -19,7 +19,9 @@
 #   1. admitted: the documented callers reach OPA, Trino, Postgres, object storage and os-ui;
 #   2. refused:  an app pod in agentic-apps, a pod in another namespace, an unlabelled pod and the
 #      Dagster code location/run pods (to OPA) are refused;
-#   3. negative twin: with the policies deleted, the app pod reaches OPA — so the refusal in 2
+#   3. cert-manager's real HTTP-01 solver answers the ingress controller on :8089 and refuses an app
+#      pod; without its policy default-deny cuts it off (the renewal outage it prevents);
+#   4. negative twin: with the policies deleted, the app pod reaches OPA — so the refusal in 2
 #      is the policy's doing, not a broken probe.
 set -uo pipefail
 cd "$(dirname "$0")/../.." || exit 2
@@ -120,6 +122,28 @@ expect refuse "the ingress controller"    ingress-nginx app.kubernetes.io/name=i
 expect refuse "a Dagster run pod"         agentic-os component=user-deployments,dagster/run-id=r3 opa 8181
 expect refuse "an unlabelled pod"         agentic-os - opa 8181
 expect refuse "an unlabelled pod"         agentic-os - minio 9000
+echo "== cert-manager's HTTP-01 solver (the real acmesolver, cert-manager v1.16.1 as on STACKIT)"
+# The solver answers /.well-known/acme-challenge/<token> with the key, for its --domain only.
+ACMESOLVER=quay.io/jetstack/cert-manager-acmesolver:v1.16.1@sha256:14304826ab1a1184e185f952ef7e0bf8e620568b5c17939179efe6f4c6049d8e
+k -n agentic-os run acme-solver --image="$ACMESOLVER" --restart=Never --labels=acme.cert-manager.io/http01-solver=true \
+  -- --listen-port=8089 --domain=renew.example --token=tok123 --key=tok123.keyauth >/dev/null
+k -n agentic-os expose pod acme-solver --port=8089 >/dev/null
+k -n agentic-os wait --for=condition=Ready pod/acme-solver --timeout=180s >/dev/null || bad "acme solver pod ready"
+acme() { # acme <ns> <labels> — 0 when the solver returns the key authorization
+  local ns=$1 name=a$RANDOM; n=$((n + 1))
+  k -n "$ns" run "$name" --image="$BUSYBOX" --restart=Never --labels="$2" --command -- sh -c \
+    'wget -T 4 -qO- --header "Host: renew.example" http://acme-solver.agentic-os.svc.cluster.local:8089/.well-known/acme-challenge/tok123 | grep -q tok123.keyauth' >/dev/null
+  for _ in $(seq 1 60); do
+    phase=$(k -n "$ns" get pod "$name" -o jsonpath='{.status.phase}' 2>/dev/null)
+    case $phase in Succeeded) return 0 ;; Failed) return 1 ;; esac
+    sleep 2
+  done
+  return 2
+}
+acme ingress-nginx app.kubernetes.io/name=ingress-nginx && ok "the ingress controller reaches the HTTP-01 solver (challenge answered)" || bad "the ingress controller reaches the HTTP-01 solver"
+acme agentic-apps app.kubernetes.io/component=software-runner; [ $? -eq 1 ] && ok "an app pod is refused at the HTTP-01 solver" || bad "an app pod is refused at the HTTP-01 solver"
+k -n agentic-os delete networkpolicy acme-http01-solver-allow-controller >/dev/null
+acme ingress-nginx app.kubernetes.io/name=ingress-nginx; [ $? -eq 1 ] && ok "twin: without its policy the solver is cut off by default-deny (renewals would fail)" || bad "twin: solver cut off without its policy"
 echo "== negative twin: without the policies the app pod gets through"
 k -n agentic-os delete networkpolicy default-deny-ingress opa-allow-callers >/dev/null
 expect reach  "an agentic-apps app pod (policies deleted)" agentic-apps app.kubernetes.io/component=software-runner opa 8181

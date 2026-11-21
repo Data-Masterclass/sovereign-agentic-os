@@ -10,7 +10,8 @@
 #   c. another namespace admitted to Postgres;
 #   d. an extra OPA caller (the Dagster code location and its run pods);
 #   e. a rule with no `from` on object storage (admits every namespace);
-#   f. the Polaris JDBC metastore no longer admitted to Postgres.
+#   f. the Polaris JDBC metastore no longer admitted to Postgres;
+#   g. cert-manager's HTTP-01 solver no longer reachable from the ingress controller on :8089.
 # Needs helm, js-yaml (os-ui/node_modules) and the subchart .tgz files.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
@@ -46,10 +47,12 @@ twin "b (missing caller)" 'Job dbt-build calls trino:8080 but no ingress policy 
   "s.replace('(list \"query-tool\" \"dbt\" \"marts-init\")', '(list \"query-tool\" \"marts-init\")', 1)"
 twin "f (Polaris metastore missing)" 'Deployment polaris calls pg-rw:5432 but no ingress policy admits it' \
   "s.replace('(list \"polaris\" \"polaris-init\" \"pg-dump\"', '(list \"pg-dump\"', 1)"
+twin "g (ACME solver unreachable)" 'HTTP-01 solver pods are not reachable from the ingress controller' \
+  "s.replace('        - { protocol: TCP, port: 8089 }', '        - { protocol: TCP, port: 8090 }', 1)"
 twin "c (another namespace)" 'postgres-allow-callers: admits another namespace' \
   "s.replace('      ports:\n        - { protocol: TCP, port: 5432 }\n', '        - namespaceSelector:\n            matchLabels:\n              kubernetes.io/metadata.name: agentic-apps\n      ports:\n        - { protocol: TCP, port: 5432 }\n', 1)"
 twin "d (extra OPA caller)" 'opa-allow-callers admits .*user-deployments' \
   "s.replace('(list \"web-fetch\" \"trino\" \"opa-reassert-principals\"))', '(list \"web-fetch\" \"trino\" \"opa-reassert-principals\") \"extra\" (list (dict \"component\" \"user-deployments\")))', 1)"
 twin "e (no from)" 'object-storage-allow-callers: a rule with no .from.' \
   "s.replace('      ports:\n        - { protocol: TCP, port: 9000 }\n', '    - ports:\n        - { protocol: TCP, port: 9000 }\n', 1)"
-echo "platform-ingress-policy: ok — the check passes the committed chart and refuses all six broken twins"
+echo "platform-ingress-policy: ok — the check passes the committed chart and refuses all seven broken twins"
