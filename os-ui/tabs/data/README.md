@@ -134,8 +134,8 @@ With the flag on, the OS stops being its own run ledger (checklist D7–D11):
 - **Launch after commit.** Build, `transform_silver`, `build_gold_join` and `sync_dataset_now`
   commit, then `lib/dbt/launch.ts` waits for the location to expose the dataset's assets and calls
   `launchRun` (`core/infra/dagster.ts`) for exactly that subset — tags `os/dataset`, `os/domain`,
-  `os/principal`, `os/user`, `os/action`, `os/layer`, `os/commit`, `os/surface`, and run-pod env
-  `OS_PRINCIPAL` + `OS_PINNED_COMMITS`. The version record keeps `{commit, dagsterRunId}`, or
+  `os/principal`, `os/user`, `os/action`, `os/layer`, `os/commit`, `os/pinned`, `os/surface` (the run worker derives its `OS_PRINCIPAL` and
+  `OS_PINNED_COMMITS` env from the tags; no pod config is sent). The version record keeps `{commit, dagsterRunId}`, or
   `launchError` saying honestly why no run exists.
 - **Schedules, not CronJobs.** `set_dataset_sync` provisions **no** `batch/v1` CronJob and removes a
   pre-B2 one (`reconcileSyncSchedule`); the schedule is the `os/schedules.yml` entry this same write

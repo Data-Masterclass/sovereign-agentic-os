@@ -21,8 +21,8 @@ ARCHITECTURE:
     (`os_projects.native_definitions`). A mismatch skips the domain; it is never wired as legacy.
   - Per-domain gating: a domain that fails to import or that `Definitions` refuses is logged and
     skipped — one broken repo never takes the location down (`os_projects.partition_definitions`).
-  - Identity. Off (no runner password mounted): the K8s run launcher reads the run pod's env from
-    the `dagster-k8s/config` tag, as before. On (WP-15): every dbt step first has os-ui accept its
+  - Identity. Off (no runner password mounted): the run worker takes the owner and the pinned commit
+    from the run's tags (`apply_run_env_from_tags`). On (WP-15): every dbt step first has os-ui accept its
     run grant (`act_as_owner`, `GrantedDbtCliResource` for native definitions), and only then gets
     the owner as OS_PRINCIPAL and the runner's Trino password; three run-status sensors end the
     activation. Observation probes and dlt landings are not covered yet (see docs/components/dagster.md).
@@ -624,4 +624,5 @@ def _maintenance_job(p: osp.Project, dom: str, schema: str, principal: str, reso
     return maintenance_job
 
 
+osp.apply_run_env_from_tags()  # a run worker reads its pin and principal from the run's tags
 defs = build_definitions()

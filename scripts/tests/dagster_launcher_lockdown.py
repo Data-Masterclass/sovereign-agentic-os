@@ -13,14 +13,15 @@ with `-f values.dagster-launcher-lockdown.yaml`. Exit 0 only when ALL of these h
      the code location's DAGSTER_CONTAINER_CONTEXT env (the lock-down turns
      `includeConfigInLaunchedRuns` off) and the pods' checksum annotations;
   B. config parity: the lock-down launcher is dagster_k8s.K8sRunLauncher with EVERY stock config key
-     at its stock value, plus the two documented `only_allow_*` keys at exactly the allowed values,
+     at its stock value, plus the two documented `only_allow_*` keys allowing nothing ({} and []),
      plus a `run_k8s_config` that equals — after dagster-k8s's own normalisation
      (K8sContainerContext.create_from_config) — what the code location used to propagate;
   C. launch parity: dagster-k8s's real K8sRunLauncher.launch_run (only the Kubernetes API call is
      captured) builds the SAME Job for a normal OS launch under both configs;
-  D. lock-down: the same real launch_run refuses a tag that sets an image, a volume, a service
-     account or a command ("violated the allowed list"), creates no Job, and drops a tag env var
-     that is not on the list — while the STOCK launcher accepts those tags (the twin: proves the
+  D. lock-down: the same real launch_run refuses a tag that sets ANY pod field: image, command,
+     volume, service account, env (plain, or with `valueFrom`, in both spellings) and resources
+     ("violated the allowed list"), and creates no Job — while the STOCK launcher accepts those
+     tags and puts the valueFrom env and the large resources into the Job (the twin: proves the
      checks see a real difference, not a test that always passes).
 """
 from __future__ import annotations
@@ -54,10 +55,10 @@ CODE_LOCATION = "agentic-os-dagster-user-deployments-sovereign"
 CONTEXT_ENV = "DAGSTER_CONTAINER_CONTEXT"
 DAGSTER_PODS = {CODE_LOCATION, "agentic-os-dagster-webserver", "agentic-os-dagster-daemon"}
 
-# The contract: what a run tag may still set. `container_config.env` + `.resources`, and env names
-# exactly those the OS itself puts in `dagster-k8s/config` (os_projects.run_pod_env, launch.ts).
-ALLOWED_FIELDS = {"container_config": {"env": True, "resources": True}}
-ALLOWED_ENV = sorted(["OS_PINNED_COMMITS", "OS_PRINCIPAL", "DESTINATION__SQLALCHEMY__CREDENTIALS__USERNAME"])
+# The contract: a run tag may set NOTHING. The OS sends no `dagster-k8s/config` tag: the run worker
+# reads its pinned commit and principal from the run's own tags (os_projects.run_tag_env).
+ALLOWED_FIELDS: dict = {}
+ALLOWED_ENV: list = []
 
 failures: list[str] = []
 
@@ -179,15 +180,14 @@ def config_parity(stock_rl: dict, lock_rl: dict, stock_ctx: dict):
     check("B3 lock-down adds no config key but the two only_allow_* keys", not extra, str(sorted(extra)))
     for k in sorted(set(s) - {"run_k8s_config"}):
         check(f"B4 stock key {k} kept at its stock value", l.get(k) == s[k], f"stock {s[k]!r} lock-down {l.get(k)!r}")
-    check("B5 only_allow_user_defined_k8s_config_fields is exactly container_config.{env,resources}",
+    check("B5 only_allow_user_defined_k8s_config_fields allows no field at all ({})",
           l.get("only_allow_user_defined_k8s_config_fields") == ALLOWED_FIELDS,
           str(l.get("only_allow_user_defined_k8s_config_fields")))
-    check("B6 only_allow_user_defined_env_vars is exactly the OS's run-pod env names",
-          sorted(l.get("only_allow_user_defined_env_vars") or []) == ALLOWED_ENV,
+    check("B6 only_allow_user_defined_env_vars allows no env name at all ([])",
+          l.get("only_allow_user_defined_env_vars") == ALLOWED_ENV,
           str(l.get("only_allow_user_defined_env_vars")))
-    pod_env = sorted(os_projects.run_pod_env("p", "d=0" * 1))
-    check("B7 the allowed env names are exactly what os_projects.run_pod_env puts in the tag",
-          pod_env == ALLOWED_ENV, str(pod_env))
+    check("B7 the OS sends no pod config of its own: no tag helper builds a dagster-k8s/config tag",
+          not hasattr(os_projects, "k8s_env_tag") and not hasattr(os_projects, "run_pod_env"))
     srk, lrk = dict(s.get("run_k8s_config") or {}), dict(l.get("run_k8s_config") or {})
     check("B8 run pod metadata (labels) kept at its stock value",
           lrk.pop("pod_template_spec_metadata", None) == srk.pop("pod_template_spec_metadata", None))
@@ -296,13 +296,21 @@ def k8s_tag(cfg: dict) -> dict:
 FORBIDDEN = {
     "container_config.image": {"container_config": {"image": "busybox:1.36"}},
     "container_config.command": {"container_config": {"command": ["/bin/sh", "-c", "true"]}},
+    "container_config.env (plain value)": {"container_config": {"env": [{"name": "PYTHONPATH", "value": "/tmp/x"}]}},
+    "container_config.env (valueFrom, snake_case)": {"container_config": {"env": [
+        {"name": "OS_PRINCIPAL", "value_from": {"secret_key_ref": {"name": "any-secret", "key": "k"}}}]}},
+    "container_config.env (valueFrom, camelCase)": {"container_config": {"env": [
+        {"name": "OS_PRINCIPAL", "valueFrom": {"secretKeyRef": {"name": "any-secret", "key": "k"}}}]}},
+    "container_config.resources (large request)": {"container_config": {"resources": {
+        "limits": {"cpu": "64", "memory": "512Gi"}, "requests": {"memory": "60Gi"}}}},
     "pod_spec_config.volumes": {"pod_spec_config": {"volumes": [{"name": "h", "host_path": {"path": "/"}}]}},
     "pod_spec_config.service_account_name": {"pod_spec_config": {"service_account_name": "default"}},
 }
 
 
 def launch_checks(stock_cfg: dict, lock_cfg: dict, stock_ctx: dict):
-    normal = {"dagster-k8s/config": os_projects.k8s_env_tag(os_projects.run_pod_env("alice", "sales=" + "a" * 40))}
+    # What the OS sends: run tags only (os/principal, os/pinned), no dagster-k8s/config.
+    normal = {"os/principal": "alice", "os/pinned": "sales=" + "a" * 40, "os/domain": "sales"}
     sj, serr = launch(stock_cfg, stock_ctx, normal)
     lj, lerr = launch(lock_cfg, None, normal)
     check("C1 stock launches a normal OS run", serr is None and len(sj) == 1, str(serr))
@@ -314,15 +322,16 @@ def launch_checks(stock_cfg: dict, lock_cfg: dict, stock_ctx: dict):
         check("C3 the run Job is IDENTICAL under both launchers (namespace + full spec)", sj == lj,
               json.dumps(diff(sj[0][1], lj[0][1]), default=str))
         names = env_names(lj[0])
-        check("C4 the run pod carries the tag env and the operator env",
-              {"OS_PINNED_COMMITS", "OS_PRINCIPAL", "TRINO_HOST", "OS_INDEX_FILE"} <= set(names), str(names))
+        check("C4 the run pod carries the operator env and none the tags could set",
+              {"TRINO_HOST", "OS_INDEX_FILE"} <= set(names) and not {"OS_PINNED_COMMITS", "OS_PRINCIPAL"} & set(names), str(names))
         check("C4b the run pod carries no runtime bearer (main's contract since #254)",
               "AGENT_RUNTIME_TOKEN" not in names, str(names))
 
     for field, cfg in FORBIDDEN.items():
+        short = field.split(" ")[0]
         jobs, err = launch(lock_cfg, None, k8s_tag(cfg))
         check(f"D1 lock-down refuses a tag that sets {field}",
-              err is not None and "violated the allowed list" in err and field in err and not jobs,
+              err is not None and "violated the allowed list" in err and short in err and not jobs,
               f"err={err!r} jobs={len(jobs)}")
         sjobs, serr = launch(stock_cfg, stock_ctx, k8s_tag(cfg))
         check(f"D1-twin the STOCK launcher creates a Job for the same {field} tag",
@@ -339,21 +348,19 @@ def launch_checks(stock_cfg: dict, lock_cfg: dict, stock_ctx: dict):
               and spec["containers"][0].get("command") == ["/bin/sh", "-c", "true"]
               and any(v.get("hostPath") == {"path": "/"} for v in spec.get("volumes", []))
               and spec.get("serviceAccountName") == "default", json.dumps(spec)[:600])
-
-    extra = {"container_config": {"env": [{"name": "OS_PRINCIPAL", "value": "alice"},
-                                          {"name": "PYTHONPATH", "value": "/tmp/not-allowed"}]}}
-    jobs, err = launch(lock_cfg, None, k8s_tag(extra))
-    check("D2 lock-down drops a tag env var that is not on the list (PYTHONPATH) and keeps an allowed one",
-          err is None and jobs and "PYTHONPATH" not in env_names(jobs[0]) and "OS_PRINCIPAL" in env_names(jobs[0]),
-          f"err={err!r} env={env_names(jobs[0]) if jobs else None}")
-    sjobs, serr = launch(stock_cfg, stock_ctx, k8s_tag(extra))
-    check("D2-twin the STOCK launcher passes PYTHONPATH into the run pod",
-          serr is None and sjobs and "PYTHONPATH" in env_names(sjobs[0]), f"err={serr!r}")
-    res = {"container_config": {"resources": {"limits": {"memory": "2Gi"}}}}
-    jobs, err = launch(lock_cfg, None, k8s_tag(res))
-    check("D3 lock-down still accepts container_config.resources from a tag",
-          err is None and jobs and jobs[0][1]["spec"]["template"]["spec"]["containers"][0]["resources"]["limits"]["memory"] == "2Gi",
-          f"err={err!r}")
+    # The twins that matter: on the stock launcher the valueFrom env and the large resources reach the Job.
+    sec = FORBIDDEN["container_config.env (valueFrom, camelCase)"]
+    sjobs, _ = launch(stock_cfg, stock_ctx, k8s_tag(sec))
+    envs = sjobs[0][1]["spec"]["template"]["spec"]["containers"][0].get("env", []) if sjobs else []
+    check("D1-twin the stock Job really carries the valueFrom env from the tag",
+          any(e.get("name") == "OS_PRINCIPAL" and "secretKeyRef" in json.dumps(e) for e in envs), json.dumps(envs)[:400])
+    big = FORBIDDEN["container_config.resources (large request)"]
+    sjobs, _ = launch(stock_cfg, stock_ctx, k8s_tag(big))
+    res = sjobs[0][1]["spec"]["template"]["spec"]["containers"][0]["resources"] if sjobs else {}
+    check("D1-twin the stock Job really carries the large resources", (res.get("limits") or {}).get("memory") == "512Gi", str(res))
+    # An empty `dagster-k8s/config` tag asks for nothing: it must still launch (the allow-list is not a blanket refusal).
+    jobs, err = launch(lock_cfg, None, k8s_tag({}))
+    check("D4 an empty dagster-k8s/config tag asks for nothing and launches", err is None and len(jobs) == 1, f"err={err!r}")
 
 
 def main() -> int:

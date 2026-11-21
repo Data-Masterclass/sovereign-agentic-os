@@ -16,7 +16,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   launchRun, run, runsForDataset, recentOsRuns, assetChecks, allAssetChecks, latestMaterialization,
-  assetGraph, reloadLocation, nextTick, k8sEnvTag, sanitizeName, sanitizeAll, scheduleNameFor, gql,
+  assetGraph, reloadLocation, nextTick, sanitizeName, sanitizeAll, scheduleNameFor, gql,
 } from '@core/infra/dagster';
 
 type Req = { query: string; variables: Record<string, unknown> };
@@ -36,9 +36,9 @@ function fakeFetch(answer: (req: Req) => unknown, opts: { status?: number; hang?
 
 const deps = (f: typeof fetch) => ({ fetch: f, url: 'http://dagster', location: 'sovereign', repository: '__repository__' });
 
-test('launchRun sends job, asset subset, tags and the run-pod env as dagster-k8s/config; maps success', async () => {
+test('launchRun sends job, asset subset and tags only (no pod config: the run launcher lock-down refuses it); maps success', async () => {
   const { fetch: f, calls } = fakeFetch(() => ({ data: { launchRun: { __typename: 'LaunchRunSuccess', run: { runId: 'r1', status: 'QUEUED', jobName: 'sales__all', tags: [] } } } }));
-  const r = await launchRun({ domain: 'sales', selection: [['sales', 'gold_orders']], tags: { 'os/dataset': 'ds_1', 'os/principal': 'amir' }, env: { OS_PRINCIPAL: 'amir', OS_PINNED_COMMITS: 'sales=abc' } }, deps(f));
+  const r = await launchRun({ domain: 'sales', selection: [['sales', 'gold_orders']], tags: { 'os/dataset': 'ds_1', 'os/principal': 'amir', 'os/pinned': 'sales=abc' } }, deps(f));
   assert.deepEqual(r, { ok: true, data: { runId: 'r1', status: 'QUEUED' } });
   const params = calls[0].variables.params as Record<string, Record<string, unknown>>;
   assert.equal(params.selector.jobName, 'sales__all');
@@ -46,7 +46,8 @@ test('launchRun sends job, asset subset, tags and the run-pod env as dagster-k8s
   assert.deepEqual(params.selector.assetSelection, [{ path: ['sales', 'gold_orders'] }]);
   const tags = Object.fromEntries((params.executionMetadata.tags as { key: string; value: string }[]).map((t) => [t.key, t.value]));
   assert.equal(tags['os/dataset'], 'ds_1');
-  assert.deepEqual(JSON.parse(tags['dagster-k8s/config']), { container_config: { env: [{ name: 'OS_PINNED_COMMITS', value: 'sales=abc' }, { name: 'OS_PRINCIPAL', value: 'amir' }] } });
+  assert.equal(tags['os/pinned'], 'sales=abc');
+  assert.equal('dagster-k8s/config' in tags, false);
 });
 
 test('launchRun maps every failure union to {ok:false} and needs a job', async () => {
@@ -143,7 +144,6 @@ test('naming helpers match os_projects.py', () => {
   assert.equal(sanitizeName('agentic-leader q3'), 'agentic_leader_q3');
   assert.equal(sanitizeName('9x'), '_9x');
   assert.equal(scheduleNameFor('sales', 'ds_ab12'), 'sales__ds_ab12');
-  assert.equal(k8sEnvTag({ B: '2', A: '1' }), JSON.stringify({ container_config: { env: [{ name: 'A', value: '1' }, { name: 'B', value: '2' }] } }));
 });
 
 test('sanitizeAll agrees with os_projects.sanitize_all on the SHARED golden (engine rebuild B3)', () => {

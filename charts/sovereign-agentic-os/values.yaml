@@ -1314,7 +1314,7 @@ dagster:
           - { name: TRINO_USER, value: dbt-runner }
           - { name: TRINO_CATALOG, value: iceberg }
           # dlt's Trino destination for the Bronze ingestion in each repo's data/dagster/definitions.py
-          # (WP-49). The USERNAME is per run: the principal, set with OS_PRINCIPAL (os_projects.run_pod_env).
+          # (WP-49). The USERNAME is per run: the principal, derived from the run's os/principal tag (os_projects.run_tag_env).
           - { name: DESTINATION__SQLALCHEMY__CREDENTIALS__DRIVERNAME, value: trino }
           - { name: DESTINATION__SQLALCHEMY__CREDENTIALS__HOST, value: trino }
           - { name: DESTINATION__SQLALCHEMY__CREDENTIALS__PORT, value: "8080" }
@@ -1361,7 +1361,7 @@ dagster:
         # API, below) and returns 0 in a `dagster-run-*` pod. The sidecar cannot be dropped here —
         # the code-server pod is the only place it can maintain the shared `current` checkout.
         # A run pod's emptyDir starts EMPTY and `os_projects.ensure_checkout` clones the commits
-        # named in the run's OS_PINNED_COMMITS env before building definitions.
+        # named in the run's os/pinned tag (-> OS_PINNED_COMMITS, os_projects.apply_run_env_from_tags) before building definitions.
         volumes:
           - name: repos-checkout
             emptyDir: {}

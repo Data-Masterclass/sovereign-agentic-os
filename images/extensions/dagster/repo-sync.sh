@@ -34,7 +34,7 @@
 #   repo-index route accepts — and that is the ONLY secret it may ever hold: no Trino password, no
 #   mirror token, nothing a `{{ env_var(...) }}` in a repo could exfiltrate. The allowlist keeps
 #   even that one out of `dbt parse`. A generated `profiles.yml` reads its credentials from the RUN
-#   pod's env (set by `dagster-k8s/config`), never from this sidecar.
+#   pod's env (set from the run tags by repo.py), never from this sidecar.
 #
 # ENV:
 #   REPO_SYNC_ENABLED      "true" to run; anything else makes the sidecar inert on an install

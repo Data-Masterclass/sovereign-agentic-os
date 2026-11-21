@@ -12,9 +12,8 @@
  *     error are all `{ok:false, error}`. Callers decide what a failure means.
  *   - One `gql()` with a hard timeout and `cache: 'no-store'`; `fetch` is injectable for tests.
  *   - Launch tags: `os/dataset`, `os/principal`, `os/domain`, `os/commit`, `os/user`, `os/action`,
- *     plus `dagster-k8s/config` carrying the run pod's env (`OS_PRINCIPAL` = the Trino user
- *     dbt-trino impersonates; `OS_PINNED_COMMITS` = the commits the run pod checks out). The env
- *     values are principals and shas — never secrets; this module logs nothing anyway.
+ *     `os/pinned` (the commits the run pod checks out). The run worker derives its env from the
+ *     tags; no `dagster-k8s/config` tag is sent (the run launcher lock-down refuses it).
  *   - The selection is a list of asset keys (`[<domain>, <dbt node>]`); the job is the per-domain
  *     `<domain>__all` job the location defines, or a schedule's job when the caller names one.
  *   - `server-only`: the Dagster URL is cluster-internal.
@@ -91,8 +90,6 @@ export type LaunchInput = {
   /** Asset keys as paths, e.g. `[['sales','gold_orders']]`. Empty = the whole job. */
   selection?: string[][];
   tags?: Record<string, string>;
-  /** Env the run pod receives (dagster-k8s/config). */
-  env?: Record<string, string>;
 };
 
 export type Launched = { runId: string; status: RunStatus };
@@ -110,12 +107,6 @@ function tagMap(tags: unknown): Record<string, string> {
 
 export function dagsterConfigured(deps: DagsterDeps = {}): boolean {
   return (deps.url ?? config.dagsterUrl).length > 0;
-}
-
-/** The `dagster-k8s/config` tag body: env the K8s run launcher injects into the run pod. */
-export function k8sEnvTag(env: Record<string, string>): string {
-  const names = Object.keys(env).sort();
-  return JSON.stringify({ container_config: { env: names.map((name) => ({ name, value: String(env[name]) })) } });
 }
 
 /**
@@ -191,7 +182,6 @@ export async function launchRun(input: LaunchInput, deps: DagsterDeps = {}): Pro
   const jobName = input.jobName ?? (input.domain ? `${sanitizeName(input.domain)}__all` : '');
   if (!jobName) return { ok: false, error: 'launchRun needs a jobName or a domain' };
   const tags: Record<string, string> = { ...(input.tags ?? {}) };
-  if (input.env && Object.keys(input.env).length) tags['dagster-k8s/config'] = k8sEnvTag(input.env);
   const params = {
     selector: {
       ...selector(deps),

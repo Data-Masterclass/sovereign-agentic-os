@@ -20,9 +20,10 @@ ARCHITECTURE:
     whose definitions do not match the recorded hash, is skipped with a reason, never fatal.
   - The dbt project directory comes from the repo's layout marker (`dbt_dir`, WP-55); the Dagster
     module path and the hash record mirror `os-ui/core/infra/data-layout.ts` (a test asserts it).
-  - Tag values are strings; `dagster-k8s/config` is JSON — the K8s run launcher reads the run
-    pod's env from it (OS_PRINCIPAL = the Trino user dbt impersonates, the dlt destination user,
-    OS_PINNED_COMMITS = the commit the run pod must check out).
+  - Tag values are strings. The run worker derives its env from the TAGS (`run_tag_env`:
+    os/principal = the Trino user dbt impersonates and the dlt destination user, os/pinned = the
+    commit the run pod must check out). No `dagster-k8s/config` tag is ever set: the launcher
+    lock-down refuses it.
 """
 from __future__ import annotations
 
@@ -157,7 +158,7 @@ PARSE_ENV_PASSTHROUGH: Tuple[str, ...] = ("PATH", "HOME", "LANG", "DBT_PROFILES_
 
 #: Fixed values dbt needs to render the generated `profiles.yml`. `OS_PRINCIPAL` is the only
 #: `env_var()` with NO default (tabs/data/lib/dbt/project.ts), so parse fails loudly without it;
-#: it is a RENDER-only placeholder — a real run gets its principal from `dagster-k8s/config`.
+#: it is a RENDER-only placeholder — a real run gets its principal from its `os/principal` tag.
 PARSE_ENV_FIXED: Dict[str, str] = {
     "DBT_SEND_ANONYMOUS_USAGE_STATS": "false",
     "OS_PRINCIPAL": "repo-sync",
@@ -451,16 +452,13 @@ def observe_tags(domain: str, assets: Sequence[SourceAsset], sha: str, pinned: s
     and a wrong single value would be worse than none."""
     tags = base_tags(domain, sha, pinned)
     principals = sorted({a.principal for a in assets})
-    env = {"OS_PINNED_COMMITS": pinned}
     if len(principals) == 1:
         tags["os/principal"] = principals[0]
-        env["OS_PRINCIPAL"] = principals[0]
     tags.update(
         {
             "os/schedule": schedule,
             "os/action": "observe external sources",
             "os/sources": ",".join(f"{a.source}.{a.table}" for a in assets),
-            "dagster-k8s/config": k8s_env_tag(env),
         }
     )
     return tags
@@ -756,24 +754,74 @@ def discover(
 # ------------------------------------------------------------------------ tags --
 
 
-def k8s_env_tag(env: Mapping[str, str]) -> str:
-    """The `dagster-k8s/config` tag: env the K8s run launcher injects into the run pod."""
-    return json.dumps(
-        {"container_config": {"env": [{"name": k, "value": str(v)} for k, v in sorted(env.items())]}},
-        separators=(",", ":"),
-        sort_keys=True,
-    )
-
-
-def run_pod_env(principal: Optional[str], pinned: str) -> Dict[str, str]:
-    """The run pod's env for a run of one domain: the commit to check out and, when the run has a
-    principal, the identity dbt impersonates (`OS_PRINCIPAL`) and dlt's Trino destination user
-    (dlt resolves `DESTINATION__SQLALCHEMY__CREDENTIALS__USERNAME` from the environment)."""
-    env = {"OS_PINNED_COMMITS": pinned}
-    if principal:
+def run_tag_env(tags: Mapping[str, object]) -> Dict[str, str]:
+    """The run worker's env, derived from the run's TAGS: the commits to check out (`os/pinned`)
+    and, when the run has a principal, the identity dbt impersonates (`OS_PRINCIPAL`) and dlt's
+    Trino destination user (dlt resolves `DESTINATION__SQLALCHEMY__CREDENTIALS__USERNAME` from the
+    environment). A tag value is just a string; the run
+    launcher lock-down allows no `dagster-k8s/config` tag at all. Invalid values are dropped."""
+    env: Dict[str, str] = {}
+    pinned = parse_pinned(str(tags.get("os/pinned") or ""))
+    if pinned:
+        env["OS_PINNED_COMMITS"] = ",".join(f"{d}={pinned[d]}" for d in sorted(pinned))
+    principal = str(tags.get("os/principal") or "")
+    if _PRINCIPAL_RE.match(principal):
         env["OS_PRINCIPAL"] = principal
         env["DESTINATION__SQLALCHEMY__CREDENTIALS__USERNAME"] = principal
     return env
+
+
+def apply_run_tag_env(tags: Mapping[str, object], env) -> None:
+    """Put `run_tag_env(tags)` into `env` (a mapping such as os.environ). The run's tags are the
+    source: they replace a value the pod already holds."""
+    env.update(run_tag_env(tags))
+
+
+def _run_args_json(argv: Sequence[str]) -> Optional[str]:
+    """The serialised `ExecuteRunArgs` / `ExecuteStepArgs` dagster passes to a run worker
+    (`dagster api execute_run <json>`) or a step process (`dagster api execute_step <json>`)."""
+    for i, a in enumerate(argv):
+        if a in ("execute_run", "execute_step") and i + 1 < len(argv):
+            return argv[i + 1]
+    return None
+
+
+def run_id_from_argv(argv: Sequence[str]) -> Optional[str]:
+    """The run id in those arguments; None for any other process."""
+    raw = _run_args_json(argv)
+    if raw is None:
+        return None
+    try:
+        body = json.loads(raw)
+        # dagster's serdes keeps the legacy field name `pipeline_run_id` for the run id
+        rid = body.get("run_id") or body.get("pipeline_run_id")
+    except (ValueError, AttributeError):
+        return None
+    return str(rid) if rid else None
+
+
+def apply_run_env_from_tags(argv: Optional[Sequence[str]] = None, env=None) -> bool:
+    """A run worker (and its step processes) learns the run's pinned commit and principal from the
+    run's TAGS: the launcher lock-down allows no per-run pod env (the lock-down allows no `dagster-k8s/config` tag). The run is read through the instance dagster itself hands the worker
+    (`ExecuteRunArgs.instance_ref`, as `dagster api execute_run` does). Any other process (the code
+    server, a sensor tick, `dagster dev`) has no such argument and keeps the env it was given:
+    returns False. A failure to read the run is raised: a run worker without its pin loads no
+    domain."""
+    raw = _run_args_json(sys.argv if argv is None else argv)
+    if raw is None:
+        return False
+    from dagster import DagsterInstance
+    from dagster._serdes import deserialize_value
+
+    args = deserialize_value(raw)
+    ref = getattr(args, "instance_ref", None)
+    with (DagsterInstance.from_ref(ref) if ref is not None else DagsterInstance.get()) as instance:
+        run = instance.get_run_by_id(args.run_id)
+        if run is None:
+            raise RuntimeError(f"run {args.run_id} is not in the Dagster instance: cannot read its tags")
+        tags = dict(run.tags)
+    apply_run_tag_env(tags, os.environ if env is None else env)
+    return True
 
 
 def platform_run_tags(domain: str, sha: str, pinned: str, job_tags: Mapping[str, object]) -> Dict[str, str]:
@@ -786,7 +834,8 @@ def platform_run_tags(domain: str, sha: str, pinned: str, job_tags: Mapping[str,
     tags = base_tags(domain, sha, pinned)
     principal = str(job_tags.get("os/principal") or "")
     principal = principal if _PRINCIPAL_RE.match(principal) else ""
-    tags["dagster-k8s/config"] = k8s_env_tag(run_pod_env(principal or None, pinned))
+    if principal:
+        tags["os/principal"] = principal
     return tags
 
 
@@ -807,7 +856,6 @@ def schedule_tags(domain: str, s: Schedule, sha: str, pinned: str, schedule: Opt
             "os/principal": s.principal,
             "os/schedule": schedule or schedule_name(domain, s.dataset),
             "os/action": "scheduled sync",
-            "dagster-k8s/config": k8s_env_tag({"OS_PRINCIPAL": s.principal, "OS_PINNED_COMMITS": pinned}),
         }
     )
     if s.run_grant:
@@ -822,7 +870,6 @@ def maintenance_tags(domain: str, schema: str, principal: str, sha: str, pinned:
             "os/principal": principal,
             "os/schema": schema,
             "os/action": "iceberg maintenance",
-            "dagster-k8s/config": k8s_env_tag({"OS_PRINCIPAL": principal, "OS_PINNED_COMMITS": pinned}),
         }
     )
     return tags
@@ -836,14 +883,13 @@ def alert_job_name(domain: str, saved_query: str) -> str:
 def alert_job_tags(domain: str, alert_id: str, sha: str, pinned: str) -> Dict[str, str]:
     """Like the `__all` job: no principal of its own — os-ui sets the owner's OS_PRINCIPAL per launch."""
     tags = base_tags(domain, sha, pinned)
-    tags.update({"os/alert": alert_id, "os/action": "alert evaluation", "dagster-k8s/config": k8s_env_tag({"OS_PINNED_COMMITS": pinned})})
+    tags.update({"os/alert": alert_id, "os/action": "alert evaluation"})
     return tags
 
 
 def all_job_tags(domain: str, sha: str, pinned: str) -> Dict[str, str]:
     """The OS-launched job carries no principal of its own: the OS sets OS_PRINCIPAL per launch."""
     tags = base_tags(domain, sha, pinned)
-    tags["dagster-k8s/config"] = k8s_env_tag({"OS_PINNED_COMMITS": pinned})
     return tags
 
 

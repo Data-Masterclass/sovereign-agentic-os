@@ -719,11 +719,12 @@ maintenance job per schema. A run-failure sensor pauses a schedule after the OS'
 consecutive failures (this is what `isQuarantined` becomes); a second sensor pauses the schedules of
 a principal the OS reports inactive. A domain that fails to load is skipped, never fatal.
 
-**Identity still travels with the work.** The run pod's `OS_PRINCIPAL` — set through the
-`dagster-k8s/config` tag by the schedule, by the maintenance schema's owner, or by the OS on an
-explicit launch — is the Trino user `dbt-trino` impersonates, so Trino→OPA governs the same identity
-the UI does. `OS_PINNED_COMMITS` tells a run pod (whose `/repos-checkout` emptyDir starts empty)
-which commit to check out. Both are principals and shas; **no secret is ever a tag or a repo file**.
+**Identity still travels with the work.** The run's `os/principal` tag — set by the
+schedule, by the maintenance schema's owner, or by the OS on an explicit launch — becomes the run
+pod's `OS_PRINCIPAL` (the run worker reads its own tags), the Trino user `dbt-trino` impersonates, so
+Trino→OPA governs the same identity the UI does. The `os/pinned` tag becomes `OS_PINNED_COMMITS`, which
+tells a run pod (whose `/repos-checkout` emptyDir starts empty) which commit to check out. No
+`dagster-k8s/config` tag is sent: the run-launcher lock-down allows none. Both are principals and shas; **no secret is ever a tag or a repo file**.
 
 **The OS reads Dagster, not itself.** `core/infra/dagster.ts` is the one typed GraphQL client —
 `Fetched<T>` like `litellm-admin.ts`, a hard timeout, an injectable `fetch`, nothing thrown and
@@ -747,7 +748,7 @@ sees only their own domains.
 Data tab runs on Trino as the caller's domain principal — or as their uid when the SQL touches their
 own `personal_<uid>` lane, because even the owner is denied their own personal table under a domain
 principal. A write runs as `user.domains[0] ?? user.id`. A dbt model in a Dagster run pod connects as
-`dbt-runner` and acts as `env_var('OS_PRINCIPAL')`, which the `dagster-k8s/config` tag sets per run
+`dbt-runner` and acts as `env_var('OS_PRINCIPAL')`, which the run worker derives from the run's `os/principal` tag
 from the schedule's principal, the maintenance schema's owner, or the principal the OS passed. A
 source observation connects as the dataset owner. The full table is
 `docs/components/trino.md` → "Who runs as whom", and it is a table because the answer must be one

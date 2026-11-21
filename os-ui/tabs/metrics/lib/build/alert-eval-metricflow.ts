@@ -65,10 +65,7 @@ export async function evaluateCommittedAlert(rule: AlertRuleRecord, deps: Deps =
   const jobName = `${dagster.sanitizeName(rule.domain)}__alert_${dagster.sanitizeName(committed.savedQuery)}`;
   const launched = await dg.launchRun({
     jobName,
-    tags: { 'os/principal': owner.id, 'os/alert': rule.id, 'os/action': 'alert evaluation', 'os/domain': rule.domain, 'os/commit': head.sha! },
-    // The same run-pod env a data launch sets: MetricFlow's dbt profile impersonates OS_PRINCIPAL,
-    // and the pod checks out the commit the alert was read at.
-    env: { OS_PRINCIPAL: owner.id, OS_PINNED_COMMITS: `${rule.domain}=${head.sha}` },
+    tags: { 'os/principal': owner.id, 'os/alert': rule.id, 'os/action': 'alert evaluation', 'os/domain': rule.domain, 'os/commit': head.sha!, 'os/pinned': `${rule.domain}=${head.sha}` },
   });
   if (!launched.ok) return { status: 'unavailable', reason: `Dagster did not launch ${jobName}: ${launched.error}` };
   const runId = launched.data.runId;
