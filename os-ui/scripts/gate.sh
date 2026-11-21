@@ -104,6 +104,9 @@ node ../scripts/check-litellm-ingress-policy.mjs
 # Platform ingress: default-deny for the namespace plus one allowlist per platform service; every
 # rendered caller is admitted, no other namespace is. Same skip rules as above.
 node ../scripts/check-platform-ingress-policy.mjs
+# Dagster run-pod shape: every identity that may write Pods/Jobs here is held to it, and the
+# real run pods (image, ServiceAccount) pass. Same skip rules as above.
+node ../scripts/check-dagster-pod-admission.mjs
 # Outbound HTTPS: the API-server rule is narrowed, the model gateway uses the egress proxy and
 # every https model host is on its allowlist. Same skip rules as above.
 node ../scripts/check-egress-routing.mjs

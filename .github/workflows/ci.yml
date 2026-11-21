@@ -121,6 +121,8 @@ jobs:
           bash scripts/tests/secret-preflight.test.sh
       - name: platform ingress policy check + negative twins
         run: bash scripts/tests/platform-ingress-policy.test.sh
+      - name: Dagster run-pod shape check + negative twins
+        run: bash scripts/tests/dagster-pod-admission.test.sh
 
       # LITELLM_SALT_KEY: rendered into litellm-credentials (local), required as an operator Secret
       # on other profiles, with negative twins. The lookup change guard: litellm-salt-key-guard.kind.sh.
