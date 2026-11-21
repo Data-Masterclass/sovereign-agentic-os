@@ -257,6 +257,25 @@ test('Ingress: another TLS secret, another backend, a resource backend or a defa
   refused(edit(ING, (d) => { d.spec.ingressClassName = 'internal'; }), 'invalid', /ingressClassName/);
 });
 
+test('Ingress: ingressClassName is REQUIRED — a missing or empty class is refused at deploy and at receive', () => {
+  refused(edit(ING, (d) => { delete d.spec.ingressClassName; }), 'invalid', /ingressClassName/);
+  refused(edit(ING, (d) => { d.spec.ingressClassName = ''; }), 'invalid', /ingressClassName/);
+  const noClass = edit(ING, (d) => { delete d.spec.ingressClassName; }).find((f) => f.path === ING)!;
+  assert.match(validateAppDeployFile({ path: `apps/color-picker/${ING}`, content: noClass.content }, REGISTRY) ?? '', /ingressClassName/);
+});
+test('Ingress: no platform ingress class configured → refused (fail closed, no default class)', () => {
+  const plan = planAppDeploy(files(), { ...ctx, ingressClass: '' });
+  assert.equal(plan.ok, false);
+  if (!plan.ok) assert.match(plan.reason, /ingress class/);
+});
+test('NEGATIVE TWIN: the scaffold writes the platform class and passes deploy and receive', () => {
+  const ing = yaml.load(files().find((f) => f.path === ING)!.content) as Record<string, any>;
+  assert.equal(ing.spec.ingressClassName, 'nginx');
+  const plan = planAppDeploy(files(), ctx);
+  assert.equal(plan.ok, true, plan.ok ? '' : plan.reason);
+  assert.equal(validateAppDeployFile({ path: `apps/color-picker/${ING}`, content: files().find((f) => f.path === ING)!.content }, REGISTRY), null);
+});
+
 const pod = (d: Record<string, any>) => d.spec.template.spec;
 test('Pod: env secretKeyRef / envFrom / secret volumes may name only the app\'s own Secrets', () => {
   const otherTls = 'other-app.sales.apps.example.org-tls';
