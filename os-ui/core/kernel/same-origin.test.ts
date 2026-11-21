@@ -12,7 +12,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { canonicalApiPath, checkSameOrigin, needsSameOriginCheck, requestOriginOf } from '@core/kernel/same-origin';
+import { canonicalApiPath, checkSameOrigin, needsSameOriginCheck, parseOriginList, requestOriginOf } from '@core/kernel/same-origin';
 
 const OS = 'https://agentic.datamasterclass.com';
 const APP = 'https://x.apps.agentic.datamasterclass.com';
@@ -21,7 +21,7 @@ function req(
   method: string,
   pathname: string,
   headers: Record<string, string>,
-  opts: { cookie?: boolean; osPublicUrl?: string; requestOrigin?: string } = {},
+  opts: { cookie?: boolean; osPublicUrl?: string; aliases?: string[]; requestOrigin?: string } = {},
 ) {
   return checkSameOrigin({
     method,
@@ -29,6 +29,7 @@ function req(
     headers: new Headers(headers),
     hasSessionCookie: opts.cookie ?? true,
     osPublicUrl: opts.osPublicUrl ?? OS,
+    osPublicUrlAliases: opts.aliases ?? [],
     requestOrigin: opts.requestOrigin ?? OS,
   });
 }
@@ -118,10 +119,32 @@ test('WORKS: non-admin GET is not checked (CORS withholds cross-origin responses
   assert.equal(req('GET', '/api/auth/me', { origin: APP }).ok, true);
 });
 
-test('WORKS: in-cluster client whose Origin is the request host (OS_PUBLIC_URL differs)', () => {
+test('REFUSED: an Origin that only matches the request host / X-Forwarded-Host (OS_PUBLIC_URL is configured)', () => {
+  // The forwarded host is request data, not configuration: it never widens the allowed set.
+  assert.equal(
+    req('GET', '/api/metrics/alerts/run', { origin: 'https://evil.example' }, { requestOrigin: 'https://evil.example' }).ok,
+    false,
+  );
   assert.equal(
     req('POST', '/api/data/datasets', { origin: 'http://os-ui:3000' }, { requestOrigin: 'http://os-ui:3000' }).ok,
+    false,
+  );
+});
+
+test('WORKS: an in-cluster client that states the configured public origin', () => {
+  assert.equal(
+    req('GET', '/api/metrics/alerts/run', { origin: OS }, { requestOrigin: 'http://os-ui:3000' }).ok,
     true,
+  );
+});
+
+test('WORKS: a configured alias host (OS_PUBLIC_URL_ALIASES); a look-alike of it is refused', () => {
+  const alias = 'https://os.agentic.datamasterclass.com';
+  assert.equal(req('POST', '/api/data/datasets', { origin: alias }, { aliases: [alias] }).ok, true);
+  assert.equal(req('POST', '/api/data/datasets', { origin: alias }).ok, false, 'not configured → refused');
+  assert.equal(
+    req('POST', '/api/data/datasets', { origin: 'https://os.agentic.datamasterclass.com.evil.example' }, { aliases: [alias] }).ok,
+    false,
   );
 });
 
@@ -144,13 +167,12 @@ test('scope: only /api/ is checked; OPTIONS never reaches the check', () => {
   assert.equal(needsSameOriginCheck('GET', '/api/platform-administrator'), false);
 });
 
-test('requestOriginOf prefers the forwarded host + scheme (ingress)', () => {
-  const u = new URL('http://10.0.0.5:3000/api/x');
+test('requestOriginOf ignores X-Forwarded-Host / -Proto (request data is never configuration)', () => {
+  const u = new URL('http://localhost:3000/api/x');
   assert.equal(
-    requestOriginOf(u, new Headers({ host: 'agentic.datamasterclass.com', 'x-forwarded-proto': 'https' })),
-    'https://agentic.datamasterclass.com',
+    requestOriginOf(u, new Headers({ 'x-forwarded-host': 'evil.example', 'x-forwarded-proto': 'https' })),
+    'http://localhost:3000',
   );
-  assert.equal(requestOriginOf(u, new Headers({})), 'http://10.0.0.5:3000');
 });
 
 // ---------------------------------------------------------------- audited state-changing GETs
@@ -207,4 +229,28 @@ test('path spellings of admin routes are judged as the admin route', () => {
     assert.equal(req('GET', p, { origin: APP }).ok, false, p);
   }
   assert.equal(canonicalApiPath('/API//platform-admin%2Fx'), '/api/platform-admin/x');
+});
+
+// ---------------------------------------------------------------- MCP consent (outside /api/)
+
+test('REFUSED: the MCP consent POST at /oauth/authorize from an apps subdomain or with no provenance', () => {
+  assert.equal(req('POST', '/oauth/authorize', { origin: APP, 'sec-fetch-site': 'same-site' }).ok, false);
+  assert.equal(req('POST', '/oauth/authorize', {}).ok, false);
+  assert.equal(req('POST', '/OAUTH/authorize', { origin: APP }).ok, false);
+});
+
+test('WORKS: the consent POST from the OS consent page; the token endpoint (no cookie) is untouched', () => {
+  assert.equal(req('POST', '/oauth/authorize', { origin: OS, 'sec-fetch-site': 'same-origin' }).ok, true);
+  assert.equal(req('POST', '/oauth/token', {}, { cookie: false }).ok, true);
+  assert.equal(needsSameOriginCheck('POST', '/oauth/token'), false);
+  assert.equal(needsSameOriginCheck('GET', '/oauth/authorize'), false);
+});
+
+test('parseOriginList keeps http(s) origins only, canonicalised', () => {
+  assert.deepEqual(
+    parseOriginList(' https://os.agentic.datamasterclass.com/ ,https://Agentic.datamasterclass.com,ftp://x,not a url,'),
+    ['https://os.agentic.datamasterclass.com', 'https://agentic.datamasterclass.com'],
+  );
+  assert.deepEqual(parseOriginList(''), []);
+  assert.deepEqual(parseOriginList(undefined), []);
 });
