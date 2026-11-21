@@ -313,7 +313,9 @@ def launch_checks(stock_cfg: dict, lock_cfg: dict, stock_ctx: dict):
               json.dumps(diff(sj[0][1], lj[0][1]), default=str))
         names = env_names(lj[0])
         check("C4 the run pod carries the tag env and the operator env",
-              {"OS_PINNED_COMMITS", "OS_PRINCIPAL", "TRINO_HOST", "AGENT_RUNTIME_TOKEN"} <= set(names), str(names))
+              {"OS_PINNED_COMMITS", "OS_PRINCIPAL", "TRINO_HOST", "OS_INDEX_FILE"} <= set(names), str(names))
+        check("C4b the run pod carries no runtime bearer (main's contract since #254)",
+              "AGENT_RUNTIME_TOKEN" not in names, str(names))
 
     for field, cfg in FORBIDDEN.items():
         jobs, err = launch(lock_cfg, None, k8s_tag(cfg))
