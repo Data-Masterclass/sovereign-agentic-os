@@ -27,7 +27,7 @@ import { opaDecide } from '@core/adapters/opa/client';
 import { listRepos, listTree, log, readBlob } from '@core/infra/git-store';
 import { publishOpa } from '@core/policy/opa-publish';
 import type { OpaSourceResult } from '@core/policy/opa-reconcile';
-import { KNOWLEDGE_WORKFLOWS_DIR } from '@core/infra/repo-layout';
+import { KNOWLEDGE_WORKFLOWS_DIR, knowledgeWorkflowDir } from '@core/infra/repo-layout';
 import { OS_META_KEY, splitFrontmatter } from '@tabs/knowledge/lib/git/bundle';
 import { knowledgeGitEnabled } from '@tabs/knowledge/lib/git/commit';
 import { compileGuardrails } from '@tabs/knowledge/lib/guardrails';
@@ -39,6 +39,8 @@ type GuardrailDoc = { guardrails: { id: string; level: string; step_id?: string;
 
 /** The OPA data path of the guardrails (one document, every workflow). */
 export const GUARDRAILS_DATA_PATH = 'os_data/guardrails';
+/** The decision rule of the platform policy (package `os.guardrails`), as an OPA data path. */
+export const GUARDRAILS_DECISION = ['os', 'guardrails', 'decision'].join('/');
 
 const FILE_RE = new RegExp(`^${KNOWLEDGE_WORKFLOWS_DIR}/([^/]+)/guardrails\\.json$`);
 
@@ -83,7 +85,7 @@ export async function restoreGuardrailsFromGit(opts: { reposDir?: string } = {})
         }
         const bad = checkDoc(doc);
         if (bad) return { ok: false, detail: `${where}: ${bad}` };
-        const wfPath = `${KNOWLEDGE_WORKFLOWS_DIR}/${m[1]}/workflow.md`;
+        const wfPath = `${knowledgeWorkflowDir(m[1])}/workflow.md`;
         let wfText: string;
         try {
           wfText = await readBlob(domain, sha, wfPath, { reposDir });
@@ -110,7 +112,7 @@ const DENY = (reason: string): GuardrailDecision => ({ allow: false, reason, vio
 
 /** Ask OPA (through the OPA adapter). Any failure to get a decision is a deny. */
 export async function decideGuardrails(workflowId: string, violations: string[], opts: { opaUrl?: string; timeoutMs?: number } = {}): Promise<GuardrailDecision> {
-  const r = await opaDecide('os/guardrails/decision', { workflow_id: workflowId, violations }, opts.timeoutMs ?? 2500, opts.opaUrl);
+  const r = await opaDecide(GUARDRAILS_DECISION, { workflow_id: workflowId, violations }, opts.timeoutMs ?? 2500, opts.opaUrl);
   if (!r.ok || !r.value.defined) return DENY('policy_unreachable');
   const d = r.value.value as GuardrailDecision | undefined;
   if (!d || typeof d.allow !== 'boolean' || !Array.isArray(d.guardrails) || !Array.isArray(d.violated)) return DENY('policy_unreachable');
