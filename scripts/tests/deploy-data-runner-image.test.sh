@@ -197,4 +197,23 @@ check "a legacy digest is not capable even if it claimed the label" "RUNNER_DOWN
 [ ! -s "$FAKE_LOG.label" ] && ok "...and its label is not even read" || bad "...and its label is not even read" "$(cat "$FAKE_LOG.label")"
 unset FAKE_LIVE_MANIFEST
 
+echo "== the test-render switch global.allowChartDefaultSecrets never reaches a deploy"
+tree "$TMP/t5"
+printf 'global:\n  allowChartDefaultSecrets: true\n' > "$TMP/allow.yaml"
+VALUES_OVERLAY=$TMP/allow.yaml derive_and_render "$TMP/t5"
+check "set by VALUES_OVERLAY: refused" "ALLOW_CHART_DEFAULT_SECRETS_REFUSED" "$out"
+holds "...with a failing exit code" [ "$rc" != 0 ]
+absent "...before any helm upgrade" "helm upgrade" "$(cat "$FAKE_LOG")"
+absent "...and before the backup" "backup " "$(cat "$FAKE_LOG")"
+cp "$TMP/live.yaml" "$TMP/live.saved.yaml"
+printf 'global:\n  allowChartDefaultSecrets: "yes"\n' >> "$TMP/live.yaml"
+derive_and_render "$TMP/t5"
+check "carried by the live release (any non-false value): refused" "ALLOW_CHART_DEFAULT_SECRETS_REFUSED" "$out"
+absent "...before any helm upgrade" "helm upgrade" "$(cat "$FAKE_LOG")"
+cp "$TMP/live.saved.yaml" "$TMP/live.yaml"
+printf 'global:\n  allowChartDefaultSecrets: false\n' > "$TMP/deny.yaml"
+VALUES_OVERLAY=$TMP/deny.yaml derive_and_render "$TMP/t5"
+check "negative twin: explicitly false deploys" "helm upgrade" "$(cat "$FAKE_LOG")"
+check "...and says so" "test-render switch: global.allowChartDefaultSecrets must not be set" "$out"
+
 finish deploy-data-runner-image

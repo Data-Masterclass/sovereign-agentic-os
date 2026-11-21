@@ -371,6 +371,27 @@ python3 scripts/lib/values-diff.py "$WORK/live.yaml" "$CHART/values.yaml" "$VALU
   || echo "   (values diff unavailable — not a deploy failure)"
 fi  # end of the prod values derivation
 
+# TEST-RENDER SWITCH (templates/base/secret-defaults-guard.yaml). global.allowChartDefaultSecrets lets
+# a throwaway test render keep the chart's published default secrets; a real deploy must never
+# carry it, whatever set it (the chart default, the live release, the dev values, VALUES_OVERLAY).
+# The values are merged in the order helm applies them; anything but false/absent refuses.
+say "test-render switch: global.allowChartDefaultSecrets must not be set for a deploy"
+if ! python3 - "$CHART/values.yaml" "$VALUES" ${OVERLAY_ARGS[@]+"${OVERLAY_ARGS[@]}"} <<'PY'
+import sys, yaml
+files = [a for a in sys.argv[1:] if a != "-f"]
+val, src = None, None
+for f in files:
+    g = (yaml.safe_load(open(f)) or {}).get("global")
+    if isinstance(g, dict) and "allowChartDefaultSecrets" in g:
+        val, src = g["allowChartDefaultSecrets"], f
+if val in (None, False):
+    print("   ok   not set (the chart guard refuses default secrets on this install)")
+    sys.exit(0)
+print(f"ALLOW_CHART_DEFAULT_SECRETS_REFUSED — global.allowChartDefaultSecrets is {val!r} in the merged values (last set by {src}). It is for test renders only; remove it. Nothing was changed.", file=sys.stderr)
+sys.exit(1)
+PY
+then exit 1; fi
+
 say "what the upgrade changes"
 if [ "$DEPLOY_ENV" = dev ] && [ -z "$REV_BEFORE" ]; then
   : > "$WORK/before.yaml"   # first install on dev: nothing to compare with
