@@ -273,8 +273,13 @@ export function withFallbackTargets(models: string[], fb: GatewayFallbacks | und
  * path resolves to), plus the enabled connection tools. Resolved via a dynamic
  * import so this module has no eager dependency on the (heavier) os-tools chain.
  */
-async function grantVocabulary(sys: System, connections: string[]): Promise<string[]> {
+async function grantVocabulary(input: System, connections: string[]): Promise<string[]> {
   const { resolveGrantedTools } = await import('./os-tools.ts');
+  const { withOutputTools } = await import('@tabs/agents/lib/output-tools');
+  // The vocabulary is the one the RUN uses: a declared output's write tool (save_knowledge_note,
+  // upload_file, create_dataset) is added at run time (run-service.ts → withOutputTools), so the
+  // key's allowed tools and the OPA grant must include it too — or the gateway refuses the run.
+  const sys = withOutputTools(input);
   const resolved = resolveGrantedTools(sys).mcpNames;
   return [...new Set([...sys.grants.tools, ...resolved, ...connections])];
 }
