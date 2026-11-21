@@ -201,11 +201,16 @@ describe('pg-boss on the real postgres:17', { timeout: 120_000 }, () => {
   });
 
   test('a tz schedule fires at 03:00 Berlin (02:00Z in winter), a UTC one does not', async () => {
-    // A second instance on the same schema with pg-boss's own TestClock (docs/api/testing.md).
+    // A second instance with pg-boss's own TestClock (docs/api/testing.md), on a schema of its own.
+    // Not on PGBOSS_SCHEMA: every instance on a schema claims the cron pass through the one
+    // `version.cron_on` row (plans.trySetCronTime), and the real-clock `boss` above stamps it with
+    // real time. Once real time is later than the TestClock's, `job_now() - cron_on` is negative for
+    // the TestClock instance, it never wins a cron pass and nothing fires. Its own schema leaves the
+    // TestClock alone on that row, so the fixed winter date below holds whatever today's date is.
     const clock = new TestClock('2026-11-21T01:58:00Z');
     const timed = new PgBoss({
       connectionString: db.url,
-      schema: PGBOSS_SCHEMA,
+      schema: `${PGBOSS_SCHEMA}_tz_clock`,
       clock,
       supervise: false,
       __test__enableSpies: true,
