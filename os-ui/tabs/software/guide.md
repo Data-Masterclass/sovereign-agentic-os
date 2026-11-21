@@ -86,13 +86,15 @@ app uses the copy frozen under `vendor/` when the app was created.
 ship inside the app under `vendor/` and `package.json` points at them with `file:` paths. A new
 app also carries an `.npmrc` whose one line sends every registry lookup for that scope to a host
 that cannot exist, so `npm install @sovereign-os/anything` fails instead of fetching a stranger's
-package. The scan **blocks** a deploy when `package.json`, a lockfile or the `.npmrc` would fetch
-the scope from anywhere else; point the dependency back at `file:./vendor/@sovereign-os/...`.
+package. The scan **blocks** a deploy when `package.json` (its dependencies, or its `overrides`,
+`resolutions` or `pnpm.overrides`), a lockfile, the `.npmrc` or a Dockerfile step would fetch the
+scope from anywhere else; point the dependency back at `file:./vendor/@sovereign-os/...`.
 
 An app created before this has no `.npmrc` and is not changed for you: its review card shows a
 note instead (it does not block). To clear it, push an `.npmrc` containing exactly
 `@sovereign-os:registry=https://sovereign-os-is-vendored-not-published.invalid/` with
-`push_app_files` — the only `.npmrc` the OS accepts.
+`push_app_files` — the only `.npmrc` the OS accepts, and only at the app's root (an `.npmrc` in
+a sub-folder is refused).
 
 ## What to consider
 

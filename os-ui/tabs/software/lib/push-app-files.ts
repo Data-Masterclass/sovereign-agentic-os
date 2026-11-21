@@ -119,6 +119,15 @@ export function assertPushable(files: ScaffoldFile[], slug?: string): void {
     if (lower !== '.npmrc' && (FORBIDDEN_ROOT_DOTFILES as readonly string[]).includes(lower)) {
       bad(`'${p}' is not pushable: it is a credential or registry file. Secrets never live in an app's source tree.`);
     }
+    // Below the root the same files are refused outright — npm reads an `.npmrc` in a workspace
+    // package too, and the one accepted `.npmrc` (the scope pin) belongs at the root only.
+    const base = lower.slice(lower.lastIndexOf('/') + 1);
+    if (lower.includes('/') && (FORBIDDEN_ROOT_DOTFILES as readonly string[]).includes(base)) {
+      bad(
+        `'${p}' is not pushable: it is a credential or registry file below the app's root. ` +
+          (base === '.npmrc' ? `The only .npmrc an app may carry is the scope pin, at the root: ${SCOPE_PIN_LINE}` : "Secrets never live in an app's source tree."),
+      );
+    }
     const bytes = Buffer.byteLength(f.content, 'utf8');
     if (bytes > MAX_FILE_BYTES) bad(`'${p}' is ${Math.round(bytes / 1024)} KiB; a single file may be at most ${MAX_FILE_BYTES / 1024} KiB.`);
     total += bytes;
