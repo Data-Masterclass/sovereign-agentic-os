@@ -26,6 +26,7 @@ FACTS = {
     'public_host': 'ingress.hosts.osUI',
     'gateway_host': 'ingress.hosts.litellm',
     'langfuse_host': 'ingress.hosts.langfuse',
+    'langfuse_enabled': 'langfuse.enabled',
     'clickhouse_persistence': 'clickhouse.persistence.enabled',
     'clickhouse_size': 'clickhouse.persistence.size',
     'apps_enabled': 'softwareRunner.enabled',

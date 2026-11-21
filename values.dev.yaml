@@ -161,6 +161,12 @@ opensearch:
     limits: { cpu: 1, memory: 1280Mi }
 
 clickhouse:
+  # Langfuse's trace tables live here. Without a volume a pod restart drops them, and every trace
+  # read then fails (dev, 21 Nov 2026: "Unknown table ... traces" after the 06:41 restart) until
+  # Langfuse runs its migrations again, which it does only when its own pods start. Production has
+  # this on; the size is the chart's, so the smoke test's volume check holds on dev too.
+  persistence:
+    enabled: true
   resources:
     requests: { cpu: 100m, memory: 768Mi }
     limits: { cpu: 1, memory: 1280Mi }
