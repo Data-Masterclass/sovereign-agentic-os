@@ -141,7 +141,8 @@ function env(withToken = true): NodeJS.ProcessEnv {
 async function seedRepo(domain: string, files: Map<string, string> | null): Promise<string> {
   await openOrInit(domain, { reposDir });
   if (files) {
-    await commitTree(domain, files, {
+    // The OS always writes os/owned-files.yml; without it the receive gate fails closed for models/.
+    await commitTree(domain, new Map([...files, ['os/owned-files.yml', 'version: 1\nfiles: {}\n']]), {
       reposDir,
       author: { name: 'Sovereign OS', email: 'os@sovereign.local' },
       message: `data(${domain}): generate project — via boot:reconcile`,

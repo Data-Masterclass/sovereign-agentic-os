@@ -59,11 +59,21 @@ test('os/generated.yml (unpushable) records which owner each generated model bel
   assert.equal(rec.owners?.silver_orders, 'alice');
   assert.equal(rec.owners?.silver_events, 'bob');
   assert.equal(Object.keys(rec.owners ?? {}).includes('author_added_model'), false, 'only OS-generated models are listed');
-  const f = (rec as { files?: Record<string, string | null> }).files ?? {};
-  assert.equal(f['models/personal/alice/silver_orders.sql'], 'alice', 'every generated model file names its owner (the receive gate reads this)');
-  assert.ok(Object.prototype.hasOwnProperty.call(f, 'models/sources.yml'), 'shared generated files are listed with no owner');
-  assert.equal(f['models/sources.yml'], null);
-  assert.equal(Object.keys(f).some((k) => k.startsWith('os/') || k.startsWith('data/')), false, 'the unpushable OS layer is not listed here');
+});
+
+test('os/owned-files.yml (unpushable, ALWAYS written) lists every generated model/test file with its owner', () => {
+  const { files } = generateProjectReport('sales', snap());
+  const f = (yaml.load(files.get(DATA_LAYOUT.ownedFilesPath)!) as { files: Record<string, string | null> }).files;
+  assert.equal(f['models/personal/alice/silver_orders.sql'], 'alice', 'the receive gate reads the owner here');
+  assert.equal(f['models/sources.yml'], null, 'a shared generated file has no owner');
+  assert.equal(Object.keys(f).some((k) => k.startsWith('os/') || k.startsWith('data/') || k.startsWith('macros/')), false, 'the unpushable OS layer is not listed');
+});
+
+test('a domain with NO native definitions still gets os/owned-files.yml (the gate must not fail closed on it forever)', () => {
+  const none: ProjectSnapshot = { domain: 'sales', datasets: [], catalogs: {} };
+  const { files } = generateProjectReport('sales', none);
+  assert.ok(files.has(DATA_LAYOUT.ownedFilesPath), [...files.keys()].join(','));
+  assert.equal(files.has(DATA_LAYOUT.generatedHashesPath), false, 'os/generated.yml stays the native marker: unchanged');
 });
 
 test('the legacy schedules file lists the owner\'s models too', () => {

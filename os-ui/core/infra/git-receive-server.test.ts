@@ -35,7 +35,7 @@ const basic = (token: string) => `Basic ${Buffer.from(`git:${token}`).toString('
 before(async () => {
   reposDir = mkdtempSync(join(tmpdir(), 'os-recv-srv-'));
   await openOrInit('sales', { reposDir });
-  const r = await commitTree('sales', new Map([['models/gold/x.sql', 'select 1\n']]), {
+  const r = await commitTree('sales', new Map([['models/gold/x.sql', 'select 1\n'], ['os/owned-files.yml', 'version: 1\nfiles: {}\n']]), {
     reposDir,
     author: { name: 'Sovereign OS', email: 'os@sovereign.local' },
     message: 'data(sales): generate — via boot:reconcile',

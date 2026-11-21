@@ -107,7 +107,7 @@ token is a Secret reference, pushed after every changed commit, failures reporte
 ```
 dbt_project.yml  profiles.yml (env_var() only; impersonation_user = OS_PRINCIPAL)  README.md  .gitignore
 macros/generate_schema_name.sql          # +schema is the exact Iceberg schema
-tests/generic/range.sql, not_blank.sql   # the OS rules dbt has no built-in for (predicates from dq.ts)
+macros/generic/range.sql, not_blank.sql  # the OS rules dbt has no built-in for (predicates from dq.ts)
 models/sources.yml                       # Bronze landings + federated tables (freshness on _loaded_at)
 models/silver/, models/gold/             # promoted layers (domain schema)      + schema.yml
 models/personal/<uid>/                   # un-promoted layers (+schema: personal_<uid>) + schema.yml

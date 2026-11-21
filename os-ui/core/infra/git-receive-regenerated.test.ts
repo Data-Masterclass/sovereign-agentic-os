@@ -52,7 +52,7 @@ test('the gate refuses a push to a regenerated path with the reason (v2 domain r
   __clearRepoKinds();
   registerRepoKind(dbtKind);
   const reposDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wp55-regen-'));
-  const head = await commitTree('sales', new Map([[LAYOUT_MARKER_PATH, layoutMarker()], ['data/dbt/dbt_project.yml', 'name: s\n']]), { author: writer, message: 'v2', reposDir });
+  const head = await commitTree('sales', new Map([[LAYOUT_MARKER_PATH, layoutMarker()], ['data/dbt/dbt_project.yml', 'name: s\n'], ['os/owned-files.yml', 'version: 1\nfiles: {}\n']]), { author: writer, message: 'v2', reposDir });
   const { blob } = await git.readBlob({ fs, gitdir: path.join(reposDir, 'sales.git'), oid: head.sha, filepath: 'README.md' });
   assert.ok(Buffer.from(blob).toString('utf8').startsWith(GENERATED_MARK));
   const upd = [{ ref: MAIN, oldSha: head.sha, newSha: 'f'.repeat(40), fastForward: true }];

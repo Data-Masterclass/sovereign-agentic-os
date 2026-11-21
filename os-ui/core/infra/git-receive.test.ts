@@ -74,6 +74,7 @@ function baseTree(): Map<string, string> {
     ['models/gold/gold_orders.sql', 'select 1\n'],
     ['models/gold/schema.yml', 'version: 2\nmodels:\n  - name: gold_orders\n'],
     ['os/schedules.yml', 'version: 1\nschedules: []\n'],
+    ['os/owned-files.yml', 'version: 1\nfiles: {}\n'],
   ]);
 }
 
@@ -223,7 +224,8 @@ test("nobody may push into somebody ELSE's personal lane, whatever their role", 
 test('a builder may push shared domain paths, and a traversal is never a path', () => {
   assert.deepEqual(decidePath('models/gold/gold_orders.sql', builder), { allowed: true });
   assert.deepEqual(decidePath('models/gold/schema.yml', builder), { allowed: true });
-  assert.deepEqual(decidePath('tests/generic/range.sql', builder), { allowed: true });
+  // `tests/generic/<name>.sql` overrides dbt's built-in generic test of that name: the OS's own live in `macros/`.
+  assert.equal(decidePath('tests/generic/not_null.sql', builder).allowed, false);
   assert.equal(decidePath('../../etc/passwd', builder).allowed, false);
   assert.equal(decidePath('models//x.sql', builder).allowed, false);
 });

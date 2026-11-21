@@ -156,19 +156,23 @@ function renderProject(domain: string, snapshot: ProjectSnapshot, opts: Generate
       sha256: { [DATA_LAYOUT.dagsterDefinitionsPath]: createHash('sha256').update(definitions).digest('hex') },
       // Which owner each OS-generated model belongs to. `os/**` is unpushable, so no author can add a
       // model here: the run detective (images/extensions/dagster) judges a run against this map.
-      // Every OS-generated model/test file with its owner (null: shared by several owners). The receive
-      // gate refuses a change by anyone but that owner or a domain admin (core/infra/git-receive.ts).
-      files: Object.fromEntries(
-        [...files.keys()]
-          .filter((k) => (k.startsWith('models/') || k.startsWith('tests/')) && !k.startsWith('data/'))
-          .sort()
-          .map((k) => [k, plan.models.find((m) => m.path === k)?.dataset.owner ?? null]),
-      ),
       owners: Object.fromEntries([...plan.models].sort((a, b) => a.name.localeCompare(b.name)).map((m) => [m.name, m.dataset.owner])),
     }));
   }
   // The semantic layer: `models/semantic/<model>.yml` (or the owner's personal lane) plus the time
   // spine. Metrics are dbt artefacts in this project, not an OS-private record (D1, M1).
   for (const [p, c] of semantic.files) files.set(p, c);
+  // OS layer, ALWAYS written (also for a domain with no native definitions): every generated model/test
+  // file with its owner (null: shared by several owners). The receive gate refuses a change by anyone but
+  // that owner or a domain admin, and fails closed for models/ and tests/ while this file is missing.
+  files.set(DATA_LAYOUT.ownedFilesPath, yml({
+    version: 1,
+    files: Object.fromEntries(
+      [...files.keys()]
+        .filter((k) => k.startsWith('models/') || k.startsWith('tests/'))
+        .sort()
+        .map((k) => [k, plan.models.find((m) => m.path === k)?.dataset.owner ?? null]),
+    ),
+  }));
   return new Map([...files.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
 }
