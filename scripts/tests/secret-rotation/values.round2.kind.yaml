@@ -1,0 +1,47 @@
+# Rehearsal of rotation round 2 (docs/ops/WP-secret-rotation.md) on kind: the production shape of
+# the datastores (local profile, Ingress on, persistence on, the plain Postgres engine, bundled
+# MinIO) with the readers that can run without the OS's own images: Langfuse web + worker, LiteLLM
+# and its agent key, Polaris. Everything else is off so it fits a laptop. Test-only values.
+# Like production after round 1: round2-kind-up.sh adds the round-1 secrets (random, per cluster,
+# mode 600, never committed) and a salt key, so the chart guard (#236) and os-ui's boot guard pass
+# while the round-2 credentials are still the chart's published defaults.
+global:
+  profile: local
+ingress:
+  enabled: true
+  className: nginx
+objectStorage:
+  persistence: { enabled: true, size: 1Gi }
+  resources: { requests: { cpu: 50m, memory: 256Mi } }
+clickhouse:
+  persistence: { enabled: true, size: 2Gi }
+  resources: { requests: { cpu: 50m, memory: 512Mi }, limits: { cpu: "1", memory: 2Gi } }
+postgres:
+  storageSize: 1Gi
+llmProviders:
+  viaEgressProxy: false
+# OpenSearch is on: os-ui waits for it at start and keeps its store there. Small heap.
+opensearch:
+  opensearchJavaOpts: "-Xms384m -Xmx384m"
+  resources: { requests: { cpu: 100m, memory: 640Mi }, limits: { cpu: "1", memory: 900Mi } }
+opa: { enabled: false }
+docling: { enabled: false }
+dagster: { enabled: false }
+dbt: { enabled: false }
+marts: { enabled: false }
+egressProxy: { enabled: false }
+webFetch: { enabled: false }
+connections: { enabled: false }
+queryTool: { enabled: false }
+dataRunner: { enabled: false }
+trino: { enabled: false }
+# os-ui is a reader of the LiteLLM master key (LITELLM_MASTER_KEY, admin env) and of the agent key;
+# the worker reads the agent key and the agent-runs Postgres role, and NO admin credential. The image
+# is built from this checkout (sovereign-os/os-ui:0.1.0, values.local.yaml), as the e2e harness does.
+osUI:
+  enabled: true
+  resources: { requests: { cpu: 50m, memory: 128Mi }, limits: { cpu: "1", memory: 1Gi } }
+  worker:
+    enabled: true
+    resources: { requests: { cpu: 50m, memory: 256Mi }, limits: { cpu: "1", memory: 1Gi } }
+networkPolicies: { enabled: false }

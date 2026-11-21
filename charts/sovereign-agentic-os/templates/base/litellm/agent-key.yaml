@@ -145,10 +145,17 @@ spec:
               fi
               echo "provisioning scoped virtual key (alias={{ $k.alias }}, budget={{ $k.maxBudget }}, rpm={{ $k.rpmLimit }}, tpm={{ $k.tpmLimit }})..."
               PAYLOAD='{"key":"'"$VIRTUAL_KEY"'","key_alias":"{{ $k.alias }}",'"$PROPS"'}'
-              curl -fsS -X POST "$B/key/generate" \
+              # FAIL CLOSED: a refused /key/generate (an alias already taken, a database error) must
+              # fail the Job (backoffLimit retries it), never end "complete" with no key — the agents
+              # would then get 401s while the Job looks fine.
+              if ! curl -fsS -X POST "$B/key/generate" \
                 -H "Authorization: Bearer $MASTER_KEY" \
                 -H "Content-Type: application/json" \
-                -d "$PAYLOAD" >/dev/null && echo "virtual key created"
+                -d "$PAYLOAD" >/dev/null; then
+                echo "virtual key NOT created: /key/generate refused (alias {{ $k.alias }} taken by another key, or LiteLLM failed)" >&2
+                exit 1
+              fi
+              echo "virtual key created"
               echo "  models: $MODELS"
           resources:
             requests: { cpu: 25m, memory: 32Mi }
