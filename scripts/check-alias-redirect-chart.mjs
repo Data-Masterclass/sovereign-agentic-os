@@ -9,7 +9,7 @@
  * ARCHITECTURE:
  *   - Renders the chart (`helm template`) and checks `ingress.redirectAliasToPublicUrl`:
  *     on → the OS UI route of the NON-canonical host carries ingress-nginx's
- *     `permanent-redirect: <publicUrl>$request_uri` + code 308, the canonical route and the /git
+ *     `permanent-redirect: <publicUrl>/` + code 308 (a URL only: ingress-nginx refuses nginx variables), the canonical route and the /git
  *     route carry none; either host can be the canonical one.
  *   - Negative twins: off (the default and the STACKIT profile) renders no redirect; on without
  *     `osUI.publicUrl`, or with a publicUrl that has a path, fails the render; the committed STACKIT
@@ -74,7 +74,7 @@ if (!skipped) {
   if (!r.ok) fail(`render (canonical apex) failed: ${r.out.trim()}`);
   else {
     const i = ingresses(r.out);
-    if (i['os-ui-ingress']?.redirect !== 'https://agentic.example.com$request_uri' || i['os-ui-ingress']?.code !== '308') fail(`os-ui-ingress (alias) must 308 to the apex; got ${JSON.stringify(i['os-ui-ingress'])}`);
+    if (i['os-ui-ingress']?.redirect !== 'https://agentic.example.com/' || i['os-ui-ingress']?.code !== '308') fail(`os-ui-ingress (alias) must 308 to the apex; got ${JSON.stringify(i['os-ui-ingress'])}`);
     if (i['os-ui-apex-ingress']?.redirect) fail('the canonical (apex) route must not redirect (a loop)');
     if (!i['os-git-http-ingress']) fail('the /git route must still render on the alias host');
     else if (i['os-git-http-ingress'].redirect) fail('the /git route must never be redirected (git clients and tokens)');
@@ -84,7 +84,7 @@ if (!skipped) {
   if (!r.ok) fail(`render (canonical os.) failed: ${r.out.trim()}`);
   else {
     const i = ingresses(r.out);
-    if (i['os-ui-apex-ingress']?.redirect !== 'https://os.agentic.example.com$request_uri') fail(`os-ui-apex-ingress (alias) must 308 to os.<zone>; got ${JSON.stringify(i['os-ui-apex-ingress'])}`);
+    if (i['os-ui-apex-ingress']?.redirect !== 'https://os.agentic.example.com/') fail(`os-ui-apex-ingress (alias) must 308 to os.<zone>; got ${JSON.stringify(i['os-ui-apex-ingress'])}`);
     if (i['os-ui-ingress']?.redirect) fail('the canonical (os.) route must not redirect');
   }
   // TWIN: off (the default) → no redirect anywhere, even with two hosts and a publicUrl.
