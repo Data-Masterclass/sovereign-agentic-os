@@ -23,6 +23,8 @@ if [ "$ONLY" != "eject" ]; then
   echo "== image tests in $IMAGE"
   docker run --rm -v "$REPO:/src:ro" -e SRC=/src "$IMAGE" python3 /src/images/extensions/dagster/tests/image/test_image.py
   docker run --rm -v "$REPO:/src:ro" -e SRC=/src "$IMAGE" python3 /src/images/extensions/dagster/tests/image/test_metricflow.py
+  # The dbt subprocess a run starts sees no credential of the pod (real dagster-dbt + dbt-core).
+  docker run --rm -v "$REPO:/src:ro" -e SRC=/src -e HOME=/tmp -e DBT_SEND_ANONYMOUS_USAGE_STATS=false "$IMAGE" python3 /src/images/extensions/dagster/tests/image/dbt_env.py
 fi
 [ "$ONLY" != "image" ] || exit 0
 
@@ -57,6 +59,10 @@ docker run --rm --network "$NET" -v "$REPO:/src:ro" -e SRC=/src -e TRINO_HOST="$
 echo "== literal-safety: dbt parse + compile in $IMAGE against trinodb/trino:$TRINO_TAG"
 docker run --rm --network "$NET" -v "$REPO:/src:ro" -e SRC=/src -e TRINO_HOST="$TRINO" "$IMAGE" \
   python3 /src/images/extensions/dagster/tests/image/literal_safety.py
+
+# The narrowed dbt env still builds on a real Trino (dbt_env.py's REAL_TRINO_HOST step).
+docker run --rm --network "$NET" -v "$REPO:/src:ro" -e HOME=/tmp -e DBT_SEND_ANONYMOUS_USAGE_STATS=false -e REAL_TRINO_HOST="$TRINO" "$IMAGE" \
+  python3 /src/images/extensions/dagster/tests/image/dbt_env.py
 
 # WP-49: the repo's own Dagster code location on Trino + Iceberg, the wrapper, the eject (lakehouse.sh).
 [ "$ONLY" = "eject" ] || sh "$REPO/images/extensions/dagster/tests/image/lakehouse.sh" "$IMAGE"
