@@ -182,3 +182,45 @@ test_ui_denied_inactive_user_with_leftover_principal if not trino.allow with inp
 test_dagster_denied_after_the_activation_window if not trino.allow with input as imp("svc-dagster-runner", "wes@x.com") with data.os_grants.run_grants as grants with data.os_data as os_data with data.governance as governance
 
 test_dagster_denied_without_an_activation_window if not trino.allow with input as imp("svc-dagster-runner", "nina@x.com") with data.os_grants.run_grants as grants with data.os_data as os_data with data.governance as governance
+
+# ---- WP-15 verifier P1: the impersonating service users have NO data rights of their own ----
+# As the SESSION user (no X-Trino-User), svc-dagster-runner and svc-os-worker may do nothing but
+# ask to impersonate. Their rights are those of the principal they act for, never their own.
+
+as_self(svc, operation, resource) := {
+	"context": {"identity": {"user": svc, "groups": []}},
+	"action": {"operation": operation, "resource": resource},
+}
+
+self_ops := [
+	["ExecuteQuery", {}],
+	["AccessCatalog", {"catalog": {"name": "iceberg"}}],
+	["FilterCatalogs", {"catalog": {"name": "iceberg"}}],
+	["ShowSchemas", {"catalog": {"name": "iceberg"}}],
+	["FilterSchemas", {"schema": {"catalogName": "iceberg", "schemaName": "sales"}}],
+	["CreateSchema", {"schema": {"catalogName": "iceberg", "schemaName": "planted"}}],
+	["CreateTable", {"table": {"catalogName": "iceberg", "schemaName": "sales", "tableName": "planted"}}],
+	["SelectFromColumns", {"table": {"catalogName": "iceberg", "schemaName": "ungoverned", "tableName": "t", "columns": ["a"]}}],
+	["InsertIntoTable", {"table": {"catalogName": "iceberg", "schemaName": "sales", "tableName": "orders"}}],
+	["DropTable", {"table": {"catalogName": "iceberg", "schemaName": "sales", "tableName": "orders"}}],
+	["ShowColumns", {"table": {"catalogName": "iceberg", "schemaName": "sales", "tableName": "orders"}}],
+]
+
+test_impersonators_have_no_rights_of_their_own if {
+	every svc in ["svc-dagster-runner", "svc-os-worker"] {
+		every o in self_ops {
+			not trino.allow with input as as_self(svc, o[0], o[1]) with data.os_grants.run_grants as grants with data.governance as governance
+		}
+	}
+}
+
+test_impersonator_has_no_row_access_of_its_own if {
+	trino.rowFilters == {{"expression": "false"}} with input as as_self("svc-dagster-runner", "GetRowFilters", {"table": {"catalogName": "iceberg", "schemaName": "ungoverned", "tableName": "t"}})
+}
+
+# Twin: the same operations for the OWNER the runner acts for are judged as the owner (allowed
+# here: an ungoverned operation for an ordinary user), and impersonation itself still works.
+test_the_owner_keeps_their_rights if {
+	trino.allow with input as as_self("dana@x.com", "ExecuteQuery", {}) with data.governance as governance
+	trino.allow with input as imp("svc-dagster-runner", "dana@x.com") with data.os_grants.run_grants as grants with data.os_data as os_data with data.governance as governance
+}

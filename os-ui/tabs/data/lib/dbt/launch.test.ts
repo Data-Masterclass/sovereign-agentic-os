@@ -259,3 +259,22 @@ test('WP-15: a grant that cannot be issued means no launch, with the reason; off
     deps({ runGrants: false, issueGrant: async () => { throw new Error('must not be called'); } }));
   assert.equal(launches[0].tags?.['os/run_grant'], undefined);
 });
+
+test('WP-15: a domain-lane build launched with run grants acts as the launching user, not the domain self-principal', async () => {
+  __setDataProjectGitForTests(true);
+  const id = seedOrders();
+  const issued: Record<string, unknown>[] = [];
+  const out = await launchAfterCommit(
+    // executeIdentity gives a domain-lane build the domain self-principal (`sales`).
+    { datasetId: id, layer: 'silver', kind: 'build', actor: { id: 'amir' }, principal: 'sales', action: 'transform silver' },
+    deps({ runGrants: true, issueGrant: async (g) => { issued.push(g); return 'rg_ds_00112233445566778899aabb'; } }),
+  );
+  assert.equal(out.launchError, null);
+  assert.equal(issued[0].principal, 'amir', 'the grant names the person');
+  assert.equal(launches[0].tags?.['os/principal'], 'amir');
+  assert.equal(launches[0].env?.OS_PRINCIPAL, 'amir');
+  // Flag off: unchanged (today's governed write identity).
+  launches = [];
+  await launchAfterCommit({ datasetId: id, layer: 'silver', kind: 'build', actor: { id: 'amir' }, principal: 'sales', action: 'x' }, deps({ runGrants: false }));
+  assert.equal(launches[0].tags?.['os/principal'], 'sales');
+});

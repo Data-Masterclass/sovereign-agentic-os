@@ -42,7 +42,14 @@ test('TLS port: a known service user with an empty password -> 401', { skip }, a
 
 test('TLS port: every chart service user authenticates and is its own session user', { skip }, async () => {
   const sec = requireSecrets();
+  // WP-15 (P1): the users that only ever act for someone have no rights of their own, so as
+  // themselves they authenticate (no 401) and are then refused by policy (PERMISSION_DENIED).
+  const impersonateOnly = new Set(['svc-dagster-runner', 'svc-os-worker']);
   for (const u of Object.keys(sec.passwords)) {
+    if (impersonateOnly.has(u)) {
+      await assert.rejects(runTls('SELECT current_user', { auth: [u, pw(u)] }), (e) => e.status === 200 && e.errorName === 'PERMISSION_DENIED', u);
+      continue;
+    }
     const { rows } = await runTls('SELECT current_user', { auth: [u, pw(u)] });
     assert.deepEqual(rows, [[u]], u);
   }
