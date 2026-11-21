@@ -75,6 +75,9 @@ holds "it cannot update namespaces" [ "$(can update namespaces)" = no ]
 holds "it cannot create cluster role bindings" [ "$(can create clusterrolebindings)" = no ]
 holds "it CAN create deployments in agentic-os" [ "$(can create deployments -n agentic-os)" = yes ]
 holds "it CAN read nodes (the DEV_NODE check)" [ "$(can get nodes)" = yes ]
+holds "it CAN update the chart's own admission policy" [ "$(can update validatingadmissionpolicies/agentic-os-dagster-run-pod-shape)" = yes ]
+holds "it cannot delete any other admission policy" [ "$(can delete validatingadmissionpolicies/some-other-policy)" = no ]
+holds "it cannot delete any other admission policy binding" [ "$(can delete validatingadmissionpolicybindings/some-other-binding)" = no ]
 
 echo "== 3. the dev chart, applied as the CI account"
 cat > "$TMP/private.yaml" <<'YAML'
