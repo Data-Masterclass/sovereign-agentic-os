@@ -1,0 +1,67 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+#
+# agent-key-migration-live — prove the make-before-break agent-system key migration against the
+# REAL LiteLLM image the chart pins (scripts/tests/agent-key-migration/run.sh): an existing system
+# keeps a working key at every step, the old guessable key is refused (401) afterwards, and a pass
+# killed half-way is finished by the next one with one new value. Includes the negative twin (a
+# key the gateway never issued must be 401). Separate from ci.yml because it pulls the gateway image.
+# Actions are pinned to commit SHAs, as ci.yml does.
+name: agent-key-migration-live
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - charts/sovereign-agentic-os/Chart.yaml
+      - charts/sovereign-agentic-os/Chart.lock
+      - charts/sovereign-agentic-os/values.yaml
+      - os-ui/core/infra/agent-system-keys.ts
+      - os-ui/core/infra/agent-system-key-sweep.ts
+      - os-ui/tabs/agents/lib/build/live.ts
+      - os-ui/tabs/agents/lib/build/live-clients.ts
+      - os-ui/tabs/agents/lib/build/system-key-migration*.ts
+      - scripts/tests/agent-key-migration/**
+      - .github/workflows/agent-key-migration-live.yml
+  push:
+    branches: [main]
+    paths:
+      - charts/sovereign-agentic-os/Chart.lock
+      - os-ui/tabs/agents/lib/build/system-key-migration*.ts
+      - scripts/tests/agent-key-migration/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agent-key-migration-live-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  agent-key-migration-live:
+    name: agent-key-migration-live
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CI: 'true'
+      AGENT_KEY_MIGRATION_WORKDIR: ${{ runner.temp }}/agent-key-migration
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Setup Node.js
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: 22
+      - name: Install (os-ui)
+        run: npm --prefix os-ui ci
+      - name: Setup Helm
+        uses: azure/setup-helm@fe7b79cd5ee1e45176fcad797de68ecaf3ca4814 # v4.2.0
+        with:
+          version: v3.16.3
+      - name: Resolve chart dependencies
+        run: |
+          helm dependency build charts/sovereign-agentic-os \
+            || helm dependency update charts/sovereign-agentic-os
+      - name: Key migration against the real gateway (with the negative twin)
+        run: bash scripts/tests/agent-key-migration/run.sh
