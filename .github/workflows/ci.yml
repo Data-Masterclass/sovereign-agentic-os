@@ -111,6 +111,9 @@ jobs:
       # Renders the chart (the dependencies were built above); CI=true turns a skip into a failure.
       - name: Langfuse hardening chart test
         run: bash scripts/tests/langfuse-hardening.test.sh
+      # Langfuse operators' route: off changes no render; on = one basic-auth Ingress (twins fail).
+      - name: Langfuse operator route chart test
+        run: bash scripts/tests/langfuse-operator-ingress.test.sh
       # Dagster run pods inherit the code server's env and container context: no credential there.
       - name: Dagster run-pod env chart test
         run: bash scripts/tests/dagster-run-pod-env.test.sh

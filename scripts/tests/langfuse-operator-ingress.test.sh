@@ -10,9 +10,10 @@
 # on) publishes the Langfuse web UI on `ingress.hosts.langfuse`, behind nginx basic auth from an
 # htpasswd Secret — the same protection the Dagster console has — with Langfuse's own login
 # still in place behind it. Renders the chart (no cluster) and asserts:
-#   1. OFF (default and STACKIT profiles): the render is byte-identical to the base ref's render
-#      (default: origin/main, or public/main), apart from the per-render random secrets — found
-#      by rendering the base twice and ignoring exactly the lines that differ between those two;
+#   1. OFF (default and STACKIT profiles) changes nothing: the render equals the render without the
+#      `operatorIngress` key and with enabled=false; given a base git ref (argument or
+#      LANGFUSE_RENDER_BASE), it also equals that commit's render. "Equal" is byte-identical apart
+#      from the per-render random secrets: the lines that differ between two reference renders;
 #   2. OFF: no Ingress has the Langfuse web Service as backend; NEXTAUTH_URL keeps its default;
 #      the Langfuse NetworkPolicy does not admit the ingress controller;
 #   3. ON (values.dev.yaml): exactly one Ingress to agentic-os-langfuse-web on
@@ -23,7 +24,7 @@
 #   4. negative twins — each must FAIL the render: ON without a host, ON with a NEXTAUTH_URL that
 #      is not https://<host>, ON with an empty basicAuthSecret; and STACKIT + a langfuse host
 #      WITHOUT the flag still renders no route (the restricted-console rule is unchanged).
-# Skips (exit 0) without helm, PyYAML, a base ref or the subchart .tgz files — FAILS when CI is set.
+# Skips (exit 0) without helm, PyYAML or the subchart .tgz files — but FAILS when CI is set.
 set -uo pipefail
 cd "$(dirname "$0")/../.." || exit 2
 . scripts/tests/assert.sh
@@ -49,39 +50,58 @@ render() { # render <chart> <out> <helm args...>
 }
 HOST=langfuse.dev.agentic.datamasterclass.com
 
-echo "== 1. OFF: byte-identical to the base render (random secrets aside)"
-BASE=${1:-}
-if [ -z "$BASE" ]; then
-  for r in origin/main public/main; do git rev-parse -q --verify "$r^{commit}" >/dev/null && { BASE=$r; break; }; done
-fi
-if [ -z "$BASE" ] || ! git rev-parse -q --verify "$BASE^{commit}" >/dev/null; then
-  skip "no base ref to compare with (pass one, or fetch origin/main)"
-fi
-git worktree add --detach "$TMP/base" "$BASE" >/dev/null 2>&1 || skip "cannot check out $BASE"
-mkdir -p "$TMP/base/$CHART/charts" && cp "$CHART"/charts/*.tgz "$TMP/base/$CHART/charts/"
 cat >"$TMP/same.py" <<'PY'
 import sys
 b1, b2, head = (open(p).read().split("\n") for p in sys.argv[1:4])
 if len(b1) != len(b2):
-    print(f"the base renders differ in length ({len(b1)} vs {len(b2)}): cannot isolate the random lines"); sys.exit(1)
+    print(f"the reference renders differ in length ({len(b1)} vs {len(b2)}): cannot isolate the random lines"); sys.exit(1)
 if len(head) != len(b1):
-    print(f"line count {len(head)} != base {len(b1)}"); sys.exit(1)
+    print(f"line count {len(head)} != reference {len(b1)}"); sys.exit(1)
 volatile = {i for i, (x, y) in enumerate(zip(b1, b2)) if x != y}
 diff = [i for i, (x, y) in enumerate(zip(b1, head)) if x != y and i not in volatile]
 if diff:
-    i = diff[0]; print(f"{len(diff)} line(s) differ, first at {i+1}: base={b1[i][:160]!r} head={head[i][:160]!r}"); sys.exit(1)
+    i = diff[0]; print(f"{len(diff)} line(s) differ, first at {i+1}: ref={b1[i][:160]!r} got={head[i][:160]!r}"); sys.exit(1)
 print(f"identical ({len(volatile)} random-secret lines ignored)")
 PY
-for prof in default stackit; do
-  args=("${T[@]}"); bargs=("${T[@]}")
-  if [ "$prof" = stackit ]; then args+=(-f values.stackit-managed.yaml); bargs+=(-f "$TMP/base/values.stackit-managed.yaml"); fi
-  if ! { render "$TMP/base/$CHART" "$TMP/b1.$prof" "${bargs[@]}" && render "$TMP/base/$CHART" "$TMP/b2.$prof" "${bargs[@]}"; }; then
-    bad "the base ($BASE) renders the $prof profile" "$(head -c 300 "$TMP/b1.$prof.err")"; continue
+# same <label> <ref chart> <chart> <ref args (one string, word-split)> <args...> — the render of
+# <chart> with <args> equals the reference render, apart from the lines that differ between two
+# renders of the reference (the per-render random secrets).
+same() {
+  local label=$1 rchart=$2 chart=$3 rargs=$4; shift 4
+  # shellcheck disable=SC2086
+  if ! { render "$rchart" "$TMP/r1" "${T[@]}" $rargs && render "$rchart" "$TMP/r2" "${T[@]}" $rargs; }; then
+    bad "$label: the reference renders" "$(head -c 300 "$TMP/r1.err")"; return
   fi
-  render "$CHART" "$TMP/h.$prof" "${args[@]}" || { bad "the $prof profile renders" "$(head -c 300 "$TMP/h.$prof.err")"; continue; }
-  out=$(python3 "$TMP/same.py" "$TMP/b1.$prof" "$TMP/b2.$prof" "$TMP/h.$prof"); rc=$?
-  rc_is "OFF, $prof profile: the render equals $BASE's — $out" 0
+  render "$chart" "$TMP/g" "${T[@]}" "$@" || { bad "$label: renders" "$(head -c 300 "$TMP/g.err")"; return; }
+  out=$(python3 "$TMP/same.py" "$TMP/r1" "$TMP/r2" "$TMP/g"); rc=$?
+  rc_is "$label — $out" 0
+}
+
+echo "== 1. OFF changes nothing (random secrets aside)"
+# The new values key contributes nothing while off: the default render equals the render with the
+# whole `operatorIngress` key deleted (helm: null removes a key), and with enabled=false.
+for prof in default stackit; do
+  pf=""; [ "$prof" = stackit ] && pf="-f values.stackit-managed.yaml"
+  # shellcheck disable=SC2086
+  same "OFF, $prof profile: = the render without the operatorIngress key" "$CHART" "$CHART" \
+    "$pf --set ingress.restricted.langfuse.operatorIngress=null" $pf
+  # shellcheck disable=SC2086
+  same "OFF, $prof profile: = the render with operatorIngress.enabled=false" "$CHART" "$CHART" \
+    "$pf --set ingress.restricted.langfuse.operatorIngress.enabled=false" $pf
 done
+# With a base git ref (the PR's base), also: the OFF render equals the base commit's render.
+BASE=${1:-${LANGFUSE_RENDER_BASE:-}}
+if [ -n "$BASE" ]; then
+  git rev-parse -q --verify "$BASE^{commit}" >/dev/null && git worktree add --detach "$TMP/base" "$BASE" >/dev/null 2>&1 \
+    || { bad "check out the base ref $BASE"; finish "$NAME"; exit 1; }
+  mkdir -p "$TMP/base/$CHART/charts" && cp "$CHART"/charts/*.tgz "$TMP/base/$CHART/charts/"
+  same "OFF, default profile: = the render of $BASE" "$TMP/base/$CHART" "$CHART" ""
+  same "OFF, stackit profile: = the render of $BASE" "$TMP/base/$CHART" "$CHART" "-f $TMP/base/values.stackit-managed.yaml" -f values.stackit-managed.yaml
+else
+  echo "  (no base ref given: the comparison with the base commit's render is not run)"
+fi
+render "$CHART" "$TMP/h.default" "${T[@]}"
+render "$CHART" "$TMP/h.stackit" "${T[@]}" -f values.stackit-managed.yaml
 
 # The checker over one rendered file. Prints "ok" or the reason.
 cat >"$TMP/check.py" <<'PY'
