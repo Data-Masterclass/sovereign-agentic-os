@@ -12,13 +12,15 @@
  *     `images/extensions/dagster/repo.py`); os-ui launches it with the owner as `OS_PRINCIPAL` (the
  *     same run-pod env as a data launch), waits for the run, and reads the op's `os_alert_result`
  *     output metadata: `mf query --saved-query` value + the committed threshold's decision.
+ *   - The committed `os_alert.owner` token must be the store owner's, or the rule is `refused`
+ *     (the image refuses too, against the run's OS_PRINCIPAL). `metrics/alerts/**` is OS-owned on push.
  *   - No fallback: Dagster unreachable, a failed run or a missing result is `unavailable`.
  */
 import 'server-only';
 import { config } from '@core/kernel/config';
 import { listTree, readBlob, log } from '@core/infra/git-store';
 import * as dagster from '@core/infra/dagster';
-import { ALERTS_PREFIX, readAlertFiles, type CommittedAlert } from '@tabs/metrics/lib/git/alerts-native';
+import { ALERTS_PREFIX, alertOwnerToken, readAlertFiles, type CommittedAlert } from '@tabs/metrics/lib/git/alerts-native';
 import { ownerPrincipal, type AlertValue } from '@tabs/metrics/lib/build/alert-eval';
 import type { AlertRuleRecord } from '@tabs/metrics/lib/alert-store';
 
@@ -26,7 +28,7 @@ import type { AlertRuleRecord } from '@tabs/metrics/lib/alert-store';
 export const ALERT_RESULT_QUERY = `query AlertResult($id: ID!) { runOrError(runId: $id) { __typename ... on Run { status eventConnection { events { __typename ... on ExecutionStepOutputEvent { stepKey metadataEntries { label ... on JsonMetadataEntry { jsonString } } } } } } ... on RunNotFoundError { message } ... on PythonError { message } } }`;
 
 export type MetricFlowResult = { status: string; value?: number; breached?: boolean; reason?: string; comparator?: string; threshold?: number; saved_query?: string };
-export type CommittedEvaluation = Exclude<AlertValue, { status: 'ok' }> | { status: 'ok'; value: number; breached: boolean; committed: CommittedAlert; runId: string };
+export type CommittedEvaluation = Exclude<AlertValue, { status: 'ok' }> | { status: 'refused'; reason: string } | { status: 'ok'; value: number; breached: boolean; committed: CommittedAlert; runId: string };
 
 type Deps = {
   dagster?: Pick<typeof dagster, 'launchRun' | 'run' | 'gql'>;
@@ -55,6 +57,11 @@ export async function evaluateCommittedAlert(rule: AlertRuleRecord, deps: Deps =
   const head = await committedAlerts(rule.domain, deps.reposDir);
   const committed = head.alerts.find((a) => a.id === rule.id);
   if (!committed) return { status: 'pending', reason: `alert ${rule.id} is not committed in the ${rule.domain} repository (metrics/alerts/)` };
+  // The job runs AS the owner: the committed file must name that owner, or an edited query would
+  // run under someone else's identity.
+  if (committed.ownerToken !== alertOwnerToken(rule.owner)) {
+    return { status: 'refused', reason: `the committed owner of ${committed.path} is not this alert's owner: refused, never run as ${rule.owner}` };
+  }
   const jobName = `${dagster.sanitizeName(rule.domain)}__alert_${dagster.sanitizeName(committed.savedQuery)}`;
   const launched = await dg.launchRun({
     jobName,

@@ -583,6 +583,11 @@ export const config = {
   get guardrailsData(): boolean {
     return ['1', 'true'].includes((process.env.OS_GUARDRAILS_DATA ?? '').trim().toLowerCase());
   },
+  // WP-50 (alerts): the identity the alert CronJob logs in as (its Secret's `username`). Only it and
+  // admins evaluate every alert; any other builder evaluates only their own. Empty = admins only.
+  get alertsSchedulerPrincipal(): string {
+    return (process.env.OS_ALERTS_SCHEDULER_PRINCIPAL ?? '').trim();
+  },
   // The chart's OPA seed (`soa.opaSeed`: seed_grants, requires_approval, governance), rendered by the
   // same helper as the push-mode OPA's data.json + governance.json: the base of the os-data bundle.
   get opaSeed(): string {

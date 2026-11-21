@@ -40,7 +40,7 @@
 import { createHash } from 'node:crypto';
 import {
   dbtProjectPath, parseRepoName, principalToken, LAYOUT_V1, LAYOUT_V2, OS_DIR, AGENTS_INDEX_PATH, AGENTS_DIR, DASHBOARDS_DIR,
-  configuredDbtProjectDir, prefixOf, AGENT_GENERATED_FILES, AGENT_ID_PATTERN, AGENT_PROMPTS_DIR, CONNECTIONS_DIR, DAGSTER_DIR, KNOWLEDGE_DIR, type LayoutVersion,
+  configuredDbtProjectDir, prefixOf, AGENT_GENERATED_FILES, AGENT_ID_PATTERN, AGENT_PROMPTS_DIR, CONNECTIONS_DIR, DAGSTER_DIR, KNOWLEDGE_DIR, METRICS_ALERTS_DIR, type LayoutVersion,
 } from '@core/infra/repo-layout';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -78,7 +78,9 @@ export const AUDIENCE_MANAGED = 'audience is managed by the OS; use promotion';
 // `connection-url` with `${ENV:<secret>}` would hand that secret to any host; only the OS writes it.
 // `knowledge/` (WP-50): the OKF bundle is generated from the store; its frontmatter carries governed
 // facts (scope, status, owner) that change only through promotion, so only the OS writes it.
-export const OS_OWNED_PREFIXES = ['os/', 'macros/', prefixOf(DAGSTER_DIR), prefixOf(CONNECTIONS_DIR), prefixOf(KNOWLEDGE_DIR)] as const;
+// `metrics/alerts/` (WP-50): the OS evaluates each alert's saved query AS its owner, so only the OS
+// writes it on the owner's behalf.
+export const OS_OWNED_PREFIXES = ['os/', 'macros/', prefixOf(DAGSTER_DIR), prefixOf(CONNECTIONS_DIR), prefixOf(KNOWLEDGE_DIR), prefixOf(METRICS_ALERTS_DIR)] as const;
 
 /**
  * Exact paths the OS owns. `dbt_project.yml` and `macros/**` are not documentation: dbt EXECUTES
@@ -401,6 +403,8 @@ export function decidePath(filePath: string, pusher: Pusher, ctx: PathContext = 
   if (p === CONNECTIONS_DIR || p.startsWith(prefixOf(CONNECTIONS_DIR))) return { allowed: false, reason: `'${p}' is ${MANAGED_BY_OS}` };
   // WP-50: `knowledge/` is the OS-generated OKF bundle; edit knowledge in the OS, where approvals apply.
   if (p === KNOWLEDGE_DIR || p.startsWith(prefixOf(KNOWLEDGE_DIR))) return { allowed: false, reason: `'${p}' is ${MANAGED_BY_OS}` };
+  // WP-50: `metrics/alerts/` holds the saved queries the OS evaluates AS each alert's owner.
+  if (p === METRICS_ALERTS_DIR || p.startsWith(prefixOf(METRICS_ALERTS_DIR))) return { allowed: false, reason: `'${p}' is ${MANAGED_BY_OS}` };
   if (proj !== null && DBT_OWNED_PREFIXES.some((prefix) => proj === prefix.slice(0, -1) || proj.startsWith(prefix))) {
     return { allowed: false, reason: `'${p}' is ${MANAGED_BY_OS}` };
   }
