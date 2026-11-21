@@ -20,7 +20,7 @@ import { useToast } from '@core/ui/core/Toast';
 type ApplyRow = {
   applied: boolean;
   verified: boolean;
-  status: 'ok' | 'fail';
+  status: 'ok' | 'fail' | 'none';
   policy: 'opa-live' | 'opa-bundle';
   detail: string;
   error?: string;
@@ -140,10 +140,10 @@ export default function RulesPanel({
 
       {result && (
         <div className="rp-result" style={{ marginTop: 14 }}>
-          <div className={`rp-result-head ${result.apply.status === 'ok' ? 'ok' : 'fail'}`}>
-            <span className="rp-result-badge">{result.apply.status === 'ok' ? '✓' : '✗'}</span>
+          <div className={`rp-result-head ${result.apply.status === 'ok' ? 'ok' : result.apply.status === 'none' ? '' : 'fail'}`}>
+            <span className="rp-result-badge">{result.apply.status === 'ok' ? '✓' : result.apply.status === 'none' ? '–' : '✗'}</span>
             <span>
-              {result.apply.status === 'ok' ? 'Guardrails enforced' : 'Guardrails failed'}
+              {result.apply.status === 'ok' ? 'Guardrails enforced' : result.apply.status === 'none' ? 'Nothing to enforce' : 'Guardrails not enforced'}
               {' · '}
               <span className="muted">{result.apply.policy === 'opa-bundle' ? 'OPA, committed guardrails' : 'OPA'}</span>
             </span>
