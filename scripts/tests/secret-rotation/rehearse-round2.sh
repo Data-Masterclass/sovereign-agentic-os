@@ -100,7 +100,7 @@ step "2. ds-prepare and ds-plan"
 TAIL=40 run prepare ok ds-prepare
 OV=""; for f in "$SOVEREIGN_SECRETS_DIR"/overlays/datastores-*.yaml; do case $f in *.rollback.yaml) ;; *) OV=$f ;; esac; done
 [ -f "$OV" ] && ok "overlay written" || { bad "no overlay"; exit 1; }
-[ "$(stat -f %Lp "$OV" 2>/dev/null || stat -c %a "$OV")" = 600 ] && ok "overlay mode 600" || bad "overlay mode"
+[ "$(python3 -c 'import os,sys; print(oct(os.stat(sys.argv[1]).st_mode & 0o777)[2:])' "$OV")" = 600 ] && ok "overlay mode 600" || bad "overlay mode"
 for v in langfuse-local-dev litellm-local-dev clickhouse-local-dev valkey-local-dev agentic-os-local-secret sk-agents-local-dev; do
   grep -q "$v" "$W"/*.log && bad "a value (${v}…) was printed" || true
 done

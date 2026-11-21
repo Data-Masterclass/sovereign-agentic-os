@@ -32,8 +32,9 @@ absent "  CNPG engine: no Postgres item (CNPG manages its roles)" "postgres-lang
 
 echo "build: new random values, the rollback, mode 600, never over a file"
 $L build "$T/values.json" "$T/ov.yaml" postgres,clickhouse,valkey,minio,litellm-master,agent-key > "$T/build.out"; rc=$?; rc_is "build exits 0" 0
-holds "  overlay mode 600" [ "$(stat -f %Lp "$T/ov.yaml" 2>/dev/null || stat -c %a "$T/ov.yaml")" = 600 ]
-holds "  rollback mode 600" [ "$(stat -f %Lp "$T/ov.rollback.yaml" 2>/dev/null || stat -c %a "$T/ov.rollback.yaml")" = 600 ]
+mode() { python3 -c 'import os,sys; print(oct(os.stat(sys.argv[1]).st_mode & 0o777)[2:])' "$1"; }
+holds "  overlay mode 600" [ "$(mode "$T/ov.yaml")" = 600 ]
+holds "  rollback mode 600" [ "$(mode "$T/ov.rollback.yaml")" = 600 ]
 for v in langfuse-local-dev litellm-local-dev clickhouse-local-dev valkey-local-dev agentic-os-local-secret sk-agents-local-dev sk-litellm-local-dev-master; do
   absent "  no default in the overlay ($v)" "$v" "$(cat "$T/ov.yaml")"
 done
@@ -80,5 +81,6 @@ holds "  the twin really changed the dispatcher" grep -q unset_for_this_test "$T
 # shellcheck disable=SC2034  # rc is read by rc_is (assert.sh)
 out=$(/bin/bash "$T/rs/scripts/ops/rotate-secrets.sh" ds-plan 2>&1); rc=$?
 rc_is "  an unset variable mid-run exits 1" 1
-check "  ... and says the run stopped before its end" "stopped before its end" "$out"
+# bash 3.2 needs the guard (it would exit 0 and the guard says so); bash 5 exits 1 by itself.
+case $out in *"stopped before its end"*|*"unbound variable"*) ok "  ... and the cause is shown" ;; *) bad "  ... and the cause is shown" "$out" ;; esac
 finish rotation-datastores
