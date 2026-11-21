@@ -129,7 +129,18 @@ printf '%s' "$govpw" | base64 > "$TMP/gov.b64"; export FAKE_GOV_SECRET=$TMP/gov.
 run FAKE_PG_READY=1
 check "with Postgres up the role is ensured" "role os_governance_admin ensured (superuser" "$out"
 check "the SQL creates or alters exactly that role" "CREATE ROLE os_governance_admin LOGIN SUPERUSER" "$(cat "$FAKE_LOG.psql" 2>/dev/null)"
-check "with the password the Secret already holds (idempotent)" "$govpw" "$(cat "$FAKE_LOG.psql" 2>/dev/null)"
+absent "the SQL sent to Postgres (and so its log on an error) never carries the plaintext password" "$govpw" "$(cat "$FAKE_LOG.psql" 2>/dev/null)"
+holds "it carries a SCRAM-SHA-256 verifier that matches the password the Secret holds" python3 - "$FAKE_LOG.psql" "$govpw" <<'PY2'
+import base64, hashlib, hmac, re, sys
+sql, pw = open(sys.argv[1]).read(), sys.argv[2]
+m = re.search(r"PASSWORD 'SCRAM-SHA-256\$(\d+):([^$]+)\$([^:]+):([^']+)'", sql)
+assert m, "no SCRAM verifier in the SQL"
+iters, salt = int(m.group(1)), base64.b64decode(m.group(2))
+salted = hashlib.pbkdf2_hmac("sha256", pw.encode(), salt, iters)
+mac = lambda k, msg: hmac.new(k, msg, hashlib.sha256).digest()
+assert base64.b64decode(m.group(3)) == hashlib.sha256(mac(salted, b"Client Key")).digest()
+assert base64.b64decode(m.group(4)) == mac(salted, b"Server Key")
+PY2
 check "the existing Secret is kept" "kept secret/postgres-governance-admin" "$out"
 absent "the admin password is not in the output" "$govpw" "$out"
 holds "the password never appears on a command line" bash -c "! grep -F -- '$govpw' '$FAKE_LOG'"

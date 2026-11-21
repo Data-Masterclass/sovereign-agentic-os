@@ -245,13 +245,21 @@ else
     --from-file=username="$S3/gov-admin-username" --from-file=password="$S3/gov-admin-password"
 fi
 if [ "$(k -n "$NS" get pod pg-0 -o jsonpath='{.status.containerStatuses[0].ready}' 2>/dev/null)" = true ]; then
+  # The server only ever sees a SCRAM-SHA-256 verifier computed here (RFC 5802, what `\password` in psql
+  # does): a failing statement is written to the Postgres log with its text, and that text must not
+  # carry the password. The plaintext stays in the Secret and in this process.
   python3 - "$S3/gov-admin-password" "$GOV_ADMIN_USER" <<'PY2' | k -n "$NS" exec -i pg-0 -c postgres -- sh -c 'psql -v ON_ERROR_STOP=1 -q -U "$POSTGRES_USER" -d postgres -f -' >/dev/null
-import sys
+import base64, hashlib, hmac, os, sys
 pw, user = open(sys.argv[1]).read(), sys.argv[2]
-assert pw.replace("-", "").replace("_", "").isalnum(), "unexpected characters in the generated password"
+assert user.replace("_", "").isalnum(), "unexpected characters in the role name"
+salt, iters = os.urandom(16), 4096
+salted = hashlib.pbkdf2_hmac("sha256", pw.encode(), salt, iters)
+mac = lambda key, msg: hmac.new(key, msg, hashlib.sha256).digest()
+b64 = lambda b: base64.b64encode(b).decode()
+verifier = f"SCRAM-SHA-256${iters}:{b64(salt)}${b64(hashlib.sha256(mac(salted, b'Client Key')).digest())}:{b64(mac(salted, b'Server Key'))}"
 print(f"DO $$BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '{user}') "
-      f"THEN CREATE ROLE {user} LOGIN SUPERUSER PASSWORD '{pw}'; "
-      f"ELSE ALTER ROLE {user} LOGIN SUPERUSER PASSWORD '{pw}'; END IF; END$$;")
+      f"THEN CREATE ROLE {user} LOGIN SUPERUSER PASSWORD '{verifier}'; "
+      f"ELSE ALTER ROLE {user} LOGIN SUPERUSER PASSWORD '{verifier}'; END IF; END$$;")
 PY2
   echo "   role $GOV_ADMIN_USER ensured (superuser, for the os-governance-bootstrap hook)"
 else
