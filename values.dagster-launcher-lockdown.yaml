@@ -156,7 +156,7 @@ dagster:
           tag: "0.4.0"
           digest: "sha256:b919d55fe9161128ace6a22894c43f2569f77b7639cd4d92e486f0e34734cea3"
           pullPolicy: IfNotPresent
-        dagsterApiGrpcArgs:
+        codeServerArgs:
           - "--python-file"
           - "/opt/dagster/app/repo.py"
         port: 3030
