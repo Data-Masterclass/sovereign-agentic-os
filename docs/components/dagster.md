@@ -164,8 +164,15 @@ credentials from the **run pod's** env instead.
   days), `git`, `repo.py`, `os_projects.py`, `repo-sync.sh`.
 - **Chart** — the user-code deployment is named **`sovereign`**, because the deployment name *is* the
   code location name that `reloadRepositoryLocation` and the OS's `DAGSTER_LOCATION` address.
-  `DAGSTER_RELOAD_LOCATION=sovereign`, `OS_INDEX_URL`/`REPO_SYNC_INDEX_URL` point at os-ui,
+  `DAGSTER_RELOAD_LOCATION=sovereign`, `REPO_SYNC_INDEX_URL` points at os-ui,
   `OS_QUARANTINE_THRESHOLD=10`. The Admin Console's version string now reads the real 1.13.11.
+- **No credential in the user-code env.** Launched run pods inherit the code server's env and
+  container context, and authored dbt reads env with `env_var()`. The runtime bearer therefore lives
+  only in the repo-sync sidecar: it fetches the OS index and writes a snapshot to
+  `/repos-checkout/.os-index.json`, which the `os_principals` sensor reads (`OS_INDEX_FILE`; a
+  snapshot older than 15 min reads as unknown, never "all active").
+  `scripts/tests/dagster-run-pod-env.test.sh` keeps it so. The Dagster subchart's own
+  `DAGSTER_PG_PASSWORD` is the one exception: a run worker writes its events to the instance DB.
 
 ## What a dbt run sees
 

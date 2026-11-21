@@ -1321,17 +1321,15 @@ dagster:
           - { name: DAGSTER_RELOAD_LOCATION, value: "sovereign" }
           - { name: DAGSTER_GRAPHQL_URL, value: "http://agentic-os-dagster-webserver:80/graphql" }
           # The `os_principals` sensor reads the OS repo index to pause a deactivated owner's
-          # schedules (concept §6); unset ⇒ the sensor skips with that reason, never guesses.
-          - { name: OS_INDEX_URL, value: "http://os-ui:3000/api/data/projects" }
+          # schedules (concept §6) from the snapshot the repo-sync sidecar writes into the shared
+          # checkout; missing or stale ⇒ the sensor skips with that reason, never guesses.
+          - { name: OS_INDEX_FILE, value: "/repos-checkout/.os-index.json" }
           # Consecutive failures after which the failure sensor pauses a schedule — the OS's
           # own QUARANTINE_THRESHOLD (tabs/data/lib/sync-runs.ts).
           - { name: OS_QUARANTINE_THRESHOLD, value: "10" }
-          # The shared runtime bearer the OS index route accepts (cluster-internal, the same
-          # contract as the sync trigger). A Secret reference — never a literal, and never
-          # written into a repository or a dbt profile.
-          - name: AGENT_RUNTIME_TOKEN
-            valueFrom:
-              secretKeyRef: { name: agent-runtime-token, key: token }
+          # NO credential in this env: launched run pods inherit it (includeConfigInLaunchedRuns),
+          # and authored dbt reads env with env_var(). The bearer lives only in the repo-sync
+          # sidecar below (scripts/tests/dagster-run-pod-env.test.sh).
         resources:
           requests: { cpu: 50m, memory: 384Mi }
           limits: { cpu: "1", memory: 1Gi }   # headroom for dbt materializations

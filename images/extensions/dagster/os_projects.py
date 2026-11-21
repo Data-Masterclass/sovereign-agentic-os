@@ -32,6 +32,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 import urllib.request
 from dataclasses import dataclass, field
 from typing import Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
@@ -879,6 +880,25 @@ def fetch_index(url: str, token: Optional[str], timeout: float = 5.0) -> Optiona
             return json.loads(res.read().decode("utf-8"))
     except Exception:  # noqa: BLE001 — unreachable is a normal state for a sensor
         return None
+
+
+#: The OS index snapshot repo-sync writes into the shared checkout (`repo-sync.sh index_domains`).
+INDEX_FILE_MAX_AGE_SECONDS = 900
+
+
+def read_index_file(path: str, max_age_seconds: int = INDEX_FILE_MAX_AGE_SECONDS) -> Optional[dict]:
+    """repo-sync's snapshot of the OS index, or None when it is missing, unreadable or older than
+    `max_age_seconds` — a stale snapshot is "unknown", never "everyone is active"."""
+    if not path:
+        return None
+    try:
+        if time.time() - os.path.getmtime(path) > max_age_seconds:
+            return None
+        with open(path, "r", encoding="utf-8") as f:
+            doc = json.load(f)
+    except (OSError, ValueError):
+        return None
+    return doc if isinstance(doc, dict) and isinstance(doc.get("domains"), list) else None
 
 
 def inactive_principals(index: Mapping[str, object]) -> set:
