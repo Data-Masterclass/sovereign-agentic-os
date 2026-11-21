@@ -272,7 +272,7 @@ before(async () => {
   for (const f of ['pw/password', 'ca/ca.crt', 'tokens/run', 'tokens/code']) chmodSync(join(H, f), 0o644);
 
   // The daemon's run coordinator exactly as the chart renders it with the overlay.
-  const rendered = execFileSync('helm', ['template', 'agentic-os', join(ROOT, 'charts/sovereign-agentic-os'), '-n', NS, '-f', join(ROOT, 'values.dagster-run-identity.yaml'),
+  const rendered = execFileSync('helm', ['template', 'agentic-os', join(ROOT, 'charts/sovereign-agentic-os'), '-n', NS, '-f', join(ROOT, 'values.dagster-launcher-lockdown.yaml'), '-f', join(ROOT, 'values.dagster-run-identity.yaml'),
     '--set', 'postgres.governance.adminSecretName=wp15-it'], { encoding: 'utf8', maxBuffer: 64 << 20 });
   const yaml = createRequire(new URL('../../os-ui/package.json', import.meta.url))('js-yaml') as typeof import('js-yaml');
   const inst = (yaml.loadAll(rendered) as { kind?: string; metadata?: { name?: string }; data?: Record<string, string> }[])

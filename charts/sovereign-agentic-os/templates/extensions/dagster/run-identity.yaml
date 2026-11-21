@@ -22,6 +22,19 @@
 {{- if not (and .Values.trino.auth.enabled .Values.trino.opa.sidecar.enabled) }}
 {{- fail "dagsterRunIdentity.enabled needs trino.auth.enabled and trino.opa.sidecar.enabled (svc-dagster-runner over TLS, judged by the sidecar)" }}
 {{- end }}
+{{- /*
+  The run pod's identity is set in the lock-down's CustomRunLauncher `run_k8s_config` (the code
+  location's own container context would otherwise override a stock launcher's). The overlays must
+  be applied in this order, `-f values.dagster-launcher-lockdown.yaml -f values.dagster-run-identity.yaml`:
+  Helm replaces lists, so the other order silently gives the run pod the lock-down's service account.
+*/}}
+{{- $rk := dict }}
+{{- $dg := .Values.dagster | default dict }}
+{{- with (($dg.runLauncher | default dict).config | default dict).customRunLauncher }}{{- $rk = (.config | default dict).run_k8s_config | default dict }}{{- end }}
+{{- $podSpec := $rk.pod_spec_config | default dict }}
+{{- if or (ne ($podSpec.service_account_name | default "") $ri.runServiceAccount) (ne (toString $podSpec.automount_service_account_token) "false") }}
+{{- fail (printf "dagsterRunIdentity.enabled: the run pod must run as %s with the token not automounted, set in dagster.runLauncher.config.customRunLauncher.config.run_k8s_config (got service account %q). Apply -f values.dagster-launcher-lockdown.yaml BEFORE -f values.dagster-run-identity.yaml." $ri.runServiceAccount ($podSpec.service_account_name | default "")) }}
+{{- end }}
 {{- range $sa := list $ri.runServiceAccount $ri.codeServiceAccount }}
 ---
 apiVersion: v1

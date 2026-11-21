@@ -41,7 +41,7 @@ for sa in dagster-run dagster-code os-ui; do
   kubectl --kubeconfig "$KUBECONFIG" -n agentic-os create serviceaccount "$sa" --dry-run=client -o yaml | kubectl --kubeconfig "$KUBECONFIG" apply -f - >/dev/null
 done
 # The chart's binding (templates/extensions/dagster/run-identity.yaml), rendered and applied as is.
-helm template agentic-os charts/sovereign-agentic-os -n agentic-os -f values.dagster-run-identity.yaml \
+helm template agentic-os charts/sovereign-agentic-os -n agentic-os -f values.dagster-launcher-lockdown.yaml -f values.dagster-run-identity.yaml \
   --set postgres.governance.adminSecretName=wp15-it --show-only templates/extensions/dagster/run-identity.yaml \
   | kubectl --kubeconfig "$KUBECONFIG" apply -f - >/dev/null
 ( umask 077

@@ -152,6 +152,29 @@ export async function resetPassword(id: string, password?: string): Promise<{ us
   return { user, tempPassword: next };
 }
 
+/**
+ * WP-15: a deactivated or removed owner's Dagster run grants end now (and an open activation
+ * window with them). Only when run grants are on. A failure is raised: a deactivation that left the
+ * owner's grants alive must not look like a success.
+ */
+let endRunGrants: ((id: string) => Promise<unknown>) | null = null;
+export function __setRunGrantEnderForTests(fn: ((id: string) => Promise<unknown>) | null): void {
+  endRunGrants = fn;
+}
+async function endOwnerRunGrants(id: string): Promise<void> {
+  if (endRunGrants) {
+    await endRunGrants(id);
+    return;
+  }
+  const { config } = await import('@core/kernel/config');
+  if (!config.dagsterRunGrants) return;
+  const [{ endRunGrantsOf }, { governanceRuntimePool }] = await Promise.all([
+    import('@core/policy/run-grants'),
+    import('@core/adapters/postgres/pool'),
+  ]);
+  await endRunGrantsOf(governanceRuntimePool(), id);
+}
+
 export async function deactivateUser(id: string): Promise<AccessUser> {
   const users = await listUsers();
   const u = users.find((x) => x.id === id);
@@ -160,6 +183,7 @@ export async function deactivateUser(id: string): Promise<AccessUser> {
     (e as Error & { status?: number }).status = 404;
     throw e;
   }
+  await endOwnerRunGrants(id);
   tenantUsersState().statusMap.set(id, 'deactivated');
   writeThrough(id, 'deactivated');
   return { ...u, status: 'deactivated', active: false };
@@ -235,6 +259,7 @@ export async function offboardUser(
     const { reassignOwner } = await import('./offboard');
     report = await reassignOwner(id, reassignTo);
   }
+  await endOwnerRunGrants(id);
   await deleteUser(id);
   tenantUsersState().statusMap.delete(id);
   mirror.deleteThrough(id);

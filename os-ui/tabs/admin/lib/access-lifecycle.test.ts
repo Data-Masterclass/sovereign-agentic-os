@@ -218,3 +218,38 @@ test('deactivate is blocked for the last active admin', async () => {
   assert.equal(res.status, 400, 'cannot deactivate the last active admin');
   activeFetch = null;
 });
+
+// ---------------------------------------------------------------------------
+// WP-15: deactivating a person ends their Dagster run grants (and an open window)
+// ---------------------------------------------------------------------------
+test('deactivate ends the owner\'s run grants when run grants are on; reactivate and an unrelated edit do not', async () => {
+  const { idRoute, listRoute } = await freshEnv();
+  await post(listRoute, { id: 'ray@example.com', name: 'Ray', role: 'creator', domains: ['sales'], password: STRONG });
+  const ended: string[] = [];
+  const { __setRunGrantEnderForTests } = await import('./tenant-users.ts');
+  __setRunGrantEnderForTests(async (id: string) => { ended.push(id); });
+  try {
+    const res = await patch(idRoute, 'ray@example.com', { op: 'deactivate' });
+    assert.equal(res.status, 200, JSON.stringify(await res.json()));
+    assert.deepEqual(ended, ['ray@example.com'], 'the owner\'s grants were ended');
+    await patch(idRoute, 'ray@example.com', { op: 'reactivate' });
+    assert.deepEqual(ended, ['ray@example.com'], 'reactivating ends nothing more');
+  } finally {
+    __setRunGrantEnderForTests(null);
+    activeFetch = null;
+  }
+});
+
+test('NEGATIVE TWIN: if ending the grants fails, the person is NOT reported deactivated', async () => {
+  const { idRoute, listRoute } = await freshEnv();
+  await post(listRoute, { id: 'sam@example.com', name: 'Sam', role: 'creator', domains: ['sales'], password: STRONG });
+  const { __setRunGrantEnderForTests } = await import('./tenant-users.ts');
+  __setRunGrantEnderForTests(async () => { throw new Error('governance database unreachable'); });
+  try {
+    const res = await patch(idRoute, 'sam@example.com', { op: 'deactivate' });
+    assert.notEqual(res.status, 200, 'a deactivation that could not end the grants is an error, not a success');
+  } finally {
+    __setRunGrantEnderForTests(null);
+    activeFetch = null;
+  }
+});
