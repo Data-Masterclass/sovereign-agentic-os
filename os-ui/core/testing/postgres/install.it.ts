@@ -160,7 +160,7 @@ describe('clean install as a NOCREATEROLE owner (real postgres:17)', { timeout: 
 
   test('the migrations install cleanly AS THE OWNER (no CREATEROLE needed once the role exists)', async () => {
     const ran = await migrateGovernance({ databaseUrl: urlFor(DB, OWNER), direction: 'up' });
-    assert.equal(ran.length, 3);
+    assert.equal(ran.length, 4, "every migration in core/adapters/postgres/migrations (WP-15 added the 4th)");
     owner = await connect(OWNER);
     const notOwned = await owner.query(
       `select n.nspname, c.relname, pg_get_userbyid(c.relowner) as owner
