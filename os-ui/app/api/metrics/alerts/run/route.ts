@@ -12,6 +12,7 @@ import { deliverAlert } from '@tabs/dashboards/lib/delivery';
 import { getPublicUser } from '@tabs/admin/lib/users';
 import { resolveAlertValue } from '@tabs/metrics/lib/build/alert-eval';
 import { alertsNativeEnabled } from '@core/infra/repo-layout';
+import { config } from '@core/kernel/config';
 
 export const dynamic = 'force-dynamic';
 
@@ -33,7 +34,9 @@ export const dynamic = 'force-dynamic';
  * number is MetricFlow's (`mf query --saved-query`, the Dagster image's alert job, run as the
  * owner). The OS's metric compiler is not called; the committed threshold decides.
  *
- * Governance: Builder+ only (same as single-rule evaluation).
+ * Governance: Builder+ only. Evaluating EVERY alert is for the scheduler's identity (the CronJob's
+ * principal, `OS_ALERTS_SCHEDULER_PRINCIPAL`) and admins; any other builder evaluates only their
+ * own alerts, so nobody triggers runs as another owner.
  */
 export const GET = withRoute(async ({ user }) => {
   if (!roleAtLeast(user.role, 'builder')) {
@@ -41,11 +44,15 @@ export const GET = withRoute(async ({ user }) => {
   }
 
   await ensureHydrated();
-  const rules = listAlertRules();
+  const scheduler = config.alertsSchedulerPrincipal;
+  // The CronJob logs in with its Secret's `username` (an id or an e-mail).
+  const isScheduler = scheduler !== '' && (user.id === scheduler || (await getPublicUser(user.id))?.email?.toLowerCase() === scheduler.toLowerCase());
+  const everyAlert = user.role === 'admin' || isScheduler;
+  const rules = everyAlert ? listAlertRules() : listAlertRules(user.id);
 
   let evaluated = 0;
   let breached = 0;
-  const results: { ruleId: string; owner: string; member: string; value: number | null; breached: boolean; status: 'ok' | 'pending' | 'unavailable' | 'orphaned' | 'error'; reason?: string }[] = [];
+  const results: { ruleId: string; owner: string; member: string; value: number | null; breached: boolean; status: 'ok' | 'pending' | 'unavailable' | 'orphaned' | 'refused' | 'error'; reason?: string }[] = [];
 
   for (const rule of rules) {
     try {
@@ -84,6 +91,6 @@ export const GET = withRoute(async ({ user }) => {
   // Every rule is evaluated (and delivered to ITS owner) whoever triggers the sweep, but the
   // values in the answer are each owner's own numbers, read with their row security. So the
   // caller sees the rows of their own rules; only an admin sees every rule's row.
-  const visible = user.role === 'admin' ? results : results.filter((r) => r.owner === user.id);
+  const visible = everyAlert ? results : results.filter((r) => r.owner === user.id);
   return NextResponse.json({ evaluated, breached, results: visible });
 }, { gate: requirePrincipal as () => Promise<CurrentUser> });

@@ -14,7 +14,8 @@ ARCHITECTURE:
   - `mf` reads `target/semantic_manifest.json`, so `dbt parse` runs first on the checkout: the
     saved query MetricFlow runs is always the committed one, never a stale artifact.
   - Identity: `mf` connects through the dbt profile, which impersonates `OS_PRINCIPAL`; the caller
-    (the Dagster run, tagged with the alert owner as its principal) sets it. No principal, no run.
+    (the Dagster run, tagged with the alert owner as its principal) sets it. No principal, no run;
+    a principal whose token is not the committed `os_alert.owner`, no run.
   - The value is the sum of the metric column over MetricFlow's rows (one row for an alert, which has
     no group-by), the same reduction os-ui's evaluator applies.
   - Never raises from `evaluate`: a refusal is `{"status": "error", ...}` with MetricFlow's output.
@@ -25,6 +26,7 @@ from __future__ import annotations
 import argparse
 import csv
 import glob
+import hashlib
 import json
 import os
 import sys
@@ -71,6 +73,11 @@ def load_alerts(repo_dir: str) -> List[Dict[str, object]]:
     return out
 
 
+def owner_token(principal: str) -> str:
+    """The opaque repository token os-ui writes for an owner: sha256(principal)[:12]."""
+    return hashlib.sha256(principal.encode("utf-8")).hexdigest()[:12]
+
+
 def breached(value: float, comparator: str, threshold: float) -> bool:
     return {"lt": value < threshold, "lte": value <= threshold, "gt": value > threshold, "gte": value >= threshold}[comparator]
 
@@ -100,8 +107,11 @@ def evaluate(repo_dir: str, alert_id: str, env: Optional[Mapping[str, str]] = No
     if not alerts:
         return {"id": alert_id, "status": "error", "reason": f"no committed alert {alert_id!r} under {ALERTS_DIR}/"}
     a = alerts[0]
-    if not (env if env is not None else os.environ).get("OS_PRINCIPAL"):
+    principal = (env if env is not None else os.environ).get("OS_PRINCIPAL", "")
+    if not principal:
         return {**a, "status": "error", "reason": "OS_PRINCIPAL is not set: MetricFlow would not run as the alert's owner"}
+    if owner_token(principal) != a["owner"]:
+        return {**a, "status": "error", "reason": "the run's principal is not the committed owner of this alert (os_alert.owner): refused"}
     project = osp.dbt_dir(repo_dir)
     rc, output = runner(["dbt", "parse", "--no-partial-parse"], cwd=project, env=env)
     if rc != 0:

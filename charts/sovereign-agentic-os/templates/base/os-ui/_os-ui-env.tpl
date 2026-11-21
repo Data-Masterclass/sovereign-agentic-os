@@ -379,6 +379,13 @@
   value: {{ (.Values.llmProviders | default dict).localModels | default list | join "," | quote }}
 - name: LLM_ACCESS_GROUP
   value: {{ (.Values.llmProviders | default dict).accessGroup | default "" | quote }}
+{{- $alertCron := (((.Values.metrics | default dict).alerts | default dict).cron | default dict) }}
+{{- if $alertCron.enabled }}
+# WP-50: the alert CronJob's principal (its Secret's username). Only it and admins evaluate every alert.
+- name: OS_ALERTS_SCHEDULER_PRINCIPAL
+  valueFrom:
+    secretKeyRef: { name: {{ $alertCron.principalSecret | default "metrics-alert-principal" | quote }}, key: username, optional: true }
+{{- end }}
 - name: OPA_URL
   value: {{ $u.opaUrl | quote }}
 {{- if .Values.opa.enabled }}
