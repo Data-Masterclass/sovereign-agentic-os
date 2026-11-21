@@ -52,22 +52,15 @@ function opaEval(mounts: Record<string, string>, data: string[], input: unknown,
   return r.stdout.trim() === '' ? undefined : JSON.parse(r.stdout);
 }
 
-/**
- * Today's decision: the per-workflow Rego module the OS generates, evaluated by the same OPA binary.
- *   - `live`: its data where the push path PUTs it (`<package path>/guardrails`) — what OPA decides today;
- *   - `intended`: its data where the generated Rego reads it (`data.guardrails`, an ABSOLUTE path).
- * The two differ: the generated Rego never sees the pushed data, so today every call is allowed,
- * even one that reports a violated guardrail. The platform policy keeps the intended semantics.
- */
-function todayAllow(md: string, violations: string[], where: 'live' | 'intended'): boolean {
+/** Today's decision: the per-workflow Rego module the OS uploads, with its data where it PUTs it. */
+function todayAllow(md: string, violations: string[]): boolean {
   const c = compileGuardrails(parseWorkflow(md));
   const dir = mkdtempSync(join(tmpdir(), 'wp30-today-'));
   chmodSync(dir, 0o755);
   writeFileSync(join(dir, 'policy.rego'), c.rego);
   writeFileSync(join(dir, 'data.json'), JSON.stringify(c.data.guardrails));
   try {
-    const prefix = where === 'live' ? `${c.packagePath}.guardrails` : 'guardrails';
-    return opaEval({ [dir]: '/t' }, ['/t/policy.rego', `${prefix}:/t/data.json`], { violations }, `data.${c.packagePath}.allow`) === true;
+    return opaEval({ [dir]: '/t' }, ['/t/policy.rego', `${c.packagePath}.guardrails:/t/data.json`], { violations }, `data.${c.packagePath}.allow`) === true;
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -103,17 +96,12 @@ test('EJECT: opa eval on the cloned repo + platform policy decides exactly as th
   const { work, clone, sha } = await clonedRepo();
   try {
     const md = workflowRecord().md;
-    let diverged = 0;
     for (const violations of CALLS) {
       const d = ejectDecision(clone, violations);
       assert.deepEqual(d.guardrails, ['sr1', 'wr2']);
-      assert.equal(d.allow, todayAllow(md, violations, 'intended'), `${JSON.stringify(violations)}: eject vs today's intended rule`);
-      const live = todayAllow(md, violations, 'live');
-      assert.equal(live, true, "today's pushed module allows every call (its data path is never read)");
-      if (d.violated.length === 0) assert.equal(d.allow, live, `${JSON.stringify(violations)}: eject vs today's live decision`);
-      else diverged++;
+      assert.equal(d.allow, todayAllow(md, violations), `${JSON.stringify(violations)}: eject vs today`);
     }
-    console.log(`[wp30-eject] opa eval (${opaImage().split('@')[0]}) on ${FILE} at ${sha.slice(0, 12)}: ${CALLS.length} calls = today's intended rule; ${CALLS.length - diverged} = today's live decision, ${diverged} differ (violations today's module never sees)`);
+    console.log(`[wp30-eject] opa eval (${opaImage().split('@')[0]}) on ${FILE} at ${sha.slice(0, 12)}: ${CALLS.length} calls = today's uploaded module`);
   } finally {
     rmSync(work, { recursive: true, force: true });
   }
@@ -130,7 +118,7 @@ test('EJECT NEGATIVE TWINS: no committed file denies every call; an edited file 
     writeFileSync(path, JSON.stringify({ guardrails: doc.guardrails.filter((g) => g.id !== 'sr1') }));
     const d = ejectDecision(clone, ['sr1']);
     assert.equal(d.allow, true, 'sr1 is no longer a guardrail of the edited file');
-    assert.notEqual(d.allow, todayAllow(workflowRecord().md, ['sr1'], 'intended'));
+    assert.notEqual(d.allow, todayAllow(workflowRecord().md, ['sr1']));
   } finally {
     rmSync(work, { recursive: true, force: true });
   }
