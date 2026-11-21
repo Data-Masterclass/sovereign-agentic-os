@@ -98,7 +98,7 @@ restart_readers() {
   while read -r kind1 d secs; do
     [ -n "$kind1" ] || continue
     case $kind1 in CronJob) echo "   CronJob/$d reads $secs at its next run"; continue ;; esac
-    if [[ "$kind1/$d" =~ $excl ]]; then echo "   not restarted: $kind1/$d (see the run-book)"; continue; fi
+    if [[ "$kind1/$d" =~ $excl ]]; then echo "   skipped here: $kind1/$d (the server: restarted before its readers, or changed live — see the run-book)"; continue; fi
     names+=("$(printf %s "$kind1" | tr "[:upper:]" "[:lower:]")/$d")
   done < <(python3 "$REPO/scripts/lib/rotation-checks.py" readers "$rw/all.json" "$@")
   rm -rf "$rw"

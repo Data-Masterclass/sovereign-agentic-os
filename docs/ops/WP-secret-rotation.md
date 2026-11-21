@@ -163,19 +163,39 @@ The old agent key can be used again only until `ds-finish` deletes it.
 
 ## Rehearsal
 
-`bash scripts/tests/secret-rotation/rehearse-round2.sh` runs on kind, from defaults, with the pinned images (`round2-kind-up.sh`, `values.round2.kind.yaml`):
-- the production shape: local profile, Ingress on, persistence on, plain Postgres, bundled MinIO;
-- the readers that run without the OS's own images: Langfuse web and worker, LiteLLM and its agent key, and Polaris.
+```
+DOCKER_CONTEXT=<a docker with ~7 GB free> RESET=1 bash scripts/tests/secret-rotation/round2-kind-up.sh
+bash scripts/tests/secret-rotation/rehearse-round2.sh
+```
 
-It runs the **real** `rotate-secrets.sh ds-*` and the chart's real hooks and Jobs, and ends with `ROUND2_REHEARSAL_OK`. Results are under "Rehearsal results".
+The cluster is kind, with its **own kubeconfig** (`~/.cache/secret-rotation-round2/kubeconfig`). The shared `~/.kube/config` and the shared docker context are never switched.
 
-## Findings while rehearsing (fixed in the tooling)
+It runs the chart the way production does:
+- local profile, Ingress on, persistence on, plain Postgres, bundled MinIO;
+- the round-1 secrets set to the install's own values (random per cluster) with a salt key, while every round-2 credential stays at the chart default. So the #236 guard and os-ui's boot guard pass exactly as in production.
 
-- **Postgres trusts loopback.** The official image's initdb writes `host all all 127.0.0.1/32 trust`, so inside pg-0 *any* password works over 127.0.0.1. Login checks therefore connect to the pod address, the `scram-sha-256` line every reader matches. This is pod-local, but `pg_isready`-style checks over loopback prove nothing about a password.
-- **`rollout status` returns while old pods are still terminating**, and those pods still hold the old value. Every restart waits until no pod of the previous revision is left.
-- **bash 3.2** (macOS `/bin/bash`), an unset variable and an EXIT trap together end a run with status 0. `rotate-secrets.sh` now treats any run that did not reach its end as a failure.
-- **key-init could complete without a key** (see "Agent key" above). It now fails closed.
+Readers, with their pinned images:
+- Langfuse web and worker (3.194.1);
+- LiteLLM 1.109.1 with its migrations and key-init Jobs;
+- Polaris;
+- OpenSearch;
+- **os-ui and os-ui-worker**, built from this checkout like the e2e harness, with their git sidecars.
 
-## Rehearsal results
+The script runs the **real** `rotate-secrets.sh ds-*` and the chart's real hooks and Jobs. Only `deploy.sh` is replaced, by the `helm upgrade` it ends with. A run ends with `ROUND2_REHEARSAL_OK`.
 
-(filled in by the rehearsal run)
+## Rehearsal results (2026-11-21, kind, run 8: 66 passed, 0 failed)
+
+| Step | Evidence |
+|---|---|
+| Before | A Langfuse trace through ingestion → Valkey queue → MinIO events → ClickHouse; a Valkey marker key; the agent key served. |
+| Negative twins | `ds-prepare` refuses a hand-edited Secret and writes nothing. `ds-plan` refuses a state from another cluster. `ds-rekey` without `--apply` only describes the steps. |
+| Valkey | New password added: old and new both valid, the marker key kept (no restart). Langfuse web and worker and LiteLLM restarted. After `ds-finish`, the old password is refused. |
+| Postgres | All 5 roles (langfuse, litellm, dagster, polaris, agent_runs) refuse the old password and accept the new one, over the pod address. Readers restarted: langfuse-web, langfuse-worker, litellm, polaris, os-ui, os-ui-worker. pg-0 was not restarted. Tables per database unchanged (langfuse 70, litellm 105, agent_runs 7). |
+| ClickHouse | Old password → 403. ClickHouse restarted first, then Langfuse web and worker. Rows kept (70 → 70, then 75 after new traces). |
+| MinIO | Old secret key → 403. MinIO restarted first, then Langfuse, Polaris, os-ui and os-ui-worker. Objects kept. |
+| LiteLLM master key | Old → 401 and new → 200 on `/key/list`. LiteLLM and **os-ui** restarted; os-ui's own `LITELLM_MASTER_KEY` reaches `/v1/models` and `/key/list` (200). **os-ui-worker holds no master key**, checked on its pod spec. **Existing virtual keys keep working**: the agent key and an extra key made under the old master both get 200 after the swap. |
+| Agent key | The old key is renamed `-retired`. The chart's key-init Job, re-run, logs "virtual key created". The new key is served before the deploy, then os-ui and os-ui-worker restart. After `ds-finish`, the old key → 401. |
+| Deploy | `helm upgrade` with the release values + the overlay succeeds. The post-upgrade reconcile hook connects with the new owner password. `ds-verify` → `DS_VERIFY_OK`. |
+| After | A **new** trace reaches ClickHouse (Postgres, Valkey, MinIO and ClickHouse all on new credentials) and the old trace is still there. A chat through LiteLLM with the new agent key → 200. |
+| Release | A second, plain upgrade from the release values changes no Secret. `ds-verify` still passes. |
+| No leak | No old, new or round-1 credential value appears in any log of the run. |

@@ -35,6 +35,17 @@ W=${REHEARSAL_WORKDIR:-$HOME/.cache/secret-rotation-round2}; mkdir -p "$W"; chmo
 export KUBECONFIG=$W/kubeconfig   # written by round2-kind-up.sh; never the shared ~/.kube/config
 export SOVEREIGN_SECRETS_DIR=$W/secrets
 ROT=("$REPO/scripts/ops/rotate-secrets.sh")
+# ds-plan refuses a chart checkout that does not contain the live os-ui tag (production safety).
+# Here os-ui is built from this checkout as 0.1.0: a throwaway clone of HEAD carries that tag.
+CLONE=$W/chart-clone
+if [ ! -d "$CLONE/.git" ] || [ "$(git -C "$CLONE" rev-parse HEAD)" != "$(git -C "$REPO" rev-parse HEAD)" ]; then
+  if [ -d "$CLONE" ]; then mv "$CLONE" "$CLONE.$(date +%s)"; fi
+  git clone -q --no-hardlinks "$REPO" "$CLONE" && git -C "$CLONE" checkout -q "$(git -C "$REPO" rev-parse HEAD)"
+  git -C "$CLONE" tag -f os-ui-v0.1.0 >/dev/null
+  cp -R "$REPO/charts/sovereign-agentic-os/charts" "$CLONE/charts/sovereign-agentic-os/" 2>/dev/null || true
+fi
+# The rehearsal tests the WORKING TREE's tooling: uncommitted chart changes must be in the clone too.
+rsync -a --delete --exclude charts "$REPO/charts/sovereign-agentic-os/" "$CLONE/charts/sovereign-agentic-os/"
 pass=0; failn=0
 ok()   { pass=$((pass+1)); echo "   ok   $*"; }
 bad()  { failn=$((failn+1)); echo "   FAIL $*"; }
@@ -53,7 +64,8 @@ run() { # <log> <expect: ok|fail> <args…> — rot, its output kept; checks the
 has() { grep -q -- "$2" "$W/$1.log" && ok "$1: $3" || bad "$1: $3 (no '$2')"; }
 hasnt() { grep -q -- "$2" "$W/$1.log" && bad "$1: $3 ('$2' found)" || ok "$1: $3"; }
 
-PK=pk-lf-localdev0000public SK=sk-lf-localdev0000secret
+# Langfuse's project key pair: the install's own (round 1), read from the cluster when needed.
+PK="" SK=""
 trace() { # <name> — one trace through Langfuse's public ingestion API (port-forward 13000)
   local id; id=$(python3 -c 'import uuid; print(uuid.uuid4())')
   printf '{"batch":[{"id":"%s","type":"trace-create","timestamp":"%s","body":{"id":"%s","name":"%s"}}]}' \
@@ -68,6 +80,7 @@ wait_trace() { local _i; for _i in $(seq 1 60); do [ "$(ch_traces "$1")" -ge 1 ]
 [ -f "$KUBECONFIG" ] && kubectl config get-contexts "$CTX" >/dev/null 2>&1 || { echo "no $KUBECONFIG with context $CTX: run round2-kind-up.sh first"; exit 2; }
 
 step "0. data before the rotation"
+PK=$(sk langfuse-init LANGFUSE_INIT_PROJECT_PUBLIC_KEY); SK=$(sk langfuse-init LANGFUSE_INIT_PROJECT_SECRET_KEY)
 pf "$REL-langfuse-web" 13000 3000
 c=$(trace before-rotation); [ "$c" = 207 ] || [ "$c" = 200 ] && ok "Langfuse accepts a trace ($c)" || bad "Langfuse ingestion → $c"
 wait_trace before-rotation && ok "the trace reached ClickHouse (worker: Valkey queue, MinIO events, ClickHouse)" || bad "the trace did not reach ClickHouse"
@@ -97,7 +110,7 @@ python3 -c 'import json,sys; s=json.load(open(sys.argv[1])); s["cluster"]["uid"]
 TAIL=3 run plan-othercluster fail ds-plan --overlay "$OV"
 has plan-othercluster "prepared for another cluster" "refuses a state of another cluster"
 cp "$W/state.bak" "${OV%.yaml}.state.json"
-TAIL=60 run plan ok ds-plan --overlay "$OV"
+TAIL=60 run plan ok ds-plan --overlay "$OV" --chart "$CLONE/charts/sovereign-agentic-os"
 has plan "(to do)" "lists the Secrets to rotate"
 has plan "Deployment $REL-langfuse-web" "discovers Langfuse as a reader"
 
@@ -141,7 +154,7 @@ has verify-master "the master key → /key/list 200" "the new master key → 200
 has verify-master "an existing virtual key (agent-litellm-key" "the agent key (made before the swap) still works"
 has verify-master "os-ui → LiteLLM admin with its LITELLM_MASTER_KEY" "os-ui uses the new master key"
 has verify-master "os-ui-worker holds no master key" "the worker holds none"
-has verify-master "Deployment/os-ui" "os-ui restarted after the swap"
+has verify-master "   ok   os-ui: rollout complete" "os-ui restarted after the swap"
 pf "$REL-litellm" 14000 4000
 c=$(printf 'header = "Authorization: Bearer %s"\n' "$vk_extra" | curl -sS -K - -o /dev/null -w '%{http_code}' http://127.0.0.1:14000/v1/models)
 stop_pf
@@ -203,7 +216,13 @@ def walk(n):
     if isinstance(n, dict): [walk(v) for v in n.values()]
     elif isinstance(n, list): [walk(v) for v in n]
     elif isinstance(n, str) and len(n) >= 12: vals.add(n)
-for f in sys.argv[1:4]: walk(yaml.safe_load(open(f)))
+CRED = ("password", "localPassword", "secretKey", "accessKey", "value", "apiKey", "token", "publicKey",
+        "salt", "nextauthSecret", "encryptionKey", "userPassword", "litellmMasterKey")
+def walk_cred(n, key=""):
+    if isinstance(n, dict): [walk_cred(v, k) for k, v in n.items()]
+    elif isinstance(n, list): [walk_cred(v, key) for v in n]
+    elif isinstance(n, str) and key in CRED and len(n) >= 12: vals.add(n)
+for f in sys.argv[1:4]: walk_cred(yaml.safe_load(open(f)))
 hits = [f for f in glob.glob(sys.argv[4] + "/*.log") if any(v in open(f, errors="replace").read() for v in vals)]
 print(" ".join(hits))
 PY
