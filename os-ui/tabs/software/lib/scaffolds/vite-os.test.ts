@@ -193,3 +193,13 @@ test('vite-os scaffold: README.md explains governed OS app + nginx:8080', () => 
   assert.match(f!.content, /8080/, 'mentions port 8080');
   assert.match(f!.content, /@sovereign-os\/app-sdk/, 'mentions the SDK');
 });
+
+// ------------------------------------------- vite/client env types (Vite docs) --
+
+test('vite-os scaffold: src/vite-env.d.ts references vite/client (types import.meta.env)', () => {
+  // https://vite.dev/guide/env-and-mode#intellisense-for-typescript — src/os.ts reads
+  // import.meta.env.VITE_OS_API, which only type-checks with the vite/client reference.
+  const f = byPath('src/vite-env.d.ts');
+  assert.ok(f, 'src/vite-env.d.ts is present');
+  assert.match(f!.content, /^\/\/\/ <reference types="vite\/client" \/>/, 'triple-slash reference to vite/client');
+});
