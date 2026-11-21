@@ -38,7 +38,12 @@ cat > "$BIN/kubectl" <<'EOF'
 # get pods → a pod name; exec … -- sh -c <script> sh <dir> → run it here; exec … python3 → a count
 args=("$@")
 case " $* " in
-  *" get pods "*) [ -n "${FAKE_NO_POD:-}" ] || echo "fake-pod" ;;
+  # No pod: real kubectl (seen on a first install, 2026-11-21) prints nothing for `{.items[*]…}`
+  # but FAILS a `{.items[0]…}` jsonpath on an empty list — exit 1, "array index out of bounds".
+  *" get pods "*)
+    if [ -z "${FAKE_NO_POD:-}" ]; then echo "fake-pod"
+    else case " $* " in *"{.items[0]"*) echo 'error: error executing jsonpath "{.items[0].metadata.name}": Error executing template: array index out of bounds: index 0, length 0.' >&2; exit 1 ;; esac
+    fi ;;
   *" exec "*" sh -c "*)
     for i in "${!args[@]}"; do [ "${args[$i]}" = "-c" ] && [ "${args[$((i-1))]}" = "sh" ] && { shift $((i+1)); break; }; done
     exec sh -c "$1" "${@:2}" ;;
@@ -71,6 +76,11 @@ echo "-- layout: no Dagster running yet"
 out=$(FAKE_NO_POD=1 $CHECK layout ctx ns 2>&1); rc=$?
 rc_is "nothing to check passes, and says so" 0
 check "says so" "nothing to check" "$out"
+
+echo "-- schedule count: no Dagster running yet"
+out=$(FAKE_NO_POD=1 $CHECK schedules ctx ns 2>&1); rc=$?
+rc_is "no webserver counts 0 and passes" 0
+check "says so" "counting 0" "$out"
 
 echo "-- schedule count"
 out=$(FAKE_COUNT=7 $CHECK schedules ctx ns 2>&1); rc=$?
