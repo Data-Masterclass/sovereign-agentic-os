@@ -33,6 +33,9 @@ case "$*" in
   *"logs deploy/os-ui-worker"*) cat "$FAKE/worker-log" ;;
   *"get pvc clickhouse-data"*)  cat "$FAKE/pvc" ;;
   *"get configmap agentic-os-litellm-config"*) cat "$FAKE/configmap" 2>/dev/null || exit 1 ;;
+  *"port-forward svc/agentic-os-langfuse-web"*)
+                        [ -f "$FAKE/langfuse-health" ] || { echo "error: no such service" >&2; exit 1; }
+                        echo "Forwarding from 127.0.0.1:41234 -> 3000"; exec sleep 30 ;;
   *) echo "fake kubectl: unexpected $*" >&2; exit 9 ;;
 esac
 STUB
@@ -43,7 +46,12 @@ STUB
 cat > "$BIN/curl" <<'STUB'
 #!/usr/bin/env bash
 # The http code for a URL is the content of $FAKE/code-<host>; no file = no answer (000).
-url=${*: -1}; host=${url#https://}; host=${host%%/*}
+url=${*: -1}
+case $url in
+  # Langfuse through the port-forward: the body, a newline, the http code (curl -w '\n%{http_code}').
+  http://127.0.0.1:41234/api/public/health*) printf '%s' "$url" > "$FAKE/langfuse-url"; cat "$FAKE/langfuse-health"; exit 0 ;;
+esac
+host=${url#https://}; host=${host%%/*}
 cat "$FAKE/code-$host" 2>/dev/null || printf '000'
 STUB
 chmod +x "$BIN"/*
@@ -61,10 +69,12 @@ healthy() {
 {"ingress": {"hosts": {"osUI": "os.example.test", "litellm": "litellm.example.test", "langfuse": "langfuse.example.test"}},
  "clickhouse": {"persistence": {"enabled": true, "size": "30Gi"}, "local": {"password": "FAKE_SECRET_PASSWORD_123"}},
  "softwareRunner": {"enabled": true, "namespace": "agentic-apps"},
+ "langfuse": {"enabled": true},
  "litellmMasterKey": "sk-FAKE_MASTER_KEY"}
 JSON
   echo 200 > "$FAKE/code-os.example.test"
   echo 404 > "$FAKE/code-litellm.example.test"
+  printf '{"status":"OK","version":"3.194.1"}\n200' > "$FAKE/langfuse-health"
 }
 smoke() { out=$(PATH="$BIN:$PATH" bash scripts/smoke-test.sh "$@" 2>&1); rc=$?; }
 
@@ -125,6 +135,24 @@ healthy; printf 'model_list:\n- model_name: a\n  model_info: {mode: chat}\n- mod
 check "a model without model_info fails, by name" "missing: unpriced" "$out"
 healthy; rm "$FAKE/configmap"; smoke
 check "a missing LiteLLM ConfigMap fails" "FAIL  LiteLLM ConfigMap agentic-os-litellm-config readable" "$out"
+
+echo "== Langfuse reads its ClickHouse tables (upstream /api/public/health, deep checks)"
+healthy; smoke
+check "recent traces pass" "Langfuse reads ClickHouse: OK (Langfuse 3.194.1)" "$out"
+check "the health call asks for both deep checks" "failIfDatabaseUnavailable=true&failIfNoRecentEvents=true" "$(cat "$FAKE/langfuse-url")"
+healthy; printf '{"status":"No traces within the last 3 minutes","version":"3.194.1"}\n503' > "$FAKE/langfuse-health"; smoke
+rc_is "an idle Langfuse (tables there, no recent trace) passes" 0
+check "idle is said as such" "Langfuse reads ClickHouse: the tables answer, no trace in the last 3 minutes" "$out"
+healthy; printf '{"status":"Couldn'"'"'t fetch recent events","version":"3.194.1"}\n503' > "$FAKE/langfuse-health"; smoke
+rc_is "missing ClickHouse tables fail" 1
+check "the upstream status is named" "FAIL  Langfuse reads ClickHouse (503: Couldn't fetch recent events)" "$out"
+healthy; printf '{"status":"Database not available","version":"3.194.1"}\n503' > "$FAKE/langfuse-health"; smoke
+check "a database outage fails" "FAIL  Langfuse reads ClickHouse (503: Database not available)" "$out"
+healthy; rm "$FAKE/langfuse-health"; smoke
+check "no port-forward fails" "FAIL  Langfuse reachable through kubectl port-forward" "$out"
+healthy; sed -i.bak 's/"langfuse": {"enabled": true}/"langfuse": {"enabled": false}/' "$FAKE/values.json"; rm "$FAKE/langfuse-health"; smoke
+rc_is "Langfuse off: nothing to check" 0
+check "and it is noted" "Langfuse is off: no trace store to check" "$out"
 
 echo "== arguments"
 smoke --nonsense; rc_is "an unknown argument exits 2" 2

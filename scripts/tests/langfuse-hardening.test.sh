@@ -14,7 +14,10 @@
 #     Langfuse worker on TCP 3000, and nothing else;
 #   * it admits the ingress controller ONLY when the console is deliberately published;
 #   * it is off with `networkPolicies.langfuseWeb=false` or `networkPolicies.defaultDeny=false`;
-#   * no template renders a TLS Secret or Certificate for a Langfuse/LiteLLM host that has no route.
+#   * no template renders a TLS Secret or Certificate for a Langfuse/LiteLLM host that has no route;
+#   * Langfuse runs its own ClickHouse migrations at start, explicitly
+#     (LANGFUSE_AUTO_CLICKHOUSE_MIGRATION_DISABLED="false" on web and worker), and the dev profile
+#     keeps ClickHouse on a volume (values.dev.yaml), so a restart cannot drop the Langfuse tables.
 # Skips (exit 0) without helm or the subchart .tgz files — but FAILS when CI is set.
 set -uo pipefail
 cd "$(dirname "$0")/../.."
@@ -89,6 +92,27 @@ elif mode == "policy-ingress":
     ns = [f["namespaceSelector"]["matchLabels"] for f in frm if "namespaceSelector" in f]
     if ns != [{"kubernetes.io/metadata.name": "ingress-nginx"}]: print(f"namespace peers {ns}"); sys.exit()
     print("ok")
+elif mode == "migrate":
+    for name in ("agentic-os-langfuse-web", "agentic-os-langfuse-worker"):
+        d = find("Deployment", name)
+        if not d: print(f"no {name} Deployment"); sys.exit()
+        env = {e["name"]: e.get("value") for e in d["spec"]["template"]["spec"]["containers"][0].get("env", [])}
+        if env.get("LANGFUSE_AUTO_CLICKHOUSE_MIGRATION_DISABLED") != "false":
+            print(f"{name}: LANGFUSE_AUTO_CLICKHOUSE_MIGRATION_DISABLED={env.get('LANGFUSE_AUTO_CLICKHOUSE_MIGRATION_DISABLED')!r}"); sys.exit()
+    ch = find("Deployment", "clickhouse")
+    vols = {v["name"]: v for v in ch["spec"]["template"]["spec"]["volumes"]} if ch else {}
+    want_pvc = len(sys.argv) > 3 and sys.argv[3] == "pvc"
+    if want_pvc and (vols.get("data", {}).get("persistentVolumeClaim", {}).get("claimName") != "clickhouse-data" or not find("PersistentVolumeClaim", "clickhouse-data")):
+        print(f"ClickHouse data is not the clickhouse-data PVC: {vols.get('data')}"); sys.exit()
+    print("ok")
+elif mode == "dev-volume":
+    dev = yaml.safe_load(open("values.dev.yaml"))
+    chart = yaml.safe_load(open("charts/sovereign-agentic-os/values.yaml"))
+    p = (dev.get("clickhouse") or {}).get("persistence") or {}
+    if p.get("enabled") is not True: print(f"values.dev.yaml clickhouse.persistence.enabled={p.get('enabled')!r}"); sys.exit()
+    if "size" in p and p["size"] != chart["clickhouse"]["persistence"]["size"]:
+        print(f"values.dev.yaml size {p['size']} differs from the chart's {chart['clickhouse']['persistence']['size']} (the smoke test compares to the chart)"); sys.exit()
+    print("ok")
 elif mode == "no-policy":
     print("ok" if not pol else "policy rendered but should not be")
 elif mode == "no-tls":
@@ -107,7 +131,7 @@ PY
 
 expect() { # expect <name> <mode> <file>
   if [ ! -s "$3" ]; then bad "$1" "helm template failed: $(tail -1 "$3.err")"; return; fi
-  local r; r=$(python3 "$TMP/check.py" "$2" "$3")
+  local r; r=$(python3 "$TMP/check.py" "$2" "$3" "${4-}")
   [ "$r" = ok ] && ok "$1" || bad "$1" "$r"
 }
 
@@ -138,6 +162,12 @@ render "$TMP/stale2.yaml" -f "$STACKIT" --set ingress.hosts.langfuse=langfuse.ex
   --set ingress.hosts.litellm=litellm.example.test
 expect "default: no TLS Secret / Certificate / Ingress TLS for either host" no-tls "$TMP/default.yaml"
 expect "STACKIT + stale hostnames, no opt-in: none either"                  no-tls "$TMP/stale2.yaml"
+
+echo "== ClickHouse: Langfuse migrations at start, durable tables"
+expect "default: web and worker run the ClickHouse migrations at start" migrate "$TMP/default.yaml"
+render "$TMP/chpvc.yaml" --set clickhouse.persistence.enabled=true
+expect "persistence on: ClickHouse data is the clickhouse-data PVC" migrate "$TMP/chpvc.yaml" pvc
+r=$(python3 "$TMP/check.py" dev-volume /dev/null); [ "$r" = ok ] && ok "dev profile: ClickHouse persistence on, at the chart's size" || bad "dev profile: ClickHouse persistence on" "$r"
 
 echo
 echo "langfuse-hardening: $pass passed, $fail failed"
