@@ -3,7 +3,7 @@
  */
 import 'server-only';
 import { config } from '@core/kernel/config';
-import { SESSION_COOKIE, type Role, verifySession } from '@core/kernel/session';
+import { sessionTokenFrom, type Role, verifySession } from '@core/kernel/session';
 import { authenticate as authUser, getPublicUser } from '@tabs/admin/lib/users';
 import { activeDomainIds } from '@tabs/admin/lib/domains';
 import { ACTIVE_DOMAIN_COOKIE, resolveDomainScope } from '@core/kernel/active-domain';
@@ -69,7 +69,8 @@ export async function currentUser(): Promise<CurrentUser | null> {
   // image does not even ship `next/headers.js`, so a static import would fail at worker boot.
   const { cookies } = await import('next/headers');
   const store = await cookies();
-  const token = store.get(SESSION_COOKIE)?.value;
+  // Only the `__Host-` session cookie counts; a tossed legacy `soa_session` is ignored.
+  const token = sessionTokenFrom((n) => store.get(n)?.value);
   const claims = await verifySession(token, config.sessionSecret);
   if (!claims) return null;
   // Drop archived domains from the live scope (a member no longer sees them even

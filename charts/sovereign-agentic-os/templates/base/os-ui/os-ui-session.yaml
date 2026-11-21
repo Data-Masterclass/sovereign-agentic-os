@@ -22,6 +22,22 @@
 {{- $current := "" }}
 {{- if $existing }}{{ $current = (index $existing.data "OS_SESSION_SECRET" | b64dec) }}{{- end }}
 {{- $secret := .Values.osUI.sessionSecret | default $current | default (randAlphaNum 48) }}
+{{- /*
+  OS_MCP_TOKEN_SECRET signs the per-user MCP bearer tokens. It is its OWN key so that
+  rotating the session secret (which signs out every browser) does not also void every
+  issued MCP token. Resolution order:
+    1. an explicit `osUI.mcpTokenSecret`, else
+    2. the value already stored under OS_MCP_TOKEN_SECRET in this Secret, else
+    3. MIGRATION: the session secret ALREADY STORED here (the key MCP tokens were signed
+       with before the split), so the first upgrade keeps existing MCP tokens valid even
+       when the same upgrade rotates `osUI.sessionSecret`, else
+    4. a fresh random value on first install.
+  GITOPS: as above, `lookup` is empty under helm template / Argo CD — set
+  `osUI.mcpTokenSecret` explicitly there.
+*/}}
+{{- $mcpCurrent := "" }}
+{{- if $existing }}{{ $mcpCurrent = (index $existing.data "OS_MCP_TOKEN_SECRET" | default "" | b64dec) }}{{- end }}
+{{- $mcpSecret := .Values.osUI.mcpTokenSecret | default $mcpCurrent | default $current | default (randAlphaNum 48) }}
 {{- if not (include "soa.eso.owned" (list $ $name)) }}
 apiVersion: v1
 kind: Secret
@@ -36,5 +52,6 @@ metadata:
 type: Opaque
 stringData:
   OS_SESSION_SECRET: {{ $secret | quote }}
+  OS_MCP_TOKEN_SECRET: {{ $mcpSecret | quote }}
 {{- end }}
 {{- end }}

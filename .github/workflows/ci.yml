@@ -124,6 +124,10 @@ jobs:
       # on other profiles, with negative twins. The lookup change guard: litellm-salt-key-guard.kind.sh.
       - name: LiteLLM salt key chart test
         run: bash scripts/tests/litellm-salt-key-chart.test.sh
+      # OS_MCP_TOKEN_SECRET is its own key in os-ui-session (a session rotation keeps MCP tokens).
+      # The lookup migration: mcp-token-secret.kind.sh.
+      - name: MCP token secret chart test
+        run: bash scripts/tests/mcp-token-secret-chart.test.sh
 
       # The chart refuses published default secrets on a non-laptop install (Ingress on, or another
       # profile): defaults fail naming each key, an install's own values and the laptop render pass.

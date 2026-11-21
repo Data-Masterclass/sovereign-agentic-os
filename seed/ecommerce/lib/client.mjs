@@ -4,11 +4,11 @@
  * Tiny governed-API client for the e-commerce seed. Zero dependencies — uses the
  * Node 22 global `fetch`. It NEVER bypasses governance: it authenticates against
  * the same `POST /api/auth/login` the browser uses, holds the resulting signed
- * `soa_session` cookie, and presents it on every governed call. OPA / RLS / audit
+ * session cookie (`__Host-soa_session`, or `soa_session_insecure` on plain-http dev), and presents it on every governed call. OPA / RLS / audit
  * therefore apply exactly as for a human in that role.
  */
 
-const SESSION_COOKIE = 'soa_session';
+const SESSION_COOKIE_NAMES = ['__Host-soa_session', 'soa_session_insecure'];
 
 /** One signed-in identity (a member of the seeded cast). Holds its own cookie. */
 export class Session {
@@ -33,8 +33,8 @@ export class Session {
     }
     // Node exposes multiple Set-Cookie via getSetCookie(); find the session one.
     const cookies = res.headers.getSetCookie?.() ?? [];
-    const sc = cookies.find((c) => c.startsWith(`${SESSION_COOKIE}=`));
-    if (!sc) throw new Error(`login for ${this.id}: no ${SESSION_COOKIE} cookie returned`);
+    const sc = cookies.find((c) => SESSION_COOKIE_NAMES.some((n) => c.startsWith(`${n}=`)));
+    if (!sc) throw new Error(`login for ${this.id}: no session cookie returned`);
     this.cookie = sc.split(';')[0];
     this.user = (await res.json()).user;
     return this.user;

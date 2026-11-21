@@ -33,7 +33,7 @@ async function login(username, password) {
   });
   if (!res.ok) throw new Error(`login ${username} failed: ${res.status}`);
   const setCookie = res.headers.getSetCookie?.() ?? [res.headers.get('set-cookie')].filter(Boolean);
-  const cookie = setCookie.map((c) => c.split(';')[0]).join('; ');
+  const cookie = setCookie.map((c) => c.split(';')[0]).filter((c) => !c.endsWith('=')).join('; ');
   if (!cookie) throw new Error(`login ${username}: no cookie`);
   return cookie;
 }
@@ -41,7 +41,8 @@ async function login(username, password) {
 async function api(cookie, path, init = {}) {
   const res = await fetch(`${BASE}${path}`, {
     ...init,
-    headers: { 'content-type': 'application/json', cookie, ...(init.headers ?? {}) },
+    // origin: the OS refuses a cookie-authenticated write without same-origin provenance.
+    headers: { 'content-type': 'application/json', cookie, origin: new URL(BASE).origin, ...(init.headers ?? {}) },
   });
   const body = await res.json().catch(() => ({}));
   return { status: res.status, body };
