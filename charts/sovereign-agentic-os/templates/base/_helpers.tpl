@@ -129,13 +129,21 @@ use the in-cluster Services). `scripts/check-consoles-not-public.mjs` holds this
 
 {{/*
 "true" when a restricted console is deliberately published: `ingress.restricted.<key>.expose`
-is true. Fails the render when the opt-in carries no protection annotation — a public route to
+is true, or `ingress.restricted.<key>.operatorIngress.enabled` (the operators' basic-auth route,
+which needs a non-empty `basicAuthSecret`). Fails the render when the opt-in carries no protection annotation — a public route to
 one of these consoles with nothing in front of it is the state this chart exists to prevent.
 Args: dict "ctx" $ "key" "<litellm|langfuse>"
 */}}
 {{- define "soa.restrictedExposed" -}}
 {{- $r := index ((.ctx.Values.ingress | default dict).restricted | default dict) .key | default dict -}}
-{{- if eq (toString $r.expose) "true" -}}
+{{- $op := $r.operatorIngress | default dict -}}
+{{- if eq (toString $op.enabled) "true" -}}
+{{- /* The operator route carries its own protection (basic auth, added in ingress.yaml). */ -}}
+{{- if not $op.basicAuthSecret -}}
+{{- fail (printf "ingress.restricted.%s.operatorIngress.enabled is true but operatorIngress.basicAuthSecret is empty: name the htpasswd Secret (key `auth`) that protects the route." .key) -}}
+{{- end -}}
+true
+{{- else if eq (toString $r.expose) "true" -}}
 {{- $a := $r.annotations | default dict -}}
 {{- $allow := index $a "nginx.ingress.kubernetes.io/whitelist-source-range" | default "" -}}
 {{- $authUrl := index $a "nginx.ingress.kubernetes.io/auth-url" | default "" -}}

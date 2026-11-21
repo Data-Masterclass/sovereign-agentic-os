@@ -37,13 +37,22 @@ global:
 
 # --- Public route: ONE host, in the dev zone ----------------------------------------------------
 # The dev ingress-nginx Service is pinned to the reserved dev IP (scripts/dev/platform.sh), and
-# cert-manager issues the certificate. LiteLLM and Langfuse stay unpublished, as in production.
+# cert-manager issues the certificate. LiteLLM stays unpublished, as in production.
+# Langfuse: the operators' route (ingress.restricted.langfuse.operatorIngress) on its own host,
+# behind nginx basic auth from the htpasswd Secret `langfuse-basic-auth` (created by hand in the
+# dev namespace; without it ingress-nginx answers 503), with Langfuse's own login behind that.
+# Its NEXTAUTH_URL (langfuse.langfuse.nextauth.url below) must be https://<this host>.
 ingress:
   enabled: true
   className: nginx
   tlsIssuer: letsencrypt-prod
   hosts:
     osUI: dev.agentic.datamasterclass.com
+    langfuse: langfuse.dev.agentic.datamasterclass.com
+  restricted:
+    langfuse:
+      operatorIngress:
+        enabled: true
 
 # --- Images: the registry-qualified images production runs ---------------------------------
 # The chart's defaults for these four name the laptop's local builds (`sovereign-os/...`, loaded
@@ -315,6 +324,9 @@ litellm:
 
 langfuse:
   langfuse:
+    # The operators' Langfuse address (ingress.hosts.langfuse above); the chart refuses any other.
+    nextauth:
+      url: https://langfuse.dev.agentic.datamasterclass.com
     web:
       resources:
         requests: { cpu: 100m, memory: 512Mi }
