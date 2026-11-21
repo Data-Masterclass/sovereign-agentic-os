@@ -46,7 +46,6 @@ import { websiteFiles, websiteGuide } from '@tabs/software/lib/scaffolds/website
 import { apiServiceFiles, apiServiceGuide } from '@tabs/software/lib/scaffolds/api-service';
 import { emptyAppFiles, emptyAppGuide } from '@tabs/software/lib/scaffolds/empty-app';
 import { lockedSeed, withScopePin } from '@tabs/software/lib/scaffold-lock';
-import { OS_SCOPE, SCOPE_PIN_REGISTRY } from '@tabs/software/lib/scope-pin';
 import { snapshotFiles, getSnapshot, hydrateSnapshot, deleteSnapshot } from '@tabs/software/lib/snapshot';
 import { generateAndCompile } from '@tabs/software/lib/auto-mcp';
 import { dataPlaneToolsFromGrants, agentToolsFromGrants } from '@tabs/software/lib/grant-tools';
@@ -524,10 +523,9 @@ function nextjsSupabaseTemplate(): Template {
           'FROM node:22-alpine\n' +
           'WORKDIR /app\n' +
           '# No lockfile is seeded, so use npm install; do NOT swallow errors.\n' +
-          'COPY package.json ./.npmrc* ./\n' +
-          `# ${OS_SCOPE}/* packages are never published: no install may fetch that scope.\n` +
-          `RUN npm config set "${OS_SCOPE}:registry" "${SCOPE_PIN_REGISTRY}"\n` +
-          `RUN env "npm_config_${OS_SCOPE}:registry=${SCOPE_PIN_REGISTRY}" npm install\n` +
+          '# The .npmrc carries the scope pin (required: the build fails without it).\n' +
+          'COPY package.json .npmrc ./\n' +
+          'RUN npm install\n' +
           'COPY . .\n' +
           'RUN npm run build\n' +
           '# next start reads PORT/HOSTNAME; the runner probes 8080 on 0.0.0.0.\n' +
