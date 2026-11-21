@@ -6,8 +6,9 @@
  * FEATURE:
  *   • One row per agent system: does it have a usable key of its own, when was the key
  *     issued or last replaced, and its budget and limits.
- *   • The legacy-key sweep: when it last ran, what it deleted, what it could not — and a
- *     button to run it again.
+ *   • The key migration (existing systems moved onto random, budgeted keys, make-before-break)
+ *     and the sweep after it: when they last ran, what they did, what failed — and a button to
+ *     run both again.
  *   • "Replace key" per system: a new random key, the old one stops working.
  *
  * USER STORY:
@@ -38,7 +39,8 @@ type KeyRow = {
   caps?: { models: string[]; maxBudget: number; budgetDuration: string; rpmLimit: number; tpmLimit: number; maxParallelRequests: number };
 };
 type Sweep = { at: number; ok: boolean; scanned: number; deleted: { alias: string; reason: string }[]; failed: { alias: string; error: string }[]; error?: string };
-type Payload = { systems: KeyRow[]; sweep: Sweep | null };
+type Migration = { at: number; ok: boolean; done: boolean; scanned: number; migrated: string[]; alreadyFine: number; failed: { alias: string; error: string }[]; error?: string };
+type Payload = { systems: KeyRow[]; sweep: Sweep | null; migration?: Migration | null };
 
 const STATE_LABEL: Record<KeyRow['state'], string> = {
   ready: 'Has its own key',
@@ -55,6 +57,13 @@ function sweepLine(sweep: Sweep | null): string {
   if (sweep.error) return `${when(sweep.at)} — could not list the gateway's keys (${sweep.error}); nothing was deleted.`;
   const failed = sweep.failed.length ? `, ${sweep.failed.length} could NOT be deleted` : '';
   return `${when(sweep.at)} — ${sweep.scanned} key(s) checked, ${sweep.deleted.length} deleted${failed}.`;
+}
+
+function migrationLine(m: Migration | null): string {
+  if (m === null) return 'has not run in this process yet (it runs at start-up, once the gateway is reachable).';
+  if (m.error) return `${when(m.at)} — not run (${m.error}); nothing was changed.`;
+  const failed = m.failed.length ? `, ${m.failed.length} could NOT be moved` : '';
+  return `${when(m.at)} — ${m.scanned} system(s): ${m.migrated.length} moved onto their own key, ${m.alreadyFine} already had one${failed}.${m.done ? '' : ' Will retry.'}`;
 }
 
 function capsLine(caps: KeyRow['caps']): string {
@@ -80,7 +89,7 @@ export default function SystemKeysPanel() {
       const body = (await res.json().catch(() => ({}))) as { error?: string; row?: { appliedDetail?: string; error?: string } | null };
       const why = body.error ?? body.row?.error ?? `request failed (${res.status})`;
       if (action === 'rotate') setNote(res.ok ? `Key replaced for ${systemId}. ${body.row?.appliedDetail ?? ''}` : `Key NOT replaced for ${systemId}: ${why}`);
-      else if (!res.ok) setNote(`Sweep failed: ${why}`);
+      else if (!res.ok) setNote(`Migration failed: ${why}`);
       await reload();
     } catch (e) {
       setNote(`Request failed: ${(e as Error).message}`);
@@ -97,7 +106,7 @@ export default function SystemKeysPanel() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12, flexWrap: 'wrap', marginBottom: 8 }}>
         <h2 style={{ fontFamily: 'var(--font-head)', fontSize: 16, margin: 0 }}>Agent system model keys</h2>
         <button className="btn" onClick={() => act('sweep')} disabled={busy !== ''}>
-          {busy === 'sweep' ? <span className="spin" /> : 'Remove old guessable keys now'}
+          {busy === 'sweep' ? <span className="spin" /> : 'Move old keys now'}
         </button>
       </div>
       <p className="muted" style={{ fontSize: 13, margin: '0 0 10px' }}>
@@ -112,12 +121,17 @@ export default function SystemKeysPanel() {
       {data ? (
         <>
           <p style={{ fontSize: 13, margin: '0 0 10px' }}>
-            <strong>Last sweep for old keys:</strong> {sweepLine(sweep)}
+            <strong>Key migration:</strong> {migrationLine(data.migration ?? null)}
+          </p>
+          {data.migration && data.migration.failed.length > 0 ? (
+            <p style={{ fontSize: 12, margin: '0 0 10px' }}>Not moved: {data.migration.failed.map((f) => `${f.alias} (${f.error})`).join(', ')}. Its old key is kept until it is moved.</p>
+          ) : null}
+          <p style={{ fontSize: 13, margin: '0 0 10px' }}>
+            <strong>Last sweep for leftover keys:</strong> {sweepLine(sweep)}
           </p>
           {sweep && sweep.deleted.length > 0 ? (
             <p className="muted" style={{ fontSize: 12, margin: '0 0 10px' }}>
-              Deleted: {sweep.deleted.map((d) => `${d.alias} (${d.reason === 'derivable' ? 'guessable from the system id' : 'no budget, from the old reconcile'})`).join(', ')}.
-              A system whose key was deleted needs one Rebuild.
+              Deleted: {sweep.deleted.map((d) => `${d.alias} (${d.reason === 'derivable' ? 'guessable, of a system that no longer exists' : 'no budget, from the old reconcile'})`).join(', ')}.
             </p>
           ) : null}
           {sweep && sweep.failed.length > 0 ? (

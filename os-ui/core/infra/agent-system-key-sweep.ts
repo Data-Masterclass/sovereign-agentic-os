@@ -23,32 +23,37 @@
  *                 values were never kept by the OS, they have no budget and no model restriction.
  *   A hand-made key, a budgeted `agent-…` key and every other key are not touched.
  *
- *   A swept system has NO key until its next Build; its runs stop with "press Build" (see
- *   `agent-system-keys.ts`). That is the intended trade: a run that waits for a Rebuild is a
- *   smaller harm than a working key anyone can guess.
+ *   A GUESSABLE KEY OF A SYSTEM THAT STILL EXISTS IS NEVER SWEPT. Existing systems are migrated
+ *   make-before-break (`tabs/agents/lib/build/system-key-migration.ts`): a random, budgeted key
+ *   is stored and in use before the old one is deleted, so nothing stops running. The sweep only
+ *   takes what no existing system can be running on: derivable keys whose system is gone, and the
+ *   unbudgeted reconcile keys (their value was never kept, so nothing can call with them). The
+ *   caller passes the aliases of the existing systems; when it cannot know them (the registry did
+ *   not hydrate), it passes `'all'` and no derivable key is touched.
  *
  *   IDEMPOTENT: a second run finds nothing. Runs server-side in os-ui web only — the worker has
  *   no master key, so `liteLlmConfigured()` is false there and the sweep reports "not configured".
- *   `scheduleBootKeySweep` runs it once at boot and retries (through `core/reconcile/runtime.ts`) while the gateway is not reachable
- *   yet. Logs carry aliases and counts, never a key or a token id.
+ *   Scheduled after the migration at boot. Logs carry aliases and counts, never a key or a token id.
  */
 import 'server-only';
-import { scheduleEvery } from '@core/reconcile/runtime';
 import { liteLlmConfigured, readAllKeys, type Fetched, type LiteLlmKeyRow } from '@core/infra/litellm-admin';
 import { adminPost } from '@core/infra/litellm-write';
 import { isLegacyDerivedToken } from '@core/infra/agent-system-keys';
 
 export type SweepTarget = { alias: string; tokenId: string; reason: 'derivable' | 'unbudgeted-agent-key' };
 
+/** The aliases (`os-<id>`) of systems that still exist — their keys are migrated, never swept — or `'all'` when unknown. */
+export type KeepAliases = ReadonlySet<string> | 'all';
+
 /** Which keys the sweep would delete. PURE — the whole decision is testable without a gateway. */
-export function planKeySweep(rows: LiteLlmKeyRow[]): SweepTarget[] {
+export function planKeySweep(rows: LiteLlmKeyRow[], keep: KeepAliases): SweepTarget[] {
   const out: SweepTarget[] = [];
   for (const row of rows) {
     const alias = typeof row.key_alias === 'string' ? row.key_alias : '';
     const tokenId = typeof row.token === 'string' ? row.token : '';
     if (!alias || !tokenId) continue;
     if (alias.startsWith('os-') && isLegacyDerivedToken(alias, tokenId)) {
-      out.push({ alias, tokenId, reason: 'derivable' });
+      if (keep !== 'all' && !keep.has(alias)) out.push({ alias, tokenId, reason: 'derivable' });
       continue;
     }
     const meta = row.metadata ?? {};
@@ -74,6 +79,7 @@ export type KeySweepResult = {
 export type KeySweepIo = {
   list: () => Promise<Fetched<LiteLlmKeyRow[]>>;
   deleteKey: (tokenId: string) => Promise<Fetched<unknown>>;
+  keep: KeepAliases;
   now?: () => number;
   log?: (line: string) => void;
 };
@@ -88,7 +94,7 @@ export async function runKeySweep(io: KeySweepIo): Promise<KeySweepResult> {
     return { at, ok: false, scanned: 0, deleted: [], failed: [], error: listed.error };
   }
   const result: KeySweepResult = { at, ok: true, scanned: listed.data.length, deleted: [], failed: [] };
-  for (const target of planKeySweep(listed.data)) {
+  for (const target of planKeySweep(listed.data, io.keep)) {
     const res = await io.deleteKey(target.tokenId);
     if (res.ok) {
       result.deleted.push({ alias: target.alias, reason: target.reason });
@@ -103,7 +109,7 @@ export async function runKeySweep(io: KeySweepIo): Promise<KeySweepResult> {
   return result;
 }
 
-type Slot = { last?: KeySweepResult; booted?: boolean };
+type Slot = { last?: KeySweepResult };
 const g = globalThis as unknown as { __osKeySweep?: Slot };
 const slot = (): Slot => (g.__osKeySweep ??= {});
 
@@ -113,36 +119,10 @@ export function lastKeySweep(): KeySweepResult | null {
 }
 
 /** Run the sweep against the real gateway and remember the result. */
-export async function sweepLegacySystemKeys(): Promise<KeySweepResult> {
+export async function sweepLegacySystemKeys(keep: KeepAliases): Promise<KeySweepResult> {
   const result = liteLlmConfigured()
-    ? await runKeySweep({ list: () => readAllKeys(), deleteKey: (tokenId) => adminPost('/key/delete', { keys: [tokenId] }, 8000) })
+    ? await runKeySweep({ keep, list: () => readAllKeys(), deleteKey: (tokenId) => adminPost('/key/delete', { keys: [tokenId] }, 8000) })
     : { at: Date.now(), ok: false, scanned: 0, deleted: [], failed: [], error: 'LiteLLM admin access is not configured in this process' };
   slot().last = result;
   return result;
-}
-
-/** How often a boot sweep that could not reach the gateway is retried (until it succeeds once). */
-const BOOT_RETRY_MS = 120_000;
-
-/**
- * Run the sweep ONCE per process at boot. When the gateway cannot be listed yet (it often is not
- * up when os-ui starts), retry through the one timer module (`core/reconcile/runtime.ts`) until a
- * sweep completes, then stop. Not awaited by the caller — boot never waits on the gateway — and a
- * failure is logged by that module, never thrown into boot.
- */
-export function scheduleBootKeySweep(sweep: () => Promise<KeySweepResult> = sweepLegacySystemKeys, retryMs: number = BOOT_RETRY_MS): void {
-  if (slot().booted || !liteLlmConfigured()) return;
-  slot().booted = true;
-  let stop: (() => void) | undefined;
-  let done = false;
-  const tick = async () => {
-    if (done) return;
-    const r = await sweep();
-    if (!r.error) {
-      done = true;
-      stop?.();
-    }
-  };
-  stop = scheduleEvery('agent-system-key-sweep', retryMs, tick);
-  void tick().catch((e) => console.error(`[key-sweep] first attempt failed: ${(e as Error)?.message ?? String(e)}`));
 }

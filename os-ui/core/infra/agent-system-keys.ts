@@ -67,6 +67,14 @@ export function legacyDerivedKey(alias: string): string {
   return `sk-${alias}`;
 }
 
+/**
+ * The alias an old key is moved to while its replacement is registered (LiteLLM requires unique
+ * aliases). Deterministic from the token id, so a resumed replacement finds the key again.
+ */
+export function retiringAlias(alias: string, tokenId: string): string {
+  return `${alias}.retiring.${tokenId.slice(0, 12)}`;
+}
+
 /** Is the gateway key with this alias and token id the old, guessable one? */
 export function isLegacyDerivedToken(alias: string, tokenId: string | undefined | null): boolean {
   return Boolean(tokenId) && tokenId === tokenIdOf(legacyDerivedKey(alias));
@@ -155,6 +163,15 @@ export function openSystemKey(record: SystemKeyRecord, kek: Kek): string {
     return key;
   } catch {
     throw new SystemKeyUnavailableError('unreadable');
+  }
+}
+
+/** Open a record, reporting failure as data: a wrong secret or an altered row is `{ ok: false }`. */
+export function tryOpenSystemKey(record: SystemKeyRecord, kek: Kek): { ok: true; key: string } | { ok: false; error: string } {
+  try {
+    return { ok: true, key: openSystemKey(record, kek) };
+  } catch (e) {
+    return { ok: false, error: (e as Error)?.message ?? String(e) };
   }
 }
 
@@ -288,8 +305,104 @@ export function postgresSystemKeyStore(sql: SqlClient): SystemKeyStore {
   };
 }
 
+// ------------------------------------------------------------------ journal ----
+
+/**
+ * MAKE-BEFORE-BREAK replacement of a system's key, written down before each gateway step so a
+ * process that dies half-way is resumed, never repeated with a second new value:
+ *
+ *   1. STAGE    the new value, sealed, with the token ids of the key(s) it replaces (`stage`).
+ *               Nothing a run reads changes: `resolveSystemKey` never looks here.
+ *   2. MOVE     each old key off the alias (`<alias>.retiring.<token prefix>`): its value keeps
+ *               working, the alias is free for the new key (LiteLLM requires unique aliases).
+ *   3. REGISTER the staged value under the alias (`/key/generate`), unless the gateway has it.
+ *   4. SWAP     the staged record into `agent_system_keys`: from here every run uses the new key.
+ *   5. DELETE   the old key(s) at the gateway, then `clear` the journal row.
+ *
+ * Re-running after a crash at any step finds the staged row and continues with the SAME value.
+ */
+export type StagedSystemKey = {
+  record: SystemKeyRecord;
+  /** Every old key this replacement retires: token id + the alias it is (or will be) found under. */
+  retire: { tokenId: string; alias: string }[];
+  stagedAt: number;
+};
+
+export interface SystemKeyJournal {
+  staged(systemId: string): Promise<StagedSystemKey | null>;
+  stage(entry: StagedSystemKey): Promise<void>;
+  clear(systemId: string): Promise<void>;
+  /** Has the one-time migration of pre-random keys completed in this deployment? */
+  migrationDone(name: string): Promise<boolean>;
+  markMigrationDone(name: string, at: number): Promise<void>;
+}
+
+/** The in-process journal: a laptop with no database, and the unit tests. */
+export function memorySystemKeyJournal(): SystemKeyJournal {
+  const rows = new Map<string, StagedSystemKey>();
+  const done = new Set<string>();
+  const copy = (e: StagedSystemKey): StagedSystemKey => ({ ...e, record: { ...e.record, caps: { ...e.record.caps } }, retire: e.retire.map((r) => ({ ...r })) });
+  return {
+    async staged(systemId) { const e = rows.get(systemId); return e ? copy(e) : null; },
+    async stage(entry) { rows.set(entry.record.systemId, copy(entry)); },
+    async clear(systemId) { rows.delete(systemId); },
+    async migrationDone(name) { return done.has(name); },
+    async markMigrationDone(name) { done.add(name); },
+  };
+}
+
+export const SYSTEM_KEY_JOURNAL_DDL: readonly string[] = [
+  `CREATE TABLE IF NOT EXISTS agent_system_key_staging (
+     system_id  TEXT PRIMARY KEY,
+     record     JSONB       NOT NULL,
+     retire     JSONB       NOT NULL,
+     staged_at  TIMESTAMPTZ NOT NULL
+   )`,
+  `CREATE TABLE IF NOT EXISTS agent_system_key_migrations (
+     name         TEXT PRIMARY KEY,
+     completed_at TIMESTAMPTZ NOT NULL
+   )`,
+];
+
+/** The Postgres journal over an injected client. The staged record is sealed exactly like a stored one. */
+export function postgresSystemKeyJournal(sql: SqlClient): SystemKeyJournal {
+  return {
+    async staged(systemId) {
+      const res = await sql.query('SELECT record, retire, staged_at FROM agent_system_key_staging WHERE system_id = $1', [systemId]);
+      const row = res.rows[0];
+      if (!row) return null;
+      const record = typeof row.record === 'string' ? JSON.parse(row.record) : row.record;
+      const retire = typeof row.retire === 'string' ? JSON.parse(row.retire) : row.retire;
+      return { record: record as SystemKeyRecord, retire: retire as StagedSystemKey['retire'], stagedAt: ms(row.staged_at) };
+    },
+    async stage(e) {
+      await sql.query(
+        `INSERT INTO agent_system_key_staging (system_id, record, retire, staged_at)
+         VALUES ($1, $2::jsonb, $3::jsonb, to_timestamp($4::double precision / 1000))
+         ON CONFLICT (system_id) DO UPDATE SET record = EXCLUDED.record, retire = EXCLUDED.retire, staged_at = EXCLUDED.staged_at`,
+        [e.record.systemId, JSON.stringify(e.record), JSON.stringify(e.retire), e.stagedAt],
+      );
+    },
+    async clear(systemId) {
+      await sql.query('DELETE FROM agent_system_key_staging WHERE system_id = $1', [systemId]);
+    },
+    async migrationDone(name) {
+      const res = await sql.query('SELECT 1 FROM agent_system_key_migrations WHERE name = $1', [name]);
+      return res.rows.length > 0;
+    },
+    async markMigrationDone(name, at) {
+      await sql.query(
+        'INSERT INTO agent_system_key_migrations (name, completed_at) VALUES ($1, to_timestamp($2::double precision / 1000)) ON CONFLICT (name) DO NOTHING',
+        [name, at],
+      );
+    },
+  };
+}
+
 type Slot = {
   store?: Promise<SystemKeyStore>;
+  journal?: Promise<SystemKeyJournal>;
+  journalUrl?: string;
   url?: string;
   ephemeralKek?: Kek;
   cache?: Map<string, { value: ResolvedSystemKey; at: number }>;
@@ -326,6 +439,41 @@ export const durableSystemKeyStore: SystemKeyStore = {
   delete: async (systemId) => (await systemKeyStore()).delete(systemId),
   list: async () => (await systemKeyStore()).list(),
 };
+
+/** The key journal of this process: Postgres when the agent-runs database is configured, else in-memory. */
+export function systemKeyJournal(): Promise<SystemKeyJournal> {
+  const s = slot();
+  const url = configuredAgentRunsDatabaseUrl();
+  if (!s.journal || s.journalUrl !== url) {
+    s.journalUrl = url;
+    const ready = url
+      ? (async (): Promise<SystemKeyJournal> => {
+          const pool = (await agentRunsPool(url)) as unknown as SqlClient;
+          for (const stmt of SYSTEM_KEY_JOURNAL_DDL) await pool.query(stmt);
+          return postgresSystemKeyJournal(pool);
+        })()
+      : Promise.resolve(memorySystemKeyJournal());
+    s.journal = ready;
+    ready.catch(() => { if (slot().journal === ready) delete slot().journal; });
+  }
+  return s.journal;
+}
+
+/** The process's journal behind one stable object. */
+export const durableSystemKeyJournal: SystemKeyJournal = {
+  staged: async (id) => (await systemKeyJournal()).staged(id),
+  stage: async (e) => (await systemKeyJournal()).stage(e),
+  clear: async (id) => (await systemKeyJournal()).clear(id),
+  migrationDone: async (n) => (await systemKeyJournal()).migrationDone(n),
+  markMigrationDone: async (n, at) => (await systemKeyJournal()).markMigrationDone(n, at),
+};
+
+/** Tests only: put a journal (or nothing) in this process's slot. */
+export function __setSystemKeyJournalForTests(journal: SystemKeyJournal | null): void {
+  const s = slot();
+  s.journalUrl = configuredAgentRunsDatabaseUrl();
+  s.journal = journal ? Promise.resolve(journal) : undefined;
+}
 
 /** Tests only: put a store (or nothing) in this process's slot and drop the read cache. */
 export function __setSystemKeyStoreForTests(store: SystemKeyStore | null): void {
@@ -368,7 +516,48 @@ const CACHE_MS = 30_000;
  * is none — the caller must stop, never fall back. `fresh` skips the short in-process cache (used
  * after the gateway rejected the cached key, i.e. it was rotated under a run in flight).
  */
-export async function resolveSystemKey(systemId: string, opts: { fresh?: boolean; now?: number } = {}): Promise<ResolvedSystemKey> {
+/**
+ * The one-time migration that gives every existing system a random, budgeted key
+ * (`tabs/agents/lib/build/system-key-migration.ts`). Until os-ui web has completed it, a run of a
+ * system with no stored key WAITS for the migration to store one instead of failing — that is
+ * what keeps systems nobody rebuilt (and their schedules) running across the upgrade.
+ */
+export const PRE_RANDOM_KEY_MIGRATION = 'agent-system-keys/v1-random-budgeted';
+
+export type ResolveOptions = {
+  fresh?: boolean;
+  now?: number;
+  /**
+   * Wait for the migration when the key is missing. Default: only with a database configured —
+   * with none, os-ui is one process and its memory store holds nothing a migration could add.
+   */
+  awaitMigration?: boolean;
+  /** How long a run waits for the migration to store its key (default 3 minutes). */
+  migrationWaitMs?: number;
+  pollMs?: number;
+  sleep?: (ms: number) => Promise<void>;
+};
+
+const MIGRATION_WAIT_MS = 180_000;
+const MIGRATION_POLL_MS = 2_000;
+
+/** Wait for the migration to store this system's key; null when it completed without one, or the wait ran out. */
+async function awaitMigratedRecord(store: SystemKeyStore, systemId: string, opts: ResolveOptions): Promise<SystemKeyRecord | null> {
+  if (!(opts.awaitMigration ?? configuredAgentRunsDatabaseUrl().length > 0)) return null;
+  const journal = await systemKeyJournal();
+  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const deadline = Date.now() + (opts.migrationWaitMs ?? MIGRATION_WAIT_MS);
+  while (!(await journal.migrationDone(PRE_RANDOM_KEY_MIGRATION))) {
+    if (Date.now() >= deadline) return null;
+    await sleep(opts.pollMs ?? MIGRATION_POLL_MS);
+    const record = await store.get(systemId);
+    if (record) return record;
+  }
+  // Completed: one last read, in case it stored the key between our two reads.
+  return store.get(systemId);
+}
+
+export async function resolveSystemKey(systemId: string, opts: ResolveOptions = {}): Promise<ResolvedSystemKey> {
   const now = opts.now ?? Date.now();
   const cache = (slot().cache ??= new Map());
   const hit = cache.get(systemId);
@@ -377,7 +566,8 @@ export async function resolveSystemKey(systemId: string, opts: { fresh?: boolean
   const kek = deploymentKek();
   let record: SystemKeyRecord | null;
   try {
-    record = await (await systemKeyStore()).get(systemId);
+    const store = await systemKeyStore();
+    record = (await store.get(systemId)) ?? (await awaitMigratedRecord(store, systemId, opts));
   } catch (e) {
     throw new SystemKeyUnavailableError('store-unavailable', (e as Error)?.message?.slice(0, 160));
   }

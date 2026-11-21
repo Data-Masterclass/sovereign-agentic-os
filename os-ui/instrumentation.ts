@@ -276,19 +276,20 @@ export async function register(): Promise<void> {
     })();
   }
 
-  // GUESSABLE KEYS OUT. Per-system model keys used to be `sk-os-<systemId>`; such a key keeps
-  // working at the gateway until it is deleted. Delete every one at boot (and the unbudgeted
-  // `agent-<id>` keys the old admin reconcile made), retrying while the gateway is not up yet. A
-  // swept system needs one Rebuild before it runs again, and its run says so. Decided from what
-  // the GATEWAY reports only, so an OS store that hydrated empty cannot cause a deletion. Web
-  // process only: it needs the gateway's admin API, which the worker is deliberately not given.
+  // KEY MIGRATION, MAKE-BEFORE-BREAK. Per-system model keys used to be `sk-os-<systemId>`
+  // (guessable) or missing. At boot every existing system that has no usable stored key is moved
+  // onto a random, budgeted key through the Build's own key step: the new key is stored and in use
+  // BEFORE the old one is deleted, so no system (and no schedule) stops. Until the pass completes,
+  // a worker run with no stored key waits for it. Then the sweep removes what nothing can be
+  // running on (derivable keys of deleted systems, the unbudgeted reconcile keys). Retried while
+  // the gateway or the registry is not up yet. Web process only: it needs the gateway's admin API.
   if (process.env.NEXT_RUNTIME === 'nodejs') {
     void (async () => {
       try {
-        const { scheduleBootKeySweep } = await import('./core/infra/agent-system-key-sweep.ts');
-        scheduleBootKeySweep();
+        const { scheduleBootKeyMigration, migrateThenSweepLive } = await import('./tabs/agents/lib/build/system-key-migration.ts');
+        scheduleBootKeyMigration(migrateThenSweepLive);
       } catch (err) {
-        console.error(`[os-ui] key sweep: could not be scheduled: ${err instanceof Error ? err.message : String(err)}`);
+        console.error(`[os-ui] key migration: could not be scheduled: ${err instanceof Error ? err.message : String(err)}`);
       }
     })();
   }

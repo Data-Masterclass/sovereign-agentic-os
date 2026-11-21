@@ -32,7 +32,9 @@ export type AuditAction =
   | 'role.change'
   | 'access.grant'
   | 'egress.allow'
-  | 'deploy';
+  | 'deploy'
+  /** The one-time move of an agent system onto a random, budgeted model key (make-before-break). */
+  | 'gateway.key.migrate';
 
 export type AuditEntry = {
   id: string;

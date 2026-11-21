@@ -18,9 +18,12 @@ import {
   isLegacyDerivedToken,
   mintSystemKey,
   openSystemKey,
+  retiringAlias,
   sealSystemKey,
   tokenIdOf,
+  tryOpenSystemKey,
   type Kek,
+  type SystemKeyJournal,
   type SystemKeyCaps,
   type SystemKeyRecord,
   type SystemKeyStore,
@@ -108,6 +111,8 @@ export interface LiteLlmClient {
   updateKey(tokenId: string, input: LiteLlmKeyInput): Promise<void>;
   /** Remove a key at the gateway (`/key/delete`), so its value stops working. Throws on refusal. */
   deleteKey(tokenId: string): Promise<void>;
+  /** Give an EXISTING key another alias (`/key/update` with `key_alias` only). Its value keeps working. Throws on refusal. */
+  renameKey(tokenId: string, alias: string): Promise<void>;
   models(): Promise<string[]>;
 }
 
@@ -169,6 +174,8 @@ export function parseGatewayFallbacks(json: string): GatewayFallbacks {
 /** Where Build keeps the key it minted: the durable encrypted store + this deployment's encryption key. */
 export type KeyVault = {
   store: SystemKeyStore;
+  /** Where a key replacement is written down before each gateway step (make-before-break). */
+  journal: SystemKeyJournal;
   /** The key-encryption key. Throws `SystemKeyUnavailableError('not-configured')` when there is none. */
   kek: () => Kek;
   /** Injected in tests; defaults to 32 CSPRNG bytes (`mintSystemKey`). */
@@ -415,28 +422,29 @@ export function makeLiveAdapters(deps: LiveDeps): BuildAdapter[] {
     /**
      * RECONCILE the system's own key, in the gateway AND in the durable store.
      *
-     *   KEEP    the gateway holds the key whose encrypted copy is stored and readable, and no
-     *           rotation was asked for → compare its caps with the definition and `/key/update`
-     *           when they differ. The value is untouched.
-     *   REPLACE in every other case — no key yet; an old GUESSABLE key (`sk-os-<id>`, from before
-     *           keys were random); a key at the gateway whose stored copy is missing or cannot be
-     *           decrypted; an explicit rotation. The old key is DELETED at the gateway (so its
-     *           value stops working), a new random one is registered under the same alias, and
-     *           its encrypted copy replaces the stored record.
+     *   KEEP    the gateway holds the key whose encrypted copy is stored and readable, no
+     *           rotation was asked for and no replacement is half-done → compare its caps with the
+     *           definition and `/key/update` when they differ. The value is untouched.
+     *   REPLACE in every other case — no key yet; an old GUESSABLE key (`sk-os-<id>`); a key at the
+     *           gateway whose stored copy is missing or unreadable; an explicit rotation; a
+     *           replacement a crashed process left in the journal.
      *
-     * LiteLLM requires key aliases to be unique, so the old key has to go before the new one can
-     * take the alias: there is a moment with no key. If registering the new key then fails, the
-     * stored record is removed too and the row FAILS — the system honestly has no key until the
-     * next Build, rather than a stored key the gateway no longer knows.
+     * REPLACE IS MAKE-BEFORE-BREAK (`SystemKeyJournal` in `core/infra/agent-system-keys.ts`): the
+     * new value is staged first, the old key is moved off the alias but KEEPS WORKING, the new key
+     * is registered and swapped into the store, and only then is the old key deleted. There is no
+     * moment in which the system has no working key, and a re-run after a crash at any step
+     * continues with the same staged value.
      */
     async apply(ctx) {
       const want = await desiredKey(ctx);
       const kek = deps.keys.kek();
+      const journal = deps.keys.journal;
       const atGateway = await deps.litellm.keysByAlias(want.alias);
       const { record, readable } = await storedKey(want.systemId, kek);
+      const staged = await journal.staged(want.systemId);
       const current = record && readable ? atGateway.find((k) => k.tokenId === record.tokenId) : undefined;
 
-      if (record && current && !ctx.rotateKey) {
+      if (!staged && record && current && !ctx.rotateKey) {
         // A second key under the alias cannot be ours (ours is `current`): remove it.
         for (const stray of atGateway) if (stray.tokenId !== current.tokenId) await deps.litellm.deleteKey(stray.tokenId);
         const drift = keyDrift(current, want);
@@ -446,49 +454,83 @@ export function makeLiveAdapters(deps: LiveDeps): BuildAdapter[] {
         return ok(`updated key '${want.alias}': ${drift.join('; ')}`, 'updated');
       }
 
-      const hadLegacy = atGateway.some((k) => isLegacyDerivedToken(want.alias, k.tokenId));
-      const why = current
-        ? 'rotated on request: the old key was deleted at the gateway and a new random key issued'
-        : atGateway.length === 0
-          ? record ? 'the gateway no longer had this system\'s key, so a new random key was issued' : ''
-          : hadLegacy
-            ? 'the old key could be derived from the system id; it was deleted at the gateway and replaced by a random key'
-            : 'the key at the gateway had no readable stored copy; it was deleted and replaced by a new random key';
+      const hadLegacy = atGateway.some((k) => isLegacyDerivedToken(want.alias, k.tokenId))
+        || (staged?.retire.some((r) => isLegacyDerivedToken(want.alias, r.tokenId)) ?? false);
+      const why = staged
+        ? 'a replacement interrupted earlier was completed with the value it had staged'
+        : current
+          ? 'rotated on request: a new random key was issued, then the old one deleted at the gateway'
+          : atGateway.length === 0
+            ? record ? 'the gateway no longer had this system\'s key, so a new random key was issued' : ''
+            : hadLegacy
+              ? 'the old key could be derived from the system id; a random key replaced it before the old one was deleted'
+              : 'the key at the gateway had no readable stored copy; a new random key replaced it';
 
-      const key = (deps.keys.mint ?? mintSystemKey)();
-      for (const old of atGateway) await deps.litellm.deleteKey(old.tokenId);
-      try {
-        await deps.litellm.generateKey(want, key);
-      } catch (e) {
-        // The old key is gone and there is no new one: do not leave a record that claims otherwise.
-        let stale = '';
-        try {
-          await deps.keys.store.delete(want.systemId);
-        } catch (d) {
-          stale = `; its stored record could not be removed either (${(d as Error).message})`;
-        }
-        forgetSystemKey(want.systemId);
-        throw new Error(`${(e as Error).message} — this system has NO model key now${stale}; press Build again`);
+      // 1. STAGE — or resume what was staged. A staged value this deployment cannot open is
+      //    useless; it is replaced, and the keys it was retiring are still retired.
+      let entry = staged;
+      let key: string | null = null;
+      if (entry) {
+        const opened = tryOpenSystemKey(entry.record, kek);
+        key = opened.ok ? opened.key : null;
       }
       const at = now();
-      try {
-        await deps.keys.store.put(
-          sealSystemKey({ systemId: want.systemId, alias: want.alias, key, caps: storedCaps(want), createdAt: record?.createdAt ?? at, rotatedAt: record ? at : null }, kek),
-        );
-      } catch (e) {
-        // A key nobody can read back is useless and unaccounted for: take it out of the gateway again.
-        let removed = 'it was removed from the gateway again';
-        try {
-          await deps.litellm.deleteKey(tokenIdOf(key));
-        } catch (d) {
-          removed = `removing it from the gateway again ALSO failed (${(d as Error).message}); run "Remove old guessable keys now" or press Build again`;
+      if (!entry || key === null) {
+        key = (deps.keys.mint ?? mintSystemKey)();
+        const fresh = tokenIdOf(key);
+        const retire = [
+          ...(entry?.retire ?? []),
+          ...atGateway.filter((k) => k.tokenId !== fresh).map((k) => ({ tokenId: k.tokenId, alias: retiringAlias(want.alias, k.tokenId) })),
+        ];
+        entry = {
+          record: sealSystemKey({ systemId: want.systemId, alias: want.alias, key, caps: storedCaps(want), createdAt: record?.createdAt ?? at, rotatedAt: record ? at : null }, kek),
+          retire: retire.filter((r, i) => retire.findIndex((x) => x.tokenId === r.tokenId) === i),
+          stagedAt: at,
+        };
+        await journal.stage(entry);
+      }
+      const newToken = tokenIdOf(key);
+
+      // 2. MOVE every other key off the alias. Its value keeps working until step 5.
+      for (const k of atGateway) {
+        if (k.tokenId === newToken) continue;
+        const target: string = entry.retire.find((r) => r.tokenId === k.tokenId)?.alias ?? retiringAlias(want.alias, k.tokenId);
+        if (!entry.retire.some((r) => r.tokenId === k.tokenId)) {
+          entry = { ...entry, retire: [...entry.retire, { tokenId: k.tokenId, alias: target }] };
+          await journal.stage(entry);
         }
-        throw new Error(`the new key could not be stored (${(e as Error).message}) — ${removed}; press Build again`);
+        await deps.litellm.renameKey(k.tokenId, target);
+      }
+
+      // 3. REGISTER the staged value, unless an earlier attempt already did.
+      if (!atGateway.some((k) => k.tokenId === newToken)) {
+        try {
+          await deps.litellm.generateKey(want, key);
+        } catch (e) {
+          // Nothing was broken: the old key (if any) still works under its retiring alias, the store
+          // is unchanged, and the journal keeps the value for the next Build.
+          throw new Error(`${(e as Error).message} — the system keeps its previous key; press Build again to finish the replacement`);
+        }
+      }
+
+      // 4. SWAP — from here every run reads the new key.
+      try {
+        await deps.keys.store.put(entry.record);
+      } catch (e) {
+        throw new Error(`the new key could not be stored (${(e as Error).message}) — the system keeps its previous key; press Build again to finish the replacement`);
       }
       forgetSystemKey(want.systemId);
+
+      // 5. DELETE the old key(s), each only if the gateway still holds it, then close the journal.
+      for (const old of entry.retire) {
+        const still = await deps.litellm.keysByAlias(old.alias);
+        if (still.some((k) => k.tokenId === old.tokenId)) await deps.litellm.deleteKey(old.tokenId);
+      }
+      await journal.clear(want.systemId);
+
       const what = `${want.models.length} model(s), ${describeCaps(want)}`;
-      return why
-        ? ok(`replaced key '${want.alias}' — ${why}; ${what}`, 'updated')
+      return why || entry.retire.length > 0
+        ? ok(`replaced key '${want.alias}' — ${why || 'a new random key was issued'}; ${what}`, 'updated')
         : ok(`created key '${want.alias}' — ${what}`, 'created');
     },
     async verify(ctx) {

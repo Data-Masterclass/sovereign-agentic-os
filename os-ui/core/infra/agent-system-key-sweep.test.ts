@@ -15,7 +15,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { planKeySweep, runKeySweep, scheduleBootKeySweep, type KeySweepResult } from './agent-system-key-sweep.ts';
+import { planKeySweep, runKeySweep } from './agent-system-key-sweep.ts';
 import { legacyDerivedKey, mintSystemKey, tokenIdOf } from './agent-system-keys.ts';
 import type { Fetched, LiteLlmKeyRow } from './litellm-admin.ts';
 
@@ -30,6 +30,7 @@ function gateway(initial: LiteLlmKeyRow[]) {
     rows,
     lines,
     io: {
+      keep: new Set<string>() as ReadonlySet<string> | 'all',
       list: async (): Promise<Fetched<LiteLlmKeyRow[]>> => ({ ok: true, data: [...rows] }),
       deleteKey: async (tokenId: string): Promise<Fetched<unknown>> => {
         const i = rows.findIndex((r) => r.token === tokenId);
@@ -55,9 +56,21 @@ test('SWEEP PLAN: a guessable per-system key and an unbudgeted reconcile key are
     { key_alias: 'os-broken' }, // no token reported: cannot be judged, so it is left
   ];
   assert.deepEqual(
-    planKeySweep(rows).map((t) => [t.alias, t.reason]),
+    planKeySweep(rows, new Set()).map((t) => [t.alias, t.reason]),
     [['os-sys_a', 'derivable'], ['agent-sys_c', 'unbudgeted-agent-key']],
   );
+});
+
+test('SWEEP PLAN: the guessable key of a system that STILL EXISTS is never a target (it is migrated, make-before-break)', () => {
+  const rows: LiteLlmKeyRow[] = [derivable('sys_live'), derivable('sys_gone'), reconcileKey('sys_live')];
+  assert.deepEqual(
+    planKeySweep(rows, new Set(['os-sys_live'])).map((t) => t.alias),
+    ['os-sys_gone', 'agent-sys_live'],
+  );
+  // Registry unknown (not hydrated): no derivable key may go — only the unusable reconcile key.
+  assert.deepEqual(planKeySweep(rows, 'all').map((t) => t.alias), ['agent-sys_live']);
+  // twin: with the system unknown to the caller, its key WOULD be swept — the keep set is what protects it.
+  assert.ok(planKeySweep(rows, new Set()).some((t) => t.alias === 'os-sys_live'));
 });
 
 test('SWEEP: deletes only the targets, reports them by alias, and a second run finds nothing (idempotent)', async () => {
@@ -75,7 +88,7 @@ test('SWEEP: deletes only the targets, reports them by alias, and a second run f
 
 test('SWEEP: an unreadable gateway deletes NOTHING and says so; a failed delete is reported, the rest still run', async () => {
   let deletes = 0;
-  const blind = await runKeySweep({ list: async () => ({ ok: false, error: 'HTTP 503' }), deleteKey: async () => { deletes += 1; return { ok: true, data: {} }; }, log: () => undefined });
+  const blind = await runKeySweep({ keep: new Set(), list: async () => ({ ok: false, error: 'HTTP 503' }), deleteKey: async () => { deletes += 1; return { ok: true, data: {} }; }, log: () => undefined });
   assert.deepEqual([blind.ok, blind.error, blind.deleted.length, deletes], [false, 'HTTP 503', 0, 0]);
 
   const gw = gateway([derivable('sys_a'), derivable('sys_b')]);
@@ -94,17 +107,6 @@ test('SWEEP LOG and RESULT carry aliases and counts — never a key, a guessable
   assert.match(text, /os-sys_a/);
   assert.doesNotMatch(text, /sk-/, 'no key-shaped string, not even the guessable one');
   for (const t of tokens) assert.ok(!text.includes(t), 'no token id in the log or the result');
-});
-
-test('BOOT: the sweep is not scheduled in a process without gateway admin access (the worker)', async () => {
-  // The test environment, like the worker, may hold no admin configuration; when it does, the
-  // schedule runs the injected sweep exactly once and never throws into boot.
-  let runs = 0;
-  const sweep = async (): Promise<KeySweepResult> => { runs += 1; return { at: 1, ok: true, scanned: 0, deleted: [], failed: [] }; };
-  scheduleBootKeySweep(sweep, 60_000);
-  scheduleBootKeySweep(sweep, 60_000); // a second call in the same process is a no-op
-  await new Promise((r) => setTimeout(r, 20));
-  assert.ok(runs <= 1, 'at most once per process');
 });
 
 test('KEY LISTING is read page by page to the end; a failed page fails the whole read (never a partial list)', async () => {
