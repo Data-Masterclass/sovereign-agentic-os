@@ -407,7 +407,14 @@ Off by default. With `-f values.dagster-run-identity.yaml` (cut-over step 5,
    OPA at `active_until`.
 5. **One data run at a time** (owner decision O1): `QueuedRunCoordinator` with
    `max_concurrent_runs: 1` and a limit of 1 per `os/run_grant`.
-6. **Defence in depth at push time:** `SET/RESET SESSION AUTHORIZATION` and `SET ROLE` in a pushed
+6. **The runner has no rights of its own** (`trino_impersonation.rego impersonate_only`):
+   `svc-dagster-runner` and `svc-os-worker`, as the session user, may ask `ImpersonateUser` and
+   nothing else (no query, listing, read or write) and see no rows.
+7. **Who a run acts as.** A build/transform/gold launch acts as the person who launched it (not the
+   domain self-principal, which is not a person `/start` can check); a sync as the dataset owner.
+   A standing grant is bound to its schedule's job (`scopes: dagster-job:<name>`), and a run's later
+   steps never move its activation window.
+8. **Defence in depth at push time:** `SET/RESET SESSION AUTHORIZATION` and `SET ROLE` in a pushed
    model, hook or `dbt_project.yml` are refused (`git-receive.ts identitySwitchShaped`).
 
 Proof: `tests/dagster/run-identity.int.test.ts` (real Dagster image, Trino 476 + the chart's OPA

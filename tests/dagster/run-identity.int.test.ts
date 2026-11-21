@@ -94,6 +94,8 @@ let server: Server;
 let sha = '';
 let keys: Record<string, string[]> = {};
 let standingId = '';
+/** When the Dagster container started: no run of this test exists before it. */
+let dagsterStarted = 0;
 
 // ------------------------------------------------------------------ os-ui's routes on the host --
 
@@ -282,6 +284,7 @@ before(async () => {
   chmodSync(join(H, 'dagster.yaml'), 0o644);
 
   spawnSync('docker', ['rm', '-f', 'wp15-dagster']);
+  dagsterStarted = Date.now();
   execFileSync('docker', ['run', '-d', '--name', 'wp15-dagster', '--network', `${PROJECT}_lh`, '--add-host=host.docker.internal:host-gateway',
     '-p', `127.0.0.1:${DAGSTER_PORT}:3000`,
     '-v', `${co}:/repos-checkout`, '-v', `${join(H, 'pw')}:/var/run/secrets/dagster-runner-trino:ro`, '-v', `${join(H, 'ca')}:/var/run/secrets/trino-ca:ro`,
@@ -318,7 +321,6 @@ after(async () => {
 const OWNER_SQL = `SELECT id, region, email FROM ${SRC} ORDER BY id`;
 
 test('1. a scheduled run under its standing grant acts as its owner, and only while it runs', async () => {
-  const t0 = Date.now();
   const runs = await until(
     () => gql<{ runsOrError: { results: { runId: string; status: string; tags: { key: string; value: string }[] }[] } }>(
       '{ runsOrError(filter: {tags: [{key: "os/schedule", value: "wp15__ds_alice15"}]}) { ... on Runs { results { runId status tags { key value } } } } }'),
@@ -327,10 +329,10 @@ test('1. a scheduled run under its standing grant acts as its owner, and only wh
   const tag = Object.fromEntries(run.tags.map((t) => [t.key, t.value]));
   assert.equal(tag['os/principal'], 'alice15');
   assert.equal(tag['os/run_grant'], standingId);
-  const q = await dbtQueries(t0 - 120_000);
+  const q = await dbtQueries(dagsterStarted);
   assert.ok(q.some((x) => x.user === 'alice15'), 'Trino ran dbt-trino queries as the owner');
   assert.ok(!q.some((x) => x.user === 'svc-dagster-runner' || x.user === 'dbt-runner'), 'never as a service user');
-  const d = tls.sidecarDecisions(new Date(t0 - 300_000).toISOString()).filter((x: { input?: { action?: { operation?: string } } }) => x.input?.action?.operation === 'ImpersonateUser');
+  const d = tls.sidecarDecisions(new Date(dagsterStarted).toISOString()).filter((x: { input?: { action?: { operation?: string } } }) => x.input?.action?.operation === 'ImpersonateUser');
   assert.ok(d.some((x: { result: boolean; input: { context: { identity: { user: string } }; action: { resource: { user: { user: string } } } } }) =>
     x.result === true && x.input.context.identity.user === 'svc-dagster-runner' && x.input.action.resource.user.user === 'alice15'), 'the sidecar allowed svc-dagster-runner → alice15');
   // Finished ⇒ not active: the run-status sensor (or os-ui's finisher) ended it, and the bundle
