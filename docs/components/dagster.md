@@ -384,9 +384,8 @@ repo.py's translator turns dbt source tests into asset checks on the source asse
 
 Off by default. With `-f values.dagster-launcher-lockdown.yaml -f values.dagster-run-identity.yaml`, in
 that order (cut-over step 5, `docs/components/trino-cutover.md`). Run pods run as ServiceAccount
-`dagster-run` with the token not automounted: dagster-k8s merges the code location's container context
-AFTER the launcher's `run_k8s_config`, so on the stock launcher the code location's own service
-account and automounted token would win. The run pod's settings therefore live in the lock-down's
+`dagster-run` with the token not automounted. dagster-k8s merges the code location's container context
+AFTER the launcher's `run_k8s_config`, so the run pod's settings live in the lock-down's
 `customRunLauncher.config.run_k8s_config` (the code location propagates no context), generated from the
 lock-down overlay by `scripts/gen-dagster-run-identity.py`; `scripts/tests/dagster-run-identity-launcher.test.sh`
 launches a run through dagster-k8s's own `launch_run` and asserts the pod. Deactivating or removing an
