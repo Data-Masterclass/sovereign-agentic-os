@@ -205,7 +205,7 @@ const DIGEST_RE = /@sha256:[a-f0-9]{64}$/;
 
 export type DeployRefusal = {
   ok: false;
-  code: 'no_manifests' | 'invalid' | 'image_registry' | 'image_not_built' | 'no_registry';
+  code: 'no_manifests' | 'invalid' | 'image_registry' | 'image_not_built' | 'no_registry' | 'no_ingress_class';
   reason: string;
 };
 export type DeployPlan = { ok: true; objects: Obj[]; image: string } | DeployRefusal;
@@ -363,7 +363,11 @@ function objectIssues(o: Obj, where: string, slug: string, registry: string, hos
     if (gate.tlsIssuer && annotations['cert-manager.io/cluster-issuer'] !== undefined && annotations['cert-manager.io/cluster-issuer'] !== gate.tlsIssuer) {
       bad(`the cluster-issuer must be the platform's '${gate.tlsIssuer}'`);
     }
-    if (gate.ingressClass && spec.ingressClassName !== undefined && spec.ingressClassName !== gate.ingressClass) {
+    // ingressClassName is REQUIRED: an Ingress without a class is served by whichever controller is
+    // the cluster default, so the class is named explicitly and must be the platform's own.
+    if (typeof spec.ingressClassName !== 'string' || spec.ingressClassName === '') {
+      bad(`the Ingress must set spec.ingressClassName${gate.ingressClass ? ` to the platform's '${gate.ingressClass}'` : ''}`);
+    } else if (gate.ingressClass && spec.ingressClassName !== gate.ingressClass) {
       bad(`ingressClassName must be the platform's '${gate.ingressClass}'`);
     }
     if (spec.defaultBackend) bad('the Ingress may not set a defaultBackend');
@@ -406,6 +410,13 @@ export function planAppDeploy(files: File[], c: DeployContext): DeployPlan {
       ok: false,
       code: 'no_registry',
       reason: 'No platform image registry is configured (chart value softwareRunner.imageRegistry), so no app image can be deployed.',
+    };
+  }
+  if (!c.ingressClass) {
+    return {
+      ok: false,
+      code: 'no_ingress_class',
+      reason: 'No platform ingress class is configured (chart value softwareRunner.ingressClass or ingress.className), so no app Ingress can be deployed.',
     };
   }
   const objects: Obj[] = [];

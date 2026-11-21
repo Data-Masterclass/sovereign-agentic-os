@@ -84,7 +84,7 @@ node ../scripts/check-consoles-not-public.mjs
 # The OS UI alias host 308s to osUI.publicUrl when ingress.redirectAliasToPublicUrl is on (one origin
 # for sessions, OAuth nonce cookies and callbacks); /git is never redirected. Same skip rules.
 node ../scripts/check-alias-redirect-chart.mjs
-# App Ingresses: the runner's annotation allow-list equals the chart's admission policy.
+# App Ingresses: the native-deploy annotation allow-list equals the chart's admission policy.
 node ../scripts/check-app-ingress-policy.mjs
 # WP-07: the os_governance bootstrap hook (a superuser Job) is off by default, connects only with a
 # dedicated admin Secret, and refuses to render against another service's credential, database or

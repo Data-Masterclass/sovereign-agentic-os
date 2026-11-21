@@ -95,7 +95,7 @@ test('BUILD: docker build of the seeded app folder, pushed to the registry, pinn
   execFileSync('docker', ['push', tag], { stdio: 'inherit' });
   image = execFileSync('docker', ['inspect', '--format', '{{index .RepoDigests 0}}', tag], { encoding: 'utf8' }).trim();
   assert.match(image, new RegExp(`^${REGISTRY}/${SLUG}@sha256:[a-f0-9]{64}$`));
-  deployFiles = appDeployFiles({ slug: SLUG, host: HOST, registry: REGISTRY, digest: image.split('@')[1] });
+  deployFiles = appDeployFiles({ slug: SLUG, host: HOST, registry: REGISTRY, ingressClass: 'nginx', digest: image.split('@')[1] });
   writeTree(work, deployFiles);
 });
 

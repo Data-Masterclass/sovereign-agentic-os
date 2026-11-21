@@ -1529,7 +1529,7 @@ softwareRunner:
     ingressNamespace: ingress-nginx
   # Annotation allow-list for app Ingresses, enforced by the API server
   # (templates/base/os-ui/apps-ingress-admission.yaml). Keep `allowedAnnotations` equal to
-  # os-ui/tabs/software/lib/app-ingress-policy.ts (the gate checks it).
+  # ALLOWED_INGRESS_ANNOTATIONS in os-ui/tabs/software/lib/native-deploy.ts (the gate checks it).
   ingressPolicy:
     enabled: true
     allowedAnnotations: ["cert-manager.io/cluster-issuer"]

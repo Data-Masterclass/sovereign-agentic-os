@@ -19,7 +19,8 @@
   `softwareRunner.ingressPolicy.exemptUsers` — by default cert-manager's controller, whose HTTP-01
   solver creates its own short-lived Ingress there while it issues an app's certificate.
 
-  The runner checks the same list before it writes (os-ui/tabs/software/lib/app-ingress-policy.ts);
+  The OS checks the same list, and a required ingressClassName, before it writes (the WP-54 gate,
+  ALLOWED_INGRESS_ANNOTATIONS in os-ui/tabs/software/lib/native-deploy.ts);
   `scripts/check-app-ingress-policy.mjs` (OS gate) fails when the two lists differ. Status updates
   by the ingress controller go to the `ingresses/status` subresource, which this does not match.
 
