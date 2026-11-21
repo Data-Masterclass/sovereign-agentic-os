@@ -156,6 +156,21 @@ export async function revokeRunGrant(pool: pg.Pool, id: string): Promise<boolean
 }
 
 /**
+ * Deactivating (or offboarding) an owner: revoke every live grant of theirs and close any open
+ * activation window now, instead of at the end of a window that can last up to ACTIVE_WINDOW_MS.
+ * A reactivated owner's standing grants are re-issued by the next reconcile (a domain commit).
+ * Returns how many grants were revoked.
+ */
+export async function endRunGrantsOf(pool: pg.Pool, principal: string): Promise<number> {
+  const r = await pool.query(
+    `UPDATE os_governance.run_grants SET revoked_at = pg_catalog.clock_timestamp(), active_run_id = NULL, active_until = NULL
+      WHERE principal_uid = $1 AND revoked_at IS NULL`,
+    [principal],
+  );
+  return r.rowCount ?? 0;
+}
+
+/**
  * The end of a run's activation window. A run's further steps re-check the grant but never move the
  * window: one run gets at most ACTIVE_WINDOW_MS from its first activation, and never past the grant.
  */

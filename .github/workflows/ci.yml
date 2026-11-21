@@ -913,6 +913,8 @@ jobs:
         run: docker build -f images/extensions/dagster/Dockerfile -t sovereign-os/dagster:ci images/extensions
       - name: Parity with the stock launcher (+ negative twins)
         run: bash scripts/tests/dagster-launcher-lockdown.test.sh sovereign-os/dagster:ci
+      - name: Run identity reaches the run pod under both overlays (+ old-layout twin, order twins)
+        run: bash scripts/tests/dagster-run-identity-launcher.test.sh sovereign-os/dagster:ci
       - name: Runs through the real webserver on kind (stock twin, then lock-down)
         run: |
           curl -sSLo /tmp/kind https://github.com/kubernetes-sigs/kind/releases/download/v0.30.0/kind-linux-amd64
