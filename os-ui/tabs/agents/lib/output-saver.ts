@@ -114,6 +114,9 @@ export type SaveOutputsInput = {
   nodes: ProducerRun[];
   /** The running user's id — a dataset of the same name that is someone else's is never written. */
   runnerId: string;
+  /** The running user's domains. When given and the system's domain is not among them, nothing
+   *  is written: the stores would otherwise quietly file the output in the runner's first domain. */
+  runnerDomains?: string[];
   dispatch: OutputDispatch;
   /** What this run already recorded (its ledger). A `saved` entry is not written again. */
   previous?: OutputResult[];
@@ -305,6 +308,7 @@ async function saveFile(input: SaveOutputsInput, o: DeclaredOutput, text: string
     const res = await dispatch('upload_file', {
       name,
       folder: path,
+      domain: sys.system.domain,
       text,
       description: `Result of the agent system “${sys.system.name}”${producer ? ` (agent ${producer})` : ''}, run ${input.runId}, ${readableStamp(input.at)}. Output “${o.name.trim()}”.`,
       tags: ['agent-output', slug(sys.system.name)],
@@ -360,7 +364,9 @@ async function saveTable(input: SaveOutputsInput, o: DeclaredOutput, text: strin
   const listing = await dispatch('list_datasets', {});
   if (listing.isError) return { ok: false, state: 'failed', reason: `the folder could not be checked before writing (${errorReason(listing.text)})`, retry: 'again' };
   const existing = listedRows(listing.text).find(
-    (r) => str(r.name).trim().toLowerCase() === name.toLowerCase() && normaliseFolderPath(str(r.folder)) === path,
+    (r) => str(r.name).trim().toLowerCase() === name.toLowerCase() && normaliseFolderPath(str(r.folder)) === path
+      // Same domain too: never reuse a same-named dataset an earlier run misfiled in another domain.
+      && (!str(r.domain) || str(r.domain) === input.system.system.domain),
   );
   if (existing && str(existing.owner) && str(existing.owner) !== input.runnerId) {
     return { ok: false, state: 'not_saved', reason: `a dataset named “${name}” in this folder belongs to someone else — give this output another name` };
@@ -440,6 +446,12 @@ export async function saveDeclaredOutputs(input: SaveOutputsInput): Promise<Outp
     const before = input.previous?.find((p) => p.key === key);
     if (input.only && !input.only.includes(key)) {
       if (before) results.push({ ...before, index });
+      continue;
+    }
+
+    const sysDomain = sys.system.domain;
+    if (input.runnerDomains && sysDomain && !input.runnerDomains.includes(sysDomain)) {
+      results.push({ ...base, state: 'not_saved', reason: `you are not a member of the domain “${sysDomain}” this agent system belongs to, so its outputs cannot be filed there`, message: `Not saved: you are not a member of the domain “${sysDomain}”` } as OutputResult);
       continue;
     }
 

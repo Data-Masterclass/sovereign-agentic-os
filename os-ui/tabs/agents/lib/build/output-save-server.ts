@@ -65,5 +65,5 @@ export async function saveRunOutputs(input: SaveRunOutputsInput): Promise<Output
     const why = e instanceof Error ? e.message : String(e);
     dispatch = async () => ({ text: JSON.stringify({ error: { code: 'upstream_error', reason: `the save could not start (${why})` } }), isError: true });
   }
-  return saveDeclaredOutputs({ ...rest, runnerId: user.id, dispatch });
+  return saveDeclaredOutputs({ ...rest, runnerId: user.id, runnerDomains: user.domains, dispatch });
 }
