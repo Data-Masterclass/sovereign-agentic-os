@@ -117,7 +117,7 @@ function MetricCard({
               onChange={(e) => onPick(e.target.checked)}
             />
           ) : null}
-          <span className="tile-name tile-name--metric" title={`${m.name}\nMetric: ${m.member}\nSource dataset: ${m.datasetName}`}>{m.name}</span>
+          <span className="tile-name" title={`${m.name}\nMetric: ${m.member}\nSource dataset: ${m.datasetName}`}>{m.name}</span>
         </div>
         <div className="row" style={{ gap: 4, alignItems: 'center', flex: 'none' }}>
           {showDomain ? <DomainTag domain={m.domain} /> : null}
