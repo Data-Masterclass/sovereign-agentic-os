@@ -6,9 +6,10 @@
  * FEATURE:    Chart test — the annotation allow-list for app Ingresses
  * USER STORY: As an operator I want the runner's own check and the API server's admission policy
  *             to allow exactly the same Ingress annotations, so neither door is wider than the other.
+ *             The os-ui list has ONE home: `ALLOWED_INGRESS_ANNOTATIONS` in native-deploy.ts (WP-54 gate).
  * ARCHITECTURE:
  *   - Static half (always runs): the chart's default `softwareRunner.ingressPolicy.allowedAnnotations`
- *     equals `APP_INGRESS_ANNOTATION_ALLOWLIST` in os-ui/tabs/software/lib/app-ingress-policy.ts,
+ *     equals `ALLOWED_INGRESS_ANNOTATIONS` in os-ui/tabs/software/lib/native-deploy.ts,
  *     and the policy is on by default.
  *   - Rendered half (needs helm): with `softwareRunner.enabled` on the default and the STACKIT
  *     profile, the chart renders the ValidatingAdmissionPolicy and its Deny binding, scoped to the
@@ -32,10 +33,10 @@ const require = createRequire(resolve(repo, 'os-ui/package.json'));
 const yaml = require('js-yaml');
 
 // ── static half ────────────────────────────────────────────────────────────────────────────
-const src = readFileSync(join(repo, 'os-ui/tabs/software/lib/app-ingress-policy.ts'), 'utf8');
-const m = src.match(/APP_INGRESS_ANNOTATION_ALLOWLIST[^=]*=\s*Object\.freeze\(\[([^\]]*)\]\)/);
+const src = readFileSync(join(repo, 'os-ui/tabs/software/lib/native-deploy.ts'), 'utf8');
+const m = src.match(/export const ALLOWED_INGRESS_ANNOTATIONS[^=]*=\s*(?:Object\.freeze\()?\[([^\]]*)\]/);
 const osList = m ? [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1]) : null;
-if (!osList) problems.push('app-ingress-policy.ts: APP_INGRESS_ANNOTATION_ALLOWLIST not found');
+if (!osList) problems.push('native-deploy.ts: ALLOWED_INGRESS_ANNOTATIONS not found');
 const values = yaml.load(readFileSync(join(CHART, 'values.yaml'), 'utf8'));
 const ip = values?.softwareRunner?.ingressPolicy ?? {};
 if (ip.enabled !== true) problems.push('values.yaml: softwareRunner.ingressPolicy.enabled must default to true');
