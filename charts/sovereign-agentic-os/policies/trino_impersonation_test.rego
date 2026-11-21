@@ -29,11 +29,14 @@ grants := {
 	"g-run-expired": {"principal_uid": "erin@x.com", "kind": "run", "expires_at": past, "revoked": false},
 	"g-run-revoked": {"principal_uid": "rob@x.com", "kind": "run", "expires_at": future, "revoked": true},
 	"g-run-no-expiry": {"principal_uid": "nora@x.com", "kind": "run", "revoked": false},
-	"g-standing-active": {"principal_uid": "dana@x.com", "kind": "standing", "active_run_id": "run-1", "expires_at": future},
-	"g-dataset-active": {"principal_uid": "dave@x.com", "kind": "dataset", "active_run_id": "run-2", "expires_at": future},
+	"g-standing-active": {"principal_uid": "dana@x.com", "kind": "standing", "active_run_id": "run-1", "active_until": future, "expires_at": future},
+	"g-dataset-active": {"principal_uid": "dave@x.com", "kind": "dataset", "active_run_id": "run-2", "active_until": future, "expires_at": future},
+	# WP-15: a missed /finish closes itself — `active_until` in the past, or absent, is not active.
+	"g-standing-window-over": {"principal_uid": "wes@x.com", "kind": "standing", "active_run_id": "run-4", "active_until": past, "expires_at": future},
+	"g-standing-no-window": {"principal_uid": "nina@x.com", "kind": "standing", "active_run_id": "run-5", "expires_at": future},
 	"g-standing-idle": {"principal_uid": "ida@x.com", "kind": "standing", "active_run_id": null, "expires_at": future},
 	"g-standing-empty-run": {"principal_uid": "eve@x.com", "kind": "standing", "active_run_id": "", "expires_at": future},
-	"g-standing-expired": {"principal_uid": "sam@x.com", "kind": "standing", "active_run_id": "run-3", "expires_at": past},
+	"g-standing-expired": {"principal_uid": "sam@x.com", "kind": "standing", "active_run_id": "run-3", "active_until": future, "expires_at": past},
 }
 
 os_data := {"users": {
@@ -143,9 +146,9 @@ test_execute_query_unaffected if {
 
 b1_grants := {
 	"g-svc-ui": {"principal_uid": "svc-os-ui", "kind": "run", "expires_at": future, "revoked": false},
-	"g-svc-dg": {"principal_uid": "svc-os-worker", "kind": "standing", "active_run_id": "r9", "expires_at": future},
+	"g-svc-dg": {"principal_uid": "svc-os-worker", "kind": "standing", "active_run_id": "r9", "active_until": future, "expires_at": future},
 	"g-purge": {"principal_uid": "os-domain-delete", "kind": "run", "expires_at": future},
-	"g-np": {"principal_uid": "northpeak-marts", "kind": "dataset", "active_run_id": "r8", "expires_at": future},
+	"g-np": {"principal_uid": "northpeak-marts", "kind": "dataset", "active_run_id": "r8", "active_until": future, "expires_at": future},
 }
 
 test_b1_worker_cannot_become_svc_os_ui_through_a_grant if not trino.allow with input as imp("svc-os-worker", "svc-os-ui") with data.os_grants.run_grants as b1_grants with data.os_data as os_data
@@ -173,3 +176,9 @@ test_b1_no_reserved_list_fails_closed if not trino.allow with input as imp("svc-
 # ---- verifier note: an INACTIVE user with a leftover governance principal is refused ----
 
 test_ui_denied_inactive_user_with_leftover_principal if not trino.allow with input as imp("svc-os-ui", "bob@x.com") with data.os_data as os_data with data.governance as {"principals": {"bob@x.com": {"domains": ["sales"], "clearances": []}}}
+
+# ---- WP-15: the activation window (`active_until`, set by /start, cleared by /finish) ----
+
+test_dagster_denied_after_the_activation_window if not trino.allow with input as imp("svc-dagster-runner", "wes@x.com") with data.os_grants.run_grants as grants with data.os_data as os_data with data.governance as governance
+
+test_dagster_denied_without_an_activation_window if not trino.allow with input as imp("svc-dagster-runner", "nina@x.com") with data.os_grants.run_grants as grants with data.os_data as os_data with data.governance as governance

@@ -488,8 +488,11 @@ test('profiles.yml emits `password:` iff the generator is told auth is ON (B4-re
   for (const method of ['ldap', 'basic', 'jwt']) {
     const on = generateProject('sales', shapeIngested(), { trinoAuthMethod: method }).get('profiles.yml')!;
     assert.match(on, new RegExp(`method: ${method}`));
-    assert.match(on, /password: "\{\{ env_var\('TRINO_PASSWORD'\) \}\}"/, 'an env_var call, never a literal');
-    assert.doesNotMatch(on, /env_var\('TRINO_PASSWORD', ''\)/, 'no empty-string default — a missing password must fail loudly');
+    // WP-15 (01 R1): the OS target reads a DBT_ENV_SECRET_ variable, which dbt refuses to render
+    // anywhere but profiles.yml / packages.yml, so authored model Jinja cannot print it.
+    assert.match(on, /password: "\{\{ env_var\('DBT_ENV_SECRET_TRINO_PASSWORD'\) \}\}"/, 'an env_var call, never a literal');
+    assert.match(on, /password: "\{\{ env_var\('TRINO_PASSWORD'\) \}\}"/, 'the local target: your own password');
+    assert.doesNotMatch(on, /env_var\('(?:DBT_ENV_SECRET_)?TRINO_PASSWORD', ''\)/, 'no empty-string default — a missing password must fail loudly');
     // Still one valid YAML document, and the key sits under the same mapping as `user:`.
     assert.match(on, /\n(\s+)user: .*\n\1password: /);
   }
@@ -506,6 +509,15 @@ test('profiles.yml has a plain `local` target that needs nothing from the OS (ej
   assert.doesNotMatch(JSON.stringify(local), /OS_/, 'no OS-injected variable in the local target');
   const on = yaml.load(generateProject('sales', shapeIngested(), { trinoAuthMethod: 'ldap' }).get('profiles.yml')!) as typeof doc;
   assert.equal(on.sovereign.outputs.local.password, "{{ env_var('TRINO_PASSWORD') }}", 'auth on: the local target needs a password too');
+  // WP-15: the OS target connects as the Dagster runner service user over TLS and acts as the
+  // run's principal; the CA it trusts is the chart's (a file path, never content).
+  const t = on.sovereign.outputs.trino;
+  assert.equal(t.user, "{{ env_var('TRINO_RUNNER_USER', 'svc-dagster-runner') }}");
+  assert.equal(t.password, "{{ env_var('DBT_ENV_SECRET_TRINO_PASSWORD') }}");
+  assert.equal(t.impersonation_user, "{{ env_var('OS_PRINCIPAL') }}");
+  assert.equal(t.cert, "{{ env_var('TRINO_CA_FILE') }}");
+  assert.equal(t.port, "{{ env_var('TRINO_TLS_PORT', '8443') | as_number }}");
+  assert.equal(t.http_scheme, undefined, 'password methods are HTTPS only (dbt-trino fixes the scheme)');
 });
 
 test('profiles.yml stays byte-stable for a given auth method (B4-review E-3)', () => {
@@ -628,4 +640,17 @@ test('rewriteFqns: models → ref, everything else → source (registered once);
   assert.equal(stripCtas('create or replace table iceberg.x.y as select 1'), 'select 1');
   assert.equal(stripCtas('CREATE TABLE iceberg.x.y AS select 2'), 'select 2');
   assert.equal(stripCtas('select 3'), 'select 3');
+});
+
+test('WP-15: with run grants, each enabled schedule names its standing grant; without, the file is unchanged', async () => {
+  const { standingGrantId } = await import('@core/policy/run-grant-ids');
+  const off = generateProject('sales', shapeAppendSync()).get('os/schedules.yml')!;
+  assert.doesNotMatch(off, /run_grant/);
+  const on = generateProject('sales', shapeAppendSync(), { runGrants: true }).get('os/schedules.yml')!;
+  const doc = yaml.load(on) as { schedules: { dataset: string; name: string; principal: string; enabled: boolean; run_grant?: string }[] };
+  assert.ok(doc.schedules.length > 0);
+  for (const e of doc.schedules) {
+    if (e.enabled) assert.equal(e.run_grant, standingGrantId('sales', e.dataset, e.principal, e.name));
+    else assert.equal(e.run_grant, undefined, 'a disabled schedule holds no grant');
+  }
 });

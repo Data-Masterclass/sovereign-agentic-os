@@ -231,3 +231,31 @@ test('setVersionRun survives the dataset.yaml round trip; a cleared launchError 
   assert.equal(failed.dagsterRunId ?? null, null, 'no fabricated run id beside an error');
   assert.equal(failed.commit ?? null, null);
 });
+
+test('WP-15: with run grants the launch carries the grant it issued for exactly this commit and selection', async () => {
+  __setDataProjectGitForTests(true);
+  const id = seedOrders();
+  const issued: Record<string, unknown>[] = [];
+  const out = await launchAfterCommit(
+    { datasetId: id, layer: 'silver', kind: 'build', actor: { id: 'amir' }, principal: 'amir', action: 'transform silver' },
+    deps({ runGrants: true, issueGrant: async (g) => { issued.push(g); return 'rg_ds_00112233445566778899aabb'; } }),
+  );
+  assert.equal(out.launchError, null);
+  assert.deepEqual(issued, [{ principal: 'amir', domain: 'sales', dataset: id, commit: SHA, selection: [['sales', `silver_${lane}`]], issuedBy: 'amir' }]);
+  assert.equal(launches[0].tags?.['os/run_grant'], 'rg_ds_00112233445566778899aabb');
+});
+
+test('WP-15: a grant that cannot be issued means no launch, with the reason; off means no grant', async () => {
+  __setDataProjectGitForTests(true);
+  const id = seedOrders();
+  const out = await launchAfterCommit(
+    { datasetId: id, layer: 'silver', kind: 'build', actor: { id: 'amir' }, principal: 'amir', action: 'x' },
+    deps({ runGrants: true, issueGrant: async () => { throw new Error('database down'); } }),
+  );
+  assert.equal(out.dagsterRunId, null);
+  assert.match(out.launchError ?? '', /run grant could not be issued \(database down\)/);
+  assert.equal(launches.length, 0);
+  await launchAfterCommit({ datasetId: id, layer: 'silver', kind: 'build', actor: { id: 'amir' }, principal: 'amir', action: 'x' },
+    deps({ runGrants: false, issueGrant: async () => { throw new Error('must not be called'); } }));
+  assert.equal(launches[0].tags?.['os/run_grant'], undefined);
+});

@@ -25,8 +25,8 @@ const grants = {
   'it-run': { principal_uid: 'alice@x.com', kind: 'run', active_run_id: null, expires_at: future, revoked: false },
   'it-run-expired': { principal_uid: 'erin@x.com', kind: 'run', expires_at: past, revoked: false },
   'it-run-revoked': { principal_uid: 'rob@x.com', kind: 'run', expires_at: future, revoked: true },
-  'it-standing-active': { principal_uid: 'dana@x.com', kind: 'standing', active_run_id: 'dg-run-1', expires_at: future },
-  'it-dataset-active': { principal_uid: 'dave@x.com', kind: 'dataset', active_run_id: 'dg-run-2', expires_at: future },
+  'it-standing-active': { principal_uid: 'dana@x.com', kind: 'standing', active_run_id: 'dg-run-1', active_until: future, expires_at: future },
+  'it-dataset-active': { principal_uid: 'dave@x.com', kind: 'dataset', active_run_id: 'dg-run-2', active_until: future, expires_at: future },
   'it-standing-idle': { principal_uid: 'ida@x.com', kind: 'standing', active_run_id: null, expires_at: future },
   // WP-14 verifier B1: a live run grant that names a SERVICE user (an OS user created with that id).
   'it-b1-svc-ui': { principal_uid: 'svc-os-ui', kind: 'run', active_run_id: null, expires_at: future, revoked: false },
