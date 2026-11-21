@@ -718,6 +718,7 @@ jobs:
           OS_PG_TEST_URL: postgres://postgres:ci-only-throwaway@127.0.0.1:5432/postgres
           WP16_DAGSTER_IMAGE: sovereign-os/dagster:ci
           WP16_WORK_PARENT: ${{ runner.temp }}
+          WP16_KEEP: '1'
         run: node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test --test-timeout=900000 ../tests/dagster/repo-status.int.test.ts
       - name: Logs (on failure)
         if: failure()
