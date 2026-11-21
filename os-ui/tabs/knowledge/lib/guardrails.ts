@@ -109,7 +109,8 @@ export function compileGuardrails(workflow: Workflow): CompiledGuardrails {
     lines.push('');
     lines.push('violated if {');
     lines.push('  some g in input.violations');
-    lines.push('  g in {x | x := data.guardrails[_].id}');
+    // Its OWN data path (where the push path writes it), never the document root.
+    lines.push(`  g in {x | x := data.${packagePath}.guardrails[_].id}`);
     lines.push('}');
   }
 
