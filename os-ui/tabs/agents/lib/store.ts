@@ -802,6 +802,19 @@ export function getSystemsUsingDataset(datasetId: string, user: Principal): Syst
  * regardless of the actor's visibility (a warn-before-break preflight). Server-side only;
  * never expose through a user-facing route. A system whose yaml can't be parsed is skipped.
  */
+/**
+ * Every system that exists, with its definition and owner — for the one-time key migration
+ * (`build/system-key-migration.ts`). NULL when the registry did not come from the durable mirror
+ * (`hydrationState()` is not 'hydrated'): the migration must then neither conclude "nothing to
+ * migrate" nor tell the sweep which systems exist. Archived systems are included: an archived
+ * system can be restored, and must then still have its key.
+ */
+export function listSystemsForKeyMigration(): { id: string; domain: string; owner: string; yaml: string }[] | null {
+  if (hydrationState() !== 'hydrated') return null;
+  ensureSeeded();
+  return [...state().store.values()].map((r) => ({ id: r.id, domain: r.domain, owner: r.owner, yaml: r.yaml }));
+}
+
 export function listAllSystemsInternal(): { id: string; name: string; grants: System['grants'] }[] {
   ensureSeeded();
   const out: { id: string; name: string; grants: System['grants'] }[] = [];

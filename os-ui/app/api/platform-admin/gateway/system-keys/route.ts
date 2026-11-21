@@ -21,7 +21,8 @@
 import { NextResponse } from 'next/server';
 import { adminCtx, fail } from '../../_ctx';
 import { authorize } from '@core/infra/governed';
-import { lastKeySweep, sweepLegacySystemKeys } from '@core/infra/agent-system-key-sweep';
+import { lastKeySweep } from '@core/infra/agent-system-key-sweep';
+import { lastKeyMigration, migrateThenSweepLive } from '@tabs/agents/lib/build/system-key-migration';
 import { ensureHydrated, getSystemForEdit, listAllSystemsInternal } from '@tabs/agents/lib/store';
 import { governYamlForOwner } from '@tabs/agents/lib/build/owner-grants';
 import { listSystemKeyRows, rotateSystemKey } from '@tabs/agents/lib/build/system-key-admin';
@@ -36,7 +37,7 @@ export async function GET() {
     return fail(e);
   }
   const systems = await listSystemKeyRows(listAllSystemsInternal().map((s) => ({ id: s.id, name: s.name })));
-  return NextResponse.json({ systems, sweep: lastKeySweep() });
+  return NextResponse.json({ systems, sweep: lastKeySweep(), migration: lastKeyMigration() });
 }
 
 export async function POST(req: Request) {
@@ -56,7 +57,8 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'the body must be JSON: {"action":"sweep"} or {"action":"rotate","systemId":"…"}' }, { status: 400 });
   }
   if (body.action === 'sweep') {
-    return NextResponse.json({ sweep: await sweepLegacySystemKeys(), by: ctx.user.id });
+    const { migration, sweep } = await migrateThenSweepLive();
+    return NextResponse.json({ migration, sweep, by: ctx.user.id });
   }
   if (body.action === 'rotate') {
     const systemId = typeof body.systemId === 'string' ? body.systemId.trim() : '';

@@ -389,27 +389,47 @@ Each agent system has ONE key at the gateway, alias `os-<systemId>`, made by the
 | Models | The system's routed models and pins, the reasoning and tools role models a run uses, and every gateway fallback target of those (`router_settings.*fallbacks`, passed to os-ui as `AGENT_SYSTEM_KEY_FALLBACKS_JSON`). |
 | How it is addressed | By its token id (SHA-256 of the value — what LiteLLM calls `token`), found with `/key/list?key_alias=`. |
 
-**A system without a usable key does not run.** A never-built system, a system whose old key
-was removed, or a key that cannot be decrypted stops the run before anything executes, with
-a message that says to press Build (`SystemKeyUnavailableError`). The Build & Run panel shows
-"Build needed" beforehand, and Admin → overview lists every system's key state.
+**A system without a usable key does not run.** A never-built system created after the upgrade,
+or a key that cannot be decrypted, stops the run before anything executes, with a message that
+says to press Build (`SystemKeyUnavailableError`). It never falls back to the shared key. The
+Build & Run panel shows "Build needed" beforehand, and Admin → overview lists every system's key
+state.
 
-**Old keys.** Before this, a system's key was `sk-os-<systemId>` — guessable. A Build of such a
-system deletes the old key at the gateway and issues a random one. For systems nobody
-rebuilds, a sweep (`core/infra/agent-system-key-sweep.ts`) runs at every os-ui start and can
-be run from Admin: it deletes every key whose hash equals that of `sk-<alias>`, and the
-unbudgeted `agent-<id>` keys of the old reconcile. It is idempotent and judges only from what
-the gateway reports.
+**Upgrading from guessable keys: a migration, not a sweep.** Before this, a system's key was
+`sk-os-<systemId>` (guessable), or the system ran on the shared key. At every os-ui start,
+`tabs/agents/lib/build/system-key-migration.ts` moves every existing system that has no usable
+stored key onto a random, budgeted key, through the Build's own `litellm` step. Nobody has to
+press Rebuild and no schedule stops:
 
-**Rotation** is "mint new, swap, delete old" (LiteLLM's own rotation endpoints are
+1. stage the new value, sealed, in `agent_system_key_staging` (with the old keys it retires);
+2. move each old key to the alias `os-<id>.retiring.<token prefix>` (`/key/update` with
+   `key_alias`): its value keeps working, the alias is free;
+3. `/key/generate` the staged value under `os-<id>`, with the configured budget and limits;
+4. store it in `agent_system_keys`: from here every run uses it;
+5. `/key/delete` the old key(s), then close the staging row.
+
+A crash at any step is finished by the next pass with the same staged value. Until a pass has
+processed every system without a failure (`agent_system_key_migrations`), a worker run whose
+system has no stored key waits up to three minutes for it instead of failing. Each move is an
+audit entry `gateway.key.migrate` (alias and outcome only). After the migration, the sweep
+(`core/infra/agent-system-key-sweep.ts`) removes what nothing can be running on: derivable keys
+of systems that no longer exist, and the unbudgeted `agent-<id>` keys of the old reconcile. It
+never deletes the guessable key of an existing system; when the registry has not hydrated it
+deletes no derivable key at all. Proven against the real gateway image by
+`scripts/tests/agent-key-migration/run.sh` (workflow `agent-key-migration-live`).
+
+**Rotation** uses the same make-before-break steps (LiteLLM's own rotation endpoints are
 Enterprise): Admin → "Replace key", or
-`POST /api/platform-admin/gateway/system-keys {"action":"rotate","systemId":"…"}`. LiteLLM
-requires unique aliases, so the old key is deleted first; a model call that lands in that
-moment gets a 401, re-reads the store and is repeated once with the new key. The key's spend
-counter starts again from zero (it is a new key); spend by tag is unaffected.
+`POST /api/platform-admin/gateway/system-keys {"action":"rotate","systemId":"…"}`. The old key
+keeps working until the new one is stored; a run holding the old value in its 30-second cache
+gets a 401 after the delete, re-reads the store and repeats the call once with the new key. The
+key's spend counter starts again from zero (it is a new key); spend by tag is unaffected.
 
-**If the encryption secret is lost or changed**, every stored key is unreadable: each system
-shows "Rebuild needed" and one Rebuild per system issues a new key. Nothing else is lost.
+**If the encryption secret is lost or changed**, every stored key is unreadable; the next os-ui
+start re-issues them (the migration treats an unreadable key as missing), or a Rebuild does.
+Nothing else is lost. The secret is in the External Secrets catalog (`os-ui-agent-key-encryption`)
+and both os-ui and the worker refuse a production boot without it (the secret guard and the deploy
+preflight).
 On Argo CD / Flux / `helm template` pipelines set `osUI.agentKeyEncryption.secret` or
 `.existingSecret`, because a generated value cannot be kept there.
 

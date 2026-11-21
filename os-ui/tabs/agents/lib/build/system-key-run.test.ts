@@ -29,6 +29,7 @@ import {
   __setSystemKeyStoreForTests,
   deploymentKek,
   mintSystemKey,
+  memorySystemKeyJournal,
   postgresSystemKeyStore,
   resolveSystemKey,
   sealSystemKey,
@@ -89,6 +90,7 @@ function fakeGateway() {
     async generateKey(input, key) { keys.set(input.alias, state(input, tokenIdOf(key))); },
     async updateKey(tokenId, input) { keys.set(input.alias, state(input, tokenId)); },
     async deleteKey(tokenId) { for (const [a, k] of keys) if (k.tokenId === tokenId) keys.delete(a); },
+    async renameKey(tokenId, alias) { for (const [a, k] of [...keys]) if (k.tokenId === tokenId) { keys.delete(a); keys.set(alias, k); } },
     async models() { return []; },
   };
   /** Every bearer an inference call presented, in order, with the answer it got. */
@@ -122,7 +124,7 @@ function deployment() {
     opa: { putGrants: async () => undefined, mergeRequiresApproval: async () => undefined, decision: async (_p, tool) => ({ effect: tool === 'connection_ghost' ? 'deny' : 'allow', reason: '' }) },
     litellm: gw.admin,
     langfuse: { ensureProject: async () => undefined, tracesFor: async () => 0 },
-    keys: { store: postgresSystemKeyStore(db), kek: () => deploymentKek() },
+    keys: { store: postgresSystemKeyStore(db), journal: memorySystemKeyJournal(), kek: () => deploymentKek() },
     // The models this run will actually ask for: the role models the engine resolves.
     runModels: () => [config.litellmReasoningModel, config.litellmToolsModel, 'sovereign-mock'],
   };

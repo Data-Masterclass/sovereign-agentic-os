@@ -6,7 +6,7 @@ import { config } from '@core/kernel/config';
 import { publishOpa } from '@core/policy/opa-publish';
 import { mergeRequiresApproval } from '@tabs/agents/lib/build/opa-state';
 import { recentTraces } from '@core/infra/agent-governed';
-import { deploymentKek, durableSystemKeyStore } from '@core/infra/agent-system-keys';
+import { deploymentKek, durableSystemKeyJournal, durableSystemKeyStore } from '@core/infra/agent-system-keys';
 import { roleModel } from '@core/models/roles';
 import { type Decision } from '@tabs/agents/lib/gateway';
 import {
@@ -172,6 +172,9 @@ export function realLitellm(): LiteLlmClient {
     async deleteKey(tokenId: string) {
       await post('/key/delete', { keys: [tokenId] }, 'the old key was not removed');
     },
+    async renameKey(tokenId: string, alias: string) {
+      await post('/key/update', { key: tokenId, key_alias: alias }, 'the old key was not moved aside, so no new key was registered');
+    },
     async models() {
       const res = await withTimeout(`${config.litellmUrl}/v1/models`, { method: 'GET', headers: bearer });
       if (!res || !res.ok) return [];
@@ -247,7 +250,7 @@ export function makeRealClients(): LiveDeps {
     litellm: realLitellm(),
     langfuse: realLangfuse(),
     // The key Build mints is kept encrypted in the durable store both os-ui and the worker read.
-    keys: { store: durableSystemKeyStore, kek: () => deploymentKek() },
+    keys: { store: durableSystemKeyStore, journal: durableSystemKeyJournal, kek: () => deploymentKek() },
     // The caps of a system's own key come from deployment config, not from a constant in the adapter.
     caps: { ...config.agentSystemKey, modelMaxBudget: {} },
     // The models a run picks by ROLE, and the gateway's fallback targets — both must be on the key.

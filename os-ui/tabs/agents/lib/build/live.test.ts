@@ -25,7 +25,9 @@ import {
   isLegacyDerivedToken,
   legacyDerivedKey,
   memorySystemKeyStore,
+  memorySystemKeyJournal,
   openSystemKey,
+  retiringAlias,
   tokenIdOf,
   type SystemKeyStore,
 } from '@core/infra/agent-system-keys';
@@ -128,6 +130,15 @@ function fakeLitellm(): LiteLlmClient & { keys: Map<string, FakeKey>; generated:
       client.deleted.push(tokenId);
       for (const [alias, k] of keys) if (k.tokenId === tokenId) keys.delete(alias);
     },
+    renamed: [] as string[],
+    async renameKey(tokenId: string, alias: string) {
+      const cur = [...keys.entries()].find(([, k]) => k.tokenId === tokenId);
+      if (!cur) throw new Error('LiteLLM /key/update failed (404)');
+      if (keys.has(alias)) throw new Error(`LiteLLM /key/update failed (400) — Key with alias '${alias}' already exists`);
+      client.renamed.push(alias);
+      keys.delete(cur[0]);
+      keys.set(alias, cur[1]);
+    },
     async models() {
       return ['sovereign-default', 'stackit-qwen3-vl-reasoning', 'stackit-qwen3-vl', 'sovereign-mock'];
     },
@@ -164,7 +175,7 @@ function deps(): LiveDeps & {
     opa,
     litellm: fakeLitellm(),
     langfuse,
-    keys: { store: memorySystemKeyStore(), kek: () => KEK },
+    keys: { store: memorySystemKeyStore(), journal: memorySystemKeyJournal(), kek: () => KEK },
   };
 }
 
@@ -418,7 +429,8 @@ test('MIGRATION: a system holding the old guessable key gets a NEW random key an
   const row = await keyRow(d);
   assert.equal(row.status, 'ok', row.error ?? '');
   assert.equal(row.change, 'updated');
-  assert.match(row.appliedDetail ?? '', /could be derived from the system id; it was deleted at the gateway and replaced by a random key/);
+  assert.match(row.appliedDetail ?? '', /could be derived from the system id; a random key replaced it before the old one was deleted/);
+  assert.deepEqual(d.litellm.renamed, [retiringAlias('os-sys_live', legacyToken)], 'the old key was moved off the alias first, still working');
   assert.deepEqual(d.litellm.deleted, [legacyToken], 'the guessable key no longer works');
   const now = d.litellm.keys.get('os-sys_live')!;
   assert.notEqual(now.tokenId, legacyToken);
@@ -458,23 +470,44 @@ test('ROTATION (mint new, swap, delete old): the value changes, the alias and th
   assert.ok(record.rotatedAt !== null && record.rotatedAt >= record.createdAt, 'the rotation is dated; the first issue date is kept');
 });
 
-test('A FAILED REPLACEMENT is honest: no new key ⇒ the stored record goes too, and the row fails', async () => {
+test('A FAILED REGISTRATION breaks nothing: the old key keeps working, and the next Build finishes with the SAME staged value', async () => {
   const d = deps();
   await build(d);
+  const before = await storedValue(d.keys.store, 'sys_live');
+  const generate = d.litellm.generateKey;
   d.litellm.generateKey = async () => { throw new Error('LiteLLM /key/generate failed (500)'); };
   const out = await rotateSystemKeyWith('sys_live', YAML, d);
   assert.equal(out.ok, false);
-  assert.match(out.error ?? '', /NO model key now; press Build again/);
-  assert.equal(await d.keys.store.get('sys_live'), null, 'no record that points at a key the gateway does not have');
+  assert.match(out.error ?? '', /keeps its previous key; press Build again/);
+  assert.equal(await storedValue(d.keys.store, 'sys_live'), before, 'the store still names the old, working key');
+  assert.ok([...d.litellm.keys.values()].some((k) => k.tokenId === tokenIdOf(before)), 'the old key is still at the gateway');
+  assert.deepEqual(d.litellm.deleted, [], 'nothing was deleted');
+  const staged = await d.keys.journal.staged('sys_live');
+  assert.ok(staged, 'the replacement is written down');
+  d.litellm.generateKey = generate;
+  const again = await rotateSystemKeyWith('sys_live', YAML, d);
+  assert.equal(again.ok, true, again.error ?? '');
+  const after = await storedValue(d.keys.store, 'sys_live');
+  assert.equal(tokenIdOf(after), staged!.record.tokenId, 'the resumed replacement used the staged value, not a second one');
+  assert.deepEqual(d.litellm.deleted, [tokenIdOf(before)], 'only now is the old key deleted');
+  assert.equal(await d.keys.journal.staged('sys_live'), null);
 });
 
-test('A key that cannot be STORED is taken out of the gateway again — never a key nobody can read', async () => {
+test('A key that cannot be STORED leaves the old key working; the next Build stores the staged value and only then deletes the old one', async () => {
   const d = deps();
+  const legacyToken = withLegacyKey(d);
+  const put = d.keys.store.put;
   d.keys.store.put = async () => { throw new Error('database down'); };
   const row = await keyRow(d);
   assert.equal(row.status, 'fail');
-  assert.match(row.error ?? '', /could not be stored \(database down\).*removed from the gateway again/);
-  assert.equal(d.litellm.keys.size, 0);
+  assert.match(row.error ?? '', /could not be stored \(database down\).*keeps its previous key/);
+  assert.deepEqual(d.litellm.deleted, [], 'the old key was not deleted before the new one was stored');
+  d.keys.store.put = put;
+  const row2 = await keyRow(d);
+  assert.equal(row2.status, 'ok', row2.error ?? '');
+  assert.equal(d.litellm.generated, 1, 'one value only, across the crash');
+  assert.deepEqual(d.litellm.deleted, [legacyToken]);
+  assert.equal(tokenIdOf(await storedValue(d.keys.store, 'sys_live')), d.litellm.keys.get('os-sys_live')!.tokenId);
 });
 
 test('NO ENCRYPTION SECRET: the build fails on the key row and registers nothing', async () => {
