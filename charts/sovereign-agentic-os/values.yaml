@@ -681,7 +681,7 @@ litellm:
       # `enable_pre_call_checks` is deliberately NOT on — see docs/components/litellm.md.
       - model_name: sovereign-default
         litellm_params:
-          model: openai/gpt-oss-20b
+          model: openai/openai/gpt-oss-20b   # STACKIT id is openai/gpt-oss-20b; LiteLLM adds the provider prefix
           api_base: os.environ/STACKIT_API_BASE
           api_key: os.environ/STACKIT_API_KEY
         model_info: &gptOss20bInfo
@@ -694,7 +694,7 @@ litellm:
           supports_function_calling: true
       - model_name: sovereign-mock            # back-compat alias -> worker tier
         litellm_params:
-          model: openai/gpt-oss-20b
+          model: openai/openai/gpt-oss-20b   # STACKIT id is openai/gpt-oss-20b; LiteLLM adds the provider prefix
           api_base: os.environ/STACKIT_API_BASE
           api_key: os.environ/STACKIT_API_KEY
         model_info: *gptOss20bInfo
