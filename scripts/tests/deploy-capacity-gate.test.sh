@@ -43,7 +43,8 @@ cat > "$BIN/kubectl" <<'STUB'
 #!/usr/bin/env bash
 echo "kubectl $*" >> "$FAKE_LOG"
 # The rotation drift guard lists the Secrets: none is managed by rotate-secrets.sh here.
-case "$*" in *"get secrets -o json"*) echo '{"items":[]}' ;; esac
+# apiserver-cidrs.py reads the pods: none carries an injected KUBERNETES_SERVICE_HOST here.
+case "$*" in *"get secrets -o json"*|*"get pods -o json"*) echo '{"items":[]}' ;; esac
 STUB
 cat > "$BIN/helm" <<STUB
 #!/usr/bin/env bash

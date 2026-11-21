@@ -128,11 +128,21 @@ spec:
     {{- end }}
     {{- end }}
     {{- end }}
+    {{- /* `extraCidrs`: the address the pods' KUBERNETES_SERVICE_HOST resolves to when the platform
+           injects a DOMAIN there (Gardener / STACKIT SKE: the kubernetes-service-host webhook), so
+           in-cluster clients connect to it rather than to the endpoint. Added only to a narrowed
+           rule: with no known endpoint the rule stays un-narrowed, and narrowing it to the extra
+           address alone would cut off the endpoint. scripts/deploy.sh fills it per cluster
+           (scripts/lib/apiserver-cidrs.py). */}}
+    {{- if $cidrs }}
+    {{- $cidrs = concat $cidrs ($api.extraCidrs | default list) }}
+    {{- end }}
     - ports:
         - { protocol: TCP, port: 443 }
         - { protocol: TCP, port: 6443 }
       {{- if $cidrs }}
-      # The Kubernetes API server only (networkPolicies.apiserver.cidrs, else discovered).
+      # The Kubernetes API server only (networkPolicies.apiserver.cidrs, else discovered, plus
+      # networkPolicies.apiserver.extraCidrs).
       to:
         {{- range ($cidrs | uniq) }}
         - ipBlock: { cidr: {{ . | quote }} }

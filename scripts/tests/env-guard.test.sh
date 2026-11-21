@@ -36,6 +36,7 @@ ctx=''; prev=''
 for a in "$@"; do [ "$prev" = --context ] && ctx=$a; prev=$a; done
 case $all in
   *"get secrets -o json"*) echo '{"items":[]}' ;;   # the rotation drift guard: none managed by rotate-secrets.sh
+  *"get pods -o json"*) echo '{"items":[]}' ;;      # apiserver-cidrs.py: no injected KUBERNETES_SERVICE_HOST
   *"get nodes"*) cat "$FAKE_DIR/flavour-$ctx" 2>/dev/null ;;
   *"get configmap sovereign-os-environment"*)
     [ -f "$FAKE_DIR/marker-$ctx" ] || { echo 'Error from server (NotFound)' >&2; exit 1; }

@@ -12,7 +12,7 @@
 # restricted consoles stayed private. Each of those has gone wrong once. `scripts/release.sh`
 # runs this after every deploy; it can also be run by hand at any time.
 #
-# READ-ONLY: kubectl get/logs/port-forward, helm get values, curl. It changes nothing.
+# READ-ONLY: kubectl get/logs/port-forward/exec (a TCP probe), helm get values, curl. It changes nothing.
 #
 # Checks (any FAIL makes the exit status 1; NOTE lines are information only):
 #   1. Deployments os-ui and os-ui-worker run the expected image tag and are fully Ready; docling
@@ -26,6 +26,10 @@
 #   5. The worker's log has its boot line with `systems=hydrated`.
 #   6. The ClickHouse PVC is at least the size the chart's values.yaml asks for.
 #   7. Every model in the LiteLLM ConfigMap carries `model_info` (prices; budgets need them).
+#   9. The Dagster daemon (the run launcher) can open a TCP connection to the API server address
+#      its own pod uses (KUBERNETES_SERVICE_HOST:KUBERNETES_SERVICE_PORT), via `kubectl exec`. On
+#      Gardener that address is the injected domain, which `allow-apiserver-egress` must admit
+#      (networkPolicies.apiserver.extraCidrs); without it no run Job is ever created.
 #   8. Langfuse can read its ClickHouse tables: upstream `GET /api/public/health` with
 #      `failIfDatabaseUnavailable=true&failIfNoRecentEvents=true`, through `kubectl port-forward`
 #      (Langfuse is never published, and the API-server proxy is outside the default-deny policy).
@@ -217,6 +221,22 @@ except Exception: print("|")' 2>/dev/null || echo '|')
   esac
 }
 
+check_dagster_apiserver() {
+  local dep="$REL-dagster-daemon" out
+  k get deploy "$dep" >/dev/null 2>&1 || { note "no Dagster daemon: no run launcher to check"; return; }
+  out=$(k exec "deploy/$dep" -c dagster -- python3 -c 'import os, socket
+h, p = os.environ.get("KUBERNETES_SERVICE_HOST", ""), int(os.environ.get("KUBERNETES_SERVICE_PORT", "443"))
+try:
+    socket.create_connection((h, p), timeout=5).close(); print("connected", h, p)
+except Exception as e:
+    print("refused", h, p, type(e).__name__)' 2>/dev/null || true)
+  case $out in
+    connected*) pass "Dagster daemon reaches the API server (${out#connected })" ;;
+    refused*)   fail "Dagster daemon reaches the API server (${out#refused }; networkPolicies.apiserver.extraCidrs)" ;;
+    *)          fail "Dagster daemon reaches the API server (kubectl exec gave no answer)" ;;
+  esac
+}
+
 check_deployment os-ui
 check_deployment os-ui-worker
 # Docling serves os-ui's document conversions; its own tag is pinned in the chart.
@@ -228,6 +248,7 @@ check_worker_boot
 check_clickhouse_volume
 check_model_info
 check_langfuse_traces
+check_dagster_apiserver
 
 if [ ${#FAILED[@]} -eq 0 ]; then echo "SMOKE_OK"; exit 0; fi
 echo "SMOKE_FAILED (${#FAILED[@]}): $(printf '%s; ' "${FAILED[@]}")"

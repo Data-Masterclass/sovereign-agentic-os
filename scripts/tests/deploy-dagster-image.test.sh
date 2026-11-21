@@ -38,7 +38,7 @@ tree() { # <dir> — a throwaway operator tree with this chart
 }
 BIN=$TMP/bin; mkdir -p "$BIN"
 # The rotation drift guard lists the Secrets: none is managed by rotate-secrets.sh here.
-printf '#!/usr/bin/env bash\necho "kubectl $*" >> "$FAKE_LOG"\ncase "$*" in *"get secrets -o json"*) echo "{\\"items\\":[]}" ;; esac\n' > "$BIN/kubectl"
+printf '#!/usr/bin/env bash\necho "kubectl $*" >> "$FAKE_LOG"\ncase "$*" in *"get pods -o json"*) echo "{\\"items\\":[]}" ;; *"get secrets -o json"*) echo "{\\"items\\":[]}" ;; esac\n' > "$BIN/kubectl"
 cat > "$BIN/helm" <<STUB
 #!/usr/bin/env bash
 [ "\$1" = version ] && { echo v4.2.2; exit 0; }   # helm-version-guard.sh
