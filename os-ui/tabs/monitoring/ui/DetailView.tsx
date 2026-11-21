@@ -43,7 +43,7 @@ type AgentDetail = {
   telemetry: { costUsd: number; tokens: number; runs: number; lastRunAt: number | null; warnings: number; errors: number; overall: Health7 };
   costSeries: { day: number; value: number }[];
   tokenSeries: { day: number; value: number }[];
-  runs: { id: string; at: number; name: string; model?: string; decision?: string; health: Health7; costUsd?: number; tokens?: number; ms?: number; source: string }[];
+  runs: { id: string; at: number; name: string; model?: string; decision?: string; health: Health7; costUsd?: number; tokens?: number; ms?: number; source: string; traceUrl?: string }[];
   issues: { at: number; name: string; health: 'warn' | 'error'; detail: string }[];
   profile: SystemProfile | null;
   lastRun: LastRunReport | null;
@@ -327,10 +327,11 @@ function AgentBody({ a }: { a: AgentDetail }) {
             <span>Time</span><span>Run</span><span>Status</span><span>Duration</span><span>Cost</span><span>Tokens</span><span>Model</span>
           </div>
           {a.runs.map((r) =>
-            // The Langfuse console has no address on a deployment that does not publish it
-            // (links.langfuse === ''): the row is then plain text, never a link to nowhere.
-            a.links.langfuse ? (
-            <a key={r.id} className="mon-tr mon-tr-run" href={a.links.langfuse} target="_blank" rel="noreferrer" title="Open in Langfuse">
+            // A row opens ITS OWN trace on the Langfuse console host (r.traceUrl). It has none on a
+            // deployment that does not publish Langfuse, or for an in-process record: the row is
+            // then plain text, never a link to nowhere.
+            r.traceUrl ? (
+            <a key={r.id} className="mon-tr mon-tr-run" href={r.traceUrl} target="_blank" rel="noreferrer" title="Open this run's trace in Langfuse">
               <span className="muted">{ago(r.at)}</span>
               <span className="mono ellip">{r.name}</span>
               <span><span className={`mon-dot ${H7_DOT[r.health]}`} /> {r.health}</span>
