@@ -23,7 +23,7 @@ import 'server-only';
 import { config } from '@core/kernel/config';
 import { commitTree, commitMessage, authorFor, repoLayout, reserveSubtree, type CommitResult, type CommitTreeOptions } from '@core/infra/git-store';
 import { relocateProject, V2_RESERVED_PREFIXES } from '@tabs/data/lib/dbt/layout';
-import { alertsModelPath, alertsNativeEnabled, dashboardsModelPath, dashboardsNativeEnabled } from '@core/infra/repo-layout';
+import { alertsModelPath, alertsNativeEnabled, dashboardsModelPath, dashboardsNativeEnabled, OS_SCHEDULES_PATH } from '@core/infra/repo-layout';
 import { currentSurface, newRequestId } from '@core/infra/request-surface';
 import { onProjectChange, type ProjectChange } from '@tabs/data/lib/project-events';
 import { peekDatasetMeta, datasetsForProject } from '@tabs/data/lib/store';
@@ -102,7 +102,7 @@ export async function commitDataProject(domain: string, actor: ActorIdentity, me
   // WP-15: the standing grant rows equal the ENABLED schedules this commit writes, BEFORE the
   // commit lands, so a schedule tick never names a grant the OS has not issued. A database error
   // is logged, not thrown: the run then fails closed at /start ("no run grant"), visibly.
-  if (runGrants) await reconcileStandingGrantsFor(domain, generated.get('os/schedules.yml') ?? null, actor.id, deps.standingGrants);
+  if (runGrants) await reconcileStandingGrantsFor(domain, generated.get(OS_SCHEDULES_PATH) ?? null, actor.id, deps.standingGrants);
   if (layout === 2) for (const pre of V2_RESERVED_PREFIXES) reserveSubtree(pre);
   const files = relocateProject(generated, layout);
   const object = meta.object ?? domain;
