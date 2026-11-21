@@ -679,3 +679,20 @@ a.mon-tr:hover {
   gap: 8px;
   margin-bottom: 10px;
 }
+
+/* ---- Agents · Data · Platform panels (tabs/monitoring/ui/PanelsView.tsx) ---- */
+.mon-tr-pfail {
+  grid-template-columns: 80px 1fr auto;
+}
+.mon-tr-pjob {
+  grid-template-columns: 1.6fr 1fr 1fr 60px;
+}
+.mon-view-seg {
+  margin: 4px 0 14px;
+}
+@media (max-width: 640px) {
+  .mon-tr-pfail,
+  .mon-tr-pjob {
+    grid-template-columns: 1fr 1fr;
+  }
+}

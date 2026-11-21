@@ -8,6 +8,7 @@ import PageHeader from '@core/ui/PageHeader';
 import { useApi } from '@core/ui/useApi';
 import DetailView, { type DetailTarget } from '@tabs/monitoring/ui/DetailView';
 import SpendSection from '@tabs/monitoring/ui/SpendSection';
+import PanelsView, { type PanelKind } from '@tabs/monitoring/ui/PanelsView';
 import GatewayPanel from '@tabs/admin/ui/GatewayPanel';
 import { useUser } from '@core/ui/useUser';
 import { roleAtLeast } from '@core/kernel/session';
@@ -23,6 +24,9 @@ import { ago, compact, money } from '@tabs/monitoring/ui/format';
  *     Last run · ⚠warnings/✗errors (Langfuse + the in-process governed ring).
  *   • Data Monitoring  — each dataset with freshness, DQ rules passing/violated, and
  *     pipeline + quality health (the real persisted DQ run).
+ *   • Agents · Data · Platform panels (`?view=`, tabs/monitoring/ui/PanelsView.tsx) — runs over
+ *     time, latency, tokens, key spend, OPA denials, Dagster job/test health, downstream impact,
+ *     component probes, VictoriaMetrics pressure, VictoriaLogs error rates; Platform is admin-only.
  *   • Cost & Spend     — tenant spend vs the billing envelope (ADMIN ONLY; the tab
  *     itself is builder-visible, so the section is gated with roleAtLeast(role,
  *     'admin')). It moved here from Platform because the envelope is display-only:
@@ -147,6 +151,18 @@ export default function MonitoringPage() {
   const [agentScope, setAgentScope] = useState<ScopeKey>('mine');
   const [dataScope, setDataScope] = useState<ScopeKey>('mine');
   const [target, setTarget] = useState<DetailTarget | null>(null);
+  // Agents · Data · Platform (admin) — persisted as ?view= so a reload or a shared link keeps it.
+  const [picked, setView] = useState<PanelKind>('agents');
+  // Platform is admin-only (the API answers 403 below admin); anyone else stays on Agents.
+  const view: PanelKind = picked === 'platform' && !canSeeSpend ? 'agents' : picked;
+  useEffect(() => {
+    const v = getUrlParam('view');
+    if (v === 'agents' || v === 'data' || v === 'platform') setView(v);
+  }, []);
+  const pickView = useCallback((v: PanelKind) => {
+    setView(v);
+    patchUrl({ view: v === 'agents' ? null : v });
+  }, []);
 
   // Deep-link + back/forward: the open artifact lives in the URL (?agent= / ?dataset=),
   // mirroring the Agents tab's ?system= convention.
@@ -211,7 +227,13 @@ export default function MonitoringPage() {
         {error ? <div className="error" style={{ marginTop: 20 }}>{error}</div> : null}
         {!data && loading ? <div className="stub-page" style={{ marginTop: 20 }}>Loading…</div> : null}
 
-        {data && (
+        <div className="seg mon-view-seg" role="tablist" aria-label="Monitoring view">
+          <button type="button" role="tab" aria-selected={view === 'agents'} className={view === 'agents' ? 'on' : ''} onClick={() => pickView('agents')}>Agents</button>
+          <button type="button" role="tab" aria-selected={view === 'data'} className={view === 'data' ? 'on' : ''} onClick={() => pickView('data')}>Data</button>
+          {canSeeSpend && <button type="button" role="tab" aria-selected={view === 'platform'} className={view === 'platform' ? 'on' : ''} onClick={() => pickView('platform')}>Platform</button>}
+        </div>
+
+        {data && view === 'agents' && (
           <>
             <div className="section-title" style={{ marginTop: 18 }}>Agent Monitoring</div>
             {!data.telemetryLive && (
@@ -234,7 +256,12 @@ export default function MonitoringPage() {
               </div>
             )}
 
-            <div className="section-title" style={{ marginTop: 26 }}>Data Monitoring</div>
+            <PanelsView kind="agents" />
+          </>
+        )}
+        {data && view === 'data' && (
+          <>
+            <div className="section-title" style={{ marginTop: 18 }}>Data Monitoring</div>
             <p className="hint" style={{ marginTop: 0, marginBottom: 8 }}>
               Freshness, pipeline health and data-quality per dataset — the real last DQ run.
             </p>
@@ -251,13 +278,18 @@ export default function MonitoringPage() {
               </div>
             )}
 
-            {canSeeSpend && (
-              <>
-                <SpendSection />
-                <GatewayPanel variant="spend" />
-              </>
-            )}
-
+            <PanelsView kind="data" />
+          </>
+        )}
+        {canSeeSpend && view === 'platform' && (
+          <>
+            <PanelsView kind="platform" />
+            <SpendSection />
+            <GatewayPanel variant="spend" />
+          </>
+        )}
+        {data && (
+          <>
             <p className="hint" style={{ marginTop: 20, opacity: 0.7 }}>
               RAG monitoring (Knowledge &amp; Files) is coming next. Policy and caps live in Governance.
             </p>
