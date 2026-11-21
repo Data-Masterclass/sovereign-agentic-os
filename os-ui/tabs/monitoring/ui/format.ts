@@ -32,3 +32,6 @@ export const money = (n: number): string => (n >= 1 ? `€${n.toFixed(2)}` : n >
 
 /** 1234 → "1.2k"; below 1000 the plain number. */
 export const compact = (n: number): string => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${n}`);
+
+/** LiteLLM's ledger unit: its spend fields are USD (the admin Gateway panel says the same). Zero is a real $0.00. */
+export const usd = (n: number): string => (n > 0 && n < 1 ? `$${n.toFixed(3)}` : `$${n.toFixed(2)}`);

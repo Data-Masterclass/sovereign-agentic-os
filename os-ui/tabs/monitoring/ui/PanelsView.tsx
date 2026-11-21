@@ -18,7 +18,7 @@ import type { AgentsView, AgentSystemPanel } from '@tabs/monitoring/lib/panels/a
 import type { DataView, DatasetPanel } from '@tabs/monitoring/lib/panels/data-panel';
 import type { PlatformView } from '@tabs/monitoring/lib/panels/platform-panel';
 import type { NotUpstream, SourceState } from '@tabs/monitoring/lib/panels/panels-core';
-import { ago, compact, money } from '@tabs/monitoring/ui/format';
+import { ago, compact, usd } from '@tabs/monitoring/ui/format';
 
 export type PanelKind = 'agents' | 'data' | 'platform';
 
@@ -113,7 +113,7 @@ function AgentCard({ s, v }: { s: AgentSystemPanel; v: AgentsView }) {
         <Stat label="held for approval" value={totals ? String(totals.held) : '—'} tone={totals?.held ? 'warn' : undefined} />
         <Stat label={`p50 / p95 (${v.windowDays}d)`} value={t === undefined ? '—' : t ? `${ms(t.p50Ms)} / ${ms(t.p95Ms)}` : 'no traces'} />
         <Stat label="tokens" value={t === undefined ? '—' : t ? compact(t.tokens) : '0'} />
-        <Stat label="key spend" value={s.keySpendUsd === undefined ? '—' : s.keySpendUsd === null ? 'no key' : money(s.keySpendUsd)} />
+        <Stat label="key spend (LiteLLM, USD)" value={s.keySpendUsd === undefined ? '—' : s.keySpendUsd === null ? 'no key' : usd(s.keySpendUsd)} />
       </div>
       <div className="mon-dq-row" style={{ marginTop: 6 }}>
         {s.policy !== undefined && (
@@ -156,7 +156,7 @@ function AgentCard({ s, v }: { s: AgentSystemPanel; v: AgentsView }) {
 
 function AgentsPanels({ v }: { v: AgentsView }) {
   return (
-    <>
+    <div className="mon-panels">
       <div className="mon-sub">Agent systems <span className="mon-sub-note">run store · Langfuse metrics · LiteLLM keys · OPA decision log</span></div>
       <Sources sources={v.sources} />
       {v.systems.length === 0 ? (
@@ -165,7 +165,7 @@ function AgentsPanels({ v }: { v: AgentsView }) {
         <div className="mon-tile-grid">{v.systems.map((s) => <AgentCard key={s.id} s={s} v={v} />)}</div>
       )}
       <NotOffered items={v.notUpstream} />
-    </>
+    </div>
   );
 }
 
@@ -222,6 +222,12 @@ function DatasetCard({ d, v }: { d: DatasetPanel; v: DataView }) {
       ) : d.downstream && d.downstream.length > 0 ? (
         <p className="hint" style={{ margin: '6px 0 0' }}>Downstream: {d.downstream.length} asset{d.downstream.length === 1 ? '' : 's'}</p>
       ) : null}
+      {d.downstreamHidden && (
+        <p className="hint" style={{ margin: '4px 0 0' }}>
+          {d.tests?.failing.length || failingJobs.length ? 'Also impacted' : 'Also downstream'}: {d.downstreamHidden.count} asset{d.downstreamHidden.count === 1 ? '' : 's'} outside your view
+          ({Object.entries(d.downstreamHidden.byDomain).map(([dom, n]) => `${dom} ${n}`).join(' · ')})
+        </p>
+      )}
       {v.sources.dagsterRuns.state === 'live' && (d.jobs?.length ?? 0) === 0 && <p className="hint" style={{ margin: '6px 0 0' }}>No Dagster runs for this dataset in the recent run window.</p>}
     </div>
   );
@@ -230,12 +236,12 @@ function DatasetCard({ d, v }: { d: DatasetPanel; v: DataView }) {
 function DataPanels({ v }: { v: DataView }) {
   const sorted = [...v.datasets].sort((a, b) => score(b) - score(a));
   return (
-    <>
+    <div className="mon-panels">
       <div className="mon-sub">Datasets <span className="mon-sub-note">Dagster runs · asset checks (dbt tests) · Dagster lineage</span></div>
       <Sources sources={v.sources} />
       {sorted.length === 0 ? <p className="hint">No datasets in your scope.</p> : <div className="mon-tile-grid">{sorted.map((d) => <DatasetCard key={d.id} d={d} v={v} />)}</div>}
       <NotOffered items={v.notUpstream} />
-    </>
+    </div>
   );
 }
 
@@ -247,7 +253,7 @@ function score(d: DatasetPanel): number {
 function PlatformPanels({ v }: { v: PlatformView }) {
   const down = v.components.filter((c) => c.status !== 'ready');
   return (
-    <>
+    <div className="mon-panels">
       <div className="mon-sub">Components <span className="mon-sub-note">each component&apos;s own health endpoint</span></div>
       <div className="mon-dq-row">
         {v.components.map((c) => (
@@ -311,7 +317,7 @@ function PlatformPanels({ v }: { v: PlatformView }) {
         </div>
       )}
       <NotOffered items={v.notUpstream} />
-    </>
+    </div>
   );
 }
 

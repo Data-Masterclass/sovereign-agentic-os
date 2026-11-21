@@ -15,7 +15,7 @@
  *       Langfuse Metrics API  → `systemTraceStats` (sessionId any of system:<id>)
  *       LiteLLM `/key/list`   → spend of alias os-<id>
  *       VictoriaLogs          → OPA decision log of principals os-<id>[:<node>]
- *       OS approvals store    → pending approvals of these systems
+ *       OS approvals store    → pending approvals of these systems the viewer may see (governance `canSee`)
  *   - A source that does not answer is `unavailable` with its reason; its per-system fields are
  *     absent (never zero).
  */
@@ -28,6 +28,7 @@ import { logsQuery } from '@core/adapters/victoria-logs/query';
 import { readAllKeys } from '@core/infra/litellm-admin';
 import { traceUrlFor } from '@core/infra/langfuse';
 import { listApprovals, ensureHydrated as ensureApprovalsHydrated } from '@core/policy/approvals';
+import { canSee as canSeeApproval } from '@core/policy/roles';
 import { scopeForUser } from '@tabs/monitoring/lib/scope';
 import { monitoringSources, SOURCES_MISSING } from '@tabs/monitoring/lib/panels/sources';
 import { visibleToOf } from '@tabs/monitoring/lib/adapters/run-store-runs';
@@ -104,7 +105,9 @@ export async function agentsView(user: CurrentUser, nowMs = Date.now()): Promise
 
   const asked = new Set(ids);
   const approvals = await ensureApprovalsHydrated().then(
-    () => ({ ok: true as const, pending: listApprovals({ status: 'pending' }).filter((a) => a.systemId && asked.has(a.systemId)) }),
+    () => ({ ok: true as const, // Governance's visibility rule for the queue (core/policy/roles.ts): admin all, builder+ own
+    // domain, creator own requests — a shared system does not widen it.
+    pending: listApprovals({ status: 'pending' }).filter((a) => a.systemId && asked.has(a.systemId) && canSeeApproval({ id: user.id, domains: user.domains, role: user.role }, a)) }),
     (e: Error) => ({ ok: false as const, error: e.message }),
   );
   const pending = approvals.ok ? approvals.pending : [];
