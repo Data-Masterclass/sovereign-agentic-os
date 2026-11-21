@@ -24,6 +24,13 @@ class DbtRunEnv(unittest.TestCase):
             "PATH", "HOME", "LC_ALL", "OS_PRINCIPAL", "DBT_ENV_SECRET_TRINO_PASSWORD", "DBT_PROFILES_DIR", "TRINO_HOST", "TRINO_CA_FILE",
         ]))
 
+    def test_exact_names_only_a_new_trino_or_dbt_variable_stays_invisible(self):
+        # Twin of a prefix rule: a credential that merely LOOKS like a dbt or Trino setting.
+        pod = {"TRINO_HOST": "trino", "TRINO_PASSWORD": "x", "TRINO_ADMIN_TOKEN": "x",
+               "DBT_ENV_CUSTOM_ENV_SECRET": "x", "DBT_ENV_SECRET_OTHER": "x", "DBT_CLOUD_API_KEY": "x",
+               "LC_SECRET": "x", "DBT_ENV_SECRET_TRINO_PASSWORD": "dbt-guards-this"}
+        self.assertEqual(sorted(osp.dbt_run_env(pod)), ["DBT_ENV_SECRET_TRINO_PASSWORD", "TRINO_HOST"])
+
 
 if __name__ == "__main__":
     unittest.main()
