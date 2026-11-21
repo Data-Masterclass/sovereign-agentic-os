@@ -105,7 +105,7 @@ function MetricCard({
       title="Open this metric — explore, govern, or set an alert"
     >
       <div className="tile-top" style={{ alignItems: 'flex-start' }}>
-        <div className="row" style={{ gap: 6, alignItems: 'flex-start', minWidth: 0, flex: 1 }}>
+        <div className="row" style={{ gap: 6, alignItems: 'flex-start', flex: '1 1 min(100%, 14rem)', minWidth: 'min(100%, 14rem)' }}>
           {onPick ? (
             // Multi-select for bulk archive. Stop the click so ticking a card
             // doesn't also open it.
@@ -117,7 +117,7 @@ function MetricCard({
               onChange={(e) => onPick(e.target.checked)}
             />
           ) : null}
-          <span className="tile-name" title={`${m.name}\nMetric: ${m.member}\nSource dataset: ${m.datasetName}`}>{m.name}</span>
+          <span className="tile-name" style={{ flex: '1 1 auto', minWidth: 0 }} title={`${m.name}\nMetric: ${m.member}\nSource dataset: ${m.datasetName}`}>{m.name}</span>
         </div>
         <div className="row" style={{ gap: 4, alignItems: 'center', flex: 'none' }}>
           {showDomain ? <DomainTag domain={m.domain} /> : null}

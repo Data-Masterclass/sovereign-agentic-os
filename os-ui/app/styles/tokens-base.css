@@ -2843,15 +2843,18 @@ button.card.tile {
 button.card.tile:hover { transform: translateY(-2px); }
 button.card.tile:focus-visible { outline: 2px solid var(--gold-line); outline-offset: 2px; }
 
-.tile-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.tile-top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 8px; }
 .tile-name {
   font-family: var(--font-head);
   font-size: 16px;
   font-weight: 600;
   letter-spacing: 0.2px;
   color: var(--text);
-  /* Shrink beside the badges without running under them: a long word breaks inside the title. */
-  min-width: 0;
+  /* The title takes the free width but never less than 14rem (or the full row, if narrower): when the badges do not
+     fit beside it, they wrap to the next line instead of squeezing the title (a squeezed title
+     broke one letter per line). A single word longer than the row still breaks inside it. */
+  flex: 1 1 min(100%, 14rem);
+  min-width: min(100%, 14rem);
   overflow-wrap: break-word;
 }
 .tile-meta { display: flex; align-items: center; gap: 7px; font-size: 12px; }
