@@ -193,8 +193,9 @@ test('WORKS: the same GETs from the OS UI, and the alert cron with its Origin', 
   for (const p of ['/api/metrics/alerts/run', '/api/mcp/token', '/api/connections/notion/authorize']) {
     assert.equal(req('GET', p, { 'sec-fetch-site': 'same-origin' }).ok, true, p);
   }
+  // The CronJob calls the in-cluster URL but states the configured public origin.
   assert.equal(
-    req('GET', '/api/metrics/alerts/run', { origin: 'http://os-ui:3000' }, { requestOrigin: 'http://os-ui:3000' }).ok,
+    req('GET', '/api/metrics/alerts/run', { origin: OS }, { requestOrigin: 'http://os-ui:3000' }).ok,
     true,
   );
 });

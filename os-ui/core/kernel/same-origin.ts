@@ -20,9 +20,10 @@
  *   3. No Origin → the `Referer`'s origin must equal an OS origin.
  *   4. Neither → refused (a cookie-carrying browser request with no provenance).
  *
- * "An OS origin" is `OS_PUBLIC_URL`'s origin, or this request's own origin (Host +
- * forwarded scheme) — the textbook same-origin comparison, which also covers an
- * in-cluster client calling the service by its internal name.
+ * "An OS origin" comes from CONFIGURATION only: `OS_PUBLIC_URL` plus the hosts listed in
+ * `OS_PUBLIC_URL_ALIASES` (the other OS UI ingress host, rendered by the chart). Request
+ * data such as `Host` or `X-Forwarded-Host` never widens that set. Only when no public
+ * URL is configured at all (local dev) is the request URL's own origin used.
  *
  * Requests WITHOUT the session cookie are not checked: bearer-token API/MCP clients,
  * OAuth token exchanges and server-to-server webhooks never rely on ambient browser
@@ -90,6 +91,8 @@ export function needsSameOriginCheck(method: string, pathname: string): boolean 
   const m = method.toUpperCase();
   // Writes through the same-origin tool proxy are covered too.
   if (path.startsWith('/tools/')) return STATE_CHANGING_METHODS.has(m);
+  // The MCP consent decision (outside /api/): approving issues an authorization code.
+  if (/^\/oauth\/authorize\/?$/.test(path)) return STATE_CHANGING_METHODS.has(m);
   if (!path.startsWith('/api/')) return false;
   if (STATE_CHANGING_METHODS.has(m)) return true;
   // Admin reads + the audited state-changing GETs (OPTIONS preflights never reach here).
@@ -105,7 +108,9 @@ export type SameOriginInput = {
   hasSessionCookie: boolean;
   /** `OS_PUBLIC_URL` (may be empty in local dev). */
   osPublicUrl: string | undefined;
-  /** This request's own origin as seen by the server (Host + forwarded scheme). */
+  /** Further configured OS UI origins (`OS_PUBLIC_URL_ALIASES`). */
+  osPublicUrlAliases: readonly string[];
+  /** The request URL's own origin — consulted ONLY when no public URL is configured. */
   requestOrigin: string | undefined;
 };
 
@@ -117,7 +122,8 @@ export function checkSameOrigin(input: SameOriginInput): SameOriginVerdict {
   if (!input.hasSessionCookie) return { ok: true };
   if ((input.headers.get('authorization') ?? '').trim()) return { ok: true };
 
-  const allowed = new Set([originOf(input.osPublicUrl), originOf(input.requestOrigin)].filter(Boolean));
+  const configured = [originOf(input.osPublicUrl), ...input.osPublicUrlAliases.map(originOf)].filter(Boolean);
+  const allowed = new Set(configured.length > 0 ? configured : [originOf(input.requestOrigin)].filter(Boolean));
 
   const site = (input.headers.get('sec-fetch-site') ?? '').trim().toLowerCase();
   if (site === 'same-origin') return { ok: true };
@@ -141,10 +147,18 @@ export function checkSameOrigin(input: SameOriginInput): SameOriginVerdict {
   return { ok: false, reason: 'request origin missing' };
 }
 
-/** The request's own origin from forwarded headers (ingress) or the URL itself. */
-export function requestOriginOf(url: URL, headers: Headers): string {
-  const host = (headers.get('x-forwarded-host') ?? headers.get('host') ?? '').split(',')[0].trim();
-  const proto = (headers.get('x-forwarded-proto') ?? '').split(',')[0].trim() || url.protocol.replace(/:$/, '');
-  if (!host) return url.origin;
-  return `${proto}://${host}`;
+/**
+ * The request URL's own origin. Forwarded headers are deliberately NOT read: they are
+ * request data, and the allowed origins come from configuration.
+ */
+export function requestOriginOf(url: URL, _headers?: Headers): string {
+  return url.origin;
+}
+
+/** A comma-separated list of origins (`OS_PUBLIC_URL_ALIASES`), canonicalised; junk dropped. */
+export function parseOriginList(raw: string | undefined): string[] {
+  return (raw ?? '')
+    .split(',')
+    .map((x) => originOf(x))
+    .filter(Boolean);
 }

@@ -2,6 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse, type NextRequest } from 'next/server';
+import { CONSENT_PAGE_HEADERS } from '@core/auth/consent-headers';
 import { currentUser, type CurrentUser } from '@core/kernel/auth';
 import { validateAuthorizeRequest, issueCode, getClient, issuer, OAuthError, type AuthorizeRequest } from '@core/mcp/oauth';
 
@@ -29,7 +30,7 @@ function errorPage(e: unknown): NextResponse {
   const msg = e instanceof OAuthError ? `${e.code}: ${e.message}` : 'invalid authorization request';
   return new NextResponse(page(`<h1>Cannot connect</h1><p class="muted">${esc(msg)}</p>`), {
     status: e instanceof OAuthError ? e.status : 400,
-    headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' },
+    headers: CONSENT_PAGE_HEADERS,
   });
 }
 
@@ -129,7 +130,7 @@ export async function GET(req: NextRequest) {
   const user = await currentUser();
   if (!user) return signinBounce(url.origin, url.pathname + url.search);
   return new NextResponse(await consentPage(v, user), {
-    headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' },
+    headers: CONSENT_PAGE_HEADERS,
   });
 }
 

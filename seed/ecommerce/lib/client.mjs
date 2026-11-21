@@ -47,9 +47,10 @@ export class Session {
       headers: {
         'content-type': 'application/json',
         cookie: this.cookie,
-        // The OS refuses a cookie-authenticated write without same-origin provenance;
-        // a non-browser client states the origin it is calling.
-        origin: new URL(this.baseUrl).origin,
+        // The OS refuses a cookie-authenticated write without same-origin provenance and
+        // accepts only its CONFIGURED origin: state OS_PUBLIC_URL when calling through a
+        // port-forward or the in-cluster Service, else the origin being called.
+        origin: new URL(process.env.OS_PUBLIC_URL || this.baseUrl).origin,
       },
       body: body === undefined ? undefined : JSON.stringify(body),
     });

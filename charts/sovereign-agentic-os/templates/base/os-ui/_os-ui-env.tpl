@@ -137,6 +137,22 @@
 - name: OS_PUBLIC_URL
   value: {{ . | quote }}
 {{- end }}
+{{- /* The OTHER OS UI ingress host(s) besides the public URL. The same-origin check accepts
+       only configured origins (never X-Forwarded-Host), so a UI served on the second host keeps
+       working. None when the ingress 308s the alias to the public URL (it never reaches os-ui). */}}
+{{- $ingA := .Values.ingress | default dict }}
+{{- if and $ingA.enabled (not $ingA.redirectAliasToPublicUrl) }}
+{{- $pubA := $publicUrl | trimSuffix "/" }}
+{{- $aliases := list }}
+{{- range $k := list "osUI" "osUIApex" }}
+{{- $h := index ($ingA.hosts | default dict) $k }}
+{{- if $h }}{{- $u := printf "https://%s" $h }}{{- if ne $u $pubA }}{{- $aliases = append $aliases $u }}{{- end }}{{- end }}
+{{- end }}
+{{- with $aliases }}
+- name: OS_PUBLIC_URL_ALIASES
+  value: {{ join "," (uniq .) | quote }}
+{{- end }}
+{{- end }}
 # In-cluster backend Service URLs (overridable per environment).
 # The shared SERVICE BEARER. A5 deleted the Python agent-runtime this was named
 # after (agent graphs run in this process now), but the token stayed: os-ui

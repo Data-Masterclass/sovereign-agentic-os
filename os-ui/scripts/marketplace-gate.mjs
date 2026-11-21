@@ -42,7 +42,7 @@ async function api(cookie, path, init = {}) {
   const res = await fetch(`${BASE}${path}`, {
     ...init,
     // origin: the OS refuses a cookie-authenticated write without same-origin provenance.
-    headers: { 'content-type': 'application/json', cookie, origin: new URL(BASE).origin, ...(init.headers ?? {}) },
+    headers: { 'content-type': 'application/json', cookie, origin: new URL(process.env.OS_PUBLIC_URL || BASE).origin, ...(init.headers ?? {}) },
   });
   const body = await res.json().catch(() => ({}));
   return { status: res.status, body };

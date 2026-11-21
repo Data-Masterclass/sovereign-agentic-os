@@ -337,6 +337,9 @@ export const config = {
   // reaches the OS across subdomains (not its own origin). '' locally → apps derive
   // it from their host or run same-origin. Same var the emailed-links path reads.
   osPublicUrl: base(env('OS_PUBLIC_URL', '')),
+  // Other origins the OS UI is served on (the second ingress host), comma-separated. The
+  // same-origin check accepts these besides OS_PUBLIC_URL; rendered by the chart.
+  osPublicUrlAliases: env('OS_PUBLIC_URL_ALIASES', ''),
   // The chart sets OS_GIT_HTTP=true when the authenticated git-http sidecar + Ingress are rendered
   // (osUI.dataProjectGit.gitHttp.enabled). Only then is a clone URL published (WP-51).
   gitHttpEnabled: env('OS_GIT_HTTP', '') === 'true',

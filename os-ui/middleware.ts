@@ -10,7 +10,7 @@ import {
   verifySession,
 } from '@core/kernel/session';
 import { corsHeadersFor } from '@core/kernel/cors';
-import { checkSameOrigin, requestOriginOf } from '@core/kernel/same-origin';
+import { checkSameOrigin, parseOriginList, requestOriginOf } from '@core/kernel/same-origin';
 import { findDisabledTab } from '@core/kernel/tabs';
 
 /**
@@ -59,7 +59,8 @@ export async function middleware(req: NextRequest) {
     headers: req.headers,
     hasSessionCookie: Boolean(sessionToken),
     osPublicUrl: appConfig.osPublicUrl,
-    requestOrigin: requestOriginOf(req.nextUrl, req.headers),
+    osPublicUrlAliases: parseOriginList(appConfig.osPublicUrlAliases),
+    requestOrigin: requestOriginOf(req.nextUrl),
   });
   if (!verdict.ok) {
     return withCors(NextResponse.json({ error: 'forbidden', reason: verdict.reason }, { status: 403 }));
