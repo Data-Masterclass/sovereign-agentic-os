@@ -18,8 +18,13 @@ chart="$repo/charts/sovereign-agentic-os"
 k() { kubectl --context "$ctx" "$@"; }
 
 rendered="$(mktemp)"
+# The Collector's kubelet egress is narrowed to the node network, as in production
+# (observability.collector.kubeletStats.nodeCidrs): here the kind nodes' InternalIPs.
+node_cidrs="$(k get nodes -o jsonpath='{range .items[*]}{.status.addresses[?(@.type=="InternalIP")].address}/32,{end}' | sed 's/,$//')"
+[ -n "$node_cidrs" ] || { echo "no node InternalIP found" >&2; exit 1; }
 # shellcheck disable=SC2086
 helm template agentic-os "$chart" --namespace "$ns" \
+  --set "observability.collector.kubeletStats.nodeCidrs={$node_cidrs}" \
   --show-only templates/base/priority-classes.yaml \
   --show-only templates/base/network/egress-policies.yaml \
   --show-only templates/base/opa/opa.yaml \

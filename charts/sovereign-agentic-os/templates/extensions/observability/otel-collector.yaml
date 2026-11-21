@@ -332,7 +332,9 @@ spec:
 {{- if and .Values.networkPolicies.defaultDeny $c.kubeletStats.enabled }}
 ---
 # The kubelet listens on the node's IP (port 10250), which is neither an in-namespace pod nor the
-# API server, so default-deny-egress would block kubelet_stats. Port-only, like the API-server rule.
+# API server, so default-deny-egress would block kubelet_stats. The destination is the node network
+# (`observability.collector.kubeletStats.nodeCidrs`); with none set the rule is port-only, like the
+# API-server rule without `networkPolicies.apiserver.cidrs`.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -349,5 +351,14 @@ spec:
   egress:
     - ports:
         - { protocol: TCP, port: 10250 }
+      {{- with ($c.kubeletStats.nodeCidrs | default list) }}
+      # The node network only (observability.collector.kubeletStats.nodeCidrs).
+      to:
+        {{- range (. | uniq) }}
+        - ipBlock: { cidr: {{ . | quote }} }
+        {{- end }}
+      {{- else }}
+      # No node network configured (observability.collector.kubeletStats.nodeCidrs): NOT narrowed.
+      {{- end }}
 {{- end }}
 {{- end }}
