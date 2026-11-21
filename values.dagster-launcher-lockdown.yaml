@@ -74,9 +74,8 @@ dagster:
                 - {name: REPO_SYNC_STATUS_PORT, value: '8089'}
                 - {name: DAGSTER_RELOAD_LOCATION, value: sovereign}
                 - {name: DAGSTER_GRAPHQL_URL, value: 'http://agentic-os-dagster-webserver:80/graphql'}
-                - {name: OS_INDEX_URL, value: 'http://os-ui:3000/api/data/projects'}
+                - {name: OS_INDEX_FILE, value: /repos-checkout/.os-index.json}
                 - {name: OS_QUARANTINE_THRESHOLD, value: '10'}
-                - {name: AGENT_RUNTIME_TOKEN, valueFrom: {secretKeyRef: {name: agent-runtime-token, key: token}}}
               resources:
                 requests: {cpu: 50m, memory: 384Mi}
                 limits: {cpu: '1', memory: 1Gi}
@@ -180,11 +179,8 @@ dagster:
           - { name: REPO_SYNC_STATUS_PORT, value: "8089" }
           - { name: DAGSTER_RELOAD_LOCATION, value: "sovereign" }
           - { name: DAGSTER_GRAPHQL_URL, value: "http://agentic-os-dagster-webserver:80/graphql" }
-          - { name: OS_INDEX_URL, value: "http://os-ui:3000/api/data/projects" }
+          - { name: OS_INDEX_FILE, value: "/repos-checkout/.os-index.json" }
           - { name: OS_QUARANTINE_THRESHOLD, value: "10" }
-          - name: AGENT_RUNTIME_TOKEN
-            valueFrom:
-              secretKeyRef: { name: agent-runtime-token, key: token }
         resources:
           requests: { cpu: 50m, memory: 384Mi }
           limits: { cpu: "1", memory: 1Gi }
