@@ -181,7 +181,8 @@ test('scaffold: nextjs-supabase seeds a runnable App Router app + a correct Dock
   const docker = byPath('Dockerfile');
   assert.ok(docker, 'Dockerfile is seeded');
   assert.match(docker!.content, /^RUN .*npm install$/m, 'uses npm install (no lockfile seeded)');
-  assert.match(docker!.content, /npm_config_@sovereign-os:registry=https:\/\/[a-z-]+\.invalid\//, 'the install runs with the scope pin');
+  assert.match(docker!.content, /^COPY package\.json \.npmrc \.\/$/m, 'the .npmrc (the scope pin) is copied, required, before the install');
+  assert.doesNotMatch(docker!.content, /sovereign-os/i, 'the Dockerfile never names the scope (the scan flags any mention)');
   assert.doesNotMatch(docker!.content, /npm ci/, 'does not use npm ci');
   assert.doesNotMatch(docker!.content, /\|\| true/, 'does not swallow install errors');
   assert.match(docker!.content, /RUN npm run build/, 'runs next build');

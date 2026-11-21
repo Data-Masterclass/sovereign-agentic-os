@@ -56,6 +56,7 @@
  *   plain `node`, and `push-app-files.ts` uses it to recognise the one `.npmrc` an app may carry.
  */
 import yaml from 'js-yaml';
+import { parse as parseToml } from 'smol-toml';
 import type { ScaffoldFile, ScanFinding } from '@tabs/software/lib/model';
 
 /** The npm scope the OS vendors its own packages under. */
@@ -275,18 +276,22 @@ function scriptFindings(path: string, manifest: Json): ScanFinding[] {
 }
 
 /**
- * Yarn Berry (`.yarnrc.yml` `npmScopes`) and Bun (`bunfig.toml` `[install.scopes]`) have their
- * own per-scope registry settings and ignore `.npmrc`, so the pin cannot reach them. ANY entry
- * for the scope there is refused: the packages are vendored, a registry for them is never right.
- * A `.yarnrc.yml` that does not parse cannot be checked and is refused too.
+ * Package managers that keep their OWN per-scope registry settings, which `.npmrc` does not
+ * override: Yarn 1 (`.yarnrc`, `"@scope:registry" "<url>"`), Yarn Berry (`.yarnrc.yml`
+ * `npmScopes`) and Bun (`bunfig.toml` `install.scopes`). An app may configure NO scope registry
+ * there at all, for any scope: the OS packages are vendored, and a scope registry is the one
+ * setting that could send them elsewhere. Each file is PARSED with a real parser (js-yaml,
+ * smol-toml, and Yarn 1's own string rule: a quoted token is a JSON string), so dotted keys,
+ * quoted keys and escapes resolve exactly as the tool would read them. A file that does not parse
+ * is refused as unreadable.
  */
 export type ScopeConfigIssue = { reason: 'configures-scope' | 'unreadable'; detail: string };
 
-const isYarnrc = (name: string): boolean => name === '.yarnrc.yml' || name === '.yarnrc.yaml';
+const isYarnrc = (name: string): boolean => name === '.yarnrc.yml' || name === '.yarnrc.yaml' || name === '.yarnrc';
 const isBunfig = (name: string): boolean => name === 'bunfig.toml';
-const SCOPE_KEY = new RegExp(`^["']?@?${OS_SCOPE.slice(1)}["']?$`, 'i');
+const nonEmpty = (v: unknown): boolean => v !== null && v !== undefined && !(isObj(v) && Object.keys(v).length === 0);
 
-function yarnrcIssue(content: string): ScopeConfigIssue | null {
+function yarnBerryIssue(content: string): ScopeConfigIssue | null {
   let doc: unknown;
   try {
     doc = yaml.load(content);
@@ -295,42 +300,52 @@ function yarnrcIssue(content: string): ScopeConfigIssue | null {
   }
   if (doc === null || doc === undefined) return null;
   if (!isObj(doc)) return { reason: 'unreadable', detail: 'could not be read: it is not a YAML mapping' };
-  const scopes = doc.npmScopes;
-  if (scopes === undefined || scopes === null) return null;
-  if (!isObj(scopes)) return { reason: 'unreadable', detail: 'could not be read: npmScopes is not a mapping' };
-  const hit = Object.keys(scopes).find((k) => SCOPE_KEY.test(k.trim()));
-  return hit ? { reason: 'configures-scope', detail: `sets npmScopes.${hit}, a registry for ${OS_SCOPE}/* that Yarn uses instead of .npmrc` } : null;
+  return nonEmpty(doc.npmScopes) ? { reason: 'configures-scope', detail: 'sets npmScopes, a scope registry that Yarn uses instead of .npmrc' } : null;
 }
 
-function bunfigIssue(content: string): ScopeConfigIssue | null {
-  let section = '';
+/** One `.yarnrc` token: a JSON string when quoted (Yarn 1's rule), else up to the next space. */
+function yarn1Key(line: string): { ok: true; key: string } | { ok: false } {
+  if (!line.startsWith('"')) return { ok: true, key: line.split(/\s+/)[0] };
+  const m = /^"(?:[^"\\]|\\.)*"/.exec(line);
+  if (!m) return { ok: false };
+  try {
+    return { ok: true, key: JSON.parse(m[0]) as string };
+  } catch {
+    return { ok: false };
+  }
+}
+
+function yarn1Issue(content: string): ScopeConfigIssue | null {
   for (const raw of content.split(/\r?\n/)) {
-    const line = raw.replace(/#.*$/, '').trim();
-    if (!line) continue;
-    const header = /^\[([^\]]+)\]$/.exec(line);
-    if (header) {
-      section = header[1].replace(/\s+/g, '');
-      const parts = section.split('.');
-      if (parts[0] === 'install' && parts[1] === 'scopes' && parts.length > 2 && SCOPE_KEY.test(parts.slice(2).join('.'))) {
-        return { reason: 'configures-scope', detail: `has a [${section}] table, a registry for ${OS_SCOPE}/* that Bun uses instead of .npmrc` };
-      }
-      continue;
-    }
-    const key = line.split('=')[0].trim();
-    if (section === 'install.scopes' && SCOPE_KEY.test(key)) {
-      return { reason: 'configures-scope', detail: `sets ${key} under [install.scopes], a registry for ${OS_SCOPE}/* that Bun uses instead of .npmrc` };
-    }
-    if (section === 'install' && key === 'scopes' && new RegExp(`["']?@?${OS_SCOPE.slice(1)}["']?\\s*=`, 'i').test(line)) {
-      return { reason: 'configures-scope', detail: `sets install.scopes for ${OS_SCOPE}, a registry that Bun uses instead of .npmrc` };
+    const line = raw.trim();
+    if (!line || line.startsWith('#')) continue;
+    const key = yarn1Key(line);
+    if (!key.ok) return { reason: 'unreadable', detail: 'could not be read: a quoted key is not terminated' };
+    if (/^@[^:]+:registry$/i.test(key.key.trim())) {
+      return { reason: 'configures-scope', detail: `sets ${key.key}, a scope registry that Yarn uses instead of .npmrc` };
     }
   }
   return null;
 }
 
-/** For a `.yarnrc.yml` / `bunfig.toml`: does it configure the scope (or can it not be read)? Null for any other file. */
+function bunfigIssue(content: string): ScopeConfigIssue | null {
+  let doc: unknown;
+  try {
+    doc = parseToml(content);
+  } catch (e) {
+    return { reason: 'unreadable', detail: `could not be read as TOML (${(e as Error).message.split('\n')[0]})` };
+  }
+  const install = isObj(doc) ? doc.install : undefined;
+  return isObj(install) && nonEmpty(install.scopes)
+    ? { reason: 'configures-scope', detail: 'sets install.scopes, a scope registry that Bun uses instead of .npmrc' }
+    : null;
+}
+
+/** For a `.yarnrc` / `.yarnrc.yml` / `bunfig.toml`: does it set a scope registry (or can it not be read)? Null for any other file. */
 export function scopeConfigIssue(path: string, content: string): ScopeConfigIssue | null {
   const name = baseName(path.replace(/^\.\//, '')).toLowerCase();
-  if (isYarnrc(name)) return yarnrcIssue(content);
+  if (name === '.yarnrc') return yarn1Issue(content);
+  if (isYarnrc(name)) return yarnBerryIssue(content);
   if (isBunfig(name)) return bunfigIssue(content);
   return null;
 }
@@ -347,29 +362,19 @@ const MANAGER_FETCH = new RegExp(`\\b(npm|pnpm|yarn|bun)\\b[^\\n]*?\\s(install|i
 const RUNNER_FETCH = new RegExp(`\\b(npx|bunx|pnpx)\\b[^\\n]*\\s["']?${OS_SCOPE}/`, 'i');
 const fetchesScope = (command: string): boolean => MANAGER_FETCH.test(command) || RUNNER_FETCH.test(command);
 
-/** Any place a Dockerfile line sets the scope's registry: `--@sovereign-os:registry=`, `npm config set …`, `npm_config_@sovereign-os:registry=`. */
-const SETS_SCOPE_REGISTRY = new RegExp(`${OS_SCOPE}:registry["']?(?:\\s*=\\s*|\\s+)["']?([^\\s"']+)`, 'gi');
 
 /**
- * The scaffold Dockerfiles set the pin themselves; a hand-edited one could still fetch the scope.
- * Blocking when a line installs a package of the scope by name (whatever the registry config, a
- * named install of a package that is not published anywhere is a request to a registry), or sets
- * the scope's registry to anything but the pin. Continuation lines are joined first.
+ * ANY mention of the scope in a Dockerfile blocks — `@sovereign-os`, `%40sovereign-os`, or the
+ * bare name, in a RUN, an ARG/ENV value used later, a LABEL or a comment. Recognising every way a
+ * build step can fetch a package (bun, bunx, pnpx, variables, heredocs…) by pattern is a race
+ * that is lost; the scaffold Dockerfiles never name the scope (the copied `.npmrc` carries the
+ * pin), so a mention is never needed. Continuation lines are joined first.
  */
 function dockerfileFindings(path: string, content: string): ScanFinding[] {
   const out: ScanFinding[] = [];
-  const lines = content.replace(/\\\r?\n/g, ' ').split(/\r?\n/);
-  for (const line of lines) {
-    if (/^\s*#/.test(line)) continue;
-    if (fetchesScope(line)) {
-      out.push(blocking(path, `${OS_SCOPE}/*`, `has a build step that installs a package of the scope by name (${line.trim().slice(0, 120)})`));
-      continue;
-    }
-    for (const m of line.matchAll(SETS_SCOPE_REGISTRY)) {
-      if (!sameRegistry(m[1], SCOPE_PIN_REGISTRY)) {
-        out.push(blocking(path, `${OS_SCOPE}/*`, `points the scope at ${m[1]} in a build step; the only accepted value is ${SCOPE_PIN_REGISTRY}`));
-        break;
-      }
+  for (const line of content.replace(/\\\r?\n/g, ' ').split(/\r?\n/)) {
+    if (/sovereign-os/i.test(line)) {
+      out.push(blocking(path, `${OS_SCOPE}/*`, `names the scope in a build step (${line.trim().slice(0, 120)}); a Dockerfile never needs to — the app's .npmrc carries the pin`));
     }
   }
   return out;
