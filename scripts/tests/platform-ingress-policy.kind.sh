@@ -51,7 +51,7 @@ k wait --for=condition=Ready node --all --timeout=300s >/dev/null || exit 2
 
 for ns in agentic-os agentic-apps ingress-nginx other; do k create namespace "$ns" >/dev/null 2>&1; done
 rendered=$(mktemp)
-helm template agentic-os "$CHART" -n agentic-os --skip-schema-validation -f values.dev.yaml > "$rendered" 2>/dev/null || exit 2
+helm template agentic-os "$CHART" -n agentic-os --skip-schema-validation --set global.allowChartDefaultSecrets=true -f values.dev.yaml > "$rendered" 2>/dev/null || exit 2
 python3 - "$rendered" > "$rendered.np" <<'PY' || exit 2
 import sys, yaml
 docs = [d for d in yaml.safe_load_all(open(sys.argv[1])) if d]
