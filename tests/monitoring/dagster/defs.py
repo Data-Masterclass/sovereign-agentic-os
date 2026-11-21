@@ -4,7 +4,7 @@
 # A tiny code location for the Monitoring panel tests: three assets in a chain
 # (sales/stg_orders -> sales/orders -> sales/orders_mart), two asset checks on sales/orders (the
 # shape dagster-dbt gives a dbt model with tests), a job and a schedule named like the OS's
-# (<domain>__<dataset>), and a job that always fails. Plain Dagster APIs only.
+# (<domain>_dbt, <domain>__<dataset>), and a job that always fails. Plain Dagster APIs only.
 import os
 
 from dagster import (AssetCheckResult, AssetKey, Definitions, ScheduleDefinition, asset, asset_check,
@@ -37,7 +37,7 @@ def not_null_orders_id():
     return AssetCheckResult(passed=os.environ.get("FX_CHECK_PASS") == "1", description="3 null ids")
 
 
-orders_job = define_asset_job("sales__orders", selection=["sales/stg_orders", "sales/orders", "sales/orders_mart"])
+orders_job = define_asset_job("sales_dbt", selection=["sales/stg_orders", "sales/orders", "sales/orders_mart"])
 
 
 @op
