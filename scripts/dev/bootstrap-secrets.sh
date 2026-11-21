@@ -30,6 +30,8 @@
 #        Secret northpeak-seed-credentials   key SEED_CREDENTIALS (scripts/dev/seed.sh)
 #        Secret dev-backup-s3                the dev bucket + its dev-only key (tofu outputs)
 #        Secret registry-pull-secret         from $DEV_PRIVATE_DIR/ghcr-read-token (read:packages)
+#        Secret postgres-governance-admin    the governance bootstrap superuser, and its role in the
+#                                            running Postgres (postgres.governance.adminSecretName)
 #
 # Inputs the OWNER provides (files in $DEV_PRIVATE_DIR, mode 600; see docs/ops/dev-environment.md):
 #   stackit-model-key   the dev project's own STACKIT AI Model Serving token (low budget). Absent
@@ -222,6 +224,39 @@ print(next(d["localPassword"] for d in o["postgres"]["extraDatabases"] if d["nam
 PY
 apply_secret dagster-postgresql generic --from-file=postgresql-password="$S3/postgresql-password"
 apply_secret northpeak-seed-credentials generic --from-file=SEED_CREDENTIALS="$CAST"
+# The Postgres GOVERNANCE ADMIN (postgres.governance.adminSecretName): the dedicated superuser the
+# chart's os-governance-bootstrap hook connects as to create the governance roles and database; the
+# chart refuses postgres.secretName for it and never renders it. Secret first (generated once, kept
+# across runs, new with --rotate), then the role in the running Postgres with that password (CREATE
+# or ALTER, so a re-run converges). The password reaches psql on stdin only. On a fresh install
+# Postgres is not running yet: re-run this script after the first deploy, before the governance
+# hook needs the role (docs/ops/dev-environment.md).
+GOV_ADMIN=postgres-governance-admin GOV_ADMIN_USER=os_governance_admin
+( umask 077; : > "$S3/gov-admin-password" )
+if [ -z "$ROTATE" ]; then
+  k -n "$NS" get secret "$GOV_ADMIN" -o jsonpath='{.data.password}' 2>/dev/null | base64 -d > "$S3/gov-admin-password" 2>/dev/null || true
+fi
+if [ -s "$S3/gov-admin-password" ]; then
+  echo "   kept secret/$GOV_ADMIN"
+else
+  python3 -c 'import secrets; print(secrets.token_urlsafe(32), end="")' > "$S3/gov-admin-password"
+  printf '%s' "$GOV_ADMIN_USER" > "$S3/gov-admin-username"
+  apply_secret "$GOV_ADMIN" generic --type=kubernetes.io/basic-auth \
+    --from-file=username="$S3/gov-admin-username" --from-file=password="$S3/gov-admin-password"
+fi
+if [ "$(k -n "$NS" get pod pg-0 -o jsonpath='{.status.containerStatuses[0].ready}' 2>/dev/null)" = true ]; then
+  python3 - "$S3/gov-admin-password" "$GOV_ADMIN_USER" <<'PY2' | k -n "$NS" exec -i pg-0 -c postgres -- sh -c 'psql -v ON_ERROR_STOP=1 -q -U "$POSTGRES_USER" -d postgres -f -' >/dev/null
+import sys
+pw, user = open(sys.argv[1]).read(), sys.argv[2]
+assert pw.replace("-", "").replace("_", "").isalnum(), "unexpected characters in the generated password"
+print(f"DO $$BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '{user}') "
+      f"THEN CREATE ROLE {user} LOGIN SUPERUSER PASSWORD '{pw}'; "
+      f"ELSE ALTER ROLE {user} LOGIN SUPERUSER PASSWORD '{pw}'; END IF; END$$;")
+PY2
+  echo "   role $GOV_ADMIN_USER ensured (superuser, for the os-governance-bootstrap hook)"
+else
+  echo "   role $GOV_ADMIN_USER: Postgres is not running yet — re-run this script after the first deploy"
+fi
 ( umask 077
   tf_out object_storage_bucket > "$S3/BUCKET"
   tf_out object_storage_endpoint > "$S3/ENDPOINT"
