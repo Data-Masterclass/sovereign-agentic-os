@@ -91,15 +91,16 @@ osUI:
     maxBudget: 1
     budgetDuration: "7d"
   # NATIVE LAYOUTS, dev first (docs: values.yaml osUI.dataProjectGit.layout and
-  # osUI.agentGraphModule). ONE domain, `sales`. Step 1 (this value): `dry-run` — os-ui logs the
-  # planned `git mv` for sales at boot and writes nothing. Step 2, after the plan is read: `apply`
+  # osUI.agentGraphModule). ONE domain, `sales`. Step 1 (done 21 Nov 2026): `dry-run` — os-ui logged
+  # the planned `git mv` for sales (13 moves into data/dbt/, 1 personal lane to its user repo, 6
+  # READMEs) and wrote nothing. Step 2 (this value), after the plan was approved: `apply`
   # moves the repo to the v2 layout (dbt at data/dbt/, Dagster definitions at data/dagster/, one
   # `OS-Reason: layout-migration` commit); every other dev domain keeps its v1 repo. The agent
   # systems in sales are generated and run as LangGraph modules (graph.mjs). Rollback:
   # `migration: "off"` and `agentGraphModule.enabled: false`, then `git revert` the migration commit.
   dataProjectGit:
     layout:
-      migration: dry-run
+      migration: apply
       migrationDomains: [sales]
   agentGraphModule:
     enabled: true
