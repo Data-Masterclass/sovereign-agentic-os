@@ -26,6 +26,7 @@ export function viteOsFiles(name: string, slug: string): ScaffoldFile[] {
     packageJson(slug),
     viteConfig(),
     tsConfig(),
+    viteEnvDtsFile(),
     indexHtml(name),
     tailwindConfig(),
     postcssConfig(),
@@ -124,6 +125,17 @@ function viteConfig(): ScaffoldFile {
       '',
     ].join('\n'),
   };
+}
+
+// ------------------------------------------------------------ src/vite-env.d.ts --
+//
+// Types `import.meta.env` (src/os.ts reads VITE_OS_API) through Vite's own client types, the way
+// Vite documents it: https://vite.dev/guide/env-and-mode#intellisense-for-typescript. Without it
+// the app's `tsc -b` fails with TS2339 on ImportMeta.env.
+
+/** `src/vite-env.d.ts` — shared by every governed SPA template that reads `import.meta.env`. */
+export function viteEnvDtsFile(): ScaffoldFile {
+  return { path: 'src/vite-env.d.ts', content: '/// <reference types="vite/client" />\n' };
 }
 
 // ------------------------------------------------------------------ tsconfig.json --
@@ -725,6 +737,7 @@ export const VITE_OS_EXPECTED_PATHS = [
   'package.json',
   'vite.config.ts',
   'tsconfig.json',
+  'src/vite-env.d.ts',
   'index.html',
   'tailwind.config.js',
   'postcss.config.js',

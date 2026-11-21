@@ -45,7 +45,7 @@
  * Infra files (Vite config, Tailwind, Dockerfile, nginx, CI, OpenAPI stub) are
  * shared with the vite-os template via `viteBaseFiles` so serving never drifts.
  */
-import { viteBaseFiles, viteOsClientFile, type ScaffoldFile } from './vite-os.ts';
+import { viteBaseFiles, viteEnvDtsFile, viteOsClientFile, type ScaffoldFile } from './vite-os.ts';
 
 export type { ScaffoldFile };
 
@@ -54,7 +54,7 @@ export function sovereignAppFiles(name: string, slug: string): ScaffoldFile[] {
   return [
     ...viteBaseFiles(name, slug),
     viteOsClientFile(),
-    viteEnvDts(),
+    viteEnvDtsFile(),
     // Thin entrypoints (Vite's router layer) — real logic lives in template/·core/·epics/.
     srcMainTsx(),
     srcAppTsx(),
@@ -76,18 +76,6 @@ export function sovereignAppFiles(name: string, slug: string): ScaffoldFile[] {
     decisionsMd(name),
     readmeMd(name, slug),
   ];
-}
-
-// ------------------------------------------------------------ src/vite-env.d.ts --
-
-function viteEnvDts(): ScaffoldFile {
-  return {
-    path: 'src/vite-env.d.ts',
-    content: [
-      '/// <reference types="vite/client" />',
-      '',
-    ].join('\n'),
-  };
 }
 
 // ----------------------------------------------------------------- src/main.tsx --
