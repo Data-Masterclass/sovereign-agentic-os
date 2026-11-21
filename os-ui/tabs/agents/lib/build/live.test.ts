@@ -130,6 +130,8 @@ function fakeLitellm(): LiteLlmClient & { keys: Map<string, FakeKey>; generated:
       client.deleted.push(tokenId);
       for (const [alias, k] of keys) if (k.tokenId === tokenId) keys.delete(alias);
     },
+    expired: [] as string[],
+    async expireKey(tokenId: string) { client.expired.push(tokenId); },
     renamed: [] as string[],
     async renameKey(tokenId: string, alias: string) {
       const cur = [...keys.entries()].find(([, k]) => k.tokenId === tokenId);
@@ -175,7 +177,8 @@ function deps(): LiveDeps & {
     opa,
     litellm: fakeLitellm(),
     langfuse,
-    keys: { store: memorySystemKeyStore(), journal: memorySystemKeyJournal(), kek: () => KEK },
+    // Grace 0: these tests watch the replacement order and the delete; the grace period is tested in system-key-migration.test.ts.
+    keys: { store: memorySystemKeyStore(), journal: memorySystemKeyJournal(), kek: () => KEK, retireGraceSeconds: 0 },
   };
 }
 

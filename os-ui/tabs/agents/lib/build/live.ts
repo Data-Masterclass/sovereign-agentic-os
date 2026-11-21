@@ -13,6 +13,7 @@ import { type Decision } from '@tabs/agents/lib/gateway';
 import { type BuildAdapter, type BuildChange, type BuildContext, type StepResult } from '@tabs/agents/lib/build/adapter';
 import { principalFor } from '@tabs/agents/lib/build/runtime-contract';
 import { compileVerify } from '@tabs/agents/lib/build/compile-verify';
+import { config } from '@core/kernel/config';
 import {
   forgetSystemKey,
   isLegacyDerivedToken,
@@ -113,6 +114,8 @@ export interface LiteLlmClient {
   deleteKey(tokenId: string): Promise<void>;
   /** Give an EXISTING key another alias (`/key/update` with `key_alias` only). Its value keeps working. Throws on refusal. */
   renameKey(tokenId: string, alias: string): Promise<void>;
+  /** LiteLLM's own key expiry: the key is refused `seconds` from now (`/key/update` with `duration`). Throws on refusal. */
+  expireKey(tokenId: string, seconds: number): Promise<void>;
   models(): Promise<string[]>;
 }
 
@@ -180,6 +183,11 @@ export type KeyVault = {
   kek: () => Kek;
   /** Injected in tests; defaults to 32 CSPRNG bytes (`mintSystemKey`). */
   mint?: () => string;
+  /**
+   * How long a replaced key keeps working before LiteLLM refuses it (default
+   * {@link RETIRE_GRACE_SECONDS}). 0 deletes it at once.
+   */
+  retireGraceSeconds?: number;
   now?: () => number;
 };
 
@@ -196,6 +204,9 @@ export const DEFAULT_KEY_CAPS: KeyCaps = {
   tpmLimit: 1_000_000,
   maxParallelRequests: 8,
 };
+
+/** The default grace a replaced key keeps working for (`config.agentSystemKeyRetireGraceSeconds`). */
+export const RETIRE_GRACE_SECONDS = config.agentSystemKeyRetireGraceSeconds;
 
 export type LiveDeps = {
   opa: OpaClient;
@@ -521,10 +532,16 @@ export function makeLiveAdapters(deps: LiveDeps): BuildAdapter[] {
       }
       forgetSystemKey(want.systemId);
 
-      // 5. DELETE the old key(s), each only if the gateway still holds it, then close the journal.
+      // 5. RETIRE the old key(s), each only if the gateway still holds it: LiteLLM's own expiry
+      //    refuses it after the grace period, so a run still holding the old value (a LangGraph
+      //    segment resolves its key once) finishes its calls. The sweep deletes it once expired.
+      //    A grace of 0 deletes at once. Then close the journal.
+      const grace = deps.keys.retireGraceSeconds ?? RETIRE_GRACE_SECONDS;
       for (const old of entry.retire) {
         const still = await deps.litellm.keysByAlias(old.alias);
-        if (still.some((k) => k.tokenId === old.tokenId)) await deps.litellm.deleteKey(old.tokenId);
+        if (!still.some((k) => k.tokenId === old.tokenId)) continue;
+        if (grace > 0) await deps.litellm.expireKey(old.tokenId, grace);
+        else await deps.litellm.deleteKey(old.tokenId);
       }
       await journal.clear(want.systemId);
 

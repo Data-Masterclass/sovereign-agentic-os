@@ -437,6 +437,10 @@ export const config = {
     // `max_parallel_requests`). Matches the shared agent key's default.
     maxParallelRequests: Math.floor(positiveNumber(env('AGENT_SYSTEM_KEY_MAX_PARALLEL_REQUESTS', ''), 8)),
   },
+  // When a system's key is replaced (migration, Rebuild, rotation), the OLD key is not deleted at
+  // once: LiteLLM's own key expiry (`/key/update` `duration`) refuses it after this many seconds,
+  // so a run still holding the old value finishes its current calls. The sweep deletes it after.
+  agentSystemKeyRetireGraceSeconds: Math.floor(positiveNumber(env('AGENT_SYSTEM_KEY_RETIRE_GRACE_SECONDS', ''), 600)),
   // The gateway's router FALLBACKS as JSON (`{"fallbacks": {"<alias>": ["<target>"]}, "default": ["<alias>"]}`),
   // rendered by the chart from `litellm.proxy_config.router_settings`. Build adds every fallback
   // target of a model on a system's key to that key's allowlist — LiteLLM checks the key against

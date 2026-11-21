@@ -40,18 +40,26 @@ import { liteLlmConfigured, readAllKeys, type Fetched, type LiteLlmKeyRow } from
 import { adminPost } from '@core/infra/litellm-write';
 import { isLegacyDerivedToken } from '@core/infra/agent-system-keys';
 
-export type SweepTarget = { alias: string; tokenId: string; reason: 'derivable' | 'unbudgeted-agent-key' };
+export type SweepTarget = { alias: string; tokenId: string; reason: 'derivable' | 'unbudgeted-agent-key' | 'expired-retiring' };
 
 /** The aliases (`os-<id>`) of systems that still exist — their keys are migrated, never swept — or `'all'` when unknown. */
 export type KeepAliases = ReadonlySet<string> | 'all';
 
 /** Which keys the sweep would delete. PURE — the whole decision is testable without a gateway. */
-export function planKeySweep(rows: LiteLlmKeyRow[], keep: KeepAliases): SweepTarget[] {
+export function planKeySweep(rows: LiteLlmKeyRow[], keep: KeepAliases, now: number = Date.now()): SweepTarget[] {
   const out: SweepTarget[] = [];
   for (const row of rows) {
     const alias = typeof row.key_alias === 'string' ? row.key_alias : '';
     const tokenId = typeof row.token === 'string' ? row.token : '';
     if (!alias || !tokenId) continue;
+    // A key moved aside by a replacement (`os-<id>.retiring.<prefix>`), once LiteLLM's own expiry
+    // has passed: nothing can call with it any more, so it is removed. One still in its grace
+    // period, or with no expiry, is left.
+    if (/^os-.+\.retiring\.[0-9a-f]{12}$/.test(alias)) {
+      const until = typeof row.expires === 'string' ? Date.parse(row.expires) : NaN;
+      if (Number.isFinite(until) && until <= now) out.push({ alias, tokenId, reason: 'expired-retiring' });
+      continue;
+    }
     if (alias.startsWith('os-') && isLegacyDerivedToken(alias, tokenId)) {
       if (keep !== 'all' && !keep.has(alias)) out.push({ alias, tokenId, reason: 'derivable' });
       continue;
@@ -94,7 +102,7 @@ export async function runKeySweep(io: KeySweepIo): Promise<KeySweepResult> {
     return { at, ok: false, scanned: 0, deleted: [], failed: [], error: listed.error };
   }
   const result: KeySweepResult = { at, ok: true, scanned: listed.data.length, deleted: [], failed: [] };
-  for (const target of planKeySweep(listed.data, io.keep)) {
+  for (const target of planKeySweep(listed.data, io.keep, at)) {
     const res = await io.deleteKey(target.tokenId);
     if (res.ok) {
       result.deleted.push({ alias: target.alias, reason: target.reason });

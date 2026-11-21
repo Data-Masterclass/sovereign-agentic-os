@@ -406,7 +406,10 @@ press Rebuild and no schedule stops:
    `key_alias`): its value keeps working, the alias is free;
 3. `/key/generate` the staged value under `os-<id>`, with the configured budget and limits;
 4. store it in `agent_system_keys`: from here every run uses it;
-5. `/key/delete` the old key(s), then close the staging row.
+5. give the old key(s) LiteLLM's own expiry (`/key/update` with `duration`,
+   `AGENT_SYSTEM_KEY_RETIRE_GRACE_SECONDS`, default 600 s), then close the staging row. A run
+   still holding the old value keeps working until then; afterwards the gateway answers 401
+   `expired_key`, and the sweep deletes the expired `.retiring.` key.
 
 A crash at any step is finished by the next pass with the same staged value. Until a pass has
 processed every system without a failure (`agent_system_key_migrations`), a worker run whose
@@ -421,8 +424,10 @@ deletes no derivable key at all. Proven against the real gateway image by
 **Rotation** uses the same make-before-break steps (LiteLLM's own rotation endpoints are
 Enterprise): Admin → "Replace key", or
 `POST /api/platform-admin/gateway/system-keys {"action":"rotate","systemId":"…"}`. The old key
-keeps working until the new one is stored; a run holding the old value in its 30-second cache
-gets a 401 after the delete, re-reads the store and repeats the call once with the new key. The
+keeps working through the grace period. A call that still gets a 401 (after the grace, or with a
+grace of 0) re-reads the store and is repeated once with the new key — in the v1 caller
+(`core/runtime/runtime.ts`) and on the LangGraph module path (`ownKeyRetryFetch` in
+`core/adapters/litellm/chat-model.ts`, the OpenAI SDK's `fetch` option). The
 key's spend counter starts again from zero (it is a new key); spend by tag is unaffected.
 
 **If the encryption secret is lost or changed**, every stored key is unreadable; the next os-ui

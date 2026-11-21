@@ -172,6 +172,11 @@ export function realLitellm(): LiteLlmClient {
     async deleteKey(tokenId: string) {
       await post('/key/delete', { keys: [tokenId] }, 'the old key was not removed');
     },
+    async expireKey(tokenId: string, seconds: number) {
+      // LiteLLM key expiry (https://docs.litellm.ai/docs/proxy/virtual_keys): `duration` on
+      // /key/update sets `expires` to now + duration; the gateway then answers 401 `expired_key`.
+      await post('/key/update', { key: tokenId, duration: `${Math.max(1, Math.floor(seconds))}s` }, 'the old key was not given its expiry');
+    },
     async renameKey(tokenId: string, alias: string) {
       await post('/key/update', { key: tokenId, key_alias: alias }, 'the old key was not moved aside, so no new key was registered');
     },
