@@ -45,7 +45,6 @@ jobs:
     timeout-minutes: 30
     env:
       CI: 'true'
-      AGENT_KEY_MIGRATION_WORKDIR: ${{ runner.temp }}/agent-key-migration
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -64,4 +63,6 @@ jobs:
           helm dependency build charts/sovereign-agentic-os \
             || helm dependency update charts/sovereign-agentic-os
       - name: Key migration against the real gateway (with the negative twin)
+        env:
+          AGENT_KEY_MIGRATION_WORKDIR: ${{ runner.temp }}/agent-key-migration
         run: bash scripts/tests/agent-key-migration/run.sh
