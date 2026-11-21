@@ -30,6 +30,7 @@ spec:
             - { name: LANGFUSE_PUBLIC_KEY, value: "pk-lf-test-not-a-default" }
             - { name: LANGFUSE_SECRET_KEY, valueFrom: { secretKeyRef: { name: lf, key: sk } } }
             - { name: LANGFUSE_SSO_PASSWORD, valueFrom: { secretKeyRef: { name: lf, key: pw } } }
+            - { name: AGENT_KEY_ENCRYPTION_KEY, valueFrom: { secretKeyRef: { name: os-ui-agent-key-encryption, key: AGENT_KEY_ENCRYPTION_KEY } } }
 YAML
 # fake kubectl: `get secret <name> -o json` answers from $TMP/secrets/<name>.json
 mkdir -p "$TMP/secrets" "$TMP/bin"
@@ -50,10 +51,17 @@ put gw masterkey "sk-test-$(printf 'a%.0s' {1..32})"
 put rt token "rt-test-$(printf 'b%.0s' {1..32})"
 put sess s "session-test-$(printf 'c%.0s' {1..32})"
 putlf
+put os-ui-agent-key-encryption AGENT_KEY_ENCRYPTION_KEY "akek-test-$(printf 'f%.0s' {1..40})"
 
 echo "== cluster Secrets with their own values"
 run; rc_is "clean exits 0" 0
-check "it reports what it checked" "6 guarded values checked by hash" "$out"
+check "it reports what it checked" "7 guarded values checked by hash" "$out"
+
+echo "== the agent-key encryption Secret is missing (negative twin)"
+rm "$TMP/secrets/os-ui-agent-key-encryption.json"
+run; rc_is "exits 1" 1
+check "reports it missing" "AGENT_KEY_ENCRYPTION_KEY (Secret os-ui-agent-key-encryption/AGENT_KEY_ENCRYPTION_KEY) is missing or empty" "$out"
+put os-ui-agent-key-encryption AGENT_KEY_ENCRYPTION_KEY "akek-test-$(printf 'f%.0s' {1..40})"
 
 echo "== the gateway key in the cluster equals the public default (negative twin)"
 put gw masterkey "sk-litellm-local-dev-master"
