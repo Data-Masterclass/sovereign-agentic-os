@@ -85,3 +85,15 @@ def test_mf_csv_is_summed_and_compared_with_the_committed_threshold():
 
 def test_unknown_alert_id_is_an_error():
     assert os_alerts.evaluate(repo(), "nope", env={"OS_PRINCIPAL": "amir"})["status"] == "error"
+
+
+def test_owner_token_must_match_the_running_principal():
+    """The run's OS_PRINCIPAL must be the committed owner: sha256(principal)[:12] == os_alert.owner."""
+    calls = []
+    r = os_alerts.evaluate(repo(), "rev_low", env={"OS_PRINCIPAL": "mallory"}, runner=lambda *a, **k: calls.append(a) or (0, ""))
+    assert r["status"] == "error" and "owner" in r["reason"] and calls == []
+
+
+def test_owner_token_of_the_fixture_is_amir_at_acme():
+    import hashlib
+    assert hashlib.sha256(b"amir@acme.example").hexdigest()[:12] != "" and os_alerts.owner_token("amir") == hashlib.sha256(b"amir").hexdigest()[:12]
