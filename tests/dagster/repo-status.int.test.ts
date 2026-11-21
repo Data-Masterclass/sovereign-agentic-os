@@ -106,6 +106,9 @@ before(async () => {
   const co = join(W, 'checkout');
   mkdirSync(co, { recursive: true });
   chmodSync(co, 0o777);
+  const gitconfig = join(W, 'gitconfig');
+  writeFileSync(gitconfig, '[safe]\n\tdirectory = *\n');
+  chmodSync(gitconfig, 0o644);
   spawnSync('docker', ['rm', '-f', SYNC, DG]);
   // repo-sync exactly as the chart runs the sidecar, but reading the repo from a mounted path
   // (git clone takes a path like a git:// URL) and bound to 0.0.0.0 so the host can reach it.
@@ -114,7 +117,8 @@ before(async () => {
     '-v', `${REPOS}:/origin:ro`, '-v', `${co}:/repos-checkout`,
     // The mounted bare repo belongs to the host user, not the container's: git's ownership check
     // would refuse it on Linux (in the cluster the repo comes over git:// and this does not apply).
-    '-e', 'GIT_CONFIG_COUNT=1', '-e', 'GIT_CONFIG_KEY_0=safe.directory', '-e', 'GIT_CONFIG_VALUE_0=*',
+    // (git's upload-pack honours `safe.directory` only from protected config, so a global file.)
+    '-v', `${gitconfig}:/etc/wp16-gitconfig:ro`, '-e', 'GIT_CONFIG_GLOBAL=/etc/wp16-gitconfig',
     '-e', 'HOME=/tmp', '-e', 'REPO_SYNC_ENABLED=true', '-e', `REPO_SYNC_DOMAINS=${DOMAIN}`, '-e', 'REPO_SYNC_INDEX_URL=',
     '-e', 'REPO_SYNC_GIT_BASE=/origin', '-e', 'REPO_SYNC_CHECKOUT=/repos-checkout', '-e', 'REPO_SYNC_INTERVAL=2',
     '-e', 'REPO_SYNC_STATUS_PORT=8089', '-e', 'POD_IP=0.0.0.0', '-e', 'POD_NAME=wp16-dagster-user-deployments-sovereign-0',
