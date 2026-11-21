@@ -139,6 +139,9 @@ data:
       location / {
         proxy_pass https://api.openai-compat.model-serving.eu01.onstackit.cloud;
         proxy_ssl_server_name on;
+        # STACKIT's endpoint refuses HTTP/1.0 (nginx's proxy default) by closing the connection.
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
         proxy_set_header Host api.openai-compat.model-serving.eu01.onstackit.cloud;
         proxy_set_header Authorization "Bearer ${STACKIT_API_KEY}";
         proxy_buffering off;
