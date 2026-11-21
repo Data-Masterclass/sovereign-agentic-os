@@ -91,6 +91,10 @@ After `ds-rekey`, the deploy:
 - on a difference it refuses (`ROTATION_DRIFT_REFUSED`), names the key, both fingerprints, and the private overlay whose value is the cluster's ("deploy with `VALUES_OVERLAY=…`");
 - `ROTATION_IN_PROGRESS=1` turns the refusal into a warning, for when you know why;
 - it fails closed when the Secrets cannot be read.
+- **It compares against the cluster the deploy targets**: production for the prod run, dev for `dev.yml`'s run. Dev is therefore checked on its own Secrets, never on production's. `ROTATION_IN_PROGRESS` is an operator's override in the production window only:
+  - **the CI pipeline must never set it** (`dev.yml`, `prod.yml`);
+  - no workflow mentions it, and a test (`rotation-drift-guard.test.sh`) fails if one does;
+  - the guard refuses it whenever it runs inside GitHub Actions (`GITHUB_ACTIONS=true`).
 
 The keys stay co-managed by `rotate-secrets` after the overlay deploy, which is harmless: from then on the render carries the same value. A later change of such a key through values alone is refused until it goes through `ds-rekey` (or `ROTATION_IN_PROGRESS=1`).
 
