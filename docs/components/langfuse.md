@@ -8,7 +8,8 @@ Backed by Postgres (metadata), ClickHouse (analytics), Valkey (queue) and MinIO 
 
 ## Not reachable from the internet
 
-Langfuse has **no public route**, on any profile. It holds every prompt, completion and tool
+Langfuse has **no public route** unless an operator turns on the protected operators' route
+(below). It holds every prompt, completion and tool
 result of every run behind a single login, and nothing outside the cluster needs it: os-ui, the
 worker and the gateway send traces to the in-cluster Service `agentic-os-langfuse-web:3000`
 (`LANGFUSE_URL`, `LANGFUSE_HOST`), and the OS reads traces back the same way.
@@ -39,6 +40,24 @@ worker and the gateway send traces to the in-cluster Service `agentic-os-langfus
   until that value is changed — not verified on a cluster. If operators need the console from
   their desks, publish it behind an IP allowlist with the opt-in above and set
   `nextauth.url` to that host in the same overlay.
+* **The operators' browser route** (`ingress.restricted.langfuse.operatorIngress.enabled`, OFF
+  by default and in the STACKIT profile; `values.dev.yaml` turns it on). The Langfuse web UI gets
+  an Ingress on `ingress.hosts.langfuse`, protected exactly like the Dagster console: nginx basic
+  auth from an htpasswd Secret (`operatorIngress.basicAuthSecret`, default `langfuse-basic-auth`,
+  key `auth`; ingress-nginx answers 503 while it is missing). Langfuse's own login stays behind
+  it — the OS runs no OIDC provider Langfuse could use for SSO
+  (https://langfuse.com/self-hosting/security/authentication-and-sso). The render fails unless
+  `langfuse.langfuse.nextauth.url` is `https://<that host>` ("Public URL of your Langfuse web
+  deployment", https://langfuse.com/self-hosting/configuration). With the route on, the chart
+  derives `LANGFUSE_CONSOLE_URL` from the same host, so the Run panel's trace link and each
+  Monitoring run row open that run's trace there. Create the Secret (password from a file you
+  keep, never on a command line):
+  ```bash
+  kubectl -n agentic-os create secret generic langfuse-basic-auth \
+    --from-literal=auth="operator:$(openssl passwd -apr1 -in <password-file>)"
+  ```
+  `scripts/tests/langfuse-operator-ingress.test.sh` (render) and
+  `scripts/tests/app-ingress-admission.kind.sh` (real ingress-nginx: admission and 401/200) test it.
 
 * **Sign-up is off** (`langfuse.langfuse.features.signUpDisabled: true`, i.e.
   `AUTH_DISABLE_SIGNUP=true`): only existing users can sign in, and an invite cannot create an

@@ -221,6 +221,16 @@ ingress:
     langfuse:
       expose: false
       annotations: {}
+      # The operators' browser route to the Langfuse web UI, protected the way the Dagster
+      # console is: nginx basic auth from an htpasswd Secret (key `auth`, release namespace;
+      # ingress-nginx answers 503 if it is missing, never an open route). Langfuse's own login
+      # stays in place behind it. Needs `ingress.hosts.langfuse` and
+      # `langfuse.langfuse.nextauth.url: https://<that host>` (the render fails otherwise). The
+      # OS's "open in Langfuse" links then point at that host. OFF here and in the STACKIT
+      # profile; values.dev.yaml turns it on. See docs/components/langfuse.md.
+      operatorIngress:
+        enabled: false
+        basicAuthSecret: langfuse-basic-auth
 
 # Object storage — local stand-in for STACKIT Object Storage (MinIO, S3).
 objectStorage:

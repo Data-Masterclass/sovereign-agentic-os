@@ -1,0 +1,29 @@
+{{- /*
+  Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+  SPDX-License-Identifier: Apache-2.0
+
+  Guard for the operators' browser route to Langfuse (`ingress.restricted.langfuse.operatorIngress`,
+  rendered by templates/base/ingress.yaml). Renders nothing; fails the render when the route
+  would not work:
+    - it needs the Ingress on and a host (`ingress.hosts.langfuse`);
+    - Langfuse's NEXTAUTH_URL must be that public address. Langfuse documents NEXTAUTH_URL as
+      "Public URL of your Langfuse web deployment" (https://langfuse.com/self-hosting/configuration):
+      NextAuth redirects there after a login, so any other value breaks the login. The value is a
+      subchart value (`langfuse.langfuse.nextauth.url`) the parent chart cannot compute, so the
+      profile sets it and this guard keeps the two in step.
+*/ -}}
+{{- $op := (((.Values.ingress | default dict).restricted | default dict).langfuse | default dict).operatorIngress | default dict }}
+{{- if and .Values.langfuse.enabled (eq (toString $op.enabled) "true") }}
+{{- if not .Values.ingress.enabled }}
+{{- fail "ingress.restricted.langfuse.operatorIngress.enabled needs ingress.enabled=true" }}
+{{- end }}
+{{- $host := index (.Values.ingress.hosts | default dict) "langfuse" | default "" | toString }}
+{{- if not $host }}
+{{- fail "ingress.restricted.langfuse.operatorIngress.enabled needs ingress.hosts.langfuse (the operators' Langfuse hostname)" }}
+{{- end }}
+{{- $want := printf "https://%s" $host }}
+{{- $got := ((.Values.langfuse.langfuse | default dict).nextauth | default dict).url | default "" | toString | trimSuffix "/" }}
+{{- if ne $got $want }}
+{{- fail (printf "ingress.restricted.langfuse.operatorIngress: Langfuse's NEXTAUTH_URL (langfuse.langfuse.nextauth.url) is %q but must be %q, the address the browser uses" $got $want) }}
+{{- end }}
+{{- end }}

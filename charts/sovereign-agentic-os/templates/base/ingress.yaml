@@ -67,7 +67,17 @@
 {{- $extra := dict }}
 {{- if has $key $restricted }}
 {{- if eq (include "soa.restrictedExposed" (dict "ctx" $ctx "key" $key)) "true" }}
-{{- $extra = (index $ing.restricted $key).annotations }}
+{{- $extra = (index $ing.restricted $key).annotations | default dict }}
+{{- $op := (index $ing.restricted $key).operatorIngress | default dict }}
+{{- if eq (toString $op.enabled) "true" }}
+{{- /* The operators' route: nginx basic auth, exactly as the Dagster console (ASCII realm —
+       ingress-nginx refuses a non-ASCII annotation value). Over any extra annotations. */}}
+{{- $extra = merge (dict
+      "nginx.ingress.kubernetes.io/auth-type" "basic"
+      "nginx.ingress.kubernetes.io/auth-secret" ($op.basicAuthSecret | toString)
+      "nginx.ingress.kubernetes.io/auth-realm" (printf "%s - operators only" (title $key))
+    ) $extra }}
+{{- end }}
 {{- else }}
 {{- $host = "" }}
 {{- end }}
