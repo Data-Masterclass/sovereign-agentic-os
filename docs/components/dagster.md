@@ -311,6 +311,52 @@ If a run Job stays Running with its main container done, the guard did not fire 
 `includeConfigInLaunchedRuns.enabled: false` on the deployment and move the run pods' `volumes`,
 `volumeMounts` and env to `dagster.runLauncher.config.k8sRunLauncher` instead.
 
+## Run launcher lock-down (opt-in overlay)
+
+`values.dagster-launcher-lockdown.yaml`, applied on top of a profile. Off by default; the default
+render does not change.
+
+**What it changes.** A run's `dagster-k8s/config` tag may set only container `env` and `resources`.
+The only env names allowed are the three the OS itself sends: `OS_PINNED_COMMITS`, `OS_PRINCIPAL`
+and `DESTINATION__SQLALCHEMY__CREDENTIALS__USERNAME` (`os_projects.run_pod_env`,
+`tabs/data/lib/dbt/launch.ts`). If a tag asks for anything else (an image, a command, a volume, a
+service account, …), dagster-k8s refuses to launch the run with "violated the allowed list" and
+creates no Job. An env var that is not on the list is dropped, and the run goes ahead without it.
+Normal runs see no difference: they get the same Job spec as before.
+
+**How, with Dagster's documented options only.** These are dagster-k8s's `K8sRunLauncher` keys
+`only_allow_user_defined_k8s_config_fields` and `only_allow_user_defined_env_vars`. The subchart's
+`K8sRunLauncher` template (1.13.11) does not render either key. The overlay therefore selects the
+subchart's documented `runLauncher.type: CustomRunLauncher` with `module: dagster_k8s`,
+`class: K8sRunLauncher`. The class is the same; the config is the stock render key for key, plus
+the two keys.
+
+dagster-k8s (`container_context.py`, `create_for_run`) applies the allow-list to the whole
+*user-defined* context: the run's tag merged with the **code location's** container context. Only
+the launcher's own `run_k8s_config` is exempt. The code location propagates env, the checkout
+volume, the repo-sync sidecar and a service account (`includeConfigInLaunchedRuns`), and all of
+those would be refused. So the overlay turns `includeConfigInLaunchedRuns` off on the `sovereign`
+deployment and moves that context, unchanged, into the launcher's `run_k8s_config`. The run image
+still comes from the code location's `DAGSTER_CURRENT_IMAGE` (`launcher.py`:
+`job_image=repository_origin.container_image`), not from the container context.
+
+**Kept in step by tests.** The overlay holds two copies: the `sovereign` deployment entry, because
+Helm replaces a list, and the propagated context. If you change values.yaml's `sovereign`
+deployment, change both copies. `scripts/tests/dagster-launcher-lockdown.test.sh` (CI) compares
+both renders. It uses dagster-k8s's own code inside the Dagster image: `create_from_config`
+normalisation and the real `K8sRunLauncher.launch_run`, with only the Kubernetes API call captured.
+It fails on any drift, and five drifted overlays are its negative twins.
+`scripts/tests/dagster-launcher-lockdown.kind.sh` (CI) installs the vendored subchart on kind.
+Both launchers then launch runs through the webserver's own GraphQL `launchRun`: stock as the
+twin, then lock-down.
+
+**Other overlays.** While this overlay is applied, operator run-pod settings must go under
+`dagster.runLauncher.config.customRunLauncher.config.run_k8s_config`. The subchart does not read
+`k8sRunLauncher.runK8sConfig` then. Because Helm replaces lists, restate this overlay's list
+there, then add your entries. A profile that sets `dagster.imagePullSecrets` also needs it as
+`image_pull_secrets` in that config. The overlay names the release (`agentic-os`) and the
+namespace (`agentic-os`) literally, as the stock render does for this install.
+
 ## Status from dbt and Dagster, one parse gate (WP-16)
 
 Off by default (`dagsterRepoStatus.enabled`). repo-sync stays the single dbt gate (10 F10); its

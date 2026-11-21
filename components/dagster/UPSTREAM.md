@@ -67,3 +67,15 @@ the image by `images/extensions/dagster/tests/image/literal_safety.py`:
 - The run pod's labels are dagster-k8s's own (`get_common_labels`, `component="run_worker"`, `dagster/*`;
   dagster_k8s/job.py and launcher.py at 1.13.11) plus the chart's `podTemplateSpecMetadata`.
 - Chart: `templates/extensions/dagster/run-pod-admission.yaml`, values `dagsterPodAdmission`.
+
+## Run launcher lock-down — docs used
+- dagster-k8s run launcher config, `only_allow_user_defined_k8s_config_fields` /
+  `only_allow_user_defined_env_vars`:
+  https://docs.dagster.io/deployment/oss/deployment-options/kubernetes/customizing-your-deployment
+- The subchart's `runLauncher.type: CustomRunLauncher` (`runLauncher.config.customRunLauncher`:
+  `module`, `class`, `config`), chart 1.13.11 `values.yaml` and `templates/helpers/instance/_run-launcher.tpl`;
+  the user deployment's `includeConfigInLaunchedRuns` (`charts/dagster-user-deployments`).
+- Behaviour read in the shipped source (dagster-k8s 0.29.31): `dagster_k8s/container_context.py`
+  (`create_for_run`, `_validate_user_k8s_config`, `_filter_user_defined_env_vars`) and
+  `dagster_k8s/launcher.py` (`_launch_k8s_job_with_args`: the run image is the code location's).
+

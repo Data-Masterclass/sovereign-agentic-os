@@ -29,7 +29,7 @@ import copy
 import json
 import os
 import sys
-import tempfile
+import shutil
 
 import yaml
 
@@ -90,9 +90,15 @@ def strip_checksums(d: dict) -> dict:
 
 
 def code_location_context(dep: dict) -> tuple[dict | None, dict]:
-    """(the container context the code location propagates, the Deployment without that env)."""
+    """(the container context the code location propagates, the Deployment without that env).
+
+    `--fixed-server-id` is the subchart's hash of the deployment's values, like the checksum
+    annotations: it changes with any value, so it is compared as present, not by value."""
     dep = copy.deepcopy(dep)
     main = dep["spec"]["template"]["spec"]["containers"][0]
+    args = main.get("args", [])
+    if "--fixed-server-id" in args:
+        args[args.index("--fixed-server-id") + 1] = "<hash>"
     ctx = None
     kept = []
     for e in main.get("env", []):
@@ -122,6 +128,9 @@ def render_parity(stock: dict, lock: dict):
             sy.pop("run_launcher"), ly.pop("run_launcher")
             check("A2 dagster.yaml differs only in run_launcher", sy == ly)
             s, l = {**s, "data": {}}, {**l, "data": {}}
+        if kind == "Secret":  # chart-generated random values differ per render; keys must not
+            s, l = ({**x, "data": sorted(x.get("data") or {}), "stringData": sorted(x.get("stringData") or {})}
+                    for x in (s, l))
         if kind == "Deployment" and name in DAGSTER_PODS:
             s, l = strip_checksums(s), strip_checksums(l)
         if kind == "Deployment" and name == CODE_LOCATION:
@@ -145,6 +154,15 @@ def diff(a, b, path=""):
             if a.get(k) != b.get(k):
                 out.update(diff(a.get(k), b.get(k), f"{path}.{k}"))
         return out
+    if isinstance(a, list) and isinstance(b, list) and len(a) == len(b):
+        out = {}
+        for i, (x, y) in enumerate(zip(a, b)):
+            if x != y:
+                out.update(diff(x, y, f"{path}[{i}]"))
+        return out
+    if isinstance(a, str) and isinstance(b, str) and len(a) > 200:  # show where long strings part
+        i = next((i for i, (x, y) in enumerate(zip(a, b)) if x != y), min(len(a), len(b)))
+        return {path: [a[max(0, i - 80):i + 120], b[max(0, i - 80):i + 120]]}
     return {path: [a, b]}
 
 
@@ -221,7 +239,11 @@ def launcher_from(cfg: dict, home: str) -> K8sRunLauncher:
 
 def launch(cfg: dict, container_context: dict | None, tags: dict) -> tuple[list, str | None]:
     """The real launch_run of one run; returns (jobs created, refusal message or None)."""
-    with tempfile.TemporaryDirectory() as home:
+    # One fixed DAGSTER_HOME path for every launch: the Job's args carry the instance ref.
+    home = "/tmp/wp15lock-home"
+    shutil.rmtree(home, ignore_errors=True)
+    os.makedirs(home)
+    if True:
         instance = DagsterInstance.local_temp(home)
         launcher = launcher_from(cfg, home)
         launcher.register_instance(instance)
@@ -242,7 +264,23 @@ def launch(cfg: dict, container_context: dict | None, tags: dict) -> tuple[list,
         except Exception as e:  # the launcher's refusal is an Exception with upstream's text
             err = str(e)
         jobs = json.loads(json.dumps(launcher._api_client.jobs).replace(home, "<home>"))  # noqa: SLF001
-        return jobs, err
+        return [origin_context_out(j) for j in jobs], err
+
+
+def origin_context_out(job):
+    """The run worker's args carry the serialised run origin, and with it the code location's
+    container context (stock) or none (lock-down: includeConfigInLaunchedRuns off). That one field
+    is the intended difference; it is lifted out to `origin_container_context` and checked alone."""
+    c = job[1]["spec"]["template"]["spec"]["containers"][0]
+    for i, a in enumerate(c.get("args") or []):
+        if a.startswith('{"__class__": "ExecuteRunArgs"'):
+            a = json.loads(a)
+            # serdes stores JobPythonOrigin under its legacy field name
+            ro = (a.get("job_origin") or a["pipeline_origin"])["repository_origin"]
+            job[1]["origin_container_context"] = ro.get("container_context")
+            ro["container_context"] = None
+            c["args"][i] = json.dumps(a, sort_keys=True)
+    return job
 
 
 def env_names(job) -> list[str]:
@@ -268,6 +306,9 @@ def launch_checks(stock_cfg: dict, lock_cfg: dict, stock_ctx: dict):
     check("C1 stock launches a normal OS run", serr is None and len(sj) == 1, str(serr))
     check("C2 lock-down launches a normal OS run", lerr is None and len(lj) == 1, str(lerr))
     if sj and lj:
+        check("C3a the stock run origin carries the code location's container context",
+              sj[0][1].pop("origin_container_context", None) is not None)
+        check("C3b the lock-down run origin carries none", lj[0][1].pop("origin_container_context", 0) is None)
         check("C3 the run Job is IDENTICAL under both launchers (namespace + full spec)", sj == lj,
               json.dumps(diff(sj[0][1], lj[0][1]), default=str))
         names = env_names(lj[0])

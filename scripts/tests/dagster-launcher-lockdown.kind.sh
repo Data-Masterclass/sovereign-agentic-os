@@ -36,11 +36,13 @@ NS=agentic-os
 TGZ=charts/sovereign-agentic-os/charts/dagster-1.13.11.tgz
 [ -f "$TGZ" ] || { echo "no $TGZ (helm dependency build charts/sovereign-agentic-os)"; exit 2; }
 TEST_IMAGE=sovereign-os/dagster-lockdown-test:kind
+INIT_IMAGE=sovereign-os/dagster-lockdown-init:kind
+UPSTREAM_INIT=$(tar xzf "$TGZ" -O dagster/values.yaml | python3 -c 'import sys,yaml; i=yaml.safe_load(sys.stdin)["busybox"]["image"]; print(i["repository"]+":"+i["tag"])')
 TMP=$(mktemp -d)
 export KUBECONFIG=${LOCK_KUBECONFIG:-$TMP/kubeconfig}
 PF_PID=""
 cleanup() {
-  [ -n "$PF_PID" ] && kill "$PF_PID" 2>/dev/null
+  [ -n "$PF_PID" ] && { kill "$PF_PID"; wait "$PF_PID"; } 2>/dev/null
   [ -n "${LOCK_KEEP:-}" ] || kind delete cluster --name "$NAME" --kubeconfig "$KUBECONFIG" >/dev/null 2>&1
   rm -rf "$TMP"
 }
@@ -70,7 +72,7 @@ docker build -q -t "$TEST_IMAGE" "$TMP/img" >/dev/null || { echo "test image bui
 
 # ── the two value sets, from the chart's own values and the overlay ──
 gen() {  # $1 stock|lock
-  python3 - "$1" "$TEST_IMAGE" > "$TMP/$1.values.yaml" <<'EOF'
+  python3 - "$1" "$TEST_IMAGE" "$INIT_IMAGE" > "$TMP/$1.values.yaml" <<'EOF'
 import sys, yaml
 mode, image = sys.argv[1], sys.argv[2]
 repo, tag = image.rsplit(":", 1)
@@ -96,6 +98,8 @@ def swap(x):
         return image
     return x
 v = swap(v)
+irepo, itag = sys.argv[3].rsplit(":", 1)
+v["busybox"] = {"image": {"repository": irepo, "tag": itag, "pullPolicy": "IfNotPresent"}}
 for d in v["dagster-user-deployments"]["deployments"]:
     d["dagsterApiGrpcArgs"] = ["--python-file", "/opt/dagster/app/wp15lock_defs.py"]
 # The OPERATOR additions WP-15 makes (values.dagster-run-identity.yaml): env + volume + mount.
@@ -119,8 +123,15 @@ gen stock || exit 2
 if [ -f values.dagster-launcher-lockdown.yaml ]; then gen lock || exit 2; fi
 
 # ── the cluster ──
-kind create cluster --name "$NAME" --kubeconfig "$KUBECONFIG" --wait 120s >/dev/null || { echo "kind create failed"; exit 2; }
+kind create cluster --name "$NAME" --kubeconfig "$KUBECONFIG" --wait 120s >/dev/null 2>&1 || { echo "kind create failed"; exit 2; }
 kind load docker-image "$TEST_IMAGE" --name "$NAME" >/dev/null || { echo "kind load failed"; exit 2; }
+# The subchart's own init image (`busybox.image`, nslookup for the code-server wait), re-packed as a
+# single-platform local image: `kind load` cannot import busybox's multi-platform index, and a node
+# pull from Docker Hub made the install flaky. Same content, set the same way for both launchers.
+docker build -q -t "$INIT_IMAGE" - >/dev/null <<EOF2 || { echo "init image build failed"; exit 2; }
+FROM $UPSTREAM_INIT
+EOF2
+kind load docker-image "$INIT_IMAGE" --name "$NAME" >/dev/null || { echo "kind load $INIT_IMAGE failed"; exit 2; }
 K create namespace "$NS" >/dev/null 2>&1 || kubectl --context "kind-$NAME" create namespace "$NS" >/dev/null
 PGPW=wp15lock-throwaway
 K create secret generic dagster-postgresql --from-literal=postgresql-password=$PGPW >/dev/null
@@ -148,12 +159,14 @@ EOF
 K wait --for=condition=Ready pod/pg --timeout=300s >/dev/null || { echo "postgres not ready"; exit 2; }
 
 GQLURL=http://127.0.0.1:${LOCK_PORT:-3071}/graphql
-gql() {  # $1 query, $2 variables JSON -> response on stdout
-  python3 -c 'import json,sys; print(json.dumps({"query": sys.argv[1], "variables": json.loads(sys.argv[2])}))' "$1" "${2:-{\}}" \
+gql() {  # $1 query, $2 variables JSON (optional) -> response on stdout
+  local vars=${2:-}
+  [ -n "$vars" ] || vars='{}'
+  python3 -c 'import json,sys; print(json.dumps({"query": sys.argv[1], "variables": json.loads(sys.argv[2])}))' "$1" "$vars" \
     | curl -s --max-time 30 "$GQLURL" -H 'content-type: application/json' -d @-
 }
 install() {  # $1 stock|lock
-  [ -n "$PF_PID" ] && kill "$PF_PID" 2>/dev/null
+  [ -n "$PF_PID" ] && { kill "$PF_PID"; wait "$PF_PID"; } 2>/dev/null
   helm upgrade --install agentic-os "$TGZ" --kube-context "kind-$NAME" -n "$NS" -f "$TMP/$1.values.yaml" \
     --wait --timeout 10m >"$TMP/helm.log" 2>&1 || { cat "$TMP/helm.log"; K get pods; return 1; }
   K rollout status deploy/agentic-os-dagster-webserver --timeout=300s >/dev/null
@@ -193,7 +206,11 @@ spec_of() {  # Job JSON on stdin -> the run pod template, normalised for a stock
   python3 -c '
 import json,sys
 j=json.load(sys.stdin); t=j["spec"]["template"]
-labels={k:v for k,v in t["metadata"].get("labels",{}).items() if k!="dagster/run-id"}
+# Labels that differ per Job by construction, nothing else: dagster/run-id (Dagster) and the four
+# the Kubernetes Job controller adds to every pod template (job-name, controller-uid and their
+# batch.kubernetes.io/ forms) — https://kubernetes.io/docs/concepts/workloads/controllers/job/
+per_job={"dagster/run-id","job-name","controller-uid","batch.kubernetes.io/job-name","batch.kubernetes.io/controller-uid"}
+labels={k:v for k,v in t["metadata"].get("labels",{}).items() if k not in per_job}
 s=t["spec"]; c=s["containers"][0]; c.pop("args",None)
 c["env"]=sorted([e for e in c.get("env",[]) if e["name"]!="PYTHONPATH"], key=lambda e:e["name"])
 for k in ("volumeMounts",): c[k]=sorted(c.get(k,[]), key=lambda e:e["name"])
