@@ -23,6 +23,7 @@
  */
 import 'server-only';
 import { config } from '@core/kernel/config';
+import { opaDecide } from '@core/adapters/opa/client';
 import { listRepos, listTree, log, readBlob } from '@core/infra/git-store';
 import { publishOpa } from '@core/policy/opa-publish';
 import type { OpaSourceResult } from '@core/policy/opa-reconcile';
@@ -83,7 +84,13 @@ export async function restoreGuardrailsFromGit(opts: { reposDir?: string } = {})
         const bad = checkDoc(doc);
         if (bad) return { ok: false, detail: `${where}: ${bad}` };
         const wfPath = `${KNOWLEDGE_WORKFLOWS_DIR}/${m[1]}/workflow.md`;
-        const meta = splitFrontmatter(await readBlob(domain, sha, wfPath, { reposDir }).catch(() => '')).front[OS_META_KEY] as Record<string, unknown> | undefined;
+        let wfText: string;
+        try {
+          wfText = await readBlob(domain, sha, wfPath, { reposDir });
+        } catch (err) {
+          return { ok: false, detail: `${where}: its ${wfPath} is unreadable (${err instanceof Error ? err.message : String(err)})` };
+        }
+        const meta = splitFrontmatter(wfText).front[OS_META_KEY] as Record<string, unknown> | undefined;
         const id = meta?.id ? String(meta.id) : '';
         if (!id) return { ok: false, detail: `${where}: ${wfPath} names no workflow id (${OS_META_KEY}.id)` };
         if (from.has(id)) return { ok: false, detail: `${where}: workflow ${id} is also committed at ${from.get(id)}` };
@@ -101,23 +108,13 @@ export async function restoreGuardrailsFromGit(opts: { reposDir?: string } = {})
 
 const DENY = (reason: string): GuardrailDecision => ({ allow: false, reason, violated: [], guardrails: [] });
 
-/** Ask OPA. Any failure to get a decision is a deny. */
+/** Ask OPA (through the OPA adapter). Any failure to get a decision is a deny. */
 export async function decideGuardrails(workflowId: string, violations: string[], opts: { opaUrl?: string; timeoutMs?: number } = {}): Promise<GuardrailDecision> {
-  const url = `${opts.opaUrl ?? config.opaUrl}/v1/data/os/guardrails/decision`;
-  try {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ input: { workflow_id: workflowId, violations } }),
-      signal: AbortSignal.timeout(opts.timeoutMs ?? 2500),
-    });
-    if (!res.ok) return DENY('policy_unreachable');
-    const d = ((await res.json()) as { result?: GuardrailDecision }).result;
-    if (!d || typeof d.allow !== 'boolean' || !Array.isArray(d.guardrails) || !Array.isArray(d.violated)) return DENY('policy_unreachable');
-    return { allow: d.allow, reason: String(d.reason), violated: d.violated, guardrails: d.guardrails };
-  } catch {
-    return DENY('policy_unreachable');
-  }
+  const r = await opaDecide('os/guardrails/decision', { workflow_id: workflowId, violations }, opts.timeoutMs ?? 2500, opts.opaUrl);
+  if (!r.ok || !r.value.defined) return DENY('policy_unreachable');
+  const d = r.value.value as GuardrailDecision | undefined;
+  if (!d || typeof d.allow !== 'boolean' || !Array.isArray(d.guardrails) || !Array.isArray(d.violated)) return DENY('policy_unreachable');
+  return { allow: d.allow, reason: String(d.reason), violated: d.violated, guardrails: d.guardrails };
 }
 
 /**

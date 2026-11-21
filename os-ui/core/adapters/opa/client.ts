@@ -23,15 +23,15 @@ function reasonFor(status: number): FetchedFailure {
   return 'invalid';
 }
 
-async function request(path: string, init: RequestInit, timeoutMs: number): Promise<Fetched<Response>> {
+async function request(path: string, init: RequestInit, timeoutMs: number, baseUrl: string = config.opaUrl): Promise<Fetched<Response>> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
-    const res = await fetch(`${config.opaUrl}${path}`, { ...init, signal: ctrl.signal, cache: 'no-store' });
+    const res = await fetch(`${baseUrl}${path}`, { ...init, signal: ctrl.signal, cache: 'no-store' });
     return { ok: true, value: res, at: now() };
   } catch (err) {
     const aborted = err instanceof Error && err.name === 'AbortError';
-    return fail(aborted ? 'timeout' : 'unreachable', `OPA ${aborted ? 'timed out' : 'unreachable'} at ${config.opaUrl}${path}`);
+    return fail(aborted ? 'timeout' : 'unreachable', `OPA ${aborted ? 'timed out' : 'unreachable'} at ${baseUrl}${path}`);
   } finally {
     clearTimeout(timer);
   }
@@ -79,8 +79,9 @@ export async function opaGetData(path: string, timeoutMs: number): Promise<Fetch
 }
 
 /** Evaluate a decision: Data API `POST /v1/data/{path}` with `{input}`. `defined:false` = no rule matched. */
-export async function opaDecide(path: string, input: unknown, timeoutMs: number): Promise<Fetched<{ defined: boolean; value?: unknown }>> {
-  const r = await request(`/v1/data/${path}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ input }) }, timeoutMs);
+/** `baseUrl`: another OPA instance than the configured one (e.g. a second instance in a test). */
+export async function opaDecide(path: string, input: unknown, timeoutMs: number, baseUrl?: string): Promise<Fetched<{ defined: boolean; value?: unknown }>> {
+  const r = await request(`/v1/data/${path}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ input }) }, timeoutMs, baseUrl);
   if (!r.ok) return r;
   if (!r.value.ok) return fail(reasonFor(r.value.status), `POST data/${path}: OPA ${r.value.status}`);
   let body: { result?: unknown };
