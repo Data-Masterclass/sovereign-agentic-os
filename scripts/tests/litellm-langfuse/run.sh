@@ -36,7 +36,7 @@ NET=lfgw
 MASTER=sk-test-master-not-a-secret
 AGENT_KEY=sk-test-scoped-agent-key       # = LITELLM_AGENT_KEY in os-ui/scripts/test-setup.mjs
 PK=pk-lf-test-not-a-secret; SK=sk-lf-test-not-a-secret
-LF=http://127.0.0.1:13000; GW=http://127.0.0.1:14000
+LF=http://127.0.0.1:13000; GW=http://127.0.0.1:${GW_PORT:-14000}
 mkdir -p "$W/data"; rm -f "$W/data/sink.jsonl"
 step() { printf '\n==================== %s\n' "$*"; }
 die() { docker logs gw > "$W/gw.log" 2>&1 || true; docker logs lfweb > "$W/lfweb.log" 2>&1 || true; echo "LITELLM_LANGFUSE_TEST_FAILED — $*"; exit 1; }
@@ -95,7 +95,7 @@ echo "Langfuse health: $(cat "$W/data/health.json")"
 # $1 config file, $2 env file, $3 LANGFUSE_HOST (default: the Langfuse web container)
 gw_up() {
   docker rm -f gw >/dev/null 2>&1
-  docker run -d --name gw --network $NET -p 127.0.0.1:14000:4000 --env-file "$2" \
+  docker run -d --name gw --network $NET -p 127.0.0.1:${GW_PORT:-14000}:4000 --env-file "$2" \
     -e HOST=0.0.0.0 -e PORT=4000 -e DATABASE_URL=postgresql://postgres:postgres@lfpg:5432/litellm -e PROXY_MASTER_KEY=$MASTER \
     -e LITELLM_LOG=INFO -e SERVER_ROOT_PATH=/tools/litellm -e STORE_MODEL_IN_DB=true -e DISABLE_SCHEMA_UPDATE=true \
     -e REDIS_PASSWORD=myredissecret -e LANGFUSE_PUBLIC_KEY=$PK -e LANGFUSE_SECRET_KEY=$SK -e LANGFUSE_HOST="${3:-http://lfweb:3000}" \
