@@ -176,7 +176,7 @@ test_version_write_builder_refused if {
 }
 
 test_version_write_other_domain_admin_refused if {
-	not data_version_write with input as vw({"id": "finn", "role": "domain_admin", "domains": ["finance"]}, asset_sales)
+	not data_version_write with input as vw({"id": "fred", "role": "domain_admin", "domains": ["finance"]}, asset_sales)
 }
 
 test_version_write_other_action_refused if {
