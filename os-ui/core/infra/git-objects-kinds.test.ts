@@ -48,6 +48,7 @@ const EXPECTED_KINDS: GitObjectKind[] = [
 const INFRASTRUCTURE: Record<string, string> = {
   'core/infra/git-store.ts': 'the commit path itself',
   'core/infra/git-objects.ts': 'the generic read-back; it writes nothing',
+  'core/models/role-store.ts': 'os/models.yml in the PLATFORM repository (the model role mapping): a platform setting the OS owns, not a domain artefact kind',
 };
 
 const COMMIT_PRIMITIVES = /\b(commitTree|commitSubtree)\b/;
