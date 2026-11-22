@@ -22,10 +22,11 @@ import type { FilesView, FilePanel, DrivePanel } from '@tabs/monitoring/lib/pane
 import type { KnowledgeView } from '@tabs/monitoring/lib/panels/knowledge-panel';
 import type { KpisView } from '@tabs/monitoring/lib/panels/kpis-panel';
 import type { DashboardsView } from '@tabs/monitoring/lib/panels/dashboards-panel';
+import type { SoftwareView, SoftwareApp } from '@tabs/monitoring/lib/panels/software-panel';
 import type { NotUpstream, SourceState } from '@tabs/monitoring/lib/panels/panels-core';
 import { ago, compact, usd } from '@tabs/monitoring/ui/format';
 
-export type PanelKind = 'agents' | 'data' | 'platform' | 'files' | 'knowledge' | 'kpis' | 'dashboards';
+export type PanelKind = 'agents' | 'data' | 'platform' | 'files' | 'knowledge' | 'kpis' | 'dashboards' | 'software';
 
 const ms = (v: number | null | undefined): string => (v === null || v === undefined ? '—' : v >= 10_000 ? `${(v / 1000).toFixed(0)} s` : v >= 1000 ? `${(v / 1000).toFixed(1)} s` : `${Math.round(v)} ms`);
 const pct = (v: number | null | undefined): string => (v === null || v === undefined ? '—' : `${Math.round(v * 100)}%`);
@@ -639,8 +640,46 @@ function DashboardsPanels({ v }: { v: DashboardsView }) {
   );
 }
 
+const SCAN_VERDICT: Record<NonNullable<SoftwareApp['scan']>['verdict'], string> = { passed: 'passed', failed: 'failed', no_verdict: 'no verdict' };
+const POD_STATE: Record<string, string> = { running: 'running', starting: 'starting', crash_looping: 'crash-looping', image_pull_failed: 'image pull failed', failed: 'failed', completed: 'completed', not_ready: 'not ready', no_pods: 'no pods found' };
+
+function SoftwarePanels({ v }: { v: SoftwareView }) {
+  const sm = v.summary;
+  return (
+    <div className="mon-panels">
+      <div className="mon-sub">Software <span className="mon-sub-note">review scan · pods (Kubernetes) · error lines (VictoriaLogs)</span></div>
+      <Sources sources={v.sources} />
+      {sm && (
+        <div className="mon-stats">
+          <Stat label="apps" value={String(sm.apps)} />
+          <Stat label="serving" value={String(sm.serving)} />
+          <Stat label="scan failed" value={String(sm.scanFailed)} tone={sm.scanFailed ? 'error' : undefined} />
+          <Stat label="scan: no verdict" value={String(sm.noVerdict)} tone={sm.noVerdict ? 'warn' : undefined} />
+          <Stat label="pods unhealthy" value={v.sources.pods.state === 'live' ? String(sm.podsUnhealthy) : '—'} tone={sm.podsUnhealthy ? 'error' : undefined} />
+        </div>
+      )}
+      {v.apps.length === 0 ? (
+        <p className="hint">{v.sources.inventory.state === 'live' ? 'No apps in your scope.' : 'Apps could not be listed.'}</p>
+      ) : (
+        <div className="mon-table">
+          <div className="mon-tr mon-th mon-tr-pfile"><span>App</span><span>Status · review</span><span>Security scan</span><span>Pods · error lines (1 h)</span></div>
+          {v.apps.map((a) => (
+            <div key={a.id} className={`mon-tr mon-tr-pfile${a.scan?.verdict === 'failed' || (a.pods && ['crash_looping', 'image_pull_failed', 'failed'].includes(a.pods.state)) ? ' err' : ''}`}>
+              <span className="ellip" title={a.name}><a className="mon-xlink" href={a.softwareUrl}>{a.name}</a> <span className="muted">· {a.domain || 'personal'}</span></span>
+              <span>{a.status.label}{a.review ? ` · ${a.review.decision}` : ' · never reviewed'}</span>
+              <span title={a.scan?.reason ?? ''}>{a.scan ? `${SCAN_VERDICT[a.scan.verdict]}${a.scan.engine ? ` (${a.scan.engine})` : ''} · crit ${a.scan.bySeverity.critical} high ${a.scan.bySeverity.high} med ${a.scan.bySeverity.medium}${a.scan.truncated ? ' (listed findings only)' : ''}${a.scan.notRun.length ? ` · not covered: ${a.scan.notRun.join(', ')}` : ''}` : 'no scan on record'}</span>
+              <span>{a.pods ? `${POD_STATE[a.pods.state]}${a.pods.items.some((p) => p.restarts) ? ` · ${a.pods.items.reduce((n, p) => n + p.restarts, 0)} restarts` : ''}` : a.serveMode === 'image' ? '—' : 'served by the OS (no pod)'} · {a.logs ? (a.logs.errorRate === null ? 'no log lines' : `${a.logs.errors} of ${a.logs.lines} (${(a.logs.errorRate * 100).toFixed(1)}%)`) : '—'}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      <NotOffered items={v.notUpstream} />
+    </div>
+  );
+}
+
 export default function PanelsView({ kind }: { kind: PanelKind }) {
-  const { data, loading, error } = useApi<AgentsView | DataView | PlatformView | FilesView | KnowledgeView | KpisView | DashboardsView>(`/api/monitoring/panels?view=${kind}`);
+  const { data, loading, error } = useApi<AgentsView | DataView | PlatformView | FilesView | KnowledgeView | KpisView | DashboardsView | SoftwareView>(`/api/monitoring/panels?view=${kind}`);
   if (error) return <div className="error" style={{ marginTop: 12 }}>{error}</div>;
   if (!data) return loading ? <div className="hint" style={{ marginTop: 12 }}><span className="spin" /> Reading the components…</div> : null;
   if (data.view === 'agents') return <AgentsPanels v={data} />;
@@ -649,5 +688,6 @@ export default function PanelsView({ kind }: { kind: PanelKind }) {
   if (data.view === 'knowledge') return <KnowledgePanels v={data} />;
   if (data.view === 'kpis') return <KpisPanels v={data} />;
   if (data.view === 'dashboards') return <DashboardsPanels v={data} />;
+  if (data.view === 'software') return <SoftwarePanels v={data} />;
   return <PlatformPanels v={data} />;
 }

@@ -260,3 +260,81 @@ export function testsSummary(results: readonly TestRule[]) {
     rules: results.map((r): TestRule => ({ id: r.id, label: r.label, status: r.status, violations: r.violations, ...(r.severity ? { severity: r.severity } : {}), ...(r.at ? { at: r.at } : {}) })),
   };
 }
+
+// ---------------------------------------------------------------- software --
+
+export type PodFacts = { name: string; phase: string; ready: boolean; restarts: number; waitingReason: string | null; lastTerminated: string | null; startedAt: string | null; terminatedNow: boolean };
+export type PodState = 'running' | 'starting' | 'crash_looping' | 'image_pull_failed' | 'failed' | 'completed' | 'not_ready';
+
+/** What a Kubernetes Pod object says (`status.phase`, `containerStatuses`) — read, not inferred. */
+export function podFactsOf(pod: Record<string, unknown>): PodFacts {
+  const meta = (pod.metadata ?? {}) as { name?: string };
+  const st = (pod.status ?? {}) as { phase?: string; startTime?: string; containerStatuses?: Record<string, unknown>[] };
+  const cs = st.containerStatuses ?? [];
+  const waiting = cs.map((c) => ((c.state ?? {}) as { waiting?: { reason?: string } }).waiting?.reason).find((r) => !!r) ?? null;
+  const term = cs.map((c) => ((c.lastState ?? {}) as { terminated?: { reason?: string } }).terminated?.reason).find((r) => !!r) ?? null;
+  return {
+    name: String(meta.name ?? ''),
+    phase: String(st.phase ?? 'Unknown'),
+    ready: cs.length > 0 && cs.every((c) => c.ready === true),
+    restarts: cs.reduce((n, c) => n + (Number(c.restartCount) || 0), 0),
+    waitingReason: waiting,
+    lastTerminated: term,
+    startedAt: typeof st.startTime === 'string' ? st.startTime : null,
+    terminatedNow: cs.some((c) => !!((c.state ?? {}) as { terminated?: unknown }).terminated),
+  };
+}
+
+export function podStateOf(f: PodFacts): PodState {
+  if (f.waitingReason === 'CrashLoopBackOff') return 'crash_looping';
+  // Between two restarts the kubelet reports the container as terminated (not yet "waiting: CrashLoopBackOff"):
+  // a container that has already restarted, is not ready and is (or was) terminated is crash-looping too.
+  if (!f.ready && f.restarts >= 1 && (f.terminatedNow || f.lastTerminated)) return 'crash_looping';
+  if (f.waitingReason === 'ImagePullBackOff' || f.waitingReason === 'ErrImagePull' || f.waitingReason === 'InvalidImageName') return 'image_pull_failed';
+  if (f.phase === 'Failed') return 'failed';
+  if (f.phase === 'Succeeded') return 'completed';
+  if (f.phase === 'Running' && f.ready) return 'running';
+  if (f.phase === 'Pending' || f.waitingReason === 'ContainerCreating') return 'starting';
+  return 'not_ready';
+}
+
+const POD_SEVERITY: PodState[] = ['crash_looping', 'image_pull_failed', 'failed', 'not_ready', 'starting', 'completed', 'running'];
+/** The worst state among an app's pods (every replica must be running for the app to read as running). */
+export function worstPodState(states: readonly PodState[]): PodState {
+  return POD_SEVERITY.find((s) => states.includes(s)) ?? 'running';
+}
+
+/** A Deployment's pod is `<runner>-<replicaset hash>-<pod hash>`; `null` for any other shape. */
+export function runnerOfPod(podName: string, runners: ReadonlySet<string>): string | null {
+  const m = /^(.+)-[a-z0-9]+-[a-z0-9]+$/.exec(podName);
+  return m && runners.has(m[1]) ? m[1] : null;
+}
+
+/** A LogsQL regex literal matching exactly the pods of these runners (`<runner>-<hash>-<hash>`). */
+export function runnerPodRegex(runners: readonly string[]): string {
+  const alt = runners.map((r) => r.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+  return `^(${alt})-[a-z0-9]+-[a-z0-9]+$`;
+}
+
+/** Log lines and lines containing "error" (any case) per pod of the asked apps in the last hour, counted by VictoriaLogs. */
+export function appLogQuery(namespace: string, runners: readonly string[], window = '1h'): string {
+  return `_time:${window} k8s.namespace.name:${logsqlString(namespace)} k8s.pod.name:~${logsqlString(runnerPodRegex(runners))} | stats by (k8s.pod.name) count() as lines, count() if (i(error)) as errors`;
+}
+
+export type AppLogCounts = { lines: number; errors: number; errorRate: number | null };
+
+/** Per-pod rows → per-runner sums; rows of pods that are not an asked runner's are dropped. No lines ⇒ no rate. */
+export function foldAppLogs(rows: readonly Record<string, string>[], runners: readonly string[]): Map<string, AppLogCounts> {
+  const asked = new Set(runners);
+  const out = new Map<string, AppLogCounts>();
+  for (const r of rows) {
+    const runner = runnerOfPod(String(r['k8s.pod.name'] ?? ''), asked);
+    if (!runner) continue;
+    const c = out.get(runner) ?? { lines: 0, errors: 0, errorRate: null };
+    c.lines += Number(r.lines) || 0;
+    c.errors += Number(r.errors) || 0;
+    out.set(runner, c);
+  }
+  for (const c of out.values()) c.errorRate = c.lines > 0 ? c.errors / c.lines : null;
+  return out;
+}
