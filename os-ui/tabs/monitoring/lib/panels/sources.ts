@@ -60,8 +60,8 @@ export type MonitoringSources = {
   connectionCatalogs(): Promise<{ catalog: string; connectionId: string; name: string; domain: string }[]>;
   /** The dataset's own Dagster asset keys from its generated dbt project; absent when the project is not in git. */
   /** Every Trino table some dataset (live or archived) can occupy, plus the schemas that are judged. */
-  /** `managedNames` is null when Dagster cannot be read, so dbt-managed tables cannot be told apart. */
-  registeredTables(): Promise<{ fqns: string[]; domainSchemas: string[]; managedNames: string[] | null }>;
+  /** `managedTables` (`schema.table` of the dbt models Dagster manages) is null when Dagster cannot be read, so dbt-managed tables cannot be told apart. */
+  registeredTables(): Promise<{ fqns: string[]; domainSchemas: string[]; managedTables: string[] | null }>;
   assetKeys(ds: { id: string; domain: string }[]): Promise<Map<string, { tested: string[] | null; models: string[][] }>>;
   /** The Files tab's scoped list (`listFiles`), with each file's recorded Docling and index outcome. */
   files?(p: PanelPrincipal): Promise<FileRow[]>;
