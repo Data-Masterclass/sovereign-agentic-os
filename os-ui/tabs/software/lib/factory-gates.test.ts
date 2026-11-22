@@ -13,7 +13,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { chmodSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { chmodSync, mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync, readFileSync as readFileSyncFs } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { config as cfg } from '@core/kernel/config';
@@ -278,4 +278,21 @@ test('factory-gates.mjs --only runs one gate; an unknown gate is an error, never
   const frame = policy.stdout.slice(policy.stdout.lastIndexOf(GATES_REPORT_DELIM) + GATES_REPORT_DELIM.length);
   const rep = JSON.parse(frame) as { gates: { id: string }[] };
   assert.deepEqual(rep.gates.map((g) => g.id), ['policy']);
+});
+
+test('NEGATIVE the gate script reached through a symlink (how a ConfigMap volume mounts it) still runs: no silent exit 0', () => {
+  // On the cluster the chart's copy is /platform/gates/factory-gates.mjs -> ..data/factory-gates.mjs -> ..<timestamp>/factory-gates.mjs.
+  // A main guard that compares the raw argv[1] with the real module path runs nothing there and every gate "passes".
+  const chartCopy = join(TEMPLATE, '..', '..', 'charts', 'sovereign-agentic-os', 'files', 'tekton', 'platform', 'factory-gates.mjs');
+  assert.equal(readFileSyncFs(chartCopy, 'utf8'), readFileSyncFs(join(TEMPLATE, 'scripts', 'factory-gates.mjs'), 'utf8'), 'the chart ships the template\'s gate script unchanged');
+  const dir = mkdtempSync(join(tmpdir(), 'fg-link-'));
+  mkdirSync(join(dir, 'real'));
+  writeFileSync(join(dir, 'real', 'factory-gates.mjs'), readFileSyncFs(chartCopy));
+  symlinkSync(join(dir, 'real', 'factory-gates.mjs'), join(dir, 'factory-gates.mjs'));
+  const r = spawnSync('node', [join(dir, 'factory-gates.mjs'), '--only', 'nonsense'], { cwd: dir, encoding: 'utf8' });
+  assert.equal(r.status, 2, `through a symlink the script must run (stdout=${r.stdout} stderr=${r.stderr})`);
+  assert.match(r.stderr, /unknown gate: nonsense/);
+  const empty = spawnSync('node', [join(dir, 'factory-gates.mjs'), '--only', 'tests'], { cwd: dir, encoding: 'utf8' });
+  assert.equal(empty.status, 1, 'a gate with nothing to run (no tests/ here) is a failure, never a silent pass');
+  rmSync(dir, { recursive: true, force: true });
 });

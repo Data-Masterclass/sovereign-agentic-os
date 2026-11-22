@@ -18,7 +18,7 @@ Upstream, unmodified. Nothing in this folder is ours beyond the pin and the inst
   - Feature flag `set-security-context`: https://tekton.dev/docs/pipelines/additional-configs/
   - Git resolver (`pipelineRef.resolver: git`): https://tekton.dev/docs/pipelines/git-resolver/
   - Cancel a run with `spec.status: Cancelled`: https://tekton.dev/docs/pipelines/pipelineruns/#cancelling-a-pipelinerun
-  - Step `onError: continue` and `$(steps.<name>.exitCode.path)`: https://tekton.dev/docs/pipelines/tasks/#specifying-onerror-for-a-step
+  - Step `onError: continue` and `$(steps.step-<name>.exitCode.path)`: https://tekton.dev/docs/pipelines/tasks/#specifying-onerror-for-a-step
   - Sidecars: https://tekton.dev/docs/pipelines/tasks/#specifying-sidecars
   - Pipeline-task workspace `subPath`: https://tekton.dev/docs/pipelines/pipelines/#specifying-workspaces
   - EventListener, TriggerBinding, TriggerTemplate, CEL interceptor: https://tekton.dev/docs/triggers/

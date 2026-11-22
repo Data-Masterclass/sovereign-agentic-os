@@ -234,13 +234,15 @@ test('GREEN: a real git push starts a Tekton PipelineRun for that exact commit; 
   const { sha, out } = await pushChange(clone, () => appendFileSync(join(clone, 'apps', SLUG, 'README.md'), '\nA note from a developer.\n'), 'docs: a note');
   assert.match(out, new RegExp(`quality checks started for ${sha.slice(0, 12)} \\(chk-`), `git said:\n${out}`);
 
-  // Tekton's own record: one PipelineRun for the sha, resolved from the app's .tekton/pipeline.yaml in git.
+  // Tekton's own record: one PipelineRun for the sha, running the CHART's Pipeline `app-checks` (platform-owned): the app's own
+  // copy in git is for ejecting, it never judges a commit here.
   const runs = runsOf(SLUG, sha);
   assert.equal(runs.length, 1, 'one PipelineRun per sha');
-  const spec = runs[0].spec as { pipelineRef: { resolver: string; params: { name: string; value: string }[] } };
-  assert.equal(spec.pipelineRef.resolver, 'git');
-  assert.ok(spec.pipelineRef.params.some((p) => p.name === 'revision' && p.value === sha));
-  assert.ok(spec.pipelineRef.params.some((p) => p.name === 'pathInRepo' && p.value === `apps/${SLUG}/.tekton/pipeline.yaml`));
+  const spec = runs[0].spec as { pipelineRef: { name: string; resolver?: string }; params: { name: string; value: string }[] };
+  assert.equal(spec.pipelineRef.name, 'app-checks');
+  assert.equal(spec.pipelineRef.resolver, undefined, 'the Pipeline is not resolved from the pushed repository');
+  assert.ok(spec.params.some((p) => p.name === 'sha' && p.value === sha));
+  assert.ok(spec.params.some((p) => p.name === 'slug' && p.value === SLUG));
 
   const rec = await waitRecord(SLUG, sha);
   assert.equal(rec.status, 'finished');
