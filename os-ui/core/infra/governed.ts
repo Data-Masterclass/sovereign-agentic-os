@@ -57,7 +57,20 @@ async function withTimeout(url: string, init: RequestInit, ms = 2500): Promise<R
  * domains, the target's tier and owner). Unlike the tool grant it is NEVER fail-open: an OPA that
  * does not answer denies, whatever `OPA_FAIL_OPEN` says.
  */
-export type WriteDecision = { rule: 'data_version_write'; input: Record<string, unknown> };
+export type WriteDecision = { rule: 'data_version_write' | 'workflow_write'; input: Record<string, unknown> };
+
+/**
+ * Test seam for the workflow write door (`agentic.authz.workflow_write`). Under `node --test` ONLY
+ * (`NODE_TEST_CONTEXT` is set by the test runner and by nothing in production), a function on a
+ * well-known global symbol stands in for the policy, so the many suites that exercise the workflow
+ * tools as a permitted user need not run an OPA. `scripts/test-setup.mjs` installs an allowing one;
+ * the tests of the door itself remove it and exercise the real path. Returns undefined in production.
+ */
+export function workflowWriteTestGate(): ((op: string, user: unknown, workflow: unknown) => unknown) | undefined {
+  if (!process.env.NODE_TEST_CONTEXT) return undefined;
+  const g = (globalThis as Record<symbol, unknown>)[Symbol.for('soa.test.workflowWriteGate')];
+  return typeof g === 'function' ? (g as (op: string, user: unknown, workflow: unknown) => unknown) : undefined;
+}
 
 export async function authorize(principal: string, tool: string, write?: WriteDecision): Promise<Authz> {
   if (write) {

@@ -27,7 +27,7 @@ import {
 } from '@tabs/data/lib/store';
 import { runQualityChecks } from '@tabs/data/lib/dq-run';
 import { DATA_CHECK_RULES, type DataCheckRule } from '@tabs/data/lib/index';
-import { queryRun } from '@core/infra/governed';
+import { queryRun, authorize, workflowWriteTestGate } from '@core/infra/governed';
 import { publishPromotionLive } from '@tabs/data/lib/publish-server';
 import { enqueue, getApproval, decide, listApprovals } from '@core/policy/approvals';
 import { canBuildStage, canPassThrough, stageArtifact } from '@tabs/data/lib/panels';
@@ -269,6 +269,8 @@ export const knowledgeWriteTools: McpTool[] = [
         fail(`import_okf_bundle: bundle is ${(zip.length / 1048576).toFixed(1)} MB — over the ${OKF_MAX_UNPACKED_BYTES / 1048576} MB cap`, 400);
       }
       const p = P(user);
+      // An import lands workflows (and notes) at Personal tier, owned by the caller: a workflow create.
+      await requireWorkflowWrite(user, 'create', { id: '', tier: 'personal', owner: user.id, domain: str(args.domain) || user.domains[0] || '' }, 'import_okf_bundle');
       try {
         const result = importOkfZip(zip, p, { domain: str(args.domain) || undefined });
         if (!result.ok) {
@@ -293,6 +295,30 @@ export const knowledgeWriteTools: McpTool[] = [
 // the workflow store's imports; the module split by tab is follow-up work (the glue ratchet keys its
 // baseline by file, and moving them out would add cross-tab imports). A workflow is NOT a knowledge
 // note: see `@core/mcp/deprecated-aliases` for the four old `*_knowledge` names of these tools.
+/** The facts OPA decides a workflow write on: the workflow's tier (My / Domain / Company), owner and domain. */
+type WorkflowFacts = { id: string; tier: 'personal' | 'shared' | 'certified'; owner: string; domain: string };
+const TIER_OF: Record<string, WorkflowFacts['tier']> = { Personal: 'personal', Shared: 'shared', Marketplace: 'certified' };
+
+/**
+ * THE OPA DOOR for a workflow write (`agentic.authz.workflow_write`), asked BEFORE the store is touched.
+ * Fail-CLOSED: an OPA that is unreachable or answers an error denies (the write branch of `authorize`
+ * ignores OPA_FAIL_OPEN). The store's own gates remain the inner authority.
+ *
+ * Test seam: see `workflowWriteTestGate` (under `node --test` only).
+ */
+async function requireWorkflowWrite(user: CurrentUser, op: 'create' | 'index' | 'publish' | 'retire', wf: WorkflowFacts, tool: string): Promise<void> {
+  const gate = workflowWriteTestGate();
+  const allowed = gate
+    ? Boolean(await gate(op, user, wf))
+    : (await authorize(`user:${user.id}`, 'workflow.write', {
+        rule: 'workflow_write',
+        input: { action: 'workflow.write', op, actor: { id: user.id, role: user.role, domains: user.domains }, workflow: wf },
+      })).allowed;
+  if (!allowed) fail(`${tool} was refused by policy (workflow ${op}): the policy engine did not allow it, or did not answer — nothing was changed`, 403);
+}
+const factsOf = (rec: { id: string; visibility: string; owner: string; domain: string }): WorkflowFacts =>
+  ({ id: rec.id, tier: TIER_OF[rec.visibility] ?? 'personal', owner: rec.owner, domain: rec.domain });
+
 export const workflowWriteTools: McpTool[] = [
   {
     name: 'author_workflow',
@@ -385,6 +411,7 @@ export const workflowWriteTools: McpTool[] = [
       const title = str(args.title).trim();
       if (!title) fail('author_workflow needs a `title`', 400);
       const p = P(user);
+      await requireWorkflowWrite(user, 'create', { id: '', tier: 'personal', owner: user.id, domain: str(args.domain) || user.domains[0] || '' }, 'author_workflow');
       const rec = createWorkflow(p, { title, domain: str(args.domain) || undefined });
       const body = str(args.markdown);
       const steps = mapSteps(args.steps);
@@ -432,6 +459,7 @@ export const workflowWriteTools: McpTool[] = [
       const id = str(args.workflowId).trim();
       if (!id) fail('publish_workflow needs a `workflowId`', 400);
       const p = P(user);
+      await requireWorkflowWrite(user, 'publish', factsOf(getWorkflow(id, p)), 'publish_workflow'); // view-scope first, then the policy
       // Route the flip through the ONE effect seam (never publishWorkflow directly).
       // Intent is PUBLISH (rung 1): a mismatch (already-Shared workflow) is a typed
       // conflict, not a silent certify-to-marketplace.
@@ -465,6 +493,7 @@ export const workflowWriteTools: McpTool[] = [
       if (!id) fail('index_workflow needs a `workflowId`', 400);
       const p = P(user);
       const view = getWorkflow(id, p);
+      await requireWorkflowWrite(user, 'index', factsOf(view), 'index_workflow');
       // A27: the embed calls bill the caller who asked for the re-index.
       const caller = actingCaller(user.id, view.domain);
       const workflow = await indexWorkflow(view.workflow, { owner: view.owner, tacit: view.tacit, updatedAt: view.updatedAt, caller });
@@ -505,6 +534,7 @@ export const workflowWriteTools: McpTool[] = [
       // View-scope + existence guard first (typed 403/404) so a lineage/role message
       // never leaks a workflow the caller can't even see.
       const view = getWorkflow(id, p);
+      await requireWorkflowWrite(user, 'retire', factsOf(view), 'retire_workflow');
       // LINEAGE GUARD (mirrors the app-delete dependentsOf check): refuse to orphan a
       // live consumer. Runs for BOTH archive and delete — retiring an in-use workflow,
       // reversibly or not, breaks the consumers' context handover.

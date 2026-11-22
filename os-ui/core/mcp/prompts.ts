@@ -7,6 +7,7 @@ import { ROLES, type Role } from '@core/kernel/session';
 import type { ToolTab, McpTab } from '@core/mcp/server';
 import { loadGuide, type GuidePath } from '@core/tabs-meta/guides';
 import { toolsetForTab } from '@core/mcp/fast-surface';
+import { authorize, workflowWriteTestGate } from '@core/infra/governed';
 
 /**
  * MCP PROMPTS — user-controlled, parameterized workflow templates surfaced by
@@ -25,6 +26,9 @@ export type PromptMessage = {
   content: { type: 'text'; text: string };
 };
 
+/** A prompt that starts a governed write is gated by the SAME OPA rule as the write (`promptAllowed`). */
+export type PromptGate = { rule: 'workflow_write'; op: 'create' };
+
 export type McpPrompt = {
   name: string;
   title: string;
@@ -34,6 +38,8 @@ export type McpPrompt = {
   minRole: Role;
   /** The pathway guide this prompt embeds (its full how-to). */
   guide: GuidePath;
+  /** Set when following the script starts a governed write: the prompt is refused where that write would be. */
+  gate?: PromptGate;
   /** Build the parameterized step script (the guide + banner + rules wrap it). */
   script: (args: Record<string, string>) => string;
 };
@@ -101,6 +107,7 @@ export const PROMPTS: McpPrompt[] = [
     tab: 'workflows',
     minRole: 'creator',
     guide: 'workflows',
+    gate: { rule: 'workflow_write', op: 'create' },
     script: (a) => [
       `GOAL: document the business process "${a.topic || '<topic>'}" as a workflow${a.domain ? ` in domain ${a.domain}` : ''}.`,
       'A workflow is process documentation (steps + actors). It is NOT a knowledge note: to keep a report or an answer, call save_knowledge_note instead and stop.',
@@ -286,6 +293,23 @@ export const PROMPTS: McpPrompt[] = [
     ].join('\n'),
   },
 ];
+
+/**
+ * May this caller be handed this prompt? A prompt whose script starts a governed write asks OPA the question the
+ * write will ask (`agentic.authz.workflow_write`, op create, for a personal workflow of the caller in their first
+ * domain) and is refused when the answer is no — or when OPA does not answer (fail-closed, like the write).
+ */
+export async function promptAllowed(prompt: McpPrompt, user: CurrentUser): Promise<boolean> {
+  if (!prompt.gate) return true;
+  const facts = { id: '', tier: 'personal', owner: user.id, domain: user.domains[0] ?? '' };
+  const gate = workflowWriteTestGate();
+  if (gate) return Boolean(await gate(prompt.gate.op, user, facts));
+  const r = await authorize(`user:${user.id}`, 'workflow.write', {
+    rule: prompt.gate.rule,
+    input: { action: 'workflow.write', op: prompt.gate.op, actor: { id: user.id, role: user.role, domains: user.domains }, workflow: facts },
+  });
+  return r.allowed;
+}
 
 /** Render a prompt to MCP `prompts/get` messages: guide + live banner + script + rules. */
 export function renderPrompt(prompt: McpPrompt, user: CurrentUser, args: Record<string, string>): PromptMessage[] {

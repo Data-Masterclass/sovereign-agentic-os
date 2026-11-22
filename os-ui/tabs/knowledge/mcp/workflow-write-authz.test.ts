@@ -118,6 +118,7 @@ test('NEGATIVE TWIN: a domain admin OUTSIDE the domain is refused by OPA on publ
   assert.ok(e.code === 'forbidden' || e.code === 'not_found', `refused (got ${e.code})`);
   assert.equal(workflowsOf(cara)[0].visibility, 'Personal', 'still My scope');
   // …and the in-domain admin, with the same verdict function, publishes.
+  payload(await raw(cara, 'request_promotion', { kind: 'workflow', id: rec.id })); // the owner files, the domain admin approves
   asks = [];
   payload(await raw(dana, 'publish_workflow', { workflowId: rec.id }));
   assert.equal(asks.find((a) => a.input.op === 'publish') !== undefined, true, 'publish was put to OPA');

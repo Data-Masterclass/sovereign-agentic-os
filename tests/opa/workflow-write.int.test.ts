@@ -87,6 +87,7 @@ test('real OPA, real tools: owner authors and indexes; a creator cannot publish;
   const mine = listWorkflows({ id: 'cara', domains: ['sales'], role: 'creator' }).mine;
   assert.equal(mine.length, 1);
   assert.equal(mine[0].visibility, 'Personal', 'nothing was published');
+  assert.notEqual((await call(cara, 'request_promotion', { kind: 'workflow', id })).isError, true, 'the owner files the request');
   assert.notEqual((await call(dana, 'publish_workflow', { workflowId: id })).isError, true, 'the domain admin of the domain publishes');
 });
 

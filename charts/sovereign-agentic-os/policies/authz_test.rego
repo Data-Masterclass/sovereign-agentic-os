@@ -227,6 +227,7 @@ test_workflow_index_owner_builder_and_domain_member_allowed if {
 test_workflow_index_refused_for_outsiders_and_peers_of_a_personal_draft if {
 	not workflow_write with input as ww("index", fred, wf_mine)
 	not workflow_write with input as ww("index", fred, wf_shared)
+
 	# a creator who is not the owner does not index another creator's private draft
 	not workflow_write with input as ww("index", {"id": "cory", "role": "creator", "domains": ["sales"]}, wf_mine)
 }
@@ -240,6 +241,7 @@ test_workflow_publish_refused_for_creator_builder_and_other_domain if {
 	# negative twins: the owner who is only a creator publishes nothing to Domain; nor a builder
 	not workflow_write with input as ww("publish", cara, wf_mine)
 	not workflow_write with input as ww("publish", ben, wf_mine)
+
 	# a domain admin of ANOTHER domain, and a user outside the domain
 	not workflow_write with input as ww("publish", fred_admin, wf_mine)
 	not workflow_write with input as ww("publish", fred, wf_mine)
