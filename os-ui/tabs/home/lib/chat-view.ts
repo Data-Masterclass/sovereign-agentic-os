@@ -57,18 +57,23 @@ export type StreamEvent = { type: string; [k: string]: unknown };
  * Split an NDJSON chunk into whole events; the unfinished tail is returned as `rest` for the next
  * chunk. A line that is not JSON is dropped, never rendered.
  */
-export function parseStreamLines(rest: string, chunk: string): { events: StreamEvent[]; rest: string } {
+export function parseStreamLines(rest: string, chunk: string): { events: StreamEvent[]; rest: string; dropped: number } {
   const lines = (rest + chunk).split('\n');
   const tail = lines.pop() ?? '';
   const events: StreamEvent[] = [];
+  let dropped = 0;
   for (const line of lines) {
     if (!line.trim()) continue;
+    let v: StreamEvent | null = null;
     try {
-      const v = JSON.parse(line) as StreamEvent;
-      if (v && typeof v.type === 'string') events.push(v);
-    } catch { /* not an event */ }
+      v = JSON.parse(line) as StreamEvent;
+    } catch {
+      dropped += 1; // counted, never rendered
+    }
+    if (v && typeof v.type === 'string') events.push(v);
+    else if (v) dropped += 1;
   }
-  return { events, rest: tail };
+  return { events, rest: tail, dropped };
 }
 
 const SECRET_KEY = /(secret|password|passwd|token|api[_-]?key|credential|private[_-]?key|authorization)/i;
@@ -124,13 +129,16 @@ const CREATES: Record<string, { kind: string; label: string }> = {
 export function linkForResult(tool: string, resultText: string | undefined): { href: string; label: string } | null {
   const c = Object.hasOwn(CREATES, tool) ? CREATES[tool] : null;
   if (!c || !resultText) return null;
+  let j: Record<string, unknown> | null = null;
+  let readable = true;
   try {
-    const j = JSON.parse(resultText) as Record<string, unknown>;
-    const inner = (j[c.kind] ?? j.metric ?? j.result) as Record<string, unknown> | undefined;
-    const id = [j.id, j[`${c.kind}Id`], inner?.id].find((v): v is string => typeof v === 'string' && v.length > 0);
-    const href = id ? artifactLink(c.kind, id) : null;
-    return href ? { href, label: `Open the ${c.label}` } : null;
+    j = JSON.parse(resultText) as Record<string, unknown>;
   } catch {
-    return null;
+    readable = false; // not JSON: there is no id to link to
   }
+  if (!readable || !j) return null;
+  const inner = (j[c.kind] ?? j.metric ?? j.result) as Record<string, unknown> | undefined;
+  const id = [j.id, j[`${c.kind}Id`], inner?.id].find((v): v is string => typeof v === 'string' && v.length > 0);
+  const href = id ? artifactLink(c.kind, id) : null;
+  return href ? { href, label: `Open the ${c.label}` } : null;
 }

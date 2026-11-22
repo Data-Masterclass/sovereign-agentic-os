@@ -11,7 +11,7 @@
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import type { CurrentUser } from '@core/kernel/auth';
-import { osToolSpecs, runOsAssistant, type RpcDispatch } from '@core/runtime/agent-loop';
+import { osToolExecutor, osToolSpecs, runOsAssistant, type RpcDispatch } from '@core/runtime/agent-loop';
 import { decideConfirmation } from '@core/runtime/confirm-execute';
 import { askTurnResponse } from '@core/runtime/ask-response';
 import { __resetConfirmations } from '@core/policy/confirmations';
@@ -85,11 +85,11 @@ test('a write is parked: the governed dispatch is never reached until the user c
   assert.equal(res.pending[0].tool, 'create_dataset');
 
   const id = res.pending[0].confirmationId;
-  const done = await decideConfirmation({ user: creator, confirmationId: id, conversationId: 'conv-1', decision: 'confirm', dispatch: spy.dispatch });
+  const done = await decideConfirmation({ user: creator, confirmationId: id, conversationId: 'conv-1', decision: 'confirm', execute: (t, a, sink) => osToolExecutor(creator, sink, spy.dispatch)(t, a) });
   assert.equal(done.status, 'executed');
   assert.deepEqual(spy.calls, [{ name: 'create_dataset', args }], 'ran once, with the args that were shown');
 
-  const again = await decideConfirmation({ user: creator, confirmationId: id, conversationId: 'conv-1', decision: 'confirm', dispatch: spy.dispatch });
+  const again = await decideConfirmation({ user: creator, confirmationId: id, conversationId: 'conv-1', decision: 'confirm', execute: (t, a, sink) => osToolExecutor(creator, sink, spy.dispatch)(t, a) });
   assert.equal(again.status, 'refused');
   assert.equal(spy.calls.length, 1, 'a second confirm does not run it again');
 });
@@ -102,7 +102,7 @@ test('NEGATIVE TWIN: a read runs straight through; a declined write never runs',
 
   const spy2 = spyDispatch();
   const w = await turn(creator, script([{ name: 'create_dataset', args: { name: 'X' } }]), { dispatch: spy2.dispatch });
-  const d = await decideConfirmation({ user: creator, confirmationId: w.pending[0].confirmationId, conversationId: 'conv-1', decision: 'decline', dispatch: spy2.dispatch });
+  const d = await decideConfirmation({ user: creator, confirmationId: w.pending[0].confirmationId, conversationId: 'conv-1', decision: 'decline', execute: (t, a, sink) => osToolExecutor(creator, sink, spy2.dispatch)(t, a) });
   assert.equal(d.status, 'declined');
   assert.equal(spy2.calls.length, 0);
 });
@@ -114,14 +114,14 @@ test('user B cannot confirm or decline user A\'s pending write; A still can; ano
   const id = res.pending[0].confirmationId;
 
   for (const decision of ['confirm', 'decline'] as const) {
-    const b = await decideConfirmation({ user: otherCreator, confirmationId: id, conversationId: 'conv-1', decision, dispatch: spy.dispatch });
+    const b = await decideConfirmation({ user: otherCreator, confirmationId: id, conversationId: 'conv-1', decision, execute: (t, a, sink) => osToolExecutor(otherCreator, sink, spy.dispatch)(t, a) });
     assert.equal(b.status, 'refused');
   }
-  const wrongConv = await decideConfirmation({ user: creator, confirmationId: id, conversationId: 'conv-2', decision: 'confirm', dispatch: spy.dispatch });
+  const wrongConv = await decideConfirmation({ user: creator, confirmationId: id, conversationId: 'conv-2', decision: 'confirm', execute: (t, a, sink) => osToolExecutor(creator, sink, spy.dispatch)(t, a) });
   assert.equal(wrongConv.status, 'refused');
   assert.equal(spy.calls.length, 0, 'none of the refused attempts ran anything');
 
-  const a = await decideConfirmation({ user: creator, confirmationId: id, conversationId: 'conv-1', decision: 'confirm', dispatch: spy.dispatch });
+  const a = await decideConfirmation({ user: creator, confirmationId: id, conversationId: 'conv-1', decision: 'confirm', execute: (t, a, sink) => osToolExecutor(creator, sink, spy.dispatch)(t, a) });
   assert.equal(a.status, 'executed');
 });
 
@@ -138,7 +138,7 @@ test('confirming does not widen rights: the governed dispatch re-checks the role
     },
   });
   const res = await turn(creator, script([{ name: 'create_dataset', args: { name: 'X' } }]));
-  const out = await decideConfirmation({ user: creator, confirmationId: res.pending[0].confirmationId, conversationId: 'conv-1', decision: 'confirm', dispatch: denied });
+  const out = await decideConfirmation({ user: creator, confirmationId: res.pending[0].confirmationId, conversationId: 'conv-1', decision: 'confirm', execute: (t, a, sink) => osToolExecutor(creator, sink, denied)(t, a) });
   assert.equal(out.status, 'failed');
   assert.equal(out.error?.code, 'forbidden');
 });

@@ -47,6 +47,6 @@ test('Home renders the chat and the launcher in its compact form', () => {
 test('the chat shell talks to the governed assistant route only, and renders no model markup', () => {
   const ui = read('tabs/home/ui/HomeChat.tsx');
   assert.match(ui, /\/api\/assistant\/chat/);
-  assert.match(ui, /\/api\/assistant\/confirm/);
+  assert.match(ui, /confirmation: \{ id: p\.confirmationId/);
   assert.doesNotMatch(ui, /dangerouslySetInnerHTML|eval\(|new Function/);
 });

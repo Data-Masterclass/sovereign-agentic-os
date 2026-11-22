@@ -14,10 +14,9 @@
 import 'server-only';
 import type { CurrentUser } from '@core/kernel/auth';
 import { beginExecute, declineConfirmation, finishExecute } from '@core/policy/confirmations';
-import { osToolExecutor, type RpcDispatch } from '@core/runtime/agent-loop';
+import type { ToolExecutor } from '@core/runtime/agentic';
 import { typedToolError, type TypedToolError } from '@core/runtime/ask-response';
 import type { ChatArtifact } from '@core/runtime/chat-artifacts';
-import { handleRpc } from '@core/mcp/server';
 
 export type DecideResult = {
   status: 'executed' | 'failed' | 'declined' | 'refused';
@@ -35,7 +34,12 @@ export async function decideConfirmation(input: {
   confirmationId: string;
   conversationId: string;
   decision: 'confirm' | 'decline';
-  dispatch?: RpcDispatch;
+  /**
+   * Runs ONE governed tool call as the confirming user, appending the call's typed artifacts to
+   * `sink`. The caller builds it from `osToolExecutor(user, sink)` (the same governed `handleRpc` door
+   * as every other call); this module never reaches the dispatcher or the admin adapters itself.
+   */
+  execute: (tool: string, args: Record<string, unknown>, sink: ChatArtifact[]) => ReturnType<ToolExecutor>;
 }): Promise<DecideResult> {
   const { user, confirmationId, conversationId } = input;
   if (input.decision === 'decline') {
@@ -50,7 +54,7 @@ export async function decideConfirmation(input: {
   const { tool, args } = begun.confirmation;
   const artifacts: ChatArtifact[] = [];
   try {
-    const out = await osToolExecutor(user, artifacts, input.dispatch ?? handleRpc)(tool, args);
+    const out = await input.execute(tool, args, artifacts);
     const error = out.isError ? typedToolError(out.text) : null;
     finishExecute(confirmationId, out.isError ? 'failed' : 'executed', out.isError ? (error?.code ?? 'error') : 'ok');
     return out.isError

@@ -145,10 +145,10 @@ export default function HomeChat({ firstName }: { firstName: string }) {
       setMessages((all) => all.map((m, i) => (i !== mi ? m : { ...m, pending: m.pending?.map((x, j) => (j === pi ? { ...x, ...u } : x)) })));
     patch({ state: 'running' });
     try {
-      const res = await fetch('/api/assistant/confirm', {
+      const res = await fetch('/api/assistant/chat', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ confirmationId: p.confirmationId, conversationId, decision }),
+        body: JSON.stringify({ confirmation: { id: p.confirmationId, conversationId, decision } }),
       });
       const j = (await res.json()) as { status?: string; text?: string; error?: TypedError };
       if (j.status === 'executed') patch({ state: 'done', note: 'Done.', link: linkForResult(p.tool, j.text) ?? undefined });
