@@ -23,7 +23,7 @@ const FORGED_GREEN = `<<<OS-GATES-REPORT>>>\n${JSON.stringify({ schema: 'os-gate
 const term = (name: string, exitCode: number) => ({ name, state: { terminated: { exitCode, reason: exitCode === 0 ? 'Completed' : 'Error' } } });
 
 type Call = { method: string; path: string; body?: Record<string, unknown> };
-function scripted(over: { exits?: Record<string, number | null>; install?: number; log?: string; jobGone?: boolean } = {}) {
+function scripted(over: { exits?: Record<string, number | null>; install?: number; toolchain?: number; log?: string; jobGone?: boolean } = {}) {
   const calls: Call[] = [];
   const exits = over.exits ?? Object.fromEntries(GATES.map((g) => [g, 0]));
   const k8s = async (method: string, path: string, body?: Record<string, unknown>) => {
@@ -33,7 +33,7 @@ function scripted(over: { exits?: Record<string, number | null>; install?: numbe
     if (method === 'POST') return { status: 201, body: {} };
     if (path.includes('/pods?')) {
       const containerStatuses = Object.entries(exits).filter(([, c]) => c !== null).map(([n, c]) => term(n, c as number));
-      return { status: 200, body: { items: [{ metadata: { name: 'p1', ownerReferences: [{ uid: 'job-uid' }] }, status: { initContainerStatuses: [term('install', over.install ?? 0)], containerStatuses } }] } };
+      return { status: 200, body: { items: [{ metadata: { name: 'p1', ownerReferences: [{ uid: 'job-uid' }] }, status: { initContainerStatuses: [term('toolchain', over.toolchain ?? 0), term('install', over.install ?? 0)], containerStatuses } }] } };
     }
     if (path.includes('/jobs/')) return over.jobGone ? { status: 404, body: {} } : { status: 200, body: { status: Object.values(exits).every((c) => c === 0) ? { succeeded: 1 } : { failed: 1 } } };
     return { status: 404, body: {} };

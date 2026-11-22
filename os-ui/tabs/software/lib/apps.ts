@@ -1288,8 +1288,8 @@ export async function saveAppFile(
     throw withStatus(new Error('File changed since you loaded it — reload and retry.'), 409);
   }
   // PLATFORM_OWNED: the editor may not change the gate files, build files or deploy manifests of a golden-path app.
-  if (isGoldenPath(app.template)) assertNoPlatformOwnedChange(prior, [{ path: clean, content: input.content }]);
   const tree = [...prior.filter((f) => f.path !== clean), { path: clean, content: input.content }];
+  if (isGoldenPath(app.template)) assertNoPlatformOwnedChange(prior, [{ path: clean, content: input.content }], tree);
   snapshotFiles(app.id, tree);
   app.updatedAt = now();
   writeThrough(app);
