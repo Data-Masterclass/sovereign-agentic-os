@@ -136,13 +136,13 @@ async function startChecks(slug: string, input: { domain: string; sha: string },
     app.checks = withResult(app.checks, result);
     await persistApp(app);
     const r = result.record;
-    if (r.error) report.notes.push(`apps/${slug}/: the quality checks could not start for ${input.sha.slice(0, 12)}: ${r.error}`);
+    if (r.error) report.notes.push(`${APPS_DIR}/${slug}/: the quality checks could not start for ${input.sha.slice(0, 12)}: ${r.error}`);
     else {
-      report.notes.push(`apps/${slug}/: quality checks started for ${input.sha.slice(0, 12)}${r.runRef ? ` (${r.runRef})` : ''}${result.superseded.length ? `; the run for ${result.superseded.map((x) => x.slice(0, 12)).join(', ')} was cancelled` : ''}`);
+      report.notes.push(`${APPS_DIR}/${slug}/: quality checks started for ${input.sha.slice(0, 12)}${r.runRef ? ` (${r.runRef})` : ''}${result.superseded.length ? `; the run for ${result.superseded.map((x) => x.slice(0, 12)).join(', ')} was cancelled` : ''}`);
       if (r.status === 'running') watchChecks(slug, input.sha);
     }
   } catch (e) {
-    report.notes.push(`apps/${slug}/: the quality checks could not start (${e instanceof Error ? e.message : String(e)})`);
+    report.notes.push(`${APPS_DIR}/${slug}/: the quality checks could not start (${e instanceof Error ? e.message : String(e)})`);
   }
 }
 
