@@ -24,7 +24,9 @@ test('roleModels returns the role name for each of the five OS roles', () => {
   });
 });
 
-test('standard-first escalation is a switch, on by default, and does not change which names are called', () => {
+test('the lead-model switch is OFF by default (strong leads), an explicit ON is kept, and it does not change which names are called', () => {
+  assert.equal(standardFirstEscalationEnabled(), false);
+  updateSettings({ standardFirstEscalation: true });
   assert.equal(standardFirstEscalationEnabled(), true);
   updateSettings({ standardFirstEscalation: false });
   assert.equal(standardFirstEscalationEnabled(), false);

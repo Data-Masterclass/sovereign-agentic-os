@@ -553,7 +553,12 @@ export async function runAgentic(opts: {
    * ("standard model could not complete the commit — retrying once on the reasoning
    * model") so the switch is always visible, never silent.
    */
-  onEscalate?: (info: { tool: string; from: string; to: string; failures: number }) => void;
+  onEscalate?: (info: { tool: string; from: string; to: string; failures: number; reason?: string }) => void;
+  /**
+   * A harness-local tool the LEAD (the worker, in cost-saving mode) may call to hand the task to `escalateActModel`
+   * (`escalate_to_strong`). Handled here, never sent to the governed executor. Once only.
+   */
+  escalateToolName?: string;
   /**
    * WRITE tools (e.g. `commit`) whose FAILED calls must never re-run byte-identically. The
    * dedup ledger only short-circuits a prior SUCCESS, so a `commit` that failed the compile
@@ -688,6 +693,18 @@ export async function runAgentic(opts: {
         ? completion.toolCalls
         : reactCall(completion.content);
 
+    // The lead's own answer is unusable (a refusal, or nothing at all): with an escalation model wired and
+    // unused, redo THIS step on it instead of ending the turn on nothing. Once; the trace says why.
+    const refused = !!completion.refusal || completion.finishReason === 'content_filter';
+    const empty = calls.length === 0 && !stripThinking(completion.content);
+    if ((refused || empty) && opts.escalateActModel && !escalated && opts.escalateActModel !== actModel) {
+      escalated = true;
+      const from = actModel;
+      actModel = opts.escalateActModel;
+      opts.onEscalate?.({ tool: 'run', from, to: actModel, failures: 0, reason: refused ? 'refusal' : 'empty answer' });
+      continue;
+    }
+
     if (calls.length === 0) {
       finalText = stripThinking(completion.content);
       break;
@@ -715,6 +732,26 @@ export async function runAgentic(opts: {
     // (dedup) so we never re-run the tool or re-append its full result.
     for (let callIndex = 0; callIndex < calls.length; callIndex += 1) {
       const call = calls[callIndex];
+      // The lead hands the task up: handled here (never the governed door), once.
+      if (opts.escalateToolName && call.name === opts.escalateToolName) {
+        const reason = typeof call.args.reason === 'string' && call.args.reason.trim() ? call.args.reason.trim().slice(0, 300) : 'the worker judged the task too hard';
+        let text: string;
+        if (opts.escalateActModel && !escalated && opts.escalateActModel !== actModel) {
+          escalated = true;
+          const from = actModel;
+          actModel = opts.escalateActModel;
+          opts.onEscalate?.({ tool: call.name, from, to: actModel, failures: 0, reason });
+          text = 'Escalated: the strong model takes over this task from here. Continue with the task.';
+        } else {
+          text = 'You are already on the strong model; continue with the task yourself.';
+        }
+        const step: AgenticStep = { tool: call.name, args: call.args, result: text, isError: false };
+        steps.push(step);
+        opts.onStep?.(step);
+        if (react) messages.push({ role: 'user', content: `Observation: ${text}` });
+        else messages.push({ role: 'tool', tool_call_id: call.id, content: text });
+        continue;
+      }
       // A call whose argument text was not a JSON object is NEVER executed with `{}` in its
       // place: the model is told, and may send it again.
       if (call.argsError) {

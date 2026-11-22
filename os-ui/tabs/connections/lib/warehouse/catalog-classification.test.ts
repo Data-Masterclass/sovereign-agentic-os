@@ -331,6 +331,8 @@ test('Pass 2: a sub-threshold table is column-enriched and re-placed above thres
 });
 
 test('escalation: a malformed standard reply escalates once to reasoning (per-batch)', async () => {
+  // the cost-saving mode (worker first); with the switch unset the strong model runs the batch directly
+  (await import('@core/models/roles')).__setStandardFirstForTests(true);
   const c = await seedConnection({ sales: ['orders'] });
   await setSeed(c.id, admin, 'starter');
   const { caller, calls } = scriptCaller((model, msg) =>

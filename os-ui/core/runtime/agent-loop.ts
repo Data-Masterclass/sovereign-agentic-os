@@ -28,7 +28,7 @@ import { inputBudget, modelContext } from '@core/models/context-windows';
 import { renderPageContext, type PageContext } from '@core/runtime/page-context';
 import { createTurnLedger, type ModelTrace } from '@core/runtime/turn-ledger';
 import { completeWithEscalation, isSpendLimit } from '@core/runtime/escalate';
-import { DELEGATE_TOOL, DELEGATE_TOOL_SPEC, newTurnDelegations, runDelegateTool } from '@core/runtime/delegate';
+import { DELEGATE_TOOL, DELEGATE_TOOL_SPEC, ESCALATE_TOOL, ESCALATE_TOOL_SPEC, newTurnDelegations, runDelegateTool } from '@core/runtime/delegate';
 
 /**
  * THE ONE OVERARCHING SOVEREIGN OS ASSISTANT (server wiring).
@@ -385,8 +385,11 @@ export async function runOsAssistant(input: RunOsAssistantInput): Promise<OsAssi
   // What this ROLE may use: a name outside it is refused by the governed door with its typed error.
   const roleToolNames = new Set(roleTools.map((t) => t.name));
   const only = input.onlyTools ? new Set(input.onlyTools) : null;
-  // Strong may hand a defined, read-only sub-task to the worker (`delegate_to_worker`); a save-as turn offers only its one tool.
-  const tools = only ? roleTools.filter((t) => only.has(t.name)) : [...roleTools, DELEGATE_TOOL_SPEC];
+  // COST-SAVING MODE (the admin's lead-model switch ON: the assistant resolves to the worker role): the worker leads and strong is the escalation path.
+  // Otherwise strong (or the pin) leads and may hand a defined, read-only sub-task to the worker (`delegate_to_worker`).
+  // A save-as turn offers only its one tool.
+  const workerLeads = assistantId === workerId && strongId !== workerId;
+  const tools = only ? roleTools.filter((t) => only.has(t.name)) : [...roleTools, workerLeads ? ESCALATE_TOOL_SPEC : DELEGATE_TOOL_SPEC];
   const turnDelegations = newTurnDelegations();
   const stepResults: { tool: string; text: string }[] = [];
   const governed = osToolExecutor(input.user, artifacts, input.dispatch);
@@ -434,6 +437,8 @@ export async function runOsAssistant(input: RunOsAssistantInput): Promise<OsAssi
     // PLAN and ACT are the same model: the one that decides never differs from the one that answers.
     planModel: assistantId,
     actModel: assistantId,
+    // In cost-saving mode strong is the escalation path: a failed check, a refusal or empty answer, or the worker's own call.
+    ...(workerLeads && !only ? { escalateActModel: strongId, escalateToolName: ESCALATE_TOOL, onEscalate: (e: { tool: string; from: string; to: string; reason?: string; failures: number }) => ledger.addEscalation({ from: e.from, to: e.to, tool: e.tool, reason: e.reason ?? `${e.tool} failed ${e.failures} times` }) } : {}),
     maxIterations: input.maxIterations ?? config.assistantMaxSteps,
     budget: inputBudget(assistantId),
     maxOutputTokens: ctx.reservedOutput,

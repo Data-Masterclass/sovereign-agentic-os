@@ -15,6 +15,7 @@ const WORKER = 'sovereign-worker';
 beforeEach(() => {
   resetSettings();
   resetModels();
+  __setForTests({ standardFirstEscalation: true }); // the cost-saving mode: worker first
 });
 
 /** A caller that records every model it was asked to run and returns a scripted reply. */

@@ -44,15 +44,12 @@ export type Settings = {
   // release saved is kept only so `core/models/role-seed.ts` can carry it into that file once (see
   // `seedRoleMapping`). It cannot be written any more (`updateSettings` refuses it).
   modelRoles: { reasoning: string; standard: string; tools: string; embeddings: string };
-  // COST ROUTING — when ON (default), surfaces whose output is STRICTLY VALIDATED
-  // before use run the STANDARD model first and escalate to the reasoning model
-  // ONLY on validation/parse failure (one escalation, then honest failure). The
-  // validators are the quality gate, so this is safe by construction. OFF pins those
-  // surfaces to the reasoning model directly (the pre-cost-routing behaviour). This
-  // NEVER touches the agent PLAN phase or free-form surfaces with no validator —
-  // those stay premium regardless (see lib/assistant/escalate.ts). Admin role pins
-  // still decide the actual aliases each tier resolves to.
-  standardFirstEscalation: boolean;
+  // THE LEAD-MODEL SWITCH ("Save costs", Platform → Models). OFF or UNSET (the default): the STRONG role leads
+  // everywhere (chat, planning, agent orchestration, the builder) and decides for itself what to hand to the
+  // worker (`core/runtime/delegate.ts`). ON: the WORKER leads and strong is only the escalation path (a failed
+  // validation, a refusal or empty answer, or the worker's own `escalate_to_strong`); strictly validated
+  // surfaces run worker-first (`escalate.ts`). Admin role mapping still decides the concrete models.
+  standardFirstEscalation?: boolean;
   // CODED (custom) APPS — the platform decision (os-ui 0.6.133). When OFF (the
   // DEFAULT), only DECLARATIVE (spec) no-code apps can be created; the coded path
   // (`kind:'code'` / image|runtime serveMode — the agent writes code + an image
@@ -109,7 +106,7 @@ function defaults(): Settings {
     localization: { locale: 'en', available: ['en', 'de'] },
     notifications: { email: 'admin@datamasterclass.com', backupFailure: true, costThreshold: true },
     modelRoles: { ...EMPTY_ROLES },
-    standardFirstEscalation: true,
+    // standardFirstEscalation is deliberately ABSENT: unset means OFF (the strong model leads).
     codedAppsEnabled: false,
     promoteAsView: false,
     autonomousAgentsEnabled: false,
@@ -272,8 +269,7 @@ function mergeSettings(base: Settings, patch: Partial<Settings> & Record<string,
     notifications: { ...base.notifications, ...(patch.notifications ?? {}) },
     modelRoles: { ...base.modelRoles, ...(patch.modelRoles ?? {}) },
     // Nil-safe: only a real boolean flips it; an absent/non-boolean patch keeps the
-    // current value (defaults ON), so a partial settings PUT never silently disables
-    // cost routing.
+    // current value. UNSET means OFF (the strong model leads); an explicit stored choice is kept as it is.
     standardFirstEscalation:
       typeof patch.standardFirstEscalation === 'boolean' ? patch.standardFirstEscalation : base.standardFirstEscalation,
     // Nil-safe (same pattern as standardFirstEscalation): only a REAL boolean flips
