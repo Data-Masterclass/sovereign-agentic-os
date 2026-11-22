@@ -189,6 +189,7 @@ test('NEGATIVE the app\'s code works on a COPY: the pushed tree is mounted read-
     const st = t.steps.find((s) => s.name === id)!;
     assert.equal(st.workingDir, '/work', id);
     assert.doesNotMatch(st.script ?? '', /workspaces\.app\.path/, `${id} must not name the pushed tree`);
+    assert.ok((st.volumeMounts ?? []).some((v) => v.mountPath === '/work' && !v.readOnly), `${id} must mount the writable copy at /work`);
   }
   for (const id of ['typecheck', 'lint', 'tests', 'build']) assert.match(t.steps.find((s) => s.name === id)!.script ?? '', /--root \/work /, id);
 });
