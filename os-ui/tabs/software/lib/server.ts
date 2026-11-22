@@ -162,9 +162,10 @@ export async function commitToApp(
   const prior = await priorTreeForCommit(app, files);
   // PLATFORM_OWNED on every user write path: the gate files, build files and deploy manifests of a
   // golden-path app are changed by the platform only. Refused before any write.
-  if (isGoldenPath(app.template) && !gitMeta?.platformWrite) assertNoPlatformOwnedChange(prior, files);
   const toCommit = ensureSectionsRegistered(prior, files, app.template);
   const tree = mergeTree(prior, toCommit);
+  // ...and the resulting tree must still hold every owned file the app had (a delete is refused like an edit).
+  if (isGoldenPath(app.template) && !gitMeta?.platformWrite) assertNoPlatformOwnedChange(prior, files, tree);
   // COMPILE GATE (verify-before-commit, redesign Week 1): the MERGED tree — including
   // the just-regenerated sections.tsx above — must COMPILE against the vendored
   // @sovereign-os/ui + @sovereign-os/app-sdk before ANY write (no mirror write, no

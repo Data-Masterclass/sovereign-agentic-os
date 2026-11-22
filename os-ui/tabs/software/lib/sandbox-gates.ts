@@ -15,6 +15,8 @@
  *     PLATFORM's own gate script and policy, written to a separate `/platform` volume and ALSO laid over the
  *     author's `policy/` and `scripts/factory-gates.mjs` in the tree (the author's versions are dropped).
  *   - Pod shape: init `writer` -> native-sidecar `opa` (serves `/platform/policy` only, never the tree) ->
+ *     init `toolchain` (`npm ci` of the PLATFORM's pinned tsc/eslint/tsx into `/platform/toolchain`; the gates
+ *     run them by absolute path, so an app's lockfile never decides a gate) ->
  *     init `install` (`npm ci --ignore-scripts`, the only step with network, through the egress proxy) ->
  *     one regular container PER GATE (typecheck, lint, tests, policy), run in parallel from
  *     `/platform/factory-gates.mjs --gate <id>` over a READ-ONLY tree, so no gate can alter what another
@@ -32,10 +34,11 @@ import { k8s as liveK8s, k8sText as liveK8sText } from '@core/infra/k8s';
 import type { ScaffoldFile } from '@tabs/software/lib/model';
 import { buildPayloadSecretManifest, writerScript, DEFAULT_MAX_PAYLOAD, SCAN_MOUNT, type ScanK8s, type ScanK8sText } from '@tabs/software/lib/scan-trivy';
 import { reportFromGateExits, REQUIRED_GATES, type GateExit, type GateResult, type GatesOutcome } from '@tabs/software/lib/gates';
-import { applyGateOverlay, gateFilesOf, type GoldenPathKey } from '@tabs/software/lib/golden-path';
+import { applyGateOverlay, gateFilesOf, platformToolchainFiles, type GoldenPathKey } from '@tabs/software/lib/golden-path';
 
 const WORK = '/work';
 const PLATFORM = '/platform';
+const TOOLCHAIN = `${PLATFORM}/toolchain`;
 const OPA_ADDR = '127.0.0.1:8181';
 const POLL_MS = 2_000;
 const LOG_LIMIT_BYTES = 256 * 1024;
@@ -108,7 +111,7 @@ export function buildGatesJobManifest(spec: {
     image: spec.nodeImage,
     workingDir: WORK,
     // The PLATFORM's script, one gate per container: the exit code is the verdict.
-    command: ['node', `${PLATFORM}/factory-gates.mjs`, '--gate', id, '--root', WORK],
+    command: ['node', `${PLATFORM}/factory-gates.mjs`, '--gate', id, '--root', WORK, '--toolchain', TOOLCHAIN],
     env: [
       { name: 'OPA_URL', value: `http://${OPA_ADDR}` },
       { name: 'HOME', value: '/tmp' },
@@ -159,6 +162,18 @@ export function buildGatesJobManifest(spec: {
               volumeMounts: [{ name: 'platform', mountPath: PLATFORM, readOnly: true }],
             },
             {
+              // The PLATFORM's pinned tools (tsc, eslint, tsx) from its own lockfile, installed beside the tree and
+              // run by absolute path: an app's package-lock.json never decides a gate. Network, through the proxy.
+              name: 'toolchain',
+              image: spec.nodeImage,
+              workingDir: TOOLCHAIN,
+              command: ['npm', 'ci', '--ignore-scripts', '--no-audit', '--no-fund', '--fetch-retries=1'],
+              env: [{ name: 'HOME', value: '/tmp' }, { name: 'npm_config_cache', value: '/tmp/npm-cache' }, { name: 'CI', value: 'true' }, ...proxyEnv],
+              securityContext: hardened,
+              resources: { requests: { cpu: '250m', memory: '512Mi' }, limits: { cpu: '1', memory: '1Gi' } },
+              volumeMounts: [{ name: 'platform', mountPath: PLATFORM }, { name: 'tmp-toolchain', mountPath: '/tmp' }],
+            },
+            {
               // The only step with network: dependencies from the registry, through the egress proxy.
               name: 'install',
               image: spec.nodeImage,
@@ -175,6 +190,7 @@ export function buildGatesJobManifest(spec: {
             { name: 'work', emptyDir: {} },
             { name: 'platform', emptyDir: {} },
             { name: 'tmp-install', emptyDir: {} },
+            { name: 'tmp-toolchain', emptyDir: {} },
             ...REQUIRED_GATES.map((id) => ({ name: `tmp-${id}`, emptyDir: {} })),
             { name: 'payload', secret: { secretName: spec.name, defaultMode: 0o400 } },
           ],
@@ -190,6 +206,12 @@ function platformLines(key: GoldenPathKey): string {
   for (const f of gateFilesOf(key)) {
     const dest = f.path === 'scripts/factory-gates.mjs' ? `${PLATFORM}/factory-gates.mjs` : `${PLATFORM}/${f.path}`;
     lines.push(`mkdir -p '${dest.slice(0, dest.lastIndexOf('/'))}'`);
+    lines.push(`printf %s '${Buffer.from(f.content, 'utf8').toString('base64')}' | base64 -d > '${dest}'`);
+  }
+  // The pinned toolchain's manifest, lockfile and eslint config; the `toolchain` init container runs `npm ci` on them.
+  for (const f of platformToolchainFiles()) {
+    const dest = `${TOOLCHAIN}/${f.path}`;
+    lines.push(`mkdir -p '${TOOLCHAIN}'`);
     lines.push(`printf %s '${Buffer.from(f.content, 'utf8').toString('base64')}' | base64 -d > '${dest}'`);
   }
   return `${lines.join('\n')}\n`;
@@ -303,8 +325,16 @@ export async function runGatesSandbox(slug: string, files: ScaffoldFile[], opts:
     return log.status === 200 ? `(output of the app's step, untrusted) ${log.text.trim()}`.slice(-DETAIL_CHARS) : '';
   };
   const extra: GateResult[] = [];
+  const toolchain = exitOf(init, 'toolchain');
+  if (toolchain.exitCode !== 0) {
+    extra.push({
+      id: 'toolchain',
+      status: toolchain.exitCode === null ? 'unavailable' : 'fail',
+      detail: `the platform's pinned toolchain ${toolchain.exitCode === null ? `did not install (${toolchain.note})` : `failed to install (exit ${toolchain.exitCode})`}; no gate can be judged without it. ${toolchain.exitCode !== null ? await tail('toolchain') : ''}`.trim().slice(0, DETAIL_CHARS),
+    });
+  }
   const install = exitOf(init, 'install');
-  if (install.exitCode !== 0) {
+  if (install.exitCode !== 0 && toolchain.exitCode === 0) {
     extra.push({
       id: 'install',
       status: install.exitCode === null ? 'unavailable' : 'fail',

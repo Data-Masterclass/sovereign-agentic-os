@@ -99,7 +99,8 @@ test('tests: a forged tsx loader that exits 0 still fails a failing test', () =>
     'node_modules/tsx/index.mjs': 'process.exit(0);\n',
     'tests/a.test.ts': "import test from 'node:test';\nimport assert from 'node:assert/strict';\ntest('fails', () => assert.equal(1, 2));\n",
   });
-  assert.notEqual(gate('tests', p, toolchain).status, 0);
+  const g = gate('tests', p, toolchain);
+  assert.notEqual(g.status, 0, g.out);
   assert.equal(gate('tests', p).status, 0, 'control: the author-owned loader exits 0 over a failing test');
 });
 

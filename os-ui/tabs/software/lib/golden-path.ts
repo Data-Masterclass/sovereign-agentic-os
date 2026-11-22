@@ -42,15 +42,25 @@ export const GOLDEN_PATHS: Record<GoldenPathKey, { label: string; blurb: string;
  * (`commitToApp`, `saveAppFile`) and git receive - by {@link platformOwnedViolations}, and the gates
  * themselves never read the author's copy of the gate files (the sandbox overlays the platform's own).
  * `package-lock.json` is deliberately NOT owned: an author adds dependencies, and the dependency scan plus
- * `npm ci` (which refuses a lockfile that disagrees with package.json) cover it.
+ * `npm ci` (which refuses a lockfile that disagrees with package.json) cover it. What the lockfile can no longer
+ * do is decide a gate: type check, lint and tests run on the platform's own pinned toolchain
+ * (`templates/platform-toolchain`, see {@link platformToolchainFiles}), never on the author's `node_modules`.
  */
-export const PLATFORM_OWNED = ['Dockerfile', 'next.config.mjs', 'k8s/', '.github/workflows/', 'policy/', 'scripts/factory-gates.mjs', 'vendor/', '.npmrc'] as const;
+export const PLATFORM_OWNED = ['Dockerfile', 'next.config.*', 'k8s/', '.github/workflows/', 'policy/', 'scripts/factory-gates.mjs', 'vendor/', '.npmrc'] as const;
 
 /** The subset of the template the sandbox overlays from the platform before it runs anything. */
 export const GATE_FILES = ['policy/', 'scripts/factory-gates.mjs'] as const;
 
+/**
+ * Next reads its build settings from `next.config.js|mjs|cjs|ts|mts|cts`. A second file beside the platform's
+ * (`next.config.ts` next to `next.config.mjs`) or one below the root would change how the app builds, so every
+ * such name is owned at ANY depth. Re-sending the platform's own file unchanged stays accepted.
+ */
+const NEXT_CONFIG = /^next\.config\.(js|mjs|cjs|ts|mts|cts)$/;
+
 export const isPlatformOwnedPath = (path: string): boolean => {
   const p = path.replace(/^\.\//, '');
+  if (NEXT_CONFIG.test(p.slice(p.lastIndexOf('/') + 1))) return true;
   return PLATFORM_OWNED.some((o) => (o.endsWith('/') ? p.startsWith(o) : p === o));
 };
 
@@ -66,9 +76,22 @@ export function platformOwnedViolations(prior: ScaffoldFile[], incoming: Scaffol
     .map((f) => f.path);
 }
 
-/** Throws 403 when `incoming` changes a platform-owned file of a golden-path app. */
-export function assertNoPlatformOwnedChange(prior: ScaffoldFile[], incoming: ScaffoldFile[]): void {
-  const bad = platformOwnedViolations(prior, incoming);
+/**
+ * The owned files the tree HAD and the tree that results from a write no longer has. Every write door merges
+ * a changeset over the prior tree and has no delete verb today; this is the check a delete (or a whole-tree
+ * replace that omits a file) would hit, so removing the Dockerfile is refused like editing it.
+ */
+export function platformOwnedRemovals(prior: ScaffoldFile[], after: ScaffoldFile[]): string[] {
+  const kept = new Set(after.map((f) => f.path.replace(/^\.\//, '')));
+  return prior.map((f) => f.path.replace(/^\.\//, '')).filter((p) => isPlatformOwnedPath(p) && !kept.has(p));
+}
+
+/**
+ * Throws 403 when `incoming` changes a platform-owned file of a golden-path app, or (when `after`, the
+ * resulting tree, is given) when the write would leave the tree without an owned file it had.
+ */
+export function assertNoPlatformOwnedChange(prior: ScaffoldFile[], incoming: ScaffoldFile[], after?: ScaffoldFile[]): void {
+  const bad = [...platformOwnedViolations(prior, incoming), ...(after ? platformOwnedRemovals(prior, after) : [])];
   if (bad.length === 0) return;
   const err = new Error(
     `platform-owned file${bad.length === 1 ? '' : 's'} cannot be changed here: ${bad.slice(0, 5).join(', ')}. ` +
@@ -76,6 +99,15 @@ export function assertNoPlatformOwnedChange(prior: ScaffoldFile[], incoming: Sca
   ) as Error & { status?: number };
   err.status = 403;
   throw err;
+}
+
+/** Where the platform's pinned gate toolchain lives (a sibling of the templates, never copied into an app). */
+const TOOLCHAIN_FILES = ['package.json', 'package-lock.json', 'eslint.config.mjs'] as const;
+
+/** The platform-pinned toolchain the sandbox installs (`npm ci`) and runs by absolute path. */
+export function platformToolchainFiles(): ScaffoldFile[] {
+  const dir = join(templatesDir(), 'platform-toolchain');
+  return TOOLCHAIN_FILES.map((name) => ({ path: name, content: readFileSync(join(dir, name), 'utf8') }));
 }
 
 /** The platform's own copy of the gate files (policy + gates script) for a template. */

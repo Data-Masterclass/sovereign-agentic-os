@@ -16,4 +16,5 @@ argparse
 
 @sovereign-os/app-sdk
   Licence: Apache-2.0 (the platform's own SDK, vendored under vendor/; its package.json declares no licence field)
+  Copyright: 2026 Borek Data Ventures UG (haftungsbeschränkt)
   Role: shipped in the image.
