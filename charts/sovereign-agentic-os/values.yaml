@@ -1294,10 +1294,10 @@ dagster:
       - name: sovereign
         image:
           repository: ghcr.io/data-masterclass/sovereign-os/dagster
-          tag: "0.4.0"
+          tag: "0.4.1"
           # Pinned by digest (the subchart renders repository@digest and ignores the tag; the
-          # tag stays for people). Built by build-images.yml from tag dagster-v0.4.0.
-          digest: "sha256:b919d55fe9161128ace6a22894c43f2569f77b7639cd4d92e486f0e34734cea3"
+          # tag stays for people). Built by build-images.yml from tag dagster-v0.4.1.
+          digest: "sha256:468a8fe7f7b3fb17586ab3e1bb2e239225d05614733d7dd7b614f594be00343d"
           pullPolicy: IfNotPresent
         # `dagster code-server start`, not `dagster api grpc`: only a code server reloads its
         # definitions in place when repo-sync calls reloadRepositoryLocation after a domain commit.
@@ -1380,7 +1380,7 @@ dagster:
             mountPath: /repos-checkout
         sidecarContainers:
           - name: repo-sync
-            image: ghcr.io/data-masterclass/sovereign-os/dagster:0.4.0@sha256:b919d55fe9161128ace6a22894c43f2569f77b7639cd4d92e486f0e34734cea3
+            image: ghcr.io/data-masterclass/sovereign-os/dagster:0.4.1@sha256:468a8fe7f7b3fb17586ab3e1bb2e239225d05614733d7dd7b614f594be00343d
             imagePullPolicy: IfNotPresent
             command: ["/bin/sh", "/opt/dagster/app/repo-sync.sh"]
             env:
@@ -1422,8 +1422,8 @@ dagster:
   dagsterWebserver:
     image:
       repository: ghcr.io/data-masterclass/sovereign-os/dagster
-      tag: "0.4.0"
-      digest: "sha256:b919d55fe9161128ace6a22894c43f2569f77b7639cd4d92e486f0e34734cea3"
+      tag: "0.4.1"
+      digest: "sha256:468a8fe7f7b3fb17586ab3e1bb2e239225d05614733d7dd7b614f594be00343d"
       pullPolicy: IfNotPresent
     resources:
       requests: { cpu: 100m, memory: 256Mi }
@@ -1431,8 +1431,8 @@ dagster:
   dagsterDaemon:
     image:
       repository: ghcr.io/data-masterclass/sovereign-os/dagster
-      tag: "0.4.0"
-      digest: "sha256:b919d55fe9161128ace6a22894c43f2569f77b7639cd4d92e486f0e34734cea3"
+      tag: "0.4.1"
+      digest: "sha256:468a8fe7f7b3fb17586ab3e1bb2e239225d05614733d7dd7b614f594be00343d"
       pullPolicy: IfNotPresent
     resources:
       requests: { cpu: 100m, memory: 256Mi }
@@ -2303,6 +2303,7 @@ osUI:
       # keeps unmigrated v1 repos on the legacy path (images/extensions/dagster/tests/image/lakehouse.sh
       # run on this digest, 21 Nov 2026).
       dagsterLayoutDigests:
+        - "sha256:468a8fe7f7b3fb17586ab3e1bb2e239225d05614733d7dd7b614f594be00343d"
         - "sha256:b919d55fe9161128ace6a22894c43f2569f77b7639cd4d92e486f0e34734cea3"
       # Limit `migration` (dry-run or apply) to these domains, e.g. [sales], to move one domain
       # first. Empty = every domain. With `apply`, NEW repos are created v2 either way; a repo not
