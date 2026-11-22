@@ -211,16 +211,19 @@ case "$writer" in alice|"alice ") ok "dlt wrote through Trino as the principal (
 # the OS's read (the same query as core/infra/dagster.ts `instigatorStates`) reports it STOPPED and
 # the other schedule unchanged.
 out="$(ej "python3 - <<'PY'
-import json, urllib.request
+import json, urllib.request, urllib.error
 def gql(q, v=None):
     r = urllib.request.Request('http://127.0.0.1:3070/graphql', json.dumps({'query': q, 'variables': v or {}}).encode(), {'content-type': 'application/json'})
-    return json.load(urllib.request.urlopen(r, timeout=30))['data']
+    try:
+        return json.load(urllib.request.urlopen(r, timeout=30))['data']
+    except urllib.error.HTTPError as e:
+        print('HTTP', e.code, e.read().decode()[:600]); raise
 READ = 'query { repositoriesOrError { ... on RepositoryConnection { nodes { name location { name } schedules { name scheduleState { id selectorId status } } } } } }'
 nodes = gql(READ)['repositoriesOrError']['nodes']
 sch = {s['name']: s['scheduleState'] for n in nodes for s in n['schedules']}
 sync = sch['sales__ds_shop0001']
 print('before', sync['status'])
-print('stop', gql('mutation(\$s: String){ stopRunningSchedule(scheduleSelectorId: \$s) { __typename ... on PythonError { message } } }', {'s': sync['selectorId']}))
+print('stop', gql('mutation(\$i: String, \$s: String){ stopRunningSchedule(id: \$i, scheduleSelectorId: \$s) { __typename ... on PythonError { message } ... on ScheduleStateResult { scheduleState { status } } } }', {'i': sync['id'], 's': sync['selectorId']}))
 sch2 = {s['name']: s['scheduleState']['status'] for n in gql(READ)['repositoriesOrError']['nodes'] for s in n['schedules']}
 print('after sales__ds_shop0001', sch2['sales__ds_shop0001'])
 print('other', [v for k, v in sch2.items() if k != 'sales__ds_shop0001'])
