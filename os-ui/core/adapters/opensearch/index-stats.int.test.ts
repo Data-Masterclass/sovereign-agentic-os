@@ -41,13 +41,22 @@ test('row counts and newest ingest time are OpenSearch’s own, for the asked un
   assert.ok(c.ok && c.value && c.value.queries >= 1, JSON.stringify(c));
 });
 
-test('a missing index is an empty map; an unreachable cluster is ok:false, never an empty success', { skip: !on }, async () => {
-  const none = await unitRowStats(`mon-absent-${randomUUID().slice(0, 8)}`, 'file_id', ['f1']);
-  assert.ok(none.ok && none.value.size === 0);
+test('a missing index is not_found (never an empty map); an index with no rows for the unit is a live empty map; an unreachable cluster is ok:false', { skip: !on }, async () => {
+  const absent = `mon-absent-${randomUUID().slice(0, 8)}`;
+  const none = await unitRowStats(absent, 'file_id', ['f1']);
+  assert.equal(none.ok, false, 'an absent index must not read as "0 rows"');
+  assert.ok(!none.ok && none.reason === 'not_found' && none.detail.includes(absent), JSON.stringify(none));
+  const noCounters = await indexSearchCounters(absent);
+  assert.ok(!noCounters.ok && noCounters.reason === 'not_found', JSON.stringify(noCounters));
+  // Negative twin: the index exists, the unit has no rows in it ⇒ an honest, live, empty answer.
+  const idx = `mon-empty-${randomUUID().slice(0, 8)}`;
+  assert.equal((await fetch(`${OS}/${idx}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ mappings: { properties: { file_id: { type: 'keyword' } } } }) })).status, 200);
+  const empty = await unitRowStats(idx, 'file_id', ['f1']);
+  assert.ok(empty.ok && empty.value.size === 0, JSON.stringify(empty));
   process.env.OPENSEARCH_URL = 'http://127.0.0.1:1';
   try {
     const down = await unitRowStats('x', 'file_id', ['f1']);
-    assert.equal(down.ok, false);
+    assert.ok(!down.ok && down.reason === 'unreachable');
   } finally {
     process.env.OPENSEARCH_URL = OS;
   }
