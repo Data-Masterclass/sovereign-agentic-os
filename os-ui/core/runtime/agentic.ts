@@ -507,11 +507,6 @@ function fitMessages(messages: LlmMessage[], budget: number): LlmMessage[] {
  * `callTool`; the loop is bounded by `maxIterations`; and if the model rejects
  * the `tools` param we transparently fall back to a ReAct JSON protocol.
  */
-/** The call's Langfuse position: the turn's `observe`, with the step's purpose as `node` unless the caller named one. */
-function observeFor(observe: { traceId: string; parentObservationId?: string; node?: string; callId?: string } | undefined, purpose: string): { observe: NonNullable<typeof observe> } | Record<string, never> {
-  return observe ? { observe: { ...observe, node: observe.node ?? purpose } } : {};
-}
-
 export async function runAgentic(opts: {
   system: string;
   userMessages: { role: 'user' | 'assistant'; content: string }[];
@@ -596,7 +591,7 @@ export async function runAgentic(opts: {
     temperature: 0.2,
     maxTokens: opts.maxOutputTokens,
     purpose: 'plan',
-    ...observeFor(opts.observe, 'plan'),
+    ...(opts.observe ? { observe: opts.observe } : {}),
     ...(opts.signal ? { signal: opts.signal } : {}),
   });
   const plan = stripThinking(planCompletion.content) || '(no plan produced)';
@@ -667,7 +662,7 @@ export async function runAgentic(opts: {
         temperature: 0.2,
         maxTokens: opts.maxOutputTokens,
         purpose: 'act',
-        ...observeFor(opts.observe, 'act'),
+        ...(opts.observe ? { observe: opts.observe } : {}),
         ...(opts.onToken && !react ? { onToken: opts.onToken } : {}),
         ...(opts.signal ? { signal: opts.signal } : {}),
       });
@@ -960,7 +955,7 @@ export async function runAgentic(opts: {
         temperature: 0.2,
         maxTokens: opts.maxOutputTokens,
         purpose: 'synthesis',
-        ...observeFor(opts.observe, 'synthesis'),
+        ...(opts.observe ? { observe: opts.observe } : {}),
       });
       finalText = stripThinking(synth.content);
     } catch {
