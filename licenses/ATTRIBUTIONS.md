@@ -8,9 +8,20 @@ Regenerate with `node scripts/license-gate.mjs --write-attributions` after a dep
 
 | Package | Version | Ecosystem | Licence (chosen) | Declared as |
 |---|---|---|---|---|
+| @protobufjs/aspromise | 1.1.2 | npm | BSD-3-Clause | BSD-3-Clause |
+| @protobufjs/base64 | 1.1.2 | npm | BSD-3-Clause | BSD-3-Clause |
+| @protobufjs/codegen | 2.0.5 | npm | BSD-3-Clause | BSD-3-Clause |
+| @protobufjs/eventemitter | 1.1.1 | npm | BSD-3-Clause | BSD-3-Clause |
+| @protobufjs/fetch | 1.1.1 | npm | BSD-3-Clause | BSD-3-Clause |
+| @protobufjs/float | 1.0.2 | npm | BSD-3-Clause | BSD-3-Clause |
+| @protobufjs/path | 1.1.2 | npm | BSD-3-Clause | BSD-3-Clause |
+| @protobufjs/pool | 1.1.0 | npm | BSD-3-Clause | BSD-3-Clause |
+| @protobufjs/utf8 | 1.1.2 | npm | BSD-3-Clause | BSD-3-Clause |
 | @ungap/structured-clone | 1.3.3 | npm | ISC | ISC |
 | argparse | 2.0.1 | npm | Python-2.0 | Python-2.0 |
 | caniuse-lite | 1.0.30001799 | npm | CC-BY-4.0 | CC-BY-4.0 |
+| cliui | 8.0.1 | npm | ISC | ISC |
+| cliui | 9.0.1 | npm | ISC | ISC |
 | d3-color | 3.1.0 | npm | ISC | ISC |
 | d3-dispatch | 3.0.1 | npm | ISC | ISC |
 | d3-drag | 3.0.0 | npm | ISC | ISC |
@@ -20,19 +31,31 @@ Regenerate with `node scripts/license-gate.mjs --write-attributions` after a dep
 | d3-timer | 3.0.1 | npm | ISC | ISC |
 | d3-transition | 3.0.1 | npm | ISC | ISC |
 | d3-zoom | 3.0.0 | npm | ISC | ISC |
+| get-caller-file | 2.0.5 | npm | ISC | ISC |
+| glob | 13.0.7 | npm | BlueOak-1.0.0 | BlueOak-1.0.0 |
 | inherits | 2.0.4 | npm | ISC | ISC |
+| lru-cache | 11.5.3 | npm | BlueOak-1.0.0 | BlueOak-1.0.0 |
+| minimatch | 10.2.6 | npm | BlueOak-1.0.0 | BlueOak-1.0.0 |
+| minipass | 7.1.3 | npm | BlueOak-1.0.0 | BlueOak-1.0.0 |
 | once | 1.4.0 | npm | ISC | ISC |
 | pako | 1.0.11 | npm | MIT AND Zlib | (MIT AND Zlib) |
 | pako | 2.2.0 | npm | MIT AND Zlib | (MIT AND Zlib) |
+| path-scurry | 2.0.2 | npm | BlueOak-1.0.0 | BlueOak-1.0.0 |
 | pg-int8 | 1.0.1 | npm | ISC | ISC |
 | picocolors | 1.1.1 | npm | ISC | ISC |
-| semver | 7.8.5 | npm | ISC | ISC |
+| protobufjs | 7.6.6 | npm | BSD-3-Clause | BSD-3-Clause |
+| semver | 7.8.6 | npm | ISC | ISC |
 | sha.js | 2.4.12 | npm | MIT AND BSD-3-Clause | (MIT AND BSD-3-Clause) |
+| smol-toml | 1.9.1 | npm | BSD-3-Clause | BSD-3-Clause |
 | source-map-js | 1.2.1 | npm | BSD-3-Clause | BSD-3-Clause |
 | split2 | 4.2.0 | npm | ISC | ISC |
 | tslib | 2.3.0 | npm | 0BSD | 0BSD |
 | tslib | 2.8.1 | npm | 0BSD | 0BSD |
 | wrappy | 1.0.2 | npm | ISC | ISC |
+| y18n | 5.0.8 | npm | ISC | ISC |
+| yaml | 2.9.1 | npm | ISC | ISC |
+| yargs-parser | 22.0.0 | npm | ISC | ISC |
+| yargs-parser | 21.1.1 | npm | ISC | ISC |
 | zrender | 5.6.1 | npm | BSD-3-Clause | BSD-3-Clause |
 | aiohappyeyeballs | 2.7.1 | python | PSF-2.0 | Python Software Foundation License |
 | babel | 2.18.0 | python | BSD-3-Clause | BSD License |
@@ -67,6 +90,7 @@ Regenerate with `node scripts/license-gate.mjs --write-attributions` after a dep
 | python-dotenv | 1.2.4 | python | BSD-3-Clause | BSD-3-Clause |
 | python-dotenv | 1.2.4 | python | BSD-3-Clause | BSD-3-Clause |
 | requests-oauthlib | 2.0.0 | python | ISC | BSD License |
+| semver | 3.1.2 | python | BSD-3-Clause | BSD-3-Clause |
 | shellingham | 1.5.4 | python | ISC | ISC License |
 | smmap | 5.0.3 | python | BSD-3-Clause | BSD License |
 | sse-starlette | 3.7.0 | python | BSD-3-Clause | BSD-3-Clause |

@@ -133,6 +133,13 @@
     },
     {
       "ecosystem": "python",
+      "name": "orjson",
+      "version": "*",
+      "licence": "MPL-2.0 AND (Apache-2.0 OR MIT)",
+      "reason": "Found by the first run of the 2026-11-22 policy on main; owner decision pending (replace, remove or except-with-reason). MPL-2.0 is forbidden"
+    },
+    {
+      "ecosystem": "python",
       "name": "pathspec",
       "version": "*",
       "licence": "Mozilla Public License 2.0",
@@ -161,6 +168,13 @@
     },
     {
       "ecosystem": "python",
+      "name": "update-checker",
+      "version": "*",
+      "licence": "BSD License",
+      "reason": "Found by the first run of the 2026-11-22 policy on main; owner decision pending (replace, remove or except-with-reason). BSD License is not on the allow list or the forbid list"
+    },
+    {
+      "ecosystem": "python",
       "name": "psycopg2-binary",
       "version": "*",
       "licence": "GNU Library or Lesser General Public License",
@@ -175,17 +189,17 @@
     },
     {
       "ecosystem": "python",
+      "name": "gitdb",
+      "version": "*",
+      "licence": "BSD License",
+      "reason": "Found by the first run of the 2026-11-22 policy on main; owner decision pending (replace, remove or except-with-reason). BSD License is not on the allow list or the forbid list"
+    },
+    {
+      "ecosystem": "python",
       "name": "cffi",
       "version": "*",
       "licence": "MIT-0",
       "reason": "Found by the first run of the 2026-11-22 policy on main; owner decision pending (replace, remove or except-with-reason). MIT-0 is not on the allow list or the forbid list"
-    },
-    {
-      "ecosystem": "python",
-      "name": "orjson",
-      "version": "*",
-      "licence": "MPL-2.0 AND (Apache-2.0 OR MIT)",
-      "reason": "Found by the first run of the 2026-11-22 policy on main; owner decision pending (replace, remove or except-with-reason). MPL-2.0 is forbidden"
     },
     {
       "ecosystem": "python",
@@ -200,13 +214,6 @@
       "version": "*",
       "licence": "Artistic License AND GNU General Public License AND GNU General Public License v2 or later",
       "reason": "Found by the first run of the 2026-11-22 policy on main; owner decision pending (replace, remove or except-with-reason). Artistic License is not on the allow list or the forbid list"
-    },
-    {
-      "ecosystem": "python",
-      "name": "gitdb",
-      "version": "*",
-      "licence": "BSD License",
-      "reason": "Found by the first run of the 2026-11-22 policy on main; owner decision pending (replace, remove or except-with-reason). BSD License is not on the allow list or the forbid list"
     },
     {
       "ecosystem": "python",
@@ -228,6 +235,13 @@
       "version": "*",
       "licence": "GPL-3.0-or-later",
       "reason": "Found by the first run of the 2026-11-22 policy on main; owner decision pending (replace, remove or except-with-reason). GPL-3.0-or-later is forbidden"
+    },
+    {
+      "ecosystem": "component",
+      "name": "git (backup-tools, git-daemon and git-http images)",
+      "version": "*",
+      "licence": "GPL-2.0-only",
+      "reason": "Found by the first run of the 2026-11-22 policy on main; owner decision pending (replace, remove or except-with-reason). GPL-2.0-only is forbidden"
     },
     {
       "ecosystem": "component",
