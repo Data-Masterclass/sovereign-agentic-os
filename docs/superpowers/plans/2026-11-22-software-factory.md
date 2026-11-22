@@ -77,7 +77,19 @@ What go-live #1 builds, in order:
 5. **Create writes the template as a commit.** `create_software template: 'nextjs-web'` commits the whole template tree to `apps/<slug>/` at create time, authored by the creator (this PR; before it the scaffold lived only in the file cache until the first deploy request), so the clone URL works the moment the app exists.
 6. **Later, optional:** `proposal/*` branches (today `main` is the only ref) become promotion requests: pushing `proposal/<slug>` opens the Domain-promotion approval carrying the commit range, and approval fast-forwards `main`.
 
+**How checks are triggered (owner decision).** As on Vercel, three equal triggers run the SAME sandbox checks (typecheck, lint, test, **build**, OPA policy, security scan):
+
+1. **Automatic on every push** to `apps/<slug>/`, whoever made it: a VS Code push, an OS commit or an in-OS agent commit. The post-receive hook starts the checks for that commit sha.
+2. **A "Run checks" button** on the app in the Software tab, which re-runs the checks for the current head.
+3. **Chat and MCP**: `verify_app_gates` (the Home chat and the in-OS agent call it after they commit; Claude Code calls it the same way).
+
+All three record the result **against the commit sha** and show it on the app: a status per check, the logs and the time it ran. Deploy accepts only a sha whose checks are all green (a red or missing record blocks, as `evaluateGates` already does). A new push **supersedes** a run still in progress for the same app: the older Job is deleted and its record is marked `superseded`, so a stale result can never be read as the head's. The build check runs `next build` (the pilot's e2e showed `tsc` alone passes a type error that `next build` rejects), so `factory-gates.mjs` gains a `build` gate and `REQUIRED_GATES` gains `'build'` with go-live #1. Runs are idempotent per sha: a repeat trigger for a sha with a finished record returns that record unless "Run checks" is pressed.
+
 Same rules in both doors: the rulebook is in the repo (`AGENTS.md`), the gates are the repo's own `scripts/factory-gates.mjs`, and nothing about the VS Code path is weaker than the in-OS path. Open points: mapping a git token to the OS user for author identity on the push (the git-http authenticator already resolves the principal), and the build gate's cost (about two minutes) against push latency, so it runs asynchronously after the push is accepted.
+
+## 5b. Go-live #2: image build, registry and promotion (PENDING OWNER APPROVAL)
+
+Not started and not to be started until the owner approves the image-build decision (D3). Proposed: a **rootless BuildKit Job** (Apache-2.0) builds the template's own Dockerfile from the green commit and pushes `<registry>/<slug>@sha256:<digest>` to a **Zot** registry (Apache-2.0) the platform owns; on green checks the OS **auto-deploys to `apps-dev`**; the **same digest is promoted to prod by approval** (builder or above, never the requester). This lifts "the OS builds no images" (07 B8-7) and needs: a build namespace with egress to the registry and the npm registry only, Zot with storage and pull credentials for the apps namespaces, and an `apps-dev` namespace with the same Pod Security and admission policies as `agentic-apps`. Rollback is a redeploy of the previous approved digest. Until approval the pilot's Docker build in the e2e stands in for the Job.
 
 ## 6. What an app may do: the OS SDK
 
@@ -130,7 +142,7 @@ The verdict is recomputed by the OS from the individual gates. A report's own `o
 
 ## 9. Open decisions, with recommendations
 
-**Order of go-lives:** #1 git round-trip (section 5a), then D1 token flow, D2 dataset writes, the build job, promotion and budgets.
+**Order of go-lives:** #1 git round-trip and the three check triggers (section 5a), #2 image build, registry and promotion (section 5b, pending owner approval), then D1 token flow, D2 dataset writes, the build job, promotion and budgets.
 
 **D1. App identity.** *Recommend:* default **delegated user**. The OS acts as identity provider for apps: the app host redirects to `/api/auth/app-login?app=<slug>`, the OS returns a short-lived signed token (audience = the app, sub, role, domains), the app's server forwards it as a bearer to an OS app gateway that runs the same OPA-checked handlers, and the SDK facade already forwards `authorization`. This needs one NetworkPolicy allowing app pods to reach the gateway path only. Browser-side calls stay possible for OS-rendered apps. **App's own identity** (background jobs, webhooks): the principal `app-<slug>` already exists and today carries only the reads-on/writes-off preset; for background work it gets nothing more until a domain admin adopts specific declared actions (the existing four-layer adoption), bounded to the declared scopes, writes held under the read-only preset, never any human-only verb. No standing service credential inside the app.
 
