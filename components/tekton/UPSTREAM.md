@@ -36,3 +36,16 @@ and fills the engine-neutral per-commit record (`check-record.ts`). Deploy stays
 **Install:** `bash scripts/tekton/install.sh --context <ctx>`, then enable `osUI.software.tekton`
 in the chart. The chart ships only the OS-owned resources (namespace, RBAC, NetworkPolicies, listener,
 quotas, pruner).
+
+## Known gaps (tracked follow-ups)
+
+- **Pod Security.** The build namespace enforces `baseline` and audits/warns `restricted`. The Catalog `git-clone`
+  step sets a partial securityContext, which Tekton's `set-security-context` leaves as written, so `restricted`
+  would refuse it. The pods that run the app's code are restricted-compliant (asserted by the kind e2e). Follow-up:
+  patch or replace the clone step, then enforce `restricted`.
+- **git-http read from the cluster is unauthenticated.** The in-cluster `os-git-http` Service has no auth of its own
+  (the ingress authenticates outside callers). NetworkPolicies admit only the clone step and the Tekton resolver
+  pods from the build side. Follow-up: a read-only, per-run credential (token in a Secret for the clone step and the
+  git resolver) checked by `/api/git/authenticate`.
+- **Licence scan of the Tekton, Zot and BuildKit images with Trivy** is to be attached to the PR (Zot and BuildKit
+  arrive with go-live 2).
