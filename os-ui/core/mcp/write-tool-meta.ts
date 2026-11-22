@@ -124,6 +124,9 @@ export const WRITE_TOOL_TABS: Readonly<Record<string, string>> = {
   // name-only, so it cannot tell the runner's Personal app from one already Shared or Certified.
   create_software: 'software',
   start_preview: 'software',
+  // Software Factory: starts a sandbox Job (2 CPU / 2Gi). Persists nothing, but it spends cluster compute,
+  // so it is a governed action (confirmation, held like `start_preview`), not a free read.
+  verify_app_gates: 'software',
   use_connection: 'software',
   use_data: 'software',
   use_knowledge: 'software',

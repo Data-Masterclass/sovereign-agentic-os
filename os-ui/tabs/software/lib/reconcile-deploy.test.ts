@@ -35,6 +35,8 @@ import type { RunnerK8s } from './runner.ts';
 import { appDeployFiles } from './native-deploy.ts';
 import { __setAppProjectGitForTests, __setAppTreeReaderForTests } from './git-commit.ts';
 import { decide, listApprovals, __resetApprovals } from '@core/policy/approvals';
+import { useGreenGates } from '@core/testing/gates';
+useGreenGates();
 
 /**
  * SELF-HEAL: an app stuck in `review` whose Governance app_deploy approval was

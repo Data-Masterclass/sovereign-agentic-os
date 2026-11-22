@@ -54,6 +54,7 @@ const PLATFORM_WRITE_TOOLS: Readonly<Record<string, string>> = {
   design_software: 'software',
   create_software: 'software',
   start_preview: 'software',
+  verify_app_gates: 'software',
   request_deploy: 'software',
   decide_deploy: 'software',
   promote: 'software',

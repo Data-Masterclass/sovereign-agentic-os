@@ -27,6 +27,8 @@ import { requestDeploy, getReviewCard } from './review.ts';
 import { applyEffect } from '@core/policy/effects';
 import { buildEffectDeps } from '@core/policy/ladder';
 import { decide, listApprovals, __resetApprovals } from '@core/policy/approvals';
+import { useGreenGates } from '@core/testing/gates';
+useGreenGates();
 
 /**
  * REGRESSION: approving a Software deploy-review in Policies & Approvals must

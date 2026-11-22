@@ -25,7 +25,9 @@ import {
 } from '@core/policy/approvals';
 import { record as recordAudit } from '@core/policy/audit';
 import { resolveScan, type ResolveScanOpts } from '@tabs/software/lib/scan';
-import { goldenPathKeyOf } from '@tabs/software/lib/golden-path';
+import { gatePolicyFor } from '@tabs/software/lib/gate-policy';
+import { acquireGateSlot } from '@tabs/software/lib/gates-limits';
+import type { GoldenPathKey } from '@tabs/software/lib/golden-path';
 import { evaluateGates, type GatesOutcome, type GateVerdict } from '@tabs/software/lib/gates';
 import { runGatesSandbox } from '@tabs/software/lib/sandbox-gates';
 import { resolveSurface } from '@tabs/software/lib/metadata';
@@ -440,10 +442,34 @@ export type DeployRequestResult =
  * review card. The creator can call this; a Builder approves it.
  */
 /** Runs the gates for a tree. Injected in tests; the default is the real sandbox Job. */
-export type GatesRunner = (slug: string, files: ScaffoldFile[]) => Promise<GatesOutcome>;
+export type GatesRunner = (slug: string, files: ScaffoldFile[], ctx?: { template?: GoldenPathKey; signal?: AbortSignal }) => Promise<GatesOutcome>;
 
-export async function runFactoryGates(slug: string, files: ScaffoldFile[], run: GatesRunner = runGatesSandbox): Promise<GateVerdict> {
-  return evaluateGates(await run(slug, files));
+/**
+ * Run the gates inside the per-app / per-user limits: one run per app (a new request supersedes the old
+ * one), a ceiling per user. `template` is the platform's gate set that judges the tree.
+ */
+/**
+ * TEST SEAM (like `__setAppProjectGitForTests`): unit suites that exercise something OTHER than the gates
+ * install a runner here so their container-app deploy requests do not need a cluster. Production never
+ * sets it; with it unset the default is the real sandbox, and no cluster means a block (never a pass).
+ */
+let gatesRunnerForTests: GatesRunner | null = null;
+export function __setGatesRunnerForTests(run: GatesRunner | null): void {
+  gatesRunnerForTests = run;
+}
+
+export async function runFactoryGates(
+  slug: string,
+  files: ScaffoldFile[],
+  run: GatesRunner = gatesRunnerForTests ?? runGatesSandbox,
+  who: { userId: string; appId: string; template?: GoldenPathKey } = { userId: 'anonymous', appId: slug },
+): Promise<GateVerdict> {
+  const slot = acquireGateSlot({ userId: who.userId, appId: who.appId });
+  try {
+    return evaluateGates(await run(slug, files, { template: who.template, signal: slot.signal }));
+  } finally {
+    slot.release();
+  }
 }
 
 /**
@@ -459,13 +485,19 @@ export async function runAppTests(
   if (app.owner !== user.id && !(isBuilder(user) && user.domains.includes(app.domain))) {
     throw withStatus(new Error('Only the creator or a builder of the owning domain can run the app tests'), 403);
   }
+  // The decision comes from what the OS stored (template + serve mode), never from the tree.
+  const policy = gatePolicyFor(app);
+  if (!policy.required) throw withStatus(new Error(`This app has no factory gates: ${policy.reason}`), 409);
   const state = appProjectGitEnabled() ? await readAppTreeState(app) : null;
   const files = state?.kind === 'tree' ? state.files : await appFilesForScan(app);
-  const template = goldenPathKeyOf(files);
-  if (!template) throw withStatus(new Error('This app was not built from a golden-path template (no `template:` in app.yaml), so it has no factory gates'), 409);
-  const run = opts.gates ?? runGatesSandbox;
-  const outcome = await run(app.slug, files);
-  return { commit: state?.kind === 'tree' ? state.sha : null, template, verdict: evaluateGates(outcome), outcome };
+  const run = opts.gates ?? gatesRunnerForTests ?? runGatesSandbox;
+  const slot = acquireGateSlot({ userId: user.id, appId: app.id });
+  try {
+    const outcome = await run(app.slug, files, { template: policy.profile, signal: slot.signal });
+    return { commit: state?.kind === 'tree' ? state.sha : null, template: policy.profile, verdict: evaluateGates(outcome), outcome };
+  } finally {
+    slot.release();
+  }
 }
 
 export async function requestDeploy(
@@ -503,11 +535,14 @@ export async function requestDeploy(
   // green tick. Refused with a typed 409 BEFORE a card or an approval exists.
   assertNotSeeded('a deploy request', files);
 
-  // SOFTWARE FACTORY: an app built from a golden-path template carries its own quality gates (tests,
-  // type check, lint, policy). They run in the platform sandbox over exactly these files, and a deploy
-  // is not even REQUESTED while one fails or cannot run: unavailable is not a pass.
-  if (goldenPathKeyOf(files)) {
-    const verdict = await runFactoryGates(app.slug, files, opts.gates);
+  // SOFTWARE FACTORY: every app served as a container carries the quality gates (tests, type check, lint,
+  // policy). Whether they apply is decided from what the OS STORED about the app (template + serve mode,
+  // gate-policy.ts), never from a line of the author's own tree. They run in the platform sandbox over
+  // exactly these files, judged by the platform's own gate script and policy, and a deploy is not even
+  // REQUESTED while one fails or cannot run: unavailable is not a pass.
+  const gatePolicy = gatePolicyFor(app);
+  if (gatePolicy.required) {
+    const verdict = await runFactoryGates(app.slug, files, opts.gates, { userId: user.id, appId: app.id, template: gatePolicy.profile });
     if (!verdict.passed) throw withStatus(new Error(verdict.summary), 422);
   }
 

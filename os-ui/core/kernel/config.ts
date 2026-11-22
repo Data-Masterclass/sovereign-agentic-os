@@ -396,8 +396,11 @@ export const config = {
   softwareScannerNamespace: env('SOFTWARE_SCANNER_NAMESPACE', ''),
   softwareScannerDbMode: env('SOFTWARE_SCANNER_DB_MODE', 'mirror') === 'offline' ? 'offline' : 'mirror',
   softwareScannerDbRepository: env('SOFTWARE_SCANNER_DB_REPOSITORY', 'ghcr.io/aquasecurity/trivy-db'),
-  // Software Factory: the gates sandbox (tabs/software/lib/sandbox-gates.ts). Empty namespace = the release namespace.
+  // Software Factory: the gates sandbox (tabs/software/lib/sandbox-gates.ts). The namespace is the chart's dedicated,
+  // default-deny sandbox namespace; empty (or the platform namespace) means the sandbox refuses to run.
   softwareSandboxNamespace: env('SOFTWARE_SANDBOX_NAMESPACE', ''),
+  // The egress proxy npm uses from the sandbox (its only way out), set by the chart.
+  softwareSandboxProxyUrl: env('SOFTWARE_SANDBOX_PROXY_URL', ''),
   // Images are pinned in the chart only (osUI.software.sandbox / opa.image); empty = not wired, and the sandbox refuses to run.
   softwareSandboxNodeImage: env('SOFTWARE_SANDBOX_NODE_IMAGE', ''),
   softwareSandboxOpaImage: env('SOFTWARE_SANDBOX_OPA_IMAGE', ''),
