@@ -803,7 +803,10 @@ and neither are model budgets (LiteLLM owns them; the OS reads its admin API).
   `createBoss` refuses `migrate: true` / `createSchema: true` (`QueueMigrationRefusedError`). Only a superuser can create those roles, so the
   chart's `os-governance-bootstrap` hook (`postgres.governance.enabled`, off by default) does
   exactly that, from `charts/sovereign-agentic-os/files/os-governance/*.sql`, with a DEDICATED
-  admin Secret (`adminSecretName`); it never runs the migrations. The template refuses to render
+  admin Secret (`adminSecretName`); it never runs the migrations. They run in the chart's `os-governance-migrate`
+  hook Job (post-install,post-upgrade, after the bootstrap): `worker/migrate-governance.mjs` from the os-ui image calls
+  `migrateGovernance` as the OWNER login only (it refuses a superuser). Idempotent on every upgrade; a failure fails the
+  Job and so the release. os-ui and the worker run as the DML-only login and never hold the owner credential. The template refuses to render
   with the Langfuse Secret or with a name another service uses
   (`scripts/check-governance-bootstrap-chart.mjs`), and the SQL refuses an existing superuser.
 - **Every function pins `search_path = pg_catalog, pg_temp`** and schema-qualifies its calls

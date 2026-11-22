@@ -30,6 +30,7 @@
 #      its own pod uses (KUBERNETES_SERVICE_HOST:KUBERNETES_SERVICE_PORT), via `kubectl exec`. On
 #      Gardener that address is the injected domain, which `allow-apiserver-egress` must admit
 #      (networkPolicies.apiserver.extraCidrs); without it no run Job is ever created.
+#  10. OPA (when deployed) is Ready and its Service `opa` has a ready endpoint (EndpointSlice).
 #   8. Langfuse can read its ClickHouse tables: upstream `GET /api/public/health` with
 #      `failIfDatabaseUnavailable=true&failIfNoRecentEvents=true`, through `kubectl port-forward`
 #      (Langfuse is never published, and the API-server proxy is outside the default-deny policy).
@@ -253,6 +254,19 @@ except Exception as e:
   esac
 }
 
+# check_opa — the Deployment is Ready AND its Service has a ready endpoint. A pod whose readiness
+# probe (`/health?bundles`) fails has no endpoint: every OPA-checked action then answers
+# `opa-unreachable` while os-ui and the worker stay green (dev, 21-22 Nov 2026, 16 hours).
+check_opa() {
+  local ready
+  if ! k get deploy opa >/dev/null 2>&1; then note "no OPA Deployment: no policy decision point to check"; return; fi
+  check_deployment opa --any-tag
+  ready=$(k get endpointslices -l kubernetes.io/service-name=opa \
+    -o jsonpath='{range .items[*].endpoints[?(@.conditions.ready==true)]}{.addresses[0]}{" "}{end}' 2>/dev/null || true)
+  if [ -n "${ready// /}" ]; then pass "opa Service has a ready endpoint"
+  else fail "opa Service has a ready endpoint (none: every OPA-checked action answers opa-unreachable)"; fi
+}
+
 check_deployment os-ui
 check_deployment os-ui-worker
 # Docling serves os-ui's document conversions; its own tag is pinned in the chart.
@@ -265,6 +279,7 @@ check_clickhouse_volume
 check_model_info
 check_langfuse_traces
 check_dagster_apiserver
+check_opa
 
 if [ ${#FAILED[@]} -eq 0 ]; then echo "SMOKE_OK"; exit 0; fi
 echo "SMOKE_FAILED (${#FAILED[@]}): $(printf '%s; ' "${FAILED[@]}")"

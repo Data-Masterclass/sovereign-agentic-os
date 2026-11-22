@@ -32,6 +32,9 @@ RUN node scripts/worker-deps.mjs --out .next/standalone
 # WP-53b: the agent id preflight is a second worker command (worker/agent-id-preflight.mjs); its
 # packages are traced the same way so it runs from the image as shipped.
 RUN node scripts/worker-deps.mjs --out .next/standalone --entry tabs/agents/lib/module/preflight-run.ts
+# The governance migration Job (worker/migrate-governance.mjs, chart os-governance-migrate) needs
+# node-pg-migrate and pg-boss as real directories too; trace its graph the same way.
+RUN node scripts/worker-deps.mjs --out .next/standalone --entry worker/migrate-governance.ts
 
 # ---- runner: minimal runtime, non-root ----
 FROM node:22.13.1-alpine3.21 AS runner
