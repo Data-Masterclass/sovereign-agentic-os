@@ -29,11 +29,16 @@ import { getAppBySlugInternal } from '@tabs/software/lib/apps';
 import { APPS_PREFIX, readAppTreeState } from '@tabs/software/lib/git-commit';
 import { appTreesIn, ingestFromRepo } from '@tabs/software/lib/ingest-from-repo';
 import type { ScaffoldFile } from '@tabs/software/lib/model';
+import { isPlatformOwnedPath } from '@tabs/software/lib/golden-path';
 
 export const APP_KIND = 'app';
 
-/** Paths inside an app a push may not change: the platform's own gate definition. */
-const GATE_OWNED = [/^policy\//, /^scripts\/factory-gates\.mjs$/];
+/**
+ * Paths inside an app a push may not change: the whole PLATFORM_OWNED list (golden-path.ts), the same rule the
+ * MCP push and the UI editor enforce. `k8s/` is the one exception here: the app-deploy kind (deploy-receive.ts)
+ * validates it against the deploy gate.
+ */
+const isGateOwned = (inner: string): boolean => isPlatformOwnedPath(inner) && !inner.startsWith('k8s/');
 
 function split(path: string): { slug: string; inner: string } | null {
   if (!path.startsWith(APPS_PREFIX)) return null;
@@ -47,8 +52,8 @@ export const matchesApp = (path: string): boolean => split(path) !== null;
 
 export function validateAppFile(file: { path: string; content: string }): string | null {
   const s = split(file.path);
-  if (s && GATE_OWNED.some((re) => re.test(s.inner))) {
-    return `${file.path} is a platform-owned file (the quality gates). A push cannot change it; the platform updates it with the template.`;
+  if (s && isGateOwned(s.inner)) {
+    return `${file.path} is a platform-owned file (the platform owns how the app is built, deployed and gated). A push cannot change it; the platform updates it with the template.`;
   }
   return null;
 }
