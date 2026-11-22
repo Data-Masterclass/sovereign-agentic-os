@@ -24,6 +24,10 @@
  *     or an agent tool outside a run. Inside an active observation (a run's tool call) it nests
  *     there by OTel context; otherwise it is its own small trace. Never a raw ingestion POST.
  *   - Scores through `@langfuse/client` `score.create`. Reads stay filtered (`observationsQuery`).
+ *   - Masking (the platform admin's switch, `langfuseMasking`): `exportMask` is the span processor's
+ *     documented `mask` option and scrubs personal data from every observation's input, output and
+ *     metadata at export; at the `content` level the writer also replaces task, argument, result and
+ *     message text by sizes where it builds an observation. Read live, no restart.
  *   - Nothing here throws into a caller: the trace store being down is an expected state.
  */
 import 'server-only';
@@ -35,6 +39,8 @@ import { LangfuseSpanProcessor, isDefaultExportSpan } from '@langfuse/otel';
 import { createTraceId, propagateAttributes, startActiveObservation, startObservation, type LangfuseAgent, type LangfuseChain } from '@langfuse/tracing';
 import { LangfuseClient } from '@langfuse/client';
 import { config } from '@core/kernel/config';
+import { liveMasking, heldMasking } from '@core/infra/masking-policy';
+import { contentShape, maskExportedAttribute, maskText, scrubPii, type MaskingPolicy } from '@core/infra/trace-masking';
 import {
   DEFAULT_REDACTION,
   boundedResult,
@@ -105,6 +111,24 @@ export function osMask({ data }: { data: unknown }): unknown {
 }
 
 /**
+ * The processor's `mask`: inline media first (always), then, while the platform admin's masking
+ * switch is ON, personal data in every string of the attribute. The switch is read on every
+ * export, so a change applies to the next span with no restart. A throw here makes the SDK mask
+ * the whole attribute ("fully masked"), never export it unmasked.
+ * https://langfuse.com/docs/observability/features/masking
+ */
+export async function exportMask(params: { data: unknown }): Promise<unknown> {
+  const media = osMask(params);
+  const policy = await liveMasking();
+  return policy.enabled ? maskExportedAttribute(media) : media;
+}
+
+/** Content-level free text: the value as the policy lets it be recorded. */
+function freeValue(policy: MaskingPolicy, value: unknown): unknown {
+  return policy.enabled && policy.level === 'content' ? contentShape(value) : value;
+}
+
+/**
  * Start the process's tracer once. Returns false when Langfuse is not configured. The SIGTERM hook
  * hands the export buffer over before a pod stops (rolling restart, worker finishing a superstep).
  */
@@ -117,7 +141,7 @@ function ensureTracing(): boolean {
       ...(s.exporter
         ? { exporter: s.exporter, exportMode: 'immediate' as const }
         : { publicKey: config.langfusePublicKey, secretKey: config.langfuseSecretKey, baseUrl: config.langfuseUrl, timeout: 5 }),
-      mask: osMask,
+      mask: exportMask,
       shouldExportSpan: exportOsSpan,
       mediaUploadEnabled: false,
     });
@@ -221,7 +245,16 @@ export async function withRunTrace<T>(input: RunTraceInput, fn: (observer: RunOb
   if (!ensureTracing()) return fn(noopObserver(input.runId));
   const traceId = await langfuseTraceId(input.runId);
   const rootSpanId = await runRootSpanId(input.runId);
-  const level: RedactionLevel = input.redaction ?? DEFAULT_REDACTION;
+  // The masking switch as it is now. A run segment keeps this level for its message text; personal
+  // data is scrubbed by `exportMask` on every export, so a later switch-on still covers it.
+  const masking = await liveMasking();
+  const contentLevel = masking.enabled && masking.level === 'content';
+  const level: RedactionLevel = contentLevel ? 'strict' : (input.redaction ?? DEFAULT_REDACTION);
+  const free = (v: unknown): unknown => freeValue(masking, v);
+  const text = (t: string | undefined): string | undefined => maskText(t, masking);
+  // Text that is cut to a length below (task, result preview) is scrubbed BEFORE it is cut: a cut
+  // e-mail address or IBAN is no longer a pattern the export mask can recognise.
+  const beforeCut = (t: string): string => (masking.enabled && masking.level === 'pii' ? scrubPii(t) : t);
   const environment = input.environment;
   const env = environment ? { environment } : {};
   const root: SpanContext = { traceId, spanId: rootSpanId, traceFlags: TraceFlags.SAMPLED, isRemote: true };
@@ -238,6 +271,7 @@ export async function withRunTrace<T>(input: RunTraceInput, fn: (observer: RunOb
         systemId: input.systemId,
         domain: input.domain,
         engine: input.engine ?? 'langgraph',
+        masking: masking.enabled ? masking.level : 'off',
         ...(input.principal ? { principal: input.principal } : {}),
       },
     },
@@ -248,7 +282,7 @@ export async function withRunTrace<T>(input: RunTraceInput, fn: (observer: RunOb
           input.resume ? 'run segment' : `run ${input.systemName}`,
           {
             ...env,
-            input: input.task ? { task: input.task.length > TASK_MAX ? `${input.task.slice(0, TASK_MAX)}…` : input.task } : undefined,
+            input: input.task ? (contentLevel ? contentShape(input.task) : { task: beforeCut(input.task).length > TASK_MAX ? `${beforeCut(input.task).slice(0, TASK_MAX)}…` : beforeCut(input.task) }) : undefined,
             metadata: { resume: !!input.resume },
           },
           { asType: 'agent', parentSpanContext: root },
@@ -281,7 +315,7 @@ export async function withRunTrace<T>(input: RunTraceInput, fn: (observer: RunOb
                   safe(() => span.update({ output: redactCompletion(completion, level) }));
                   return completion;
                 } catch (e) {
-                  safe(() => span.update({ level: 'ERROR', statusMessage: message(e) }));
+                  safe(() => span.update({ level: 'ERROR', statusMessage: text(message(e)) }));
                   throw e;
                 }
               },
@@ -296,10 +330,10 @@ export async function withRunTrace<T>(input: RunTraceInput, fn: (observer: RunOb
                 safe(() => tool.update({ ...env, input: { tool: call.name, callId: call.id, args: redactArgs(call.args, level) }, metadata: { decision: meta.decision, approvalId: meta.approvalId, redaction: level } }));
                 try {
                   const out = await run();
-                  safe(() => tool.update({ output: { isError: out.isError, ...boundedResult(out.text, level) }, level: out.isError ? 'WARNING' : 'DEFAULT', metadata: { decision: decisionOf(out, meta.decision), approvalId: meta.approvalId } }));
+                  safe(() => tool.update({ output: { isError: out.isError, ...boundedResult(beforeCut(out.text), level) }, level: out.isError ? 'WARNING' : 'DEFAULT', metadata: { decision: decisionOf(out, meta.decision), approvalId: meta.approvalId } }));
                   return out;
                 } catch (e) {
-                  safe(() => tool.update({ level: 'ERROR', statusMessage: message(e), metadata: { decision: 'error', approvalId: meta.approvalId } }));
+                  safe(() => tool.update({ level: 'ERROR', statusMessage: text(message(e)), metadata: { decision: 'error', approvalId: meta.approvalId } }));
                   throw e;
                 }
               },
@@ -312,7 +346,7 @@ export async function withRunTrace<T>(input: RunTraceInput, fn: (observer: RunOb
                 {
                   ...env,
                   input: { tool: call.name, callId: call.id, args: redactArgs(call.args, level) },
-                  output: meta.detail ? { detail: meta.detail } : undefined,
+                  output: text(meta.detail) ? { detail: text(meta.detail) } : undefined,
                   level: meta.decision === 'held' ? 'DEFAULT' : 'WARNING',
                   metadata: { decision: meta.decision, approvalId: meta.approvalId },
                 },
@@ -322,9 +356,9 @@ export async function withRunTrace<T>(input: RunTraceInput, fn: (observer: RunOb
           end: (status) =>
             safe(() => {
               (node as LangfuseChain | null)?.update({
-                output: status?.output,
+                output: free(status?.output),
                 level: status?.error ? 'ERROR' : 'DEFAULT',
-                statusMessage: status?.error ? status.error.slice(0, 300) : status?.parked ? 'parked on approval' : undefined,
+                statusMessage: status?.error ? text(status.error)?.slice(0, 300) : status?.parked ? 'parked on approval' : undefined,
                 metadata: { ...(metadata ?? {}), ...(status?.metadata ?? {}), ...(status?.parked ? { parked: true } : {}) },
               }).end();
             }),
@@ -367,7 +401,10 @@ export type StandaloneObservation = {
 export function recordObservation(o: StandaloneObservation): boolean {
   if (!ensureTracing()) return false;
   try {
-    const attrs = { input: o.input, output: o.output, metadata: o.metadata, level: o.level };
+    // Held in memory, not awaited: this call is synchronous. Personal data is scrubbed at export
+    // regardless (`exportMask`); only the content level's sizes depend on the value held here.
+    const masking = heldMasking();
+    const attrs = { input: freeValue(masking, o.input), output: freeValue(masking, o.output), metadata: o.metadata, level: o.level };
     const write = (): void => {
       // An event ends on creation; the others are point-in-time records, ended at once.
       if (o.asType === 'event') startObservation(o.name, attrs, { asType: 'event' });
@@ -397,8 +434,10 @@ export async function scoreTrace(input: { runId: string; name: string; value: nu
   const c = scoreClient();
   if (!c) return false;
   try {
-    // Queued; the client sends within its flush interval (1 s) or on `flushLangfuse()`.
-    c.score.create({ traceId: await langfuseTraceId(input.runId), name: input.name, value: input.value, comment: input.comment, metadata: input.metadata });
+    // Queued; the client sends within its flush interval (1 s) or on `flushLangfuse()`. The judge's
+    // comment is free text about the run's content, so it follows the masking switch too.
+    const masking = await liveMasking();
+    c.score.create({ traceId: await langfuseTraceId(input.runId), name: input.name, value: input.value, comment: maskText(input.comment, masking), metadata: input.metadata });
     return true;
   } catch {
     return false;

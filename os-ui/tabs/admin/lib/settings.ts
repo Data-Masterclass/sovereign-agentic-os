@@ -28,6 +28,7 @@
  */
 import type { OsMirror } from '@core/infra/os-mirror';
 import { isRunWorkerProcess } from '@core/kernel/process-role';
+import { DEFAULT_MASKING, normalizeMasking, type MaskingPolicy } from '@core/infra/trace-masking';
 
 export type Settings = {
   sso: { enabled: boolean; provider: string; issuerUrl: string; scim: boolean };
@@ -88,6 +89,14 @@ export type Settings = {
   // owner keeps stored-only are never sent regardless. Read through
   // `core/models/roles.ts` `filesAutoDescribeEnabled()`.
   filesAutoDescribe: boolean;
+  // LANGFUSE MASKING (2026-11-22). When OFF (the DEFAULT) traces are what they were. When ON,
+  // everything the OS sends to Langfuse is masked client-side with Langfuse's documented `mask`
+  // hook and LiteLLM's per-request redaction header: `pii` replaces e-mail addresses, phone
+  // numbers, IBANs and card numbers; `content` replaces all message, task, tool-argument and
+  // tool-result text by its size and keeps model, tokens, latency, cost, tool names and status.
+  // Read live by os-ui and by the run worker: no restart. Server-side masking is a Langfuse
+  // Enterprise feature and is not used. Read through `core/infra/masking-policy.ts`.
+  langfuseMasking: MaskingPolicy;
 };
 
 const EMPTY_ROLES = { reasoning: '', standard: '', tools: '', embeddings: '' };
@@ -106,6 +115,7 @@ function defaults(): Settings {
     promoteAsView: false,
     autonomousAgentsEnabled: false,
     filesAutoDescribe: true,
+    langfuseMasking: { ...DEFAULT_MASKING },
   };
 }
 
@@ -244,6 +254,9 @@ function mergeSettings(base: Settings, patch: Partial<Settings> & Record<string,
     // Nil-safe: only a REAL boolean flips it; a settings blob saved before the switch existed
     // (or a partial PATCH) keeps the current value, which defaults ON.
     filesAutoDescribe: typeof patch.filesAutoDescribe === 'boolean' ? patch.filesAutoDescribe : base.filesAutoDescribe !== false,
+    // Nil-safe per half: only a real boolean flips `enabled`, only a known level sets `level`; a blob
+    // saved before the switch existed, a partial PATCH or garbage keeps the current value (OFF).
+    langfuseMasking: normalizeMasking(patch.langfuseMasking, base.langfuseMasking ?? DEFAULT_MASKING),
   };
 }
 

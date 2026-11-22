@@ -23,6 +23,11 @@ export async function PATCH(req: Request) {
     const body = await req.json();
     const settings = updateSettings(body ?? {}); // rejects raw-secret fields
     audit({ tenant: tenant.id, actor: user.id, role: user.role, action: 'settings.update', target: `tenant:${tenant.id}`, detail: `Updated tenant settings (${Object.keys(body ?? {}).join(', ')})` });
+    // The masking switch decides what leaves for Langfuse, so its new value is in the audit trail itself.
+    if (body && typeof body === 'object' && 'langfuseMasking' in body) {
+      const m = settings.langfuseMasking;
+      audit({ tenant: tenant.id, actor: user.id, role: user.role, action: 'settings.langfuse-masking', target: `tenant:${tenant.id}`, detail: `Langfuse masking ${m.enabled ? `ON (${m.level})` : 'OFF'}` });
+    }
     return NextResponse.json({ settings });
   } catch (e) {
     return fail(e);

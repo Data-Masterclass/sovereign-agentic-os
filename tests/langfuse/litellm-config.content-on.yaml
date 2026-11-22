@@ -1,0 +1,33 @@
+# LiteLLM for the masking e2e test (gateway half): the SAME callback block as production
+# (`langfuse_otel` on OTel v2) but with `turn_off_message_logging: false` and (compose.masking.yaml)
+# `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=span_only`, i.e. a gateway whose operator has
+# switched message capture ON (the debugging session docs/components/langfuse.md describes). On OTel
+# v2 the production gateway captures no content at all; this is the case the switch must still cover. With it the gateway's generation carries the prompt and the completion, so the test
+# can prove that the OS's masking switch reaches the gateway through LiteLLM's documented
+# per-request header `x-litellm-enable-message-redaction`, at run time, with no redeploy.
+# https://docs.litellm.ai/docs/proxy/logging#redact-messages-response-content
+model_list:
+  - model_name: sovereign-default
+    litellm_params:
+      model: openai/stub-model
+      api_base: os.environ/STUB_API_BASE
+      api_key: sk-stub-unused
+    model_info:
+      mode: chat
+      input_cost_per_token: 0.00000015
+      output_cost_per_token: 0.00000025
+      supports_function_calling: true
+  - model_name: sovereign-reasoning
+    litellm_params:
+      model: openai/stub-model
+      api_base: os.environ/STUB_API_BASE
+      api_key: sk-stub-unused
+    model_info:
+      mode: chat
+      input_cost_per_token: 0.0000015
+      output_cost_per_token: 0.00000175
+      supports_function_calling: true
+litellm_settings:
+  callbacks: ["langfuse_otel"]
+  turn_off_message_logging: false
+  drop_params: true

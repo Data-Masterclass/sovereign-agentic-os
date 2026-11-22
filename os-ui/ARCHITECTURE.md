@@ -412,6 +412,8 @@ core/infra/langfuse.ts            the ONE Langfuse writer: NodeSDK + LangfuseSpa
                                   withRunTrace, recordObservation, traceUrlFor, scoreTrace,
                                   readObservations (+ observationsQuery, which refuses an unfiltered read)
 core/infra/trace-port.ts          the RunObserver port, the no-op observer and the redaction policy
+core/infra/trace-masking.ts       the admin masking switch's PII patterns and content shape (pure)
+core/infra/masking-policy.ts      the switch read live (os-ui + worker) and the gateway's redaction header
 build-graph.ts  observed(name, body)   every plan_/act_/tools_/route_ node is a CHAIN observation; the
                                   node gets an LlmCall that wraps each call in a `llm.<node>` span (the
                                   gateway's GENERATION nests under it — the only generation) and a

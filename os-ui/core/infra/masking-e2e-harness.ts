@@ -57,6 +57,7 @@ export function startRecordingForwarder(): Promise<{ server: Server; url: string
     });
   });
   return new Promise((resolve) => server.listen(0, '127.0.0.1', () => {
+    server.unref();
     const port = (server.address() as { port: number }).port;
     resolve({ server, url: `http://127.0.0.1:${port}`, recorded });
   }));

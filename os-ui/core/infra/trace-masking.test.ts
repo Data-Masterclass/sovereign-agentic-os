@@ -21,8 +21,10 @@ test('PII: a valid IBAN (with or without spaces) is replaced; a wrong checksum i
   assert.equal(scrubPii('pay DE89 3704 0044 0532 0130 00 now'), 'pay [iban] now');
   assert.equal(scrubPii('pay DE89370400440532013000 now'), 'pay [iban] now');
   assert.equal(scrubPii('pay GB82WEST12345698765432 now'), 'pay [iban] now');
-  // NEGATIVE TWIN: same shape, checksum broken — an order reference, not an account.
-  assert.equal(scrubPii('ref DE89 3704 0044 0532 0130 01 ok'), 'ref DE89 3704 0044 0532 0130 01 ok');
+  // NEGATIVE TWIN: same shape, checksum broken — not an account, so never labelled an IBAN
+  // (digit runs inside it may still be caught by the phone rule; that is a different pattern).
+  assert.ok(!scrubPii('ref DE89 3704 0044 0532 0130 02 ok').includes('[iban]'));
+  assert.equal(scrubPii('ref XY12ABCD34 ok'), 'ref XY12ABCD34 ok');
 });
 
 test('PII: a Luhn-valid card number is replaced; a Luhn-invalid one is not', () => {
