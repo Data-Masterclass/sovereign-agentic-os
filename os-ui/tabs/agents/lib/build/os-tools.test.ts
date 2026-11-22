@@ -6,6 +6,8 @@ import assert from 'node:assert/strict';
 import type { CurrentUser } from '@core/kernel/auth';
 import { parseSystem, serializeSystem, type System } from '@tabs/agents/lib/system-schema';
 import { handleRpc as realHandleRpc } from '@core/mcp/server';
+import { setDeprecationSink } from '@core/mcp/deprecated-aliases';
+import { toolsForGrant } from '@tabs/agents/lib/capability-tools';
 import { isWriteTool } from '@tabs/agents/lib/build/hold';
 import { agentForbiddenReason } from '@core/mcp/write-tool-meta';
 import {
@@ -71,7 +73,7 @@ test('grantedToolBrief: ADVERTISES only granted tools as callable list entries',
   // The exact ungranted tools the live bug attempted must NOT be advertised as callable
   // (they may still be *named* inside a granted tool's own before/after hint prose, but
   // that is not a callable entry — the manifest still excludes them).
-  for (const leak of ['create_software', 'build_gold_join', 'run_quality_checks', 'index_knowledge']) {
+  for (const leak of ['create_software', 'build_gold_join', 'run_quality_checks', 'index_workflow']) {
     assert.ok(!advertised.has(leak), `${leak} is not granted — it must not be advertised as callable`);
   }
 });
@@ -294,11 +296,11 @@ test('executor: read-only STILL blocks every write (personal create included)', 
 
 test('writeTargetScope: create/author/upload/build/define = personal; escalation = domain/company', () => {
   // Personal (My) create/author/upload/build path — the runner's own work.
-  for (const t of ['create_dataset', 'ingest_dataset', 'upload_file', 'author_knowledge', 'define_metric', 'create_connection', 'create_software', 'create_dashboard', 'create_agent_system', 'transform_silver', 'build_gold_join', 'document_dataset']) {
+  for (const t of ['create_dataset', 'ingest_dataset', 'upload_file', 'author_workflow', 'define_metric', 'create_connection', 'create_software', 'create_dashboard', 'create_agent_system', 'transform_silver', 'build_gold_join', 'document_dataset']) {
     assert.equal(writeTargetScope(t), 'personal', `${t} targets personal`);
   }
   // Escalation family → Domain.
-  for (const t of ['publish_knowledge', 'request_promotion', 'approve_promotion']) {
+  for (const t of ['publish_workflow', 'request_promotion', 'approve_promotion']) {
     assert.equal(writeTargetScope(t), 'domain', `${t} escalates to domain`);
   }
   // Tenant-wide family → COMPANY (the admin gate). `reindex_corpus` re-parses and re-embeds a
@@ -598,12 +600,12 @@ test('holdDecision: read-only holds all; personal never held; domain→domain_ad
     assert.deepEqual(holdDecision(p, 'upload_file'), { held: false });
   }
   // Domain escalation → held to domain_admin.
-  assert.deepEqual(holdDecision('read-propose', 'publish_knowledge'), { held: true, approverRole: 'domain_admin' });
+  assert.deepEqual(holdDecision('read-propose', 'publish_workflow'), { held: true, approverRole: 'domain_admin' });
   assert.deepEqual(holdDecision('full-in-scope', 'request_promotion'), { held: true, approverRole: 'domain_admin' });
 });
 
 test('executor: read-propose does NOT hold personal create/upload/author/define/connection', async () => {
-  for (const tool of ['create_dataset', 'upload_file', 'author_knowledge', 'define_metric', 'create_connection']) {
+  for (const tool of ['create_dataset', 'upload_file', 'author_workflow', 'define_metric', 'create_connection']) {
     const deps = spyDeps();
     const exec = grantedToolExecutor(CREATOR, sysWithPreset([tool], 'read-propose'), 'sys1', deps);
     const res = await exec(tool, { name: 'x', title: 'x', datasetId: 'ds1', aggregation: 'count' });
@@ -617,14 +619,14 @@ test('executor: read-propose does NOT hold personal create/upload/author/define/
 test('executor: promoting to Domain is HELD and enqueued to domain_admin', async () => {
   const deps = spyDeps();
   // read-propose (or any non-read-only): a Domain escalation is still held.
-  const exec = grantedToolExecutor(BUILDER, sysWithPreset(['publish_knowledge'], 'full-in-scope'), 'sys1', deps);
-  const res = await exec('publish_knowledge', { workflowId: 'wf1' });
+  const exec = grantedToolExecutor(BUILDER, sysWithPreset(['publish_workflow'], 'full-in-scope'), 'sys1', deps);
+  const res = await exec('publish_workflow', { workflowId: 'wf1' });
   assert.equal(res.isError, true);
   assert.match(res.text, /requires domain_admin approval/);
   assert.equal(deps.calls.handleRpc.length, 0, 'NEVER executed');
   assert.equal(deps.calls.enqueue.length, 1);
   const item = deps.calls.enqueue[0] as { tool: string; approverRole: string; requestedBy: string; agent: string };
-  assert.equal(item.tool, 'publish_knowledge');
+  assert.equal(item.tool, 'publish_workflow');
   assert.equal(item.approverRole, 'domain_admin');
   assert.equal(item.requestedBy, 'u2');
   assert.equal(item.agent, 'os-sys1');
@@ -808,7 +810,7 @@ test('summarizeWriteOutcomes: counts direct My-writes by tab, held separately, i
     { tool: 'ingest_dataset', result: 'ok', isError: false },    // direct → My Data
     { tool: 'define_metric', result: 'ok', isError: false },     // direct → My Metrics
     { tool: 'query_data', result: 'rows', isError: false },      // a READ — ignored
-    { tool: 'publish_knowledge', result: HELD, isError: true },  // held → Governance
+    { tool: 'publish_workflow', result: HELD, isError: true },  // held → Governance
   ]);
   assert.equal(o.wroteTotal, 3);
   assert.equal(o.heldTotal, 1);
@@ -833,7 +835,7 @@ test('writeOutcomesLine: honest sentences for direct + held, empty when nothing 
   assert.equal(writeOutcomesLine(summarizeWriteOutcomes([{ tool: 'query_data', result: 'r', isError: false }])), '');
   const line = writeOutcomesLine(summarizeWriteOutcomes([
     { tool: 'define_metric', result: 'ok', isError: false },
-    { tool: 'publish_knowledge', result: HELD, isError: true },
+    { tool: 'publish_workflow', result: HELD, isError: true },
   ]));
   assert.match(line, /Wrote 1 record directly — 1 to My Metrics\./);
   assert.match(line, /1 write awaiting approval in Governance → Inbox\./);
@@ -1107,4 +1109,75 @@ test('F6: when the grant check itself cannot be made, the call is refused — ne
   assert.equal(errorOf(r).code, 'forbidden');
   assert.match(errorOf(r).reason ?? '', /could not be checked against the system's resource grants \(file index unavailable\)/);
   assert.equal(deps.calls.handleRpc.length, 0);
+});
+
+// --- WORKFLOW vs KNOWLEDGE: "save the report as knowledge" can only reach the note tool ---------
+
+/** A team granted what the Simple builder gives a KNOWLEDGE write grant — nothing else. */
+function knowledgeWriteTeam(): System {
+  return sysGranting(toolsForGrant('knowledge', 'Write-bounded'), { knowledge: [{ id: '', capability: 'Write-bounded', folder: { path: '/results', scope: 'personal' } }] });
+}
+
+test('WF/K: a knowledge-write team is OFFERED the note tool and NO workflow tool', () => {
+  const offered = new Set(grantedToolSpecs(CREATOR, knowledgeWriteTeam()).map((s) => s.name));
+  assert.ok(offered.has('save_knowledge_note'));
+  for (const t of ['author_workflow', 'index_workflow', 'publish_workflow', 'retire_workflow', 'list_workflows', 'get_workflow', 'author_knowledge', 'index_knowledge']) {
+    assert.ok(!offered.has(t), `${t} must not be offered to a knowledge-write team`);
+  }
+});
+
+test('WF/K: NEGATIVE TWIN — a knowledge-write team that CALLS author_workflow, or the old author_knowledge, is refused and nothing runs', async () => {
+  for (const name of ['author_workflow', 'author_knowledge']) {
+    const deps = spyDeps({ resolvers: GRANT_RESOLVERS });
+    const r = await grantedToolExecutor(CREATOR, knowledgeWriteTeam(), 'sys_k', deps)(name, { title: 'Daily report' });
+    assert.equal(errorOf(r).code, 'not_found', `${name}: not granted`);
+    assert.match(r.text, /not granted to this system/);
+    assert.equal(deps.calls.handleRpc.length, 0, `${name} must never reach the workflow store`);
+  }
+  // And the positive twin: the note save is the one that runs.
+  const ok = spyDeps({ resolvers: GRANT_RESOLVERS });
+  const r = await grantedToolExecutor(CREATOR, knowledgeWriteTeam(), 'sys_k', ok)('save_knowledge_note', { title: 'Daily report', md: 'body', folder: '/results' });
+  assert.equal(r.text, 'ran save_knowledge_note');
+});
+
+test('WF/K: a team granted WORKFLOW authoring is offered the workflow tool and not the note tool', () => {
+  const sys = sysGranting(toolsForGrant('workflows', 'Write-bounded'), { workflows: [{ id: 'wf_a', capability: 'Write-bounded' }] });
+  const offered = new Set(grantedToolSpecs(CREATOR, sys).map((s) => s.name));
+  assert.ok(offered.has('author_workflow') && offered.has('get_workflow'));
+  assert.ok(!offered.has('save_knowledge_note'));
+});
+
+test('WF/K: a system saved with the OLD names keeps running — the old name reaches the workflow tool, once logged', async () => {
+  const legacy = parseSystem({
+    version: '1', system: { name: 'Legacy', domain: 'sales', visibility: 'Personal' }, entrypoint: 'a', safety_preset: 'full-in-scope',
+    grants: { tools: ['author_knowledge', 'get_knowledge'], knowledge: [{ id: 'wf_refunds', capability: 'Write-bounded' }] },
+    agents: [{ id: 'a', role: 'agent', agent_md: '', memory_md: '' }],
+  });
+  const lines: string[] = [];
+  const prev = setDeprecationSink((l) => lines.push(l));
+  try {
+    const deps = spyDeps({ resolvers: GRANT_RESOLVERS });
+    const exec = grantedToolExecutor(CREATOR, legacy, 'sys_l', deps);
+    const r = await exec('author_knowledge', { title: 'Still works' }); // the name a stored prompt may still use
+    assert.equal(r.text, 'ran author_workflow');
+    assert.equal(lines.length, 1);
+    assert.match(lines[0], /'author_knowledge'.*via agent.*use 'author_workflow'/);
+    const r2 = await exec('author_workflow', { title: 'New name' });
+    assert.equal(r2.text, 'ran author_workflow');
+    assert.equal(lines.length, 1, 'the current name logs nothing');
+  } finally {
+    setDeprecationSink(prev);
+  }
+});
+
+test('WF/K: publish_knowledge (old name) is HELD exactly like publish_workflow — the rename cannot lift a hold', async () => {
+  for (const name of ['publish_workflow', 'publish_knowledge']) {
+    const deps = spyDeps();
+    const sys = parseSystem({ version: '1', system: { name: 'T', domain: 'sales', visibility: 'Personal' }, entrypoint: 'a', safety_preset: 'full-in-scope', grants: { tools: [name] }, agents: [{ id: 'a', role: 'agent', agent_md: '', memory_md: '' }] });
+    const res = await grantedToolExecutor(BUILDER, sys, 'sys1', deps)(name, { workflowId: 'wf1' });
+    assert.equal(res.isError, true, `${name} must not execute`);
+    assert.match(res.text, /requires domain_admin approval/);
+    assert.equal(deps.calls.handleRpc.length, 0);
+    assert.equal((deps.calls.enqueue[0] as { tool: string }).tool, 'publish_workflow', 'the queued request names the current tool');
+  }
 });

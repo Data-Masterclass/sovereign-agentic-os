@@ -56,6 +56,20 @@ import { appWriteApplier } from '@core/policy/app-write-port';
  *  own already-two-step rails in write-tools). */
 export type LadderKind = 'knowledge' | 'personal_knowledge' | 'connection' | 'artifact' | 'dashboard' | 'app' | 'agent_system';
 export const LADDER_KINDS: readonly LadderKind[] = ['knowledge', 'personal_knowledge', 'connection', 'artifact', 'dashboard', 'app', 'agent_system'] as const;
+/**
+ * The `kind` word a caller (an MCP tool, an agent) used → the ladder kind it means, decided by the id.
+ * A workflow (`wf_…`) is ladder kind `knowledge` — a historical, PERSISTED spelling (approvals and
+ * promotion records already carry it, so it is not renamed); a knowledge note (`pk_…`) is
+ * `personal_knowledge`. So callers may say `workflow` (the real name), and `knowledge` with a note id
+ * means the note — the mix-up this prevents is a note promoted through the workflow path and back.
+ */
+export function normalizeLadderKind(kind: string, id: string): string {
+  const k = kind.trim();
+  if (k === 'workflow') return 'knowledge';
+  if (k === 'knowledge' && id.trim().startsWith('pk_')) return 'personal_knowledge';
+  return k;
+}
+
 export function isLadderKind(x: string): x is LadderKind {
   return (LADDER_KINDS as readonly string[]).includes(x);
 }
@@ -251,7 +265,7 @@ export function buildEffectDeps(): EffectDeps {
 /**
  * The thin-compat + UI one-shot: advance a ladder artifact one rung THROUGH the
  * effect seam in a single call. This is the "approve half" the retained aliases
- * (`publish_knowledge`, `promote_connection`, software `promote`) and the
+ * (`publish_workflow`, `promote_connection`, software `promote`) and the
  * re-pointed UI direct-promote buttons collapse onto — same privilege as the old
  * direct fns (the underlying store re-gates role+domain), but NO tier flips
  * outside `effects.ts`.
@@ -294,7 +308,7 @@ export async function promoteThroughSeam(
   // artefact. A NON-owner may act here solely as the APPROVE-half of a request the owner filed.
   //
   // Rung 2 (Domain→COMPANY): the owner must NOT one-shot. This check used to read rung 1 only, so
-  // an admin who OWNED a Shared artefact and called the tab's own promote entry (publish_knowledge,
+  // an admin who OWNED a Shared artefact and called the tab's own promote entry (publish_workflow,
   // promote_connection, the software `promote`, a UI promote button — none of which name a rung,
   // so the rung is derived from the tier) certified it company-wide in a single call, and minted a
   // `promote_certify` record with `decidedBy === requestedBy`: exactly the act the Governance door

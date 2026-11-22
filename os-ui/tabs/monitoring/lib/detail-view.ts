@@ -96,7 +96,7 @@ async function grantNameLookup(
   user: CurrentUser,
 ): Promise<(kind: GrantKind, id: string) => string | undefined> {
   const maps: Record<GrantKind, Map<string, string>> = {
-    data: new Map(), knowledge: new Map(), files: new Map(), metrics: new Map(), connections: new Map(),
+    data: new Map(), knowledge: new Map(), workflows: new Map(), files: new Map(), metrics: new Map(), connections: new Map(),
   };
   const put = (kind: GrantKind, items: { id: string; name: string }[]) => {
     for (const it of items) maps[kind].set(it.id, it.name);
@@ -105,7 +105,7 @@ async function grantNameLookup(
   try { await ensureDataHydrated(); put('data', flat(listDatasets(principal))); } catch { /* fail-soft */ }
   try {
     await ensureKnowledgeHydrated();
-    put('knowledge', flat(listWorkflows(principal)).map((w) => ({ id: w.id, name: w.title })));
+    put('workflows', flat(listWorkflows(principal)).map((w) => ({ id: w.id, name: w.title })));
   } catch { /* fail-soft */ }
   try { put('knowledge', flat(listPersonalKnowledge(principal)).map((k) => ({ id: k.id, name: k.title }))); } catch { /* fail-soft */ }
   try { await ensureFilesHydrated(); put('files', flat(listFiles(principal))); } catch { /* fail-soft */ }

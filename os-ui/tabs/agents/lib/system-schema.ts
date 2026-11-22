@@ -3,6 +3,7 @@
  */
 import yaml from 'js-yaml';
 import { roleAtLeast, type Role } from '@core/kernel/session';
+import { migrateLegacyWorkflowGrants, upgradeLegacyToolList } from '@tabs/agents/lib/legacy-workflow-grants';
 
 /**
  * `system.yaml` — the SINGLE source of truth for an agent system (Agents tab,
@@ -110,6 +111,14 @@ export type Grants = {
    * from `system.yaml` when empty so pre-Wave-3 files stay byte-stable.
    */
   files: ArtifactGrant[];
+  /**
+   * WORKFLOW grants — the documented business processes (`wf_…`) an agent may read, index, publish or
+   * author. A workflow is NOT a knowledge note (`grants.knowledge`, `pk_…`): the two have separate
+   * tools and separate grants. Before they were split a `wf_…` id sat under `grants.knowledge`; reading
+   * a saved system moves it here (`migrateLegacyWorkflowGrants`). Additive + omitted from `system.yaml`
+   * when empty, so a system with no workflow grant stays byte-stable.
+   */
+  workflows: ArtifactGrant[];
   /**
    * PLAN-ITEM grants — the Operating Manual (and, when generalised, Strategic Pillars
    * / Big Bets) an agent may load as context. Each `id` encodes the plan target, not a
@@ -278,11 +287,20 @@ function parseArtifactGrants(v: unknown, where: string, allowLayer = false): Art
 
 function parseGrants(v: unknown): Grants {
   const g = isRecord(v) ? v : {};
+  // A system saved before workflows and knowledge notes were split: its `wf_…` grants sit under
+  // `knowledge` and its workflow tools carry the old names. Upgraded on read — the same rule the
+  // stored migration applies — so the system keeps running unchanged.
+  const legacy = migrateLegacyWorkflowGrants({
+    knowledge: parseArtifactGrants(g.knowledge, 'grants.knowledge'),
+    workflows: parseArtifactGrants(g.workflows, 'grants.workflows'),
+    tools: strArray(g.tools, 'grants.tools'),
+  });
   return {
     data: parseArtifactGrants(g.data, 'grants.data', true),
-    knowledge: parseArtifactGrants(g.knowledge, 'grants.knowledge'),
+    knowledge: legacy.knowledge,
+    workflows: legacy.workflows,
     metrics: parseArtifactGrants(g.metrics, 'grants.metrics'),
-    tools: strArray(g.tools, 'grants.tools'),
+    tools: legacy.tools,
     connections: parseArtifactGrants(g.connections, 'grants.connections'),
     // Files hold ONLY folder grants (no per-item list) — parsed with the same
     // reader; a pre-Wave-3 file has no `grants.files` key ⇒ empty list.
@@ -298,6 +316,7 @@ function grantKinds(sys: System): { kind: string; arr: ArtifactGrant[] }[] {
   return [
     { kind: 'data', arr: sys.grants.data },
     { kind: 'knowledge', arr: sys.grants.knowledge },
+    { kind: 'workflow', arr: sys.grants.workflows ?? [] },
     { kind: 'metric', arr: sys.grants.metrics },
     { kind: 'connection', arr: sys.grants.connections },
     { kind: 'files', arr: sys.grants.files },
@@ -364,6 +383,7 @@ export function downgradeGrantsForRole(sys: System, role: Role): System {
       ...sys.grants,
       data: fix(sys.grants.data),
       knowledge: fix(sys.grants.knowledge),
+      workflows: fix(sys.grants.workflows ?? []),
       metrics: fix(sys.grants.metrics),
       connections: fix(sys.grants.connections),
       files: fix(sys.grants.files),
@@ -372,7 +392,7 @@ export function downgradeGrantsForRole(sys: System, role: Role): System {
   };
 }
 
-function parseAgents(v: unknown): AgentSpec[] {
+function parseAgents(v: unknown, workflowsInPlay = false): AgentSpec[] {
   if (!Array.isArray(v)) return [];
   return v.map((raw, i) => {
     if (!isRecord(raw) || typeof raw.id !== 'string' || raw.id.length === 0) {
@@ -385,7 +405,7 @@ function parseAgents(v: unknown): AgentSpec[] {
       memory_md: typeof raw.memory_md === 'string' ? raw.memory_md : '',
     };
     if (raw.members !== undefined) a.members = strArray(raw.members, `agents.${raw.id}.members`);
-    if (raw.tools !== undefined) a.tools = strArray(raw.tools, `agents.${raw.id}.tools`);
+    if (raw.tools !== undefined) a.tools = upgradeLegacyToolList(strArray(raw.tools, `agents.${raw.id}.tools`), workflowsInPlay).tools;
     if (raw.model !== undefined && raw.model !== null) a.model = String(raw.model);
     return a;
   });
@@ -499,7 +519,14 @@ export function parseSystem(input: string | Record<string, unknown>): System {
     throw new SystemError(`system.yaml: safety_preset '${String(doc.safety_preset)}' is invalid (expected ${SAFETY_PRESETS.join('|')})`);
   }
 
-  const agents = parseAgents(doc.agents);
+  const grants = parseGrants(doc.grants);
+  // A workflow grant that moved, or an old tool name that was renamed, means this system uses
+  // workflows: an agent's own (narrowed) tool list gets the workflow read tools too.
+  const rawGrants = isRecord(doc.grants) ? doc.grants : {};
+  const workflowsInPlay =
+    (Array.isArray(rawGrants.knowledge) && rawGrants.knowledge.some((e) => (typeof e === 'string' ? e : isRecord(e) ? e.id : '')?.toString().startsWith('wf_'))) ||
+    grants.workflows.length > 0;
+  const agents = parseAgents(doc.agents, workflowsInPlay);
   const ui = parseUi(doc.ui, new Set(agents.map((a) => a.id)));
   const outputs = parseOutputs(doc.outputs);
 
@@ -517,7 +544,7 @@ export function parseSystem(input: string | Record<string, unknown>): System {
     safetyPreset,
     entrypoint: typeof doc.entrypoint === 'string' ? doc.entrypoint : '',
     state: { channels },
-    grants: parseGrants(doc.grants),
+    grants,
     routing: { overrides: strMap(routingRaw.overrides) },
     agents,
     edges: parseEdges(doc.edges),
@@ -543,6 +570,8 @@ function serializeGrants(g: Grants): Record<string, unknown> {
   };
   // Defensive: hand-rolled System literals may omit the additive `files` list.
   if (g.files && g.files.length > 0) out.files = g.files;
+  // Additive workflow grants — emitted only when present so a system without one stays byte-stable.
+  if (g.workflows && g.workflows.length > 0) out.workflows = g.workflows;
   // Additive plan-item grants — emitted only when present so pre-plan systems stay byte-stable.
   if (g.plan && g.plan.length > 0) out.plan = g.plan;
   return out;

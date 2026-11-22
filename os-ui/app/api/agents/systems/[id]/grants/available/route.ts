@@ -67,10 +67,10 @@ export const dynamic = 'force-dynamic';
 // `connections` (plural) is the Simple-builder GrantKind spelling; `connection`
 // (singular) is the original Grants-panel spelling — both resolve to the same list.
 type Kind =
-  | 'data' | 'knowledge' | 'files' | 'connection' | 'connections' | 'metric'
+  | 'data' | 'knowledge' | 'workflows' | 'files' | 'connection' | 'connections' | 'metric'
   | 'operating-manual';
 const KINDS: Kind[] = [
-  'data', 'knowledge', 'files', 'connection', 'connections', 'metric',
+  'data', 'knowledge', 'workflows', 'files', 'connection', 'connections', 'metric',
   'operating-manual',
 ];
 
@@ -115,19 +115,22 @@ export const GET = withRoute<{ id: string }>(async ({ user, params, req }) => {
         ...g.marketplace.map((d) => ({ id: d.id, name: d.name, scope: 'marketplace' as const, domain: d.domain, layers: builtLayers(d.dots), folder: d.folder })),
       ];
     } else if (kind === 'knowledge') {
-      // Hydrate both knowledge stores before listing (best-effort; OS-mirror backed).
-      await Promise.all([ensureWorkflowsHydrated(), ensurePersonalHydrated()]);
-      const wf = listWorkflows(principal);
+      // Knowledge NOTES (pk_xxx) only — foldered. A workflow is a different artifact with its own feed.
+      await ensurePersonalHydrated();
       const pk = listPersonalKnowledge(principal);
       items = [
-        // Workflows (wf_xxx) — no folder support ⇒ live at root.
-        ...wf.mine.map((w) => ({ id: w.id, name: w.title, scope: 'personal' as const, domain: w.domain, folder: '/' })),
-        ...wf.domain.map((w) => ({ id: w.id, name: w.title, scope: 'domain' as const, domain: w.domain, folder: '/' })),
-        ...wf.marketplace.map((w) => ({ id: w.id, name: w.title, scope: 'marketplace' as const, domain: w.domain, folder: '/' })),
-        // Personal knowledge entries (pk_xxx) — same canView scoping, separate store; foldered.
         ...pk.mine.map((p) => ({ id: p.id, name: p.title, scope: 'personal' as const, domain: p.domain, folder: p.folder })),
         ...pk.domain.map((p) => ({ id: p.id, name: p.title, scope: 'domain' as const, domain: p.domain, folder: p.folder })),
         ...pk.marketplace.map((p) => ({ id: p.id, name: p.title, scope: 'marketplace' as const, domain: p.domain, folder: p.folder })),
+      ];
+    } else if (kind === 'workflows') {
+      // Workflows (wf_xxx) only — no folder support ⇒ live at root.
+      await ensureWorkflowsHydrated();
+      const wf = listWorkflows(principal);
+      items = [
+        ...wf.mine.map((w) => ({ id: w.id, name: w.title, scope: 'personal' as const, domain: w.domain, folder: '/' })),
+        ...wf.domain.map((w) => ({ id: w.id, name: w.title, scope: 'domain' as const, domain: w.domain, folder: '/' })),
+        ...wf.marketplace.map((w) => ({ id: w.id, name: w.title, scope: 'marketplace' as const, domain: w.domain, folder: '/' })),
       ];
     } else if (kind === 'files') {
       await ensureFilesHydrated();

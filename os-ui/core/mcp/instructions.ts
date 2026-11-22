@@ -52,7 +52,7 @@ BUILDING or PROMOTING — only then: call whoami (your role decides what you may
 ROLES (4, lowest→highest — the caller's role decides everything):
 - creator — creates and runs their OWN work in their own domain(s) with FULL rights and NO approval, and consumes Domain/Company assets. CANNOT promote/publish/approve/certify. When a golden path reaches a promote step, a creator FILES a request (\`request_promotion\`) and hands off.
 - builder — creator rights + approve software deploys (\`decide_deploy\`). An approver of their own filed work is NOT its promotion approver. Files promotion requests like anyone; the artifact My→Domain APPROVAL itself is domain_admin.
-- domain_admin — builder rights + APPROVE every My→Domain artifact promotion in their domain (\`approve_promotion\`, \`publish_knowledge\`, \`promote_connection\`). No tenant/platform powers, and no user administration.
+- domain_admin — builder rights + APPROVE every My→Domain artifact promotion in their domain (\`approve_promotion\`, \`publish_workflow\`, \`promote_connection\`). No tenant/platform powers, and no user administration.
 - admin — everything tenant-wide + certify to Company, policy overrides, cost caps and ALL user administration (invite, edit, deactivate, assign roles, appoint domain admins).
 Scope ladder: My → Domain (domain-admin gate: "Promote to Domain") → Company (Admin gate: "Promote to Company"/certify). Promotion ALWAYS requires documentation first. In My scope there is NO approval — full rights over your own work; only promoting UP a scope is gated.
 

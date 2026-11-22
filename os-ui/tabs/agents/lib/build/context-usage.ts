@@ -25,7 +25,12 @@
  */
 
 /** Which OS tab / artifact class a used-context entry belongs to. */
-export type ContextKind = 'data' | 'knowledge' | 'files' | 'metrics' | 'connections';
+export type ContextKind = 'data' | 'knowledge' | 'workflows' | 'files' | 'metrics' | 'connections';
+
+/** A search hit's id says which artifact it is: `wf_…` is a workflow, anything else a knowledge note. */
+function kindOfHit(kind: ContextKind, id: string): ContextKind {
+  return kind === 'knowledge' && id.startsWith('wf_') ? 'workflows' : kind;
+}
 
 /** How the context was engaged. */
 export type ContextMode = 'read' | 'retrieved' | 'written';
@@ -93,6 +98,7 @@ export type UsageNode = { node?: string; steps?: UsageStep[] };
 const KIND_ROUTE: Record<ContextKind, string> = {
   data: '/data',
   knowledge: '/knowledge',
+  workflows: '/workflows',
   files: '/unstructured',
   metrics: '/metrics',
   connections: '/connections',
@@ -143,7 +149,9 @@ const ID_ARG: Record<string, { field: string; kind: ContextKind; mode: ContextMo
   use_data: { field: 'datasetId', kind: 'data', mode: 'read' },
   use_as_data: { field: 'datasetId', kind: 'data', mode: 'read' },
   // Knowledge (read a specific unit)
-  get_knowledge: { field: 'knowledgeId', kind: 'knowledge', mode: 'read' },
+  get_knowledge: { field: 'id', kind: 'knowledge', mode: 'read' },
+  // A workflow is a different artifact (its own tab and grant kind).
+  get_workflow: { field: 'workflowId', kind: 'workflows', mode: 'read' },
   use_knowledge: { field: 'knowledgeId', kind: 'knowledge', mode: 'read' },
   // Files (read)
   get_file: { field: 'fileId', kind: 'files', mode: 'read' },
@@ -169,9 +177,9 @@ const WRITE_TARGET: Record<string, { fields: string[]; kind: ContextKind }> = {
   ingest_dataset: { fields: ['datasetId', 'id'], kind: 'data' },
   transform_silver: { fields: ['datasetId', 'id'], kind: 'data' },
   document_dataset: { fields: ['datasetId', 'id'], kind: 'data' },
-  author_knowledge: { fields: ['knowledgeId', 'id'], kind: 'knowledge' },
-  publish_knowledge: { fields: ['knowledgeId', 'id'], kind: 'knowledge' },
-  index_knowledge: { fields: ['knowledgeId', 'id'], kind: 'knowledge' },
+  author_workflow: { fields: ['workflowId', 'id'], kind: 'workflows' },
+  publish_workflow: { fields: ['workflowId', 'id'], kind: 'workflows' },
+  index_workflow: { fields: ['workflowId', 'id'], kind: 'workflows' },
   upload_file: { fields: ['fileId', 'id', 'path'], kind: 'files' },
   commit_agent_files: { fields: ['fileId', 'id'], kind: 'files' },
   define_metric: { fields: ['metricId', 'id'], kind: 'metrics' },
@@ -305,9 +313,10 @@ export function deriveContextUsage(nodes: UsageNode[]): RunContextUsage {
       if (searchKind) {
         if (!errored) {
           for (const hit of searchHits(result)) {
-            const deepLink = deepLinkFor(searchKind, hit.id);
+            const hitKind = kindOfHit(searchKind, hit.id);
+            const deepLink = deepLinkFor(hitKind, hit.id);
             items.push({
-              kind: searchKind,
+              kind: hitKind,
               id: hit.id,
               ...(hit.name ? { name: hit.name } : {}),
               via: tool,
@@ -402,6 +411,7 @@ function rollUp(items: ContextItem[]): Record<ContextKind, string[]> {
   const by: Record<ContextKind, Set<string>> = {
     data: new Set(),
     knowledge: new Set(),
+    workflows: new Set(),
     files: new Set(),
     metrics: new Set(),
     connections: new Set(),
@@ -413,6 +423,7 @@ function rollUp(items: ContextItem[]): Record<ContextKind, string[]> {
   return {
     data: [...by.data],
     knowledge: [...by.knowledge],
+    workflows: [...by.workflows],
     files: [...by.files],
     metrics: [...by.metrics],
     connections: [...by.connections],

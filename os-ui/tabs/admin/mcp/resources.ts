@@ -9,6 +9,7 @@ import type { ToolTab, McpTab } from '@core/mcp/server';
 // --- Governed read/list lib functions (the SAME the UI + discovery tools call) --
 import { listDatasets, getDataset } from '@tabs/data/lib/store';
 import { listWorkflows, getWorkflow, getManual } from '@tabs/knowledge/lib/store';
+import { listPersonalKnowledge } from '@tabs/knowledge/lib/personal-store';
 import { listFiles, getFile } from '@tabs/files/lib/store';
 import { listMetrics } from '@tabs/metrics/lib/store';
 import { listDashboards, getDashboard } from '@tabs/dashboards/lib/store';
@@ -137,9 +138,19 @@ const myResources: McpResource[] = [
     uri: 'sovereign-os://my/knowledge',
     name: 'my-knowledge',
     title: 'My knowledge',
-    description: 'Knowledge business processes you can see, DLS-scoped. Search/reuse before authoring.',
+    description: 'Knowledge notes you can see (My · Domain · Company), scope-checked. Look here before saving a new note.',
     mimeType: 'application/json',
     tab: 'knowledge',
+    minRole: 'creator',
+    read: async (user) => json(listPersonalKnowledge(P(user))),
+  },
+  {
+    uri: 'sovereign-os://my/workflows',
+    name: 'my-workflows',
+    title: 'My workflows',
+    description: 'Workflows (documented business processes) you can see, DLS-scoped. Look here before authoring a new one.',
+    mimeType: 'application/json',
+    tab: 'workflows',
     minRole: 'creator',
     read: async (user) => json(listWorkflows(P(user))),
   },
@@ -222,10 +233,10 @@ export const RESOURCE_TEMPLATES: McpResourceTemplate[] = [
   {
     uriTemplate: 'sovereign-os://workflow/{id}',
     name: 'workflow',
-    title: 'Knowledge business process by id',
-    description: 'One knowledge business process (also called: workflow, process workflow, SOP (Standard Operating Procedure)) you can see — steps, rules, tacit.',
+    title: 'Workflow by id',
+    description: 'One workflow (a documented business process; also called: process workflow, SOP (Standard Operating Procedure)) you can see — steps, actors, rules, tacit.',
     mimeType: 'application/json',
-    tab: 'knowledge',
+    tab: 'workflows',
     minRole: 'creator',
     read: async (user, p) => json(getWorkflow(p.id, P(user))),
   },

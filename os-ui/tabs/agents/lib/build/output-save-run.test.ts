@@ -487,3 +487,15 @@ test('a runner outside the system\'s domain gets every output refused with the r
   }
   assert.deepEqual(w.writes(), [], 'not one write was dispatched');
 });
+
+test('WF/K: a declared KNOWLEDGE output is saved with the note tool only — the saver is never offered a workflow tool', () => {
+  const base = addOutput(team(), { kind: 'knowledge', name: 'Result', folder: { path: '/results', scope: 'personal' } });
+  const sys: System = {
+    ...base,
+    grants: { ...base.grants, tools: [...base.grants.tools, 'author_workflow', 'search_knowledge'], workflows: [{ id: 'wf_a', capability: 'Write-bounded' }] },
+  };
+  const saver = outputSaveSystem(sys);
+  assert.deepEqual(saver.grants.tools, ['save_knowledge_note']);
+  assert.deepEqual(saver.grants.workflows, [], 'the system’s workflow grants are dropped from the save scope');
+  assert.ok(saver.grants.knowledge.length > 0 && saver.grants.knowledge.every((g) => g.folder), 'only the declared folder is granted');
+});

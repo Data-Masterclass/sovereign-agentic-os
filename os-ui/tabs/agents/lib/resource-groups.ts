@@ -8,10 +8,10 @@
  *   ① Plan Items   — Strategy · Big Bets · Operating Model · Workflows
  *   ② Context      — Knowledge · Files · Data · Connections · Metrics
  *
- * Workflows is its OWN member of Plan Items, SEPARATE from Knowledge (they were
- * historically conflated because a workflow id `wf_…` shares the `grants.knowledge`
- * list with knowledge docs `pk_…`; the two sections keep them visually distinct and
- * route each to the correct grant channel — see `resourceKindGrantField`).
+ * Workflows is its OWN member of Plan Items, SEPARATE from Knowledge: a workflow (`wf_…`,
+ * documentation of a business process) lands in `grants.workflows`, a knowledge note
+ * (`pk_…`) in `grants.knowledge`, and each has its own available feed. (They used to share
+ * the `knowledge` list and feed, split only by id prefix; a saved system is upgraded on read.)
  *
  * Each member names the underlying GRANTABLE mechanism:
  *   • `field`  — the `system.grants` key its per-item grants land in (when wireable).
@@ -30,11 +30,11 @@ import type { Grants } from '@tabs/agents/lib/system-schema';
 export type ResourceSection = 'plan' | 'context';
 
 /** The `system.grants` id-list keys a member's grants can land in. */
-export type GrantField = keyof Pick<Grants, 'data' | 'knowledge' | 'metrics' | 'connections' | 'files' | 'plan'>;
+export type GrantField = keyof Pick<Grants, 'data' | 'knowledge' | 'workflows' | 'metrics' | 'connections' | 'files' | 'plan'>;
 
 /** The `…/grants/available?kind=` feed a member browses. */
 export type FeedKind =
-  | 'data' | 'knowledge' | 'files' | 'connections' | 'metric'
+  | 'data' | 'knowledge' | 'workflows' | 'files' | 'connections' | 'metric'
   | 'operating-manual';
 
 export type ResourceMember = {
@@ -48,17 +48,11 @@ export type ResourceMember = {
   /** Present only when wireable — the grant list + browse feed it uses. */
   field?: GrantField;
   feedKind?: FeedKind;
-  /**
-   * For Knowledge vs Workflows — both draw from the `knowledge` feed but each shows
-   * only its OWN item family (workflows are `wf_…`, knowledge docs everything else).
-   * `undefined` ⇒ show every item of `feedKind`.
-   */
-  idFamily?: 'workflow' | 'knowledge';
   /** Shown when the member is a non-wireable placeholder — why it isn't grantable yet. */
   note?: string;
 };
 
-/** True when an id from the shared knowledge feed is a WORKFLOW (`wf_…`). */
+/** True when an id names a WORKFLOW (`wf_…`) rather than a knowledge note (`pk_…`). */
 export function isWorkflowId(id: string): boolean {
   return id.startsWith('wf_');
 }
@@ -66,7 +60,7 @@ export function isWorkflowId(id: string): boolean {
 /**
  * The ordered members of both sections. Data · Knowledge · Files · Connections ·
  * Metrics are wireable (they already have grant lists + available feeds). Workflows is
- * wireable via the shared knowledge feed, filtered to `wf_…` ids. The Plan-item kind
+ * wireable through its own `workflows` list and feed. The Plan-item kind
  * Operating Model is wireable through the `plan` grant list with its own available feed
  * (`operating-manual` feed → `get_operating_manual`). A granted plan item is loaded at
  * run time via its governed read tool, RLS/DLS-checked as the caller in-store —
@@ -81,13 +75,13 @@ export const RESOURCE_MEMBERS: ResourceMember[] = [
   },
   {
     key: 'workflows', label: 'Workflows', section: 'plan', wireable: true,
-    field: 'knowledge', feedKind: 'knowledge', idFamily: 'workflow',
+    field: 'workflows', feedKind: 'workflows',
   },
 
   // ② Context
   {
     key: 'knowledge', label: 'Knowledge', section: 'context', wireable: true,
-    field: 'knowledge', feedKind: 'knowledge', idFamily: 'knowledge',
+    field: 'knowledge', feedKind: 'knowledge',
   },
   { key: 'files', label: 'Files', section: 'context', wireable: true, field: 'files', feedKind: 'files' },
   { key: 'data', label: 'Data', section: 'context', wireable: true, field: 'data', feedKind: 'data' },

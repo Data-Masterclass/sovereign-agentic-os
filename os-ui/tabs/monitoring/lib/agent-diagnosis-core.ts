@@ -16,8 +16,8 @@ import type { LastRun } from '@tabs/agents/lib/store';
 
 // ------------------------------------------------------------ system profile --
 
-export type GrantKind = 'data' | 'knowledge' | 'files' | 'metrics' | 'connections';
-export const GRANT_KINDS: readonly GrantKind[] = ['data', 'knowledge', 'files', 'metrics', 'connections'];
+export type GrantKind = 'data' | 'knowledge' | 'workflows' | 'files' | 'metrics' | 'connections';
+export const GRANT_KINDS: readonly GrantKind[] = ['data', 'knowledge', 'workflows', 'files', 'metrics', 'connections'];
 
 export type GrantRow = { id: string; name: string; capability: string };
 export type GrantGroup = { kind: GrantKind; count: number; rows: GrantRow[] };

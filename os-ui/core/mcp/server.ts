@@ -28,6 +28,7 @@ import { buildInstructions } from '@core/mcp/instructions';
 import {
   COMPACT_LIST_TOOLS, LOAD_TOOLSET_TOOL, TOOLSETS, compactList, loadToolset, loadedToolsets, pagingArgs, toolsetOf, withListPaging,
 } from '@core/mcp/fast-surface';
+import { currentToolName, logDeprecatedTool } from '@core/mcp/deprecated-aliases';
 
 /**
  * THE SOVEREIGN AGENTIC OS — remote MCP server (JSON-RPC 2.0 core).
@@ -78,7 +79,7 @@ export type JsonSchema = {
 // Operating Model — its four MCP tools (get/update/list-versions/restore) wrap the
 // governed manual store, so the tab now carries a real MCP surface. (The tab id + tool
 // identifiers keep the `manual` name for wire stability; the product name is "Operating Model".)
-export const MCP_TABS = ['software', 'data', 'knowledge', 'agents', 'files', 'metrics', 'dashboards', 'connections', 'governance', 'monitoring', 'operating-manual'] as const;
+export const MCP_TABS = ['software', 'data', 'knowledge', 'workflows', 'agents', 'files', 'metrics', 'dashboards', 'connections', 'governance', 'monitoring', 'operating-manual'] as const;
 export type McpTab = (typeof MCP_TABS)[number];
 export function isMcpTab(x: string): x is McpTab {
   return (MCP_TABS as readonly string[]).includes(x);
@@ -537,7 +538,15 @@ export async function handleRpc(
       const params = req.params ?? {};
       const name = str(params.name);
       const args = (params.arguments as Record<string, unknown>) ?? {};
-      const tool = tools.find((t) => t.name === name);
+      // A DEPRECATED name (`author_knowledge` → `author_workflow`, …) is resolved to the current
+      // tool and logged; it runs the same governed handler, so nothing is widened. It is never
+      // listed, so only a client that still holds the old name reaches this.
+      const current = currentToolName(name);
+      let tool = tools.find((t) => t.name === name);
+      if (!tool && current) {
+        tool = tools.find((t) => t.name === current);
+        if (tool) logDeprecatedTool(name, current, 'mcp', user.id);
+      }
       // An unknown / out-of-scope tool stays a JSON-RPC error (don't even hint at
       // tools this endpoint doesn't serve).
       if (!tool) return rpcError(id, -32602, `Tool not available: ${name || '(none)'}`);

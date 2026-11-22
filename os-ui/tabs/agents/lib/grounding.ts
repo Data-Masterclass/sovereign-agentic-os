@@ -74,15 +74,9 @@ export async function resolveSystemGrounding(system: System, user: CurrentUser):
   const p = principalOf(user);
 
   const data = resolveNames(g.data.map((x) => x.id), (id) => getDataset(id, p).name);
-  const knowledge = resolveNames(g.knowledge.map((x) => x.id), (id) => {
-    // Knowledge grants may be a workflow (wf_) or a personal-knowledge note (pk_).
-    try {
-      return id.startsWith('wf') ? getWorkflow(id, p).title : getPersonalKnowledge(id, p).title;
-    } catch {
-      // Mis-prefixed legacy id — try the other store.
-      return id.startsWith('wf') ? getPersonalKnowledge(id, p).title : getWorkflow(id, p).title;
-    }
-  });
+  // A knowledge grant is a personal-knowledge NOTE (pk_); a workflow (wf_) is its own grant kind.
+  const knowledge = resolveNames(g.knowledge.map((x) => x.id), (id) => getPersonalKnowledge(id, p).title);
+  const workflows = resolveNames((g.workflows ?? []).map((x) => x.id), (id) => getWorkflow(id, p).title);
   const metrics = resolveNames(g.metrics.map((x) => x.id), (id) => {
     const m = getMetric(id, p);
     return m.measure.label ?? m.measure.name;
@@ -116,6 +110,7 @@ export async function resolveSystemGrounding(system: System, user: CurrentUser):
     outputs: outputs.length ? outputs : undefined,
     data: data.length ? data : undefined,
     knowledge: knowledge.length ? knowledge : undefined,
+    workflows: workflows.length ? workflows : undefined,
     connections: connections.length ? connections : undefined,
     metrics: metrics.length ? metrics : undefined,
     plan: plan.length ? plan : undefined,

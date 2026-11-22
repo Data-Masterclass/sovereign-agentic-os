@@ -54,9 +54,10 @@ test('default scaffold agentifies the Agent step, leaves others manual', () => {
   assert.equal(out.manualSteps.length, 2);
 });
 
-test('the workflow is attached as context via grants.knowledge', () => {
+test('the workflow is attached as context via grants.workflows (never grants.knowledge)', () => {
   const out = scaffoldSystem(parseWorkflow(WF));
-  assert.deepEqual(out.system.grants.knowledge, [{ id: 'bank-submission', capability: 'Read' }]);
+  assert.deepEqual(out.system.grants.workflows, [{ id: 'bank-submission', capability: 'Read' }]);
+  assert.deepEqual(out.system.grants.knowledge, []);
   assert.deepEqual(out.system.grants.tools, ['retrieve']);
   // Every scaffolded agent, in every shape (single, supervisor + members, coordinator).
   for (const dispositions of [{}, { review: 'automate' as const }]) {
@@ -353,7 +354,7 @@ test('all-manual workflow scaffolds a single coordinator with the workflow conte
   assert.equal(out.agentSteps.length, 0);
   assert.equal(out.system.agents.length, 1);
   assert.equal(out.system.agents[0].id, 'coordinator');
-  assert.deepEqual(out.system.grants.knowledge, [{ id: 'bank-submission', capability: 'Read' }]);
+  assert.deepEqual(out.system.grants.workflows, [{ id: 'bank-submission', capability: 'Read' }]);
 });
 
 test('scaffolded handoff edges carry NO `when` guard — "step complete" was never a valid when-expression', () => {

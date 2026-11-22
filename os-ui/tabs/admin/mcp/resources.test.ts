@@ -63,7 +63,7 @@ test('resources/list: exposes the 10 guides + the 9 my/* inventories, annotated 
   ]) assert.ok(uris.includes(u), `missing guide ${u}`);
   // 9 dynamic inventories.
   for (const u of [
-    'sovereign-os://my/identity', 'sovereign-os://my/datasets', 'sovereign-os://my/knowledge',
+    'sovereign-os://my/identity', 'sovereign-os://my/datasets', 'sovereign-os://my/knowledge', 'sovereign-os://my/workflows',
     'sovereign-os://my/connections', 'sovereign-os://my/files', 'sovereign-os://my/metrics',
     'sovereign-os://my/dashboards', 'sovereign-os://my/agents', 'sovereign-os://my/software',
   ]) assert.ok(uris.includes(u), `missing inventory ${u}`);

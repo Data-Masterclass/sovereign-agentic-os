@@ -274,7 +274,7 @@ test('X7: an object that EXISTS but is invisible is refused per the OS conventio
     ['create_agent_system', { name: 'Conformance system' }, 'systemId'],
     ['create_software', { name: 'Conformance app' }, 'appId'],
     ['create_dataset', { name: 'Conformance orders' }, 'datasetId'],
-    ['author_knowledge', { title: 'Conformance workflow' }, 'workflowId'],
+    ['author_workflow', { title: 'Conformance workflow' }, 'workflowId'],
     ['upload_file', { name: 'conformance.txt', content: 'secret-payload' }, 'fileId'],
   ];
   for (const [name, args, key] of mints) {

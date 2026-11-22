@@ -69,7 +69,7 @@ test('a handler that throws stamps the approval failed and never rejects the dec
   assert.equal(getApproval(a.id)?.resume?.status, 'failed');
   assert.equal(getApproval(a.id)?.resume?.error?.code, 'resume_handler_failed');
 
-  const plain = enqueue({ kind: 'knowledge_certify', title: 't', detail: '', agent: 'a', domain: 'sales', requestedBy: 'rae', tool: 'publish_knowledge' });
+  const plain = enqueue({ kind: 'knowledge_certify', title: 't', detail: '', agent: 'a', domain: 'sales', requestedBy: 'rae', tool: 'publish_workflow' });
   assert.ok(decide(plain.id, 'approve', 'dana'));
   await decisionSettled(plain.id);
   assert.equal(fired, 1, 'no run → no handler');
@@ -193,7 +193,7 @@ test('withdraw: an already decided hold cannot be withdrawn, and a withdrawn one
 });
 
 test('withdraw: only a parked agent run\'s call — an ordinary request (no run) is refused and stays pending', async () => {
-  const plain = enqueue({ kind: 'knowledge_certify', title: 't', detail: '', agent: 'a', domain: 'sales', requestedBy: 'rae', tool: 'publish_knowledge' });
+  const plain = enqueue({ kind: 'knowledge_certify', title: 't', detail: '', agent: 'a', domain: 'sales', requestedBy: 'rae', tool: 'publish_workflow' });
   assert.equal(canWithdraw(RAE, plain), false);
   const out = await withdrawHeldCall(RAE, plain.id);
   assert.equal(!out.ok && out.code, 'not_a_held_call');

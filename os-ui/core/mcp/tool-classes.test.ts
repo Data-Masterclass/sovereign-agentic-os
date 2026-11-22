@@ -107,7 +107,7 @@ test('nothing closed to agent runs, and no approval or destructive verb, is conf
 test('SESSION_ALLOWABLE_TOOLS: a small, reasoned set of catalogued writes — no removal, request, promotion or approval', () => {
   const names = Object.keys(SESSION_ALLOWABLE_TOOLS);
   assert.deepEqual(names.sort(), [
-    'author_knowledge', 'create_agent_system', 'create_dataset', 'create_software',
+    'author_workflow', 'create_agent_system', 'create_dataset', 'create_software',
     'export_okf_bundle', 'run_quality_checks', 'upload_file',
   ], 'growing this set is an owner decision — it must be a visible diff');
   const registered = new Set(ALL_MCP_TOOLS.map((t) => t.name));

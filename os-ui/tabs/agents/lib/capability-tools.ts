@@ -39,12 +39,14 @@ import { planTargetOf } from '@tabs/agents/lib/plan-grants';
  * are read-only (no agent author path), so they provision read tools only. `plan`
  * holds Operating Manual grants (`manual:*`), each of which provisions its governed
  * read tool (see {@link planToolsForId}); the store DLS/scope-checks the request. */
-export type GrantKind = 'data' | 'knowledge' | 'files' | 'connections' | 'metrics' | 'plan';
+export type GrantKind = 'data' | 'knowledge' | 'workflows' | 'files' | 'connections' | 'metrics' | 'plan';
 
 /** Read + discovery tools per kind — always provisioned for any usable grant. */
 const READ_TOOLS: Record<GrantKind, string[]> = {
   data: ['query_data', 'list_datasets', 'get_dataset', 'profile_dataset'],
   knowledge: ['search_knowledge', 'list_knowledge', 'get_knowledge'],
+  // A workflow is NOT a knowledge note: its own grant kind, its own read tools.
+  workflows: ['list_workflows', 'get_workflow'],
   files: ['list_files', 'search_files', 'get_file'],
   connections: ['list_connections', 'get_connection', 'test_connection', 'list_connection_templates'],
   metrics: ['list_metrics', 'query_metric', 'get_metric'],
@@ -53,7 +55,7 @@ const READ_TOOLS: Record<GrantKind, string[]> = {
 
 
 /** Create/write tools per kind — added on top of the read set when the grant writes.
- * Promotion/lifecycle tools (request_promotion, publish_knowledge, promote_connection,
+ * Promotion/lifecycle tools (request_promotion, publish_workflow, promote_connection,
  * approve_*) are DELIBERATELY excluded: those are governed hand-offs, not "use it".
  * `metrics` grants `define_metric` — the define-a-KPI write, wired through the SAME
  * governed metrics path the MCP tool uses (a My-scope write, so it runs DIRECTLY under
@@ -61,7 +63,10 @@ const READ_TOOLS: Record<GrantKind, string[]> = {
  * no author path in the builder, so writing grants nothing extra. */
 const WRITE_TOOLS: Record<GrantKind, string[]> = {
   data: ['create_dataset', 'ingest_dataset', 'transform_silver', 'build_gold_join', 'add_dataset_version', 'document_dataset'],
-  knowledge: ['author_knowledge', 'index_knowledge', 'save_knowledge_note'],
+  // Knowledge hands out the NOTE write only. Authoring a workflow is the `workflows` kind's write, so a
+  // team granted knowledge write can save a report as a note and can never author a workflow.
+  knowledge: ['save_knowledge_note'],
+  workflows: ['author_workflow', 'index_workflow'],
   files: ['upload_file'],
   connections: ['create_connection'],
   metrics: ['define_metric'],
@@ -122,10 +127,10 @@ export function writeToolsForKind(kind: GrantKind): string[] {
  * is offered. `null` means the chip is always available (ungated by a resource
  * grant — it just needs to be in the catalog).
  */
-export type ChipGrantKind = 'data' | 'knowledge' | 'files' | 'connections' | 'metrics' | 'plan' | null;
+export type ChipGrantKind = 'data' | 'knowledge' | 'workflows' | 'files' | 'connections' | 'metrics' | 'plan' | null;
 
 /** The grant lists a chip's surfacing predicate may inspect (every grantable kind). */
-type ChipGrants = Pick<Grants, 'data' | 'knowledge' | 'files' | 'connections' | 'metrics' | 'plan'>;
+type ChipGrants = Pick<Grants, 'data' | 'knowledge' | 'workflows' | 'files' | 'connections' | 'metrics' | 'plan'>;
 
 export type CapabilityChip = {
   /** Stable id persisted nowhere — used only in UI state and tests. */
@@ -156,10 +161,18 @@ export const CAPABILITY_CHIPS: CapabilityChip[] = [
   {
     id: 'search-knowledge',
     label: 'Search knowledge',
-    description: 'Search and read the knowledge workflows and documents the team can use.',
+    description: 'Search and read the knowledge notes the team can use.',
     domain: 'Knowledge',
     grantKind: 'knowledge',
     tools: READ_TOOLS.knowledge,
+  },
+  {
+    id: 'read-workflows',
+    label: 'Read workflows',
+    description: 'List and read the workflows (documented business processes) the team can use.',
+    domain: 'Workflows',
+    grantKind: 'workflows',
+    tools: READ_TOOLS.workflows,
   },
   {
     id: 'use-connection',

@@ -1,205 +1,45 @@
 # Knowledge — golden path
 
-## Where things live now
+## What a knowledge note is
 
-The Plan section splits this into three sibling tabs — don't conflate them:
+A **knowledge note** is a titled, free-form markdown document in your **My knowledge**: a report, a
+summary, a result, a piece of know-how. It is the artifact of the Knowledge tab. It is **not a
+workflow**: a workflow (steps + actors, the documentation of a business process) is a different
+artifact with its own tab and its own tools (see the Workflows guide: `author_workflow`).
 
-- **Business Processes** is its own tab. The authored, step-by-step "how work gets done"
-  records (steps · actors · rules · tacit) live there and are the subject of the
-  `author_knowledge` / `index_knowledge` / `publish_knowledge` loop below.
-- **Operating Manual** is its own tab with three scopes — **My · Domain · Company** —
-  for the durable policy/handbook prose (get · update · list-versions · restore per
-  scope), separate from business processes.
-- **Knowledge** is now **reference-only**: the canonical, searchable, RLS-scoped
-  knowledge store you read from (`search_knowledge` · `list_knowledge` ·
-  `get_knowledge`) to ground agents. Authoring still flows through this surface's
-  `author_knowledge`, but the browsing home for the business process records is the
-  Business Processes tab.
+If you are asked to "save this as knowledge", "keep this answer", "store the report" — that is
+`save_knowledge_note`. Never `author_workflow`.
 
-## What this is
+## The tools
 
-The knowledge store is the OS's canonical store for how work gets done. A
-business process holds these kinds of content that complement each other:
+| Tool | What it does |
+|---|---|
+| `save_knowledge_note(title, md, folder?, domain?, sourceKey?)` | Save a note into My knowledge, optionally in a folder. Personal and owner-only. Repeating a call with the same `sourceKey` returns the note already saved. The note is indexed so `search_knowledge` finds it, for its owner only. |
+| `list_knowledge(folder?)` | The notes you can see: My · Domain · Company, each with its `pk_…` id, title and folder. |
+| `get_knowledge(id)` | One note: title, markdown, folder, scope. |
+| `search_knowledge(query, k?)` | Governed hybrid retrieval (dense + lexical, reranked) with provenance. OPA `retrieve` gate + document-level grant filter. The index also holds the text of indexed workflows (their ids start `wf_`); a note hit has a `pk_…` id. |
+| `export_okf_bundle` · `import_okf_bundle` | OKF (Open Knowledge Format) v0.2 interchange. The exported bundle is built from a workflow; an import lands governed artifacts at Personal tier. |
 
-- **steps** — ordered sequence of actions, each owned by an actor, with inputs,
-  outputs, and an optional per-step inline tacit note.
-- **actors** — the business process's first-class actor registry. Each actor is a described
-  entity (name · category · description) in one of five categories: **Human ·
-  Software · Agent · Customer · Partner**. Customer and Partner are *external*
-  (outside the organisation) and render as visually distinct swimlane lanes. Steps
-  reference actors from this registry; omit `actors` and one is derived from the
-  steps' distinct (category, name) pairs automatically.
-- **rules** — guardrails (`hard: true` = must-not-violate; `hard: false` = soft
-  guideline). Both process-level and step-level rules are supported.
-- **tacit** — unstructured know-how that resists formalization: the gotchas, the
-  "why behind the why", institutional memory, cultural nuances. Tacit lives in two
-  places: a short **per-step** note (`steps[].tacit`) and a longer **process-level**
-  `tacit` string (the sibling TACIT.md). Both are indexed as separate retrieval units.
+## How to use it
 
-Knowledge grounds agents — an agent system without published knowledge is
-operating blind. In the cross-tab spine, knowledge feeds directly into the Agents
-tab.
-
-## How to build it
-
-1. **Dedupe first.** Call `search_knowledge` with the concept you plan to capture.
-   If a relevant business process exists, call `get_knowledge` and extend it rather than
-   authoring a duplicate. Call `list_knowledge` to browse by domain.
-
-2. **Author.** Call `author_knowledge` with the real params (see below). The tool
-   creates a My-scope draft (yours, no approval) — a single `workflow.md` in the
-   governed store.
-
-3. **Index.** Call `index_knowledge` to chunk, embed, and make the business process
-   retrievable via semantic search. This step is required before the business process
-   appears in `search_knowledge` results.
-
-4. **Verify.** Call `search_knowledge` with a phrase drawn from the business process body
-   or its tacit content. Confirm it surfaces in the top results. This closes the
-   authoring loop.
-
-5. ⛔ **Domain admin publishes.** A domain admin (or tenant admin) calls
-   `publish_knowledge` to promote the business process from My to Domain. Published
-   business processes are visible to domain members and can be referenced by agent systems.
-
-**Note:** `search_knowledge` hits carry provenance metadata (author, domain, tier).
-Always cite the source when you relay knowledge to a user.
-
-## `author_knowledge` — real params
-
-```
-author_knowledge({
-  title:    string,          // required — e.g. "Refund handling"
-  domain:   string?,         // one of your domains; defaults to your first
-  markdown: string?,         // optional free prose body (context, background)
-  steps: [                   // ordered steps
-    {
-      title:      string,    // required
-      actor:      "Human" | "Software" | "Agent" | "Customer" | "Partner",
-                             // Customer + Partner are EXTERNAL actors
-      actor_name: string?,   // e.g. "Loan Officer"; matches actors[].name
-      inputs:     string[],  // artefacts consumed
-      outputs:    string[],  // artefacts produced
-      tacit:      string?,   // per-step inline note — gotchas, edge cases,
-                             // undocumented nuances for THIS step
-    }
-  ],
-  actors: [                  // optional actor registry (else derived from steps)
-    {
-      name:        string,   // required — e.g. "Salesforce API"
-      category:    "Human" | "Software" | "Agent" | "Customer" | "Partner",
-      description: string?,  // its role — applies to EVERY category, e.g.
-                             // "Salesforce API — nightly REST ingestion"
-    }
-  ],
-  rules: [                   // process-level decision rules
-    { text: string, hard: boolean }
-  ],
-  tacit: string?,            // process-level tacit doc — unstructured know-how
-                             // that applies to the whole business process (gotchas, cultural
-                             // notes, the "why"). Markdown headings split it into
-                             // separately-retrievable chunks. Per-step notes go in
-                             // steps[].tacit instead.
-})
-```
-
-### How tacit knowledge is stored and indexed
-
-- **`steps[].tacit`** — stored as a `> tacit:` blockquote in `workflow.md`
-  immediately after the step's fenced block. Chunked as a `tacit` unit with the
-  step's provenance (actor, step_id). Trust = visibility − 0.05; authority = 0.5.
-- **`tacit` (process-level)** — stored as a sibling `TACIT.md`. Markdown headings
-  split it into separately-retrievable chunks so large tacit docs don't collapse
-  into a single opaque blob. Trust = visibility − 0.05; authority = 0.55.
-- Both are indexed by `index_knowledge` and surface in `search_knowledge` results
-  with `type: "tacit"` provenance.
-
-## What to consider
-
-- **Search before authoring.** Duplicate knowledge fragments the canonical record.
-  A `search_knowledge` call with a broad query is cheap; a duplicate article is
-  expensive to reconcile later.
-- **Actor fidelity matters.** Steps with incorrect actor types (e.g. marking an
-  automated step as Human) mislead agents that consume the knowledge.
-- **Index is not automatic.** `author_knowledge` creates a draft record;
-  `index_knowledge` makes it findable. Missing this step means agents will not
-  retrieve the business process.
-- **Hard rules are enforced.** When an agent system ingests published knowledge,
-  `hard: true` rules are applied as constraints. Set this flag deliberately.
-- **Tacit is a first-class citizen, not a hack.** Use `steps[].tacit` for inline
-  per-step notes. Use the top-level `tacit` string for process-wide gotchas.
-  Never hand-embed `> tacit:` blockquotes in the raw `markdown` param — use the
-  structured fields so the chunker can index them properly.
-- **Provenance must be cited.** Do not paraphrase or strip attribution from
-  knowledge hits. The OS traces which knowledge grounded which agent action.
+1. **Look first.** `list_knowledge` or `search_knowledge` — extend what exists rather than saving a duplicate.
+2. **Save.** `save_knowledge_note` with a title and the markdown body. Pass a `sourceKey` when a program
+   saves, so a retry does not write a second note.
+3. **Share (optional).** A creator files `request_promotion({kind:"personal_knowledge", id})`; a
+   domain admin approves. Nothing is shared until then.
+4. **Ground an agent.** Grant the note (or its folder) to an agent system under *Knowledge*. A
+   workflow is granted under *Workflows*, not here.
 
 ## Governance
 
 | Step | Role required |
 |---|---|
-| `search_knowledge`, `list_knowledge`, `get_knowledge` | Creator |
-| `author_knowledge`, `index_knowledge` | Creator (own work) |
-| `retire_knowledge` (archive/delete) | Creator (own My-scope); domain admin+ for a Domain business process |
-| ⛔ `publish_knowledge` | Domain admin (or tenant admin) |
+| `search_knowledge`, `list_knowledge`, `get_knowledge`, `save_knowledge_note` | Creator (own work) |
+| Share a note with the domain | Creator files, domain admin approves |
 
-`retire_knowledge` is lineage-aware: retiring a business process still consumed by an App
-or Agent system is blocked (409) — remove those uses first. `action: "delete"` is
-physical + irreversible (purges the index) and refuses a still-published business process;
-`action: "archive"` (default) is a reversible soft-hide.
+A note is Personal: *owner only*, not an admin, not a domain admin. Filing `request_promotion` is the
+owner asking for it to be shared, and from that point the appointed approver may read the record in
+order to decide it. Nothing else widens, and a note nobody filed stays private.
 
-OPA enforces domain scope. Unpublished business processes are My-scope and invisible to
-agents. A creator cannot publish their own knowledge — file the business process and hand
-off to a domain admin.
-
-**Worked example (with tacit):**
-
-```
-search_knowledge({ query: "how to reconcile invoice exceptions", domain: "finance" })
-→ [] — no existing business process
-
-author_knowledge({
-  title: "Invoice exception reconciliation",
-  domain: "finance",
-  steps: [
-    {
-      title: "Pull flagged invoices",
-      actor: "Software",
-      outputs: ["Flagged invoice list"],
-      tacit: "The ERP export misses invoices created before 9 AM on the same day — run it after 10 AM."
-    },
-    {
-      title: "Review and resolve",
-      actor: "Human",
-      inputs: ["Flagged invoice list"],
-      actor_name: "Finance Analyst"
-    }
-  ],
-  rules: [{ text: "Exceptions > 10 000 EUR need CFO sign-off", hard: true }],
-  tacit: "## Seasonal note\nVolume spikes 3× in December — request extra headcount by Nov 15.\n\n## System quirk\nThe ERP auto-closes exceptions older than 90 days without notification."
-})
-→ { id: "wf_04F...", status: "draft", visibility: "My" }
-
-index_knowledge({ workflowId: "wf_04F..." })
-→ { workflow: { unitCount: 6 }, domain: { unitCount: 1 } }
-
-search_knowledge({ query: "reconcile invoice exceptions" })
-→ [{ id: "wf_04F...", score: 0.94, provenance: { type: "workflow", author: "alex@..." } },
-   { id: "wf_04F...:tacit:doc:0", score: 0.87, provenance: { type: "tacit" } }]
-```
-
-A domain admin then calls `publish_knowledge({ workflowId: "wf_04F..." })` to make
-it available to agents.
-
-### Promotion — who may read what
-
-A **business process (workflow)** draft is visible to Builder+ in its own domain, so the domain
-admin who approves a filed promotion can already read it. A **"My knowledge" entry** is stricter:
-Personal means *owner only* — not an admin, not a domain admin. Filing `request_promotion` on one
-is the owner asking for it to be shared, and from that point the appointed approver may read the
-record in order to decide it (`getPersonalKnowledgeForGovernance`). Nothing else widens: the
-lists and the normal read path are unchanged, and an entry nobody filed stays private.
-
-The audience gate is `visibility` (My · Domain · Company), never the workflow's legacy
-`status: draft|live` word — a Personal entry that is somehow already `live` still promotes, and a
-second promotion is refused with `This knowledge is already promoted` / `Workflow is already
-published`.
+The audience gate is `visibility` (My · Domain · Company). A second promotion is refused with
+`This knowledge is already promoted`.

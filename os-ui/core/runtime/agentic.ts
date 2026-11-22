@@ -338,6 +338,12 @@ function discoveryDirective(tools: ToolSpec[]): string {
   if (has('search_knowledge', 'list_knowledge')) {
     lines.push('- KNOWLEDGE: use list_knowledge to see what exists, then search_knowledge to retrieve it.');
   }
+  if (has('save_knowledge_note')) {
+    lines.push('- SAVE AS KNOWLEDGE: to keep a report, result or answer as knowledge, call save_knowledge_note (title + md). A workflow is process documentation (steps + actors), never a place to keep a report.');
+  }
+  if (has('list_workflows', 'get_workflow', 'author_workflow')) {
+    lines.push('- WORKFLOWS: a workflow documents a business process (steps + actors). Use list_workflows / get_workflow to read one; author_workflow only when asked to document a process.');
+  }
   if (has('search_files', 'list_files', 'get_file', 'read_app_files')) {
     lines.push('- FILES: use list_files / search_files to find the exact file before reading it.');
   }

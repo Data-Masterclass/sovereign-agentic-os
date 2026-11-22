@@ -537,7 +537,9 @@ export function osLayerSystemDoc(sys: System): Record<string, unknown> {
     form: 'os-layer',
     system: sys.system,
     safety_preset: sys.safetyPreset,
-    grants: sys.grants,
+    // `workflows` is additive: emitted only when the system grants one, so a system without a workflow
+    // grant keeps the committed file it always had (the same rule `serializeSystem` follows).
+    grants: sys.grants.workflows?.length ? sys.grants : Object.fromEntries(Object.entries(sys.grants).filter(([k]) => k !== 'workflows')),
     agents: sys.agents.map((a) => ({ id: a.id, role: a.role, ...(a.model ? { model: a.model } : {}) })),
   };
   if (Object.keys(sys.routing.overrides).length > 0) doc.routing = sys.routing;

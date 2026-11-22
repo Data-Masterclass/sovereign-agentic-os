@@ -106,6 +106,7 @@ export function buildEvalReport(
   const grantGroups: EvalGrantGroup[] = [
     { kind: 'Data', arr: g.data },
     { kind: 'Knowledge', arr: g.knowledge },
+    { kind: 'Workflows', arr: g.workflows ?? [] },
     { kind: 'Files', arr: g.files },
     { kind: 'Connections', arr: g.connections },
     { kind: 'Metrics', arr: g.metrics },

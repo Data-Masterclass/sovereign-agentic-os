@@ -174,6 +174,7 @@ function groundingDigest(ctx: Awaited<ReturnType<typeof resolveSystemGrounding>>
   };
   named('Granted data', ctx.data);
   named('Granted knowledge', ctx.knowledge);
+  named('Granted workflows', ctx.workflows);
   named('Granted connections', ctx.connections);
   named('Granted metrics', ctx.metrics);
   named('Granted plan', ctx.plan);

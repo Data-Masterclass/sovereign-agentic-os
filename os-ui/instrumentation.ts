@@ -385,6 +385,21 @@ export async function register(): Promise<void> {
     })();
   }
 
+  // WORKFLOW GRANTS: agent systems saved before workflows and knowledge notes were split name their
+  // workflows under `grants.knowledge` and use the `*_knowledge` tool names. The read path already
+  // upgrades them in memory, so nothing stops; this pass rewrites the stored `system.yaml` to agree
+  // (OS_WORKFLOW_GRANT_MIGRATION = apply (default) | dry-run | off). Idempotent; web process only.
+  if (process.env.NEXT_RUNTIME === 'nodejs') {
+    void (async () => {
+      try {
+        const { scheduleBootWorkflowGrantMigration } = await import('./tabs/agents/lib/workflow-grant-migration.ts');
+        scheduleBootWorkflowGrantMigration();
+      } catch (err) {
+        console.error(`[os-ui] workflow grant migration: could not be scheduled: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    })();
+  }
+
   // PROJECTS IN GIT (engine rebuild B1 for data, Part D for agent systems): when
   // DATA_PROJECT_GIT=true, subscribe the ONE commit path to both stores' change events so every
   // dataset / composition / check / sync / publish / retire write regenerates the domain's dbt

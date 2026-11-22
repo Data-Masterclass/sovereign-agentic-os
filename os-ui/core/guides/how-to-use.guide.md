@@ -17,7 +17,8 @@ The Sovereign Agentic OS MCP is the **same governed front door as the UI** — e
 | `overview` | OS surfaces and the cross-tab spine |
 | `governance` | Roles, tier ladder, promotion gates |
 | `data` | Ingested or curated datasets; business layer auto-materializes |
-| `knowledge` | Canonical steps, rules, tacit know-how |
+| `knowledge` | Notes: free-form markdown documents (`save_knowledge_note`), searchable |
+| `workflows` | Documented business processes: steps, actors, rules, tacit know-how (`author_workflow`) |
 | `connections` | Named credentials consumed by reference |
 | `agents` | Agent systems grounded in knowledge |
 | `software` | Apps and services wired to governed deps |
@@ -34,7 +35,7 @@ Your role is set by the platform — you cannot self-elevate.
 |---|---|
 | **creator** | Full, unapproved rights over your OWN **My** work (create · edit · run); consume Domain/Company assets; FILE promotion requests (cannot approve or certify) |
 | **builder** | Everything a creator can, PLUS approve software deploys (`decide_deploy`). Files promotion requests like anyone — the artifact My → Domain approval itself is a domain admin's |
-| **domain_admin** | Everything a builder can, PLUS APPROVE every My → Domain artifact promotion in your domain (`approve_promotion`, `publish_knowledge`, `promote_connection`) |
+| **domain_admin** | Everything a builder can, PLUS APPROVE every My → Domain artifact promotion in your domain (`approve_promotion`, `publish_workflow`, `promote_connection`) |
 | **admin** | Everything tenant-wide: certify My/Domain → Company, policy overrides, cost caps, and all user administration (invite, edit, deactivate, assign roles, appoint domain admins) |
 
 **My is yours.** In your own My scope there is NO approval — you (and the agents you build, which run AS you) create and write freely. Approval only enters when you promote up a scope: **Domain** needs a domain admin, **Company** needs an admin. You can only change what you originally built. If a tool returns `forbidden`, your role is below a promotion gate — file a request (`request_promotion`) or ask a domain admin.
@@ -43,7 +44,7 @@ Your role is set by the platform — you cannot self-elevate.
 
 Before creating anything, discover what is already there:
 
-- Read `sovereign-os://my/<datasets|knowledge|connections|files|metrics|dashboards|agents|software>`
+- Read `sovereign-os://my/<datasets|knowledge|workflows|connections|files|metrics|dashboards|agents|software>`
 - Or call the matching `list_*` tool (e.g. `list_datasets`, `list_knowledge`)
 
 Reuse existing ids rather than duplicating assets — the OS is built around a single source of truth per concept.

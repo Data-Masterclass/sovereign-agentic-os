@@ -16,7 +16,7 @@ const ELEVATED = ['promote', 'decide_deploy', 'delete'];
 const BUILDER_FLOOR = ['promote', 'decide_deploy', 'delete'];
 /** Rung-1 promotion-APPROVAL tools — now raised to a domain_admin floor: a plain
  *  builder does NOT see them; a domain_admin does. */
-const DOMAIN_ADMIN_FLOOR = ['publish_knowledge', 'approve_promotion', 'promote_connection'];
+const DOMAIN_ADMIN_FLOOR = ['publish_workflow', 'approve_promotion', 'promote_connection'];
 
 function result(res: JsonRpcResponse | null): Record<string, unknown> {
   assert.ok(res && 'result' in res, 'expected a JSON-RPC result');

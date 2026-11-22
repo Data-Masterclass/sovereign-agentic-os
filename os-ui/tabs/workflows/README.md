@@ -2,8 +2,11 @@
 
 Process documentation. Each workflow records a business process (its steps and the actors who carry
 them out) as a document you can file in folders, share and promote. The tab **runs nothing**: it has no
-run engine, no schedules, no APIs of its own and no MCP tools. To run work, or to run it on a schedule,
-build an agent system in the Agents tab.
+run engine and no schedules. To run work, or to run it on a schedule, build an agent system in the Agents tab.
+
+A workflow is **not** a knowledge note. A workflow (`wf_…`) is process documentation, owned by this tab and
+stored in the workflow store; a knowledge note (`pk_…`) is a free-form markdown document, owned by the
+Knowledge tab (`save_knowledge_note`). The two have separate MCP tools and separate agent grants.
 
 The authoritative contract is [`manifest.ts`](./manifest.ts) — this file explains it; the manifest is what the checks and the docs generator read. If the two disagree, the manifest is right.
 
@@ -19,7 +22,9 @@ _No APIs of its own._
 
 **MCP tools**
 
-_No MCP tools yet. Every user-facing action should grow one — the MCP server is a front door to the same governed code, not a back door around it._
+`author_workflow` · `list_workflows` · `get_workflow` · `index_workflow` · `publish_workflow` · `retire_workflow`
+(`tabs/workflows/mcp/workflow-write-tools.ts`). The old names `author_knowledge`, `index_knowledge`,
+`publish_knowledge` and `retire_knowledge` still work for one release and log a deprecation.
 
 **Needs deployed**
 

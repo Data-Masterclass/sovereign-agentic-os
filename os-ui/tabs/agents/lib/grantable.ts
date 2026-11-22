@@ -45,14 +45,20 @@ async function listOne(systemId: string, user: CurrentUser, kind: AgentGrantKind
       ...g.marketplace.map((d) => ({ id: d.id, name: d.name, scope: 'marketplace' as const })),
     ];
   }
-  if (kind === 'knowledge') {
-    await Promise.all([ensureWorkflowsHydrated(), ensurePersonalHydrated()]);
+  if (kind === 'workflows') {
+    await ensureWorkflowsHydrated();
     const wf = listWorkflows(principal);
-    const pk = listPersonalKnowledge(principal);
     return [
       ...wf.mine.map((w) => ({ id: w.id, name: w.title, scope: 'personal' as const })),
       ...wf.domain.map((w) => ({ id: w.id, name: w.title, scope: 'domain' as const })),
       ...wf.marketplace.map((w) => ({ id: w.id, name: w.title, scope: 'marketplace' as const })),
+    ];
+  }
+  if (kind === 'knowledge') {
+    // Knowledge NOTES only; a workflow is the `workflows` kind above.
+    await ensurePersonalHydrated();
+    const pk = listPersonalKnowledge(principal);
+    return [
       ...pk.mine.map((p) => ({ id: p.id, name: p.title, scope: 'personal' as const })),
       ...pk.domain.map((p) => ({ id: p.id, name: p.title, scope: 'domain' as const })),
       ...pk.marketplace.map((p) => ({ id: p.id, name: p.title, scope: 'marketplace' as const })),

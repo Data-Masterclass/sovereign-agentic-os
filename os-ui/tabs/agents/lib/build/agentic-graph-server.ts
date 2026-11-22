@@ -192,7 +192,7 @@ function grantedContextBrief(sys: System): string {
  * system may call — {@link grantedToolBrief}). It deliberately does NOT inject the
  * full per-tab CONTEXT.md tool catalog or golden paths: those enumerate EVERY tool of
  * the tab regardless of grants, which advertised ungranted tools (build_gold_join,
- * run_quality_checks, index_knowledge, create_software …) to the model and led it to
+ * run_quality_checks, index_workflow, create_software …) to the model and led it to
  * attempt them. Discovery is now scoped to grants at BOTH the manifest and the prompt.
  * The build spec is injected ONLY when `create_software` is actually granted (it names
  * that tool as the entry point). `user` role-scopes the brief so the prompt can never

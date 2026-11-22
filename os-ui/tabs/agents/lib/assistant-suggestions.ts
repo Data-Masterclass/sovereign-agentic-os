@@ -32,10 +32,10 @@ import type { OutputKind } from '@tabs/agents/lib/system-schema';
  * DLS-scoped grantable set, so a hallucinated id never survives.
  */
 export type AgentGrantKind =
-  | 'data' | 'knowledge' | 'files' | 'connections' | 'metric'
+  | 'data' | 'knowledge' | 'workflows' | 'files' | 'connections' | 'metric'
   | 'operating-manual';
 export const AGENT_GRANT_KINDS: AgentGrantKind[] = [
-  'data', 'knowledge', 'files', 'connections', 'metric',
+  'data', 'knowledge', 'workflows', 'files', 'connections', 'metric',
   'operating-manual',
 ];
 

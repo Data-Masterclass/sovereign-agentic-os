@@ -43,16 +43,17 @@ test('the flat/foldered types bind to exactly one resource member; Plan collapse
   for (const m of plan.members!) assert.equal(m.field, 'plan');
 });
 
-test('Workflows uses the knowledge feed narrowed to the workflow family', () => {
+test('Workflows has its OWN grant list and feed — it is not a knowledge family', () => {
   const m = AGENT_CONTEXT_META.workflows.member!;
-  assert.equal(m.feedKind, 'knowledge');
-  assert.equal(m.idFamily, 'workflow');
+  assert.equal(m.field, 'workflows');
+  assert.equal(m.feedKind, 'workflows');
 });
 
-test('Knowledge uses the knowledge feed narrowed to the knowledge (non-workflow) family', () => {
+test('Knowledge has the knowledge list and feed, and no workflow filter', () => {
   const m = AGENT_CONTEXT_META.knowledge.member!;
+  assert.equal(m.field, 'knowledge');
   assert.equal(m.feedKind, 'knowledge');
-  assert.equal(m.idFamily, 'knowledge');
+  assert.equal('idFamily' in m, false);
 });
 
 test('create-new: data/files/knowledge/connections deep-link; metrics is derived; workflows/plan have none', () => {

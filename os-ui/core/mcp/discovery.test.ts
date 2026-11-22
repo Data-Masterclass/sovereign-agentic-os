@@ -76,7 +76,8 @@ test('connections is a real MCP tab and promote_connection is Domain-admin-gated
 // are ignored.
 const PATH_PRIMARY: Partial<Record<GuidePath, string[]>> = {
   data: ['create_dataset', 'request_promotion', 'approve_promotion', 'ingest_dataset', 'profile_dataset', 'transform_silver', 'build_gold_join'],
-  knowledge: ['author_knowledge', 'publish_knowledge'],
+  knowledge: ['save_knowledge_note', 'list_knowledge', 'search_knowledge'],
+  workflows: ['author_workflow', 'publish_workflow'],
   connections: ['create_connection', 'promote_connection', 'list_connection_templates'],
   agents: ['create_agent_system', 'build_agent_system', 'run_agent_system'],
   // Declarative-first golden path (0.6.136): the core tools are the spec-authoring surface.

@@ -12,7 +12,8 @@ import { listSystems, getSystem } from '@tabs/agents/lib/store';
  * A workflow is CONSUMED when another governed artifact wires it in as context:
  *   • an App records `use_knowledge` as a `consumes` edge, ref `knowledge:workflow:<id>`
  *     (the "context out" handover — see /api/knowledge/suggest + platform-mcp);
- *   • an Agent system grants it via `grants.knowledge[].id === <id>`.
+ *   • an Agent system grants it via `grants.workflows[].id === <id>` (before the split, under
+ *     `grants.knowledge`; a saved system is upgraded on read, and both are checked here).
  *
  * Mirrors `dependentsOf` in software/lifecycle.ts (the app-delete lineage guard):
  * a retire that would orphan a live dependency is BLOCKED. Apps are scanned through
@@ -40,7 +41,7 @@ export async function knowledgeConsumers(
   for (const summary of [...groups.mine, ...groups.domain, ...groups.marketplace]) {
     // The summary omits grants; read the full system (view-scoped) to inspect them.
     const { system } = getSystem(summary.id, user);
-    if (system.grants.knowledge.some((g) => g.id === workflowId)) {
+    if ([...system.grants.workflows, ...system.grants.knowledge].some((g) => g.id === workflowId)) {
       out.push({ by: summary.id, kind: 'agent_system' });
     }
   }

@@ -35,6 +35,7 @@ const TITLES: Record<McpTab, string> = {
   software: 'Software',
   data: 'Data',
   knowledge: 'Knowledge',
+  workflows: 'Workflows',
   agents: 'Agents',
   files: 'Files',
   metrics: 'Metrics',

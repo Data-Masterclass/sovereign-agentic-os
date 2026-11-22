@@ -24,11 +24,12 @@ import { allToolsForKind, writeToolsForKind, type GrantKind } from '@tabs/agents
 import { agentOutputTools } from '@tabs/agents/lib/output-tools';
 import type { System } from '@tabs/agents/lib/system-schema';
 
-const KINDS: GrantKind[] = ['data', 'knowledge', 'files', 'connections', 'metrics', 'plan'];
+const KINDS: GrantKind[] = ['data', 'knowledge', 'workflows', 'files', 'connections', 'metrics', 'plan'];
 
 const READ_LABEL: Record<GrantKind, string> = {
   data: 'Data reading',
   knowledge: 'Knowledge search',
+  workflows: 'Workflow reading',
   files: 'File reading',
   connections: 'Connections',
   metrics: 'Metrics',
@@ -37,6 +38,7 @@ const READ_LABEL: Record<GrantKind, string> = {
 const WRITE_LABEL: Record<GrantKind, string> = {
   data: 'Dataset writing',
   knowledge: 'Knowledge writing',
+  workflows: 'Workflow writing',
   files: 'File saving',
   connections: 'Connection setup',
   metrics: 'Metric definition',

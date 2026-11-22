@@ -25,7 +25,7 @@ async function rpc(user: CurrentUser, method: string, params?: Record<string, un
 }
 
 const EXPECTED = [
-  'build_data_product', 'author_and_publish_knowledge', 'connect_data_source',
+  'build_data_product', 'author_and_publish_workflow', 'connect_data_source',
   'build_agent_system', 'build_and_ship_software', 'define_metric', 'build_dashboard',
   'upload_and_share_file',
   // mcp-v2 surfaces wave — one golden-path prompt per surface.

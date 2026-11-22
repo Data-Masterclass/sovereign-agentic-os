@@ -135,7 +135,7 @@ function singleAgentSystem(opts: { id: string; name: string; role: string; agent
     safetyPreset: opts.preset ?? 'read-only',
     entrypoint: opts.id,
     state: { channels: { messages: 'add_messages' } },
-    grants: { data: [], knowledge: [], metrics: [], tools: [...opts.tools], connections: [], files: [], plan: [] },
+    grants: { data: [], knowledge: [], metrics: [], tools: [...opts.tools], connections: [], files: [], workflows: [], plan: [] },
     routing: { overrides: {} },
     agents: [{ id: opts.id, role: opts.role, agent_md: opts.agentMd, memory_md: '# Memory', tools: [...opts.tools] }],
     edges: [],

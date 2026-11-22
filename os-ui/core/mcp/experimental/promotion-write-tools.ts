@@ -67,7 +67,7 @@ import {
   deleteWorkflow,
 } from '@tabs/knowledge/lib/store';
 import { knowledgeConsumers } from '@tabs/knowledge/lib/consumers';
-import { fileArtifactPromotion, promoteThroughSeam, isLadderKind, type LadderKind } from '@core/policy/ladder';
+import { fileArtifactPromotion, promoteThroughSeam, isLadderKind, normalizeLadderKind, type LadderKind } from '@core/policy/ladder';
 import { pendingHandle } from '@core/mcp/pending';
 import {
   serializeWorkflow,
@@ -122,23 +122,25 @@ export const promotionTools: McpTool[] = [
     extraTabs: ['files'],
     minRole: 'creator',
     description:
-      'FILE a rung-1 promotion request (My → a governed DOMAIN asset) for ANY ownable artifact: a dataset, file, knowledge workflow, personal knowledge entry, connection, dashboard, artifact, app or agent system. Path: the promote step of every tab’s golden path — the ONE governed ladder. Before: create + document the artifact (creating in My scope needs no approval; only this promotion up a scope is gated). After: a domain admin (or tenant admin) in the domain runs `decide_approval` (or `approve_promotion` for dataset/file). Governance: OWNER-ONLY trigger — edit rights are not enough; it does NOT promote, it enqueues the governed request and returns the pending handle. If you are the owner AND already hold the rung-1 authority (a domain admin or platform admin promoting your OWN artifact), you may then decide your own request: the rank and scope gates still apply, and blocking it would simply leave your artifact unpromotable. Certification (Domain → Company) is the separate `request_certification`. Idempotency: filing while a request is pending returns the existing handle.',
+      'FILE a rung-1 promotion request (My → a governed DOMAIN asset) for ANY ownable artifact: a dataset, file, workflow (`kind: "workflow"`, id `wf_…`), knowledge note (`kind: "personal_knowledge"`, id `pk_…`), connection, dashboard, artifact, app or agent system. Path: the promote step of every tab’s golden path — the ONE governed ladder. Before: create + document the artifact (creating in My scope needs no approval; only this promotion up a scope is gated). After: a domain admin (or tenant admin) in the domain runs `decide_approval` (or `approve_promotion` for dataset/file). Governance: OWNER-ONLY trigger — edit rights are not enough; it does NOT promote, it enqueues the governed request and returns the pending handle. If you are the owner AND already hold the rung-1 authority (a domain admin or platform admin promoting your OWN artifact), you may then decide your own request: the rank and scope gates still apply, and blocking it would simply leave your artifact unpromotable. Certification (Domain → Company) is the separate `request_certification`. Idempotency: filing while a request is pending returns the existing handle.',
     inputSchema: {
       type: 'object',
       properties: {
-        kind: { type: 'string', enum: ['dataset', 'file', 'knowledge', 'personal_knowledge', 'connection', 'dashboard', 'artifact', 'app', 'agent_system']
+        kind: { type: 'string', enum: ['dataset', 'file', 'workflow', 'knowledge', 'personal_knowledge', 'connection', 'dashboard', 'artifact', 'app', 'agent_system']
 , description: 'What to promote (you must OWN it). A metric is NOT on this list: a metric IS a measure on a dataset, so its audience is its dataset’s — promote the dataset.' },
         id: { type: 'string', description: 'The artifact id you own and have documented.' },
         visibility: { type: 'string', description: 'Requested asset visibility (dataset/file only; default domain).' },
         grants: { type: 'array', description: 'Optional explicit policy grants (dataset/file only; else a domain read grant).' },
       },
       required: ['kind', 'id'],
-      examples: [{ kind: 'dataset', id: 'ds_ab12cd', visibility: 'domain' }, { kind: 'knowledge', id: 'wf_ab12cd' }, { kind: 'connection', id: 'conn_ab12cd' }],
+      examples: [{ kind: 'dataset', id: 'ds_ab12cd', visibility: 'domain' }, { kind: 'workflow', id: 'wf_ab12cd' }, { kind: 'personal_knowledge', id: 'pk_ab12cd' }, { kind: 'connection', id: 'conn_ab12cd' }],
     },
     call: async (user, args) => {
-      const kind = str(args.kind).trim();
       const id = str(args.id).trim();
       if (!id) fail('request_promotion needs an `id`', 400);
+      // `workflow` is the real name of a `wf_…` artifact (ladder kind `knowledge`, kept as persisted);
+      // `knowledge` with a `pk_…` id is the note. See `normalizeLadderKind`.
+      const kind = normalizeLadderKind(str(args.kind), id);
 
       // The formerly-DIRECT ladder kinds (knowledge/personal_knowledge/connection/
       // dashboard/artifact/app/agent_system) file through the ONE ladder seam — owner-only,
@@ -156,7 +158,7 @@ export const promotionTools: McpTool[] = [
         );
       }
       if (kind !== 'dataset' && kind !== 'file') {
-        fail('request_promotion needs `kind` = dataset | file | knowledge | personal_knowledge | connection | dashboard | artifact | app | agent_system', 400);
+        fail('request_promotion needs `kind` = dataset | file | workflow | personal_knowledge | connection | dashboard | artifact | app | agent_system', 400);
       }
       const p = P(user);
       const opts = {

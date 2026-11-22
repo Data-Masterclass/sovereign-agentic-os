@@ -6,6 +6,7 @@ import type { McpTool, JsonSchema } from '@core/mcp/server';
 
 import { dataWriteTools } from '@core/mcp/experimental/data-write-tools';
 import { knowledgeWriteTools } from '@tabs/knowledge/mcp/knowledge-write-tools';
+import { workflowWriteTools } from '@tabs/workflows/mcp/workflow-write-tools';
 import { fileWriteTools } from '@tabs/files/mcp/file-write-tools';
 import { promotionTools } from '@core/mcp/experimental/promotion-write-tools';
 import { metricWriteTools } from '@tabs/metrics/mcp/metric-write-tools';
@@ -36,6 +37,7 @@ import { lifecycleTools } from '@core/mcp/lifecycle-tools';
 
 export { dataWriteTools } from '@core/mcp/experimental/data-write-tools';
 export { knowledgeWriteTools } from '@tabs/knowledge/mcp/knowledge-write-tools';
+export { workflowWriteTools } from '@tabs/workflows/mcp/workflow-write-tools';
 export { fileWriteTools } from '@tabs/files/mcp/file-write-tools';
 export { promotionTools } from '@core/mcp/experimental/promotion-write-tools';
 export { metricWriteTools } from '@tabs/metrics/mcp/metric-write-tools';
@@ -48,6 +50,7 @@ export { lifecycleTools } from '@core/mcp/lifecycle-tools';
 export const ALL_WRITE_TOOLS: McpTool[] = [
   ...dataWriteTools,
   ...knowledgeWriteTools,
+  ...workflowWriteTools,
   ...fileWriteTools,
   ...metricWriteTools,
   ...dashboardWriteTools,
