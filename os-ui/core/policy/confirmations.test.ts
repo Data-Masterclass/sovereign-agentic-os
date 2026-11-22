@@ -147,7 +147,7 @@ test('ALLOWANCE: only a SESSION_ALLOWABLE tool can be granted, and it covers exa
     assert.equal(grantSessionAllowance({ userId: 'rae', conversationId: 'conv-1', tool }, { at: T0 }).ok, true, tool);
   }
   __resetConfirmations();
-  for (const tool of ['delete', 'archive', 'retire', 'retire_dataset', 'request_deploy', 'request_promotion', 'promote', 'decide_approval', 'publish_knowledge', 'no_such_tool', 'constructor', '']) {
+  for (const tool of ['delete', 'archive', 'retire', 'retire_dataset', 'request_deploy', 'request_promotion', 'promote', 'decide_approval', 'publish_workflow', 'no_such_tool', 'constructor', '']) {
     const r = grantSessionAllowance({ userId: 'rae', conversationId: 'conv-1', tool }, { at: T0 });
     assert.equal(r.ok, false, `${tool} must not be grantable`);
     assert.equal(sessionAllows({ userId: 'rae', conversationId: 'conv-1', tool }, { at: T0 }), false);

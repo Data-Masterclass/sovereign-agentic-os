@@ -58,6 +58,7 @@ export function registerGrants(backends: MockBackends, sys: System): void {
   put('connection', sys.grants.connections);
   put('data', sys.grants.data);
   put('knowledge', sys.grants.knowledge);
+  put('workflow', sys.grants.workflows ?? []);
   put('metric', sys.grants.metrics);
 }
 

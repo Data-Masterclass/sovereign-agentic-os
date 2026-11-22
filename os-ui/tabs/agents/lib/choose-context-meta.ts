@@ -107,7 +107,7 @@ export const AGENT_CONTEXT_META: Record<AgentContextType, AgentContextMeta> = {
   },
   workflows: {
     type: 'workflows', label: 'Workflows',
-    blurb: 'Your business processes (workflows) the team can run, loaded on demand under your access.',
+    blurb: 'The documented business processes (workflows) the team can read, loaded on demand under your access.',
     member: memberByKey('workflows'),
   },
   plan: {
@@ -121,7 +121,7 @@ export const AGENT_CONTEXT_META: Record<AgentContextType, AgentContextMeta> = {
 /** The granted count for a type — sums the plan sub-members' grants for the collapsed row. */
 export function agentContextGrantedCount(
   type: AgentContextType,
-  grantCountByField: (field: ResourceMember['field'], idFamily?: ResourceMember['idFamily']) => number,
+  grantCountByField: (field: ResourceMember['field']) => number,
 ): number {
   const meta = AGENT_CONTEXT_META[type];
   if (meta.members) {
@@ -129,5 +129,5 @@ export function agentContextGrantedCount(
     return grantCountByField('plan');
   }
   const m = meta.member!;
-  return grantCountByField(m.field, m.idFamily);
+  return grantCountByField(m.field);
 }

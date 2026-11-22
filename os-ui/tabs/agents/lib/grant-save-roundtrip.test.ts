@@ -182,7 +182,9 @@ test('OUTPUT FOLDERS (id: \'\'): an unrelated tick does not delete the Write gra
   const results = back.grants.knowledge.find((g) => g.folder?.path === '/results');
   assert.equal(results?.capability, 'Write-bounded');
   assert.ok(back.grants.knowledge.some((g) => g.folder?.path === '/Finance/InvoiceProcessing/Results' && g.capability === 'Write-bounded'));
-  assert.ok(back.grants.knowledge.some((g) => g.id === 'wf_invoice'), 'the item grant is kept');
+  // `wf_invoice` was filed under knowledge in the stored text: reading the system moves it to workflows.
+  assert.ok(back.grants.workflows.some((g) => g.id === 'wf_invoice'), 'the item grant is kept, now as a workflow grant');
+  assert.ok(!back.grants.knowledge.some((g) => g.id === 'wf_invoice'), 'and is no longer a knowledge grant');
   assert.ok(isOutputFolder(back, 'knowledge', { path: '/results', scope: 'personal' }));
 });
 
@@ -216,6 +218,6 @@ test('ZERO MATCH (builder): the My-files grant says it contains 0 files and wher
   assert.equal(zeroMatchWarning('data', folderGrantCoverage({ path: '/nope', scope: 'domain' }, [])), 'This grant currently contains 0 datasets.');
   assert.equal(
     zeroMatchWarning('knowledge', folderGrantCoverage({ path: '/k', scope: 'domain' }, [{ id: 'pk1', folder: '/k', scope: 'personal' }])),
-    'This grant currently contains 0 knowledge items. 1 knowledge item is in My knowledge /k.',
+    'This grant currently contains 0 knowledge notes. 1 knowledge note is in My knowledge /k.',
   );
 });

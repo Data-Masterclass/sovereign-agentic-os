@@ -41,9 +41,17 @@ test('every declared write tool is registered under its correct real tab', () =>
   for (const n of ['create_dataset', 'add_dataset_version', 'document_dataset', 'request_promotion', 'approve_promotion', 'query_data', 'ingest_dataset', 'profile_dataset', 'transform_silver', 'build_gold_join']) {
     assert.ok(namesFor('data').includes(n), `data tab missing ${n}`);
   }
-  // Knowledge — incl. the OKF interchange twins (export_okf_bundle / import_okf_bundle).
-  for (const n of ['author_knowledge', 'publish_knowledge', 'index_knowledge', 'search_knowledge', 'export_okf_bundle', 'import_okf_bundle']) {
+  // Knowledge — notes only, incl. the OKF interchange twins (export_okf_bundle / import_okf_bundle).
+  for (const n of ['save_knowledge_note', 'list_knowledge', 'get_knowledge', 'search_knowledge', 'export_okf_bundle', 'import_okf_bundle']) {
     assert.ok(namesFor('knowledge').includes(n), `knowledge tab missing ${n}`);
+  }
+  // Workflows — its own tab and tools; none of them under knowledge, and no `*_knowledge` workflow name.
+  for (const n of ['author_workflow', 'publish_workflow', 'index_workflow', 'retire_workflow', 'list_workflows', 'get_workflow']) {
+    assert.ok(namesFor('workflows').includes(n), `workflows tab missing ${n}`);
+    assert.ok(!namesFor('knowledge').includes(n), `${n} must not be offered by the knowledge tab`);
+  }
+  for (const n of ['author_knowledge', 'publish_knowledge', 'index_knowledge', 'retire_knowledge']) {
+    assert.ok(!namesFor('workflows').includes(n) && !namesFor('knowledge').includes(n), `deprecated ${n} must not be listed on any tab`);
   }
   // Files / Metrics / Dashboards / Agents
   // request_promotion/approve_promotion live on data but ALSO surface on files (extraTabs).
@@ -68,7 +76,7 @@ test('toolsForTab: a tab view carries its own tools + the meta discovery tools, 
   assert.ok(data.includes('whoami') && data.includes('list_capabilities'));
   // but never another tab's tools
   assert.ok(!data.includes('create_software'));
-  assert.ok(!data.includes('author_knowledge'));
+  assert.ok(!data.includes('author_workflow'));
   assert.ok(!data.includes('upload_file'));
 
   // Software is the platform surface — several tools, all tagged software (+ meta).
@@ -206,7 +214,7 @@ test('global topbar MCP button: the overarching endpoint (no tab) exposes all to
   }
   const allNames = ALL_MCP_TOOLS.map((t) => t.name);
   for (const n of [
-    'create_dataset', 'author_knowledge', 'upload_file', 'define_metric',
+    'create_dataset', 'author_workflow', 'save_knowledge_note', 'upload_file', 'define_metric',
     'create_dashboard', 'create_agent_system', 'create_software',
     'query_data', 'search_knowledge', 'whoami', 'list_capabilities',
   ]) {

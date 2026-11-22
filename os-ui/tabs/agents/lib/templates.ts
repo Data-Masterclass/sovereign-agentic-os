@@ -73,7 +73,7 @@ export function templateYaml(key: TemplateKey, name: string, domain: string, vis
     safetyPreset: 'read-only',
     entrypoint: spec.agentId,
     state: { channels: { messages: 'add_messages' } },
-    grants: { data: [], knowledge: [], metrics: [], tools: ['search_knowledge'], connections: [], files: [], plan: [] },
+    grants: { data: [], knowledge: [], metrics: [], tools: ['search_knowledge'], connections: [], files: [], workflows: [], plan: [] },
     routing: { overrides: {} },
     agents: [
       // NO per-agent `tools:` — the agent inherits everything the team is granted. A list here

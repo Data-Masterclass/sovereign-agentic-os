@@ -147,6 +147,15 @@ const MUTATORS: Record<string, () => void | Promise<void>> = {
   archiveSystem: () => { const id = seed(); calls = []; store.archiveSystem(id, amir); },
   unarchiveSystem: () => { const id = seed(); store.archiveSystem(id, amir); calls = []; store.unarchiveSystem(id, amir); },
   deleteSystem: () => { const id = seed(); calls = []; store.deleteSystem(id, amir); },
+  // The one-time rewrite of a system saved in the old workflow/knowledge spelling: a definition change
+  // like any other, so it MUST commit (and only when something is rewritten).
+  migrateStoredWorkflowGrants: () => {
+    const rec = store.createSystem(amir, { name: 'Legacy', yaml: 'system:\n  name: Legacy\n  domain: sales\nagents: []\ngrants:\n  knowledge:\n    - { id: wf_old, capability: Read }\n  tools: [get_knowledge]\n' });
+    (globalThis as unknown as Record<symbol, { hydratedAt?: number }>)[Symbol.for('soa.agents.store')].hydratedAt = Date.now();
+    calls = [];
+    store.migrateStoredWorkflowGrants({ actorId: 'migration' });
+    assert.ok(rec.yaml.includes('workflows'), 'the stored text was rewritten');
+  },
   restoreSystemVersion: () => {
     const id = seed();
     const f = store.readFile(id, amir, `agents/${agentIdOf(id)}/AGENT.md`);

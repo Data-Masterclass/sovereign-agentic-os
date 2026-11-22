@@ -171,6 +171,9 @@ function setArtifactGrantCapability(
 ): System {
   const sys = structuredClone(input);
   const write = capabilityWrites(cap);
+  // A workflow id is a WORKFLOW grant whichever kind the caller named: a stale client or an old
+  // script that still files `wf_…` under knowledge must not recreate the mix-up.
+  if (id && kind === 'knowledge' && id.startsWith('wf_')) kind = 'workflows';
   // An id grant is stored for EVERY kind, files included: a single file is granted by its id
   // (`grant-scope.ts` enforces it, `parseSystem` reads it). Files used to be skipped here, so
   // ticking one file in the builder stored nothing and the tick silently came back off.
@@ -246,6 +249,7 @@ export function setDescription(input: System, text: string): System {
  */
 export function removeArtifactGrant(input: System, kind: GrantKind, id: string | null): System {
   const sys = structuredClone(input);
+  if (id && kind === 'knowledge' && id.startsWith('wf_')) kind = 'workflows'; // see setArtifactGrantCapability
   if (id) sys.grants[kind] = sys.grants[kind].filter((g) => g.folder || g.id !== id);
   // Keep the kind's WRITE tools while ANY remaining grant of the kind writes. Files carry
   // only folder grants (no item list), so count those — otherwise removing an unrelated

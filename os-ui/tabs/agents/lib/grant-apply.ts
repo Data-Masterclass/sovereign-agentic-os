@@ -36,7 +36,9 @@ import { itemsUnderFolder, normaliseFolderPath } from '@core/kernel/folders';
 import type { System, DataLayer } from '@tabs/agents/lib/system-schema';
 
 /** The foldered grant kinds the tree edits. */
-export type FolderedGrantKind = 'data' | 'knowledge' | 'files';
+// `workflows` is listed so the item picker can share the folder-aware code; a workflow has no folders,
+// so it is NOT in `FOLDERED_GRANT_KINDS` below and no folder grant is ever made for it.
+export type FolderedGrantKind = 'data' | 'knowledge' | 'workflows' | 'files';
 
 /** A folder reference `{path, scope}` — structurally the FolderTree's `FolderGrant`.
  *  Declared here rather than imported so this module pulls in no `.tsx`. */
@@ -195,13 +197,14 @@ export function treeProtectedFolders(
 // --------------------------------------------------------- "this grant is empty" --
 
 const LANE_LABEL: Record<FolderRef['scope'], Record<FolderedGrantKind, string>> = {
-  personal: { files: 'My files', data: 'My data', knowledge: 'My knowledge' },
-  domain: { files: 'Domain files', data: 'Domain data', knowledge: 'Domain knowledge' },
+  personal: { files: 'My files', data: 'My data', knowledge: 'My knowledge', workflows: 'My workflows' },
+  domain: { files: 'Domain files', data: 'Domain data', knowledge: 'Domain knowledge', workflows: 'Domain workflows' },
 };
 const KIND_NOUN: Record<FolderedGrantKind, [string, string]> = {
   files: ['file', 'files'],
   data: ['dataset', 'datasets'],
-  knowledge: ['knowledge item', 'knowledge items'],
+  knowledge: ['knowledge note', 'knowledge notes'],
+  workflows: ['workflow', 'workflows'],
 };
 
 /** How a folder grant is named to a person: `/invoices in Domain files`. */

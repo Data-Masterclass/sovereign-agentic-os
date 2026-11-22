@@ -8,7 +8,7 @@ import { pendingHandle, whoCanApprove } from '@core/mcp/pending';
 import { decide, decisionSettled, ensureHydrated, getApproval, listApprovals, recordEffect, type Approval, type ApprovalStatus } from '@core/policy/approvals';
 import { canApprove, canSee, roleLabel } from '@core/policy/roles';
 import { applyEffect } from '@core/policy/effects';
-import { buildEffectDeps, fileArtifactCertification, isLadderKind, type LadderKind } from '@core/policy/ladder';
+import { buildEffectDeps, fileArtifactCertification, isLadderKind, normalizeLadderKind, type LadderKind } from '@core/policy/ladder';
 import { remember } from '@core/policy/standing';
 import { record as audit } from '@core/policy/audit';
 // getLineage is dynamically imported at its call site below, not statically
@@ -230,24 +230,24 @@ export const governanceTools: McpTool[] = [
     tab: 'governance',
     minRole: 'builder',
     description:
-      'FILE a rung-2 CERTIFICATION request (a Domain asset → Company scope, the cross-domain Marketplace storefront) — the domain vouches for its artifact. Works for any kind: dataset, knowledge, connection, dashboard, model, app. Path: the certify step of the ladder. Before: the artifact is already a Domain asset (promote it to Domain first with request_promotion). After: a platform ADMIN runs `decide_approval`. Governance: TRIGGER = a Builder/Domain-admin IN the artifact’s domain (owner-not-required — the domain vouches); APPROVE = a platform Admin only. Returns the pending handle; it does NOT certify.',
+      'FILE a rung-2 CERTIFICATION request (a Domain asset → Company scope, the cross-domain Marketplace storefront) — the domain vouches for its artifact. Works for any kind: dataset, workflow, personal_knowledge (a note), connection, dashboard, model, app. Path: the certify step of the ladder. Before: the artifact is already a Domain asset (promote it to Domain first with request_promotion). After: a platform ADMIN runs `decide_approval`. Governance: TRIGGER = a Builder/Domain-admin IN the artifact’s domain (owner-not-required — the domain vouches); APPROVE = a platform Admin only. Returns the pending handle; it does NOT certify.',
     inputSchema: {
       type: 'object',
       properties: {
-        kind: { type: 'string', enum: ['dataset', 'knowledge', 'personal_knowledge', 'connection', 'dashboard', 'artifact', 'app', 'agent_system'], description: 'What to certify (a Domain asset). A file is certified directly by an Admin (there is no request rung for it), and a metric follows its dataset.' },
+        kind: { type: 'string', enum: ['dataset', 'workflow', 'knowledge', 'personal_knowledge', 'connection', 'dashboard', 'artifact', 'app', 'agent_system'], description: 'What to certify (a Domain asset). A file is certified directly by an Admin (there is no request rung for it), and a metric follows its dataset.' },
         id: { type: 'string', description: 'The domain asset id.' },
         mode: { type: 'string', description: 'Optional marketplace consumption mode (e.g. read-in-place | fork-allowed for models).' },
       },
       required: ['kind', 'id'],
-      examples: [{ kind: 'knowledge', id: 'wf_ab12cd' }],
+      examples: [{ kind: 'workflow', id: 'wf_ab12cd' }],
 
     },
     call: async (user, args) => {
-      const kind = str(args.kind).trim();
       const id = str(args.id).trim();
       if (!id) fail('request_certification needs an `id`', 400);
+      const kind = normalizeLadderKind(str(args.kind), id); // `workflow` → the persisted ladder kind
       if (!isLadderKind(kind) && kind !== 'dataset') {
-        fail('request_certification needs `kind` = dataset | knowledge | personal_knowledge | connection | dashboard | artifact | app | agent_system', 400);
+        fail('request_certification needs `kind` = dataset | workflow | personal_knowledge | connection | dashboard | artifact | app | agent_system', 400);
       }
       // Datasets keep their own two-step certification path; here we file the
       // ladder kinds. (Dataset certification: use the Data tab / requestCertification.)

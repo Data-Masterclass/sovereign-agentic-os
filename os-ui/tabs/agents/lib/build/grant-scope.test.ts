@@ -68,7 +68,7 @@ test('REGISTRY RATCHET: every argument a rule names exists in that tool\'s input
 test('REGISTRY RATCHET: an argument that carries a resource id is always checked — it cannot hide in the "touches none" table', () => {
   // The id argument names the registry uses for the grantable kinds. A tool that declares one
   // must check it (or be `broad`, which refuses the whole tool under a restriction).
-  const ID_ARGS: Record<string, string> = { datasetId: 'data', workflowId: 'knowledge', metricId: 'metrics', connId: 'connections', connectionId: 'connections', fileId: 'files' };
+  const ID_ARGS: Record<string, string> = { datasetId: 'data', workflowId: 'workflows', metricId: 'metrics', connId: 'connections', connectionId: 'connections', fileId: 'files' };
   for (const t of ALL_MCP_TOOLS) {
     const declared = Object.keys(((t.inputSchema ?? {}) as { properties?: Record<string, unknown> }).properties ?? {});
     for (const arg of declared) {
@@ -315,7 +315,7 @@ test('CREATED in this run: a new artifact is usable afterwards, by id and in SQL
 test('createdIds / createdFromSteps: the ids a creating tool answers with, and the ledger a resumed run rebuilds', () => {
   assert.deepEqual(createdIds('data', JSON.stringify({ id: 'ds_1' })), ['ds_1']);
   assert.deepEqual(createdIds('data', JSON.stringify({ dataset: { id: 'ds_2' }, cron: '* * * * *' })), ['ds_2']);
-  assert.deepEqual(createdIds('knowledge', JSON.stringify({ workflows: [{ id: 'wf_1' }, { id: 'wf_2' }] })), ['wf_1', 'wf_2']);
+  assert.deepEqual(createdIds('workflows', JSON.stringify({ workflows: [{ id: 'wf_1' }, { id: 'wf_2' }] })), ['wf_1', 'wf_2']);
   assert.deepEqual(createdIds('metrics', JSON.stringify({ datasetId: 'ds_1', measure: { name: 'revenue' } })), ['ds_1.revenue']);
   assert.deepEqual(createdIds('data', 'not json'), []);
   const seed = createdFromSteps([
@@ -343,7 +343,7 @@ test('THE PROMPT says what is enforced, kind by kind — and nothing it does not
   assert.match(brief, /the engine ENFORCES it/);
   assert.match(brief, /- datasets: ds_orders \(read-only\), ds_stage/);
   assert.match(brief, /- files: only files in \/Invoices \(My files, read-only\)/);
-  assert.match(brief, /No grant narrows these kinds, so the running user's own access applies to them: knowledge, metrics, connections, plan/);
+  assert.match(brief, /No grant narrows these kinds, so the running user's own access applies to them: knowledge, workflows, metrics, connections, plan/);
   assert.doesNotMatch(brief, /DENIED by OPA|ONLY resource ids/);
   assert.equal(grantScopeBrief(system({})), '', 'no resource grant → nothing is claimed');
 });
@@ -356,4 +356,77 @@ test('find is refused for an agent whose grants limit it to specific items (it w
   assert.ok(rule.broad.kinds.includes('data') && rule.broad.kinds.includes('files') && rule.broad.kinds.includes('knowledge'));
   // NEGATIVE TWIN: the per-kind list tools stay grant-filtered rather than broad, so an agent can still read what it was granted.
   assert.equal(TOOL_RESOURCES.list_datasets?.broad, undefined);
+});
+
+// ------------------------------------------------ workflows are their own grant kind --
+
+test('WF/K: a workflow grant covers the workflow tools and NOT knowledge notes; a note grant covers notes and NOT workflows', async () => {
+  const wfOnly = system({ workflows: [{ id: 'wf_refunds', capability: 'Read' }] });
+  assert.equal((await check('get_workflow', { workflowId: 'wf_refunds' }, wfOnly)).allow, true);
+  const other = await check('get_workflow', { workflowId: 'wf_hr' }, wfOnly);
+  assert.equal(other.allow, false);
+  assert.match(reason(other), /workflow wf_hr/);
+  // Knowledge is untouched by a workflow grant: its tools keep the running user's own access.
+  assert.equal((await check('get_knowledge', { id: 'pk_any' }, wfOnly)).allow, true);
+
+  const noteOnly = system({ knowledge: [{ id: 'pk_notes', capability: 'Read' }] });
+  assert.equal((await check('get_knowledge', { id: 'pk_notes' }, noteOnly)).allow, true);
+  assert.equal((await check('get_knowledge', { id: 'pk_other' }, noteOnly)).allow, false);
+  // NEGATIVE TWIN: a restricted NOTE grant does not narrow workflows (a different kind), and
+  // the deprecated `workflowId` spelling of get_knowledge is checked against the WORKFLOW grants.
+  assert.equal((await check('get_workflow', { workflowId: 'wf_any' }, noteOnly)).allow, true);
+  const legacyArg = await check('get_knowledge', { workflowId: 'wf_hr' }, wfOnly);
+  assert.equal(legacyArg.allow, false, 'the deprecated argument cannot walk around a workflow restriction');
+});
+
+test('WF/K: a write grant on one kind does not let the other kind be written', async () => {
+  const wfRead = system({ workflows: [{ id: 'wf_a', capability: 'Read' }] });
+  assert.equal((await check('index_workflow', { workflowId: 'wf_a' }, wfRead)).allow, false, 'a Read workflow grant refuses a workflow write');
+  const wfWrite = system({ workflows: [{ id: 'wf_a', capability: 'Write-bounded' }] });
+  assert.equal((await check('index_workflow', { workflowId: 'wf_a' }, wfWrite)).allow, true);
+  assert.equal((await check('retire_workflow', { workflowId: 'wf_a' }, wfWrite)).allow, true);
+});
+
+test('WF/K: search_knowledge checks each hit against ITS artifact — a wf_ hit by the workflow grants, a pk_ hit by the note grants', async () => {
+  const sys = system({ workflows: [{ id: 'wf_refunds', capability: 'Read' }], knowledge: [{ id: 'pk_notes', capability: 'Read' }] });
+  const v = await check('search_knowledge', { query: 'refunds' }, sys);
+  assert.ok(v.allow && v.shape);
+  const hits = { hits: [
+    { unit: { id: 'u1', provenance: { workflowId: 'wf_refunds' } } },
+    { unit: { id: 'u2', provenance: { workflowId: 'wf_hr' } } },
+    { unit: { id: 'u3', provenance: { workflowId: 'pk_notes' } } },
+    { unit: { id: 'u4', provenance: { workflowId: 'pk_other' } } },
+  ] };
+  const out = JSON.parse(((v.allow && v.shape ? v.shape(JSON.stringify(hits)) : null) as { text: string }).text);
+  assert.deepEqual(out.hits.map((h: { unit: { id: string } }) => h.unit.id), ['u1', 'u3']);
+  // A note-only restriction leaves workflow hits alone (the workflow kind is unrestricted), and the reverse.
+  const notesOnly = system({ knowledge: [{ id: 'pk_notes', capability: 'Read' }] });
+  const v2 = await check('search_knowledge', { query: 'x' }, notesOnly);
+  const out2 = JSON.parse(((v2.allow && v2.shape ? v2.shape(JSON.stringify(hits)) : null) as { text: string }).text);
+  assert.deepEqual(out2.hits.map((h: { unit: { id: string } }) => h.unit.id), ['u1', 'u2', 'u3']);
+});
+
+test('WF/K: the polymorphic tools route a wf_ id to the workflow grants whatever kind word was sent', async () => {
+  const sys = system({ workflows: [{ id: 'wf_a', capability: 'Write-bounded' }], knowledge: [{ id: 'pk_a', capability: 'Read' }] });
+  for (const kind of ['workflow', 'knowledge']) {
+    assert.equal((await check('request_promotion', { kind, id: 'wf_a' }, sys)).allow, true, `${kind}/wf_a is a granted workflow`);
+    assert.equal((await check('request_promotion', { kind, id: 'wf_b' }, sys)).allow, false, `${kind}/wf_b is not granted`);
+  }
+  // A note granted READ cannot be promoted (a write), and a note id under `knowledge` is checked as a note.
+  assert.equal((await check('request_promotion', { kind: 'knowledge', id: 'pk_a' }, sys)).allow, false);
+  assert.equal((await check('request_promotion', { kind: 'personal_knowledge', id: 'pk_a' }, sys)).allow, false);
+});
+
+test('WF/K: author_workflow creates a WORKFLOW the run may then use; save_knowledge_note a NOTE', async () => {
+  const sys = system({ workflows: [{ id: 'wf_a', capability: 'Write-bounded' }], knowledge: [{ id: 'pk_a', capability: 'Write-bounded' }] });
+  const scope = grantScopeOf(sys);
+  const made = await checkGrantScope('author_workflow', { title: 'New' }, scope, RESOLVERS);
+  assert.ok(made.allow && made.created);
+  if (made.allow && made.created) made.created(JSON.stringify({ id: 'wf_new', title: 'New' }));
+  assert.ok(scope.created.workflows.has('wf_new') && !scope.created.knowledge.has('wf_new'));
+  assert.equal((await checkGrantScope('get_workflow', { workflowId: 'wf_new' }, scope, RESOLVERS)).allow, true);
+  const note = await checkGrantScope('save_knowledge_note', { title: 'N', md: 'x' }, scope, RESOLVERS);
+  assert.ok(note.allow && note.created);
+  if (note.allow && note.created) note.created(JSON.stringify({ id: 'pk_new' }));
+  assert.ok(scope.created.knowledge.has('pk_new') && !scope.created.workflows.has('pk_new'));
 });

@@ -119,8 +119,8 @@ const LADDER: KindSpec[] = [
     kind: 'knowledge',
     lifecycleKind: 'knowledge',
     owner: cara,
-    create: async (o, n) => (await call<{ id: string }>(o, 'author_knowledge', { title: n })).id,
-    read: { tool: 'get_knowledge', arg: 'workflowId', field: 'visibility' },
+    create: async (o, n) => (await call<{ id: string }>(o, 'author_workflow', { title: n })).id,
+    read: { tool: 'get_workflow', arg: 'workflowId', field: 'visibility' },
     audience: { my: 'Personal', domain: 'Shared', company: 'Marketplace' },
     approvalKind: 'artifact_promote',
   },
@@ -355,7 +355,7 @@ test('matrix (d): an owner who IS the approver is never dead-ended — files, th
 test('matrix (d): the self-decide carve-out is for AUDIENCE moves only — rank and scope still bind', async () => {
   __resetApprovals();
   // A creator owner still cannot decide: the rank gate comes first.
-  const mine = await call<{ id: string }>(cara, 'author_knowledge', { title: 'carve-rank' });
+  const mine = await call<{ id: string }>(cara, 'author_workflow', { title: 'carve-rank' });
   const caraFiled = await call<Filed>(cara, 'request_promotion', { kind: 'knowledge', id: mine.id });
   assert.match(
     (await refusal(cara, 'decide_approval', { requestId: caraFiled.requestId!, decision: 'approve' })).reason,
@@ -515,10 +515,10 @@ test('H1: the dedup lookup can never serve a foreign principal the pending Appro
 test('H2: the ladder one-shot writes an audit entry AND a self-approved queue record', async () => {
   __resetApprovals();
   __resetAudit();
-  // dana owns a workflow and holds the rung-1 authority, so `publish_knowledge` is a one-shot
+  // dana owns a workflow and holds the rung-1 authority, so `publish_workflow` is a one-shot
   // through the ladder seam — the path that used to move the audience and leave no trace.
-  const wf = await call<{ id: string }>(dana, 'author_knowledge', { title: 'One-shot' });
-  await call(dana, 'publish_knowledge', { workflowId: wf.id });
+  const wf = await call<{ id: string }>(dana, 'author_workflow', { title: 'One-shot' });
+  await call(dana, 'publish_workflow', { workflowId: wf.id });
 
   const rows = listApprovals({});
   assert.equal(rows.length, 1, 'the one-shot minted exactly one queue record');
@@ -553,7 +553,7 @@ test('H2: an owner-approver decision is recorded and audited the same way', asyn
 
 test('DECISION: the self-decide carve-out does NOT extend to the Company rung', async () => {
   __resetApprovals();
-  const wf = await call<{ id: string }>(cara, 'author_knowledge', { title: 'company-rung' });
+  const wf = await call<{ id: string }>(cara, 'author_workflow', { title: 'company-rung' });
   const filed = await call<Filed>(cara, 'request_promotion', { kind: 'knowledge', id: wf.id });
   await call(dana, 'decide_approval', { requestId: filed.requestId!, decision: 'approve' });
 
@@ -669,7 +669,7 @@ test('M: a non-owner Admin still certifies in one shot — the domain vouched, s
   __resetApprovals();
   // cara owns it; the domain promoted it; ada is NOT the owner, so certifying is a genuine
   // second pair of eyes and the one-shot stands.
-  const wf = await call<{ id: string }>(cara, 'author_knowledge', { title: 'vouched' });
+  const wf = await call<{ id: string }>(cara, 'author_workflow', { title: 'vouched' });
   const filed = await call<Filed>(cara, 'request_promotion', { kind: 'knowledge', id: wf.id });
   await call(dana, 'decide_approval', { requestId: filed.requestId!, decision: 'approve' });
   __resetApprovals();
@@ -728,10 +728,10 @@ test('tripwire: both approval doors audit an effect that reported failure', () =
 
 test('M4: a Personal workflow is promoted on its AUDIENCE, not on its legacy status word', async () => {
   __resetApprovals();
-  const wf = await call<{ id: string }>(cara, 'author_knowledge', { title: 'personal-but-live' });
+  const wf = await call<{ id: string }>(cara, 'author_workflow', { title: 'personal-but-live' });
   const filed = await call<Filed>(cara, 'request_promotion', { kind: 'knowledge', id: wf.id });
   await call(dana, 'decide_approval', { requestId: filed.requestId!, decision: 'approve' });
-  const rec = await call<{ visibility: string }>(cara, 'get_knowledge', { workflowId: wf.id });
+  const rec = await call<{ visibility: string }>(cara, 'get_workflow', { workflowId: wf.id });
   assert.equal(rec.visibility, 'Shared', 'the AUDIENCE moved');
   // A second promotion is refused on the audience, with the audience's reason.
   assert.match((await refusal(cara, 'request_promotion', { kind: 'knowledge', id: wf.id })).reason, /already promoted/i);

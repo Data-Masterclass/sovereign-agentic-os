@@ -50,8 +50,10 @@ export type GroundingContext = {
   outputs?: { kind: string; name: string }[];
   /** Granted DATA products, by name. */
   data?: GroundedResource[];
-  /** Granted KNOWLEDGE items, by name. */
+  /** Granted KNOWLEDGE notes, by name. */
   knowledge?: GroundedResource[];
+  /** Granted WORKFLOWS (documented business processes), by name. */
+  workflows?: GroundedResource[];
   /** Granted CONNECTIONS, by name. */
   connections?: GroundedResource[];
   /** Granted METRICS, by name. */
@@ -129,6 +131,7 @@ export function buildContextBlock(ctx: GroundingContext): string {
   for (const [label, list] of [
     ['Granted data', ctx.data],
     ['Granted knowledge', ctx.knowledge],
+    ['Granted workflows', ctx.workflows],
     ['Granted connections', ctx.connections],
     ['Granted metrics', ctx.metrics],
     ['Granted plan items', ctx.plan],
@@ -140,7 +143,7 @@ export function buildContextBlock(ctx: GroundingContext): string {
     parts.push(`Granted tool pool (assigned automatically): ${ctx.tools.join(', ')}`);
   }
   const anyAssets =
-    (ctx.data?.length ?? 0) + (ctx.knowledge?.length ?? 0) + (ctx.connections?.length ?? 0) +
+    (ctx.data?.length ?? 0) + (ctx.knowledge?.length ?? 0) + (ctx.workflows?.length ?? 0) + (ctx.connections?.length ?? 0) +
     (ctx.metrics?.length ?? 0) + (ctx.plan?.length ?? 0);
   if (anyAssets === 0) {
     parts.push('(No governed assets are granted yet — propose the team structure from the goal, and note in each step which asset it will need granted.)');

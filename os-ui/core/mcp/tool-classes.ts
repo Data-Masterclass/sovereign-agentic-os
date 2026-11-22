@@ -37,11 +37,11 @@ import { WRITE_TOOL_NAMES } from '@core/mcp/write-tool-meta';
 export const READ_TOOLS: readonly string[] = [
   'diff_dataset_data', 'diff_versions', 'get_agent_run', 'get_agent_system', 'get_app_spec', 'get_connection', 'get_cost',
   'get_dagster_run', 'get_dashboard', 'get_dataset', 'get_dataset_versions', 'get_engineering_view', 'get_file', 'get_guide',
-  'get_history', 'get_knowledge', 'get_lineage', 'get_metric', 'get_monitoring_overview', 'get_monitoring_panels',
+  'get_history', 'get_knowledge', 'get_lineage', 'get_workflow', 'get_metric', 'get_monitoring_overview', 'get_monitoring_panels',
   'get_operating_manual', 'get_policy_view', 'get_request', 'get_run_trace', 'get_software',
   'get_sync_status', 'get_version', 'list_agent_systems', 'list_approvals',
   'list_capabilities', 'list_connection_templates', 'list_connections', 'list_dashboards',
-  'list_datasets', 'list_files', 'list_knowledge', 'list_metrics', 'list_operating_manual_versions',
+  'list_datasets', 'list_files', 'list_knowledge', 'list_workflows', 'list_metrics', 'list_operating_manual_versions',
   'list_runs', 'list_software', 'profile_dataset', 'query_data', 'query_metric', 'read_app_files',
   'search_files', 'search_knowledge', 'whoami',
   // The caller's own Home chat conversations (scoped by user id inside the store).
@@ -150,7 +150,7 @@ export function needsUserConfirm(name: string): boolean {
  */
 export const SESSION_ALLOWABLE_TOOLS: Readonly<Record<string, string>> = {
   create_dataset: 'creates a NEW private dataset; sharing is the separate promotion path',
-  author_knowledge: 'creates a NEW Personal (draft) business process — `createWorkflow`, never an update of an existing one',
+  author_workflow: 'creates a NEW Personal (draft) workflow — `createWorkflow`, never an update of an existing one',
   upload_file: 'creates a NEW private file in the Files tab',
   create_agent_system: 'creates a NEW agent system, always My-scope and owner-only',
   create_software: 'creates a NEW app record, Personal until promoted',

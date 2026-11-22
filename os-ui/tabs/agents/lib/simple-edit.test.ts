@@ -114,9 +114,9 @@ test('addArtifactGrant grants Data at Read and is idempotent', () => {
 
 test('addArtifactGrant / removeArtifactGrant round-trip on Knowledge', () => {
   const sys = parseSystem(BASE);
-  const added = addArtifactGrant(sys, 'knowledge', 'wf_playbook');
-  assert.deepEqual(added.grants.knowledge, [{ id: 'wf_playbook', capability: 'Read' }]);
-  const removed = removeArtifactGrant(added, 'knowledge', 'wf_playbook');
+  const added = addArtifactGrant(sys, 'knowledge', 'pk_playbook');
+  assert.deepEqual(added.grants.knowledge, [{ id: 'pk_playbook', capability: 'Read' }]);
+  const removed = removeArtifactGrant(added, 'knowledge', 'pk_playbook');
   assert.deepEqual(removed.grants.knowledge, []);
   // removing a non-grant is a no-op
   assert.deepEqual(removeArtifactGrant(sys, 'data', 'nope').grants.data, sys.grants.data);
@@ -186,8 +186,8 @@ test('re-toggling Read/Write keeps a previously-picked data layer', () => {
 });
 
 test('non-data kinds ignore the layer argument', () => {
-  const sys = setArtifactGrant(parseSystem(BASE), 'knowledge', 'wf_playbook', false, 'silver');
-  assert.equal(sys.grants.knowledge[0].id, 'wf_playbook');
+  const sys = setArtifactGrant(parseSystem(BASE), 'knowledge', 'pk_playbook', false, 'silver');
+  assert.equal(sys.grants.knowledge[0].id, 'pk_playbook');
   assert.equal((sys.grants.knowledge[0] as { layer?: string }).layer, undefined);
 });
 

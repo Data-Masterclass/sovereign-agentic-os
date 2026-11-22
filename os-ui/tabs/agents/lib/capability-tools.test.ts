@@ -21,14 +21,16 @@ test('Read grants provision only read + discovery tools', () => {
   assert.deepEqual(toolsForGrant('data', 'Read'), ['query_data', 'list_datasets', 'get_dataset', 'profile_dataset']);
   assert.deepEqual(toolsForGrant('files', 'Read'), ['list_files', 'search_files', 'get_file']);
   // no write tool leaks into a Read grant
-  assert.ok(!toolsForGrant('knowledge', 'Read').includes('author_knowledge'));
+  assert.ok(!toolsForGrant('knowledge', 'Read').includes('save_knowledge_note'));
+  assert.ok(!toolsForGrant('workflows', 'Read').includes('author_workflow'));
 });
 
 test('Write grants add the create/write tools on top of read', () => {
   for (const cap of ['Write-approval', 'Write-bounded'] as const) {
     const data = toolsForGrant('data', cap);
     assert.ok(data.includes('query_data') && data.includes('create_dataset') && data.includes('ingest_dataset'));
-    assert.ok(toolsForGrant('knowledge', cap).includes('author_knowledge'));
+    assert.ok(toolsForGrant('knowledge', cap).includes('save_knowledge_note'));
+    assert.ok(toolsForGrant('workflows', cap).includes('author_workflow'));
     assert.ok(toolsForGrant('files', cap).includes('upload_file'));
     assert.ok(toolsForGrant('connections', cap).includes('create_connection'));
     // METRICS is now a grantable WRITE: a write grant provisions define_metric (on top of
@@ -92,7 +94,8 @@ type ChipGrants = Pick<Grants, 'data' | 'knowledge' | 'files' | 'connections' | 
 /** A grants object where every resource list is populated. */
 const FULL_GRANTS: ChipGrants = {
   data: [{ id: 'ds_sales', capability: 'Read' }],
-  knowledge: [{ id: 'wf_playbook', capability: 'Read' }],
+  knowledge: [{ id: 'pk_playbook', capability: 'Read' }],
+  workflows: [{ id: 'wf_refunds', capability: 'Read' }],
   files: [{ id: '', capability: 'Read', folder: { path: '/reports', scope: 'domain' } }],
   connections: [{ id: 'conn_crm', capability: 'Read' }],
   metrics: [{ id: 'mt_revenue', capability: 'Read' }],
@@ -290,4 +293,44 @@ test('CLAIM: the connection chip does not promise to call the external system', 
   // Its tools only list, read and test a connection; none executes a call against it.
   assert.ok(chip.tools.every((t) => /^(list|get|test)_/.test(t)), `unexpected tool in ${chip.tools.join(', ')}`);
   assert.doesNotMatch(chip.description, /^Call\b/, 'the description must not promise a call');
+});
+
+// ─── Workflows and knowledge are two artifacts: separate grants, separate tools ─────────
+
+test('NEGATIVE TWIN: a knowledge-WRITE grant hands out the note write only — never a workflow-authoring tool', () => {
+  for (const cap of ['Write-approval', 'Write-bounded'] as const) {
+    const tools = toolsForGrant('knowledge', cap);
+    assert.ok(tools.includes('save_knowledge_note'), 'the knowledge write is the note write');
+    for (const t of ['author_workflow', 'index_workflow', 'publish_workflow', 'retire_workflow', 'list_workflows', 'get_workflow',
+      'author_knowledge', 'index_knowledge', 'publish_knowledge', 'retire_knowledge']) {
+      assert.ok(!tools.includes(t), `a knowledge grant must not provision ${t}`);
+    }
+  }
+});
+
+test('a workflow grant hands out the workflow tools — and never the note write', () => {
+  const read = toolsForGrant('workflows', 'Read');
+  assert.deepEqual(read, ['list_workflows', 'get_workflow']);
+  const write = toolsForGrant('workflows', 'Write-bounded');
+  assert.ok(write.includes('author_workflow') && write.includes('index_workflow'));
+  assert.ok(!write.includes('save_knowledge_note'), 'a workflow grant must not provision the note write');
+  // The promotion tool stays a governed hand-off, never auto-provisioned.
+  assert.ok(!write.includes('publish_workflow') && !write.includes('retire_workflow'));
+});
+
+test('the knowledge chip offers notes only; the workflows chip offers workflows only', () => {
+  const k = CAPABILITY_CHIPS.find((c) => c.id === 'search-knowledge')!;
+  const w = CAPABILITY_CHIPS.find((c) => c.id === 'read-workflows')!;
+  assert.equal(w.grantKind, 'workflows');
+  assert.equal(k.grantKind, 'knowledge');
+  assert.ok(!k.tools.some((t) => /workflow/.test(t)), 'no workflow tool under the knowledge chip');
+  assert.ok(!w.tools.some((t) => /knowledge/.test(t)), 'no knowledge tool under the workflows chip');
+  assert.ok(!/workflow/i.test(k.description) && !/knowledge/i.test(w.description), 'the chip texts keep the two words apart');
+});
+
+test('a workflows-only team is offered the workflows chip and NOT the knowledge chip (and vice versa)', () => {
+  const onlyWf = capabilityChipsForGrants({ ...FULL_GRANTS, knowledge: [], data: [], files: [], connections: [], metrics: [], plan: [] }, null).map((c) => c.id);
+  assert.deepEqual(onlyWf, ['read-workflows']);
+  const onlyK = capabilityChipsForGrants({ ...FULL_GRANTS, workflows: [], data: [], files: [], connections: [], metrics: [], plan: [] }, null).map((c) => c.id);
+  assert.deepEqual(onlyK, ['search-knowledge']);
 });

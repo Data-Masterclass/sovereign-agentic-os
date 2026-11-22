@@ -143,7 +143,9 @@ async function grantDependents(kind: ContextKind, artifactId: string): Promise<D
     }
   }
   for (const sys of listAllSystemsInternal()) {
-    if (agentGrantList(sys.grants, kind).some((g) => g.id === artifactId && !g.folder)) {
+    // An agent system grants a workflow under `grants.workflows` (a note under `grants.knowledge`).
+    const list = artifactId.startsWith('wf_') ? (sys.grants.workflows ?? []) : agentGrantList(sys.grants, kind);
+    if (list.some((g) => g.id === artifactId && !g.folder)) {
       out.push({ kind: 'agent', id: sys.id, name: sys.name, tab: 'agents' });
     }
   }

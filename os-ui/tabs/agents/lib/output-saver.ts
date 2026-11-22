@@ -157,7 +157,7 @@ export function outputSaveSystem(input: System): System {
       }
     }
   }
-  sys.grants = { tools: [...tools], data: grants.data, knowledge: grants.knowledge, files: grants.files, metrics: [], connections: [], plan: [] };
+  sys.grants = { tools: [...tools], data: grants.data, knowledge: grants.knowledge, files: grants.files, metrics: [], connections: [], workflows: [], plan: [] };
   return sys;
 }
 

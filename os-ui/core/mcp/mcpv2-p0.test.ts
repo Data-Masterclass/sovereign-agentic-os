@@ -79,7 +79,7 @@ test('P0.1 every enqueue-write returns the uniform PendingHandle shape (dataset 
   const dsId = await makeDataset();
   const p1 = await call<Pending>(cara, 'request_promotion', { kind: 'dataset', id: dsId });
   // ladder path (knowledge — formerly one-step direct)
-  const wf = await call<{ id: string }>(cara, 'author_knowledge', { title: 'Refunds' });
+  const wf = await call<{ id: string }>(cara, 'author_workflow', { title: 'Refunds' });
   const p2 = await call<Pending>(cara, 'request_promotion', { kind: 'knowledge', id: wf.id });
 
   for (const p of [p1, p2]) {
@@ -121,7 +121,7 @@ test('P0.1 every enqueue-write returns the uniform PendingHandle shape (dataset 
 // ============================ 2. QUEUE TOOLS ==================================
 test('P0.2 get_request / list_approvals are canSee-scoped; no existence leak', async () => {
   resetAll();
-  const wf = await call<{ id: string }>(cara, 'author_knowledge', { title: 'Flow' });
+  const wf = await call<{ id: string }>(cara, 'author_workflow', { title: 'Flow' });
   const filed = await call<Pending>(cara, 'request_promotion', { kind: 'knowledge', id: wf.id });
 
   // Owner sees their own request.
@@ -150,7 +150,7 @@ test('P0.2 get_request / list_approvals are canSee-scoped; no existence leak', a
 // ============================ 3. LADDER — TWO-STEP PER KIND ====================
 test('P0.3 knowledge ladder: creator files → domain_admin approves → LIVE Shared (effect ran)', async () => {
   resetAll();
-  const wf = await call<{ id: string }>(cara, 'author_knowledge', { title: 'Refund handling' });
+  const wf = await call<{ id: string }>(cara, 'author_workflow', { title: 'Refund handling' });
   const filed = await call<Pending>(cara, 'request_promotion', { kind: 'knowledge', id: wf.id });
   assert.equal(filed.status, 'pending');
 
@@ -161,14 +161,14 @@ test('P0.3 knowledge ladder: creator files → domain_admin approves → LIVE Sh
   assert.equal(decided.effect.live, true, 'the ladder effect is LIVE (not a stub)');
 
   // Read back through the governed store: it is now Shared/live.
-  const seen = await call<{ workflow: { visibility: string; status: string } }>(ben, 'get_knowledge', { workflowId: wf.id });
+  const seen = await call<{ workflow: { visibility: string; status: string } }>(ben, 'get_workflow', { workflowId: wf.id });
   assert.equal(seen.workflow.visibility, 'Shared');
   assert.equal(seen.workflow.status, 'live');
 });
 
 test('P0.3 owner-only trigger: a domain peer (edit rights, NOT owner) cannot file the promotion', async () => {
   resetAll();
-  const wf = await call<{ id: string }>(cara, 'author_knowledge', { title: 'Owned by cara' });
+  const wf = await call<{ id: string }>(cara, 'author_workflow', { title: 'Owned by cara' });
   // ben is a builder in sales (can edit cara's draft) — but he is NOT the owner.
   const e = err(await raw(ben, 'request_promotion', { kind: 'knowledge', id: wf.id }));
   assert.equal(e.code, 'forbidden');
@@ -177,7 +177,7 @@ test('P0.3 owner-only trigger: a domain peer (edit rights, NOT owner) cannot fil
 
 test('P0.3 decide gating: creator forbidden (floor); cross-domain builder cannot approve', async () => {
   resetAll();
-  const wf = await call<{ id: string }>(cara, 'author_knowledge', { title: 'X' });
+  const wf = await call<{ id: string }>(cara, 'author_workflow', { title: 'X' });
   const filed = await call<Pending>(cara, 'request_promotion', { kind: 'knowledge', id: wf.id });
 
   // A creator hits the builder floor.
@@ -193,7 +193,7 @@ test('P0.3 decide gating: creator forbidden (floor); cross-domain builder cannot
 test('P0.3 certification rung: builder-in-domain files → ADMIN approves; builder cannot certify', async () => {
   resetAll();
   // Promote to Shared first (rung 1).
-  const wf = await call<{ id: string }>(cara, 'author_knowledge', { title: 'Certify me' });
+  const wf = await call<{ id: string }>(cara, 'author_workflow', { title: 'Certify me' });
   const p = await call<Pending>(cara, 'request_promotion', { kind: 'knowledge', id: wf.id });
   await call(dana, 'decide_approval', { requestId: p.requestId, decision: 'approve' });
 
@@ -215,7 +215,7 @@ test('P0.3 certification rung: builder-in-domain files → ADMIN approves; build
   const decided = await call<{ decided: string; effect: { live: boolean } }>(ada, 'decide_approval', { requestId: cert.requestId, decision: 'approve' });
   assert.equal(decided.decided, 'approved');
   assert.equal(decided.effect.live, true);
-  const seen = await call<{ workflow: { visibility: string } }>(ada, 'get_knowledge', { workflowId: wf.id });
+  const seen = await call<{ workflow: { visibility: string } }>(ada, 'get_workflow', { workflowId: wf.id });
   assert.equal(seen.workflow.visibility, 'Marketplace');
 });
 
@@ -318,20 +318,20 @@ test('FIX1 agent_system rides the ladder: creator files → the admin (edit righ
 // trigger) — knowledge canEdit would otherwise let them, so the seam must guard it.
 test('FIX2 owner-only one-shot: a domain_admin cannot publish a creator’s PRIVATE draft without a filing', async () => {
   resetAll();
-  const wf = await call<{ id: string }>(cara, 'author_knowledge', { title: 'Cara private' });
+  const wf = await call<{ id: string }>(cara, 'author_workflow', { title: 'Cara private' });
 
   // dana is a domain_admin in sales (canEdit cara's draft, passes the publish role floor)
-  // — but not the owner and no request has been filed → publish_knowledge is a typed forbidden.
-  const e = err(await raw(dana, 'publish_knowledge', { workflowId: wf.id }));
+  // — but not the owner and no request has been filed → publish_workflow is a typed forbidden.
+  const e = err(await raw(dana, 'publish_workflow', { workflowId: wf.id }));
   assert.equal(e.code, 'forbidden');
   assert.match(e.reason, /owner/i);
   // The draft is untouched — still Personal.
-  const seen = await call<{ workflow: { visibility: string } }>(cara, 'get_knowledge', { workflowId: wf.id });
+  const seen = await call<{ workflow: { visibility: string } }>(cara, 'get_workflow', { workflowId: wf.id });
   assert.equal(seen.workflow.visibility, 'Personal');
 
-  // Once the OWNER files, the domain_admin’s publish_knowledge becomes the legit approve-half.
+  // Once the OWNER files, the domain_admin’s publish_workflow becomes the legit approve-half.
   const filed = await call<Pending>(cara, 'request_promotion', { kind: 'knowledge', id: wf.id });
-  const pub = await call<{ visibility: string }>(dana, 'publish_knowledge', { workflowId: wf.id });
+  const pub = await call<{ visibility: string }>(dana, 'publish_workflow', { workflowId: wf.id });
   assert.equal(pub.visibility, 'Shared');
   // The filed request is closed out (no lingering pending duplicate).
   const after = await call<{ status: string }>(cara, 'get_request', { requestId: filed.requestId });
@@ -339,17 +339,17 @@ test('FIX2 owner-only one-shot: a domain_admin cannot publish a creator’s PRIV
 });
 
 // HIGH 5: the tier-derived rung can never diverge from the caller's stated intent.
-test('FIX5 rung intent: publish_knowledge on an already-Shared workflow is a CONFLICT, never a silent certify', async () => {
+test('FIX5 rung intent: publish_workflow on an already-Shared workflow is a CONFLICT, never a silent certify', async () => {
   resetAll();
   // dana (domain_admin) owns + publishes her own draft → Shared.
-  const wf = await call<{ id: string }>(dana, 'author_knowledge', { title: 'Dana flow' });
-  await call(dana, 'publish_knowledge', { workflowId: wf.id });
+  const wf = await call<{ id: string }>(dana, 'author_workflow', { title: 'Dana flow' });
+  await call(dana, 'publish_workflow', { workflowId: wf.id });
 
-  // A second publish_knowledge (intent=promote) on a Shared workflow must NOT silently
+  // A second publish_workflow (intent=promote) on a Shared workflow must NOT silently
   // certify it to the marketplace — it is a typed conflict.
-  const e = err(await raw(dana, 'publish_knowledge', { workflowId: wf.id }));
+  const e = err(await raw(dana, 'publish_workflow', { workflowId: wf.id }));
   assert.equal(e.code, 'conflict');
-  const seen = await call<{ workflow: { visibility: string } }>(dana, 'get_knowledge', { workflowId: wf.id });
+  const seen = await call<{ workflow: { visibility: string } }>(dana, 'get_workflow', { workflowId: wf.id });
   assert.notEqual(seen.workflow.visibility, 'Marketplace', 'a promote-intent call never jumps to the marketplace');
 });
 
@@ -359,9 +359,9 @@ import { __resetStore as resetKnowledgeForTacit } from '@tabs/knowledge/lib/stor
 import { getTacit } from '@tabs/knowledge/lib/store';
 import { chunkWorkflow } from '@tabs/knowledge/lib/chunk';
 
-test('TACIT.1 author_knowledge with per-step tacit persists inline and is parseable', async () => {
+test('TACIT.1 author_workflow with per-step tacit persists inline and is parseable', async () => {
   resetAll();
-  const wf = await call<{ id: string }>(cara, 'author_knowledge', {
+  const wf = await call<{ id: string }>(cara, 'author_workflow', {
     title: 'Invoice reconciliation',
     domain: 'sales',
     steps: [
@@ -381,16 +381,16 @@ test('TACIT.1 author_knowledge with per-step tacit persists inline and is parsea
   });
 
   // The workflow parses and the per-step tacit is round-tripped through workflow.md.
-  const view = await call<{ workflow: { steps: { title: string; tacit: string }[] } }>(cara, 'get_knowledge', { workflowId: wf.id });
+  const view = await call<{ workflow: { steps: { title: string; tacit: string }[] } }>(cara, 'get_workflow', { workflowId: wf.id });
   const step0 = view.workflow.steps[0];
   assert.ok(step0.tacit.includes('ERP export'), 'per-step tacit is persisted and round-trips through workflow.md');
   assert.equal(view.workflow.steps[1].tacit, '', 'step without tacit has empty string');
 });
 
-test('TACIT.2 author_knowledge with workflow-level tacit persists in the sibling tacit.md', async () => {
+test('TACIT.2 author_workflow with workflow-level tacit persists in the sibling tacit.md', async () => {
   resetAll();
   const wfTacit = '## Seasonal note\nVolume spikes 3× in December.\n\n## System quirk\nAuto-closes after 90 days.';
-  const wf = await call<{ id: string }>(cara, 'author_knowledge', {
+  const wf = await call<{ id: string }>(cara, 'author_workflow', {
     title: 'Refund escalation',
     domain: 'sales',
     tacit: wfTacit,
@@ -405,7 +405,7 @@ test('TACIT.2 author_knowledge with workflow-level tacit persists in the sibling
 test('TACIT.3 per-step tacit and workflow-level tacit both produce indexable tacit units', async () => {
   resetAll();
   const wfTacit = '## Cultural note\nThe support team calls this the "Friday problem" — volume drops 40% on Fridays.';
-  const wf = await call<{ id: string }>(cara, 'author_knowledge', {
+  const wf = await call<{ id: string }>(cara, 'author_workflow', {
     title: 'Support triage',
     domain: 'sales',
     steps: [
@@ -419,7 +419,7 @@ test('TACIT.3 per-step tacit and workflow-level tacit both produce indexable tac
   });
 
   // Retrieve the workflow view to get the parsed Workflow object for chunking.
-  const view = await call<{ workflow: { id: string; title: string; steps: { id: string; title: string; actor: string; actor_name: string; inputs: string[]; outputs: string[]; links: unknown[]; rules: unknown[]; tacit: string }[]; rules: unknown[]; visibility: string; status: string; domain: string; version: string; body: string } }>(cara, 'get_knowledge', { workflowId: wf.id });
+  const view = await call<{ workflow: { id: string; title: string; steps: { id: string; title: string; actor: string; actor_name: string; inputs: string[]; outputs: string[]; links: unknown[]; rules: unknown[]; tacit: string }[]; rules: unknown[]; visibility: string; status: string; domain: string; version: string; body: string } }>(cara, 'get_workflow', { workflowId: wf.id });
   const { tacit } = getTacit(wf.id, { id: 'cara', domains: ['sales'], role: 'creator' });
 
   const units = chunkWorkflow({ workflow: view.workflow as Parameters<typeof chunkWorkflow>[0]['workflow'], owner: 'cara', tacit, updatedAt: new Date().toISOString() });

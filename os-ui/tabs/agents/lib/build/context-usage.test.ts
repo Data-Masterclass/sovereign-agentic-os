@@ -31,7 +31,7 @@ test('captures a direct id-arg read with best-effort name from the result', () =
 
 test('tolerates args persisted as a JSON string (client fallback path)', () => {
   const nodes: UsageNode[] = [
-    { steps: [{ tool: 'get_knowledge', args: JSON.stringify({ knowledgeId: 'ku_1' }), result: '{"title":"Policy"}' }] },
+    { steps: [{ tool: 'get_knowledge', args: JSON.stringify({ id: 'ku_1' }), result: '{"title":"Policy"}' }] },
   ];
   const u = deriveContextUsage(nodes);
   assert.equal(u.items[0].id, 'ku_1');
@@ -184,7 +184,7 @@ test('hints are clipped to a single short line (no raw blobs)', () => {
 test('deriveContextUsageByNode attributes context to each agent separately', () => {
   const nodes: UsageNode[] = [
     { node: 'researcher', steps: [{ tool: 'get_dataset', args: { datasetId: 'ds_1' }, result: '{"name":"One"}' }] },
-    { node: 'writer', steps: [{ tool: 'get_knowledge', args: { knowledgeId: 'ku_1' }, result: '{"title":"P"}' }] },
+    { node: 'writer', steps: [{ tool: 'get_knowledge', args: { id: 'ku_1' }, result: '{"title":"P"}' }] },
   ];
   const byNode = deriveContextUsageByNode(nodes);
   assert.equal(byNode.length, 2);

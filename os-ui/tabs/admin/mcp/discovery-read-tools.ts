@@ -14,7 +14,9 @@ import {
 // --- Governed read/list lib functions (the EXACT same the UI + /api call) ------
 import { listDatasets, getDataset } from '@tabs/data/lib/store';
 import type { Dataset } from '@tabs/data/lib/dataset-schema';
-import { listWorkflows, getWorkflow } from '@tabs/knowledge/lib/store';
+import { getWorkflow } from '@tabs/knowledge/lib/store';
+import { listPersonalKnowledge, getPersonalKnowledge, ensureHydrated as ensurePersonalKnowledgeHydrated } from '@tabs/knowledge/lib/personal-store';
+import { logDeprecatedTool } from '@core/mcp/deprecated-aliases';
 import { listFiles, getFile, searchFilesHybrid } from '@tabs/files/lib';
 import { listMetrics } from '@tabs/metrics/lib/store';
 import { listDashboards, getDashboard } from '@tabs/dashboards/lib/store';
@@ -283,21 +285,50 @@ export const readTools: McpTool[] = [
     tab: 'knowledge',
     minRole: 'creator',
     description:
-      'List the knowledge business processes you can see (also called: workflows, process workflows, SOPs (Standard Operating Procedures)) — My · Domain · Company. Path: DISCOVERY for the Knowledge golden path (guide: sovereign-os://guide/path/knowledge). Before: whoami. After: get_knowledge, or search_knowledge for content. Governance: read-only, DLS-scoped.',
-    inputSchema: withLifecycleArg(NO_ARGS),
-    call: async (user, args) => lifecycleView('knowledge', args, listWorkflows(P(user))),
+      'List the knowledge notes you can see — the free-form markdown documents of the Knowledge tab (My · Domain · Company), each with its id (pk_…), title and folder. Pass `folder` to list ONE folder (and its subfolders). Path: DISCOVERY for the Knowledge golden path (guide: sovereign-os://guide/path/knowledge). Before: whoami. After: get_knowledge for a note\'s text, or search_knowledge for content across notes. Governance: read-only, scope-checked.',
+    inputSchema: withLifecycleArg({
+      type: 'object',
+      properties: { folder: { type: 'string', description: 'Optional folder path, e.g. "/results".' } },
+      examples: [{}, { folder: '/results' }],
+    }),
+    call: async (user, args) => {
+      await ensurePersonalKnowledgeHydrated();
+      const groups = listPersonalKnowledge(P(user));
+      const folder = str(args.folder).trim();
+      const f = folder ? normaliseFolderPath(folder) : '';
+      const keep = (rows: { folder: string }[]) => (f ? rows.filter((r) => isUnderFolderIgnoringCase(r.folder, f)) : rows);
+      return lifecycleView('knowledge', args, { mine: keep(groups.mine), domain: keep(groups.domain), marketplace: keep(groups.marketplace) });
+    },
   },
   {
     name: 'get_knowledge',
     tab: 'knowledge',
     minRole: 'creator',
     description:
-      'Read one knowledge business process (also called: workflow, process workflow, SOP (Standard Operating Procedure)) you can see — steps, rules, tacit, status. Returns `knowledgeLinks: { links: [{id,title}], unresolved: [{href,label}] }` — the first-class references from THIS process to OTHER Knowledge artifacts, so you can walk a certified bundle deterministically (workflow → rule → term) instead of re-searching; unresolvable links are flagged, not dropped. Path: DISCOVERY for the Knowledge golden path. Before: list_knowledge / search_knowledge. After: index_knowledge or (Builder) publish_knowledge, or get_knowledge on a linked id. Governance: read-only; unseeable id → not_found.',
-    inputSchema: idArg('workflowId', 'Workflow id from list_knowledge.'),
+      'Read one knowledge note you can see — its title, markdown text, folder and scope. Path: DISCOVERY for the Knowledge golden path. Before: list_knowledge / search_knowledge. Governance: read-only; an unseeable id → not_found. A workflow is a different artifact: read it with get_workflow.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'Knowledge note id (pk_…) from list_knowledge or a search_knowledge hit.' },
+        workflowId: { type: 'string', description: 'DEPRECATED, removed next release: a workflow id. Use get_workflow for a workflow.' },
+      },
+      required: ['id'],
+      examples: [{ id: 'pk_ab12cd' }],
+    },
     call: async (user, args) => {
-      const id = str(args.workflowId).trim();
-      if (!id) fail('get_knowledge needs a `workflowId`', 400);
-      return getWorkflow(id, P(user));
+      // Transitional (one release): this tool used to read workflows, under a `workflowId`
+      // argument. A client that still sends one gets the workflow, and the call is logged.
+      const legacy = str(args.workflowId).trim();
+      if (legacy && !str(args.id).trim()) { // a client written before the split: the schema still accepts the old argument
+        logDeprecatedTool('get_knowledge(workflowId)', 'get_workflow', 'mcp', user.id);
+        return getWorkflow(legacy, P(user));
+      }
+      const id = str(args.id).trim();
+      if (!id) fail('get_knowledge needs an `id` (a note id from list_knowledge)', 400);
+      // A workflow id is never read here: it belongs to the Workflows tab and to its own grant kind.
+      if (id.startsWith('wf_')) fail(`${id} is a workflow, not a knowledge note — read it with get_workflow`, 400);
+      await ensurePersonalKnowledgeHydrated();
+      return getPersonalKnowledge(id, P(user));
     },
   },
   {

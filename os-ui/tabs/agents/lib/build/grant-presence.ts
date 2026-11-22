@@ -2,8 +2,8 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  *
  * FEATURE:    A run says when something its agents were granted is gone
- * USER STORY: As the owner of an agent system granted a dataset, a file, a knowledge item, a
- *             metric or a connection that someone has since deleted, I want the run report to say
+ * USER STORY: As the owner of an agent system granted a dataset, a file, a knowledge note, a
+ *             workflow, a metric or a connection that someone has since deleted, I want the run report to say
  *             so before the agents start, by kind and id, instead of finding out from an agent
  *             that "could not find" what it was told to use.
  * ARCHITECTURE:
@@ -15,7 +15,7 @@
  *     both. Any other answer (an outage, a refusal) says nothing rather than guess.
  *   - The warnings join the run's `warnings` (the run report a person reads); they are never put
  *     into an agent's prompt or a tool result.
- *   - Personal notes (`pk_…`) have no `get_*` tool; they are skipped rather than misreported.
+ *   - A knowledge note (`pk_…`) is probed with `get_knowledge`, a workflow (`wf_…`) with `get_workflow`.
  */
 import type { CurrentUser } from '@core/kernel/auth';
 import { handleRpc as realHandleRpc, type JsonRpcResponse } from '@core/mcp/server';
@@ -23,10 +23,11 @@ import type { System } from '@tabs/agents/lib/system-schema';
 
 type Probe = { kind: string; noun: string; tool: string; arg: string };
 
-const PROBES: Record<'data' | 'files' | 'knowledge' | 'metrics' | 'connections', Probe> = {
+const PROBES: Record<'data' | 'files' | 'knowledge' | 'workflows' | 'metrics' | 'connections', Probe> = {
   data: { kind: 'data', noun: 'dataset', tool: 'get_dataset', arg: 'datasetId' },
   files: { kind: 'files', noun: 'file', tool: 'get_file', arg: 'fileId' },
-  knowledge: { kind: 'knowledge', noun: 'knowledge item', tool: 'get_knowledge', arg: 'workflowId' },
+  knowledge: { kind: 'knowledge', noun: 'knowledge note', tool: 'get_knowledge', arg: 'id' },
+  workflows: { kind: 'workflows', noun: 'workflow', tool: 'get_workflow', arg: 'workflowId' },
   metrics: { kind: 'metrics', noun: 'metric', tool: 'get_metric', arg: 'metricId' },
   connections: { kind: 'connections', noun: 'connection', tool: 'get_connection', arg: 'connId' },
 };
@@ -48,7 +49,6 @@ export async function missingGrantWarnings(
     const grants = (sys.grants[lane] ?? []) as { id?: string; folder?: unknown }[];
     for (const g of grants) {
       if (!g.id || g.folder) continue;
-      if (lane === 'knowledge' && g.id.startsWith('pk_')) continue;
       let res: unknown;
       try {
         res = await call(user, { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: probe.tool, arguments: { [probe.arg]: g.id } } });

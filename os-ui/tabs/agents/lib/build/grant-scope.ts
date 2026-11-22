@@ -34,8 +34,8 @@ import { sqlTableRefs } from '@tabs/agents/lib/build/sql-tables';
 export type FolderKind = 'files' | 'data' | 'knowledge';
 
 /** The governed resource kinds a system can be granted (`grants.*` minus `tools`). */
-export type ResourceKind = 'data' | 'knowledge' | 'metrics' | 'connections' | 'files' | 'plan';
-export const RESOURCE_KINDS: readonly ResourceKind[] = ['data', 'knowledge', 'metrics', 'connections', 'files', 'plan'];
+export type ResourceKind = 'data' | 'knowledge' | 'workflows' | 'metrics' | 'connections' | 'files' | 'plan';
+export const RESOURCE_KINDS: readonly ResourceKind[] = ['data', 'knowledge', 'workflows', 'metrics', 'connections', 'files', 'plan'];
 
 /** What a call does to the resource it names. */
 export type Access = 'read' | 'write';
@@ -43,7 +43,8 @@ export type Access = 'read' | 'write';
 /** How a kind is named to the model. */
 const KIND_NOUN: Record<ResourceKind, string> = {
   data: 'dataset',
-  knowledge: 'knowledge item',
+  knowledge: 'knowledge note',
+  workflows: 'workflow',
   metrics: 'metric',
   connections: 'connection',
   files: 'file',
@@ -73,7 +74,9 @@ export type ToolResourceRule = {
    * The result is a list: rows of another id are removed. `rowsKey` names the array (strict —
    * a row without an id is removed too); absent, every array of rows carrying `idPath` is filtered.
    */
-  filter?: { kind: ResourceKind; idPath: string[]; rowsKey?: string };
+  filter?: { kind: ResourceKind; idPath: string[]; rowsKey?: string; alt?: { prefix: string; kind: ResourceKind } };
+  // `alt`: a list whose rows are of two artifacts (a search over an index that holds both): a row
+  // whose id starts with `alt.prefix` is checked against `alt.kind`'s grants, every other row against `kind`'s.
   /** The call creates a NEW artifact of this kind; its id becomes usable for the rest of the run. */
   creates?: ResourceKind[];
   /** Acts across a whole kind with no id to check: refused while any of these kinds is restricted. */
@@ -133,25 +136,33 @@ export const TOOL_RESOURCES: Readonly<Record<string, ToolResourceRule>> = {
   find: { broad: { kinds: ['data', 'metrics', 'knowledge', 'files', 'connections'], why: 'it searches every kind of artifact the running user can see' } },
   suggest_metrics: { broad: { kinds: ['data', 'metrics'], why: 'it reads every dataset and metric the running user can see' } },
   // ------------------------------------------------------------- knowledge --
+  // A knowledge NOTE (`pk_…`). A workflow (`wf_…`) is a different artifact with its own grant kind below.
   list_knowledge: lists('knowledge'),
-  get_knowledge: reads('knowledge', 'workflowId'),
-  search_knowledge: { filter: { kind: 'knowledge', rowsKey: 'hits', idPath: ['unit', 'provenance', 'workflowId'] } },
-  index_knowledge: writes('knowledge', 'workflowId'),
-  publish_knowledge: writes('knowledge', 'workflowId'),
-  retire_knowledge: writes('knowledge', 'workflowId'),
-  author_knowledge: { creates: ['knowledge'] },
+  // `workflowId` is the deprecated spelling (the tool reads a workflow then, and says so in the log): it
+  // is checked against the WORKFLOW grants, never waved through.
+  get_knowledge: { ids: [id('knowledge', 'id', 'read'), id('workflows', 'workflowId', 'read')] },
+  // The index holds notes and indexed workflows: each hit is checked against its own artifact's grants.
+  search_knowledge: { filter: { kind: 'knowledge', rowsKey: 'hits', idPath: ['unit', 'provenance', 'workflowId'], alt: { prefix: 'wf_', kind: 'workflows' } } },
   // A note is filed into a folder of My knowledge, so a writable knowledge folder confines it.
-  // (`author_knowledge` creates a business process, which has no folder — nothing to confine.)
   save_knowledge_note: { folderWrite: { arg: 'folder', kind: 'knowledge' }, creates: ['knowledge'] },
-  import_okf_bundle: { creates: ['knowledge'] },
-  export_okf_bundle: { ids: [id('knowledge', 'workflowId', 'read')], creates: ['files'] },
+  // OKF import lands workflows AND notes at Personal tier: both kinds are created.
+  import_okf_bundle: { creates: ['knowledge', 'workflows'] },
+  export_okf_bundle: { ids: [id('workflows', 'workflowId', 'read')], creates: ['files'] },
+  // ------------------------------------------------------------- workflows --
+  list_workflows: lists('workflows'),
+  get_workflow: reads('workflows', 'workflowId'),
+  index_workflow: writes('workflows', 'workflowId'),
+  publish_workflow: writes('workflows', 'workflowId'),
+  retire_workflow: writes('workflows', 'workflowId'),
+  // A workflow has no folder — nothing to confine.
+  author_workflow: { creates: ['workflows'] },
   // ----------------------------------------------------------------- files --
   list_files: lists('files'),
   search_files: lists('files'),
   get_file: reads('files', 'fileId'),
   upload_file: { folderWrite: { arg: 'folder' }, creates: ['files'] },
-  reindex_corpus: { broad: { kinds: ['files', 'knowledge'], why: 'it re-indexes a whole tenant corpus' } },
-  delete_domain: { broad: { kinds: ['data', 'knowledge', 'metrics', 'connections', 'files'], why: 'it deletes a whole domain (admin only, closed to agent runs)' } },
+  reindex_corpus: { broad: { kinds: ['files', 'knowledge', 'workflows'], why: 'it re-indexes a whole tenant corpus' } },
+  delete_domain: { broad: { kinds: ['data', 'knowledge', 'workflows', 'metrics', 'connections', 'files'], why: 'it deletes a whole domain (admin only, closed to agent runs)' } },
   // ----------------------------------------------------------- connections --
   list_connections: lists('connections'),
   get_connection: reads('connections', 'connId'),
@@ -240,12 +251,21 @@ const KIND_WORD: Readonly<Record<string, ResourceKind>> = {
   dataset: 'data',
   data: 'data',
   knowledge: 'knowledge',
-  workflow: 'knowledge',
+  // `kind: 'knowledge'` with a `wf_…` id is a workflow (see `kindForRef`); the plain words are:
+  workflow: 'workflows',
   personal_knowledge: 'knowledge',
   metric: 'metrics',
   connection: 'connections',
   file: 'files',
 };
+
+/**
+ * A polymorphic tool's `kind: 'knowledge'` older spelling named a workflow (`wf_…`) too. The id decides:
+ * a `wf_…` id is a workflow and is checked against the workflow grants, whatever the kind word said.
+ */
+function kindForRef(kind: ResourceKind | undefined, rid: string | undefined): ResourceKind | undefined {
+  return kind === 'knowledge' && rid && rid.startsWith('wf_') ? 'workflows' : kind;
+}
 
 // ------------------------------------------------------------------ scope --
 
@@ -319,6 +339,7 @@ export function grantScopeOf(sys: System, createdSeed?: Partial<Record<ResourceK
   const kinds = {
     data: kindScope(g.data),
     knowledge: kindScope(g.knowledge),
+    workflows: kindScope(g.workflows ?? []),
     metrics: kindScope(g.metrics),
     connections: kindScope(g.connections),
     files: kindScope(g.files),
@@ -331,7 +352,7 @@ export function grantScopeOf(sys: System, createdSeed?: Partial<Record<ResourceK
     list
       .filter((f) => f.folder && enabled(f.capability))
       .map((f) => ({ path: normaliseFolderPath(f.folder!.path), scope: f.folder!.scope, write: canWrite(f.capability) }));
-  const created = { data: new Set<string>(), knowledge: new Set<string>(), metrics: new Set<string>(), connections: new Set<string>(), files: new Set<string>(), plan: new Set<string>() };
+  const created = { data: new Set<string>(), knowledge: new Set<string>(), workflows: new Set<string>(), metrics: new Set<string>(), connections: new Set<string>(), files: new Set<string>(), plan: new Set<string>() };
   for (const k of RESOURCE_KINDS) for (const v of createdSeed?.[k] ?? []) created[k].add(v);
   return { kinds, folders, createFolders: { data: foldersOf(g.data), knowledge: foldersOf(g.knowledge) }, created };
 }
@@ -485,8 +506,8 @@ export async function checkGrantScope(
 
   if (rule.kindId) {
     const word = typeof a[rule.kindId.kindArg] === 'string' ? (a[rule.kindId.kindArg] as string).trim().toLowerCase() : '';
-    const kind = KIND_WORD[word];
     const [rid] = argIds(a, rule.kindId.idArg);
+    const kind = kindForRef(KIND_WORD[word], rid);
     if (kind && rid) {
       const why = await denyReason(kind, rid, rule.kindId.access);
       if (why) return refuse(why, kind, rid);
@@ -496,8 +517,8 @@ export async function checkGrantScope(
   if (rule.ref) {
     const raw = typeof a[rule.ref.arg] === 'string' ? (a[rule.ref.arg] as string).trim() : '';
     const cut = raw.indexOf(':');
-    const kind = cut > 0 ? KIND_WORD[raw.slice(0, cut).toLowerCase()] : undefined;
     const rid = cut > 0 ? raw.slice(cut + 1).trim() : '';
+    const kind = kindForRef(cut > 0 ? KIND_WORD[raw.slice(0, cut).toLowerCase()] : undefined, rid);
     if (kind && rid) {
       const why = await denyReason(kind, rid, rule.ref.access);
       if (why) return refuse(why, kind, rid);
@@ -589,20 +610,25 @@ export async function checkGrantScope(
   const filter = rule.filter;
   if (filter) {
     const ks = scope.kinds[filter.kind];
+    const alt = filter.alt;
+    const altKs = alt ? scope.kinds[alt.kind] : null;
+    const kindOfRow = (rid: unknown): ResourceKind => (alt && typeof rid === 'string' && rid.startsWith(alt.prefix) ? alt.kind : filter.kind);
     // A metric follows its dataset (see `denyReason`): a dataset restriction narrows the metric list too.
     const metricsFollowData = filter.kind === 'metrics' && !ks.restricted && scope.kinds.data.restricted;
-    const active = filter.kind === 'files' ? scope.folders.length > 0 || ks.restricted : ks.restricted || ks.denied.size > 0 || metricsFollowData;
+    const active = filter.kind === 'files' ? scope.folders.length > 0 || ks.restricted : ks.restricted || ks.denied.size > 0 || metricsFollowData || !!(altKs && (altKs.restricted || altKs.denied.size > 0));
     if (active) {
       const keepFiles = filter.kind === 'files' ? new Set([...filesIn(scope.folders, await files(), false), ...ks.read]) : null;
       const keep = (rid: unknown): boolean => {
         // A row that names no item: removed under a restriction (it cannot be shown to be granted),
         // kept when the only thing in force is a list of switched-off ids.
-        if (typeof rid !== 'string' || !rid) return !(ks.restricted || keepFiles !== null || metricsFollowData);
-        if (scope.created[filter.kind].has(rid)) return true;
-        if (ks.denied.has(rid)) return false;
+        if (typeof rid !== 'string' || !rid) return !(ks.restricted || !!altKs?.restricted || keepFiles !== null || metricsFollowData);
+        const rowKind = kindOfRow(rid);
+        const rks = scope.kinds[rowKind];
+        if (scope.created[rowKind].has(rid)) return true;
+        if (rks.denied.has(rid)) return false;
         if (keepFiles) return keepFiles.has(rid);
         if (metricsFollowData) return [...scope.kinds.data.read, ...scope.created.data].some((d) => rid.startsWith(`${d}.`));
-        return ks.restricted ? ks.read.has(rid) : true;
+        return rks.restricted ? rks.read.has(rid) : true;
       };
       const noun = KIND_NOUN[filter.kind];
       verdict.shape = (text) => {
@@ -655,7 +681,8 @@ export async function checkGrantScope(
 /** Result keys that carry the id (or the record) of a newly created artifact, per kind. */
 const CREATED_KEYS: Record<ResourceKind, string[]> = {
   data: ['dataset', 'datasets', 'datasetId'],
-  knowledge: ['workflow', 'workflows', 'workflowId', 'knowledge'],
+  knowledge: ['knowledge', 'note'],
+  workflows: ['workflow', 'workflows', 'workflowId'],
   metrics: ['metric', 'metrics', 'metricId'],
   connections: ['connection', 'connections', 'connId', 'connectionId'],
   files: ['file', 'files', 'fileId', 'asset'],
@@ -709,6 +736,7 @@ export function createdFromSteps(steps: { tool: string; result: string; isError:
 const LABEL: Record<ResourceKind, string> = {
   data: 'datasets',
   knowledge: 'knowledge',
+  workflows: 'workflows',
   metrics: 'metrics',
   connections: 'connections',
   files: 'files',

@@ -10,6 +10,7 @@ import {
   serializeSystem,
   assertGrantsWithinRole,
 } from '@tabs/agents/lib/system-schema';
+import { legacyWorkflowFindings } from '@tabs/agents/lib/legacy-workflow-grants';
 import { canPromote, roleAtLeast } from '@core/kernel/session';
 import { type TemplateKey, templateYaml } from '@tabs/agents/lib/templates';
 import { canManageArtifact, type ArtifactScope } from '@core/policy/edit-scope';
@@ -586,7 +587,7 @@ function starterYaml(name: string, domain: string, visibility: Visibility): stri
     safetyPreset: 'read-only',
     entrypoint: 'assistant',
     state: { channels: { messages: 'add_messages' } },
-    grants: { data: [], knowledge: [], metrics: [], tools: ['search_knowledge'], connections: [], files: [], plan: [] },
+    grants: { data: [], knowledge: [], metrics: [], tools: ['search_knowledge'], connections: [], files: [], workflows: [], plan: [] },
     routing: { overrides: {} },
     agents: [
       {
@@ -667,6 +668,56 @@ export function moveSystemsDomain(
     moved.push(rec.id);
   }
   return moved;
+}
+
+/**
+ * The ONE-TIME rewrite of stored systems from the old workflow/knowledge spelling to the new one
+ * (`wf_…` under `grants.knowledge` → `grants.workflows`; `author_knowledge` → `author_workflow`, …).
+ * The read path already applies the same rule (`parseSystem`), so a system keeps running whether or
+ * not this has run; this makes the stored text say what the system means, so a person reading
+ * `system.yaml` (or the domain repo) sees the real grants.
+ *
+ *   - DRY RUN (`dryRun: true`): reads and reports, writes nothing.
+ *   - IDEMPOTENT: a system with nothing in the old spelling is not touched (no version, no commit),
+ *     so a second pass changes nothing and reports an empty list.
+ *   - Each rewrite snapshots the prior definition (restorable from the version history) and is a
+ *     definition change like any other edit (it reaches the durable mirror and the domain repo).
+ *   - Returns `null` when the registry did not come from the durable mirror: it must not conclude
+ *     "nothing to migrate" from an empty or partial registry.
+ */
+export type WorkflowGrantMigrationReport = {
+  dryRun: boolean;
+  scanned: number;
+  changed: { id: string; domain: string; findings: string[] }[];
+  failed: { id: string; error: string }[];
+};
+
+export function migrateStoredWorkflowGrants(opts: { dryRun?: boolean; actorId?: string } = {}): WorkflowGrantMigrationReport | null {
+  if (hydrationState() !== 'hydrated') return null;
+  ensureSeeded();
+  const dryRun = opts.dryRun === true;
+  const report: WorkflowGrantMigrationReport = { dryRun, scanned: 0, changed: [], failed: [] };
+  for (const rec of state().store.values()) {
+    report.scanned += 1;
+    const findings = legacyWorkflowFindings(rec.yaml);
+    if (findings.length === 0) continue;
+    if (dryRun) {
+      report.changed.push({ id: rec.id, domain: rec.domain, findings });
+      continue;
+    }
+    try {
+      const next = serializeSystem(parseSystem(rec.yaml)); // parse upgrades; serialize writes the new spelling
+      const actorId = opts.actorId ?? 'migration';
+      versions.record(rec.id, actorId, snapshotState(rec), 'migrate workflow grants');
+      rec.yaml = next;
+      rec.updatedAt = now();
+      writeThrough(rec, { action: 'migrate workflow grants', actorId });
+      report.changed.push({ id: rec.id, domain: rec.domain, findings });
+    } catch (e) {
+      report.failed.push({ id: rec.id, error: e instanceof Error ? e.message : String(e) });
+    }
+  }
+  return report;
 }
 
 // ------------------------------------------------------------------- scoping --

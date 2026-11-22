@@ -36,11 +36,13 @@ export type WriteScope = 'personal' | 'domain' | 'company';
  * create/author/upload/build/document/update on a PERSONAL (My) artifact — the
  * runner's own work — and is NOT held.
  *
- *   - `publish_knowledge`  — flips a workflow My→Domain (domain_admin gate).
+ *   - `publish_workflow`   — flips a workflow My→Domain (domain_admin gate). Its deprecated name
+ *                            `publish_knowledge` stays in the set: a held write must never depend on
+ *                            which spelling reached the gate.
  *   - `request_promotion`  — files a My→Domain promotion request (domain_admin).
  *   - `approve_promotion`  — APPLIES a Domain promotion (domain_admin).
  */
-const ESCALATING_DOMAIN_TOOLS = new Set(['publish_knowledge', 'request_promotion', 'approve_promotion']);
+const ESCALATING_DOMAIN_TOOLS = new Set(['publish_workflow', 'publish_knowledge', 'request_promotion', 'approve_promotion']);
 
 /**
  * The writes whose hold is NOT a matter of the agent's rights — held to a human under EVERY

@@ -17,7 +17,6 @@ import {
   accessCap, allowedAccessLevels, capabilityToAccess, clampAccess,
   ACCESS_LABELS, type AccessLevel, type AccessCap,
 } from '@tabs/agents/lib/access-levels';
-import { isWorkflowId } from '@tabs/agents/lib/resource-groups';
 import { scopeLabel, type ScopeKey } from '@core/kernel/scopes';
 import FolderTree, { type FolderSelection } from '@core/ui/core/FolderTree';
 import { normaliseFolderPath } from '@core/kernel/folders';
@@ -71,16 +70,14 @@ export function highestLayer(layers: DataLayer[] | undefined): DataLayer | null 
  * small supplementary add-picker so nothing that was grantable before is lost.
  */
 export function FolderResourcePicker({
-  systemId, system, kind, label, canEdit, onCommit, idFamily, hideLabel,
+  systemId, system, kind, label, canEdit, onCommit, hideLabel,
 }: {
   systemId: string;
   system: System;
-  kind: 'data' | 'knowledge' | 'files';
+  kind: 'data' | 'knowledge' | 'workflows' | 'files';
   label: string;
   canEdit: boolean;
   onCommit: (next: System) => void;
-  /** Knowledge feed only — narrow to workflows (`wf_…`) or knowledge docs (everything else). */
-  idFamily?: 'workflow' | 'knowledge';
   /** Suppress the internal category label — the caller renders a prominent one. */
   hideLabel?: boolean;
 }) {
@@ -101,11 +98,9 @@ export function FolderResourcePicker({
     return () => { alive = false; };
   }, [systemId, kind]);
 
-  // Split the shared knowledge feed so Workflows (own Plan-Items member) and Knowledge
-  // (Context) each show ONLY their own item family. Other kinds pass every item.
-  const inFamily = (id: string) =>
-    !idFamily ? true : idFamily === 'workflow' ? isWorkflowId(id) : !isWorkflowId(id);
-  const items = (feed?.items ?? []).filter((a) => inFamily(a.id));
+  // Workflows (own Plan-Items member) and Knowledge (Context) each have their OWN feed.
+  const inFamily = (_id: string) => true;
+  const items = feed?.items ?? [];
   const allFolders = feed?.folders ?? [];
   // A folder flagged `outsideDomain` exists only because a LIVE grant points at it from
   // outside this system's domain. It is deliberately NOT a tree node: the narrowed feed gives
@@ -135,7 +130,7 @@ export function FolderResourcePicker({
   // THAT GRANT'S LANE (so a folder grant renders as a fully-ticked folder — and a grant on
   // "My files" never ticks anything under "Domain files"). Workflows carry no folders, so the
   // Workflows picker manages item grants only.
-  const managesFolders = idFamily !== 'workflow';
+  const managesFolders = kind !== 'workflows';
   const rootGrantable = kind === 'files';
   const grantList = system.grants[kind];
   const checked = checkedIdsFor(system, kind, treeItems, inFamily);

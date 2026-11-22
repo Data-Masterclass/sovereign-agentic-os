@@ -10,6 +10,7 @@ import {
   type McpTool,
 } from '@core/mcp/server';
 import { WRITE_TOOL_NAMES, WRITE_TOOL_TABS } from '@core/mcp/write-tool-meta';
+import { DEPRECATED_TOOL_ALIASES, currentToolName, logDeprecatedTool } from '@core/mcp/deprecated-aliases';
 import type { ToolExecutor, ToolSpec } from '@core/runtime/agentic';
 import type { ArtifactGrant, System, SafetyPreset } from '@tabs/agents/lib/system-schema';
 import { type Effect } from '@tabs/agents/lib/gateway';
@@ -86,12 +87,21 @@ export const OS_TOOL_ALIASES: Record<string, string> = {
   files_retrieve: 'search_files',
 
   write_file: 'upload_file',
+
+  // The four workflow tools were named `*_knowledge`. A system or a model that still uses the old
+  // name reaches the workflow tool of the same purpose — and only if that tool is granted
+  // (`grants.tools` is migrated on read, see `migrateLegacyWorkflowGrants`). Removed one release later.
+  ...DEPRECATED_TOOL_ALIASES,
 };
 
 /** #28: which feature flag gates an alias's target (only the ones that
  *  actually depend on one — retrieve's target is always on). */
 const ALIAS_REQUIRES_FEATURE: Record<string, string> = {
   metrics: 'metrics',
+  author_knowledge: 'workflows',
+  index_knowledge: 'workflows',
+  publish_knowledge: 'workflows',
+  retire_knowledge: 'workflows',
   files_retrieve: 'files',
   write_file: 'files',
 };
@@ -282,8 +292,8 @@ const realFileLister: FileLister = async (principal) => {
  * The REAL, server-backed {@link ScopedItemsLoader}: reads the SAME canView/DLS-scoped
  * lists the `grants/available` route surfaces, as the acting `user`, and projects each
  * item to `{ id, folder }` for the folder kernel. `personal` reads the caller's own
- * lane (`mine`); `domain` reads the shared-in-domain lane. Knowledge folds BOTH the
- * workflow catalog (no folders → root) and the foldered personal-knowledge entries.
+ * lane (`mine`); `domain` reads the shared-in-domain lane. Knowledge is the foldered
+ * personal-knowledge notes (a workflow is its own grant kind and has no folder).
  * Never widens: it is exactly the owner-grantable universe, so the kernel's result is
  * provably a subset.
  */
@@ -302,18 +312,13 @@ export function serverScopedItemsLoader(user: CurrentUser, deps: { listFiles?: F
       const group = scope === 'personal' ? g.mine : g.domain;
       return group.map((f) => ({ id: f.id, folder: f.folder }));
     }
-    // knowledge — workflows (no folder → root) ∪ foldered personal-knowledge entries.
-    const [{ listWorkflows, ensureHydrated: ensureWf }, { listPersonalKnowledge, ensureHydrated: ensurePk }] =
-      await Promise.all([import('@tabs/knowledge/lib/store'), import('@tabs/knowledge/lib/personal-store')]);
-    await Promise.all([ensureWf(), ensurePk()]);
-    const wf = listWorkflows(principal);
+    // knowledge — the foldered personal-knowledge NOTES. A workflow has no folder and is its own
+    // grant kind, so a knowledge folder grant never expands to a `wf_…` id.
+    const { listPersonalKnowledge, ensureHydrated: ensurePk } = await import('@tabs/knowledge/lib/personal-store');
+    await ensurePk();
     const pk = listPersonalKnowledge(principal);
-    const wfGroup = scope === 'personal' ? wf.mine : wf.domain;
     const pkGroup = scope === 'personal' ? pk.mine : pk.domain;
-    return [
-      ...wfGroup.map((w) => ({ id: w.id, folder: '/' })),
-      ...pkGroup.map((p) => ({ id: p.id, folder: p.folder })),
-    ];
+    return pkGroup.map((p) => ({ id: p.id, folder: p.folder }));
   };
 }
 
@@ -809,6 +814,10 @@ export function agentToolGate(
 
   const callTool: ToolExecutor = async (name, args) => {
     const mcpName = resolveAlias(name);
+    // A deprecated spelling is still honoured (it runs the current tool through every gate below),
+    // and the operator is told once per call so the system can be moved before the name is removed.
+    const current = currentToolName(name);
+    if (current) logDeprecatedTool(name, current, 'agent', sysPrincipal);
 
     // Gate 0 — CLOSED TO AGENT RUNS. A few writes are operator acts whose effect is not an
     // artifact in a lane: `reindex_corpus` re-parses and re-embeds a whole tenant corpus. Held

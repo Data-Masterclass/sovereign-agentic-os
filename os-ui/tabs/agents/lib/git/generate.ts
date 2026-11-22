@@ -288,6 +288,7 @@ export function renderReadme(s: SnapshotSystem, placed: PlacedSystem, sys: Syste
     ...(sys.grants.tools.length > 0 ? [...sys.grants.tools].sort().map((t) => `| tool | \`${t}\` | — | — |`) : []),
     ...grantRows('data', sys.grants.data),
     ...grantRows('knowledge', sys.grants.knowledge),
+    ...grantRows('workflows', sys.grants.workflows ?? []),
     ...grantRows('metrics', sys.grants.metrics),
     ...grantRows('connections', sys.grants.connections),
     ...grantRows('files', sys.grants.files),

@@ -88,6 +88,17 @@ const BUNDLES: BundleSpec[] = [
       ]).then(() => {}),
   },
   {
+    // The Workflows tab's own tools (a workflow is documentation of a business process; it is a
+    // different artifact from a knowledge note). Same store as the Knowledge tab's workflows.
+    feature: 'workflows',
+    name: 'workflow-write',
+    load: async () => {
+      const m = await import('@tabs/workflows/mcp/workflow-write-tools');
+      return [...m.workflowWriteTools, ...m.workflowReadTools];
+    },
+    hydrate: () => import('@tabs/knowledge/lib/store').then((m) => m.ensureHydrated()),
+  },
+  {
     feature: 'files',
     name: 'file-write',
     load: async () => {

@@ -402,10 +402,11 @@ const KIND_META: Record<ContextKind, { label: string; href: string }> = {
   data: { label: 'Data', href: '/data' },
   files: { label: 'Files', href: '/unstructured' },
   knowledge: { label: 'Knowledge', href: '/knowledge' },
+  workflows: { label: 'Workflows', href: '/workflows' },
   metrics: { label: 'Metrics', href: '/metrics' },
   connections: { label: 'Connections', href: '/connections' },
 };
-const KIND_ORDER: ContextKind[] = ['data', 'files', 'knowledge', 'metrics', 'connections'];
+const KIND_ORDER: ContextKind[] = ['data', 'files', 'knowledge', 'workflows', 'metrics', 'connections'];
 
 /** The read/retrieved/written verb shown on each chip. */
 const MODE_LABEL: Record<ContextItem['mode'], string> = { read: 'read', retrieved: 'retrieved', written: 'written' };

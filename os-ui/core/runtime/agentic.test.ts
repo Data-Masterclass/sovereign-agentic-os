@@ -748,3 +748,25 @@ test('F10: a tool call whose argument JSON was broken is NOT executed with {} â€
   assert.match(res.steps[0].result, /invalid_argument/);
   assert.match(res.steps[0].result, /not valid JSON/);
 });
+
+test('WF/K: the ACT prompt tells a team that can save notes to use save_knowledge_note â€” and says a workflow is not a place for a report', async () => {
+  const actSystems: string[] = [];
+  const llm: LlmCall = async (req) => {
+    if (req.tools) actSystems.push(req.messages.find((m) => m.role === 'system')?.content ?? '');
+    return { content: req.tools ? 'done' : 'plan', toolCalls: [] };
+  };
+  const spec = (name: string): ToolSpec => ({ name, description: `${name}.`, inputSchema: { type: 'object', properties: {} } });
+  const run = async (tools: ToolSpec[]) => {
+    actSystems.length = 0;
+    await runAgentic({ system: 'sys', userMessages: [{ role: 'user', content: 'save the report as knowledge' }], tools, callTool: async () => ({ text: 'ok', isError: false }), llm, planModel: 'r', actModel: 'e' });
+    return actSystems[0] ?? '';
+  };
+  const noteTeam = await run([spec('save_knowledge_note'), spec('list_knowledge')]);
+  assert.match(noteTeam, /SAVE AS KNOWLEDGE: .*save_knowledge_note/);
+  assert.match(noteTeam, /never a place to keep a report/);
+  assert.doesNotMatch(noteTeam, /author_workflow/, 'a note-only team is never pointed at the workflow tool');
+  // The twin: a workflow team gets the workflow line and is not told to save notes.
+  const wfTeam = await run([spec('author_workflow'), spec('get_workflow')]);
+  assert.match(wfTeam, /WORKFLOWS: .*list_workflows/);
+  assert.doesNotMatch(wfTeam, /SAVE AS KNOWLEDGE/);
+});

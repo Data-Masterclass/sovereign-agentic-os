@@ -32,11 +32,11 @@ test('Workflows is its OWN member, separate from Knowledge', () => {
   assert.notEqual(workflows.section, knowledge.section); // plan vs context
   assert.equal(workflows.label, 'Workflows');
   assert.equal(knowledge.label, 'Knowledge');
-  // Both draw from the shared `knowledge` feed but each filters to its own family.
-  assert.equal(workflows.feedKind, 'knowledge');
+  // Each has its own grant list and its own available feed (no shared list split by id prefix).
+  assert.equal(workflows.field, 'workflows');
+  assert.equal(workflows.feedKind, 'workflows');
+  assert.equal(knowledge.field, 'knowledge');
   assert.equal(knowledge.feedKind, 'knowledge');
-  assert.equal(workflows.idFamily, 'workflow');
-  assert.equal(knowledge.idFamily, 'knowledge');
 });
 
 test('the wireable Context members carry a grant field + feed kind', () => {

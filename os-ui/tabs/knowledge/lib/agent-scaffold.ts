@@ -177,8 +177,9 @@ export function scaffoldSystem(
     safetyPreset: 'read-only',
     entrypoint,
     state: { channels: { messages: 'add_messages' } },
-    // The whole workflow is attached as governed context via grants.knowledge.
-    grants: { data: [], knowledge: [{ id: workflow.id, capability: 'Read' }], metrics: [], tools: ['retrieve'], connections: [], files: [], plan: [] },
+    // The whole workflow is attached as governed context via grants.workflows (a workflow is not a
+    // knowledge note: it has its own grant kind).
+    grants: { data: [], knowledge: [], workflows: [{ id: workflow.id, capability: 'Read' }], metrics: [], tools: ['retrieve'], connections: [], files: [], plan: [] },
     routing: { overrides: {} },
     agents,
     edges,

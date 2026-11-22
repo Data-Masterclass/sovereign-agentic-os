@@ -95,7 +95,7 @@ test('DATA: a builder builds a governed dataset → metric → dashboard, all as
 // ---- KNOWLEDGE lane: author → index → publish -------------------------------
 test('KNOWLEDGE: author a draft, index it, then a builder publishes it', async () => {
   resetAll();
-  const wf = payload<{ id: string; status: string }>(await call(builder, 'author_knowledge', {
+  const wf = payload<{ id: string; status: string }>(await call(builder, 'author_workflow', {
     title: 'Refund handling',
     steps: [{ title: 'Verify order', actor: 'Human' }, { title: 'Issue refund', actor: 'Software' }],
     rules: [{ text: 'Refunds over 500 EUR need a manager', hard: true }],
@@ -103,10 +103,10 @@ test('KNOWLEDGE: author a draft, index it, then a builder publishes it', async (
   assert.ok(wf.id);
   assert.equal(wf.status, 'draft');
 
-  // index_knowledge runs the governed pipeline for a workflow the caller can see.
-  await call(builder, 'index_knowledge', { workflowId: wf.id });
+  // index_workflow runs the governed pipeline for a workflow the caller can see.
+  await call(builder, 'index_workflow', { workflowId: wf.id });
 
-  const pub = payload<{ status: string; visibility: string }>(await call(builder, 'publish_knowledge', { workflowId: wf.id }));
+  const pub = payload<{ status: string; visibility: string }>(await call(builder, 'publish_workflow', { workflowId: wf.id }));
   assert.equal(pub.status, 'live');
   assert.equal(pub.visibility, 'Shared');
 });
@@ -152,7 +152,7 @@ test('LOCKDOWN: a creator may create but is denied every promote/publish (typed 
     name: 'My draft', columns: [{ name: 'a', description: 'A constant' }],
   }));
   assert.equal(ds.owner, 'cara');
-  const wf = payload(await call(creator, 'author_knowledge', { title: 'Draft flow' }));
+  const wf = payload(await call(creator, 'author_workflow', { title: 'Draft flow' }));
 
   // The creator CAN FILE a promotion request (the split's whole point) — but the
   // dataset must be documented + silver/gold. Build it up so the FILE step is a
@@ -166,7 +166,7 @@ test('LOCKDOWN: a creator may create but is denied every promote/publish (typed 
   // …but a creator may NOT approve it, nor publish knowledge (typed forbidden).
   for (const [name, args] of [
     ['approve_promotion', { approvalId: filed.approvalId }],
-    ['publish_knowledge', { workflowId: (wf as { id: string }).id }],
+    ['publish_workflow', { workflowId: (wf as { id: string }).id }],
   ] as const) {
     const e = errorOf(await call(creator, name, args as Record<string, unknown>));
     assert.equal(e.code, 'forbidden', `${name} must be a typed forbidden for a creator`);
@@ -250,11 +250,11 @@ test('DATA QUALITY: a rule without a column is a typed bad_request', async () =>
 // ---- RETIRE KNOWLEDGE: governed archive/delete, lineage- + role-gated --------
 test('RETIRE: a zero-consumer draft archives (reversible), then deletes physically', async () => {
   resetAll();
-  const wf = payload<{ id: string }>(await call(creator, 'author_knowledge', { title: 'Stale flow' }));
+  const wf = payload<{ id: string }>(await call(creator, 'author_workflow', { title: 'Stale flow' }));
 
   // ARCHIVE (default): reversible soft-hide of the caller's OWN Personal draft.
   const archived = payload<{ action: string; archived: boolean; reversible: boolean }>(
-    await call(creator, 'retire_knowledge', { workflowId: wf.id }),
+    await call(creator, 'retire_workflow', { workflowId: wf.id }),
   );
   assert.equal(archived.action, 'archive');
   assert.equal(archived.archived, true);
@@ -263,20 +263,20 @@ test('RETIRE: a zero-consumer draft archives (reversible), then deletes physical
   // DELETE: physical + irreversible on the zero-consumer draft (archived first, above,
   // but a draft can be deleted directly — the store only blocks a LIVE workflow).
   const deleted = payload<{ action: string; deleted: boolean; reversible: boolean }>(
-    await call(creator, 'retire_knowledge', { workflowId: wf.id, action: 'delete' }),
+    await call(creator, 'retire_workflow', { workflowId: wf.id, action: 'delete' }),
   );
   assert.equal(deleted.action, 'delete');
   assert.equal(deleted.deleted, true);
   assert.equal(deleted.reversible, false);
 
   // Gone: a second retire is a typed not_found (the governed view guard).
-  const gone = errorOf(await call(creator, 'retire_knowledge', { workflowId: wf.id }));
+  const gone = errorOf(await call(creator, 'retire_workflow', { workflowId: wf.id }));
   assert.equal(gone.code, 'not_found');
 });
 
 test('RETIRE: blocked (typed conflict) while an Agent system still consumes the workflow', async () => {
   resetAll();
-  const wf = payload<{ id: string }>(await call(builder, 'author_knowledge', { title: 'Consumed flow' }));
+  const wf = payload<{ id: string }>(await call(builder, 'author_workflow', { title: 'Consumed flow' }));
 
   // Wire the workflow into an agent system's knowledge grants (the "context out"
   // handover) so it has a live consumer.
@@ -287,27 +287,43 @@ test('RETIRE: blocked (typed conflict) while an Agent system still consumes the 
   payload(await call(builder, 'commit_agent_files', { systemId: sys.id, path: 'system.yaml', content: granted }));
 
   // Retire (archive OR delete) is BLOCKED — never orphan a live dependency.
-  const blocked = errorOf(await call(builder, 'retire_knowledge', { workflowId: wf.id }));
+  const blocked = errorOf(await call(builder, 'retire_workflow', { workflowId: wf.id }));
   assert.equal(blocked.code, 'conflict');
   assert.match(blocked.reason, new RegExp(`still consumed by:.*${sys.id}`));
 
   // Remove the grant → the consumer is gone → retire now succeeds.
   const released = granted.replace(`knowledge: [${wf.id}]`, 'knowledge: []');
   payload(await call(builder, 'commit_agent_files', { systemId: sys.id, path: 'system.yaml', content: released }));
-  const ok = payload<{ archived: boolean }>(await call(builder, 'retire_knowledge', { workflowId: wf.id }));
+  const ok = payload<{ archived: boolean }>(await call(builder, 'retire_workflow', { workflowId: wf.id }));
   assert.equal(ok.archived, true, 'with no consumer, retire proceeds');
+});
+
+test('RETIRE: blocked while an Agent system consumes the workflow through its `workflows` grant (the new home of that grant)', async () => {
+  resetAll();
+  const wf = payload<{ id: string }>(await call(builder, 'author_workflow', { title: 'Consumed flow 2' }));
+  const sys = payload<{ id: string }>(await call(builder, 'create_agent_system', { name: 'Triage 2', template: 'analyze' }));
+  const view = payload<{ yaml: string }>(await call(builder, 'get_agent_system', { systemId: sys.id }));
+  const granted = view.yaml.replace(/^(\s*)knowledge: \[\]/m, `$1knowledge: []\n$1workflows: [${wf.id}]`);
+  assert.notEqual(granted, view.yaml, 'spliced a workflows grant into system.yaml');
+  payload(await call(builder, 'commit_agent_files', { systemId: sys.id, path: 'system.yaml', content: granted }));
+  const blocked = errorOf(await call(builder, 'retire_workflow', { workflowId: wf.id }));
+  assert.equal(blocked.code, 'conflict');
+  assert.match(blocked.reason, new RegExp(`still consumed by:.*${sys.id}`));
+  // NEGATIVE TWIN: a NOTE with the same grant shape is not a workflow consumer.
+  const note = payload<{ id: string }>(await call(builder, 'save_knowledge_note', { title: 'Unrelated note', md: 'x' }));
+  assert.ok(note.id.startsWith('pk_'));
 });
 
 test('RETIRE: role-gated — a creator is denied retiring another owner’s SHARED workflow', async () => {
   resetAll();
   // Builder authors + publishes a workflow → it becomes a SHARED domain artifact.
-  const wf = payload<{ id: string }>(await call(builder, 'author_knowledge', { title: 'Shared SOP' }));
-  const pub = payload<{ status: string; visibility: string }>(await call(builder, 'publish_knowledge', { workflowId: wf.id }));
+  const wf = payload<{ id: string }>(await call(builder, 'author_workflow', { title: 'Shared SOP' }));
+  const pub = payload<{ status: string; visibility: string }>(await call(builder, 'publish_workflow', { workflowId: wf.id }));
   assert.equal(pub.visibility, 'Shared');
 
   // A same-domain CREATOR can SEE it but is not entitled to edit/retire it (the
   // Knowledge edit gate: owner, or a same-domain Builder+). Typed forbidden.
-  const denied = errorOf(await call(creator, 'retire_knowledge', { workflowId: wf.id }));
+  const denied = errorOf(await call(creator, 'retire_workflow', { workflowId: wf.id }));
   assert.equal(denied.code, 'forbidden');
 });
 

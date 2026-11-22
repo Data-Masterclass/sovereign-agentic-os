@@ -73,7 +73,8 @@ test('buildEvalReport assembles the exact mandated section structure', () => {
   assert.equal(r.define.safety, 'Read + propose');
   assert.match(r.define.trigger, /On schedule/);
   const kinds = r.define.grants.map((g) => g.kind);
-  assert.ok(kinds.includes('Data') && kinds.includes('Knowledge'));
+  assert.ok(kinds.includes('Data') && kinds.includes('Workflows'), 'wf_playbook is a workflow grant (a legacy knowledge grant is upgraded on read)');
+  assert.ok(!kinds.includes('Knowledge'));
 
   // APPENDIX 3 — Agent descriptions (name/role + instructions).
   assert.equal(r.agentDescriptions.length, 2);

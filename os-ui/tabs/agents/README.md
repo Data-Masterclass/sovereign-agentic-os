@@ -329,7 +329,7 @@ node scripts/run-agent-graph.mjs <path-to-checkout>/agents/<slug>/system.yaml "t
 # system:     Revenue review (domain sales, entrypoint lead)
 # engine:     langgraph, checkpointer memory
 # path:       lead → researcher → publisher
-# tool calls: researcher → search_knowledge, publisher → author_knowledge
+# tool calls: researcher → search_knowledge, publisher → save_knowledge_note
 # reachedEnd: true          # exit 0; exit 1 when the run does not reach END
 ```
 

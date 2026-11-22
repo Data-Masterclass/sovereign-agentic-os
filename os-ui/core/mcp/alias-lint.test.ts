@@ -34,9 +34,9 @@ const ALIAS_MAP: Record<string, string[]> = {
   dashboard: ['report', 'business intelligence (bi)', 'data visualization'],
   agent_system: ['ai team', 'assistant team'],
   connection: ['integration', 'data source', 'google', 'microsoft', 'aws', 'snowflake', 'databricks'],
-  // Business process / workflow family: the rename wave added "workflow, process workflow";
-  // the synonym sweep extends to include SOP.
-  business_process: ['workflow', 'process workflow', 'sop (standard operating procedure)'],
+  // Workflow family (the documentation of a business process; its own tab, NOT knowledge): the
+  // workflow tools carry the synonyms "process workflow" and "SOP". `workflow` is the tool's NAME now.
+  business_process: ['process workflow', 'sop (standard operating procedure)'],
   sync: ['refresh', 'data pipeline', 'etl'],
 };
 
@@ -49,7 +49,7 @@ const FAMILY_PRIMARY_TOOLS: Record<string, string[]> = {
   dashboard: ['create_dashboard', 'list_dashboards', 'get_dashboard'],
   agent_system: ['create_agent_system', 'list_agent_systems', 'get_agent_system'],
   connection: ['create_connection', 'list_connections', 'get_connection', 'list_connection_templates'],
-  business_process: ['author_knowledge', 'list_knowledge', 'get_knowledge'],
+  business_process: ['author_workflow', 'list_workflows', 'get_workflow'],
   sync: ['set_dataset_sync', 'sync_dataset_now', 'get_sync_status'],
 };
 

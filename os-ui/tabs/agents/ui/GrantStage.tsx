@@ -44,15 +44,10 @@ export default function GrantStage({
   const cap = accessCap(system.safetyPreset);
 
   // Count grants of a member's grant channel, for the collapsed-row badge. Workflows and
-  // Knowledge share the `knowledge` list but split by id family, so we honour idFamily.
-  const grantCountByField = (field: ResourceMember['field'], idFamily?: ResourceMember['idFamily']): number => {
+  // Knowledge each have their own list (`grants.workflows`, `grants.knowledge`).
+  const grantCountByField = (field: ResourceMember['field']): number => {
     if (!field) return 0;
-    const list = system.grants[field] ?? [];
-    if (field === 'knowledge' && idFamily) {
-      const isWf = (id: string) => id.startsWith('wf_');
-      return list.filter((g) => (idFamily === 'workflow' ? isWf(g.id ?? '') : !isWf(g.id ?? ''))).length;
-    }
-    return list.length;
+    return (system.grants[field] ?? []).length;
   };
 
   // Map each agents context type to a shared ChooseContextShell descriptor. The shell owns
@@ -92,12 +87,11 @@ export default function GrantStage({
         }
         const m = meta.member!;
         if (FOLDERED.has(type)) {
-          // Foldered kinds (data · knowledge · files) + Workflows (knowledge feed, wf_ family).
+          // Foldered kinds (data · knowledge · files) + Workflows (its own feed, no folders).
           return (
             <FolderResourcePicker
               systemId={systemId} system={system}
-              kind={m.feedKind as 'data' | 'knowledge' | 'files'}
-              idFamily={m.idFamily}
+              kind={m.feedKind as 'data' | 'knowledge' | 'workflows' | 'files'}
               label={m.label}
               hideLabel
               canEdit={canEdit} onCommit={onCommit}

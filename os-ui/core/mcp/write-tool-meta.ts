@@ -34,13 +34,16 @@ export const WRITE_TOOL_TABS: Readonly<Record<string, string>> = {
   reconcile_domain_tables: 'data',
   rollback_dataset_version: 'data',
   tag_dataset_version: 'data',
-  author_knowledge: 'knowledge',
+  // A workflow (the documentation of a business process) is its own artifact with its own tab; a
+  // note is saved with `save_knowledge_note`. The `*_knowledge` spellings of the four tools below
+  // are deprecated aliases (`@core/mcp/deprecated-aliases`) and resolve to these before any table.
+  author_workflow: 'workflows',
   // A titled markdown note in the caller's own My knowledge — a My-scope write like
-  // `author_knowledge` (read-only holds it; otherwise the runner's own rights decide).
+  // `author_workflow` (read-only holds it; otherwise the runner's own rights decide).
   save_knowledge_note: 'knowledge',
-  publish_knowledge: 'knowledge',
-  index_knowledge: 'knowledge',
-  retire_knowledge: 'knowledge',
+  publish_workflow: 'workflows',
+  index_workflow: 'workflows',
+  retire_workflow: 'workflows',
   export_okf_bundle: 'knowledge',
   import_okf_bundle: 'knowledge',
   upload_file: 'files',
