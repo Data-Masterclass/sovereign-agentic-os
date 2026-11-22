@@ -127,7 +127,7 @@ PY
 readiness
 VERSION=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("litellm_version","unknown"))' "$W/readiness.json")
 curl -sS -o /dev/null -w 'shared agent key: HTTP %{http_code}\n' -H "Authorization: Bearer $MASTER" -H 'content-type: application/json' \
-  $GW/key/generate -d '{"key":"'$AGENT_KEY'","key_alias":"sovereign-agents","models":["sovereign-default"],"max_budget":25,"budget_duration":"7d"}'
+  $GW/key/generate -d '{"key":"'$AGENT_KEY'","key_alias":"sovereign-agents","models":["stackit-gpt-oss-20b"],"max_budget":25,"budget_duration":"7d"}'
 
 run_test() { # $1 log file
   (cd "$REPO/os-ui" && LITELLM_URL=$GW LITELLM_E2E_MASTER_KEY=$MASTER LANGFUSE_E2E_URL=$LF LANGFUSE_E2E_PUBLIC_KEY=$PK \
@@ -143,7 +143,7 @@ grep -E '^# (pass|fail)|^not ok|^ok|GENERATION|assert' "$W/e2e.log" | head -40
 step "headers of the gateway's OTLP export (sink)"
 gw_up "$W/config.yaml" "$W/otel.env" http://stub:8080 || die "gateway (sink) did not start"
 curl -sS -o /dev/null -H "Authorization: Bearer $AGENT_KEY" -H 'content-type: application/json' $GW/v1/chat/completions \
-  -d '{"model":"sovereign-default","messages":[{"role":"user","content":"hi"}]}'
+  -d '{"model":"stackit-gpt-oss-20b","messages":[{"role":"user","content":"hi"}]}'
 for i in $(seq 1 20); do grep -q '/otel/' "$W/data/sink.jsonl" 2>/dev/null && break; sleep 1; done
 python3 - "$W/data/sink.jsonl" <<'PY' || die "the gateway exported nothing to the sink"
 import json,sys
