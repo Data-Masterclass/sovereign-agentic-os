@@ -64,5 +64,5 @@ done
 cd "$REPO/os-ui"
 LITELLM_URL=$GW LITELLM_MASTER_KEY=$MASTER GATEWAY_MODELS_E2E_REQUIRED=1 \
   node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test --test-concurrency=1 \
-  tabs/admin/lib/gateway-models.e2e.test.ts tabs/admin/lib/model-roles.e2e.test.ts || die "the e2e test failed"
+  tabs/admin/lib/gateway-models.e2e.test.ts tabs/admin/lib/model-roles.e2e.test.ts tabs/admin/lib/role-switch.e2e.test.ts || die "the e2e test failed"
 echo "GATEWAY_MODELS_TEST_PASSED"
