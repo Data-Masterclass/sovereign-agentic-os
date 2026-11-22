@@ -16,7 +16,7 @@ import {
 import { loadTabContext, tabTitle } from '@core/tabs-meta/context';
 import { buildInstructions } from '@core/mcp/instructions';
 import { runAgentic, type AgenticStep, type AgenticResult, type LlmCall, type ToolExecutor, type ToolSpec } from '@core/runtime/agentic';
-import { ungatedInteractive, userConfirmGate } from '@core/runtime/confirm-gate';
+import { userConfirmGate } from '@core/runtime/confirm-gate';
 import { confirmationPort } from '@core/policy/confirmations';
 import { ASK_RULES_BLOCK } from '@core/runtime/ask-rules';
 import { parseArtifacts, truncationBanner, type ChatArtifact } from '@core/runtime/chat-artifacts';
@@ -283,7 +283,9 @@ export type RunOsAssistantInput = {
   /**
    * Put the user-confirm gate in front of the governed dispatch: a write the model asks for is
    * PARKED (returned on `pending`) and runs only when the same user confirms it in this
-   * conversation (`confirm-execute.ts`). Absent: today's behaviour (the drawer), unchanged.
+   * conversation (`confirm-execute.ts`). EVERY turn is gated: when the caller names no
+   * conversation (the drawer, a direct API call) the turn mints its own id and returns it as
+   * `conversationId`, so the parked card can be confirmed against it.
    */
   confirm?: { conversationId: string };
   /** Injected in tests: the governed dispatch the executor calls (default `handleRpc`). */
@@ -307,6 +309,8 @@ export type OsAssistantResult = AgenticResult & {
   artifacts: ChatArtifact[];
   /** The Langfuse trace (= turn) id every model call on this turn was logged under. */
   traceId: string;
+  /** The conversation the turn's parked confirmations are bound to (the caller's, or one minted here). */
+  conversationId: string;
 };
 
 /**
@@ -327,6 +331,11 @@ function mintW3cTraceId(): string {
   return randomBytes(16).toString('hex');
 }
 
+/** A fresh conversation id for a turn whose caller named none. Matches the shape the route accepts. */
+function mintConversationId(): string {
+  return `srv-${randomBytes(16).toString('hex')}`;
+}
+
 /**
  * Run one PLAN→ACT turn for the overarching OS assistant and return the full
  * trace (plan, every governed tool call, final answer). Production runs on the
@@ -337,6 +346,10 @@ export async function runOsAssistant(input: RunOsAssistantInput): Promise<OsAssi
   const injected = input.llm;
   // Every turn (the Home chat and the drawer) files all its model calls in ONE Langfuse trace.
   const traceId = input.traceId || mintW3cTraceId();
+  // Fail-closed: a turn that names no conversation gets one minted here, so there is no way to
+  // run an interactive turn without the confirm gate. The id is bound to the signed-in user in the
+  // confirmation store, so it is not a secret and not a capability.
+  const conversationId = input.confirm?.conversationId ?? mintConversationId();
   const parentObservationId = /^[0-9a-f]{32}$/.test(traceId) ? randomBytes(8).toString('hex') : undefined;
   const artifacts: ChatArtifact[] = [];
   // Production: the ONE assistant model for both plan + act. Tests inject `llm`
@@ -347,32 +360,29 @@ export async function runOsAssistant(input: RunOsAssistantInput): Promise<OsAssi
   const roleTools = osToolSpecs(input.user, input.tab);
   // What this ROLE may use: a name outside it is refused by the governed door with its typed error.
   const roleToolNames = new Set(roleTools.map((t) => t.name));
-  if (input.onlyTools && !input.confirm) throw new Error('onlyTools needs the confirm gate: without it a tool outside the list would not be closed');
   const only = input.onlyTools ? new Set(input.onlyTools) : null;
   const tools = only ? roleTools.filter((t) => only.has(t.name)) : roleTools;
   const result = await runAgentic({
     system: osAssistantSystem(input.tab, input.page),
     userMessages: input.messages,
     tools,
-    // With `confirm` (the Home chat) a write is parked until the user confirms; without it the
-    // drawer keeps its pass-through, named so it can be found (pinned in `confirm-gate.test.ts`).
-    callTool: input.confirm
-      ? userConfirmGate(
-          osToolExecutor(input.user, artifacts, input.dispatch),
-          {
-            userId: input.user.id,
-            conversationId: input.confirm.conversationId,
-            surface: 'ask',
-            traceId,
-            // A tool this user's role cannot use is refused by the governed door with its typed
-            // error; it is not offered for confirmation.
-            refusedByInner: (tool) => !roleToolNames.has(tool),
-            // A save-as turn closes everything but its one tool, even a write the role may use.
-            ...(only ? { closed: (tool: string) => (only.has(tool) ? null : `${tool} is not available for this action`) } : {}),
-          },
-          confirmationPort(),
-        )
-      : ungatedInteractive(osToolExecutor(input.user, artifacts, input.dispatch)),
+    // EVERY interactive turn (Home chat, the Ask-the-OS drawer, a direct API call) parks a write
+    // until the same user confirms it (pinned in `assistant-all-turns-gated.test.ts`).
+    callTool: userConfirmGate(
+      osToolExecutor(input.user, artifacts, input.dispatch),
+      {
+        userId: input.user.id,
+        conversationId,
+        surface: 'ask',
+        traceId,
+        // A tool this user's role cannot use is refused by the governed door with its typed
+        // error; it is not offered for confirmation.
+        refusedByInner: (tool) => !roleToolNames.has(tool),
+        // A save-as turn closes everything but its one tool, even a write the role may use.
+        ...(only ? { closed: (tool: string) => (only.has(tool) ? null : `${tool} is not available for this action`) } : {}),
+      },
+      confirmationPort(),
+    ),
     onStep: input.onStep,
     ...(input.onToken ? { onToken: input.onToken } : {}),
     ...(input.signal ? { signal: input.signal } : {}),
@@ -401,5 +411,5 @@ export async function runOsAssistant(input: RunOsAssistantInput): Promise<OsAssi
     // only today, per `OS_RULES`.
     writeToolNames: [...WRITE_TOOL_NAMES],
   });
-  return { ...result, tab: input.tab, artifacts, traceId };
+  return { ...result, tab: input.tab, artifacts, traceId, conversationId };
 }

@@ -58,8 +58,8 @@ export async function POST(req: Request) {
     // The current-screen snapshot the client publishes (open artifact + stage). It
     // only ENRICHES; a missing/malformed value degrades to "no page context".
     pageContextRaw = body?.pageContext ?? null;
-    // The Home chat names its conversation: that turns on the confirm-before-write gate. The
-    // drawer sends neither field and behaves exactly as before.
+    // A client may name its conversation (Home and the drawer do). Absent or malformed, the turn
+    // mints one — the confirm-before-write gate is on for every turn either way.
     if (typeof body?.conversationId === 'string' && /^[A-Za-z0-9_-]{8,64}$/.test(body.conversationId)) {
       conversationId = body.conversationId;
     }
@@ -171,6 +171,7 @@ export async function POST(req: Request) {
       traceId: result.traceId,
       model: roleModel('standard'),
       pending: result.pending,
+      conversationId: result.conversationId,
     }), ...(conversationId ? { saveAs: availableSaveAs } : {}) });
 
   // Live steps: newline-delimited JSON, one event per finished tool step, then one `done` event

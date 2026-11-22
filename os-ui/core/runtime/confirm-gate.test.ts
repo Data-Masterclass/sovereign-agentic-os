@@ -426,7 +426,6 @@ test('RATCHET: the exact `ungatedInteractive(` call sites — every one is a kno
   // TO SHRINK: replace a call site with `userConfirmGate(...)` (or `readOnlyGate`) and delete its
   // line here. TO GROW: do not. A new assistant surface chooses a real gate.
   assert.deepEqual(occurrences('ungatedInteractive('), {
-    'core/runtime/agent-loop.ts': 1, // Ask the OS
     'core/runtime/confirm-gate.ts': 1, // the definition
     'core/runtime/runtime.ts': 1, // tab assistant, app chat, Build chat
     'tabs/agents/lib/build/agentic-graph.ts': 1, // Software Team panel
@@ -434,7 +433,7 @@ test('RATCHET: the exact `ungatedInteractive(` call sites — every one is a kno
 });
 
 test('WIRED ONCE: the Home chat is the only production user of the user-confirm gate and the confirmation store', () => {
-  // `userConfirmGate(` is called from Ask-the-OS when a conversation id is given (the Home chat);
+  // `userConfirmGate(` is called from Ask-the-OS on EVERY turn (Home chat, drawer, direct API);
   // the other constructors still have no caller. Another call site is a reviewed change.
   assert.deepEqual(occurrences('userConfirmGate('), { 'core/runtime/agent-loop.ts': 1, 'core/runtime/confirm-gate.ts': 1 });
   for (const ctor of ['readOnlyGate(', 'engineHeldGate(']) {

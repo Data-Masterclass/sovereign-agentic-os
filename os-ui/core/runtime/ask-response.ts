@@ -67,6 +67,8 @@ export type AskTurnResponse = {
   /** C1 — the Langfuse trace (= turn) id every model call on this turn was logged under. */
   traceId: string;
   model: string;
+  /** The conversation the parked confirmations belong to; send it back with the decision. */
+  conversationId: string;
 };
 
 export type AskTurnInput = {
@@ -78,6 +80,7 @@ export type AskTurnInput = {
   traceId: string;
   model: string;
   pending?: AskPending[];
+  conversationId: string;
 };
 
 /** One step as the live stream carries it (same projection as the final `tools[]`). */
@@ -106,5 +109,6 @@ export function askTurnResponse(input: AskTurnInput): AskTurnResponse {
     tab: input.tab,
     traceId: input.traceId,
     model: input.model,
+    conversationId: input.conversationId,
   };
 }

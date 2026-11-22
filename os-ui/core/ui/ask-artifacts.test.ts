@@ -185,13 +185,14 @@ test('C9: the turn returns artifacts BESIDE content and tools, always as an arra
     tab: 'metrics',
     traceId: 'ask-1',
     model: 'sovereign-default',
+    conversationId: 'c-test-0001',
   });
   assert.equal(res.content, 'Revenue was €128,450 last month.');
   assert.deepEqual(res.tools, [{ name: 'query_metric', isError: false }]);
   assert.equal(res.artifacts.length, 2);
   assert.equal(res.traceId, 'ask-1');
   // Total shape: no client branch for "old response".
-  assert.deepEqual(Object.keys(res).sort(), ['artifacts', 'content', 'model', 'pending', 'plan', 'role', 'tab', 'tools', 'traceId']);
+  assert.deepEqual(Object.keys(res).sort(), ['artifacts', 'content', 'conversationId', 'model', 'pending', 'plan', 'role', 'tab', 'tools', 'traceId']);
 });
 
 test('C9/C5: the route re-validates, and the truncation fields survive to the client', () => {
@@ -203,6 +204,7 @@ test('C9/C5: the route re-validates, and the truncation fields survive to the cl
     tab: null,
     traceId: 'ask-2',
     model: 'm',
+    conversationId: 'c-test-0001',
   });
   const t = res.artifacts[0];
   assert.ok(t.kind === 'table' && t.truncated === true && t.rowLimit === 1000);
@@ -210,7 +212,7 @@ test('C9/C5: the route re-validates, and the truncation fields survive to the cl
 });
 
 test('C9: a turn with no artifacts returns an empty array, never an absent field', () => {
-  const res = askTurnResponse({ finalText: 'hi', plan: '', steps: [], artifacts: [], tab: null, traceId: 't', model: 'm' });
+  const res = askTurnResponse({ finalText: 'hi', plan: '', steps: [], artifacts: [], tab: null, traceId: 't', model: 'm', conversationId: 'c-test-0001' });
   assert.deepEqual(res.artifacts, []);
 });
 
