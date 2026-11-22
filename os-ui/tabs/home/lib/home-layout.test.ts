@@ -48,7 +48,7 @@ test('the chat shell talks to the governed assistant route only, and renders no 
   const ui = read('tabs/home/ui/HomeChat.tsx');
   assert.match(ui, /\/api\/assistant\/chat/);
   // The decision POST lives in the card shared with the drawer.
-  const card = read('tabs/home/ui/ConfirmCard.tsx');
+  const card = read('core/ui/ConfirmCard.tsx');
   assert.match(card, /\/api\/assistant\/chat/);
   assert.match(card, /confirmation: \{ id: p\.confirmationId/);
   assert.match(ui, /sendDecision\(/);

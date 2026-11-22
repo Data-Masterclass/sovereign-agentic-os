@@ -13,7 +13,7 @@
 'use client';
 
 import Link from 'next/link';
-import { confirmCardArgs, linkForResult, plainError, type TypedError } from '@tabs/home/lib/chat-view';
+import { confirmCardArgs, linkForResult, plainError, type TypedError } from '@core/ui/chat-view';
 
 export type Pending = {
   confirmationId: string;

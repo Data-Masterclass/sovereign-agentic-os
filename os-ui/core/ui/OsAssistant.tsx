@@ -26,7 +26,7 @@ import { usePageContext } from '@core/ui/core/PageContext';
 import Markdown from '@core/ui/Markdown';
 import AskArtifacts from '@core/ui/AskArtifacts';
 import { parseArtifacts, type ChatArtifact } from '@core/runtime/chat-artifacts';
-import ConfirmCard, { sendDecision, type Pending } from '@tabs/home/ui/ConfirmCard';
+import ConfirmCard, { sendDecision, type Pending } from '@core/ui/ConfirmCard';
 
 // Friendly label for the tab in focus (mirrors the server's path→tab map). Used
 // only for the little "Context:" hint in the header; the server is authoritative.
