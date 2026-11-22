@@ -358,10 +358,6 @@ proxy would block, before anything is stored.
 */}}
 {{- define "soa.egressHosts" -}}
 {{- $hosts := .Values.egressProxy.allowlist | default list }}
-{{- /* The Software Factory gates sandbox installs the app's dependencies through this proxy (npm). */}}
-{{- if include "soa.softwareSandboxOn" . }}
-{{- $hosts = append $hosts "registry.npmjs.org" }}
-{{- end }}
 {{- $s3 := (.Values.opensearchSnapshots | default dict).s3 | default dict }}
 {{- if and .Values.opensearch.enabled $s3.enabled $s3.endpointHost }}
 {{- $hosts = append $hosts $s3.endpointHost }}
@@ -454,23 +450,3 @@ must fail the render, not the rollout. The org-built image comes from build-imag
 {{- end -}}
 {{- printf "%s:%s" $q.repository $q.tag -}}
 {{- end -}}
-
-{{/*
-soa.softwareSandboxOn - "true" when the Software Factory gates sandbox is rendered (osUI.enabled and
-osUI.software.sandbox.enabled true), else "".
-*/}}
-{{- define "soa.softwareSandboxOn" -}}
-{{- $sb := ((.Values.osUI.software | default dict).sandbox | default dict) -}}
-{{- if and .Values.osUI.enabled ($sb.enabled | default false) }}true{{ end -}}
-{{- end }}
-
-{{/*
-soa.softwareSandboxNs - the DEDICATED namespace the gates run in (default `<release namespace>-sandbox`).
-Untrusted tests never run beside os-ui and its databases, so the release namespace is refused.
-*/}}
-{{- define "soa.softwareSandboxNs" -}}
-{{- $sb := ((.Values.osUI.software | default dict).sandbox | default dict) -}}
-{{- $ns := $sb.namespace | default (printf "%s-sandbox" .Release.Namespace) -}}
-{{- if eq $ns .Release.Namespace }}{{ fail (printf "osUI.software.sandbox.namespace must be a dedicated namespace, not the release namespace (%s): the gates run untrusted app tests" .Release.Namespace) }}{{ end -}}
-{{- $ns -}}
-{{- end }}

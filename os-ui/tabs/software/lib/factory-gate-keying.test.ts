@@ -21,6 +21,8 @@ import { commitToApp } from '@tabs/software/lib/server';
 import { requestDeploy, runAppTests, __resetReviewCards } from './review.ts';
 import { gatePolicyFor } from './gate-policy.ts';
 import { REQUIRED_GATES, type GatesOutcome } from './gates.ts';
+import { recordFromOutcome } from './check-record.ts';
+import type { ChecksRunner } from './tekton-checks.ts';
 
 let reposDir = '';
 let prior = '';
@@ -41,7 +43,11 @@ const outcome = (status: 'pass' | 'fail'): GatesOutcome => ({
 });
 function recorder(status: 'pass' | 'fail') {
   const calls: string[] = [];
-  return { calls, gates: async (slug: string) => { calls.push(slug); return outcome(status); } };
+  const gates: ChecksRunner = async (i) => {
+    calls.push(i.slug);
+    return { record: recordFromOutcome({ sha: i.sha, trigger: i.trigger, engine: 'fake', startedAt: 't0', finishedAt: 't1', outcome: outcome(status) }), superseded: [] };
+  };
+  return { calls, gates };
 }
 
 test('gatePolicyFor: a golden-path app and ANY container app require the gates; a spec app does not', () => {
@@ -60,7 +66,7 @@ test('deleting `template:` from app.yaml does not skip the gates (HIGH)', async 
   await commitToApp(app.id, creator, [{ path: 'app.yaml', content: "apiVersion: software.sovereign-os/v1\nkind: App\nname: 'Gate Key One'\nsurface: both\n" }], 'drop the template line');
   const r = recorder('fail');
   await assert.rejects(
-    requestDeploy(app.id, creator, { scanMode: 'offline-mock', gates: r.gates }),
+    requestDeploy(app.id, creator, { scanMode: 'offline-mock', checks: r.gates }),
     (e: Error & { status?: number }) => { assert.equal(e.status, 422); return true; },
   );
   assert.equal(r.calls.length, 1, 'the gates must have run');
@@ -71,7 +77,7 @@ test('app.yaml naming a different template does not skip the gates (HIGH)', asyn
   const app = await createApp(creator, { name: 'Gate Key Two', template: 'nextjs-web' });
   await commitToApp(app.id, creator, [{ path: 'app.yaml', content: "name: 'Gate Key Two'\ntemplate: something-else\nsurface: both\n" }], 'rename the template');
   const r = recorder('fail');
-  await assert.rejects(requestDeploy(app.id, creator, { scanMode: 'offline-mock', gates: r.gates }), /./);
+  await assert.rejects(requestDeploy(app.id, creator, { scanMode: 'offline-mock', checks: r.gates }), /./);
   assert.equal(r.calls.length, 1);
 });
 
@@ -80,7 +86,7 @@ test('the same edit with passing gates still opens the review (the gate is a gat
   const app = await createApp(creator, { name: 'Gate Key Three', template: 'nextjs-web' });
   await commitToApp(app.id, creator, [{ path: 'app.yaml', content: "name: 'Gate Key Three'\nsurface: both\n" }], 'drop the template line');
   const r = recorder('pass');
-  const out = await requestDeploy(app.id, creator, { scanMode: 'offline-mock', gates: r.gates });
+  const out = await requestDeploy(app.id, creator, { scanMode: 'offline-mock', checks: r.gates });
   assert.equal(out.kind, 'review');
   assert.equal(r.calls.length, 1);
 });
@@ -89,7 +95,7 @@ test('a legacy-template CONTAINER app is gated too: the default is to require th
   __resetReviewCards();
   const app = await createApp(creator, { name: 'Gate Key Legacy', template: 'nextjs-supabase' });
   const r = recorder('fail');
-  await assert.rejects(requestDeploy(app.id, creator, { scanMode: 'offline-mock', gates: r.gates }), (e: Error & { status?: number }) => { assert.equal(e.status, 422); return true; });
+  await assert.rejects(requestDeploy(app.id, creator, { scanMode: 'offline-mock', checks: r.gates }), (e: Error & { status?: number }) => { assert.equal(e.status, 422); return true; });
   assert.equal(r.calls.length, 1);
 });
 
@@ -97,7 +103,7 @@ test('NEGATIVE TWIN: an app the OS serves itself (spec) has no container, so no 
   __resetReviewCards();
   const app = await createApp(creator, { name: 'Gate Key Spec', template: 'nextjs-supabase', kind: 'spec' } as never);
   const r = recorder('fail');
-  await requestDeploy(app.id, creator, { scanMode: 'offline-mock', gates: r.gates }).catch(() => undefined);
+  await requestDeploy(app.id, creator, { scanMode: 'offline-mock', checks: r.gates }).catch(() => undefined);
   assert.equal(r.calls.length, 0, 'a non-container app must not start a sandbox');
 });
 
@@ -105,7 +111,7 @@ test('verify_app_gates (runAppTests) keys on the stored template too, even with 
   const app = await createApp(creator, { name: 'Gate Key Verify', template: 'nextjs-web' });
   await commitToApp(app.id, creator, [{ path: 'app.yaml', content: "name: 'Gate Key Verify'\nsurface: both\n" }], 'drop the template line');
   const r = recorder('pass');
-  const out = await runAppTests(app.id, creator, { gates: r.gates });
+  const out = await runAppTests(app.id, creator, { checks: r.gates });
   assert.equal(out.verdict.passed, true);
   assert.equal(r.calls.length, 1);
 });

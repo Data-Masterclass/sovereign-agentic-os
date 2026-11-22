@@ -19,6 +19,9 @@
  *   - PURE: no I/O, no `server-only`.
  */
 
+/** Frames the laptop report printed by scripts/factory-gates.mjs. The OS never reads it for a verdict. */
+export const GATES_REPORT_DELIM = '<<<OS-GATES-REPORT>>>';
+
 /** The gates the sandbox must report. Order is the order a human reads them in. */
 export const REQUIRED_GATES = ['typecheck', 'lint', 'tests', 'build', 'policy'] as const;
 

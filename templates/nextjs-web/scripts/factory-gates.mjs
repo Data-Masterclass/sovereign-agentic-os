@@ -209,5 +209,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   }
   const report = await runGates(root, process.env, toolchain, only);
   process.stdout.write(`${REPORT_DELIM}\n${JSON.stringify(report)}\n`);
-  process.exit(report.ok ? 0 : 1);
+  // One gate (the CI pipeline runs one per step): the same exit codes as `--gate`. Several: 0 only when all passed.
+  const [only1] = report.gates.length === 1 ? report.gates : [];
+  process.exit(only1 ? (only1.status === 'pass' ? 0 : only1.status === 'unavailable' ? 3 : 1) : report.ok ? 0 : 1);
 }

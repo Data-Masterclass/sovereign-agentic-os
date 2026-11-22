@@ -9,8 +9,10 @@
     - the build namespace (Pod Security `baseline` enforced, `restricted` audited), a ServiceAccount for runs, the vendored Catalog
       tasks (git-clone, trivy-scanner; files/tekton/tasks/, byte-for-byte);
     - the EventListener the OS posts to (CEL-validated), its TriggerBinding and TriggerTemplate, which
-      create ONE PipelineRun per commit. The Pipeline itself is the app's own `.tekton/pipeline.yaml`,
-      resolved from git at the exact commit by Tekton's git resolver;
+      create ONE PipelineRun per commit. The Pipeline is the PLATFORM's (`app-checks`, files/tekton/pipelines/,
+      the same as the template's eject copy) and its gate steps run the platform's gates script and policy from the
+      ConfigMap `app-checks-platform`; nothing is resolved from the app's own commit, so the pushed tree cannot
+      change what judges it;
     - RBAC: os-ui may read runs, task runs, pods and their logs, and cancel a run (patch). It may not
       create a PipelineRun: only the EventListener's ServiceAccount can, so os-ui cannot start an
       arbitrary pipeline;
@@ -50,6 +52,25 @@ metadata:
     {{- include "soa.labels" . | nindent 4 }}
 # The run's pods never need the Kubernetes API.
 automountServiceAccountToken: false
+---
+{{- /* The platform's gate files: the gates script and the Rego policy the gate steps run. Byte-identical to the
+       template's copies (scripts/check-software-tekton-chart.mjs fails when they differ). */}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-checks-platform
+  namespace: {{ $ns }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+data:
+  factory-gates.mjs: |
+{{ $.Files.Get "files/tekton/platform/factory-gates.mjs" | indent 4 }}
+  app-rules.rego: |
+{{ $.Files.Get "files/tekton/platform/app-rules.rego" | indent 4 }}
+---
+{{- $pipe := fromYaml ($.Files.Get "files/tekton/pipelines/app-checks.yaml") }}
+{{- $_ := set $pipe.metadata "namespace" $ns }}
+{{ toYaml $pipe }}
 ---
 {{- range $f := list "git-clone" "trivy-scanner" }}
 {{- $t := fromYaml ($.Files.Get (printf "files/tekton/tasks/%s.yaml" $f)) }}
@@ -200,13 +221,9 @@ spec:
           soa.dev/sha: $(tt.params.sha)
           soa.dev/trigger: $(tt.params.trigger)
       spec:
-        # The pipeline of record is the app's own file, at exactly this commit.
+        # The pipeline of record is the PLATFORM's (rendered above), never a file from the app's own commit.
         pipelineRef:
-          resolver: git
-          params:
-            - { name: url, value: "{{ $git }}/$(tt.params.repo)" }
-            - { name: revision, value: $(tt.params.sha) }
-            - { name: pathInRepo, value: "apps/$(tt.params.slug)/.tekton/pipeline.yaml" }
+          name: app-checks
         params:
           - { name: slug, value: $(tt.params.slug) }
           - { name: repoUrl, value: "{{ $git }}/$(tt.params.repo)" }

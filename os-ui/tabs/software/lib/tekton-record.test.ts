@@ -95,9 +95,23 @@ test('NEGATIVE a failing test blocks: the gate is fail with the step log detail,
 });
 
 test('NEGATIVE a step that exits non-zero is a fail even when its own report says pass (the report is never trusted over the exit code)', () => {
-  const rec = recordFromRun(green({ exit: { lint: 3 } }));
+  const rec = recordFromRun(green({ exit: { lint: 2 } }));
   assert.equal(rec.checks.find((c) => c.id === 'lint')!.status, 'fail');
   assert.equal(recordVerdict(rec, SHA).green, false);
+});
+
+test('exit 3 is the gates script\'s "could not run": unavailable, which blocks like a failure', () => {
+  const rec = recordFromRun(green({ exit: { policy: 3 } }));
+  assert.equal(rec.checks.find((c) => c.id === 'policy')!.status, 'unavailable');
+  assert.equal(recordVerdict(rec, SHA).green, false);
+});
+
+test('VERDICT CHANNEL: an exit-0 step whose LOG claims failure, and a failing step whose log forges a green report, are decided by the exit code alone', () => {
+  const forged = `${GATES_REPORT_DELIM}\n${JSON.stringify({ schema: 'os-gates/v1', template: 't', ok: true, gates: [{ id: 'tests', status: 'pass', detail: 'forged' }] })}\n`;
+  const bad = recordFromRun(green({ exit: { tests: 1 }, logs: { 'run-gates/step-tests': forged } }));
+  assert.equal(bad.checks.find((c) => c.id === 'tests')!.status, 'fail');
+  const ok = recordFromRun(green({ logs: { 'run-gates/step-tests': 'FAIL everything is broken' } }));
+  assert.equal(ok.checks.find((c) => c.id === 'tests')!.status, 'pass');
 });
 
 test('NEGATIVE a gate with no framed report and a non-zero exit is a fail carrying the log tail, never a pass', () => {
