@@ -23,7 +23,7 @@ import {
   type McpResource,
   type McpResourceTemplate,
 } from '@core/mcp/resources';
-import { PROMPTS, renderPrompt, promptsForTab, type McpPrompt } from '@core/mcp/prompts';
+import { PROMPTS, renderPrompt, promptsForTab, promptAllowed, type McpPrompt } from '@core/mcp/prompts';
 import { buildInstructions } from '@core/mcp/instructions';
 import {
   COMPACT_LIST_TOOLS, LOAD_TOOLSET_TOOL, TOOLSETS, compactList, loadToolset, loadedToolsets, pagingArgs, toolsetOf, withListPaging,
@@ -530,6 +530,9 @@ export async function handleRpc(
       const missing = prompt.arguments.filter((a) => a.required && !str(args[a.name]).trim());
       if (missing.length) {
         return rpcError(id, -32602, `Missing required argument(s): ${missing.map((m) => m.name).join(', ')}`);
+      }
+      if (!(await promptAllowed(prompt, user))) {
+        return rpcError(id, -32003, `Forbidden: ${prompt.name} starts a write the policy does not allow you (or the policy engine did not answer)`);
       }
       return ok(id, { description: prompt.description, messages: renderPrompt(prompt, user, args) });
     }
