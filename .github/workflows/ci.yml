@@ -1187,6 +1187,12 @@ jobs:
           OPA_IT_OPEN_URL: http://127.0.0.1:18182
           OPA_IT_OPEN_CONTAINER: opa-it-open
         run: node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test ../tests/opa/workflow-write.int.test.ts
+      - name: external-mcp.int.test (real OPA, stub of Notion's MCP server)
+        working-directory: os-ui
+        env:
+          OPA_IT_URL: http://127.0.0.1:18181
+          OPA_IT_TOKENS_FILE: ${{ runner.temp }}/opa-tokens.json
+        run: node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test ../tests/opa/external-mcp.int.test.ts
       - name: OPA logs (on failure)
         if: failure()
         run: docker logs opa-it || true
