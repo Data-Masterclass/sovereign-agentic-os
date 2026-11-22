@@ -19,7 +19,7 @@ import type { CurrentUser } from '@core/kernel/auth';
 import { createApp, saveAppFile, getAppForUser } from '@tabs/software/lib/apps';
 import { commitToApp } from '@tabs/software/lib/server';
 import { pushAppFiles } from './push-app-files.ts';
-import { platformOwnedViolations, isPlatformOwnedPath, readTemplate } from './golden-path.ts';
+import { platformOwnedViolations, platformOwnedRemovals, isPlatformOwnedPath, readTemplate } from './golden-path.ts';
 
 let reposDir = '';
 let prior = '';
@@ -80,4 +80,48 @@ test('NEGATIVE TWIN: a legacy (non golden-path) app is not subject to the golden
   const app = await createApp(builder, { name: 'Owned Legacy', template: 'nextjs-supabase' });
   const out = await pushAppFiles({ appId: app.id, files: [{ path: 'Dockerfile', content: 'FROM node:22-alpine\n' }], message: 'legacy' }, builder);
   assert.ok(out.appId);
+});
+
+// ---------------------------------------------------------------- next.config.* and deletions ---
+
+test('every next.config.* (js, mjs, cjs, ts, mts, cts) at any depth is platform-owned; look-alikes are not', () => {
+  for (const ext of ['js', 'mjs', 'cjs', 'ts', 'mts', 'cts']) {
+    for (const dir of ['', 'src/', 'apps/web/', 'a/b/c/']) assert.equal(isPlatformOwnedPath(`${dir}next.config.${ext}`), true, `${dir}next.config.${ext}`);
+  }
+  // NEGATIVE TWINS
+  for (const p of ['next.config.md', 'docs/next.config.md', 'src/lib/next-config.ts', 'src/lib/nextconfig.ts', 'next.config.json', 'xnext.config.mjs', 'src/next.configs.ts']) assert.equal(isPlatformOwnedPath(p), false, p);
+});
+
+test('MCP push cannot add a second next.config (ts/js) or override it below the root', async () => {
+  const app = await createApp(builder, { name: 'Owned Next', template: 'nextjs-web' });
+  for (const path of ['next.config.ts', 'next.config.js', 'src/next.config.mjs', 'next.config.mjs']) {
+    await assert.rejects(
+      pushAppFiles({ appId: app.id, files: [{ path, content: 'export default { output: "export" };\n' }], message: 'x' }, builder),
+      (e: Error & { status?: number }) => { assert.equal(e.status, 403, path); assert.match(e.message, /platform-owned/i); return true; },
+    );
+  }
+});
+
+test('NEGATIVE TWIN: re-pushing the platform next.config.mjs unchanged is accepted, and a next.config note in docs/ is the author\'s', async () => {
+  const app = await createApp(builder, { name: 'Owned Next Ok', template: 'nextjs-web' });
+  const out = await pushAppFiles({ appId: app.id, files: [{ path: 'next.config.mjs', content: tpl('next.config.mjs') }, { path: 'docs/next.config.md', content: '# why\n' }], message: 'ok' }, builder);
+  assert.ok(out.appId);
+});
+
+test('platformOwnedRemovals: an owned file that is in the tree before and gone after is a violation', () => {
+  const before = [{ path: 'Dockerfile', content: 'a' }, { path: 'policy/app-rules.rego', content: 'p' }, { path: 'next.config.ts', content: 'n' }, { path: 'src/a.ts', content: 'x' }];
+  assert.deepEqual(platformOwnedRemovals(before, before.filter((f) => f.path !== 'Dockerfile')), ['Dockerfile']);
+  assert.deepEqual(platformOwnedRemovals(before, before.filter((f) => !/^(policy|next)/.test(f.path))).sort(), ['next.config.ts', 'policy/app-rules.rego']);
+  // NEGATIVE TWINS: removing source is the author's; keeping every owned file is fine; an owned file that never existed is not a removal
+  assert.deepEqual(platformOwnedRemovals(before, before.filter((f) => f.path !== 'src/a.ts')), []);
+  assert.deepEqual(platformOwnedRemovals(before, before), []);
+  assert.deepEqual(platformOwnedRemovals([{ path: 'src/a.ts', content: 'x' }], []), []);
+});
+
+test('the commit tool refuses a merged tree that lost an owned file (the choke point every door shares)', async () => {
+  const { assertNoPlatformOwnedChange } = await import('./golden-path.ts');
+  const prior = [{ path: 'Dockerfile', content: 'FROM x' }, { path: 'src/a.ts', content: 'x' }];
+  assert.throws(() => assertNoPlatformOwnedChange(prior, [], [{ path: 'src/a.ts', content: 'x' }]), (e: Error & { status?: number }) => { assert.equal(e.status, 403); assert.match(e.message, /Dockerfile/); return true; });
+  assert.doesNotThrow(() => assertNoPlatformOwnedChange(prior, [], prior));
+  assert.doesNotThrow(() => assertNoPlatformOwnedChange(prior, [{ path: 'src/b.ts', content: 'y' }], [...prior, { path: 'src/b.ts', content: 'y' }]));
 });
