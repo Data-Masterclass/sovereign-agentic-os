@@ -2,6 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
+import { randomBytes } from 'node:crypto';
 import { config } from '@core/kernel/config';
 import type { CurrentUser } from '@core/kernel/auth';
 import {
@@ -308,6 +309,15 @@ export type OsAssistantResult = AgenticResult & {
  */
 export const ASK_COST_TAB = 'ask';
 
+/**
+ * A fresh W3C trace id (32 hex) for a Home chat turn. The gateway nests a model call in the caller's
+ * Langfuse trace only when it is sent a W3C `traceparent` (`gateway-trace.ts`); with an `ask-…` id
+ * every model call of a turn became its own trace.
+ */
+function mintW3cTraceId(): string {
+  return randomBytes(16).toString('hex');
+}
+
 /** A fresh turn id. `randomUUID` where available, else a timestamped random fallback. */
 function mintTraceId(): string {
   const c = globalThis.crypto as { randomUUID?: () => string } | undefined;
@@ -323,7 +333,9 @@ function mintTraceId(): string {
  */
 export async function runOsAssistant(input: RunOsAssistantInput): Promise<OsAssistantResult> {
   const injected = input.llm;
-  const traceId = input.traceId || mintTraceId();
+  // The Home chat (`confirm`) files all of a turn's model calls in ONE Langfuse trace.
+  const traceId = input.traceId || (input.confirm ? mintW3cTraceId() : mintTraceId());
+  const parentObservationId = /^[0-9a-f]{32}$/.test(traceId) ? randomBytes(8).toString('hex') : undefined;
   const artifacts: ChatArtifact[] = [];
   // Production: the ONE assistant model for both plan + act. Tests inject `llm`
   // and own model selection, so the config tier ids are opaque placeholders.
@@ -356,7 +368,7 @@ export async function runOsAssistant(input: RunOsAssistantInput): Promise<OsAssi
     onStep: input.onStep,
     // C1 — ONE trace per turn: the plan call, every act iteration and the cap synthesis all
     // nest under this turn's id instead of each creating its own unlinked Langfuse trace.
-    observe: { traceId },
+    observe: { traceId, ...(parentObservationId ? { parentObservationId } : {}) },
     // A3: attributed — the user, their active domain, the Ask surface and this turn
     // (never the master key).
     llm: injected ?? liteLlmCaller({

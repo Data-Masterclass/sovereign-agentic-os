@@ -144,7 +144,8 @@ export default function OsAssistant() {
 
   return (
     <>
-      {!open && (
+      {/* On Home the page IS the assistant; the floating launcher would only cover its input. */}
+      {!open && pathname !== '/' && (
         <button
           type="button"
           className="osa-launcher"
