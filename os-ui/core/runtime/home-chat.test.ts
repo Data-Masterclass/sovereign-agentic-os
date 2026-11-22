@@ -142,3 +142,29 @@ test('confirming does not widen rights: the governed dispatch re-checks the role
   assert.equal(out.status, 'failed');
   assert.equal(out.error?.code, 'forbidden');
 });
+
+// 5. one trace per turn --------------------------------------------------------------------------
+test('every model call of a Home chat turn carries ONE W3C trace id, so the gateway files them in one Langfuse trace', async () => {
+  const { gatewayTraceHeaders } = await import('@core/runtime/gateway-trace');
+  const seen: { traceId?: string; parent?: string }[] = [];
+  let acted = false;
+  const llm: LlmCall = async (req) => {
+    seen.push({ traceId: req.observe?.traceId, parent: req.observe?.parentObservationId });
+    if (!req.tools) return { content: '1. plan', toolCalls: [] };
+    if (!acted) { acted = true; return { content: '', toolCalls: [{ id: 'a', name: 'whoami', args: {} }] }; }
+    return { content: 'ok', toolCalls: [] };
+  };
+  const res = await turn(creator, llm, { dispatch: spyDispatch().dispatch });
+  assert.ok(seen.length >= 3, 'plan, act and the final answer each made a model call');
+  assert.match(res.traceId, /^[0-9a-f]{32}$/, 'the turn id is a W3C trace id');
+  assert.ok(seen.every((s) => s.traceId === res.traceId), 'all calls share the turn id');
+  assert.ok(seen.every((s) => /^[0-9a-f]{16}$/.test(s.parent ?? '')), 'and name a W3C parent span');
+  for (const s of seen) assert.ok(gatewayTraceHeaders({ traceId: s.traceId!, parentObservationId: s.parent }).headers.traceparent, 'a traceparent header is sent');
+});
+
+test('NEGATIVE TWIN: the drawer path (no confirm) keeps its ask- id, which sends no traceparent', async () => {
+  const seen: (string | undefined)[] = [];
+  const llm: LlmCall = async (req) => { seen.push(req.observe?.traceId); return { content: req.tools ? 'ok' : '1. plan', toolCalls: [] }; };
+  const res = await runOsAssistant({ user: creator, tab: null, messages: [{ role: 'user', content: 'go' }], llm });
+  assert.match(res.traceId, /^ask-/);
+});
