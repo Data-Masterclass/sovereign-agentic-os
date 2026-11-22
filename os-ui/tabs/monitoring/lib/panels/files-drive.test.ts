@@ -84,7 +84,7 @@ test('paused is shown with its reason; needs-reconnect is shown', async () => {
 });
 
 test('lag over the threshold is "lagging"; a drive that never synced has lag null (twin: not 0)', async () => {
-  drives = [row({ runs: [run('2026-11-22T07:00:00Z')] }), row({ id: 'src_new', runs: [], initialDone: false })];
+  drives = [row({ runs: [run('2026-11-22T07:00:00Z')] }), row({ id: 'src_new', runs: [], initialDone: false, createdAt: '2026-11-22T11:50:00Z' })];
   const v = await filesView(ada, now);
   const by = Object.fromEntries(v.drives.connections.map((x) => [x.id, x]));
   assert.equal(by.src_x.state, 'lagging');
