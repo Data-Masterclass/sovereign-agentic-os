@@ -90,6 +90,7 @@ function ModelsPageInner() {
   const confirm = useConfirm();
   const [assistant, setAssistant] = useState('');
   const [assistantExplicit, setAssistantExplicit] = useState(false);
+  const [assistantRole, setAssistantRole] = useState<'strong' | 'pinned'>('strong');
   // Live gateway catalog (source of truth for the role selectors) + the current
   // modelRoles store (the ONE per-role default store).
   const [catalog, setCatalog] = useState<CatalogModel[]>([]);
@@ -123,7 +124,7 @@ function ModelsPageInner() {
       ]);
       const mBody = await mRes.json();
       if (!mRes.ok) { setError(mBody.error ?? 'Failed to load'); return; }
-      setAssistant(mBody.assistant ?? ''); setAssistantExplicit(Boolean(mBody.assistantExplicit));
+      setAssistant(mBody.assistant ?? ''); setAssistantExplicit(Boolean(mBody.assistantExplicit)); setAssistantRole(mBody.assistantRole === 'pinned' ? 'pinned' : 'strong');
       if (cRes.ok) { const c = await cRes.json(); setCatalog(c.models ?? []); setCatalogSource(c.source ?? null); setCatalogError(c.error ?? ''); setConnections(c.credentials ?? null); setImageInput(c.imageInput ?? null); }
       if (sRes.ok) { const s = await sRes.json(); setStandardFirst(s.settings?.standardFirstEscalation !== false); }
       if (pRes.ok) { const p = await pRes.json(); setPrices(p.prices ?? {}); setPricesMeta({ updatedAt: p.updatedAt, updatedBy: p.updatedBy }); setPriceEdits({}); }
@@ -317,12 +318,16 @@ function ModelsPageInner() {
         <p className="hint">
           Agents &amp; Software build chat, the Big Bets planner, the Knowledge assistant and the Metric
           agent all run on <strong>this one model</strong>, through the governed LiteLLM gateway. By default
-          it <strong>follows the worker role</strong> above, so it just works; override it below to pin a
+          it <strong>follows the strong role</strong> above: it plans, chooses tools and writes every
+          answer on the strong model, and hands only clearly defined, schema-checked sub-tasks to the worker. Override it below to pin a
           model you added with Add a provider.
         </p>
         <div className="card" style={{ marginBottom: 16 }}>
           <div className="row" style={{ gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
             <span className="comp-label" style={{ margin: 0 }}>Active assistant</span>
+            <span className="pa-tag" title="The model the assistant runs on right now, and the role it stands for">
+              {assistant || 'unset'} · {assistantRole === 'strong' ? 'strong role' : 'pinned by an admin'}
+            </span>
             <select
               value={assistantExplicit ? assistant : ''}
               disabled={busy !== ''}
@@ -331,7 +336,7 @@ function ModelsPageInner() {
                 : patch(e.target.value, { op: 'assistant' })}
               style={{ minWidth: 260 }}
             >
-              <option value="">Follow Standard default ({assistant || 'unset'})</option>
+              <option value="">Follow the strong role ({assistant || 'unset'})</option>
               {catalog.filter((m) => m.mode !== 'embedding').map((m) => (
                 <option key={m.model_name} value={m.model_name}>{m.display} ({m.model_name})</option>
               ))}

@@ -202,3 +202,7 @@
 .hc-saveas-btn { padding: 4px 12px; border: 1px solid var(--gold-line); border-radius: 999px; background: transparent; color: var(--gold-text); font-size: 12px; cursor: pointer; }
 .hc-saveas-btn:hover { background: var(--gold-soft); border-color: var(--gold); }
 .hc-draft { margin-bottom: 6px; }
+
+.hc-trace { margin-top: 8px; font-size: 12px; color: var(--muted, #667); }
+.hc-trace summary { cursor: pointer; }
+.hc-trace ul { margin: 6px 0 0; padding-left: 18px; }

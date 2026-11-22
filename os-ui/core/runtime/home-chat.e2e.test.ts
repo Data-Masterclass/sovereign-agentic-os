@@ -48,6 +48,21 @@ async function tracesOf(userId: string, atLeast: number): Promise<Trace[]> {
   return list;
 }
 
+/** The distinct models (and node names) of the GENERATIONs inside one trace, as Langfuse recorded them. */
+async function generationsOf(traceId: string, atLeast: number): Promise<{ model: string; name: string }[]> {
+  let out: { model: string; name: string }[] = [];
+  for (let i = 0; i < 30; i++) {
+    const r = await fetch(`${LF}/api/public/traces/${traceId}`, { headers: { authorization: basic } });
+    if (r.ok) {
+      const obs = ((await r.json()) as { observations?: { type: string; model?: string | null; name?: string | null }[] }).observations ?? [];
+      out = obs.filter((o) => o.type === 'GENERATION').map((o) => ({ model: o.model ?? '', name: o.name ?? '' }));
+      if (out.length >= atLeast) break;
+    }
+    await sleep(2000);
+  }
+  return out;
+}
+
 async function generationCount(traceId: string): Promise<number> {
   for (let i = 0; i < 30; i++) {
     const r = await fetch(`${LF}/api/public/traces/${traceId}`, { headers: { authorization: basic } });
@@ -75,16 +90,22 @@ function opaDecisions(tool: string, principal: string): { effect: unknown; decis
   return out;
 }
 
-async function turn(user: { id: string; domains: string[] }, traceId?: string) {
+async function turn(user: { id: string; domains: string[] }, traceId?: string, delegate = false) {
   const { runOsAssistant } = await import('@core/runtime/agent-loop');
   const { liteLlmCaller } = await import('@core/runtime/runtime');
   const real = liteLlmCaller({ userId: user.id, domain: user.domains[0], tab: 'ask' });
   let acted = false;
+  let delegated = false;
   const llm: import('@core/runtime/agentic').LlmCall = async (req) => {
     const c = await real(req);
     if (req.tools && !acted) { // the stub provider cannot call tools: this test puts the call in its reply
       acted = true;
       return { ...c, content: '', toolCalls: [{ id: 'k1', name: 'search_knowledge', args: { query: 'onboarding' } }] };
+    }
+    // STRONG decides to delegate: the stub cannot, so this test puts the decision in strong's reply.
+    if (delegate && req.tools && !delegated) {
+      delegated = true;
+      return { ...c, content: '', toolCalls: [{ id: 'k2', name: 'delegate_to_worker', args: { preset: 'summarise_tool_result', input_refs: ['last'] } }] };
     }
     return c;
   };
@@ -137,4 +158,25 @@ test('NEGATIVE TWIN (policy): a domain OPA has no grant for is denied, and the d
   assert.ok(step && /deny/i.test(step.result), `the governed tool reports the denial: ${step?.result.slice(0, 200)}`);
   const d = opaDecisions('retrieve', 'nogrant');
   assert.ok(d.length >= 1 && d.every((x) => x.effect === 'deny'), 'OPA decided deny');
+});
+
+test('ROLES e2e: strong leads on one catalog model, a delegation runs on a DIFFERENT one, and the trace and Langfuse show both', { skip, timeout: 300_000 }, async () => {
+  const user = { id: `u-e2e-${hex(4)}`, domains: ['sales'] };
+  const res = await turn(user, undefined, true);
+  const roles = res.modelTrace.calls.map((c) => `${c.purpose}:${c.role}`);
+  assert.ok(roles.includes('plan:strong') && roles.includes('delegate:summarise_tool_result:worker'), roles.join(', '));
+  assert.equal(res.modelTrace.delegations[0]?.role, 'worker', 'the stub answers the schema, so no escalation');
+  assert.equal(res.modelTrace.delegations[0]?.escalated, false);
+  const gens = await generationsOf(res.traceId, 5);
+  const models = new Set(gens.map((g) => g.model).filter(Boolean));
+  assert.ok(models.size >= 2, `the gateway ran two distinct catalog models in the one trace, got ${[...models].join(' | ') || 'none'}`);
+  assert.ok(gens.some((g) => /delegate:summarise_tool_result/.test(g.name)), `the worker generation is named by its step: ${gens.map((g) => g.name).join(', ')}`);
+});
+
+test('NEGATIVE TWIN (roles): a turn in which strong does not delegate runs on ONE catalog model only', { skip, timeout: 300_000 }, async () => {
+  const user = { id: `u-e2e-${hex(4)}`, domains: ['sales'] };
+  const res = await turn(user);
+  assert.ok(res.modelTrace.calls.every((c) => c.role === 'strong'));
+  const gens = await generationsOf(res.traceId, 3);
+  assert.equal(new Set(gens.map((g) => g.model).filter(Boolean)).size, 1, 'one model, so the two-model check above is not trivially true');
 });

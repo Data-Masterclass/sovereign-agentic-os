@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { adminCtx, fail } from '../_ctx';
-import { getDefaults, getAssistantModelId, isAssistantExplicit } from '@tabs/admin/lib/models';
+import { getDefaults, getAssistantModelId, isAssistantExplicit, assistantModelInfo } from '@tabs/admin/lib/models';
 
 export const dynamic = 'force-dynamic';
 
@@ -15,7 +15,7 @@ export const dynamic = 'force-dynamic';
 export async function GET() {
   try {
     await adminCtx();
-    return NextResponse.json({ defaults: getDefaults(), assistant: getAssistantModelId(), assistantExplicit: isAssistantExplicit() });
+    return NextResponse.json({ defaults: getDefaults(), assistant: getAssistantModelId(), assistantExplicit: isAssistantExplicit(), assistantRole: assistantModelInfo().role });
   } catch (e) {
     return fail(e);
   }

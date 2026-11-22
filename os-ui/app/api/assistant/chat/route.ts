@@ -2,7 +2,8 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { roleModel } from '@core/models/roles';
+import { getAssistantModelId } from '@tabs/admin/lib/models';
+import { pricedTrace } from '@core/runtime/turn-prices';
 import { requireUser } from '@core/kernel/auth';
 import { mcpTabForPath, osToolExecutor, osToolSpecs, runOsAssistant } from '@core/runtime/agent-loop';
 import { decideConfirmation } from '@core/runtime/confirm-execute';
@@ -162,7 +163,7 @@ export async function POST(req: Request) {
     }
     return { error: `The assistant could not complete the request: ${(e as Error).message}`, status: 502 };
   };
-  const shape = (result: Awaited<ReturnType<typeof runOsAssistant>>) =>
+  const shape = async (result: Awaited<ReturnType<typeof runOsAssistant>>) =>
     ({ ...askTurnResponse({
       finalText: result.finalText,
       plan: result.plan,
@@ -170,7 +171,8 @@ export async function POST(req: Request) {
       artifacts: result.artifacts,
       tab,
       traceId: result.traceId,
-      model: roleModel('standard'),
+      model: getAssistantModelId(),
+      modelTrace: await pricedTrace(result.modelTrace),
       pending: result.pending,
       conversationId: result.conversationId,
     }), ...(conversationId ? { saveAs: availableSaveAs } : {}) });
@@ -191,7 +193,7 @@ export async function POST(req: Request) {
             onStep: (st) => send(askStepEvent({ tool: st.tool, isError: st.isError, result: st.result, parked: !!st.parked })),
           });
           remember(result);
-          send({ type: 'done', ...shape(result) });
+          send({ type: 'done', ...(await shape(result)) });
         } catch (e) {
           send({ type: 'error', error: failure(e).error });
         } finally {
@@ -207,7 +209,7 @@ export async function POST(req: Request) {
   try {
     const result = await runOsAssistant({ user, tab, page, messages: clean, confirm, onlyTools });
     remember(result);
-    return NextResponse.json(shape(result));
+    return NextResponse.json(await shape(result));
   } catch (e) {
     const f = failure(e);
     return NextResponse.json({ error: f.error }, { status: f.status });

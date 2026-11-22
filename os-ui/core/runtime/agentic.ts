@@ -106,6 +106,12 @@ export type LlmRequest = {
   onToken?: (text: string) => void;
   /** Aborts the call (the user pressed Stop). */
   signal?: AbortSignal;
+  /** What the call is for (`plan`, `act`, `synthesis`, `delegate:<task>`): the per-turn model trace and the Langfuse node. */
+  purpose?: string;
+  /** The call redoes a worker sub-task on the strong model after the worker's answer failed its check. */
+  escalated?: boolean;
+  /** The delegation (`delegate_to_worker`, numbered per turn) this call belongs to. */
+  delegationId?: number;
 };
 export type LlmCall = (req: LlmRequest) => Promise<LlmCompletion>;
 
@@ -512,6 +518,11 @@ function fitMessages(messages: LlmMessage[], budget: number): LlmMessage[] {
  * `callTool`; the loop is bounded by `maxIterations`; and if the model rejects
  * the `tools` param we transparently fall back to a ReAct JSON protocol.
  */
+/** The call's Langfuse position: the turn's `observe`, with the step's purpose as `node` unless the caller named one. */
+function observeFor(observe: { traceId: string; parentObservationId?: string; node?: string; callId?: string } | undefined, purpose: string): { observe: NonNullable<typeof observe> } | Record<string, never> {
+  return observe ? { observe: { ...observe, node: observe.node ?? purpose } } : {};
+}
+
 export async function runAgentic(opts: {
   system: string;
   userMessages: { role: 'user' | 'assistant'; content: string }[];
@@ -590,7 +601,8 @@ export async function runAgentic(opts: {
     messages: budgetMessages([{ role: 'system', content: planPrompt(opts.system) }, ...user], budget),
     temperature: 0.2,
     maxTokens: opts.maxOutputTokens,
-    ...(opts.observe ? { observe: opts.observe } : {}),
+    purpose: 'plan',
+    ...observeFor(opts.observe, 'plan'),
     ...(opts.signal ? { signal: opts.signal } : {}),
   });
   const plan = stripThinking(planCompletion.content) || '(no plan produced)';
@@ -660,7 +672,8 @@ export async function runAgentic(opts: {
         tools: react ? undefined : wire,
         temperature: 0.2,
         maxTokens: opts.maxOutputTokens,
-        ...(opts.observe ? { observe: opts.observe } : {}),
+        purpose: 'act',
+        ...observeFor(opts.observe, 'act'),
         ...(opts.onToken && !react ? { onToken: opts.onToken } : {}),
         ...(opts.signal ? { signal: opts.signal } : {}),
       });
@@ -922,7 +935,8 @@ export async function runAgentic(opts: {
         ),
         temperature: 0.2,
         maxTokens: opts.maxOutputTokens,
-        ...(opts.observe ? { observe: opts.observe } : {}),
+        purpose: 'synthesis',
+        ...observeFor(opts.observe, 'synthesis'),
       });
       finalText = stripThinking(synth.content);
     } catch {

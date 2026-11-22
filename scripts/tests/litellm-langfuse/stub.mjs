@@ -28,9 +28,12 @@ createServer((req, res) => {
     if (req.method === 'POST' && url.startsWith('/v1/chat/completions')) {
       let body = {};
       try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { /* empty */ }
+      // A worker delegation (core/runtime/delegate.ts) asks for ONE JSON object {"result", "confidence"}: answer it.
+      const asksDelegation = (body.messages ?? []).some((m) => typeof m.content === 'string' && m.content.includes('"confidence"') && m.content.includes('Answer ONE JSON object {"result"'));
+      const content = asksDelegation ? JSON.stringify({ result: { summary: 's', key_figures: [] }, confidence: 0.9 }) : 'COMPLETION_CANARY_7f3a fixed answer';
       return json(res, 200, {
         id: 'chatcmpl-stub', object: 'chat.completion', created: Math.floor(Date.now() / 1000), model: body.model, usage: USAGE,
-        choices: [{ index: 0, finish_reason: 'stop', message: { role: 'assistant', content: 'COMPLETION_CANARY_7f3a fixed answer' } }],
+        choices: [{ index: 0, finish_reason: 'stop', message: { role: 'assistant', content } }],
       });
     }
     json(res, 404, { error: 'not found', url });

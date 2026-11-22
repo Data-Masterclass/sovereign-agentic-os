@@ -27,6 +27,8 @@ import { ensureAssistantModelFresh, resolveAssistantModelId } from '@core/runtim
 import { inputBudget, modelContext } from '@core/models/context-windows';
 import { ensureModelLimitsFresh } from '@core/models/model-limits-live';
 import { renderPageContext, type PageContext } from '@core/runtime/page-context';
+import { createTurnLedger, type ModelTrace } from '@core/runtime/turn-ledger';
+import { DELEGATE_TOOL, DELEGATE_TOOL_SPEC, newTurnDelegations, runDelegateTool } from '@core/runtime/delegate';
 
 /**
  * THE ONE OVERARCHING SOVEREIGN OS ASSISTANT (server wiring).
@@ -44,7 +46,10 @@ import { renderPageContext, type PageContext } from '@core/runtime/page-context'
  *
  * It reuses the pure PLAN→ACT harness (`agentic.ts`) and the governed LiteLLM
  * caller (`runtime.ts`), and runs on the ONE assistant model
- * (`resolveAssistantModelId()` → `sovereign-default`).
+ * (`resolveAssistantModelId()`): the STRONG role unless an admin pinned another alias.
+ * Orchestration, planning, tool choice and the final answer are always on it; only clearly
+ * defined, schema-checked sub-tasks go to the worker (`delegate.ts`), each redone on strong
+ * when its check fails. `modelTrace` lists every model call of the turn with its role.
  */
 
 /**
@@ -93,6 +98,12 @@ const OS_RULES = [
   'their own domain; promoting/publishing a shared asset is Builder+; certifying to',
   'the marketplace is Admin. Deploy is a Builder-REVIEWED draft (request_deploy',
   'opens a review gate) — never auto-live.',
+  '',
+  'DELEGATING: you may hand a clearly defined, read-only sub-task (condense a long tool',
+  'result, extract fields, classify, format a table) to the cheap worker with',
+  '`delegate_to_worker`: you write the instruction and the JSON schema of the answer, and',
+  'reference earlier results with input_refs. You always plan, choose tools, decide and write',
+  'the final answer yourself; the worker only returns data that fits your schema.',
   '',
   'BE HONEST: if a tool is blocked by governance (role or approval), say so plainly',
   '— name the role required — and do NOT pretend you performed the action. Prefer',
@@ -313,6 +324,8 @@ export type OsAssistantResult = AgenticResult & {
   traceId: string;
   /** The conversation the turn's parked confirmations are bound to (the caller's, or one minted here). */
   conversationId: string;
+  /** Every model call of the turn: purpose, model, the role it stands for, escalation and reported usage. */
+  modelTrace: ModelTrace;
 };
 
 /**
@@ -354,18 +367,41 @@ export async function runOsAssistant(input: RunOsAssistantInput): Promise<OsAssi
   const conversationId = input.confirm?.conversationId ?? mintConversationId();
   const parentObservationId = /^[0-9a-f]{32}$/.test(traceId) ? randomBytes(8).toString('hex') : undefined;
   const artifacts: ChatArtifact[] = [];
-  // Production: the ONE assistant model for both plan + act. Tests inject `llm`
-  // and own model selection, so the config tier ids are opaque placeholders.
+  // Production: the ONE assistant model (strong, or the admin's pin) for plan, tool choice and the answer.
+  // A test injects `llm` and skips the hydration of the admin stores; the model is resolved the same way.
   if (!injected) await ensureAssistantModelFresh();
-  const assistantId = injected ? roleModel('standard') : resolveAssistantModelId();
+  const assistantId = resolveAssistantModelId();
   // The model's own limits from the LiteLLM catalog (at most one read a minute), before they are asked for.
   if (!injected) await ensureModelLimitsFresh();
+  const strongId = roleModel('reasoning');
+  const workerId = roleModel('standard');
+  const ledger = createTurnLedger((m) => (m === strongId ? 'strong' : m === workerId ? 'worker' : 'pinned'));
+  const llm = ledger.wrap(injected ?? liteLlmCaller({
+    userId: input.user.id,
+    domain: input.user.activeDomain ?? input.user.domains[0] ?? 'none',
+    tab: ASK_COST_TAB,
+    runId: traceId,
+  }));
   const ctx = modelContext(assistantId);
   const roleTools = osToolSpecs(input.user, input.tab);
   // What this ROLE may use: a name outside it is refused by the governed door with its typed error.
   const roleToolNames = new Set(roleTools.map((t) => t.name));
   const only = input.onlyTools ? new Set(input.onlyTools) : null;
-  const tools = only ? roleTools.filter((t) => only.has(t.name)) : roleTools;
+  // Strong may hand a defined, read-only sub-task to the worker (`delegate_to_worker`); a save-as turn offers only its one tool.
+  const tools = only ? roleTools.filter((t) => only.has(t.name)) : [...roleTools, DELEGATE_TOOL_SPEC];
+  const turnDelegations = newTurnDelegations();
+  const stepResults: { tool: string; text: string }[] = [];
+  const governed = osToolExecutor(input.user, artifacts, input.dispatch);
+  // The delegation tool is the harness's own, read-only (the worker has no tools); every other tool is the governed door.
+  const executor: typeof governed = async (name, args, ctx) =>
+    name === DELEGATE_TOOL
+      ? runDelegateTool(args, {
+          llm, results: () => stepResults, turn: turnDelegations,
+          user: { id: input.user.id, domains: input.user.domains },
+          ...(input.signal ? { signal: input.signal } : {}),
+          onSpan: (d) => ledger.addDelegation(d),
+        })
+      : governed(name, args, ctx);
   const result = await runAgentic({
     system: osAssistantSystem(input.tab, input.page),
     userMessages: input.messages,
@@ -373,7 +409,7 @@ export async function runOsAssistant(input: RunOsAssistantInput): Promise<OsAssi
     // EVERY interactive turn (Home chat, the Ask-the-OS drawer, a direct API call) parks a write
     // until the same user confirms it (pinned in `assistant-all-turns-gated.test.ts`).
     callTool: userConfirmGate(
-      osToolExecutor(input.user, artifacts, input.dispatch),
+      executor,
       {
         userId: input.user.id,
         conversationId,
@@ -381,13 +417,13 @@ export async function runOsAssistant(input: RunOsAssistantInput): Promise<OsAssi
         traceId,
         // A tool this user's role cannot use is refused by the governed door with its typed
         // error; it is not offered for confirmation.
-        refusedByInner: (tool) => !roleToolNames.has(tool),
+        refusedByInner: (tool) => tool === DELEGATE_TOOL || !roleToolNames.has(tool),
         // A save-as turn closes everything but its one tool, even a write the role may use.
         ...(only ? { closed: (tool: string) => (only.has(tool) ? null : `${tool} is not available for this action`) } : {}),
       },
       confirmationPort(),
     ),
-    onStep: input.onStep,
+    onStep: (step) => { stepResults.push({ tool: step.tool, text: step.result }); input.onStep?.(step); },
     ...(input.onToken ? { onToken: input.onToken } : {}),
     ...(input.signal ? { signal: input.signal } : {}),
     // C1 — ONE trace per turn: the plan call, every act iteration and the cap synthesis all
@@ -395,13 +431,9 @@ export async function runOsAssistant(input: RunOsAssistantInput): Promise<OsAssi
     observe: { traceId, ...(parentObservationId ? { parentObservationId } : {}) },
     // A3: attributed — the user, their active domain, the Ask surface and this turn
     // (never the master key).
-    llm: injected ?? liteLlmCaller({
-      userId: input.user.id,
-      domain: input.user.activeDomain ?? input.user.domains[0] ?? 'none',
-      tab: ASK_COST_TAB,
-      runId: traceId,
-    }),
-    planModel: injected ? roleModel('reasoning') : assistantId,
+    llm,
+    // PLAN and ACT are the same model: the one that decides never differs from the one that answers.
+    planModel: assistantId,
     actModel: assistantId,
     maxIterations: input.maxIterations ?? config.assistantMaxSteps,
     budget: inputBudget(assistantId),
@@ -415,5 +447,5 @@ export async function runOsAssistant(input: RunOsAssistantInput): Promise<OsAssi
     // only today, per `OS_RULES`.
     writeToolNames: [...WRITE_TOOL_NAMES],
   });
-  return { ...result, tab: input.tab, artifacts, traceId, conversationId };
+  return { ...result, tab: input.tab, artifacts, traceId, conversationId, modelTrace: ledger.trace() };
 }

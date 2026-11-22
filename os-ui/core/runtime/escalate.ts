@@ -3,7 +3,8 @@
  */
 import 'server-only';
 import { roleModel, standardFirstEscalationEnabled } from '@core/models/roles';
-import { assistantComplete, type AssistantMessage, type AssistantCaller } from '@core/runtime/complete';
+import { assistantComplete, CostCapExceededError, type AssistantMessage, type AssistantCaller } from '@core/runtime/complete';
+import { BudgetExceededError } from '@core/infra/litellm-credential';
 
 /**
  * STANDARD-FIRST ESCALATION — the ONE cost-routing helper (Cost routing wave).
@@ -116,8 +117,10 @@ export async function completeWithEscalation(
     if (accepts(opts.validate, first.content)) {
       return { content: first.content, model: first.model, escalated: false };
     }
-  } catch {
-    /* standard tier unusable (unreachable/over-cap/etc) → fall through to escalate */
+  } catch (e) {
+    // A spend limit ends the call: escalating would spend more on the SAME key / cap (and on the pricier tier).
+    if (e instanceof BudgetExceededError || e instanceof CostCapExceededError) throw e;
+    /* standard tier unusable (unreachable, etc) → fall through to escalate */
   }
 
   // ESCALATE ONCE to reasoning. Its result stands (validated or not) — the surface's
