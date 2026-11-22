@@ -26,7 +26,7 @@ import { config } from '@core/kernel/config';
 import { recentOsRuns } from '@core/infra/dagster';
 import { checkExecutions, dependedByGraph, downstreamOf, jobHealthOf, laneAlertsOf, visibleModels, type LaneAlert, type RunGroupHealth } from '@core/adapters/dagster/monitoring-read';
 import { monitoringSources, SOURCES_MISSING, type MonitoringSources } from '@tabs/monitoring/lib/panels/sources';
-import { live, qualityTrend, splitDownstream, unavailable, type NotUpstream, type SourceState, type TrendPoint } from '@tabs/monitoring/lib/panels/panels-core';
+import { failingSince, live, qualityTrend, ruleStatusOf, ruleTrend, ruleTypeOf, splitDownstream, unavailable, type NotUpstream, type RuleStatus, type RuleTrendPoint, type RuleType, type SourceState, type TrendPoint } from '@tabs/monitoring/lib/panels/panels-core';
 
 /** Dagster reads per page are bounded: runs scanned, datasets given a trend. */
 const RUN_SCAN = 200;
@@ -35,6 +35,26 @@ const ALERT_SCAN = 1000;
 
 /** An alert with the model names the viewer may see; `hidden` counts the ones withheld. */
 export type LaneAlertView = { runId: string; models: string[]; hidden: number; principal: string; at: string | null; url?: string };
+
+const RULE_EXECUTIONS = 10;
+
+/** One dbt test of a dataset, as Dagster's asset check records it. */
+export type RulePanel = {
+  name: string;
+  type: RuleType;
+  status: RuleStatus;
+  /** Rows dbt reported failing (`dagster_dbt/failed_row_count`); absent when dbt reported none. */
+  failingRows?: number;
+  severity?: 'warn' | 'error';
+  lastRunAt?: string;
+  runId?: string;
+  /** Dagster's run page for the latest evaluation. */
+  runUrl?: string;
+  /** Start of the current failing streak; `failingSinceExact` is false when it began before the history read. */
+  failingSince?: string;
+  failingSinceExact?: boolean;
+  trend?: RuleTrendPoint[];
+};
 
 export type DatasetPanel = {
   id: string;
@@ -50,6 +70,8 @@ export type DatasetPanel = {
   lastSuccessAt?: string | null;
   tests?: { source: 'dagster' | 'os' | null; ranAt: string | null; total: number; failing: { name: string; violations: number | null }[]; notRun: number };
   trend?: TrendPoint[];
+  /** Per-rule results (Dagster asset checks of the dataset's tested asset). Absent until a dbt test has run in Dagster. */
+  rules?: RulePanel[];
   /** Downstream assets of datasets the viewer can see, by name. */
   downstream?: { key: string; url?: string }[];
   /** Downstream assets the viewer cannot see: a count per domain only, never their names. */
@@ -65,12 +87,16 @@ export type DataView = {
   datasets: DatasetPanel[];
   /** Hand-launched runs (no dataset) of the viewer's domains that reached beyond their owner's lane. */
   laneAlerts: LaneAlertView[];
+
+  /** Datasets whose per-rule results were not read because the per-response limit (`TREND_DATASETS`) was reached. */
+  rulesDatasetsOmitted: number;
   notUpstream: NotUpstream[];
 };
 
 const NOT_UPSTREAM: NotUpstream[] = [
   { panel: 'Freshness vs SLA', reason: 'The generated Dagster definitions declare no FreshnessPolicy, so Dagster has no SLA to evaluate. Shown: the last successful run per job, not an SLA verdict.' },
   { panel: 'Trino query errors and slow queries', reason: 'Trino documents system.runtime.queries, but the OS has no governed read path to Trino’s system catalog yet, and per-user visibility needs Trino query rules. Not in this release.' },
+  { panel: 'Failing row counts where dbt reports none', reason: 'A rule’s failing-row count is dagster-dbt’s failed_row_count metadata, which dbt’s run_results records for a failing test. Where dbt reported no count the rule shows its status without one — the OS never counts rows itself.' },
   { panel: 'Storage growth', reason: 'The Collector’s kubelet_stats receiver runs without the volume metric group, and per-table Iceberg $snapshots summaries would need one Trino query per table. Not in this release.' },
 ];
 
@@ -109,6 +135,7 @@ export async function dataView(user: CurrentUser, nowMs = Date.now()): Promise<D
 
   const datasets: DatasetPanel[] = [];
   let trends = 0;
+  let omitted = 0;
   for (const { d, scope } of all) {
     const h = health?.get(d.id);
     const rec = dq.ok ? dq.m.get(d.id) ?? null : null;
@@ -132,10 +159,29 @@ export async function dataView(user: CurrentUser, nowMs = Date.now()): Promise<D
     }
     if (dk?.tested) {
       p.testedAssetUrl = assetUrl(dk.tested);
+      if (rec?.source === 'dagster' && trends >= TREND_DATASETS && rec.results.length) omitted += 1;
       if (rec?.source === 'dagster' && trends < TREND_DATASETS && rec.results.length) {
         trends += 1;
-        const ex = await Promise.all(rec.results.map((r) => checkExecutions(dk.tested!, r.id, 10, { timeoutMs: 4000 })));
+        const ex = await Promise.all(rec.results.map((r) => checkExecutions(dk.tested!, r.id, RULE_EXECUTIONS, { timeoutMs: 4000 })));
         p.trend = qualityTrend(ex.flatMap((e) => (e.ok ? e.value : [])));
+        // Per rule: the same executions, kept apart. Over the cap a rule keeps its latest status only.
+        p.rules = rec.results.map((r, i) => {
+          const e = ex[i];
+          const hist = e.ok ? e.value : null;
+          const latest = hist?.[0];
+          const status: RuleStatus = latest ? ruleStatusOf(latest) : r.status === 'pass' ? 'pass' : r.status === 'fail' ? 'fail' : 'not_run';
+          const since = hist ? failingSince(hist, RULE_EXECUTIONS) : null;
+          return {
+            name: r.label,
+            type: ruleTypeOf(r.id),
+            status,
+            ...(latest?.failedRows !== null && latest?.failedRows !== undefined && (status === 'fail' || status === 'warn') ? { failingRows: latest.failedRows } : status === 'fail' && r.violations !== null ? { failingRows: r.violations } : {}),
+            ...(latest?.severity ? { severity: latest.severity === 'WARN' ? 'warn' as const : 'error' as const } : {}),
+            ...(latest ? { lastRunAt: latest.at, runId: latest.runId, ...(dagsterUi && latest.runId ? { runUrl: `${dagsterUi}/runs/${encodeURIComponent(latest.runId)}` } : {}) } : {}),
+            ...(since?.since ? { failingSince: since.since, failingSinceExact: since.exact } : {}),
+            ...(hist ? { trend: ruleTrend(hist, RULE_EXECUTIONS) } : {}),
+          };
+        });
       }
     }
     if (graph.ok && dk) {
@@ -158,6 +204,8 @@ export async function dataView(user: CurrentUser, nowMs = Date.now()): Promise<D
     links: dagsterUi ? { dagster: dagsterUi } : {},
     datasets,
     laneAlerts: [...laneAlerts].filter(([k]) => k.startsWith('domain:')).flatMap(([, v]) => v.map(view)),
+
+    rulesDatasetsOmitted: omitted,
     notUpstream: NOT_UPSTREAM,
   };
 }

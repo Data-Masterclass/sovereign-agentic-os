@@ -12,16 +12,20 @@ import type { CurrentUser } from '@core/kernel/auth';
 import { agentsView, type AgentsView } from '@tabs/monitoring/lib/panels/agents-panel';
 import { dataView, type DataView } from '@tabs/monitoring/lib/panels/data-panel';
 import { platformView, type PlatformView } from '@tabs/monitoring/lib/panels/platform-panel';
+import { filesView, type FilesView } from '@tabs/monitoring/lib/panels/files-panel';
+import { knowledgeView, type KnowledgeView } from '@tabs/monitoring/lib/panels/knowledge-panel';
 
-export const PANEL_VIEWS = ['agents', 'data', 'platform'] as const;
+export const PANEL_VIEWS = ['agents', 'data', 'platform', 'files', 'knowledge'] as const;
 export type PanelView = (typeof PANEL_VIEWS)[number];
 export const isPanelView = (v: unknown): v is PanelView => typeof v === 'string' && (PANEL_VIEWS as readonly string[]).includes(v);
 
-export type { AgentsView, DataView, PlatformView };
+export type { AgentsView, DataView, PlatformView, FilesView, KnowledgeView };
 export { PlatformForbiddenError } from '@tabs/monitoring/lib/panels/platform-panel';
 
-export function monitoringPanels(user: CurrentUser, view: PanelView): Promise<AgentsView | DataView | PlatformView> {
+export function monitoringPanels(user: CurrentUser, view: PanelView): Promise<AgentsView | DataView | PlatformView | FilesView | KnowledgeView> {
   if (view === 'agents') return agentsView(user);
   if (view === 'data') return dataView(user);
+  if (view === 'files') return filesView(user);
+  if (view === 'knowledge') return knowledgeView(user);
   return platformView(user);
 }

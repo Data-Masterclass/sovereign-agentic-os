@@ -19,8 +19,12 @@ import { latestDqRuns } from '@tabs/data/lib/dq-status-server';
 import { projectSnapshot } from '@tabs/data/lib/dbt/snapshot';
 import { datasetAssetKeys } from '@tabs/data/lib/dbt/asset-keys';
 import { dataProjectGitEnabled } from '@tabs/data/lib/dbt/commit';
+import { listFiles, getFile, ensureHydrated as ensureFilesHydrated } from '@tabs/files/lib/store';
+import { listWorkflows, ensureHydrated as ensureKnowledgeHydrated } from '@tabs/knowledge/lib/store';
 
 export const monitoringSourcesImpl: MonitoringSources = {
+  files: (p) => monitoringFilesSource(p),
+  knowledge: (p) => monitoringKnowledgeSource(p),
   async agentSystems(p) {
     await ensureAgentsHydrated();
     return agentHealthRows({ id: p.id, domains: p.domains, role: p.role as never }).map((r) => ({ id: r.id, name: r.name, scope: r.scope }));
@@ -56,6 +60,35 @@ export const monitoringSourcesImpl: MonitoringSources = {
     }
     return out;
   },
+};
+
+const asPrincipal = (p: { id: string; domains: string[]; role: string }) => ({ id: p.id, domains: p.domains, role: p.role as never });
+
+export const monitoringFilesSource: NonNullable<MonitoringSources['files']> = async (p) => {
+  await ensureFilesHydrated();
+  const user = asPrincipal(p);
+  const g = listFiles(user);
+  const out: Awaited<ReturnType<NonNullable<MonitoringSources['files']>>> = [];
+  for (const [scope, list] of [['mine', g.mine], ['domain', g.domain], ['marketplace', g.marketplace]] as const) {
+    for (const f of list) {
+      const a = getFile(f.id, user).asset;
+      out.push({
+        id: f.id, name: f.name, domain: f.domain, scope, kind: f.kind, bytes: f.bytes,
+        mode: a.indexing.mode,
+        extraction: a.indexing.extraction ? { status: a.indexing.extraction.status, code: a.indexing.extraction.code, reason: a.indexing.extraction.reason, at: a.indexing.extraction.at } : null,
+        outcome: a.indexing.outcome ? { status: a.indexing.outcome.status, chunks: a.indexing.outcome.chunks, reason: a.indexing.outcome.reason, at: a.indexing.outcome.at } : null,
+      });
+    }
+  }
+  return out;
+};
+
+export const monitoringKnowledgeSource: NonNullable<MonitoringSources['knowledge']> = async (p) => {
+  await ensureKnowledgeHydrated();
+  const g = listWorkflows(asPrincipal(p));
+  return (['mine', 'domain', 'marketplace'] as const).flatMap((scope) =>
+    g[scope].map((w) => ({ id: w.id, title: w.title, domain: w.domain, scope, status: w.status, updatedAt: w.updatedAt, publishedAt: w.publishedAt, certified: !!w.certifiedAt })),
+  );
 };
 
 export function registerMonitoringPanelSources(): void {
