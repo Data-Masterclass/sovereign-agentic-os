@@ -68,7 +68,7 @@ jobs:
           sudo install -m 0755 kind /usr/local/bin/kind
 
       - name: Chart dependencies
-        run: helm dependency build charts/sovereign-agentic-os
+        run: helm dependency build charts/sovereign-agentic-os || helm dependency update charts/sovereign-agentic-os
 
       - name: Isolation (os-ui, postgres, OPA and the API server blocked; proxy and DNS open; control reaches them)
         run: bash tests/software-factory/isolation.sh
