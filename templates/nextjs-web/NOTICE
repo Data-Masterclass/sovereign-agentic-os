@@ -1,0 +1,19 @@
+Third-party attribution for apps built from this template.
+
+The template's own code is Apache-2.0. Almost every package in package-lock.json is MIT, ISC, BSD or Apache-2.0.
+The packages below are under other permissive licences that require attribution; none is copyleft.
+Regenerate this list from package-lock.json when dependencies change (the template-licences test checks it).
+
+caniuse-lite
+  Licence: CC-BY-4.0 (https://creativecommons.org/licenses/by/4.0/)
+  Copyright: Alexis Deveria and contributors, https://github.com/browserslist/caniuse-lite
+  Role: data used by Next.js at BUILD time (browser support tables). Not part of the runtime image.
+
+argparse
+  Licence: Python-2.0 (Python Software Foundation License)
+  Copyright: Python Software Foundation and contributors, https://github.com/nodeca/argparse
+  Role: development only (a dependency of eslint's js-yaml). Not part of the runtime image.
+
+@sovereign-os/app-sdk
+  Licence: Apache-2.0 (the platform's own SDK, vendored under vendor/; its package.json declares no licence field)
+  Role: shipped in the image.
