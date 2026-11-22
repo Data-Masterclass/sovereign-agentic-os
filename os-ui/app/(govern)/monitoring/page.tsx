@@ -157,7 +157,7 @@ export default function MonitoringPage() {
   const view: PanelKind = picked === 'platform' && !canSeeSpend ? 'agents' : picked;
   useEffect(() => {
     const v = getUrlParam('view');
-    if (v === 'agents' || v === 'data' || v === 'platform' || v === 'files' || v === 'knowledge' || v === 'kpis' || v === 'dashboards' || v === 'software') setView(v);
+    if (v === 'agents' || v === 'data' || v === 'platform' || v === 'files' || v === 'knowledge' || v === 'kpis' || v === 'dashboards' || v === 'software' || v === 'workflows') setView(v);
   }, []);
   const pickView = useCallback((v: PanelKind) => {
     setView(v);
@@ -235,6 +235,7 @@ export default function MonitoringPage() {
           <button type="button" role="tab" aria-selected={view === 'kpis'} className={view === 'kpis' ? 'on' : ''} onClick={() => pickView('kpis')}>KPIs</button>
           <button type="button" role="tab" aria-selected={view === 'dashboards'} className={view === 'dashboards' ? 'on' : ''} onClick={() => pickView('dashboards')}>Dashboards</button>
           <button type="button" role="tab" aria-selected={view === 'software'} className={view === 'software' ? 'on' : ''} onClick={() => pickView('software')}>Software</button>
+          <button type="button" role="tab" aria-selected={view === 'workflows'} className={view === 'workflows' ? 'on' : ''} onClick={() => pickView('workflows')}>Workflows</button>
           {canSeeSpend && <button type="button" role="tab" aria-selected={view === 'platform'} className={view === 'platform' ? 'on' : ''} onClick={() => pickView('platform')}>Platform</button>}
         </div>
 
@@ -291,6 +292,7 @@ export default function MonitoringPage() {
         {view === 'kpis' && <PanelsView kind="kpis" />}
         {view === 'dashboards' && <PanelsView kind="dashboards" />}
         {view === 'software' && <PanelsView kind="software" />}
+        {view === 'workflows' && <PanelsView kind="workflows" />}
         {canSeeSpend && view === 'platform' && (
           <>
             <PanelsView kind="platform" />
