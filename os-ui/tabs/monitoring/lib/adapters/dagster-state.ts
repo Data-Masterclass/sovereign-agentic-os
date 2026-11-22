@@ -2,6 +2,8 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  *
  * FEATURE:    Live schedule and sensor state from Dagster for Monitoring (read only)
+ * USER STORY: As a platform engineer I pause a schedule in Dagster and Monitoring shows it as paused there,
+ *             without the OS changing it.
  * ARCHITECTURE: one GraphQL read (`instigatorStates`), the OS's own expectation (sync enabled) from
  *   the store, then the pure core. An unreadable Dagster gives a warning alert and no items.
  */
