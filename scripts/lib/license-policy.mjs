@@ -260,18 +260,20 @@ export function loadKnownViolations(file) {
   const k = typeof file === 'string' ? JSON.parse(readFileSync(file, 'utf8')) : file;
   const list = k.violations || [];
   list.forEach((x, i) => {
-    for (const f of ['ecosystem', 'name', 'version']) if (!x[f]) throw new Error(`known-violations[${i}]${x.name ? ` (${x.name})` : ''}: "${f}" is required`);
-    if (x.version === '*') throw new Error(`known-violations[${i}] (${x.name}): an exact version is required, "*" would hide every future version`);
+    const py = x.ecosystem === 'python'; // python resolves against a live index: keyed on package + licence, the version floats
+    for (const f of ['ecosystem', 'name', py ? 'licence' : 'version']) if (!x[f]) throw new Error(`known-violations[${i}]${x.name ? ` (${x.name})` : ''}: "${f}" is required`);
+    if (!py && x.version === '*') throw new Error(`known-violations[${i}] (${x.name}): an exact version is required, "*" would hide every future version`);
     if (typeof x.reason !== 'string' || x.reason.trim() === '') throw new Error(`known-violations[${i}] (${x.name}): a reason is required`);
   });
   return { violations: list };
 }
 
 // A finding is "known" only if it is not never-allowed (AGPL, EUPL, source-available: verdict forbid - those always fail) and an entry
-// names its exact package version. `unchecked` = entries of an ecosystem that was not scanned this run: reported, never silent.
+// names its exact package version (python: its package + licence, because the index moves under us). `unchecked` = entries of an ecosystem that was not scanned this run: reported, never silent.
 export function applyKnownViolations(results, known, { scanned }) {
   const list = known.violations;
-  const matches = (x, r) => x.ecosystem === r.ecosystem && x.name === r.name && x.version === r.version;
+  const matches = (x, r) => x.ecosystem === r.ecosystem && x.name === r.name
+    && (x.ecosystem === 'python' ? x.licence === String(r.expression) : x.version === r.version); // python: a bump with the same licence stays known
   const failures = results.filter((r) => r.status === 'fail');
   const knownHits = failures.filter((r) => r.verdict !== 'forbid' && list.some((x) => matches(x, r)));
   const newFailures = failures.filter((r) => !knownHits.includes(r));
