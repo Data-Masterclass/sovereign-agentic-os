@@ -229,7 +229,8 @@ test('AGENT_FORBIDDEN_TOOLS: the catalog names exactly the doors that consult it
   assert.match(src, /OUT OF SCOPE, on purpose/);
   assert.match(src, /`runOsAssistant`/);
   assert.match(src, /`runTabAgent`/);
-  assert.match(src, /NO structural confirm step/);
+  assert.match(src, /every write there parks behind the user-confirm gate/);
+  assert.doesNotMatch(src, /NO structural confirm step/, 'the interactive assistants are confirm-gated now; the comment must not say otherwise');
   assert.doesNotMatch(src, /TWO doors consult this/);
   assert.doesNotMatch(src, /does NOT consult it/);
   assert.doesNotMatch(src, /ONE door consults this today/);
