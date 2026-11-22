@@ -35,6 +35,39 @@ export type FileRow = {
   outcome: { status: 'indexed' | 'empty' | 'failed'; chunks?: number; reason?: string; at?: string } | null;
 };
 
+/** The security scan of an app's newest review card, as the review recorded it. */
+export type ScanFacts = {
+  mode: string;
+  /** The engine that produced the result (`trivy`); null when none ran. */
+  engine: string | null;
+  passed: boolean;
+  /** True when NO engine ran: `passed` is false for that reason, not a finding. */
+  unavailable: boolean;
+  reason: string | null;
+  /** Categories no engine covered — a zero there is not "clean". */
+  notRun: string[];
+  /** The review capped its finding list; severity counts are then of the listed findings only. */
+  truncated: boolean;
+  scannedAt: string;
+  byCategory: Record<string, number>;
+  bySeverity: Record<'critical' | 'high' | 'medium' | 'low' | 'info', number>;
+};
+
+/** One app of the Software tab's scoped list with its newest review card. */
+export type SoftwareRow = {
+  id: string;
+  slug: string;
+  name: string;
+  domain: string;
+  scope: ScopeGroup;
+  serveMode: 'spec' | 'runtime' | 'image';
+  /** The runner's object name (`app-<slug>`) for an image app — the pod label — else null (no pod exists). */
+  runner: string | null;
+  /** `deployStatusOf` — the one honest status word. */
+  status: { label: string; servedUrl: string | null };
+  review: { requestedAt: string; decision: string; decidedAt: string | null; scan: ScanFacts } | null;
+};
+
 /** One knowledge workflow of the Knowledge tab's scoped list. */
 export type KnowledgeRow = {
   id: string;
@@ -76,6 +109,8 @@ export type MonitoringSources = {
   assetKeys(ds: { id: string; domain: string }[]): Promise<Map<string, { tested: string[] | null; models: string[][] }>>;
   /** The Files tab's scoped list (`listFiles`), with each file's recorded Docling and index outcome. */
   files?(p: PanelPrincipal): Promise<FileRow[]>;
+  /** The Software tab's scoped list of apps (`listAppsForUser`) with each app's newest review card. */
+  software?(p: PanelPrincipal): Promise<SoftwareRow[]>;
   /** The Knowledge tab's scoped list of workflows (`listWorkflows`). */
   knowledge?(p: PanelPrincipal): Promise<KnowledgeRow[]>;
   /** The Metrics tab's scoped list (`listMetrics`). */
