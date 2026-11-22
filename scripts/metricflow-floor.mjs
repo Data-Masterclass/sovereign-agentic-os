@@ -16,7 +16,7 @@
  *   - A pin is a VIOLATION unless its lower bound is >= the floor. That means an UNPINNED
  *     `metricflow` is a violation too: pip would happily resolve a BSL release, and "we did not
  *     mean to" is not a licence position. `dbt-metricflow` (the extras package) counts the same.
- *   - `licenses/denied-licenses.txt` already denies `BUSL`/`BSL-1.1` by SPDX id; this is the second
+ *   - `licenses/policy.json` already forbids `BUSL*`/`BSL-1.1` by SPDX id; this is the second
  *     half, because a pip specifier carries no SPDX id for the deny list to match.
  *   - The dbt-core floor (night-2 review M-1) is not a licence rule but it lives here because it is
  *     the same question — "can a pin let something unacceptable into a build?" — and the same scan

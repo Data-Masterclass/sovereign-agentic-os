@@ -14,7 +14,7 @@
  *   Trivy (Apache-2.0, `aquasec/trivy`) covers the two categories the review card can honestly
  *   claim: dependency vulnerabilities read from the app's manifests/lockfiles, and committed
  *   secrets. It is NOT a SAST engine, and there is no allowlisted one to wire — Semgrep's engine
- *   is LGPL-2.1 and absent from `licenses/allowed-licenses.txt` — so `sast` is always reported in
+ *   is LGPL-2.1 and forbidden by `licenses/policy.json` — so `sast` is always reported in
  *   `notRun` rather than as a zero count that reads like a clean bill of health.
  *
  *   It mirrors `tabs/software/lib/runner.ts`: deterministic names, an INJECTABLE k8s client so

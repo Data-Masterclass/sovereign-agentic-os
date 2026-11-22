@@ -806,7 +806,7 @@ does not relax retroactively, so the relicensing to Apache-2.0 at v0.209.0 is NO
 unpinned mention is also a violation, and `dbt-metricflow` (the extras package) counts the same.
 `scripts/metricflow-floor.mjs:6-19`, `:18`, `:33`, `:80` It runs as pass 3 of
 `scripts/license-check.sh:150-159` and is invoked from `.github/workflows/license-gate.yml:37-38`; the
-deny-list carries `BUSL` and `BSL-1.1` as SPDX ids (`licenses/denied-licenses.txt:11-12`). MetricFlow
+forbid list in `licenses/policy.json` carries `BUSL*` and `BSL-1.1` as SPDX id patterns. MetricFlow
 is **not installed anywhere today**, and the floor test treats absence as a pass rather than a skip
 (`os-ui/tabs/data/lib/dbt/semantic/metricflow-floor.test.ts:78`).
 

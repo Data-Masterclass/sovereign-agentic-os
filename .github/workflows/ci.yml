@@ -72,6 +72,9 @@ jobs:
         # CI=true makes a skipped chart check a hard failure (see the scripts' headers).
         run: bash scripts/gate.sh
 
+      - name: Licence gate tests (scripts/tests/license-gate.test.mjs)
+        run: node --test scripts/tests/license-gate.test.mjs
+
       - name: Structure ratchet (core / tabs / components)
         run: node scripts/check-structure.mjs
 

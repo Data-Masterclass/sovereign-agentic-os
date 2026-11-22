@@ -126,7 +126,7 @@ export type ScanResult = {
    * The categories NO engine covered, so a ZERO count in `summary` cannot be read as "clean".
    * `['sast']` on every live Trivy scan: Trivy finds dependency vulnerabilities and committed
    * secrets, and there is no allowlisted SAST engine to wire (Semgrep's engine is LGPL-2.1 and
-   * absent from `licenses/allowed-licenses.txt`). Saying nothing here is how `sast 0` came to
+   * forbidden by `licenses/policy.json`). Saying nothing here is how `sast 0` came to
    * read as "we looked at the code and it is fine".
    */
   notRun?: ScanCategory[];

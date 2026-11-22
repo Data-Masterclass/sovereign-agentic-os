@@ -24,13 +24,33 @@ image references in `charts/sovereign-agentic-os/values.yaml`, cross-checked aga
 ```bash
 # install: brew install syft   (or download the binary from github.com/anchore/syft)
 syft scan dir:. -o cyclonedx-json=sbom.cdx.json     # regenerate the SBOM
-scripts/license-check.sh --update-sbom              # refresh SBOM + run the allowlist gate
+scripts/license-check.sh --update-sbom              # refresh SBOM + run the licence gate (licenses/policy.json)
 ```
 
 Regenerate `sbom.cdx.json` and reconcile this manifest **on every release** (see the
 Release process section at the bottom).
 
 ---
+
+## Licence policy (owner decision, 2026-11-22)
+
+One policy for the **whole repo** — OS code, images, chart components and app templates. It replaces the
+earlier "Apache/MIT/BSD/ISC only" rule. The lists live in **one file**, `licenses/policy.json`, which the
+gate (`scripts/license-gate.mjs`, run by `scripts/license-check.sh` and CI) reads.
+
+- **Allowed:** Apache-2.0, MIT, BSD-2-Clause, BSD-3-Clause, ISC, 0BSD, Zlib, Unlicense, BlueOak-1.0.0,
+  PSF-2.0 / Python-2.0, and — for data and docs — CC-BY-4.0 and CC0-1.0.
+- **Forbidden:** all copyleft (GPL, LGPL, AGPL, MPL, EPL, CDDL, EUPL) and all source-available licences
+  (BUSL/BSL, SSPL, Elastic-2.0, Commons Clause, CC-BY-NC-*, CC-BY-SA-*). A forbidden licence can never be waived.
+- **Unknown or unlicensed:** fails, unless an entry in `licenses/exceptions.json` carries a reviewed reason.
+- **Dual-licensed** (`A OR B`): passes if any option is allowed; the gate prints which option it chose.
+  (`A AND B` needs both allowed.)
+- **Attribution:** every dependency whose chosen licence is not Apache-2.0 or MIT needs an entry in this file or
+  in `licenses/ATTRIBUTIONS.md` (generated: `node scripts/license-gate.mjs --python-resolve --write-attributions`).
+  The gate fails when one is missing.
+- **Known violations:** `licenses/known-violations.json` lists the findings that existed on main when the
+  policy began. It is a ratchet, not a waiver: each run prints them, `--strict` fails on them, a new finding
+  fails, and an entry whose package is fixed is reported STALE and fails — so the list only shrinks.
 
 ## Components
 
@@ -185,7 +205,7 @@ and the whole `licenses/` directory alongside the mirrored images.
 On every release:
 
 1. `scripts/license-check.sh --update-sbom` — regenerate `sbom.cdx.json` (syft) and run
-   the allowlist gate (`licenses/allowed-licenses.txt`).
+   the licence gate (`licenses/policy.json`; see "Licence policy" above).
 2. Reconcile this manifest + `licenses/components.tsv` with any added/updated/removed
    components and pinned versions in `Chart.yaml` / `values.yaml`.
 3. Add the full license text for any **new** license under `licenses/`, and the
@@ -193,4 +213,5 @@ On every release:
 4. Update `licenses/source-offer.md` if a copyleft component's pinned version changed.
 
 The CI gate (`.github/workflows/license-gate.yml`) fails the build if a component's
-license is not on the allowlist (blocks ELv2 / BSL / SSPL / AGPL-when-bundled).
+license is forbidden by `licenses/policy.json` (copyleft and source-available licences), is unknown without a
+reviewed exception, or lacks an attribution entry.
