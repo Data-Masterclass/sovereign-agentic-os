@@ -231,7 +231,7 @@ variable "ingress_subdomains" {
   description = "Hostnames (relative to dns_name) that resolve to the ingress load balancer."
   type        = list(string)
   # No "litellm" and no "langfuse": neither console is published (chart: ingress.restricted).
-  default     = ["os", "openmetadata", "superset", "forgejo", "argocd", "terminal", "workbench", "dagster"]
+  default     = ["os", "openmetadata", "superset", "argocd", "terminal", "workbench", "dagster"]
 }
 
 # --- Container Registry (provider has no resource — see registry.tf) ----------

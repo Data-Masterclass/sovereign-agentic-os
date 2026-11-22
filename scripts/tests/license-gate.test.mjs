@@ -287,7 +287,7 @@ test('known violations: an entry whose package is fixed or gone is STALE and fai
   assert.equal(applyKnownViolations(rs, known, { scanned: ['npm'] }).stale.length, 1);
 });
 test('known violations: python entries are stale-checked whenever python is scanned, and reported UNCHECKED when it is not', () => {
-  const known = loadKnownViolations({ violations: [KV('gone', { ecosystem: 'python' }), KV('kept')] });
+  const known = loadKnownViolations({ violations: [{ ecosystem: 'python', name: 'gone', licence: 'MPL-2.0', reason: 'owner decision pending' }, KV('kept')] });
   const rs = checkAll([bad('kept')], { policy, exceptions: NO_EXC, noticesText: '' });
   const withPy = applyKnownViolations(rs, known, { scanned: ['npm', 'python'] });
   assert.deepEqual(withPy.stale.map((x) => x.name), ['gone']); assert.deepEqual(withPy.unchecked, []);

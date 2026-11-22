@@ -143,13 +143,14 @@ if (flag('--write-known')) {
   const seen = new Set(); const violations = [];
   for (const r of fails) {
     if (r.verdict === 'forbid') continue; // never-allowed licences can never be listed: they must be fixed
-    const k = `${r.ecosystem}:${r.name}@${r.version}`; if (seen.has(k)) continue; seen.add(k);
-    violations.push({ ecosystem: r.ecosystem, name: r.name, version: r.version, licence: String(r.expression || 'none'), reason: 'Found by the first run of the 2026-11-22 policy on main; owner decision pending (replace, remove or add a reviewed exception). ' + r.reasons[0] });
+    const py = r.ecosystem === 'python';
+    const k = py ? `${r.ecosystem}:${r.name}:${r.expression}` : `${r.ecosystem}:${r.name}@${r.version}`; if (seen.has(k)) continue; seen.add(k);
+    violations.push({ ecosystem: r.ecosystem, name: r.name, ...(py ? {} : { version: r.version }), licence: String(r.expression || 'none'), reason: 'Found by the first run of the 2026-11-22 policy on main; owner decision pending (replace, remove or add a reviewed exception). ' + r.reasons[0] });
   }
   const prev = existsSync(knownFile) ? loadKnownViolations(knownFile).violations.filter((x) => !scanned.includes(x.ecosystem)) : [];
   writeFileSync(knownFile, JSON.stringify({ _comment: ['Ratchet of licence-gate findings that existed on main when the 2026-11-22 policy was introduced.',
     'NOT a waiver: every run prints each entry, `node scripts/license-gate.mjs --strict` fails on them, and an entry whose package is',
-    'fixed or gone is STALE and fails the gate, so this list can only shrink. New findings always fail. An entry names an EXACT version;',
+    'fixed or gone is STALE and fails the gate, so this list can only shrink. New findings always fail. An entry names an EXACT version (python: package + licence, the version floats with the index);',
     'AGPL, EUPL and source-available licences can never be listed. Python entries are only checked when the gate runs with --python-resolve.'], violations: [...prev, ...violations] }, null, 2) + '\n');
   console.log(`wrote ${rel(knownFile)} (${violations.length} entries for ${scanned.join(', ')})`); process.exit(0);
 }
@@ -164,7 +165,7 @@ for (const r of results.filter((x) => x.status === 'pass' && /\bOR\b|\//.test(St
 for (const r of results.filter((x) => x.note)) console.log(`exc   ${r.ecosystem}:${r.name}@${r.version}  ${r.note}`);
 for (const r of knownHits) console.log(`KNOWN ${r.ecosystem}:${r.name}@${r.version}  [${r.expression || 'no licence'}]  ${r.reasons[0]}  (${r.source})`);
 for (const r of newFailures) console.log(`FAIL  ${r.ecosystem}:${r.name}@${r.version}  [${r.expression || 'no licence'}]  ${r.reasons.join('; ')}  (${r.source})`);
-for (const x of stale) console.log(`STALE known violation ${x.ecosystem}:${x.name}@${x.version} no longer fails - remove it from licenses/known-violations.json`);
+for (const x of stale) console.log(`STALE known violation ${x.ecosystem}:${x.name}${x.version ? `@${x.version}` : ` [${x.licence}]`} no longer fails - remove it from licenses/known-violations.json`);
 if (unchecked.length) console.log(`note  ${unchecked.length} known-violation entr${unchecked.length === 1 ? 'y' : 'ies'} for ${[...new Set(unchecked.map((x) => x.ecosystem))].join(', ')} NOT checked this run (ecosystem not scanned; python needs --python-resolve)`);
 for (const x of results.unusedExceptions) console.log(`warn  unused exception ${x.ecosystem}:${x.name}@${x.version} - remove it from licenses/exceptions.json`);
 if (newFailures.length || stale.length) { console.log(`\nLICENCE GATE: FAIL - ${newFailures.length} new finding(s), ${stale.length} stale known-violation entr${stale.length === 1 ? 'y' : 'ies'}.`); process.exit(1); }
