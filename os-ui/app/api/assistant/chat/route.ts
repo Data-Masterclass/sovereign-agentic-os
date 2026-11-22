@@ -4,7 +4,8 @@
 import { NextResponse } from 'next/server';
 import { roleModel } from '@core/models/roles';
 import { requireUser } from '@core/kernel/auth';
-import { mcpTabForPath, runOsAssistant } from '@core/runtime/agent-loop';
+import { mcpTabForPath, osToolExecutor, runOsAssistant } from '@core/runtime/agent-loop';
+import { decideConfirmation } from '@core/runtime/confirm-execute';
 import { askStepEvent, askTurnResponse } from '@core/runtime/ask-response';
 import { sanitizePageContext } from '@core/runtime/page-context';
 import { AssistantNotConfiguredError } from '@core/runtime/complete';
@@ -35,6 +36,7 @@ type Msg = { role: 'user' | 'assistant' | 'system'; content: string };
 
 export async function POST(req: Request) {
   let path = '';
+  let confirmation: { id: string; conversationId: string; decision: 'confirm' | 'decline' } | null = null;
   let messages: Msg[] = [];
   let pageContextRaw: unknown = null;
   let conversationId: string | null = null;
@@ -42,6 +44,12 @@ export async function POST(req: Request) {
   try {
     const body = await req.json();
     path = (body?.path ?? '').toString();
+    // Confirm or decline a write the Home chat parked: same route, same session gate. The
+    // arguments that run are the ones stored with the confirmation, never anything from here.
+    const c = body?.confirmation;
+    if (c && typeof c.id === 'string' && typeof c.conversationId === 'string' && (c.decision === 'confirm' || c.decision === 'decline')) {
+      confirmation = { id: c.id, conversationId: c.conversationId, decision: c.decision };
+    }
     messages = Array.isArray(body?.messages) ? body.messages : [];
     // The current-screen snapshot the client publishes (open artifact + stage). It
     // only ENRICHES; a missing/malformed value degrades to "no page context".
@@ -67,7 +75,7 @@ export async function POST(req: Request) {
     .slice(-20)
     .map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content.trim() }));
 
-  if (clean.length === 0) {
+  if (clean.length === 0 && !confirmation) {
     return NextResponse.json({ error: 'No message to send' }, { status: 400 });
   }
 
@@ -77,6 +85,19 @@ export async function POST(req: Request) {
   } catch (e) {
     const status = (e as { status?: number }).status ?? 401;
     return NextResponse.json({ error: 'Sign in to use the assistant.' }, { status });
+  }
+
+  if (confirmation) {
+    const result = await decideConfirmation({
+      user,
+      confirmationId: confirmation.id,
+      conversationId: confirmation.conversationId,
+      decision: confirmation.decision,
+      execute: (tool, args, sink) => osToolExecutor(user, sink)(tool, args),
+    });
+    // A refusal is the same 404 for "not yours", "not here" and "does not exist".
+    const status = result.status === 'refused' ? (result.code === 'not_found' ? 404 : 409) : 200;
+    return NextResponse.json(result, { status });
   }
 
   const tab = mcpTabForPath(path);

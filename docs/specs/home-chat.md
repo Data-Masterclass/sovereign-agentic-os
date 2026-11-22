@@ -47,7 +47,7 @@ file structure were taken from any of them.
 - `POST /api/assistant/chat` with `conversationId` and `stream: true` turns the confirm gate on and
   returns newline-delimited JSON: `step` events, then one `done` event with the final answer,
   `tools[]`, `pending[]` and `traceId`. Without those two fields the call behaves as before (the drawer).
-- `POST /api/assistant/confirm` `{ confirmationId, conversationId, decision }` runs or cancels one
+- `POST /api/assistant/chat` with `confirmation: { id, conversationId, decision }` runs or cancels one
   parked write. Arguments come from the stored record. The call goes through the same governed
   dispatch as the user, so a denial comes back typed.
 - A tool the user's role cannot use is not offered to the model; if it is named anyway it returns the

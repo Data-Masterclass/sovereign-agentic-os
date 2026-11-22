@@ -34,12 +34,17 @@ export type TypedToolError = { code: string; reason: string; hint: string };
  */
 export function typedToolError(resultText: string | undefined): TypedToolError | null {
   if (!resultText) return null;
+  let parsed: { error?: Partial<TypedToolError> } | null = null;
+  let readable = true;
   try {
-    const e = (JSON.parse(resultText) as { error?: Partial<TypedToolError> }).error;
-    if (e && typeof e.code === 'string' && typeof e.reason === 'string') {
-      return { code: e.code, reason: e.reason, hint: typeof e.hint === 'string' ? e.hint : '' };
-    }
-  } catch { /* not JSON: not a typed error */ }
+    parsed = JSON.parse(resultText) as { error?: Partial<TypedToolError> };
+  } catch {
+    readable = false; // free text, not a typed error: the caller shows it as it is
+  }
+  const e = readable ? parsed?.error : undefined;
+  if (e && typeof e.code === 'string' && typeof e.reason === 'string') {
+    return { code: e.code, reason: e.reason, hint: typeof e.hint === 'string' ? e.hint : '' };
+  }
   return null;
 }
 
