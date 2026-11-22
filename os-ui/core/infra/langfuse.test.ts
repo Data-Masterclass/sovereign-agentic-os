@@ -40,6 +40,7 @@ process.env.LANGFUSE_SECRET_KEY = 'sk-test';
 
 const { observationsQuery, traceUrlFor, scoreTrace, flushLangfuse, langfuseTraceId, UnfilteredLangfuseQueryError } = await import('@core/infra/langfuse');
 const { config } = await import('@core/kernel/config');
+const { __setMaskingForTests } = await import('@core/infra/masking-policy');
 
 test('LANGFUSE-READ: an unfiltered observations query is refused, typed (A23)', () => {
   assert.throws(() => observationsQuery({}), UnfilteredLangfuseQueryError);
@@ -105,6 +106,8 @@ test('LANGFUSE-LINK: a run traced before the OTel writer links to its LEGACY tra
 test('LANGFUSE-SCORE: the judge verdict lands on the RUN trace as a score (A22)', async () => {
   const runId = 'run_1b4e28ba-2fa1-11d2-883f-0016d3cca427';
   received.length = 0;
+  // The masking switch is read as OFF (an unread switch would mask the comment: see langfuse-masking-failsafe.test.ts).
+  __setMaskingForTests({ enabled: false, level: 'pii' });
   assert.equal(
     await scoreTrace({ runId, name: 'llm-judge', value: 0.75, comment: 'mostly grounded', metadata: { rubric: 'v2' } }),
     true,

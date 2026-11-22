@@ -106,3 +106,11 @@ test('CONSISTENCY: when the settings write is refused, no audit row says it happ
   assert.deepEqual(getSettings().langfuseMasking, { enabled: false, level: 'pii' });
   assert.equal(AUDIT.length, 0);
 });
+
+test('the settings read says whether the masking switch is known; an unknown switch is reported as the strictest level', async () => {
+  const unknown = await (await GET()).json();
+  assert.deepEqual(unknown.maskingStatus, { known: false, effective: { enabled: true, level: 'content' } });
+  await patch({ langfuseMasking: { enabled: false, level: 'pii' } });
+  const known = await (await GET()).json();
+  assert.deepEqual(known.maskingStatus, { known: true, effective: { enabled: false, level: 'pii' } });
+});
