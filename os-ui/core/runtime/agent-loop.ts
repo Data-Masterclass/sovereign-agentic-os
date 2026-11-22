@@ -310,19 +310,12 @@ export type OsAssistantResult = AgenticResult & {
 export const ASK_COST_TAB = 'ask';
 
 /**
- * A fresh W3C trace id (32 hex) for a Home chat turn. The gateway nests a model call in the caller's
+ * A fresh W3C trace id (32 hex) for a turn. The gateway nests a model call in the caller's
  * Langfuse trace only when it is sent a W3C `traceparent` (`gateway-trace.ts`); with an `ask-…` id
  * every model call of a turn became its own trace.
  */
 function mintW3cTraceId(): string {
   return randomBytes(16).toString('hex');
-}
-
-/** A fresh turn id. `randomUUID` where available, else a timestamped random fallback. */
-function mintTraceId(): string {
-  const c = globalThis.crypto as { randomUUID?: () => string } | undefined;
-  if (c?.randomUUID) return `ask-${c.randomUUID()}`;
-  return `ask-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
 /**
@@ -333,8 +326,8 @@ function mintTraceId(): string {
  */
 export async function runOsAssistant(input: RunOsAssistantInput): Promise<OsAssistantResult> {
   const injected = input.llm;
-  // The Home chat (`confirm`) files all of a turn's model calls in ONE Langfuse trace.
-  const traceId = input.traceId || (input.confirm ? mintW3cTraceId() : mintTraceId());
+  // Every turn (the Home chat and the drawer) files all its model calls in ONE Langfuse trace.
+  const traceId = input.traceId || mintW3cTraceId();
   const parentObservationId = /^[0-9a-f]{32}$/.test(traceId) ? randomBytes(8).toString('hex') : undefined;
   const artifacts: ChatArtifact[] = [];
   // Production: the ONE assistant model for both plan + act. Tests inject `llm`
