@@ -197,3 +197,153 @@ test('prompts/get author_and_publish_workflow: allowed → the script; refused o
   const down = await getPrompt(cara);
   assert.ok(down.error && /forbidden/i.test(down.error.message), 'fail closed');
 });
+
+// ═══ Verifier findings: the other doors (effect, REST, OKF import), the test seam, the migration ═══
+
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { promoteThroughSeam } from '@core/policy/ladder';
+import { workflowWriteTestGate } from '@core/infra/governed';
+import { getWorkflow } from '@tabs/knowledge/lib/store';
+import { exportAndValidate, exportWorkflowBundle } from '@tabs/knowledge/lib/okf-export';
+import { zipBundle } from '@tabs/knowledge/lib/okf-zip';
+
+const cora: CurrentUser = { id: 'cora', name: 'Cora', domains: ['sales'], role: 'creator' };
+const principal = (u: CurrentUser) => ({ id: u.id, domains: u.domains, role: u.role });
+
+test('SEAM: the test gate is honoured under node --test, and NEVER when NODE_ENV is production', () => {
+  (globalThis as Record<symbol, unknown>)[GATE] = () => true;
+  assert.equal(typeof workflowWriteTestGate(), 'function', 'under the test runner an installed gate is honoured');
+  const env = process.env.NODE_ENV;
+  (process.env as Record<string, string | undefined>).NODE_ENV = 'production';
+  try {
+    assert.equal(workflowWriteTestGate(), undefined, 'production ignores it even if something set the symbol');
+  } finally {
+    (process.env as Record<string, string | undefined>).NODE_ENV = env;
+    delete (globalThis as Record<symbol, unknown>)[GATE];
+  }
+});
+
+// ─── the approval effect (publish through the ladder seam) ────────────────────────────────
+
+async function filed(): Promise<string> {
+  const rec = payload<{ id: string }>(await raw(cara, 'author_workflow', { title: 'To approve' }));
+  payload(await raw(cara, 'request_promotion', { kind: 'workflow', id: rec.id }));
+  asks = [];
+  return rec.id;
+}
+
+test('EFFECT: the approval publishes only if OPA allows `publish` for the APPROVER — and asks as the approver', async () => {
+  const id = await filed();
+  await promoteThroughSeam('knowledge', id, dana, { rung: 'promote' });
+  const ask = asks.find((a) => a.input.op === 'publish');
+  assert.ok(ask, 'the effect asked OPA before publishing');
+  assert.deepEqual(ask!.input.actor, { id: 'dana', role: 'domain_admin', domains: ['sales'] }, 'the approver, not the requester');
+  assert.equal(ask!.input.principal, 'user:dana');
+  assert.equal(getWorkflow(id, principal(dana)).visibility, 'Shared');
+});
+
+test('NEGATIVE TWIN: OPA refuses the approver’s publish → the effect fails and the workflow stays Personal; unreachable OPA fails closed', async () => {
+  const id = await filed();
+  verdict = () => false;
+  await assert.rejects(() => promoteThroughSeam('knowledge', id, dana, { rung: 'promote' }), (e: { status?: number }) => e.status === 403);
+  assert.equal(getWorkflow(id, principal(cara)).visibility, 'Personal');
+  verdict = () => 'unreachable';
+  await assert.rejects(() => promoteThroughSeam('knowledge', id, dana, { rung: 'promote' }), (e: { status?: number }) => e.status === 403);
+  assert.equal(getWorkflow(id, principal(cara)).visibility, 'Personal');
+});
+
+test('EFFECT: certify is a separate OPA op (`certify`)', async () => {
+  const id = await filed();
+  await promoteThroughSeam('knowledge', id, dana, { rung: 'promote' });
+  asks = [];
+  const ada: CurrentUser = { id: 'ada', name: 'Ada', domains: ['sales'], role: 'admin' };
+  payload(await raw(dana, 'request_certification', { kind: 'workflow', id }));
+  verdict = (i) => i.op !== 'certify';
+  await assert.rejects(() => promoteThroughSeam('knowledge', id, ada, { rung: 'certify' }), (e: { status?: number }) => e.status === 403);
+  assert.ok(asks.some((a) => a.input.op === 'certify'));
+  assert.equal(getWorkflow(id, principal(ada)).visibility, 'Shared');
+});
+
+// ─── the REST routes: every mutating handler asks OPA first, with the right op ───────────
+
+const ROUTES: Record<string, Record<string, string>> = {
+  'app/api/knowledge/workflows/route.ts': { POST: 'create' },
+  'app/api/knowledge/workflows/[id]/route.ts': { PATCH: 'update', POST: "'retire'|'update'", DELETE: 'retire' },
+  'app/api/knowledge/workflows/[id]/folder/route.ts': { POST: 'update' },
+  'app/api/knowledge/workflows/[id]/tacit/route.ts': { PUT: 'update' },
+  'app/api/knowledge/workflows/[id]/versions/route.ts': { POST: 'update' },
+  'app/api/knowledge/workflows/[id]/index/route.ts': { POST: 'index' },
+};
+
+function handlerBody(src: string, verb: string): string {
+  const start = src.indexOf(`export const ${verb} =`);
+  assert.ok(start >= 0, `handler ${verb} exists`);
+  const next = src.indexOf('\nexport const ', start + 10);
+  return src.slice(start, next === -1 ? undefined : next);
+}
+
+for (const [file, verbs] of Object.entries(ROUTES)) {
+  test(`REST: ${file.replace('app/api/knowledge/workflows', '…')} — ${Object.keys(verbs).join('/')} ask workflow_write BEFORE the store write`, () => {
+    const src = readFileSync(join(process.cwd(), file), 'utf8');
+    assert.match(src, /import \{[^}]*\bauthorize\b[^}]*\} from '@core\/infra\/governed'/, 'the route imports the OPA authorize');
+    for (const verb of Object.keys(verbs)) {
+      const body = handlerBody(src, verb);
+      const gateAt = body.search(/await gate\(|authorize\(/);
+      const writeAt = body.search(/\b(createWorkflow|updateWorkflow|deleteWorkflow|archiveWorkflow|unarchiveWorkflow|renameKnowledge|setWorkflowLinks|moveWorkflow|updateTacit|restoreWorkflowVersion|indexWorkflow)\(/);
+      assert.ok(gateAt >= 0, `${verb}: asks the policy`);
+      assert.ok(writeAt === -1 || gateAt < writeAt, `${verb}: the policy is asked before the store is touched`);
+      assert.match(body, /workflow_write|gate\(/, `${verb}: it is the workflow_write door`);
+    }
+  });
+}
+
+test('REST: the gates name the real op — create / update / retire / index', () => {
+  const read = (f: string) => readFileSync(join(process.cwd(), f), 'utf8');
+  assert.match(handlerBody(read('app/api/knowledge/workflows/route.ts'), 'POST'), /'create'/);
+  const idRoute = read('app/api/knowledge/workflows/[id]/route.ts');
+  assert.match(handlerBody(idRoute, 'DELETE'), /'retire'/);
+  assert.match(handlerBody(idRoute, 'PATCH'), /'update'/);
+  assert.match(handlerBody(idRoute, 'POST'), /'retire'/);
+  assert.match(handlerBody(read('app/api/knowledge/workflows/[id]/index/route.ts'), 'POST'), /'index'/);
+});
+
+// ─── OKF import: each workflow concept is authorised with its REAL op ────────────────────
+
+function zipOf(id: string, user: CurrentUser): string {
+  const view = getWorkflow(id, principal(user));
+  const { bundle } = exportAndValidate(exportWorkflowBundle(view));
+  return zipBundle(bundle).toString('base64');
+}
+
+test('OKF import: a matched workflow is an UPDATE decided by OPA; a new one is a CREATE; refused items are skipped, nothing written', async () => {
+  const rec = payload<{ id: string }>(await raw(cara, 'author_workflow', { title: 'Original', steps: [{ title: 'Step one', actor: 'Human' }] }));
+  const b64 = zipOf(rec.id, cara);
+  const before = getWorkflow(rec.id, principal(cara)).updatedAt;
+  asks = [];
+  verdict = (i) => i.op !== 'update'; // creates allowed, updates refused
+  const r = payload<{ imported: { id: string; outcome: string }[]; skipped: { reason: string }[] }>(await raw(cara, 'import_okf_bundle', { base64Content: b64 }));
+  assert.deepEqual(asks.map((a) => a.input.op), ['update'], 'the matched concept is an update — not a create');
+  assert.equal(r.imported.filter((x) => x.outcome === 'versioned').length, 0, 'the refused update imported nothing');
+  assert.ok(r.skipped.some((s) => /policy|refused|not allowed/i.test(s.reason)), 'and says why');
+  assert.equal(getWorkflow(rec.id, principal(cara)).updatedAt, before, 'the workflow was not touched');
+  // Allowed update → versioned. Another creator (cannot see cara's draft) → a CREATE.
+  asks = [];
+  verdict = () => true;
+  const ok = payload<{ imported: { outcome: string }[] }>(await raw(cara, 'import_okf_bundle', { base64Content: b64 }));
+  assert.deepEqual(ok.imported.map((x) => x.outcome), ['versioned']);
+  assert.deepEqual(asks.map((a) => a.input.op), ['update']);
+  asks = [];
+  const created = payload<{ imported: { outcome: string }[] }>(await raw(cora, 'import_okf_bundle', { base64Content: b64 }));
+  assert.deepEqual(created.imported.map((x) => x.outcome), ['created']);
+  assert.deepEqual(asks.map((a) => a.input.op), ['create']);
+});
+
+test('NEGATIVE TWIN (fail closed): OPA unreachable → the import writes no workflow at all', async () => {
+  const rec = payload<{ id: string }>(await raw(cara, 'author_workflow', { title: 'Original' }));
+  const b64 = zipOf(rec.id, cara);
+  verdict = () => 'unreachable';
+  const r = payload<{ imported: unknown[]; skipped: unknown[] }>(await raw(cora, 'import_okf_bundle', { base64Content: b64 }));
+  assert.equal(r.imported.length, 0);
+  assert.equal(workflowsOf(cora).length, 0);
+});
