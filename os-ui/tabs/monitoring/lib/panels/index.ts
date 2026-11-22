@@ -16,20 +16,22 @@ import { filesView, type FilesView } from '@tabs/monitoring/lib/panels/files-pan
 import { knowledgeView, type KnowledgeView } from '@tabs/monitoring/lib/panels/knowledge-panel';
 import { kpisView, type KpisView } from '@tabs/monitoring/lib/panels/kpis-panel';
 import { dashboardsView, type DashboardsView } from '@tabs/monitoring/lib/panels/dashboards-panel';
+import { workflowsView, type WorkflowsView } from '@tabs/monitoring/lib/panels/workflows-panel';
 
-export const PANEL_VIEWS = ['agents', 'data', 'platform', 'files', 'knowledge', 'kpis', 'dashboards'] as const;
+export const PANEL_VIEWS = ['agents', 'data', 'platform', 'files', 'knowledge', 'kpis', 'dashboards', 'workflows'] as const;
 export type PanelView = (typeof PANEL_VIEWS)[number];
 export const isPanelView = (v: unknown): v is PanelView => typeof v === 'string' && (PANEL_VIEWS as readonly string[]).includes(v);
 
-export type { AgentsView, DataView, PlatformView, FilesView, KnowledgeView, KpisView, DashboardsView };
+export type { AgentsView, DataView, PlatformView, FilesView, KnowledgeView, KpisView, DashboardsView, WorkflowsView };
 export { PlatformForbiddenError } from '@tabs/monitoring/lib/panels/platform-panel';
 
-export function monitoringPanels(user: CurrentUser, view: PanelView): Promise<AgentsView | DataView | PlatformView | FilesView | KnowledgeView | KpisView | DashboardsView> {
+export function monitoringPanels(user: CurrentUser, view: PanelView): Promise<AgentsView | DataView | PlatformView | FilesView | KnowledgeView | KpisView | DashboardsView | WorkflowsView> {
   if (view === 'agents') return agentsView(user);
   if (view === 'data') return dataView(user);
   if (view === 'files') return filesView(user);
   if (view === 'knowledge') return knowledgeView(user);
   if (view === 'kpis') return kpisView(user);
   if (view === 'dashboards') return dashboardsView(user);
+  if (view === 'workflows') return workflowsView(user);
   return platformView(user);
 }
