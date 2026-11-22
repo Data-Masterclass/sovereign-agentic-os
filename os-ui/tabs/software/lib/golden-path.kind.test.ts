@@ -82,7 +82,7 @@ async function proxy(port: number, as?: string): Promise<{ stop: () => void; k8s
         return { status: r.status, body: r.text ? (JSON.parse(r.text) as Record<string, unknown>) : {} };
       } catch { return { status: 0, body: {} }; }
     },
-    text: async (path) => { try { const r = await call('GET', path, undefined, 'text/plain'); return r; } catch { return { status: 0, text: '' }; } },
+    text: async (path) => { try { const r = await call('GET', path, undefined, '*/*'); return r; } catch { return { status: 0, text: '' }; } },
   };
 }
 
