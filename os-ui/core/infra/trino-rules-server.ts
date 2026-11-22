@@ -30,6 +30,7 @@
  *   - Writes no secret: `buildTrinoRules` emits identifiers and regexes only.
  */
 import 'server-only';
+import { createHash } from 'node:crypto';
 import { config } from '@core/kernel/config';
 import { k8s, type K8sResult } from '@core/infra/k8s';
 import { buildTrinoRules, renderTrinoRules, type RulesInput } from '@core/infra/trino-rules';
@@ -37,6 +38,9 @@ import { buildTrinoRules, renderTrinoRules, type RulesInput } from '@core/infra/
 /** The ConfigMap the chart renders and Trino mounts at `/etc/trino/rules.json`. */
 export const RULES_CONFIGMAP = 'trino-access-rules';
 export const RULES_KEY = 'rules.json';
+/** The sha256 of what the OS last wrote, stamped on the ConfigMap, so a foreign edit is recognisable. */
+export const RULES_STAMP = 'os.sovereign/rules-sha256';
+const sha = (text: string) => createHash('sha256').update(text).digest('hex');
 
 /** Stable, machine-readable reason — what the health row and the logs key off. */
 export type ReconcileCode =
@@ -80,9 +84,15 @@ export async function reconcileTrinoAccessRules(
   if (get.status < 200 || get.status >= 300) return bad('get-failed', `GET ${RULES_CONFIGMAP} → ${get.status}`);
 
   const data = (get.body.data ?? {}) as Record<string, string>;
+  const stamp = ((get.body.metadata as { annotations?: Record<string, string> } | undefined)?.annotations ?? {})[RULES_STAMP];
   if (data[RULES_KEY] === desired) return record({ ok: true, changed: false, code: 'unchanged', detail: 'rules already current', at });
+  // The OS owns access rights. The data no longer matches what the OS itself stamped: someone (or a
+  // helm upgrade) replaced it. Restore it, and say so.
+  if (stamp && stamp !== sha(data[RULES_KEY] ?? '')) {
+    drift = { at, detail: `The Trino access rules were changed outside the OS (their hash no longer matches what the OS wrote). The OS restored them from domain membership. Access rights are set through the OS and OPA, not in Trino's rules file.` };
+  }
 
-  const patch = await call('PATCH', cmPath(ns), { data: { [RULES_KEY]: desired } });
+  const patch = await call('PATCH', cmPath(ns), { metadata: { annotations: { [RULES_STAMP]: sha(desired) } }, data: { [RULES_KEY]: desired } });
   if (patch.status < 200 || patch.status >= 300) return bad('patch-failed', `PATCH ${RULES_CONFIGMAP} → ${patch.status}`);
   return record({
     ok: true,
@@ -96,6 +106,12 @@ export async function reconcileTrinoAccessRules(
 // ----------------------------------------------------------------- last outcome --
 
 let last: ReconcileOutcome | null = null;
+let drift: { at: number; detail: string } | null = null;
+
+/** The most recent foreign edit of the rules this process found and repaired, or null. */
+export function lastDrift(): { at: number; detail: string } | null {
+  return drift;
+}
 
 function record(out: ReconcileOutcome): ReconcileOutcome {
   last = out;
@@ -110,6 +126,7 @@ export function lastReconcileOutcome(): ReconcileOutcome | null {
 /** Test seam — the module-level record is process-wide by design. */
 export function _resetReconcileOutcome(): void {
   last = null;
+  drift = null;
 }
 
 // ------------------------------------------------------------------- scheduler --
