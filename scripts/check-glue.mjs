@@ -303,7 +303,7 @@ for (const f of prod.filter((x) => /^app\/.+\/route\.(ts|tsx)$/.test(x.rel))) {
   const verbs = exportedNames(f).map((e) => e.name).filter((n) => /^(POST|PUT|PATCH|DELETE)$/.test(n));
   if (verbs.length && !callsAuthorize(f)) add(R7, f.rel, 0, `${verbs.sort().join('/')} ungoverned`, `${verbs.join('/')} handler without a governance authorize() call before the effect`);
 }
-const READ_TOOL = /^(get|list|search|query|preview|diff|whoami|suggest|profile|read|export|use|test|verify|explain|describe|find|check)_/;
+const READ_TOOL = /^(get|list|search|query|preview|diff|whoami|suggest|profile|read|export|use|test|verify|explain|describe|find|check|load)_/;
 for (const f of prod.filter((x) => /^(core\/mcp|tabs\/[^/]+\/mcp)\//.test(x.rel))) {
   if (callsAuthorize(f)) continue;
   walk(f, (n) => {
