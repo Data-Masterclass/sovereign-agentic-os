@@ -31,6 +31,13 @@ test('validateAppFile: platform-owned gate files may not be edited by a push', (
   assert.match(validateAppFile({ path: 'apps/inv/scripts/factory-gates.mjs', content: '// weakened' }) ?? '', /platform-owned/);
   assert.match(validateAppFile({ path: 'apps/inv/policy/app-rules.rego', content: 'package factory' }) ?? '', /platform-owned/);
   assert.equal(validateAppFile({ path: 'apps/inv/src/app/page.tsx', content: 'x' }), null);
+  // the whole PLATFORM_OWNED list is enforced on git receive, not only the two gate files
+  for (const p of ['Dockerfile', 'next.config.mjs', '.npmrc', '.github/workflows/ci.yml', 'vendor/x/y.js', 'policy/extra.rego']) {
+    assert.match(validateAppFile({ path: `apps/inv/${p}`, content: 'x' }) ?? '', /platform-owned/, p);
+  }
+  // negative twins: k8s/ is validated by the app-deploy kind, the lockfile is the author's
+  assert.equal(validateAppFile({ path: 'apps/inv/k8s/deployment.yaml', content: 'x' }), null);
+  assert.equal(validateAppFile({ path: 'apps/inv/package-lock.json', content: '{}' }), null);
   assert.equal(validateAppFile({ path: 'apps/inv/README.md', content: 'x' }), null);
 });
 
