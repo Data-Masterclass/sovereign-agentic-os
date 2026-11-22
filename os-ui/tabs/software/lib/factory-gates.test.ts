@@ -93,6 +93,8 @@ const files = () => instantiateGoldenPath('nextjs-web', { name: 'A', slug: 'a', 
 // The sandbox itself (Job shape, verdict channel, overlay, namespace, supersede) is tested in
 // sandbox-gates-verdict.test.ts; the pod log is no longer parsed for a verdict at all.
 
+const files = () => instantiateGoldenPath('nextjs-web', { name: 'A', slug: 'a', host: 'a.d.apps.test', registry: 'r/apps', ingressClass: 'nginx' });
+
 // ----------------------------------------------- the deploy request is blocked ---
 
 const creator: CurrentUser = { id: 'alice', name: 'Alice', domains: ['sales'], role: 'creator' };

@@ -102,9 +102,9 @@ test('NEGATIVE another domain cannot see the app (404) and starts nothing', asyn
   assert.equal(calls.length, 0);
 });
 
-test('NEGATIVE a creator who is not the owner may not start checks (403)', async () => {
+test('NEGATIVE a colleague of the same domain cannot start checks on someone else\'s personal app (it is not visible to them: 404)', async () => {
   const app = await createApp(alice, { name: 'Owner Desk', template: 'nextjs-web' });
   ACTING = bob;
-  assert.equal((await post(app.id)).status, 403);
+  assert.equal((await post(app.id)).status, 404);
   assert.equal(calls.length, 0);
 });

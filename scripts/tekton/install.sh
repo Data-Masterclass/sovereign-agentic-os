@@ -6,7 +6,7 @@
 # from the pins in versions.env, each manifest verified by sha256. Nothing of ours is mixed into the
 # upstream manifests; the one setting we change (`set-security-context`, so step pods fit Pod Security
 # `restricted`) is a documented feature flag, applied as a ConfigMap patch.
-#   KUBECONFIG=<file> bash components/tekton/install.sh        (or: --kubeconfig <file> / --context <ctx>)
+#   KUBECONFIG=<file> bash scripts/tekton/install.sh        (or: --kubeconfig <file> / --context <ctx>)
 # Idempotent. Never touches a kubeconfig's current-context: pass the context you mean.
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"

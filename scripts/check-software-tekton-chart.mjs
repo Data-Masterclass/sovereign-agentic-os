@@ -8,7 +8,7 @@
  *             os-ui can read and cancel runs but cannot start an arbitrary pipeline, that the app's code
  *             reaches only the egress proxy, and that the Tekton pins are the ones that were checked.
  * ARCHITECTURE:
- *   - Static half (always runs): the vendored Catalog tasks match the sha256 in components/tekton/versions.env;
+ *   - Static half (always runs): the vendored Catalog tasks match the sha256 in scripts/tekton/versions.env;
  *     the pins are well-formed (release URL names the version, 64-hex digests); the sandbox settings are gone.
  *   - Rendered half (needs helm + subchart tarballs): off by default (renders nothing); on, it renders the
  *     namespace (Pod Security restricted), the listener, RBAC, quota, pruner and the default-deny network
@@ -31,7 +31,7 @@ const yaml = require('js-yaml');
 
 // ── static half ────────────────────────────────────────────────────────────────────────────
 const pins = Object.fromEntries(
-  readFileSync(join(repo, 'components/tekton/versions.env'), 'utf8').split('\n').filter((l) => /^[A-Z0-9_]+=/.test(l)).map((l) => [l.slice(0, l.indexOf('=')), l.slice(l.indexOf('=') + 1)]),
+  readFileSync(join(repo, 'scripts/tekton/versions.env'), 'utf8').split('\n').filter((l) => /^[A-Z0-9_]+=/.test(l)).map((l) => [l.slice(0, l.indexOf('=')), l.slice(l.indexOf('=') + 1)]),
 );
 for (const k of ['TEKTON_PIPELINES_SHA256', 'TEKTON_TRIGGERS_SHA256', 'TEKTON_INTERCEPTORS_SHA256', 'TEKTON_TASK_GIT_CLONE_SHA256', 'TEKTON_TASK_TRIVY_SCANNER_SHA256']) {
   if (!/^[a-f0-9]{64}$/.test(pins[k] ?? '')) problems.push(`versions.env: ${k} is not a sha256`);

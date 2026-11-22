@@ -14,8 +14,10 @@
  *     never read. A required check that is missing, `unavailable`, or from a run that is not finished
  *     blocks. A record for another sha never answers for this one.
  *   - PURE: no I/O. The records live on the app (`App.checks`), newest first, bounded.
+ *   - SUPERSEDE: when a newer push cancels an in-progress run, the older RUNNING record becomes
+ *     `superseded` (`markSuperseded`); a finished record is a fact and is never rewritten.
  */
-import { REQUIRED_GATES, evaluateGates, type GatesOutcome } from '@tabs/software/lib/gates';
+import { REQUIRED_GATES, evaluateGates, type GateVerdict, type GatesOutcome } from '@tabs/software/lib/gates';
 
 export type CheckStatus = 'pass' | 'fail' | 'unavailable';
 export type CheckEntry = { id: string; status: CheckStatus; detail: string; violations?: string[]; log?: string };
@@ -26,7 +28,7 @@ export type CheckRecord = {
   sha: string;
   status: CheckRunStatus;
   trigger: CheckTrigger;
-  /** Which engine produced this record, e.g. `sandbox-job`. */
+  /** Which engine produced this record, e.g. `tekton`. */
   engine: string;
   /** Opaque handle of the run in that engine (Job name, PipelineRun name). */
   runRef: string | null;
@@ -91,4 +93,31 @@ export function recordFor(records: CheckRecord[] | undefined, sha: string): Chec
 /** Store `rec` newest-first, replacing an earlier record for the same sha. Returns a new array. */
 export function upsertRecord(records: CheckRecord[] | undefined, rec: CheckRecord): CheckRecord[] {
   return [rec, ...(records ?? []).filter((r) => r.sha !== rec.sha)].slice(0, MAX_CHECK_RECORDS);
+}
+
+/** Mark the RUNNING records of `shas` as superseded (a newer push cancelled their run). Finished ones stay. */
+export function markSuperseded(records: CheckRecord[] | undefined, shas: string[], at: string = new Date().toISOString()): CheckRecord[] {
+  return (records ?? []).map((r) => (r.status === 'running' && shas.includes(r.sha) ? { ...r, status: 'superseded' as const, finishedAt: r.finishedAt ?? at } : r));
+}
+
+/** What an engine returned for one trigger: the record, and the shas whose runs it cancelled. */
+export type CheckResult = { record: CheckRecord; superseded: string[] };
+
+/** Fold a result into an app's record list: supersede first, then store the record newest-first. */
+export function withResult(records: CheckRecord[] | undefined, result: CheckResult): CheckRecord[] {
+  return upsertRecord(markSuperseded(records, result.superseded), result.record);
+}
+
+/** The verdict a card or an MCP caller reads: the sentence and the blocking checks, from the record alone. */
+export function verdictOfRecord(rec: CheckRecord | null | undefined, sha: string): GateVerdict {
+  const v = recordVerdict(rec, sha);
+  if (v.green) return { passed: true, blocking: [], summary: 'All quality checks passed.' };
+  const blocking = rec && rec.sha === sha && rec.status === 'finished' && !rec.error
+    ? rec.checks.filter((c) => c.status !== 'pass').map((c) => ({ id: c.id, detail: `check '${c.id}' is ${c.status}: ${c.detail}`.slice(0, 1500) }))
+    : [];
+  if (blocking.length === 0 && rec?.status === 'finished' && rec.sha === sha) {
+    // a missing required gate or an engine error: recordVerdict says which
+    blocking.push({ id: rec.error ? 'engine' : 'checks', detail: v.reason });
+  }
+  return { passed: false, blocking, summary: `Quality checks blocked: ${v.reason}` };
 }

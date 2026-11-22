@@ -175,7 +175,7 @@ export const PLATFORM_MCP_TOOLS: { name: string; description: string; write: boo
   {
     name: 'verify_app_gates',
     description:
-      "SOFTWARE FACTORY · run the app's quality gates (type check, lint, unit tests, policy rules via OPA) in the OS SANDBOX on its COMMITTED tree and return the verdict per gate - the same run and the same verdict `request_deploy` applies, so a green result here means the deploy request will not be blocked on gates. A gate that fails, is unavailable, or is missing from the report blocks; a sandbox that cannot run blocks with its reason. Push your changes first (`push_app_files` or git); uncommitted local files are not tested. Judged by the PLATFORM's gate script and policy, not the copies in your tree. Owner or an owning-domain builder. For every app served as a container. A GOVERNED ACTION: it starts a sandbox Job (2 CPU / 2Gi), so it needs the present user's confirmation and is limited to ONE run per app (a new request replaces the old run) and a ceiling per user.",
+      "SOFTWARE FACTORY · run the app's quality checks (type check, lint, unit tests, build, policy rules via OPA, and a Trivy source scan) as a Tekton PipelineRun on its COMMITTED head and return the verdict per check - the same run (one per commit; a push starts it too) and the same verdict `request_deploy` applies, so a green result here means the deploy request will not be blocked on checks. A check that fails, is unavailable, or is missing blocks; an engine that cannot run blocks with its reason. The call waits for the run up to a limit; a longer run returns `status: running` with its `runRef` - call again to read it. Push your changes first (`push_app_files` or git); uncommitted local files are not tested. Owner or an owning-domain builder. For every app served as a container; judged by the PLATFORM's gate script and policy, not the copies in your tree. A GOVERNED ACTION (it starts a CI run, so it needs the present user's confirmation) with a per-user ceiling.",
     write: true,
   },
   // ---- Code in Claude, push to the OS (night-2 S6) ----
@@ -424,8 +424,21 @@ export async function callPlatformMcp(
     }
 
     case 'verify_app_gates': {
-      const r = await runAppTests(appId, user);
-      return { commit: r.commit, template: r.template, passed: r.verdict.passed, summary: r.verdict.summary, blocking: r.verdict.blocking, report: r.outcome.ok ? r.outcome.report : null };
+      // Trigger 3 of 3 (push and the Run checks button are the others): the same Tekton run, one per commit. The call
+      // waits for it up to the configured time; a longer run comes back as `running` with its run reference.
+      const r = await runAppTests(appId, user, { trigger: 'mcp' });
+      return {
+        commit: r.commit,
+        template: r.template,
+        status: r.record.status,
+        passed: r.verdict.passed,
+        summary: r.verdict.summary,
+        blocking: r.verdict.blocking,
+        runRef: r.record.runRef,
+        checks: r.record.checks,
+        startedAt: r.record.startedAt,
+        finishedAt: r.record.finishedAt,
+      };
     }
 
     case 'commit': {

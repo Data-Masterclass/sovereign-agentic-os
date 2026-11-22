@@ -27,10 +27,9 @@ import { record as recordAudit } from '@core/policy/audit';
 import { resolveScan, type ResolveScanOpts } from '@tabs/software/lib/scan';
 import { gatePolicyFor } from '@tabs/software/lib/gate-policy';
 import { acquireGateSlot } from '@tabs/software/lib/gates-limits';
-import type { GoldenPathKey } from '@tabs/software/lib/golden-path';
-import { evaluateGates, type GatesOutcome, type GateVerdict } from '@tabs/software/lib/gates';
-import { runGatesSandbox } from '@tabs/software/lib/sandbox-gates';
-import { recordFromOutcome, recordVerdict, recordFor, upsertRecord, type CheckTrigger } from '@tabs/software/lib/check-record';
+import type { GateVerdict } from '@tabs/software/lib/gates';
+import { verdictOfRecord, recordVerdict, recordFor, withResult, type CheckRecord, type CheckTrigger } from '@tabs/software/lib/check-record';
+import { defaultChecksRunner, type ChecksRunner } from '@tabs/software/lib/tekton-checks';
 import { resolveSurface } from '@tabs/software/lib/metadata';
 import { ungrantedDatasetWarningForApp } from '@tabs/software/lib/dataset-guard';
 import { getSnapshot, hydrateSnapshot } from '@tabs/software/lib/snapshot';
@@ -442,46 +441,37 @@ export type DeployRequestResult =
  * auto-deploy; the first deploy and any scope-broadening change open a Builder
  * review card. The creator can call this; a Builder approves it.
  */
-/** Runs the gates for a tree. Injected in tests; the default is the real sandbox Job. */
-export type GatesRunner = (slug: string, files: ScaffoldFile[], ctx?: { template?: GoldenPathKey; signal?: AbortSignal }) => Promise<GatesOutcome>;
-
-/**
- * Run the gates inside the per-app / per-user limits: one run per app (a new request supersedes the old
- * one), a ceiling per user. `template` is the platform's gate set that judges the tree.
- */
 /**
  * TEST SEAM (like `__setAppProjectGitForTests`): unit suites that exercise something OTHER than the gates
- * install a runner here so their container-app deploy requests do not need a cluster. Production never
- * sets it; with it unset the default is the real sandbox, and no cluster means a block (never a pass).
+ * install a checks runner here so their container-app deploy requests do not need a cluster. Production never
+ * sets it; with it unset the default is the real engine, and no engine means a block (never a pass).
  */
-let gatesRunnerForTests: GatesRunner | null = null;
-export function __setGatesRunnerForTests(run: GatesRunner | null): void {
-  gatesRunnerForTests = run;
+let checksRunnerForTests: ChecksRunner | null = null;
+export function __setChecksRunnerForTests(run: ChecksRunner | null): void {
+  checksRunnerForTests = run;
 }
 
-export async function runFactoryGates(
-  slug: string,
-  files: ScaffoldFile[],
-  run: GatesRunner = gatesRunnerForTests ?? runGatesSandbox,
-  who: { userId: string; appId: string; template?: GoldenPathKey } = { userId: 'anonymous', appId: slug },
-): Promise<GateVerdict> {
-  const slot = acquireGateSlot({ userId: who.userId, appId: who.appId });
+/** One person cannot hold more than a few checks runs at once (gates-limits.ts); per app the engine supersedes. */
+async function withChecksSlot<T>(userId: string, appId: string, fn: () => Promise<T>): Promise<T> {
+  const slot = acquireGateSlot({ userId, appId });
   try {
-    return evaluateGates(await run(slug, files, { template: who.template, signal: slot.signal }));
+    return await fn();
   } finally {
     slot.release();
   }
 }
 
 /**
- * Run an app's quality gates on its committed tree WITHOUT asking for a deploy: the same sandbox and
- * the same verdict `requestDeploy` applies. Owner or an owning-domain builder; nothing is written.
+ * Run an app's quality checks on its committed head WITHOUT asking for a deploy: the same Tekton run (one per
+ * commit, idempotent) every trigger uses, and the same verdict `requestDeploy` applies. Owner or an
+ * owning-domain builder. `force` ("Run checks") starts a new attempt when the commit's run has finished;
+ * `waitMs` bounds how long the call waits (0 = return the running record at once).
  */
 export async function runAppTests(
   appId: string,
   user: CurrentUser,
-  opts: { gates?: GatesRunner; trigger?: CheckTrigger } = {},
-): Promise<{ commit: string | null; template: string | null; verdict: GateVerdict; outcome: GatesOutcome }> {
+  opts: { checks?: ChecksRunner; trigger?: CheckTrigger; force?: boolean; waitMs?: number } = {},
+): Promise<{ commit: string; template: string | null; verdict: GateVerdict; record: CheckRecord }> {
   const app = await getAppForUser(appId, user);
   if (app.owner !== user.id && !(isBuilder(user) && user.domains.includes(app.domain))) {
     throw withStatus(new Error('Only the creator or a builder of the owning domain can run the app tests'), 403);
@@ -491,29 +481,20 @@ export async function runAppTests(
   if (!policy.required) throw withStatus(new Error(`This app has no factory gates: ${policy.reason}`), 409);
   const state = appProjectGitEnabled() ? await readAppTreeState(app) : null;
   const files = state?.kind === 'tree' ? state.files : await appFilesForScan(app);
-  const run = opts.gates ?? gatesRunnerForTests ?? runGatesSandbox;
-  const startedAt = new Date().toISOString();
-  const slot = acquireGateSlot({ userId: user.id, appId: app.id });
-  let outcome: GatesOutcome;
-  try {
-    outcome = await run(app.slug, files, { template: policy.profile, signal: slot.signal });
-  } finally {
-    slot.release();
-  }
-  const commit = state?.kind === 'tree' ? state.sha : null;
+  if (state?.kind !== 'tree') throw withStatus(new Error('The checks run on a commit, and this app has none in the domain repository yet (is the domain git enabled?)'), 409);
+  const commit = state.sha;
   // The result belongs to the commit it ran on: stored on the app, shown in the Software tab, and the
-  // only thing a deploy of that commit accepts. A superseded run is not a result and is not stored.
-  if (commit && !(outcome.ok === false && outcome.kind === 'superseded')) {
-    app.checks = upsertRecord(app.checks, recordFromOutcome({ sha: commit, trigger: opts.trigger ?? 'mcp', engine: 'sandbox-job', startedAt, finishedAt: new Date().toISOString(), outcome }));
-    await persistApp(app);
-  }
-  return { commit, template: policy.profile, verdict: evaluateGates(outcome), outcome };
+  // only thing a deploy of that commit accepts.
+  const result = await withChecksSlot(user.id, app.id, () => (opts.checks ?? checksRunnerForTests ?? defaultChecksRunner)({ slug: app.slug, domain: app.domain, sha: commit, trigger: opts.trigger ?? 'mcp', force: opts.force, waitMs: opts.waitMs }));
+  app.checks = withResult(app.checks, result);
+  await persistApp(app);
+  return { commit, template: policy.profile, verdict: verdictOfRecord(result.record, commit), record: result.record };
 }
 
 export async function requestDeploy(
   appId: string,
   user: CurrentUser,
-  opts: { sha?: string; changedFiles?: DiffSummary['files']; scanMode?: ScanMode; scan?: ResolveScanOpts; runner?: RunnerOpts; gates?: GatesRunner } = {},
+  opts: { sha?: string; changedFiles?: DiffSummary['files']; scanMode?: ScanMode; scan?: ResolveScanOpts; runner?: RunnerOpts; checks?: ChecksRunner } = {},
 ): Promise<DeployRequestResult> {
   // EXISTENCE FIRST (F2-1) — see startPreview.
   const app = await getAppForUser(appId, user);
@@ -547,8 +528,8 @@ export async function requestDeploy(
 
   // SOFTWARE FACTORY: every app served as a container carries the quality gates (tests, type check, lint,
   // build, policy). Whether they apply is decided from what the OS STORED about the app (template + serve
-  // mode, gate-policy.ts), never from a line of the author's own tree. They run in the platform sandbox over
-  // exactly these files, judged by the platform's own gate script and policy, and a deploy is not even
+  // mode, gate-policy.ts), never from a line of the author's own tree. They run as a Tekton PipelineRun over
+  // exactly this commit, judged by the platform's own gate script and policy, and a deploy is not even
   // REQUESTED while one fails or cannot run: unavailable is not a pass.
   const gatePolicy = gatePolicyFor(app);
   if (gatePolicy.required) {
@@ -558,23 +539,21 @@ export async function requestDeploy(
       throw withStatus(new Error(`The requested commit ${opts.sha.slice(0, 12)} is not the app's head ${sha.slice(0, 12)}; push or select the head and run its checks first`), 409);
     }
     const stored = sha ? recordFor(app.checks, sha) : null;
-    if (stored && stored.status === 'finished') {
+    if (stored && stored.status === 'finished' && !stored.error) {
+      // A finished record for exactly this sha is a fact: it is read, not re-run.
       const v = recordVerdict(stored, sha as string);
       if (!v.green) throw withStatus(new Error(`Quality checks for ${(sha as string).slice(0, 12)} are not green: ${v.reason}`), 422);
     } else {
-      const startedAt = new Date().toISOString();
-      const slot = acquireGateSlot({ userId: user.id, appId: app.id });
-      let outcome: GatesOutcome;
-      try {
-        outcome = await (opts.gates ?? gatesRunnerForTests ?? runGatesSandbox)(app.slug, files, { template: gatePolicy.profile, signal: slot.signal });
-      } finally {
-        slot.release();
+      if (!sha) throw withStatus(new Error('The quality checks run on a commit, and this app has none in the domain repository yet (is the domain git enabled?)'), 409);
+      // No record, an unfinished one, one that could not run, or a superseded one: ask the engine. It is idempotent per
+      // commit, so a run already in progress is joined, not duplicated.
+      const result = await withChecksSlot(user.id, app.id, () => (opts.checks ?? checksRunnerForTests ?? defaultChecksRunner)({ slug: app.slug, domain: app.domain, sha, trigger: 'deploy', force: stored?.status === 'superseded' }));
+      app.checks = withResult(app.checks, result);
+      await persistApp(app);
+      if (result.record.status === 'running') {
+        throw withStatus(new Error(`The quality checks for ${sha.slice(0, 12)} are still running (${result.record.runRef ?? 'run'}); request the deploy again when they have finished`), 409);
       }
-      const verdict = evaluateGates(outcome);
-      if (sha && !(outcome.ok === false && outcome.kind === 'superseded')) {
-        app.checks = upsertRecord(app.checks, recordFromOutcome({ sha, trigger: 'deploy', engine: 'sandbox-job', startedAt, finishedAt: new Date().toISOString(), outcome }));
-        await persistApp(app);
-      }
+      const verdict = verdictOfRecord(result.record, sha);
       if (!verdict.passed) throw withStatus(new Error(verdict.summary), 422);
     }
   }

@@ -18,17 +18,24 @@
  *   - Validation (synchronous, refuses the push): the files the platform owns (PLATFORM_OWNED: gate files,
  *     Dockerfile, next.config.*, workflows, vendor, .npmrc) are neither editable nor removable by a push, otherwise an author could weaken the
  *     checks that judge the same push. `k8s/` is validated by the app-deploy kind (deploy-receive.ts).
- *   - Starting the checks for the pushed sha is NOT done here (the engine that runs them is decided
- *     separately); the report says so instead of implying they ran.
+ *   - STARTING THE CHECKS (trigger 1 of 3): after the registry is re-derived, a golden-path app gets one Tekton
+ *     run for the pushed sha (tekton-checks.ts: idempotent per sha, a newer sha cancels the app's run in
+ *     progress). The running record is stored on the app and the push output says so. A push is never
+ *     rejected by a long job; a red result only blocks the deploy of that commit. When the engine cannot start
+ *     the run, a FINISHED record carrying the reason is stored (never skipped silently, never green).
  */
 import 'server-only';
 import { APPS_DIR } from '@core/infra/repo-layout';
 import { registerRepoKind, type ChangedFile, type IngestReport, type Pusher } from '@core/infra/git-receive';
 import type { CurrentUser } from '@core/kernel/auth';
 import { runWithSurface } from '@core/infra/request-surface';
-import { getAppBySlugInternal } from '@tabs/software/lib/apps';
+import { getAppBySlugInternal, persistApp } from '@tabs/software/lib/apps';
 import { APPS_PREFIX, readAppTreeState } from '@tabs/software/lib/git-commit';
 import { appTreesIn, ingestFromRepo } from '@tabs/software/lib/ingest-from-repo';
+import { gatePolicyFor } from '@tabs/software/lib/gate-policy';
+import { withResult } from '@tabs/software/lib/check-record';
+import { defaultChecksRunner, type ChecksRunner } from '@tabs/software/lib/tekton-checks';
+import { watchChecks } from '@tabs/software/lib/checks-sync';
 import type { ScaffoldFile } from '@tabs/software/lib/model';
 import { isPlatformOwnedPath } from '@tabs/software/lib/golden-path';
 
@@ -70,7 +77,7 @@ export function validateAppDelete(file: { path: string }): string | null {
 
 const asUser = (p: Pusher): CurrentUser => ({ id: p.id, name: p.name ?? p.id, domains: p.domains, allDomains: p.domains, activeDomain: null, role: p.role });
 
-export type ReceiveDeps = { readTree?: (slug: string, sha: string, domain: string) => Promise<ScaffoldFile[]> };
+export type ReceiveDeps = { readTree?: (slug: string, sha: string, domain: string) => Promise<ScaffoldFile[]>; checks?: ChecksRunner };
 
 async function defaultReadTree(slug: string, sha: string, domain: string): Promise<ScaffoldFile[]> {
   const state = await readAppTreeState({ slug, domain }, { ref: sha });
@@ -96,8 +103,9 @@ export async function ingestApps(input: { domain: string; files: ChangedFile[]; 
       report.notes.push(`${APPS_DIR}/${slug}/ belongs to domain '${app.domain}', not '${input.domain}'; not ingested`);
       continue;
     }
+    let tree: ScaffoldFile[] | null = null;
     try {
-      const tree = await readTree(slug, input.sha, input.domain);
+      tree = await readTree(slug, input.sha, input.domain);
       const full = tree.map((f) => ({ path: `${APPS_PREFIX}${slug}/${f.path}`, content: f.content }));
       const out = await runWithSurface('git:push', () => ingestFromRepo('app', full, user));
       for (const a of out.apps) {
@@ -113,9 +121,29 @@ export async function ingestApps(input: { domain: string; files: ChangedFile[]; 
       report.skipped += 1;
       report.notes.push(`${APPS_DIR}/${slug}/: the registry could not be re-derived (${e instanceof Error ? e.message : String(e)}); the files are stored`);
     }
+    // Whether checks run is decided from the stored app (template + serve mode), never from a line in the pushed tree.
+    if (tree && app && gatePolicyFor(app).required) await startChecks(slug, input, report, deps);
   }
-  if (slugs.size > 0) report.notes.push('quality checks are not started by a push yet; run them with verify_app_gates');
   return report;
+}
+
+/** Trigger 1 of 3: one run for the pushed sha of an app that has a registry record and a stored app that requires the gates. */
+async function startChecks(slug: string, input: { domain: string; sha: string }, report: IngestReport, deps: ReceiveDeps): Promise<void> {
+  const app = await getAppBySlugInternal(slug);
+  if (!app) return; // never create: a slug with no record is reported by the ingest, and has nothing to check
+  try {
+    const result = await (deps.checks ?? defaultChecksRunner)({ slug, domain: input.domain, sha: input.sha, trigger: 'push', waitMs: 0 });
+    app.checks = withResult(app.checks, result);
+    await persistApp(app);
+    const r = result.record;
+    if (r.error) report.notes.push(`apps/${slug}/: the quality checks could not start for ${input.sha.slice(0, 12)}: ${r.error}`);
+    else {
+      report.notes.push(`apps/${slug}/: quality checks started for ${input.sha.slice(0, 12)}${r.runRef ? ` (${r.runRef})` : ''}${result.superseded.length ? `; the run for ${result.superseded.map((x) => x.slice(0, 12)).join(', ')} was cancelled` : ''}`);
+      if (r.status === 'running') watchChecks(slug, input.sha);
+    }
+  } catch (e) {
+    report.notes.push(`apps/${slug}/: the quality checks could not start (${e instanceof Error ? e.message : String(e)})`);
+  }
 }
 
 export function registerAppIngest(): void {

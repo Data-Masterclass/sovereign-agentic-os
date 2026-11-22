@@ -46,7 +46,7 @@ export const GOLDEN_PATHS: Record<GoldenPathKey, { label: string; blurb: string;
  * do is decide a gate: type check, lint and tests run on the platform's own pinned toolchain
  * (`templates/platform-toolchain`, see {@link platformToolchainFiles}), never on the author's `node_modules`.
  */
-export const PLATFORM_OWNED = ['Dockerfile', 'next.config.*', 'k8s/', '.github/workflows/', 'policy/', 'scripts/factory-gates.mjs', 'vendor/', '.npmrc'] as const;
+export const PLATFORM_OWNED = ['Dockerfile', 'next.config.*', 'k8s/', '.github/workflows/', '.tekton/', 'policy/', 'scripts/factory-gates.mjs', 'vendor/', '.npmrc'] as const;
 
 /** The subset of the template the sandbox overlays from the platform before it runs anything. */
 export const GATE_FILES = ['policy/', 'scripts/factory-gates.mjs'] as const;
