@@ -81,6 +81,8 @@ spec:
             workingDir: $(workspaces.app.path)
             env:
               - { name: CI, value: "true" }
+              - { name: HOME, value: /tmp }
+              - { name: npm_config_cache, value: /tmp/.npm }
               - { name: NEXT_TELEMETRY_DISABLED, value: "1" }
             computeResources:
               requests: { cpu: 100m, memory: 256Mi }
@@ -96,7 +98,7 @@ spec:
             onError: continue
             image: node:22-alpine3.24@sha256:1314fb30ec37592d5845e5a160d522c0e680972aa534549940b8d73bde88481a
             workingDir: $(workspaces.app.path)
-            env: [{ name: CI, value: "true" }]
+            env: [{ name: CI, value: "true" }, { name: HOME, value: /tmp }, { name: npm_config_cache, value: /tmp/.npm }]
             computeResources:
               requests: { cpu: 100m, memory: 256Mi }
               limits: { cpu: "1", memory: 1Gi }
@@ -107,7 +109,7 @@ spec:
             onError: continue
             image: node:22-alpine3.24@sha256:1314fb30ec37592d5845e5a160d522c0e680972aa534549940b8d73bde88481a
             workingDir: $(workspaces.app.path)
-            env: [{ name: CI, value: "true" }]
+            env: [{ name: CI, value: "true" }, { name: HOME, value: /tmp }, { name: npm_config_cache, value: /tmp/.npm }]
             computeResources:
               requests: { cpu: 100m, memory: 256Mi }
               limits: { cpu: "1", memory: 1Gi }
@@ -118,7 +120,7 @@ spec:
             onError: continue
             image: node:22-alpine3.24@sha256:1314fb30ec37592d5845e5a160d522c0e680972aa534549940b8d73bde88481a
             workingDir: $(workspaces.app.path)
-            env: [{ name: CI, value: "true" }]
+            env: [{ name: CI, value: "true" }, { name: HOME, value: /tmp }, { name: npm_config_cache, value: /tmp/.npm }]
             computeResources:
               requests: { cpu: 100m, memory: 256Mi }
               limits: { cpu: "1", memory: 1Gi }
@@ -131,6 +133,8 @@ spec:
             workingDir: $(workspaces.app.path)
             env:
               - { name: CI, value: "true" }
+              - { name: HOME, value: /tmp }
+              - { name: npm_config_cache, value: /tmp/.npm }
               - { name: NEXT_TELEMETRY_DISABLED, value: "1" }
             computeResources:
               requests: { cpu: 250m, memory: 512Mi }
@@ -181,7 +185,7 @@ spec:
       params:
         # Dependencies (from the lockfile) and committed secrets, high and critical only; same Trivy pin as the OS deploy scan.
         - name: ARGS
-          value: ["fs", "--scanners", "vuln,secret", "--severity", "HIGH,CRITICAL", "--exit-code", "1", "--skip-dirs", "node_modules,.next", "--no-progress"]
+          value: ["fs", "--scanners", "vuln,secret", "--severity", "HIGH,CRITICAL", "--exit-code", "1", "--skip-dirs", "node_modules,.next", "--no-progress", "--cache-dir", "/tmp/trivy-cache", "--db-repository", "ghcr.io/aquasecurity/trivy-db"]
         - { name: IMAGE_PATH, value: "." }
         - { name: TRIVY_IMAGE, value: "docker.io/aquasec/trivy:0.58.2@sha256:665030f4d33a82c1e8d9d5e0453365842236723c1ee5cc3becca698268e66a56" }
       workspaces:
