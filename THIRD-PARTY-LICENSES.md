@@ -143,8 +143,6 @@ models, so run tracing is done explicitly with the `langfuse` SDK.
 
 | Component | Version | License (SPDX) | Full text | Notes |
 |---|---|---|---|---|
-| **Forgejo** | **v11.0.15** (chart 17.1.1) | **GPL-3.0-or-later** | `licenses/GPL-3.0.txt` | **Ships as a SEPARATE SERVICE (mere aggregation)** — own pod, not linked into our code. Source repo + commit + written offer: `licenses/source-offer.md` |
-| Forgejo Runner | 6 | MIT | `licenses/MIT.txt` | CI runner (act_runner) |
 | Conftest | 0.56.0 | Apache-2.0 | `licenses/Apache-2.0.txt` | CI-only binary. Pre-merge OPA/Rego policy gate for the `analytics` monorepo (#146). Pinned in the seeded `.forgejo/workflows/ci.yml`; **not** bundled in a runtime image (downloaded by the CI job). |
 | Argo CD | chart 10.0.0 | Apache-2.0 | `licenses/Apache-2.0.txt` | GitOps deploy |
 | Harbor | platform | Apache-2.0 | `licenses/Apache-2.0.txt` | Production registry |
@@ -196,9 +194,9 @@ models, so run tracing is done explicitly with the `langfuse` SDK.
 
 ## Copyleft source availability
 
-- **Forgejo (GPL-3.0-or-later)** — bundled as a separate, unmodified service. Exact
-  source repo, version, and commit, plus the written offer for the air-gap bundle, are
-  recorded in `licenses/source-offer.md`.
+- **git (GPL-2.0-only)** — the unmodified Alpine package in the git-http, git-daemon and backup-tools images, run as a
+  separate program (reviewed exception in `licenses/exceptions.json`). Upstream source and the written offer for the
+  air-gap bundle are recorded in `licenses/source-offer.md`.
 
 The air-gap bundle (per `stackit/packaging.md`) ships `sbom.cdx.json`, this manifest,
 and the whole `licenses/` directory alongside the mirrored images.

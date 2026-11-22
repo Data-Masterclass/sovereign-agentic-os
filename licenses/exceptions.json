@@ -1,15 +1,15 @@
 {
   "_comment": [
     "Reviewed exceptions to the licence gate (licenses/policy.json). Owner decision 2026-11-22.",
-    "Two kinds of entry:",
-    " 1. COPYLEFT that policy.json marks 'exceptable': unmodified weak-copyleft libraries (MPL, LGPL, EPL, CDDL) and unmodified GPL programs.",
-    "    Needs a `condition`: 'unmodified-not-linked' (weak copyleft, used unmodified, not linked into our code) or 'separate-program'",
-    "    (runs as its own process; the only condition a GPL accepts). The gate checks the condition and still requires an attribution entry.",
-    " 2. UNKNOWN or missing licences: a reason saying what was verified and where.",
-    "AGPL, EUPL and source-available licences (BUSL/BSL, SSPL, Elastic, Commons Clause, CC-BY-NC/SA) can NEVER be excepted.",
-    "Every entry needs: ecosystem (npm | python | component), name, version ('*' or exact), reason, reviewedBy and date (YYYY-MM-DD).",
-    "An entry without a reason, reviewedBy or a valid condition makes the gate fail with a config error; an entry that no longer matches",
-    "any dependency is reported, so this file cannot rot silently."
+    "An entry allows ONE copyleft dependency that policy.json marks 'exceptable': an unmodified weak-copyleft library (MPL, LGPL, EPL, CDDL)",
+    "or an unmodified GPL program. It needs a `condition`: 'unmodified-not-linked' (weak copyleft, used unmodified, not linked into our code)",
+    "or 'separate-program' (runs as its own process; the only condition a GPL accepts). The gate checks the condition and still requires an",
+    "attribution entry.",
+    "An exception can NEVER waive an UNKNOWN or missing licence: resolve it first to an SPDX id through an alias in policy.json (a reviewed",
+    "mapping), then the normal rules apply. AGPL, EUPL and source-available licences (BUSL/BSL, SSPL, Elastic, Commons Clause, CC-BY-NC/SA)",
+    "can NEVER be excepted.",
+    "Every entry needs: ecosystem (npm | python | component), name, version ('*' or exact), condition, reason, reviewedBy and date (YYYY-MM-DD).",
+    "An entry that no longer matches any dependency is reported, so this file cannot rot silently."
   ],
   "exceptions": [
     {

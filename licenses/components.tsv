@@ -40,8 +40,6 @@ Trino	optional	Apache-2.0	optional	licenses/Apache-2.0.txt	Optional scale/federa
 Apache Spark	optional	Apache-2.0	optional	licenses/Apache-2.0.txt	Optional distributed ETL (off by default); NOTICE bundled
 SeaweedFS	3.97	Apache-2.0	yes	licenses/Apache-2.0.txt	Air-gap object storage
 Supabase	platform	Apache-2.0	yes	licenses/Apache-2.0.txt	Wrapped per packaging.md
-Forgejo	v11.0.15 (chart 17.1.1)	GPL-3.0-or-later	yes	licenses/GPL-3.0.txt	SEPARATE SERVICE / mere aggregation; source: licenses/source-offer.md
-Forgejo Runner	6	MIT	yes	licenses/MIT.txt	CI runner (act_runner)
 Argo CD	chart 10.0.0	Apache-2.0	yes	licenses/Apache-2.0.txt	GitOps deploy
 Harbor	platform	Apache-2.0	yes	licenses/Apache-2.0.txt	Production container registry
 Velero	platform	Apache-2.0	yes	licenses/Apache-2.0.txt	Backup/restore
