@@ -91,6 +91,10 @@ export type LlmRequest = {
    * Absent on calls outside a run (the assistant, classify).
    */
   observe?: { traceId: string; parentObservationId?: string; node?: string; callId?: string };
+  /** Ask the gateway to stream; each piece of reply text is handed here as it arrives. */
+  onToken?: (text: string) => void;
+  /** Aborts the call (the user pressed Stop). */
+  signal?: AbortSignal;
 };
 export type LlmCall = (req: LlmRequest) => Promise<LlmCompletion>;
 
@@ -557,6 +561,13 @@ export async function runAgentic(opts: {
    * is what every caller got before the assistant path started passing one.
    */
   observe?: { traceId: string; parentObservationId?: string; node?: string; callId?: string };
+  /**
+   * Stream the ACT model's reply text as it is written (native tool calling only: the ReAct
+   * fallback's text is protocol JSON and is never streamed). The final text is still the return value.
+   */
+  onToken?: (text: string) => void;
+  /** Aborts the model calls of this run (the user pressed Stop). */
+  signal?: AbortSignal;
 }): Promise<AgenticResult> {
   const maxIterations = opts.maxIterations ?? DEFAULT_MAX_ITERATIONS;
   const budget = opts.budget ?? DEFAULT_MESSAGE_BUDGET;
@@ -569,6 +580,7 @@ export async function runAgentic(opts: {
     temperature: 0.2,
     maxTokens: opts.maxOutputTokens,
     ...(opts.observe ? { observe: opts.observe } : {}),
+    ...(opts.signal ? { signal: opts.signal } : {}),
   });
   const plan = stripThinking(planCompletion.content) || '(no plan produced)';
   opts.onPlan?.(plan);
@@ -638,6 +650,8 @@ export async function runAgentic(opts: {
         temperature: 0.2,
         maxTokens: opts.maxOutputTokens,
         ...(opts.observe ? { observe: opts.observe } : {}),
+        ...(opts.onToken && !react ? { onToken: opts.onToken } : {}),
+        ...(opts.signal ? { signal: opts.signal } : {}),
       });
     } catch (e) {
       // Native tool-calling unsupported → rebuild the system prompt with the ReAct
