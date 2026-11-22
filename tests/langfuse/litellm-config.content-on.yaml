@@ -7,7 +7,7 @@
 # per-request header `x-litellm-enable-message-redaction`, at run time, with no redeploy.
 # https://docs.litellm.ai/docs/proxy/logging#redact-messages-response-content
 model_list:
-  - model_name: sovereign-default
+  - model_name: sovereign-worker
     litellm_params:
       model: openai/stub-model
       api_base: os.environ/STUB_API_BASE
@@ -17,7 +17,7 @@ model_list:
       input_cost_per_token: 0.00000015
       output_cost_per_token: 0.00000025
       supports_function_calling: true
-  - model_name: sovereign-reasoning
+  - model_name: sovereign-strong
     litellm_params:
       model: openai/stub-model
       api_base: os.environ/STUB_API_BASE
