@@ -2,15 +2,19 @@
  * FEATURE:    The quality gates of the Software Factory, runnable anywhere (laptop, CI, OS sandbox).
  * USER STORY: As the author of this app I want to run the exact checks the platform runs before a
  *             deploy, and see which one blocks me and why.
- * ARCHITECTURE: Runs `typecheck`, `lint`, `test` as child processes and the `policy` gate through
- *               OPA (a running server at OPA_URL, else the `opa` binary). If OPA is not available the
- *               policy gate is `unavailable`, which is NOT a pass. Prints one framed JSON report.
+ * ARCHITECTURE: Runs `typecheck` (tsc), `lint` (eslint) and the tests (node --test, at least one file) as child
+ *               processes with platform-defined commands, and the `policy` gate through OPA (a running
+ *               server at OPA_URL, else the `opa` binary). If OPA is not available the policy gate is
+ *               `unavailable`, which is NOT a pass. In the OS sandbox this file is the PLATFORM's copy, run
+ *               once per gate (`--gate <id>`) and judged by its exit code; the author's copy is never run
+ *               there. Without `--gate` it prints one framed JSON report for the laptop.
  *               Vulnerability scanning (Trivy) is run by the platform, not here.
  */
 import { spawnSync } from 'node:child_process';
 import { readdirSync, readFileSync, statSync, writeFileSync, mkdtempSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { tmpdir } from 'node:os';
+import { setTimeout as sleep } from 'node:timers/promises';
 
 export const REPORT_DELIM = '<<<OS-GATES-REPORT>>>';
 const SKIP = new Set(['node_modules', '.next', '.git', 'vendor']);
@@ -37,6 +41,13 @@ async function policyGate(root, env) {
   const facts = collectFacts(root);
   if (env.OPA_URL) {
     try {
+      // OPA runs as a sidecar that may still be starting: wait for it (bounded) before calling it unavailable.
+      const base = env.OPA_URL.replace(/\/$/, '');
+      for (let i = 0; i < 30; i++) {
+        const up = await fetch(`${base}/health`).then((r) => r.ok, () => false);
+        if (up) break;
+        await sleep(1000);
+      }
       const res = await fetch(`${env.OPA_URL.replace(/\/$/, '')}/v1/data/factory/deny`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -67,19 +78,75 @@ function verdict(violations) {
     : { id: 'policy', status: 'fail', detail: `${list.length} violation(s)`, violations: list };
 }
 
-function npmGate(id, script, root) {
-  const r = spawnSync('npm', ['run', '--silent', script], { cwd: root, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
+const TOOL = { typecheck: ['node_modules/typescript/bin/tsc', '--noEmit', '--incremental', 'false'], lint: ['node_modules/eslint/bin/eslint.js', '.'] };
+
+function toolGate(id, root) {
+  const [bin, ...args] = TOOL[id];
+  const r = spawnSync(process.execPath, [join(root, bin), ...args], { cwd: root, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
+  const out = `${r.stdout ?? ''}${r.stderr ?? ''}`.trim();
+  const tail = out.split('\n').slice(-25).join('\n');
+  if (r.status === 0) return { id, status: 'pass', detail: `${id} passed` };
+  if (r.error) return { id, status: 'unavailable', detail: `${id} could not run: ${r.error.message}` };
+  return { id, status: 'fail', detail: tail || `${id} exited ${r.status}` };
+}
+
+function testFiles(root) {
+  const found = [];
+  const walk = (dir) => {
+    let names = [];
+    try { names = readdirSync(dir); } catch { return; }
+    for (const name of names) {
+      if (SKIP.has(name)) continue;
+      const abs = join(dir, name);
+      if (statSync(abs).isDirectory()) walk(abs);
+      else if (/\.test\.(ts|tsx|mjs|js)$/.test(name)) found.push(relative(root, abs));
+    }
+  };
+  walk(join(root, 'tests'));
+  return found.sort();
+}
+
+function testsGate(root) {
+  const files = testFiles(root);
+  // A gate that ran no tests is not a pass.
+  if (files.length === 0) return { id: 'tests', status: 'fail', detail: 'no test files found under tests/ (a gate that ran nothing is not a pass)' };
+  const r = spawnSync(process.execPath, ['--import', 'tsx', '--test', ...files], { cwd: root, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
   const tail = `${r.stdout ?? ''}${r.stderr ?? ''}`.trim().split('\n').slice(-25).join('\n');
-  return { id, status: r.status === 0 ? 'pass' : 'fail', detail: r.status === 0 ? `npm run ${script} passed` : tail };
+  if (r.error) return { id: 'tests', status: 'unavailable', detail: `tests could not run: ${r.error.message}` };
+  return { id: 'tests', status: r.status === 0 ? 'pass' : 'fail', detail: r.status === 0 ? `${files.length} test file(s) passed` : tail };
+}
+
+export const GATE_IDS = ['typecheck', 'lint', 'tests', 'policy'];
+
+export async function runGate(id, root = process.cwd(), env = process.env) {
+  if (id === 'policy') return policyGate(root, env);
+  if (id === 'tests') return testsGate(root);
+  if (TOOL[id]) return toolGate(id, root);
+  return { id, status: 'unavailable', detail: `unknown gate '${id}'` };
 }
 
 export async function runGates(root = process.cwd(), env = process.env) {
-  const gates = [npmGate('typecheck', 'typecheck', root), npmGate('lint', 'lint', root), npmGate('tests', 'test', root), await policyGate(root, env)];
+  const gates = [];
+  for (const id of GATE_IDS) gates.push(await runGate(id, root, env));
   return { schema: 'os-gates/v1', template: 'nextjs-web', ok: gates.every((g) => g.status === 'pass'), gates };
 }
 
+/**
+ * Exit codes, the contract the platform sandbox reads (it never reads this output): 0 = the gate passed,
+ * 3 = the gate could not run (not a pass), anything else = it failed.
+ *   node scripts/factory-gates.mjs                     all gates, framed report, for the author on a laptop
+ *   node scripts/factory-gates.mjs --gate <id> [--root <dir>]   one gate: the platform runs it this way
+ */
 if (import.meta.url === `file://${process.argv[1]}`) {
-  const report = await runGates();
+  const arg = (name) => { const i = process.argv.indexOf(name); return i > 0 ? process.argv[i + 1] : undefined; };
+  const root = arg('--root') ?? process.cwd();
+  const one = arg('--gate');
+  if (one) {
+    const g = await runGate(one, root);
+    process.stdout.write(`${g.status.toUpperCase()} ${g.id}: ${g.detail}\n${(g.violations ?? []).map((v) => `  - ${v}\n`).join('')}`);
+    process.exit(g.status === 'pass' ? 0 : g.status === 'unavailable' ? 3 : 1);
+  }
+  const report = await runGates(root);
   process.stdout.write(`${REPORT_DELIM}\n${JSON.stringify(report)}\n`);
   process.exit(report.ok ? 0 : 1);
 }

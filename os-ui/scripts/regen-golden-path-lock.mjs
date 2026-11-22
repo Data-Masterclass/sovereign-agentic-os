@@ -8,11 +8,11 @@
  * ARCHITECTURE: Writes the manifests an instantiated app commits (package.json, the vendored SDK's
  *             package.json, the scope-pin .npmrc) into an empty temp dir, runs
  *             `npm install --package-lock-only --ignore-scripts` there and copies npm's own output
- *             VERBATIM to templates/<key>/package-lock.json under the placeholder name. Needs network.
+ *             (minus sharp, see strip-lock-sharp.mjs) to templates/<key>/package-lock.json under the placeholder name. Needs network.
  *               cd os-ui && node --experimental-strip-types --import ./scripts/test-setup.mjs scripts/regen-golden-path-lock.mjs [nextjs-web]
  */
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -36,7 +36,11 @@ try {
     console.error(`regen-golden-path-lock: npm failed:\n${run.stdout}\n${run.stderr}`);
     process.exit(1);
   }
-  copyFileSync(join(dir, 'package-lock.json'), join(ROOT, '..', 'templates', key, 'package-lock.json'));
+  // npm always resolves Next's optional `sharp` (LGPL libvips); the template does not use it, so it is removed.
+  const { stripSharp } = await import('./strip-lock-sharp.mjs');
+  const lock = JSON.parse(readFileSync(join(dir, 'package-lock.json'), 'utf8'));
+  stripSharp(lock);
+  writeFileSync(join(ROOT, '..', 'templates', key, 'package-lock.json'), `${JSON.stringify(lock, null, 2)}\n`);
   console.log(`regen-golden-path-lock: wrote templates/${key}/package-lock.json`);
 } finally {
   rmSync(dir, { recursive: true, force: true });

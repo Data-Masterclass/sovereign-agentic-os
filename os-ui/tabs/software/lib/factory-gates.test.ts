@@ -22,8 +22,7 @@ import type { CurrentUser } from '@core/kernel/auth';
 import { createApp } from '@tabs/software/lib/apps';
 import { requestDeploy, __resetReviewCards } from './review.ts';
 import { instantiateGoldenPath } from './golden-path.ts';
-import { REQUIRED_GATES, evaluateGates, parseGatesLog, GATES_REPORT_DELIM, type GatesOutcome } from './gates.ts';
-import { buildGatesJobManifest, runGatesSandbox } from './sandbox-gates.ts';
+import { REQUIRED_GATES, evaluateGates, type GatesOutcome } from './gates.ts';
 
 let reposDir = '';
 let prior = '';
@@ -86,82 +85,10 @@ test('a sandbox that could not run is a block with its reason', () => {
   assert.match(v.blocking[0].detail, /no cluster/);
 });
 
-test('the pod log is read from the frame, not the noise around it', () => {
-  const report = JSON.stringify(green().ok ? (green() as { report: unknown }).report : {});
-  const parsed = parseGatesLog(`npm WARN deprecated x\n${GATES_REPORT_DELIM}\n${report}\n`);
-  assert.equal(parsed.ok, true);
-  const none = parseGatesLog('npm ERR! something\n');
-  assert.equal(none.ok, false);
-});
-
-// --------------------------------------------------------------- the sandbox ---
-
-test('the sandbox Job is restricted: no token, non-root, read-only root, limits, secret payload, OPA as a native sidecar', () => {
-  const job = buildGatesJobManifest({ name: 'gates-x', namespace: 'agentic-build', nodeImage: 'node:22', opaImage: 'opa:1', timeoutMs: 600_000 }) as {
-    spec: { activeDeadlineSeconds: number; template: { spec: Record<string, unknown> } };
-  };
-  const pod = job.spec.template.spec as { automountServiceAccountToken: boolean; securityContext: { runAsNonRoot: boolean }; initContainers: { name: string; restartPolicy?: string }[]; containers: { name: string; securityContext: { readOnlyRootFilesystem: boolean; allowPrivilegeEscalation: boolean }; resources: { limits: { memory: string } }; env: { name: string; value: string }[] }[]; volumes: { name: string; secret?: unknown }[] };
-  assert.equal(pod.automountServiceAccountToken, false);
-  assert.equal(pod.securityContext.runAsNonRoot, true);
-  assert.equal(job.spec.activeDeadlineSeconds, 600);
-  assert.deepEqual(pod.initContainers.map((c) => c.name), ['writer', 'opa']);
-  assert.equal(pod.initContainers[1].restartPolicy, 'Always');
-  const main = pod.containers[0];
-  assert.equal(main.name, 'gates');
-  assert.equal(main.securityContext.readOnlyRootFilesystem, true);
-  assert.equal(main.securityContext.allowPrivilegeEscalation, false);
-  assert.ok(main.resources.limits.memory);
-  assert.ok(main.env.some((e) => e.name === 'OPA_URL' && e.value === 'http://127.0.0.1:8181'));
-  assert.ok(pod.volumes.some((v) => v.name === 'payload' && v.secret));
-});
-
-type Call = { method: string; path: string; body?: unknown };
-function scriptedK8s(logText: string, opts: { jobFails?: boolean } = {}) {
-  const calls: Call[] = [];
-  const k8s = async (method: string, path: string, body?: unknown) => {
-    calls.push({ method, path, body });
-    if (method === 'DELETE') return { status: 404, body: {} };
-    if (method === 'POST' && path.endsWith('/jobs')) return { status: 201, body: { metadata: { uid: 'job-uid' } } };
-    if (method === 'POST') return { status: 201, body: {} };
-    if (path.includes('/pods?')) return { status: 200, body: { items: [{ metadata: { name: 'p1', ownerReferences: [{ uid: 'job-uid' }] } }] } };
-    if (path.includes('/jobs/')) return { status: 200, body: { status: opts.jobFails ? { failed: 1, conditions: [{ type: 'Failed', reason: 'BackoffLimitExceeded' }] } : { succeeded: 1 } } };
-    return { status: 404, body: {} };
-  };
-  const k8sText = async (path: string) => { calls.push({ method: 'LOG', path }); return { status: 200, text: logText }; };
-  return { calls, k8s, k8sText };
-}
 const files = () => instantiateGoldenPath('nextjs-web', { name: 'A', slug: 'a', host: 'a.d.apps.test', registry: 'r/apps', ingressClass: 'nginx' });
 
-test('a green pod log becomes a passing outcome, read from the gates container, and the payload Secret is dropped', async () => {
-  const s = scriptedK8s(`noise\n${GATES_REPORT_DELIM}\n${JSON.stringify((green() as { report: unknown }).report)}\n`);
-  const out = await runGatesSandbox('a', files(), { k8s: s.k8s, k8sText: s.k8sText, namespace: 'agentic-build', nodeImage: 'node:test', opaImage: 'opa:test', runId: 't1', sleep: async () => {} });
-  assert.equal(out.ok, true);
-  assert.equal(evaluateGates(out).passed, true);
-  assert.ok(s.calls.some((c) => c.method === 'LOG' && c.path.includes('container=gates')));
-  assert.ok(s.calls.some((c) => c.method === 'DELETE' && c.path.includes('/secrets/')));
-});
-
-test('a failed Job is a refusal, never a pass', async () => {
-  const s = scriptedK8s('', { jobFails: true });
-  const out = await runGatesSandbox('a', files(), { k8s: s.k8s, k8sText: s.k8sText, namespace: 'agentic-build', nodeImage: 'node:test', opaImage: 'opa:test', runId: 't2', sleep: async () => {} });
-  assert.equal(out.ok, false);
-  assert.equal(evaluateGates(out).passed, false);
-});
-
-test('no Kubernetes API at all is a refusal naming the cause', async () => {
-  const out = await runGatesSandbox('a', files(), { k8s: async () => ({ status: 0, body: {} }), k8sText: async () => ({ status: 0, text: '' }), namespace: 'x', nodeImage: 'node:test', opaImage: 'opa:test', runId: 't3', sleep: async () => {} });
-  assert.equal(out.ok, false);
-  assert.equal(out.ok ? '' : out.kind, 'no-cluster');
-});
-
-test('no pinned sandbox images (the chart sets them) is a refusal, and no Job is created', async () => {
-  const calls: string[] = [];
-  const out = await runGatesSandbox('a', files(), { k8s: async (m, p) => { calls.push(`${m} ${p}`); return { status: 200, body: {} }; }, k8sText: async () => ({ status: 0, text: '' }), namespace: 'x', nodeImage: '', opaImage: '', runId: 't4', sleep: async () => {} });
-  assert.equal(out.ok, false);
-  assert.equal(out.ok ? '' : out.kind, 'sandbox-failed');
-  assert.match(out.ok ? '' : out.reason, /images are not configured/);
-  assert.deepEqual(calls, []);
-});
+// The sandbox itself (Job shape, verdict channel, overlay, namespace, supersede) is tested in
+// sandbox-gates-verdict.test.ts; the pod log is no longer parsed for a verdict at all.
 
 // ----------------------------------------------- the deploy request is blocked ---
 

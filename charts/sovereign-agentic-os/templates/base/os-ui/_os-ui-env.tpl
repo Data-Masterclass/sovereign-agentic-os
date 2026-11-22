@@ -232,6 +232,14 @@
      chart's own `opa.image` so the policy engine in the sandbox is the one the platform runs. */}}
 {{- $sb := (($u.software | default dict).sandbox | default dict) }}
 {{- $oi := (.Values.opa).image | default dict }}
+{{- if include "soa.softwareSandboxOn" . }}
+- name: SOFTWARE_SANDBOX_NAMESPACE
+  value: {{ include "soa.softwareSandboxNs" . | quote }}
+{{- if .Values.egressProxy.enabled }}
+- name: SOFTWARE_SANDBOX_PROXY_URL
+  value: {{ printf "http://egress-proxy.%s.svc:3128" .Release.Namespace | quote }}
+{{- end }}
+{{- end }}
 - name: SOFTWARE_SANDBOX_NODE_IMAGE
   value: {{ $sb.nodeImage | default "node:22-alpine3.24" | quote }}
 - name: SOFTWARE_SANDBOX_OPA_IMAGE

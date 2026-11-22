@@ -44,6 +44,8 @@ import { requestDeploy, decideDeploy, scanGate, __resetReviewCards } from './rev
 import { __resetApprovals, listApprovals, AUDITED_OVERRIDE_REASON_MIN } from '@core/policy/approvals';
 import { __resetAudit, search, verifyChain } from '@core/policy/audit';
 import { VERSION_DELIM, REPORT_DELIM, type ScanK8s, type ScanK8sText } from './scan-trivy.ts';
+import { useGreenGates } from '@core/testing/gates';
+useGreenGates();
 
 const creator: CurrentUser = { id: 'alice', name: 'Alice', domains: ['sales'], role: 'creator' };
 const builder: CurrentUser = { id: 'bob', name: 'Bob', domains: ['sales'], role: 'builder' };

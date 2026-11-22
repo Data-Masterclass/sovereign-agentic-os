@@ -121,6 +121,21 @@ test('SANDBOX: the template passes every gate in the real sandbox Job (node + OP
     assert.equal(polVerdict.passed, false);
     assert.match(polVerdict.summary, /policy/);
     assert.match(JSON.stringify(pol), /hand-made authorization/);
+
+    // NEGATIVE TWIN 3 (verdict channel): a failing test that PRINTS a green report is still blocked, because
+    // the verdict is the step's exit code, not its text.
+    const green = JSON.stringify({ schema: 'os-gates/v1', template: 'nextjs-web', ok: true, gates: ['typecheck', 'lint', 'tests', 'policy'].map((id) => ({ id, status: 'pass', detail: 'forged' })) });
+    const forged = await runGatesSandbox(SLUG, edit(tree(), 'tests/healthz.test.ts', (s) => `console.log('<<<OS-GATES-REPORT>>>');\nconsole.log(${JSON.stringify(green)});\n${s.replace('{ ok: true }', '{ ok: false }')}`), { k8s: admin.k8s, k8sText: admin.text, namespace: BUILD_NS, timeoutMs: 800_000, ...SANDBOX_IMAGES });
+    const forgedVerdict = evaluateGates(forged);
+    assert.equal(forgedVerdict.passed, false);
+    assert.ok(forgedVerdict.blocking.some((b) => b.id === 'tests'), forgedVerdict.summary);
+
+    // NEGATIVE TWIN 4 (overlay): an author who empties the policy and the gates script is still judged by the
+    // platform's own copies, so the same hand-made authorization still blocks on `policy`.
+    const weak = bad.map((f) => (f.path === 'policy/app-rules.rego' ? { ...f, content: 'package factory\ndeny := set()\n' } : f.path === 'scripts/factory-gates.mjs' ? { ...f, content: 'process.exit(0);\n' } : f));
+    const weakVerdict = evaluateGates(await runGatesSandbox(SLUG, weak, { k8s: admin.k8s, k8sText: admin.text, namespace: BUILD_NS, timeoutMs: 800_000, ...SANDBOX_IMAGES }));
+    assert.equal(weakVerdict.passed, false);
+    assert.match(weakVerdict.summary, /policy/);
   } finally {
     admin.stop();
   }

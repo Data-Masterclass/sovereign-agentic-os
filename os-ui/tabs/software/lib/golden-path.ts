@@ -36,8 +36,58 @@ export const GOLDEN_PATHS: Record<GoldenPathKey, { label: string; blurb: string;
   },
 };
 
-/** Files a business-user path may not change: the platform owns how the app is built, deployed and gated. */
-export const PLATFORM_OWNED = ['Dockerfile', 'next.config.mjs', 'k8s/', '.github/workflows/', 'policy/', 'scripts/factory-gates.mjs', 'vendor/', '.npmrc', 'package-lock.json'] as const;
+/**
+ * Files no author path may change: the platform owns how the app is built, deployed and GATED. The list is
+ * enforced (not merely advertised) on every write path - the MCP push, the UI editor, the commit tool
+ * (`commitToApp`, `saveAppFile`) and git receive - by {@link platformOwnedViolations}, and the gates
+ * themselves never read the author's copy of the gate files (the sandbox overlays the platform's own).
+ * `package-lock.json` is deliberately NOT owned: an author adds dependencies, and the dependency scan plus
+ * `npm ci` (which refuses a lockfile that disagrees with package.json) cover it.
+ */
+export const PLATFORM_OWNED = ['Dockerfile', 'next.config.mjs', 'k8s/', '.github/workflows/', 'policy/', 'scripts/factory-gates.mjs', 'vendor/', '.npmrc'] as const;
+
+/** The subset of the template the sandbox overlays from the platform before it runs anything. */
+export const GATE_FILES = ['policy/', 'scripts/factory-gates.mjs'] as const;
+
+export const isPlatformOwnedPath = (path: string): boolean => {
+  const p = path.replace(/^\.\//, '');
+  return PLATFORM_OWNED.some((o) => (o.endsWith('/') ? p.startsWith(o) : p === o));
+};
+
+/**
+ * What a write would change among the platform-owned files: a path is a violation when it is owned and is
+ * new or has different bytes than the tree it lands on. Re-sending an unchanged owned file is accepted, so a
+ * full-tree push still works.
+ */
+export function platformOwnedViolations(prior: ScaffoldFile[], incoming: ScaffoldFile[]): string[] {
+  const before = new Map(prior.map((f) => [f.path.replace(/^\.\//, ''), f.content]));
+  return incoming
+    .filter((f) => isPlatformOwnedPath(f.path) && before.get(f.path.replace(/^\.\//, '')) !== f.content)
+    .map((f) => f.path);
+}
+
+/** Throws 403 when `incoming` changes a platform-owned file of a golden-path app. */
+export function assertNoPlatformOwnedChange(prior: ScaffoldFile[], incoming: ScaffoldFile[]): void {
+  const bad = platformOwnedViolations(prior, incoming);
+  if (bad.length === 0) return;
+  const err = new Error(
+    `platform-owned file${bad.length === 1 ? '' : 's'} cannot be changed here: ${bad.slice(0, 5).join(', ')}. ` +
+      `The platform owns how the app is built, deployed and gated (${PLATFORM_OWNED.join(', ')}). Nothing was written.`,
+  ) as Error & { status?: number };
+  err.status = 403;
+  throw err;
+}
+
+/** The platform's own copy of the gate files (policy + gates script) for a template. */
+export function gateFilesOf(key: GoldenPathKey): ScaffoldFile[] {
+  return readTemplate(key).filter((f) => GATE_FILES.some((g) => (g.endsWith('/') ? f.path.startsWith(g) : f.path === g)));
+}
+
+/** `files` with every gate file replaced by the platform's copy (the author's versions are dropped). */
+export function applyGateOverlay(files: ScaffoldFile[], key: GoldenPathKey): ScaffoldFile[] {
+  const isGate = (p: string) => GATE_FILES.some((g) => (g.endsWith('/') ? p.startsWith(g) : p === g));
+  return [...files.filter((f) => !isGate(f.path.replace(/^\.\//, ''))), ...gateFilesOf(key)];
+}
 
 export const isGoldenPath = (k: unknown): k is GoldenPathKey => typeof k === 'string' && Object.prototype.hasOwnProperty.call(GOLDEN_PATHS, k);
 
@@ -72,12 +122,6 @@ export function rulesOf(key: GoldenPathKey): { agents: string; claude: string; p
   const t = readTemplate(key);
   const get = (p: string) => t.find((f) => f.path === p)?.content ?? '';
   return { agents: get('AGENTS.md'), claude: get('CLAUDE.md'), policy: get('policy/app-rules.rego') };
-}
-
-/** The golden-path key an app's committed tree declares in `app.yaml` (`template: <key>`), or null. */
-export function goldenPathKeyOf(files: ScaffoldFile[]): GoldenPathKey | null {
-  const m = /^template:\s*['"]?([a-z0-9-]+)['"]?\s*$/m.exec(files.find((f) => f.path === 'app.yaml')?.content ?? '');
-  return m && isGoldenPath(m[1]) ? m[1] : null;
 }
 
 /** Source tree for a NEW app (no deploy files): template + vendored SDK + scope pin + slug-named lockfile. */

@@ -50,6 +50,7 @@ import { snapshotFiles, getSnapshot, hydrateSnapshot } from '@tabs/software/lib/
 import { commitAppTree, gitCommitNote, readAppTreeState, type AppCommitOutcome } from '@tabs/software/lib/git-commit';
 import { ensureSectionsRegistered, unregisteredPageHints } from '@tabs/software/lib/sections-registry';
 import { compileGate, formatGateError, gateActivityNote } from '@tabs/software/lib/compile-gate';
+import { assertNoPlatformOwnedChange, isGoldenPath } from '@tabs/software/lib/golden-path';
 export { snapshotFiles, getSnapshot, hydrateSnapshot };
 
 /**
@@ -146,7 +147,7 @@ export async function commitToApp(
   files: ScaffoldFile[],
   message: string,
   /** The action + surface recorded on the git commit (defaults to a plain `commit` from the UI). */
-  gitMeta?: { action?: string; surface?: string; requestId?: string },
+  gitMeta?: { action?: string; surface?: string; requestId?: string; /** The platform itself writing (SDK refresh); never set from a user door. */ platformWrite?: boolean },
 ): Promise<{ app: App; step: AdapterStep; git?: AppCommitOutcome }> {
   const app = await getAppByIdInternal(appId);
   if (!app) throw withStatus(new Error('App not found'), 404);
@@ -159,6 +160,9 @@ export async function commitToApp(
   // (not the bare template seed) — the whole-tree metadata parse + scan stay honest.
   await hydrateSnapshot(app.id);
   const prior = await priorTreeForCommit(app, files);
+  // PLATFORM_OWNED on every user write path: the gate files, build files and deploy manifests of a
+  // golden-path app are changed by the platform only. Refused before any write.
+  if (isGoldenPath(app.template) && !gitMeta?.platformWrite) assertNoPlatformOwnedChange(prior, files);
   const toCommit = ensureSectionsRegistered(prior, files, app.template);
   const tree = mergeTree(prior, toCommit);
   // COMPILE GATE (verify-before-commit, redesign Week 1): the MERGED tree — including
@@ -282,7 +286,7 @@ export async function refreshVendoredSdk(
     return { skipped: true, reason: `template '${app.template}' has no vendored SDK to refresh` };
   }
   const files = vendorSdkForRepo(); // fresh vendor/@sovereign-os/app-sdk/* from disk
-  return commitToApp(app.id, user, files, 'chore: refresh vendored @sovereign-os/app-sdk (os.records.* write surface)');
+  return commitToApp(app.id, user, files, 'chore: refresh vendored @sovereign-os/app-sdk (os.records.* write surface)', { platformWrite: true });
 }
 
 // ------------------------------------------------------- Front-door adapters ---

@@ -175,8 +175,8 @@ export const PLATFORM_MCP_TOOLS: { name: string; description: string; write: boo
   {
     name: 'verify_app_gates',
     description:
-      "SOFTWARE FACTORY · run the app's quality gates (type check, lint, unit tests, policy rules via OPA) in the OS SANDBOX on its COMMITTED tree and return the verdict per gate - the same run and the same verdict `request_deploy` applies, so a green result here means the deploy request will not be blocked on gates. A gate that fails, is unavailable, or is missing from the report blocks; a sandbox that cannot run blocks with its reason. Push your changes first (`push_app_files` or git); uncommitted local files are not tested. Owner or an owning-domain builder. Only for apps built from a golden-path template.",
-    write: false,
+      "SOFTWARE FACTORY · run the app's quality gates (type check, lint, unit tests, policy rules via OPA) in the OS SANDBOX on its COMMITTED tree and return the verdict per gate - the same run and the same verdict `request_deploy` applies, so a green result here means the deploy request will not be blocked on gates. A gate that fails, is unavailable, or is missing from the report blocks; a sandbox that cannot run blocks with its reason. Push your changes first (`push_app_files` or git); uncommitted local files are not tested. Judged by the PLATFORM's gate script and policy, not the copies in your tree. Owner or an owning-domain builder. For every app served as a container. A GOVERNED ACTION: it starts a sandbox Job (2 CPU / 2Gi), so it needs the present user's confirmation and is limited to ONE run per app (a new request replaces the old run) and a ceiling per user.",
+    write: true,
   },
   // ---- Code in Claude, push to the OS (night-2 S6) ----
   {

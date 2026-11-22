@@ -4,7 +4,7 @@
 import 'server-only';
 import { config } from '@core/kernel/config';
 import { appDeployFiles, APP_K8S_DIR, APP_CI_WORKFLOW, type AppResources } from '@tabs/software/lib/native-deploy';
-import { GOLDEN_PATHS, goldenPathEnv, goldenPathFiles, isGoldenPath } from '@tabs/software/lib/golden-path';
+import { GOLDEN_PATHS, goldenPathEnv, goldenPathFiles, isGoldenPath, assertNoPlatformOwnedChange } from '@tabs/software/lib/golden-path';
 import { parseAppActions } from '@tabs/software/lib/app-actions';
 import { emptyContextGrants, normalizeContextGrants, type ContextGrants } from '@core/kernel/context-grants';
 import { emptyAgentGrants, normalizeAgentGrants, type AppAgentGrant } from '@tabs/software/lib/app-agent-grants';
@@ -1287,6 +1287,8 @@ export async function saveAppFile(
   if (existing && input.sha && blobSha(existing.content) !== input.sha) {
     throw withStatus(new Error('File changed since you loaded it — reload and retry.'), 409);
   }
+  // PLATFORM_OWNED: the editor may not change the gate files, build files or deploy manifests of a golden-path app.
+  if (isGoldenPath(app.template)) assertNoPlatformOwnedChange(prior, [{ path: clean, content: input.content }]);
   const tree = [...prior.filter((f) => f.path !== clean), { path: clean, content: input.content }];
   snapshotFiles(app.id, tree);
   app.updatedAt = now();

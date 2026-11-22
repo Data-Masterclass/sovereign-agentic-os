@@ -15,7 +15,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { instantiateGoldenPath, isGoldenPath, goldenPathKeyOf, readTemplate, rulesOf, GOLDEN_PATHS } from './golden-path.ts';
+import { instantiateGoldenPath, isGoldenPath, readTemplate, rulesOf, GOLDEN_PATHS } from './golden-path.ts';
 import { planAppDeploy, NOT_BUILT_DIGEST } from './native-deploy.ts';
 import { parseAppActions } from './app-actions.ts';
 import { resolveToolOperation } from './tool-exec.ts';
@@ -123,8 +123,3 @@ test('the function the app exposes parses as a declared action and resolves to a
   assert.match(get(files, 'src/app/api/functions/classify-order/route.ts'), /classifyOrder/);
 });
 
-test('goldenPathKeyOf recognises a factory app from its committed app.yaml, and only that', () => {
-  assert.equal(goldenPathKeyOf(tree()), 'nextjs-web');
-  assert.equal(goldenPathKeyOf([{ path: 'app.yaml', content: 'name: x\nsurface: ui\n' }]), null);
-  assert.equal(goldenPathKeyOf([]), null);
-});

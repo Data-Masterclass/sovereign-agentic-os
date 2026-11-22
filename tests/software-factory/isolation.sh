@@ -40,6 +40,7 @@ kubectl -n kube-system rollout status deploy/coredns --timeout=300s
 kubectl wait --for=condition=Ready nodes --all --timeout=300s
 
 # 1. the chart's sandbox objects, exactly as rendered
+ls "$repo/charts/sovereign-agentic-os/charts"/*.tgz >/dev/null 2>&1 || helm dependency build "$repo/charts/sovereign-agentic-os" >/dev/null
 kubectl create namespace "$PLATFORM_NS"
 helm template agentic-os "$repo/charts/sovereign-agentic-os" -n "$PLATFORM_NS" --skip-schema-validation \
   --set osUI.enabled=true --set networkPolicies.defaultDeny=true --set 'networkPolicies.apiserver.cidrs={10.96.0.1/32}' --set egressProxy.enabled=true \
@@ -84,9 +85,11 @@ spec:
     spec:
       restartPolicy: Never
       automountServiceAccountToken: false
+      securityContext: { runAsNonRoot: true, runAsUser: 10001, runAsGroup: 10001, seccompProfile: { type: RuntimeDefault } }
       containers:
         - name: probe
           image: busybox:1.37.0
+          securityContext: { allowPrivilegeEscalation: false, capabilities: { drop: [ALL] }, readOnlyRootFilesystem: true }
           command: ["sh","-c"]
           args:
             - |

@@ -1,0 +1,137 @@
+{{- if include "soa.softwareSandboxOn" . }}
+{{- /*
+  SOFTWARE FACTORY GATES SANDBOX (tabs/software/lib/sandbox-gates.ts).
+
+  An app's own tests, type check and lint are UNTRUSTED CODE that the platform runs. They run in this
+  DEDICATED namespace, never beside os-ui, Postgres, OPA and the rest of the platform:
+
+    * Pod Security `restricted` is enforced on the namespace.
+    * Default-deny for ingress AND egress. The only egress is DNS and the egress proxy (policy below), so a
+      test that tries os-ui, a database, OPA or the Kubernetes API connects to nothing. The proxy is the
+      only way out and its allowlist (registry.npmjs.org for `npm ci`) is the chart's own.
+    * The pods are labelled `app.kubernetes.io/component: software-gates`, which is excluded from the
+      release namespace's blanket allow-intra-namespace / allow-apiserver policies as well.
+    * A quota bounds how much a loop of runs can take.
+    * os-ui gets exactly the verbs it needs in THIS namespace and no others: Jobs (incl. deletecollection to
+      supersede an app's older run), pod status and logs, and create/delete of the payload Secret (never
+      get/list: it cannot read a Secret back).
+
+  NetworkPolicy is only as good as the CNI under it: tests/software-factory/isolation.sh proves the
+  isolation on kind with Calico.
+*/}}
+{{- $sbNs := include "soa.softwareSandboxNs" . }}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ $sbNs }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    soa.dev/purpose: software-gates-sandbox
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: os-ui-software-sandbox
+  namespace: {{ $sbNs }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "get", "list", "watch", "delete", "deletecollection"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: os-ui-software-sandbox
+  namespace: {{ $sbNs }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: os-ui-software-sandbox
+subjects:
+  - kind: ServiceAccount
+    name: os-ui
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: software-gates
+  namespace: {{ $sbNs }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  hard:
+    pods: "8"
+    requests.cpu: "3"
+    requests.memory: 4Gi
+    limits.cpu: "12"
+    limits.memory: 12Gi
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: software-gates-default-deny
+  namespace: {{ $sbNs }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+{{- if .Values.egressProxy.enabled }}
+---
+{{- /* EGRESS for the gates pods, and nothing more: DNS, and the egress proxy (port 3128) in the release
+       namespace. NetworkPolicy is additive, so this is the complete allowlist. */}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: software-gates-egress
+  namespace: {{ $sbNs }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: software-gates
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+        # Gardener/SKE CoreDNS listens on 8053 (see egress-policies.yaml).
+        - { protocol: UDP, port: 8053 }
+        - { protocol: TCP, port: 8053 }
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Release.Namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/component: egress-proxy
+      ports:
+        - { protocol: TCP, port: 3128 }
+{{- else }}
+{{- fail "osUI.software.sandbox needs egressProxy.enabled (the gates install npm dependencies only through the egress proxy); set osUI.software.sandbox.enabled=false to run without the gates sandbox" }}
+{{- end }}
+{{- end }}

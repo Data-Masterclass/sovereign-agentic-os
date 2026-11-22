@@ -36,8 +36,9 @@ const alice: CurrentUser = { id: 'alice', name: 'Alice', domains: ['sales'], rol
 const mallory: CurrentUser = { id: 'mallory', name: 'Mallory', domains: ['hr'], role: 'creator' };
 const pass: GatesOutcome = { ok: true, report: { schema: 'os-gates/v1', template: 'nextjs-web', ok: true, gates: REQUIRED_GATES.map((id) => ({ id, status: 'pass', detail: '' })) } };
 
-test('both factory tools are registered and read-only', () => {
-  for (const n of ['get_app_template', 'verify_app_gates']) assert.equal(PLATFORM_MCP_TOOLS.find((t) => t.name === n)?.write, false, n);
+test('both factory tools are registered: the template read is read-only, the gates run is a governed action', () => {
+  assert.equal(PLATFORM_MCP_TOOLS.find((t) => t.name === 'get_app_template')?.write, false);
+  assert.equal(PLATFORM_MCP_TOOLS.find((t) => t.name === 'verify_app_gates')?.write, true);
 });
 
 test('get_app_template lists templates, then returns rules, policy, platform-owned paths and files', async () => {
@@ -77,8 +78,8 @@ test('runAppTests reports a failing gate and is invisible to another domain (not
   await assert.rejects(runAppTests(app.id, mallory, { gates: async () => pass }), (e: Error & { status?: number }) => e.status === 404);
 });
 
-test('runAppTests refuses an app that is not from a golden path (409)', async () => {
-  const app = await createApp(alice, { name: 'Plain Desk', template: 'nextjs-supabase' });
+test('runAppTests refuses an app the OS serves itself, which has no container to gate (409)', async () => {
+  const app = await createApp(alice, { name: 'Plain Desk', template: 'nextjs-supabase', kind: 'spec' } as never);
   await assert.rejects(runAppTests(app.id, alice, { gates: async () => pass }), (e: Error & { status?: number }) => e.status === 409);
 });
 

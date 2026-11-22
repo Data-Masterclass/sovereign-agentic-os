@@ -2093,6 +2093,11 @@ osUI:
     # is `opa.image` above, so the sandbox evaluates the policy with the platform's own OPA.
     sandbox:
       nodeImage: "node:22-alpine3.24"
+      # The gates run untrusted app tests, so they run in a DEDICATED namespace (never the release
+      # namespace; the chart refuses it): default-deny network, Pod Security restricted, and the only way
+      # out is DNS + the egress proxy for `npm ci`. Default `<release namespace>-sandbox`.
+      enabled: true
+      namespace: ""
     scanner:
       # ON by default. A cluster WITHOUT a scanner cannot approve a software deploy at all,
       # so the useful default is "try, and say so honestly when it does not work".

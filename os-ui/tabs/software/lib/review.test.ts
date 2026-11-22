@@ -14,6 +14,8 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { config as __cfg } from '@core/kernel/config';
+import { useGreenGates } from '@core/testing/gates';
+useGreenGates();
 
 // Night-2 S5 + review M-2: `commitToApp` COMMITS to the domain repository and a commit git
 // refuses is a 503 that writes nothing. These tests commit real files, so they need a real repos

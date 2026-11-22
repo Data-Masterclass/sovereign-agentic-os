@@ -32,7 +32,7 @@ agent and an external tool such as Claude Code. The platform gates check them; a
 - Validate every request body before use; return 400 with a reason, never a stack trace.
 - No `eval`, no `dangerouslySetInnerHTML`, no raw HTML from data.
 - No calls to hosts outside the OS (`fetch('https://...')`). The platform network policy blocks them anyway.
-- Do not edit platform-owned files: `Dockerfile`, `k8s/**`, `.github/workflows/**`, `next.config.mjs`.
+- Do not edit platform-owned files: `Dockerfile`, `k8s/**`, `.github/workflows/**`, `next.config.mjs`, `policy/**`, `scripts/factory-gates.mjs`, `vendor/**`, `.npmrc`. A push that changes one is refused, and the gates are judged by the platform's copies of the policy and the gates script, not yours.
 
 ## 6. Identity and authorization: the OS decides
 - Identity is the signed-in user, delegated by the OS. Get it from `src/lib/os` (`asCaller`, `requireUser`).

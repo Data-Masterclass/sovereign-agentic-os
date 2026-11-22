@@ -90,6 +90,10 @@ node ../scripts/check-app-ingress-policy.mjs
 # dedicated admin Secret, and refuses to render against another service's credential, database or
 # role. Rendered YAML, same skip rules as above.
 node ../scripts/check-governance-bootstrap-chart.mjs
+# Software Factory gates sandbox: a dedicated namespace (never the release one), default-deny with only DNS +
+# the egress proxy out, RBAC in that namespace, excluded from the blanket allows, the proxy admits it. Rendered
+# YAML, same skip rules as above.
+node ../scripts/check-software-sandbox-chart.mjs
 # The Dagster webserver and code-location ingress policies must select exactly their pods and
 # admit every OS caller (os-ui, os-ui-worker, the code server and its run pods, webserver, daemon)
 # on the right port — and the ingress controller only when a Dagster Ingress renders. Rendered
