@@ -16,6 +16,8 @@ import type pg from 'pg';
 import type { Fetched } from '@core/adapters/_contract';
 import { repoStatus, repoVerdict } from '@core/adapters/dagster/graphql-read';
 import { scheduleEvery } from '@core/reconcile/runtime';
+import { config } from '@core/kernel/config';
+import { governanceRuntimePool } from '@core/adapters/postgres/pool';
 
 export const DBT_PARSE_CHECK = 'dbt-parse';
 
@@ -49,4 +51,25 @@ export function startDbtParseVerdictCopy(pool: () => pg.Pool, everyMs = 30_000):
     const r = await copyDbtParseVerdicts(pool());
     if (!r.ok) throw new Error(`dbt-parse verdicts not copied — ${r.reason}: ${r.detail}`);
   });
+}
+
+export type DbtVerdictRow = { domain: string; sha: string; status: 'pending' | 'passed' | 'failed' | 'error'; checkedAt: string; details: Record<string, unknown> };
+
+/** The newest `dbt-parse` row of every domain: that row is the domain's head verdict. */
+export const NEWEST_VERDICT_SQL = `SELECT DISTINCT ON (domain) domain, sha, status, checked_at, details
+  FROM os_governance.commit_checks WHERE check_name = '${DBT_PARSE_CHECK}' ORDER BY domain, checked_at DESC`;
+
+export async function readNewestDbtVerdicts(pool: Pick<pg.Pool, 'query'>): Promise<DbtVerdictRow[]> {
+  const r = await pool.query(NEWEST_VERDICT_SQL);
+  return r.rows.map((x: Record<string, unknown>) => ({
+    domain: String(x.domain), sha: String(x.sha), status: x.status as DbtVerdictRow['status'],
+    checkedAt: x.checked_at instanceof Date ? x.checked_at.toISOString() : String(x.checked_at),
+    details: (x.details ?? {}) as Record<string, unknown>,
+  }));
+}
+
+/** Null when no governance database is configured (nothing copies verdicts either). */
+export async function newestDbtVerdicts(): Promise<DbtVerdictRow[] | null> {
+  if (!config.governanceDatabaseUrl) return null;
+  return readNewestDbtVerdicts(governanceRuntimePool());
 }
