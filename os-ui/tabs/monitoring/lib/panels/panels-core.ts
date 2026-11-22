@@ -242,3 +242,21 @@ export function ruleTrend(executions: readonly { runId: string; at: string; pass
     .reverse()
     .slice(-points);
 }
+
+/** One rule of a dataset's quality record, as Dagster's check execution reports it. */
+export type TestRule = { id: string; label: string; status: string; violations: number | null; severity?: 'warn' | 'error'; at?: string };
+
+/**
+ * The Data panel's quality block. Every field is Dagster's own (or the labelled OS probe's): dbt's
+ * severity decides warn versus fail, the failed row count is `violations`, `at` is the check
+ * execution's time. Nothing is evaluated here.
+ */
+export function testsSummary(results: readonly TestRule[]) {
+  return {
+    total: results.length,
+    failing: results.filter((r) => r.status === 'fail').map((r) => ({ name: r.label, violations: r.violations })),
+    warning: results.filter((r) => r.status === 'warn').map((r) => ({ name: r.label, violations: r.violations })),
+    notRun: results.filter((r) => r.status === 'not_run').length,
+    rules: results.map((r): TestRule => ({ id: r.id, label: r.label, status: r.status, violations: r.violations, ...(r.severity ? { severity: r.severity } : {}), ...(r.at ? { at: r.at } : {}) })),
+  };
+}

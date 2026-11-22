@@ -17,7 +17,7 @@ export type PanelPrincipal = { id: string; domains: string[]; role: string };
 export type TestRecord = {
   source: 'dagster' | 'os' | null;
   ranAt: string | null;
-  results: { id: string; label: string; status: 'pass' | 'fail' | 'not_run' | string; violations: number | null }[];
+  results: { id: string; label: string; status: 'pass' | 'warn' | 'fail' | 'not_run' | string; violations: number | null; severity?: 'warn' | 'error'; at?: string }[];
 };
 
 /** One file of the Files tab's scoped list with what Docling and the index run recorded for it. */
