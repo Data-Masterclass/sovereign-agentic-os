@@ -22,4 +22,9 @@ os.environ["FX_CHECK_PASS"] = "0"
 fx.defs.get_job_def("sales_dbt").execute_in_process(instance=instance, tags=tags)
 fx.defs.get_job_def("sales__broken").execute_in_process(instance=instance, tags={"os/dataset": "orders", "os/domain": "sales", "os/principal": "ada"}, raise_on_error=False)
 fx.defs.get_job_def("sales_dbt").execute_in_process(instance=instance, tags={"os/dataset": "secret_ds", "os/domain": "hr", "os/principal": "zoe"})
+# 5-6. Alert evaluations, tagged as the OS tags them (os/alert = the rule id): rule al_1 evaluated once OK, then its
+#      evaluation FAILED; rule al_hr (another domain's) evaluated OK — the negative twin for scope.
+fx.defs.get_job_def("sales_dbt").execute_in_process(instance=instance, tags={"os/alert": "al_1", "os/domain": "sales", "os/principal": "ada"})
+fx.defs.get_job_def("sales__broken").execute_in_process(instance=instance, tags={"os/alert": "al_1", "os/domain": "sales", "os/principal": "ada"}, raise_on_error=False)
+fx.defs.get_job_def("sales_dbt").execute_in_process(instance=instance, tags={"os/alert": "al_hr", "os/domain": "hr", "os/principal": "zoe"})
 print("seeded")

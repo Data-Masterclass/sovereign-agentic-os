@@ -17,7 +17,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { recentOsRuns } from '@core/infra/dagster';
-import { checkExecutions, dependedByGraph, downstreamOf, jobHealthOf } from './monitoring-read';
+import { alertRunHealthOf, checkExecutions, dependedByGraph, downstreamOf, jobHealthOf } from './monitoring-read';
 
 const on = process.env.MON_IT === '1';
 const deps = { url: process.env.MON_DAGSTER_URL ?? 'http://127.0.0.1:13570', timeoutMs: 10_000 };
@@ -72,4 +72,15 @@ test('downstream assets are the transitive closure of Dagster’s dependedByKeys
   const down = await dependedByGraph({ url: 'http://127.0.0.1:1', timeoutMs: 1000 });
   assert.equal(down.ok, false);
   assert.equal(!down.ok && down.reason, 'unreachable');
+});
+
+test('alert evaluation runs (os/alert tag) are counted per asked rule, a failed run is a failure; another rule is not listed', { skip: !on }, async () => {
+  const runs = await recentOsRuns(100, deps);
+  assert.ok(runs.ok, JSON.stringify(runs));
+  const h = alertRunHealthOf(runs.data, ['al_1']);
+  assert.deepEqual([...h.keys()], ['al_1'], 'al_hr must not be listed');
+  assert.equal(h.get('al_1')!.runs, 2);
+  assert.equal(h.get('al_1')!.failures, 1);
+  assert.equal(h.get('al_1')!.lastStatus, 'FAILURE', 'the newest evaluation failed');
+  assert.ok(h.get('al_1')!.lastFailureRunId);
 });

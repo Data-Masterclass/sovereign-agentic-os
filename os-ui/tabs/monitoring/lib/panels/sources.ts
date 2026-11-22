@@ -47,6 +47,24 @@ export type KnowledgeRow = {
   certified: boolean;
 };
 
+/** One governed metric of the Metrics tab's scoped list. `error` is the registry's own load error (fail-soft). */
+export type MetricRow = { id: string; name: string; member: string; datasetId: string; datasetName: string; domain: string; scope: ScopeGroup; error?: string };
+
+/** One alert rule the viewer may see (creator own · builder own + domain · admin all), as stored with its last evaluation. */
+export type AlertRuleRow = { id: string; member: string; comparator: string; threshold: number; owner: string; domain: string; lastEvaluated?: string; lastBreached?: boolean; lastValue?: number };
+
+/** One dashboard of the Dashboards tab's scoped list; each panel's members were checked by the tab against the served model. */
+export type DashboardRow = {
+  id: string;
+  name: string;
+  domain: string;
+  scope: ScopeGroup;
+  view: string;
+  /** False when the served model has no such view at all. */
+  viewServed: boolean;
+  panels: { name: string; members: string[]; missing: string[] }[];
+};
+
 export type MonitoringSources = {
   /** The Agents store's scoped list of agent systems for this principal. */
   agentSystems(p: PanelPrincipal): Promise<{ id: string; name: string; scope: ScopeGroup }[]>;
@@ -60,6 +78,12 @@ export type MonitoringSources = {
   files?(p: PanelPrincipal): Promise<FileRow[]>;
   /** The Knowledge tab's scoped list of workflows (`listWorkflows`). */
   knowledge?(p: PanelPrincipal): Promise<KnowledgeRow[]>;
+  /** The Metrics tab's scoped list (`listMetrics`). */
+  metrics?(p: PanelPrincipal): Promise<MetricRow[]>;
+  /** The alert rules the viewer may see. */
+  alertRules?(p: PanelPrincipal): Promise<AlertRuleRow[]>;
+  /** The Dashboards tab's scoped list with the served-model check of each panel. */
+  dashboards?(p: PanelPrincipal): Promise<DashboardRow[]>;
 };
 
 const slot = globalThis as unknown as { __osMonitoringSources?: MonitoringSources };
