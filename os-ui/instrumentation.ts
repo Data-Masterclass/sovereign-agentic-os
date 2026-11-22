@@ -327,6 +327,28 @@ export async function register(): Promise<void> {
     })();
   }
 
+  // MODEL ROLE MAPPING. The OS owns which catalog model each of the three roles (sovereign-strong, -worker,
+  // -embedding) means (`os/models.yml` in the platform repo) and enforces it at LiteLLM's
+  // `router_settings.model_group_alias`: once at boot, then every MODEL_ROLE_RECONCILE_INTERVAL_SECONDS
+  // (default 300; 0 = off). A foreign edit of the alias is put back and reported; a role whose model left the
+  // catalog is a warning, never a silent fallback. Web process only (it needs the gateway's master key).
+  if (process.env.NEXT_RUNTIME === 'nodejs') {
+    void (async () => {
+      try {
+        const [{ scheduleRoleReconcile }, { liveRoleIo }, { liteLlmConfigured }] = await Promise.all([
+          import('./core/models/role-reconcile.ts'),
+          import('./core/models/role-live.ts'),
+          import('./core/infra/litellm-admin.ts'),
+        ]);
+        const raw = (process.env.MODEL_ROLE_RECONCILE_INTERVAL_SECONDS ?? '').trim();
+        const seconds = raw === '' ? 300 : Math.max(0, Math.floor(Number(raw)) || 0);
+        if (liteLlmConfigured()) scheduleRoleReconcile(liveRoleIo, seconds);
+      } catch (err) {
+        console.error(`[os-ui] model role reconcile: could not be scheduled: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    })();
+  }
+
   // PROJECTS IN GIT (engine rebuild B1 for data, Part D for agent systems): when
   // DATA_PROJECT_GIT=true, subscribe the ONE commit path to both stores' change events so every
   // dataset / composition / check / sync / publish / retire write regenerates the domain's dbt

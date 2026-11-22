@@ -20,7 +20,7 @@ mock.module('@core/kernel/auth', {
   namedExports: { requireUser: async () => ({ id: 'u1', name: 'Admin', domains: [], role: 'admin' }) },
 });
 mock.module('@core/infra/litellm-admin', {
-  namedExports: { readModels: async () => LIVE, readCredentials: async () => ({ ok: true, data: [] }) },
+  namedExports: { readModels: async () => LIVE, readCredentials: async () => ({ ok: true, data: [] }), readRouterAliases: async () => ({ ok: true, data: {} }) },
 });
 
 const { GET } = await import('../../../app/api/agents/models/route.ts');

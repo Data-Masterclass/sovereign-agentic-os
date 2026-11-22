@@ -125,6 +125,8 @@ jobs:
         run: |
           bash scripts/tests/litellm-ingress-policy.test.sh
           bash scripts/tests/secret-preflight.test.sh
+      - name: LiteLLM has no config-file model_group_alias (the OS writes the role mapping)
+        run: bash scripts/tests/litellm-no-config-alias.test.sh
       - name: platform ingress policy check + negative twins
         run: bash scripts/tests/platform-ingress-policy.test.sh
       - name: Dagster run-pod shape check + negative twins

@@ -19,12 +19,13 @@ import { applyRoleMapping, lastRoleReport, reconcileRoleMapping, type RoleReconc
 import { ModelMappingError, type RoleMapping } from '@core/models/role-mapping';
 
 const MAP: RoleMapping = { 'sovereign-strong': 'big', 'sovereign-worker': 'small', 'sovereign-embedding': 'emb' };
-function io(over: Partial<RoleReconcileIo> & { aliases?: Record<string, string>; catalog?: string[]; file?: RoleMapping | null } = {}) {
-  const state = { aliases: { ...(over.aliases ?? {}) }, file: over.file === undefined ? MAP : over.file, writes: [] as Record<string, string>[], commits: [] as { m: RoleMapping; by: string }[], audits: [] as { action: string; detail?: unknown }[] };
+function io(opts: Partial<RoleReconcileIo> & { aliases?: Record<string, string>; catalog?: string[]; file?: RoleMapping | null } = {}) {
+  const { aliases, catalog, file, ...over } = opts;
+  const state = { aliases: { ...(aliases ?? {}) }, file: file === undefined ? MAP : file, writes: [] as Record<string, string>[], commits: [] as { m: RoleMapping; by: string }[], audits: [] as { action: string; detail?: unknown }[] };
   const r: RoleReconcileIo = {
     readMapping: async () => state.file,
     writeMapping: async (m, by) => { state.file = m; state.commits.push({ m, by }); return { sha: 'abc', changed: true }; },
-    catalog: async () => ({ ok: true, data: over.catalog ?? ['big', 'small', 'emb', 'other'] }),
+    catalog: async () => ({ ok: true, data: catalog ?? ['big', 'small', 'emb', 'other'] }),
     readAliases: async () => ({ ok: true, data: { ...state.aliases } }),
     writeAliases: async (a) => { state.writes.push(a); state.aliases = { ...a }; return { ok: true, data: {} }; },
     audit: ((e: { action: string; detail?: unknown }) => { state.audits.push(e); }) as never,
@@ -84,7 +85,7 @@ test('NEGATIVE TWIN: an unreadable gateway is "could not check", never "in sync"
   const { r } = io({ readAliases: async () => ({ ok: false, error: 'timeout' }) });
   const rep = await reconcileRoleMapping(r);
   assert.deepEqual([rep.ok, rep.state], [false, 'unreadable']);
-  const c = io({ catalog: undefined });
+  const c = io();
   c.r.catalog = async () => ({ ok: false, error: 'HTTP 500' });
   assert.equal((await reconcileRoleMapping(c.r)).state, 'unreadable');
 });

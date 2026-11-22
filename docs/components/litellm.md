@@ -252,6 +252,43 @@ flag is read as `config`, so ambiguity never offers a Remove button. Older relea
 catalog (`enabled`, `capEUR`, endpoints) into the `os-model-config` index; those documents are no
 longer read.
 
+### The three role names: the OS owns the mapping, LiteLLM owns the catalog
+
+The OS calls only three model names: `sovereign-strong`, `sovereign-worker`, `sovereign-embedding`. Each
+maps to a model in the LiteLLM catalog (the real models, under their real names, added by the platform team in
+LiteLLM). The **mapping is the OS's**: edited in Platform → Models (admin only, audited), stored as the file
+`os/models.yml` in the platform repository (versioned, diffable, restorable), and **enforced at the gateway**
+by writing LiteLLM's documented `router_settings.model_group_alias` with `POST /config/update` — so os-ui, agent
+keys and apps all resolve a role the same way, at the gateway; the OS does no client-side resolution.
+Platform → Models shows each role's model with its price per 1M tokens (from the catalog entry) and a link to LiteLLM.
+
+* **Remap = no restart.** Measured on 1.109.1: `/config/update` applies at once and survives a gateway restart (it
+  is stored in LiteLLM's database). **LiteLLM refuses to change an alias that is set in its config file**
+  ("is set in the config file and cannot be changed here"), so the chart must never set `model_group_alias`
+  (`scripts/tests/litellm-no-config-alias.test.sh`).
+* **Reconcile** at boot and every `MODEL_ROLE_RECONCILE_INTERVAL_SECONDS` (default 300; 0 = off). An alias that is
+  absent is created; one someone changed in LiteLLM is put back **and reported** (audited `gateway.models.reconcile`,
+  shown in Platform → Models). Aliases the OS does not own are left alone. No `os/models.yml` yet = nothing is
+  written (the OS invents no model names).
+* **Validation, no silent fallback.** A mapping to a model that is not in the catalog is refused (422,
+  `unknown_catalog_model`). A catalog model removed while a role points at it is a red warning; the alias is NOT
+  changed, so a call fails with LiteLLM's own typed error ("no healthy deployments") instead of answering from
+  another model.
+* **Old names** keep working for one release as aliases of the roles: `sovereign-default`, `sovereign-mock` →
+  worker; `sovereign-reasoning`, `-reasoning-fast`, `-premium`, `-vision` → strong; `sovereign-embed` → embedding.
+  A deprecated name that is itself a real catalog model (today's config-file `sovereign-default`) is not aliased
+  over — the real model wins. Once the roles are mapped, a setting that still names an old alias logs one
+  deprecation line.
+* **Aliases are not models.** LiteLLM 1.109.1 lists every alias as a `db_model: true` row in `/model/info`; the OS
+  reads `GET /router/settings` and takes the aliases out of the catalog.
+* **Cost** stays per model: catalog entries carry real per-token prices (`input_cost_per_token` /
+  `output_cost_per_token` in `litellm_params` — 1.109.1 drops them from `model_info` on `/model/new`), so spend per key,
+  per team and per model keeps working under a role.
+
+Not done in this change (follow-up): switching os-ui's `chatModel`/`reasoningModel`/`executionModel` defaults and
+the chart's `model_list` onto the roles, and a per-role fallback. The chart's `router_settings.fallbacks` live in the
+config file, which LiteLLM will not let the API change, so a per-role fallback needs those moved to the database first.
+
 Proof against the real gateway: `scripts/tests/gateway-models/run.sh` (the `gateway-models-live` workflow).
 
 ## Adding a provider (Azure, OpenAI-compatible, Ollama, Mistral, STACKIT, any LiteLLM provider)

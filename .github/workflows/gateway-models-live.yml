@@ -6,7 +6,10 @@
 # config file AND store_model_in_db, on a real Postgres): a model added through LiteLLM's own admin API
 # shows up in the OS model route with no OS change, one removed disappears, a config-file model is
 # told apart from a database one (and refused for removal by the OS and by LiteLLM), and no credential
-# value reaches the OS answer. Separate from ci.yml because it pulls the gateway image.
+# value reaches the OS answer. It also proves the OS-owned role mapping (sovereign-strong/-worker/-embedding
+# written to router_settings.model_group_alias): a remap changes the next call with no restart, a foreign
+# edit is repaired and reported, a mapping to a missing model is refused, a removed catalog model is a typed
+# failure (no silent fallback), an old alias still works and logs a deprecation. Separate from ci.yml because it pulls the gateway image.
 # Actions are pinned to commit SHAs, as ci.yml does.
 name: gateway-models-live
 
@@ -18,7 +21,10 @@ on:
       - charts/sovereign-agentic-os/Chart.lock
       - charts/sovereign-agentic-os/values.yaml
       - os-ui/core/models/gateway-catalog*.ts
+      - os-ui/core/models/role-*.ts
       - os-ui/core/infra/litellm-admin.ts
+      - os-ui/app/api/platform-admin/models/roles/**
+      - os-ui/tabs/admin/lib/model-roles.e2e.test.ts
       - os-ui/app/api/agents/models/**
       - os-ui/tabs/admin/lib/model-remove.ts
       - os-ui/tabs/admin/lib/gateway-models.e2e.test.ts
@@ -29,6 +35,7 @@ on:
     paths:
       - charts/sovereign-agentic-os/Chart.lock
       - os-ui/core/models/gateway-catalog*.ts
+      - os-ui/core/models/role-*.ts
       - scripts/tests/gateway-models/**
   workflow_dispatch:
 

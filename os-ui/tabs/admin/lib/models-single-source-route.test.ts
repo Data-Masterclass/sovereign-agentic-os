@@ -21,7 +21,7 @@ let CREDS: { ok: true; data: unknown[] } | { ok: false; error: string } = { ok: 
 const real = async (m: string): Promise<Record<string, unknown>> => ({ ...(await import(m)) });
 mock.module('@core/kernel/auth', { namedExports: { requireUser: async () => ({ id: 'u1', name: 'Admin', domains: [], role: 'admin' }) } });
 mock.module('@core/infra/litellm-admin', {
-  namedExports: { ...(await real('@core/infra/litellm-admin')), readModels: async () => LIVE, readCredentials: async () => CREDS },
+  namedExports: { ...(await real('@core/infra/litellm-admin')), readModels: async () => LIVE, readCredentials: async () => CREDS, readRouterAliases: async () => ({ ok: true, data: {} }) },
 });
 mock.module('../../../app/api/platform-admin/_ctx.ts', {
   namedExports: {
