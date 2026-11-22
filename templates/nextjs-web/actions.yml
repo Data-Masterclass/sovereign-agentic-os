@@ -1,0 +1,7 @@
+actions:
+  - name: classify_order
+    description: Decide whether an order amount needs review (above the review limit) or is standard.
+    write: false
+    scopes: [records]
+    input:
+      amount: number
