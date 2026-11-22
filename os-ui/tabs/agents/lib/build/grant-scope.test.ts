@@ -347,3 +347,14 @@ test('THE PROMPT says what is enforced, kind by kind — and nothing it does not
   assert.doesNotMatch(brief, /DENIED by OPA|ONLY resource ids/);
   assert.equal(grantScopeBrief(system({})), '', 'no resource grant → nothing is claimed');
 });
+
+// ------------------------------------------------- find under a restricted grant (fast surface) --
+
+test('find is refused for an agent whose grants limit it to specific items (it would widen the scope); load_toolset touches no resource', () => {
+  const rule = TOOL_RESOURCES.find;
+  assert.ok(rule?.broad, 'find is a broad tool: it searches every kind the user can see');
+  assert.ok(rule.broad.kinds.includes('data') && rule.broad.kinds.includes('files') && rule.broad.kinds.includes('knowledge'));
+  // NEGATIVE TWIN: the per-kind list tools stay grant-filtered rather than broad, so an agent can still read what it was granted.
+  assert.equal(TOOL_RESOURCES.list_datasets?.broad, undefined);
+  assert.ok('load_toolset' in NO_GRANTED_RESOURCE && !('load_toolset' in TOOL_RESOURCES));
+});

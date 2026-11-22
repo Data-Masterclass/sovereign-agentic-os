@@ -18,6 +18,10 @@ export const dynamic = 'force-dynamic';
  * resolved to the LIVE delegated identity. Unauthenticated → HTTP 401 + a
  * JSON-RPC error. Designed so OAuth2 can slot in behind `resolveMcpUser` later.
  *
+ * Fast door: this endpoint serves a small read/find core by default, named toolsets on demand
+ * (`load_toolset` + `notifications/tools/list_changed`) and compact paginated lists
+ * (`core/mcp/fast-surface.ts`). `Mcp-Session-Id` is assigned at `initialize`.
+ *
  * Governance: `handleRpc` routes every `tools/call` to the same governed library
  * function the UI uses, under the caller's identity — OPA + audit + role gates
  * apply unchanged. No secret ever reaches the client.
@@ -26,7 +30,7 @@ export const dynamic = 'force-dynamic';
 // The overarching endpoint: the FULL governed registry, all tabs. Per-tab
 // filtered lenses live at /api/mcp/<tab> and share this same transport shell.
 export async function POST(req: Request) {
-  return serveMcp(req);
+  return serveMcp(req, {}, { fast: true });
 }
 
 // Streamable HTTP: serve the (idle) server→client SSE stream on GET. Hosted Claude
