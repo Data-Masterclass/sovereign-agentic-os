@@ -162,3 +162,24 @@ test('a warn alone does not make the dataset failing, and a warn is not a perfec
   const bad = checksToRecord(d, [check({ name: 'a' }), check({ name: 'f', latest: { status: 'FAILED', runId: 'r1', at: 'x', severity: 'ERROR', description: null, metadata: {} } })])!;
   assert.equal(bad.badge, 'failing');
 });
+
+test('the periodic read-back tells the owner of a failing scheduled run with NO page read, and stays quiet when nothing failed', async () => {
+  __resetDqAlerts();
+  __setDataProjectGitForTests(true);
+  const sent: string[] = [];
+  const failing = (id: string) => ({
+    id: `${id}:a`, datasetId: id, ranAt: 'a', badge: 'failing' as const, healthScore: 10,
+    results: [{ id: 'r', label: 'not_null(x)', status: 'fail' as const, violations: 1 }],
+    ranBy: 'run', domain: 'sales', rowCount: null, schemaFingerprint: null, source: 'dagster' as const,
+  });
+  const deps = {
+    alert: ((i: { datasetName: string }) => { sent.push(i.datasetName); return { channel: 'in_app' as const, delivered: true, to: 'amir' }; }) as unknown as typeof deliverDqAlert,
+    ownerOf: async (id: string) => ({ owner: 'amir', name: id }),
+    latestRuns: async () => new Map([['ds_bad', failing('ds_bad')], ['ds_ok', { ...failing('ds_ok'), badge: 'passing' as const, results: [{ id: 'r', label: 'x', status: 'pass' as const, violations: 0 }] }]]),
+  };
+  const r = await readbackAllDq([{ id: 'ds_bad', domain: 'sales' }, { id: 'ds_ok', domain: 'sales' }], deps);
+  assert.deepEqual(sent, ['ds_bad']);
+  assert.deepEqual(r, { read: 2, alerted: 1 });
+  // twin: a second pass over the same execution does not tell the owner again
+  assert.deepEqual(await readbackAllDq([{ id: 'ds_bad', domain: 'sales' }], deps), { read: 1, alerted: 0 });
+});
