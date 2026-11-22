@@ -508,7 +508,7 @@ export async function importExternalPages(
     if (!connectionId || pages.length === 0) throw new ExternalMcpError('invalid_request', 'An import needs a connectionId and at least one page.', 'Preview first, then pick the pages.');
     if (pages.length > IMPORT_MAX_PAGES) throw new ExternalMcpError('invalid_request', `At most ${IMPORT_MAX_PAGES} pages per import; you picked ${pages.length}.`, 'Split the selection into smaller imports.');
     const { conn } = await resolve(user, connectionId, 'notion-fetch', deps);
-    const folder = str(args.folder).trim() || `/imports/${conn.provider}`;
+    const folder = str(args.folder).trim() || ['', 'imports', conn.provider].join('/');
     const domain = user.activeDomain ?? user.domains[0];
     for (const pick of pages) {
       try {
