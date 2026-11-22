@@ -183,3 +183,17 @@ test('the periodic read-back tells the owner of a failing scheduled run with NO 
   // twin: a second pass over the same execution does not tell the owner again
   assert.deepEqual(await readbackAllDq([{ id: 'ds_bad', domain: 'sales' }], deps), { read: 1, alerted: 0 });
 });
+
+test('the REAL Dagster payload of a failed dbt not_null test (captured from lakehouse.sh: dagster-dbt 0.29.31 on Trino) maps to a fail with 1 row, error severity and its time', async () => {
+  const { readFileSync } = await import('node:fs');
+  const payload = readFileSync(new URL('./fixtures/dagster-dq-failed-real.json', import.meta.url), 'utf8');
+  const f = (async () => new Response(payload, { status: 200, headers: { 'content-type': 'application/json' } })) as unknown as typeof fetch;
+  const { allAssetChecks } = await import('@core/infra/dagster');
+  const all = await allAssetChecks({ fetch: f, url: 'http://dagster' });
+  assert.ok(all.ok);
+  const checks = (all as { ok: true; data: Record<string, AssetCheck[]> }).data['sales/personal_alice/gold_shop_orders'];
+  assert.equal(checks.length, 1);
+  assert.deepEqual(checkToResult(checks[0]), {
+    id: 'not_null_gold_shop_orders_customer', label: 'not_null_gold_shop_orders_customer', status: 'fail', violations: 1, severity: 'error', at: new Date(1795335615 * 1000).toISOString(), // the check execution's own timestamp, in seconds
+  });
+});

@@ -1,0 +1,48 @@
+{
+ "data": {
+  "assetNodes": [
+   {
+    "assetKey": {
+     "path": [
+      "sales",
+      "personal_alice",
+      "gold_shop_orders"
+     ]
+    },
+    "assetChecksOrError": {
+     "__typename": "AssetChecks",
+     "checks": [
+      {
+       "name": "not_null_gold_shop_orders_customer",
+       "executionForLatestMaterialization": {
+        "status": "FAILED",
+        "timestamp": 1795335615.0,
+        "evaluation": {
+         "severity": "ERROR",
+         "metadataEntries": [
+          {
+           "label": "Execution Duration"
+          },
+          {
+           "label": "dagster_dbt/failed_row_count",
+           "intValue": 1
+          },
+          {
+           "label": "invocation_id"
+          },
+          {
+           "label": "status"
+          },
+          {
+           "label": "unique_id"
+          }
+         ]
+        }
+       }
+      }
+     ]
+    }
+   }
+  ]
+ }
+}
