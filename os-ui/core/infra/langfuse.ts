@@ -34,13 +34,13 @@ import 'server-only';
 import { createHash, randomUUID } from 'node:crypto';
 import { TraceFlags, type SpanContext } from '@opentelemetry/api';
 import { NodeSDK } from '@opentelemetry/sdk-node';
-import type { SpanExporter, ReadableSpan } from '@opentelemetry/sdk-trace-base';
+import type { SpanExporter, ReadableSpan, SpanProcessor } from '@opentelemetry/sdk-trace-base';
 import { LangfuseSpanProcessor, isDefaultExportSpan } from '@langfuse/otel';
 import { createTraceId, propagateAttributes, startActiveObservation, startObservation, type LangfuseAgent, type LangfuseChain } from '@langfuse/tracing';
 import { LangfuseClient } from '@langfuse/client';
 import { config } from '@core/kernel/config';
-import { liveMasking, heldMasking } from '@core/infra/masking-policy';
-import { contentShape, maskExportedAttribute, maskText, scrubPii, type MaskingPolicy } from '@core/infra/trace-masking';
+import { liveMasking, heldMasking, maskingStatus } from '@core/infra/masking-policy';
+import { contentOnly, contentShape, maskExportedAttribute, maskFlatAttributes, maskText, scrubPii, type MaskingPolicy } from '@core/infra/trace-masking';
 import {
   DEFAULT_REDACTION,
   boundedResult,
@@ -120,8 +120,24 @@ export function osMask({ data }: { data: unknown }): unknown {
 export async function exportMask(params: { data: unknown }): Promise<unknown> {
   const media = osMask(params);
   const policy = await liveMasking();
-  return policy.enabled ? maskExportedAttribute(media) : media;
+  return policy.enabled ? maskExportedAttribute(media, policy) : media;
 }
+
+/**
+ * The attributes the `mask` hook is never given (each metadata key is its own attribute, and the
+ * status message): masked by the same policy in a processor that runs BEFORE the Langfuse processor
+ * and edits the finished span in place, as the SDK's own masking does. Synchronous, so it reads the
+ * policy held in memory, which is the strictest level while the switch is unknown.
+ */
+const flatAttributeMask: SpanProcessor = {
+  onStart: () => undefined,
+  onEnd: (span: ReadableSpan) => {
+    try { maskFlatAttributes(span.attributes as Record<string, unknown>, heldMasking()); }
+    catch { for (const k of Object.keys(span.attributes)) if (k.startsWith('langfuse.observation.metadata.') || k.startsWith('langfuse.trace.metadata.') || k === 'langfuse.observation.status_message') delete (span.attributes as Record<string, unknown>)[k]; }
+  },
+  forceFlush: () => Promise.resolve(),
+  shutdown: () => Promise.resolve(),
+};
 
 /** Content-level free text: the value as the policy lets it be recorded. */
 function freeValue(policy: MaskingPolicy, value: unknown): unknown {
@@ -146,7 +162,7 @@ function ensureTracing(): boolean {
       mediaUploadEnabled: false,
     });
     // No metrics and no logs: this SDK exists to export Langfuse traces only.
-    const sdk = new NodeSDK({ spanProcessors: [processor], metricReaders: [], logRecordProcessors: [], autoDetectResources: false, serviceName: 'os-ui' });
+    const sdk = new NodeSDK({ spanProcessors: [flatAttributeMask, processor], metricReaders: [], logRecordProcessors: [], autoDetectResources: false, serviceName: 'os-ui' });
     sdk.start();
     s.processor = processor;
     s.sdk = sdk;
@@ -271,7 +287,8 @@ export async function withRunTrace<T>(input: RunTraceInput, fn: (observer: RunOb
         systemId: input.systemId,
         domain: input.domain,
         engine: input.engine ?? 'langgraph',
-        masking: masking.enabled ? masking.level : 'off',
+        // 'content (switch unknown)': the switch could not be read, so the strictest level was applied.
+        masking: maskingStatus().known ? (masking.enabled ? masking.level : 'off') : 'content (switch unknown)',
         ...(input.principal ? { principal: input.principal } : {}),
       },
     },
@@ -371,8 +388,9 @@ export async function withRunTrace<T>(input: RunTraceInput, fn: (observer: RunOb
         span: makeSpan,
         finish: (outcome) =>
           safe(() => {
-            startObservation('run.result', { ...env, output: outcome, level: outcome.failed ? 'ERROR' : 'DEFAULT' }, { asType: 'event', parentSpanContext: segmentCtx() });
-            (segment as LangfuseAgent | null)?.update({ output: outcome, level: outcome.failed ? 'ERROR' : 'DEFAULT' }).end();
+            const result = contentLevel ? contentOnly(outcome) : outcome;
+            startObservation('run.result', { ...env, output: result, level: outcome.failed ? 'ERROR' : 'DEFAULT' }, { asType: 'event', parentSpanContext: segmentCtx() });
+            (segment as LangfuseAgent | null)?.update({ output: result, level: outcome.failed ? 'ERROR' : 'DEFAULT' }).end();
           }),
         flush: flushLangfuse,
       };
@@ -401,10 +419,11 @@ export type StandaloneObservation = {
 export function recordObservation(o: StandaloneObservation): boolean {
   if (!ensureTracing()) return false;
   try {
-    // Held in memory, not awaited: this call is synchronous. Personal data is scrubbed at export
-    // regardless (`exportMask`); only the content level's sizes depend on the value held here.
+    // Held in memory, not awaited: this call is synchronous. While the switch is unknown that value
+    // is the strictest level, and `exportMask` / `flatAttributeMask` enforce the policy again at
+    // export, so a value that is read late still never leaves unmasked.
     const masking = heldMasking();
-    const attrs = { input: freeValue(masking, o.input), output: freeValue(masking, o.output), metadata: o.metadata, level: o.level };
+    const attrs = { input: freeValue(masking, o.input), output: freeValue(masking, o.output), metadata: masking.enabled && masking.level === 'content' ? (contentOnly(o.metadata) as Record<string, unknown> | undefined) : o.metadata, level: o.level };
     const write = (): void => {
       // An event ends on creation; the others are point-in-time records, ended at once.
       if (o.asType === 'event') startObservation(o.name, attrs, { asType: 'event' });

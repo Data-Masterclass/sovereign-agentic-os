@@ -6,12 +6,13 @@
  *             follows it on its next write, in os-ui and in the run worker, with no restart.
  * ARCHITECTURE: one read of the platform setting (`langfuseMasking`, Platform → Settings) after
  *             the settings are hydrated — after a pod restart the in-memory value is the default
- *             until the saved one is read, and a switch an admin turned ON must not read OFF. The
+ *             until the saved one is read, and a switch an admin turned ON must not read OFF: until it
+ *             HAS been read the policy is the strictest (`UNKNOWN_MASKING`), never the default. The
  *             run worker re-reads the setting at most every few seconds (`settings.ts`).
  *             `gatewayMessageRedaction()` is the gateway half: LiteLLM's documented per-request
  *             header, sent on every model call while masking is on.
  */
-import { langfuseMaskingPolicy, heldLangfuseMaskingPolicy, __setLangfuseMaskingForTests } from '@core/models/roles';
+import { langfuseMaskingPolicy, heldLangfuseMaskingPolicy, langfuseMaskingStatus, __setLangfuseMaskingForTests } from '@core/models/roles';
 import type { MaskingPolicy } from '@core/infra/trace-masking';
 import { gatewayRedactionHeaders } from '@core/runtime/gateway-trace';
 
@@ -24,6 +25,9 @@ export function liveMasking(): Promise<MaskingPolicy> {
 export function heldMasking(): MaskingPolicy {
   return heldLangfuseMaskingPolicy();
 }
+
+/** Whether the switch has been read, and the policy that applies right now (strict while unknown). */
+export const maskingStatus = langfuseMaskingStatus;
 
 /** Test seam: set the switch in memory (no mirror, no restart — the same effect an admin's save has). */
 export const __setMaskingForTests = __setLangfuseMaskingForTests;

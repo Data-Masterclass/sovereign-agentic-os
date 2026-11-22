@@ -265,14 +265,28 @@ Enterprise feature and is **not** used; masking happens in the sender, with the 
 
 | Where traces are written | Mechanism (upstream docs) | Applies |
 |---|---|---|
-| os-ui and the run worker (run, node, model-call, tool and standalone observations, scores) | Langfuse's `mask` option of `LangfuseSpanProcessor` ([masking](https://langfuse.com/docs/observability/features/masking)) scrubs every observation's input, output and metadata at export; at level `content` the writer also replaces text by sizes where it builds an observation | next export / next run segment, no restart |
-| LiteLLM's `langfuse_otel` generation of each model call | LiteLLM's per-request header `x-litellm-enable-message-redaction: true` ([logging](https://docs.litellm.ai/docs/proxy/logging#redact-messages-response-content)), sent by the OS on every model call while masking is on | next model call, no restart |
+| os-ui and the run worker (run, node, model-call, tool and standalone observations, scores) | Langfuse's `mask` option of `LangfuseSpanProcessor` ([masking](https://langfuse.com/docs/observability/features/masking)) scrubs every observation's input and output at export, and at level `content` reduces any text the writer did not already reduce; a processor in front of it applies the same policy to each metadata key and to status messages, which the SDK's `mask` is never given; at level `content` the writer also replaces text by sizes where it builds an observation | next export / next run segment, no restart |
+| LiteLLM's `langfuse_otel` generation of each model call | LiteLLM's per-request header `x-litellm-enable-message-redaction: true` ([logging](https://docs.litellm.ai/docs/proxy/logging#redact-messages-response-content)), sent on every model call, from one shared helper (`core/adapters/litellm/gateway-fetch.ts`, guarded by a test), while masking is on or unknown | next model call, no restart |
 
 Levels. `pii` replaces e-mail addresses, phone numbers, IBANs (mod-97 checked) and card numbers
 (Luhn checked) with `[email]`, `[phone]`, `[iban]`, `[card]` and keeps the rest of the text. `content`
 replaces every message, task, tool argument, tool result, error text and score comment by its size
 (`{ redacted, chars }`); model, tokens, latency, cost, tool names, governance decisions, status,
 tags, user and session stay, so Monitoring is unaffected.
+
+Until the switch has been read. A pod that has just restarted, or a settings store that cannot be
+read, does not know the switch yet. In that state the OS applies the strictest level (`content`) and
+the redaction header, never the default "off", logs the fact, tags new run traces with
+`masking: content (switch unknown)` and reports it in the settings read (`maskingStatus.known`).
+The state ends at the next successful read of the store (retried every few seconds). A store that
+answers "no settings saved yet" is a known answer: masking is off.
+
+What the patterns do not catch. `pii` is pattern-based: e-mail addresses (including international and
+quoted forms), phone numbers, IBANs and card numbers. **Names, postal addresses and dates of birth
+are not recognised by any pattern and stay in the text at `pii`. The `content` level is the one that
+covers them.** Bare digit runs are matched only where they have a telephone shape (for example
+`555-123-4567`, `5551234567`, `01701234567`, `49 170 1234567`); dates, amounts, ids such as `wf_...`,
+ISO timestamps and version numbers are deliberately left alone.
 
 What it does not do. Nothing already stored in Langfuse is changed. A run segment already in progress
 keeps the level it started with for its message text (personal data is scrubbed on every export

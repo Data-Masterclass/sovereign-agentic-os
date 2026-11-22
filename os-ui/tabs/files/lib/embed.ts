@@ -26,6 +26,7 @@
 import { config } from '@core/kernel/config';
 import { offlineMockAllowed, refuseOfflineMock } from '@core/kernel/offline-mock';
 import { roleModel } from '@core/models/roles';
+import { gatewayFetch } from '@core/adapters/litellm/gateway-fetch';
 import {
   callerCredential,
   GatewayRejectedError,
@@ -57,7 +58,7 @@ async function post(url: string, body: unknown, apiKey: string, ms = 8000): Prom
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), ms);
   try {
-    return await fetch(url, {
+    return await gatewayFetch(url, {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
       body: JSON.stringify(body),
