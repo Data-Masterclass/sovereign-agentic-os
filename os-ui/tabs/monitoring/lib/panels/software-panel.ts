@@ -23,7 +23,7 @@ import type { CurrentUser } from '@core/kernel/auth';
 import { config } from '@core/kernel/config';
 import { k8s } from '@core/infra/k8s';
 import { logsQuery } from '@core/adapters/victoria-logs/query';
-import { monitoringSources, SOURCES_MISSING, type ScanFacts, type SoftwareRow } from '@tabs/monitoring/lib/panels/sources';
+import { monitoringSources, SOURCES_MISSING, type CheckFacts, type ScanFacts, type SoftwareRow } from '@tabs/monitoring/lib/panels/sources';
 import {
   appLogQuery, foldAppLogs, live, podFactsOf, podStateOf, runnerOfPod, unavailable, worstPodState,
   type AppLogCounts, type NotUpstream, type PodFacts, type PodState, type SourceState,
@@ -44,6 +44,20 @@ export type AppScan = {
   scannedAt: string;
 };
 
+export type AppChecks =
+  | { state: 'not_recorded' }
+  | { state: 'recorded'; overall: 'passed' | 'failed' | 'unavailable' | 'running' | 'superseded'; sha: string; engine: string; trigger: string; runRef: string | null; startedAt: string; finishedAt: string | null; error: string | null; checks: CheckFacts['checks'] };
+
+/** The newest record, summarised from its per-check statuses (a record's own claim is not read). */
+export function checksOf(records: CheckFacts[] | null): AppChecks {
+  const r = records && records.length ? records[0] : null;
+  if (!r) return { state: 'not_recorded' };
+  const overall = r.status === 'running' ? 'running' : r.status === 'superseded' ? 'superseded'
+    : r.error || r.checks.length === 0 || r.checks.some((c) => c.status === 'unavailable') ? (r.checks.some((c) => c.status === 'fail') ? 'failed' : 'unavailable')
+    : r.checks.some((c) => c.status === 'fail') ? 'failed' : 'passed';
+  return { state: 'recorded', overall, sha: r.sha, engine: r.engine, trigger: r.trigger, runRef: r.runRef, startedAt: r.startedAt, finishedAt: r.finishedAt, error: r.error, checks: r.checks };
+}
+
 export type AppPods = { state: PodState | 'no_pods'; items: (PodFacts & { state: PodState })[] };
 
 export type SoftwareApp = {
@@ -56,6 +70,8 @@ export type SoftwareApp = {
   softwareUrl: string;
   review: { requestedAt: string; decision: string; decidedAt: string | null } | null;
   scan: AppScan | null;
+  /** CI/CD: the newest check record of the app, as recorded; `not_recorded` when the app has none. */
+  ci: AppChecks;
   /** null = the app has no pod (declarative / runtime) or Kubernetes did not answer (see `sources.pods`). */
   pods: AppPods | null;
   /** null = not an image app's log, or VictoriaLogs did not answer (see `sources.logs`). */
@@ -74,7 +90,7 @@ export type SoftwareView = {
 };
 
 const NOT_UPSTREAM: NotUpstream[] = [
-  { panel: 'CI/CD results', reason: 'The OS has no CI runner, image builder or registry — an image app serves an image the operator built elsewhere — so no build or test run is recorded. The nearest recorded facts are shown instead: the review card’s scan and the deploy decision.' },
+  { panel: 'CI/CD results for apps with no check record', reason: 'An app shows its newest recorded check run (App.checks: per-gate status, trigger, engine, run reference). An app with none — nothing has run its checks yet, or it predates the record — says “not recorded”; the OS has no CI runner of its own, so nothing else stands in for it. A Tekton engine will write the same record.' },
   { panel: 'Scan history', reason: 'Only the scan of each app’s newest review card is kept; earlier scans are not shown.' },
 ];
 
@@ -92,7 +108,7 @@ function inScope(r: SoftwareRow, user: CurrentUser): boolean {
 }
 
 const attention = (a: SoftwareApp): number =>
-  (a.scan?.verdict === 'failed' ? 4 : 0) + (a.pods && ['crash_looping', 'image_pull_failed', 'failed', 'not_ready'].includes(a.pods.state) ? 4 : 0) + (a.scan?.verdict === 'no_verdict' ? 1 : 0) + ((a.logs?.errorRate ?? 0) > 0.05 ? 2 : 0);
+  (a.scan?.verdict === 'failed' ? 4 : 0) + (a.ci.state === 'recorded' && a.ci.overall === 'failed' ? 3 : 0) + (a.pods && ['crash_looping', 'image_pull_failed', 'failed', 'not_ready'].includes(a.pods.state) ? 4 : 0) + (a.scan?.verdict === 'no_verdict' ? 1 : 0) + ((a.logs?.errorRate ?? 0) > 0.05 ? 2 : 0);
 
 export async function softwareView(user: CurrentUser, nowMs = Date.now()): Promise<SoftwareView> {
   const src = monitoringSources();
@@ -137,6 +153,7 @@ export async function softwareView(user: CurrentUser, nowMs = Date.now()): Promi
       softwareUrl: `/software?focus=${encodeURIComponent(r.id)}`,
       review: r.review ? { requestedAt: r.review.requestedAt, decision: r.review.decision, decidedAt: r.review.decidedAt } : null,
       scan: r.review ? scanOf(r.review.scan) : null,
+      ci: checksOf(r.checks),
       pods,
       logs: r.runner && logCounts ? logCounts.get(r.runner) ?? { lines: 0, errors: 0, errorRate: null } : null,
     };

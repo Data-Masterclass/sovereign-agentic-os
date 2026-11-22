@@ -33,7 +33,7 @@ const row = (pod: string, msg: string, ns = NS) => JSON.stringify({ _msg: msg, '
 
 const app = (slug: string, o: Record<string, unknown> = {}) => ({
   id: `id-${slug}`, slug, name: slug, domain: 'sales', scope: 'mine' as const, serveMode: 'image' as const, runner: `app-${slug}`,
-  status: { label: 'Live', servedUrl: 'https://x' }, review: null, ...o,
+  status: { label: 'Live', servedUrl: 'https://x' }, checks: null, review: null, ...o,
 });
 const ada = { id: 'ada', name: 'Ada', domains: ['sales'], allDomains: ['sales'], activeDomain: null, role: 'creator' } as never;
 

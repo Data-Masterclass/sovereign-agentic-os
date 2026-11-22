@@ -53,6 +53,19 @@ export type ScanFacts = {
   bySeverity: Record<'critical' | 'high' | 'medium' | 'low' | 'info', number>;
 };
 
+/** One check record the app holds against a commit sha (`App.checks`; engine-neutral — a sandbox Job today, a Tekton run later). */
+export type CheckFacts = {
+  sha: string;
+  status: 'running' | 'finished' | 'superseded';
+  trigger: string;
+  engine: string;
+  runRef: string | null;
+  startedAt: string;
+  finishedAt: string | null;
+  checks: { id: string; status: 'pass' | 'fail' | 'unavailable'; detail: string }[];
+  error: string | null;
+};
+
 /** One app of the Software tab's scoped list with its newest review card. */
 export type SoftwareRow = {
   id: string;
@@ -66,6 +79,8 @@ export type SoftwareRow = {
   /** `deployStatusOf` — the one honest status word. */
   status: { label: string; servedUrl: string | null };
   review: { requestedAt: string; decision: string; decidedAt: string | null; scan: ScanFacts } | null;
+  /** The app's check records, newest first; null when the app carries no `checks` field at all (nothing records them). */
+  checks: CheckFacts[] | null;
 };
 
 /** One knowledge workflow of the Knowledge tab's scoped list. */

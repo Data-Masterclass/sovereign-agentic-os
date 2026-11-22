@@ -113,6 +113,8 @@ export const monitoringSoftwareSource: NonNullable<MonitoringSources['software']
       serveMode: mode,
       runner: mode === 'image' ? runnerName(a.slug) : null,
       status: (({ label, servedUrl }) => ({ label, servedUrl }))(deployStatusOf({ slug: a.slug, serveMode: mode, spec: a.spec, deploy: a.deploy })),
+      // `App.checks` is the engine-neutral per-sha check record (PR #297); an app without the field has none.
+      checks: (() => { const c = (a as unknown as { checks?: unknown }).checks; return Array.isArray(c) ? (c as NonNullable<import('@tabs/monitoring/lib/panels/sources').SoftwareRow['checks']>) : null; })(),
       review: card
         ? {
             requestedAt: card.requestedAt, decision: card.decision, decidedAt: card.decidedAt ?? null,
