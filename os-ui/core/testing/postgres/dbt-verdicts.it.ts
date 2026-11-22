@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  *
  * AREA:       monitoring / adapters/postgres
- * FEATURE:    Integration test: the refused-commit alert reads the real `commit_checks` rows
+ * FEATURE:    Integration test: the newest dbt verdict per domain, read from the real `commit_checks` rows
  * USER STORY: As an engineer whose commit dbt refused I want the alert to come from the rows the
  *             verdict copy really writes, not from a fixture shape I hope matches.
  * ARCHITECTURE:
@@ -15,7 +15,7 @@ import assert from 'node:assert/strict';
 import pg from 'pg';
 import { freshDatabase } from './it-support.ts';
 import { migrateGovernance } from './unwrapped.ts';
-import { collectDbtVerdictAlerts } from '@tabs/monitoring/lib/adapters/dbt-verdicts';
+import { readNewestDbtVerdicts } from '@core/adapters/dagster/commit-checks';
 
 let db: Awaited<ReturnType<typeof freshDatabase>>;
 let pool: pg.Pool;
@@ -34,23 +34,25 @@ describe('refused dbt commit alert (real postgres:17)', { timeout: 120_000 }, ()
     await db?.drop();
   });
 
-  test('a failed verdict row becomes one warning with dbt text; a later passed head clears it', async () => {
+  test('the newest row of a domain is its head: failed, then a later passed commit replaces it', async () => {
     await pool.query(
       `INSERT INTO os_governance.commit_checks (domain, sha, check_name, status, details) VALUES ('sales', $1, 'dbt-parse', 'failed', $2::jsonb)`,
       [A, JSON.stringify({ errorSummary: 'Compilation Error in model silver_x', current: null })],
     );
-    const alerts = await collectDbtVerdictAlerts(pool);
-    assert.equal(alerts.length, 1, JSON.stringify(alerts));
-    assert.equal(alerts[0].domain, 'sales');
-    assert.match(alerts[0].detail, /Compilation Error in model silver_x/);
+    const first = (await readNewestDbtVerdicts(pool)).filter((r) => r.domain === 'sales');
+    assert.equal(first.length, 1);
+    assert.equal(first[0].status, 'failed');
+    assert.equal(first[0].sha, A);
+    assert.equal(first[0].details.errorSummary, 'Compilation Error in model silver_x');
 
     await new Promise((r) => setTimeout(r, 20));
     await pool.query(`INSERT INTO os_governance.commit_checks (domain, sha, check_name, status, details) VALUES ('sales', $1, 'dbt-parse', 'passed', '{}')`, [B]);
-    assert.deepEqual(await collectDbtVerdictAlerts(pool), []);
+    const second = (await readNewestDbtVerdicts(pool)).filter((r) => r.domain === 'sales');
+    assert.deepEqual(second.map((r) => [r.sha, r.status]), [[B, 'passed']]);
   });
 
-  test('another check name (opa test) on a failed row raises nothing', async () => {
+  test('twin: a row of another check (opa-test) is never returned as a dbt verdict', async () => {
     await pool.query(`INSERT INTO os_governance.commit_checks (domain, sha, check_name, status) VALUES ('ops', $1, 'opa-test', 'failed')`, [A]);
-    assert.deepEqual((await collectDbtVerdictAlerts(pool)).filter((a) => a.domain === 'ops'), []);
+    assert.deepEqual((await readNewestDbtVerdicts(pool)).filter((r) => r.domain === 'ops'), []);
   });
 });
