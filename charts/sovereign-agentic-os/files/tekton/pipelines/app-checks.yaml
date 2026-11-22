@@ -129,6 +129,7 @@ spec:
               #!/bin/sh
               set -e
               cp -R $(workspaces.app.path)/. /work/
+              ls -la /work
           # The policy judges the PUSHED tree, before any step runs the app's code: a platform step writes the facts (the app's
           # text files), then a one-shot `opa eval` over the read-only platform policy decides. No policy server exists in the pod.
           - name: facts

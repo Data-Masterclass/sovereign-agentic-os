@@ -26,7 +26,7 @@ cleanup() {
     gp="$(k -n agentic-build get pods -l tekton.dev/pipelineTask=gates -o name 2>/dev/null | head -1)"
     for c in copy facts install typecheck; do
       echo "--- $gp step-$c" >&2
-      k -n agentic-build logs "$gp" -c "step-$c" --tail=15 >&2 || true
+      k -n agentic-build logs "$gp" -c "step-$c" 2>&1 | head -25 >&2 || true
     done
     for p in $(k -n agentic-build get pods -l tekton.dev/pipelineTask=fetch -o name 2>/dev/null | head -2); do
       echo "--- $p" >&2
