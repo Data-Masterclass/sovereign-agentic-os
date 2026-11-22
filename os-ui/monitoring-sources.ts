@@ -35,11 +35,16 @@ import { listGovernedDatasets } from '@tabs/data/lib/store';
 import { viewName, registryDimensionMembers } from '@tabs/data/lib/metrics';
 import { listSources, ensureSourcesHydrated as ensureDriveSourcesHydrated, sourcesHydrationState } from '@tabs/files/lib/connectors';
 import { getConnectionById } from '@tabs/connections/lib/store';
+import { listAppsForUser, serveModeOf } from '@tabs/software/lib/apps';
+import { listReviewCards } from '@tabs/software/lib/review';
+import { deployStatusOf } from '@tabs/software/lib/deploy-status';
+import { runnerName } from '@tabs/software/lib/native-deploy';
 import { listWorkflows, ensureHydrated as ensureKnowledgeHydrated } from '@tabs/knowledge/lib/store';
 
 export const monitoringSourcesImpl: MonitoringSources = {
   files: (p) => monitoringFilesSource(p),
   driveSources: (p) => monitoringDriveSource(p),
+  software: (p) => monitoringSoftwareSource(p),
   knowledge: (p) => monitoringKnowledgeSource(p),
   metrics: (p) => monitoringMetricsSource(p),
   alertRules: (p) => monitoringAlertRulesSource(p),
@@ -149,6 +154,36 @@ export const monitoringDriveSource: NonNullable<MonitoringSources['driveSources'
     });
   }
   return out;
+};
+
+/** The viewer's apps (the Software tab's own list) with each app's newest review card and its scan as recorded. */
+export const monitoringSoftwareSource: NonNullable<MonitoringSources['software']> = async (p) => {
+  const apps = await listAppsForUser(asPrincipal(p) as never);
+  const newest = new Map<string, Awaited<ReturnType<typeof listReviewCards>>[number]>();
+  for (const c of await listReviewCards()) if (!newest.has(c.appId)) newest.set(c.appId, c); // already newest first
+  const sev = (list: { severity: string }[], k: 'critical' | 'high' | 'medium' | 'low' | 'info') => list.filter((f) => f.severity === k).length;
+  return apps.map((a) => {
+    const mode = serveModeOf(a);
+    const card = newest.get(a.id);
+    return {
+      id: a.id, slug: a.slug, name: a.name, domain: a.domain,
+      scope: a.visibility === 'Personal' ? ('mine' as const) : a.visibility === 'Shared' ? ('domain' as const) : ('marketplace' as const),
+      serveMode: mode,
+      runner: mode === 'image' ? runnerName(a.slug) : null,
+      status: (({ label, servedUrl }) => ({ label, servedUrl }))(deployStatusOf({ slug: a.slug, serveMode: mode, spec: a.spec, deploy: a.deploy })),
+      review: card
+        ? {
+            requestedAt: card.requestedAt, decision: card.decision, decidedAt: card.decidedAt ?? null,
+            scan: {
+              mode: card.scan.mode, engine: card.scan.engine ?? null, passed: card.scan.passed, unavailable: card.scan.unavailable === true,
+              reason: card.scan.reason ?? null, notRun: card.scan.notRun ?? [], truncated: card.scan.truncated === true, scannedAt: card.scan.scannedAt,
+              byCategory: { ...card.scan.summary },
+              bySeverity: { critical: sev(card.scan.findings, 'critical'), high: sev(card.scan.findings, 'high'), medium: sev(card.scan.findings, 'medium'), low: sev(card.scan.findings, 'low'), info: sev(card.scan.findings, 'info') },
+            },
+          }
+        : null,
+    };
+  });
 };
 
 export const monitoringKnowledgeSource: NonNullable<MonitoringSources['knowledge']> = async (p) => {
