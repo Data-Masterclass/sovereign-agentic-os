@@ -30,9 +30,9 @@ function check(over: Partial<AssetCheck> = {}): AssetCheck {
 }
 
 test('a dbt test maps 1:1: pass, fail with the failed-row count, never-executed, other statuses', () => {
-  assert.deepEqual(checkToResult(check()), { id: 'not_null_silver_orders_order_id', label: 'not_null_silver_orders_order_id', status: 'pass', violations: 0 });
+  assert.deepEqual(checkToResult(check()), { id: 'not_null_silver_orders_order_id', label: 'not_null_silver_orders_order_id', status: 'pass', violations: 0, at: '2026-11-13T06:01:00.000Z' });
   const failed = checkToResult(check({ latest: { status: 'FAILED', runId: 'r1', at: 'x', severity: 'ERROR', description: '3 rows', metadata: { 'dagster_dbt/failed_row_count': 3 } } }));
-  assert.deepEqual(failed, { id: 'not_null_silver_orders_order_id', label: 'not_null_silver_orders_order_id', status: 'fail', violations: 3 });
+  assert.deepEqual(failed, { id: 'not_null_silver_orders_order_id', label: 'not_null_silver_orders_order_id', status: 'fail', violations: 3, severity: 'error', at: 'x' });
   const unknownCount = checkToResult(check({ latest: { status: 'FAILED', runId: 'r1', at: 'x', severity: null, description: null, metadata: {} } }));
   assert.equal(unknownCount.violations, null, 'an unknown count is null, never 0');
   const never = checkToResult(check({ latest: null }));
@@ -142,4 +142,23 @@ test('a failing dataset with no resolvable owner is logged, not retried forever 
     console.warn = realWarn;
   }
   assert.ok(warns.some((w) => w.includes('ds_z') && w.includes('no resolvable owner')));
+});
+
+test('a dbt test with severity warn that found rows is a WARN, not a fail; severity and time ride along (ownership rule: dbt decides)', () => {
+  const warn = checkToResult(check({ latest: { status: 'FAILED', runId: 'r1', at: '2026-11-13T06:01:00.000Z', severity: 'WARN', description: '2 rows', metadata: { 'dagster_dbt/failed_row_count': 2 } } }));
+  assert.deepEqual(warn, { id: 'not_null_silver_orders_order_id', label: 'not_null_silver_orders_order_id', status: 'warn', violations: 2, severity: 'warn', at: '2026-11-13T06:01:00.000Z' });
+  // twin: the same execution with severity ERROR is a fail
+  assert.equal(checkToResult(check({ latest: { status: 'FAILED', runId: 'r1', at: 'x', severity: 'ERROR', description: null, metadata: { 'dagster_dbt/failed_row_count': 2 } } })).status, 'fail');
+});
+
+test('a warn alone does not make the dataset failing, and a warn is not a perfect score', () => {
+  const rec = checksToRecord(d, [
+    check({ name: 'a' }),
+    check({ name: 'w', latest: { status: 'FAILED', runId: 'r1', at: '2026-11-13T06:01:00.000Z', severity: 'WARN', description: null, metadata: { 'dagster_dbt/failed_row_count': 1 } } }),
+  ])!;
+  assert.equal(rec.badge, 'passing');
+  assert.ok(rec.healthScore !== null && rec.healthScore <= 99, 'a warn must not round up to 100');
+  // twin: add an error-severity failure and the badge is failing
+  const bad = checksToRecord(d, [check({ name: 'a' }), check({ name: 'f', latest: { status: 'FAILED', runId: 'r1', at: 'x', severity: 'ERROR', description: null, metadata: {} } })])!;
+  assert.equal(bad.badge, 'failing');
 });
