@@ -99,14 +99,14 @@ export function recordFromRun(o: RunObjects): CheckRecord {
   const trigger = (TRIGGERS as string[]).includes(str(labels['soa.dev/trigger'])) ? (str(labels['soa.dev/trigger']) as CheckTrigger) : 'push';
 
   const byTask = (t: string) => o.taskRuns.find((tr) => taskOf(tr) === t);
-  const fetch = byTask('fetch');
+  const fetchRun = byTask('fetch');
   const gates = byTask('gates');
   const scan = byTask('scan');
   const checks: CheckEntry[] = [];
 
-  if (fetch && succeeded(fetch).status === 'False') {
-    const bad = stepsOf(fetch).find((s) => s.exit !== null && s.exit !== 0) ?? stepsOf(fetch)[0];
-    checks.push({ id: 'fetch', status: 'fail', detail: tail(o.logs[`${nameOf(fetch)}/${bad?.container ?? 'step-clone'}`] ?? '') || succeeded(fetch).message || 'the clone of the commit failed' });
+  if (fetchRun && succeeded(fetchRun).status === 'False') {
+    const bad = stepsOf(fetchRun).find((s) => s.exit !== null && s.exit !== 0) ?? stepsOf(fetchRun)[0];
+    checks.push({ id: 'fetch', status: 'fail', detail: tail(o.logs[`${nameOf(fetchRun)}/${bad?.container ?? 'step-clone'}`] ?? '') || succeeded(fetchRun).message || 'the clone of the commit failed' });
   }
   if (gates) {
     const steps = stepsOf(gates);

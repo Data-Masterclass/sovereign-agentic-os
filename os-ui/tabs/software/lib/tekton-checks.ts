@@ -23,16 +23,19 @@
  *     create a PipelineRun: only the listener can (templates/base/os-ui/software-tekton.yaml).
  */
 import 'server-only';
-import { config } from '@core/kernel/config';
-import { k8s as liveK8s, k8sText as liveK8sText } from '@core/infra/k8s';
+import {
+  tektonNamespace, tektonListenerUrl, tektonWaitMs, liveTektonK8s, liveTektonK8sText, postEvent,
+  listRuns, getRun, cancelRun, listTaskRuns, stepLog,
+  type TektonObj, type TektonK8s, type TektonK8sText, type TektonPost,
+} from '@core/adapters/tekton/client';
 import { domainRepoName, legacyDomainRepoName, repoDirName } from '@core/infra/repo-layout';
 import type { CheckRecord, CheckResult, CheckTrigger } from '@tabs/software/lib/check-record';
 import { recordFromRun, checksRunName, type RunObjects } from '@tabs/software/lib/tekton-record';
 
-type Obj = Record<string, unknown>;
-export type ChecksK8s = (method: string, path: string, body?: unknown) => Promise<{ status: number; body: Obj }>;
-export type ChecksK8sText = (path: string) => Promise<{ status: number; text: string }>;
-export type ChecksPost = (url: string, json: unknown) => Promise<{ status: number; text: string }>;
+type Obj = TektonObj;
+export type ChecksK8s = TektonK8s;
+export type ChecksK8sText = TektonK8sText;
+export type ChecksPost = TektonPost;
 export type ChecksDeps = {
   k8s?: ChecksK8s;
   k8sText?: ChecksK8sText;
@@ -61,30 +64,25 @@ const str = (v: unknown): string => (typeof v === 'string' ? v : '');
 const obj = (v: unknown): Obj => (v && typeof v === 'object' ? (v as Obj) : {});
 const arr = (v: unknown): Obj[] => (Array.isArray(v) ? (v as Obj[]) : []);
 
-const postJson: ChecksPost = async (url, json) => {
-  try {
-    const res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(json), signal: AbortSignal.timeout(10_000) });
-    return { status: res.status, text: await res.text() };
-  } catch (e) {
-    return { status: 0, text: e instanceof Error ? e.message : String(e) };
-  }
+/** The adapter's `Fetched` answer as the status/text pair this module reasons about (`status: 0` = never reached). */
+const postViaAdapter: ChecksPost = async (url, json) => {
+  const r = await postEvent(url, json);
+  return r.ok ? r.value : { status: 0, text: r.detail };
 };
 
 type Cfg = { k8s: ChecksK8s; k8sText: ChecksK8sText; post: ChecksPost; ns: string; url: string; now: () => number; sleep: (ms: number) => Promise<void> };
 function cfg(d: ChecksDeps): Cfg {
   return {
-    k8s: d.k8s ?? (liveK8s as ChecksK8s),
-    k8sText: d.k8sText ?? (liveK8sText as ChecksK8sText),
-    post: d.post ?? postJson,
-    ns: d.namespace ?? config.softwareTektonNamespace,
-    url: d.listenerUrl ?? config.softwareTektonListenerUrl,
+    k8s: d.k8s ?? liveTektonK8s,
+    k8sText: d.k8sText ?? liveTektonK8sText,
+    post: d.post ?? postViaAdapter,
+    ns: d.namespace ?? tektonNamespace(),
+    url: d.listenerUrl ?? tektonListenerUrl(),
     now: d.now ?? (() => Date.now()),
     sleep: d.sleep ?? ((ms) => new Promise<void>((r) => setTimeout(r, ms))),
   };
 }
 
-const runsPath = (ns: string) => `/apis/tekton.dev/v1/namespaces/${ns}/pipelineruns`;
-const selector = (labels: Record<string, string>) => `labelSelector=${encodeURIComponent(Object.entries(labels).map(([k, v]) => `${k}=${v}`).join(','))}`;
 const nameOf = (r: Obj): string => str(obj(r.metadata).name);
 const labelOf = (r: Obj, k: string): string => str(obj(obj(r.metadata).labels)[k]);
 const created = (r: Obj): string => str(obj(r.metadata).creationTimestamp);
@@ -115,7 +113,7 @@ export async function startChecksRun(input: StartInput, deps: ChecksDeps = {}): 
   if (!SLUG_RE.test(input.slug)) return { ok: false, kind: 'refused', reason: `'${input.slug}' is not a valid app slug` };
   if (!SHA_RE.test(input.sha)) return { ok: false, kind: 'refused', reason: `'${input.sha}' is not a full commit sha` };
 
-  const listed = await c.k8s('GET', `${runsPath(c.ns)}?${selector({ [L_APP]: input.slug })}`);
+  const listed = await listRuns(c.k8s, c.ns, { [L_APP]: input.slug });
   if (listed.status === 0) return { ok: false, kind: 'no-cluster', reason: 'the Kubernetes API server is unreachable from the OS, so no Tekton run could be started' };
   if (listed.status !== 200) return { ok: false, kind: 'refused', reason: `Kubernetes refused to list the app's PipelineRuns (HTTP ${listed.status}); os-ui needs get/list on pipelineruns in ${c.ns}` };
   const runs = arr(listed.body.items);
@@ -125,7 +123,7 @@ export async function startChecksRun(input: StartInput, deps: ChecksDeps = {}): 
   for (const r of runs) {
     const sha = labelOf(r, L_SHA);
     if (isDone(r) || sha === input.sha) continue;
-    const res = await c.k8s('PATCH', `${runsPath(c.ns)}/${nameOf(r)}`, { spec: { status: 'Cancelled' } });
+    const res = await cancelRun(c.k8s, c.ns, nameOf(r));
     if (res.status === 200) {
       if (!superseded.includes(sha)) superseded.push(sha);
     } else if (res.status === 0) {
@@ -144,7 +142,7 @@ export async function startChecksRun(input: StartInput, deps: ChecksDeps = {}): 
   if (sent.status === 0) return { ok: false, kind: 'refused', reason: `the Tekton EventListener is unreachable: ${sent.text}`.slice(0, 300) };
   if (sent.status < 200 || sent.status >= 300) return { ok: false, kind: 'refused', reason: `the Tekton EventListener refused the event (HTTP ${sent.status}): ${sent.text}`.slice(0, 300) };
   for (let i = 0; i < APPEAR_TRIES; i++) {
-    const got = await c.k8s('GET', `${runsPath(c.ns)}/${runName}`);
+    const got = await getRun(c.k8s, c.ns, runName);
     if (got.status === 200) return { ok: true, runRef: runName, created: true, superseded };
     if (got.status === 0) return { ok: false, kind: 'no-cluster', reason: 'the Kubernetes API server became unreachable after the event was accepted' };
     await c.sleep(500);
@@ -156,13 +154,13 @@ export async function startChecksRun(input: StartInput, deps: ChecksDeps = {}): 
 export async function readChecksRecord(slug: string, sha: string, deps: ChecksDeps = {}): Promise<ReadResult> {
   const c = cfg(deps);
   if (!c.ns) return { kind: 'none' };
-  const listed = await c.k8s('GET', `${runsPath(c.ns)}?${selector({ [L_APP]: slug, [L_SHA]: sha })}`);
+  const listed = await listRuns(c.k8s, c.ns, { [L_APP]: slug, [L_SHA]: sha });
   if (listed.status === 0) return { kind: 'no-cluster' };
   if (listed.status !== 200) return { kind: 'none' };
   const run = arr(listed.body.items).sort((a, b) => created(b).localeCompare(created(a)))[0];
   if (!run) return { kind: 'none' };
 
-  const trs = await c.k8s('GET', `/apis/tekton.dev/v1/namespaces/${c.ns}/taskruns?${selector({ 'tekton.dev/pipelineRun': nameOf(run) })}`);
+  const trs = await listTaskRuns(c.k8s, c.ns, nameOf(run));
   if (trs.status === 0) return { kind: 'no-cluster' };
   const taskRuns = trs.status === 200 ? arr(trs.body.items) : [];
   const logs: Record<string, string> = {};
@@ -175,7 +173,7 @@ export async function readChecksRecord(slug: string, sha: string, deps: ChecksDe
       const container = str(s.container) || `step-${step}`;
       // The verdict step prints nothing we read; every other terminated step may carry a gate report or the failure.
       if (!Object.keys(terminated).length || step === 'verdict') continue;
-      const log = await c.k8sText(`/api/v1/namespaces/${c.ns}/pods/${pod}/log?container=${container}&limitBytes=${LOG_LIMIT}`);
+      const log = await stepLog(c.k8sText, c.ns, pod, container, LOG_LIMIT);
       if (log.status === 200) logs[`${nameOf(tr)}/${container}`] = log.text;
     }
   }
@@ -190,7 +188,7 @@ const iso = (ms: number) => new Date(ms).toISOString();
 /** Start (idempotently) and wait up to `waitMs` for the run; always returns a record, never throws. */
 export async function ensureChecksRecord(input: StartInput & { waitMs?: number }, deps: ChecksDeps = {}): Promise<CheckResult> {
   const c = cfg(deps);
-  const wait = input.waitMs ?? deps.waitMs ?? config.softwareTektonWaitMs;
+  const wait = input.waitMs ?? deps.waitMs ?? tektonWaitMs();
   const t0 = c.now();
   const started = await startChecksRun(input, deps);
   if (!started.ok) {

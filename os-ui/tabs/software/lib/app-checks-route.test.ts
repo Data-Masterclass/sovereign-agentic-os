@@ -28,6 +28,18 @@ mock.module('@core/kernel/auth', {
   },
 });
 
+// OPA is a separate component; its decision is the only thing stood in for here (its own tests cover the rules).
+let OPA_ALLOWS = true;
+const asked: { principal: string; tool: string }[] = [];
+mock.module('@core/infra/governed', {
+  namedExports: {
+    authorize: async (principal: string, tool: string) => {
+      asked.push({ principal, tool });
+      return { allowed: OPA_ALLOWS, policy: OPA_ALLOWS ? 'opa-allow' : 'opa-deny' };
+    },
+  },
+});
+
 const { createApp } = await import('@tabs/software/lib/apps');
 const { __setChecksRunner } = await import('./tekton-checks.ts');
 const { recordFromOutcome } = await import('./check-record.ts');
@@ -52,6 +64,8 @@ const mallory = { id: 'mallory', name: 'Mallory', domains: ['hr'], role: 'creato
 const calls: { trigger: string; force?: boolean; sha: string }[] = [];
 beforeEach(() => {
   ACTING = alice;
+  OPA_ALLOWS = true;
+  asked.length = 0;
   calls.length = 0;
   __setChecksRunner(async (i) => {
     calls.push({ trigger: i.trigger, force: i.force, sha: i.sha });
@@ -74,6 +88,7 @@ test('POST runs the checks for the head with trigger `button`, forced, and store
   const body = (await res.json()) as { commit: string; record: { status: string; runRef: string; trigger: string } };
   assert.match(body.commit, /^[0-9a-f]{40}$/);
   assert.deepEqual(calls, [{ trigger: 'button', force: true, sha: body.commit }]);
+  assert.deepEqual(asked, [{ principal: 'user:alice', tool: 'software_checks' }]);
   assert.equal(body.record.status, 'running');
   const listed = (await (await get(app.id)).json()) as { checks: { sha: string; status: string }[]; head: string };
   assert.equal(listed.checks[0].sha, body.commit);
@@ -106,5 +121,13 @@ test('NEGATIVE a colleague of the same domain cannot start checks on someone els
   const app = await createApp(alice, { name: 'Owner Desk', template: 'nextjs-web' });
   ACTING = bob;
   assert.equal((await post(app.id)).status, 404);
+  assert.equal(calls.length, 0);
+});
+
+test('NEGATIVE OPA denies the software_checks grant: 403 and no run is started', async () => {
+  const app = await createApp(alice, { name: 'Denied Desk', template: 'nextjs-web' });
+  OPA_ALLOWS = false;
+  const res = await post(app.id);
+  assert.equal(res.status, 403);
   assert.equal(calls.length, 0);
 });

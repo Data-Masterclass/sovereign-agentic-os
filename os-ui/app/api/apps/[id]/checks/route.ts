@@ -7,6 +7,7 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@core/kernel/route-server';
+import { authorize } from '@core/infra/governed';
 import { getAppForUser } from '@tabs/software/lib/apps';
 import { readAppTreeState, appProjectGitEnabled } from '@tabs/software/lib/git-commit';
 import { runAppTests } from '@tabs/software/lib/review';
@@ -24,6 +25,10 @@ export const GET = withRoute<{ id: string }>(async ({ user, params }) => {
 
 /** Run the checks for the current head now. Returns at once (202) with the running record; the result lands on the app when Tekton finishes. */
 export const POST = withRoute<{ id: string }>(async ({ user, params }) => {
+  // Governance first (GLUE-7): OPA's `software_checks` grant (creator and up) before a Tekton run is started. The owner /
+  // builder-of-the-domain rule is then enforced by `runAppTests` itself.
+  const decision = await authorize(`user:${user.id}`, 'software_checks');
+  if (!decision.allowed) return NextResponse.json({ error: `OPA refused running checks (${decision.policy})` }, { status: 403 });
   const r = await runAppTests(params.id, user, { trigger: 'button', force: true, waitMs: 0 });
   if (r.record.status === 'running') {
     const app = await getAppForUser(params.id, user);
