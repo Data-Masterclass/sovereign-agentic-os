@@ -60,8 +60,8 @@ const ACCESS_OPTIONS: { value: Access; label: string; direct?: boolean }[] = [
 ];
 
 type Available = { id: string; name: string; scope: 'personal' | 'domain' | 'marketplace' };
-type GrantField = 'data' | 'knowledge' | 'metrics' | 'connections';
-type Kind = 'data' | 'knowledge' | 'metric' | 'connection';
+type GrantField = 'data' | 'knowledge' | 'workflows' | 'metrics' | 'connections';
+type Kind = 'data' | 'knowledge' | 'workflows' | 'metric' | 'connection';
 
 type RoutingData = {
   activities: string[];
@@ -313,7 +313,12 @@ export default function GrantsRouting({
       />
       <ArtifactGrantList
         systemId={systemId} kind="knowledge" field="knowledge" label="Knowledge"
-        emptyText="No knowledge workflows you can access." grants={system.grants.knowledge}
+        emptyText="No knowledge notes you can access." grants={system.grants.knowledge}
+        canEdit={canEdit} canDirectWrite={canDirectWrite} busy={busy} commit={commit}
+      />
+      <ArtifactGrantList
+        systemId={systemId} kind="workflows" field="workflows" label="Workflows"
+        emptyText="No workflows you can access." grants={system.grants.workflows ?? []}
         canEdit={canEdit} canDirectWrite={canDirectWrite} busy={busy} commit={commit}
       />
       <ArtifactGrantList
