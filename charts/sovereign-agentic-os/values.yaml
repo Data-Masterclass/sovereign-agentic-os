@@ -648,6 +648,12 @@ litellmAgentKey:
   alias: "sovereign-agents"
   # Per-model cost caps (model_max_budget)
   enterprise: false
+  # OWNERSHIP: this shared key's budget, models and limits belong to the platform team in LiteLLM.
+  # The key-init Job therefore CREATES the key when it is absent and, when it exists, only REPORTS
+  # how it differs from the values below (`[key-drift]` lines in the Job log) — an edit made in
+  # LiteLLM survives `helm upgrade`. true = the earlier behaviour: re-apply the values below with
+  # /key/update on every upgrade (use it once to roll a changed `models` list out, then switch off).
+  reapplyOnUpgrade: false
   # Spend cap on this key PER `budgetDuration`. LiteLLM calls the unit "USD" but converts
   # nothing: the amount is in whatever currency the `model_info` prices below are in — EUR on
   # the shipped price book. This ONE key serves every assistant and every agent run that has
@@ -658,9 +664,9 @@ litellmAgentKey:
   # Reset window for maxBudget (LiteLLM key `budget_duration`: "7d" weekly, "30d", "24h").
   # Weekly, like `osUI.agentSystemKey.budgetDuration`. Empty => NO reset: a lifetime cap, after
   # which every caller of this key is refused until an admin raises it. Do not ship that.
-  # Changing the window on an existing key (the key-init Job runs /key/update on every
-  # upgrade) sets a new reset time; it does NOT zero the spend already counted — that happens
-  # at the first reset. See docs/components/litellm.md "Budgets".
+  # Changing the window on an existing key (with `reapplyOnUpgrade` below, the key-init Job runs
+  # /key/update on every upgrade) sets a new reset time; it does NOT zero the spend already counted
+  # — that happens at the first reset. See docs/components/litellm.md "Budgets".
   budgetDuration: "7d"
   models:                 # only these models are callable with this key
     - sovereign-default   # standard/worker tier (STACKIT gpt-oss-20b)
@@ -2195,6 +2201,16 @@ osUI:
     rpmLimit: 300
     tpmLimit: 1000000
     maxParallelRequests: 8
+    # THE CONTINUOUS KEY RECONCILE. The platform team may edit a system's key directly in LiteLLM, so
+    # os-ui compares every system's key with its definition on a timer (the first pass is one
+    # interval after start-up) and REPORTS a difference — Admin → Gateway and Monitoring → Agents —
+    # without overwriting it. An admin puts a key back with "Re-apply from the OS" (audited).
+    #   intervalSeconds     how often; 0 switches the check off.
+    #   autoCorrectSystems  system ids whose key is put back automatically when it drifts
+    #                       (audited as gateway.key.reconcile); ["*"] = every system. Empty = alert only.
+    reconcile:
+      intervalSeconds: 300
+      autoCorrectSystems: []
   # THE SECRET THE PER-SYSTEM KEYS ARE ENCRYPTED UNDER. Each system's key is random, and its
   # only copy outside the gateway is stored encrypted in the `agent_runs` database; os-ui and the
   # worker decrypt it with this secret (it is NOT the LiteLLM master key). Leave both EMPTY on a

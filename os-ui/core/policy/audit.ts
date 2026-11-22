@@ -34,7 +34,11 @@ export type AuditAction =
   | 'egress.allow'
   | 'deploy'
   /** The one-time move of an agent system onto a random, budgeted model key (make-before-break). */
-  | 'gateway.key.migrate';
+  | 'gateway.key.migrate'
+  /** The continuous reconcile put a system's key back to its definition (only where an admin enabled auto-correct for that system). */
+  | 'gateway.key.reconcile'
+  /** An admin pressed "re-apply from the OS" on a system whose key had drifted. */
+  | 'gateway.key.reapply';
 
 export type AuditEntry = {
   id: string;

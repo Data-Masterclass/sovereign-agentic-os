@@ -343,8 +343,13 @@ export function keyDrift(have: Omit<LiteLlmKeyState, 'tokenId'>, want: LiteLlmKe
   if (have.rpmLimit !== want.rpmLimit) out.push(`requests/min ${show(have.rpmLimit)} → ${want.rpmLimit}`);
   if (have.tpmLimit !== want.tpmLimit) out.push(`tokens/min ${show(have.tpmLimit)} → ${want.tpmLimit}`);
   if (have.maxParallelRequests !== want.maxParallelRequests) out.push(`calls at once ${show(have.maxParallelRequests)} → ${want.maxParallelRequests}`);
-  // `allowedTools` absent from the read-back (a gateway that hides metadata) is not drift.
-  if (have.allowedTools !== undefined && !sameSet(have.allowedTools, want.allowedTools)) {
+  // `allowedTools` absent from the read-back is DRIFT, not "nothing to compare": the OS stamps it on
+  // every key it writes (`metadata.allowed_tools`), and an edit in the gateway's own UI replaces the
+  // key's metadata wholesale — so a missing list means the stamp was dropped. (`/key/list` is read with
+  // `return_full_object=true`, which returns metadata; a gateway that hid it would show on every key.)
+  if (have.allowedTools === undefined) {
+    out.push(`allowed tools not recorded on the key → ${want.allowedTools.length}`);
+  } else if (!sameSet(have.allowedTools, want.allowedTools)) {
     out.push(`allowed tools ${have.allowedTools.length} → ${want.allowedTools.length}`);
   }
   return out;
@@ -352,9 +357,41 @@ export function keyDrift(have: Omit<LiteLlmKeyState, 'tokenId'>, want: LiteLlmKe
 
 // ----------------------------------------------------------------- adapters ------
 
-export function makeLiveAdapters(deps: LiveDeps): BuildAdapter[] {
+/**
+ * The key a system SHOULD have, from its definition and the configured caps. The ONE place this is
+ * worked out: the Build's `litellm` step writes it, and the continuous reconcile compares the
+ * gateway's key against it (`key-reconcile.ts`), so the two can never disagree about "wanted".
+ */
+export function keyWanted(deps: Pick<LiveDeps, 'caps' | 'runModels' | 'fallbacks'>): (ctx: BuildContext) => Promise<LiteLlmKeyInput> {
   const caps = deps.caps ?? DEFAULT_KEY_CAPS;
+  return async (ctx) => {
+    const table = routingTableFor(ctx.system);
+    // What the definition routes to, what a run picks by ROLE (the plan step's reasoning model, the
+    // fast tools model), and every model the gateway may fall back to from any of those.
+    const models = withFallbackTargets([...new Set([...routedModels(ctx.system, table), ...(deps.runModels?.() ?? [])])], deps.fallbacks);
+    // Per-model hard cost cap for the pay-per-token STACKIT (qwen) routes only.
+    const modelMaxBudget: Record<string, number> = { ...caps.modelMaxBudget };
+    for (const m of models) {
+      if (/stackit|qwen/i.test(m) && modelMaxBudget[m] === undefined) modelMaxBudget[m] = 2;
+    }
+    const { all } = connectionTools(ctx.system);
+    return {
+      systemId: ctx.systemId ?? 'sys',
+      alias: principalFor(ctx.systemId ?? 'sys'),
+      models,
+      maxBudget: caps.maxBudget,
+      budgetDuration: caps.budgetDuration,
+      modelMaxBudget,
+      rpmLimit: caps.rpmLimit,
+      tpmLimit: caps.tpmLimit,
+      maxParallelRequests: caps.maxParallelRequests,
+      allowedTools: await grantVocabulary(ctx.system, all),
+    };
+  };
+}
 
+
+export function makeLiveAdapters(deps: LiveDeps): BuildAdapter[] {
   const opa: BuildAdapter = {
     tool: 'opa',
     async apply(ctx) {
@@ -385,31 +422,7 @@ export function makeLiveAdapters(deps: LiveDeps): BuildAdapter[] {
     },
   };
 
-  /** The key this system SHOULD have, from its definition and the configured caps. */
-  const desiredKey = async (ctx: BuildContext): Promise<LiteLlmKeyInput> => {
-    const table = routingTableFor(ctx.system);
-    // What the definition routes to, what a run picks by ROLE (the plan step's reasoning model, the
-    // fast tools model), and every model the gateway may fall back to from any of those.
-    const models = withFallbackTargets([...new Set([...routedModels(ctx.system, table), ...(deps.runModels?.() ?? [])])], deps.fallbacks);
-    // Per-model hard cost cap for the pay-per-token STACKIT (qwen) routes only.
-    const modelMaxBudget: Record<string, number> = { ...caps.modelMaxBudget };
-    for (const m of models) {
-      if (/stackit|qwen/i.test(m) && modelMaxBudget[m] === undefined) modelMaxBudget[m] = 2;
-    }
-    const { all } = connectionTools(ctx.system);
-    return {
-      systemId: ctx.systemId ?? 'sys',
-      alias: principalFor(ctx.systemId ?? 'sys'),
-      models,
-      maxBudget: caps.maxBudget,
-      budgetDuration: caps.budgetDuration,
-      modelMaxBudget,
-      rpmLimit: caps.rpmLimit,
-      tpmLimit: caps.tpmLimit,
-      maxParallelRequests: caps.maxParallelRequests,
-      allowedTools: await grantVocabulary(ctx.system, all),
-    };
-  };
+  const desiredKey = keyWanted(deps);
 
   const storedCaps = (want: LiteLlmKeyInput): SystemKeyCaps => ({
     models: [...want.models],

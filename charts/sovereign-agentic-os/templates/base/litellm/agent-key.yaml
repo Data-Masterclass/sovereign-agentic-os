@@ -5,16 +5,19 @@
   key API with the master key to register it, limited to the allowed models
   with a budget cap and rate limits.
 
-  RECONCILING, NOT CREATE-ONLY. The Job is idempotent in BOTH directions:
+  CREATE-ONLY BY DEFAULT (ownership). The shared key is the platform team's to tune in LiteLLM
+  (its budget, its models, its limits) — LiteLLM owns global budgets and rate limits. So the Job:
     - key missing  -> POST /key/generate with the full chart-derived properties
-    - key present  -> POST /key/update  with the SAME properties
-  It used to `exit 0` as soon as /key/info said the key existed, which froze
-  `models`, `max_budget`, `budget_duration`, `model_max_budget`, `rpm_limit`,
-  `tpm_limit` and `max_parallel_requests` at whatever the chart said on the day
-  the key was FIRST provisioned. A later edit to `litellmAgentKey.models` never
-  reached LiteLLM, and once the run path moved off the master key (Phase 3) the
-  stale allowlist surfaced as `key_model_access_denied` 403s. Now every run of
-  this Job re-asserts the chart values. `key_alias` is set at create time only.
+    - key present  -> compare the key with the chart values and REPORT the difference in the Job
+                      log (`[key-drift] ...`); it does NOT write. An edit made in LiteLLM survives
+                      `helm upgrade`.
+  `litellmAgentKey.reapplyOnUpgrade: true` is the explicit opt-in to the earlier behaviour: on every
+  run the key is brought to the chart values with POST /key/update (the SAME properties as the create
+  path). The earlier behaviour was the reconcile fix for a stale allowlist (a later edit to
+  `litellmAgentKey.models` never reached LiteLLM and surfaced as `key_model_access_denied` 403s once
+  the run path moved off the master key); with create-only a changed `models` list is reported as
+  drift and applied by `reapplyOnUpgrade` once, or by an admin in LiteLLM. `key_alias` is set at
+  create time only.
 
   ROOT-CAUSE FIX (hooks): this Job used to be a Helm post-install/post-upgrade
   *hook*. The live deploy is forced to run `helm ... --no-hooks` (the argo-cd
@@ -25,10 +28,11 @@
   LiteLLM readiness (the proxy only serves after its migration initContainer has
   created the schema), then registers or reconciles the key.
   `ttlSecondsAfterFinished` lets it self-clean so the next `helm upgrade` /
-  ArgoCD sync recreates and re-runs it — that re-run IS the reconcile.
+  ArgoCD sync recreates and re-runs it.
 
-  LOGGING: the Job prints the allowlist before and after the update so an
-  operator can confirm the reconcile in `kubectl logs`. It never prints the key
+  LOGGING: the Job prints each drifted field (chart value and live value) — or, with
+  `reapplyOnUpgrade`, the allowlist before and after the update — so an
+  operator can confirm it in `kubectl logs`. It never prints the key
   value, the master key, or the raw /key/info body (which carries the key).
 */}}
 {{- $k := .Values.litellmAgentKey }}
@@ -131,8 +135,9 @@ spec:
                 -H "Authorization: Bearer $MASTER_KEY" \
                 "$B/key/info?key=$VIRTUAL_KEY" || true)
               if [ "$info" = "200" ]; then
+{{- if $k.reapplyOnUpgrade }}
                 before=$(current_models || true)
-                echo "virtual key already provisioned; reconciling it to chart values (alias={{ $k.alias }}, budget={{ $k.maxBudget }}, rpm={{ $k.rpmLimit }}, tpm={{ $k.tpmLimit }})..."
+                echo "virtual key already provisioned; reconciling it to chart values (reapplyOnUpgrade; alias={{ $k.alias }}, budget={{ $k.maxBudget }}, rpm={{ $k.rpmLimit }}, tpm={{ $k.tpmLimit }})..."
                 echo "  models before: ${before:-<unreadable>}"
                 curl -fsS -X POST "$B/key/update" \
                   -H "Authorization: Bearer $MASTER_KEY" \
@@ -142,6 +147,34 @@ spec:
                 echo "  models after:  ${after:-<unreadable>}"
                 echo "virtual key reconciled"
                 exit 0
+{{- else }}
+                # EXISTS: the platform team owns this key's settings in LiteLLM. Compare with the chart
+                # values and REPORT; write nothing. (litellmAgentKey.reapplyOnUpgrade=true re-applies.)
+                # The /key/info body carries the key itself: it stays in a variable, only the named
+                # fields below are ever printed.
+                body=$(curl -sS -H "Authorization: Bearer $MASTER_KEY" "$B/key/info?key=$VIRTUAL_KEY" || true)
+                field() {
+                  printf '%s' "$body" | grep -Eo "\"$1\": *(\[[^]]*\]|\"[^\"]*\"|[^,}]*)" | head -n 1 \
+                    | sed -E 's/^"[a-z_]+": *//; s/^"//; s/"$//; s/\.0$//'
+                }
+                set_of() { printf '%s' "$1" | tr -d '[]" ' | tr ',' '\n' | sort | tr '\n' ' '; }
+                drift=0
+                compare() {
+                  if [ "$2" != "$3" ]; then echo "[key-drift] $1: chart=${2:-null} live=${3:-<unreadable>}"; drift=1; fi
+                }
+                compare models "$(set_of "$MODELS")" "$(set_of "$(field models)")"
+                compare max_budget "{{ $k.maxBudget }}" "$(field max_budget)"
+                compare budget_duration "{{ $k.budgetDuration | default "null" }}" "$(field budget_duration)"
+                compare rpm_limit "{{ $k.rpmLimit | int64 }}" "$(field rpm_limit)"
+                compare tpm_limit "{{ $k.tpmLimit | int64 }}" "$(field tpm_limit)"
+                compare max_parallel_requests "{{ $k.maxParallelRequests | int64 }}" "$(field max_parallel_requests)"
+                if [ "$drift" = "1" ]; then
+                  echo "virtual key (alias={{ $k.alias }}) exists and differs from the chart values; NOT overwritten (litellmAgentKey.reapplyOnUpgrade is false). Fix it in LiteLLM, change the chart values, or set reapplyOnUpgrade: true to re-apply on upgrade."
+                else
+                  echo "virtual key (alias={{ $k.alias }}) already provisioned and matches the chart values; nothing to do"
+                fi
+                exit 0
+{{- end }}
               fi
               echo "provisioning scoped virtual key (alias={{ $k.alias }}, budget={{ $k.maxBudget }}, rpm={{ $k.rpmLimit }}, tpm={{ $k.tpmLimit }})..."
               PAYLOAD='{"key":"'"$VIRTUAL_KEY"'","key_alias":"{{ $k.alias }}",'"$PROPS"'}'

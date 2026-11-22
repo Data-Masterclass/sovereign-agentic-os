@@ -16,6 +16,7 @@
  *       LiteLLM `/key/list`   → spend of alias os-<id>
  *       VictoriaLogs          → OPA decision log of principals os-<id>[:<node>]
  *       OS approvals store    → pending approvals of these systems the viewer may see (governance `canSee`)
+ *       key reconcile report  → drift of the system's gateway key (`core/infra/agent-key-drift.ts`), only the viewer's systems
  *   - A source that does not answer is `unavailable` with its reason; its per-system fields are
  *     absent (never zero).
  */
@@ -26,6 +27,7 @@ import { agentRunsPool, configuredAgentRunsDatabaseUrl } from '@core/adapters/po
 import { systemTraceStats, type SystemTraceStats } from '@core/adapters/langfuse/metrics';
 import { logsQuery } from '@core/adapters/victoria-logs/query';
 import { readAllKeys } from '@core/infra/litellm-admin';
+import { driftForSystems, lastKeyReconcile } from '@core/infra/agent-key-drift';
 import { traceUrlFor } from '@core/infra/langfuse';
 import { listApprovals, ensureHydrated as ensureApprovalsHydrated } from '@core/policy/approvals';
 import { canSee as canSeeApproval } from '@core/policy/roles';
@@ -49,6 +51,11 @@ export type AgentSystemPanel = {
   policy?: PolicyCounts | null;
   /** Absent when the approvals store could not be read (sources.approvals says why). */
   approvalsWaiting?: { id: string; title: string; tool: string; createdAt: string; node?: string }[];
+  /**
+   * How the system's key at the gateway differs from its definition (the continuous reconcile).
+   * `null` = compared and in sync (or never built); ABSENT = could not be compared (sources.keyReconcile says why).
+   */
+  keyDrift?: { kind: 'drift' | 'missing' | 'duplicate' | 'not-ours'; changes: string[]; since: string; action: 'alert' | 'corrected' | 'correction-failed' } | null;
 };
 
 export type AgentsView = {
@@ -56,7 +63,7 @@ export type AgentsView = {
   generatedAt: string;
   windowDays: number;
   runWindowDays: number;
-  sources: { inventory: SourceState; runStore: SourceState; langfuse: SourceState; litellm: SourceState; opaDecisionLog: SourceState; approvals: SourceState };
+  sources: { inventory: SourceState; runStore: SourceState; langfuse: SourceState; litellm: SourceState; opaDecisionLog: SourceState; approvals: SourceState; keyReconcile: SourceState };
   links: { langfuse?: string };
   systems: AgentSystemPanel[];
   notUpstream: NotUpstream[];
@@ -112,6 +119,16 @@ export async function agentsView(user: CurrentUser, nowMs = Date.now()): Promise
   );
   const pending = approvals.ok ? approvals.pending : [];
 
+  // The continuous key reconcile's last pass, narrowed to the viewer's systems. No pass yet, or a
+  // pass that could not read the gateway, is "unavailable" — never "no drift".
+  const reconcile = lastKeyReconcile();
+  const driftState: SourceState = !reconcile
+    ? unavailable('the key reconcile has not run in this process yet (it runs on a timer after boot)')
+    : !reconcile.ok
+      ? unavailable(`key reconcile: ${reconcile.error ?? 'the last pass could not read every key'}`)
+      : live;
+  const drift = reconcile?.ok ? new Map(driftForSystems(reconcile, ids).map((e) => [e.systemId, e])) : null;
+
   const systems: AgentSystemPanel[] = [];
   for (const r of rows) {
     const s = 'data' in runs ? runs.data?.get(r.id) : undefined;
@@ -133,6 +150,9 @@ export async function agentsView(user: CurrentUser, nowMs = Date.now()): Promise
       ...(traces.ok ? { traces: traces.value.get(r.id) ?? null } : {}),
       ...(spend ? { keySpendUsd: spend.has(r.id) ? spend.get(r.id)! : null } : {}),
       ...(policy ? { policy: policy.get(r.id) ?? null } : {}),
+      ...(drift
+        ? { keyDrift: drift.has(r.id) ? { kind: drift.get(r.id)!.kind, changes: drift.get(r.id)!.changes, since: new Date(drift.get(r.id)!.firstSeenAt).toISOString(), action: drift.get(r.id)!.action } : null }
+        : {}),
       ...(approvals.ok
         ? { approvalsWaiting: pending.filter((a) => a.systemId === r.id).map((a) => ({ id: a.id, title: a.title, tool: a.tool, createdAt: a.createdAt, ...(a.node ? { node: a.node } : {}) })) }
         : {}),
@@ -144,7 +164,7 @@ export async function agentsView(user: CurrentUser, nowMs = Date.now()): Promise
     generatedAt: now.toISOString(),
     windowDays: AGENT_WINDOW_DAYS,
     runWindowDays: RUN_WINDOW_DAYS,
-    sources: { inventory: listed.ok ? live : unavailable(`agent systems: ${listed.error}`), runStore: runs.state, langfuse: traceState, litellm: keyState, opaDecisionLog: opaState, approvals: approvals.ok ? live : unavailable(`approvals: ${approvals.error}`) },
+    sources: { inventory: listed.ok ? live : unavailable(`agent systems: ${listed.error}`), runStore: runs.state, langfuse: traceState, litellm: keyState, opaDecisionLog: opaState, approvals: approvals.ok ? live : unavailable(`approvals: ${approvals.error}`), keyReconcile: driftState },
     links: config.langfuseConsoleUrl ? { langfuse: config.langfuseConsoleUrl } : {},
     systems,
     notUpstream: NOT_UPSTREAM,

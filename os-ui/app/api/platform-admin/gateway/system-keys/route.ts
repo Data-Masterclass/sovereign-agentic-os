@@ -2,7 +2,8 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  *
  * FEATURE:    The per-system model keys, for admins: which systems have a usable key, when the
- *             legacy-key sweep last ran and what it removed; run the sweep; rotate one key.
+ *             legacy-key sweep last ran and what it removed; run the sweep; rotate one key; the
+ *             continuous reconcile's drift report, and "re-apply from the OS" for one system.
  *
  * USER STORY: As a platform admin I see which agent systems still need a Build before they can
  *             run, I can remove guessable keys from the gateway on demand, and I can replace one
@@ -22,10 +23,13 @@ import { NextResponse } from 'next/server';
 import { adminCtx, fail } from '../../_ctx';
 import { authorize } from '@core/infra/governed';
 import { lastKeySweep } from '@core/infra/agent-system-key-sweep';
+import { lastKeyReconcile } from '@core/infra/agent-key-drift';
+import { config } from '@core/kernel/config';
 import { lastKeyMigration, migrateThenSweepLive } from '@tabs/agents/lib/build/system-key-migration';
 import { ensureHydrated, getSystemForEdit, listAllSystemsInternal } from '@tabs/agents/lib/store';
 import { governYamlForOwner } from '@tabs/agents/lib/build/owner-grants';
-import { listSystemKeyRows, rotateSystemKey } from '@tabs/agents/lib/build/system-key-admin';
+import { listSystemKeyRows, reapplySystemKey, rotateSystemKey } from '@tabs/agents/lib/build/system-key-admin';
+import { parseAutoCorrect, reconcileKeysLive } from '@tabs/agents/lib/build/key-reconcile';
 
 export const dynamic = 'force-dynamic';
 
@@ -37,7 +41,16 @@ export async function GET() {
     return fail(e);
   }
   const systems = await listSystemKeyRows(listAllSystemsInternal().map((s) => ({ id: s.id, name: s.name })));
-  return NextResponse.json({ systems, sweep: lastKeySweep(), migration: lastKeyMigration() });
+  const auto = parseAutoCorrect(config.agentKeyReconcile.autoCorrectSystems);
+  return NextResponse.json({
+    systems,
+    sweep: lastKeySweep(),
+    migration: lastKeyMigration(),
+    // The continuous reconcile: its last pass (null before the first) and how it is set — read-only here;
+    // auto-correct is a deployment value (`osUI.agentSystemKey.reconcile.autoCorrectSystems`), per system.
+    reconcile: lastKeyReconcile(),
+    reconcileMode: { intervalSeconds: config.agentKeyReconcile.intervalSeconds, autoCorrect: auto === 'all' ? 'all' : [...auto].sort() },
+  });
 }
 
 export async function POST(req: Request) {
@@ -54,7 +67,7 @@ export async function POST(req: Request) {
   try {
     body = (await req.json()) as { action?: unknown; systemId?: unknown };
   } catch {
-    return NextResponse.json({ error: 'the body must be JSON: {"action":"sweep"} or {"action":"rotate","systemId":"…"}' }, { status: 400 });
+    return NextResponse.json({ error: 'the body must be JSON: {"action":"sweep"}, {"action":"rotate","systemId":"…"} or {"action":"reapply","systemId":"…"}' }, { status: 400 });
   }
   if (body.action === 'sweep') {
     const { migration, sweep } = await migrateThenSweepLive();
@@ -71,5 +84,19 @@ export async function POST(req: Request) {
       return fail(e);
     }
   }
-  return NextResponse.json({ error: 'unknown action — use "sweep" or "rotate"' }, { status: 400 });
+  if (body.action === 'reapply') {
+    const systemId = typeof body.systemId === 'string' ? body.systemId.trim() : '';
+    if (!systemId) return NextResponse.json({ error: 'reapply needs a systemId' }, { status: 400 });
+    try {
+      const view = getSystemForEdit(systemId, ctx.user);
+      const drift = lastKeyReconcile()?.entries.find((e) => e.systemId === systemId);
+      const outcome = await reapplySystemKey(systemId, await governYamlForOwner(view.yaml, view.owner), { actor: ctx.user.id, domain: view.domain, ...(drift ? { drift } : {}) });
+      // Refresh the report so the alert clears (or stays, with the reason) without waiting for the timer.
+      const reconcile = outcome.ok ? await reconcileKeysLive().catch(() => lastKeyReconcile()) : lastKeyReconcile();
+      return NextResponse.json({ ...outcome, reconcile, by: ctx.user.id }, { status: outcome.ok ? 200 : 502 });
+    } catch (e) {
+      return fail(e);
+    }
+  }
+  return NextResponse.json({ error: 'unknown action — use "sweep", "rotate" or "reapply"' }, { status: 400 });
 }

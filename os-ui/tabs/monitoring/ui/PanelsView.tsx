@@ -106,6 +106,13 @@ function AgentCard({ s, v }: { s: AgentSystemPanel; v: AgentsView }) {
           {v.links.langfuse && <a className="mon-xlink" href={`${v.links.langfuse}`} target="_blank" rel="noreferrer">Langfuse ↗</a>}
         </span>
       </div>
+      {s.keyDrift && (
+        <p className={`hint ${s.keyDrift.action === 'corrected' ? '' : 'err'}`} role="alert" style={{ margin: '6px 0 0' }}>
+          <b>Model key {s.keyDrift.action === 'corrected' ? 'was out of line and has been put back' : 'differs from this system\'s definition'}</b> (since {ago(s.keyDrift.since)}): {s.keyDrift.changes.join('; ')}.{' '}
+          {s.keyDrift.action === 'alert' && 'Someone changed it in the gateway; an admin can re-apply it from Admin → Gateway.'}
+          {s.keyDrift.action === 'correction-failed' && 'Automatic correction failed; see Admin → Gateway.'}
+        </p>
+      )}
       {runs ? <RunBars days={runs.days} windowDays={v.runWindowDays} /> : <p className="hint">Runs: —</p>}
       <div className="mon-stats" style={{ marginTop: 10 }}>
         <Stat label={`runs ok (${v.runWindowDays}d)`} value={totals ? String(totals.done) : '—'} />

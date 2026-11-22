@@ -702,6 +702,19 @@
 - name: AGENT_SYSTEM_KEY_MAX_PARALLEL_REQUESTS
   value: {{ .maxParallelRequests | int64 | quote }}
 {{- end }}
+{{- /* THE CONTINUOUS KEY RECONCILE (os-ui/core/kernel/config.ts `agentKeyReconcile`). 0 = off, so the
+     interval is rendered whenever the key is present (`hasKey`, not truthiness). The auto-correct
+     list is rendered only when non-empty: absent = alert only. */}}
+{{- with .reconcile }}
+{{- if hasKey . "intervalSeconds" }}
+- name: AGENT_KEY_RECONCILE_INTERVAL_SECONDS
+  value: {{ .intervalSeconds | int64 | quote }}
+{{- end }}
+{{- if .autoCorrectSystems }}
+- name: AGENT_KEY_RECONCILE_AUTOCORRECT_SYSTEMS
+  value: {{ join "," .autoCorrectSystems | quote }}
+{{- end }}
+{{- end }}
 {{- end }}
 {{- /* THE GATEWAY'S FALLBACKS, for the per-system key's model allowlist. LiteLLM authorises a key
      against the model it falls back TO, so a system key without the fallback target answers 403
