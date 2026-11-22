@@ -44,6 +44,8 @@ export const READ_TOOLS: readonly string[] = [
   'list_datasets', 'list_files', 'list_knowledge', 'list_metrics', 'list_operating_manual_versions',
   'list_runs', 'list_software', 'profile_dataset', 'query_data', 'query_metric', 'read_app_files',
   'search_files', 'search_knowledge', 'whoami',
+  // The caller's own Home chat conversations (scoped by user id inside the store).
+  'list_conversations', 'get_conversation',
   // Persist nothing, but are not free: each spends reasoning-model budget and returns a candidate
   // or a directive. `generate_app_spec` returns an unsaved AppSpec (`set_app_spec` publishes it);
   // `verify_software` returns the test directive and normalises findings it does not store.

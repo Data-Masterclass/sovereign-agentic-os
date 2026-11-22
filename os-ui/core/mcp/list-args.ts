@@ -172,4 +172,5 @@ export const LIST_TOOLS_WITHOUT_LIFECYCLE: Readonly<Record<string, string>> = {
   list_exposed_tables: 'upstream tables, discovered rather than authored',
   list_adoptable_actions: 'upstream actions, discovered rather than authored',
   list_files: 'a file has no versioned definition to pin — it IS its bytes',
+  list_conversations: 'a chat conversation is not a versioned artifact; it has no draft or live state',
 };

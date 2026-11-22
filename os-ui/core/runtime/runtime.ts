@@ -26,6 +26,7 @@ import {
 import { ungatedInteractive } from '@core/runtime/confirm-gate';
 import { ensureAssistantModelFresh, resolveAssistantModelId } from '@core/runtime/complete';
 import { gatewayTraceHeaders } from '@core/runtime/gateway-trace';
+import { assembleStream } from '@core/runtime/llm-stream';
 import { inputBudget, modelContext } from '@core/models/context-windows';
 
 /**
@@ -224,9 +225,20 @@ export function liteLlmCaller(caller?: CallerContext): LlmCall {
       if (req.observe.node) metadata.node = req.observe.node;
     }
     const trace = gatewayTraceHeaders(req.observe);
+    // Streaming: the same request with `stream: true`; the body is read as events by
+    // `assembleStream` and ends in the same completion. Errors still arrive as a normal JSON body.
+    const streaming = typeof req.onToken === 'function';
+    if (streaming) {
+      body.stream = true;
+      body.stream_options = { include_usage: true };
+    }
     const send = async (apiKey: string): Promise<{ res: Response; text: string }> => {
       const ctrl = new AbortController();
       const timer = setTimeout(() => ctrl.abort(), LLM_TIMEOUT_MS);
+      if (req.signal) {
+        if (req.signal.aborted) ctrl.abort();
+        else req.signal.addEventListener('abort', () => ctrl.abort(), { once: true });
+      }
       try {
         const r = await fetch(`${config.litellmUrl}/v1/chat/completions`, {
           method: 'POST',
@@ -240,7 +252,7 @@ export function liteLlmCaller(caller?: CallerContext): LlmCall {
           cache: 'no-store',
           signal: ctrl.signal,
         });
-        return { res: r, text: await r.text() };
+        return { res: r, text: streaming && r.ok ? '' : await r.text() };
       } finally {
         clearTimeout(timer);
       }
@@ -279,6 +291,11 @@ export function liteLlmCaller(caller?: CallerContext): LlmCall {
       // A rate-limit 429 keeps its message and gains the gateway's Retry-After (agent engine waits on it).
       if (res.status === 429) throw new GatewayRateLimitedError(text, res.headers.get('retry-after'));
       throw new Error(`LiteLLM ${res.status}: ${text.slice(0, 300)}`);
+    }
+
+    if (streaming && res.body) {
+      const streamed = await assembleStream(res.body, req.onToken);
+      return { ...streamed, gatewayCallId: trace.callId };
     }
 
     let data: Record<string, unknown> = {};

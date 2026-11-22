@@ -10,6 +10,7 @@ import { governanceBaseTools } from '@core/mcp/governance-tools';
 import { discoveryBaseTools } from '@core/mcp/discovery-base-tools';
 import { GIT_TOOLS } from '@core/mcp/git-tools';
 import { lifecycleTools } from '@core/mcp/lifecycle-tools';
+import { CONVERSATION_TOOLS } from '@core/mcp/conversation-tools';
 
 /**
  * Base bundles — always on, no flag. server.ts imports this for its side
@@ -32,3 +33,5 @@ registerToolBundle({ name: 'git', tools: GIT_TOOLS });
 // Lifecycle (night 2, stream V): go_live + retire. Always on — "which version runs" is not a
 // feature flag, and the migration marks every existing object Live so day one is unchanged.
 registerToolBundle({ name: 'lifecycle', tools: lifecycleTools });
+// Home chat history: the caller's own conversations, read-only.
+registerToolBundle({ name: 'conversations', tools: CONVERSATION_TOOLS });
