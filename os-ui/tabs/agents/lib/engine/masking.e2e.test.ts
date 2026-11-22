@@ -31,6 +31,7 @@ process.env.LANGFUSE_PUBLIC_KEY = 'pk-lf-e2e-public';
 process.env.LANGFUSE_SECRET_KEY = 'sk-lf-e2e-secret';
 process.env.LITELLM_URL = LITELLM;
 const { __setMaskingForTests } = await import('@core/infra/masking-policy');
+const { _reset: restartSettings } = await import('@tabs/admin/lib/settings');
 const { parseSystem } = await import('@tabs/agents/lib/system-schema');
 const { compile } = await import('@tabs/agents/lib/langgraph-compile');
 const { runGraphEngine } = await import('@tabs/agents/lib/engine/run');
@@ -41,8 +42,10 @@ const kit = { parseSystem, compile, runGraphEngine, memoryCheckpointer, shapeYam
 const { shapeTraceMetrics } = await import('@tabs/agents/lib/build/run-diagnostics');
 
 type Level = 'pii' | 'content';
-async function runWith(masking: { enabled: boolean; level: Level }) {
-  __setMaskingForTests(masking);
+async function runWith(masking: { enabled: boolean; level: Level } | 'restarted') {
+  // 'restarted': a fresh process whose settings were never read and whose store cannot be read
+  // (this stack has no settings store) - the switch is UNKNOWN, which must mask like "all content".
+  if (masking === 'restarted') restartSettings(); else __setMaskingForTests(masking);
   const stub = await startStubModel(scriptedLlm(SEEDED_TASK));
   try {
     const before = forwarder!.recorded.length;
@@ -110,4 +113,18 @@ test('the gateway of the chart (message logging off) records no content in any m
   for (const g of off.trace.observations.filter((o) => o.type === 'GENERATION')) {
     assert.ok(!contains(JSON.stringify(g), SEED.email), 'the gateway generation holds no prompt text even with masking off');
   }
+});
+
+test('RESTART BEFORE HYDRATION (settings never read, store unreachable): the real Langfuse receives no seeded text at all - the strictest level applies', { skip }, async () => {
+  const r = await runWith('restarted');
+  const stored = JSON.stringify(r.trace);
+  assert.ok(r.payloadParts > 0 && r.payload.includes('run.result'), 'the capture holds the run\'s ingestion payload');
+  for (const v of [SEED.email, SEED.iban, SEED.phone, SEED.phrase, 'Keller', 'FINAL(']) {
+    assert.ok(!contains(r.payload, v), `${v} must not be in the ingestion payload`);
+    assert.ok(!contains(stored, v), `${v} must not be in the stored trace`);
+  }
+  assert.ok(r.trace.observations.some((o) => o.type === 'TOOL' && o.name.startsWith('tool.')), 'the structure (tool names) is still there');
+  // NEGATIVE TWIN: once the switch is known to be OFF, the same stack carries the seeded text again.
+  const off = await runWith({ enabled: false, level: 'pii' });
+  assert.ok(contains(JSON.stringify(off.trace), SEED.email), 'a run that is not masked would have shown it');
 });

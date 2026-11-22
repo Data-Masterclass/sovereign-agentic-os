@@ -22,12 +22,13 @@ mock.module('@/app/api/platform-admin/_ctx', {
     fail: (e: unknown) => new Response(JSON.stringify({ error: (e as Error).message }), { status: (e as { status?: number })?.status ?? 500, headers: { 'content-type': 'application/json' } }),
   },
 });
-mock.module('@tabs/admin/lib/audit', { namedExports: { audit: (e: { action: string; detail: string; actor: string }) => { AUDIT.push(e); } } });
+let AUDIT_FAILS = false;
+mock.module('@tabs/admin/lib/audit', { namedExports: { audit: (e: { action: string; detail: string; actor: string }) => { if (AUDIT_FAILS) throw new Error('audit store down'); AUDIT.push(e); } } });
 
 const { PATCH, GET } = await import('@/app/api/platform-admin/settings/route');
 const { _reset, getSettings } = await import('@tabs/admin/lib/settings');
 
-beforeEach(() => { _reset(); ROLE = 'admin'; AUDIT.length = 0; });
+beforeEach(() => { _reset(); ROLE = 'admin'; AUDIT.length = 0; AUDIT_FAILS = false; });
 const patch = (body: unknown) => PATCH(new Request('http://x/api/platform-admin/settings', { method: 'PATCH', body: JSON.stringify(body) }));
 
 test('a non-admin cannot switch masking: 403 and the setting is unchanged', async () => {
@@ -61,4 +62,47 @@ test('switching it off is audited too; an invalid level is ignored', async () =>
 test('an unrelated settings patch writes no masking audit row', async () => {
   await patch({ currency: 'CHF' });
   assert.equal(AUDIT.filter((a) => a.action === 'settings.langfuse-masking').length, 0);
+});
+
+// ------------------------------------------------------ 403 and consistency --
+
+test('non-admin 403 on every verb of the route, for the masking field and for any other field; nothing is written or audited', async () => {
+  ROLE = 'creator';
+  const get = await GET();
+  assert.equal(get.status, 403, 'a non-admin cannot even read the settings');
+  const other = await patch({ currency: 'CHF' });
+  assert.equal(other.status, 403);
+  assert.equal(getSettings().currency, 'EUR');
+  const masking = await patch({ langfuseMasking: { enabled: false, level: 'pii' } });
+  assert.equal(masking.status, 403);
+  assert.equal(AUDIT.length, 0);
+  // NEGATIVE TWIN: the same requests as an admin succeed.
+  ROLE = 'admin';
+  assert.equal((await GET()).status, 200);
+  assert.equal((await patch({ currency: 'CHF' })).status, 200);
+});
+
+test('CONSISTENCY: when the audit row cannot be written the settings write is undone - both fail', async () => {
+  AUDIT_FAILS = true;
+  const res = await patch({ langfuseMasking: { enabled: true, level: 'content' } });
+  assert.equal(res.status, 500);
+  assert.deepEqual(getSettings().langfuseMasking, { enabled: false, level: 'pii' }, 'the switch did not change');
+  assert.equal(AUDIT.length, 0);
+  // A non-masking field is held to the same rule.
+  const other = await patch({ currency: 'CHF' });
+  assert.equal(other.status, 500);
+  assert.equal(getSettings().currency, 'EUR');
+  // NEGATIVE TWIN: with the audit store up, both succeed together.
+  AUDIT_FAILS = false;
+  const ok = await patch({ langfuseMasking: { enabled: true, level: 'content' } });
+  assert.equal(ok.status, 200);
+  assert.deepEqual(getSettings().langfuseMasking, { enabled: true, level: 'content' });
+  assert.ok(AUDIT.some((a) => a.action === 'settings.langfuse-masking'));
+});
+
+test('CONSISTENCY: when the settings write is refused, no audit row says it happened', async () => {
+  const res = await patch({ langfuseMasking: { enabled: true, level: 'content' }, ssoClientSecret: 'x' });
+  assert.equal(res.status, 400);
+  assert.deepEqual(getSettings().langfuseMasking, { enabled: false, level: 'pii' });
+  assert.equal(AUDIT.length, 0);
 });

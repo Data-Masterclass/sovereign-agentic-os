@@ -31,6 +31,7 @@ process.env.LANGFUSE_PUBLIC_KEY = 'pk-lf-e2e-public';
 process.env.LANGFUSE_SECRET_KEY = 'sk-lf-e2e-secret';
 process.env.LITELLM_URL = LITELLM_CONTENT;
 const { __setMaskingForTests } = await import('@core/infra/masking-policy');
+const { _reset: restartSettings } = await import('@tabs/admin/lib/settings');
 const { parseSystem } = await import('@tabs/agents/lib/system-schema');
 const { compile } = await import('@tabs/agents/lib/langgraph-compile');
 const { runGraphEngine } = await import('@tabs/agents/lib/engine/run');
@@ -39,8 +40,8 @@ const { SHAPE_SINGLE_READ_YAML, graphDeps, scriptedLlm } = await import('@tabs/a
 const { liteLlmCaller } = await import('@core/runtime/runtime');
 const kit = { parseSystem, compile, runGraphEngine, memoryCheckpointer, shapeYaml: SHAPE_SINGLE_READ_YAML, graphDeps, liteLlmCaller } as unknown as RunKit;
 
-async function gatewayGenerations(masking: { enabled: boolean; level: 'pii' | 'content' }) {
-  __setMaskingForTests(masking);
+async function gatewayGenerations(masking: { enabled: boolean; level: 'pii' | 'content' } | 'restarted') {
+  if (masking === 'restarted') restartSettings(); else __setMaskingForTests(masking);
   const stub = await startStubModel(scriptedLlm(SEEDED_TASK));
   try {
     const { result, traceId } = await tracedRun(`run_${randomUUID()}`, kit);
@@ -75,4 +76,15 @@ test('GATEWAY: the switch applies to the very next call — OFF again, the e-mai
   await gatewayGenerations({ enabled: true, level: 'pii' });
   const { gens } = await gatewayGenerations({ enabled: false, level: 'pii' });
   assert.ok(gens.some((g) => contains(JSON.stringify(g.input ?? null), SEED.email)));
+});
+
+test('GATEWAY, RESTART BEFORE HYDRATION (settings never read, store unreachable): the call is redacted at the gateway - no prompt or completion in any generation', { skip }, async () => {
+  const { gens, calls } = await gatewayGenerations('restarted');
+  assert.equal(gens.length, calls);
+  for (const g of gens) {
+    const text = JSON.stringify({ input: g.input ?? null, output: g.output ?? null });
+    for (const v of [SEED.email, SEED.iban, SEED.phone, SEED.phrase]) assert.ok(!contains(text, v), `${v} must not be in the gateway's generation`);
+    assert.ok(g.model && g.usage?.total === 15, 'model and usage remain');
+  }
+  // NEGATIVE TWIN: the first test of this file (masking known OFF) shows the same gateway DOES record the e-mail.
 });
