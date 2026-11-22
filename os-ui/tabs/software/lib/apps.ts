@@ -1869,6 +1869,14 @@ export async function createApp(
   writeNewApp(app);
   // The scaffold IS the first commit: seed the durable source tree (code apps only).
   if (seedFiles.length > 0) snapshotFiles(app.id, seedFiles);
+  // SOFTWARE FACTORY (git-native): a golden-path app's scaffold is committed to `apps/<slug>/` of the
+  // domain repository AT CREATE, authored as the creator, so a developer can clone it from VS Code
+  // straight away. Other templates keep their first commit at the first deploy request (unchanged).
+  // A refusal is logged by commitAppTree and the cache copy remains; the deploy request pins it later.
+  if (isGoldenPath(tpl.key) && seedFiles.length > 0) {
+    const { commitAppTree } = await import('@tabs/software/lib/git-commit');
+    await commitAppTree(app, user, seedFiles, { action: 'create_software', reason: `seed from template ${tpl.key}` });
+  }
 
   // 5. Audit the creation through the same Langfuse spine the agents use.
   void trace({

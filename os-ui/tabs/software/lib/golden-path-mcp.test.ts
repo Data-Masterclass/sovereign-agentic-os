@@ -81,3 +81,14 @@ test('runAppTests refuses an app that is not from a golden path (409)', async ()
   const app = await createApp(alice, { name: 'Plain Desk', template: 'nextjs-supabase' });
   await assert.rejects(runAppTests(app.id, alice, { gates: async () => pass }), (e: Error & { status?: number }) => e.status === 409);
 });
+
+test('GIT-NATIVE: create_software with the template writes it into apps/<slug>/ as a commit by the creator', async () => {
+  const { readAppTreeState } = await import('./git-commit.ts');
+  const app = (await callPlatformMcp(alice, 'create_software', { name: 'Git Desk', template: 'nextjs-web', kind: 'code' })) as { id: string; slug: string; domain: string };
+  const state = await readAppTreeState(app);
+  assert.equal(state.kind, 'tree', 'the scaffold is in git right after create, not only in the cache');
+  if (state.kind !== 'tree') return;
+  assert.match(state.sha, /^[0-9a-f]{40}$/);
+  const paths = state.files.map((f) => f.path);
+  for (const p of ['AGENTS.md', 'CLAUDE.md', 'README.md', 'package.json', 'Dockerfile', 'k8s/deployment.yaml', 'src/lib/os/index.ts']) assert.ok(paths.includes(p), `missing ${p}`);
+});
