@@ -234,8 +234,19 @@ echo "$out" | grep -q "after sales__ds_shop0001 STOPPED" && ok "paused-in-Dagste
 # Ownership rule: a quality rule is a dbt test; the schedule's own job evaluates it as a Dagster asset
 # check, and Dagster's check execution is the result (status, failed row count, time). Nothing here
 # is an OS evaluator.
+# The repo's schedules run hourly and default to RUNNING, so the daemon in `dagster dev` can launch a run of its own at
+# hh:00 while this proof drives its runs; that run's check results land later than the latest materialization. Read only
+# once Dagster reports no run in progress (its own runs query), so the read is of a finished run, never of a half-done one.
 checks() { ej "python3 - <<'PY'
-import json, urllib.request
+import json, time, urllib.request
+def gql(query):
+    return json.load(urllib.request.urlopen(urllib.request.Request('http://127.0.0.1:3070/graphql', json.dumps({'query': query}).encode(), {'content-type': 'application/json'}), timeout=30))
+busy = '{ runsOrError(filter: {statuses: [QUEUED, NOT_STARTED, STARTING, STARTED, CANCELING]}) { ... on Runs { results { runId } } } }'
+for _ in range(90):
+    if not gql(busy)['data']['runsOrError']['results']: break
+    time.sleep(2)
+else:
+    raise SystemExit('a Dagster run is still in progress after 180 s')
 q = '{ assetNodes { assetKey { path } assetChecksOrError { __typename ... on AssetChecks { checks { name executionForLatestMaterialization { status timestamp evaluation { severity metadataEntries { label ... on IntMetadataEntry { intValue } } } } } } } } }'
 r = json.load(urllib.request.urlopen(urllib.request.Request('http://127.0.0.1:3070/graphql', json.dumps({'query': q}).encode(), {'content-type': 'application/json'}), timeout=30))
 json.dump(r, open('/repo/dq-$1.json', 'w'))
