@@ -151,3 +151,27 @@ export function jobHealthOf(runs: readonly DagsterRun[], datasetIds: readonly st
   for (const [ds, j] of jobs) out.set(ds, { datasetId: ds, jobs: [...j.values()], schedules: [...(schedules.get(ds)?.values() ?? [])] });
   return out;
 }
+
+export type AlertRunHealth = { ruleId: string; runs: number; failures: number; lastStatus: string; lastRunAt: string | null; lastFailureRunId: string | null };
+
+/**
+ * Evaluation history of committed alerts, from Dagster: each evaluation is a run of the alert's job,
+ * tagged `os/alert=<rule id>` (alert-eval-metricflow.ts). A FAILED run is MetricFlow (or Dagster) failing
+ * to produce the number — the real metric query error. Only the asked rule ids are kept; runs arrive newest first.
+ */
+export function alertRunHealthOf(runs: readonly DagsterRun[], ruleIds: readonly string[]): Map<string, AlertRunHealth> {
+  const asked = new Set(ruleIds);
+  const out = new Map<string, AlertRunHealth>();
+  for (const r of runs) {
+    const id = r.tags['os/alert'];
+    if (!id || !asked.has(id)) continue;
+    let h = out.get(id);
+    if (!h) out.set(id, (h = { ruleId: id, runs: 0, failures: 0, lastStatus: r.status, lastRunAt: r.startedAt, lastFailureRunId: null }));
+    h.runs += 1;
+    if (r.status === 'FAILURE') {
+      h.failures += 1;
+      h.lastFailureRunId ??= r.runId;
+    }
+  }
+  return out;
+}

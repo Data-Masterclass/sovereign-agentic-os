@@ -157,7 +157,7 @@ export default function MonitoringPage() {
   const view: PanelKind = picked === 'platform' && !canSeeSpend ? 'agents' : picked;
   useEffect(() => {
     const v = getUrlParam('view');
-    if (v === 'agents' || v === 'data' || v === 'platform' || v === 'files' || v === 'knowledge') setView(v);
+    if (v === 'agents' || v === 'data' || v === 'platform' || v === 'files' || v === 'knowledge' || v === 'kpis' || v === 'dashboards') setView(v);
   }, []);
   const pickView = useCallback((v: PanelKind) => {
     setView(v);
@@ -232,6 +232,8 @@ export default function MonitoringPage() {
           <button type="button" role="tab" aria-selected={view === 'data'} className={view === 'data' ? 'on' : ''} onClick={() => pickView('data')}>Data</button>
           <button type="button" role="tab" aria-selected={view === 'files'} className={view === 'files' ? 'on' : ''} onClick={() => pickView('files')}>Files</button>
           <button type="button" role="tab" aria-selected={view === 'knowledge'} className={view === 'knowledge' ? 'on' : ''} onClick={() => pickView('knowledge')}>Knowledge</button>
+          <button type="button" role="tab" aria-selected={view === 'kpis'} className={view === 'kpis' ? 'on' : ''} onClick={() => pickView('kpis')}>KPIs</button>
+          <button type="button" role="tab" aria-selected={view === 'dashboards'} className={view === 'dashboards' ? 'on' : ''} onClick={() => pickView('dashboards')}>Dashboards</button>
           {canSeeSpend && <button type="button" role="tab" aria-selected={view === 'platform'} className={view === 'platform' ? 'on' : ''} onClick={() => pickView('platform')}>Platform</button>}
         </div>
 
@@ -285,6 +287,8 @@ export default function MonitoringPage() {
         )}
         {view === 'files' && <PanelsView kind="files" />}
         {view === 'knowledge' && <PanelsView kind="knowledge" />}
+        {view === 'kpis' && <PanelsView kind="kpis" />}
+        {view === 'dashboards' && <PanelsView kind="dashboards" />}
         {canSeeSpend && view === 'platform' && (
           <>
             <PanelsView kind="platform" />
