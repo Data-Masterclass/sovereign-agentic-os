@@ -26,7 +26,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile, execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { createServer, type Server } from 'node:http';
-import { mkdtempSync, readFileSync, writeFileSync, rmSync, appendFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, chmodSync, readFileSync, writeFileSync, rmSync, appendFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -332,6 +332,34 @@ test('"Run checks" (the button) on a finished head starts a new attempt for the 
   const runs = runsOf(SLUG, green.sha);
   assert.equal(runs.length, 2);
   assert.ok(runs.some((x) => x.metadata.labels['soa.dev/trigger'] === 'button'));
+});
+
+test('NEGATIVE a forged toolchain: a lockfile that maps typescript to a package whose tsc exits 0 does not turn the type check green', { skip, timeout: 1_500_000 }, async () => {
+  const app = join(clone, 'apps', SLUG);
+  const { sha, out } = await pushChange(clone, () => {
+    // The author ships their own `typescript`: a local package whose `tsc` always succeeds, wired through package.json and the lockfile.
+    mkdirSync(join(app, 'fake-ts', 'bin'), { recursive: true });
+    writeFileSync(join(app, 'fake-ts', 'package.json'), JSON.stringify({ name: 'typescript', version: '5.9.3', bin: { tsc: 'bin/tsc' } }));
+    writeFileSync(join(app, 'fake-ts', 'bin', 'tsc'), '#!/usr/bin/env node\nprocess.exit(0);\n');
+    chmodSync(join(app, 'fake-ts', 'bin', 'tsc'), 0o755);
+    const pkgPath = join(app, 'package.json');
+    const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'));
+    pkg.devDependencies.typescript = 'file:./fake-ts';
+    writeFileSync(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`);
+    execFileSync('npm', ['install', '--package-lock-only', '--ignore-scripts', '--no-audit', '--no-fund'], { cwd: app, stdio: 'pipe' });
+    writeFileSync(join(app, 'src', 'lib', 'forged-type-error.ts'), "export const n: number = 'not a number';\n");
+    execFileSync('git', ['-C', clone, 'add', 'apps/' + SLUG]);
+  }, 'chore: ship my own typescript');
+  assert.match(out, /quality checks started/, `git said:\n${out}`);
+  const rec = await waitRecord(SLUG, sha);
+  const byId = Object.fromEntries(rec.checks.map((c) => [c.id, c]));
+  assert.equal(byId.typecheck.status, 'fail', `the platform's own tsc judged it: ${JSON.stringify(rec.checks.map((c) => [c.id, c.status]))}`);
+  assert.match(byId.typecheck.detail, /TS2322/, 'the real tsc reported the real type error');
+  assert.equal(recordVerdict(rec, sha).green, false);
+  // The pod ran the platform's toolchain installed by its own step, from the chart's lockfile.
+  const gatesPod = kjson<{ items: { metadata: { name: string } }[] }>(['-n', NS, 'get', 'pod', '-l', `tekton.dev/pipelineRun=${rec.runRef},tekton.dev/pipelineTask=gates`]).items[0].metadata.name;
+  const tcLog = (await run('kubectl', ['--kubeconfig', KUBECONFIG, '-n', NS, 'logs', gatesPod, '-c', 'step-toolchain'], { maxBuffer: 8 * 1024 * 1024 })).stdout;
+  assert.match(tcLog, /added \d+ packages/);
 });
 
 test('NEGATIVE another domain: an app of domain hr is untouched by a push to the sales repository, and has no run', { skip, timeout: 300_000 }, async () => {

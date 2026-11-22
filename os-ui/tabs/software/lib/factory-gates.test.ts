@@ -90,8 +90,8 @@ test('a sandbox that could not run is a block with its reason', () => {
 
 const files = () => instantiateGoldenPath('nextjs-web', { name: 'A', slug: 'a', host: 'a.d.apps.test', registry: 'r/apps', ingressClass: 'nginx' });
 
-// The sandbox itself (Job shape, verdict channel, overlay, namespace, supersede) is tested in
-// sandbox-gates-verdict.test.ts; the pod log is no longer parsed for a verdict at all.
+// The Tekton run (exit-code verdict, platform-owned pipeline and gate files, supersede) is tested in tekton-record.test.ts,
+// tekton-checks.test.ts and the kind test; the pod log is not parsed for a verdict at all.
 
 
 // ----------------------------------------------- the deploy request is blocked ---

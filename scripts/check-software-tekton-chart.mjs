@@ -110,6 +110,22 @@ if (!helmOk || !depsOk) {
     for (const [key, file] of [['factory-gates.mjs', 'scripts/factory-gates.mjs'], ['app-rules.rego', 'policy/app-rules.rego']]) {
       if (plat?.data?.[key] !== readFileSync(join(repo, 'templates/nextjs-web', file), 'utf8')) problems.push(`ConfigMap app-checks-platform: ${key} is missing or differs from templates/nextjs-web/${file}`);
     }
+    // THE TOOLCHAIN IS THE PLATFORM'S TOO: tsc, eslint and tsx come from the pinned lockfile (ConfigMap), never from the app's node_modules.
+    const tcm = find('ConfigMap', 'app-checks-toolchain');
+    for (const f of ['package.json', 'package-lock.json', 'eslint.config.mjs', 'next-allowlist.json']) {
+      if (tcm?.data?.[f] !== readFileSync(join(repo, 'templates/platform-toolchain', f), 'utf8')) problems.push(`ConfigMap app-checks-toolchain: ${f} is missing or differs from templates/platform-toolchain/${f}`);
+    }
+    const gatesTask = pipe?.spec?.tasks?.find((t) => t.name === 'gates')?.taskSpec;
+    const stepNames = (gatesTask?.steps ?? []).map((st) => st.name);
+    if (stepNames.indexOf('toolchain') !== 0 || stepNames.indexOf('install') !== 1) problems.push(`gates steps must start with toolchain then install (got ${stepNames.slice(0, 3).join(',')})`);
+    for (const st of gatesTask?.steps ?? []) {
+      if (['typecheck', 'lint', 'tests', 'build'].includes(st.name)) {
+        if (!/--toolchain \/platform\/toolchain\b/.test(st.script ?? '')) problems.push(`gate step ${st.name} does not run on the platform toolchain (--toolchain /platform/toolchain)`);
+        if (/node_modules/.test(st.script ?? '')) problems.push(`gate step ${st.name} names node_modules`);
+        const m = (st.volumeMounts ?? []).find((v) => v.mountPath === '/platform/toolchain');
+        if (!m || m.readOnly !== true) problems.push(`gate step ${st.name} must mount the toolchain read-only`);
+      }
+    }
     // NEGATIVE TWIN: the pipeline file in the template (the eject copy) is not what the OS runs, and the two must not be confused
     if (res?.resolver === 'git') problems.push('negative twin: a git-resolved pipeline is back');
     if (pr?.spec?.taskRunTemplate?.podTemplate?.automountServiceAccountToken !== false) problems.push('run pods must not mount a ServiceAccount token');

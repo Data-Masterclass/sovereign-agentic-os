@@ -18,7 +18,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { buildGatesJobManifest } from './sandbox-gates.ts';
+import { load as yamlLoad } from 'js-yaml';
 
 const ROOT = resolve(process.cwd(), '..');
 const GATES = join(ROOT, 'templates/nextjs-web/scripts/factory-gates.mjs');
@@ -95,8 +95,9 @@ test('without --toolchain (an author\'s laptop) the build runs the project\'s ow
   assert.equal(ran(dir), true, `${r.stdout}${r.stderr}`);
 });
 
-test('the sandbox build container runs the platform script with the toolchain dir, on its own copy of the tree', () => {
-  const m = buildGatesJobManifest({ name: 'gates-a-t1', namespace: 'agentic-sandbox', slug: 'a', nodeImage: 'node:test', opaImage: 'opa:test', timeoutMs: 600_000 }) as { spec: { template: { spec: { containers: { name: string; command: string[] }[] } } } };
-  const b = m.spec.template.spec.containers.find((c) => c.name === 'build')!;
-  assert.match(b.command.join(' '), /factory-gates\.mjs --gate build --root \/build --toolchain \/platform\/toolchain/);
+test('the Tekton build step runs the platform script with the toolchain dir (which carries the allowlist)', () => {
+  const p = yamlLoad(readFileSync(join(ROOT, 'charts/sovereign-agentic-os/files/tekton/pipelines/app-checks.yaml'), 'utf8')) as { spec: { tasks: { name: string; taskSpec?: { steps: { name: string; script?: string }[] } }[] } };
+  const b = p.spec.tasks.find((t) => t.name === 'gates')!.taskSpec!.steps.find((st) => st.name === 'build')!;
+  assert.match(b.script ?? '', /\/platform\/gates\/factory-gates\.mjs --only build --root \$\(workspaces\.app\.path\) --toolchain \/platform\/toolchain/);
+  assert.ok(existsSync(join(ROOT, 'charts/sovereign-agentic-os/files/tekton/toolchain/next-allowlist.json')), 'the allowlist ships with the toolchain ConfigMap');
 });
