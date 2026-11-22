@@ -16,6 +16,18 @@ export SF_KUBECONFIG
 # (under $HOME on macOS with colima / Docker Desktop; anywhere on Linux).
 export SF_REPOS_DIR="${SF_REPOS_DIR:-$(mktemp -d "${SF_REPOS_PARENT:-$HOME}/.sf-tekton-repos.XXXXXX")}"
 cleanup() {
+  rc=$?
+  if [ "$rc" != 0 ]; then
+    # A failed run must say why in the CI log before the cluster is deleted: the git server, and the pods of the clone steps.
+    k() { kubectl --kubeconfig "$SF_KUBECONFIG" "$@"; }
+    echo "--- diagnostics (exit $rc)" >&2
+    k -n agentic-os logs deploy/os-git-http --tail=40 >&2 || true
+    k -n agentic-os exec deploy/os-git-http -- sh -c 'id; ls -la /repos; ls -la /repos/sales.git | head; git config --global --list' >&2 || true
+    for p in $(k -n agentic-build get pods -l tekton.dev/pipelineTask=fetch -o name 2>/dev/null | head -2); do
+      echo "--- $p" >&2
+      k -n agentic-build logs "$p" --all-containers --tail=30 >&2 || true
+    done
+  fi
   if [ "${KEEP:-}" != "1" ]; then
     bash "$here/tekton-down.sh" || true
     # Only the scratch directory this run created (or was given), never anything else.
