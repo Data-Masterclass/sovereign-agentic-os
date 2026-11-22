@@ -54,6 +54,10 @@ export type RulePanel = {
   failingSince?: string;
   failingSinceExact?: boolean;
   trend?: RuleTrendPoint[];
+  /** Status `unavailable`: why Dagster's executions for this rule could not be read. No live field is shown then. */
+  unavailableReason?: string;
+  /** Status `unavailable`: the last value the OS recorded, labelled with when — never shown as the current status. */
+  lastRecorded?: { status: 'pass' | 'fail' | 'not_run'; failingRows?: number; at: string | null };
 };
 
 export type DatasetPanel = {
@@ -75,7 +79,8 @@ export type DatasetPanel = {
   /** Downstream assets of datasets the viewer can see, by name. */
   downstream?: { key: string; url?: string }[];
   /** Downstream assets the viewer cannot see: a count per domain only, never their names. */
-  downstreamHidden?: { count: number; byDomain: Record<string, number> };
+  /** Downstream consumers outside the viewer's scope — an aggregate count only, no names. */
+  downstreamHidden?: { count: number };
   testedAssetUrl?: string;
 };
 
@@ -136,6 +141,9 @@ export async function dataView(user: CurrentUser, nowMs = Date.now()): Promise<D
   const datasets: DatasetPanel[] = [];
   let trends = 0;
   let omitted = 0;
+  let rulesUnreadable = 0;
+  let rulesAsked = 0;
+  let firstUnreadable: string | null = null;
   for (const { d, scope } of all) {
     const h = health?.get(d.id);
     const rec = dq.ok ? dq.m.get(d.id) ?? null : null;
@@ -163,12 +171,27 @@ export async function dataView(user: CurrentUser, nowMs = Date.now()): Promise<D
       if (rec?.source === 'dagster' && trends < TREND_DATASETS && rec.results.length) {
         trends += 1;
         const ex = await Promise.all(rec.results.map((r) => checkExecutions(dk.tested!, r.id, RULE_EXECUTIONS, { timeoutMs: 4000 })));
-        p.trend = qualityTrend(ex.flatMap((e) => (e.ok ? e.value : [])));
+        // A trend built from the executions that happened to answer would pass for the whole: shown only when all did.
+        if (ex.every((e) => e.ok)) p.trend = qualityTrend(ex.flatMap((e) => (e.ok ? e.value : [])));
+        rulesAsked += ex.length;
         // Per rule: the same executions, kept apart. Over the cap a rule keeps its latest status only.
         p.rules = rec.results.map((r, i) => {
           const e = ex[i];
           const hist = e.ok ? e.value : null;
           const latest = hist?.[0];
+          if (!e.ok) {
+            // Dagster could not be asked: the rule is unavailable. The recorded value is kept only as a labelled last-known one.
+            rulesUnreadable += 1;
+            firstUnreadable ??= e.detail;
+            const recorded: 'pass' | 'fail' | 'not_run' = r.status === 'pass' ? 'pass' : r.status === 'fail' ? 'fail' : 'not_run';
+            return {
+              name: r.label,
+              type: ruleTypeOf(r.id),
+              status: 'unavailable' as const,
+              unavailableReason: `Dagster: ${e.detail}`,
+              lastRecorded: { status: recorded, ...(recorded === 'fail' && r.violations !== null ? { failingRows: r.violations } : {}), at: rec.ranAt },
+            };
+          }
           const status: RuleStatus = latest ? ruleStatusOf(latest) : r.status === 'pass' ? 'pass' : r.status === 'fail' ? 'fail' : 'not_run';
           const since = hist ? failingSince(hist, RULE_EXECUTIONS) : null;
           return {
@@ -187,7 +210,7 @@ export async function dataView(user: CurrentUser, nowMs = Date.now()): Promise<D
     if (graph.ok && dk) {
       const split = splitDownstream(downstreamOf(graph.value, dk.models), visibleKeys);
       p.downstream = split.visible.map((k) => ({ key: k.join('/'), url: assetUrl(k) }));
-      if (split.hiddenCount) p.downstreamHidden = { count: split.hiddenCount, byDomain: split.hiddenByDomain };
+      if (split.hiddenCount) p.downstreamHidden = { count: split.hiddenCount };
     }
     datasets.push(p);
   }
@@ -198,7 +221,7 @@ export async function dataView(user: CurrentUser, nowMs = Date.now()): Promise<D
     sources: {
       inventory: listed.ok ? live : unavailable(`datasets: ${listed.error}`),
       dagsterRuns: runs.ok ? live : unavailable(`Dagster: ${runs.error}`),
-      tests: dq.ok ? live : unavailable(`quality: ${dq.error}`),
+      tests: !dq.ok ? unavailable(`quality: ${dq.error}`) : rulesUnreadable ? unavailable(`Dagster asset checks: ${rulesUnreadable} of ${rulesAsked} rules could not be read (${firstUnreadable}); their rows show unavailable with the last recorded value and its time`) : live,
       lineage: !graph.ok ? unavailable(`Dagster: ${graph.detail}`) : !keys.ok ? unavailable(`dbt project: ${keys.error}`) : live,
     },
     links: dagsterUi ? { dagster: dagsterUi } : {},

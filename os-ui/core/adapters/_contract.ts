@@ -10,7 +10,7 @@
  *     failure as `ok:false` with a reason instead of throwing or returning a success-shaped value.
  *   - `health()` returns the version the component itself reports (GLUE-4: no version literals).
  */
-export type FetchedFailure = 'unreachable' | 'unauthorized' | 'forbidden' | 'invalid' | 'conflict' | 'timeout';
+export type FetchedFailure = 'unreachable' | 'unauthorized' | 'forbidden' | 'invalid' | 'conflict' | 'timeout' | 'not_found';
 
 export type Fetched<T> =
   | { ok: true; value: T; at: string }

@@ -9,8 +9,7 @@
  *     tabs' own mappings (`filesIndexMapping`, `knowledgeIndexMapping`); the files and workflows go in through
  *     the stores' own `createFile` / `createWorkflow`; the readers are `monitoringFilesSource` /
  *     `monitoringKnowledgeSource` — the ones registered at boot — feeding `filesView` / `knowledgeView`.
- *   - Negative twins: a foreign-domain user's file, workflow and OpenSearch rows never reach a creator (an admin
- *     sees them); and an absent index reads "unavailable", never "0 rows".
+ *   - Negative twins: a foreign-domain user's file, workflow and OpenSearch rows never reach a creator (each owner sees only their own); and an absent index reads "unavailable", never "0 rows".
  *   - Lives beside instrumentation.ts because it needs three tabs (a tab never imports another tab, GLUE-9).
  *   - Run: MON_IT=1 node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test monitoring-files-knowledge.int.test.ts
  */
@@ -93,9 +92,10 @@ test('Files and Knowledge from the real stores and OpenSearch: own rows only, th
   const fb = await filesView(bob);
   assert.deepEqual(fb.files.map((x) => x.id), [foreign.id]);
   assert.equal(fb.files[0].openSearchRows, 1);
+  // A personal file or workflow is private to its owner in the real stores — an admin's list does not include it either.
   const fa = await filesView(root);
-  assert.deepEqual(Object.fromEntries(fa.files.filter((x) => [mine.id, foreign.id].includes(x.id)).map((x) => [x.id, x.openSearchRows])), { [mine.id]: 2, [foreign.id]: 1 });
+  assert.ok(![mine.id, foreign.id].some((id) => fa.files.some((x) => x.id === id)), 'the stores keep personal files private, admins included');
   const ka = await knowledgeView(root);
-  assert.ok([wfMine.id, wfForeign.id].every((id) => ka.workflows.some((w) => w.id === id)));
+  assert.ok(![wfMine.id, wfForeign.id].some((id) => ka.workflows.some((w) => w.id === id)));
   assert.ok(ka.searchLatency || ka.searchLatencyUnavailable, 'an admin gets latency or the reason it is unavailable, never silence');
 });

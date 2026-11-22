@@ -241,7 +241,6 @@ function DatasetCard({ d, v }: { d: DatasetPanel; v: DataView }) {
       {d.downstreamHidden && (
         <p className="hint" style={{ margin: '4px 0 0' }}>
           {d.tests?.failing.length || failingJobs.length ? 'Also impacted' : 'Also downstream'}: {d.downstreamHidden.count} asset{d.downstreamHidden.count === 1 ? '' : 's'} outside your view
-          ({Object.entries(d.downstreamHidden.byDomain).map(([dom, n]) => `${dom} ${n}`).join(' · ')})
         </p>
       )}
       {v.sources.dagsterRuns.state === 'live' && (d.jobs?.length ?? 0) === 0 && <p className="hint" style={{ margin: '6px 0 0' }}>No Dagster runs for this dataset in the recent run window.</p>}
@@ -250,7 +249,7 @@ function DatasetCard({ d, v }: { d: DatasetPanel; v: DataView }) {
 }
 
 type FlatRule = RulePanel & { datasetId: string; datasetName: string; domain: string; dataUrl: string };
-const RULE_ORDER: Record<RulePanel['status'], number> = { fail: 0, warn: 1, not_run: 2, pass: 3 };
+const RULE_ORDER: Record<RulePanel['status'], number> = { fail: 0, warn: 1, unavailable: 2, not_run: 3, pass: 4 };
 
 /** Data quality per rule and per dataset — failing rules first; filter by domain and dataset. */
 function RuleQuality({ v }: { v: DataView }) {
@@ -267,7 +266,8 @@ function RuleQuality({ v }: { v: DataView }) {
     .sort((a, b) => RULE_ORDER[a.status] - RULE_ORDER[b.status] || a.datasetName.localeCompare(b.datasetName) || a.name.localeCompare(b.name));
   const failing = all.filter((r) => r.status === 'fail').length;
   const warning = all.filter((r) => r.status === 'warn').length;
-  const tone = (s: RulePanel['status']) => (s === 'fail' ? ' err' : s === 'warn' ? ' warn' : s === 'pass' ? ' ok' : ' muted');
+  const unreadable = all.filter((r) => r.status === 'unavailable').length;
+  const tone = (s: RulePanel['status']) => (s === 'fail' ? ' err' : s === 'warn' ? ' warn' : s === 'pass' ? ' ok' : s === 'unavailable' ? ' warn' : ' muted');
   return (
     <>
       <div className="mon-sub">Data quality by rule <span className="mon-sub-note">dbt tests as Dagster asset checks · failing first</span></div>
@@ -275,6 +275,7 @@ function RuleQuality({ v }: { v: DataView }) {
         <Stat label="rules" value={String(all.length)} />
         <Stat label="failing" value={String(failing)} tone={failing ? 'error' : undefined} />
         <Stat label="warning" value={String(warning)} tone={warning ? 'warn' : undefined} />
+        {unreadable > 0 && <Stat label="unavailable" value={String(unreadable)} tone="warn" />}
       </div>
       {v.rulesDatasetsOmitted > 0 && <p className="hint">Per-rule results of {v.rulesDatasetsOmitted} more dataset(s) are not read in this response (limit); their latest status is in the dataset cards.</p>}
       {all.length === 0 ? (
@@ -301,6 +302,12 @@ function RuleQuality({ v }: { v: DataView }) {
                 </span>
                 <span>
                   <span className={`badge${tone(r.status)}`}>{r.status === 'not_run' ? 'not run' : r.status}{r.severity ? ` · ${r.severity}` : ''}</span>
+                  {r.status === 'unavailable' && (
+                    <span className="hint" style={{ display: 'block', margin: '2px 0 0' }}>
+                      {r.unavailableReason}
+                      {r.lastRecorded && ` · last recorded: ${r.lastRecorded.status === 'not_run' ? 'not run' : r.lastRecorded.status}${r.lastRecorded.failingRows !== undefined ? ` (${r.lastRecorded.failingRows} rows)` : ''}${r.lastRecorded.at ? `, ${r.lastRecorded.at}` : ''}`}
+                    </span>
+                  )}
                 </span>
                 <span>{r.status === 'fail' || r.status === 'warn' ? (r.failingRows !== undefined ? String(r.failingRows) : '—') : ''}</span>
                 <span className="muted">
@@ -477,7 +484,8 @@ function KnowledgePanels({ v }: { v: KnowledgeView }) {
           <Stat label="indexed" value={String(sm.indexed)} />
           <Stat label="stale" value={String(sm.stale)} tone={sm.stale ? 'warn' : undefined} />
           <Stat label="published, not indexed" value={String(sm.notIndexed)} tone={sm.notIndexed ? 'error' : undefined} />
-          {v.searchLatency !== undefined && <Stat label="avg search (index-wide)" value={v.searchLatency && v.searchLatency.avgMs !== null ? ms(v.searchLatency.avgMs) : '—'} />}
+          {v.searchLatency !== undefined && <Stat label="avg search (index-wide)" value={v.searchLatency.avgMs !== null ? ms(v.searchLatency.avgMs) : '—'} />}
+          {v.searchLatencyUnavailable && <Stat label="avg search (index-wide)" value="unavailable" tone="warn" />}
         </div>
       )}
       {v.workflows.length === 0 ? (

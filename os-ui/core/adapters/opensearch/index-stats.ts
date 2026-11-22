@@ -9,7 +9,7 @@
  *   https://docs.opensearch.org/latest/aggregations/) and the index stats API
  *   (`GET /<index>/_stats/search`). The query is filtered to the ASKED ids, so rows of other
  *   units never leave OpenSearch. An unreachable cluster is ok:false, never an empty success; an index
- *   that does not exist (404) is an honest empty map. Read-only; goes through the one OpenSearch client.
+ *   that does not exist (404) is ok:false `not_found` — "index absent" is not "0 rows". Read-only; goes through the one OpenSearch client.
  */
 import type { Fetched } from '../_contract';
 import { failed, fetched } from '../health/http';
@@ -29,7 +29,7 @@ export async function unitRowStats(index: string, unitField: string, ids: readon
   };
   const res = await opensearchTry(`/${encodeURIComponent(index)}/_search`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
   if (!res) return failed('unreachable', 'OpenSearch did not answer');
-  if (res.status === 404) return fetched(out);
+  if (res.status === 404) return failed('not_found', `OpenSearch index "${index}" does not exist (not set up, or nothing has been indexed yet)`);
   if (res.status === 401 || res.status === 403) return failed(res.status === 401 ? 'unauthorized' : 'forbidden', `OpenSearch answered ${res.status}`);
   if (!res.ok) return failed('invalid', `OpenSearch answered ${res.status}`);
   let j: TermsReply;
@@ -49,10 +49,10 @@ export async function unitRowStats(index: string, unitField: string, ids: readon
 export type SearchCounters = { queries: number; totalMs: number };
 
 /** OpenSearch's own cumulative search counters for one index (`query_total`, `query_time_in_millis`). */
-export async function indexSearchCounters(index: string): Promise<Fetched<SearchCounters | null>> {
+export async function indexSearchCounters(index: string): Promise<Fetched<SearchCounters>> {
   const res = await opensearchTry(`/${encodeURIComponent(index)}/_stats/search`, { method: 'GET' });
   if (!res) return failed('unreachable', 'OpenSearch did not answer');
-  if (res.status === 404) return fetched(null);
+  if (res.status === 404) return failed('not_found', `OpenSearch index "${index}" does not exist (not set up, or nothing has been indexed yet)`);
   if (!res.ok) return failed('invalid', `OpenSearch answered ${res.status}`);
   type StatsReply = { _all?: { total?: { search?: { query_total?: number; query_time_in_millis?: number } } } };
   let j: StatsReply;
