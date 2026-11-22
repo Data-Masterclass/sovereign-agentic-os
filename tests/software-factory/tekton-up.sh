@@ -152,6 +152,19 @@ spec:
 YAML
   sleep 30
   k -n "$PLATFORM_NS" logs diag-volume >&2 || true
+  # The same image outside Kubernetes, with the same config: does the container runtime or Kubernetes decide?
+  d="$(mktemp -d)"
+  k -n "$PLATFORM_NS" get configmap egress-proxy-config -o jsonpath='{.data.tinyproxy\.conf}' > "$d/tinyproxy.conf" || true
+  k -n "$PLATFORM_NS" get configmap egress-proxy-config -o jsonpath='{.data.filter}' > "$d/filter" || true
+  chmod -R a+rX "$d"
+  img=sovereign-os/egress-proxy:sf-e2e
+  for v in "plain:" "uid65534:--user 65534" "readonly:--user 65534 --read-only --tmpfs /tmp" "seccomp-unconfined:--user 65534 --security-opt seccomp=unconfined" "cap-drop:--user 65534 --cap-drop ALL --security-opt no-new-privileges"; do
+    printf '%s => ' "${v%%:*}" >&2
+    # shellcheck disable=SC2086
+    timeout 3 docker run --rm -v "$d:/etc/tinyproxy:ro" ${v#*:} "$img" 2>&1 | grep -E "Could not|listening" | head -1 >&2 || true
+    echo >&2
+  done
+  uname -r >&2; docker version --format '{{.Server.Version}}' >&2 || true
 }
 k -n "$PLATFORM_NS" rollout status deployment/os-git-http --timeout=180s || { diagnose os-git-http os-ui; exit 1; }
 k -n "$PLATFORM_NS" rollout status deployment/egress-proxy --timeout=180s || { diagnose egress-proxy egress-proxy; exit 1; }
