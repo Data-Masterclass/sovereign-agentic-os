@@ -59,3 +59,48 @@ test('NEGATIVE TWIN: the detector flags an unlisted CC-BY package, and nothing f
   assert.deepEqual(needsAttribution({ packages: { 'node_modules/x': { license: 'CC-BY-4.0' }, 'node_modules/y': { license: 'MIT' } } }), [{ name: 'x', license: 'CC-BY-4.0' }]);
   assert.ok(copyleftIn({ packages: { 'node_modules/z': { license: 'MPL-2.0' } } }).length === 0, 'MPL is caught by the CI licence gate, not this detector');
 });
+
+// Every attribution entry (a block starting at an unindented line) must carry its licence and a copyright line.
+function noticeBlocks(notice: string): Map<string, string> {
+  const blocks = new Map<string, string>();
+  let name = '';
+  for (const line of notice.split('\n')) {
+    if (/^\S/.test(line) && !/^(Third-party|The template|The packages|Regenerate)/.test(line) && line.trim()) { name = line.trim(); blocks.set(name, ''); }
+    else if (name) blocks.set(name, `${blocks.get(name)}${line}\n`);
+  }
+  return blocks;
+}
+/** Packages the lock holds under any licence other than Apache/MIT/BSD/ISC, INCLUDING packages that declare none. */
+export function attributionNeeded(lock: { packages: Record<string, { license?: string }> }): { name: string; license: string }[] {
+  return Object.entries(lock.packages)
+    .filter(([k, v]) => k && !(v.license && PLAIN.test(v.license)))
+    .map(([k, v]) => ({ name: k.replace(/^.*node_modules\//, ''), license: v.license ? String(v.license) : '' }));
+}
+export function noticeGaps(lock: { packages: Record<string, { license?: string }> }, notice: string): string[] {
+  const blocks = noticeBlocks(notice);
+  const gaps: string[] = [];
+  for (const { name, license } of attributionNeeded(lock)) {
+    const b = blocks.get(name);
+    if (b === undefined) { gaps.push(`${name}: not named in NOTICE`); continue; }
+    if (license && !b.includes(license)) gaps.push(`${name}: licence ${license} missing`);
+    if (!/Licence:\s*\S/.test(b)) gaps.push(`${name}: no Licence line`);
+    if (!/Copyright:\s*\S/.test(b)) gaps.push(`${name}: no Copyright line`);
+  }
+  return gaps;
+}
+
+test('NOTICE names every non-Apache/MIT/BSD/ISC package of the lock (argparse, caniuse-lite, the SDK) with licence and copyright', () => {
+  const notice = readFileSync(join(ROOT, 'templates/nextjs-web/NOTICE'), 'utf8');
+  assert.deepEqual(noticeGaps(lockOf(), notice), []);
+  const names = attributionNeeded(lockOf()).map((n) => n.name).sort();
+  assert.ok(names.includes('argparse') && names.includes('caniuse-lite'), names.join(','));
+  assert.match(notice, /argparse[\s\S]*Python-2\.0/);
+  assert.match(notice, /caniuse-lite[\s\S]*CC-BY-4\.0/);
+});
+
+test('NEGATIVE TWINS: a package missing from NOTICE, one without a copyright line, and one with no declared licence are all flagged', () => {
+  const lock = { packages: { '': {}, 'node_modules/argparse': { license: 'Python-2.0' }, 'node_modules/new-thing': { license: 'CC-BY-4.0' }, 'node_modules/nolic': {}, 'node_modules/ok': { license: 'MIT' } } };
+  const notice = 'argparse\n  Licence: Python-2.0\n\nnolic\n  Licence: Apache-2.0\n  Copyright: someone\n';
+  assert.deepEqual(noticeGaps(lock, notice), ['argparse: no Copyright line', 'new-thing: not named in NOTICE']);
+  assert.deepEqual(noticeGaps(lock, `${notice}new-thing\n  Licence: CC-BY-4.0\n  Copyright: x\n`), ['argparse: no Copyright line']);
+});
