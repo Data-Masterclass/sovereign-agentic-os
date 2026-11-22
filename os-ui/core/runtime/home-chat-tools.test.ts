@@ -115,14 +115,17 @@ test('LOW: the worker\'s output reaches strong wrapped as untrusted data, and th
 // ------------------------------------------------------------------ LOW 4: escalation honours the admin pin
 
 test('LOW: with an admin pin set, a failed delegation escalates to the PIN, not to the strong role', async () => {
-  const { setAssistantModel, _reset } = await import('@tabs/admin/lib/models');
-  setAssistantModel('acme-chat');
+  // The admin's pin lives in the process-wide models state (a core test must not import the admin tab): set it the way `setAssistantModel` does.
+  const KEY = Symbol.for('soa.platform.models');
+  const g = globalThis as unknown as Record<symbol, unknown>;
+  const before = g[KEY];
+  g[KEY] = { keys: new Map(), assistant: 'acme-chat', hydration: Promise.resolve() };
   try {
     const calls: Call[] = [];
     let n = 0;
     await turn(llmOf(calls, [{ content: '', toolCalls: [{ id: 'w', name: 'whoami', args: {} }] }, { content: '', toolCalls: [{ id: 'd', name: 'delegate_to_worker', args: SUMMARISE }] }, FINAL], () => (n++ === 0 ? { content: 'not json' } : { content: GOOD })));
     assert.deepEqual(calls.filter((c) => c.purpose?.startsWith('delegate:')).map((c) => c.model), [WORKER, 'acme-chat']);
-  } finally { _reset(); }
+  } finally { g[KEY] = before; }
 });
 
 test('LOW twin: without a pin the escalation goes to the strong role', async () => {
