@@ -28,6 +28,7 @@ createServer((req, res) => {
     if (req.method === 'POST' && url.startsWith('/v1/chat/completions')) {
       let body = {};
       try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { /* empty */ }
+      appendFileSync(`${DATA}/models.jsonl`, JSON.stringify({ model: body.model }) + '\n'); // the upstream model the gateway really called
       // A worker delegation (core/runtime/delegate.ts) asks for ONE JSON object {"result", "confidence"}: answer it.
       const asksDelegation = (body.messages ?? []).some((m) => typeof m.content === 'string' && m.content.includes('"confidence"') && m.content.includes('Answer ONE JSON object {"result"'));
       const content = asksDelegation ? JSON.stringify({ result: { summary: 's', key_figures: [] }, confidence: 0.9 }) : 'COMPLETION_CANARY_7f3a fixed answer';

@@ -89,6 +89,8 @@ export type DelegateToWorkerOpts<I, O> = {
   delegationId?: number;
   /** 0 = strong delegating. A worker context is 1 and may not delegate. */
   depth?: number;
+  /** The turn's trace position: the delegation's model call nests in the same Langfuse trace. */
+  observe?: { traceId: string; parentObservationId?: string; node?: string; callId?: string };
 };
 
 export async function delegateToWorker<I, O>(o: DelegateToWorkerOpts<I, O>): Promise<Delegated<O> & { role: 'worker' | 'strong' }> {
@@ -117,6 +119,7 @@ export async function delegateToWorker<I, O>(o: DelegateToWorkerOpts<I, O>): Pro
       maxTokens: o.budget.maxOutputTokens,
       // NO `tools`: a sub-agent cannot call the governed dispatch.
       purpose: `delegate:${o.task}`,
+      ...(o.observe ? { observe: { ...o.observe, node: `delegate:${o.task}` } } : {}),
       ...(o.delegationId !== undefined ? { delegationId: o.delegationId } : {}),
       ...(attempt > 1 ? { escalated: true } : {}),
       ...(req.signal ? { signal: req.signal } : {}),
@@ -208,6 +211,7 @@ export async function runDelegateTool(
     user?: { id: string; domains?: string[] };
     signal?: AbortSignal;
     depth?: number;
+    observe?: DelegateToWorkerOpts<unknown, unknown>['observe'];
     prices?: DelegateToWorkerOpts<unknown, unknown>['prices'];
     onSpan?: (d: DelegationRecord) => void;
   },
@@ -272,6 +276,7 @@ export async function runDelegateTool(
       prices: deps.prices,
       delegationId: id,
       depth: deps.depth ?? 0,
+      observe: deps.observe,
     });
   } catch (e) {
     // A spend limit must reach the turn as itself; a failed delegation is a typed result strong can work around.
