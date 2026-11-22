@@ -27,8 +27,8 @@ import { datasetAssetKeys } from '@tabs/data/lib/dbt/asset-keys';
 import { dataProjectGitEnabled } from '@tabs/data/lib/dbt/commit';
 import { listFiles, getFile, ensureHydrated as ensureFilesHydrated } from '@tabs/files/lib/store';
 import { listMetrics, ensureHydrated as ensureMetricsHydrated } from '@tabs/metrics/lib/store';
-import { listAlertRules, ensureHydrated as ensureAlertsHydrated } from '@tabs/metrics/lib/alert-store';
-import { listDashboards, getDashboard, ensureHydrated as ensureDashboardsHydrated } from '@tabs/dashboards/lib/store';
+import { listAlertRules, alertStoreHydrationState, ensureHydrated as ensureAlertsHydrated } from '@tabs/metrics/lib/alert-store';
+import { listDashboards, getDashboard, hydrationState as dashboardsHydrationState, ensureHydrated as ensureDashboardsHydrated } from '@tabs/dashboards/lib/store';
 import { missingPanelMembers, panelRequestedMembers } from '@tabs/dashboards/lib/model';
 import { panelViewsFor, type RegistryViewDims } from '@tabs/dashboards/lib/panel-views';
 import { listGovernedDatasets } from '@tabs/data/lib/store';
@@ -143,6 +143,7 @@ export const monitoringMetricsSource: NonNullable<MonitoringSources['metrics']> 
 /** The alert rules the viewer may see: creator own · builder / domain admin own + their domains · admin all. */
 export const monitoringAlertRulesSource: NonNullable<MonitoringSources['alertRules']> = async (p) => {
   await ensureAlertsHydrated();
+  if (alertStoreHydrationState() !== 'hydrated') throw new Error('the alert rules are not loaded — the store could not be read from OpenSearch');
   const wide = p.role === 'admin';
   const builder = p.role === 'builder' || p.role === 'domain_admin';
   return listAlertRules()
@@ -152,6 +153,7 @@ export const monitoringAlertRulesSource: NonNullable<MonitoringSources['alertRul
 
 export const monitoringDashboardsSource: NonNullable<MonitoringSources['dashboards']> = async (p) => {
   await ensureDashboardsHydrated();
+  if (dashboardsHydrationState() !== 'hydrated') throw new Error('the dashboards are not loaded — the store could not be read from OpenSearch');
   await ensureMetricsHydrated();
   const user = asPrincipal(p);
   const g = listDashboards(user);
