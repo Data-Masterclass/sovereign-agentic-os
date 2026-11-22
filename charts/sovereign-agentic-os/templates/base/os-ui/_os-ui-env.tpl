@@ -227,6 +227,15 @@
 - name: SOFTWARE_SCANNER_TIMEOUT_MS
   value: {{ mul ($sc.timeoutSeconds | default 180) 1000 | quote }}
 {{- end }}
+{{- /* ---- Software Factory gates sandbox (tabs/software/lib/sandbox-gates.ts). The images are
+     pinned HERE and nowhere in code: node from `osUI.software.sandbox.nodeImage`, OPA from the
+     chart's own `opa.image` so the policy engine in the sandbox is the one the platform runs. */}}
+{{- $sb := (($u.software | default dict).sandbox | default dict) }}
+{{- $oi := (.Values.opa).image | default dict }}
+- name: SOFTWARE_SANDBOX_NODE_IMAGE
+  value: {{ $sb.nodeImage | default "node:22-alpine3.24" | quote }}
+- name: SOFTWARE_SANDBOX_OPA_IMAGE
+  value: {{ printf "%s:%s" ($oi.repository | default "openpolicyagent/opa") ($oi.tag | default "1.22.4") }}{{ if $oi.digest }}{{ printf "@%s" $oi.digest }}{{ end }}
 # ---- Data-tab ingest (T3). os-ui streams an uploaded file to MinIO
 # (uploads/<uid>/) with a SigV4 PUT, then calls the data-runner /ingest —
 # which writes the physical Iceberg Bronze table. Reuses the SAME

@@ -627,8 +627,8 @@ jobs:
         run: |
           if [ "$EVENT" != pull_request ]; then echo "run=true" >> "$GITHUB_OUTPUT"; echo "a $EVENT run always validates"; exit 0; fi
           changed="$(git diff --name-only "$BASE"...HEAD)"
-          if grep -qE '^(images/extensions/(dagster|dbt)/|os-ui/tabs/data/lib/dbt/|os-ui/tabs/dashboards/lib/git/|charts/|scripts/glue/|scripts/validate-generated\.sh$|scripts/tests/validate-generated\.test\.sh$|scripts/tests/glue-fixtures/GLUE-6/|tests/policies/|values[^/]*\.yaml$|\.github/workflows/ci\.yml$)' <<<"$changed"; then
-            echo "run=true" >> "$GITHUB_OUTPUT"; echo "validated inputs changed:"; grep -E '^(images/extensions/(dagster|dbt)/|os-ui/tabs/data/lib/dbt/|os-ui/tabs/dashboards/lib/git/|charts/|scripts/glue/|scripts/validate-generated|scripts/tests/validate-generated|scripts/tests/glue-fixtures/GLUE-6/|tests/policies/|values|\.github/workflows/ci\.yml)' <<<"$changed" | head -20
+          if grep -qE '^(images/extensions/(dagster|dbt)/|os-ui/tabs/data/lib/dbt/|os-ui/tabs/dashboards/lib/git/|charts/|templates/|scripts/glue/|scripts/validate-generated\.sh$|scripts/tests/validate-generated\.test\.sh$|scripts/tests/glue-fixtures/GLUE-6/|tests/policies/|values[^/]*\.yaml$|\.github/workflows/ci\.yml$)' <<<"$changed"; then
+            echo "run=true" >> "$GITHUB_OUTPUT"; echo "validated inputs changed:"; grep -E '^(images/extensions/(dagster|dbt)/|os-ui/tabs/data/lib/dbt/|os-ui/tabs/dashboards/lib/git/|charts/|templates/|scripts/glue/|scripts/validate-generated|scripts/tests/validate-generated|scripts/tests/glue-fixtures/GLUE-6/|tests/policies/|values|\.github/workflows/ci\.yml)' <<<"$changed" | head -20
           else
             echo "run=false" >> "$GITHUB_OUTPUT"; echo "GLUE-6: this PR touches nothing the component validators check — not run (push and nightly runs always run it)"
           fi

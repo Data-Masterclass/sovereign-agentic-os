@@ -1,0 +1,13 @@
+{
+  "generators": [
+    {
+      "module": "tabs/software/lib/golden-path.ts",
+      "parts": [],
+      "component": "OPA (the app's own policy/app-rules.rego) + OpenAPI",
+      "validator": "opa check --strict + opa test via scripts/validate-generated.sh; opa eval in tabs/software/lib/factory-gates.test.ts",
+      "goldens": [
+        "tabs/software/lib/fixtures/nextjs-web.golden.json"
+      ]
+    }
+  ]
+}
