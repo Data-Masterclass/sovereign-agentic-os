@@ -80,11 +80,16 @@ spec:
           - name: opa
             image: openpolicyagent/opa:1.22.4@sha256:ff50f50332ff9e722ffafe2658c195ced1f9b6d4f3064000c2ecfa8cdf7acccf
             args: ["run", "--server", "--addr=127.0.0.1:8181", "--log-level=error", "/platform/policy"]
+            securityContext: { allowPrivilegeEscalation: false, capabilities: { drop: [ALL] }, readOnlyRootFilesystem: true }
             volumeMounts:
               - { name: platform-policy, mountPath: /platform/policy, readOnly: true }
             computeResources:
               requests: { cpu: 10m, memory: 32Mi }
               limits: { cpu: 500m, memory: 256Mi }
+        stepTemplate:
+          # The code of the app runs in these steps: no privilege escalation, no capabilities, not root (the pod sets non-root,
+          # seccomp and no ServiceAccount token). Tekton's `set-security-context` flag only covers the containers Tekton injects.
+          securityContext: { allowPrivilegeEscalation: false, capabilities: { drop: [ALL] } }
         steps:
           - name: install
             image: node:22-alpine3.24@sha256:1314fb30ec37592d5845e5a160d522c0e680972aa534549940b8d73bde88481a
