@@ -8,10 +8,12 @@ import { compile } from '@tabs/agents/lib/langgraph-compile';
 import { SOFTWARE_TEAM_YAML } from '@tabs/agents/lib/software-team';
 import { runNode, type AgenticGraphDeps } from '@tabs/agents/lib/build/agentic-graph';
 import type { LlmCall, LlmCompletion, ToolSpec } from '@core/runtime/agentic';
+import { userConfirmGate } from '@core/runtime/confirm-gate';
 import {
   preRoute,
   postRoute,
   extractSignals,
+  settleAfterConfirm,
   stripControlTags,
   classifyTeamError,
   getSession,
@@ -139,6 +141,18 @@ function scriptLlm(actByModel: Record<string, LlmCompletion>): LlmCall {
   };
 }
 
+/**
+ * A gate fixture for the routing tests, which are about WHICH role runs and what signals it emits,
+ * not about confirmation (`agentic-graph-server.test.ts` covers that with the real store): the
+ * user has already allowed every tool for this conversation, so nothing parks.
+ */
+const allowAll = (inner: Parameters<typeof userConfirmGate>[0]) =>
+  userConfirmGate(
+    inner,
+    { userId: 'u-route', conversationId: 'route-test-conv', surface: 'team' },
+    { create: () => { throw new Error('nothing should park in a routing test'); }, sessionAllows: () => true },
+  );
+
 function deps(over: Partial<AgenticGraphDeps> = {}): AgenticGraphDeps {
   return {
     llm: scriptLlm({}),
@@ -160,7 +174,7 @@ test('INTAKE turn: the planner asks questions and creates NO app (no build tool 
       executed.push(name);
       return { text: 'ok', isError: false };
     },
-  }), { extraGuidance: 'PHASE: INTAKE. Ask only what is missing.' });
+  }), { extraGuidance: 'PHASE: INTAKE. Ask only what is missing.', gate: allowAll });
 
   const signals = extractSignals(run.result);
   assert.equal(signals.planReady, false);
@@ -185,11 +199,36 @@ test('BUILD turn: the builder commits, we capture the appId, and advance to FEED
       executed.push(name);
       return { text: '{"id":"app_zz99","slug":"renewals"}', isError: false };
     },
-  }), { extraGuidance: 'PHASE: BUILD.' });
+  }), { extraGuidance: 'PHASE: BUILD.', gate: allowAll });
 
   const signals = extractSignals(run.result);
   assert.ok(executed.includes('create_software'), 'the builder actually creates the app');
   assert.equal(signals.committed, true);
   assert.equal(signals.appId, 'app_zz99');
   assert.equal(postRoute('build', signals), 'feedback');
+});
+
+// ----------------------------------------------- parked calls and the session ----
+
+test('a PARKED call is not a commit: the turn does not advance on a call that has not run', () => {
+  const parked = {
+    finalText: 'waiting', plan: '',
+    steps: [{ tool: 'commit', args: {}, result: 'NOT EXECUTED: awaiting', isError: false, parked: true as const }],
+    pending: [],
+  } as unknown as Parameters<typeof extractSignals>[0];
+  const s = extractSignals(parked);
+  assert.equal(s.committed, false);
+  assert.equal(s.appId, null);
+  // twin: the same step, run, IS a commit
+  const ran = { ...parked, steps: [{ tool: 'commit', args: {}, result: '{"id":"app_ok1"}', isError: false }] } as unknown as Parameters<typeof extractSignals>[0];
+  assert.equal(extractSignals(ran).committed, true);
+  assert.equal(extractSignals(ran).appId, 'app_ok1');
+});
+
+test('settleAfterConfirm: a confirmed commit in BUILD moves to FEEDBACK, a confirmed create_software captures the app id, a refused one changes nothing', () => {
+  assert.deepEqual(settleAfterConfirm({ phase: 'build', appId: 'app_1' }, 'commit', { ok: true, text: '{}' }), { phase: 'feedback', appId: 'app_1' });
+  assert.deepEqual(settleAfterConfirm({ phase: 'build', appId: null }, 'create_software', { ok: true, text: '{"id":"app_zz1"}' }), { phase: 'build', appId: 'app_zz1' });
+  assert.deepEqual(settleAfterConfirm({ phase: 'build', appId: 'app_1' }, 'commit', { ok: false, text: 'Error' }), { phase: 'build', appId: 'app_1' });
+  assert.deepEqual(settleAfterConfirm({ phase: 'deploy', appId: 'app_1' }, 'request_deploy', { ok: true, text: '{}' }), { phase: 'done', appId: 'app_1' });
+  assert.deepEqual(settleAfterConfirm({ phase: 'deploy', appId: 'app_1' }, 'request_deploy', { ok: false, text: 'no' }), { phase: 'feedback', appId: 'app_1' });
 });

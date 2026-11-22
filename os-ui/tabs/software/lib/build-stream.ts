@@ -16,7 +16,7 @@ import type { FileChange } from '@tabs/software/lib/build-changeset';
 export type BuildStreamEvent =
   | { type: 'plan'; text: string }
   | { type: 'activity'; line: ActivityLine; raw?: { tool: string; args: unknown; result: string } }
-  | { type: 'final'; role: 'assistant'; content: string; finalText?: string; model?: string; mode?: string; changes?: FileChange[] }
+  | { type: 'final'; role: 'assistant'; content: string; finalText?: string; model?: string; mode?: string; changes?: FileChange[]; pending?: { confirmationId: string; tool: string; args: Record<string, unknown>; expiresAt: string }[]; conversationId?: string }
   | { type: 'error'; message: string };
 
 /**

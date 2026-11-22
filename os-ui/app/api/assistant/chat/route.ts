@@ -105,6 +105,7 @@ export async function POST(req: Request) {
       user,
       confirmationId: confirmation.id,
       conversationId: confirmation.conversationId,
+      surface: 'ask',
       decision: confirmation.decision,
       execute: (tool, args, sink) => osToolExecutor(user, sink)(tool, args),
     });

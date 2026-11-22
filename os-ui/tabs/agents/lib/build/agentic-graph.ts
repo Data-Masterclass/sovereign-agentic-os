@@ -11,7 +11,7 @@ import {
   type ToolExecutor,
   type ToolSpec,
 } from '@core/runtime/agentic';
-import { ungatedInteractive } from '@core/runtime/confirm-gate';
+import type { GatedToolExecutor } from '@core/runtime/confirm-gate';
 import { compactToolResult } from '@core/infra/context/context-assembler';
 import { curateContext, type CurateCandidate, type EmbedFn } from '@core/infra/context/librarian';
 
@@ -534,7 +534,17 @@ export async function runNode(
   nodeId: string,
   messages: { role: 'user' | 'assistant'; content: string }[],
   deps: AgenticGraphDeps,
-  opts: { extraGuidance?: string; onStep?: (step: import('@core/runtime/agentic').AgenticStep) => void } = {},
+  opts: {
+    extraGuidance?: string;
+    onStep?: (step: import('@core/runtime/agentic').AgenticStep) => void;
+    /**
+     * REQUIRED: puts the user-confirm gate in front of this turn's executor. A single-node turn is
+     * interactive (a person is typing into the panel), so a write parks until they confirm it. The
+     * caller builds the gate (it owns the user, the conversation and the confirmation store); this
+     * layer stays pure and has no way to run a turn without one.
+     */
+    gate: (inner: ToolExecutor) => GatedToolExecutor;
+  },
 ): Promise<NodeRun> {
   const node = ir.nodes.find((n) => n.id === nodeId);
   if (!node) throw new Error(`Unknown team node: ${nodeId}`);
@@ -547,10 +557,8 @@ export async function runNode(
     system,
     userMessages: messages,
     tools: deps.toolSpecsFor(node),
-    // Type-level wiring only: `runAgentic` takes a gated executor, and this path has no
-    // structural confirmation step today — named so it can be found (pinned in
-    // `core/runtime/confirm-gate.test.ts`). Behaviour is exactly what it was.
-    callTool: ungatedInteractive(deps.callTool),
+    // The caller's confirm gate (`opts.gate`): a write parks until the same user confirms it.
+    callTool: opts.gate(deps.callTool),
     llm: deps.llm,
     planModel: deps.reasoningModel,
     actModel,

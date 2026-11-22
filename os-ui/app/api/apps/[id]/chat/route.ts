@@ -7,7 +7,8 @@ import { requireUser } from '@core/kernel/auth';
 import { getAppForUser, saveChat } from '@tabs/software/lib/apps';
 import { getSnapshot } from '@tabs/software/lib/snapshot';
 import { diffTrees, type FileChange } from '@tabs/software/lib/build-changeset';
-import { runTabAgent, renderAssistantText } from '@core/runtime/runtime';
+import { runTabAgent, renderAssistantText, tabAgentExecutor } from '@core/runtime/runtime';
+import { decideConfirmation } from '@core/runtime/confirm-execute';
 import { cleanTurns } from '@core/runtime/turns';
 import { buildRunError, buildMaxIterations, honestBuildFinalText } from '@tabs/software/lib/build-run';
 import { toolCallToLine, gateLineFromStep, committedSummaryLine, type ActivityLine } from '@tabs/software/lib/build-activity';
@@ -31,12 +32,21 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   const { id } = await ctx.params;
 
   let messages: Msg[] = [];
+  let conversationId: string | null = null;
+  let confirmation: { id: string; conversationId: string; decision: 'confirm' | 'decline' } | null = null;
   let mode: ChatRunMode = 'build';
   let target: BuildTarget | null = null;
   try {
     const body = await req.json();
     messages = Array.isArray(body?.messages) ? body.messages : [];
     mode = asChatRunMode(body?.mode);
+    // The build run is confirm-gated: a `commit` parks until the user presses Run on its card.
+    // The client names its conversation (the card is bound to it); absent or malformed, the turn mints one.
+    if (typeof body?.conversationId === 'string' && /^[A-Za-z0-9_-]{8,64}$/.test(body.conversationId)) conversationId = body.conversationId;
+    const c = body?.confirmation;
+    if (c && typeof c.id === 'string' && typeof c.conversationId === 'string' && (c.decision === 'confirm' || c.decision === 'decline')) {
+      confirmation = { id: c.id, conversationId: c.conversationId, decision: c.decision };
+    }
     // The targeted scope: `target` ({kind, epicId?, storyId?}) is the current shape;
     // the legacy `story` ({epicId, storyId}) stays accepted for backward compat.
     const t = body?.target;
@@ -56,6 +66,28 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     app = await getAppForUser(id, user);
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: (e as { status?: number }).status ?? 404 });
+  }
+
+  // Confirm or decline a commit this app's Build chat parked. The arguments that run are the ones
+  // stored with the confirmation; the bound appId and the mode allowlist are applied again.
+  if (confirmation) {
+    const before = getSnapshot(app.id);
+    const result = await decideConfirmation({
+      user,
+      confirmationId: confirmation.id,
+      conversationId: confirmation.conversationId,
+      surface: `app-chat:${app.id}`,
+      decision: confirmation.decision,
+      execute: (tool, args) =>
+        tabAgentExecutor({
+          user,
+          tab: 'software',
+          boundArgs: { appId: app.id },
+          toolNames: isReadOnlyMode(mode) ? READ_ONLY_MODE_TOOLS : mode === 'build' ? BUILD_MODE_TOOLS : undefined,
+        })(tool, args),
+    });
+    const status = result.status === 'refused' ? (result.code === 'not_found' ? 404 : 409) : 200;
+    return NextResponse.json({ ...result, changes: diffTrees(before, getSnapshot(app.id)) }, { status });
   }
 
   const clean = cleanTurns(messages);
@@ -110,6 +142,8 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       // persistence + backward-compat.
       let finalText = '';
       let changes: FileChange[] = [];
+      let pending: { confirmationId: string; tool: string; args: Record<string, unknown>; expiresAt: string }[] = [];
+      let turnConversationId = conversationId;
       // The tier this turn ran on for the UI note — the mode's tier (reasoning for
       // every Software stage), which is what the run actually executes on now.
       const ranRole = modelRoleForMode(mode);
@@ -125,6 +159,8 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
           // model never has to repeat it (an omitted/empty id is filled in, not 404'd —
           // the `commit({})` → not_found fix) and a mismatched id is rejected loudly.
           boundArgs: { appId: app.id },
+          // A write parks for the user's confirmation; the card is bound to this app's conversation.
+          confirm: { ...(conversationId ? { conversationId } : {}), surface: `app-chat:${app.id}` },
           // EVERY stage (incl. Build code-generation) runs on the reasoning tier. Passing
           // it here is the fix: runTabAgent used to ignore the computed tier and run on the
           // platform assistant/standard model. No standard→reasoning escalation is needed
@@ -163,6 +199,8 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
         });
         content = renderAssistantText(result);
         finalText = result.finalText;
+        pending = result.pending ?? [];
+        turnConversationId = result.conversationId;
         // Diff the committed tree after the run (build mode only ever writes).
         if (mode === 'build') changes = diffTrees(before, getSnapshot(app.id));
         // EMPTY-CHANGESET HONESTY (0.6.115): a build turn that committed 0 files did NOT
@@ -205,6 +243,9 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
         tier: tierNote(ranRole),
         mode,
         changes,
+        // Writes parked for the user's OK (empty when none), and the conversation they are bound to.
+        pending,
+        conversationId: turnConversationId,
       });
       controller.close();
     },

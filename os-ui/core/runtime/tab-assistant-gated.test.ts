@@ -21,6 +21,8 @@ import { __resetConfirmations } from '@core/policy/confirmations';
 import { decideConfirmation } from '@core/runtime/confirm-execute';
 
 const creator: CurrentUser = { id: 'u-creator', name: 'Robin', domains: ['sales'], role: 'creator' };
+// `commit` is the developer-mode write: builder or admin only.
+const builder: CurrentUser = { id: 'u-builder', name: 'Bea', domains: ['sales'], role: 'builder' };
 
 let LLM: LlmCall = async () => ({ content: '', toolCalls: [] });
 const reached: { name: string; args: Record<string, unknown> }[] = [];
@@ -125,7 +127,8 @@ test('INJECTION: a tool result that tells the model to write cannot make the wri
 });
 
 test('INJECTION twin: a role-forbidden or unlisted tool is refused, not offered for confirmation', async () => {
-  const res = await run(script([{ name: 'decide_deploy', args: { cardId: 'x', decision: 'approve' } }]), { tab: 'software' });
+  const { handleRpc } = await import('@core/mcp/server');
+  const res = await run(script([{ name: 'decide_deploy', args: { cardId: 'x', decision: 'approve' } }]), { tab: 'software', dispatch: handleRpc });
   assert.deepEqual(reached, []);
   assert.equal(res.pending?.length ?? 0, 0, 'a call that can only be denied is not parked');
   assert.equal(res.steps[0].isError, true);
@@ -151,13 +154,13 @@ test('ROUTE /api/agent-chat twin: the same route confirms with the returned id e
   LLM = script([WRITE]);
   const { json } = await post({ agent: 'data-product', messages: [{ role: 'user', content: 'make a dataset' }] });
   const id = json.pending[0].confirmationId;
-  const wrong = await post({ confirmation: { id, conversationId: 'not-this-one', decision: 'confirm' } });
+  const wrong = await post({ agent: 'data-product', confirmation: { id, conversationId: 'not-this-one', decision: 'confirm' } });
   assert.notEqual(wrong.status, 200);
   assert.deepEqual(reached, []);
-  const ok = await post({ confirmation: { id, conversationId: json.conversationId, decision: 'confirm' } });
+  const ok = await post({ agent: 'data-product', confirmation: { id, conversationId: json.conversationId, decision: 'confirm' } });
   assert.equal(ok.json.status, 'executed');
   assert.deepEqual(reached, [WRITE]);
-  assert.notEqual((await post({ confirmation: { id, conversationId: json.conversationId, decision: 'confirm' } })).status, 200);
+  assert.notEqual((await post({ agent: 'data-product', confirmation: { id, conversationId: json.conversationId, decision: 'confirm' } })).status, 200);
   assert.equal(reached.length, 1);
 });
 
@@ -170,14 +173,14 @@ test('ROUTE /api/agent-chat: a read-only turn answers without confirmation', asy
 
 // 3. the app Build chat (bound to ONE app, with a per-mode allowlist) ------------------------------
 test('APP BUILD CHAT: a commit parks; confirming runs it once with the BOUND appId merged in; the allowlist still closes other tools', async () => {
-  const build = { tab: 'software' as const, boundArgs: { appId: 'app_1' }, toolNames: ['commit', 'read_app_files'] };
+  const build = { user: builder, tab: 'software' as const, boundArgs: { appId: 'app_1' }, toolNames: ['commit', 'read_app_files'] };
   const res = await run(script([{ name: 'commit', args: { files: [{ path: 'a.txt', content: 'x' }] } }]), build);
   assert.deepEqual(reached, [], 'the commit did not run');
   assert.equal(res.pending?.length, 1);
   const conv = (res as { conversationId: string }).conversationId;
 
-  const exec = real.tabAgentExecutor({ user: creator, tab: 'software', ...build, dispatch });
-  const ok = await decideConfirmation({ user: creator, confirmationId: res.pending![0].confirmationId, conversationId: conv, decision: 'confirm', execute: exec });
+  const exec = real.tabAgentExecutor({ ...build, dispatch });
+  const ok = await decideConfirmation({ user: builder, confirmationId: res.pending![0].confirmationId, conversationId: conv, decision: 'confirm', execute: exec });
   assert.equal(ok.status, 'executed');
   assert.equal(reached.length, 1);
   assert.equal(reached[0].name, 'commit');
@@ -190,10 +193,10 @@ test('APP BUILD CHAT: a commit parks; confirming runs it once with the BOUND app
 });
 
 test('APP BUILD CHAT twin: a model-supplied appId that conflicts with the bound one never reaches the dispatch, even confirmed', async () => {
-  const build = { tab: 'software' as const, boundArgs: { appId: 'app_1' }, toolNames: ['commit'] };
+  const build = { user: builder, tab: 'software' as const, boundArgs: { appId: 'app_1' }, toolNames: ['commit'] };
   const res = await run(script([{ name: 'commit', args: { appId: 'app_OTHER', files: [] } }]), build);
-  const exec = real.tabAgentExecutor({ user: creator, tab: 'software', ...build, dispatch });
-  const out = await decideConfirmation({ user: creator, confirmationId: res.pending![0].confirmationId, conversationId: (res as { conversationId: string }).conversationId, decision: 'confirm', execute: exec });
+  const exec = real.tabAgentExecutor({ ...build, dispatch });
+  const out = await decideConfirmation({ user: builder, confirmationId: res.pending![0].confirmationId, conversationId: (res as { conversationId: string }).conversationId, decision: 'confirm', execute: exec });
   assert.equal(out.status, 'failed');
   assert.deepEqual(reached, []);
 });

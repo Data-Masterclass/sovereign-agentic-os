@@ -5,7 +5,8 @@ import { NextResponse } from 'next/server';
 import { roleModel } from '@core/models/roles';
 import { contextForAgentKey, tabForAgentKey } from '@core/tabs-meta/context';
 import { currentUser } from '@core/kernel/auth';
-import { runTabAgent, renderAssistantText } from '@core/runtime/runtime';
+import { runTabAgent, renderAssistantText, tabToolExecutor } from '@core/runtime/runtime';
+import { decideConfirmation } from '@core/runtime/confirm-execute';
 import { assistantComplete, AssistantNotConfiguredError } from '@core/runtime/complete';
 
 export const dynamic = 'force-dynamic';
@@ -104,12 +105,38 @@ const FALLBACK_PROMPT =
 export async function POST(req: Request) {
   let agent = '';
   let messages: Msg[] = [];
+  let conversationId: string | null = null;
+  let confirmation: { id: string; conversationId: string; decision: 'confirm' | 'decline' } | null = null;
   try {
     const body = await req.json();
     agent = (body?.agent ?? '').toString();
     messages = Array.isArray(body?.messages) ? body.messages : [];
+    // A write the helper wants to make is parked until the user confirms it. The caller may name its
+    // conversation; absent or malformed, the turn mints one and returns it.
+    if (typeof body?.conversationId === 'string' && /^[A-Za-z0-9_-]{8,64}$/.test(body.conversationId)) conversationId = body.conversationId;
+    const c = body?.confirmation;
+    if (c && typeof c.id === 'string' && typeof c.conversationId === 'string' && (c.decision === 'confirm' || c.decision === 'decline')) {
+      confirmation = { id: c.id, conversationId: c.conversationId, decision: c.decision };
+    }
   } catch {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+  }
+
+  // Confirm or decline a write this helper parked. Same governed dispatch, same user, the stored arguments.
+  if (confirmation) {
+    const tab = tabForAgentKey(agent);
+    const user = await currentUser();
+    if (!user) return NextResponse.json({ error: 'Sign in to use this assistant.' }, { status: 401 });
+    if (!tab) return NextResponse.json({ error: 'Unknown assistant.' }, { status: 404 });
+    const result = await decideConfirmation({
+      user,
+      confirmationId: confirmation.id,
+      conversationId: confirmation.conversationId,
+      surface: `tab:${tab}`,
+      decision: confirmation.decision,
+      execute: (tool, args) => tabToolExecutor(user, tab)(tool, args),
+    });
+    return NextResponse.json(result, { status: result.status === 'refused' ? (result.code === 'not_found' ? 404 : 409) : 200 });
   }
 
   const clean = messages
@@ -139,11 +166,19 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Sign in to use this assistant.' }, { status: 401 });
     }
     try {
-      const result = await runTabAgent({ user, tab, messages: clean });
+      const result = await runTabAgent({
+        user,
+        tab,
+        messages: clean,
+        confirm: { ...(conversationId ? { conversationId } : {}), surface: `tab:${tab}` },
+      });
       return NextResponse.json({
         role: 'assistant',
         content: renderAssistantText(result),
         model: roleModel('standard'),
+        // Writes parked for the user's OK (empty when none) and the conversation they are bound to.
+        pending: result.pending ?? [],
+        conversationId: result.conversationId,
       });
     } catch (e) {
       if (e instanceof AssistantNotConfiguredError) {

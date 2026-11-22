@@ -13,7 +13,8 @@
  */
 import 'server-only';
 import type { CurrentUser } from '@core/kernel/auth';
-import { beginExecute, declineConfirmation, finishExecute } from '@core/policy/confirmations';
+import { beginExecute, declineConfirmation, finishExecute, getConfirmationForUser } from '@core/policy/confirmations';
+import type { ConfirmSurface } from '@core/runtime/confirm-gate';
 import type { ToolExecutor } from '@core/runtime/agentic';
 import { typedToolError, type TypedToolError } from '@core/runtime/ask-response';
 import type { ChatArtifact } from '@core/runtime/chat-artifacts';
@@ -33,6 +34,12 @@ export async function decideConfirmation(input: {
   user: CurrentUser;
   confirmationId: string;
   conversationId: string;
+  /**
+   * The surface deciding. A confirmation is only valid on the surface that parked it: a tab
+   * assistant's card cannot be decided through Ask the OS, or the reverse. Every route passes its
+   * own; absent only in tests that predate surfaces.
+   */
+  surface?: ConfirmSurface;
   decision: 'confirm' | 'decline';
   /**
    * Runs ONE governed tool call as the confirming user, appending the call's typed artifacts to
@@ -42,6 +49,10 @@ export async function decideConfirmation(input: {
   execute: (tool: string, args: Record<string, unknown>, sink: ChatArtifact[]) => ReturnType<ToolExecutor>;
 }): Promise<DecideResult> {
   const { user, confirmationId, conversationId } = input;
+  if (input.surface) {
+    const peek = getConfirmationForUser(confirmationId, user.id);
+    if (peek && peek.surface !== input.surface) return { status: 'refused', code: 'not_found', artifacts: [] };
+  }
   if (input.decision === 'decline') {
     const c = declineConfirmation(confirmationId, user.id);
     // Same conversation rule as confirm: a record of another conversation is "not found".

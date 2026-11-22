@@ -13,7 +13,6 @@ import {
   lastUserText,
 } from '@tabs/agents/lib/build/phase-router';
 import { cleanTurns } from '@core/runtime/turns';
-import { isAwaitingConfirmation } from '@tabs/agents/lib/build/phase-tools';
 import { getAppForUser } from '@tabs/software/lib/apps';
 
 export const dynamic = 'force-dynamic';
@@ -72,7 +71,7 @@ export async function POST(req: Request) {
           user,
           yaml: SOFTWARE_TEAM_YAML,
           messages: clean,
-          onStep: (s) => send('step', { tool: s.tool, isError: s.isError, awaiting: isAwaitingConfirmation(s.result) }),
+          onStep: (s) => send('step', { tool: s.tool, isError: s.isError, awaiting: !!s.parked }),
         });
 
         // The app's name for the confirm card — read as the user, so an app they cannot see

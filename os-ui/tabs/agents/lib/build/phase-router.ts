@@ -100,6 +100,8 @@ export function extractSignals(run: AgenticResult): TurnSignals {
   let committed = false;
   let appId: string | null = null;
   for (const s of run.steps) {
+    // A PARKED call did not run (it waits for the user's OK), so it is neither a commit nor an app id.
+    if (s.parked) continue;
     if ((s.tool === 'create_software' || s.tool === 'commit') && !s.isError) committed = true;
     if (!appId && !s.isError) {
       // create_software / commit return the app JSON — capture its id once.
@@ -108,6 +110,23 @@ export function extractSignals(run: AgenticResult): TurnSignals {
     }
   }
   return { planReady, committed, appId };
+}
+
+/**
+ * Where the session goes once the user CONFIRMS a call the turn parked (the call ran just now, as
+ * the user): the same signals `extractSignals` reads from a call that ran inside the turn.
+ */
+export function settleAfterConfirm(
+  session: Pick<TeamSession, 'phase' | 'appId'>,
+  tool: string,
+  result: { ok: boolean; text: string },
+): { phase: Phase; appId: string | null } {
+  if (tool === 'request_deploy') return { phase: result.ok ? 'done' : 'feedback', appId: session.appId };
+  if (!result.ok) return { phase: session.phase, appId: session.appId };
+  const m = result.text.match(/"id"\s*:\s*"(app_[^"]+)"/i) ?? result.text.match(APP_ID_RE);
+  const appId = session.appId ?? (m ? (m[1] ?? m[0]) : null);
+  const phase = tool === 'commit' ? postRoute(session.phase, { planReady: false, committed: true, appId }) : session.phase;
+  return { phase, appId };
 }
 
 /** Advance the phase after the turn ran, from the agent's signals. */
