@@ -162,7 +162,7 @@ spec:
       image: sovereign-os/egress-proxy:sf-e2e
       imagePullPolicy: Never
       securityContext: { runAsUser: 0, capabilities: { add: [SYS_PTRACE] } }
-      command: ["sh", "-c", "apk add --no-cache strace >/dev/null 2>&1; cp /etc/tinyproxy/tinyproxy.conf /tmp/c.conf; strace -f -o /tmp/s.txt timeout 2 tinyproxy -d -c /etc/tinyproxy/tinyproxy.conf; echo STRACE-TAIL; tail -22 /tmp/s.txt; echo; cat /etc/resolv.conf; ls -la /etc/tinyproxy/"]
+      command: ["sh", "-c", "apk add --no-cache strace >/dev/null 2>&1; cp /etc/tinyproxy/tinyproxy.conf /tmp/c.conf; strace -f -o /tmp/s.txt timeout 2 tinyproxy -d -c /etc/tinyproxy/tinyproxy.conf; echo STRACE-FAILS; grep -nE '= -1|connect|sendto|recvfrom' /tmp/s.txt | grep -v 'ENOENT.*(ld-|/lib|/usr/lib)' | head -40; echo STRACE-OPEN; grep -nE 'tinyproxy|resolv|hosts|nsswitch' /tmp/s.txt | head -20; echo; cat /etc/resolv.conf; ls -la /etc/tinyproxy/"]
       volumeMounts: [{ name: config, mountPath: /etc/tinyproxy, readOnly: true }, { name: tmp, mountPath: /tmp }]
   volumes: [{ name: config, configMap: { name: egress-proxy-config } }, { name: tmp, emptyDir: {} }]
 YAML
