@@ -2102,7 +2102,10 @@ osUI:
       # The gates run untrusted app tests, so they run in a DEDICATED namespace (never the release
       # namespace; the chart refuses it): default-deny network, Pod Security restricted, and the only way
       # out is DNS + the egress proxy for `npm ci`. Default `<release namespace>-sandbox`.
-      enabled: true
+      # OFF by default: turning it on adds registry.npmjs.org to the egress proxy allowlist and creates the
+      # namespace, so it is an explicit operator choice. While it is off the gates cannot run, so a
+      # container-app deploy request is BLOCKED with the reason (never skipped).
+      enabled: false
       namespace: ""
     scanner:
       # ON by default. A cluster WITHOUT a scanner cannot approve a software deploy at all,

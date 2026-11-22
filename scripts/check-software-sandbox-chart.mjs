@@ -33,7 +33,7 @@ if (!helmOk || !depsOk) {
   const msg = `check-software-sandbox-chart: ${helmOk ? 'no subchart .tgz (run `helm dependency build charts/sovereign-agentic-os`)' : 'helm not on PATH'} - SKIPPED`;
   if (process.env.CI) problems.push(msg); else console.warn(msg);
 } else {
-  const BASE = ['--set', 'osUI.enabled=true', '--set', 'networkPolicies.defaultDeny=true', '--set', 'networkPolicies.apiserver.cidrs={10.96.0.1/32}', '--set', 'egressProxy.enabled=true'];
+  const BASE = ['--set', 'osUI.enabled=true', '--set', 'osUI.software.sandbox.enabled=true', '--set', 'networkPolicies.defaultDeny=true', '--set', 'networkPolicies.apiserver.cidrs={10.96.0.1/32}', '--set', 'egressProxy.enabled=true'];
   const render = (only, extra = []) => execFileSync('helm', ['template', 'agentic-os', CHART, '-n', 'agentic-os', '--skip-schema-validation', ...BASE, ...extra, ...only.flatMap((t) => ['--show-only', t])], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
   const docs = (s) => yaml.loadAll(s).filter(Boolean);
   const SANDBOX = 'templates/base/os-ui/software-sandbox.yaml';

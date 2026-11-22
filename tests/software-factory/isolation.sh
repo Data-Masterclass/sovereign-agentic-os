@@ -43,7 +43,7 @@ kubectl wait --for=condition=Ready nodes --all --timeout=300s
 ls "$repo/charts/sovereign-agentic-os/charts"/*.tgz >/dev/null 2>&1 || { helm dependency build "$repo/charts/sovereign-agentic-os" || helm dependency update "$repo/charts/sovereign-agentic-os"; } >/dev/null
 kubectl create namespace "$PLATFORM_NS"
 helm template agentic-os "$repo/charts/sovereign-agentic-os" -n "$PLATFORM_NS" --skip-schema-validation \
-  --set osUI.enabled=true --set networkPolicies.defaultDeny=true --set 'networkPolicies.apiserver.cidrs={10.96.0.1/32}' --set egressProxy.enabled=true \
+  --set osUI.enabled=true --set osUI.software.sandbox.enabled=true --set networkPolicies.defaultDeny=true --set 'networkPolicies.apiserver.cidrs={10.96.0.1/32}' --set egressProxy.enabled=true \
   --show-only templates/base/os-ui/software-sandbox.yaml >"$work/rendered-sandbox.yaml"
 SANDBOX_NS="$(kubectl create --dry-run=client -f "$work/rendered-sandbox.yaml" -o jsonpath='{.items[?(@.kind=="Namespace")].metadata.name}' 2>/dev/null || true)"
 [ -n "$SANDBOX_NS" ] || SANDBOX_NS="$(awk '/^kind: Namespace/{f=1} f&&/^  name:/{print $2; exit}' "$work/rendered-sandbox.yaml")"
