@@ -78,6 +78,7 @@ helm template agentic-os "$root/charts/sovereign-agentic-os" -n "$PLATFORM_NS" -
 k apply -f "$chart_yaml" >/dev/null
 rm -f "$chart_yaml"
 
+REPOS_UID="$(id -u)"; [ "$REPOS_UID" != 0 ] || REPOS_UID=65532
 say "6. the domain git server: the OS's git-http image over the bare repositories"
 cat <<YAML | k apply -f - >/dev/null
 apiVersion: apps/v1
@@ -89,17 +90,14 @@ spec:
   template:
     metadata: { labels: { app.kubernetes.io/component: os-ui } }
     spec:
-      securityContext: { runAsNonRoot: true, runAsUser: 65532, seccompProfile: { type: RuntimeDefault } }
+      # The server runs as the uid that owns the repositories (the host user that wrote them), as os-ui and git-http share a uid in the
+      # chart: git refuses a repository owned by another user ("dubious ownership"), and lighttpd does not pass GIT_CONFIG_* to the CGI.
+      securityContext: { runAsNonRoot: true, runAsUser: ${REPOS_UID}, seccompProfile: { type: RuntimeDefault } }
       containers:
         - name: git-http
           image: sovereign-os/git-http:sf-e2e
           imagePullPolicy: Never
           ports: [{ name: git-http, containerPort: 9419 }]
-          env:
-            # The repositories are owned by the host user that wrote them, not by the CGI user.
-            - { name: GIT_CONFIG_COUNT, value: "1" }
-            - { name: GIT_CONFIG_KEY_0, value: safe.directory }
-            - { name: GIT_CONFIG_VALUE_0, value: "*" }
           securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
           volumeMounts:
             - { name: repos, mountPath: /repos, readOnly: true }
