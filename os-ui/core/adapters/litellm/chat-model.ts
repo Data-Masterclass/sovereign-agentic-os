@@ -25,6 +25,7 @@
  */
 import { ChatOpenAI } from '@langchain/openai';
 import { config } from '@core/kernel/config';
+import { viaGateway } from '@core/adapters/litellm/gateway-fetch';
 import { callerCredential, type CallerContext } from '@core/infra/litellm-credential';
 import { forgetSystemKey, resolveSystemKey, tokenIdOf } from '@core/infra/agent-system-keys';
 import type { Fetched } from '@core/adapters/_contract';
@@ -55,13 +56,15 @@ export function gatewayChatModel(input: {
   // An agent system's own key can be replaced while a segment runs (migration, Rebuild, rotation):
   // the same 401 → re-read the store → repeat once that the v1 caller has (`core/runtime/runtime.ts`).
   const systemId = input.caller?.keyRef && input.ownKey && !input.apiKey ? input.caller.keyRef.key : null;
+  // Every module model call carries the platform's masking switch as LiteLLM's redaction header.
+  const viaMasking = viaGateway(input.fetch);
   const fetchImpl = systemId
-    ? ownKeyRetryFetch(systemId, input.ownKey!, input.fetch ?? globalThis.fetch, input.rotationWaitMs ?? ROTATION_WAIT_MS)
-    : input.fetch;
+    ? ownKeyRetryFetch(systemId, input.ownKey!, viaMasking, input.rotationWaitMs ?? ROTATION_WAIT_MS)
+    : viaMasking;
   const model = new ChatOpenAI({
     model: input.model,
     apiKey,
-    configuration: { baseURL: input.baseURL ?? `${config.litellmUrl}/v1`, ...(fetchImpl ? { fetch: fetchImpl } : {}) },
+    configuration: { baseURL: input.baseURL ?? `${config.litellmUrl}/v1`, fetch: fetchImpl },
     maxRetries: 0,
     timeout: GATEWAY_MODEL_TIMEOUT_MS,
     modelKwargs: {

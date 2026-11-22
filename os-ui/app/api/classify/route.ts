@@ -16,6 +16,7 @@
  */
 import { NextResponse } from 'next/server';
 import { config } from '@core/kernel/config';
+import { gatewayFetch } from '@core/adapters/litellm/gateway-fetch';
 import { withRoute } from '@core/kernel/route-server';
 import { truncateToTokens } from '@core/infra/context/context-assembler';
 import {
@@ -92,7 +93,7 @@ export const POST = withRoute<Record<string, string>, { title?: unknown; text?: 
   };
 
   try {
-    const res = await fetch(`${config.litellmUrl}/v1/chat/completions`, {
+    const res = await gatewayFetch(`${config.litellmUrl}/v1/chat/completions`, {
       method: 'POST',
       headers: {
         authorization: `Bearer ${cred.apiKey}`,

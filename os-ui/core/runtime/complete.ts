@@ -3,6 +3,7 @@
  */
 import 'server-only';
 import { config } from '@core/kernel/config';
+import { gatewayFetch } from '@core/adapters/litellm/gateway-fetch';
 import {
   callerCredential, runCredentialConfigured, NoRunCredentialError,
   BudgetExceededError, isBudgetRejection,
@@ -113,7 +114,7 @@ export function liteLlmAssistantCaller(): AssistantCaller {
     let res: Response;
     let text: string;
     try {
-      res = await fetch(`${config.litellmUrl}/v1/chat/completions`, {
+      res = await gatewayFetch(`${config.litellmUrl}/v1/chat/completions`, {
         method: 'POST',
         headers: {
           authorization: `Bearer ${cred.apiKey}`,

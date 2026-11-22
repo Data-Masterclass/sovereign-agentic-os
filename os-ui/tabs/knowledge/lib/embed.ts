@@ -39,6 +39,7 @@ import {
   type CallerContext,
 } from '@core/infra/litellm-credential';
 import { hashEmbed } from '@tabs/knowledge/lib/embed-core';
+import { gatewayFetch } from '@core/adapters/litellm/gateway-fetch';
 
 export type EmbedResult = { vectors: number[][]; source: 'litellm' | 'offline-hash' };
 
@@ -65,7 +66,7 @@ async function postEmbeddings(body: unknown, apiKey: string, ms = 4000): Promise
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), ms);
   try {
-    return await fetch(`${config.litellmUrl}/v1/embeddings`, {
+    return await gatewayFetch(`${config.litellmUrl}/v1/embeddings`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
       body: JSON.stringify(body),

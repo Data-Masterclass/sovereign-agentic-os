@@ -41,10 +41,10 @@
  */
 
 import { config } from '@core/kernel/config';
-import { getSettings, ensureHydrated as ensureSettingsHydrated, __setForTests as setSettingsForTests } from '@tabs/admin/lib/settings';
+import { getSettings, ensureHydrated as ensureSettingsHydrated, maskingSwitchKnown, __setForTests as setSettingsForTests } from '@tabs/admin/lib/settings';
 import { noteDeprecatedAlias } from '@core/models/role-mapping';
 import { roleMappingActive } from '@core/models/role-reconcile';
-import { DEFAULT_MASKING, type MaskingPolicy } from '@core/infra/trace-masking';
+import { DEFAULT_MASKING, UNKNOWN_MASKING, type MaskingPolicy } from '@core/infra/trace-masking';
 
 export type ModelRole = 'reasoning' | 'standard' | 'tools' | 'embeddings' | 'coder';
 
@@ -156,15 +156,27 @@ export async function filesAutoDescribeEnabled(): Promise<boolean> {
  * The platform admin's Langfuse masking switch (`langfuseMasking`), settings hydrated first. Kept
  * here, with the other platform flags the kernel reads, so `core/infra/masking-policy.ts` (and
  * through it the Langfuse writer and the gateway callers) never imports a tab. Default OFF.
+ *
+ * FAILS SAFE: until the switch has been read from the settings store (a pod that just restarted,
+ * a store that cannot be reached) it is UNKNOWN, and an unknown privacy switch is the strictest
+ * level (`UNKNOWN_MASKING`: all content masked), never the default OFF. Logged on every failed read
+ * (`settings.ts`, at most every few seconds) and visible through `langfuseMaskingStatus()`. Once the store answers the unknown state ends.
  */
 export async function langfuseMaskingPolicy(): Promise<MaskingPolicy> {
   await ensureSettingsHydrated();
+  return heldLangfuseMaskingPolicy();
+}
+
+/** The same value as already held in memory (the synchronous call sites): strict while unknown. */
+export function heldLangfuseMaskingPolicy(): MaskingPolicy {
+  if (!maskingSwitchKnown()) return { ...UNKNOWN_MASKING };
   return getSettings().langfuseMasking ?? DEFAULT_MASKING;
 }
 
-/** The same value as already held in memory (the synchronous call sites). */
-export function heldLangfuseMaskingPolicy(): MaskingPolicy {
-  return getSettings().langfuseMasking ?? DEFAULT_MASKING;
+/** Whether the switch was read, and what applies right now (for logs, Monitoring and tests). */
+export function langfuseMaskingStatus(): { known: boolean; effective: MaskingPolicy } {
+  const known = maskingSwitchKnown();
+  return { known, effective: known ? (getSettings().langfuseMasking ?? DEFAULT_MASKING) : { ...UNKNOWN_MASKING } };
 }
 
 /** Test seam: set the switch in memory, without the mirror (see settings `__setForTests`). */

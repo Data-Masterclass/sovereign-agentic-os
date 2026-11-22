@@ -129,6 +129,15 @@ type SettingsState = {
   refreshedAt?: number;
   /** The in-flight worker re-read, shared by concurrent callers. */
   refreshing?: Promise<void> | null;
+  /**
+   * Whether the Langfuse masking switch has been READ (the store answered: a saved value, or "no
+   * settings saved yet"), or SET by an admin in this process. Until then the held value is only the
+   * default, and a privacy control must not treat its default as its setting
+   * (`core/models/roles.ts` applies the strictest level while this is false).
+   */
+  maskingKnown?: boolean;
+  /** When a read of the store last failed to give an answer (for the retry interval and the log). */
+  unreadAt?: number;
 };
 
 /**
@@ -183,6 +192,12 @@ export async function ensureHydrated(): Promise<void> {
   const s = settingsState();
   if (!s.hydration) s.hydration = hydrateSettings();
   await s.hydration;
+  // A read that got no answer (store unreachable, boot race) is retried, at most every
+  // SETTINGS_REFRESH_MIN_MS: the unknown masking state must end as soon as the store is back.
+  if (!s.maskingKnown && !isRunWorkerProcess() && Date.now() - (s.unreadAt ?? 0) >= SETTINGS_REFRESH_MIN_MS) {
+    if (!s.refreshing) s.refreshing = hydrateSettings().finally(() => { s.refreshing = null; });
+    await s.refreshing;
+  }
   // The run worker is a READER of os-ui's writes: re-read when stale (os-ui never does — it is
   // the writer, and its in-process value is authoritative).
   if (isRunWorkerProcess() && Date.now() - (s.refreshedAt ?? 0) >= SETTINGS_REFRESH_MIN_MS) {
@@ -193,16 +208,40 @@ export async function ensureHydrated(): Promise<void> {
 
 async function hydrateSettings(): Promise<void> {
   const s = settingsState();
-  const mirror = await getMirror();
-  const doc = (await mirror.getDoc(DOC_ID)) as { settings?: unknown } | null;
+  let read: { state: 'found'; doc: unknown } | { state: 'absent' } | { state: 'unreachable' };
+  try {
+    const mirror = await getMirror();
+    read = await mirror.read(DOC_ID) as typeof read;
+  } catch {
+    read = { state: 'unreachable' };
+  }
+  if (read.state === 'unreachable') {
+    // NO silent fallback: the store gave no answer, so the held values are only defaults. The
+    // masking switch is then UNKNOWN (not OFF) and is retried (`ensureHydrated`).
+    s.unreadAt = Date.now();
+    s.refreshedAt = Date.now();
+    if (!s.maskingKnown) console.warn('[langfuse-masking] the settings store gave no answer: the masking switch is unknown, so the strictest level (all content masked) applies until it is read');
+    return;
+  }
   s.refreshedAt = Date.now();
+  s.unreadAt = undefined;
+  const doc = read.state === 'found' ? (read.doc as { settings?: unknown } | null) : null;
   if (doc && doc.settings && typeof doc.settings === 'object') {
     // Merge THROUGH updateSettings' semantics so the stored partial only sets the
     // fields it carries (nil-safe): a stored doc from before a field existed keeps
     // that field at its current default rather than blanking it. An unreadable doc
     // (null) keeps what is held — a re-read never resets settings to defaults.
     s.settings = mergeSettings(defaults(), doc.settings as Record<string, unknown>);
+    s.maskingKnown = true;
+  } else if (read.state === 'absent') {
+    // The store answered 404: nothing was ever saved, so the default IS the setting.
+    s.maskingKnown = true;
   }
+}
+
+/** Whether the Langfuse masking switch has been read from the store (or set in this process). */
+export function maskingSwitchKnown(): boolean {
+  return settingsState().maskingKnown === true;
 }
 
 function fail(message: string, status: number): Error {
@@ -269,8 +308,21 @@ export function updateSettings(patch: Partial<Settings> & Record<string, unknown
   }
   const s = settingsState();
   s.settings = mergeSettings(s.settings, patch);
+  // An admin's own value is the setting; it is no longer unknown.
+  if ('langfuseMasking' in patch) s.maskingKnown = true;
   writeThrough(s.settings);
   return s.settings;
+}
+
+/**
+ * Put back the settings a failed update replaced (the route undoes the write when its audit row
+ * cannot be written: both succeed or both fail), and write them through again.
+ */
+export function restoreSettings(previous: Settings, wasKnown: boolean): void {
+  const s = settingsState();
+  s.settings = previous;
+  s.maskingKnown = wasKnown;
+  writeThrough(s.settings);
 }
 
 /** The coded-apps platform flag (default OFF). The ONE read the create-gate + MCP
@@ -297,6 +349,8 @@ export function _reset(): void {
   s.hydration = null;
   s.refreshedAt = undefined;
   s.refreshing = null;
+  s.maskingKnown = false;
+  s.unreadAt = undefined;
   // Reset the mirror's probe state if it was already loaded (a fresh-process sim).
   if (mirrorPromise) void mirrorPromise.then((m) => m.__reset()).catch(() => {});
 }
@@ -308,5 +362,6 @@ export function _reset(): void {
 export function __setForTests(patch: Partial<Settings> & Record<string, unknown>): Settings {
   const s = settingsState();
   s.settings = mergeSettings(s.settings, patch);
+  if ('langfuseMasking' in patch) s.maskingKnown = true;
   return s.settings;
 }
