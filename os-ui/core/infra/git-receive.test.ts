@@ -382,6 +382,30 @@ test('a push the validator refuses is a 422 naming the file and the reason (E5)'
   assert.equal(__openLeases(), 0);
 });
 
+test('a kind that refuses a DELETION (validateDelete) makes the push a 422 naming the file; a delete it allows, or a kind without the hook, is accepted', async () => {
+  __clearRepoKinds();
+  registerRepoKind({
+    kind: 'owned',
+    matches: (p) => p.startsWith('models/gold/'),
+    validate: () => null,
+    validateDelete: ({ path }) => (path.endsWith('schema.yml') ? 'the platform owns this file; it cannot be removed here' : null),
+    ingest: async (): Promise<IngestReport> => ({ kind: 'owned', created: 0, updated: 0, skipped: 0, notes: [] }),
+  });
+  const refused = await fakePush('sales', builder, new Map([['models/gold/schema.yml', null]]));
+  assert.equal(refused.decision.ok, false);
+  assert.equal(refused.decision.ok === false && refused.decision.status, 422);
+  assert.equal(refused.decision.ok === false && refused.decision.message.trim(), 'models/gold/schema.yml: the platform owns this file; it cannot be removed here');
+  assert.equal(__openLeases(), 0);
+  // NEGATIVE TWINS: the same kind lets an unowned file go; a kind with no validateDelete (the spy) lets schema.yml go.
+  const allowed = await fakePush('sales', builder, new Map([['models/gold/gold_orders.sql', null]]));
+  assert.equal(allowed.decision.ok, true);
+  await git.writeRef({ fs, gitdir: repoPath('sales', { reposDir }), ref: MAIN, value: (await synthesize('sales', new Map())).oldSha, force: true });
+  __clearRepoKinds();
+  registerSpy();
+  const noHook = await fakePush('sales', builder, new Map([['models/gold/schema.yml', null]]));
+  assert.equal(noHook.decision.ok, true);
+});
+
 test('a validator that THROWS rejects the push rather than crashing the gate', async () => {
   __clearRepoKinds();
   registerRepoKind({
