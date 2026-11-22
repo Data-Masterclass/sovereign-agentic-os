@@ -5,7 +5,7 @@ import { NextResponse } from 'next/server';
 import { roleModel } from '@core/models/roles';
 import { requireUser } from '@core/kernel/auth';
 import { mcpTabForPath, runOsAssistant } from '@core/runtime/agent-loop';
-import { askTurnResponse } from '@core/runtime/ask-response';
+import { askStepEvent, askTurnResponse } from '@core/runtime/ask-response';
 import { sanitizePageContext } from '@core/runtime/page-context';
 import { AssistantNotConfiguredError } from '@core/runtime/complete';
 
@@ -37,6 +37,8 @@ export async function POST(req: Request) {
   let path = '';
   let messages: Msg[] = [];
   let pageContextRaw: unknown = null;
+  let conversationId: string | null = null;
+  let wantStream = false;
   try {
     const body = await req.json();
     path = (body?.path ?? '').toString();
@@ -44,6 +46,12 @@ export async function POST(req: Request) {
     // The current-screen snapshot the client publishes (open artifact + stage). It
     // only ENRICHES; a missing/malformed value degrades to "no page context".
     pageContextRaw = body?.pageContext ?? null;
+    // The Home chat names its conversation: that turns on the confirm-before-write gate. The
+    // drawer sends neither field and behaves exactly as before.
+    if (typeof body?.conversationId === 'string' && /^[A-Za-z0-9_-]{8,64}$/.test(body.conversationId)) {
+      conversationId = body.conversationId;
+    }
+    wantStream = body?.stream === true;
   } catch {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
   }
@@ -75,33 +83,58 @@ export async function POST(req: Request) {
   const page = sanitizePageContext(pageContextRaw);
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), CHAT_TIMEOUT_MS);
-  try {
-    const result = await runOsAssistant({ user, tab, page, messages: clean });
-    return NextResponse.json(
-      askTurnResponse({
-        finalText: result.finalText,
-        plan: result.plan,
-        steps: result.steps,
-        artifacts: result.artifacts,
-        tab,
-        traceId: result.traceId,
-        model: roleModel('standard'),
-      }),
-    );
-  } catch (e) {
-    if (e instanceof AssistantNotConfiguredError) {
-      return NextResponse.json({ error: e.message }, { status: e.status });
-    }
+  const confirm = conversationId ? { conversationId } : undefined;
+  const failure = (e: unknown): { error: string; status: number } => {
+    if (e instanceof AssistantNotConfiguredError) return { error: e.message, status: e.status };
     if ((e as Error).name === 'AbortError') {
-      return NextResponse.json(
-        { error: 'The model did not respond in time — it may still be warming up. Try again in a few seconds.' },
-        { status: 504 },
-      );
+      return { error: 'The model did not respond in time — it may still be warming up. Try again in a few seconds.', status: 504 };
     }
-    return NextResponse.json(
-      { error: `The assistant could not complete the request: ${(e as Error).message}` },
-      { status: 502 },
-    );
+    return { error: `The assistant could not complete the request: ${(e as Error).message}`, status: 502 };
+  };
+  const shape = (result: Awaited<ReturnType<typeof runOsAssistant>>) =>
+    askTurnResponse({
+      finalText: result.finalText,
+      plan: result.plan,
+      steps: result.steps,
+      artifacts: result.artifacts,
+      tab,
+      traceId: result.traceId,
+      model: roleModel('standard'),
+      pending: result.pending,
+    });
+
+  // Live steps: newline-delimited JSON, one event per finished tool step, then one `done` event
+  // carrying the same payload the JSON response has. The steps are real (the harness's own
+  // `onStep`); the final answer arrives whole — the gateway call is not token-streamed.
+  if (wantStream) {
+    const enc = new TextEncoder();
+    const body = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        const send = (o: unknown) => controller.enqueue(enc.encode(`${JSON.stringify(o)}\n`));
+        try {
+          const result = await runOsAssistant({
+            user, tab, page, messages: clean, confirm,
+            onStep: (st) => send(askStepEvent({ tool: st.tool, isError: st.isError, result: st.result, parked: !!st.parked })),
+          });
+          send({ type: 'done', ...shape(result) });
+        } catch (e) {
+          send({ type: 'error', error: failure(e).error });
+        } finally {
+          clearTimeout(timer);
+          controller.close();
+        }
+      },
+      cancel() { ctrl.abort(); },
+    });
+    return new Response(body, { headers: { 'content-type': 'application/x-ndjson; charset=utf-8', 'cache-control': 'no-store' } });
+  }
+
+  try {
+    const result = await runOsAssistant({ user, tab, page, messages: clean, confirm });
+    return NextResponse.json(shape(result));
+  } catch (e) {
+    const f = failure(e);
+    return NextResponse.json({ error: f.error }, { status: f.status });
   } finally {
     clearTimeout(timer);
   }

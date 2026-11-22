@@ -35,11 +35,11 @@ test('NEGATIVE TWIN: a dimmed tile never carries a create action', () => {
   for (const c of launcherFor('creator').filter((x) => !x.canAct)) assert.doesNotMatch(c.href, /action=/);
 });
 
-test('Home renders the chat first and the launcher in its compact form', () => {
+test('Home renders the chat and the launcher in its compact form', () => {
   const page = read('app/page.tsx');
   assert.match(page, /HomeChat/);
   assert.match(page, /<HomeLauncher[^>]*compact/);
-  assert.ok(page.indexOf('<HomeChat') < page.indexOf('<HomeLauncher'), 'chat precedes the tiles');
+  assert.doesNotMatch(page, /<HomeLauncher cards=\{feed\.launcher\} \/>/, 'no full-size gallery any more');
   const tile = read('tabs/home/ui/HomeLauncher.tsx');
   assert.match(tile, /href=\{c\.href\}/, 'the tile still links to the card href');
 });

@@ -24,14 +24,38 @@ import { parseArtifacts, type ChatArtifact } from '@core/runtime/chat-artifacts'
  *   that can refuse to hand the browser something it does not understand.
  */
 
-/** The per-turn trace the surface already showed as chips: which governed tools ran. */
-export type AskToolTrace = { name: string; isError: boolean };
+/** The typed refusal every governed tool returns: `{ code, reason, hint }`. */
+export type TypedToolError = { code: string; reason: string; hint: string };
+
+/**
+ * The typed error inside a tool result's text, or null. Only the exact `{ error: { code, reason,
+ * hint } }` shape the MCP door emits counts; anything else (free text, a data row) is not an error
+ * this surface may re-label.
+ */
+export function typedToolError(resultText: string | undefined): TypedToolError | null {
+  if (!resultText) return null;
+  try {
+    const e = (JSON.parse(resultText) as { error?: Partial<TypedToolError> }).error;
+    if (e && typeof e.code === 'string' && typeof e.reason === 'string') {
+      return { code: e.code, reason: e.reason, hint: typeof e.hint === 'string' ? e.hint : '' };
+    }
+  } catch { /* not JSON: not a typed error */ }
+  return null;
+}
+
+/** The per-turn trace the surface shows as chips: which governed tools ran, and why one was refused. */
+export type AskToolTrace = { name: string; isError: boolean; parked?: boolean; error?: TypedToolError };
+
+/** A write that did NOT run and awaits the user's confirmation. */
+export type AskPending = { confirmationId: string; tool: string; args: Record<string, unknown>; expiresAt: string };
 
 export type AskTurnResponse = {
   role: 'assistant';
   content: string;
   plan: string;
   tools: AskToolTrace[];
+  /** Writes parked for the user's confirmation; empty on a turn that parked nothing. */
+  pending: AskPending[];
   /** C9 — the typed artifacts the governed tools produced, in call order. */
   artifacts: ChatArtifact[];
   tab: string | null;
@@ -43,12 +67,19 @@ export type AskTurnResponse = {
 export type AskTurnInput = {
   finalText: string;
   plan: string;
-  steps: { tool: string; isError: boolean }[];
+  steps: { tool: string; isError: boolean; result?: string; parked?: boolean }[];
   artifacts: ChatArtifact[];
   tab: string | null;
   traceId: string;
   model: string;
+  pending?: AskPending[];
 };
+
+/** One step as the live stream carries it (same projection as the final `tools[]`). */
+export function askStepEvent(s: { tool: string; isError: boolean; result?: string; parked?: boolean; skipped?: boolean }): { type: 'step' } & AskToolTrace {
+  const error = s.isError ? typedToolError(s.result) : null;
+  return { type: 'step', name: s.tool, isError: s.isError, ...(s.parked ? { parked: true } : {}), ...(error ? { error } : {}) };
+}
 
 /**
  * Shape one finished turn for the wire. Deliberately total: every field is present on
@@ -61,7 +92,11 @@ export function askTurnResponse(input: AskTurnInput): AskTurnResponse {
     content: input.finalText,
     plan: input.plan,
     // The transparent, honest trace of the governed tools it invoked this turn.
-    tools: input.steps.map((s) => ({ name: s.tool, isError: s.isError })),
+    tools: input.steps.map((s) => {
+      const error = s.isError ? typedToolError(s.result) : null;
+      return { name: s.tool, isError: s.isError, ...(s.parked ? { parked: true } : {}), ...(error ? { error } : {}) };
+    }),
+    pending: input.pending ?? [],
     artifacts: parseArtifacts({ artifacts: input.artifacts }),
     tab: input.tab,
     traceId: input.traceId,

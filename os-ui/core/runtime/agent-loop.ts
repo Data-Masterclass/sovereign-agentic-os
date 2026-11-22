@@ -14,8 +14,9 @@ import {
 } from '@core/mcp/server';
 import { loadTabContext, tabTitle } from '@core/tabs-meta/context';
 import { buildInstructions } from '@core/mcp/instructions';
-import { runAgentic, type AgenticResult, type LlmCall, type ToolExecutor, type ToolSpec } from '@core/runtime/agentic';
-import { ungatedInteractive } from '@core/runtime/confirm-gate';
+import { runAgentic, type AgenticStep, type AgenticResult, type LlmCall, type ToolExecutor, type ToolSpec } from '@core/runtime/agentic';
+import { ungatedInteractive, userConfirmGate } from '@core/runtime/confirm-gate';
+import { confirmationPort } from '@core/policy/confirmations';
 import { ASK_RULES_BLOCK } from '@core/runtime/ask-rules';
 import { parseArtifacts, truncationBanner, type ChatArtifact } from '@core/runtime/chat-artifacts';
 import { WRITE_TOOL_NAMES } from '@core/mcp/write-tool-meta';
@@ -278,6 +279,16 @@ export type RunOsAssistantInput = {
   traceId?: string;
   /** Injected in tests; defaults to the live governed LiteLLM caller. */
   llm?: LlmCall;
+  /**
+   * Put the user-confirm gate in front of the governed dispatch: a write the model asks for is
+   * PARKED (returned on `pending`) and runs only when the same user confirms it in this
+   * conversation (`confirm-execute.ts`). Absent: today's behaviour (the drawer), unchanged.
+   */
+  confirm?: { conversationId: string };
+  /** Injected in tests: the governed dispatch the executor calls (default `handleRpc`). */
+  dispatch?: RpcDispatch;
+  /** Called as each step finishes — what the Home chat streams to the browser. */
+  onStep?: (step: AgenticStep) => void;
 };
 
 export type OsAssistantResult = AgenticResult & {
@@ -319,13 +330,30 @@ export async function runOsAssistant(input: RunOsAssistantInput): Promise<OsAssi
   if (!injected) await ensureAssistantModelFresh();
   const assistantId = injected ? config.litellmExecModel : resolveAssistantModelId();
   const ctx = modelContext(assistantId);
+  const tools = osToolSpecs(input.user, input.tab);
+  const offeredTools = new Set(tools.map((t) => t.name));
   const result = await runAgentic({
     system: osAssistantSystem(input.tab, input.page),
     userMessages: input.messages,
-    tools: osToolSpecs(input.user, input.tab),
-    // No structural confirmation step yet — named so it can be found and replaced (the
-    // call sites are pinned in `confirm-gate.test.ts`). Behaviour is exactly what it was.
-    callTool: ungatedInteractive(osToolExecutor(input.user, artifacts)),
+    tools,
+    // With `confirm` (the Home chat) a write is parked until the user confirms; without it the
+    // drawer keeps its pass-through, named so it can be found (pinned in `confirm-gate.test.ts`).
+    callTool: input.confirm
+      ? userConfirmGate(
+          osToolExecutor(input.user, artifacts, input.dispatch),
+          {
+            userId: input.user.id,
+            conversationId: input.confirm.conversationId,
+            surface: 'ask',
+            traceId,
+            // A tool this user's role cannot use is refused by the governed door with its typed
+            // error; it is not offered for confirmation.
+            refusedByInner: (tool) => !offeredTools.has(tool),
+          },
+          confirmationPort(),
+        )
+      : ungatedInteractive(osToolExecutor(input.user, artifacts, input.dispatch)),
+    onStep: input.onStep,
     // C1 — ONE trace per turn: the plan call, every act iteration and the cap synthesis all
     // nest under this turn's id instead of each creating its own unlinked Langfuse trace.
     observe: { traceId },
