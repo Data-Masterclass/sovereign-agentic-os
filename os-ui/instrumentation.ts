@@ -170,6 +170,10 @@ export async function register(): Promise<void> {
       // Monitoring panels: the Agents and Data tabs' scoped readers (monitoring-sources.ts).
       const { registerMonitoringPanelSources } = await import('./monitoring-sources.ts');
       registerMonitoringPanelSources();
+      // Connected-drive owner alerts (sync failed · behind · needs reconnect): a timer in os-ui, so a lag
+      // alert still fires when Dagster (which runs the schedule) is down.
+      const { startDriveHealthWatch } = await import('./drive-health-watch.ts');
+      startDriveHealthWatch();
       const { startOpaReconciler } = await import('./core/policy/opa-reconcile.ts');
       startOpaReconciler();
       // WP-11 (OS_OPA_DATA_BUNDLE=1): the same sources compile the os-data bundle OPA downloads

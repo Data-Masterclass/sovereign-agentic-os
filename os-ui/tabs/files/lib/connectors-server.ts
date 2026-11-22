@@ -20,6 +20,7 @@ import {
   removeSource,
 } from '@tabs/files/lib/connectors';
 import { liveClientFor } from '@tabs/files/lib/connectors-live';
+import { appendRun, type SyncTrigger } from '@tabs/files/lib/drive-sync-health';
 import { createHash } from 'node:crypto';
 import { createFile, addVersion, attachObject, objectKeyForAsset, fileExists, type Principal } from '@tabs/files/lib/store';
 import { putBlob } from '@tabs/files/lib/object-store';
@@ -33,8 +34,9 @@ import type { FileAsset } from '@tabs/files/lib/asset-schema';
  * domain / sensitivity, private by default — NOT the source ACLs), honours
  * copy-into-store vs index-in-place, and auto-indexes it. Detects change by content
  * hash (an unchanged file is skipped — never re-imported or re-embedded). The
- * overnight first pass + live-incremental cadence are driven by Dagster
- * (best-effort trigger; the sync still runs in-process so kind works offline).
+ * scheduled pass is a real Dagster job (`images/extensions/dagster/os_files_sync.py`) that calls
+ * `runDueConnectorSyncs` through os-ui's runtime route; a manual click runs the same governed path.
+ * Every run (either trigger) is recorded on its source — `drive-sync-health.ts`.
  */
 
 function principalFor(source: ConnectorSource): Principal {
@@ -117,32 +119,6 @@ function makeStoreSink(source: ConnectorSource, client: ConnectorClient): SyncSi
   };
 }
 
-/**
- * Dagster labelling for the (overnight) connector sync. The `sovereign` code location defines NO
- * job for the Files connectors — they are not dbt models, and the concept lists an API-batch source
- * as a Dagster external asset, which is B3/B4 work (`os/external.yml` already records them).
- *
- * So this is a LOGGED NO-OP, not a fake trigger: the old call fired
- * `launchPipelineExecution(pipelineName: 'files_connector_sync')` against a job that has never
- * existed — Dagster answered with an error union the code discarded and then reported `live` from
- * `res.ok` (HTTP 200 with a GraphQL error body). The in-process sync is the real executor either
- * way; it runs below regardless.
- *
- * FLAG-IRRESPECTIVE, deliberately (review B2-review-M6c): this is a no-op with `DATA_PROJECT_GIT`
- * off as well as on, because the job it used to "launch" never existed in EITHER state — the old
- * call reported `live` from an HTTP 200 whose body was a GraphQL error. Restoring that would
- * restore a lie, so the honest no-op stands for both.
- *
- * TODO (B3/B4): define the external-source asset `files__<source>` in the `sovereign` location and
- * launch it here through `core/infra/dagster.ts` `launchRun`, as the connector's owner principal.
- *
- * @returns always false — "no Dagster run was launched" — in the `live` shape the caller records.
- */
-function triggerDagster(source: ConnectorSource, cadence: string): boolean {
-  console.info(`[files] connector sync ${source.id} (${cadence}) ran in-process — the Dagster 'sovereign' location defines no job for Files connectors yet (engine rebuild B3/B4)`);
-  return false;
-}
-
 /** What a sync needs to know about its owner NOW, on every run (wired by the routes: the live
  *  principal from `core/kernel/auth.ts` and the token from the owner's Connection). */
 export type SyncEntitlement = {
@@ -170,7 +146,7 @@ function pause(source: ConnectorSource, reason: string): never {
  * longer holding the drive grant ⇒ the source is paused and nothing is read. A run by an entitled
  * owner lifts an earlier pause. The first pass is the overnight batch; later passes are incremental.
  */
-export async function runConnectorSync(sourceId: string, owner: string, ent: SyncEntitlement): Promise<SyncResult> {
+export async function runConnectorSync(sourceId: string, owner: string, ent: SyncEntitlement, trigger: SyncTrigger = 'manual'): Promise<SyncResult> {
   await requireSourcesLoaded();
   const source = getSource(sourceId);
   if (!source) throw refusal('Connected source not found', 404, 'not_found');
@@ -178,17 +154,67 @@ export async function runConnectorSync(sourceId: string, owner: string, ent: Syn
   const live = await ent.liveOwner(source.owner);
   if (!live) pause(source, 'the owner is deactivated');
   if (!live.domains.includes(source.domain)) pause(source, `the owner is no longer a member of ${source.domain}`);
-  let token: string | null;
+  // From here a sync is ATTEMPTED: whatever happens is recorded on the source (a refusal above is a
+  // pause, not a run).
+  const started = Date.now();
+  const record = (r: { ok: true; added: number; changed: number; unchanged: number } | { ok: false; error: string }): void => {
+    const ended = Date.now();
+    source.runs = appendRun(source.runs, {
+      at: new Date(started).toISOString(), endedAt: new Date(ended).toISOString(), durationMs: ended - started, trigger,
+      added: 0, changed: 0, unchanged: 0, ...r,
+      ...(r.ok ? {} : { error: r.error.slice(0, 500) }),
+    });
+    saveSource(source);
+  };
   try {
-    token = await ent.token();
+    let token: string | null;
+    try {
+      token = await ent.token();
+    } catch (e) {
+      const st = (e as { status?: number }).status;
+      if (st === 403 || st === 404) pause(source, 'the owner no longer holds the drive connection');
+      throw e;
+    }
+    const client = liveClientFor(source.provider, token);
+    const result = await runSync(source, client, makeStoreSink(source, client));
+    record({ ok: true, added: result.added, changed: result.updated, unchanged: result.unchanged });
+    return result;
   } catch (e) {
-    const st = (e as { status?: number }).status;
-    if (st === 403 || st === 404) pause(source, 'the owner no longer holds the drive connection');
+    if ((e as { code?: string }).code !== 'source_paused') record({ ok: false, error: e instanceof Error ? e.message : String(e) });
     throw e;
   }
-  const client = liveClientFor(source.provider, token);
-  triggerDagster(source, source.initialDone ? 'incremental' : 'overnight');
-  return runSync(source, client, makeStoreSink(source, client));
+}
+
+/** One source's outcome in a scheduled pass. */
+export type DueSyncOutcome = { sourceId: string; status: 'ok' | 'failed' | 'skipped'; reason?: string; added?: number; changed?: number; unchanged?: number };
+
+const inFlight = new Set<string>();
+
+/**
+ * The scheduled pass (the Dagster job `os_files_drive_sync` calls it through the runtime route): every
+ * source is synced as ITS owner — `entitlementFor` builds the owner's live-principal check and the token of
+ * the source's own connection. A PAUSED source is skipped: nothing is read and its pause is not lifted (only
+ * a click by the entitled owner lifts a pause); a source already syncing is skipped too. One failing source
+ * never stops the others; its failure is recorded on it and reported here. While the sources could not be
+ * loaded the pass refuses (`store_not_loaded`) instead of reporting "nothing to do".
+ */
+export async function runDueConnectorSyncs(entitlementFor: (source: ConnectorSource) => SyncEntitlement): Promise<DueSyncOutcome[]> {
+  await requireSourcesLoaded();
+  const out: DueSyncOutcome[] = [];
+  for (const source of listSources()) {
+    if (source.paused) { out.push({ sourceId: source.id, status: 'skipped', reason: `paused: ${source.paused.reason}` }); continue; }
+    if (inFlight.has(source.id)) { out.push({ sourceId: source.id, status: 'skipped', reason: 'a sync of this source is already running' }); continue; }
+    inFlight.add(source.id);
+    try {
+      const r = await runConnectorSync(source.id, source.owner, entitlementFor(source), 'schedule');
+      out.push({ sourceId: source.id, status: 'ok', added: r.added, changed: r.updated, unchanged: r.unchanged });
+    } catch (e) {
+      out.push({ sourceId: source.id, status: 'failed', reason: (e instanceof Error ? e.message : String(e)).slice(0, 500) });
+    } finally {
+      inFlight.delete(source.id);
+    }
+  }
+  return out;
 }
 
 /**
