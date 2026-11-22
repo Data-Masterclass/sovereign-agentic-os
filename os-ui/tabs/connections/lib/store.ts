@@ -255,6 +255,7 @@ import {
   type NotionClientReg,
   type McpToolInfo,
 } from '@core/auth/notion-mcp';
+import { ExternalMcpError } from '@core/runtime/external-mcp';
 // The GOVERNED folder registry (Wave-2 parity) — a moved-into folder is upserted as an
 // explicit row so it persists even when empty. Reused, never forked (mirrors Data/Metrics).
 import { createFolder, type FolderScope, type Principal as FolderPrincipal } from '@core/folders/index';
@@ -2948,6 +2949,41 @@ export async function verifyNotionConnection(
     map.set(c.id, c);
     writeThrough(c);
     return { ok: false, tools: [], detail: `Could not reach the Notion MCP server: ${(e as Error).message}. Try Reconnect.` };
+  }
+}
+
+/**
+ * The chat's door to a Notion MCP connection: the connection as the CALLER may use it, with a live access
+ * token (silently refreshed). Server-side only: the token goes to the MCP client and nowhere else.
+ * The connection must be visible to the caller AND be theirs (a per-user OAuth token runs only for its owner).
+ * Failures are typed (`ExternalMcpError`) so the chat can say what happened.
+ */
+export async function resolveNotionMcpSession(
+  connId: string,
+  user: CurrentUser,
+  opts: { fetchImpl?: FetchFn; now?: number } = {},
+): Promise<{ connection: Connection; reg: NotionClientReg; accessToken: string }> {
+  const map = await getCache();
+  const c = map.get(connId);
+  if (!c || !visibleToUser(c, user) || !isNotionMcp(c) || c.owner !== user.id) {
+    throw new ExternalMcpError('unknown_connection', 'That Notion connection is not yours to use.', 'Use a connection you created in the Connections tab.');
+  }
+  const reg = getNotionClientReg(c);
+  const ts = readTokens(c.secretRef);
+  if (!reg || !ts) throw new ExternalMcpError('oauth_expired', 'Notion is not connected yet.', 'Open the Connections tab and click Connect Notion.');
+  const reconnect = new ExternalMcpError('oauth_expired', 'Your Notion sign-in has expired.', 'Open the Connections tab and click Reconnect on this connection.');
+  const nowSec = opts.now ?? Math.floor(Date.now() / 1000);
+  if (!isExpired(ts, nowSec)) return { connection: c, reg, accessToken: ts.accessToken };
+  try {
+    const next = await refreshNotionToken(reg, ts, { fetchImpl: opts.fetchImpl, now: nowSec });
+    storeTokens(c.secretRef, next);
+    return { connection: c, reg, accessToken: next.accessToken };
+  } catch {
+    c.health = 'needs-reconnect';
+    c.updatedAt = now();
+    map.set(c.id, c);
+    writeThrough(c);
+    throw reconnect;
   }
 }
 

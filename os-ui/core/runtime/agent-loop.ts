@@ -31,6 +31,7 @@ import { createTurnLedger, type ModelTrace } from '@core/runtime/turn-ledger';
 import { completeWithEscalation, isSpendLimit } from '@core/runtime/escalate';
 import { createToolLoader, ENABLE_TOOLS, toolsetBlock } from '@core/runtime/chat-tools';
 import { DELEGATE_TOOL, DELEGATE_TOOL_SPEC, ESCALATE_TOOL, ESCALATE_TOOL_SPEC, newTurnDelegations, runDelegateTool } from '@core/runtime/delegate';
+import { loadExternalTools, externalPromptBlock, externalClassifier, withExternalTools } from '@core/runtime/external-mcp';
 
 /**
  * THE ONE OVERARCHING SOVEREIGN OS ASSISTANT (server wiring).
@@ -388,7 +389,9 @@ export async function runOsAssistant(input: RunOsAssistantInput): Promise<OsAssi
     runId: traceId,
   }));
   const ctx = modelContext(assistantId);
-  const roleTools = osToolSpecs(input.user, input.tab);
+  // The user's own remote MCP connections (Notion): their tools, namespaced per connection; OPA decides each call.
+  const external = await loadExternalTools(input.user);
+  const roleTools = [...osToolSpecs(input.user, input.tab), ...external.specs];
   // What this ROLE may use: a name outside it is refused by the governed door with its typed error.
   const roleToolNames = new Set(roleTools.map((t) => t.name));
   const only = input.onlyTools ? new Set(input.onlyTools) : null;
@@ -426,14 +429,15 @@ export async function runOsAssistant(input: RunOsAssistantInput): Promise<OsAssi
   };
   const tools = offeredTools();
   const result = await runAgentic({
-    system: osAssistantSystem(input.tab, input.page),
+    system: osAssistantSystem(input.tab, input.page) + externalPromptBlock(external),
     userMessages: input.messages,
     tools,
     // EVERY interactive turn (Home chat, the Ask-the-OS drawer, a direct API call) parks a write
     // until the same user confirms it (pinned in `assistant-all-turns-gated.test.ts`).
     callTool: userConfirmGate(
-      osToolExecutor(input.user, artifacts, input.dispatch),
+      withExternalTools(input.user, osToolExecutor(input.user, artifacts, input.dispatch)),
       {
+        classify: externalClassifier(input.user),
         userId: input.user.id,
         conversationId,
         surface: 'ask',

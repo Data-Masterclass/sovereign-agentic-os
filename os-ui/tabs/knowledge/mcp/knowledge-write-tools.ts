@@ -119,6 +119,7 @@ import { normalizeContextGrants } from '@core/kernel/context-grants';
 import {
   createPersonalKnowledge,
   findPersonalKnowledgeBySourceKey,
+  updatePersonalKnowledge,
   ensureHydrated as ensurePersonalKnowledgeHydrated,
 } from '@tabs/knowledge/lib/personal-store';
 
@@ -164,6 +165,7 @@ export const knowledgeWriteTools: McpTool[] = [
         folder: { type: 'string', description: 'Optional folder path in My knowledge, e.g. "/results". Created when the first note is saved there.' },
         domain: { type: 'string', description: 'One of YOUR domains; defaults to your first.' },
         sourceKey: { type: 'string', description: 'Optional. A key that identifies this save; repeating the call with it returns the note already saved.' },
+        refresh: { type: 'boolean', description: 'Optional, with `sourceKey`: when the key matches a note you already saved, replace its title and body (kept in its version history) instead of returning it unchanged. Used to re-import a source.' },
       },
       required: ['title', 'md'],
       examples: [{ title: 'Invoice run — 2026-11-19', md: '## Summary\n12 invoices processed.', folder: '/results' }],
@@ -180,6 +182,8 @@ export const knowledgeWriteTools: McpTool[] = [
       await ensurePersonalKnowledgeHydrated();
       const sourceKey = str(args.sourceKey).trim();
       const existing = sourceKey ? findPersonalKnowledgeBySourceKey(p, sourceKey) : null;
+      const refreshed = !!existing && args.refresh === true;
+      if (existing && refreshed) updatePersonalKnowledge(existing.id, p, { title, md });
       const rec = existing ?? createPersonalKnowledge(p, {
         title,
         md,
@@ -193,8 +197,9 @@ export const knowledgeWriteTools: McpTool[] = [
         folder: rec.folder,
         domain: rec.domain,
         visibility: rec.visibility,
-        ...(existing ? { already: true } : {}),
-        ...(await indexSavedNote(rec, user, !!existing)),
+        ...(existing && !refreshed ? { already: true } : {}),
+        ...(refreshed ? { updated: true } : {}),
+        ...(await indexSavedNote(rec, user, !!existing && !refreshed)),
       };
     },
   },  {

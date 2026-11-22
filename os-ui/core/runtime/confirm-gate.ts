@@ -76,6 +76,12 @@ export type ConfirmContext = {
    * governed door will refuse.
    */
   refusedByInner?: (tool: string) => boolean;
+  /**
+   * Tools whose class is decided per call rather than by name (the user's external MCP tools, where
+   * OPA says whether THIS call reads or writes): `free` runs without a card, `confirm` parks, null
+   * leaves the decision to {@link needsUserConfirm}. A classifier that throws parks the call.
+   */
+  classify?: (tool: string) => Promise<'free' | 'confirm' | null>;
 };
 
 /** What the gate needs from the confirmation store. Injected — the gate never imports the store. */
@@ -126,7 +132,14 @@ export function userConfirmGate(inner: ToolExecutor, ctx: ConfirmContext, port: 
     const closedReason = ctx.closed?.(name) ?? null;
     if (closedReason) return refusal('surface_closed', closedReason);
 
-    if (!needsUserConfirm(name)) return inner(name, args);
+    let cls: 'free' | 'confirm' | null = null;
+    try {
+      cls = (await ctx.classify?.(name)) ?? null;
+    } catch {
+      cls = 'confirm';
+    }
+    if (cls === 'free') return inner(name, args);
+    if (cls === null && !needsUserConfirm(name)) return inner(name, args);
     if (ctx.refusedByInner?.(name)) return inner(name, args);
 
     let allowed = false;

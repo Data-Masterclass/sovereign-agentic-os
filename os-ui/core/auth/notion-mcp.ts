@@ -269,7 +269,11 @@ async function mcpRpc(
     const sid = res.headers.get('mcp-session-id');
     // A notification (no id) yields 202 with no body — that is success.
     if (message.id === undefined) return { body: null, sessionId: sid ?? sessionId };
-    if (!res.ok) throw tagged(`MCP endpoint returned ${res.status}`, 502);
+    if (!res.ok) {
+      const e = tagged(`MCP endpoint returned ${res.status}`, 502);
+      (e as Error & { remoteStatus?: number }).remoteStatus = res.status; // 401 = token refused
+      throw e;
+    }
     const text = await res.text();
     return { body: parseRpcBody(res.headers.get('content-type') ?? '', text), sessionId: sid ?? sessionId };
   } finally {
@@ -311,6 +315,75 @@ export async function listNotionMcpTools(
     .filter((t): t is Record<string, unknown> => Boolean(t) && typeof t === 'object')
     .map((t) => ({ name: String(t.name ?? ''), description: typeof t.description === 'string' ? t.description : undefined }))
     .filter((t) => t.name);
+}
+
+// ------------------------------------------- full tool defs + tools/call (chat) ---
+
+/** A tool as the remote MCP server advertises it (`tools/list`), schema and annotations kept. */
+export type McpToolDef = {
+  name: string;
+  description?: string;
+  inputSchema?: { type?: string; properties?: Record<string, unknown>; required?: string[] };
+  /** MCP tool annotations (`readOnlyHint`, ...) exactly as the server sent them. */
+  annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean };
+};
+
+/** What `tools/call` returned: the MCP result object, untouched. */
+export type McpCallResult = {
+  content?: { type?: string; text?: string }[];
+  structuredContent?: unknown;
+  isError?: boolean;
+};
+
+async function openSession(f: FetchFn, reg: NotionClientReg, accessToken: string): Promise<string | null> {
+  const init = await mcpRpc(f, reg.mcpEndpoint, accessToken, {
+    jsonrpc: '2.0',
+    id: 1,
+    method: 'initialize',
+    params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'sovereign-agentic-os', version: '1.0' } },
+  }, null);
+  await mcpRpc(f, reg.mcpEndpoint, accessToken, { jsonrpc: '2.0', method: 'notifications/initialized' }, init.sessionId).catch(() => undefined);
+  return init.sessionId;
+}
+
+function rpcFailure(body: Record<string, unknown> | null, what: string): Error {
+  const err = body?.error as { message?: unknown; code?: unknown } | undefined;
+  const e = tagged(`${what}: ${typeof err?.message === 'string' ? err.message : 'no result'}`, 502);
+  (e as Error & { rpcCode?: unknown }).rpcCode = err?.code;
+  return e;
+}
+
+/** `tools/list` with each tool's schema and annotations. Throws on transport/auth failure. */
+export async function listNotionMcpToolDefs(reg: NotionClientReg, accessToken: string, opts: { fetchImpl?: FetchFn } = {}): Promise<McpToolDef[]> {
+  const f = opts.fetchImpl ?? fetch;
+  const sid = await openSession(f, reg, accessToken);
+  const listed = await mcpRpc(f, reg.mcpEndpoint, accessToken, { jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} }, sid);
+  const tools = (listed.body?.result as { tools?: unknown } | undefined)?.tools;
+  if (!Array.isArray(tools)) throw rpcFailure(listed.body, 'tools/list');
+  return tools
+    .filter((t): t is Record<string, unknown> => Boolean(t) && typeof t === 'object' && typeof (t as Record<string, unknown>).name === 'string')
+    .map((t) => ({
+      name: String(t.name),
+      ...(typeof t.description === 'string' ? { description: t.description } : {}),
+      ...(t.inputSchema && typeof t.inputSchema === 'object' ? { inputSchema: t.inputSchema as McpToolDef['inputSchema'] } : {}),
+      ...(t.annotations && typeof t.annotations === 'object' ? { annotations: t.annotations as McpToolDef['annotations'] } : {}),
+    }));
+}
+
+/** One MCP `tools/call` through the user's token. Throws on transport/auth/JSON-RPC failure. */
+export async function callNotionMcpTool(
+  reg: NotionClientReg,
+  accessToken: string,
+  name: string,
+  args: Record<string, unknown>,
+  opts: { fetchImpl?: FetchFn; timeoutMs?: number } = {},
+): Promise<McpCallResult> {
+  const f = opts.fetchImpl ?? fetch;
+  const sid = await openSession(f, reg, accessToken);
+  const res = await mcpRpc(f, reg.mcpEndpoint, accessToken, { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name, arguments: args } }, sid, opts.timeoutMs ?? 30000);
+  const result = res.body?.result as McpCallResult | undefined;
+  if (!result || typeof result !== 'object') throw rpcFailure(res.body, `tools/call ${name}`);
+  return result;
 }
 
 // --------------------------------------------------- client-reg (de)serialize ---

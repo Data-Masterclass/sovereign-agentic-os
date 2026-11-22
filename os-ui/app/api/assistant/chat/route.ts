@@ -12,6 +12,9 @@ import { canContinue, deleteConversation, ensureHydrated, saveTurn } from '@core
 import { askStepEvent, askTurnResponse } from '@core/runtime/ask-response';
 import { sanitizePageContext } from '@core/runtime/page-context';
 import { AssistantNotConfiguredError } from '@core/runtime/complete';
+import { withExternalTools } from '@core/runtime/external-mcp';
+// Registers the user's Notion MCP connections as the chat's external tool source.
+import '@tabs/connections/lib/external-mcp-source';
 
 export const dynamic = 'force-dynamic';
 
@@ -108,7 +111,7 @@ export async function POST(req: Request) {
       conversationId: confirmation.conversationId,
       surface: 'ask',
       decision: confirmation.decision,
-      execute: (tool, args, sink) => osToolExecutor(user, sink)(tool, args),
+      execute: (tool, args, sink) => withExternalTools(user, osToolExecutor(user, sink), { confirmed: true })(tool, args),
     });
     // A refusal is the same 404 for "not yours", "not here" and "does not exist".
     const status = result.status === 'refused' ? (result.code === 'not_found' ? 404 : 409) : 200;
