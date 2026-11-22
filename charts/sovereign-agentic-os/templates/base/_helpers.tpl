@@ -451,11 +451,11 @@ must fail the render, not the rollout. The org-built image comes from build-imag
 
 {{/*
 soa.softwareSandboxOn - "true" when the Software Factory gates sandbox is rendered (osUI.enabled and
-osUI.software.sandbox.enabled not false), else "".
+osUI.software.sandbox.enabled true), else "".
 */}}
 {{- define "soa.softwareSandboxOn" -}}
 {{- $sb := ((.Values.osUI.software | default dict).sandbox | default dict) -}}
-{{- if and .Values.osUI.enabled (ne ($sb.enabled | toString) "false") }}true{{ end -}}
+{{- if and .Values.osUI.enabled ($sb.enabled | default false) }}true{{ end -}}
 {{- end }}
 
 {{/*
