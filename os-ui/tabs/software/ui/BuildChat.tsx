@@ -21,6 +21,9 @@ import {
   type TargetEpic,
 } from '@tabs/software/lib/build-target';
 import type { ChatRunMode } from '@tabs/software/lib/chat-modes';
+import ConfirmCard, { postDecision, type Pending } from '@core/ui/ConfirmCard';
+
+const newConversationId = () => `b-${(globalThis.crypto?.randomUUID?.() ?? `${Date.now()}${Math.random()}`).replace(/[^A-Za-z0-9]/g, '').slice(0, 32)}`;
 
 export type { FileChange };
 export type ChatMessage = { role: 'user' | 'assistant'; content: string };
@@ -94,6 +97,9 @@ export default function BuildChat({
     initialMessages.map((m) => (m.role === 'assistant' ? { ...m, content: stripThinking(m.content) } : m)),
   );
   const [lastChanges, setLastChanges] = useState<FileChange[]>([]);
+  // A commit the run wants to make waits for the user's OK on a card (the run itself never writes unconfirmed).
+  const [conversationId] = useState(newConversationId);
+  const [pending, setPending] = useState<Pending[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -118,6 +124,7 @@ export default function BuildChat({
       setPlanText('');
       setFeed([]);
       setLastChanges([]);
+      setPending([]);
       const next: ChatMessage[] = [...messages, { role: 'user', content }];
       setMessages(next);
       setInput('');
@@ -133,7 +140,7 @@ export default function BuildChat({
         const res = await fetch(`/api/apps/${appId}/chat`, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ agent: 'software', messages: next, mode: runMode, target: target ?? undefined }),
+          body: JSON.stringify({ agent: 'software', conversationId, messages: next, mode: runMode, target: target ?? undefined }),
           signal: ctrl.signal,
         });
         if (!res.ok) {
@@ -168,6 +175,7 @@ export default function BuildChat({
             const bubble = stripThinking(e.finalText || e.content);
             setMessages((m) => [...m, { role: 'assistant', content: bubble }]);
             setLastChanges(changes);
+            setPending(Array.isArray(e.pending) ? e.pending.map((p) => ({ ...p, state: 'open' as const })) : []);
             if (runMode === 'build' && changes.length > 0) onBuilt?.(changes);
           }
         });
@@ -184,7 +192,25 @@ export default function BuildChat({
         scrollDown();
       }
     },
-    [appId, loading, messages, mode, target, onBuilt, onRunStart, onRunEnd],
+    [appId, conversationId, loading, messages, mode, target, onBuilt, onRunStart, onRunEnd],
+  );
+
+  // Run or cancel a parked commit. The route re-applies this app's bound id and the mode's allowlist.
+  const decide = useCallback(
+    async (pi: number, decision: 'confirm' | 'decline') => {
+      const p = pending[pi];
+      if (!p) return;
+      const patch = (u: Partial<Pending>) => setPending((all) => all.map((x, j) => (j === pi ? { ...x, ...u } : x)));
+      patch({ state: 'running' });
+      const out = await postDecision(p, conversationId, decision, { endpoint: `/api/apps/${appId}/chat`, extra: { agent: 'software', mode } });
+      patch(out.patch);
+      const changes = out.body && Array.isArray(out.body.changes) ? (out.body.changes as FileChange[]) : [];
+      if (decision === 'confirm' && out.body?.status === 'executed' && changes.length > 0) {
+        setLastChanges(changes);
+        onBuilt?.(changes);
+      }
+    },
+    [appId, conversationId, mode, onBuilt, pending],
   );
 
   // One of the four scope actions (Design · Build · Test · Review) for the
@@ -289,6 +315,14 @@ export default function BuildChat({
             </div>
           ))
         )}
+        {pending.length > 0 ? (
+          <div className="bubble assistant">
+            <div className="bubble-role">{label}</div>
+            <div className="bubble-body">
+              {pending.map((p, pi) => <ConfirmCard key={p.confirmationId} p={p} onDecide={(d) => void decide(pi, d)} />)}
+            </div>
+          </div>
+        ) : null}
         {/* LIVE ACTIVITY FEED — the plan + each governed tool step as it happens,
             so the run is legible while it works instead of a silent spinner. The live
             BUILD stepper + current-step line + STOP live UNDER the Build button (below

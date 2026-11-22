@@ -17,21 +17,12 @@
  *     hallucinated tool call away.
  *   - TWO refusals, in this order: a name in `AGENT_FORBIDDEN_TOOLS` (an approval is a person's
  *     decision — refused even if a yaml offers it), then any name not in the turn's offered list.
- *   - THE CONFIRM STEP (owner decision, 2026-11-19). The engine path parks `request_deploy`,
- *     `delete`, `archive` and the rest of `hold.ts` `ALWAYS_CONFIRMED_TOOLS` for a SECOND person
- *     (the others — `retire_connection`, `request_certification`, the Operating Model writes —
- *     are not Software-tab tools, so no phase can offer them). This panel is a synchronous chat
- *     turn with no checkpoint to park on, and the person is present — so the rule here is the
- *     product's own: a write happens only on the signed-in user's explicit confirmation. A name
- *     in {@link PANEL_CONFIRMED_TOOLS} is therefore NEVER dispatched by this door. The call is
- *     handed to `park`, which records it in the user's server-side session, and the model gets a
- *     typed `awaiting_user_confirmation` result. Only `resolvePhaseConfirmation`
- *     (`agentic-graph-server.ts`, POST /api/software/team/confirm) executes it, as that user,
- *     from the server-held copy of the arguments. With no `park` wired the call is refused —
- *     fail closed, never "run it anyway".
- *   - The set is this door's OWN, deliberately not derived from `hold.ts`: that classification
- *     answers "does a second person decide?", and growing it must not silently change what this
- *     panel asks its user to click.
+ *   - THE CONFIRM STEP lives OUTSIDE this door, in the shared user-confirm gate
+ *     (`core/runtime/confirm-gate.ts`, wired in `runPhaseTurn`): every write the turn asks for,
+ *     `request_deploy` included, is parked there for the signed-in user and decided through
+ *     `resolvePhaseConfirmation` (POST /api/software/team/confirm). This door is the layer under
+ *     it: it refuses what the turn may not call, and it never dispatches a name in
+ *     {@link PANEL_CONFIRMED_TOOLS} on its own — fail closed if the gate were ever missing.
  */
 import type { ToolExecutor } from '@core/runtime/agentic';
 import { agentForbiddenReason } from '@core/mcp/write-tool-meta';
@@ -42,31 +33,21 @@ function refusal(code: 'forbidden' | 'not_found' | 'confirmation_required', reas
 }
 
 /**
- * The tools this panel never runs on the model's say-so: the signed-in user confirms each call
- * with a button first. Today that is the one always-confirmed tool any phase of the team offers.
+ * The tools this door never dispatches itself even when the gate in front is missing: the one
+ * always-confirmed tool any phase of the team offers. (The gate parks EVERY write; this is the
+ * floor under it.)
  */
 export const PANEL_CONFIRMED_TOOLS: ReadonlySet<string> = new Set(['request_deploy']);
 
-/** One call waiting for the user's Confirm / Cancel. Held server-side, in the user's session. */
+/** One call waiting for the user's Confirm / Cancel: the session's handle on a record in the shared confirmation store. */
 export type PanelConfirmation = {
-  /** Opaque, single-use. The confirm request must present it. */
+  /** The confirmation store's id. Opaque, single-use. The confirm request must present it. */
   id: string;
   tool: string;
   /** The arguments the model asked for — what will be executed on Confirm, never a client copy. */
   args: Record<string, unknown>;
   createdAt: string;
 };
-
-/** Records a call as waiting for the user and returns its handle. */
-export type ConfirmPark = (tool: string, args: Record<string, unknown>) => PanelConfirmation;
-
-/** The `status` of the typed result a parked call returns to the model. */
-export const AWAITING_USER_CONFIRMATION = 'awaiting_user_confirmation';
-
-/** True when a tool step's result text is the parked-call result (the UI labels it differently). */
-export function isAwaitingConfirmation(resultText: string): boolean {
-  return resultText.includes(`"status":"${AWAITING_USER_CONFIRMATION}"`);
-}
 
 /** The offered tool names minus anything closed to agents — what a turn may actually call. */
 export function phaseCallableTools(offered: readonly string[]): string[] {
@@ -75,10 +56,10 @@ export function phaseCallableTools(offered: readonly string[]): string[] {
 
 /**
  * Wrap `inner` so it dispatches ONLY the names in `offered`, never a name closed to agents, and
- * never a name in {@link PANEL_CONFIRMED_TOOLS} — those are parked for the user's confirmation.
+ * never a name in {@link PANEL_CONFIRMED_TOOLS} (the shared gate in front of this door parks those).
  * `offered` is the list of tool names the model was actually handed this turn.
  */
-export function phaseToolExecutor(inner: ToolExecutor, offered: readonly string[], park?: ConfirmPark): ToolExecutor {
+export function phaseToolExecutor(inner: ToolExecutor, offered: readonly string[]): ToolExecutor {
   const allow = new Set(phaseCallableTools(offered));
   return async (name, args) => {
     const forbidden = agentForbiddenReason(name);
@@ -90,20 +71,7 @@ export function phaseToolExecutor(inner: ToolExecutor, offered: readonly string[
       );
     }
     if (PANEL_CONFIRMED_TOOLS.has(name)) {
-      if (!park) {
-        return refusal('confirmation_required', `'${name}' needs the user's confirmation and this caller has no way to ask for it. Nothing was done.`);
-      }
-      const pending = park(name, args ?? {});
-      return {
-        text: JSON.stringify({
-          status: AWAITING_USER_CONFIRMATION,
-          executed: false,
-          tool: name,
-          confirmationId: pending.id,
-          hint: `NOT done yet. The user now sees a Confirm and a Cancel button for this '${name}' call. Do not call it again. Tell the user it is waiting for their confirmation, and stop.`,
-        }),
-        isError: false,
-      };
+      return refusal('confirmation_required', `'${name}' needs the user's confirmation and this door has no way to ask for it. Nothing was done.`);
     }
     return inner(name, args);
   };

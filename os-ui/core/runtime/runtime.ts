@@ -2,6 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
+import { randomBytes } from 'node:crypto';
 import { config } from '@core/kernel/config';
 import { runSessionId } from '@core/infra/trace-port';
 import {
@@ -23,7 +24,8 @@ import {
   type ToolExecutor,
   type ToolSpec,
 } from '@core/runtime/agentic';
-import { ungatedInteractive } from '@core/runtime/confirm-gate';
+import { userConfirmGate, type ConfirmSurface } from '@core/runtime/confirm-gate';
+import { confirmationPort } from '@core/policy/confirmations';
 import { ensureAssistantModelFresh, resolveAssistantModelId } from '@core/runtime/complete';
 import { gatewayTraceHeaders } from '@core/runtime/gateway-trace';
 import { assembleStream } from '@core/runtime/llm-stream';
@@ -499,10 +501,41 @@ export type RunTabAgentInput = {
   writeToolNames?: string[];
   /** Injected in tests; defaults to the live LiteLLM caller. */
   llm?: LlmCall;
+  /** Injected in tests: the governed dispatch the executor calls (default `handleRpc`). */
+  dispatch?: typeof handleRpc;
+  /**
+   * The conversation a parked write is bound to, and the surface that parked it. EVERY turn is
+   * gated: when the caller names none, the turn mints its own id (`tab:<tab>` surface) and returns
+   * it as `conversationId`, so a confirmation can be decided against it.
+   */
+  confirm?: { conversationId?: string; surface?: ConfirmSurface };
 };
 
+export type TabAgentResult = AgenticResult & { conversationId: string; surface: ConfirmSurface };
+
+/**
+ * The UNGATED pipeline a tab assistant's tool calls run through once they are allowed to run:
+ * the governed dispatch, the run's bound args (e.g. `appId`) and the mode allowlist. The turn puts
+ * the confirm gate in FRONT of this; a confirmed call is executed through it again, so a
+ * confirmation never skips the bound ids or the allowlist.
+ */
+export function tabAgentExecutor(input: Pick<RunTabAgentInput, 'user' | 'tab' | 'toolNames' | 'boundArgs' | 'dispatch'>): ToolExecutor {
+  const allow = input.toolNames ? new Set(input.toolNames) : null;
+  const baseExec = tabToolExecutor(input.user, input.tab, input.dispatch);
+  // Bind the run's server-known args (e.g. appId) into EVERY tool call BEFORE the
+  // allowlist/governed dispatch — a run scoped to one app never depends on the model
+  // repeating its id, and a mismatched id is rejected loudly (never a cross-app write).
+  const withBinding = input.boundArgs ? boundExecutor(baseExec, input.boundArgs) : baseExec;
+  return allow
+    ? async (name: string, args: Record<string, unknown>) =>
+        allow.has(name)
+          ? withBinding(name, args)
+          : { text: `Error: tool "${name}" is not available in this mode.`, isError: true }
+    : withBinding;
+}
+
 /** Run one PLAN→ACT turn for a tab assistant and return the full trace. */
-export async function runTabAgent(input: RunTabAgentInput): Promise<AgenticResult> {
+export async function runTabAgent(input: RunTabAgentInput): Promise<TabAgentResult> {
   // Production callers run on the ONE platform-admin assistant model (the same
   // model every built-in assistant uses); if none is configured this throws an
   // honest, admin-actionable error rather than silently answering with fake AI.
@@ -521,24 +554,28 @@ export async function runTabAgent(input: RunTabAgentInput): Promise<AgenticResul
   const specs = allow
     ? tabToolSpecs(input.user, input.tab).filter((t) => allow.has(t.name))
     : tabToolSpecs(input.user, input.tab);
-  const baseExec = tabToolExecutor(input.user, input.tab);
-  // Bind the run's server-known args (e.g. appId) into EVERY tool call BEFORE the
-  // allowlist/governed dispatch — a run scoped to one app never depends on the model
-  // repeating its id, and a mismatched id is rejected loudly (never a cross-app write).
-  const withBinding = input.boundArgs ? boundExecutor(baseExec, input.boundArgs) : baseExec;
-  const callTool = allow
-    ? async (name: string, args: Record<string, unknown>) =>
-        allow.has(name)
-          ? withBinding(name, args)
-          : { text: `Error: tool "${name}" is not available in this mode.`, isError: true }
-    : withBinding;
-  return runAgentic({
+  const conversationId = input.confirm?.conversationId ?? `srv-${randomBytes(16).toString('hex')}`;
+  const surface: ConfirmSurface = input.confirm?.surface ?? `tab:${input.tab}`;
+  const roleToolNames = new Set(tabToolSpecs(input.user, input.tab).map((t) => t.name));
+  const callTool = userConfirmGate(
+    tabAgentExecutor(input),
+    {
+      userId: input.user.id,
+      conversationId,
+      surface,
+      // A tool outside this mode's allowlist is refused, not offered for confirmation.
+      ...(allow ? { closed: (tool: string) => (allow.has(tool) ? null : `${tool} is not available in this mode`) } : {}),
+      // A tool this user's role cannot use is refused by the governed door with its typed error.
+      refusedByInner: (tool) => !roleToolNames.has(tool),
+    },
+    confirmationPort(),
+  );
+  const result = await runAgentic({
     system: osSystem(input.tab, input.extraContext),
     userMessages: input.messages,
     tools: specs,
-    // No structural confirmation step yet — named so it can be found and replaced (the
-    // call sites are pinned in `confirm-gate.test.ts`). Behaviour is exactly what it was.
-    callTool: ungatedInteractive(callTool),
+    // Every turn parks a write until the same user confirms it (`tab-assistant-gated.test.ts`).
+    callTool,
     llm: injected ?? liteLlmCaller({
       userId: input.user.id,
       domain: input.user.domains[0] ?? 'none',
@@ -555,6 +592,7 @@ export async function runTabAgent(input: RunTabAgentInput): Promise<AgenticResul
     onEscalate: input.onEscalate,
     writeToolNames: input.writeToolNames,
   });
+  return { ...result, conversationId, surface };
 }
 
 /**

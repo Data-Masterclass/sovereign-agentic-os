@@ -239,13 +239,13 @@ export const WRITE_TOOL_NAMES: ReadonlySet<string> = new Set(Object.keys(WRITE_T
  *      behind it; what it closes is an app tool that would read like the real thing in a trace
  *      and an approval inbox while doing something else entirely.
  *
- * OUT OF SCOPE, on purpose and stated so nobody reads "refused" as "everywhere": the two
+ * OUT OF SCOPE, on purpose and stated so nobody reads "refused" as "everywhere": the
  * INTERACTIVE ASSISTANTS — Ask the OS (`runOsAssistant`, `core/runtime/agent-loop.ts`) and the
  * per-tab assistant (`runTabAgent`, `core/runtime/runtime.ts`, via `/api/agent-chat` and the app
  * Build chat). They offer the present user's role-scoped registry and dispatch through
  * `handleRpc` as that user; they consult neither this table nor the hold table. A person is
- * present, but there is NO structural confirm step before a write there — the "confirm first"
- * rule is prompt-level only. Neither does `handleRpc` itself, the MCP HTTP door or any UI route
+ * present, and every write there parks behind the user-confirm gate
+ * (`core/runtime/confirm-gate.ts`) until that person confirms it. Neither does `handleRpc` itself, the MCP HTTP door or any UI route
  * consult this table: a person keeps every one of these tools, under their own role gates.
  *
  * It lives here rather than in a tab for the same reason `WRITE_TOOL_TABS` does — a core

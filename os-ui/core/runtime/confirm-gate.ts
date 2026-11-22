@@ -7,10 +7,12 @@
  *             I want that enforced by code rather than by a sentence in a prompt — so the harness
  *             must not be able to receive an executor whose author never chose a gate.
  * ARCHITECTURE:
- *   - Ask the OS (Home chat, the drawer, a direct API call) uses `userConfirmGate` on EVERY turn.
- *     The remaining `ungatedInteractive` callers (the tab assistant, the Software Team panel) pass
- *     every call straight through: nothing parks there. Later PRs replace those call sites one by
- *     one; `confirm-gate.test.ts` pins the exact list so it can only shrink.
+ *   - EVERY interactive assistant turn uses `userConfirmGate`: Ask the OS (Home chat, the drawer, a
+ *     direct API call), the per-tab assistant, the app Build chat, `/api/agent-chat` and the
+ *     Software Team panel. There is deliberately NO "ungated interactive" constructor: it was
+ *     removed once its last caller was converted, so a new surface cannot choose it. The only
+ *     pass-through is `engineHeldGate`, a marker for engine paths that hold elsewhere.
+ *     `confirm-gate.test.ts` pins the call sites.
  *   - Pure: no `server-only`, no store, no transport. The confirmation store is reached through an
  *     injected {@link ConfirmationPort}, so this module and its tests need no backend.
  *   - `runAgentic` takes a {@link GatedToolExecutor}. The brand is a compile-time property (a
@@ -23,7 +25,7 @@
 import type { ToolExecutor, ToolOutcome, PendingToolCall } from '@core/runtime/agentic';
 import { needsUserConfirm } from '@core/mcp/tool-classes';
 
-export type GateKind = 'user-confirm' | 'engine-held' | 'read-only' | 'ungated-interactive';
+export type GateKind = 'user-confirm' | 'engine-held' | 'read-only';
 
 /** Type-level brand. Declared, never exported and never assigned: only a constructor here can mint it. */
 declare const GATED: unique symbol;
@@ -47,7 +49,7 @@ function brand(fn: (name: string, args: Record<string, unknown>) => Promise<Tool
 export function gateKindOf(fn: unknown): GateKind | null {
   if (typeof fn !== 'function') return null;
   const kind = (fn as unknown as Record<symbol, unknown>)[GATE_KIND];
-  return kind === 'user-confirm' || kind === 'engine-held' || kind === 'read-only' || kind === 'ungated-interactive' ? kind : null;
+  return kind === 'user-confirm' || kind === 'engine-held' || kind === 'read-only' ? kind : null;
 }
 
 /** Where the conversation is happening. A confirmation is bound to it and is not valid elsewhere. */
@@ -173,14 +175,4 @@ export function readOnlyGate(inner: ToolExecutor): GatedToolExecutor {
     }
     return inner(name, args);
   }, 'read-only');
-}
-
-/**
- * EXPLICIT PASS-THROUGH — today's behaviour, named. An interactive assistant whose tool calls run
- * as the present user with NO structural confirmation step. Every use is a known gap, which is
- * why it has a name that can be searched for: `confirm-gate.test.ts` pins the exact call sites,
- * and the list is meant to reach zero.
- */
-export function ungatedInteractive(inner: ToolExecutor): GatedToolExecutor {
-  return brand((name, args) => inner(name, args), 'ungated-interactive');
 }

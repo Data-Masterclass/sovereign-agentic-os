@@ -1354,20 +1354,19 @@ the interactive-assistant rows in the table above are still accurate, and a test
 `core/mcp/tool-classes.test.ts` fails if a production file starts importing the
 module before the gate that uses it is reviewed.
 
-**The harness now takes a *gated* executor, and every interactive caller says
-"ungated" out loud.** `runAgentic`'s `callTool` is a `GatedToolExecutor`
-(`core/runtime/confirm-gate.ts`, pure): a plain executor does not type-check
-(`confirm-gate.typecheck.ts` fails the build if that stops being true), so a caller
-has to pick a constructor — `userConfirmGate`, `readOnlyGate`, `engineHeldGate`, or
-`ungatedInteractive`. **Ask the OS now picks `userConfirmGate` on every turn** (Home
-chat, the drawer and a direct API call alike; a turn that names no conversation gets a
-server-minted id, returned as `conversationId`), so a write parks until the same user
-confirms it, whoever started the turn. **The tab assistant and the Software Team panel
-still pick `ungatedInteractive`**, a pass-through, so nothing is confirmed, parked or
-refused there that was not before. `core/runtime/confirm-gate.test.ts`
-pins the exact `ungatedInteractive(` call sites (the tab assistant, the
-Software Team panel) and the files that call `runAgentic(`, so the first list can
-only shrink in review and the second cannot grow unnoticed.
+**The harness takes a *gated* executor, and every interactive assistant uses the confirm gate.**
+`runAgentic`'s `callTool` is a `GatedToolExecutor` (`core/runtime/confirm-gate.ts`, pure): a plain
+executor does not type-check (`confirm-gate.typecheck.ts` fails the build if that stops being
+true), so a caller has to pick a constructor. **Every interactive turn picks `userConfirmGate`**:
+Ask the OS (Home chat, the drawer, a direct API call), the per-tab assistant and `/api/agent-chat`,
+the app Build chat, and the Software Team panel. A write parks until the same user confirms it;
+a turn that names no conversation gets a server-minted id, returned as `conversationId`; a
+confirmation is bound to user, conversation and **surface** (`ask`, `tab:<tab>`,
+`app-chat:<appId>`, `team`) and each surface decides on its own route, which re-applies that
+surface's bound ids and tool allowlist. The old `ungatedInteractive` constructor is deleted, so
+a new surface cannot choose it; `core/runtime/confirm-gate.test.ts` pins the call sites of the
+gate and the files that call `runAgentic(`. `engineHeldGate` (engine paths that hold elsewhere)
+has no production caller.
 
 What the later wiring will rely on, already in place and tested:
 

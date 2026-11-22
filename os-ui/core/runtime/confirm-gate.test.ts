@@ -28,7 +28,6 @@ import {
   userConfirmGate,
   engineHeldGate,
   readOnlyGate,
-  ungatedInteractive,
   gateKindOf,
   parkedText,
   type ConfirmContext,
@@ -176,7 +175,7 @@ test('userConfirmGate: if the confirmation cannot be recorded the call is refuse
   assert.equal(reached.length, 0);
 });
 
-test('readOnlyGate runs confirm-free tools and refuses everything else; engineHeldGate and ungatedInteractive pass through', async () => {
+test('readOnlyGate runs confirm-free tools and refuses everything else; engineHeldGate passes through', async () => {
   const { inner, reached } = spyInner();
   const ro = readOnlyGate(inner);
   assert.deepEqual(await ro(READ, {}), { text: 'ok', isError: false });
@@ -188,7 +187,7 @@ test('readOnlyGate runs confirm-free tools and refuses everything else; engineHe
   }
   assert.deepEqual(reached.map((r) => r.name), [READ]);
 
-  for (const make of [engineHeldGate, ungatedInteractive]) {
+  for (const make of [engineHeldGate]) {
     const s = spyInner((name) => ({ text: `ran ${name}`, isError: name === 'boom' }));
     const g = make(s.inner);
     assert.deepEqual(await g(WRITE, { a: 1 }), { text: `ran ${WRITE}`, isError: false });
@@ -204,7 +203,6 @@ test('every constructor stamps its kind; a plain function carries none and the i
   assert.equal(gateKindOf(userConfirmGate(inner, CTX, port)), 'user-confirm');
   assert.equal(gateKindOf(engineHeldGate(inner)), 'engine-held');
   assert.equal(gateKindOf(readOnlyGate(inner)), 'read-only');
-  assert.equal(gateKindOf(ungatedInteractive(inner)), 'ungated-interactive');
   assert.equal(gateKindOf(inner), null, 'wrapping must not brand the executor it wraps');
   assert.equal(gateKindOf(async () => ({ text: '', isError: false })), null);
   assert.equal(gateKindOf(null), null);
@@ -356,14 +354,14 @@ test('PARKED in ReAct mode (no native tool-calling) ends the turn the same way',
   assert.equal(result.finalText, parkedFinalText(result.pending));
 });
 
-test('NO BEHAVIOUR CHANGE: with ungatedInteractive nothing parks — a write runs and the model writes the final text', async () => {
+test('a pass-through gate (engineHeldGate) parks nothing — a write runs and the model writes the final text', async () => {
   const { inner, reached } = spyInner();
   const { llm, calls } = scriptLlm([
     { content: 'plan' },
     { content: '', toolCalls: [{ id: 'c1', name: WRITE, args: { name: 'A' } }, { id: 'c2', name: 'retire_dataset', args: { id: 'x' } }] },
     { content: 'Both done.' },
   ]);
-  const result = await run(ungatedInteractive(inner), llm);
+  const result = await run(engineHeldGate(inner), llm);
   assert.deepEqual(reached.map((r) => r.name), [WRITE, 'retire_dataset']);
   assert.deepEqual(result.pending, []);
   assert.equal(result.finalText, 'Both done.');
@@ -422,33 +420,39 @@ test('RATCHET: exactly these non-test files contain `runAgentic(` — a new call
   });
 });
 
-test('RATCHET: the exact `ungatedInteractive(` call sites — every one is a known gap, and the list must only shrink', () => {
-  // TO SHRINK: replace a call site with `userConfirmGate(...)` (or `readOnlyGate`) and delete its
-  // line here. TO GROW: do not. A new assistant surface chooses a real gate.
-  assert.deepEqual(occurrences('ungatedInteractive('), {
-    'core/runtime/confirm-gate.ts': 1, // the definition
-    'core/runtime/runtime.ts': 1, // tab assistant, app chat, Build chat
-    'tabs/agents/lib/build/agentic-graph.ts': 1, // Software Team panel
-  });
+test('NO UNGATED INTERACTIVE PASS-THROUGH EXISTS: the constructor is gone, so no assistant surface can choose it', () => {
+  // The interactive assistants (Ask the OS, the tab assistant, the app Build chat, /api/agent-chat
+  // and the Software Team panel) all use `userConfirmGate`. The only pass-through left is
+  // `engineHeldGate`, whose callers are engine paths with their own second-person hold; it has no
+  // production caller yet (pinned below). A new interactive surface chooses a real gate.
+  assert.deepEqual(occurrences('ungatedInteractive'), {});
+  assert.doesNotMatch(read('core/runtime/confirm-gate.ts'), /ungated-interactive/);
 });
 
-test('WIRED ONCE: the Home chat is the only production user of the user-confirm gate and the confirmation store', () => {
+test('WIRED: the interactive assistants are the only production users of the user-confirm gate and the confirmation store', () => {
   // `userConfirmGate(` is called from Ask-the-OS on EVERY turn (Home chat, drawer, direct API);
   // the other constructors still have no caller. Another call site is a reviewed change.
-  assert.deepEqual(occurrences('userConfirmGate('), { 'core/runtime/agent-loop.ts': 1, 'core/runtime/confirm-gate.ts': 1 });
+  assert.deepEqual(occurrences('userConfirmGate('), {
+    'core/runtime/agent-loop.ts': 1, // Ask the OS: Home chat, drawer, direct API
+    'core/runtime/confirm-gate.ts': 1, // the definition
+    'core/runtime/runtime.ts': 1, // tab assistant, app Build chat, /api/agent-chat
+    'tabs/agents/lib/build/agentic-graph-server.ts': 1, // Software Team panel
+  });
   for (const ctor of ['readOnlyGate(', 'engineHeldGate(']) {
     assert.deepEqual(occurrences(ctor), { 'core/runtime/confirm-gate.ts': 1 }, `${ctor} is called from production code`);
   }
   const storeUsers = sourceFiles().filter((f) => f !== 'core/policy/confirmations.ts' && /policy\/confirmations|confirmationPort|createConfirmation|grantSessionAllowance/.test(read(f)));
-  assert.deepEqual(storeUsers, ['core/runtime/agent-loop.ts', 'core/runtime/confirm-execute.ts'], 'the confirmation store has an unreviewed production consumer');
+  assert.deepEqual(storeUsers, ['core/runtime/agent-loop.ts', 'core/runtime/confirm-execute.ts', 'core/runtime/runtime.ts', 'tabs/agents/lib/build/agentic-graph-server.ts'], 'the confirmation store has an unreviewed production consumer');
   const gateImporters = sourceFiles().filter((f) => /@core\/runtime\/confirm-gate/.test(read(f)));
   assert.deepEqual(gateImporters, [
     'core/policy/confirmations.ts', // types only
     'core/runtime/agent-loop.ts',
     'core/runtime/agentic.ts', // type only
+    'core/runtime/confirm-execute.ts', // type only (ConfirmSurface)
     'core/runtime/confirm-gate.typecheck.ts', // types only
     'core/runtime/runtime.ts',
-    'tabs/agents/lib/build/agentic-graph.ts',
+    'tabs/agents/lib/build/agentic-graph-server.ts',
+    'tabs/agents/lib/build/agentic-graph.ts', // type only (the gate is built by the caller)
   ]);
 });
 

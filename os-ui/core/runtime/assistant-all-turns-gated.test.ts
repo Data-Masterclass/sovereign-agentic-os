@@ -180,18 +180,18 @@ test('GUARD: Ask-the-OS and its route never choose the ungated pass-through, and
   assert.doesNotMatch(loop, /callTool:\s*input\.confirm\s*\?/, 'the gate must not be conditional on a caller-supplied conversation');
 });
 
-test('GUARD twin: the other callers of the pass-through are exactly the known list (tab assistant, Software Team panel)', () => {
+test('GUARD twin: no production file anywhere uses the ungated pass-through — it no longer exists', () => {
   const hits: string[] = [];
   const walk = (dir: string) => {
     for (const f of readdirSync(resolve(OSUI, dir), { withFileTypes: true })) {
       if (f.name === 'node_modules' || f.name === '.next') continue;
       const p = `${dir}/${f.name}`;
       if (f.isDirectory()) walk(p);
-      else if (/\.(ts|tsx)$/.test(f.name) && !/\.test\.ts$/.test(f.name) && /ungatedInteractive\(/.test(read(p))) hits.push(p);
+      else if (/\.(ts|tsx)$/.test(f.name) && !/\.test\.ts$/.test(f.name) && /ungatedInteractive/.test(read(p))) hits.push(p);
     }
   };
   for (const d of ['app', 'core', 'tabs']) walk(d);
-  assert.deepEqual(hits.sort(), ['core/runtime/confirm-gate.ts', 'core/runtime/runtime.ts', 'tabs/agents/lib/build/agentic-graph.ts']);
+  assert.deepEqual(hits, []);
 });
 
 test('UI: the drawer shows the SAME confirm card as Home and decides against the conversation it sent', () => {
