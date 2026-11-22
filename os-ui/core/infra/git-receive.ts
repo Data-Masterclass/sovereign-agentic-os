@@ -39,7 +39,7 @@
  */
 import { createHash } from 'node:crypto';
 import {
-  dbtProjectPath, parseRepoName, principalToken, LAYOUT_V1, LAYOUT_V2, OS_DIR, AGENTS_INDEX_PATH, AGENTS_DIR, DASHBOARDS_DIR,
+  dbtProjectPath, parseRepoName, TOP_LEVEL_DIRS, V1_NON_DBT_TOP_LEVEL, DATA_DIR, principalToken, LAYOUT_V1, LAYOUT_V2, OS_DIR, AGENTS_INDEX_PATH, AGENTS_DIR, DASHBOARDS_DIR,
   configuredDbtProjectDir, prefixOf, AGENT_GENERATED_FILES, AGENT_ID_PATTERN, AGENT_PROMPTS_DIR, CONNECTIONS_DIR, DAGSTER_DIR, KNOWLEDGE_DIR, METRICS_ALERTS_DIR, type LayoutVersion,
 } from '@core/infra/repo-layout';
 import fs from 'node:fs';
@@ -439,6 +439,17 @@ export function failClosedViolation(projPath: string, pusher: Pusher): string | 
   return `'${projPath}' cannot be checked against the OS's list of generated files (os/owned-files.yml is missing or unreadable): pushes to models/ and tests/ wait until the OS regenerates it — until the OS regenerates it, make the change in the OS or ask a domain admin`;
 }
 
+/**
+ * dbt build output and fetched code. NEVER pushable, whatever the role or layout: dbt trusts a
+ * `target/partial_parse.msgpack` over the files it sits beside, `target/manifest.json` looks like a
+ * parsed project, and `dbt_packages/` is third-party code the OS would run.
+ */
+export const BUILD_OUTPUT_SEGMENTS = ['target', 'logs', 'dbt_packages'] as const;
+/** What may sit at the top of the dbt project (project-relative). Everything else is refused. */
+const DBT_PROJECT_TOP = ['models', 'tests', 'seeds', 'snapshots', 'analyses', 'docs', 'macros', 'README.md', '.gitignore', 'dbt_project.yml', 'profiles.yml', 'packages.yml'];
+/** Repo-root files a domain repo may carry beside its folders. */
+const REPO_ROOT_FILES = ['README.md', '.gitignore'];
+
 export function decidePath(filePath: string, pusher: Pusher, ctx: PathContext = {}): PathVerdict {
   const p = filePath.replace(/^\/+/, '');
   if (p.split('/').some((s) => s === '' || s === '.' || s === '..')) {
@@ -447,6 +458,9 @@ export function decidePath(filePath: string, pusher: Pusher, ctx: PathContext = 
   const layout = ctx.layout ?? LAYOUT_V1;
   // The dbt project's own files, wherever the layout puts the project (null: not in the project).
   const proj = dbtProjectPath(p, layout);
+  if (p.split('/').some((seg) => (BUILD_OUTPUT_SEGMENTS as readonly string[]).includes(seg))) {
+    return { allowed: false, reason: `'${p}' is dbt build output or fetched code (target/, logs/, dbt_packages/) — it is never pushed: the OS parses the repository from its source files` };
+  }
   const osPrefix = prefixOf(OS_DIR);
   if (p === OS_DIR || p.startsWith(osPrefix)) return { allowed: false, reason: `'${p}' is ${MANAGED_BY_OS}` };
   // WP-49: `data/dagster/` holds the generated code location the Dagster code server EXECUTES.
@@ -474,6 +488,19 @@ export function decidePath(filePath: string, pusher: Pusher, ctx: PathContext = 
   }
   // A USER repository is the owner's outright (the gate already refused anyone else).
   if (ctx.repoKind === 'user') return { allowed: true };
+  // AN ALLOW-LIST for a domain repo: only the known folders and the dbt project's known top-level
+  // paths. An unknown path has no meaning the OS could honour and could sit beside code it executes.
+  {
+    const top = p.split('/')[0];
+    const projTop = proj === null ? null : proj.split('/')[0];
+    const known = layout === LAYOUT_V2
+      ? REPO_ROOT_FILES.includes(p)
+        || (([...TOP_LEVEL_DIRS] as string[]).includes(top) && (top !== DATA_DIR || (projTop !== null && DBT_PROJECT_TOP.includes(projTop))))
+      : REPO_ROOT_FILES.includes(p) || V1_NON_DBT_TOP_LEVEL.includes(top) || DBT_PROJECT_TOP.includes(top);
+    if (!known) {
+      return { allowed: false, reason: `'${p}' is not a path this repository accepts — models, tests, seeds, snapshots, docs, agents, dashboards and apps are pushable; anything else is the OS's or unknown` };
+    }
+  }
   const lanes = pusher.lanes && pusher.lanes.length ? pusher.lanes : personalLanes(pusher.id);
   // Lanes are written in the v1 shape: a data lane is project-relative, an agent lane repo-relative.
   if (lanes.some((lane) => p.startsWith(lane) || (proj !== null && lane.startsWith('models/') && proj.startsWith(lane)))) return { allowed: true };

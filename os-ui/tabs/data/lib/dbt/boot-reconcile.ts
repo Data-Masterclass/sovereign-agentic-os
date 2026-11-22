@@ -38,6 +38,7 @@ import { COMMITTER, listRepos } from '@core/infra/git-store';
 import { ensureHydrated, hydrationState, listAllDatasets } from '@tabs/data/lib/store';
 import { commitDataProject, dataProjectGitEnabled, type ActorIdentity, type HookDeps } from '@tabs/data/lib/dbt/commit';
 import { removeSyncCronJob } from '@tabs/data/lib/sync-cron-removal';
+import { domainsMissingOwnedFiles } from '@core/infra/owned-files';
 
 /** The platform principal: author AND committer for a write no person performed. */
 export const PLATFORM_ACTOR: ActorIdentity = { id: 'system', name: COMMITTER.name, email: COMMITTER.email };
@@ -66,7 +67,31 @@ export type BootReconcileDeps = HookDeps & {
   hydration?: () => 'hydrated' | 'failed' | 'pending';
   /** The pre-B2 CronJob cleanup (tests inject a fake k8s client). B4-review H-1. */
   cron?: typeof removeSyncCronJob;
+  /** Domains whose repo lacks os/owned-files.yml (tests). */
+  missingOwnedFiles?: () => Promise<string[]>;
 };
+
+/**
+ * The receive gate fails closed for models/ and tests/ in a domain whose repo has no
+ * `os/owned-files.yml`. Say so, loudly, with the way out: the flag off or an unhydrated registry means
+ * this reconcile cannot write it, and builders would otherwise be locked out without a word.
+ */
+async function warnMissingOwnedFiles(deps: BootReconcileDeps, why: string): Promise<string[]> {
+  let missing: string[] = [];
+  try {
+    missing = await (deps.missingOwnedFiles ?? (() => domainsMissingOwnedFiles({ reposDir: deps.reposDir ?? config.reposDir })))();
+  } catch {
+    return [];
+  }
+  if (missing.length) {
+    console.error(
+      `[data-projects] os/owned-files.yml is MISSING in: ${missing.join(', ')} — builders and creators cannot push models/ or tests/ there ` +
+        `(the receive gate fails closed) until the OS regenerates it. ${why} ` +
+        'Reconcile one domain: POST /api/platform-admin/data-projects/<domain>/reconcile (admin), or restart with DATA_PROJECT_GIT on.',
+    );
+  }
+  return missing;
+}
 
 /** Datasets in the store ∪ repositories on disk, sorted — deterministic for the log and the tests. */
 async function discoverDomains(deps: BootReconcileDeps): Promise<string[]> {
@@ -124,7 +149,10 @@ async function standDownPreB2Crons(deps: BootReconcileDeps): Promise<BootReconci
  * Returns what it found; never throws.
  */
 export async function reconcileDataProjectsAtBoot(deps: BootReconcileDeps = {}): Promise<BootReconcileResult> {
-  if (!dataProjectGitEnabled()) return { domains: [], committed: [], failed: [], ran: false, cronsStoodDown: [] };
+  if (!dataProjectGitEnabled()) {
+    await warnMissingOwnedFiles(deps, 'DATA_PROJECT_GIT is off, so the boot reconcile did not run.');
+    return { domains: [], committed: [], failed: [], ran: false, cronsStoodDown: [] };
+  }
   try {
     await (deps.hydrate ?? ensureHydrated)();
   } catch {
@@ -142,6 +170,7 @@ export async function reconcileDataProjectsAtBoot(deps: BootReconcileDeps = {}):
         'could not be read, so an empty store would be indistinguishable from a domain with no datasets. ' +
         'Nothing was committed. It runs on the next boot, or the next dataset write commits by itself.',
     );
+    await warnMissingOwnedFiles(deps, `The dataset registry is '${hydration}', so the boot reconcile did not run.`);
     return { domains: [], committed: [], failed: [], ran: false, cronsStoodDown: [] };
   }
   // BEFORE the first commit: the old scheduler is stood down, so `os/schedules.yml` never races a
@@ -169,5 +198,11 @@ export async function reconcileDataProjectsAtBoot(deps: BootReconcileDeps = {}):
       failed.push({ domain, error: e instanceof Error ? e.message : String(e) });
     }
   }
+  await warnMissingOwnedFiles(deps, failed.length ? 'Some domains failed to reconcile (see above).' : 'The reconcile ran but these domains still lack it.');
   return { domains, committed, failed, ran: true, cronsStoodDown };
+}
+
+/** Reconcile ONE domain now (the admin route): the same whole-tree commit, for that domain only. */
+export async function reconcileOneDomain(domain: string, deps: BootReconcileDeps = {}): Promise<BootReconcileResult> {
+  return reconcileDataProjectsAtBoot({ ...deps, domains: async () => [domain] });
 }

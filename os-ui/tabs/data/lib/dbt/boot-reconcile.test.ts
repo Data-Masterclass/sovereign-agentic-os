@@ -144,6 +144,24 @@ test('every domain\'s boot commit carries os/owned-files.yml, and a domain whose
   assert.ok(calls[0].files.has('os/owned-files.yml'));
 });
 
+test('a domain still missing os/owned-files.yml is reported loudly, with the way out, whether the reconcile ran or was skipped', async () => {
+  seed();
+  const logged: string[] = [];
+  const orig = console.error;
+  console.error = (...a: unknown[]) => { logged.push(a.join(' ')); };
+  try {
+    const missing = async () => ['sales'];
+    await reconcileDataProjectsAtBoot({ committer, hydrate: async () => {}, hydration: () => 'pending' as const, domains: async () => ['sales'], missingOwnedFiles: missing });
+    assert.ok(logged.some((l) => /os\/owned-files\.yml is MISSING in: sales/.test(l) && /POST \/api\/platform-admin\/data-projects\/<domain>\/reconcile/.test(l)), logged.join('\n'));
+    assert.ok(logged.some((l) => /registry is 'pending'/.test(l)), 'says why it did not run');
+    logged.length = 0;
+    await reconcileDataProjectsAtBoot({ committer, hydrate: async () => {}, hydration: () => 'hydrated' as const, domains: async () => ['sales'], missingOwnedFiles: async () => [] });
+    assert.equal(logged.some((l) => /MISSING/.test(l)), false, 'NEGATIVE TWIN: nothing missing, nothing said');
+  } finally {
+    console.error = orig;
+  }
+});
+
 test('a second boot that changed nothing commits nothing', async () => {
   seed();
   await reconcileDataProjectsAtBoot({ committer, hydrate: async () => {}, hydration: () => 'hydrated' as const, domains: async () => ['sales', 'finance'] });

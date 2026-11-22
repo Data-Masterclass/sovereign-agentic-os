@@ -92,3 +92,24 @@ test('the receive gate fails closed when the old head has no os/owned-files.yml,
   assert.equal(ok.ok, true, ok.ok ? '' : ok.message);
   abortReceive('sales');
 });
+
+test('build output and fetched code are never pushable, in either layout, for any role', () => {
+  const layouts = [{}, { layout: 2 as never }];
+  for (const ctx of layouts) {
+    for (const p of ['target/partial_parse.msgpack', 'target/manifest.json', 'logs/dbt.log', 'dbt_packages/x/macros/m.sql', 'data/dbt/target/partial_parse.msgpack', 'models/silver/target/x.sql']) {
+      for (const role of ['creator', 'builder', 'domain_admin', 'admin'] as const) {
+        const v = decidePath(p, pusher('bob', role), ctx);
+        assert.equal(v.allowed, false, `${p} (${role}, layout ${JSON.stringify(ctx)})`);
+      }
+    }
+  }
+});
+
+test('an allow-list: a builder may push only the known top-level paths; an unknown one is refused', () => {
+  for (const p of ['weird/x.txt', 'build.sh', '.dbt/profiles.yml', 'partial_parse.msgpack']) {
+    assert.equal(decidePath(p, pusher('bob', 'builder')).allowed, false, p);
+  }
+  for (const p of ['models/gold/gold_x.sql', 'docs/notes.md', 'README.md', 'agents/a/system.yaml', 'dashboards/d/dashboard.yaml']) {
+    assert.equal(decidePath(p, pusher('bob', 'builder')).allowed, true, p);
+  }
+});

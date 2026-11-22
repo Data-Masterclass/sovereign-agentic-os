@@ -31,6 +31,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -192,6 +193,15 @@ DBT_RUN_ENV_NAMES: Tuple[str, ...] = (
 )
 
 
+#: Directories dbt writes (or fetches into) that a checked-out repository must never be trusted for.
+BUILD_OUTPUT_DIRS: Tuple[str, ...] = ("target", "logs", "dbt_packages")
+
+
+def dbt_cli_env(ambient: Optional[Mapping[str, str]] = None) -> Dict[str, str]:
+    """`dbt_run_env` plus `DBT_PARTIAL_PARSE=false`: a dbt RUN never uses a parse cache."""
+    return {**dbt_run_env(ambient), "DBT_PARTIAL_PARSE": "false"}
+
+
 def dbt_run_env(ambient: Optional[Mapping[str, str]] = None) -> Dict[str, str]:
     """The allowlisted subset of `ambient` (default: this process's env) a dbt run may see."""
     src = os.environ if ambient is None else ambient
@@ -217,9 +227,17 @@ def dbt_parse(
     run: Runner = _run,
     ambient: Optional[Mapping[str, str]] = None,
 ) -> Tuple[int, str]:
-    """`dbt parse` in `project_dir` under `parse_env()` — writes `target/manifest.json`."""
+    """`dbt parse` in `project_dir` under `parse_env()` — writes `target/manifest.json`.
+
+    Starts from nothing: a repository can carry `target/` (a pushed `partial_parse.msgpack` makes dbt
+    use the SQL inside it instead of the files, a pushed `manifest.json` looks like a parsed project),
+    `logs/` and `dbt_packages/` (fetched code). They are removed, and `--no-partial-parse` makes dbt
+    ignore any cache regardless.
+    """
+    for sub in BUILD_OUTPUT_DIRS:
+        shutil.rmtree(os.path.join(project_dir, sub), ignore_errors=True)
     return run(
-        ["dbt", "parse", "--profiles-dir", ".", "--no-use-colors", "--quiet"],
+        ["dbt", "--no-partial-parse", "parse", "--profiles-dir", ".", "--no-use-colors", "--quiet"],
         project_dir,
         parse_env(ambient),
     )
@@ -750,6 +768,8 @@ def ensure_checkout(
         if code != 0:
             run(["rm", "-rf", tmp], None)
             return None, f"commit {sha} not in {domain}: {out.strip()[:400]}"
+        for sub in BUILD_OUTPUT_DIRS:  # a checked-in target/ is never a parsed project
+            shutil.rmtree(os.path.join(dbt_dir(tmp), sub), ignore_errors=True)
         os.replace(tmp, sha_dir)
     # `dbt parse` renders the repository's Jinja — it runs with an ALLOWLISTED environment
     # (`parse_env`), never this pod's, so no authored `{{ env_var(...) }}` can read a secret.

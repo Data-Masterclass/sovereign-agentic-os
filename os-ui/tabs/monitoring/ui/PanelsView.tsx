@@ -275,6 +275,11 @@ function PlatformPanels({ v }: { v: PlatformView }) {
         ))}
       </div>
       {down.length > 0 && <p className="hint" style={{ marginTop: 0 }}>{down.map((c) => `${c.id}: ${c.detail}`).join(' · ')}</p>}
+      {v.repoGate.missing.length > 0 && (
+        <div className="mon-tr err" role="alert">
+          <span>Data repositories without the OS&apos;s list of generated files: {v.repoGate.missing.join(', ')}. Builders cannot push models or tests there until it is written. Reconcile a domain: POST /api/platform-admin/data-projects/&lt;domain&gt;/reconcile.</span>
+        </div>
+      )}
 
       <div className="mon-sub">Resource pressure <span className="mon-sub-note">VictoriaMetrics · kubelet_stats</span></div>
       <Sources sources={{ victoriaMetrics: v.pressure.state }} />
