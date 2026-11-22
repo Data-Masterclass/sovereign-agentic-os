@@ -127,6 +127,8 @@ jobs:
           bash scripts/tests/secret-preflight.test.sh
       - name: LiteLLM has no config-file model_group_alias (the OS writes the role mapping)
         run: bash scripts/tests/litellm-no-config-alias.test.sh
+      - name: LiteLLM catalog is seeded under real names, the role seed is in it, keys allow the three roles
+        run: bash scripts/tests/litellm-role-catalog.test.sh
       - name: platform ingress policy check + negative twins
         run: bash scripts/tests/platform-ingress-policy.test.sh
       - name: Dagster run-pod shape check + negative twins
