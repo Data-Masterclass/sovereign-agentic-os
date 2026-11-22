@@ -32,6 +32,9 @@ const NOTION_DEFAULTS: NotionMcpMetadata = {
 
 export type FetchFn = typeof fetch;
 
+/** The injected fetch of a call, else the global one (the single place this module names it). */
+const fetchOf = (opts: { fetchImpl?: FetchFn }): FetchFn => opts.fetchImpl ?? fetch;
+
 export type NotionMcpMetadata = {
   /** The MCP resource the token is audience-bound to (the /mcp endpoint). */
   resource: string;
@@ -101,7 +104,7 @@ async function postForm(f: FetchFn, url: string, body: URLSearchParams, ms = 100
  * endpoints if a metadata hop is unreachable, so the flow still starts.
  */
 export async function discoverMetadata(opts: { fetchImpl?: FetchFn; mcpEndpoint?: string } = {}): Promise<NotionMcpMetadata> {
-  const f = opts.fetchImpl ?? fetch;
+  const f = fetchOf(opts);
   const mcp = opts.mcpEndpoint ?? NOTION_MCP_ENDPOINT;
   const origin = new URL(mcp).origin;
 
@@ -138,7 +141,7 @@ export async function registerClient(
   redirectUri: string,
   opts: { fetchImpl?: FetchFn } = {},
 ): Promise<NotionClientReg> {
-  const f = opts.fetchImpl ?? fetch;
+  const f = fetchOf(opts);
   const res = await f(meta.registrationEndpoint, {
     method: 'POST',
     headers: { 'content-type': 'application/json', accept: 'application/json' },
@@ -190,7 +193,7 @@ export async function exchangeNotionCode(
   input: { code: string; redirectUri: string; codeVerifier: string },
   opts: { fetchImpl?: FetchFn; now?: number } = {},
 ): Promise<TokenSet> {
-  const f = opts.fetchImpl ?? fetch;
+  const f = fetchOf(opts);
   const body = new URLSearchParams({
     grant_type: 'authorization_code',
     code: input.code,
@@ -213,7 +216,7 @@ export async function refreshNotionToken(
   opts: { fetchImpl?: FetchFn; now?: number } = {},
 ): Promise<TokenSet> {
   if (!prev.refreshToken) throw tagged('No refresh token stored; Notion must be reconnected', 401);
-  const f = opts.fetchImpl ?? fetch;
+  const f = fetchOf(opts);
   const body = new URLSearchParams({
     grant_type: 'refresh_token',
     refresh_token: prev.refreshToken,
@@ -293,7 +296,7 @@ export async function listNotionMcpTools(
   accessToken: string,
   opts: { fetchImpl?: FetchFn } = {},
 ): Promise<McpToolInfo[]> {
-  const f = opts.fetchImpl ?? fetch;
+  const f = fetchOf(opts);
   const init = await mcpRpc(f, reg.mcpEndpoint, accessToken, {
     jsonrpc: '2.0',
     id: 1,
@@ -355,7 +358,7 @@ function rpcFailure(body: Record<string, unknown> | null, what: string): Error {
 
 /** `tools/list` with each tool's schema and annotations. Throws on transport/auth failure. */
 export async function listNotionMcpToolDefs(reg: NotionClientReg, accessToken: string, opts: { fetchImpl?: FetchFn } = {}): Promise<McpToolDef[]> {
-  const f = opts.fetchImpl ?? fetch;
+  const f = fetchOf(opts);
   const sid = await openSession(f, reg, accessToken);
   const listed = await mcpRpc(f, reg.mcpEndpoint, accessToken, { jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} }, sid);
   const tools = (listed.body?.result as { tools?: unknown } | undefined)?.tools;
@@ -378,7 +381,7 @@ export async function callNotionMcpTool(
   args: Record<string, unknown>,
   opts: { fetchImpl?: FetchFn; timeoutMs?: number } = {},
 ): Promise<McpCallResult> {
-  const f = opts.fetchImpl ?? fetch;
+  const f = fetchOf(opts);
   const sid = await openSession(f, reg, accessToken);
   const res = await mcpRpc(f, reg.mcpEndpoint, accessToken, { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name, arguments: args } }, sid, opts.timeoutMs ?? 30000);
   const result = res.body?.result as McpCallResult | undefined;

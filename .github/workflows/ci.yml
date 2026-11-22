@@ -52,6 +52,9 @@ jobs:
         run: npm --prefix os-ui ci
       - name: Test (os-ui)
         run: npm --prefix os-ui test
+      - name: Chat external MCP tests (real store, gate and knowledge tool; stub of Notion's MCP)
+        working-directory: os-ui
+        run: node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test ../tests/chat/external-mcp.test.ts
       # gate.sh's three chart checks (`check-worker-env.mjs`, `check-trino-rules-chart.mjs`)
       # run `helm template`, which needs BOTH helm and the subchart tarballs — and the tarballs
       # are gitignored, so a fresh runner has neither. Without this the gate either died on helm's
