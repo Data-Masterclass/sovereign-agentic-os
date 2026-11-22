@@ -6,13 +6,29 @@
  *             registers, instead of a shadow table nobody governs.
  * ARCHITECTURE: pure over the physical tables Trino lists and the registered footprint (every table a
  *   dataset can occupy). Judged: the domains' schemas and personal lanes. Not judged: dlt landing
- *   schemas, Iceberg metadata tables (`name$snapshots`) and every other schema. One warning per
+ *   schemas, OS-internal tables (see `isOsInternal`), Iceberg metadata tables (`name$snapshots`) and every other schema. One warning per
  *   schema, naming up to ten tables. Trino owns such a table; the OS only reports it.
  */
 import type { Alert } from '@tabs/monitoring/lib/types';
 import type { PhysicalTable } from '@core/adapters/trino/tables';
 
-export type Judged = { domainSchemas: string[]; personalSchemaPrefix: string };
+export type Judged = {
+  domainSchemas: string[];
+  personalSchemaPrefix: string;
+  /** Names of the dbt models Dagster manages (asset keys `[domain, model]`): their tables are the repository's. */
+  managedNames: ReadonlySet<string>;
+};
+
+/**
+ * Tables the OS itself writes, so a warning means "made outside the OS":
+ *   - every table a dataset can occupy (`registered`, from `footprint()`);
+ *   - the merge staging table of such a table, `<table>_stg` (sync-sql.ts), which a failed merge leaves behind;
+ *   - the table of a dbt model Dagster manages (git owns the model; Dagster materialises it).
+ */
+export function isOsInternal(schema: string, table: string, registered: ReadonlySet<string>, managedNames: ReadonlySet<string>): boolean {
+  if (registered.has(`${schema}.${table}`) || managedNames.has(table)) return true;
+  return table.endsWith('_stg') && registered.has(`${schema}.${table.slice(0, -4)}`);
+}
 
 export function unregisteredTableAlerts(physical: readonly PhysicalTable[], registered: ReadonlySet<string>, judged: Judged): Alert[] {
   const domainOf = new Set(judged.domainSchemas);
@@ -20,7 +36,7 @@ export function unregisteredTableAlerts(physical: readonly PhysicalTable[], regi
   for (const p of physical) {
     if (p.table.includes('$')) continue;
     const judgedSchema = domainOf.has(p.schema) || p.schema.startsWith(judged.personalSchemaPrefix);
-    if (!judgedSchema || registered.has(`${p.schema}.${p.table}`)) continue;
+    if (!judgedSchema || isOsInternal(p.schema, p.table, registered, judged.managedNames)) continue;
     bySchema.set(p.schema, [...(bySchema.get(p.schema) ?? []), p.table]);
   }
   return [...bySchema.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([schema, tables]): Alert => {
