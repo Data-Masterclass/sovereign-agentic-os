@@ -30,7 +30,8 @@ function script(calls: { name: string; args: Record<string, unknown> }[], finalT
     if (!req.tools) return { content: '1. plan', toolCalls: [] };
     if (!acted) {
       acted = true;
-      return { content: '', toolCalls: calls.map((c, i) => ({ id: `c${i}`, name: c.name, args: c.args })) };
+      // a chat call carries a compact tool set: load the toolsets first (same batch, local, read-only)
+      return { content: '', toolCalls: [{ id: 'en', name: 'enable_tools', args: { toolsets: ['data', 'knowledge', 'files', 'metrics', 'dashboards', 'agents', 'software', 'connections', 'governance'] } }, ...calls.map((c, i) => ({ id: `c${i}`, name: c.name, args: c.args }))] };
     }
     return { content: finalText, toolCalls: [] };
   };
@@ -54,15 +55,15 @@ test('a creator\'s chat is not even offered a Builder+ tool, and naming it anywa
   const names = osToolSpecs(creator, null).map((t) => t.name);
   assert.ok(!names.includes('approve_promotion'), 'approve_promotion is not offered to a creator');
   const res = await turn(creator, script([{ name: 'approve_promotion', args: { requestId: 'r-1' } }]));
-  assert.equal(res.steps[0].isError, true);
+  assert.equal(res.steps.at(-1)!.isError, true);
   assert.equal(res.pending.length, 0, 'a refused call is not parked as if it could be confirmed');
   const wire = askTurnResponse({
     finalText: res.finalText, plan: res.plan, steps: res.steps, artifacts: res.artifacts,
     tab: null, traceId: res.traceId, model: 'm', pending: res.pending, conversationId: res.conversationId,
   });
-  assert.equal(wire.tools[0].error?.code, 'forbidden');
-  assert.match(wire.tools[0].error?.reason ?? '', /domain_admin|builder/);
-  assert.ok((wire.tools[0].error?.hint ?? '').length > 0, 'a hint travels with the refusal');
+  assert.equal(wire.tools.at(-1)!.error?.code, 'forbidden');
+  assert.match(wire.tools.at(-1)!.error?.reason ?? '', /domain_admin|builder/);
+  assert.ok((wire.tools.at(-1)!.error?.hint ?? '').length > 0, 'a hint travels with the refusal');
 });
 
 test('NEGATIVE TWIN: the same tool IS offered to a domain admin and is not refused as forbidden', async () => {
@@ -72,7 +73,7 @@ test('NEGATIVE TWIN: the same tool IS offered to a domain admin and is not refus
     finalText: res.finalText, plan: res.plan, steps: res.steps, artifacts: res.artifacts,
     tab: null, traceId: res.traceId, model: 'm', pending: res.pending, conversationId: res.conversationId,
   });
-  assert.notEqual(wire.tools[0].error?.code, 'forbidden');
+  assert.notEqual(wire.tools.at(-1)!.error?.code, 'forbidden');
 });
 
 // 2. a write needs confirmation ----------------------------------------------------------------

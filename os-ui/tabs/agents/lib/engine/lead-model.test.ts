@@ -48,7 +48,7 @@ function run(acts: Reply[], lead?: GraphDeps['lead'], seen: Seen[] = []) {
 }
 const FINAL: Reply = { content: 'all done' };
 const READ: Reply = { content: '', toolCalls: [{ id: 'r', name: 'search_knowledge', args: {} }] };
-const stepsOf = (r: Awaited<ReturnType<typeof run>>) => r.result.nodeRuns.flatMap((n) => n.steps);
+const stepsOf = (r: Awaited<ReturnType<typeof run>>) => r.result.runs.flatMap((n) => n.result.steps);
 
 test('NO LEAD SWITCH wired: the engine routes by the tool classifier exactly as before (a read-only node runs on the worker)', async () => {
   const r = await run([READ, FINAL]);

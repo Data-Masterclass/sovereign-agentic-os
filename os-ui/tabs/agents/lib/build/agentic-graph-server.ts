@@ -8,7 +8,9 @@ import { confirmationPort, declineConfirmation } from '@core/policy/confirmation
 import { decideConfirmation } from '@core/runtime/confirm-execute';
 import { agentForbiddenReason } from '@core/mcp/write-tool-meta';
 import { config } from '@core/kernel/config';
-import { roleModel } from '@core/models/roles';
+import { roleModel, leadMode, ensureModelRolesFresh } from '@core/models/roles';
+import { runDelegateTool, newTurnDelegations } from '@core/runtime/delegate';
+import { completeWithEscalation, isSpendLimit } from '@core/runtime/escalate';
 import { inputBudget, modelContext } from '@core/models/context-windows';
 import { configuredReasoningEfforts } from '@core/runtime/reasoning-budget';
 import { ensureModelLimitsFresh } from '@core/models/model-limits-live';
@@ -300,6 +302,25 @@ export type RunOsTeamResult = AgenticGraphResult & {
 };
 
 /**
+ * The OS-wide lead switch for a run (`roles.ts` `leadMode()`): strong leads and delegates through the SAME primitive as the
+ * chat (`delegate.ts`, one budget per run, as the running user, through the run's own gateway caller so its key and budget
+ * bind), or the worker leads and the engine escalates. The settings are made current first (a run worker has its own copy).
+ */
+async function leadFor(input: { llm: LlmCall; user: CurrentUser }): Promise<NonNullable<AgenticGraphDeps['lead']>> {
+  await ensureModelRolesFresh();
+  const mode = leadMode();
+  if (mode === 'worker') return { mode };
+  const turn = newTurnDelegations();
+  return {
+    mode,
+    delegate: (args, ctx) => runDelegateTool(args, {
+      llm: input.llm, escalate: completeWithEscalation, isSpendLimit, results: () => ctx.results, turn,
+      user: { id: input.user.id, domains: input.user.domains },
+    }),
+  };
+}
+
+/**
  * Run ANY agent system over one turn as a real LangGraph `StateGraph`, live, in-process, as
  * the RUNNING USER. Generalises the former `runAgenticTeam` (software-only) to the
  * whole governed OS MCP toolset: per node, the granted, role-scoped tool schemas
@@ -350,6 +371,7 @@ export async function runOsTeam(input: RunOsTeamInput): Promise<RunOsTeamResult>
     embed: embedder.embed,
     embedSource: embedder.lastSource,
     preamble: osPreamble(input.user, sys),
+    lead: await leadFor({ llm: tracked.llm, user: input.user }),
     reasoningModel: roleModel('reasoning'),
     // ACT/tool-calling fallback model (a per-agent pin still wins). The `tools`
     // role defaults to Qwen for clean OpenAI tool_calls; the harmony-format
@@ -730,16 +752,20 @@ export async function runPhaseTurn(input: RunPhaseTurnInput): Promise<PhaseTurnR
   const conversationId = teamConversationId(input.user.id);
   const turnNode = ir.nodes.find((n) => n.id === role);
   const offered = phaseCallableTools(specsFor(turnNode?.tools ?? []).map((t) => t.name));
+  const phaseLlm = input.llm ?? liteLlmCaller({ userId: input.user.id, domain: sys.system.domain, tab: 'software' });
   const run = await runNode(
     ir,
     role,
     input.messages,
     {
       // A3: attributed — the runner, the system's domain and the Software tab (no run id: not a checkpointed run).
-      llm: input.llm ?? liteLlmCaller({ userId: input.user.id, domain: sys.system.domain, tab: 'software' }),
+      llm: phaseLlm,
       toolSpecsFor: (node) => specsFor(node.tools).filter((t) => offered.includes(t.name)),
       callTool: phaseToolExecutor(input.callTool ?? tabToolExecutor(input.user, 'software'), offered),
       preamble: preamble(),
+      // The phase door offers exactly the phase's tools, so no delegation tool and no escalation tool here: the lead switch
+      // still decides which model runs the node, and the worker still escalates on a refusal or an empty answer.
+      lead: await ensureModelRolesFresh().then(() => ({ mode: leadMode(), escalateTool: false })),
       reasoningModel: roleModel('reasoning'),
       // Tool-calling fallback model (per-agent pin still wins) — Qwen by default
       // for clean OpenAI tool_calls, not the harmony-format light model.

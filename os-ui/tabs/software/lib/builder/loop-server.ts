@@ -23,7 +23,8 @@
  */
 import 'server-only';
 import type { CurrentUser } from '@core/kernel/auth';
-import { assistantComplete } from '@core/runtime/complete';
+import type { AssistantCaller } from '@core/runtime/complete';
+import { completeWithEscalation } from '@core/runtime/escalate';
 import { roleModel } from '@core/models/roles';
 import { trace } from '@core/infra/agent-governed';
 import { currentSurface } from '@core/infra/request-surface';
@@ -204,14 +205,29 @@ async function priorTree(app: App): Promise<SourceFile[]> {
   return getSnapshot(app.id) ?? templateFiles(app.template, app.name, app.slug);
 }
 
-function completeAs(user: CurrentUser, role: 'reasoning' | 'coder') {
+/**
+ * The builder's ONE model door, on the OS-wide lead switch (`roles.ts`): strong leads by default (the planner and the coder
+ * run on the strong role directly); with "Save costs" ON the worker tries first and the strong model redoes a result that
+ * fails its check (`validate`; a step with no check is judged by "not empty"), through the same escalation helper as the
+ * chat and the engine (`escalate.ts`). Exported for the test.
+ */
+export function completeAs(
+  user: CurrentUser,
+  role: 'reasoning' | 'coder',
+  opts: { validate?: (content: string) => boolean; caller?: AssistantCaller } = {},
+) {
   return async (system: string, userText: string): Promise<string> => {
-    const { content } = await assistantComplete(
+    const { content } = await completeWithEscalation(
       [
         { role: 'system', content: system },
         { role: 'user', content: userText },
       ],
-      { model: roleModel(role), user: { id: user.id, domains: user.domains } },
+      {
+        user: { id: user.id, domains: user.domains },
+        reasoningModel: roleModel(role),
+        validate: opts.validate ?? ((c) => c.trim().length > 0),
+        ...(opts.caller ? { caller: opts.caller } : {}),
+      },
     );
     return content;
   };
@@ -239,7 +255,7 @@ export async function agenticBuild(
   const label = targetLabelFor(target);
 
   const reason = completeAs(user, 'reasoning');
-  const coder = completeAs(user, 'coder');
+  const coder = completeAs(user, 'coder', { validate: (raw) => parseCoderReply(raw).ok });
 
   // The loop hands the commit dep only (files, message), so the scorecard it should carry is
   // captured here as the loop reports it. A commit happens BEFORE the loop returns, so the record

@@ -183,16 +183,17 @@ test('TOOLS twin: an enabled tool still goes through the confirm gate (a write p
   assert.equal(res.pending.length, 1);
 });
 
-test('TOOLS: enable_tools cannot reach beyond the user\'s role: an unknown toolset is refused, and a tool above the role stays unavailable', async () => {
-  const res = await turn(llmOf([], [
+test('TOOLS: enable_tools cannot reach beyond the user\'s role: an unknown toolset is refused, and a loaded toolset offers only what the role may list', async () => {
+  const calls: Call[] = [];
+  const res = await turn(llmOf(calls, [
     { content: '', toolCalls: [{ id: 'b', name: 'enable_tools', args: { toolsets: ['nope'] } }] },
     { content: '', toolCalls: [{ id: 'c', name: 'enable_tools', args: { toolsets: ['governance'] } }] },
-    { content: '', toolCalls: [{ id: 'd', name: 'decide_deploy', args: {} }] },
     FINAL,
   ]));
   assert.ok(res.steps[0].isError && /unknown_toolset/.test(res.steps[0].result));
-  assert.ok(res.steps[2].isError);
-  assert.ok(!reached.includes('decide_deploy'));
+  const last = calls.filter((c) => c.tools.length).at(-1)!.tools;
+  assert.ok(last.includes('get_lineage') && last.includes('go_live'), 'governance tools the role may list are now offered');
+  assert.ok(!last.includes('decide_approval') && !last.includes('delete_domain') && !last.includes('get_policy_view'), 'a creator is never offered an approver or admin tool');
 });
 
 test('TOOLS: the saving is real: the default tool payload is under a quarter of the full registry payload', async () => {
@@ -208,4 +209,15 @@ test('TOOLS: strong still delegates a long result with the compact set (bigDispa
   const calls: Call[] = [];
   const res = await runOsAssistant({ user, tab: null, messages: [{ role: 'user', content: 'x' }], dispatch: bigDispatch, llm: llmOf(calls, [{ content: '', toolCalls: [{ id: 'w', name: 'whoami', args: {} }] }, { content: '', toolCalls: [{ id: 'd', name: 'delegate_to_worker', args: SUMMARISE }] }, FINAL], () => ({ content: GOOD })) });
   assert.equal(res.modelTrace.delegations.length, 1);
+});
+
+test('LIMITS: a delegation never asks for more output than the worker model\'s own limit, whatever strong requested', async () => {
+  const { runDelegateTool, newTurnDelegations } = await import('@core/runtime/delegate');
+  const { completeWithEscalation, isSpendLimit } = await import('@core/runtime/escalate');
+  const caps: (number | undefined)[] = [];
+  const llm: LlmCall = async (req) => { caps.push(req.maxTokens); return { content: GOOD, toolCalls: [] }; };
+  const deps = { llm, escalate: completeWithEscalation, isSpendLimit, results: () => [{ tool: 't', text: 'x '.repeat(5000) }], turn: newTurnDelegations() };
+  await runDelegateTool({ ...SUMMARISE, max_tokens: 3000 }, { ...deps, maxOutputCap: 800 });
+  await runDelegateTool({ ...SUMMARISE, max_tokens: 3000 }, deps);
+  assert.deepEqual(caps, [800, 3000]);
 });
