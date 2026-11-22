@@ -8,7 +8,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { MAX_SYNC_RUNS, appendRun, lagMs, activeConditions, diffIncidents, lagThresholdMs, type SyncRunRecord } from '@tabs/files/lib/drive-sync-health';
+import { MAX_SYNC_RUNS, appendRun, lagMs, activeConditions, diffIncidents, lagThresholdMs, type SyncRunRecord } from '@core/infra/drive-sync-health';
 
 const run = (at: string, ok = true, extra: Partial<SyncRunRecord> = {}): SyncRunRecord => ({ at, endedAt: at, durationMs: 5, trigger: 'schedule', ok, added: 0, changed: 0, unchanged: 0, ...(ok ? {} : { error: 'boom' }), ...extra });
 const T = (m: number) => new Date(Date.UTC(2026, 10, 22, 10, m)).toISOString();

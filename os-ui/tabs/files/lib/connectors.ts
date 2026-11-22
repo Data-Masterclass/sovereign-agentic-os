@@ -4,7 +4,7 @@
 import type { Sensitivity, Storage } from '@tabs/files/lib/asset-schema';
 import { osMirror } from '@core/infra/os-mirror';
 import { newSeenFields, noteSeen, writeChanged, writeDeleted, writeNew, type SeenFields } from '@core/infra/field-writes';
-import type { SyncRunRecord } from '@tabs/files/lib/drive-sync-health';
+import type { SyncRunRecord } from '@core/infra/drive-sync-health';
 
 /**
  * Connected drives (handover §provisioning). A user connects a source — Google
@@ -287,7 +287,7 @@ export function nextCadence(source: ConnectorSource): Cadence {
  * indexes), tallies the outcomes, and advances the cursor + marks the initial pass
  * done. The content-hash skip lives in the sink (unchanged → 'unchanged').
  */
-export async function runSync(source: ConnectorSource, client: ConnectorClient, sink: SyncSink): Promise<SyncResult> {
+export async function runSync(source: ConnectorSource, client: ConnectorClient, sink: SyncSink, opts: { deferFinalSave?: boolean } = {}): Promise<SyncResult> {
   const cadence = nextCadence(source);
   const { items, cursor } = await client.pull(source, source.cursor);
   let added = 0, updated = 0, unchanged = 0;
@@ -306,7 +306,9 @@ export async function runSync(source: ConnectorSource, client: ConnectorClient, 
   source.initialDone = true;
   source.paused = null;
   connSources().set(source.id, source);
-  persist(source);
+  // `deferFinalSave`: the caller records the run on the source and saves ONCE, so the cursor and the run record
+  // go out as one update instead of two racing ones (the mirror sends each save concurrently).
+  if (!opts.deferFinalSave) persist(source);
   return { sourceId: source.id, cadence, clientMode: client.mode, added, updated, unchanged, cursor };
 }
 

@@ -17,7 +17,7 @@ process.env.OS_OFFLINE_MOCK = 'allow';
 const c = await import('@tabs/files/lib/connectors');
 const srv = await import('@tabs/files/lib/connectors-server');
 const files = await import('@tabs/files/lib/store');
-const { MAX_SYNC_RUNS } = await import('@tabs/files/lib/drive-sync-health');
+const { MAX_SYNC_RUNS } = await import('@core/infra/drive-sync-health');
 
 let cluster: ReturnType<typeof fakeCluster>;
 beforeEach(() => { cluster = fakeCluster(); c.__resetConnectors(); files.__resetStore(); });

@@ -14,7 +14,7 @@
  *   - Negative twins: the provider answering 500 → the Dagster run FAILS with the text, the source records a failed
  *     run, the panel shows it; a paused source's drive is never asked; os-ui down → the Dagster run fails and no
  *     sync is recorded; Dagster down → the panel says unavailable and has no schedule (never zero).
- *   - Run: MON_IT=1 node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test tabs/files/lib/drive-sync.int.test.ts
+ *   - Run: MON_IT=1 node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test drive-sync.int.test.ts
  */
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -44,7 +44,7 @@ async function listen(srv: Server, port: number, host: string): Promise<number> 
 
 type Mods = {
   c: typeof import('@tabs/files/lib/connectors');
-  tickWith: typeof import('../../../app/api/runtime/files-sync/_handlers').tickWith;
+  tickWith: typeof import('./app/api/runtime/files-sync/_handlers').tickWith;
   dagster: typeof import('@core/infra/dagster');
   filesView: typeof import('@tabs/monitoring/lib/panels/files-panel').filesView;
   reg: typeof import('@tabs/monitoring/lib/panels/sources');
@@ -65,6 +65,8 @@ function startOsUi(): Promise<number> {
 
 before(async () => {
   if (!on) return;
+  // OpenSearch may still be starting (cold CI container): wait for it, start from an empty source index.
+  for (let i = 0; i < 60; i++) { if ((await fetch(`${OS}/_cluster/health?wait_for_status=yellow&timeout=5s`).catch(() => null))?.ok) break; await sleep(1000); }
   await fetch(`${OS}/os-files-sources`, { method: 'DELETE' }); // a fresh store: no source of an earlier run
   driveSrv = createServer((req, res) => {
     drive.seen.push(String(req.headers.authorization ?? ''));
@@ -78,11 +80,19 @@ before(async () => {
   process.env.GOOGLE_API_BASE_URL = `http://127.0.0.1:${port}`;
   m = {
     c: await import('@tabs/files/lib/connectors'),
-    tickWith: (await import('../../../app/api/runtime/files-sync/_handlers')).tickWith,
+    tickWith: (await import('./app/api/runtime/files-sync/_handlers')).tickWith,
     dagster: await import('@core/infra/dagster'),
     filesView: (await import('@tabs/monitoring/lib/panels/files-panel')).filesView,
     reg: await import('@tabs/monitoring/lib/panels/sources'),
   };
+  // The source store's mirror creates its index on the first probe; a probe that times out on a cold cluster leaves
+  // the mirror unhealthy for a minute, so warm it until the sources load.
+  for (let i = 0; i < 30; i++) {
+    m.c.__resetConnectors();
+    try { await m.c.requireSourcesLoaded(); if (m.c.sourcesHydrationState() === 'hydrated') break; } catch { /* retry */ }
+    await sleep(1000);
+  }
+  assert.equal(m.c.sourcesHydrationState(), 'hydrated', 'the source store loaded from OpenSearch');
   await startOsUi();
 });
 after(async () => { driveSrv?.close(); osuiSrv?.close(); });
