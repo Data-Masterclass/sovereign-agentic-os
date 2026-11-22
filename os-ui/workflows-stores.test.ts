@@ -14,8 +14,8 @@ import assert from 'node:assert/strict';
 import * as ks from '@tabs/knowledge/lib/store';
 import * as appr from '@core/policy/approvals';
 import { registerMonitoringSources } from '@tabs/monitoring/lib/panels/sources';
-import { monitoringSourcesImpl } from '../../../../monitoring-sources';
-import { workflowsView } from './workflows-panel';
+import { monitoringSourcesImpl } from './monitoring-sources';
+import { workflowsView } from '@tabs/monitoring/lib/panels/workflows-panel';
 
 const ada = { id: 'ada', domains: ['sales'], role: 'creator' as const };
 const dora = { id: 'dora', domains: ['sales'], role: 'domain_admin' as const };
