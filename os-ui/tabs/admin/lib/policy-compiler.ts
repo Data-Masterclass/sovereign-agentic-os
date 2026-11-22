@@ -53,18 +53,19 @@ export type CompiledPolicy = {
 const BASE_BY_ROLE: Record<Role, string[]> = {
   // creator (base role): read governed data via the two governed tools.
   // The precise grant-set is a Governance policy decision flagged for human review before publish.
-  creator: ['metrics', 'query'],
+  creator: ['metrics', 'query', 'software_checks'],
   // builder: + promote to Shared, request external connection writes, workbench.
-  builder: ['metrics', 'query', 'promote', 'connection_write_request', 'workbench'],
+  builder: ['metrics', 'query', 'software_checks', 'promote', 'connection_write_request', 'workbench'],
   // domain_admin: builder's grants + domain-scoped user administration. NO
   // platform surfaces ('admin', models.manage, egress.curate, backups.restore
   // stay platform-admin-only) — the route tier re-scopes user_admin to the
   // caller's own domain(s).
-  domain_admin: ['metrics', 'query', 'promote', 'connection_write_request', 'workbench', 'user_admin', 'membership_admin'],
+  domain_admin: ['metrics', 'query', 'software_checks', 'promote', 'connection_write_request', 'workbench', 'user_admin', 'membership_admin'],
   // admin: + platform management surfaces (still OPA-gated, default-deny).
   admin: [
     'metrics',
     'query',
+    'software_checks',
     'promote',
     'connection_write_request',
     'workbench',
