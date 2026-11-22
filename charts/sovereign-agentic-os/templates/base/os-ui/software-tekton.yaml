@@ -35,9 +35,9 @@ metadata:
            `git-clone` step sets only runAsNonRoot/runAsUser in its own securityContext, and Tekton's
            `set-security-context` then leaves that step's securityContext as written, so it lacks the
            allowPrivilegeEscalation/capabilities fields `restricted` demands (a real finding from the kind run).
-           Baseline still refuses privileged pods, host namespaces and hostPath. The pods that run the app's code
-           (the `gates` and `scan` steps carry no securityContext of their own) ARE made restricted-compliant by
-           Tekton's flag, and the audit label records any pod that is not. */}}
+           Baseline still refuses privileged pods, host namespaces and hostPath. The `gates` pod, the one that runs the
+           app's code, is restricted-compliant: its pipeline sets a stepTemplate securityContext (Tekton's
+           `set-security-context` flag covers only the containers Tekton itself injects; proven by the kind test). */}}
     pod-security.kubernetes.io/enforce: baseline
     pod-security.kubernetes.io/enforce-version: latest
     pod-security.kubernetes.io/audit: restricted
