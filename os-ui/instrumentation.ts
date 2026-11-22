@@ -186,6 +186,16 @@ export async function register(): Promise<void> {
         const { governanceRuntimePool } = await import('./core/adapters/postgres/pool.ts');
         startDbtParseVerdictCopy(governanceRuntimePool);
       }
+      // Ownership rule (dbt tests run in Dagster's scheduled runs): read the check executions back on a
+      // timer so an owner hears about a failing run without opening a page. Reads only.
+      if (cfg.dataProjectGit && cfg.dagsterUrl && !isRunWorkerProcess()) {
+        const { scheduleEvery } = await import('./core/reconcile/runtime.ts');
+        scheduleEvery('dq-readback', 5 * 60_000, async () => {
+          const { listAllDatasets } = await import('./tabs/data/lib/store.ts');
+          const { readbackAllDq } = await import('./tabs/data/lib/dq-status-server.ts');
+          await readbackAllDq(listAllDatasets().filter((d) => d.domain).map((d) => ({ id: d.id, domain: d.domain })));
+        });
+      }
       // WP-15: grants whose Dagster run finished stop letting Dagster act as their owner.
       if (cfg.dagsterRunGrants && !isRunWorkerProcess()) {
         const { startRunGrantFinisher } = await import('./core/policy/run-grant-finisher.ts');
