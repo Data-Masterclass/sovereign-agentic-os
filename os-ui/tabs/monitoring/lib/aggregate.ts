@@ -33,6 +33,7 @@ import { collectBackupFailureAlerts } from '@tabs/monitoring/lib/adapters/backup
 import { collectDagsterState } from '@tabs/monitoring/lib/adapters/dagster-state';
 import { accessDriftAlerts } from '@tabs/monitoring/lib/access-drift-core';
 import { currentDrift } from '@core/infra/trino-rules-server';
+import { collectDbtVerdictAlerts } from '@tabs/monitoring/lib/adapters/dbt-verdicts';
 import { LENS_IDS, type HealthItem, type LensSummary, type Overview, type Scope } from '@tabs/monitoring/lib/types';
 
 /**
@@ -78,6 +79,8 @@ export async function buildOverview(user: CurrentUser, opts: { runs?: RunListFil
     ...filterScope(scope, (await collectDagsterState()).alerts),
     // Ownership rule: the OS owns access rights; a hand edit of Trino's rules is repaired and reported.
     ...filterScope(scope, accessDriftAlerts(await driftToReport(), Date.now())),
+    // Ownership rule: git owns models; a commit dbt refused is shown with dbt's own text.
+    ...filterScope(scope, await collectDbtVerdictAlerts()),
   ];
 
   return { scope, lenses, attention, alerts, generatedAt: new Date().toISOString() };
