@@ -4,8 +4,10 @@
 import { NextResponse } from 'next/server';
 import { roleModel } from '@core/models/roles';
 import { requireUser } from '@core/kernel/auth';
-import { mcpTabForPath, osToolExecutor, runOsAssistant } from '@core/runtime/agent-loop';
+import { mcpTabForPath, osToolExecutor, osToolSpecs, runOsAssistant } from '@core/runtime/agent-loop';
 import { decideConfirmation } from '@core/runtime/confirm-execute';
+import { SAVE_AS, isSaveAsKind, saveAsPlan, type SaveAsKind } from '@core/runtime/save-as';
+import { canContinue, ensureHydrated, saveTurn } from '@core/runtime/conversations';
 import { askStepEvent, askTurnResponse } from '@core/runtime/ask-response';
 import { sanitizePageContext } from '@core/runtime/page-context';
 import { AssistantNotConfiguredError } from '@core/runtime/complete';
@@ -41,6 +43,7 @@ export async function POST(req: Request) {
   let pageContextRaw: unknown = null;
   let conversationId: string | null = null;
   let wantStream = false;
+  let saveAsRaw: unknown = null;
   try {
     const body = await req.json();
     path = (body?.path ?? '').toString();
@@ -60,6 +63,7 @@ export async function POST(req: Request) {
       conversationId = body.conversationId;
     }
     wantStream = body?.stream === true;
+    saveAsRaw = body?.saveAs ?? null;
   } catch {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
   }
@@ -105,6 +109,42 @@ export async function POST(req: Request) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), CHAT_TIMEOUT_MS);
   const confirm = conversationId ? { conversationId } : undefined;
+
+  // History is per user: a conversation id that exists and is not the caller's is "not found" —
+  // the same answer as an id that does not exist.
+  if (conversationId) {
+    await ensureHydrated();
+    if (!canContinue(user.id, conversationId)) return NextResponse.json({ error: 'No such conversation.' }, { status: 404 });
+  }
+
+  // "Save as": the kind comes from a fixed table; the turn is restricted to that kind's ONE create
+  // tool, behind the confirm gate. Needs a conversation (the confirmation is bound to it).
+  const offered = osToolSpecs(user, tab).map((t) => t.name);
+  const availableSaveAs = (Object.keys(SAVE_AS) as SaveAsKind[]).filter((k) => offered.includes(SAVE_AS[k].tool));
+  let onlyTools: string[] | undefined;
+  let storedUserText = clean[clean.length - 1]?.content ?? '';
+  if (saveAsRaw !== null) {
+    if (!conversationId || !isSaveAsKind(saveAsRaw)) return NextResponse.json({ error: 'Save as needs a conversation and a known kind.' }, { status: 400 });
+    const plan = saveAsPlan(saveAsRaw, offered);
+    if (!plan.ok) return NextResponse.json({ error: plan.reason }, { status: 403 });
+    onlyTools = [plan.tool];
+    clean.push({ role: 'user', content: plan.instruction });
+    storedUserText = `Save as ${SAVE_AS[saveAsRaw].label}`;
+  }
+  const remember = (result: Awaited<ReturnType<typeof runOsAssistant>>) => {
+    if (!conversationId) return;
+    saveTurn(user.id, conversationId, {
+      user: storedUserText,
+      assistant: {
+        content: result.finalText,
+        steps: result.steps.map((s) => {
+          const e = askStepEvent({ tool: s.tool, isError: s.isError, result: s.result, parked: !!s.parked });
+          return { name: e.name, isError: e.isError, ...(e.parked ? { parked: true } : {}), ...(e.error ? { error: e.error } : {}) };
+        }),
+        pending: result.pending,
+      },
+    });
+  };
   const failure = (e: unknown): { error: string; status: number } => {
     if (e instanceof AssistantNotConfiguredError) return { error: e.message, status: e.status };
     if ((e as Error).name === 'AbortError') {
@@ -113,7 +153,7 @@ export async function POST(req: Request) {
     return { error: `The assistant could not complete the request: ${(e as Error).message}`, status: 502 };
   };
   const shape = (result: Awaited<ReturnType<typeof runOsAssistant>>) =>
-    askTurnResponse({
+    ({ ...askTurnResponse({
       finalText: result.finalText,
       plan: result.plan,
       steps: result.steps,
@@ -122,7 +162,7 @@ export async function POST(req: Request) {
       traceId: result.traceId,
       model: roleModel('standard'),
       pending: result.pending,
-    });
+    }), ...(conversationId ? { saveAs: availableSaveAs } : {}) });
 
   // Live steps: newline-delimited JSON, one event per finished tool step, then one `done` event
   // carrying the same payload the JSON response has. The steps are real (the harness's own
@@ -134,9 +174,12 @@ export async function POST(req: Request) {
         const send = (o: unknown) => controller.enqueue(enc.encode(`${JSON.stringify(o)}\n`));
         try {
           const result = await runOsAssistant({
-            user, tab, page, messages: clean, confirm,
+            user, tab, page, messages: clean, confirm, onlyTools,
+            signal: ctrl.signal,
+            onToken: (t) => send({ type: 'token', t }),
             onStep: (st) => send(askStepEvent({ tool: st.tool, isError: st.isError, result: st.result, parked: !!st.parked })),
           });
+          remember(result);
           send({ type: 'done', ...shape(result) });
         } catch (e) {
           send({ type: 'error', error: failure(e).error });
@@ -151,7 +194,8 @@ export async function POST(req: Request) {
   }
 
   try {
-    const result = await runOsAssistant({ user, tab, page, messages: clean, confirm });
+    const result = await runOsAssistant({ user, tab, page, messages: clean, confirm, onlyTools });
+    remember(result);
     return NextResponse.json(shape(result));
   } catch (e) {
     const f = failure(e);

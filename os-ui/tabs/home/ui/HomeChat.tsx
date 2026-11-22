@@ -31,9 +31,13 @@ import {
 
 type Step = { name: string; isError: boolean; parked?: boolean; error?: TypedError };
 type Pending = { confirmationId: string; tool: string; args: Record<string, unknown>; expiresAt: string; state?: 'open' | 'running' | 'done' | 'declined' | 'failed' | 'gone'; note?: string; link?: { href: string; label: string } };
+type Summary = { id: string; title: string; updatedAt: string; messageCount: number };
+type SaveAsKind = 'kpi' | 'dashboard' | 'knowledge' | 'agent';
+const SAVE_LABELS: Record<SaveAsKind, string> = { kpi: 'KPI', dashboard: 'Dashboard', knowledge: 'Knowledge note', agent: 'Agent' };
 type Msg = {
   role: 'user' | 'assistant';
   content: string;
+  saveAs?: SaveAsKind[];
   steps?: Step[];
   pending?: Pending[];
   artifacts?: ChatArtifact[];
@@ -58,6 +62,9 @@ export default function HomeChat({ firstName }: { firstName: string }) {
   const [conversationId, setConversationId] = useState(newConversationId);
   const [messages, setMessages] = useState<Msg[]>([]);
   const [live, setLive] = useState<Step[]>([]);
+  const [draft, setDraft] = useState('');
+  const [history, setHistory] = useState<Summary[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -71,15 +78,46 @@ export default function HomeChat({ firstName }: { firstName: string }) {
 
   const stop = useCallback(() => abortRef.current?.abort(), []);
 
-  const send = useCallback(async (text: string, history: Msg[]) => {
+  const loadHistory = useCallback(async () => {
+    try {
+      const r = await fetch('/api/assistant/conversations');
+      if (r.ok) setHistory(((await r.json()) as { conversations?: Summary[] }).conversations ?? []);
+    } catch { /* the list is a convenience; the chat works without it */ }
+  }, []);
+  useEffect(() => { void loadHistory(); }, [loadHistory]);
+
+  const openConversation = useCallback(async (id: string) => {
+    const r = await fetch(`/api/assistant/conversations/${encodeURIComponent(id)}`);
+    if (!r.ok) { setError('That conversation is no longer available.'); return; }
+    const c = (await r.json()) as { id: string; messages: { role: 'user' | 'assistant'; content: string; steps?: Step[]; pending?: { confirmationId: string; tool: string }[] }[] };
+    setMessages(c.messages.map((m) => ({
+      role: m.role,
+      content: m.content,
+      steps: m.steps,
+      // A pending write's arguments are never stored: after a reload its card is closed.
+      pending: m.pending?.map((p) => ({ ...p, args: {}, expiresAt: '', state: 'gone' as const, note: 'This request is no longer available (it expired or was already used). Ask again.' })),
+    })));
+    setConversationId(c.id);
+    setShowHistory(false);
+    setError('');
+  }, []);
+
+  const removeConversation = useCallback(async (id: string) => {
+    await fetch(`/api/assistant/conversations/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    setHistory((h) => h.filter((x) => x.id !== id));
+    if (id === conversationId) { setMessages([]); setConversationId(newConversationId()); }
+  }, [conversationId]);
+
+  const send = useCallback(async (text: string, prior: Msg[], saveAs?: SaveAsKind) => {
     const content = text.trim();
     if (!content || busy) return;
     setError('');
     lastUserRef.current = content;
-    const next: Msg[] = [...history, { role: 'user', content }];
+    const next: Msg[] = [...prior, { role: 'user', content }];
     setMessages(next);
     setInput('');
     setLive([]);
+    setDraft('');
     setBusy(true);
     const ctrl = new AbortController();
     abortRef.current = ctrl;
@@ -91,6 +129,7 @@ export default function HomeChat({ firstName }: { firstName: string }) {
           path: '/',
           conversationId,
           stream: true,
+          ...(saveAs ? { saveAs } : {}),
           messages: next.map((m) => ({ role: m.role, content: m.content })),
         }),
         signal: ctrl.signal,
@@ -109,7 +148,8 @@ export default function HomeChat({ firstName }: { firstName: string }) {
         const parsed = parseStreamLines(rest, dec.decode(value, { stream: true }));
         rest = parsed.rest;
         for (const ev of parsed.events) {
-          if (ev.type === 'step') setLive((l) => [...l, ev as unknown as Step]);
+          if (ev.type === 'token') setDraft((d) => d + String(ev.t ?? ''));
+          else if (ev.type === 'step') { setDraft(''); setLive((l) => [...l, ev as unknown as Step]); }
           else if (ev.type === 'done') done = ev;
           else if (ev.type === 'error') throw new Error(String(ev.error ?? 'The assistant could not complete the request.'));
         }
@@ -124,6 +164,7 @@ export default function HomeChat({ firstName }: { firstName: string }) {
           steps: (done!.tools as Step[] | undefined) ?? [],
           pending: ((done!.pending as Pending[] | undefined) ?? []).map((p) => ({ ...p, state: 'open' as const })),
           artifacts: artifacts.length ? artifacts : undefined,
+          saveAs: (done!.saveAs as SaveAsKind[] | undefined) ?? [],
         },
       ]);
     } catch (e) {
@@ -134,9 +175,11 @@ export default function HomeChat({ firstName }: { firstName: string }) {
     } finally {
       abortRef.current = null;
       setLive([]);
+      setDraft('');
       setBusy(false);
+      void loadHistory();
     }
-  }, [busy, conversationId]);
+  }, [busy, conversationId, loadHistory]);
 
   const decide = useCallback(async (mi: number, pi: number, decision: 'confirm' | 'decline') => {
     const p = messages[mi]?.pending?.[pi];
@@ -166,8 +209,24 @@ export default function HomeChat({ firstName }: { firstName: string }) {
     <section className="hc" aria-label="Chat with the OS">
       <div className="hc-head">
         <p className="hc-kicker">✦ Ask the OS</p>
-        {messages.length > 0 ? <button type="button" className="hc-new" onClick={reset}>New chat</button> : null}
+        <div className="hc-head-actions">
+          {history.length > 0 ? <button type="button" className="hc-new" aria-expanded={showHistory} onClick={() => setShowHistory((v) => !v)}>History ({history.length})</button> : null}
+          {messages.length > 0 ? <button type="button" className="hc-new" onClick={reset}>New chat</button> : null}
+        </div>
       </div>
+      {showHistory ? (
+        <ul className="hc-history" aria-label="Your conversations">
+          {history.map((h) => (
+            <li key={h.id} className={`hc-history-row${h.id === conversationId ? ' is-current' : ''}`}>
+              <button type="button" className="hc-history-open" onClick={() => void openConversation(h.id)}>
+                <span className="hc-history-title">{h.title}</span>
+                <span className="hc-history-meta">{new Date(h.updatedAt).toLocaleDateString()} · {Math.ceil(h.messageCount / 2)} turn{h.messageCount > 2 ? 's' : ''}</span>
+              </button>
+              <button type="button" className="hc-history-del" aria-label={`Delete ${h.title}`} onClick={() => void removeConversation(h.id)}>×</button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
 
       <div className="hc-log" ref={logRef} role="log" aria-live="polite">
         {messages.length === 0 ? (
@@ -204,6 +263,14 @@ export default function HomeChat({ firstName }: { firstName: string }) {
                       )}
                     </div>
                   ))}
+                  {mi === messages.length - 1 && !busy && m.saveAs && m.saveAs.length > 0 && m.content ? (
+                    <div className="hc-saveas" role="group" aria-label="Save this answer as">
+                      <span className="hc-saveas-label">Save as</span>
+                      {m.saveAs.map((k) => (
+                        <button key={k} type="button" className="hc-saveas-btn" onClick={() => void send(`Save as ${SAVE_LABELS[k]}`, messages, k)}>{SAVE_LABELS[k]}</button>
+                      ))}
+                    </div>
+                  ) : null}
                 </div>
               )}
               {m.failed ? <button type="button" className="hc-retry" onClick={() => void send(lastUserRef.current, messages.slice(0, mi))}>Retry</button> : null}
@@ -214,7 +281,8 @@ export default function HomeChat({ firstName }: { firstName: string }) {
           <div className="hc-msg hc-assistant">
             <div className="hc-answer">
               {live.length > 0 ? <div className="hc-steps">{live.map((s, i) => <StepRow key={i} s={s} />)}</div> : null}
-              <p className="hc-working"><span className="spin" /> Working through governed tools…</p>
+              {draft ? <div className="hc-draft"><Markdown>{draft}</Markdown></div> : null}
+              <p className="hc-working"><span className="spin" /> {draft ? 'Writing…' : 'Working through governed tools…'}</p>
             </div>
           </div>
         ) : null}
