@@ -483,7 +483,7 @@ jobs:
         working-directory: os-ui
         env:
           TRACING_E2E: "1"
-        run: node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test --test-concurrency=1 tabs/agents/lib/engine/tracing.e2e.test.ts tabs/agents/lib/module/tracing.e2e.test.ts core/adapters/langfuse/metrics.int.test.ts core/infra/masking.e2e.test.ts core/infra/masking-gateway.e2e.test.ts
+        run: node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test --test-concurrency=1 tabs/agents/lib/engine/tracing.e2e.test.ts tabs/agents/lib/module/tracing.e2e.test.ts core/adapters/langfuse/metrics.int.test.ts tabs/agents/lib/engine/masking.e2e.test.ts tabs/agents/lib/engine/masking-gateway.e2e.test.ts
       - name: Stack logs on failure
         if: failure()
         run: docker compose -f tests/langfuse/compose.yaml -f tests/langfuse/compose.masking.yaml -p wp31-langfuse logs --tail 200

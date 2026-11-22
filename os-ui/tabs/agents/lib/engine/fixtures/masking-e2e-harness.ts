@@ -14,6 +14,7 @@
 import { createServer, request as httpRequest, type Server } from 'node:http';
 import { gunzipSync } from 'node:zlib';
 import { randomUUID } from 'node:crypto';
+import type { LlmCall } from '@core/runtime/agentic';
 
 export const LANGFUSE = process.env.LANGFUSE_E2E_URL ?? `http://127.0.0.1:${process.env.LANGFUSE_E2E_PORT ?? '13031'}`;
 export const PK = 'pk-lf-e2e-public';
@@ -64,9 +65,7 @@ export function startRecordingForwarder(): Promise<{ server: Server; url: string
 }
 
 /** The scripted model of the parity harness, served as an OpenAI-compatible endpoint for LiteLLM. */
-export async function startStubModel(task: string): Promise<{ server: Server; calls: () => number }> {
-  const { scriptedLlm } = await import('@tabs/agents/lib/engine/parity-harness');
-  const script = scriptedLlm(task);
+export async function startStubModel(script: LlmCall): Promise<{ server: Server; calls: () => number }> {
   let calls = 0;
   const server = createServer((req, res) => {
     let raw = '';
@@ -118,26 +117,31 @@ export async function settledTrace(traceId: string, generations: number, timeout
   throw new Error(`trace ${traceId} incomplete after ${timeoutMs} ms: missing ${missing}`);
 }
 
+/** What a test hands over to drive one real run (its own imports, so this file reaches no admin module). */
+export type RunKit = {
+  parseSystem: (yaml: string) => { system: { name: string; domain: string } };
+  compile: (sys: never) => unknown;
+  runGraphEngine: (args: never) => Promise<{ reachedEnd: boolean }>;
+  memoryCheckpointer: () => unknown;
+  shapeYaml: string;
+  graphDeps: (sys: never, systemId: string, llm: LlmCall, sink: { enqueued: string[] }) => object;
+  liteLlmCaller: (ctx: { userId: string; domain: string; systemId: string; tab: string; runId: string; env: string }) => LlmCall;
+};
+
 /** One real agent run (real engine, real model caller, real gateway) with the seeded task. */
-export async function tracedRun(runId: string): Promise<{ result: { reachedEnd: boolean }; traceId: string }> {
-  const { parseSystem } = await import('@tabs/agents/lib/system-schema');
-  const { compile } = await import('@tabs/agents/lib/langgraph-compile');
-  const { runGraphEngine } = await import('@tabs/agents/lib/engine/run');
-  const { memoryCheckpointer } = await import('@tabs/agents/lib/engine/checkpointer');
-  const { SHAPE_SINGLE_READ_YAML, graphDeps } = await import('@tabs/agents/lib/engine/parity-harness');
-  const { liteLlmCaller } = await import('@core/runtime/runtime');
+export async function tracedRun(runId: string, kit: RunKit): Promise<{ result: { reachedEnd: boolean }; traceId: string }> {
   const { withRunTrace, flushLangfuse, langfuseTraceId } = await import('@core/infra/langfuse');
-  const sys = parseSystem(SHAPE_SINGLE_READ_YAML);
-  const gateway = liteLlmCaller({ userId: 'rae', domain: sys.system.domain, systemId: 'sys-e2e-mask', tab: 'agents', runId, env: 'test' });
+  const sys = kit.parseSystem(kit.shapeYaml);
+  const gateway = kit.liteLlmCaller({ userId: 'rae', domain: sys.system.domain, systemId: 'sys-e2e-mask', tab: 'agents', runId, env: 'test' });
   const result = await withRunTrace(
     { runId, systemId: 'sys-e2e-mask', systemName: sys.system.name, userId: 'rae', domain: sys.system.domain, task: SEEDED_TASK, environment: 'test', principal: 'os-sys-e2e-mask' },
-    (observe) => runGraphEngine({
-      ir: compile(sys),
-      deps: { ...graphDeps(sys, 'sys-e2e-mask', gateway, { enqueued: [] }), observe },
+    (observe) => kit.runGraphEngine({
+      ir: kit.compile(sys as never),
+      deps: { ...kit.graphDeps(sys as never, 'sys-e2e-mask', gateway, { enqueued: [] }), observe },
       messages: [{ role: 'user', content: SEEDED_TASK }],
       runId,
-      checkpointer: memoryCheckpointer(),
-    }),
+      checkpointer: kit.memoryCheckpointer(),
+    } as never),
   );
   await flushLangfuse();
   return { result, traceId: await langfuseTraceId(runId) };
