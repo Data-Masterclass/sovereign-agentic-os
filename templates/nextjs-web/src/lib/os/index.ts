@@ -21,7 +21,7 @@ import {
   type WhoAmI,
 } from '@sovereign-os/app-sdk';
 
-export type OsEnv = { OS_BASE_URL?: string; APP_SLUG?: string };
+export type OsEnv = Record<string, string | undefined>;
 
 /** An OS client acting as the caller whose request this is. */
 export function osFor(request: Request, env: OsEnv = process.env, fetchImpl: typeof fetch = fetch): OsClient {
