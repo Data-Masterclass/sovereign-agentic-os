@@ -61,7 +61,7 @@ const { registerMonitoringSources } = await import('./sources');
 const { softwareView } = await import('./software-panel');
 
 const scan = (o: Record<string, unknown> = {}) => ({ mode: 'live', engine: 'trivy', passed: true, unavailable: false, reason: null, notRun: ['sast'], truncated: false, scannedAt: '2026-11-21T10:00:00Z', byCategory: { secrets: 0, sast: 0, deps: 1, container: 0 }, bySeverity: { critical: 0, high: 0, medium: 1, low: 0, info: 0 }, ...o });
-const app = (o: Record<string, unknown>) => ({ id: 'a1', slug: 'orders', name: 'Orders', domain: 'sales', scope: 'mine' as const, serveMode: 'image' as const, runner: 'app-orders', status: { label: 'Live', servedUrl: 'https://orders.example' }, review: { requestedAt: '2026-11-21T09:00:00Z', decision: 'approved', decidedAt: '2026-11-21T10:05:00Z', scan: scan() }, ...o });
+const app = (o: Record<string, unknown>) => ({ id: 'a1', slug: 'orders', name: 'Orders', domain: 'sales', scope: 'mine' as const, serveMode: 'image' as const, runner: 'app-orders', status: { label: 'Live', servedUrl: 'https://orders.example' }, checks: null as never, review: { requestedAt: '2026-11-21T09:00:00Z', decision: 'approved', decidedAt: '2026-11-21T10:05:00Z', scan: scan() }, ...o });
 let apps: ReturnType<typeof app>[] = [];
 registerMonitoringSources({
   agentSystems: async () => [], datasets: async () => [], latestTests: async () => new Map(), assetKeys: async () => new Map(),
@@ -157,11 +157,31 @@ test('no log lines: no rate (null), not 0%; VictoriaLogs down: unavailable', asy
   assert.ok(w.apps.every((a) => a.logs === null));
 });
 
-test('CI/CD results are said to be not recorded; the review decision is the nearest recorded fact', async () => {
+const rec = (o: Record<string, unknown> = {}) => ({ sha: 'abc1234567890', status: 'finished', trigger: 'push', engine: 'sandbox-job', runRef: 'job-1', startedAt: '2026-11-22T08:00:00Z', finishedAt: '2026-11-22T08:02:00Z', error: null, checks: [{ id: 'build', status: 'pass', detail: 'ok' }, { id: 'test', status: 'pass', detail: 'ok' }], ...o });
+
+test('CI/CD: the newest recorded check run is shown from App.checks; an app with none says not_recorded (twin)', async () => {
+  apps = [app({ checks: [rec(), rec({ sha: 'old', checks: [{ id: 'build', status: 'fail', detail: 'x' }] })] as never }), app({ id: 'a9', slug: 'orders2', runner: 'app-orders2', checks: null as never })];
+  const v = await softwareView(ada);
+  const ci = v.apps.find((a) => a.id === 'a1')!.ci;
+  assert.equal(ci.state, 'recorded');
+  assert.equal(ci.state === 'recorded' && ci.overall, 'passed');
+  assert.equal(ci.state === 'recorded' && ci.engine, 'sandbox-job');
+  assert.deepEqual(v.apps.find((a) => a.id === 'a9')!.ci, { state: 'not_recorded' });
+});
+
+test('CI/CD: a failing gate is failed; a record whose run could not start or is still running is never "passed"', async () => {
+  const of = async (r: Record<string, unknown>) => { apps = [app({ checks: [rec(r)] as never })]; const ci = (await softwareView(ada)).apps[0].ci; return ci.state === 'recorded' ? ci.overall : ci.state; };
+  assert.equal(await of({ checks: [{ id: 'build', status: 'pass', detail: '' }, { id: 'test', status: 'fail', detail: 'boom' }] }), 'failed');
+  assert.equal(await of({ checks: [], error: 'sandbox failed: no cluster' }), 'unavailable');
+  assert.equal(await of({ checks: [{ id: 'build', status: 'unavailable', detail: '' }] }), 'unavailable');
+  assert.equal(await of({ status: 'running', finishedAt: null }), 'running');
+});
+
+test('CI/CD results are said to be not recorded for an app with no record; the review decision is also shown', async () => {
   const v = await softwareView(ada);
   const n = v.notUpstream.find((x) => /CI/.test(x.panel))!;
   assert.ok(n);
-  assert.match(n.reason, /no CI runner|no image builder/i);
+  assert.match(n.reason, /not recorded/i);
 });
 
 test('the source reader not registered or failing is "unavailable" with the reason, not "no apps"', async () => {

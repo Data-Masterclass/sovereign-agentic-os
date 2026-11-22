@@ -662,11 +662,11 @@ function SoftwarePanels({ v }: { v: SoftwareView }) {
         <p className="hint">{v.sources.inventory.state === 'live' ? 'No apps in your scope.' : 'Apps could not be listed.'}</p>
       ) : (
         <div className="mon-table">
-          <div className="mon-tr mon-th mon-tr-pfile"><span>App</span><span>Status · review</span><span>Security scan</span><span>Pods · error lines (1 h)</span></div>
+          <div className="mon-tr mon-th mon-tr-pfile"><span>App</span><span>Status · review · checks</span><span>Security scan</span><span>Pods · error lines (1 h)</span></div>
           {v.apps.map((a) => (
             <div key={a.id} className={`mon-tr mon-tr-pfile${a.scan?.verdict === 'failed' || (a.pods && ['crash_looping', 'image_pull_failed', 'failed'].includes(a.pods.state)) ? ' err' : ''}`}>
               <span className="ellip" title={a.name}><a className="mon-xlink" href={a.softwareUrl}>{a.name}</a> <span className="muted">· {a.domain || 'personal'}</span></span>
-              <span>{a.status.label}{a.review ? ` · ${a.review.decision}` : ' · never reviewed'}</span>
+              <span>{a.status.label}{a.review ? ` · ${a.review.decision}` : ' · never reviewed'} · {a.ci.state === 'recorded' ? `checks ${a.ci.overall} (${a.ci.engine}, ${a.ci.sha.slice(0, 7)})` : 'checks not recorded'}</span>
               <span title={a.scan?.reason ?? ''}>{a.scan ? `${SCAN_VERDICT[a.scan.verdict]}${a.scan.engine ? ` (${a.scan.engine})` : ''} · crit ${a.scan.bySeverity.critical} high ${a.scan.bySeverity.high} med ${a.scan.bySeverity.medium}${a.scan.truncated ? ' (listed findings only)' : ''}${a.scan.notRun.length ? ` · not covered: ${a.scan.notRun.join(', ')}` : ''}` : 'no scan on record'}</span>
               <span>{a.pods ? `${POD_STATE[a.pods.state]}${a.pods.items.some((p) => p.restarts) ? ` · ${a.pods.items.reduce((n, p) => n + p.restarts, 0)} restarts` : ''}` : a.serveMode === 'image' ? '—' : 'served by the OS (no pod)'} · {a.logs ? (a.logs.errorRate === null ? 'no log lines' : `${a.logs.errors} of ${a.logs.lines} (${(a.logs.errorRate * 100).toFixed(1)}%)`) : '—'}</span>
             </div>
