@@ -38,7 +38,11 @@ docker run -d --name gw --network $NET -p 127.0.0.1:14000:4000 --env-file "$W/ot
   --config /etc/litellm/config.yaml >/dev/null
 for i in $(seq 1 90); do [ "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:14000/health/readiness || true)" = 200 ] && break; sleep 2; done
 curl -sS -o /dev/null -w 'shared agent key: HTTP %{http_code}\n' -H "Authorization: Bearer $MASTER" -H 'content-type: application/json' \
-  http://127.0.0.1:14000/key/generate -d '{"key":"sk-test-scoped-agent-key","key_alias":"sovereign-agents","models":["sovereign-default"],"max_budget":25,"budget_duration":"7d"}'
+  http://127.0.0.1:14000/key/generate -d '{"key":"sk-test-scoped-agent-key","key_alias":"sovereign-agents","models":["stackit-gpt-oss-20b","sovereign-strong","sovereign-worker","sovereign-embedding"],"max_budget":25,"budget_duration":"7d"}'
+
+# The OS calls only the role names; as the OS does at boot (os/models.yml), map them onto the chart's catalog model.
+curl -sS -o /dev/null -w 'role aliases: HTTP %{http_code}\n' -H "Authorization: Bearer $MASTER" -H 'content-type: application/json' \
+  http://127.0.0.1:14000/config/update -d '{"router_settings":{"model_group_alias":{"sovereign-strong":"stackit-gpt-oss-20b","sovereign-worker":"stackit-gpt-oss-20b","sovereign-embedding":"stackit-gpt-oss-20b"}}}'
 
 OPA_IMAGE=$(node -e '
 const y=require(process.argv[2]);const o=y.load(require("fs").readFileSync(process.argv[1],"utf8")).opa.image;
@@ -50,8 +54,7 @@ docker run -d --name lfopa --network $NET -p 127.0.0.1:18181:8181 -v "$W/opa":/p
 for i in $(seq 1 30); do [ "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:18181/health || true)" = 200 ] && break; sleep 1; done
 
 [ -z "${HOME_CHAT_STACK_ONLY:-}" ] || { echo "HOME_CHAT_STACK_UP (gateway :14000, Langfuse :13000, OPA :18181)"; exit 0; }
-(cd "$REPO/os-ui" && LITELLM_URL=http://127.0.0.1:14000 OPA_URL=http://127.0.0.1:18181 LITELLM_EXEC_MODEL=sovereign-default LITELLM_REASONING_MODEL=sovereign-default \
-  LANGFUSE_E2E_URL=http://127.0.0.1:13000 LANGFUSE_E2E_PUBLIC_KEY=pk-lf-test-not-a-secret LANGFUSE_E2E_SECRET_KEY=sk-lf-test-not-a-secret \
+(cd "$REPO/os-ui" && LITELLM_URL=http://127.0.0.1:14000 OPA_URL=http://127.0.0.1:18181   LANGFUSE_E2E_URL=http://127.0.0.1:13000 LANGFUSE_E2E_PUBLIC_KEY=pk-lf-test-not-a-secret LANGFUSE_E2E_SECRET_KEY=sk-lf-test-not-a-secret \
   HOME_CHAT_E2E_OPA_CONTAINER=lfopa HOME_CHAT_E2E_REQUIRED=1 \
   node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test --test-concurrency=1 core/runtime/home-chat.e2e.test.ts) 2>&1 | tee "$W/home-chat-e2e.log" | grep -E '^# (pass|fail)|^not ok|^ok|ℹ (pass|fail)|✔|✖|Error' 
 grep -q 'ℹ fail 0' "$W/home-chat-e2e.log" && grep -q 'ℹ pass 4' "$W/home-chat-e2e.log" && { echo HOME_CHAT_E2E_OK; exit 0; }

@@ -34,7 +34,7 @@ if (SCOPE !== 'full' && SCOPE !== 'llm_only') throw new Error(`LITELLM_E2E_SPAN_
 const REQUIRED = process.env.TRACING_E2E_REQUIRED === '1';
 const skip = !LF && !REQUIRED ? 'LANGFUSE_E2E_URL is not set (run scripts/tests/litellm-langfuse/run.sh)' : false;
 
-/** The stub provider's fixed usage, and the chart's `sovereign-default` prices per token. */
+/** The stub provider's fixed usage, and the chart's `stackit-gpt-oss-20b` prices per token. */
 const STUB_USAGE = { input: 1000, output: 500, total: 1500 };
 const PRICE = { input: 0.00000015, output: 0.00000025 };
 const CANARY = 'PROMPT_CANARY_91c2';
@@ -108,7 +108,7 @@ test(`tracing e2e: one model call is exactly one GENERATION in the app span's tr
 
   const call = liteLlmCaller({ userId: 'u-e2e', domain: 'sales', systemId: 'sys-e2e', tab: 'agents', runId: 'run-e2e' });
   const completion = await call({
-    model: 'sovereign-default',
+    model: 'stackit-gpt-oss-20b',
     messages: [{ role: 'system', content: `${CANARY} system` }, { role: 'user', content: `${CANARY} hello` }],
     observe: { traceId, parentObservationId: appSpanId },
   });
@@ -172,17 +172,17 @@ test('tracing e2e: a virtual key whose budget is spent is refused, and the OS re
   // One call costs 0.000275 at the chart's prices; the second call spends past this budget.
   const gen = await fetch(`${GW}/key/generate`, {
     method: 'POST', headers: { authorization: `Bearer ${MASTER}`, 'content-type': 'application/json' },
-    body: JSON.stringify({ key, key_alias: `e2e-budget-${hex(3)}`, models: ['sovereign-default'], max_budget: 0.0004, budget_duration: '7d' }),
+    body: JSON.stringify({ key, key_alias: `e2e-budget-${hex(3)}`, models: ['stackit-gpt-oss-20b'], max_budget: 0.0004, budget_duration: '7d' }),
   });
   assert.equal(gen.status, 200, `/key/generate: ${(await gen.text()).slice(0, 200)}`);
   // The system's own key as Build stores it: sealed in the key store, referenced by system id.
   const store = keys.memorySystemKeyStore();
   keys.__setSystemKeyStoreForTests(store);
-  const caps = { models: ['sovereign-default'], maxBudget: 0.0004, budgetDuration: '7d', rpmLimit: 300, tpmLimit: 1_000_000, maxParallelRequests: 8 };
+  const caps = { models: ['stackit-gpt-oss-20b'], maxBudget: 0.0004, budgetDuration: '7d', rpmLimit: 300, tpmLimit: 1_000_000, maxParallelRequests: 8 };
   await store.put(keys.sealSystemKey({ systemId: 'sys-budget', alias: keys.systemKeyAlias('sys-budget'), key, caps, createdAt: Date.now(), rotatedAt: null }, keys.deploymentKek()));
   const keyRef = keys.systemKeyRef('sys-budget');
   const call = liteLlmCaller({ userId: 'u-e2e', domain: 'sales', systemId: 'sys-budget', keyRef });
-  const req = { model: 'sovereign-default', messages: [{ role: 'user' as const, content: 'spend' }] };
+  const req = { model: 'stackit-gpt-oss-20b', messages: [{ role: 'user' as const, content: 'spend' }] };
 
   let refused: unknown = null;
   let served = 0;
