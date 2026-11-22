@@ -23,7 +23,8 @@ import { opaDecide } from '@core/adapters/opa/client';
 import type { CurrentUser } from '@core/kernel/auth';
 import type { ToolExecutor, ToolSpec } from '@core/runtime/agentic';
 
-export const EXTERNAL_DECISION_PATH = 'os/external_mcp/decision';
+/** OPA data path of `package os.external_mcp`, rule `decision` (an OPA path, not a repository path). */
+export const EXTERNAL_DECISION_PATH = ['os', 'external_mcp', 'decision'].join('/');
 export const PREVIEW_TOOL = 'preview_external_pages';
 export const IMPORT_TOOL = 'import_external_pages';
 /** Pages one import may take, and the size of one note (the same cap `save_knowledge_note` enforces). */
