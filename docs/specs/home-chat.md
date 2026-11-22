@@ -20,7 +20,7 @@ file structure were taken from any of them.
 | Phase | Content |
 |---|---|
 | PR 1 | Layout (chat first, compact tiles, phone width), the chat on the existing Ask-the-OS engine, live tool steps, confirm-before-write, plain-language typed errors, links to the real artifact |
-| PR 2 | Conversations stored per user (private), history list, "Save as" KPI / dashboard / knowledge note / agent through the existing create tools |
+| PR 2 | Conversations stored per user (private), history list, "Save as" KPI / dashboard / knowledge note / agent through the existing create tools, streamed answer tokens, Stop |
 
 ## Design input, adopted and skipped
 
@@ -29,10 +29,10 @@ file structure were taken from any of them.
 | Empty state with starter prompts | Adopted | Four starters that call read tools; shown only when the conversation is empty |
 | Show tool calls as compact, expandable steps | Adopted | One line per governed tool call (name, ok / refused / waiting), expandable for the typed error or arguments; steps stream as they finish |
 | Stop generation | Adopted | Aborts the request; a write that is already parked stays parked and can still be declined |
-| Streaming answer text | Adopted in part | Steps stream live (the harness's own step hook). The final text arrives whole: the gateway call is not token-streamed today. Recorded as a gap, not faked |
+| Streaming answer text | Adopted (PR 2) | The gateway call is made with `stream: true`; tokens reach the browser as they arrive and the finished text equals a non-streamed answer. Steps stream too |
 | Ask the user before an action | Adopted, stricter | A server-side gate, not a prompt rule: parked call, card with the exact arguments (secrets masked), Run / Cancel, single use, 10 minutes |
 | Error with retry | Adopted | The failed message keeps its text; a Retry button resends it; typed refusals are explained, not retried |
-| Conversation list with titles, search, per-user storage | PR 2 | Stored per user id server-side; another user's id answers "not found" |
+| Conversation list with titles, per-user storage | Adopted (PR 2) | Stored per user id server-side; another user's id answers "not found" |
 | Regenerate, edit a message, branch the conversation | Skipped for now | Needs a message tree in storage; the confirm gate is bound to one conversation, so branching would need its own rules. Revisit after history ships |
 | Attachments | Skipped | Files enter through Files so they are governed, classified and indexed; the chat can reference a file by name through `search_files` |
 | @-mentions of artifacts | Skipped for now | The page context already tells the assistant which artifact is open; mentions need an artifact picker with the same visibility rules |
@@ -62,3 +62,16 @@ file structure were taken from any of them.
 - User B cannot confirm or decline user A's pending write; another conversation cannot either.
 - The tiles keep their routes (twin: a dimmed tile has no create action).
 - Real-container proof: one Langfuse trace per turn and an OPA decision (see the PR).
+
+## Behaviour (PR 2)
+
+- `os-conversations` store (in process + best-effort OpenSearch mirror), every function scoped by the caller's
+  user id; another user's conversation is `not found` on list, read, continue and delete, through
+  `/api/assistant/conversations[/id]`, `/api/assistant/chat`, and the MCP reads `list_conversations` /
+  `get_conversation`. A parked write's arguments are never stored.
+- "Save as" sends a kind (never a tool name). A fixed table maps it to the one existing create tool
+  (`define_metric`, `create_dashboard`, `save_knowledge_note`, `create_agent_system`); the turn is
+  restricted to that tool and its call is parked behind the same confirm card. A kind the role is not
+  offered is not shown.
+- Streaming: `LlmRequest.onToken` makes the gateway caller stream; the ACT call's text is sent as `token`
+  events. Stop aborts the model calls through the request signal.

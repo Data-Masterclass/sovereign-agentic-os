@@ -21,9 +21,9 @@ NET=lfgw
 MASTER=sk-test-master-not-a-secret   # the throw-away gateway's own key, as in litellm-langfuse/run.sh
 mkdir -p "$W"
 down() { docker rm -f gw lfweb lfworker lfch lfredis lfminio lfpg lfstub lfopa >/dev/null 2>&1; docker network rm $NET >/dev/null 2>&1; }
-trap down EXIT
+[ -n "${HOME_CHAT_KEEP:-}" ] || trap down EXIT
 
-KEEP=1 "$REPO/scripts/tests/litellm-langfuse/run.sh" > "$W/stack.log" 2>&1 || true
+KEEP=1 STUB_FILE=${STUB_FILE:-stub.mjs} "$REPO/scripts/tests/litellm-langfuse/run.sh" > "$W/stack.log" 2>&1 || true
 docker ps --format '{{.Names}}' | grep -qx gw && docker ps --format '{{.Names}}' | grep -qx lfweb || { tail -20 "$W/stack.log"; echo "HOME_CHAT_E2E_FAILED: the gateway/Langfuse stack is not up"; exit 1; }
 IMAGE=$(node -e '
 const y=require(process.argv[2]);const d=y.loadAll(require("fs").readFileSync(process.argv[1],"utf8")).filter(Boolean).find(x=>x.kind==="Deployment"&&/-litellm$/.test(x.metadata.name));console.log(d.spec.template.spec.containers[0].image)' "$W/rendered.yaml" "$REPO/os-ui/node_modules/js-yaml")
@@ -49,6 +49,7 @@ docker run -d --name lfopa --network $NET -p 127.0.0.1:18181:8181 -v "$W/opa":/p
   run --server --addr 0.0.0.0:8181 --set decision_logs.console=true /policy/authz.rego /policy/data.json >/dev/null
 for i in $(seq 1 30); do [ "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:18181/health || true)" = 200 ] && break; sleep 1; done
 
+[ -z "${HOME_CHAT_STACK_ONLY:-}" ] || { echo "HOME_CHAT_STACK_UP (gateway :14000, Langfuse :13000, OPA :18181)"; exit 0; }
 (cd "$REPO/os-ui" && LITELLM_URL=http://127.0.0.1:14000 OPA_URL=http://127.0.0.1:18181 LITELLM_EXEC_MODEL=sovereign-default LITELLM_REASONING_MODEL=sovereign-default \
   LANGFUSE_E2E_URL=http://127.0.0.1:13000 LANGFUSE_E2E_PUBLIC_KEY=pk-lf-test-not-a-secret LANGFUSE_E2E_SECRET_KEY=sk-lf-test-not-a-secret \
   HOME_CHAT_E2E_OPA_CONTAINER=lfopa HOME_CHAT_E2E_REQUIRED=1 \
