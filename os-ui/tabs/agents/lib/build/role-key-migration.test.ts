@@ -45,7 +45,6 @@ function gateway(): Gw {
     tokenId, models: [...i.models], maxBudget: i.maxBudget, budgetDuration: i.budgetDuration, rpmLimit: i.rpmLimit,
     tpmLimit: i.tpmLimit, maxParallelRequests: i.maxParallelRequests, allowedTools: [...i.allowedTools],
   });
-  const all = () => [...rows.values()].flat();
   const gw: Gw = {
     rows, updates: [], unreachable: false, fullUpdates: 0,
     async keysByAlias(alias) {
@@ -55,10 +54,10 @@ function gateway(): Gw {
     async generateKey(i, key) { rows.set(i.alias, [...(rows.get(i.alias) ?? []), state(i, tokenIdOf(key))]); },
     async updateKey(tokenId, i) { gw.fullUpdates += 1; for (const [a, ks] of rows) rows.set(a, ks.map((k) => (k.tokenId === tokenId ? state(i, tokenId) : k))); },
     async deleteKey() {}, async renameKey() {}, async expireKey() {}, async models() { return []; },
-    async keyModels(tokenId) {
+    async keyInfo(tokenId) {
       if (gw.unreachable) throw new Error('LiteLLM /key/info failed (unreachable)');
-      const k = all().find((x) => x.tokenId === tokenId);
-      return k ? [...k.models] : null;
+      for (const [alias, ks] of rows) { const k = ks.find((x) => x.tokenId === tokenId); if (k) return { alias, models: [...k.models] }; }
+      return null;
     },
     async addKeyModels(tokenId, models) {
       gw.updates.push({ tokenId, models: [...models] });

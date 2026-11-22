@@ -337,6 +337,30 @@ export async function register(): Promise<void> {
     })();
   }
 
+  // ROLE NAMES ON EXISTING KEYS. A key minted before the role names lacks them, so a call on sovereign-strong
+  // would be refused. Once at boot the OS ADDS the three names to the shared agent key and to every agent-system
+  // key it owns (never removes, never changes a value, never touches another key; audited; idempotent).
+  // AGENT_KEY_ROLE_MIGRATION=apply (default) | dry-run (log the plan only) | off. Web process only.
+  if (process.env.NEXT_RUNTIME === 'nodejs') {
+    void (async () => {
+      try {
+        const mode = (process.env.AGENT_KEY_ROLE_MIGRATION ?? 'apply').trim().toLowerCase();
+        const { liteLlmConfigured } = await import('./core/infra/litellm-admin.ts');
+        if (mode === 'off' || !liteLlmConfigured()) return;
+        const { migrateRoleKeysLive } = await import('./tabs/agents/lib/build/role-key-migration-live.ts');
+        // Idempotent, so it is simply repeated while a pass could not complete (gateway or registry not ready at boot).
+        for (const waitMs of [0, 60_000, 300_000]) {
+          if (waitMs) await new Promise((res) => setTimeout(res, waitMs));
+          const r = await migrateRoleKeysLive({ dryRun: mode === 'dry-run' });
+          console.info(`[os-ui] role-key migration (${mode}): ${r.changed.length} changed, ${r.skipped.length} left alone, ${r.errors.length} error(s)${r.errors.length ? `: ${r.errors.join('; ')}` : ''}`);
+          if (r.ok) break;
+        }
+      } catch (err) {
+        console.error(`[os-ui] role-key migration: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    })();
+  }
+
   // MODEL ROLE MAPPING. The OS owns which catalog model each of the three roles (sovereign-strong, -worker,
   // -embedding) means (`os/models.yml` in the platform repo) and enforces it at LiteLLM's
   // `router_settings.model_group_alias`: once at boot, then every MODEL_ROLE_RECONCILE_INTERVAL_SECONDS
@@ -349,7 +373,7 @@ export async function register(): Promise<void> {
           import('./core/models/role-reconcile.ts'),
           import('./core/models/role-live.ts'),
           import('./core/infra/litellm-admin.ts'),
-          import('./core/models/role-seed-live.ts'),
+          import('./tabs/admin/lib/role-seed-live.ts'),
         ]);
         const raw = (process.env.MODEL_ROLE_RECONCILE_INTERVAL_SECONDS ?? '').trim();
         const seconds = raw === '' ? 300 : Math.max(0, Math.floor(Number(raw)) || 0);

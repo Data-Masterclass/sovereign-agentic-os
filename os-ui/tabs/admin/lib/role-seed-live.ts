@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  *
- * AREA:       core / models
+ * TAB:        admin
  * FEATURE:    The real wiring of the first role mapping: the chart seed, the old admin override, the platform repository and LiteLLM.
  * USER STORY: As an operator the first mapping appears by itself on first boot, from what my admin had chosen or from the chart.
  * ARCHITECTURE: `role-seed.ts` holds the logic. Here: the seed comes from `MODEL_ROLE_SEED_JSON` (chart

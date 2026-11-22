@@ -36,6 +36,9 @@ const { ROLE_NAMES, ModelMappingError } = await import('@core/models/role-mappin
 const { keyWanted } = await import('@tabs/agents/lib/build/live');
 const { parseSystem } = await import('@tabs/agents/lib/system-schema');
 const { compile } = await import('@tabs/agents/lib/langgraph-compile');
+const { migrateRoleKeys } = await import('@tabs/agents/lib/build/role-key-migration');
+const { realRoleKeyClient } = await import('@core/infra/litellm-role-keys');
+const { deriveKek, memorySystemKeyJournal, memorySystemKeyStore, sealSystemKey, tokenIdOf } = await import('@core/infra/agent-system-keys');
 const io = () => liveRoleIo({ reposDir });
 
 const admin = (path: string, body?: unknown, method = 'POST') =>
@@ -145,4 +148,72 @@ test('REAL GATEWAY: NEGATIVE TWIN — a mapping to a model outside the catalog c
   const key = await newKey([...ROLE_NAMES], 'os-sys-neg');
   await assert.rejects(applyRoleMapping(io(), { 'sovereign-strong': 'ghost', 'sovereign-worker': W, 'sovereign-embedding': E }, 'admin1'), (e: unknown) => e instanceof ModelMappingError);
   assert.equal((await chat(key, 'sovereign-strong')).content, `from-${B}`);
+});
+
+test('REAL GATEWAY: keys minted BEFORE the switch — the migration adds the roles (dry run first), and they call sovereign-strong with no rebuild; keys the OS does not own are untouched', { skip }, async () => {
+  const OLD = ['sovereign-default', 'sovereign-reasoning', 'sovereign-embed'];
+  const kek = deriveKek('e2e-key-encryption-secret-0123456789abcdef');
+  const store = memorySystemKeyStore();
+  const mint = async (alias: string, models: string[], value: string) => {
+    const r = await admin('/key/generate', { key: value, models, key_alias: alias, max_budget: 7, budget_duration: '7d', rpm_limit: 111 });
+    const text = await r.text();
+    assert.equal(r.status, 200, text);
+    keys.push(value);
+  };
+  const sysValue = `sk-pre-sys-${sfx}-${randomBytes(8).toString('hex')}`;
+  const sharedValue = `sk-pre-shared-${sfx}-${randomBytes(8).toString('hex')}`;
+  const strangerValue = `sk-stranger-${sfx}-${randomBytes(8).toString('hex')}`;
+  const impostorValue = `sk-impostor-${sfx}-${randomBytes(8).toString('hex')}`;
+  await mint(`os-sys_pre${sfx}`, OLD, sysValue);
+  await mint(`sovereign-agents-${sfx}`, OLD, sharedValue);
+  await mint(`someone-elses-${sfx}`, ['sovereign-default'], strangerValue);
+  await mint(`os-sys_imp${sfx}`, ['sovereign-default'], impostorValue); // an os-<id> alias, but not the key the OS stored
+  await store.put(sealSystemKey({ systemId: `sys_pre${sfx}`, alias: `os-sys_pre${sfx}`, key: sysValue, caps: { models: OLD, maxBudget: 7, budgetDuration: '7d', rpmLimit: 111, tpmLimit: 1, maxParallelRequests: 8 }, createdAt: 1, rotatedAt: null }, kek));
+  await store.put(sealSystemKey({ systemId: `sys_imp${sfx}`, alias: `os-sys_imp${sfx}`, key: `sk-the-stored-one-${sfx}`, caps: { models: [], maxBudget: 7, budgetDuration: '7d', rpmLimit: 1, tpmLimit: 1, maxParallelRequests: 1 }, createdAt: 1, rotatedAt: null }, kek));
+  const mio = () => ({
+    systems: async () => [
+      { id: `sys_pre${sfx}`, domain: 'sales', owner: 'u1', yaml: '' },
+      { id: `sys_imp${sfx}`, domain: 'sales', owner: 'u1', yaml: '' },
+    ],
+    deps: { keys: { store, journal: memorySystemKeyJournal(), kek: () => kek, retireGraceSeconds: 0 }, litellm: realRoleKeyClient() },
+    sharedKey: sharedValue,
+    log: () => undefined,
+    audit: (() => undefined) as never,
+  });
+
+  // BEFORE: the pre-switch keys are refused on a role (the allowlist is what the migration fixes)
+  assert.ok([400, 401, 403].includes((await chat(sysValue, 'sovereign-strong')).status));
+  const sysBefore = await keyInfo(sysValue);
+
+  // DRY RUN: the plan, no write
+  const plan = await migrateRoleKeys(mio(), { dryRun: true });
+  assert.equal(plan.ok, true, JSON.stringify(plan));
+  assert.deepEqual(plan.changed.map((c) => c.subject).sort(), [`os-sys_pre${sfx}`, 'shared agent key']);
+  assert.deepEqual((await keyInfo(sysValue)).models, sysBefore.models, 'a dry run wrote nothing');
+  assert.ok([400, 401, 403].includes((await chat(sysValue, 'sovereign-strong')).status));
+
+  // APPLY
+  const done = await migrateRoleKeys(mio());
+  assert.equal(done.ok, true, JSON.stringify(done));
+  for (const v of [sysValue, sharedValue]) {
+    const info = await keyInfo(v);
+    for (const r of ROLE_NAMES) assert.ok(info.models.includes(r), `${r} on the key`);
+    for (const m of OLD) assert.ok(info.models.includes(m), `${m} kept`);
+    assert.equal((await chat(v, 'sovereign-strong')).content, `from-${B}`, 'the key minted before the switch calls the role, with no rebuild');
+    assert.equal((await chat(v, 'sovereign-worker')).content, `from-${W}`);
+  }
+  // nothing else on the key moved, and it is the same key (the same value still works)
+  const sysAfter = await keyInfo(sysValue);
+  assert.equal(sysAfter.key_name, sysBefore.key_name);
+  const raw = (await (await admin(`/key/info?key=${encodeURIComponent(sysValue)}`, undefined, 'GET')).json()) as { info: { max_budget: number; rpm_limit: number; budget_duration: string } };
+  assert.deepEqual([raw.info.max_budget, raw.info.rpm_limit, raw.info.budget_duration], [7, 111, '7d']);
+
+  // IDEMPOTENT
+  assert.deepEqual((await migrateRoleKeys(mio())).changed, []);
+
+  // NEGATIVE TWINS: the keys the OS does not own are exactly as they were
+  assert.deepEqual((await keyInfo(strangerValue)).models, ['sovereign-default']);
+  assert.deepEqual((await keyInfo(impostorValue)).models, ['sovereign-default']);
+  assert.ok(done.skipped.some((x) => x.subject === `os-sys_imp${sfx}`), JSON.stringify(done.skipped));
+  void tokenIdOf;
 });
