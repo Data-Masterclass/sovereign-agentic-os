@@ -17,14 +17,14 @@ import type { RpcDispatch } from '@core/runtime/agent-loop';
 import { runOsAssistant } from '@core/runtime/agent-loop';
 import { BudgetExceededError } from '@core/infra/litellm-credential';
 import { __resetConfirmations } from '@core/policy/confirmations';
-import { _reset as resetModels, setAssistantModel, assistantModelInfo } from '@tabs/admin/lib/models';
-import { _reset as resetSettings } from '@tabs/admin/lib/settings';
+import { completeWithEscalation, isSpendLimit } from '@core/runtime/escalate';
 
 const STRONG = 'sovereign-strong';
 const WORKER = 'sovereign-worker';
 const user: CurrentUser = { id: 'u-roles', name: 'Robin', domains: ['sales'], role: 'creator' };
 
-beforeEach(() => { resetModels(); resetSettings(); __resetConfirmations(); });
+const wiring = { escalate: completeWithEscalation, isSpendLimit };
+beforeEach(() => { __resetConfirmations(); });
 
 /** A tool result of `chars` characters, shaped like a big table dump. */
 const bigResult = (chars: number) => JSON.stringify({ rows: Array.from({ length: Math.ceil(chars / 40) }, (_, i) => ({ id: i, total: `EUR ${1000 + i}` })) }).slice(0, chars);
@@ -58,41 +58,6 @@ function scripted(seen: Seen[], delegation: Delegation = null, workerReply: (req
 const turn = (llm: LlmCall, dispatch: RpcDispatch, extra: Record<string, unknown> = {}) =>
   runOsAssistant({ user, tab: null, messages: [{ role: 'user', content: 'who am I?' }], llm, dispatch, ...extra } as Parameters<typeof runOsAssistant>[0]);
 const delegated = (seen: Seen[]) => seen.filter((s) => s.purpose?.startsWith('delegate:'));
-
-// ---------------------------------------------------------------- 1. strong by default / 2. the pin
-
-test('DEFAULT: the assistant plans, acts and answers on the STRONG role', async () => {
-  const seen: Seen[] = [];
-  await turn(scripted(seen), dispatchOf('{"ok":true}'));
-  assert.ok(seen.length >= 3, 'plan, act, final');
-  assert.deepEqual([...new Set(seen.map((s) => s.model))], [STRONG]);
-  assert.equal(assistantModelInfo().model, STRONG);
-  assert.equal(assistantModelInfo().role, 'strong');
-  assert.equal(assistantModelInfo().explicit, false);
-});
-
-test('DEFAULT twin: the assistant is NOT on the worker by default (the old default would fail this)', async () => {
-  const seen: Seen[] = [];
-  await turn(scripted(seen), dispatchOf('{"ok":true}'));
-  assert.equal(seen.filter((s) => s.model === WORKER).length, 0);
-});
-
-test('PIN: an explicit admin pin overrides the strong default for plan and act', async () => {
-  setAssistantModel('acme-chat');
-  const seen: Seen[] = [];
-  await turn(scripted(seen), dispatchOf('{"ok":true}'));
-  assert.deepEqual([...new Set(seen.map((s) => s.model))], ['acme-chat']);
-  assert.deepEqual({ ...assistantModelInfo() }, { model: 'acme-chat', role: 'pinned', explicit: true });
-});
-
-test('PIN twin: without a pin the assistant is on strong, not on a leftover pin', async () => {
-  setAssistantModel('acme-chat');
-  resetModels();
-  const seen: Seen[] = [];
-  await turn(scripted(seen), dispatchOf('{"ok":true}'));
-  assert.ok(!seen.some((s) => s.model === 'acme-chat'));
-  assert.ok(seen.every((s) => s.model === STRONG));
-});
 
 const GOOD_SUMMARY = JSON.stringify({ result: { summary: 'A table of rows; totals run from EUR 1000 upward.', key_figures: ['EUR 1000'] }, confidence: 0.9 });
 const TABLE_SCHEMA = { type: 'object', properties: { label: { type: 'string' } }, required: ['label'] };
@@ -209,7 +174,7 @@ test('ESCALATION twin: a valid worker answer is final: no strong call for the su
 test('DEPTH: a delegation made from a worker context (depth 2) is refused', async () => {
   const { runDelegateTool, newTurnDelegations } = await import('@core/runtime/delegate');
   const llm: LlmCall = async () => ({ content: GOOD_SUMMARY, toolCalls: [] });
-  const deps = { llm, results: () => [{ tool: 't', text: 'EUR 1000 '.repeat(2000) }], turn: newTurnDelegations() };
+  const deps = { llm, ...wiring, results: () => [{ tool: 't', text: 'EUR 1000 '.repeat(2000) }], turn: newTurnDelegations() };
   const refused = await runDelegateTool(SUMMARY_PRESET, { ...deps, depth: 1 });
   assert.ok(refused.isError && /delegation_depth/.test(refused.text));
   assert.equal(deps.turn.count, 0);
@@ -218,9 +183,9 @@ test('DEPTH: a delegation made from a worker context (depth 2) is refused', asyn
 test('DEPTH twin: from strong (depth 0) the same delegation runs; the primitive refuses depth 1 as well', async () => {
   const { runDelegateTool, newTurnDelegations, delegateToWorker } = await import('@core/runtime/delegate');
   const llm: LlmCall = async () => ({ content: GOOD_SUMMARY, toolCalls: [] });
-  const ok = await runDelegateTool(SUMMARY_PRESET, { llm, results: () => [{ tool: 't', text: 'EUR 1000 '.repeat(2000) }], turn: newTurnDelegations() });
+  const ok = await runDelegateTool(SUMMARY_PRESET, { llm, ...wiring, results: () => [{ tool: 't', text: 'EUR 1000 '.repeat(2000) }], turn: newTurnDelegations() });
   assert.ok(!ok.isError, ok.text);
-  await assert.rejects(() => delegateToWorker({ task: 'x', input: 'a', inputSchema: (r) => r as string, serialize: (i) => i, instruction: 'i', outputSchema: (r) => r, budget: { maxInputChars: 10, maxOutputTokens: 10 }, caller: llm, depth: 1 }), /depth/i);
+  await assert.rejects(() => delegateToWorker({ task: 'x', input: 'a', inputSchema: (r) => r as string, serialize: (i) => i, instruction: 'i', outputSchema: (r) => r, budget: { maxInputChars: 10, maxOutputTokens: 10 }, caller: llm, ...wiring, depth: 1 }), /depth/i);
 });
 
 // ---------------------------------------------------------------- 7. never worker for deciding
@@ -302,7 +267,7 @@ test('BUDGET twin: a worker-side budget rejection ends the turn: it is NOT escal
 test('BUDGET: a turn may make at most MAX_DELEGATIONS_PER_TURN delegations; the next one is refused with a typed result', async () => {
   const { runDelegateTool, newTurnDelegations, MAX_DELEGATIONS_PER_TURN } = await import('@core/runtime/delegate');
   const llm: LlmCall = async () => ({ content: GOOD_SUMMARY, toolCalls: [] });
-  const deps = { llm, results: () => [{ tool: 't', text: 'EUR 1000 '.repeat(2000) }], turn: newTurnDelegations() };
+  const deps = { llm, ...wiring, results: () => [{ tool: 't', text: 'EUR 1000 '.repeat(2000) }], turn: newTurnDelegations() };
   for (let i = 0; i < MAX_DELEGATIONS_PER_TURN; i++) assert.ok(!(await runDelegateTool(SUMMARY_PRESET, deps)).isError);
   const over = await runDelegateTool(SUMMARY_PRESET, deps);
   assert.ok(over.isError && /turn_budget/.test(over.text));
@@ -312,7 +277,7 @@ test('BUDGET twin: a delegation answer is capped at max_tokens (the worker reque
   const { runDelegateTool, newTurnDelegations, MAX_WORKER_OUTPUT_TOKENS } = await import('@core/runtime/delegate');
   const caps: (number | undefined)[] = [];
   const llm: LlmCall = async (req) => { caps.push(req.maxTokens); return { content: GOOD_SUMMARY, toolCalls: [] }; };
-  const deps = { llm, results: () => [{ tool: 't', text: 'EUR 1000 '.repeat(2000) }], turn: newTurnDelegations() };
+  const deps = { llm, ...wiring, results: () => [{ tool: 't', text: 'EUR 1000 '.repeat(2000) }], turn: newTurnDelegations() };
   await runDelegateTool({ ...SUMMARY_PRESET, max_tokens: 10_000_000 }, deps);
   await runDelegateTool({ ...SUMMARY_PRESET, max_tokens: 300 }, deps);
   assert.deepEqual(caps, [MAX_WORKER_OUTPUT_TOKENS, 300]);

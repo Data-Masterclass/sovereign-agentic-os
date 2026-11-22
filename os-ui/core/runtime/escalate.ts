@@ -3,7 +3,7 @@
  */
 import 'server-only';
 import { roleModel, standardFirstEscalationEnabled } from '@core/models/roles';
-import { assistantComplete, CostCapExceededError, type AssistantMessage, type AssistantCaller } from '@core/runtime/complete';
+import { assistantComplete, type AssistantMessage, type AssistantCaller } from '@core/runtime/complete';
 import { BudgetExceededError } from '@core/infra/litellm-credential';
 
 /**
@@ -63,6 +63,11 @@ export type EscalationOpts = {
   reasoningModel?: string;
 };
 
+/** A spend limit (the gateway key's budget, or a Governance cost cap): 402 either way. */
+export function isSpendLimit(e: unknown): boolean {
+  return e instanceof BudgetExceededError || (e as { name?: string } | null)?.name === 'CostCapExceededError';
+}
+
 /** Did the predicate accept this text? A throwing predicate counts as a rejection. */
 function accepts(validate: (c: string) => boolean, content: string): boolean {
   try {
@@ -119,7 +124,7 @@ export async function completeWithEscalation(
     }
   } catch (e) {
     // A spend limit ends the call: escalating would spend more on the SAME key / cap (and on the pricier tier).
-    if (e instanceof BudgetExceededError || e instanceof CostCapExceededError) throw e;
+    if (isSpendLimit(e)) throw e;
     /* standard tier unusable (unreachable, etc) → fall through to escalate */
   }
 
