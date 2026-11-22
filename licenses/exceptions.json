@@ -1,10 +1,25 @@
 {
   "_comment": [
-    "Reviewed exceptions to the licence gate (licenses/policy.json). Empty on purpose.",
-    "An entry applies ONLY to a package whose licence is UNKNOWN or missing - it can never waive a forbidden licence.",
-    "Every entry needs: ecosystem (npm | python | component), name, version ('*' or exact), reason (what was verified, and where),",
-    "reviewedBy, and date (YYYY-MM-DD). An entry without a reason or reviewedBy makes the gate fail with a config error.",
-    "An entry that no longer matches any dependency is reported, so this file cannot rot silently."
+    "Reviewed exceptions to the licence gate (licenses/policy.json). Owner decision 2026-11-22.",
+    "Two kinds of entry:",
+    " 1. COPYLEFT that policy.json marks 'exceptable': unmodified weak-copyleft libraries (MPL, LGPL, EPL, CDDL) and unmodified GPL programs.",
+    "    Needs a `condition`: 'unmodified-not-linked' (weak copyleft, used unmodified, not linked into our code) or 'separate-program'",
+    "    (runs as its own process; the only condition a GPL accepts). The gate checks the condition and still requires an attribution entry.",
+    " 2. UNKNOWN or missing licences: a reason saying what was verified and where.",
+    "AGPL, EUPL and source-available licences (BUSL/BSL, SSPL, Elastic, Commons Clause, CC-BY-NC/SA) can NEVER be excepted.",
+    "Every entry needs: ecosystem (npm | python | component), name, version ('*' or exact), reason, reviewedBy and date (YYYY-MM-DD).",
+    "An entry without a reason, reviewedBy or a valid condition makes the gate fail with a config error; an entry that no longer matches",
+    "any dependency is reported, so this file cannot rot silently."
   ],
-  "exceptions": []
+  "exceptions": [
+    {
+      "ecosystem": "component",
+      "name": "git (backup-tools, git-daemon and git-http images)",
+      "version": "*",
+      "condition": "separate-program",
+      "reason": "Unmodified Alpine git package, a separate program the chart runs as its own process (git bundle/fsck, git daemon, git-http-backend); never linked into our code. Source offer: licenses/source-offer.md.",
+      "reviewedBy": "owner (decision relayed by the coordinator, 2026-11-22)",
+      "date": "2026-11-22"
+    }
+  ]
 }

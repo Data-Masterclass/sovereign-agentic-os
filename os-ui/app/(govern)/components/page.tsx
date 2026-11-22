@@ -78,7 +78,6 @@ const TOOL_KEYS: Record<string, string> = {
   dagster: 'dagster',
   mlflow: 'mlflow',
   jupyterhub: 'jupyterhub',
-  featureform: 'featureform',
   'opensearch-dashboards': 'opensearch',
 };
 

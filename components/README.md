@@ -5,7 +5,7 @@ an `UPSTREAM.md` naming the project, its licence and the exact pin (image digest
 version). No Dockerfile that adds layers, no templates, no scripts, no configuration.
 
 Every component here must carry a licence allowed by `licenses/policy.json` (owner decision of 2026-11-22; the gate
-reads `licenses/components.tsv`). Copyleft and source-available components are not added.
+reads `licenses/components.tsv`). Copyleft needs a reviewed exception (`licenses/exceptions.json`); AGPL and source-available components are never added.
 
 Everything we wrote — Helm templates, init jobs, policies, clients — lives in the chart or in
 the tab that owns it. If a file here would contain our code, it is in the wrong place.

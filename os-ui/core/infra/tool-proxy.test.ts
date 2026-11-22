@@ -66,7 +66,7 @@ test('own-tab policy: root-absolute-asset SPAs + WS tools carry ownTab; verified
   // routes (verified live: Langfuse/Dagster chunk requests 404 on the OS
   // origin), or they need WebSockets (JupyterHub). Each must carry the Tier-2
   // own-tab metadata so the ToolWindow shows the card, never a blank iframe.
-  for (const key of ['langfuse', 'dagster', 'featureform', 'jupyterhub']) {
+  for (const key of ['langfuse', 'dagster', 'jupyterhub']) {
     const t = TOOLS[key];
     assert.ok(t.ownTab, `${key} carries ownTab`);
     assert.ok(t.ownTab!.reason.length > 0, `${key} ownTab.reason is honest, not empty`);
@@ -87,11 +87,9 @@ test('role gate: minRole is enforced by rank, not equality', () => {
   // A builder-gated tool (OpenSearch) denies a creator but allows a builder.
   assert.equal(roleAllowed('creator', TOOLS.opensearch.minRole), false);
   assert.equal(roleAllowed('builder', TOOLS.opensearch.minRole), true);
-  // Featureform is a Science-tab launcher; a creator must be able to open it,
-  // consistent with MLflow (both creator+). Regression guard for the role gate.
-  assert.equal(TOOLS.featureform.minRole, 'creator');
+  // MLflow is a Science-tab launcher; a creator must be able to open it. Regression guard for the role gate.
   assert.equal(TOOLS.mlflow.minRole, 'creator');
-  assert.equal(roleAllowed('creator', TOOLS.featureform.minRole), true);
+  assert.equal(roleAllowed('creator', TOOLS.mlflow.minRole), true);
 });
 
 /* --------------------------------------------------------------- CSP / frame */

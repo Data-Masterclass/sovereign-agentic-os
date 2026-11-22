@@ -4,8 +4,8 @@
  *
  * AREA:       repo tooling (licence gate)
  * FEATURE:    The licence gate - enforces licenses/policy.json over npm, Python and container components
- * USER STORY: As the owner I want CI to fail on any dependency the 2026-11-22 policy forbids, on unknown
- *             licences without a reviewed reason, and on missing attribution - and to say which option of a
+ * USER STORY: As the owner I want CI to fail on AGPL / source-available dependencies, on copyleft without a reviewed
+ *             exception (reason + condition), on unknown licences without a reviewed reason, and on missing attribution - and to say which option of a
  *             dual licence was chosen.
  * ARCHITECTURE: Thin CLI over scripts/lib/license-policy.mjs. Sources, all read from the repo:
  *               npm      os-ui/package-lock.json and the app-scaffold lockfiles
@@ -113,7 +113,7 @@ const noticesText = policy.noticesFiles.map((f) => join(ROOT, f)).filter(existsS
 
 if (flag('--write-attributions')) {
   // Regenerates the machine-listed attribution section: every dependency whose chosen licence is not Apache-2.0/MIT.
-  const rows = checkAll(deps, { policy, exceptions, noticesText: '' }).filter((r) => r.verdict === 'allow' && r.needsAttribution && r.ecosystem !== 'component')
+  const rows = checkAll(deps, { policy, exceptions, noticesText: '' }).filter((r) => r.status !== 'fail' || r.reasons.some((x) => /attribution/.test(x))).filter((r) => (r.verdict === 'allow' || r.verdict === 'exceptable') && r.needsAttribution && r.ecosystem !== 'component')
     .sort((a, b) => (a.ecosystem + a.name).localeCompare(b.ecosystem + b.name));
   // Keep rows an earlier run produced: a Python pin resolves differently per interpreter (3.12 pulls greenlet,
   // 3.13 does not), and an attribution for a dependency we may ship must not vanish because a laptop runs 3.13.

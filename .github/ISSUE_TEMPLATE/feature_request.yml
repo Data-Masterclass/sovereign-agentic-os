@@ -28,7 +28,7 @@ body:
         - L1 · Agent core (LangGraph / LiteLLM / Langfuse / OpenSearch)
         - L2 · Context (OPA / Docling / Haystack / dbt / Cube / OpenMetadata / Dagster)
         - L3 · Self-service (Iceberg/Polaris / Trino / Superset / Forgejo / Argo CD / MCP)
-        - L4 · Science (JupyterHub / MLflow / Featureform / KServe)
+        - L4 · Science (JupyterHub / MLflow / KServe)
         - OS UI / Admin Console
         - Packaging / install / docs
     validations:

@@ -9,6 +9,7 @@
 #   - npm      os-ui and the app-scaffold lockfiles
 #   - python   every image's pip dependencies (resolved with pip; needs network)
 #   - component licenses/components.tsv (container images, charts, Go binaries)
+# Weak copyleft / GPL programs pass only with a reviewed exception whose condition fits; AGPL and source-available never.
 # Dual-licensed packages pass when ANY option is allowed and the chosen option is printed. Anything other
 # than Apache-2.0 / MIT needs an attribution entry (THIRD-PARTY-LICENSES.md or licenses/ATTRIBUTIONS.md).
 # Then it runs the version floors a licence list cannot express (metricflow, dbt-core).

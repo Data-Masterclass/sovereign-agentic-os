@@ -20,9 +20,17 @@ export function loadPolicy(file) {
   p.aliases = p.aliases || {}; p.noticesFiles = p.noticesFiles || [];
   p._allow = new Map(p.allow.map((id) => [id.toLowerCase(), id]));
   p._alias = new Map(Object.entries(p.aliases).map(([k, v]) => [k.toLowerCase(), v]));
-  p._forbid = p.forbid.map((g) => new RegExp('^' + g.split('*').map((s) => s.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*') + '$', 'i'));
+  const glob = (g) => new RegExp('^' + g.split('*').map((s) => s.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*') + '$', 'i');
+  p._forbid = p.forbid.map(glob);
+  p.exceptable = p.exceptable || {}; p.conditions = p.conditions || {};
+  p._exceptable = Object.entries(p.exceptable).flatMap(([family, globs]) => globs.map((g) => ({ family, re: glob(g) })));
   return p;
 }
+
+// The conditions a reviewed exception may carry. 'unmodified-not-linked': a weak-copyleft library used unmodified and not
+// linked into our code. 'separate-program': an unmodified program that runs as its own process. Which family needs which
+// is in policy.json (`conditions`).
+export const EXCEPTION_CONDITIONS = ['unmodified-not-linked', 'separate-program'];
 
 export function loadExceptions(file) {
   const e = typeof file === 'string' ? JSON.parse(readFileSync(file, 'utf8')) : file;
@@ -31,6 +39,7 @@ export function loadExceptions(file) {
     for (const k of ['ecosystem', 'name', 'version']) if (!x[k]) throw new Error(`exceptions[${i}]: "${k}" is required`);
     if (typeof x.reason !== 'string' || x.reason.trim() === '') throw new Error(`exceptions[${i}] (${x.name}): a reason is required`);
     if (typeof x.reviewedBy !== 'string' || x.reviewedBy.trim() === '') throw new Error(`exceptions[${i}] (${x.name}): reviewedBy is required`);
+    if (x.condition !== undefined && !EXCEPTION_CONDITIONS.includes(x.condition)) throw new Error(`exceptions[${i}] (${x.name}): condition must be one of ${EXCEPTION_CONDITIONS.join(', ')}`);
   });
   return { exceptions: list };
 }
@@ -56,7 +65,9 @@ function classifyAtom(raw, policy) {
   const alias = policy._alias.get(id.toLowerCase()); if (alias) id = alias;
   if (policy._allow.has(id.toLowerCase())) return { verdict: 'allow', chosen: [policy._allow.get(id.toLowerCase())], why: [] };
   const base = id.replace(/\+$/, '');
-  if (policy._forbid.some((re) => re.test(id) || re.test(base))) return { verdict: 'forbid', chosen: [], why: [`${id} is forbidden`] };
+  if (policy._forbid.some((re) => re.test(id) || re.test(base))) return { verdict: 'forbid', chosen: [], why: [`${id} is never allowed (AGPL / EUPL / source-available)`] };
+  const exc = policy._exceptable.find((e) => e.re.test(id) || e.re.test(base));
+  if (exc) return { verdict: 'exceptable', chosen: [id], families: [exc.family], why: [`${id} is copyleft: allowed only through a reviewed entry in licenses/exceptions.json`] };
   return { verdict: 'unknown', chosen: [], why: [`${id} is not on the allow list or the forbid list`] };
 }
 
@@ -65,10 +76,14 @@ function combine(kind, parts) {
   if (kind === 'AND') {
     if (parts.some((p) => p.verdict === 'forbid')) return { verdict: 'forbid', chosen: [], why: parts.flatMap((p) => p.why) };
     if (parts.some((p) => p.verdict === 'unknown')) return { verdict: 'unknown', chosen: [], why: parts.flatMap((p) => p.why) };
+    const ex = parts.filter((p) => p.verdict === 'exceptable');
+    if (ex.length) return { verdict: 'exceptable', chosen: uniq(parts.flatMap((p) => p.chosen)), families: uniq(ex.flatMap((p) => p.families)), why: ex.flatMap((p) => p.why) };
     return { verdict: 'allow', chosen: uniq(parts.flatMap((p) => p.chosen)), why: [] };
   }
   const ok = parts.find((p) => p.verdict === 'allow'); // OR: the first allowed option, in written order
   if (ok) return { verdict: 'allow', chosen: ok.chosen, why: [] };
+  const ex = parts.filter((p) => p.verdict === 'exceptable'); // else the option that needs the weakest exception (weak before gpl)
+  if (ex.length) return ex.find((p) => !p.families.includes('gpl')) ?? ex[0];
   return { verdict: parts.some((p) => p.verdict === 'forbid') ? 'forbid' : 'unknown', chosen: [], why: parts.flatMap((p) => p.why) };
 }
 
@@ -207,11 +222,24 @@ export function checkAll(deps, { policy, exceptions, noticesText = '' }) {
       if (alt.verdict !== 'unknown') ev = { ...alt, expression: d.alt };
     }
     const r = { ...d, verdict: ev.verdict, chosen: ev.chosen, reasons: [], status: 'pass', needsAttribution: false, attributed: false, note: '' };
-    if (ev.verdict === 'forbid') { r.status = 'fail'; r.reasons.push(...ev.why, 'forbidden licences cannot be excepted'); return r; }
+    const findException = () => exc.findIndex((x) => x.ecosystem === d.ecosystem && x.name === d.name && (x.version === '*' || x.version === d.version));
+    if (ev.verdict === 'forbid') { r.status = 'fail'; r.reasons.push(...ev.why, 'this licence can never be excepted'); return r; }
     if (ev.verdict === 'unknown') {
-      const i = exc.findIndex((x) => x.ecosystem === d.ecosystem && x.name === d.name && (x.version === '*' || x.version === d.version));
+      const i = findException();
       if (i >= 0) { used.add(i); r.note = `excepted: ${exc[i].reason} (reviewed by ${exc[i].reviewedBy})`; return r; }
       r.status = 'fail'; r.reasons.push(...ev.why, 'unknown or missing licence: fix upstream or add a reviewed entry with a reason to licenses/exceptions.json'); return r;
+    }
+    if (ev.verdict === 'exceptable') {
+      const i = findException();
+      if (i < 0) { r.status = 'fail'; r.reasons.push(...ev.why, `add a reviewed exception (condition ${EXCEPTION_CONDITIONS.join(' | ')}) or replace the dependency`); return r; }
+      used.add(i);
+      const need = ev.families.map((f) => (policy.conditions[f] || []));
+      if (!exc[i].condition || !need.every((allowedConds) => allowedConds.includes(exc[i].condition))) {
+        r.status = 'fail';
+        r.reasons.push(`the exception for ${d.name} needs a condition that fits ${ev.families.join('+')}: ${[...new Set(need.flat())].join(' | ')}${exc[i].condition ? ` (has "${exc[i].condition}")` : ' (has none)'}`);
+        return r;
+      }
+      r.note = `excepted (${exc[i].condition}): ${exc[i].reason} (reviewed by ${exc[i].reviewedBy})`;
     }
     r.needsAttribution = r.chosen.some((id) => !policy.attributionExempt.includes(id));
     if (r.needsAttribution) {
