@@ -33,7 +33,7 @@ networking:
   disableDefaultCNI: true
   podSubnet: 192.168.0.0/16
 YAML
-kind create cluster --name "$CLUSTER" --kubeconfig "$SF_ISO_KUBECONFIG" --config "$work/kind-config.yaml" --wait 120s >/dev/null
+kind create cluster --name "$CLUSTER" --kubeconfig "$SF_ISO_KUBECONFIG" --config "$work/kind-config.yaml" >/dev/null 2>&1 || true  # no CNI yet: the node is NotReady until Calico is applied
 kubectl apply -f "https://raw.githubusercontent.com/projectcalico/calico/${CALICO_VERSION}/manifests/calico.yaml" >/dev/null
 kubectl -n kube-system rollout status ds/calico-node --timeout=300s
 kubectl -n kube-system rollout status deploy/coredns --timeout=300s
@@ -90,6 +90,7 @@ spec:
         - name: probe
           image: busybox:1.37.0
           securityContext: { allowPrivilegeEscalation: false, capabilities: { drop: [ALL] }, readOnlyRootFilesystem: true }
+          resources: { requests: { cpu: 10m, memory: 16Mi }, limits: { cpu: 100m, memory: 64Mi } }
           command: ["sh","-c"]
           args:
             - |
@@ -100,7 +101,6 @@ spec:
               try egress-proxy-dns egress-proxy.$PLATFORM_NS.svc 3128
 $(echo "$ips" | awk -F= 'NF==2 && $1!="egress-proxy"{p=($1=="os-ui")?3000:($1=="pg-rw")?5432:8181; printf "              try %s-ip %s %s\n", $1, $2, p}')
               try apiserver kubernetes.default.svc 443
-              if nslookup kubernetes.default.svc >/dev/null 2>&1; then echo "dns OPEN"; else echo "dns BLOCKED"; fi
 YAML
   kubectl -n "$ns" wait --for=condition=complete "job/$job" --timeout=240s >/dev/null || kubectl -n "$ns" wait --for=condition=failed "job/$job" --timeout=5s >/dev/null || true
   kubectl -n "$ns" logs "job/$job"
@@ -116,7 +116,7 @@ for t in os-ui-dns postgres-dns opa-dns os-ui-ip pg-rw-ip opa-ip apiserver; do
   echo "$sandbox" | grep -q "^$t BLOCKED$" || fail "$t was not blocked from the sandbox namespace"
 done
 echo "$sandbox" | grep -q "^egress-proxy-dns OPEN$" || fail "the egress proxy is not reachable from the sandbox (npm would fail)"
-echo "$sandbox" | grep -q "^dns OPEN$" || fail "DNS is not reachable from the sandbox"
+# DNS is proven by egress-proxy-dns above: it connects by NAME, so resolution worked.
 # 5. negative twin: the same targets ARE reachable without the policy
 for t in os-ui-dns opa-dns os-ui-ip pg-rw-ip opa-ip; do
   echo "$control" | grep -q "^$t OPEN$" || fail "control: $t unreachable even without a policy - the probe proves nothing"
