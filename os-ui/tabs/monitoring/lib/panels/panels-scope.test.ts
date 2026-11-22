@@ -81,7 +81,7 @@ registerMonitoringSources({
   latestTests: async () => new Map(),
   syncSchedules: async () => [],
   connectionCatalogs: async () => [],
-  registeredTables: async () => ({ fqns: [], domainSchemas: [], managedNames: [] }),
+  registeredTables: async () => ({ fqns: [], domainSchemas: [], managedTables: [] }),
   assetKeys: async () => new Map(),
 });
 const { agentsView } = await import('./agents-panel');

@@ -52,8 +52,8 @@ test('a table made by plain SQL that no dataset registers is flagged; the regist
   // The registered side is what the Monitoring source hands over: the real footprint of the store.
   __setDataProjectGitForTests(false); // no Dagster in this harness: there are no dbt-managed tables to exclude
   const reg = await monitoringSourcesImpl.registeredTables();
-  assert.deepEqual(reg.managedNames, []);
-  const alerts = unregisteredTableAlerts(tables, new Set(reg.fqns), { domainSchemas: [], personalSchemaPrefix: 'personal_', managedNames: new Set(reg.managedNames ?? []) });
+  assert.deepEqual(reg.managedTables, []);
+  const alerts = unregisteredTableAlerts(tables, new Set(reg.fqns), { domainSchemas: [], personalSchemaPrefix: 'personal_', managedTables: new Set(reg.managedTables ?? []) });
   assert.equal(alerts.length, 1);
   assert.match(alerts[0].detail, /hand_made_scratch/);
   assert.doesNotMatch(alerts[0].detail, new RegExp(registeredTable), 'neither the registered table nor its staging table is flagged');

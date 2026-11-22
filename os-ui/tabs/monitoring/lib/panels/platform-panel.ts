@@ -132,8 +132,8 @@ async function readUnregistered(user: CurrentUser): Promise<{ state: SourceState
   if (!physical.ok) return { state: unavailable(`Trino: ${physical.detail}`), alerts: [] };
   try {
     const reg = await src.registeredTables();
-    if (reg.managedNames === null) return { state: unavailable('Dagster cannot be read, so tables Dagster manages cannot be told from shadow tables'), alerts: [] };
-    return { state: live, alerts: unregisteredTableAlerts(physical.value, new Set(reg.fqns), { domainSchemas: reg.domainSchemas, personalSchemaPrefix: 'personal_', managedNames: new Set(reg.managedNames) }) };
+    if (reg.managedTables === null) return { state: unavailable('Dagster cannot be read, so tables Dagster manages cannot be told from shadow tables'), alerts: [] };
+    return { state: live, alerts: unregisteredTableAlerts(physical.value, new Set(reg.fqns), { domainSchemas: reg.domainSchemas, personalSchemaPrefix: 'personal_', managedTables: new Set(reg.managedTables) }) };
   } catch (e) {
     return { state: unavailable(`registered tables: ${e instanceof Error ? e.message : String(e)}`), alerts: [] };
   }

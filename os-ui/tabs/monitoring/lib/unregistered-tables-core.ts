@@ -15,18 +15,19 @@ import type { PhysicalTable } from '@core/adapters/trino/tables';
 export type Judged = {
   domainSchemas: string[];
   personalSchemaPrefix: string;
-  /** Names of the dbt models Dagster manages (asset keys `[domain, model]`): their tables are the repository's. */
-  managedNames: ReadonlySet<string>;
+  /** `schema.table` of the dbt models Dagster manages (from its asset keys, `managedTablesOf`): their tables are the repository's. */
+  managedTables: ReadonlySet<string>;
 };
 
 /**
  * Tables the OS itself writes, so a warning means "made outside the OS":
  *   - every table a dataset can occupy (`registered`, from `footprint()`);
  *   - the merge staging table of such a table, `<table>_stg` (sync-sql.ts), which a failed merge leaves behind;
- *   - the table of a dbt model Dagster manages (git owns the model; Dagster materialises it).
+ *   - the table of a dbt model Dagster manages (git owns the model; Dagster materialises it), matched on
+ *     schema AND table.
  */
-export function isOsInternal(schema: string, table: string, registered: ReadonlySet<string>, managedNames: ReadonlySet<string>): boolean {
-  if (registered.has(`${schema}.${table}`) || managedNames.has(table)) return true;
+export function isOsInternal(schema: string, table: string, registered: ReadonlySet<string>, managedTables: ReadonlySet<string>): boolean {
+  if (registered.has(`${schema}.${table}`) || managedTables.has(`${schema}.${table}`)) return true;
   return table.endsWith('_stg') && registered.has(`${schema}.${table.slice(0, -4)}`);
 }
 
@@ -36,7 +37,7 @@ export function unregisteredTableAlerts(physical: readonly PhysicalTable[], regi
   for (const p of physical) {
     if (p.table.includes('$')) continue;
     const judgedSchema = domainOf.has(p.schema) || p.schema.startsWith(judged.personalSchemaPrefix);
-    if (!judgedSchema || isOsInternal(p.schema, p.table, registered, judged.managedNames)) continue;
+    if (!judgedSchema || isOsInternal(p.schema, p.table, registered, judged.managedTables)) continue;
     bySchema.set(p.schema, [...(bySchema.get(p.schema) ?? []), p.table]);
   }
   return [...bySchema.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([schema, tables]): Alert => {
@@ -49,4 +50,17 @@ export function unregisteredTableAlerts(physical: readonly PhysicalTable[], regi
       detail: `Tables created directly in Trino that no dataset registers: ${shown}. Trino owns them and the OS does not govern them as datasets. Register one by adding a dataset for it (a dbt model with a schema.yml pushed to the domain repository becomes a dataset), or drop it if it is scratch.`,
     };
   });
+}
+
+/**
+ * Dagster asset keys of dbt models -> `schema.table`. dagster-dbt keys are `[domain, schema, model]`;
+ * a two-part key `[domain, model]` lives in the domain's schema (`domainSchemaOf`).
+ */
+export function managedTablesOf(keys: readonly (readonly string[])[], domainSchemaOf: (domain: string) => string): Set<string> {
+  const out = new Set<string>();
+  for (const k of keys) {
+    if (k.length >= 3) out.add(`${k[k.length - 2]}.${k[k.length - 1]}`);
+    else if (k.length === 2) out.add(`${domainSchemaOf(k[0])}.${k[1]}`);
+  }
+  return out;
 }
