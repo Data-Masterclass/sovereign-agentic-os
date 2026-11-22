@@ -106,3 +106,22 @@ test('autonomous-agents flag is NIL-SAFE — a partial PUT never accidentally en
   assert.equal(updateSettings({ currency: 'USD' }).autonomousAgentsEnabled, true);
   assert.equal(updateSettings({ autonomousAgentsEnabled: 'yes' as unknown as boolean }).autonomousAgentsEnabled, true);
 });
+
+// ---------------------------------------------------------------- Langfuse masking --
+
+test('langfuse masking defaults OFF at the PII level (today\'s behaviour)', () => {
+  assert.deepEqual(getSettings().langfuseMasking, { enabled: false, level: 'pii' });
+});
+
+test('langfuse masking toggles on, changes level, and a partial patch keeps the other half', () => {
+  assert.deepEqual(updateSettings({ langfuseMasking: { enabled: true, level: 'pii' } }).langfuseMasking, { enabled: true, level: 'pii' });
+  assert.deepEqual(updateSettings({ langfuseMasking: { level: 'content' } } as never).langfuseMasking, { enabled: true, level: 'content' });
+  assert.deepEqual(updateSettings({ langfuseMasking: { enabled: false } } as never).langfuseMasking, { enabled: false, level: 'content' });
+});
+
+test('langfuse masking is NIL-SAFE: an unrelated patch, garbage or an unknown level never flips it', () => {
+  updateSettings({ langfuseMasking: { enabled: true, level: 'content' } });
+  assert.deepEqual(updateSettings({ currency: 'GBP' }).langfuseMasking, { enabled: true, level: 'content' });
+  assert.deepEqual(updateSettings({ langfuseMasking: { enabled: 'no', level: 'all' } } as never).langfuseMasking, { enabled: true, level: 'content' });
+  assert.deepEqual(updateSettings({ langfuseMasking: 'off' } as never).langfuseMasking, { enabled: true, level: 'content' });
+});
