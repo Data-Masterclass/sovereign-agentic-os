@@ -212,6 +212,11 @@ function DatasetCard({ d, v }: { d: DatasetPanel; v: DataView }) {
             {d.laneAlerts![0].url ? <> <a className="mon-xlink" href={d.laneAlerts![0].url} target="_blank" rel="noreferrer">run ↗</a></> : null}</span>
         </div>
       )}
+      {d.tests && d.tests.warning?.length > 0 && (
+        <p className="hint" style={{ margin: '2px 0 6px' }}>
+          Warnings (dbt severity warn): {d.tests.warning.map((f) => `${f.name}${f.violations !== null ? ` (${f.violations} rows)` : ''}`).join(' · ')}
+        </p>
+      )}
       {(d.jobs?.length ?? 0) + (d.schedules?.length ?? 0) > 0 && (
         <div className="mon-table" style={{ marginTop: 6 }}>
           <div className="mon-tr mon-th mon-tr-pjob"><span>Job / schedule</span><span>Last</span><span>Last success</span><span>Fails</span></div>

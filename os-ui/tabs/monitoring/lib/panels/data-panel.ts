@@ -26,7 +26,7 @@ import { config } from '@core/kernel/config';
 import { recentOsRuns } from '@core/infra/dagster';
 import { checkExecutions, dependedByGraph, downstreamOf, jobHealthOf, laneAlertsOf, visibleModels, type LaneAlert, type RunGroupHealth } from '@core/adapters/dagster/monitoring-read';
 import { monitoringSources, SOURCES_MISSING, type MonitoringSources } from '@tabs/monitoring/lib/panels/sources';
-import { failingSince, live, qualityTrend, ruleStatusOf, ruleTrend, ruleTypeOf, splitDownstream, unavailable, type NotUpstream, type RuleStatus, type RuleTrendPoint, type RuleType, type SourceState, type TrendPoint } from '@tabs/monitoring/lib/panels/panels-core';
+import { failingSince, live, qualityTrend, ruleStatusOf, ruleTrend, ruleTypeOf, splitDownstream, testsSummary, unavailable, type NotUpstream, type RuleStatus, type RuleTrendPoint, type RuleType, type SourceState, type TestRule, type TrendPoint } from '@tabs/monitoring/lib/panels/panels-core';
 
 /** Dagster reads per page are bounded: runs scanned, datasets given a trend. */
 const RUN_SCAN = 200;
@@ -72,7 +72,7 @@ export type DatasetPanel = {
   laneAlerts?: LaneAlertView[];
   /** Newest successful run end of any job of this dataset (Dagster), or null. */
   lastSuccessAt?: string | null;
-  tests?: { source: 'dagster' | 'os' | null; ranAt: string | null; total: number; failing: { name: string; violations: number | null }[]; notRun: number };
+  tests?: { source: 'dagster' | 'os' | null; ranAt: string | null; total: number; failing: { name: string; violations: number | null }[]; warning: { name: string; violations: number | null }[]; notRun: number; rules: TestRule[] };
   trend?: TrendPoint[];
   /** Per-rule results (Dagster asset checks of the dataset's tested asset). Absent until a dbt test has run in Dagster. */
   rules?: RulePanel[];
@@ -160,9 +160,7 @@ export async function dataView(user: CurrentUser, nowMs = Date.now()): Promise<D
       p.tests = {
         source: rec?.source === 'dagster' || rec?.source === 'os' ? rec.source : null,
         ranAt: rec?.ranAt ?? null,
-        total: results.length,
-        failing: results.filter((r) => r.status === 'fail').map((r) => ({ name: r.label, violations: r.violations })),
-        notRun: results.filter((r) => r.status === 'not_run').length,
+        ...testsSummary(results),
       };
     }
     if (dk?.tested) {
