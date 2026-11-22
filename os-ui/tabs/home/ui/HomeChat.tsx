@@ -103,7 +103,7 @@ export default function HomeChat({ firstName }: { firstName: string }) {
   }, []);
 
   const removeConversation = useCallback(async (id: string) => {
-    await fetch(`/api/assistant/conversations/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    await fetch('/api/assistant/chat', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ deleteConversation: id }) });
     setHistory((h) => h.filter((x) => x.id !== id));
     if (id === conversationId) { setMessages([]); setConversationId(newConversationId()); }
   }, [conversationId]);

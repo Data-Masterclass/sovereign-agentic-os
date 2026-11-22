@@ -294,7 +294,7 @@ export function liteLlmCaller(caller?: CallerContext): LlmCall {
     }
 
     if (streaming && res.body) {
-      const streamed = await assembleStream(res.body, req.onToken);
+      const streamed = await assembleStream(res.body, { message: parseLlmMessage, usage: parseLlmUsage }, req.onToken);
       return { ...streamed, gatewayCallId: trace.callId };
     }
 

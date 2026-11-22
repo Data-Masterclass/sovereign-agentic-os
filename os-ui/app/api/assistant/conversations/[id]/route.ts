@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { requireUser } from '@core/kernel/auth';
-import { deleteConversation, ensureHydrated, getConversation } from '@core/runtime/conversations';
+import { ensureHydrated, getConversation } from '@core/runtime/conversations';
 
 export const dynamic = 'force-dynamic';
 
@@ -22,13 +22,4 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
   await ensureHydrated();
   const c = getConversation(user.id, (await ctx.params).id);
   return c ? NextResponse.json(c) : NextResponse.json({ error: 'No such conversation.' }, { status: 404 });
-}
-
-export async function DELETE(_req: Request, ctx: { params: Promise<{ id: string }> }) {
-  const user = await who();
-  if (user instanceof NextResponse) return user;
-  await ensureHydrated();
-  return deleteConversation(user.id, (await ctx.params).id)
-    ? NextResponse.json({ ok: true })
-    : NextResponse.json({ error: 'No such conversation.' }, { status: 404 });
 }
