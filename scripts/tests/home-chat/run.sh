@@ -59,7 +59,7 @@ for i in $(seq 1 30); do [ "$(curl -s -o /dev/null -w '%{http_code}' http://127.
 
 [ -z "${HOME_CHAT_STACK_ONLY:-}" ] || { echo "HOME_CHAT_STACK_UP (gateway :14000, Langfuse :13000, OPA :18181)"; exit 0; }
 (cd "$REPO/os-ui" && LITELLM_URL=http://127.0.0.1:14000 OPA_URL=http://127.0.0.1:18181   LANGFUSE_E2E_URL=http://127.0.0.1:13000 LANGFUSE_E2E_PUBLIC_KEY=pk-lf-test-not-a-secret LANGFUSE_E2E_SECRET_KEY=sk-lf-test-not-a-secret \
-  HOME_CHAT_E2E_OPA_CONTAINER=lfopa HOME_CHAT_E2E_REQUIRED=1 \
+  HOME_CHAT_E2E_OPA_CONTAINER=lfopa HOME_CHAT_E2E_REQUIRED=1 HOME_CHAT_E2E_STUB_LOG="$W/data/models.jsonl" \
   node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test --test-concurrency=1 core/runtime/home-chat.e2e.test.ts) 2>&1 | tee "$W/home-chat-e2e.log" | grep -E '^# (pass|fail)|^not ok|^ok|ℹ (pass|fail)|✔|✖|Error' 
 grep -q 'ℹ fail 0' "$W/home-chat-e2e.log" && grep -q 'ℹ pass 6' "$W/home-chat-e2e.log" && { echo HOME_CHAT_E2E_OK; exit 0; }
 echo "HOME_CHAT_E2E_FAILED (log: $W/home-chat-e2e.log)"; exit 1
