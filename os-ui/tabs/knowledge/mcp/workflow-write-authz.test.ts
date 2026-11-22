@@ -274,6 +274,10 @@ const ROUTES: Record<string, Record<string, string>> = {
   'app/api/knowledge/workflows/[id]/tacit/route.ts': { PUT: 'update' },
   'app/api/knowledge/workflows/[id]/versions/route.ts': { POST: 'update' },
   'app/api/knowledge/workflows/[id]/index/route.ts': { POST: 'index' },
+  // Applying a workflow's guardrails pushes its policy to OPA (an edit-level action); a retrieve that finds the
+  // workflow unindexed indexes it first (an index write).
+  'app/api/knowledge/workflows/[id]/guardrails/route.ts': { POST: 'update' },
+  'app/api/knowledge/workflows/[id]/retrieve/route.ts': { POST: 'index' },
 };
 
 function handlerBody(src: string, verb: string): string {
@@ -290,7 +294,7 @@ for (const [file, verbs] of Object.entries(ROUTES)) {
     for (const verb of Object.keys(verbs)) {
       const body = handlerBody(src, verb);
       const gateAt = body.search(/await gate\(|authorize\(/);
-      const writeAt = body.search(/\b(createWorkflow|updateWorkflow|deleteWorkflow|archiveWorkflow|unarchiveWorkflow|renameKnowledge|setWorkflowLinks|moveWorkflow|updateTacit|restoreWorkflowVersion|indexWorkflow)\(/);
+      const writeAt = body.search(/\b(createWorkflow|updateWorkflow|deleteWorkflow|archiveWorkflow|unarchiveWorkflow|renameKnowledge|setWorkflowLinks|moveWorkflow|updateTacit|restoreWorkflowVersion|indexWorkflow|applyGuardrails|verifyGuardrails)\(/);
       assert.ok(gateAt >= 0, `${verb}: asks the policy`);
       assert.ok(writeAt === -1 || gateAt < writeAt, `${verb}: the policy is asked before the store is touched`);
       assert.match(body, /workflow_write|gate\(/, `${verb}: it is the workflow_write door`);
@@ -306,6 +310,39 @@ test('REST: the gates name the real op — create / update / retire / index', ()
   assert.match(handlerBody(idRoute, 'PATCH'), /'update'/);
   assert.match(handlerBody(idRoute, 'POST'), /'retire'/);
   assert.match(handlerBody(read('app/api/knowledge/workflows/[id]/index/route.ts'), 'POST'), /'index'/);
+  assert.match(handlerBody(read('app/api/knowledge/workflows/[id]/guardrails/route.ts'), 'POST'), /'update'/);
+  assert.match(handlerBody(read('app/api/knowledge/workflows/[id]/retrieve/route.ts'), 'POST'), /'index'/);
+});
+
+test('REST: the routes that stay un-gated are READS of workflow state — none calls a workflow store mutator or the indexer', () => {
+  const read = (f: string) => readFileSync(join(process.cwd(), f), 'utf8');
+  const MUTATORS = /\b(createWorkflow|updateWorkflow|deleteWorkflow|archiveWorkflow|unarchiveWorkflow|renameKnowledge|setWorkflowLinks|moveWorkflow|updateTacit|restoreWorkflowVersion|publishWorkflow|certifyWorkflow|indexWorkflow|importOkfZip|importBundle)\(/;
+  const reads: [string, string[]][] = [
+    ['app/api/knowledge/workflows/[id]/eval/route.ts', ['POST']], // scores retrieval over in-memory units; stores nothing
+    ['app/api/knowledge/workflows/[id]/scaffold-agent/route.ts', ['POST']], // reads the workflow; `create` makes an AGENT system (agents door), not a workflow write
+    ['app/api/knowledge/workflows/[id]/okf/route.ts', ['GET']], // export
+    ['app/api/knowledge/workflows/[id]/guardrails/route.ts', ['GET']], // compile (preview)
+    ['app/api/knowledge/workflows/[id]/tacit/route.ts', ['GET']],
+    ['app/api/knowledge/workflows/[id]/versions/route.ts', ['GET']],
+  ];
+  for (const [file, verbs] of reads) {
+    const src = read(file);
+    for (const verb of verbs) {
+      const body = src.includes(`export const ${verb} =`) ? handlerBody(src, verb) : src.slice(src.indexOf(`export async function ${verb}`));
+      assert.doesNotMatch(body, MUTATORS, `${file} ${verb} is a read and must stay one`);
+    }
+  }
+  // There is no REST door for an OKF import: the only importer is the MCP tool (gated per concept).
+  const importers = ['app/api/knowledge/workflows/route.ts', 'app/api/knowledge/workflows/[id]/okf/route.ts'].map(read).join('\n');
+  assert.doesNotMatch(importers, /importOkfZip|importBundle/);
+});
+
+test('the retrieve route asks for `index` before its lazy index, and a refusal skips the write instead of failing the read', () => {
+  const body = handlerBody(readFileSync(join(process.cwd(), 'app/api/knowledge/workflows/[id]/retrieve/route.ts'), 'utf8'), 'POST');
+  const askAt = body.indexOf("'index'");
+  const idxAt = body.indexOf('await indexWorkflow(');
+  assert.ok(askAt >= 0 && askAt < idxAt, 'asked before indexing');
+  assert.match(body, /canIndex/, 'the answer decides whether the lazy index runs');
 });
 
 // ─── OKF import: each workflow concept is authorised with its REAL op ────────────────────
