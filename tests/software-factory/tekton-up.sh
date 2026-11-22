@@ -150,7 +150,7 @@ spec:
       volumeMounts: [{ name: config, mountPath: /etc/tinyproxy, readOnly: true }, { name: tmp, mountPath: /tmp }]
   volumes: [{ name: config, configMap: { name: egress-proxy-config } }, { name: tmp, emptyDir: {} }]
 YAML
-  sleep 8
+  sleep 30
   k -n "$PLATFORM_NS" logs diag-volume >&2 || true
 }
 k -n "$PLATFORM_NS" rollout status deployment/os-git-http --timeout=180s || { diagnose os-git-http os-ui; exit 1; }
