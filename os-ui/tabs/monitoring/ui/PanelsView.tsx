@@ -13,14 +13,17 @@
  */
 'use client';
 
+import { useMemo, useState } from 'react';
 import { useApi } from '@core/ui/useApi';
 import type { AgentsView, AgentSystemPanel } from '@tabs/monitoring/lib/panels/agents-panel';
-import type { DataView, DatasetPanel } from '@tabs/monitoring/lib/panels/data-panel';
+import type { DataView, DatasetPanel, RulePanel } from '@tabs/monitoring/lib/panels/data-panel';
 import type { PlatformView } from '@tabs/monitoring/lib/panels/platform-panel';
+import type { FilesView, FilePanel } from '@tabs/monitoring/lib/panels/files-panel';
+import type { KnowledgeView } from '@tabs/monitoring/lib/panels/knowledge-panel';
 import type { NotUpstream, SourceState } from '@tabs/monitoring/lib/panels/panels-core';
 import { ago, compact, usd } from '@tabs/monitoring/ui/format';
 
-export type PanelKind = 'agents' | 'data' | 'platform';
+export type PanelKind = 'agents' | 'data' | 'platform' | 'files' | 'knowledge';
 
 const ms = (v: number | null | undefined): string => (v === null || v === undefined ? '—' : v >= 10_000 ? `${(v / 1000).toFixed(0)} s` : v >= 1000 ? `${(v / 1000).toFixed(1)} s` : `${Math.round(v)} ms`);
 const pct = (v: number | null | undefined): string => (v === null || v === undefined ? '—' : `${Math.round(v * 100)}%`);
@@ -246,6 +249,76 @@ function DatasetCard({ d, v }: { d: DatasetPanel; v: DataView }) {
   );
 }
 
+type FlatRule = RulePanel & { datasetId: string; datasetName: string; domain: string; dataUrl: string };
+const RULE_ORDER: Record<RulePanel['status'], number> = { fail: 0, warn: 1, not_run: 2, pass: 3 };
+
+/** Data quality per rule and per dataset — failing rules first; filter by domain and dataset. */
+function RuleQuality({ v }: { v: DataView }) {
+  const [domain, setDomain] = useState('');
+  const [dataset, setDataset] = useState('');
+  const all = useMemo<FlatRule[]>(
+    () => v.datasets.flatMap((d) => (d.rules ?? []).map((r) => ({ ...r, datasetId: d.id, datasetName: d.name, domain: d.domain, dataUrl: d.dataUrl }))),
+    [v.datasets],
+  );
+  const domains = [...new Set(all.map((r) => r.domain).filter(Boolean))].sort();
+  const datasets = [...new Map(all.filter((r) => !domain || r.domain === domain).map((r) => [r.datasetId, r.datasetName])).entries()];
+  const rows = all
+    .filter((r) => (!domain || r.domain === domain) && (!dataset || r.datasetId === dataset))
+    .sort((a, b) => RULE_ORDER[a.status] - RULE_ORDER[b.status] || a.datasetName.localeCompare(b.datasetName) || a.name.localeCompare(b.name));
+  const failing = all.filter((r) => r.status === 'fail').length;
+  const warning = all.filter((r) => r.status === 'warn').length;
+  const tone = (s: RulePanel['status']) => (s === 'fail' ? ' err' : s === 'warn' ? ' warn' : s === 'pass' ? ' ok' : ' muted');
+  return (
+    <>
+      <div className="mon-sub">Data quality by rule <span className="mon-sub-note">dbt tests as Dagster asset checks · failing first</span></div>
+      <div className="mon-stats">
+        <Stat label="rules" value={String(all.length)} />
+        <Stat label="failing" value={String(failing)} tone={failing ? 'error' : undefined} />
+        <Stat label="warning" value={String(warning)} tone={warning ? 'warn' : undefined} />
+      </div>
+      {v.rulesDatasetsOmitted > 0 && <p className="hint">Per-rule results of {v.rulesDatasetsOmitted} more dataset(s) are not read in this response (limit); their latest status is in the dataset cards.</p>}
+      {all.length === 0 ? (
+        <p className="hint">{v.sources.tests.state === 'live' ? 'No dbt test has run in Dagster for your datasets yet.' : 'Rule results are not available while Dagster does not answer.'}</p>
+      ) : (
+        <>
+          <div className="mon-dq-row" style={{ marginBottom: 8 }}>
+            <select aria-label="Filter by domain" value={domain} onChange={(e) => { setDomain(e.target.value); setDataset(''); }}>
+              <option value="">All domains</option>
+              {domains.map((d) => <option key={d} value={d}>{d}</option>)}
+            </select>
+            <select aria-label="Filter by dataset" value={dataset} onChange={(e) => setDataset(e.target.value)}>
+              <option value="">All datasets</option>
+              {datasets.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+            </select>
+          </div>
+          <div className="mon-table">
+            <div className="mon-tr mon-th mon-tr-prule"><span>Rule</span><span>Status</span><span>Failing rows</span><span>Last run</span><span>Failing since</span><span>Trend</span></div>
+            {rows.map((r) => (
+              <div key={`${r.datasetId}-${r.name}`} className={`mon-tr mon-tr-prule${r.status === 'fail' ? ' err' : ''}`}>
+                <span className="ellip" title={r.name}>
+                  <span className="mono">{r.name}</span> <span className="badge muted">{r.type}</span>
+                  <br /><a className="mon-xlink" href={r.dataUrl}>{r.datasetName}</a> <span className="muted">· {r.domain}</span>
+                </span>
+                <span>
+                  <span className={`badge${tone(r.status)}`}>{r.status === 'not_run' ? 'not run' : r.status}{r.severity ? ` · ${r.severity}` : ''}</span>
+                </span>
+                <span>{r.status === 'fail' || r.status === 'warn' ? (r.failingRows !== undefined ? String(r.failingRows) : '—') : ''}</span>
+                <span className="muted">
+                  {r.lastRunAt ? ago(r.lastRunAt) : '—'}{' '}
+                  {r.runUrl && <a className="mon-xlink" href={r.runUrl} target="_blank" rel="noreferrer">run ↗</a>}
+                </span>
+                <span className="muted">{r.failingSince ? `${r.failingSinceExact ? '' : 'before '}${ago(r.failingSince)}` : ''}</span>
+                <span className="mono" title="oldest → newest: ✓ passed, ✗ failed">{(r.trend ?? []).map((p) => (p.passed ? '✓' : '✗')).join(' ') || '—'}</span>
+              </div>
+            ))}
+          </div>
+          <p className="hint">Failing rows are the count dbt reported for the failing test; “—” means dbt reported none (the OS does not count rows).</p>
+        </>
+      )}
+    </>
+  );
+}
+
 function DataPanels({ v }: { v: DataView }) {
   const sorted = [...v.datasets].sort((a, b) => score(b) - score(a));
   return (
@@ -258,6 +331,8 @@ function DataPanels({ v }: { v: DataView }) {
             {a.url ? <> <a className="mon-xlink" href={a.url} target="_blank" rel="noreferrer">run ↗</a></> : null}</span>
         </div>
       ))}
+      <RuleQuality v={v} />
+      <div className="mon-sub">Datasets</div>
       {sorted.length === 0 ? <p className="hint">No datasets in your scope.</p> : <div className="mon-tile-grid">{sorted.map((d) => <DatasetCard key={d.id} d={d} v={v} />)}</div>}
       <NotOffered items={v.notUpstream} />
     </div>
@@ -345,11 +420,93 @@ function PlatformPanels({ v }: { v: PlatformView }) {
   );
 }
 
+const FILE_CONV: Record<FilePanel['conversion'], string> = { extracted: 'converted', pending: 'converting', failed: 'conversion failed', not_needed: 'no conversion needed' };
+const FILE_IDX: Record<FilePanel['indexing'], string> = { indexed: 'searchable', empty: 'nothing to index', failed: 'indexing failed', stored_only: 'stored only', not_indexed: 'not indexed' };
+
+function FilesPanels({ v }: { v: FilesView }) {
+  const sm = v.summary;
+  return (
+    <div className="mon-panels">
+      <div className="mon-sub">Files <span className="mon-sub-note">Docling conversion (as recorded) · OpenSearch index rows</span></div>
+      <Sources sources={v.sources} />
+      {sm && (
+        <div className="mon-stats">
+          <Stat label="files" value={String(sm.total)} />
+          <Stat label="searchable" value={String(sm.searchable)} />
+          <Stat label="conversion failed" value={String(sm.conversionFailed)} tone={sm.conversionFailed ? 'error' : undefined} />
+          <Stat label="indexing failed" value={String(sm.indexingFailed)} tone={sm.indexingFailed ? 'error' : undefined} />
+          <Stat label="converting" value={String(sm.converting)} tone={sm.converting ? 'warn' : undefined} />
+          <Stat label="OS and OpenSearch disagree" value={v.sources.openSearch.state === 'live' ? String(sm.disagreements) : '—'} tone={sm.disagreements ? 'warn' : undefined} />
+        </div>
+      )}
+      {Object.keys(v.conversionFailuresByCode).length > 0 && (
+        <p className="hint">Conversion failures: {Object.entries(v.conversionFailuresByCode).map(([c, n]) => `${c} ×${n}`).join(' · ')}</p>
+      )}
+      {v.files.length === 0 ? (
+        <p className="hint">{v.sources.inventory.state === 'live' ? 'No files in your scope.' : 'Files could not be listed.'}</p>
+      ) : (
+        <div className="mon-table">
+          <div className="mon-tr mon-th mon-tr-pfile"><span>File</span><span>Conversion</span><span>Indexing</span><span>Rows in OpenSearch</span></div>
+          {v.files.map((f) => (
+            <div key={f.id} className={`mon-tr mon-tr-pfile${f.conversion === 'failed' || f.indexing === 'failed' ? ' err' : ''}`}>
+              <span className="ellip" title={f.name}><a className="mon-xlink" href={f.filesUrl}>{f.name}</a> <span className="muted">· {f.domain || 'personal'}</span></span>
+              <span title={f.conversionFailure?.reason ?? ''}>{FILE_CONV[f.conversion]}{f.conversionFailure?.code ? ` — ${f.conversionFailure.code}` : ''}</span>
+              <span title={f.indexingFailure?.reason ?? ''}>{FILE_IDX[f.indexing]}</span>
+              <span>{f.openSearchRows === undefined ? '—' : f.openSearchRows}{f.agreement === 'missing_in_index' ? ' · recorded indexed, none found' : f.agreement === 'unrecorded_rows' ? ' · rows without a recorded index run' : ''}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      {v.truncated && <p className="hint">Showing the files needing attention first; the counts above cover every file in your scope.</p>}
+      <NotOffered items={v.notUpstream} />
+    </div>
+  );
+}
+
+const KN_STATE: Record<NonNullable<KnowledgeView['workflows'][number]['index']>['state'], string> = { indexed: 'indexed', stale: 'stale — edited after the last index', not_indexed: 'published but not indexed', draft_not_indexed: 'draft (not indexed)' };
+
+function KnowledgePanels({ v }: { v: KnowledgeView }) {
+  const sm = v.summary;
+  return (
+    <div className="mon-panels">
+      <div className="mon-sub">Knowledge <span className="mon-sub-note">OpenSearch rows and ingest time per workflow</span></div>
+      <Sources sources={v.sources} />
+      {sm && (
+        <div className="mon-stats">
+          <Stat label="workflows" value={String(sm.total)} />
+          <Stat label="indexed" value={String(sm.indexed)} />
+          <Stat label="stale" value={String(sm.stale)} tone={sm.stale ? 'warn' : undefined} />
+          <Stat label="published, not indexed" value={String(sm.notIndexed)} tone={sm.notIndexed ? 'error' : undefined} />
+          {v.searchLatency !== undefined && <Stat label="avg search (index-wide)" value={v.searchLatency && v.searchLatency.avgMs !== null ? ms(v.searchLatency.avgMs) : '—'} />}
+        </div>
+      )}
+      {v.workflows.length === 0 ? (
+        <p className="hint">{v.sources.inventory.state === 'live' ? 'No knowledge workflows in your scope.' : 'Knowledge could not be listed.'}</p>
+      ) : (
+        <div className="mon-table">
+          <div className="mon-tr mon-th mon-tr-pfile"><span>Workflow</span><span>Index</span><span>Rows</span><span>Last indexed</span></div>
+          {v.workflows.map((w) => (
+            <div key={w.id} className={`mon-tr mon-tr-pfile${w.index?.state === 'not_indexed' ? ' err' : ''}`}>
+              <span className="ellip" title={w.title}><a className="mon-xlink" href={w.knowledgeUrl}>{w.title}</a> <span className="muted">· {w.domain || 'personal'} · {w.status}</span></span>
+              <span>{w.index ? KN_STATE[w.index.state] : '—'}</span>
+              <span>{w.index ? w.index.rows : '—'}</span>
+              <span className="muted">{w.index?.lastIndexedAt ? ago(w.index.lastIndexedAt) : '—'}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      <NotOffered items={v.notUpstream} />
+    </div>
+  );
+}
+
 export default function PanelsView({ kind }: { kind: PanelKind }) {
-  const { data, loading, error } = useApi<AgentsView | DataView | PlatformView>(`/api/monitoring/panels?view=${kind}`);
+  const { data, loading, error } = useApi<AgentsView | DataView | PlatformView | FilesView | KnowledgeView>(`/api/monitoring/panels?view=${kind}`);
   if (error) return <div className="error" style={{ marginTop: 12 }}>{error}</div>;
   if (!data) return loading ? <div className="hint" style={{ marginTop: 12 }}><span className="spin" /> Reading the components…</div> : null;
   if (data.view === 'agents') return <AgentsPanels v={data} />;
   if (data.view === 'data') return <DataPanels v={data} />;
+  if (data.view === 'files') return <FilesPanels v={data} />;
+  if (data.view === 'knowledge') return <KnowledgePanels v={data} />;
   return <PlatformPanels v={data} />;
 }

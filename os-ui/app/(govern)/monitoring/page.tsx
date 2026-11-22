@@ -157,7 +157,7 @@ export default function MonitoringPage() {
   const view: PanelKind = picked === 'platform' && !canSeeSpend ? 'agents' : picked;
   useEffect(() => {
     const v = getUrlParam('view');
-    if (v === 'agents' || v === 'data' || v === 'platform') setView(v);
+    if (v === 'agents' || v === 'data' || v === 'platform' || v === 'files' || v === 'knowledge') setView(v);
   }, []);
   const pickView = useCallback((v: PanelKind) => {
     setView(v);
@@ -230,6 +230,8 @@ export default function MonitoringPage() {
         <div className="seg mon-view-seg" role="tablist" aria-label="Monitoring view">
           <button type="button" role="tab" aria-selected={view === 'agents'} className={view === 'agents' ? 'on' : ''} onClick={() => pickView('agents')}>Agents</button>
           <button type="button" role="tab" aria-selected={view === 'data'} className={view === 'data' ? 'on' : ''} onClick={() => pickView('data')}>Data</button>
+          <button type="button" role="tab" aria-selected={view === 'files'} className={view === 'files' ? 'on' : ''} onClick={() => pickView('files')}>Files</button>
+          <button type="button" role="tab" aria-selected={view === 'knowledge'} className={view === 'knowledge' ? 'on' : ''} onClick={() => pickView('knowledge')}>Knowledge</button>
           {canSeeSpend && <button type="button" role="tab" aria-selected={view === 'platform'} className={view === 'platform' ? 'on' : ''} onClick={() => pickView('platform')}>Platform</button>}
         </div>
 
@@ -281,6 +283,8 @@ export default function MonitoringPage() {
             <PanelsView kind="data" />
           </>
         )}
+        {view === 'files' && <PanelsView kind="files" />}
+        {view === 'knowledge' && <PanelsView kind="knowledge" />}
         {canSeeSpend && view === 'platform' && (
           <>
             <PanelsView kind="platform" />

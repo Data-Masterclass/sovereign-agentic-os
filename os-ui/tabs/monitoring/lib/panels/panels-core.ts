@@ -157,3 +157,93 @@ export function splitDownstream(keys: readonly string[][], visibleKeys: readonly
   }
   return { visible, hiddenCount, hiddenByDomain };
 }
+
+// ------------------------------------------------------------------- files --
+
+export type FileConversion = 'extracted' | 'pending' | 'failed' | 'not_needed';
+export type FileIndexing = 'indexed' | 'empty' | 'failed' | 'stored_only' | 'not_indexed';
+
+export type FileFacts = {
+  mode: 'indexed' | 'stored-only';
+  extraction: { status: 'extracted' | 'pending' | 'failed' } | null;
+  outcome: { status: 'indexed' | 'empty' | 'failed'; chunks?: number } | null;
+};
+
+export function conversionOf(f: FileFacts): FileConversion {
+  return f.extraction ? f.extraction.status : 'not_needed';
+}
+
+export function indexingOf(f: FileFacts): FileIndexing {
+  if (f.mode === 'stored-only') return 'stored_only';
+  return f.outcome ? f.outcome.status : 'not_indexed';
+}
+
+/**
+ * Whether OpenSearch agrees with the recorded index outcome. `rows` is what OpenSearch itself counted
+ * for the file (null = OpenSearch did not answer, so no verdict). A file recorded as indexed with no row
+ * in OpenSearch, or recorded as not indexed with rows there, is a disagreement worth showing.
+ */
+export function indexAgreement(f: FileFacts, rows: number | null): 'agrees' | 'missing_in_index' | 'unrecorded_rows' | 'unknown' {
+  if (rows === null) return 'unknown';
+  const idx = indexingOf(f);
+  if (idx === 'indexed' && (f.outcome?.chunks ?? 1) > 0 && rows === 0) return 'missing_in_index';
+  if ((idx === 'not_indexed' || idx === 'failed' || idx === 'empty') && rows > 0) return 'unrecorded_rows';
+  return 'agrees';
+}
+
+// --------------------------------------------------------------- knowledge --
+
+export type KnowledgeIndexState = 'indexed' | 'stale' | 'not_indexed' | 'draft_not_indexed';
+
+/**
+ * A workflow's index state from OpenSearch's own numbers: `rows` and the newest `ingested_at` it stored.
+ * Stale = the workflow changed after the newest ingest. A draft is not indexed until it is published
+ * (or indexed on request), so no rows on a draft is not a fault.
+ */
+export function knowledgeIndexState(w: { status: 'draft' | 'live'; updatedAt: string }, idx: { rows: number; newest: string | null } | undefined): KnowledgeIndexState {
+  const rows = idx?.rows ?? 0;
+  if (rows === 0) return w.status === 'live' ? 'not_indexed' : 'draft_not_indexed';
+  if (idx?.newest && Date.parse(w.updatedAt) > Date.parse(idx.newest)) return 'stale';
+  return 'indexed';
+}
+
+// -------------------------------------------------------------- data rules --
+
+export type RuleType = 'not_null' | 'unique' | 'range' | 'accepted_values' | 'custom';
+export type RuleStatus = 'pass' | 'fail' | 'warn' | 'not_run';
+
+/** dbt names a generic test `<test>_<model>_<column>…`; anything not one of ours is a custom test. */
+export function ruleTypeOf(checkName: string): RuleType {
+  for (const t of ['not_null', 'unique', 'accepted_values', 'range'] as const) if (checkName.startsWith(`${t}_`)) return t;
+  return 'custom';
+}
+
+/** pass / fail / warn from Dagster's evaluation: a failed check of severity WARN is a warning, not a failure. */
+export function ruleStatusOf(ev: { passed: boolean | null; severity: 'WARN' | 'ERROR' | null } | null): RuleStatus {
+  if (!ev || ev.passed === null) return 'not_run';
+  if (ev.passed) return 'pass';
+  return ev.severity === 'WARN' ? 'warn' : 'fail';
+}
+
+/**
+ * Since when the rule has been failing: the first execution of the unbroken streak (newest first) of
+ * failures that ends at the latest run. `exact: false` when the streak reaches the end of what was
+ * read (`limit` executions) — it began at or before `since`.
+ */
+export function failingSince(executions: readonly { at: string; passed: boolean | null }[], limit: number): { since: string | null; exact: boolean } {
+  if (executions.length === 0 || executions[0].passed !== false) return { since: null, exact: true };
+  let i = 0;
+  while (i < executions.length && executions[i].passed === false) i += 1;
+  return { since: executions[i - 1].at, exact: !(i === executions.length && executions.length >= limit) };
+}
+
+export type RuleTrendPoint = { runId: string; at: string; passed: boolean; failedRows: number | null };
+
+/** Executions (newest first) → points oldest → newest; an execution with no evaluation is skipped. */
+export function ruleTrend(executions: readonly { runId: string; at: string; passed: boolean | null; failedRows?: number | null }[], points = 10): RuleTrendPoint[] {
+  return executions
+    .filter((e): e is typeof e & { passed: boolean } => e.passed !== null)
+    .map((e) => ({ runId: e.runId, at: e.at, passed: e.passed, failedRows: e.failedRows ?? null }))
+    .reverse()
+    .slice(-points);
+}
