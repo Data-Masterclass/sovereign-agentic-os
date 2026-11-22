@@ -294,13 +294,46 @@ test('known violations: python entries are stale-checked whenever python is scan
   const noPy = applyKnownViolations(rs, known, { scanned: ['npm'] });
   assert.deepEqual(noPy.stale, []); assert.deepEqual(noPy.unchecked.map((x) => x.ecosystem), ['python']); // said out loud, never silent
 });
+// Python resolves against a live index (certifi ships a new version every few weeks): its ratchet is keyed on package + licence.
+const PY = (name, licence, extra = {}) => ({ ecosystem: 'python', name, licence, reason: 'owner decision pending', ...extra });
+const pyDep = (name, version, expression) => ({ ecosystem: 'python', name, version, expression, source: 't' });
+test('python known violations: a version bump with the SAME licence stays KNOWN (a new certifi release must not turn main red)', () => {
+  const known = loadKnownViolations({ violations: [PY('certifi', 'Mozilla Public License 2.0')] }); // no version at all
+  for (const version of ['2026.11.20', '2026.12.3', '2027.1.1']) {
+    const rs = checkAll([pyDep('certifi', version, 'Mozilla Public License 2.0')], { policy, exceptions: NO_EXC, noticesText: '' });
+    const out = applyKnownViolations(rs, known, { scanned: ['python'] });
+    assert.equal(out.known.length, 1, version); assert.equal(out.newFailures.length, 0, version); assert.equal(out.stale.length, 0, version);
+  }
+  // two versions of the same package in two images are covered by the one entry
+  const two = checkAll([pyDep('pathspec', '0.12.1', 'MPL-2.0'), pyDep('pathspec', '1.0.4', 'MPL-2.0')], { policy, exceptions: NO_EXC, noticesText: '' });
+  assert.equal(applyKnownViolations(two, loadKnownViolations({ violations: [PY('pathspec', 'MPL-2.0')] }), { scanned: ['python'] }).known.length, 2);
+});
+test('python known violations: a LICENCE change fails (negative twin), and so does a different package', () => {
+  const known = loadKnownViolations({ violations: [PY('certifi', 'MPL-2.0')] });
+  const changed = checkAll([pyDep('certifi', '2026.12.3', 'MPL-2.0 AND GPL-3.0-only')], { policy, exceptions: NO_EXC, noticesText: '' });
+  const out = applyKnownViolations(changed, known, { scanned: ['python'] });
+  assert.equal(out.newFailures.length, 1); assert.equal(out.stale.length, 1);
+  const other = checkAll([pyDep('certifi', '1', 'MPL-2.0'), pyDep('newcomer', '1', 'MPL-2.0')], { policy, exceptions: NO_EXC, noticesText: '' });
+  assert.deepEqual(applyKnownViolations(other, known, { scanned: ['python'] }).newFailures.map((r) => r.name), ['newcomer']);
+});
+test('python known violations: never-allowed licences still cannot hide, and the licence is required', () => {
+  const known = loadKnownViolations({ violations: [PY('x', 'SSPL-1.0')] });
+  const rs = checkAll([pyDep('x', '1', 'SSPL-1.0')], { policy, exceptions: NO_EXC, noticesText: '' });
+  assert.equal(applyKnownViolations(rs, known, { scanned: ['python'] }).newFailures.length, 1);
+  assert.throws(() => loadKnownViolations({ violations: [PY('x', undefined)] }), /licence/);
+});
+test('npm and component entries still need an exact version (only python floats)', () => {
+  assert.throws(() => loadKnownViolations({ violations: [{ ecosystem: 'npm', name: 'x', licence: 'MIT', reason: 'r' }] }), /version/);
+  assert.throws(() => loadKnownViolations({ violations: [{ ecosystem: 'component', name: 'x', version: '*', reason: 'r' }] }), /exact version/);
+});
 test('known violations need a reason', () => {
   assert.throws(() => loadKnownViolations({ violations: [KV('x', { reason: '' })] }), /reason/);
 });
 test('the committed known-violations file: exact versions, nothing never-allowed', () => {
   const k = loadKnownViolations(JSON.parse(readFileSync(join(ROOT, 'licenses', 'known-violations.json'), 'utf8')));
   for (const v of k.violations) {
-    assert.notEqual(v.version, '*', v.name);
+    if (v.ecosystem === 'python') { assert.ok(v.licence, `${v.name}: python entries are keyed on package + licence`); assert.equal(v.version, undefined, `${v.name}: no version for python`); }
+    else assert.ok(v.version && v.version !== '*', v.name);
     assert.notEqual(evaluateExpression(v.licence ?? '', policy).verdict, 'forbid', `${v.name} (${v.licence}) is never allowed and cannot be listed`);
   }
   assert.ok(!k.violations.some((v) => /forgejo/i.test(v.name)), 'Forgejo is not deployed');
