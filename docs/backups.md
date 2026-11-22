@@ -25,7 +25,7 @@ that night's Velero backup.
 
 | Data | Where it lives | Protected by | RPO | RTO (est.) |
 |---|---|---|---|---|
-| Langfuse / Polaris (Iceberg catalog) / Featureform / LiteLLM / Dagster / Superset / OpenMetadata / MLflow / warehouse DBs | `pg` STS, PVC `data-pg-0` | pg_dump (consistent); Velero **skips** live PGDATA on purpose | ≤ 24 h (minutes if you run `pre-upgrade-backup.sh` first) | ~30 min (restore dumps into a fresh pg) |
+| Langfuse / Polaris (Iceberg catalog) / LiteLLM / Dagster / Superset / OpenMetadata / MLflow / warehouse DBs | `pg` STS, PVC `data-pg-0` | pg_dump (consistent); Velero **skips** live PGDATA on purpose | ≤ 24 h (minutes if you run `pre-upgrade-backup.sh` first) | ~30 min (restore dumps into a fresh pg) |
 | Lakehouse: Iceberg incl. the 150k mart, uploads, MLflow artifacts, **pg dumps** | MinIO, PVC `minio-data` | Velero fs-backup | ≤ 24 h | hours (kopia restore of ~20 Gi) |
 | OpenSearch: `os-*` mirrors (approvals, audit, and every artifact store after the mirror-bootstrap deploy), `files`, `knowledge`, `haystack_knowledge` | STS `opensearch-master`, PVC `opensearch-master-opensearch-master-0` (post-migration) | Velero fs-backup | ≤ 24 h | ~1 h |
 | Forgejo repos | PVC `gitea-shared-storage` | Velero fs-backup | ≤ 24 h | ~1 h |

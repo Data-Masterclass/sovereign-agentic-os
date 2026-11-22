@@ -125,24 +125,6 @@ export const TOOLS: Record<string, Tool> = {
     sso: { mode: 'none' }, // MLflow OSS has no per-user accounts; proxy+role is the gate.
     note: 'MLflow OSS is unauthenticated internally; the OS role gate is the access control.',
   },
-  featureform: {
-    key: 'featureform',
-    title: 'Featureform',
-    upstream: config.featureformUrl,
-    protocol: 'http',
-    frame: 'strip',
-    basePath: '/tools/featureform',
-    minRole: 'creator',
-    embeddable: true,
-    sso: { mode: 'none' },
-    note: 'Featureform OSS has no per-user accounts; the proxy + role gate IS the access control. creator+ (matches MLflow, its Science-tab sibling) so a creator can open it from the Layer-4 grid.',
-    // Featureform's dashboard loads root-absolute assets → blank behind the
-    // /tools prefix (no clean base-path config). Own tab.
-    ownTab: {
-      reason: 'The Featureform dashboard loads its scripts from the site root, which collides with the OS’s own routes inside the embedded frame.',
-      consoleUrl: config.featureformConsoleUrl,
-    },
-  },
   langfuse: {
     key: 'langfuse',
     title: 'Langfuse',

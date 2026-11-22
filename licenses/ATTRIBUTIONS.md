@@ -54,31 +54,41 @@ Regenerate with `node scripts/license-gate.mjs --write-attributions` after a dep
 | yargs-parser | 21.1.1 | npm | ISC | ISC |
 | zrender | 5.6.1 | npm | BSD-3-Clause | BSD-3-Clause |
 | aiohappyeyeballs | 2.7.1 | python | PSF-2.0 | Python Software Foundation License |
+| antlr4-python3-runtime | 4.13.2 | python | BSD-3-Clause | BSD |
 | babel | 2.18.0 | python | BSD-3-Clause | BSD License |
+| cffi | 2.1.1 | python | MIT-0 | MIT-0 |
 | click | 8.5.1 | python | BSD-3-Clause | BSD-3-Clause |
+| colorama | 0.4.6 | python | BSD-3-Clause | BSD License |
 | fsspec | 2026.9.0 | python | BSD-3-Clause | BSD-3-Clause |
+| gitdb | 4.0.12 | python | BSD-3-Clause | BSD License |
 | GitPython | 3.2.1 | python | BSD-3-Clause | BSD-3-Clause |
 | greenlet | 3.5.6 | python | MIT AND PSF-2.0 | MIT AND PSF-2.0 |
 | httpcore | 1.0.9 | python | BSD-3-Clause | BSD-3-Clause |
 | httpx | 0.28.1 | python | BSD-3-Clause | BSD License |
 | idna | 3.20 | python | BSD-3-Clause | BSD-3-Clause |
+| isodate | 0.7.2 | python | BSD-3-Clause | BSD License |
+| Jinja2 | 3.1.6 | python | BSD-3-Clause | BSD License |
+| lz4 | 4.4.5 | python | BSD-3-Clause | BSD License |
 | MarkupSafe | 3.0.4 | python | BSD-3-Clause | BSD-3-Clause |
 | networkx | 3.7 | python | BSD-3-Clause | BSD-3-Clause |
 | oauthlib | 4.0.1 | python | BSD-3-Clause | BSD-3-Clause |
 | pathlib_abc | 0.5.2 | python | PSF-2.0 | Python Software Foundation License |
 | protobuf | 6.33.6 | python | BSD-3-Clause | 3-Clause BSD License |
 | pyasn1 | 0.6.5 | python | BSD-2-Clause | BSD-2-Clause |
+| pyasn1_modules | 0.4.2 | python | BSD-3-Clause | BSD License |
 | pycparser | 3.12 | python | BSD-3-Clause | BSD-3-Clause |
 | Pygments | 2.21.0 | python | BSD-2-Clause | BSD-2-Clause |
 | python-dateutil | 4.0.0 | python | BSD-3-Clause | BSD-3-Clause |
 | python-dotenv | 1.2.4 | python | BSD-3-Clause | BSD-3-Clause |
-| requests-oauthlib | 2.0.0 | python | ISC | BSD License |
+| requests-oauthlib | 2.0.0 | python | BSD-3-Clause | BSD License |
 | semver | 3.1.2 | python | BSD-3-Clause | BSD-3-Clause |
 | shellingham | 1.5.4 | python | ISC | ISC License |
 | smmap | 5.0.3 | python | BSD-3-Clause | BSD License |
-| sse-starlette | 3.7.0 | python | BSD-3-Clause | BSD-3-Clause |
+| sqlparse | 0.5.5 | python | BSD-3-Clause | BSD License |
+| sse-starlette | 3.7.1 | python | BSD-3-Clause | BSD-3-Clause |
 | starlette | 1.10.0 | python | BSD-3-Clause | BSD-3-Clause |
 | typing_extensions | 4.16.0 | python | PSF-2.0 | PSF-2.0 |
+| update-checker | 0.18.0 | python | BSD-3-Clause | BSD License |
 | uvicorn | 0.54.0 | python | BSD-3-Clause | BSD-3-Clause |
 | websockets | 17.4 | python | BSD-3-Clause | BSD-3-Clause |
 | zstandard | 0.25.0 | python | BSD-3-Clause | BSD-3-Clause |

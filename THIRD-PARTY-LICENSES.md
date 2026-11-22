@@ -32,22 +32,28 @@ Release process section at the bottom).
 
 ---
 
-## Licence policy (owner decision, 2026-11-22)
+## Licence policy (owner decision, 2026-11-22, refined)
 
 One policy for the **whole repo** — OS code, images, chart components and app templates. It replaces the
 earlier "Apache/MIT/BSD/ISC only" rule. The lists live in **one file**, `licenses/policy.json`, which the
 gate (`scripts/license-gate.mjs`, run by `scripts/license-check.sh` and CI) reads.
 
-- **Allowed:** Apache-2.0, MIT, BSD-2-Clause, BSD-3-Clause, ISC, 0BSD, Zlib, Unlicense, BlueOak-1.0.0,
-  PSF-2.0 / Python-2.0, and — for data and docs — CC-BY-4.0 and CC0-1.0.
-- **Forbidden:** all copyleft (GPL, LGPL, AGPL, MPL, EPL, CDDL, EUPL) and all source-available licences
-  (BUSL/BSL, SSPL, Elastic-2.0, Commons Clause, CC-BY-NC-*, CC-BY-SA-*). A forbidden licence can never be waived.
+- **Permissive only for our own code and everything linked into it.** Allowed: Apache-2.0, MIT, MIT-0, BSD-2-Clause,
+  BSD-3-Clause (the plain "BSD License" classifier resolves to this), ISC, 0BSD, Zlib, Unlicense, BlueOak-1.0.0,
+  PostgreSQL, PSF-2.0 / Python-2.0, and — for data and docs — CC-BY-4.0 and CC0-1.0.
+- **Only through a reviewed exception:** unmodified weak-copyleft libraries (MPL, LGPL, EPL, CDDL) and unmodified
+  separate GPL programs (for example `git` in the git-http, git-daemon and backup-tools images). Each entry in
+  `licenses/exceptions.json` needs a reason, a reviewer, and the condition `unmodified-not-linked` (a library used
+  unmodified, not linked into our code) or `separate-program` (its own process; the only condition a GPL accepts).
+  The gate checks the condition.
+- **Never allowed, never excepted:** AGPL, strong copyleft linked into our code (EUPL, and GPL anywhere but as a
+  separate program), and source-available licences (BUSL/BSL, SSPL, Elastic-2.0, Commons Clause, CC-BY-NC-*, CC-BY-SA-*).
 - **Unknown or unlicensed:** fails, unless an entry in `licenses/exceptions.json` carries a reviewed reason.
 - **Dual-licensed** (`A OR B`): passes if any option is allowed; the gate prints which option it chose.
   (`A AND B` needs both allowed.)
-- **Attribution:** every dependency whose chosen licence is not Apache-2.0 or MIT needs an entry in this file or
-  in `licenses/ATTRIBUTIONS.md` (generated: `node scripts/license-gate.mjs --python-resolve --write-attributions`).
-  The gate fails when one is missing.
+- **Attribution:** every dependency whose chosen licence is not Apache-2.0 or MIT — excepted ones included — needs an
+  entry in this file or in `licenses/ATTRIBUTIONS.md` (generated: `node scripts/license-gate.mjs --python-resolve
+  --write-attributions`). The gate fails when one is missing.
 - **Known violations:** `licenses/known-violations.json` lists the findings that existed on main when the
   policy began. It is a ratchet, not a waiver: each run prints them, `--strict` fails on them, a new finding
   fails, and an entry whose package is fixed is reported STALE and fails — so the list only shrinks.
@@ -154,7 +160,6 @@ models, so run tracing is done explicitly with the `langfuse` SDK.
 | Component | Version | License (SPDX) | Full text | Notes |
 |---|---|---|---|---|
 | JupyterHub | Layer 4 (off) | BSD-3-Clause | `licenses/BSD-3-Clause.txt` | Notebooks |
-| **Featureform** | **v0.12.1** | **MPL-2.0** | `licenses/MPL-2.0.txt` | **OPTIONAL** feature store. File-level copyleft. Source repo + commit: `licenses/source-offer.md` |
 | MLflow | Layer 4 (off) | Apache-2.0 | `licenses/Apache-2.0.txt` | Experiment tracking / model registry |
 | KServe | Layer 4 (off) | Apache-2.0 | `licenses/Apache-2.0.txt` | Model serving / inference |
 
@@ -194,8 +199,6 @@ models, so run tracing is done explicitly with the `langfuse` SDK.
 - **Forgejo (GPL-3.0-or-later)** — bundled as a separate, unmodified service. Exact
   source repo, version, and commit, plus the written offer for the air-gap bundle, are
   recorded in `licenses/source-offer.md`.
-- **Featureform (MPL-2.0)** — optional; exact source repo/version/commit in
-  `licenses/source-offer.md`.
 
 The air-gap bundle (per `stackit/packaging.md`) ships `sbom.cdx.json`, this manifest,
 and the whole `licenses/` directory alongside the mirrored images.
@@ -213,5 +216,5 @@ On every release:
 4. Update `licenses/source-offer.md` if a copyleft component's pinned version changed.
 
 The CI gate (`.github/workflows/license-gate.yml`) fails the build if a component's
-license is forbidden by `licenses/policy.json` (copyleft and source-available licences), is unknown without a
-reviewed exception, or lacks an attribution entry.
+license is never allowed by `licenses/policy.json` (AGPL, source-available), is copyleft without a reviewed
+exception, is unknown without a reviewed exception, or lacks an attribution entry.

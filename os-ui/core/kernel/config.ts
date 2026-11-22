@@ -798,7 +798,6 @@ export const config = {
   // In-cluster Service defaults; point at port-forwards locally. -------------
   jupyterhubUrl: base(env('JUPYTERHUB_URL', 'http://proxy-public:80')),
   mlflowUrl: base(env('MLFLOW_URL', 'http://mlflow:5000')),
-  featureformUrl: base(env('FEATUREFORM_URL', 'http://featureform:7878')),
 
   // Direct Trino coordinates (reachability probes).
   trinoHost: env('TRINO_HOST', 'trino'),
@@ -889,7 +888,6 @@ export const config = {
   // Layer-4 consoles (browser-reachable; default to local port-forwards).
   jupyterhubConsoleUrl: base(consoleEnv('JUPYTERHUB_CONSOLE_URL', 'http://localhost:8000')),
   mlflowConsoleUrl: base(consoleEnv('MLFLOW_CONSOLE_URL', 'http://localhost:5000')),
-  featureformConsoleUrl: base(consoleEnv('FEATUREFORM_CONSOLE_URL', 'http://localhost:7878')),
 
   // ---------------------------------------------------------------------------
   // THE APP-BUILDING HARNESS (stream H). Appended as one block at the end of the

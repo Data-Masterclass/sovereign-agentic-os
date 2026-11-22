@@ -10,203 +10,133 @@
       "name": "@img/sharp-libvips-darwin-arm64",
       "version": "*",
       "licence": "LGPL-3.0-or-later",
-      "reason": "Found by the first run of the 2026-11-22 policy on main; owner decision pending (replace, remove or except-with-reason). LGPL-3.0-or-later is forbidden"
+      "reason": "Found by the first run of the 2026-11-22 policy on main; owner decision pending (replace, remove or except-with-reason). LGPL-3.0-or-later is copyleft: allowed only through a reviewed entry in licenses/exceptions.json"
     },
     {
       "ecosystem": "npm",
       "name": "@img/sharp-libvips-darwin-x64",
       "version": "*",
       "licence": "LGPL-3.0-or-later",
-      "reason": "Found by the first run of the 2026-11-22 policy on main; owner decision pending (replace, remove or except-with-reason). LGPL-3.0-or-later is forbidden"
+      "reason": "Found by the first run of the 2026-11-22 policy on main; owner decision pending (replace, remove or except-with-reason). LGPL-3.0-or-later is copyleft: allowed only through a reviewed entry in licenses/exceptions.json"
     },
     {
       "ecosystem": "npm",
       "name": "@img/sharp-libvips-linux-arm",
       "version": "*",
       "licence": "LGPL-3.0-or-later",
-      "reason": "Found by the first run of the 2026-11-22 policy on main; owner decision pending (replace, remove or except-with-reason). LGPL-3.0-or-later is forbidden"
+      "reason": "Found by the first run of the 2026-11-22 policy on main; owner decision pending (replace, remove or except-with-reason). LGPL-3.0-or-later is copyleft: allowed only through a reviewed entry in licenses/exceptions.json"
     },
     {
       "ecosystem": "npm",
       "name": "@img/sharp-libvips-linux-arm64",
       "version": "*",
       "licence": "LGPL-3.0-or-later",
-      "reason": "Found by the first run of the 2026-11-22 policy on main; owner decision pending (replace, remove or except-with-reason). LGPL-3.0-or-later is forbidden"
+      "reason": "Found by the first run of the 2026-11-22 policy on main; owner decision pending (replace, remove or except-with-reason). LGPL-3.0-or-later is copyleft: allowed only through a reviewed entry in licenses/exceptions.json"
     },
     {
       "ecosystem": "npm",
       "name": "@img/sharp-libvips-linux-ppc64",
       "version": "*",
       "licence": "LGPL-3.0-or-later",
-      "reason": "Found by the first run of the 2026-11-22 policy on main; owner decision pending (replace, remove or except-with-reason). LGPL-3.0-or-later is forbidden"
+      "reason": "Found by the first run of the 2026-11-22 policy on main; owner decision pending (replace, remove or except-with-reason). LGPL-3.0-or-later is copyleft: allowed only through a reviewed entry in licenses/exceptions.json"
     },
     {
       "ecosystem": "npm",
       "name": "@img/sharp-libvips-linux-riscv64",
       "version": "*",
       "licence": "LGPL-3.0-or-later",
-      "reason": "Found by the first run of the 2026-11-22 policy on main; owner decision pending (replace, remove or except-with-reason). LGPL-3.0-or-later is forbidden"
+      "reason": "Found by the first run of the 2026-11-22 policy on main; owner decision pending (replace, remove or except-with-reason). LGPL-3.0-or-later is copyleft: allowed only through a reviewed entry in licenses/exceptions.json"
     },
     {
       "ecosystem": "npm",
       "name": "@img/sharp-libvips-linux-s390x",
       "version": "*",
       "licence": "LGPL-3.0-or-later",
-      "reason": "Found by the first run of the 2026-11-22 policy on main; owner decision pending (replace, remove or except-with-reason). LGPL-3.0-or-later is forbidden"
+      "reason": "Found by the first run of the 2026-11-22 policy on main; owner decision pending (replace, remove or except-with-reason). LGPL-3.0-or-later is copyleft: allowed only through a reviewed entry in licenses/exceptions.json"
     },
     {
       "ecosystem": "npm",
       "name": "@img/sharp-libvips-linux-x64",
       "version": "*",
       "licence": "LGPL-3.0-or-later",
-      "reason": "Found by the first run of the 2026-11-22 policy on main; owner decision pending (replace, remove or except-with-reason). LGPL-3.0-or-later is forbidden"
+      "reason": "Found by the first run of the 2026-11-22 policy on main; owner decision pending (replace, remove or except-with-reason). LGPL-3.0-or-later is copyleft: allowed only through a reviewed entry in licenses/exceptions.json"
     },
     {
       "ecosystem": "npm",
       "name": "@img/sharp-libvips-linuxmusl-arm64",
       "version": "*",
       "licence": "LGPL-3.0-or-later",
-      "reason": "Found by the first run of the 2026-11-22 policy on main; owner decision pending (replace, remove or except-with-reason). LGPL-3.0-or-later is forbidden"
+      "reason": "Found by the first run of the 2026-11-22 policy on main; owner decision pending (replace, remove or except-with-reason). LGPL-3.0-or-later is copyleft: allowed only through a reviewed entry in licenses/exceptions.json"
     },
     {
       "ecosystem": "npm",
       "name": "@img/sharp-libvips-linuxmusl-x64",
       "version": "*",
       "licence": "LGPL-3.0-or-later",
-      "reason": "Found by the first run of the 2026-11-22 policy on main; owner decision pending (replace, remove or except-with-reason). LGPL-3.0-or-later is forbidden"
+      "reason": "Found by the first run of the 2026-11-22 policy on main; owner decision pending (replace, remove or except-with-reason). LGPL-3.0-or-later is copyleft: allowed only through a reviewed entry in licenses/exceptions.json"
     },
     {
       "ecosystem": "npm",
       "name": "@img/sharp-wasm32",
       "version": "*",
       "licence": "Apache-2.0 AND LGPL-3.0-or-later AND MIT",
-      "reason": "Found by the first run of the 2026-11-22 policy on main; owner decision pending (replace, remove or except-with-reason). LGPL-3.0-or-later is forbidden"
+      "reason": "Found by the first run of the 2026-11-22 policy on main; owner decision pending (replace, remove or except-with-reason). LGPL-3.0-or-later is copyleft: allowed only through a reviewed entry in licenses/exceptions.json"
     },
     {
       "ecosystem": "npm",
       "name": "@img/sharp-win32-arm64",
       "version": "*",
       "licence": "Apache-2.0 AND LGPL-3.0-or-later",
-      "reason": "Found by the first run of the 2026-11-22 policy on main; owner decision pending (replace, remove or except-with-reason). LGPL-3.0-or-later is forbidden"
+      "reason": "Found by the first run of the 2026-11-22 policy on main; owner decision pending (replace, remove or except-with-reason). LGPL-3.0-or-later is copyleft: allowed only through a reviewed entry in licenses/exceptions.json"
     },
     {
       "ecosystem": "npm",
       "name": "@img/sharp-win32-ia32",
       "version": "*",
       "licence": "Apache-2.0 AND LGPL-3.0-or-later",
-      "reason": "Found by the first run of the 2026-11-22 policy on main; owner decision pending (replace, remove or except-with-reason). LGPL-3.0-or-later is forbidden"
+      "reason": "Found by the first run of the 2026-11-22 policy on main; owner decision pending (replace, remove or except-with-reason). LGPL-3.0-or-later is copyleft: allowed only through a reviewed entry in licenses/exceptions.json"
     },
     {
       "ecosystem": "npm",
       "name": "@img/sharp-win32-x64",
       "version": "*",
       "licence": "Apache-2.0 AND LGPL-3.0-or-later",
-      "reason": "Found by the first run of the 2026-11-22 policy on main; owner decision pending (replace, remove or except-with-reason). LGPL-3.0-or-later is forbidden"
-    },
-    {
-      "ecosystem": "python",
-      "name": "antlr4-python3-runtime",
-      "version": "*",
-      "licence": "BSD",
-      "reason": "Found by the first run of the 2026-11-22 policy on main; owner decision pending (replace, remove or except-with-reason). BSD is not on the allow list or the forbid list"
-    },
-    {
-      "ecosystem": "python",
-      "name": "colorama",
-      "version": "*",
-      "licence": "BSD License",
-      "reason": "Found by the first run of the 2026-11-22 policy on main; owner decision pending (replace, remove or except-with-reason). BSD License is not on the allow list or the forbid list"
-    },
-    {
-      "ecosystem": "python",
-      "name": "isodate",
-      "version": "*",
-      "licence": "BSD License",
-      "reason": "Found by the first run of the 2026-11-22 policy on main; owner decision pending (replace, remove or except-with-reason). BSD License is not on the allow list or the forbid list"
-    },
-    {
-      "ecosystem": "python",
-      "name": "Jinja2",
-      "version": "*",
-      "licence": "BSD License",
-      "reason": "Found by the first run of the 2026-11-22 policy on main; owner decision pending (replace, remove or except-with-reason). BSD License is not on the allow list or the forbid list"
+      "reason": "Found by the first run of the 2026-11-22 policy on main; owner decision pending (replace, remove or except-with-reason). LGPL-3.0-or-later is copyleft: allowed only through a reviewed entry in licenses/exceptions.json"
     },
     {
       "ecosystem": "python",
       "name": "orjson",
       "version": "*",
       "licence": "MPL-2.0 AND (Apache-2.0 OR MIT)",
-      "reason": "Found by the first run of the 2026-11-22 policy on main; owner decision pending (replace, remove or except-with-reason). MPL-2.0 is forbidden"
+      "reason": "Found by the first run of the 2026-11-22 policy on main; owner decision pending (replace, remove or except-with-reason). MPL-2.0 is copyleft: allowed only through a reviewed entry in licenses/exceptions.json"
     },
     {
       "ecosystem": "python",
       "name": "pathspec",
       "version": "*",
       "licence": "Mozilla Public License 2.0",
-      "reason": "Found by the first run of the 2026-11-22 policy on main; owner decision pending (replace, remove or except-with-reason). MPL-2.0 is forbidden"
-    },
-    {
-      "ecosystem": "python",
-      "name": "python-dateutil",
-      "version": "*",
-      "licence": "BSD License AND Apache Software License",
-      "reason": "Found by the first run of the 2026-11-22 policy on main; owner decision pending (replace, remove or except-with-reason). BSD License is not on the allow list or the forbid list"
-    },
-    {
-      "ecosystem": "python",
-      "name": "sqlparse",
-      "version": "*",
-      "licence": "BSD License",
-      "reason": "Found by the first run of the 2026-11-22 policy on main; owner decision pending (replace, remove or except-with-reason). BSD License is not on the allow list or the forbid list"
+      "reason": "Found by the first run of the 2026-11-22 policy on main; owner decision pending (replace, remove or except-with-reason). MPL-2.0 is copyleft: allowed only through a reviewed entry in licenses/exceptions.json"
     },
     {
       "ecosystem": "python",
       "name": "tqdm",
       "version": "*",
       "licence": "MPL-2.0 AND MIT",
-      "reason": "Found by the first run of the 2026-11-22 policy on main; owner decision pending (replace, remove or except-with-reason). MPL-2.0 is forbidden"
-    },
-    {
-      "ecosystem": "python",
-      "name": "update-checker",
-      "version": "*",
-      "licence": "BSD License",
-      "reason": "Found by the first run of the 2026-11-22 policy on main; owner decision pending (replace, remove or except-with-reason). BSD License is not on the allow list or the forbid list"
+      "reason": "Found by the first run of the 2026-11-22 policy on main; owner decision pending (replace, remove or except-with-reason). MPL-2.0 is copyleft: allowed only through a reviewed entry in licenses/exceptions.json"
     },
     {
       "ecosystem": "python",
       "name": "psycopg2-binary",
       "version": "*",
       "licence": "GNU Library or Lesser General Public License",
-      "reason": "Found by the first run of the 2026-11-22 policy on main; owner decision pending (replace, remove or except-with-reason). LGPL is forbidden"
+      "reason": "Found by the first run of the 2026-11-22 policy on main; owner decision pending (replace, remove or except-with-reason). LGPL is copyleft: allowed only through a reviewed entry in licenses/exceptions.json"
     },
     {
       "ecosystem": "python",
       "name": "certifi",
       "version": "*",
       "licence": "Mozilla Public License 2.0",
-      "reason": "Found by the first run of the 2026-11-22 policy on main; owner decision pending (replace, remove or except-with-reason). MPL-2.0 is forbidden"
-    },
-    {
-      "ecosystem": "python",
-      "name": "gitdb",
-      "version": "*",
-      "licence": "BSD License",
-      "reason": "Found by the first run of the 2026-11-22 policy on main; owner decision pending (replace, remove or except-with-reason). BSD License is not on the allow list or the forbid list"
-    },
-    {
-      "ecosystem": "python",
-      "name": "cffi",
-      "version": "*",
-      "licence": "MIT-0",
-      "reason": "Found by the first run of the 2026-11-22 policy on main; owner decision pending (replace, remove or except-with-reason). MIT-0 is not on the allow list or the forbid list"
-    },
-    {
-      "ecosystem": "python",
-      "name": "pyasn1_modules",
-      "version": "*",
-      "licence": "BSD License",
-      "reason": "Found by the first run of the 2026-11-22 policy on main; owner decision pending (replace, remove or except-with-reason). BSD License is not on the allow list or the forbid list"
+      "reason": "Found by the first run of the 2026-11-22 policy on main; owner decision pending (replace, remove or except-with-reason). MPL-2.0 is copyleft: allowed only through a reviewed entry in licenses/exceptions.json"
     },
     {
       "ecosystem": "python",
@@ -216,39 +146,11 @@
       "reason": "Found by the first run of the 2026-11-22 policy on main; owner decision pending (replace, remove or except-with-reason). Artistic License is not on the allow list or the forbid list"
     },
     {
-      "ecosystem": "python",
-      "name": "lz4",
-      "version": "*",
-      "licence": "BSD License",
-      "reason": "Found by the first run of the 2026-11-22 policy on main; owner decision pending (replace, remove or except-with-reason). BSD License is not on the allow list or the forbid list"
-    },
-    {
-      "ecosystem": "component",
-      "name": "PostgreSQL",
-      "version": "*",
-      "licence": "PostgreSQL",
-      "reason": "Found by the first run of the 2026-11-22 policy on main; owner decision pending (replace, remove or except-with-reason). PostgreSQL is not on the allow list or the forbid list"
-    },
-    {
       "ecosystem": "component",
       "name": "Forgejo",
       "version": "*",
       "licence": "GPL-3.0-or-later",
-      "reason": "Found by the first run of the 2026-11-22 policy on main; owner decision pending (replace, remove or except-with-reason). GPL-3.0-or-later is forbidden"
-    },
-    {
-      "ecosystem": "component",
-      "name": "git (backup-tools, git-daemon and git-http images)",
-      "version": "*",
-      "licence": "GPL-2.0-only",
-      "reason": "Found by the first run of the 2026-11-22 policy on main; owner decision pending (replace, remove or except-with-reason). GPL-2.0-only is forbidden"
-    },
-    {
-      "ecosystem": "component",
-      "name": "Featureform",
-      "version": "*",
-      "licence": "MPL-2.0",
-      "reason": "Found by the first run of the 2026-11-22 policy on main; owner decision pending (replace, remove or except-with-reason). MPL-2.0 is forbidden"
+      "reason": "Found by the first run of the 2026-11-22 policy on main; owner decision pending (replace, remove or except-with-reason). GPL-3.0-or-later is copyleft: allowed only through a reviewed entry in licenses/exceptions.json"
     }
   ]
 }

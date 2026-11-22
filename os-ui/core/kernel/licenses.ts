@@ -62,7 +62,6 @@ export const COMPONENTS: Component[] = [
   // ---- Science (Layer 4) ----
   { name: 'JupyterHub', license: 'BSD-3-Clause', layer: 'Science', note: 'Multi-user notebooks.' },
   { name: 'MLflow', license: 'Apache-2.0', layer: 'Science', note: 'Experiment tracking + model registry.' },
-  { name: 'Featureform', license: 'MPL-2.0', layer: 'Science', note: 'Feature store / virtual feature engineering.' },
   { name: 'KServe', license: 'Apache-2.0', layer: 'Science', note: 'Model inference serving.' },
 
   // ---- OS UI tier ----

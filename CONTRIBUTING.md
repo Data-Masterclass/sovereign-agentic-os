@@ -2,17 +2,19 @@
 
 Thanks for your interest in contributing! The core is **Apache-2.0** (see `LICENSE`).
 Bundled third-party components keep their own licenses (see `THIRD-PARTY-LICENSES.md`);
-please don't add a dependency whose license the policy forbids — CI enforces it
+please don't add a dependency whose license the policy does not allow — CI enforces it
 (`.github/workflows/license-gate.yml`, `scripts/license-gate.mjs`).
 
-**Licence policy (owner decision, 2026-11-22), for the whole repo — code, images, chart components, app templates:**
-allowed are Apache-2.0, MIT, BSD-2-Clause, BSD-3-Clause, ISC, 0BSD, Zlib, Unlicense, BlueOak-1.0.0,
-PSF-2.0/Python-2.0, and CC-BY-4.0 / CC0-1.0 for data and docs. Forbidden are all copyleft (GPL, LGPL, AGPL, MPL,
-EPL, CDDL, EUPL) and all source-available licences (BUSL/BSL, SSPL, Elastic-2.0, Commons Clause, CC-BY-NC-*,
-CC-BY-SA-*). An unknown or missing licence fails unless `licenses/exceptions.json` has a reviewed entry with a
-reason. A dual-licensed package passes if one option is allowed. Anything other than Apache-2.0/MIT needs an
-attribution entry (`THIRD-PARTY-LICENSES.md` or `licenses/ATTRIBUTIONS.md`). The single source is
-`licenses/policy.json`.
+**Licence policy (owner decision, 2026-11-22, refined), for the whole repo — code, images, chart components, app templates:**
+permissive only for our own code and everything linked into it — Apache-2.0, MIT, MIT-0, BSD-2/3-Clause (plain
+"BSD License" = BSD), ISC, 0BSD, Zlib, Unlicense, BlueOak-1.0.0, PostgreSQL, PSF-2.0/Python-2.0, and CC-BY-4.0 / CC0-1.0 for
+data and docs. Unmodified weak-copyleft libraries (MPL, LGPL) and unmodified separate GPL programs (for example `git`
+in an image) are allowed only through a reviewed entry in `licenses/exceptions.json` with a reason and the condition
+`unmodified-not-linked` or `separate-program`; the gate checks it. Never allowed, never excepted: AGPL, strong copyleft
+linked into our code, and source-available licences (BUSL/BSL, SSPL, Elastic-2.0, Commons Clause, CC-BY-NC-*, CC-BY-SA-*).
+An unknown or missing licence fails unless an exception carries a reviewed reason. A dual-licensed package passes if one
+option is allowed. Anything other than Apache-2.0/MIT needs an attribution entry (`THIRD-PARTY-LICENSES.md` or
+`licenses/ATTRIBUTIONS.md`). The single source is `licenses/policy.json`.
 
 > **Status:** this is a **pre-beta / experimental test release**. Interfaces, chart values,
 > and schema may change without notice.
@@ -92,7 +94,7 @@ labels are not — never rename a module to chase a label.
 Never copy upstream source into this repo — components are consumed as **pinned images and
 subcharts**. Adding or upgrading one requires, in the same pull request: a row in
 `THIRD-PARTY-LICENSES.md`, the license text in `licenses/`, and a regenerated `sbom.cdx.json`. The licence must be
-allowed by `licenses/policy.json`; a copyleft or source-available component is not added.
+allowed by `licenses/policy.json`; copyleft needs a reviewed exception, AGPL and source-available components are never added.
 Must modify upstream? Use `components/<name>/patches/*.patch`, applied at image build, and
 prefer an upstream pull request.
 

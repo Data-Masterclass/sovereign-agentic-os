@@ -31,22 +31,6 @@ rest of the platform. It is not statically or dynamically linked into any Data
 Masterclass code. Distributing it alongside our Apache-2.0 work is **aggregation**
 under GPLv3 §5; the GPL applies to Forgejo only.
 
-## Featureform — MPL-2.0 (optional; off by default)
-
-- Component: Featureform (virtual feature store, Layer 4 / Science — `ml.enabled=false`)
-- License: MPL-2.0 (full text: `licenses/MPL-2.0.txt`)
-- Upstream source repository: https://github.com/featureform/featureform
-- Distributed version: latest stable release **v0.12.1**
-  (tag `v0.12.2` also exists upstream; pin the tag actually shipped in a given
-  release of this product)
-- Source commit (v0.12.1): **9ac091f4e377f79312fca393da86694d71ffb5b4**
-- Source commit (v0.12.2): **d42305e0a0e05550e612730a4b436c92386c3e3d**
-- Source tarball (corresponding source):
-  https://github.com/featureform/featureform/archive/refs/tags/v0.12.1.tar.gz
-
-MPL-2.0 is file-level copyleft: it obliges source availability for MPL-covered
-files only, and is satisfied by pointing to the unmodified upstream source above.
-Featureform is an optional component (Layer 4 Science, disabled by default).
 
 ---
 

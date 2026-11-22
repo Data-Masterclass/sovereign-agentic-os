@@ -53,7 +53,6 @@
       "core/infra/opa-decision.ts :: config.opaUrl",
       "core/infra/opa-decision.ts :: fetch: fetch(`${config.opaUrl}/v1/config`, { signal: ctrl.signal, cache: 'no-store' })",
       "core/infra/tool-proxy.ts :: config.mlflowUrl",
-      "core/infra/tool-proxy.ts :: config.featureformUrl",
       "core/infra/tool-proxy.ts :: config.langfuseUrl",
       "core/infra/tool-proxy.ts :: config.litellmUrl",
       "core/infra/tool-proxy.ts :: config.opensearchDashboardsInternalUrl",
