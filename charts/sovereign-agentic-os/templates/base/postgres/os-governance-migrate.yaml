@@ -1,0 +1,83 @@
+{{- /*
+  os_governance schema migration — the PRODUCTION CALLER of the migrations. OFF unless
+  `postgres.governance.enabled` (the same switch as the bootstrap hook).
+
+  WHY: `os-governance-bootstrap` (weight 6) creates the roles and the empty database and expressly
+  never runs the migrations ("they run as the owner"). Before this Job nothing did, so on a release
+  with the governance store enabled `os_governance.grant_revision` never existed, os-ui answered 503
+  for the `os-grants` bundle, OPA never became Ready and every OPA-checked action answered
+  `opa-unreachable` (dev, 21-22 Nov 2026).
+
+  WHAT: runs `worker/migrate-governance.mjs` from the os-ui image (the same source tree and
+  node_modules the worker runs): node-pg-migrate's runner, then pg-boss's own `migrate`
+  (migrate.ts `migrateGovernance`), AS THE OWNER login from `postgres.governance.owner.secretName`.
+  The entrypoint refuses a superuser. Idempotent under node-pg-migrate's advisory lock, so every
+  upgrade re-runs it and applies only what is new.
+
+  FAILS LOUDLY: a failed migration fails this Job (backoffLimit below), which fails `helm upgrade`
+  and the dev.yml deploy. The Job is kept on failure (`before-hook-creation,hook-succeeded` only),
+  so `kubectl logs job/os-governance-migrate` still has the reason.
+
+  ORDER: post-install,post-upgrade, weight 7 — after os-governance-bootstrap (6), which created the
+  owner role and the database. Needs only Postgres; os-ui need not be Ready.
+*/}}
+{{- if and .Values.postgres.enabled (.Values.postgres.governance | default dict).enabled .Values.osUI.enabled }}
+{{- $pg := .Values.postgres }}
+{{- $gov := $pg.governance }}
+{{- $u := .Values.osUI }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: os-governance-migrate
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "os-governance-migrate") | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "7"
+    # NOT hook-failed: a failed run stays for `kubectl logs`.
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 6
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        {{- include "soa.selectorLabels" (dict "ctx" . "component" "os-governance-migrate") | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- include "soa.podSecurityContext" . | nindent 8 }}
+        runAsUser: 1000
+      containers:
+        - name: migrate
+          image: "{{ $u.image.repository }}:{{ $u.image.tag }}"
+          imagePullPolicy: IfNotPresent      # locally-built image, loaded into kind
+          securityContext:
+            {{- include "soa.containerSecurityContext" . | nindent 12 }}
+            readOnlyRootFilesystem: true
+          workingDir: /app/src
+          command: ["node", "--experimental-strip-types", "--no-warnings", "worker/migrate-governance.mjs"]
+          env:
+            # The OWNER login only (never the bootstrap admin, the runtime or the queue login).
+            - name: OS_GOVERNANCE_OWNER_DB_USERNAME
+              valueFrom: { secretKeyRef: { name: {{ $gov.owner.secretName }}, key: username } }
+            - name: OS_GOVERNANCE_OWNER_DB_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ $gov.owner.secretName }}, key: password } }
+            - name: OS_GOVERNANCE_OWNER_DATABASE_URL
+              value: postgresql://$(OS_GOVERNANCE_OWNER_DB_USERNAME):$(OS_GOVERNANCE_OWNER_DB_PASSWORD)@{{ include "soa.pgHost" . }}/{{ $gov.database }}
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { cpu: 500m, memory: 384Mi }
+      volumes:
+        - name: tmp
+          emptyDir: {}
+{{- end }}

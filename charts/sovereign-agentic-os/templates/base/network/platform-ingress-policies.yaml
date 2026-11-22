@@ -35,7 +35,7 @@
     postgres :5432       Polaris (relational-jdbc metastore: server and its bootstrap initContainers),
                          polaris-init, Dagster (webserver, daemon, code location, run pods), Langfuse (web,
                          worker), LiteLLM (proxy, migrations), pg-dump, postgres-reconcile,
-                         os-governance-bootstrap; CNPG: the operator namespace and the instances
+                         os-governance-bootstrap, os-governance-migrate; CNPG: the operator namespace and the instances
     object storage :9000 trino, polaris, data-runner, Langfuse (web, worker), marts-init,
                          polaris-init, object-storage-init, pg-dump, OpenSearch (snapshot repo)
     valkey :6379         Langfuse (web, worker), LiteLLM
@@ -206,7 +206,7 @@ spec:
     - Ingress
   ingress:
     - from:
-        {{- include "soa.np.peers" (dict "components" (list "polaris" "polaris-init" "pg-dump" "postgres-reconcile" "os-governance-bootstrap") "extra" (concat $dagsterPods $langfusePods $litellmPods)) | nindent 8 }}
+        {{- include "soa.np.peers" (dict "components" (list "polaris" "polaris-init" "pg-dump" "postgres-reconcile" "os-governance-bootstrap" "os-governance-migrate") "extra" (concat $dagsterPods $langfusePods $litellmPods)) | nindent 8 }}
       ports:
         - { protocol: TCP, port: 5432 }
     {{- if $cnpg }}

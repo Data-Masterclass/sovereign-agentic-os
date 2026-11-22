@@ -218,6 +218,14 @@ spec:
       securityContext:
         {{- include "soa.podSecurityContext" . | nindent 8 }}
         runAsUser: 1000
+        {{- if $persist }}
+        {{- /* The `opa-bundles` PVC is root-owned when first provisioned; OPA runs as 1000 and
+             persists its bundles under /var/opa/bundles (`mkdir /var/opa/bundles: permission
+             denied` without this). Kubernetes' documented fix: fsGroup makes the volume group-
+             writable for the pod; OnRootMismatch skips the recursive chown once the root is right. */}}
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+        {{- end }}
       containers:
         - name: opa
           image: "{{ $opa.image.repository }}:{{ $opa.image.tag }}@{{ $opa.image.digest }}"
