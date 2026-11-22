@@ -120,6 +120,26 @@ diagnose() {
   k -n "$PLATFORM_NS" describe pods -l "app.kubernetes.io/component=$2" >&2 || true
   k -n "$PLATFORM_NS" logs -l "app.kubernetes.io/component=$2" --all-containers --tail=50 >&2 || true
   k get networkpolicy -A >&2 || true
+  k -n "$PLATFORM_NS" get configmap egress-proxy-config -o yaml >&2 || true
+  # What the container sees at its config path, with the same user and volume (the container itself exits at once).
+  cat <<YAML | k apply -f - >/dev/null || true
+apiVersion: v1
+kind: Pod
+metadata: { name: diag-volume, namespace: ${PLATFORM_NS} }
+spec:
+  restartPolicy: Never
+  securityContext: { runAsNonRoot: true, runAsUser: 65534, seccompProfile: { type: RuntimeDefault } }
+  containers:
+    - name: look
+      image: sovereign-os/egress-proxy:sf-e2e
+      imagePullPolicy: Never
+      command: ["sh", "-c", "id; ls -laL /etc/tinyproxy; head -3 /etc/tinyproxy/tinyproxy.conf; tinyproxy -v; tinyproxy -d -c /etc/tinyproxy/tinyproxy.conf 2>&1 | head -5"]
+      securityContext: { allowPrivilegeEscalation: false, capabilities: { drop: [ALL] }, readOnlyRootFilesystem: true }
+      volumeMounts: [{ name: config, mountPath: /etc/tinyproxy, readOnly: true }, { name: tmp, mountPath: /tmp }]
+  volumes: [{ name: config, configMap: { name: egress-proxy-config } }, { name: tmp, emptyDir: {} }]
+YAML
+  sleep 8
+  k -n "$PLATFORM_NS" logs diag-volume >&2 || true
 }
 k -n "$PLATFORM_NS" rollout status deployment/os-git-http --timeout=180s || { diagnose os-git-http os-ui; exit 1; }
 k -n "$PLATFORM_NS" rollout status deployment/egress-proxy --timeout=180s || { diagnose egress-proxy egress-proxy; exit 1; }
