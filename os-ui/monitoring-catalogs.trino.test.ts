@@ -3,7 +3,7 @@
  *
  * FEATURE:    The OS reads the catalogs a real Trino serves and flags a connection whose catalog is gone
  * USER STORY: As a platform engineer I trust that the Data sources list is what Trino itself answers.
- * ARCHITECTURE: runs on the lakehouse harness (tests/lakehouse: the chart's Trino 476). The query goes
+ * ARCHITECTURE: lives beside `monitoring-sources.ts` (the one place allowed to know several tabs); runs on the lakehouse harness (tests/lakehouse: the chart's Trino 476). The query goes
  *   to Trino through the harness client; the OS code under test is `readTrinoCatalogs` and
  *   `dataSourceRows`. Negative twins: a catalog Trino does not serve is not listed, and a connection
  *   pointing at it is the warning.
@@ -13,7 +13,7 @@ import assert from 'node:assert/strict';
 import { readTrinoCatalogs } from '@core/adapters/trino/catalogs';
 import { dataSourceRows } from '@tabs/monitoring/lib/data-sources-core';
 // @ts-ignore -- the harness client is plain JS (tests/lakehouse/lib.mjs), no type declarations
-import { run } from '../../../../tests/lakehouse/lib.mjs';
+import { run } from '../tests/lakehouse/lib.mjs';
 
 const skip = process.env.LH_TRINO_URL ? false : 'LH_TRINO_URL not set (start tests/lakehouse/up.sh)';
 const trino = (sql: string): Promise<{ rows: unknown[][] }> => run(sql, { user: 'it_catalogs', source: 'os-ui-it' });
