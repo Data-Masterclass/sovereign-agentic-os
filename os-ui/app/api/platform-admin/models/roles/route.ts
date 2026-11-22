@@ -16,6 +16,7 @@ import { NextResponse } from 'next/server';
 import { adminCtx, fail } from '../../_ctx';
 import { authorize } from '@core/infra/governed';
 import { audit } from '@tabs/admin/lib/audit';
+import { getPublicUser } from '@tabs/admin/lib/users';
 import { readGatewayCatalog } from '@core/models/gateway-catalog';
 import { liveRoleIo } from '@core/models/role-live';
 import { ROLE_NAMES, ModelMappingError } from '@core/models/role-mapping';
@@ -81,7 +82,9 @@ export async function PUT(req: Request) {
     }
     let report;
     try {
-      report = await applyRoleMapping(liveRoleIo(), body.roles, user.id);
+      // The commit's author is the admin's real name and email (like every other OS commit), not just the id.
+      const email = (await getPublicUser(user.id))?.email;
+      report = await applyRoleMapping(liveRoleIo(), body.roles, { id: user.id, name: user.name, email });
     } catch (e) {
       if (e instanceof ModelMappingError) {
         return NextResponse.json({ error: e.message, code: e.code, ...(e.role ? { role: e.role } : {}), ...(e.model ? { model: e.model } : {}) }, { status: e.status });

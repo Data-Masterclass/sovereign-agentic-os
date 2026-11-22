@@ -45,8 +45,8 @@ export function platformRoleStore(opts: GitStoreOptions = {}): RoleStore {
         }
       }
       files.set(MODELS_FILE, serializeModelsYml(mapping));
-      const { author } = authorFor(actor);
-      return commitSubtree(PLATFORM_REPO, `${OS_DIR}/`, files, { ...opts, author, message: `models: update the role mapping (strong → ${mapping['sovereign-strong']}, worker → ${mapping['sovereign-worker']}, embedding → ${mapping['sovereign-embedding']})`, trailers: { 'OS-Actor': actor.id } });
+      const { author, synthesized } = authorFor(actor);
+      return commitSubtree(PLATFORM_REPO, `${OS_DIR}/`, files, { ...opts, author, message: `models: update the role mapping (strong → ${mapping['sovereign-strong']}, worker → ${mapping['sovereign-worker']}, embedding → ${mapping['sovereign-embedding']})`, trailers: { 'OS-Actor': actor.id, ...(synthesized ? { 'OS-Author-Email': 'synthesized' } : {}) } });
     },
   };
 }

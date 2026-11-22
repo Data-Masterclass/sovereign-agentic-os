@@ -21,10 +21,11 @@ import { ModelMappingError, type RoleMapping } from '@core/models/role-mapping';
 const MAP: RoleMapping = { 'sovereign-strong': 'big', 'sovereign-worker': 'small', 'sovereign-embedding': 'emb' };
 function io(opts: Partial<RoleReconcileIo> & { aliases?: Record<string, string>; catalog?: string[]; file?: RoleMapping | null } = {}) {
   const { aliases, catalog, file, ...over } = opts;
-  const state = { aliases: { ...(aliases ?? {}) }, file: file === undefined ? MAP : file, writes: [] as Record<string, string>[], commits: [] as { m: RoleMapping; by: string }[], audits: [] as { action: string; detail?: unknown }[] };
+  const state = { aliases: { ...(aliases ?? {}) }, file: file === undefined ? MAP : file, writes: [] as Record<string, string>[], commits: [] as { m: RoleMapping; by: string }[], revision: 'r0', audits: [] as { action: string; detail?: unknown }[] };
   const r: RoleReconcileIo = {
     readMapping: async () => state.file,
-    writeMapping: async (m, by) => { state.file = m; state.commits.push({ m, by }); return { sha: 'abc', changed: true }; },
+    writeMapping: async (m, by) => { state.file = m; state.commits.push({ m, by: by.id }); state.revision = `r${state.commits.length}`; return { sha: 'abc', changed: true }; },
+    readRevision: async () => state.revision,
     catalog: async () => ({ ok: true, data: catalog ?? ['big', 'small', 'emb', 'other'] }),
     readAliases: async () => ({ ok: true, data: { ...state.aliases } }),
     writeAliases: async (a) => { state.writes.push(a); state.aliases = { ...a }; return { ok: true, data: {} }; },
@@ -114,4 +115,53 @@ test('NEGATIVE TWIN: if the gateway refuses the write the report says so (not ap
   const rep = await reconcileRoleMapping(r);
   assert.deepEqual([rep.ok, rep.state], [false, 'unreadable']);
   assert.match(String(rep.error), /config file/);
+});
+
+// ---------------------------------------------------------------- serialisation + compare-and-set ---
+
+const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+for (const withRevision of [true, false]) test(`RACE (${withRevision ? 'revision moves' : 'revision constant: only the in-process queue protects'}): an admin apply and a timer pass never interleave — the pass cannot revert the fresh edit or log false drift`, async () => {
+  const lines: string[] = [];
+  const { r, state } = io({ log: (l) => lines.push(l), ...(withRevision ? {} : { readRevision: async () => 'fixed' }) });
+  await reconcileRoleMapping(r); // gateway in sync with MAP
+  let reads = 0;
+  const slow: RoleReconcileIo = {
+    ...r,
+    writeMapping: async (m, by) => { await wait(5); return r.writeMapping(m, by); },
+    // the first gateway read (the timer pass, which started first) is slow: without the queue it lands AFTER the apply wrote
+    readAliases: async () => { if (++reads === 1) await wait(80); return r.readAliases(); },
+  };
+  const applying = applyRoleMapping(slow, { ...MAP, 'sovereign-strong': 'other' }, 'admin1');
+  const timer = reconcileRoleMapping(slow); // fires while the apply is in flight
+  const [, pass] = await Promise.all([applying, timer]);
+  assert.equal(state.aliases['sovereign-strong'], 'other', "the admin's edit stands");
+  assert.deepEqual(pass.drift, [], 'no false drift');
+  assert.equal(state.audits.length, 0, 'nothing audited as a foreign edit');
+  assert.ok(!lines.some((l) => /repaired/.test(l)));
+});
+
+test('CAS: a pass whose mapping is no longer the head (another replica committed) writes nothing and says so', async () => {
+  const { r, state } = io({ aliases: { 'sovereign-strong': 'other' } });
+  let calls = 0;
+  r.readRevision = async () => (++calls === 1 ? 'r1' : 'r2'); // moved between the read and the write
+  const rep = await reconcileRoleMapping(r);
+  assert.deepEqual([rep.ok, rep.state], [false, 'unreadable']);
+  assert.match(String(rep.error), /changed while this check ran/);
+  assert.equal(state.writes.length, 0);
+  assert.equal(state.audits.length, 0, 'a stale pass reports no drift');
+  assert.equal(state.aliases['sovereign-strong'], 'other');
+});
+
+test('a role at a missing catalog model is NOT enforced: its alias is not written, a warning is raised', async () => {
+  const lines: string[] = [];
+  const { r, state } = io({ aliases: { 'sovereign-strong': 'old-model' }, catalog: ['small', 'emb'], log: (l) => lines.push(l) });
+  const rep = await reconcileRoleMapping(r);
+  assert.equal(rep.state, 'blocked');
+  assert.equal(state.aliases['sovereign-strong'], 'old-model', 'the missing role keeps whatever it had');
+  assert.ok(!Object.values(state.aliases).includes('big'), 'the missing model is never written as an alias');
+  assert.ok(!('sovereign-default' in state.aliases) || state.aliases['sovereign-default'] === 'small');
+  assert.equal(state.aliases['sovereign-worker'], 'small', 'the healthy roles are still enforced');
+  assert.ok(lines.some((l) => /WARNING/.test(l) && /sovereign-strong → big/.test(l)));
+  assert.deepEqual(rep.missing, [{ role: 'sovereign-strong', model: 'big' }]);
 });

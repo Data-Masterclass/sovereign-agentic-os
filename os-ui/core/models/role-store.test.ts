@@ -56,3 +56,20 @@ test('NEGATIVE TWIN: a file that does not parse is a typed error on read, never 
   await commitSubtree(PLATFORM_REPO, 'os/', new Map([[MODELS_FILE, 'roles: nonsense\n'], ['os/other-writer.yml', 'keep: me\n']]), { reposDir, author: { name: 'x', email: 'x@x' }, message: 'break it' });
   await assert.rejects(platformRoleStore({ reposDir }).read(), (e: unknown) => (e as { code?: string }).code === 'invalid_mapping');
 });
+
+test('the live IO commits as the admin: real name and email, no synthesized mailbox; the head revision moves with each commit', async () => {
+  const { liveRoleIo } = await import('@core/models/role-live');
+  const io = liveRoleIo({ reposDir });
+  const before = await io.readRevision();
+  await io.writeMapping({ ...M, 'sovereign-worker': 'w2' }, { id: 'admin1', name: 'Ada Admin', email: 'ada@example.com' });
+  const head = (await log(PLATFORM_REPO, { reposDir, limit: 1 }))[0];
+  assert.deepEqual([head.author.name, head.author.email], ['Ada Admin', 'ada@example.com']);
+  assert.equal(head.trailers['OS-Author-Email'], undefined);
+  assert.notEqual(await io.readRevision(), before);
+  assert.equal(await io.readRevision(), head.sha);
+  // an admin without a known email is marked as synthesized, never silently invented
+  await io.writeMapping({ ...M, 'sovereign-worker': 'w3' }, { id: 'admin2' });
+  const syn = (await log(PLATFORM_REPO, { reposDir, limit: 1 }))[0];
+  assert.match(syn.author.email, /@os\.local$/);
+  assert.equal(syn.trailers['OS-Author-Email'], 'synthesized');
+});

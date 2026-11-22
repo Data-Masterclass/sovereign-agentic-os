@@ -16,7 +16,8 @@ import { record as audit } from '@core/policy/audit';
 import { readRouterAliases } from '@core/infra/litellm-admin';
 import { adminPost } from '@core/infra/litellm-write';
 import { readGatewayCatalog } from '@core/models/gateway-catalog';
-import type { GitStoreOptions } from '@core/infra/git-store';
+import { log as gitLog, type GitStoreOptions } from '@core/infra/git-store';
+import { PLATFORM_REPO } from '@core/infra/repo-layout';
 import { platformRoleStore } from '@core/models/role-store';
 import type { RoleReconcileIo } from '@core/models/role-reconcile';
 
@@ -24,7 +25,8 @@ export function liveRoleIo(opts: GitStoreOptions = {}): RoleReconcileIo {
   const store = platformRoleStore(opts);
   return {
     readMapping: () => store.read(),
-    writeMapping: (mapping, by) => store.write(mapping, { id: by }),
+    writeMapping: (mapping, by) => store.write(mapping, by),
+    readRevision: async () => (await gitLog(PLATFORM_REPO, { ...opts, limit: 1 }))[0]?.sha ?? null,
     async catalog() {
       const r = await readGatewayCatalog();
       return r.ok ? { ok: true, data: r.data.models.map((m) => m.name) } : r;
