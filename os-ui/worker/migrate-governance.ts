@@ -12,11 +12,10 @@
  *     both idempotent under node-pg-migrate's advisory lock.
  *   - Connects with `OS_GOVERNANCE_OWNER_DATABASE_URL` only (the chart builds it from the OWNER
  *     Secret). os-ui and the worker never hold that credential: they run as the DML-only login.
- *   - Refuses a SUPERUSER login: the schema must be owned by the NOSUPERUSER, NOCREATEROLE owner or
+ *   - Refuses a SUPERUSER login (`refuseSuperuser`, enforced in the adapter): the schema must be owned by the NOSUPERUSER, NOCREATEROLE owner or
  *     the audit log's guarantees do not hold against the OS's own credentials.
  *   - Any failure throws; `migrate-governance.mjs` exits non-zero, the Job fails, `helm upgrade` fails.
  */
-import pg from 'pg';
 import { migrateGovernance } from '@core/adapters/postgres/migrate';
 
 export const OWNER_URL_ENV = 'OS_GOVERNANCE_OWNER_DATABASE_URL';
@@ -26,20 +25,7 @@ export async function main(env: NodeJS.ProcessEnv = process.env): Promise<string
   const databaseUrl = (env[OWNER_URL_ENV] ?? '').trim();
   if (!databaseUrl) throw new Error(`${OWNER_URL_ENV} is not set: the governance migrations run as the owner login only`);
 
-  const probe = new pg.Client({ connectionString: databaseUrl });
-  await probe.connect();
-  try {
-    const who = await probe.query<{ rolname: string; rolsuper: boolean }>(
-      'select rolname, rolsuper from pg_roles where rolname = current_user',
-    );
-    if (who.rows[0]?.rolsuper) {
-      throw new Error(`refusing to migrate as a superuser (${who.rows[0].rolname}): use the NOSUPERUSER owner login`);
-    }
-  } finally {
-    await probe.end();
-  }
-
-  const r = await migrateGovernance({ databaseUrl, direction: 'up' });
+  const r = await migrateGovernance({ databaseUrl, direction: 'up', refuseSuperuser: true });
   if (!r.ok) throw new Error(`governance migrations failed: ${r.reason} — ${r.detail}`);
   return r.value;
 }
