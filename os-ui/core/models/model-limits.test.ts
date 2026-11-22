@@ -5,6 +5,7 @@
  * USER STORY: As a platform admin I map `sovereign-strong` to a model; the OS reads that model's
  *             limits from LiteLLM's `/model/info` and sizes input and output from them, with no
  *             hand-set env. An explicit `MODEL_CONTEXT_WINDOWS` still wins.
+ * ARCHITECTURE: pure tests of `model-limits.ts` and `context-windows.ts`; the catalog table is set and reset around each case.
  * NEGATIVE TWINS: a catalog without limits gives the defaults AND a warning; an override beats the
  *             catalog; a catalog value is never applied to a different model.
  */

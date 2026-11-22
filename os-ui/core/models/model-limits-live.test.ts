@@ -2,6 +2,8 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  *
  * FEATURE:    The held catalog limits follow LiteLLM, are refreshed at most once a minute, and a failed read is loud and keeps the last good table.
+ * USER STORY: As a platform admin a remap of a role is followed within a minute, and a gateway blip never silently resets the limits.
+ * ARCHITECTURE: `ensureModelLimitsFresh` with an injected IO; the real `/model/info` read is proved in `reasoning-budget.e2e.test.ts`.
  */
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
