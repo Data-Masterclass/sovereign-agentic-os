@@ -5,7 +5,7 @@
  * USER STORY: As a user I want to type what I need on Home and have the OS answer or do it, ask me
  *             before it changes anything, explain a refusal plainly, and link me to what it made.
  * ARCHITECTURE:
- *   - Client shell over `tabs/home/lib/chat-view.ts` (all decisions live there, unit-tested).
+ *   - Client shell over `core/ui/chat-view.ts` (all decisions live there, unit-tested).
  *   - Talks to `/api/assistant/chat` (steps stream as newline-delimited JSON) and
  *     `/api/assistant/confirm`; both run the governed MCP dispatch as the signed-in user.
  *   - A write arrives as `pending[]` and runs only when the user presses Run on its card.
@@ -18,14 +18,14 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import Markdown from '@core/ui/Markdown';
 import AskArtifacts from '@core/ui/AskArtifacts';
 import { parseArtifacts, type ChatArtifact } from '@core/runtime/chat-artifacts';
-import ConfirmCard, { sendDecision, type Pending } from '@tabs/home/ui/ConfirmCard';
+import ConfirmCard, { sendDecision, type Pending } from '@core/ui/ConfirmCard';
 import {
   STARTERS,
   parseStreamLines,
   plainError,
   type StreamEvent,
   type TypedError,
-} from '@tabs/home/lib/chat-view';
+} from '@core/ui/chat-view';
 
 type Step = { name: string; isError: boolean; parked?: boolean; error?: TypedError };
 type Summary = { id: string; title: string; updatedAt: string; messageCount: number };

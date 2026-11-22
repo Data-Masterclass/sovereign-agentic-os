@@ -198,7 +198,7 @@ test('UI: the drawer shows the SAME confirm card as Home and decides against the
   const drawer = read('core/ui/OsAssistant.tsx');
   const home = read('tabs/home/ui/HomeChat.tsx');
   for (const [name, src] of [['OsAssistant', drawer], ['HomeChat', home]] as const) {
-    assert.match(src, /import ConfirmCard, \{[^}]*sendDecision[^}]*\} from '@tabs\/home\/ui\/ConfirmCard'/, `${name} uses the shared card`);
+    assert.match(src, /import ConfirmCard, \{[^}]*sendDecision[^}]*\} from '@core\/ui\/ConfirmCard'/, `${name} uses the shared card`);
     assert.doesNotMatch(src, /hc-confirm/, `${name} must not render its own copy of the card`);
   }
   assert.match(drawer, /<ConfirmCard /);
