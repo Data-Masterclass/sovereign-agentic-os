@@ -2166,6 +2166,37 @@ osUI:
       resources:
         requests: { cpu: 100m, memory: 256Mi }
         limits:   { cpu: "1",  memory: 1Gi }
+    # SOFTWARE FACTORY CI (go-live 1): the per-commit checks of an app run as Tekton PipelineRuns.
+    # OFF by default because it needs Tekton Pipelines and Triggers installed first, as separately
+    # versioned platform components: `bash components/tekton/install.sh` (pins in
+    # components/tekton/versions.env). With it off, a check can not run and says so (the record
+    # carries the reason; a deploy of a golden-path app is refused), it is never reported green.
+    # This replaces the hand-made sandbox Job and its SOFTWARE_SANDBOX_* settings (retired).
+    tekton:
+      enabled: false
+      # The build namespace: Pod Security `restricted`, default-deny network, a quota.
+      namespace: agentic-build
+      # Where a run clones the domain repository from. Empty = the in-cluster `os-git-http` Service.
+      gitBaseUrl: ""
+      # Where the npm registry is reached from. Empty = the platform egress proxy; its allowlist
+      # (`egressHosts` below) is the only way out for the app's code.
+      httpProxy: ""
+      egressHosts:
+        - registry.npmjs.org
+      timeouts:
+        pipeline: 30m
+      workspace:
+        storage: 2Gi
+        storageClassName: ""
+      quota: { pods: "20", cpu: "6", memory: 12Gi, pvcs: "30" }
+      # Run history: the newest N PipelineRuns are kept (the OS copies each verdict and its logs
+      # into the app record, so nothing is lost by pruning).
+      history: { keep: 30, schedule: "17 * * * *" }
+      pruner:
+        image: ""             # default pins ghcr.io/tektoncd/plumbing/tkn by digest
+      # How long os-ui waits for a run when a caller needs the answer now (verify_app_gates,
+      # request_deploy). The run continues after; a caller that times out gets `running`.
+      waitSeconds: 180
   image:
     repository: sovereign-os/os-ui    # built locally, loaded into kind
     tag: "0.1.0"

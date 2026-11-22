@@ -1,0 +1,638 @@
+{{- $tk := ((.Values.osUI.software | default dict).tekton | default dict) }}
+{{- if $tk.enabled | default false }}
+{{- /*
+  SOFTWARE FACTORY CI (go-live 1, 2026-11-22): the per-commit checks of an app run as Tekton PipelineRuns.
+
+  WHAT IS HERE AND WHAT IS NOT. Tekton Pipelines and Triggers are separate, pinned platform components
+  installed as upstream documents it (components/tekton/install.sh); their CRDs must exist before this
+  template renders. This file is only what the OS owns around them:
+    - the build namespace (Pod Security `restricted`), a ServiceAccount for runs, the vendored Catalog
+      tasks (git-clone, trivy-scanner; files/tekton/tasks/, byte-for-byte);
+    - the EventListener the OS posts to (CEL-validated), its TriggerBinding and TriggerTemplate, which
+      create ONE PipelineRun per commit. The Pipeline itself is the app's own `.tekton/pipeline.yaml`,
+      resolved from git at the exact commit by Tekton's git resolver;
+    - RBAC: os-ui may read runs, task runs, pods and their logs, and cancel a run (patch). It may not
+      create a PipelineRun: only the EventListener's ServiceAccount can, so os-ui cannot start an
+      arbitrary pipeline;
+    - NetworkPolicies, quota and the run-history pruner.
+  NOTHING of Tekton is re-implemented: no queue, no runner, no status store of ours.
+*/}}
+{{- $ns := $tk.namespace | default "agentic-build" }}
+{{- $platform := .Release.Namespace }}
+{{- $git := $tk.gitBaseUrl | default (printf "http://os-git-http.%s.svc.cluster.local:9419/git" $platform) }}
+{{- $proxy := $tk.httpProxy | default (printf "http://egress-proxy.%s.svc.cluster.local:3128" $platform) }}
+{{- $keep := $tk.history.keep | default 30 }}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ $ns }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    soa.dev/purpose: software-checks
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: app-checks
+  namespace: {{ $ns }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+# The run's pods never need the Kubernetes API.
+automountServiceAccountToken: false
+---
+{{- range $f := list "git-clone" "trivy-scanner" }}
+{{- $t := fromYaml ($.Files.Get (printf "files/tekton/tasks/%s.yaml" $f)) }}
+{{- $_ := set $t.metadata "namespace" $ns }}
+{{ toYaml $t }}
+---
+{{- end }}
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: app-checks
+  namespace: {{ $ns }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  hard:
+    {{- /* A bound on concurrent runs: a burst of pushes queues behind Kubernetes' own scheduler and the quota. */}}
+    pods: {{ ($tk.quota | default dict).pods | default "20" | quote }}
+    requests.cpu: {{ ($tk.quota | default dict).cpu | default "6" | quote }}
+    requests.memory: {{ ($tk.quota | default dict).memory | default "12Gi" | quote }}
+    persistentvolumeclaims: {{ ($tk.quota | default dict).pvcs | default "30" | quote }}
+---
+# ---- the listener the OS posts to ------------------------------------------------------------------
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: app-checks-listener
+  namespace: {{ $ns }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: app-checks-listener
+  namespace: {{ $ns }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: tekton-triggers-eventlistener-roles
+subjects:
+  - kind: ServiceAccount
+    name: app-checks-listener
+    namespace: {{ $ns }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: app-checks-listener-{{ $ns }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: tekton-triggers-eventlistener-clusterroles
+subjects:
+  - kind: ServiceAccount
+    name: app-checks-listener
+    namespace: {{ $ns }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: app-checks-listener-runs
+  namespace: {{ $ns }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+rules:
+  {{- /* The one thing only the listener may do: create a PipelineRun (and its PVC workspace). */}}
+  - apiGroups: ["tekton.dev"]
+    resources: ["pipelineruns"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: app-checks-listener-runs
+  namespace: {{ $ns }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: app-checks-listener-runs
+subjects:
+  - kind: ServiceAccount
+    name: app-checks-listener
+    namespace: {{ $ns }}
+---
+apiVersion: triggers.tekton.dev/v1beta1
+kind: TriggerBinding
+metadata:
+  name: app-checks
+  namespace: {{ $ns }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  params:
+    - { name: slug, value: $(body.slug) }
+    - { name: domain, value: $(body.domain) }
+    - { name: repo, value: $(body.repo) }
+    - { name: sha, value: $(body.sha) }
+    - { name: runName, value: $(body.runName) }
+    - { name: trigger, value: $(body.trigger) }
+---
+apiVersion: triggers.tekton.dev/v1beta1
+kind: TriggerTemplate
+metadata:
+  name: app-checks
+  namespace: {{ $ns }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  params:
+    - name: slug
+    - name: domain
+    - name: repo
+    - name: sha
+    - name: runName
+    - name: trigger
+  resourcetemplates:
+    - apiVersion: tekton.dev/v1
+      kind: PipelineRun
+      metadata:
+        name: $(tt.params.runName)
+        labels:
+          app.kubernetes.io/managed-by: os-ui
+          soa.dev/kind: app-checks
+          soa.dev/app: $(tt.params.slug)
+          soa.dev/domain: $(tt.params.domain)
+          soa.dev/sha: $(tt.params.sha)
+          soa.dev/trigger: $(tt.params.trigger)
+      spec:
+        # The pipeline of record is the app's own file, at exactly this commit.
+        pipelineRef:
+          resolver: git
+          params:
+            - { name: url, value: "{{ $git }}/$(tt.params.repo)" }
+            - { name: revision, value: $(tt.params.sha) }
+            - { name: pathInRepo, value: "apps/$(tt.params.slug)/.tekton/pipeline.yaml" }
+        params:
+          - { name: slug, value: $(tt.params.slug) }
+          - { name: repoUrl, value: "{{ $git }}/$(tt.params.repo)" }
+          - { name: sha, value: $(tt.params.sha) }
+          - { name: httpProxy, value: {{ $proxy | quote }} }
+          - { name: noProxy, value: "127.0.0.1,localhost,.svc,.cluster.local" }
+        taskRunTemplate:
+          serviceAccountName: app-checks
+          podTemplate:
+            automountServiceAccountToken: false
+            securityContext:
+              runAsNonRoot: true
+              runAsUser: 65532
+              runAsGroup: 65532
+              fsGroup: 65532
+              seccompProfile: { type: RuntimeDefault }
+        timeouts:
+          pipeline: {{ ($tk.timeouts | default dict).pipeline | default "30m" | quote }}
+        workspaces:
+          - name: source
+            volumeClaimTemplate:
+              spec:
+                accessModes: ["ReadWriteOnce"]
+                {{- with ($tk.workspace | default dict).storageClassName }}
+                storageClassName: {{ . | quote }}
+                {{- end }}
+                resources:
+                  requests:
+                    storage: {{ ($tk.workspace | default dict).storage | default "2Gi" | quote }}
+---
+apiVersion: triggers.tekton.dev/v1beta1
+kind: EventListener
+metadata:
+  name: app-checks
+  namespace: {{ $ns }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  serviceAccountName: app-checks-listener
+  triggers:
+    - name: app-checks
+      interceptors:
+        - ref:
+            name: cel
+          params:
+            - name: filter
+              value: >-
+                body.slug.matches('^[a-z0-9][a-z0-9-]{0,62}$') &&
+                body.domain.matches('^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$') &&
+                body.repo.matches('^[A-Za-z0-9][A-Za-z0-9._-]{0,63}[.]git$') &&
+                body.sha.matches('^[0-9a-f]{40}$') &&
+                body.runName.matches('^chk-[a-z0-9-]{1,50}$') &&
+                body.trigger in ['push', 'button', 'mcp', 'deploy']
+      bindings:
+        - ref: app-checks
+      template:
+        ref: app-checks
+  resources:
+    kubernetesResource:
+      spec:
+        template:
+          spec:
+            securityContext:
+              runAsNonRoot: true
+              seccompProfile: { type: RuntimeDefault }
+            containers:
+              - resources:
+                  requests: { cpu: 25m, memory: 64Mi }
+                  limits: { cpu: 250m, memory: 256Mi }
+                securityContext:
+                  allowPrivilegeEscalation: false
+                  readOnlyRootFilesystem: true
+                  capabilities: { drop: ["ALL"] }
+---
+# ---- os-ui: read runs, cancel a run; never create one ---------------------------------------------
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: os-ui-software-checks
+  namespace: {{ $ns }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["tekton.dev"]
+    resources: ["pipelineruns", "taskruns"]
+    verbs: ["get", "list", "watch"]
+  {{- /* `patch` is how a superseded run is cancelled: spec.status: Cancelled, Tekton's own mechanism. */}}
+  - apiGroups: ["tekton.dev"]
+    resources: ["pipelineruns"]
+    verbs: ["patch"]
+  {{- /* Per-gate logs come from the step containers of a run's pods. Read-only. */}}
+  - apiGroups: [""]
+    resources: ["pods", "pods/log"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: os-ui-software-checks
+  namespace: {{ $ns }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: os-ui-software-checks
+subjects:
+  - kind: ServiceAccount
+    name: os-ui
+    namespace: {{ $platform }}
+---
+# ---- run history: keep the newest {{ $keep }} PipelineRuns (the OS copies each verdict into App.checks) ---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: app-checks-pruner
+  namespace: {{ $ns }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: app-checks-pruner
+  namespace: {{ $ns }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["tekton.dev"]
+    resources: ["pipelineruns"]
+    verbs: ["get", "list", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: app-checks-pruner
+  namespace: {{ $ns }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: app-checks-pruner
+subjects:
+  - kind: ServiceAccount
+    name: app-checks-pruner
+    namespace: {{ $ns }}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: app-checks-prune
+  namespace: {{ $ns }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  schedule: {{ ($tk.history).schedule | default "17 * * * *" | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      ttlSecondsAfterFinished: 3600
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/component: checks-pruner
+        spec:
+          serviceAccountName: app-checks-pruner
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            seccompProfile: { type: RuntimeDefault }
+          containers:
+            - name: tkn
+              image: {{ ($tk.pruner | default dict).image | default "ghcr.io/tektoncd/plumbing/tkn@sha256:a898cceda07606683d072e613aba96236954e2e5ed0fdcefd62d9da309806e44" | quote }}
+              # `tkn` as documented: delete all but the newest N PipelineRuns (a run's TaskRuns, pods and PVC go with it).
+              command: ["tkn", "pipelinerun", "delete", "--namespace", {{ $ns | quote }}, "--keep", {{ $keep | quote }}, "--force"]
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities: { drop: ["ALL"] }
+              resources:
+                requests: { cpu: 10m, memory: 32Mi }
+                limits: { cpu: 100m, memory: 128Mi }
+{{- if .Values.networkPolicies.defaultDeny }}
+---
+# ---- network: default deny, then exactly what each step needs ------------------------------------
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: checks-default-deny
+  namespace: {{ $ns }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: checks-allow-dns
+  namespace: {{ $ns }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+        # Gardener/SKE CoreDNS listens on 8053 (see egress-policies.yaml).
+        - { protocol: UDP, port: 8053 }
+        - { protocol: TCP, port: 8053 }
+---
+{{- /* The app's code (npm ci, tests, next build) runs in the `gates` pod and reaches the npm registry ONLY
+       through the platform's egress proxy, whose allowlist names the registry. Nothing else: not the git
+       server, not the listener, not the API server, not another pod. */}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: checks-gates-egress
+  namespace: {{ $ns }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      tekton.dev/pipelineTask: gates
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $platform }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/component: egress-proxy
+      ports:
+        - { protocol: TCP, port: 3128 }
+---
+{{- /* The clone step (a Catalog task with fixed arguments, not app code) reads the domain repository. */}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: checks-fetch-egress
+  namespace: {{ $ns }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      tekton.dev/pipelineTask: fetch
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $platform }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/component: os-ui
+      ports:
+        - { protocol: TCP, port: 9419 }
+---
+{{- /* Trivy fetches its vulnerability database from an OCI registry: public addresses on 443 only, the same
+       posture as the deploy scanner (software-scanner-egress). */}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: checks-scan-egress
+  namespace: {{ $ns }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      tekton.dev/pipelineTask: scan
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10, 169.254.0.0/16]
+      ports:
+        - { protocol: TCP, port: 443 }
+---
+{{- /* The listener: ingress from os-ui only; egress to the Kubernetes API server only (it creates the run). */}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: checks-listener
+  namespace: {{ $ns }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      eventlistener: app-checks
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $platform }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/component: os-ui
+      ports:
+        - { protocol: TCP, port: 8080 }
+  egress:
+    - ports:
+        - { protocol: TCP, port: 443 }
+        - { protocol: TCP, port: 6443 }
+      {{- $api := ((.Values.networkPolicies | default dict).apiserver | default dict) }}
+      {{- $cidrs := $api.cidrs | default list }}
+      {{- if not $cidrs }}
+      {{- $slices := lookup "discovery.k8s.io/v1" "EndpointSlice" "default" "" }}
+      {{- range ($slices.items | default list) }}
+      {{- if eq (index (.metadata.labels | default dict) "kubernetes.io/service-name") "kubernetes" }}
+      {{- range (.endpoints | default list) }}{{- range .addresses }}{{- $cidrs = append $cidrs (printf "%s/32" .) }}{{- end }}{{- end }}
+      {{- end }}
+      {{- end }}
+      {{- end }}
+      {{- if $cidrs }}
+      {{- $cidrs = concat $cidrs ($api.extraCidrs | default list) }}
+      to:
+        {{- range ($cidrs | uniq) }}
+        - ipBlock: { cidr: {{ . | quote }} }
+        {{- end }}
+      {{- end }}
+---
+{{- /* The pruner talks to the API server only. */}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: checks-pruner
+  namespace: {{ $ns }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: checks-pruner
+  policyTypes: [Egress]
+  egress:
+    - ports:
+        - { protocol: TCP, port: 443 }
+        - { protocol: TCP, port: 6443 }
+---
+{{- /* os-ui (platform namespace, default-deny egress) may reach the listener. */}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-os-ui-to-checks-listener
+  namespace: {{ $platform }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: os-ui
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $ns }}
+          podSelector:
+            matchLabels:
+              eventlistener: app-checks
+      ports:
+        - { protocol: TCP, port: 8080 }
+---
+{{- /* The git server accepts the clone step of a run from the build namespace, and nothing else there. */}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-checks-fetch-to-git-http
+  namespace: {{ $platform }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: os-ui
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $ns }}
+          podSelector:
+            matchLabels:
+              tekton.dev/pipelineTask: fetch
+      ports:
+        - { protocol: TCP, port: 9419 }
+---
+{{- /* The resolver pods (tekton-pipelines-resolvers) read the app's pipeline file from the git server. */}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-tekton-resolvers-to-git-http
+  namespace: {{ $platform }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: os-ui
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: tekton-pipelines-resolvers
+      ports:
+        - { protocol: TCP, port: 9419 }
+---
+{{- /* The egress proxy takes requests from the gates pods of the build namespace. */}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-checks-gates-to-egress-proxy
+  namespace: {{ $platform }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: egress-proxy
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $ns }}
+          podSelector:
+            matchLabels:
+              tekton.dev/pipelineTask: gates
+      ports:
+        - { protocol: TCP, port: 3128 }
+{{- end }}
+{{- end }}
