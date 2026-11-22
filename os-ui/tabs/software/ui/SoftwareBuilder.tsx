@@ -6,6 +6,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import CodePanel from '@tabs/software/ui/CodePanel';
+import ChecksPanel from '@tabs/software/ui/ChecksPanel';
 import LifecycleActions from '@core/ui/lifecycle/LifecycleActions';
 import GitHeadBadge from '@core/ui/git/GitHeadBadge';
 import CloneRepository from '@core/ui/git-clone/CloneRepository';
@@ -797,6 +798,9 @@ function DeveloperSurface({
           </p>
         )}
       </div>
+
+      {/* Checks — per commit, from Tekton; the same run a push and verify_app_gates start. */}
+      <ChecksPanel appId={app.id} canRun={canEditCode} />
 
       {/* Code — BELOW, full width (code needs the space). */}
       <div style={{ marginTop: 16 }}>
