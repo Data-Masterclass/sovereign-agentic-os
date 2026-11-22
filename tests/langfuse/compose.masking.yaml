@@ -3,7 +3,7 @@
 #
 #   docker compose -f tests/langfuse/compose.yaml -f tests/langfuse/compose.masking.yaml -p lfmask up -d --wait
 #   cd os-ui && TRACING_E2E=1 node --experimental-test-module-mocks --import ./scripts/test-setup.mjs \
-#     --test --test-concurrency=1 core/infra/masking.e2e.test.ts core/infra/masking-gateway.e2e.test.ts
+#     --test --test-concurrency=1 tabs/agents/lib/engine/masking.e2e.test.ts tabs/agents/lib/engine/masking-gateway.e2e.test.ts
 services:
   litellm-content:
     restart: always

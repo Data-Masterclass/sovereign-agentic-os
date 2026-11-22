@@ -41,9 +41,10 @@
  */
 
 import { config } from '@core/kernel/config';
-import { getSettings, ensureHydrated as ensureSettingsHydrated } from '@tabs/admin/lib/settings';
+import { getSettings, ensureHydrated as ensureSettingsHydrated, __setForTests as setSettingsForTests } from '@tabs/admin/lib/settings';
 import { noteDeprecatedAlias } from '@core/models/role-mapping';
 import { roleMappingActive } from '@core/models/role-reconcile';
+import { DEFAULT_MASKING, type MaskingPolicy } from '@core/infra/trace-masking';
 
 export type ModelRole = 'reasoning' | 'standard' | 'tools' | 'embeddings' | 'coder';
 
@@ -149,6 +150,26 @@ export function standardFirstEscalationEnabled(): boolean {
 export async function filesAutoDescribeEnabled(): Promise<boolean> {
   await ensureSettingsHydrated();
   return getSettings().filesAutoDescribe !== false;
+}
+
+/**
+ * The platform admin's Langfuse masking switch (`langfuseMasking`), settings hydrated first. Kept
+ * here, with the other platform flags the kernel reads, so `core/infra/masking-policy.ts` (and
+ * through it the Langfuse writer and the gateway callers) never imports a tab. Default OFF.
+ */
+export async function langfuseMaskingPolicy(): Promise<MaskingPolicy> {
+  await ensureSettingsHydrated();
+  return getSettings().langfuseMasking ?? DEFAULT_MASKING;
+}
+
+/** The same value as already held in memory (the synchronous call sites). */
+export function heldLangfuseMaskingPolicy(): MaskingPolicy {
+  return getSettings().langfuseMasking ?? DEFAULT_MASKING;
+}
+
+/** Test seam: set the switch in memory, without the mirror (see settings `__setForTests`). */
+export function __setLangfuseMaskingForTests(policy: Partial<MaskingPolicy>): void {
+  setSettingsForTests({ langfuseMasking: policy } as never);
 }
 
 /** All effective role models — surfaced to the agent builder + admin panel. */

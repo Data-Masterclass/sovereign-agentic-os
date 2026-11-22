@@ -283,7 +283,7 @@ baseline; on OTel v2 the gateway captures no message content at all unless an op
 ([migration guide](https://docs.litellm.ai/docs/observability/langfuse_to_otel_v2_migration)); the header
 makes masking hold in that case too.
 
-Proof. `core/infra/masking.e2e.test.ts` and `core/infra/masking-gateway.e2e.test.ts` run a real agent
+Proof. `tabs/agents/lib/engine/masking.e2e.test.ts` and `tabs/agents/lib/engine/masking-gateway.e2e.test.ts` run a real agent
 run through the real gateway against the real Langfuse container (stack
 `tests/langfuse/compose.yaml` + `compose.masking.yaml`). A recording forwarder in front of Langfuse
 captures the exact ingestion payload: with masking off a seeded e-mail, IBAN and phone number are in

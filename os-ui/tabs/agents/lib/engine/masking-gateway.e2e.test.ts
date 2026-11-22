@@ -19,7 +19,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { SEED, SEEDED_TASK, contains, settledTrace, startRecordingForwarder, startStubModel, tracedRun } from '@core/infra/masking-e2e-harness';
+import { SEED, SEEDED_TASK, contains, settledTrace, startRecordingForwarder, startStubModel, tracedRun, type RunKit } from '@tabs/agents/lib/engine/fixtures/masking-e2e-harness';
 
 const E2E = process.env.TRACING_E2E === '1';
 const LITELLM_CONTENT = process.env.LITELLM_CONTENT_E2E_URL ?? `http://127.0.0.1:${process.env.LITELLM_CONTENT_E2E_PORT ?? '14032'}`;
@@ -30,13 +30,20 @@ if (forwarder) process.env.LANGFUSE_URL = forwarder.url;
 process.env.LANGFUSE_PUBLIC_KEY = 'pk-lf-e2e-public';
 process.env.LANGFUSE_SECRET_KEY = 'sk-lf-e2e-secret';
 process.env.LITELLM_URL = LITELLM_CONTENT;
-const { __setForTests } = await import('@tabs/admin/lib/settings');
+const { __setMaskingForTests } = await import('@core/infra/masking-policy');
+const { parseSystem } = await import('@tabs/agents/lib/system-schema');
+const { compile } = await import('@tabs/agents/lib/langgraph-compile');
+const { runGraphEngine } = await import('@tabs/agents/lib/engine/run');
+const { memoryCheckpointer } = await import('@tabs/agents/lib/engine/checkpointer');
+const { SHAPE_SINGLE_READ_YAML, graphDeps, scriptedLlm } = await import('@tabs/agents/lib/engine/parity-harness');
+const { liteLlmCaller } = await import('@core/runtime/runtime');
+const kit = { parseSystem, compile, runGraphEngine, memoryCheckpointer, shapeYaml: SHAPE_SINGLE_READ_YAML, graphDeps, liteLlmCaller } as unknown as RunKit;
 
 async function gatewayGenerations(masking: { enabled: boolean; level: 'pii' | 'content' }) {
-  __setForTests({ langfuseMasking: masking } as never);
-  const stub = await startStubModel(SEEDED_TASK);
+  __setMaskingForTests(masking);
+  const stub = await startStubModel(scriptedLlm(SEEDED_TASK));
   try {
-    const { result, traceId } = await tracedRun(`run_${randomUUID()}`);
+    const { result, traceId } = await tracedRun(`run_${randomUUID()}`, kit);
     assert.equal(result.reachedEnd, true);
     const calls = stub.calls();
     const trace = await settledTrace(traceId, calls);

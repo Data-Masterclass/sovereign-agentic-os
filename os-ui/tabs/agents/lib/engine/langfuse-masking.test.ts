@@ -20,7 +20,7 @@ import { compile } from '@tabs/agents/lib/langgraph-compile';
 import { runGraphEngine } from '@tabs/agents/lib/engine/run';
 import { memoryCheckpointer } from '@tabs/agents/lib/engine/checkpointer';
 import { SHAPE_SINGLE_READ_YAML, graphDeps, scriptedLlm, type HoldSink } from '@tabs/agents/lib/engine/parity-harness';
-import { __setForTests } from '@tabs/admin/lib/settings';
+import { __setMaskingForTests } from '@core/infra/masking-policy';
 import { __useSpanExporterForTests, flushLangfuse, langfuseTraceId, recordObservation, withRunTrace } from '@core/infra/langfuse';
 
 const exporter = new InMemorySpanExporter();
@@ -32,7 +32,7 @@ const PHRASE = 'Refund the invoice for the Keller account';
 const TASK = `${PHRASE}. Contact ${EMAIL}, IBAN ${IBAN}, phone +49 170 1234567.`;
 
 const everything = (spans: ReadableSpan[]): string => JSON.stringify(spans.map((s) => ({ name: s.name, attributes: s.attributes, status: s.status })));
-beforeEach(() => { exporter.reset(); __setForTests({ langfuseMasking: { enabled: false, level: 'pii' } } as never); });
+beforeEach(() => { exporter.reset(); __setMaskingForTests({ enabled: false, level: 'pii' }); });
 
 async function runWithPii(runId: string): Promise<ReadableSpan[]> {
   const sys = parseSystem(SHAPE_SINGLE_READ_YAML);
@@ -55,7 +55,7 @@ test('MASKING OFF (default): the seeded e-mail and IBAN are in the exported span
 });
 
 test('MASKING ON (pii): neither the e-mail, the IBAN nor the phone number reaches the exporter; the replacement and the structure do', async () => {
-  __setForTests({ langfuseMasking: { enabled: true, level: 'pii' } } as never);
+  __setMaskingForTests({ enabled: true, level: 'pii' });
   const spans = await runWithPii('run_mask-0000-4000-8000-000000000002');
   const all = everything(spans);
   assert.ok(spans.length > 3, 'the run produced its spans');
@@ -69,7 +69,7 @@ test('MASKING ON (pii): neither the e-mail, the IBAN nor the phone number reache
 });
 
 test('MASKING ON (content): no message, task, tool argument or result text is exported; metadata is', async () => {
-  __setForTests({ langfuseMasking: { enabled: true, level: 'content' } } as never);
+  __setMaskingForTests({ enabled: true, level: 'content' });
   const spans = await runWithPii('run_mask-0000-4000-8000-000000000003');
   const all = everything(spans);
   for (const secret of [EMAIL, IBAN, PHRASE, 'Keller', 'FINAL(']) assert.ok(!all.includes(secret), `${secret} must not be exported at the content level`);
@@ -81,21 +81,21 @@ test('MASKING ON (content): no message, task, tool argument or result text is ex
 });
 
 test('MASKING ON (pii): a value cut short by the result preview is scrubbed before it is cut, not left as a fragment', async () => {
-  __setForTests({ langfuseMasking: { enabled: true, level: 'pii' } } as never);
+  __setMaskingForTests({ enabled: true, level: 'pii' });
   const all = everything(await runWithPii('run_mask-0000-4000-8000-000000000007'));
   for (const fragment of ['maria', 'DE8937', 'example-customer']) assert.ok(!all.includes(fragment), `fragment ${fragment} must not survive the 160-character preview`);
 });
 
 test('the switch is read live: ON then OFF in one process, no restart', async () => {
-  __setForTests({ langfuseMasking: { enabled: true, level: 'pii' } } as never);
+  __setMaskingForTests({ enabled: true, level: 'pii' });
   assert.ok(!everything(await runWithPii('run_mask-0000-4000-8000-000000000004')).includes(EMAIL));
   exporter.reset();
-  __setForTests({ langfuseMasking: { enabled: false, level: 'pii' } } as never);
+  __setMaskingForTests({ enabled: false, level: 'pii' });
   assert.ok(everything(await runWithPii('run_mask-0000-4000-8000-000000000005')).includes(EMAIL));
 });
 
 test('an error message and a standalone observation are masked too (not only the run tree)', async () => {
-  __setForTests({ langfuseMasking: { enabled: true, level: 'pii' } } as never);
+  __setMaskingForTests({ enabled: true, level: 'pii' });
   await withRunTrace(
     { runId: 'run_mask-0000-4000-8000-000000000006', systemId: 'sys-mask', systemName: 'm', userId: 'rae', domain: 'sales' },
     async (observe) => { observe.span('node').end({ error: `refused for ${EMAIL}` }); observe.finish({ reachedEnd: false, parked: false, interrupted: false, failed: true, path: [], finalChars: 0, stepsUsed: 0 }); },
@@ -108,7 +108,7 @@ test('an error message and a standalone observation are masked too (not only the
 });
 
 test('standalone observation at the content level: input and output become sizes', async () => {
-  __setForTests({ langfuseMasking: { enabled: true, level: 'content' } } as never);
+  __setMaskingForTests({ enabled: true, level: 'content' });
   recordObservation({ name: 'tool.query', asType: 'tool', input: { sql: 'select secret_column from t' }, output: { rows: [1, 2] }, metadata: { kind: 'data', rows: 2 } });
   await flushLangfuse();
   const all = everything(exporter.getFinishedSpans());

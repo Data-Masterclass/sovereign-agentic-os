@@ -21,7 +21,7 @@ import { runGraphEngine } from '@tabs/agents/lib/engine/run';
 import { memoryCheckpointer } from '@tabs/agents/lib/engine/checkpointer';
 import { FIXTURE_TASK, SHAPE_SUPERVISOR_YAML, graphDeps, scriptedLlm, type HoldSink } from '@tabs/agents/lib/engine/parity-harness';
 import { noopObserver, type RunObserver } from '@core/infra/trace-port';
-import { ensureHydrated as ensureSettingsHydrated } from '@tabs/admin/lib/settings';
+import { liveMasking } from '@core/infra/masking-policy';
 
 type Captured = { auth: string; body: Record<string, unknown>; callId?: string };
 
@@ -63,7 +63,7 @@ test('ATTRIBUTION (A27): every model call of a real engine run carries user, dom
   const captured: Captured[] = [];
   // The platform settings (the masking switch is read on every model call) hydrate once per process
   // through the mirror's own fetch; do that before the gateway stand-in replaces `fetch`.
-  await ensureSettingsHydrated();
+  await liveMasking();
   globalThis.fetch = gatewayStub(captured);
   const runId = 'run_attr0000-0000-4000-8000-000000000001';
   const sys = parseSystem(SHAPE_SUPERVISOR_YAML);
