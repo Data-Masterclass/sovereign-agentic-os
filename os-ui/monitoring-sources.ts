@@ -26,11 +26,21 @@ import { projectSnapshot } from '@tabs/data/lib/dbt/snapshot';
 import { datasetAssetKeys } from '@tabs/data/lib/dbt/asset-keys';
 import { dataProjectGitEnabled } from '@tabs/data/lib/dbt/commit';
 import { listFiles, getFile, ensureHydrated as ensureFilesHydrated } from '@tabs/files/lib/store';
+import { listMetrics, ensureHydrated as ensureMetricsHydrated } from '@tabs/metrics/lib/store';
+import { listAlertRules, ensureHydrated as ensureAlertsHydrated } from '@tabs/metrics/lib/alert-store';
+import { listDashboards, getDashboard, ensureHydrated as ensureDashboardsHydrated } from '@tabs/dashboards/lib/store';
+import { missingPanelMembers, panelRequestedMembers } from '@tabs/dashboards/lib/model';
+import { panelViewsFor, type RegistryViewDims } from '@tabs/dashboards/lib/panel-views';
+import { listGovernedDatasets } from '@tabs/data/lib/store';
+import { viewName, registryDimensionMembers } from '@tabs/data/lib/metrics';
 import { listWorkflows, ensureHydrated as ensureKnowledgeHydrated } from '@tabs/knowledge/lib/store';
 
 export const monitoringSourcesImpl: MonitoringSources = {
   files: (p) => monitoringFilesSource(p),
   knowledge: (p) => monitoringKnowledgeSource(p),
+  metrics: (p) => monitoringMetricsSource(p),
+  alertRules: (p) => monitoringAlertRulesSource(p),
+  dashboards: (p) => monitoringDashboardsSource(p),
   async agentSystems(p) {
     await ensureAgentsHydrated();
     return agentHealthRows({ id: p.id, domains: p.domains, role: p.role as never }).map((r) => ({ id: r.id, name: r.name, scope: r.scope }));
@@ -120,6 +130,50 @@ export const monitoringKnowledgeSource: NonNullable<MonitoringSources['knowledge
   return (['mine', 'domain', 'marketplace'] as const).flatMap((scope) =>
     g[scope].map((w) => ({ id: w.id, title: w.title, domain: w.domain, scope, status: w.status, updatedAt: w.updatedAt, publishedAt: w.publishedAt, certified: !!w.certifiedAt })),
   );
+};
+
+export const monitoringMetricsSource: NonNullable<MonitoringSources['metrics']> = async (p) => {
+  await ensureMetricsHydrated();
+  const g = listMetrics(asPrincipal(p));
+  return (['mine', 'domain', 'marketplace'] as const).flatMap((scope) =>
+    g[scope].map((m) => ({ id: m.id, name: m.name, member: m.member, datasetId: m.datasetId, datasetName: m.datasetName, domain: m.domain ?? '', scope, ...(m.error ? { error: m.error } : {}) })),
+  );
+};
+
+/** The alert rules the viewer may see: creator own · builder / domain admin own + their domains · admin all. */
+export const monitoringAlertRulesSource: NonNullable<MonitoringSources['alertRules']> = async (p) => {
+  await ensureAlertsHydrated();
+  const wide = p.role === 'admin';
+  const builder = p.role === 'builder' || p.role === 'domain_admin';
+  return listAlertRules()
+    .filter((r) => wide || r.owner === p.id || (builder && p.domains.includes(r.domain)))
+    .map((r) => ({ id: r.id, member: r.member, comparator: r.comparator, threshold: r.threshold, owner: r.owner, domain: r.domain, lastEvaluated: r.lastEvaluated, lastBreached: r.lastBreached, lastValue: r.lastValue }));
+};
+
+export const monitoringDashboardsSource: NonNullable<MonitoringSources['dashboards']> = async (p) => {
+  await ensureDashboardsHydrated();
+  await ensureMetricsHydrated();
+  const user = asPrincipal(p);
+  const g = listDashboards(user);
+  const members = (() => {
+    const m = listMetrics(user);
+    return [...m.mine, ...m.domain, ...m.marketplace].map((x) => x.member);
+  })();
+  const registryDims: RegistryViewDims = new Map(listGovernedDatasets().map((d) => [viewName(d), registryDimensionMembers(d)]));
+  const views = panelViewsFor(members, registryDims);
+  const out: Awaited<ReturnType<NonNullable<MonitoringSources['dashboards']>>> = [];
+  for (const [scope, list] of [['mine', g.mine], ['domain', g.domain], ['marketplace', g.marketplace]] as const) {
+    for (const d of list) {
+      const spec = getDashboard(d.id, user).spec;
+      const v = views.find((x) => x.view === spec.view);
+      const served = v ? { measures: v.measures, dimensions: v.dimensions, timeDimensions: v.timeDimensions } : { measures: [], dimensions: [], timeDimensions: [] };
+      out.push({
+        id: d.id, name: spec.name, domain: spec.domain ?? '', scope, view: spec.view, viewServed: !!v,
+        panels: spec.charts.map((c) => ({ name: c.name, members: panelRequestedMembers(c), missing: missingPanelMembers(c, served) })),
+      });
+    }
+  }
+  return out;
 };
 
 export function registerMonitoringPanelSources(): void {

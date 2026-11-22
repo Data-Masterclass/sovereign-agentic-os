@@ -17,7 +17,7 @@ const view = readFileSync(new URL('./PanelsView.tsx', import.meta.url), 'utf8');
 const css = readFileSync(new URL('../../../app/(govern)/monitoring/monitoring.css', import.meta.url), 'utf8');
 
 test('each panel view renders inside the .mon-panels container', () => {
-  for (const fn of ['AgentsPanels', 'DataPanels', 'PlatformPanels', 'FilesPanels', 'KnowledgePanels']) {
+  for (const fn of ['AgentsPanels', 'DataPanels', 'PlatformPanels', 'FilesPanels', 'KnowledgePanels', 'KpisPanels', 'DashboardsPanels']) {
     const body = view.slice(view.indexOf(`function ${fn}(`));
     const ret = body.slice(body.indexOf('return ('), body.indexOf('return (') + 80);
     assert.match(ret, /className="mon-panels"/, `${fn} must render inside .mon-panels`);

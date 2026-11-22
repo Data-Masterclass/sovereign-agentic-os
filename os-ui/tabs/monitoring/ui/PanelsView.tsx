@@ -20,10 +20,12 @@ import type { DataView, DatasetPanel, RulePanel } from '@tabs/monitoring/lib/pan
 import type { PlatformView } from '@tabs/monitoring/lib/panels/platform-panel';
 import type { FilesView, FilePanel } from '@tabs/monitoring/lib/panels/files-panel';
 import type { KnowledgeView } from '@tabs/monitoring/lib/panels/knowledge-panel';
+import type { KpisView } from '@tabs/monitoring/lib/panels/kpis-panel';
+import type { DashboardsView } from '@tabs/monitoring/lib/panels/dashboards-panel';
 import type { NotUpstream, SourceState } from '@tabs/monitoring/lib/panels/panels-core';
 import { ago, compact, usd } from '@tabs/monitoring/ui/format';
 
-export type PanelKind = 'agents' | 'data' | 'platform' | 'files' | 'knowledge';
+export type PanelKind = 'agents' | 'data' | 'platform' | 'files' | 'knowledge' | 'kpis' | 'dashboards';
 
 const ms = (v: number | null | undefined): string => (v === null || v === undefined ? '—' : v >= 10_000 ? `${(v / 1000).toFixed(0)} s` : v >= 1000 ? `${(v / 1000).toFixed(1)} s` : `${Math.round(v)} ms`);
 const pct = (v: number | null | undefined): string => (v === null || v === undefined ? '—' : `${Math.round(v * 100)}%`);
@@ -519,13 +521,93 @@ function KnowledgePanels({ v }: { v: KnowledgeView }) {
   );
 }
 
+function KpisPanels({ v }: { v: KpisView }) {
+  const sm = v.summary;
+  return (
+    <div className="mon-panels">
+      <div className="mon-sub">KPIs <span className="mon-sub-note">metric registry · Dagster runs · stored alert rules</span></div>
+      <Sources sources={v.sources} />
+      {sm && (
+        <div className="mon-stats">
+          <Stat label="metrics" value={String(sm.metrics)} />
+          <Stat label="cannot be read" value={String(sm.loadErrors)} tone={sm.loadErrors ? 'error' : undefined} />
+          <Stat label="alerts firing" value={String(sm.alertsFiring)} tone={sm.alertsFiring ? 'error' : undefined} />
+          <Stat label="alert evaluation failed (last run)" value={v.sources.dagster.state === 'live' ? String(sm.alertsFailing) : '—'} tone={sm.alertsFailing ? 'warn' : undefined} />
+        </div>
+      )}
+      <div className="mon-sub">Alerts</div>
+      {v.alerts.length === 0 ? <p className="hint">{v.sources.alerts.state === 'live' ? 'No alert rules in your scope.' : 'Alert rules could not be read.'}</p> : (
+        <div className="mon-table">
+          <div className="mon-tr mon-th mon-tr-pfile"><span>Rule</span><span>State</span><span>Last value</span><span>Evaluations (Dagster)</span></div>
+          {v.alerts.map((a) => (
+            <div key={a.id} className={`mon-tr mon-tr-pfile${a.firing ? ' err' : ''}`}>
+              <span className="ellip" title={a.member}><span className="mono">{a.member}</span> {a.condition} <span className="muted">· {a.domain}</span></span>
+              <span><span className={`badge${a.firing ? ' err' : a.lastEvaluated ? ' ok' : ' muted'}`}>{a.firing ? 'firing' : a.lastEvaluated ? 'ok' : 'never evaluated'}</span>{a.lastEvaluated ? <span className="muted"> {ago(a.lastEvaluated)}</span> : null}</span>
+              <span>{a.lastValue === undefined ? '—' : String(a.lastValue)}</span>
+              <span>{a.evaluations === undefined ? '—' : a.evaluations.runs === 0 ? 'no run in the window' : `${a.evaluations.failures} failed / ${a.evaluations.runs}`}{a.evaluations?.lastFailureUrl ? <> <a className="mon-xlink" href={a.evaluations.lastFailureUrl} target="_blank" rel="noreferrer">run ↗</a></> : null}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="mon-sub">Metrics</div>
+      {v.metrics.length === 0 ? <p className="hint">{v.sources.inventory.state === 'live' ? 'No metrics in your scope.' : 'Metrics could not be listed.'}</p> : (
+        <div className="mon-table">
+          <div className="mon-tr mon-th mon-tr-pfile"><span>Metric</span><span>Dataset data last built</span><span>Alerts firing</span><span>Status</span></div>
+          {v.metrics.map((m) => (
+            <div key={m.id} className={`mon-tr mon-tr-pfile${m.loadError ? ' err' : ''}`}>
+              <span className="ellip" title={m.name}><a className="mon-xlink" href={m.kpisUrl}>{m.name}</a> <span className="muted">· {m.datasetName}</span></span>
+              <span className="muted">{m.dataLastSuccessAt === undefined ? '—' : m.dataLastSuccessAt ? ago(m.dataLastSuccessAt) : 'no successful run in the window'}</span>
+              <span>{m.alertsFiring}</span>
+              <span title={m.loadError ?? ''}>{m.loadError ? `cannot be read — ${m.loadError}` : 'readable'}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      <NotOffered items={v.notUpstream} />
+    </div>
+  );
+}
+
+function DashboardsPanels({ v }: { v: DashboardsView }) {
+  const sm = v.summary;
+  return (
+    <div className="mon-panels">
+      <div className="mon-sub">Dashboards <span className="mon-sub-note">each panel’s members checked against the served model</span></div>
+      <Sources sources={v.sources} />
+      {sm && (
+        <div className="mon-stats">
+          <Stat label="dashboards" value={String(sm.dashboards)} />
+          <Stat label="with broken references" value={String(sm.withBrokenReferences)} tone={sm.withBrokenReferences ? 'error' : undefined} />
+          <Stat label="broken panels" value={String(sm.brokenPanels)} tone={sm.brokenPanels ? 'error' : undefined} />
+        </div>
+      )}
+      {v.dashboards.length === 0 ? <p className="hint">{v.sources.inventory.state === 'live' ? 'No dashboards in your scope.' : 'Dashboards could not be listed.'}</p> : (
+        <div className="mon-table">
+          <div className="mon-tr mon-th mon-tr-pfile"><span>Dashboard</span><span>View</span><span>Panels</span><span>Broken references</span></div>
+          {v.dashboards.map((d) => (
+            <div key={d.id} className={`mon-tr mon-tr-pfile${d.broken.length || !d.viewServed ? ' err' : ''}`}>
+              <span className="ellip" title={d.name}><a className="mon-xlink" href={d.dashboardsUrl}>{d.name}</a> <span className="muted">· {d.domain || 'personal'}</span></span>
+              <span className="mono ellip">{d.view}{d.viewServed ? '' : ' — not served'}</span>
+              <span>{d.panels}</span>
+              <span>{d.broken.length === 0 ? (d.viewServed ? 'none' : 'view not served') : d.broken.map((b) => `${b.panel}: ${b.missing.join(', ')}`).join(' · ')}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      <NotOffered items={v.notUpstream} />
+    </div>
+  );
+}
+
 export default function PanelsView({ kind }: { kind: PanelKind }) {
-  const { data, loading, error } = useApi<AgentsView | DataView | PlatformView | FilesView | KnowledgeView>(`/api/monitoring/panels?view=${kind}`);
+  const { data, loading, error } = useApi<AgentsView | DataView | PlatformView | FilesView | KnowledgeView | KpisView | DashboardsView>(`/api/monitoring/panels?view=${kind}`);
   if (error) return <div className="error" style={{ marginTop: 12 }}>{error}</div>;
   if (!data) return loading ? <div className="hint" style={{ marginTop: 12 }}><span className="spin" /> Reading the components…</div> : null;
   if (data.view === 'agents') return <AgentsPanels v={data} />;
   if (data.view === 'data') return <DataPanels v={data} />;
   if (data.view === 'files') return <FilesPanels v={data} />;
   if (data.view === 'knowledge') return <KnowledgePanels v={data} />;
+  if (data.view === 'kpis') return <KpisPanels v={data} />;
+  if (data.view === 'dashboards') return <DashboardsPanels v={data} />;
   return <PlatformPanels v={data} />;
 }
