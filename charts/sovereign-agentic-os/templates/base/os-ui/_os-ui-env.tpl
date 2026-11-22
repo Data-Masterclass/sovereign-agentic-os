@@ -287,10 +287,14 @@
 # index + the SHARED embedding model. FILES_EMBED_DIM is sourced from
 # the SINGLE retrieval.knnDimension so the knn_vector mapping and the
 # query vectors always match — NEVER hardcoded here.
+# The OS calls only the three role names. The FIRST mapping (os/models.yml, when it does not exist yet) is
+# seeded from this: {"sovereign-strong": "<catalog model>", "sovereign-worker": ..., "sovereign-embedding": ...}.
+{{- with ($u.modelRoles | default dict).seed }}
+- name: MODEL_ROLE_SEED_JSON
+  value: {{ . | toJson | quote }}
+{{- end }}
 - name: FILES_INDEX
   value: {{ $u.filesIndex | default "files" | quote }}
-- name: FILES_EMBED_MODEL
-  value: {{ $u.filesEmbedModel | default "sovereign-embed" | quote }}
 - name: FILES_EMBED_DIM
   value: {{ .Values.retrieval.knnDimension | quote }}
 {{- with $u.doclingUrl }}
@@ -763,9 +767,6 @@
 # THE APP-BUILDING HARNESS (stream H). Additive; the default value "spec" keeps
 # the Software Build stage byte-identical to today. SOFTWARE_BUILDER=agentic
 # routes Build to the bounded planner -> coder -> build -> reviewer loop.
-# LITELLM_CODER_MODEL is optional: empty means the `coder` model role resolves
-# to the reasoning tier.
+# The `coder` model role is the `sovereign-strong` role (no model name is set here).
 - name: SOFTWARE_BUILDER
   value: {{ (.Values.softwareBuilder | default dict).mode | default "spec" | quote }}
-- name: LITELLM_CODER_MODEL
-  value: {{ (.Values.softwareBuilder | default dict).coderModel | default "" | quote }}

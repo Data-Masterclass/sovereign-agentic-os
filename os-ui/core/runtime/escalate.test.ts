@@ -3,13 +3,14 @@
  */
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { _reset as resetSettings, updateSettings } from '@tabs/admin/lib/settings';
+import { _reset as resetSettings, updateSettings, __setForTests } from '@tabs/admin/lib/settings';
 import { _reset as resetModels } from '@tabs/admin/lib/models';
 import { completeWithEscalation } from '@core/runtime/escalate';
 import type { AssistantCaller } from '@core/runtime/complete';
 
-const STANDARD = 'sovereign-default';
-const REASONING = 'sovereign-reasoning';
+const STANDARD = 'sovereign-worker';
+const REASONING = 'sovereign-strong';
+const WORKER = 'sovereign-worker';
 
 beforeEach(() => {
   resetSettings();
@@ -105,23 +106,31 @@ test('admin toggle OFF pins the surface to reasoning directly — standard is ne
   assert.deepEqual(models, [REASONING]); // only reasoning ran
 });
 
-test('admin role PIN wins: pinning the standard role re-points which alias the cheap tier runs', async () => {
-  updateSettings({ modelRoles: { standard: 'sovereign-mock', reasoning: '', embeddings: '', tools: '' } });
-  const { caller, models } = scriptCaller({ 'sovereign-mock': 'good', [REASONING]: 'deep' });
+test('an explicit standardModel option wins over the role: it re-points which model the cheap tier runs', async () => {
+  const { caller, models } = scriptCaller({ 'catalog-cheap': 'good', [REASONING]: 'deep' });
   const out = await completeWithEscalation([{ role: 'user', content: 'q' }], {
     caller,
+    standardModel: 'catalog-cheap',
     validate: (c) => c === 'good',
   });
-  assert.equal(out.model, 'sovereign-mock'); // the pinned standard alias answered
+  assert.equal(out.model, 'catalog-cheap');
   assert.equal(out.escalated, false);
-  assert.deepEqual(models, ['sovereign-mock']);
+  assert.deepEqual(models, ['catalog-cheap']);
 });
 
-test('when standard and reasoning resolve to the SAME alias, a single call runs (nothing to save)', async () => {
-  updateSettings({ modelRoles: { standard: REASONING, reasoning: REASONING, embeddings: '', tools: '' } });
+test('NEGATIVE TWIN: the old admin override (settings modelRoles) no longer re-points the cheap tier', async () => {
+  __setForTests({ modelRoles: { standard: 'catalog-cheap', reasoning: '', embeddings: '', tools: '' } });
+  const { caller, models } = scriptCaller({ [WORKER]: 'good', [REASONING]: 'deep' });
+  const out = await completeWithEscalation([{ role: 'user', content: 'q' }], { caller, validate: (c) => c === 'good' });
+  assert.equal(out.model, WORKER);
+  assert.deepEqual(models, [WORKER]);
+});
+
+test('when standard and reasoning are the SAME model, a single call runs (nothing to save)', async () => {
   const { caller, models } = scriptCaller({ [REASONING]: 'deep' });
   const out = await completeWithEscalation([{ role: 'user', content: 'q' }], {
     caller,
+    standardModel: REASONING,
     validate: () => false, // even a failing validate can't cause a second identical call
   });
   assert.equal(out.model, REASONING);

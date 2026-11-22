@@ -96,6 +96,14 @@ test('NEGATIVE TWIN: an unreadable catalog writes nothing', async () => {
   assert.equal(state.writes.length, 0);
 });
 
+test('a cluster that carries its own catalog under the OLD names keeps what each role meant (no seed in the catalog)', async () => {
+  const { i, state } = io(null, ['sovereign-default', 'sovereign-reasoning', 'sovereign-vision', 'sovereign-embed', 'sovereign-mock']);
+  const r = await seedRoleMapping(i, { seed: SEED, legacy: null }, { by: 'system:os-ui' });
+  assert.equal(r.state, 'seeded');
+  assert.deepEqual(state.file, { 'sovereign-strong': 'sovereign-reasoning', 'sovereign-worker': 'sovereign-default', 'sovereign-embedding': 'sovereign-embed' });
+  assert.equal(r.sources['sovereign-strong'], 'old-name');
+});
+
 test('NEGATIVE TWIN: a seed that names a model outside the catalog is not written', async () => {
   const { i, state } = io(null, ['other']);
   const r = await seedRoleMapping(i, { seed: SEED, legacy: null }, { by: 'system:os-ui' });

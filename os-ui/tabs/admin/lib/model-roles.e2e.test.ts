@@ -41,8 +41,7 @@ const { platformRoleStore, MODELS_FILE } = await import('@core/models/role-store
 const { readGatewayCatalog } = await import('@core/models/gateway-catalog');
 const { log, readBlob } = await import('@core/infra/git-store');
 const { PLATFORM_REPO } = await import('@core/infra/repo-layout');
-const { roleModel } = await import('@core/models/roles');
-const { updateSettings } = await import('@tabs/admin/lib/settings');
+const { gatewayChatModel } = await import('@core/adapters/litellm/chat-model');
 const io = () => liveRoleIo({ reposDir });
 
 const admin = (path: string, body: unknown) =>
@@ -104,13 +103,13 @@ test('REAL GATEWAY: an OLD alias still works (it means its role) and logs a depr
   assert.ok(cat.ok && cat.data.models.some((m) => m.name === 'sovereign-default'));
   const aliases = await io().readAliases();
   assert.ok(aliases.ok && !('sovereign-default' in aliases.data), 'the real model wins');
-  // the deprecation log: a setting that still names an old alias
+  // the deprecation log: an agent that still pins an old alias
   const lines: string[] = [];
   const warn = console.warn;
   console.warn = (l: string) => { lines.push(String(l)); };
   try {
-    updateSettings({ modelRoles: { reasoning: 'sovereign-premium' } });
-    assert.equal(roleModel('reasoning'), 'sovereign-premium', 'the OS does no client-side resolution');
+    const m = gatewayChatModel({ model: 'sovereign-premium', apiKey: 'k', baseURL: `${GW}/v1`, writeSystem: false });
+    assert.ok(m.ok, 'the OS does no client-side resolution: the stored old name is sent as it is');
   } finally { console.warn = warn; }
   assert.ok(lines.some((l) => /deprecated.*sovereign-premium.*sovereign-strong/.test(l)), lines.join('|'));
 });

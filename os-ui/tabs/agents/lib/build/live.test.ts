@@ -56,7 +56,7 @@ grants:
     - { id: crm_write, capability: Write-approval }
 agents:
   - { id: supervisor, role: r, agent_md: "# Supervisor", memory_md: "# Mem", members: [worker], tools: [retrieve] }
-  - { id: worker, role: w, agent_md: "# Worker", memory_md: "", tools: [write_file], model: sovereign-default }
+  - { id: worker, role: w, agent_md: "# Worker", memory_md: "", tools: [write_file], model: sovereign-worker }
 edges:
   - { from: supervisor, to: worker, type: supervise }
 `;
@@ -142,7 +142,7 @@ function fakeLitellm(): LiteLlmClient & { keys: Map<string, FakeKey>; generated:
       keys.set(alias, cur[1]);
     },
     async models() {
-      return ['sovereign-default', 'stackit-qwen3-vl-reasoning', 'stackit-qwen3-vl', 'sovereign-mock'];
+      return ['sovereign-worker', 'stackit-qwen3-vl-reasoning', 'stackit-qwen3-vl', 'sovereign-worker'];
     },
   };
   return client;
@@ -225,11 +225,11 @@ test('litellm registers a scoped key (alias os-<id>) with budget caps + routed m
   await orchestrateBuild({ yaml: YAML, systemId: 'sys_live', adapters: makeLiveAdapters(d), probe: 'p' });
   const info = d.litellm.keys.get('os-sys_live')!;
   assert.ok(info, 'key registered under the system alias');
-  assert.ok(info.models.includes('sovereign-default'), 'light/standard tier model allowed');
-  assert.ok(info.models.some((m) => /sovereign-reasoning/i.test(m)), 'reasoning tier model allowed');
+  assert.ok(info.models.includes('sovereign-worker'), 'light/standard tier model allowed');
+  assert.ok(info.models.some((m) => /sovereign-strong/i.test(m)), 'reasoning tier model allowed');
   const litellm = (await orchestrateBuild({ yaml: YAML, systemId: 'sys_live', adapters: makeLiveAdapters(d), probe: 'p' })).rows.find((r) => r.tool === 'litellm')!;
-  assert.match(litellm.detail.toLowerCase(), /sovereign-default/);
-  assert.match(litellm.detail.toLowerCase(), /sovereign-reasoning/);
+  assert.match(litellm.detail.toLowerCase(), /sovereign-worker/);
+  assert.match(litellm.detail.toLowerCase(), /sovereign-strong/);
 });
 
 test('litellm apply is idempotent (an already-provisioned key is not regenerated)', async () => {
@@ -340,7 +340,7 @@ test('key DRIFTED (the old hard-coded caps): a rebuild updates it and says exact
 test('a changed DEFINITION reaches the key too: a newly routed model is added to the allowlist', async () => {
   const d = deps();
   await build(d);
-  const report = await orchestrateBuild({ yaml: YAML.replace('model: sovereign-default', 'model: sovereign-vision'), systemId: 'sys_live', adapters: makeLiveAdapters(d), probe: 'p' });
+  const report = await orchestrateBuild({ yaml: YAML.replace('model: sovereign-worker', 'model: sovereign-vision'), systemId: 'sys_live', adapters: makeLiveAdapters(d), probe: 'p' });
   const row = report.rows.find((r) => r.tool === 'litellm')!;
   assert.equal(row.change, 'updated');
   assert.match(row.appliedDetail ?? '', /models .* → .*sovereign-vision/);
@@ -400,7 +400,7 @@ async function storedValue(store: SystemKeyStore, systemId: string): Promise<str
 /** A gateway that already holds the key every system built BEFORE this change has: `sk-os-<id>`. */
 function withLegacyKey(d: ReturnType<typeof deps>, systemId = 'sys_live') {
   const alias = `os-${systemId}`;
-  d.litellm.keys.set(alias, { tokenId: tokenIdOf(legacyDerivedKey(alias)), models: ['sovereign-default'], maxBudget: 5, budgetDuration: '', rpmLimit: 120, tpmLimit: 200_000, updates: 0 });
+  d.litellm.keys.set(alias, { tokenId: tokenIdOf(legacyDerivedKey(alias)), models: ['sovereign-worker'], maxBudget: 5, budgetDuration: '', rpmLimit: 120, tpmLimit: 200_000, updates: 0 });
   return tokenIdOf(legacyDerivedKey(alias));
 }
 
@@ -537,12 +537,12 @@ test('A gateway that cannot be READ is not mistaken for "no key": nothing is min
 test('ALLOWLIST: the key allows the run\'s role models (the plan step\'s reasoning model) and every gateway fallback target', async () => {
   const d = deps();
   const fallbacks = parseGatewayFallbacks(JSON.stringify({
-    fallbacks: { 'sovereign-default': ['sovereign-premium'], 'sovereign-reasoning': ['sovereign-reasoning-fast'], 'sovereign-reasoning-fast': ['sovereign-last-resort'] },
+    fallbacks: { 'sovereign-worker': ['sovereign-premium'], 'sovereign-strong': ['sovereign-strong'], 'sovereign-strong': ['sovereign-last-resort'] },
     default: ['sovereign-catch-all'],
   }));
   await orchestrateBuild({ yaml: YAML, systemId: 'sys_live', adapters: makeLiveAdapters({ ...d, runModels: () => ['role-reasoning-model', 'role-tools-model'], fallbacks }), probe: 'p' });
   const models = d.litellm.keys.get('os-sys_live')!.models;
-  for (const m of ['sovereign-default', 'sovereign-reasoning', 'role-reasoning-model', 'role-tools-model', 'sovereign-premium', 'sovereign-reasoning-fast', 'sovereign-last-resort', 'sovereign-catch-all']) {
+  for (const m of ['sovereign-worker', 'sovereign-strong', 'role-reasoning-model', 'role-tools-model', 'sovereign-premium', 'sovereign-strong', 'sovereign-last-resort', 'sovereign-catch-all']) {
     assert.ok(models.includes(m), `${m} is missing from the key's model list (${models.join(', ')})`);
   }
   assert.equal(d.litellm.keys.get('os-sys_live')!.maxParallelRequests, 8, 'max_parallel_requests is set on a system key');
@@ -558,7 +558,7 @@ test('withFallbackTargets / parseGatewayFallbacks: transitive, cycle-safe, and e
 
 test('an `auto` model pin is the engine\'s sentinel, not a model on the key', async () => {
   const d = deps();
-  await orchestrateBuild({ yaml: YAML.replace('model: sovereign-default', 'model: auto'), systemId: 'sys_live', adapters: makeLiveAdapters(d), probe: 'p' });
+  await orchestrateBuild({ yaml: YAML.replace('model: sovereign-worker', 'model: auto'), systemId: 'sys_live', adapters: makeLiveAdapters(d), probe: 'p' });
   assert.ok(!d.litellm.keys.get('os-sys_live')!.models.includes('auto'));
 });
 

@@ -29,6 +29,7 @@ import { viaGateway } from '@core/adapters/litellm/gateway-fetch';
 import { callerCredential, type CallerContext } from '@core/infra/litellm-credential';
 import { forgetSystemKey, resolveSystemKey, tokenIdOf } from '@core/infra/agent-system-keys';
 import type { Fetched } from '@core/adapters/_contract';
+import { noteDeprecatedAlias } from '@core/models/role-mapping';
 
 /** Just above LiteLLM's router `timeout: 120` (seconds). */
 export const GATEWAY_MODEL_TIMEOUT_MS = 130_000;
@@ -50,6 +51,8 @@ export function gatewayChatModel(input: {
   rotationWaitMs?: number;
 }): Fetched<ChatOpenAI> {
   const at = new Date().toISOString();
+  // A stored name (an agent pinned to an old alias) still works at the gateway; say once that it is deprecated.
+  noteDeprecatedAlias(input.model, 'an agent model call');
   const cred = input.caller ? callerCredential(input.caller, input.ownKey) : null;
   const apiKey = input.apiKey ?? cred?.apiKey ?? '';
   if (!apiKey) return { ok: false, reason: 'unauthorized', detail: 'no scoped run credential for the gateway (the master key is never used)', at };

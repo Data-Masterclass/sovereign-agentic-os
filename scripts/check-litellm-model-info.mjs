@@ -63,20 +63,29 @@ function merge(base, overlay) {
   return out;
 }
 
-/** The frozen array literal of `DEFAULT_IMAGE_MODELS` — the OS's own answer to "may see images". */
-function imageAllowlist() {
-  const src = read('os-ui/core/models/capabilities.ts');
-  const m = /DEFAULT_IMAGE_MODELS[^=]*=\s*Object\.freeze\(\[([\s\S]*?)\]\)/.exec(src);
-  if (!m) throw new Error('could not find DEFAULT_IMAGE_MODELS in os-ui/core/models/capabilities.ts');
-  return new Set([...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1]));
+/**
+ * The models the OS may send an image to, for one profile: the catalog model the seed maps the STRONG role to
+ * (`osUI.modelRoles.seed.sovereign-strong` — the OS allowlist is the role name, `DEFAULT_IMAGE_MODELS` in
+ * os-ui/core/models/capabilities.ts), plus the old names that still resolve to strong for one release
+ * (`DEPRECATED_ALIASES` in os-ui/core/models/role-names.ts).
+ */
+function imageAllowlist(values) {
+  const src = read('os-ui/core/models/role-names.ts');
+  const old = [...src.matchAll(/'([^']+)':\s*'sovereign-strong'/g)].map((x) => x[1]);
+  if (!old.length) throw new Error('could not find the strong aliases in os-ui/core/models/role-names.ts');
+  const caps = read('os-ui/core/models/capabilities.ts');
+  if (!/DEFAULT_IMAGE_MODELS[^=]*=\s*Object\.freeze\(\[ROLE_STRONG, \.\.\.strongAliases\(\)\]\)/.test(caps)) throw new Error('DEFAULT_IMAGE_MODELS is no longer [ROLE_STRONG, ...strongAliases()]; update this check');
+  const strong = values.osUI?.modelRoles?.seed?.['sovereign-strong'];
+  return new Set([...(strong ? [strong] : []), ...old]);
 }
 
 const EPS = 1e-15;
 const same = (a, b) => Math.abs(a - b) <= EPS;
 const num = (v) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null);
 
-function check(name, values, images) {
+function check(name, values) {
   const problems = [];
+  const images = imageAllowlist(values);
   const pc = values.litellm?.proxy_config ?? {};
   const list = Array.isArray(pc.model_list) ? pc.model_list : [];
   if (!list.length) problems.push('litellm.proxy_config.model_list is empty');
@@ -169,16 +178,14 @@ function check(name, values, images) {
 }
 
 const base = loadYaml('charts/sovereign-agentic-os/values.yaml');
-const images = imageAllowlist();
 const results = [
-  check('values.yaml (base)', base, images),
-  check('values.stackit-managed.yaml (over base)', merge(base, loadYaml('values.stackit-managed.yaml')), images),
+  check('values.yaml (base)', base),
+  check('values.stackit-managed.yaml (over base)', merge(base, loadYaml('values.stackit-managed.yaml'))),
   // The one-time overlay for a cluster that carries its own model_list (production): a copy of a
   // list is exactly the thing that rots, so it is held to the same rules.
   check(
     'deploy/overlays/gateway-model-info.stackit.yaml (over both)',
     merge(merge(base, loadYaml('values.stackit-managed.yaml')), loadYaml('deploy/overlays/gateway-model-info.stackit.yaml')),
-    images,
   ),
 ];
 // 9. The tracing e2e stack mirrors the chart's gateway.

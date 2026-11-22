@@ -20,7 +20,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 
 const GW = (process.env.LITELLM_URL ?? '').replace(/\/+$/, '');
 const MASTER = process.env.LITELLM_MASTER_KEY ?? '';
@@ -48,21 +48,26 @@ const chat = async (key: string, model: string) => {
 const sfx = randomBytes(3).toString('hex');
 const A = `sw-a-${sfx}`, B = `sw-b-${sfx}`, W = `sw-w-${sfx}`, E = `sw-e-${sfx}`;
 const modelIds: string[] = [];
+const idOf = new Map<string, string>();
 const keys: string[] = [];
 async function addModel(name: string, mode: 'chat' | 'embedding' = 'chat') {
   const r = await admin('/model/new', { model_name: name, litellm_params: { model: 'openai/stub', api_key: 'unused', mock_response: `from-${name}`, input_cost_per_token: 0.000002, output_cost_per_token: 0.000008 }, model_info: { mode } });
-  assert.equal(r.status, 200, await r.text());
+  const text = await r.text();
+  assert.equal(r.status, 200, text);
   const info = (await (await fetch(`${GW}/model/info`, { headers: { authorization: `Bearer ${MASTER}` } })).json()) as { data: { model_name: string; model_info: { id: string } }[] };
-  modelIds.push(info.data.find((m) => m.model_name === name)!.model_info.id);
+  const id = info.data.find((m) => m.model_name === name)!.model_info.id;
+  modelIds.push(id);
+  idOf.set(name, id);
 }
 async function newKey(models: string[], alias: string) {
   const r = await admin('/key/generate', { models, key_alias: `${alias}-${sfx}`, max_budget: 5, budget_duration: '7d' });
-  assert.equal(r.status, 200, await r.text());
-  const k = (await r.json()) as { key: string; token?: string };
+  const text = await r.text();
+  assert.equal(r.status, 200, text);
+  const k = JSON.parse(text) as { key: string; token?: string };
   keys.push(k.key);
   return k.key;
 }
-const keyInfo = async (key: string) => ((await (await admin(`/key/info?key=${encodeURIComponent(key)}`, undefined, 'GET')).json()) as { info: { models: string[]; spend: number; token: string } }).info;
+const keyInfo = async (key: string) => ((await (await admin(`/key/info?key=${encodeURIComponent(key)}`, undefined, 'GET')).json()) as { info: { models: string[]; spend: number; token?: string; key_name: string } }).info;
 
 after(async () => {
   if (skip) { rmSync(reposDir, { recursive: true, force: true }); return; }
@@ -104,21 +109,29 @@ agents:
   assert.equal((await chat(key, 'sovereign-strong')).content, `from-${B}`, 'remapped: the same key, the very next call, the new model');
 
   const after2 = await keyInfo(key);
-  assert.equal(after2.token, before.token, 'same key');
+  assert.equal(after2.key_name, before.key_name, 'same key');
   assert.deepEqual(after2.models, before.models, 'the key was not rebuilt or edited');
 });
 
-test('REAL GATEWAY: spend is booked on the key and per model, under a role', { skip }, async () => {
+test('REAL GATEWAY: spend is booked on the key, per ROLE (model_group) and per catalog MODEL (model_id)', { skip }, async () => {
   const key = await newKey([...ROLE_NAMES], 'os-sys-spend');
   await chat(key, 'sovereign-strong'); await chat(key, 'sovereign-worker');
-  await new Promise((r) => setTimeout(r, 4000)); // LiteLLM writes spend in batches
-  const info = await keyInfo(key);
-  assert.ok(info.spend > 0, `key spend moved: ${info.spend}`);
-  const logs = (await (await admin(`/spend/logs?api_key=${encodeURIComponent(info.token)}`, undefined, 'GET')).json()) as { model?: string; model_group?: string; spend?: number }[];
+  const hashed = createHash('sha256').update(key).digest('hex');
+  type Row = { model_group?: string; model_id?: string; spend?: number };
+  let logs: Row[] = [];
+  let spend = 0;
+  for (let i = 0; i < 40 && (logs.length < 2 || spend <= 0); i++) { // LiteLLM writes spend in batches
+    await new Promise((r) => setTimeout(r, 2000));
+    logs = (await (await admin(`/spend/logs?api_key=${hashed}`, undefined, 'GET')).json()) as Row[];
+    spend = (await keyInfo(key)).spend;
+  }
+  assert.ok(spend > 0, `the key's spend moved: ${spend}`);
   assert.ok(Array.isArray(logs) && logs.length >= 2, JSON.stringify(logs).slice(0, 300));
-  const byModel = new Set(logs.map((l) => l.model_group ?? l.model));
-  assert.ok(byModel.has('sovereign-strong') || byModel.has(B), `spend row names the role or its model: ${[...byModel].join(',')}`);
-  assert.ok(logs.every((l) => (l.spend ?? 0) > 0), 'every call carries a cost');
+  const strong = logs.find((l) => l.model_group === 'sovereign-strong')!;
+  const worker = logs.find((l) => l.model_group === 'sovereign-worker')!;
+  assert.equal(strong.model_id, idOf.get(B), 'the strong call is booked on the catalog model strong means now');
+  assert.equal(worker.model_id, idOf.get(W), 'the worker call on its own model');
+  assert.ok((strong.spend ?? 0) > 0 && (worker.spend ?? 0) > 0, 'every call carries a cost (the catalog entry\'s own price)');
 });
 
 test('REAL GATEWAY: NEGATIVE TWIN — a key WITHOUT the role names is refused, so the allowlist is what makes a remap work', { skip }, async () => {

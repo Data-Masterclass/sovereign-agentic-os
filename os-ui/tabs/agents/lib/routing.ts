@@ -2,45 +2,31 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 /**
- * Model routing — by activity (LOCKED). The workspace default table maps each
- * activity to a LiteLLM tier, inherited by systems/agents with per-agent
- * overrides. The tier model_names are the REAL sovereign gateway aliases (verified
- * against the live LiteLLM proxy_config.model_list — see values.stackit-managed.yaml):
+ * Model routing — by activity (LOCKED). The workspace default table maps each activity to a tier, inherited
+ * by systems/agents with per-agent overrides. The tier model names are the OS's ROLE NAMES — the only names
+ * the OS calls (`core/models/role-names.ts`); which catalog model a role means is `os/models.yml`
+ * (Platform → Models), enforced at the gateway, so a remap needs no change here and no key rebuild:
  *
- *   • light     → `sovereign-default` — chat, coding, tool-selection, light work
- *                 (gpt-oss-20b, the STACKIT standard/worker model).
- *   • reasoning → `sovereign-reasoning` — planning / deep reasoning (Qwen3-VL-235B).
- *   • vision    → `sovereign-reasoning` — the rare vision/video need runs on the
- *                 SAME Qwen3-VL-235B (it is a VLM), so there is no separate vision
- *                 alias to present; the tier just reuses the reasoning model.
+ *   • light     → `sovereign-worker` — chat, coding, tool-selection, light work.
+ *   • reasoning → `sovereign-strong` — planning / deep reasoning.
+ *   • vision    → `sovereign-strong` — the rare vision/video need runs on the strong role.
  *
- * The PRESENTED model set is exactly the three STACKIT-managed sovereign models
- * (sovereign-default→gpt-oss-20b; sovereign-reasoning→Qwen3-VL-235B; sovereign-
- * embed→Qwen3-VL-Embedding-8B) plus `sovereign-mock` (the offline/testing model).
- * The former stale aliases (`sovereign-reasoning-fast`, `sovereign-vision`,
- * `sovereign-premium`) are retired from the catalog — they all mapped to the same
- * Qwen3-VL-235B behind the gateway, so nothing is lost. There is no in-box self-
- * hosted model server; provenance for every alias is `external` (STACKIT-EU). A
- * per-agent pin MUST be one of these real aliases or Build/run 404s at the gateway.
- *
- * PURE module: editing the table writes LiteLLM routing config (the LiteLLM build
- * adapter), but no endpoint is ever hardcoded in the UI — a per-agent model is a
- * LiteLLM `model_name` picked live from `/model/info`; these tier defaults are the
- * install baseline only.
+ * A per-agent pin may still name a real catalog model (picked live from LiteLLM); the role names are the
+ * defaults and need no pin.
  */
+
+import { ROLE_EMBEDDING, ROLE_STRONG, ROLE_WORKER } from '@core/models/role-names';
 
 export type Activity = 'planning' | 'coding' | 'text-writing' | 'tool-selection' | 'vision' | 'video';
 export type Tier = 'light' | 'reasoning' | 'vision';
 
 export const ACTIVITIES: Activity[] = ['planning', 'coding', 'text-writing', 'tool-selection', 'vision', 'video'];
 
-/** Tier → default LiteLLM model_name (a REAL live gateway alias; overridable).
- *  Vision reuses the reasoning model — Qwen3-VL-235B IS the vision-capable model,
- *  so there is no separate `sovereign-vision` alias in the presented set. */
+/** Tier → default model name: a ROLE NAME (see the header). */
 export const TIER_MODELS: Record<Tier, string> = {
-  light: 'sovereign-default',
-  reasoning: 'sovereign-reasoning',
-  vision: 'sovereign-reasoning',
+  light: ROLE_WORKER,
+  reasoning: ROLE_STRONG,
+  vision: ROLE_STRONG,
 };
 
 /**
@@ -72,12 +58,9 @@ export type ModelInfo = {
  * not listed falls back to prefix heuristics ({@link provenanceOf} / {@link tierOf}).
  */
 export const MODEL_CATALOG: Record<string, ModelInfo> = {
-  'sovereign-default': { model_name: 'sovereign-default', display: 'gpt-oss-20b', params: '20B', tier: 'light', provenance: 'external' },
-  'sovereign-reasoning': { model_name: 'sovereign-reasoning', display: 'Qwen3-VL-235B', params: '235B', tier: 'reasoning', provenance: 'external' },
-  'sovereign-embed': { model_name: 'sovereign-embed', display: 'Qwen3-VL-Embedding-8B', params: '8B', tier: 'light', provenance: 'external' },
-  // The offline / testing model — the honest fallback when no live gateway is
-  // reachable. Presented so an admin can pick it per role for testing.
-  'sovereign-mock': { model_name: 'sovereign-mock', display: 'Mock model (offline / testing)', tier: 'light', provenance: 'external' },
+  [ROLE_WORKER]: { model_name: ROLE_WORKER, display: 'Worker role', tier: 'light', provenance: 'external' },
+  [ROLE_STRONG]: { model_name: ROLE_STRONG, display: 'Strong role', tier: 'reasoning', provenance: 'external' },
+  [ROLE_EMBEDDING]: { model_name: ROLE_EMBEDDING, display: 'Embedding role', tier: 'light', provenance: 'external' },
 };
 
 /**
@@ -180,9 +163,9 @@ export function modelInfo(model: string): ModelInfo {
  *   • Auto (default)  → no per-agent pin; the workspace activity routing decides
  *                        (cheap-first). This is the recommended default.
  *   • Reasoning       → the platform-admin REASONING role model (default
- *                        `sovereign-reasoning`) for planning / deep thinking.
+ *                        `sovereign-strong`) for planning / deep thinking.
  *   • Standard        → the platform-admin STANDARD role model (default
- *                        `sovereign-default`) for fast tool-running work.
+ *                        `sovereign-worker`) for fast tool-running work.
  * The `model` here is the INSTALL-BASELINE alias; the agent builder overrides it
  * with the live admin-configured role model (the /api/agents/models `roles`
  * payload). The stored `mode` id stays `execution` (unchanged agent-pin
@@ -318,9 +301,9 @@ export function resolveModel(activity: Activity, table: RoutingTable, agentModel
  */
 export function tierOf(model: string): Tier {
   const m = model.toLowerCase();
-  // Reasoning first: both the local `sovereign-reasoning[-fast]` and the legacy
-  // `…-vl-reasoning` alias must classify as reasoning (the latter also matches the
-  // vision heuristic below, so order matters).
+  // Reasoning first: a name containing "reason" must classify as reasoning (it can also match the
+  // vision heuristic below, so order matters). The strong role is reasoning by definition.
+  if (m === ROLE_STRONG) return 'reasoning';
   if (m.includes('reason')) return 'reasoning';
   if (m.includes('qwen') || m.includes('vl') || m.includes('vision')) return 'vision';
   return 'light';

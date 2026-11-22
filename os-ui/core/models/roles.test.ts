@@ -1,117 +1,32 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG
+ *
+ * `roleModel` and friends: the OS's own roles onto the three role names. The deeper behaviour
+ * (old override and env ignored, every role a role name) is in `role-switch.test.ts`; this file
+ * keeps the helpers that used to live next to the old override.
  */
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { roleModel, roleDefault, roleModels, MOCK_MODEL, type ModelRole } from '@core/models/roles';
+import { roleModel, roleModels, standardFirstEscalationEnabled } from '@core/models/roles';
 import { updateSettings, _reset } from '@tabs/admin/lib/settings';
-
-const ROLES: ModelRole[] = ['reasoning', 'standard', 'embeddings'];
-
-// The three STACKIT-managed sovereign models each role points at when a live
-// gateway is configured (the connected default). These are the ONLY live aliases
-// the settings panel presents, plus the mock below.
-const CONNECTED: Record<'reasoning' | 'standard' | 'embeddings', string> = {
-  reasoning: 'sovereign-reasoning',   // Qwen3-VL-235B
-  standard: 'sovereign-default',      // gpt-oss-20b
-  embeddings: 'sovereign-embed',      // Qwen3-VL-Embedding-8B
-};
 
 beforeEach(() => { _reset(); });
 
-test('the mock model is the single offline/testing fallback alias', () => {
-  assert.equal(MOCK_MODEL, 'sovereign-mock');
+test('tools follows the worker role, coder follows the strong role (no env or setting decides)', () => {
+  assert.equal(roleModel('tools'), roleModel('standard'));
+  assert.equal(roleModel('coder'), roleModel('reasoning'));
 });
 
-test('unset roles fall back to the connected STACKIT alias (config default)', () => {
-  // Fresh store: every role is empty → the resolver returns the config baseline,
-  // which is the role's live STACKIT alias when a gateway is configured.
-  for (const role of ROLES) {
-    assert.equal(roleModel(role), roleDefault(role), `${role} falls back to its config default`);
-  }
-});
-
-test('each STACKIT role resolves to exactly its intended sovereign model when configured', () => {
-  // The connected defaults are the three STACKIT models — nothing else.
-  assert.equal(roleModel('reasoning'), CONNECTED.reasoning);
-  assert.equal(roleModel('standard'), CONNECTED.standard);
-  assert.equal(roleModel('embeddings'), CONNECTED.embeddings);
-});
-
-test('roleDefault falls back to the MOCK model when nothing is wired', () => {
-  // When the config alias for a role is empty (no gateway model configured — the
-  // offline case) every role coalesces to the mock so the flow still runs. We can
-  // only prove the coalescing branch directly, so assert the invariant: every role
-  // default is EITHER a real sovereign alias OR the mock — never empty.
-  for (const role of ['reasoning', 'standard', 'tools', 'embeddings'] as ModelRole[]) {
-    const d = roleDefault(role);
-    assert.ok(d.length > 0, `${role} default is never empty`);
-    assert.ok(d.startsWith('sovereign-'), `${role} default is a sovereign alias (incl. ${MOCK_MODEL})`);
-  }
-});
-
-test('an admin override wins over the default — including pinning the mock for testing', () => {
-  updateSettings({ modelRoles: { reasoning: 'sovereign-reasoning', standard: MOCK_MODEL, embeddings: '' } });
-  assert.equal(roleModel('reasoning'), 'sovereign-reasoning');   // explicit STACKIT pin
-  assert.equal(roleModel('standard'), MOCK_MODEL);               // mock is selectable for testing
-  assert.equal(roleModel('embeddings'), roleDefault('embeddings')); // empty string → default
-});
-
-test('a blank/whitespace override does NOT win (treated as unset)', () => {
-  updateSettings({ modelRoles: { reasoning: '   ', standard: '', embeddings: '' } });
-  assert.equal(roleModel('reasoning'), roleDefault('reasoning'));
-});
-
-test('roleModels returns the effective map for all four roles', () => {
-  updateSettings({ modelRoles: { reasoning: 'sovereign-reasoning', standard: '', embeddings: '' } });
-  const m = roleModels();
-  assert.equal(m.reasoning, 'sovereign-reasoning');
-  assert.equal(m.standard, roleDefault('standard'));
-  assert.equal(m.embeddings, roleDefault('embeddings'));
-  assert.equal(m.tools, roleDefault('tools'));
-});
-
-// ---- TOOLS FOLLOWS STANDARD (config-only external provider, 2026-11-20) ----------------------
-// Agent nodes run on `tools`; the admin UI offers only Standard/Reasoning/Embeddings and says
-// Standard covers "agent execution". Pointing Standard at a newly registered provider must move
-// the agent nodes too — reproduced end to end: before this, chat moved and every node stayed on
-// `sovereign-default`.
-
-const TOOLS_ENVS = ['LITELLM_TOOLS_MODEL', 'LITELLM_EXEC_MODEL', 'LITELLM_CHAT_MODEL'] as const;
-function withoutToolsEnv(fn: () => void): void {
-  const saved = TOOLS_ENVS.map((k) => [k, process.env[k]] as const);
-  for (const k of TOOLS_ENVS) delete process.env[k];
-  try { fn(); } finally { for (const [k, v] of saved) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } }
-}
-
-test('tools follows an admin Standard pin when no deployment env pins the tools tier', () => {
-  withoutToolsEnv(() => {
-    updateSettings({ modelRoles: { reasoning: '', standard: 'mistral-small', tools: '', embeddings: '' } });
-    assert.equal(roleModel('tools'), 'mistral-small');
+test('roleModels returns the role name for each of the five OS roles', () => {
+  assert.deepEqual(roleModels(), {
+    standard: 'sovereign-worker', tools: 'sovereign-worker', reasoning: 'sovereign-strong', coder: 'sovereign-strong', embeddings: 'sovereign-embedding',
   });
 });
 
-test('with no Standard pin, tools keeps the shipped default (no behaviour change out of the box)', () => {
-  withoutToolsEnv(() => {
-    assert.equal(roleModel('tools'), roleModel('standard'));
-    assert.equal(roleModel('tools'), 'sovereign-default');
-  });
-});
-
-test('an explicit tools pin still wins over Standard', () => {
-  withoutToolsEnv(() => {
-    updateSettings({ modelRoles: { reasoning: '', standard: 'mistral-small', tools: 'sovereign-reasoning', embeddings: '' } });
-    assert.equal(roleModel('tools'), 'sovereign-reasoning');
-  });
-});
-
-test('an operator env pin on the tools tier is kept, not overridden by the Standard pin', () => {
-  withoutToolsEnv(() => {
-    process.env.LITELLM_TOOLS_MODEL = 'sovereign-reasoning';
-    try {
-      updateSettings({ modelRoles: { reasoning: '', standard: 'mistral-small', tools: '', embeddings: '' } });
-      assert.equal(roleModel('tools'), roleDefault('tools'));
-    } finally { delete process.env.LITELLM_TOOLS_MODEL; }
-  });
+test('standard-first escalation is a switch, on by default, and does not change which names are called', () => {
+  assert.equal(standardFirstEscalationEnabled(), true);
+  updateSettings({ standardFirstEscalation: false });
+  assert.equal(standardFirstEscalationEnabled(), false);
+  assert.equal(roleModel('standard'), 'sovereign-worker');
 });

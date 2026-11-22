@@ -255,12 +255,10 @@ export const config = {
   // OpenSearch: the endpoint and credentials are read by the ONE client,
   // core/adapters/opensearch/client.ts — never here (scripts/check-opensearch-client.mjs).
   knowledgeIndex: env('KNOWLEDGE_INDEX', 'knowledge'),
-  // Knowledge context layer (Knowledge tab). The `sovereign-embed` LiteLLM model
-  // (mock-model on kind) emits deterministic 384-dim vectors; the dim MUST match
-  // opensearch.knnDimension (chart `retrieval.knnDimension`). When LiteLLM is
-  // unreachable the index/retrieve pipeline falls back to a deterministic local
+  // Knowledge context layer (Knowledge tab). The embedding MODEL is the role `sovereign-embedding`
+  // (core/models/roles.ts); its vector dim MUST match opensearch.knnDimension (chart `retrieval.knnDimension`).
+  // When LiteLLM is unreachable the index/retrieve pipeline falls back to a deterministic local
   // hash embedding of the SAME dim, so cosine ranking still works offline.
-  embedModel: env('KNOWLEDGE_EMBED_MODEL', 'sovereign-embed'),
   embedDim: Number(env('KNOWLEDGE_EMBED_DIM', '384')) || 384,
   // Artifact-metadata index (workspace lifecycle store). Best-effort durable
   // mirror of the artifact registry; the OS UI degrades to an in-process store
@@ -297,12 +295,9 @@ export const config = {
   // Files + Knowledge search: a k-NN hit counts only at or above this cosine similarity, so an
   // unrelated query returns nothing instead of the k nearest of everything (rank-fusion.ts).
   searchSemanticMinCosine: Number(env('SEARCH_SEMANTIC_MIN_COSINE', '0.3')),
-  // The SHARED embedding model fronted by LiteLLM (kind: sovereign-embed@384;
-  // STACKIT: Qwen3-VL-Embedding-8B@4096 via STACKIT-managed inference). NEVER
-  // hardcode the dim — the helm template wires FILES_EMBED_DIM from
-  // `retrieval.knnDimension` (the single source), so changing the model + dim
-  // reindexes consistently.
-  filesEmbedModel: env('FILES_EMBED_MODEL', 'sovereign-embed'),
+  // The SHARED embedding model is the role `sovereign-embedding`. NEVER hardcode the dim — the helm
+  // template wires FILES_EMBED_DIM from `retrieval.knnDimension` (the single source), so changing the
+  // model + dim reindexes consistently.
   filesEmbedDim: Number(env('FILES_EMBED_DIM', '384')),
   // Ingest-by-type services (Phase 3). Docling (docs), a transcriber (audio/video),
   // an OCR/caption service (images). In-cluster Service defaults; the live adapters
@@ -485,26 +480,11 @@ export const config = {
   // os-ui and the worker alike. It is not the gateway master key and is not derived from it. If it
   // changes, every stored key becomes unreadable and each system needs one Rebuild.
   agentKeyEncryptionKey: env('AGENT_KEY_ENCRYPTION_KEY', ''),
-  // Chat model fronted by LiteLLM that the task-scoped agent chat windows call
-  // (POST {LITELLM_URL}/v1/chat/completions). Offline default = the mock model.
-  litellmChatModel: env('LITELLM_CHAT_MODEL', 'sovereign-mock'),
-  // Two-tier models for the agentic assistant harness (lib/assistant). PLAN once
-  // with the reasoning tier, then ACT (tool-calling) with the cheap-first light
-  // tier — both self-hosted STACKIT Qwen with thinking disabled. Offline these
-  // fall back to the mock chat model so the loop still runs on a laptop.
-  litellmReasoningModel: env('LITELLM_REASONING_MODEL', env('LITELLM_CHAT_MODEL', 'sovereign-reasoning')),
-  litellmExecModel: env('LITELLM_EXEC_MODEL', env('LITELLM_CHAT_MODEL', 'sovereign-default')),
-  // Agent tool-calling (function-calling) model — the EXEC/"fast" tier of the
-  // multi-agent graph (this role is used ONLY there; Ask-the-OS resolves its own
-  // model). Defaults to the STANDARD tier (gpt-oss-20b): cheap-first, so read-only
-  // gatherer nodes run fast/cheap while the Auto router still escalates genuine
-  // write/decide/synthesis nodes to the reasoning tier (Qwen). Previously this
-  // followed the reasoning model, so EVERY node — even fast gatherers — ran on the
-  // 235B model, the main token/latency sink of a team run. gpt-oss-20b's "harmony"
-  // tool-call framing is stripped defensively (lib/assistant/runtime.ts), so it
-  // degrades gracefully. Admin-overridable via LITELLM_TOOLS_MODEL / the `tools`
-  // role to pin tool-calling back to the reasoning model if desired.
-  litellmToolsModel: env('LITELLM_TOOLS_MODEL', env('LITELLM_EXEC_MODEL', 'sovereign-default')),
+  // MODELS: the OS calls only the three role names (core/models/roles.ts). Which catalog model a role means
+  // is `os/models.yml`, enforced at the gateway — there is no model name in this config. The FIRST mapping
+  // (when that file does not exist yet) comes from the chart: `osUI.modelRoles.seed`, as JSON
+  // {"sovereign-strong": "<catalog model>", "sovereign-worker": …, "sovereign-embedding": …}.
+  modelRoleSeedJson: env('MODEL_ROLE_SEED_JSON', ''),
   // Ask-the-OS assistant + single-agent runs: max PLAN→ACT tool-call rounds per
   // turn. Raised over time (8 → 30 → 50) so multi-step builds (ingest → silver →
   // gold → metric → publish) finish in one conversation. Tunable via env.
@@ -924,11 +904,6 @@ export const config = {
   //     from the user stories. Opt-in only; anything but the exact string 'agentic'
   //     resolves to 'spec', so a typo can never silently switch the builder.
   softwareBuilder: env('SOFTWARE_BUILDER', 'spec') === 'agentic' ? 'agentic' : 'spec',
-  // The CODER model role (`core/models/roles.ts` role `coder`) — the tier that writes
-  // the app's code in the agentic builder. EMPTY by default, which means the `coder`
-  // role falls back to the REASONING tier, so no deployment needs a new env var to
-  // keep working. Pin a code-specialised LiteLLM model_name here to use one.
-  litellmCoderModel: env('LITELLM_CODER_MODEL', ''),
 } as const;
 
 /**

@@ -2,150 +2,69 @@
  * Copyright 2026 Borek Data Ventures UG
  */
 /**
- * Model-role resolver — the ONE runtime resolution point for the model roles the
- * OS uses everywhere. There are exactly FOUR presented models: the three live
- * STACKIT-managed sovereign models, plus the mock (offline/testing) fallback:
+ * Model roles — the OS's own names for what it asks a model to do, mapped onto the THREE role names it
+ * is allowed to call: `sovereign-strong`, `sovereign-worker`, `sovereign-embedding`.
  *
- *   • reasoning  → STACKIT reasoning model  (`sovereign-reasoning` → Qwen3-VL-235B)
- *   • standard   → STACKIT standard/worker  (`sovereign-default`   → gpt-oss-20b)
- *   • tools      → the multi-agent graph's EXEC/"fast" tier. Defaults to the
- *                  STANDARD model (gpt-oss-20b) so fast gatherer nodes run cheap;
- *                  the Auto router escalates write/decide/synthesis nodes to the
- *                  reasoning model. gpt-oss-20b's "harmony" tool-call framing is
- *                  stripped defensively; pin this role to reasoning to override.
- *   • embeddings → STACKIT embeddings model (`sovereign-embed` → Qwen3-VL-Embedding-8B)
+ *   • standard   → worker     assistants, light work, summaries
+ *   • tools      → worker     the agent engine's fast/execution tier
+ *   • reasoning  → strong     planning, deep reasoning, image understanding
+ *   • coder      → strong     the app builder's code-writing tier
+ *   • embeddings → embedding  Knowledge and Files vectors
  *
- *   • mock (`sovereign-mock`) → NOT a role. It is the OFFLINE / testing default:
- *                  when NO live gateway is configured (no admin override AND no env
- *                  override for the role) every role resolves to the mock so the
- *                  teaching flow runs on a laptop. It is only ever "connected" when
- *                  an admin explicitly picks it for a role.
+ * Which CATALOG model a role means is NOT decided here. The mapping is the OS's file `os/models.yml`
+ * (Platform → Models), enforced at the gateway as LiteLLM's `router_settings.model_group_alias`
+ * (`role-reconcile.ts`), so a remap changes the next call with no restart and no key rebuild.
+ * Nothing in the OS resolves a role to a model: the old admin override (`settings.modelRoles`) and
+ * the `LITELLM_*_MODEL` / `*_EMBED_MODEL` env defaults are gone (`role-seed.ts` carries an old
+ * override into the file once).
  *
- * Resolution order (per role):
- *   1. the persisted PLATFORM-ADMIN override (`settings.modelRoles.<role>`) when it
- *      is a non-empty LiteLLM `model_name`;
- *   2. ELSE the deployment CONNECTED default — the role's STACKIT alias, sourced
- *      from the env-configurable `config.ts` (helm/operator can re-point it, but the
- *      baseline the whole OS ships with is the live STACKIT alias);
- *   3. ELSE (no live gateway wired at all) the MOCK model (`sovereign-mock`) — the
- *      honest offline default, so the teaching flow runs on a laptop.
- *
- * "Connected" means a live gateway model is configured for the role (via config/env
- * or an admin override). When NOTHING is configured — `config` resolves the role to
- * the mock chat model — we return the mock explicitly. This keeps the set ADMIN-
- * CONFIGURABLE (an admin re-points a role, or a deployment sets the env, without a
- * rebuild) while making mock the default when nothing is wired. It never rewrites
- * the fixed LiteLLM aliases — it only chooses WHICH live alias each app role uses.
- *
- * Server-only (reads the in-process admin settings store).
+ * Server-only (reads the in-process admin settings store for the two switches below).
  */
-
-import { config } from '@core/kernel/config';
 import { getSettings, ensureHydrated as ensureSettingsHydrated, maskingSwitchKnown, _reset as resetSettings, __setForTests as setSettingsForTests } from '@tabs/admin/lib/settings';
-import { noteDeprecatedAlias } from '@core/models/role-mapping';
-import { roleMappingActive } from '@core/models/role-reconcile';
+import { noteDeprecatedAlias, ROLE_EMBEDDING, ROLE_STRONG, ROLE_WORKER, type RoleName } from '@core/models/role-mapping';
 import { DEFAULT_MASKING, UNKNOWN_MASKING, type MaskingPolicy } from '@core/infra/trace-masking';
 
 export type ModelRole = 'reasoning' | 'standard' | 'tools' | 'embeddings' | 'coder';
 
-/**
- * The FOUR roles a platform admin can re-point in the Admin panel. `coder` is deliberately NOT
- * one of them: it is env-only (`LITELLM_CODER_MODEL`) and falls back to the reasoning tier when
- * unset, so the agentic builder gains a tier without adding a noun to the admin UI. See
- * `roleDefault('coder')` below.
- */
-export type AdminModelRole = Exclude<ModelRole, 'coder'>;
+const ROLE_OF: Record<ModelRole, RoleName> = {
+  standard: ROLE_WORKER,
+  tools: ROLE_WORKER,
+  reasoning: ROLE_STRONG,
+  coder: ROLE_STRONG,
+  embeddings: ROLE_EMBEDDING,
+};
 
-/** The offline/testing fallback alias — the ONLY non-role model we present. */
-export const MOCK_MODEL = 'sovereign-mock';
-
-/**
- * The default for a role when there is no admin override: the env-configurable
- * connected STACKIT alias from `config.ts`, ELSE the mock model. `config` already
- * falls the chat-fronted roles back to `sovereign-mock` when no gateway model is
- * set; embeddings/tools do not, so we coalesce here to the mock so EVERY role is
- * mock-by-default when nothing is wired. A deployment/env that pins a real alias
- * (the STACKIT default, or an operator override) keeps that alias — "connected".
- */
-export function roleDefault(role: ModelRole): string {
-  // CODER — the agentic builder's code-writing tier (stream H). Additive and env-only: an unset
-  // `LITELLM_CODER_MODEL` means the role resolves to the REASONING tier, so no deployment needs a
-  // new variable for the builder to work, and a code-specialised model is a one-env-var upgrade.
-  if (role === 'coder') {
-    const pinned = config.litellmCoderModel;
-    return pinned && pinned.trim().length > 0 ? pinned : roleDefault('reasoning');
-  }
-  const configured = (() => {
-    switch (role) {
-      case 'reasoning':
-        return config.litellmReasoningModel;
-      case 'standard':
-        return config.litellmExecModel;
-      case 'tools':
-        return config.litellmToolsModel;
-      case 'embeddings':
-        return config.embedModel;
-    }
-  })();
-  return configured && configured.trim().length > 0 ? configured : MOCK_MODEL;
+/** The role name the OS sends to the gateway for one of its own roles. */
+export function roleModel(role: ModelRole): RoleName {
+  return ROLE_OF[role];
 }
 
-/** Effective LiteLLM model_name for a role: admin override if set, else env default. */
-export function roleModel(role: ModelRole): string {
-  const name = resolveRoleModel(role);
-  // Once an admin has mapped the three roles (Platform → Models), the old names are deprecated aliases
-  // for them: they keep working at the gateway, and naming one here logs a deprecation (once per name).
-  if (roleMappingActive()) noteDeprecatedAlias(name, `the '${role}' model setting`);
-  return name;
-}
-
-function resolveRoleModel(role: ModelRole): string {
-  // `coder` has no admin override (it is not an admin-editable role — see AdminModelRole).
-  if (role === 'coder') return roleDefault('coder');
-  const override = getSettings().modelRoles[role];
-  if (override && override.trim().length > 0) return override;
-  // TOOLS FOLLOWS STANDARD. The admin UI offers Standard / Reasoning / Embeddings and says
-  // Standard covers "agent execution"; agent nodes run on `tools`. Without this an admin who
-  // points Standard at a newly registered provider sees chat move and every agent node stay on
-  // the shipped alias. An operator who pinned LITELLM_TOOLS_MODEL / LITELLM_EXEC_MODEL keeps it.
-  if (role === 'tools' && !toolsPinnedByEnv()) return resolveRoleModel('standard');
-  return roleDefault(role);
-}
-
-/** True when the deployment pinned the tools tier itself (env), so it does not follow Standard. */
-function toolsPinnedByEnv(): boolean {
-  const set = (k: string) => (process.env[k] ?? '').trim().length > 0;
-  return set('LITELLM_TOOLS_MODEL') || set('LITELLM_EXEC_MODEL') || set('LITELLM_CHAT_MODEL');
-}
-
-/**
- * Make the admin's role choices current before resolving a model for a call. The roles live in
- * the settings store, which is hydrated from its mirror on demand: a fresh os-ui pod (before any
- * admin page loaded) and the run worker (which never writes settings) would otherwise resolve
- * every role to the deployment default and silently ignore what the admin saved.
- */
+/** Make the admin's switches current before a call (the settings are hydrated from their mirror on demand). */
 export async function ensureModelRolesFresh(): Promise<void> {
   // The store is fail-soft itself: an unreadable doc keeps the held values (it never throws).
   await ensureSettingsHydrated();
 }
 
+/** A stored name (an agent pinned to an old alias, a per-agent pin) that is deprecated: log it once. */
+export function noteStoredModelName(name: string, where: string): void {
+  noteDeprecatedAlias(name, where);
+}
+
 /**
  * Whether STANDARD-FIRST ESCALATION is active (Cost routing). ON (default) means the
- * strictly-validated cost-routed surfaces try the standard tier first and escalate to
- * reasoning only on validation failure; OFF pins them to reasoning directly. This is
- * the ONE admin switch `completeWithEscalation` consults. Nil-safe: an unset/legacy
- * settings blob (older store) defaults ON. Server-only (reads the admin settings).
+ * strictly-validated cost-routed surfaces try the worker first and escalate to strong only on
+ * validation failure; OFF pins them to strong directly. Nil-safe: an unset/legacy settings blob
+ * defaults ON. Server-only (reads the admin settings).
  */
 export function standardFirstEscalationEnabled(): boolean {
   return getSettings().standardFirstEscalation !== false;
 }
 
 /**
- * Whether uploaded files get an AUTOMATIC DESCRIPTION + TAGS (one call on the standard model per
- * file, billed to the uploader). ON by default; the ONE admin switch the Files generator
- * consults. The settings are hydrated first: after a pod restart the in-memory value is the
- * default until the saved one is read, and a switch an admin turned OFF must not read ON.
- * Nil-safe: a settings blob saved before the switch existed means ON.
+ * Whether uploaded files get an AUTOMATIC DESCRIPTION + TAGS (one call on the worker role per
+ * file, billed to the uploader). ON by default. The settings are hydrated first: after a pod
+ * restart the in-memory value is the default until the saved one is read, and a switch an admin
+ * turned OFF must not read ON.
  */
 export async function filesAutoDescribeEnabled(): Promise<boolean> {
   await ensureSettingsHydrated();
@@ -189,13 +108,7 @@ export function __resetLangfuseMaskingForTests(): void {
   resetSettings();
 }
 
-/** All effective role models — surfaced to the agent builder + admin panel. */
-export function roleModels(): Record<ModelRole, string> {
-  return {
-    reasoning: roleModel('reasoning'),
-    standard: roleModel('standard'),
-    tools: roleModel('tools'),
-    embeddings: roleModel('embeddings'),
-    coder: roleModel('coder'),
-  };
+/** All role names the OS sends — surfaced to the agent builder + admin panel. */
+export function roleModels(): Record<ModelRole, RoleName> {
+  return { ...ROLE_OF };
 }

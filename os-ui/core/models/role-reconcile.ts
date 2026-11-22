@@ -183,12 +183,30 @@ export function applyRoleMapping(io: RoleReconcileIo, requested: unknown, by: Ro
 }
 
 /** At boot of os-ui web: reconcile once, then on a timer. Never throws into boot. */
-export function scheduleRoleReconcile(io: () => RoleReconcileIo, intervalSeconds: number): (() => void) | null {
+export function scheduleRoleReconcile(io: () => RoleReconcileIo, intervalSeconds: number, prepare?: () => Promise<unknown>): (() => void) | null {
   const g2 = globalThis as unknown as { __osRoleReconcileBooted?: boolean };
   if (g2.__osRoleReconcileBooted || intervalSeconds <= 0) return null;
   g2.__osRoleReconcileBooted = true;
-  void reconcileRoleMapping(io()).catch((e) => console.error(`[role-reconcile] first pass failed: ${(e as Error).message}`));
-  return scheduleEvery('model-role-reconcile', intervalSeconds * 1000, () => reconcileRoleMapping(io()));
+  // `prepare` runs once, before the first pass: the first mapping (`role-seed.ts`) when the file does not exist.
+  void (async () => {
+    if (prepare) {
+      try {
+        const r = await prepare();
+        console.info(`[role-reconcile] first mapping: ${JSON.stringify(r)}`);
+      } catch (e) {
+        console.error(`[role-reconcile] first mapping failed: ${(e as Error).message}`);
+      }
+    }
+    await reconcileRoleMapping(io());
+  })().catch((e) => console.error(`[role-reconcile] first pass failed: ${(e as Error).message}`));
+  // While there is still no mapping file (the gateway was not up at boot, or the seed was incomplete) the first
+  // mapping is tried again on each pass; once the file exists `prepare` is not called again.
+  return scheduleEvery('model-role-reconcile', intervalSeconds * 1000, async () => {
+    if (prepare && lastRoleReport()?.state === 'unmapped') await prepare().catch((e) => console.error(`[role-reconcile] first mapping failed: ${(e as Error).message}`));
+    return reconcileRoleMapping(io());
+  });
 }
 
 export { ModelMappingError };
+/** Run work that writes `os/models.yml` in the same queue as apply and reconcile (the first mapping uses it). */
+export { exclusive as exclusiveRoleWork };

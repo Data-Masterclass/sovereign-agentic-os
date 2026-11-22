@@ -12,6 +12,7 @@ import {
 import { type Decision } from '@tabs/agents/lib/gateway';
 import { type BuildAdapter, type BuildChange, type BuildContext, type StepResult } from '@tabs/agents/lib/build/adapter';
 import { principalFor } from '@tabs/agents/lib/build/runtime-contract';
+import { ROLE_NAMES } from '@core/models/role-names';
 import { compileVerify } from '@tabs/agents/lib/build/compile-verify';
 import { config } from '@core/kernel/config';
 import {
@@ -368,12 +369,11 @@ export function keyWanted(deps: Pick<LiveDeps, 'caps' | 'runModels' | 'fallbacks
     const table = routingTableFor(ctx.system);
     // What the definition routes to, what a run picks by ROLE (the plan step's reasoning model, the
     // fast tools model), and every model the gateway may fall back to from any of those.
-    const models = withFallbackTargets([...new Set([...routedModels(ctx.system, table), ...(deps.runModels?.() ?? [])])], deps.fallbacks);
-    // Per-model hard cost cap for the pay-per-token STACKIT (qwen) routes only.
+    // The THREE ROLE NAMES are always allowed: the OS calls only those, and an admin remap in Platform → Models
+    // changes what they mean at the gateway — so the key needs no rebuild when a role is remapped.
+    const models = withFallbackTargets([...new Set([...ROLE_NAMES, ...routedModels(ctx.system, table), ...(deps.runModels?.() ?? [])])], deps.fallbacks);
+    // Per-model hard cost caps come from the chart (`modelMaxBudget`), keyed by role name or catalog model; none is invented here.
     const modelMaxBudget: Record<string, number> = { ...caps.modelMaxBudget };
-    for (const m of models) {
-      if (/stackit|qwen/i.test(m) && modelMaxBudget[m] === undefined) modelMaxBudget[m] = 2;
-    }
     const { all } = connectionTools(ctx.system);
     return {
       systemId: ctx.systemId ?? 'sys',

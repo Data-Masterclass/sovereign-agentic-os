@@ -1,10 +1,10 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  *
- * FEATURE:    The run worker re-reads the admin settings, so model-role pins reach agent runs.
- * USER STORY: As a platform admin I point Standard (or tools) at a newly registered provider and
- *             the next agent run uses it — reproduced end to end before this: the worker kept the
- *             values it booted with and every run stayed on `sovereign-default`.
+ * FEATURE:    The run worker re-reads the admin settings, so a switch an admin flips reaches agent runs.
+ * USER STORY: As a platform admin I turn cost routing off and the next agent run obeys it — before
+ *             this the worker kept the values it booted with. (Which model a role means is no longer a
+ *             setting: it is `os/models.yml`, enforced at the gateway.)
  * ARCHITECTURE: the settings mirror is replaced with an in-memory doc (`mock.module`); the process
  *               role is the real `core/kernel/process-role` flag; the clock is `Date.now`.
  */
@@ -28,35 +28,35 @@ mock.module('@core/infra/os-mirror', {
 
 const { ensureHydrated, getSettings, _reset, SETTINGS_REFRESH_MIN_MS } = await import('@tabs/admin/lib/settings');
 const { markRunWorkerProcess, __clearRunWorkerProcess } = await import('@core/kernel/process-role');
-const { roleModel, ensureModelRolesFresh } = await import('@core/models/roles');
+const { standardFirstEscalationEnabled, ensureModelRolesFresh } = await import('@core/models/roles');
 
-const roles = (standard: string) => ({ settings: { modelRoles: { reasoning: '', standard, tools: '', embeddings: '' } } });
+const roles = (standardFirst: boolean) => ({ settings: { standardFirstEscalation: standardFirst } });
 
 test('the web app reads the settings doc once (it is the writer)', async () => {
   _reset(); __clearRunWorkerProcess(); reads = 0;
-  stored = roles('mistral-small');
+  stored = roles(false);
   await ensureHydrated();
-  stored = roles('something-else');
+  stored = roles(true);
   await ensureHydrated();
   assert.equal(reads, 1);
-  assert.equal(getSettings().modelRoles.standard, 'mistral-small');
+  assert.equal(getSettings().standardFirstEscalation, false);
 });
 
-test('the run worker picks up a role an admin saved after it booted', async () => {
+test('the run worker picks up a switch an admin saved after it booted', async () => {
   _reset(); markRunWorkerProcess(); reads = 0;
   let now = 1_000_000;
   const clock = mock.method(Date, 'now', () => now);
   try {
     stored = null; // booted before the admin saved anything
     await ensureModelRolesFresh();
-    assert.equal(roleModel('standard'), 'sovereign-default');
-    stored = roles('mistral-small');
+    assert.equal(standardFirstEscalationEnabled(), true);
+    stored = roles(false);
     now += SETTINGS_REFRESH_MIN_MS - 1;
     await ensureModelRolesFresh();
-    assert.equal(roleModel('standard'), 'sovereign-default', 'no re-read inside the refresh window');
+    assert.equal(standardFirstEscalationEnabled(), true, 'no re-read inside the refresh window');
     now += 2;
     await ensureModelRolesFresh();
-    assert.equal(roleModel('standard'), 'mistral-small');
+    assert.equal(standardFirstEscalationEnabled(), false);
   } finally {
     clock.mock.restore(); __clearRunWorkerProcess();
   }
@@ -67,18 +67,18 @@ test('an unreadable doc on a re-read keeps the held values (never resets to defa
   let now = 2_000_000;
   const clock = mock.method(Date, 'now', () => now);
   try {
-    stored = roles('mistral-small');
+    stored = roles(false);
     await ensureModelRolesFresh();
     stored = null; whenEmpty = 'unreachable';
     now += SETTINGS_REFRESH_MIN_MS + 1;
     await ensureModelRolesFresh();
-    assert.equal(roleModel('standard'), 'mistral-small');
+    assert.equal(standardFirstEscalationEnabled(), false);
   } finally {
     clock.mock.restore(); __clearRunWorkerProcess(); whenEmpty = 'absent';
   }
 });
 
-test('every model-call entry point makes the roles current before resolving a model', async () => {
+test('every model-call entry point makes the settings current before it calls a model', async () => {
   const { readFileSync } = await import('node:fs');
   const src = (p: string) => readFileSync(new URL(`../../../${p}`, import.meta.url), 'utf8');
   const exec = src('tabs/agents/lib/build/run-jobs-server.ts');

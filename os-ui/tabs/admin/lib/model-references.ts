@@ -7,9 +7,8 @@
  * Before an admin removes a model from the catalog, the OS lists every place the
  * alias is in use so removal is a two-step informed confirmation, never a silent
  * break. Covered:
- *   • ROLE pins/defaults — the four runtime roles (standard/reasoning/tools/
- *     embeddings) resolved by lib/models/roles.ts (explicit admin pin OR the
- *     deployment default resolving to the alias — both break on removal).
+ *   • ROLE mapping — the three roles (strong/worker/embedding) mapped to the model
+ *     in `os/models.yml` (Platform → Models).
  *   • ASSISTANT pin — an explicit assistant override (the follow-Standard case is
  *     already covered by the Standard role entry).
  *   • AGENT per-node pins — `agents[].model` in each agent system's system.yaml.
@@ -29,24 +28,18 @@
  * see mirrored systems should `ensureHydrated()` the agent store first.
  */
 
-import { getSettings } from '@tabs/admin/lib/settings';
-import { roleModel, type AdminModelRole, type ModelRole } from '@core/models/roles';
+import { lastRoleReport } from '@core/models/role-reconcile';
+import { ROLE_NAMES } from '@core/models/role-mapping';
 import { getAssistantModelId, isAssistantExplicit } from '@tabs/admin/lib/models';
 import { parseSystem } from '@tabs/agents/lib/system-schema';
 
 export type ModelReference = { kind: 'role' | 'assistant' | 'agent'; label: string };
 
-const ROLE_LABELS: Record<ModelRole, string> = {
-  standard: 'Standard',
-  reasoning: 'Reasoning',
-  tools: 'Tools',
-  embeddings: 'Embeddings',
-  // Additive (stream H): the agentic builder's code tier. NOT in `ROLES` below, so it stays out
-  // of the admin-editable list — it is env-only and falls back to the reasoning tier.
-  coder: 'Coder',
+const ROLE_LABELS: Record<(typeof ROLE_NAMES)[number], string> = {
+  'sovereign-strong': 'Strong',
+  'sovereign-worker': 'Worker',
+  'sovereign-embedding': 'Embedding',
 };
-// Only the ADMIN-EDITABLE roles have a settings pin to read (`coder` is env-only — stream H).
-const ROLES: AdminModelRole[] = ['standard', 'reasoning', 'tools', 'embeddings'];
 
 type AgentRecordLike = { id?: string; name?: string; yaml?: string; archived?: boolean };
 
@@ -62,11 +55,11 @@ export function modelReferences(alias: string): ModelReference[] {
   const out: ModelReference[] = [];
   if (!alias) return out;
 
-  const pinned = getSettings().modelRoles;
-  for (const role of ROLES) {
-    if (roleModel(role) === alias) {
-      const explicit = (pinned[role] ?? '').trim() === alias;
-      out.push({ kind: 'role', label: `${ROLE_LABELS[role]} role ${explicit ? 'pin' : 'default'}` });
+  // The three roles: which catalog model each one is mapped to (`os/models.yml`, as last reconciled).
+  const mapping = lastRoleReport()?.mapping;
+  if (mapping) {
+    for (const role of ROLE_NAMES) {
+      if (mapping[role] === alias) out.push({ kind: 'role', label: `${ROLE_LABELS[role]} role (Platform → Models)` });
     }
   }
 

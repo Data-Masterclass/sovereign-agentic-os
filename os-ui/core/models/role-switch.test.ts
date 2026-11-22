@@ -16,7 +16,7 @@ import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { roleModel, roleModels, type ModelRole } from '@core/models/roles';
 import { ROLE_NAMES } from '@core/models/role-mapping';
-import { updateSettings, _reset } from '@tabs/admin/lib/settings';
+import { updateSettings, __setForTests, _reset } from '@tabs/admin/lib/settings';
 
 beforeEach(() => { _reset(); });
 
@@ -36,8 +36,9 @@ test('roleModels() holds only role names', () => {
   for (const [role, name] of Object.entries(roleModels())) assert.ok((ROLE_NAMES as readonly string[]).includes(name), `${role} → ${name}`);
 });
 
-test('NEGATIVE TWIN: the old admin override no longer decides — a stored value for a role changes nothing', () => {
-  updateSettings({ modelRoles: { reasoning: 'some-real-model', standard: 'sovereign-mock', tools: 'x', embeddings: 'y' } });
+test('NEGATIVE TWIN: the old admin override no longer decides — a value a previous release stored changes nothing, and cannot be written', () => {
+  assert.throws(() => updateSettings({ modelRoles: { reasoning: 'x' } }), (e: unknown) => (e as { status?: number }).status === 410);
+  __setForTests({ modelRoles: { reasoning: 'some-real-model', standard: 'sovereign-mock', tools: 'x', embeddings: 'y' } });
   for (const [role, want] of Object.entries(EXPECT)) assert.equal(roleModel(role as ModelRole), want, `${role} ignores the override`);
 });
 

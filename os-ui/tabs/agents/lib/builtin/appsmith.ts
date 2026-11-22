@@ -21,7 +21,7 @@
  *     governed call and a red tree can never land. That is the feedback loop the single-shot
  *     builder never had.
  *   - MODEL TIERS: a `system.yaml` addresses LiteLLM aliases, not OS model roles, so the coder
- *     node names `sovereign-default` (the exec/code tier) here. The software-side harness
+ *     node names `sovereign-worker` (the exec/code tier) here. The software-side harness
  *     (`tabs/software/lib/builder/loop-server.ts`) resolves the OS `coder` ROLE instead, which
  *     falls back to the reasoning tier when a deployment has not pinned a code model. Both paths
  *     are deliberate and documented; neither invents a third model surface.
@@ -74,7 +74,7 @@ routing:
 agents:
   - id: planner
     role: Turns the user stories into a concrete file-by-file build plan
-    model: sovereign-reasoning
+    model: sovereign-strong
     tools: [get_software, read_app_files, get_dataset]
     agent_md: |
       # Planner — App Smith
@@ -94,7 +94,7 @@ agents:
     memory_md: '# Memory'
   - id: coder
     role: Writes the code and commits it through the governed, compile-gated door
-    model: sovereign-default
+    model: sovereign-worker
     tools: [commit, read_app_files, get_dataset]
     agent_md: |
       # Coder — App Smith
@@ -115,7 +115,7 @@ agents:
     memory_md: '# Memory'
   - id: reviewer
     role: Scores the committed app against the acceptance checks derived from the stories
-    model: sovereign-reasoning
+    model: sovereign-strong
     tools: [verify_software, read_app_files]
     agent_md: |
       # Reviewer — App Smith

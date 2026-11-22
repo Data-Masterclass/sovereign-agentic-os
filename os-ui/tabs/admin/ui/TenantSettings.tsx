@@ -22,6 +22,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import Link from 'next/link';
 import { useUser } from '@core/ui/useUser';
 import { roleAtLeast } from '@core/kernel/session';
 import { sectionMinRole } from '@tabs/admin/lib/sections';
@@ -33,7 +34,6 @@ type Settings = {
   currency: string;
   localization: { locale: 'en' | 'de'; available: string[] };
   notifications: { email: string; backupFailure: boolean; costThreshold: boolean };
-  modelRoles: { reasoning: string; standard: string; embeddings: string };
   /** os-ui 0.6.133 — allow coded (custom) apps. OFF by default: only Declarative
    *  (no-code) apps can be created. The coded path is experimental. */
   codedAppsEnabled: boolean;
@@ -44,19 +44,11 @@ type Settings = {
   langfuseMasking: { enabled: boolean; level: 'pii' | 'content' };
 };
 
-type CatalogModel = { model_name: string; display: string; provenance: 'internal' | 'external' };
-type ModelsResponse = { models: CatalogModel[]; source: 'litellm' | 'unavailable'; roles: { reasoning: string; standard: string; embeddings: string } };
 
 // Prominent currencies as quick-pick chips; the dropdown covers the rest.
 const PROMINENT_CURRENCIES = ['EUR', 'CHF', 'USD'] as const;
 // A pragmatic slice of common ISO-4217 codes for the "other" dropdown.
 const OTHER_CURRENCIES = ['GBP', 'JPY', 'CAD', 'AUD', 'CNY', 'INR', 'SEK', 'NOK', 'DKK', 'PLN', 'SGD', 'HKD', 'NZD', 'ZAR', 'BRL', 'AED'] as const;
-
-const ROLE_META: { key: keyof Settings['modelRoles']; label: string; help: string }[] = [
-  { key: 'reasoning', label: 'Reasoning', help: 'Planning and deep reasoning across the OS. Default: sovereign-reasoning.' },
-  { key: 'standard', label: 'Standard', help: 'Assistants, agent execution and light work. Default: sovereign-default.' },
-  { key: 'embeddings', label: 'Embeddings', help: 'Knowledge + Files vector embeddings. Default: sovereign-embed.' },
-];
 
 function Switch({ on, onClick, disabled }: { on: boolean; onClick: () => void; disabled?: boolean }) {
   return (
@@ -64,15 +56,6 @@ function Switch({ on, onClick, disabled }: { on: boolean; onClick: () => void; d
       <span className="switch-track"><span className="switch-thumb" /></span>
       <span className="switch-text">{on ? 'ON' : 'OFF'}</span>
     </button>
-  );
-}
-
-/** In-box (sovereign) vs hosted (external) badge — same language as the agent builder. */
-function ProvBadge({ provenance }: { provenance: 'internal' | 'external' }) {
-  return provenance === 'internal' ? (
-    <span className="badge ok" title="Runs in-box on the sovereign cluster — no data leaves.">in-box · sovereign</span>
-  ) : (
-    <span className="badge warn" title="Runs on a hosted API — the call leaves the box.">hosted · external</span>
   );
 }
 
@@ -89,8 +72,6 @@ function TenantSettingsInner() {
   const [s, setS] = useState<Settings | null>(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState('');
-  const [catalog, setCatalog] = useState<CatalogModel[]>([]);
-  const [catalogSource, setCatalogSource] = useState<'litellm' | 'unavailable' | null>(null);
 
   const load = useCallback(async () => {
     setError('');
@@ -105,20 +86,6 @@ function TenantSettingsInner() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
-
-  // The live LiteLLM catalog that populates the three model-role selectors (same
-  // source the agent builder uses). LiteLLM unreachable = no list (no install-catalog fallback).
-  useEffect(() => {
-    let alive = true;
-    (async () => {
-      try {
-        const res = await fetch('/api/agents/models', { cache: 'no-store' });
-        const body = (await res.json()) as ModelsResponse;
-        if (alive && res.ok) { setCatalog(body.models ?? []); setCatalogSource(body.source ?? null); }
-      } catch { /* keep the selectors on their current values */ }
-    })();
-    return () => { alive = false; };
-  }, []);
 
   const save = useCallback(async (group: string, patch: Partial<Settings>) => {
     setBusy(group);
@@ -271,40 +238,10 @@ function TenantSettingsInner() {
 
         <div className="section-title">Model roles</div>
         <div className="card" style={{ marginBottom: 18 }}>
-          <div className="hint" style={{ marginBottom: 12 }}>
-            The three default models the OS resolves at runtime. Each is chosen from the live LiteLLM
-            catalog; leave a role on <strong>Default</strong> to use the platform env baseline. This
-            re-points the app ROLE → gateway alias — it never changes the fixed LiteLLM aliases.
-            {catalogSource === 'unavailable' ? ' LiteLLM could not be read, so no models are listed.' : ''}
+          <div className="hint">
+            The OS calls three model roles (strong, worker, embedding). Which model each one means is set in{' '}
+            <Link href="/platform?section=models">Platform → Models</Link>, not here.
           </div>
-          {ROLE_META.map((r) => {
-            const value = s.modelRoles[r.key];
-            const selected = catalog.find((m) => m.model_name === value);
-            return (
-              <div key={r.key} className="row" style={{ gap: 12, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center' }}>
-                <label className="hint" style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: '1 1 320px' }}>
-                  {r.label}
-                  <select
-                    value={value}
-                    onChange={(e) => set('modelRoles', { ...s.modelRoles, [r.key]: e.target.value })}
-                  >
-                    <option value="">Default (platform baseline)</option>
-                    {catalog.map((m) => (
-                      <option key={m.model_name} value={m.model_name}>
-                        {m.display} — {m.provenance === 'internal' ? 'in-box' : 'hosted'} ({m.model_name})
-                      </option>
-                    ))}
-                    {value && !selected ? <option value={value}>{value} (current)</option> : null}
-                  </select>
-                  <span className="hint" style={{ fontSize: 12 }}>{r.help}</span>
-                </label>
-                {selected ? <ProvBadge provenance={selected.provenance} /> : null}
-              </div>
-            );
-          })}
-          <button className="btn" disabled={busy === 'modelRoles'} onClick={() => save('modelRoles', { modelRoles: s.modelRoles })}>
-            {busy === 'modelRoles' ? <span className="spin" /> : 'Save'}
-          </button>
         </div>
 
         <div className="section-title">Software</div>

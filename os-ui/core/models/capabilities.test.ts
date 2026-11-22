@@ -50,12 +50,13 @@ test('the env var is MODEL_IMAGE_ALLOWLIST', () => {
   assert.equal(ENV, 'MODEL_IMAGE_ALLOWLIST');
 });
 
-test('default: exactly the four Qwen3-VL aliases may receive images', () => {
+test('default: exactly the strong role and the old names that resolve to it may receive images', () => {
   setEnv(undefined);
   assert.deepEqual([...DEFAULT_IMAGE_MODELS].sort(), [
     'sovereign-premium',
     'sovereign-reasoning',
     'sovereign-reasoning-fast',
+    'sovereign-strong',
     'sovereign-vision',
   ]);
   for (const m of DEFAULT_IMAGE_MODELS) assert.equal(canReceiveImages(m), true, m);
@@ -64,7 +65,7 @@ test('default: exactly the four Qwen3-VL aliases may receive images', () => {
 
 test('default: the text-only and embedding aliases may not', () => {
   setEnv(undefined);
-  for (const m of ['sovereign-default', 'sovereign-mock', 'sovereign-embed', 'gpt-oss', 'gpt-oss-20b']) {
+  for (const m of ['sovereign-worker', 'sovereign-embedding', 'sovereign-default', 'sovereign-mock', 'sovereign-embed', 'gpt-oss', 'gpt-oss-20b']) {
     assert.equal(canReceiveImages(m), false, m);
   }
 });
@@ -287,5 +288,6 @@ test('SOURCE: the tier guess in routing.ts is not wired to the image decision', 
   assert.equal(/from ['"][^'"]*models\/capabilities['"]/.test(routing), false, 'routing.ts must not import the capability map');
   assert.match(routing, /decided only by `canReceiveImages`/, 'tierOf carries the warning that it is a display guess');
   const caps = read('core/models/capabilities.ts');
-  assert.equal(/^import /m.test(caps), false, 'capabilities.ts imports nothing (core must not import a tab; no guess can leak in)');
+  const imports = [...caps.matchAll(/^import .* from '([^']+)'/gm)].map((m) => m[1]);
+  assert.deepEqual(imports, ['@core/models/role-names'], 'capabilities.ts imports only the pure role names (core must not import a tab; no guess can leak in)');
 });

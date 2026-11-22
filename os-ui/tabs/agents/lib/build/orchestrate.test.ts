@@ -25,7 +25,7 @@ agents:
     agent_md: "# Worker"
     memory_md: ""
     tools: [retrieve]
-    model: sovereign-default
+    model: sovereign-worker
 edges:
   - { from: supervisor, to: worker, type: supervise }
 `;
@@ -114,6 +114,6 @@ test('the LiteLLM row proves light→Standard and reasoning→Reasoning routing'
   const report = await orchestrateBuild({ yaml: SUP, adapters: makeMockAdapters(backends) });
   const litellm = report.rows.find((r) => r.tool === 'litellm')!;
   assert.equal(litellm.status, 'ok');
-  assert.match(litellm.detail.toLowerCase(), /sovereign-default/);
-  assert.match(litellm.detail.toLowerCase(), /sovereign-reasoning/);
+  assert.match(litellm.detail.toLowerCase(), /sovereign-worker/);
+  assert.match(litellm.detail.toLowerCase(), /sovereign-strong/);
 });

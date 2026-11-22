@@ -159,8 +159,8 @@ function deps(over: Partial<AgenticGraphDeps> = {}): AgenticGraphDeps {
     toolSpecsFor: () => [],
     callTool: async () => ({ text: 'ok', isError: false }),
     preamble: 'OS RULES + build spec',
-    reasoningModel: 'sovereign-reasoning',
-    execModel: 'sovereign-default',
+    reasoningModel: 'sovereign-strong',
+    execModel: 'sovereign-worker',
     maxIterations: 2,
     ...over,
   };
@@ -169,7 +169,7 @@ function deps(over: Partial<AgenticGraphDeps> = {}): AgenticGraphDeps {
 test('INTAKE turn: the planner asks questions and creates NO app (no build tool executed)', async () => {
   const executed: string[] = [];
   const run = await runNode(IR, 'planner', [{ role: 'user', content: 'build something' }], deps({
-    llm: scriptLlm({ 'sovereign-reasoning': { content: '1. Who uses it? 2. What fields? [[QUESTIONS]]', toolCalls: [] } }),
+    llm: scriptLlm({ 'sovereign-strong': { content: '1. Who uses it? 2. What fields? [[QUESTIONS]]', toolCalls: [] } }),
     callTool: async (name) => {
       executed.push(name);
       return { text: 'ok', isError: false };
@@ -192,7 +192,7 @@ test('BUILD turn: the builder commits, we capture the appId, and advance to FEED
   };
   const run = await runNode(IR, 'builder', [{ role: 'user', content: 'approve — build it' }], deps({
     llm: scriptLlm({
-      'sovereign-default': { content: '', toolCalls: [{ id: 'c1', name: 'create_software', args: { name: 'Renewals' } }] },
+      'sovereign-worker': { content: '', toolCalls: [{ id: 'c1', name: 'create_software', args: { name: 'Renewals' } }] },
     }),
     toolSpecsFor: (n) => (n.id === 'builder' ? [createSpec] : []),
     callTool: async (name) => {

@@ -29,20 +29,22 @@ test('the default table routes light work to the Standard tier and reasoning to 
   assert.equal(table.vision.tier, 'vision');
 });
 
-test('reasoning tier maps to the sovereign-reasoning gateway alias', () => {
-  assert.equal(TIER_MODELS.reasoning, 'sovereign-reasoning');
+test('the tiers map to the role names', () => {
+  assert.equal(TIER_MODELS.reasoning, 'sovereign-strong');
+  assert.equal(TIER_MODELS.light, 'sovereign-worker');
+  assert.equal(TIER_MODELS.vision, 'sovereign-strong');
 });
 
-test('routeProbe: a light prompt hits the sovereign-default (light) model', () => {
+test('routeProbe: a light prompt hits the worker role', () => {
   const probe = routeProbe('coding', defaultRoutingTable());
   assert.equal(probe.tier, 'light');
-  assert.equal(probe.model, 'sovereign-default'); // the REAL live light alias
+  assert.equal(probe.model, 'sovereign-worker');
 });
 
-test('routeProbe: a reasoning prompt hits the local sovereign reasoning model', () => {
+test('routeProbe: a reasoning prompt hits the strong role', () => {
   const probe = routeProbe('planning', defaultRoutingTable());
   assert.equal(probe.tier, 'reasoning');
-  assert.match(probe.model, /sovereign-reasoning/i);
+  assert.equal(probe.model, 'sovereign-strong');
 });
 
 test('a per-agent model override resolves over the activity routing', () => {
@@ -61,41 +63,23 @@ test('a workspace override replaces an activity default', () => {
 
 test('tierOf classifies known model_names', () => {
   assert.equal(tierOf('some-small-model'), 'light');              // unknown → light heuristic
+  assert.equal(tierOf('sovereign-strong'), 'reasoning');
   assert.equal(tierOf('sovereign-reasoning'), 'reasoning');
   assert.equal(tierOf('sovereign-reasoning-fast'), 'reasoning');   // legacy fast alias, still classifies
   assert.equal(tierOf('stackit-qwen3-vl-reasoning'), 'reasoning'); // legacy alias
   assert.equal(tierOf('stackit-qwen3-vl'), 'vision');
 });
 
-test('MODEL_CATALOG presents ONLY the 3 STACKIT models + the mock (no stale aliases)', () => {
-  // Every catalog entry carries a human display + tier + provenance; the key IS
-  // the real LiteLLM model_name from the live proxy_config.model_list.
+test('MODEL_CATALOG presents ONLY the three roles (the catalog itself is LiteLLM\'s)', () => {
   for (const [name, info] of Object.entries(MODEL_CATALOG)) {
     assert.equal(info.model_name, name, `${name} keyed by its own model_name`);
     assert.ok(info.display.length > 0, `${name} has a display name`);
     assert.ok(['light', 'reasoning', 'vision'].includes(info.tier), `${name} has a tier`);
     assert.ok(['internal', 'external'].includes(info.provenance), `${name} has provenance`);
-    // Every catalog id must be a sovereign alias — the only family on the live
-    // gateway. No `ministral-*` / `stackit-*` / other-provider phantoms.
-    assert.ok(name.startsWith('sovereign-'), `${name} is a real sovereign gateway alias`);
   }
-  // Exactly the intended presented set: the three STACKIT roles + the mock.
-  assert.deepEqual(
-    Object.keys(MODEL_CATALOG).sort(),
-    ['sovereign-default', 'sovereign-embed', 'sovereign-mock', 'sovereign-reasoning'],
-  );
-  // The live model set is all STACKIT-managed inference → every alias is external.
-  assert.equal(MODEL_CATALOG['sovereign-default'].provenance, 'external');
-  assert.equal(MODEL_CATALOG['sovereign-reasoning'].provenance, 'external');
-  assert.equal(MODEL_CATALOG['sovereign-embed'].provenance, 'external');
-  // The stale duplicate-of-Qwen aliases are retired from the presented catalog.
-  assert.equal(MODEL_CATALOG['sovereign-vision'], undefined);
-  assert.equal(MODEL_CATALOG['sovereign-premium'], undefined);
-  assert.equal(MODEL_CATALOG['sovereign-reasoning-fast'], undefined);
-  // No phantom / stale self-hosted ids leaked back in.
-  assert.equal(MODEL_CATALOG['ministral-3'], undefined);
-  assert.equal(MODEL_CATALOG['magistral-small'], undefined);
-  assert.equal(MODEL_CATALOG['bge-m3'], undefined);
+  assert.deepEqual(Object.keys(MODEL_CATALOG).sort(), ['sovereign-embedding', 'sovereign-strong', 'sovereign-worker']);
+  // NEGATIVE TWIN: no old alias and no real model name is presented from here.
+  for (const gone of ['sovereign-default', 'sovereign-mock', 'sovereign-reasoning', 'sovereign-embed', 'sovereign-vision', 'sovereign-premium', 'ministral-3', 'bge-m3']) assert.equal(MODEL_CATALOG[gone], undefined, gone);
 });
 
 test('provenanceOf: catalog wins; unknown names default to external (no in-box server)', () => {
@@ -110,8 +94,8 @@ test('provenanceOf: catalog wins; unknown names default to external (no in-box s
 });
 
 test('modelInfo resolves unknown model_names via heuristics (never throws)', () => {
-  const known = modelInfo('sovereign-reasoning');
-  assert.equal(known.display, 'Qwen3-VL-235B');
+  const known = modelInfo('sovereign-strong');
+  assert.equal(known.display, 'Strong role');
   const unknown = modelInfo('mystery-model-x');
   assert.equal(unknown.model_name, 'mystery-model-x');
   assert.equal(unknown.display, 'mystery-model-x'); // display falls back to the id

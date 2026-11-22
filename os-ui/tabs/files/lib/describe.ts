@@ -52,9 +52,6 @@ import {
   tagVocabulary,
 } from '@tabs/files/lib/store';
 
-/** The alias the standard role resolves to when no real model is wired (`core/models/roles`). */
-export const MOCK_MODEL_ALIAS = 'sovereign-mock';
-
 export type DescribeCallContext = { userId: string; domain: string; model: string };
 
 export type DescribeDeps = {
@@ -126,8 +123,8 @@ async function run(id: string, deps: DescribeDeps, actingUserId: string): Promis
   };
 
   const model = deps.model();
-  if (!model || model === MOCK_MODEL_ALIAS) {
-    return fail('not-configured', 'No description was written: no real model is configured for the standard role.');
+  if (!model) {
+    return fail('not-configured', 'No description was written: no model is configured for the worker role.');
   }
 
   markAutoDocsPending(id);

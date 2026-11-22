@@ -15,8 +15,8 @@
  * human reading; `software-team.test.ts` asserts the two are byte-identical.
  *
  * Model routing (STACKIT reasoning/execution tiers):
- *   • builder            → `sovereign-default`   (gpt-oss-20b — code/execution; see routing.ts)
- *   • all five others    → `sovereign-reasoning` (Qwen3-VL-235B — reasoning)
+ *   • builder            → `sovereign-worker`   (code/execution; see routing.ts)
+ *   • all five others    → `sovereign-strong` (reasoning)
  *
  * Phase gates (A5-review-H-2): the five `when` guards below route on five declared
  * boolean state channels, and each is written by the agent whose turn the guard
@@ -85,7 +85,7 @@ routing:
 agents:
   - id: orchestrator
     role: Delivery lead — routes the brief through plan, build, test, deploy, then reports
-    model: sovereign-reasoning
+    model: sovereign-strong
     tools: []
     members: [planner, builder, tester, deployer, communication]
     agent_md: |
@@ -98,7 +98,7 @@ agents:
     memory_md: '# Memory'
   - id: planner
     role: Turns the brief into a small, concrete build plan
-    model: sovereign-reasoning
+    model: sovereign-strong
     tools: [use_knowledge, use_data]
     agent_md: |
       # Planner
@@ -110,7 +110,7 @@ agents:
     memory_md: '# Memory'
   - id: builder
     role: Writes the code and commits it through the governed platform
-    model: sovereign-default
+    model: sovereign-worker
     tools: [create_software, commit, use_connection, use_data, use_knowledge]
     agent_md: |
       # Builder
@@ -123,7 +123,7 @@ agents:
     memory_md: '# Memory'
   - id: tester
     role: Verifies the preview before anything ships
-    model: sovereign-reasoning
+    model: sovereign-strong
     tools: [start_preview]
     agent_md: |
       # Tester
@@ -135,7 +135,7 @@ agents:
     memory_md: '# Memory'
   - id: deployer
     role: Requests the governed go-live (never approves it)
-    model: sovereign-reasoning
+    model: sovereign-strong
     tools: [request_deploy]
     agent_md: |
       # Deployer
@@ -146,7 +146,7 @@ agents:
     memory_md: '# Memory'
   - id: communication
     role: Narrates progress to the user and asks the clarifying questions
-    model: sovereign-reasoning
+    model: sovereign-strong
     tools: []
     agent_md: |
       # Communication

@@ -143,9 +143,9 @@ test('routing hits the sovereign light + reasoning defaults (real gateway aliase
   const light = routeProbe('coding', backends.litellm.routing);
   const reasoning = routeProbe('planning', backends.litellm.routing);
   assert.equal(light.tier, 'light');
-  assert.equal(light.model, 'sovereign-default'); // the REAL live light alias
+  assert.equal(light.model, 'sovereign-worker'); // the REAL live light alias
   assert.equal(reasoning.tier, 'reasoning');
-  assert.match(reasoning.model, /sovereign-reasoning/i);
+  assert.match(reasoning.model, /sovereign-strong/i);
 });
 
 test('granted connection works while a non-granted one is blocked; a write is held for approval', async () => {

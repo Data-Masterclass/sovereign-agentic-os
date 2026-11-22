@@ -11,11 +11,11 @@ import { _reset as resetSettings } from '@tabs/admin/lib/settings';
 
 beforeEach(() => { _reset(); resetSettings(); });
 
-test('getDefaults projects the ONE role store (settings modelRoles via roles.ts)', () => {
-  // Unset roles → the config baselines; there is no separate defaults record.
-  assert.equal(getDefaults().chat, 'sovereign-default');
-  assert.equal(getDefaults().reasoning, 'sovereign-reasoning');
-  assert.equal(getDefaults().embedding, 'sovereign-embed');
+test('getDefaults projects the three roles the OS calls', () => {
+  // The OS calls only the role names; there is no separate defaults record.
+  assert.equal(getDefaults().chat, 'sovereign-worker');
+  assert.equal(getDefaults().reasoning, 'sovereign-strong');
+  assert.equal(getDefaults().embedding, 'sovereign-embedding');
 });
 
 test('registerProviderKey stores ref+fingerprint only', () => {
@@ -26,8 +26,8 @@ test('registerProviderKey stores ref+fingerprint only', () => {
 });
 
 test('assistant follows the STANDARD role out of the box (no explicit override)', () => {
-  assert.equal(getAssistantModelId(), 'sovereign-default');
-  assert.equal(getAssistantModel()?.id, 'sovereign-default');
+  assert.equal(getAssistantModelId(), 'sovereign-worker');
+  assert.equal(getAssistantModel()?.id, 'sovereign-worker');
   assert.equal(isAssistantExplicit(), false);
 });
 
@@ -37,7 +37,7 @@ test('an explicit assistant pin is held until cleared; clearing goes back to fol
   assert.equal(getAssistantModelId(), 'acme-chat');
   clearAssistantModel();
   assert.equal(isAssistantExplicit(), false);
-  assert.equal(getAssistantModelId(), 'sovereign-default');
+  assert.equal(getAssistantModelId(), 'sovereign-worker');
 });
 
 test('NEGATIVE TWIN: a blank alias is refused (400) and changes nothing', () => {
@@ -51,7 +51,7 @@ test('after a model is removed in LiteLLM a pin at it goes back to follow-Standa
   assert.equal(getAssistantModelId(), 'acme-chat');
   assert.equal(clearAssistantIf('acme-chat'), true);
   assert.equal(isAssistantExplicit(), false);
-  assert.equal(getAssistantModelId(), 'sovereign-default', 'never a ghost pin');
+  assert.equal(getAssistantModelId(), 'sovereign-worker', 'never a ghost pin');
 });
 
 test('globalThis pin: the state is shared under soa.platform.models and holds no catalog', () => {

@@ -108,7 +108,7 @@ export const MOCK_COST: HealthItem[] = [
     lens: 'cost',
     title: 'Sales domain — LLM spend (month-to-date)',
     health: 'amber',
-    detail: '$182 of the $200 Governance cap (91%). sovereign-mock + premium-eu split.',
+    detail: '$182 of the $200 Governance cap (91%). strong + worker split.',
     owner: SALES_OWNER,
     domain: SALES_DOMAIN,
     metric: 182,
