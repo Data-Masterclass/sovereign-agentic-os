@@ -286,3 +286,31 @@ test('NEGATIVE TWIN: the old wording is gone from every per-tab brief too', () =
 test('the instructions are short (a slim preamble, not a manual)', () => {
   assert.ok(buildInstructions().length < 3_800, `instructions are ${buildInstructions().length} chars`);
 });
+
+// ---------------------------------------------------------------- review fixes (verifier, LOW x3 + skipped.reason)
+test('session ids: only an id the server issued to THIS user is accepted; a client-chosen id is rejected', async () => {
+  const { issueSession, resolveSessionKey } = await import('@core/mcp/fast-surface');
+  const sid = issueSession('cara');
+  assert.deepEqual(resolveSessionKey(sid, 'tokhash', 'cara'), { key: `sid:${sid}` });
+  // NEGATIVE TWINS: client-chosen, another user's issued id, and no header (token-derived key).
+  assert.deepEqual(resolveSessionKey('client-chosen-12345678', 'tokhash', 'cara'), { rejected: true });
+  assert.deepEqual(resolveSessionKey(sid, 'tokhash', 'dan'), { rejected: true }, 'an id issued to cara cannot be used by dan');
+  assert.deepEqual(resolveSessionKey('', 'tokhash', 'cara'), { key: 'tok:tokhash' });
+});
+
+test('load_toolset is NOT in ALL_MCP_TOOLS (agent runs and the Home chat never see it) but IS on the fast door; find stays in both', async () => {
+  const names = ALL_MCP_TOOLS.map((t) => t.name);
+  assert.ok(!names.includes('load_toolset'), 'load_toolset must not be in the registry agents use');
+  assert.ok(names.includes('find'), 'find is kept deliberately for agent runs and the Home chat');
+  assert.ok((await listNames(cara, freshKey())).includes('load_toolset'), 'the fast door still lists it');
+  assert.ok(!(await listNames(cara, null)).includes('load_toolset'), 'NEGATIVE TWIN: the plain door does not');
+});
+
+test('find reports a skipped source with a typed code, never the raw error message', async () => {
+  const { skipCode } = await import('@core/mcp/find-tools');
+  assert.equal(skipCode(new Error('timed out after 10s')), 'timeout');
+  assert.equal(skipCode(Object.assign(new Error('Not permitted to read /secret/path'), { status: 403 })), 'forbidden');
+  const raw = 'connect ECONNREFUSED 10.1.2.3:5432 password=hunter2';
+  assert.equal(skipCode(new Error(raw)), 'failed');
+  assert.doesNotMatch(skipCode(new Error(raw)), /hunter2|ECONN|10\.1/);
+});
