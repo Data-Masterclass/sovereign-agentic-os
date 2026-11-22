@@ -3,7 +3,9 @@
  *
  * AREA:       admin
  * FEATURE:    The catalog price of each model a turn used, for the per-role cost in the turn trace
- * ARCHITECTURE: the role name a turn calls stands for a catalog model through LiteLLM's `model_group_alias`
+ * USER STORY: As an admin I see what each role cost in a turn, priced from the catalog and never from a guess.
+ * ARCHITECTURE:
+ *   - the role name a turn calls stands for a catalog model through LiteLLM's `model_group_alias`
  *   (Platform → Models); the price is the price book's entry for that catalog model
  *   (`tabs/admin/lib/model-prices.ts`, EUR per 1M tokens). A gateway that cannot be read, or a model with no
  *   price, leaves the cost unknown (`undefined`): there is no default price.
