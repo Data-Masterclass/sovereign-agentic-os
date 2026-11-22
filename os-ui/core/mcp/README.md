@@ -45,6 +45,12 @@ Import via `@/lib/mcp/server` — no internal files directly.
 - **`token.ts`** — long-lived bearer token mint + verify.
 - **`pending.ts`** — pending-approval queue for `requires_approval` decisions.
 - **`http.ts`** — Streamable-HTTP transport utilities.
+- **`fast-surface.ts`** / **`find-tools.ts`** — the fast external surface served by `/api/mcp`:
+  a small read/find core by default, named toolsets loaded with `load_toolset` (the server
+  sends `notifications/tools/list_changed`; `Mcp-Session-Id` is assigned at `initialize`),
+  compact paginated lists (`detail: true` for full records) and the cross-artifact `find(query)`.
+  A tool that is not loaded is refused (`toolset_not_loaded`). Internal callers and the per-tab
+  endpoints keep the full registry and the original payloads.
 
 Test coverage: `mcpv2-p0.test.ts` (promotion seam invariant), `wave-a.test.ts`,
 `wave-b.test.ts`, and per-domain test files.

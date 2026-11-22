@@ -11,6 +11,7 @@ import { discoveryBaseTools } from '@core/mcp/discovery-base-tools';
 import { GIT_TOOLS } from '@core/mcp/git-tools';
 import { lifecycleTools } from '@core/mcp/lifecycle-tools';
 import { CONVERSATION_TOOLS } from '@core/mcp/conversation-tools';
+import { FIND_TOOLS } from '@core/mcp/find-tools';
 
 /**
  * Base bundles — always on, no flag. server.ts imports this for its side
@@ -35,3 +36,5 @@ registerToolBundle({ name: 'git', tools: GIT_TOOLS });
 registerToolBundle({ name: 'lifecycle', tools: lifecycleTools });
 // Home chat history: the caller's own conversations, read-only.
 registerToolBundle({ name: 'conversations', tools: CONVERSATION_TOOLS });
+// Fast external surface: the cross-artifact `find(query)` and `load_toolset`.
+registerToolBundle({ name: 'find', tools: FIND_TOOLS });

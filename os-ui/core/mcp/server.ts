@@ -25,6 +25,9 @@ import {
 } from '@core/mcp/resources';
 import { PROMPTS, renderPrompt, promptsForTab, type McpPrompt } from '@core/mcp/prompts';
 import { buildInstructions } from '@core/mcp/instructions';
+import {
+  COMPACT_LIST_TOOLS, TOOLSETS, compactList, loadToolset, loadedToolsets, pagingArgs, toolsetOf, withListPaging,
+} from '@core/mcp/fast-surface';
 
 /**
  * THE SOVEREIGN AGENTIC OS — remote MCP server (JSON-RPC 2.0 core).
@@ -214,6 +217,8 @@ const discoveryTools: McpTool[] = [
         name: t.name,
         tab: t.tab,
         minRole: t.minRole,
+        // The toolset a client loads with `load_toolset` to call it on the external door; null = core.
+        toolset: toolsetOf(t),
         description: t.description,
       }));
       // os-ui 0.6.133: when coded apps are OFF, the coded-only tools are advertised as
@@ -343,6 +348,19 @@ export type HandleRpcOptions = {
   prompts?: McpPrompt[];
   serverInfo?: { name: string; title: string; version: string };
   instructions?: string;
+  /**
+   * The FAST EXTERNAL SURFACE (`core/mcp/fast-surface.ts`) — set only by the HTTP door the user's
+   * MCP client connects to. A small core read toolset is listed by default, the rest are named
+   * toolsets loaded on demand (`load_toolset` + `notifications/tools/list_changed`), and artifact
+   * lists come back as compact pages. Absent for every internal caller (agent runs, the Home chat,
+   * the UI), which keep the full registry and the original payloads.
+   */
+  fast?: {
+    /** Identifies the MCP session (`Mcp-Session-Id`, else a token-derived key); bound to the user. */
+    sessionKey: string;
+    /** Receives server→client notifications raised by a call (the transport decides how to send). */
+    notify?: (notification: { jsonrpc: '2.0'; method: string }) => void;
+  };
 };
 
 /** The role-scoped wire list for `resources/list` (no `read` fn / internals leak). */
@@ -440,10 +458,10 @@ export async function handleRpc(
     case 'initialize':
       return ok(id, {
         protocolVersion: MCP_PROTOCOL_VERSION,
-        // Declare all three primitives. No subscribe/listChanged: this transport
-        // is POST-only (no server-initiated stream), so we never promise updates.
+        // Declare all three primitives. `tools.listChanged` is promised ONLY on the fast external
+        // door, where load_toolset really changes the list and raises the notification.
         capabilities: {
-          tools: { listChanged: false },
+          tools: { listChanged: !!opts.fast },
           resources: {},
           prompts: { listChanged: false },
         },
@@ -457,8 +475,19 @@ export async function handleRpc(
     case 'ping':
       return ok(id, {});
 
-    case 'tools/list':
-      return ok(id, { tools: listToolsForRole(user.role, tools) });
+    case 'tools/list': {
+      if (!opts.fast) return ok(id, { tools: listToolsForRole(user.role, tools) });
+      const loaded = loadedToolsets(opts.fast.sessionKey, user.id);
+      const visible = tools.filter((t) => {
+        const set = toolsetOf(t);
+        return set === null || loaded.has(set);
+      });
+      return ok(id, {
+        tools: listToolsForRole(user.role, visible).map((t) =>
+          COMPACT_LIST_TOOLS.includes(t.name) ? { ...t, inputSchema: withListPaging(t.inputSchema) } : t,
+        ),
+      });
+    }
 
     case 'resources/list':
       return ok(id, { resources: listResourcesForRole(user.role, resources) });
@@ -520,6 +549,20 @@ export async function handleRpc(
           hint: `Ask a ${tool.minRole} to run it, or keep your work Personal.`,
         });
       }
+      // THE FAST DOOR'S TOOLSET GATE. A tool outside the core set is callable only once its toolset
+      // is loaded in this session. This is the control, not the list: a client that guesses a name
+      // is refused here, with the one call that fixes it.
+      if (opts.fast) {
+        const set = toolsetOf(tool);
+        if (set === null && tool.name === 'load_toolset') return loadToolsetCall(id, user, args, tools, opts.fast);
+        if (set !== null && !loadedToolsets(opts.fast.sessionKey, user.id).has(set)) {
+          return toolError(id, {
+            code: 'toolset_not_loaded',
+            reason: `${tool.name} is in the "${set}" toolset, which is not loaded in this session`,
+            hint: `Call load_toolset {"name":"${set}"}, then call ${tool.name} again. Reading and finding (list_*, get_*, search_*, query_*, find) never needs a toolset.`,
+          });
+        }
+      }
       try {
         // Part D: every tool call runs inside an `mcp:<tool>` request-surface scope, so a write it
         // causes is committed to the domain repo as `… — via mcp:<tool>` (the UI's counterpart is
@@ -531,7 +574,13 @@ export async function handleRpc(
         // id would split one causal chain across two `OS-Request-Id`s in the git log. The run id
         // (`runWithRunId`) rides along the same way, which is what produces `OS-Run-Id`.
         const ambient = currentSurface();
-        const result = await runWithSurface(`mcp:${tool.name}`, () => tool.call(user, args), ambient?.requestId);
+        // The fast door compacts artifact lists (id, name, domain, scope, status, updated) unless the
+        // client asks for `detail: true`; the paging arguments are the door's own, not the tool's.
+        const compact = !!opts.fast && COMPACT_LIST_TOOLS.includes(tool.name);
+        if (compact) pagingArgs(args); // a bad limit/offset is a typed bad_request before any read
+        const callArgs = compact ? withoutPaging(args) : args;
+        let result = await runWithSurface(`mcp:${tool.name}`, () => tool.call(user, callArgs), ambient?.requestId);
+        if (compact && !pagingArgs(args).detail) result = compactList(result, args);
         // C7 / D14 — a tool that declares an artifact projection also returns it as
         // `structuredContent`, conforming to the `outputSchema` it advertised. The text
         // block is unchanged, so every existing client and the model's own view of the
@@ -540,7 +589,7 @@ export async function handleRpc(
         // error, so a throwing projection degrades to "no artifacts" and the answer stands.
         const artifacts = projectArtifacts(tool, result, args);
         return ok(id, {
-          content: [{ type: 'text', text: safeText(result) }],
+          content: [{ type: 'text', text: safeText(result, !opts.fast) }],
           ...(artifacts === undefined ? {} : { structuredContent: { artifacts } }),
         });
       } catch (e) {
@@ -553,6 +602,44 @@ export async function handleRpc(
     default:
       return rpcError(id, -32601, `Method not found: ${method ?? '(none)'}`);
   }
+}
+
+function withoutPaging(args: Record<string, unknown>): Record<string, unknown> {
+  const { detail: _d, limit: _l, offset: _o, ...rest } = args;
+  return rest;
+}
+
+/**
+ * `load_toolset` on the fast door: record the toolset for THIS session (bound to this user), tell
+ * the transport the tool list changed, and answer with the names that appeared. It only widens the
+ * LIST — every tool it reveals still passes the role floor and its governed function when called.
+ */
+function loadToolsetCall(
+  id: string | number | null | undefined,
+  user: CurrentUser,
+  args: Record<string, unknown>,
+  tools: McpTool[],
+  fast: NonNullable<HandleRpcOptions['fast']>,
+): JsonRpcResponse {
+  const name = str(args.name).trim();
+  if (!(name in TOOLSETS)) {
+    return toolError(id, {
+      code: 'bad_request',
+      reason: `unknown toolset "${name || '(none)'}"`,
+      hint: `Use one of: ${Object.entries(TOOLSETS).map(([k, v]) => `${k} (${v.description})`).join('; ')}.`,
+    });
+  }
+  if (!loadToolset(fast.sessionKey, user.id, name)) {
+    return toolError(id, { code: 'forbidden', reason: 'this session belongs to another user', hint: 'Reconnect the MCP server to start your own session.' });
+  }
+  const added = tools.filter((t) => toolsetOf(t) === name && roleCanUse(user.role, t.minRole)).map((t) => t.name);
+  fast.notify?.({ jsonrpc: '2.0', method: 'notifications/tools/list_changed' });
+  const payload = {
+    loaded: name,
+    tools: added,
+    note: `${added.length} tool(s) added to this session's tool list (tools/list has changed). Loading widens the list only: every tool still runs as you, role-gated, policy-checked and audited.`,
+  };
+  return ok(id, { content: [{ type: 'text', text: JSON.stringify(payload) }], structuredContent: payload });
 }
 
 /** A structured, model-readable tool error: `{ error: { code, reason, hint } }`. */
@@ -678,10 +765,12 @@ function projectArtifacts(
   }
 }
 
-function safeText(result: unknown): string {
+/** The text block of a result. Pretty-printed by default; the fast external door sends it compact
+ *  (indentation is pure token cost to a model and the structure is identical). */
+function safeText(result: unknown, pretty = true): string {
   if (typeof result === 'string') return result;
   try {
-    return JSON.stringify(result, null, 2);
+    return JSON.stringify(result, null, pretty ? 2 : undefined);
   } catch {
     return String(result);
   }

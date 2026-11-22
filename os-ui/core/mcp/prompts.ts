@@ -6,6 +6,7 @@ import type { CurrentUser } from '@core/kernel/auth';
 import { ROLES, type Role } from '@core/kernel/session';
 import type { ToolTab, McpTab } from '@core/mcp/server';
 import { loadGuide, type GuidePath } from '@core/tabs-meta/guides';
+import { toolsetForTab } from '@core/mcp/fast-surface';
 
 /**
  * MCP PROMPTS — user-controlled, parameterized workflow templates surfaced by
@@ -277,7 +278,7 @@ export const PROMPTS: McpPrompt[] = [
       'GOAL: get oriented in the Sovereign Agentic OS.',
       'Steps:',
       '1. whoami — your identity, role, domains, and what you can/cannot do.',
-      '2. list_capabilities — every tool split into available vs gated.',
+      '2. list_capabilities — every tool split into available vs gated (with the toolset each one loads from).',
       '3. Read sovereign-os://guide/overview and sovereign-os://guide/governance (or get_guide).',
       '4. Read your inventories: sovereign-os://my/datasets, my/knowledge, my/connections, my/files, my/metrics, my/dashboards, my/agents, my/software (or the list_* tools).',
       '5. Summarize: "here is what exists, and here is what you may do" — then pick a golden-path prompt.',
@@ -288,9 +289,13 @@ export const PROMPTS: McpPrompt[] = [
 /** Render a prompt to MCP `prompts/get` messages: guide + live banner + script + rules. */
 export function renderPrompt(prompt: McpPrompt, user: CurrentUser, args: Record<string, string>): PromptMessage[] {
   const guide = loadGuide(prompt.guide);
+  // A build prompt uses write tools. On the external MCP door those are a named toolset the client
+  // loads first; say so up front so the first write is not a refusal.
+  const toolset = toolsetForTab(prompt.tab);
   const text = [
     roleBanner(user),
     '',
+    toolset ? `TOOLS: the write tools below are in the "${toolset}" toolset — call load_toolset({name: "${toolset}"}) before the first one (reads like list_* and find need no toolset).\n` : '',
     prompt.script(args),
     '',
     RULES,

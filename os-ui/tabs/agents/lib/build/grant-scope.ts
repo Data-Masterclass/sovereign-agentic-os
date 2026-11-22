@@ -127,6 +127,10 @@ export const TOOL_RESOURCES: Readonly<Record<string, ToolResourceRule>> = {
   // Adds a measure over a dataset the system must be able to read; the metric it defines is new.
   define_metric: { ids: [id('data', 'datasetId', 'read')], creates: ['metrics'] },
   preview_metric: reads('data', 'datasetId'),
+  // `find` runs the governed list/search tools as the user, across every kind: an agent whose grants
+  // name specific items must use the grant-scoped list_*/search_* tools instead, so find is refused
+  // under any restriction (it narrows nothing itself).
+  find: { broad: { kinds: ['data', 'metrics', 'knowledge', 'files', 'connections'], why: 'it searches every kind of artifact the running user can see' } },
   suggest_metrics: { broad: { kinds: ['data', 'metrics'], why: 'it reads every dataset and metric the running user can see' } },
   // ------------------------------------------------------------- knowledge --
   list_knowledge: lists('knowledge'),
@@ -204,6 +208,8 @@ const MONITORING = 'reads run and trace telemetry, not a granted resource';
  * connection, file or plan item.
  */
 export const NO_GRANTED_RESOURCE: Readonly<Record<string, string>> = {
+  // external-door toolsets
+  load_toolset: 'changes only which tools one external MCP session lists; it reads and writes no artifact, and every tool it reveals keeps its own grant check.',
   // home chat history
   list_conversations: 'reads the caller\'s OWN Home chat conversations by user id; a conversation is private to its user and is not a resource a grant can name.',
   get_conversation: 'reads one of the caller\'s OWN Home chat conversations by user id; another user\'s id is not found, and no grant exists that could widen it.',
