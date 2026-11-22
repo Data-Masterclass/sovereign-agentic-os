@@ -22,6 +22,7 @@
  */
 'use client';
 
+import { LEAD_SWITCH_LABEL, leadSwitchText } from '@tabs/admin/lib/lead-model-label';
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { ConfirmProvider, useConfirm } from '@core/ui/lifecycle/ConfirmDialog';
@@ -90,7 +91,7 @@ function ModelsPageInner() {
   const confirm = useConfirm();
   const [assistant, setAssistant] = useState('');
   const [assistantExplicit, setAssistantExplicit] = useState(false);
-  const [assistantRole, setAssistantRole] = useState<'strong' | 'pinned'>('strong');
+  const [assistantRole, setAssistantRole] = useState<'strong' | 'worker' | 'pinned'>('strong');
   // Live gateway catalog (source of truth for the role selectors) + the current
   // modelRoles store (the ONE per-role default store).
   const [catalog, setCatalog] = useState<CatalogModel[]>([]);
@@ -102,7 +103,7 @@ function ModelsPageInner() {
   const [imageInput, setImageInput] = useState<ImageInput | null>(null);
   // Cost routing: standard-first escalation (default ON). Strictly-validated surfaces
   // try Standard first and escalate to Reasoning only on a validation miss.
-  const [standardFirst, setStandardFirst] = useState(true);
+  const [standardFirst, setStandardFirst] = useState(false);
   // Token prices: the effective book (stored/env per row) + unsaved field edits.
   const [prices, setPrices] = useState<Record<string, PriceRow>>({});
   const [pricesMeta, setPricesMeta] = useState<{ updatedAt?: string; updatedBy?: string }>({});
@@ -124,9 +125,9 @@ function ModelsPageInner() {
       ]);
       const mBody = await mRes.json();
       if (!mRes.ok) { setError(mBody.error ?? 'Failed to load'); return; }
-      setAssistant(mBody.assistant ?? ''); setAssistantExplicit(Boolean(mBody.assistantExplicit)); setAssistantRole(mBody.assistantRole === 'pinned' ? 'pinned' : 'strong');
+      setAssistant(mBody.assistant ?? ''); setAssistantExplicit(Boolean(mBody.assistantExplicit)); setAssistantRole(mBody.assistantRole === 'pinned' || mBody.assistantRole === 'worker' ? mBody.assistantRole : 'strong');
       if (cRes.ok) { const c = await cRes.json(); setCatalog(c.models ?? []); setCatalogSource(c.source ?? null); setCatalogError(c.error ?? ''); setConnections(c.credentials ?? null); setImageInput(c.imageInput ?? null); }
-      if (sRes.ok) { const s = await sRes.json(); setStandardFirst(s.settings?.standardFirstEscalation !== false); }
+      if (sRes.ok) { const s = await sRes.json(); setStandardFirst(s.settings?.standardFirstEscalation === true); }
       if (pRes.ok) { const p = await pRes.json(); setPrices(p.prices ?? {}); setPricesMeta({ updatedAt: p.updatedAt, updatedBy: p.updatedBy }); setPriceEdits({}); }
     } catch (e) { setError((e as Error).message); } finally { setLoading(false); }
   }, []);
@@ -152,7 +153,7 @@ function ModelsPageInner() {
       });
       const body = await res.json();
       if (!res.ok) setError(body.error ?? 'Save failed');
-      else { setToast('Saved the cost-routing setting.'); await load(); }
+      else { setToast('Saved the lead-model setting.'); await load(); }
     } finally { setBusy(''); }
   }, [standardFirst, load]);
 
@@ -284,7 +285,7 @@ function ModelsPageInner() {
           </button>
         </div>
 
-        <div className="section-title">Cost routing</div>
+        <div className="section-title">Lead model</div>
         <div className="card" style={{ marginBottom: 18 }}>
           <label
             className="row"
@@ -298,14 +299,10 @@ function ModelsPageInner() {
               style={{ marginTop: 3 }}
             />
             <span className="hint" style={{ flex: 1 }}>
-              <strong>Standard-first escalation</strong> (cost routing)
+              <strong>{LEAD_SWITCH_LABEL}</strong>
               <span style={{ display: 'block', fontSize: 12, marginTop: 2 }}>
-                For surfaces whose output is strictly validated before use — suggest metrics, DQ
-                fix proposals, structured stage assistants, NL→SQL generation — run the <strong>worker</strong>{' '}
-                role first and escalate to the <strong>strong</strong> role only when validation fails. The validators
-                are the quality gate, so this is safe by construction. Every escalation is traced to the
-                model that actually answered. Turn off to send those surfaces straight to the strong role.
-                The agent plan phase and free-form surfaces always use the strong role regardless.
+                {leadSwitchText(standardFirst, assistant || 'unset')}{' '}
+                Every escalation is shown in the turn's model trace.
               </span>
             </span>
           </label>
@@ -318,15 +315,15 @@ function ModelsPageInner() {
         <p className="hint">
           Agents &amp; Software build chat, the Big Bets planner, the Knowledge assistant and the Metric
           agent all run on <strong>this one model</strong>, through the governed LiteLLM gateway. By default
-          it <strong>follows the strong role</strong> above: it plans, chooses tools and writes every
-          answer on the strong model, and hands only clearly defined, schema-checked sub-tasks to the worker. Override it below to pin a
+          it <strong>follows the lead role</strong> (the strong model, unless the cost saver below is on): it plans, chooses tools and writes every
+          answer on the lead model; the strong lead hands only clearly defined, schema-checked sub-tasks to the worker. Override it below to pin a
           model you added with Add a provider.
         </p>
         <div className="card" style={{ marginBottom: 16 }}>
           <div className="row" style={{ gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
             <span className="comp-label" style={{ margin: 0 }}>Active assistant</span>
             <span className="pa-tag" title="The model the assistant runs on right now, and the role it stands for">
-              {assistant || 'unset'} · {assistantRole === 'strong' ? 'strong role' : 'pinned by an admin'}
+              {assistant || 'unset'} · {assistantRole === 'pinned' ? 'pinned by an admin' : `${assistantRole} role (lead)`}
             </span>
             <select
               value={assistantExplicit ? assistant : ''}
@@ -336,7 +333,7 @@ function ModelsPageInner() {
                 : patch(e.target.value, { op: 'assistant' })}
               style={{ minWidth: 260 }}
             >
-              <option value="">Follow the strong role ({assistant || 'unset'})</option>
+              <option value="">Follow the lead role ({assistant || 'unset'})</option>
               {catalog.filter((m) => m.mode !== 'embedding').map((m) => (
                 <option key={m.model_name} value={m.model_name}>{m.display} ({m.model_name})</option>
               ))}

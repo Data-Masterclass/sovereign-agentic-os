@@ -49,14 +49,14 @@ test('the run worker picks up a switch an admin saved after it booted', async ()
   try {
     stored = null; // booted before the admin saved anything
     await ensureModelRolesFresh();
-    assert.equal(standardFirstEscalationEnabled(), true);
-    stored = roles(false);
+    assert.equal(standardFirstEscalationEnabled(), false);
+    stored = roles(true);
     now += SETTINGS_REFRESH_MIN_MS - 1;
     await ensureModelRolesFresh();
-    assert.equal(standardFirstEscalationEnabled(), true, 'no re-read inside the refresh window');
+    assert.equal(standardFirstEscalationEnabled(), false, 'no re-read inside the refresh window');
     now += 2;
     await ensureModelRolesFresh();
-    assert.equal(standardFirstEscalationEnabled(), false);
+    assert.equal(standardFirstEscalationEnabled(), true);
   } finally {
     clock.mock.restore(); __clearRunWorkerProcess();
   }

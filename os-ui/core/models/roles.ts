@@ -51,13 +51,25 @@ export function noteStoredModelName(name: string, where: string): void {
 }
 
 /**
- * Whether STANDARD-FIRST ESCALATION is active (Cost routing). ON (default) means the
- * strictly-validated cost-routed surfaces try the worker first and escalate to strong only on
- * validation failure; OFF pins them to strong directly. Nil-safe: an unset/legacy settings blob
- * defaults ON. Server-only (reads the admin settings).
+ * The OS-WIDE LEAD-MODEL SWITCH (Platform → Models, "Save costs"; settings `standardFirstEscalation`).
+ * ON = cost-saving mode: the WORKER leads and strong is the escalation path. OFF or UNSET (the default):
+ * the STRONG role leads. Only a real `true` turns it on, so an unset or legacy blob means strong leads.
+ * Server-only (reads the admin settings).
  */
 export function standardFirstEscalationEnabled(): boolean {
-  return getSettings().standardFirstEscalation !== false;
+  return getSettings().standardFirstEscalation === true;
+}
+
+export type LeadMode = 'strong' | 'worker';
+export function leadMode(): LeadMode {
+  return standardFirstEscalationEnabled() ? 'worker' : 'strong';
+}
+
+/** The role that leads (plans, chooses tools, answers) and the one the other side of the switch escalates to or delegates to. */
+export function leadModel(): { mode: LeadMode; lead: RoleName; escalation: RoleName } {
+  return leadMode() === 'worker'
+    ? { mode: 'worker', lead: ROLE_WORKER, escalation: ROLE_STRONG }
+    : { mode: 'strong', lead: ROLE_STRONG, escalation: ROLE_WORKER };
 }
 
 /**
@@ -101,6 +113,11 @@ export function langfuseMaskingStatus(): { known: boolean; effective: MaskingPol
 /** Test seam: set the switch in memory, without the mirror (see settings `__setForTests`). */
 export function __setLangfuseMaskingForTests(policy: Partial<MaskingPolicy>): void {
   setSettingsForTests({ langfuseMasking: policy } as never);
+}
+
+/** Test seam: set the lead-model switch in memory (ON = the worker leads), without the mirror. */
+export function __setStandardFirstForTests(on: boolean): void {
+  setSettingsForTests({ standardFirstEscalation: on } as never);
 }
 
 /** Test seam: a fresh process (nothing read, nothing set): the masking switch is unknown again. */

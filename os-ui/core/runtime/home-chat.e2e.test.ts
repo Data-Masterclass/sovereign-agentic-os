@@ -95,17 +95,23 @@ function opaDecisions(tool: string, principal: string): { effect: unknown; decis
   return out;
 }
 
-async function turn(user: { id: string; domains: string[] }, traceId?: string, delegate = false) {
+async function turn(user: { id: string; domains: string[] }, traceId?: string, delegate = false, escalate = false) {
   const { runOsAssistant } = await import('@core/runtime/agent-loop');
   const { liteLlmCaller } = await import('@core/runtime/runtime');
   const real = liteLlmCaller({ userId: user.id, domain: user.domains[0], tab: 'ask' });
   let acted = false;
   let delegated = false;
+  let escalated = false;
   const llm: import('@core/runtime/agentic').LlmCall = async (req) => {
     const c = await real(req);
     if (req.tools && !acted) { // the stub provider cannot call tools: this test puts the call in its reply
       acted = true;
       return { ...c, content: '', toolCalls: [{ id: 'k1', name: 'search_knowledge', args: { query: 'onboarding' } }] };
+    }
+    // COST-SAVING MODE: the worker leads and, for a task it judges too hard, calls escalate_to_strong.
+    if (escalate && req.tools && req.model === 'sovereign-worker' && !escalated) {
+      escalated = true;
+      return { ...c, content: '', toolCalls: [{ id: 'k3', name: 'escalate_to_strong', args: { reason: 'too hard for the worker' } }] };
     }
     // STRONG decides to delegate: the stub cannot, so this test puts the decision in strong's reply.
     if (delegate && req.tools && !delegated) {
@@ -186,4 +192,28 @@ test('NEGATIVE TWIN (roles): a turn in which strong does not delegate runs on ON
   const res = await turn(user);
   assert.ok(res.modelTrace.calls.every((c) => c.role === 'strong'));
   assert.equal(new Set(upstreamModels().slice(before)).size, 1, 'one upstream model, so the two-model check above is not trivially true');
+});
+
+test('LEAD SWITCH e2e (ON): the worker leads on one catalog model, escalates, and strong answers on ANOTHER; the trace shows the escalation', { skip, timeout: 300_000 }, async () => {
+  const { __setStandardFirstForTests } = await import('@core/models/roles');
+  __setStandardFirstForTests(true);
+  try {
+    const user = { id: `u-e2e-${hex(4)}`, domains: ['sales'] };
+    const before = upstreamModels().length;
+    const res = await turn(user, undefined, false, true);
+    assert.equal(res.modelTrace.calls[0].role, 'worker', 'the worker plans');
+    assert.ok(res.modelTrace.calls.some((c) => c.role === 'strong'), 'strong ran after the escalation');
+    assert.equal(res.modelTrace.escalations.length, 1);
+    assert.equal(res.modelTrace.escalations[0].tool, 'escalate_to_strong');
+    assert.equal(new Set(upstreamModels().slice(before)).size, 2, 'two distinct upstream catalog models in one turn');
+  } finally {
+    __setStandardFirstForTests(false);
+  }
+});
+
+test('LEAD SWITCH e2e twin (OFF, the default): strong leads from the first call and nothing escalates', { skip, timeout: 300_000 }, async () => {
+  const user = { id: `u-e2e-${hex(4)}`, domains: ['sales'] };
+  const res = await turn(user);
+  assert.equal(res.modelTrace.calls[0].role, 'strong');
+  assert.equal(res.modelTrace.escalations.length, 0);
 });
