@@ -179,8 +179,8 @@ export async function dqTrend(d: DqDataset, deps: DqStatusDeps = {}): Promise<{ 
   return last ? [{ ranAt: last.ranAt, score: last.healthScore, badge: last.badge }] : [];
 }
 
-/** Latest quality run for many datasets at once (one Dagster round trip when the flag is on). */
-export async function latestDqRuns(datasets: DqDataset[], deps: DqStatusDeps = {}): Promise<Map<string, DqRunRecord | null>> {
+/** The batch read without the owner alert (the alert is `alertOnNewFailure`'s, applied by the caller). */
+export async function readDqRuns(datasets: DqDataset[], deps: DqStatusDeps = {}): Promise<Map<string, DqRunRecord | null>> {
   const out = new Map<string, DqRunRecord | null>();
   await ensureHydrated().catch(() => {});
   if (!(deps.flag ?? dataProjectGitEnabled)()) {
@@ -198,11 +198,27 @@ export async function latestDqRuns(datasets: DqDataset[], deps: DqStatusDeps = {
       const keys = datasetAssetKeys(snapshot, d.id);
       if (!keys.tested) continue;
       const rec = checksToRecord(d, all.data[keys.tested.join('/')] ?? []);
-      if (rec) {
-        out.set(d.id, rec);
-        await alertOnNewFailure(rec, deps);
-      }
+      if (rec) out.set(d.id, rec);
     }
   }
   return out;
+}
+
+/** Latest quality run for many datasets at once (one Dagster round trip when the flag is on). */
+export async function latestDqRuns(datasets: DqDataset[], deps: DqStatusDeps = {}): Promise<Map<string, DqRunRecord | null>> {
+  const out = await readDqRuns(datasets, deps);
+  for (const rec of out.values()) await alertOnNewFailure(rec, deps);
+  return out;
+}
+
+/**
+ * The periodic read-back: the scheduled Dagster run evaluates the dbt tests, and this tells each
+ * owner once when a run turned a dataset failing, whether or not anyone opened a page. It reads
+ * Dagster's check executions; it evaluates nothing itself.
+ */
+export async function readbackAllDq(datasets: DqDataset[], deps: DqStatusDeps & { latestRuns?: typeof readDqRuns } = {}): Promise<{ read: number; alerted: number }> {
+  const runs = await (deps.latestRuns ?? readDqRuns)(datasets, deps);
+  let alerted = 0;
+  for (const rec of runs.values()) if ((await alertOnNewFailure(rec, deps)) === 'alerted') alerted++;
+  return { read: runs.size, alerted };
 }

@@ -11,7 +11,7 @@
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { __setDataProjectGitForTests } from '@tabs/data/lib/dbt/commit';
-import { alertOnNewFailure, checkToResult, checksToRecord, latestDqRun, type DqDataset } from '@tabs/data/lib/dq-status-server';
+import { alertOnNewFailure, readbackAllDq, checkToResult, checksToRecord, latestDqRun, type DqDataset } from '@tabs/data/lib/dq-status-server';
 import { __resetDqAlerts } from '@tabs/data/lib/dq-alert-state';
 import type { deliverDqAlert } from '@core/notifications/dq-alert';
 import type { AssetCheck } from '@core/infra/dagster';
@@ -175,7 +175,7 @@ test('the periodic read-back tells the owner of a failing scheduled run with NO 
   const deps = {
     alert: ((i: { datasetName: string }) => { sent.push(i.datasetName); return { channel: 'in_app' as const, delivered: true, to: 'amir' }; }) as unknown as typeof deliverDqAlert,
     ownerOf: async (id: string) => ({ owner: 'amir', name: id }),
-    latestRuns: async () => new Map([['ds_bad', failing('ds_bad')], ['ds_ok', { ...failing('ds_ok'), badge: 'passing' as const, results: [{ id: 'r', label: 'x', status: 'pass' as const, violations: 0 }] }]]),
+    latestRuns: async (ds: DqDataset[]) => new Map([...new Map([['ds_bad', failing('ds_bad')], ['ds_ok', { ...failing('ds_ok'), badge: 'passing' as const, results: [{ id: 'r', label: 'x', status: 'pass' as const, violations: 0 }] }]])].filter(([id]) => ds.some((d) => d.id === id))),
   };
   const r = await readbackAllDq([{ id: 'ds_bad', domain: 'sales' }, { id: 'ds_ok', domain: 'sales' }], deps);
   assert.deepEqual(sent, ['ds_bad']);
