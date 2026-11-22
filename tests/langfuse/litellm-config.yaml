@@ -1,10 +1,10 @@
 # LiteLLM for the tracing e2e test. The callback block is production's
 # (charts/sovereign-agentic-os/values.yaml `litellm_settings`): `langfuse_otel` on OTel v2, message
-# logging off, no legacy `langfuse` in any callback list (scripts/check-litellm-model-info.mjs). The two aliases are the ones the engine asks for;
+# logging off, no legacy `langfuse` in any callback list (scripts/check-litellm-model-info.mjs). The two names are the role names the OS asks for (sovereign-worker / sovereign-strong);
 # both route to the test process's scripted OpenAI-compatible stub and carry a price, so the
 # gateway's generation has a real cost.
 model_list:
-  - model_name: sovereign-default
+  - model_name: sovereign-worker
     litellm_params:
       model: openai/stub-model
       api_base: os.environ/STUB_API_BASE
@@ -14,7 +14,7 @@ model_list:
       input_cost_per_token: 0.00000015
       output_cost_per_token: 0.00000025
       supports_function_calling: true
-  - model_name: sovereign-reasoning
+  - model_name: sovereign-strong
     litellm_params:
       model: openai/stub-model
       api_base: os.environ/STUB_API_BASE
