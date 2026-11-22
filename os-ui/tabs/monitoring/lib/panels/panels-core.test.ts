@@ -9,7 +9,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ruleTrend, ruleTypeOf, ruleStatusOf, failingSince, splitDownstream, errorLogRows, foldDecisions, keySpendBySystem, nodePressure, opaDecisionQuery, qualityTrend, systemOfPrincipal, systemPrincipalRegex } from './panels-core';
+import { ruleTrend, ruleTypeOf, ruleStatusOf, failingSince, splitDownstream, errorLogRows, foldDecisions, keySpendBySystem, nodePressure, opaDecisionQuery, qualityTrend, testsSummary, systemOfPrincipal, systemPrincipalRegex } from './panels-core';
 
 test('the OPA principal regex matches os-<id> and os-<id>:<node> only, with ids escaped', () => {
   const re = new RegExp(systemPrincipalRegex(['sys_a', 'b.c']));
@@ -104,4 +104,19 @@ test('failing since = the first run of the unbroken failing streak that ends at 
 test('trend is oldest → newest, one point per execution, with the row count only where dbt reported it', () => {
   const t = ruleTrend([{ ...ex(2, false), failedRows: 3 }, { ...ex(1, true), failedRows: null }]);
   assert.deepEqual(t.map((p) => [p.runId, p.passed, p.failedRows]), [['r1', true, null], ['r2', false, 3]]);
+});
+
+test('testsSummary: per-rule results keep dbt severity and time; a warn is neither failing nor not-run', () => {
+  const s = testsSummary([
+    { id: 'a', label: 'not_null(x)', status: 'pass', violations: 0, at: '2026-11-22T06:00:00.000Z' },
+    { id: 'b', label: 'range(y)', status: 'warn', violations: 2, severity: 'warn', at: '2026-11-22T06:00:01.000Z' },
+    { id: 'c', label: 'unique(id)', status: 'fail', violations: 1, severity: 'error', at: '2026-11-22T06:00:02.000Z' },
+    { id: 'd', label: 'x', status: 'not_run', violations: null },
+  ]);
+  assert.equal(s.total, 4);
+  assert.deepEqual(s.failing, [{ name: 'unique(id)', violations: 1 }]);
+  assert.deepEqual(s.warning, [{ name: 'range(y)', violations: 2 }]);
+  assert.equal(s.notRun, 1);
+  assert.deepEqual(s.rules[1], { id: 'b', label: 'range(y)', status: 'warn', violations: 2, severity: 'warn', at: '2026-11-22T06:00:01.000Z' });
+  assert.deepEqual(s.rules[3], { id: 'd', label: 'x', status: 'not_run', violations: null });
 });
