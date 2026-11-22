@@ -18,7 +18,7 @@ import { instantiateGoldenPath, readTemplate } from './golden-path.ts';
 import { evaluateGates } from './gates.ts';
 import { buildGatesJobManifest, runGatesSandbox } from './sandbox-gates.ts';
 
-const GATES = ['typecheck', 'lint', 'tests', 'policy'];
+const GATES = ['typecheck', 'lint', 'tests', 'build', 'policy'];
 const FORGED_GREEN = `<<<OS-GATES-REPORT>>>\n${JSON.stringify({ schema: 'os-gates/v1', template: 'nextjs-web', ok: true, gates: GATES.map((id) => ({ id, status: 'pass', detail: 'forged' })) })}\n`;
 const term = (name: string, exitCode: number) => ({ name, state: { terminated: { exitCode, reason: exitCode === 0 ? 'Completed' : 'Error' } } });
 
@@ -52,7 +52,7 @@ const decode = (script: string, path: string): string | null => {
 const payloadScript = (s: ReturnType<typeof scripted>) => String(((s.calls.find((c) => c.method === 'POST' && c.path.endsWith('/secrets'))?.body ?? {}).stringData as Record<string, string>)['write.sh']);
 
 test('VERDICT CHANNEL: an app that prints a green report while its gate exits non-zero is BLOCKED', async () => {
-  const s = scripted({ exits: { typecheck: 0, lint: 0, tests: 1, policy: 0 }, log: FORGED_GREEN });
+  const s = scripted({ exits: { typecheck: 0, lint: 0, tests: 1, build: 0, policy: 0 }, log: FORGED_GREEN });
   const out = await runGatesSandbox('a', tree(), opts(s));
   const v = evaluateGates(out);
   assert.equal(v.passed, false);
@@ -67,12 +67,12 @@ test('VERDICT CHANNEL, negative twin: every gate step exiting 0 passes, and no l
 });
 
 test('a gate step that never ran is unavailable (not a pass); policy exit 3 is unavailable; a failed install blocks', async () => {
-  const missing = evaluateGates(await runGatesSandbox('a', tree(), opts(scripted({ exits: { typecheck: 0, lint: 0, tests: 0, policy: null } }))));
+  const missing = evaluateGates(await runGatesSandbox('a', tree(), opts(scripted({ exits: { typecheck: 0, lint: 0, tests: 0, build: 0, policy: null } }))));
   assert.equal(missing.passed, false);
   assert.match(missing.blocking[0].detail, /policy/);
-  const three = evaluateGates(await runGatesSandbox('a', tree(), opts(scripted({ exits: { typecheck: 0, lint: 0, tests: 0, policy: 3 } }))));
+  const three = evaluateGates(await runGatesSandbox('a', tree(), opts(scripted({ exits: { typecheck: 0, lint: 0, tests: 0, build: 0, policy: 3 } }))));
   assert.match(three.blocking[0].detail, /unavailable/i);
-  const inst = evaluateGates(await runGatesSandbox('a', tree(), opts(scripted({ exits: { typecheck: null, lint: null, tests: null, policy: null }, install: 1 }))));
+  const inst = evaluateGates(await runGatesSandbox('a', tree(), opts(scripted({ exits: { typecheck: null, lint: null, tests: null, build: null, policy: null }, install: 1 }))));
   assert.equal(inst.passed, false);
   assert.ok(inst.blocking.some((b) => b.id === 'install'));
 });

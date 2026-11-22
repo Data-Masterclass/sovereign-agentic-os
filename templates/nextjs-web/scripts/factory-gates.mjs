@@ -2,7 +2,7 @@
  * FEATURE:    The quality gates of the Software Factory, runnable anywhere (laptop, CI, OS sandbox).
  * USER STORY: As the author of this app I want to run the exact checks the platform runs before a
  *             deploy, and see which one blocks me and why.
- * ARCHITECTURE: Runs `typecheck` (tsc), `lint` (eslint) and the tests (node --test, at least one file) as child
+ * ARCHITECTURE: Runs `typecheck` (tsc), `lint` (eslint), `build` (next build) and the tests (node --test, at least one file) as child
  *               processes with platform-defined commands, and the `policy` gate through OPA (a running
  *               server at OPA_URL, else the `opa` binary). If OPA is not available the policy gate is
  *               `unavailable`, which is NOT a pass. In the OS sandbox this file is the PLATFORM's copy, run
@@ -80,7 +80,7 @@ function verdict(violations) {
 }
 
 // Tool paths inside a `node_modules` directory. Always run as `node <absolute path>`, never through `.bin`.
-const TOOL = { typecheck: ['typescript/bin/tsc', '--noEmit', '--incremental', 'false'], lint: ['eslint/bin/eslint.js', '.'] };
+const TOOL = { typecheck: ['typescript/bin/tsc', '--noEmit', '--incremental', 'false'], lint: ['eslint/bin/eslint.js', '.'], build: ['next/dist/bin/next', 'build'] };
 
 /**
  * Where the tools come from. In the OS sandbox the platform passes `--toolchain <dir>`: a directory it
@@ -88,11 +88,12 @@ const TOOL = { typecheck: ['typescript/bin/tsc', '--noEmit', '--incremental', 'f
  * that maps `typescript` to a package whose `tsc` exits 0 changes nothing). Without it (an author's laptop,
  * CI of the app's own repo) the project's own node_modules is used: useful feedback, never a verdict.
  */
-const modulesOf = (root, toolchain) => join(toolchain ?? root, 'node_modules');
+// `build` compiles the author's own dependency tree (it is what ships), so it always runs from the project.
+const modulesOf = (root, toolchain, id) => join(id === 'build' ? root : (toolchain ?? root), 'node_modules');
 
 function toolGate(id, root, toolchain) {
   const [rel, ...args] = TOOL[id];
-  const bin = join(modulesOf(root, toolchain), rel);
+  const bin = join(modulesOf(root, toolchain, id), rel);
   if (!existsSync(bin)) return { id, status: 'unavailable', detail: `${id} could not run: ${bin} does not exist` };
   // The platform's eslint config judges the app too: the author's config imports packages from the author's tree.
   const extra = id === 'lint' && toolchain ? ['--config', join(toolchain, 'eslint.config.mjs')] : [];
@@ -142,7 +143,7 @@ function testsGate(root, toolchain) {
   return { id: 'tests', status: r.status === 0 ? 'pass' : 'fail', detail: r.status === 0 ? `${files.length} test file(s) passed` : tail };
 }
 
-export const GATE_IDS = ['typecheck', 'lint', 'tests', 'policy'];
+export const GATE_IDS = ['typecheck', 'lint', 'tests', 'build', 'policy'];
 
 export async function runGate(id, root = process.cwd(), env = process.env, toolchain = undefined) {
   if (id === 'policy') return policyGate(root, env);

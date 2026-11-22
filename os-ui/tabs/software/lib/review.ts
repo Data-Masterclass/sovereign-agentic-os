@@ -30,6 +30,7 @@ import { acquireGateSlot } from '@tabs/software/lib/gates-limits';
 import type { GoldenPathKey } from '@tabs/software/lib/golden-path';
 import { evaluateGates, type GatesOutcome, type GateVerdict } from '@tabs/software/lib/gates';
 import { runGatesSandbox } from '@tabs/software/lib/sandbox-gates';
+import { recordFromOutcome, recordVerdict, recordFor, upsertRecord, type CheckTrigger } from '@tabs/software/lib/check-record';
 import { resolveSurface } from '@tabs/software/lib/metadata';
 import { ungrantedDatasetWarningForApp } from '@tabs/software/lib/dataset-guard';
 import { getSnapshot, hydrateSnapshot } from '@tabs/software/lib/snapshot';
@@ -479,7 +480,7 @@ export async function runFactoryGates(
 export async function runAppTests(
   appId: string,
   user: CurrentUser,
-  opts: { gates?: GatesRunner } = {},
+  opts: { gates?: GatesRunner; trigger?: CheckTrigger } = {},
 ): Promise<{ commit: string | null; template: string | null; verdict: GateVerdict; outcome: GatesOutcome }> {
   const app = await getAppForUser(appId, user);
   if (app.owner !== user.id && !(isBuilder(user) && user.domains.includes(app.domain))) {
@@ -491,19 +492,28 @@ export async function runAppTests(
   const state = appProjectGitEnabled() ? await readAppTreeState(app) : null;
   const files = state?.kind === 'tree' ? state.files : await appFilesForScan(app);
   const run = opts.gates ?? gatesRunnerForTests ?? runGatesSandbox;
+  const startedAt = new Date().toISOString();
   const slot = acquireGateSlot({ userId: user.id, appId: app.id });
+  let outcome: GatesOutcome;
   try {
-    const outcome = await run(app.slug, files, { template: policy.profile, signal: slot.signal });
-    return { commit: state?.kind === 'tree' ? state.sha : null, template: policy.profile, verdict: evaluateGates(outcome), outcome };
+    outcome = await run(app.slug, files, { template: policy.profile, signal: slot.signal });
   } finally {
     slot.release();
   }
+  const commit = state?.kind === 'tree' ? state.sha : null;
+  // The result belongs to the commit it ran on: stored on the app, shown in the Software tab, and the
+  // only thing a deploy of that commit accepts. A superseded run is not a result and is not stored.
+  if (commit && !(outcome.ok === false && outcome.kind === 'superseded')) {
+    app.checks = upsertRecord(app.checks, recordFromOutcome({ sha: commit, trigger: opts.trigger ?? 'mcp', engine: 'sandbox-job', startedAt, finishedAt: new Date().toISOString(), outcome }));
+    await persistApp(app);
+  }
+  return { commit, template: policy.profile, verdict: evaluateGates(outcome), outcome };
 }
 
 export async function requestDeploy(
   appId: string,
   user: CurrentUser,
-  opts: { changedFiles?: DiffSummary['files']; scanMode?: ScanMode; scan?: ResolveScanOpts; runner?: RunnerOpts; gates?: GatesRunner } = {},
+  opts: { sha?: string; changedFiles?: DiffSummary['files']; scanMode?: ScanMode; scan?: ResolveScanOpts; runner?: RunnerOpts; gates?: GatesRunner } = {},
 ): Promise<DeployRequestResult> {
   // EXISTENCE FIRST (F2-1) — see startPreview.
   const app = await getAppForUser(appId, user);
@@ -536,14 +546,37 @@ export async function requestDeploy(
   assertNotSeeded('a deploy request', files);
 
   // SOFTWARE FACTORY: every app served as a container carries the quality gates (tests, type check, lint,
-  // policy). Whether they apply is decided from what the OS STORED about the app (template + serve mode,
-  // gate-policy.ts), never from a line of the author's own tree. They run in the platform sandbox over
+  // build, policy). Whether they apply is decided from what the OS STORED about the app (template + serve
+  // mode, gate-policy.ts), never from a line of the author's own tree. They run in the platform sandbox over
   // exactly these files, judged by the platform's own gate script and policy, and a deploy is not even
   // REQUESTED while one fails or cannot run: unavailable is not a pass.
   const gatePolicy = gatePolicyFor(app);
   if (gatePolicy.required) {
-    const verdict = await runFactoryGates(app.slug, files, opts.gates, { userId: user.id, appId: app.id, template: gatePolicy.profile });
-    if (!verdict.passed) throw withStatus(new Error(verdict.summary), 422);
+    // An explicit `sha` is a promise about WHICH commit is meant: it must be the pinned head, and the
+    // record stored for it must be green. No record for it means the checks run now, on that commit.
+    if (opts.sha && sha && opts.sha !== sha) {
+      throw withStatus(new Error(`The requested commit ${opts.sha.slice(0, 12)} is not the app's head ${sha.slice(0, 12)}; push or select the head and run its checks first`), 409);
+    }
+    const stored = sha ? recordFor(app.checks, sha) : null;
+    if (stored && stored.status === 'finished') {
+      const v = recordVerdict(stored, sha as string);
+      if (!v.green) throw withStatus(new Error(`Quality checks for ${(sha as string).slice(0, 12)} are not green: ${v.reason}`), 422);
+    } else {
+      const startedAt = new Date().toISOString();
+      const slot = acquireGateSlot({ userId: user.id, appId: app.id });
+      let outcome: GatesOutcome;
+      try {
+        outcome = await (opts.gates ?? gatesRunnerForTests ?? runGatesSandbox)(app.slug, files, { template: gatePolicy.profile, signal: slot.signal });
+      } finally {
+        slot.release();
+      }
+      const verdict = evaluateGates(outcome);
+      if (sha && !(outcome.ok === false && outcome.kind === 'superseded')) {
+        app.checks = upsertRecord(app.checks, recordFromOutcome({ sha, trigger: 'deploy', engine: 'sandbox-job', startedAt, finishedAt: new Date().toISOString(), outcome }));
+        await persistApp(app);
+      }
+      if (!verdict.passed) throw withStatus(new Error(verdict.summary), 422);
+    }
   }
 
   const requested = requestedEnvelope(app);

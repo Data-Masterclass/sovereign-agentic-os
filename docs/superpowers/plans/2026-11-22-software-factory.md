@@ -162,7 +162,18 @@ Built: the `nextjs-web` template (rules files, SDK door with delegated identity,
 
 Not built, by design: D1 (token flow and gateway), D2 (dataset writes), the BuildKit Job, dev-to-prod promotion, budgets, the in-OS agent system, preview, chart wiring for the sandbox (RBAC, egress to the npm registry, `SOFTWARE_SANDBOX_*` env), and the UI create picker. Each is a separate small go-live.
 
-## 11. Gate integrity (decisions of record after the independent security verification)
+## 11. Owner decisions of 2026-11-22 (record)
+
+1. **App identity (D1): recommended, pending owner decision.** The OS issues a short-lived signed token for the user, used through an OS app gateway with one narrow egress rule; background jobs run as `app-<slug>` and get grants only after a domain admin adopts specific declared actions. Not built.
+2. **Writes (D2): recommended, pending owner decision.** `os.datasets.write` always creates a new dataset version with app/agent/run lineage and the existing rollback; `os.records` stays for app-local state. Not built.
+3. **Image builds (D3): APPROVED.** The OS builds images in a rootless BuildKit task and pushes to a Zot registry (digest-only references).
+4. **Dev and prod for apps (D4): APPROVED.** Two namespaces on the existing clusters (`apps-dev`, `apps-prod`); promotion moves the same digest, by approval; rollback is the previous digest.
+5. **CI engine: APPROVED.** Tekton Pipelines and Triggers (Apache-2.0) run the checks and the build; the pipeline lives in git under `apps/<slug>/.tekton/`; the OS reads PipelineRun and TaskRun status through Kubernetes and fills the engine-neutral per-sha result (`check-record.ts`); a superseded run is cancelled with Tekton's own `spec.status: Cancelled`; deploy stays in the OS (no Argo CD). The pilot's hand-made sandbox Job is replaced by Tekton tasks running the same gates.
+
+### Status of go-live 1 in this branch
+Built and tested: `build` is a required gate (template `factory-gates.mjs` runs `next build`); a push to `apps/<slug>/` re-derives the registry through `ingestFromRepo('app')` (never audience, never retire, never create, never another domain's app) and refuses edits to the gate files; check results are recorded per commit sha (`App.checks`: per-check status, detail, trigger, times, engine, run reference); `requestDeploy` takes an optional `sha`, reads the stored record instead of re-running, and refuses a red, missing, unfinished or other-sha record. Not yet built: the Tekton installation and pipelines, the push-triggered run, the "Run checks" button, supersede by cancellation, the chart wiring, the image build, Zot, apps-dev and promotion.
+
+## 12. Gate integrity (decisions of record after the independent security verification)
 
 1. **What requires the gates.** The decision is made from what the OS stored (`app.template` and `serveMode`, `gate-policy.ts`), never from the author's `app.yaml` `template:` line. Every app served as a container (`serveMode: image`) requires the gates, whatever its template; a golden-path app is judged by its own template's gate set, a legacy-template container app by the `nextjs-web` gate set (the only platform-owned set). A legacy app that cannot pass them is blocked until it moves to the golden path: blocked, not skipped. Apps the OS serves itself (`spec`, `runtime`) run no container of the author's, so no gates apply to them.
 2. **Whose rules, whose verdict.** The sandbox runs the PLATFORM's copy of `scripts/factory-gates.mjs` and `policy/` (written to a read-only `/platform` volume and laid over the tree; OPA loads `/platform/policy` only). Each gate is its own container; the verdict is that container's exit code in the pod status (0 pass, 3 unavailable, other fail, never ran = unavailable). Log text is display-only, read only for a gate that did not pass. There is no log parser.

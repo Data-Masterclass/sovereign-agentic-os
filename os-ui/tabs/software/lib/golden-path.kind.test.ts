@@ -105,7 +105,7 @@ test('SANDBOX: the template passes every gate in the real sandbox Job (node + OP
     assert.equal(out.ok, true, out.ok ? '' : out.reason);
     const verdict = evaluateGates(out);
     assert.equal(verdict.passed, true, verdict.summary);
-    if (out.ok) assert.deepEqual(out.report.gates.map((g) => g.id).sort(), ['lint', 'policy', 'tests', 'typecheck']);
+    if (out.ok) assert.deepEqual(out.report.gates.map((g) => g.id).sort(), ['build', 'lint', 'policy', 'tests', 'typecheck']);
 
     // NEGATIVE TWIN 1: a unit test that fails blocks on `tests`.
     const red = await runGatesSandbox(SLUG, edit(tree(), 'tests/healthz.test.ts', (s) => s.replace('{ ok: true }', '{ ok: false }')), { k8s: admin.k8s, k8sText: admin.text, namespace: BUILD_NS, timeoutMs: 800_000, ...SANDBOX_IMAGES });

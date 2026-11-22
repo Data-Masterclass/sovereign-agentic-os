@@ -20,7 +20,7 @@
  */
 
 /** The gates the sandbox must report. Order is the order a human reads them in. */
-export const REQUIRED_GATES = ['typecheck', 'lint', 'tests', 'policy'] as const;
+export const REQUIRED_GATES = ['typecheck', 'lint', 'tests', 'build', 'policy'] as const;
 
 export type GateStatus = 'pass' | 'fail' | 'unavailable';
 export type GateResult = { id: string; status: GateStatus; detail: string; violations?: string[] };
