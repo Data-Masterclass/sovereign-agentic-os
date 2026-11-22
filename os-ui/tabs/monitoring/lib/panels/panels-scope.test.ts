@@ -80,6 +80,7 @@ registerMonitoringSources({
   datasets: async () => [],
   latestTests: async () => new Map(),
   syncSchedules: async () => [],
+  connectionCatalogs: async () => [],
   assetKeys: async () => new Map(),
 });
 const { agentsView } = await import('./agents-panel');

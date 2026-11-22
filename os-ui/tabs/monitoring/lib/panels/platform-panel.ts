@@ -23,6 +23,11 @@ import { logsQuery } from '@core/adapters/victoria-logs/query';
 import { scopeForUser } from '@tabs/monitoring/lib/scope';
 import { buildOverview } from '@tabs/monitoring/lib/aggregate';
 import { domainsMissingOwnedFiles } from '@core/infra/owned-files';
+import { readTrinoCatalogs } from '@core/adapters/trino/catalogs';
+import { queryRun } from '@core/infra/governed';
+import { routeFor } from '@core/infra/trino-source';
+import { monitoringSources } from '@tabs/monitoring/lib/panels/sources';
+import { dataSourceRows, type DataSourceRow } from '@tabs/monitoring/lib/data-sources-core';
 import { collectBackups } from '@tabs/monitoring/lib/adapters/backup-health';
 import type { Alert, HealthItem } from '@tabs/monitoring/lib/types';
 import { ERROR_LOG_QUERY, PROMQL, errorLogRows, live, nodePressure, podUse, unavailable, type ErrorLogRow, type NodePressure, type NotUpstream, type PodUse, type SourceState } from '@tabs/monitoring/lib/panels/panels-core';
@@ -41,6 +46,8 @@ export type PlatformView = {
   backups: { state: SourceState; items: HealthItem[] };
   alerts: { state: SourceState; items: Alert[] };
   repoGate: RepoGate;
+  /** The catalogs Trino serves (Trino and the chart own them) and the OS connection using each. */
+  dataSources: { state: SourceState; rows: DataSourceRow[]; alerts: Alert[] };
   notUpstream: NotUpstream[];
 };
 
@@ -78,6 +85,16 @@ export async function platformView(user: CurrentUser, nowMs = Date.now()): Promi
     buildOverview(user).then((ov) => ({ ok: true as const, alerts: ov.alerts }), (e: Error) => ({ ok: false as const, error: e.message })),
   ]);
   const repoGate: RepoGate = await domainsMissingOwnedFiles().then((missing) => ({ state: live, missing }), (e: Error) => ({ state: unavailable(`git store: ${e.message}`), missing: [] }));
+  const catalogs = await readTrinoCatalogs((sql) => queryRun(sql, user.id, routeFor(user, 'monitoring')));
+  let conns: Awaited<ReturnType<NonNullable<ReturnType<typeof monitoringSources>>['connectionCatalogs']>> | null = null;
+  let connsError = 'the Connections reader is not registered';
+  try {
+    const src = monitoringSources();
+    if (src) conns = await src.connectionCatalogs();
+  } catch (e) {
+    connsError = e instanceof Error ? e.message : String(e);
+  }
+  const ds = catalogs.ok ? dataSourceRows(catalogs.value, conns ?? []) : { rows: [], alerts: [] as Alert[] };
   const vmFail = [mem, disk, topMem, topCpu].find((r) => !r.ok);
   return {
     view: 'platform',
@@ -94,6 +111,10 @@ export async function platformView(user: CurrentUser, nowMs = Date.now()): Promi
     backups: { state: backups.ok ? live : unavailable(`backups: ${backups.error}`), items: backups.ok ? backups.items : [] },
     alerts: { state: overview.ok ? live : unavailable(`alerts: ${overview.error}`), items: overview.ok ? overview.alerts : [] },
     repoGate,
+    dataSources: {
+      state: !catalogs.ok ? unavailable(`Trino: ${catalogs.detail}`) : conns === null ? unavailable(`connections cannot be matched to catalogs: ${connsError}`) : live,
+      ...ds,
+    },
     notUpstream: NOT_UPSTREAM,
   };
 }

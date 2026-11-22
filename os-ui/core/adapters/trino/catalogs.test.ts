@@ -16,7 +16,8 @@ test('reads catalog names from system.metadata.catalogs, sorted, without Trino\'
   const r = await readTrinoCatalogs(async (sql) => { seen.push(sql); return { rows: [['iceberg'], ['system'], ['sales_pg'], ['jmx']] }; });
   assert.deepEqual(seen, [CATALOGS_SQL]);
   assert.match(CATALOGS_SQL, /system\.metadata\.catalogs/);
-  assert.deepEqual(r, { ok: true, value: ['iceberg', 'jmx', 'sales_pg'] });
+  assert.ok(r.ok);
+  assert.deepEqual((r as { value: string[] }).value, ['iceberg', 'jmx', 'sales_pg']);
 });
 
 test('twin: an unreachable Trino is a failure, never an empty catalog list', async () => {

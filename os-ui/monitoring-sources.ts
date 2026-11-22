@@ -17,6 +17,8 @@ import { agentHealthRows, ensureHydrated as ensureAgentsHydrated } from '@tabs/a
 import { listAllDatasets, listDatasets, ensureHydrated as ensureDataHydrated } from '@tabs/data/lib/store';
 import { listRepos } from '@core/infra/git-store';
 import { scheduleNameFor } from '@core/infra/dagster';
+import { listDatasets, ensureHydrated as ensureDataHydrated } from '@tabs/data/lib/store';
+import { listWarehouseConnections } from '@tabs/connections/lib/store';
 import { latestDqRuns } from '@tabs/data/lib/dq-status-server';
 import { projectSnapshot } from '@tabs/data/lib/dbt/snapshot';
 import { datasetAssetKeys } from '@tabs/data/lib/dbt/asset-keys';
@@ -49,6 +51,8 @@ export const monitoringSourcesImpl: MonitoringSources = {
     await ensureDataHydrated();
     const domains = await listRepos().then((x) => x.map((y) => y.name)).catch(() => [] as string[]);
     return listAllDatasets().filter((d) => d.sync?.enabled && d.domain).map((d) => ({ schedule: scheduleNameFor(d.domain, d.id, domains), domain: d.domain, owner: d.owner, datasetId: d.id }));
+  async connectionCatalogs() {
+    return (await listWarehouseConnections()).flatMap((c) => (c.warehouse ? [{ catalog: c.warehouse.catalog, connectionId: c.id, name: c.name, domain: c.domain }] : []));
   },
   async assetKeys(ds) {
     const out = new Map<string, { tested: string[] | null; models: string[][] }>();
