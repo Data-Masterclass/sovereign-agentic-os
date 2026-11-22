@@ -32,8 +32,12 @@ export async function unitRowStats(index: string, unitField: string, ids: readon
   if (res.status === 404) return fetched(out);
   if (res.status === 401 || res.status === 403) return failed(res.status === 401 ? 'unauthorized' : 'forbidden', `OpenSearch answered ${res.status}`);
   if (!res.ok) return failed('invalid', `OpenSearch answered ${res.status}`);
-  const j = (await res.json().catch(() => null)) as TermsReply | null;
-  if (!j) return failed('invalid', 'OpenSearch answered a body that is not JSON');
+  let j: TermsReply;
+  try {
+    j = (await res.json()) as TermsReply;
+  } catch (e) {
+    return failed('invalid', `OpenSearch answered a body that is not JSON: ${(e as Error).message}`);
+  }
   const asked = new Set(ids);
   for (const b of j.aggregations?.u?.buckets ?? []) {
     if (!asked.has(b.key)) continue; // a second guard behind the query filter
@@ -50,8 +54,14 @@ export async function indexSearchCounters(index: string): Promise<Fetched<Search
   if (!res) return failed('unreachable', 'OpenSearch did not answer');
   if (res.status === 404) return fetched(null);
   if (!res.ok) return failed('invalid', `OpenSearch answered ${res.status}`);
-  const j = (await res.json().catch(() => null)) as { _all?: { total?: { search?: { query_total?: number; query_time_in_millis?: number } } } } | null;
-  const s = j?._all?.total?.search;
+  type StatsReply = { _all?: { total?: { search?: { query_total?: number; query_time_in_millis?: number } } } };
+  let j: StatsReply;
+  try {
+    j = (await res.json()) as StatsReply;
+  } catch (e) {
+    return failed('invalid', `OpenSearch answered a body that is not JSON: ${(e as Error).message}`);
+  }
+  const s = j._all?.total?.search;
   if (!s || typeof s.query_total !== 'number' || typeof s.query_time_in_millis !== 'number') return failed('invalid', 'OpenSearch answered no search stats');
   return fetched({ queries: s.query_total, totalMs: s.query_time_in_millis });
 }
