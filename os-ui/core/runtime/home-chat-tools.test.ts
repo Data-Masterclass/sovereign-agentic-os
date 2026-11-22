@@ -55,10 +55,12 @@ const bigDispatch: RpcDispatch = async (_u, req) => { reached.push(String((req.p
 test('LOW: delegate_to_worker is refused when it was not offered this turn (the worker leads), and no worker call is made', async () => {
   __setStandardFirstForTests(true);
   const calls: Call[] = [];
-  const res = await turn(llmOf(calls, [{ content: '', toolCalls: [{ id: 'd', name: 'delegate_to_worker', args: SUMMARISE }] }, FINAL]));
+  // whoami first: a prior result exists, so only the offered-this-turn guard can refuse the delegation
+  const res = await turn(llmOf(calls, [{ content: '', toolCalls: [{ id: 'w', name: 'whoami', args: {} }] }, { content: '', toolCalls: [{ id: 'd', name: 'delegate_to_worker', args: SUMMARISE }] }, FINAL]));
   assert.equal(calls.filter((c) => c.purpose?.startsWith('delegate:')).length, 0);
   const step = res.steps.find((s) => s.tool === 'delegate_to_worker');
   assert.ok(step?.isError, 'refused');
+  assert.match(step!.result, /not available here/, 'refused by the offered-this-turn guard, not by a missing input');
 });
 
 test('LOW twin: the same call when strong leads (offered) runs the delegation', async () => {
@@ -69,7 +71,7 @@ test('LOW twin: the same call when strong leads (offered) runs the delegation', 
 
 test('LOW: a save-as turn (one allowed tool) refuses delegate_to_worker too', async () => {
   const calls: Call[] = [];
-  const res = await turn(llmOf(calls, [{ content: '', toolCalls: [{ id: 'd', name: 'delegate_to_worker', args: SUMMARISE }] }, FINAL]), { onlyTools: ['define_metric'] });
+  const res = await turn(llmOf(calls, [{ content: '', toolCalls: [{ id: 'w', name: 'whoami', args: {} }] }, { content: '', toolCalls: [{ id: 'd', name: 'delegate_to_worker', args: SUMMARISE }] }, FINAL]), { onlyTools: ['define_metric'] });
   assert.equal(calls.filter((c) => c.purpose?.startsWith('delegate:')).length, 0);
   assert.ok(res.steps.find((s) => s.tool === 'delegate_to_worker')?.isError);
 });
