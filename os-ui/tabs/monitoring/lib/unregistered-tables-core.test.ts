@@ -14,7 +14,7 @@ import { unregisteredTableAlerts } from '@tabs/monitoring/lib/unregistered-table
 
 const t = (schema: string, table: string) => ({ schema, table });
 const registered = new Set(['sales.gold_orders', 'personal_amir.silver_orders']);
-const judged = { domainSchemas: ['sales'], personalSchemaPrefix: 'personal_' };
+const judged = { domainSchemas: ['sales'], personalSchemaPrefix: 'personal_', managedNames: new Set<string>() };
 
 test('a table in a domain schema that no dataset registers is one warning per schema, naming the table', () => {
   const a = unregisteredTableAlerts([t('sales', 'gold_orders'), t('sales', 'scratch_tmp'), t('sales', 'oops')], registered, judged);
@@ -39,4 +39,20 @@ test('twin: registered tables, landing schemas, iceberg metadata tables and fore
     registered, judged,
   );
   assert.deepEqual(a, []);
+});
+
+test('twin: OS-internal tables give no warning: a merge staging table of a registered table, and a table Dagster manages as a dbt model', () => {
+  const a = unregisteredTableAlerts(
+    [t('sales', 'gold_orders_stg'), t('sales', 'int_orders_cleaned'), t('sales', 'gold_orders')],
+    registered,
+    { ...judged, managedNames: new Set(['int_orders_cleaned']) },
+  );
+  assert.deepEqual(a, []);
+});
+
+test('a staging-looking name whose base table is NOT registered is still flagged, and so is a model-looking name Dagster does not manage', () => {
+  const a = unregisteredTableAlerts([t('sales', 'mystery_stg'), t('sales', 'int_other')], registered, { ...judged, managedNames: new Set(['int_orders_cleaned']) });
+  assert.equal(a.length, 1);
+  assert.match(a[0].detail, /mystery_stg/);
+  assert.match(a[0].detail, /int_other/);
 });
