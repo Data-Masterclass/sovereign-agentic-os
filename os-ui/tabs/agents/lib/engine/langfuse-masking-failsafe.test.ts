@@ -29,9 +29,8 @@ mock.module('@core/infra/os-mirror', {
   },
 });
 
-const { _reset } = await import('@tabs/admin/lib/settings');
 const { __useSpanExporterForTests, flushLangfuse, recordObservation, withRunTrace, exportMask } = await import('@core/infra/langfuse');
-const { liveMasking, heldMasking, maskingStatus } = await import('@core/infra/masking-policy');
+const { liveMasking, heldMasking, maskingStatus, __resetMaskingForTests: _reset } = await import('@core/infra/masking-policy');
 
 const exporter = new InMemorySpanExporter();
 __useSpanExporterForTests(exporter);
