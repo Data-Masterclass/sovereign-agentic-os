@@ -52,3 +52,16 @@ export function gatewayTraceHeaders(observe: GatewayTraceContext | undefined): {
   if (traceparent) headers.traceparent = traceparent;
   return { headers, callId };
 }
+
+/**
+ * LiteLLM's documented per-request switch for message redaction: with this header the call's
+ * messages and response are replaced by "redacted-by-litellm" before any logging callback
+ * (`langfuse_otel` included) runs, whatever the gateway's global `turn_off_message_logging` is.
+ * https://docs.litellm.ai/docs/proxy/logging#redact-messages-response-content
+ */
+export const GATEWAY_REDACTION_HEADER = 'x-litellm-enable-message-redaction';
+
+/** The redaction header when the platform's masking switch is on, otherwise no header at all. */
+export function gatewayRedactionHeaders(on: boolean): Record<string, string> {
+  return on ? { [GATEWAY_REDACTION_HEADER]: 'true' } : {};
+}

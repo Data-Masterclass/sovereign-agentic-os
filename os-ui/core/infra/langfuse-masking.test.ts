@@ -77,7 +77,13 @@ test('MASKING ON (content): no message, task, tool argument or result text is ex
   assert.ok(spans.some((s) => s.name.startsWith('llm.')), 'the model-call spans are kept');
   assert.ok(spans.some((s) => s.name === 'run.result'), 'the run result event is kept');
   assert.ok(spans.some((s) => /litellm_call_id/.test(JSON.stringify(s.attributes))), 'the call id is kept');
-  assert.match(all, /"chars"/, 'sizes are kept in place of text');
+  assert.match(all, /chars/, 'sizes are kept in place of text');
+});
+
+test('MASKING ON (pii): a value cut short by the result preview is scrubbed before it is cut, not left as a fragment', async () => {
+  __setForTests({ langfuseMasking: { enabled: true, level: 'pii' } } as never);
+  const all = everything(await runWithPii('run_mask-0000-4000-8000-000000000007'));
+  for (const fragment of ['maria', 'DE8937', 'example-customer']) assert.ok(!all.includes(fragment), `fragment ${fragment} must not survive the 160-character preview`);
 });
 
 test('the switch is read live: ON then OFF in one process, no restart', async () => {

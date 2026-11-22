@@ -478,18 +478,18 @@ jobs:
       - name: Install (os-ui)
         run: npm --prefix os-ui ci
       - name: Start Langfuse + LiteLLM
-        run: docker compose -f tests/langfuse/compose.yaml -p wp31-langfuse up -d --wait --wait-timeout 600
+        run: docker compose -f tests/langfuse/compose.yaml -f tests/langfuse/compose.masking.yaml -p wp31-langfuse up -d --wait --wait-timeout 600
       - name: Tracing e2e (Langfuse 3.194.1)
         working-directory: os-ui
         env:
           TRACING_E2E: "1"
-        run: node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test --test-concurrency=1 tabs/agents/lib/engine/tracing.e2e.test.ts tabs/agents/lib/module/tracing.e2e.test.ts core/adapters/langfuse/metrics.int.test.ts
+        run: node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test --test-concurrency=1 tabs/agents/lib/engine/tracing.e2e.test.ts tabs/agents/lib/module/tracing.e2e.test.ts core/adapters/langfuse/metrics.int.test.ts core/infra/masking.e2e.test.ts core/infra/masking-gateway.e2e.test.ts
       - name: Stack logs on failure
         if: failure()
-        run: docker compose -f tests/langfuse/compose.yaml -p wp31-langfuse logs --tail 200
+        run: docker compose -f tests/langfuse/compose.yaml -f tests/langfuse/compose.masking.yaml -p wp31-langfuse logs --tail 200
       - name: Stop the stack
         if: always()
-        run: docker compose -f tests/langfuse/compose.yaml -p wp31-langfuse down -v
+        run: docker compose -f tests/langfuse/compose.yaml -f tests/langfuse/compose.masking.yaml -p wp31-langfuse down -v
 
   # WP-05: the observability stack on the real images. The chart's Collector, VictoriaMetrics,
   # VictoriaLogs and OPA on kind (OTLP in, PromQL/LogsQL out, an OPA decision in VictoriaLogs);

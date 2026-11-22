@@ -17,6 +17,7 @@
 import type { Fetched } from '@core/adapters/_contract';
 import type { LlmCompletion, LlmRequest } from '@core/runtime/agentic';
 import type { RunObserver } from '@core/infra/trace-port';
+import { gatewayMessageRedaction } from '@core/infra/masking-policy';
 
 /** The traceparent of a span, when both ids are OTel-shaped (as `core/runtime/runtime.ts` builds it). */
 export function traceparentOf(observe: LlmRequest['observe']): string | undefined {
@@ -58,6 +59,8 @@ export function tracedModelFetch(observer: RunObserver | null, kind: string, age
         const tp = traceparentOf(r.observe);
         if (tp) headers.set('traceparent', tp);
         if (r.observe?.callId) headers.set('x-litellm-call-id', r.observe.callId);
+        // The platform admin's masking switch, as LiteLLM's per-request redaction header (core/infra/masking-policy.ts).
+        for (const [k, v] of Object.entries(await gatewayMessageRedaction())) headers.set(k, v);
         res = await globalThis.fetch(url, { ...init, headers });
         const c = completionOf(await res.clone().text());
         const msg = c.ok ? c.value : { content: `(unreadable response: ${c.detail})` };

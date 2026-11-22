@@ -48,6 +48,7 @@ const roleOf = (m: AnyMsg): LlmMessage['role'] => {
 
 export { traceparentOf } from '@core/adapters/litellm/traced-fetch';
 import { traceparentOf } from '@core/adapters/litellm/traced-fetch';
+import { gatewayMessageRedaction } from '@core/infra/masking-policy';
 
 export function moduleTracer(observer: RunObserver | null): ModuleTracer {
   const open = new Map<string, SpanHandle>();
@@ -83,7 +84,7 @@ export function moduleTracer(observer: RunObserver | null): ModuleTracer {
         let ai: Awaited<ReturnType<typeof handler>> | undefined;
         await span.llm(async (r: LlmRequest): Promise<LlmCompletion> => {
           const tp = traceparentOf(r.observe);
-          const headers: Record<string, string> = { ...(tp ? { traceparent: tp } : {}), ...(r.observe?.callId ? { 'x-litellm-call-id': r.observe.callId } : {}) };
+          const headers: Record<string, string> = { ...(tp ? { traceparent: tp } : {}), ...(r.observe?.callId ? { 'x-litellm-call-id': r.observe.callId } : {}), ...(await gatewayMessageRedaction()) };
           ai = await handler({ ...request, modelSettings: { ...(request.modelSettings ?? {}), options: { headers } } });
           const out = ai as unknown as AnyMsg;
           return {

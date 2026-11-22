@@ -255,6 +255,42 @@ kubectl -n agentic-os port-forward svc/agentic-os-langfuse-web 3000:3000
 These are injected into os-ui (`LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` / `LANGFUSE_URL`)
 and into LiteLLM (`callbacks: ["langfuse_otel"]` on OpenTelemetry v2; no `langfuse` in any callback list — see "What the gateway writes").
 
+## Masking switch (Platform → Settings → Traces)
+
+A platform admin can switch masking on for everything the OS sends to Langfuse. It is **off by
+default**, which is today's behaviour. The switch is a platform setting (`langfuseMasking`,
+`{ enabled, level }`), changed through the admin-only settings route, which is checked like every
+other admin setting and writes an audit row with the new value. Server-side masking is a Langfuse
+Enterprise feature and is **not** used; masking happens in the sender, with the upstream hooks:
+
+| Where traces are written | Mechanism (upstream docs) | Applies |
+|---|---|---|
+| os-ui and the run worker (run, node, model-call, tool and standalone observations, scores) | Langfuse's `mask` option of `LangfuseSpanProcessor` ([masking](https://langfuse.com/docs/observability/features/masking)) scrubs every observation's input, output and metadata at export; at level `content` the writer also replaces text by sizes where it builds an observation | next export / next run segment, no restart |
+| LiteLLM's `langfuse_otel` generation of each model call | LiteLLM's per-request header `x-litellm-enable-message-redaction: true` ([logging](https://docs.litellm.ai/docs/proxy/logging#redact-messages-response-content)), sent by the OS on every model call while masking is on | next model call, no restart |
+
+Levels. `pii` replaces e-mail addresses, phone numbers, IBANs (mod-97 checked) and card numbers
+(Luhn checked) with `[email]`, `[phone]`, `[iban]`, `[card]` and keeps the rest of the text. `content`
+replaces every message, task, tool argument, tool result, error text and score comment by its size
+(`{ redacted, chars }`); model, tokens, latency, cost, tool names, governance decisions, status,
+tags, user and session stay, so Monitoring is unaffected.
+
+What it does not do. Nothing already stored in Langfuse is changed. A run segment already in progress
+keeps the level it started with for its message text (personal data is scrubbed on every export
+either way). The gateway's tool definitions and ids are not message content. **No part of the switch
+needs a restart or a redeploy.** The chart's `turn_off_message_logging: true` stays as the gateway's
+baseline; on OTel v2 the gateway captures no message content at all unless an operator sets
+`OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=span_only` or a per-key `capture_message_content`
+([migration guide](https://docs.litellm.ai/docs/observability/langfuse_to_otel_v2_migration)); the header
+makes masking hold in that case too.
+
+Proof. `core/infra/masking.e2e.test.ts` and `core/infra/masking-gateway.e2e.test.ts` run a real agent
+run through the real gateway against the real Langfuse container (stack
+`tests/langfuse/compose.yaml` + `compose.masking.yaml`). A recording forwarder in front of Langfuse
+captures the exact ingestion payload: with masking off a seeded e-mail, IBAN and phone number are in
+it and in the stored trace; with it on they are in neither, while tokens, cost, latency, model and
+tool names remain. The gateway case uses a second LiteLLM with content capture on: off, its
+generation holds the prompt; on, it does not.
+
 ## Engineering view ("Under the hood")
 
 An agent system's **Langfuse** tab carries the `Langfuse trace` of its last run: the trace id **is**

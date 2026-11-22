@@ -27,6 +27,7 @@ import { ungatedInteractive } from '@core/runtime/confirm-gate';
 import { ensureAssistantModelFresh, resolveAssistantModelId } from '@core/runtime/complete';
 import { gatewayTraceHeaders } from '@core/runtime/gateway-trace';
 import { assembleStream } from '@core/runtime/llm-stream';
+import { gatewayMessageRedaction } from '@core/infra/masking-policy';
 import { inputBudget, modelContext } from '@core/models/context-windows';
 
 /**
@@ -232,6 +233,10 @@ export function liteLlmCaller(caller?: CallerContext): LlmCall {
       body.stream = true;
       body.stream_options = { include_usage: true };
     }
+    // The platform admin's masking switch, as LiteLLM's documented per-request redaction header: while it
+    // is ON the gateway's own Langfuse record of this call carries no prompt and no completion, even if
+    // an operator has switched the gateway's content capture on. Read per call: no restart.
+    const redaction = await gatewayMessageRedaction();
     const send = async (apiKey: string): Promise<{ res: Response; text: string }> => {
       const ctrl = new AbortController();
       const timer = setTimeout(() => ctrl.abort(), LLM_TIMEOUT_MS);
@@ -247,6 +252,7 @@ export function liteLlmCaller(caller?: CallerContext): LlmCall {
             'content-type': 'application/json',
             accept: 'application/json',
             ...trace.headers,
+            ...redaction,
           },
           body: JSON.stringify({ ...body, user: cred.user, metadata }),
           cache: 'no-store',

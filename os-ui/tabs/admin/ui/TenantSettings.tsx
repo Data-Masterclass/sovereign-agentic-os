@@ -40,6 +40,8 @@ type Settings = {
   /** os-ui 0.6.152 — allow autonomous (unattended) agent execution. OFF by default:
    *  agents run only when a human clicks Run; cron/event triggers are refused. */
   autonomousAgentsEnabled: boolean;
+  /** Langfuse masking: what the OS may send to Langfuse. OFF by default. */
+  langfuseMasking: { enabled: boolean; level: 'pii' | 'content' };
 };
 
 type CatalogModel = { model_name: string; display: string; provenance: 'internal' | 'external' };
@@ -345,6 +347,52 @@ function TenantSettingsInner() {
           <div className="hint" style={{ marginTop: 8 }}>
             Off (default) = agents run only when a person clicks Run. Scheduled (cron) and
             event/API triggers are refused until this is on — nothing runs unattended.
+          </div>
+        </div>
+
+        <div className="section-title">Traces (Langfuse)</div>
+        <div className="card" style={{ marginBottom: 18 }}>
+          <div className="row" style={{ gap: 14, flexWrap: 'wrap', alignItems: 'center' }}>
+            <label className="hint" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              Mask what is sent to Langfuse
+              <Switch
+                on={s.langfuseMasking.enabled}
+                disabled={busy === 'langfuseMasking'}
+                onClick={() => {
+                  const next = { ...s.langfuseMasking, enabled: !s.langfuseMasking.enabled };
+                  set('langfuseMasking', next);
+                  void save('langfuseMasking', { langfuseMasking: next });
+                }}
+              />
+            </label>
+            <label className="hint" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              Level
+              <select
+                value={s.langfuseMasking.level}
+                disabled={busy === 'langfuseMasking'}
+                onChange={(e) => {
+                  const next = { ...s.langfuseMasking, level: e.target.value as 'pii' | 'content' };
+                  set('langfuseMasking', next);
+                  void save('langfuseMasking', { langfuseMasking: next });
+                }}
+              >
+                <option value="pii">Personal data only (e-mail, phone, IBAN, card)</option>
+                <option value="content">All content (keep model, tokens, latency, cost, tool names, status)</option>
+              </select>
+            </label>
+          </div>
+          <div className="hint" style={{ marginTop: 8 }}>
+            Off (default) = traces are recorded as before. On = the masking happens inside os-ui, before anything
+            is sent, and the gateway is told to leave prompts and answers out of its own record of each call.
+            Monitoring keeps working: tokens, cost, latency, model, tool names and errors are never masked.
+          </div>
+          <div className="hint" style={{ marginTop: 6 }}>
+            <strong>Applies without a restart or a redeploy</strong>: os-ui and the run worker read this switch
+            on their next write (the worker within a few seconds). A run that is already in progress keeps the
+            level it started with for its message text; personal data is masked on every export either way.
+            Traces already stored in Langfuse are not changed. The gateway&apos;s tool definitions and ids
+            are not message content and are not masked. Langfuse&apos;s own server-side masking is an
+            Enterprise feature and is not used.
           </div>
         </div>
 
