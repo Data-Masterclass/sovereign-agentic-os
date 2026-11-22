@@ -15,7 +15,7 @@ import type { Pusher } from '@core/infra/git-receive';
 
 globalThis.fetch = (() => Promise.reject(new Error('offline-stub'))) as typeof fetch;
 const { createApp, getAppBySlugInternal } = await import('./apps.ts');
-const { matchesApp, validateAppFile, ingestApps } = await import('./app-receive.ts');
+const { matchesApp, validateAppFile, validateAppDelete, ingestApps } = await import('./app-receive.ts');
 
 const dev = testUser({ id: 'dan', name: 'Dan', domains: ['eng'], role: 'builder' });
 const pusher: Pusher = { id: 'dan', name: 'Dan', role: 'builder', domains: ['eng'] };
@@ -39,6 +39,22 @@ test('validateAppFile: platform-owned gate files may not be edited by a push', (
   assert.equal(validateAppFile({ path: 'apps/inv/k8s/deployment.yaml', content: 'x' }), null);
   assert.equal(validateAppFile({ path: 'apps/inv/package-lock.json', content: '{}' }), null);
   assert.equal(validateAppFile({ path: 'apps/inv/README.md', content: 'x' }), null);
+});
+
+test('validateAppFile: next.config.* of every extension and depth is platform-owned on a push', () => {
+  for (const p of ['next.config.ts', 'next.config.js', 'next.config.cjs', 'next.config.mts', 'src/next.config.mjs', 'a/b/next.config.ts']) {
+    assert.match(validateAppFile({ path: `apps/inv/${p}`, content: 'x' }) ?? '', /platform-owned/, p);
+  }
+  assert.equal(validateAppFile({ path: 'apps/inv/docs/next.config.md', content: 'x' }), null);
+});
+
+test('validateAppDelete: deleting ANY platform-owned file (k8s/ included) is refused; source, lockfile and docs may go', () => {
+  for (const p of ['Dockerfile', 'next.config.mjs', 'next.config.ts', 'src/next.config.js', '.npmrc', 'policy/app-rules.rego', 'scripts/factory-gates.mjs', 'vendor/x/y.js', '.github/workflows/ci.yml', 'k8s/deployment.yaml']) {
+    assert.match(validateAppDelete({ path: `apps/inv/${p}` }) ?? '', /platform-owned/, p);
+  }
+  // NEGATIVE TWINS
+  for (const p of ['src/app/page.tsx', 'package-lock.json', 'README.md', 'docs/next.config.md', 'tests/a.test.ts']) assert.equal(validateAppDelete({ path: `apps/inv/${p}` }), null, p);
+  assert.equal(validateAppDelete({ path: 'dashboards/x/Dockerfile' }), null, 'not an app path');
 });
 
 test('ingestApps: re-derives from the FULL tree at the pushed sha, not only the changed files', async () => {
