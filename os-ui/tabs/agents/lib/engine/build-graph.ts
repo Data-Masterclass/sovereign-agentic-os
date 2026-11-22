@@ -973,7 +973,7 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
           model: workerLeads ? deps.execModel : deps.reasoningModel,
           messages: fitRequest(deps, id, [{ role: 'system', content: planPrompt(system) }, ...turns], deps.budget ?? 24_000),
           temperature: 0.2,
-          maxTokens: outMax(deps, deps.reasoningModel),
+          maxTokens: outMax(deps, workerLeads ? deps.execModel : deps.reasoningModel),
           ...(deps.reasoningEfforts?.plan ? { reasoningEffort: deps.reasoningEfforts.plan } : {}),
         });
         const planText = stripThinking(completion.content) || '(no plan produced)';
