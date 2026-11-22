@@ -32,7 +32,7 @@ import { deriveAlerts, type AlertTraceInput, type AlertCapInput } from '@tabs/mo
 import { collectBackupFailureAlerts } from '@tabs/monitoring/lib/adapters/backup-failures';
 import { collectDagsterState } from '@tabs/monitoring/lib/adapters/dagster-state';
 import { accessDriftAlerts } from '@tabs/monitoring/lib/access-drift-core';
-import { lastDrift } from '@core/infra/trino-rules-server';
+import { currentDrift } from '@core/infra/trino-rules-server';
 import { LENS_IDS, type HealthItem, type LensSummary, type Overview, type Scope } from '@tabs/monitoring/lib/types';
 
 /**
@@ -77,7 +77,7 @@ export async function buildOverview(user: CurrentUser, opts: { runs?: RunListFil
     ...filterScope(scope, await collectBackupFailureAlerts()),
     ...filterScope(scope, (await collectDagsterState()).alerts),
     // Ownership rule: the OS owns access rights; a hand edit of Trino's rules is repaired and reported.
-    ...filterScope(scope, accessDriftAlerts(lastDrift(), Date.now())),
+    ...filterScope(scope, accessDriftAlerts(await driftToReport(), Date.now())),
   ];
 
   return { scope, lenses, attention, alerts, generatedAt: new Date().toISOString() };
@@ -109,4 +109,14 @@ function scopedAlerts(scope: Scope) {
   }));
 
   return deriveAlerts(traces, caps, scope, opaReconcileStatus());
+}
+
+/** The access-rules drift to report. An unreadable record is not "no drift", but there is nothing to show either (outside a cluster); it is logged. */
+async function driftToReport() {
+  const r = await currentDrift();
+  if (!r.ok) {
+    console.warn(`[monitoring] access-rules drift not readable: ${r.reason}`);
+    return null;
+  }
+  return r.drift;
 }
