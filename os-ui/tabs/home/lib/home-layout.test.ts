@@ -47,8 +47,12 @@ test('Home renders the chat and the launcher in its compact form', () => {
 test('the chat shell talks to the governed assistant route only, and renders no model markup', () => {
   const ui = read('tabs/home/ui/HomeChat.tsx');
   assert.match(ui, /\/api\/assistant\/chat/);
-  assert.match(ui, /confirmation: \{ id: p\.confirmationId/);
-  assert.doesNotMatch(ui, /dangerouslySetInnerHTML|eval\(|new Function/);
+  // The decision POST lives in the card shared with the drawer.
+  const card = read('tabs/home/ui/ConfirmCard.tsx');
+  assert.match(card, /\/api\/assistant\/chat/);
+  assert.match(card, /confirmation: \{ id: p\.confirmationId/);
+  assert.match(ui, /sendDecision\(/);
+  for (const src of [ui, card]) assert.doesNotMatch(src, /dangerouslySetInnerHTML|eval\(|new Function/);
 });
 
 test('history and save-as: the chat uses the per-user conversation routes, and each route scopes by the signed-in user', () => {
