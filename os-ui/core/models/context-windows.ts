@@ -28,6 +28,8 @@
  * model degrades safely (small budget) rather than blowing the window.
  */
 
+import { ROLE_STRONG, ROLE_WORKER, ROLE_EMBEDDING, DEPRECATED_ALIASES, type RoleName } from '@core/models/role-names';
+
 export type ModelContext = {
   /** Total token window the model accepts (input + output). */
   contextWindow: number;
@@ -36,19 +38,23 @@ export type ModelContext = {
 };
 
 /**
- * Built-in defaults for the sovereign-* models. `model_name` here is the LiteLLM
- * alias the gateway routes on (the same ids `lib/models/roles.ts` resolves to).
- *   • sovereign-reasoning (Qwen) — a ~200k-window reasoning model.
- *   • sovereign-default / gpt-oss(-20b) — the lighter execution model (~128k).
- *   • sovereign-embed — an embedding model; n/a for chat budgeting, listed so a
- *     lookup returns a sane (tiny) shape rather than the unknown fallback.
+ * Built-in defaults, keyed by the role names the OS sends (and the old names that still resolve to a role).
+ * The window is a property of the model the role is mapped to, which the OS does not read here; these are
+ * conservative figures that hold for the models the chart seeds. A model with a smaller or larger window
+ * is set with the `MODEL_CONTEXT_WINDOWS` env (a JSON map), keyed by the role name.
+ *   • sovereign-strong    — a large-window reasoning model (~200k).
+ *   • sovereign-worker    — the lighter execution model (~128k).
+ *   • sovereign-embedding — an embedding model; n/a for chat budgeting, listed so a lookup returns a sane
+ *     (tiny) shape rather than the unknown fallback.
  */
+const ROLE_CONTEXTS: Record<RoleName, ModelContext> = {
+  [ROLE_STRONG]: { contextWindow: 200_000, reservedOutput: 8_000 },
+  [ROLE_WORKER]: { contextWindow: 128_000, reservedOutput: 4_000 },
+  [ROLE_EMBEDDING]: { contextWindow: 8_192, reservedOutput: 0 },
+};
 export const DEFAULT_MODEL_CONTEXTS: Record<string, ModelContext> = {
-  'sovereign-reasoning': { contextWindow: 200_000, reservedOutput: 8_000 },
-  'sovereign-default': { contextWindow: 128_000, reservedOutput: 4_000 },
-  'gpt-oss': { contextWindow: 128_000, reservedOutput: 4_000 },
-  'gpt-oss-20b': { contextWindow: 128_000, reservedOutput: 4_000 },
-  'sovereign-embed': { contextWindow: 8_192, reservedOutput: 0 },
+  ...ROLE_CONTEXTS,
+  ...Object.fromEntries(Object.entries(DEPRECATED_ALIASES).map(([old, role]) => [old, ROLE_CONTEXTS[role]])),
 };
 
 /**

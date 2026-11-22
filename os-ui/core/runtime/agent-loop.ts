@@ -4,6 +4,7 @@
 import 'server-only';
 import { randomBytes } from 'node:crypto';
 import { config } from '@core/kernel/config';
+import { roleModel } from '@core/models/roles';
 import type { CurrentUser } from '@core/kernel/auth';
 import {
   handleRpc,
@@ -355,7 +356,7 @@ export async function runOsAssistant(input: RunOsAssistantInput): Promise<OsAssi
   // Production: the ONE assistant model for both plan + act. Tests inject `llm`
   // and own model selection, so the config tier ids are opaque placeholders.
   if (!injected) await ensureAssistantModelFresh();
-  const assistantId = injected ? config.litellmExecModel : resolveAssistantModelId();
+  const assistantId = injected ? roleModel('standard') : resolveAssistantModelId();
   const ctx = modelContext(assistantId);
   const roleTools = osToolSpecs(input.user, input.tab);
   // What this ROLE may use: a name outside it is refused by the governed door with its typed error.
@@ -397,7 +398,7 @@ export async function runOsAssistant(input: RunOsAssistantInput): Promise<OsAssi
       tab: ASK_COST_TAB,
       runId: traceId,
     }),
-    planModel: injected ? config.litellmReasoningModel : assistantId,
+    planModel: injected ? roleModel('reasoning') : assistantId,
     actModel: assistantId,
     maxIterations: input.maxIterations ?? config.assistantMaxSteps,
     budget: inputBudget(assistantId),

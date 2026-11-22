@@ -669,10 +669,11 @@ litellmAgentKey:
   # — that happens at the first reset. See docs/components/litellm.md "Budgets".
   budgetDuration: "7d"
   models:                 # only these models are callable with this key
-    - sovereign-default   # standard/worker tier (STACKIT gpt-oss-20b)
-    - sovereign-mock      # back-compat alias -> same standard/worker tier
-    - sovereign-reasoning # reasoning tier (STACKIT Qwen3-VL-235B)
-    - sovereign-embed     # offline embeddings (mock-model)
+    # THE THREE ROLE NAMES are the only names the OS calls. Which catalog model each one means is the
+    # mapping in Platform -> Models (os/models.yml), enforced at the gateway, so a remap needs no change here.
+    - sovereign-strong
+    - sovereign-worker
+    - sovereign-embedding
     # LiteLLM model ACCESS GROUP, not an alias: every model an admin registers in
     # Admin -> Models & Providers joins it (`model_info.access_groups`), so this key can call
     # it without a Helm change (os-ui tabs/admin/lib/provider-registration.ts).
@@ -805,7 +806,13 @@ litellm:
     limits: { cpu: "1", memory: 1536Mi }
   proxy_config:
     model_list:
-      # --- Standard / worker tier (STACKIT gpt-oss-20b, pay-per-token)
+      # --- THE CATALOG, under REAL model names. The chart seeds it; LiteLLM owns it from then on (the platform team
+      # adds and removes models in the LiteLLM UI; models added there are never removed by an upgrade). The OS calls
+      # only the three ROLE names (sovereign-strong / -worker / -embedding); the mapping onto these models is
+      # `os/models.yml`, first seeded from `osUI.modelRoles.seed` below. This chart NEVER sets
+      # `router_settings.model_group_alias`: LiteLLM refuses to change a config-file alias through the API, which
+      # is how the OS writes the roles (scripts/tests/litellm-no-config-alias.test.sh).
+      # --- Worker candidate (STACKIT gpt-oss-20b, pay-per-token)
       #
       # `model_info` — WHY EVERY ALIAS CARRIES ONE. These are custom model ids behind an
       # OpenAI-compatible endpoint, so LiteLLM's built-in price map does not know them: without
@@ -821,12 +828,12 @@ litellm:
       # Qwen3-VL-235B 200K context / 16384 max generation, text + image, tool calling.
       # `max_input_tokens` is informational here (it is what `/model/info` reports): the router's
       # `enable_pre_call_checks` is deliberately NOT on — see docs/components/litellm.md.
-      - model_name: sovereign-default
+      - model_name: stackit-gpt-oss-20b
         litellm_params:
           model: openai/openai/gpt-oss-20b   # STACKIT id is openai/gpt-oss-20b; LiteLLM adds the provider prefix
           api_base: os.environ/STACKIT_API_BASE
           api_key: os.environ/STACKIT_API_KEY
-        model_info: &gptOss20bInfo
+        model_info:
           mode: chat
           input_cost_per_token: 0.00000015     # 0.15 per 1M
           output_cost_per_token: 0.00000025    # 0.25 per 1M
@@ -834,14 +841,8 @@ litellm:
           max_output_tokens: 8192
           supports_vision: false
           supports_function_calling: true
-      - model_name: sovereign-mock            # back-compat alias -> worker tier
-        litellm_params:
-          model: openai/openai/gpt-oss-20b   # STACKIT id is openai/gpt-oss-20b; LiteLLM adds the provider prefix
-          api_base: os.environ/STACKIT_API_BASE
-          api_key: os.environ/STACKIT_API_KEY
-        model_info: *gptOss20bInfo
-      # --- Reasoning tier (STACKIT Qwen3-VL-235B, pay-per-token)
-      - model_name: sovereign-reasoning
+      # --- Strong candidate (STACKIT Qwen3-VL-235B, pay-per-token)
+      - model_name: stackit-qwen3-vl-235b
         litellm_params:
           model: openai/Qwen/Qwen3-VL-235B-A22B-Instruct-FP8   # == stackitPremium.chatModelId
           api_base: os.environ/STACKIT_API_BASE
@@ -853,10 +854,10 @@ litellm:
           output_cost_per_token: 0.00000175    # 1.75 per 1M
           max_input_tokens: 200000
           max_output_tokens: 16384
-          supports_vision: true                # on the OS image allowlist (capabilities.ts)
+          supports_vision: true                # the strong role is on the OS image allowlist (capabilities.ts)
           supports_function_calling: true
       # --- Offline embeddings (mock-model, deterministic 384-dim) -------------
-      - model_name: sovereign-embed
+      - model_name: mock-embedding
         litellm_params:
           model: openai/mock-embed
           api_base: http://mock-model:8080/v1
@@ -866,16 +867,15 @@ litellm:
           input_cost_per_token: 0              # the bundled mock is free: priced AT zero, on purpose
           output_cost_per_token: 0
           supports_vision: false
-      # NOTE: this list is the shipped SEED only — the four aliases the OS actually
-      # uses (sovereign-default/-mock/-reasoning/-embed).
+      # NOTE: this list is the shipped SEED of the catalog only.
     router_settings:
       routing_strategy: simple-shuffle        # load-balance across healthy deployments
       num_retries: 3                          # retry transient failures before failover
       timeout: 120                            # per-request timeout (s)
       allowed_fails: 3                        # circuit-breaking: trip after N fails...
       cooldown_time: 60                       # ...then cool the deployment down (s)
-      # No static fallbacks: the pruned model_list is the four seed aliases, none of
-      # which is a duplicate reasoning route to fail over to.
+      # No static fallbacks: the seed catalog has no duplicate route to fail over to. A fallback per role is
+      # a LiteLLM setting on the catalog models (docs/components/litellm.md, "Fallbacks per role").
     litellm_settings:
       # Gateway-level tracing to Langfuse over OTLP (OpenTelemetry v2, env LITELLM_OTEL_V2 above).
       # Exactly one GENERATION per model call. NEVER also `success_callback: ["langfuse"]` (the
@@ -2067,12 +2067,12 @@ osUI:
   # WHICH MODELS MAY BE SENT IMAGES (MODEL_IMAGE_ALLOWLIST - os-ui/core/models/capabilities.ts).
   # An image sent to a model leaves the OS for wherever that gateway alias points, so the
   # answer is an EXPLICIT list of LiteLLM model_names, never a guess from the name.
-  #   - key absent / null (DEFAULT): the built-in list - the aliases the STACKIT profile points
-  #     at Qwen3-VL-235B on STACKIT (EU): sovereign-reasoning, sovereign-vision,
-  #     sovereign-premium, sovereign-reasoning-fast.
+  #   - key absent / null (DEFAULT): the built-in list - the role `sovereign-strong` (and the old
+  #     names that still resolve to it for one release). Map `sovereign-strong` to a model that
+  #     accepts images, or set this list.
   #   - a list: REPLACES the built-in list (it is not merged), so you can remove a model as
   #     well as add one. Names are exact and case-sensitive; there is no wildcard.
-  #       imageAllowlist: ["sovereign-vision", "my-eu-vlm"]
+  #       imageAllowlist: ["sovereign-strong", "my-eu-vlm"]
   #   - an empty list []: NO model may be sent images.
   # A model that is not on the list is never sent an image, whatever it is called. If you
   # re-point a listed alias at another endpoint in `litellm.proxy_config.model_list`, or add a
@@ -2261,7 +2261,17 @@ osUI:
   langfuseRedaction: ""
   # Model pricing for Monitoring cost facts — EUR per 1M tokens per LiteLLM
   # model_name.
-  modelPricesJson: '{"sovereign-default":{"inputPerM":0.15,"outputPerM":0.25},"sovereign-mock":{"inputPerM":0.15,"outputPerM":0.25},"sovereign-reasoning":{"inputPerM":1.5,"outputPerM":1.75}}'
+  modelPricesJson: '{"stackit-gpt-oss-20b":{"inputPerM":0.15,"outputPerM":0.25},"stackit-qwen3-vl-235b":{"inputPerM":1.5,"outputPerM":1.75}}'
+  # THE FIRST ROLE MAPPING. The OS calls only sovereign-strong / -worker / -embedding; the mapping onto
+  # catalog models is the file os/models.yml, edited in Platform -> Models. When that file does not exist yet
+  # (first boot after this seed) the OS writes it from these three catalog names - or from the old per-role
+  # admin setting where there was one (never overwriting a file that exists). Each name must be in the
+  # catalog above (scripts/check-litellm-role-catalog.mjs).
+  modelRoles:
+    seed:
+      sovereign-strong: stackit-qwen3-vl-235b
+      sovereign-worker: stackit-gpt-oss-20b
+      sovereign-embedding: mock-embedding
   # OS_ENABLED_TABS env var. Comma-separated tab keys (replaces the base tier). Empty = base tier, "*" = all tabs.
   enabledTabs: ""
   # In-cluster backend Service URLs (base URLs; the app appends the paths).
@@ -2275,7 +2285,6 @@ osUI:
   knowledgeIndex: "knowledge"
   # Files tab (unstructured context products).
   filesIndex:      "files"
-  filesEmbedModel: "sovereign-embed"
   # Ingest-by-type services (Phase 3).
   doclingUrl:    ""
   transcribeUrl: ""
@@ -2424,12 +2433,9 @@ osUI:
 #     iteration with its diagnostics fed back, and acceptance checks derived
 #     from the app's own user stories. Max 4 iterations.
 #
-# coderModel optionally pins a code-specialised LiteLLM model_name for the
-# `coder` model role. EMPTY means the coder role falls back to the REASONING
-# tier, so turning the loop on needs no model change.
+# The coder tier of the loop runs on the `sovereign-strong` role (Platform -> Models).
 softwareBuilder:
   mode: "spec"
-  coderModel: ""
 
 # WP-10 — platform Secrets through the External Secrets Operator (ESO) from STACKIT Secrets Manager.
 # OFF by default: nothing renders and no Secret changes. Install ESO first

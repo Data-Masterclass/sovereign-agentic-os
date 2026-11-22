@@ -112,10 +112,10 @@ test('H12 every loop step becomes a governed trace span under the run', () => {
   assert.ok(LOOP_SERVER.includes('currentSurface()?.runId ? { traceId: currentSurface()!.runId! } : undefined'));
 });
 
-test('H14 the coder model role is additive and falls back to the reasoning tier', () => {
+test('H14 the coder model role is the strong role (no model name of its own)', () => {
   const roles = readFileSync(join(process.cwd(), 'core', 'models', 'roles.ts'), 'utf8');
-  assert.ok(roles.includes("if (role === 'coder') {"));
-  assert.ok(roles.includes("return pinned && pinned.trim().length > 0 ? pinned : roleDefault('reasoning');"));
+  assert.ok(roles.includes('coder: ROLE_STRONG,'));
+  assert.ok(!roles.includes('litellmCoderModel'));
   // And the builder asks for the role, never for a hard-coded model id.
   assert.ok(LOOP_SERVER.includes("roleModel(role)"));
   assert.ok(LOOP_SERVER.includes("completeAs(user, 'coder')"));

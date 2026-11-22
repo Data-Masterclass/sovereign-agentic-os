@@ -302,12 +302,12 @@ test('runOsTeam emits ONE run-summary trace with the summed token usage (Monitor
 });
 
 test('runOsTeam prices the run from the ADMIN-SAVED price book (effectiveModelPrices, no env needed)', async () => {
-  // Store a price for BOTH tier models this run calls (plan=sovereign-reasoning,
-  // act=sovereign-default) in the durable store — no MODEL_PRICES_JSON env at all.
+  // Store a price for BOTH tier models this run calls (plan=sovereign-strong,
+  // act=sovereign-worker) in the durable store — no MODEL_PRICES_JSON env at all.
   resetModelPrices();
   setModelPrices({
-    'sovereign-reasoning': { inputPerM: 1000, outputPerM: 2000 },
-    'sovereign-default': { inputPerM: 1000, outputPerM: 2000 },
+    'sovereign-strong': { inputPerM: 1000, outputPerM: 2000 },
+    'sovereign-worker': { inputPerM: 1000, outputPerM: 2000 },
   }, 'admin');
   try {
     const deps = spyDeps();

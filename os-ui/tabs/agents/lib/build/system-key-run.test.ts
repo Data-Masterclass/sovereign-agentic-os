@@ -18,6 +18,7 @@
  *   - "Another process" is a fresh store object over the same rows plus an empty read cache —
  *     what the `os-ui-worker` has: the database and the encryption secret, nothing in memory.
  */
+import { roleModel } from '@core/models/roles';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -128,7 +129,7 @@ function deployment() {
     // Grace 0: the old value must be refused right after the rotation here (the grace is tested in system-key-migration.test.ts).
     keys: { store: postgresSystemKeyStore(db), journal: memorySystemKeyJournal(), kek: () => deploymentKek(), retireGraceSeconds: 0 },
     // The models this run will actually ask for: the role models the engine resolves.
-    runModels: () => [config.litellmReasoningModel, config.litellmToolsModel, 'sovereign-mock'],
+    runModels: () => [roleModel('reasoning'), roleModel('tools'), 'sovereign-worker'],
   };
   /** Become "another process": a new store object over the same rows, nothing cached. */
   const asWorker = () => __setSystemKeyStoreForTests(postgresSystemKeyStore(db));
@@ -217,7 +218,7 @@ test('ROTATION UNDER A RUN IN FLIGHT: the call that meets the old key is repeate
   // The web process rotates. The worker's cached copy is NOT told (it is another process): put the
   // new record in the shared database and swap the key at the gateway directly.
   const fresh = mintSystemKey();
-  const model = config.litellmToolsModel;
+  const model = roleModel('tools');
   await d.gw.admin.deleteKey(tokenIdOf(before));
   await d.gw.admin.generateKey({ systemId: 'sys_rot', alias: 'os-sys_rot', models: [model], maxBudget: 5, budgetDuration: '7d', modelMaxBudget: {}, rpmLimit: 300, tpmLimit: 1, maxParallelRequests: 8, allowedTools: [] }, fresh);
   await d.build.keys.store.put(sealSystemKey({ systemId: 'sys_rot', alias: 'os-sys_rot', key: fresh, caps: { models: [model], maxBudget: 5, budgetDuration: '7d', rpmLimit: 300, tpmLimit: 1, maxParallelRequests: 8 }, createdAt: 1, rotatedAt: 2 }, deploymentKek()));
@@ -255,7 +256,7 @@ test('A KEY THE GATEWAY NO LONGER KNOWS (swept, not yet rebuilt) is an explicit 
   __setRotationWaitForTests(0);
   const call = liteLlmCaller({ userId: 'u1', domain: 'sales', systemId: 'sys_gone', keyRef: systemKeyRef('sys_gone') });
   await withGateway(d.gw, () => assert.rejects(
-    call({ model: config.litellmToolsModel, messages: [{ role: 'user', content: 'ping' }] }),
+    call({ model: roleModel('tools'), messages: [{ role: 'user', content: 'ping' }] }),
     (e: unknown) => e instanceof SystemKeyRefusedError && e.code === 'system_key_rejected' && /Press Rebuild/.test(e.message) && !e.message.includes(own),
   ));
   assert.ok(d.gw.calls.every((c) => c.bearer === own), 'no other credential was tried');

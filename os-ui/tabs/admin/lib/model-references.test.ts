@@ -22,6 +22,7 @@ function seedAgentStore(recs: Rec[]): void {
 beforeEach(() => {
   resetSettings();
   resetModels();
+  (globalThis as unknown as { __osRoleReport?: unknown }).__osRoleReport = undefined;
   seedAgentStore([]);
 });
 
@@ -29,20 +30,18 @@ test('an unreferenced alias has no usages', () => {
   assert.deepEqual(modelReferences('my-cloud-llm'), []);
 });
 
-test('an explicit role pin surfaces as "<Role> role pin"', () => {
-  updateSettings({ modelRoles: { standard: 'my-cloud-llm' } });
-  const refs = modelReferences('my-cloud-llm');
-  // The tools role (agent execution) follows a Standard pin, so removing the alias breaks it too.
-  assert.deepEqual(refs, [{ kind: 'role', label: 'Standard role pin' }, { kind: 'role', label: 'Tools role default' }]);
+const mapRoles = (m: Record<string, string> | null) => { (globalThis as unknown as { __osRoleReport?: unknown }).__osRoleReport = { last: { mapping: m } }; };
+
+test('a catalog model a role is mapped to surfaces as "<Role> role (Platform → Models)"', () => {
+  mapRoles({ 'sovereign-strong': 'my-cloud-llm', 'sovereign-worker': 'other', 'sovereign-embedding': 'emb' });
+  assert.deepEqual(modelReferences('my-cloud-llm'), [{ kind: 'role', label: 'Strong role (Platform → Models)' }]);
 });
 
-test('a role RESOLVING to the alias by default also counts (removal breaks it too)', () => {
-  // sovereign-default is the env baseline for both standard and tools.
-  const labels = modelReferences('sovereign-default').map((r) => r.label);
-  assert.ok(labels.includes('Standard role default'));
-  assert.ok(labels.includes('Tools role default'));
-  // Follow-Standard assistant is NOT double-reported as an assistant pin.
-  assert.ok(!modelReferences('sovereign-default').some((r) => r.kind === 'assistant'));
+test('NEGATIVE TWIN: with no mapping yet, or for a model no role uses, there is no role usage', () => {
+  mapRoles(null);
+  assert.deepEqual(modelReferences('my-cloud-llm'), []);
+  mapRoles({ 'sovereign-strong': 'a', 'sovereign-worker': 'b', 'sovereign-embedding': 'c' });
+  assert.deepEqual(modelReferences('my-cloud-llm'), []);
 });
 
 test('an explicit assistant pin surfaces', () => {
@@ -57,7 +56,7 @@ test('agent per-node pins surface with the system name and node ids', () => {
       name: 'Order triage',
       yaml: 'system:\n  name: Order triage\nagents:\n  - id: planner\n    model: my-cloud-llm\n  - id: writer\n    model: my-cloud-llm\n  - id: other\n',
     },
-    { id: 'sys2', name: 'Untouched', yaml: 'agents:\n  - id: a\n    model: sovereign-reasoning\n' },
+    { id: 'sys2', name: 'Untouched', yaml: 'agents:\n  - id: a\n    model: sovereign-strong\n' },
   ]);
   const refs = modelReferences('my-cloud-llm');
   assert.equal(refs.length, 1);

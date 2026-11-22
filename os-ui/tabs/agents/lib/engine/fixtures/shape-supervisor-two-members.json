@@ -12,7 +12,7 @@
     "exchanges": [
       {
         "request": {
-          "model": "sovereign-reasoning",
+          "model": "sovereign-strong",
           "tools": [],
           "messages": 2
         },
@@ -23,7 +23,7 @@
       },
       {
         "request": {
-          "model": "sovereign-reasoning",
+          "model": "sovereign-strong",
           "tools": [],
           "messages": 2
         },
@@ -34,7 +34,7 @@
       },
       {
         "request": {
-          "model": "sovereign-reasoning",
+          "model": "sovereign-strong",
           "tools": [],
           "messages": 2
         },
@@ -45,7 +45,7 @@
       },
       {
         "request": {
-          "model": "sovereign-default",
+          "model": "sovereign-worker",
           "tools": [
             "list_knowledge",
             "search_knowledge"
@@ -68,7 +68,7 @@
       },
       {
         "request": {
-          "model": "sovereign-default",
+          "model": "sovereign-worker",
           "tools": [
             "list_knowledge",
             "search_knowledge"
@@ -82,7 +82,7 @@
       },
       {
         "request": {
-          "model": "sovereign-reasoning",
+          "model": "sovereign-strong",
           "tools": [],
           "messages": 2
         },
@@ -93,7 +93,7 @@
       },
       {
         "request": {
-          "model": "sovereign-default",
+          "model": "sovereign-worker",
           "tools": [
             "get_dataset",
             "list_datasets",
@@ -118,7 +118,7 @@
       },
       {
         "request": {
-          "model": "sovereign-default",
+          "model": "sovereign-worker",
           "tools": [
             "get_dataset",
             "list_datasets",

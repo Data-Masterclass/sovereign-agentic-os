@@ -53,6 +53,8 @@
  * yet — it is the capability map only.
  */
 
+import { ROLE_STRONG, strongAliases } from '@core/models/role-names';
+
 /** What a model may be sent. One field today; a typed home for the next capability. */
 export type ModelCapabilities = {
   /** True only when the model is on the effective image allowlist. */
@@ -63,16 +65,11 @@ export type ModelCapabilities = {
 export const IMAGE_ALLOWLIST_ENV = 'MODEL_IMAGE_ALLOWLIST';
 
 /**
- * The built-in allowlist: the gateway aliases that the shipped STACKIT profile routes to
- * Qwen3-VL-235B on STACKIT (EU). Frozen — the only way to change the effective list at runtime
+ * The built-in allowlist: the `strong` role, which sees images, and the old names that still resolve
+ * to it for one release (the shipped mapping points `strong` at a vision model — Platform → Models). Frozen — the only way to change the effective list at runtime
  * is the admin override.
  */
-export const DEFAULT_IMAGE_MODELS: readonly string[] = Object.freeze([
-  'sovereign-reasoning',
-  'sovereign-vision',
-  'sovereign-premium',
-  'sovereign-reasoning-fast',
-]);
+export const DEFAULT_IMAGE_MODELS: readonly string[] = Object.freeze([ROLE_STRONG, ...strongAliases()]);
 
 /** The effective allowlist, where it came from, and anything an admin should be told. */
 export type ImageAllowlist = {

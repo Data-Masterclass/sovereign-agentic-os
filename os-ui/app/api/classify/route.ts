@@ -17,6 +17,7 @@
 import { NextResponse } from 'next/server';
 import { config } from '@core/kernel/config';
 import { gatewayFetch } from '@core/adapters/litellm/gateway-fetch';
+import { roleModel } from '@core/models/roles';
 import { withRoute } from '@core/kernel/route-server';
 import { truncateToTokens } from '@core/infra/context/context-assembler';
 import {
@@ -80,7 +81,7 @@ export const POST = withRoute<Record<string, string>, { title?: unknown; text?: 
   });
 
   const payload = {
-    model: config.litellmChatModel,
+    model: roleModel('standard'),
     messages: [
       { role: 'system', content: SYSTEM },
       { role: 'user', content: `TITLE: ${title}\n\nTEXT:\n${truncateToTokens(text, 1_000)}` },

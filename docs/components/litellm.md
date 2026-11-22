@@ -98,13 +98,11 @@ kubectl -n agentic-os port-forward svc/agentic-os-litellm 4000:4000
   ```bash
   curl http://localhost:4000/v1/chat/completions \
     -H "Authorization: Bearer sk-litellm-local-dev-master" -H "Content-Type: application/json" \
-    -d '{"model":"sovereign-mock","messages":[{"role":"user","content":"hi"}]}'
+    -d '{"model":"sovereign-worker","messages":[{"role":"user","content":"hi"}]}'
   ```
-  Models (all inference on the STACKIT managed three-tier set): `sovereign-reasoning`
-  (reasoning, Qwen3-VL-235B), `sovereign-default` (standard/worker, gpt-oss-20b) with
-  `sovereign-mock` as its back-compat alias, `sovereign-embed` (embeddings,
-  Qwen3-VL-Embedding-8B, 4096-dim), `sovereign-vision` / `sovereign-premium`
-  (Qwen3-VL — vision + last-resort). Admin can re-point each role in Platform Settings.
+  The OS calls three names only: `sovereign-strong`, `sovereign-worker`, `sovereign-embedding`. Each means a model
+  in the catalog (the chart seeds `stackit-gpt-oss-20b`, `stackit-qwen3-vl-235b` and an embedding model); an admin
+  re-points a role in Platform → Models ("The three role names" below).
 - **Virtual keys + cost caps:** UI → *Virtual Keys*. The agents use a scoped key
   (`sk-agents-local-dev`, alias `sovereign-agents`) limited to the `litellmAgentKey.models`
   allowlist with a budget — see "The shared agent key: created by the chart, owned in LiteLLM" below.
@@ -153,15 +151,15 @@ state of this stack until 2026-11-19 (measured on 1.90.0: three calls of 1,000 +
 key spend `0.0`). With the prices set, the same calls book 0.000275 (standard) and 0.002375
 (reasoning).
 
-| Alias (STACKIT profile) | Upstream model | Input / output per 1M | per token (`model_info`) | Context / max output | Images | Tools |
+| Catalog model (STACKIT profile) | Upstream model | Input / output per 1M | per token (`model_info`) | Context / max output | Images | Tools |
 |---|---|---|---|---|---|---|
-| `sovereign-default`, `sovereign-mock` | gpt-oss-20b | 0.15 / 0.25 EUR | 1.5e-07 / 2.5e-07 | 131K / 8192 | no | yes |
-| `sovereign-reasoning`, `-reasoning-fast`, `-premium`, `-vision` | Qwen3-VL-235B-A22B-Instruct-FP8 | 1.50 / 1.75 EUR | 1.5e-06 / 1.75e-06 | 200K / 16384 | yes | yes |
-| `sovereign-embed` | Qwen3-VL-Embedding-8B | 0.08 EUR input | 8e-08 / 0 | 32000 input | no (the OS sends none) | n/a |
+| `stackit-gpt-oss-20b` | gpt-oss-20b | 0.15 / 0.25 EUR | 1.5e-07 / 2.5e-07 | 131K / 8192 | no | yes |
+| `stackit-qwen3-vl-235b` | Qwen3-VL-235B-A22B-Instruct-FP8 | 1.50 / 1.75 EUR | 1.5e-06 / 1.75e-06 | 200K / 16384 | yes | yes |
+| `stackit-qwen3-vl-embedding-8b` | Qwen3-VL-Embedding-8B | 0.08 EUR input | 8e-08 / 0 | 32000 input | no (the OS sends none) | n/a |
 
 Sources: prices — STACKIT AI Model Serving price table (stackit.com, EUR per 1M tokens, read
 2026-11-19); limits, modalities and tool calling — docs.stackit.cloud "Available shared models".
-On the base (laptop) profile `sovereign-embed` is the bundled mock and is priced at 0 on purpose.
+On the base (laptop) profile the embedding model is the bundled mock `mock-embedding` and is priced at 0 on purpose.
 
 * **Currency.** LiteLLM calls its ledger "USD" and converts nothing. The prices are EUR, so
   `maxBudget`, `spend` and every amount in the LiteLLM console are EUR on this stack.
@@ -285,9 +283,52 @@ Platform → Models shows each role's model with its price per 1M tokens (from t
   `output_cost_per_token` in `litellm_params` — 1.109.1 drops them from `model_info` on `/model/new`), so spend per key,
   per team and per model keeps working under a role.
 
-Not done in this change (follow-up): switching os-ui's `chatModel`/`reasoningModel`/`executionModel` defaults and
-the chart's `model_list` onto the roles, and a per-role fallback. The chart's `router_settings.fallbacks` live in the
-config file, which LiteLLM will not let the API change, so a per-role fallback needs those moved to the database first.
+### Every OS model call uses the three role names
+
+os-ui's own roles map onto the three names: standard and tools → `sovereign-worker`; reasoning and coder →
+`sovereign-strong`; embeddings → `sovereign-embedding` (`core/models/roles.ts`). No model name is in os-ui code:
+`core/models/role-call-sites.guard.test.ts` fails on a hard-coded model name outside the deprecated-alias table.
+
+* **Gone:** the admin `settings.modelRoles` override (the Settings and Models & Providers role dropdowns) and the
+  `LITELLM_*_MODEL` / `KNOWLEDGE_EMBED_MODEL` / `FILES_EMBED_MODEL` env defaults. `PATCH /settings` with `modelRoles`
+  answers 410. What a role means is only `os/models.yml` (Platform → Models).
+* **First mapping.** At boot, when `os/models.yml` does not exist, the OS writes it once (`core/models/role-seed.ts`):
+  per role the old override if it names a catalog model, else the chart seed `osUI.modelRoles.seed`, else — a
+  cluster that carries its own catalog under the old names, as production does — the old name of that role when
+  the catalog still serves it. A role with none is `incomplete` and nothing is written. An existing file is never
+  touched, so the run is idempotent. Preview: `POST /api/platform-admin/models/roles/migrate {"dryRun": true}` (admin).
+* **Keys.** An agent system's key (`keyWanted`) and the shared key (`litellmAgentKey.models`) always allow the three
+  role names, so a remap needs no key rebuild (measured: the same key, the next call, the new model). A key that does
+  not list the roles is refused, so an EXISTING key must be updated once (the key reconcile reports it as drift; the
+  shared key needs `litellmAgentKey.reapplyOnUpgrade: true` once or an edit in LiteLLM).
+* **Catalog seed (chart).** `litellm.proxy_config.model_list` seeds real names: `stackit-gpt-oss-20b`,
+  `stackit-qwen3-vl-235b`, and the embedding model (`stackit-qwen3-vl-embedding-8b` on STACKIT, `mock-embedding` on
+  the local profile). The old aliases are no longer config models; the OS writes them as aliases of the roles for one
+  release (a cluster whose own list still has them keeps them as real models). Models added in LiteLLM live in its
+  database and are never touched by a deploy or by this chart.
+* **Budgets and cost** are LiteLLM's: spend is booked per key, per role (`model_group` in the spend log) and per
+  catalog model (`model_id`), at the price on the catalog entry (`scripts/check-litellm-model-info.mjs`).
+* **Images** are allowed to the `sovereign-strong` role (and its old names). Map `strong` to a model that accepts
+  images, or set `osUI.imageAllowlist`.
+
+### Fallbacks per role (measured on LiteLLM 1.109.1, `scripts/tests/gateway-models`-style container)
+
+* **Through the API.** `POST /config/update {"router_settings":{"fallbacks":[{"sovereign-strong":["…"]}]}}` works when
+  the config FILE sets no `fallbacks`: it applies at once and survives a restart. The key is the ROLE name — a
+  fallback keyed by the catalog model never fires for a call made through a role. The list is replaced whole.
+  When the file sets `fallbacks` LiteLLM refuses ("is set in the config file and cannot be changed here"), so the
+  STACKIT profile no longer sets any.
+* **The target must be allowed on the caller's key**, else the fallback is skipped ("the caller is not authorized to
+  call it"). A fallback to another role (`sovereign-strong` → `sovereign-worker`) works with the keys as they are; a
+  fallback to a specific catalog model (e.g. STACKIT Qwen when Lyceum fails) needs that model on every key
+  (`AGENT_SYSTEM_KEY_FALLBACKS_JSON` carries it onto system keys; the shared key's list or the
+  `os-admin-registered` access group the shared key holds).
+* **`/fallback`** takes a real model group; it rejects a role alias ("not found in router"), so it cannot give a role a
+  fallback.
+* **Deployment order inside one model group** (two deployments under the same `model_name`, `order: 1/2`) fails over
+  to the second when the first fails, with no fallback setting — but both deployments are then the same catalog
+  entry, so a call to that name can be answered by either model.
+* The OS does not manage fallbacks yet; this is the documented route for it.
 
 Proof against the real gateway: `scripts/tests/gateway-models/run.sh` (the `gateway-models-live` workflow).
 
@@ -552,19 +593,10 @@ defaults and the router's fallback maps are now the complete set of aliases the 
 `sovereign-premium` and `sovereign-reasoning-fast`, which the base four-alias list never
 allowed — the overlay now carries its own `litellmAgentKey.models`. The aliases come from:
 
-| Role / use | Source | Default alias |
-|---|---|---|
-| standard (worker) | `config.litellmExecModel` ← `LITELLM_EXEC_MODEL` | `sovereign-default` |
-| chat / offline fallback | `config.litellmChatModel` ← `LITELLM_CHAT_MODEL` | `sovereign-mock` |
-| reasoning | `config.litellmReasoningModel` ← `LITELLM_REASONING_MODEL` | `sovereign-reasoning` |
-| tools | `config.litellmToolsModel` ← `LITELLM_TOOLS_MODEL`; unset → follows the Standard role | `sovereign-default` |
-| knowledge embeddings | `config.embedModel` ← `KNOWLEDGE_EMBED_MODEL` | `sovereign-embed` |
-| files embeddings | `config.filesEmbedModel` ← `FILES_EMBED_MODEL` | `sovereign-embed` |
-
-plus any **admin override** per role in Platform Settings (`modelRoles`, read by
-`core/models/roles.ts`). Renaming an alias or re-pointing a role means updating
-`litellmAgentKey.models` in the same change; the Job will push the new list on
-the next upgrade.
+The OS itself requests only the three role names, so the required set is `sovereign-strong`, `sovereign-worker`,
+`sovereign-embedding` plus any fallback target (`scripts/check-litellm-role-catalog.mjs` checks the roles on every
+profile). Which catalog model a role means is `os/models.yml` (Platform → Models); nothing in the key changes when
+a role is remapped.
 
 **Models an admin registers at runtime need no Helm change.** Admin → Models & Providers
 (`/api/platform-admin/providers/*`, see "Adding a provider" above) sends `/model/new` with

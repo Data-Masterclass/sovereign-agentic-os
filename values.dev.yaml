@@ -75,6 +75,11 @@ dbt:
     user: sales     # see "Synthetic seed" below: the fresh-install schema rule
 
 osUI:
+  # The first role mapping (os/models.yml, written once when it does not exist): embeddings on STACKIT's model.
+  # strong/worker come from the chart seed (STACKIT Qwen / gpt-oss) until an admin maps them in Platform -> Models.
+  modelRoles:
+    seed:
+      sovereign-embedding: stackit-qwen3-vl-embedding-8b
   # WP-05: no node-list ClusterRole on dev — the dev CI account deploys namespaced objects only
   # (scripts/dev/manifests/ci-rbac.yaml) and may not create cluster RBAC. Platform says the nodes
   # are not readable (403 → forbidden), never an invented list.
@@ -215,8 +220,11 @@ polaris:
 
 litellm:
   proxy_config:
-    # Same model mapping as production: STACKIT model ids carry their own provider prefix
-    # (openai/gpt-oss-20b), so LiteLLM needs openai/openai/gpt-oss-20b. No mock model on dev.
+    # The CATALOG under real model names (same STACKIT upstreams as production). STACKIT model ids carry their
+    # own provider prefix (openai/gpt-oss-20b), so LiteLLM needs openai/openai/gpt-oss-20b. No mock model on
+    # dev. The OS calls only the three role names; their mapping is os/models.yml (Platform -> Models), first
+    # seeded from osUI.modelRoles.seed. Models added in the LiteLLM UI (e.g. Lyceum's) live in LiteLLM's
+    # database and are never touched by a deploy.
     model_list:
     - litellm_params:
         api_base: os.environ/STACKIT_API_BASE
@@ -230,20 +238,7 @@ litellm:
         output_cost_per_token: 2.5e-07
         supports_function_calling: true
         supports_vision: false
-      model_name: sovereign-default
-    - litellm_params:
-        api_base: os.environ/STACKIT_API_BASE
-        api_key: os.environ/STACKIT_API_KEY
-        model: openai/openai/gpt-oss-20b
-      model_info:
-        input_cost_per_token: 1.5e-07
-        max_input_tokens: 131000
-        max_output_tokens: 8192
-        mode: chat
-        output_cost_per_token: 2.5e-07
-        supports_function_calling: true
-        supports_vision: false
-      model_name: sovereign-mock
+      model_name: stackit-gpt-oss-20b
     - litellm_params:
         api_base: os.environ/STACKIT_API_BASE
         api_key: os.environ/STACKIT_API_KEY
@@ -260,55 +255,7 @@ litellm:
         output_cost_per_token: 1.75e-06
         supports_function_calling: true
         supports_vision: true
-      model_name: sovereign-reasoning
-    - litellm_params:
-        api_base: os.environ/STACKIT_API_BASE
-        api_key: os.environ/STACKIT_API_KEY
-        extra_body:
-          chat_template_kwargs:
-            enable_thinking: false
-        model: openai/Qwen/Qwen3-VL-235B-A22B-Instruct-FP8
-      model_info:
-        input_cost_per_token: 1.5e-06
-        max_input_tokens: 200000
-        max_output_tokens: 16384
-        mode: chat
-        output_cost_per_token: 1.75e-06
-        supports_function_calling: true
-        supports_vision: true
-      model_name: sovereign-reasoning-fast
-    - litellm_params:
-        api_base: os.environ/STACKIT_API_BASE
-        api_key: os.environ/STACKIT_API_KEY
-        extra_body:
-          chat_template_kwargs:
-            enable_thinking: false
-        model: openai/Qwen/Qwen3-VL-235B-A22B-Instruct-FP8
-      model_info:
-        input_cost_per_token: 1.5e-06
-        max_input_tokens: 200000
-        max_output_tokens: 16384
-        mode: chat
-        output_cost_per_token: 1.75e-06
-        supports_function_calling: true
-        supports_vision: true
-      model_name: sovereign-vision
-    - litellm_params:
-        api_base: os.environ/STACKIT_API_BASE
-        api_key: os.environ/STACKIT_API_KEY
-        extra_body:
-          chat_template_kwargs:
-            enable_thinking: false
-        model: openai/Qwen/Qwen3-VL-235B-A22B-Instruct-FP8
-      model_info:
-        input_cost_per_token: 1.5e-06
-        max_input_tokens: 200000
-        max_output_tokens: 16384
-        mode: chat
-        output_cost_per_token: 1.75e-06
-        supports_function_calling: true
-        supports_vision: true
-      model_name: sovereign-premium
+      model_name: stackit-qwen3-vl-235b
     - litellm_params:
         api_base: os.environ/STACKIT_API_BASE
         api_key: os.environ/STACKIT_API_KEY
@@ -320,7 +267,7 @@ litellm:
         output_cost_per_token: 0
         output_vector_size: 4096
         supports_vision: false
-      model_name: sovereign-embed
+      model_name: stackit-qwen3-vl-embedding-8b
     litellm_settings:
       max_budget: 20
       budget_duration: 30d

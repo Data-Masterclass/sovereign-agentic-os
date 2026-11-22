@@ -217,8 +217,8 @@ test('models: provider keys hold ONLY a ref + fingerprint — never a raw value'
 test('models: the defaults projection reads the ONE role store; the OS keeps no enable switch or cap', async () => {
   resetModels();
   // getDefaults projects the ONE role store (unset → baselines).
-  assert.equal(getDefaults().chat, 'sovereign-default');
-  assert.equal(getDefaults().embedding, 'sovereign-embed');
+  assert.equal(getDefaults().chat, 'sovereign-worker');
+  assert.equal(getDefaults().embedding, 'sovereign-embedding');
   // Enabling/disabling and capping a model belong to LiteLLM: there is no OS function for them.
   const models = await import('@tabs/admin/lib/models');
   assert.equal('setEnabled' in models || 'setCap' in models, false);

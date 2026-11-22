@@ -9,7 +9,7 @@ import { assistantComplete, resolveAssistantModelId, AssistantNotConfiguredError
 beforeEach(() => _reset());
 
 test('resolveAssistantModelId returns the configured assistant (sovereign chat by default)', () => {
-  assert.equal(resolveAssistantModelId(), 'sovereign-default');
+  assert.equal(resolveAssistantModelId(), 'sovereign-worker');
 });
 
 test('assistantComplete runs on the chosen model via the injected caller', async () => {
@@ -44,7 +44,7 @@ test('an unresolvable assistant is still an HONEST, admin-actionable error', () 
 test('assistantComplete threads the surface (`tab`) to the caller so the spend is tagged with it; default is unset → `assistant`', async () => {
   const seen: (string | undefined)[] = [];
   const caller: AssistantCaller = async (req) => { seen.push(req.tab); return 'ok'; };
-  await assistantComplete([{ role: 'user', content: 'x' }], { model: 'sovereign-default', user: { id: 'amir', domains: ['sales'] }, tab: 'files', caller });
-  await assistantComplete([{ role: 'user', content: 'x' }], { model: 'sovereign-default', user: { id: 'amir', domains: ['sales'] }, caller });
+  await assistantComplete([{ role: 'user', content: 'x' }], { model: 'sovereign-worker', user: { id: 'amir', domains: ['sales'] }, tab: 'files', caller });
+  await assistantComplete([{ role: 'user', content: 'x' }], { model: 'sovereign-worker', user: { id: 'amir', domains: ['sales'] }, caller });
   assert.deepEqual(seen, ['files', undefined]);
 });

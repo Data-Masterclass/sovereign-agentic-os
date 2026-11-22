@@ -18,7 +18,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   describeFile, planDescribeBackfill, runDescribeBackfill, settleStaleAutoDocs, classifyModelError,
-  __resetDescribeFlights, MOCK_MODEL_ALIAS, type DescribeDeps, type DescribeCallContext,
+  __resetDescribeFlights, type DescribeDeps, type DescribeCallContext,
 } from '@tabs/files/lib/describe';
 import {
   AUTO_DOCS_LIMITS, DOC_OPEN, DOC_CLOSE, buildDescribeMessages, excerptOf, generationPlan, parseDocsReply,
@@ -331,10 +331,10 @@ test('the model is unreachable ⇒ the upload stands, the state is "failed" with
   assert.equal((await run(f.id, deps([GOOD]))).state, 'done');
 });
 
-test('a standard role that points at the mock model is refused without a call: a canned reply is not a description', async () => {
+test('a worker role with no model name is refused without a call', async () => {
   process.env[OFFLINE_MOCK_ENV] = 'allow';
   const f = createFile(amir, { name: 'invoice.md', text: INVOICE });
-  const d = deps([GOOD], { model: () => MOCK_MODEL_ALIAS });
+  const d = deps([GOOD], { model: () => '' });
   const result = await run(f.id, d);
   assert.equal(result.state === 'failed' && result.code, 'not-configured');
   assert.equal(d.calls.length, 0);

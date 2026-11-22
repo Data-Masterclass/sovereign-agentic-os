@@ -20,7 +20,7 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = resolve(fileURLToPath(new URL('../..', import.meta.url)));
 const SKIP_DIRS = new Set(['node_modules', '.next', 'dist', 'coverage', 'tests', '__fixtures__']);
-const ALLOWED = new Set(['core/models/role-mapping.ts', 'tabs/admin/lib/llm-provider-presets.ts']);
+const ALLOWED = new Set(['core/models/role-names.ts', 'tabs/admin/lib/llm-provider-presets.ts']);
 const NAME = /\b(sovereign-(default|mock|reasoning-fast|reasoning|premium|vision|embed)\b|gpt-oss|qwen3?[-\s]?vl|qwen3)/i;
 
 /** The code of a file without its comments (a name in a comment is documentation, not a call). */

@@ -627,7 +627,7 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
           </>
         ) : null}
         {panel === 'grants' ? (
-          <GrantsRouting systemId={systemId} system={sys} canEdit={data.canEdit} canDirectWrite={roleAtLeast(data.role, 'builder')} roles={{ reasoning: modelsData?.roles?.reasoning || 'sovereign-reasoning', standard: modelsData?.roles?.standard || 'sovereign-default' }} routing={routingData} onChanged={reloadAll} />
+          <GrantsRouting systemId={systemId} system={sys} canEdit={data.canEdit} canDirectWrite={roleAtLeast(data.role, 'builder')} roles={{ reasoning: modelsData?.roles?.reasoning || 'sovereign-strong', standard: modelsData?.roles?.standard || 'sovereign-worker' }} routing={routingData} onChanged={reloadAll} />
         ) : null}
         {panel === 'build' ? (
           <>
@@ -647,8 +647,8 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
               agentId={selectedAgent}
               canEdit={data.canEdit}
               roles={{
-                reasoning: modelsData?.roles?.reasoning || 'sovereign-reasoning',
-                standard: modelsData?.roles?.standard || 'sovereign-default',
+                reasoning: modelsData?.roles?.reasoning || 'sovereign-strong',
+                standard: modelsData?.roles?.standard || 'sovereign-worker',
               }}
               isEntrypoint={selectedAgent === sys.entrypoint}
               onSetEntrypoint={editable ? () => void commit(setEntrypoint(sys, selectedAgent), { snapshot: sys }) : undefined}

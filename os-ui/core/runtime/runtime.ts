@@ -4,6 +4,7 @@
 import 'server-only';
 import { randomBytes } from 'node:crypto';
 import { config } from '@core/kernel/config';
+import { roleModel } from '@core/models/roles';
 import { runSessionId } from '@core/infra/trace-port';
 import {
   callerCredential, runCredentialConfigured, NoRunCredentialError, SystemKeyRefusedError, isModelAccessRejection,
@@ -543,7 +544,7 @@ export async function runTabAgent(input: RunTabAgentInput): Promise<TabAgentResu
   // config tiers as opaque ids the fake caller ignores.
   const injected = input.llm;
   if (!injected) await ensureAssistantModelFresh();
-  const assistantId = injected ? config.litellmExecModel : resolveAssistantModelId();
+  const assistantId = injected ? roleModel('standard') : resolveAssistantModelId();
   // The model this run ACTUALLY executes on: an explicit override (the Software Build
   // passes the reasoning tier) wins over the platform assistant default. Tests inject
   // their own caller, so they keep the opaque exec id. The context window + budget +
@@ -581,7 +582,7 @@ export async function runTabAgent(input: RunTabAgentInput): Promise<TabAgentResu
       domain: input.user.domains[0] ?? 'none',
       tab: input.tab,
     }),
-    planModel: injected ? config.litellmReasoningModel : runModel,
+    planModel: injected ? roleModel('reasoning') : runModel,
     actModel: runModel,
     maxIterations: input.maxIterations,
     budget: inputBudget(runModel),

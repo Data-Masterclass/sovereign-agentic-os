@@ -103,13 +103,15 @@ litellm:
     # — `scripts/deploy.sh` derives the values from the live release) must add the same
     # `model_info` blocks THERE; see docs/components/litellm.md "Prices and budgets".
     model_list:
-      # Standard/worker tier -> gpt-oss-20b on STACKIT (lightweight, non-reasoning).
-      - model_name: sovereign-default
+      # THE CATALOG under real model names (the chart seeds it; LiteLLM owns it afterwards). The OS calls only
+      # the three role names; the mapping is os/models.yml, first seeded from `osUI.modelRoles.seed` below.
+      # Worker candidate -> gpt-oss-20b on STACKIT (lightweight, non-reasoning).
+      - model_name: stackit-gpt-oss-20b
         litellm_params:
           model: openai/gpt-oss-20b
           api_base: "https://api.openai-compat.model-serving.eu01.onstackit.cloud/v1"
           api_key: os.environ/STACKIT_API_KEY
-        model_info: &gptOss20bInfo
+        model_info:
           mode: chat
           input_cost_per_token: 0.00000015     # 0.15 EUR per 1M (STACKIT price list)
           output_cost_per_token: 0.00000025    # 0.25 EUR per 1M
@@ -117,13 +119,7 @@ litellm:
           max_output_tokens: 8192              # STACKIT: maximum generation 8192
           supports_vision: false               # STACKIT: input and output are text
           supports_function_calling: true      # STACKIT: tool calling enabled
-      - model_name: sovereign-mock # back-compat alias -> worker tier
-        litellm_params:
-          model: openai/gpt-oss-20b
-          api_base: "https://api.openai-compat.model-serving.eu01.onstackit.cloud/v1"
-          api_key: os.environ/STACKIT_API_KEY
-        model_info: *gptOss20bInfo
-      - model_name: sovereign-embed # embeddings for RAG (EU-sovereign)
+      - model_name: stackit-qwen3-vl-embedding-8b # embeddings for RAG (EU-sovereign)
         # NOTE: Qwen3-VL-Embedding-8B is 4096-dim — set opensearch.knnDimension to
         # match (retrieval.knnDimension: 4096) and reindex. Dimension MUST match.
         litellm_params:
@@ -137,50 +133,30 @@ litellm:
           max_input_tokens: 32000              # STACKIT: maximum input tokens 32000
           output_vector_size: 4096             # STACKIT: output dimension 4096
           supports_vision: false               # the endpoint accepts images, but the OS sends none: off the allowlist
-      # Vision + heavy escalation -> Qwen3-VL 235B (the confirmed VLM).
-      - model_name: sovereign-vision
+      # Strong candidate (vision + heavy reasoning) -> Qwen3-VL 235B (the confirmed VLM).
+      - model_name: stackit-qwen3-vl-235b
         litellm_params:
           model: openai/Qwen/Qwen3-VL-235B-A22B-Instruct-FP8
           api_base: "https://api.openai-compat.model-serving.eu01.onstackit.cloud/v1"
           api_key: os.environ/STACKIT_API_KEY
-        model_info: &qwen3Vl235bInfo
+        model_info:
           mode: chat
           input_cost_per_token: 0.0000015      # 1.50 EUR per 1M (STACKIT price list)
           output_cost_per_token: 0.00000175    # 1.75 EUR per 1M
           max_input_tokens: 200000             # STACKIT: context length 200K
           max_output_tokens: 16384             # STACKIT: maximum generation 16384
-          supports_vision: true                # STACKIT: text and image input; on the OS image allowlist
+          supports_vision: true                # STACKIT: text and image input; the strong role is on the OS image allowlist
           supports_function_calling: true      # STACKIT: tool calling enabled
-      - model_name: sovereign-premium
-        litellm_params:
-          model: openai/Qwen/Qwen3-VL-235B-A22B-Instruct-FP8
-          api_base: "https://api.openai-compat.model-serving.eu01.onstackit.cloud/v1"
-          api_key: os.environ/STACKIT_API_KEY
-        model_info: *qwen3Vl235bInfo
-      # Reasoning tier (keeps routing.ts' `sovereign-reasoning` default valid).
-      # BOTH the sovereign and the fast reasoning names map to STACKIT Qwen3-VL-235B.
-      - model_name: sovereign-reasoning
-        litellm_params:
-          model: openai/Qwen/Qwen3-VL-235B-A22B-Instruct-FP8
-          api_base: "https://api.openai-compat.model-serving.eu01.onstackit.cloud/v1"
-          api_key: os.environ/STACKIT_API_KEY
-        model_info: *qwen3Vl235bInfo
-      - model_name: sovereign-reasoning-fast
-        litellm_params:
-          model: openai/Qwen/Qwen3-VL-235B-A22B-Instruct-FP8
-          api_base: "https://api.openai-compat.model-serving.eu01.onstackit.cloud/v1"
-          api_key: os.environ/STACKIT_API_KEY
-        model_info: *qwen3Vl235bInfo
     router_settings:
       routing_strategy: simple-shuffle
       num_retries: 3
       timeout: 120
       allowed_fails: 3
       cooldown_time: 60
-      fallbacks:
-        - sovereign-default: ["sovereign-premium"]
-        - sovereign-mock: ["sovereign-premium"]
-        - sovereign-reasoning: ["sovereign-reasoning-fast"]
+      # NO config-file `fallbacks`. LiteLLM refuses to change a fallback that is set in the config file through
+      # its API, and a fallback keyed by a catalog model never fires for a call made through a role name.
+      # A per-role fallback is set through the API, keyed by the ROLE name — docs/components/litellm.md,
+      # "Fallbacks per role" (measured on 1.109.1).
     litellm_settings:
       # Tracing (`callbacks: ["langfuse_otel"]`) and redaction come from values.yaml; this file
       # must not add `success_callback: ["langfuse"]` back — the two would merge into one config
@@ -242,10 +218,13 @@ osUI:
   # No langfuseConsoleUrl: Langfuse has no public route, so the OS shows no "open in Langfuse"
   # link (the chart derives an empty console URL from the missing ingress host).
   openmetadataUrl: "https://openmetadata.REPLACE-DNS-NAME"
+  # The first role mapping on this profile (see the chart's osUI.modelRoles): embeddings on STACKIT's model.
+  modelRoles:
+    seed:
+      sovereign-embedding: stackit-qwen3-vl-embedding-8b
 
 # A3 (checklist A28): the scoped agent key's allowlist MUST cover every alias the OS can
-# request on this profile — including the router fallback targets below, which the base
-# chart's four-alias list does not know. `scripts/check-litellm-allowlist.mjs` fails the
+# request on this profile: the three role names (and any router fallback target). `scripts/check-litellm-allowlist.mjs` fails the
 # gate when this list misses one; the `litellm-agent-key-init` Job pushes it on upgrade.
 litellmAgentKey:
   # The shared key's weekly pool on this profile, in the currency of the `model_info` prices
@@ -254,13 +233,9 @@ litellmAgentKey:
   maxBudget: 250
   budgetDuration: "7d"
   models:
-    - sovereign-default
-    - sovereign-mock
-    - sovereign-reasoning
-    - sovereign-embed
-    - sovereign-premium         # fallback target of sovereign-default / sovereign-mock
-    - sovereign-reasoning-fast  # fallback target of sovereign-reasoning
-    - sovereign-vision          # vision inputs route here (platform-admin role override)
+    - sovereign-strong
+    - sovereign-worker
+    - sovereign-embedding
     # LiteLLM model ACCESS GROUP, not an alias: every model an admin registers in
     # Admin -> Models & Providers joins it (`model_info.access_groups`), so this key can call
     # it without a Helm change (os-ui tabs/admin/lib/provider-registration.ts).

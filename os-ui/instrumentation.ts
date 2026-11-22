@@ -345,14 +345,16 @@ export async function register(): Promise<void> {
   if (process.env.NEXT_RUNTIME === 'nodejs') {
     void (async () => {
       try {
-        const [{ scheduleRoleReconcile }, { liveRoleIo }, { liteLlmConfigured }] = await Promise.all([
+        const [{ scheduleRoleReconcile }, { liveRoleIo }, { liteLlmConfigured }, { seedRoleMappingLive }] = await Promise.all([
           import('./core/models/role-reconcile.ts'),
           import('./core/models/role-live.ts'),
           import('./core/infra/litellm-admin.ts'),
+          import('./core/models/role-seed-live.ts'),
         ]);
         const raw = (process.env.MODEL_ROLE_RECONCILE_INTERVAL_SECONDS ?? '').trim();
         const seconds = raw === '' ? 300 : Math.max(0, Math.floor(Number(raw)) || 0);
-        if (liteLlmConfigured()) scheduleRoleReconcile(liveRoleIo, seconds);
+        // First boot: `os/models.yml` is created from the old admin override or the chart seed (never overwritten).
+        if (liteLlmConfigured()) scheduleRoleReconcile(liveRoleIo, seconds, () => seedRoleMappingLive({ by: 'system:os-ui' }));
       } catch (err) {
         console.error(`[os-ui] model role reconcile: could not be scheduled: ${err instanceof Error ? err.message : String(err)}`);
       }

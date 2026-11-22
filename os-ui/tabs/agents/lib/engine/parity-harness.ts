@@ -613,8 +613,8 @@ export function graphDeps(sys: System, systemId: string, llm: LlmCall, sink: Hol
     ...(opts.toolCallTimeoutMs !== undefined ? { toolCallTimeoutMs: opts.toolCallTimeoutMs } : {}),
     ...(opts.toolResultMaxChars !== undefined ? { toolResultMaxChars: opts.toolResultMaxChars } : {}),
     preamble: FIXTURE_PREAMBLE,
-    reasoningModel: 'sovereign-reasoning',
-    execModel: 'sovereign-default',
+    reasoningModel: 'sovereign-strong',
+    execModel: 'sovereign-worker',
     maxIterations: 4,
     maxRunSteps: 40,
     hold: {

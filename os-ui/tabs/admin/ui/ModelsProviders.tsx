@@ -30,13 +30,12 @@ import { useUser } from '@core/ui/useUser';
 import { roleAtLeast } from '@core/kernel/session';
 import { sectionMinRole } from '@tabs/admin/lib/sections';
 import ProviderWizard from '@tabs/admin/ui/ProviderWizard';
+import { DEPRECATED_ALIASES } from '@core/models/role-names';
 
 type ModelReference = { kind: 'role' | 'assistant' | 'agent'; label: string };
 
-// The three per-ROLE defaults are ONE store: the platform-admin settings
-// `modelRoles`, resolved at runtime by lib/models/roles.ts. This page shows the
-// SAME values (and writes the SAME store) as Settings → Model roles.
-type RoleKey = 'standard' | 'reasoning' | 'embeddings';
+// The three roles (sovereign-strong / -worker / -embedding) are mapped in the section below; the mapping is the
+// file os/models.yml, enforced at the gateway. The old per-role dropdowns (settings `modelRoles`) are gone.
 type ProviderType = 'stackit' | 'openai-compatible' | 'azure' | 'bedrock' | 'self-hosted';
 // `management` = who owns the model (from LiteLLM's `db_model`): `config` = set by the deployment's
 // `model_list` (changed with a deploy), `database` = registered in LiteLLM (removable), `mixed` = both.
@@ -69,12 +68,6 @@ const PROVIDER_LABELS: Record<ProviderType, string> = {
   bedrock: 'AWS Bedrock',
 };
 
-const ROLE_META: { key: RoleKey; label: string; help: string }[] = [
-  { key: 'standard', label: 'Standard', help: 'Assistants, agent execution and light work. Default: sovereign-default.' },
-  { key: 'reasoning', label: 'Reasoning', help: 'Planning and deep reasoning across the OS. Default: sovereign-reasoning.' },
-  { key: 'embeddings', label: 'Embeddings', help: 'Knowledge + Files vector embeddings. Default: sovereign-embed.' },
-];
-
 // Token prices (EUR per 1M tokens) — stored beats the deployment-config seed.
 type PriceRow = { inputPerM: number; outputPerM: number; source: 'stored' | 'env' };
 type PriceEdit = { input: string; output: string };
@@ -106,7 +99,6 @@ function ModelsPageInner() {
   const [roleEdit, setRoleEdit] = useState<Record<string, string>>({});
   const [connections, setConnections] = useState<Connection[] | null>(null);
   const [imageInput, setImageInput] = useState<ImageInput | null>(null);
-  const [modelRoles, setModelRoles] = useState<Record<RoleKey, string>>({ standard: '', reasoning: '', embeddings: '' });
   // Cost routing: standard-first escalation (default ON). Strictly-validated surfaces
   // try Standard first and escalate to Reasoning only on a validation miss.
   const [standardFirst, setStandardFirst] = useState(true);
@@ -133,7 +125,7 @@ function ModelsPageInner() {
       if (!mRes.ok) { setError(mBody.error ?? 'Failed to load'); return; }
       setAssistant(mBody.assistant ?? ''); setAssistantExplicit(Boolean(mBody.assistantExplicit));
       if (cRes.ok) { const c = await cRes.json(); setCatalog(c.models ?? []); setCatalogSource(c.source ?? null); setCatalogError(c.error ?? ''); setConnections(c.credentials ?? null); setImageInput(c.imageInput ?? null); }
-      if (sRes.ok) { const s = await sRes.json(); if (s.settings?.modelRoles) setModelRoles(s.settings.modelRoles); setStandardFirst(s.settings?.standardFirstEscalation !== false); }
+      if (sRes.ok) { const s = await sRes.json(); setStandardFirst(s.settings?.standardFirstEscalation !== false); }
       if (pRes.ok) { const p = await pRes.json(); setPrices(p.prices ?? {}); setPricesMeta({ updatedAt: p.updatedAt, updatedBy: p.updatedBy }); setPriceEdits({}); }
     } catch (e) { setError((e as Error).message); } finally { setLoading(false); }
   }, []);
@@ -150,18 +142,18 @@ function ModelsPageInner() {
     } finally { setBusy(''); }
   }, [roleEdit, load]);
 
-  // Save the three per-role defaults to the ONE store (settings modelRoles).
+  // Cost routing switch (settings `standardFirstEscalation`) — the only per-role setting that is not the mapping.
   const saveRoles = useCallback(async () => {
     setBusy('roles'); setError('');
     try {
       const res = await fetch('/api/platform-admin/settings', {
-        method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ modelRoles, standardFirstEscalation: standardFirst }),
+        method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ standardFirstEscalation: standardFirst }),
       });
       const body = await res.json();
       if (!res.ok) setError(body.error ?? 'Save failed');
-      else { setToast('Saved the default model per role — every assistant, agent and embedding call resolves through these.'); await load(); }
+      else { setToast('Saved the cost-routing setting.'); await load(); }
     } finally { setBusy(''); }
-  }, [modelRoles, standardFirst, load]);
+  }, [standardFirst, load]);
 
   // Save the edited token prices. Both fields set → an override; both cleared on
   // a stored row → remove the override (back to the deployment seed / unpriced).
@@ -283,47 +275,16 @@ function ModelsPageInner() {
             );
           })}
           <div className="hint" style={{ fontSize: 12, marginBottom: 10 }}>
-            Old names keep working for one release, as aliases of these roles: sovereign-default and sovereign-mock → worker;
-            sovereign-reasoning, -reasoning-fast, -premium, -vision → strong; sovereign-embed → embedding.
+            Old names keep working for one release, as aliases of these roles:{' '}
+            {ROLE_NAMES.map((r) => `${Object.entries(DEPRECATED_ALIASES).filter(([, to]) => to === r).map(([a]) => a).join(', ')} → ${r.replace('sovereign-', '')}`).join('; ')}.
           </div>
           <button className="btn" disabled={busy === 'rolemap' || ROLE_NAMES.some((r) => !roleEdit[r])} onClick={saveRoleMapping}>
             {busy === 'rolemap' ? <span className="spin" /> : 'Save role mapping'}
           </button>
         </div>
 
-        <div className="section-title">Default model per role</div>
+        <div className="section-title">Cost routing</div>
         <div className="card" style={{ marginBottom: 18 }}>
-          <div className="hint" style={{ marginBottom: 12 }}>
-            The three defaults the whole OS resolves at runtime, picked from the LIVE gateway catalog.
-            Leave a role on <strong>Default</strong> to use the platform baseline. This is the SAME setting
-            as <Link href="/platform?section=settings">Settings → Model roles</Link> — one store, no duplicates.
-            {catalogSource === 'unavailable' ? ' LiteLLM could not be read, so no models are listed — the OS does not guess.' : ''}
-          </div>
-          {ROLE_META.map((r) => {
-            const val = modelRoles[r.key] ?? '';
-            const selected = catalog.find((m) => m.model_name === val);
-            return (
-              <div key={r.key} className="row" style={{ gap: 12, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center' }}>
-                <label className="hint" style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: '1 1 340px' }}>
-                  {r.label}
-                  <select
-                    value={val}
-                    disabled={busy !== ''}
-                    onChange={(e) => setModelRoles({ ...modelRoles, [r.key]: e.target.value })}
-                  >
-                    <option value="">Default (platform baseline)</option>
-                    {catalog.map((m) => (
-                      <option key={m.model_name} value={m.model_name}>
-                        {m.display} — {m.provenance === 'internal' ? 'in-box' : 'hosted'} ({m.model_name})
-                      </option>
-                    ))}
-                    {val && !selected ? <option value={val}>{val} (current)</option> : null}
-                  </select>
-                  <span className="hint" style={{ fontSize: 12 }}>{r.help}</span>
-                </label>
-              </div>
-            );
-          })}
           <label
             className="row"
             style={{ gap: 10, alignItems: 'flex-start', marginTop: 6, marginBottom: 14, cursor: 'pointer' }}
@@ -339,11 +300,11 @@ function ModelsPageInner() {
               <strong>Standard-first escalation</strong> (cost routing)
               <span style={{ display: 'block', fontSize: 12, marginTop: 2 }}>
                 For surfaces whose output is strictly validated before use — suggest metrics, DQ
-                fix proposals, structured stage assistants, NL→SQL generation — run <strong>Standard</strong>{' '}
-                first and escalate to <strong>Reasoning</strong> only when validation fails. The validators
+                fix proposals, structured stage assistants, NL→SQL generation — run the <strong>worker</strong>{' '}
+                role first and escalate to the <strong>strong</strong> role only when validation fails. The validators
                 are the quality gate, so this is safe by construction. Every escalation is traced to the
-                model that actually answered. Turn off to send those surfaces straight to Reasoning.
-                The agent plan phase and free-form surfaces always use Reasoning regardless.
+                model that actually answered. Turn off to send those surfaces straight to the strong role.
+                The agent plan phase and free-form surfaces always use the strong role regardless.
               </span>
             </span>
           </label>
@@ -356,7 +317,7 @@ function ModelsPageInner() {
         <p className="hint">
           Agents &amp; Software build chat, the Big Bets planner, the Knowledge assistant and the Metric
           agent all run on <strong>this one model</strong>, through the governed LiteLLM gateway. By default
-          it <strong>follows the Standard role</strong> above, so it just works; override it below to pin a
+          it <strong>follows the worker role</strong> above, so it just works; override it below to pin a
           model you added with Add a provider.
         </p>
         <div className="card" style={{ marginBottom: 16 }}>
@@ -396,12 +357,8 @@ function ModelsPageInner() {
           // catalog-groups.ts (live db_model flag, else the governed endpoint mark).
           const liveByName = new Map(catalog.map((c) => [c.model_name, c]));
           const { managed, adminAdded } = splitCatalog(catalog);
-          // The effective per-role default ids: the override else the platform baseline.
-          const roleDefaults = new Set([
-            modelRoles.standard || 'sovereign-default',
-            modelRoles.reasoning || 'sovereign-reasoning',
-            modelRoles.embeddings || 'sovereign-embed',
-          ]);
+          // The catalog models the three roles are mapped to now (os/models.yml).
+          const roleDefaults = new Set((rolesData?.roles ?? []).map((r) => r.model));
           const familyOf = (name: string): string => {
             const t = liveByName.get(name)?.providerType;
             return t ? (PROVIDER_LABELS[t] ?? t) : '';

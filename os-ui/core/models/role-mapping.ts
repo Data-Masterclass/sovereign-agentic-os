@@ -22,20 +22,9 @@
  */
 import yaml from 'js-yaml';
 
-export const ROLE_NAMES = ['sovereign-strong', 'sovereign-worker', 'sovereign-embedding'] as const;
-export type RoleName = (typeof ROLE_NAMES)[number];
-export type RoleMapping = Record<RoleName, string>;
-
-/** Old names that still work for one release, and the role each one now stands for. */
-export const DEPRECATED_ALIASES: Readonly<Record<string, RoleName>> = {
-  'sovereign-default': 'sovereign-worker',
-  'sovereign-mock': 'sovereign-worker',
-  'sovereign-reasoning': 'sovereign-strong',
-  'sovereign-reasoning-fast': 'sovereign-strong',
-  'sovereign-premium': 'sovereign-strong',
-  'sovereign-vision': 'sovereign-strong',
-  'sovereign-embed': 'sovereign-embedding',
-};
+import { ROLE_NAMES, ROLE_STRONG, ROLE_WORKER, ROLE_EMBEDDING, DEPRECATED_ALIASES, strongAliases, type RoleName, type RoleMapping } from '@core/models/role-names';
+export { ROLE_NAMES, ROLE_STRONG, ROLE_WORKER, ROLE_EMBEDDING, DEPRECATED_ALIASES, strongAliases };
+export type { RoleName, RoleMapping };
 
 /** A typed refusal: the file or the requested mapping is not acceptable. `status` is the HTTP status a route answers with. */
 export class ModelMappingError extends Error {

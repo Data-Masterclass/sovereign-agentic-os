@@ -43,7 +43,7 @@ test('gateway unreachable: no seed list, so no flags — only the list in force 
   assert.equal(body.source, 'unavailable');
   assert.deepEqual(body.models, []);
   assert.equal(body.imageInput.source, 'default');
-  assert.deepEqual(body.imageInput.models, ['sovereign-reasoning', 'sovereign-vision', 'sovereign-premium', 'sovereign-reasoning-fast']);
+  assert.deepEqual(body.imageInput.models, ['sovereign-strong', 'sovereign-reasoning', 'sovereign-reasoning-fast', 'sovereign-premium', 'sovereign-vision']);
   assert.deepEqual(body.imageInput.warnings, []);
 });
 

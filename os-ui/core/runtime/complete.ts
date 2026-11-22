@@ -10,6 +10,7 @@ import {
 } from '@core/infra/litellm-credential';
 import { getAssistantModel, ensureHydrated as ensureModelCatalogHydrated } from '@tabs/admin/lib/models';
 import { ensureModelRolesFresh } from '@core/models/roles';
+import { noteDeprecatedAlias } from '@core/models/role-mapping';
 import { checkCap } from '@core/policy/cost';
 
 /**
@@ -100,6 +101,7 @@ export function liteLlmAssistantCaller(): AssistantCaller {
     // Checked per CALL, not when the caller is built: a factory that throws at
     // module scope takes down every module that constructs one eagerly.
     if (!runCredentialConfigured()) throw new NoRunCredentialError();
+    noteDeprecatedAlias(req.model, 'an assistant model call');
     // The scoped agent key, never the master key — the assistant is a run path
     // too, so the same model allowlist and spend cap must bind to it.
     const cred = callerCredential({

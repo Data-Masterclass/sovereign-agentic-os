@@ -39,11 +39,10 @@ export type Settings = {
   currency: string;
   localization: { locale: 'en' | 'de'; available: ('en' | 'de')[] };
   notifications: { email: string; backupFailure: boolean; costThreshold: boolean };
-  // The default model ROLES the OS resolves at runtime. Each is a live LiteLLM
-  // `model_name` (e.g. `sovereign-reasoning`); an EMPTY string means "unset —
-  // fall back to the config.ts env default" (see lib/models/roles.ts). The panel
-  // re-points ROLE→alias; it never rewrites the fixed LiteLLM aliases. `tools` is
-  // the agent tool-calling model (default Qwen, for clean OpenAI tool_calls).
+  // DEPRECATED, INERT. The old per-role model override. Nothing resolves a model from it any more: the OS
+  // calls the three role names and the mapping is `os/models.yml` (Platform → Models). The value a previous
+  // release saved is kept only so `core/models/role-seed.ts` can carry it into that file once (see
+  // `seedRoleMapping`). It cannot be written any more (`updateSettings` refuses it).
   modelRoles: { reasoning: string; standard: string; tools: string; embeddings: string };
   // COST ROUTING — when ON (default), surfaces whose output is STRICTLY VALIDATED
   // before use run the STANDARD model first and escalate to the reasoning model
@@ -305,6 +304,9 @@ function mergeSettings(base: Settings, patch: Partial<Settings> & Record<string,
 export function updateSettings(patch: Partial<Settings> & Record<string, unknown>): Settings {
   if ('ssoClientSecret' in patch || 'clientSecret' in patch || 'secret' in patch) {
     throw fail('Secrets are configured via Ory + the secrets manager, never here', 400);
+  }
+  if ('modelRoles' in patch) {
+    throw fail('The per-role model setting is gone: the three role names are mapped in Platform → Models (os/models.yml)', 410);
   }
   const s = settingsState();
   s.settings = mergeSettings(s.settings, patch);
