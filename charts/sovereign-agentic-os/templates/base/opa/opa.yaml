@@ -106,7 +106,7 @@ data:
 {{ .Files.Get "policies/connections.rego" | indent 4 }}
   # External MCP tools in the chat (package os.external_mcp): one decision per call on a
   # remote MCP server of the user's Connections; tested beside it (external_mcp_test.rego).
-  external-mcp.rego: |
+  external_mcp.rego: |
 {{ .Files.Get "policies/external_mcp.rego" | indent 4 }}
   # Decision-log policy (package system.log): `drop` skips plain data-document reads,
   # `mask` erases secret-bearing keys (decision_logs.drop_decision / mask_decision).

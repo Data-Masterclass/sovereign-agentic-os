@@ -12,7 +12,7 @@ each file several times.
 - "/policies/service_identities.json"
 - "/policies/governance.json"
 - "/policies/connections.rego"
-- "/policies/external-mcp.rego"
+- "/policies/external_mcp.rego"
 - "/policies/system-log.rego"
 - "/policies/system-authz.rego"
 {{- if (.Values.opa.guardrailsData | default dict).enabled }}
