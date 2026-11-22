@@ -33,10 +33,13 @@ import { missingPanelMembers, panelRequestedMembers } from '@tabs/dashboards/lib
 import { panelViewsFor, type RegistryViewDims } from '@tabs/dashboards/lib/panel-views';
 import { listGovernedDatasets } from '@tabs/data/lib/store';
 import { viewName, registryDimensionMembers } from '@tabs/data/lib/metrics';
+import { listSources, ensureSourcesHydrated as ensureDriveSourcesHydrated, sourcesHydrationState } from '@tabs/files/lib/connectors';
+import { getConnectionById } from '@tabs/connections/lib/store';
 import { listWorkflows, ensureHydrated as ensureKnowledgeHydrated } from '@tabs/knowledge/lib/store';
 
 export const monitoringSourcesImpl: MonitoringSources = {
   files: (p) => monitoringFilesSource(p),
+  driveSources: (p) => monitoringDriveSource(p),
   knowledge: (p) => monitoringKnowledgeSource(p),
   metrics: (p) => monitoringMetricsSource(p),
   alertRules: (p) => monitoringAlertRulesSource(p),
@@ -120,6 +123,30 @@ export const monitoringFilesSource: NonNullable<MonitoringSources['files']> = as
         outcome: a.indexing.outcome ? { status: a.indexing.outcome.status, chunks: a.indexing.outcome.chunks, reason: a.indexing.outcome.reason, at: a.indexing.outcome.at } : null,
       });
     }
+  }
+  return out;
+};
+
+/** Connection health as the Connections store records it; anything else (gone, never tested) is `unknown`. */
+export async function driveConnectionHealth(connectionId: string): Promise<'healthy' | 'needs-reconnect' | 'unknown'> {
+  const c = await getConnectionById(connectionId);
+  return c?.health === 'healthy' ? 'healthy' : c?.health === 'needs-reconnect' ? 'needs-reconnect' : 'unknown';
+}
+
+/** Every connected drive with its connection's health. The panel scopes it (the Files rule) — this reader
+ *  never returns a list it could not load: an unloaded store throws, and the panel says "unavailable". */
+export const monitoringDriveSource: NonNullable<MonitoringSources['driveSources']> = async () => {
+  await ensureDriveSourcesHydrated();
+  if (sourcesHydrationState() !== 'hydrated') throw new Error('the connected-drive store could not be loaded from OpenSearch');
+  const out: Awaited<ReturnType<NonNullable<MonitoringSources['driveSources']>>> = [];
+  for (const s of listSources()) {
+    out.push({
+      id: s.id, provider: s.provider, label: s.label, domain: s.domain, owner: s.owner, mode: s.mode,
+      connectionId: s.connectionId,
+      connectionHealth: s.connectionId ? await driveConnectionHealth(s.connectionId).catch(() => 'unknown' as const) : 'unknown',
+      imported: Object.values(s.imported ?? {}).filter((e) => e.hash !== '').length,
+      initialDone: s.initialDone, createdAt: s.createdAt, paused: s.paused ?? null, runs: s.runs ?? [],
+    });
   }
   return out;
 };
