@@ -65,6 +65,12 @@ test('real OPA: the decision table', async () => {
     ['retire', 'builder on a shared one', ben, wfOf('maya', 'shared'), true],
     ['retire', 'builder on a private one', ben, wfOf('cara', 'personal'), false],
     ['retire', 'user outside the domain', fred, wfOf('maya', 'shared'), false],
+    ['update', 'owner', cara, wfOf('cara', 'personal'), true],
+    ['update', 'builder on a shared one', ben, wfOf('maya', 'shared'), true],
+    ['update', 'builder on a private draft', ben, wfOf('cara', 'personal'), false],
+    ['update', 'user outside the domain', fred, wfOf('maya', 'shared'), false],
+    ['certify', 'admin', ada, wfOf('maya', 'shared'), true],
+    ['certify', 'domain admin', dana, wfOf('maya', 'shared'), false],
   ];
   for (const [op, who, u, wf, want] of table) assert.equal(await decide(op, u, wf), want, `${op} — ${who}`);
 });

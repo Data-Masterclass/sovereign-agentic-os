@@ -71,17 +71,54 @@ export type ImportResult = {
   rejected?: string;
 };
 
+export type ImportOpts = {
+  domain?: string;
+  /**
+   * A veto per WORKFLOW concept, by its path in the bundle: a returned reason skips it (nothing written,
+   * the reason is reported). How the caller puts each workflow write through the policy engine, which
+   * is asynchronous, while the import itself stays synchronous.
+   */
+  refuse?: (path: string) => string | undefined;
+};
+
+/** One workflow write an import WOULD make: a `create`, or an `update` of the matched workflow `workflowId`. */
+export type OkfWorkflowWrite = { path: string; op: 'create' | 'update'; workflowId: string };
+
 /** Decode a zip Buffer and import it. The zip layer enforces zip-slip + caps. */
-export function importOkfZip(zip: Buffer, user: Principal, opts: { domain?: string } = {}): ImportResult {
+export function importOkfZip(zip: Buffer, user: Principal, opts: ImportOpts = {}): ImportResult {
   const bundle = unzipBundle(zip); // throws OkfZipError (honest reason) on a violation
   return importBundle(bundle, user, opts);
+}
+
+/**
+ * The workflow writes importing this zip would make, with the REAL op of each (a concept that matches a
+ * workflow the importer can edit is an UPDATE; any other is a CREATE). Reads only; a bundle that fails
+ * conformance plans nothing (the import rejects it anyway).
+ */
+export function planWorkflowWrites(zip: Buffer, user: Principal): OkfWorkflowWrite[] {
+  const bundle = unzipBundle(zip);
+  if (!validateBundle(bundle).ok) return [];
+  const out: OkfWorkflowWrite[] = [];
+  for (const file of bundle.files) {
+    if (!file.path.toLowerCase().endsWith('.md') || RESERVED_FILES.has(basename(file.path).toLowerCase())) continue;
+    let doc: OkfDoc;
+    try {
+      doc = parseOkfDoc(file.content);
+    } catch {
+      continue; // reported by the import itself
+    }
+    if (internalKindForType(doc.type) !== 'workflow') continue;
+    const existing = matchExisting(doc, user, 'workflow');
+    out.push({ path: file.path, op: existing ? 'update' : 'create', workflowId: existing ?? '' });
+  }
+  return out;
 }
 
 /**
  * Import an already-decoded in-memory bundle. Validates conformance first; a
  * conformance failure REJECTS the whole bundle with the honest first error.
  */
-export function importBundle(bundle: OkfBundle, user: Principal, opts: { domain?: string } = {}): ImportResult {
+export function importBundle(bundle: OkfBundle, user: Principal, opts: ImportOpts = {}): ImportResult {
   const validation = validateBundle(bundle);
   if (!validation.ok) {
     return {
@@ -115,6 +152,11 @@ export function importBundle(bundle: OkfBundle, user: Principal, opts: { domain?
 
     const kind = internalKindForType(doc.type);
     const domain = opts.domain;
+    const vetoed = kind === 'workflow' ? opts.refuse?.(file.path) : undefined;
+    if (vetoed) {
+      skipped.push({ path: file.path, reason: vetoed });
+      continue;
+    }
     try {
       const result = kind === 'workflow'
         ? importWorkflowConcept(doc, user, domain)

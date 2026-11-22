@@ -27,7 +27,20 @@ export function migrationModeFromEnv(raw: string | undefined = process.env.OS_WO
   return v === 'dry-run' || v === 'off' ? v : 'apply';
 }
 
-/** One pass. Returns true when the registry was readable (so the schedule may stop). */
+/** What the schedule remembers between passes, so one broken system is reported once, not every two minutes. */
+export type MigrationState = { attempts: number; reported: Set<string> };
+export const newMigrationState = (): MigrationState => ({ attempts: 0, reported: new Set() });
+
+/** After this many passes that still fail on the same systems, the schedule stops and says so once. */
+export const MAX_FAILED_PASSES = 3;
+
+export type PassOutcome =
+  | 'pending' // the registry has not hydrated from the durable mirror: try again
+  | 'clean' // read, nothing left to rewrite, nothing failed: done
+  | 'failed' // some systems could not be rewritten: try again (quietly), up to MAX_FAILED_PASSES
+  | 'gave-up'; // the last allowed pass: reported once, no more retries
+
+/** One pass. */
 export async function runWorkflowGrantMigrationPass(
   mode: MigrationMode,
   io: {
@@ -35,17 +48,28 @@ export async function runWorkflowGrantMigrationPass(
     migrate: (o: { dryRun: boolean }) => ReturnType<typeof import('@tabs/agents/lib/store').migrateStoredWorkflowGrants>;
     log: (line: string) => void;
   },
-): Promise<boolean> {
-  if (mode === 'off') return true;
+  state: MigrationState = newMigrationState(),
+): Promise<PassOutcome> {
+  if (mode === 'off') return 'clean';
   await io.ensureHydrated();
   const report = io.migrate({ dryRun: mode === 'dry-run' });
-  if (!report) return false;
+  if (!report) return 'pending';
   for (const c of report.changed) {
     io.log(`[workflow-grants] ${mode === 'dry-run' ? 'WOULD rewrite' : 'rewrote'} system ${c.id} (${c.domain || 'no domain'}): ${c.findings.join('; ')}`);
   }
-  for (const f of report.failed) io.log(`[workflow-grants] could NOT rewrite system ${f.id}: ${f.error} (it keeps running: the read path upgrades it)`);
+  // A system that cannot be rewritten (its definition no longer parses, say) is reported ONCE; it keeps
+  // running through the read path, and retrying it every two minutes forever would only fill the log.
+  for (const f of report.failed) {
+    if (state.reported.has(f.id)) continue;
+    state.reported.add(f.id);
+    io.log(`[workflow-grants] WARNING could NOT rewrite system ${f.id}: ${f.error} (it keeps running: the read path upgrades it)`);
+  }
   io.log(`[workflow-grants] ${mode} pass done — ${report.scanned} system(s), ${report.changed.length} ${mode === 'dry-run' ? 'to rewrite' : 'rewritten'}, ${report.failed.length} failed`);
-  return report.failed.length === 0;
+  if (report.failed.length === 0) return 'clean';
+  state.attempts += 1;
+  if (state.attempts < MAX_FAILED_PASSES) return 'failed';
+  io.log(`[workflow-grants] giving up after ${state.attempts} passes on: ${report.failed.map((f) => f.id).join(', ')} — fix or delete them, then restart os-ui to try again`);
+  return 'gave-up';
 }
 
 const g = globalThis as unknown as { __osWorkflowGrantMigration?: boolean };
@@ -54,17 +78,18 @@ const g = globalThis as unknown as { __osWorkflowGrantMigration?: boolean };
 export function scheduleBootWorkflowGrantMigration(mode: MigrationMode = migrationModeFromEnv(), retryMs = 120_000): void {
   if (g.__osWorkflowGrantMigration || mode === 'off') return;
   g.__osWorkflowGrantMigration = true;
+  const state = newMigrationState();
   let stop: (() => void) | undefined;
   let finished = false;
   const tick = async () => {
     if (finished) return;
     const store = await import('@tabs/agents/lib/store');
-    const done = await runWorkflowGrantMigrationPass(mode, {
+    const outcome = await runWorkflowGrantMigrationPass(mode, {
       ensureHydrated: store.ensureHydrated,
       migrate: (o) => store.migrateStoredWorkflowGrants(o),
       log: (l) => console.log(l),
-    });
-    if (done) {
+    }, state);
+    if (outcome === 'clean' || outcome === 'gave-up') {
       finished = true;
       stop?.();
     }

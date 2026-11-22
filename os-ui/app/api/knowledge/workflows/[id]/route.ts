@@ -11,8 +11,17 @@ import { purgeKnowledgeUnits } from '@tabs/knowledge/lib/index-pipeline';
 import { findGaps } from '@tabs/knowledge/lib/gaps';
 import { resolveEntityIndex } from '@tabs/knowledge/lib/mock-entities';
 import { roleAtLeast } from '@core/kernel/session';
+import { authorize, workflowWriteTestGate, workflowWriteDecision, workflowFacts, type WorkflowOp, type WorkflowFacts } from '@core/infra/governed';
+import type { CurrentUser } from '@core/kernel/auth';
 
 export const dynamic = 'force-dynamic';
+
+/** OPA door (`agentic.authz.workflow_write`), asked before the store is touched. Fail-closed: no answer = no. */
+async function gate(user: CurrentUser, op: WorkflowOp, wf: WorkflowFacts): Promise<void> {
+  const seam = workflowWriteTestGate();
+  const ok = seam ? Boolean(await seam(op, user, wf)) : (await authorize(`user:${user.id}`, 'workflow.write', workflowWriteDecision(user, op, wf))).allowed;
+  if (!ok) throw Object.assign(new Error(`This workflow change was refused by policy (${op}) — the policy engine did not allow it, or did not answer. Nothing was changed.`), { status: 403 });
+}
 
 /** GET → full workflow view (meta + parsed steps). */
 export const GET = withRoute<{ id: string }>(async ({ user, params }) => {
@@ -37,6 +46,7 @@ export const PATCH = withRoute<{ id: string }, any>(async ({ user, params, body 
     if (!md && body.links === undefined) {
       return NextResponse.json({ error: 'md or links is required' }, { status: 400 });
     }
+    await gate(user, 'update', workflowFacts(getWorkflow(id, user))); // view-scope first, then the policy
     let rec = md ? updateWorkflow(id, user, { md, sha: body.sha }) : undefined;
     if (body.links !== undefined) {
       const links = normalizeWorkflowLinks(body.links);
@@ -67,10 +77,13 @@ export const POST = withRoute<{ id: string }, { action?: string; title?: string;
     const { id } = params;
     switch (body.action) {
       case 'archive':
+        await gate(user, 'retire', workflowFacts(getWorkflow(id, user)));
         return NextResponse.json({ workflow: archiveWorkflow(id, user) });
       case 'unarchive':
+        await gate(user, 'update', workflowFacts(getWorkflow(id, user)));
         return NextResponse.json({ workflow: unarchiveWorkflow(id, user) });
       case 'rename': {
+        await gate(user, 'update', workflowFacts(getWorkflow(id, user)));
         // Accept `title` (this tab's field) OR `name` (the OS-wide { action:'rename', name }
         // shape the Data tab uses) so both callers land on the same display-only rename.
         const rec = renameKnowledge(id, user, body.title ?? body.name ?? '');
@@ -84,6 +97,7 @@ export const POST = withRoute<{ id: string }, { action?: string; title?: string;
 /** DELETE → permanently remove a draft workflow + its version history (edit-scoped). */
 export const DELETE = withRoute<{ id: string }>(async ({ user, params }) => {
     const { id } = params;
+    await gate(user, 'retire', workflowFacts(getWorkflow(id, user)));
     deleteWorkflow(id, user); // record + version history (edit-gated)
     // PHYSICAL purge: remove the workflow's indexed vectors from OpenSearch + the
     // offline mirror so a deleted workflow stops being retrievable. Best-effort +
