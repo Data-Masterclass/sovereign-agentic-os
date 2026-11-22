@@ -10,9 +10,10 @@
  * second owner for facts that belong in LiteLLM (model access, budgets). What is left is what only
  * the OS can decide:
  *   • the ASSISTANT PIN — which LiteLLM alias powers every built-in artifact-building assistant
- *     (Agents/Software build chat, Big Bets planner, Knowledge, Metric). EMPTY = follow the unified
- *     STANDARD role (`core/models/roles.ts`, the platform-admin settings `modelRoles`), so the
- *     assistant tracks the admin's Standard default; a non-empty value is an explicit override. The
+ *     (Agents/Software build chat, Big Bets planner, Knowledge, Metric). EMPTY = follow the
+ *     STRONG role (`core/models/roles.ts` `reasoning`, i.e. `sovereign-strong`): the assistant orchestrates,
+ *     plans, chooses tools and writes the final answer on strong, and hands only clearly defined
+ *     sub-tasks to the worker (`core/runtime/delegate.ts`). A non-empty value is an explicit override. The
  *     route that sets it checks, against LiteLLM right now, that the alias exists and is a chat model.
  *     A pin at an alias that was later removed in LiteLLM is not hidden: the gateway's own "model not
  *     found" answers the call, and Models & Providers lists it under "References".
@@ -46,7 +47,7 @@ function fail(message: string, status: number): Error {
 
 type ModelsState = {
   keys: Map<string, ProviderKey>;
-  /** EMPTY = follow the unified STANDARD role; non-empty = an explicit override an admin set. */
+  /** EMPTY = follow the STRONG role; non-empty = an explicit override an admin set. */
   assistant: string;
   hydration: Promise<void> | null;
 };
@@ -89,7 +90,7 @@ async function hydrateModels(): Promise<void> {
     if (!doc || typeof doc.id !== 'string') continue;
     const docId = doc.id as string;
     if (docId === '__assistant__') {
-      // Restore the explicit assistant override ('' = follow the STANDARD role).
+      // Restore the explicit assistant override ('' = follow the STRONG role).
       const a = doc as unknown as { assistant?: string };
       if (typeof a.assistant === 'string') s.assistant = a.assistant;
     } else if (docId.startsWith('key:')) {
@@ -143,14 +144,23 @@ export function listProviderKeys(): ProviderKey[] {
 
 /**
  * The id of the ONE model that powers every built-in assistant. An EMPTY explicit
- * override means "follow the unified STANDARD role", so this returns the effective
- * model_name the assistant will actually run on.
+ * override means "follow the STRONG role", so this returns the effective
+ * model_name the assistant will actually run on (planning, tool choice and the final answer).
  */
 export function getAssistantModelId(): string {
-  return modelsState().assistant || roleModel('standard');
+  return modelsState().assistant || roleModel('reasoning');
 }
 
-/** True when an admin has pinned an EXPLICIT assistant override (not "follow Standard"). */
+/**
+ * The effective assistant model and which role it stands for: `strong` (the default), or `pinned`
+ * (an admin override, whatever the alias is). What Platform → Models shows.
+ */
+export function assistantModelInfo(): { model: string; role: 'strong' | 'pinned'; explicit: boolean } {
+  const explicit = isAssistantExplicit();
+  return { model: getAssistantModelId(), role: explicit ? 'pinned' : 'strong', explicit };
+}
+
+/** True when an admin has pinned an EXPLICIT assistant override (not "follow Strong"). */
 export function isAssistantExplicit(): boolean {
   return modelsState().assistant.length > 0;
 }
@@ -165,7 +175,7 @@ export function getAssistantModel(): { id: string } | null {
   return id ? { id } : null;
 }
 
-/** Clear an explicit assistant override — the assistant follows the STANDARD role again. */
+/** Clear an explicit assistant override — the assistant follows the STRONG role again. */
 export function clearAssistantModel(): void {
   modelsState().assistant = '';
   mirror.writeThrough('__assistant__', { id: '__assistant__', assistant: '' });
@@ -183,7 +193,7 @@ export function setAssistantModel(modelId: string): string {
   return id;
 }
 
-/** After a model is removed in LiteLLM: an explicit pin at it goes back to "follow Standard" — never a ghost pin. */
+/** After a model is removed in LiteLLM: an explicit pin at it goes back to "follow Strong" — never a ghost pin. */
 export function clearAssistantIf(modelId: string): boolean {
   if (modelsState().assistant !== modelId) return false;
   clearAssistantModel();

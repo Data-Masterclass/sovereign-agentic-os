@@ -2,6 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { parseArtifacts, type ChatArtifact } from '@core/runtime/chat-artifacts';
+import { priceTrace, type PricedTrace } from '@core/runtime/turn-ledger';
 
 /**
  * FEATURE:    The Ask-the-OS turn response shape — `{ content, plan, tools, artifacts, … }`.
@@ -69,6 +70,8 @@ export type AskTurnResponse = {
   model: string;
   /** The conversation the parked confirmations belong to; send it back with the decision. */
   conversationId: string;
+  /** Every model call of the turn: purpose, model, role (strong / worker / pinned), escalation, usage and cost per role. */
+  modelTrace: PricedTrace;
 };
 
 export type AskTurnInput = {
@@ -81,6 +84,8 @@ export type AskTurnInput = {
   model: string;
   pending?: AskPending[];
   conversationId: string;
+  /** Absent = a turn that made no model call of its own to report (an empty trace). */
+  modelTrace?: PricedTrace;
 };
 
 /** One step as the live stream carries it (same projection as the final `tools[]`). */
@@ -110,5 +115,6 @@ export function askTurnResponse(input: AskTurnInput): AskTurnResponse {
     traceId: input.traceId,
     model: input.model,
     conversationId: input.conversationId,
+    modelTrace: input.modelTrace ?? priceTrace({ calls: [], delegations: [] }, {}),
   };
 }
