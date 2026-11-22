@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { getAssistantModelId } from '@tabs/admin/lib/models';
-import { pricedTrace } from '@core/runtime/turn-prices';
+import { pricedTrace } from '@tabs/admin/lib/turn-prices';
 import { requireUser } from '@core/kernel/auth';
 import { mcpTabForPath, osToolExecutor, osToolSpecs, runOsAssistant } from '@core/runtime/agent-loop';
 import { decideConfirmation } from '@core/runtime/confirm-execute';

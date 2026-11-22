@@ -21,11 +21,17 @@
 import 'server-only';
 import { z } from 'zod';
 import { roleModel } from '@core/models/roles';
-import { completeWithEscalation } from '@core/runtime/escalate';
 import { parseJsonReply } from '@core/runtime/json-reply';
 import type { LlmCall, ToolSpec } from '@core/runtime/agentic';
-import { CostCapExceededError, type AssistantCaller } from '@core/runtime/complete';
-import { BudgetExceededError } from '@core/infra/litellm-credential';
+
+/** The escalation helper the consumer passes (the OS's `completeWithEscalation`, `escalate.ts`): worker first, strong on a failed check. */
+export type AssistantCaller = (req: { model: string; messages: { role: 'system' | 'user' | 'assistant'; content: string }[]; temperature?: number; signal?: AbortSignal }) => Promise<string>;
+export type EscalateFn = (
+  messages: { role: 'system' | 'user' | 'assistant'; content: string }[],
+  opts: { user?: { id: string; domains?: string[] }; validate: (content: string) => boolean; caller: AssistantCaller; signal?: AbortSignal },
+) => Promise<{ content: string; model: string; escalated: boolean }>;
+/** A spend limit ends the call; the consumer says what one looks like (`isSpendLimit` in `escalate.ts`). */
+export type IsSpendLimit = (e: unknown) => boolean;
 
 /** The most input characters one delegation is ever handed. */
 export const MAX_WORKER_INPUT_CHARS = 60_000;
@@ -81,6 +87,7 @@ export type DelegateToWorkerOpts<I, O> = {
   validate?: (value: O, input: I) => boolean;
   budget: { maxInputChars: number; maxOutputTokens: number };
   caller: LlmCall;
+  escalate: EscalateFn;
   user?: { id: string; domains?: string[] };
   signal?: AbortSignal;
   prices?: Record<string, { inputPerM: number; outputPerM: number }>;
@@ -100,13 +107,10 @@ export async function delegateToWorker<I, O>(o: DelegateToWorkerOpts<I, O>): Pro
   if (input === null) throw new Error(`${o.task}: the input did not pass its schema`);
   const text = o.serialize(input).slice(0, o.budget.maxInputChars);
   const started = Date.now();
+  // parseJsonReply answers null for text that is not JSON; the schema functions are expected not to throw.
   const accepted = (content: string): O | null => {
-    try {
-      const v = o.outputSchema(parseJsonReply(content));
-      return v !== null && (!o.validate || o.validate(v, input)) ? v : null;
-    } catch {
-      return null;
-    }
+    const v = o.outputSchema(parseJsonReply(content));
+    return v !== null && (!o.validate || o.validate(v, input)) ? v : null;
   };
   let attempt = 0;
   let usage: DelegationSpan['usage'];
@@ -129,7 +133,7 @@ export async function delegateToWorker<I, O>(o: DelegateToWorkerOpts<I, O>): Pro
     if (c.usage) usage = usage ? { input: usage.input + c.usage.input, output: usage.output + c.usage.output, total: usage.total + c.usage.total } : { ...c.usage };
     return c.content;
   };
-  const r = await completeWithEscalation(
+  const r = await o.escalate(
     [
       { role: 'system', content: `${o.instruction} Answer with the JSON object only.` },
       { role: 'user', content: text },
@@ -190,13 +194,13 @@ export type DelegationRecord = { id: number; instruction: string; preset?: strin
 
 const refusal = (code: string, reason: string, hint = '') => ({ text: JSON.stringify({ error: { code, reason, hint } }), isError: true });
 
-/** Compile strong's JSON schema with zod's own `fromJSONSchema`; null when it is not a usable object schema. */
-function compileSchema(raw: unknown): z.ZodType | null {
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw) || (raw as { type?: unknown }).type !== 'object') return null;
+/** Compile strong's JSON schema with zod's own `fromJSONSchema`; a reason when it is not a usable object schema. */
+function compileSchema(raw: unknown): { schema: z.ZodType } | { reason: string } {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw) || (raw as { type?: unknown }).type !== 'object') return { reason: 'output_schema must be a JSON schema object with "type": "object".' };
   try {
-    return z.fromJSONSchema(raw as Parameters<typeof z.fromJSONSchema>[0]) as z.ZodType;
-  } catch {
-    return null;
+    return { schema: z.fromJSONSchema(raw as Parameters<typeof z.fromJSONSchema>[0]) as z.ZodType };
+  } catch (e) {
+    return { reason: `output_schema could not be compiled: ${(e as Error).message}` };
   }
 }
 
@@ -205,6 +209,8 @@ export async function runDelegateTool(
   args: Record<string, unknown>,
   deps: {
     llm: LlmCall;
+    escalate: EscalateFn;
+    isSpendLimit: IsSpendLimit;
     /** Texts of this turn's earlier tool calls, in order (`step:1` is index 0). */
     results: () => { tool: string; text: string }[];
     turn: TurnDelegations;
@@ -221,8 +227,9 @@ export async function runDelegateTool(
   if (args.preset !== undefined && !preset) return refusal('invalid_argument', `Unknown preset. Choose one of: ${PRESETS.join(', ')}.`);
   const rawSchema = args.output_schema ?? (preset === 'summarise_tool_result' ? SUMMARY_SCHEMA : undefined);
   if (rawSchema === undefined) return refusal('output_schema_required', 'A delegation needs an output_schema (JSON schema, type "object") for the answer.', 'Write the schema of the answer you want back, then call again.');
-  const schema = compileSchema(rawSchema);
-  if (!schema) return refusal('invalid_output_schema', 'output_schema is not a usable JSON schema of type "object".', 'Send a valid JSON schema object.');
+  const compiled = compileSchema(rawSchema);
+  if (!('schema' in compiled)) return refusal('invalid_output_schema', compiled.reason, 'Send a valid JSON schema object.');
+  const schema = compiled.schema;
   const instruction = (typeof args.instruction === 'string' && args.instruction.trim()) || (preset ? PRESET_INSTRUCTION[preset] : '');
   if (!instruction) return refusal('invalid_argument', 'A delegation needs an instruction (or a preset).');
   const refs = Array.isArray(args.input_refs) ? args.input_refs.filter((r): r is string => typeof r === 'string') : [];
@@ -271,6 +278,7 @@ export async function runDelegateTool(
       },
       budget: { maxInputChars: MAX_WORKER_INPUT_CHARS, maxOutputTokens: maxTokens },
       caller: deps.llm,
+      escalate: deps.escalate,
       user: deps.user,
       signal: deps.signal,
       prices: deps.prices,
@@ -280,7 +288,7 @@ export async function runDelegateTool(
     });
   } catch (e) {
     // A spend limit must reach the turn as itself; a failed delegation is a typed result strong can work around.
-    if (e instanceof BudgetExceededError || e instanceof CostCapExceededError) throw e;
+    if (deps.isSpendLimit(e)) throw e;
     return refusal('delegation_failed', (e as Error).message, 'Do the sub-task yourself or answer from what you have.');
   }
   const text = JSON.stringify({ delegated: true, role: r.role, model: r.model, escalated: r.escalated, result: r.value.result });

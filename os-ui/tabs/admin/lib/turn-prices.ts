@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  *
- * AREA:       runtime
+ * AREA:       admin
  * FEATURE:    The catalog price of each model a turn used, for the per-role cost in the turn trace
  * ARCHITECTURE: the role name a turn calls stands for a catalog model through LiteLLM's `model_group_alias`
  *   (Platform → Models); the price is the price book's entry for that catalog model

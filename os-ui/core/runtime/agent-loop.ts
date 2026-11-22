@@ -28,6 +28,7 @@ import { inputBudget, modelContext } from '@core/models/context-windows';
 import { ensureModelLimitsFresh } from '@core/models/model-limits-live';
 import { renderPageContext, type PageContext } from '@core/runtime/page-context';
 import { createTurnLedger, type ModelTrace } from '@core/runtime/turn-ledger';
+import { completeWithEscalation, isSpendLimit } from '@core/runtime/escalate';
 import { DELEGATE_TOOL, DELEGATE_TOOL_SPEC, newTurnDelegations, runDelegateTool } from '@core/runtime/delegate';
 
 /**
@@ -396,7 +397,7 @@ export async function runOsAssistant(input: RunOsAssistantInput): Promise<OsAssi
   const executor: typeof governed = async (name, args, ctx) =>
     name === DELEGATE_TOOL
       ? runDelegateTool(args, {
-          llm, results: () => stepResults, turn: turnDelegations,
+          llm, escalate: completeWithEscalation, isSpendLimit, results: () => stepResults, turn: turnDelegations,
           user: { id: input.user.id, domains: input.user.domains },
           ...(input.signal ? { signal: input.signal } : {}),
           observe: { traceId, ...(parentObservationId ? { parentObservationId } : {}) },
