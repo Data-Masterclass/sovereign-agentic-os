@@ -261,7 +261,7 @@ test('GREEN: a real git push starts a Tekton PipelineRun for that exact commit; 
   const fetchTr = trs.items.find((t) => t.metadata.labels['tekton.dev/pipelineTask'] === 'fetch')!;
   assert.equal(fetchTr.status.results?.find((r) => r.name === 'commit')?.value, sha, 'Tekton cloned exactly the pushed commit');
   const gatesTr = trs.items.find((t) => t.metadata.labels['tekton.dev/pipelineTask'] === 'gates')!;
-  assert.deepEqual(gatesTr.status.steps.map((s) => `${s.name}:${s.terminated?.exitCode}`), ['install', ...REQUIRED_GATES, 'verdict'].map((n) => `${n}:0`));
+  assert.deepEqual(gatesTr.status.steps.map((s) => `${s.name}:${s.terminated?.exitCode}`), ['toolchain', 'install', ...REQUIRED_GATES, 'verdict'].map((n) => `${n}:0`));
 
   // The pod that ran the app's code is restricted: no ServiceAccount token, non-root, no privilege escalation, no capabilities.
   const podName = kjson<{ items: { metadata: { name: string } }[] }>(['-n', NS, 'get', 'pod', '-l', `tekton.dev/pipelineRun=${rec.runRef},tekton.dev/pipelineTask=gates`]).items[0].metadata.name;
