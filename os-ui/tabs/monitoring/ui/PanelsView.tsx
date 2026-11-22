@@ -18,7 +18,7 @@ import { useApi } from '@core/ui/useApi';
 import type { AgentsView, AgentSystemPanel } from '@tabs/monitoring/lib/panels/agents-panel';
 import type { DataView, DatasetPanel, RulePanel } from '@tabs/monitoring/lib/panels/data-panel';
 import type { PlatformView } from '@tabs/monitoring/lib/panels/platform-panel';
-import type { FilesView, FilePanel } from '@tabs/monitoring/lib/panels/files-panel';
+import type { FilesView, FilePanel, DrivePanel } from '@tabs/monitoring/lib/panels/files-panel';
 import type { KnowledgeView } from '@tabs/monitoring/lib/panels/knowledge-panel';
 import type { KpisView } from '@tabs/monitoring/lib/panels/kpis-panel';
 import type { DashboardsView } from '@tabs/monitoring/lib/panels/dashboards-panel';
@@ -418,12 +418,52 @@ function PlatformPanels({ v }: { v: PlatformView }) {
 const FILE_CONV: Record<FilePanel['conversion'], string> = { extracted: 'converted', pending: 'converting', failed: 'conversion failed', not_needed: 'no conversion needed' };
 const FILE_IDX: Record<FilePanel['indexing'], string> = { indexed: 'searchable', empty: 'nothing to index', failed: 'indexing failed', stored_only: 'stored only', not_indexed: 'not indexed' };
 
+const DRIVE_STATE: Record<DrivePanel['state'], string> = { ok: 'syncing', failed: 'last sync failed', lagging: 'behind', paused: 'paused', needs_reconnect: 'needs reconnect', never_synced: 'not synced yet' };
+
+function DrivePanels({ d }: { d: FilesView['drives'] }) {
+  const sm = d.summary;
+  return (
+    <>
+      <div className="mon-sub">Connected drives <span className="mon-sub-note">sync runs as the OS recorded them · schedule from Dagster</span></div>
+      <Sources sources={d.sources} />
+      {d.schedule && (
+        <p className="hint">Schedule {d.schedule.name}: {d.schedule.status === 'RUNNING' ? `${d.schedule.cron}, next ${d.schedule.nextTickAt ?? 'unknown'}` : 'stopped'}{d.lastDagsterRun ? ` · Dagster's last run ${d.lastDagsterRun.status}${d.lastDagsterRun.endedAt ? `, ${ago(d.lastDagsterRun.endedAt)}` : ''}` : ' · Dagster has no run of it yet'}</p>
+      )}
+      {sm && (
+        <div className="mon-stats">
+          <Stat label="drives" value={String(sm.connections)} />
+          <Stat label="last sync failed" value={String(sm.failing)} tone={sm.failing ? 'error' : undefined} />
+          <Stat label="behind" value={String(sm.lagging)} tone={sm.lagging ? 'warn' : undefined} />
+          <Stat label="paused" value={String(sm.paused)} tone={sm.paused ? 'warn' : undefined} />
+          <Stat label="need reconnect" value={String(sm.needsReconnect)} tone={sm.needsReconnect ? 'error' : undefined} />
+        </div>
+      )}
+      {d.connections.length === 0 ? (
+        <p className="hint">{d.sources.drives.state === 'live' ? 'No connected drives in your scope.' : 'Connected drives could not be listed.'}</p>
+      ) : (
+        <div className="mon-table">
+          <div className="mon-tr mon-th mon-tr-pfile"><span>Drive</span><span>Last sync</span><span>Imported · lag</span><span>State</span></div>
+          {d.connections.map((c) => (
+            <div key={c.id} className={`mon-tr mon-tr-pfile${c.state === 'failed' || c.state === 'needs_reconnect' ? ' err' : ''}`}>
+              <span className="ellip" title={c.label}><a className="mon-xlink" href={c.connectionsUrl}>{c.label}</a> <span className="muted">· {c.domain || 'personal'} · {c.provider}</span></span>
+              <span title={c.lastSync?.error ?? ''}>{c.lastSync ? `${ago(c.lastSync.at)} · ${c.lastSync.trigger} · ${c.lastSync.ok ? `+${c.lastSync.added} new, ${c.lastSync.changed} changed, ${c.lastSync.unchanged} unchanged, ${Math.round(c.lastSync.durationMs / 1000)}s` : `failed: ${c.lastSync.error ?? 'no error text'}`}` : 'never'}</span>
+              <span>{c.filesImported} files · {c.lagMinutes === null ? 'no successful sync' : `${c.lagMinutes} min`}</span>
+              <span title={c.paused?.reason ?? ''}>{DRIVE_STATE[c.state]}{c.paused ? ` — ${c.paused.reason}` : ''}{c.failedRuns ? ` · ${c.failedRuns} of last ${c.historyRuns} runs failed` : ''}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
 function FilesPanels({ v }: { v: FilesView }) {
   const sm = v.summary;
   return (
     <div className="mon-panels">
       <div className="mon-sub">Files <span className="mon-sub-note">Docling conversion (as recorded) · OpenSearch index rows</span></div>
       <Sources sources={v.sources} />
+      <DrivePanels d={v.drives} />
       {sm && (
         <div className="mon-stats">
           <Stat label="files" value={String(sm.total)} />

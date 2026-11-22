@@ -35,6 +35,26 @@ export type FileRow = {
   outcome: { status: 'indexed' | 'empty' | 'failed'; chunks?: number; reason?: string; at?: string } | null;
 };
 
+/** One connected drive (a Files `ConnectorSource`) with the health of the Connection it syncs with. */
+export type DriveRow = {
+  id: string;
+  provider: 'google-drive' | 'onedrive';
+  label: string;
+  domain: string;
+  owner: string;
+  mode: 'copy' | 'reference';
+  connectionId: string | null;
+  /** The Connections store's own `health`, mapped; `unknown` when it could not be read. */
+  connectionHealth: 'healthy' | 'needs-reconnect' | 'unknown';
+  /** Remote files recorded in the import ledger (their content landed). */
+  imported: number;
+  initialDone: boolean;
+  createdAt: string;
+  paused: { reason: string; at: string } | null;
+  /** The bounded run history, oldest first. */
+  runs: { at: string; endedAt: string; durationMs: number; trigger: 'manual' | 'schedule'; ok: boolean; added: number; changed: number; unchanged: number; error?: string }[];
+};
+
 /** One knowledge workflow of the Knowledge tab's scoped list. */
 export type KnowledgeRow = {
   id: string;
@@ -76,6 +96,8 @@ export type MonitoringSources = {
   assetKeys(ds: { id: string; domain: string }[]): Promise<Map<string, { tested: string[] | null; models: string[][] }>>;
   /** The Files tab's scoped list (`listFiles`), with each file's recorded Docling and index outcome. */
   files?(p: PanelPrincipal): Promise<FileRow[]>;
+  /** Every connected drive (the reader need not scope; the panel does, with the Files rule). */
+  driveSources?(p: PanelPrincipal): Promise<DriveRow[]>;
   /** The Knowledge tab's scoped list of workflows (`listWorkflows`). */
   knowledge?(p: PanelPrincipal): Promise<KnowledgeRow[]>;
   /** The Metrics tab's scoped list (`listMetrics`). */
