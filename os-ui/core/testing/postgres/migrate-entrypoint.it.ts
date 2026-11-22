@@ -37,7 +37,7 @@ const QUEUE = { user: `wp_mig_q_${suffix}`, password: 'q-pw-it' };
 function entrypoint(env: Record<string, string>) {
   return spawnSync(process.execPath, ['--experimental-strip-types', '--no-warnings', 'worker/migrate-governance.mjs'], {
     cwd: OS_UI,
-    env: { PATH: process.env.PATH ?? '', ...env } as NodeJS.ProcessEnv,
+    env: { PATH: process.env.PATH ?? '', ...env } as unknown as NodeJS.ProcessEnv,
     encoding: 'utf8',
     timeout: 100_000,
   });
