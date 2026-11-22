@@ -78,6 +78,8 @@ export interface MigrateOptions {
   direction: 'up' | 'down';
   /** How many migrations to apply; default all for `up`, 1 for `down` (node-pg-migrate defaults). */
   count?: number;
+  /** Refuse (ok:false) when the login is a superuser: the production Job must run as the NOSUPERUSER owner. */
+  refuseSuperuser?: boolean;
 }
 
 /**
@@ -89,10 +91,22 @@ export async function migrateGovernance(opts: MigrateOptions): Promise<Fetched<s
   const databaseUrl = opts.databaseUrl.trim();
   if (!databaseUrl) throw new Error('migrateGovernance: no database URL');
   try {
+    if (opts.refuseSuperuser) await assertNotSuperuser(databaseUrl);
     const ran = await migrateOrThrow(databaseUrl, opts);
     return fetchedOk(ran);
   } catch (err) {
     return pgFailure(err);
+  }
+}
+
+async function assertNotSuperuser(databaseUrl: string): Promise<void> {
+  const c = new pg.Client({ connectionString: databaseUrl });
+  await c.connect();
+  try {
+    const who = await c.query<{ rolname: string; rolsuper: boolean }>('select rolname, rolsuper from pg_roles where rolname = current_user');
+    if (who.rows[0]?.rolsuper) throw new Error(`refusing to migrate as a superuser (${who.rows[0].rolname}): use the NOSUPERUSER owner login`);
+  } finally {
+    await c.end();
   }
 }
 
