@@ -61,12 +61,13 @@ test('the quality trend is one point per Dagster run, oldest first; unevaluated 
   ]);
 });
 
-test('downstream names only assets of datasets the viewer can see; the rest is a count per other domain', () => {
+test('downstream names only assets of datasets the viewer can see; the rest is one aggregate count', () => {
   const visible = [['sales', 'orders'], ['sales', 'orders_mart']];
   const d = splitDownstream([['sales', 'orders_mart'], ['hr', 'salary_by_order'], ['hr', 'bonus'], ['finance', 'rev']], visible);
   assert.deepEqual(d.visible, [['sales', 'orders_mart']]);
   assert.equal(d.hiddenCount, 3);
-  assert.deepEqual(d.hiddenByDomain, { hr: 2, finance: 1 });
+  assert.deepEqual(Object.keys(d).sort(), ['hiddenCount', 'visible'], 'no per-domain breakdown');
+  assert.ok(!JSON.stringify(d).includes('finance'));
   // Negative twin: no hidden key's name survives anywhere in the result.
   assert.ok(!JSON.stringify(d).includes('salary_by_order'));
   assert.ok(!JSON.stringify(d).includes('bonus'));

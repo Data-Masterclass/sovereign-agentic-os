@@ -139,23 +139,18 @@ export function qualityTrend(executions: readonly { runId: string; at: string; p
 
 /**
  * Downstream assets split by visibility: names only for assets of datasets the viewer can see
- * (`visibleKeys` = their models' keys); every other asset is only COUNTED, per its domain (the
- * asset key's first segment) — another domain's asset names never reach the payload.
+ * (`visibleKeys` = their models' keys); every other asset is only COUNTED, in total — no other
+ * domain's name (asset or domain) reaches the payload.
  */
-export function splitDownstream(keys: readonly string[][], visibleKeys: readonly string[][]): { visible: string[][]; hiddenCount: number; hiddenByDomain: Record<string, number> } {
+export function splitDownstream(keys: readonly string[][], visibleKeys: readonly string[][]): { visible: string[][]; hiddenCount: number } {
   const seen = new Set(visibleKeys.map((k) => k.join('/')));
   const visible: string[][] = [];
-  const hiddenByDomain: Record<string, number> = {};
   let hiddenCount = 0;
   for (const k of keys) {
     if (seen.has(k.join('/'))) visible.push(k);
-    else {
-      hiddenCount += 1;
-      const d = k[0] ?? '?';
-      hiddenByDomain[d] = (hiddenByDomain[d] ?? 0) + 1;
-    }
+    else hiddenCount += 1;
   }
-  return { visible, hiddenCount, hiddenByDomain };
+  return { visible, hiddenCount };
 }
 
 // ------------------------------------------------------------------- files --
@@ -210,7 +205,7 @@ export function knowledgeIndexState(w: { status: 'draft' | 'live'; updatedAt: st
 // -------------------------------------------------------------- data rules --
 
 export type RuleType = 'not_null' | 'unique' | 'range' | 'accepted_values' | 'custom';
-export type RuleStatus = 'pass' | 'fail' | 'warn' | 'not_run';
+export type RuleStatus = 'pass' | 'fail' | 'warn' | 'not_run' | 'unavailable';
 
 /** dbt names a generic test `<test>_<model>_<column>…`; anything not one of ours is a custom test. */
 export function ruleTypeOf(checkName: string): RuleType {

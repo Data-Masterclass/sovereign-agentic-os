@@ -40,7 +40,9 @@ export type KnowledgeView = {
   sources: { inventory: SourceState; openSearch: SourceState };
   summary: { total: number; indexed: number; stale: number; notIndexed: number; draftsNotIndexed: number } | null;
   /** Admin only: OpenSearch's cumulative search counters for the knowledge index. */
-  searchLatency?: { queries: number; avgMs: number | null } | null;
+  searchLatency?: { queries: number; avgMs: number | null };
+  /** Admin only: why the counters could not be read (OpenSearch down, or the index absent) — never shown as 0 or hidden. */
+  searchLatencyUnavailable?: string;
   workflows: KnowledgePanel[];
   notUpstream: NotUpstream[];
 };
@@ -77,7 +79,7 @@ export async function knowledgeView(user: CurrentUser, nowMs = Date.now()): Prom
     generatedAt: new Date(nowMs).toISOString(),
     sources: { inventory: listed.ok ? live : unavailable(`knowledge: ${listed.error}`), openSearch: os.ok ? live : unavailable(`OpenSearch: ${os.detail}`) },
     summary: listed.ok && os.ok ? { total: workflows.length, indexed: count('indexed'), stale: count('stale'), notIndexed: count('not_indexed'), draftsNotIndexed: count('draft_not_indexed') } : null,
-    ...(counters && counters.ok ? { searchLatency: counters.value ? { queries: counters.value.queries, avgMs: counters.value.queries > 0 ? counters.value.totalMs / counters.value.queries : null } : null } : {}),
+    ...(counters ? (counters.ok ? { searchLatency: { queries: counters.value.queries, avgMs: counters.value.queries > 0 ? counters.value.totalMs / counters.value.queries : null } } : { searchLatencyUnavailable: `OpenSearch: ${counters.detail}` }) : {}),
     workflows,
     notUpstream: NOT_UPSTREAM,
   };
