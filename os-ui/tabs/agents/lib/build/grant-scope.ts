@@ -215,7 +215,7 @@ export const NO_GRANTED_RESOURCE: Readonly<Record<string, string>> = {
   archive: APPS, build_software: APPS, commit: APPS, create_software: APPS, decide_deploy: APPS, delete: APPS,
   design_software: APPS, generate_app_spec: APPS, get_app_spec: APPS, get_software: APPS, get_software_status: APPS,
   list_software: APPS, promote: APPS, push_app_files: APPS, read_app_files: APPS, request_deploy: APPS,
-  set_app_design: APPS, set_app_spec: APPS, start_preview: APPS, verify_software: APPS,
+  set_app_design: APPS, set_app_spec: APPS, start_preview: APPS, verify_software: APPS, get_app_template: APPS, verify_app_gates: APPS,
   // dashboards
   create_dashboard: DASHBOARDS, get_dashboard: DASHBOARDS, list_dashboards: DASHBOARDS,
   // governance
