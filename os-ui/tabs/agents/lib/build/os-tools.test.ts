@@ -945,8 +945,6 @@ test('executor: the enqueued card for an always-confirmed call carries the true 
 
 import { agentToolGate } from '@tabs/agents/lib/build/os-tools';
 import type { GrantResolvers } from '@tabs/agents/lib/build/grant-scope';
-import { useGreenGates } from '@core/testing/gates';
-useGreenGates();
 
 function sysGranting(tools: string[], grants: Record<string, unknown>, preset = 'full-in-scope'): System {
   return parseSystem({

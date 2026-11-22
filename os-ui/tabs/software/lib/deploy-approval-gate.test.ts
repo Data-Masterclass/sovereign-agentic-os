@@ -17,7 +17,7 @@ import { startPreview, requestDeploy, decideDeploy, reconcileDeployStatus } from
 import { appDeployFiles } from './native-deploy.ts';
 import { __setAppProjectGitForTests, __setAppTreeReaderForTests } from './git-commit.ts';
 import type { RunnerK8s } from './runner.ts';
-import { useGreenGates } from '@core/testing/gates';
+import { useGreenGates } from '@tabs/software/lib/test-gates';
 useGreenGates();
 
 const creator: CurrentUser = testUser({ id: 'wp54-cara', name: 'Cara', domains: ['sales'], role: 'creator' });

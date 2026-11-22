@@ -77,7 +77,7 @@ mock.module('@core/runtime/complete', {
 
 import type { CurrentUser } from '@core/kernel/auth';
 import { testUser } from '@core/testing/user';
-import { useGreenGates } from '@core/testing/gates';
+import { useGreenGates } from '@tabs/software/lib/test-gates';
 useGreenGates();
 
 const { handleRpc } = await import('@core/mcp/server');

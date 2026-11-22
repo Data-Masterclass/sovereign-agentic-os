@@ -25,7 +25,7 @@ import type { CurrentUser } from '@core/kernel/auth';
 import { createApp, saveAppFile } from '@tabs/software/lib/apps';
 import { requestDeploy, getReviewCard, __resetReviewCards } from './review.ts';
 import { __resetApprovals } from '@core/policy/approvals';
-import { useGreenGates } from '@core/testing/gates';
+import { useGreenGates } from '@tabs/software/lib/test-gates';
 useGreenGates();
 
 /**

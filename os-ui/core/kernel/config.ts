@@ -400,7 +400,7 @@ export const config = {
   // default-deny sandbox namespace; empty (or the platform namespace) means the sandbox refuses to run.
   softwareSandboxNamespace: env('SOFTWARE_SANDBOX_NAMESPACE', ''),
   // The egress proxy npm uses from the sandbox (its only way out), set by the chart.
-  softwareSandboxProxyUrl: env('SOFTWARE_SANDBOX_PROXY_URL', ''),
+  softwareSandboxProxy: env('SOFTWARE_SANDBOX_PROXY_URL', ''),
   // Images are pinned in the chart only (osUI.software.sandbox / opa.image); empty = not wired, and the sandbox refuses to run.
   softwareSandboxNodeImage: env('SOFTWARE_SANDBOX_NODE_IMAGE', ''),
   softwareSandboxOpaImage: env('SOFTWARE_SANDBOX_OPA_IMAGE', ''),
