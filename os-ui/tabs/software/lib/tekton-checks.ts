@@ -25,7 +25,7 @@
 import 'server-only';
 import { config } from '@core/kernel/config';
 import { k8s as liveK8s, k8sText as liveK8sText } from '@core/infra/k8s';
-import { domainRepoName, repoDirName } from '@core/infra/repo-layout';
+import { domainRepoName, legacyDomainRepoName, repoDirName } from '@core/infra/repo-layout';
 import type { CheckRecord, CheckResult, CheckTrigger } from '@tabs/software/lib/check-record';
 import { recordFromRun, checksRunName, type RunObjects } from '@tabs/software/lib/tekton-record';
 
@@ -106,7 +106,9 @@ export async function startChecksRun(input: StartInput, deps: ChecksDeps = {}): 
   }
   let repo: string;
   try {
-    repo = repoDirName(domainRepoName(input.domain));
+    // `<domain>.git` is the engineer's own clone URL and is served in both repository layouts (a real directory, or the
+    // alias beside `domain-<domain>.git`); a domain whose name reads as another repo kind has only the canonical name.
+    repo = repoDirName(legacyDomainRepoName(input.domain) ?? domainRepoName(input.domain));
   } catch (e) {
     return { ok: false, kind: 'refused', reason: e instanceof Error ? e.message : 'invalid domain' };
   }

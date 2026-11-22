@@ -4,9 +4,9 @@
   SOFTWARE FACTORY CI (go-live 1, 2026-11-22): the per-commit checks of an app run as Tekton PipelineRuns.
 
   WHAT IS HERE AND WHAT IS NOT. Tekton Pipelines and Triggers are separate, pinned platform components
-  installed as upstream documents it (components/tekton/install.sh); their CRDs must exist before this
+  installed as upstream documents it (scripts/tekton/install.sh); their CRDs must exist before this
   template renders. This file is only what the OS owns around them:
-    - the build namespace (Pod Security `restricted`), a ServiceAccount for runs, the vendored Catalog
+    - the build namespace (Pod Security `baseline` enforced, `restricted` audited), a ServiceAccount for runs, the vendored Catalog
       tasks (git-clone, trivy-scanner; files/tekton/tasks/, byte-for-byte);
     - the EventListener the OS posts to (CEL-validated), its TriggerBinding and TriggerTemplate, which
       create ONE PipelineRun per commit. The Pipeline itself is the app's own `.tekton/pipeline.yaml`,
@@ -29,8 +29,17 @@ metadata:
   labels:
     {{- include "soa.labels" . | nindent 4 }}
     soa.dev/purpose: software-checks
-    pod-security.kubernetes.io/enforce: restricted
+    {{- /* `baseline` is enforced, `restricted` is audited and warned. Why not enforce `restricted`: the Catalog
+           `git-clone` step sets only runAsNonRoot/runAsUser in its own securityContext, and Tekton's
+           `set-security-context` then leaves that step's securityContext as written, so it lacks the
+           allowPrivilegeEscalation/capabilities fields `restricted` demands (a real finding from the kind run).
+           Baseline still refuses privileged pods, host namespaces and hostPath. The pods that run the app's code
+           (the `gates` and `scan` steps carry no securityContext of their own) ARE made restricted-compliant by
+           Tekton's flag, and the audit label records any pod that is not. */}}
+    pod-security.kubernetes.io/enforce: baseline
     pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
 ---
 apiVersion: v1
 kind: ServiceAccount
@@ -62,6 +71,21 @@ spec:
     requests.cpu: {{ ($tk.quota | default dict).cpu | default "6" | quote }}
     requests.memory: {{ ($tk.quota | default dict).memory | default "12Gi" | quote }}
     persistentvolumeclaims: {{ ($tk.quota | default dict).pvcs | default "30" | quote }}
+---
+{{- /* A quota demands requests on every container, including the ones Tekton injects (place-scripts, prepare) and
+       Catalog steps that declare none (a real finding from the kind run). Tekton reads LimitRange defaults. */}}
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: app-checks
+  namespace: {{ $ns }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  limits:
+    - type: Container
+      defaultRequest: { cpu: 50m, memory: 64Mi }
+      default: { cpu: "1", memory: 1Gi }
 ---
 # ---- the listener the OS posts to ------------------------------------------------------------------
 apiVersion: v1
@@ -503,6 +527,16 @@ spec:
       ports:
         - { protocol: TCP, port: 8080 }
   egress:
+    {{- /* The CEL interceptor that validates the event is a Tekton Triggers component in its own namespace. */}}
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: tekton-pipelines
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: core-interceptors
+      ports:
+        - { protocol: TCP, port: 8443 }
     - ports:
         - { protocol: TCP, port: 443 }
         - { protocol: TCP, port: 6443 }
