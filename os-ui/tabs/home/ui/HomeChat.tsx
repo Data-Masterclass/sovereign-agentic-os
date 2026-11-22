@@ -263,7 +263,7 @@ export default function HomeChat({ firstName }: { firstName: string }) {
                       )}
                     </div>
                   ))}
-                  {mi === messages.length - 1 && !busy && m.saveAs && m.saveAs.length > 0 && m.content ? (
+                  {mi === messages.length - 1 && !busy && !m.pending?.length && m.saveAs && m.saveAs.length > 0 && m.content ? (
                     <div className="hc-saveas" role="group" aria-label="Save this answer as">
                       <span className="hc-saveas-label">Save as</span>
                       {m.saveAs.map((k) => (

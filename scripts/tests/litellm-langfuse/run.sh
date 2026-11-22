@@ -65,7 +65,7 @@ docker run -d --name lfch --network $NET --user 101:101 -e CLICKHOUSE_DB=default
 docker run -d --name lfredis --network $NET --network-alias valkey redis:7 --requirepass myredissecret --maxmemory-policy noeviction >/dev/null
 docker run -d --name lfminio --network $NET --entrypoint sh -e MINIO_ROOT_USER=minio -e MINIO_ROOT_PASSWORD=miniosecret cgr.dev/chainguard/minio \
   -c 'mkdir -p /data/langfuse && minio server --address ":9000" /data' >/dev/null
-docker run -d --name lfstub --network $NET --network-alias stub -v "$HERE":/h:ro -v "$W/data":/data -e DATA_DIR=/data node:22-alpine node /h/stub.mjs >/dev/null
+docker run -d --name lfstub --network $NET --network-alias stub -v "$HERE":/h:ro -v "$W/data":/data -e DATA_DIR=/data node:22-alpine node /h/${STUB_FILE:-stub.mjs} >/dev/null
 # Langfuse migrates ClickHouse over the native port at start: wait for it, not only for HTTP.
 for i in $(seq 1 60); do
   docker exec lfpg pg_isready -h 127.0.0.1 -U postgres >/dev/null 2>&1 \
