@@ -204,6 +204,9 @@ const MONITORING = 'reads run and trace telemetry, not a granted resource';
  * connection, file or plan item.
  */
 export const NO_GRANTED_RESOURCE: Readonly<Record<string, string>> = {
+  // home chat history
+  list_conversations: 'reads the caller\'s OWN Home chat conversations by user id; a conversation is private to its user and is not a resource a grant can name.',
+  get_conversation: 'reads one of the caller\'s OWN Home chat conversations by user id; another user\'s id is not found, and no grant exists that could widen it.',
   // agents
   build_agent_system: AGENT_SYSTEMS, commit_agent_files: AGENT_SYSTEMS, create_agent_system: AGENT_SYSTEMS,
   get_agent_run: AGENT_SYSTEMS, get_agent_system: AGENT_SYSTEMS, list_agent_systems: AGENT_SYSTEMS,
