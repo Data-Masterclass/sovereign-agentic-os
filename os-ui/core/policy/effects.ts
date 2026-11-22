@@ -23,6 +23,7 @@ import { promotePersonalKnowledge, certifyPersonalKnowledge } from '@tabs/knowle
 import { transitionDashboard } from '@tabs/dashboards/lib/store';
 import { promoteSystem } from '@tabs/agents/lib/store';
 import { runWithPromotion } from '@core/infra/git-promote';
+import { authorize, workflowWriteTestGate, workflowWriteDecision } from '@core/infra/governed';
 
 /**
  * The approval-IS-an-action executor (governance-golden-path.md key principle).
@@ -488,6 +489,20 @@ async function applyLadder(
 
   switch (kind) {
     case 'knowledge': {
+      // THE OPA DOOR for a workflow publish / certify, asked AS THE APPROVER before the store flips
+      // the tier. The approval decision (role ladder + domain scope in `decide`) says WHO may decide;
+      // this asks the policy engine the same question every other workflow write asks, so the
+      // approval route is not a way round it. Fail-closed: no answer, no publish.
+      {
+        const op = rung === 'promote' ? 'publish' : 'certify';
+        const asApprover = approverPrincipal(approver, rung === 'promote' ? 'builder' : 'admin', a.domain);
+        const facts = { id, tier: rung === 'promote' ? 'personal' : 'shared', owner: a.requestedBy, domain: a.domain } as const;
+        const seam = workflowWriteTestGate();
+        const allowed = seam
+          ? Boolean(await seam(op, asApprover, facts))
+          : (await authorize(`user:${asApprover.id}`, 'workflow.write', workflowWriteDecision(asApprover, op, facts))).allowed;
+        if (!allowed) throw Object.assign(new Error(`The workflow ${op} was refused by policy for ${asApprover.id}: the policy engine did not allow it, or did not answer. Nothing was changed.`), { status: 403 });
+      }
       const rec = rung === 'promote'
         ? publishWorkflow(id, approverPrincipal(approver, 'builder', a.domain))
         : certifyWorkflow(id, approverPrincipal(approver, 'admin', a.domain));

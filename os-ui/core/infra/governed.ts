@@ -57,6 +57,18 @@ async function withTimeout(url: string, init: RequestInit, ms = 2500): Promise<R
  * domains, the target's tier and owner). Unlike the tool grant it is NEVER fail-open: an OPA that
  * does not answer denies, whatever `OPA_FAIL_OPEN` says.
  */
+/** The ops of `agentic.authz.workflow_write`. `update` = edit/rename/move/tacit/links/restore/unarchive. */
+export type WorkflowOp = 'create' | 'update' | 'index' | 'publish' | 'certify' | 'retire';
+/** The facts the rule decides on: the workflow's tier (My / Domain / Company), owner and domain. */
+export type WorkflowFacts = { id: string; tier: 'personal' | 'shared' | 'certified'; owner: string; domain: string };
+const WORKFLOW_TIER: Record<string, WorkflowFacts['tier']> = { Personal: 'personal', Shared: 'shared', Marketplace: 'certified' };
+/** A stored workflow's facts for the rule (`visibility` is the store's spelling of the tier). */
+export const workflowFacts = (rec: { id: string; visibility: string; owner: string; domain: string }): WorkflowFacts =>
+  ({ id: rec.id, tier: WORKFLOW_TIER[rec.visibility] ?? 'personal', owner: rec.owner, domain: rec.domain });
+/** The WriteDecision for one workflow op by one caller — what every door passes to `authorize`. */
+export const workflowWriteDecision = (user: { id: string; role: string; domains: string[] }, op: WorkflowOp, workflow: WorkflowFacts): WriteDecision =>
+  ({ rule: 'workflow_write', input: { action: 'workflow.write', op, actor: { id: user.id, role: user.role, domains: user.domains }, workflow } });
+
 export type WriteDecision = { rule: 'data_version_write' | 'workflow_write'; input: Record<string, unknown> };
 
 /**
@@ -67,7 +79,8 @@ export type WriteDecision = { rule: 'data_version_write' | 'workflow_write'; inp
  * the tests of the door itself remove it and exercise the real path. Returns undefined in production.
  */
 export function workflowWriteTestGate(): ((op: string, user: unknown, workflow: unknown) => unknown) | undefined {
-  if (!process.env.NODE_TEST_CONTEXT) return undefined;
+  // Never in production: NODE_TEST_CONTEXT alone is not enough (a stray env var must not open a write door).
+  if (!process.env.NODE_TEST_CONTEXT || process.env.NODE_ENV === 'production') return undefined;
   const g = (globalThis as Record<symbol, unknown>)[Symbol.for('soa.test.workflowWriteGate')];
   return typeof g === 'function' ? (g as (op: string, user: unknown, workflow: unknown) => unknown) : undefined;
 }

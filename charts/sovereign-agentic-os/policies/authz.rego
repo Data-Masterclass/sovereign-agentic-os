@@ -111,15 +111,17 @@ data_version_write if {
 }
 
 # A WRITE to a workflow (wf_..., the documentation of a business process; a knowledge note has no rule
-# here): author, index, publish, retire. os-ui asks this rule before the store is touched
+# here): author (create), edit (update), index, publish, certify, retire. os-ui asks this rule before the store is touched
 # (os-ui/tabs/knowledge/mcp/knowledge-write-tools.ts) and never fails open: an OPA that does not
 # answer denies. The store's own gates stay the inner authority; this is the door in front of them.
 #   create  the owner, in a domain they belong to (an admin spans the tenant)
 #   index   the owner; a builder or better of the workflow's domain; for a Domain/Company workflow
 #           any member of its domain; an admin
 #   publish a domain_admin of the workflow's domain, or an admin (My -> Domain is their approval)
-#   retire  the owner; a builder or better of the domain for a Domain workflow; an admin for a Company one
-# Input: {"action": "workflow.write", "op": "create"|"index"|"publish"|"retire",
+#   retire / update  the owner; a builder or better of the domain for a Domain workflow; an admin for a
+#           Domain or Company one (update = edit, rename, move, tacit, links, restore a version, unarchive)
+#   certify an admin (Domain -> Company)
+# Input: {"action": "workflow.write", "op": "create"|"update"|"index"|"publish"|"certify"|"retire",
 #         "actor": {"id", "role", "domains"},
 #         "workflow": {"id", "tier": "personal"|"shared"|"certified", "owner", "domain"}}
 default workflow_write := false
@@ -182,13 +184,13 @@ workflow_write if {
 
 workflow_write if {
 	input.action == "workflow.write"
-	input.op == "retire"
+	input.op in {"retire", "update"}
 	input.workflow.owner == input.actor.id
 }
 
 workflow_write if {
 	input.action == "workflow.write"
-	input.op == "retire"
+	input.op in {"retire", "update"}
 	input.workflow.tier == "shared"
 	input.actor.role in builder_up
 	workflow_domain_member
@@ -196,9 +198,15 @@ workflow_write if {
 
 workflow_write if {
 	input.action == "workflow.write"
-	input.op == "retire"
+	input.op in {"retire", "update"}
 	input.workflow.tier in {"shared", "certified"}
 	input.actor.role == "admin"
 }
 
 workflow_domain_member if input.workflow.domain in input.actor.domains
+
+workflow_write if {
+	input.action == "workflow.write"
+	input.op == "certify"
+	input.actor.role == "admin"
+}
