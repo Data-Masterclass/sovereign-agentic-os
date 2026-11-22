@@ -20,6 +20,33 @@ export type TestRecord = {
   results: { id: string; label: string; status: 'pass' | 'fail' | 'not_run' | string; violations: number | null }[];
 };
 
+/** One file of the Files tab's scoped list with what Docling and the index run recorded for it. */
+export type FileRow = {
+  id: string;
+  name: string;
+  domain: string;
+  scope: ScopeGroup;
+  kind: string;
+  bytes: number;
+  mode: 'indexed' | 'stored-only';
+  /** Docling's recorded answer (absent = no conversion was needed or asked). */
+  extraction: { status: 'extracted' | 'pending' | 'failed'; code?: string; reason?: string; at?: string } | null;
+  /** The recorded result of the last index run (absent = none recorded). */
+  outcome: { status: 'indexed' | 'empty' | 'failed'; chunks?: number; reason?: string; at?: string } | null;
+};
+
+/** One knowledge workflow of the Knowledge tab's scoped list. */
+export type KnowledgeRow = {
+  id: string;
+  title: string;
+  domain: string;
+  scope: ScopeGroup;
+  status: 'draft' | 'live';
+  updatedAt: string;
+  publishedAt: string | null;
+  certified: boolean;
+};
+
 export type MonitoringSources = {
   /** The Agents store's scoped list of agent systems for this principal. */
   agentSystems(p: PanelPrincipal): Promise<{ id: string; name: string; scope: ScopeGroup }[]>;
@@ -33,6 +60,10 @@ export type MonitoringSources = {
   connectionCatalogs(): Promise<{ catalog: string; connectionId: string; name: string; domain: string }[]>;
   /** The dataset's own Dagster asset keys from its generated dbt project; absent when the project is not in git. */
   assetKeys(ds: { id: string; domain: string }[]): Promise<Map<string, { tested: string[] | null; models: string[][] }>>;
+  /** The Files tab's scoped list (`listFiles`), with each file's recorded Docling and index outcome. */
+  files?(p: PanelPrincipal): Promise<FileRow[]>;
+  /** The Knowledge tab's scoped list of workflows (`listWorkflows`). */
+  knowledge?(p: PanelPrincipal): Promise<KnowledgeRow[]>;
 };
 
 const slot = globalThis as unknown as { __osMonitoringSources?: MonitoringSources };

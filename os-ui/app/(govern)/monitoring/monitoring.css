@@ -687,12 +687,20 @@ a.mon-tr:hover {
 .mon-tr-pjob {
   grid-template-columns: 1.6fr 1fr 1fr 60px;
 }
+.mon-tr-prule {
+  grid-template-columns: 2fr 1fr 0.7fr 1fr 1fr 1fr;
+}
+.mon-tr-pfile {
+  grid-template-columns: 2fr 1.4fr 1fr 1.4fr;
+}
 .mon-view-seg {
   margin: 4px 0 14px;
 }
 @media (max-width: 640px) {
   .mon-tr-pfail,
-  .mon-tr-pjob {
+  .mon-tr-pjob,
+  .mon-tr-prule,
+  .mon-tr-pfile {
     grid-template-columns: 1fr 1fr;
   }
 }
@@ -714,11 +722,16 @@ a.mon-tr:hover {
 .mon-panels .mon-tile-grid {
   grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr));
 }
+.mon-panels select {
+  max-width: 100%;
+}
 .mon-panels .mon-table {
   max-width: 100%;
 }
 @media (max-width: 640px) {
-  .mon-panels .mon-tr-pfail {
+  .mon-panels .mon-tr-pfail,
+  .mon-panels .mon-tr-prule,
+  .mon-panels .mon-tr-pfile {
     grid-template-columns: 1fr;
     gap: 4px;
   }

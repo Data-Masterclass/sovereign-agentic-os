@@ -21,9 +21,18 @@ import { failed, fetched } from '../health/http';
 /** The typed client's `{ok:false, error}` → the adapter contract's failure (Dagster down, GraphQL error). */
 const failure = <T>(error: string): Fetched<T> => failed(/timeout|did not answer/i.test(error) ? 'timeout' : /HTTP 4\d\d|GraphQL|Error:/.test(error) ? 'invalid' : 'unreachable', `Dagster: ${error}`);
 
-export type CheckExecution = { runId: string; at: string; passed: boolean | null; status: string };
+export type CheckExecution = {
+  runId: string;
+  at: string;
+  passed: boolean | null;
+  status: string;
+  /** The check's own severity (dbt `severity: warn` → WARN), null when Dagster stored none. */
+  severity: 'WARN' | 'ERROR' | null;
+  /** `dagster_dbt/failed_row_count` as Dagster stored it; null when dbt reported no count. */
+  failedRows: number | null;
+};
 
-const EXECUTIONS = `query Ex($key: AssetKeyInput!, $name: String!, $limit: Int!) { assetCheckExecutions(assetKey: $key, checkName: $name, limit: $limit) { runId status timestamp evaluation { success } } }`;
+const EXECUTIONS = `query Ex($key: AssetKeyInput!, $name: String!, $limit: Int!) { assetCheckExecutions(assetKey: $key, checkName: $name, limit: $limit) { runId status timestamp evaluation { success severity metadataEntries { label ... on IntMetadataEntry { intValue } ... on FloatMetadataEntry { floatValue } } } } }`;
 
 /** A check's executions, newest first. `passed` null while it has no evaluation (in progress / skipped). */
 export async function checkExecutions(key: string[], checkName: string, limit = 10, deps: DagsterDeps = {}): Promise<Fetched<CheckExecution[]>> {
@@ -31,8 +40,17 @@ export async function checkExecutions(key: string[], checkName: string, limit = 
   if (!r.ok) return failure(r.error);
   return fetched(
     (r.data.assetCheckExecutions ?? []).map((e) => {
-      const ev = e.evaluation as { success?: boolean } | null;
-      return { runId: String(e.runId ?? ''), at: new Date(Number(e.timestamp) * 1000).toISOString(), passed: typeof ev?.success === 'boolean' ? ev.success : null, status: String(e.status ?? '') };
+      const ev = e.evaluation as { success?: boolean; severity?: string; metadataEntries?: { label?: string; intValue?: number | null; floatValue?: number | null }[] } | null;
+      const m = (ev?.metadataEntries ?? []).find((x) => x.label === 'dagster_dbt/failed_row_count');
+      const n = m?.intValue ?? m?.floatValue ?? null;
+      return {
+        runId: String(e.runId ?? ''),
+        at: new Date(Number(e.timestamp) * 1000).toISOString(),
+        passed: typeof ev?.success === 'boolean' ? ev.success : null,
+        status: String(e.status ?? ''),
+        severity: ev?.severity === 'WARN' || ev?.severity === 'ERROR' ? ev.severity : null,
+        failedRows: typeof n === 'number' ? n : null,
+      };
     }),
   );
 }

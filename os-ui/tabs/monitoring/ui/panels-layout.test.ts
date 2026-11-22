@@ -17,11 +17,17 @@ const view = readFileSync(new URL('./PanelsView.tsx', import.meta.url), 'utf8');
 const css = readFileSync(new URL('../../../app/(govern)/monitoring/monitoring.css', import.meta.url), 'utf8');
 
 test('each panel view renders inside the .mon-panels container', () => {
-  for (const fn of ['AgentsPanels', 'DataPanels', 'PlatformPanels']) {
+  for (const fn of ['AgentsPanels', 'DataPanels', 'PlatformPanels', 'FilesPanels', 'KnowledgePanels']) {
     const body = view.slice(view.indexOf(`function ${fn}(`));
     const ret = body.slice(body.indexOf('return ('), body.indexOf('return (') + 80);
     assert.match(ret, /className="mon-panels"/, `${fn} must render inside .mon-panels`);
   }
+});
+
+test('the per-rule and per-file rows stack on a phone', () => {
+  const phone = css.slice(css.indexOf('@media (max-width: 640px)'));
+  assert.match(phone, /\.mon-panels \.mon-tr-prule[\s\S]*grid-template-columns:\s*1fr\b/);
+  assert.match(phone, /\.mon-panels \.mon-tr-pfile[\s\S]*grid-template-columns:\s*1fr\b/);
 });
 
 test('inside .mon-panels a badge wraps, cells shrink, rows stack on a phone', () => {

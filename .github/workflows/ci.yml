@@ -602,7 +602,7 @@ jobs:
         working-directory: os-ui
         env:
           MON_IT: '1'
-        run: node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test --test-concurrency=1 core/adapters/victoria-metrics/query.int.test.ts tabs/monitoring/lib/panels/panels-queries.int.test.ts monitoring-run-stats.int.test.ts core/adapters/dagster/monitoring-read.int.test.ts
+        run: node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test --test-concurrency=1 core/adapters/victoria-metrics/query.int.test.ts tabs/monitoring/lib/panels/panels-queries.int.test.ts monitoring-run-stats.int.test.ts core/adapters/dagster/monitoring-read.int.test.ts core/adapters/opensearch/index-stats.int.test.ts
       - name: Dagster logs (on failure)
         if: failure()
         run: docker logs --tail 80 monit-dagster || true
