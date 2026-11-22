@@ -332,15 +332,6 @@ spec:
   ingress:
     - from:
         {{- include "soa.np.peers" (dict "components" (list "web-fetch" "opensearch-snapshot-register" "opensearch-snapshot-cron" "opensearch-maintenance") "extra" (concat $opensearchPods $litellmPods)) | nindent 8 }}
-        {{- /* The Software Factory gates sandbox (its own namespace): only its install step uses npm through here. */}}
-        {{- if include "soa.softwareSandboxOn" . }}
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: {{ include "soa.softwareSandboxNs" . }}
-          podSelector:
-            matchLabels:
-              app.kubernetes.io/component: software-gates
-        {{- end }}
       ports:
         - { protocol: TCP, port: 3128 }
 {{- end }}

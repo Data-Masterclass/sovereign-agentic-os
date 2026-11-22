@@ -74,7 +74,7 @@ spec:
              entire job is to fetch a vulnerability DB, read an emptyDir and print JSON, so it has
              no business on the in-namespace service plane or the API server. Its complete
              allowlist is `software-scanner-egress` in templates/base/os-ui/software-scanner.yaml. */}}
-      - { key: app.kubernetes.io/component, operator: NotIn, values: [agent-schedule, software-scanner, software-gates] }
+      - { key: app.kubernetes.io/component, operator: NotIn, values: [agent-schedule, software-scanner] }
   policyTypes:
     - Egress
   egress:
@@ -101,7 +101,7 @@ spec:
              entire job is to fetch a vulnerability DB, read an emptyDir and print JSON, so it has
              no business on the in-namespace service plane or the API server. Its complete
              allowlist is `software-scanner-egress` in templates/base/os-ui/software-scanner.yaml. */}}
-      - { key: app.kubernetes.io/component, operator: NotIn, values: [agent-schedule, software-scanner, software-gates] }
+      - { key: app.kubernetes.io/component, operator: NotIn, values: [agent-schedule, software-scanner] }
       {{- /* The model gateway leaves this any-443 rule while its calls go through the egress proxy:
              its complete allowlist is `litellm-egress` (templates/base/litellm/egress-policy.yaml),
              so a client that ignores HTTPS_PROXY cannot go direct. */}}

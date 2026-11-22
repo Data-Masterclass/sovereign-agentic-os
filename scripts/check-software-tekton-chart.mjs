@@ -103,7 +103,7 @@ if (!helmOk || !depsOk) {
     const pipe = find('Pipeline', 'app-checks');
     if (!pipe) problems.push('the chart does not render the Pipeline app-checks');
     const pj = JSON.stringify(pipe ?? {});
-    if (/factory-gates\.mjs/.test(pj.replace(/\/platform\/gates\/factory-gates\.mjs/g, ''))) problems.push('a gate step runs the app\'s own scripts/factory-gates.mjs; only /platform/gates/factory-gates.mjs may run');
+    if (/scripts\/factory-gates\.mjs/.test(pj)) problems.push('a gate step runs the app\'s own scripts/factory-gates.mjs; only /platform/gates/factory-gates.mjs may run (and nothing may name scripts/factory-gates.mjs)');
     if (pj.includes('workspaces.app.path)/policy')) problems.push('OPA loads the app\'s own policy; it must load /platform/policy');
     if (pipe && !pj.includes('/platform/policy')) problems.push('OPA does not load /platform/policy');
     const plat = find('ConfigMap', 'app-checks-platform');

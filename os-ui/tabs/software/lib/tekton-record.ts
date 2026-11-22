@@ -18,7 +18,7 @@
  *     anything a log claims. Cancelled runs are `superseded`; unfinished runs are `running`.
  */
 import type { CheckEntry, CheckRecord, CheckRunStatus, CheckStatus, CheckTrigger } from '@tabs/software/lib/check-record';
-import { REQUIRED_GATES, parseGatesLog } from '@tabs/software/lib/gates';
+import { REQUIRED_GATES, EXIT_UNAVAILABLE } from '@tabs/software/lib/gates';
 
 type Obj = Record<string, unknown>;
 export type RunObjects = {
@@ -64,19 +64,12 @@ function gateEntry(id: string, step: StepView | undefined, log: string, runDone:
   if (!step || step.exit === null) {
     return runDone ? { id, status: 'unavailable', detail: `the '${id}' step did not run (an earlier step failed or the run ended first)` } : null;
   }
-  const parsed = parseGatesLog(log);
-  const g = parsed.ok ? parsed.report.gates.find((x) => x.id === id) : undefined;
-  if (g) {
-    let status: CheckStatus = g.status;
-    let detail = g.detail;
-    if (step.exit !== 0 && g.status === 'pass') {
-      status = 'fail';
-      detail = `the step exited ${step.exit} although its report says pass; ${g.detail}`;
-    }
-    return { id, status, detail: tail(detail), ...(g.violations?.length ? { violations: g.violations.slice(0, 50) } : {}) };
-  }
-  if (step.exit === 0) return { id, status: 'unavailable', detail: 'the step finished without a gate report in its log' };
-  return { id, status: 'fail', detail: tail(log) || `the step exited ${step.exit} and wrote no log` };
+  // THE VERDICT IS THE STEP'S EXIT CODE (0 pass, 3 unavailable, else fail), recorded by Tekton. Log text is
+  // display only: it is app-influenced output and never decides a gate.
+  if (step.exit === 0) return { id, status: 'pass', detail: `${id} step exited 0` };
+  const violations = log.split('\n').filter((l) => l.startsWith('  - ')).map((l) => l.slice(4)).slice(0, 50);
+  if (step.exit === EXIT_UNAVAILABLE) return { id, status: 'unavailable', detail: tail(log) || `${id} could not run`, ...(violations.length ? { violations } : {}) };
+  return { id, status: 'fail', detail: tail(log) || `the step exited ${step.exit} and wrote no log`, ...(violations.length ? { violations } : {}) };
 }
 
 function scanEntry(tr: Obj | undefined, logs: Record<string, string>, runSucceeded: boolean): CheckEntry | null {

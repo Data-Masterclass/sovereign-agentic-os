@@ -153,8 +153,8 @@ test('SUPERSEDE: the older running record of the app is marked superseded when a
   assert.equal(stored.find((r) => r.sha === '4'.repeat(40))!.status, 'running');
 });
 
-test('NEGATIVE a push to an app that is not from a golden-path template starts no checks', async () => {
-  const app = await createApp(dev, { name: 'Plain Push', template: 'sovereign-app' });
+test('NEGATIVE a push to an app the OS serves itself (no container) starts no checks, whatever its app.yaml claims', async () => {
+  const app = await createApp(dev, { name: 'Plain Push', template: 'sovereign-app', kind: 'spec' } as never);
   const calls: { slug: string; sha: string; trigger: string }[] = [];
   const report = await ingestApps(
     { domain: 'eng', pusher, sha: '5'.repeat(40), files: [{ path: `apps/${app.slug}/app.yaml`, status: 'modified', content: YAML }] },

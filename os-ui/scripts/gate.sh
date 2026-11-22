@@ -93,11 +93,6 @@ node ../scripts/check-software-tekton-chart.mjs
 # dedicated admin Secret, and refuses to render against another service's credential, database or
 # role. Rendered YAML, same skip rules as above.
 node ../scripts/check-governance-bootstrap-chart.mjs
-# Software Factory gates sandbox: a dedicated namespace (never the release one), default-deny with only DNS +
-# the egress proxy out, RBAC in that namespace, excluded from the blanket allows, the proxy admits it. Rendered
-# YAML, same skip rules as above.
-node ../scripts/check-software-sandbox-chart.mjs
-
 # The migrations' production caller: with the governance store on, the `os-governance-migrate` hook
 # Job (owner login only, after the bootstrap) renders and Postgres admits it; OPA's persistent
 # bundle volume is group-writable. Rendered YAML, same skip rules as above.

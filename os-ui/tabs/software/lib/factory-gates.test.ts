@@ -21,7 +21,7 @@ import type { CurrentUser } from '@core/kernel/auth';
 import { createApp, getAppForUser } from '@tabs/software/lib/apps';
 import { requestDeploy, runAppTests, __resetReviewCards } from './review.ts';
 import { instantiateGoldenPath } from './golden-path.ts';
-import { REQUIRED_GATES, evaluateGates, type GatesOutcome } from './gates.ts';
+import { REQUIRED_GATES, GATES_REPORT_DELIM, evaluateGates, type GatesOutcome } from './gates.ts';
 import { recordFromOutcome } from './check-record.ts';
 import type { ChecksRunner } from './tekton-checks.ts';
 
@@ -93,7 +93,6 @@ const files = () => instantiateGoldenPath('nextjs-web', { name: 'A', slug: 'a', 
 // The sandbox itself (Job shape, verdict channel, overlay, namespace, supersede) is tested in
 // sandbox-gates-verdict.test.ts; the pod log is no longer parsed for a verdict at all.
 
-const files = () => instantiateGoldenPath('nextjs-web', { name: 'A', slug: 'a', host: 'a.d.apps.test', registry: 'r/apps', ingressClass: 'nginx' });
 
 // ----------------------------------------------- the deploy request is blocked ---
 
