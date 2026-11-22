@@ -610,7 +610,7 @@ jobs:
         env:
           MON_IT: '1'
           OPENSEARCH_URL: http://127.0.0.1:19200
-        run: node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test --test-concurrency=1 core/adapters/victoria-metrics/query.int.test.ts tabs/monitoring/lib/panels/panels-queries.int.test.ts monitoring-run-stats.int.test.ts core/adapters/dagster/monitoring-read.int.test.ts core/adapters/opensearch/index-stats.int.test.ts monitoring-files-knowledge.int.test.ts
+        run: node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test --test-concurrency=1 core/adapters/victoria-metrics/query.int.test.ts tabs/monitoring/lib/panels/panels-queries.int.test.ts monitoring-run-stats.int.test.ts core/adapters/dagster/monitoring-read.int.test.ts core/adapters/opensearch/index-stats.int.test.ts monitoring-files-knowledge.int.test.ts tabs/files/lib/drive-sync.int.test.ts
       - name: Dagster logs (on failure)
         if: failure()
         run: docker logs --tail 80 monit-dagster || true
@@ -865,7 +865,7 @@ jobs:
       - name: Install dagster-test deps
         run: pip install "pyyaml>=6,<7"
       - name: pytest (dagster extension)
-        run: python3 -m pytest -q images/extensions/dagster/tests/test_os_projects.py images/extensions/dagster/tests/test_dbt_env.py images/extensions/dagster/tests/test_os_alerts.py images/extensions/dagster/tests/test_index_file.py images/extensions/dagster/tests/test_run_identity.py
+        run: python3 -m pytest -q images/extensions/dagster/tests/test_os_projects.py images/extensions/dagster/tests/test_dbt_env.py images/extensions/dagster/tests/test_os_alerts.py images/extensions/dagster/tests/test_os_files_sync.py images/extensions/dagster/tests/test_index_file.py images/extensions/dagster/tests/test_run_identity.py
       # agent-runtime: deleted in the engine rebuild (A5) — agent systems execute as a real
       # LangGraph StateGraph inside os-ui, covered by `npm --prefix os-ui test`.
 
