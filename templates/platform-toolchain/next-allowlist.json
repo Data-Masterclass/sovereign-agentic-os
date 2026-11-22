@@ -1,0 +1,9 @@
+{
+  "note": "PLATFORM-OWNED. The `next` versions the build gate will run, with the sha512 integrity of the registry tarball (npm ci verifies installed bytes against the lockfile's integrity; the gate binds that entry to this list). Add a pair only when the template moves to a new next.",
+  "next": [
+    {
+      "version": "16.4.6",
+      "integrity": "sha512-QZJiYhaZLJMo2KpkQGQIwvmd79WVsAWeYIU554a8d7zArS3si/IRy3lBNV/rtYhE70oLwdLYhPAXLPx8HwcwtA=="
+    }
+  ]
+}

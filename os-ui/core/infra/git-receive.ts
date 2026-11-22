@@ -160,6 +160,12 @@ export type RepoKind = {
    */
   validate(file: { path: string; content: string }): string | null;
   /**
+   * Optional: refuse the DELETION of a file this kind owns (a platform-owned file of an app, say). Called for
+   * every removed path the kind matches; returns null when the removal is acceptable. A kind without it
+   * accepts any removal (retirement is a separate governed action: see `ingest` rule 2).
+   */
+  validateDelete?(file: { path: string }): string | null;
+  /**
    * Apply the pushed files through the kind's GOVERNED service, as the pusher.
    *
    * TWO RULES EVERY KIND OBEYS, not optional:
@@ -759,7 +765,20 @@ export async function beginReceive(
 
     const unmatched: string[] = [];
     for (const f of changed) {
-      if (f.status === 'deleted' || f.content === null) continue;
+      if (f.status === 'deleted' || f.content === null) {
+        for (const kind of registeredRepoKinds()) {
+          const view = kind.validateDelete ? filesForKind(kind, [f], layout)[0] : undefined;
+          if (!view) continue;
+          let problem: string | null = null;
+          try {
+            problem = kind.validateDelete!({ path: view.path });
+          } catch (e) {
+            problem = e instanceof Error ? e.message : String(e);
+          }
+          if (problem) return reject(release, 422, `${f.path}: ${problem}`);
+        }
+        continue;
+      }
       const owners = registeredRepoKinds()
         .map((k) => ({ k, view: filesForKind(k, [f], layout)[0] }))
         .filter((o) => o.view);

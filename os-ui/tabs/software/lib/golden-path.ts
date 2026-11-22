@@ -102,7 +102,7 @@ export function assertNoPlatformOwnedChange(prior: ScaffoldFile[], incoming: Sca
 }
 
 /** Where the platform's pinned gate toolchain lives (a sibling of the templates, never copied into an app). */
-const TOOLCHAIN_FILES = ['package.json', 'package-lock.json', 'eslint.config.mjs'] as const;
+const TOOLCHAIN_FILES = ['package.json', 'package-lock.json', 'eslint.config.mjs', 'next-allowlist.json'] as const;
 
 /** The platform-pinned toolchain the sandbox installs (`npm ci`) and runs by absolute path. */
 export function platformToolchainFiles(): ScaffoldFile[] {

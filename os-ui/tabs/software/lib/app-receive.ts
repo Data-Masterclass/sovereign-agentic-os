@@ -15,8 +15,8 @@
  *     visibility are not read from files: `rederive` touches manifest, surface, auto-MCP and declared
  *     actions only) and NEVER RETIRE (a removed file is reported). A slug with no record is
  *     `unmatched`; an app of another domain than the repo is skipped.
- *   - Validation (synchronous, refuses the push): the gate files the platform owns (`policy/`,
- *     `scripts/factory-gates.mjs`) are not editable by a push, otherwise an author could weaken the
+ *   - Validation (synchronous, refuses the push): the files the platform owns (PLATFORM_OWNED: gate files,
+ *     Dockerfile, next.config.*, workflows, vendor, .npmrc) are neither editable nor removable by a push, otherwise an author could weaken the
  *     checks that judge the same push. `k8s/` is validated by the app-deploy kind (deploy-receive.ts).
  *   - Starting the checks for the pushed sha is NOT done here (the engine that runs them is decided
  *     separately); the report says so instead of implying they ran.
@@ -54,6 +54,15 @@ export function validateAppFile(file: { path: string; content: string }): string
   const s = split(file.path);
   if (s && isGateOwned(s.inner)) {
     return `${file.path} is a platform-owned file (the platform owns how the app is built, deployed and gated). A push cannot change it; the platform updates it with the template.`;
+  }
+  return null;
+}
+
+/** Removing a platform-owned file (the Dockerfile, a gate file, a next.config.*, k8s/) is refused like editing it. */
+export function validateAppDelete(file: { path: string }): string | null {
+  const s = split(file.path);
+  if (s && isPlatformOwnedPath(s.inner)) {
+    return `${file.path} is a platform-owned file (the platform owns how the app is built, deployed and gated). A push cannot remove it.`;
   }
   return null;
 }
@@ -109,5 +118,5 @@ export async function ingestApps(input: { domain: string; files: ChangedFile[]; 
 }
 
 export function registerAppIngest(): void {
-  registerRepoKind({ kind: APP_KIND, matches: matchesApp, validate: validateAppFile, ingest: (i) => ingestApps(i) });
+  registerRepoKind({ kind: APP_KIND, matches: matchesApp, validate: validateAppFile, validateDelete: validateAppDelete, ingest: (i) => ingestApps(i) });
 }
