@@ -296,3 +296,17 @@ test('NEGATIVE the gate script reached through a symlink (how a ConfigMap volume
   assert.equal(empty.status, 1, 'a gate with nothing to run (no tests/ here) is a failure, never a silent pass');
   rmSync(dir, { recursive: true, force: true });
 });
+
+test('factory-gates.mjs --facts writes the files the policy judges and exits 0 without running anything of the app', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'fg-facts-'));
+  mkdirSync(join(dir, 'src'));
+  writeFileSync(join(dir, 'src', 'a.ts'), 'export const a = 1;\n');
+  mkdirSync(join(dir, 'node_modules', 'x'), { recursive: true });
+  writeFileSync(join(dir, 'node_modules', 'x', 'i.js'), 'x');
+  const out = join(dir, '..', `facts-${Date.now()}.json`);
+  const r = spawnSync('node', [join(TEMPLATE, 'scripts', 'factory-gates.mjs'), '--facts', out, '--root', dir], { encoding: 'utf8' });
+  assert.equal(r.status, 0, `${r.stdout}${r.stderr}`);
+  const facts = JSON.parse(readFileSyncFs(out, 'utf8')) as { files: { path: string; content: string }[] };
+  assert.deepEqual(facts.files.map((f) => f.path), ['src/a.ts']);
+  rmSync(dir, { recursive: true, force: true });
+});

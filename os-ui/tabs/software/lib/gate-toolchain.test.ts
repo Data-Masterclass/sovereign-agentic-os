@@ -127,17 +127,18 @@ test('the gates never name node_modules/.bin, and a missing platform tool is una
 
 // ------------------------------------------------------- the Tekton gates pod ---
 
-type Step = { name: string; script?: string; workingDir?: string; env?: { name: string }[]; volumeMounts?: { name: string; mountPath: string; readOnly?: boolean }[] };
+type Step = { name: string; image?: string; command?: string[]; args?: string[]; onError?: string; script?: string; workingDir?: string; env?: { name: string }[]; volumeMounts?: { name: string; mountPath: string; readOnly?: boolean }[] };
 const PIPE = join(ROOT, 'charts/sovereign-agentic-os/files/tekton/pipelines/app-checks.yaml');
 const gatesTask = () => {
-  const p = yamlLoad(readFileSync(PIPE, 'utf8')) as { spec: { tasks: { name: string; taskSpec?: { steps: Step[]; volumes: { name: string; emptyDir?: unknown; configMap?: { name: string } }[] } }[] } };
+  const p = yamlLoad(readFileSync(PIPE, 'utf8')) as { spec: { tasks: { name: string; taskSpec?: { steps: Step[]; sidecars?: unknown[]; stepTemplate?: { securityContext?: Record<string, unknown>; volumeMounts?: { name: string; mountPath: string }[] }; workspaces?: { name: string; readOnly?: boolean }[]; volumes: { name: string; emptyDir?: unknown; configMap?: { name: string } }[] } }[] } };
   return p.spec.tasks.find((t) => t.name === 'gates')!.taskSpec!;
 };
 
 test('Tekton: every gate runs the platform toolchain by absolute path, read-only, and a toolchain step installs it first', () => {
   const t = gatesTask();
   const names = t.steps.map((s) => s.name);
-  assert.deepEqual(names.slice(0, 2), ['toolchain', 'install'], names.join(','));
+  assert.equal(names[0], 'toolchain', names.join(','));
+  assert.ok(names.indexOf('install') > names.indexOf('policy'), 'the policy is judged before any step that runs the app\'s code');
   const tc = t.steps[0];
   assert.match(tc.script ?? '', /npm ci --ignore-scripts/);
   assert.equal(tc.workingDir, '/platform/toolchain');
@@ -151,6 +152,53 @@ test('Tekton: every gate runs the platform toolchain by absolute path, read-only
   // the toolchain comes from the chart's ConfigMap, the install lands in an emptyDir
   assert.equal(t.volumes.find((v) => v.name === 'platform-toolchain-src')!.configMap!.name, 'app-checks-toolchain');
   assert.ok(t.volumes.find((v) => v.name === 'platform-toolchain')!.emptyDir);
+});
+
+test('NEGATIVE the policy has no server: no sidecar, nothing listens on loopback, the policy step is a one-shot `opa eval` over the read-only platform policy', () => {
+  const t = gatesTask();
+  assert.equal(t.sidecars, undefined, 'a sidecar shares the pod network namespace with the app\'s code (tests, build)');
+  assert.doesNotMatch(JSON.stringify(t), /8181|OPA_URL|--server/, 'no OPA server address or flag anywhere in the gates task');
+  const policy = t.steps.find((s) => s.name === 'policy')!;
+  assert.match(String(policy.image), /openpolicyagent\/opa:[^@]+@sha256:[a-f0-9]{64}$/);
+  assert.deepEqual(policy.command, ['/opa']);
+  assert.deepEqual((policy.args ?? []).slice(0, 1), ['eval']);
+  assert.ok((policy.args ?? []).includes('--fail-defined'), 'a violation is the step\'s exit code');
+  assert.ok(!(policy.args ?? []).includes('--server'));
+  assert.equal(policy.onError, 'continue');
+  const ro = (s: Step, mount: string) => (s.volumeMounts ?? []).find((v) => v.mountPath === mount)?.readOnly;
+  assert.equal(ro(policy, '/platform/policy'), true);
+  assert.equal(ro(policy, '/facts'), true, 'the facts the policy judges are read-only for it');
+  // the files the policy judges are written by a platform step that runs before any of the app\'s code
+  const facts = t.steps.find((s) => s.name === 'facts')!;
+  assert.match(facts.script ?? '', /factory-gates\.mjs --facts \/facts\/facts\.json --root \$\(workspaces\.app\.path\)/);
+  assert.ok(t.steps.findIndex((s) => s.name === 'facts') < t.steps.findIndex((s) => s.name === 'policy'));
+  // NEGATIVE TWIN: the steps that run the app\'s code mount neither the policy nor the facts
+  for (const id of ['install', 'typecheck', 'lint', 'tests', 'build']) {
+    const mounts = (t.steps.find((s) => s.name === id)!.volumeMounts ?? []).map((v) => v.mountPath);
+    assert.ok(!mounts.includes('/platform/policy') && !mounts.includes('/facts'), `${id} must not see the policy or the facts (${mounts.join(',')})`);
+  }
+});
+
+test('NEGATIVE the app\'s code works on a COPY: the pushed tree is mounted read-only and judged by policy and scan unchanged', () => {
+  const t = gatesTask();
+  assert.equal(t.workspaces!.find((w) => w.name === 'app')!.readOnly, true, 'the clone is read-only in the pod that runs the app\'s code');
+  assert.ok(t.volumes.find((v) => v.name === 'work')!.emptyDir, 'the copy lives in an emptyDir');
+  const names = t.steps.map((s) => s.name);
+  assert.ok(names.indexOf('copy') >= 0 && names.indexOf('copy') < names.indexOf('install'));
+  for (const id of ['install', 'typecheck', 'lint', 'tests', 'build']) {
+    const st = t.steps.find((s) => s.name === id)!;
+    assert.equal(st.workingDir, '/work', id);
+    assert.doesNotMatch(st.script ?? '', /workspaces\.app\.path/, `${id} must not name the pushed tree`);
+  }
+  for (const id of ['typecheck', 'lint', 'tests', 'build']) assert.match(t.steps.find((s) => s.name === id)!.script ?? '', /--root \/work /, id);
+});
+
+test('every step has a read-only root filesystem (writable scratch is an emptyDir at /tmp and /work)', () => {
+  const t = gatesTask();
+  assert.equal(t.stepTemplate!.securityContext!.readOnlyRootFilesystem, true);
+  assert.ok((t.stepTemplate!.volumeMounts ?? []).some((v) => v.mountPath === '/tmp'));
+  assert.ok(t.volumes.find((v) => v.name === 'tmp')!.emptyDir);
+  for (const s of t.steps) assert.equal((s as { securityContext?: unknown }).securityContext, undefined, `${s.name} must not override the template`);
 });
 
 test('NEGATIVE TWIN: the app\'s own install step does not get the toolchain and runs in the app\'s folder', () => {
