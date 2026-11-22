@@ -36,10 +36,10 @@ export function loadExceptions(file) {
   const e = typeof file === 'string' ? JSON.parse(readFileSync(file, 'utf8')) : file;
   const list = e.exceptions || [];
   list.forEach((x, i) => {
-    for (const k of ['ecosystem', 'name', 'version']) if (!x[k]) throw new Error(`exceptions[${i}]: "${k}" is required`);
+    for (const k of ['ecosystem', 'name', 'version', 'condition']) if (!x[k]) throw new Error(`exceptions[${i}]${x.name ? ` (${x.name})` : ''}: "${k}" is required`);
     if (typeof x.reason !== 'string' || x.reason.trim() === '') throw new Error(`exceptions[${i}] (${x.name}): a reason is required`);
     if (typeof x.reviewedBy !== 'string' || x.reviewedBy.trim() === '') throw new Error(`exceptions[${i}] (${x.name}): reviewedBy is required`);
-    if (x.condition !== undefined && !EXCEPTION_CONDITIONS.includes(x.condition)) throw new Error(`exceptions[${i}] (${x.name}): condition must be one of ${EXCEPTION_CONDITIONS.join(', ')}`);
+    if (!EXCEPTION_CONDITIONS.includes(x.condition)) throw new Error(`exceptions[${i}] (${x.name}): condition must be one of ${EXCEPTION_CONDITIONS.join(', ')}`);
   });
   return { exceptions: list };
 }
@@ -224,10 +224,10 @@ export function checkAll(deps, { policy, exceptions, noticesText = '' }) {
     const r = { ...d, verdict: ev.verdict, chosen: ev.chosen, reasons: [], status: 'pass', needsAttribution: false, attributed: false, note: '' };
     const findException = () => exc.findIndex((x) => x.ecosystem === d.ecosystem && x.name === d.name && (x.version === '*' || x.version === d.version));
     if (ev.verdict === 'forbid') { r.status = 'fail'; r.reasons.push(...ev.why, 'this licence can never be excepted'); return r; }
-    if (ev.verdict === 'unknown') {
-      const i = findException();
-      if (i >= 0) { used.add(i); r.note = `excepted: ${exc[i].reason} (reviewed by ${exc[i].reviewedBy})`; return r; }
-      r.status = 'fail'; r.reasons.push(...ev.why, 'unknown or missing licence: fix upstream or add a reviewed entry with a reason to licenses/exceptions.json'); return r;
+    if (ev.verdict === 'unknown') { // an exception can NEVER waive an unknown: it must first be resolved to an SPDX id by an alias
+      r.status = 'fail';
+      r.reasons.push(...ev.why, 'unknown or missing licence: resolve it to an SPDX id with an alias in licenses/policy.json (a reviewed mapping); exceptions never waive an unknown licence');
+      return r;
     }
     if (ev.verdict === 'exceptable') {
       const i = findException();
@@ -260,18 +260,22 @@ export function loadKnownViolations(file) {
   const k = typeof file === 'string' ? JSON.parse(readFileSync(file, 'utf8')) : file;
   const list = k.violations || [];
   list.forEach((x, i) => {
-    for (const f of ['ecosystem', 'name', 'version']) if (!x[f]) throw new Error(`known-violations[${i}]: "${f}" is required`);
+    for (const f of ['ecosystem', 'name', 'version']) if (!x[f]) throw new Error(`known-violations[${i}]${x.name ? ` (${x.name})` : ''}: "${f}" is required`);
+    if (x.version === '*') throw new Error(`known-violations[${i}] (${x.name}): an exact version is required, "*" would hide every future version`);
     if (typeof x.reason !== 'string' || x.reason.trim() === '') throw new Error(`known-violations[${i}] (${x.name}): a reason is required`);
   });
   return { violations: list };
 }
 
+// A finding is "known" only if it is not never-allowed (AGPL, EUPL, source-available: verdict forbid - those always fail) and an entry
+// names its exact package version. `unchecked` = entries of an ecosystem that was not scanned this run: reported, never silent.
 export function applyKnownViolations(results, known, { scanned }) {
   const list = known.violations;
-  const matches = (x, r) => x.ecosystem === r.ecosystem && x.name === r.name && (x.version === '*' || x.version === r.version);
+  const matches = (x, r) => x.ecosystem === r.ecosystem && x.name === r.name && x.version === r.version;
   const failures = results.filter((r) => r.status === 'fail');
-  const knownHits = failures.filter((r) => list.some((x) => matches(x, r)));
+  const knownHits = failures.filter((r) => r.verdict !== 'forbid' && list.some((x) => matches(x, r)));
   const newFailures = failures.filter((r) => !knownHits.includes(r));
-  const stale = list.filter((x) => scanned.includes(x.ecosystem) && !failures.some((r) => matches(x, r)));
-  return { known: knownHits, newFailures, stale };
+  const stale = list.filter((x) => scanned.includes(x.ecosystem) && !knownHits.some((r) => matches(x, r)));
+  const unchecked = list.filter((x) => !scanned.includes(x.ecosystem));
+  return { known: knownHits, newFailures, stale, unchecked };
 }

@@ -61,7 +61,6 @@ cmd_urls(){
   printf "  %-14s https://%s  (admins only; the gateway has no public host)\n" "LLM Gateway" "os.$d/tools/litellm/ui"
   printf "  %-14s %s\n" "Langfuse"     "no public host — kubectl -n agentic-os port-forward svc/agentic-os-langfuse-web 3000:3000"
   printf "  %-14s https://%s\n" "Superset"     "superset.$d"
-  printf "  %-14s https://%s\n" "Forgejo"      "forgejo.$d"
   printf "  %-14s https://%s\n" "Argo CD"      "argocd.$d"
   printf "  %-14s https://%s\n" "OpenMetadata" "openmetadata.$d"
   [ "$d" = "<your-domain>" ] && warn "Set STACKIT_DNS_NAME in deploy/.env.stackit (or run after 'deploy')."

@@ -8,24 +8,20 @@
     "             licenses/exceptions.json that carries a reason, reviewedBy and a condition from `conditions` (unmodified, not linked into",
     "             our code; or a separate program). A GPL needs 'separate-program'. The gate checks the condition.",
     "forbid     - never allowed, never excepted: AGPL, EUPL and source-available licences (BUSL/BSL, SSPL, Elastic, Commons Clause, CC-BY-NC, CC-BY-SA).",
-    "Unknown or unlicensed fails unless an exception carries a reason. Dual-licensed (SPDX 'A OR B', or legacy 'A/B'): passes if ANY option is allowed",
     "(the chosen option is recorded); 'A AND B' needs every side allowed; 'WITH <exception>' does not change the base licence.",
     "attributionExempt - every OTHER chosen licence (including excepted ones) needs an attribution entry (the package name) in one of noticesFiles.",
+    "An UNKNOWN licence (neither allowed, exceptable nor forbidden) always fails and can NEVER be waived by an exception: resolve it first to an SPDX id",
+    "through an explicit alias below (a reviewed mapping), after which the forbid / condition rules apply as normal. Free-text spellings of the",
+    "never-allowed and copyleft licences ('Elastic License 2.0', 'Server Side Public License', 'GNU General Public License', ...) are matched by the",
+    "forbid / exceptable patterns directly, so they cannot slip through as unknown.",
     "aliases    - legacy/free-text licence strings mapped to an SPDX id; the bare 'BSD License' / 'BSD' resolve to BSD-3-Clause (owner decision)."
   ],
   "allow": [
     "Apache-2.0", "MIT", "BSD-2-Clause", "BSD-3-Clause", "ISC", "0BSD", "Zlib", "Unlicense", "BlueOak-1.0.0", "PSF-2.0", "Python-2.0", "CC-BY-4.0", "CC0-1.0", "MIT-0", "PostgreSQL"
   ],
   "exceptable": {
-    "weak": [
-      "MPL*",
-      "LGPL*",
-      "EPL*",
-      "CDDL*"
-    ],
-    "gpl": [
-      "GPL*"
-    ]
+    "weak": ["MPL*", "LGPL*", "EPL*", "CDDL*", "GNU Lesser General Public License*", "GNU Library*", "GNU LGPL*", "Mozilla Public License*", "Eclipse Public License*", "Common Development and Distribution License*"],
+    "gpl": ["GPL*", "GNU General Public License*", "GNU GPL*"]
   },
   "conditions": {
     "weak": [
@@ -37,7 +33,7 @@
     ]
   },
   "forbid": [
-    "AGPL*", "EUPL*", "BUSL*", "BSL-1.1", "SSPL*", "Elastic-2.0", "ELv2", "Commons-Clause*", "CC-BY-NC*", "CC-BY-SA*"
+    "AGPL*", "EUPL*", "BUSL*", "BSL-1.1", "SSPL*", "Elastic-2.0", "ELv2", "Commons-Clause*", "CC-BY-NC*", "CC-BY-SA*", "Elastic License*", "Server Side Public License*", "SSPL", "Business Source License*", "BSL 1.1", "Commons Clause*", "GNU Affero*", "GNU AGPL*", "European Union Public Licen*", "Creative Commons*NonCommercial*", "Creative Commons*ShareAlike*"
   ],
   "attributionExempt": [
     "Apache-2.0",
@@ -82,6 +78,14 @@
     "3-Clause BSD License": "BSD-3-Clause",
     "2-Clause BSD License": "BSD-2-Clause",
     "BSD License": "BSD-3-Clause",
-    "BSD": "BSD-3-Clause"
+    "BSD": "BSD-3-Clause",
+    "Elastic License 2.0": "Elastic-2.0",
+    "Elastic License v2": "Elastic-2.0",
+    "Server Side Public License": "SSPL-1.0",
+    "Business Source License 1.1": "BUSL-1.1",
+    "Business Source License": "BUSL-1.1",
+    "Commons Clause": "Commons-Clause",
+    "GNU GPL v3": "GPL-3.0-only",
+    "GNU GPL v2": "GPL-2.0-only"
   }
 }
