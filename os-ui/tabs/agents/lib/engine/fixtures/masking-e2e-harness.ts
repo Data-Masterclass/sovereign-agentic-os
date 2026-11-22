@@ -3,6 +3,8 @@
  *
  * FEATURE:    Shared rig of the Langfuse masking e2e tests (`masking.e2e.test.ts`,
  *             `masking-gateway.e2e.test.ts`)
+ * USER STORY: As the owner I want the masking proof to come from the real Langfuse and the real
+ *             gateway, with the exact payload os-ui sent to Langfuse searchable for a seeded value.
  * ARCHITECTURE: test-only. It starts (1) the scripted OpenAI-compatible model the stack's LiteLLM
  *             routes to and (2) a RECORDING FORWARDER in front of the real Langfuse web
  *             container: every request os-ui sends to Langfuse is stored (gunzipped) and
