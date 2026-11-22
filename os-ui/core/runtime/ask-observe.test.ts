@@ -74,7 +74,15 @@ test('C1: the turn id is server-minted and unique per turn, never reused across 
   const a = await runOsAssistant({ user: creator, tab: null, messages: [{ role: 'user', content: 'x' }], llm: recording().llm });
   const b = await runOsAssistant({ user: creator, tab: null, messages: [{ role: 'user', content: 'y' }], llm: recording().llm });
   assert.notEqual(a.traceId, b.traceId, 'two turns must not share a trace id');
-  assert.match(a.traceId, /^ask-/, 'the turn id is namespaced so it cannot collide with a run id');
+  // A W3C trace id (32 hex): the gateway nests a model call in the caller's Langfuse trace only when
+  // it is sent a `traceparent` made from one, so an `ask-` id made every call its own trace.
+  assert.match(a.traceId, /^[0-9a-f]{32}$/, 'the turn id is a W3C trace id');
+  const { gatewayTraceHeaders } = await import('@core/runtime/gateway-trace');
+  const seen = recording();
+  await runOsAssistant({ user: creator, tab: null, messages: [{ role: 'user', content: 'z' }], llm: seen.llm });
+  for (const r of seen.reqs) {
+    assert.ok(gatewayTraceHeaders(r.observe).headers.traceparent, 'every call of a drawer turn sends a traceparent');
+  }
 });
 
 test('C1: an injected traceId is honoured (the hook the durable-thread work will use)', async () => {

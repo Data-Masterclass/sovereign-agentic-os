@@ -161,10 +161,3 @@ test('every model call of a Home chat turn carries ONE W3C trace id, so the gate
   assert.ok(seen.every((s) => /^[0-9a-f]{16}$/.test(s.parent ?? '')), 'and name a W3C parent span');
   for (const s of seen) assert.ok(gatewayTraceHeaders({ traceId: s.traceId!, parentObservationId: s.parent }).headers.traceparent, 'a traceparent header is sent');
 });
-
-test('NEGATIVE TWIN: the drawer path (no confirm) keeps its ask- id, which sends no traceparent', async () => {
-  const seen: (string | undefined)[] = [];
-  const llm: LlmCall = async (req) => { seen.push(req.observe?.traceId); return { content: req.tools ? 'ok' : '1. plan', toolCalls: [] }; };
-  const res = await runOsAssistant({ user: creator, tab: null, messages: [{ role: 'user', content: 'go' }], llm });
-  assert.match(res.traceId, /^ask-/);
-});
