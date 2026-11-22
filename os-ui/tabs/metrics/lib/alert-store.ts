@@ -26,7 +26,7 @@ export type AlertRuleRecord = AlertRule & {
 
 const ALERT_STORE_KEY = Symbol.for('soa.metrics.alert-rules.store');
 
-type AlertStoreState = { rules: Map<string, AlertRuleRecord>; hydration: Promise<void> | null };
+type AlertStoreState = { rules: Map<string, AlertRuleRecord>; hydration: Promise<void> | null; hydratedAt?: number; hydrateFailedAt?: number };
 
 function alertStoreState(): AlertStoreState {
   const g = globalThis as unknown as Record<symbol, AlertStoreState | undefined>;
@@ -60,14 +60,33 @@ export async function ensureHydrated(): Promise<void> {
   return s.hydration;
 }
 
+/**
+ * Did the rules really LOAD? An unreachable mirror leaves the map empty, which is indistinguishable from
+ * "no rules" — a reader that shows a count must ask this first (the dashboards store's `hydrationState`).
+ */
+export function alertStoreHydrationState(): 'hydrated' | 'failed' | 'pending' {
+  const s = alertStoreState();
+  if (s.hydratedAt !== undefined) return 'hydrated';
+  return s.hydrateFailedAt !== undefined ? 'failed' : 'pending';
+}
+
 async function hydrate(): Promise<void> {
   const s = alertStoreState();
-  const docs = (await mirror.hydrate(1000)) ?? [];
+  const docs = await mirror.hydrate(1000);
+  if (docs === null) {
+    // The mirror could not be read: stay un-hydrated and say so, so the next read retries and no reader
+    // mistakes the empty map for "no rules". A failed hydration is never cached as done.
+    s.hydrateFailedAt = Date.now();
+    s.hydration = null;
+    return;
+  }
   for (const rec of docs as AlertRuleRecord[]) {
     // Coerce legacy 'email'/'slack' channels to the only supported one ('in_app') so old
     // persisted rules keep firing — never crash on legacy data.
     if (rec.id) s.rules.set(rec.id, { ...rec, notify: coerceChannels(rec.notify) });
   }
+  s.hydratedAt = Date.now();
+  delete s.hydrateFailedAt;
 }
 
 export function saveAlertRule(rule: AlertRule, owner: string, domain = 'default'): AlertRuleRecord {
@@ -113,4 +132,5 @@ export function recordEvaluation(id: string, value: number, breached: boolean): 
 export function __resetAlertStore(): void {
   const g = globalThis as unknown as Record<symbol, AlertStoreState | undefined>;
   g[ALERT_STORE_KEY] = { rules: new Map(), hydration: null };
+  mirror.__reset();
 }
