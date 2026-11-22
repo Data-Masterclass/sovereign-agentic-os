@@ -27,6 +27,9 @@ k() { kubectl --kubeconfig "$SF_KUBECONFIG" "$@"; }
 say() { printf '\n==> %s\n' "$*"; }
 for t in docker kind kubectl helm curl; do command -v "$t" >/dev/null || { echo "missing tool: $t" >&2; exit 1; }; done
 mkdir -p "$SF_REPOS_DIR"
+# `mktemp -d` makes a 0700 directory owned by the host user; the git-http container runs as another uid and must be able to
+# read the repositories (on Linux the mode is enforced, so an unreadable directory looks like "repository not found" = HTTP 404).
+chmod a+rx "$SF_REPOS_DIR"
 
 say "1. kind cluster $CLUSTER (default CNI off, repos mounted at /repos)"
 if ! kind get clusters 2>/dev/null | grep -qx "$CLUSTER"; then
